@@ -1,0 +1,14 @@
+{
+  "name": "@platforma/wp-import",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "preview": "pnpm build && node dist/index.js preview",
+    "run": "pnpm build && node dist/index.js run"
+  },
+  "devDependencies": {
+    "@types/node": "25.6.0",
+    "typescript": "6.0.3"
+  }
+}
