@@ -11,6 +11,6 @@ import { PermissionsGuard } from './permissions.guard';
   imports: [JwtModule.register({}), PrismaModule],
   controllers: [AuthController],
   providers: [AuthService, JwtAuthGuard, PermissionsGuard],
-  exports: [JwtAuthGuard, PermissionsGuard],
+  exports: [JwtModule, JwtAuthGuard, PermissionsGuard],
 })
 export class AuthModule {}

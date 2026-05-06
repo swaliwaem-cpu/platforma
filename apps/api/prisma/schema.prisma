@@ -8,9 +8,10 @@ datasource db {
 }
 
 enum UserStatus {
-  ACTIVE  @map("active")
-  BLOCKED @map("blocked")
-  INVITED @map("invited")
+  ACTIVE      @map("active")
+  BLOCKED     @map("blocked")
+  INVITED     @map("invited")
+  DEACTIVATED @map("deactivated")
 
   @@map("user_status")
 }

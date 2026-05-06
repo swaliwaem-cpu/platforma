@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { platformName } from '@platforma/shared';
 
+import { UsersAdminPage } from './admin/UsersAdminPage';
 import { AuthProvider, useAuth } from './auth/AuthProvider';
 import './styles.css';
 
@@ -94,7 +95,15 @@ function AppRoutes() {
       <section className="workspace">
         {activeSection === 'admin' ? (
           hasPermission('admin:access') ? (
-            <AdminHome />
+            pathname.startsWith('/admin/users') ? (
+              hasPermission('users:read') ? (
+                <UsersAdminPage onBack={() => navigate('/admin')} />
+              ) : (
+                <AccessDenied />
+              )
+            ) : (
+              <AdminHome onOpenUsers={() => navigate('/admin/users')} />
+            )
           ) : (
             <AccessDenied />
           )
@@ -205,12 +214,23 @@ function CatalogHome() {
   );
 }
 
-function AdminHome() {
+function AdminHome({ onOpenUsers }: { onOpenUsers: () => void }) {
+  const { hasPermission } = useAuth();
+
   return (
     <div className="content-panel">
       <p className="eyebrow">Админка</p>
       <h2>Панель управления</h2>
-      <p className="muted-text">Доступ разрешён.</p>
+      <div className="admin-actions">
+        <button
+          className="primary-button primary-button--fit"
+          disabled={!hasPermission('users:read')}
+          type="button"
+          onClick={onOpenUsers}
+        >
+          Пользователи
+        </button>
+      </div>
     </div>
   );
 }
