@@ -13,8 +13,10 @@
   "dependencies": {
     "@nestjs/common": "11.1.19",
     "@nestjs/core": "11.1.19",
+    "@nestjs/jwt": "^11.0.2",
     "@nestjs/platform-express": "11.1.19",
     "@prisma/client": "6.19.3",
+    "argon2": "^0.44.0",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2"
   },

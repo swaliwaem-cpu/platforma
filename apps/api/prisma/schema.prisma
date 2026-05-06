@@ -6,3 +6,348 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+enum UserStatus {
+  ACTIVE  @map("active")
+  BLOCKED @map("blocked")
+  INVITED @map("invited")
+
+  @@map("user_status")
+}
+
+enum ObjectStatus {
+  DRAFT     @map("draft")
+  PUBLISHED @map("published")
+  ARCHIVED  @map("archived")
+
+  @@map("object_status")
+}
+
+enum LocationType {
+  AREA     @map("area")
+  DISTRICT @map("district")
+  CUSTOM   @map("custom")
+
+  @@map("location_type")
+}
+
+enum FileStorage {
+  LOCAL @map("local")
+  MINIO @map("minio")
+
+  @@map("file_storage")
+}
+
+enum ObjectFileType {
+  PRESENTATION @map("presentation")
+  FLOOR_PLAN   @map("floor_plan")
+  DOCUMENT     @map("document")
+  OTHER        @map("other")
+
+  @@map("object_file_type")
+}
+
+enum ImportMode {
+  PREVIEW @map("preview")
+  RUN     @map("run")
+
+  @@map("import_mode")
+}
+
+enum ImportStatus {
+  PENDING @map("pending")
+  SUCCESS @map("success")
+  PARTIAL @map("partial")
+  FAILED  @map("failed")
+
+  @@map("import_status")
+}
+
+model User {
+  id                    String     @id @default(uuid()) @db.Uuid
+  email                 String     @unique @db.VarChar(320)
+  passwordHash          String     @map("password_hash")
+  refreshTokenHash      String?    @map("refresh_token_hash")
+  refreshTokenExpiresAt DateTime?  @map("refresh_token_expires_at")
+  name                  String?
+  status                UserStatus @default(INVITED)
+  roleId                String     @map("role_id") @db.Uuid
+  createdAt             DateTime   @default(now()) @map("created_at")
+  updatedAt             DateTime   @updatedAt @map("updated_at")
+  deletedAt             DateTime?  @map("deleted_at")
+
+  role          Role           @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  auditLogs     AuditLog[]     @relation("AuditActor")
+  importReports ImportReport[] @relation("ImportReportCreator")
+  uploadedFiles File[]         @relation("FileUploader")
+
+  @@index([roleId])
+  @@index([status])
+  @@map("users")
+}
+
+model Role {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @unique @db.VarChar(64)
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  users       User[]
+  permissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String   @id @default(uuid()) @db.Uuid
+  key         String   @unique @db.VarChar(120)
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String   @map("role_id") @db.Uuid
+  permissionId String   @map("permission_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+model Developer {
+  id        String   @id @default(uuid()) @db.Uuid
+  wpTermId  Int?     @unique @map("wp_term_id")
+  name      String   @unique
+  slug      String?  @unique
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  objects RealEstateObject[]
+
+  @@map("developers")
+}
+
+model Location {
+  id        String       @id @default(uuid()) @db.Uuid
+  wpTermId  Int?         @unique @map("wp_term_id")
+  name      String
+  slug      String
+  type      LocationType @default(CUSTOM)
+  parentId  String?      @map("parent_id") @db.Uuid
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+
+  parent         Location?          @relation("LocationTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children       Location[]         @relation("LocationTree")
+  primaryObjects RealEstateObject[] @relation("PrimaryObjectLocation")
+  objectLinks    ObjectLocation[]
+
+  @@unique([type, slug])
+  @@index([parentId])
+  @@map("locations")
+}
+
+model MetroStation {
+  id        String   @id @default(uuid()) @db.Uuid
+  wpTermId  Int?     @unique @map("wp_term_id")
+  name      String
+  slug      String
+  lineName  String?  @map("line_name")
+  lineColor String?  @map("line_color") @db.VarChar(32)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  objectLinks ObjectMetroStation[]
+
+  @@unique([lineName, slug])
+  @@index([lineName])
+  @@map("metro_stations")
+}
+
+model RealEstateObject {
+  id                String       @id @default(uuid()) @db.Uuid
+  wpPostId          Int?         @unique @map("wp_post_id")
+  title             String
+  slug              String       @unique
+  status            ObjectStatus @default(DRAFT)
+  description       String?
+  shortDescription  String?      @map("short_description")
+  priceFrom         Decimal?     @map("price_from") @db.Decimal(14, 2)
+  pricePerMeterFrom Decimal?     @map("price_per_meter_from") @db.Decimal(14, 2)
+  completionYear    Int?         @map("completion_year")
+  completionQuarter Int?         @map("completion_quarter")
+  address           String?
+  latitude          Decimal?     @db.Decimal(9, 6)
+  longitude         Decimal?     @db.Decimal(9, 6)
+  featuresJson      Json         @default("{}") @map("features_json")
+  developerId       String?      @map("developer_id") @db.Uuid
+  primaryLocationId String?      @map("primary_location_id") @db.Uuid
+  publishedAt       DateTime?    @map("published_at")
+  archivedAt        DateTime?    @map("archived_at")
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+  deletedAt         DateTime?    @map("deleted_at")
+
+  developer       Developer?           @relation(fields: [developerId], references: [id], onDelete: SetNull)
+  primaryLocation Location?            @relation("PrimaryObjectLocation", fields: [primaryLocationId], references: [id], onDelete: SetNull)
+  locations       ObjectLocation[]
+  metroStations   ObjectMetroStation[]
+  images          ObjectImage[]
+  files           ObjectFile[]
+  auditLogs       AuditLog[]           @relation("ObjectAuditLogs")
+
+  @@index([status])
+  @@index([developerId])
+  @@index([primaryLocationId])
+  @@index([priceFrom])
+  @@index([completionYear])
+  @@index([latitude, longitude])
+  @@map("real_estate_objects")
+}
+
+model ObjectLocation {
+  objectId   String   @map("object_id") @db.Uuid
+  locationId String   @map("location_id") @db.Uuid
+  isPrimary  Boolean  @default(false) @map("is_primary")
+  sortOrder  Int      @default(0) @map("sort_order")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  object   RealEstateObject @relation(fields: [objectId], references: [id], onDelete: Cascade)
+  location Location         @relation(fields: [locationId], references: [id], onDelete: Restrict)
+
+  @@id([objectId, locationId])
+  @@index([locationId])
+  @@map("object_locations")
+}
+
+model ObjectMetroStation {
+  objectId       String   @map("object_id") @db.Uuid
+  metroStationId String   @map("metro_station_id") @db.Uuid
+  sortOrder      Int      @default(0) @map("sort_order")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  object       RealEstateObject @relation(fields: [objectId], references: [id], onDelete: Cascade)
+  metroStation MetroStation     @relation(fields: [metroStationId], references: [id], onDelete: Restrict)
+
+  @@id([objectId, metroStationId])
+  @@index([metroStationId])
+  @@map("object_metro_stations")
+}
+
+model File {
+  id             String      @id @default(uuid()) @db.Uuid
+  wpAttachmentId Int?        @unique @map("wp_attachment_id")
+  storage        FileStorage @default(MINIO)
+  bucket         String?
+  key            String
+  url            String?
+  originalName   String?     @map("original_name")
+  mimeType       String?     @map("mime_type")
+  sizeBytes      BigInt?     @map("size_bytes")
+  checksum       String?
+  uploadedById   String?     @map("uploaded_by_id") @db.Uuid
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+
+  uploadedBy   User?         @relation("FileUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  objectImages ObjectImage[]
+  objectFiles  ObjectFile[]
+
+  @@unique([storage, bucket, key])
+  @@index([uploadedById])
+  @@map("files")
+}
+
+model ObjectImage {
+  id            String   @id @default(uuid()) @db.Uuid
+  objectId      String   @map("object_id") @db.Uuid
+  fileId        String   @map("file_id") @db.Uuid
+  sortOrder     Int      @default(0) @map("sort_order")
+  isCover       Boolean  @default(false) @map("is_cover")
+  alt           String?
+  title         String?
+  sourceMetaKey String?  @map("source_meta_key")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  object RealEstateObject @relation(fields: [objectId], references: [id], onDelete: Cascade)
+  file   File             @relation(fields: [fileId], references: [id], onDelete: Restrict)
+
+  @@unique([objectId, fileId])
+  @@index([fileId])
+  @@index([objectId, isCover])
+  @@map("object_images")
+}
+
+model ObjectFile {
+  id            String         @id @default(uuid()) @db.Uuid
+  objectId      String         @map("object_id") @db.Uuid
+  fileId        String         @map("file_id") @db.Uuid
+  type          ObjectFileType @default(OTHER)
+  title         String?
+  sortOrder     Int            @default(0) @map("sort_order")
+  sourceMetaKey String?        @map("source_meta_key")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+
+  object RealEstateObject @relation(fields: [objectId], references: [id], onDelete: Cascade)
+  file   File             @relation(fields: [fileId], references: [id], onDelete: Restrict)
+
+  @@unique([objectId, fileId, type])
+  @@index([fileId])
+  @@index([objectId, type])
+  @@map("object_files")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  action      String   @db.VarChar(120)
+  entityType  String   @map("entity_type") @db.VarChar(120)
+  entityId    String?  @map("entity_id") @db.VarChar(120)
+  objectId    String?  @map("object_id") @db.Uuid
+  metadata    Json?
+  ipAddress   String?  @map("ip_address") @db.VarChar(64)
+  userAgent   String?  @map("user_agent")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  actor  User?             @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  object RealEstateObject? @relation("ObjectAuditLogs", fields: [objectId], references: [id], onDelete: SetNull)
+
+  @@index([actorUserId])
+  @@index([entityType, entityId])
+  @@index([objectId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model ImportReport {
+  id           String       @id @default(uuid()) @db.Uuid
+  mode         ImportMode
+  status       ImportStatus @default(PENDING)
+  source       String       @default("wordpress") @db.VarChar(120)
+  startedAt    DateTime     @default(now()) @map("started_at")
+  finishedAt   DateTime?    @map("finished_at")
+  summaryJson  Json?        @map("summary_json")
+  warningsJson Json?        @map("warnings_json")
+  errorsJson   Json?        @map("errors_json")
+  createdById  String?      @map("created_by_id") @db.Uuid
+  createdAt    DateTime     @default(now()) @map("created_at")
+
+  createdBy User? @relation("ImportReportCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([mode, status])
+  @@index([createdById])
+  @@index([createdAt])
+  @@map("import_reports")
+}

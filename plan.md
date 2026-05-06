@@ -67,31 +67,31 @@
 
 ### Этап 3. База данных
 
-- [ ] Описать Prisma schema для пользователей, ролей и прав.
-- [ ] Описать Prisma schema для объектов недвижимости.
-- [ ] Описать справочники `Developer`, `Location`, `MetroStation`.
-- [ ] Описать связи с метро, изображениями и файлами.
-- [ ] Описать `AuditLog` и `ImportReport`.
-- [ ] Добавить технические поля импорта: `wpPostId`, `wpAttachmentId`, `wpTermId`.
-- [ ] Создать первую миграцию.
-- [ ] Добавить seed ролей `admin`, `editor`, `user`.
-- [ ] Добавить seed permissions.
-- [ ] Добавить seed первого admin-пользователя.
+- [x] Описать Prisma schema для пользователей, ролей и прав.
+- [x] Описать Prisma schema для объектов недвижимости.
+- [x] Описать справочники `Developer`, `Location`, `MetroStation`.
+- [x] Описать связи с метро, изображениями и файлами.
+- [x] Описать `AuditLog` и `ImportReport`.
+- [x] Добавить технические поля импорта: `wpPostId`, `wpAttachmentId`, `wpTermId`.
+- [x] Создать первую миграцию.
+- [x] Добавить seed ролей `admin`, `editor`, `user`.
+- [x] Добавить seed permissions.
+- [x] Добавить seed первого admin-пользователя.
 
 ### Этап 4. Auth и RBAC
 
-- [ ] Реализовать `POST /auth/login`.
-- [ ] Реализовать `POST /auth/logout`.
-- [ ] Реализовать `POST /auth/refresh`.
-- [ ] Реализовать `GET /auth/me`.
-- [ ] Хешировать пароли через `Argon2id`.
-- [ ] Хранить refresh token в `httpOnly cookie`.
-- [ ] Не хранить токены в `localStorage`.
-- [ ] Добавить guards для JWT и permissions.
-- [ ] Закрыть защищённые backend endpoints.
-- [ ] Добавить frontend auth provider.
-- [ ] Добавить `/login`.
-- [ ] Добавить protected routes.
+- [x] Реализовать `POST /auth/login`.
+- [x] Реализовать `POST /auth/logout`.
+- [x] Реализовать `POST /auth/refresh`.
+- [x] Реализовать `GET /auth/me`.
+- [x] Хешировать пароли через `Argon2id`.
+- [x] Хранить refresh token в `httpOnly cookie`.
+- [x] Не хранить токены в `localStorage`.
+- [x] Добавить guards для JWT и permissions.
+- [x] Закрыть защищённые backend endpoints.
+- [x] Добавить frontend auth provider.
+- [x] Добавить `/login`.
+- [x] Добавить protected routes.
 
 ### Этап 5. Пользователи
 
