@@ -200,6 +200,10 @@ fieldset {
   padding: 8px 0;
 }
 
+.text-button--danger {
+  color: #b42318;
+}
+
 .nav-list {
   display: grid;
   gap: 8px;
@@ -628,7 +632,15 @@ tr.user-row--deactivated .text-button {
 .gallery-actions {
   display: flex;
   flex-shrink: 0;
+  flex-wrap: wrap;
   gap: 10px;
+}
+
+.file-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 12px;
 }
 
 .file-list strong {

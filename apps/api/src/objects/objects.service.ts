@@ -954,6 +954,77 @@ export class ObjectsService {
     };
   }
 
+  async deleteGalleryImage(
+    id: string,
+    imageId: string,
+    actor: AuthenticatedUser,
+    request: RequestWithAudit,
+  ) {
+    const object = await this.findExistingObject(id);
+    const normalizedImageId = this.parseUuid(imageId, 'Gallery image is invalid');
+    const image = object.images.find((currentImage) => currentImage.id === normalizedImageId);
+
+    if (!image) {
+      throw new NotFoundException('Gallery image not found');
+    }
+
+    const updatedObject = await this.prisma.$transaction(async (tx) => {
+      await tx.objectImage.delete({
+        where: {
+          id: image.id,
+        },
+      });
+
+      const remainingImages = await tx.objectImage.findMany({
+        where: {
+          objectId: object.id,
+        },
+        orderBy: [
+          {
+            sortOrder: 'asc',
+          },
+          {
+            createdAt: 'asc',
+          },
+        ],
+      });
+
+      await Promise.all(
+        remainingImages.map((remainingImage, index) =>
+          tx.objectImage.update({
+            where: {
+              id: remainingImage.id,
+            },
+            data: {
+              sortOrder: index,
+              isCover: image.isCover ? index === 0 : remainingImage.isCover,
+            },
+          }),
+        ),
+      );
+
+      return this.findExistingObject(object.id, tx);
+    });
+
+    await this.filesService.deleteUnlinkedFile(image.file.id);
+
+    await this.logObjectAction({
+      action: 'object.gallery.delete',
+      actor,
+      request,
+      objectId: updatedObject.id,
+      metadata: {
+        imageId: image.id,
+        fileId: image.file.id,
+        wasCover: image.isCover,
+      },
+    });
+
+    return {
+      object: this.serializeObjectDetail(updatedObject),
+    };
+  }
+
   async uploadObjectFile(
     id: string,
     body: UploadObjectFileBody,
@@ -1010,6 +1081,78 @@ export class ObjectsService {
       await this.filesService.deleteUnlinkedFile(uploadedFile.file.id);
       throw error;
     }
+  }
+
+  async deleteObjectFile(
+    id: string,
+    objectFileId: string,
+    actor: AuthenticatedUser,
+    request: RequestWithAudit,
+  ) {
+    const object = await this.findExistingObject(id);
+    const normalizedObjectFileId = this.parseUuid(objectFileId, 'Object file is invalid');
+    const objectFile = object.files.find((currentFile) => currentFile.id === normalizedObjectFileId);
+
+    if (!objectFile) {
+      throw new NotFoundException('Object file not found');
+    }
+
+    const updatedObject = await this.prisma.$transaction(async (tx) => {
+      await tx.objectFile.delete({
+        where: {
+          id: objectFile.id,
+        },
+      });
+
+      const remainingFiles = await tx.objectFile.findMany({
+        where: {
+          objectId: object.id,
+          type: objectFile.type,
+        },
+        orderBy: [
+          {
+            sortOrder: 'asc',
+          },
+          {
+            createdAt: 'asc',
+          },
+        ],
+      });
+
+      await Promise.all(
+        remainingFiles.map((remainingFile, index) =>
+          tx.objectFile.update({
+            where: {
+              id: remainingFile.id,
+            },
+            data: {
+              sortOrder: index,
+            },
+          }),
+        ),
+      );
+
+      return this.findExistingObject(object.id, tx);
+    });
+
+    await this.filesService.deleteUnlinkedFile(objectFile.file.id);
+
+    await this.logObjectAction({
+      action: 'object.file.delete',
+      actor,
+      request,
+      objectId: updatedObject.id,
+      metadata: {
+        objectFileId: objectFile.id,
+        fileId: objectFile.file.id,
+        type: objectFile.type,
+        title: objectFile.title,
+      },
+    });
+
+    return {
+      object: this.serializeObjectDetail(updatedObject),
+    };
   }
 
   private async findExistingObject(id: string, client: ObjectClient = this.prisma) {

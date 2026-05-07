@@ -107,6 +107,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
   const canUpdate = hasPermission('objects:update');
   const canPublish = hasPermission('objects:publish');
   const canUpload = hasPermission('files:upload') && canUpdate;
+  const canDeleteMedia = hasPermission('files:delete') && canUpdate;
   const editObjectId = useMemo(() => {
     const match = pathname.match(/^\/admin\/objects\/([0-9a-f-]+)\/edit$/i);
 
@@ -392,6 +393,64 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
     }
   }
 
+  async function deleteGalleryImage(imageId: string) {
+    if (!accessToken || !editObjectId) {
+      return;
+    }
+
+    const confirmed = window.confirm('Удалить изображение из объекта?');
+
+    if (!confirmed) {
+      return;
+    }
+
+    setIsUploading(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const data = await apiRequest<ObjectResponse>(`/objects/${editObjectId}/gallery/${imageId}`, accessToken, {
+        method: 'DELETE',
+      });
+
+      setObject(data.object);
+      setNotice('Изображение удалено');
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Не удалось удалить изображение');
+    } finally {
+      setIsUploading(false);
+    }
+  }
+
+  async function deleteLinkedFile(objectFileId: string) {
+    if (!accessToken || !editObjectId) {
+      return;
+    }
+
+    const confirmed = window.confirm('Удалить PDF-файл из объекта?');
+
+    if (!confirmed) {
+      return;
+    }
+
+    setIsUploading(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const data = await apiRequest<ObjectResponse>(`/objects/${editObjectId}/files/${objectFileId}`, accessToken, {
+        method: 'DELETE',
+      });
+
+      setObject(data.object);
+      setNotice('PDF-файл удалён');
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Не удалось удалить PDF');
+    } finally {
+      setIsUploading(false);
+    }
+  }
+
   async function persistGalleryOrder(nextImages: ObjectImage[]) {
     if (!accessToken || !editObjectId || !object) {
       return;
@@ -478,6 +537,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
         accessToken={accessToken}
         canPublish={canPublish}
         canUpdate={canUpdate}
+        canDeleteMedia={canDeleteMedia}
         canUpload={canUpload}
         coverFile={coverFile}
         developers={developers}
@@ -505,6 +565,8 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
         onFormChange={setForm}
         onGalleryFileChange={setGalleryFile}
         onGalleryMove={moveGalleryImage}
+        onGalleryDelete={(imageId) => void deleteGalleryImage(imageId)}
+        onLinkedFileDelete={(objectFileId) => void deleteLinkedFile(objectFileId)}
         onObjectFileChange={setObjectFile}
         onObjectFileTitleChange={setObjectFileTitle}
         onObjectFileTypeChange={setObjectFileType}
@@ -687,6 +749,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
 
 type ObjectEditorProps = {
   accessToken: string | null;
+  canDeleteMedia: boolean;
   canPublish: boolean;
   canUpdate: boolean;
   canUpload: boolean;
@@ -715,7 +778,9 @@ type ObjectEditorProps = {
   onDrop: (imageId: string) => void;
   onFormChange: (form: ObjectFormState) => void;
   onGalleryFileChange: (file: File | null) => void;
+  onGalleryDelete: (imageId: string) => void;
   onGalleryMove: (imageId: string, direction: -1 | 1) => void;
+  onLinkedFileDelete: (objectFileId: string) => void;
   onObjectFileChange: (file: File | null) => void;
   onObjectFileTitleChange: (title: string) => void;
   onObjectFileTypeChange: (type: ObjectFileType) => void;
@@ -1019,6 +1084,14 @@ function ObjectEditor(props: ObjectEditorProps) {
                         >
                           Ниже
                         </button>
+                        <button
+                          className="text-button text-button--danger"
+                          disabled={!props.canDeleteMedia || props.isUploading}
+                          type="button"
+                          onClick={() => props.onGalleryDelete(image.id)}
+                        >
+                          Удалить
+                        </button>
                       </div>
                     </li>
                   ))}
@@ -1061,7 +1134,17 @@ function ObjectEditor(props: ObjectEditorProps) {
                   {props.object?.files.map((file) => (
                     <li key={file.id}>
                       <span>{file.title || file.file.originalName || fileTypeLabels[file.type]}</span>
-                      <strong>{fileTypeLabels[file.type]}</strong>
+                      <div className="file-actions">
+                        <strong>{fileTypeLabels[file.type]}</strong>
+                        <button
+                          className="text-button text-button--danger"
+                          disabled={!props.canDeleteMedia || props.isUploading}
+                          type="button"
+                          onClick={() => props.onLinkedFileDelete(file.id)}
+                        >
+                          Удалить
+                        </button>
+                      </div>
                     </li>
                   ))}
                 </ul>

@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -111,6 +112,17 @@ export class ObjectsController {
     return this.objectsService.sortGallery(id, body, actor, request);
   }
 
+  @Delete(':id/gallery/:imageId')
+  @RequirePermissions('objects:update', 'files:delete')
+  async deleteGalleryImage(
+    @Param('id') id: string,
+    @Param('imageId') imageId: string,
+    @CurrentUser() actor: AuthenticatedUser,
+    @Req() request: RequestWithAuth,
+  ) {
+    return this.objectsService.deleteGalleryImage(id, imageId, actor, request);
+  }
+
   @Post(':id/files')
   @RequirePermissions('objects:update', 'files:upload')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: GENERIC_MAX_SIZE_BYTES } }))
@@ -122,5 +134,16 @@ export class ObjectsController {
     @Req() request: RequestWithAuth,
   ) {
     return this.objectsService.uploadObjectFile(id, body, file, actor, request);
+  }
+
+  @Delete(':id/files/:objectFileId')
+  @RequirePermissions('objects:update', 'files:delete')
+  async deleteObjectFile(
+    @Param('id') id: string,
+    @Param('objectFileId') objectFileId: string,
+    @CurrentUser() actor: AuthenticatedUser,
+    @Req() request: RequestWithAuth,
+  ) {
+    return this.objectsService.deleteObjectFile(id, objectFileId, actor, request);
   }
 }
