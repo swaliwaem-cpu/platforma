@@ -5,6 +5,8 @@ export type ObjectStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
 export type LocationType = 'AREA' | 'DISTRICT' | 'CUSTOM';
 export type FileStorage = 'LOCAL' | 'MINIO';
 export type ObjectFileType = 'PRESENTATION' | 'FLOOR_PLAN' | 'DOCUMENT' | 'OTHER';
+export type ImportMode = 'PREVIEW' | 'RUN';
+export type ImportStatus = 'PENDING' | 'SUCCESS' | 'PARTIAL' | 'FAILED';
 
 export type HealthStatus = {
   status: 'ok' | 'error';
@@ -198,4 +200,36 @@ export type ObjectsResponse = {
 
 export type ObjectResponse = {
   object: RealEstateObjectDetail;
+};
+
+export type ImportReportUser = {
+  id: string;
+  email: string;
+  name: string | null;
+};
+
+export type ImportReport = {
+  id: string;
+  mode: ImportMode;
+  status: ImportStatus;
+  source: string;
+  startedAt: string;
+  finishedAt: string | null;
+  summaryJson: Record<string, unknown> | unknown[] | string | number | boolean | null;
+  warningsJson: Record<string, unknown> | unknown[] | string | number | boolean | null;
+  errorsJson: Record<string, unknown> | unknown[] | string | number | boolean | null;
+  createdBy: ImportReportUser | null;
+  createdAt: string;
+};
+
+export type ImportReportsResponse = {
+  items: ImportReport[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};
+
+export type ImportReportResponse = {
+  report: ImportReport;
 };

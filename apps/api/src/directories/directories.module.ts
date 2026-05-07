@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 
+import { AuthModule } from '../auth/auth.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import {
   DevelopersController,
@@ -9,7 +10,7 @@ import {
 import { DirectoriesService } from './directories.service';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [AuthModule, PrismaModule],
   controllers: [DevelopersController, LocationsController, MetroController],
   providers: [DirectoriesService],
 })

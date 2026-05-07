@@ -1,9 +1,11 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { platformName } from '@platforma/shared';
 
+import { ImportAdminPage } from './admin/ImportAdminPage';
 import { ObjectsAdminPage } from './admin/ObjectsAdminPage';
 import { UsersAdminPage } from './admin/UsersAdminPage';
 import { AuthProvider, useAuth } from './auth/AuthProvider';
+import { CatalogPage } from './catalog/CatalogPage';
 import './styles.css';
 
 function usePathname() {
@@ -108,8 +110,15 @@ function AppRoutes() {
               ) : (
                 <AccessDenied />
               )
+            ) : pathname.startsWith('/admin/import') ? (
+              hasPermission('import:preview') ? (
+                <ImportAdminPage onBack={() => navigate('/admin')} />
+              ) : (
+                <AccessDenied />
+              )
             ) : (
               <AdminHome
+                onOpenImport={() => navigate('/admin/import')}
                 onOpenObjects={() => navigate('/admin/objects')}
                 onOpenUsers={() => navigate('/admin/users')}
               />
@@ -118,7 +127,7 @@ function AppRoutes() {
             <AccessDenied />
           )
         ) : activeSection === 'catalog' ? (
-          <CatalogHome />
+          <CatalogPage />
         ) : (
           <CabinetHome />
         )}
@@ -214,20 +223,12 @@ function CabinetHome() {
   );
 }
 
-function CatalogHome() {
-  return (
-    <div className="content-panel">
-      <p className="eyebrow">Каталог</p>
-      <h2>Объекты недвижимости</h2>
-      <p className="muted-text">Нет опубликованных объектов.</p>
-    </div>
-  );
-}
-
 function AdminHome({
+  onOpenImport,
   onOpenObjects,
   onOpenUsers,
 }: {
+  onOpenImport: () => void;
   onOpenObjects: () => void;
   onOpenUsers: () => void;
 }) {
@@ -253,6 +254,14 @@ function AdminHome({
           onClick={onOpenUsers}
         >
           Пользователи
+        </button>
+        <button
+          className="secondary-button secondary-button--fit"
+          disabled={!hasPermission('import:preview')}
+          type="button"
+          onClick={onOpenImport}
+        >
+          Импорт
         </button>
       </div>
     </div>

@@ -3,12 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "pnpm --filter @platforma/api prisma:generate && tsc -p tsconfig.json",
     "preview": "pnpm build && node dist/index.js preview",
     "run": "pnpm build && node dist/index.js run"
   },
   "devDependencies": {
     "@types/node": "25.6.0",
     "typescript": "6.0.3"
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.3",
+    "mysql2": "^3.22.3"
   }
 }

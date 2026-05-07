@@ -277,16 +277,24 @@ dd {
   margin-top: 24px;
 }
 
+.workspace:has(.catalog-page),
 .workspace:has(.admin-users),
-.workspace:has(.admin-objects) {
+.workspace:has(.admin-objects),
+.workspace:has(.admin-import) {
   padding: 28px;
 }
 
+.catalog-page,
 .admin-users,
-.admin-objects {
+.admin-objects,
+.admin-import {
   display: grid;
   gap: 18px;
   max-width: 1180px;
+}
+
+.catalog-page {
+  max-width: 1360px;
 }
 
 .admin-objects {
@@ -294,6 +302,10 @@ dd {
 }
 
 .admin-objects--editor {
+  max-width: 1440px;
+}
+
+.admin-import {
   max-width: 1440px;
 }
 
@@ -649,6 +661,188 @@ tr.user-row--deactivated .text-button {
   text-transform: uppercase;
 }
 
+.catalog-count {
+  color: #536172;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.catalog-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.catalog-card {
+  overflow: hidden;
+  border: 1px solid #d6dde5;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 16px 40px rgb(24 32 42 / 8%);
+}
+
+.catalog-card-media {
+  display: grid;
+  overflow: hidden;
+  aspect-ratio: 16 / 10;
+  place-items: center;
+  background: #eef3f7;
+  color: #536172;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.catalog-card-media img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.catalog-card-body {
+  display: grid;
+  gap: 18px;
+  padding: 18px;
+}
+
+.catalog-card h3 {
+  margin: 0;
+  color: #18202a;
+  font-size: 20px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.catalog-card p {
+  margin: 8px 0 0;
+  color: #536172;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.catalog-card-meta {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.catalog-card-meta div {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 12px;
+  border-top: 1px solid #e0e6ed;
+  padding-top: 10px;
+}
+
+.catalog-card-meta dt {
+  color: #536172;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.catalog-card-meta dd {
+  color: #303b47;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.catalog-pagination {
+  border: 1px solid #d6dde5;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.import-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 420px;
+  gap: 18px;
+  align-items: start;
+}
+
+.import-report-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.import-report-panel h3 {
+  margin: 0;
+  color: #18202a;
+  font-size: 22px;
+  line-height: 1.25;
+}
+
+.import-details {
+  margin: 0;
+}
+
+.report-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.report-summary div {
+  border: 1px solid #e0e6ed;
+  border-radius: 6px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.report-summary dt {
+  color: #536172;
+  font-size: 12px;
+}
+
+.report-summary dd {
+  margin-top: 4px;
+  color: #18202a;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.report-issues {
+  display: grid;
+  gap: 10px;
+}
+
+.report-issues h4 {
+  margin: 0;
+  color: #303b47;
+  font-size: 15px;
+}
+
+.report-issues pre {
+  overflow: auto;
+  max-height: 260px;
+  margin: 0;
+  border: 1px solid #e0e6ed;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #303b47;
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.import-status--pending {
+  background: #edf4ff;
+  color: #174ea6;
+}
+
+.import-status--success {
+  background: #e7f7ed;
+  color: #19733d;
+}
+
+.import-status--partial {
+  background: #fff7df;
+  color: #855b00;
+}
+
+.import-status--failed {
+  background: #fff4f2;
+  color: #b42318;
+}
+
 @media (max-width: 760px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -665,8 +859,10 @@ tr.user-row--deactivated .text-button {
     padding: 20px;
   }
 
+  .workspace:has(.catalog-page),
   .workspace:has(.admin-users),
-  .workspace:has(.admin-objects) {
+  .workspace:has(.admin-objects),
+  .workspace:has(.admin-import) {
     padding: 20px;
   }
 
@@ -689,7 +885,9 @@ tr.user-row--deactivated .text-button {
     max-width: none;
   }
 
+  .catalog-grid,
   .users-layout,
+  .import-layout,
   .object-editor-layout,
   .form-grid {
     grid-template-columns: 1fr;

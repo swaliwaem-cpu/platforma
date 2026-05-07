@@ -17,9 +17,11 @@ RUN corepack enable
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/api/node_modules ./apps/api/node_modules
+COPY --from=deps /app/tools/wp-import/node_modules ./tools/wp-import/node_modules
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY apps/api ./apps/api
 COPY packages/shared ./packages/shared
+COPY tools/wp-import ./tools/wp-import
 
 RUN pnpm --filter @platforma/api prisma:generate
 RUN pnpm --filter @platforma/api build
