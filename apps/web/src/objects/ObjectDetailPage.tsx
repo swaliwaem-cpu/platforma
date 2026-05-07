@@ -208,6 +208,22 @@ function ObjectDetail({
 
       <div className="object-detail-layout">
         <div className="object-detail-main">
+          <section className="detail-section object-map-section" aria-labelledby="object-map-title">
+            <div>
+              <p className="eyebrow">Карта</p>
+              <h3 id="object-map-title">На карте</h3>
+            </div>
+
+            <YandexMap
+              emptyState={{
+                eyebrow: 'Карта объекта',
+                title: 'Координаты не указаны',
+                description: 'Добавьте широту и долготу в карточке объекта, чтобы показать его на карте.',
+              }}
+              points={mapPoints}
+            />
+          </section>
+
           <section className="detail-section" aria-labelledby="object-description-title">
             <div>
               <p className="eyebrow">Описание</p>
@@ -286,22 +302,6 @@ function ObjectDetail({
             ) : (
               <p className="muted-text">Метро не указано.</p>
             )}
-          </section>
-
-          <section className="detail-section object-map-section" aria-labelledby="object-map-title">
-            <div>
-              <p className="eyebrow">Карта</p>
-              <h3 id="object-map-title">На карте</h3>
-            </div>
-
-            <YandexMap
-              emptyState={{
-                eyebrow: 'Карта объекта',
-                title: 'Координаты не указаны',
-                description: 'Добавьте широту и долготу в карточке объекта, чтобы показать его на карте.',
-              }}
-              points={mapPoints}
-            />
           </section>
         </aside>
       </div>

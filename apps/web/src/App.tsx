@@ -179,7 +179,9 @@ function AppRoutes() {
       ? 'catalog'
       : 'cabinet';
   const objectSlug = parseObjectSlug(pathname);
-  const visibleNavItems = navItems.filter((item) => canAccessPermissions(hasPermission, item.requiredPermissions));
+  const visibleNavItems = navItems.filter(
+    (item) => canShowNavItem(item, user) && canAccessPermissions(hasPermission, item.requiredPermissions),
+  );
 
   return (
     <main className="app-shell">
@@ -493,6 +495,10 @@ function canAccessPermissions(
   requiredPermissions: readonly string[],
 ) {
   return requiredPermissions.every((permission) => hasPermission(permission));
+}
+
+function canShowNavItem(item: (typeof navItems)[number], user: AuthUser) {
+  return !(user.role.name === 'user' && item.id === 'cabinet');
 }
 
 function getAvailableCabinetSections(user: AuthUser) {
