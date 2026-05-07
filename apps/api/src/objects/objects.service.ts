@@ -108,6 +108,8 @@ type ListObjectsQuery = {
   limit?: string;
   search?: string;
   status?: string;
+  sortBy?: string;
+  sortDirection?: string;
   developerId?: string;
   locationId?: string;
   metroStationId?: string;
@@ -179,6 +181,7 @@ export class ObjectsService {
     const search = query.search?.trim();
     const priceFromMin = this.parseNullableDecimal(query.priceFromMin, 'Price from min', 14, 2);
     const priceFromMax = this.parseNullableDecimal(query.priceFromMax, 'Price from max', 14, 2);
+    const orderBy = this.parseObjectListOrderBy(query.sortBy, query.sortDirection);
 
     if (search) {
       filters.push({
@@ -341,9 +344,7 @@ export class ObjectsService {
       this.prisma.realEstateObject.findMany({
         where,
         include: objectListInclude,
-        orderBy: {
-          createdAt: 'desc',
-        },
+        orderBy,
         skip: (page - 1) * limit,
         take: limit,
       }),
@@ -1454,6 +1455,58 @@ export class ObjectsService {
     }
 
     return normalizedStatus as ObjectStatus;
+  }
+
+  private parseObjectListOrderBy(sortBy: string | undefined, sortDirection: string | undefined) {
+    const direction = this.parseSortDirection(sortDirection);
+    const normalizedSortBy = sortBy?.trim() || 'createdAt';
+    const sortableFields = new Set([
+      'title',
+      'status',
+      'priceFrom',
+      'completionYear',
+      'createdAt',
+      'updatedAt',
+    ]);
+
+    if (!sortableFields.has(normalizedSortBy)) {
+      return [
+        {
+          createdAt: 'desc',
+        },
+      ] satisfies Prisma.RealEstateObjectOrderByWithRelationInput[];
+    }
+
+    if (normalizedSortBy === 'createdAt') {
+      return [
+        {
+          createdAt: direction,
+        },
+      ] satisfies Prisma.RealEstateObjectOrderByWithRelationInput[];
+    }
+
+    return [
+      {
+        [normalizedSortBy]: direction,
+      },
+      {
+        createdAt: 'desc',
+      },
+    ] satisfies Prisma.RealEstateObjectOrderByWithRelationInput[];
+  }
+
+  private parseSortDirection(value: string | undefined): Prisma.SortOrder {
+    if (!value) {
+      return 'desc';
+    }
+
+    const normalizedDirection = value.trim().toLowerCase();
+
+    if (normalizedDirection === 'asc' || normalizedDirection === 'desc') {
+      return normalizedDirection;
+    }
+
+    return 'desc';
   }
 
   private parseObjectFileType(value: unknown) {

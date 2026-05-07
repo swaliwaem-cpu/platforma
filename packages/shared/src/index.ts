@@ -71,6 +71,10 @@ export type ObjectDeveloper = {
   slug: string | null;
 };
 
+export type DevelopersResponse = {
+  items: ObjectDeveloper[];
+};
+
 export type ObjectLocation = {
   id: string;
   wpTermId: number | null;
@@ -78,6 +82,10 @@ export type ObjectLocation = {
   slug: string;
   type: LocationType;
   parentId: string | null;
+};
+
+export type LocationsResponse = {
+  items: ObjectLocation[];
 };
 
 export type ObjectLocationLink = ObjectLocation & {
@@ -92,6 +100,10 @@ export type ObjectMetroStation = {
   slug: string;
   lineName: string | null;
   lineColor: string | null;
+};
+
+export type MetroStationsResponse = {
+  items: ObjectMetroStation[];
 };
 
 export type ObjectMetroStationLink = ObjectMetroStation & {

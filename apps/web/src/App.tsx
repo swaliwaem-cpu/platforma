@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { platformName } from '@platforma/shared';
 
+import { ObjectsAdminPage } from './admin/ObjectsAdminPage';
 import { UsersAdminPage } from './admin/UsersAdminPage';
 import { AuthProvider, useAuth } from './auth/AuthProvider';
 import './styles.css';
@@ -101,8 +102,17 @@ function AppRoutes() {
               ) : (
                 <AccessDenied />
               )
+            ) : pathname.startsWith('/admin/objects') ? (
+              hasPermission('objects:read') ? (
+                <ObjectsAdminPage pathname={pathname} navigate={navigate} onBack={() => navigate('/admin')} />
+              ) : (
+                <AccessDenied />
+              )
             ) : (
-              <AdminHome onOpenUsers={() => navigate('/admin/users')} />
+              <AdminHome
+                onOpenObjects={() => navigate('/admin/objects')}
+                onOpenUsers={() => navigate('/admin/users')}
+              />
             )
           ) : (
             <AccessDenied />
@@ -214,7 +224,13 @@ function CatalogHome() {
   );
 }
 
-function AdminHome({ onOpenUsers }: { onOpenUsers: () => void }) {
+function AdminHome({
+  onOpenObjects,
+  onOpenUsers,
+}: {
+  onOpenObjects: () => void;
+  onOpenUsers: () => void;
+}) {
   const { hasPermission } = useAuth();
 
   return (
@@ -224,6 +240,14 @@ function AdminHome({ onOpenUsers }: { onOpenUsers: () => void }) {
       <div className="admin-actions">
         <button
           className="primary-button primary-button--fit"
+          disabled={!hasPermission('objects:read')}
+          type="button"
+          onClick={onOpenObjects}
+        >
+          Объекты
+        </button>
+        <button
+          className="secondary-button secondary-button--fit"
           disabled={!hasPermission('users:read')}
           type="button"
           onClick={onOpenUsers}

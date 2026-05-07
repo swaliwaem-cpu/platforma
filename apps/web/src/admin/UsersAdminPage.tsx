@@ -8,8 +8,7 @@ import {
 } from '@platforma/shared';
 
 import { useAuth } from '../auth/AuthProvider';
-
-const apiUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
+import { apiRequest } from './api';
 
 const statusLabels: Record<UserStatus, string> = {
   ACTIVE: 'Активен',
@@ -521,39 +520,6 @@ export function UsersAdminPage({ onBack }: UsersAdminPageProps) {
       </div>
     </div>
   );
-}
-
-async function apiRequest<T = unknown>(path: string, accessToken: string, options: RequestInit = {}) {
-  const response = await fetch(`${apiUrl}${path}`, {
-    ...options,
-    credentials: 'include',
-    headers: {
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-      Authorization: `Bearer ${accessToken}`,
-      ...options.headers,
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(await resolveErrorMessage(response));
-  }
-
-  if (response.status === 204) {
-    return null as T;
-  }
-
-  return (await response.json()) as T;
-}
-
-async function resolveErrorMessage(response: Response) {
-  try {
-    const data = (await response.json()) as { message?: string | string[] };
-    const message = Array.isArray(data.message) ? data.message.join(', ') : data.message;
-
-    return message || 'Запрос не выполнен';
-  } catch {
-    return 'Запрос не выполнен';
-  }
 }
 
 function formatDate(value: string) {
