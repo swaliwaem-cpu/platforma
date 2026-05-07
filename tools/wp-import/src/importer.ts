@@ -178,20 +178,26 @@ async function ensureDeveloper(tx: Prisma.TransactionClient, name: string, slug:
 }
 
 async function getUniqueDeveloperSlug(tx: Prisma.TransactionClient, slug: string, currentId: string | null) {
-  const existingDeveloper = await tx.developer.findUnique({
-    where: {
-      slug,
-    },
-    select: {
-      id: true,
-    },
-  });
+  let candidate = slug;
+  let index = 2;
 
-  if (!existingDeveloper || existingDeveloper.id === currentId) {
-    return slug;
+  while (true) {
+    const existingDeveloper = await tx.developer.findUnique({
+      where: {
+        slug: candidate,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!existingDeveloper || existingDeveloper.id === currentId) {
+      return candidate;
+    }
+
+    candidate = `${slug}-${index}`;
+    index += 1;
   }
-
-  return `${slug}-${shortHash(currentId ?? slug)}`;
 }
 
 async function ensureLocations(tx: Prisma.TransactionClient, locations: MappedLocation[]) {
@@ -756,10 +762,6 @@ function getExtensionByMimeType(mimeType: string | null) {
   }
 
   return '';
-}
-
-function shortHash(value: string) {
-  return createHash('sha1').update(value).digest('hex').slice(0, 8);
 }
 
 function toImportIssue(error: unknown): ImportIssue {
