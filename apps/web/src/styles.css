@@ -1183,7 +1183,8 @@ tr.user-row--deactivated .text-button {
 .catalog-map-list {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  min-height: 560px;
+  align-self: start;
+  min-height: 0;
 }
 
 .catalog-map-list ul {
@@ -1191,6 +1192,7 @@ tr.user-row--deactivated .text-button {
   align-content: start;
   gap: 0;
   overflow: auto;
+  max-height: calc(73px * 8);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -1199,6 +1201,7 @@ tr.user-row--deactivated .text-button {
 .catalog-map-list li {
   display: grid;
   gap: 6px;
+  min-height: 73px;
   border-top: 1px solid #e0e6ed;
   padding: 14px 16px;
 }
@@ -1221,6 +1224,16 @@ tr.user-row--deactivated .text-button {
 .catalog-map-list span {
   color: #536172;
   font-size: 13px;
+  line-height: 1.45;
+}
+
+.catalog-map-empty {
+  margin: 0;
+  border-top: 1px solid #e0e6ed;
+  color: #536172;
+  padding: 16px;
+  font-size: 14px;
+  font-weight: 700;
   line-height: 1.45;
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type MouseEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
 import type {
   DevelopersResponse,
   LocationsResponse,
@@ -16,7 +16,7 @@ import type {
 
 import { apiRequest, apiUrl } from '../admin/api';
 import { useAuth } from '../auth/AuthProvider';
-import { YandexMap, type YandexMapPoint } from '../map/YandexMap';
+import { YandexMap, type YandexMapBounds, type YandexMapPoint } from '../map/YandexMap';
 
 type CatalogPageProps = {
   navigate: (nextPathname: string) => void;
@@ -561,11 +561,23 @@ function CatalogMapView({
   total: number;
   onOpenObject: (slug: string) => void;
 }) {
+  const [visibleBounds, setVisibleBounds] = useState<YandexMapBounds | null>(null);
   const balloonImageUrls = useMapObjectImageUrls(accessToken, objects);
   const points = useMemo(
     () => objects.map((object) => mapObjectToPoint(object, balloonImageUrls.get(object.id))),
     [balloonImageUrls, objects],
   );
+  const visibleObjects = useMemo(
+    () => (visibleBounds ? objects.filter((object) => isMapObjectInBounds(object, visibleBounds)) : objects),
+    [objects, visibleBounds],
+  );
+  const handleBoundsChange = useCallback((bounds: YandexMapBounds) => {
+    setVisibleBounds(bounds);
+  }, []);
+
+  useEffect(() => {
+    setVisibleBounds(null);
+  }, [objects]);
 
   if (error) {
     return <p className="form-error">{error}</p>;
@@ -586,6 +598,7 @@ function CatalogMapView({
       <div className="catalog-map-panel">
         {isLoading ? <div className="map-loading">Загрузка объектов</div> : null}
         <YandexMap
+          onBoundsChange={handleBoundsChange}
           points={points}
           onOpenPoint={(point) => {
             const object = objects.find((candidate) => candidate.id === point.id);
@@ -599,19 +612,23 @@ function CatalogMapView({
 
       <aside className="catalog-map-list" aria-label="Объекты на карте">
         <div className="table-meta">
-          <span>{isLoading ? 'Загрузка' : `На карте: ${objects.length}`}</span>
-          <span>{total > objects.length ? `из ${total}` : 'Все точки'}</span>
+          <span>{isLoading ? 'Загрузка' : `В области: ${visibleObjects.length}`}</span>
+          <span>{objects.length > 0 ? `На карте: ${objects.length}` : total > 0 ? `из ${total}` : 'Все точки'}</span>
         </div>
-        <ul>
-          {objects.map((object) => (
-            <li key={object.id}>
-              <button className="text-button" type="button" onClick={() => onOpenObject(object.slug)}>
-                {object.title}
-              </button>
-              <span>{object.primaryLocation?.name ?? object.address ?? 'Локация не указана'}</span>
-            </li>
-          ))}
-        </ul>
+        {visibleObjects.length > 0 ? (
+          <ul>
+            {visibleObjects.map((object) => (
+              <li key={object.id}>
+                <button className="text-button" type="button" onClick={() => onOpenObject(object.slug)}>
+                  {object.title}
+                </button>
+                <span>{object.primaryLocation?.name ?? object.address ?? 'Локация не указана'}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="catalog-map-empty">В текущей области карты объектов нет.</p>
+        )}
       </aside>
     </section>
   );
@@ -934,6 +951,21 @@ function mapObjectToPoint(object: MapObject, imageUrl: string | undefined): Yand
     coordinates: [object.latitude, object.longitude],
     balloonHtml: buildMapBalloon(object, imageUrl),
   };
+}
+
+function isMapObjectInBounds(object: MapObject, bounds: YandexMapBounds) {
+  const [[firstLatitude, firstLongitude], [secondLatitude, secondLongitude]] = bounds;
+  const minLatitude = Math.min(firstLatitude, secondLatitude);
+  const maxLatitude = Math.max(firstLatitude, secondLatitude);
+  const minLongitude = Math.min(firstLongitude, secondLongitude);
+  const maxLongitude = Math.max(firstLongitude, secondLongitude);
+
+  return (
+    object.latitude >= minLatitude &&
+    object.latitude <= maxLatitude &&
+    object.longitude >= minLongitude &&
+    object.longitude <= maxLongitude
+  );
 }
 
 function buildMapBalloon(object: MapObject, imageUrl: string | undefined) {

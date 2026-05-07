@@ -8,6 +8,8 @@ export type YandexMapPoint = {
   balloonHtml: string;
 };
 
+export type YandexMapBounds = [[number, number], [number, number]];
+
 type YandexMapFallbackState = {
   eyebrow: string;
   title: string;
@@ -17,6 +19,7 @@ type YandexMapFallbackState = {
 type YandexMapProps = {
   points: YandexMapPoint[];
   emptyState?: YandexMapFallbackState;
+  onBoundsChange?: (bounds: YandexMapBounds) => void;
   onOpenPoint?: (point: YandexMapPoint) => void;
 };
 
@@ -28,9 +31,14 @@ type YandexClusterer = {
 };
 
 type YandexMapInstance = {
+  events: {
+    add: (eventName: string, handler: () => void) => void;
+    remove: (eventName: string, handler: () => void) => void;
+  };
   geoObjects: {
     add: (object: YandexGeoObject | YandexClusterer) => void;
   };
+  getBounds: () => number[][] | null;
   setBounds: (bounds: number[][], options?: Record<string, unknown>) => void;
   destroy: () => void;
 };
@@ -64,7 +72,7 @@ const defaultEmptyState: YandexMapFallbackState = {
   description: 'Для отображения на карте у объекта должны быть широта и долгота.',
 };
 
-export function YandexMap({ emptyState = defaultEmptyState, points, onOpenPoint }: YandexMapProps) {
+export function YandexMap({ emptyState = defaultEmptyState, points, onBoundsChange, onOpenPoint }: YandexMapProps) {
   const apiKey = (import.meta.env.VITE_YANDEX_MAPS_API_KEY ?? '').trim();
 
   if (points.length === 0) {
@@ -77,16 +85,18 @@ export function YandexMap({ emptyState = defaultEmptyState, points, onOpenPoint 
     );
   }
 
-  return <YandexMapApi apiKey={apiKey} points={points} onOpenPoint={onOpenPoint} />;
+  return <YandexMapApi apiKey={apiKey} points={points} onBoundsChange={onBoundsChange} onOpenPoint={onOpenPoint} />;
 }
 
 function YandexMapApi({
   apiKey,
   points,
+  onBoundsChange,
   onOpenPoint,
 }: {
   apiKey: string;
   points: YandexMapPoint[];
+  onBoundsChange?: (bounds: YandexMapBounds) => void;
   onOpenPoint?: (point: YandexMapPoint) => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -136,6 +146,7 @@ function YandexMapApi({
 
     let isCancelled = false;
     let map: YandexMapInstance | null = null;
+    let handleBoundsChange: (() => void) | null = null;
 
     setStatus('loading');
 
@@ -182,6 +193,21 @@ function YandexMapApi({
         clusterer.add(placemarks);
         map.geoObjects.add(clusterer);
 
+        const notifyBoundsChange = () => {
+          if (!map || !onBoundsChange) {
+            return;
+          }
+
+          const nextBounds = normalizeYandexBounds(map.getBounds());
+
+          if (nextBounds) {
+            onBoundsChange(nextBounds);
+          }
+        };
+
+        handleBoundsChange = notifyBoundsChange;
+        map.events.add('boundschange', notifyBoundsChange);
+
         const bounds = clusterer.getBounds();
 
         if (bounds && points.length > 1) {
@@ -191,6 +217,7 @@ function YandexMapApi({
           });
         }
 
+        notifyBoundsChange();
         setStatus('ready');
       })
       .catch(() => {
@@ -203,10 +230,14 @@ function YandexMapApi({
       isCancelled = true;
 
       if (map) {
+        if (handleBoundsChange) {
+          map.events.remove('boundschange', handleBoundsChange);
+        }
+
         map.destroy();
       }
     };
-  }, [apiKey, center, points]);
+  }, [apiKey, center, onBoundsChange, points]);
 
   return (
     <div className="yandex-map-shell">
@@ -298,4 +329,36 @@ function getMapCenter(points: YandexMapPoint[]): [number, number] {
   );
 
   return [totals.latitude / points.length, totals.longitude / points.length];
+}
+
+function normalizeYandexBounds(bounds: number[][] | null): YandexMapBounds | null {
+  const firstPoint = bounds?.[0];
+  const secondPoint = bounds?.[1];
+
+  if (!firstPoint || !secondPoint) {
+    return null;
+  }
+
+  const firstLatitude = firstPoint[0];
+  const firstLongitude = firstPoint[1];
+  const secondLatitude = secondPoint[0];
+  const secondLongitude = secondPoint[1];
+
+  if (
+    typeof firstLatitude !== 'number' ||
+    typeof firstLongitude !== 'number' ||
+    typeof secondLatitude !== 'number' ||
+    typeof secondLongitude !== 'number' ||
+    !Number.isFinite(firstLatitude) ||
+    !Number.isFinite(firstLongitude) ||
+    !Number.isFinite(secondLatitude) ||
+    !Number.isFinite(secondLongitude)
+  ) {
+    return null;
+  }
+
+  return [
+    [firstLatitude, firstLongitude],
+    [secondLatitude, secondLongitude],
+  ];
 }
