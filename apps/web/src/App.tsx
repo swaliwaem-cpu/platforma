@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { platformName } from '@platforma/shared';
+import type { AuthUser, UserStatus } from '@platforma/shared';
 
 import { ImportAdminPage } from './admin/ImportAdminPage';
 import { ObjectsAdminPage } from './admin/ObjectsAdminPage';
@@ -7,6 +8,89 @@ import { UsersAdminPage } from './admin/UsersAdminPage';
 import { AuthProvider, useAuth } from './auth/AuthProvider';
 import { CatalogPage } from './catalog/CatalogPage';
 import './styles.css';
+
+type AppSection = 'cabinet' | 'catalog' | 'admin';
+
+const userStatusLabels: Record<UserStatus, string> = {
+  ACTIVE: 'Активен',
+  BLOCKED: 'Заблокирован',
+  INVITED: 'Приглашён',
+  DEACTIVATED: 'Отключён',
+};
+
+const navItems = [
+  {
+    id: 'cabinet',
+    label: 'Кабинет',
+    path: '/cabinet',
+    section: 'cabinet',
+    requiredPermissions: [],
+  },
+  {
+    id: 'catalog',
+    label: 'Каталог',
+    path: '/catalog',
+    section: 'catalog',
+    requiredPermissions: ['objects:read'],
+  },
+  {
+    id: 'admin',
+    label: 'Админка',
+    path: '/admin',
+    section: 'admin',
+    requiredPermissions: ['admin:access'],
+  },
+] as const satisfies ReadonlyArray<{
+  id: string;
+  label: string;
+  path: string;
+  section: AppSection;
+  requiredPermissions: readonly string[];
+}>;
+
+const cabinetSections = [
+  {
+    id: 'profile',
+    label: 'Профиль',
+    group: 'Кабинет',
+    path: '/cabinet',
+    requiredPermissions: [],
+  },
+  {
+    id: 'catalog',
+    label: 'Каталог объектов',
+    group: 'Каталог',
+    path: '/catalog',
+    requiredPermissions: ['objects:read'],
+  },
+  {
+    id: 'admin-objects',
+    label: 'Управление объектами',
+    group: 'Админка',
+    path: '/admin/objects',
+    requiredPermissions: ['admin:access', 'objects:read'],
+  },
+  {
+    id: 'admin-users',
+    label: 'Пользователи',
+    group: 'Админка',
+    path: '/admin/users',
+    requiredPermissions: ['admin:access', 'users:read'],
+  },
+  {
+    id: 'admin-import',
+    label: 'Импорт WordPress',
+    group: 'Админка',
+    path: '/admin/import',
+    requiredPermissions: ['admin:access', 'import:preview'],
+  },
+] as const satisfies ReadonlyArray<{
+  id: string;
+  label: string;
+  group: string;
+  path: string;
+  requiredPermissions: readonly string[];
+}>;
 
 function usePathname() {
   const [pathname, setPathname] = useState(window.location.pathname);
@@ -52,11 +136,12 @@ function AppRoutes() {
     return <LoginPage onSuccess={() => navigate(pathname === '/' ? '/cabinet' : pathname)} />;
   }
 
-  const activeSection = pathname.startsWith('/admin')
+  const activeSection: AppSection = pathname.startsWith('/admin')
     ? 'admin'
     : pathname.startsWith('/catalog')
       ? 'catalog'
       : 'cabinet';
+  const visibleNavItems = navItems.filter((item) => canAccessPermissions(hasPermission, item.requiredPermissions));
 
   return (
     <main className="app-shell">
@@ -67,27 +152,16 @@ function AppRoutes() {
         </div>
 
         <nav className="nav-list">
-          <button
-            className={activeSection === 'cabinet' ? 'nav-item nav-item--active' : 'nav-item'}
-            type="button"
-            onClick={() => navigate('/cabinet')}
-          >
-            Кабинет
-          </button>
-          <button
-            className={activeSection === 'catalog' ? 'nav-item nav-item--active' : 'nav-item'}
-            type="button"
-            onClick={() => navigate('/catalog')}
-          >
-            Каталог
-          </button>
-          <button
-            className={activeSection === 'admin' ? 'nav-item nav-item--active' : 'nav-item'}
-            type="button"
-            onClick={() => navigate('/admin')}
-          >
-            Админка
-          </button>
+          {visibleNavItems.map((item) => (
+            <button
+              key={item.id}
+              className={activeSection === item.section ? 'nav-item nav-item--active' : 'nav-item'}
+              type="button"
+              onClick={() => navigate(item.path)}
+            >
+              {item.label}
+            </button>
+          ))}
         </nav>
 
         <button className="secondary-button" type="button" onClick={() => void logout()}>
@@ -127,9 +201,13 @@ function AppRoutes() {
             <AccessDenied />
           )
         ) : activeSection === 'catalog' ? (
-          <CatalogPage />
+          hasPermission('objects:read') ? (
+            <CatalogPage />
+          ) : (
+            <AccessDenied />
+          )
         ) : (
-          <CabinetHome />
+          <CabinetHome navigate={navigate} />
         )}
       </section>
     </main>
@@ -198,27 +276,83 @@ function LoginPage({ onSuccess }: { onSuccess: () => void }) {
   );
 }
 
-function CabinetHome() {
+function CabinetHome({ navigate }: { navigate: (nextPathname: string) => void }) {
   const { user } = useAuth();
 
+  if (!user) {
+    return null;
+  }
+
+  const availableSections = getAvailableCabinetSections(user);
+
   return (
-    <div className="content-panel">
-      <p className="eyebrow">Профиль</p>
-      <h2>{user?.name ?? user?.email}</h2>
-      <dl className="details-list">
-        <div>
-          <dt>Email</dt>
-          <dd>{user?.email}</dd>
+    <div className="cabinet-page">
+      <section className="content-panel">
+        <div className="cabinet-profile-header">
+          <div>
+            <p className="eyebrow">Профиль</p>
+            <h2>{user.name ?? user.email}</h2>
+          </div>
+          <div className="cabinet-badges" aria-label="Роль и статус">
+            <span className="role-pill">{user.role.name}</span>
+            <span className={`status-pill status-pill--${user.status.toLowerCase()}`}>
+              {userStatusLabels[user.status]}
+            </span>
+          </div>
         </div>
-        <div>
-          <dt>Роль</dt>
-          <dd>{user?.role.name}</dd>
-        </div>
-        <div>
-          <dt>Статус</dt>
-          <dd>{user?.status}</dd>
-        </div>
-      </dl>
+
+        <dl className="details-list">
+          <div>
+            <dt>Имя</dt>
+            <dd>{user.name ?? 'Не указано'}</dd>
+          </div>
+          <div>
+            <dt>Email</dt>
+            <dd>{user.email}</dd>
+          </div>
+          <div>
+            <dt>Роль</dt>
+            <dd>{user.role.name}</dd>
+          </div>
+          <div>
+            <dt>Статус</dt>
+            <dd>{userStatusLabels[user.status]}</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section className="content-panel">
+        <p className="eyebrow">Доступные разделы</p>
+        <h2>Разделы для роли</h2>
+
+        <ul className="cabinet-section-list">
+          {availableSections.map((section) => (
+            <li key={section.id}>
+              <div className="cabinet-section-main">
+                <strong>{section.label}</strong>
+                <span>{section.group}</span>
+                {section.requiredPermissions.length ? (
+                  <div className="permission-chip-list" aria-label="Права">
+                    {section.requiredPermissions.map((permission) => (
+                      <span className="permission-chip" key={permission}>
+                        {permission}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+
+              <button
+                className="secondary-button secondary-button--fit"
+                type="button"
+                onClick={() => navigate(section.path)}
+              >
+                Открыть
+              </button>
+            </li>
+          ))}
+        </ul>
+      </section>
     </div>
   );
 }
@@ -233,36 +367,41 @@ function AdminHome({
   onOpenUsers: () => void;
 }) {
   const { hasPermission } = useAuth();
+  const actions = [
+    {
+      label: 'Объекты',
+      className: 'primary-button primary-button--fit',
+      canAccess: hasPermission('objects:read'),
+      onClick: onOpenObjects,
+    },
+    {
+      label: 'Пользователи',
+      className: 'secondary-button secondary-button--fit',
+      canAccess: hasPermission('users:read'),
+      onClick: onOpenUsers,
+    },
+    {
+      label: 'Импорт',
+      className: 'secondary-button secondary-button--fit',
+      canAccess: hasPermission('import:preview'),
+      onClick: onOpenImport,
+    },
+  ].filter((action) => action.canAccess);
 
   return (
     <div className="content-panel">
       <p className="eyebrow">Админка</p>
       <h2>Панель управления</h2>
       <div className="admin-actions">
-        <button
-          className="primary-button primary-button--fit"
-          disabled={!hasPermission('objects:read')}
-          type="button"
-          onClick={onOpenObjects}
-        >
-          Объекты
-        </button>
-        <button
-          className="secondary-button secondary-button--fit"
-          disabled={!hasPermission('users:read')}
-          type="button"
-          onClick={onOpenUsers}
-        >
-          Пользователи
-        </button>
-        <button
-          className="secondary-button secondary-button--fit"
-          disabled={!hasPermission('import:preview')}
-          type="button"
-          onClick={onOpenImport}
-        >
-          Импорт
-        </button>
+        {actions.length ? (
+          actions.map((action) => (
+            <button className={action.className} key={action.label} type="button" onClick={action.onClick}>
+              {action.label}
+            </button>
+          ))
+        ) : (
+          <p className="muted-text">Для текущей роли нет доступных разделов админки.</p>
+        )}
       </div>
     </div>
   );
@@ -275,5 +414,20 @@ function AccessDenied() {
       <h2>Недостаточно прав</h2>
       <p className="muted-text">Текущая роль не открывает этот раздел.</p>
     </div>
+  );
+}
+
+function canAccessPermissions(
+  hasPermission: (permission: string) => boolean,
+  requiredPermissions: readonly string[],
+) {
+  return requiredPermissions.every((permission) => hasPermission(permission));
+}
+
+function getAvailableCabinetSections(user: AuthUser) {
+  const permissions = new Set(user.permissions);
+
+  return cabinetSections.filter((section) =>
+    section.requiredPermissions.every((permission) => permissions.has(permission)),
   );
 }
