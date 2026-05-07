@@ -34,25 +34,6 @@ const fileTypeLabels: Record<ObjectFileType, string> = {
   OTHER: 'Файл',
 };
 
-const featureLabels: Record<string, string> = {
-  apartmentFeatures: 'Особенности квартир',
-  constructionStage: 'Стадия строительства',
-  finishing: 'Отделка',
-  fourPlusRoom: '4+ комнаты',
-  handover: 'Передача ключей',
-  nearbyPlaces: 'Места рядом',
-  objectTypes: 'Типы объекта',
-  oneRoom: '1 комната',
-  optionalPrice: 'Опциональная цена',
-  rajonOkolo: 'Рядом',
-  rooms: 'Комнаты',
-  roomPrices: 'Цены по комнатам',
-  studio: 'Студия',
-  taxonomy: 'Категории',
-  threeRoom: '3 комнаты',
-  twoRoom: '2 комнаты',
-};
-
 export function ObjectDetailPage({ slug, onBack }: ObjectDetailPageProps) {
   const { accessToken } = useAuth();
   const [object, setObject] = useState<RealEstateObjectDetail | null>(null);
@@ -139,7 +120,6 @@ function ObjectDetail({
   onBack: () => void;
 }) {
   const descriptionParagraphs = useMemo(() => getDescriptionParagraphs(object), [object]);
-  const featureRows = useMemo(() => getFeatureRows(object), [object]);
   const locationRows = useMemo(() => getLocationRows(object), [object]);
   const presentationFiles = object.files.filter((file) => file.type === 'PRESENTATION');
   const otherFiles = object.files.filter((file) => file.type !== 'PRESENTATION');
@@ -157,9 +137,11 @@ function ObjectDetail({
           <p className="eyebrow">Объект</p>
           <h2>{object.title}</h2>
         </div>
-        <span className={`status-pill object-status object-status--${object.status.toLowerCase()}`}>
-          {objectStatusLabels[object.status]}
-        </span>
+        {object.status === 'PUBLISHED' ? null : (
+          <span className={`status-pill object-status object-status--${object.status.toLowerCase()}`}>
+            {objectStatusLabels[object.status]}
+          </span>
+        )}
       </header>
 
       <section className="object-detail-hero" aria-label="Основные данные объекта">
@@ -176,31 +158,12 @@ function ObjectDetail({
               <dd>{formatPrice(object.pricePerMeterFrom)}</dd>
             </div>
             <div>
-              <dt>Срок</dt>
-              <dd>{formatCompletion(object.completionYear, object.completionQuarter)}</dd>
+              <dt>Район</dt>
+              <dd>{object.primaryLocation?.name ?? 'Не указан'}</dd>
             </div>
             <div>
               <dt>Застройщик</dt>
               <dd>{object.developer?.name ?? 'Не указан'}</dd>
-            </div>
-          </dl>
-
-          <dl className="object-detail-facts">
-            <div>
-              <dt>Адрес</dt>
-              <dd>{object.address ?? 'Не указан'}</dd>
-            </div>
-            <div>
-              <dt>Локация</dt>
-              <dd>{object.primaryLocation?.name ?? 'Не указана'}</dd>
-            </div>
-            <div>
-              <dt>Координаты</dt>
-              <dd>{formatCoordinates(object.latitude, object.longitude)}</dd>
-            </div>
-            <div>
-              <dt>Опубликован</dt>
-              <dd>{formatDate(object.publishedAt)}</dd>
             </div>
           </dl>
         </div>
@@ -238,19 +201,6 @@ function ObjectDetail({
             ) : (
               <p className="muted-text">Описание пока не заполнено.</p>
             )}
-
-            {featureRows.length > 0 ? (
-              <dl className="feature-grid">
-                {featureRows.map((feature) => (
-                  <div key={`${feature.label}-${feature.value}`}>
-                    <dt>{feature.label}</dt>
-                    <dd>{feature.value}</dd>
-                  </div>
-                ))}
-              </dl>
-            ) : (
-              <p className="muted-text">Особенности пока не указаны.</p>
-            )}
           </section>
         </div>
 
@@ -276,7 +226,7 @@ function ObjectDetail({
 
           <section className="detail-section" aria-labelledby="object-location-title">
             <div>
-              <p className="eyebrow">Локация</p>
+              <p className="eyebrow">Район</p>
               <h3 id="object-location-title">Метро и районы</h3>
             </div>
 
@@ -290,7 +240,7 @@ function ObjectDetail({
                 ))}
               </dl>
             ) : (
-              <p className="muted-text">Локация не указана.</p>
+              <p className="muted-text">Район не указан.</p>
             )}
 
             {object.metroStations.length > 0 ? (
@@ -640,7 +590,7 @@ function getObjectMapPoints(object: RealEstateObjectDetail, imageUrl: string | n
 
 function buildObjectMapBalloon(object: RealEstateObjectDetail, imageUrl: string | null) {
   const title = escapeHtml(object.title);
-  const location = escapeHtml(object.primaryLocation?.name ?? 'Локация не указана');
+  const location = escapeHtml(object.primaryLocation?.name ?? 'Район не указан');
   const address = object.address ? escapeHtml(object.address) : null;
   const developer = escapeHtml(object.developer?.name ?? 'Застройщик не указан');
   const price = escapeHtml(formatPrice(object.priceFrom));
@@ -661,65 +611,13 @@ function buildObjectMapBalloon(object: RealEstateObjectDetail, imageUrl: string 
     .join('');
 }
 
-function getFeatureRows(object: RealEstateObjectDetail): FeatureRow[] {
-  const rows: FeatureRow[] = [];
-  const roomPrices = getRecord(object.featuresJson.roomPrices);
-  const taxonomy = getRecord(object.featuresJson.taxonomy);
-  const characteristics = getRecordArray(object.featuresJson.characteristics);
-  const rooms = getRecordArray(object.featuresJson.rooms);
-
-  for (const [key, value] of Object.entries(roomPrices)) {
-    const price = typeof value === 'string' ? formatPrice(value) : formatFeatureValue(value);
-
-    if (price && price !== 'Не указана') {
-      rows.push({
-        label: getFeatureLabel(key),
-        value: price,
-      });
-    }
-  }
-
-  for (const item of [...characteristics, ...rooms]) {
-    for (const [key, value] of Object.entries(item)) {
-      const formattedValue = formatFeatureValue(value);
-
-      if (formattedValue) {
-        rows.push({
-          label: getFeatureLabel(key),
-          value: formattedValue,
-        });
-      }
-    }
-  }
-
-  for (const [key, value] of Object.entries(taxonomy)) {
-    const formattedValue = formatFeatureValue(value);
-
-    if (formattedValue) {
-      rows.push({
-        label: getFeatureLabel(key),
-        value: formattedValue,
-      });
-    }
-  }
-
-  if (typeof object.featuresJson.optionalPrice === 'boolean') {
-    rows.push({
-      label: featureLabels.optionalPrice ?? 'Опциональная цена',
-      value: object.featuresJson.optionalPrice ? 'Да' : 'Нет',
-    });
-  }
-
-  return rows.slice(0, 24);
-}
-
 function getLocationRows(object: RealEstateObjectDetail): FeatureRow[] {
   const rows: FeatureRow[] = [];
   const regularLocations = object.locations.filter((location) => location.id !== object.primaryLocation?.id);
 
   if (object.primaryLocation) {
     rows.push({
-      label: 'Основная локация',
+      label: 'Район',
       value: object.primaryLocation.name,
     });
   }
@@ -731,75 +629,7 @@ function getLocationRows(object: RealEstateObjectDetail): FeatureRow[] {
     });
   }
 
-  if (object.address) {
-    rows.push({
-      label: 'Адрес',
-      value: object.address,
-    });
-  }
-
   return rows;
-}
-
-function getRecord(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return {};
-  }
-
-  return value as Record<string, unknown>;
-}
-
-function getRecordArray(value: unknown): Array<Record<string, unknown>> {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item));
-}
-
-function formatFeatureValue(value: unknown): string {
-  if (value === null || value === undefined || value === '') {
-    return '';
-  }
-
-  if (typeof value === 'boolean') {
-    return value ? 'Да' : 'Нет';
-  }
-
-  if (typeof value === 'number') {
-    return new Intl.NumberFormat('ru-RU').format(value);
-  }
-
-  if (typeof value === 'string') {
-    return value.trim();
-  }
-
-  if (Array.isArray(value)) {
-    return value.map(formatFeatureValue).filter(Boolean).join(', ');
-  }
-
-  if (typeof value === 'object') {
-    return Object.entries(value)
-      .map(([key, nestedValue]) => {
-        const formattedValue = formatFeatureValue(nestedValue);
-
-        return formattedValue ? `${getFeatureLabel(key)}: ${formattedValue}` : '';
-      })
-      .filter(Boolean)
-      .join(', ');
-  }
-
-  return '';
-}
-
-function getFeatureLabel(value: string) {
-  const normalizedValue = value.replace(/-/gu, ' ');
-
-  return featureLabels[value] ?? featureLabels[toCamelCase(value)] ?? normalizedValue;
-}
-
-function toCamelCase(value: string) {
-  return value.replace(/[-_](\w)/gu, (_, character: string) => character.toUpperCase());
 }
 
 function formatPrice(value: string | null) {
@@ -826,28 +656,6 @@ function formatCompletion(year: number | null, quarter: number | null) {
   }
 
   return quarter ? `${quarter} кв. ${year}` : String(year);
-}
-
-function formatCoordinates(latitude: number | null, longitude: number | null) {
-  if (latitude === null || longitude === null) {
-    return 'Не указаны';
-  }
-
-  return `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
-}
-
-function formatDate(value: string | null) {
-  if (!value) {
-    return 'Не опубликован';
-  }
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat('ru-RU').format(date);
 }
 
 function formatFileSize(value: string) {

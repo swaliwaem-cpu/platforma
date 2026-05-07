@@ -8,6 +8,7 @@ import type {
   ObjectDeveloper,
   ObjectLocation,
   ObjectMetroStation,
+  ObjectMetroStationLink,
   ObjectStatus,
   ObjectsResponse,
   RealEstateObjectSummary,
@@ -627,6 +628,10 @@ function CatalogCard({
 }) {
   const coverImage = object.coverImage;
   const objectHref = `/objects/${encodeURIComponent(object.slug)}`;
+  const hasPresentation = Boolean(object.presentationFile);
+  const locationLabel = object.primaryLocation?.name ?? object.address ?? 'Локация не указана';
+  const metroLabel = formatMetroStations(object.metroStations);
+  const shortDescription = object.shortDescription?.trim();
 
   function handleOpen(event: MouseEvent<HTMLAnchorElement>) {
     event.preventDefault();
@@ -635,32 +640,47 @@ function CatalogCard({
 
   return (
     <article className="catalog-card">
-      <a className="catalog-card-media catalog-card-media-link" href={objectHref} onClick={handleOpen}>
+      <a
+        aria-label={`Открыть объект ${object.title}`}
+        className="catalog-card-media catalog-card-media-link"
+        href={objectHref}
+        onClick={handleOpen}
+      >
         {coverImage ? (
           <SecureImage accessToken={accessToken} alt={coverImage.alt ?? object.title} fileId={coverImage.file.id} />
         ) : (
-          <span>Нет обложки</span>
+          <CatalogMediaState title="Нет обложки" text="Показываем данные объекта" tone="empty" />
         )}
+        <span aria-hidden="true" className="catalog-card-media-shade" />
+        <span className="catalog-card-badges">
+          {object.status === 'PUBLISHED' ? null : (
+            <span className={`status-pill catalog-card-status object-status object-status--${object.status.toLowerCase()}`}>
+              {objectStatusLabels[object.status]}
+            </span>
+          )}
+          <span className={`catalog-card-pdf-badge${hasPresentation ? ' catalog-card-pdf-badge--active' : ''}`}>
+            {hasPresentation ? 'PDF' : 'Без PDF'}
+          </span>
+        </span>
       </a>
       <div className="catalog-card-body">
-        <div className="catalog-card-heading">
-          <div>
-            <h3>
-              <a href={objectHref} onClick={handleOpen}>
-                {object.title}
-              </a>
-            </h3>
-            <p>{object.primaryLocation?.name ?? object.address ?? 'Локация не указана'}</p>
-          </div>
-          <span className={`status-pill object-status object-status--${object.status.toLowerCase()}`}>
-            {objectStatusLabels[object.status]}
-          </span>
+        <div className="catalog-card-price-row">
+          <p className="catalog-card-price">{formatPrice(object.priceFrom)}</p>
+          <span>{formatPricePerMeter(object.pricePerMeterFrom)}</span>
         </div>
-        <dl className="catalog-card-meta">
-          <div>
-            <dt>Цена</dt>
-            <dd>{formatPrice(object.priceFrom)}</dd>
-          </div>
+        <div className="catalog-card-heading">
+          <h3>
+            <a href={objectHref} onClick={handleOpen}>
+              {object.title}
+            </a>
+          </h3>
+          {shortDescription ? <p className="catalog-card-description">{shortDescription}</p> : null}
+        </div>
+        <div className="catalog-card-location" aria-label="Локация и метро">
+          <span>{locationLabel}</span>
+          {metroLabel ? <span>{metroLabel}</span> : null}
+        </div>
+        <dl className="catalog-card-facts">
           <div>
             <dt>Срок</dt>
             <dd>{formatCompletion(object.completionYear, object.completionQuarter)}</dd>
@@ -669,46 +689,68 @@ function CatalogCard({
             <dt>Застройщик</dt>
             <dd>{object.developer?.name ?? 'Не указан'}</dd>
           </div>
-          <div>
-            <dt>Презентация</dt>
-            <dd>{object.presentationFile ? 'Есть' : 'Нет'}</dd>
-          </div>
         </dl>
-        <a className="secondary-button secondary-button--fit catalog-card-link" href={objectHref} onClick={handleOpen}>
-          Открыть объект
-        </a>
+        <div className="catalog-card-actions">
+          <a className="catalog-card-link" href={objectHref} onClick={handleOpen}>
+            Подробнее
+          </a>
+          <span className={`catalog-card-action-note${hasPresentation ? ' catalog-card-action-note--active' : ''}`}>
+            {hasPresentation ? 'PDF есть' : 'PDF нет'}
+          </span>
+        </div>
       </div>
     </article>
   );
 }
 
+function CatalogMediaState({ title, text, tone }: { title: string; text: string; tone: 'empty' | 'error' | 'loading' }) {
+  return (
+    <span className={`catalog-card-media-state catalog-card-media-state--${tone}`}>
+      <span aria-hidden="true" className="catalog-card-media-mark" />
+      <span>{title}</span>
+      <small>{text}</small>
+    </span>
+  );
+}
+
 function SecureImage({ accessToken, alt, fileId }: { accessToken: string; alt: string; fileId: string }) {
   const [src, setSrc] = useState<string | null>(null);
+  const [imageState, setImageState] = useState<'loading' | 'loaded' | 'error'>('loading');
 
   useEffect(() => {
     let objectUrl: string | null = null;
     let isCancelled = false;
 
+    setSrc(null);
+    setImageState('loading');
+
     async function loadImage() {
-      const response = await fetch(`${apiUrl}/files/${fileId}/content`, {
-        credentials: 'include',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      });
+      try {
+        const response = await fetch(`${apiUrl}/files/${fileId}/content`, {
+          credentials: 'include',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        });
 
-      if (!response.ok) {
-        return;
+        if (!response.ok) {
+          throw new Error('Image request failed');
+        }
+
+        const blob = await response.blob();
+
+        if (isCancelled) {
+          return;
+        }
+
+        objectUrl = URL.createObjectURL(blob);
+        setSrc(objectUrl);
+        setImageState('loaded');
+      } catch {
+        if (!isCancelled) {
+          setImageState('error');
+        }
       }
-
-      const blob = await response.blob();
-
-      if (isCancelled) {
-        return;
-      }
-
-      objectUrl = URL.createObjectURL(blob);
-      setSrc(objectUrl);
     }
 
     void loadImage();
@@ -722,11 +764,15 @@ function SecureImage({ accessToken, alt, fileId }: { accessToken: string; alt: s
     };
   }, [accessToken, fileId]);
 
-  if (!src) {
-    return <span>Загрузка изображения</span>;
+  if (imageState === 'error') {
+    return <CatalogMediaState title="Обложка недоступна" text="Данные объекта сохранены" tone="error" />;
   }
 
-  return <img alt={alt} src={src} />;
+  if (!src) {
+    return <CatalogMediaState title="Загрузка" text="Подтягиваем обложку" tone="loading" />;
+  }
+
+  return <img alt={alt} src={src} onError={() => setImageState('error')} />;
 }
 
 function useMapObjectImageUrls(accessToken: string, objects: MapObject[]) {
@@ -994,6 +1040,25 @@ function formatPrice(value: string | null) {
     style: 'currency',
     currency: 'RUB',
   }).format(parsed);
+}
+
+function formatPricePerMeter(value: string | null) {
+  if (!value) {
+    return 'за м² не указана';
+  }
+
+  return `${formatPrice(value)}/м²`;
+}
+
+function formatMetroStations(stations: ObjectMetroStationLink[]) {
+  if (stations.length === 0) {
+    return null;
+  }
+
+  const visibleStations = stations.slice(0, 2).map((station) => station.name);
+  const hiddenCount = stations.length - visibleStations.length;
+
+  return `Метро ${visibleStations.join(', ')}${hiddenCount > 0 ? ` +${hiddenCount}` : ''}`;
 }
 
 function formatCompletion(year: number | null, quarter: number | null) {
