@@ -215,6 +215,7 @@ export type MapObject = {
   completionQuarter: number | null;
   developer: ObjectDeveloper | null;
   primaryLocation: ObjectLocation | null;
+  coverImage: ObjectImage | null;
 };
 
 export type MapObjectsResponse = {

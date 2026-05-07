@@ -12,6 +12,7 @@
     "db:seed": "pnpm --filter @platforma/api db:seed",
     "dev:api": "pnpm --filter @platforma/api dev",
     "dev:web": "pnpm --filter @platforma/web dev",
+    "test": "pnpm -r --if-present test",
     "wp-import:preview": "pnpm --filter @platforma/wp-import run preview",
     "wp-import:run": "pnpm --filter @platforma/wp-import run run"
   }

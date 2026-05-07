@@ -39,7 +39,7 @@ type YandexMapsApi = {
   ready: (callback: () => void) => void;
   Map: new (
     element: HTMLElement,
-    state: { center: [number, number]; zoom: number; controls?: string[] },
+    state: { center: [number, number]; zoom: number; controls?: string[]; behaviors?: string[] },
     options?: Record<string, unknown>,
   ) => YandexMapInstance;
   Placemark: new (
@@ -65,9 +65,32 @@ const defaultEmptyState: YandexMapFallbackState = {
 };
 
 export function YandexMap({ emptyState = defaultEmptyState, points, onOpenPoint }: YandexMapProps) {
+  const apiKey = (import.meta.env.VITE_YANDEX_MAPS_API_KEY ?? '').trim();
+
+  if (points.length === 0) {
+    return (
+      <div className="map-fallback">
+        <p className="eyebrow">{emptyState.eyebrow}</p>
+        <h2>{emptyState.title}</h2>
+        <p className="muted-text">{emptyState.description}</p>
+      </div>
+    );
+  }
+
+  return <YandexMapApi apiKey={apiKey} points={points} onOpenPoint={onOpenPoint} />;
+}
+
+function YandexMapApi({
+  apiKey,
+  points,
+  onOpenPoint,
+}: {
+  apiKey: string;
+  points: YandexMapPoint[];
+  onOpenPoint?: (point: YandexMapPoint) => void;
+}) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
-  const apiKey = (import.meta.env.VITE_YANDEX_MAPS_API_KEY ?? '').trim();
   const center = useMemo(() => getMapCenter(points), [points]);
   const pointsById = useMemo(() => new Map(points.map((point) => [point.id, point])), [points]);
 
@@ -107,7 +130,7 @@ export function YandexMap({ emptyState = defaultEmptyState, points, onOpenPoint 
   }, [onOpenPoint, pointsById]);
 
   useEffect(() => {
-    if (!apiKey || points.length === 0 || !containerRef.current) {
+    if (points.length === 0 || !containerRef.current) {
       return;
     }
 
@@ -128,6 +151,7 @@ export function YandexMap({ emptyState = defaultEmptyState, points, onOpenPoint 
             center,
             zoom: points.length > 1 ? 11 : 15,
             controls: ['zoomControl', 'fullscreenControl'],
+            behaviors: ['drag', 'scrollZoom', 'dblClickZoom', 'multiTouch'],
           },
           {
             suppressMapOpenBlock: true,
@@ -184,26 +208,6 @@ export function YandexMap({ emptyState = defaultEmptyState, points, onOpenPoint 
     };
   }, [apiKey, center, points]);
 
-  if (!apiKey) {
-    return (
-      <div className="map-fallback">
-        <p className="eyebrow">Яндекс.Карта</p>
-        <h2>Нужен API key</h2>
-        <p className="muted-text">Добавьте VITE_YANDEX_MAPS_API_KEY, чтобы включить карту.</p>
-      </div>
-    );
-  }
-
-  if (points.length === 0) {
-    return (
-      <div className="map-fallback">
-        <p className="eyebrow">{emptyState.eyebrow}</p>
-        <h2>{emptyState.title}</h2>
-        <p className="muted-text">{emptyState.description}</p>
-      </div>
-    );
-  }
-
   return (
     <div className="yandex-map-shell">
       {status === 'loading' ? <div className="map-loading">Загрузка карты</div> : null}
@@ -211,7 +215,7 @@ export function YandexMap({ emptyState = defaultEmptyState, points, onOpenPoint 
         <div className="map-fallback map-fallback--overlay">
           <p className="eyebrow">Яндекс.Карта</p>
           <h2>Карта не загрузилась</h2>
-          <p className="muted-text">Проверьте API key и доступность Yandex Maps JS API.</p>
+          <p className="muted-text">Проверьте доступность Yandex Maps JS API.</p>
         </div>
       ) : null}
       <div ref={containerRef} className="yandex-map" />
@@ -252,10 +256,11 @@ function loadYandexMaps(apiKey: string) {
     }
 
     const script = document.createElement('script');
-    const params = new URLSearchParams({
-      apikey: apiKey,
-      lang: 'ru_RU',
-    });
+    const params = new URLSearchParams({ lang: 'ru_RU' });
+
+    if (apiKey) {
+      params.set('apikey', apiKey);
+    }
 
     script.id = yandexMapsScriptId;
     script.async = true;

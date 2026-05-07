@@ -273,6 +273,7 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
 
       {isMapView ? (
         <CatalogMapView
+          accessToken={accessToken ?? ''}
           error={mapError}
           filters={filters}
           isLoading={isMapLoading}
@@ -543,6 +544,7 @@ function CatalogListView({
 }
 
 function CatalogMapView({
+  accessToken,
   error,
   filters,
   isLoading,
@@ -550,6 +552,7 @@ function CatalogMapView({
   total,
   onOpenObject,
 }: {
+  accessToken: string;
   error: string | null;
   filters: CatalogFilters;
   isLoading: boolean;
@@ -557,7 +560,11 @@ function CatalogMapView({
   total: number;
   onOpenObject: (slug: string) => void;
 }) {
-  const points = useMemo(() => objects.map((object) => mapObjectToPoint(object)), [objects]);
+  const balloonImageUrls = useMapObjectImageUrls(accessToken, objects);
+  const points = useMemo(
+    () => objects.map((object) => mapObjectToPoint(object, balloonImageUrls.get(object.id))),
+    [balloonImageUrls, objects],
+  );
 
   if (error) {
     return <p className="form-error">{error}</p>;
@@ -722,6 +729,80 @@ function SecureImage({ accessToken, alt, fileId }: { accessToken: string; alt: s
   return <img alt={alt} src={src} />;
 }
 
+function useMapObjectImageUrls(accessToken: string, objects: MapObject[]) {
+  const [imageUrls, setImageUrls] = useState<Map<string, string>>(() => new Map());
+
+  useEffect(() => {
+    let isCancelled = false;
+    const objectUrls: string[] = [];
+    const imageFiles = objects
+      .map((object) => ({
+        objectId: object.id,
+        fileId: object.coverImage?.file.id ?? null,
+      }))
+      .filter((item): item is { objectId: string; fileId: string } => Boolean(item.fileId));
+
+    setImageUrls(new Map());
+
+    if (!accessToken || imageFiles.length === 0) {
+      return () => undefined;
+    }
+
+    async function loadImages() {
+      const nextImageUrls = new Map<string, string>();
+
+      await Promise.all(
+        imageFiles.map(async ({ fileId, objectId }) => {
+          const objectUrl = await fetchFileObjectUrl(accessToken, fileId).catch(() => null);
+
+          if (!objectUrl) {
+            return;
+          }
+
+          if (isCancelled) {
+            URL.revokeObjectURL(objectUrl);
+            return;
+          }
+
+          objectUrls.push(objectUrl);
+          nextImageUrls.set(objectId, objectUrl);
+        }),
+      );
+
+      if (!isCancelled) {
+        setImageUrls(nextImageUrls);
+      }
+    }
+
+    void loadImages();
+
+    return () => {
+      isCancelled = true;
+
+      for (const objectUrl of objectUrls) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [accessToken, objects]);
+
+  return imageUrls;
+}
+
+async function fetchFileObjectUrl(accessToken: string, fileId: string) {
+  const response = await fetch(`${apiUrl}/files/${fileId}/content`, {
+    credentials: 'include',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error('Image request failed');
+  }
+
+  return URL.createObjectURL(await response.blob());
+}
+
 function parseCatalogFilters(queryString: string): CatalogFilters {
   const params = new URLSearchParams(queryString);
   const status = parseCatalogStatus(params.get('status'));
@@ -799,17 +880,17 @@ function buildObjectsParams(filters: CatalogFilters, includePage: boolean) {
   return params;
 }
 
-function mapObjectToPoint(object: MapObject): YandexMapPoint {
+function mapObjectToPoint(object: MapObject, imageUrl: string | undefined): YandexMapPoint {
   return {
     id: object.id,
     title: object.title,
     hint: object.title,
     coordinates: [object.latitude, object.longitude],
-    balloonHtml: buildMapBalloon(object),
+    balloonHtml: buildMapBalloon(object, imageUrl),
   };
 }
 
-function buildMapBalloon(object: MapObject) {
+function buildMapBalloon(object: MapObject, imageUrl: string | undefined) {
   const pointId = escapeHtml(object.id);
   const title = escapeHtml(object.title);
   const location = escapeHtml(object.primaryLocation?.name ?? object.address ?? 'Локация не указана');
@@ -817,9 +898,11 @@ function buildMapBalloon(object: MapObject) {
   const price = escapeHtml(formatPrice(object.priceFrom));
   const completion = escapeHtml(formatCompletion(object.completionYear, object.completionQuarter));
   const href = escapeHtml(`/objects/${encodeURIComponent(object.slug)}`);
+  const image = imageUrl ? `<img class="map-balloon-image" src="${escapeHtml(imageUrl)}" alt="${title}" />` : '';
 
   return [
     '<div class="map-balloon">',
+    image,
     `<strong>${title}</strong>`,
     `<span>${location}</span>`,
     `<span>${developer}</span>`,

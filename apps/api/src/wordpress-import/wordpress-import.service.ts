@@ -52,7 +52,10 @@ export class WordpressImportService {
     try {
       await execFileAsync('pnpm', ['--filter', '@platforma/wp-import', 'run', mode], {
         cwd: findWorkspaceRoot(),
-        env: process.env,
+        env: {
+          ...process.env,
+          PRISMA_HIDE_UPDATE_MESSAGE: 'true',
+        },
         maxBuffer: 1024 * 1024 * 50,
         timeout: 1000 * 60 * 30,
       });
@@ -231,7 +234,19 @@ function findWorkspaceRoot() {
 
 function getCommandErrorMessage(error: unknown) {
   if (error && typeof error === 'object' && 'stderr' in error && typeof error.stderr === 'string') {
-    return error.stderr.trim() || 'WordPress import command failed';
+    const stderr = normalizeCommandOutput(error.stderr);
+
+    if (stderr) {
+      return stderr;
+    }
+  }
+
+  if (error && typeof error === 'object' && 'stdout' in error && typeof error.stdout === 'string') {
+    const stdout = normalizeCommandOutput(error.stdout);
+
+    if (stdout) {
+      return stdout;
+    }
   }
 
   if (error instanceof Error) {
@@ -239,4 +254,11 @@ function getCommandErrorMessage(error: unknown) {
   }
 
   return 'WordPress import command failed';
+}
+
+function normalizeCommandOutput(value: string) {
+  return value
+    .replace(/\u001b\[[0-9;]*m/gu, '')
+    .replace(/┌[\s\S]*?┘\s*/gu, '')
+    .trim();
 }

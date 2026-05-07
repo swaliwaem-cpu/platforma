@@ -144,7 +144,8 @@ function ObjectDetail({
   const presentationFiles = object.files.filter((file) => file.type === 'PRESENTATION');
   const otherFiles = object.files.filter((file) => file.type !== 'PRESENTATION');
   const carouselImages = useMemo(() => getCarouselImages(object), [object]);
-  const mapPoints = useMemo(() => getObjectMapPoints(object), [object]);
+  const mapBalloonImageUrl = useSecureImageObjectUrl(accessToken, carouselImages[0]?.file.id ?? null);
+  const mapPoints = useMemo(() => getObjectMapPoints(object, mapBalloonImageUrl), [mapBalloonImageUrl, object]);
 
   return (
     <div className="object-detail-page">
@@ -497,6 +498,66 @@ function SecureImage({ accessToken, alt, fileId }: { accessToken: string; alt: s
   return <img alt={alt} src={src} />;
 }
 
+function useSecureImageObjectUrl(accessToken: string, fileId: string | null) {
+  const [src, setSrc] = useState<string | null>(null);
+
+  useEffect(() => {
+    let objectUrl: string | null = null;
+    let isCancelled = false;
+
+    setSrc(null);
+
+    const imageFileId = fileId ?? '';
+
+    if (!imageFileId) {
+      return () => undefined;
+    }
+
+    async function loadImage() {
+      const nextObjectUrl = await fetchFileObjectUrl(accessToken, imageFileId).catch(() => null);
+
+      if (!nextObjectUrl) {
+        return;
+      }
+
+      if (isCancelled) {
+        URL.revokeObjectURL(nextObjectUrl);
+        return;
+      }
+
+      objectUrl = nextObjectUrl;
+      setSrc(nextObjectUrl);
+    }
+
+    void loadImage();
+
+    return () => {
+      isCancelled = true;
+
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [accessToken, fileId]);
+
+  return src;
+}
+
+async function fetchFileObjectUrl(accessToken: string, fileId: string) {
+  const response = await fetch(`${apiUrl}/files/${fileId}/content`, {
+    credentials: 'include',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error('Image request failed');
+  }
+
+  return URL.createObjectURL(await response.blob());
+}
+
 function SecureFileButton({ accessToken, fileId }: { accessToken: string; fileId: string }) {
   const [isOpening, setIsOpening] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -561,7 +622,7 @@ function getCarouselImages(object: RealEstateObjectDetail) {
   return [coverImage, ...object.images.filter((image) => image.id !== coverImage.id)];
 }
 
-function getObjectMapPoints(object: RealEstateObjectDetail): YandexMapPoint[] {
+function getObjectMapPoints(object: RealEstateObjectDetail, imageUrl: string | null): YandexMapPoint[] {
   if (object.latitude === null || object.longitude === null) {
     return [];
   }
@@ -572,21 +633,23 @@ function getObjectMapPoints(object: RealEstateObjectDetail): YandexMapPoint[] {
       title: object.title,
       hint: object.title,
       coordinates: [object.latitude, object.longitude],
-      balloonHtml: buildObjectMapBalloon(object),
+      balloonHtml: buildObjectMapBalloon(object, imageUrl),
     },
   ];
 }
 
-function buildObjectMapBalloon(object: RealEstateObjectDetail) {
+function buildObjectMapBalloon(object: RealEstateObjectDetail, imageUrl: string | null) {
   const title = escapeHtml(object.title);
   const location = escapeHtml(object.primaryLocation?.name ?? 'Локация не указана');
   const address = object.address ? escapeHtml(object.address) : null;
   const developer = escapeHtml(object.developer?.name ?? 'Застройщик не указан');
   const price = escapeHtml(formatPrice(object.priceFrom));
   const completion = escapeHtml(formatCompletion(object.completionYear, object.completionQuarter));
+  const image = imageUrl ? `<img class="map-balloon-image" src="${escapeHtml(imageUrl)}" alt="${title}" />` : '';
 
   return [
     '<div class="map-balloon">',
+    image,
     `<strong>${title}</strong>`,
     `<span>${location}</span>`,
     address ? `<span>${address}</span>` : '',

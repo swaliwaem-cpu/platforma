@@ -6,3 +6,5 @@ dist
 coverage
 pnpm-debug.log
 *.tsbuildinfo
+tools/wp-import/uploads/*
+!tools/wp-import/uploads/.gitkeep

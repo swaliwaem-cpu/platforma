@@ -186,6 +186,7 @@
 - [x] Добавить `/catalog/map`.
 - [x] Реализовать `GET /map/objects`.
 - [x] Вывести markers объектов.
+- [x] Добавить no-key режим карты через Yandex widget с markers, clusters и styled balloons.
 - [x] Добавить popup/card при клике на marker.
 - [x] Добавить переход с marker на страницу объекта.
 - [x] Добавить кластеризацию при большом количестве объектов.
@@ -201,32 +202,32 @@
 
 ### Этап 14. Стабилизация
 
-- [ ] Проверить роли `admin`, `editor`, `user`.
-- [ ] Проверить все auth-сценарии.
-- [ ] Проверить CRUD пользователей.
-- [ ] Проверить CRUD объектов.
-- [ ] Проверить импорт preview.
-- [ ] Проверить импорт commit.
-- [ ] Проверить повторный импорт без дублей.
-- [ ] Проверить каталог и фильтры.
-- [ ] Проверить карту каталога и карту объекта.
-- [ ] Проверить загрузку файлов.
-- [ ] Проверить audit log.
-- [ ] Проверить адаптивность основных страниц.
-- [ ] Подготовить staging/production env checklist.
+- [x] Проверить роли `admin`, `editor`, `user`.
+- [x] Проверить все auth-сценарии.
+- [x] Проверить CRUD пользователей.
+- [x] Проверить CRUD объектов.
+- [x] Проверить импорт preview.
+- [x] Проверить импорт commit.
+- [x] Проверить повторный импорт без дублей.
+- [x] Проверить каталог и фильтры.
+- [x] Проверить карту каталога и карту объекта.
+- [x] Проверить загрузку файлов.
+- [x] Проверить audit log.
+- [x] Проверить адаптивность основных страниц.
+- [x] Подготовить staging/production env checklist.
 
 ## Test Plan
 
-- [ ] Unit tests для mappers WordPress import.
-- [ ] Unit tests для permissions и guards.
-- [ ] Unit tests для сервисов объектов и пользователей.
-- [ ] API tests для `/auth`, `/objects`, `/users`, `/wordpress-import`.
-- [ ] E2E smoke test: login -> admin -> create object -> publish -> catalog -> object details.
-- [ ] E2E smoke test: import preview -> import run -> повторный import run без дублей.
+- [x] Unit tests для mappers WordPress import.
+- [x] Unit tests для permissions и guards.
+- [x] Unit tests для сервисов объектов и пользователей.
+- [x] API tests для `/auth`, `/objects`, `/users`, `/wordpress-import`.
+- [x] E2E smoke test: login -> admin -> create object -> publish -> catalog -> object details.
+- [x] E2E smoke test: import preview -> import run -> повторный import run без дублей.
 - [ ] Manual QA: роли, карта, загрузка файлов, фильтры, empty/error states.
-- [ ] Проверить, что обычный `user` не имеет доступа к admin endpoints.
-- [ ] Проверить, что `editor` не может управлять пользователями и запускать импорт.
-- [ ] Проверить, что отсутствующие координаты не ломают каталог и страницу объекта.
+- [x] Проверить, что обычный `user` не имеет доступа к admin endpoints.
+- [x] Проверить, что `editor` не может управлять пользователями и запускать импорт.
+- [x] Проверить, что отсутствующие координаты не ломают каталог и страницу объекта.
 
 ## Assumptions
 

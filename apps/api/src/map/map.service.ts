@@ -5,8 +5,25 @@ import { PrismaService } from '../prisma/prisma.service';
 
 const mapObjectInclude = {
   developer: true,
+  images: {
+    include: {
+      file: true,
+    },
+    orderBy: [
+      {
+        isCover: 'desc',
+      },
+      {
+        sortOrder: 'asc',
+      },
+      {
+        createdAt: 'asc',
+      },
+    ],
+    take: 1,
+  },
   primaryLocation: true,
-} as const;
+} satisfies Prisma.RealEstateObjectInclude;
 
 type MapObjectRecord = Prisma.RealEstateObjectGetPayload<{ include: typeof mapObjectInclude }>;
 
@@ -333,6 +350,8 @@ export class MapService {
   }
 
   private serializeMapObject(object: MapObjectRecord) {
+    const coverImage = object.images[0] ?? null;
+
     return {
       id: object.id,
       title: object.title,
@@ -362,6 +381,38 @@ export class MapService {
             parentId: object.primaryLocation.parentId,
           }
         : null,
+      coverImage: coverImage ? this.serializeMapObjectImage(coverImage) : null,
+    };
+  }
+
+  private serializeMapObjectImage(image: MapObjectRecord['images'][number]) {
+    return {
+      id: image.id,
+      file: this.serializeMapFile(image.file),
+      sortOrder: image.sortOrder,
+      isCover: image.isCover,
+      alt: image.alt,
+      title: image.title,
+      sourceMetaKey: image.sourceMetaKey,
+      createdAt: image.createdAt.toISOString(),
+      updatedAt: image.updatedAt.toISOString(),
+    };
+  }
+
+  private serializeMapFile(file: MapObjectRecord['images'][number]['file']) {
+    return {
+      id: file.id,
+      wpAttachmentId: file.wpAttachmentId,
+      storage: file.storage,
+      bucket: file.bucket,
+      key: file.key,
+      url: file.url,
+      originalName: file.originalName,
+      mimeType: file.mimeType,
+      sizeBytes: file.sizeBytes?.toString() ?? null,
+      checksum: file.checksum,
+      createdAt: file.createdAt.toISOString(),
+      updatedAt: file.updatedAt.toISOString(),
     };
   }
 }

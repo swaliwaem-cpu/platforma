@@ -52,6 +52,8 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       NODE_ENV: development
       PORT: ${API_PORT:-3000}
@@ -71,6 +73,18 @@ services:
       JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
       JWT_REFRESH_TTL_DAYS: ${JWT_REFRESH_TTL_DAYS:-30}
       REFRESH_COOKIE_NAME: ${REFRESH_COOKIE_NAME:-platforma_refresh_token}
+      WP_DB_HOST: ${WP_DB_HOST:-host.docker.internal}
+      WP_DB_PORT: ${WP_DB_PORT:-3306}
+      WP_DB_SOCKET: ${WP_DB_SOCKET:-}
+      WP_DB_USER: ${WP_DB_USER:-wp_readonly}
+      WP_DB_PASSWORD: ${WP_DB_PASSWORD:-password}
+      WP_DB_NAME: ${WP_DB_NAME:-local}
+      WP_TABLE_PREFIX: ${WP_TABLE_PREFIX:-wp_}
+      WP_POST_TYPE: ${WP_POST_TYPE:-nedvizhimosts}
+      WP_IMPORT_LIMIT: ${WP_IMPORT_LIMIT:-}
+      WP_UPLOADS_PATH: ${WP_UPLOADS_PATH:-/wp-uploads}
+    volumes:
+      - ${WP_UPLOADS_HOST_PATH:-./tools/wp-import/uploads}:${WP_UPLOADS_PATH:-/wp-uploads}:ro
     depends_on:
       postgres:
         condition: service_healthy
