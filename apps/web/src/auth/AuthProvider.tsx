@@ -1,7 +1,12 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { AuthResponse, AuthUser } from '@platforma/shared';
 
-const apiUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
+import {
+  apiAuthClearedEventName,
+  apiAuthUpdatedEventName,
+  apiUrl,
+  setApiAccessToken,
+} from '../admin/api';
 
 type AuthContextValue = {
   accessToken: string | null;
@@ -20,8 +25,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   const applyAuthResponse = useCallback((response: AuthResponse) => {
+    setApiAccessToken(response.accessToken);
     setAccessToken(response.accessToken);
     setUser(response.user);
+  }, []);
+
+  const clearAuthState = useCallback(() => {
+    setApiAccessToken(null);
+    setAccessToken(null);
+    setUser(null);
   }, []);
 
   useEffect(() => {
@@ -35,6 +47,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
 
         if (!response.ok) {
+          setApiAccessToken(null);
           return;
         }
 
@@ -56,6 +69,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isMounted = false;
     };
   }, [applyAuthResponse]);
+
+  useEffect(() => {
+    const handleAuthUpdated = (event: Event) => {
+      const session = (event as CustomEvent<AuthResponse>).detail;
+
+      if (session) {
+        applyAuthResponse(session);
+      }
+    };
+
+    window.addEventListener(apiAuthUpdatedEventName, handleAuthUpdated);
+    window.addEventListener(apiAuthClearedEventName, clearAuthState);
+
+    return () => {
+      window.removeEventListener(apiAuthUpdatedEventName, handleAuthUpdated);
+      window.removeEventListener(apiAuthClearedEventName, clearAuthState);
+    };
+  }, [applyAuthResponse, clearAuthState]);
 
   const login = useCallback(
     async (email: string, password: string) => {
@@ -83,9 +114,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       credentials: 'include',
     });
 
-    setAccessToken(null);
-    setUser(null);
-  }, []);
+    clearAuthState();
+  }, [clearAuthState]);
 
   const value = useMemo<AuthContextValue>(
     () => ({

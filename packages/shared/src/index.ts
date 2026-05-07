@@ -202,6 +202,26 @@ export type ObjectResponse = {
   object: RealEstateObjectDetail;
 };
 
+export type MapObject = {
+  id: string;
+  title: string;
+  slug: string;
+  status: ObjectStatus;
+  address: string | null;
+  latitude: number;
+  longitude: number;
+  priceFrom: string | null;
+  completionYear: number | null;
+  completionQuarter: number | null;
+  developer: ObjectDeveloper | null;
+  primaryLocation: ObjectLocation | null;
+};
+
+export type MapObjectsResponse = {
+  items: MapObject[];
+  total: number;
+};
+
 export type ImportReportUser = {
   id: string;
   email: string;

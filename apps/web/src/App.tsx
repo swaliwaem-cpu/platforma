@@ -7,6 +7,7 @@ import { ObjectsAdminPage } from './admin/ObjectsAdminPage';
 import { UsersAdminPage } from './admin/UsersAdminPage';
 import { AuthProvider, useAuth } from './auth/AuthProvider';
 import { CatalogPage } from './catalog/CatalogPage';
+import { ObjectDetailPage } from './objects/ObjectDetailPage';
 import './styles.css';
 
 type AppSection = 'cabinet' | 'catalog' | 'admin';
@@ -64,6 +65,13 @@ const cabinetSections = [
     requiredPermissions: ['objects:read'],
   },
   {
+    id: 'catalog-map',
+    label: 'Карта каталога',
+    group: 'Каталог',
+    path: '/catalog/map',
+    requiredPermissions: ['objects:read'],
+  },
+  {
     id: 'admin-objects',
     label: 'Управление объектами',
     group: 'Админка',
@@ -97,17 +105,46 @@ function usePathname() {
 
   useEffect(() => {
     const handlePopState = () => setPathname(window.location.pathname);
+    const handleDocumentClick = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+        return;
+      }
+
+      if (!(event.target instanceof Element)) {
+        return;
+      }
+
+      const link = event.target.closest('a[href]');
+
+      if (!(link instanceof HTMLAnchorElement) || (link.target && link.target !== '_self')) {
+        return;
+      }
+
+      const url = new URL(link.href);
+
+      if (url.origin !== window.location.origin || !isAppRoute(url.pathname)) {
+        return;
+      }
+
+      event.preventDefault();
+      window.history.pushState(null, '', `${url.pathname}${url.search}${url.hash}`);
+      setPathname(window.location.pathname);
+    };
 
     window.addEventListener('popstate', handlePopState);
+    document.addEventListener('click', handleDocumentClick);
 
-    return () => window.removeEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      document.removeEventListener('click', handleDocumentClick);
+    };
   }, []);
 
   return {
     pathname,
     navigate: (nextPathname: string) => {
       window.history.pushState(null, '', nextPathname);
-      setPathname(nextPathname);
+      setPathname(window.location.pathname);
     },
   };
 }
@@ -138,9 +175,10 @@ function AppRoutes() {
 
   const activeSection: AppSection = pathname.startsWith('/admin')
     ? 'admin'
-    : pathname.startsWith('/catalog')
+    : pathname.startsWith('/catalog') || pathname.startsWith('/objects/')
       ? 'catalog'
       : 'cabinet';
+  const objectSlug = parseObjectSlug(pathname);
   const visibleNavItems = navItems.filter((item) => canAccessPermissions(hasPermission, item.requiredPermissions));
 
   return (
@@ -200,9 +238,15 @@ function AppRoutes() {
           ) : (
             <AccessDenied />
           )
+        ) : objectSlug ? (
+          hasPermission('objects:read') ? (
+            <ObjectDetailPage slug={objectSlug} onBack={() => navigate('/catalog')} />
+          ) : (
+            <AccessDenied />
+          )
         ) : activeSection === 'catalog' ? (
           hasPermission('objects:read') ? (
-            <CatalogPage />
+            <CatalogPage navigate={navigate} pathname={pathname} />
           ) : (
             <AccessDenied />
           )
@@ -212,6 +256,33 @@ function AppRoutes() {
       </section>
     </main>
   );
+}
+
+function isAppRoute(pathname: string) {
+  return (
+    pathname === '/' ||
+    pathname === '/login' ||
+    pathname === '/cabinet' ||
+    pathname === '/catalog' ||
+    pathname.startsWith('/catalog/') ||
+    pathname === '/admin' ||
+    pathname.startsWith('/admin/') ||
+    pathname.startsWith('/objects/')
+  );
+}
+
+function parseObjectSlug(pathname: string) {
+  const match = pathname.match(/^\/objects\/([^/]+)\/?$/u);
+
+  if (!match?.[1]) {
+    return null;
+  }
+
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return match[1];
+  }
 }
 
 function LoginPage({ onSuccess }: { onSuccess: () => void }) {
