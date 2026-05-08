@@ -298,104 +298,124 @@ function CatalogFilters({
   onChange: (patch: Partial<CatalogFilters>, options?: { resetPage: boolean }) => void;
   onReset: () => void;
 }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const activeAdvancedFilterCount = countActiveAdvancedFilters(filters);
+  const filterButtonLabel = isExpanded ? 'Скрыть фильтры' : '+ фильтры';
+
   return (
-    <section className="catalog-filters" aria-label="Фильтры каталога">
-      <label>
-        Поиск
-        <input
-          placeholder="Название, адрес, застройщик"
-          type="search"
-          value={filters.search}
-          onChange={(event) => onChange({ search: event.target.value })}
-        />
-      </label>
+    <section className={`catalog-filters${isExpanded ? ' catalog-filters--expanded' : ''}`} aria-label="Фильтры каталога">
+      <div className="catalog-filter-search-row">
+        <label className="catalog-filter-search">
+          Поиск
+          <input
+            placeholder="Название, адрес, застройщик"
+            type="search"
+            value={filters.search}
+            onChange={(event) => onChange({ search: event.target.value })}
+          />
+        </label>
 
-      <label>
-        Застройщик
-        <select
-          disabled={isDirectoriesLoading}
-          value={filters.developerId}
-          onChange={(event) => onChange({ developerId: event.target.value })}
+        <button
+          aria-expanded={isExpanded}
+          className="catalog-filter-toggle"
+          type="button"
+          onClick={() => setIsExpanded((currentValue) => !currentValue)}
         >
-          <option value="">Все застройщики</option>
-          {directories.developers.map((developer) => (
-            <option key={developer.id} value={developer.id}>
-              {developer.name}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <label>
-        Локация
-        <select
-          disabled={isDirectoriesLoading}
-          value={filters.locationId}
-          onChange={(event) => onChange({ locationId: event.target.value })}
-        >
-          <option value="">Все локации</option>
-          {directories.locations.map((location) => (
-            <option key={location.id} value={location.id}>
-              {location.name}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <label>
-        Метро
-        <select
-          disabled={isDirectoriesLoading}
-          value={filters.metroStationId}
-          onChange={(event) => onChange({ metroStationId: event.target.value })}
-        >
-          <option value="">Все станции</option>
-          {directories.metroStations.map((station) => (
-            <option key={station.id} value={station.id}>
-              {station.lineName ? `${station.name}, ${station.lineName}` : station.name}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <label>
-        Срок, год
-        <input
-          inputMode="numeric"
-          placeholder="2026"
-          type="text"
-          value={filters.completionYear}
-          onChange={(event) => onChange({ completionYear: sanitizeIntegerText(event.target.value, 4) })}
-        />
-      </label>
-
-      <label>
-        Цена от
-        <input
-          inputMode="decimal"
-          placeholder="0"
-          type="text"
-          value={filters.priceFromMin}
-          onChange={(event) => onChange({ priceFromMin: sanitizeDecimalText(event.target.value) })}
-        />
-      </label>
-
-      <label>
-        Цена до
-        <input
-          inputMode="decimal"
-          placeholder="50000000"
-          type="text"
-          value={filters.priceFromMax}
-          onChange={(event) => onChange({ priceFromMax: sanitizeDecimalText(event.target.value) })}
-        />
-      </label>
-
-      <div className="catalog-filter-actions">
-        <button className="secondary-button secondary-button--fit" type="button" onClick={onReset}>
-          Сбросить
+          {filterButtonLabel}
+          {activeAdvancedFilterCount > 0 ? <span>{activeAdvancedFilterCount}</span> : null}
         </button>
       </div>
+
+      {isExpanded ? (
+        <div className="catalog-filter-fields">
+          <label>
+            Застройщик
+            <select
+              disabled={isDirectoriesLoading}
+              value={filters.developerId}
+              onChange={(event) => onChange({ developerId: event.target.value })}
+            >
+              <option value="">Все застройщики</option>
+              {directories.developers.map((developer) => (
+                <option key={developer.id} value={developer.id}>
+                  {developer.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            Локация
+            <select
+              disabled={isDirectoriesLoading}
+              value={filters.locationId}
+              onChange={(event) => onChange({ locationId: event.target.value })}
+            >
+              <option value="">Все локации</option>
+              {directories.locations.map((location) => (
+                <option key={location.id} value={location.id}>
+                  {location.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            Метро
+            <select
+              disabled={isDirectoriesLoading}
+              value={filters.metroStationId}
+              onChange={(event) => onChange({ metroStationId: event.target.value })}
+            >
+              <option value="">Все станции</option>
+              {directories.metroStations.map((station) => (
+                <option key={station.id} value={station.id}>
+                  {station.lineName ? `${station.name}, ${station.lineName}` : station.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            Срок, год
+            <input
+              inputMode="numeric"
+              placeholder="2026"
+              type="text"
+              value={filters.completionYear}
+              onChange={(event) => onChange({ completionYear: sanitizeIntegerText(event.target.value, 4) })}
+            />
+          </label>
+
+          <label>
+            Цена от
+            <input
+              inputMode="decimal"
+              placeholder="0"
+              type="text"
+              value={filters.priceFromMin}
+              onChange={(event) => onChange({ priceFromMin: sanitizeDecimalText(event.target.value) })}
+            />
+          </label>
+
+          <label>
+            Цена до
+            <input
+              inputMode="decimal"
+              placeholder="50000000"
+              type="text"
+              value={filters.priceFromMax}
+              onChange={(event) => onChange({ priceFromMax: sanitizeDecimalText(event.target.value) })}
+            />
+          </label>
+
+          <div className="catalog-filter-actions">
+            <button className="secondary-button secondary-button--fit" type="button" onClick={onReset}>
+              Сбросить
+            </button>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -496,6 +516,8 @@ function CatalogMapView({
   onOpenObject: (slug: string) => void;
 }) {
   const [visibleBounds, setVisibleBounds] = useState<YandexMapBounds | null>(null);
+  const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
+  const [isListVisible, setIsListVisible] = useState(true);
   const balloonImageUrls = useMapObjectImageUrls(accessToken, objects);
   const points = useMemo(
     () => objects.map((object) => mapObjectToPoint(object, balloonImageUrls.get(object.id))),
@@ -505,13 +527,26 @@ function CatalogMapView({
     () => (visibleBounds ? objects.filter((object) => isMapObjectInBounds(object, visibleBounds)) : objects),
     [objects, visibleBounds],
   );
+  const selectedObject = useMemo(
+    () => objects.find((object) => object.id === selectedObjectId) ?? null,
+    [objects, selectedObjectId],
+  );
   const handleBoundsChange = useCallback((bounds: YandexMapBounds) => {
     setVisibleBounds(bounds);
+  }, []);
+  const handleSelectPoint = useCallback((point: YandexMapPoint) => {
+    setSelectedObjectId(point.id);
   }, []);
 
   useEffect(() => {
     setVisibleBounds(null);
   }, [objects]);
+
+  useEffect(() => {
+    if (selectedObjectId && !objects.some((object) => object.id === selectedObjectId)) {
+      setSelectedObjectId(null);
+    }
+  }, [objects, selectedObjectId]);
 
   if (error) {
     return <p className="form-error">{error}</p>;
@@ -534,37 +569,110 @@ function CatalogMapView({
         <YandexMap
           onBoundsChange={handleBoundsChange}
           points={points}
-          onOpenPoint={(point) => {
-            const object = objects.find((candidate) => candidate.id === point.id);
-
-            if (object) {
-              onOpenObject(object.slug);
-            }
-          }}
+          selectedPointId={selectedObjectId}
+          onSelectPoint={handleSelectPoint}
         />
-      </div>
 
-      <aside className="catalog-map-list" aria-label="Объекты на карте">
-        <div className="table-meta">
-          <span>{isLoading ? 'Загрузка' : `В области: ${visibleObjects.length}`}</span>
-          <span>{objects.length > 0 ? `На карте: ${objects.length}` : total > 0 ? `из ${total}` : 'Все точки'}</span>
-        </div>
-        {visibleObjects.length > 0 ? (
-          <ul>
-            {visibleObjects.map((object) => (
-              <li key={object.id}>
-                <button className="text-button" type="button" onClick={() => onOpenObject(object.slug)}>
-                  {object.title}
-                </button>
-                <span>{object.primaryLocation?.name ?? object.address ?? 'Локация не указана'}</span>
-              </li>
-            ))}
-          </ul>
+        {selectedObject ? (
+          <MapObjectCard
+            imageUrl={balloonImageUrls.get(selectedObject.id)}
+            object={selectedObject}
+            onClose={() => setSelectedObjectId(null)}
+            onOpen={() => onOpenObject(selectedObject.slug)}
+          />
+        ) : null}
+
+        {isListVisible ? (
+          <aside className="catalog-map-list" aria-label="Объекты на карте">
+            <div className="catalog-map-list-header">
+              <button className="text-button" type="button" onClick={() => setIsListVisible(false)}>
+                Скрыть/показать
+              </button>
+              <div className="table-meta">
+                <span>{isLoading ? 'Загрузка' : `В области: ${visibleObjects.length}`}</span>
+                <span>{objects.length > 0 ? `На карте: ${objects.length}` : total > 0 ? `из ${total}` : 'На карте: 0'}</span>
+              </div>
+            </div>
+            {visibleObjects.length > 0 ? (
+              <ul>
+                {visibleObjects.map((object) => (
+                  <li key={object.id} className={object.id === selectedObjectId ? 'catalog-map-list-item--selected' : undefined}>
+                    <button className="text-button" type="button" onClick={() => setSelectedObjectId(object.id)}>
+                      {object.title}
+                    </button>
+                    <span>{object.primaryLocation?.name ?? object.address ?? 'Локация не указана'}</span>
+                    <strong>{formatMapListPricePerMeter(object.pricePerMeterFrom)}</strong>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="catalog-map-empty">В текущей области карты объектов нет.</p>
+            )}
+          </aside>
         ) : (
-          <p className="catalog-map-empty">В текущей области карты объектов нет.</p>
+          <button className="catalog-map-list-toggle" type="button" onClick={() => setIsListVisible(true)}>
+            Показать список
+          </button>
         )}
-      </aside>
+      </div>
     </section>
+  );
+}
+
+function MapObjectCard({
+  imageUrl,
+  object,
+  onClose,
+  onOpen,
+}: {
+  imageUrl: string | undefined;
+  object: MapObject;
+  onClose: () => void;
+  onOpen: () => void;
+}) {
+  const metroLabel = formatMetroStations(object.metroStations ?? []);
+
+  return (
+    <article className="map-object-card" aria-label={`Объект ${object.title}`}>
+      <button aria-label="Закрыть карточку" className="map-object-card-close" type="button" onClick={onClose}>
+        ×
+      </button>
+      {imageUrl ? (
+        <img className="map-object-card-image" src={imageUrl} alt={object.coverImage?.alt ?? object.title} />
+      ) : (
+        <div className="map-object-card-image map-object-card-image--empty">Нет обложки</div>
+      )}
+      <div className="map-object-card-body">
+        <h3>{object.title}</h3>
+        <dl>
+          <div>
+            <dt>Застройщик</dt>
+            <dd>{object.developer?.name ?? 'Не указан'}</dd>
+          </div>
+          <div>
+            <dt>Расположение</dt>
+            <dd>{object.primaryLocation?.name ?? object.address ?? 'Локация не указана'}</dd>
+          </div>
+          {metroLabel ? (
+            <div>
+              <dt>Метро</dt>
+              <dd>{metroLabel.replace(/^Метро /, '')}</dd>
+            </div>
+          ) : null}
+          <div>
+            <dt>Завершение строительства</dt>
+            <dd>{formatCompletion(object.completionYear, object.completionQuarter)}</dd>
+          </div>
+        </dl>
+        <p>
+          Цена от: <strong>{formatPrice(object.priceFrom)}</strong> | Цена за метр от:{' '}
+          <strong>{formatMapCardPricePerMeter(object.pricePerMeterFrom)}</strong>
+        </p>
+        <button className="primary-button primary-button--fit" type="button" onClick={onOpen}>
+          Подробнее
+        </button>
+      </div>
+    </article>
   );
 }
 
@@ -839,6 +947,17 @@ function buildCatalogQuery(filters: CatalogFilters) {
   return query ? `?${query}` : '';
 }
 
+function countActiveAdvancedFilters(filters: CatalogFilters) {
+  return [
+    filters.developerId,
+    filters.locationId,
+    filters.metroStationId,
+    filters.completionYear,
+    filters.priceFromMin,
+    filters.priceFromMax,
+  ].filter((value) => value.trim().length > 0).length;
+}
+
 function buildObjectsParams(filters: CatalogFilters, includePage: boolean) {
   const params = new URLSearchParams({
     limit: includePage ? '12' : '1000',
@@ -872,6 +991,7 @@ function mapObjectToPoint(object: MapObject, imageUrl: string | undefined): Yand
     hint: object.title,
     coordinates: [object.latitude, object.longitude],
     balloonHtml: buildMapBalloon(object, imageUrl),
+    markerLabel: formatMapMarkerPrice(object.pricePerMeterFrom),
   };
 }
 
@@ -974,6 +1094,38 @@ function formatPricePerMeter(value: string | null) {
   }
 
   return `${formatPrice(value)}/м²`;
+}
+
+function formatMapMarkerPrice(value: string | null) {
+  if (!value) {
+    return 'по запросу/м²';
+  }
+
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed)) {
+    return `от ${value}/м²`;
+  }
+
+  if (parsed >= 1000000) {
+    return `от ${formatCompactRussianNumber(parsed / 1000000)}млн/м²`;
+  }
+
+  return `от ${formatCompactRussianNumber(parsed / 1000)}т/м²`;
+}
+
+function formatMapListPricePerMeter(value: string | null) {
+  return value ? `Цена за м²: ${formatPrice(value)}` : 'Цена за м²: по запросу';
+}
+
+function formatMapCardPricePerMeter(value: string | null) {
+  return value ? formatPrice(value) : 'по запросу';
+}
+
+function formatCompactRussianNumber(value: number) {
+  return new Intl.NumberFormat('ru-RU', {
+    maximumFractionDigits: value < 10 ? 1 : 0,
+  }).format(value);
 }
 
 function formatMetroStations(stations: ObjectMetroStationLink[]) {

@@ -22,6 +22,14 @@ const mapObjectInclude = {
     ],
     take: 1,
   },
+  metroStations: {
+    include: {
+      metroStation: true,
+    },
+    orderBy: {
+      sortOrder: 'asc',
+    },
+  },
   primaryLocation: true,
 } satisfies Prisma.RealEstateObjectInclude;
 
@@ -361,6 +369,7 @@ export class MapService {
       latitude: object.latitude?.toNumber() ?? 0,
       longitude: object.longitude?.toNumber() ?? 0,
       priceFrom: object.priceFrom?.toString() ?? null,
+      pricePerMeterFrom: object.pricePerMeterFrom?.toString() ?? null,
       completionYear: object.completionYear,
       completionQuarter: object.completionQuarter,
       developer: object.developer
@@ -381,6 +390,15 @@ export class MapService {
             parentId: object.primaryLocation.parentId,
           }
         : null,
+      metroStations: object.metroStations.map((link) => ({
+        id: link.metroStation.id,
+        wpTermId: link.metroStation.wpTermId,
+        name: link.metroStation.name,
+        slug: link.metroStation.slug,
+        lineName: link.metroStation.lineName,
+        lineColor: link.metroStation.lineColor,
+        sortOrder: link.sortOrder,
+      })),
       coverImage: coverImage ? this.serializeMapObjectImage(coverImage) : null,
     };
   }

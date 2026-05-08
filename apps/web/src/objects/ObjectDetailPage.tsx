@@ -598,6 +598,7 @@ function getObjectMapPoints(object: RealEstateObjectDetail, imageUrl: string | n
       hint: object.title,
       coordinates: [object.latitude, object.longitude],
       balloonHtml: buildObjectMapBalloon(object, imageUrl),
+      markerLabel: formatObjectMapMarkerPrice(object.pricePerMeterFrom),
     },
   ];
 }
@@ -662,6 +663,30 @@ function formatPrice(value: string | null) {
     style: 'currency',
     currency: 'RUB',
   }).format(parsed);
+}
+
+function formatObjectMapMarkerPrice(value: string | null) {
+  if (!value) {
+    return 'по запросу/м²';
+  }
+
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed)) {
+    return `от ${value}/м²`;
+  }
+
+  if (parsed >= 1000000) {
+    return `от ${formatCompactRussianNumber(parsed / 1000000)}млн/м²`;
+  }
+
+  return `от ${formatCompactRussianNumber(parsed / 1000)}т/м²`;
+}
+
+function formatCompactRussianNumber(value: number) {
+  return new Intl.NumberFormat('ru-RU', {
+    maximumFractionDigits: value < 10 ? 1 : 0,
+  }).format(value);
 }
 
 function formatCompletion(year: number | null, quarter: number | null) {

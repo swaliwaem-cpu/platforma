@@ -212,10 +212,12 @@ export type MapObject = {
   latitude: number;
   longitude: number;
   priceFrom: string | null;
+  pricePerMeterFrom: string | null;
   completionYear: number | null;
   completionQuarter: number | null;
   developer: ObjectDeveloper | null;
   primaryLocation: ObjectLocation | null;
+  metroStations: ObjectMetroStationLink[];
   coverImage: ObjectImage | null;
 };
 

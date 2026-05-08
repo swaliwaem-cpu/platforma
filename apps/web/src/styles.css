@@ -766,13 +766,57 @@ tr.user-row--deactivated .text-button {
 
 .catalog-filters {
   display: grid;
-  grid-template-columns: minmax(220px, 1.4fr) repeat(3, minmax(170px, 1fr));
-  gap: 14px;
+  gap: 16px;
   border: 1px solid #d6dde5;
   border-radius: 8px;
   background: #ffffff;
   padding: 18px;
   box-shadow: 0 16px 40px rgb(24 32 42 / 8%);
+}
+
+.catalog-filter-search-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 14px;
+  align-items: end;
+}
+
+.catalog-filter-search {
+  min-width: 0;
+}
+
+.catalog-filter-toggle {
+  display: inline-flex;
+  min-height: 45px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid #18202a;
+  border-radius: 999px;
+  background: #111820;
+  color: #f8faf6;
+  padding: 0 22px;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.catalog-filter-toggle span {
+  display: inline-grid;
+  min-width: 22px;
+  min-height: 22px;
+  place-items: center;
+  border-radius: 999px;
+  background: #f8faf6;
+  color: #111820;
+  padding: 0 6px;
+  font-size: 12px;
+}
+
+.catalog-filter-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(170px, 1fr));
+  gap: 14px;
 }
 
 .catalog-filters label {
@@ -1160,14 +1204,10 @@ tr.user-row--deactivated .text-button {
 }
 
 .catalog-map-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
-  gap: 18px;
-  align-items: stretch;
+  display: block;
 }
 
-.catalog-map-panel,
-.catalog-map-list {
+.catalog-map-panel {
   overflow: hidden;
   border: 1px solid #d6dde5;
   border-radius: 8px;
@@ -1177,14 +1217,37 @@ tr.user-row--deactivated .text-button {
 
 .catalog-map-panel {
   position: relative;
-  min-height: 560px;
+  min-height: 640px;
 }
 
 .catalog-map-list {
+  position: absolute;
+  z-index: 4;
+  top: 24px;
+  right: 24px;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  align-self: start;
+  width: min(320px, calc(100% - 48px));
+  max-height: calc(100% - 48px);
+  overflow: hidden;
+  border: 1px solid rgb(214 221 229 / 88%);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 96%);
   min-height: 0;
+  box-shadow: 0 18px 50px rgb(24 32 42 / 16%);
+}
+
+.catalog-map-list-header {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px 12px;
+}
+
+.catalog-map-list-header .text-button {
+  justify-self: end;
+  color: #18202a;
+  font-size: 13px;
+  line-height: 1;
 }
 
 .catalog-map-list ul {
@@ -1192,7 +1255,6 @@ tr.user-row--deactivated .text-button {
   align-content: start;
   gap: 0;
   overflow: auto;
-  max-height: calc(73px * 8);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -1201,9 +1263,12 @@ tr.user-row--deactivated .text-button {
 .catalog-map-list li {
   display: grid;
   gap: 6px;
-  min-height: 73px;
   border-top: 1px solid #e0e6ed;
   padding: 14px 16px;
+}
+
+.catalog-map-list-item--selected {
+  background: #fff4f2;
 }
 
 .catalog-map-list a,
@@ -1227,6 +1292,27 @@ tr.user-row--deactivated .text-button {
   line-height: 1.45;
 }
 
+.catalog-map-list strong {
+  color: #18202a;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.catalog-map-list-toggle {
+  position: absolute;
+  z-index: 4;
+  top: 24px;
+  right: 24px;
+  border: 1px solid rgb(214 221 229 / 90%);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 96%);
+  color: #18202a;
+  padding: 11px 16px;
+  font-size: 13px;
+  font-weight: 900;
+  box-shadow: 0 14px 34px rgb(24 32 42 / 14%);
+}
+
 .catalog-map-empty {
   margin: 0;
   border-top: 1px solid #e0e6ed;
@@ -1239,12 +1325,193 @@ tr.user-row--deactivated .text-button {
 
 .yandex-map-shell {
   position: relative;
-  min-height: 560px;
+  min-height: 640px;
 }
 
 .yandex-map {
   width: 100%;
-  min-height: 560px;
+  min-height: 640px;
+}
+
+.map-price-marker {
+  position: relative;
+  display: inline-flex;
+  min-width: 104px;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #f8fbff;
+  border-radius: 999px;
+  background: #2563eb;
+  color: #f8fbff;
+  padding: 0 14px 0 25px;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+  box-shadow: 0 10px 22px rgb(24 32 42 / 22%);
+  transform: translateZ(0);
+}
+
+.map-price-marker::before {
+  position: absolute;
+  top: 50%;
+  left: -2px;
+  width: 34px;
+  aspect-ratio: 1;
+  border: 2px solid #f8fbff;
+  border-radius: 50%;
+  background: #174ea6;
+  box-shadow: 0 6px 14px rgb(24 32 42 / 18%);
+  content: "";
+  transform: translate(-38%, -50%);
+}
+
+.map-price-marker span {
+  position: relative;
+  z-index: 1;
+}
+
+.map-price-marker--selected {
+  background: #d1432f;
+}
+
+.map-price-marker--selected::before {
+  background: #9f2f20;
+}
+
+.map-object-card {
+  position: absolute;
+  z-index: 5;
+  top: 28px;
+  left: 28px;
+  display: grid;
+  gap: 0;
+  width: min(430px, calc(100% - 400px));
+  min-width: 320px;
+  overflow: hidden;
+  border: 1px solid rgb(214 221 229 / 88%);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 98%);
+  box-shadow: 0 24px 70px rgb(24 32 42 / 18%);
+}
+
+.map-object-card-close {
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  right: 12px;
+  display: grid;
+  width: 34px;
+  aspect-ratio: 1;
+  place-items: center;
+  border: 1px solid rgb(24 32 42 / 12%);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 94%);
+  color: #18202a;
+  font-size: 24px;
+  line-height: 1;
+  box-shadow: 0 10px 22px rgb(24 32 42 / 12%);
+}
+
+.map-object-card-image {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #eef3f7;
+  object-fit: cover;
+}
+
+.map-object-card-image--empty {
+  display: grid;
+  place-items: center;
+  color: #66736f;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.map-object-card-body {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.map-object-card h3 {
+  margin: 0;
+  color: #18202a;
+  font-size: 26px;
+  line-height: 1.16;
+  overflow-wrap: anywhere;
+}
+
+.map-object-card dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.map-object-card dl div {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.map-object-card dt,
+.map-object-card dd,
+.map-object-card p {
+  margin: 0;
+}
+
+.map-object-card dt {
+  color: #536172;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.map-object-card dd {
+  color: #18202a;
+  font-size: 15px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.map-object-card p {
+  color: #18202a;
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+@media (max-width: 1100px) {
+  .map-object-card {
+    width: min(390px, calc(100% - 380px));
+  }
+}
+
+@media (max-width: 980px) {
+  .catalog-map-list {
+    top: auto;
+    right: 18px;
+    bottom: 18px;
+    left: 18px;
+    width: auto;
+    max-height: 40%;
+    min-height: 0;
+  }
+
+  .catalog-map-list-toggle {
+    top: auto;
+    right: 18px;
+    bottom: 18px;
+  }
+
+  .map-object-card {
+    top: 18px;
+    right: 18px;
+    left: 18px;
+    width: auto;
+    min-width: 0;
+    max-height: calc(60% - 30px);
+    overflow: auto;
+  }
 }
 
 .map-loading {
@@ -1887,6 +2154,15 @@ tr.user-row--deactivated .text-button {
     align-items: stretch;
   }
 
+  .catalog-filter-search-row,
+  .catalog-filter-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .catalog-filter-toggle {
+    width: 100%;
+  }
+
   .catalog-card {
     transform: none;
   }
@@ -1930,6 +2206,50 @@ tr.user-row--deactivated .text-button {
   .yandex-map,
   .map-fallback {
     min-height: 420px;
+  }
+
+  .catalog-map-list {
+    top: auto;
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    width: auto;
+    max-height: 42%;
+    min-height: 0;
+  }
+
+  .catalog-map-list-toggle {
+    top: auto;
+    right: 12px;
+    bottom: 12px;
+  }
+
+  .map-object-card {
+    top: 12px;
+    right: 12px;
+    left: 12px;
+    width: auto;
+    min-width: 0;
+    max-height: calc(58% - 18px);
+    overflow: auto;
+  }
+
+  .map-object-card-image {
+    aspect-ratio: 16 / 8;
+  }
+
+  .map-object-card-body {
+    gap: 10px;
+    padding: 14px;
+  }
+
+  .map-object-card h3 {
+    font-size: 22px;
+  }
+
+  .map-object-card dl div {
+    grid-template-columns: 1fr;
+    gap: 4px;
   }
 
   .object-map-section .yandex-map-shell,

@@ -6,6 +6,7 @@ export type YandexMapPoint = {
   coordinates: [number, number];
   hint: string;
   balloonHtml: string;
+  markerLabel?: string;
 };
 
 export type YandexMapBounds = [[number, number], [number, number]];
@@ -19,11 +20,19 @@ type YandexMapFallbackState = {
 type YandexMapProps = {
   points: YandexMapPoint[];
   emptyState?: YandexMapFallbackState;
+  selectedPointId?: string | null;
   onBoundsChange?: (bounds: YandexMapBounds) => void;
   onOpenPoint?: (point: YandexMapPoint) => void;
+  onSelectPoint?: (point: YandexMapPoint) => void;
 };
 
 type YandexGeoObject = unknown;
+
+type YandexPlacemark = {
+  events: {
+    add: (eventName: string, handler: (event?: unknown) => void) => void;
+  };
+};
 
 type YandexClusterer = {
   add: (objects: YandexGeoObject[]) => void;
@@ -54,8 +63,11 @@ type YandexMapsApi = {
     coordinates: [number, number],
     properties: Record<string, string>,
     options?: Record<string, unknown>,
-  ) => YandexGeoObject;
+  ) => YandexPlacemark;
   Clusterer: new (options?: Record<string, unknown>) => YandexClusterer;
+  templateLayoutFactory: {
+    createClass: (template: string) => unknown;
+  };
 };
 
 declare global {
@@ -72,7 +84,14 @@ const defaultEmptyState: YandexMapFallbackState = {
   description: 'Для отображения на карте у объекта должны быть широта и долгота.',
 };
 
-export function YandexMap({ emptyState = defaultEmptyState, points, onBoundsChange, onOpenPoint }: YandexMapProps) {
+export function YandexMap({
+  emptyState = defaultEmptyState,
+  points,
+  selectedPointId = null,
+  onBoundsChange,
+  onOpenPoint,
+  onSelectPoint,
+}: YandexMapProps) {
   const apiKey = (import.meta.env.VITE_YANDEX_MAPS_API_KEY ?? '').trim();
 
   if (points.length === 0) {
@@ -85,28 +104,42 @@ export function YandexMap({ emptyState = defaultEmptyState, points, onBoundsChan
     );
   }
 
-  return <YandexMapApi apiKey={apiKey} points={points} onBoundsChange={onBoundsChange} onOpenPoint={onOpenPoint} />;
+  return (
+    <YandexMapApi
+      apiKey={apiKey}
+      points={points}
+      selectedPointId={selectedPointId}
+      onBoundsChange={onBoundsChange}
+      onOpenPoint={onOpenPoint}
+      onSelectPoint={onSelectPoint}
+    />
+  );
 }
 
 function YandexMapApi({
   apiKey,
   points,
+  selectedPointId,
   onBoundsChange,
   onOpenPoint,
+  onSelectPoint,
 }: {
   apiKey: string;
   points: YandexMapPoint[];
+  selectedPointId: string | null;
   onBoundsChange?: (bounds: YandexMapBounds) => void;
   onOpenPoint?: (point: YandexMapPoint) => void;
+  onSelectPoint?: (point: YandexMapPoint) => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const center = useMemo(() => getMapCenter(points), [points]);
   const pointsById = useMemo(() => new Map(points.map((point) => [point.id, point])), [points]);
+  const handlePointClick = onSelectPoint ?? onOpenPoint;
 
   useEffect(() => {
     const container = containerRef.current;
-    const handleOpenPoint = onOpenPoint;
+    const handleOpenPoint = handlePointClick;
 
     if (!container || !handleOpenPoint) {
       return;
@@ -137,7 +170,21 @@ function YandexMapApi({
     container.addEventListener('click', handleMapClick);
 
     return () => container.removeEventListener('click', handleMapClick);
-  }, [onOpenPoint, pointsById]);
+  }, [handlePointClick, pointsById]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+
+    if (!container) {
+      return;
+    }
+
+    container.querySelectorAll<HTMLElement>('[data-yandex-point-id]').forEach((marker) => {
+      const isSelected = Boolean(selectedPointId) && marker.dataset.yandexPointId === selectedPointId;
+
+      marker.classList.toggle('map-price-marker--selected', isSelected);
+    });
+  }, [points, selectedPointId, status]);
 
   useEffect(() => {
     if (points.length === 0 || !containerRef.current) {
@@ -171,24 +218,48 @@ function YandexMapApi({
 
         const clusterer = new ymaps.Clusterer({
           clusterDisableClickZoom: false,
-          clusterOpenBalloonOnClick: true,
+          clusterOpenBalloonOnClick: false,
           gridSize: 80,
           preset: 'islands#blueClusterIcons',
         });
-        const placemarks = points.map(
-          (point) =>
-            new ymaps.Placemark(
-              point.coordinates,
-              {
-                balloonContent: point.balloonHtml,
-                hintContent: point.hint,
-                iconCaption: point.title,
-              },
-              {
-                preset: 'islands#blueHomeIcon',
-              },
-            ),
+        const markerLayout = ymaps.templateLayoutFactory.createClass(
+          [
+            '<button class="map-price-marker" type="button"',
+            ' data-map-point-id="$[properties.pointId]"',
+            ' data-yandex-point-id="$[properties.pointId]">',
+            '<span>$[properties.markerLabel]</span>',
+            '</button>',
+          ].join(''),
         );
+        const placemarks = points.map((point) => {
+          const placemark = new ymaps.Placemark(
+            point.coordinates,
+            {
+              balloonContent: point.balloonHtml,
+              hintContent: point.hint,
+              markerLabel: point.markerLabel ?? point.title,
+              pointId: point.id,
+            },
+            {
+              iconLayout: markerLayout,
+              iconOffset: [-58, -20],
+              iconShape: {
+                type: 'Rectangle',
+                coordinates: [
+                  [-58, -20],
+                  [58, 20],
+                ],
+              },
+              openBalloonOnClick: false,
+            },
+          );
+
+          placemark.events.add('click', () => {
+            handlePointClick?.(point);
+          });
+
+          return placemark;
+        });
 
         clusterer.add(placemarks);
         map.geoObjects.add(clusterer);
@@ -237,7 +308,7 @@ function YandexMapApi({
         map.destroy();
       }
     };
-  }, [apiKey, center, onBoundsChange, points]);
+  }, [apiKey, center, handlePointClick, onBoundsChange, points]);
 
   return (
     <div className="yandex-map-shell">
