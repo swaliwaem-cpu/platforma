@@ -183,6 +183,7 @@ model RealEstateObject {
   status            ObjectStatus @default(DRAFT)
   description       String?
   shortDescription  String?      @map("short_description")
+  layoutsUrl        String?      @map("layouts_url") @db.VarChar(2048)
   priceFrom         Decimal?     @map("price_from") @db.Decimal(14, 2)
   pricePerMeterFrom Decimal?     @map("price_per_meter_from") @db.Decimal(14, 2)
   completionYear    Int?         @map("completion_year")

@@ -162,6 +162,7 @@ export type RealEstateObjectBase = {
   status: ObjectStatus;
   description: string | null;
   shortDescription: string | null;
+  layoutsUrl: string | null;
   priceFrom: string | null;
   pricePerMeterFrom: string | null;
   completionYear: number | null;

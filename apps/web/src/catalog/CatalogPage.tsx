@@ -68,19 +68,6 @@ const objectStatusLabels: Record<ObjectStatus, string> = {
   ARCHIVED: 'Архивный',
 };
 
-const statusOptions: Array<{ value: CatalogStatusFilter; label: string }> = [
-  { value: 'PUBLISHED', label: 'Опубликованные' },
-  { value: 'DRAFT', label: 'Черновики' },
-  { value: 'ARCHIVED', label: 'Архивные' },
-  { value: 'ALL', label: 'Все статусы' },
-];
-
-const booleanOptions = [
-  { value: '', label: 'Не важно' },
-  { value: 'true', label: 'Да' },
-  { value: 'false', label: 'Нет' },
-] satisfies Array<{ value: BooleanFilter; label: string }>;
-
 export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
   const { accessToken } = useAuth();
   const [queryString, setQueryString] = useState(window.location.search);
@@ -383,20 +370,6 @@ function CatalogFilters({
       </label>
 
       <label>
-        Квартал
-        <select
-          value={filters.completionQuarter}
-          onChange={(event) => onChange({ completionQuarter: event.target.value })}
-        >
-          <option value="">Любой</option>
-          <option value="1">1 кв.</option>
-          <option value="2">2 кв.</option>
-          <option value="3">3 кв.</option>
-          <option value="4">4 кв.</option>
-        </select>
-      </label>
-
-      <label>
         Цена от
         <input
           inputMode="decimal"
@@ -416,45 +389,6 @@ function CatalogFilters({
           value={filters.priceFromMax}
           onChange={(event) => onChange({ priceFromMax: sanitizeDecimalText(event.target.value) })}
         />
-      </label>
-
-      <label>
-        Статус
-        <select value={filters.status} onChange={(event) => onChange({ status: event.target.value as CatalogStatusFilter })}>
-          {statusOptions.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <label>
-        Презентация
-        <select
-          value={filters.hasPresentation}
-          onChange={(event) => onChange({ hasPresentation: event.target.value as BooleanFilter })}
-        >
-          {booleanOptions.map((option) => (
-            <option key={option.value || 'any'} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <label>
-        Координаты
-        <select
-          value={filters.hasCoordinates}
-          onChange={(event) => onChange({ hasCoordinates: event.target.value as BooleanFilter })}
-        >
-          {booleanOptions.map((option) => (
-            <option key={option.value || 'any'} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
       </label>
 
       <div className="catalog-filter-actions">
@@ -868,7 +802,6 @@ async function fetchFileObjectUrl(accessToken: string, fileId: string) {
 
 function parseCatalogFilters(queryString: string): CatalogFilters {
   const params = new URLSearchParams(queryString);
-  const status = parseCatalogStatus(params.get('status'));
 
   return {
     search: parseTextParam(params.get('search')),
@@ -876,12 +809,12 @@ function parseCatalogFilters(queryString: string): CatalogFilters {
     locationId: parseTextParam(params.get('locationId')),
     metroStationId: parseTextParam(params.get('metroStationId')),
     completionYear: sanitizeIntegerText(params.get('completionYear') ?? '', 4),
-    completionQuarter: parseQuarter(params.get('completionQuarter')),
+    completionQuarter: defaultFilters.completionQuarter,
     priceFromMin: sanitizeDecimalText(params.get('priceFromMin') ?? ''),
     priceFromMax: sanitizeDecimalText(params.get('priceFromMax') ?? ''),
-    status,
-    hasPresentation: parseBooleanFilter(params.get('hasPresentation')),
-    hasCoordinates: parseBooleanFilter(params.get('hasCoordinates')),
+    status: defaultFilters.status,
+    hasPresentation: defaultFilters.hasPresentation,
+    hasCoordinates: defaultFilters.hasCoordinates,
     page: parsePositiveInteger(params.get('page'), 1),
   };
 }
@@ -894,16 +827,8 @@ function buildCatalogQuery(filters: CatalogFilters) {
   setParam(params, 'locationId', filters.locationId);
   setParam(params, 'metroStationId', filters.metroStationId);
   setParam(params, 'completionYear', filters.completionYear);
-  setParam(params, 'completionQuarter', filters.completionQuarter);
   setParam(params, 'priceFromMin', filters.priceFromMin);
   setParam(params, 'priceFromMax', filters.priceFromMax);
-
-  if (filters.status !== defaultFilters.status) {
-    params.set('status', filters.status);
-  }
-
-  setParam(params, 'hasPresentation', filters.hasPresentation);
-  setParam(params, 'hasCoordinates', filters.hasCoordinates);
 
   if (filters.page > 1) {
     params.set('page', String(filters.page));
@@ -930,11 +855,8 @@ function buildObjectsParams(filters: CatalogFilters, includePage: boolean) {
   setParam(params, 'locationId', filters.locationId);
   setParam(params, 'metroStationId', filters.metroStationId);
   setParam(params, 'completionYear', filters.completionYear);
-  setParam(params, 'completionQuarter', filters.completionQuarter);
   setParam(params, 'priceFromMin', filters.priceFromMin);
   setParam(params, 'priceFromMax', filters.priceFromMax);
-  setParam(params, 'hasPresentation', filters.hasPresentation);
-  setParam(params, 'hasCoordinates', filters.hasCoordinates);
 
   if (filters.status !== 'ALL') {
     params.set('status', filters.status);
@@ -1000,34 +922,6 @@ function setParam(params: URLSearchParams, key: string, value: string) {
 
 function parseTextParam(value: string | null) {
   return value?.trim() ?? '';
-}
-
-function parseCatalogStatus(value: string | null): CatalogStatusFilter {
-  const normalizedValue = value?.trim().toUpperCase();
-
-  if (normalizedValue === 'ALL') {
-    return 'ALL';
-  }
-
-  if (normalizedValue === 'DRAFT' || normalizedValue === 'PUBLISHED' || normalizedValue === 'ARCHIVED') {
-    return normalizedValue;
-  }
-
-  return defaultFilters.status;
-}
-
-function parseBooleanFilter(value: string | null): BooleanFilter {
-  const normalizedValue = value?.trim().toLowerCase();
-
-  if (normalizedValue === 'true' || normalizedValue === 'false') {
-    return normalizedValue;
-  }
-
-  return '';
-}
-
-function parseQuarter(value: string | null) {
-  return value === '1' || value === '2' || value === '3' || value === '4' ? value : '';
 }
 
 function parsePositiveInteger(value: string | null, fallback: number) {

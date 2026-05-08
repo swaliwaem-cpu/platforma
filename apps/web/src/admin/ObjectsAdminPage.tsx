@@ -28,6 +28,7 @@ type ObjectFormState = {
   title: string;
   description: string;
   shortDescription: string;
+  layoutsUrl: string;
   priceFrom: string;
   pricePerMeterFrom: string;
   completionYear: string;
@@ -62,6 +63,7 @@ const emptyForm: ObjectFormState = {
   title: '',
   description: '',
   shortDescription: '',
+  layoutsUrl: '',
   priceFrom: '',
   pricePerMeterFrom: '',
   completionYear: '',
@@ -854,6 +856,17 @@ function ObjectEditor(props: ObjectEditorProps) {
                 />
               </label>
 
+              <label className="field-wide">
+                Планировки и цены
+                <input
+                  inputMode="url"
+                  placeholder="https://developer.example/plans"
+                  type="url"
+                  value={props.form.layoutsUrl}
+                  onChange={(event) => props.onFormChange({ ...props.form, layoutsUrl: event.target.value })}
+                />
+              </label>
+
               <label>
                 Цена от
                 <input
@@ -1267,6 +1280,7 @@ function createFormFromObject(object: RealEstateObjectDetail): ObjectFormState {
     title: object.title,
     description: object.description ?? '',
     shortDescription: object.shortDescription ?? '',
+    layoutsUrl: object.layoutsUrl ?? '',
     priceFrom: object.priceFrom ?? '',
     pricePerMeterFrom: object.pricePerMeterFrom ?? '',
     completionYear: object.completionYear?.toString() ?? '',
@@ -1293,6 +1307,7 @@ function createPayloadFromForm(form: ObjectFormState) {
     title: form.title.trim(),
     description: emptyToNull(form.description),
     shortDescription: emptyToNull(form.shortDescription),
+    layoutsUrl: emptyToNull(form.layoutsUrl),
     priceFrom: emptyToNull(form.priceFrom),
     pricePerMeterFrom: emptyToNull(form.pricePerMeterFrom),
     completionYear: emptyToNull(form.completionYear),
@@ -1319,6 +1334,18 @@ function validateObjectForm(form: ObjectFormState) {
 
   if ((form.latitude && !form.longitude) || (!form.latitude && form.longitude)) {
     return 'Широта и долгота заполняются вместе';
+  }
+
+  if (form.layoutsUrl.trim()) {
+    try {
+      const url = new URL(form.layoutsUrl.trim());
+
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        return 'Ссылка на планировки должна начинаться с http:// или https://';
+      }
+    } catch {
+      return 'Ссылка на планировки некорректна';
+    }
   }
 
   try {

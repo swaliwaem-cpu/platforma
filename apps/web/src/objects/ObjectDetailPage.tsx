@@ -166,6 +166,20 @@ function ObjectDetail({
               <dd>{object.developer?.name ?? 'Не указан'}</dd>
             </div>
           </dl>
+
+          {object.layoutsUrl ? (
+            <div className="object-layouts-cta">
+              <span>Планировки и цены</span>
+              <a
+                href={object.layoutsUrl}
+                referrerPolicy="no-referrer"
+                rel="noopener noreferrer nofollow"
+                target="_blank"
+              >
+                Открыть на сайте застройщика
+              </a>
+            </div>
+          ) : null}
         </div>
       </section>
 

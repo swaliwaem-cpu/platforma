@@ -126,6 +126,7 @@ type CreateObjectBody = {
   status?: unknown;
   description?: unknown;
   shortDescription?: unknown;
+  layoutsUrl?: unknown;
   priceFrom?: unknown;
   pricePerMeterFrom?: unknown;
   completionYear?: unknown;
@@ -428,6 +429,7 @@ export class ObjectsService {
     const slug = await this.generateUniqueSlug(title);
     const description = this.parseNullableText(body.description, 'Description', 30000);
     const shortDescription = this.parseNullableText(body.shortDescription, 'Short description', 2000);
+    const layoutsUrl = this.parseNullableUrl(body.layoutsUrl, 'Layouts URL', 2048);
     const priceFrom = this.parseNullableDecimal(body.priceFrom, 'Price from', 14, 2);
     const pricePerMeterFrom = this.parseNullableDecimal(body.pricePerMeterFrom, 'Price per meter from', 14, 2);
     const completionYear = this.parseNullableInteger(body.completionYear, 'Completion year', 1900, 2200);
@@ -466,6 +468,7 @@ export class ObjectsService {
           status: ObjectStatus.DRAFT,
           ...(description !== undefined ? { description } : {}),
           ...(shortDescription !== undefined ? { shortDescription } : {}),
+          ...(layoutsUrl !== undefined ? { layoutsUrl } : {}),
           ...(priceFrom !== undefined ? { priceFrom } : {}),
           ...(pricePerMeterFrom !== undefined ? { pricePerMeterFrom } : {}),
           ...(completionYear !== undefined ? { completionYear } : {}),
@@ -546,6 +549,16 @@ export class ObjectsService {
       if (shortDescription !== object.shortDescription) {
         data.shortDescription = shortDescription;
         changes.shortDescription = this.change(object.shortDescription, shortDescription);
+        hasScalarChanges = true;
+      }
+    }
+
+    if ('layoutsUrl' in body) {
+      const layoutsUrl = this.parseNullableUrl(body.layoutsUrl, 'Layouts URL', 2048) ?? null;
+
+      if (layoutsUrl !== object.layoutsUrl) {
+        data.layoutsUrl = layoutsUrl;
+        changes.layoutsUrl = this.change(object.layoutsUrl, layoutsUrl);
         hasScalarChanges = true;
       }
     }
@@ -1458,6 +1471,28 @@ export class ObjectsService {
     return result;
   }
 
+  private parseNullableUrl(value: unknown, fieldName: string, maxLength: number) {
+    const result = this.parseNullableText(value, fieldName, maxLength);
+
+    if (!result) {
+      return result;
+    }
+
+    let parsedUrl: URL;
+
+    try {
+      parsedUrl = new URL(result);
+    } catch {
+      throw new BadRequestException(`${fieldName} is invalid`);
+    }
+
+    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+      throw new BadRequestException(`${fieldName} must start with http:// or https://`);
+    }
+
+    return parsedUrl.toString();
+  }
+
   private parseNullableInteger(value: unknown, fieldName: string, min: number, max: number) {
     if (value === undefined) {
       return undefined;
@@ -1797,6 +1832,7 @@ export class ObjectsService {
       status: object.status,
       description: object.description,
       shortDescription: object.shortDescription,
+      layoutsUrl: object.layoutsUrl,
       priceFrom: this.decimalToString(object.priceFrom),
       pricePerMeterFrom: this.decimalToString(object.pricePerMeterFrom),
       completionYear: object.completionYear,
@@ -1917,6 +1953,7 @@ export class ObjectsService {
       status: object.status,
       description: object.description,
       shortDescription: object.shortDescription,
+      layoutsUrl: object.layoutsUrl,
       priceFrom: this.decimalToString(object.priceFrom),
       pricePerMeterFrom: this.decimalToString(object.pricePerMeterFrom),
       completionYear: object.completionYear,

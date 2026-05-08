@@ -1503,6 +1503,42 @@ tr.user-row--deactivated .text-button {
   font-weight: 800;
 }
 
+.object-layouts-cta {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #d6dde5;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px 16px;
+}
+
+.object-layouts-cta span {
+  color: #536172;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.object-layouts-cta a {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: #1f6b5b;
+  color: #f9fcf8;
+  padding: 0 14px;
+  font-size: 14px;
+  font-weight: 800;
+  text-align: center;
+  text-decoration: none;
+}
+
+.object-layouts-cta a:hover,
+.object-layouts-cta a:focus-visible {
+  background: #19584b;
+  box-shadow: 0 0 0 3px rgb(31 107 91 / 16%);
+}
+
 .object-detail-facts,
 .location-list {
   display: grid;
