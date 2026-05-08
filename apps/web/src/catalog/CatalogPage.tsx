@@ -25,6 +25,7 @@ type CatalogPageProps = {
 
 type BooleanFilter = '' | 'true' | 'false';
 type CatalogStatusFilter = ObjectStatus | 'ALL';
+type CatalogViewMode = 'cards' | 'list';
 
 type CatalogFilters = {
   search: string;
@@ -72,6 +73,7 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
   const { accessToken } = useAuth();
   const [queryString, setQueryString] = useState(window.location.search);
   const filters = useMemo(() => parseCatalogFilters(queryString), [queryString]);
+  const viewMode = useMemo(() => parseCatalogViewMode(queryString), [queryString]);
   const isMapView = pathname === '/catalog/map';
   const [objects, setObjects] = useState<RealEstateObjectSummary[]>([]);
   const [mapObjects, setMapObjects] = useState<MapObject[]>([]);
@@ -210,14 +212,22 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
       ...patch,
       page: options.resetPage ? 1 : (patch.page ?? filters.page),
     };
-    const nextSearch = buildCatalogQuery(nextFilters);
+    const nextSearch = buildCatalogQuery(nextFilters, viewMode);
 
     window.history.pushState(null, '', `${pathname}${nextSearch}`);
     setQueryString(window.location.search);
   }
 
   function resetFilters() {
-    window.history.pushState(null, '', pathname);
+    window.history.pushState(null, '', `${pathname}${buildCatalogQuery(defaultFilters, viewMode)}`);
+    setQueryString(window.location.search);
+  }
+
+  function toggleCatalogViewMode() {
+    const nextViewMode: CatalogViewMode = viewMode === 'list' ? 'cards' : 'list';
+    const nextSearch = buildCatalogQuery(filters, nextViewMode);
+
+    window.history.pushState(null, '', `${pathname}${nextSearch}`);
     setQueryString(window.location.search);
   }
 
@@ -232,20 +242,38 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
           <span className="catalog-count">
             {isMapView ? formatCatalogCount(isMapLoading, mapTotal) : formatCatalogCount(isLoading, total)}
           </span>
-          <button
-            className={isMapView ? 'secondary-button secondary-button--fit' : 'primary-button primary-button--fit'}
-            type="button"
-            onClick={() => navigate(`/catalog${queryString}`)}
-          >
-            Список
-          </button>
-          <button
-            className={isMapView ? 'primary-button primary-button--fit' : 'secondary-button secondary-button--fit'}
-            type="button"
-            onClick={() => navigate(`/catalog/map${queryString}`)}
-          >
-            Карта
-          </button>
+          {isMapView ? (
+            <>
+              <button
+                className="secondary-button secondary-button--fit"
+                type="button"
+                onClick={() => navigate(`/catalog${queryString}`)}
+              >
+                Список
+              </button>
+              <button
+                className="primary-button primary-button--fit"
+                type="button"
+                onClick={() => navigate(`/catalog/map${queryString}`)}
+              >
+                Карта
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                aria-pressed={viewMode === 'list'}
+                className={`catalog-view-toggle${viewMode === 'list' ? ' catalog-view-toggle--list' : ''}`}
+                type="button"
+                onClick={toggleCatalogViewMode}
+              >
+                Карточками / Списком
+              </button>
+              <button className="catalog-map-button" type="button" onClick={() => navigate(`/catalog/map${queryString}`)}>
+                Показать на карте
+              </button>
+            </>
+          )}
         </div>
       </header>
 
@@ -277,6 +305,7 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
           isLoading={isLoading}
           objects={objects}
           totalPages={totalPages}
+          viewMode={viewMode}
           onPageChange={(page) => updateFilters({ page }, { resetPage: false })}
           onOpenObject={(slug) => navigate(`/objects/${encodeURIComponent(slug)}`)}
         />
@@ -427,6 +456,7 @@ function CatalogListView({
   isLoading,
   objects,
   totalPages,
+  viewMode,
   onPageChange,
   onOpenObject,
 }: {
@@ -436,6 +466,7 @@ function CatalogListView({
   isLoading: boolean;
   objects: RealEstateObjectSummary[];
   totalPages: number;
+  viewMode: CatalogViewMode;
   onPageChange: (page: number) => void;
   onOpenObject: (slug: string) => void;
 }) {
@@ -465,11 +496,24 @@ function CatalogListView({
 
   return (
     <>
-      <div className="catalog-grid">
-        {objects.map((object) => (
-          <CatalogCard key={object.id} object={object} accessToken={accessToken} onOpen={() => onOpenObject(object.slug)} />
-        ))}
-      </div>
+      {viewMode === 'list' ? (
+        <div className="catalog-list" aria-label="Объекты списком">
+          {objects.map((object) => (
+            <CatalogListItem
+              key={object.id}
+              object={object}
+              accessToken={accessToken}
+              onOpen={() => onOpenObject(object.slug)}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="catalog-grid" aria-label="Объекты карточками">
+          {objects.map((object) => (
+            <CatalogCard key={object.id} object={object} accessToken={accessToken} onOpen={() => onOpenObject(object.slug)} />
+          ))}
+        </div>
+      )}
 
       {totalPages > 1 ? (
         <div className="pagination catalog-pagination">
@@ -671,6 +715,80 @@ function MapObjectCard({
         <button className="primary-button primary-button--fit" type="button" onClick={onOpen}>
           Подробнее
         </button>
+      </div>
+    </article>
+  );
+}
+
+function CatalogListItem({
+  accessToken,
+  object,
+  onOpen,
+}: {
+  accessToken: string;
+  object: RealEstateObjectSummary;
+  onOpen: () => void;
+}) {
+  const coverImage = object.coverImage;
+  const objectHref = `/objects/${encodeURIComponent(object.slug)}`;
+  const developerLabel = object.developer?.name ?? 'Не указан';
+  const locationLabel = object.primaryLocation?.name ?? object.address ?? 'Локация не указана';
+  const metroLabel = formatListMetroStations(object.metroStations);
+
+  function handleOpen(event: MouseEvent<HTMLAnchorElement>) {
+    event.preventDefault();
+    onOpen();
+  }
+
+  return (
+    <article className="catalog-list-item">
+      <a
+        aria-label={`Открыть объект ${object.title}`}
+        className="catalog-list-item-media"
+        href={objectHref}
+        onClick={handleOpen}
+      >
+        {coverImage ? (
+          <SecureImage accessToken={accessToken} alt={coverImage.alt ?? object.title} fileId={coverImage.file.id} />
+        ) : (
+          <CatalogMediaState title="Нет обложки" text="Показываем данные объекта" tone="empty" />
+        )}
+      </a>
+
+      <div className="catalog-list-item-body">
+        <h3>
+          <a href={objectHref} onClick={handleOpen}>
+            {object.title}
+          </a>
+        </h3>
+        <dl className="catalog-list-item-details">
+          <div>
+            <dt>Застройщик</dt>
+            <dd>{developerLabel}</dd>
+          </div>
+          <div>
+            <dt>Расположение</dt>
+            <dd>{locationLabel}</dd>
+          </div>
+          <div>
+            <dt>Метро</dt>
+            <dd>{metroLabel ?? 'Не указано'}</dd>
+          </div>
+          <div>
+            <dt>Завершение строительства</dt>
+            <dd>{formatListCompletion(object.completionYear, object.completionQuarter)}</dd>
+          </div>
+        </dl>
+        <p className="catalog-list-item-price">
+          Цена от: {formatRequestedPrice(object.priceFrom)} | Цена за метр от:{' '}
+          {formatRequestedPrice(object.pricePerMeterFrom)}
+        </p>
+      </div>
+
+      <div className="catalog-list-item-action">
+        <a className="catalog-list-item-link" href={objectHref} onClick={handleOpen}>
+          Подробнее
+        </a>
       </div>
     </article>
   );
@@ -927,7 +1045,13 @@ function parseCatalogFilters(queryString: string): CatalogFilters {
   };
 }
 
-function buildCatalogQuery(filters: CatalogFilters) {
+function parseCatalogViewMode(queryString: string): CatalogViewMode {
+  const params = new URLSearchParams(queryString);
+
+  return params.get('view') === 'list' ? 'list' : 'cards';
+}
+
+function buildCatalogQuery(filters: CatalogFilters, viewMode: CatalogViewMode = 'cards') {
   const params = new URLSearchParams();
 
   setParam(params, 'search', filters.search);
@@ -940,6 +1064,10 @@ function buildCatalogQuery(filters: CatalogFilters) {
 
   if (filters.page > 1) {
     params.set('page', String(filters.page));
+  }
+
+  if (viewMode === 'list') {
+    params.set('view', viewMode);
   }
 
   const query = params.toString();
@@ -1122,6 +1250,10 @@ function formatMapCardPricePerMeter(value: string | null) {
   return value ? formatPrice(value) : 'по запросу';
 }
 
+function formatRequestedPrice(value: string | null) {
+  return value ? formatPrice(value) : 'по запросу';
+}
+
 function formatCompactRussianNumber(value: number) {
   return new Intl.NumberFormat('ru-RU', {
     maximumFractionDigits: value < 10 ? 1 : 0,
@@ -1139,12 +1271,24 @@ function formatMetroStations(stations: ObjectMetroStationLink[]) {
   return `Метро ${visibleStations.join(', ')}${hiddenCount > 0 ? ` +${hiddenCount}` : ''}`;
 }
 
+function formatListMetroStations(stations: ObjectMetroStationLink[]) {
+  return formatMetroStations(stations)?.replace(/^Метро /, '') ?? null;
+}
+
 function formatCompletion(year: number | null, quarter: number | null) {
   if (!year) {
     return 'Не указан';
   }
 
   return quarter ? `${quarter} кв. ${year}` : String(year);
+}
+
+function formatListCompletion(year: number | null, quarter: number | null) {
+  if (!year) {
+    return 'Не указан';
+  }
+
+  return quarter ? `${quarter} кв. ${year} г.` : `${year} г.`;
 }
 
 function escapeHtml(value: string) {
