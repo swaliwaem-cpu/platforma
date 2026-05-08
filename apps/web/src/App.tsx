@@ -185,7 +185,13 @@ function AppRoutes() {
 
   return (
     <main className="app-shell">
-      <aside className="sidebar" aria-label="Основная навигация">
+      <aside className="sidebar" aria-label="Основная навигация" tabIndex={0}>
+        <div className="sidebar-handle" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </div>
+
         <div>
           <p className="eyebrow">Closed platform</p>
           <h1>{platformName}</h1>

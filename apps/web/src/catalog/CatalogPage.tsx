@@ -245,14 +245,15 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
           {isMapView ? (
             <>
               <button
-                className="secondary-button secondary-button--fit"
+                className="catalog-view-toggle"
                 type="button"
                 onClick={() => navigate(`/catalog${queryString}`)}
               >
                 Список
               </button>
               <button
-                className="primary-button primary-button--fit"
+                aria-current="page"
+                className="catalog-map-button"
                 type="button"
                 onClick={() => navigate(`/catalog/map${queryString}`)}
               >
@@ -712,7 +713,7 @@ function MapObjectCard({
           Цена от: <strong>{formatPrice(object.priceFrom)}</strong> | Цена за метр от:{' '}
           <strong>{formatMapCardPricePerMeter(object.pricePerMeterFrom)}</strong>
         </p>
-        <button className="primary-button primary-button--fit" type="button" onClick={onOpen}>
+        <button className="catalog-card-link map-object-card-link" type="button" onClick={onOpen}>
           Подробнее
         </button>
       </div>
@@ -806,6 +807,7 @@ function CatalogCard({
   const coverImage = object.coverImage;
   const objectHref = `/objects/${encodeURIComponent(object.slug)}`;
   const hasPresentation = Boolean(object.presentationFile);
+  const hasVisibleBadges = object.status !== 'PUBLISHED' || hasPresentation;
   const locationLabel = object.primaryLocation?.name ?? object.address ?? 'Локация не указана';
   const metroLabel = formatMetroStations(object.metroStations);
   const shortDescription = object.shortDescription?.trim();
@@ -829,16 +831,16 @@ function CatalogCard({
           <CatalogMediaState title="Нет обложки" text="Показываем данные объекта" tone="empty" />
         )}
         <span aria-hidden="true" className="catalog-card-media-shade" />
-        <span className="catalog-card-badges">
-          {object.status === 'PUBLISHED' ? null : (
-            <span className={`status-pill catalog-card-status object-status object-status--${object.status.toLowerCase()}`}>
-              {objectStatusLabels[object.status]}
-            </span>
-          )}
-          <span className={`catalog-card-pdf-badge${hasPresentation ? ' catalog-card-pdf-badge--active' : ''}`}>
-            {hasPresentation ? 'PDF' : 'Без PDF'}
+        {hasVisibleBadges ? (
+          <span className="catalog-card-badges">
+            {object.status === 'PUBLISHED' ? null : (
+              <span className={`status-pill catalog-card-status object-status object-status--${object.status.toLowerCase()}`}>
+                {objectStatusLabels[object.status]}
+              </span>
+            )}
+            {hasPresentation ? <span className="catalog-card-pdf-badge catalog-card-pdf-badge--active">PDF</span> : null}
           </span>
-        </span>
+        ) : null}
       </a>
       <div className="catalog-card-body">
         <div className="catalog-card-price-row">
@@ -871,9 +873,6 @@ function CatalogCard({
           <a className="catalog-card-link" href={objectHref} onClick={handleOpen}>
             Подробнее
           </a>
-          <span className={`catalog-card-action-note${hasPresentation ? ' catalog-card-action-note--active' : ''}`}>
-            {hasPresentation ? 'PDF есть' : 'PDF нет'}
-          </span>
         </div>
       </div>
     </article>
