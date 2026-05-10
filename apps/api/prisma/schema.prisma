@@ -71,18 +71,21 @@ model User {
   refreshTokenHash      String?    @map("refresh_token_hash")
   refreshTokenExpiresAt DateTime?  @map("refresh_token_expires_at")
   name                  String?
+  profilePhotoFileId    String?    @map("profile_photo_file_id") @db.Uuid
   status                UserStatus @default(INVITED)
   roleId                String     @map("role_id") @db.Uuid
   createdAt             DateTime   @default(now()) @map("created_at")
   updatedAt             DateTime   @updatedAt @map("updated_at")
   deletedAt             DateTime?  @map("deleted_at")
 
-  role          Role           @relation(fields: [roleId], references: [id], onDelete: Restrict)
-  auditLogs     AuditLog[]     @relation("AuditActor")
-  importReports ImportReport[] @relation("ImportReportCreator")
-  uploadedFiles File[]         @relation("FileUploader")
+  role             Role           @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  profilePhotoFile File?          @relation("UserProfilePhoto", fields: [profilePhotoFileId], references: [id], onDelete: SetNull)
+  auditLogs        AuditLog[]     @relation("AuditActor")
+  importReports    ImportReport[] @relation("ImportReportCreator")
+  uploadedFiles    File[]         @relation("FileUploader")
 
   @@index([roleId])
+  @@index([profilePhotoFileId])
   @@index([status])
   @@map("users")
 }
@@ -261,9 +264,10 @@ model File {
   createdAt      DateTime    @default(now()) @map("created_at")
   updatedAt      DateTime    @updatedAt @map("updated_at")
 
-  uploadedBy   User?         @relation("FileUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
-  objectImages ObjectImage[]
-  objectFiles  ObjectFile[]
+  uploadedBy         User?         @relation("FileUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  profilePhotoUsers  User[]        @relation("UserProfilePhoto")
+  objectImages       ObjectImage[]
+  objectFiles        ObjectFile[]
 
   @@unique([storage, bucket, key])
   @@index([uploadedById])

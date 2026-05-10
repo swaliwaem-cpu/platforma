@@ -9,6 +9,13 @@ export type AuthenticatedUser = {
     id: string;
     name: string;
   };
+  profilePhotoFile: {
+    id: string;
+    url: string | null;
+    originalName: string | null;
+    mimeType: string | null;
+    updatedAt: string;
+  } | null;
   permissions: string[];
 };
 

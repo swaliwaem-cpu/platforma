@@ -27,4 +27,4 @@ RUN pnpm --filter @platforma/api prisma:generate
 RUN pnpm --filter @platforma/api build
 
 EXPOSE 3000
-CMD ["pnpm", "--filter", "@platforma/api", "start"]
+CMD ["sh", "-c", "pnpm --dir apps/api exec prisma migrate deploy && pnpm --filter @platforma/api start"]

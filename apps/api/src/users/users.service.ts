@@ -3,11 +3,14 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { Prisma, UserStatus } from '@prisma/client';
 import * as argon2 from 'argon2';
 
 import { AuthenticatedUser, RequestWithAuth } from '../auth/auth.types';
+import { FilesService } from '../files/files.service';
+import { UploadedFile } from '../files/uploaded-file.type';
 import { PrismaService } from '../prisma/prisma.service';
 
 const userInclude = {
@@ -22,7 +25,15 @@ const roleInclude = {
   },
 } as const;
 
+const authUserInclude = {
+  role: {
+    include: roleInclude,
+  },
+  profilePhotoFile: true,
+} as const;
+
 type UserWithRole = Prisma.UserGetPayload<{ include: typeof userInclude }>;
+type AuthUserWithRole = Prisma.UserGetPayload<{ include: typeof authUserInclude }>;
 type RoleWithPermissions = Prisma.RoleGetPayload<{ include: typeof roleInclude }>;
 
 type RequestWithAudit = RequestWithAuth & {
@@ -56,9 +67,21 @@ type UpdateUserBody = {
   roleId?: unknown;
 };
 
+type UpdateOwnProfileBody = {
+  name?: unknown;
+};
+
+type ChangeOwnPasswordBody = {
+  currentPassword?: unknown;
+  newPassword?: unknown;
+};
+
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly filesService: FilesService,
+  ) {}
 
   async list(query: ListUsersQuery) {
     const page = this.parsePositiveInteger(query.page, 1);
@@ -124,6 +147,16 @@ export class UsersService {
     return {
       items: roles.map((role) => this.serializeRole(role)),
     };
+  }
+
+  async getOwnProfilePhotoContent(actor: AuthenticatedUser) {
+    const user = await this.findActiveUserForSession(actor.id);
+
+    if (!user.profilePhotoFileId) {
+      throw new NotFoundException('Profile photo not found');
+    }
+
+    return this.filesService.getContent(user.profilePhotoFileId);
   }
 
   async create(body: CreateUserBody, actor: AuthenticatedUser, request: RequestWithAudit) {
@@ -312,6 +345,131 @@ export class UsersService {
     };
   }
 
+  async updateOwnProfile(body: UpdateOwnProfileBody, actor: AuthenticatedUser, request: RequestWithAudit) {
+    const user = await this.findActiveUserForSession(actor.id);
+    const data: Prisma.UserUpdateInput = {};
+    const changes: Record<string, Prisma.InputJsonValue> = {};
+    let hasChanges = false;
+
+    if ('name' in body) {
+      const name = this.parseNullableName(body.name);
+
+      if (name !== user.name) {
+        data.name = name;
+        changes.name = this.change(user.name, name);
+        hasChanges = true;
+      }
+    }
+
+    if (!hasChanges) {
+      return {
+        user: this.serializeAuthenticatedUser(user),
+      };
+    }
+
+    const updatedUser = await this.prisma.user.update({
+      where: { id: user.id },
+      data,
+      include: authUserInclude,
+    });
+
+    await this.logUserAction({
+      action: 'user.profile_update',
+      actor,
+      request,
+      entityId: updatedUser.id,
+      metadata: {
+        before: this.toAuditSnapshot(user),
+        after: this.toAuditSnapshot(updatedUser),
+        changes,
+      },
+    });
+
+    return {
+      user: this.serializeAuthenticatedUser(updatedUser),
+    };
+  }
+
+  async changeOwnPassword(body: ChangeOwnPasswordBody, actor: AuthenticatedUser, request: RequestWithAudit) {
+    const currentPassword = this.parseRequiredPassword(body.currentPassword, 'Current password is required');
+    const newPassword = this.parsePassword(body.newPassword);
+    const user = await this.findActiveUserForSession(actor.id);
+    const passwordMatches = await argon2.verify(user.passwordHash, currentPassword);
+
+    if (!passwordMatches) {
+      throw new BadRequestException('Current password is invalid');
+    }
+
+    const updatedUser = await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash: await argon2.hash(newPassword, { type: argon2.argon2id }),
+      },
+      include: authUserInclude,
+    });
+
+    await this.logUserAction({
+      action: 'user.password_change',
+      actor,
+      request,
+      entityId: updatedUser.id,
+      metadata: {
+        changes: {
+          password: {
+            changed: true,
+          },
+        },
+      },
+    });
+
+    return {
+      user: this.serializeAuthenticatedUser(updatedUser),
+    };
+  }
+
+  async uploadOwnProfilePhoto(
+    file: UploadedFile | undefined,
+    actor: AuthenticatedUser,
+    request: RequestWithAudit,
+  ) {
+    const user = await this.findActiveUserForSession(actor.id);
+    const previousPhotoFileId = user.profilePhotoFileId;
+    const uploadedFile = await this.filesService.uploadFile(file, actor, 'image');
+    const updatedUser = await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        profilePhotoFile: {
+          connect: {
+            id: uploadedFile.file.id,
+          },
+        },
+      },
+      include: authUserInclude,
+    });
+
+    await this.logUserAction({
+      action: 'user.profile_photo_update',
+      actor,
+      request,
+      entityId: updatedUser.id,
+      metadata: {
+        before: this.toAuditSnapshot(user),
+        after: this.toAuditSnapshot(updatedUser),
+        changes: {
+          profilePhotoFileId: this.change(previousPhotoFileId, updatedUser.profilePhotoFileId),
+        },
+      },
+    });
+
+    if (previousPhotoFileId && previousPhotoFileId !== uploadedFile.file.id) {
+      await this.filesService.deleteUnlinkedFile(previousPhotoFileId);
+    }
+
+    return {
+      user: this.serializeAuthenticatedUser(updatedUser),
+    };
+  }
+
   async deactivate(id: string, actor: AuthenticatedUser, request: RequestWithAudit) {
     const user = await this.findExistingUser(id);
 
@@ -399,6 +557,24 @@ export class UsersService {
     return user;
   }
 
+  private async findActiveUserForSession(id: string) {
+    const userId = this.parseUuid(id, 'User is invalid');
+    const user = await this.prisma.user.findFirst({
+      where: {
+        id: userId,
+        status: UserStatus.ACTIVE,
+        deletedAt: null,
+      },
+      include: authUserInclude,
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('User is not active');
+    }
+
+    return user;
+  }
+
   private async ensureRoleExists(roleId: string) {
     const role = await this.prisma.role.findUnique({
       where: { id: roleId },
@@ -427,6 +603,14 @@ export class UsersService {
   private parsePassword(value: unknown) {
     if (typeof value !== 'string' || value.length < 8) {
       throw new BadRequestException('Password must be at least 8 characters');
+    }
+
+    return value;
+  }
+
+  private parseRequiredPassword(value: unknown, message: string) {
+    if (typeof value !== 'string' || value.length === 0) {
+      throw new BadRequestException(message);
     }
 
     return value;
@@ -512,6 +696,29 @@ export class UsersService {
     };
   }
 
+  private serializeAuthenticatedUser(user: AuthUserWithRole): AuthenticatedUser {
+    return {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      status: user.status,
+      role: {
+        id: user.role.id,
+        name: user.role.name,
+      },
+      profilePhotoFile: user.profilePhotoFile
+        ? {
+            id: user.profilePhotoFile.id,
+            url: user.profilePhotoFile.url,
+            originalName: user.profilePhotoFile.originalName,
+            mimeType: user.profilePhotoFile.mimeType,
+            updatedAt: user.profilePhotoFile.updatedAt.toISOString(),
+          }
+        : null,
+      permissions: user.role.permissions.map(({ permission }) => permission.key),
+    };
+  }
+
   private serializeRole(role: RoleWithPermissions) {
     return {
       id: role.id,
@@ -521,7 +728,7 @@ export class UsersService {
     };
   }
 
-  private toAuditSnapshot(user: UserWithRole): Prisma.InputJsonObject {
+  private toAuditSnapshot(user: UserWithRole | AuthUserWithRole): Prisma.InputJsonObject {
     return {
       id: user.id,
       email: user.email,
@@ -529,6 +736,7 @@ export class UsersService {
       status: user.status,
       roleId: user.roleId,
       roleName: user.role.name,
+      profilePhotoFileId: user.profilePhotoFileId,
       deletedAt: user.deletedAt?.toISOString() ?? null,
     };
   }

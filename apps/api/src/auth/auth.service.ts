@@ -133,6 +133,7 @@ export class AuthService {
           },
         },
       },
+      profilePhotoFile: true,
     } as const;
   }
 
@@ -146,6 +147,15 @@ export class AuthService {
         id: user.role.id,
         name: user.role.name,
       },
+      profilePhotoFile: user.profilePhotoFile
+        ? {
+            id: user.profilePhotoFile.id,
+            url: user.profilePhotoFile.url,
+            originalName: user.profilePhotoFile.originalName,
+            mimeType: user.profilePhotoFile.mimeType,
+            updatedAt: user.profilePhotoFile.updatedAt.toISOString(),
+          }
+        : null,
       permissions: user.role.permissions.map(({ permission }) => permission.key),
     };
   }

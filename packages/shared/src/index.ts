@@ -8,6 +8,14 @@ export type ObjectFileType = 'PRESENTATION' | 'FLOOR_PLAN' | 'DOCUMENT' | 'OTHER
 export type ImportMode = 'PREVIEW' | 'RUN';
 export type ImportStatus = 'PENDING' | 'SUCCESS' | 'PARTIAL' | 'FAILED';
 
+export type ProfilePhotoFile = {
+  id: string;
+  url: string | null;
+  originalName: string | null;
+  mimeType: string | null;
+  updatedAt: string;
+};
+
 export type HealthStatus = {
   status: 'ok' | 'error';
   database: 'ok' | 'unavailable';
@@ -25,6 +33,7 @@ export type AuthUser = {
     id: string;
     name: string;
   };
+  profilePhotoFile: ProfilePhotoFile | null;
   permissions: string[];
 };
 

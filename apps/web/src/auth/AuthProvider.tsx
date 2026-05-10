@@ -14,6 +14,7 @@ type AuthContextValue = {
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  updateUser: (user: AuthUser) => void;
   hasPermission: (permission: string) => boolean;
 };
 
@@ -124,6 +125,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isLoading,
       login,
       logout,
+      updateUser: setUser,
       hasPermission: (permission) => user?.permissions.includes(permission) ?? false,
     }),
     [accessToken, isLoading, login, logout, user],

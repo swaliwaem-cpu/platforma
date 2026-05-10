@@ -87,6 +87,7 @@ export class FilesService {
       include: {
         _count: {
           select: {
+            profilePhotoUsers: true,
             objectImages: true,
             objectFiles: true,
           },
@@ -98,8 +99,8 @@ export class FilesService {
       throw new NotFoundException('File not found');
     }
 
-    if (file._count.objectImages > 0 || file._count.objectFiles > 0) {
-      throw new ConflictException('File is linked to an object and cannot be deleted');
+    if (file._count.profilePhotoUsers > 0 || file._count.objectImages > 0 || file._count.objectFiles > 0) {
+      throw new ConflictException('File is linked and cannot be deleted');
     }
 
     await this.storage.deleteObject(file.key);

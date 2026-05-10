@@ -97,18 +97,21 @@ async function seed() {
 
   const adminEmail = process.env.ADMIN_EMAIL ?? 'admin@example.com';
   const adminName = process.env.ADMIN_NAME ?? 'Platform Admin';
+  const explicitAdminPasswordHash = process.env.ADMIN_PASSWORD_HASH;
+  const explicitAdminPassword = process.env.ADMIN_PASSWORD;
   const adminPasswordHash =
-    process.env.ADMIN_PASSWORD_HASH && process.env.ADMIN_PASSWORD_HASH.length > 0
-      ? process.env.ADMIN_PASSWORD_HASH
-      : await argon2.hash(process.env.ADMIN_PASSWORD ?? 'platforma_admin_password', {
+    explicitAdminPasswordHash && explicitAdminPasswordHash.length > 0
+      ? explicitAdminPasswordHash
+      : await argon2.hash(explicitAdminPassword ?? '12345', {
           type: argon2.argon2id,
         });
+  const shouldUpdateAdminPassword = Boolean(explicitAdminPasswordHash || explicitAdminPassword);
 
   await prisma.user.upsert({
     where: { email: adminEmail },
     update: {
       name: adminName,
-      passwordHash: adminPasswordHash,
+      ...(shouldUpdateAdminPassword ? { passwordHash: adminPasswordHash } : {}),
       roleId: adminRole.id,
       status: UserStatus.ACTIVE,
     },

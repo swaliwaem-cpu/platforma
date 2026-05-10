@@ -1,3 +1,5 @@
+@import "tailwindcss";
+
 :root {
   color: #18202a;
   background: #eef1f4;
@@ -342,6 +344,56 @@ fieldset {
 }
 
 .cabinet-profile-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.cabinet-profile-identity {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 16px;
+}
+
+.profile-avatar {
+  display: grid;
+  width: 72px;
+  min-width: 72px;
+  aspect-ratio: 1;
+  overflow: hidden;
+  place-items: center;
+  border: 1px solid #c6d0dc;
+  border-radius: 999px;
+  background: #edf4ff;
+  color: #174ea6;
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.profile-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.profile-form,
+.profile-photo-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+  margin-top: 24px;
+}
+
+.password-form {
+  display: grid;
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.cabinet-section-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -2734,6 +2786,7 @@ tr.user-row--deactivated .text-button {
   }
 
   .cabinet-profile-header,
+  .cabinet-section-header,
   .cabinet-section-list li {
     align-items: stretch;
     grid-template-columns: 1fr;
@@ -2741,6 +2794,16 @@ tr.user-row--deactivated .text-button {
 
   .cabinet-profile-header {
     flex-direction: column;
+  }
+
+  .cabinet-profile-identity,
+  .cabinet-section-header {
+    flex-direction: column;
+  }
+
+  .profile-form,
+  .profile-photo-form {
+    grid-template-columns: 1fr;
   }
 
   .cabinet-badges {
