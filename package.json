@@ -14,6 +14,8 @@
     "dev:web": "pnpm --filter @platforma/web dev",
     "test": "pnpm -r --if-present test",
     "wp-import:preview": "pnpm --filter @platforma/wp-import run preview",
+    "wp-import:repair:preview": "pnpm --filter @platforma/wp-import run repair:preview",
+    "wp-import:repair:run": "pnpm --filter @platforma/wp-import run repair:run",
     "wp-import:run": "pnpm --filter @platforma/wp-import run run"
   }
 }

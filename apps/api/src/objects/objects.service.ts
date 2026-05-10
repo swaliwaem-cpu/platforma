@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { ObjectFileType, ObjectStatus, Prisma } from '@prisma/client';
+import { LocationType, ObjectFileType, ObjectStatus, Prisma } from '@prisma/client';
 
 import { AuthenticatedUser, RequestWithAuth } from '../auth/auth.types';
 import { FilesService } from '../files/files.service';
@@ -112,6 +112,7 @@ type ListObjectsQuery = {
   sortDirection?: string;
   developerId?: string;
   locationId?: string;
+  areaId?: string;
   metroStationId?: string;
   completionYear?: string;
   completionQuarter?: string;
@@ -270,6 +271,21 @@ export class ObjectsService {
             },
           },
         ],
+      });
+    }
+
+    if (query.areaId) {
+      const areaId = this.parseUuid(query.areaId, 'Area is invalid');
+
+      filters.push({
+        locations: {
+          some: {
+            locationId: areaId,
+            location: {
+              type: LocationType.AREA,
+            },
+          },
+        },
       });
     }
 

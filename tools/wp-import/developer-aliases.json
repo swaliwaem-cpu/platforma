@@ -1,0 +1,96 @@
+{
+  "groups": [
+    {
+      "canonicalName": "Аквилон",
+      "aliases": ["Akvilon", "Группа Аквилон"]
+    },
+    {
+      "canonicalName": "Coldy",
+      "aliases": ["COLDY"]
+    },
+    {
+      "canonicalName": "Element",
+      "aliases": ["ELEMENT"]
+    },
+    {
+      "canonicalName": "Forma",
+      "aliases": ["FORMA"]
+    },
+    {
+      "canonicalName": "Ingrad",
+      "aliases": ["INGRAD", "Инград"]
+    },
+    {
+      "canonicalName": "Level Group",
+      "aliases": ["Level group"]
+    },
+    {
+      "canonicalName": "Stone",
+      "aliases": ["STONE", "Stone Hedge"]
+    },
+    {
+      "canonicalName": "Tekta Group",
+      "aliases": ["TEKTA GROUP"]
+    },
+    {
+      "canonicalName": "Vesper",
+      "aliases": ["VESPER"]
+    },
+    {
+      "canonicalName": "VOS’HOD",
+      "aliases": ["Vos'hod", "VOSHOD"]
+    },
+    {
+      "canonicalName": "ГК Основа",
+      "aliases": ["ГК «Основа»", "Основа"]
+    },
+    {
+      "canonicalName": "Донстрой",
+      "aliases": ["ДОНСТРОЙ"]
+    },
+    {
+      "canonicalName": "Кортрос",
+      "aliases": ["КОРТРОС"]
+    },
+    {
+      "canonicalName": "Крост",
+      "aliases": ["КРОСТ", "Концерн КРОСТ"]
+    },
+    {
+      "canonicalName": "Пионер",
+      "aliases": ["ПИОНЕР", "PIONEER"]
+    },
+    {
+      "canonicalName": "Страна Девелопмент",
+      "aliases": ["Страна.Девелопмент", "ГК Страна Девелопмент", "Страна"]
+    },
+    {
+      "canonicalName": "ЛСР",
+      "aliases": ["Группа ЛСР"]
+    },
+    {
+      "canonicalName": "ФСК",
+      "aliases": ["ГК ФСК"]
+    },
+    {
+      "canonicalName": "Эталон",
+      "aliases": ["Группа «Эталон»"]
+    },
+    {
+      "canonicalName": "PSN Group",
+      "aliases": ["Группа ПСН"]
+    },
+    {
+      "canonicalName": "Родина",
+      "aliases": ["Группа Родина"]
+    },
+    {
+      "canonicalName": "Ташир",
+      "aliases": ["Tashir Development"]
+    },
+    {
+      "canonicalName": "Upside Development",
+      "aliases": ["Upside"]
+    }
+  ]
+}

@@ -129,12 +129,13 @@ model RolePermission {
 }
 
 model Developer {
-  id        String   @id @default(uuid()) @db.Uuid
-  wpTermId  Int?     @unique @map("wp_term_id")
-  name      String   @unique
-  slug      String?  @unique
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id             String   @id @default(uuid()) @db.Uuid
+  wpTermId       Int?     @unique @map("wp_term_id")
+  name           String   @unique
+  normalizedName String?  @unique @map("normalized_name")
+  slug           String?  @unique
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
 
   objects RealEstateObject[]
 

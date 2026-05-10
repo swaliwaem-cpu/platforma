@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { ObjectFileType, ObjectStatus, Prisma } from '@prisma/client';
+import { LocationType, ObjectFileType, ObjectStatus, Prisma } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -31,6 +31,14 @@ const mapObjectInclude = {
     },
   },
   primaryLocation: true,
+  locations: {
+    include: {
+      location: true,
+    },
+    orderBy: {
+      sortOrder: 'asc',
+    },
+  },
 } satisfies Prisma.RealEstateObjectInclude;
 
 type MapObjectRecord = Prisma.RealEstateObjectGetPayload<{ include: typeof mapObjectInclude }>;
@@ -40,6 +48,7 @@ type MapObjectsQuery = {
   status?: string;
   developerId?: string;
   locationId?: string;
+  areaId?: string;
   metroStationId?: string;
   completionYear?: string;
   completionQuarter?: string;
@@ -188,6 +197,21 @@ export class MapService {
             },
           },
         ],
+      });
+    }
+
+    if (query.areaId) {
+      const areaId = this.parseUuid(query.areaId, 'Area is invalid');
+
+      filters.push({
+        locations: {
+          some: {
+            locationId: areaId,
+            location: {
+              type: LocationType.AREA,
+            },
+          },
+        },
       });
     }
 
@@ -390,6 +414,16 @@ export class MapService {
             parentId: object.primaryLocation.parentId,
           }
         : null,
+      locations: object.locations.map((link) => ({
+        id: link.location.id,
+        wpTermId: link.location.wpTermId,
+        name: link.location.name,
+        slug: link.location.slug,
+        type: link.location.type,
+        parentId: link.location.parentId,
+        isPrimary: link.isPrimary,
+        sortOrder: link.sortOrder,
+      })),
       metroStations: object.metroStations.map((link) => ({
         id: link.metroStation.id,
         wpTermId: link.metroStation.wpTermId,

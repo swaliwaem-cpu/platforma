@@ -73,6 +73,15 @@ export type MappedDeveloper = {
   slug: string;
 };
 
+export type DeveloperAliasGroup = {
+  canonicalName: string;
+  aliases: string[];
+};
+
+export type DeveloperAliasConfig = {
+  groups: DeveloperAliasGroup[];
+};
+
 export type MappedLocation = {
   wpTermId: number;
   name: string;

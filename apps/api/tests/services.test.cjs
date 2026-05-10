@@ -3,8 +3,10 @@ require('reflect-metadata');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { BadRequestException, ConflictException } = require('@nestjs/common');
-const { ObjectFileType, ObjectStatus, UserStatus } = require('@prisma/client');
+const { LocationType, ObjectFileType, ObjectStatus, UserStatus } = require('@prisma/client');
 
+const { DirectoriesService } = require('../dist/directories/directories.service.js');
+const { MapService } = require('../dist/map/map.service.js');
 const { ObjectsService } = require('../dist/objects/objects.service.js');
 const { UsersService } = require('../dist/users/users.service.js');
 
@@ -29,6 +31,22 @@ function decimal(value) {
   return {
     toString: () => value,
     toNumber: () => Number(value),
+  };
+}
+
+function locationRecord(overrides = {}) {
+  const now = new Date('2026-05-01T10:00:00.000Z');
+
+  return {
+    id: '66666666-6666-4666-8666-666666666666',
+    wpTermId: null,
+    name: 'Тверской',
+    slug: 'tverskoy',
+    type: LocationType.DISTRICT,
+    parentId: null,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
   };
 }
 
@@ -93,6 +111,30 @@ function userRecord(overrides = {}) {
   };
 }
 
+test('DirectoriesService.listLocations filters district and area directories by type', async () => {
+  const calls = [];
+  const prisma = {
+    location: {
+      findMany: async (args) => {
+        calls.push(args);
+        const type = args.where.AND.find((filter) => filter.type).type;
+
+        return [locationRecord({ type })];
+      },
+    },
+  };
+  const service = new DirectoriesService(prisma);
+
+  const districts = await service.listLocations({ type: 'district', limit: '500' });
+  const areas = await service.listLocations({ type: 'AREA', limit: '500' });
+
+  assert.equal(calls[0].where.AND[0].type, LocationType.DISTRICT);
+  assert.equal(calls[1].where.AND[0].type, LocationType.AREA);
+  assert.equal(districts.items[0].type, LocationType.DISTRICT);
+  assert.equal(areas.items[0].type, LocationType.AREA);
+  assert.equal(calls[0].take, 500);
+});
+
 test('ObjectsService.list builds catalog filters for status, price, presentation and missing coordinates', async () => {
   const calls = {};
   const prisma = {
@@ -140,6 +182,101 @@ test('ObjectsService.list builds catalog filters for status, price, presentation
   assert.equal(filters.some((filter) => filter.files?.none?.type === ObjectFileType.PRESENTATION), true);
   assert.equal(filters.some((filter) => filter.OR?.some((item) => item.latitude === null)), true);
   assert.equal(filters.some((filter) => filter.OR?.some((item) => item.title?.contains === 'центр')), true);
+});
+
+test('ObjectsService.list filters locationId and areaId through linked locations', async () => {
+  const calls = {};
+  const districtId = '66666666-6666-4666-8666-666666666666';
+  const areaId = '77777777-7777-4777-8777-777777777777';
+  const prisma = {
+    realEstateObject: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [objectRecord()];
+      },
+      count: async (args) => {
+        calls.count = args;
+        return 1;
+      },
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await service.list({ locationId: districtId, areaId });
+
+  const filters = calls.findMany.where.AND;
+  const locationFilter = filters.find((filter) =>
+    filter.OR?.some((item) => item.locations?.some?.locationId === districtId),
+  );
+  const areaFilter = filters.find((filter) => filter.locations?.some?.locationId === areaId);
+
+  assert.equal(locationFilter.OR.some((item) => item.primaryLocationId === districtId), true);
+  assert.equal(locationFilter.OR.some((item) => item.locations?.some?.locationId === districtId), true);
+  assert.equal(areaFilter.locations.some.location.type, LocationType.AREA);
+  assert.deepEqual(calls.count.where, calls.findMany.where);
+});
+
+test('MapService.listObjects returns linked locations with type and supports areaId', async () => {
+  const calls = {};
+  const district = locationRecord();
+  const area = locationRecord({
+    id: '77777777-7777-4777-8777-777777777777',
+    name: 'На Патриарших',
+    slug: 'na-patriarshih',
+    type: LocationType.AREA,
+  });
+  const mapObject = objectRecord({
+    latitude: decimal('55.751244'),
+    longitude: decimal('37.618423'),
+    primaryLocation: district,
+    locations: [
+      {
+        objectId: '11111111-1111-4111-8111-111111111111',
+        locationId: district.id,
+        isPrimary: true,
+        sortOrder: 0,
+        location: district,
+      },
+      {
+        objectId: '11111111-1111-4111-8111-111111111111',
+        locationId: area.id,
+        isPrimary: false,
+        sortOrder: 1,
+        location: area,
+      },
+    ],
+  });
+  const prisma = {
+    realEstateObject: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [mapObject];
+      },
+      count: async (args) => {
+        calls.count = args;
+        return 1;
+      },
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new MapService(prisma);
+
+  const result = await service.listObjects({ locationId: district.id, areaId: area.id });
+
+  const filters = calls.findMany.where.AND;
+  const areaFilter = filters.find((filter) => filter.locations?.some?.locationId === area.id);
+
+  assert.equal(calls.findMany.include.locations.include.location, true);
+  assert.equal(areaFilter.locations.some.location.type, LocationType.AREA);
+  assert.deepEqual(
+    result.items[0].locations.map((location) => [location.name, location.type, location.isPrimary]),
+    [
+      ['Тверской', LocationType.DISTRICT, true],
+      ['На Патриарших', LocationType.AREA, false],
+    ],
+  );
+  assert.deepEqual(calls.count.where, calls.findMany.where);
 });
 
 test('ObjectsService.create rejects incomplete coordinate pairs before writing an object', async () => {

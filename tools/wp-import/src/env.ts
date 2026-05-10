@@ -29,10 +29,14 @@ export type ImportConfig = {
 
 const rootDir = resolve(__dirname, '../../..');
 
-export function loadImportConfig() {
+export function loadEnvFiles() {
   loadDotEnvFile(resolve(rootDir, '.env'));
   loadDotEnvFile(resolve(rootDir, 'apps/api/.env'));
   loadDotEnvFile(resolve(rootDir, 'tools/wp-import/.env'));
+}
+
+export function loadImportConfig() {
+  loadEnvFiles();
 
   const tablePrefix = getEnv('WP_TABLE_PREFIX', 'wp_');
 

@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const { LocationType, ObjectFileType, ObjectStatus } = require('@prisma/client');
 const { mapWordPressSource, slugify } = require('../dist/mapper.js');
+const { createDeveloperAliases } = require('../dist/developer-aliases.js');
 
 function makePost(overrides) {
   return {
@@ -50,6 +51,8 @@ function makeSource(overrides = {}) {
   const terms = [
     { term_id: 1, name: 'Районы', slug: 'rajony', taxonomy: 'category', parent: 0 },
     { term_id: 2, name: 'Центральный', slug: 'centralnyy', taxonomy: 'category', parent: 1 },
+    { term_id: 3, name: 'Район около', slug: 'rajon-okolo', taxonomy: 'category', parent: 0 },
+    { term_id: 4, name: 'У воды', slug: 'u-vody', taxonomy: 'category', parent: 3 },
     { term_id: 10, name: 'Метро', slug: 'metro', taxonomy: 'category', parent: 0 },
     { term_id: 11, name: 'Красная линия', slug: 'red-line', taxonomy: 'category', parent: 10 },
     { term_id: 12, name: 'Площадь 1905 года', slug: 'ploshhad-1905-goda', taxonomy: 'category', parent: 11 },
@@ -103,7 +106,7 @@ function makeSource(overrides = {}) {
     termsByObjectId: new Map([
       [
         101,
-        [2, 12, 21, 31].map((termId) => ({
+        [4, 2, 12, 21, 31].map((termId) => ({
           ...terms.find((term) => term.term_id === termId),
           object_id: 101,
         })),
@@ -117,6 +120,45 @@ function makeSource(overrides = {}) {
   };
 }
 
+function makeDeveloperDuplicateSource() {
+  return makeSource({
+    objects: [
+      makePost({
+        ID: 101,
+        post_title: 'Первый объект',
+        post_name: 'first-object',
+      }),
+      makePost({
+        ID: 102,
+        post_title: 'Второй объект',
+        post_name: 'second-object',
+      }),
+    ],
+    metaByPostId: new Map([
+      [
+        101,
+        makeMeta({
+          zagolovok_1: 'Первый объект',
+          imya_zastrojshhika: 'Coldy',
+        }),
+      ],
+      [
+        102,
+        makeMeta({
+          zagolovok_1: 'Второй объект',
+          imya_zastrojshhika: 'COLDY',
+        }),
+      ],
+    ]),
+    termsByObjectId: new Map([
+      [101, []],
+      [102, []],
+    ]),
+    attachmentsById: new Map(),
+    referencedAttachmentIds: new Set(),
+  });
+}
+
 test('mapWordPressSource maps object fields, taxonomies, images and files', () => {
   const mapped = mapWordPressSource(makeSource(), 'nedvizhimost', true);
   const [object] = mapped.objects;
@@ -124,7 +166,7 @@ test('mapWordPressSource maps object fields, taxonomies, images and files', () =
   assert.equal(mapped.summary.objectsFound, 1);
   assert.equal(mapped.summary.objectsMapped, 1);
   assert.equal(mapped.summary.developersMapped, 1);
-  assert.equal(mapped.summary.locationsMapped, 1);
+  assert.equal(mapped.summary.locationsMapped, 2);
   assert.equal(mapped.summary.metroStationsMapped, 1);
   assert.equal(mapped.summary.validImagesMapped, 2);
   assert.equal(mapped.summary.validFilesMapped, 1);
@@ -145,6 +187,12 @@ test('mapWordPressSource maps object fields, taxonomies, images and files', () =
   assert.equal(object.completionQuarter, 2);
   assert.equal(object.developer.slug, 'developer');
   assert.equal(object.primaryLocation.type, LocationType.DISTRICT);
+  assert.equal(object.primaryLocation.name, 'Центральный');
+  assert.equal(object.locations.some((location) => location.type === LocationType.AREA && location.name === 'У воды'), true);
+  assert.equal(
+    object.locations.some((location) => location.type === LocationType.DISTRICT && location.name === 'Центральный'),
+    true,
+  );
   assert.equal(object.metroStations[0].lineName, 'Красная линия');
   assert.equal(object.metroStations[0].lineColor, '#ff0000');
   assert.equal(object.images[0].attachment.ID, 201);
@@ -154,6 +202,146 @@ test('mapWordPressSource maps object fields, taxonomies, images and files', () =
   assert.equal(object.files[0].type, ObjectFileType.PRESENTATION);
   assert.equal(object.files[0].attachment.ID, 301);
   assert.equal(mapped.warnings.some((warning) => warning.code === 'missing_local_file'), true);
+});
+
+test('mapWordPressSource falls back to AREA as primary location when district is missing', () => {
+  const terms = [
+    { term_id: 3, name: 'Район около', slug: 'rajon-okolo', taxonomy: 'category', parent: 0 },
+    { term_id: 4, name: 'У парка', slug: 'u-parka', taxonomy: 'category', parent: 3 },
+  ];
+  const source = makeSource({
+    termsByObjectId: new Map([
+      [
+        101,
+        [4].map((termId) => ({
+          ...terms.find((term) => term.term_id === termId),
+          object_id: 101,
+        })),
+      ],
+    ]),
+    termsById: new Map(terms.map((term) => [term.term_id, term])),
+  });
+
+  const mapped = mapWordPressSource(source, 'nedvizhimost', true);
+  const [object] = mapped.objects;
+
+  assert.equal(mapped.summary.locationsMapped, 1);
+  assert.equal(object.primaryLocation.type, LocationType.AREA);
+  assert.equal(object.primaryLocation.name, 'У парка');
+});
+
+test('mapWordPressSource prefers the last mapped district when multiple rajony terms exist', () => {
+  const terms = [
+    { term_id: 9, name: 'Районы', slug: 'rajony', taxonomy: 'category', parent: 0 },
+    { term_id: 69, name: 'З', slug: 'z', taxonomy: 'category', parent: 9 },
+    { term_id: 70, name: 'Запад', slug: 'zapad', taxonomy: 'category', parent: 69 },
+    { term_id: 389, name: 'О', slug: 'o', taxonomy: 'category', parent: 9 },
+    { term_id: 390, name: 'Очаково-Матвеевское', slug: 'ochakovo-matveevskoe', taxonomy: 'category', parent: 389 },
+  ];
+  const source = makeSource({
+    termsByObjectId: new Map([
+      [
+        101,
+        [70, 390].map((termId) => ({
+          ...terms.find((term) => term.term_id === termId),
+          object_id: 101,
+        })),
+      ],
+    ]),
+    termsById: new Map(terms.map((term) => [term.term_id, term])),
+  });
+
+  const mapped = mapWordPressSource(source, 'nedvizhimost', true);
+  const [object] = mapped.objects;
+
+  assert.equal(object.primaryLocation.type, LocationType.DISTRICT);
+  assert.equal(object.primaryLocation.name, 'Очаково-Матвеевское');
+});
+
+test('mapWordPressSource maps Palashevsky-like terms with district as primary location', () => {
+  const terms = [
+    { term_id: 6, name: 'Район около', slug: 'rajon-okolo', taxonomy: 'category', parent: 0 },
+    { term_id: 9, name: 'Районы', slug: 'rajony', taxonomy: 'category', parent: 0 },
+    { term_id: 19, name: 'На Патриарших', slug: 'na-patriarshih', taxonomy: 'category', parent: 6 },
+    { term_id: 1238, name: 'Т', slug: 't', taxonomy: 'category', parent: 9 },
+    { term_id: 1242, name: 'Тверской', slug: 'tverskoj', taxonomy: 'category', parent: 1238 },
+    { term_id: 1747, name: 'Центр', slug: 'czentr', taxonomy: 'category', parent: 6 },
+  ];
+  const source = makeSource({
+    objects: [
+      makePost({
+        ID: 41747,
+        post_title: 'Дом «Палашёвский 11»',
+        post_name: 'dom-palashyovskij-11',
+      }),
+    ],
+    metaByPostId: new Map([
+      [
+        41747,
+        makeMeta({
+          zagolovok_1: 'Дом «Палашёвский 11»',
+          imya_zastrojshhika: 'Sminex',
+        }),
+      ],
+    ]),
+    termsByObjectId: new Map([
+      [
+        41747,
+        [19, 1747, 1242].map((termId) => ({
+          ...terms.find((term) => term.term_id === termId),
+          object_id: 41747,
+        })),
+      ],
+    ]),
+    termsById: new Map(terms.map((term) => [term.term_id, term])),
+    attachmentsById: new Map(),
+    referencedAttachmentIds: new Set(),
+  });
+
+  const mapped = mapWordPressSource(source, 'nedvizhimost', true);
+  const [object] = mapped.objects;
+  const areaNames = object.locations
+    .filter((location) => location.type === LocationType.AREA)
+    .map((location) => location.name)
+    .sort();
+
+  assert.equal(object.primaryLocation.type, LocationType.DISTRICT);
+  assert.equal(object.primaryLocation.name, 'Тверской');
+  assert.deepEqual(areaNames, ['На Патриарших', 'Центр']);
+});
+
+test('mapWordPressSource reports potential developer duplicates without aliases', () => {
+  const mapped = mapWordPressSource(makeDeveloperDuplicateSource(), 'nedvizhimost', true);
+  const developerNames = mapped.objects.map((object) => object.developer?.name);
+
+  assert.deepEqual(developerNames, ['Coldy', 'COLDY']);
+  assert.equal(mapped.summary.developersMapped, 2);
+  assert.equal(
+    mapped.warnings.some(
+      (warning) => warning.code === 'possible_developer_duplicate' && warning.message.includes('Coldy, COLDY'),
+    ),
+    true,
+  );
+});
+
+test('mapWordPressSource applies explicit developer aliases only', () => {
+  const aliases = createDeveloperAliases({
+    groups: [
+      {
+        canonicalName: 'Coldy',
+        aliases: ['COLDY'],
+      },
+    ],
+  });
+  const mapped = mapWordPressSource(makeDeveloperDuplicateSource(), 'nedvizhimost', true, aliases);
+  const developerNames = mapped.objects.map((object) => object.developer?.name);
+
+  assert.deepEqual(developerNames, ['Coldy', 'Coldy']);
+  assert.equal(mapped.summary.developersMapped, 1);
+  assert.equal(
+    mapped.warnings.some((warning) => warning.code === 'possible_developer_duplicate'),
+    false,
+  );
 });
 
 test('mapWordPressSource reports missing optional data without failing the import', () => {

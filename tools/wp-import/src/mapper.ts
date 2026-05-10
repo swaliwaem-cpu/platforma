@@ -1,6 +1,12 @@
 import { LocationType, ObjectFileType, ObjectStatus, Prisma } from '@prisma/client';
 
 import {
+  DeveloperAliases,
+  emptyDeveloperAliases,
+  normalizeDeveloperName,
+  resolveDeveloperName,
+} from './developer-aliases';
+import {
   ImportIssue,
   MappedDeveloper,
   MappedFile,
@@ -19,10 +25,18 @@ import {
 const imageMimeTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const pdfMimeType = 'application/pdf';
 
-export function mapWordPressSource(source: WpSourceData, postType: string, dryRun: boolean) {
+export function mapWordPressSource(
+  source: WpSourceData,
+  postType: string,
+  dryRun: boolean,
+  developerAliases: DeveloperAliases = emptyDeveloperAliases,
+) {
   const warnings: ImportIssue[] = [];
   const errors: ImportIssue[] = [];
-  const objects = source.objects.map((post) => mapObject(post, source, warnings, errors));
+  const objects = source.objects.map((post) => mapObject(post, source, warnings, errors, developerAliases));
+
+  warnAboutPotentialDeveloperDuplicates(objects, warnings);
+
   const developers = new Set(objects.map((object) => object.developer?.name).filter(Boolean));
   const locations = new Map<string, MappedLocation>();
   const metroStations = new Map<string, MappedMetroStation>();
@@ -73,6 +87,7 @@ function mapObject(
   source: WpSourceData,
   warnings: ImportIssue[],
   errors: ImportIssue[],
+  developerAliases: DeveloperAliases,
 ) {
   const meta = source.metaByPostId.get(post.ID) ?? new Map<string, string[]>();
   const objectTerms = source.termsByObjectId.get(post.ID) ?? [];
@@ -80,10 +95,11 @@ function mapObject(
   const title = firstText(meta, 'zagolovok_1') ?? normalizeText(post.post_title) ?? `WordPress object ${post.ID}`;
   const shortDescription = firstLongText(meta, 'korotkoe_opisanie');
   const description = buildDescription(post, meta, shortDescription);
-  const developer = mapDeveloper(firstText(meta, 'imya_zastrojshhika'));
+  const developer = mapDeveloper(firstText(meta, 'imya_zastrojshhika'), developerAliases);
   const coordinates = parseCoordinates(firstText(meta, 'karta_koordinaty'));
   const images = collectImages(meta, source, post.ID, warnings);
   const files = collectFiles(meta, source, post.ID, warnings);
+  const primaryLocation = selectPrimaryLocation(classifiedTerms.locations);
 
   if (!developer) {
     warnings.push({
@@ -122,7 +138,7 @@ function mapObject(
     publishedAt: post.post_status === 'publish' ? parseWpDate(post.post_date) : null,
     developer,
     locations: classifiedTerms.locations,
-    primaryLocation: classifiedTerms.locations[0] ?? null,
+    primaryLocation,
     metroStations: classifiedTerms.metroStations,
     images,
     files,
@@ -141,15 +157,49 @@ function mapObject(
   return mappedObject;
 }
 
-function mapDeveloper(name: string | null): MappedDeveloper | null {
+function mapDeveloper(name: string | null, developerAliases: DeveloperAliases): MappedDeveloper | null {
   if (!name) {
     return null;
   }
 
+  const canonicalName = resolveDeveloperName(name, developerAliases);
+
   return {
-    name,
-    slug: slugify(name),
+    name: canonicalName,
+    slug: slugify(canonicalName),
   };
+}
+
+function warnAboutPotentialDeveloperDuplicates(objects: MappedObject[], warnings: ImportIssue[]) {
+  const namesByNormalizedName = new Map<string, Set<string>>();
+
+  for (const object of objects) {
+    if (!object.developer) {
+      continue;
+    }
+
+    const normalizedName = normalizeDeveloperName(object.developer.name);
+
+    if (!normalizedName) {
+      continue;
+    }
+
+    const names = namesByNormalizedName.get(normalizedName) ?? new Set<string>();
+    names.add(object.developer.name);
+    namesByNormalizedName.set(normalizedName, names);
+  }
+
+  for (const [normalizedName, names] of namesByNormalizedName.entries()) {
+    if (names.size < 2) {
+      continue;
+    }
+
+    warnings.push({
+      severity: 'warning',
+      code: 'possible_developer_duplicate',
+      message: `Developer names differ only by case or spacing for "${normalizedName}": ${[...names].join(', ')}. Add an explicit group to developer-aliases.json before merging.`,
+    });
+  }
 }
 
 function classifyTerms(objectTerms: WpObjectTerm[], source: WpSourceData) {
@@ -215,6 +265,19 @@ function mapLocation(term: WpTerm, type: LocationType, parentTerm: WpTerm | null
     type,
     parentWpTermId: parentTerm?.term_id ?? null,
   };
+}
+
+function selectPrimaryLocation(locations: MappedLocation[]) {
+  const districtLocations = locations.filter((location) => location.type === LocationType.DISTRICT);
+
+  if (districtLocations.length > 0) {
+    return districtLocations[districtLocations.length - 1] ?? null;
+  }
+
+  return (
+    locations.find((location) => location.type === LocationType.AREA) ??
+    null
+  );
 }
 
 function mapMetroStation(term: WpTerm, path: WpTerm[], source: WpSourceData): MappedMetroStation | null {

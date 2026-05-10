@@ -5,6 +5,8 @@
   "scripts": {
     "build": "pnpm --filter @platforma/api prisma:generate && tsc -p tsconfig.json",
     "preview": "pnpm build && node dist/index.js preview",
+    "repair:preview": "pnpm build && node dist/index.js repair preview",
+    "repair:run": "pnpm build && node dist/index.js repair run",
     "run": "pnpm build && node dist/index.js run",
     "test": "pnpm build && node --test tests/*.test.cjs"
   },

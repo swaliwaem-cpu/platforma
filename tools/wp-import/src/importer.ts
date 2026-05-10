@@ -13,6 +13,7 @@ import {
   PrismaClient,
 } from '@prisma/client';
 
+import { loadDeveloperAliases, normalizeDeveloperName } from './developer-aliases';
 import { ImportConfig, loadImportConfig } from './env';
 import { mapWordPressSource, slugify } from './mapper';
 import { ImportStorage } from './storage';
@@ -54,9 +55,10 @@ export async function executeWordPressImport(mode: ImportModeName) {
   let wpClient: WordPressReadonlyClient | null = null;
 
   try {
+    const developerAliases = await loadDeveloperAliases();
     wpClient = new WordPressReadonlyClient(config.wp);
     const source = await wpClient.fetchSourceData();
-    const mapped = mapWordPressSource(source, config.wp.postType, mode === 'preview');
+    const mapped = mapWordPressSource(source, config.wp.postType, mode === 'preview', developerAliases);
     const counters: ImportCounters = {
       objectsImported: 0,
       objectsCreated: 0,
@@ -152,19 +154,29 @@ async function persistMappedImport(mapped: MappedImport, config: ImportConfig, c
 }
 
 async function ensureDeveloper(tx: Prisma.TransactionClient, name: string, slug: string) {
-  const existingDeveloper = await tx.developer.findUnique({
-    where: {
-      name,
-    },
-  });
+  const normalizedName = normalizeDeveloperName(name);
+  const existingDeveloper =
+    (await findDeveloperByNormalizedName(tx, normalizedName)) ??
+    (await tx.developer.findUnique({
+      where: {
+        name,
+      },
+    }));
 
   if (existingDeveloper) {
+    const hasUnresolvedNameConflict = await hasDeveloperNormalizedNameConflict(
+      tx,
+      normalizedName,
+      existingDeveloper.id,
+    );
+
     return tx.developer.update({
       where: {
         id: existingDeveloper.id,
       },
       data: {
         slug: existingDeveloper.slug ?? (await getUniqueDeveloperSlug(tx, slug, existingDeveloper.id)),
+        normalizedName: hasUnresolvedNameConflict ? existingDeveloper.normalizedName : normalizedName,
       },
     });
   }
@@ -172,9 +184,42 @@ async function ensureDeveloper(tx: Prisma.TransactionClient, name: string, slug:
   return tx.developer.create({
     data: {
       name,
+      normalizedName,
       slug: await getUniqueDeveloperSlug(tx, slug, null),
     },
   });
+}
+
+async function findDeveloperByNormalizedName(tx: Prisma.TransactionClient, normalizedName: string) {
+  if (!normalizedName) {
+    return null;
+  }
+
+  return tx.developer.findUnique({
+    where: {
+      normalizedName,
+    },
+  });
+}
+
+async function hasDeveloperNormalizedNameConflict(
+  tx: Prisma.TransactionClient,
+  normalizedName: string,
+  currentDeveloperId: string,
+) {
+  if (!normalizedName) {
+    return false;
+  }
+
+  const matches = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT "id"
+    FROM "developers"
+    WHERE lower(regexp_replace(btrim("name"), '\\s+', ' ', 'g')) = ${normalizedName}
+      AND "id" <> ${currentDeveloperId}::uuid
+    LIMIT 1
+  `;
+
+  return matches.length > 0;
 }
 
 async function getUniqueDeveloperSlug(tx: Prisma.TransactionClient, slug: string, currentId: string | null) {

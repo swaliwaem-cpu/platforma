@@ -226,6 +226,7 @@ export type MapObject = {
   completionQuarter: number | null;
   developer: ObjectDeveloper | null;
   primaryLocation: ObjectLocation | null;
+  locations: ObjectLocationLink[];
   metroStations: ObjectMetroStationLink[];
   coverImage: ObjectImage | null;
 };

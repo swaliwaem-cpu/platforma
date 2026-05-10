@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type {
   ObjectFileType,
   ObjectLinkedFile,
+  ObjectLocation,
   ObjectMetroStationLink,
   ObjectResponse,
   RealEstateObjectDetail,
@@ -20,6 +21,8 @@ type FeatureRow = {
   label: string;
   value: string;
 };
+
+type DisplayLocation = Pick<ObjectLocation, 'id' | 'name' | 'type'>;
 
 const objectStatusLabels: Record<RealEstateObjectDetail['status'], string> = {
   DRAFT: 'Черновик',
@@ -120,6 +123,7 @@ function ObjectDetail({
   onBack: () => void;
 }) {
   const descriptionParagraphs = useMemo(() => getDescriptionParagraphs(object), [object]);
+  const districtLocation = useMemo(() => getObjectDistrictLocation(object), [object]);
   const locationRows = useMemo(() => getLocationRows(object), [object]);
   const presentationFiles = object.files.filter((file) => file.type === 'PRESENTATION');
   const otherFiles = object.files.filter((file) => file.type !== 'PRESENTATION');
@@ -159,7 +163,7 @@ function ObjectDetail({
             </div>
             <div>
               <dt>Район</dt>
-              <dd>{object.primaryLocation?.name ?? 'Не указан'}</dd>
+              <dd>{districtLocation?.name ?? 'Не указан'}</dd>
             </div>
             <div>
               <dt>Застройщик</dt>
@@ -241,7 +245,7 @@ function ObjectDetail({
           <section className="detail-section" aria-labelledby="object-location-title">
             <div>
               <p className="eyebrow">Район</p>
-              <h3 id="object-location-title">Метро и районы</h3>
+              <h3 id="object-location-title">Район, окружение и метро</h3>
             </div>
 
             {locationRows.length > 0 ? (
@@ -605,7 +609,7 @@ function getObjectMapPoints(object: RealEstateObjectDetail, imageUrl: string | n
 
 function buildObjectMapBalloon(object: RealEstateObjectDetail, imageUrl: string | null) {
   const title = escapeHtml(object.title);
-  const location = escapeHtml(object.primaryLocation?.name ?? 'Район не указан');
+  const location = escapeHtml(getObjectDistrictLocation(object)?.name ?? 'Район не указан');
   const address = object.address ? escapeHtml(object.address) : null;
   const developer = escapeHtml(object.developer?.name ?? 'Застройщик не указан');
   const price = escapeHtml(formatPrice(object.priceFrom));
@@ -628,23 +632,67 @@ function buildObjectMapBalloon(object: RealEstateObjectDetail, imageUrl: string 
 
 function getLocationRows(object: RealEstateObjectDetail): FeatureRow[] {
   const rows: FeatureRow[] = [];
-  const regularLocations = object.locations.filter((location) => location.id !== object.primaryLocation?.id);
+  const districtLocation = getObjectDistrictLocation(object);
+  const areaLocations = getObjectAreaLocations(object);
+  const otherLocations = getObjectOtherLocations(object);
 
-  if (object.primaryLocation) {
+  if (districtLocation) {
     rows.push({
       label: 'Район',
-      value: object.primaryLocation.name,
+      value: districtLocation.name,
     });
   }
 
-  if (regularLocations.length > 0) {
+  if (areaLocations.length > 0) {
+    rows.push({
+      label: 'Окружение',
+      value: areaLocations.map((location) => location.name).join(', '),
+    });
+  }
+
+  if (otherLocations.length > 0) {
     rows.push({
       label: 'Дополнительно',
-      value: regularLocations.map((location) => location.name).join(', '),
+      value: otherLocations.map((location) => location.name).join(', '),
     });
   }
 
   return rows;
+}
+
+function getObjectDistrictLocation(object: RealEstateObjectDetail): DisplayLocation | null {
+  if (object.primaryLocation?.type === 'DISTRICT') {
+    return object.primaryLocation;
+  }
+
+  return object.locations.find((location) => location.type === 'DISTRICT') ?? null;
+}
+
+function getObjectAreaLocations(object: RealEstateObjectDetail): DisplayLocation[] {
+  return uniqueLocationsById([
+    ...(object.primaryLocation?.type === 'AREA' ? [object.primaryLocation] : []),
+    ...object.locations.filter((location) => location.type === 'AREA'),
+  ]);
+}
+
+function getObjectOtherLocations(object: RealEstateObjectDetail): DisplayLocation[] {
+  return uniqueLocationsById([
+    ...(object.primaryLocation?.type === 'CUSTOM' ? [object.primaryLocation] : []),
+    ...object.locations.filter((location) => location.type === 'CUSTOM'),
+  ]);
+}
+
+function uniqueLocationsById(locations: DisplayLocation[]) {
+  const seenIds = new Set<string>();
+
+  return locations.filter((location) => {
+    if (seenIds.has(location.id)) {
+      return false;
+    }
+
+    seenIds.add(location.id);
+    return true;
+  });
 }
 
 function formatPrice(value: string | null) {
