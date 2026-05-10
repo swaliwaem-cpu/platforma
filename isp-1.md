@@ -186,16 +186,28 @@
 
 ### Этап 9. Проверить импорт и repair
 
-- [ ] Запустить unit tests для `tools/wp-import`.
-- [ ] Запустить backend tests.
-- [ ] Запустить frontend build.
-- [ ] Запустить repair `preview`.
-- [ ] Проверить, что preview показывает ожидаемые 171 объекта с `AREA` primary и доступным `DISTRICT`.
-- [ ] Проверить preview alias-групп застройщиков.
-- [ ] После проверки запустить repair `run`.
-- [ ] Проверить, что после repair количество объектов осталось 303.
-- [ ] Проверить, что после repair объектов с `AREA` primary и доступным `DISTRICT` стало 0.
-- [ ] Проверить, что повторный repair `run` не создаёт дополнительных изменений.
+- [x] Запустить unit tests для `tools/wp-import`.
+- [x] Запустить backend tests.
+- [x] Запустить frontend build.
+- [x] Запустить repair `preview`.
+- [x] Проверить, что preview показывает ожидаемые 171 объекта с `AREA` primary и доступным `DISTRICT`.
+- [x] Проверить preview alias-групп застройщиков.
+- [x] После проверки запустить repair `run`.
+- [x] Проверить, что после repair количество объектов осталось 303.
+- [x] Проверить, что после repair объектов с `AREA` primary и доступным `DISTRICT` стало 0.
+- [x] Проверить, что повторный repair `run` не создаёт дополнительных изменений.
+
+Результат проверки:
+
+- `pnpm --filter @platforma/wp-import test`: 8 tests passed.
+- `pnpm --filter @platforma/api test`: 28 tests passed.
+- `pnpm --filter @platforma/web build`: passed.
+- `repair preview`: `locationCandidates = 171`.
+- `repair preview`: `developerAliasGroups = 23`, `developerGroupsWithMatches = 23`, `developerObjectsToMove = 51`, `developersToDelete = 32`.
+- `repair run`: `objectsPrimaryLocationUpdated = 171`, `objectLocationPrimaryFlagsUpdated = 171`, `developerObjectsMoved = 51`, `developersDeleted = 32`, `developersNormalized = 12`.
+- После `repair run` в `real_estate_objects` осталось 303 объекта.
+- После `repair run` объектов с `AREA` primary и доступным `DISTRICT` стало 0.
+- Повторный `repair run`: `locationCandidates = 0`, `developerObjectsToMove = 0`, `developersToDelete = 0`, все update/delete counters = 0.
 
 ### Этап 10. Manual QA
 
