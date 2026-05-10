@@ -1500,11 +1500,12 @@ tr.user-row--deactivated .text-button {
   min-width: 0;
 }
 
-.catalog-card-location span {
+.catalog-card-location > span {
   display: inline-flex;
   min-width: 0;
   max-width: 100%;
   align-items: center;
+  flex-wrap: wrap;
   border: 1px solid var(--catalog-border);
   border-radius: 999px;
   background: var(--catalog-panel-soft);
@@ -1513,6 +1514,32 @@ tr.user-row--deactivated .text-button {
   font-size: 12px;
   font-weight: 850;
   line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.catalog-card-metro {
+  gap: 5px;
+}
+
+.catalog-card-metro-station {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.catalog-card-metro-dot {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 auto;
+  border: 2px solid var(--catalog-panel-soft);
+  border-radius: 999px;
+  background: var(--catalog-ink-700);
+  box-shadow: 0 0 0 1px var(--catalog-border);
+}
+
+.catalog-card-metro-name {
+  min-width: 0;
   overflow-wrap: anywhere;
 }
 

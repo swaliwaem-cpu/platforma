@@ -833,7 +833,6 @@ function CatalogCard({
   const hasPresentation = Boolean(object.presentationFile);
   const hasVisibleBadges = object.status !== 'PUBLISHED' || hasPresentation;
   const districtLabel = getObjectDistrictLabel(object);
-  const metroLabel = formatMetroStations(object.metroStations);
   const shortDescription = object.shortDescription?.trim();
 
   function handleOpen(event: MouseEvent<HTMLAnchorElement>) {
@@ -881,7 +880,7 @@ function CatalogCard({
         </div>
         <div className="catalog-card-location" aria-label="Район и метро">
           <span>{districtLabel}</span>
-          {metroLabel ? <span>{metroLabel}</span> : null}
+          <CatalogCardMetroLabel stations={object.metroStations} />
         </div>
         <dl className="catalog-card-facts">
           <div>
@@ -900,6 +899,39 @@ function CatalogCard({
         </div>
       </div>
     </article>
+  );
+}
+
+function CatalogCardMetroLabel({ stations }: { stations: ObjectMetroStationLink[] }) {
+  if (stations.length === 0) {
+    return null;
+  }
+
+  const visibleStations = stations.slice(0, 2);
+  const hiddenCount = stations.length - visibleStations.length;
+
+  return (
+    <span className="catalog-card-metro" aria-label={formatMetroStations(stations) ?? undefined}>
+      <span className="catalog-card-metro-prefix">Метро</span>
+      {visibleStations.map((station, index) => {
+        const lineColor = normalizeLineColor(station.lineColor);
+
+        return (
+          <span className="catalog-card-metro-station" key={station.id}>
+            <span
+              aria-hidden="true"
+              className="catalog-card-metro-dot"
+              style={lineColor ? { background: lineColor } : undefined}
+            />
+            <span className="catalog-card-metro-name">
+              {station.name}
+              {index < visibleStations.length - 1 ? ',' : ''}
+            </span>
+          </span>
+        );
+      })}
+      {hiddenCount > 0 ? <span className="catalog-card-metro-more">+{hiddenCount}</span> : null}
+    </span>
   );
 }
 
@@ -1303,6 +1335,16 @@ function formatCompactRussianNumber(value: number) {
   return new Intl.NumberFormat('ru-RU', {
     maximumFractionDigits: value < 10 ? 1 : 0,
   }).format(value);
+}
+
+function normalizeLineColor(value: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const trimmedValue = value.trim();
+
+  return /^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/iu.test(trimmedValue) ? trimmedValue : null;
 }
 
 function formatMetroStations(stations: ObjectMetroStationLink[]) {
