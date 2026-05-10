@@ -7,6 +7,7 @@ import type {
   MetroStationsResponse,
   ObjectDeveloper,
   ObjectLocation,
+  ObjectLocationLink,
   ObjectMetroStation,
   ObjectMetroStationLink,
   ObjectStatus,
@@ -31,6 +32,7 @@ type CatalogFilters = {
   search: string;
   developerId: string;
   locationId: string;
+  areaId: string;
   metroStationId: string;
   completionYear: string;
   completionQuarter: string;
@@ -44,7 +46,8 @@ type CatalogFilters = {
 
 type DirectoryState = {
   developers: ObjectDeveloper[];
-  locations: ObjectLocation[];
+  districtLocations: ObjectLocation[];
+  areaLocations: ObjectLocation[];
   metroStations: ObjectMetroStation[];
 };
 
@@ -52,6 +55,7 @@ const defaultFilters: CatalogFilters = {
   search: '',
   developerId: '',
   locationId: '',
+  areaId: '',
   metroStationId: '',
   completionYear: '',
   completionQuarter: '',
@@ -79,7 +83,8 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
   const [mapObjects, setMapObjects] = useState<MapObject[]>([]);
   const [directories, setDirectories] = useState<DirectoryState>({
     developers: [],
-    locations: [],
+    districtLocations: [],
+    areaLocations: [],
     metroStations: [],
   });
   const [totalPages, setTotalPages] = useState(1);
@@ -137,15 +142,17 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
     setDirectoryError(null);
 
     try {
-      const [developers, locations, metroStations] = await Promise.all([
+      const [developers, districtLocations, areaLocations, metroStations] = await Promise.all([
         apiRequest<DevelopersResponse>('/developers?limit=500', accessToken),
-        apiRequest<LocationsResponse>('/locations?limit=500', accessToken),
+        apiRequest<LocationsResponse>('/locations?type=DISTRICT&limit=500', accessToken),
+        apiRequest<LocationsResponse>('/locations?type=AREA&limit=500', accessToken),
         apiRequest<MetroStationsResponse>('/metro?limit=500', accessToken),
       ]);
 
       setDirectories({
         developers: developers.items,
-        locations: locations.items,
+        districtLocations: districtLocations.items,
+        areaLocations: areaLocations.items,
         metroStations: metroStations.items,
       });
     } catch (caughtError) {
@@ -375,14 +382,30 @@ function CatalogFilters({
           </label>
 
           <label>
-            Локация
+            Район
             <select
               disabled={isDirectoriesLoading}
               value={filters.locationId}
               onChange={(event) => onChange({ locationId: event.target.value })}
             >
-              <option value="">Все локации</option>
-              {directories.locations.map((location) => (
+              <option value="">Все районы</option>
+              {directories.districtLocations.map((location) => (
+                <option key={location.id} value={location.id}>
+                  {location.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            Окружение
+            <select
+              disabled={isDirectoriesLoading}
+              value={filters.areaId}
+              onChange={(event) => onChange({ areaId: event.target.value })}
+            >
+              <option value="">Все окружения</option>
+              {directories.areaLocations.map((location) => (
                 <option key={location.id} value={location.id}>
                   {location.name}
                 </option>
@@ -645,7 +668,7 @@ function CatalogMapView({
                     <button className="text-button" type="button" onClick={() => setSelectedObjectId(object.id)}>
                       {object.title}
                     </button>
-                    <span>{object.primaryLocation?.name ?? object.address ?? 'Локация не указана'}</span>
+                    <span>{getObjectDistrictLabel(object)}</span>
                     <strong>{formatMapListPricePerMeter(object.pricePerMeterFrom)}</strong>
                   </li>
                 ))}
@@ -676,6 +699,7 @@ function MapObjectCard({
   onOpen: () => void;
 }) {
   const metroLabel = formatMetroStations(object.metroStations ?? []);
+  const districtLabel = getObjectDistrictLabel(object);
 
   return (
     <article className="map-object-card" aria-label={`Объект ${object.title}`}>
@@ -695,8 +719,8 @@ function MapObjectCard({
             <dd>{object.developer?.name ?? 'Не указан'}</dd>
           </div>
           <div>
-            <dt>Расположение</dt>
-            <dd>{object.primaryLocation?.name ?? object.address ?? 'Локация не указана'}</dd>
+            <dt>Район</dt>
+            <dd>{districtLabel}</dd>
           </div>
           {metroLabel ? (
             <div>
@@ -733,7 +757,7 @@ function CatalogListItem({
   const coverImage = object.coverImage;
   const objectHref = `/objects/${encodeURIComponent(object.slug)}`;
   const developerLabel = object.developer?.name ?? 'Не указан';
-  const locationLabel = object.primaryLocation?.name ?? object.address ?? 'Локация не указана';
+  const districtLabel = getObjectDistrictLabel(object);
   const metroLabel = formatListMetroStations(object.metroStations);
 
   function handleOpen(event: MouseEvent<HTMLAnchorElement>) {
@@ -768,8 +792,8 @@ function CatalogListItem({
             <dd>{developerLabel}</dd>
           </div>
           <div>
-            <dt>Расположение</dt>
-            <dd>{locationLabel}</dd>
+            <dt>Район</dt>
+            <dd>{districtLabel}</dd>
           </div>
           <div>
             <dt>Метро</dt>
@@ -808,7 +832,7 @@ function CatalogCard({
   const objectHref = `/objects/${encodeURIComponent(object.slug)}`;
   const hasPresentation = Boolean(object.presentationFile);
   const hasVisibleBadges = object.status !== 'PUBLISHED' || hasPresentation;
-  const locationLabel = object.primaryLocation?.name ?? object.address ?? 'Локация не указана';
+  const districtLabel = getObjectDistrictLabel(object);
   const metroLabel = formatMetroStations(object.metroStations);
   const shortDescription = object.shortDescription?.trim();
 
@@ -855,8 +879,8 @@ function CatalogCard({
           </h3>
           {shortDescription ? <p className="catalog-card-description">{shortDescription}</p> : null}
         </div>
-        <div className="catalog-card-location" aria-label="Локация и метро">
-          <span>{locationLabel}</span>
+        <div className="catalog-card-location" aria-label="Район и метро">
+          <span>{districtLabel}</span>
           {metroLabel ? <span>{metroLabel}</span> : null}
         </div>
         <dl className="catalog-card-facts">
@@ -1032,6 +1056,7 @@ function parseCatalogFilters(queryString: string): CatalogFilters {
     search: parseTextParam(params.get('search')),
     developerId: parseTextParam(params.get('developerId')),
     locationId: parseTextParam(params.get('locationId')),
+    areaId: parseTextParam(params.get('areaId')),
     metroStationId: parseTextParam(params.get('metroStationId')),
     completionYear: sanitizeIntegerText(params.get('completionYear') ?? '', 4),
     completionQuarter: defaultFilters.completionQuarter,
@@ -1056,6 +1081,7 @@ function buildCatalogQuery(filters: CatalogFilters, viewMode: CatalogViewMode = 
   setParam(params, 'search', filters.search);
   setParam(params, 'developerId', filters.developerId);
   setParam(params, 'locationId', filters.locationId);
+  setParam(params, 'areaId', filters.areaId);
   setParam(params, 'metroStationId', filters.metroStationId);
   setParam(params, 'completionYear', filters.completionYear);
   setParam(params, 'priceFromMin', filters.priceFromMin);
@@ -1078,6 +1104,7 @@ function countActiveAdvancedFilters(filters: CatalogFilters) {
   return [
     filters.developerId,
     filters.locationId,
+    filters.areaId,
     filters.metroStationId,
     filters.completionYear,
     filters.priceFromMin,
@@ -1099,6 +1126,7 @@ function buildObjectsParams(filters: CatalogFilters, includePage: boolean) {
   setParam(params, 'search', filters.search);
   setParam(params, 'developerId', filters.developerId);
   setParam(params, 'locationId', filters.locationId);
+  setParam(params, 'areaId', filters.areaId);
   setParam(params, 'metroStationId', filters.metroStationId);
   setParam(params, 'completionYear', filters.completionYear);
   setParam(params, 'priceFromMin', filters.priceFromMin);
@@ -1140,7 +1168,7 @@ function isMapObjectInBounds(object: MapObject, bounds: YandexMapBounds) {
 function buildMapBalloon(object: MapObject, imageUrl: string | undefined) {
   const pointId = escapeHtml(object.id);
   const title = escapeHtml(object.title);
-  const location = escapeHtml(object.primaryLocation?.name ?? object.address ?? 'Локация не указана');
+  const district = escapeHtml(getObjectDistrictLabel(object));
   const developer = escapeHtml(object.developer?.name ?? 'Застройщик не указан');
   const price = escapeHtml(formatPrice(object.priceFrom));
   const completion = escapeHtml(formatCompletion(object.completionYear, object.completionQuarter));
@@ -1151,12 +1179,30 @@ function buildMapBalloon(object: MapObject, imageUrl: string | undefined) {
     '<div class="map-balloon">',
     image,
     `<strong>${title}</strong>`,
-    `<span>${location}</span>`,
+    `<span>${district}</span>`,
     `<span>${developer}</span>`,
     `<span>${price}, ${completion}</span>`,
     `<a href="${href}" data-map-point-id="${pointId}">Открыть объект</a>`,
     '</div>',
   ].join('');
+}
+
+type CatalogObjectWithLocations = {
+  address: string | null;
+  primaryLocation: ObjectLocation | null;
+  locations: ObjectLocationLink[];
+};
+
+function getObjectDistrictLabel(object: CatalogObjectWithLocations) {
+  return getObjectDistrictLocation(object)?.name ?? object.address ?? 'Район не указан';
+}
+
+function getObjectDistrictLocation(object: CatalogObjectWithLocations) {
+  if (object.primaryLocation?.type === 'DISTRICT') {
+    return object.primaryLocation;
+  }
+
+  return object.locations.find((location) => location.type === 'DISTRICT') ?? null;
 }
 
 function setParam(params: URLSearchParams, key: string, value: string) {

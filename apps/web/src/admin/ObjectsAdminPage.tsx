@@ -38,7 +38,9 @@ type ObjectFormState = {
   longitude: string;
   developerId: string;
   primaryLocationId: string;
-  locationIds: string[];
+  districtLocationIds: string[];
+  areaLocationIds: string[];
+  preservedLocationIds: string[];
   metroStationIds: string[];
   featuresText: string;
 };
@@ -73,7 +75,9 @@ const emptyForm: ObjectFormState = {
   longitude: '',
   developerId: '',
   primaryLocationId: '',
-  locationIds: [],
+  districtLocationIds: [],
+  areaLocationIds: [],
+  preservedLocationIds: [],
   metroStationIds: [],
   featuresText: '{}',
 };
@@ -82,7 +86,8 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
   const { accessToken, hasPermission } = useAuth();
   const [objects, setObjects] = useState<RealEstateObjectSummary[]>([]);
   const [developers, setDevelopers] = useState<ObjectDeveloper[]>([]);
-  const [locations, setLocations] = useState<ObjectLocation[]>([]);
+  const [districtLocations, setDistrictLocations] = useState<ObjectLocation[]>([]);
+  const [areaLocations, setAreaLocations] = useState<ObjectLocation[]>([]);
   const [metroStations, setMetroStations] = useState<ObjectMetroStation[]>([]);
   const [object, setObject] = useState<RealEstateObjectDetail | null>(null);
   const [form, setForm] = useState<ObjectFormState>(emptyForm);
@@ -168,14 +173,16 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
   }
 
   async function loadDirectories(token: string) {
-    const [developersData, locationsData, metroData] = await Promise.all([
+    const [developersData, districtLocationsData, areaLocationsData, metroData] = await Promise.all([
       apiRequest<DevelopersResponse>('/developers?limit=500', token),
-      apiRequest<LocationsResponse>('/locations?limit=500', token),
+      apiRequest<LocationsResponse>('/locations?type=DISTRICT&limit=500', token),
+      apiRequest<LocationsResponse>('/locations?type=AREA&limit=500', token),
       apiRequest<MetroStationsResponse>('/metro?limit=500', token),
     ]);
 
     setDevelopers(developersData.items);
-    setLocations(locationsData.items);
+    setDistrictLocations(districtLocationsData.items);
+    setAreaLocations(areaLocationsData.items);
     setMetroStations(metroData.items);
   }
 
@@ -551,7 +558,8 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
         isLoading={isLoading}
         isSubmitting={isSubmitting}
         isUploading={isUploading}
-        locations={locations}
+        areaLocations={areaLocations}
+        districtLocations={districtLocations}
         metroStations={metroStations}
         notice={notice}
         object={object}
@@ -655,7 +663,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
                   </SortButton>
                 </th>
                 <th>Застройщик</th>
-                <th>Локация</th>
+                <th>Район</th>
                 <th>
                   <SortButton
                     active={sortBy === 'priceFrom'}
@@ -699,7 +707,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
                     </span>
                   </td>
                   <td>{item.developer?.name ?? 'Нет'}</td>
-                  <td>{item.primaryLocation?.name ?? 'Нет'}</td>
+                  <td>{getObjectDistrictName(item) ?? 'Нет'}</td>
                   <td>{formatPrice(item.priceFrom)}</td>
                   <td>{formatCompletion(item.completionYear, item.completionQuarter)}</td>
                   <td>{formatDate(item.createdAt)}</td>
@@ -757,6 +765,8 @@ type ObjectEditorProps = {
   canUpload: boolean;
   coverFile: File | null;
   developers: ObjectDeveloper[];
+  districtLocations: ObjectLocation[];
+  areaLocations: ObjectLocation[];
   draggedImageId: string | null;
   error: string | null;
   form: ObjectFormState;
@@ -765,7 +775,6 @@ type ObjectEditorProps = {
   isLoading: boolean;
   isSubmitting: boolean;
   isUploading: boolean;
-  locations: ObjectLocation[];
   metroStations: ObjectMetroStation[];
   notice: string | null;
   object: RealEstateObjectDetail | null;
@@ -956,13 +965,13 @@ function ObjectEditor(props: ObjectEditorProps) {
               </label>
 
               <label>
-                Основная локация
+                Основной район
                 <select
                   value={props.form.primaryLocationId}
                   onChange={(event) => props.onFormChange({ ...props.form, primaryLocationId: event.target.value })}
                 >
                   <option value="">Не выбрана</option>
-                  {props.locations.map((location) => (
+                  {props.districtLocations.map((location) => (
                     <option key={location.id} value={location.id}>
                       {location.name}
                     </option>
@@ -971,15 +980,32 @@ function ObjectEditor(props: ObjectEditorProps) {
               </label>
 
               <label>
-                Локации
+                Районы
                 <select
                   multiple
-                  value={props.form.locationIds}
+                  value={props.form.districtLocationIds}
                   onChange={(event) =>
-                    props.onFormChange({ ...props.form, locationIds: getSelectedValues(event) })
+                    props.onFormChange({ ...props.form, districtLocationIds: getSelectedValues(event) })
                   }
                 >
-                  {props.locations.map((location) => (
+                  {props.districtLocations.map((location) => (
+                    <option key={location.id} value={location.id}>
+                      {location.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                Окружение
+                <select
+                  multiple
+                  value={props.form.areaLocationIds}
+                  onChange={(event) =>
+                    props.onFormChange({ ...props.form, areaLocationIds: getSelectedValues(event) })
+                  }
+                >
+                  {props.areaLocations.map((location) => (
                     <option key={location.id} value={location.id}>
                       {location.name}
                     </option>
@@ -1276,6 +1302,8 @@ function SecureImage({ accessToken, alt, fileId }: { accessToken: string; alt: s
 }
 
 function createFormFromObject(object: RealEstateObjectDetail): ObjectFormState {
+  const districtLocation = getObjectDistrictLocation(object);
+
   return {
     title: object.title,
     description: object.description ?? '',
@@ -1289,8 +1317,10 @@ function createFormFromObject(object: RealEstateObjectDetail): ObjectFormState {
     latitude: object.latitude?.toString() ?? '',
     longitude: object.longitude?.toString() ?? '',
     developerId: object.developer?.id ?? '',
-    primaryLocationId: object.primaryLocation?.id ?? '',
-    locationIds: object.locations.map((location) => location.id),
+    primaryLocationId: districtLocation?.id ?? '',
+    districtLocationIds: getObjectLocationsByType(object, 'DISTRICT').map((location) => location.id),
+    areaLocationIds: getObjectLocationsByType(object, 'AREA').map((location) => location.id),
+    preservedLocationIds: getPreservedLocationIds(object),
     metroStationIds: object.metroStations.map((station) => station.id),
     featuresText: JSON.stringify(object.featuresJson ?? {}, null, 2),
   };
@@ -1300,7 +1330,9 @@ function createPayloadFromForm(form: ObjectFormState) {
   const primaryLocationId = emptyToNull(form.primaryLocationId);
   const locationIds = unique([
     ...(primaryLocationId ? [primaryLocationId] : []),
-    ...form.locationIds,
+    ...form.districtLocationIds,
+    ...form.areaLocationIds,
+    ...form.preservedLocationIds,
   ]);
 
   return {
@@ -1321,6 +1353,54 @@ function createPayloadFromForm(form: ObjectFormState) {
     locationIds,
     metroStationIds: form.metroStationIds,
   };
+}
+
+type ObjectWithLocations = {
+  primaryLocation: ObjectLocation | null;
+  locations: ObjectLocation[];
+};
+
+function getObjectDistrictName(object: ObjectWithLocations) {
+  return getObjectDistrictLocation(object)?.name ?? null;
+}
+
+function getObjectDistrictLocation(object: ObjectWithLocations) {
+  if (object.primaryLocation?.type === 'DISTRICT') {
+    return object.primaryLocation;
+  }
+
+  return object.locations.find((location) => location.type === 'DISTRICT') ?? null;
+}
+
+function getObjectLocationsByType(object: ObjectWithLocations, type: ObjectLocation['type']) {
+  return uniqueLocationsById([
+    ...(object.primaryLocation?.type === type ? [object.primaryLocation] : []),
+    ...object.locations.filter((location) => location.type === type),
+  ]);
+}
+
+function getPreservedLocationIds(object: ObjectWithLocations) {
+  return uniqueLocationsById([
+    ...(object.primaryLocation && !isEditableObjectLocationType(object.primaryLocation.type) ? [object.primaryLocation] : []),
+    ...object.locations.filter((location) => !isEditableObjectLocationType(location.type)),
+  ]).map((location) => location.id);
+}
+
+function isEditableObjectLocationType(type: ObjectLocation['type']) {
+  return type === 'DISTRICT' || type === 'AREA';
+}
+
+function uniqueLocationsById(locations: ObjectLocation[]) {
+  const seenIds = new Set<string>();
+
+  return locations.filter((location) => {
+    if (seenIds.has(location.id)) {
+      return false;
+    }
+
+    seenIds.add(location.id);
+    return true;
+  });
 }
 
 function validateObjectForm(form: ObjectFormState) {
