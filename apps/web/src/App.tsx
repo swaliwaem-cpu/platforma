@@ -3,6 +3,7 @@ import { platformName } from '@platforma/shared';
 import type { AuthUser, UserStatus } from '@platforma/shared';
 
 import { ImportAdminPage } from './admin/ImportAdminPage';
+import { AdminButton, AdminPanel, AdminStatusBadge } from './admin/AdminUi';
 import { ObjectsAdminPage } from './admin/ObjectsAdminPage';
 import { UsersAdminPage } from './admin/UsersAdminPage';
 import { apiRequest, apiUrl } from './admin/api';
@@ -751,40 +752,54 @@ function AdminHome({
   const actions = [
     {
       label: 'Объекты',
-      className: 'primary-button primary-button--fit',
+      description: 'Каталог, публикация, медиа и данные объектов.',
+      tone: 'primary',
       canAccess: hasPermission('objects:read'),
       onClick: onOpenObjects,
     },
     {
       label: 'Пользователи',
-      className: 'secondary-button secondary-button--fit',
+      description: 'Роли, статусы и доступы сотрудников.',
+      tone: 'secondary',
       canAccess: hasPermission('users:read'),
       onClick: onOpenUsers,
     },
     {
       label: 'Импорт',
-      className: 'secondary-button secondary-button--fit',
+      description: 'Preview, run и отчеты WordPress-импорта.',
+      tone: 'secondary',
       canAccess: hasPermission('import:preview'),
       onClick: onOpenImport,
     },
   ].filter((action) => action.canAccess);
 
   return (
-    <div className="content-panel">
-      <p className="eyebrow">Админка</p>
-      <h2>Панель управления</h2>
+    <AdminPanel className="content-panel admin-home-panel">
+      <div className="admin-home-header">
+        <div>
+          <p className="eyebrow">Админка</p>
+          <h2>Панель управления</h2>
+        </div>
+        <AdminStatusBadge className="status-pill--active">Доступно</AdminStatusBadge>
+      </div>
       <div className="admin-actions">
         {actions.length ? (
           actions.map((action) => (
-            <button className={action.className} key={action.label} type="button" onClick={action.onClick}>
-              {action.label}
-            </button>
+            <article className="admin-action-card" key={action.label}>
+              <div>
+                <h3>{action.label}</h3>
+                <p>{action.description}</p>
+              </div>
+              <AdminButton tone={action.tone === 'primary' ? 'primary' : 'secondary'} type="button" onClick={action.onClick}>
+                Открыть
+              </AdminButton>
+            </article>
           ))
         ) : (
           <p className="muted-text">Для текущей роли нет доступных разделов админки.</p>
         )}
       </div>
-    </div>
+    </AdminPanel>
   );
 }
 

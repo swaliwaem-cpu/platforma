@@ -1,4 +1,18 @@
-import { ChangeEvent, DragEvent, FormEvent, useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, DragEvent, FormEvent, useEffect, useMemo, useState, type ReactNode } from 'react';
+import {
+  ArrowDownIcon,
+  ArrowLeftIcon,
+  ArrowUpDownIcon,
+  ArrowUpIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+  PlusIcon,
+  SaveIcon,
+  SearchIcon,
+  SendIcon,
+  Trash2Icon,
+  UploadIcon,
+} from 'lucide-react';
 import {
   DevelopersResponse,
   LocationsResponse,
@@ -15,7 +29,19 @@ import {
   RealEstateObjectSummary,
 } from '@platforma/shared';
 
+import { Input } from '@/components/ui/input';
+import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+
 import { useAuth } from '../auth/AuthProvider';
+import { AdminAlert, AdminButton, AdminEmptyState, AdminPanel, AdminStatusBadge } from './AdminUi';
 import { apiRequest, apiUrl } from './api';
 
 type ObjectsAdminPageProps = {
@@ -122,6 +148,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
   }, [pathname]);
   const isCreateRoute = pathname === '/admin/objects/new';
   const isListRoute = pathname === '/admin/objects';
+  const hasActiveListFilters = Boolean(search.trim() || statusFilter);
 
   useEffect(() => {
     if (!accessToken) {
@@ -506,6 +533,12 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
     setSortDirection(sortField === 'title' ? 'asc' : 'desc');
   }
 
+  function resetListFilters() {
+    setSearch('');
+    setStatusFilter('');
+    setPage(1);
+  }
+
   function handleGalleryDrop(targetImageId: string) {
     if (!object || !draggedImageId || draggedImageId === targetImageId) {
       setDraggedImageId(null);
@@ -596,163 +629,212 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
           <p className="eyebrow">Админка</p>
           <h2>Объекты</h2>
         </div>
-        <button className="secondary-button secondary-button--fit" type="button" onClick={onBack}>
+        <AdminButton tone="secondary" type="button" onClick={onBack}>
+          <ArrowLeftIcon data-icon="inline-start" />
           Назад
-        </button>
+        </AdminButton>
       </header>
 
       <section className="toolbar" aria-label="Фильтры объектов">
-        <input
-          aria-label="Поиск объектов"
-          placeholder="Поиск по названию, адресу, застройщику"
-          type="search"
-          value={search}
-          onChange={(event) => {
-            setSearch(event.target.value);
-            setPage(1);
-          }}
-        />
-        <select
-          aria-label="Фильтр по статусу"
-          value={statusFilter}
-          onChange={(event) => {
-            setStatusFilter(event.target.value);
-            setPage(1);
-          }}
-        >
-          <option value="">Все статусы</option>
-          {Object.entries(objectStatusLabels).map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
-        <button
-          className="primary-button primary-button--fit"
-          disabled={!canCreate}
-          type="button"
-          onClick={() => navigate('/admin/objects/new')}
-        >
-          Новый объект
-        </button>
+        <div className="object-toolbar-main">
+          <label className="toolbar-field toolbar-field--search">
+            <span>Поиск</span>
+            <span className="toolbar-input-shell">
+              <SearchIcon data-icon="inline-start" />
+              <Input
+                aria-label="Поиск объектов"
+                className="admin-toolbar-search"
+                placeholder="Название, slug, адрес, застройщик"
+                type="search"
+                value={search}
+                onChange={(event) => {
+                  setSearch(event.target.value);
+                  setPage(1);
+                }}
+              />
+            </span>
+          </label>
+
+          <label className="toolbar-field toolbar-field--status">
+            <span>Статус</span>
+            <select
+              aria-label="Фильтр по статусу"
+              value={statusFilter}
+              onChange={(event) => {
+                setStatusFilter(event.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="">Все статусы</option>
+              {Object.entries(objectStatusLabels).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="object-toolbar-actions">
+          <AdminButton disabled={!hasActiveListFilters} tone="secondary" type="button" onClick={resetListFilters}>
+            Сбросить
+          </AdminButton>
+          <AdminButton
+            disabled={!canCreate}
+            tone="primary"
+            type="button"
+            onClick={() => navigate('/admin/objects/new')}
+          >
+            <PlusIcon data-icon="inline-start" />
+            Новый объект
+          </AdminButton>
+        </div>
       </section>
 
-      {error ? <p className="form-error">{error}</p> : null}
-      {notice ? <p className="form-notice">{notice}</p> : null}
+      {error ? <AdminAlert tone="error">{error}</AdminAlert> : null}
+      {notice ? <AdminAlert tone="notice">{notice}</AdminAlert> : null}
 
-      <section className="table-panel" aria-label="Список объектов">
-        <div className="table-meta">
-          <span>{isLoading ? 'Загрузка' : `Всего: ${total}`}</span>
+      <AdminPanel className="table-panel" role="region" aria-label="Список объектов">
+        <div className="table-meta object-table-meta">
+          <span>{isLoading ? 'Загрузка объектов' : `Найдено: ${total}`}</span>
           <span>
             Страница {page} из {totalPages}
           </span>
         </div>
 
-        <div className="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>
-                  <SortButton active={sortBy === 'title'} direction={sortDirection} onClick={() => handleSort('title')}>
-                    Название
-                  </SortButton>
-                </th>
-                <th>
-                  <SortButton active={sortBy === 'status'} direction={sortDirection} onClick={() => handleSort('status')}>
-                    Статус
-                  </SortButton>
-                </th>
-                <th>Застройщик</th>
-                <th>Район</th>
-                <th>
-                  <SortButton
-                    active={sortBy === 'priceFrom'}
-                    direction={sortDirection}
-                    onClick={() => handleSort('priceFrom')}
-                  >
-                    Цена
-                  </SortButton>
-                </th>
-                <th>
-                  <SortButton
-                    active={sortBy === 'completionYear'}
-                    direction={sortDirection}
-                    onClick={() => handleSort('completionYear')}
-                  >
-                    Срок
-                  </SortButton>
-                </th>
-                <th>
-                  <SortButton
-                    active={sortBy === 'createdAt'}
-                    direction={sortDirection}
-                    onClick={() => handleSort('createdAt')}
-                  >
-                    Создан
-                  </SortButton>
-                </th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {objects.map((item) => (
-                <tr key={item.id}>
-                  <td>
+        <Table className="admin-table">
+          <TableHeader>
+            <TableRow>
+              <TableHead aria-sort={getSortAria(sortBy, sortDirection, 'title')} className="object-title-column">
+                <SortButton active={sortBy === 'title'} direction={sortDirection} onClick={() => handleSort('title')}>
+                  Название
+                </SortButton>
+              </TableHead>
+              <TableHead aria-sort={getSortAria(sortBy, sortDirection, 'status')}>
+                <SortButton active={sortBy === 'status'} direction={sortDirection} onClick={() => handleSort('status')}>
+                  Статус
+                </SortButton>
+              </TableHead>
+              <TableHead>Застройщик</TableHead>
+              <TableHead>Локация</TableHead>
+              <TableHead aria-sort={getSortAria(sortBy, sortDirection, 'priceFrom')}>
+                <SortButton
+                  active={sortBy === 'priceFrom'}
+                  direction={sortDirection}
+                  onClick={() => handleSort('priceFrom')}
+                >
+                  Цена
+                </SortButton>
+              </TableHead>
+              <TableHead aria-sort={getSortAria(sortBy, sortDirection, 'completionYear')}>
+                <SortButton
+                  active={sortBy === 'completionYear'}
+                  direction={sortDirection}
+                  onClick={() => handleSort('completionYear')}
+                >
+                  Срок
+                </SortButton>
+              </TableHead>
+              <TableHead aria-sort={getSortAria(sortBy, sortDirection, 'createdAt')}>
+                <SortButton
+                  active={sortBy === 'createdAt'}
+                  direction={sortDirection}
+                  onClick={() => handleSort('createdAt')}
+                >
+                  Создан
+                </SortButton>
+              </TableHead>
+              <TableHead className="object-action-column">
+                <span className="sr-only">Действия</span>
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {objects.map((item) => (
+              <TableRow key={item.id}>
+                <TableCell className="object-title-column">
+                  <div className="object-title-cell">
                     <strong>{item.title}</strong>
-                    <span className="table-subtext">{item.slug}</span>
-                  </td>
-                  <td>
-                    <span className={`status-pill object-status object-status--${item.status.toLowerCase()}`}>
+                    <code>{item.slug}</code>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div className="object-status-cell">
+                    <AdminStatusBadge className={`object-status object-status--${item.status.toLowerCase()}`}>
                       {objectStatusLabels[item.status]}
-                    </span>
-                  </td>
-                  <td>{item.developer?.name ?? 'Нет'}</td>
-                  <td>{getObjectDistrictName(item) ?? 'Нет'}</td>
-                  <td>{formatPrice(item.priceFrom)}</td>
-                  <td>{formatCompletion(item.completionYear, item.completionQuarter)}</td>
-                  <td>{formatDate(item.createdAt)}</td>
-                  <td>
-                    <button
-                      className="text-button"
-                      type="button"
-                      onClick={() => navigate(`/admin/objects/${item.id}/edit`)}
-                    >
-                      Открыть
-                    </button>
-                  </td>
-                </tr>
-              ))}
+                    </AdminStatusBadge>
+                    <span className="table-subtext">Обновлен: {formatDate(item.updatedAt)}</span>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <span className={item.developer ? undefined : 'muted-cell'}>
+                    {item.developer?.name ?? 'Не указан'}
+                  </span>
+                </TableCell>
+                <TableCell>
+                  <span className={getObjectDistrictName(item) ? undefined : 'muted-cell'}>
+                    {getObjectDistrictName(item) ?? 'Не указана'}
+                  </span>
+                  {getObjectMetroSummary(item) ? <span className="table-subtext">{getObjectMetroSummary(item)}</span> : null}
+                </TableCell>
+                <TableCell>
+                  <strong className="object-price-cell">{formatPrice(item.priceFrom)}</strong>
+                  {item.pricePerMeterFrom ? (
+                    <span className="table-subtext">{formatPrice(item.pricePerMeterFrom)} за м²</span>
+                  ) : null}
+                </TableCell>
+                <TableCell>{formatCompletion(item.completionYear, item.completionQuarter)}</TableCell>
+                <TableCell>
+                  <time dateTime={item.createdAt}>{formatDate(item.createdAt)}</time>
+                </TableCell>
+                <TableCell className="object-action-column">
+                  <AdminButton
+                    tone="text"
+                    type="button"
+                    onClick={() => navigate(`/admin/objects/${item.id}/edit`)}
+                  >
+                    Открыть
+                  </AdminButton>
+                </TableCell>
+              </TableRow>
+            ))}
 
-              {!isLoading && objects.length === 0 ? (
-                <tr>
-                  <td colSpan={8}>
-                    <span className="empty-row">Объекты не найдены</span>
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
+            {!isLoading && objects.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={8}>
+                  <AdminEmptyState
+                    title="Объекты не найдены"
+                    description={
+                      hasActiveListFilters
+                        ? 'Сбросьте фильтры или измените поисковый запрос.'
+                        : 'Создайте первый объект, чтобы он появился в списке.'
+                    }
+                  />
+                </TableCell>
+              </TableRow>
+            ) : null}
+          </TableBody>
+        </Table>
 
         <div className="pagination">
-          <button
-            className="secondary-button secondary-button--fit"
+          <AdminButton
             disabled={page <= 1}
+            tone="secondary"
             type="button"
             onClick={() => setPage((currentPage) => Math.max(1, currentPage - 1))}
           >
             Назад
-          </button>
-          <button
-            className="secondary-button secondary-button--fit"
+          </AdminButton>
+          <AdminButton
             disabled={page >= totalPages}
+            tone="secondary"
             type="button"
             onClick={() => setPage((currentPage) => currentPage + 1)}
           >
             Вперёд
-          </button>
+          </AdminButton>
         </div>
-      </section>
+      </AdminPanel>
     </div>
   );
 }
@@ -803,7 +885,26 @@ type ObjectEditorProps = {
 };
 
 function ObjectEditor(props: ObjectEditorProps) {
+  const [isJsonFieldsOpen, setIsJsonFieldsOpen] = useState(false);
   const coverImage = props.object?.images.find((image) => image.isCover) ?? props.object?.images[0] ?? null;
+  const previewStatus = props.object?.status ?? 'DRAFT';
+  const previewDeveloperName =
+    findById(props.developers, props.form.developerId)?.name ?? props.object?.developer?.name ?? 'Не выбран';
+  const previewDistrictName =
+    findById(props.districtLocations, props.form.primaryLocationId)?.name ??
+    getNamesByIds(props.districtLocations, props.form.districtLocationIds)[0] ??
+    (props.object ? getObjectDistrictName(props.object) : null) ??
+    'Не указан';
+  const previewMetroSummary =
+    getNamesByIds(props.metroStations, props.form.metroStationIds).slice(0, 2).join(', ') ||
+    (props.object ? getObjectMetroSummary(props.object) : null) ||
+    'Не указано';
+
+  useEffect(() => {
+    if (props.error?.startsWith('Features JSON')) {
+      setIsJsonFieldsOpen(true);
+    }
+  }, [props.error]);
 
   return (
     <div className="admin-objects admin-objects--editor">
@@ -814,248 +915,313 @@ function ObjectEditor(props: ObjectEditorProps) {
         </div>
         <div className="header-actions">
           {props.object?.status !== 'PUBLISHED' && !props.isCreateRoute ? (
-            <button
-              className="success-button"
+            <AdminButton
               disabled={!props.canPublish || props.isSubmitting}
+              tone="success"
               type="button"
               onClick={props.onPublish}
             >
+              <SendIcon data-icon="inline-start" />
               Опубликовать
-            </button>
+            </AdminButton>
           ) : null}
-          <button className="secondary-button secondary-button--fit" type="button" onClick={props.onBack}>
+          <AdminButton tone="secondary" type="button" onClick={props.onBack}>
+            <ArrowLeftIcon data-icon="inline-start" />
             Назад
-          </button>
+          </AdminButton>
         </div>
       </header>
 
-      {props.error ? <p className="form-error">{props.error}</p> : null}
-      {props.notice ? <p className="form-notice">{props.notice}</p> : null}
+      {props.error ? <AdminAlert tone="error">{props.error}</AdminAlert> : null}
+      {props.notice ? <AdminAlert tone="notice">{props.notice}</AdminAlert> : null}
 
       <div className="object-editor-layout">
         <form className="object-form editor-panel" onSubmit={props.onSubmit}>
           <fieldset disabled={props.isLoading || props.isSubmitting || (!props.isCreateRoute && !props.canUpdate)}>
-            <div className="form-grid">
-              <label className="field-wide">
-                Название
-                <input
-                  required
-                  maxLength={240}
-                  type="text"
-                  value={props.form.title}
-                  onChange={(event) => props.onFormChange({ ...props.form, title: event.target.value })}
-                />
-              </label>
+            <div className="object-form-sections">
+              <ObjectFormSection title="Основные данные" description="Название, описания и ссылка на материалы застройщика.">
+                <FieldGroup className="form-grid">
+                  <Field className="field-wide">
+                    <FieldLabel htmlFor="object-title">Название</FieldLabel>
+                    <Input
+                      id="object-title"
+                      required
+                      maxLength={240}
+                      type="text"
+                      value={props.form.title}
+                      onChange={(event) => props.onFormChange({ ...props.form, title: event.target.value })}
+                    />
+                  </Field>
 
-              <label className="field-wide">
-                Короткое описание
-                <textarea
-                  rows={3}
-                  value={props.form.shortDescription}
-                  onChange={(event) => props.onFormChange({ ...props.form, shortDescription: event.target.value })}
-                />
-              </label>
+                  <Field className="field-wide">
+                    <FieldLabel htmlFor="object-short-description">Короткое описание</FieldLabel>
+                    <textarea
+                      id="object-short-description"
+                      rows={3}
+                      value={props.form.shortDescription}
+                      onChange={(event) => props.onFormChange({ ...props.form, shortDescription: event.target.value })}
+                    />
+                  </Field>
 
-              <label className="field-wide">
-                Описание
-                <textarea
-                  rows={7}
-                  value={props.form.description}
-                  onChange={(event) => props.onFormChange({ ...props.form, description: event.target.value })}
-                />
-              </label>
+                  <Field className="field-wide">
+                    <FieldLabel htmlFor="object-description">Описание</FieldLabel>
+                    <textarea
+                      id="object-description"
+                      rows={7}
+                      value={props.form.description}
+                      onChange={(event) => props.onFormChange({ ...props.form, description: event.target.value })}
+                    />
+                  </Field>
 
-              <label className="field-wide">
-                Планировки и цены
-                <input
-                  inputMode="url"
-                  placeholder="https://developer.example/plans"
-                  type="url"
-                  value={props.form.layoutsUrl}
-                  onChange={(event) => props.onFormChange({ ...props.form, layoutsUrl: event.target.value })}
-                />
-              </label>
+                  <Field className="field-wide">
+                    <FieldLabel htmlFor="object-layouts-url">Планировки и цены</FieldLabel>
+                    <Input
+                      id="object-layouts-url"
+                      inputMode="url"
+                      placeholder="https://developer.example/plans"
+                      type="url"
+                      value={props.form.layoutsUrl}
+                      onChange={(event) => props.onFormChange({ ...props.form, layoutsUrl: event.target.value })}
+                    />
+                  </Field>
+                </FieldGroup>
+              </ObjectFormSection>
 
-              <label>
-                Цена от
-                <input
-                  inputMode="decimal"
-                  type="text"
-                  value={props.form.priceFrom}
-                  onChange={(event) => props.onFormChange({ ...props.form, priceFrom: event.target.value })}
-                />
-              </label>
+              <ObjectFormSection title="Цены и сроки" description="Публичные значения для карточек, каталога и предпросмотра.">
+                <FieldGroup className="form-grid">
+                  <Field>
+                    <FieldLabel htmlFor="object-price-from">Цена от</FieldLabel>
+                    <Input
+                      id="object-price-from"
+                      inputMode="decimal"
+                      type="text"
+                      value={props.form.priceFrom}
+                      onChange={(event) => props.onFormChange({ ...props.form, priceFrom: event.target.value })}
+                    />
+                  </Field>
 
-              <label>
-                Цена за метр от
-                <input
-                  inputMode="decimal"
-                  type="text"
-                  value={props.form.pricePerMeterFrom}
-                  onChange={(event) => props.onFormChange({ ...props.form, pricePerMeterFrom: event.target.value })}
-                />
-              </label>
+                  <Field>
+                    <FieldLabel htmlFor="object-price-meter">Цена за метр от</FieldLabel>
+                    <Input
+                      id="object-price-meter"
+                      inputMode="decimal"
+                      type="text"
+                      value={props.form.pricePerMeterFrom}
+                      onChange={(event) => props.onFormChange({ ...props.form, pricePerMeterFrom: event.target.value })}
+                    />
+                  </Field>
 
-              <label>
-                Год сдачи
-                <input
-                  inputMode="numeric"
-                  type="text"
-                  value={props.form.completionYear}
-                  onChange={(event) => props.onFormChange({ ...props.form, completionYear: event.target.value })}
-                />
-              </label>
+                  <Field>
+                    <FieldLabel htmlFor="object-completion-year">Год сдачи</FieldLabel>
+                    <Input
+                      id="object-completion-year"
+                      inputMode="numeric"
+                      type="text"
+                      value={props.form.completionYear}
+                      onChange={(event) => props.onFormChange({ ...props.form, completionYear: event.target.value })}
+                    />
+                  </Field>
 
-              <label>
-                Квартал
-                <select
-                  value={props.form.completionQuarter}
-                  onChange={(event) => props.onFormChange({ ...props.form, completionQuarter: event.target.value })}
-                >
-                  <option value="">Не указан</option>
-                  <option value="1">1 квартал</option>
-                  <option value="2">2 квартал</option>
-                  <option value="3">3 квартал</option>
-                  <option value="4">4 квартал</option>
-                </select>
-              </label>
+                  <Field>
+                    <FieldLabel htmlFor="object-completion-quarter">Квартал</FieldLabel>
+                    <select
+                      id="object-completion-quarter"
+                      value={props.form.completionQuarter}
+                      onChange={(event) => props.onFormChange({ ...props.form, completionQuarter: event.target.value })}
+                    >
+                      <option value="">Не указан</option>
+                      <option value="1">1 квартал</option>
+                      <option value="2">2 квартал</option>
+                      <option value="3">3 квартал</option>
+                      <option value="4">4 квартал</option>
+                    </select>
+                  </Field>
+                </FieldGroup>
+              </ObjectFormSection>
 
-              <label className="field-wide">
-                Адрес
-                <input
-                  type="text"
-                  value={props.form.address}
-                  onChange={(event) => props.onFormChange({ ...props.form, address: event.target.value })}
-                />
-              </label>
+              <ObjectFormSection title="Локация" description="Адрес, координаты, районы, окружение и метро.">
+                <FieldGroup className="form-grid">
+                  <Field className="field-wide">
+                    <FieldLabel htmlFor="object-address">Адрес</FieldLabel>
+                    <Input
+                      id="object-address"
+                      type="text"
+                      value={props.form.address}
+                      onChange={(event) => props.onFormChange({ ...props.form, address: event.target.value })}
+                    />
+                  </Field>
 
-              <label>
-                Широта
-                <input
-                  inputMode="decimal"
-                  type="text"
-                  value={props.form.latitude}
-                  onChange={(event) => props.onFormChange({ ...props.form, latitude: event.target.value })}
-                />
-              </label>
+                  <Field>
+                    <FieldLabel htmlFor="object-latitude">Широта</FieldLabel>
+                    <Input
+                      id="object-latitude"
+                      inputMode="decimal"
+                      type="text"
+                      value={props.form.latitude}
+                      onChange={(event) => props.onFormChange({ ...props.form, latitude: event.target.value })}
+                    />
+                  </Field>
 
-              <label>
-                Долгота
-                <input
-                  inputMode="decimal"
-                  type="text"
-                  value={props.form.longitude}
-                  onChange={(event) => props.onFormChange({ ...props.form, longitude: event.target.value })}
-                />
-              </label>
+                  <Field>
+                    <FieldLabel htmlFor="object-longitude">Долгота</FieldLabel>
+                    <Input
+                      id="object-longitude"
+                      inputMode="decimal"
+                      type="text"
+                      value={props.form.longitude}
+                      onChange={(event) => props.onFormChange({ ...props.form, longitude: event.target.value })}
+                    />
+                  </Field>
 
-              <label>
-                Застройщик
-                <select
-                  value={props.form.developerId}
-                  onChange={(event) => props.onFormChange({ ...props.form, developerId: event.target.value })}
-                >
-                  <option value="">Не выбран</option>
-                  {props.developers.map((developer) => (
-                    <option key={developer.id} value={developer.id}>
-                      {developer.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  <Field>
+                    <FieldLabel htmlFor="object-developer">Застройщик</FieldLabel>
+                    <select
+                      id="object-developer"
+                      value={props.form.developerId}
+                      onChange={(event) => props.onFormChange({ ...props.form, developerId: event.target.value })}
+                    >
+                      <option value="">Не выбран</option>
+                      {props.developers.map((developer) => (
+                        <option key={developer.id} value={developer.id}>
+                          {developer.name}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
 
-              <label>
-                Основной район
-                <select
-                  value={props.form.primaryLocationId}
-                  onChange={(event) => props.onFormChange({ ...props.form, primaryLocationId: event.target.value })}
-                >
-                  <option value="">Не выбрана</option>
-                  {props.districtLocations.map((location) => (
-                    <option key={location.id} value={location.id}>
-                      {location.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  <Field>
+                    <FieldLabel htmlFor="object-primary-location">Основной район</FieldLabel>
+                    <select
+                      id="object-primary-location"
+                      value={props.form.primaryLocationId}
+                      onChange={(event) => props.onFormChange({ ...props.form, primaryLocationId: event.target.value })}
+                    >
+                      <option value="">Не выбрана</option>
+                      {props.districtLocations.map((location) => (
+                        <option key={location.id} value={location.id}>
+                          {location.name}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
 
-              <label>
-                Районы
-                <select
-                  multiple
-                  value={props.form.districtLocationIds}
-                  onChange={(event) =>
-                    props.onFormChange({ ...props.form, districtLocationIds: getSelectedValues(event) })
-                  }
-                >
-                  {props.districtLocations.map((location) => (
-                    <option key={location.id} value={location.id}>
-                      {location.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  <Field>
+                    <FieldLabel htmlFor="object-districts">Районы</FieldLabel>
+                    <select
+                      id="object-districts"
+                      multiple
+                      value={props.form.districtLocationIds}
+                      onChange={(event) =>
+                        props.onFormChange({ ...props.form, districtLocationIds: getSelectedValues(event) })
+                      }
+                    >
+                      {props.districtLocations.map((location) => (
+                        <option key={location.id} value={location.id}>
+                          {location.name}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
 
-              <label>
-                Окружение
-                <select
-                  multiple
-                  value={props.form.areaLocationIds}
-                  onChange={(event) =>
-                    props.onFormChange({ ...props.form, areaLocationIds: getSelectedValues(event) })
-                  }
-                >
-                  {props.areaLocations.map((location) => (
-                    <option key={location.id} value={location.id}>
-                      {location.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  <Field>
+                    <FieldLabel htmlFor="object-areas">Окружение</FieldLabel>
+                    <select
+                      id="object-areas"
+                      multiple
+                      value={props.form.areaLocationIds}
+                      onChange={(event) =>
+                        props.onFormChange({ ...props.form, areaLocationIds: getSelectedValues(event) })
+                      }
+                    >
+                      {props.areaLocations.map((location) => (
+                        <option key={location.id} value={location.id}>
+                          {location.name}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
 
-              <label>
-                Метро
-                <select
-                  multiple
-                  value={props.form.metroStationIds}
-                  onChange={(event) =>
-                    props.onFormChange({ ...props.form, metroStationIds: getSelectedValues(event) })
-                  }
-                >
-                  {props.metroStations.map((station) => (
-                    <option key={station.id} value={station.id}>
-                      {station.lineName ? `${station.name}, ${station.lineName}` : station.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  <Field className="field-wide">
+                    <FieldLabel htmlFor="object-metro">Метро</FieldLabel>
+                    <select
+                      id="object-metro"
+                      multiple
+                      value={props.form.metroStationIds}
+                      onChange={(event) =>
+                        props.onFormChange({ ...props.form, metroStationIds: getSelectedValues(event) })
+                      }
+                    >
+                      {props.metroStations.map((station) => (
+                        <option key={station.id} value={station.id}>
+                          {station.lineName ? `${station.name}, ${station.lineName}` : station.name}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </FieldGroup>
+              </ObjectFormSection>
 
-              <label className="field-wide">
-                Features JSON
-                <textarea
-                  rows={5}
-                  spellCheck={false}
-                  value={props.form.featuresText}
-                  onChange={(event) => props.onFormChange({ ...props.form, featuresText: event.target.value })}
-                />
-              </label>
+              <ObjectFormSection
+                title="JSON-поля"
+                description="Технические свойства объекта. Формат должен остаться валидным JSON-объектом."
+                action={
+                  <AdminButton
+                    aria-controls="object-json-fields"
+                    aria-expanded={isJsonFieldsOpen}
+                    tone="secondary"
+                    type="button"
+                    onClick={() => setIsJsonFieldsOpen((currentValue) => !currentValue)}
+                  >
+                    {isJsonFieldsOpen ? (
+                      <ChevronUpIcon data-icon="inline-start" />
+                    ) : (
+                      <ChevronDownIcon data-icon="inline-start" />
+                    )}
+                    {isJsonFieldsOpen ? 'Скрыть JSON-поля' : 'Показать JSON-поля'}
+                  </AdminButton>
+                }
+              >
+                {isJsonFieldsOpen ? (
+                  <FieldGroup id="object-json-fields">
+                    <Field>
+                      <FieldLabel htmlFor="object-features-json">Features JSON</FieldLabel>
+                      <textarea
+                        id="object-features-json"
+                        rows={7}
+                        spellCheck={false}
+                        value={props.form.featuresText}
+                        onChange={(event) => props.onFormChange({ ...props.form, featuresText: event.target.value })}
+                      />
+                    </Field>
+                  </FieldGroup>
+                ) : null}
+              </ObjectFormSection>
             </div>
 
             <div className="form-actions object-form-actions">
-              <button
-                className="primary-button primary-button--fit"
+              <AdminButton
                 disabled={props.isSubmitting || (props.isCreateRoute ? false : !props.canUpdate)}
+                tone="primary"
                 type="submit"
               >
+                <SaveIcon data-icon="inline-start" />
                 {props.isCreateRoute ? 'Создать' : 'Сохранить'}
-              </button>
+              </AdminButton>
             </div>
           </fieldset>
         </form>
 
         <aside className="object-side">
-          <section className="editor-panel object-preview" aria-label="Предпросмотр карточки">
-            <p className="eyebrow">Предпросмотр</p>
+          <AdminPanel className="editor-panel object-preview" role="region" aria-label="Предпросмотр карточки">
+            <div className="panel-title-row">
+              <div>
+                <p className="eyebrow">Предпросмотр</p>
+                <h3>{props.form.title.trim() || 'Название объекта'}</h3>
+              </div>
+              <AdminStatusBadge className={`object-status object-status--${previewStatus.toLowerCase()}`}>
+                {objectStatusLabels[previewStatus]}
+              </AdminStatusBadge>
+            </div>
             <div className="preview-media">
               {coverImage && props.accessToken ? (
                 <SecureImage accessToken={props.accessToken} alt={coverImage.alt ?? props.form.title} fileId={coverImage.file.id} />
@@ -1063,36 +1229,72 @@ function ObjectEditor(props: ObjectEditorProps) {
                 <span>Нет обложки</span>
               )}
             </div>
-            <h3>{props.form.title.trim() || 'Название объекта'}</h3>
-            <p className="preview-meta">
-              {objectStatusLabels[props.object?.status ?? 'DRAFT']} · {formatPrice(props.form.priceFrom)}
-            </p>
-            <p className="preview-address">{props.form.address.trim() || 'Адрес не указан'}</p>
+            <dl className="preview-facts">
+              <div>
+                <dt>Цена</dt>
+                <dd>{formatPrice(props.form.priceFrom)}</dd>
+              </div>
+              <div>
+                <dt>За м²</dt>
+                <dd>{formatPrice(props.form.pricePerMeterFrom)}</dd>
+              </div>
+              <div>
+                <dt>Срок</dt>
+                <dd>{formatCompletion(props.form.completionYear, props.form.completionQuarter)}</dd>
+              </div>
+              <div>
+                <dt>Район</dt>
+                <dd>{previewDistrictName}</dd>
+              </div>
+            </dl>
+            <div className="preview-detail-list">
+              <div>
+                <span>Адрес</span>
+                <strong>{props.form.address.trim() || 'Адрес не указан'}</strong>
+              </div>
+              <div>
+                <span>Застройщик</span>
+                <strong>{previewDeveloperName}</strong>
+              </div>
+              <div>
+                <span>Метро</span>
+                <strong>{previewMetroSummary}</strong>
+              </div>
+            </div>
             <p className="helper-text">{props.form.shortDescription.trim() || 'Короткое описание появится здесь'}</p>
-          </section>
+          </AdminPanel>
 
           {!props.isCreateRoute ? (
             <>
-              <section className="editor-panel media-panel" aria-label="Медиа объекта">
-                <p className="eyebrow">Медиа</p>
-                <FileUploadRow
-                  accept="image/jpeg,image/png,image/webp"
-                  buttonLabel="Загрузить обложку"
-                  disabled={!props.canUpload || props.isUploading}
-                  file={props.coverFile}
-                  label="Обложка"
-                  onChange={props.onCoverFileChange}
-                  onUpload={props.onUploadCover}
-                />
-                <FileUploadRow
-                  accept="image/jpeg,image/png,image/webp"
-                  buttonLabel="Добавить в галерею"
-                  disabled={!props.canUpload || props.isUploading}
-                  file={props.galleryFile}
-                  label="Галерея"
-                  onChange={props.onGalleryFileChange}
-                  onUpload={props.onUploadGalleryImage}
-                />
+              <AdminPanel className="editor-panel media-panel" role="region" aria-label="Медиа объекта">
+                <div className="panel-title-row">
+                  <div>
+                    <p className="eyebrow">Медиа</p>
+                    <h3>Обложка и галерея</h3>
+                  </div>
+                  <span className="panel-count">{props.object?.images.length ?? 0} фото</span>
+                </div>
+
+                <div className="upload-stack">
+                  <FileUploadRow
+                    accept="image/jpeg,image/png,image/webp"
+                    buttonLabel="Загрузить"
+                    disabled={!props.canUpload || props.isUploading}
+                    file={props.coverFile}
+                    label="Обложка"
+                    onChange={props.onCoverFileChange}
+                    onUpload={props.onUploadCover}
+                  />
+                  <FileUploadRow
+                    accept="image/jpeg,image/png,image/webp"
+                    buttonLabel="Добавить"
+                    disabled={!props.canUpload || props.isUploading}
+                    file={props.galleryFile}
+                    label="Галерея"
+                    onChange={props.onGalleryFileChange}
+                    onUpload={props.onUploadGalleryImage}
+                  />
+                </div>
 
                 <ul className="gallery-list">
                   {props.object?.images.map((image, index) => (
@@ -1105,61 +1307,96 @@ function ObjectEditor(props: ObjectEditorProps) {
                       onDragStart={() => props.onDragStart(image.id)}
                       onDrop={() => props.onDrop(image.id)}
                     >
-                      <span>{image.isCover ? 'Обложка' : `Фото ${index + 1}`}</span>
+                      <div className="gallery-item-main">
+                        <div className="gallery-thumb">
+                          {props.accessToken ? (
+                            <SecureImage
+                              accessToken={props.accessToken}
+                              alt={image.alt ?? image.title ?? `Фото ${index + 1}`}
+                              fileId={image.file.id}
+                            />
+                          ) : (
+                            <span>Фото</span>
+                          )}
+                        </div>
+                        <div>
+                          <strong>{image.isCover ? 'Обложка' : `Фото ${index + 1}`}</strong>
+                          <span>{image.title || image.file.originalName || `sortOrder ${image.sortOrder}`}</span>
+                        </div>
+                      </div>
                       <div className="gallery-actions">
-                        <button
-                          className="text-button"
+                        <AdminButton
+                          tone="text"
                           disabled={index === 0}
                           type="button"
                           onClick={() => props.onGalleryMove(image.id, -1)}
                         >
+                          <ChevronUpIcon data-icon="inline-start" />
                           Выше
-                        </button>
-                        <button
-                          className="text-button"
+                        </AdminButton>
+                        <AdminButton
+                          tone="text"
                           disabled={index === (props.object?.images.length ?? 0) - 1}
                           type="button"
                           onClick={() => props.onGalleryMove(image.id, 1)}
                         >
+                          <ChevronDownIcon data-icon="inline-start" />
                           Ниже
-                        </button>
-                        <button
-                          className="text-button text-button--danger"
+                        </AdminButton>
+                        <AdminButton
+                          className="text-button--danger"
+                          tone="text"
                           disabled={!props.canDeleteMedia || props.isUploading}
                           type="button"
                           onClick={() => props.onGalleryDelete(image.id)}
                         >
+                          <Trash2Icon data-icon="inline-start" />
                           Удалить
-                        </button>
+                        </AdminButton>
                       </div>
                     </li>
                   ))}
                 </ul>
-              </section>
+                {props.object?.images.length === 0 ? (
+                  <AdminEmptyState title="Галерея пустая" description="Сначала загрузите обложку или добавьте фото в галерею." />
+                ) : null}
+              </AdminPanel>
 
-              <section className="editor-panel media-panel" aria-label="Файлы объекта">
-                <p className="eyebrow">PDF-файлы</p>
-                <label>
-                  Тип
-                  <select
-                    value={props.objectFileType}
-                    onChange={(event) => props.onObjectFileTypeChange(event.target.value as ObjectFileType)}
-                  >
-                    {Object.entries(fileTypeLabels).map(([value, label]) => (
-                      <option key={value} value={value}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Название
-                  <input
-                    type="text"
-                    value={props.objectFileTitle}
-                    onChange={(event) => props.onObjectFileTitleChange(event.target.value)}
-                  />
-                </label>
+              <AdminPanel className="editor-panel media-panel" role="region" aria-label="Файлы объекта">
+                <div className="panel-title-row">
+                  <div>
+                    <p className="eyebrow">PDF-файлы</p>
+                    <h3>Документы объекта</h3>
+                  </div>
+                  <span className="panel-count">{props.object?.files.length ?? 0} файлов</span>
+                </div>
+
+                <FieldGroup className="file-upload-fields">
+                  <Field>
+                    <FieldLabel htmlFor="object-file-type">Тип</FieldLabel>
+                    <select
+                      id="object-file-type"
+                      value={props.objectFileType}
+                      onChange={(event) => props.onObjectFileTypeChange(event.target.value as ObjectFileType)}
+                    >
+                      {Object.entries(fileTypeLabels).map(([value, label]) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="object-file-title">Название</FieldLabel>
+                    <Input
+                      id="object-file-title"
+                      type="text"
+                      value={props.objectFileTitle}
+                      onChange={(event) => props.onObjectFileTitleChange(event.target.value)}
+                    />
+                  </Field>
+                </FieldGroup>
+
                 <FileUploadRow
                   accept="application/pdf"
                   buttonLabel="Загрузить PDF"
@@ -1172,32 +1409,71 @@ function ObjectEditor(props: ObjectEditorProps) {
                 <ul className="file-list">
                   {props.object?.files.map((file) => (
                     <li key={file.id}>
-                      <span>{file.title || file.file.originalName || fileTypeLabels[file.type]}</span>
+                      <div className="file-main">
+                        <strong>{file.title || file.file.originalName || fileTypeLabels[file.type]}</strong>
+                        <span>{file.file.originalName ?? 'Имя файла не указано'}</span>
+                      </div>
                       <div className="file-actions">
                         <strong>{fileTypeLabels[file.type]}</strong>
-                        <button
-                          className="text-button text-button--danger"
+                        {file.file.sizeBytes ? <span>{formatFileSize(file.file.sizeBytes)}</span> : null}
+                        <AdminButton
+                          className="text-button--danger"
+                          tone="text"
                           disabled={!props.canDeleteMedia || props.isUploading}
                           type="button"
                           onClick={() => props.onLinkedFileDelete(file.id)}
                         >
+                          <Trash2Icon data-icon="inline-start" />
                           Удалить
-                        </button>
+                        </AdminButton>
                       </div>
                     </li>
                   ))}
                 </ul>
-              </section>
+                {props.object?.files.length === 0 ? (
+                  <AdminEmptyState title="PDF-файлов нет" description="Добавьте презентацию, планировку или другой документ." />
+                ) : null}
+              </AdminPanel>
             </>
           ) : (
-            <section className="editor-panel media-panel">
-              <p className="eyebrow">Медиа</p>
+            <AdminPanel className="editor-panel media-panel" role="region">
+              <div className="panel-title-row">
+                <div>
+                  <p className="eyebrow">Медиа</p>
+                  <h3>Файлы появятся после создания</h3>
+                </div>
+              </div>
               <p className="helper-text">Загрузка обложки, галереи и PDF откроется после создания объекта.</p>
-            </section>
+            </AdminPanel>
           )}
         </aside>
       </div>
     </div>
+  );
+}
+
+function ObjectFormSection({
+  action,
+  children,
+  description,
+  title,
+}: {
+  action?: ReactNode;
+  children: ReactNode;
+  description: string;
+  title: string;
+}) {
+  return (
+    <section className="object-form-section">
+      <div className="object-form-section-header">
+        <div>
+          <h3>{title}</h3>
+          <p>{description}</p>
+        </div>
+        {action ? <div className="object-form-section-action">{action}</div> : null}
+      </div>
+      {children}
+    </section>
   );
 }
 
@@ -1220,7 +1496,7 @@ function FileUploadRow({
 }) {
   return (
     <div className="upload-row">
-      <label>
+      <label className="upload-field">
         {label}
         <input
           accept={accept}
@@ -1228,9 +1504,15 @@ function FileUploadRow({
           onChange={(event) => onChange(event.target.files?.[0] ?? null)}
         />
       </label>
-      <button className="secondary-button secondary-button--fit" disabled={disabled || !file} type="button" onClick={onUpload}>
-        {buttonLabel}
-      </button>
+      <div className="upload-action">
+        <span className={file ? 'upload-file-name' : 'upload-file-name upload-file-name--empty'}>
+          {file?.name ?? 'Файл не выбран'}
+        </span>
+        <AdminButton disabled={disabled || !file} tone="secondary" type="button" onClick={onUpload}>
+          <UploadIcon data-icon="inline-start" />
+          {buttonLabel}
+        </AdminButton>
+      </div>
     </div>
   );
 }
@@ -1247,10 +1529,24 @@ function SortButton({
   onClick: () => void;
 }) {
   return (
-    <button className={active ? 'table-sort-button table-sort-button--active' : 'table-sort-button'} type="button" onClick={onClick}>
+    <AdminButton
+      className={active ? 'table-sort-button table-sort-button--active' : 'table-sort-button'}
+      fit={false}
+      tone="text"
+      type="button"
+      onClick={onClick}
+    >
       {children}
-      {active ? <span>{direction === 'asc' ? '↑' : '↓'}</span> : null}
-    </button>
+      {active ? (
+        direction === 'asc' ? (
+          <ArrowUpIcon data-icon="inline-end" />
+        ) : (
+          <ArrowDownIcon data-icon="inline-end" />
+        )
+      ) : (
+        <ArrowUpDownIcon data-icon="inline-end" />
+      )}
+    </AdminButton>
   );
 }
 
@@ -1360,6 +1656,18 @@ type ObjectWithLocations = {
   locations: ObjectLocation[];
 };
 
+type ObjectWithMetroStations = {
+  metroStations: Array<Pick<ObjectMetroStation, 'lineName' | 'name'>>;
+};
+
+function getSortAria(activeSortBy: SortField, direction: SortDirection, sortField: SortField) {
+  if (activeSortBy !== sortField) {
+    return undefined;
+  }
+
+  return direction === 'asc' ? 'ascending' : 'descending';
+}
+
 function getObjectDistrictName(object: ObjectWithLocations) {
   return getObjectDistrictLocation(object)?.name ?? null;
 }
@@ -1370,6 +1678,36 @@ function getObjectDistrictLocation(object: ObjectWithLocations) {
   }
 
   return object.locations.find((location) => location.type === 'DISTRICT') ?? null;
+}
+
+function getObjectMetroSummary(object: ObjectWithMetroStations) {
+  if (object.metroStations.length === 0) {
+    return null;
+  }
+
+  const stationNames = object.metroStations.map((station) =>
+    station.lineName ? `${station.name}, ${station.lineName}` : station.name,
+  );
+
+  if (stationNames.length <= 2) {
+    return stationNames.join(', ');
+  }
+
+  return `${stationNames.slice(0, 2).join(', ')} и еще ${stationNames.length - 2}`;
+}
+
+function findById<T extends { id: string }>(items: T[], id: string) {
+  if (!id) {
+    return null;
+  }
+
+  return items.find((item) => item.id === id) ?? null;
+}
+
+function getNamesByIds(items: Array<{ id: string; name: string }>, ids: string[]) {
+  const itemById = new Map(items.map((item) => [item.id, item.name]));
+
+  return ids.map((id) => itemById.get(id)).filter((name): name is string => Boolean(name));
 }
 
 function getObjectLocationsByType(object: ObjectWithLocations, type: ObjectLocation['type']) {
@@ -1499,6 +1837,24 @@ function formatPrice(value: string | null) {
     style: 'currency',
     currency: 'RUB',
   }).format(parsed);
+}
+
+function formatFileSize(value: string) {
+  const bytes = Number(value);
+
+  if (!Number.isFinite(bytes) || bytes < 0) {
+    return value;
+  }
+
+  if (bytes < 1024) {
+    return `${bytes} Б`;
+  }
+
+  if (bytes < 1024 * 1024) {
+    return `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 }).format(bytes / 1024)} КБ`;
+  }
+
+  return `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 }).format(bytes / (1024 * 1024))} МБ`;
 }
 
 function formatCompletion(year: number | string | null, quarter: number | string | null) {
