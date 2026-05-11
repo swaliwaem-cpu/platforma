@@ -587,7 +587,7 @@ function getDescriptionParagraphs(object: RealEstateObjectDetail) {
   const featureTextSections = Array.isArray(object.featuresJson.textSections)
     ? object.featuresJson.textSections.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
     : [];
-  const sourceText = object.description || object.shortDescription || featureTextSections.join('\n\n');
+  const sourceText = object.description || featureTextSections.join('\n\n');
 
   return sourceText
     .split(/\n{2,}/u)

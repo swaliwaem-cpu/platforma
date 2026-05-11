@@ -2249,18 +2249,6 @@ tr.user-row--deactivated .text-button {
   overflow-wrap: anywhere;
 }
 
-.catalog-card-description {
-  display: -webkit-box;
-  overflow: hidden;
-  margin: 0;
-  color: var(--catalog-ink-700);
-  font-size: 13px;
-  font-weight: 650;
-  line-height: 1.45;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
 .catalog-card-location {
   display: flex;
   flex-wrap: wrap;

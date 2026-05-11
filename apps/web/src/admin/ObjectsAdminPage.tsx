@@ -54,7 +54,6 @@ type ObjectsAdminPageProps = {
 type ObjectFormState = {
   title: string;
   description: string;
-  shortDescription: string;
   layoutsUrl: string;
   krtName: string;
   apartmentAreaRange: string;
@@ -97,7 +96,6 @@ const fileTypeLabels: Record<ObjectFileType, string> = {
 const emptyForm: ObjectFormState = {
   title: '',
   description: '',
-  shortDescription: '',
   layoutsUrl: '',
   krtName: '',
   apartmentAreaRange: '',
@@ -953,7 +951,7 @@ function ObjectEditor(props: ObjectEditorProps) {
         <form className="object-form editor-panel" onSubmit={props.onSubmit}>
           <fieldset disabled={props.isLoading || props.isSubmitting || (!props.isCreateRoute && !props.canUpdate)}>
             <div className="object-form-sections">
-              <ObjectFormSection title="Основные данные" description="Название, описания и ссылка на материалы застройщика.">
+              <ObjectFormSection title="Основные данные" description="Название, описание и ссылка на материалы застройщика.">
                 <FieldGroup className="form-grid">
                   <Field className="field-wide">
                     <FieldLabel htmlFor="object-title">Название</FieldLabel>
@@ -964,16 +962,6 @@ function ObjectEditor(props: ObjectEditorProps) {
                       type="text"
                       value={props.form.title}
                       onChange={(event) => props.onFormChange({ ...props.form, title: event.target.value })}
-                    />
-                  </Field>
-
-                  <Field className="field-wide">
-                    <FieldLabel htmlFor="object-short-description">Короткое описание</FieldLabel>
-                    <textarea
-                      id="object-short-description"
-                      rows={3}
-                      value={props.form.shortDescription}
-                      onChange={(event) => props.onFormChange({ ...props.form, shortDescription: event.target.value })}
                     />
                   </Field>
 
@@ -1357,7 +1345,6 @@ function ObjectEditor(props: ObjectEditorProps) {
                 <strong>{previewMetroSummary}</strong>
               </div>
             </div>
-            <p className="helper-text">{props.form.shortDescription.trim() || 'Короткое описание появится здесь'}</p>
           </AdminPanel>
 
           {!props.isCreateRoute ? (
@@ -1704,7 +1691,6 @@ function createFormFromObject(object: RealEstateObjectDetail): ObjectFormState {
   return {
     title: object.title,
     description: object.description ?? '',
-    shortDescription: object.shortDescription ?? '',
     layoutsUrl: object.layoutsUrl ?? '',
     krtName: object.krtName ?? '',
     apartmentAreaRange: object.apartmentAreaRange ?? '',
@@ -1741,7 +1727,6 @@ function createPayloadFromForm(form: ObjectFormState) {
   return {
     title: form.title.trim(),
     description: emptyToNull(form.description),
-    shortDescription: emptyToNull(form.shortDescription),
     layoutsUrl: emptyToNull(form.layoutsUrl),
     krtName: emptyToNull(form.krtName),
     apartmentAreaRange: emptyToNull(form.apartmentAreaRange),

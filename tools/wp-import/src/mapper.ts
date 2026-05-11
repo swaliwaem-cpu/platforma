@@ -93,8 +93,7 @@ function mapObject(
   const objectTerms = source.termsByObjectId.get(post.ID) ?? [];
   const classifiedTerms = classifyTerms(objectTerms, source);
   const title = firstText(meta, 'zagolovok_1') ?? normalizeText(post.post_title) ?? `WordPress object ${post.ID}`;
-  const shortDescription = firstLongText(meta, 'korotkoe_opisanie');
-  const description = buildDescription(post, meta, shortDescription);
+  const description = buildDescription(post, meta);
   const developer = mapDeveloper(firstText(meta, 'imya_zastrojshhika'), developerAliases);
   const coordinates = parseCoordinates(firstText(meta, 'karta_koordinaty'));
   const images = collectImages(meta, source, post.ID, warnings);
@@ -127,7 +126,7 @@ function mapObject(
     slug: normalizeSlug(post.post_name) ?? `${slugify(title)}-${post.ID}`,
     status: mapObjectStatus(post.post_status),
     description,
-    shortDescription,
+    shortDescription: null,
     priceFrom: parseMoney(firstText(meta, 'stoimost')),
     pricePerMeterFrom: parseMoney(firstText(meta, 'za_m2')),
     completionYear: classifiedTerms.completionYear,
@@ -588,7 +587,6 @@ function buildFeaturesJson(
       sourceUrl: source.siteUrl && post.post_name ? `${source.siteUrl.replace(/\/+$/u, '')}/${post.post_name}/` : null,
     },
     h1: firstText(meta, 'zagolovok_1'),
-    shortDescription: firstLongText(meta, 'korotkoe_opisanie'),
     optionalPrice: parseBoolean(firstMeta(meta, 'czena_opczionalna')),
     roomPrices: compactJson({
       studio: parseMoney(firstText(meta, 'stoimost_1')),
@@ -633,7 +631,7 @@ function groupFeatureTerms(objectTerms: WpObjectTerm[], source: WpSourceData) {
   return groups;
 }
 
-function buildDescription(post: WpPost, meta: Map<string, string[]>, shortDescription: string | null) {
+function buildDescription(post: WpPost, meta: Map<string, string[]>) {
   const contentSections = [
     firstLongText(meta, 'opisanie_2'),
     firstLongText(meta, 'opisanie_3'),
@@ -646,7 +644,7 @@ function buildDescription(post: WpPost, meta: Map<string, string[]>, shortDescri
     return contentSections.join('\n\n');
   }
 
-  return normalizeText(stripHtml(post.post_content)) ?? shortDescription;
+  return normalizeText(stripHtml(post.post_content));
 }
 
 function collectRepeater(meta: Map<string, string[]>, prefix: string) {

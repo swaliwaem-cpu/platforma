@@ -833,7 +833,6 @@ function CatalogCard({
   const hasPresentation = Boolean(object.presentationFile);
   const hasVisibleBadges = object.status !== 'PUBLISHED' || hasPresentation;
   const districtLabel = getObjectDistrictLabel(object);
-  const shortDescription = object.shortDescription?.trim();
 
   function handleOpen(event: MouseEvent<HTMLAnchorElement>) {
     event.preventDefault();
@@ -876,7 +875,6 @@ function CatalogCard({
               {object.title}
             </a>
           </h3>
-          {shortDescription ? <p className="catalog-card-description">{shortDescription}</p> : null}
         </div>
         <div className="catalog-card-location" aria-label="Район и метро">
           <span>{districtLabel}</span>

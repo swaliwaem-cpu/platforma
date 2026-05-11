@@ -177,7 +177,8 @@ test('mapWordPressSource maps object fields, taxonomies, images and files', () =
   assert.equal(object.slug, 'zhk-severnyy');
   assert.equal(object.status, ObjectStatus.PUBLISHED);
   assert.equal(object.description, 'Описание из WordPress');
-  assert.equal(object.shortDescription, 'Короткое описание');
+  assert.equal(object.shortDescription, null);
+  assert.equal(Object.hasOwn(object.featuresJson, 'shortDescription'), false);
   assert.equal(object.priceFrom, '12500000');
   assert.equal(object.pricePerMeterFrom, '350000.5');
   assert.equal(object.address, 'Екатеринбург, ул. Ленина, 1');
@@ -202,6 +203,25 @@ test('mapWordPressSource maps object fields, taxonomies, images and files', () =
   assert.equal(object.files[0].type, ObjectFileType.PRESENTATION);
   assert.equal(object.files[0].attachment.ID, 301);
   assert.equal(mapped.warnings.some((warning) => warning.code === 'missing_local_file'), true);
+});
+
+test('mapWordPressSource ignores WordPress short description meta when description content is empty', () => {
+  const source = makeSource({
+    objects: [
+      makePost({
+        ID: 101,
+        post_title: 'ЖК Северный',
+        post_name: 'zhk-severnyy',
+        post_content: '',
+      }),
+    ],
+  });
+
+  const mapped = mapWordPressSource(source, 'nedvizhimost', true);
+  const [object] = mapped.objects;
+
+  assert.equal(object.description, null);
+  assert.equal(object.shortDescription, null);
 });
 
 test('mapWordPressSource falls back to AREA as primary location when district is missing', () => {
