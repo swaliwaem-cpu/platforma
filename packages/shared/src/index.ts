@@ -172,6 +172,12 @@ export type RealEstateObjectBase = {
   description: string | null;
   shortDescription: string | null;
   layoutsUrl: string | null;
+  krtName: string | null;
+  apartmentAreaRange: string | null;
+  ceilingHeight: string | null;
+  propertyClass: string | null;
+  floorRange: string | null;
+  apartmentsCountText: string | null;
   priceFrom: string | null;
   pricePerMeterFrom: string | null;
   completionYear: number | null;

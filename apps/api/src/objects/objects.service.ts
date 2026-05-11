@@ -128,6 +128,12 @@ type CreateObjectBody = {
   description?: unknown;
   shortDescription?: unknown;
   layoutsUrl?: unknown;
+  krtName?: unknown;
+  apartmentAreaRange?: unknown;
+  ceilingHeight?: unknown;
+  propertyClass?: unknown;
+  floorRange?: unknown;
+  apartmentsCountText?: unknown;
   priceFrom?: unknown;
   pricePerMeterFrom?: unknown;
   completionYear?: unknown;
@@ -446,6 +452,12 @@ export class ObjectsService {
     const description = this.parseNullableText(body.description, 'Description', 30000);
     const shortDescription = this.parseNullableText(body.shortDescription, 'Short description', 2000);
     const layoutsUrl = this.parseNullableUrl(body.layoutsUrl, 'Layouts URL', 2048);
+    const krtName = this.parseNullableText(body.krtName, 'KRT name', 240);
+    const apartmentAreaRange = this.parseNullableText(body.apartmentAreaRange, 'Apartment area range', 120);
+    const ceilingHeight = this.parseNullableText(body.ceilingHeight, 'Ceiling height', 120);
+    const propertyClass = this.parseNullableText(body.propertyClass, 'Property class', 120);
+    const floorRange = this.parseNullableText(body.floorRange, 'Floor range', 120);
+    const apartmentsCountText = this.parseNullableText(body.apartmentsCountText, 'Apartments count text', 120);
     const priceFrom = this.parseNullableDecimal(body.priceFrom, 'Price from', 14, 2);
     const pricePerMeterFrom = this.parseNullableDecimal(body.pricePerMeterFrom, 'Price per meter from', 14, 2);
     const completionYear = this.parseNullableInteger(body.completionYear, 'Completion year', 1900, 2200);
@@ -485,6 +497,12 @@ export class ObjectsService {
           ...(description !== undefined ? { description } : {}),
           ...(shortDescription !== undefined ? { shortDescription } : {}),
           ...(layoutsUrl !== undefined ? { layoutsUrl } : {}),
+          ...(krtName !== undefined ? { krtName } : {}),
+          ...(apartmentAreaRange !== undefined ? { apartmentAreaRange } : {}),
+          ...(ceilingHeight !== undefined ? { ceilingHeight } : {}),
+          ...(propertyClass !== undefined ? { propertyClass } : {}),
+          ...(floorRange !== undefined ? { floorRange } : {}),
+          ...(apartmentsCountText !== undefined ? { apartmentsCountText } : {}),
           ...(priceFrom !== undefined ? { priceFrom } : {}),
           ...(pricePerMeterFrom !== undefined ? { pricePerMeterFrom } : {}),
           ...(completionYear !== undefined ? { completionYear } : {}),
@@ -575,6 +593,66 @@ export class ObjectsService {
       if (layoutsUrl !== object.layoutsUrl) {
         data.layoutsUrl = layoutsUrl;
         changes.layoutsUrl = this.change(object.layoutsUrl, layoutsUrl);
+        hasScalarChanges = true;
+      }
+    }
+
+    if ('krtName' in body) {
+      const krtName = this.parseNullableText(body.krtName, 'KRT name', 240) ?? null;
+
+      if (krtName !== object.krtName) {
+        data.krtName = krtName;
+        changes.krtName = this.change(object.krtName, krtName);
+        hasScalarChanges = true;
+      }
+    }
+
+    if ('apartmentAreaRange' in body) {
+      const apartmentAreaRange = this.parseNullableText(body.apartmentAreaRange, 'Apartment area range', 120) ?? null;
+
+      if (apartmentAreaRange !== object.apartmentAreaRange) {
+        data.apartmentAreaRange = apartmentAreaRange;
+        changes.apartmentAreaRange = this.change(object.apartmentAreaRange, apartmentAreaRange);
+        hasScalarChanges = true;
+      }
+    }
+
+    if ('ceilingHeight' in body) {
+      const ceilingHeight = this.parseNullableText(body.ceilingHeight, 'Ceiling height', 120) ?? null;
+
+      if (ceilingHeight !== object.ceilingHeight) {
+        data.ceilingHeight = ceilingHeight;
+        changes.ceilingHeight = this.change(object.ceilingHeight, ceilingHeight);
+        hasScalarChanges = true;
+      }
+    }
+
+    if ('propertyClass' in body) {
+      const propertyClass = this.parseNullableText(body.propertyClass, 'Property class', 120) ?? null;
+
+      if (propertyClass !== object.propertyClass) {
+        data.propertyClass = propertyClass;
+        changes.propertyClass = this.change(object.propertyClass, propertyClass);
+        hasScalarChanges = true;
+      }
+    }
+
+    if ('floorRange' in body) {
+      const floorRange = this.parseNullableText(body.floorRange, 'Floor range', 120) ?? null;
+
+      if (floorRange !== object.floorRange) {
+        data.floorRange = floorRange;
+        changes.floorRange = this.change(object.floorRange, floorRange);
+        hasScalarChanges = true;
+      }
+    }
+
+    if ('apartmentsCountText' in body) {
+      const apartmentsCountText = this.parseNullableText(body.apartmentsCountText, 'Apartments count text', 120) ?? null;
+
+      if (apartmentsCountText !== object.apartmentsCountText) {
+        data.apartmentsCountText = apartmentsCountText;
+        changes.apartmentsCountText = this.change(object.apartmentsCountText, apartmentsCountText);
         hasScalarChanges = true;
       }
     }
@@ -1849,6 +1927,12 @@ export class ObjectsService {
       description: object.description,
       shortDescription: object.shortDescription,
       layoutsUrl: object.layoutsUrl,
+      krtName: object.krtName,
+      apartmentAreaRange: object.apartmentAreaRange,
+      ceilingHeight: object.ceilingHeight,
+      propertyClass: object.propertyClass,
+      floorRange: object.floorRange,
+      apartmentsCountText: object.apartmentsCountText,
       priceFrom: this.decimalToString(object.priceFrom),
       pricePerMeterFrom: this.decimalToString(object.pricePerMeterFrom),
       completionYear: object.completionYear,
@@ -1970,6 +2054,12 @@ export class ObjectsService {
       description: object.description,
       shortDescription: object.shortDescription,
       layoutsUrl: object.layoutsUrl,
+      krtName: object.krtName,
+      apartmentAreaRange: object.apartmentAreaRange,
+      ceilingHeight: object.ceilingHeight,
+      propertyClass: object.propertyClass,
+      floorRange: object.floorRange,
+      apartmentsCountText: object.apartmentsCountText,
       priceFrom: this.decimalToString(object.priceFrom),
       pricePerMeterFrom: this.decimalToString(object.pricePerMeterFrom),
       completionYear: object.completionYear,

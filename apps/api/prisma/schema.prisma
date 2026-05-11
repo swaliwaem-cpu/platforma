@@ -188,6 +188,12 @@ model RealEstateObject {
   description       String?
   shortDescription  String?      @map("short_description")
   layoutsUrl        String?      @map("layouts_url") @db.VarChar(2048)
+  krtName           String?      @map("krt_name") @db.VarChar(240)
+  apartmentAreaRange String?     @map("apartment_area_range") @db.VarChar(120)
+  ceilingHeight     String?      @map("ceiling_height") @db.VarChar(120)
+  propertyClass     String?      @map("property_class") @db.VarChar(120)
+  floorRange        String?      @map("floor_range") @db.VarChar(120)
+  apartmentsCountText String?    @map("apartments_count_text") @db.VarChar(120)
   priceFrom         Decimal?     @map("price_from") @db.Decimal(14, 2)
   pricePerMeterFrom Decimal?     @map("price_per_meter_from") @db.Decimal(14, 2)
   completionYear    Int?         @map("completion_year")

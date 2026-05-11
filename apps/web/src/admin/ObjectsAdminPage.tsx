@@ -43,6 +43,7 @@ import {
 import { useAuth } from '../auth/AuthProvider';
 import { AdminAlert, AdminButton, AdminEmptyState, AdminPanel, AdminStatusBadge } from './AdminUi';
 import { apiRequest, apiUrl } from './api';
+import { getLinkedFileOriginalName, getLinkedFileTitle } from './fileDisplay';
 
 type ObjectsAdminPageProps = {
   pathname: string;
@@ -55,6 +56,12 @@ type ObjectFormState = {
   description: string;
   shortDescription: string;
   layoutsUrl: string;
+  krtName: string;
+  apartmentAreaRange: string;
+  ceilingHeight: string;
+  propertyClass: string;
+  floorRange: string;
+  apartmentsCountText: string;
   priceFrom: string;
   pricePerMeterFrom: string;
   completionYear: string;
@@ -92,6 +99,12 @@ const emptyForm: ObjectFormState = {
   description: '',
   shortDescription: '',
   layoutsUrl: '',
+  krtName: '',
+  apartmentAreaRange: '',
+  ceilingHeight: '',
+  propertyClass: '',
+  floorRange: '',
+  apartmentsCountText: '',
   priceFrom: '',
   pricePerMeterFrom: '',
   completionYear: '',
@@ -183,6 +196,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
       resetUploads();
       setError(null);
       setNotice(null);
+      setIsLoading(false);
       return;
     }
 
@@ -1039,6 +1053,88 @@ function ObjectEditor(props: ObjectEditorProps) {
                 </FieldGroup>
               </ObjectFormSection>
 
+              <ObjectFormSection
+                title="Параметры карточки"
+                description="Ручные значения для блока основных параметров на публичной карточке."
+              >
+                <FieldGroup className="form-grid">
+                  <Field>
+                    <FieldLabel htmlFor="object-krt-name">КРТ</FieldLabel>
+                    <Input
+                      id="object-krt-name"
+                      maxLength={240}
+                      type="text"
+                      value={props.form.krtName}
+                      onChange={(event) => props.onFormChange({ ...props.form, krtName: event.target.value })}
+                    />
+                  </Field>
+
+                  <Field>
+                    <FieldLabel htmlFor="object-apartment-area-range">Площадь квартир</FieldLabel>
+                    <Input
+                      id="object-apartment-area-range"
+                      maxLength={120}
+                      placeholder="От 35 м²"
+                      type="text"
+                      value={props.form.apartmentAreaRange}
+                      onChange={(event) =>
+                        props.onFormChange({ ...props.form, apartmentAreaRange: event.target.value })
+                      }
+                    />
+                  </Field>
+
+                  <Field>
+                    <FieldLabel htmlFor="object-ceiling-height">Высота потолков</FieldLabel>
+                    <Input
+                      id="object-ceiling-height"
+                      maxLength={120}
+                      placeholder="3,1 метра"
+                      type="text"
+                      value={props.form.ceilingHeight}
+                      onChange={(event) => props.onFormChange({ ...props.form, ceilingHeight: event.target.value })}
+                    />
+                  </Field>
+
+                  <Field>
+                    <FieldLabel htmlFor="object-property-class">Класс недвижимости</FieldLabel>
+                    <Input
+                      id="object-property-class"
+                      maxLength={120}
+                      placeholder="Премиум-класс"
+                      type="text"
+                      value={props.form.propertyClass}
+                      onChange={(event) => props.onFormChange({ ...props.form, propertyClass: event.target.value })}
+                    />
+                  </Field>
+
+                  <Field>
+                    <FieldLabel htmlFor="object-floor-range">Этажность</FieldLabel>
+                    <Input
+                      id="object-floor-range"
+                      maxLength={120}
+                      placeholder="8 - 25 этажей"
+                      type="text"
+                      value={props.form.floorRange}
+                      onChange={(event) => props.onFormChange({ ...props.form, floorRange: event.target.value })}
+                    />
+                  </Field>
+
+                  <Field>
+                    <FieldLabel htmlFor="object-apartments-count-text">Количество квартир</FieldLabel>
+                    <Input
+                      id="object-apartments-count-text"
+                      maxLength={120}
+                      placeholder="672 квартиры"
+                      type="text"
+                      value={props.form.apartmentsCountText}
+                      onChange={(event) =>
+                        props.onFormChange({ ...props.form, apartmentsCountText: event.target.value })
+                      }
+                    />
+                  </Field>
+                </FieldGroup>
+              </ObjectFormSection>
+
               <ObjectFormSection title="Локация" description="Адрес, координаты, районы, окружение и метро.">
                 <FieldGroup className="form-grid">
                   <Field className="field-wide">
@@ -1407,28 +1503,33 @@ function ObjectEditor(props: ObjectEditorProps) {
                   onUpload={props.onUploadLinkedFile}
                 />
                 <ul className="file-list">
-                  {props.object?.files.map((file) => (
-                    <li key={file.id}>
-                      <div className="file-main">
-                        <strong>{file.title || file.file.originalName || fileTypeLabels[file.type]}</strong>
-                        <span>{file.file.originalName ?? 'Имя файла не указано'}</span>
-                      </div>
-                      <div className="file-actions">
-                        <strong>{fileTypeLabels[file.type]}</strong>
-                        {file.file.sizeBytes ? <span>{formatFileSize(file.file.sizeBytes)}</span> : null}
-                        <AdminButton
-                          className="text-button--danger"
-                          tone="text"
-                          disabled={!props.canDeleteMedia || props.isUploading}
-                          type="button"
-                          onClick={() => props.onLinkedFileDelete(file.id)}
-                        >
-                          <Trash2Icon data-icon="inline-start" />
-                          Удалить
-                        </AdminButton>
-                      </div>
-                    </li>
-                  ))}
+                  {props.object?.files.map((file) => {
+                    const displayTitle = getLinkedFileTitle(file, fileTypeLabels);
+                    const displayOriginalName = getLinkedFileOriginalName(file);
+
+                    return (
+                      <li key={file.id}>
+                        <div className="file-main">
+                          <strong>{displayTitle}</strong>
+                          <span>{displayOriginalName}</span>
+                        </div>
+                        <div className="file-actions">
+                          <strong>{fileTypeLabels[file.type]}</strong>
+                          {file.file.sizeBytes ? <span>{formatFileSize(file.file.sizeBytes)}</span> : null}
+                          <AdminButton
+                            className="text-button--danger"
+                            tone="text"
+                            disabled={!props.canDeleteMedia || props.isUploading}
+                            type="button"
+                            onClick={() => props.onLinkedFileDelete(file.id)}
+                          >
+                            <Trash2Icon data-icon="inline-start" />
+                            Удалить
+                          </AdminButton>
+                        </div>
+                      </li>
+                    );
+                  })}
                 </ul>
                 {props.object?.files.length === 0 ? (
                   <AdminEmptyState title="PDF-файлов нет" description="Добавьте презентацию, планировку или другой документ." />
@@ -1605,6 +1706,12 @@ function createFormFromObject(object: RealEstateObjectDetail): ObjectFormState {
     description: object.description ?? '',
     shortDescription: object.shortDescription ?? '',
     layoutsUrl: object.layoutsUrl ?? '',
+    krtName: object.krtName ?? '',
+    apartmentAreaRange: object.apartmentAreaRange ?? '',
+    ceilingHeight: object.ceilingHeight ?? '',
+    propertyClass: object.propertyClass ?? '',
+    floorRange: object.floorRange ?? '',
+    apartmentsCountText: object.apartmentsCountText ?? '',
     priceFrom: object.priceFrom ?? '',
     pricePerMeterFrom: object.pricePerMeterFrom ?? '',
     completionYear: object.completionYear?.toString() ?? '',
@@ -1636,6 +1743,12 @@ function createPayloadFromForm(form: ObjectFormState) {
     description: emptyToNull(form.description),
     shortDescription: emptyToNull(form.shortDescription),
     layoutsUrl: emptyToNull(form.layoutsUrl),
+    krtName: emptyToNull(form.krtName),
+    apartmentAreaRange: emptyToNull(form.apartmentAreaRange),
+    ceilingHeight: emptyToNull(form.ceilingHeight),
+    propertyClass: emptyToNull(form.propertyClass),
+    floorRange: emptyToNull(form.floorRange),
+    apartmentsCountText: emptyToNull(form.apartmentsCountText),
     priceFrom: emptyToNull(form.priceFrom),
     pricePerMeterFrom: emptyToNull(form.pricePerMeterFrom),
     completionYear: emptyToNull(form.completionYear),
@@ -1764,6 +1877,24 @@ function validateObjectForm(form: ObjectFormState) {
     } catch {
       return 'Ссылка на планировки некорректна';
     }
+  }
+
+  if (form.krtName.trim().length > 240) {
+    return 'КРТ не должен быть длиннее 240 символов';
+  }
+
+  const manualDetailFields = [
+    ['Площадь квартир', form.apartmentAreaRange],
+    ['Высота потолков', form.ceilingHeight],
+    ['Класс недвижимости', form.propertyClass],
+    ['Этажность', form.floorRange],
+    ['Количество квартир', form.apartmentsCountText],
+  ] as const;
+
+  const tooLongManualDetailField = manualDetailFields.find(([, value]) => value.trim().length > 120);
+
+  if (tooLongManualDetailField) {
+    return `${tooLongManualDetailField[0]} не должно быть длиннее 120 символов`;
   }
 
   try {

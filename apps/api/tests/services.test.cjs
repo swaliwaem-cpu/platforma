@@ -61,6 +61,12 @@ function objectRecord(overrides = {}) {
     status: ObjectStatus.DRAFT,
     description: null,
     shortDescription: null,
+    krtName: null,
+    apartmentAreaRange: null,
+    ceilingHeight: null,
+    propertyClass: null,
+    floorRange: null,
+    apartmentsCountText: null,
     priceFrom: null,
     pricePerMeterFrom: null,
     completionYear: null,
@@ -290,6 +296,179 @@ test('ObjectsService.create rejects incomplete coordinate pairs before writing a
 
   await assert.rejects(
     () => service.create({ title: 'ЖК Координаты', latitude: '55.1' }, actor, request),
+    BadRequestException,
+  );
+});
+
+test('ObjectsService.create saves manual detail parameters and serializes them', async () => {
+  const manualDetailParameters = {
+    krtName: 'Большое Сити',
+    apartmentAreaRange: 'От 35 м²',
+    ceilingHeight: '3,1 метра',
+    propertyClass: 'Премиум-класс',
+    floorRange: '8 - 25 этажей',
+    apartmentsCountText: '672 квартиры',
+  };
+  const calls = {};
+  const createdObject = objectRecord(manualDetailParameters);
+  const prisma = {
+    realEstateObject: {
+      findUnique: async () => null,
+      create: async (args) => {
+        calls.create = args;
+
+        return objectRecord({ id: createdObject.id });
+      },
+      findFirst: async () => createdObject,
+    },
+    objectLocation: {
+      deleteMany: async () => {},
+    },
+    objectMetroStation: {
+      deleteMany: async () => {},
+    },
+    auditLog: {
+      create: async (args) => {
+        calls.auditLog = args;
+      },
+    },
+    $transaction: async (callback) => callback(prisma),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  const result = await service.create(
+    {
+      title: 'ЖК Большое Сити',
+      ...manualDetailParameters,
+    },
+    actor,
+    request,
+  );
+
+  assert.equal(calls.create.data.krtName, manualDetailParameters.krtName);
+  assert.equal(calls.create.data.apartmentAreaRange, manualDetailParameters.apartmentAreaRange);
+  assert.equal(calls.create.data.ceilingHeight, manualDetailParameters.ceilingHeight);
+  assert.equal(calls.create.data.propertyClass, manualDetailParameters.propertyClass);
+  assert.equal(calls.create.data.floorRange, manualDetailParameters.floorRange);
+  assert.equal(calls.create.data.apartmentsCountText, manualDetailParameters.apartmentsCountText);
+  assert.equal(result.object.krtName, manualDetailParameters.krtName);
+  assert.equal(result.object.apartmentAreaRange, manualDetailParameters.apartmentAreaRange);
+  assert.equal(result.object.ceilingHeight, manualDetailParameters.ceilingHeight);
+  assert.equal(result.object.propertyClass, manualDetailParameters.propertyClass);
+  assert.equal(result.object.floorRange, manualDetailParameters.floorRange);
+  assert.equal(result.object.apartmentsCountText, manualDetailParameters.apartmentsCountText);
+});
+
+test('ObjectsService.update clears empty manual detail parameters', async () => {
+  const calls = {};
+  const existingObject = objectRecord({
+    krtName: 'Большое Сити',
+    apartmentAreaRange: 'От 35 м²',
+    ceilingHeight: '3,1 метра',
+    propertyClass: 'Премиум-класс',
+    floorRange: '8 - 25 этажей',
+    apartmentsCountText: '672 квартиры',
+  });
+  const updatedObject = objectRecord({
+    krtName: null,
+    apartmentAreaRange: null,
+    ceilingHeight: null,
+    propertyClass: null,
+    floorRange: null,
+    apartmentsCountText: null,
+  });
+  let findFirstCount = 0;
+  const prisma = {
+    realEstateObject: {
+      findFirst: async () => {
+        findFirstCount += 1;
+
+        return findFirstCount === 1 ? existingObject : updatedObject;
+      },
+      update: async (args) => {
+        calls.update = args;
+
+        return updatedObject;
+      },
+    },
+    auditLog: {
+      create: async (args) => {
+        calls.auditLog = args;
+      },
+    },
+    $transaction: async (callback) => callback(prisma),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await service.update(
+    existingObject.id,
+    {
+      krtName: '',
+      apartmentAreaRange: '',
+      ceilingHeight: '',
+      propertyClass: '',
+      floorRange: '',
+      apartmentsCountText: '',
+    },
+    actor,
+    request,
+  );
+
+  assert.ok(calls.update, 'Object update must be called for cleared manual detail parameters');
+  assert.equal(calls.update.data.krtName, null);
+  assert.equal(calls.update.data.apartmentAreaRange, null);
+  assert.equal(calls.update.data.ceilingHeight, null);
+  assert.equal(calls.update.data.propertyClass, null);
+  assert.equal(calls.update.data.floorRange, null);
+  assert.equal(calls.update.data.apartmentsCountText, null);
+});
+
+test('ObjectsService.create rejects too long manual detail parameters', async () => {
+  const createService = () => {
+    const prisma = {
+      realEstateObject: {
+        findUnique: async () => null,
+        create: async () => objectRecord(),
+        findFirst: async () => objectRecord(),
+      },
+      objectLocation: {
+        deleteMany: async () => {},
+      },
+      objectMetroStation: {
+        deleteMany: async () => {},
+      },
+      auditLog: {
+        create: async () => {},
+      },
+      $transaction: async (callback) => callback(prisma),
+    };
+
+    return new ObjectsService(prisma, {});
+  };
+
+  await assert.rejects(
+    () =>
+      createService().create(
+        {
+          title: 'ЖК Длинное КРТ',
+          krtName: 'а'.repeat(241),
+        },
+        actor,
+        request,
+      ),
+    BadRequestException,
+  );
+
+  await assert.rejects(
+    () =>
+      createService().create(
+        {
+          title: 'ЖК Длинная высота',
+          ceilingHeight: 'а'.repeat(121),
+        },
+        actor,
+        request,
+      ),
     BadRequestException,
   );
 });

@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import type {
   ObjectFileType,
   ObjectLinkedFile,
-  ObjectLocation,
   ObjectMetroStationLink,
   ObjectResponse,
   RealEstateObjectDetail,
@@ -11,18 +10,19 @@ import type {
 import { apiRequest, apiUrl } from '../admin/api';
 import { useAuth } from '../auth/AuthProvider';
 import { YandexMap, type YandexMapPoint } from '../map/YandexMap';
+import {
+  formatCompletion,
+  formatPrice,
+  getLocationRows,
+  getObjectDistrictLocation,
+  getObjectLocationLine,
+  getObjectParameterRows,
+} from './objectDetailViewModel';
 
 type ObjectDetailPageProps = {
   slug: string;
   onBack: () => void;
 };
-
-type FeatureRow = {
-  label: string;
-  value: string;
-};
-
-type DisplayLocation = Pick<ObjectLocation, 'id' | 'name' | 'type'>;
 
 const objectStatusLabels: Record<RealEstateObjectDetail['status'], string> = {
   DRAFT: 'Черновик',
@@ -123,9 +123,10 @@ function ObjectDetail({
   onBack: () => void;
 }) {
   const descriptionParagraphs = useMemo(() => getDescriptionParagraphs(object), [object]);
-  const districtLocation = useMemo(() => getObjectDistrictLocation(object), [object]);
+  const locationLine = useMemo(() => getObjectLocationLine(object), [object]);
   const locationRows = useMemo(() => getLocationRows(object), [object]);
-  const presentationFiles = object.files.filter((file) => file.type === 'PRESENTATION');
+  const parameterRows = useMemo(() => getObjectParameterRows(object), [object]);
+  const presentationFile = object.files.find((file) => file.type === 'PRESENTATION') ?? null;
   const otherFiles = object.files.filter((file) => file.type !== 'PRESENTATION');
   const carouselImages = useMemo(() => getCarouselImages(object), [object]);
   const mapBalloonImageUrl = useSecureImageObjectUrl(accessToken, carouselImages[0]?.file.id ?? null);
@@ -138,8 +139,8 @@ function ObjectDetail({
           <button className="text-button" type="button" onClick={onBack}>
             Вернуться к каталогу
           </button>
-          <p className="eyebrow">Объект</p>
           <h2>{object.title}</h2>
+          <p className="object-detail-location-line">{locationLine.line}</p>
         </div>
         {object.status === 'PUBLISHED' ? null : (
           <span className={`status-pill object-status object-status--${object.status.toLowerCase()}`}>
@@ -148,131 +149,131 @@ function ObjectDetail({
         )}
       </header>
 
-      <section className="object-detail-hero" aria-label="Основные данные объекта">
-        <ObjectImageCarousel accessToken={accessToken} images={carouselImages} objectTitle={object.title} />
+      <ObjectImageCarousel accessToken={accessToken} images={carouselImages} objectTitle={object.title} />
 
-        <div className="object-detail-summary">
-          <dl className="object-detail-metrics">
-            <div>
-              <dt>Цена</dt>
-              <dd>{formatPrice(object.priceFrom)}</dd>
-            </div>
-            <div>
-              <dt>За метр</dt>
-              <dd>{formatPrice(object.pricePerMeterFrom)}</dd>
-            </div>
-            <div>
-              <dt>Район</dt>
-              <dd>{districtLocation?.name ?? 'Не указан'}</dd>
-            </div>
-            <div>
-              <dt>Застройщик</dt>
-              <dd>{object.developer?.name ?? 'Не указан'}</dd>
-            </div>
-          </dl>
-
-          {object.layoutsUrl ? (
-            <div className="object-layouts-cta">
-              <span>Планировки и цены</span>
-              <a
-                href={object.layoutsUrl}
-                referrerPolicy="no-referrer"
-                rel="noopener noreferrer nofollow"
-                target="_blank"
-              >
-                Открыть на сайте застройщика
-              </a>
-            </div>
-          ) : null}
+      <section className="detail-section object-parameters-section" aria-labelledby="object-parameters-title">
+        <div>
+          <p className="eyebrow">Параметры</p>
+          <h3 id="object-parameters-title">Основные параметры</h3>
         </div>
+
+        <dl className="object-parameters-grid">
+          {parameterRows.map((row) => (
+            <div key={row.label}>
+              <dt>{row.label}</dt>
+              <dd>{row.value}</dd>
+            </div>
+          ))}
+        </dl>
       </section>
 
-      <div className="object-detail-layout">
-        <div className="object-detail-main">
-          <section className="detail-section object-map-section" aria-labelledby="object-map-title">
-            <div>
-              <p className="eyebrow">Карта</p>
-              <h3 id="object-map-title">На карте</h3>
-            </div>
+      <div className="object-detail-actions" aria-label="Действия по объекту">
+        {presentationFile ? (
+          <SecureFileButton
+            accessToken={accessToken}
+            className="object-detail-action-button object-detail-action-button--primary"
+            fileId={presentationFile.file.id}
+            label="Показать презентацию"
+            openingLabel="Открываем презентацию"
+            wrapperClassName="object-detail-action"
+          />
+        ) : (
+          <button className="object-detail-action-button object-detail-action-button--disabled" disabled type="button">
+            Презентация отсутствует
+          </button>
+        )}
 
-            <YandexMap
-              emptyState={{
-                eyebrow: 'Карта объекта',
-                title: 'Координаты не указаны',
-                description: 'Добавьте широту и долготу в карточке объекта, чтобы показать его на карте.',
-              }}
-              points={mapPoints}
-            />
-          </section>
+        {object.layoutsUrl ? (
+          <a
+            className="object-detail-action-button object-detail-action-button--secondary"
+            href={object.layoutsUrl}
+            referrerPolicy="no-referrer"
+            rel="noopener noreferrer nofollow"
+            target="_blank"
+          >
+            Показать планировки и цены
+          </a>
+        ) : (
+          <button className="object-detail-action-button object-detail-action-button--disabled" disabled type="button">
+            Планировки отсутствуют
+          </button>
+        )}
+      </div>
 
-          <section className="detail-section" aria-labelledby="object-description-title">
-            <div>
-              <p className="eyebrow">Описание</p>
-              <h3 id="object-description-title">Описание и особенности</h3>
-            </div>
-            {descriptionParagraphs.length > 0 ? (
-              <div className="object-description">
-                {descriptionParagraphs.map((paragraph) => (
-                  <p key={paragraph}>{paragraph}</p>
-                ))}
-              </div>
-            ) : (
-              <p className="muted-text">Описание пока не заполнено.</p>
-            )}
-          </section>
+      <section className="detail-section object-map-section" aria-labelledby="object-map-title">
+        <div>
+          <p className="eyebrow">Карта</p>
+          <h3 id="object-map-title">Локация и расположение</h3>
         </div>
 
-        <aside className="object-detail-aside">
-          <section className="detail-section" aria-labelledby="object-files-title">
-            <div>
-              <p className="eyebrow">Файлы</p>
-              <h3 id="object-files-title">Презентация и документы</h3>
-            </div>
+        <YandexMap
+          emptyState={{
+            eyebrow: 'Карта объекта',
+            title: 'Координаты не указаны',
+            description: 'Добавьте широту и долготу в карточке объекта, чтобы показать его на карте.',
+          }}
+          points={mapPoints}
+        />
+      </section>
 
-            {presentationFiles.length > 0 ? (
-              <FileList accessToken={accessToken} files={presentationFiles} title="Презентация" />
-            ) : (
-              <p className="muted-text">Презентация не загружена.</p>
-            )}
+      <section className="detail-section" aria-labelledby="object-description-title">
+        <div>
+          <p className="eyebrow">Описание</p>
+          <h3 id="object-description-title">Описание и особенности</h3>
+        </div>
+        {descriptionParagraphs.length > 0 ? (
+          <div className="object-description">
+            {descriptionParagraphs.map((paragraph) => (
+              <p key={paragraph}>{paragraph}</p>
+            ))}
+          </div>
+        ) : (
+          <p className="muted-text">Описание пока не заполнено.</p>
+        )}
+      </section>
 
-            {otherFiles.length > 0 ? (
-              <FileList accessToken={accessToken} files={otherFiles} title="Другие файлы" />
-            ) : (
-              <p className="muted-text">Дополнительные файлы не загружены.</p>
-            )}
-          </section>
+      <section className="detail-section" aria-labelledby="object-files-title">
+        <div>
+          <p className="eyebrow">Файлы</p>
+          <h3 id="object-files-title">Файлы и документы</h3>
+        </div>
 
-          <section className="detail-section" aria-labelledby="object-location-title">
-            <div>
-              <p className="eyebrow">Район</p>
-              <h3 id="object-location-title">Район, окружение и метро</h3>
-            </div>
+        {otherFiles.length > 0 ? (
+          <FileList accessToken={accessToken} files={otherFiles} title="Документы" />
+        ) : (
+          <p className="muted-text">Дополнительные файлы не загружены.</p>
+        )}
+      </section>
 
-            {locationRows.length > 0 ? (
-              <dl className="location-list">
-                {locationRows.map((row) => (
-                  <div key={`${row.label}-${row.value}`}>
-                    <dt>{row.label}</dt>
-                    <dd>{row.value}</dd>
-                  </div>
-                ))}
-              </dl>
-            ) : (
-              <p className="muted-text">Район не указан.</p>
-            )}
+      <section className="detail-section" aria-labelledby="object-location-title">
+        <div>
+          <p className="eyebrow">Район</p>
+          <h3 id="object-location-title">Район, окружение и метро</h3>
+        </div>
 
-            {object.metroStations.length > 0 ? (
-              <ul className="metro-list" aria-label="Станции метро">
-                {object.metroStations.map((station) => (
-                  <MetroStationItem key={station.id} station={station} />
-                ))}
-              </ul>
-            ) : (
-              <p className="muted-text">Метро не указано.</p>
-            )}
-          </section>
-        </aside>
-      </div>
+        {locationRows.length > 0 ? (
+          <dl className="location-list">
+            {locationRows.map((row) => (
+              <div key={`${row.label}-${row.value}`}>
+                <dt>{row.label}</dt>
+                <dd>{row.value}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : (
+          <p className="muted-text">Район не указан.</p>
+        )}
+
+        {object.metroStations.length > 0 ? (
+          <ul className="metro-list" aria-label="Станции метро">
+            {object.metroStations.map((station) => (
+              <MetroStationItem key={station.id} station={station} />
+            ))}
+          </ul>
+        ) : (
+          <p className="muted-text">Метро не указано.</p>
+        )}
+      </section>
     </div>
   );
 }
@@ -526,7 +527,21 @@ async function fetchFileObjectUrl(accessToken: string, fileId: string) {
   return URL.createObjectURL(await response.blob());
 }
 
-function SecureFileButton({ accessToken, fileId }: { accessToken: string; fileId: string }) {
+function SecureFileButton({
+  accessToken,
+  className = 'text-button',
+  fileId,
+  label = 'Открыть',
+  openingLabel = 'Открываем',
+  wrapperClassName = 'detail-file-action',
+}: {
+  accessToken: string;
+  className?: string;
+  fileId: string;
+  label?: string;
+  openingLabel?: string;
+  wrapperClassName?: string;
+}) {
   const [isOpening, setIsOpening] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -559,9 +574,9 @@ function SecureFileButton({ accessToken, fileId }: { accessToken: string; fileId
   }
 
   return (
-    <div className="detail-file-action">
-      <button className="text-button" disabled={isOpening} type="button" onClick={() => void handleOpen()}>
-        {isOpening ? 'Открываем' : 'Открыть'}
+    <div className={wrapperClassName}>
+      <button className={className} disabled={isOpening} type="button" onClick={() => void handleOpen()}>
+        {isOpening ? openingLabel : label}
       </button>
       {error ? <span>{error}</span> : null}
     </div>
@@ -630,89 +645,6 @@ function buildObjectMapBalloon(object: RealEstateObjectDetail, imageUrl: string 
     .join('');
 }
 
-function getLocationRows(object: RealEstateObjectDetail): FeatureRow[] {
-  const rows: FeatureRow[] = [];
-  const districtLocation = getObjectDistrictLocation(object);
-  const areaLocations = getObjectAreaLocations(object);
-  const otherLocations = getObjectOtherLocations(object);
-
-  if (districtLocation) {
-    rows.push({
-      label: 'Район',
-      value: districtLocation.name,
-    });
-  }
-
-  if (areaLocations.length > 0) {
-    rows.push({
-      label: 'Окружение',
-      value: areaLocations.map((location) => location.name).join(', '),
-    });
-  }
-
-  if (otherLocations.length > 0) {
-    rows.push({
-      label: 'Дополнительно',
-      value: otherLocations.map((location) => location.name).join(', '),
-    });
-  }
-
-  return rows;
-}
-
-function getObjectDistrictLocation(object: RealEstateObjectDetail): DisplayLocation | null {
-  if (object.primaryLocation?.type === 'DISTRICT') {
-    return object.primaryLocation;
-  }
-
-  return object.locations.find((location) => location.type === 'DISTRICT') ?? null;
-}
-
-function getObjectAreaLocations(object: RealEstateObjectDetail): DisplayLocation[] {
-  return uniqueLocationsById([
-    ...(object.primaryLocation?.type === 'AREA' ? [object.primaryLocation] : []),
-    ...object.locations.filter((location) => location.type === 'AREA'),
-  ]);
-}
-
-function getObjectOtherLocations(object: RealEstateObjectDetail): DisplayLocation[] {
-  return uniqueLocationsById([
-    ...(object.primaryLocation?.type === 'CUSTOM' ? [object.primaryLocation] : []),
-    ...object.locations.filter((location) => location.type === 'CUSTOM'),
-  ]);
-}
-
-function uniqueLocationsById(locations: DisplayLocation[]) {
-  const seenIds = new Set<string>();
-
-  return locations.filter((location) => {
-    if (seenIds.has(location.id)) {
-      return false;
-    }
-
-    seenIds.add(location.id);
-    return true;
-  });
-}
-
-function formatPrice(value: string | null) {
-  if (!value) {
-    return 'Не указана';
-  }
-
-  const parsed = Number(value);
-
-  if (!Number.isFinite(parsed)) {
-    return value;
-  }
-
-  return new Intl.NumberFormat('ru-RU', {
-    maximumFractionDigits: 0,
-    style: 'currency',
-    currency: 'RUB',
-  }).format(parsed);
-}
-
 function formatObjectMapMarkerPrice(value: string | null) {
   if (!value) {
     return 'по запросу/м²';
@@ -735,14 +667,6 @@ function formatCompactRussianNumber(value: number) {
   return new Intl.NumberFormat('ru-RU', {
     maximumFractionDigits: value < 10 ? 1 : 0,
   }).format(value);
-}
-
-function formatCompletion(year: number | null, quarter: number | null) {
-  if (!year) {
-    return 'Не указан';
-  }
-
-  return quarter ? `${quarter} кв. ${year}` : String(year);
 }
 
 function formatFileSize(value: string) {
