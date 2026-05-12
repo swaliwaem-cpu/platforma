@@ -1,7 +1,8 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { platformName } from '@platforma/shared';
-import type { AuthUser, UserStatus } from '@platforma/shared';
+import { MenuIcon } from 'lucide-react';
+import { platformName, type AuthUser, type UserStatus } from '@platforma/shared';
 
+import platformLogoUrl from '../../../_Fluffy_White_1-02.svg';
 import { ImportAdminPage } from './admin/ImportAdminPage';
 import { AdminButton, AdminPanel, AdminStatusBadge } from './admin/AdminUi';
 import { ObjectsAdminPage } from './admin/ObjectsAdminPage';
@@ -162,6 +163,7 @@ export function App() {
 function AppRoutes() {
   const { pathname, navigate } = usePathname();
   const { user, isLoading, logout, hasPermission } = useAuth();
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   if (isLoading) {
     return <main className="app-shell app-shell--center">Загрузка</main>;
@@ -186,35 +188,48 @@ function AppRoutes() {
   );
 
   return (
-    <main className="app-shell">
-      <aside className="sidebar" aria-label="Основная навигация" tabIndex={0}>
-        <div className="sidebar-handle" aria-hidden="true">
-          <span />
-          <span />
-          <span />
-        </div>
-
-        <div>
-          <p className="eyebrow">Closed platform</p>
-          <h1>{platformName}</h1>
-        </div>
-
-        <nav className="nav-list">
-          {visibleNavItems.map((item) => (
-            <button
-              key={item.id}
-              className={activeSection === item.section ? 'nav-item nav-item--active' : 'nav-item'}
-              type="button"
-              onClick={() => navigate(item.path)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </nav>
-
-        <button className="secondary-button" type="button" onClick={() => void logout()}>
-          Выйти
+    <main className={isSidebarOpen ? 'app-shell app-shell--sidebar-open' : 'app-shell'}>
+      <aside className={isSidebarOpen ? 'sidebar sidebar--open' : 'sidebar'} aria-label="Основная навигация">
+        <button
+          className="sidebar-toggle"
+          type="button"
+          aria-controls="main-sidebar-content"
+          aria-expanded={isSidebarOpen}
+          aria-label={isSidebarOpen ? 'Свернуть меню' : 'Раскрыть меню'}
+          onClick={() => setIsSidebarOpen((isOpen) => !isOpen)}
+        >
+          <MenuIcon aria-hidden="true" />
         </button>
+
+        <div id="main-sidebar-content" className="sidebar-content" aria-hidden={!isSidebarOpen}>
+          <div className="sidebar-brand">
+            <img className="sidebar-logo" src={platformLogoUrl} alt="" aria-hidden="true" />
+            <h1 className="sidebar-title">Платформа брокеров</h1>
+          </div>
+
+          <nav className="nav-list">
+            {visibleNavItems.map((item) => (
+              <button
+                key={item.id}
+                className={activeSection === item.section ? 'nav-item nav-item--active' : 'nav-item'}
+                type="button"
+                tabIndex={isSidebarOpen ? 0 : -1}
+                onClick={() => navigate(item.path)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
+
+          <button
+            className="secondary-button"
+            type="button"
+            tabIndex={isSidebarOpen ? 0 : -1}
+            onClick={() => void logout()}
+          >
+            Выйти
+          </button>
+        </div>
       </aside>
 
       <section className="workspace">

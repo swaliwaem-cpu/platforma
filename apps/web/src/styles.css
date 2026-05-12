@@ -97,10 +97,15 @@ button {
 
 .app-shell {
   --sidebar-width: 280px;
-  --sidebar-peek: 56px;
+  --sidebar-collapsed-width: 64px;
   display: grid;
   min-height: 100vh;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-collapsed-width) minmax(0, 1fr);
+  transition: grid-template-columns 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.app-shell--sidebar-open {
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
 }
 
 .app-shell--center,
@@ -112,79 +117,99 @@ button {
 }
 
 .sidebar {
-  position: fixed;
+  position: sticky;
   z-index: 30;
   top: 14px;
-  bottom: 14px;
   left: 0;
   display: flex;
-  width: var(--sidebar-width);
+  width: 100%;
+  height: calc(100vh - 28px);
   min-height: 0;
+  align-self: start;
   flex-direction: column;
-  justify-content: space-between;
   border: 1px solid #d6dde5;
   border-left: 0;
   border-radius: 0 8px 8px 0;
   background: oklch(98.7% 0.006 230);
+  overflow: hidden;
   padding: 26px 22px;
   box-shadow: 0 18px 46px rgb(24 32 42 / 10%);
-  transform: translateX(calc((var(--sidebar-width) - var(--sidebar-peek)) * -1));
-  transition:
-    box-shadow 220ms cubic-bezier(0.22, 1, 0.36, 1),
-    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: box-shadow 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.sidebar:hover,
-.sidebar:focus-within {
+.sidebar--open {
   box-shadow: 0 24px 70px rgb(24 32 42 / 18%);
-  transform: translateX(0);
 }
 
-.sidebar:focus-visible {
-  outline: 0;
-  box-shadow:
-    0 0 0 3px rgb(37 99 235 / 16%),
-    0 24px 70px rgb(24 32 42 / 18%);
-}
-
-.sidebar > :not(.sidebar-handle) {
+.sidebar-content {
+  display: flex;
+  min-width: 236px;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
   opacity: 0;
+  pointer-events: none;
   transition: opacity 150ms ease;
 }
 
-.sidebar:hover > :not(.sidebar-handle),
-.sidebar:focus-within > :not(.sidebar-handle) {
+.sidebar--open .sidebar-content {
   opacity: 1;
+  pointer-events: auto;
   transition-delay: 70ms;
 }
 
-.sidebar-handle {
+.sidebar-brand {
+  display: grid;
+  gap: 14px;
+  padding-right: 48px;
+}
+
+.sidebar-logo {
+  width: 52px;
+  height: auto;
+  object-fit: contain;
+}
+
+.sidebar-title {
+  font-size: 29px;
+  line-height: 1.08;
+}
+
+.sidebar-toggle {
   position: absolute;
   top: 18px;
   right: 10px;
   display: grid;
   width: 36px;
   height: 36px;
-  align-content: center;
-  justify-items: center;
-  gap: 4px;
+  place-items: center;
   border: 1px solid #d6dde5;
   border-radius: 8px;
   background: #f8fafc;
+  color: #18202a;
   box-shadow: 0 10px 24px rgb(24 32 42 / 10%);
-  pointer-events: none;
 }
 
-.sidebar-handle span {
-  width: 16px;
-  height: 2px;
-  border-radius: 999px;
-  background: #18202a;
+.sidebar-toggle:hover {
+  border-color: #bcc7d3;
+  background: #ffffff;
+}
+
+.sidebar-toggle:focus-visible {
+  outline: 0;
+  box-shadow:
+    0 0 0 3px rgb(37 99 235 / 16%),
+    0 10px 24px rgb(24 32 42 / 10%);
+}
+
+.sidebar-toggle svg {
+  width: 22px;
+  height: 22px;
 }
 
 .workspace {
   min-width: 0;
-  padding: 32px 32px 32px 84px;
+  padding: 32px;
 }
 
 .login-panel,
@@ -338,7 +363,8 @@ fieldset {
 .nav-list {
   display: grid;
   gap: 8px;
-  margin: 32px 0;
+  align-content: start;
+  margin: 28px 0 0;
 }
 
 .nav-item {
@@ -353,6 +379,10 @@ fieldset {
   border-color: #2563eb;
   background: #edf4ff;
   color: #174ea6;
+}
+
+.sidebar .secondary-button {
+  margin-top: auto;
 }
 
 .details-list {
@@ -698,7 +728,7 @@ dd {
 .workspace:has(.admin-users),
 .workspace:has(.admin-objects),
 .workspace:has(.admin-import) {
-  padding: 28px 28px 28px 84px;
+  padding: 28px;
 }
 
 .catalog-page,
@@ -3823,15 +3853,13 @@ tr.user-row--deactivated .text-button {
 
 @media (max-width: 760px) {
   .app-shell {
-    --sidebar-width: min(280px, calc(100vw - 16px));
-    --sidebar-peek: 52px;
-    grid-template-columns: 1fr;
+    --sidebar-width: min(260px, 72vw);
+    --sidebar-collapsed-width: 60px;
   }
 
   .sidebar {
     top: 8px;
-    bottom: 8px;
-    width: var(--sidebar-width);
+    height: calc(100vh - 16px);
     min-height: auto;
     gap: 24px;
     border-right: 1px solid #d6dde5;
@@ -3841,7 +3869,7 @@ tr.user-row--deactivated .text-button {
   }
 
   .workspace {
-    padding: 20px 20px 20px 72px;
+    padding: 20px;
   }
 
   .workspace:has(.catalog-page),
@@ -3849,7 +3877,7 @@ tr.user-row--deactivated .text-button {
   .workspace:has(.admin-users),
   .workspace:has(.admin-objects),
   .workspace:has(.admin-import) {
-    padding: 20px 20px 20px 72px;
+    padding: 20px;
   }
 
   .login-panel,
