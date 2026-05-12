@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import { MenuIcon } from 'lucide-react';
 import { platformName, type AuthUser, type UserStatus } from '@platforma/shared';
 
@@ -163,7 +163,32 @@ export function App() {
 function AppRoutes() {
   const { pathname, navigate } = usePathname();
   const { user, isLoading, logout, hasPermission } = useAuth();
+  const sidebarRef = useRef<HTMLElement | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  useEffect(() => {
+    if (!isSidebarOpen) {
+      return;
+    }
+
+    const handleDocumentPointerDown = (event: PointerEvent) => {
+      if (event.button !== 0 || !(event.target instanceof Node) || !sidebarRef.current) {
+        return;
+      }
+
+      if (sidebarRef.current.contains(event.target)) {
+        return;
+      }
+
+      setIsSidebarOpen(false);
+    };
+
+    document.addEventListener('pointerdown', handleDocumentPointerDown);
+
+    return () => {
+      document.removeEventListener('pointerdown', handleDocumentPointerDown);
+    };
+  }, [isSidebarOpen]);
 
   if (isLoading) {
     return <main className="app-shell app-shell--center">Загрузка</main>;
@@ -189,7 +214,11 @@ function AppRoutes() {
 
   return (
     <main className={isSidebarOpen ? 'app-shell app-shell--sidebar-open' : 'app-shell'}>
-      <aside className={isSidebarOpen ? 'sidebar sidebar--open' : 'sidebar'} aria-label="Основная навигация">
+      <aside
+        ref={sidebarRef}
+        className={isSidebarOpen ? 'sidebar sidebar--open' : 'sidebar'}
+        aria-label="Основная навигация"
+      >
         <button
           className="sidebar-toggle"
           type="button"
