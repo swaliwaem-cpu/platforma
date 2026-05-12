@@ -1951,9 +1951,9 @@ tr.user-row--deactivated .text-button {
 
 .catalog-map-button {
   min-width: 158px;
-  border-color: color-mix(in oklch, var(--catalog-forest) 30%, var(--catalog-border));
-  background: var(--catalog-forest);
-  color: oklch(98.5% 0.006 160);
+  border-color: var(--catalog-ink-900);
+  background: var(--catalog-ink-900);
+  color: oklch(98.5% 0.006 230);
   font-weight: 900;
 }
 
@@ -1967,9 +1967,9 @@ tr.user-row--deactivated .text-button {
 
 .catalog-map-button:hover,
 .catalog-map-button:focus-visible {
-  border-color: var(--catalog-forest-deep);
-  background: var(--catalog-forest-deep);
-  box-shadow: 0 0 0 3px color-mix(in oklch, var(--catalog-forest) 18%, transparent);
+  border-color: var(--catalog-ink-800);
+  background: var(--catalog-ink-800);
+  box-shadow: 0 0 0 3px rgb(24 32 42 / 14%);
 }
 
 .catalog-view-toggle--list {
@@ -2067,8 +2067,12 @@ tr.user-row--deactivated .text-button {
 .catalog-quick-links {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
   align-items: stretch;
+  overflow: hidden;
+  border: 1px solid var(--catalog-border);
+  border-radius: var(--catalog-radius-md);
+  background: var(--catalog-panel);
+  box-shadow: var(--catalog-shadow-panel);
 }
 
 .catalog-quick-links-column {
@@ -2076,11 +2080,12 @@ tr.user-row--deactivated .text-button {
   align-content: start;
   gap: 12px;
   min-width: 0;
-  border: 1px solid var(--catalog-border);
-  border-radius: var(--catalog-radius-md);
-  background: var(--catalog-panel);
-  padding: 15px;
-  box-shadow: var(--catalog-shadow-panel);
+  background: transparent;
+  padding: 16px 18px 18px;
+}
+
+.catalog-quick-links-column + .catalog-quick-links-column {
+  border-left: 1px solid var(--catalog-border-soft);
 }
 
 .catalog-quick-links-column h3 {
@@ -2289,10 +2294,10 @@ tr.user-row--deactivated .text-button {
   min-height: 38px;
   align-items: center;
   justify-content: center;
-  border: 1px solid color-mix(in oklch, var(--catalog-forest) 32%, var(--catalog-border));
+  border: 1px solid color-mix(in oklch, var(--catalog-ink-900) 24%, var(--catalog-border));
   border-radius: var(--catalog-radius-sm);
   background: var(--catalog-panel);
-  color: var(--catalog-forest-deep);
+  color: var(--catalog-ink-900);
   padding: 0 12px;
   font-size: 13px;
   font-weight: 850;
@@ -2307,10 +2312,10 @@ tr.user-row--deactivated .text-button {
 
 .catalog-list-item-link:hover,
 .catalog-list-item-link:focus-visible {
-  border-color: var(--catalog-forest);
-  background: var(--catalog-forest);
-  color: oklch(98.5% 0.006 160);
-  box-shadow: 0 0 0 3px color-mix(in oklch, var(--catalog-forest) 16%, transparent);
+  border-color: var(--catalog-ink-900);
+  background: var(--catalog-ink-900);
+  color: oklch(98.5% 0.006 230);
+  box-shadow: 0 0 0 3px rgb(24 32 42 / 14%);
 }
 
 .catalog-card {
@@ -2636,8 +2641,8 @@ tr.user-row--deactivated .text-button {
   align-items: center;
   justify-content: center;
   border-radius: var(--catalog-radius-sm);
-  background: var(--catalog-forest);
-  color: oklch(98.5% 0.006 160);
+  background: var(--catalog-ink-900);
+  color: oklch(98.5% 0.006 230);
   padding: 0 14px;
   font-weight: 850;
   line-height: 1;
@@ -2648,8 +2653,8 @@ tr.user-row--deactivated .text-button {
 
 .catalog-card-link:hover,
 .catalog-card-link:focus-visible {
-  background: var(--catalog-forest-deep);
-  box-shadow: 0 0 0 3px color-mix(in oklch, var(--catalog-forest) 16%, transparent);
+  background: var(--catalog-ink-800);
+  box-shadow: 0 0 0 3px rgb(24 32 42 / 14%);
 }
 
 @keyframes catalog-media-loading {
@@ -2672,6 +2677,8 @@ tr.user-row--deactivated .text-button {
 
   .catalog-quick-links-column:nth-child(3) {
     grid-column: 1 / -1;
+    border-top: 1px solid var(--catalog-border-soft);
+    border-left: 0;
   }
 
   .catalog-grid {
@@ -2696,6 +2703,11 @@ tr.user-row--deactivated .text-button {
 
   .catalog-quick-links-column:nth-child(3) {
     grid-column: auto;
+  }
+
+  .catalog-quick-links-column + .catalog-quick-links-column {
+    border-top: 1px solid var(--catalog-border-soft);
+    border-left: 0;
   }
 }
 

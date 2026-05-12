@@ -84,6 +84,7 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
   const viewMode = useMemo(() => parseCatalogViewMode(queryString), [queryString]);
   const isCatalogRoute = pathname === '/catalog';
   const isMapView = pathname === '/catalog/map';
+  const canShowCatalogQuickLinks = isCatalogRoute || isMapView;
   const [objects, setObjects] = useState<RealEstateObjectSummary[]>([]);
   const [mapObjects, setMapObjects] = useState<MapObject[]>([]);
   const [directories, setDirectories] = useState<DirectoryState>({
@@ -128,7 +129,7 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
   useEffect(() => {
     let isCancelled = false;
 
-    if (!accessToken || !isCatalogRoute) {
+    if (!accessToken || !canShowCatalogQuickLinks) {
       setCatalogLinks([]);
       setCatalogLinksError(null);
       setIsCatalogLinksLoading(false);
@@ -163,7 +164,7 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
     return () => {
       isCancelled = true;
     };
-  }, [accessToken, isCatalogRoute]);
+  }, [accessToken, canShowCatalogQuickLinks]);
 
   useEffect(() => {
     if (!accessToken || isMapView) {
@@ -322,7 +323,7 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
         </div>
       </header>
 
-      {isCatalogRoute ? (
+      {canShowCatalogQuickLinks ? (
         <CatalogQuickLinks
           error={catalogLinksError}
           isLoading={isCatalogLinksLoading}
