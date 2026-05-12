@@ -170,6 +170,9 @@ export type RealEstateObjectBase = {
   slug: string;
   status: ObjectStatus;
   description: string | null;
+  architectureDescription: string | null;
+  infrastructureDescription: string | null;
+  fillingDescription: string | null;
   shortDescription: string | null;
   layoutsUrl: string | null;
   krtName: string | null;

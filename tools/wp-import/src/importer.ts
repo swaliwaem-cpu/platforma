@@ -9,6 +9,7 @@ import {
   ImportStatus,
   Location,
   MetroStation,
+  ObjectStatus,
   Prisma,
   PrismaClient,
 } from '@prisma/client';
@@ -34,6 +35,7 @@ type ImportCounters = {
   objectsImported: number;
   objectsCreated: number;
   objectsUpdated: number;
+  objectsArchived: number;
   objectsFailed: number;
 };
 
@@ -63,17 +65,24 @@ export async function executeWordPressImport(mode: ImportModeName) {
       objectsImported: 0,
       objectsCreated: 0,
       objectsUpdated: 0,
+      objectsArchived: 0,
       objectsFailed: 0,
     };
 
     if (mode === 'run') {
-      await persistMappedImport(mapped, config, {
+      const context: ImportContext = {
         prisma,
         storage: new ImportStorage(config.s3),
         warnings: mapped.warnings,
         errors: mapped.errors,
         counters,
-      });
+      };
+
+      await persistMappedImport(mapped, config, context);
+
+      if (config.wp.importLimit === null) {
+        await archiveImportedObjectsMissingFromSource(mapped, context);
+      }
     }
 
     const summary = {
@@ -151,6 +160,41 @@ async function persistMappedImport(mapped: MappedImport, config: ImportConfig, c
       });
     }
   }
+}
+
+async function archiveImportedObjectsMissingFromSource(mapped: MappedImport, context: ImportContext) {
+  const sourceWpPostIds = mapped.objects.map((object) => object.wpPostId);
+
+  if (sourceWpPostIds.length === 0) {
+    return;
+  }
+
+  const archived = await context.prisma.realEstateObject.updateMany({
+    where: {
+      deletedAt: null,
+      status: {
+        not: ObjectStatus.ARCHIVED,
+      },
+      AND: [
+        {
+          wpPostId: {
+            not: null,
+          },
+        },
+        {
+          wpPostId: {
+            notIn: sourceWpPostIds,
+          },
+        },
+      ],
+    },
+    data: {
+      status: ObjectStatus.ARCHIVED,
+      publishedAt: null,
+    },
+  });
+
+  context.counters.objectsArchived += archived.count;
 }
 
 async function ensureDeveloper(tx: Prisma.TransactionClient, name: string, slug: string) {
@@ -399,6 +443,9 @@ async function upsertObject(
     slug,
     status: object.status,
     description: object.description,
+    architectureDescription: object.architectureDescription,
+    infrastructureDescription: object.infrastructureDescription,
+    fillingDescription: object.fillingDescription,
     shortDescription: object.shortDescription,
     priceFrom: object.priceFrom,
     pricePerMeterFrom: object.pricePerMeterFrom,

@@ -14,6 +14,7 @@ import {
   formatCompletion,
   formatPrice,
   getLocationRows,
+  getObjectContentSections,
   getObjectDistrictLocation,
   getObjectLocationLine,
   getObjectParameterRows,
@@ -123,6 +124,7 @@ function ObjectDetail({
   onBack: () => void;
 }) {
   const descriptionParagraphs = useMemo(() => getDescriptionParagraphs(object), [object]);
+  const contentSections = useMemo(() => getObjectContentSections(object), [object]);
   const locationLine = useMemo(() => getObjectLocationLine(object), [object]);
   const locationRows = useMemo(() => getLocationRows(object), [object]);
   const parameterRows = useMemo(() => getObjectParameterRows(object), [object]);
@@ -230,6 +232,32 @@ function ObjectDetail({
         ) : (
           <p className="muted-text">Описание пока не заполнено.</p>
         )}
+      </section>
+
+      <section className="detail-section object-content-detail-section" aria-labelledby="object-content-sections-title">
+        <div>
+          <p className="eyebrow">Детали</p>
+          <h3 id="object-content-sections-title">Архитектура, инфраструктура и наполнение</h3>
+        </div>
+
+        <div className="object-content-sections">
+          {contentSections.map((section) => (
+            <article className="object-content-section-item" key={section.label}>
+              <h4>{section.label}</h4>
+              <div
+                className={
+                  section.isEmpty
+                    ? 'object-content-section-text object-content-section-text--empty'
+                    : 'object-content-section-text'
+                }
+              >
+                {section.paragraphs.map((paragraph, index) => (
+                  <p key={`${section.label}-${index}`}>{paragraph}</p>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
       </section>
 
       <section className="detail-section" aria-labelledby="object-files-title">
@@ -584,12 +612,7 @@ function SecureFileButton({
 }
 
 function getDescriptionParagraphs(object: RealEstateObjectDetail) {
-  const featureTextSections = Array.isArray(object.featuresJson.textSections)
-    ? object.featuresJson.textSections.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-    : [];
-  const sourceText = object.description || featureTextSections.join('\n\n');
-
-  return sourceText
+  return (object.description ?? '')
     .split(/\n{2,}/u)
     .map((paragraph) => paragraph.trim())
     .filter(Boolean);

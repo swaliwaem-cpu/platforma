@@ -54,6 +54,9 @@ type ObjectsAdminPageProps = {
 type ObjectFormState = {
   title: string;
   description: string;
+  architectureDescription: string;
+  infrastructureDescription: string;
+  fillingDescription: string;
   layoutsUrl: string;
   krtName: string;
   apartmentAreaRange: string;
@@ -96,6 +99,9 @@ const fileTypeLabels: Record<ObjectFileType, string> = {
 const emptyForm: ObjectFormState = {
   title: '',
   description: '',
+  architectureDescription: '',
+  infrastructureDescription: '',
+  fillingDescription: '',
   layoutsUrl: '',
   krtName: '',
   apartmentAreaRange: '',
@@ -976,6 +982,45 @@ function ObjectEditor(props: ObjectEditorProps) {
                   </Field>
 
                   <Field className="field-wide">
+                    <FieldLabel htmlFor="object-architecture-description">Архитектура</FieldLabel>
+                    <textarea
+                      id="object-architecture-description"
+                      maxLength={10000}
+                      rows={5}
+                      value={props.form.architectureDescription}
+                      onChange={(event) =>
+                        props.onFormChange({ ...props.form, architectureDescription: event.target.value })
+                      }
+                    />
+                  </Field>
+
+                  <Field className="field-wide">
+                    <FieldLabel htmlFor="object-infrastructure-description">Инфраструктура</FieldLabel>
+                    <textarea
+                      id="object-infrastructure-description"
+                      maxLength={10000}
+                      rows={5}
+                      value={props.form.infrastructureDescription}
+                      onChange={(event) =>
+                        props.onFormChange({ ...props.form, infrastructureDescription: event.target.value })
+                      }
+                    />
+                  </Field>
+
+                  <Field className="field-wide">
+                    <FieldLabel htmlFor="object-filling-description">Наполнение</FieldLabel>
+                    <textarea
+                      id="object-filling-description"
+                      maxLength={10000}
+                      rows={5}
+                      value={props.form.fillingDescription}
+                      onChange={(event) =>
+                        props.onFormChange({ ...props.form, fillingDescription: event.target.value })
+                      }
+                    />
+                  </Field>
+
+                  <Field className="field-wide">
                     <FieldLabel htmlFor="object-layouts-url">Планировки и цены</FieldLabel>
                     <Input
                       id="object-layouts-url"
@@ -1691,6 +1736,9 @@ function createFormFromObject(object: RealEstateObjectDetail): ObjectFormState {
   return {
     title: object.title,
     description: object.description ?? '',
+    architectureDescription: object.architectureDescription ?? '',
+    infrastructureDescription: object.infrastructureDescription ?? '',
+    fillingDescription: object.fillingDescription ?? '',
     layoutsUrl: object.layoutsUrl ?? '',
     krtName: object.krtName ?? '',
     apartmentAreaRange: object.apartmentAreaRange ?? '',
@@ -1727,6 +1775,9 @@ function createPayloadFromForm(form: ObjectFormState) {
   return {
     title: form.title.trim(),
     description: emptyToNull(form.description),
+    architectureDescription: emptyToNull(form.architectureDescription),
+    infrastructureDescription: emptyToNull(form.infrastructureDescription),
+    fillingDescription: emptyToNull(form.fillingDescription),
     layoutsUrl: emptyToNull(form.layoutsUrl),
     krtName: emptyToNull(form.krtName),
     apartmentAreaRange: emptyToNull(form.apartmentAreaRange),
@@ -1862,6 +1913,18 @@ function validateObjectForm(form: ObjectFormState) {
     } catch {
       return 'Ссылка на планировки некорректна';
     }
+  }
+
+  const contentSectionFields = [
+    ['Архитектура', form.architectureDescription],
+    ['Инфраструктура', form.infrastructureDescription],
+    ['Наполнение', form.fillingDescription],
+  ] as const;
+
+  const tooLongContentSectionField = contentSectionFields.find(([, value]) => value.trim().length > 10000);
+
+  if (tooLongContentSectionField) {
+    return `${tooLongContentSectionField[0]} не должно быть длиннее 10000 символов`;
   }
 
   if (form.krtName.trim().length > 240) {

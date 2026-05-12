@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   formatCompletion,
   formatPrice,
+  getObjectContentSections,
   getObjectLocationLine,
   getObjectParameterRows,
 } from '../src/objects/objectDetailViewModel.ts';
@@ -110,4 +111,35 @@ test('getObjectParameterRows returns ten rows in public order', () => {
 test('format helpers use neutral empty fallback', () => {
   assert.equal(formatPrice(null), 'Не указано');
   assert.equal(formatCompletion(null, null), 'Не указано');
+});
+
+test('getObjectContentSections returns public content sections with empty fallback', () => {
+  const sections = getObjectContentSections(
+    createObject({
+      architectureDescription: 'Архитектурный код\n\nЛобби и фасады',
+      infrastructureDescription: '  ',
+      fillingDescription: null,
+    }),
+  );
+
+  assert.deepEqual(
+    sections.map((section) => section.label),
+    ['Архитектура', 'Инфраструктура', 'Наполнение'],
+  );
+
+  assert.deepEqual(sections[0], {
+    label: 'Архитектура',
+    paragraphs: ['Архитектурный код', 'Лобби и фасады'],
+    isEmpty: false,
+  });
+  assert.deepEqual(sections[1], {
+    label: 'Инфраструктура',
+    paragraphs: ['Не заполнено'],
+    isEmpty: true,
+  });
+  assert.deepEqual(sections[2], {
+    label: 'Наполнение',
+    paragraphs: ['Не заполнено'],
+    isEmpty: true,
+  });
 });

@@ -94,6 +94,9 @@ function mapObject(
   const classifiedTerms = classifyTerms(objectTerms, source);
   const title = firstText(meta, 'zagolovok_1') ?? normalizeText(post.post_title) ?? `WordPress object ${post.ID}`;
   const description = buildDescription(post, meta);
+  const architectureDescription = firstLongText(meta, 'opisanie_3');
+  const infrastructureDescription = firstLongText(meta, 'opisanie_4_1');
+  const fillingDescription = firstLongText(meta, 'opisanie_4_2');
   const developer = mapDeveloper(firstText(meta, 'imya_zastrojshhika'), developerAliases);
   const coordinates = parseCoordinates(firstText(meta, 'karta_koordinaty'));
   const images = collectImages(meta, source, post.ID, warnings);
@@ -126,6 +129,9 @@ function mapObject(
     slug: normalizeSlug(post.post_name) ?? `${slugify(title)}-${post.ID}`,
     status: mapObjectStatus(post.post_status),
     description,
+    architectureDescription,
+    infrastructureDescription,
+    fillingDescription,
     shortDescription: null,
     priceFrom: parseMoney(firstText(meta, 'stoimost')),
     pricePerMeterFrom: parseMoney(firstText(meta, 'za_m2')),
@@ -632,19 +638,7 @@ function groupFeatureTerms(objectTerms: WpObjectTerm[], source: WpSourceData) {
 }
 
 function buildDescription(post: WpPost, meta: Map<string, string[]>) {
-  const contentSections = [
-    firstLongText(meta, 'opisanie_2'),
-    firstLongText(meta, 'opisanie_3'),
-    firstLongText(meta, 'opisanie_4_1'),
-    firstLongText(meta, 'opisanie_4_2'),
-    firstLongText(meta, 'opisanie_5'),
-  ].filter(Boolean);
-
-  if (contentSections.length > 0) {
-    return contentSections.join('\n\n');
-  }
-
-  return normalizeText(stripHtml(post.post_content));
+  return firstLongText(meta, 'opisanie_2') ?? normalizeText(stripHtml(post.post_content));
 }
 
 function collectRepeater(meta: Map<string, string[]>, prefix: string) {

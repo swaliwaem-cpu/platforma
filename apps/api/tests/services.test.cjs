@@ -60,6 +60,9 @@ function objectRecord(overrides = {}) {
     slug: 'zhk-testovyy',
     status: ObjectStatus.DRAFT,
     description: null,
+    architectureDescription: null,
+    infrastructureDescription: null,
+    fillingDescription: null,
     shortDescription: null,
     krtName: null,
     apartmentAreaRange: null,
@@ -359,6 +362,59 @@ test('ObjectsService.create saves manual detail parameters and serializes them',
   assert.equal(result.object.apartmentsCountText, manualDetailParameters.apartmentsCountText);
 });
 
+test('ObjectsService.create saves content sections and serializes them', async () => {
+  const contentSections = {
+    architectureDescription: 'Архитектура корпуса',
+    infrastructureDescription: 'Инфраструктура квартала',
+    fillingDescription: 'Наполнение апартаментов',
+  };
+  const calls = {};
+  const createdObject = objectRecord(contentSections);
+  const prisma = {
+    realEstateObject: {
+      findUnique: async () => null,
+      create: async (args) => {
+        calls.create = args;
+
+        return objectRecord({ id: createdObject.id });
+      },
+      findFirst: async () => createdObject,
+    },
+    objectLocation: {
+      deleteMany: async () => {},
+    },
+    objectMetroStation: {
+      deleteMany: async () => {},
+    },
+    auditLog: {
+      create: async (args) => {
+        calls.auditLog = args;
+      },
+    },
+    $transaction: async (callback) => callback(prisma),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  const result = await service.create(
+    {
+      title: 'ЖК Содержательный',
+      ...contentSections,
+    },
+    actor,
+    request,
+  );
+
+  assert.equal(calls.create.data.architectureDescription, contentSections.architectureDescription);
+  assert.equal(calls.create.data.infrastructureDescription, contentSections.infrastructureDescription);
+  assert.equal(calls.create.data.fillingDescription, contentSections.fillingDescription);
+  assert.equal(result.object.architectureDescription, contentSections.architectureDescription);
+  assert.equal(result.object.infrastructureDescription, contentSections.infrastructureDescription);
+  assert.equal(result.object.fillingDescription, contentSections.fillingDescription);
+  assert.equal(calls.auditLog.data.metadata.after.architectureDescription, contentSections.architectureDescription);
+  assert.equal(calls.auditLog.data.metadata.after.infrastructureDescription, contentSections.infrastructureDescription);
+  assert.equal(calls.auditLog.data.metadata.after.fillingDescription, contentSections.fillingDescription);
+});
+
 test('ObjectsService.update clears empty manual detail parameters', async () => {
   const calls = {};
   const existingObject = objectRecord({
@@ -423,6 +479,70 @@ test('ObjectsService.update clears empty manual detail parameters', async () => 
   assert.equal(calls.update.data.apartmentsCountText, null);
 });
 
+test('ObjectsService.update clears empty content sections', async () => {
+  const calls = {};
+  const existingObject = objectRecord({
+    architectureDescription: 'Архитектура корпуса',
+    infrastructureDescription: 'Инфраструктура квартала',
+    fillingDescription: 'Наполнение апартаментов',
+  });
+  const updatedObject = objectRecord({
+    architectureDescription: null,
+    infrastructureDescription: null,
+    fillingDescription: null,
+  });
+  let findFirstCount = 0;
+  const prisma = {
+    realEstateObject: {
+      findFirst: async () => {
+        findFirstCount += 1;
+
+        return findFirstCount === 1 ? existingObject : updatedObject;
+      },
+      update: async (args) => {
+        calls.update = args;
+
+        return updatedObject;
+      },
+    },
+    auditLog: {
+      create: async (args) => {
+        calls.auditLog = args;
+      },
+    },
+    $transaction: async (callback) => callback(prisma),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await service.update(
+    existingObject.id,
+    {
+      architectureDescription: '',
+      infrastructureDescription: '',
+      fillingDescription: '',
+    },
+    actor,
+    request,
+  );
+
+  assert.ok(calls.update, 'Object update must be called for cleared content sections');
+  assert.equal(calls.update.data.architectureDescription, null);
+  assert.equal(calls.update.data.infrastructureDescription, null);
+  assert.equal(calls.update.data.fillingDescription, null);
+  assert.deepEqual(calls.auditLog.data.metadata.changes.architectureDescription, {
+    from: 'Архитектура корпуса',
+    to: null,
+  });
+  assert.deepEqual(calls.auditLog.data.metadata.changes.infrastructureDescription, {
+    from: 'Инфраструктура квартала',
+    to: null,
+  });
+  assert.deepEqual(calls.auditLog.data.metadata.changes.fillingDescription, {
+    from: 'Наполнение апартаментов',
+    to: null,
+  });
+});
+
 test('ObjectsService.create rejects too long manual detail parameters', async () => {
   const createService = () => {
     const prisma = {
@@ -465,6 +585,43 @@ test('ObjectsService.create rejects too long manual detail parameters', async ()
         {
           title: 'ЖК Длинная высота',
           ceilingHeight: 'а'.repeat(121),
+        },
+        actor,
+        request,
+      ),
+    BadRequestException,
+  );
+});
+
+test('ObjectsService.create rejects too long content sections', async () => {
+  const createService = () => {
+    const prisma = {
+      realEstateObject: {
+        findUnique: async () => null,
+        create: async () => objectRecord(),
+        findFirst: async () => objectRecord(),
+      },
+      objectLocation: {
+        deleteMany: async () => {},
+      },
+      objectMetroStation: {
+        deleteMany: async () => {},
+      },
+      auditLog: {
+        create: async () => {},
+      },
+      $transaction: async (callback) => callback(prisma),
+    };
+
+    return new ObjectsService(prisma, {});
+  };
+
+  await assert.rejects(
+    () =>
+      createService().create(
+        {
+          title: 'ЖК Длинная архитектура',
+          architectureDescription: 'а'.repeat(10001),
         },
         actor,
         request,

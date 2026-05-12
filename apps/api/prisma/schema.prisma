@@ -186,6 +186,9 @@ model RealEstateObject {
   slug              String       @unique
   status            ObjectStatus @default(DRAFT)
   description       String?
+  architectureDescription String? @map("architecture_description")
+  infrastructureDescription String? @map("infrastructure_description")
+  fillingDescription String? @map("filling_description")
   shortDescription  String?      @map("short_description")
   layoutsUrl        String?      @map("layouts_url") @db.VarChar(2048)
   krtName           String?      @map("krt_name") @db.VarChar(240)

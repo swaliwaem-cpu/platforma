@@ -5,6 +5,12 @@ export type FeatureRow = {
   value: string;
 };
 
+export type ObjectContentSection = {
+  label: string;
+  paragraphs: string[];
+  isEmpty: boolean;
+};
+
 export type DisplayLocation = Pick<ObjectLocation, 'id' | 'name' | 'type'>;
 
 export type ObjectLocationLine = {
@@ -14,6 +20,32 @@ export type ObjectLocationLine = {
 };
 
 const emptyValueLabel = 'Не указано';
+const emptyContentSectionLabel = 'Не заполнено';
+
+export function getObjectContentSections(object: RealEstateObjectDetail): ObjectContentSection[] {
+  return [
+    {
+      label: 'Архитектура',
+      value: object.architectureDescription,
+    },
+    {
+      label: 'Инфраструктура',
+      value: object.infrastructureDescription,
+    },
+    {
+      label: 'Наполнение',
+      value: object.fillingDescription,
+    },
+  ].map((section) => {
+    const paragraphs = getTextParagraphs(section.value);
+
+    return {
+      label: section.label,
+      paragraphs: paragraphs.length > 0 ? paragraphs : [emptyContentSectionLabel],
+      isEmpty: paragraphs.length === 0,
+    };
+  });
+}
 
 export function getObjectLocationLine(object: RealEstateObjectDetail): ObjectLocationLine {
   const district = getObjectDistrictLocation(object);
@@ -164,4 +196,11 @@ export function formatCompletion(year: number | null, quarter: number | null) {
   }
 
   return quarter ? `${quarter} кв. ${year}` : String(year);
+}
+
+function getTextParagraphs(value: string | null | undefined) {
+  return (value ?? '')
+    .split(/\n{2,}/u)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
 }

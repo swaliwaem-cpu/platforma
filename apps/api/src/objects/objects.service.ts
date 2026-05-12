@@ -126,6 +126,9 @@ type CreateObjectBody = {
   title?: unknown;
   status?: unknown;
   description?: unknown;
+  architectureDescription?: unknown;
+  infrastructureDescription?: unknown;
+  fillingDescription?: unknown;
   shortDescription?: unknown;
   layoutsUrl?: unknown;
   krtName?: unknown;
@@ -450,6 +453,13 @@ export class ObjectsService {
     const title = this.parseRequiredString(body.title, 'Title is required', 240);
     const slug = await this.generateUniqueSlug(title);
     const description = this.parseNullableText(body.description, 'Description', 30000);
+    const architectureDescription = this.parseNullableText(body.architectureDescription, 'Architecture description', 10000);
+    const infrastructureDescription = this.parseNullableText(
+      body.infrastructureDescription,
+      'Infrastructure description',
+      10000,
+    );
+    const fillingDescription = this.parseNullableText(body.fillingDescription, 'Filling description', 10000);
     const shortDescription = this.parseNullableText(body.shortDescription, 'Short description', 2000);
     const layoutsUrl = this.parseNullableUrl(body.layoutsUrl, 'Layouts URL', 2048);
     const krtName = this.parseNullableText(body.krtName, 'KRT name', 240);
@@ -495,6 +505,9 @@ export class ObjectsService {
           slug,
           status: ObjectStatus.DRAFT,
           ...(description !== undefined ? { description } : {}),
+          ...(architectureDescription !== undefined ? { architectureDescription } : {}),
+          ...(infrastructureDescription !== undefined ? { infrastructureDescription } : {}),
+          ...(fillingDescription !== undefined ? { fillingDescription } : {}),
           ...(shortDescription !== undefined ? { shortDescription } : {}),
           ...(layoutsUrl !== undefined ? { layoutsUrl } : {}),
           ...(krtName !== undefined ? { krtName } : {}),
@@ -573,6 +586,39 @@ export class ObjectsService {
       if (description !== object.description) {
         data.description = description;
         changes.description = this.change(object.description, description);
+        hasScalarChanges = true;
+      }
+    }
+
+    if ('architectureDescription' in body) {
+      const architectureDescription =
+        this.parseNullableText(body.architectureDescription, 'Architecture description', 10000) ?? null;
+
+      if (architectureDescription !== object.architectureDescription) {
+        data.architectureDescription = architectureDescription;
+        changes.architectureDescription = this.change(object.architectureDescription, architectureDescription);
+        hasScalarChanges = true;
+      }
+    }
+
+    if ('infrastructureDescription' in body) {
+      const infrastructureDescription =
+        this.parseNullableText(body.infrastructureDescription, 'Infrastructure description', 10000) ?? null;
+
+      if (infrastructureDescription !== object.infrastructureDescription) {
+        data.infrastructureDescription = infrastructureDescription;
+        changes.infrastructureDescription = this.change(object.infrastructureDescription, infrastructureDescription);
+        hasScalarChanges = true;
+      }
+    }
+
+    if ('fillingDescription' in body) {
+      const fillingDescription =
+        this.parseNullableText(body.fillingDescription, 'Filling description', 10000) ?? null;
+
+      if (fillingDescription !== object.fillingDescription) {
+        data.fillingDescription = fillingDescription;
+        changes.fillingDescription = this.change(object.fillingDescription, fillingDescription);
         hasScalarChanges = true;
       }
     }
@@ -1925,6 +1971,9 @@ export class ObjectsService {
       slug: object.slug,
       status: object.status,
       description: object.description,
+      architectureDescription: object.architectureDescription,
+      infrastructureDescription: object.infrastructureDescription,
+      fillingDescription: object.fillingDescription,
       shortDescription: object.shortDescription,
       layoutsUrl: object.layoutsUrl,
       krtName: object.krtName,
@@ -2052,6 +2101,9 @@ export class ObjectsService {
       slug: object.slug,
       status: object.status,
       description: object.description,
+      architectureDescription: object.architectureDescription,
+      infrastructureDescription: object.infrastructureDescription,
+      fillingDescription: object.fillingDescription,
       shortDescription: object.shortDescription,
       layoutsUrl: object.layoutsUrl,
       krtName: object.krtName,

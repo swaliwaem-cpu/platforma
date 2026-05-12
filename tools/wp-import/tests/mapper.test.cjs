@@ -88,6 +88,11 @@ function makeSource(overrides = {}) {
         makeMeta({
           zagolovok_1: ' ЖК "Северный" ',
           korotkoe_opisanie: '<p>Короткое описание</p>',
+          opisanie_2: '<p>Основное описание</p>',
+          opisanie_3: '<p>Архитектура объекта</p>',
+          opisanie_4_1: '<p>Инфраструктура объекта</p>',
+          opisanie_4_2: '<p>Наполнение объекта</p>',
+          opisanie_5: '<p>Расположение объекта</p>',
           imya_zastrojshhika: 'Девелопер',
           karta_koordinaty: '55.751244, 37.618423',
           stoimost: 'от 12 500 000 ₽',
@@ -176,7 +181,10 @@ test('mapWordPressSource maps object fields, taxonomies, images and files', () =
   assert.equal(object.title, 'ЖК "Северный"');
   assert.equal(object.slug, 'zhk-severnyy');
   assert.equal(object.status, ObjectStatus.PUBLISHED);
-  assert.equal(object.description, 'Описание из WordPress');
+  assert.equal(object.description, 'Основное описание');
+  assert.equal(object.architectureDescription, 'Архитектура объекта');
+  assert.equal(object.infrastructureDescription, 'Инфраструктура объекта');
+  assert.equal(object.fillingDescription, 'Наполнение объекта');
   assert.equal(object.shortDescription, null);
   assert.equal(Object.hasOwn(object.featuresJson, 'shortDescription'), false);
   assert.equal(object.priceFrom, '12500000');
@@ -215,6 +223,14 @@ test('mapWordPressSource ignores WordPress short description meta when descripti
         post_content: '',
       }),
     ],
+    metaByPostId: new Map([
+      [
+        101,
+        makeMeta({
+          korotkoe_opisanie: '<p>Короткое описание</p>',
+        }),
+      ],
+    ]),
   });
 
   const mapped = mapWordPressSource(source, 'nedvizhimost', true);
@@ -222,6 +238,33 @@ test('mapWordPressSource ignores WordPress short description meta when descripti
 
   assert.equal(object.description, null);
   assert.equal(object.shortDescription, null);
+});
+
+test('mapWordPressSource falls back to post content without merging extra content sections', () => {
+  const source = makeSource({
+    metaByPostId: new Map([
+      [
+        101,
+        makeMeta({
+          korotkoe_opisanie: '<p>Короткое описание</p>',
+          opisanie_3: '<p>Архитектура объекта</p>',
+          opisanie_4_1: '<p>Инфраструктура объекта</p>',
+          opisanie_4_2: '<p>Наполнение объекта</p>',
+          opisanie_5: '<p>Расположение объекта</p>',
+        }),
+      ],
+    ]),
+  });
+
+  const mapped = mapWordPressSource(source, 'nedvizhimost', true);
+  const [object] = mapped.objects;
+
+  assert.equal(object.description, 'Описание из WordPress');
+  assert.equal(object.architectureDescription, 'Архитектура объекта');
+  assert.equal(object.infrastructureDescription, 'Инфраструктура объекта');
+  assert.equal(object.fillingDescription, 'Наполнение объекта');
+  assert.equal(object.description.includes('Архитектура объекта'), false);
+  assert.equal(object.description.includes('Короткое описание'), false);
 });
 
 test('mapWordPressSource falls back to AREA as primary location when district is missing', () => {

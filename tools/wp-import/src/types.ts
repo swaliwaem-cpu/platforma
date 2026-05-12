@@ -121,6 +121,9 @@ export type MappedObject = {
   slug: string;
   status: ObjectStatus;
   description: string | null;
+  architectureDescription: string | null;
+  infrastructureDescription: string | null;
+  fillingDescription: string | null;
   shortDescription: null;
   priceFrom: string | null;
   pricePerMeterFrom: string | null;

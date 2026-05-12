@@ -20,6 +20,8 @@ test('catalog card does not render short description text', () => {
   assert.doesNotMatch(catalogSource, /shortDescription\?\.trim/);
 });
 
-test('object detail text falls back to imported feature sections, not short description', () => {
+test('object detail text only uses the main description field', () => {
   assert.doesNotMatch(objectDetailSource, /object\.shortDescription/);
+  assert.doesNotMatch(objectDetailSource, /featuresJson\.textSections/);
+  assert.doesNotMatch(objectDetailSource, /featureTextSections/);
 });

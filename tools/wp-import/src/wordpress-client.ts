@@ -99,7 +99,7 @@ export class WordPressReadonlyClient {
 
   private async fetchObjects() {
     const limitClause = this.config.importLimit ? 'LIMIT ?' : '';
-    const params: unknown[] = [this.config.postType, 'publish', 'draft', 'private'];
+    const params: unknown[] = [this.config.postType, 'publish'];
 
     if (this.config.importLimit) {
       params.push(this.config.importLimit);
@@ -109,7 +109,7 @@ export class WordPressReadonlyClient {
       `SELECT ID, post_title, post_name, post_content, post_status, post_date, post_modified
        FROM ${this.table('posts')}
        WHERE post_type = ?
-         AND post_status IN (?, ?, ?)
+         AND post_status = ?
        ORDER BY ID ASC
        ${limitClause}`,
       params,
