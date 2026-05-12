@@ -12,6 +12,7 @@ import {
   ObjectStatus,
   Prisma,
   PrismaClient,
+  type RealEstateObject,
 } from '@prisma/client';
 
 import { loadDeveloperAliases, normalizeDeveloperName } from './developer-aliases';
@@ -48,6 +49,75 @@ type ImportContext = {
 };
 
 type FileRecord = Pick<File, 'id' | 'wpAttachmentId' | 'key'>;
+type ManualObjectOverrideField =
+  | 'title'
+  | 'description'
+  | 'architectureDescription'
+  | 'infrastructureDescription'
+  | 'fillingDescription'
+  | 'shortDescription'
+  | 'priceFrom'
+  | 'pricePerMeterFrom'
+  | 'completionYear'
+  | 'completionQuarter'
+  | 'address'
+  | 'latitude'
+  | 'longitude'
+  | 'featuresJson'
+  | 'developerId'
+  | 'primaryLocationId'
+  | 'locationIds'
+  | 'metroStationIds';
+
+type ManualObjectOverrides = {
+  fields: Set<ManualObjectOverrideField>;
+  values: Partial<Record<ManualObjectOverrideField, unknown>>;
+};
+
+type ExistingObjectForImport = Pick<
+  RealEstateObject,
+  | 'wpPostId'
+  | 'title'
+  | 'slug'
+  | 'status'
+  | 'description'
+  | 'architectureDescription'
+  | 'infrastructureDescription'
+  | 'fillingDescription'
+  | 'shortDescription'
+  | 'priceFrom'
+  | 'pricePerMeterFrom'
+  | 'completionYear'
+  | 'completionQuarter'
+  | 'address'
+  | 'latitude'
+  | 'longitude'
+  | 'featuresJson'
+  | 'developerId'
+  | 'primaryLocationId'
+  | 'publishedAt'
+>;
+
+const manualObjectOverrideFields = new Set<ManualObjectOverrideField>([
+  'title',
+  'description',
+  'architectureDescription',
+  'infrastructureDescription',
+  'fillingDescription',
+  'shortDescription',
+  'priceFrom',
+  'pricePerMeterFrom',
+  'completionYear',
+  'completionQuarter',
+  'address',
+  'latitude',
+  'longitude',
+  'featuresJson',
+  'developerId',
+  'primaryLocationId',
+  'locationIds',
+  'metroStationIds',
+]);
 
 export async function executeWordPressImport(mode: ImportModeName) {
   const config = loadImportConfig();
@@ -140,10 +210,21 @@ async function persistMappedImport(mapped: MappedImport, config: ImportConfig, c
         const primaryLocationId = object.primaryLocation
           ? locationByWpTermId.get(object.primaryLocation.wpTermId)?.id ?? null
           : null;
-        const objectRecord = await upsertObject(tx, object, developerId, primaryLocationId, context);
+        const { objectRecord, manualOverrideFields } = await upsertObject(
+          tx,
+          object,
+          developerId,
+          primaryLocationId,
+          context,
+        );
 
-        await replaceLocationLinks(tx, objectRecord.id, object.locations, locationByWpTermId, primaryLocationId);
-        await replaceMetroStationLinks(tx, objectRecord.id, object.metroStations, metroByWpTermId);
+        if (!shouldPreserveManualLocationLinks(manualOverrideFields)) {
+          await replaceLocationLinks(tx, objectRecord.id, object.locations, locationByWpTermId, primaryLocationId);
+        }
+
+        if (!manualOverrideFields.has('metroStationIds')) {
+          await replaceMetroStationLinks(tx, objectRecord.id, object.metroStations, metroByWpTermId);
+        }
 
         return objectRecord;
       });
@@ -437,7 +518,120 @@ async function upsertObject(
     });
   }
 
-  const data = {
+  const manualOverrides = existingObject
+    ? await loadManualObjectOverrides(tx, existingObject.id)
+    : createEmptyManualObjectOverrides();
+  const data = resolveImportedObjectData({
+    object,
+    slug,
+    existingObject,
+    developerId,
+    primaryLocationId,
+    manualOverrideFields: manualOverrides.fields,
+    manualOverrideValues: manualOverrides.values,
+  });
+
+  if (existingObject) {
+    context.counters.objectsUpdated += 1;
+
+    const objectRecord = await tx.realEstateObject.update({
+      where: {
+        id: existingObject.id,
+      },
+      data,
+    });
+
+    return {
+      objectRecord,
+      manualOverrideFields: manualOverrides.fields,
+    };
+  }
+
+  context.counters.objectsCreated += 1;
+
+  const objectRecord = await tx.realEstateObject.create({
+    data,
+  });
+
+  return {
+    objectRecord,
+    manualOverrideFields: manualOverrides.fields,
+  };
+}
+
+async function loadManualObjectOverrides(tx: Prisma.TransactionClient, objectId: string) {
+  const logs = await tx.auditLog.findMany({
+    where: {
+      action: 'object.update',
+      entityType: 'object',
+      OR: [
+        {
+          entityId: objectId,
+        },
+        {
+          objectId,
+        },
+      ],
+    },
+    select: {
+      metadata: true,
+    },
+    orderBy: {
+      createdAt: 'asc',
+    },
+  });
+
+  return collectManualObjectOverrides(logs.map((log) => log.metadata));
+}
+
+export function collectManualObjectOverrideFields(metadataItems: Array<unknown>) {
+  return collectManualObjectOverrides(metadataItems).fields;
+}
+
+export function collectManualObjectOverrides(metadataItems: Array<unknown>) {
+  const overrides: ManualObjectOverrides = createEmptyManualObjectOverrides();
+
+  for (const metadata of metadataItems) {
+    if (!isRecord(metadata) || !isRecord(metadata.changes)) {
+      continue;
+    }
+
+    for (const field of Object.keys(metadata.changes)) {
+      if (manualObjectOverrideFields.has(field as ManualObjectOverrideField)) {
+        const overrideField = field as ManualObjectOverrideField;
+        const change = metadata.changes[field];
+
+        overrides.fields.add(overrideField);
+
+        if (isRecord(change) && Object.prototype.hasOwnProperty.call(change, 'to')) {
+          overrides.values[overrideField] = change.to;
+        }
+      }
+    }
+  }
+
+  return overrides;
+}
+
+export function resolveImportedObjectData(params: {
+  object: MappedObject;
+  slug: string;
+  existingObject: ExistingObjectForImport | null;
+  developerId: string | null;
+  primaryLocationId: string | null;
+  manualOverrideFields: Set<ManualObjectOverrideField>;
+  manualOverrideValues?: Partial<Record<ManualObjectOverrideField, unknown>>;
+}) {
+  const {
+    object,
+    slug,
+    existingObject,
+    developerId,
+    primaryLocationId,
+    manualOverrideFields,
+    manualOverrideValues = {},
+  } = params;
+  const data: Prisma.RealEstateObjectUncheckedCreateInput = {
     wpPostId: object.wpPostId,
     title: object.title,
     slug,
@@ -458,24 +652,141 @@ async function upsertObject(
     developerId,
     primaryLocationId,
     publishedAt: object.status === 'PUBLISHED' ? object.publishedAt ?? existingObject?.publishedAt ?? new Date() : null,
-  } satisfies Prisma.RealEstateObjectUncheckedCreateInput;
+  };
 
-  if (existingObject) {
-    context.counters.objectsUpdated += 1;
-
-    return tx.realEstateObject.update({
-      where: {
-        id: existingObject.id,
-      },
-      data,
-    });
+  if (!existingObject || manualOverrideFields.size === 0) {
+    return data;
   }
 
-  context.counters.objectsCreated += 1;
+  applyManualObjectOverrides(data, existingObject, manualOverrideFields, manualOverrideValues);
 
-  return tx.realEstateObject.create({
-    data,
-  });
+  return data;
+}
+
+function applyManualObjectOverrides(
+  data: Prisma.RealEstateObjectUncheckedCreateInput,
+  existingObject: ExistingObjectForImport,
+  manualOverrideFields: Set<ManualObjectOverrideField>,
+  manualOverrideValues: Partial<Record<ManualObjectOverrideField, unknown>>,
+) {
+  if (manualOverrideFields.has('title')) {
+    data.title = getManualOverrideValue(manualOverrideValues, 'title', existingObject.title);
+  }
+
+  if (manualOverrideFields.has('description')) {
+    data.description = getManualOverrideValue(manualOverrideValues, 'description', existingObject.description);
+  }
+
+  if (manualOverrideFields.has('architectureDescription')) {
+    data.architectureDescription = getManualOverrideValue(
+      manualOverrideValues,
+      'architectureDescription',
+      existingObject.architectureDescription,
+    );
+  }
+
+  if (manualOverrideFields.has('infrastructureDescription')) {
+    data.infrastructureDescription = getManualOverrideValue(
+      manualOverrideValues,
+      'infrastructureDescription',
+      existingObject.infrastructureDescription,
+    );
+  }
+
+  if (manualOverrideFields.has('fillingDescription')) {
+    data.fillingDescription = getManualOverrideValue(
+      manualOverrideValues,
+      'fillingDescription',
+      existingObject.fillingDescription,
+    );
+  }
+
+  if (manualOverrideFields.has('shortDescription')) {
+    data.shortDescription = getManualOverrideValue(manualOverrideValues, 'shortDescription', existingObject.shortDescription);
+  }
+
+  if (manualOverrideFields.has('priceFrom')) {
+    data.priceFrom = getManualOverrideValue(manualOverrideValues, 'priceFrom', existingObject.priceFrom);
+  }
+
+  if (manualOverrideFields.has('pricePerMeterFrom')) {
+    data.pricePerMeterFrom = getManualOverrideValue(
+      manualOverrideValues,
+      'pricePerMeterFrom',
+      existingObject.pricePerMeterFrom,
+    );
+  }
+
+  if (manualOverrideFields.has('completionYear')) {
+    data.completionYear = getManualOverrideValue(manualOverrideValues, 'completionYear', existingObject.completionYear);
+  }
+
+  if (manualOverrideFields.has('completionQuarter')) {
+    data.completionQuarter = getManualOverrideValue(
+      manualOverrideValues,
+      'completionQuarter',
+      existingObject.completionQuarter,
+    );
+  }
+
+  if (manualOverrideFields.has('address')) {
+    data.address = getManualOverrideValue(manualOverrideValues, 'address', existingObject.address);
+  }
+
+  if (manualOverrideFields.has('latitude')) {
+    data.latitude = getManualOverrideValue(manualOverrideValues, 'latitude', existingObject.latitude);
+  }
+
+  if (manualOverrideFields.has('longitude')) {
+    data.longitude = getManualOverrideValue(manualOverrideValues, 'longitude', existingObject.longitude);
+  }
+
+  if (manualOverrideFields.has('featuresJson')) {
+    data.featuresJson = getManualOverrideValue(
+      manualOverrideValues,
+      'featuresJson',
+      existingObject.featuresJson,
+    ) as Prisma.InputJsonValue;
+  }
+
+  if (manualOverrideFields.has('developerId')) {
+    data.developerId = getManualOverrideValue(manualOverrideValues, 'developerId', existingObject.developerId);
+  }
+
+  if (manualOverrideFields.has('primaryLocationId')) {
+    data.primaryLocationId = getManualOverrideValue(
+      manualOverrideValues,
+      'primaryLocationId',
+      existingObject.primaryLocationId,
+    );
+  }
+}
+
+function getManualOverrideValue<T>(
+  manualOverrideValues: Partial<Record<ManualObjectOverrideField, unknown>>,
+  field: ManualObjectOverrideField,
+  fallback: T,
+) {
+  if (!Object.prototype.hasOwnProperty.call(manualOverrideValues, field)) {
+    return fallback;
+  }
+
+  return manualOverrideValues[field] as T;
+}
+
+function shouldPreserveManualLocationLinks(manualOverrideFields: Set<ManualObjectOverrideField>) {
+  return manualOverrideFields.has('primaryLocationId') || manualOverrideFields.has('locationIds');
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function createEmptyManualObjectOverrides(): ManualObjectOverrides {
+  return {
+    fields: new Set<ManualObjectOverrideField>(),
+    values: {},
+  };
 }
 
 async function getUniqueObjectSlug(tx: Prisma.TransactionClient, slug: string, wpPostId: number) {

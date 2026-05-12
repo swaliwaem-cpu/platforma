@@ -543,6 +543,84 @@ test('ObjectsService.update clears empty content sections', async () => {
   });
 });
 
+test('ObjectsService.update allows fixing coordinates on already incomplete published imported objects', async () => {
+  const calls = {};
+  const district = locationRecord({
+    id: 'cc0580d8-a670-47ff-8f10-d5c4d2522184',
+  });
+  const locationLink = {
+    objectId: '11111111-1111-4111-8111-111111111111',
+    locationId: district.id,
+    isPrimary: true,
+    sortOrder: 0,
+    location: district,
+  };
+  const existingObject = objectRecord({
+    status: ObjectStatus.PUBLISHED,
+    developerId: 'f114fdfc-0478-47c8-a1ed-e614a8499108',
+    primaryLocationId: district.id,
+    primaryLocation: district,
+    locations: [locationLink],
+    address: null,
+    latitude: decimal('59.841541'),
+    longitude: decimal('30.225039'),
+    completionYear: 2025,
+  });
+  const updatedObject = objectRecord({
+    ...existingObject,
+    latitude: decimal('55.761614'),
+    longitude: decimal('37.64136'),
+  });
+  let findFirstCount = 0;
+  const prisma = {
+    realEstateObject: {
+      findFirst: async () => {
+        findFirstCount += 1;
+
+        return findFirstCount === 1 ? existingObject : updatedObject;
+      },
+      update: async (args) => {
+        calls.update = args;
+
+        return updatedObject;
+      },
+    },
+    location: {
+      findMany: async (args) => {
+        calls.locationFindMany = args;
+
+        return [district];
+      },
+    },
+    auditLog: {
+      create: async (args) => {
+        calls.auditLog = args;
+      },
+    },
+    $transaction: async (callback) => callback(prisma),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  const result = await service.update(
+    existingObject.id,
+    {
+      latitude: '55.761614',
+      longitude: '37.64136',
+    },
+    actor,
+    request,
+  );
+
+  assert.ok(calls.update, 'Object update must be called for coordinate fixes');
+  assert.equal(calls.update.data.latitude, '55.761614');
+  assert.equal(calls.update.data.longitude, '37.64136');
+  assert.equal(result.object.latitude, 55.761614);
+  assert.deepEqual(calls.auditLog.data.metadata.changes.latitude, {
+    from: '59.841541',
+    to: '55.761614',
+  });
+});
+
 test('ObjectsService.create rejects too long manual detail parameters', async () => {
   const createService = () => {
     const prisma = {

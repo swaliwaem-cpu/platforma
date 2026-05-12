@@ -853,18 +853,32 @@ export class ObjectsService {
     this.validateCoordinatePair(nextLatitude, nextLongitude);
 
     if (object.status === ObjectStatus.PUBLISHED) {
-      this.validatePublishRequirements({
-        title: nextTitle,
-        slug: object.slug,
-        status: object.status,
-        developerId: nextDeveloperId,
-        primaryLocationId: nextPrimaryLocationId,
-        address: nextAddress,
-        latitude: nextLatitude,
-        longitude: nextLongitude,
-        completionYear: nextCompletionYear,
-        completionQuarter: nextCompletionQuarter,
-      });
+      this.validatePublishedObjectUpdate(
+        {
+          title: object.title,
+          slug: object.slug,
+          status: object.status,
+          developerId: object.developerId,
+          primaryLocationId: object.primaryLocationId,
+          address: object.address,
+          latitude: this.decimalToString(object.latitude),
+          longitude: this.decimalToString(object.longitude),
+          completionYear: object.completionYear,
+          completionQuarter: object.completionQuarter,
+        },
+        {
+          title: nextTitle,
+          slug: object.slug,
+          status: object.status,
+          developerId: nextDeveloperId,
+          primaryLocationId: nextPrimaryLocationId,
+          address: nextAddress,
+          latitude: nextLatitude,
+          longitude: nextLongitude,
+          completionYear: nextCompletionYear,
+          completionQuarter: nextCompletionQuarter,
+        },
+      );
     }
 
     if (nextPrimaryLocationId && !nextLocationIds.includes(nextPrimaryLocationId)) {
@@ -1521,6 +1535,36 @@ export class ObjectsService {
   }
 
   private validatePublishRequirements(state: ObjectLifecycleState) {
+    this.validateCompletion(state.completionYear, state.completionQuarter);
+    this.validateCoordinatePair(state.latitude, state.longitude);
+
+    const missingFields = this.getPublishMissingFields(state);
+
+    if (missingFields.length > 0) {
+      throw new BadRequestException(`Object cannot be published. Missing fields: ${missingFields.join(', ')}`);
+    }
+  }
+
+  private validatePublishedObjectUpdate(currentState: ObjectLifecycleState, nextState: ObjectLifecycleState) {
+    this.validateCompletion(nextState.completionYear, nextState.completionQuarter);
+    this.validateCoordinatePair(nextState.latitude, nextState.longitude);
+
+    const currentMissingFields = this.getPublishMissingFields(currentState);
+    const nextMissingFields = this.getPublishMissingFields(nextState);
+
+    if (nextMissingFields.length === 0) {
+      return;
+    }
+
+    const currentMissingFieldSet = new Set(currentMissingFields);
+    const newlyMissingFields = nextMissingFields.filter((field) => !currentMissingFieldSet.has(field));
+
+    if (currentMissingFields.length === 0 || newlyMissingFields.length > 0) {
+      throw new BadRequestException(`Object cannot be published. Missing fields: ${nextMissingFields.join(', ')}`);
+    }
+  }
+
+  private getPublishMissingFields(state: ObjectLifecycleState) {
     const missingFields = [];
 
     if (!state.title.trim()) {
@@ -1547,12 +1591,7 @@ export class ObjectsService {
       missingFields.push('coordinates');
     }
 
-    this.validateCompletion(state.completionYear, state.completionQuarter);
-    this.validateCoordinatePair(state.latitude, state.longitude);
-
-    if (missingFields.length > 0) {
-      throw new BadRequestException(`Object cannot be published. Missing fields: ${missingFields.join(', ')}`);
-    }
+    return missingFields;
   }
 
   private validateCompletion(completionYear: number | null, completionQuarter: number | null) {
