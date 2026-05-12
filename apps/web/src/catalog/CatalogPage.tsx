@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
 import type {
+  CatalogLinksResponse,
   DevelopersResponse,
   LocationsResponse,
   MapObject,
@@ -12,6 +13,7 @@ import type {
   ObjectMetroStationLink,
   ObjectStatus,
   ObjectsResponse,
+  PublicCatalogQuickLink,
   RealEstateObjectSummary,
 } from '@platforma/shared';
 
@@ -31,6 +33,7 @@ type CatalogViewMode = 'cards' | 'list';
 type CatalogFilters = {
   search: string;
   developerId: string;
+  krtName: string;
   locationId: string;
   areaId: string;
   metroStationId: string;
@@ -54,6 +57,7 @@ type DirectoryState = {
 const defaultFilters: CatalogFilters = {
   search: '',
   developerId: '',
+  krtName: '',
   locationId: '',
   areaId: '',
   metroStationId: '',
@@ -78,6 +82,7 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
   const [queryString, setQueryString] = useState(window.location.search);
   const filters = useMemo(() => parseCatalogFilters(queryString), [queryString]);
   const viewMode = useMemo(() => parseCatalogViewMode(queryString), [queryString]);
+  const isCatalogRoute = pathname === '/catalog';
   const isMapView = pathname === '/catalog/map';
   const [objects, setObjects] = useState<RealEstateObjectSummary[]>([]);
   const [mapObjects, setMapObjects] = useState<MapObject[]>([]);
@@ -90,12 +95,15 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
   const [mapTotal, setMapTotal] = useState(0);
+  const [catalogLinks, setCatalogLinks] = useState<PublicCatalogQuickLink[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isMapLoading, setIsMapLoading] = useState(false);
   const [isDirectoriesLoading, setIsDirectoriesLoading] = useState(false);
+  const [isCatalogLinksLoading, setIsCatalogLinksLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mapError, setMapError] = useState<string | null>(null);
   const [directoryError, setDirectoryError] = useState<string | null>(null);
+  const [catalogLinksError, setCatalogLinksError] = useState<string | null>(null);
 
   useEffect(() => {
     const handlePopState = () => setQueryString(window.location.search);
@@ -116,6 +124,46 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
 
     void loadDirectories();
   }, [accessToken]);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    if (!accessToken || !isCatalogRoute) {
+      setCatalogLinks([]);
+      setCatalogLinksError(null);
+      setIsCatalogLinksLoading(false);
+      return;
+    }
+
+    const catalogLinksAccessToken = accessToken;
+
+    async function loadCatalogLinks() {
+      setIsCatalogLinksLoading(true);
+      setCatalogLinksError(null);
+
+      try {
+        const data = await apiRequest<CatalogLinksResponse>('/catalog-links', catalogLinksAccessToken);
+
+        if (!isCancelled) {
+          setCatalogLinks(data.items);
+        }
+      } catch (caughtError) {
+        if (!isCancelled) {
+          setCatalogLinksError(caughtError instanceof Error ? caughtError.message : 'Не удалось загрузить ссылки каталога');
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsCatalogLinksLoading(false);
+        }
+      }
+    }
+
+    void loadCatalogLinks();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [accessToken, isCatalogRoute]);
 
   useEffect(() => {
     if (!accessToken || isMapView) {
@@ -238,6 +286,28 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
     setQueryString(window.location.search);
   }
 
+  function openCatalogDeveloperLink(developerId: string) {
+    const nextFilters = {
+      ...defaultFilters,
+      developerId,
+    };
+    const nextSearch = buildCatalogQuery(nextFilters, viewMode);
+
+    window.history.pushState(null, '', `/catalog${nextSearch}`);
+    setQueryString(window.location.search);
+  }
+
+  function openCatalogKrtLink(krtName: string) {
+    const nextFilters = {
+      ...defaultFilters,
+      krtName,
+    };
+    const nextSearch = buildCatalogQuery(nextFilters, viewMode);
+
+    window.history.pushState(null, '', `/catalog${nextSearch}`);
+    setQueryString(window.location.search);
+  }
+
   return (
     <div className="catalog-page">
       <header className="page-header">
@@ -249,41 +319,27 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
           <span className="catalog-count">
             {isMapView ? formatCatalogCount(isMapLoading, mapTotal) : formatCatalogCount(isLoading, total)}
           </span>
-          {isMapView ? (
-            <>
-              <button
-                className="catalog-view-toggle"
-                type="button"
-                onClick={() => navigate(`/catalog${queryString}`)}
-              >
-                Список
-              </button>
-              <button
-                aria-current="page"
-                className="catalog-map-button"
-                type="button"
-                onClick={() => navigate(`/catalog/map${queryString}`)}
-              >
-                Карта
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                aria-pressed={viewMode === 'list'}
-                className={`catalog-view-toggle${viewMode === 'list' ? ' catalog-view-toggle--list' : ''}`}
-                type="button"
-                onClick={toggleCatalogViewMode}
-              >
-                Карточками / Списком
-              </button>
-              <button className="catalog-map-button" type="button" onClick={() => navigate(`/catalog/map${queryString}`)}>
-                Показать на карте
-              </button>
-            </>
-          )}
         </div>
       </header>
+
+      {isCatalogRoute ? (
+        <CatalogQuickLinks
+          error={catalogLinksError}
+          isLoading={isCatalogLinksLoading}
+          links={catalogLinks}
+          onOpenDeveloper={openCatalogDeveloperLink}
+          onOpenKrt={openCatalogKrtLink}
+          onOpenObject={(slug) => navigate(`/objects/${encodeURIComponent(slug)}`)}
+        />
+      ) : null}
+
+      <CatalogViewActions
+        isMapView={isMapView}
+        viewMode={viewMode}
+        onOpenCatalog={() => navigate(`/catalog${queryString}`)}
+        onOpenMap={() => navigate(`/catalog/map${queryString}`)}
+        onToggleViewMode={toggleCatalogViewMode}
+      />
 
       <CatalogFilters
         directories={directories}
@@ -320,6 +376,162 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
       )}
     </div>
   );
+}
+
+function CatalogViewActions({
+  isMapView,
+  viewMode,
+  onOpenCatalog,
+  onOpenMap,
+  onToggleViewMode,
+}: {
+  isMapView: boolean;
+  viewMode: CatalogViewMode;
+  onOpenCatalog: () => void;
+  onOpenMap: () => void;
+  onToggleViewMode: () => void;
+}) {
+  return (
+    <div className="catalog-view-actions" aria-label="Переключение вида каталога">
+      {isMapView ? (
+        <>
+          <button className="catalog-view-toggle" type="button" onClick={onOpenCatalog}>
+            Список
+          </button>
+          <button aria-current="page" className="catalog-map-button" type="button" onClick={onOpenMap}>
+            Карта
+          </button>
+        </>
+      ) : (
+        <>
+          <button
+            aria-pressed={viewMode === 'list'}
+            className={`catalog-view-toggle${viewMode === 'list' ? ' catalog-view-toggle--list' : ''}`}
+            type="button"
+            onClick={onToggleViewMode}
+          >
+            Карточками / Списком
+          </button>
+          <button className="catalog-map-button" type="button" onClick={onOpenMap}>
+            Показать на карте
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+const catalogQuickLinkGroups: Array<{ type: PublicCatalogQuickLink['type']; title: string }> = [
+  { type: 'DEVELOPER', title: 'Крупные застройщики' },
+  { type: 'KRT', title: 'Основные локации КРТ' },
+  { type: 'SALES_START', title: 'Старты продаж' },
+];
+
+function CatalogQuickLinks({
+  error,
+  isLoading,
+  links,
+  onOpenDeveloper,
+  onOpenKrt,
+  onOpenObject,
+}: {
+  error: string | null;
+  isLoading: boolean;
+  links: PublicCatalogQuickLink[];
+  onOpenDeveloper: (developerId: string) => void;
+  onOpenKrt: (krtName: string) => void;
+  onOpenObject: (slug: string) => void;
+}) {
+  if (error) {
+    return <p className="form-error">{error}</p>;
+  }
+
+  if (!isLoading && links.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="catalog-quick-links" aria-label="Быстрые ссылки каталога">
+      {catalogQuickLinkGroups.map((group) => {
+        const groupLinks = links.filter((link) => link.type === group.type);
+
+        return (
+          <article className="catalog-quick-links-column" key={group.type}>
+            <h3>{group.title}</h3>
+            {isLoading && groupLinks.length === 0 ? (
+              <p className="muted-text">Загрузка</p>
+            ) : groupLinks.length > 0 ? (
+              <ul>
+                {groupLinks.map((link) => (
+                  <li key={link.id}>
+                    <CatalogQuickLinkItem
+                      link={link}
+                      onOpenDeveloper={onOpenDeveloper}
+                      onOpenKrt={onOpenKrt}
+                      onOpenObject={onOpenObject}
+                    />
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="muted-text">Нет ссылок</p>
+            )}
+          </article>
+        );
+      })}
+    </section>
+  );
+}
+
+function CatalogQuickLinkItem({
+  link,
+  onOpenDeveloper,
+  onOpenKrt,
+  onOpenObject,
+}: {
+  link: PublicCatalogQuickLink;
+  onOpenDeveloper: (developerId: string) => void;
+  onOpenKrt: (krtName: string) => void;
+  onOpenObject: (slug: string) => void;
+}) {
+  const developerId = link.developerId;
+  const krtName = link.krtName;
+  const objectSlug = link.objectSlug;
+
+  if (link.type === 'DEVELOPER' && developerId) {
+    return (
+      <button className="text-button" type="button" onClick={() => onOpenDeveloper(developerId)}>
+        {link.label}
+      </button>
+    );
+  }
+
+  if (link.type === 'KRT' && krtName) {
+    return (
+      <button className="text-button" type="button" onClick={() => onOpenKrt(krtName)}>
+        {link.label}
+      </button>
+    );
+  }
+
+  if (link.type === 'SALES_START' && objectSlug) {
+    const objectHref = `/objects/${encodeURIComponent(objectSlug)}`;
+
+    return (
+      <a
+        className="text-button"
+        href={objectHref}
+        onClick={(event) => {
+          event.preventDefault();
+          onOpenObject(objectSlug);
+        }}
+      >
+        {link.label}
+      </a>
+    );
+  }
+
+  return null;
 }
 
 function CatalogFilters({
@@ -1085,6 +1297,7 @@ function parseCatalogFilters(queryString: string): CatalogFilters {
   return {
     search: parseTextParam(params.get('search')),
     developerId: parseTextParam(params.get('developerId')),
+    krtName: parseTextParam(params.get('krtName')),
     locationId: parseTextParam(params.get('locationId')),
     areaId: parseTextParam(params.get('areaId')),
     metroStationId: parseTextParam(params.get('metroStationId')),
@@ -1110,6 +1323,7 @@ function buildCatalogQuery(filters: CatalogFilters, viewMode: CatalogViewMode = 
 
   setParam(params, 'search', filters.search);
   setParam(params, 'developerId', filters.developerId);
+  setParam(params, 'krtName', filters.krtName);
   setParam(params, 'locationId', filters.locationId);
   setParam(params, 'areaId', filters.areaId);
   setParam(params, 'metroStationId', filters.metroStationId);
@@ -1133,6 +1347,7 @@ function buildCatalogQuery(filters: CatalogFilters, viewMode: CatalogViewMode = 
 function countActiveAdvancedFilters(filters: CatalogFilters) {
   return [
     filters.developerId,
+    filters.krtName,
     filters.locationId,
     filters.areaId,
     filters.metroStationId,
@@ -1155,6 +1370,7 @@ function buildObjectsParams(filters: CatalogFilters, includePage: boolean) {
 
   setParam(params, 'search', filters.search);
   setParam(params, 'developerId', filters.developerId);
+  setParam(params, 'krtName', filters.krtName);
   setParam(params, 'locationId', filters.locationId);
   setParam(params, 'areaId', filters.areaId);
   setParam(params, 'metroStationId', filters.metroStationId);

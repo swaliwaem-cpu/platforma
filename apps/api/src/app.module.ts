@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { AuthModule } from './auth/auth.module';
+import { CatalogLinksModule } from './catalog-links/catalog-links.module';
 import { DirectoriesModule } from './directories/directories.module';
 import { FilesModule } from './files/files.module';
 import { HealthController } from './health/health.controller';
@@ -15,6 +16,7 @@ import { WordpressImportModule } from './wordpress-import/wordpress-import.modul
     PrismaModule,
     AuthModule,
     UsersModule,
+    CatalogLinksModule,
     DirectoriesModule,
     FilesModule,
     ObjectsModule,

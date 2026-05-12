@@ -6,6 +6,7 @@ const { BadRequestException, ForbiddenException } = require('@nestjs/common');
 const { UserStatus } = require('@prisma/client');
 
 const { AuthController } = require('../dist/auth/auth.controller.js');
+const { CatalogLinksController } = require('../dist/catalog-links/catalog-links.controller.js');
 const { getRefreshCookieName } = require('../dist/auth/cookies.js');
 const { PERMISSIONS_KEY } = require('../dist/auth/permissions.decorator.js');
 const { PermissionsGuard } = require('../dist/auth/permissions.guard.js');
@@ -122,6 +123,9 @@ test('AuthController refresh rotates cookie and logout clears it', async () => {
 });
 
 test('API controllers expose expected permission contracts', () => {
+  assert.deepEqual(getPermissions(CatalogLinksController, 'list'), ['objects:read']);
+  assert.deepEqual(getPermissions(CatalogLinksController, 'listAdmin'), ['admin:access', 'objects:update']);
+  assert.deepEqual(getPermissions(CatalogLinksController, 'updateAdmin'), ['admin:access', 'objects:update']);
   assert.deepEqual(getPermissions(ObjectsController, 'list'), ['objects:read']);
   assert.deepEqual(getPermissions(ObjectsController, 'create'), ['objects:create']);
   assert.deepEqual(getPermissions(ObjectsController, 'publish'), ['objects:publish']);
@@ -130,6 +134,32 @@ test('API controllers expose expected permission contracts', () => {
   assert.deepEqual(getPermissions(UsersController, 'deactivate'), ['users:delete']);
   assert.deepEqual(getPermissions(WordpressImportController, 'runPreview'), ['import:preview']);
   assert.deepEqual(getPermissions(WordpressImportController, 'runImport'), ['import:run']);
+});
+
+test('CatalogLinksController delegates public and admin endpoints to the service', async () => {
+  const calls = [];
+  const controller = new CatalogLinksController({
+    listPublic: async () => {
+      calls.push(['listPublic']);
+      return { items: [] };
+    },
+    listAdmin: async () => {
+      calls.push(['listAdmin']);
+      return { items: [] };
+    },
+    updateAdmin: async (body) => {
+      calls.push(['updateAdmin', body]);
+      return { items: body.items };
+    },
+  });
+  const body = { items: [{ type: 'KRT', label: 'Большое Сити', sortOrder: 0, isEnabled: true, krtName: 'Большое Сити' }] };
+
+  await controller.list();
+  await controller.listAdmin();
+  const result = await controller.updateAdmin(body);
+
+  assert.deepEqual(calls, [['listPublic'], ['listAdmin'], ['updateAdmin', body]]);
+  assert.deepEqual(result, { items: body.items });
 });
 
 test('PermissionsGuard blocks regular users and editors from admin-only endpoints', () => {

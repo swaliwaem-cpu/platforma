@@ -6,32 +6,32 @@
 
 ## Key Changes
 
-- [ ] Добавить Prisma-модель `CatalogQuickLink` с типами `DEVELOPER`, `KRT`, `SALES_START`, порядком, `label`, `isEnabled`, ссылкой на `developerId` или `objectId`, и текстом `krtName`.
-- [ ] Добавить миграцию с предзаполнением строк:
+- [x] Добавить Prisma-модель `CatalogQuickLink` с типами `DEVELOPER`, `KRT`, `SALES_START`, порядком, `label`, `isEnabled`, ссылкой на `developerId` или `objectId`, и текстом `krtName`.
+- [x] Добавить миграцию с предзаполнением строк:
   `MR Group`, `FORMA`, `Эталон`, `Sminex`, `ФСК`;
   `Большое Сити`, `Верейская`, `ЗИЛ-Юг`, `Север`, `Ленинградский`;
   `Upside Мосфильмовская`, `Мастерс`, `Муза`, `Резиденции Воронцова`, `Палашевский 11`.
-- [ ] Добавить shared-типы для публичного и админского ответа блока.
-- [ ] Добавить API-модуль `catalog-links`:
+- [x] Добавить shared-типы для публичного и админского ответа блока.
+- [x] Добавить API-модуль `catalog-links`:
   `GET /catalog-links` для каталога;
   `GET /catalog-links/admin` и `PUT /catalog-links/admin` для админки.
-- [ ] Права: публичное чтение через `objects:read`, редактирование через `admin:access` + `objects:update`; новые роли/permissions не добавлять.
-- [ ] Расширить фильтры `/objects` и `/map/objects` параметром `krtName`; фильтрация КРТ: точное совпадение после `trim`, без учета регистра.
-- [ ] Добавить `/admin/catalog-links` и карточку в главной админке «Ссылки каталога».
-- [ ] В админке сделать три редактируемые колонки: название, целевой застройщик/КРТ/объект, включено, порядок, добавление и удаление строки.
-- [ ] Для «Стартов продаж» выбирать опубликованный объект; публичная ссылка ведет на `/objects/:slug`.
-- [ ] В `CatalogPage` загрузить блок ссылок только для `/catalog`, не для `/catalog/map`.
-- [ ] Клик по застройщику сбрасывает остальные фильтры и ставит `developerId`; клик по КРТ ставит `krtName`; текущий режим `view=list` сохраняется.
-- [ ] Стили сделать в текущем спокойном рабочем стиле: desktop 3 колонки, tablet 2/1, mobile 1 колонка; без новых библиотек.
+- [x] Права: публичное чтение через `objects:read`, редактирование через `admin:access` + `objects:update`; новые роли/permissions не добавлять.
+- [x] Расширить фильтры `/objects` и `/map/objects` параметром `krtName`; фильтрация КРТ: точное совпадение после `trim`, без учета регистра.
+- [x] Добавить `/admin/catalog-links` и карточку в главной админке «Ссылки каталога».
+- [x] В админке сделать три редактируемые колонки: название, целевой застройщик/КРТ/объект, включено, порядок, добавление и удаление строки.
+- [x] Для «Стартов продаж» выбирать опубликованный объект; публичная ссылка ведет на `/objects/:slug`.
+- [x] В `CatalogPage` загрузить блок ссылок только для `/catalog`, не для `/catalog/map`.
+- [x] Клик по застройщику сбрасывает остальные фильтры и ставит `developerId`; клик по КРТ ставит `krtName`; текущий режим `view=list` сохраняется.
+- [x] Стили сделать в текущем спокойном рабочем стиле: desktop 3 колонки, tablet 2/1, mobile 1 колонка; без новых библиотек.
 
 ## Test Plan
 
-- [ ] API: проверить создание/сериализацию `CatalogQuickLink`, права `GET/PUT`, валидацию пустых enabled-целей.
-- [ ] API: проверить `/objects?krtName=Большое Сити` и `/map/objects?krtName=...` на exact case-insensitive фильтр.
-- [ ] Web static tests: проверить наличие `/admin/catalog-links`, трех колонок, query `krtName`, построение ссылок для `developerId`, `krtName`, `objectSlug`.
-- [ ] Запустить `pnpm --filter @platforma/api test`.
-- [ ] Запустить `pnpm --filter @platforma/web test`.
-- [ ] Запустить `pnpm build:web` и при возможности `pnpm build:api`.
+- [x] API: проверить создание/сериализацию `CatalogQuickLink`, права `GET/PUT`, валидацию пустых enabled-целей.
+- [x] API: проверить `/objects?krtName=Большое Сити` и `/map/objects?krtName=...` на exact case-insensitive фильтр.
+- [x] Web static tests: проверить наличие `/admin/catalog-links`, трех колонок, query `krtName`, построение ссылок для `developerId`, `krtName`, `objectSlug`.
+- [x] Запустить `pnpm --filter @platforma/api test`.
+- [x] Запустить `pnpm --filter @platforma/web test`.
+- [x] Запустить `pnpm build:web` и при возможности `pnpm build:api`.
 
 ## Manual Checks
 

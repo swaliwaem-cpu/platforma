@@ -3,6 +3,7 @@ import { MenuIcon } from 'lucide-react';
 import { platformName, type AuthUser, type UserStatus } from '@platforma/shared';
 
 import platformLogoUrl from '../../../_Fluffy_White_1-02.svg';
+import { CatalogLinksAdminPage } from './admin/CatalogLinksAdminPage';
 import { ImportAdminPage } from './admin/ImportAdminPage';
 import { AdminButton, AdminPanel, AdminStatusBadge } from './admin/AdminUi';
 import { ObjectsAdminPage } from './admin/ObjectsAdminPage';
@@ -87,6 +88,13 @@ const cabinetSections = [
     group: 'Админка',
     path: '/admin/users',
     requiredPermissions: ['admin:access', 'users:read'],
+  },
+  {
+    id: 'admin-catalog-links',
+    label: 'Ссылки каталога',
+    group: 'Админка',
+    path: '/admin/catalog-links',
+    requiredPermissions: ['admin:access', 'objects:update'],
   },
   {
     id: 'admin-import',
@@ -276,6 +284,12 @@ function AppRoutes() {
               ) : (
                 <AccessDenied />
               )
+            ) : pathname.startsWith('/admin/catalog-links') ? (
+              hasPermission('objects:update') ? (
+                <CatalogLinksAdminPage onBack={() => navigate('/admin')} />
+              ) : (
+                <AccessDenied />
+              )
             ) : pathname.startsWith('/admin/import') ? (
               hasPermission('import:preview') ? (
                 <ImportAdminPage onBack={() => navigate('/admin')} />
@@ -284,6 +298,7 @@ function AppRoutes() {
               )
             ) : (
               <AdminHome
+                onOpenCatalogLinks={() => navigate('/admin/catalog-links')}
                 onOpenImport={() => navigate('/admin/import')}
                 onOpenObjects={() => navigate('/admin/objects')}
                 onOpenUsers={() => navigate('/admin/users')}
@@ -784,10 +799,12 @@ function getProfileInitials(user: AuthUser) {
 }
 
 function AdminHome({
+  onOpenCatalogLinks,
   onOpenImport,
   onOpenObjects,
   onOpenUsers,
 }: {
+  onOpenCatalogLinks: () => void;
   onOpenImport: () => void;
   onOpenObjects: () => void;
   onOpenUsers: () => void;
@@ -807,6 +824,13 @@ function AdminHome({
       tone: 'secondary',
       canAccess: hasPermission('users:read'),
       onClick: onOpenUsers,
+    },
+    {
+      label: 'Ссылки каталога',
+      description: 'Быстрые переходы для главной выдачи каталога.',
+      tone: 'secondary',
+      canAccess: hasPermission('objects:update'),
+      onClick: onOpenCatalogLinks,
     },
     {
       label: 'Импорт',

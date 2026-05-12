@@ -111,6 +111,7 @@ type ListObjectsQuery = {
   sortBy?: string;
   sortDirection?: string;
   developerId?: string;
+  krtName?: string;
   locationId?: string;
   areaId?: string;
   metroStationId?: string;
@@ -261,6 +262,17 @@ export class ObjectsService {
     if (query.developerId) {
       filters.push({
         developerId: this.parseUuid(query.developerId, 'Developer is invalid'),
+      });
+    }
+
+    const krtName = query.krtName?.trim();
+
+    if (krtName) {
+      filters.push({
+        krtName: {
+          equals: krtName,
+          mode: 'insensitive',
+        },
       });
     }
 

@@ -7,6 +7,7 @@ export type FileStorage = 'LOCAL' | 'MINIO';
 export type ObjectFileType = 'PRESENTATION' | 'FLOOR_PLAN' | 'DOCUMENT' | 'OTHER';
 export type ImportMode = 'PREVIEW' | 'RUN';
 export type ImportStatus = 'PENDING' | 'SUCCESS' | 'PARTIAL' | 'FAILED';
+export type CatalogQuickLinkType = 'DEVELOPER' | 'KRT' | 'SALES_START';
 
 export type ProfilePhotoFile = {
   id: string;
@@ -219,6 +220,61 @@ export type ObjectsResponse = {
 
 export type ObjectResponse = {
   object: RealEstateObjectDetail;
+};
+
+export type PublicCatalogQuickLink = {
+  id: string;
+  type: CatalogQuickLinkType;
+  label: string;
+  sortOrder: number;
+  developerId: string | null;
+  krtName: string | null;
+  objectSlug: string | null;
+};
+
+export type CatalogLinksResponse = {
+  items: PublicCatalogQuickLink[];
+};
+
+export type AdminCatalogQuickLinkObject = {
+  id: string;
+  title: string;
+  slug: string;
+  status: ObjectStatus;
+};
+
+export type AdminCatalogQuickLink = {
+  id: string;
+  type: CatalogQuickLinkType;
+  label: string;
+  sortOrder: number;
+  isEnabled: boolean;
+  developerId: string | null;
+  objectId: string | null;
+  krtName: string | null;
+  developer: ObjectDeveloper | null;
+  object: AdminCatalogQuickLinkObject | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AdminCatalogLinksResponse = {
+  items: AdminCatalogQuickLink[];
+};
+
+export type UpdateCatalogQuickLinkInput = {
+  id?: string;
+  type: CatalogQuickLinkType;
+  label: string;
+  sortOrder: number;
+  isEnabled: boolean;
+  developerId?: string | null;
+  objectId?: string | null;
+  krtName?: string | null;
+};
+
+export type UpdateCatalogLinksRequest = {
+  items: UpdateCatalogQuickLinkInput[];
 };
 
 export type MapObject = {

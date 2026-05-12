@@ -6,6 +6,7 @@ const { BadRequestException, ConflictException } = require('@nestjs/common');
 const { LocationType, ObjectFileType, ObjectStatus, UserStatus } = require('@prisma/client');
 
 const { DirectoriesService } = require('../dist/directories/directories.service.js');
+const { CatalogLinksService } = require('../dist/catalog-links/catalog-links.service.js');
 const { MapService } = require('../dist/map/map.service.js');
 const { ObjectsService } = require('../dist/objects/objects.service.js');
 const { UsersService } = require('../dist/users/users.service.js');
@@ -120,6 +121,26 @@ function userRecord(overrides = {}) {
   };
 }
 
+function catalogQuickLinkRecord(overrides = {}) {
+  const now = new Date('2026-05-01T10:00:00.000Z');
+
+  return {
+    id: '99999999-9999-4999-8999-999999999999',
+    type: 'KRT',
+    label: 'Большое Сити',
+    sortOrder: 0,
+    isEnabled: true,
+    developerId: null,
+    objectId: null,
+    krtName: 'Большое Сити',
+    createdAt: now,
+    updatedAt: now,
+    developer: null,
+    object: null,
+    ...overrides,
+  };
+}
+
 test('DirectoriesService.listLocations filters district and area directories by type', async () => {
   const calls = [];
   const prisma = {
@@ -142,6 +163,222 @@ test('DirectoriesService.listLocations filters district and area directories by 
   assert.equal(districts.items[0].type, LocationType.DISTRICT);
   assert.equal(areas.items[0].type, LocationType.AREA);
   assert.equal(calls[0].take, 500);
+});
+
+test('CatalogLinksService.listPublic returns enabled links with valid public targets', async () => {
+  const developerId = '55555555-5555-4555-8555-555555555555';
+  const publishedObject = objectRecord({
+    id: '22222222-2222-4222-8222-222222222222',
+    title: 'Upside Мосфильмовская',
+    slug: 'upside-mosfilmovskaya',
+    status: ObjectStatus.PUBLISHED,
+  });
+  const prisma = {
+    catalogQuickLink: {
+      findMany: async (args) => {
+        assert.deepEqual(args.where, { isEnabled: true });
+        assert.equal(args.include.developer, true);
+        assert.equal(args.include.object, true);
+
+        return [
+          catalogQuickLinkRecord({
+            type: 'DEVELOPER',
+            label: 'ФСК',
+            developerId,
+            developer: {
+              id: developerId,
+              wpTermId: null,
+              name: 'ФСК',
+              slug: 'fsk',
+              normalizedName: 'фск',
+              createdAt: new Date('2026-05-01T10:00:00.000Z'),
+              updatedAt: new Date('2026-05-01T10:00:00.000Z'),
+            },
+          }),
+          catalogQuickLinkRecord(),
+          catalogQuickLinkRecord({
+            type: 'SALES_START',
+            label: publishedObject.title,
+            objectId: publishedObject.id,
+            object: publishedObject,
+          }),
+          catalogQuickLinkRecord({
+            type: 'DEVELOPER',
+            label: 'No target',
+            developerId: null,
+            developer: null,
+          }),
+        ];
+      },
+    },
+  };
+  const service = new CatalogLinksService(prisma);
+
+  const result = await service.listPublic();
+
+  assert.deepEqual(result.items, [
+    {
+      id: '99999999-9999-4999-8999-999999999999',
+      type: 'DEVELOPER',
+      label: 'ФСК',
+      sortOrder: 0,
+      developerId,
+      krtName: null,
+      objectSlug: null,
+    },
+    {
+      id: '99999999-9999-4999-8999-999999999999',
+      type: 'KRT',
+      label: 'Большое Сити',
+      sortOrder: 0,
+      developerId: null,
+      krtName: 'Большое Сити',
+      objectSlug: null,
+    },
+    {
+      id: '99999999-9999-4999-8999-999999999999',
+      type: 'SALES_START',
+      label: 'Upside Мосфильмовская',
+      sortOrder: 0,
+      developerId: null,
+      krtName: null,
+      objectSlug: 'upside-mosfilmovskaya',
+    },
+  ]);
+});
+
+test('CatalogLinksService.listAdmin returns editable links with related targets', async () => {
+  const developerId = '55555555-5555-4555-8555-555555555555';
+  const object = objectRecord({
+    id: '22222222-2222-4222-8222-222222222222',
+    title: 'Upside Мосфильмовская',
+    slug: 'upside-mosfilmovskaya',
+    status: ObjectStatus.PUBLISHED,
+  });
+  const prisma = {
+    catalogQuickLink: {
+      findMany: async (args) => {
+        assert.equal(args.include.developer, true);
+        assert.equal(args.include.object, true);
+
+        return [
+          catalogQuickLinkRecord({
+            type: 'SALES_START',
+            label: object.title,
+            objectId: object.id,
+            object,
+            developerId,
+            developer: {
+              id: developerId,
+              wpTermId: null,
+              name: 'ФСК',
+              slug: 'fsk',
+              normalizedName: 'фск',
+              createdAt: new Date('2026-05-01T10:00:00.000Z'),
+              updatedAt: new Date('2026-05-01T10:00:00.000Z'),
+            },
+          }),
+        ];
+      },
+    },
+  };
+  const service = new CatalogLinksService(prisma);
+
+  const result = await service.listAdmin();
+
+  assert.equal(result.items[0].type, 'SALES_START');
+  assert.equal(result.items[0].object.slug, 'upside-mosfilmovskaya');
+  assert.equal(result.items[0].object.status, ObjectStatus.PUBLISHED);
+  assert.equal(result.items[0].developer.name, 'ФСК');
+  assert.equal(result.items[0].createdAt, '2026-05-01T10:00:00.000Z');
+});
+
+test('CatalogLinksService.updateAdmin validates enabled targets and replaces rows', async () => {
+  const calls = [];
+  const developerId = '55555555-5555-4555-8555-555555555555';
+  const objectId = '22222222-2222-4222-8222-222222222222';
+  const prisma = {
+    developer: {
+      count: async (args) => {
+        calls.push(['developer.count', args]);
+        return args.where.id === developerId ? 1 : 0;
+      },
+    },
+    realEstateObject: {
+      count: async (args) => {
+        calls.push(['realEstateObject.count', args]);
+        return args.where.id === objectId && args.where.status === ObjectStatus.PUBLISHED ? 1 : 0;
+      },
+    },
+    catalogQuickLink: {
+      deleteMany: async (args) => {
+        calls.push(['catalogQuickLink.deleteMany', args]);
+      },
+      update: async (args) => {
+        calls.push(['catalogQuickLink.update', args]);
+      },
+      create: async (args) => {
+        calls.push(['catalogQuickLink.create', args]);
+      },
+      findMany: async () => [],
+    },
+    $transaction: async (callback) => callback(prisma),
+  };
+  const service = new CatalogLinksService(prisma);
+
+  await assert.rejects(
+    () =>
+      service.updateAdmin({
+        items: [{ type: 'DEVELOPER', label: 'ФСК', sortOrder: 0, isEnabled: true }],
+      }),
+    BadRequestException,
+  );
+
+  await service.updateAdmin({
+    items: [
+      {
+        id: '99999999-9999-4999-8999-999999999999',
+        type: 'DEVELOPER',
+        label: ' ФСК ',
+        sortOrder: 0,
+        isEnabled: true,
+        developerId,
+      },
+      {
+        type: 'KRT',
+        label: 'Большое Сити',
+        sortOrder: 1,
+        isEnabled: true,
+        krtName: ' Большое Сити ',
+      },
+      {
+        type: 'SALES_START',
+        label: 'Upside Мосфильмовская',
+        sortOrder: 2,
+        isEnabled: true,
+        objectId,
+      },
+    ],
+  });
+
+  assert.deepEqual(calls.find((call) => call[0] === 'catalogQuickLink.deleteMany')[1], {
+    where: {
+      id: {
+        notIn: ['99999999-9999-4999-8999-999999999999'],
+      },
+    },
+  });
+  assert.equal(calls.some((call) => call[0] === 'catalogQuickLink.update'), true);
+  assert.equal(calls.filter((call) => call[0] === 'catalogQuickLink.create').length, 2);
+  assert.equal(
+    calls.some(
+      (call) =>
+        call[0] === 'realEstateObject.count' &&
+        call[1].where.id === objectId &&
+        call[1].where.status === ObjectStatus.PUBLISHED,
+    ),
+    true,
+  );
 });
 
 test('ObjectsService.list builds catalog filters for status, price, presentation and missing coordinates', async () => {
@@ -226,6 +463,33 @@ test('ObjectsService.list filters locationId and areaId through linked locations
   assert.deepEqual(calls.count.where, calls.findMany.where);
 });
 
+test('ObjectsService.list filters krtName by exact case-insensitive trimmed value', async () => {
+  const calls = {};
+  const prisma = {
+    realEstateObject: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [objectRecord({ krtName: 'Большое Сити' })];
+      },
+      count: async (args) => {
+        calls.count = args;
+        return 1;
+      },
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await service.list({ krtName: '  большое сити  ' });
+
+  const filters = calls.findMany.where.AND;
+  assert.equal(
+    filters.some((filter) => filter.krtName?.equals === 'большое сити' && filter.krtName?.mode === 'insensitive'),
+    true,
+  );
+  assert.deepEqual(calls.count.where, calls.findMany.where);
+});
+
 test('MapService.listObjects returns linked locations with type and supports areaId', async () => {
   const calls = {};
   const district = locationRecord();
@@ -284,6 +548,38 @@ test('MapService.listObjects returns linked locations with type and supports are
       ['Тверской', LocationType.DISTRICT, true],
       ['На Патриарших', LocationType.AREA, false],
     ],
+  );
+  assert.deepEqual(calls.count.where, calls.findMany.where);
+});
+
+test('MapService.listObjects filters krtName by exact case-insensitive trimmed value', async () => {
+  const calls = {};
+  const mapObject = objectRecord({
+    latitude: decimal('55.751244'),
+    longitude: decimal('37.618423'),
+    krtName: 'Большое Сити',
+  });
+  const prisma = {
+    realEstateObject: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [mapObject];
+      },
+      count: async (args) => {
+        calls.count = args;
+        return 1;
+      },
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new MapService(prisma);
+
+  await service.listObjects({ krtName: '  большое сити  ' });
+
+  const filters = calls.findMany.where.AND;
+  assert.equal(
+    filters.some((filter) => filter.krtName?.equals === 'большое сити' && filter.krtName?.mode === 'insensitive'),
+    true,
   );
   assert.deepEqual(calls.count.where, calls.findMany.where);
 });
