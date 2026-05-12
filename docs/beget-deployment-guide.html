@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Инструкция по развертыванию Platforma на Beget</title>
+  <style>
+    @page {
+      margin: 18mm 16mm;
+      size: A4;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      color: #17202a;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+      font-size: 12.5px;
+      line-height: 1.48;
+      margin: 0;
+    }
+
+    h1,
+    h2,
+    h3 {
+      color: #0e1720;
+      line-height: 1.2;
+      margin: 0 0 8px;
+      page-break-after: avoid;
+    }
+
+    h1 {
+      font-size: 28px;
+      margin-bottom: 10px;
+    }
+
+    h2 {
+      border-top: 1px solid #d7dee7;
+      font-size: 19px;
+      margin-top: 24px;
+      padding-top: 14px;
+    }
+
+    h3 {
+      font-size: 15px;
+      margin-top: 14px;
+    }
+
+    p {
+      margin: 0 0 9px;
+    }
+
+    ul,
+    ol {
+      margin: 0 0 11px 20px;
+      padding: 0;
+    }
+
+    li {
+      margin-bottom: 5px;
+    }
+
+    code {
+      background: #eef2f6;
+      border-radius: 4px;
+      color: #111827;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 11.5px;
+      padding: 1px 4px;
+    }
+
+    pre {
+      background: #111827;
+      border-radius: 6px;
+      color: #f8fafc;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 10.2px;
+      line-height: 1.42;
+      margin: 8px 0 12px;
+      overflow-wrap: anywhere;
+      padding: 11px 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    a {
+      color: #075985;
+      text-decoration: none;
+    }
+
+    .cover {
+      border-bottom: 3px solid #0f766e;
+      margin-bottom: 18px;
+      padding-bottom: 14px;
+    }
+
+    .subtitle {
+      color: #475569;
+      font-size: 14px;
+      max-width: 680px;
+    }
+
+    .meta {
+      color: #64748b;
+      font-size: 11.5px;
+      margin-top: 10px;
+    }
+
+    .note,
+    .warning,
+    .success {
+      border-left: 4px solid #0ea5e9;
+      border-radius: 4px;
+      margin: 10px 0 13px;
+      padding: 9px 11px;
+    }
+
+    .note {
+      background: #f0f9ff;
+    }
+
+    .warning {
+      background: #fff7ed;
+      border-left-color: #f97316;
+    }
+
+    .success {
+      background: #ecfdf5;
+      border-left-color: #10b981;
+    }
+
+    .checklist li {
+      list-style: none;
+      margin-left: -16px;
+    }
+
+    .checklist li::before {
+      content: "□ ";
+      color: #0f766e;
+      font-weight: 700;
+    }
+
+    .page-break {
+      page-break-before: always;
+    }
+
+    .small {
+      color: #64748b;
+      font-size: 11px;
+    }
+  </style>
+</head>
+<body>
+  <section class="cover">
+    <h1>Развертывание Platforma на Beget</h1>
+    <p class="subtitle">
+      Пошаговая инструкция по загрузке проекта на VPS/VDS Beget, настройке Docker,
+      PostgreSQL/PostGIS, Redis, S3/MinIO, Nginx, SSL и первичной проверке платформы.
+    </p>
+    <p class="meta">Проект: <code>/Users/nick/Documents/platforma</code>. Дата подготовки: 12 мая 2026.</p>
+  </section>
+
+  <div class="warning">
+    <strong>Важно.</strong> Этот проект нельзя просто загрузить в <code>public_html</code> обычного shared-хостинга.
+    Ему нужен постоянно работающий <code>NestJS</code> API, <code>PostgreSQL</code> с расширением
+    <code>PostGIS</code>, <code>Redis</code>, S3-совместимое хранилище и сборка через <code>pnpm</code>.
+    Рабочий вариант для Beget - VPS/VDS в Beget Cloud с Docker.
+  </div>
+
+  <h2>0. Что есть в проекте</h2>
+  <ul>
+    <li><code>apps/web</code> - Vite + React + Tailwind frontend.</li>
+    <li><code>apps/api</code> - NestJS API, Prisma, auth/RBAC, объекты, файлы, карта, WordPress import.</li>
+    <li><code>packages/shared</code> - общие TypeScript-типы.</li>
+    <li><code>tools/wp-import</code> - CLI-инструмент импорта данных из WordPress.</li>
+    <li><code>docker-compose.yml</code> - локальный запуск PostgreSQL/PostGIS, Redis, MinIO, API и web.</li>
+  </ul>
+
+  <h2>1. Подготовьте Beget VPS</h2>
+  <ol>
+    <li>В панели Beget создайте VPS/VDS, а не обычный виртуальный хостинг.</li>
+    <li>В маркетплейсе выберите образ <strong>Docker</strong>. Он устанавливает Ubuntu, Docker CE и Docker Compose.</li>
+    <li>Рекомендуемая минимальная конфигурация: 2 CPU, 4 GB RAM, 40 GB NVMe. Для тяжелого импорта WordPress лучше больше.</li>
+    <li>Создайте DNS-записи:
+      <ul>
+        <li><code>platform.example.ru</code> A-record на IP сервера.</li>
+        <li><code>api.platform.example.ru</code> A-record на IP сервера.</li>
+      </ul>
+    </li>
+  </ol>
+
+  <div class="note">
+    В примерах ниже замените <code>SERVER_IP</code>, <code>platform.example.ru</code>,
+    <code>api.platform.example.ru</code>, пароли и секреты на свои значения.
+  </div>
+
+  <h2>2. Подключитесь к серверу</h2>
+  <pre>ssh root@SERVER_IP</pre>
+
+  <p>Проверьте, что Docker работает:</p>
+  <pre>docker run hello-world
+docker compose version</pre>
+
+  <h2>3. Загрузите проект на сервер</h2>
+  <h3>Вариант A: через Git</h3>
+  <pre>mkdir -p /opt
+cd /opt
+git clone YOUR_REPOSITORY_URL platforma
+cd /opt/platforma</pre>
+
+  <h3>Вариант B: через rsync с локальной машины</h3>
+  <pre>rsync -av --exclude node_modules --exclude dist --exclude .git \
+  /Users/nick/Documents/platforma/ root@SERVER_IP:/opt/platforma/</pre>
+
+  <p>После загрузки на сервере:</p>
+  <pre>cd /opt/platforma</pre>
+
+  <h2>4. Создайте production .env</h2>
+  <pre>cd /opt/platforma
+cp .env.example .env
+nano .env</pre>
+
+  <p>Минимальный пример значений:</p>
+  <pre>COMPOSE_PROJECT_NAME=platforma
+
+POSTGRES_DB=platforma
+POSTGRES_USER=platforma
+POSTGRES_PASSWORD=STRONG_POSTGRES_PASSWORD
+DATABASE_URL=postgresql://platforma:STRONG_POSTGRES_PASSWORD@postgres:5432/platforma?schema=public
+
+REDIS_URL=redis://redis:6379
+
+MINIO_ROOT_USER=platforma_admin
+MINIO_ROOT_PASSWORD=STRONG_MINIO_PASSWORD
+MINIO_BUCKET=platforma
+S3_ENDPOINT=http://minio:9000
+S3_PUBLIC_ENDPOINT=http://minio:9000
+S3_REGION=us-east-1
+S3_ACCESS_KEY_ID=platforma_admin
+S3_SECRET_ACCESS_KEY=STRONG_MINIO_PASSWORD
+
+API_PORT=3000
+WEB_PORT=5173
+VITE_API_URL=https://api.platform.example.ru
+WEB_ORIGIN=https://platform.example.ru
+
+JWT_ACCESS_SECRET=GENERATE_LONG_RANDOM_SECRET
+JWT_REFRESH_SECRET=GENERATE_ANOTHER_LONG_RANDOM_SECRET
+JWT_ACCESS_TTL=15m
+JWT_REFRESH_TTL_DAYS=30
+REFRESH_COOKIE_NAME=platforma_refresh_token
+
+VITE_YANDEX_MAPS_API_KEY=</pre>
+
+  <p>Секреты можно сгенерировать командой:</p>
+  <pre>openssl rand -hex 32</pre>
+
+  <div class="warning">
+    Не оставляйте значения <code>change-me-access-secret</code>, <code>change-me-refresh-secret</code>
+    и простые пароли из примера. Не публикуйте файл <code>.env</code> в репозиторий.
+  </div>
+
+  <h2>5. Создайте production docker-compose</h2>
+  <p>
+    В текущем <code>docker-compose.yml</code> наружу публикуются порты PostgreSQL, Redis, MinIO, API и web.
+    Для production лучше закрыть базу, Redis и MinIO от интернета, а API/web отдавать через Nginx.
+  </p>
+
+  <pre>cp docker-compose.yml docker-compose.prod.yml
+nano docker-compose.prod.yml</pre>
+
+  <p>В <code>docker-compose.prod.yml</code>:</p>
+  <ul>
+    <li>У сервисов <code>postgres</code>, <code>redis</code>, <code>minio</code> уберите блоки <code>ports</code>.</li>
+    <li>У сервиса <code>api</code> оставьте локальную публикацию:</li>
+  </ul>
+
+  <pre>ports:
+  - "127.0.0.1:3000:3000"</pre>
+
+  <ul>
+    <li>У сервиса <code>web</code> оставьте локальную публикацию:</li>
+  </ul>
+
+  <pre>ports:
+  - "127.0.0.1:5173:5173"</pre>
+
+  <div class="note">
+    Это не меняет код проекта, но защищает внутренние сервисы от прямого доступа извне.
+  </div>
+
+  <h2>6. Запустите проект</h2>
+  <pre>cd /opt/platforma
+docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml ps</pre>
+
+  <p>API-контейнер при старте выполнит Prisma migrations через команду из <code>apps/api/Dockerfile</code>.</p>
+
+  <p>Проверьте здоровье API:</p>
+  <pre>curl http://127.0.0.1:3000/health</pre>
+
+  <p>Ожидаемый ответ:</p>
+  <pre>{
+  "status": "ok",
+  "database": "ok",
+  "postgis": true
+}</pre>
+
+  <h2>7. Создайте первого admin-пользователя</h2>
+  <pre>docker compose -f docker-compose.prod.yml exec \
+  -e ADMIN_EMAIL=admin@example.ru \
+  -e ADMIN_NAME="Platform Admin" \
+  -e ADMIN_PASSWORD="STRONG_ADMIN_PASSWORD" \
+  api pnpm --filter @platforma/api db:seed</pre>
+
+  <div class="warning">
+    После первого входа замените пароль администратора. Значения <code>ADMIN_PASSWORD</code>
+    нужны только для первичного seed.
+  </div>
+
+  <h2>8. Настройте Nginx и SSL</h2>
+  <pre>apt update
+apt install -y nginx certbot python3-certbot-nginx</pre>
+
+  <p>Создайте конфиг для frontend:</p>
+  <pre>nano /etc/nginx/sites-available/platforma-web</pre>
+
+  <pre>server {
+  server_name platform.example.ru;
+
+  location / {
+    proxy_pass http://127.0.0.1:5173;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+}</pre>
+
+  <p>Создайте конфиг для API:</p>
+  <pre>nano /etc/nginx/sites-available/platforma-api</pre>
+
+  <pre>server {
+  server_name api.platform.example.ru;
+
+  client_max_body_size 60m;
+
+  location / {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  }
+}</pre>
+
+  <p>Включите сайты и выпустите SSL:</p>
+  <pre>ln -s /etc/nginx/sites-available/platforma-web /etc/nginx/sites-enabled/platforma-web
+ln -s /etc/nginx/sites-available/platforma-api /etc/nginx/sites-enabled/platforma-api
+nginx -t
+systemctl reload nginx
+certbot --nginx -d platform.example.ru -d api.platform.example.ru</pre>
+
+  <h2>9. Если используете Beget S3 вместо MinIO</h2>
+  <ol>
+    <li>В панели Beget создайте S3 bucket вручную.</li>
+    <li>Скопируйте из панели: URL, имя bucket, Access key и Secret key.</li>
+    <li>В <code>.env</code> замените S3-настройки:</li>
+  </ol>
+
+  <pre>S3_ENDPOINT=https://s3.ru1.storage.beget.cloud
+S3_PUBLIC_ENDPOINT=https://s3.ru1.storage.beget.cloud
+S3_REGION=ru1
+S3_ACCESS_KEY_ID=ACCESS_KEY_FROM_BEGET
+S3_SECRET_ACCESS_KEY=SECRET_KEY_FROM_BEGET
+MINIO_BUCKET=YOUR_BEGET_BUCKET_NAME</pre>
+
+  <div class="warning">
+    Не указывайте в <code>S3_PUBLIC_ENDPOINT</code> URL уже с bucket. Код проекта сам добавляет
+    <code>MINIO_BUCKET</code> к endpoint. Если вставить URL с bucket, ссылки могут получить дубль bucket.
+  </div>
+
+  <p>Перезапустите API после изменения <code>.env</code>:</p>
+  <pre>docker compose -f docker-compose.prod.yml up -d --build api</pre>
+
+  <h2>10. WordPress import</h2>
+  <p>Если нужен импорт из WordPress, заполните в <code>.env</code>:</p>
+  <pre>WP_DB_HOST=
+WP_DB_PORT=3306
+WP_DB_USER=
+WP_DB_PASSWORD=
+WP_DB_NAME=
+WP_TABLE_PREFIX=wp_
+WP_POST_TYPE=nedvizhimosts
+WP_IMPORT_LIMIT=
+WP_UPLOADS_HOST_PATH=/absolute/path/to/wp-content/uploads
+WP_UPLOADS_PATH=/wp-uploads</pre>
+
+  <p>Сначала запускайте preview:</p>
+  <pre>docker compose -f docker-compose.prod.yml exec api pnpm wp-import:preview</pre>
+
+  <p>Только после проверки отчета запускайте полный импорт:</p>
+  <pre>docker compose -f docker-compose.prod.yml exec api pnpm wp-import:run</pre>
+
+  <h2>11. Обновление проекта после изменений</h2>
+  <h3>Если проект загружен через Git</h3>
+  <pre>cd /opt/platforma
+git pull
+docker compose -f docker-compose.prod.yml up -d --build</pre>
+
+  <h3>Если проект загружен через rsync</h3>
+  <p>Повторите загрузку с локальной машины, затем на сервере:</p>
+  <pre>cd /opt/platforma
+docker compose -f docker-compose.prod.yml up -d --build</pre>
+
+  <h2>12. Диагностика</h2>
+  <pre>docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml logs -f api
+docker compose -f docker-compose.prod.yml logs -f web
+docker compose -f docker-compose.prod.yml logs -f postgres
+docker compose -f docker-compose.prod.yml logs -f minio
+curl http://127.0.0.1:3000/health</pre>
+
+  <h2>13. Финальный чеклист</h2>
+  <ul class="checklist">
+    <li>VPS создан именно с Docker, а не обычный shared-хостинг.</li>
+    <li>DNS доменов <code>platform.example.ru</code> и <code>api.platform.example.ru</code> указывает на IP сервера.</li>
+    <li>Файл <code>.env</code> заполнен production-значениями.</li>
+    <li>Пароли PostgreSQL, MinIO/S3, admin и JWT secrets заменены на сильные.</li>
+    <li>PostgreSQL, Redis и MinIO не открыты напрямую в интернет.</li>
+    <li><code>docker compose -f docker-compose.prod.yml ps</code> показывает запущенные сервисы.</li>
+    <li><code>/health</code> возвращает <code>database: "ok"</code> и <code>postgis: true</code>.</li>
+    <li>SSL выпущен через Certbot для frontend и API доменов.</li>
+    <li>Вход под admin работает.</li>
+    <li>Открываются каталог, карта, карточка объекта, админка пользователей и объектов.</li>
+    <li>Загрузка изображений и PDF работает.</li>
+    <li>Если используется WordPress import, сначала проверен preview.</li>
+  </ul>
+
+  <h2>14. Спорные места и что улучшить позже</h2>
+  <ul>
+    <li>Текущий <code>apps/web/Dockerfile</code> запускает <code>pnpm dev</code>. Для настоящего production позже лучше заменить это на сборку <code>pnpm build:web</code> и отдачу статических файлов через Nginx.</li>
+    <li>Managed PostgreSQL Beget можно использовать только если подключено расширение <code>PostGIS</code>. Если расширение недоступно, оставляйте <code>postgis/postgis</code> в Docker.</li>
+    <li>Beget S3 bucket нужно создать вручную в панели, потому что создание bucket через SDK у Beget ограничено.</li>
+  </ul>
+
+  <h2>15. Ссылки на документацию Beget</h2>
+  <ul>
+    <li>Docker VPS: <a href="https://beget.com/ru/cloud/marketplace/docker">https://beget.com/ru/cloud/marketplace/docker</a></li>
+    <li>VPS/VDS: <a href="https://beget.com/ru/vps">https://beget.com/ru/vps</a></li>
+    <li>S3 Beget: <a href="https://beget.com/ru/kb/manual/obektnoe-hranilishche-s3-v-beget">https://beget.com/ru/kb/manual/obektnoe-hranilishche-s3-v-beget</a></li>
+    <li>PostgreSQL Beget: <a href="https://beget.com/ru/kb/manual/cloud-postgresql">https://beget.com/ru/kb/manual/cloud-postgresql</a></li>
+  </ul>
+
+  <p class="small">
+    Подготовлено для проекта Platforma. Перед выполнением команд внимательно замените все placeholder-значения.
+  </p>
+</body>
+</html>
