@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
+import { ArrowDownIcon, ArrowUpDownIcon, ArrowUpIcon } from 'lucide-react';
 import type {
   CatalogLinksResponse,
   DevelopersResponse,
@@ -77,20 +78,6 @@ const defaultFilters: CatalogFilters = {
   sortDirection: 'desc',
   page: 1,
 };
-
-const catalogSortOptions: Array<{
-  label: string;
-  sortBy: CatalogSortField;
-  sortDirection: SortDirection;
-}> = [
-  { label: 'По цене вниз', sortBy: 'priceFrom', sortDirection: 'desc' },
-  { label: 'По цене вверх', sortBy: 'priceFrom', sortDirection: 'asc' },
-  { label: 'Цена м² вниз', sortBy: 'pricePerMeterFrom', sortDirection: 'desc' },
-  { label: 'Цена м² вверх', sortBy: 'pricePerMeterFrom', sortDirection: 'asc' },
-  { label: 'Сдача раньше', sortBy: 'completionDate', sortDirection: 'asc' },
-  { label: 'Сдача позже', sortBy: 'completionDate', sortDirection: 'desc' },
-  { label: 'Сначала новые на портале', sortBy: 'createdAt', sortDirection: 'desc' },
-];
 
 const objectStatusLabels: Record<ObjectStatus, string> = {
   DRAFT: 'Черновик',
@@ -716,47 +703,81 @@ function CatalogSortBar({
   filters: CatalogFilters;
   onChange: (patch: Partial<CatalogFilters>, options?: { resetPage: boolean }) => void;
 }) {
-  const activeSortLabel = getCatalogSortLabel(filters);
-  const isDefaultSort =
-    filters.sortBy === defaultFilters.sortBy && filters.sortDirection === defaultFilters.sortDirection;
+  function onSortChange(sortBy: CatalogSortField) {
+    const sortDirection =
+      filters.sortBy === sortBy
+        ? toggleCatalogSortDirection(filters.sortDirection)
+        : getDefaultCatalogSortDirection(sortBy);
+
+    onChange({ sortBy, sortDirection });
+  }
 
   return (
     <section className="catalog-sort-bar" aria-label="Сортировка каталога">
-      <div className="catalog-sort-heading">
-        <span>Сортировка</span>
-        <strong>{activeSortLabel}</strong>
-      </div>
-      <div className="catalog-sort-actions">
-        {catalogSortOptions.map((option) => {
-          const isActive = filters.sortBy === option.sortBy && filters.sortDirection === option.sortDirection;
-
-          return (
-            <button
-              key={`${option.sortBy}-${option.sortDirection}`}
-              aria-pressed={isActive}
-              className={isActive ? 'catalog-sort-option catalog-sort-option--active' : 'catalog-sort-option'}
-              type="button"
-              onClick={() => onChange({ sortBy: option.sortBy, sortDirection: option.sortDirection })}
-            >
-              {option.label}
-            </button>
-          );
-        })}
-        <button
-          className="catalog-sort-reset"
-          disabled={isDefaultSort}
-          type="button"
-          onClick={() =>
-            onChange({
-              sortBy: defaultFilters.sortBy,
-              sortDirection: defaultFilters.sortDirection,
-            })
-          }
+      <div className="catalog-sort-row">
+        <span className="catalog-sort-spacer" aria-hidden="true" />
+        <CatalogSortButton
+          active={filters.sortBy === 'priceFrom'}
+          direction={filters.sortDirection}
+          onClick={() => onSortChange('priceFrom')}
         >
-          Порядок по умолчанию
-        </button>
+          Цена
+        </CatalogSortButton>
+        <CatalogSortButton
+          active={filters.sortBy === 'pricePerMeterFrom'}
+          direction={filters.sortDirection}
+          onClick={() => onSortChange('pricePerMeterFrom')}
+        >
+          Цена м²
+        </CatalogSortButton>
+        <CatalogSortButton
+          active={filters.sortBy === 'completionDate'}
+          direction={filters.sortDirection}
+          onClick={() => onSortChange('completionDate')}
+        >
+          Срок
+        </CatalogSortButton>
+        <CatalogSortButton
+          active={filters.sortBy === 'createdAt'}
+          direction={filters.sortDirection}
+          onClick={() => onSortChange('createdAt')}
+        >
+          Добавлен
+        </CatalogSortButton>
       </div>
     </section>
+  );
+}
+
+function CatalogSortButton({
+  active,
+  children,
+  direction,
+  onClick,
+}: {
+  active: boolean;
+  children: ReactNode;
+  direction: SortDirection;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      aria-pressed={active}
+      className={active ? 'catalog-sort-button catalog-sort-button--active' : 'catalog-sort-button'}
+      type="button"
+      onClick={onClick}
+    >
+      {children}
+      {active ? (
+        direction === 'asc' ? (
+          <ArrowUpIcon aria-hidden="true" />
+        ) : (
+          <ArrowDownIcon aria-hidden="true" />
+        )
+      ) : (
+        <ArrowUpDownIcon aria-hidden="true" />
+      )}
+    </button>
   );
 }
 
@@ -1459,12 +1480,12 @@ function parseCatalogSortDirection(value: string | null): SortDirection {
   return value === 'asc' || value === 'desc' ? value : defaultFilters.sortDirection;
 }
 
-function getCatalogSortLabel(filters: CatalogFilters) {
-  const selectedOption = catalogSortOptions.find(
-    (option) => option.sortBy === filters.sortBy && option.sortDirection === filters.sortDirection,
-  );
+function getDefaultCatalogSortDirection(sortBy: CatalogSortField): SortDirection {
+  return sortBy === 'completionDate' ? 'asc' : 'desc';
+}
 
-  return selectedOption?.label ?? 'Сначала новые на портале';
+function toggleCatalogSortDirection(direction: SortDirection): SortDirection {
+  return direction === 'asc' ? 'desc' : 'asc';
 }
 
 function parseTextParam(value: string | null) {

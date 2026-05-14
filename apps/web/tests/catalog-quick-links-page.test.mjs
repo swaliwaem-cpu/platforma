@@ -96,14 +96,18 @@ test('catalog sorting renders below filters and drives URL and object request pa
   assert.match(source, /sortBy: filters\.sortBy,/);
   assert.match(source, /sortDirection: filters\.sortDirection,/);
   assert.match(source, /function CatalogSortBar\(/);
-  assert.match(source, /Сначала новые на портале/);
-  assert.match(source, /По цене вниз/);
-  assert.match(source, /По цене вверх/);
-  assert.match(source, /Цена м² вниз/);
-  assert.match(source, /Цена м² вверх/);
-  assert.match(source, /Сдача раньше/);
-  assert.match(source, /Сдача позже/);
-  assert.match(source, /Порядок по умолчанию/);
+  assert.match(source, /function CatalogSortButton\(/);
+  assert.match(source, /onSortChange\('priceFrom'\)/);
+  assert.match(source, /onSortChange\('pricePerMeterFrom'\)/);
+  assert.match(source, /onSortChange\('completionDate'\)/);
+  assert.match(source, /onSortChange\('createdAt'\)/);
+  assert.match(source, />\s*Цена\s*</);
+  assert.match(source, />\s*Цена м²\s*</);
+  assert.match(source, />\s*Срок\s*</);
+  assert.match(source, />\s*Добавлен\s*</);
+  assert.doesNotMatch(source, /<span>Сортировка<\/span>/);
+  assert.doesNotMatch(source, /<strong>\{activeSortLabel\}<\/strong>/);
+  assert.doesNotMatch(source, /Порядок по умолчанию/);
   assert.ok(filtersIndex > -1, 'filters should render on the catalog page');
   assert.ok(sortIndex > filtersIndex, 'sort controls should render below filters');
 });
@@ -133,7 +137,10 @@ test('catalog action buttons use ink instead of forest green', () => {
 
 test('catalog sorting controls keep catalog panel styling and responsive wrapping', () => {
   assert.match(styles, /\.catalog-sort-bar\s*\{[\s\S]*display:\s*grid;[\s\S]*border:\s*1px solid var\(--catalog-border\)/);
-  assert.match(styles, /\.catalog-sort-actions\s*\{[\s\S]*display:\s*flex;[\s\S]*flex-wrap:\s*wrap/);
-  assert.match(styles, /\.catalog-sort-option--active\s*\{[\s\S]*background:\s*var\(--catalog-ink-900\)/);
-  assert.match(styles, /@media \(max-width:\s*700px\)\s*\{[\s\S]*\.catalog-sort-actions\s*\{[\s\S]*display:\s*grid;[\s\S]*grid-template-columns:\s*1fr/);
+  assert.match(styles, /\.catalog-sort-row\s*\{[\s\S]*display:\s*grid;[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\) repeat\(4,\s*minmax\(118px,\s*auto\)\)/);
+  assert.match(styles, /\.catalog-sort-button\s*\{[\s\S]*border:\s*0;[\s\S]*background:\s*transparent/);
+  assert.match(styles, /\.catalog-sort-button--active\s*\{[\s\S]*color:\s*var\(--catalog-blue-deep\)/);
+  assert.doesNotMatch(styles, /\.catalog-sort-heading/);
+  assert.doesNotMatch(styles, /\.catalog-sort-reset/);
+  assert.match(styles, /@media \(max-width:\s*700px\)\s*\{[\s\S]*\.catalog-sort-row\s*\{[\s\S]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
 });
