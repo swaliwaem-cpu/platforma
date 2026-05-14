@@ -82,6 +82,32 @@ test('catalog filters include krtName in URL and API requests', () => {
   assert.match(source, /setParam\(params, 'krtName', filters\.krtName\)/);
 });
 
+test('catalog sorting renders below filters and drives URL and object request params', () => {
+  const filtersIndex = source.indexOf('\n      <CatalogFilters');
+  const sortIndex = source.indexOf('<CatalogSortBar');
+
+  assert.match(source, /type CatalogSortField = 'createdAt' \| 'priceFrom' \| 'pricePerMeterFrom' \| 'completionDate';/);
+  assert.match(source, /type SortDirection = 'asc' \| 'desc';/);
+  assert.match(source, /sortBy: CatalogSortField;/);
+  assert.match(source, /sortDirection: SortDirection;/);
+  assert.match(source, /sortBy: parseCatalogSortBy\(params\.get\('sortBy'\)\)/);
+  assert.match(source, /sortDirection: parseCatalogSortDirection\(params\.get\('sortDirection'\)\)/);
+  assert.match(source, /setCatalogSortParams\(params, filters\)/);
+  assert.match(source, /sortBy: filters\.sortBy,/);
+  assert.match(source, /sortDirection: filters\.sortDirection,/);
+  assert.match(source, /function CatalogSortBar\(/);
+  assert.match(source, /Сначала новые на портале/);
+  assert.match(source, /По цене вниз/);
+  assert.match(source, /По цене вверх/);
+  assert.match(source, /Цена м² вниз/);
+  assert.match(source, /Цена м² вверх/);
+  assert.match(source, /Сдача раньше/);
+  assert.match(source, /Сдача позже/);
+  assert.match(source, /Порядок по умолчанию/);
+  assert.ok(filtersIndex > -1, 'filters should render on the catalog page');
+  assert.ok(sortIndex > filtersIndex, 'sort controls should render below filters');
+});
+
 test('catalog quick links use calm responsive columns without new UI dependencies', () => {
   assert.match(styles, /\.catalog-quick-links\s*\{[\s\S]*display:\s*grid;[\s\S]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/);
   assert.match(styles, /\.catalog-quick-links\s*\{[\s\S]*border:\s*1px solid var\(--catalog-border\)/);
@@ -103,4 +129,11 @@ test('catalog action buttons use ink instead of forest green', () => {
   assert.doesNotMatch(mapButtonStyles, /catalog-forest/);
   assert.doesNotMatch(cardLinkStyles, /catalog-forest/);
   assert.doesNotMatch(listLinkHoverStyles, /catalog-forest/);
+});
+
+test('catalog sorting controls keep catalog panel styling and responsive wrapping', () => {
+  assert.match(styles, /\.catalog-sort-bar\s*\{[\s\S]*display:\s*grid;[\s\S]*border:\s*1px solid var\(--catalog-border\)/);
+  assert.match(styles, /\.catalog-sort-actions\s*\{[\s\S]*display:\s*flex;[\s\S]*flex-wrap:\s*wrap/);
+  assert.match(styles, /\.catalog-sort-option--active\s*\{[\s\S]*background:\s*var\(--catalog-ink-900\)/);
+  assert.match(styles, /@media \(max-width:\s*700px\)\s*\{[\s\S]*\.catalog-sort-actions\s*\{[\s\S]*display:\s*grid;[\s\S]*grid-template-columns:\s*1fr/);
 });

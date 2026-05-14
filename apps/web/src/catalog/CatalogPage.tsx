@@ -30,6 +30,8 @@ type CatalogPageProps = {
 type BooleanFilter = '' | 'true' | 'false';
 type CatalogStatusFilter = ObjectStatus | 'ALL';
 type CatalogViewMode = 'cards' | 'list';
+type CatalogSortField = 'createdAt' | 'priceFrom' | 'pricePerMeterFrom' | 'completionDate';
+type SortDirection = 'asc' | 'desc';
 
 type CatalogFilters = {
   search: string;
@@ -45,6 +47,8 @@ type CatalogFilters = {
   status: CatalogStatusFilter;
   hasPresentation: BooleanFilter;
   hasCoordinates: BooleanFilter;
+  sortBy: CatalogSortField;
+  sortDirection: SortDirection;
   page: number;
 };
 
@@ -69,8 +73,24 @@ const defaultFilters: CatalogFilters = {
   status: 'PUBLISHED',
   hasPresentation: '',
   hasCoordinates: '',
+  sortBy: 'createdAt',
+  sortDirection: 'desc',
   page: 1,
 };
+
+const catalogSortOptions: Array<{
+  label: string;
+  sortBy: CatalogSortField;
+  sortDirection: SortDirection;
+}> = [
+  { label: 'По цене вниз', sortBy: 'priceFrom', sortDirection: 'desc' },
+  { label: 'По цене вверх', sortBy: 'priceFrom', sortDirection: 'asc' },
+  { label: 'Цена м² вниз', sortBy: 'pricePerMeterFrom', sortDirection: 'desc' },
+  { label: 'Цена м² вверх', sortBy: 'pricePerMeterFrom', sortDirection: 'asc' },
+  { label: 'Сдача раньше', sortBy: 'completionDate', sortDirection: 'asc' },
+  { label: 'Сдача позже', sortBy: 'completionDate', sortDirection: 'desc' },
+  { label: 'Сначала новые на портале', sortBy: 'createdAt', sortDirection: 'desc' },
+];
 
 const objectStatusLabels: Record<ObjectStatus, string> = {
   DRAFT: 'Черновик',
@@ -350,6 +370,8 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
         onChange={updateFilters}
         onReset={resetFilters}
       />
+
+      {!isMapView ? <CatalogSortBar filters={filters} onChange={updateFilters} /> : null}
 
       {directoryError ? <p className="form-error">{directoryError}</p> : null}
 
@@ -683,6 +705,57 @@ function CatalogFilters({
           </div>
         </div>
       ) : null}
+    </section>
+  );
+}
+
+function CatalogSortBar({
+  filters,
+  onChange,
+}: {
+  filters: CatalogFilters;
+  onChange: (patch: Partial<CatalogFilters>, options?: { resetPage: boolean }) => void;
+}) {
+  const activeSortLabel = getCatalogSortLabel(filters);
+  const isDefaultSort =
+    filters.sortBy === defaultFilters.sortBy && filters.sortDirection === defaultFilters.sortDirection;
+
+  return (
+    <section className="catalog-sort-bar" aria-label="Сортировка каталога">
+      <div className="catalog-sort-heading">
+        <span>Сортировка</span>
+        <strong>{activeSortLabel}</strong>
+      </div>
+      <div className="catalog-sort-actions">
+        {catalogSortOptions.map((option) => {
+          const isActive = filters.sortBy === option.sortBy && filters.sortDirection === option.sortDirection;
+
+          return (
+            <button
+              key={`${option.sortBy}-${option.sortDirection}`}
+              aria-pressed={isActive}
+              className={isActive ? 'catalog-sort-option catalog-sort-option--active' : 'catalog-sort-option'}
+              type="button"
+              onClick={() => onChange({ sortBy: option.sortBy, sortDirection: option.sortDirection })}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+        <button
+          className="catalog-sort-reset"
+          disabled={isDefaultSort}
+          type="button"
+          onClick={() =>
+            onChange({
+              sortBy: defaultFilters.sortBy,
+              sortDirection: defaultFilters.sortDirection,
+            })
+          }
+        >
+          Порядок по умолчанию
+        </button>
+      </div>
     </section>
   );
 }
@@ -1212,6 +1285,8 @@ function parseCatalogFilters(queryString: string): CatalogFilters {
     status: defaultFilters.status,
     hasPresentation: defaultFilters.hasPresentation,
     hasCoordinates: defaultFilters.hasCoordinates,
+    sortBy: parseCatalogSortBy(params.get('sortBy')),
+    sortDirection: parseCatalogSortDirection(params.get('sortDirection')),
     page: parsePositiveInteger(params.get('page'), 1),
   };
 }
@@ -1234,6 +1309,7 @@ function buildCatalogQuery(filters: CatalogFilters, viewMode: CatalogViewMode = 
   setParam(params, 'completionYear', filters.completionYear);
   setParam(params, 'priceFromMin', filters.priceFromMin);
   setParam(params, 'priceFromMax', filters.priceFromMax);
+  setCatalogSortParams(params, filters);
 
   if (filters.page > 1) {
     params.set('page', String(filters.page));
@@ -1264,8 +1340,8 @@ function countActiveAdvancedFilters(filters: CatalogFilters) {
 function buildObjectsParams(filters: CatalogFilters, includePage: boolean) {
   const params = new URLSearchParams({
     limit: includePage ? '12' : '1000',
-    sortBy: 'createdAt',
-    sortDirection: 'desc',
+    sortBy: filters.sortBy,
+    sortDirection: filters.sortDirection,
   });
 
   if (includePage) {
@@ -1359,6 +1435,36 @@ function setParam(params: URLSearchParams, key: string, value: string) {
   if (normalizedValue) {
     params.set(key, normalizedValue);
   }
+}
+
+function setCatalogSortParams(params: URLSearchParams, filters: CatalogFilters) {
+  const isDefaultSort =
+    filters.sortBy === defaultFilters.sortBy && filters.sortDirection === defaultFilters.sortDirection;
+
+  if (!isDefaultSort) {
+    params.set('sortBy', filters.sortBy);
+    params.set('sortDirection', filters.sortDirection);
+  }
+}
+
+function parseCatalogSortBy(value: string | null): CatalogSortField {
+  if (value === 'priceFrom' || value === 'pricePerMeterFrom' || value === 'completionDate' || value === 'createdAt') {
+    return value;
+  }
+
+  return defaultFilters.sortBy;
+}
+
+function parseCatalogSortDirection(value: string | null): SortDirection {
+  return value === 'asc' || value === 'desc' ? value : defaultFilters.sortDirection;
+}
+
+function getCatalogSortLabel(filters: CatalogFilters) {
+  const selectedOption = catalogSortOptions.find(
+    (option) => option.sortBy === filters.sortBy && option.sortDirection === filters.sortDirection,
+  );
+
+  return selectedOption?.label ?? 'Сначала новые на портале';
 }
 
 function parseTextParam(value: string | null) {

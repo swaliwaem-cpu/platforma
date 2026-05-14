@@ -456,7 +456,7 @@ test('ObjectsService.list builds catalog filters for status, price, presentation
   assert.equal(result.limit, 5);
   assert.equal(calls.findMany.skip, 5);
   assert.equal(calls.findMany.take, 5);
-  assert.deepEqual(calls.findMany.orderBy, [{ priceFrom: 'asc' }, { createdAt: 'desc' }]);
+  assert.deepEqual(calls.findMany.orderBy, [{ priceFrom: { sort: 'asc', nulls: 'last' } }, { createdAt: 'desc' }]);
   assert.deepEqual(calls.count.where, calls.findMany.where);
 
   const filters = calls.findMany.where.AND;
@@ -468,6 +468,49 @@ test('ObjectsService.list builds catalog filters for status, price, presentation
   assert.equal(filters.some((filter) => filter.files?.none?.type === ObjectFileType.PRESENTATION), true);
   assert.equal(filters.some((filter) => filter.OR?.some((item) => item.latitude === null)), true);
   assert.equal(filters.some((filter) => filter.OR?.some((item) => item.title?.contains === 'центр')), true);
+});
+
+test('ObjectsService.list sorts catalog price per meter and completion date with empty values last', async () => {
+  const calls = [];
+  const prisma = {
+    realEstateObject: {
+      findMany: async (args) => {
+        calls.push(args);
+        return [objectRecord()];
+      },
+      count: async () => 1,
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await service.list({
+    sortBy: 'pricePerMeterFrom',
+    sortDirection: 'desc',
+  });
+  await service.list({
+    sortBy: 'completionDate',
+    sortDirection: 'asc',
+  });
+  await service.list({
+    sortBy: 'completionYear',
+    sortDirection: 'desc',
+  });
+
+  assert.deepEqual(calls[0].orderBy, [
+    { pricePerMeterFrom: { sort: 'desc', nulls: 'last' } },
+    { createdAt: 'desc' },
+  ]);
+  assert.deepEqual(calls[1].orderBy, [
+    { completionYear: { sort: 'asc', nulls: 'last' } },
+    { completionQuarter: { sort: 'asc', nulls: 'last' } },
+    { createdAt: 'desc' },
+  ]);
+  assert.deepEqual(calls[2].orderBy, [
+    { completionYear: { sort: 'desc', nulls: 'last' } },
+    { completionQuarter: { sort: 'desc', nulls: 'last' } },
+    { createdAt: 'desc' },
+  ]);
 });
 
 test('ObjectsService.list filters locationId and areaId through linked locations', async () => {

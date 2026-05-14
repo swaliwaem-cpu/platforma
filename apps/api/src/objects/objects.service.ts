@@ -1949,6 +1949,8 @@ export class ObjectsService {
       'title',
       'status',
       'priceFrom',
+      'pricePerMeterFrom',
+      'completionDate',
       'completionYear',
       'createdAt',
       'updatedAt',
@@ -1966,6 +1968,40 @@ export class ObjectsService {
       return [
         {
           createdAt: direction,
+        },
+      ] satisfies Prisma.RealEstateObjectOrderByWithRelationInput[];
+    }
+
+    if (normalizedSortBy === 'priceFrom' || normalizedSortBy === 'pricePerMeterFrom') {
+      return [
+        {
+          [normalizedSortBy]: {
+            sort: direction,
+            nulls: 'last',
+          },
+        },
+        {
+          createdAt: 'desc',
+        },
+      ] satisfies Prisma.RealEstateObjectOrderByWithRelationInput[];
+    }
+
+    if (normalizedSortBy === 'completionDate' || normalizedSortBy === 'completionYear') {
+      return [
+        {
+          completionYear: {
+            sort: direction,
+            nulls: 'last',
+          },
+        },
+        {
+          completionQuarter: {
+            sort: direction,
+            nulls: 'last',
+          },
+        },
+        {
+          createdAt: 'desc',
         },
       ] satisfies Prisma.RealEstateObjectOrderByWithRelationInput[];
     }

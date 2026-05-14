@@ -2433,6 +2433,97 @@ tr.user-row--deactivated .text-button {
   align-items: end;
 }
 
+.catalog-sort-bar {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.22fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  border: 1px solid var(--catalog-border);
+  border-radius: var(--catalog-radius-md);
+  background: var(--catalog-panel);
+  padding: 14px 16px;
+  box-shadow: var(--catalog-shadow-panel);
+}
+
+.catalog-sort-heading {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.catalog-sort-heading span {
+  color: var(--catalog-ink-700);
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.catalog-sort-heading strong {
+  color: var(--catalog-ink-900);
+  font-size: 15px;
+  font-weight: 900;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.catalog-sort-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.catalog-sort-option,
+.catalog-sort-reset {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--catalog-border);
+  border-radius: 999px;
+  background: var(--catalog-panel);
+  color: var(--catalog-ink-800);
+  padding: 0 13px;
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1;
+  white-space: nowrap;
+  transition:
+    border-color 180ms ease,
+    background 180ms ease,
+    box-shadow 180ms ease,
+    color 180ms ease,
+    opacity 180ms ease;
+}
+
+.catalog-sort-option:hover,
+.catalog-sort-option:focus-visible,
+.catalog-sort-reset:hover:not(:disabled),
+.catalog-sort-reset:focus-visible:not(:disabled) {
+  border-color: var(--catalog-blue);
+  background: var(--catalog-blue-soft);
+  color: var(--catalog-blue-deep);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--catalog-blue) 14%, transparent);
+}
+
+.catalog-sort-option--active {
+  border-color: var(--catalog-ink-900);
+  background: var(--catalog-ink-900);
+  color: oklch(98.5% 0.006 230);
+}
+
+.catalog-sort-reset {
+  border-style: dashed;
+  color: var(--catalog-ink-700);
+}
+
+.catalog-sort-reset:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
 .catalog-quick-links {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -3066,6 +3157,21 @@ tr.user-row--deactivated .text-button {
 }
 
 @media (max-width: 700px) {
+  .catalog-sort-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .catalog-sort-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .catalog-sort-option,
+  .catalog-sort-reset {
+    width: 100%;
+    white-space: normal;
+  }
+
   .catalog-quick-links {
     grid-template-columns: 1fr;
   }
