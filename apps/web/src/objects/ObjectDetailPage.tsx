@@ -9,6 +9,7 @@ import type {
 
 import { apiRequest, apiUrl } from '../admin/api';
 import { useAuth } from '../auth/AuthProvider';
+import { SecureImage, useSecureImageObjectUrl } from '../files/SecureImage';
 import { YandexMap, type YandexMapPoint } from '../map/YandexMap';
 import {
   formatCompletion,
@@ -131,7 +132,11 @@ function ObjectDetail({
   const presentationFile = object.files.find((file) => file.type === 'PRESENTATION') ?? null;
   const otherFiles = object.files.filter((file) => file.type !== 'PRESENTATION');
   const carouselImages = useMemo(() => getCarouselImages(object), [object]);
-  const mapBalloonImageUrl = useSecureImageObjectUrl(accessToken, carouselImages[0]?.file.id ?? null);
+  const { src: mapBalloonImageUrl } = useSecureImageObjectUrl({
+    accessToken,
+    fileId: carouselImages[0]?.file.id ?? null,
+    variant: 'card',
+  });
   const mapPoints = useMemo(() => getObjectMapPoints(object, mapBalloonImageUrl), [mapBalloonImageUrl, object]);
 
   return (
@@ -344,7 +349,7 @@ function ObjectImageCarousel({
   return (
     <section className="object-image-carousel" aria-label="Галерея объекта">
       <div className="object-carousel-media">
-        <SecureImage accessToken={accessToken} alt={activeImage.alt ?? objectTitle} fileId={activeImage.file.id} />
+        <SecureImage accessToken={accessToken} alt={activeImage.alt ?? objectTitle} fileId={activeImage.file.id} variant="detail" />
 
         {hasManyImages ? (
           <>
@@ -381,7 +386,12 @@ function ObjectImageCarousel({
               type="button"
               onClick={() => setActiveIndex(index)}
             >
-              <SecureImage accessToken={accessToken} alt={image.alt ?? `${objectTitle}, миниатюра ${index + 1}`} fileId={image.file.id} />
+              <SecureImage
+                accessToken={accessToken}
+                alt={image.alt ?? `${objectTitle}, миниатюра ${index + 1}`}
+                fileId={image.file.id}
+                variant="thumbnail"
+              />
             </button>
           ))}
         </div>
@@ -432,127 +442,6 @@ function MetroStationItem({ station }: { station: ObjectMetroStationLink }) {
       </div>
     </li>
   );
-}
-
-function SecureImage({ accessToken, alt, fileId }: { accessToken: string; alt: string; fileId: string }) {
-  const [src, setSrc] = useState<string | null>(null);
-  const [hasError, setHasError] = useState(false);
-
-  useEffect(() => {
-    let objectUrl: string | null = null;
-    let isCancelled = false;
-
-    async function loadImage() {
-      setSrc(null);
-      setHasError(false);
-
-      try {
-        const response = await fetch(`${apiUrl}/files/${fileId}/content`, {
-          credentials: 'include',
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
-        });
-
-        if (!response.ok) {
-          throw new Error('Image request failed');
-        }
-
-        const blob = await response.blob();
-
-        if (isCancelled) {
-          return;
-        }
-
-        objectUrl = URL.createObjectURL(blob);
-        setSrc(objectUrl);
-      } catch {
-        if (!isCancelled) {
-          setHasError(true);
-        }
-      }
-    }
-
-    void loadImage();
-
-    return () => {
-      isCancelled = true;
-
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl);
-      }
-    };
-  }, [accessToken, fileId]);
-
-  if (hasError) {
-    return <span>Изображение недоступно</span>;
-  }
-
-  if (!src) {
-    return <span>Загрузка изображения</span>;
-  }
-
-  return <img alt={alt} src={src} />;
-}
-
-function useSecureImageObjectUrl(accessToken: string, fileId: string | null) {
-  const [src, setSrc] = useState<string | null>(null);
-
-  useEffect(() => {
-    let objectUrl: string | null = null;
-    let isCancelled = false;
-
-    setSrc(null);
-
-    const imageFileId = fileId ?? '';
-
-    if (!imageFileId) {
-      return () => undefined;
-    }
-
-    async function loadImage() {
-      const nextObjectUrl = await fetchFileObjectUrl(accessToken, imageFileId).catch(() => null);
-
-      if (!nextObjectUrl) {
-        return;
-      }
-
-      if (isCancelled) {
-        URL.revokeObjectURL(nextObjectUrl);
-        return;
-      }
-
-      objectUrl = nextObjectUrl;
-      setSrc(nextObjectUrl);
-    }
-
-    void loadImage();
-
-    return () => {
-      isCancelled = true;
-
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl);
-      }
-    };
-  }, [accessToken, fileId]);
-
-  return src;
-}
-
-async function fetchFileObjectUrl(accessToken: string, fileId: string) {
-  const response = await fetch(`${apiUrl}/files/${fileId}/content`, {
-    credentials: 'include',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error('Image request failed');
-  }
-
-  return URL.createObjectURL(await response.blob());
 }
 
 function SecureFileButton({

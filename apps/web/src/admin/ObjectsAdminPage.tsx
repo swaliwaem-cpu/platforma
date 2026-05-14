@@ -41,8 +41,9 @@ import {
 } from '@/components/ui/table';
 
 import { useAuth } from '../auth/AuthProvider';
+import { SecureImage } from '../files/SecureImage';
 import { AdminAlert, AdminButton, AdminEmptyState, AdminPanel, AdminStatusBadge } from './AdminUi';
-import { apiRequest, apiUrl } from './api';
+import { apiRequest } from './api';
 import { getLinkedFileOriginalName, getLinkedFileTitle } from './fileDisplay';
 
 type ObjectsAdminPageProps = {
@@ -1353,7 +1354,12 @@ function ObjectEditor(props: ObjectEditorProps) {
             </div>
             <div className="preview-media">
               {coverImage && props.accessToken ? (
-                <SecureImage accessToken={props.accessToken} alt={coverImage.alt ?? props.form.title} fileId={coverImage.file.id} />
+                <SecureImage
+                  accessToken={props.accessToken}
+                  alt={coverImage.alt ?? props.form.title}
+                  fileId={coverImage.file.id}
+                  variant="card"
+                />
               ) : (
                 <span>Нет обложки</span>
               )}
@@ -1442,6 +1448,7 @@ function ObjectEditor(props: ObjectEditorProps) {
                               accessToken={props.accessToken}
                               alt={image.alt ?? image.title ?? `Фото ${index + 1}`}
                               fileId={image.file.id}
+                              variant="thumbnail"
                             />
                           ) : (
                             <span>Фото</span>
@@ -1681,53 +1688,6 @@ function SortButton({
       )}
     </AdminButton>
   );
-}
-
-function SecureImage({ accessToken, alt, fileId }: { accessToken: string; alt: string; fileId: string }) {
-  const [src, setSrc] = useState<string | null>(null);
-
-  useEffect(() => {
-    let objectUrl: string | null = null;
-    let isCancelled = false;
-
-    async function loadImage() {
-      const response = await fetch(`${apiUrl}/files/${fileId}/content`, {
-        credentials: 'include',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      });
-
-      if (!response.ok) {
-        return;
-      }
-
-      const blob = await response.blob();
-
-      if (isCancelled) {
-        return;
-      }
-
-      objectUrl = URL.createObjectURL(blob);
-      setSrc(objectUrl);
-    }
-
-    void loadImage();
-
-    return () => {
-      isCancelled = true;
-
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl);
-      }
-    };
-  }, [accessToken, fileId]);
-
-  if (!src) {
-    return <span>Загрузка изображения</span>;
-  }
-
-  return <img alt={alt} src={src} />;
 }
 
 function createFormFromObject(object: RealEstateObjectDetail): ObjectFormState {

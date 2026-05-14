@@ -4,6 +4,7 @@ import { basename } from 'node:path';
 
 import {
   File,
+  FileVariantKind,
   FileStorage,
   ImportMode,
   ImportStatus,
@@ -17,6 +18,12 @@ import {
 
 import { loadDeveloperAliases, normalizeDeveloperName } from './developer-aliases';
 import { ImportConfig, loadImportConfig } from './env';
+import {
+  GeneratedImageVariant,
+  IMAGE_VARIANT_ORDER,
+  generateImageVariants,
+  isImageVariantSourceMimeType,
+} from './image-variants';
 import { mapWordPressSource, slugify } from './mapper';
 import { ImportStorage } from './storage';
 import {
@@ -48,7 +55,11 @@ type ImportContext = {
   counters: ImportCounters;
 };
 
-type FileRecord = Pick<File, 'id' | 'wpAttachmentId' | 'key'>;
+type FileRecord = Pick<File, 'id' | 'wpAttachmentId' | 'key' | 'mimeType'> & {
+  variants: Array<{
+    variant: FileVariantKind;
+  }>;
+};
 type ManualObjectOverrideField =
   | 'title'
   | 'description'
@@ -957,10 +968,18 @@ async function ensureImportedFile(
       id: true,
       wpAttachmentId: true,
       key: true,
+      mimeType: true,
+      variants: {
+        select: {
+          variant: true,
+        },
+      },
     },
   });
 
   if (existingFile) {
+    await ensureImportedFileVariants(context, existingFile, attachment);
+
     return existingFile;
   }
 
@@ -971,6 +990,9 @@ async function ensureImportedFile(
   const body = await readFile(attachment.localPath);
   const key = getAttachmentStorageKey(attachment);
   const checksum = createHash('sha256').update(body).digest('hex');
+  const variants = isImageVariantSourceMimeType(attachment.mimeType)
+    ? await generateImageVariants(body, key)
+    : [];
 
   await context.storage.putObject({
     key,
@@ -1007,10 +1029,95 @@ async function ensureImportedFile(
       id: true,
       wpAttachmentId: true,
       key: true,
+      mimeType: true,
+      variants: {
+        select: {
+          variant: true,
+        },
+      },
     },
   });
 
+  await upsertFileVariants(context, file.id, variants);
+
   return file;
+}
+
+async function ensureImportedFileVariants(
+  context: ImportContext,
+  existingFile: FileRecord,
+  attachment: WpAttachment,
+) {
+  if (!isImageVariantSourceMimeType(existingFile.mimeType ?? attachment.mimeType)) {
+    return;
+  }
+
+  const existingVariantKinds = new Set(existingFile.variants.map((variant) => variant.variant));
+  const missingVariantKinds = new Set(
+    IMAGE_VARIANT_ORDER.filter((variant) => !existingVariantKinds.has(variant)),
+  );
+
+  if (missingVariantKinds.size === 0) {
+    return;
+  }
+
+  if (!attachment.localPath || !attachment.mimeType) {
+    throw new Error(`Attachment ${attachment.ID} cannot backfill image variants without local path or MIME type`);
+  }
+
+  const body = await readFile(attachment.localPath);
+  const variants = (await generateImageVariants(body, existingFile.key)).filter((variant) =>
+    missingVariantKinds.has(variant.variant),
+  );
+
+  await upsertFileVariants(context, existingFile.id, variants);
+}
+
+async function upsertFileVariants(
+  context: ImportContext,
+  fileId: string,
+  variants: GeneratedImageVariant[],
+) {
+  for (const variant of variants) {
+    await context.storage.putObject({
+      key: variant.key,
+      body: variant.body,
+      contentType: variant.mimeType,
+    });
+
+    await context.prisma.fileVariant.upsert({
+      where: {
+        fileId_variant: {
+          fileId,
+          variant: variant.variant,
+        },
+      },
+      update: {
+        storage: FileStorage.MINIO,
+        bucket: context.storage.getBucket(),
+        key: variant.key,
+        url: context.storage.getPublicUrl(variant.key),
+        mimeType: variant.mimeType,
+        width: variant.width,
+        height: variant.height,
+        sizeBytes: variant.sizeBytes,
+        checksum: variant.checksum,
+      },
+      create: {
+        fileId,
+        variant: variant.variant,
+        storage: FileStorage.MINIO,
+        bucket: context.storage.getBucket(),
+        key: variant.key,
+        url: context.storage.getPublicUrl(variant.key),
+        mimeType: variant.mimeType,
+        width: variant.width,
+        height: variant.height,
+        sizeBytes: variant.sizeBytes,
+        checksum: variant.checksum,
+      },
+    });
+  }
 }
 
 async function upsertObjectImage(

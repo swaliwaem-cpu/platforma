@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Param,
   Post,
+  Query,
   Res,
   UploadedFile,
   UseGuards,
@@ -50,12 +51,19 @@ export class FilesController {
 
   @Get(':id/content')
   @RequirePermissions('objects:read')
-  async getContent(@Param('id') id: string, @Res() response: FileContentResponse) {
-    const { file, buffer } = await this.filesService.getContent(id);
+  async getContent(
+    @Param('id') id: string,
+    @Query('variant') variant: string | undefined,
+    @Res() response: FileContentResponse,
+  ) {
+    const { file, buffer, variant: servedVariant } = await this.filesService.getContent(id, variant);
 
     response.setHeader('Content-Type', file.mimeType ?? 'application/octet-stream');
     response.setHeader('Content-Length', buffer.length);
-    response.setHeader('Cache-Control', 'private, max-age=300');
+    response.setHeader('Cache-Control', isImageMimeType(file.mimeType) ? 'private, max-age=86400' : 'private, max-age=300');
+    if (servedVariant !== 'original') {
+      response.setHeader('X-Platforma-File-Variant', servedVariant);
+    }
     response.setHeader('Content-Disposition', `inline; filename="${sanitizeHeaderFilename(file.originalName)}"`);
     response.send(buffer);
   }
@@ -70,4 +78,8 @@ export class FilesController {
 
 function sanitizeHeaderFilename(value: string | null) {
   return (value ?? 'file').replace(/[^\x20-\x7E]/gu, '_').replace(/["\\]/gu, '_');
+}
+
+function isImageMimeType(value: string | null | undefined) {
+  return value?.toLowerCase().startsWith('image/') ?? false;
 }

@@ -4,6 +4,7 @@ export type UserStatus = 'ACTIVE' | 'BLOCKED' | 'INVITED' | 'DEACTIVATED';
 export type ObjectStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
 export type LocationType = 'AREA' | 'DISTRICT' | 'CUSTOM';
 export type FileStorage = 'LOCAL' | 'MINIO';
+export type FileVariant = 'THUMBNAIL' | 'CARD' | 'DETAIL';
 export type ObjectFileType = 'PRESENTATION' | 'FLOOR_PLAN' | 'DOCUMENT' | 'OTHER';
 export type ImportMode = 'PREVIEW' | 'RUN';
 export type ImportStatus = 'PENDING' | 'SUCCESS' | 'PARTIAL' | 'FAILED';

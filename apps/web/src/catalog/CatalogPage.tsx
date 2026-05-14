@@ -17,8 +17,9 @@ import type {
   RealEstateObjectSummary,
 } from '@platforma/shared';
 
-import { apiRequest, apiUrl } from '../admin/api';
+import { apiRequest } from '../admin/api';
 import { useAuth } from '../auth/AuthProvider';
+import { SecureImage } from '../files/SecureImage';
 import { YandexMap, type YandexMapBounds, type YandexMapPoint } from '../map/YandexMap';
 
 type CatalogPageProps = {
@@ -799,11 +800,7 @@ function CatalogMapView({
   const [visibleBounds, setVisibleBounds] = useState<YandexMapBounds | null>(null);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [isListVisible, setIsListVisible] = useState(true);
-  const balloonImageUrls = useMapObjectImageUrls(accessToken, objects);
-  const points = useMemo(
-    () => objects.map((object) => mapObjectToPoint(object, balloonImageUrls.get(object.id))),
-    [balloonImageUrls, objects],
-  );
+  const points = useMemo(() => objects.map((object) => mapObjectToPoint(object)), [objects]);
   const visibleObjects = useMemo(
     () => (visibleBounds ? objects.filter((object) => isMapObjectInBounds(object, visibleBounds)) : objects),
     [objects, visibleBounds],
@@ -856,7 +853,7 @@ function CatalogMapView({
 
         {selectedObject ? (
           <MapObjectCard
-            imageUrl={balloonImageUrls.get(selectedObject.id)}
+            accessToken={accessToken}
             object={selectedObject}
             onClose={() => setSelectedObjectId(null)}
             onOpen={() => onOpenObject(selectedObject.slug)}
@@ -901,12 +898,12 @@ function CatalogMapView({
 }
 
 function MapObjectCard({
-  imageUrl,
+  accessToken,
   object,
   onClose,
   onOpen,
 }: {
-  imageUrl: string | undefined;
+  accessToken: string;
   object: MapObject;
   onClose: () => void;
   onOpen: () => void;
@@ -919,8 +916,17 @@ function MapObjectCard({
       <button aria-label="Закрыть карточку" className="map-object-card-close" type="button" onClick={onClose}>
         ×
       </button>
-      {imageUrl ? (
-        <img className="map-object-card-image" src={imageUrl} alt={object.coverImage?.alt ?? object.title} />
+      {object.coverImage ? (
+        <SecureImage
+          accessToken={accessToken}
+          alt={object.coverImage.alt ?? object.title}
+          className="map-object-card-image"
+          errorFallback="Обложка недоступна"
+          fileId={object.coverImage.file.id}
+          loadingFallback="Загрузка обложки"
+          placeholderClassName="map-object-card-image map-object-card-image--empty"
+          variant="card"
+        />
       ) : (
         <div className="map-object-card-image map-object-card-image--empty">Нет обложки</div>
       )}
@@ -987,7 +993,7 @@ function CatalogListItem({
         onClick={handleOpen}
       >
         {coverImage ? (
-          <SecureImage accessToken={accessToken} alt={coverImage.alt ?? object.title} fileId={coverImage.file.id} />
+          <CatalogCoverImage accessToken={accessToken} alt={coverImage.alt ?? object.title} fileId={coverImage.file.id} />
         ) : (
           <CatalogMediaState title="Нет обложки" text="Показываем данные объекта" tone="empty" />
         )}
@@ -1061,7 +1067,7 @@ function CatalogCard({
         onClick={handleOpen}
       >
         {coverImage ? (
-          <SecureImage accessToken={accessToken} alt={coverImage.alt ?? object.title} fileId={coverImage.file.id} />
+          <CatalogCoverImage accessToken={accessToken} alt={coverImage.alt ?? object.title} fileId={coverImage.file.id} />
         ) : (
           <CatalogMediaState title="Нет обложки" text="Показываем данные объекта" tone="empty" />
         )}
@@ -1146,9 +1152,19 @@ function CatalogCardMetroLabel({ stations }: { stations: ObjectMetroStationLink[
   );
 }
 
-function CatalogMediaState({ title, text, tone }: { title: string; text: string; tone: 'empty' | 'error' | 'loading' }) {
+function CatalogMediaState({
+  title,
+  text,
+  tone,
+  visibilityRef,
+}: {
+  title: string;
+  text: string;
+  tone: 'empty' | 'error' | 'loading';
+  visibilityRef?: (node: HTMLElement | null) => void;
+}) {
   return (
-    <span className={`catalog-card-media-state catalog-card-media-state--${tone}`}>
+    <span ref={visibilityRef} className={`catalog-card-media-state catalog-card-media-state--${tone}`}>
       <span aria-hidden="true" className="catalog-card-media-mark" />
       <span>{title}</span>
       <small>{text}</small>
@@ -1156,140 +1172,27 @@ function CatalogMediaState({ title, text, tone }: { title: string; text: string;
   );
 }
 
-function SecureImage({ accessToken, alt, fileId }: { accessToken: string; alt: string; fileId: string }) {
-  const [src, setSrc] = useState<string | null>(null);
-  const [imageState, setImageState] = useState<'loading' | 'loaded' | 'error'>('loading');
-
-  useEffect(() => {
-    let objectUrl: string | null = null;
-    let isCancelled = false;
-
-    setSrc(null);
-    setImageState('loading');
-
-    async function loadImage() {
-      try {
-        const response = await fetch(`${apiUrl}/files/${fileId}/content`, {
-          credentials: 'include',
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
-        });
-
-        if (!response.ok) {
-          throw new Error('Image request failed');
-        }
-
-        const blob = await response.blob();
-
-        if (isCancelled) {
-          return;
-        }
-
-        objectUrl = URL.createObjectURL(blob);
-        setSrc(objectUrl);
-        setImageState('loaded');
-      } catch {
-        if (!isCancelled) {
-          setImageState('error');
-        }
-      }
-    }
-
-    void loadImage();
-
-    return () => {
-      isCancelled = true;
-
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl);
-      }
-    };
-  }, [accessToken, fileId]);
-
-  if (imageState === 'error') {
-    return <CatalogMediaState title="Обложка недоступна" text="Данные объекта сохранены" tone="error" />;
-  }
-
-  if (!src) {
-    return <CatalogMediaState title="Загрузка" text="Подтягиваем обложку" tone="loading" />;
-  }
-
-  return <img alt={alt} src={src} onError={() => setImageState('error')} />;
-}
-
-function useMapObjectImageUrls(accessToken: string, objects: MapObject[]) {
-  const [imageUrls, setImageUrls] = useState<Map<string, string>>(() => new Map());
-
-  useEffect(() => {
-    let isCancelled = false;
-    const objectUrls: string[] = [];
-    const imageFiles = objects
-      .map((object) => ({
-        objectId: object.id,
-        fileId: object.coverImage?.file.id ?? null,
-      }))
-      .filter((item): item is { objectId: string; fileId: string } => Boolean(item.fileId));
-
-    setImageUrls(new Map());
-
-    if (!accessToken || imageFiles.length === 0) {
-      return () => undefined;
-    }
-
-    async function loadImages() {
-      const nextImageUrls = new Map<string, string>();
-
-      await Promise.all(
-        imageFiles.map(async ({ fileId, objectId }) => {
-          const objectUrl = await fetchFileObjectUrl(accessToken, fileId).catch(() => null);
-
-          if (!objectUrl) {
-            return;
-          }
-
-          if (isCancelled) {
-            URL.revokeObjectURL(objectUrl);
-            return;
-          }
-
-          objectUrls.push(objectUrl);
-          nextImageUrls.set(objectId, objectUrl);
-        }),
-      );
-
-      if (!isCancelled) {
-        setImageUrls(nextImageUrls);
-      }
-    }
-
-    void loadImages();
-
-    return () => {
-      isCancelled = true;
-
-      for (const objectUrl of objectUrls) {
-        URL.revokeObjectURL(objectUrl);
-      }
-    };
-  }, [accessToken, objects]);
-
-  return imageUrls;
-}
-
-async function fetchFileObjectUrl(accessToken: string, fileId: string) {
-  const response = await fetch(`${apiUrl}/files/${fileId}/content`, {
-    credentials: 'include',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error('Image request failed');
-  }
-
-  return URL.createObjectURL(await response.blob());
+function CatalogCoverImage({ accessToken, alt, fileId }: { accessToken: string; alt: string; fileId: string }) {
+  return (
+    <SecureImage
+      accessToken={accessToken}
+      alt={alt}
+      fileId={fileId}
+      lazy
+      renderError={({ visibilityRef }) => (
+        <CatalogMediaState
+          visibilityRef={visibilityRef}
+          title="Обложка недоступна"
+          text="Данные объекта сохранены"
+          tone="error"
+        />
+      )}
+      renderFallback={({ visibilityRef }) => (
+        <CatalogMediaState visibilityRef={visibilityRef} title="Загрузка" text="Подтягиваем обложку" tone="loading" />
+      )}
+      variant="card"
+    />
+  );
 }
 
 function parseCatalogFilters(queryString: string): CatalogFilters {
@@ -1386,13 +1289,13 @@ function buildObjectsParams(filters: CatalogFilters, includePage: boolean) {
   return params;
 }
 
-function mapObjectToPoint(object: MapObject, imageUrl: string | undefined): YandexMapPoint {
+function mapObjectToPoint(object: MapObject): YandexMapPoint {
   return {
     id: object.id,
     title: object.title,
     hint: object.title,
     coordinates: [object.latitude, object.longitude],
-    balloonHtml: buildMapBalloon(object, imageUrl),
+    balloonHtml: buildMapBalloon(object),
     markerLabel: formatMapMarkerPrice(object.pricePerMeterFrom),
   };
 }
@@ -1412,7 +1315,7 @@ function isMapObjectInBounds(object: MapObject, bounds: YandexMapBounds) {
   );
 }
 
-function buildMapBalloon(object: MapObject, imageUrl: string | undefined) {
+function buildMapBalloon(object: MapObject) {
   const pointId = escapeHtml(object.id);
   const title = escapeHtml(object.title);
   const district = escapeHtml(getObjectDistrictLabel(object));
@@ -1420,11 +1323,9 @@ function buildMapBalloon(object: MapObject, imageUrl: string | undefined) {
   const price = escapeHtml(formatPrice(object.priceFrom));
   const completion = escapeHtml(formatCompletion(object.completionYear, object.completionQuarter));
   const href = escapeHtml(`/objects/${encodeURIComponent(object.slug)}`);
-  const image = imageUrl ? `<img class="map-balloon-image" src="${escapeHtml(imageUrl)}" alt="${title}" />` : '';
 
   return [
     '<div class="map-balloon">',
-    image,
     `<strong>${title}</strong>`,
     `<span>${district}</span>`,
     `<span>${developer}</span>`,

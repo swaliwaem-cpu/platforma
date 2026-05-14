@@ -7,7 +7,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { File, FileStorage } from '@prisma/client';
+import { File, FileStorage, FileVariantKind } from '@prisma/client';
 
 import { AuthenticatedUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
@@ -18,10 +18,22 @@ import {
   PDF_MAX_SIZE_BYTES,
   PDF_MIME_TYPES,
 } from './file-upload.constants';
+import { generateImageVariants, isImageVariantSourceMimeType } from './image-variants';
 import { S3StorageService } from './s3-storage.service';
 import { UploadedFile } from './uploaded-file.type';
 
 export type UploadFileKind = 'generic' | 'image' | 'pdf';
+export type ServedFileVariant = 'original' | 'original-fallback' | 'thumbnail' | 'card' | 'detail';
+
+type RequestedFileVariant =
+  | {
+      kind: 'original';
+    }
+  | {
+      kind: 'variant';
+      variant: FileVariantKind;
+      headerValue: Exclude<ServedFileVariant, 'original' | 'original-fallback'>;
+    };
 
 @Injectable()
 export class FilesService {
@@ -34,12 +46,23 @@ export class FilesService {
     const validatedFile = this.validateUploadedFile(file, kind);
     const checksum = createHash('sha256').update(validatedFile.buffer).digest('hex');
     const key = this.createStorageKey(validatedFile.originalname, validatedFile.mimetype);
+    const variants = isImageVariantSourceMimeType(validatedFile.mimetype)
+      ? await generateImageVariants(validatedFile.buffer, key)
+      : [];
 
     await this.storage.putObject({
       key,
       body: validatedFile.buffer,
       contentType: validatedFile.mimetype,
     });
+
+    for (const variant of variants) {
+      await this.storage.putObject({
+        key: variant.key,
+        body: variant.body,
+        contentType: variant.mimeType,
+      });
+    }
 
     const storedFile = await this.prisma.file.create({
       data: {
@@ -52,6 +75,24 @@ export class FilesService {
         sizeBytes: BigInt(validatedFile.size),
         checksum,
         uploadedById: actor.id,
+        ...(variants.length > 0
+          ? {
+              variants: {
+                create: variants.map((variant) => ({
+                  variant: variant.variant,
+                  storage: FileStorage.MINIO,
+                  bucket: this.storage.getBucket(),
+                  key: variant.key,
+                  url: this.storage.getPublicUrl(variant.key),
+                  mimeType: variant.mimeType,
+                  width: variant.width,
+                  height: variant.height,
+                  sizeBytes: variant.sizeBytes,
+                  checksum: variant.checksum,
+                })),
+              },
+            }
+          : {}),
       },
     });
 
@@ -68,13 +109,42 @@ export class FilesService {
     };
   }
 
-  async getContent(id: string) {
-    const file = await this.findExistingFile(id);
+  async getContent(id: string, variant?: string | null) {
+    const requestedVariant = this.parseRequestedVariant(variant);
+    const file = await this.findExistingFileWithVariants(id);
+
+    if (requestedVariant.kind === 'variant') {
+      const fileVariant = file.variants.find((currentVariant) => currentVariant.variant === requestedVariant.variant);
+
+      if (fileVariant) {
+        const buffer = await this.storage.getObject(fileVariant.key);
+
+        return {
+          file: {
+            ...file,
+            mimeType: fileVariant.mimeType,
+            sizeBytes: fileVariant.sizeBytes,
+          },
+          buffer,
+          variant: requestedVariant.headerValue,
+        };
+      }
+
+      const buffer = await this.storage.getObject(file.key);
+
+      return {
+        file,
+        buffer,
+        variant: 'original-fallback' as const,
+      };
+    }
+
     const buffer = await this.storage.getObject(file.key);
 
     return {
       file,
       buffer,
+      variant: 'original' as const,
     };
   }
 
@@ -85,6 +155,11 @@ export class FilesService {
         id: fileId,
       },
       include: {
+        variants: {
+          select: {
+            key: true,
+          },
+        },
         _count: {
           select: {
             profilePhotoUsers: true,
@@ -101,6 +176,10 @@ export class FilesService {
 
     if (file._count.profilePhotoUsers > 0 || file._count.objectImages > 0 || file._count.objectFiles > 0) {
       throw new ConflictException('File is linked and cannot be deleted');
+    }
+
+    for (const variant of file.variants) {
+      await this.storage.deleteObject(variant.key);
     }
 
     await this.storage.deleteObject(file.key);
@@ -260,6 +339,60 @@ export class FilesService {
     }
 
     return file;
+  }
+
+  private async findExistingFileWithVariants(id: string) {
+    const fileId = this.parseUuid(id, 'File is invalid');
+    const file = await this.prisma.file.findUnique({
+      where: {
+        id: fileId,
+      },
+      include: {
+        variants: true,
+      },
+    });
+
+    if (!file) {
+      throw new NotFoundException('File not found');
+    }
+
+    return file;
+  }
+
+  private parseRequestedVariant(variant: string | null | undefined): RequestedFileVariant {
+    const normalizedVariant = variant?.trim().toLowerCase();
+
+    if (!normalizedVariant || normalizedVariant === 'original') {
+      return {
+        kind: 'original',
+      };
+    }
+
+    if (normalizedVariant === 'thumbnail') {
+      return {
+        kind: 'variant',
+        variant: FileVariantKind.THUMBNAIL,
+        headerValue: 'thumbnail',
+      };
+    }
+
+    if (normalizedVariant === 'card') {
+      return {
+        kind: 'variant',
+        variant: FileVariantKind.CARD,
+        headerValue: 'card',
+      };
+    }
+
+    if (normalizedVariant === 'detail') {
+      return {
+        kind: 'variant',
+        variant: FileVariantKind.DETAIL,
+        headerValue: 'detail',
+      };
+    }
+
+    throw new BadRequestException('File variant is invalid');
   }
 
   private parseUuid(value: string, message: string) {

@@ -6,6 +6,7 @@
     "build": "tsc -p tsconfig.build.json",
     "db:seed": "pnpm build && node dist/prisma/seed.js",
     "dev": "pnpm build && node dist/main.js",
+    "media:variants:backfill": "pnpm build && node dist/files/backfill-image-variants.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "start": "node dist/main.js",
@@ -19,7 +20,8 @@
     "@prisma/client": "6.19.3",
     "argon2": "^0.44.0",
     "reflect-metadata": "0.2.2",
-    "rxjs": "7.8.2"
+    "rxjs": "7.8.2",
+    "sharp": "^0.34.5"
   },
   "devDependencies": {
     "@types/node": "25.6.0",

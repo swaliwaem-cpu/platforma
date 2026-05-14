@@ -39,6 +39,14 @@ enum FileStorage {
   @@map("file_storage")
 }
 
+enum FileVariantKind {
+  THUMBNAIL @map("thumbnail")
+  CARD      @map("card")
+  DETAIL    @map("detail")
+
+  @@map("file_variant_kind")
+}
+
 enum ObjectFileType {
   PRESENTATION @map("presentation")
   FLOOR_PLAN   @map("floor_plan")
@@ -309,10 +317,33 @@ model File {
   profilePhotoUsers  User[]        @relation("UserProfilePhoto")
   objectImages       ObjectImage[]
   objectFiles        ObjectFile[]
+  variants           FileVariant[]
 
   @@unique([storage, bucket, key])
   @@index([uploadedById])
   @@map("files")
+}
+
+model FileVariant {
+  fileId    String          @map("file_id") @db.Uuid
+  variant   FileVariantKind
+  storage   FileStorage     @default(MINIO)
+  bucket    String?
+  key       String
+  url       String?
+  mimeType  String          @map("mime_type")
+  width     Int
+  height    Int
+  sizeBytes BigInt          @map("size_bytes")
+  checksum  String?
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  file File @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@id([fileId, variant])
+  @@unique([storage, bucket, key])
+  @@map("file_variants")
 }
 
 model ObjectImage {
