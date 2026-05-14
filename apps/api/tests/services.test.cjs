@@ -97,6 +97,46 @@ function objectRecord(overrides = {}) {
   };
 }
 
+function fileRecord(overrides = {}) {
+  const now = new Date('2026-05-01T10:00:00.000Z');
+
+  return {
+    id: '55555555-5555-4555-8555-555555555555',
+    wpAttachmentId: null,
+    storage: 'MINIO',
+    bucket: 'objects',
+    key: 'objects/image.jpg',
+    url: 'https://cdn.example.test/objects/image.jpg',
+    originalName: 'image.jpg',
+    mimeType: 'image/jpeg',
+    sizeBytes: 123n,
+    checksum: null,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
+function objectImageRecord(overrides = {}) {
+  const now = new Date('2026-05-01T10:00:00.000Z');
+  const fileId = overrides.fileId ?? '55555555-5555-4555-8555-555555555555';
+
+  return {
+    id: '22222222-2222-4222-8222-222222222222',
+    objectId: '11111111-1111-4111-8111-111111111111',
+    fileId,
+    sortOrder: 0,
+    isCover: false,
+    alt: null,
+    title: null,
+    sourceMetaKey: null,
+    createdAt: now,
+    updatedAt: now,
+    file: fileRecord({ id: fileId }),
+    ...overrides,
+  };
+}
+
 function userRecord(overrides = {}) {
   const now = new Date('2026-05-01T10:00:00.000Z');
 
@@ -1069,6 +1109,204 @@ test('ObjectsService.publish rejects objects without coordinates', async () => {
   await assert.rejects(
     () => service.publish('11111111-1111-4111-8111-111111111111', actor, request),
     /Missing fields: coordinates/,
+  );
+});
+
+test('ObjectsService.updateGalleryLayout assigns cover and image order', async () => {
+  const firstImage = objectImageRecord({
+    id: '22222222-2222-4222-8222-222222222222',
+    fileId: '55555555-5555-4555-8555-555555555555',
+    sortOrder: 0,
+    isCover: true,
+  });
+  const secondImage = objectImageRecord({
+    id: '33333333-3333-4333-8333-333333333333',
+    fileId: '66666666-6666-4666-8666-666666666666',
+    sortOrder: 1,
+  });
+  const thirdImage = objectImageRecord({
+    id: '44444444-4444-4444-8444-444444444444',
+    fileId: '77777777-7777-4777-8777-777777777777',
+    sortOrder: 2,
+  });
+  const calls = {
+    updates: [],
+  };
+  const updatedObject = objectRecord({
+    images: [
+      { ...secondImage, sortOrder: 0, isCover: false },
+      { ...firstImage, sortOrder: 1, isCover: false },
+      { ...thirdImage, sortOrder: 2, isCover: true },
+    ],
+  });
+  let findFirstCount = 0;
+  const prisma = {
+    realEstateObject: {
+      findFirst: async () => {
+        findFirstCount += 1;
+
+        return findFirstCount === 1
+          ? objectRecord({ images: [firstImage, secondImage, thirdImage] })
+          : updatedObject;
+      },
+    },
+    objectImage: {
+      update: async (args) => {
+        calls.updates.push(args);
+      },
+    },
+    auditLog: {
+      create: async (args) => {
+        calls.auditLog = args;
+      },
+    },
+    $transaction: async (callback) => callback(prisma),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  const result = await service.updateGalleryLayout(
+    '11111111-1111-4111-8111-111111111111',
+    {
+      imageIds: [secondImage.id, firstImage.id, thirdImage.id],
+      coverImageId: thirdImage.id,
+    },
+    actor,
+    request,
+  );
+
+  assert.deepEqual(
+    calls.updates.map((call) => [call.where.id, call.data.sortOrder, call.data.isCover]),
+    [
+      [secondImage.id, 0, false],
+      [firstImage.id, 1, false],
+      [thirdImage.id, 2, true],
+    ],
+  );
+  assert.deepEqual(
+    result.object.images.map((image) => [image.id, image.sortOrder, image.isCover]),
+    [
+      [secondImage.id, 0, false],
+      [firstImage.id, 1, false],
+      [thirdImage.id, 2, true],
+    ],
+  );
+  assert.equal(calls.auditLog.data.action, 'object.gallery.layout');
+  assert.deepEqual(calls.auditLog.data.metadata.before, {
+    imageIds: [firstImage.id, secondImage.id, thirdImage.id],
+    coverImageId: firstImage.id,
+  });
+  assert.deepEqual(calls.auditLog.data.metadata.after, {
+    imageIds: [secondImage.id, firstImage.id, thirdImage.id],
+    coverImageId: thirdImage.id,
+  });
+});
+
+test('ObjectsService.updateGalleryLayout rejects incomplete image ids', async () => {
+  const firstImage = objectImageRecord({
+    id: '22222222-2222-4222-8222-222222222222',
+    isCover: true,
+  });
+  const secondImage = objectImageRecord({
+    id: '33333333-3333-4333-8333-333333333333',
+    fileId: '66666666-6666-4666-8666-666666666666',
+    sortOrder: 1,
+  });
+  const prisma = {
+    realEstateObject: {
+      findFirst: async () => objectRecord({ images: [firstImage, secondImage] }),
+    },
+    objectImage: {
+      update: async () => assert.fail('Gallery layout must not update incomplete image ids'),
+    },
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await assert.rejects(
+    () =>
+      service.updateGalleryLayout(
+        '11111111-1111-4111-8111-111111111111',
+        {
+          imageIds: [firstImage.id],
+          coverImageId: firstImage.id,
+        },
+        actor,
+        request,
+      ),
+    BadRequestException,
+  );
+});
+
+test('ObjectsService.updateGalleryLayout rejects extra image ids', async () => {
+  const firstImage = objectImageRecord({
+    id: '22222222-2222-4222-8222-222222222222',
+    isCover: true,
+  });
+  const secondImage = objectImageRecord({
+    id: '33333333-3333-4333-8333-333333333333',
+    fileId: '66666666-6666-4666-8666-666666666666',
+    sortOrder: 1,
+  });
+  const prisma = {
+    realEstateObject: {
+      findFirst: async () => objectRecord({ images: [firstImage, secondImage] }),
+    },
+    objectImage: {
+      update: async () => assert.fail('Gallery layout must not update extra image ids'),
+    },
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await assert.rejects(
+    () =>
+      service.updateGalleryLayout(
+        '11111111-1111-4111-8111-111111111111',
+        {
+          imageIds: [
+            firstImage.id,
+            secondImage.id,
+            '44444444-4444-4444-8444-444444444444',
+          ],
+          coverImageId: firstImage.id,
+        },
+        actor,
+        request,
+      ),
+    BadRequestException,
+  );
+});
+
+test('ObjectsService.updateGalleryLayout rejects cover image outside layout ids', async () => {
+  const firstImage = objectImageRecord({
+    id: '22222222-2222-4222-8222-222222222222',
+    isCover: true,
+  });
+  const secondImage = objectImageRecord({
+    id: '33333333-3333-4333-8333-333333333333',
+    fileId: '66666666-6666-4666-8666-666666666666',
+    sortOrder: 1,
+  });
+  const prisma = {
+    realEstateObject: {
+      findFirst: async () => objectRecord({ images: [firstImage, secondImage] }),
+    },
+    objectImage: {
+      update: async () => assert.fail('Gallery layout must not update an invalid cover'),
+    },
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await assert.rejects(
+    () =>
+      service.updateGalleryLayout(
+        '11111111-1111-4111-8111-111111111111',
+        {
+          imageIds: [firstImage.id, secondImage.id],
+          coverImageId: '44444444-4444-4444-8444-444444444444',
+        },
+        actor,
+        request,
+      ),
+    BadRequestException,
   );
 });
 

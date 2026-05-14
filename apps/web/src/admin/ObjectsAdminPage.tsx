@@ -1,4 +1,4 @@
-import { ChangeEvent, DragEvent, FormEvent, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react';
 import {
   ArrowDownIcon,
   ArrowLeftIcon,
@@ -6,12 +6,14 @@ import {
   ArrowUpIcon,
   ChevronDownIcon,
   ChevronUpIcon,
+  ImageIcon,
   PlusIcon,
   SaveIcon,
   SearchIcon,
   SendIcon,
   Trash2Icon,
   UploadIcon,
+  XIcon,
 } from 'lucide-react';
 import {
   DevelopersResponse,
@@ -81,6 +83,16 @@ type ObjectFormState = {
   featuresText: string;
 };
 
+type GalleryDraftItem = {
+  draftId: string;
+  kind: 'existing' | 'new';
+  imageId: string | null;
+  file: File | null;
+  previewUrl: string;
+  name: string;
+  isUploading?: boolean;
+};
+
 type SortField = 'createdAt' | 'updatedAt' | 'title' | 'status' | 'priceFrom' | 'completionYear';
 type SortDirection = 'asc' | 'desc';
 
@@ -147,12 +159,18 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [coverFile, setCoverFile] = useState<File | null>(null);
-  const [galleryFile, setGalleryFile] = useState<File | null>(null);
+  const [isGalleryModalOpen, setIsGalleryModalOpen] = useState(false);
+  const [galleryDraftItems, setGalleryDraftItems] = useState<GalleryDraftItem[]>([]);
+  const [galleryCoverDraftId, setGalleryCoverDraftId] = useState<string | null>(null);
+  const [galleryDeletedImageIds, setGalleryDeletedImageIds] = useState<string[]>([]);
+  const [galleryModalError, setGalleryModalError] = useState<string | null>(null);
+  const [galleryModalProgress, setGalleryModalProgress] = useState<string | null>(null);
   const [objectFile, setObjectFile] = useState<File | null>(null);
   const [objectFileType, setObjectFileType] = useState<ObjectFileType>('PRESENTATION');
   const [objectFileTitle, setObjectFileTitle] = useState('');
-  const [draggedImageId, setDraggedImageId] = useState<string | null>(null);
+  const galleryDraftItemsRef = useRef<GalleryDraftItem[]>([]);
+  const pendingEditorErrorRef = useRef<string | null>(null);
+  const pendingEditorNoticeRef = useRef<string | null>(null);
 
   const canCreate = hasPermission('objects:create');
   const canUpdate = hasPermission('objects:update');
@@ -210,12 +228,340 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
     }
   }, [accessToken, editObjectId, isCreateRoute]);
 
+  useEffect(() => () => {
+    revokeGalleryDraftPreviewUrls(galleryDraftItemsRef.current);
+    galleryDraftItemsRef.current = [];
+  }, []);
+
   function resetUploads() {
-    setCoverFile(null);
-    setGalleryFile(null);
+    resetGalleryModalDraft();
     setObjectFile(null);
     setObjectFileTitle('');
     setObjectFileType('PRESENTATION');
+  }
+
+  function openGalleryModal() {
+    const nextDraftItems = createGalleryDraftItems(object?.images ?? []);
+
+    revokeGalleryDraftPreviewUrls(galleryDraftItemsRef.current);
+    galleryDraftItemsRef.current = nextDraftItems;
+    setGalleryDraftItems(nextDraftItems);
+    setGalleryCoverDraftId(getInitialGalleryCoverDraftId(object?.images ?? []));
+    setGalleryDeletedImageIds([]);
+    setGalleryModalError(null);
+    setGalleryModalProgress(null);
+    setIsGalleryModalOpen(true);
+  }
+
+  function closeGalleryModal() {
+    resetGalleryModalDraft();
+  }
+
+  function addGalleryDraftFiles(files: FileList | File[]) {
+    const nextNewItems = createNewGalleryDraftItems(files);
+
+    if (nextNewItems.length === 0) {
+      return;
+    }
+
+    const nextDraftItems = [...galleryDraftItemsRef.current, ...nextNewItems];
+    galleryDraftItemsRef.current = nextDraftItems;
+    setGalleryDraftItems(nextDraftItems);
+    setGalleryModalError(null);
+
+    if (!galleryCoverDraftId) {
+      setGalleryCoverDraftId(nextNewItems[0]?.draftId ?? null);
+    }
+  }
+
+  function removeGalleryDraftItem(draftId: string) {
+    const removedItem = galleryDraftItemsRef.current.find((item) => item.draftId === draftId);
+
+    if (!removedItem) {
+      return;
+    }
+
+    revokeGalleryDraftPreviewUrl(removedItem);
+
+    const removedImageId = removedItem.kind === 'existing' ? removedItem.imageId : null;
+
+    if (removedImageId) {
+      setGalleryDeletedImageIds((currentIds) =>
+        currentIds.includes(removedImageId) ? currentIds : [...currentIds, removedImageId],
+      );
+    }
+
+    const nextDraftItems = galleryDraftItemsRef.current.filter((item) => item.draftId !== draftId);
+    galleryDraftItemsRef.current = nextDraftItems;
+    setGalleryDraftItems(nextDraftItems);
+    setGalleryModalError(null);
+
+    if (galleryCoverDraftId === draftId) {
+      setGalleryCoverDraftId(null);
+    }
+  }
+
+  function reorderGalleryDraftItem(draggedDraftId: string, targetDraftId: string) {
+    if (draggedDraftId === targetDraftId) {
+      return;
+    }
+
+    const currentItems = galleryDraftItemsRef.current;
+    const draggedIndex = currentItems.findIndex((item) => item.draftId === draggedDraftId);
+    const targetIndex = currentItems.findIndex((item) => item.draftId === targetDraftId);
+
+    if (draggedIndex === -1 || targetIndex === -1) {
+      return;
+    }
+
+    const nextDraftItems = [...currentItems];
+    const draggedItem = nextDraftItems.splice(draggedIndex, 1)[0];
+    const nextTargetIndex = nextDraftItems.findIndex((item) => item.draftId === targetDraftId);
+
+    if (!draggedItem || nextTargetIndex === -1) {
+      return;
+    }
+
+    nextDraftItems.splice(nextTargetIndex, 0, draggedItem);
+    galleryDraftItemsRef.current = nextDraftItems;
+    setGalleryDraftItems(nextDraftItems);
+    setGalleryModalError(null);
+  }
+
+  function moveGalleryDraftItem(draftId: string, direction: 'up' | 'down') {
+    const currentItems = galleryDraftItemsRef.current;
+    const currentIndex = currentItems.findIndex((item) => item.draftId === draftId);
+
+    if (currentIndex === -1) {
+      return;
+    }
+
+    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+
+    if (targetIndex < 0 || targetIndex >= currentItems.length) {
+      return;
+    }
+
+    const nextDraftItems = [...currentItems];
+    const movedItem = nextDraftItems.splice(currentIndex, 1)[0];
+
+    if (!movedItem) {
+      return;
+    }
+
+    nextDraftItems.splice(targetIndex, 0, movedItem);
+    galleryDraftItemsRef.current = nextDraftItems;
+    setGalleryDraftItems(nextDraftItems);
+    setGalleryModalError(null);
+  }
+
+  function resetGalleryModalDraft() {
+    revokeGalleryDraftPreviewUrls(galleryDraftItemsRef.current);
+    galleryDraftItemsRef.current = [];
+    setIsGalleryModalOpen(false);
+    setGalleryDraftItems([]);
+    setGalleryCoverDraftId(null);
+    setGalleryDeletedImageIds([]);
+    setGalleryModalError(null);
+    setGalleryModalProgress(null);
+  }
+
+  async function saveGalleryModalChanges() {
+    if (!accessToken) {
+      setGalleryModalError('Нет доступа');
+      return;
+    }
+
+    if (galleryModalProgress) {
+      return;
+    }
+
+    const draftItems = galleryDraftItemsRef.current;
+
+    if (draftItems.length > 0 && !galleryCoverDraftId) {
+      setGalleryModalError('Выберите обложку для галереи');
+      return;
+    }
+
+    const coverDraftItem = galleryCoverDraftId
+      ? draftItems.find((item) => item.draftId === galleryCoverDraftId) ?? null
+      : null;
+
+    if (galleryCoverDraftId && !coverDraftItem) {
+      setGalleryModalError('Выберите обложку для галереи');
+      return;
+    }
+
+    if (!canUpdate) {
+      setGalleryModalError('Нет прав на изменение галереи');
+      return;
+    }
+
+    if (draftItems.some((item) => item.kind === 'new') && !canUpload) {
+      setGalleryModalError('Нет прав на загрузку изображений');
+      return;
+    }
+
+    if (galleryDeletedImageIds.length > 0 && !canDeleteMedia) {
+      setGalleryModalError('Нет прав на удаление изображений');
+      return;
+    }
+
+    setGalleryModalError(null);
+    setNotice(null);
+
+    try {
+      if (isCreateRoute) {
+        const validationError = validateObjectForm(form);
+
+        if (validationError) {
+          setGalleryModalError(validationError);
+          return;
+        }
+
+        if (!canCreate) {
+          setGalleryModalError('Нет прав на создание объекта');
+          return;
+        }
+
+        setIsSubmitting(true);
+        setGalleryModalProgress('Создание объекта');
+
+        const payload = createPayloadFromForm(form);
+        const createData = await apiRequest<ObjectResponse>('/objects', accessToken, {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+
+        setObject(createData.object);
+        setForm(createFormFromObject(createData.object));
+
+        try {
+          const layoutData = await persistGalleryDraftForObject(createData.object.id, createData.object.images);
+
+          setObject(layoutData.object);
+          setForm(createFormFromObject(layoutData.object));
+          resetGalleryModalDraft();
+          pendingEditorNoticeRef.current = 'Объект создан, галерея сохранена';
+          navigate(`/admin/objects/${layoutData.object.id}/edit`);
+          setNotice('Объект создан, галерея сохранена');
+        } catch (caughtError) {
+          const mediaErrorMessage =
+            caughtError instanceof Error ? caughtError.message : 'Не удалось сохранить галерею';
+
+          resetGalleryModalDraft();
+          pendingEditorErrorRef.current = `Объект создан, но медиа не загрузились: ${mediaErrorMessage}`;
+          navigate(`/admin/objects/${createData.object.id}/edit`);
+        }
+
+        return;
+      }
+
+      if (!editObjectId) {
+        setGalleryModalError('Нет доступа');
+        return;
+      }
+
+      const layoutData = await persistGalleryDraftForObject(editObjectId, object?.images ?? []);
+
+      setObject(layoutData.object);
+      setForm(createFormFromObject(layoutData.object));
+      resetGalleryModalDraft();
+      setNotice('Галерея сохранена');
+    } catch (caughtError) {
+      setGalleryModalError(caughtError instanceof Error ? caughtError.message : 'Не удалось сохранить галерею');
+    } finally {
+      setGalleryModalProgress(null);
+      setIsSubmitting(false);
+    }
+  }
+
+  async function persistGalleryDraftForObject(objectId: string, initialImages: ObjectImage[]) {
+    if (!accessToken) {
+      throw new Error('Нет доступа');
+    }
+
+    const draftItems = galleryDraftItemsRef.current;
+    const coverDraftItem = galleryCoverDraftId
+      ? draftItems.find((item) => item.draftId === galleryCoverDraftId) ?? null
+      : null;
+    const imageIdByDraftId = new Map<string, string>();
+    let currentImages = initialImages;
+
+    draftItems.forEach((item) => {
+      if (item.kind === 'existing' && item.imageId) {
+        imageIdByDraftId.set(item.draftId, item.imageId);
+      }
+    });
+
+    if (galleryDeletedImageIds.length > 0) {
+      setGalleryModalProgress('Удаление изображений');
+    }
+
+    for (const imageId of galleryDeletedImageIds) {
+      const deleteData = await apiRequest<ObjectResponse>(`/objects/${objectId}/gallery/${imageId}`, accessToken, {
+        method: 'DELETE',
+      });
+
+      currentImages = deleteData.object.images;
+    }
+
+    if (coverDraftItem?.kind === 'new') {
+      if (!coverDraftItem.file) {
+        throw new Error('Не удалось прочитать файл обложки');
+      }
+
+      setGalleryModalProgress('Загрузка обложки');
+
+      const coverData = await uploadObjectMedia(objectId, 'cover', coverDraftItem.file);
+      const uploadedCoverImage = findUploadedGalleryImage(currentImages, coverData.object.images);
+
+      imageIdByDraftId.set(coverDraftItem.draftId, uploadedCoverImage.id);
+      currentImages = coverData.object.images;
+    }
+
+    const galleryUploadItems = draftItems.filter((item) => item.kind === 'new' && item.draftId !== galleryCoverDraftId);
+
+    if (galleryUploadItems.length > 0) {
+      setGalleryModalProgress('Загрузка изображений');
+    }
+
+    for (const item of galleryUploadItems) {
+      if (!item.file) {
+        throw new Error('Не удалось прочитать файл галереи');
+      }
+
+      const galleryData = await uploadObjectMedia(objectId, 'gallery', item.file);
+      const uploadedGalleryImage = findUploadedGalleryImage(currentImages, galleryData.object.images);
+
+      imageIdByDraftId.set(item.draftId, uploadedGalleryImage.id);
+      currentImages = galleryData.object.images;
+    }
+
+    const imageIds = draftItems.map((item) => {
+      const imageId = imageIdByDraftId.get(item.draftId);
+
+      if (!imageId) {
+        throw new Error('Не удалось сохранить изображение галереи');
+      }
+
+      return imageId;
+    });
+    const coverImageId = coverDraftItem ? imageIdByDraftId.get(coverDraftItem.draftId) ?? null : null;
+
+    if (draftItems.length > 0 && !coverImageId) {
+      throw new Error('Не удалось сохранить обложку галереи');
+    }
+
+    setGalleryModalProgress('Сохранение порядка');
+
+    return apiRequest<ObjectResponse>(`/objects/${objectId}/gallery/layout`, accessToken, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        imageIds,
+        coverImageId,
+      }),
+    });
   }
 
   async function loadDirectories(token: string) {
@@ -282,6 +628,16 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
       setObject(data.object);
       setForm(createFormFromObject(data.object));
       resetUploads();
+
+      if (pendingEditorErrorRef.current) {
+        setError(pendingEditorErrorRef.current);
+        pendingEditorErrorRef.current = null;
+      }
+
+      if (pendingEditorNoticeRef.current) {
+        setNotice(pendingEditorNoticeRef.current);
+        pendingEditorNoticeRef.current = null;
+      }
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Не удалось загрузить объект');
     } finally {
@@ -359,57 +715,18 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
     }
   }
 
-  async function uploadCover() {
-    await uploadMedia('cover');
-  }
-
-  async function uploadGalleryImage() {
-    await uploadMedia('gallery');
-  }
-
-  async function uploadMedia(kind: 'cover' | 'gallery') {
-    if (!accessToken || !editObjectId) {
-      return;
+  async function uploadObjectMedia(objectId: string, kind: 'cover' | 'gallery', file: File) {
+    if (!accessToken) {
+      throw new Error('Нет доступа');
     }
 
-    const selectedFile = kind === 'cover' ? coverFile : galleryFile;
+    const body = new FormData();
+    body.append('file', file);
 
-    if (!selectedFile) {
-      setError('Выберите изображение');
-      return;
-    }
-
-    setIsUploading(true);
-    setError(null);
-    setNotice(null);
-
-    try {
-      const body = new FormData();
-      body.append('file', selectedFile);
-
-      const data = await apiRequest<ObjectResponse>(
-        `/objects/${editObjectId}/${kind}`,
-        accessToken,
-        {
-          method: 'POST',
-          body,
-        },
-      );
-
-      setObject(data.object);
-      setForm(createFormFromObject(data.object));
-      setNotice(kind === 'cover' ? 'Обложка загружена' : 'Изображение добавлено');
-
-      if (kind === 'cover') {
-        setCoverFile(null);
-      } else {
-        setGalleryFile(null);
-      }
-    } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Не удалось загрузить изображение');
-    } finally {
-      setIsUploading(false);
-    }
+    return apiRequest<ObjectResponse>(`/objects/${objectId}/${kind}`, accessToken, {
+      method: 'POST',
+      body,
+    });
   }
 
   async function uploadLinkedFile() {
@@ -448,35 +765,6 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
     }
   }
 
-  async function deleteGalleryImage(imageId: string) {
-    if (!accessToken || !editObjectId) {
-      return;
-    }
-
-    const confirmed = window.confirm('Удалить изображение из объекта?');
-
-    if (!confirmed) {
-      return;
-    }
-
-    setIsUploading(true);
-    setError(null);
-    setNotice(null);
-
-    try {
-      const data = await apiRequest<ObjectResponse>(`/objects/${editObjectId}/gallery/${imageId}`, accessToken, {
-        method: 'DELETE',
-      });
-
-      setObject(data.object);
-      setNotice('Изображение удалено');
-    } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Не удалось удалить изображение');
-    } finally {
-      setIsUploading(false);
-    }
-  }
-
   async function deleteLinkedFile(objectFileId: string) {
     if (!accessToken || !editObjectId) {
       return;
@@ -506,40 +794,6 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
     }
   }
 
-  async function persistGalleryOrder(nextImages: ObjectImage[]) {
-    if (!accessToken || !editObjectId || !object) {
-      return;
-    }
-
-    const previousObject = object;
-    const nextObject = {
-      ...object,
-      images: nextImages.map((image, index) => ({
-        ...image,
-        sortOrder: index,
-      })),
-    };
-
-    setObject(nextObject);
-    setError(null);
-    setNotice(null);
-
-    try {
-      const data = await apiRequest<ObjectResponse>(`/objects/${editObjectId}/gallery/sort`, accessToken, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          imageIds: nextImages.map((image) => image.id),
-        }),
-      });
-
-      setObject(data.object);
-      setNotice('Порядок галереи обновлён');
-    } catch (caughtError) {
-      setObject(previousObject);
-      setError(caughtError instanceof Error ? caughtError.message : 'Не удалось отсортировать галерею');
-    }
-  }
-
   function handleSort(sortField: SortField) {
     setPage(1);
 
@@ -558,54 +812,23 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
     setPage(1);
   }
 
-  function handleGalleryDrop(targetImageId: string) {
-    if (!object || !draggedImageId || draggedImageId === targetImageId) {
-      setDraggedImageId(null);
-      return;
-    }
-
-    const nextImages = moveImage(object.images, draggedImageId, targetImageId);
-    setDraggedImageId(null);
-    void persistGalleryOrder(nextImages);
-  }
-
-  function moveGalleryImage(imageId: string, direction: -1 | 1) {
-    if (!object) {
-      return;
-    }
-
-    const currentIndex = object.images.findIndex((image) => image.id === imageId);
-    const nextIndex = currentIndex + direction;
-
-    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= object.images.length) {
-      return;
-    }
-
-    const nextImages = [...object.images];
-    const [movedImage] = nextImages.splice(currentIndex, 1);
-
-    if (!movedImage) {
-      return;
-    }
-
-    nextImages.splice(nextIndex, 0, movedImage);
-    void persistGalleryOrder(nextImages);
-  }
-
   if (isCreateRoute || editObjectId) {
     return (
       <ObjectEditor
         accessToken={accessToken}
         canPublish={canPublish}
+        canCreate={canCreate}
         canUpdate={canUpdate}
         canDeleteMedia={canDeleteMedia}
         canUpload={canUpload}
-        coverFile={coverFile}
         developers={developers}
-        draggedImageId={draggedImageId}
         error={error}
         form={form}
-        galleryFile={galleryFile}
+        galleryCoverDraftId={galleryCoverDraftId}
+        galleryDraftItems={galleryDraftItems}
+        galleryModalError={galleryModalError}
+        galleryModalProgress={galleryModalProgress}
+        isGalleryModalOpen={isGalleryModalOpen}
         isCreateRoute={isCreateRoute}
         isLoading={isLoading}
         isSubmitting={isSubmitting}
@@ -619,23 +842,21 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
         objectFileTitle={objectFileTitle}
         objectFileType={objectFileType}
         onBack={() => navigate('/admin/objects')}
-        onCoverFileChange={setCoverFile}
-        onDragEnd={() => setDraggedImageId(null)}
-        onDragOver={(event) => event.preventDefault()}
-        onDragStart={setDraggedImageId}
-        onDrop={handleGalleryDrop}
         onFormChange={setForm}
-        onGalleryFileChange={setGalleryFile}
-        onGalleryMove={moveGalleryImage}
-        onGalleryDelete={(imageId) => void deleteGalleryImage(imageId)}
+        onGalleryCoverDraftChange={setGalleryCoverDraftId}
+        onGalleryDraftMove={moveGalleryDraftItem}
+        onGalleryDraftRemove={removeGalleryDraftItem}
+        onGalleryDraftReorder={reorderGalleryDraftItem}
+        onGalleryFilesAdd={addGalleryDraftFiles}
+        onGalleryModalClose={closeGalleryModal}
+        onGalleryModalOpen={openGalleryModal}
+        onGalleryModalSave={() => void saveGalleryModalChanges()}
         onLinkedFileDelete={(objectFileId) => void deleteLinkedFile(objectFileId)}
         onObjectFileChange={setObjectFile}
         onObjectFileTitleChange={setObjectFileTitle}
         onObjectFileTypeChange={setObjectFileType}
         onPublish={() => void publishObject()}
         onSubmit={(event) => void handleSubmit(event)}
-        onUploadCover={() => void uploadCover()}
-        onUploadGalleryImage={() => void uploadGalleryImage()}
         onUploadLinkedFile={() => void uploadLinkedFile()}
       />
     );
@@ -861,17 +1082,20 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
 type ObjectEditorProps = {
   accessToken: string | null;
   canDeleteMedia: boolean;
+  canCreate: boolean;
   canPublish: boolean;
   canUpdate: boolean;
   canUpload: boolean;
-  coverFile: File | null;
   developers: ObjectDeveloper[];
   districtLocations: ObjectLocation[];
   areaLocations: ObjectLocation[];
-  draggedImageId: string | null;
   error: string | null;
   form: ObjectFormState;
-  galleryFile: File | null;
+  galleryCoverDraftId: string | null;
+  galleryDraftItems: GalleryDraftItem[];
+  galleryModalError: string | null;
+  galleryModalProgress: string | null;
+  isGalleryModalOpen: boolean;
   isCreateRoute: boolean;
   isLoading: boolean;
   isSubmitting: boolean;
@@ -883,23 +1107,21 @@ type ObjectEditorProps = {
   objectFileTitle: string;
   objectFileType: ObjectFileType;
   onBack: () => void;
-  onCoverFileChange: (file: File | null) => void;
-  onDragEnd: () => void;
-  onDragOver: (event: DragEvent<HTMLLIElement>) => void;
-  onDragStart: (imageId: string) => void;
-  onDrop: (imageId: string) => void;
   onFormChange: (form: ObjectFormState) => void;
-  onGalleryFileChange: (file: File | null) => void;
-  onGalleryDelete: (imageId: string) => void;
-  onGalleryMove: (imageId: string, direction: -1 | 1) => void;
+  onGalleryCoverDraftChange: (draftId: string) => void;
+  onGalleryDraftMove: (draftId: string, direction: 'up' | 'down') => void;
+  onGalleryDraftRemove: (draftId: string) => void;
+  onGalleryDraftReorder: (draggedDraftId: string, targetDraftId: string) => void;
+  onGalleryFilesAdd: (files: FileList | File[]) => void;
+  onGalleryModalClose: () => void;
+  onGalleryModalOpen: () => void;
+  onGalleryModalSave: () => void;
   onLinkedFileDelete: (objectFileId: string) => void;
   onObjectFileChange: (file: File | null) => void;
   onObjectFileTitleChange: (title: string) => void;
   onObjectFileTypeChange: (type: ObjectFileType) => void;
   onPublish: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-  onUploadCover: () => void;
-  onUploadGalleryImage: () => void;
   onUploadLinkedFile: () => void;
 };
 
@@ -956,7 +1178,9 @@ function ObjectEditor(props: ObjectEditorProps) {
 
       <div className="object-editor-layout">
         <form className="object-form editor-panel" onSubmit={props.onSubmit}>
-          <fieldset disabled={props.isLoading || props.isSubmitting || (!props.isCreateRoute && !props.canUpdate)}>
+          <fieldset
+            disabled={props.isLoading || props.isSubmitting || (props.isCreateRoute ? !props.canCreate : !props.canUpdate)}
+          >
             <div className="object-form-sections">
               <ObjectFormSection title="Основные данные" description="Название, описание и ссылка на материалы застройщика.">
                 <FieldGroup className="form-grid">
@@ -1330,7 +1554,7 @@ function ObjectEditor(props: ObjectEditorProps) {
 
             <div className="form-actions object-form-actions">
               <AdminButton
-                disabled={props.isSubmitting || (props.isCreateRoute ? false : !props.canUpdate)}
+                disabled={props.isSubmitting || (props.isCreateRoute ? !props.canCreate : !props.canUpdate)}
                 tone="primary"
                 type="submit"
               >
@@ -1398,198 +1622,485 @@ function ObjectEditor(props: ObjectEditorProps) {
             </div>
           </AdminPanel>
 
+          <AdminPanel className="editor-panel media-panel" role="region" aria-label="Медиа объекта">
+            <div className="panel-title-row">
+              <div>
+                <p className="eyebrow">Медиа</p>
+                <h3>Обложка и галерея</h3>
+              </div>
+              <span className="panel-count">{props.object?.images.length ?? props.galleryDraftItems.length} фото</span>
+            </div>
+
+            <AdminButton
+              disabled={
+                !props.canUpdate ||
+                props.isSubmitting ||
+                (!props.canUpload && (props.object?.images.length ?? props.galleryDraftItems.length) === 0)
+              }
+              tone="secondary"
+              type="button"
+              onClick={props.onGalleryModalOpen}
+            >
+              <ImageIcon data-icon="inline-start" />
+              Управлять галереей
+            </AdminButton>
+          </AdminPanel>
+
           {!props.isCreateRoute ? (
-            <>
-              <AdminPanel className="editor-panel media-panel" role="region" aria-label="Медиа объекта">
-                <div className="panel-title-row">
-                  <div>
-                    <p className="eyebrow">Медиа</p>
-                    <h3>Обложка и галерея</h3>
-                  </div>
-                  <span className="panel-count">{props.object?.images.length ?? 0} фото</span>
+            <AdminPanel className="editor-panel media-panel" role="region" aria-label="Файлы объекта">
+              <div className="panel-title-row">
+                <div>
+                  <p className="eyebrow">PDF-файлы</p>
+                  <h3>Документы объекта</h3>
                 </div>
+                <span className="panel-count">{props.object?.files.length ?? 0} файлов</span>
+              </div>
 
-                <div className="upload-stack">
-                  <FileUploadRow
-                    accept="image/jpeg,image/png,image/webp"
-                    buttonLabel="Загрузить"
-                    disabled={!props.canUpload || props.isUploading}
-                    file={props.coverFile}
-                    label="Обложка"
-                    onChange={props.onCoverFileChange}
-                    onUpload={props.onUploadCover}
+              <FieldGroup className="file-upload-fields">
+                <Field>
+                  <FieldLabel htmlFor="object-file-type">Тип</FieldLabel>
+                  <select
+                    id="object-file-type"
+                    value={props.objectFileType}
+                    onChange={(event) => props.onObjectFileTypeChange(event.target.value as ObjectFileType)}
+                  >
+                    {Object.entries(fileTypeLabels).map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="object-file-title">Название</FieldLabel>
+                  <Input
+                    id="object-file-title"
+                    type="text"
+                    value={props.objectFileTitle}
+                    onChange={(event) => props.onObjectFileTitleChange(event.target.value)}
                   />
-                  <FileUploadRow
-                    accept="image/jpeg,image/png,image/webp"
-                    buttonLabel="Добавить"
-                    disabled={!props.canUpload || props.isUploading}
-                    file={props.galleryFile}
-                    label="Галерея"
-                    onChange={props.onGalleryFileChange}
-                    onUpload={props.onUploadGalleryImage}
-                  />
-                </div>
+                </Field>
+              </FieldGroup>
 
-                <ul className="gallery-list">
-                  {props.object?.images.map((image, index) => (
-                    <li
-                      key={image.id}
-                      draggable
-                      className={props.draggedImageId === image.id ? 'gallery-item gallery-item--dragging' : 'gallery-item'}
-                      onDragEnd={props.onDragEnd}
-                      onDragOver={props.onDragOver}
-                      onDragStart={() => props.onDragStart(image.id)}
-                      onDrop={() => props.onDrop(image.id)}
-                    >
-                      <div className="gallery-item-main">
-                        <div className="gallery-thumb">
-                          {props.accessToken ? (
-                            <SecureImage
-                              accessToken={props.accessToken}
-                              alt={image.alt ?? image.title ?? `Фото ${index + 1}`}
-                              fileId={image.file.id}
-                              variant="thumbnail"
-                            />
-                          ) : (
-                            <span>Фото</span>
-                          )}
-                        </div>
-                        <div>
-                          <strong>{image.isCover ? 'Обложка' : `Фото ${index + 1}`}</strong>
-                          <span>{image.title || image.file.originalName || `sortOrder ${image.sortOrder}`}</span>
-                        </div>
+              <FileUploadRow
+                accept="application/pdf"
+                buttonLabel="Загрузить PDF"
+                disabled={!props.canUpload || props.isUploading}
+                file={props.objectFile}
+                label="Файл"
+                onChange={props.onObjectFileChange}
+                onUpload={props.onUploadLinkedFile}
+              />
+              <ul className="file-list">
+                {props.object?.files.map((file) => {
+                  const displayTitle = getLinkedFileTitle(file, fileTypeLabels);
+                  const displayOriginalName = getLinkedFileOriginalName(file);
+
+                  return (
+                    <li key={file.id}>
+                      <div className="file-main">
+                        <strong>{displayTitle}</strong>
+                        <span>{displayOriginalName}</span>
                       </div>
-                      <div className="gallery-actions">
-                        <AdminButton
-                          tone="text"
-                          disabled={index === 0}
-                          type="button"
-                          onClick={() => props.onGalleryMove(image.id, -1)}
-                        >
-                          <ChevronUpIcon data-icon="inline-start" />
-                          Выше
-                        </AdminButton>
-                        <AdminButton
-                          tone="text"
-                          disabled={index === (props.object?.images.length ?? 0) - 1}
-                          type="button"
-                          onClick={() => props.onGalleryMove(image.id, 1)}
-                        >
-                          <ChevronDownIcon data-icon="inline-start" />
-                          Ниже
-                        </AdminButton>
+                      <div className="file-actions">
+                        <strong>{fileTypeLabels[file.type]}</strong>
+                        {file.file.sizeBytes ? <span>{formatFileSize(file.file.sizeBytes)}</span> : null}
                         <AdminButton
                           className="text-button--danger"
                           tone="text"
                           disabled={!props.canDeleteMedia || props.isUploading}
                           type="button"
-                          onClick={() => props.onGalleryDelete(image.id)}
+                          onClick={() => props.onLinkedFileDelete(file.id)}
                         >
                           <Trash2Icon data-icon="inline-start" />
                           Удалить
                         </AdminButton>
                       </div>
                     </li>
-                  ))}
-                </ul>
-                {props.object?.images.length === 0 ? (
-                  <AdminEmptyState title="Галерея пустая" description="Сначала загрузите обложку или добавьте фото в галерею." />
-                ) : null}
-              </AdminPanel>
-
-              <AdminPanel className="editor-panel media-panel" role="region" aria-label="Файлы объекта">
-                <div className="panel-title-row">
-                  <div>
-                    <p className="eyebrow">PDF-файлы</p>
-                    <h3>Документы объекта</h3>
-                  </div>
-                  <span className="panel-count">{props.object?.files.length ?? 0} файлов</span>
-                </div>
-
-                <FieldGroup className="file-upload-fields">
-                  <Field>
-                    <FieldLabel htmlFor="object-file-type">Тип</FieldLabel>
-                    <select
-                      id="object-file-type"
-                      value={props.objectFileType}
-                      onChange={(event) => props.onObjectFileTypeChange(event.target.value as ObjectFileType)}
-                    >
-                      {Object.entries(fileTypeLabels).map(([value, label]) => (
-                        <option key={value} value={value}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="object-file-title">Название</FieldLabel>
-                    <Input
-                      id="object-file-title"
-                      type="text"
-                      value={props.objectFileTitle}
-                      onChange={(event) => props.onObjectFileTitleChange(event.target.value)}
-                    />
-                  </Field>
-                </FieldGroup>
-
-                <FileUploadRow
-                  accept="application/pdf"
-                  buttonLabel="Загрузить PDF"
-                  disabled={!props.canUpload || props.isUploading}
-                  file={props.objectFile}
-                  label="Файл"
-                  onChange={props.onObjectFileChange}
-                  onUpload={props.onUploadLinkedFile}
-                />
-                <ul className="file-list">
-                  {props.object?.files.map((file) => {
-                    const displayTitle = getLinkedFileTitle(file, fileTypeLabels);
-                    const displayOriginalName = getLinkedFileOriginalName(file);
-
-                    return (
-                      <li key={file.id}>
-                        <div className="file-main">
-                          <strong>{displayTitle}</strong>
-                          <span>{displayOriginalName}</span>
-                        </div>
-                        <div className="file-actions">
-                          <strong>{fileTypeLabels[file.type]}</strong>
-                          {file.file.sizeBytes ? <span>{formatFileSize(file.file.sizeBytes)}</span> : null}
-                          <AdminButton
-                            className="text-button--danger"
-                            tone="text"
-                            disabled={!props.canDeleteMedia || props.isUploading}
-                            type="button"
-                            onClick={() => props.onLinkedFileDelete(file.id)}
-                          >
-                            <Trash2Icon data-icon="inline-start" />
-                            Удалить
-                          </AdminButton>
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-                {props.object?.files.length === 0 ? (
-                  <AdminEmptyState title="PDF-файлов нет" description="Добавьте презентацию, планировку или другой документ." />
-                ) : null}
-              </AdminPanel>
-            </>
+                  );
+                })}
+              </ul>
+              {props.object?.files.length === 0 ? (
+                <AdminEmptyState title="PDF-файлов нет" description="Добавьте презентацию, планировку или другой документ." />
+              ) : null}
+            </AdminPanel>
           ) : (
             <AdminPanel className="editor-panel media-panel" role="region">
               <div className="panel-title-row">
                 <div>
-                  <p className="eyebrow">Медиа</p>
-                  <h3>Файлы появятся после создания</h3>
+                  <p className="eyebrow">PDF-файлы</p>
+                  <h3>Документы объекта</h3>
                 </div>
               </div>
-              <p className="helper-text">Загрузка обложки, галереи и PDF откроется после создания объекта.</p>
+              <p className="helper-text">PDF-файлы можно будет добавить после создания объекта.</p>
             </AdminPanel>
           )}
         </aside>
       </div>
+      {props.isGalleryModalOpen ? (
+        <GalleryManagementModal
+          accessToken={props.accessToken}
+          canDeleteMedia={props.canDeleteMedia}
+          canUpload={props.canUpload}
+          coverDraftId={props.galleryCoverDraftId}
+          draftItems={props.galleryDraftItems}
+          error={props.galleryModalError}
+          existingImages={props.object?.images ?? []}
+          isSaving={Boolean(props.galleryModalProgress)}
+          progress={props.galleryModalProgress}
+          onAddFiles={props.onGalleryFilesAdd}
+          onCancel={props.onGalleryModalClose}
+          onClose={props.onGalleryModalClose}
+          onCoverChange={props.onGalleryCoverDraftChange}
+          onDraftMove={props.onGalleryDraftMove}
+          onDraftRemove={props.onGalleryDraftRemove}
+          onDraftReorder={props.onGalleryDraftReorder}
+          onSave={props.onGalleryModalSave}
+        />
+      ) : null}
     </div>
   );
+}
+
+function GalleryManagementModal({
+  accessToken,
+  canDeleteMedia,
+  canUpload,
+  coverDraftId,
+  draftItems,
+  error,
+  existingImages,
+  isSaving,
+  progress,
+  onAddFiles,
+  onCancel,
+  onClose,
+  onCoverChange,
+  onDraftMove,
+  onDraftRemove,
+  onDraftReorder,
+  onSave,
+}: {
+  accessToken: string | null;
+  canDeleteMedia: boolean;
+  canUpload: boolean;
+  coverDraftId: string | null;
+  draftItems: GalleryDraftItem[];
+  error: string | null;
+  existingImages: ObjectImage[];
+  isSaving: boolean;
+  progress: string | null;
+  onAddFiles: (files: FileList | File[]) => void;
+  onCancel: () => void;
+  onClose: () => void;
+  onCoverChange: (draftId: string) => void;
+  onDraftMove: (draftId: string, direction: 'up' | 'down') => void;
+  onDraftRemove: (draftId: string) => void;
+  onDraftReorder: (draggedDraftId: string, targetDraftId: string) => void;
+  onSave: () => void;
+}) {
+  const [draggedDraftId, setDraggedDraftId] = useState<string | null>(null);
+  const [dropTargetDraftId, setDropTargetDraftId] = useState<string | null>(null);
+  const [isCoverDropTarget, setIsCoverDropTarget] = useState(false);
+  const existingImageById = useMemo(() => new Map(existingImages.map((image) => [image.id, image])), [existingImages]);
+  const coverDraftItem = draftItems.find((item) => item.draftId === coverDraftId) ?? null;
+  const coverExistingImage = coverDraftItem?.imageId ? existingImageById.get(coverDraftItem.imageId) ?? null : null;
+  const coverSlotClassName = [
+    'gallery-cover-slot',
+    coverDraftItem ? 'gallery-cover-slot--active' : null,
+    isCoverDropTarget ? 'gallery-cover-slot--drop-target' : null,
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  function clearGalleryDragState() {
+    setDraggedDraftId(null);
+    setDropTargetDraftId(null);
+    setIsCoverDropTarget(false);
+  }
+
+  function getDraggedDraftId(event: DragEvent<HTMLElement>) {
+    return event.dataTransfer.getData('text/plain') || draggedDraftId;
+  }
+
+  function handleTileDragStart(event: DragEvent<HTMLLIElement>, draftId: string) {
+    if (isSaving) {
+      event.preventDefault();
+      return;
+    }
+
+    setDraggedDraftId(draftId);
+    setDropTargetDraftId(null);
+    setIsCoverDropTarget(false);
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', draftId);
+  }
+
+  function handleTileDragOver(event: DragEvent<HTMLLIElement>, targetDraftId: string) {
+    if (isSaving || !draggedDraftId || draggedDraftId === targetDraftId) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    setDropTargetDraftId(targetDraftId);
+    setIsCoverDropTarget(false);
+  }
+
+  function handleTileDrop(event: DragEvent<HTMLLIElement>, targetDraftId: string) {
+    event.preventDefault();
+
+    const nextDraggedDraftId = getDraggedDraftId(event);
+
+    clearGalleryDragState();
+
+    if (!nextDraggedDraftId || nextDraggedDraftId === targetDraftId) {
+      return;
+    }
+
+    onDraftReorder(nextDraggedDraftId, targetDraftId);
+  }
+
+  function handleCoverSlotDragOver(event: DragEvent<HTMLDivElement>) {
+    if (isSaving || !draggedDraftId) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    setDropTargetDraftId(null);
+    setIsCoverDropTarget(true);
+  }
+
+  function handleCoverSlotDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+
+    const nextDraggedDraftId = getDraggedDraftId(event);
+
+    clearGalleryDragState();
+
+    if (!nextDraggedDraftId || !draftItems.some((item) => item.draftId === nextDraggedDraftId)) {
+      return;
+    }
+
+    onCoverChange(nextDraggedDraftId);
+  }
+
+  function handleCoverSlotDragLeave(event: DragEvent<HTMLDivElement>) {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      return;
+    }
+
+    setIsCoverDropTarget(false);
+  }
+
+  return (
+    <div className="gallery-modal-backdrop">
+      <section
+        aria-labelledby="gallery-modal-title"
+        aria-modal="true"
+        className="gallery-modal"
+        role="dialog"
+      >
+        <div className="gallery-modal-header">
+          <div>
+            <p className="eyebrow">Медиа</p>
+            <h3 id="gallery-modal-title">Обложка и галерея</h3>
+          </div>
+          <AdminButton
+            aria-label="Закрыть"
+            className="gallery-modal-close"
+            disabled={isSaving}
+            tone="text"
+            type="button"
+            onClick={onClose}
+          >
+            <XIcon />
+          </AdminButton>
+        </div>
+
+        {error ? <AdminAlert tone="error">{error}</AdminAlert> : null}
+        {progress ? <AdminAlert tone="notice">{progress}</AdminAlert> : null}
+
+        <div
+          className={coverSlotClassName}
+          onDragLeave={handleCoverSlotDragLeave}
+          onDragOver={handleCoverSlotDragOver}
+          onDrop={handleCoverSlotDrop}
+        >
+          {coverDraftItem ? (
+            <>
+              <div className="gallery-cover-preview">
+                <GalleryDraftPreview
+                  accessToken={accessToken}
+                  existingImage={coverExistingImage}
+                  item={coverDraftItem}
+                  variant="card"
+                />
+              </div>
+              <div className="gallery-cover-meta">
+                <span>Обложка</span>
+                <strong>{coverDraftItem.name}</strong>
+              </div>
+            </>
+          ) : (
+            <div className="gallery-cover-placeholder">
+              <ImageIcon />
+              <span>Обложка не выбрана</span>
+            </div>
+          )}
+        </div>
+
+        <label aria-disabled={!canUpload || isSaving} className="gallery-upload-dropzone">
+          <UploadIcon />
+          <span>Добавить изображения</span>
+          <input
+            accept="image/jpeg,image/png,image/webp"
+            disabled={!canUpload || isSaving}
+            multiple
+            type="file"
+            onChange={(event) => {
+              if (event.currentTarget.files) {
+                onAddFiles(event.currentTarget.files);
+                event.currentTarget.value = '';
+              }
+            }}
+          />
+        </label>
+
+        {draftItems.length > 0 ? (
+          <ul className="gallery-tile-grid">
+            {draftItems.map((item, itemIndex) => {
+              const existingImage = item.imageId ? existingImageById.get(item.imageId) ?? null : null;
+              const isCover = item.draftId === coverDraftId;
+              const tileClassName = [
+                'gallery-tile',
+                isCover ? 'gallery-tile--cover' : null,
+                item.draftId === draggedDraftId ? 'gallery-tile--dragging' : null,
+                item.draftId === dropTargetDraftId ? 'gallery-tile--drop-target' : null,
+              ]
+                .filter(Boolean)
+                .join(' ');
+
+              return (
+                <li
+                  key={item.draftId}
+                  className={tileClassName}
+                  draggable={!isSaving}
+                  onDragEnd={clearGalleryDragState}
+                  onDragOver={(event) => handleTileDragOver(event, item.draftId)}
+                  onDragStart={(event) => handleTileDragStart(event, item.draftId)}
+                  onDrop={(event) => handleTileDrop(event, item.draftId)}
+                >
+                  <AdminButton
+                    aria-label={`Удалить ${item.name}`}
+                    className="gallery-tile-remove-button"
+                    disabled={isSaving || (item.kind === 'existing' && !canDeleteMedia)}
+                    fit={false}
+                    size="icon"
+                    title="Удалить"
+                    tone="danger"
+                    type="button"
+                    onClick={() => onDraftRemove(item.draftId)}
+                  >
+                    <Trash2Icon />
+                  </AdminButton>
+                  <button
+                    aria-pressed={isCover}
+                    className="gallery-tile-button"
+                    disabled={isSaving}
+                    type="button"
+                    onClick={() => onCoverChange(item.draftId)}
+                  >
+                    <div className="gallery-tile-preview">
+                      <GalleryDraftPreview
+                        accessToken={accessToken}
+                        existingImage={existingImage}
+                        item={item}
+                        variant="thumbnail"
+                      />
+                    </div>
+                    <span className="gallery-tile-name">{item.name}</span>
+                    {item.kind === 'new' ? <span className="gallery-tile-status">Новое</span> : null}
+                    {isCover ? <span className="gallery-tile-status">Обложка</span> : null}
+                  </button>
+                  <div className="gallery-tile-order-actions" aria-label={`Порядок ${item.name}`}>
+                    <AdminButton
+                      aria-label={`Поднять ${item.name}`}
+                      className="gallery-tile-order-button"
+                      disabled={isSaving || itemIndex === 0}
+                      fit={false}
+                      size="icon"
+                      title="Выше"
+                      tone="text"
+                      type="button"
+                      onClick={() => onDraftMove(item.draftId, 'up')}
+                    >
+                      <ArrowUpIcon />
+                    </AdminButton>
+                    <AdminButton
+                      aria-label={`Опустить ${item.name}`}
+                      className="gallery-tile-order-button"
+                      disabled={isSaving || itemIndex === draftItems.length - 1}
+                      fit={false}
+                      size="icon"
+                      title="Ниже"
+                      tone="text"
+                      type="button"
+                      onClick={() => onDraftMove(item.draftId, 'down')}
+                    >
+                      <ArrowDownIcon />
+                    </AdminButton>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <AdminEmptyState title="Галерея пустая" description="Добавьте изображения перед сохранением галереи." />
+        )}
+
+        <div className="gallery-modal-actions">
+          <AdminButton disabled={isSaving} tone="secondary" type="button" onClick={onCancel}>
+            Отмена
+          </AdminButton>
+          <AdminButton disabled={isSaving} tone="primary" type="button" onClick={onSave}>
+            <SaveIcon data-icon="inline-start" />
+            Сохранить
+          </AdminButton>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function GalleryDraftPreview({
+  accessToken,
+  existingImage,
+  item,
+  variant,
+}: {
+  accessToken: string | null;
+  existingImage: ObjectImage | null;
+  item: GalleryDraftItem;
+  variant: 'card' | 'thumbnail';
+}) {
+  if (item.kind === 'new') {
+    return <img alt={item.name} src={item.previewUrl} />;
+  }
+
+  if (accessToken && existingImage) {
+    return (
+      <SecureImage
+        accessToken={accessToken}
+        alt={existingImage.alt ?? existingImage.title ?? item.name}
+        fileId={existingImage.file.id}
+        variant={variant}
+      />
+    );
+  }
+
+  return <span>Фото</span>;
 }
 
 function ObjectFormSection({
@@ -1932,24 +2443,71 @@ function unique(values: string[]) {
   return values.filter((value, index) => values.indexOf(value) === index);
 }
 
-function moveImage(images: ObjectImage[], movedId: string, targetId: string) {
-  const currentIndex = images.findIndex((image) => image.id === movedId);
-  const targetIndex = images.findIndex((image) => image.id === targetId);
+function createGalleryDraftItems(images: ObjectImage[]): GalleryDraftItem[] {
+  return images.map((image) => ({
+    draftId: getExistingGalleryDraftId(image.id),
+    kind: 'existing',
+    imageId: image.id,
+    file: null,
+    previewUrl: image.file.url ?? '',
+    name: getGalleryDraftImageName(image),
+  }));
+}
 
-  if (currentIndex < 0 || targetIndex < 0) {
-    return images;
+function createNewGalleryDraftItems(files: FileList | File[]): GalleryDraftItem[] {
+  return Array.from(files).map((file) => ({
+    draftId: getNewGalleryDraftId(),
+    kind: 'new',
+    imageId: null,
+    file,
+    previewUrl: URL.createObjectURL(file),
+    name: file.name || 'Новое изображение',
+  }));
+}
+
+function findUploadedGalleryImage(previousImages: ObjectImage[], nextImages: ObjectImage[]) {
+  const previousImageIds = new Set(previousImages.map((image) => image.id));
+  const uploadedImage = nextImages.find((image) => !previousImageIds.has(image.id));
+
+  if (!uploadedImage) {
+    throw new Error('Не удалось определить загруженное изображение');
   }
 
-  const nextImages = [...images];
-  const [movedImage] = nextImages.splice(currentIndex, 1);
+  return uploadedImage;
+}
 
-  if (!movedImage) {
-    return images;
+function getInitialGalleryCoverDraftId(images: ObjectImage[]) {
+  const coverImage = images.find((image) => image.isCover) ?? images[0] ?? null;
+
+  return coverImage ? getExistingGalleryDraftId(coverImage.id) : null;
+}
+
+function getExistingGalleryDraftId(imageId: string) {
+  return `existing:${imageId}`;
+}
+
+function getNewGalleryDraftId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `new:${crypto.randomUUID()}`;
   }
 
-  nextImages.splice(targetIndex, 0, movedImage);
+  return `new:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+}
 
-  return nextImages;
+function getGalleryDraftImageName(image: ObjectImage) {
+  return image.title || image.file.originalName || `Фото ${image.sortOrder + 1}`;
+}
+
+function revokeGalleryDraftPreviewUrl(item: GalleryDraftItem) {
+  if (item.kind !== 'new') {
+    return;
+  }
+
+  URL.revokeObjectURL(item.previewUrl);
+}
+
+function revokeGalleryDraftPreviewUrls(items: GalleryDraftItem[]) {
+  items.forEach((item) => revokeGalleryDraftPreviewUrl(item));
 }
 
 function formatDate(value: string) {

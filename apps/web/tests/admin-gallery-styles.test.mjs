@@ -23,3 +23,74 @@ test('admin gallery item keeps preview text readable next to action buttons', ()
     /\.gallery-actions\s*\{[\s\S]*?justify-content:\s*flex-end;[\s\S]*?\}/,
   );
 });
+
+test('admin gallery modal uses stable cover slot and large responsive tile grid', () => {
+  assert.match(
+    styles,
+    /\.gallery-modal-backdrop\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?inset:\s*0;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.gallery-modal\s*\{[\s\S]*?max-width:\s*920px;[\s\S]*?max-height:\s*calc\(100dvh - 32px\);[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.gallery-cover-slot\s*\{[\s\S]*?min-height:\s*180px;[\s\S]*?border:\s*1px dashed[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.gallery-tile-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(140px,\s*1fr\)\);[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.gallery-tile-preview\s*\{[\s\S]*?aspect-ratio:\s*4 \/ 3;[\s\S]*?overflow:\s*hidden;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.gallery-tile-name\s*\{[\s\S]*?overflow-wrap:\s*anywhere;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /@media\s*\(max-width:\s*640px\)\s*\{[\s\S]*?\.gallery-tile-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(120px,\s*1fr\)\);[\s\S]*?\}/,
+  );
+});
+
+test('admin gallery modal exposes visual drag targets and compact order controls', () => {
+  assert.match(
+    styles,
+    /\.gallery-cover-slot--drop-target\s*\{[\s\S]*?border-color:\s*#2563eb;[\s\S]*?box-shadow:\s*0 0 0 3px rgb\(37 99 235 \/ 14%\);[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.gallery-tile--drop-target \.gallery-tile-button\s*\{[\s\S]*?border-color:\s*#2563eb;[\s\S]*?box-shadow:\s*0 0 0 3px rgb\(37 99 235 \/ 14%\);[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.gallery-tile-order-actions\s*\{[\s\S]*?display:\s*flex;[\s\S]*?justify-content:\s*space-between;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.gallery-tile-order-button\s*\{[\s\S]*?width:\s*32px;[\s\S]*?height:\s*32px;[\s\S]*?\}/,
+  );
+});
+
+test('admin gallery modal keeps tile remove action compact and anchored', () => {
+  assert.match(
+    styles,
+    /\.gallery-tile\s*\{[\s\S]*?position:\s*relative;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.gallery-tile-remove-button\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?top:\s*8px;[\s\S]*?right:\s*8px;[\s\S]*?width:\s*32px;[\s\S]*?height:\s*32px;[\s\S]*?\}/,
+  );
+});

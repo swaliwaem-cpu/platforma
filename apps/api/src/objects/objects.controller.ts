@@ -101,6 +101,17 @@ export class ObjectsController {
     return this.objectsService.uploadGalleryImage(id, file, actor, request);
   }
 
+  @Patch(':id/gallery/layout')
+  @RequirePermissions('objects:update')
+  async updateGalleryLayout(
+    @Param('id') id: string,
+    @Body() body: Record<string, unknown>,
+    @CurrentUser() actor: AuthenticatedUser,
+    @Req() request: RequestWithAuth,
+  ) {
+    return this.objectsService.updateGalleryLayout(id, body, actor, request);
+  }
+
   @Patch(':id/gallery/sort')
   @RequirePermissions('objects:update')
   async sortGallery(

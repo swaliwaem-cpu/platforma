@@ -129,6 +129,7 @@ test('API controllers expose expected permission contracts', () => {
   assert.deepEqual(getPermissions(ObjectsController, 'list'), ['objects:read']);
   assert.deepEqual(getPermissions(ObjectsController, 'create'), ['objects:create']);
   assert.deepEqual(getPermissions(ObjectsController, 'publish'), ['objects:publish']);
+  assert.deepEqual(getPermissions(ObjectsController, 'updateGalleryLayout'), ['objects:update']);
   assert.deepEqual(getPermissions(ObjectsController, 'uploadObjectFile'), ['objects:update', 'files:upload']);
   assert.deepEqual(getPermissions(UsersController, 'create'), ['users:create']);
   assert.deepEqual(getPermissions(UsersController, 'deactivate'), ['users:delete']);
@@ -215,19 +216,35 @@ test('ObjectsController delegates catalog and admin object endpoints to the serv
       calls.push(['publish', id, actor, request]);
       return { object: { id, status: 'PUBLISHED' } };
     },
+    updateGalleryLayout: async (id, body, actor, request) => {
+      calls.push(['updateGalleryLayout', id, body, actor, request]);
+      return { object: { id, images: [] } };
+    },
   });
   const request = { headers: {} };
+  const galleryLayoutBody = {
+    imageIds: ['22222222-2222-4222-8222-222222222222'],
+    coverImageId: '22222222-2222-4222-8222-222222222222',
+  };
 
   await controller.list({ status: 'published' });
   await controller.getBySlug('zhk-testovyy');
   await controller.create({ title: 'ЖК Тестовый' }, user, request);
   await controller.publish('object-id', user, request);
+  await controller.updateGalleryLayout('object-id', galleryLayoutBody, user, request);
 
-  assert.deepEqual(calls.map((call) => call[0]), ['list', 'getBySlug', 'create', 'publish']);
+  assert.deepEqual(calls.map((call) => call[0]), [
+    'list',
+    'getBySlug',
+    'create',
+    'publish',
+    'updateGalleryLayout',
+  ]);
   assert.deepEqual(calls[0][1], { status: 'published' });
   assert.equal(calls[1][1], 'zhk-testovyy');
   assert.equal(calls[2][2], user);
   assert.equal(calls[3][1], 'object-id');
+  assert.deepEqual(calls[4], ['updateGalleryLayout', 'object-id', galleryLayoutBody, user, request]);
 });
 
 test('UsersController delegates user management endpoints to the service', async () => {

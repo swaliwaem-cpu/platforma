@@ -158,6 +158,11 @@ type SortGalleryBody = {
   imageIds?: unknown;
 };
 
+type GalleryLayoutBody = {
+  imageIds?: unknown;
+  coverImageId?: unknown;
+};
+
 type UploadObjectFileBody = {
   type?: unknown;
   title?: unknown;
@@ -1156,6 +1161,76 @@ export class ObjectsService {
     };
   }
 
+  async updateGalleryLayout(
+    id: string,
+    body: GalleryLayoutBody,
+    actor: AuthenticatedUser,
+    request: RequestWithAudit,
+  ) {
+    const object = await this.findExistingObject(id);
+    const imageIds = this.parseUuidList(body.imageIds, 'Gallery image is invalid') ?? [];
+    const coverImageId = this.parseNullableUuidField(body.coverImageId, 'Cover image is invalid') ?? null;
+    const currentImageIds = object.images.map((image) => image.id);
+    const currentCoverImageId = object.images.find((image) => image.isCover)?.id ?? null;
+    const hasDuplicateImageIds = new Set(imageIds).size !== imageIds.length;
+
+    if (hasDuplicateImageIds || !this.sameStringSet(currentImageIds, imageIds)) {
+      throw new BadRequestException('Gallery image ids must match current object gallery');
+    }
+
+    if (coverImageId && !imageIds.includes(coverImageId)) {
+      throw new BadRequestException('Cover image must be included in gallery image ids');
+    }
+
+    const hasOrderChanges = !this.sameStringArray(currentImageIds, imageIds);
+    const hasCoverChanges = object.images.some((image) => image.isCover !== (image.id === coverImageId));
+
+    if (!hasOrderChanges && !hasCoverChanges) {
+      return {
+        object: this.serializeObjectDetail(object),
+      };
+    }
+
+    const updatedObject = await this.prisma.$transaction(async (tx) => {
+      await Promise.all(
+        imageIds.map((imageId, index) =>
+          tx.objectImage.update({
+            where: {
+              id: imageId,
+            },
+            data: {
+              sortOrder: index,
+              isCover: imageId === coverImageId,
+            },
+          }),
+        ),
+      );
+
+      return this.findExistingObject(object.id, tx);
+    });
+
+    await this.logObjectAction({
+      action: 'object.gallery.layout',
+      actor,
+      request,
+      objectId: updatedObject.id,
+      metadata: {
+        before: {
+          imageIds: currentImageIds,
+          coverImageId: currentCoverImageId,
+        },
+        after: {
+          imageIds,
+          coverImageId,
+        },
+      },
+    });
+
+    return {
+      object: this.serializeObjectDetail(updatedObject),
+    };
+  }
+
   async deleteGalleryImage(
     id: string,
     imageId: string,
@@ -1823,6 +1898,24 @@ export class ObjectsService {
         return this.parseUuid(item.trim(), message);
       }),
     );
+  }
+
+  private parseUuidList(value: unknown, message: string) {
+    if (value === undefined) {
+      return undefined;
+    }
+
+    if (!Array.isArray(value)) {
+      throw new BadRequestException(message);
+    }
+
+    return value.map((item) => {
+      if (typeof item !== 'string') {
+        throw new BadRequestException(message);
+      }
+
+      return this.parseUuid(item.trim(), message);
+    });
   }
 
   private parseUuid(value: string, message: string) {
