@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { PencilIcon } from 'lucide-react';
 import type {
   ObjectFileType,
   ObjectLinkedFile,
@@ -40,10 +41,11 @@ const fileTypeLabels: Record<ObjectFileType, string> = {
 };
 
 export function ObjectDetailPage({ slug, onBack }: ObjectDetailPageProps) {
-  const { accessToken } = useAuth();
+  const { accessToken, hasPermission } = useAuth();
   const [object, setObject] = useState<RealEstateObjectDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const canEditObject = hasPermission('admin:access') && hasPermission('objects:update');
 
   useEffect(() => {
     if (!accessToken) {
@@ -112,15 +114,24 @@ export function ObjectDetailPage({ slug, onBack }: ObjectDetailPageProps) {
     );
   }
 
-  return <ObjectDetail object={object} accessToken={accessToken ?? ''} onBack={onBack} />;
+  return (
+    <ObjectDetail
+      accessToken={accessToken ?? ''}
+      canEditObject={canEditObject}
+      object={object}
+      onBack={onBack}
+    />
+  );
 }
 
 function ObjectDetail({
   accessToken,
+  canEditObject,
   object,
   onBack,
 }: {
   accessToken: string;
+  canEditObject: boolean;
   object: RealEstateObjectDetail;
   onBack: () => void;
 }) {
@@ -138,6 +149,7 @@ function ObjectDetail({
     variant: 'card',
   });
   const mapPoints = useMemo(() => getObjectMapPoints(object, mapBalloonImageUrl), [mapBalloonImageUrl, object]);
+  const editObjectPath = `/admin/objects/${object.id}/edit`;
 
   return (
     <div className="object-detail-page">
@@ -149,11 +161,21 @@ function ObjectDetail({
           <h2>{object.title}</h2>
           <p className="object-detail-location-line">{locationLine.line}</p>
         </div>
-        {object.status === 'PUBLISHED' ? null : (
-          <span className={`status-pill object-status object-status--${object.status.toLowerCase()}`}>
-            {objectStatusLabels[object.status]}
-          </span>
-        )}
+        {object.status !== 'PUBLISHED' || canEditObject ? (
+          <div className="object-detail-header-actions">
+            {object.status === 'PUBLISHED' ? null : (
+              <span className={`status-pill object-status object-status--${object.status.toLowerCase()}`}>
+                {objectStatusLabels[object.status]}
+              </span>
+            )}
+            {canEditObject ? (
+              <a className="object-detail-edit-link" href={editObjectPath}>
+                <PencilIcon aria-hidden="true" />
+                Редактировать
+              </a>
+            ) : null}
+          </div>
+        ) : null}
       </header>
 
       <ObjectImageCarousel accessToken={accessToken} images={carouselImages} objectTitle={object.title} />

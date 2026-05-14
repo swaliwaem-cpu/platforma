@@ -1617,6 +1617,18 @@ tr.user-row--deactivated .text-button {
   overflow-wrap: anywhere;
 }
 
+.object-preview-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.object-preview-catalog-link {
+  min-height: 30px;
+}
+
 .preview-media {
   display: grid;
   overflow: hidden;
@@ -3544,6 +3556,49 @@ tr.user-row--deactivated .text-button {
   line-height: 1.45;
 }
 
+.object-detail-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.object-detail-edit-link {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid #c6d0dc;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #174ea6;
+  padding: 0 16px;
+  font-size: 14px;
+  font-weight: 850;
+  line-height: 1.2;
+  text-decoration: none;
+  transition:
+    border-color 180ms ease,
+    background 180ms ease,
+    box-shadow 180ms ease,
+    color 180ms ease;
+}
+
+.object-detail-edit-link:hover,
+.object-detail-edit-link:focus-visible {
+  border-color: #2563eb;
+  background: #edf4ff;
+  box-shadow: 0 0 0 3px rgb(37 99 235 / 14%);
+}
+
+.object-detail-edit-link svg {
+  width: 16px;
+  height: 16px;
+}
+
 .object-detail-hero,
 .detail-section {
   border: 1px solid #d6dde5;
@@ -4622,6 +4677,11 @@ tr.user-row--deactivated .text-button {
     font-size: 14px;
   }
 
+  .object-detail-header-actions {
+    align-items: flex-start;
+    margin-left: 0;
+  }
+
   .catalog-grid,
   .admin-actions,
   .catalog-filters,
@@ -4819,6 +4879,10 @@ tr.user-row--deactivated .text-button {
   .object-form-section-action,
   .object-form-section-action .admin-button {
     width: 100%;
+  }
+
+  .object-preview-actions {
+    align-items: flex-start;
   }
 
   .panel-count {

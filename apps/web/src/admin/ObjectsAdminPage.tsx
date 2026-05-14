@@ -6,6 +6,7 @@ import {
   ArrowUpIcon,
   ChevronDownIcon,
   ChevronUpIcon,
+  ExternalLinkIcon,
   ImageIcon,
   PlusIcon,
   SaveIcon,
@@ -1129,6 +1130,7 @@ function ObjectEditor(props: ObjectEditorProps) {
   const [isJsonFieldsOpen, setIsJsonFieldsOpen] = useState(false);
   const coverImage = props.object?.images.find((image) => image.isCover) ?? props.object?.images[0] ?? null;
   const previewStatus = props.object?.status ?? 'DRAFT';
+  const previewCatalogPath = props.object ? `/objects/${encodeURIComponent(props.object.slug)}` : null;
   const previewDeveloperName =
     findById(props.developers, props.form.developerId)?.name ?? props.object?.developer?.name ?? 'Не выбран';
   const previewDistrictName =
@@ -1572,9 +1574,19 @@ function ObjectEditor(props: ObjectEditorProps) {
                 <p className="eyebrow">Предпросмотр</p>
                 <h3>{props.form.title.trim() || 'Название объекта'}</h3>
               </div>
-              <AdminStatusBadge className={`object-status object-status--${previewStatus.toLowerCase()}`}>
-                {objectStatusLabels[previewStatus]}
-              </AdminStatusBadge>
+              <div className="object-preview-actions">
+                <AdminStatusBadge className={`object-status object-status--${previewStatus.toLowerCase()}`}>
+                  {objectStatusLabels[previewStatus]}
+                </AdminStatusBadge>
+                {previewCatalogPath ? (
+                  <AdminButton className="object-preview-catalog-link" tone="secondary" asChild>
+                    <a aria-label="Открыть объект в каталоге" href={previewCatalogPath}>
+                      <ExternalLinkIcon data-icon="inline-start" />
+                      В каталоге
+                    </a>
+                  </AdminButton>
+                ) : null}
+              </div>
             </div>
             <div className="preview-media">
               {coverImage && props.accessToken ? (

@@ -129,6 +129,11 @@ test('create object editor opens gallery modal before object exists', () => {
   assert.match(source, /existingImages=\{props\.object\?\.images \?\? \[\]\}/);
 });
 
+test('object editor preview exposes catalog link for existing object', () => {
+  assert.match(source, /const previewCatalogPath = props\.object\s*\?\s*`\/objects\/\$\{encodeURIComponent\(props\.object\.slug\)\}`\s*:\s*null;/);
+  assert.match(source, /previewCatalogPath \? \([\s\S]*?<AdminButton[\s\S]*?className="object-preview-catalog-link"[\s\S]*?asChild[\s\S]*?>[\s\S]*?<a[\s\S]*?href=\{previewCatalogPath\}[\s\S]*?>[\s\S]*?В каталоге[\s\S]*?<\/a>[\s\S]*?<\/AdminButton>/);
+});
+
 test('gallery modal save button is enabled and disabled while saving', () => {
   assert.match(source, /onGalleryModalSave=\{\(\) => void saveGalleryModalChanges\(\)\}/);
   assert.match(source, /onSave=\{props\.onGalleryModalSave\}/);
