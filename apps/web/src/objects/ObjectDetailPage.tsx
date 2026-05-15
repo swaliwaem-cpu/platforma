@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { PencilIcon } from 'lucide-react';
 import type {
   ObjectFileType,
+  ObjectImageSection,
   ObjectLinkedFile,
   ObjectMetroStationLink,
   ObjectResponse,
@@ -39,6 +40,15 @@ const fileTypeLabels: Record<ObjectFileType, string> = {
   DOCUMENT: 'Документ',
   OTHER: 'Файл',
 };
+
+const sectionOptions: {
+  value: ObjectImageSection;
+  label: string;
+}[] = [
+  { value: 'ARCHITECTURE', label: 'Архитектура' },
+  { value: 'INTERIORS', label: 'Интерьеры' },
+  { value: 'FILLING', label: 'Наполнение' },
+];
 
 export function ObjectDetailPage({ slug, onBack }: ObjectDetailPageProps) {
   const { accessToken, hasPermission } = useAuth();
@@ -342,28 +352,43 @@ function ObjectImageCarousel({
   images: RealEstateObjectDetail['images'];
   objectTitle: string;
 }) {
+  const [activeSection, setActiveSection] = useState<ObjectImageSection | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
-  const activeImage = images[activeIndex] ?? null;
-  const lightboxImage = lightboxIndex === null ? null : images[lightboxIndex] ?? null;
-  const hasManyImages = images.length > 1;
+  const filteredImages = useMemo(() => {
+    if (!activeSection) {
+      return images;
+    }
+
+    return images.filter((image) => image.section === activeSection);
+  }, [activeSection, images]);
+  const activeImage = filteredImages[activeIndex] ?? null;
+  const lightboxImage = lightboxIndex === null ? null : filteredImages[lightboxIndex] ?? null;
+  const hasManyImages = filteredImages.length > 1;
+  const hasSectionFilters = images.some((image) => image.section !== null);
 
   useEffect(() => {
-    if (activeIndex > Math.max(images.length - 1, 0)) {
+    if (activeIndex > Math.max(filteredImages.length - 1, 0)) {
       setActiveIndex(0);
     }
 
-    if (lightboxIndex !== null && lightboxIndex > Math.max(images.length - 1, 0)) {
+    if (lightboxIndex !== null && lightboxIndex > Math.max(filteredImages.length - 1, 0)) {
       setLightboxIndex(null);
     }
-  }, [activeIndex, images.length, lightboxIndex]);
+  }, [activeIndex, filteredImages.length, lightboxIndex]);
 
   function showPreviousImage() {
-    setActiveIndex((currentIndex) => (currentIndex === 0 ? images.length - 1 : currentIndex - 1));
+    setActiveIndex((currentIndex) => (currentIndex === 0 ? filteredImages.length - 1 : currentIndex - 1));
   }
 
   function showNextImage() {
-    setActiveIndex((currentIndex) => (currentIndex + 1) % images.length);
+    setActiveIndex((currentIndex) => (currentIndex + 1) % filteredImages.length);
+  }
+
+  function toggleSectionFilter(section: ObjectImageSection) {
+    setActiveSection((currentSection) => (currentSection === section ? null : section));
+    setActiveIndex(0);
+    setLightboxIndex(null);
   }
 
   function openLightbox() {
@@ -380,7 +405,7 @@ function ObjectImageCarousel({
         return currentIndex;
       }
 
-      return currentIndex === 0 ? images.length - 1 : currentIndex - 1;
+      return currentIndex === 0 ? filteredImages.length - 1 : currentIndex - 1;
     });
   }
 
@@ -390,7 +415,7 @@ function ObjectImageCarousel({
         return currentIndex;
       }
 
-      return (currentIndex + 1) % images.length;
+      return (currentIndex + 1) % filteredImages.length;
     });
   }
 
@@ -449,32 +474,58 @@ function ObjectImageCarousel({
               ›
             </button>
             <span className="carousel-counter">
-              {activeIndex + 1} / {images.length}
+              {activeIndex + 1} / {filteredImages.length}
             </span>
           </>
         ) : null}
       </div>
 
-      {hasManyImages ? (
+      {hasManyImages || hasSectionFilters ? (
         <div className="carousel-thumbnail-zone">
-          <div className="carousel-thumbnails" aria-label="Миниатюры галереи">
-            {images.map((image, index) => (
-              <button
-                key={image.id}
-                aria-label={`Фото ${index + 1}`}
-                className={index === activeIndex ? 'carousel-thumbnail carousel-thumbnail--active' : 'carousel-thumbnail'}
-                type="button"
-                onClick={() => setActiveIndex(index)}
-              >
-                <SecureImage
-                  accessToken={accessToken}
-                  alt={image.alt ?? `${objectTitle}, миниатюра ${index + 1}`}
-                  fileId={image.file.id}
-                  variant="thumbnail"
-                />
-              </button>
-            ))}
-          </div>
+          {hasSectionFilters ? (
+            <div className="carousel-section-filters" aria-label="Разделы галереи">
+              {sectionOptions.map((option) => {
+                const sectionImageCount = images.filter((image) => image.section === option.value).length;
+                const sectionButtonClassName =
+                  activeSection === option.value
+                    ? 'carousel-section-filter carousel-section-filter--active'
+                    : 'carousel-section-filter';
+
+                return (
+                  <button
+                    key={option.value}
+                    className={sectionButtonClassName}
+                    disabled={sectionImageCount === 0}
+                    type="button"
+                    onClick={() => toggleSectionFilter(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+
+          {hasManyImages ? (
+            <div className="carousel-thumbnails" aria-label="Миниатюры галереи">
+              {filteredImages.map((image, index) => (
+                <button
+                  key={image.id}
+                  aria-label={`Фото ${index + 1}`}
+                  className={index === activeIndex ? 'carousel-thumbnail carousel-thumbnail--active' : 'carousel-thumbnail'}
+                  type="button"
+                  onClick={() => setActiveIndex(index)}
+                >
+                  <SecureImage
+                    accessToken={accessToken}
+                    alt={image.alt ?? `${objectTitle}, миниатюра ${index + 1}`}
+                    fileId={image.file.id}
+                    variant="thumbnail"
+                  />
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -527,7 +578,7 @@ function ObjectImageCarousel({
                   ›
                 </button>
                 <span className="carousel-modal-counter">
-                  {(lightboxIndex ?? 0) + 1} / {images.length}
+                  {(lightboxIndex ?? 0) + 1} / {filteredImages.length}
                 </span>
               </>
             ) : null}

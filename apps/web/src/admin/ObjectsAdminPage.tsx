@@ -23,6 +23,7 @@ import {
   ObjectDeveloper,
   ObjectFileType,
   ObjectImage,
+  ObjectImageSection,
   ObjectLocation,
   ObjectMetroStation,
   ObjectResponse,
@@ -91,6 +92,7 @@ type GalleryDraftItem = {
   file: File | null;
   previewUrl: string;
   name: string;
+  section: ObjectImageSection | null;
   isUploading?: boolean;
 };
 
@@ -109,6 +111,15 @@ const fileTypeLabels: Record<ObjectFileType, string> = {
   DOCUMENT: 'Документ',
   OTHER: 'Другое',
 };
+
+const gallerySectionOptions: {
+  value: ObjectImageSection;
+  label: string;
+}[] = [
+  { value: 'ARCHITECTURE', label: 'Архитектура' },
+  { value: 'INTERIORS', label: 'Интерьеры' },
+  { value: 'FILLING', label: 'Наполнение' },
+];
 
 const emptyForm: ObjectFormState = {
   title: '',
@@ -356,6 +367,16 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
     setGalleryModalError(null);
   }
 
+  function assignGalleryDraftSection(draftId: string, section: ObjectImageSection | null) {
+    const nextDraftItems = galleryDraftItemsRef.current.map((item) =>
+      item.draftId === draftId ? { ...item, section } : item,
+    );
+
+    galleryDraftItemsRef.current = nextDraftItems;
+    setGalleryDraftItems(nextDraftItems);
+    setGalleryModalError(null);
+  }
+
   function resetGalleryModalDraft() {
     revokeGalleryDraftPreviewUrls(galleryDraftItemsRef.current);
     galleryDraftItemsRef.current = [];
@@ -549,6 +570,17 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
       return imageId;
     });
     const coverImageId = coverDraftItem ? imageIdByDraftId.get(coverDraftItem.draftId) ?? null : null;
+    const imageSections = draftItems.reduce<Record<string, ObjectImageSection | null>>((imageSections, item) => {
+      const imageId = imageIdByDraftId.get(item.draftId);
+
+      if (!imageId) {
+        return imageSections;
+      }
+
+      imageSections[imageId] = item.section;
+
+      return imageSections;
+    }, {});
 
     if (draftItems.length > 0 && !coverImageId) {
       throw new Error('Не удалось сохранить обложку галереи');
@@ -561,6 +593,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
       body: JSON.stringify({
         imageIds,
         coverImageId,
+        imageSections,
       }),
     });
   }
@@ -848,6 +881,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
         onGalleryDraftMove={moveGalleryDraftItem}
         onGalleryDraftRemove={removeGalleryDraftItem}
         onGalleryDraftReorder={reorderGalleryDraftItem}
+        onGalleryDraftSectionChange={assignGalleryDraftSection}
         onGalleryFilesAdd={addGalleryDraftFiles}
         onGalleryModalClose={closeGalleryModal}
         onGalleryModalOpen={openGalleryModal}
@@ -1113,6 +1147,7 @@ type ObjectEditorProps = {
   onGalleryDraftMove: (draftId: string, direction: 'up' | 'down') => void;
   onGalleryDraftRemove: (draftId: string) => void;
   onGalleryDraftReorder: (draggedDraftId: string, targetDraftId: string) => void;
+  onGalleryDraftSectionChange: (draftId: string, section: ObjectImageSection | null) => void;
   onGalleryFilesAdd: (files: FileList | File[]) => void;
   onGalleryModalClose: () => void;
   onGalleryModalOpen: () => void;
@@ -1767,6 +1802,7 @@ function ObjectEditor(props: ObjectEditorProps) {
           onDraftMove={props.onGalleryDraftMove}
           onDraftRemove={props.onGalleryDraftRemove}
           onDraftReorder={props.onGalleryDraftReorder}
+          onSectionChange={props.onGalleryDraftSectionChange}
           onSave={props.onGalleryModalSave}
         />
       ) : null}
@@ -1791,6 +1827,7 @@ function GalleryManagementModal({
   onDraftMove,
   onDraftRemove,
   onDraftReorder,
+  onSectionChange,
   onSave,
 }: {
   accessToken: string | null;
@@ -1809,11 +1846,13 @@ function GalleryManagementModal({
   onDraftMove: (draftId: string, direction: 'up' | 'down') => void;
   onDraftRemove: (draftId: string) => void;
   onDraftReorder: (draggedDraftId: string, targetDraftId: string) => void;
+  onSectionChange: (draftId: string, section: ObjectImageSection | null) => void;
   onSave: () => void;
 }) {
   const [draggedDraftId, setDraggedDraftId] = useState<string | null>(null);
   const [dropTargetDraftId, setDropTargetDraftId] = useState<string | null>(null);
   const [isCoverDropTarget, setIsCoverDropTarget] = useState(false);
+  const [sectionDropTarget, setSectionDropTarget] = useState<ObjectImageSection | null>(null);
   const existingImageById = useMemo(() => new Map(existingImages.map((image) => [image.id, image])), [existingImages]);
   const coverDraftItem = draftItems.find((item) => item.draftId === coverDraftId) ?? null;
   const coverExistingImage = coverDraftItem?.imageId ? existingImageById.get(coverDraftItem.imageId) ?? null : null;
@@ -1829,6 +1868,7 @@ function GalleryManagementModal({
     setDraggedDraftId(null);
     setDropTargetDraftId(null);
     setIsCoverDropTarget(false);
+    setSectionDropTarget(null);
   }
 
   function getDraggedDraftId(event: DragEvent<HTMLElement>) {
@@ -1844,6 +1884,7 @@ function GalleryManagementModal({
     setDraggedDraftId(draftId);
     setDropTargetDraftId(null);
     setIsCoverDropTarget(false);
+    setSectionDropTarget(null);
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', draftId);
   }
@@ -1857,6 +1898,7 @@ function GalleryManagementModal({
     event.dataTransfer.dropEffect = 'move';
     setDropTargetDraftId(targetDraftId);
     setIsCoverDropTarget(false);
+    setSectionDropTarget(null);
   }
 
   function handleTileDrop(event: DragEvent<HTMLLIElement>, targetDraftId: string) {
@@ -1882,6 +1924,7 @@ function GalleryManagementModal({
     event.dataTransfer.dropEffect = 'move';
     setDropTargetDraftId(null);
     setIsCoverDropTarget(true);
+    setSectionDropTarget(null);
   }
 
   function handleCoverSlotDrop(event: DragEvent<HTMLDivElement>) {
@@ -1904,6 +1947,40 @@ function GalleryManagementModal({
     }
 
     setIsCoverDropTarget(false);
+  }
+
+  function handleSectionSlotDragOver(event: DragEvent<HTMLDivElement>, section: ObjectImageSection) {
+    if (isSaving || !draggedDraftId) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    setDropTargetDraftId(null);
+    setIsCoverDropTarget(false);
+    setSectionDropTarget(section);
+  }
+
+  function handleSectionSlotDrop(event: DragEvent<HTMLDivElement>, section: ObjectImageSection) {
+    event.preventDefault();
+
+    const nextDraggedDraftId = getDraggedDraftId(event);
+
+    clearGalleryDragState();
+
+    if (!nextDraggedDraftId || !draftItems.some((item) => item.draftId === nextDraggedDraftId)) {
+      return;
+    }
+
+    onSectionChange(nextDraggedDraftId, section);
+  }
+
+  function handleSectionSlotDragLeave(event: DragEvent<HTMLDivElement>) {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      return;
+    }
+
+    setSectionDropTarget(null);
   }
 
   return (
@@ -1963,6 +2040,57 @@ function GalleryManagementModal({
           )}
         </div>
 
+        <div className="gallery-section-slots" aria-label="Разделы галереи">
+          {gallerySectionOptions.map((option) => {
+            const sectionItems = draftItems.filter((item) => item.section === option.value);
+            const sectionSlotClassName = [
+              'gallery-section-slot',
+              sectionItems.length > 0 ? 'gallery-section-slot--active' : null,
+              sectionDropTarget === option.value ? 'gallery-section-slot--drop-target' : null,
+            ]
+              .filter(Boolean)
+              .join(' ');
+
+            return (
+              <div
+                key={option.value}
+                className={sectionSlotClassName}
+                onDragLeave={handleSectionSlotDragLeave}
+                onDragOver={(event) => handleSectionSlotDragOver(event, option.value)}
+                onDrop={(event) => handleSectionSlotDrop(event, option.value)}
+              >
+                <div className="gallery-section-slot-header">
+                  <span>{option.label}</span>
+                  <strong>{sectionItems.length}</strong>
+                </div>
+                {sectionItems.length > 0 ? (
+                  <div className="gallery-section-thumbnails" aria-label={`${option.label}: ${sectionItems.length}`}>
+                    {sectionItems.slice(0, 4).map((item) => {
+                      const existingImage = item.imageId ? existingImageById.get(item.imageId) ?? null : null;
+
+                      return (
+                        <div className="gallery-section-thumbnail" key={item.draftId}>
+                          <GalleryDraftPreview
+                            accessToken={accessToken}
+                            existingImage={existingImage}
+                            item={item}
+                            variant="thumbnail"
+                          />
+                        </div>
+                      );
+                    })}
+                    {sectionItems.length > 4 ? (
+                      <span className="gallery-section-more">+{sectionItems.length - 4}</span>
+                    ) : null}
+                  </div>
+                ) : (
+                  <p className="gallery-section-placeholder">Перетащите фото в раздел</p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
         <label aria-disabled={!canUpload || isSaving} className="gallery-upload-dropzone">
           <UploadIcon />
           <span>Добавить изображения</span>
@@ -1985,6 +2113,7 @@ function GalleryManagementModal({
             {draftItems.map((item, itemIndex) => {
               const existingImage = item.imageId ? existingImageById.get(item.imageId) ?? null : null;
               const isCover = item.draftId === coverDraftId;
+              const sectionLabel = getGallerySectionLabel(item.section);
               const tileClassName = [
                 'gallery-tile',
                 isCover ? 'gallery-tile--cover' : null,
@@ -2033,9 +2162,35 @@ function GalleryManagementModal({
                       />
                     </div>
                     <span className="gallery-tile-name">{item.name}</span>
-                    {item.kind === 'new' ? <span className="gallery-tile-status">Новое</span> : null}
-                    {isCover ? <span className="gallery-tile-status">Обложка</span> : null}
+                    <span className="gallery-tile-status-row">
+                      {item.kind === 'new' ? <span className="gallery-tile-status">Новое</span> : null}
+                      {isCover ? <span className="gallery-tile-status">Обложка</span> : null}
+                      {sectionLabel ? (
+                        <span className="gallery-tile-status gallery-tile-status--section">{sectionLabel}</span>
+                      ) : null}
+                    </span>
                   </button>
+                  <label className="gallery-tile-section-field">
+                    <span>Раздел</span>
+                    <select
+                      className="gallery-tile-section-select"
+                      disabled={isSaving}
+                      value={item.section ?? ''}
+                      onChange={(event) =>
+                        onSectionChange(
+                          item.draftId,
+                          event.currentTarget.value ? (event.currentTarget.value as ObjectImageSection) : null,
+                        )
+                      }
+                    >
+                      <option value="">Без раздела</option>
+                      {gallerySectionOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                   <div className="gallery-tile-order-actions" aria-label={`Порядок ${item.name}`}>
                     <AdminButton
                       aria-label={`Поднять ${item.name}`}
@@ -2463,6 +2618,7 @@ function createGalleryDraftItems(images: ObjectImage[]): GalleryDraftItem[] {
     file: null,
     previewUrl: image.file.url ?? '',
     name: getGalleryDraftImageName(image),
+    section: image.section,
   }));
 }
 
@@ -2474,6 +2630,7 @@ function createNewGalleryDraftItems(files: FileList | File[]): GalleryDraftItem[
     file,
     previewUrl: URL.createObjectURL(file),
     name: file.name || 'Новое изображение',
+    section: null,
   }));
 }
 
@@ -2508,6 +2665,10 @@ function getNewGalleryDraftId() {
 
 function getGalleryDraftImageName(image: ObjectImage) {
   return image.title || image.file.originalName || `Фото ${image.sortOrder + 1}`;
+}
+
+function getGallerySectionLabel(section: ObjectImageSection | null) {
+  return gallerySectionOptions.find((option) => option.value === section)?.label ?? null;
 }
 
 function revokeGalleryDraftPreviewUrl(item: GalleryDraftItem) {

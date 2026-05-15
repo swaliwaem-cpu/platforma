@@ -36,36 +36,36 @@
 
 ### Admin UI
 
-- [ ] В `ObjectsAdminPage.tsx` импортировать `ObjectImageSection`.
-- [ ] Добавить константу `gallerySectionOptions` с labels:
+- [x] В `ObjectsAdminPage.tsx` импортировать `ObjectImageSection`.
+- [x] Добавить константу `gallerySectionOptions` с labels:
   `Архитектура`, `Интерьеры`, `Наполнение`.
-- [ ] Расширить `GalleryDraftItem`: `section: ObjectImageSection | null`.
-- [ ] В `createGalleryDraftItems` брать `section` из `image.section`; в `createNewGalleryDraftItems` ставить `section: null`.
-- [ ] Добавить обработчик `assignGalleryDraftSection(draftId, section)`; при выборе нового раздела он заменяет старый, при очистке ставит `null`.
-- [ ] Передать `onGalleryDraftSectionChange` в `GalleryManagementModal`.
-- [ ] В модалке оставить существующий cover-slot сверху.
-- [ ] Ниже cover-slot добавить три `gallery-section-slot` drop-зоны: “Архитектура”, “Интерьеры”, “Наполнение”.
-- [ ] Каждая section-зона показывает count назначенных фото и компактный список/миниатюры первых фото; пустая зона показывает спокойный placeholder.
-- [ ] Drag tile на section-зону назначает фото в этот раздел, не меняя порядок и не влияя на `isCover`.
-- [ ] В карточке фото показывать статус-чип выбранного раздела рядом с `Новое` и `Обложка`.
-- [ ] Добавить компактный `select` “Раздел” на карточке фото для клавиатурного/без-drag управления: `Без раздела`, `Архитектура`, `Интерьеры`, `Наполнение`.
-- [ ] При сохранении галереи отправлять в layout patch:
+- [x] Расширить `GalleryDraftItem`: `section: ObjectImageSection | null`.
+- [x] В `createGalleryDraftItems` брать `section` из `image.section`; в `createNewGalleryDraftItems` ставить `section: null`.
+- [x] Добавить обработчик `assignGalleryDraftSection(draftId, section)`; при выборе нового раздела он заменяет старый, при очистке ставит `null`.
+- [x] Передать `onGalleryDraftSectionChange` в `GalleryManagementModal`.
+- [x] В модалке оставить существующий cover-slot сверху.
+- [x] Ниже cover-slot добавить три `gallery-section-slot` drop-зоны: “Архитектура”, “Интерьеры”, “Наполнение”.
+- [x] Каждая section-зона показывает count назначенных фото и компактный список/миниатюры первых фото; пустая зона показывает спокойный placeholder.
+- [x] Drag tile на section-зону назначает фото в этот раздел, не меняя порядок и не влияя на `isCover`.
+- [x] В карточке фото показывать статус-чип выбранного раздела рядом с `Новое` и `Обложка`.
+- [x] Добавить компактный `select` “Раздел” на карточке фото для клавиатурного/без-drag управления: `Без раздела`, `Архитектура`, `Интерьеры`, `Наполнение`.
+- [x] При сохранении галереи отправлять в layout patch:
   `imageIds`, `coverImageId`, `imageSections`.
-- [ ] Обновить CSS модалки: сетка из 3 section-зон на desktop, одна колонка на mobile, focus/drop states в стиле текущего cover-slot.
+- [x] Обновить CSS модалки: сетка из 3 section-зон на desktop, одна колонка на mobile, focus/drop states в стиле текущего cover-slot.
 
 ### Public Object Gallery
 
-- [ ] В `ObjectImageCarousel` добавить state `activeSection: ObjectImageSection | null`.
-- [ ] Добавить `sectionOptions` с теми же тремя labels.
-- [ ] Считать `filteredImages`: без фильтра все фото, с фильтром только фото с выбранным `section`.
-- [ ] Повторный клик по активному овалу сбрасывает фильтр.
-- [ ] При смене фильтра сбрасывать `activeIndex` и `lightboxIndex` в безопасное состояние.
-- [ ] Counter, стрелки, thumbnails и lightbox должны работать внутри текущего набора `filteredImages`.
-- [ ] В зоне над thumbnails добавить `carousel-section-filters` с тремя pill-кнопками.
-- [ ] Кнопки изначально `opacity: 0; pointer-events: none`, появляются на hover/focus той же нижней control-zone, что и thumbnails.
-- [ ] На touch-устройствах сделать section-фильтры видимыми всегда, как текущие thumbnails.
-- [ ] Если у объекта нет ни одного фото с разделом, section-фильтры не рендерить.
-- [ ] Если у конкретного раздела нет фото, соответствующий овал показывать disabled.
+- [x] В `ObjectImageCarousel` добавить state `activeSection: ObjectImageSection | null`.
+- [x] Добавить `sectionOptions` с теми же тремя labels.
+- [x] Считать `filteredImages`: без фильтра все фото, с фильтром только фото с выбранным `section`.
+- [x] Повторный клик по активному овалу сбрасывает фильтр.
+- [x] При смене фильтра сбрасывать `activeIndex` и `lightboxIndex` в безопасное состояние.
+- [x] Counter, стрелки, thumbnails и lightbox должны работать внутри текущего набора `filteredImages`.
+- [x] В зоне над thumbnails добавить `carousel-section-filters` с тремя pill-кнопками.
+- [x] Кнопки изначально `opacity: 0; pointer-events: none`, появляются на hover/focus той же нижней control-zone, что и thumbnails.
+- [x] На touch-устройствах сделать section-фильтры видимыми всегда, как текущие thumbnails.
+- [x] Если у объекта нет ни одного фото с разделом, section-фильтры не рендерить.
+- [x] Если у конкретного раздела нет фото, соответствующий овал показывать disabled.
 
 ## Test Plan
 
@@ -75,15 +75,15 @@
   layout сохраняет старые sections, если `imageSections` не передан;
   layout отклоняет неизвестный image id или невалидный section.
 - [x] API contract test: `updateGalleryLayout` принимает тело с `imageSections`.
-- [ ] Web admin tests:
+- [x] Web admin tests:
   draft state хранит `section`;
   модалка содержит три section drop-зоны;
   save payload содержит `imageSections`;
   tile показывает section label.
-- [ ] Web style tests:
+- [x] Web style tests:
   section-зоны модалки адаптивны;
   gallery filter pills скрыты до hover/focus и видимы на touch.
-- [ ] Object detail tests:
+- [x] Object detail tests:
   есть `activeSection`;
   повторный click сбрасывает фильтр;
   thumbnails/counter работают по `filteredImages`.

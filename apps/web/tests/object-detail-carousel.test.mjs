@@ -22,3 +22,25 @@ test('object detail carousel lightbox uses original image variant and keyboard c
   assert.match(source, /className="carousel-modal-backdrop"/);
   assert.match(source, /className="carousel-modal-image"/);
 });
+
+test('object detail carousel filters images by thematic section', () => {
+  assert.match(source, /ObjectImageSection/);
+  assert.match(source, /const \[activeSection,\s*setActiveSection\] = useState<ObjectImageSection \| null>\(null\);/);
+  assert.match(source, /const filteredImages = useMemo\(\(\) => \{[\s\S]*?if \(!activeSection\) \{[\s\S]*?return images;[\s\S]*?\}[\s\S]*?return images\.filter\(\(image\) => image\.section === activeSection\);[\s\S]*?\}, \[activeSection,\s*images\]\);/);
+  assert.match(source, /const activeImage = filteredImages\[activeIndex\] \?\? null;/);
+  assert.match(source, /const lightboxImage = lightboxIndex === null \? null : filteredImages\[lightboxIndex\] \?\? null;/);
+  assert.match(source, /setActiveSection\(\(currentSection\) => \(currentSection === section \? null : section\)\);/);
+  assert.match(source, /setActiveIndex\(0\);/);
+  assert.match(source, /setLightboxIndex\(null\);/);
+  assert.match(source, /filteredImages\.length/);
+});
+
+test('object detail carousel renders section filter pills above thumbnails', () => {
+  assert.match(source, /const hasSectionFilters = images\.some\(\(image\) => image\.section !== null\);/);
+  assert.match(source, /className="carousel-section-filters"/);
+  assert.match(source, /sectionOptions\.map\(\(option\) => \{/);
+  assert.match(source, /const sectionImageCount = images\.filter\(\(image\) => image\.section === option\.value\)\.length;/);
+  assert.match(source, /className=\{sectionButtonClassName\}/);
+  assert.match(source, /disabled=\{sectionImageCount === 0\}/);
+  assert.match(source, /onClick=\{\(\) => toggleSectionFilter\(option\.value\)\}/);
+});

@@ -61,6 +61,33 @@ test('object detail carousel hides thumbnails until lower hover or focus zone', 
   );
 });
 
+test('object detail carousel section filter pills share lower hover and touch behavior', () => {
+  assert.match(
+    styles,
+    /\.carousel-section-filters\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?left:\s*50%;[\s\S]*?opacity:\s*0;[\s\S]*?pointer-events:\s*none;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.carousel-thumbnail-zone:hover \.carousel-section-filters,\s*\.carousel-thumbnail-zone:focus-within \.carousel-section-filters\s*\{[\s\S]*?opacity:\s*1;[\s\S]*?pointer-events:\s*auto;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.carousel-section-filter\s*\{[\s\S]*?border-radius:\s*999px;[\s\S]*?min-height:\s*34px;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.carousel-section-filter:disabled\s*\{[\s\S]*?opacity:\s*0\.48;[\s\S]*?cursor:\s*not-allowed;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /@media\s*\(hover:\s*none\)\s*\{[\s\S]*?\.carousel-section-filters\s*\{[\s\S]*?opacity:\s*1;[\s\S]*?pointer-events:\s*auto;[\s\S]*?\}/,
+  );
+});
+
 test('object detail carousel modal keeps original image contained', () => {
   assert.match(
     styles,

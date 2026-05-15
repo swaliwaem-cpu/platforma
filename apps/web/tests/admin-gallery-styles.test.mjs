@@ -83,6 +83,38 @@ test('admin gallery modal exposes visual drag targets and compact order controls
   );
 });
 
+test('admin gallery modal exposes responsive thematic section slots', () => {
+  assert.match(
+    styles,
+    /\.gallery-section-slots\s*\{[\s\S]*?display:\s*grid;[\s\S]*?grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\);[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.gallery-section-slot\s*\{[\s\S]*?min-height:\s*138px;[\s\S]*?border:\s*1px dashed #c6d0dc;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.gallery-section-slot--drop-target\s*\{[\s\S]*?border-color:\s*#2563eb;[\s\S]*?box-shadow:\s*0 0 0 3px rgb\(37 99 235 \/ 14%\);[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.gallery-section-thumbnails\s*\{[\s\S]*?grid-template-columns:\s*repeat\(4,\s*32px\);[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.gallery-tile-section-select\s*\{[\s\S]*?min-height:\s*34px;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /@media\s*\(max-width:\s*640px\)\s*\{[\s\S]*?\.gallery-section-slots\s*\{[\s\S]*?grid-template-columns:\s*1fr;[\s\S]*?\}/,
+  );
+});
+
 test('admin gallery modal keeps tile remove action compact and anchored', () => {
   assert.match(
     styles,

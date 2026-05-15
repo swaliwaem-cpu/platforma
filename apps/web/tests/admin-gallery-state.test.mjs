@@ -8,7 +8,7 @@ const currentDir = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(resolve(currentDir, '../src/admin/ObjectsAdminPage.tsx'), 'utf8');
 
 test('object editor stores gallery changes in modal draft state', () => {
-  assert.match(source, /type GalleryDraftItem\s*=\s*\{[\s\S]*?draftId:\s*string;[\s\S]*?kind:\s*'existing' \| 'new';[\s\S]*?imageId:\s*string \| null;[\s\S]*?file:\s*File \| null;[\s\S]*?previewUrl:\s*string;[\s\S]*?name:\s*string;[\s\S]*?isUploading\?:\s*boolean;[\s\S]*?\};/);
+  assert.match(source, /type GalleryDraftItem\s*=\s*\{[\s\S]*?draftId:\s*string;[\s\S]*?kind:\s*'existing' \| 'new';[\s\S]*?imageId:\s*string \| null;[\s\S]*?file:\s*File \| null;[\s\S]*?previewUrl:\s*string;[\s\S]*?name:\s*string;[\s\S]*?section:\s*ObjectImageSection \| null;[\s\S]*?isUploading\?:\s*boolean;[\s\S]*?\};/);
 
   assert.match(source, /const \[isGalleryModalOpen,\s*setIsGalleryModalOpen\] = useState\(false\);/);
   assert.match(source, /const \[galleryDraftItems,\s*setGalleryDraftItems\] = useState<GalleryDraftItem\[\]>\(\[\]\);/);
@@ -22,8 +22,8 @@ test('object editor stores gallery changes in modal draft state', () => {
 
 test('gallery modal draft lifecycle creates and revokes local preview URLs', () => {
   assert.match(source, /function openGalleryModal\(\)[\s\S]*?createGalleryDraftItems\(object\?\.images \?\? \[\]\)/);
-  assert.match(source, /function createGalleryDraftItems\(images: ObjectImage\[\]\)[\s\S]*?images\.map\(\(image\) => \(\{[\s\S]*?kind:\s*'existing'/);
-  assert.match(source, /function createNewGalleryDraftItems\(files: FileList \| File\[\]\)[\s\S]*?URL\.createObjectURL\(file\)/);
+  assert.match(source, /function createGalleryDraftItems\(images: ObjectImage\[\]\)[\s\S]*?images\.map\(\(image\) => \(\{[\s\S]*?kind:\s*'existing'[\s\S]*?section:\s*image\.section/);
+  assert.match(source, /function createNewGalleryDraftItems\(files: FileList \| File\[\]\)[\s\S]*?URL\.createObjectURL\(file\)[\s\S]*?section:\s*null/);
   assert.match(source, /function removeGalleryDraftItem\(draftId: string\)[\s\S]*?revokeGalleryDraftPreviewUrl\(removedItem\)/);
   assert.match(source, /function closeGalleryModal\(\)[\s\S]*?resetGalleryModalDraft\(\)/);
   assert.match(source, /useEffect\(\(\) => \(\) => \{[\s\S]*?revokeGalleryDraftPreviewUrls\(galleryDraftItemsRef\.current\);[\s\S]*?\}, \[\]\);/);
@@ -56,6 +56,22 @@ test('gallery management modal exposes cover slot, multiple image input and larg
   assert.match(source, /className="gallery-modal-actions"/);
   assert.match(source, /Отмена/);
   assert.match(source, /onClick=\{onSave\}[\s\S]*?Сохранить/);
+});
+
+test('gallery management modal supports thematic section assignment', () => {
+  assert.match(source, /ObjectImageSection/);
+  assert.match(source, /const gallerySectionOptions:\s*\{[\s\S]*?value:\s*ObjectImageSection;[\s\S]*?label:\s*string;[\s\S]*?\}\[\]\s*=\s*\[[\s\S]*?ARCHITECTURE[\s\S]*?Архитектура[\s\S]*?INTERIORS[\s\S]*?Интерьеры[\s\S]*?FILLING[\s\S]*?Наполнение/);
+  assert.match(source, /function assignGalleryDraftSection\(draftId: string,\s*section: ObjectImageSection \| null\)/);
+  assert.match(source, /onGalleryDraftSectionChange=\{assignGalleryDraftSection\}/);
+  assert.match(source, /onSectionChange: \(draftId: string,\s*section: ObjectImageSection \| null\) => void;/);
+  assert.match(source, /className="gallery-section-slots"/);
+  assert.match(source, /className=\{sectionSlotClassName\}/);
+  assert.match(source, /onDrop=\{\(event\) => handleSectionSlotDrop\(event,\s*option\.value\)\}/);
+  assert.match(source, /onSectionChange\(nextDraggedDraftId,\s*section\)/);
+  assert.match(source, /className="gallery-tile-section-select"/);
+  assert.match(source, /<option value="">Без раздела<\/option>/);
+  assert.match(source, /gallerySectionOptions\.map\(\(option\) => \(/);
+  assert.match(source, /gallery-tile-status gallery-tile-status--section/);
 });
 
 test('gallery management modal supports drag and keyboard-style ordering controls', () => {
@@ -108,7 +124,9 @@ test('gallery modal save flow persists edited object gallery layout', () => {
   assert.match(source, /setGalleryModalProgress\('Загрузка изображений'/);
   assert.match(source, /uploadObjectMedia\(objectId,\s*'gallery',\s*item\.file\)/);
   assert.match(source, /setGalleryModalProgress\('Сохранение порядка'/);
-  assert.match(source, /apiRequest<ObjectResponse>\(`\/objects\/\$\{objectId\}\/gallery\/layout`,\s*accessToken,\s*\{[\s\S]*?method:\s*'PATCH'[\s\S]*?body:\s*JSON\.stringify\(\{[\s\S]*?imageIds[\s\S]*?coverImageId/);
+  assert.match(source, /const imageSections = draftItems\.reduce<Record<string,\s*ObjectImageSection \| null>>/);
+  assert.match(source, /imageSections\[imageId\] = item\.section;/);
+  assert.match(source, /apiRequest<ObjectResponse>\(`\/objects\/\$\{objectId\}\/gallery\/layout`,\s*accessToken,\s*\{[\s\S]*?method:\s*'PATCH'[\s\S]*?body:\s*JSON\.stringify\(\{[\s\S]*?imageIds[\s\S]*?coverImageId[\s\S]*?imageSections/);
   assert.match(source, /setObject\(layoutData\.object\)/);
   assert.match(source, /resetGalleryModalDraft\(\)/);
   assert.match(source, /setNotice\('Галерея сохранена'\)/);
