@@ -455,6 +455,7 @@ export class MapService {
       file: this.serializeMapFile(image.file),
       sortOrder: image.sortOrder,
       isCover: image.isCover,
+      section: image.section,
       alt: image.alt,
       title: image.title,
       sourceMetaKey: image.sourceMetaKey,

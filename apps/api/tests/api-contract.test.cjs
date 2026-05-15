@@ -225,6 +225,9 @@ test('ObjectsController delegates catalog and admin object endpoints to the serv
   const galleryLayoutBody = {
     imageIds: ['22222222-2222-4222-8222-222222222222'],
     coverImageId: '22222222-2222-4222-8222-222222222222',
+    imageSections: {
+      '22222222-2222-4222-8222-222222222222': 'ARCHITECTURE',
+    },
   };
 
   await controller.list({ status: 'published' });

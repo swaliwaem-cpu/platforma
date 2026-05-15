@@ -11,6 +11,12 @@ const { MapService } = require('../dist/map/map.service.js');
 const { ObjectsService } = require('../dist/objects/objects.service.js');
 const { UsersService } = require('../dist/users/users.service.js');
 
+const ObjectImageSection = {
+  ARCHITECTURE: 'ARCHITECTURE',
+  INTERIORS: 'INTERIORS',
+  FILLING: 'FILLING',
+};
+
 const actor = {
   id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
   email: 'admin@example.test',
@@ -127,6 +133,7 @@ function objectImageRecord(overrides = {}) {
     fileId,
     sortOrder: 0,
     isCover: false,
+    section: null,
     alt: null,
     title: null,
     sourceMetaKey: null,
@@ -427,7 +434,16 @@ test('ObjectsService.list builds catalog filters for status, price, presentation
     realEstateObject: {
       findMany: async (args) => {
         calls.findMany = args;
-        return [objectRecord()];
+        return [
+          objectRecord({
+            images: [
+              objectImageRecord({
+                isCover: true,
+                section: ObjectImageSection.FILLING,
+              }),
+            ],
+          }),
+        ];
       },
       count: async (args) => {
         calls.count = args;
@@ -452,6 +468,7 @@ test('ObjectsService.list builds catalog filters for status, price, presentation
   });
 
   assert.equal(result.total, 1);
+  assert.equal(result.items[0].coverImage.section, ObjectImageSection.FILLING);
   assert.equal(result.page, 2);
   assert.equal(result.limit, 5);
   assert.equal(calls.findMany.skip, 5);
@@ -602,6 +619,12 @@ test('MapService.listObjects returns linked locations with type and supports are
         location: area,
       },
     ],
+    images: [
+      objectImageRecord({
+        isCover: true,
+        section: ObjectImageSection.ARCHITECTURE,
+      }),
+    ],
   });
   const prisma = {
     realEstateObject: {
@@ -625,6 +648,7 @@ test('MapService.listObjects returns linked locations with type and supports are
 
   assert.equal(calls.findMany.include.locations.include.location, true);
   assert.equal(areaFilter.locations.some.location.type, LocationType.AREA);
+  assert.equal(result.items[0].coverImage.section, ObjectImageSection.ARCHITECTURE);
   assert.deepEqual(
     result.items[0].locations.map((location) => [location.name, location.type, location.isPrimary]),
     [
@@ -1242,6 +1266,244 @@ test('ObjectsService.updateGalleryLayout assigns cover and image order', async (
     imageIds: [secondImage.id, firstImage.id, thirdImage.id],
     coverImageId: thirdImage.id,
   });
+});
+
+test('ObjectsService.updateGalleryLayout updates image sections without order or cover changes', async () => {
+  const firstImage = objectImageRecord({
+    id: '22222222-2222-4222-8222-222222222222',
+    fileId: '55555555-5555-4555-8555-555555555555',
+    sortOrder: 0,
+    isCover: true,
+    section: null,
+  });
+  const secondImage = objectImageRecord({
+    id: '33333333-3333-4333-8333-333333333333',
+    fileId: '66666666-6666-4666-8666-666666666666',
+    sortOrder: 1,
+    section: ObjectImageSection.INTERIORS,
+  });
+  const calls = {
+    updates: [],
+  };
+  const updatedObject = objectRecord({
+    images: [
+      { ...firstImage, section: ObjectImageSection.ARCHITECTURE },
+      { ...secondImage, section: null },
+    ],
+  });
+  let findFirstCount = 0;
+  const prisma = {
+    realEstateObject: {
+      findFirst: async () => {
+        findFirstCount += 1;
+
+        return findFirstCount === 1
+          ? objectRecord({ images: [firstImage, secondImage] })
+          : updatedObject;
+      },
+    },
+    objectImage: {
+      update: async (args) => {
+        calls.updates.push(args);
+      },
+    },
+    auditLog: {
+      create: async (args) => {
+        calls.auditLog = args;
+      },
+    },
+    $transaction: async (callback) => callback(prisma),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  const result = await service.updateGalleryLayout(
+    '11111111-1111-4111-8111-111111111111',
+    {
+      imageIds: [firstImage.id, secondImage.id],
+      coverImageId: firstImage.id,
+      imageSections: {
+        [firstImage.id]: ObjectImageSection.ARCHITECTURE,
+        [secondImage.id]: null,
+      },
+    },
+    actor,
+    request,
+  );
+
+  assert.deepEqual(
+    calls.updates.map((call) => [call.where.id, call.data.section]),
+    [
+      [firstImage.id, ObjectImageSection.ARCHITECTURE],
+      [secondImage.id, null],
+    ],
+  );
+  assert.deepEqual(
+    result.object.images.map((image) => [image.id, image.section]),
+    [
+      [firstImage.id, ObjectImageSection.ARCHITECTURE],
+      [secondImage.id, null],
+    ],
+  );
+  assert.deepEqual(calls.auditLog.data.metadata.before, {
+    imageIds: [firstImage.id, secondImage.id],
+    coverImageId: firstImage.id,
+    imageSections: {
+      [firstImage.id]: null,
+      [secondImage.id]: ObjectImageSection.INTERIORS,
+    },
+  });
+  assert.deepEqual(calls.auditLog.data.metadata.after, {
+    imageIds: [firstImage.id, secondImage.id],
+    coverImageId: firstImage.id,
+    imageSections: {
+      [firstImage.id]: ObjectImageSection.ARCHITECTURE,
+      [secondImage.id]: null,
+    },
+  });
+});
+
+test('ObjectsService.updateGalleryLayout preserves image sections when omitted', async () => {
+  const firstImage = objectImageRecord({
+    id: '22222222-2222-4222-8222-222222222222',
+    fileId: '55555555-5555-4555-8555-555555555555',
+    sortOrder: 0,
+    isCover: true,
+    section: ObjectImageSection.ARCHITECTURE,
+  });
+  const secondImage = objectImageRecord({
+    id: '33333333-3333-4333-8333-333333333333',
+    fileId: '66666666-6666-4666-8666-666666666666',
+    sortOrder: 1,
+    section: ObjectImageSection.INTERIORS,
+  });
+  const calls = {
+    updates: [],
+  };
+  const updatedObject = objectRecord({
+    images: [
+      { ...secondImage, sortOrder: 0, isCover: false },
+      { ...firstImage, sortOrder: 1, isCover: true },
+    ],
+  });
+  let findFirstCount = 0;
+  const prisma = {
+    realEstateObject: {
+      findFirst: async () => {
+        findFirstCount += 1;
+
+        return findFirstCount === 1
+          ? objectRecord({ images: [firstImage, secondImage] })
+          : updatedObject;
+      },
+    },
+    objectImage: {
+      update: async (args) => {
+        calls.updates.push(args);
+      },
+    },
+    auditLog: {
+      create: async (args) => {
+        calls.auditLog = args;
+      },
+    },
+    $transaction: async (callback) => callback(prisma),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await service.updateGalleryLayout(
+    '11111111-1111-4111-8111-111111111111',
+    {
+      imageIds: [secondImage.id, firstImage.id],
+      coverImageId: firstImage.id,
+    },
+    actor,
+    request,
+  );
+
+  assert.deepEqual(
+    calls.updates.map((call) => call.data.section),
+    [undefined, undefined],
+  );
+  assert.equal('imageSections' in calls.auditLog.data.metadata.before, false);
+  assert.equal('imageSections' in calls.auditLog.data.metadata.after, false);
+});
+
+test('ObjectsService.updateGalleryLayout rejects image sections with unknown image ids', async () => {
+  const firstImage = objectImageRecord({
+    id: '22222222-2222-4222-8222-222222222222',
+    isCover: true,
+  });
+  const secondImage = objectImageRecord({
+    id: '33333333-3333-4333-8333-333333333333',
+    fileId: '66666666-6666-4666-8666-666666666666',
+    sortOrder: 1,
+  });
+  const prisma = {
+    realEstateObject: {
+      findFirst: async () => objectRecord({ images: [firstImage, secondImage] }),
+    },
+    objectImage: {
+      update: async () => assert.fail('Gallery layout must not update unknown section image ids'),
+    },
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await assert.rejects(
+    () =>
+      service.updateGalleryLayout(
+        '11111111-1111-4111-8111-111111111111',
+        {
+          imageIds: [firstImage.id, secondImage.id],
+          coverImageId: firstImage.id,
+          imageSections: {
+            [firstImage.id]: ObjectImageSection.ARCHITECTURE,
+            '44444444-4444-4444-8444-444444444444': ObjectImageSection.FILLING,
+          },
+        },
+        actor,
+        request,
+      ),
+    BadRequestException,
+  );
+});
+
+test('ObjectsService.updateGalleryLayout rejects invalid image sections', async () => {
+  const firstImage = objectImageRecord({
+    id: '22222222-2222-4222-8222-222222222222',
+    isCover: true,
+  });
+  const secondImage = objectImageRecord({
+    id: '33333333-3333-4333-8333-333333333333',
+    fileId: '66666666-6666-4666-8666-666666666666',
+    sortOrder: 1,
+  });
+  const prisma = {
+    realEstateObject: {
+      findFirst: async () => objectRecord({ images: [firstImage, secondImage] }),
+    },
+    objectImage: {
+      update: async () => assert.fail('Gallery layout must not update invalid image sections'),
+    },
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await assert.rejects(
+    () =>
+      service.updateGalleryLayout(
+        '11111111-1111-4111-8111-111111111111',
+        {
+          imageIds: [firstImage.id, secondImage.id],
+          coverImageId: firstImage.id,
+          imageSections: {
+            [firstImage.id]: 'AMENITIES',
+            [secondImage.id]: ObjectImageSection.INTERIORS,
+          },
+        },
+        actor,
+        request,
+      ),
+    BadRequestException,
+  );
 });
 
 test('ObjectsService.updateGalleryLayout rejects incomplete image ids', async () => {

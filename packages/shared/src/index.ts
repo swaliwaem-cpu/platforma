@@ -6,6 +6,7 @@ export type LocationType = 'AREA' | 'DISTRICT' | 'CUSTOM';
 export type FileStorage = 'LOCAL' | 'MINIO';
 export type FileVariant = 'THUMBNAIL' | 'CARD' | 'DETAIL';
 export type ObjectFileType = 'PRESENTATION' | 'FLOOR_PLAN' | 'DOCUMENT' | 'OTHER';
+export type ObjectImageSection = 'ARCHITECTURE' | 'INTERIORS' | 'FILLING';
 export type ImportMode = 'PREVIEW' | 'RUN';
 export type ImportStatus = 'PENDING' | 'SUCCESS' | 'PARTIAL' | 'FAILED';
 export type CatalogQuickLinkType = 'DEVELOPER' | 'KRT' | 'SALES_START';
@@ -147,6 +148,7 @@ export type ObjectImage = {
   file: ObjectStoredFile;
   sortOrder: number;
   isCover: boolean;
+  section: ObjectImageSection | null;
   alt: string | null;
   title: string | null;
   sourceMetaKey: string | null;

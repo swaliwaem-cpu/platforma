@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { LocationType, ObjectFileType, ObjectStatus, Prisma } from '@prisma/client';
+import { LocationType, ObjectFileType, ObjectImageSection, ObjectStatus, Prisma } from '@prisma/client';
 
 import { AuthenticatedUser, RequestWithAuth } from '../auth/auth.types';
 import { FilesService } from '../files/files.service';
@@ -161,6 +161,7 @@ type SortGalleryBody = {
 type GalleryLayoutBody = {
   imageIds?: unknown;
   coverImageId?: unknown;
+  imageSections?: unknown;
 };
 
 type UploadObjectFileBody = {
@@ -1170,8 +1171,10 @@ export class ObjectsService {
     const object = await this.findExistingObject(id);
     const imageIds = this.parseUuidList(body.imageIds, 'Gallery image is invalid') ?? [];
     const coverImageId = this.parseNullableUuidField(body.coverImageId, 'Cover image is invalid') ?? null;
+    const imageSections = this.parseImageSections(body.imageSections, imageIds);
     const currentImageIds = object.images.map((image) => image.id);
     const currentCoverImageId = object.images.find((image) => image.isCover)?.id ?? null;
+    const currentImageSections = this.createImageSectionMap(object.images);
     const hasDuplicateImageIds = new Set(imageIds).size !== imageIds.length;
 
     if (hasDuplicateImageIds || !this.sameStringSet(currentImageIds, imageIds)) {
@@ -1184,8 +1187,11 @@ export class ObjectsService {
 
     const hasOrderChanges = !this.sameStringArray(currentImageIds, imageIds);
     const hasCoverChanges = object.images.some((image) => image.isCover !== (image.id === coverImageId));
+    const hasSectionChanges = imageSections
+      ? imageIds.some((imageId) => currentImageSections[imageId] !== imageSections[imageId])
+      : false;
 
-    if (!hasOrderChanges && !hasCoverChanges) {
+    if (!hasOrderChanges && !hasCoverChanges && !hasSectionChanges) {
       return {
         object: this.serializeObjectDetail(object),
       };
@@ -1201,6 +1207,7 @@ export class ObjectsService {
             data: {
               sortOrder: index,
               isCover: imageId === coverImageId,
+              ...(imageSections ? { section: imageSections[imageId] } : {}),
             },
           }),
         ),
@@ -1209,20 +1216,25 @@ export class ObjectsService {
       return this.findExistingObject(object.id, tx);
     });
 
+    const beforeMetadata = {
+      imageIds: currentImageIds,
+      coverImageId: currentCoverImageId,
+      ...(hasSectionChanges ? { imageSections: currentImageSections } : {}),
+    };
+    const afterMetadata = {
+      imageIds,
+      coverImageId,
+      ...(hasSectionChanges && imageSections ? { imageSections } : {}),
+    };
+
     await this.logObjectAction({
       action: 'object.gallery.layout',
       actor,
       request,
       objectId: updatedObject.id,
       metadata: {
-        before: {
-          imageIds: currentImageIds,
-          coverImageId: currentCoverImageId,
-        },
-        after: {
-          imageIds,
-          coverImageId,
-        },
+        before: beforeMetadata,
+        after: afterMetadata,
       },
     });
 
@@ -1928,6 +1940,50 @@ export class ObjectsService {
     return value;
   }
 
+  private parseImageSections(value: unknown, imageIds: string[]) {
+    if (value === undefined) {
+      return undefined;
+    }
+
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      throw new BadRequestException('Gallery image sections are invalid');
+    }
+
+    const parsedSections: Record<string, ObjectImageSection | null> = {};
+
+    for (const [rawImageId, rawSection] of Object.entries(value)) {
+      const imageId = this.parseUuid(rawImageId, 'Gallery image section is invalid');
+
+      if (rawSection === null) {
+        parsedSections[imageId] = null;
+        continue;
+      }
+
+      if (
+        typeof rawSection !== 'string' ||
+        !Object.values(ObjectImageSection).includes(rawSection as ObjectImageSection)
+      ) {
+        throw new BadRequestException('Gallery image section is invalid');
+      }
+
+      parsedSections[imageId] = rawSection as ObjectImageSection;
+    }
+
+    if (!this.sameStringSet(imageIds, Object.keys(parsedSections))) {
+      throw new BadRequestException('Gallery image section ids must match gallery image ids');
+    }
+
+    return parsedSections;
+  }
+
+  private createImageSectionMap(images: ObjectDetailRecord['images']) {
+    return images.reduce<Record<string, ObjectImageSection | null>>((sectionMap, image) => {
+      sectionMap[image.id] = image.section;
+
+      return sectionMap;
+    }, {});
+  }
+
   private parseObjectStatus(value: unknown) {
     if (typeof value !== 'string') {
       throw new BadRequestException('Object status is required');
@@ -2227,6 +2283,7 @@ export class ObjectsService {
       file: this.serializeFile(image.file),
       sortOrder: image.sortOrder,
       isCover: image.isCover,
+      section: image.section,
       alt: image.alt,
       title: image.title,
       sourceMetaKey: image.sourceMetaKey,

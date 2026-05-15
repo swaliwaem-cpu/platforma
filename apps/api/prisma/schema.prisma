@@ -56,6 +56,14 @@ enum ObjectFileType {
   @@map("object_file_type")
 }
 
+enum ObjectImageSection {
+  ARCHITECTURE @map("architecture")
+  INTERIORS    @map("interiors")
+  FILLING      @map("filling")
+
+  @@map("object_image_section")
+}
+
 enum ImportMode {
   PREVIEW @map("preview")
   RUN     @map("run")
@@ -352,6 +360,7 @@ model ObjectImage {
   fileId        String   @map("file_id") @db.Uuid
   sortOrder     Int      @default(0) @map("sort_order")
   isCover       Boolean  @default(false) @map("is_cover")
+  section       ObjectImageSection? @map("section")
   alt           String?
   title         String?
   sourceMetaKey String?  @map("source_meta_key")
@@ -364,6 +373,7 @@ model ObjectImage {
   @@unique([objectId, fileId])
   @@index([fileId])
   @@index([objectId, isCover])
+  @@index([objectId, section])
   @@map("object_images")
 }
 
