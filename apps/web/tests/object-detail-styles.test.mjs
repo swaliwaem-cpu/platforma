@@ -39,6 +39,40 @@ test('object detail carousel is a framed standalone media section', () => {
   assert.match(styles, /\.object-detail-location-line\s*\{/);
 });
 
+test('object detail carousel hides thumbnails until lower hover or focus zone', () => {
+  assert.match(
+    styles,
+    /\.carousel-thumbnail-zone\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?bottom:\s*0;[\s\S]*?left:\s*0;[\s\S]*?right:\s*0;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.carousel-thumbnails\s*\{[\s\S]*?left:\s*50%;[\s\S]*?width:\s*min\(calc\(100% - 28px\),\s*1240px\);[\s\S]*?justify-content:\s*center;[\s\S]*?opacity:\s*0;[\s\S]*?pointer-events:\s*none;[\s\S]*?transform:\s*translate\(-50%,\s*8px\);[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.carousel-thumbnail-zone:hover \.carousel-thumbnails,\s*\.carousel-thumbnail-zone:focus-within \.carousel-thumbnails\s*\{[\s\S]*?opacity:\s*1;[\s\S]*?pointer-events:\s*auto;[\s\S]*?transform:\s*translate\(-50%,\s*0\);[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /@media\s*\(hover:\s*none\)\s*\{[\s\S]*?\.carousel-thumbnails\s*\{[\s\S]*?opacity:\s*1;[\s\S]*?pointer-events:\s*auto;[\s\S]*?\}/,
+  );
+});
+
+test('object detail carousel modal keeps original image contained', () => {
+  assert.match(
+    styles,
+    /\.carousel-modal-backdrop\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?inset:\s*0;[\s\S]*?z-index:\s*90;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.carousel-modal-image img\s*\{[\s\S]*?max-width:\s*calc\(100vw - 48px\);[\s\S]*?max-height:\s*calc\(100dvh - 112px\);[\s\S]*?object-fit:\s*contain;[\s\S]*?object-position:\s*center center;[\s\S]*?\}/,
+  );
+});
+
 test('object parameters grid has desktop, tablet, and mobile layouts', () => {
   const baseParametersRuleIndex = styles.indexOf('.object-parameters-grid {', styles.indexOf('.object-parameters-section'));
   const tabletParametersRuleIndex = styles.lastIndexOf('@media (max-width: 1100px)');

@@ -343,14 +343,20 @@ function ObjectImageCarousel({
   objectTitle: string;
 }) {
   const [activeIndex, setActiveIndex] = useState(0);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const activeImage = images[activeIndex] ?? null;
+  const lightboxImage = lightboxIndex === null ? null : images[lightboxIndex] ?? null;
   const hasManyImages = images.length > 1;
 
   useEffect(() => {
     if (activeIndex > Math.max(images.length - 1, 0)) {
       setActiveIndex(0);
     }
-  }, [activeIndex, images.length]);
+
+    if (lightboxIndex !== null && lightboxIndex > Math.max(images.length - 1, 0)) {
+      setLightboxIndex(null);
+    }
+  }, [activeIndex, images.length, lightboxIndex]);
 
   function showPreviousImage() {
     setActiveIndex((currentIndex) => (currentIndex === 0 ? images.length - 1 : currentIndex - 1));
@@ -359,6 +365,50 @@ function ObjectImageCarousel({
   function showNextImage() {
     setActiveIndex((currentIndex) => (currentIndex + 1) % images.length);
   }
+
+  function openLightbox() {
+    setLightboxIndex(activeIndex);
+  }
+
+  function closeLightbox() {
+    setLightboxIndex(null);
+  }
+
+  function showPreviousLightboxImage() {
+    setLightboxIndex((currentIndex) => {
+      if (currentIndex === null) {
+        return currentIndex;
+      }
+
+      return currentIndex === 0 ? images.length - 1 : currentIndex - 1;
+    });
+  }
+
+  function showNextLightboxImage() {
+    setLightboxIndex((currentIndex) => {
+      if (currentIndex === null) {
+        return currentIndex;
+      }
+
+      return (currentIndex + 1) % images.length;
+    });
+  }
+
+  useEffect(() => {
+    if (lightboxIndex === null) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        closeLightbox();
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [lightboxIndex]);
 
   if (!activeImage) {
     return (
@@ -371,7 +421,14 @@ function ObjectImageCarousel({
   return (
     <section className="object-image-carousel" aria-label="Галерея объекта">
       <div className="object-carousel-media">
-        <SecureImage accessToken={accessToken} alt={activeImage.alt ?? objectTitle} fileId={activeImage.file.id} variant="detail" />
+        <button
+          aria-label="Открыть фото в полном размере"
+          className="object-carousel-media-button"
+          type="button"
+          onClick={openLightbox}
+        >
+          <SecureImage accessToken={accessToken} alt={activeImage.alt ?? objectTitle} fileId={activeImage.file.id} variant="detail" />
+        </button>
 
         {hasManyImages ? (
           <>
@@ -399,23 +456,82 @@ function ObjectImageCarousel({
       </div>
 
       {hasManyImages ? (
-        <div className="carousel-thumbnails" aria-label="Миниатюры галереи">
-          {images.map((image, index) => (
+        <div className="carousel-thumbnail-zone">
+          <div className="carousel-thumbnails" aria-label="Миниатюры галереи">
+            {images.map((image, index) => (
+              <button
+                key={image.id}
+                aria-label={`Фото ${index + 1}`}
+                className={index === activeIndex ? 'carousel-thumbnail carousel-thumbnail--active' : 'carousel-thumbnail'}
+                type="button"
+                onClick={() => setActiveIndex(index)}
+              >
+                <SecureImage
+                  accessToken={accessToken}
+                  alt={image.alt ?? `${objectTitle}, миниатюра ${index + 1}`}
+                  fileId={image.file.id}
+                  variant="thumbnail"
+                />
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {lightboxImage ? (
+        <div className="carousel-modal-backdrop" onClick={closeLightbox}>
+          <section
+            aria-label="Полноразмерное фото объекта"
+            aria-modal="true"
+            className="carousel-modal"
+            role="dialog"
+            onClick={(event) => event.stopPropagation()}
+          >
             <button
-              key={image.id}
-              aria-label={`Фото ${index + 1}`}
-              className={index === activeIndex ? 'carousel-thumbnail carousel-thumbnail--active' : 'carousel-thumbnail'}
+              aria-label="Закрыть полноразмерное фото"
+              className="carousel-modal-close"
               type="button"
-              onClick={() => setActiveIndex(index)}
+              onClick={closeLightbox}
             >
+              ×
+            </button>
+
+            {hasManyImages ? (
+              <button
+                aria-label="Предыдущее полноразмерное фото"
+                className="carousel-modal-button carousel-modal-button--previous"
+                type="button"
+                onClick={showPreviousLightboxImage}
+              >
+                ‹
+              </button>
+            ) : null}
+
+            <div className="carousel-modal-image">
               <SecureImage
                 accessToken={accessToken}
-                alt={image.alt ?? `${objectTitle}, миниатюра ${index + 1}`}
-                fileId={image.file.id}
-                variant="thumbnail"
+                alt={lightboxImage.alt ?? objectTitle}
+                fileId={lightboxImage.file.id}
+                variant="original"
               />
-            </button>
-          ))}
+            </div>
+
+            {hasManyImages ? (
+              <>
+                <button
+                  aria-label="Следующее полноразмерное фото"
+                  className="carousel-modal-button carousel-modal-button--next"
+                  type="button"
+                  onClick={showNextLightboxImage}
+                >
+                  ›
+                </button>
+                <span className="carousel-modal-counter">
+                  {(lightboxIndex ?? 0) + 1} / {images.length}
+                </span>
+              </>
+            ) : null}
+          </section>
         </div>
       ) : null}
     </section>

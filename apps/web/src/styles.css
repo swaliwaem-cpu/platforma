@@ -3730,11 +3730,29 @@ tr.user-row--deactivated .text-button {
   inset: 0;
 }
 
+.object-carousel-media-button {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.object-carousel-media-button:focus-visible {
+  outline: 3px solid rgb(37 99 235 / 72%);
+  outline-offset: -6px;
+}
+
+.object-carousel-media-button img,
 .object-carousel-media img,
 .object-gallery-item img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: center center;
 }
 
 .carousel-button {
@@ -3776,16 +3794,51 @@ tr.user-row--deactivated .text-button {
   font-weight: 800;
 }
 
+.carousel-thumbnail-zone {
+  position: absolute;
+  z-index: 3;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 132px;
+  pointer-events: none;
+}
+
+.carousel-thumbnail-zone::before {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 100%;
+  content: "";
+  pointer-events: auto;
+}
+
 .carousel-thumbnails {
   position: absolute;
-  z-index: 2;
-  right: 14px;
+  right: auto;
   bottom: 14px;
-  left: 14px;
+  left: 50%;
   display: flex;
+  width: min(calc(100% - 28px), 1240px);
+  max-width: calc(100% - 28px);
+  justify-content: center;
   gap: 8px;
   overflow-x: auto;
   padding: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 8px);
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease;
+}
+
+.carousel-thumbnail-zone:hover .carousel-thumbnails,
+.carousel-thumbnail-zone:focus-within .carousel-thumbnails {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%, 0);
 }
 
 .carousel-thumbnail {
@@ -3811,6 +3864,97 @@ tr.user-row--deactivated .text-button {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: center center;
+}
+
+.carousel-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  background: rgb(10 15 22 / 88%);
+  padding: 24px;
+}
+
+.carousel-modal {
+  position: relative;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+}
+
+.carousel-modal-image {
+  display: grid;
+  max-width: 100%;
+  max-height: 100%;
+  place-items: center;
+}
+
+.carousel-modal-image img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: calc(100vw - 48px);
+  max-height: calc(100dvh - 112px);
+  object-fit: contain;
+  object-position: center center;
+}
+
+.carousel-modal-close,
+.carousel-modal-button,
+.carousel-modal-counter {
+  position: absolute;
+  z-index: 2;
+  border: 1px solid rgb(255 255 255 / 42%);
+  background: rgb(24 32 42 / 78%);
+  color: #ffffff;
+}
+
+.carousel-modal-close,
+.carousel-modal-button {
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  padding: 0;
+}
+
+.carousel-modal-close {
+  top: 0;
+  right: 0;
+  width: 42px;
+  height: 42px;
+  font-size: 28px;
+  line-height: 1;
+}
+
+.carousel-modal-button {
+  top: 50%;
+  width: 46px;
+  height: 46px;
+  font-size: 32px;
+  line-height: 1;
+  transform: translateY(-50%);
+}
+
+.carousel-modal-button--previous {
+  left: 0;
+  padding-bottom: 3px;
+}
+
+.carousel-modal-button--next {
+  right: 0;
+  padding-bottom: 3px;
+}
+
+.carousel-modal-counter {
+  right: 0;
+  bottom: 0;
+  border-radius: 999px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .object-detail-summary {
@@ -5052,15 +5196,39 @@ tr.user-row--deactivated .text-button {
     right: 10px;
   }
 
+  .carousel-thumbnail-zone {
+    height: 106px;
+  }
+
   .carousel-thumbnails {
-    right: 10px;
     bottom: 10px;
-    left: 10px;
+    width: min(calc(100% - 20px), 1240px);
+    max-width: calc(100% - 20px);
   }
 
   .carousel-thumbnail {
     width: 62px;
     height: 44px;
+  }
+
+  .carousel-modal-backdrop {
+    padding: 14px;
+  }
+
+  .carousel-modal-image img {
+    max-width: calc(100vw - 28px);
+    max-height: calc(100dvh - 96px);
+  }
+
+  .carousel-modal-button {
+    width: 38px;
+    height: 38px;
+    font-size: 28px;
+  }
+
+  .carousel-modal-close {
+    width: 38px;
+    height: 38px;
   }
 
   .object-detail-facts div,
@@ -5076,6 +5244,14 @@ tr.user-row--deactivated .text-button {
 
   .detail-file-action {
     justify-items: start;
+  }
+}
+
+@media (hover: none) {
+  .carousel-thumbnails {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translate(-50%, 0);
   }
 }
 

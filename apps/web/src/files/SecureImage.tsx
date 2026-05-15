@@ -41,7 +41,7 @@ export function SecureImage({
   errorFallback = 'Изображение недоступно',
   fileId,
   lazy = false,
-  loadingFallback = 'Загрузка изображения',
+  loadingFallback = null,
   placeholderClassName,
   renderError,
   renderFallback,

@@ -21,6 +21,13 @@ test('web has shared secure image helper with variant-aware file content URL', (
   assert.match(secureImageSource, /IntersectionObserver/);
 });
 
+test('secure image default loading state does not show visible copy', () => {
+  const secureImageSource = readFileSync(secureImagePath, 'utf8');
+
+  assert.match(secureImageSource, /loadingFallback = null/);
+  assert.doesNotMatch(secureImageSource, /loadingFallback = 'Загрузка изображения'/);
+});
+
 test('catalog loads cover images lazily as card variants', () => {
   assert.match(catalogSource, /from '\.\.\/files\/SecureImage'/);
   assert.match(catalogSource, /variant="card"/);
