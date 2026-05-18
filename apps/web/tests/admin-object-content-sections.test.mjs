@@ -54,22 +54,28 @@ test('objects admin form persists and validates content section fields', () => {
   assert.match(source, /trim\(\)\.length > 10000/);
 });
 
-test('public object detail renders content sections between description and files', () => {
+test('public object detail renders files beside parameters and content sections after description', () => {
   assert.match(objectDetailViewModelSource, /function getObjectContentSections|export function getObjectContentSections/);
   assert.match(objectDetailViewModelSource, /label:\s*'Архитектура'/);
   assert.match(objectDetailViewModelSource, /label:\s*'Инфраструктура'/);
   assert.match(objectDetailViewModelSource, /label:\s*'Наполнение'/);
   assert.match(objectDetailViewModelSource, /Не заполнено/);
 
+  const parametersIndex = objectDetailSource.indexOf('id="object-parameters-title"');
+  const filesIndex = objectDetailSource.indexOf('id="object-files-title"');
+  const mapIndex = objectDetailSource.indexOf('id="object-map-title"');
   const descriptionIndex = objectDetailSource.indexOf('id="object-description-title"');
   const contentIndex = objectDetailSource.indexOf('id="object-content-sections-title"');
-  const filesIndex = objectDetailSource.indexOf('id="object-files-title"');
 
+  assert.notEqual(parametersIndex, -1, 'parameters section should exist');
+  assert.notEqual(filesIndex, -1, 'files section should exist');
+  assert.notEqual(mapIndex, -1, 'map section should exist');
   assert.notEqual(descriptionIndex, -1, 'description section should exist');
   assert.notEqual(contentIndex, -1, 'content sections should exist');
-  assert.notEqual(filesIndex, -1, 'files section should exist');
+  assert.ok(parametersIndex < filesIndex);
+  assert.ok(filesIndex < mapIndex);
+  assert.ok(mapIndex < descriptionIndex);
   assert.ok(descriptionIndex < contentIndex);
-  assert.ok(contentIndex < filesIndex);
 
   assert.match(objectDetailSource, /getObjectContentSections\(object\)/);
   assert.match(objectDetailSource, /object-content-sections/);

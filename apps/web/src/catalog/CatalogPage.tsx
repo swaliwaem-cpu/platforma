@@ -1184,13 +1184,13 @@ function CatalogCard({
         </div>
         <div className="catalog-card-heading">
           <h3>
-            <a href={objectHref} onClick={handleOpen}>
+            <a href={objectHref} title={object.title} onClick={handleOpen}>
               {object.title}
             </a>
           </h3>
         </div>
         <div className="catalog-card-location" aria-label="Район и метро">
-          <span>{districtLabel}</span>
+          <span title={districtLabel}>{districtLabel}</span>
           <CatalogCardMetroLabel stations={object.metroStations} />
         </div>
         <dl className="catalog-card-facts">
@@ -1220,9 +1220,10 @@ function CatalogCardMetroLabel({ stations }: { stations: ObjectMetroStationLink[
 
   const visibleStations = stations.slice(0, 2);
   const hiddenCount = stations.length - visibleStations.length;
+  const metroLabel = formatMetroStations(stations) ?? undefined;
 
   return (
-    <span className="catalog-card-metro" aria-label={formatMetroStations(stations) ?? undefined}>
+    <span className="catalog-card-metro" aria-label={metroLabel} title={metroLabel}>
       <span className="catalog-card-metro-prefix">Метро</span>
       {visibleStations.map((station, index) => {
         const lineColor = normalizeLineColor(station.lineColor);
@@ -1546,20 +1547,16 @@ function formatPricePerMeter(value: string | null) {
 
 function formatMapMarkerPrice(value: string | null) {
   if (!value) {
-    return 'по запросу/м²';
+    return 'по запросу';
   }
 
   const parsed = Number(value);
 
   if (!Number.isFinite(parsed)) {
-    return `от ${value}/м²`;
+    return `от ${value}`;
   }
 
-  if (parsed >= 1000000) {
-    return `от ${formatCompactRussianNumber(parsed / 1000000)}млн/м²`;
-  }
-
-  return `от ${formatCompactRussianNumber(parsed / 1000)}т/м²`;
+  return `от ${formatCompactRussianNumber(parsed / 1000)}т`;
 }
 
 function formatMapListPricePerMeter(value: string | null) {

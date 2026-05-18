@@ -6,6 +6,7 @@ import test from 'node:test';
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const styles = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
+const objectDetailSource = readFileSync(resolve(currentDir, '../src/objects/ObjectDetailPage.tsx'), 'utf8');
 
 function getRuleBody(selector) {
   const startIndex = styles.indexOf(`${selector} {`);
@@ -100,18 +101,31 @@ test('object detail carousel modal keeps original image contained', () => {
   );
 });
 
-test('object parameters grid has desktop, tablet, and mobile layouts', () => {
-  const baseParametersRuleIndex = styles.indexOf('.object-parameters-grid {', styles.indexOf('.object-parameters-section'));
-  const tabletParametersRuleIndex = styles.lastIndexOf('@media (max-width: 1100px)');
+test('object parameters and files share a desktop row before the map', () => {
+  const summaryGridIndex = objectDetailSource.indexOf('className="object-parameters-files-grid"');
+  const parametersIndex = objectDetailSource.indexOf('id="object-parameters-title"');
+  const filesIndex = objectDetailSource.indexOf('id="object-files-title"');
+  const actionsIndex = objectDetailSource.indexOf('className="object-detail-actions"');
+  const mapIndex = objectDetailSource.indexOf('id="object-map-title"');
 
-  assert.ok(
-    tabletParametersRuleIndex > baseParametersRuleIndex,
-    'tablet object parameters rule should be declared after the desktop rule so it wins in the cascade',
+  assert.notEqual(summaryGridIndex, -1, 'parameters and files grid should exist');
+  assert.notEqual(parametersIndex, -1, 'parameters section should exist');
+  assert.notEqual(filesIndex, -1, 'files section should exist');
+  assert.notEqual(actionsIndex, -1, 'object action buttons should exist');
+  assert.notEqual(mapIndex, -1, 'map section should exist');
+  assert.ok(summaryGridIndex < parametersIndex);
+  assert.ok(parametersIndex < filesIndex);
+  assert.ok(filesIndex < actionsIndex);
+  assert.ok(actionsIndex < mapIndex);
+
+  assert.match(
+    styles,
+    /\.object-parameters-files-grid\s*\{[\s\S]*?display:\s*grid;[\s\S]*?grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);[\s\S]*?gap:\s*18px;[\s\S]*?align-items:\s*stretch;[\s\S]*?\}/,
   );
 
   assert.match(
     styles,
-    /\.object-parameters-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(5,\s*minmax\(0,\s*1fr\)\);[\s\S]*?gap:\s*10px;[\s\S]*?\}/,
+    /\.object-parameters-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);[\s\S]*?gap:\s*10px;[\s\S]*?\}/,
   );
 
   assert.match(
@@ -126,12 +140,37 @@ test('object parameters grid has desktop, tablet, and mobile layouts', () => {
 
   assert.match(
     styles,
-    /@media\s*\(max-width:\s*1100px\)\s*\{[\s\S]*?\.object-parameters-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);[\s\S]*?\}/,
+    /@media\s*\(max-width:\s*1100px\)\s*\{[\s\S]*?\.object-parameters-files-grid\s*\{[\s\S]*?grid-template-columns:\s*1fr;[\s\S]*?\}/,
   );
 
   assert.match(
     styles,
     /@media\s*\(max-width:\s*760px\)\s*\{[\s\S]*?\.object-parameters-grid\s*\{[\s\S]*?grid-template-columns:\s*1fr;[\s\S]*?\}/,
+  );
+});
+
+test('object description and location share a desktop row with two-third and one-third columns', () => {
+  const descriptionGridIndex = objectDetailSource.indexOf('className="object-description-location-grid"');
+  const descriptionIndex = objectDetailSource.indexOf('id="object-description-title"');
+  const locationIndex = objectDetailSource.indexOf('id="object-location-title"');
+  const contentIndex = objectDetailSource.indexOf('id="object-content-sections-title"');
+
+  assert.notEqual(descriptionGridIndex, -1, 'description and location grid should exist');
+  assert.notEqual(descriptionIndex, -1, 'description section should exist');
+  assert.notEqual(locationIndex, -1, 'location section should exist');
+  assert.notEqual(contentIndex, -1, 'content sections should exist');
+  assert.ok(descriptionGridIndex < descriptionIndex);
+  assert.ok(descriptionIndex < locationIndex);
+  assert.ok(locationIndex < contentIndex);
+
+  assert.match(
+    styles,
+    /\.object-description-location-grid\s*\{[\s\S]*?display:\s*grid;[\s\S]*?grid-template-columns:\s*minmax\(0,\s*2fr\)\s+minmax\(280px,\s*1fr\);[\s\S]*?gap:\s*18px;[\s\S]*?align-items:\s*stretch;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /@media\s*\(max-width:\s*1100px\)\s*\{[\s\S]*?\.object-description-location-grid\s*\{[\s\S]*?grid-template-columns:\s*1fr;[\s\S]*?\}/,
   );
 });
 

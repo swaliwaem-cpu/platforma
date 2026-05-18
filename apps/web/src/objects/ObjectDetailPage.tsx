@@ -190,53 +190,68 @@ function ObjectDetail({
 
       <ObjectImageCarousel accessToken={accessToken} images={carouselImages} objectTitle={object.title} />
 
-      <section className="detail-section object-parameters-section" aria-labelledby="object-parameters-title">
-        <div>
-          <p className="eyebrow">Параметры</p>
-          <h3 id="object-parameters-title">Основные параметры</h3>
-        </div>
+      <div className="object-parameters-files-grid">
+        <section className="detail-section object-parameters-section" aria-labelledby="object-parameters-title">
+          <div>
+            <p className="eyebrow">Параметры</p>
+            <h3 id="object-parameters-title">Основные параметры</h3>
+          </div>
 
-        <dl className="object-parameters-grid">
-          {parameterRows.map((row) => (
-            <div key={row.label}>
-              <dt>{row.label}</dt>
-              <dd>{row.value}</dd>
-            </div>
-          ))}
-        </dl>
-      </section>
+          <dl className="object-parameters-grid">
+            {parameterRows.map((row) => (
+              <div key={row.label}>
+                <dt>{row.label}</dt>
+                <dd>{row.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
 
-      <div className="object-detail-actions" aria-label="Действия по объекту">
-        {presentationFile ? (
-          <SecureFileButton
-            accessToken={accessToken}
-            className="object-detail-action-button object-detail-action-button--primary"
-            fileId={presentationFile.file.id}
-            label="Показать презентацию"
-            openingLabel="Открываем презентацию"
-            wrapperClassName="object-detail-action"
-          />
-        ) : (
-          <button className="object-detail-action-button object-detail-action-button--disabled" disabled type="button">
-            Презентация отсутствует
-          </button>
-        )}
+        <section className="detail-section object-files-section" aria-labelledby="object-files-title">
+          <div>
+            <p className="eyebrow">Файлы</p>
+            <h3 id="object-files-title">Файлы и документы</h3>
+          </div>
 
-        {object.layoutsUrl ? (
-          <a
-            className="object-detail-action-button object-detail-action-button--secondary"
-            href={object.layoutsUrl}
-            referrerPolicy="no-referrer"
-            rel="noopener noreferrer nofollow"
-            target="_blank"
-          >
-            Показать планировки и цены
-          </a>
-        ) : (
-          <button className="object-detail-action-button object-detail-action-button--disabled" disabled type="button">
-            Планировки отсутствуют
-          </button>
-        )}
+          <div className="object-detail-actions" aria-label="Действия по объекту">
+            {presentationFile ? (
+              <SecureFileButton
+                accessToken={accessToken}
+                className="object-detail-action-button object-detail-action-button--primary"
+                fileId={presentationFile.file.id}
+                label="Показать презентацию"
+                openingLabel="Открываем презентацию"
+                wrapperClassName="object-detail-action"
+              />
+            ) : (
+              <button className="object-detail-action-button object-detail-action-button--disabled" disabled type="button">
+                Презентация отсутствует
+              </button>
+            )}
+
+            {object.layoutsUrl ? (
+              <a
+                className="object-detail-action-button object-detail-action-button--secondary"
+                href={object.layoutsUrl}
+                referrerPolicy="no-referrer"
+                rel="noopener noreferrer nofollow"
+                target="_blank"
+              >
+                Показать планировки и цены
+              </a>
+            ) : (
+              <button className="object-detail-action-button object-detail-action-button--disabled" disabled type="button">
+                Планировки отсутствуют
+              </button>
+            )}
+          </div>
+
+          {otherFiles.length > 0 ? (
+            <FileList accessToken={accessToken} files={otherFiles} title="Документы" />
+          ) : (
+            <p className="muted-text">Дополнительные файлы не загружены.</p>
+          )}
+        </section>
       </div>
 
       <section className="detail-section object-map-section" aria-labelledby="object-map-title">
@@ -255,21 +270,53 @@ function ObjectDetail({
         />
       </section>
 
-      <section className="detail-section" aria-labelledby="object-description-title">
-        <div>
-          <p className="eyebrow">Описание</p>
-          <h3 id="object-description-title">Описание и особенности</h3>
-        </div>
-        {descriptionParagraphs.length > 0 ? (
-          <div className="object-description">
-            {descriptionParagraphs.map((paragraph) => (
-              <p key={paragraph}>{paragraph}</p>
-            ))}
+      <div className="object-description-location-grid">
+        <section className="detail-section object-description-section" aria-labelledby="object-description-title">
+          <div>
+            <p className="eyebrow">Описание</p>
+            <h3 id="object-description-title">Описание и особенности</h3>
           </div>
-        ) : (
-          <p className="muted-text">Описание пока не заполнено.</p>
-        )}
-      </section>
+          {descriptionParagraphs.length > 0 ? (
+            <div className="object-description">
+              {descriptionParagraphs.map((paragraph) => (
+                <p key={paragraph}>{paragraph}</p>
+              ))}
+            </div>
+          ) : (
+            <p className="muted-text">Описание пока не заполнено.</p>
+          )}
+        </section>
+
+        <section className="detail-section object-location-section" aria-labelledby="object-location-title">
+          <div>
+            <p className="eyebrow">Район</p>
+            <h3 id="object-location-title">Район, окружение и метро</h3>
+          </div>
+
+          {locationRows.length > 0 ? (
+            <dl className="location-list">
+              {locationRows.map((row) => (
+                <div key={`${row.label}-${row.value}`}>
+                  <dt>{row.label}</dt>
+                  <dd>{row.value}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : (
+            <p className="muted-text">Район не указан.</p>
+          )}
+
+          {object.metroStations.length > 0 ? (
+            <ul className="metro-list" aria-label="Станции метро">
+              {object.metroStations.map((station) => (
+                <MetroStationItem key={station.id} station={station} />
+              ))}
+            </ul>
+          ) : (
+            <p className="muted-text">Метро не указано.</p>
+          )}
+        </section>
+      </div>
 
       <section className="detail-section object-content-detail-section" aria-labelledby="object-content-sections-title">
         <div>
@@ -297,48 +344,6 @@ function ObjectDetail({
         </div>
       </section>
 
-      <section className="detail-section" aria-labelledby="object-files-title">
-        <div>
-          <p className="eyebrow">Файлы</p>
-          <h3 id="object-files-title">Файлы и документы</h3>
-        </div>
-
-        {otherFiles.length > 0 ? (
-          <FileList accessToken={accessToken} files={otherFiles} title="Документы" />
-        ) : (
-          <p className="muted-text">Дополнительные файлы не загружены.</p>
-        )}
-      </section>
-
-      <section className="detail-section" aria-labelledby="object-location-title">
-        <div>
-          <p className="eyebrow">Район</p>
-          <h3 id="object-location-title">Район, окружение и метро</h3>
-        </div>
-
-        {locationRows.length > 0 ? (
-          <dl className="location-list">
-            {locationRows.map((row) => (
-              <div key={`${row.label}-${row.value}`}>
-                <dt>{row.label}</dt>
-                <dd>{row.value}</dd>
-              </div>
-            ))}
-          </dl>
-        ) : (
-          <p className="muted-text">Район не указан.</p>
-        )}
-
-        {object.metroStations.length > 0 ? (
-          <ul className="metro-list" aria-label="Станции метро">
-            {object.metroStations.map((station) => (
-              <MetroStationItem key={station.id} station={station} />
-            ))}
-          </ul>
-        ) : (
-          <p className="muted-text">Метро не указано.</p>
-        )}
-      </section>
     </div>
   );
 }
@@ -748,20 +753,16 @@ function buildObjectMapBalloon(object: RealEstateObjectDetail, imageUrl: string 
 
 function formatObjectMapMarkerPrice(value: string | null) {
   if (!value) {
-    return 'по запросу/м²';
+    return 'по запросу';
   }
 
   const parsed = Number(value);
 
   if (!Number.isFinite(parsed)) {
-    return `от ${value}/м²`;
+    return `от ${value}`;
   }
 
-  if (parsed >= 1000000) {
-    return `от ${formatCompactRussianNumber(parsed / 1000000)}млн/м²`;
-  }
-
-  return `от ${formatCompactRussianNumber(parsed / 1000)}т/м²`;
+  return `от ${formatCompactRussianNumber(parsed / 1000)}т`;
 }
 
 function formatCompactRussianNumber(value: number) {

@@ -34,20 +34,16 @@ type YandexPlacemark = {
   };
 };
 
-type YandexClusterer = {
-  add: (objects: YandexGeoObject[]) => void;
-  getBounds: () => number[][] | null;
-};
-
 type YandexMapInstance = {
   events: {
     add: (eventName: string, handler: () => void) => void;
     remove: (eventName: string, handler: () => void) => void;
   };
   geoObjects: {
-    add: (object: YandexGeoObject | YandexClusterer) => void;
+    add: (object: YandexGeoObject) => void;
   };
   getBounds: () => number[][] | null;
+  getZoom: () => number;
   setBounds: (bounds: number[][], options?: Record<string, unknown>) => void;
   destroy: () => void;
 };
@@ -64,7 +60,6 @@ type YandexMapsApi = {
     properties: Record<string, string>,
     options?: Record<string, unknown>,
   ) => YandexPlacemark;
-  Clusterer: new (options?: Record<string, unknown>) => YandexClusterer;
   templateLayoutFactory: {
     createClass: (template: string) => unknown;
   };
@@ -78,6 +73,7 @@ declare global {
 }
 
 const yandexMapsScriptId = 'platforma-yandex-maps-js-api';
+const expandedMarkerZoom = 14;
 const defaultEmptyState: YandexMapFallbackState = {
   eyebrow: 'Яндекс.Карта',
   title: 'Нет объектов с координатами',
@@ -203,8 +199,10 @@ function YandexMapApi({
           return;
         }
 
-        map = new ymaps.Map(
-          containerRef.current,
+        const mapContainer = containerRef.current;
+
+        const nextMap = new ymaps.Map(
+          mapContainer,
           {
             center,
             zoom: points.length > 1 ? 11 : 15,
@@ -215,13 +213,8 @@ function YandexMapApi({
             suppressMapOpenBlock: true,
           },
         );
+        map = nextMap;
 
-        const clusterer = new ymaps.Clusterer({
-          clusterDisableClickZoom: false,
-          clusterOpenBalloonOnClick: false,
-          gridSize: 80,
-          preset: 'islands#blueClusterIcons',
-        });
         const markerLayout = ymaps.templateLayoutFactory.createClass(
           [
             '<button class="map-price-marker" type="button"',
@@ -242,12 +235,12 @@ function YandexMapApi({
             },
             {
               iconLayout: markerLayout,
-              iconOffset: [-58, -20],
+              iconOffset: [-18, -18],
               iconShape: {
                 type: 'Rectangle',
                 coordinates: [
-                  [-58, -20],
-                  [58, 20],
+                  [-18, -18],
+                  [128, 18],
                 ],
               },
               openBalloonOnClick: false,
@@ -261,34 +254,39 @@ function YandexMapApi({
           return placemark;
         });
 
-        clusterer.add(placemarks);
-        map.geoObjects.add(clusterer);
+        placemarks.forEach((placemark) => nextMap.geoObjects.add(placemark));
 
         const notifyBoundsChange = () => {
-          if (!map || !onBoundsChange) {
+          if (!onBoundsChange) {
             return;
           }
 
-          const nextBounds = normalizeYandexBounds(map.getBounds());
+          const nextBounds = normalizeYandexBounds(nextMap.getBounds());
 
           if (nextBounds) {
             onBoundsChange(nextBounds);
           }
         };
+        const syncMarkerExpansion = () => {
+          mapContainer.classList.toggle('yandex-map--markers-expanded', nextMap.getZoom() >= expandedMarkerZoom);
+        };
+        handleBoundsChange = () => {
+          syncMarkerExpansion();
+          notifyBoundsChange();
+        };
 
-        handleBoundsChange = notifyBoundsChange;
-        map.events.add('boundschange', notifyBoundsChange);
+        nextMap.events.add('boundschange', handleBoundsChange);
 
-        const bounds = clusterer.getBounds();
+        const bounds = getPointsBounds(points);
 
         if (bounds && points.length > 1) {
-          map.setBounds(bounds, {
+          nextMap.setBounds(bounds, {
             checkZoomRange: true,
             zoomMargin: 48,
           });
         }
 
-        notifyBoundsChange();
+        handleBoundsChange();
         setStatus('ready');
       })
       .catch(() => {
@@ -400,6 +398,20 @@ function getMapCenter(points: YandexMapPoint[]): [number, number] {
   );
 
   return [totals.latitude / points.length, totals.longitude / points.length];
+}
+
+function getPointsBounds(points: YandexMapPoint[]) {
+  if (points.length === 0) {
+    return null;
+  }
+
+  const latitudes = points.map((point) => point.coordinates[0]);
+  const longitudes = points.map((point) => point.coordinates[1]);
+
+  return [
+    [Math.min(...latitudes), Math.min(...longitudes)],
+    [Math.max(...latitudes), Math.max(...longitudes)],
+  ];
 }
 
 function normalizeYandexBounds(bounds: number[][] | null): YandexMapBounds | null {

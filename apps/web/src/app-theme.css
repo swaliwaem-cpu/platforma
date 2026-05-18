@@ -415,7 +415,7 @@ html[data-app-theme] :is(.profile-avatar, .gallery-section-slot-header strong, .
   color: var(--app-theme-ink-800);
 }
 
-html[data-app-theme] :is(.catalog-card-pdf-badge--active, .map-price-marker--selected) {
+html[data-app-theme] :is(.catalog-card-pdf-badge--active) {
   border-color: color-mix(in srgb, var(--app-theme-accent) 32%, var(--app-theme-border));
   background: var(--app-theme-accent);
   color: var(--app-theme-primary-foreground);
@@ -444,19 +444,31 @@ html[data-app-theme] :is(.catalog-card-media-shade) {
 }
 
 html[data-app-theme] :is(.map-price-marker) {
-  border-color: var(--app-theme-surface);
-  background: var(--app-theme-primary);
+  border-color: transparent;
+  background: transparent;
   color: var(--app-theme-primary-foreground);
-  box-shadow: var(--app-theme-shadow-card);
+  box-shadow: none;
 }
 
 html[data-app-theme] .map-price-marker::before {
   border-color: var(--app-theme-surface);
   background: var(--app-theme-primary-deep);
+  box-shadow: var(--app-theme-shadow-card);
+}
+
+html[data-app-theme] .map-price-marker::after {
+  border-color: var(--app-theme-surface);
+  background: var(--app-theme-primary);
+  box-shadow: var(--app-theme-shadow-card);
 }
 
 html[data-app-theme] .map-price-marker--selected::before {
   background: color-mix(in srgb, var(--app-theme-accent) 74%, var(--app-theme-ink-900));
+}
+
+html[data-app-theme] .map-price-marker--selected::after {
+  border-color: color-mix(in srgb, var(--app-theme-accent) 32%, var(--app-theme-border));
+  background: var(--app-theme-accent);
 }
 
 html[data-app-theme] :is(.catalog-map-list, .map-object-card, .map-loading) {
