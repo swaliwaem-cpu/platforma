@@ -164,3 +164,4 @@
 - [x] Keep PDF behavior unchanged.
 - [x] Make `SecureImage` mark `loaded` only after browser image preload finishes.
 - [x] Add image-only `Server-Timing` for `/media/files/:id/content` diagnostics.
+- [x] Use `detail` 1440px image variant inside object lightbox instead of `original`.

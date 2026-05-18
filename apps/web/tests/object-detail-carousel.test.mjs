@@ -15,8 +15,9 @@ test('object detail carousel opens a dialog lightbox from the main image', () =>
   assert.match(source, /aria-modal="true"/);
 });
 
-test('object detail carousel lightbox uses original image variant and keyboard close', () => {
-  assert.match(source, /variant="original"/);
+test('object detail carousel lightbox uses detail image variant and keyboard close', () => {
+  assert.match(source, /className="carousel-modal-image"[\s\S]*?variant="detail"/);
+  assert.doesNotMatch(source, /variant="original"/);
   assert.match(source, /function closeLightbox\(\)\s*\{[\s\S]*?setLightboxIndex\(null\);[\s\S]*?\}/);
   assert.match(source, /event\.key === 'Escape'/);
   assert.match(source, /className="carousel-modal-backdrop"/);

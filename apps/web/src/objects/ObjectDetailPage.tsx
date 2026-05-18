@@ -568,7 +568,7 @@ function ObjectImageCarousel({
                 accessToken={accessToken}
                 alt={lightboxImage.alt ?? objectTitle}
                 fileId={lightboxImage.file.id}
-                variant="original"
+                variant="detail"
               />
             </div>
 

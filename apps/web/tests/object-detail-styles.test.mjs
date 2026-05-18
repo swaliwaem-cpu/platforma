@@ -89,7 +89,7 @@ test('object detail carousel section filter pills share lower hover and touch be
   );
 });
 
-test('object detail carousel modal keeps original image contained', () => {
+test('object detail carousel modal keeps lightbox image contained', () => {
   assert.match(
     styles,
     /\.carousel-modal-backdrop\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?inset:\s*0;[\s\S]*?z-index:\s*90;[\s\S]*?\}/,
