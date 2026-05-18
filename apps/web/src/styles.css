@@ -175,6 +175,45 @@ button {
   line-height: 1.08;
 }
 
+.theme-toggle {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  margin-top: 18px;
+  place-items: center;
+  border: 1px solid #d6dde5;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #303b47;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.theme-toggle:hover {
+  border-color: #2563eb;
+  background: #edf4ff;
+  color: #174ea6;
+}
+
+.theme-toggle:active {
+  transform: translateY(1px);
+}
+
+.theme-toggle:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px rgb(37 99 235 / 16%);
+}
+
+.theme-toggle svg {
+  width: 20px;
+  height: 20px;
+}
+
 .sidebar-toggle {
   position: absolute;
   top: 18px;
@@ -4983,8 +5022,13 @@ tr.user-row--deactivated .text-button {
     --sidebar-collapsed-width: 60px;
   }
 
+  .app-shell--sidebar-open {
+    grid-template-columns: var(--sidebar-collapsed-width) minmax(0, 1fr);
+  }
+
   .sidebar {
     top: 8px;
+    width: var(--sidebar-collapsed-width);
     height: calc(100vh - 16px);
     min-height: auto;
     gap: 24px;
@@ -4992,6 +5036,10 @@ tr.user-row--deactivated .text-button {
     border-bottom: 1px solid #d6dde5;
     border-radius: 0 8px 8px 0;
     padding: 22px 18px;
+  }
+
+  .sidebar--open {
+    width: var(--sidebar-width);
   }
 
   .workspace {

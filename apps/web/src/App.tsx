@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from 'react';
-import { MenuIcon } from 'lucide-react';
+import { MenuIcon, MoonIcon, SunIcon } from 'lucide-react';
 import { platformName, type AuthUser, type UserStatus } from '@platforma/shared';
 
 import platformLogoUrl from '../../../_Fluffy_White_1-02.svg';
@@ -12,7 +12,9 @@ import { apiRequest, apiUrl } from './admin/api';
 import { AuthProvider, useAuth } from './auth/AuthProvider';
 import { CatalogPage } from './catalog/CatalogPage';
 import { ObjectDetailPage } from './objects/ObjectDetailPage';
+import { getAppliedAppTheme, getNextAppTheme, setAppTheme } from './appTheme';
 import './styles.css';
+import './app-theme.css';
 
 type AppSection = 'cabinet' | 'catalog' | 'admin';
 
@@ -173,6 +175,16 @@ function AppRoutes() {
   const { user, isLoading, logout, hasPermission } = useAuth();
   const sidebarRef = useRef<HTMLElement | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [appTheme, setAppThemeState] = useState(() => getAppliedAppTheme());
+  const isDarkTheme = appTheme === 'dark-premium';
+  const themeToggleLabel = isDarkTheme ? 'Включить светлую тему' : 'Включить темную тему';
+
+  const handleThemeToggle = () => {
+    const nextTheme = getNextAppTheme(appTheme);
+
+    setAppTheme(nextTheme);
+    setAppThemeState(nextTheme);
+  };
 
   useEffect(() => {
     if (!isSidebarOpen) {
@@ -243,6 +255,17 @@ function AppRoutes() {
             <img className="sidebar-logo" src={platformLogoUrl} alt="" aria-hidden="true" />
             <h1 className="sidebar-title">Платформа брокеров</h1>
           </div>
+
+          <button
+            className="theme-toggle"
+            type="button"
+            aria-label={themeToggleLabel}
+            title={themeToggleLabel}
+            tabIndex={isSidebarOpen ? 0 : -1}
+            onClick={handleThemeToggle}
+          >
+            {isDarkTheme ? <SunIcon aria-hidden="true" /> : <MoonIcon aria-hidden="true" />}
+          </button>
 
           <nav className="nav-list">
             {visibleNavItems.map((item) => (

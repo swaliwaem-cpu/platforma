@@ -1,0 +1,496 @@
+html[data-app-theme="dark-premium"] {
+  color-scheme: dark;
+  --app-theme-canvas: #0f141a;
+  --app-theme-surface: #151b23;
+  --app-theme-surface-soft: #1b2330;
+  --app-theme-surface-muted: #202a36;
+  --app-theme-control: #121922;
+  --app-theme-ink-900: #f3f6f8;
+  --app-theme-ink-800: #d8e0e8;
+  --app-theme-ink-700: #a9b6c4;
+  --app-theme-ink-600: #8291a2;
+  --app-theme-border-strong: #455263;
+  --app-theme-border: #313d4b;
+  --app-theme-border-soft: #283341;
+  --app-theme-primary: #c8a66a;
+  --app-theme-primary-deep: #e3c681;
+  --app-theme-primary-soft: #2d271c;
+  --app-theme-primary-foreground: #11161c;
+  --app-theme-object: #72bda7;
+  --app-theme-object-deep: #9edac8;
+  --app-theme-object-soft: #18332b;
+  --app-theme-accent: #d0a170;
+  --app-theme-accent-soft: #34261f;
+  --app-theme-success: #8bd7a5;
+  --app-theme-success-soft: #193226;
+  --app-theme-warning: #e8c16e;
+  --app-theme-warning-soft: #342b18;
+  --app-theme-danger: #f1a199;
+  --app-theme-danger-soft: #3b2022;
+  --app-theme-shadow-panel: 0 18px 44px rgb(0 0 0 / 32%);
+  --app-theme-shadow-card: 0 20px 48px rgb(0 0 0 / 36%);
+  --app-theme-shadow-card-hover: 0 26px 68px rgb(0 0 0 / 46%);
+  --app-theme-shadow-overlay: 0 30px 82px rgb(0 0 0 / 54%);
+  --app-theme-focus-primary: 0 0 0 3px rgb(200 166 106 / 23%);
+  --app-theme-focus-object: 0 0 0 3px rgb(114 189 167 / 22%);
+  --app-theme-radius-sm: 6px;
+  --app-theme-radius-md: 8px;
+}
+
+html[data-app-theme="minimal-luxury"] {
+  color-scheme: light;
+  --app-theme-canvas: #f7f6f2;
+  --app-theme-surface: #fffefa;
+  --app-theme-surface-soft: #fbfaf6;
+  --app-theme-surface-muted: #f0ede6;
+  --app-theme-control: #fffefa;
+  --app-theme-ink-900: #1d2228;
+  --app-theme-ink-800: #363b42;
+  --app-theme-ink-700: #686d72;
+  --app-theme-ink-600: #858a8f;
+  --app-theme-border-strong: #c8c0b4;
+  --app-theme-border: #ded7cc;
+  --app-theme-border-soft: #ebe6dd;
+  --app-theme-primary: #222831;
+  --app-theme-primary-deep: #14191f;
+  --app-theme-primary-soft: #eeece7;
+  --app-theme-primary-foreground: #fffefa;
+  --app-theme-object: #345f57;
+  --app-theme-object-deep: #274942;
+  --app-theme-object-soft: #edf4f0;
+  --app-theme-accent: #9a6a43;
+  --app-theme-accent-soft: #f4eadf;
+  --app-theme-success: #2e6f49;
+  --app-theme-success-soft: #ecf6ef;
+  --app-theme-warning: #7b5b18;
+  --app-theme-warning-soft: #fff6db;
+  --app-theme-danger: #a64237;
+  --app-theme-danger-soft: #fff1ee;
+  --app-theme-shadow-panel: 0 1px 0 rgb(29 34 40 / 4%), 0 12px 34px rgb(29 34 40 / 4%);
+  --app-theme-shadow-card: 0 1px 0 rgb(29 34 40 / 4%), 0 16px 38px rgb(29 34 40 / 5%);
+  --app-theme-shadow-card-hover: 0 1px 0 rgb(29 34 40 / 5%), 0 22px 52px rgb(29 34 40 / 8%);
+  --app-theme-shadow-overlay: 0 24px 72px rgb(29 34 40 / 14%);
+  --app-theme-focus-primary: 0 0 0 3px rgb(34 40 49 / 14%);
+  --app-theme-focus-object: 0 0 0 3px rgb(52 95 87 / 16%);
+  --app-theme-radius-sm: 5px;
+  --app-theme-radius-md: 7px;
+}
+
+html[data-app-theme] {
+  color: var(--app-theme-ink-900);
+  background: var(--app-theme-canvas);
+  --catalog-ink-900: var(--app-theme-ink-900);
+  --catalog-ink-800: var(--app-theme-ink-800);
+  --catalog-ink-700: var(--app-theme-ink-700);
+  --catalog-ink-600: var(--app-theme-ink-600);
+  --catalog-canvas: var(--app-theme-canvas);
+  --catalog-panel: var(--app-theme-surface);
+  --catalog-panel-soft: var(--app-theme-surface-soft);
+  --catalog-panel-green: var(--app-theme-object-soft);
+  --catalog-border-strong: var(--app-theme-border-strong);
+  --catalog-border: var(--app-theme-border);
+  --catalog-border-soft: var(--app-theme-border-soft);
+  --catalog-blue: var(--app-theme-primary);
+  --catalog-blue-deep: var(--app-theme-primary-deep);
+  --catalog-blue-soft: var(--app-theme-primary-soft);
+  --catalog-forest: var(--app-theme-object);
+  --catalog-forest-deep: var(--app-theme-object-deep);
+  --catalog-forest-soft: var(--app-theme-object-soft);
+  --catalog-copper: var(--app-theme-accent);
+  --catalog-copper-soft: var(--app-theme-accent-soft);
+  --catalog-warning: var(--app-theme-warning);
+  --catalog-warning-soft: var(--app-theme-warning-soft);
+  --catalog-danger: var(--app-theme-danger);
+  --catalog-danger-soft: var(--app-theme-danger-soft);
+  --catalog-shadow-panel: var(--app-theme-shadow-panel);
+  --catalog-shadow-card: var(--app-theme-shadow-card);
+  --catalog-shadow-card-hover: var(--app-theme-shadow-card-hover);
+  --catalog-shadow-overlay: var(--app-theme-shadow-overlay);
+  --catalog-radius-sm: var(--app-theme-radius-sm);
+  --catalog-radius-md: var(--app-theme-radius-md);
+  --background: var(--app-theme-canvas);
+  --foreground: var(--app-theme-ink-900);
+  --card: var(--app-theme-surface);
+  --card-foreground: var(--app-theme-ink-900);
+  --popover: var(--app-theme-surface);
+  --popover-foreground: var(--app-theme-ink-900);
+  --primary: var(--app-theme-primary);
+  --primary-foreground: var(--app-theme-primary-foreground);
+  --secondary: var(--app-theme-surface-soft);
+  --secondary-foreground: var(--app-theme-ink-800);
+  --muted: var(--app-theme-surface-soft);
+  --muted-foreground: var(--app-theme-ink-700);
+  --accent: var(--app-theme-primary-soft);
+  --accent-foreground: var(--app-theme-primary-deep);
+  --destructive: var(--app-theme-danger);
+  --border: var(--app-theme-border);
+  --input: var(--app-theme-border-strong);
+  --ring: var(--app-theme-primary);
+  --sidebar: var(--app-theme-surface);
+  --sidebar-foreground: var(--app-theme-ink-900);
+  --sidebar-primary: var(--app-theme-primary);
+  --sidebar-primary-foreground: var(--app-theme-primary-foreground);
+  --sidebar-accent: var(--app-theme-primary-soft);
+  --sidebar-accent-foreground: var(--app-theme-primary-deep);
+  --sidebar-border: var(--app-theme-border);
+  --sidebar-ring: var(--app-theme-primary);
+}
+
+html[data-app-theme],
+html[data-app-theme] body {
+  background: var(--app-theme-canvas);
+  color: var(--app-theme-ink-900);
+}
+
+html[data-app-theme] ::selection {
+  background: color-mix(in srgb, var(--app-theme-primary) 22%, transparent);
+}
+
+html[data-app-theme] :is(h1, h2, h3, h4, .sidebar-title, .editor-panel h3, .admin-action-card h3, .object-detail-header h2, .detail-section h3, .object-content-section-item h4, .detail-file-list strong, .metro-list strong, .map-object-card h3) {
+  color: var(--app-theme-ink-900);
+  letter-spacing: 0;
+}
+
+html[data-app-theme] :is(.eyebrow, label, .toolbar-field, .catalog-link-field, .helper-text, .muted-text, dt, .table-meta, .pagination, .table-subtext, .catalog-count, .object-detail-location-line, .permission-group-title, .object-content-section-text--empty) {
+  color: var(--app-theme-ink-700);
+}
+
+html[data-app-theme] :is(.workspace, .app-shell, .login-shell) {
+  background: var(--app-theme-canvas);
+}
+
+html[data-app-theme] :is(
+  .sidebar,
+  .login-panel,
+  .content-panel,
+  .admin-users .page-header,
+  .admin-objects .page-header,
+  .admin-catalog-links .page-header,
+  .admin-import .page-header,
+  .admin-users .toolbar,
+  .admin-objects .toolbar,
+  .admin-import .toolbar,
+  .table-panel,
+  .editor-panel,
+  .admin-panel,
+  .catalog-page .page-header,
+  .catalog-filters,
+  .catalog-sort-bar,
+  .catalog-quick-links,
+  .catalog-list,
+  .catalog-pagination,
+  .catalog-map-panel,
+  .object-detail-hero,
+  .detail-section,
+  .object-image-carousel,
+  .gallery-modal,
+  .map-object-card
+) {
+  border-color: var(--app-theme-border);
+  border-radius: var(--app-theme-radius-md);
+  background: var(--app-theme-surface);
+  color: var(--app-theme-ink-900);
+  box-shadow: var(--app-theme-shadow-panel);
+}
+
+html[data-app-theme] :is(.catalog-card, .catalog-list-item, .admin-action-card) {
+  border-color: var(--app-theme-border);
+  border-radius: var(--app-theme-radius-md);
+  background: var(--app-theme-surface);
+  box-shadow: var(--app-theme-shadow-card);
+}
+
+html[data-app-theme] :is(.catalog-card:hover, .catalog-card:focus-within, .catalog-list-item:hover, .catalog-list-item:focus-within) {
+  border-color: color-mix(in srgb, var(--app-theme-primary) 28%, var(--app-theme-border));
+  background: color-mix(in srgb, var(--app-theme-primary-soft) 44%, var(--app-theme-surface));
+  box-shadow: var(--app-theme-shadow-card-hover);
+}
+
+html[data-app-theme] :is(
+  .admin-action-card,
+  .cabinet-section-list li,
+  .role-permissions-panel,
+  .permission-chip--role,
+  .catalog-link-row,
+  .catalog-link-empty,
+  .preview-facts div,
+  .upload-row,
+  .gallery-item,
+  .file-list li,
+  .gallery-cover-slot,
+  .gallery-section-slot,
+  .gallery-upload-dropzone,
+  .gallery-tile-button,
+  .gallery-tile-preview,
+  .object-detail-metrics div,
+  .object-layouts-cta,
+  .object-parameters-grid div,
+  .feature-grid div,
+  .empty-detail-block,
+  .detail-file-list li,
+  .metro-list li,
+  .report-summary div,
+  .report-issue-card,
+  .report-issue-meta div,
+  .report-issue-raw pre
+) {
+  border-color: var(--app-theme-border-soft);
+  background: var(--app-theme-surface-soft);
+  color: var(--app-theme-ink-800);
+}
+
+html[data-app-theme] :is(input, select, textarea, [data-slot="input"], .catalog-filter-search input, .catalog-filter-fields input, .catalog-filter-fields select, .catalog-link-field input, .catalog-link-field select) {
+  border-color: var(--app-theme-border-strong);
+  background: var(--app-theme-control);
+  color: var(--app-theme-ink-900);
+  caret-color: var(--app-theme-primary);
+}
+
+html[data-app-theme] :is(input, select, textarea, [data-slot="input"])::placeholder {
+  color: var(--app-theme-ink-600);
+}
+
+html[data-app-theme] :is(input, select, textarea, [data-slot="input"]):hover {
+  border-color: color-mix(in srgb, var(--app-theme-primary) 34%, var(--app-theme-border-strong));
+}
+
+html[data-app-theme] :is(input, select, textarea, [data-slot="input"]):focus,
+html[data-app-theme] :is(input, select, textarea, [data-slot="input"]):focus-visible {
+  border-color: var(--app-theme-primary);
+  box-shadow: var(--app-theme-focus-primary);
+}
+
+html[data-app-theme] :is(.primary-button, .admin-button--primary, .catalog-filter-toggle, .catalog-map-button, .catalog-card-link, .catalog-list-item-link:hover, .catalog-list-item-link:focus-visible) {
+  border-color: var(--app-theme-primary);
+  background: var(--app-theme-primary);
+  color: var(--app-theme-primary-foreground);
+  box-shadow: none;
+}
+
+html[data-app-theme] :is(.primary-button:hover, .primary-button:focus-visible, .admin-button--primary:hover, .admin-button--primary:focus-visible, .catalog-filter-toggle:hover, .catalog-filter-toggle:focus-visible, .catalog-map-button:hover, .catalog-map-button:focus-visible, .catalog-card-link:hover, .catalog-card-link:focus-visible) {
+  border-color: var(--app-theme-primary-deep);
+  background: var(--app-theme-primary-deep);
+  color: var(--app-theme-primary-foreground);
+  box-shadow: var(--app-theme-focus-primary);
+}
+
+html[data-app-theme] :is(.secondary-button, .admin-button--secondary, .object-detail-edit-link, .object-detail-action-button--secondary, .catalog-view-toggle, .catalog-list-item-link, .catalog-map-list-header .text-button, .catalog-map-list-toggle, .sidebar-toggle, .theme-toggle) {
+  border-color: var(--app-theme-border);
+  background: var(--app-theme-surface);
+  color: var(--app-theme-ink-800);
+  box-shadow: none;
+}
+
+html[data-app-theme] :is(.secondary-button:hover, .secondary-button:focus-visible, .admin-button--secondary:hover, .admin-button--secondary:focus-visible, .object-detail-edit-link:hover, .object-detail-edit-link:focus-visible, .object-detail-action-button--secondary:hover, .object-detail-action-button--secondary:focus-visible, .catalog-view-toggle:hover, .catalog-view-toggle:focus-visible, .catalog-list-item-link:hover, .catalog-list-item-link:focus-visible, .catalog-map-list-header .text-button:hover, .catalog-map-list-header .text-button:focus-visible, .catalog-map-list-toggle:hover, .catalog-map-list-toggle:focus-visible, .sidebar-toggle:hover, .sidebar-toggle:focus-visible, .theme-toggle:hover, .theme-toggle:focus-visible) {
+  border-color: var(--app-theme-primary);
+  background: var(--app-theme-primary-soft);
+  color: var(--app-theme-primary-deep);
+  box-shadow: var(--app-theme-focus-primary);
+}
+
+html[data-app-theme] :is(.object-detail-action-button--primary, .object-layouts-cta a, .admin-button--success, .success-button) {
+  border-color: var(--app-theme-object);
+  background: var(--app-theme-object);
+  color: var(--app-theme-primary-foreground);
+}
+
+html[data-app-theme] :is(.object-detail-action-button--primary:hover, .object-detail-action-button--primary:focus-visible, .object-layouts-cta a:hover, .object-layouts-cta a:focus-visible) {
+  background: var(--app-theme-object-deep);
+  box-shadow: var(--app-theme-focus-object);
+}
+
+html[data-app-theme] :is(.text-button, .admin-button--text, .catalog-quick-links .text-button, .catalog-map-list a, .catalog-map-list button, .map-balloon a, .catalog-link-public-url) {
+  color: var(--app-theme-primary-deep);
+}
+
+html[data-app-theme] :is(.text-button:hover, .text-button:focus-visible, .admin-button--text:hover, .admin-button--text:focus-visible, .catalog-quick-links .text-button:hover, .catalog-quick-links .text-button:focus-visible) {
+  color: var(--app-theme-primary-deep);
+  background: var(--app-theme-primary-soft);
+  box-shadow: var(--app-theme-focus-primary);
+}
+
+html[data-app-theme] :is(.nav-item) {
+  background: transparent;
+  color: var(--app-theme-ink-800);
+}
+
+html[data-app-theme] :is(.nav-item:hover, .nav-item--active) {
+  border-color: var(--app-theme-primary);
+  background: var(--app-theme-primary-soft);
+  color: var(--app-theme-primary-deep);
+}
+
+html[data-app-theme] :is(table, .admin-table) {
+  color: var(--app-theme-ink-800);
+  font-variant-numeric: tabular-nums;
+}
+
+html[data-app-theme] :is(th, td, .catalog-links-meta, .catalog-link-column, .object-form-section, .user-form-section, .permission-group, .catalog-filter-fields, .object-content-sections, .object-content-section-item, .details-list div, .object-detail-facts div, .location-list div, .catalog-card-actions, .catalog-list-item + .catalog-list-item, .catalog-map-list li) {
+  border-color: var(--app-theme-border-soft);
+}
+
+html[data-app-theme] th {
+  color: var(--app-theme-ink-700);
+  background: color-mix(in srgb, var(--app-theme-surface-soft) 76%, var(--app-theme-surface));
+  font-weight: 800;
+}
+
+html[data-app-theme] td {
+  color: var(--app-theme-ink-800);
+}
+
+html[data-app-theme] tbody tr:hover td {
+  background: color-mix(in srgb, var(--app-theme-primary-soft) 62%, var(--app-theme-surface));
+}
+
+html[data-app-theme] :is(tr.is-selected td, .catalog-map-list-item--selected) {
+  background: var(--app-theme-primary-soft);
+}
+
+html[data-app-theme] tr.user-row--deactivated td {
+  background: var(--app-theme-surface-muted);
+  color: var(--app-theme-ink-600);
+}
+
+html[data-app-theme] :is(.user-identity-cell strong, .object-title-cell strong, .object-price-cell, .import-start-cell strong, .import-metric-cell strong, .catalog-card-price, .catalog-card h3, .catalog-list-item h3, .catalog-list-item-price, .object-detail-metrics dd, .object-parameters-grid dd, .preview-facts dd, .report-summary dd) {
+  color: var(--app-theme-ink-900);
+  font-variant-numeric: tabular-nums;
+}
+
+html[data-app-theme] :is(.object-description, .object-content-section-text) {
+  color: var(--app-theme-ink-800);
+}
+
+html[data-app-theme] :is(.table-subtext, .muted-cell, .cabinet-section-main span, .admin-action-card p, .user-form-section-header p, .role-permissions-title p, .object-form-section-header p, .catalog-link-column-header p, .preview-meta, .preview-detail-list span, .file-actions span, .import-metric-cell span, .import-report-user span, .report-section-header span, .report-issue-meta dt, .detail-file-list span, .metro-list span, .detail-file-action span, .object-detail-action span, .permission-chip--role code, .map-object-card dt, .map-object-card-image--empty, .map-fallback, .map-loading) {
+  color: var(--app-theme-ink-700);
+}
+
+html[data-app-theme] :is(.role-pill, .import-mode-pill--preview, .catalog-view-toggle--list, .table-sort-button--active) {
+  border-color: color-mix(in srgb, var(--app-theme-primary) 24%, var(--app-theme-border));
+  background: var(--app-theme-primary-soft);
+  color: var(--app-theme-primary-deep);
+}
+
+html[data-app-theme] :is(.permission-chip, .panel-count, .gallery-tile-status, .import-mode-pill, .report-issue-code, .report-issue-severity) {
+  border-color: var(--app-theme-border-soft);
+  background: var(--app-theme-surface-muted);
+  color: var(--app-theme-ink-700);
+}
+
+html[data-app-theme] :is(.status-pill--active, .object-status--published, .gallery-tile-status--section, .import-mode-pill--run, .import-status--success) {
+  border-color: color-mix(in srgb, var(--app-theme-success) 28%, var(--app-theme-border));
+  background: var(--app-theme-success-soft);
+  color: var(--app-theme-success);
+}
+
+html[data-app-theme] :is(.status-pill--blocked, .object-detail-action-button--disabled, .danger-button, .admin-button--danger, .admin-alert--error, .deactivation-confirm, .report-summary-item--danger, .report-issue-card--error, .import-status--failed) {
+  border-color: color-mix(in srgb, var(--app-theme-danger) 32%, var(--app-theme-border));
+  background: var(--app-theme-danger-soft);
+  color: var(--app-theme-danger);
+}
+
+html[data-app-theme] :is(.status-pill--invited, .object-status--draft, .report-summary-item--warning, .report-issue-card--warning, .import-status--partial) {
+  border-color: color-mix(in srgb, var(--app-theme-warning) 32%, var(--app-theme-border));
+  background: var(--app-theme-warning-soft);
+  color: var(--app-theme-warning);
+}
+
+html[data-app-theme] :is(.status-pill--deactivated, .object-status--archived) {
+  border-color: var(--app-theme-border-soft);
+  background: var(--app-theme-surface-muted);
+  color: var(--app-theme-ink-700);
+}
+
+html[data-app-theme] :is(.form-error, .text-button--danger) {
+  color: var(--app-theme-danger);
+}
+
+html[data-app-theme] :is(.form-notice, .admin-alert--notice) {
+  color: var(--app-theme-success);
+}
+
+html[data-app-theme] :is(.profile-avatar, .gallery-section-slot-header strong, .catalog-card-location > span, .catalog-card-facts div, .catalog-count) {
+  border-color: var(--app-theme-border-soft);
+  background: var(--app-theme-surface-soft);
+  color: var(--app-theme-ink-800);
+}
+
+html[data-app-theme] :is(.catalog-card-pdf-badge--active, .map-price-marker--selected) {
+  border-color: color-mix(in srgb, var(--app-theme-accent) 32%, var(--app-theme-border));
+  background: var(--app-theme-accent);
+  color: var(--app-theme-primary-foreground);
+}
+
+html[data-app-theme] :is(.catalog-card-media, .catalog-list-item-media, .map-object-card-image, .preview-media, .gallery-thumb, .gallery-cover-preview, .gallery-cover-placeholder, .gallery-section-thumbnail, .gallery-section-more, .object-image-carousel--empty, .object-carousel-media, .carousel-thumbnail, .object-gallery-item, .map-fallback, .map-balloon-image) {
+  border-color: var(--app-theme-border-soft);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--app-theme-object) 10%, transparent), color-mix(in srgb, var(--app-theme-accent) 10%, transparent)),
+    var(--app-theme-surface-muted);
+  color: var(--app-theme-ink-700);
+}
+
+html[data-app-theme] .carousel-thumbnail--active {
+  border-color: var(--app-theme-primary);
+}
+
+html[data-app-theme] .carousel-thumbnail:focus-visible {
+  outline: 0;
+  border-color: var(--app-theme-primary-deep);
+  box-shadow: var(--app-theme-focus-primary);
+}
+
+html[data-app-theme] :is(.catalog-card-media-shade) {
+  background: linear-gradient(180deg, rgb(15 20 26 / 36%) 0%, rgb(15 20 26 / 6%) 48%, transparent 100%);
+}
+
+html[data-app-theme] :is(.map-price-marker) {
+  border-color: var(--app-theme-surface);
+  background: var(--app-theme-primary);
+  color: var(--app-theme-primary-foreground);
+  box-shadow: var(--app-theme-shadow-card);
+}
+
+html[data-app-theme] .map-price-marker::before {
+  border-color: var(--app-theme-surface);
+  background: var(--app-theme-primary-deep);
+}
+
+html[data-app-theme] .map-price-marker--selected::before {
+  background: color-mix(in srgb, var(--app-theme-accent) 74%, var(--app-theme-ink-900));
+}
+
+html[data-app-theme] :is(.catalog-map-list, .map-object-card, .map-loading) {
+  background: color-mix(in srgb, var(--app-theme-surface) 94%, transparent);
+  box-shadow: var(--app-theme-shadow-overlay);
+}
+
+html[data-app-theme] :is(.map-balloon) {
+  color: var(--app-theme-ink-800);
+}
+
+html[data-app-theme] :is(.map-balloon strong, .map-object-card dd, .map-object-card p) {
+  color: var(--app-theme-ink-900);
+}
+
+html[data-app-theme] :is(.carousel-button, .carousel-counter, .carousel-section-filter, .carousel-modal-close, .carousel-modal-button, .carousel-modal-counter, .object-gallery-item figcaption) {
+  border-color: color-mix(in srgb, var(--app-theme-surface) 42%, transparent);
+  background: color-mix(in srgb, var(--app-theme-ink-900) 78%, transparent);
+  color: var(--app-theme-surface);
+}
+
+html[data-app-theme="dark-premium"] :is(.sidebar-logo, .catalog-card-media img, .catalog-list-item-media img, .object-carousel-media img, .object-gallery-item img, .map-object-card-image, .preview-media img, .gallery-thumb img) {
+  filter: saturate(0.92) contrast(1.02);
+}
+
+html[data-app-theme="dark-premium"] :is(.carousel-button, .carousel-counter, .carousel-section-filter, .carousel-modal-close, .carousel-modal-button, .carousel-modal-counter, .object-gallery-item figcaption) {
+  background: rgb(0 0 0 / 72%);
+  color: #ffffff;
+}
+
+html[data-app-theme="minimal-luxury"] :is(.sidebar, .login-panel, .content-panel, .table-panel, .editor-panel, .admin-panel, .catalog-card, .catalog-list, .catalog-filters, .catalog-sort-bar, .catalog-quick-links, .object-detail-hero, .detail-section) {
+  box-shadow: var(--app-theme-shadow-panel);
+}
+
+html[data-app-theme="minimal-luxury"] :is(.admin-button, .primary-button, .secondary-button, .catalog-card-link, .catalog-map-button, .catalog-filter-toggle, .object-detail-action-button) {
+  font-weight: 760;
+}
