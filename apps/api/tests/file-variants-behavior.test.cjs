@@ -330,3 +330,55 @@ test('MediaController.getContent delegates to FilesService and shares content he
   assert.equal(headers['Content-Disposition'], 'inline; filename="Card.webp"');
   assert.deepEqual(response.body, Buffer.from('media body'));
 });
+
+test('MediaController.getContent adds image server timing without changing PDF headers', async () => {
+  const imageController = new MediaController({
+    getContent: async () => ({
+      file: createFileRecord({
+        mimeType: 'image/webp',
+        originalName: 'Card.webp',
+      }),
+      buffer: Buffer.from('media body'),
+      variant: 'card',
+    }),
+  });
+  const imageHeaders = {};
+  const imageResponse = {
+    setHeader: (name, value) => {
+      imageHeaders[name] = value;
+    },
+    send: (body) => {
+      imageResponse.body = body;
+    },
+  };
+
+  await imageController.getContent('11111111-1111-4111-8111-111111111111', 'card', imageResponse);
+
+  assert.match(String(imageHeaders['Server-Timing']), /^platforma-media;dur=\d+(\.\d+)?$/);
+
+  const pdfController = new MediaController({
+    getContent: async () => ({
+      file: createFileRecord({
+        mimeType: 'application/pdf',
+        originalName: 'presentation.pdf',
+      }),
+      buffer: Buffer.from('pdf body'),
+      variant: 'original',
+    }),
+  });
+  const pdfHeaders = {};
+  const pdfResponse = {
+    setHeader: (name, value) => {
+      pdfHeaders[name] = value;
+    },
+    send: (body) => {
+      pdfResponse.body = body;
+    },
+  };
+
+  await pdfController.getContent('11111111-1111-4111-8111-111111111111', undefined, pdfResponse);
+
+  assert.equal(pdfHeaders['Content-Type'], 'application/pdf');
+  assert.equal(pdfHeaders['Cache-Control'], 'private, max-age=300');
+  assert.equal(pdfHeaders['Server-Timing'], undefined);
+});

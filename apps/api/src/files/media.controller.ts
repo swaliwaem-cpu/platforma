@@ -15,8 +15,11 @@ export class MediaController {
     @Query('variant') variant: string | undefined,
     @Res() response: FileContentResponse,
   ) {
+    const startedAt = Date.now();
     const content = await this.filesService.getContent(id, variant);
 
-    sendFileContentResponse(response, content);
+    sendFileContentResponse(response, content, {
+      serverTimingDurationMs: Date.now() - startedAt,
+    });
   }
 }

@@ -156,3 +156,11 @@
 - The project currently has no object-level ACL for files; existing `/files/:id/content` is protected only by generic `objects:read`.
 - The risk of role change or user blocking during the 200-minute TTL is accepted for this version.
 - File metadata caching and MinIO streaming are not part of this task; they remain separate optimizations if media-token does not remove enough latency.
+
+---
+
+## 6. Production follow-up: image loading UX and media diagnostics
+
+- [x] Keep PDF behavior unchanged.
+- [x] Make `SecureImage` mark `loaded` only after browser image preload finishes.
+- [x] Add image-only `Server-Timing` for `/media/files/:id/content` diagnostics.

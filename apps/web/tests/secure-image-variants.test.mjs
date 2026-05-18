@@ -34,6 +34,15 @@ test('secure image default loading state does not show visible copy', () => {
   assert.doesNotMatch(secureImageSource, /loadingFallback = 'Загрузка изображения'/);
 });
 
+test('secure image marks loaded only after browser image preload finishes', () => {
+  const secureImageSource = readFileSync(secureImagePath, 'utf8');
+
+  assert.match(secureImageSource, /const preloadImage = new Image\(\)/);
+  assert.match(secureImageSource, /preloadImage\.onload = \(\) => \{/);
+  assert.match(secureImageSource, /setSrc\(nextSrc\);[\s\S]*setStatus\('loaded'\);/);
+  assert.doesNotMatch(secureImageSource, /setSrc\(buildMediaFileContentUrl\(fileId, normalizedVariant\)\);\s*setStatus\('loaded'\);/);
+});
+
 test('catalog loads cover images lazily as card variants', () => {
   assert.match(catalogSource, /from '\.\.\/files\/SecureImage'/);
   assert.match(catalogSource, /variant="card"/);

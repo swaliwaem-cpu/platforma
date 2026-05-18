@@ -151,11 +151,42 @@ export function useSecureImageObjectUrl({
       return () => undefined;
     }
 
-    setStatus('loading');
-    setSrc(buildMediaFileContentUrl(fileId, normalizedVariant));
-    setStatus('loaded');
+    let isCancelled = false;
+    const nextSrc = buildMediaFileContentUrl(fileId, normalizedVariant);
 
-    return () => undefined;
+    setStatus('loading');
+
+    if (typeof Image === 'undefined') {
+      setSrc(nextSrc);
+      setStatus('loaded');
+
+      return () => undefined;
+    }
+
+    const preloadImage = new Image();
+
+    preloadImage.onload = () => {
+      if (isCancelled) {
+        return;
+      }
+
+      setSrc(nextSrc);
+      setStatus('loaded');
+    };
+
+    preloadImage.onerror = () => {
+      if (!isCancelled) {
+        setStatus('error');
+      }
+    };
+
+    preloadImage.src = nextSrc;
+
+    return () => {
+      isCancelled = true;
+      preloadImage.onload = null;
+      preloadImage.onerror = null;
+    };
   }, [accessToken, fileId, normalizedVariant, shouldLoad]);
 
   return {
