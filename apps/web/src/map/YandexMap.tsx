@@ -34,10 +34,16 @@ type YandexPlacemark = {
   };
 };
 
+type YandexEventManager = {
+  add: (eventName: string, handler: () => void) => void;
+  remove: (eventName: string, handler: () => void) => void;
+};
+
 type YandexMapInstance = {
-  events: {
-    add: (eventName: string, handler: () => void) => void;
-    remove: (eventName: string, handler: () => void) => void;
+  events: YandexEventManager;
+  container: {
+    events: YandexEventManager;
+    fitToViewport: (preservePixelPosition?: boolean) => void;
   };
   geoObjects: {
     add: (object: YandexGeoObject) => void;
@@ -190,6 +196,10 @@ function YandexMapApi({
     let isCancelled = false;
     let map: YandexMapInstance | null = null;
     let handleBoundsChange: (() => void) | null = null;
+    let handleFullscreenEnter: (() => void) | null = null;
+    let handleFullscreenExit: (() => void) | null = null;
+    let boundsBeforeFullscreen: YandexMapBounds | null = null;
+    let resizeFrameId: number | null = null;
 
     setStatus('loading');
 
@@ -274,8 +284,37 @@ function YandexMapApi({
           syncMarkerExpansion();
           notifyBoundsChange();
         };
+        const scheduleViewportUpdate = (restoreBounds: boolean) => {
+          if (resizeFrameId !== null) {
+            window.cancelAnimationFrame(resizeFrameId);
+          }
+
+          resizeFrameId = window.requestAnimationFrame(() => {
+            resizeFrameId = null;
+
+            nextMap.container.fitToViewport();
+
+            if (restoreBounds && boundsBeforeFullscreen) {
+              nextMap.setBounds(boundsBeforeFullscreen, {
+                checkZoomRange: true,
+              });
+              boundsBeforeFullscreen = null;
+            }
+
+            handleBoundsChange?.();
+          });
+        };
+        handleFullscreenEnter = () => {
+          boundsBeforeFullscreen = normalizeYandexBounds(nextMap.getBounds());
+          scheduleViewportUpdate(false);
+        };
+        handleFullscreenExit = () => {
+          scheduleViewportUpdate(true);
+        };
 
         nextMap.events.add('boundschange', handleBoundsChange);
+        nextMap.container.events.add('fullscreenenter', handleFullscreenEnter);
+        nextMap.container.events.add('fullscreenexit', handleFullscreenExit);
 
         const bounds = getPointsBounds(points);
 
@@ -301,6 +340,18 @@ function YandexMapApi({
       if (map) {
         if (handleBoundsChange) {
           map.events.remove('boundschange', handleBoundsChange);
+        }
+
+        if (handleFullscreenEnter) {
+          map.container.events.remove('fullscreenenter', handleFullscreenEnter);
+        }
+
+        if (handleFullscreenExit) {
+          map.container.events.remove('fullscreenexit', handleFullscreenExit);
+        }
+
+        if (resizeFrameId !== null) {
+          window.cancelAnimationFrame(resizeFrameId);
         }
 
         map.destroy();

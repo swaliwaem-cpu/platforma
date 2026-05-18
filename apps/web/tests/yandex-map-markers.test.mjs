@@ -52,6 +52,16 @@ test('yandex map expands marker labels only on close zoom', () => {
   assert.match(mapSource, /\w+\.events\.add\('boundschange', handleBoundsChange\);/);
 });
 
+test('yandex map refits viewport after fullscreen size changes', () => {
+  assert.match(mapSource, /container:\s*\{[\s\S]*fitToViewport:/);
+  assert.match(mapSource, /let boundsBeforeFullscreen: YandexMapBounds \| null = null;/);
+  assert.match(mapSource, /boundsBeforeFullscreen = normalizeYandexBounds\(nextMap\.getBounds\(\)\);/);
+  assert.match(mapSource, /nextMap\.container\.events\.add\('fullscreenenter', handleFullscreenEnter\);/);
+  assert.match(mapSource, /nextMap\.container\.events\.add\('fullscreenexit', handleFullscreenExit\);/);
+  assert.match(mapSource, /nextMap\.container\.fitToViewport\(\);[\s\S]*?nextMap\.setBounds\(boundsBeforeFullscreen, \{/);
+  assert.match(mapSource, /\w+\.container\.events\.remove\('fullscreenexit', handleFullscreenExit\);/);
+});
+
 test('map marker labels omit price-per-meter suffixes', () => {
   const catalogMarkerFormatter = getFunctionBody(catalogSource, 'formatMapMarkerPrice');
   const objectMarkerFormatter = getFunctionBody(objectDetailSource, 'formatObjectMapMarkerPrice');
@@ -87,5 +97,17 @@ test('map marker CSS starts as a circle and animates an oval label from it', () 
   assert.match(
     styles,
     /\.yandex-map--markers-expanded \.map-price-marker span\s*\{[\s\S]*?opacity:\s*1;[\s\S]*?transform:\s*translateX\(0\);[\s\S]*?\}/,
+  );
+});
+
+test('catalog map layout stays bounded after fullscreen exits', () => {
+  assert.match(styles, /\.catalog-page\s*\{[\s\S]*?width:\s*min\(100%,\s*1360px\);[\s\S]*?min-width:\s*0;/);
+  assert.match(styles, /\.catalog-map-layout\s*\{[\s\S]*?min-width:\s*0;[\s\S]*?max-width:\s*100%;/);
+  assert.match(styles, /\.catalog-map-panel\s*\{[\s\S]*?min-width:\s*0;[\s\S]*?max-width:\s*100%;/);
+  assert.match(styles, /\.yandex-map-shell\s*\{[\s\S]*?height:\s*640px;[\s\S]*?overflow:\s*hidden;/);
+  assert.match(styles, /\.yandex-map\s*\{[\s\S]*?height:\s*640px;[\s\S]*?overflow:\s*hidden;/);
+  assert.match(
+    styles,
+    /@media\s*\(max-width:\s*760px\)\s*\{[\s\S]*?\.yandex-map-shell,\s*[\s\S]*?\.yandex-map,\s*[\s\S]*?\.map-fallback\s*\{[\s\S]*?height:\s*420px;/,
   );
 });

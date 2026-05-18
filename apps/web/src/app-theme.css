@@ -503,6 +503,13 @@ html[data-app-theme="minimal-luxury"] :is(.sidebar, .login-panel, .content-panel
   box-shadow: var(--app-theme-shadow-panel);
 }
 
+html[data-app-theme] .sidebar:not(.sidebar--open) {
+  border-width: 0;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
 html[data-app-theme="minimal-luxury"] :is(.admin-button, .primary-button, .secondary-button, .catalog-card-link, .catalog-map-button, .catalog-filter-toggle, .object-detail-action-button) {
   font-weight: 760;
 }

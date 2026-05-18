@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import { MenuIcon, MoonIcon, SunIcon } from 'lucide-react';
-import { platformName, type AuthUser, type UserStatus } from '@platforma/shared';
+import type { AuthUser, UserStatus } from '@platforma/shared';
 
 import platformLogoUrl from '../../../_Fluffy_White_1-02.svg';
 import { CatalogLinksAdminPage } from './admin/CatalogLinksAdminPage';
@@ -233,7 +233,7 @@ function AppRoutes() {
   );
 
   return (
-    <main className={isSidebarOpen ? 'app-shell app-shell--sidebar-open' : 'app-shell'}>
+    <main className="app-shell">
       <aside
         ref={sidebarRef}
         className={isSidebarOpen ? 'sidebar sidebar--open' : 'sidebar'}
@@ -402,8 +402,8 @@ function LoginPage({ onSuccess }: { onSuccess: () => void }) {
   return (
     <main className="login-shell">
       <section className="login-panel" aria-labelledby="login-title">
-        <p className="eyebrow">Closed platform</p>
-        <h1 id="login-title">{platformName}</h1>
+        <p className="eyebrow">Платформа брокеров</p>
+        <h1 id="login-title">Fluffy White</h1>
 
         <form className="login-form" onSubmit={(event) => void handleSubmit(event)}>
           <label>

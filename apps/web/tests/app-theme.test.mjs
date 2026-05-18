@@ -106,15 +106,27 @@ test('sidebar exposes an icon-only theme toggle wired to app theme helpers', () 
   assert.match(themeStyles, /:is\([^)]*\.theme-toggle[^)]*\)/);
 });
 
-test('mobile sidebar opens without expanding the app shell grid', () => {
+test('sidebar opens as an overlay without shifting the workspace', () => {
+  const appSource = readFileSync(resolve(srcDir, 'App.tsx'), 'utf8');
   const styles = readFileSync(resolve(srcDir, 'styles.css'), 'utf8');
 
+  assert.doesNotMatch(appSource, /app-shell--sidebar-open/);
+  assert.match(styles, /\.app-shell\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\);[\s\S]*?\}/);
+  assert.doesNotMatch(styles, /\.app-shell--sidebar-open/);
   assert.match(
     styles,
-    /@media \(max-width: 760px\) \{[\s\S]*?\.app-shell--sidebar-open \{[\s\S]*?grid-template-columns: var\(--sidebar-collapsed-width\) minmax\(0, 1fr\);[\s\S]*?\}/,
+    /\.workspace\s*\{[\s\S]*?display:\s*grid;[\s\S]*?justify-items:\s*center;[\s\S]*?\}/,
   );
   assert.match(
     styles,
-    /@media \(max-width: 760px\) \{[\s\S]*?\.sidebar--open \{[\s\S]*?width: var\(--sidebar-width\);[\s\S]*?\}/,
+    /\.sidebar\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?width:\s*var\(--sidebar-toggle-size\);[\s\S]*?height:\s*var\(--sidebar-toggle-size\);[\s\S]*?\}/,
+  );
+  assert.match(
+    styles,
+    /\.sidebar--open\s*\{[\s\S]*?width:\s*var\(--sidebar-width\);[\s\S]*?height:\s*auto;[\s\S]*?max-height:\s*calc\(100vh - 32px\);[\s\S]*?\}/,
+  );
+  assert.match(
+    styles,
+    /@media \(max-width: 760px\) \{[\s\S]*?\.workspace:has\(\.catalog-page\)[\s\S]*?padding:\s*80px 20px 20px;[\s\S]*?\}/,
   );
 });
