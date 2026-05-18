@@ -133,9 +133,10 @@
 
 **Before deploy, add env on the server:**
 - [x] Document expected env in `.env.example`, `apps/api/.env.example` and `docker-compose.yml`.
-- [ ] Set `JWT_MEDIA_SECRET=<strong-random-secret>` on the production server.
-- [ ] Set `MEDIA_TOKEN_TTL_MINUTES=200` on the production server.
-- [ ] Optional: set `MEDIA_COOKIE_NAME=platforma_media_token` on the production server.
+- [x] Set `JWT_MEDIA_SECRET=<strong-random-secret>` on the production server.
+- [x] Set `MEDIA_TOKEN_TTL_MINUTES=200` on the production server.
+- [x] Optional: set `MEDIA_COOKIE_NAME=platforma_media_token` on the production server.
+- [x] Deploy commit `599c641` on production through `docker compose -f docker-compose.prod.yml up -d --build`.
 
 **Acceptance Criteria:**
 - User/admin/editor receive `platforma_media_token` after login/refresh.
