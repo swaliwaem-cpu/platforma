@@ -1,0 +1,28 @@
+[     295ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:5173/node_modules/.vite/deps/react-dom_client.js?v=470e4665:14336
+[     422ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://127.0.0.1:5173/favicon.ico:0
+[     588ms] [ERROR] Access to fetch at 'http://localhost:3000/auth/refresh' from origin 'http://127.0.0.1:5173' has been blocked by CORS policy: The 'Access-Control-Allow-Origin' header has a value 'http://localhost:5173' that is not equal to the supplied origin. Have the server send the header with a valid value. @ http://127.0.0.1:5173/:0
+[     589ms] [ERROR] Failed to load resource: net::ERR_FAILED @ http://localhost:3000/auth/refresh:0
+[     589ms] [ERROR] Access to fetch at 'http://localhost:3000/auth/refresh' from origin 'http://127.0.0.1:5173' has been blocked by CORS policy: The 'Access-Control-Allow-Origin' header has a value 'http://localhost:5173' that is not equal to the supplied origin. Have the server send the header with a valid value. @ http://127.0.0.1:5173/:0
+[     589ms] [ERROR] Failed to load resource: net::ERR_FAILED @ http://localhost:3000/auth/refresh:0
+[     608ms] TypeError: Failed to fetch
+    at refreshSession (http://127.0.0.1:5173/src/auth/AuthProvider.tsx:27:28)
+    at http://127.0.0.1:5173/src/auth/AuthProvider.tsx:45:8
+    at Object.react_stack_bottom_frame (http://127.0.0.1:5173/node_modules/.vite/deps/react-dom_client.js?v=470e4665:12903:13)
+    at runWithFiberInDEV (http://127.0.0.1:5173/node_modules/.vite/deps/react-dom_client.js?v=470e4665:850:66)
+    at commitHookEffectListMount (http://127.0.0.1:5173/node_modules/.vite/deps/react-dom_client.js?v=470e4665:6616:153)
+    at commitHookPassiveMountEffects (http://127.0.0.1:5173/node_modules/.vite/deps/react-dom_client.js?v=470e4665:6651:55)
+    at reconnectPassiveEffects (http://127.0.0.1:5173/node_modules/.vite/deps/react-dom_client.js?v=470e4665:7700:6)
+    at recursivelyTraverseReconnectPassiveEffects (http://127.0.0.1:5173/node_modules/.vite/deps/react-dom_client.js?v=470e4665:7687:5)
+    at reconnectPassiveEffects (http://127.0.0.1:5173/node_modules/.vite/deps/react-dom_client.js?v=470e4665:7699:6)
+    at recursivelyTraverseReconnectPassiveEffects (http://127.0.0.1:5173/node_modules/.vite/deps/react-dom_client.js?v=470e4665:7687:5)
+[     609ms] TypeError: Failed to fetch
+    at refreshSession (http://127.0.0.1:5173/src/auth/AuthProvider.tsx:27:28)
+    at http://127.0.0.1:5173/src/auth/AuthProvider.tsx:45:8
+    at Object.react_stack_bottom_frame (http://127.0.0.1:5173/node_modules/.vite/deps/react-dom_client.js?v=470e4665:12903:13)
+    at runWithFiberInDEV (http://127.0.0.1:5173/node_modules/.vite/deps/react-dom_client.js?v=470e4665:850:66)
+    at commitHookEffectListMount (http://127.0.0.1:5173/node_modules/.vite/deps/react-dom_client.js?v=470e4665:6616:153)
+    at commitHookPassiveMountEffects (http://127.0.0.1:5173/node_modules/.vite/deps/react-dom_client.js?v=470e4665:6651:55)
+    at commitPassiveMountOnFiber (http://127.0.0.1:5173/node_modules/.vite/deps/react-dom_client.js?v=470e4665:7617:22)
+    at recursivelyTraversePassiveMountEffects (http://127.0.0.1:5173/node_modules/.vite/deps/react-dom_client.js?v=470e4665:7605:5)
+    at commitPassiveMountOnFiber (http://127.0.0.1:5173/node_modules/.vite/deps/react-dom_client.js?v=470e4665:7616:6)
+    at recursivelyTraversePassiveMountEffects (http://127.0.0.1:5173/node_modules/.vite/deps/react-dom_client.js?v=470e4665:7605:5)
