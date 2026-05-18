@@ -7,7 +7,8 @@ const { UserStatus } = require('@prisma/client');
 
 const { AuthController } = require('../dist/auth/auth.controller.js');
 const { CatalogLinksController } = require('../dist/catalog-links/catalog-links.controller.js');
-const { getRefreshCookieName } = require('../dist/auth/cookies.js');
+const { getMediaCookieName, getRefreshCookieName } = require('../dist/auth/cookies.js');
+const { MediaController } = require('../dist/files/media.controller.js');
 const { PERMISSIONS_KEY } = require('../dist/auth/permissions.decorator.js');
 const { PermissionsGuard } = require('../dist/auth/permissions.guard.js');
 const { ObjectsController } = require('../dist/objects/objects.controller.js');
@@ -65,6 +66,7 @@ test('AuthController normalizes login email and keeps refresh token in httpOnly 
       return {
         accessToken: 'access-token',
         refreshToken: 'refresh-token',
+        mediaToken: 'media-token',
         user,
       };
     },
@@ -79,6 +81,10 @@ test('AuthController normalizes login email and keeps refresh token in httpOnly 
   assert.equal(response.cookies[0].name, getRefreshCookieName());
   assert.equal(response.cookies[0].value, 'refresh-token');
   assert.equal(response.cookies[0].options.httpOnly, true);
+  assert.equal(response.cookies[1].name, getMediaCookieName());
+  assert.equal(response.cookies[1].value, 'media-token');
+  assert.equal(response.cookies[1].options.httpOnly, true);
+  assert.equal(response.cookies[1].options.maxAge, 200 * 60 * 1000);
 });
 
 test('AuthController validates login body', async () => {
@@ -101,6 +107,7 @@ test('AuthController refresh rotates cookie and logout clears it', async () => {
       return {
         accessToken: 'new-access-token',
         refreshToken: 'new-refresh-token',
+        mediaToken: 'new-media-token',
         user,
       };
     },
@@ -117,9 +124,12 @@ test('AuthController refresh rotates cookie and logout clears it', async () => {
 
   assert.equal(result.accessToken, 'new-access-token');
   assert.equal(refreshResponse.cookies[0].value, 'new-refresh-token');
+  assert.equal(refreshResponse.cookies[1].name, getMediaCookieName());
+  assert.equal(refreshResponse.cookies[1].value, 'new-media-token');
   assert.deepEqual(calls.refresh, request);
   assert.deepEqual(calls.logout, request);
   assert.equal(logoutResponse.clearedCookies[0].name, getRefreshCookieName());
+  assert.equal(logoutResponse.clearedCookies[1].name, getMediaCookieName());
 });
 
 test('API controllers expose expected permission contracts', () => {
@@ -135,6 +145,7 @@ test('API controllers expose expected permission contracts', () => {
   assert.deepEqual(getPermissions(UsersController, 'deactivate'), ['users:delete']);
   assert.deepEqual(getPermissions(WordpressImportController, 'runPreview'), ['import:preview']);
   assert.deepEqual(getPermissions(WordpressImportController, 'runImport'), ['import:run']);
+  assert.deepEqual(getPermissions(MediaController, 'getContent'), []);
 });
 
 test('CatalogLinksController delegates public and admin endpoints to the service', async () => {

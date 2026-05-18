@@ -147,50 +147,15 @@ export function useSecureImageObjectUrl({
   }, [fileId, lazy, rootMargin, shouldLoad, targetElement]);
 
   useEffect(() => {
-    let objectUrl: string | null = null;
-    let isCancelled = false;
-    const abortController = new AbortController();
-
-    if (!accessToken || !fileId || !shouldLoad) {
+    if (!fileId || !shouldLoad) {
       return () => undefined;
     }
 
     setStatus('loading');
+    setSrc(buildMediaFileContentUrl(fileId, normalizedVariant));
+    setStatus('loaded');
 
-    async function loadImage() {
-      try {
-        const nextObjectUrl = await fetchSecureImageObjectUrl({
-          accessToken,
-          fileId: fileId ?? '',
-          signal: abortController.signal,
-          variant: normalizedVariant,
-        });
-
-        if (isCancelled) {
-          URL.revokeObjectURL(nextObjectUrl);
-          return;
-        }
-
-        objectUrl = nextObjectUrl;
-        setSrc(nextObjectUrl);
-        setStatus('loaded');
-      } catch (caughtError) {
-        if (!isCancelled && !isAbortError(caughtError)) {
-          setStatus('error');
-        }
-      }
-    }
-
-    void loadImage();
-
-    return () => {
-      isCancelled = true;
-      abortController.abort();
-
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl);
-      }
-    };
+    return () => undefined;
   }, [accessToken, fileId, normalizedVariant, shouldLoad]);
 
   return {
@@ -204,40 +169,13 @@ function normalizeVariant(variant: SecureImageVariant): SecureImageVariant {
   return variant === 'original' ? 'original' : variant.toLowerCase() as SecureImageVariant;
 }
 
-async function fetchSecureImageObjectUrl({
-  accessToken,
-  fileId,
-  signal,
-  variant,
-}: {
-  accessToken: string;
-  fileId: string;
-  signal: AbortSignal;
-  variant: SecureImageVariant;
-}) {
+export function buildMediaFileContentUrl(fileId: string, variant: SecureImageVariant = 'original') {
   const params = new URLSearchParams();
 
   if (variant !== 'original') {
     params.set('variant', variant);
   }
   const queryString = params.toString();
-  const url = `${apiUrl}/files/${fileId}/content${queryString ? `?${queryString}` : ''}`;
 
-  const response = await fetch(url, {
-    credentials: 'include',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-    signal,
-  });
-
-  if (!response.ok) {
-    throw new Error('Image request failed');
-  }
-
-  return URL.createObjectURL(await response.blob());
-}
-
-function isAbortError(error: unknown) {
-  return error instanceof DOMException && error.name === 'AbortError';
+  return `${apiUrl}/media/files/${encodeURIComponent(fileId)}/content${queryString ? `?${queryString}` : ''}`;
 }

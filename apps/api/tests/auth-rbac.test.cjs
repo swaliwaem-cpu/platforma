@@ -6,6 +6,8 @@ const { ForbiddenException, UnauthorizedException } = require('@nestjs/common');
 const { UserStatus } = require('@prisma/client');
 
 const { JwtAuthGuard } = require('../dist/auth/jwt-auth.guard.js');
+const { getMediaCookieName } = require('../dist/auth/cookies.js');
+const { MediaTokenGuard } = require('../dist/auth/media-token.guard.js');
 const { PermissionsGuard } = require('../dist/auth/permissions.guard.js');
 
 function makeContext(request, handler = function handler() {}, controller = class Controller {}) {
@@ -148,4 +150,60 @@ test('JwtAuthGuard attaches active user permissions to the request', async () =>
   assert.equal(findArgs.where.id, '11111111-1111-4111-8111-111111111111');
   assert.deepEqual(request.user.permissions, ['objects:read', 'users:read']);
   assert.equal(request.user.role.name, 'admin');
+});
+
+test('MediaTokenGuard rejects missing cookie', async () => {
+  const guard = new MediaTokenGuard({
+    verifyAsync: async () => assert.fail('Media token must not be verified without cookie'),
+  });
+
+  await assert.rejects(
+    () => guard.canActivate(makeContext({ headers: {} })),
+    UnauthorizedException,
+  );
+});
+
+test('MediaTokenGuard rejects non-media tokens', async () => {
+  const guard = new MediaTokenGuard({
+    verifyAsync: async (token, options) => {
+      assert.equal(token, 'access-token');
+      assert.equal(options.secret, 'change-me-media-secret');
+
+      return {
+        sub: '11111111-1111-4111-8111-111111111111',
+        email: 'admin@example.test',
+        type: 'access',
+        scope: 'files:read',
+        role: 'admin',
+      };
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      guard.canActivate(
+        makeContext({ headers: { cookie: `${getMediaCookieName()}=access-token` } }),
+      ),
+    UnauthorizedException,
+  );
+});
+
+test('MediaTokenGuard accepts valid media-token without requiring Prisma', async () => {
+  const request = { headers: { cookie: `${getMediaCookieName()}=media-token` } };
+  const guard = new MediaTokenGuard({
+    verifyAsync: async (token, options) => {
+      assert.equal(token, 'media-token');
+      assert.equal(options.secret, 'change-me-media-secret');
+
+      return {
+        sub: '11111111-1111-4111-8111-111111111111',
+        email: 'admin@example.test',
+        type: 'media',
+        scope: 'files:read',
+        role: 'admin',
+      };
+    },
+  });
+
+  assert.equal(await guard.canActivate(makeContext(request)), true);
 });

@@ -5,12 +5,13 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
+import { MediaTokenGuard } from './media-token.guard';
 import { PermissionsGuard } from './permissions.guard';
 
 @Module({
   imports: [JwtModule.register({}), PrismaModule],
   controllers: [AuthController],
-  providers: [AuthService, JwtAuthGuard, PermissionsGuard],
-  exports: [JwtModule, JwtAuthGuard, PermissionsGuard],
+  providers: [AuthService, JwtAuthGuard, MediaTokenGuard, PermissionsGuard],
+  exports: [JwtModule, JwtAuthGuard, MediaTokenGuard, PermissionsGuard],
 })
 export class AuthModule {}

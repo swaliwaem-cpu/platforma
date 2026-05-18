@@ -8,9 +8,10 @@ import { ImportAdminPage } from './admin/ImportAdminPage';
 import { AdminButton, AdminPanel, AdminStatusBadge } from './admin/AdminUi';
 import { ObjectsAdminPage } from './admin/ObjectsAdminPage';
 import { UsersAdminPage } from './admin/UsersAdminPage';
-import { apiRequest, apiUrl } from './admin/api';
+import { apiRequest } from './admin/api';
 import { AuthProvider, useAuth } from './auth/AuthProvider';
 import { CatalogPage } from './catalog/CatalogPage';
+import { buildMediaFileContentUrl } from './files/SecureImage';
 import { ObjectDetailPage } from './objects/ObjectDetailPage';
 import { getAppliedAppTheme, getNextAppTheme, setAppTheme } from './appTheme';
 import './styles.css';
@@ -764,50 +765,18 @@ function SecureProfileImage({
   fallback: string;
   fileId: string;
 }) {
-  const [src, setSrc] = useState<string | null>(null);
+  const [hasError, setHasError] = useState(false);
+  const src = buildMediaFileContentUrl(fileId, 'thumbnail');
 
   useEffect(() => {
-    let objectUrl: string | null = null;
-    let isCancelled = false;
-
-    async function loadImage() {
-      const response = await fetch(`${apiUrl}/users/me/profile-photo/content?v=${encodeURIComponent(fileId)}`, {
-        credentials: 'include',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      });
-
-      if (!response.ok) {
-        return;
-      }
-
-      const blob = await response.blob();
-
-      if (isCancelled) {
-        return;
-      }
-
-      objectUrl = URL.createObjectURL(blob);
-      setSrc(objectUrl);
-    }
-
-    void loadImage();
-
-    return () => {
-      isCancelled = true;
-
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl);
-      }
-    };
+    setHasError(false);
   }, [accessToken, fileId]);
 
-  if (!src) {
+  if (hasError) {
     return <span>{fallback}</span>;
   }
 
-  return <img alt={alt} src={src} />;
+  return <img alt={alt} src={src} onError={() => setHasError(true)} />;
 }
 
 function getProfileInitials(user: AuthUser) {

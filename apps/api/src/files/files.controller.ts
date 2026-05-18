@@ -20,13 +20,9 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RequirePermissions } from '../auth/permissions.decorator';
 import { PermissionsGuard } from '../auth/permissions.guard';
 import { GENERIC_MAX_SIZE_BYTES } from './file-upload.constants';
+import { type FileContentResponse, sendFileContentResponse } from './file-content-response';
 import { FilesService } from './files.service';
 import { UploadedFile as UploadedFileData } from './uploaded-file.type';
-
-type FileContentResponse = {
-  setHeader: (name: string, value: string | number) => void;
-  send: (body: Buffer) => void;
-};
 
 @Controller('files')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -56,16 +52,9 @@ export class FilesController {
     @Query('variant') variant: string | undefined,
     @Res() response: FileContentResponse,
   ) {
-    const { file, buffer, variant: servedVariant } = await this.filesService.getContent(id, variant);
+    const content = await this.filesService.getContent(id, variant);
 
-    response.setHeader('Content-Type', file.mimeType ?? 'application/octet-stream');
-    response.setHeader('Content-Length', buffer.length);
-    response.setHeader('Cache-Control', isImageMimeType(file.mimeType) ? 'private, max-age=86400' : 'private, max-age=300');
-    if (servedVariant !== 'original') {
-      response.setHeader('X-Platforma-File-Variant', servedVariant);
-    }
-    response.setHeader('Content-Disposition', `inline; filename="${sanitizeHeaderFilename(file.originalName)}"`);
-    response.send(buffer);
+    sendFileContentResponse(response, content);
   }
 
   @Delete(':id')
@@ -74,12 +63,4 @@ export class FilesController {
   async delete(@Param('id') id: string) {
     await this.filesService.delete(id);
   }
-}
-
-function sanitizeHeaderFilename(value: string | null) {
-  return (value ?? 'file').replace(/[^\x20-\x7E]/gu, '_').replace(/["\\]/gu, '_');
-}
-
-function isImageMimeType(value: string | null | undefined) {
-  return value?.toLowerCase().startsWith('image/') ?? false;
 }

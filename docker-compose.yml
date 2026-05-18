@@ -70,9 +70,12 @@ services:
       FILE_PDF_MAX_SIZE_BYTES: ${FILE_PDF_MAX_SIZE_BYTES:-52428800}
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-change-me-access-secret}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change-me-refresh-secret}
+      JWT_MEDIA_SECRET: ${JWT_MEDIA_SECRET:-change-me-media-secret}
       JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
       JWT_REFRESH_TTL_DAYS: ${JWT_REFRESH_TTL_DAYS:-30}
+      MEDIA_TOKEN_TTL_MINUTES: ${MEDIA_TOKEN_TTL_MINUTES:-200}
       REFRESH_COOKIE_NAME: ${REFRESH_COOKIE_NAME:-platforma_refresh_token}
+      MEDIA_COOKIE_NAME: ${MEDIA_COOKIE_NAME:-platforma_media_token}
       WP_DB_HOST: ${WP_DB_HOST:-host.docker.internal}
       WP_DB_PORT: ${WP_DB_PORT:-3306}
       WP_DB_SOCKET: ${WP_DB_SOCKET:-}

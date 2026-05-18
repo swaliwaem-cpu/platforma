@@ -49,6 +49,14 @@ export type RefreshTokenPayload = {
   type: 'refresh';
 };
 
+export type MediaTokenPayload = {
+  sub: string;
+  email: string;
+  type: 'media';
+  scope: 'files:read';
+  role: string;
+};
+
 export type LoginResponse = {
   accessToken: string;
   user: AuthenticatedUser;

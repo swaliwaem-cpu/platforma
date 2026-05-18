@@ -7,6 +7,7 @@ const { FileVariantKind } = require('@prisma/client');
 
 const { FilesController } = require('../dist/files/files.controller.js');
 const { FilesService } = require('../dist/files/files.service.js');
+const { MediaController } = require('../dist/files/media.controller.js');
 
 const actor = {
   id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
@@ -291,4 +292,41 @@ test('FilesController.getContent preserves existing cache behavior for PDFs', as
   assert.equal(headers['Content-Type'], 'application/pdf');
   assert.equal(headers['Cache-Control'], 'private, max-age=300');
   assert.equal(headers['X-Platforma-File-Variant'], undefined);
+});
+
+test('MediaController.getContent delegates to FilesService and shares content headers', async () => {
+  const calls = [];
+  const controller = new MediaController({
+    getContent: async (id, variant) => {
+      calls.push({ id, variant });
+
+      return {
+        file: createFileRecord({
+          mimeType: 'image/webp',
+          originalName: 'Card.webp',
+        }),
+        buffer: Buffer.from('media body'),
+        variant: 'card',
+      };
+    },
+  });
+  const headers = {};
+  const response = {
+    setHeader: (name, value) => {
+      headers[name] = value;
+    },
+    send: (body) => {
+      response.body = body;
+    },
+  };
+
+  await controller.getContent('11111111-1111-4111-8111-111111111111', 'card', response);
+
+  assert.deepEqual(calls, [{ id: '11111111-1111-4111-8111-111111111111', variant: 'card' }]);
+  assert.equal(headers['Content-Type'], 'image/webp');
+  assert.equal(headers['Content-Length'], 10);
+  assert.equal(headers['Cache-Control'], 'private, max-age=86400');
+  assert.equal(headers['X-Platforma-File-Variant'], 'card');
+  assert.equal(headers['Content-Disposition'], 'inline; filename="Card.webp"');
+  assert.deepEqual(response.body, Buffer.from('media body'));
 });

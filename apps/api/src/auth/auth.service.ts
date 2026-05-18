@@ -9,12 +9,14 @@ import {
   AccessTokenPayload,
   AuthenticatedUser,
   LoginResponse,
+  MediaTokenPayload,
   RefreshTokenPayload,
   RequestWithAuth,
 } from './auth.types';
 
 const DEFAULT_ACCESS_TTL = '15m';
 const DEFAULT_REFRESH_TTL_DAYS = 30;
+const DEFAULT_MEDIA_TTL_MINUTES = 200;
 
 @Injectable()
 export class AuthService {
@@ -23,7 +25,10 @@ export class AuthService {
     private readonly jwtService: JwtService,
   ) {}
 
-  async login(email: string, password: string): Promise<LoginResponse & { refreshToken: string }> {
+  async login(
+    email: string,
+    password: string,
+  ): Promise<LoginResponse & { refreshToken: string; mediaToken: string | null }> {
     const user = await this.findActiveUserByEmail(email);
 
     if (!user) {
@@ -42,11 +47,14 @@ export class AuthService {
     return {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
+      mediaToken: tokens.mediaToken,
       user: authUser,
     };
   }
 
-  async refresh(request: RequestWithAuth): Promise<LoginResponse & { refreshToken: string }> {
+  async refresh(
+    request: RequestWithAuth,
+  ): Promise<LoginResponse & { refreshToken: string; mediaToken: string | null }> {
     const refreshToken = getCookieValue(request.headers.cookie, getRefreshCookieName());
 
     if (!refreshToken) {
@@ -77,6 +85,7 @@ export class AuthService {
     return {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
+      mediaToken: tokens.mediaToken,
       user: authUser,
     };
   }
@@ -173,8 +182,16 @@ export class AuthService {
       email: user.email,
       type: 'refresh',
     };
+    const mediaPayload: MediaTokenPayload = {
+      sub: user.id,
+      email: user.email,
+      type: 'media',
+      scope: 'files:read',
+      role: user.role.name,
+    };
+    const shouldIssueMediaToken = user.permissions.includes('objects:read');
 
-    const [accessToken, refreshToken] = await Promise.all([
+    const [accessToken, refreshToken, mediaToken] = await Promise.all([
       this.jwtService.signAsync(accessPayload, {
         secret: process.env.JWT_ACCESS_SECRET ?? 'change-me-access-secret',
         expiresIn: this.getAccessTokenTtlSeconds(),
@@ -183,6 +200,12 @@ export class AuthService {
         secret: process.env.JWT_REFRESH_SECRET ?? 'change-me-refresh-secret',
         expiresIn: refreshTtlDays * 24 * 60 * 60,
       }),
+      shouldIssueMediaToken
+        ? this.jwtService.signAsync(mediaPayload, {
+            secret: process.env.JWT_MEDIA_SECRET ?? 'change-me-media-secret',
+            expiresIn: this.getMediaTokenTtlSeconds(),
+          })
+        : Promise.resolve(null),
     ]);
 
     await this.prisma.user.update({
@@ -196,6 +219,7 @@ export class AuthService {
     return {
       accessToken,
       refreshToken,
+      mediaToken,
       refreshExpiresAt,
     };
   }
@@ -248,5 +272,15 @@ export class AuthService {
     };
 
     return amount * multiplierByUnit[unit as keyof typeof multiplierByUnit];
+  }
+
+  private getMediaTokenTtlSeconds() {
+    const ttlMinutes = Number(process.env.MEDIA_TOKEN_TTL_MINUTES ?? DEFAULT_MEDIA_TTL_MINUTES);
+
+    if (!Number.isFinite(ttlMinutes) || ttlMinutes <= 0) {
+      return DEFAULT_MEDIA_TTL_MINUTES * 60;
+    }
+
+    return ttlMinutes * 60;
   }
 }

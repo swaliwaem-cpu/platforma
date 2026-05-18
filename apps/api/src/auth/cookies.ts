@@ -33,3 +33,17 @@ export function getRefreshCookieOptions(maxAge?: number): CookieOptions {
     maxAge,
   };
 }
+
+export function getMediaCookieName() {
+  return process.env.MEDIA_COOKIE_NAME ?? 'platforma_media_token';
+}
+
+export function getMediaCookieOptions(maxAge?: number): CookieOptions {
+  return {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge,
+  };
+}

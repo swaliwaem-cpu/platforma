@@ -9,9 +9,9 @@ import type {
   RealEstateObjectDetail,
 } from '@platforma/shared';
 
-import { apiRequest, apiUrl } from '../admin/api';
+import { apiRequest } from '../admin/api';
 import { useAuth } from '../auth/AuthProvider';
-import { SecureImage, useSecureImageObjectUrl } from '../files/SecureImage';
+import { SecureImage, buildMediaFileContentUrl, useSecureImageObjectUrl } from '../files/SecureImage';
 import { YandexMap, type YandexMapPoint } from '../map/YandexMap';
 import {
   formatCompletion,
@@ -639,11 +639,9 @@ function MetroStationItem({ station }: { station: ObjectMetroStationLink }) {
 }
 
 function SecureFileButton({
-  accessToken,
   className = 'text-button',
   fileId,
   label = 'Открыть',
-  openingLabel = 'Открываем',
   wrapperClassName = 'detail-file-action',
 }: {
   accessToken: string;
@@ -653,41 +651,22 @@ function SecureFileButton({
   openingLabel?: string;
   wrapperClassName?: string;
 }) {
-  const [isOpening, setIsOpening] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleOpen() {
-    setIsOpening(true);
+  function handleOpen() {
     setError(null);
 
-    try {
-      const response = await fetch(`${apiUrl}/files/${fileId}/content`, {
-        credentials: 'include',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      });
+    const openedWindow = window.open(buildMediaFileContentUrl(fileId), '_blank', 'noopener,noreferrer');
 
-      if (!response.ok) {
-        throw new Error('File request failed');
-      }
-
-      const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
-
-      window.open(objectUrl, '_blank', 'noopener,noreferrer');
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
-    } catch {
+    if (!openedWindow) {
       setError('Файл недоступен');
-    } finally {
-      setIsOpening(false);
     }
   }
 
   return (
     <div className={wrapperClassName}>
-      <button className={className} disabled={isOpening} type="button" onClick={() => void handleOpen()}>
-        {isOpening ? openingLabel : label}
+      <button className={className} type="button" onClick={handleOpen}>
+        {label}
       </button>
       {error ? <span>{error}</span> : null}
     </div>

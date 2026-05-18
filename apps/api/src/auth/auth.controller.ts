@@ -14,13 +14,20 @@ import {
 import { AuthService } from './auth.service';
 import { CookieResponse, RequestWithAuth } from './auth.types';
 import { CurrentUser } from './current-user.decorator';
-import { getRefreshCookieName, getRefreshCookieOptions } from './cookies';
+import {
+  getMediaCookieName,
+  getMediaCookieOptions,
+  getRefreshCookieName,
+  getRefreshCookieOptions,
+} from './cookies';
 import { JwtAuthGuard } from './jwt-auth.guard';
 
 type LoginBody = {
   email?: string;
   password?: string;
 };
+
+const DEFAULT_MEDIA_TTL_MINUTES = 200;
 
 @Controller('auth')
 export class AuthController {
@@ -39,6 +46,7 @@ export class AuthController {
     const result = await this.authService.login(email, password);
 
     this.setRefreshCookie(response, result.refreshToken);
+    this.setMediaCookie(response, result.mediaToken);
 
     return {
       accessToken: result.accessToken,
@@ -50,7 +58,8 @@ export class AuthController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async logout(@Req() request: RequestWithAuth, @Res({ passthrough: true }) response: CookieResponse) {
     await this.authService.logout(request);
-    response.clearCookie(getRefreshCookieName(), this.clearCookieOptions());
+    response.clearCookie(getRefreshCookieName(), this.clearCookieOptions(getRefreshCookieOptions()));
+    response.clearCookie(getMediaCookieName(), this.clearCookieOptions(getMediaCookieOptions()));
   }
 
   @Post('refresh')
@@ -59,6 +68,7 @@ export class AuthController {
     const result = await this.authService.refresh(request);
 
     this.setRefreshCookie(response, result.refreshToken);
+    this.setMediaCookie(response, result.mediaToken);
 
     return {
       accessToken: result.accessToken,
@@ -79,9 +89,30 @@ export class AuthController {
     response.cookie(getRefreshCookieName(), refreshToken, getRefreshCookieOptions(maxAge));
   }
 
-  private clearCookieOptions() {
-    const { path, sameSite, secure } = getRefreshCookieOptions();
+  private setMediaCookie(response: CookieResponse, mediaToken: string | null) {
+    if (!mediaToken) {
+      response.clearCookie(getMediaCookieName(), this.clearCookieOptions(getMediaCookieOptions()));
+      return;
+    }
+
+    const maxAge = this.getMediaCookieMaxAge();
+
+    response.cookie(getMediaCookieName(), mediaToken, getMediaCookieOptions(maxAge));
+  }
+
+  private clearCookieOptions(options: ReturnType<typeof getRefreshCookieOptions>) {
+    const { path, sameSite, secure } = options;
 
     return { path, sameSite, secure };
+  }
+
+  private getMediaCookieMaxAge() {
+    const ttlMinutes = Number(process.env.MEDIA_TOKEN_TTL_MINUTES ?? DEFAULT_MEDIA_TTL_MINUTES);
+
+    if (!Number.isFinite(ttlMinutes) || ttlMinutes <= 0) {
+      return DEFAULT_MEDIA_TTL_MINUTES * 60 * 1000;
+    }
+
+    return ttlMinutes * 60 * 1000;
   }
 }
