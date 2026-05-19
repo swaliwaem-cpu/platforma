@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 
 export type YandexMapPoint = {
   id: string;
@@ -18,6 +19,7 @@ type YandexMapFallbackState = {
 };
 
 type YandexMapProps = {
+  children?: ReactNode;
   points: YandexMapPoint[];
   emptyState?: YandexMapFallbackState;
   selectedPointId?: string | null;
@@ -44,6 +46,7 @@ type YandexMapInstance = {
   container: {
     events: YandexEventManager;
     fitToViewport: (preservePixelPosition?: boolean) => void;
+    getElement: () => HTMLElement;
   };
   geoObjects: {
     add: (object: YandexGeoObject) => void;
@@ -87,6 +90,7 @@ const defaultEmptyState: YandexMapFallbackState = {
 };
 
 export function YandexMap({
+  children,
   emptyState = defaultEmptyState,
   points,
   selectedPointId = null,
@@ -114,12 +118,15 @@ export function YandexMap({
       onBoundsChange={onBoundsChange}
       onOpenPoint={onOpenPoint}
       onSelectPoint={onSelectPoint}
-    />
+    >
+      {children}
+    </YandexMapApi>
   );
 }
 
 function YandexMapApi({
   apiKey,
+  children,
   points,
   selectedPointId,
   onBoundsChange,
@@ -127,6 +134,7 @@ function YandexMapApi({
   onSelectPoint,
 }: {
   apiKey: string;
+  children?: ReactNode;
   points: YandexMapPoint[];
   selectedPointId: string | null;
   onBoundsChange?: (bounds: YandexMapBounds) => void;
@@ -135,6 +143,7 @@ function YandexMapApi({
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [overlayRoot, setOverlayRoot] = useState<HTMLElement | null>(null);
   const center = useMemo(() => getMapCenter(points), [points]);
   const pointsById = useMemo(() => new Map(points.map((point) => [point.id, point])), [points]);
   const handlePointClick = onSelectPoint ?? onOpenPoint;
@@ -199,9 +208,11 @@ function YandexMapApi({
     let handleFullscreenEnter: (() => void) | null = null;
     let handleFullscreenExit: (() => void) | null = null;
     let boundsBeforeFullscreen: YandexMapBounds | null = null;
+    let nextOverlayRoot: HTMLElement | null = null;
     let resizeFrameId: number | null = null;
 
     setStatus('loading');
+    setOverlayRoot(null);
 
     void loadYandexMaps(apiKey)
       .then((ymaps) => {
@@ -224,6 +235,13 @@ function YandexMapApi({
           },
         );
         map = nextMap;
+
+        const mapElement = nextMap.container.getElement();
+
+        nextOverlayRoot = document.createElement('div');
+        nextOverlayRoot.className = 'yandex-map-overlay-root';
+        mapElement.appendChild(nextOverlayRoot);
+        setOverlayRoot(nextOverlayRoot);
 
         const markerLayout = ymaps.templateLayoutFactory.createClass(
           [
@@ -354,6 +372,11 @@ function YandexMapApi({
           window.cancelAnimationFrame(resizeFrameId);
         }
 
+        if (nextOverlayRoot) {
+          nextOverlayRoot.remove();
+        }
+
+        setOverlayRoot(null);
         map.destroy();
       }
     };
@@ -370,6 +393,7 @@ function YandexMapApi({
         </div>
       ) : null}
       <div ref={containerRef} className="yandex-map" />
+      {overlayRoot ? createPortal(children, overlayRoot) : null}
     </div>
   );
 }

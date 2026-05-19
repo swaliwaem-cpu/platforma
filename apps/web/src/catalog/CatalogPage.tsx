@@ -934,58 +934,68 @@ function CatalogMapView({
     );
   }
 
+  const shouldRenderOverlayInsideMap = points.length > 0;
+  const mapOverlay = (
+    <>
+      {isLoading ? <div className="map-loading">Загрузка объектов</div> : null}
+
+      {selectedObject ? (
+        <MapObjectCard
+          accessToken={accessToken}
+          object={selectedObject}
+          onClose={() => setSelectedObjectId(null)}
+          onOpen={() => onOpenObject(selectedObject.slug)}
+        />
+      ) : null}
+
+      {isListVisible ? (
+        <aside className="catalog-map-list" aria-label="Объекты на карте">
+          <div className="catalog-map-list-header">
+            <button className="text-button" type="button" onClick={() => setIsListVisible(false)}>
+              Скрыть/показать
+            </button>
+            <div className="table-meta">
+              <span>{isLoading ? 'Загрузка' : `В области: ${visibleObjects.length}`}</span>
+              <span>{objects.length > 0 ? `На карте: ${objects.length}` : total > 0 ? `из ${total}` : 'На карте: 0'}</span>
+            </div>
+          </div>
+          {visibleObjects.length > 0 ? (
+            <ul>
+              {visibleObjects.map((object) => (
+                <li key={object.id} className={object.id === selectedObjectId ? 'catalog-map-list-item--selected' : undefined}>
+                  <button className="text-button" type="button" onClick={() => setSelectedObjectId(object.id)}>
+                    {object.title}
+                  </button>
+                  <span>{getObjectDistrictLabel(object)}</span>
+                  <strong>{formatMapListPricePerMeter(object.pricePerMeterFrom)}</strong>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="catalog-map-empty">В текущей области карты объектов нет.</p>
+          )}
+        </aside>
+      ) : (
+        <button className="catalog-map-list-toggle" type="button" onClick={() => setIsListVisible(true)}>
+          Показать список
+        </button>
+      )}
+    </>
+  );
+
   return (
     <section className="catalog-map-layout" aria-label="Карта объектов">
       <div className="catalog-map-panel">
-        {isLoading ? <div className="map-loading">Загрузка объектов</div> : null}
         <YandexMap
           onBoundsChange={handleBoundsChange}
           points={points}
           selectedPointId={selectedObjectId}
           onSelectPoint={handleSelectPoint}
-        />
+        >
+          {shouldRenderOverlayInsideMap ? mapOverlay : null}
+        </YandexMap>
 
-        {selectedObject ? (
-          <MapObjectCard
-            accessToken={accessToken}
-            object={selectedObject}
-            onClose={() => setSelectedObjectId(null)}
-            onOpen={() => onOpenObject(selectedObject.slug)}
-          />
-        ) : null}
-
-        {isListVisible ? (
-          <aside className="catalog-map-list" aria-label="Объекты на карте">
-            <div className="catalog-map-list-header">
-              <button className="text-button" type="button" onClick={() => setIsListVisible(false)}>
-                Скрыть/показать
-              </button>
-              <div className="table-meta">
-                <span>{isLoading ? 'Загрузка' : `В области: ${visibleObjects.length}`}</span>
-                <span>{objects.length > 0 ? `На карте: ${objects.length}` : total > 0 ? `из ${total}` : 'На карте: 0'}</span>
-              </div>
-            </div>
-            {visibleObjects.length > 0 ? (
-              <ul>
-                {visibleObjects.map((object) => (
-                  <li key={object.id} className={object.id === selectedObjectId ? 'catalog-map-list-item--selected' : undefined}>
-                    <button className="text-button" type="button" onClick={() => setSelectedObjectId(object.id)}>
-                      {object.title}
-                    </button>
-                    <span>{getObjectDistrictLabel(object)}</span>
-                    <strong>{formatMapListPricePerMeter(object.pricePerMeterFrom)}</strong>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="catalog-map-empty">В текущей области карты объектов нет.</p>
-            )}
-          </aside>
-        ) : (
-          <button className="catalog-map-list-toggle" type="button" onClick={() => setIsListVisible(true)}>
-            Показать список
-          </button>
-        )}
+        {shouldRenderOverlayInsideMap ? null : mapOverlay}
       </div>
     </section>
   );

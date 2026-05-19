@@ -62,6 +62,24 @@ test('yandex map refits viewport after fullscreen size changes', () => {
   assert.match(mapSource, /\w+\.container\.events\.remove\('fullscreenexit', handleFullscreenExit\);/);
 });
 
+test('catalog map overlays render through the yandex map element for fullscreen', () => {
+  assert.match(mapSource, /children\?: ReactNode;/);
+  assert.match(mapSource, /import \{ createPortal \} from 'react-dom';/);
+  assert.match(mapSource, /getElement: \(\) => HTMLElement;/);
+  assert.doesNotMatch(mapSource, /nextMap\.panes\.get\('controls'\)/);
+  assert.match(mapSource, /const mapElement = nextMap\.container\.getElement\(\);/);
+  assert.match(mapSource, /nextOverlayRoot = document\.createElement\('div'\);/);
+  assert.match(mapSource, /nextOverlayRoot\.className = 'yandex-map-overlay-root';/);
+  assert.match(mapSource, /mapElement\.appendChild\(nextOverlayRoot\);/);
+  assert.match(mapSource, /createPortal\(children, overlayRoot\)/);
+  assert.match(mapSource, /<div ref=\{containerRef\} className="yandex-map" \/>/);
+  assert.match(
+    catalogSource,
+    /<YandexMap[\s\S]*?onSelectPoint=\{handleSelectPoint\}[\s\S]*?>\s*\{shouldRenderOverlayInsideMap \? mapOverlay : null\}\s*<\/YandexMap>/,
+  );
+  assert.match(catalogSource, /const mapOverlay = \([\s\S]*?<MapObjectCard[\s\S]*?<aside className="catalog-map-list"/);
+});
+
 test('map marker labels omit price-per-meter suffixes', () => {
   const catalogMarkerFormatter = getFunctionBody(catalogSource, 'formatMapMarkerPrice');
   const objectMarkerFormatter = getFunctionBody(objectDetailSource, 'formatObjectMapMarkerPrice');
@@ -105,7 +123,15 @@ test('catalog map layout stays bounded after fullscreen exits', () => {
   assert.match(styles, /\.catalog-map-layout\s*\{[\s\S]*?min-width:\s*0;[\s\S]*?max-width:\s*100%;/);
   assert.match(styles, /\.catalog-map-panel\s*\{[\s\S]*?min-width:\s*0;[\s\S]*?max-width:\s*100%;/);
   assert.match(styles, /\.yandex-map-shell\s*\{[\s\S]*?height:\s*640px;[\s\S]*?overflow:\s*hidden;/);
-  assert.match(styles, /\.yandex-map\s*\{[\s\S]*?height:\s*640px;[\s\S]*?overflow:\s*hidden;/);
+  assert.match(styles, /\.yandex-map\s*\{[\s\S]*?position:\s*relative;[\s\S]*?height:\s*640px;[\s\S]*?overflow:\s*hidden;/);
+  assert.match(
+    styles,
+    /\.yandex-map-overlay-root\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?z-index:\s*2147483000;[\s\S]*?inset:\s*0;[\s\S]*?pointer-events:\s*none;/,
+  );
+  assert.match(styles, /\.yandex-map-overlay-root > \*\s*\{[\s\S]*?pointer-events:\s*auto;/);
+  assert.match(styles, /\.catalog-map-list\s*\{[\s\S]*?z-index:\s*20;[\s\S]*?pointer-events:\s*auto;[\s\S]*?\}/);
+  assert.match(styles, /\.catalog-map-list-toggle\s*\{[\s\S]*?z-index:\s*20;[\s\S]*?pointer-events:\s*auto;[\s\S]*?\}/);
+  assert.match(styles, /\.map-object-card\s*\{[\s\S]*?z-index:\s*21;[\s\S]*?pointer-events:\s*auto;[\s\S]*?\}/);
   assert.match(
     styles,
     /@media\s*\(max-width:\s*760px\)\s*\{[\s\S]*?\.yandex-map-shell,\s*[\s\S]*?\.yandex-map,\s*[\s\S]*?\.map-fallback\s*\{[\s\S]*?height:\s*420px;/,
