@@ -659,6 +659,49 @@ test('MapService.listObjects returns linked locations with type and supports are
   assert.deepEqual(calls.count.where, calls.findMany.where);
 });
 
+test('MapService.listObjects serializes all map gallery images for popup previews', async () => {
+  const coverImage = objectImageRecord({
+    id: '22222222-2222-4222-8222-222222222222',
+    fileId: '55555555-5555-4555-8555-555555555555',
+    isCover: true,
+    sortOrder: 0,
+    title: 'Обложка',
+  });
+  const galleryImage = objectImageRecord({
+    id: '33333333-3333-4333-8333-333333333333',
+    fileId: '77777777-7777-4777-8777-777777777777',
+    sortOrder: 1,
+    title: 'Галерея',
+  });
+  const mapObject = objectRecord({
+    latitude: decimal('55.751244'),
+    longitude: decimal('37.618423'),
+    images: [coverImage, galleryImage],
+  });
+  const prisma = {
+    realEstateObject: {
+      findMany: async (args) => {
+        assert.equal(args.include.images.take, undefined);
+        return [mapObject];
+      },
+      count: async () => 1,
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new MapService(prisma);
+
+  const result = await service.listObjects({});
+
+  assert.equal(result.items[0].coverImage.id, coverImage.id);
+  assert.deepEqual(
+    result.items[0].images.map((image) => [image.id, image.file.id, image.title]),
+    [
+      [coverImage.id, coverImage.file.id, 'Обложка'],
+      [galleryImage.id, galleryImage.file.id, 'Галерея'],
+    ],
+  );
+});
+
 test('MapService.listObjects filters krtName by exact case-insensitive trimmed value', async () => {
   const calls = {};
   const mapObject = objectRecord({

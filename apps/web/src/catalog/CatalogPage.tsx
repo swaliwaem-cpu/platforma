@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
-import { ArrowDownIcon, ArrowUpDownIcon, ArrowUpIcon } from 'lucide-react';
+import { ArrowDownIcon, ArrowUpDownIcon, ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon } from 'lucide-react';
 import type {
   CatalogLinksResponse,
   DevelopersResponse,
@@ -1012,28 +1012,75 @@ function MapObjectCard({
   onClose: () => void;
   onOpen: () => void;
 }) {
+  const [activeImageIndex, setActiveImageIndex] = useState(0);
   const metroLabel = formatMetroStations(object.metroStations ?? []);
   const districtLabel = getObjectDistrictLabel(object);
+  const galleryImages = object.images.length > 0 ? object.images : object.coverImage ? [object.coverImage] : [];
+  const activeImage = galleryImages[activeImageIndex] ?? galleryImages[0] ?? null;
+  const hasGalleryNavigation = galleryImages.length > 1;
+  const activeImageOrdinal = galleryImages[activeImageIndex] ? activeImageIndex + 1 : 1;
+
+  useEffect(() => {
+    setActiveImageIndex(0);
+  }, [object.id]);
+
+  const showPreviousImage = () => {
+    setActiveImageIndex((currentIndex) =>
+      galleryImages.length > 0 ? (currentIndex - 1 + galleryImages.length) % galleryImages.length : 0,
+    );
+  };
+
+  const showNextImage = () => {
+    setActiveImageIndex((currentIndex) =>
+      galleryImages.length > 0 ? (currentIndex + 1) % galleryImages.length : 0,
+    );
+  };
 
   return (
     <article className="map-object-card" aria-label={`Объект ${object.title}`}>
       <button aria-label="Закрыть карточку" className="map-object-card-close" type="button" onClick={onClose}>
         ×
       </button>
-      {object.coverImage ? (
-        <SecureImage
-          accessToken={accessToken}
-          alt={object.coverImage.alt ?? object.title}
-          className="map-object-card-image"
-          errorFallback="Обложка недоступна"
-          fileId={object.coverImage.file.id}
-          loadingFallback="Загрузка обложки"
-          placeholderClassName="map-object-card-image map-object-card-image--empty"
-          variant="card"
-        />
-      ) : (
-        <div className="map-object-card-image map-object-card-image--empty">Нет обложки</div>
-      )}
+      <div className="map-object-card-gallery" aria-label={`Галерея ${object.title}`}>
+        {activeImage ? (
+          <SecureImage
+            key={activeImage.id}
+            accessToken={accessToken}
+            alt={activeImage.alt ?? activeImage.title ?? object.title}
+            className="map-object-card-image"
+            errorFallback="Превью недоступно"
+            fileId={activeImage.file.id}
+            loadingFallback="Загрузка превью"
+            placeholderClassName="map-object-card-image map-object-card-image--empty"
+            variant="thumbnail"
+          />
+        ) : (
+          <div className="map-object-card-image map-object-card-image--empty">Нет фото</div>
+        )}
+        {hasGalleryNavigation ? (
+          <>
+            <button
+              aria-label="Предыдущее фото"
+              className="map-object-card-gallery-button map-object-card-gallery-button--previous"
+              type="button"
+              onClick={showPreviousImage}
+            >
+              <ChevronLeftIcon aria-hidden="true" size={20} />
+            </button>
+            <button
+              aria-label="Следующее фото"
+              className="map-object-card-gallery-button map-object-card-gallery-button--next"
+              type="button"
+              onClick={showNextImage}
+            >
+              <ChevronRightIcon aria-hidden="true" size={20} />
+            </button>
+            <span className="map-object-card-gallery-count">
+              {activeImageOrdinal}/{galleryImages.length}
+            </span>
+          </>
+        ) : null}
+      </div>
       <div className="map-object-card-body">
         <h3>{object.title}</h3>
         <dl>

@@ -55,6 +55,16 @@ test('catalog map no longer preloads every object cover', () => {
   assert.doesNotMatch(catalogSource, /balloonImageUrls/);
 });
 
+test('catalog map popup gallery uses thumbnail variants only', () => {
+  const mapObjectCardSource = extractFunctionSource(catalogSource, 'function MapObjectCard');
+
+  assert.match(mapObjectCardSource, /const galleryImages = object\.images\.length > 0 \? object\.images :/);
+  assert.match(mapObjectCardSource, /const activeImage = galleryImages\[activeImageIndex\] \?\? galleryImages\[0\] \?\? null;/);
+  assert.match(mapObjectCardSource, /variant="thumbnail"/);
+  assert.doesNotMatch(mapObjectCardSource, /variant="original"/);
+  assert.doesNotMatch(mapObjectCardSource, /variant="card"/);
+});
+
 test('detail page requests detail image for main photo and thumbnail image for carousel thumbs', () => {
   assert.match(detailSource, /variant="detail"/);
   assert.match(detailSource, /variant="thumbnail"/);

@@ -3870,10 +3870,18 @@ tr.user-row--deactivated .text-button {
   box-shadow: 0 10px 22px rgb(24 32 42 / 12%);
 }
 
-.map-object-card-image {
+.map-object-card-gallery {
+  position: relative;
   width: 100%;
   aspect-ratio: 16 / 9;
+  overflow: hidden;
   background: var(--catalog-panel-green);
+}
+
+.map-object-card-image {
+  display: block;
+  width: 100%;
+  height: 100%;
   object-fit: cover;
 }
 
@@ -3883,6 +3891,50 @@ tr.user-row--deactivated .text-button {
   color: var(--catalog-ink-700);
   font-size: 14px;
   font-weight: 900;
+}
+
+.map-object-card-gallery-button {
+  position: absolute;
+  top: 50%;
+  z-index: 1;
+  display: grid;
+  width: 36px;
+  aspect-ratio: 1;
+  place-items: center;
+  border: 1px solid rgb(24 32 42 / 14%);
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--catalog-panel) 92%, transparent);
+  color: var(--catalog-ink-900);
+  box-shadow: 0 10px 24px rgb(24 32 42 / 16%);
+  transform: translateY(-50%);
+}
+
+.map-object-card-gallery-button:hover,
+.map-object-card-gallery-button:focus-visible {
+  background: var(--catalog-gold);
+  color: var(--catalog-ink-900);
+}
+
+.map-object-card-gallery-button--previous {
+  left: 12px;
+}
+
+.map-object-card-gallery-button--next {
+  right: 12px;
+}
+
+.map-object-card-gallery-count {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 1;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgb(24 32 42 / 76%);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1;
 }
 
 .map-object-card-body {
@@ -5601,7 +5653,7 @@ tr.user-row--deactivated .text-button {
     overflow: auto;
   }
 
-  .map-object-card-image {
+  .map-object-card-gallery {
     aspect-ratio: 16 / 8;
   }
 

@@ -20,7 +20,6 @@ const mapObjectInclude = {
         createdAt: 'asc',
       },
     ],
-    take: 1,
   },
   metroStations: {
     include: {
@@ -445,6 +444,7 @@ export class MapService {
         lineColor: link.metroStation.lineColor,
         sortOrder: link.sortOrder,
       })),
+      images: object.images.map((image) => this.serializeMapObjectImage(image)),
       coverImage: coverImage ? this.serializeMapObjectImage(coverImage) : null,
     };
   }

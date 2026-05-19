@@ -296,6 +296,7 @@ export type MapObject = {
   primaryLocation: ObjectLocation | null;
   locations: ObjectLocationLink[];
   metroStations: ObjectMetroStationLink[];
+  images: ObjectImage[];
   coverImage: ObjectImage | null;
 };
 
