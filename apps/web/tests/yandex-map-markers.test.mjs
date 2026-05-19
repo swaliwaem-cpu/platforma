@@ -49,16 +49,23 @@ test('yandex map expands marker labels only on close zoom', () => {
   assert.match(mapSource, /const expandedMarkerZoom = 14;/);
   assert.match(mapSource, /\w+\.getZoom\(\)/);
   assert.match(mapSource, /\.classList\.toggle\('yandex-map--markers-expanded'/);
+  assert.match(mapSource, /yandexMapElement\?\.classList\.toggle\('yandex-map--markers-expanded'/);
   assert.match(mapSource, /\w+\.events\.add\('boundschange', handleBoundsChange\);/);
 });
 
-test('yandex map refits viewport after fullscreen size changes', () => {
+test('yandex map preserves viewport after fullscreen size changes', () => {
   assert.match(mapSource, /container:\s*\{[\s\S]*fitToViewport:/);
-  assert.match(mapSource, /let boundsBeforeFullscreen: YandexMapBounds \| null = null;/);
-  assert.match(mapSource, /boundsBeforeFullscreen = normalizeYandexBounds\(nextMap\.getBounds\(\)\);/);
+  assert.match(mapSource, /type YandexMapViewport = \{\s*center: \[number, number\];\s*zoom: number;\s*\};/);
+  assert.match(mapSource, /getCenter: \(\) => number\[\] \| null;/);
+  assert.match(mapSource, /setCenter: \(center: \[number, number\], zoom\?: number, options\?: Record<string, unknown>\) => void;/);
+  assert.match(mapSource, /let viewportBeforeFullscreen: YandexMapViewport \| null = null;/);
+  assert.match(mapSource, /viewportBeforeFullscreen = getCurrentMapViewport\(nextMap\);/);
+  assert.match(mapSource, /const viewportToRestore = getCurrentMapViewport\(nextMap\) \?\? viewportBeforeFullscreen;/);
   assert.match(mapSource, /nextMap\.container\.events\.add\('fullscreenenter', handleFullscreenEnter\);/);
   assert.match(mapSource, /nextMap\.container\.events\.add\('fullscreenexit', handleFullscreenExit\);/);
-  assert.match(mapSource, /nextMap\.container\.fitToViewport\(\);[\s\S]*?nextMap\.setBounds\(boundsBeforeFullscreen, \{/);
+  assert.match(mapSource, /nextMap\.container\.fitToViewport\(\);[\s\S]*?restoreMapViewport\(nextMap, viewportToRestore\);/);
+  assert.match(mapSource, /function getCurrentMapViewport\(map: YandexMapInstance\): YandexMapViewport \| null/);
+  assert.match(mapSource, /function restoreMapViewport\(map: YandexMapInstance, viewport: YandexMapViewport\)/);
   assert.match(mapSource, /\w+\.container\.events\.remove\('fullscreenexit', handleFullscreenExit\);/);
 });
 
@@ -94,7 +101,7 @@ test('map marker labels omit price-per-meter suffixes', () => {
 test('map marker CSS starts as a circle and animates an oval label from it', () => {
   assert.match(
     styles,
-    /\.map-price-marker\s*\{[\s\S]*?width:\s*36px;[\s\S]*?height:\s*36px;[\s\S]*?background:\s*transparent;[\s\S]*?\}/,
+    /\.map-price-marker\s*\{[\s\S]*?width:\s*36px;[\s\S]*?height:\s*36px;[\s\S]*?background:\s*transparent;[\s\S]*?overflow:\s*visible;[\s\S]*?\}/,
   );
   assert.match(
     styles,
@@ -102,20 +109,35 @@ test('map marker CSS starts as a circle and animates an oval label from it', () 
   );
   assert.match(
     styles,
-    /\.map-price-marker::after\s*\{[\s\S]*?transform-origin:\s*left center;[\s\S]*?scaleX\(0\);[\s\S]*?\}/,
+    /\.map-price-marker-label\s*\{[\s\S]*?pointer-events:\s*none;[\s\S]*?transform-origin:\s*left center;[\s\S]*?scaleX\(0\);[\s\S]*?\}/,
   );
   assert.match(
     styles,
-    /\.map-price-marker span\s*\{[\s\S]*?opacity:\s*0;[\s\S]*?transform:\s*translateX\(-10px\);[\s\S]*?\}/,
+    /\.map-price-marker-label span\s*\{[\s\S]*?opacity:\s*0;[\s\S]*?transform:\s*translateX\(-10px\);[\s\S]*?\}/,
   );
   assert.match(
     styles,
-    /\.yandex-map--markers-expanded \.map-price-marker\s*\{[\s\S]*?width:\s*124px;[\s\S]*?\}/,
+    /\.yandex-map--markers-expanded \.map-price-marker-label\s*\{[\s\S]*?opacity:\s*1;[\s\S]*?transform:\s*translateY\(-50%\) scaleX\(1\);[\s\S]*?\}/,
   );
   assert.match(
     styles,
-    /\.yandex-map--markers-expanded \.map-price-marker span\s*\{[\s\S]*?opacity:\s*1;[\s\S]*?transform:\s*translateX\(0\);[\s\S]*?\}/,
+    /\.yandex-map--markers-expanded \.map-price-marker-label span\s*\{[\s\S]*?opacity:\s*1;[\s\S]*?transform:\s*translateX\(0\);[\s\S]*?\}/,
   );
+});
+
+test('map marker click target stays limited to the visible circle', () => {
+  assert.match(mapSource, /'<div class="map-price-marker-anchor">',/);
+  assert.match(mapSource, /'<button class="map-price-marker" type="button"',/);
+  assert.match(mapSource, /'<\/button>',\s*'<span class="map-price-marker-label" aria-hidden="true">',\s*'<span>\$\[properties\.markerLabel\]<\/span>',\s*'<\/span>',\s*'<\/div>',/);
+  assert.match(
+    mapSource,
+    /iconOffset:\s*\[-18,\s*-18\],\s*iconShape:\s*\{\s*type:\s*'Circle',\s*coordinates:\s*\[18,\s*18\],\s*radius:\s*18,\s*\}/,
+  );
+  assert.doesNotMatch(mapSource, /\[128,\s*18\]/);
+  assert.match(styles, /\.map-price-marker-anchor\s*\{[\s\S]*?position:\s*relative;[\s\S]*?width:\s*124px;[\s\S]*?height:\s*36px;[\s\S]*?\}/);
+  assert.match(styles, /\.map-price-marker\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?left:\s*0;[\s\S]*?top:\s*0;[\s\S]*?width:\s*36px;[\s\S]*?height:\s*36px;[\s\S]*?\}/);
+  assert.match(styles, /\.map-price-marker-label\s*\{[\s\S]*?left:\s*18px;[\s\S]*?width:\s*104px;[\s\S]*?height:\s*34px;[\s\S]*?pointer-events:\s*none;[\s\S]*?\}/);
+  assert.doesNotMatch(styles, /\.yandex-map--markers-expanded \.map-price-marker\s*\{[\s\S]*?width:\s*124px;[\s\S]*?\}/);
 });
 
 test('catalog map layout stays bounded after fullscreen exits', () => {

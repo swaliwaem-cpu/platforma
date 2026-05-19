@@ -12,6 +12,11 @@ export type YandexMapPoint = {
 
 export type YandexMapBounds = [[number, number], [number, number]];
 
+type YandexMapViewport = {
+  center: [number, number];
+  zoom: number;
+};
+
 type YandexMapFallbackState = {
   eyebrow: string;
   title: string;
@@ -52,8 +57,10 @@ type YandexMapInstance = {
     add: (object: YandexGeoObject) => void;
   };
   getBounds: () => number[][] | null;
+  getCenter: () => number[] | null;
   getZoom: () => number;
   setBounds: (bounds: number[][], options?: Record<string, unknown>) => void;
+  setCenter: (center: [number, number], zoom?: number, options?: Record<string, unknown>) => void;
   destroy: () => void;
 };
 
@@ -207,7 +214,9 @@ function YandexMapApi({
     let handleBoundsChange: (() => void) | null = null;
     let handleFullscreenEnter: (() => void) | null = null;
     let handleFullscreenExit: (() => void) | null = null;
-    let boundsBeforeFullscreen: YandexMapBounds | null = null;
+    let viewportBeforeFullscreen: YandexMapViewport | null = null;
+    let yandexMapContainer: HTMLElement | null = null;
+    let yandexMapElement: HTMLElement | null = null;
     let nextOverlayRoot: HTMLElement | null = null;
     let resizeFrameId: number | null = null;
 
@@ -221,6 +230,8 @@ function YandexMapApi({
         }
 
         const mapContainer = containerRef.current;
+
+        yandexMapContainer = mapContainer;
 
         const nextMap = new ymaps.Map(
           mapContainer,
@@ -237,6 +248,7 @@ function YandexMapApi({
         map = nextMap;
 
         const mapElement = nextMap.container.getElement();
+        yandexMapElement = mapElement;
 
         nextOverlayRoot = document.createElement('div');
         nextOverlayRoot.className = 'yandex-map-overlay-root';
@@ -245,11 +257,16 @@ function YandexMapApi({
 
         const markerLayout = ymaps.templateLayoutFactory.createClass(
           [
+            '<div class="map-price-marker-anchor">',
             '<button class="map-price-marker" type="button"',
             ' data-map-point-id="$[properties.pointId]"',
-            ' data-yandex-point-id="$[properties.pointId]">',
-            '<span>$[properties.markerLabel]</span>',
+            ' data-yandex-point-id="$[properties.pointId]"',
+            ' aria-label="$[properties.hintContent]">',
             '</button>',
+            '<span class="map-price-marker-label" aria-hidden="true">',
+            '<span>$[properties.markerLabel]</span>',
+            '</span>',
+            '</div>',
           ].join(''),
         );
         const placemarks = points.map((point) => {
@@ -265,11 +282,9 @@ function YandexMapApi({
               iconLayout: markerLayout,
               iconOffset: [-18, -18],
               iconShape: {
-                type: 'Rectangle',
-                coordinates: [
-                  [-18, -18],
-                  [128, 18],
-                ],
+                type: 'Circle',
+                coordinates: [18, 18],
+                radius: 18,
               },
               openBalloonOnClick: false,
             },
@@ -296,13 +311,16 @@ function YandexMapApi({
           }
         };
         const syncMarkerExpansion = () => {
-          mapContainer.classList.toggle('yandex-map--markers-expanded', nextMap.getZoom() >= expandedMarkerZoom);
+          const shouldExpandMarkers = nextMap.getZoom() >= expandedMarkerZoom;
+
+          mapContainer.classList.toggle('yandex-map--markers-expanded', shouldExpandMarkers);
+          yandexMapElement?.classList.toggle('yandex-map--markers-expanded', shouldExpandMarkers);
         };
         handleBoundsChange = () => {
           syncMarkerExpansion();
           notifyBoundsChange();
         };
-        const scheduleViewportUpdate = (restoreBounds: boolean) => {
+        const scheduleViewportUpdate = (viewportToRestore: YandexMapViewport | null) => {
           if (resizeFrameId !== null) {
             window.cancelAnimationFrame(resizeFrameId);
           }
@@ -312,22 +330,22 @@ function YandexMapApi({
 
             nextMap.container.fitToViewport();
 
-            if (restoreBounds && boundsBeforeFullscreen) {
-              nextMap.setBounds(boundsBeforeFullscreen, {
-                checkZoomRange: true,
-              });
-              boundsBeforeFullscreen = null;
+            if (viewportToRestore) {
+              restoreMapViewport(nextMap, viewportToRestore);
             }
 
             handleBoundsChange?.();
           });
         };
         handleFullscreenEnter = () => {
-          boundsBeforeFullscreen = normalizeYandexBounds(nextMap.getBounds());
-          scheduleViewportUpdate(false);
+          viewportBeforeFullscreen = getCurrentMapViewport(nextMap);
+          scheduleViewportUpdate(viewportBeforeFullscreen);
         };
         handleFullscreenExit = () => {
-          scheduleViewportUpdate(true);
+          const viewportToRestore = getCurrentMapViewport(nextMap) ?? viewportBeforeFullscreen;
+
+          viewportBeforeFullscreen = null;
+          scheduleViewportUpdate(viewportToRestore);
         };
 
         nextMap.events.add('boundschange', handleBoundsChange);
@@ -376,6 +394,8 @@ function YandexMapApi({
           nextOverlayRoot.remove();
         }
 
+        yandexMapContainer?.classList.remove('yandex-map--markers-expanded');
+        yandexMapElement?.classList.remove('yandex-map--markers-expanded');
         setOverlayRoot(null);
         map.destroy();
       }
@@ -519,4 +539,37 @@ function normalizeYandexBounds(bounds: number[][] | null): YandexMapBounds | nul
     [firstLatitude, firstLongitude],
     [secondLatitude, secondLongitude],
   ];
+}
+
+function getCurrentMapViewport(map: YandexMapInstance): YandexMapViewport | null {
+  const center = normalizeYandexCenter(map.getCenter());
+  const zoom = map.getZoom();
+
+  if (!center || !Number.isFinite(zoom)) {
+    return null;
+  }
+
+  return { center, zoom };
+}
+
+function restoreMapViewport(map: YandexMapInstance, viewport: YandexMapViewport) {
+  map.setCenter(viewport.center, viewport.zoom, {
+    checkZoomRange: true,
+  });
+}
+
+function normalizeYandexCenter(center: number[] | null): [number, number] | null {
+  const latitude = center?.[0];
+  const longitude = center?.[1];
+
+  if (
+    typeof latitude !== 'number' ||
+    typeof longitude !== 'number' ||
+    !Number.isFinite(latitude) ||
+    !Number.isFinite(longitude)
+  ) {
+    return null;
+  }
+
+  return [latitude, longitude];
 }

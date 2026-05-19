@@ -3724,8 +3724,17 @@ tr.user-row--deactivated .text-button {
   pointer-events: auto;
 }
 
-.map-price-marker {
+.map-price-marker-anchor {
   position: relative;
+  width: 124px;
+  height: 36px;
+}
+
+.map-price-marker {
+  position: absolute;
+  z-index: 2;
+  left: 0;
+  top: 0;
   display: inline-flex;
   width: 36px;
   height: 36px;
@@ -3742,11 +3751,11 @@ tr.user-row--deactivated .text-button {
   white-space: nowrap;
   text-align: left;
   transform: translateZ(0);
+  overflow: visible;
   transition: width 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.map-price-marker::before,
-.map-price-marker::after {
+.map-price-marker::before {
   position: absolute;
   top: 50%;
   content: "";
@@ -3765,15 +3774,21 @@ tr.user-row--deactivated .text-button {
   transform: translateY(-50%);
 }
 
-.map-price-marker::after {
+.map-price-marker-label {
+  position: absolute;
   z-index: 1;
+  top: 50%;
   left: 18px;
+  display: inline-flex;
   width: 104px;
   height: 34px;
+  align-items: center;
   border: 2px solid oklch(98.5% 0.006 230);
   border-radius: 999px;
   background: var(--catalog-blue);
+  color: oklch(98.5% 0.006 230);
   box-shadow: 0 10px 22px rgb(24 32 42 / 22%);
+  pointer-events: none;
   opacity: 0;
   transform-origin: left center;
   transform: translateY(-50%) scaleX(0);
@@ -3782,12 +3797,10 @@ tr.user-row--deactivated .text-button {
     transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.map-price-marker span {
-  position: relative;
-  z-index: 3;
+.map-price-marker-label span {
   display: inline-flex;
   min-width: 0;
-  margin-left: 42px;
+  margin-left: 24px;
   opacity: 0;
   transform: translateX(-10px);
   transition:
@@ -3795,16 +3808,12 @@ tr.user-row--deactivated .text-button {
     transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.yandex-map--markers-expanded .map-price-marker {
-  width: 124px;
-}
-
-.yandex-map--markers-expanded .map-price-marker::after {
+.yandex-map--markers-expanded .map-price-marker-label {
   opacity: 1;
   transform: translateY(-50%) scaleX(1);
 }
 
-.yandex-map--markers-expanded .map-price-marker span {
+.yandex-map--markers-expanded .map-price-marker-label span {
   opacity: 1;
   transform: translateX(0);
 }
@@ -3819,7 +3828,7 @@ tr.user-row--deactivated .text-button {
     0 6px 14px rgb(24 32 42 / 18%);
 }
 
-.map-price-marker--selected::after {
+.map-price-marker--selected + .map-price-marker-label {
   background: var(--catalog-copper);
 }
 
@@ -3829,8 +3838,8 @@ tr.user-row--deactivated .text-button {
 
 @media (prefers-reduced-motion: reduce) {
   .map-price-marker,
-  .map-price-marker::after,
-  .map-price-marker span {
+  .map-price-marker-label,
+  .map-price-marker-label span {
     transition: none;
   }
 }
