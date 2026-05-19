@@ -61,6 +61,7 @@ test('catalog map popup gallery uses thumbnail variants only', () => {
   assert.match(mapObjectCardSource, /const galleryImages = object\.images\.length > 0 \? object\.images :/);
   assert.match(mapObjectCardSource, /const activeImage = galleryImages\[activeImageIndex\] \?\? galleryImages\[0\] \?\? null;/);
   assert.match(mapObjectCardSource, /variant="thumbnail"/);
+  assert.doesNotMatch(mapObjectCardSource, /loadingFallback="Загрузка превью"/);
   assert.doesNotMatch(mapObjectCardSource, /variant="original"/);
   assert.doesNotMatch(mapObjectCardSource, /variant="card"/);
 });

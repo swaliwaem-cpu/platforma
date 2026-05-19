@@ -1050,7 +1050,6 @@ function MapObjectCard({
             className="map-object-card-image"
             errorFallback="Превью недоступно"
             fileId={activeImage.file.id}
-            loadingFallback="Загрузка превью"
             placeholderClassName="map-object-card-image map-object-card-image--empty"
             variant="thumbnail"
           />
