@@ -1234,16 +1234,16 @@ function CatalogCard({
         ) : null}
       </a>
       <div className="catalog-card-body">
-        <div className="catalog-card-price-row">
-          <p className="catalog-card-price">{formatPrice(object.priceFrom)}</p>
-          <span>{formatPricePerMeter(object.pricePerMeterFrom)}</span>
-        </div>
         <div className="catalog-card-heading">
           <h3>
             <a href={objectHref} title={object.title} onClick={handleOpen}>
               {object.title}
             </a>
           </h3>
+        </div>
+        <div className="catalog-card-price-row">
+          <p className="catalog-card-price">{formatPrice(object.priceFrom)}</p>
+          <span>{formatPricePerMeter(object.pricePerMeterFrom)}</span>
         </div>
         <div className="catalog-card-location" aria-label="Район и метро">
           <span title={districtLabel}>{districtLabel}</span>

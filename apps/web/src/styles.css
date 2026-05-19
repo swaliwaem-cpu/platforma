@@ -3286,10 +3286,10 @@ tr.user-row--deactivated .text-button {
 }
 
 .catalog-card-body {
-  --catalog-card-title-height: 46px;
+  --catalog-card-title-height: 58px;
   --catalog-card-location-height: 64px;
   display: grid;
-  grid-template-rows: auto var(--catalog-card-title-height) var(--catalog-card-location-height) auto minmax(0, 1fr);
+  grid-template-rows: var(--catalog-card-title-height) auto var(--catalog-card-location-height) auto minmax(0, 1fr);
   gap: 13px;
   min-width: 0;
   padding: 15px;
@@ -3304,9 +3304,10 @@ tr.user-row--deactivated .text-button {
 .catalog-card-price {
   margin: 0;
   color: var(--catalog-ink-900);
-  font-size: 23px;
-  font-weight: 900;
-  line-height: 1.12;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.28;
+  overflow-wrap: anywhere;
 }
 
 .catalog-card-price-row span {
@@ -3328,8 +3329,9 @@ tr.user-row--deactivated .text-button {
   -webkit-line-clamp: 2;
   margin: 0;
   color: var(--catalog-ink-900);
-  font-size: 18px;
-  line-height: 1.28;
+  font-size: 23px;
+  font-weight: 900;
+  line-height: 1.12;
   overflow-wrap: anywhere;
 }
 
@@ -3439,7 +3441,8 @@ tr.user-row--deactivated .text-button {
   background: var(--catalog-ink-900);
   color: oklch(98.5% 0.006 230);
   padding: 0 14px;
-  font-weight: 850;
+  font-family: var(--platforma-font-sans);
+  font-weight: 700;
   line-height: 1;
   transition:
     background 180ms ease,
@@ -5603,10 +5606,6 @@ tr.user-row--deactivated .text-button {
     min-height: 0;
     max-height: none;
     overflow: visible;
-  }
-
-  .catalog-card-price {
-    font-size: 22px;
   }
 
   .catalog-card-facts {
