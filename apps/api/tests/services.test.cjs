@@ -430,12 +430,18 @@ test('CatalogLinksService.updateAdmin validates enabled targets and replaces row
 
 test('ObjectsService.list builds catalog filters for status, price, presentation and missing coordinates', async () => {
   const calls = {};
+  const objectId = '11111111-1111-4111-8111-111111111111';
   const prisma = {
+    $queryRaw: async (query) => {
+      calls.searchQuery = query;
+      return [{ id: objectId }];
+    },
     realEstateObject: {
       findMany: async (args) => {
         calls.findMany = args;
         return [
           objectRecord({
+            id: objectId,
             images: [
               objectImageRecord({
                 isCover: true,
@@ -484,7 +490,42 @@ test('ObjectsService.list builds catalog filters for status, price, presentation
   );
   assert.equal(filters.some((filter) => filter.files?.none?.type === ObjectFileType.PRESENTATION), true);
   assert.equal(filters.some((filter) => filter.OR?.some((item) => item.latitude === null)), true);
-  assert.equal(filters.some((filter) => filter.OR?.some((item) => item.title?.contains === 'центр')), true);
+  assert.equal(filters.some((filter) => filter.id?.in?.includes(objectId)), true);
+  assert.equal(calls.searchQuery.values.every((value) => value === '%центр%'), true);
+  assert.match(calls.searchQuery.strings.join('?'), /replace\(lower\(coalesce\(o\.title, ''\)\), '\.', ''\)/);
+  assert.match(calls.searchQuery.strings.join('?'), /replace\(lower\(coalesce\(d\.name, ''\)\), '\.', ''\)/);
+  assert.match(calls.searchQuery.strings.join('?'), /replace\(lower\(coalesce\(o\.address, ''\)\), '\.', ''\)/);
+  assert.match(calls.searchQuery.strings.join('?'), /object_locations ol/);
+  assert.match(calls.searchQuery.strings.join('?'), /l\.type::text = 'district'/);
+});
+
+test('ObjectsService.list ignores dots in object catalog search', async () => {
+  const calls = {};
+  const prisma = {
+    $queryRaw: async (query) => {
+      calls.searchQuery = query;
+      return [{ id: '11111111-1111-4111-8111-111111111111' }];
+    },
+    realEstateObject: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [objectRecord()];
+      },
+      count: async () => 1,
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await service.list({ search: ' ул. Новая ' });
+
+  assert.equal(calls.searchQuery.values.every((value) => value === '%ул новая%'), true);
+  assert.equal(
+    calls.findMany.where.AND.some((filter) =>
+      filter.id?.in?.includes('11111111-1111-4111-8111-111111111111'),
+    ),
+    true,
+  );
 });
 
 test('ObjectsService.list sorts catalog price per meter and completion date with empty values last', async () => {
@@ -731,6 +772,44 @@ test('MapService.listObjects filters krtName by exact case-insensitive trimmed v
     filters.some((filter) => filter.krtName?.equals === 'большое сити' && filter.krtName?.mode === 'insensitive'),
     true,
   );
+  assert.deepEqual(calls.count.where, calls.findMany.where);
+});
+
+test('MapService.listObjects uses dot-insensitive search for map catalog objects', async () => {
+  const calls = {};
+  const objectId = '11111111-1111-4111-8111-111111111111';
+  const mapObject = objectRecord({
+    id: objectId,
+    latitude: decimal('55.751244'),
+    longitude: decimal('37.618423'),
+  });
+  const prisma = {
+    $queryRaw: async (query) => {
+      calls.searchQuery = query;
+      return [{ id: objectId }];
+    },
+    realEstateObject: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [mapObject];
+      },
+      count: async (args) => {
+        calls.count = args;
+        return 1;
+      },
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new MapService(prisma);
+
+  await service.listObjects({ search: ' ж.к. Ари ' });
+
+  assert.equal(calls.searchQuery.values.every((value) => value === '%жк ари%'), true);
+  assert.equal(calls.findMany.where.AND.some((filter) => filter.id?.in?.includes(objectId)), true);
+  assert.match(calls.searchQuery.strings.join('?'), /replace\(lower\(coalesce\(o\.title, ''\)\), '\.', ''\)/);
+  assert.match(calls.searchQuery.strings.join('?'), /replace\(lower\(coalesce\(d\.name, ''\)\), '\.', ''\)/);
+  assert.match(calls.searchQuery.strings.join('?'), /replace\(lower\(coalesce\(o\.address, ''\)\), '\.', ''\)/);
+  assert.match(calls.searchQuery.strings.join('?'), /object_locations ol/);
   assert.deepEqual(calls.count.where, calls.findMany.where);
 });
 

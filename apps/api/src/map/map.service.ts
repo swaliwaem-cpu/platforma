@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { LocationType, ObjectFileType, ObjectStatus, Prisma } from '@prisma/client';
 
+import { findCatalogSearchObjectIds } from '../objects/object-search';
 import { PrismaService } from '../prisma/prisma.service';
 
 const mapObjectInclude = {
@@ -64,7 +65,7 @@ export class MapService {
 
   async listObjects(query: MapObjectsQuery) {
     const limit = Math.min(this.parsePositiveInteger(query.limit, 1000), 2000);
-    const filters = this.buildFilters(query);
+    const filters = await this.buildFilters(query);
     const where: Prisma.RealEstateObjectWhereInput = {
       AND: [
         ...filters,
@@ -102,7 +103,7 @@ export class MapService {
     };
   }
 
-  private buildFilters(query: MapObjectsQuery) {
+  private async buildFilters(query: MapObjectsQuery) {
     const filters: Prisma.RealEstateObjectWhereInput[] = [
       {
         deletedAt: null,
@@ -113,59 +114,12 @@ export class MapService {
     const priceFromMax = this.parseNullableDecimal(query.priceFromMax, 'Price from max', 14, 2);
 
     if (search) {
+      const searchObjectIds = await findCatalogSearchObjectIds(this.prisma, search);
+
       filters.push({
-        OR: [
-          {
-            title: {
-              contains: search,
-              mode: 'insensitive',
-            },
-          },
-          {
-            slug: {
-              contains: search,
-              mode: 'insensitive',
-            },
-          },
-          {
-            address: {
-              contains: search,
-              mode: 'insensitive',
-            },
-          },
-          {
-            description: {
-              contains: search,
-              mode: 'insensitive',
-            },
-          },
-          {
-            shortDescription: {
-              contains: search,
-              mode: 'insensitive',
-            },
-          },
-          {
-            developer: {
-              is: {
-                name: {
-                  contains: search,
-                  mode: 'insensitive',
-                },
-              },
-            },
-          },
-          {
-            primaryLocation: {
-              is: {
-                name: {
-                  contains: search,
-                  mode: 'insensitive',
-                },
-              },
-            },
-          },
-        ],
+        id: {
+          in: searchObjectIds,
+        },
       });
     }
 

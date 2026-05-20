@@ -16,3 +16,36 @@ test('object PDF upload starts immediately after file selection without a separa
   assert.doesNotMatch(source, /buttonLabel="Загрузить PDF"/);
   assert.doesNotMatch(source, /onUpload=\{props\.onUploadLinkedFile\}/);
 });
+
+test('object PDF upload creates a new object before saving the selected file', () => {
+  const uploadLinkedFileSource = extractFunctionSource(source, 'async function uploadLinkedFile');
+
+  assert.doesNotMatch(uploadLinkedFileSource, /if \(!accessToken \|\| !editObjectId\)/);
+  assert.match(uploadLinkedFileSource, /let targetObjectId = editObjectId;/);
+  assert.match(uploadLinkedFileSource, /if \(!targetObjectId && isCreateRoute\) \{/);
+  assert.match(uploadLinkedFileSource, /const validationError = validateObjectForm\(form\);/);
+  assert.match(uploadLinkedFileSource, /apiRequest<ObjectResponse>\('\/objects',\s*accessToken,\s*\{/);
+  assert.match(uploadLinkedFileSource, /apiRequest<ObjectResponse>\(`\/objects\/\$\{targetObjectId\}\/files`,\s*accessToken,\s*\{/);
+  assert.match(uploadLinkedFileSource, /pendingEditorNoticeRef\.current = 'Объект создан, PDF-файл добавлен';/);
+  assert.match(uploadLinkedFileSource, /pendingEditorErrorRef\.current = `Объект создан, но PDF не загрузился: \$\{uploadErrorMessage\}`;/);
+  assert.match(uploadLinkedFileSource, /navigate\(`\/admin\/objects\/\$\{createdObjectId\}\/edit`\)/);
+});
+
+test('object editor shows the PDF upload panel on create and edit routes', () => {
+  assert.match(source, /<AdminPanel className="editor-panel media-panel" role="region" aria-label="Файлы объекта">/);
+  assert.doesNotMatch(source, /PDF-файлы можно будет добавить после создания объекта/);
+  assert.doesNotMatch(
+    source,
+    /\{!props\.isCreateRoute \? \(\s*<AdminPanel className="editor-panel media-panel" role="region" aria-label="Файлы объекта">/,
+  );
+});
+
+function extractFunctionSource(sourceText, marker) {
+  const markerIndex = sourceText.indexOf(marker);
+
+  assert.notEqual(markerIndex, -1, `${marker} should exist`);
+
+  const nextFunctionIndex = sourceText.indexOf('\n  async function ', markerIndex + marker.length);
+
+  return sourceText.slice(markerIndex, nextFunctionIndex === -1 ? sourceText.length : nextFunctionIndex);
+}

@@ -74,8 +74,7 @@ type ObjectFormState = {
   completionYear: string;
   completionQuarter: string;
   address: string;
-  latitude: string;
-  longitude: string;
+  coordinates: string;
   developerId: string;
   primaryLocationId: string;
   districtLocationIds: string[];
@@ -139,8 +138,7 @@ const emptyForm: ObjectFormState = {
   completionYear: '',
   completionQuarter: '',
   address: '',
-  latitude: '',
-  longitude: '',
+  coordinates: '',
   developerId: '',
   primaryLocationId: '',
   districtLocationIds: [],
@@ -764,7 +762,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
   }
 
   async function uploadLinkedFile(selectedFile: File) {
-    if (!accessToken || !editObjectId) {
+    if (!accessToken) {
       return;
     }
 
@@ -773,13 +771,53 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
     setError(null);
     setNotice(null);
 
+    let targetObjectId = editObjectId;
+    let createdObjectId: string | null = null;
+    let shouldResetSubmitting = false;
+
     try {
+      if (!targetObjectId && isCreateRoute) {
+        const validationError = validateObjectForm(form);
+
+        if (validationError) {
+          setObjectFile(null);
+          setError(validationError);
+          return;
+        }
+
+        if (!canCreate) {
+          setObjectFile(null);
+          setError('Нет прав на создание объекта');
+          return;
+        }
+
+        setIsSubmitting(true);
+        shouldResetSubmitting = true;
+
+        const payload = createPayloadFromForm(form);
+        const createData = await apiRequest<ObjectResponse>('/objects', accessToken, {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+
+        targetObjectId = createData.object.id;
+        createdObjectId = createData.object.id;
+        setObject(createData.object);
+        setForm(createFormFromObject(createData.object));
+      }
+
+      if (!targetObjectId) {
+        setObjectFile(null);
+        setError('Нет доступа');
+        return;
+      }
+
       const body = new FormData();
       body.append('file', selectedFile);
       body.append('type', objectFileType);
       body.append('title', objectFileTitle);
 
-      const data = await apiRequest<ObjectResponse>(`/objects/${editObjectId}/files`, accessToken, {
+      const data = await apiRequest<ObjectResponse>(`/objects/${targetObjectId}/files`, accessToken, {
         method: 'POST',
         body,
       });
@@ -787,11 +825,30 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
       setObject(data.object);
       setObjectFile(null);
       setObjectFileTitle('');
-      setNotice('PDF-файл добавлен');
+
+      if (createdObjectId) {
+        setForm(createFormFromObject(data.object));
+        pendingEditorNoticeRef.current = 'Объект создан, PDF-файл добавлен';
+        navigate(`/admin/objects/${createdObjectId}/edit`);
+      } else {
+        setNotice('PDF-файл добавлен');
+      }
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Не удалось загрузить PDF');
+      const uploadErrorMessage = caughtError instanceof Error ? caughtError.message : 'Не удалось загрузить PDF';
+
+      if (createdObjectId) {
+        setObjectFile(null);
+        pendingEditorErrorRef.current = `Объект создан, но PDF не загрузился: ${uploadErrorMessage}`;
+        navigate(`/admin/objects/${createdObjectId}/edit`);
+      } else {
+        setError(uploadErrorMessage);
+      }
     } finally {
       setIsUploading(false);
+
+      if (shouldResetSubmitting) {
+        setIsSubmitting(false);
+      }
     }
   }
 
@@ -1451,25 +1508,15 @@ function ObjectEditor(props: ObjectEditorProps) {
                     />
                   </Field>
 
-                  <Field>
-                    <FieldLabel htmlFor="object-latitude">Широта</FieldLabel>
+                  <Field className="field-wide">
+                    <FieldLabel htmlFor="object-coordinates">Координаты</FieldLabel>
                     <Input
-                      id="object-latitude"
+                      id="object-coordinates"
                       inputMode="decimal"
+                      placeholder="55.713384, 37.651074"
                       type="text"
-                      value={props.form.latitude}
-                      onChange={(event) => props.onFormChange({ ...props.form, latitude: event.target.value })}
-                    />
-                  </Field>
-
-                  <Field>
-                    <FieldLabel htmlFor="object-longitude">Долгота</FieldLabel>
-                    <Input
-                      id="object-longitude"
-                      inputMode="decimal"
-                      type="text"
-                      value={props.form.longitude}
-                      onChange={(event) => props.onFormChange({ ...props.form, longitude: event.target.value })}
+                      value={props.form.coordinates}
+                      onChange={(event) => props.onFormChange({ ...props.form, coordinates: event.target.value })}
                     />
                   </Field>
 
@@ -1699,93 +1746,81 @@ function ObjectEditor(props: ObjectEditorProps) {
             </AdminButton>
           </AdminPanel>
 
-          {!props.isCreateRoute ? (
-            <AdminPanel className="editor-panel media-panel" role="region" aria-label="Файлы объекта">
-              <div className="panel-title-row">
-                <div>
-                  <p className="eyebrow">PDF-файлы</p>
-                  <h3>Документы объекта</h3>
-                </div>
-                <span className="panel-count">{props.object?.files.length ?? 0} файлов</span>
+          <AdminPanel className="editor-panel media-panel" role="region" aria-label="Файлы объекта">
+            <div className="panel-title-row">
+              <div>
+                <p className="eyebrow">PDF-файлы</p>
+                <h3>Документы объекта</h3>
               </div>
+              <span className="panel-count">{props.object?.files.length ?? 0} файлов</span>
+            </div>
 
-              <FieldGroup className="file-upload-fields">
-                <Field>
-                  <FieldLabel htmlFor="object-file-type">Тип</FieldLabel>
-                  <select
-                    id="object-file-type"
-                    value={props.objectFileType}
-                    onChange={(event) => props.onObjectFileTypeChange(event.target.value as ObjectFileType)}
-                  >
-                    {Object.entries(fileTypeLabels).map(([value, label]) => (
-                      <option key={value} value={value}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="object-file-title">Название</FieldLabel>
-                  <Input
-                    id="object-file-title"
-                    type="text"
-                    value={props.objectFileTitle}
-                    onChange={(event) => props.onObjectFileTitleChange(event.target.value)}
-                  />
-                </Field>
-              </FieldGroup>
+            <FieldGroup className="file-upload-fields">
+              <Field>
+                <FieldLabel htmlFor="object-file-type">Тип</FieldLabel>
+                <select
+                  id="object-file-type"
+                  value={props.objectFileType}
+                  onChange={(event) => props.onObjectFileTypeChange(event.target.value as ObjectFileType)}
+                >
+                  {Object.entries(fileTypeLabels).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="object-file-title">Название</FieldLabel>
+                <Input
+                  id="object-file-title"
+                  type="text"
+                  value={props.objectFileTitle}
+                  onChange={(event) => props.onObjectFileTitleChange(event.target.value)}
+                />
+              </Field>
+            </FieldGroup>
 
-              <FileUploadRow
-                accept="application/pdf"
-                disabled={!props.canUpload || props.isUploading}
-                file={props.objectFile}
-                label="Файл"
-                onChange={props.onObjectFileChange}
-              />
-              <ul className="file-list">
-                {props.object?.files.map((file) => {
-                  const displayTitle = getLinkedFileTitle(file, fileTypeLabels);
-                  const displayOriginalName = getLinkedFileOriginalName(file);
+            <FileUploadRow
+              accept="application/pdf"
+              disabled={!props.canUpload || props.isUploading || props.isSubmitting}
+              file={props.objectFile}
+              label="Файл"
+              onChange={props.onObjectFileChange}
+            />
+            <ul className="file-list">
+              {props.object?.files.map((file) => {
+                const displayTitle = getLinkedFileTitle(file, fileTypeLabels);
+                const displayOriginalName = getLinkedFileOriginalName(file);
 
-                  return (
-                    <li key={file.id}>
-                      <div className="file-main">
-                        <strong>{displayTitle}</strong>
-                        <span>{displayOriginalName}</span>
-                      </div>
-                      <div className="file-actions">
-                        <strong>{fileTypeLabels[file.type]}</strong>
-                        {file.file.sizeBytes ? <span>{formatFileSize(file.file.sizeBytes)}</span> : null}
-                        <AdminButton
-                          className="text-button--danger"
-                          tone="text"
-                          disabled={!props.canDeleteMedia || props.isUploading}
-                          type="button"
-                          onClick={() => props.onLinkedFileDelete(file.id)}
-                        >
-                          <Trash2Icon data-icon="inline-start" />
-                          Удалить
-                        </AdminButton>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-              {props.object?.files.length === 0 ? (
-                <AdminEmptyState title="PDF-файлов нет" description="Добавьте презентацию, планировку или другой документ." />
-              ) : null}
-            </AdminPanel>
-          ) : (
-            <AdminPanel className="editor-panel media-panel" role="region">
-              <div className="panel-title-row">
-                <div>
-                  <p className="eyebrow">PDF-файлы</p>
-                  <h3>Документы объекта</h3>
-                </div>
-              </div>
-              <p className="helper-text">PDF-файлы можно будет добавить после создания объекта.</p>
-            </AdminPanel>
-          )}
+                return (
+                  <li key={file.id}>
+                    <div className="file-main">
+                      <strong>{displayTitle}</strong>
+                      <span>{displayOriginalName}</span>
+                    </div>
+                    <div className="file-actions">
+                      <strong>{fileTypeLabels[file.type]}</strong>
+                      {file.file.sizeBytes ? <span>{formatFileSize(file.file.sizeBytes)}</span> : null}
+                      <AdminButton
+                        className="text-button--danger"
+                        tone="text"
+                        disabled={!props.canDeleteMedia || props.isUploading}
+                        type="button"
+                        onClick={() => props.onLinkedFileDelete(file.id)}
+                      >
+                        <Trash2Icon data-icon="inline-start" />
+                        Удалить
+                      </AdminButton>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+            {(props.object?.files.length ?? 0) === 0 ? (
+              <AdminEmptyState title="PDF-файлов нет" description="Добавьте презентацию, планировку или другой документ." />
+            ) : null}
+          </AdminPanel>
         </aside>
       </div>
       {props.isGalleryModalOpen ? (
@@ -2376,8 +2411,7 @@ function createFormFromObject(object: RealEstateObjectDetail): ObjectFormState {
     completionYear: object.completionYear?.toString() ?? '',
     completionQuarter: object.completionQuarter?.toString() ?? '',
     address: object.address ?? '',
-    latitude: object.latitude?.toString() ?? '',
-    longitude: object.longitude?.toString() ?? '',
+    coordinates: formatCoordinatePair(object.latitude?.toString() ?? '', object.longitude?.toString() ?? ''),
     developerId: object.developer?.id ?? '',
     primaryLocationId: districtLocation?.id ?? '',
     districtLocationIds: getObjectLocationsByType(object, 'DISTRICT').map((location) => location.id),
@@ -2389,6 +2423,7 @@ function createFormFromObject(object: RealEstateObjectDetail): ObjectFormState {
 }
 
 function createPayloadFromForm(form: ObjectFormState) {
+  const coordinates = parseCoordinatePair(form.coordinates);
   const primaryLocationId = emptyToNull(form.primaryLocationId);
   const locationIds = unique([
     ...(primaryLocationId ? [primaryLocationId] : []),
@@ -2415,8 +2450,8 @@ function createPayloadFromForm(form: ObjectFormState) {
     completionYear: emptyToNull(form.completionYear),
     completionQuarter: emptyToNull(form.completionQuarter),
     address: emptyToNull(form.address),
-    latitude: emptyToNull(form.latitude),
-    longitude: emptyToNull(form.longitude),
+    latitude: coordinates.latitude,
+    longitude: coordinates.longitude,
     featuresJson: JSON.parse(form.featuresText) as Record<string, unknown>,
     developerId: emptyToNull(form.developerId),
     primaryLocationId,
@@ -2524,8 +2559,10 @@ function validateObjectForm(form: ObjectFormState) {
     return 'Год сдачи обязателен, если указан квартал';
   }
 
-  if ((form.latitude && !form.longitude) || (!form.latitude && form.longitude)) {
-    return 'Широта и долгота заполняются вместе';
+  const coordinateParse = parseCoordinatePair(form.coordinates);
+
+  if (coordinateParse.error) {
+    return coordinateParse.error;
   }
 
   if (form.layoutsUrl.trim()) {
@@ -2591,6 +2628,81 @@ function emptyToNull(value: string) {
   const trimmedValue = value.trim();
 
   return trimmedValue ? trimmedValue : null;
+}
+
+function formatCoordinatePair(latitude: string, longitude: string) {
+  if (latitude && longitude) {
+    return `${latitude}, ${longitude}`;
+  }
+
+  return latitude || longitude;
+}
+
+function parseCoordinatePair(value: string): { latitude: string | null; longitude: string | null; error: string | null } {
+  const trimmedValue = value.trim();
+
+  if (!trimmedValue) {
+    return {
+      latitude: null,
+      longitude: null,
+      error: null,
+    };
+  }
+
+  const parts = trimmedValue.split(',');
+
+  if (parts.length !== 2) {
+    return {
+      latitude: null,
+      longitude: null,
+      error: 'Координаты нужно указать в формате: широта, долгота',
+    };
+  }
+
+  const [rawLatitude, rawLongitude] = parts as [string, string];
+  const latitude = rawLatitude.trim();
+  const longitude = rawLongitude.trim();
+
+  if (!latitude || !longitude) {
+    return {
+      latitude: null,
+      longitude: null,
+      error: 'Координаты нужно указать в формате: широта, долгота',
+    };
+  }
+
+  const latitudeNumber = Number(latitude);
+  const longitudeNumber = Number(longitude);
+
+  if (!Number.isFinite(latitudeNumber) || !Number.isFinite(longitudeNumber)) {
+    return {
+      latitude: null,
+      longitude: null,
+      error: 'Координаты должны быть числами через точку',
+    };
+  }
+
+  if (latitudeNumber < -90 || latitudeNumber > 90) {
+    return {
+      latitude: null,
+      longitude: null,
+      error: 'Широта должна быть от -90 до 90',
+    };
+  }
+
+  if (longitudeNumber < -180 || longitudeNumber > 180) {
+    return {
+      latitude: null,
+      longitude: null,
+      error: 'Долгота должна быть от -180 до 180',
+    };
+  }
+
+  return {
+    latitude,
+    longitude,
+    error: null,
+  };
 }
 
 function unique(values: string[]) {

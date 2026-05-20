@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { ArrowDownIcon, ArrowUpDownIcon, ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon } from 'lucide-react';
 import type {
   CatalogLinksResponse,
@@ -121,6 +121,8 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
   const [mapError, setMapError] = useState<string | null>(null);
   const [directoryError, setDirectoryError] = useState<string | null>(null);
   const [catalogLinksError, setCatalogLinksError] = useState<string | null>(null);
+  const objectsRequestIdRef = useRef(0);
+  const mapObjectsRequestIdRef = useRef(0);
 
   useEffect(() => {
     const handlePopState = () => setQueryString(window.location.search);
@@ -232,6 +234,9 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
       return;
     }
 
+    const requestId = objectsRequestIdRef.current + 1;
+    objectsRequestIdRef.current = requestId;
+
     setIsLoading(true);
     setError(null);
     setLoadMoreError(null);
@@ -240,14 +245,22 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
       const params = buildObjectsParams(filters, true);
       const data = await apiRequest<ObjectsResponse>(`/objects?${params.toString()}`, accessToken);
 
+      if (objectsRequestIdRef.current !== requestId) {
+        return;
+      }
+
       setObjects(data.items);
       setTotal(data.total);
       setTotalPages(data.totalPages);
       setLoadedThroughPage(filters.page);
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Не удалось загрузить каталог');
+      if (objectsRequestIdRef.current === requestId) {
+        setError(caughtError instanceof Error ? caughtError.message : 'Не удалось загрузить каталог');
+      }
     } finally {
-      setIsLoading(false);
+      if (objectsRequestIdRef.current === requestId) {
+        setIsLoading(false);
+      }
     }
   }
 
@@ -261,6 +274,8 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
       ...filters,
       page: nextPage,
     };
+    const requestId = objectsRequestIdRef.current + 1;
+    objectsRequestIdRef.current = requestId;
 
     setIsLoadingMore(true);
     setLoadMoreError(null);
@@ -269,14 +284,22 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
       const params = buildObjectsParams(nextFilters, true);
       const data = await apiRequest<ObjectsResponse>(`/objects?${params.toString()}`, accessToken);
 
+      if (objectsRequestIdRef.current !== requestId) {
+        return;
+      }
+
       setObjects((currentObjects) => appendUniqueCatalogObjects(currentObjects, data.items));
       setTotal(data.total);
       setTotalPages(data.totalPages);
       setLoadedThroughPage(nextPage);
     } catch (caughtError) {
-      setLoadMoreError(caughtError instanceof Error ? caughtError.message : 'Не удалось загрузить следующую страницу');
+      if (objectsRequestIdRef.current === requestId) {
+        setLoadMoreError(caughtError instanceof Error ? caughtError.message : 'Не удалось загрузить следующую страницу');
+      }
     } finally {
-      setIsLoadingMore(false);
+      if (objectsRequestIdRef.current === requestId) {
+        setIsLoadingMore(false);
+      }
     }
   }
 
@@ -284,6 +307,9 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
     if (!accessToken) {
       return;
     }
+
+    const requestId = mapObjectsRequestIdRef.current + 1;
+    mapObjectsRequestIdRef.current = requestId;
 
     if (filters.hasCoordinates === 'false') {
       setMapObjects([]);
@@ -300,12 +326,20 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
       const params = buildObjectsParams(filters, false);
       const data = await apiRequest<MapObjectsResponse>(`/map/objects?${params.toString()}`, accessToken);
 
+      if (mapObjectsRequestIdRef.current !== requestId) {
+        return;
+      }
+
       setMapObjects(data.items);
       setMapTotal(data.total);
     } catch (caughtError) {
-      setMapError(caughtError instanceof Error ? caughtError.message : 'Не удалось загрузить объекты для карты');
+      if (mapObjectsRequestIdRef.current === requestId) {
+        setMapError(caughtError instanceof Error ? caughtError.message : 'Не удалось загрузить объекты для карты');
+      }
     } finally {
-      setIsMapLoading(false);
+      if (mapObjectsRequestIdRef.current === requestId) {
+        setIsMapLoading(false);
+      }
     }
   }
 
@@ -315,7 +349,28 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
       ...patch,
       page: options.resetPage ? 1 : (patch.page ?? filters.page),
     };
+    const shouldResetSearchResults = 'search' in patch && patch.search !== filters.search;
     const nextSearch = buildCatalogQuery(nextFilters, viewMode);
+
+    if (shouldResetSearchResults) {
+      objectsRequestIdRef.current += 1;
+      setObjects([]);
+      setTotal(0);
+      setTotalPages(1);
+      setLoadedThroughPage(nextFilters.page);
+      setError(null);
+      setLoadMoreError(null);
+      setIsLoadingMore(false);
+      setIsLoading(true);
+    }
+
+    if (shouldResetSearchResults && isMapView) {
+      mapObjectsRequestIdRef.current += 1;
+      setMapObjects([]);
+      setMapTotal(0);
+      setMapError(null);
+      setIsMapLoading(nextFilters.hasCoordinates !== 'false');
+    }
 
     window.history.pushState(null, '', `${pathname}${nextSearch}`);
     setQueryString(window.location.search);
@@ -1157,7 +1212,7 @@ function MapObjectCard({
             errorFallback="Превью недоступно"
             fileId={activeImage.file.id}
             placeholderClassName="map-object-card-image map-object-card-image--empty"
-            variant="thumbnail"
+            variant="card"
           />
         ) : (
           <div className="map-object-card-image map-object-card-image--empty">Нет фото</div>
@@ -1456,7 +1511,7 @@ function parseCatalogFilters(queryString: string): CatalogFilters {
   const params = new URLSearchParams(queryString);
 
   return {
-    search: parseTextParam(params.get('search')),
+    search: parseSearchParam(params.get('search')),
     developerId: parseTextParam(params.get('developerId')),
     krtName: parseTextParam(params.get('krtName')),
     locationId: parseTextParam(params.get('locationId')),
@@ -1485,7 +1540,7 @@ function parseCatalogViewMode(queryString: string): CatalogViewMode {
 function buildCatalogQuery(filters: CatalogFilters, viewMode: CatalogViewMode = 'cards') {
   const params = new URLSearchParams();
 
-  setParam(params, 'search', filters.search);
+  setSearchParam(params, 'search', filters.search);
   setParam(params, 'developerId', filters.developerId);
   setParam(params, 'krtName', filters.krtName);
   setParam(params, 'locationId', filters.locationId);
@@ -1537,7 +1592,7 @@ function buildObjectsParams(filters: CatalogFilters, includePage: boolean) {
     params.set('page', String(filters.page));
   }
 
-  setParam(params, 'search', filters.search);
+  setSearchParam(params, 'search', filters.search);
   setParam(params, 'developerId', filters.developerId);
   setParam(params, 'krtName', filters.krtName);
   setParam(params, 'locationId', filters.locationId);
@@ -1626,6 +1681,12 @@ function setParam(params: URLSearchParams, key: string, value: string) {
   }
 }
 
+function setSearchParam(params: URLSearchParams, key: string, value: string) {
+  if (value.trim()) {
+    params.set(key, value);
+  }
+}
+
 function setCatalogSortParams(params: URLSearchParams, filters: CatalogFilters) {
   const isDefaultSort =
     filters.sortBy === defaultFilters.sortBy && filters.sortDirection === defaultFilters.sortDirection;
@@ -1666,6 +1727,10 @@ function toggleCatalogSortDirection(direction: SortDirection): SortDirection {
 
 function parseTextParam(value: string | null) {
   return value?.trim() ?? '';
+}
+
+function parseSearchParam(value: string | null) {
+  return value ?? '';
 }
 
 function parsePositiveInteger(value: string | null, fallback: number) {

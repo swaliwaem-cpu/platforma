@@ -3736,12 +3736,12 @@ tr.user-row--deactivated .text-button {
 .catalog-map-list {
   position: absolute;
   z-index: 20;
-  top: 24px;
+  top: 64px;
   right: 24px;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   width: min(320px, calc(100% - 48px));
-  max-height: calc(100% - 48px);
+  max-height: calc(100% - 88px);
   overflow: hidden;
   border: 1px solid color-mix(in oklch, var(--catalog-border) 88%, transparent);
   border-radius: var(--catalog-radius-md);
@@ -3837,7 +3837,7 @@ tr.user-row--deactivated .text-button {
 .catalog-map-list-toggle {
   position: absolute;
   z-index: 20;
-  top: 24px;
+  top: 64px;
   right: 24px;
   border: 1px solid color-mix(in oklch, var(--catalog-border) 90%, transparent);
   border-radius: 999px;

@@ -159,3 +159,8 @@ test('catalog map layout stays bounded after fullscreen exits', () => {
     /@media\s*\(max-width:\s*760px\)\s*\{[\s\S]*?\.yandex-map-shell,\s*[\s\S]*?\.yandex-map,\s*[\s\S]*?\.map-fallback\s*\{[\s\S]*?height:\s*420px;/,
   );
 });
+
+test('catalog map list leaves room for yandex fullscreen control', () => {
+  assert.match(styles, /\.catalog-map-list\s*\{[\s\S]*?top:\s*64px;[\s\S]*?right:\s*24px;[\s\S]*?max-height:\s*calc\(100% - 88px\);/);
+  assert.match(styles, /\.catalog-map-list-toggle\s*\{[\s\S]*?top:\s*64px;[\s\S]*?right:\s*24px;/);
+});

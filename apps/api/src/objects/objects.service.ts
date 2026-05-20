@@ -9,6 +9,7 @@ import { AuthenticatedUser, RequestWithAuth } from '../auth/auth.types';
 import { FilesService } from '../files/files.service';
 import { UploadedFile } from '../files/uploaded-file.type';
 import { PrismaService } from '../prisma/prisma.service';
+import { findCatalogSearchObjectIds } from './object-search';
 
 const objectListInclude = {
   developer: true,
@@ -203,59 +204,12 @@ export class ObjectsService {
     const orderBy = this.parseObjectListOrderBy(query.sortBy, query.sortDirection);
 
     if (search) {
+      const searchObjectIds = await findCatalogSearchObjectIds(this.prisma, search);
+
       filters.push({
-        OR: [
-          {
-            title: {
-              contains: search,
-              mode: 'insensitive',
-            },
-          },
-          {
-            slug: {
-              contains: search,
-              mode: 'insensitive',
-            },
-          },
-          {
-            address: {
-              contains: search,
-              mode: 'insensitive',
-            },
-          },
-          {
-            description: {
-              contains: search,
-              mode: 'insensitive',
-            },
-          },
-          {
-            shortDescription: {
-              contains: search,
-              mode: 'insensitive',
-            },
-          },
-          {
-            developer: {
-              is: {
-                name: {
-                  contains: search,
-                  mode: 'insensitive',
-                },
-              },
-            },
-          },
-          {
-            primaryLocation: {
-              is: {
-                name: {
-                  contains: search,
-                  mode: 'insensitive',
-                },
-              },
-            },
-          },
-        ],
+        id: {
+          in: searchObjectIds,
+        },
       });
     }
 

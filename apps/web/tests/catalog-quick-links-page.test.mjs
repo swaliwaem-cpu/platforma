@@ -82,6 +82,32 @@ test('catalog filters include krtName in URL and API requests', () => {
   assert.match(source, /setParam\(params, 'krtName', filters\.krtName\)/);
 });
 
+test('catalog search keeps typed spaces while syncing URL and API params', () => {
+  assert.match(source, /search: parseSearchParam\(params\.get\('search'\)\)/);
+  assert.match(source, /setSearchParam\(params, 'search', filters\.search\)/);
+  assert.match(source, /function setSearchParam\(params: URLSearchParams, key: string, value: string\)/);
+  assert.match(source, /if \(value\.trim\(\)\) \{[\s\S]*?params\.set\(key, value\);[\s\S]*?\}/);
+});
+
+test('catalog search clears stale results and shows loading before URL fetch finishes', () => {
+  assert.match(source, /const shouldResetSearchResults = 'search' in patch && patch\.search !== filters\.search;/);
+  assert.match(source, /if \(shouldResetSearchResults\) \{[\s\S]*?setObjects\(\[\]\);[\s\S]*?setTotal\(0\);[\s\S]*?setTotalPages\(1\);[\s\S]*?setLoadedThroughPage\(nextFilters\.page\);[\s\S]*?setError\(null\);[\s\S]*?setLoadMoreError\(null\);[\s\S]*?setIsLoading\(true\);[\s\S]*?\}/);
+  assert.match(source, /if \(shouldResetSearchResults && isMapView\) \{[\s\S]*?setMapObjects\(\[\]\);[\s\S]*?setMapTotal\(0\);[\s\S]*?setMapError\(null\);[\s\S]*?setIsMapLoading\(nextFilters\.hasCoordinates !== 'false'\);[\s\S]*?\}/);
+});
+
+test('catalog search ignores stale object responses from previous characters', () => {
+  assert.match(source, /useRef/);
+  assert.match(source, /const objectsRequestIdRef = useRef\(0\);/);
+  assert.match(source, /const mapObjectsRequestIdRef = useRef\(0\);/);
+  assert.match(source, /const requestId = objectsRequestIdRef\.current \+ 1;[\s\S]*?objectsRequestIdRef\.current = requestId;/);
+  assert.match(source, /if \(objectsRequestIdRef\.current !== requestId\) \{[\s\S]*?return;[\s\S]*?\}[\s\S]*?setObjects\(data\.items\);/);
+  assert.match(source, /if \(objectsRequestIdRef\.current === requestId\) \{[\s\S]*?setIsLoading\(false\);[\s\S]*?\}/);
+  assert.match(source, /objectsRequestIdRef\.current \+= 1;[\s\S]*?setObjects\(\[\]\);/);
+  assert.match(source, /const requestId = mapObjectsRequestIdRef\.current \+ 1;[\s\S]*?mapObjectsRequestIdRef\.current = requestId;/);
+  assert.match(source, /if \(mapObjectsRequestIdRef\.current !== requestId\) \{[\s\S]*?return;[\s\S]*?\}[\s\S]*?setMapObjects\(data\.items\);/);
+  assert.match(source, /mapObjectsRequestIdRef\.current \+= 1;[\s\S]*?setMapObjects\(\[\]\);/);
+});
+
 test('catalog sorting renders below filters and drives URL and object request params', () => {
   const filtersIndex = source.indexOf('\n      <CatalogFilters');
   const sortIndex = source.indexOf('<CatalogSortBar');
