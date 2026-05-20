@@ -175,6 +175,10 @@ test('object files block keeps primary actions inline and labels additional file
   );
   assert.match(objectDetailSource, /<FileActionLabel>Презентация<\/FileActionLabel>/);
   assert.match(objectDetailSource, /<FileActionLabel>Планировки<\/FileActionLabel>/);
+  assert.match(
+    objectDetailSource,
+    /className="object-detail-action-button object-detail-action-button--disabled object-detail-action-button--missing"/,
+  );
   assert.doesNotMatch(objectDetailSource, /value="Отсутствует"|value="Открыть цены"|value="Отсутствуют"/);
 
   assert.notEqual(actionsIndex, -1, 'files primary actions should have a dedicated layout class');
@@ -207,6 +211,16 @@ test('object files block keeps primary actions inline and labels additional file
   assert.match(
     appThemeStyles,
     /html\[data-app-theme\] \.object-files-section \.object-detail-action-button\s*\{[\s\S]*?border-color:\s*var\(--app-theme-border-soft\);[\s\S]*?background:\s*var\(--app-theme-surface-soft\);[\s\S]*?color:\s*var\(--app-theme-ink-800\);[\s\S]*?\}/,
+  );
+
+  assert.match(
+    appThemeStyles,
+    /html\[data-app-theme\] \.object-files-section :is\(\.object-detail-action-button:hover,\s*\.object-detail-action-button:focus-visible\)\s*\{[\s\S]*?background:\s*color-mix\(in srgb,\s*var\(--app-theme-primary-soft\) 44%,\s*var\(--app-theme-surface\)\);[\s\S]*?\}/,
+  );
+
+  assert.match(
+    appThemeStyles,
+    /html\[data-app-theme\] \.object-files-section \.object-detail-action-button--missing:hover\s*\{[\s\S]*?background:\s*var\(--app-theme-danger-soft\);[\s\S]*?\}/,
   );
 
   assert.match(

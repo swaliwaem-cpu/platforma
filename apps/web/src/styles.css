@@ -4977,6 +4977,13 @@ tr.user-row--deactivated .text-button {
   box-shadow: none;
 }
 
+.object-detail-action-button--missing:hover {
+  border-color: #b42318;
+  background: #fff1ee;
+  color: #b42318;
+  box-shadow: 0 0 0 3px rgb(180 35 24 / 14%);
+}
+
 .object-detail-action-button:disabled {
   cursor: default;
 }

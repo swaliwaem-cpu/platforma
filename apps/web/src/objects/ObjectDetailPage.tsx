@@ -238,7 +238,11 @@ function ObjectDetail({
                 <FileActionLabel>Планировки</FileActionLabel>
               </a>
             ) : (
-              <button className="object-detail-action-button object-detail-action-button--disabled" disabled type="button">
+              <button
+                className="object-detail-action-button object-detail-action-button--disabled object-detail-action-button--missing"
+                disabled
+                type="button"
+              >
                 <FileActionLabel>Планировки</FileActionLabel>
               </button>
             )}

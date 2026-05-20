@@ -406,6 +406,13 @@ html[data-app-theme] .object-files-section .object-detail-action-button--disable
   box-shadow: none;
 }
 
+html[data-app-theme] .object-files-section .object-detail-action-button--missing:hover {
+  border-color: color-mix(in srgb, var(--app-theme-danger) 36%, var(--app-theme-border));
+  background: var(--app-theme-danger-soft);
+  color: var(--app-theme-danger);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-theme-danger) 22%, transparent);
+}
+
 html[data-app-theme] .object-file-action-label {
   color: var(--app-theme-ink-700);
 }
