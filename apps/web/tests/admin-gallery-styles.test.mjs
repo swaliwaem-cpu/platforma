@@ -27,12 +27,12 @@ test('admin gallery item keeps preview text readable next to action buttons', ()
 test('admin gallery modal uses stable cover slot and large responsive tile grid', () => {
   assert.match(
     styles,
-    /\.gallery-modal-backdrop\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?inset:\s*0;[\s\S]*?\}/,
+    /\.gallery-modal-backdrop\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?inset:\s*0;[\s\S]*?align-items:\s*center;[\s\S]*?\}/,
   );
 
   assert.match(
     styles,
-    /\.gallery-modal\s*\{[\s\S]*?max-width:\s*920px;[\s\S]*?max-height:\s*calc\(100dvh - 32px\);[\s\S]*?\}/,
+    /\.gallery-modal\s*\{[\s\S]*?width:\s*90vw;[\s\S]*?height:\s*90dvh;[\s\S]*?max-width:\s*90vw;[\s\S]*?max-height:\s*90dvh;[\s\S]*?\}/,
   );
 
   assert.match(
