@@ -75,7 +75,11 @@ test('detail page opens files through media URL without blob fetches', () => {
   const secureFileButtonSource = extractFunctionSource(detailSource, 'function SecureFileButton');
 
   assert.match(detailSource, /buildMediaFileContentUrl/);
-  assert.match(secureFileButtonSource, /window\.open\(buildMediaFileContentUrl\(fileId\), '_blank', 'noopener,noreferrer'\)/);
+  assert.match(secureFileButtonSource, /href=\{buildMediaFileContentUrl\(fileId\)\}/);
+  assert.match(secureFileButtonSource, /target="_blank"/);
+  assert.match(secureFileButtonSource, /rel="noopener noreferrer"/);
+  assert.doesNotMatch(secureFileButtonSource, /window\.open/);
+  assert.doesNotMatch(secureFileButtonSource, /Файл недоступен/);
   assert.doesNotMatch(secureFileButtonSource, /\bfetch\(/);
   assert.doesNotMatch(secureFileButtonSource, /response\.blob\(\)/);
   assert.doesNotMatch(secureFileButtonSource, /URL\.createObjectURL/);

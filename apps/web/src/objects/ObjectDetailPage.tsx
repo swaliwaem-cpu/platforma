@@ -656,24 +656,11 @@ function SecureFileButton({
   openingLabel?: string;
   wrapperClassName?: string;
 }) {
-  const [error, setError] = useState<string | null>(null);
-
-  function handleOpen() {
-    setError(null);
-
-    const openedWindow = window.open(buildMediaFileContentUrl(fileId), '_blank', 'noopener,noreferrer');
-
-    if (!openedWindow) {
-      setError('Файл недоступен');
-    }
-  }
-
   return (
     <div className={wrapperClassName}>
-      <button className={className} type="button" onClick={handleOpen}>
+      <a className={className} href={buildMediaFileContentUrl(fileId)} rel="noopener noreferrer" target="_blank">
         {label}
-      </button>
-      {error ? <span>{error}</span> : null}
+      </a>
     </div>
   );
 }
