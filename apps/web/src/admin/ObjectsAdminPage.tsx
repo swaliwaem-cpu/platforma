@@ -111,6 +111,8 @@ const fileTypeLabels: Record<ObjectFileType, string> = {
   OTHER: 'Другое',
 };
 
+const objectPdfUploadLimit = 10;
+
 const gallerySectionOptions: {
   value: ObjectImageSection;
   label: string;
@@ -175,7 +177,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
   const [galleryDeletedImageIds, setGalleryDeletedImageIds] = useState<string[]>([]);
   const [galleryModalError, setGalleryModalError] = useState<string | null>(null);
   const [galleryModalProgress, setGalleryModalProgress] = useState<string | null>(null);
-  const [objectFile, setObjectFile] = useState<File | null>(null);
+  const [objectFiles, setObjectFiles] = useState<File[]>([]);
   const [objectFileType, setObjectFileType] = useState<ObjectFileType>('PRESENTATION');
   const [objectFileTitle, setObjectFileTitle] = useState('');
   const galleryDraftItemsRef = useRef<GalleryDraftItem[]>([]);
@@ -245,7 +247,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
 
   function resetUploads() {
     resetGalleryModalDraft();
-    setObjectFile(null);
+    setObjectFiles([]);
     setObjectFileTitle('');
     setObjectFileType('PRESENTATION');
   }
@@ -761,12 +763,34 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
     });
   }
 
-  async function uploadLinkedFile(selectedFile: File) {
+  async function uploadLinkedFiles(selectedFiles: FileList | File[]) {
     if (!accessToken) {
       return;
     }
 
-    setObjectFile(selectedFile);
+    const filesToUpload = Array.from(selectedFiles);
+
+    if (filesToUpload.length === 0) {
+      setObjectFiles([]);
+      return;
+    }
+
+    const currentFileCount = object?.files.length ?? 0;
+    const remainingSlots = objectPdfUploadLimit - currentFileCount;
+
+    if (remainingSlots <= 0) {
+      setObjectFiles([]);
+      setError(`Можно загрузить не больше ${objectPdfUploadLimit} PDF-файлов на объект`);
+      return;
+    }
+
+    if (filesToUpload.length > remainingSlots) {
+      setObjectFiles([]);
+      setError(`Можно добавить ещё ${remainingSlots} PDF-файлов`);
+      return;
+    }
+
+    setObjectFiles(filesToUpload);
     setIsUploading(true);
     setError(null);
     setNotice(null);
@@ -774,19 +798,21 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
     let targetObjectId = editObjectId;
     let createdObjectId: string | null = null;
     let shouldResetSubmitting = false;
+    let uploadedCount = 0;
+    const uploadTitle = filesToUpload.length === 1 ? objectFileTitle : '';
 
     try {
       if (!targetObjectId && isCreateRoute) {
         const validationError = validateObjectForm(form);
 
         if (validationError) {
-          setObjectFile(null);
+          setObjectFiles([]);
           setError(validationError);
           return;
         }
 
         if (!canCreate) {
-          setObjectFile(null);
+          setObjectFiles([]);
           setError('Нет прав на создание объекта');
           return;
         }
@@ -807,43 +833,59 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
       }
 
       if (!targetObjectId) {
-        setObjectFile(null);
+        setObjectFiles([]);
         setError('Нет доступа');
         return;
       }
 
-      const body = new FormData();
-      body.append('file', selectedFile);
-      body.append('type', objectFileType);
-      body.append('title', objectFileTitle);
+      let latestObject: RealEstateObjectDetail | null = null;
 
-      const data = await apiRequest<ObjectResponse>(`/objects/${targetObjectId}/files`, accessToken, {
-        method: 'POST',
-        body,
-      });
+      for (const selectedFile of filesToUpload) {
+        const body = new FormData();
+        body.append('file', selectedFile);
+        body.append('type', objectFileType);
+        body.append('title', uploadTitle);
 
-      setObject(data.object);
-      setObjectFile(null);
+        const data = await apiRequest<ObjectResponse>(`/objects/${targetObjectId}/files`, accessToken, {
+          method: 'POST',
+          body,
+        });
+
+        latestObject = data.object;
+        uploadedCount += 1;
+        setObject(data.object);
+      }
+
+      if (latestObject) {
+        setObject(latestObject);
+      }
+
+      setObjectFiles([]);
       setObjectFileTitle('');
 
       if (createdObjectId) {
-        setForm(createFormFromObject(data.object));
-        pendingEditorNoticeRef.current = 'Объект создан, PDF-файл добавлен';
+        if (latestObject) {
+          setForm(createFormFromObject(latestObject));
+        }
+        pendingEditorNoticeRef.current = getUploadedPdfNotice(uploadedCount, true);
         navigate(`/admin/objects/${createdObjectId}/edit`);
       } else {
-        setNotice('PDF-файл добавлен');
+        setNotice(getUploadedPdfNotice(uploadedCount));
       }
     } catch (caughtError) {
       const uploadErrorMessage = caughtError instanceof Error ? caughtError.message : 'Не удалось загрузить PDF';
 
       if (createdObjectId) {
-        setObjectFile(null);
+        setObjectFiles([]);
         pendingEditorErrorRef.current = `Объект создан, но PDF не загрузился: ${uploadErrorMessage}`;
         navigate(`/admin/objects/${createdObjectId}/edit`);
+      } else if (uploadedCount > 0) {
+        setError(`Часть PDF-файлов загружена, но загрузка остановилась: ${uploadErrorMessage}`);
       } else {
         setError(uploadErrorMessage);
       }
     } finally {
+      setObjectFiles([]);
       setIsUploading(false);
 
       if (shouldResetSubmitting) {
@@ -925,7 +967,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
         metroStations={metroStations}
         notice={notice}
         object={object}
-        objectFile={objectFile}
+        objectFiles={objectFiles}
         objectFileTitle={objectFileTitle}
         objectFileType={objectFileType}
         onBack={() => navigate('/admin/objects')}
@@ -940,12 +982,8 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
         onGalleryModalOpen={openGalleryModal}
         onGalleryModalSave={() => void saveGalleryModalChanges()}
         onLinkedFileDelete={(objectFileId) => void deleteLinkedFile(objectFileId)}
-        onObjectFileChange={(file) => {
-          if (file) {
-            void uploadLinkedFile(file);
-          } else {
-            setObjectFile(null);
-          }
+        onObjectFilesChange={(files) => {
+          void uploadLinkedFiles(files);
         }}
         onObjectFileTitleChange={setObjectFileTitle}
         onObjectFileTypeChange={setObjectFileType}
@@ -1196,7 +1234,7 @@ type ObjectEditorProps = {
   metroStations: ObjectMetroStation[];
   notice: string | null;
   object: RealEstateObjectDetail | null;
-  objectFile: File | null;
+  objectFiles: File[];
   objectFileTitle: string;
   objectFileType: ObjectFileType;
   onBack: () => void;
@@ -1211,7 +1249,7 @@ type ObjectEditorProps = {
   onGalleryModalOpen: () => void;
   onGalleryModalSave: () => void;
   onLinkedFileDelete: (objectFileId: string) => void;
-  onObjectFileChange: (file: File | null) => void;
+  onObjectFilesChange: (files: File[]) => void;
   onObjectFileTitleChange: (title: string) => void;
   onObjectFileTypeChange: (type: ObjectFileType) => void;
   onPublish: () => void;
@@ -1236,6 +1274,8 @@ function ObjectEditor(props: ObjectEditorProps) {
     getNamesByIds(props.metroStations, props.form.metroStationIds).slice(0, 2).join(', ') ||
     (props.object ? getObjectMetroSummary(props.object) : null) ||
     'Не указано';
+  const objectFileCount = props.object?.files.length ?? 0;
+  const isObjectFileLimitReached = objectFileCount >= objectPdfUploadLimit;
 
   useEffect(() => {
     if (props.error?.startsWith('Features JSON')) {
@@ -1752,7 +1792,9 @@ function ObjectEditor(props: ObjectEditorProps) {
                 <p className="eyebrow">PDF-файлы</p>
                 <h3>Документы объекта</h3>
               </div>
-              <span className="panel-count">{props.object?.files.length ?? 0} файлов</span>
+              <span className="panel-count">
+                {objectFileCount}/{objectPdfUploadLimit} файлов
+              </span>
             </div>
 
             <FieldGroup className="file-upload-fields">
@@ -1783,10 +1825,11 @@ function ObjectEditor(props: ObjectEditorProps) {
 
             <FileUploadRow
               accept="application/pdf"
-              disabled={!props.canUpload || props.isUploading || props.isSubmitting}
-              file={props.objectFile}
+              disabled={!props.canUpload || props.isUploading || props.isSubmitting || isObjectFileLimitReached}
+              files={props.objectFiles}
               label="Файл"
-              onChange={props.onObjectFileChange}
+              multiple
+              onChange={props.onObjectFilesChange}
             />
             <ul className="file-list">
               {props.object?.files.map((file) => {
@@ -2319,16 +2362,21 @@ function ObjectFormSection({
 function FileUploadRow({
   accept,
   disabled,
-  file,
+  files,
   label,
+  multiple = false,
   onChange,
 }: {
   accept: string;
   disabled: boolean;
-  file: File | null;
+  files: File[];
   label: string;
-  onChange: (file: File | null) => void;
+  multiple?: boolean;
+  onChange: (files: File[]) => void;
 }) {
+  const fileLabel =
+    files.length === 0 ? 'Файл не выбран' : files.length === 1 ? files[0]?.name : `Выбрано файлов: ${files.length}`;
+
   return (
     <div className="upload-row">
       <label className={disabled ? 'upload-field upload-field--disabled' : 'upload-field'}>
@@ -2338,19 +2386,20 @@ function FileUploadRow({
           <input
             accept={accept}
             disabled={disabled}
+            multiple={multiple}
             type="file"
             onChange={(event) => {
-              const nextFile = event.target.files?.[0] ?? null;
+              const nextFiles = Array.from(event.target.files ?? []);
 
-              onChange(nextFile);
+              onChange(nextFiles);
               event.currentTarget.value = '';
             }}
           />
         </span>
       </label>
       <div className="upload-action">
-        <span className={file ? 'upload-file-name' : 'upload-file-name upload-file-name--empty'}>
-          {file?.name ?? 'Файл не выбран'}
+        <span className={files.length > 0 ? 'upload-file-name' : 'upload-file-name upload-file-name--empty'}>
+          {fileLabel}
         </span>
       </div>
     </div>
@@ -2849,6 +2898,14 @@ function formatFileSize(value: string) {
   }
 
   return `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 }).format(bytes / (1024 * 1024))} МБ`;
+}
+
+function getUploadedPdfNotice(count: number, createdObject = false) {
+  if (count === 1) {
+    return createdObject ? 'Объект создан, PDF-файл добавлен' : 'PDF-файл добавлен';
+  }
+
+  return createdObject ? `Объект создан, PDF-файлы добавлены: ${count}` : `PDF-файлы добавлены: ${count}`;
 }
 
 function formatCompletion(year: number | string | null, quarter: number | string | null) {

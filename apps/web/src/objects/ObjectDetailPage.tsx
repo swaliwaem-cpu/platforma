@@ -11,6 +11,7 @@ import type {
 
 import { apiRequest } from '../admin/api';
 import { useAuth } from '../auth/AuthProvider';
+import { getLinkedFileTitle } from '../files/fileDisplay';
 import { SecureImage, buildMediaFileContentUrl, useSecureImageObjectUrl } from '../files/SecureImage';
 import { YandexMap, type YandexMapPoint } from '../map/YandexMap';
 import {
@@ -150,8 +151,8 @@ function ObjectDetail({
   const locationLine = useMemo(() => getObjectLocationLine(object), [object]);
   const locationRows = useMemo(() => getLocationRows(object), [object]);
   const parameterRows = useMemo(() => getObjectParameterRows(object), [object]);
-  const presentationFile = object.files.find((file) => file.type === 'PRESENTATION') ?? null;
-  const otherFiles = object.files.filter((file) => file.type !== 'PRESENTATION');
+  const primaryPresentationFile = object.files.find((file) => file.type === 'PRESENTATION') ?? null;
+  const listedFiles = object.files.filter((file) => file.id !== primaryPresentationFile?.id);
   const carouselImages = useMemo(() => getCarouselImages(object), [object]);
   const { src: mapBalloonImageUrl } = useSecureImageObjectUrl({
     accessToken,
@@ -212,11 +213,11 @@ function ObjectDetail({
           </div>
 
           <div className="object-detail-actions object-files-primary-actions" aria-label="Действия по объекту">
-            {presentationFile ? (
+            {primaryPresentationFile ? (
               <SecureFileButton
                 accessToken={accessToken}
                 className="object-detail-action-button object-detail-action-button--primary"
-                fileId={presentationFile.file.id}
+                fileId={primaryPresentationFile.file.id}
                 label={<FileActionLabel>Презентация</FileActionLabel>}
                 openingLabel="Открываем презентацию"
                 wrapperClassName="object-detail-action"
@@ -248,8 +249,8 @@ function ObjectDetail({
             )}
           </div>
 
-          {otherFiles.length > 0 ? (
-            <FileList accessToken={accessToken} files={otherFiles} title="Дополнительные файлы" />
+          {listedFiles.length > 0 ? (
+            <FileList accessToken={accessToken} files={listedFiles} title="Дополнительные файлы" />
           ) : (
             <div className="detail-file-group object-files-additional">
               <h4>Дополнительные файлы</h4>
@@ -612,18 +613,22 @@ function FileList({
     <div className="detail-file-group">
       <h4>{title}</h4>
       <ul className="detail-file-list">
-        {files.map((file) => (
-          <li key={file.id}>
-            <div>
-              <strong>{file.title || file.file.originalName || fileTypeLabels[file.type]}</strong>
-              <span>
-                {fileTypeLabels[file.type]}
-                {file.file.sizeBytes ? `, ${formatFileSize(file.file.sizeBytes)}` : ''}
-              </span>
-            </div>
-            <SecureFileButton accessToken={accessToken} fileId={file.file.id} />
-          </li>
-        ))}
+        {files.map((file) => {
+          const displayTitle = getLinkedFileTitle(file, fileTypeLabels);
+
+          return (
+            <li key={file.id}>
+              <div>
+                <strong>{displayTitle}</strong>
+                <span>
+                  {fileTypeLabels[file.type]}
+                  {file.file.sizeBytes ? `, ${formatFileSize(file.file.sizeBytes)}` : ''}
+                </span>
+              </div>
+              <SecureFileButton accessToken={accessToken} fileId={file.file.id} />
+            </li>
+          );
+        })}
       </ul>
     </div>
   );

@@ -11,6 +11,8 @@ import { UploadedFile } from '../files/uploaded-file.type';
 import { PrismaService } from '../prisma/prisma.service';
 import { findCatalogSearchObjectIds } from './object-search';
 
+const objectPdfUploadLimit = 10;
+
 const objectListInclude = {
   developer: true,
   primaryLocation: true,
@@ -1278,10 +1280,25 @@ export class ObjectsService {
     const object = await this.findExistingObject(id);
     const type = this.parseObjectFileType(body.type);
     const title = this.parseNullableText(body.title, 'File title', 500) ?? null;
+
+    if (object.files.length >= objectPdfUploadLimit) {
+      throw new BadRequestException(`Object cannot have more than ${objectPdfUploadLimit} PDF files`);
+    }
+
     const uploadedFile = await this.filesService.uploadFile(file, actor, 'pdf');
 
     try {
       const updatedObject = await this.prisma.$transaction(async (tx) => {
+        const existingFileCount = await tx.objectFile.count({
+          where: {
+            objectId: object.id,
+          },
+        });
+
+        if (existingFileCount >= objectPdfUploadLimit) {
+          throw new BadRequestException(`Object cannot have more than ${objectPdfUploadLimit} PDF files`);
+        }
+
         const maxSortOrder = await tx.objectFile.aggregate({
           where: {
             objectId: object.id,

@@ -7,7 +7,7 @@ import test from 'node:test';
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const appSource = readFileSync(resolve(currentDir, '../src/App.tsx'), 'utf8');
 
-test('login screen shows broker platform and Fluffy White titles', () => {
+test('login screen shows broker platform and FluffyWhite titles', () => {
   assert.match(appSource, /<p className="eyebrow">Платформа брокеров<\/p>/);
-  assert.match(appSource, /<h1 id="login-title">Fluffy White<\/h1>/);
+  assert.match(appSource, /<h1 id="login-title">FluffyWhite<\/h1>/);
 });

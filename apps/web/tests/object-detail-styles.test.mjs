@@ -161,7 +161,7 @@ test('object parameters and files share a desktop row before the map', () => {
 test('object files block keeps primary actions inline and labels additional files', () => {
   const actionsIndex = objectDetailSource.indexOf('className="object-detail-actions object-files-primary-actions"');
   const additionalFilesIndex = objectDetailSource.indexOf(
-    '<FileList accessToken={accessToken} files={otherFiles} title="Дополнительные файлы" />',
+    '<FileList accessToken={accessToken} files={listedFiles} title="Дополнительные файлы" />',
   );
   const emptyFilesIndex = objectDetailSource.indexOf('className="muted-text object-files-empty"');
 
@@ -175,10 +175,17 @@ test('object files block keeps primary actions inline and labels additional file
   );
   assert.match(objectDetailSource, /<FileActionLabel>Презентация<\/FileActionLabel>/);
   assert.match(objectDetailSource, /<FileActionLabel>Планировки<\/FileActionLabel>/);
+  assert.match(objectDetailSource, /import \{ getLinkedFileTitle \} from '\.\.\/files\/fileDisplay';/);
+  assert.match(objectDetailSource, /const primaryPresentationFile = object\.files\.find\(\(file\) => file\.type === 'PRESENTATION'\) \?\? null;/);
+  assert.match(objectDetailSource, /const listedFiles = object\.files\.filter\(\(file\) => file\.id !== primaryPresentationFile\?\.id\);/);
+  assert.match(objectDetailSource, /const displayTitle = getLinkedFileTitle\(file, fileTypeLabels\);/);
+  assert.match(objectDetailSource, /<strong>\{displayTitle\}<\/strong>/);
   assert.match(
     objectDetailSource,
     /className="object-detail-action-button object-detail-action-button--disabled object-detail-action-button--missing"/,
   );
+  assert.doesNotMatch(objectDetailSource, /<strong>\{file\.title \|\| file\.file\.originalName \|\| fileTypeLabels\[file\.type\]\}<\/strong>/);
+  assert.doesNotMatch(objectDetailSource, /const otherFiles = object\.files\.filter\(\(file\) => file\.type !== 'PRESENTATION'\);/);
   assert.doesNotMatch(objectDetailSource, /value="Отсутствует"|value="Открыть цены"|value="Отсутствуют"/);
 
   assert.notEqual(actionsIndex, -1, 'files primary actions should have a dedicated layout class');

@@ -5,7 +5,7 @@ import {
   decodeMojibakeText,
   getLinkedFileOriginalName,
   getLinkedFileTitle,
-} from '../src/admin/fileDisplay.ts';
+} from '../src/files/fileDisplay.ts';
 
 const fileTypeLabels = {
   PRESENTATION: 'Презентация',

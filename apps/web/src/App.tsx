@@ -404,7 +404,7 @@ function LoginPage({ onSuccess }: { onSuccess: () => void }) {
     <main className="login-shell">
       <section className="login-panel" aria-labelledby="login-title">
         <p className="eyebrow">Платформа брокеров</p>
-        <h1 id="login-title">Fluffy White</h1>
+        <h1 id="login-title">FluffyWhite</h1>
 
         <form className="login-form" onSubmit={(event) => void handleSubmit(event)}>
           <label>
