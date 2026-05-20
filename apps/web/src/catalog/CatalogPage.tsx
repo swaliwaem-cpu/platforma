@@ -32,6 +32,7 @@ type BooleanFilter = '' | 'true' | 'false';
 type CatalogStatusFilter = ObjectStatus | 'ALL';
 type CatalogViewMode = 'cards' | 'list';
 type CatalogSortField = 'createdAt' | 'priceFrom' | 'pricePerMeterFrom' | 'completionDate';
+type CatalogPageSize = 25 | 50 | 75;
 type SortDirection = 'asc' | 'desc';
 
 type CatalogFilters = {
@@ -51,6 +52,7 @@ type CatalogFilters = {
   sortBy: CatalogSortField;
   sortDirection: SortDirection;
   page: number;
+  limit: CatalogPageSize;
 };
 
 type DirectoryState = {
@@ -77,7 +79,10 @@ const defaultFilters: CatalogFilters = {
   sortBy: 'createdAt',
   sortDirection: 'desc',
   page: 1,
+  limit: 25,
 };
+
+const catalogPageSizeOptions = [25, 50, 75] as const;
 
 const objectStatusLabels: Record<ObjectStatus, string> = {
   DRAFT: 'Черновик',
@@ -103,13 +108,16 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
   });
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
+  const [loadedThroughPage, setLoadedThroughPage] = useState(filters.page);
   const [mapTotal, setMapTotal] = useState(0);
   const [catalogLinks, setCatalogLinks] = useState<PublicCatalogQuickLink[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isMapLoading, setIsMapLoading] = useState(false);
   const [isDirectoriesLoading, setIsDirectoriesLoading] = useState(false);
   const [isCatalogLinksLoading, setIsCatalogLinksLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   const [mapError, setMapError] = useState<string | null>(null);
   const [directoryError, setDirectoryError] = useState<string | null>(null);
   const [catalogLinksError, setCatalogLinksError] = useState<string | null>(null);
@@ -226,6 +234,7 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
 
     setIsLoading(true);
     setError(null);
+    setLoadMoreError(null);
 
     try {
       const params = buildObjectsParams(filters, true);
@@ -234,10 +243,40 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
       setObjects(data.items);
       setTotal(data.total);
       setTotalPages(data.totalPages);
+      setLoadedThroughPage(filters.page);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Не удалось загрузить каталог');
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  async function loadMoreObjects() {
+    if (!accessToken || isLoading || isLoadingMore || loadedThroughPage >= totalPages) {
+      return;
+    }
+
+    const nextPage = loadedThroughPage + 1;
+    const nextFilters = {
+      ...filters,
+      page: nextPage,
+    };
+
+    setIsLoadingMore(true);
+    setLoadMoreError(null);
+
+    try {
+      const params = buildObjectsParams(nextFilters, true);
+      const data = await apiRequest<ObjectsResponse>(`/objects?${params.toString()}`, accessToken);
+
+      setObjects((currentObjects) => appendUniqueCatalogObjects(currentObjects, data.items));
+      setTotal(data.total);
+      setTotalPages(data.totalPages);
+      setLoadedThroughPage(nextPage);
+    } catch (caughtError) {
+      setLoadMoreError(caughtError instanceof Error ? caughtError.message : 'Не удалось загрузить следующую страницу');
+    } finally {
+      setIsLoadingMore(false);
     }
   }
 
@@ -378,9 +417,15 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
           error={error}
           filters={filters}
           isLoading={isLoading}
+          isLoadingMore={isLoadingMore}
+          loadedThroughPage={loadedThroughPage}
+          loadMoreError={loadMoreError}
           objects={objects}
+          total={total}
           totalPages={totalPages}
           viewMode={viewMode}
+          onLimitChange={(limit) => updateFilters({ limit })}
+          onLoadMore={loadMoreObjects}
           onPageChange={(page) => updateFilters({ page }, { resetPage: false })}
           onOpenObject={(slug) => navigate(`/objects/${encodeURIComponent(slug)}`)}
         />
@@ -786,9 +831,15 @@ function CatalogListView({
   error,
   filters,
   isLoading,
+  isLoadingMore,
+  loadedThroughPage,
+  loadMoreError,
   objects,
+  total,
   totalPages,
   viewMode,
+  onLimitChange,
+  onLoadMore,
   onPageChange,
   onOpenObject,
 }: {
@@ -796,12 +847,21 @@ function CatalogListView({
   error: string | null;
   filters: CatalogFilters;
   isLoading: boolean;
+  isLoadingMore: boolean;
+  loadedThroughPage: number;
+  loadMoreError: string | null;
   objects: RealEstateObjectSummary[];
+  total: number;
   totalPages: number;
   viewMode: CatalogViewMode;
+  onLimitChange: (limit: CatalogPageSize) => void;
+  onLoadMore: () => void;
   onPageChange: (page: number) => void;
   onOpenObject: (slug: string) => void;
 }) {
+  const hasNextPage = loadedThroughPage < totalPages;
+  const pageOptions = Array.from({ length: totalPages }, (_, index) => index + 1);
+
   if (error) {
     return <p className="form-error">{error}</p>;
   }
@@ -847,27 +907,73 @@ function CatalogListView({
         </div>
       )}
 
-      {totalPages > 1 ? (
+      {total > 0 ? (
         <div className="pagination catalog-pagination">
-          <button
-            className="secondary-button secondary-button--fit"
-            disabled={filters.page <= 1}
-            type="button"
-            onClick={() => onPageChange(Math.max(1, filters.page - 1))}
-          >
-            Назад
-          </button>
-          <span>
-            Страница {filters.page} из {totalPages}
-          </span>
-          <button
-            className="secondary-button secondary-button--fit"
-            disabled={filters.page >= totalPages}
-            type="button"
-            onClick={() => onPageChange(filters.page + 1)}
-          >
-            Вперёд
-          </button>
+          {hasNextPage ? (
+            <button className="catalog-pagination-more" disabled={isLoadingMore} type="button" onClick={onLoadMore}>
+              {isLoadingMore ? 'Загрузка' : 'Показать еще'}
+            </button>
+          ) : null}
+
+          <div className="catalog-pagination-nav" aria-label="Навигация по страницам каталога">
+            <button
+              aria-label="Предыдущая страница"
+              className="catalog-pagination-arrow"
+              disabled={filters.page <= 1}
+              type="button"
+              onClick={() => onPageChange(Math.max(1, filters.page - 1))}
+            >
+              <ChevronLeftIcon aria-hidden="true" />
+            </button>
+
+            <label className="catalog-pagination-field">
+              Страница
+              <select
+                aria-label="Выбор страницы каталога"
+                className="catalog-pagination-select"
+                value={filters.page}
+                onChange={(event) => onPageChange(parsePositiveInteger(event.target.value, 1))}
+              >
+                {pageOptions.map((page) => (
+                  <option key={page} value={page}>
+                    {page}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <span className="catalog-pagination-total">из {totalPages}</span>
+
+            <button
+              aria-label="Следующая страница"
+              className="catalog-pagination-arrow"
+              disabled={filters.page >= totalPages}
+              type="button"
+              onClick={() => onPageChange(Math.min(totalPages, filters.page + 1))}
+            >
+              <ChevronRightIcon aria-hidden="true" />
+            </button>
+          </div>
+
+          <label className="catalog-pagination-field catalog-pagination-field--limit">
+            На странице
+            <select
+              aria-label="Количество объектов на странице"
+              className="catalog-pagination-select"
+              value={filters.limit}
+              onChange={(event) => onLimitChange(parseCatalogPageSize(event.target.value))}
+            >
+              {catalogPageSizeOptions.map((limit) => (
+                <option key={limit} value={limit}>
+                  {limit}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <span className="catalog-pagination-count">Показано: {objects.length} из {total}</span>
+
+          {loadMoreError ? <p className="form-error catalog-pagination-error">{loadMoreError}</p> : null}
         </div>
       ) : null}
     </>
@@ -1366,6 +1472,7 @@ function parseCatalogFilters(queryString: string): CatalogFilters {
     sortBy: parseCatalogSortBy(params.get('sortBy')),
     sortDirection: parseCatalogSortDirection(params.get('sortDirection')),
     page: parsePositiveInteger(params.get('page'), 1),
+    limit: parseCatalogPageSize(params.get('limit')),
   };
 }
 
@@ -1393,6 +1500,10 @@ function buildCatalogQuery(filters: CatalogFilters, viewMode: CatalogViewMode = 
     params.set('page', String(filters.page));
   }
 
+  if (filters.limit !== defaultFilters.limit) {
+    params.set('limit', String(filters.limit));
+  }
+
   if (viewMode === 'list') {
     params.set('view', viewMode);
   }
@@ -1417,7 +1528,7 @@ function countActiveAdvancedFilters(filters: CatalogFilters) {
 
 function buildObjectsParams(filters: CatalogFilters, includePage: boolean) {
   const params = new URLSearchParams({
-    limit: includePage ? '12' : '1000',
+    limit: includePage ? String(filters.limit) : '1000',
     sortBy: filters.sortBy,
     sortDirection: filters.sortDirection,
   });
@@ -1537,6 +1648,14 @@ function parseCatalogSortDirection(value: string | null): SortDirection {
   return value === 'asc' || value === 'desc' ? value : defaultFilters.sortDirection;
 }
 
+function parseCatalogPageSize(value: string | null): CatalogPageSize {
+  const parsed = Number(value);
+
+  return catalogPageSizeOptions.includes(parsed as CatalogPageSize)
+    ? (parsed as CatalogPageSize)
+    : defaultFilters.limit;
+}
+
 function getDefaultCatalogSortDirection(sortBy: CatalogSortField): SortDirection {
   return sortBy === 'completionDate' ? 'asc' : 'desc';
 }
@@ -1569,6 +1688,24 @@ function sanitizeIntegerText(value: string, maxLength: number) {
 
 function sanitizeDecimalText(value: string) {
   return value.replace(/[^\d,.]/g, '').replace(',', '.').slice(0, 15);
+}
+
+function appendUniqueCatalogObjects(
+  currentObjects: RealEstateObjectSummary[],
+  nextObjects: RealEstateObjectSummary[],
+) {
+  const knownObjectIds = new Set(currentObjects.map((object) => object.id));
+  const uniqueNextObjects = nextObjects.filter((object) => {
+    if (knownObjectIds.has(object.id)) {
+      return false;
+    }
+
+    knownObjectIds.add(object.id);
+
+    return true;
+  });
+
+  return [...currentObjects, ...uniqueNextObjects];
 }
 
 function formatCatalogCount(isLoading: boolean, total: number) {
