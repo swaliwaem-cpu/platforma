@@ -1856,7 +1856,12 @@ function GalleryManagementModal({
   const [draggedDraftId, setDraggedDraftId] = useState<string | null>(null);
   const [dropTargetDraftId, setDropTargetDraftId] = useState<string | null>(null);
   const [isCoverDropTarget, setIsCoverDropTarget] = useState(false);
+  const [isCloseConfirmOpen, setIsCloseConfirmOpen] = useState(false);
   const existingImageById = useMemo(() => new Map(existingImages.map((image) => [image.id, image])), [existingImages]);
+  const hasUnsavedChanges = useMemo(
+    () => hasGalleryDraftChanges(draftItems, coverDraftId, existingImages),
+    [coverDraftId, draftItems, existingImages],
+  );
   const coverDraftItem = draftItems.find((item) => item.draftId === coverDraftId) ?? null;
   const coverExistingImage = coverDraftItem?.imageId ? existingImageById.get(coverDraftItem.imageId) ?? null : null;
   const coverSlotClassName = [
@@ -1866,6 +1871,12 @@ function GalleryManagementModal({
   ]
     .filter(Boolean)
     .join(' ');
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) {
+      setIsCloseConfirmOpen(false);
+    }
+  }, [hasUnsavedChanges]);
 
   function clearGalleryDragState() {
     setDraggedDraftId(null);
@@ -1948,6 +1959,24 @@ function GalleryManagementModal({
     setIsCoverDropTarget(false);
   }
 
+  function requestGalleryModalClose() {
+    if (hasUnsavedChanges) {
+      setIsCloseConfirmOpen(true);
+      return;
+    }
+
+    onClose();
+  }
+
+  function confirmGalleryModalClose() {
+    setIsCloseConfirmOpen(false);
+    onClose();
+  }
+
+  function cancelGalleryModalClose() {
+    setIsCloseConfirmOpen(false);
+  }
+
   return (
     <div className="gallery-modal-backdrop">
       <section
@@ -1961,16 +1990,59 @@ function GalleryManagementModal({
             <p className="eyebrow">Медиа</p>
             <h3 id="gallery-modal-title">Обложка и галерея</h3>
           </div>
-          <AdminButton
-            aria-label="Закрыть"
-            className="gallery-modal-close"
-            disabled={isSaving}
-            tone="text"
-            type="button"
-            onClick={onClose}
-          >
-            <XIcon />
-          </AdminButton>
+          <div className="gallery-modal-header-actions">
+            <AdminButton
+              className="gallery-modal-header-save"
+              disabled={isSaving}
+              tone="primary"
+              type="button"
+              onClick={onSave}
+            >
+              <SaveIcon data-icon="inline-start" />
+              Сохранить
+            </AdminButton>
+            <AdminButton
+              aria-label="Закрыть"
+              className="gallery-modal-close"
+              disabled={isSaving}
+              tone="text"
+              type="button"
+              onClick={requestGalleryModalClose}
+            >
+              <XIcon />
+            </AdminButton>
+            {isCloseConfirmOpen ? (
+              <div
+                aria-describedby="gallery-close-confirm-description"
+                aria-labelledby="gallery-close-confirm-title"
+                className="gallery-close-confirm"
+                role="alertdialog"
+              >
+                <strong id="gallery-close-confirm-title">Вы точно хотите закрыть?</strong>
+                <span id="gallery-close-confirm-description">Были изменения</span>
+                <div className="gallery-close-confirm-actions">
+                  <AdminButton
+                    className="gallery-close-confirm-action"
+                    disabled={isSaving}
+                    tone="secondary"
+                    type="button"
+                    onClick={confirmGalleryModalClose}
+                  >
+                    Да
+                  </AdminButton>
+                  <AdminButton
+                    className="gallery-close-confirm-action"
+                    disabled={isSaving}
+                    tone="primary"
+                    type="button"
+                    onClick={cancelGalleryModalClose}
+                  >
+                    Нет
+                  </AdminButton>
+                </div>
+              </div>
+            ) : null}
+          </div>
         </div>
 
         {error ? <AdminAlert tone="error">{error}</AdminAlert> : null}
@@ -2564,6 +2636,31 @@ function getInitialGalleryCoverDraftId(images: ObjectImage[]) {
   const coverImage = images.find((image) => image.isCover) ?? images[0] ?? null;
 
   return coverImage ? getExistingGalleryDraftId(coverImage.id) : null;
+}
+
+function hasGalleryDraftChanges(
+  draftItems: GalleryDraftItem[],
+  coverDraftId: string | null,
+  existingImages: ObjectImage[],
+) {
+  if (draftItems.length !== existingImages.length) {
+    return true;
+  }
+
+  if (coverDraftId !== getInitialGalleryCoverDraftId(existingImages)) {
+    return true;
+  }
+
+  return draftItems.some((item, index) => {
+    const existingImage = existingImages[index];
+
+    return (
+      !existingImage ||
+      item.kind !== 'existing' ||
+      item.imageId !== existingImage.id ||
+      item.section !== existingImage.section
+    );
+  });
 }
 
 function getExistingGalleryDraftId(imageId: string) {

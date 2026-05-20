@@ -184,6 +184,7 @@ html[data-app-theme] :is(
   .detail-section,
   .object-image-carousel,
   .gallery-modal,
+  .gallery-close-confirm,
   .map-object-card
 ) {
   border-color: var(--app-theme-border);
@@ -360,7 +361,7 @@ html[data-app-theme] :is(.object-description, .object-content-section-text) {
   color: var(--app-theme-ink-800);
 }
 
-html[data-app-theme] :is(.table-subtext, .muted-cell, .cabinet-section-main span, .admin-action-card p, .user-form-section-header p, .role-permissions-title p, .object-form-section-header p, .catalog-link-column-header p, .preview-meta, .preview-detail-list span, .file-actions span, .import-metric-cell span, .import-report-user span, .report-section-header span, .report-issue-meta dt, .detail-file-list span, .metro-list span, .detail-file-action span, .object-detail-action span, .permission-chip--role code, .map-object-card dt, .map-object-card-image--empty, .map-fallback, .map-loading) {
+html[data-app-theme] :is(.table-subtext, .muted-cell, .cabinet-section-main span, .admin-action-card p, .user-form-section-header p, .role-permissions-title p, .object-form-section-header p, .catalog-link-column-header p, .preview-meta, .preview-detail-list span, .file-actions span, .gallery-close-confirm strong, .gallery-close-confirm span, .import-metric-cell span, .import-report-user span, .report-section-header span, .report-issue-meta dt, .detail-file-list span, .metro-list span, .detail-file-action span, .object-detail-action span, .permission-chip--role code, .map-object-card dt, .map-object-card-image--empty, .map-fallback, .map-loading) {
   color: var(--app-theme-ink-700);
 }
 

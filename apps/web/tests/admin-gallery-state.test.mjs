@@ -44,6 +44,9 @@ test('gallery management modal exposes cover slot, multiple image input and larg
   assert.match(source, /aria-modal="true"/);
   assert.match(source, /className="gallery-modal-header"/);
   assert.match(source, /Обложка и галерея/);
+  assert.match(source, /className="gallery-modal-header-actions"/);
+  assert.match(source, /className="gallery-modal-header-save"/);
+  assert.match(source, /onClick=\{onSave\}[\s\S]*?<SaveIcon[\s\S]*?Сохранить/);
   assert.match(source, /className=\{coverSlotClassName\}/);
   assert.match(source, /gallery-cover-slot--active/);
   assert.match(source, /className="gallery-upload-dropzone"/);
@@ -56,6 +59,21 @@ test('gallery management modal exposes cover slot, multiple image input and larg
   assert.match(source, /className="gallery-modal-actions"/);
   assert.match(source, /Отмена/);
   assert.match(source, /onClick=\{onSave\}[\s\S]*?Сохранить/);
+});
+
+test('gallery management modal confirms close when draft has unsaved changes', () => {
+  assert.match(source, /const \[isCloseConfirmOpen,\s*setIsCloseConfirmOpen\] = useState\(false\);/);
+  assert.match(source, /const hasUnsavedChanges = useMemo\([\s\S]*?hasGalleryDraftChanges\(draftItems,\s*coverDraftId,\s*existingImages\)/);
+  assert.match(source, /function requestGalleryModalClose\(\)[\s\S]*?if \(hasUnsavedChanges\) \{[\s\S]*?setIsCloseConfirmOpen\(true\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?onClose\(\);/);
+  assert.match(source, /function confirmGalleryModalClose\(\)[\s\S]*?setIsCloseConfirmOpen\(false\);[\s\S]*?onClose\(\);/);
+  assert.match(source, /function cancelGalleryModalClose\(\)[\s\S]*?setIsCloseConfirmOpen\(false\);/);
+  assert.match(source, /onClick=\{requestGalleryModalClose\}/);
+  assert.match(source, /role="alertdialog"/);
+  assert.match(source, /Вы точно хотите закрыть\?/);
+  assert.match(source, /Были изменения/);
+  assert.match(source, /onClick=\{confirmGalleryModalClose\}[\s\S]*?Да/);
+  assert.match(source, /onClick=\{cancelGalleryModalClose\}[\s\S]*?Нет/);
+  assert.match(source, /function hasGalleryDraftChanges\([\s\S]*?draftItems: GalleryDraftItem\[\],[\s\S]*?coverDraftId: string \| null,[\s\S]*?existingImages: ObjectImage\[\],[\s\S]*?\)/);
 });
 
 test('gallery management modal supports thematic section assignment', () => {

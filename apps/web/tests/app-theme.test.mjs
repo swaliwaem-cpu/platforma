@@ -56,6 +56,8 @@ test('app theme stylesheet covers contrast-sensitive dark theme selectors', () =
     '.object-content-section-text--empty',
     '.metro-list strong',
     '.carousel-thumbnail',
+    '.gallery-close-confirm strong',
+    '.gallery-close-confirm span',
   ].forEach((selector) => {
     assert.match(styles, new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   });

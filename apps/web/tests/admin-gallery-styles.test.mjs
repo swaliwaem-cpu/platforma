@@ -37,6 +37,16 @@ test('admin gallery modal uses stable cover slot and large responsive tile grid'
 
   assert.match(
     styles,
+    /\.gallery-modal-header-actions\s*\{[\s\S]*?margin-left:\s*auto;[\s\S]*?position:\s*relative;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.gallery-modal-header-save\s*\{[\s\S]*?min-height:\s*36px;[\s\S]*?padding:\s*8px 12px;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
     /\.gallery-cover-slot\s*\{[\s\S]*?min-height:\s*180px;[\s\S]*?border:\s*1px dashed[\s\S]*?\}/,
   );
 
@@ -58,6 +68,23 @@ test('admin gallery modal uses stable cover slot and large responsive tile grid'
   assert.match(
     styles,
     /@media\s*\(max-width:\s*640px\)\s*\{[\s\S]*?\.gallery-tile-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(120px,\s*1fr\)\);[\s\S]*?\}/,
+  );
+});
+
+test('admin gallery modal styles compact close confirmation', () => {
+  assert.match(
+    styles,
+    /\.gallery-close-confirm\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?right:\s*0;[\s\S]*?width:\s*min\(260px,\s*calc\(100vw - 48px\)\);[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.gallery-close-confirm-actions\s*\{[\s\S]*?display:\s*flex;[\s\S]*?justify-content:\s*flex-end;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.gallery-close-confirm-action\s*\{[\s\S]*?min-height:\s*30px;[\s\S]*?padding:\s*6px 10px;[\s\S]*?\}/,
   );
 });
 
