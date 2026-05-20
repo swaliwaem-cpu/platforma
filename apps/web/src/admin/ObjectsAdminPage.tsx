@@ -763,23 +763,19 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
     });
   }
 
-  async function uploadLinkedFile() {
+  async function uploadLinkedFile(selectedFile: File) {
     if (!accessToken || !editObjectId) {
       return;
     }
 
-    if (!objectFile) {
-      setError('Выберите PDF-файл');
-      return;
-    }
-
+    setObjectFile(selectedFile);
     setIsUploading(true);
     setError(null);
     setNotice(null);
 
     try {
       const body = new FormData();
-      body.append('file', objectFile);
+      body.append('file', selectedFile);
       body.append('type', objectFileType);
       body.append('title', objectFileTitle);
 
@@ -887,12 +883,17 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
         onGalleryModalOpen={openGalleryModal}
         onGalleryModalSave={() => void saveGalleryModalChanges()}
         onLinkedFileDelete={(objectFileId) => void deleteLinkedFile(objectFileId)}
-        onObjectFileChange={setObjectFile}
+        onObjectFileChange={(file) => {
+          if (file) {
+            void uploadLinkedFile(file);
+          } else {
+            setObjectFile(null);
+          }
+        }}
         onObjectFileTitleChange={setObjectFileTitle}
         onObjectFileTypeChange={setObjectFileType}
         onPublish={() => void publishObject()}
         onSubmit={(event) => void handleSubmit(event)}
-        onUploadLinkedFile={() => void uploadLinkedFile()}
       />
     );
   }
@@ -1158,7 +1159,6 @@ type ObjectEditorProps = {
   onObjectFileTypeChange: (type: ObjectFileType) => void;
   onPublish: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-  onUploadLinkedFile: () => void;
 };
 
 function ObjectEditor(props: ObjectEditorProps) {
@@ -1166,6 +1166,8 @@ function ObjectEditor(props: ObjectEditorProps) {
   const coverImage = props.object?.images.find((image) => image.isCover) ?? props.object?.images[0] ?? null;
   const previewStatus = props.object?.status ?? 'DRAFT';
   const previewCatalogPath = props.object ? `/objects/${encodeURIComponent(props.object.slug)}` : null;
+  const saveButtonLabel = props.isCreateRoute ? 'Создать' : 'Сохранить';
+  const isSaveDisabled = props.isLoading || props.isSubmitting || (props.isCreateRoute ? !props.canCreate : !props.canUpdate);
   const previewDeveloperName =
     findById(props.developers, props.form.developerId)?.name ?? props.object?.developer?.name ?? 'Не выбран';
   const previewDistrictName =
@@ -1188,7 +1190,14 @@ function ObjectEditor(props: ObjectEditorProps) {
     <div className="admin-objects admin-objects--editor">
       <header className="page-header">
         <div>
-          <p className="eyebrow">{props.isCreateRoute ? 'Новый объект' : 'Редактирование объекта'}</p>
+          <div className="object-editor-kicker">
+            <p className="eyebrow">{props.isCreateRoute ? 'Новый объект' : 'Редактирование объекта'}</p>
+            {!props.isCreateRoute ? (
+              <AdminStatusBadge className={`object-status object-status--${previewStatus.toLowerCase()}`}>
+                {objectStatusLabels[previewStatus]}
+              </AdminStatusBadge>
+            ) : null}
+          </div>
           <h2>{props.isCreateRoute ? 'Создание объекта' : props.object?.title ?? 'Объект'}</h2>
         </div>
         <div className="header-actions">
@@ -1214,7 +1223,7 @@ function ObjectEditor(props: ObjectEditorProps) {
       {props.notice ? <AdminAlert tone="notice">{props.notice}</AdminAlert> : null}
 
       <div className="object-editor-layout">
-        <form className="object-form editor-panel" onSubmit={props.onSubmit}>
+        <form className="object-form editor-panel" id="object-editor-form" onSubmit={props.onSubmit}>
           <fieldset
             disabled={props.isLoading || props.isSubmitting || (props.isCreateRoute ? !props.canCreate : !props.canUpdate)}
           >
@@ -1590,13 +1599,9 @@ function ObjectEditor(props: ObjectEditorProps) {
             </div>
 
             <div className="form-actions object-form-actions">
-              <AdminButton
-                disabled={props.isSubmitting || (props.isCreateRoute ? !props.canCreate : !props.canUpdate)}
-                tone="primary"
-                type="submit"
-              >
+              <AdminButton disabled={isSaveDisabled} tone="primary" type="submit">
                 <SaveIcon data-icon="inline-start" />
-                {props.isCreateRoute ? 'Создать' : 'Сохранить'}
+                {saveButtonLabel}
               </AdminButton>
             </div>
           </fieldset>
@@ -1610,9 +1615,10 @@ function ObjectEditor(props: ObjectEditorProps) {
                 <h3>{props.form.title.trim() || 'Название объекта'}</h3>
               </div>
               <div className="object-preview-actions">
-                <AdminStatusBadge className={`object-status object-status--${previewStatus.toLowerCase()}`}>
-                  {objectStatusLabels[previewStatus]}
-                </AdminStatusBadge>
+                <AdminButton disabled={isSaveDisabled} form="object-editor-form" tone="primary" type="submit">
+                  <SaveIcon data-icon="inline-start" />
+                  {saveButtonLabel}
+                </AdminButton>
                 {previewCatalogPath ? (
                   <AdminButton className="object-preview-catalog-link" tone="secondary" asChild>
                     <a aria-label="Открыть объект в каталоге" href={previewCatalogPath}>
@@ -1731,12 +1737,10 @@ function ObjectEditor(props: ObjectEditorProps) {
 
               <FileUploadRow
                 accept="application/pdf"
-                buttonLabel="Загрузить PDF"
                 disabled={!props.canUpload || props.isUploading}
                 file={props.objectFile}
                 label="Файл"
                 onChange={props.onObjectFileChange}
-                onUpload={props.onUploadLinkedFile}
               />
               <ul className="file-list">
                 {props.object?.files.map((file) => {
@@ -2297,39 +2301,40 @@ function ObjectFormSection({
 
 function FileUploadRow({
   accept,
-  buttonLabel,
   disabled,
   file,
   label,
   onChange,
-  onUpload,
 }: {
   accept: string;
-  buttonLabel: string;
   disabled: boolean;
   file: File | null;
   label: string;
   onChange: (file: File | null) => void;
-  onUpload: () => void;
 }) {
   return (
     <div className="upload-row">
-      <label className="upload-field">
-        {label}
-        <input
-          accept={accept}
-          type="file"
-          onChange={(event) => onChange(event.target.files?.[0] ?? null)}
-        />
+      <label className={disabled ? 'upload-field upload-field--disabled' : 'upload-field'}>
+        <span>{label}</span>
+        <span className="upload-file-control">
+          <span className="upload-file-button">Выбрать файл</span>
+          <input
+            accept={accept}
+            disabled={disabled}
+            type="file"
+            onChange={(event) => {
+              const nextFile = event.target.files?.[0] ?? null;
+
+              onChange(nextFile);
+              event.currentTarget.value = '';
+            }}
+          />
+        </span>
       </label>
       <div className="upload-action">
         <span className={file ? 'upload-file-name' : 'upload-file-name upload-file-name--empty'}>
           {file?.name ?? 'Файл не выбран'}
         </span>
-        <AdminButton disabled={disabled || !file} tone="secondary" type="button" onClick={onUpload}>
-          <UploadIcon data-icon="inline-start" />
-          {buttonLabel}
-        </AdminButton>
       </div>
     </div>
   );

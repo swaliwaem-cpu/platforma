@@ -560,7 +560,7 @@ function CatalogFilters({
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const activeAdvancedFilterCount = countActiveAdvancedFilters(filters);
-  const filterButtonLabel = isExpanded ? 'Скрыть фильтры' : '+ фильтры';
+  const filterButtonLabel = isExpanded ? 'Скрыть фильтры' : '+ Фильтры';
 
   return (
     <section className={`catalog-filters${isExpanded ? ' catalog-filters--expanded' : ''}`} aria-label="Фильтры каталога">

@@ -152,6 +152,14 @@ test('object editor preview exposes catalog link for existing object', () => {
   assert.match(source, /previewCatalogPath \? \([\s\S]*?<AdminButton[\s\S]*?className="object-preview-catalog-link"[\s\S]*?asChild[\s\S]*?>[\s\S]*?<a[\s\S]*?href=\{previewCatalogPath\}[\s\S]*?>[\s\S]*?В каталоге[\s\S]*?<\/a>[\s\S]*?<\/AdminButton>/);
 });
 
+test('object editor header owns status badge and preview duplicates save action', () => {
+  assert.match(source, /className="object-editor-kicker"[\s\S]*?<AdminStatusBadge[\s\S]*?object-status--\$\{previewStatus\.toLowerCase\(\)\}/);
+  assert.match(source, /<form className="object-form editor-panel" id="object-editor-form" onSubmit=\{props\.onSubmit\}>/);
+  assert.match(source, /const saveButtonLabel = props\.isCreateRoute \? 'Создать' : 'Сохранить';/);
+  assert.match(source, /const isSaveDisabled = props\.isLoading \|\| props\.isSubmitting/);
+  assert.match(source, /className="object-preview-actions"[\s\S]*?<AdminButton disabled=\{isSaveDisabled\} form="object-editor-form" tone="primary" type="submit">[\s\S]*?<SaveIcon[\s\S]*?\{saveButtonLabel\}/);
+});
+
 test('gallery modal save button is enabled and disabled while saving', () => {
   assert.match(source, /onGalleryModalSave=\{\(\) => void saveGalleryModalChanges\(\)\}/);
   assert.match(source, /onSave=\{props\.onGalleryModalSave\}/);

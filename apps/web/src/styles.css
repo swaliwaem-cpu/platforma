@@ -1824,6 +1824,18 @@ tr.user-row--deactivated .text-button {
   white-space: nowrap;
 }
 
+.object-editor-kicker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.object-editor-kicker .eyebrow {
+  margin: 0;
+}
+
 .object-preview {
   display: grid;
   gap: 14px;
@@ -1958,7 +1970,52 @@ tr.user-row--deactivated .text-button {
 }
 
 .upload-field {
+  display: grid;
+  gap: 8px;
   min-width: 0;
+}
+
+.upload-file-control {
+  position: relative;
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+}
+
+.upload-file-button {
+  display: inline-flex;
+  min-height: 38px;
+  max-width: 100%;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--catalog-border-strong);
+  border-radius: var(--catalog-radius-sm);
+  background: var(--catalog-panel);
+  color: var(--catalog-ink-900);
+  padding: 0 14px;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-file-control input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.upload-field--disabled .upload-file-button {
+  opacity: 0.65;
+}
+
+.upload-field--disabled .upload-file-control input {
+  cursor: not-allowed;
 }
 
 .upload-action {
@@ -2740,7 +2797,8 @@ tr.user-row--deactivated .text-button {
   background: var(--catalog-ink-900);
   color: oklch(98.5% 0.006 230);
   padding: 0 16px;
-  font-weight: 850;
+  font-family: var(--platforma-font-sans);
+  font-weight: 700;
   line-height: 1;
   white-space: nowrap;
   transition:
@@ -3016,6 +3074,7 @@ tr.user-row--deactivated .text-button {
   margin: 0;
   color: var(--catalog-ink-900);
   font-size: 19px;
+  font-weight: 700;
   line-height: 1.22;
   overflow-wrap: anywhere;
 }
@@ -3062,7 +3121,7 @@ tr.user-row--deactivated .text-button {
   margin: 0;
   color: var(--catalog-ink-900);
   font-size: 14px;
-  font-weight: 900;
+  font-weight: 650;
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
