@@ -6,6 +6,7 @@ import test from 'node:test';
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const styles = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
+const appThemeStyles = readFileSync(resolve(currentDir, '../src/app-theme.css'), 'utf8');
 const objectDetailSource = readFileSync(resolve(currentDir, '../src/objects/ObjectDetailPage.tsx'), 'utf8');
 
 function getRuleBody(selector) {
@@ -105,7 +106,7 @@ test('object parameters and files share a desktop row before the map', () => {
   const summaryGridIndex = objectDetailSource.indexOf('className="object-parameters-files-grid"');
   const parametersIndex = objectDetailSource.indexOf('id="object-parameters-title"');
   const filesIndex = objectDetailSource.indexOf('id="object-files-title"');
-  const actionsIndex = objectDetailSource.indexOf('className="object-detail-actions"');
+  const actionsIndex = objectDetailSource.indexOf('className="object-detail-actions object-files-primary-actions"');
   const mapIndex = objectDetailSource.indexOf('id="object-map-title"');
 
   assert.notEqual(summaryGridIndex, -1, 'parameters and files grid should exist');
@@ -113,6 +114,14 @@ test('object parameters and files share a desktop row before the map', () => {
   assert.notEqual(filesIndex, -1, 'files section should exist');
   assert.notEqual(actionsIndex, -1, 'object action buttons should exist');
   assert.notEqual(mapIndex, -1, 'map section should exist');
+  assert.doesNotMatch(
+    objectDetailSource,
+    /<section className="detail-section object-parameters-section"[\s\S]*?<p className="eyebrow">Параметры<\/p>/,
+  );
+  assert.match(
+    objectDetailSource,
+    /<section className="detail-section object-parameters-section"[\s\S]*?<h3 id="object-parameters-title">Основные параметры<\/h3>/,
+  );
   assert.ok(summaryGridIndex < parametersIndex);
   assert.ok(parametersIndex < filesIndex);
   assert.ok(filesIndex < actionsIndex);
@@ -146,6 +155,68 @@ test('object parameters and files share a desktop row before the map', () => {
   assert.match(
     styles,
     /@media\s*\(max-width:\s*760px\)\s*\{[\s\S]*?\.object-parameters-grid\s*\{[\s\S]*?grid-template-columns:\s*1fr;[\s\S]*?\}/,
+  );
+});
+
+test('object files block keeps primary actions inline and labels additional files', () => {
+  const actionsIndex = objectDetailSource.indexOf('className="object-detail-actions object-files-primary-actions"');
+  const additionalFilesIndex = objectDetailSource.indexOf(
+    '<FileList accessToken={accessToken} files={otherFiles} title="Дополнительные файлы" />',
+  );
+  const emptyFilesIndex = objectDetailSource.indexOf('className="muted-text object-files-empty"');
+
+  assert.doesNotMatch(
+    objectDetailSource,
+    /<section className="detail-section object-files-section"[\s\S]*?<p className="eyebrow">Файлы<\/p>/,
+  );
+  assert.match(
+    objectDetailSource,
+    /<section className="detail-section object-files-section"[\s\S]*?<h3 id="object-files-title">Файлы и документы<\/h3>/,
+  );
+  assert.match(objectDetailSource, /<FileActionLabel>Презентация<\/FileActionLabel>/);
+  assert.match(objectDetailSource, /<FileActionLabel>Планировки<\/FileActionLabel>/);
+  assert.doesNotMatch(objectDetailSource, /value="Отсутствует"|value="Открыть цены"|value="Отсутствуют"/);
+
+  assert.notEqual(actionsIndex, -1, 'files primary actions should have a dedicated layout class');
+  assert.notEqual(additionalFilesIndex, -1, 'additional files list should have an explicit title');
+  assert.notEqual(emptyFilesIndex, -1, 'empty additional files state should sit in the additional files group');
+  assert.ok(actionsIndex < additionalFilesIndex);
+  assert.ok(actionsIndex < emptyFilesIndex);
+
+  assert.match(
+    styles,
+    /\.object-files-section \.object-files-primary-actions\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);[\s\S]*?align-items:\s*start;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.object-files-section\s*\{[\s\S]*?align-content:\s*start;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.object-files-section \.object-detail-action-button\s*\{[\s\S]*?min-height:\s*0;[\s\S]*?align-items:\s*flex-start;[\s\S]*?justify-content:\s*flex-start;[\s\S]*?border:\s*1px solid #e0e6ed;[\s\S]*?border-radius:\s*8px;[\s\S]*?background:\s*#f8fafc;[\s\S]*?padding:\s*14px;[\s\S]*?text-align:\s*left;[\s\S]*?\}/,
+  );
+  assert.doesNotMatch(styles, /\.object-files-section \.object-detail-action-button\s*\{[\s\S]*?height:\s*104px;/);
+
+  assert.match(
+    styles,
+    /\.object-file-action-label\s*\{[\s\S]*?font-size:\s*12px;[\s\S]*?font-weight:\s*800;[\s\S]*?line-height:\s*1\.35;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    appThemeStyles,
+    /html\[data-app-theme\] \.object-files-section \.object-detail-action-button\s*\{[\s\S]*?border-color:\s*var\(--app-theme-border-soft\);[\s\S]*?background:\s*var\(--app-theme-surface-soft\);[\s\S]*?color:\s*var\(--app-theme-ink-800\);[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.detail-file-list li > div\s*\{[\s\S]*?flex:\s*1 1 auto;[\s\S]*?min-width:\s*0;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /@media\s*\(max-width:\s*760px\)\s*\{[\s\S]*?\.object-files-section \.object-files-primary-actions\s*\{[\s\S]*?grid-template-columns:\s*1fr;[\s\S]*?\}/,
   );
 });
 

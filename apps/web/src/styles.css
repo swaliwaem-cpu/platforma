@@ -4730,6 +4730,10 @@ tr.user-row--deactivated .text-button {
   align-content: start;
 }
 
+.object-files-section {
+  align-content: start;
+}
+
 .object-parameters-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4767,8 +4771,29 @@ tr.user-row--deactivated .text-button {
   gap: 12px;
 }
 
-.object-files-section .object-detail-actions {
-  grid-template-columns: 1fr;
+.object-files-section .object-files-primary-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+.object-files-section .object-detail-action-button {
+  min-height: 0;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 6px;
+  border: 1px solid #e0e6ed;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 14px;
+  color: #303b47;
+  text-align: left;
+}
+
+.object-file-action-label {
+  color: #536172;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.35;
 }
 
 .object-detail-action {
@@ -5030,6 +5055,11 @@ tr.user-row--deactivated .text-button {
   padding: 12px;
 }
 
+.detail-file-list li > div {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .detail-file-list strong,
 .metro-list strong {
   display: block;
@@ -5052,6 +5082,10 @@ tr.user-row--deactivated .text-button {
   justify-items: end;
   gap: 4px;
   flex-shrink: 0;
+}
+
+.object-files-empty {
+  margin: 0;
 }
 
 .metro-list li {
@@ -5917,6 +5951,10 @@ tr.user-row--deactivated .text-button {
   .detail-file-list li {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .object-files-section .object-files-primary-actions {
+    grid-template-columns: 1fr;
   }
 
   .detail-file-action {

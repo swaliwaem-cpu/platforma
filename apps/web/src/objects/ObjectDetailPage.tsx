@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { PencilIcon } from 'lucide-react';
 import type {
   ObjectFileType,
@@ -193,7 +193,6 @@ function ObjectDetail({
       <div className="object-parameters-files-grid">
         <section className="detail-section object-parameters-section" aria-labelledby="object-parameters-title">
           <div>
-            <p className="eyebrow">Параметры</p>
             <h3 id="object-parameters-title">Основные параметры</h3>
           </div>
 
@@ -209,23 +208,22 @@ function ObjectDetail({
 
         <section className="detail-section object-files-section" aria-labelledby="object-files-title">
           <div>
-            <p className="eyebrow">Файлы</p>
             <h3 id="object-files-title">Файлы и документы</h3>
           </div>
 
-          <div className="object-detail-actions" aria-label="Действия по объекту">
+          <div className="object-detail-actions object-files-primary-actions" aria-label="Действия по объекту">
             {presentationFile ? (
               <SecureFileButton
                 accessToken={accessToken}
                 className="object-detail-action-button object-detail-action-button--primary"
                 fileId={presentationFile.file.id}
-                label="Показать презентацию"
+                label={<FileActionLabel>Презентация</FileActionLabel>}
                 openingLabel="Открываем презентацию"
                 wrapperClassName="object-detail-action"
               />
             ) : (
               <button className="object-detail-action-button object-detail-action-button--disabled" disabled type="button">
-                Презентация отсутствует
+                <FileActionLabel>Презентация</FileActionLabel>
               </button>
             )}
 
@@ -237,19 +235,22 @@ function ObjectDetail({
                 rel="noopener noreferrer nofollow"
                 target="_blank"
               >
-                Показать планировки и цены
+                <FileActionLabel>Планировки</FileActionLabel>
               </a>
             ) : (
               <button className="object-detail-action-button object-detail-action-button--disabled" disabled type="button">
-                Планировки отсутствуют
+                <FileActionLabel>Планировки</FileActionLabel>
               </button>
             )}
           </div>
 
           {otherFiles.length > 0 ? (
-            <FileList accessToken={accessToken} files={otherFiles} title="Документы" />
+            <FileList accessToken={accessToken} files={otherFiles} title="Дополнительные файлы" />
           ) : (
-            <p className="muted-text">Дополнительные файлы не загружены.</p>
+            <div className="detail-file-group object-files-additional">
+              <h4>Дополнительные файлы</h4>
+              <p className="muted-text object-files-empty">Не загружены.</p>
+            </div>
           )}
         </section>
       </div>
@@ -624,6 +625,10 @@ function FileList({
   );
 }
 
+function FileActionLabel({ children }: { children: ReactNode }) {
+  return <span className="object-file-action-label">{children}</span>;
+}
+
 function MetroStationItem({ station }: { station: ObjectMetroStationLink }) {
   const lineColor = normalizeLineColor(station.lineColor);
 
@@ -647,7 +652,7 @@ function SecureFileButton({
   accessToken: string;
   className?: string;
   fileId: string;
-  label?: string;
+  label?: ReactNode;
   openingLabel?: string;
   wrapperClassName?: string;
 }) {

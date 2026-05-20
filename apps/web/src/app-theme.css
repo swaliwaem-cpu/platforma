@@ -389,6 +389,27 @@ html[data-app-theme] :is(.status-pill--blocked, .object-detail-action-button--di
   color: var(--app-theme-danger);
 }
 
+html[data-app-theme] .object-files-section .object-detail-action-button {
+  border-color: var(--app-theme-border-soft);
+  background: var(--app-theme-surface-soft);
+  color: var(--app-theme-ink-800);
+}
+
+html[data-app-theme] .object-files-section :is(.object-detail-action-button:hover, .object-detail-action-button:focus-visible) {
+  border-color: color-mix(in srgb, var(--app-theme-primary) 28%, var(--app-theme-border));
+  background: color-mix(in srgb, var(--app-theme-primary-soft) 44%, var(--app-theme-surface));
+  color: var(--app-theme-ink-900);
+  box-shadow: var(--app-theme-focus-primary);
+}
+
+html[data-app-theme] .object-files-section .object-detail-action-button--disabled {
+  box-shadow: none;
+}
+
+html[data-app-theme] .object-file-action-label {
+  color: var(--app-theme-ink-700);
+}
+
 html[data-app-theme] :is(.status-pill--invited, .object-status--draft, .report-summary-item--warning, .report-issue-card--warning, .import-status--partial) {
   border-color: color-mix(in srgb, var(--app-theme-warning) 32%, var(--app-theme-border));
   background: var(--app-theme-warning-soft);
