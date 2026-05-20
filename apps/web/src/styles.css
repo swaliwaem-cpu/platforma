@@ -473,12 +473,10 @@ h2 {
 .login-mode-toggle {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
+  gap: 8px;
   margin-top: 24px;
-  border: 1px solid #d6dde5;
-  border-radius: 8px;
-  background: #f8fafc;
-  padding: 4px;
+  border: 0;
+  background: transparent;
 }
 
 .login-mode-button {
