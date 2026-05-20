@@ -45,6 +45,22 @@ export type AuthResponse = {
   user: AuthUser;
 };
 
+export type EmailRegistrationRequestResponse = {
+  ok: true;
+};
+
+export type EmailRegistrationVerifyInput =
+  | {
+      token: string;
+      email?: never;
+      code?: never;
+    }
+  | {
+      email: string;
+      code: string;
+      token?: never;
+    };
+
 export type AdminRole = {
   id: string;
   name: string;

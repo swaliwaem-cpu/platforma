@@ -1,5 +1,5 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { AuthResponse, AuthUser } from '@platforma/shared';
+import { AuthResponse, AuthUser, EmailRegistrationVerifyInput } from '@platforma/shared';
 
 import {
   apiAuthClearedEventName,
@@ -13,6 +13,8 @@ type AuthContextValue = {
   user: AuthUser | null;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
+  requestEmailRegistration: (email: string) => Promise<void>;
+  verifyEmailRegistration: (input: EmailRegistrationVerifyInput) => Promise<void>;
   logout: () => Promise<void>;
   updateUser: (user: AuthUser) => void;
   hasPermission: (permission: string) => boolean;
@@ -109,6 +111,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [applyAuthResponse],
   );
 
+  const requestEmailRegistration = useCallback(async (email: string) => {
+    const response = await fetch(`${apiUrl}/auth/register/request`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ email }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Не удалось отправить код');
+    }
+  }, []);
+
+  const verifyEmailRegistration = useCallback(
+    async (input: EmailRegistrationVerifyInput) => {
+      const response = await fetch(`${apiUrl}/auth/register/verify`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(input),
+      });
+
+      if (!response.ok) {
+        throw new Error('Не удалось подтвердить вход');
+      }
+
+      applyAuthResponse((await response.json()) as AuthResponse);
+    },
+    [applyAuthResponse],
+  );
+
   const logout = useCallback(async () => {
     await fetch(`${apiUrl}/auth/logout`, {
       method: 'POST',
@@ -124,11 +161,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       isLoading,
       login,
+      requestEmailRegistration,
+      verifyEmailRegistration,
       logout,
       updateUser: setUser,
       hasPermission: (permission) => user?.permissions.includes(permission) ?? false,
     }),
-    [accessToken, isLoading, login, logout, user],
+    [accessToken, isLoading, login, logout, requestEmailRegistration, user, verifyEmailRegistration],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

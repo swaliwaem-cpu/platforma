@@ -98,6 +98,72 @@ test('AuthController validates login body', async () => {
   );
 });
 
+test('AuthController starts email registration with normalized email', async () => {
+  const calls = {};
+  const controller = new AuthController({
+    requestEmailRegistration: async (email, request) => {
+      calls.requestEmailRegistration = { email, request };
+
+      return { ok: true };
+    },
+  });
+  const request = { headers: { 'user-agent': 'node-test' }, ip: '127.0.0.1' };
+
+  const result = await controller.requestEmailRegistration({ email: ' User@Example.Test ' }, request);
+
+  assert.deepEqual(result, { ok: true });
+  assert.deepEqual(calls.requestEmailRegistration, {
+    email: 'user@example.test',
+    request,
+  });
+});
+
+test('AuthController verifies email registration and sets auth cookies', async () => {
+  const calls = {};
+  const controller = new AuthController({
+    verifyEmailRegistration: async (body) => {
+      calls.verifyEmailRegistration = body;
+
+      return {
+        accessToken: 'access-token',
+        refreshToken: 'refresh-token',
+        mediaToken: 'media-token',
+        user,
+      };
+    },
+  });
+  const response = makeResponse();
+
+  const result = await controller.verifyEmailRegistration(
+    { email: ' User@Example.Test ', code: '123456' },
+    response,
+  );
+
+  assert.deepEqual(calls.verifyEmailRegistration, { email: 'user@example.test', code: '123456' });
+  assert.deepEqual(result, { accessToken: 'access-token', user });
+  assert.equal('refreshToken' in result, false);
+  assert.equal(response.cookies[0].name, getRefreshCookieName());
+  assert.equal(response.cookies[0].value, 'refresh-token');
+  assert.equal(response.cookies[1].name, getMediaCookieName());
+  assert.equal(response.cookies[1].value, 'media-token');
+});
+
+test('AuthController validates email registration bodies', async () => {
+  const controller = new AuthController({
+    requestEmailRegistration: async () => assert.fail('Auth service must not be called for invalid email'),
+    verifyEmailRegistration: async () => assert.fail('Auth service must not be called for invalid verification'),
+  });
+
+  await assert.rejects(
+    () => controller.requestEmailRegistration({ email: 'not-an-email' }, { headers: {} }),
+    BadRequestException,
+  );
+  await assert.rejects(
+    () => controller.verifyEmailRegistration({ email: 'user@example.test' }, makeResponse()),
+    BadRequestException,
+  );
+});
+
 test('AuthController refresh rotates cookie and logout clears it', async () => {
   const calls = {};
   const controller = new AuthController({

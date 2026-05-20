@@ -18,6 +18,7 @@ import './styles.css';
 import './app-theme.css';
 
 type AppSection = 'cabinet' | 'catalog' | 'admin';
+type LoginMode = 'login' | 'register';
 
 const userStatusLabels: Record<UserStatus, string> = {
   ACTIVE: 'Активен',
@@ -379,25 +380,97 @@ function parseObjectSlug(pathname: string) {
 }
 
 function LoginPage({ onSuccess }: { onSuccess: () => void }) {
-  const { login } = useAuth();
+  const { login, requestEmailRegistration, verifyEmailRegistration } = useAuth();
+  const [mode, setMode] = useState<LoginMode>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [registrationEmail, setRegistrationEmail] = useState('');
+  const [registrationCode, setRegistrationCode] = useState('');
+  const [isRegistrationCodeSent, setIsRegistrationCodeSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    const token = new URLSearchParams(window.location.search).get('auth_token');
+
+    if (!token) {
+      return;
+    }
+
+    let isMounted = true;
+
+    setMode('register');
+    setError(null);
+    setNotice('Проверяем ссылку входа');
+    setIsSubmitting(true);
+
+    void verifyEmailRegistration({ token })
+      .then(() => {
+        if (isMounted) {
+          onSuccess();
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setError('Ссылка входа недействительна или устарела');
+        }
+      })
+      .finally(() => {
+        if (isMounted) {
+          setIsSubmitting(false);
+          setNotice(null);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [verifyEmailRegistration]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+    setNotice(null);
     setIsSubmitting(true);
 
     try {
-      await login(email, password);
+      if (mode === 'login') {
+        await login(email, password);
+        onSuccess();
+        return;
+      }
+
+      if (!isRegistrationCodeSent) {
+        await requestEmailRegistration(registrationEmail);
+        setIsRegistrationCodeSent(true);
+        setNotice('Письмо отправлено');
+        return;
+      }
+
+      await verifyEmailRegistration({
+        email: registrationEmail,
+        code: registrationCode,
+      });
       onSuccess();
     } catch {
-      setError('Проверьте email и пароль');
+      setError(mode === 'login' ? 'Проверьте email и пароль' : 'Проверьте email и код из письма');
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  function selectMode(nextMode: LoginMode) {
+    setMode(nextMode);
+    setError(null);
+    setNotice(null);
+  }
+
+  function handleRegistrationEmailChange(value: string) {
+    setRegistrationEmail(value);
+    setRegistrationCode('');
+    setIsRegistrationCodeSent(false);
+    setNotice(null);
   }
 
   return (
@@ -406,33 +479,94 @@ function LoginPage({ onSuccess }: { onSuccess: () => void }) {
         <p className="eyebrow">Платформа брокеров</p>
         <h1 id="login-title">FluffyWhite</h1>
 
-        <form className="login-form" onSubmit={(event) => void handleSubmit(event)}>
-          <label>
-            Email
-            <input
-              autoComplete="email"
-              name="email"
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-            />
-          </label>
+        <div className="login-mode-toggle" aria-label="Способ входа">
+          <button
+            className={mode === 'login' ? 'login-mode-button login-mode-button--active' : 'login-mode-button'}
+            type="button"
+            aria-pressed={mode === 'login'}
+            onClick={() => selectMode('login')}
+          >
+            Вход
+          </button>
+          <button
+            className={mode === 'register' ? 'login-mode-button login-mode-button--active' : 'login-mode-button'}
+            type="button"
+            aria-pressed={mode === 'register'}
+            onClick={() => selectMode('register')}
+          >
+            Регистрация
+          </button>
+        </div>
 
-          <label>
-            Пароль
-            <input
-              autoComplete="current-password"
-              name="password"
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-            />
-          </label>
+        <form className="login-form" onSubmit={(event) => void handleSubmit(event)}>
+          {mode === 'login' ? (
+            <>
+              <label>
+                Email
+                <input
+                  autoComplete="email"
+                  name="email"
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                />
+              </label>
+
+              <label>
+                Пароль
+                <input
+                  autoComplete="current-password"
+                  name="password"
+                  type="password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                />
+              </label>
+            </>
+          ) : (
+            <>
+              <label>
+                Введите ваш email
+                <input
+                  autoComplete="email"
+                  name="registration-email"
+                  type="email"
+                  value={registrationEmail}
+                  onChange={(event) => handleRegistrationEmailChange(event.target.value)}
+                />
+              </label>
+
+              {isRegistrationCodeSent ? (
+                <label>
+                  Введите код из письма
+                  <input
+                    autoComplete="one-time-code"
+                    inputMode="numeric"
+                    maxLength={6}
+                    name="registration-code"
+                    pattern="[0-9]*"
+                    type="text"
+                    value={registrationCode}
+                    onChange={(event) => setRegistrationCode(event.target.value.replace(/\D/gu, '').slice(0, 6))}
+                  />
+                </label>
+              ) : null}
+            </>
+          )}
 
           {error ? <p className="form-error">{error}</p> : null}
+          {notice ? <p className="form-notice">{notice}</p> : null}
 
           <button className="primary-button" disabled={isSubmitting} type="submit">
-            {isSubmitting ? 'Вход' : 'Войти'}
+            {isSubmitting
+              ? mode === 'login'
+                ? 'Вход'
+                : 'Отправка'
+              : mode === 'login'
+                ? 'Войти'
+                : isRegistrationCodeSent
+                  ? 'Войти'
+                  : 'Отправить код'}
           </button>
         </form>
       </section>

@@ -19,12 +19,14 @@
     "@nestjs/platform-express": "11.1.19",
     "@prisma/client": "6.19.3",
     "argon2": "^0.44.0",
+    "nodemailer": "^8.0.7",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2",
     "sharp": "^0.34.5"
   },
   "devDependencies": {
     "@types/node": "25.6.0",
+    "@types/nodemailer": "^8.0.0",
     "prisma": "6.19.3",
     "typescript": "6.0.3"
   }

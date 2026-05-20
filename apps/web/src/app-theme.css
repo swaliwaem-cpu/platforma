@@ -274,14 +274,14 @@ html[data-app-theme] :is(.primary-button:hover, .primary-button:focus-visible, .
   box-shadow: var(--app-theme-focus-primary);
 }
 
-html[data-app-theme] :is(.secondary-button, .admin-button--secondary, .object-detail-edit-link, .object-detail-action-button--secondary, .catalog-view-toggle, .catalog-list-item-link, .catalog-map-list-header .text-button, .catalog-map-list-toggle, .sidebar-toggle, .theme-toggle) {
+html[data-app-theme] :is(.secondary-button, .admin-button--secondary, .object-detail-edit-link, .object-detail-action-button--secondary, .catalog-view-toggle, .catalog-list-item-link, .catalog-map-list-header .text-button, .catalog-map-list-toggle, .sidebar-toggle, .theme-toggle, .login-mode-button) {
   border-color: var(--app-theme-border);
   background: var(--app-theme-surface);
   color: var(--app-theme-ink-800);
   box-shadow: none;
 }
 
-html[data-app-theme] :is(.secondary-button:hover, .secondary-button:focus-visible, .admin-button--secondary:hover, .admin-button--secondary:focus-visible, .object-detail-edit-link:hover, .object-detail-edit-link:focus-visible, .object-detail-action-button--secondary:hover, .object-detail-action-button--secondary:focus-visible, .catalog-view-toggle:hover, .catalog-view-toggle:focus-visible, .catalog-list-item-link:hover, .catalog-list-item-link:focus-visible, .catalog-map-list-header .text-button:hover, .catalog-map-list-header .text-button:focus-visible, .catalog-map-list-toggle:hover, .catalog-map-list-toggle:focus-visible, .sidebar-toggle:hover, .sidebar-toggle:focus-visible, .theme-toggle:hover, .theme-toggle:focus-visible) {
+html[data-app-theme] :is(.secondary-button:hover, .secondary-button:focus-visible, .admin-button--secondary:hover, .admin-button--secondary:focus-visible, .object-detail-edit-link:hover, .object-detail-edit-link:focus-visible, .object-detail-action-button--secondary:hover, .object-detail-action-button--secondary:focus-visible, .catalog-view-toggle:hover, .catalog-view-toggle:focus-visible, .catalog-list-item-link:hover, .catalog-list-item-link:focus-visible, .catalog-map-list-header .text-button:hover, .catalog-map-list-header .text-button:focus-visible, .catalog-map-list-toggle:hover, .catalog-map-list-toggle:focus-visible, .sidebar-toggle:hover, .sidebar-toggle:focus-visible, .theme-toggle:hover, .theme-toggle:focus-visible, .login-mode-button:hover, .login-mode-button:focus-visible, .login-mode-button--active) {
   border-color: var(--app-theme-primary);
   background: var(--app-theme-primary-soft);
   color: var(--app-theme-primary-deep);

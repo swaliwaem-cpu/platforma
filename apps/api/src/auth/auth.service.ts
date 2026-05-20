@@ -1,28 +1,57 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { UserStatus } from '@prisma/client';
+import { Prisma, UserStatus } from '@prisma/client';
 import * as argon2 from 'argon2';
+import { createHmac, randomBytes, randomInt } from 'crypto';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { getCookieValue, getRefreshCookieName } from './cookies';
 import {
   AccessTokenPayload,
   AuthenticatedUser,
+  EmailRegistrationRequestResponse,
+  EmailRegistrationVerifyInput,
   LoginResponse,
   MediaTokenPayload,
   RefreshTokenPayload,
   RequestWithAuth,
 } from './auth.types';
+import { MailService } from './mail.service';
 
 const DEFAULT_ACCESS_TTL = '15m';
 const DEFAULT_REFRESH_TTL_DAYS = 30;
 const DEFAULT_MEDIA_TTL_MINUTES = 200;
+const DEFAULT_EMAIL_AUTH_TTL_MINUTES = 15;
+const DEFAULT_PUBLIC_APP_URL = 'http://localhost:5173';
+
+const authUserInclude = {
+  role: {
+    include: {
+      permissions: {
+        include: {
+          permission: true,
+        },
+      },
+    },
+  },
+  profilePhotoFile: true,
+} as const;
+
+type AuthUserWithRole = Prisma.UserGetPayload<{ include: typeof authUserInclude }>;
+
+type RequestWithAudit = RequestWithAuth & {
+  ip?: string;
+  socket?: {
+    remoteAddress?: string;
+  };
+};
 
 @Injectable()
 export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
+    private readonly mailService: MailService,
   ) {}
 
   async login(
@@ -109,6 +138,85 @@ export class AuthService {
     return { user };
   }
 
+  async requestEmailRegistration(
+    email: string,
+    request: RequestWithAudit,
+  ): Promise<EmailRegistrationRequestResponse> {
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await this.findOrCreateEmailRegistrationUser(normalizedEmail);
+
+    if (!user || user.status === UserStatus.BLOCKED || user.status === UserStatus.DEACTIVATED) {
+      return { ok: true };
+    }
+
+    const token = randomBytes(32).toString('base64url');
+    const code = randomInt(0, 1_000_000).toString().padStart(6, '0');
+    const expiresInMinutes = this.getEmailAuthTtlMinutes();
+    const expiresAt = new Date(Date.now() + expiresInMinutes * 60 * 1000);
+
+    await this.prisma.emailAuthChallenge.create({
+      data: {
+        email: normalizedEmail,
+        tokenHash: this.hashEmailAuthValue(`token:${token}`),
+        codeHash: this.hashEmailAuthValue(`code:${normalizedEmail}:${code}`),
+        userId: user.id,
+        expiresAt,
+        ipAddress: this.getRequestIp(request),
+        userAgent: this.getRequestUserAgent(request),
+      },
+    });
+
+    await this.mailService.sendEmailLogin({
+      to: normalizedEmail,
+      code,
+      loginUrl: this.buildEmailLoginUrl(token),
+      expiresInMinutes,
+    });
+
+    return { ok: true };
+  }
+
+  async verifyEmailRegistration(
+    input: EmailRegistrationVerifyInput,
+  ): Promise<LoginResponse & { refreshToken: string; mediaToken: string | null }> {
+    const challenge = await this.findValidEmailAuthChallenge(input);
+
+    if (!challenge || challenge.user.deletedAt) {
+      throw new UnauthorizedException('Email login link or code is invalid');
+    }
+
+    if (challenge.user.status === UserStatus.BLOCKED || challenge.user.status === UserStatus.DEACTIVATED) {
+      throw new UnauthorizedException('User is not active');
+    }
+
+    await this.prisma.emailAuthChallenge.update({
+      where: { id: challenge.id },
+      data: {
+        consumedAt: new Date(),
+      },
+    });
+
+    const sessionUser =
+      challenge.user.status === UserStatus.INVITED
+        ? await this.prisma.user.update({
+            where: { id: challenge.user.id },
+            data: {
+              status: UserStatus.ACTIVE,
+            },
+            include: authUserInclude,
+          })
+        : challenge.user;
+    const authUser = this.toAuthenticatedUser(sessionUser);
+    const tokens = await this.issueTokens(authUser);
+
+    return {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      mediaToken: tokens.mediaToken,
+      user: authUser,
+    };
+  }
+
   private async findActiveUserByEmail(email: string) {
     return this.prisma.user.findFirst({
       where: {
@@ -116,7 +224,7 @@ export class AuthService {
         status: UserStatus.ACTIVE,
         deletedAt: null,
       },
-      include: this.userInclude(),
+      include: authUserInclude,
     });
   }
 
@@ -127,26 +235,89 @@ export class AuthService {
         status: UserStatus.ACTIVE,
         deletedAt: null,
       },
-      include: this.userInclude(),
+      include: authUserInclude,
     });
   }
 
-  private userInclude() {
-    return {
-      role: {
-        include: {
-          permissions: {
-            include: {
-              permission: true,
-            },
-          },
-        },
+  private async findOrCreateEmailRegistrationUser(email: string) {
+    const existingUser = await this.prisma.user.findFirst({
+      where: {
+        email,
+        deletedAt: null,
       },
-      profilePhotoFile: true,
-    } as const;
+      include: authUserInclude,
+    });
+
+    if (existingUser) {
+      return existingUser;
+    }
+
+    const userRole = await this.prisma.role.findUnique({
+      where: {
+        name: 'user',
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!userRole) {
+      throw new InternalServerErrorException('Default user role is not configured');
+    }
+
+    return this.prisma.user.create({
+      data: {
+        email,
+        passwordHash: await argon2.hash(randomBytes(32).toString('hex'), { type: argon2.argon2id }),
+        roleId: userRole.id,
+        status: UserStatus.INVITED,
+      },
+      include: authUserInclude,
+    });
   }
 
-  private toAuthenticatedUser(user: NonNullable<Awaited<ReturnType<AuthService['findActiveUserById']>>>) {
+  private async findValidEmailAuthChallenge(input: EmailRegistrationVerifyInput) {
+    const baseWhere = {
+      consumedAt: null,
+      expiresAt: {
+        gt: new Date(),
+      },
+    };
+
+    if ('token' in input) {
+      return this.prisma.emailAuthChallenge.findFirst({
+        where: {
+          ...baseWhere,
+          tokenHash: this.hashEmailAuthValue(`token:${input.token}`),
+        },
+        include: {
+          user: {
+            include: authUserInclude,
+          },
+        },
+      });
+    }
+
+    const email = input.email.trim().toLowerCase();
+
+    return this.prisma.emailAuthChallenge.findFirst({
+      where: {
+        ...baseWhere,
+        email,
+        codeHash: this.hashEmailAuthValue(`code:${email}:${input.code}`),
+      },
+      include: {
+        user: {
+          include: authUserInclude,
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+  }
+
+  private toAuthenticatedUser(user: AuthUserWithRole) {
     return {
       id: user.id,
       email: user.email,
@@ -282,5 +453,46 @@ export class AuthService {
     }
 
     return ttlMinutes * 60;
+  }
+
+  private getEmailAuthTtlMinutes() {
+    const ttlMinutes = Number(process.env.EMAIL_AUTH_TTL_MINUTES ?? DEFAULT_EMAIL_AUTH_TTL_MINUTES);
+
+    if (!Number.isFinite(ttlMinutes) || ttlMinutes <= 0) {
+      return DEFAULT_EMAIL_AUTH_TTL_MINUTES;
+    }
+
+    return ttlMinutes;
+  }
+
+  private hashEmailAuthValue(value: string) {
+    return createHmac('sha256', this.getEmailAuthSecret()).update(value).digest('hex');
+  }
+
+  private getEmailAuthSecret() {
+    return process.env.EMAIL_AUTH_SECRET ?? process.env.JWT_ACCESS_SECRET ?? 'change-me-email-auth-secret';
+  }
+
+  private buildEmailLoginUrl(token: string) {
+    const url = new URL('/login', process.env.PUBLIC_APP_URL ?? DEFAULT_PUBLIC_APP_URL);
+
+    url.searchParams.set('auth_token', token);
+
+    return url.toString();
+  }
+
+  private getRequestIp(request: RequestWithAudit) {
+    const forwardedFor = request.headers['x-forwarded-for'];
+    const value = Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor;
+    const ip = value?.split(',')[0]?.trim() || request.ip || request.socket?.remoteAddress || null;
+
+    return ip ? ip.slice(0, 64) : null;
+  }
+
+  private getRequestUserAgent(request: RequestWithAudit) {
+    const userAgent = request.headers['user-agent'];
+    const value = Array.isArray(userAgent) ? userAgent[0] : userAgent;
+
+    return value ? value.slice(0, 512) : null;
   }
 }

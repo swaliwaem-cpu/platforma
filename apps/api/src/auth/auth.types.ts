@@ -61,3 +61,19 @@ export type LoginResponse = {
   accessToken: string;
   user: AuthenticatedUser;
 };
+
+export type EmailRegistrationRequestResponse = {
+  ok: true;
+};
+
+export type EmailRegistrationVerifyInput =
+  | {
+      token: string;
+      email?: never;
+      code?: never;
+    }
+  | {
+      email: string;
+      code: string;
+      token?: never;
+    };

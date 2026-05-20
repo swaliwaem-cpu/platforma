@@ -7,6 +7,7 @@ const { LocationType, ObjectFileType, ObjectStatus, UserStatus } = require('@pri
 
 const { DirectoriesService } = require('../dist/directories/directories.service.js');
 const { CatalogLinksService } = require('../dist/catalog-links/catalog-links.service.js');
+const { AuthService } = require('../dist/auth/auth.service.js');
 const { MapService } = require('../dist/map/map.service.js');
 const { ObjectsService } = require('../dist/objects/objects.service.js');
 const { UsersService } = require('../dist/users/users.service.js');
@@ -1832,4 +1833,160 @@ test('UsersService.deactivate archives access by status and clears refresh sessi
   assert.equal(calls.update.data.refreshTokenHash, null);
   assert.equal(calls.update.data.refreshTokenExpiresAt, null);
   assert.equal(calls.auditLog.data.action, 'user.deactivate');
+});
+
+test('AuthService.requestEmailRegistration creates invited user role and sends login email', async () => {
+  const calls = {};
+  const userRole = { id: '55555555-5555-4555-8555-555555555555' };
+  const createdUser = userRecord({
+    id: '66666666-6666-4666-8666-666666666666',
+    email: 'new@example.test',
+    name: null,
+    status: UserStatus.INVITED,
+    roleId: userRole.id,
+    role: {
+      id: userRole.id,
+      name: 'user',
+      description: 'User role',
+      permissions: [],
+    },
+  });
+  const prisma = {
+    role: {
+      findUnique: async (args) => {
+        calls.roleFindUnique = args;
+
+        return userRole;
+      },
+    },
+    user: {
+      findFirst: async (args) => {
+        calls.userFindFirst = args;
+
+        return null;
+      },
+      create: async (args) => {
+        calls.userCreate = args;
+
+        return createdUser;
+      },
+    },
+    emailAuthChallenge: {
+      create: async (args) => {
+        calls.challengeCreate = args;
+
+        return { id: '77777777-7777-4777-8777-777777777777' };
+      },
+    },
+  };
+  const mailer = {
+    sendEmailLogin: async (message) => {
+      calls.mailer = message;
+    },
+  };
+  const previousPublicAppUrl = process.env.PUBLIC_APP_URL;
+  process.env.PUBLIC_APP_URL = 'https://broker.fluffywhite.moscow';
+
+  try {
+    const service = new AuthService(prisma, {}, mailer);
+    const result = await service.requestEmailRegistration('new@example.test', request);
+
+    assert.deepEqual(result, { ok: true });
+    assert.deepEqual(calls.roleFindUnique, { where: { name: 'user' }, select: { id: true } });
+    assert.equal(calls.userCreate.data.email, 'new@example.test');
+    assert.equal(calls.userCreate.data.roleId, userRole.id);
+    assert.equal(calls.userCreate.data.status, UserStatus.INVITED);
+    assert.equal(calls.challengeCreate.data.email, 'new@example.test');
+    assert.equal(calls.challengeCreate.data.userId, createdUser.id);
+    assert.match(calls.challengeCreate.data.tokenHash, /^[a-f0-9]{64}$/);
+    assert.match(calls.challengeCreate.data.codeHash, /^[a-f0-9]{64}$/);
+    assert.equal(calls.challengeCreate.data.ipAddress, '127.0.0.1');
+    assert.equal(calls.challengeCreate.data.userAgent, 'node-test');
+    assert.equal(calls.mailer.to, 'new@example.test');
+    assert.match(calls.mailer.code, /^\d{6}$/);
+    assert.match(calls.mailer.loginUrl, /^https:\/\/broker\.fluffywhite\.moscow\/login\?auth_token=/);
+  } finally {
+    if (previousPublicAppUrl === undefined) {
+      delete process.env.PUBLIC_APP_URL;
+    } else {
+      process.env.PUBLIC_APP_URL = previousPublicAppUrl;
+    }
+  }
+});
+
+test('AuthService.verifyEmailRegistration consumes magic token and activates invited user', async () => {
+  const calls = [];
+  const now = new Date();
+  const invitedUser = userRecord({
+    email: 'new@example.test',
+    status: UserStatus.INVITED,
+    role: {
+      id: '44444444-4444-4444-8444-444444444444',
+      name: 'user',
+      description: 'User role',
+      permissions: [
+        {
+          permission: {
+            key: 'objects:read',
+          },
+        },
+      ],
+    },
+    profilePhotoFile: null,
+  });
+  const activeUser = {
+    ...invitedUser,
+    status: UserStatus.ACTIVE,
+  };
+  const prisma = {
+    emailAuthChallenge: {
+      findFirst: async (args) => {
+        calls.push(['challenge.findFirst', args]);
+
+        return {
+          id: '77777777-7777-4777-8777-777777777777',
+          email: 'new@example.test',
+          userId: invitedUser.id,
+          expiresAt: new Date(now.getTime() + 5 * 60 * 1000),
+          consumedAt: null,
+          user: invitedUser,
+        };
+      },
+      update: async (args) => {
+        calls.push(['challenge.update', args]);
+
+        return {};
+      },
+    },
+    user: {
+      update: async (args) => {
+        calls.push(['user.update', args]);
+
+        if (args.data.status === UserStatus.ACTIVE) {
+          return activeUser;
+        }
+
+        return activeUser;
+      },
+    },
+  };
+  const jwtService = {
+    signAsync: async (payload) => `${payload.type}-token`,
+  };
+  const service = new AuthService(prisma, jwtService, { sendEmailLogin: async () => {} });
+
+  const result = await service.verifyEmailRegistration({ token: 'magic-token' });
+
+  assert.equal(result.accessToken, 'access-token');
+  assert.equal(result.refreshToken, 'refresh-token');
+  assert.equal(result.mediaToken, 'media-token');
+  assert.equal(result.user.status, UserStatus.ACTIVE);
+  assert.equal(calls[0][0], 'challenge.findFirst');
+  assert.match(calls[0][1].where.tokenHash, /^[a-f0-9]{64}$/);
+  assert.equal(calls[1][0], 'challenge.update');
+  assert.equal(calls[1][1].data.consumedAt instanceof Date, true);
+  assert.equal(calls[2][0], 'user.update');
+  assert.equal(calls[2][1].data.status, UserStatus.ACTIVE);
+  assert.equal(calls[3][0], 'user.update');
+  assert.match(calls[3][1].data.refreshTokenHash, /^\$argon2/);
 });

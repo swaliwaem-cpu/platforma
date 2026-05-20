@@ -12,7 +12,7 @@ import {
 } from '@nestjs/common';
 
 import { AuthService } from './auth.service';
-import { CookieResponse, RequestWithAuth } from './auth.types';
+import { CookieResponse, EmailRegistrationVerifyInput, RequestWithAuth } from './auth.types';
 import { CurrentUser } from './current-user.decorator';
 import {
   getMediaCookieName,
@@ -25,6 +25,16 @@ import { JwtAuthGuard } from './jwt-auth.guard';
 type LoginBody = {
   email?: string;
   password?: string;
+};
+
+type EmailRegistrationRequestBody = {
+  email?: unknown;
+};
+
+type EmailRegistrationVerifyBody = {
+  email?: unknown;
+  code?: unknown;
+  token?: unknown;
 };
 
 const DEFAULT_MEDIA_TTL_MINUTES = 200;
@@ -44,6 +54,32 @@ export class AuthController {
     }
 
     const result = await this.authService.login(email, password);
+
+    this.setRefreshCookie(response, result.refreshToken);
+    this.setMediaCookie(response, result.mediaToken);
+
+    return {
+      accessToken: result.accessToken,
+      user: result.user,
+    };
+  }
+
+  @Post('register/request')
+  @HttpCode(HttpStatus.OK)
+  async requestEmailRegistration(
+    @Body() body: EmailRegistrationRequestBody,
+    @Req() request: RequestWithAuth,
+  ) {
+    return this.authService.requestEmailRegistration(this.parseEmail(body.email), request);
+  }
+
+  @Post('register/verify')
+  @HttpCode(HttpStatus.OK)
+  async verifyEmailRegistration(
+    @Body() body: EmailRegistrationVerifyBody,
+    @Res({ passthrough: true }) response: CookieResponse,
+  ) {
+    const result = await this.authService.verifyEmailRegistration(this.parseEmailRegistrationVerifyBody(body));
 
     this.setRefreshCookie(response, result.refreshToken);
     this.setMediaCookie(response, result.mediaToken);
@@ -80,6 +116,39 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   async me(@CurrentUser() user: NonNullable<RequestWithAuth['user']>) {
     return this.authService.getMe(user);
+  }
+
+  private parseEmailRegistrationVerifyBody(body: EmailRegistrationVerifyBody): EmailRegistrationVerifyInput {
+    if (typeof body.token === 'string' && body.token.trim().length > 0) {
+      return {
+        token: body.token.trim(),
+      };
+    }
+
+    const email = this.parseEmail(body.email);
+
+    if (typeof body.code !== 'string' || !/^\d{6}$/.test(body.code.trim())) {
+      throw new BadRequestException('Email code is required');
+    }
+
+    return {
+      email,
+      code: body.code.trim(),
+    };
+  }
+
+  private parseEmail(value: unknown) {
+    if (typeof value !== 'string') {
+      throw new BadRequestException('Email is required');
+    }
+
+    const email = value.trim().toLowerCase();
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 320) {
+      throw new BadRequestException('Email is invalid');
+    }
+
+    return email;
   }
 
   private setRefreshCookie(response: CookieResponse, refreshToken: string) {
