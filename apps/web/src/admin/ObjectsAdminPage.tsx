@@ -1856,7 +1856,6 @@ function GalleryManagementModal({
   const [draggedDraftId, setDraggedDraftId] = useState<string | null>(null);
   const [dropTargetDraftId, setDropTargetDraftId] = useState<string | null>(null);
   const [isCoverDropTarget, setIsCoverDropTarget] = useState(false);
-  const [sectionDropTarget, setSectionDropTarget] = useState<ObjectImageSection | null>(null);
   const existingImageById = useMemo(() => new Map(existingImages.map((image) => [image.id, image])), [existingImages]);
   const coverDraftItem = draftItems.find((item) => item.draftId === coverDraftId) ?? null;
   const coverExistingImage = coverDraftItem?.imageId ? existingImageById.get(coverDraftItem.imageId) ?? null : null;
@@ -1872,7 +1871,6 @@ function GalleryManagementModal({
     setDraggedDraftId(null);
     setDropTargetDraftId(null);
     setIsCoverDropTarget(false);
-    setSectionDropTarget(null);
   }
 
   function getDraggedDraftId(event: DragEvent<HTMLElement>) {
@@ -1888,7 +1886,6 @@ function GalleryManagementModal({
     setDraggedDraftId(draftId);
     setDropTargetDraftId(null);
     setIsCoverDropTarget(false);
-    setSectionDropTarget(null);
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', draftId);
   }
@@ -1902,7 +1899,6 @@ function GalleryManagementModal({
     event.dataTransfer.dropEffect = 'move';
     setDropTargetDraftId(targetDraftId);
     setIsCoverDropTarget(false);
-    setSectionDropTarget(null);
   }
 
   function handleTileDrop(event: DragEvent<HTMLLIElement>, targetDraftId: string) {
@@ -1928,7 +1924,6 @@ function GalleryManagementModal({
     event.dataTransfer.dropEffect = 'move';
     setDropTargetDraftId(null);
     setIsCoverDropTarget(true);
-    setSectionDropTarget(null);
   }
 
   function handleCoverSlotDrop(event: DragEvent<HTMLDivElement>) {
@@ -1951,40 +1946,6 @@ function GalleryManagementModal({
     }
 
     setIsCoverDropTarget(false);
-  }
-
-  function handleSectionSlotDragOver(event: DragEvent<HTMLDivElement>, section: ObjectImageSection) {
-    if (isSaving || !draggedDraftId) {
-      return;
-    }
-
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'move';
-    setDropTargetDraftId(null);
-    setIsCoverDropTarget(false);
-    setSectionDropTarget(section);
-  }
-
-  function handleSectionSlotDrop(event: DragEvent<HTMLDivElement>, section: ObjectImageSection) {
-    event.preventDefault();
-
-    const nextDraggedDraftId = getDraggedDraftId(event);
-
-    clearGalleryDragState();
-
-    if (!nextDraggedDraftId || !draftItems.some((item) => item.draftId === nextDraggedDraftId)) {
-      return;
-    }
-
-    onSectionChange(nextDraggedDraftId, section);
-  }
-
-  function handleSectionSlotDragLeave(event: DragEvent<HTMLDivElement>) {
-    if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
-      return;
-    }
-
-    setSectionDropTarget(null);
   }
 
   return (
@@ -2042,57 +2003,6 @@ function GalleryManagementModal({
               <span>Обложка не выбрана</span>
             </div>
           )}
-        </div>
-
-        <div className="gallery-section-slots" aria-label="Разделы галереи">
-          {gallerySectionOptions.map((option) => {
-            const sectionItems = draftItems.filter((item) => item.section === option.value);
-            const sectionSlotClassName = [
-              'gallery-section-slot',
-              sectionItems.length > 0 ? 'gallery-section-slot--active' : null,
-              sectionDropTarget === option.value ? 'gallery-section-slot--drop-target' : null,
-            ]
-              .filter(Boolean)
-              .join(' ');
-
-            return (
-              <div
-                key={option.value}
-                className={sectionSlotClassName}
-                onDragLeave={handleSectionSlotDragLeave}
-                onDragOver={(event) => handleSectionSlotDragOver(event, option.value)}
-                onDrop={(event) => handleSectionSlotDrop(event, option.value)}
-              >
-                <div className="gallery-section-slot-header">
-                  <span>{option.label}</span>
-                  <strong>{sectionItems.length}</strong>
-                </div>
-                {sectionItems.length > 0 ? (
-                  <div className="gallery-section-thumbnails" aria-label={`${option.label}: ${sectionItems.length}`}>
-                    {sectionItems.slice(0, 4).map((item) => {
-                      const existingImage = item.imageId ? existingImageById.get(item.imageId) ?? null : null;
-
-                      return (
-                        <div className="gallery-section-thumbnail" key={item.draftId}>
-                          <GalleryDraftPreview
-                            accessToken={accessToken}
-                            existingImage={existingImage}
-                            item={item}
-                            variant="thumbnail"
-                          />
-                        </div>
-                      );
-                    })}
-                    {sectionItems.length > 4 ? (
-                      <span className="gallery-section-more">+{sectionItems.length - 4}</span>
-                    ) : null}
-                  </div>
-                ) : (
-                  <p className="gallery-section-placeholder">Перетащите фото в раздел</p>
-                )}
-              </div>
-            );
-          })}
         </div>
 
         <label aria-disabled={!canUpload || isSaving} className="gallery-upload-dropzone">

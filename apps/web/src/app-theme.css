@@ -218,7 +218,6 @@ html[data-app-theme] :is(
   .gallery-item,
   .file-list li,
   .gallery-cover-slot,
-  .gallery-section-slot,
   .gallery-upload-dropzone,
   .gallery-tile-button,
   .gallery-tile-preview,
@@ -430,7 +429,7 @@ html[data-app-theme] :is(.form-notice, .admin-alert--notice) {
   color: var(--app-theme-success);
 }
 
-html[data-app-theme] :is(.profile-avatar, .gallery-section-slot-header strong, .catalog-card-location > span, .catalog-card-facts div, .catalog-count) {
+html[data-app-theme] :is(.profile-avatar, .catalog-card-location > span, .catalog-card-facts div, .catalog-count) {
   border-color: var(--app-theme-border-soft);
   background: var(--app-theme-surface-soft);
   color: var(--app-theme-ink-800);
@@ -442,7 +441,7 @@ html[data-app-theme] :is(.catalog-card-pdf-badge--active) {
   color: var(--app-theme-primary-foreground);
 }
 
-html[data-app-theme] :is(.catalog-card-media, .catalog-list-item-media, .map-object-card-image, .preview-media, .gallery-thumb, .gallery-cover-preview, .gallery-cover-placeholder, .gallery-section-thumbnail, .gallery-section-more, .object-image-carousel--empty, .object-carousel-media, .carousel-thumbnail, .object-gallery-item, .map-fallback, .map-balloon-image) {
+html[data-app-theme] :is(.catalog-card-media, .catalog-list-item-media, .map-object-card-image, .preview-media, .gallery-thumb, .gallery-cover-preview, .gallery-cover-placeholder, .object-image-carousel--empty, .object-carousel-media, .carousel-thumbnail, .object-gallery-item, .map-fallback, .map-balloon-image) {
   border-color: var(--app-theme-border-soft);
   background:
     linear-gradient(135deg, color-mix(in srgb, var(--app-theme-object) 10%, transparent), color-mix(in srgb, var(--app-theme-accent) 10%, transparent)),

@@ -64,10 +64,10 @@ test('gallery management modal supports thematic section assignment', () => {
   assert.match(source, /function assignGalleryDraftSection\(draftId: string,\s*section: ObjectImageSection \| null\)/);
   assert.match(source, /onGalleryDraftSectionChange=\{assignGalleryDraftSection\}/);
   assert.match(source, /onSectionChange: \(draftId: string,\s*section: ObjectImageSection \| null\) => void;/);
-  assert.match(source, /className="gallery-section-slots"/);
-  assert.match(source, /className=\{sectionSlotClassName\}/);
-  assert.match(source, /onDrop=\{\(event\) => handleSectionSlotDrop\(event,\s*option\.value\)\}/);
-  assert.match(source, /onSectionChange\(nextDraggedDraftId,\s*section\)/);
+  assert.doesNotMatch(source, /className="gallery-section-slots"/);
+  assert.doesNotMatch(source, /className=\{sectionSlotClassName\}/);
+  assert.doesNotMatch(source, /handleSectionSlot/);
+  assert.doesNotMatch(source, /onSectionChange\(nextDraggedDraftId,\s*section\)/);
   assert.match(source, /className="gallery-tile-section-select"/);
   assert.match(source, /<option value="">Без раздела<\/option>/);
   assert.match(source, /gallerySectionOptions\.map\(\(option\) => \(/);
