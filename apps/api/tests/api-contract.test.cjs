@@ -135,11 +135,21 @@ test('AuthController verifies email registration and sets auth cookies', async (
   const response = makeResponse();
 
   const result = await controller.verifyEmailRegistration(
-    { email: ' User@Example.Test ', code: '123456' },
+    {
+      email: ' User@Example.Test ',
+      code: '123456',
+      password: 'Strong!1',
+      passwordConfirmation: 'Strong!1',
+    },
     response,
   );
 
-  assert.deepEqual(calls.verifyEmailRegistration, { email: 'user@example.test', code: '123456' });
+  assert.deepEqual(calls.verifyEmailRegistration, {
+    email: 'user@example.test',
+    code: '123456',
+    password: 'Strong!1',
+    passwordConfirmation: 'Strong!1',
+  });
   assert.deepEqual(result, { accessToken: 'access-token', user });
   assert.equal('refreshToken' in result, false);
   assert.equal(response.cookies[0].name, getRefreshCookieName());
@@ -160,6 +170,31 @@ test('AuthController validates email registration bodies', async () => {
   );
   await assert.rejects(
     () => controller.verifyEmailRegistration({ email: 'user@example.test' }, makeResponse()),
+    BadRequestException,
+  );
+  await assert.rejects(
+    () =>
+      controller.verifyEmailRegistration(
+        {
+          email: 'user@example.test',
+          code: '123456',
+          password: 'weak',
+          passwordConfirmation: 'weak',
+        },
+        makeResponse(),
+      ),
+    BadRequestException,
+  );
+  await assert.rejects(
+    () =>
+      controller.verifyEmailRegistration(
+        {
+          token: 'magic-token',
+          password: 'Strong!1',
+          passwordConfirmation: 'Strong!2',
+        },
+        makeResponse(),
+      ),
     BadRequestException,
   );
 });

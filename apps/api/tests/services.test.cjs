@@ -1975,7 +1975,11 @@ test('AuthService.verifyEmailRegistration consumes magic token and activates inv
   };
   const service = new AuthService(prisma, jwtService, { sendEmailLogin: async () => {} });
 
-  const result = await service.verifyEmailRegistration({ token: 'magic-token' });
+  const result = await service.verifyEmailRegistration({
+    token: 'magic-token',
+    password: 'Strong!1',
+    passwordConfirmation: 'Strong!1',
+  });
 
   assert.equal(result.accessToken, 'access-token');
   assert.equal(result.refreshToken, 'refresh-token');
@@ -1987,6 +1991,7 @@ test('AuthService.verifyEmailRegistration consumes magic token and activates inv
   assert.equal(calls[1][1].data.consumedAt instanceof Date, true);
   assert.equal(calls[2][0], 'user.update');
   assert.equal(calls[2][1].data.status, UserStatus.ACTIVE);
+  assert.match(calls[2][1].data.passwordHash, /^\$argon2/);
   assert.equal(calls[3][0], 'user.update');
   assert.match(calls[3][1].data.refreshTokenHash, /^\$argon2/);
 });

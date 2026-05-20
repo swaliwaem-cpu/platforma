@@ -20,8 +20,12 @@ test('login screen exposes entry points for password login and email registratio
   assert.match(appSource, />\s*Регистрация\s*<\/button>/);
   assert.match(appSource, /Введите ваш email/);
   assert.match(appSource, /Введите код из письма/);
+  assert.match(appSource, /Придумайте пароль/);
+  assert.match(appSource, /registration-password-confirmation/);
+  assert.match(appSource, /Пароль должен быть от 8 символов/);
   assert.match(appSource, /auth_token/);
   assert.match(styles, /\.login-mode-toggle\s*\{/);
+  assert.match(styles, /\.registration-password-grid\s*\{/);
 });
 
 test('auth provider calls email registration endpoints and applies verified sessions', () => {

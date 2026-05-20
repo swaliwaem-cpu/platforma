@@ -502,6 +502,28 @@ h2 {
   box-shadow: 0 8px 18px rgb(24 32 42 / 8%);
 }
 
+.registration-password-panel {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #d6dde5;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 16px;
+}
+
+.registration-password-title {
+  margin: 0;
+  color: #18202a;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.registration-password-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
 label {
   display: grid;
   gap: 8px;
@@ -5666,6 +5688,10 @@ tr.user-row--deactivated .text-button {
   .login-panel,
   .content-panel {
     padding: 24px;
+  }
+
+  .registration-password-grid {
+    grid-template-columns: 1fr;
   }
 
   .page-header,

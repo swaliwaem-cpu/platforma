@@ -1,4 +1,4 @@
-import { Injectable, InternalServerErrorException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, InternalServerErrorException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Prisma, UserStatus } from '@prisma/client';
 import * as argon2 from 'argon2';
@@ -179,6 +179,8 @@ export class AuthService {
   async verifyEmailRegistration(
     input: EmailRegistrationVerifyInput,
   ): Promise<LoginResponse & { refreshToken: string; mediaToken: string | null }> {
+    this.assertValidEmailRegistrationPassword(input.password, input.passwordConfirmation);
+
     const challenge = await this.findValidEmailAuthChallenge(input);
 
     if (!challenge || challenge.user.deletedAt) {
@@ -196,16 +198,14 @@ export class AuthService {
       },
     });
 
-    const sessionUser =
-      challenge.user.status === UserStatus.INVITED
-        ? await this.prisma.user.update({
-            where: { id: challenge.user.id },
-            data: {
-              status: UserStatus.ACTIVE,
-            },
-            include: authUserInclude,
-          })
-        : challenge.user;
+    const sessionUser = await this.prisma.user.update({
+      where: { id: challenge.user.id },
+      data: {
+        passwordHash: await argon2.hash(input.password, { type: argon2.argon2id }),
+        ...(challenge.user.status === UserStatus.INVITED ? { status: UserStatus.ACTIVE } : {}),
+      },
+      include: authUserInclude,
+    });
     const authUser = this.toAuthenticatedUser(sessionUser);
     const tokens = await this.issueTokens(authUser);
 
@@ -237,6 +237,27 @@ export class AuthService {
       },
       include: authUserInclude,
     });
+  }
+
+  private assertValidEmailRegistrationPassword(password: string, passwordConfirmation: string) {
+    if (typeof password !== 'string' || typeof passwordConfirmation !== 'string') {
+      throw new BadRequestException('Password and confirmation are required');
+    }
+
+    if (password !== passwordConfirmation) {
+      throw new BadRequestException('Password confirmation does not match');
+    }
+
+    if (
+      password.length < 8 ||
+      !/^[\x21-\x7E]+$/.test(password) ||
+      !/[A-Z]/.test(password) ||
+      !/[^A-Za-z0-9]/.test(password)
+    ) {
+      throw new BadRequestException(
+        'Password must be at least 8 ASCII characters and include an uppercase letter and a special character',
+      );
+    }
   }
 
   private async findOrCreateEmailRegistrationUser(email: string) {

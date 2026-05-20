@@ -35,6 +35,8 @@ type EmailRegistrationVerifyBody = {
   email?: unknown;
   code?: unknown;
   token?: unknown;
+  password?: unknown;
+  passwordConfirmation?: unknown;
 };
 
 const DEFAULT_MEDIA_TTL_MINUTES = 200;
@@ -119,9 +121,12 @@ export class AuthController {
   }
 
   private parseEmailRegistrationVerifyBody(body: EmailRegistrationVerifyBody): EmailRegistrationVerifyInput {
+    const password = this.parseRegistrationPassword(body.password, body.passwordConfirmation);
+
     if (typeof body.token === 'string' && body.token.trim().length > 0) {
       return {
         token: body.token.trim(),
+        ...password,
       };
     }
 
@@ -134,7 +139,38 @@ export class AuthController {
     return {
       email,
       code: body.code.trim(),
+      ...password,
     };
+  }
+
+  private parseRegistrationPassword(passwordValue: unknown, confirmationValue: unknown) {
+    if (typeof passwordValue !== 'string' || typeof confirmationValue !== 'string') {
+      throw new BadRequestException('Password and confirmation are required');
+    }
+
+    if (passwordValue !== confirmationValue) {
+      throw new BadRequestException('Password confirmation does not match');
+    }
+
+    if (!this.isValidRegistrationPassword(passwordValue)) {
+      throw new BadRequestException(
+        'Password must be at least 8 ASCII characters and include an uppercase letter and a special character',
+      );
+    }
+
+    return {
+      password: passwordValue,
+      passwordConfirmation: confirmationValue,
+    };
+  }
+
+  private isValidRegistrationPassword(password: string) {
+    return (
+      password.length >= 8 &&
+      /^[\x21-\x7E]+$/.test(password) &&
+      /[A-Z]/.test(password) &&
+      /[^A-Za-z0-9]/.test(password)
+    );
   }
 
   private parseEmail(value: unknown) {

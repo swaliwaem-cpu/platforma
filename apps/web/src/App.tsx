@@ -384,10 +384,14 @@ function LoginPage({ onSuccess }: { onSuccess: () => void }) {
   const [password, setPassword] = useState('');
   const [registrationEmail, setRegistrationEmail] = useState('');
   const [registrationCode, setRegistrationCode] = useState('');
+  const [registrationAuthToken, setRegistrationAuthToken] = useState<string | null>(null);
+  const [registrationPassword, setRegistrationPassword] = useState('');
+  const [registrationPasswordConfirmation, setRegistrationPasswordConfirmation] = useState('');
   const [isRegistrationCodeSent, setIsRegistrationCodeSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const shouldShowRegistrationPasswordStep = mode === 'register' && Boolean(registrationAuthToken || registrationCode.length === 6);
 
   useEffect(() => {
     const token = new URLSearchParams(window.location.search).get('auth_token');
@@ -396,63 +400,65 @@ function LoginPage({ onSuccess }: { onSuccess: () => void }) {
       return;
     }
 
-    let isMounted = true;
-
     setMode('register');
+    setRegistrationAuthToken(token);
+    setRegistrationCode('');
+    setRegistrationPassword('');
+    setRegistrationPasswordConfirmation('');
+    setIsRegistrationCodeSent(true);
     setError(null);
-    setNotice('Проверяем ссылку входа');
-    setIsSubmitting(true);
-
-    void verifyEmailRegistration({ token })
-      .then(() => {
-        if (isMounted) {
-          onSuccess();
-        }
-      })
-      .catch(() => {
-        if (isMounted) {
-          setError('Ссылка входа недействительна или устарела');
-        }
-      })
-      .finally(() => {
-        if (isMounted) {
-          setIsSubmitting(false);
-          setNotice(null);
-        }
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, [verifyEmailRegistration]);
+    setNotice('Придумайте пароль для завершения регистрации');
+  }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
     setNotice(null);
-    setIsSubmitting(true);
 
     try {
       if (mode === 'login') {
+        setIsSubmitting(true);
         await login(email, password);
         onSuccess();
         return;
       }
 
-      if (!isRegistrationCodeSent) {
+      if (!registrationAuthToken && !isRegistrationCodeSent) {
+        setIsSubmitting(true);
         await requestEmailRegistration(registrationEmail);
         setIsRegistrationCodeSent(true);
         setNotice('Письмо отправлено');
         return;
       }
 
+      if (!registrationAuthToken && registrationCode.length !== 6) {
+        setError('Введите код из письма');
+        return;
+      }
+
+      const passwordError = getRegistrationPasswordError(registrationPassword, registrationPasswordConfirmation);
+
+      if (passwordError) {
+        setError(passwordError);
+        return;
+      }
+
+      setIsSubmitting(true);
       await verifyEmailRegistration({
-        email: registrationEmail,
-        code: registrationCode,
+        ...(registrationAuthToken
+          ? {
+              token: registrationAuthToken,
+            }
+          : {
+              email: registrationEmail,
+              code: registrationCode,
+            }),
+        password: registrationPassword,
+        passwordConfirmation: registrationPasswordConfirmation,
       });
       onSuccess();
     } catch {
-      setError(mode === 'login' ? 'Проверьте email и пароль' : 'Проверьте email и код из письма');
+      setError(mode === 'login' ? 'Проверьте email и пароль' : 'Проверьте email, код и пароль');
     } finally {
       setIsSubmitting(false);
     }
@@ -462,11 +468,17 @@ function LoginPage({ onSuccess }: { onSuccess: () => void }) {
     setMode(nextMode);
     setError(null);
     setNotice(null);
+    setRegistrationAuthToken(null);
+    setRegistrationPassword('');
+    setRegistrationPasswordConfirmation('');
   }
 
   function handleRegistrationEmailChange(value: string) {
     setRegistrationEmail(value);
     setRegistrationCode('');
+    setRegistrationAuthToken(null);
+    setRegistrationPassword('');
+    setRegistrationPasswordConfirmation('');
     setIsRegistrationCodeSent(false);
     setNotice(null);
   }
@@ -523,18 +535,20 @@ function LoginPage({ onSuccess }: { onSuccess: () => void }) {
             </>
           ) : (
             <>
-              <label>
-                Введите ваш email
-                <input
-                  autoComplete="email"
-                  name="registration-email"
-                  type="email"
-                  value={registrationEmail}
-                  onChange={(event) => handleRegistrationEmailChange(event.target.value)}
-                />
-              </label>
+              {registrationAuthToken ? null : (
+                <label>
+                  Введите ваш email
+                  <input
+                    autoComplete="email"
+                    name="registration-email"
+                    type="email"
+                    value={registrationEmail}
+                    onChange={(event) => handleRegistrationEmailChange(event.target.value)}
+                  />
+                </label>
+              )}
 
-              {isRegistrationCodeSent ? (
+              {!registrationAuthToken && isRegistrationCodeSent ? (
                 <label>
                   Введите код из письма
                   <input
@@ -548,6 +562,39 @@ function LoginPage({ onSuccess }: { onSuccess: () => void }) {
                     onChange={(event) => setRegistrationCode(event.target.value.replace(/\D/gu, '').slice(0, 6))}
                   />
                 </label>
+              ) : null}
+
+              {shouldShowRegistrationPasswordStep ? (
+                <div className="registration-password-panel" role="group" aria-labelledby="registration-password-title">
+                  <p id="registration-password-title" className="registration-password-title">
+                    Придумайте пароль
+                  </p>
+                  <p className="helper-text">
+                    Пароль должен быть от 8 символов, на английском языке, с заглавной буквой и спецсимволом.
+                  </p>
+                  <div className="registration-password-grid">
+                    <label>
+                      Пароль
+                      <input
+                        autoComplete="new-password"
+                        name="registration-password"
+                        type="password"
+                        value={registrationPassword}
+                        onChange={(event) => setRegistrationPassword(event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      Повторите пароль
+                      <input
+                        autoComplete="new-password"
+                        name="registration-password-confirmation"
+                        type="password"
+                        value={registrationPasswordConfirmation}
+                        onChange={(event) => setRegistrationPasswordConfirmation(event.target.value)}
+                      />
+                    </label>
+                  </div>
+                </div>
               ) : null}
             </>
           )}
@@ -563,12 +610,35 @@ function LoginPage({ onSuccess }: { onSuccess: () => void }) {
               : mode === 'login'
                 ? 'Войти'
                 : isRegistrationCodeSent
-                  ? 'Войти'
+                  ? shouldShowRegistrationPasswordStep
+                    ? 'Завершить регистрацию'
+                    : 'Проверить код'
                   : 'Отправить код'}
           </button>
         </form>
       </section>
     </main>
+  );
+}
+
+function getRegistrationPasswordError(password: string, passwordConfirmation: string) {
+  if (password !== passwordConfirmation) {
+    return 'Пароли не совпадают';
+  }
+
+  if (!isValidRegistrationPassword(password)) {
+    return 'Пароль должен быть от 8 символов, на английском языке, с заглавной буквой и спецсимволом';
+  }
+
+  return null;
+}
+
+function isValidRegistrationPassword(password: string) {
+  return (
+    password.length >= 8 &&
+    /^[\x21-\x7E]+$/.test(password) &&
+    /[A-Z]/.test(password) &&
+    /[^A-Za-z0-9]/.test(password)
   );
 }
 

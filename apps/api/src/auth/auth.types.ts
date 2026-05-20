@@ -69,11 +69,15 @@ export type EmailRegistrationRequestResponse = {
 export type EmailRegistrationVerifyInput =
   | {
       token: string;
+      password: string;
+      passwordConfirmation: string;
       email?: never;
       code?: never;
     }
   | {
       email: string;
       code: string;
+      password: string;
+      passwordConfirmation: string;
       token?: never;
     };

@@ -146,7 +146,7 @@ html[data-app-theme] ::selection {
   background: color-mix(in srgb, var(--app-theme-primary) 22%, transparent);
 }
 
-html[data-app-theme] :is(h1, h2, h3, h4, .sidebar-title, .editor-panel h3, .admin-action-card h3, .object-detail-header h2, .detail-section h3, .object-content-section-item h4, .detail-file-list strong, .metro-list strong, .map-object-card h3) {
+html[data-app-theme] :is(h1, h2, h3, h4, .sidebar-title, .registration-password-title, .editor-panel h3, .admin-action-card h3, .object-detail-header h2, .detail-section h3, .object-content-section-item h4, .detail-file-list strong, .metro-list strong, .map-object-card h3) {
   color: var(--app-theme-ink-900);
   letter-spacing: 0;
 }
@@ -211,6 +211,7 @@ html[data-app-theme] :is(
   .admin-action-card,
   .cabinet-section-list li,
   .role-permissions-panel,
+  .registration-password-panel,
   .permission-chip--role,
   .catalog-link-row,
   .catalog-link-empty,
