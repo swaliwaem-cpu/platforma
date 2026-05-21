@@ -157,6 +157,10 @@ type CreateObjectBody = {
 
 type UpdateObjectBody = Partial<CreateObjectBody>;
 
+type UpdateObjectStatusBody = {
+  status?: unknown;
+};
+
 type SortGalleryBody = {
   imageIds?: unknown;
 };
@@ -908,51 +912,65 @@ export class ObjectsService {
   }
 
   async publish(id: string, actor: AuthenticatedUser, request: RequestWithAudit) {
+    return this.updateStatus(id, { status: ObjectStatus.PUBLISHED }, actor, request);
+  }
+
+  async updateStatus(id: string, body: UpdateObjectStatusBody, actor: AuthenticatedUser, request: RequestWithAudit) {
+    const status = this.parseQuickEditStatus(body.status);
     const object = await this.findExistingObject(id);
 
-    this.validatePublishRequirements({
-      title: object.title,
-      slug: object.slug,
-      status: object.status,
-      developerId: object.developerId,
-      primaryLocationId: object.primaryLocationId,
-      address: object.address,
-      latitude: this.decimalToString(object.latitude),
-      longitude: this.decimalToString(object.longitude),
-      completionYear: object.completionYear,
-      completionQuarter: object.completionQuarter,
-    });
-
-    if (object.status === ObjectStatus.PUBLISHED) {
+    if (object.status === status) {
       return {
         object: this.serializeObjectDetail(object),
       };
     }
 
-    const publishedObject = await this.prisma.realEstateObject.update({
+    if (status === ObjectStatus.PUBLISHED) {
+      this.validatePublishRequirements({
+        title: object.title,
+        slug: object.slug,
+        status: object.status,
+        developerId: object.developerId,
+        primaryLocationId: object.primaryLocationId,
+        address: object.address,
+        latitude: this.decimalToString(object.latitude),
+        longitude: this.decimalToString(object.longitude),
+        completionYear: object.completionYear,
+        completionQuarter: object.completionQuarter,
+      });
+    }
+
+    const updatedObject = await this.prisma.realEstateObject.update({
       where: {
         id: object.id,
       },
-      data: {
-        status: ObjectStatus.PUBLISHED,
-        publishedAt: object.publishedAt ?? new Date(),
-      },
+      data:
+        status === ObjectStatus.PUBLISHED
+          ? {
+              status: ObjectStatus.PUBLISHED,
+              publishedAt: object.publishedAt ?? new Date(),
+              archivedAt: null,
+            }
+          : {
+              status: ObjectStatus.ARCHIVED,
+              archivedAt: object.archivedAt ?? new Date(),
+            },
       include: objectDetailInclude,
     });
 
     await this.logObjectAction({
-      action: 'object.publish',
+      action: status === ObjectStatus.PUBLISHED ? 'object.publish' : 'object.archive',
       actor,
       request,
-      objectId: publishedObject.id,
+      objectId: updatedObject.id,
       metadata: {
         before: this.toAuditSnapshot(object),
-        after: this.toAuditSnapshot(publishedObject),
+        after: this.toAuditSnapshot(updatedObject),
       },
     });
 
     return {
-      object: this.serializeObjectDetail(publishedObject),
+      object: this.serializeObjectDetail(updatedObject),
     };
   }
 
@@ -1967,6 +1985,16 @@ export class ObjectsService {
     }
 
     return normalizedStatus as ObjectStatus;
+  }
+
+  private parseQuickEditStatus(value: unknown) {
+    const status = this.parseObjectStatus(value);
+
+    if (status !== ObjectStatus.PUBLISHED && status !== ObjectStatus.ARCHIVED) {
+      throw new BadRequestException('Status must be PUBLISHED or ARCHIVED');
+    }
+
+    return status;
   }
 
   private parseObjectListOrderBy(sortBy: string | undefined, sortDirection: string | undefined) {

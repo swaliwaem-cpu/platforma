@@ -326,6 +326,22 @@ html[data-app-theme] :is(table, .admin-table) {
   font-variant-numeric: tabular-nums;
 }
 
+html[data-app-theme] .compact-table {
+  color: var(--app-theme-ink-800);
+}
+
+html[data-app-theme] :is(.quick-edit-input, .quick-edit-select) {
+  border-color: var(--app-theme-border-strong);
+  background: var(--app-theme-control);
+  color: var(--app-theme-ink-900);
+}
+
+html[data-app-theme] :is(.quick-edit-cell-button:hover, .quick-edit-cell-button:focus-visible, .object-title-open:hover, .object-title-open:focus-visible, .object-title-edit-button:hover, .object-title-edit-button:focus-visible) {
+  background: var(--app-theme-primary-soft);
+  color: var(--app-theme-primary-deep);
+  box-shadow: var(--app-theme-focus-primary);
+}
+
 html[data-app-theme] :is(th, td, .catalog-links-meta, .catalog-link-column, .object-form-section, .user-form-section, .permission-group, .catalog-filter-fields, .object-content-sections, .object-content-section-item, .details-list div, .object-detail-facts div, .location-list div, .catalog-card-actions, .catalog-list-item + .catalog-list-item, .catalog-map-list li) {
   border-color: var(--app-theme-border-soft);
 }

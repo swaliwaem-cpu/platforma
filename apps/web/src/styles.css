@@ -1187,6 +1187,13 @@ dd {
   padding: 0;
 }
 
+.admin-objects .object-table-panel {
+  width: 90vw;
+  max-width: 90vw;
+  justify-self: start;
+  margin-inline: calc(50% - 45vw);
+}
+
 .editor-panel {
   gap: 16px;
   padding: 24px;
@@ -1224,12 +1231,120 @@ table {
   min-width: 800px;
 }
 
+.compact-table {
+  table-layout: fixed;
+  min-width: 1180px;
+}
+
+.compact-table :is([data-slot="table-head"], [data-slot="table-cell"]) {
+  padding: 8px 7px;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.compact-table [data-slot="table-head"] {
+  white-space: normal;
+  vertical-align: bottom;
+}
+
+.compact-table [data-slot="table-cell"] {
+  vertical-align: top;
+}
+
+.object-quick-edit-table {
+  border-spacing: 0;
+}
+
+.object-quick-column--title {
+  width: 11%;
+}
+
+.object-quick-column--status {
+  width: 7%;
+}
+
+.object-quick-column--priceFrom {
+  width: 7%;
+}
+
+.object-quick-column--pricePerMeterFrom {
+  width: 7%;
+}
+
+.object-quick-column--developer {
+  width: 9%;
+}
+
+.object-quick-column--krtName {
+  width: 5%;
+}
+
+.object-quick-column--completion {
+  width: 6%;
+}
+
+.object-quick-column--metro {
+  width: 12%;
+}
+
+.object-quick-column--propertyClass {
+  width: 6%;
+}
+
+.object-quick-column--apartmentsCountText {
+  width: 7%;
+}
+
+.object-quick-column--apartmentAreaRange {
+  width: 7%;
+}
+
+.object-quick-column--ceilingHeight {
+  width: 6%;
+}
+
+.object-quick-column--floorRange {
+  width: 5%;
+}
+
+.object-quick-column--coordinates {
+  width: 8%;
+}
+
 .admin-table [data-slot="table-cell"] {
   white-space: normal;
 }
 
 .admin-table [data-slot="table-head"] {
   white-space: nowrap;
+}
+
+.admin-table.compact-table [data-slot="table-head"] {
+  font-size: 10px;
+  font-weight: 800;
+  white-space: normal;
+  vertical-align: bottom;
+}
+
+.compact-table .table-sort-button {
+  max-width: 100%;
+  align-items: flex-start;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.1;
+  white-space: normal;
+}
+
+.compact-table .table-sort-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.compact-table .table-sort-button svg {
+  width: 11px;
+  height: 11px;
+  margin-top: 1px;
 }
 
 th,
@@ -1354,25 +1469,142 @@ tr.user-row--deactivated .text-button {
   min-width: 0;
 }
 
+.object-title-cell {
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: start;
+  gap: 4px;
+}
+
+.object-title-open,
+.quick-edit-cell-button,
+.object-title-edit-button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.object-title-open {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: 4px;
+  border-radius: 6px;
+  padding: 4px 5px;
+  text-align: left;
+}
+
+.object-title-edit-button {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: #536172;
+}
+
+.object-title-edit-button svg {
+  width: 14px;
+  height: 14px;
+}
+
 .object-title-cell strong {
   color: #18202a;
-  font-size: 15px;
+  font-size: 12px;
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
 
-.object-title-cell code {
-  width: fit-content;
+.compact-table .status-pill {
+  min-height: 22px;
+  padding: 2px 7px;
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.quick-edit-cell-button {
+  display: block;
+  width: 100%;
+  min-height: 30px;
+  min-width: 0;
+  border-radius: 6px;
+  padding: 5px 6px;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.quick-edit-cell-button--empty {
+  color: #6d7885;
+  font-weight: 650;
+}
+
+.quick-edit-editor {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.quick-edit-input,
+.quick-edit-select {
+  width: 100%;
+  min-width: 0;
+  min-height: 30px;
+  border: 1px solid #c6d0dc;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #18202a;
+  padding: 5px 7px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.quick-edit-select--multiple {
+  min-height: 84px;
+}
+
+.quick-edit-metro-editor {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.quick-edit-metro-selected {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.quick-edit-metro-selected span {
   max-width: 100%;
   border: 1px solid #e0e6ed;
-  border-radius: 6px;
+  border-radius: 999px;
   background: #f8fafc;
   color: #536172;
-  padding: 3px 7px;
-  font-size: 12px;
+  padding: 2px 6px;
+  font-size: 10px;
   font-weight: 750;
   overflow-wrap: anywhere;
-  white-space: normal;
+}
+
+.quick-edit-error {
+  margin: 0;
+  color: #b42318;
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.quick-edit-input:focus-visible,
+.quick-edit-select:focus-visible,
+.quick-edit-cell-button:focus-visible,
+.object-title-open:focus-visible,
+.object-title-edit-button:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 1px;
 }
 
 .object-price-cell {

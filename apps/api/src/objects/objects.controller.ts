@@ -67,6 +67,17 @@ export class ObjectsController {
     return this.objectsService.update(id, body, actor, request);
   }
 
+  @Patch(':id/status')
+  @RequirePermissions('objects:publish')
+  async updateStatus(
+    @Param('id') id: string,
+    @Body() body: Record<string, unknown>,
+    @CurrentUser() actor: AuthenticatedUser,
+    @Req() request: RequestWithAuth,
+  ) {
+    return this.objectsService.updateStatus(id, body, actor, request);
+  }
+
   @Post(':id/publish')
   @RequirePermissions('objects:publish')
   async publish(

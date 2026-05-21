@@ -1302,6 +1302,112 @@ test('ObjectsService.publish rejects objects without coordinates', async () => {
   );
 });
 
+test('ObjectsService.updateStatus publishes through existing publication checks', async () => {
+  const draftObject = objectRecord({
+    developerId: '55555555-5555-4555-8555-555555555555',
+    primaryLocationId: '66666666-6666-4666-8666-666666666666',
+    address: 'Екатеринбург, ул. Ленина, 1',
+    latitude: decimal('55.751244'),
+    longitude: decimal('37.618423'),
+    completionYear: 2027,
+    completionQuarter: 2,
+  });
+  const publishedObject = objectRecord({
+    ...draftObject,
+    status: ObjectStatus.PUBLISHED,
+    publishedAt: new Date('2026-05-02T10:00:00.000Z'),
+  });
+  const calls = {};
+  const prisma = {
+    realEstateObject: {
+      findFirst: async (args) => {
+        calls.findFirst = args;
+        return draftObject;
+      },
+      update: async (args) => {
+        calls.update = args;
+        return publishedObject;
+      },
+    },
+    auditLog: {
+      create: async (args) => {
+        calls.auditLog = args;
+      },
+    },
+  };
+  const service = new ObjectsService(prisma, {});
+
+  const result = await service.updateStatus(draftObject.id, { status: ObjectStatus.PUBLISHED }, actor, request);
+
+  assert.equal(result.object.status, ObjectStatus.PUBLISHED);
+  assert.equal(calls.update.data.status, ObjectStatus.PUBLISHED);
+  assert.equal(calls.update.data.publishedAt instanceof Date, true);
+  assert.equal(calls.auditLog.data.action, 'object.publish');
+});
+
+test('ObjectsService.updateStatus archives without clearing publishedAt or requiring publish fields', async () => {
+  const publishedAt = new Date('2026-05-02T10:00:00.000Z');
+  const incompleteObject = objectRecord({
+    status: ObjectStatus.PUBLISHED,
+    publishedAt,
+    developerId: null,
+    primaryLocationId: null,
+    address: null,
+    latitude: null,
+    longitude: null,
+    completionYear: null,
+    completionQuarter: null,
+  });
+  const archivedObject = objectRecord({
+    ...incompleteObject,
+    status: ObjectStatus.ARCHIVED,
+  });
+  const calls = {};
+  const prisma = {
+    realEstateObject: {
+      findFirst: async (args) => {
+        calls.findFirst = args;
+        return incompleteObject;
+      },
+      update: async (args) => {
+        calls.update = args;
+        return archivedObject;
+      },
+    },
+    auditLog: {
+      create: async (args) => {
+        calls.auditLog = args;
+      },
+    },
+  };
+  const service = new ObjectsService(prisma, {});
+
+  const result = await service.updateStatus(incompleteObject.id, { status: ObjectStatus.ARCHIVED }, actor, request);
+
+  assert.equal(result.object.status, ObjectStatus.ARCHIVED);
+  assert.equal(calls.update.data.status, ObjectStatus.ARCHIVED);
+  assert.equal('publishedAt' in calls.update.data, false);
+  assert.equal(calls.auditLog.data.action, 'object.archive');
+  assert.equal(calls.auditLog.data.metadata.before.publishedAt, publishedAt.toISOString());
+  assert.equal(calls.auditLog.data.metadata.after.publishedAt, publishedAt.toISOString());
+});
+
+test('ObjectsService.updateStatus rejects draft status in quick status endpoint', async () => {
+  const service = new ObjectsService(
+    {
+      realEstateObject: {
+        findFirst: async () => assert.fail('Object lookup should not run for invalid status'),
+      },
+    },
+    {},
+  );
+
+  await assert.rejects(
+    () => service.updateStatus('11111111-1111-4111-8111-111111111111', { status: ObjectStatus.DRAFT }, actor, request),
+    /Status must be PUBLISHED or ARCHIVED/,
+  );
+});
+
 test('ObjectsService.updateGalleryLayout assigns cover and image order', async () => {
   const firstImage = objectImageRecord({
     id: '22222222-2222-4222-8222-222222222222',

@@ -2,7 +2,6 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState, type Drag
 import {
   ArrowDownIcon,
   ArrowLeftIcon,
-  ArrowUpDownIcon,
   ArrowUpIcon,
   ChevronDownIcon,
   ChevronUpIcon,
@@ -28,27 +27,31 @@ import {
   ObjectMetroStation,
   ObjectResponse,
   ObjectsResponse,
-  ObjectStatus,
   RealEstateObjectDetail,
   RealEstateObjectSummary,
 } from '@platforma/shared';
 
 import { Input } from '@/components/ui/input';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 
 import { useAuth } from '../auth/AuthProvider';
 import { SecureImage } from '../files/SecureImage';
 import { AdminAlert, AdminButton, AdminEmptyState, AdminPanel, AdminStatusBadge } from './AdminUi';
+import {
+  ObjectQuickEditTable,
+  objectStatusLabels,
+  type ObjectQuickEditCellValue,
+  type ObjectQuickEditColumnKey,
+  type SortDirection,
+  type SortField,
+} from './ObjectQuickEditTable';
 import { apiRequest } from './api';
 import { getLinkedFileOriginalName, getLinkedFileTitle } from './fileDisplay';
+import {
+  createObjectQuickEditRequest,
+  shouldRemoveObjectQuickEditRow,
+  updateObjectQuickEditRows,
+} from './objectQuickEditPersistence';
 
 type ObjectsAdminPageProps = {
   pathname: string;
@@ -95,15 +98,6 @@ type GalleryDraftItem = {
   isUploading?: boolean;
 };
 
-type SortField = 'createdAt' | 'updatedAt' | 'title' | 'status' | 'priceFrom' | 'completionYear';
-type SortDirection = 'asc' | 'desc';
-
-const objectStatusLabels: Record<ObjectStatus, string> = {
-  DRAFT: 'Черновик',
-  PUBLISHED: 'Опубликован',
-  ARCHIVED: 'Архив',
-};
-
 const fileTypeLabels: Record<ObjectFileType, string> = {
   PRESENTATION: 'Презентация',
   FLOOR_PLAN: 'Планировка',
@@ -112,6 +106,7 @@ const fileTypeLabels: Record<ObjectFileType, string> = {
 };
 
 const objectPdfUploadLimit = 10;
+const objectListPageSize = 20;
 
 const gallerySectionOptions: {
   value: ObjectImageSection;
@@ -623,7 +618,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
     try {
       const params = new URLSearchParams({
         page: String(page),
-        limit: '20',
+        limit: String(objectListPageSize),
         sortBy,
         sortDirection,
       });
@@ -746,6 +741,57 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
       setError(caughtError instanceof Error ? caughtError.message : 'Не удалось опубликовать объект');
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function handleInlineEditCommit({
+    objectId,
+    columnKey,
+    value,
+  }: {
+    objectId: string;
+    columnKey: ObjectQuickEditColumnKey;
+    value: ObjectQuickEditCellValue;
+  }) {
+    if (!accessToken) {
+      const inlineEditErrorMessage = 'Нет доступа';
+
+      setError(inlineEditErrorMessage);
+      throw new Error(inlineEditErrorMessage);
+    }
+
+    setError(null);
+    setNotice(null);
+
+    try {
+      const request = createObjectQuickEditRequest({
+        objectId,
+        columnKey,
+        value,
+        developers,
+        parseCoordinates: parseCoordinatePair,
+      });
+      const data = await apiRequest<ObjectResponse>(request.path, accessToken, {
+        method: request.method,
+        body: JSON.stringify(request.payload),
+      });
+      const shouldRemoveRow = shouldRemoveObjectQuickEditRow(objects, data.object, statusFilter);
+
+      setObjects((currentObjects) => updateObjectQuickEditRows(currentObjects, data.object, statusFilter));
+
+      if (shouldRemoveRow) {
+        const nextTotal = Math.max(0, total - 1);
+
+        setTotal(nextTotal);
+        setTotalPages(Math.max(1, Math.ceil(nextTotal / objectListPageSize)));
+      }
+
+      setNotice('Объект сохранён');
+    } catch (caughtError) {
+      const inlineEditErrorMessage = caughtError instanceof Error ? caughtError.message : 'Не удалось сохранить ячейку';
+
+      setError(inlineEditErrorMessage);
+      throw new Error(inlineEditErrorMessage);
     }
   }
 
@@ -1065,7 +1111,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
       {error ? <AdminAlert tone="error">{error}</AdminAlert> : null}
       {notice ? <AdminAlert tone="notice">{notice}</AdminAlert> : null}
 
-      <AdminPanel className="table-panel" role="region" aria-label="Список объектов">
+      <AdminPanel className="table-panel object-table-panel" role="region" aria-label="Список объектов">
         <div className="table-meta object-table-meta">
           <span>{isLoading ? 'Загрузка объектов' : `Найдено: ${total}`}</span>
           <span>
@@ -1073,119 +1119,18 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
           </span>
         </div>
 
-        <Table className="admin-table">
-          <TableHeader>
-            <TableRow>
-              <TableHead aria-sort={getSortAria(sortBy, sortDirection, 'title')} className="object-title-column">
-                <SortButton active={sortBy === 'title'} direction={sortDirection} onClick={() => handleSort('title')}>
-                  Название
-                </SortButton>
-              </TableHead>
-              <TableHead aria-sort={getSortAria(sortBy, sortDirection, 'status')}>
-                <SortButton active={sortBy === 'status'} direction={sortDirection} onClick={() => handleSort('status')}>
-                  Статус
-                </SortButton>
-              </TableHead>
-              <TableHead>Застройщик</TableHead>
-              <TableHead>Локация</TableHead>
-              <TableHead aria-sort={getSortAria(sortBy, sortDirection, 'priceFrom')}>
-                <SortButton
-                  active={sortBy === 'priceFrom'}
-                  direction={sortDirection}
-                  onClick={() => handleSort('priceFrom')}
-                >
-                  Цена
-                </SortButton>
-              </TableHead>
-              <TableHead aria-sort={getSortAria(sortBy, sortDirection, 'completionYear')}>
-                <SortButton
-                  active={sortBy === 'completionYear'}
-                  direction={sortDirection}
-                  onClick={() => handleSort('completionYear')}
-                >
-                  Срок
-                </SortButton>
-              </TableHead>
-              <TableHead aria-sort={getSortAria(sortBy, sortDirection, 'createdAt')}>
-                <SortButton
-                  active={sortBy === 'createdAt'}
-                  direction={sortDirection}
-                  onClick={() => handleSort('createdAt')}
-                >
-                  Создан
-                </SortButton>
-              </TableHead>
-              <TableHead className="object-action-column">
-                <span className="sr-only">Действия</span>
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {objects.map((item) => (
-              <TableRow key={item.id}>
-                <TableCell className="object-title-column">
-                  <div className="object-title-cell">
-                    <strong>{item.title}</strong>
-                    <code>{item.slug}</code>
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <div className="object-status-cell">
-                    <AdminStatusBadge className={`object-status object-status--${item.status.toLowerCase()}`}>
-                      {objectStatusLabels[item.status]}
-                    </AdminStatusBadge>
-                    <span className="table-subtext">Обновлен: {formatDate(item.updatedAt)}</span>
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <span className={item.developer ? undefined : 'muted-cell'}>
-                    {item.developer?.name ?? 'Не указан'}
-                  </span>
-                </TableCell>
-                <TableCell>
-                  <span className={getObjectDistrictName(item) ? undefined : 'muted-cell'}>
-                    {getObjectDistrictName(item) ?? 'Не указана'}
-                  </span>
-                  {getObjectMetroSummary(item) ? <span className="table-subtext">{getObjectMetroSummary(item)}</span> : null}
-                </TableCell>
-                <TableCell>
-                  <strong className="object-price-cell">{formatPrice(item.priceFrom)}</strong>
-                  {item.pricePerMeterFrom ? (
-                    <span className="table-subtext">{formatPrice(item.pricePerMeterFrom)} за м²</span>
-                  ) : null}
-                </TableCell>
-                <TableCell>{formatCompletion(item.completionYear, item.completionQuarter)}</TableCell>
-                <TableCell>
-                  <time dateTime={item.createdAt}>{formatDate(item.createdAt)}</time>
-                </TableCell>
-                <TableCell className="object-action-column">
-                  <AdminButton
-                    tone="text"
-                    type="button"
-                    onClick={() => navigate(`/admin/objects/${item.id}/edit`)}
-                  >
-                    Открыть
-                  </AdminButton>
-                </TableCell>
-              </TableRow>
-            ))}
-
-            {!isLoading && objects.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={8}>
-                  <AdminEmptyState
-                    title="Объекты не найдены"
-                    description={
-                      hasActiveListFilters
-                        ? 'Сбросьте фильтры или измените поисковый запрос.'
-                        : 'Создайте первый объект, чтобы он появился в списке.'
-                    }
-                  />
-                </TableCell>
-              </TableRow>
-            ) : null}
-          </TableBody>
-        </Table>
+        <ObjectQuickEditTable
+          developers={developers}
+          hasActiveListFilters={hasActiveListFilters}
+          isLoading={isLoading}
+          metroStations={metroStations}
+          objects={objects}
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          onInlineEditCommit={handleInlineEditCommit}
+          onOpenObject={(objectId) => navigate(`/admin/objects/${objectId}/edit`)}
+          onSort={handleSort}
+        />
 
         <div className="pagination">
           <AdminButton
@@ -2406,39 +2351,6 @@ function FileUploadRow({
   );
 }
 
-function SortButton({
-  active,
-  children,
-  direction,
-  onClick,
-}: {
-  active: boolean;
-  children: string;
-  direction: SortDirection;
-  onClick: () => void;
-}) {
-  return (
-    <AdminButton
-      className={active ? 'table-sort-button table-sort-button--active' : 'table-sort-button'}
-      fit={false}
-      tone="text"
-      type="button"
-      onClick={onClick}
-    >
-      {children}
-      {active ? (
-        direction === 'asc' ? (
-          <ArrowUpIcon data-icon="inline-end" />
-        ) : (
-          <ArrowDownIcon data-icon="inline-end" />
-        )
-      ) : (
-        <ArrowUpDownIcon data-icon="inline-end" />
-      )}
-    </AdminButton>
-  );
-}
-
 function createFormFromObject(object: RealEstateObjectDetail): ObjectFormState {
   const districtLocation = getObjectDistrictLocation(object);
 
@@ -2517,14 +2429,6 @@ type ObjectWithLocations = {
 type ObjectWithMetroStations = {
   metroStations: Array<Pick<ObjectMetroStation, 'lineName' | 'name'>>;
 };
-
-function getSortAria(activeSortBy: SortField, direction: SortDirection, sortField: SortField) {
-  if (activeSortBy !== sortField) {
-    return undefined;
-  }
-
-  return direction === 'asc' ? 'ascending' : 'descending';
-}
 
 function getObjectDistrictName(object: ObjectWithLocations) {
   return getObjectDistrictLocation(object)?.name ?? null;
@@ -2854,14 +2758,6 @@ function revokeGalleryDraftPreviewUrl(item: GalleryDraftItem) {
 
 function revokeGalleryDraftPreviewUrls(items: GalleryDraftItem[]) {
   items.forEach((item) => revokeGalleryDraftPreviewUrl(item));
-}
-
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat('ru-RU', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  }).format(new Date(value));
 }
 
 function formatPrice(value: string | null) {

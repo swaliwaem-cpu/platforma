@@ -240,6 +240,7 @@ test('API controllers expose expected permission contracts', () => {
   assert.deepEqual(getPermissions(ObjectsController, 'list'), ['objects:read']);
   assert.deepEqual(getPermissions(ObjectsController, 'create'), ['objects:create']);
   assert.deepEqual(getPermissions(ObjectsController, 'publish'), ['objects:publish']);
+  assert.deepEqual(getPermissions(ObjectsController, 'updateStatus'), ['objects:publish']);
   assert.deepEqual(getPermissions(ObjectsController, 'updateGalleryLayout'), ['objects:update']);
   assert.deepEqual(getPermissions(ObjectsController, 'uploadObjectFile'), ['objects:update', 'files:upload']);
   assert.deepEqual(getPermissions(UsersController, 'create'), ['users:create']);
@@ -328,6 +329,10 @@ test('ObjectsController delegates catalog and admin object endpoints to the serv
       calls.push(['publish', id, actor, request]);
       return { object: { id, status: 'PUBLISHED' } };
     },
+    updateStatus: async (id, body, actor, request) => {
+      calls.push(['updateStatus', id, body, actor, request]);
+      return { object: { id, status: body.status } };
+    },
     updateGalleryLayout: async (id, body, actor, request) => {
       calls.push(['updateGalleryLayout', id, body, actor, request]);
       return { object: { id, images: [] } };
@@ -346,6 +351,7 @@ test('ObjectsController delegates catalog and admin object endpoints to the serv
   await controller.getBySlug('zhk-testovyy');
   await controller.create({ title: 'ЖК Тестовый' }, user, request);
   await controller.publish('object-id', user, request);
+  await controller.updateStatus('object-id', { status: 'ARCHIVED' }, user, request);
   await controller.updateGalleryLayout('object-id', galleryLayoutBody, user, request);
 
   assert.deepEqual(calls.map((call) => call[0]), [
@@ -353,13 +359,15 @@ test('ObjectsController delegates catalog and admin object endpoints to the serv
     'getBySlug',
     'create',
     'publish',
+    'updateStatus',
     'updateGalleryLayout',
   ]);
   assert.deepEqual(calls[0][1], { status: 'published' });
   assert.equal(calls[1][1], 'zhk-testovyy');
   assert.equal(calls[2][2], user);
   assert.equal(calls[3][1], 'object-id');
-  assert.deepEqual(calls[4], ['updateGalleryLayout', 'object-id', galleryLayoutBody, user, request]);
+  assert.deepEqual(calls[4], ['updateStatus', 'object-id', { status: 'ARCHIVED' }, user, request]);
+  assert.deepEqual(calls[5], ['updateGalleryLayout', 'object-id', galleryLayoutBody, user, request]);
 });
 
 test('UsersController delegates user management endpoints to the service', async () => {
