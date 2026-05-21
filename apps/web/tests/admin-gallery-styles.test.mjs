@@ -10,7 +10,7 @@ const styles = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
 test('admin gallery item keeps preview text readable next to action buttons', () => {
   assert.match(
     styles,
-    /\.gallery-item\s*\{[\s\S]*?cursor:\s*grab;[\s\S]*?flex-wrap:\s*wrap;[\s\S]*?\}/,
+    /\.gallery-item\s*\{[\s\S]*?align-items:\s*center;[\s\S]*?cursor:\s*grab;[\s\S]*?flex-wrap:\s*wrap;[\s\S]*?\}/,
   );
 
   assert.match(
