@@ -468,7 +468,6 @@ function ObjectImageCarousel({
             alt={activeImage.alt ?? objectTitle}
             className="object-carousel-image"
             fileId={activeImage.file.id}
-            style={{ objectPosition: '50% 50%' }}
             variant="detail"
           />
         </button>

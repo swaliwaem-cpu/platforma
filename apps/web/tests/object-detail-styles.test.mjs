@@ -44,12 +44,17 @@ test('object detail carousel is a framed standalone media section', () => {
 test('object detail carousel centers the active image crop', () => {
   assert.match(
     objectDetailSource,
-    /className="object-carousel-image"[\s\S]*?style=\{\{ objectPosition:\s*'50% 50%' \}\}[\s\S]*?variant="detail"/,
+    /className="object-carousel-image"[\s\S]*?variant="detail"/,
   );
 
   assert.match(
     styles,
-    /\.object-carousel-media-button \.object-carousel-image\s*\{[\s\S]*?display:\s*block;[\s\S]*?object-position:\s*50% 50%;[\s\S]*?\}/,
+    /\.object-carousel-media-button\s*\{[\s\S]*?position:\s*relative;[\s\S]*?display:\s*grid;[\s\S]*?overflow:\s*hidden;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.object-carousel-media-button \.object-carousel-image\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?top:\s*50%;[\s\S]*?left:\s*50%;[\s\S]*?min-width:\s*100%;[\s\S]*?min-height:\s*100%;[\s\S]*?transform:\s*translate\(-50%,\s*-50%\);[\s\S]*?\}/,
   );
 });
 
