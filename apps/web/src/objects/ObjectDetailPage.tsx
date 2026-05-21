@@ -463,7 +463,14 @@ function ObjectImageCarousel({
           type="button"
           onClick={openLightbox}
         >
-          <SecureImage accessToken={accessToken} alt={activeImage.alt ?? objectTitle} fileId={activeImage.file.id} variant="detail" />
+          <SecureImage
+            accessToken={accessToken}
+            alt={activeImage.alt ?? objectTitle}
+            className="object-carousel-image"
+            fileId={activeImage.file.id}
+            style={{ objectPosition: '50% 50%' }}
+            variant="detail"
+          />
         </button>
 
         {hasManyImages ? (

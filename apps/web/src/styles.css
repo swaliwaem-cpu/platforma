@@ -4502,6 +4502,11 @@ tr.user-row--deactivated .text-button {
   object-position: center center;
 }
 
+.object-carousel-media-button .object-carousel-image {
+  display: block;
+  object-position: 50% 50%;
+}
+
 .carousel-button {
   position: absolute;
   z-index: 2;
