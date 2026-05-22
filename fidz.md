@@ -12,12 +12,12 @@
 
 ### Этап 1. Подготовка
 
-- [ ] Проверить, что работа идёт в ветке `on-ser`.
-- [ ] Зафиксировать два XML-файла из `fdz` как тестовые fixtures для Yandex Realty и Cian/Sminex.
-- [ ] Добавить новый workspace-пакет `tools/feed-import`.
-- [ ] Подключить `fast-xml-parser` только для нового импортёра.
-- [ ] Добавить root scripts: `feed-import:preview`, `feed-import:run`.
-- [ ] Проверить, что существующий `tools/wp-import` не меняет поведение.
+- [x] Проверить, что реализация перенесена в основную ветку `on-ser`; временный worktree и ветка `feat/feed-import` удалены.
+- [x] Зафиксировать два XML-файла из `fdz` как тестовые fixtures для Yandex Realty и Cian/Sminex.
+- [x] Добавить новый workspace-пакет `tools/feed-import`.
+- [x] Подключить `fast-xml-parser` только для нового импортёра.
+- [x] Добавить root scripts: `feed-import:preview`, `feed-import:run`.
+- [x] Проверить, что существующий `tools/wp-import` не меняет поведение.
 
 ### Этап 2. Prisma schema и миграция
 
