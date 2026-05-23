@@ -3,7 +3,15 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { LocationType, ObjectFileType, ObjectImageSection, ObjectStatus, Prisma } from '@prisma/client';
+import {
+  FeedUnitStatus,
+  FeedUnitType,
+  LocationType,
+  ObjectFileType,
+  ObjectImageSection,
+  ObjectStatus,
+  Prisma,
+} from '@prisma/client';
 
 import { AuthenticatedUser, RequestWithAuth } from '../auth/auth.types';
 import { FilesService } from '../files/files.service';
@@ -95,8 +103,27 @@ const objectDetailInclude = {
   },
 } as const;
 
+const feedUnitInclude = {
+  residentialDetails: true,
+  commercialDetails: true,
+  media: {
+    include: {
+      mediaAsset: {
+        include: {
+          file: true,
+        },
+      },
+    },
+    orderBy: {
+      sortOrder: 'asc' as const,
+    },
+  },
+} as const;
+
 type ObjectListRecord = Prisma.RealEstateObjectGetPayload<{ include: typeof objectListInclude }>;
 type ObjectDetailRecord = Prisma.RealEstateObjectGetPayload<{ include: typeof objectDetailInclude }>;
+type ObjectFeedUnitRecord = Prisma.FeedUnitGetPayload<{ include: typeof feedUnitInclude }>;
+type ObjectFeedMediaFileRecord = NonNullable<ObjectFeedUnitRecord['media'][number]['mediaAsset']['file']>;
 type ObjectClient = PrismaService | Prisma.TransactionClient;
 
 type RequestWithAudit = RequestWithAuth & {
@@ -124,6 +151,16 @@ type ListObjectsQuery = {
   priceFromMax?: string;
   hasCoordinates?: string;
   hasPresentation?: string;
+};
+
+type ListObjectFeedUnitsQuery = {
+  page?: string;
+  limit?: string;
+  status?: string;
+  type?: string;
+  search?: string;
+  sortBy?: string;
+  sortDirection?: string;
 };
 
 type CreateObjectBody = {
@@ -307,12 +344,7 @@ export class ObjectsService {
         throw new BadRequestException('Price from min cannot be greater than max');
       }
 
-      filters.push({
-        priceFrom: {
-          ...(priceFromMin ? { gte: priceFromMin } : {}),
-          ...(priceFromMax ? { lte: priceFromMax } : {}),
-        },
-      });
+      filters.push(this.createFeedFallbackPriceFilter('priceFrom', 'feedPriceFrom', priceFromMin, priceFromMax));
     }
 
     const hasCoordinates = this.parseOptionalBoolean(query.hasCoordinates, 'Has coordinates is invalid');
@@ -416,6 +448,92 @@ export class ObjectsService {
 
     return {
       object: this.serializeObjectDetail(object),
+    };
+  }
+
+  async listFeedUnits(id: string, query: ListObjectFeedUnitsQuery) {
+    const objectId = this.parseUuid(id, 'Object is invalid');
+    await this.ensureObjectExists(objectId);
+
+    const page = this.parsePositiveInteger(query.page, 1);
+    const limit = Math.min(this.parsePositiveInteger(query.limit, 20), 100);
+    const filters: Prisma.FeedUnitWhereInput[] = [
+      {
+        objectId,
+      },
+    ];
+
+    if (query.status) {
+      const statuses = this.parseFeedUnitStatuses(query.status);
+
+      filters.push(
+        statuses.length === 1
+          ? {
+              status: statuses[0],
+            }
+          : {
+              status: {
+                in: statuses,
+              },
+            },
+      );
+    }
+
+    if (query.type) {
+      filters.push({
+        type: this.parseFeedUnitType(query.type),
+      });
+    }
+
+    const search = query.search?.trim();
+
+    if (search) {
+      filters.push({
+        OR: [
+          {
+            externalId: {
+              contains: search,
+              mode: 'insensitive',
+            },
+          },
+          {
+            title: {
+              contains: search,
+              mode: 'insensitive',
+            },
+          },
+          {
+            address: {
+              contains: search,
+              mode: 'insensitive',
+            },
+          },
+        ],
+      });
+    }
+
+    const where: Prisma.FeedUnitWhereInput = {
+      AND: filters,
+    };
+    const orderBy = this.parseFeedUnitOrderBy(query.sortBy, query.sortDirection);
+
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.feedUnit.findMany({
+        where,
+        include: feedUnitInclude,
+        orderBy,
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.feedUnit.count({ where }),
+    ]);
+
+    return {
+      items: items.map((unit) => this.serializeFeedUnit(unit)),
+      total,
+      page,
+      limit,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
     };
   }
 
@@ -1530,6 +1648,19 @@ export class ObjectsService {
     }
   }
 
+  private async ensureObjectExists(objectId: string) {
+    const count = await this.prisma.realEstateObject.count({
+      where: {
+        id: objectId,
+        deletedAt: null,
+      },
+    });
+
+    if (count === 0) {
+      throw new NotFoundException('Object not found');
+    }
+  }
+
   private async ensureLocationIdsExist(locationIds: string[]) {
     if (locationIds.length === 0) {
       return;
@@ -1859,6 +1990,33 @@ export class ObjectsService {
     return result === '-0' ? '0' : result;
   }
 
+  private createFeedFallbackPriceFilter(
+    manualField: 'priceFrom',
+    feedField: 'feedPriceFrom',
+    min: string | null | undefined,
+    max: string | null | undefined,
+  ): Prisma.RealEstateObjectWhereInput {
+    const rangeFilter = {
+      ...(min ? { gte: min } : {}),
+      ...(max ? { lte: max } : {}),
+    };
+
+    return {
+      OR: [
+        {
+          [feedField]: {
+            not: null,
+            ...rangeFilter,
+          },
+        },
+        {
+          [feedField]: null,
+          [manualField]: rangeFilter,
+        },
+      ],
+    };
+  }
+
   private parseNullableUuidField(value: unknown, message: string) {
     if (value === undefined) {
       return undefined;
@@ -1997,6 +2155,40 @@ export class ObjectsService {
     return status;
   }
 
+  private parseFeedUnitStatus(value: string) {
+    const normalizedStatus = value.trim().toUpperCase();
+
+    if (!Object.values(FeedUnitStatus).includes(normalizedStatus as FeedUnitStatus)) {
+      throw new BadRequestException('Feed unit status is invalid');
+    }
+
+    return normalizedStatus as FeedUnitStatus;
+  }
+
+  private parseFeedUnitStatuses(value: string): FeedUnitStatus[] {
+    const statuses = value
+      .split(',')
+      .map((status) => status.trim())
+      .filter(Boolean)
+      .map((status) => this.parseFeedUnitStatus(status));
+
+    if (statuses.length === 0) {
+      throw new BadRequestException('Feed unit status is invalid');
+    }
+
+    return [...new Set(statuses)];
+  }
+
+  private parseFeedUnitType(value: string) {
+    const normalizedType = value.trim().toUpperCase();
+
+    if (!Object.values(FeedUnitType).includes(normalizedType as FeedUnitType)) {
+      throw new BadRequestException('Feed unit type is invalid');
+    }
+
+    return normalizedType as FeedUnitType;
+  }
+
   private parseObjectListOrderBy(sortBy: string | undefined, sortDirection: string | undefined) {
     const direction = this.parseSortDirection(sortDirection);
     const normalizedSortBy = sortBy?.trim() || 'createdAt';
@@ -2028,7 +2220,15 @@ export class ObjectsService {
     }
 
     if (normalizedSortBy === 'priceFrom' || normalizedSortBy === 'pricePerMeterFrom') {
+      const feedSortBy = normalizedSortBy === 'priceFrom' ? 'feedPriceFrom' : 'feedPricePerMeterFrom';
+
       return [
+        {
+          [feedSortBy]: {
+            sort: direction,
+            nulls: 'last',
+          },
+        },
         {
           [normalizedSortBy]: {
             sort: direction,
@@ -2069,6 +2269,122 @@ export class ObjectsService {
         createdAt: 'desc',
       },
     ] satisfies Prisma.RealEstateObjectOrderByWithRelationInput[];
+  }
+
+  private parseFeedUnitOrderBy(sortBy: string | undefined, sortDirection: string | undefined) {
+    const direction = this.parseSortDirection(sortDirection);
+    const normalizedSortBy = sortBy?.trim() || '';
+
+    if (!normalizedSortBy) {
+      return [
+        {
+          status: 'asc',
+        },
+        {
+          price: {
+            sort: 'asc',
+            nulls: 'last',
+          },
+        },
+        {
+          createdAt: 'desc',
+        },
+      ] satisfies Prisma.FeedUnitOrderByWithRelationInput[];
+    }
+
+    if (normalizedSortBy === 'status') {
+      return [
+        {
+          status: direction,
+        },
+        {
+          createdAt: 'desc',
+        },
+      ] satisfies Prisma.FeedUnitOrderByWithRelationInput[];
+    }
+
+    if (normalizedSortBy === 'title') {
+      return [
+        {
+          title: {
+            sort: direction,
+            nulls: 'last',
+          },
+        },
+        {
+          externalId: direction,
+        },
+        {
+          createdAt: 'desc',
+        },
+      ] satisfies Prisma.FeedUnitOrderByWithRelationInput[];
+    }
+
+    if (normalizedSortBy === 'building') {
+      return [
+        {
+          building: {
+            sort: direction,
+            nulls: 'last',
+          },
+        },
+        {
+          section: {
+            sort: direction,
+            nulls: 'last',
+          },
+        },
+        {
+          createdAt: 'desc',
+        },
+      ] satisfies Prisma.FeedUnitOrderByWithRelationInput[];
+    }
+
+    if (normalizedSortBy === 'rooms') {
+      return [
+        {
+          rooms: {
+            sort: direction,
+            nulls: 'last',
+          },
+        },
+        {
+          type: direction,
+        },
+        {
+          createdAt: 'desc',
+        },
+      ] satisfies Prisma.FeedUnitOrderByWithRelationInput[];
+    }
+
+    if (normalizedSortBy === 'price' || normalizedSortBy === 'area' || normalizedSortBy === 'floor') {
+      return [
+        {
+          [normalizedSortBy]: {
+            sort: direction,
+            nulls: 'last',
+          },
+        },
+        {
+          createdAt: 'desc',
+        },
+      ] satisfies Prisma.FeedUnitOrderByWithRelationInput[];
+    }
+
+    return [
+      {
+        status: 'asc',
+      },
+      {
+        price: {
+          sort: 'asc',
+          nulls: 'last',
+        },
+      },
+      {
+        createdAt: 'desc',
+      },
+    ] satisfies Prisma.FeedUnitOrderByWithRelationInput[];
   }
 
   private parseSortDirection(value: string | undefined): Prisma.SortOrder {
@@ -2179,6 +2495,83 @@ export class ObjectsService {
     return first.every((value) => secondSet.has(value));
   }
 
+  private serializeFeedUnit(unit: ObjectFeedUnitRecord) {
+    return {
+      id: unit.id,
+      sourceId: unit.sourceId,
+      objectId: unit.objectId,
+      externalId: unit.externalId,
+      type: unit.type,
+      status: unit.status,
+      title: unit.title,
+      address: unit.address,
+      building: unit.building,
+      section: unit.section,
+      floor: unit.floor,
+      rooms: unit.rooms,
+      price: this.decimalToString(unit.price),
+      currency: unit.currency,
+      area: this.decimalToString(unit.area),
+      pricePerMeter: this.decimalToString(unit.pricePerMeter),
+      completionYear: unit.completionYear,
+      completionQuarter: unit.completionQuarter,
+      rawPayload: unit.rawPayload ?? null,
+      archivedAt: unit.archivedAt?.toISOString() ?? null,
+      residentialDetails: unit.residentialDetails
+        ? {
+            unitId: unit.residentialDetails.unitId,
+            apartmentNumber: unit.residentialDetails.apartmentNumber,
+            layoutType: unit.residentialDetails.layoutType,
+            livingArea: this.decimalToString(unit.residentialDetails.livingArea),
+            kitchenArea: this.decimalToString(unit.residentialDetails.kitchenArea),
+            balconyCount: unit.residentialDetails.balconyCount,
+            detailsJson: unit.residentialDetails.detailsJson,
+          }
+        : null,
+      commercialDetails: unit.commercialDetails
+        ? {
+            unitId: unit.commercialDetails.unitId,
+            commercialType: unit.commercialDetails.commercialType,
+            entrance: unit.commercialDetails.entrance,
+            ceilingHeight: this.decimalToString(unit.commercialDetails.ceilingHeight),
+            powerKw: this.decimalToString(unit.commercialDetails.powerKw),
+            separateEntrance: unit.commercialDetails.separateEntrance,
+            detailsJson: unit.commercialDetails.detailsJson,
+          }
+        : null,
+      media: unit.media.map((link) => ({
+        id: link.mediaAsset.id,
+        sourceUrl: link.mediaAsset.sourceUrl,
+        file: link.mediaAsset.file ? this.serializeFeedFile(link.mediaAsset.file) : null,
+        contentType: link.mediaAsset.contentType,
+        checksum: link.mediaAsset.checksum,
+        sortOrder: link.sortOrder,
+        label: link.label,
+        createdAt: link.mediaAsset.createdAt.toISOString(),
+        updatedAt: link.mediaAsset.updatedAt.toISOString(),
+      })),
+      createdAt: unit.createdAt.toISOString(),
+      updatedAt: unit.updatedAt.toISOString(),
+    };
+  }
+
+  private serializeFeedFile(file: ObjectFeedMediaFileRecord) {
+    return {
+      id: file.id,
+      wpAttachmentId: file.wpAttachmentId,
+      storage: file.storage,
+      bucket: file.bucket,
+      key: file.key,
+      url: file.url,
+      originalName: file.originalName,
+      mimeType: file.mimeType,
+      sizeBytes: file.sizeBytes?.toString() ?? null,
+      checksum: file.checksum,
+      createdAt: file.createdAt.toISOString(),
+      updatedAt: file.updatedAt.toISOString(),
+    };
+  }
+
   private serializeObjectSummary(object: ObjectListRecord) {
     const coverImage = object.images[0] ?? null;
     const presentationFile = object.files[0] ?? null;
@@ -2219,6 +2612,15 @@ export class ObjectsService {
       apartmentsCountText: object.apartmentsCountText,
       priceFrom: this.decimalToString(object.priceFrom),
       pricePerMeterFrom: this.decimalToString(object.pricePerMeterFrom),
+      feedPriceFrom: this.decimalToString(object.feedPriceFrom),
+      feedPricePerMeterFrom: this.decimalToString(object.feedPricePerMeterFrom),
+      feedAreaRange: object.feedAreaRange,
+      feedFloorRange: object.feedFloorRange,
+      feedUnitsCount: object.feedUnitsCount,
+      feedUnitsCountText: object.feedUnitsCountText,
+      feedCompletionYear: object.feedCompletionYear,
+      feedCompletionQuarter: object.feedCompletionQuarter,
+      feedUpdatedAt: object.feedUpdatedAt?.toISOString() ?? null,
       completionYear: object.completionYear,
       completionQuarter: object.completionQuarter,
       address: object.address,

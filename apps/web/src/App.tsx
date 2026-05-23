@@ -4,6 +4,7 @@ import type { AuthUser, UserStatus } from '@platforma/shared';
 
 import platformLogoUrl from '../../../_Fluffy_White_1-02.svg';
 import { CatalogLinksAdminPage } from './admin/CatalogLinksAdminPage';
+import { FeedsAdminPage } from './admin/FeedsAdminPage';
 import { ImportAdminPage } from './admin/ImportAdminPage';
 import { AdminButton, AdminPanel, AdminStatusBadge } from './admin/AdminUi';
 import { ObjectsAdminPage } from './admin/ObjectsAdminPage';
@@ -99,6 +100,13 @@ const cabinetSections = [
     group: 'Админка',
     path: '/admin/catalog-links',
     requiredPermissions: ['admin:access', 'objects:update'],
+  },
+  {
+    id: 'admin-feeds',
+    label: 'Фиды',
+    group: 'Админка',
+    path: '/admin/feeds',
+    requiredPermissions: ['admin:access', 'feeds:read'],
   },
   {
     id: 'admin-import',
@@ -313,6 +321,12 @@ function AppRoutes() {
               ) : (
                 <AccessDenied />
               )
+            ) : pathname.startsWith('/admin/feeds') ? (
+              hasPermission('feeds:read') ? (
+                <FeedsAdminPage pathname={pathname} navigate={navigate} onBack={() => navigate('/admin')} />
+              ) : (
+                <AccessDenied />
+              )
             ) : pathname.startsWith('/admin/import') ? (
               hasPermission('import:preview') ? (
                 <ImportAdminPage onBack={() => navigate('/admin')} />
@@ -322,6 +336,7 @@ function AppRoutes() {
             ) : (
               <AdminHome
                 onOpenCatalogLinks={() => navigate('/admin/catalog-links')}
+                onOpenFeeds={() => navigate('/admin/feeds')}
                 onOpenImport={() => navigate('/admin/import')}
                 onOpenObjects={() => navigate('/admin/objects')}
                 onOpenUsers={() => navigate('/admin/users')}
@@ -994,11 +1009,13 @@ function getProfileInitials(user: AuthUser) {
 
 function AdminHome({
   onOpenCatalogLinks,
+  onOpenFeeds,
   onOpenImport,
   onOpenObjects,
   onOpenUsers,
 }: {
   onOpenCatalogLinks: () => void;
+  onOpenFeeds: () => void;
   onOpenImport: () => void;
   onOpenObjects: () => void;
   onOpenUsers: () => void;
@@ -1025,6 +1042,13 @@ function AdminHome({
       tone: 'secondary',
       canAccess: hasPermission('objects:update'),
       onClick: onOpenCatalogLinks,
+    },
+    {
+      label: 'Фиды',
+      description: 'Источники застройщиков, отчёты запусков и импортированные лоты.',
+      tone: 'secondary',
+      canAccess: hasPermission('feeds:read'),
+      onClick: onOpenFeeds,
     },
     {
       label: 'Импорт',

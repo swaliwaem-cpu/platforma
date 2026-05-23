@@ -88,6 +88,38 @@ enum CatalogQuickLinkType {
   @@map("catalog_quick_link_type")
 }
 
+enum FeedFormat {
+  YANDEX_REALTY @map("yandex_realty")
+  CIAN_XML      @map("cian_xml")
+
+  @@map("feed_format")
+}
+
+enum FeedSourceKind {
+  URL  @map("url")
+  FILE @map("file")
+
+  @@map("feed_source_kind")
+}
+
+enum FeedUnitType {
+  RESIDENTIAL @map("residential")
+  COMMERCIAL  @map("commercial")
+
+  @@map("feed_unit_type")
+}
+
+enum FeedUnitStatus {
+  AVAILABLE @map("available")
+  BOOKED    @map("booked")
+  RESERVED  @map("reserved")
+  SOLD      @map("sold")
+  ARCHIVED  @map("archived")
+  UNKNOWN   @map("unknown")
+
+  @@map("feed_unit_status")
+}
+
 model User {
   id                    String     @id @default(uuid()) @db.Uuid
   email                 String     @unique @db.VarChar(320)
@@ -184,6 +216,7 @@ model Developer {
 
   objects           RealEstateObject[]
   catalogQuickLinks CatalogQuickLink[]
+  feedSources       FeedSource[]
 
   @@map("developers")
 }
@@ -245,6 +278,15 @@ model RealEstateObject {
   apartmentsCountText String?    @map("apartments_count_text") @db.VarChar(120)
   priceFrom         Decimal?     @map("price_from") @db.Decimal(14, 2)
   pricePerMeterFrom Decimal?     @map("price_per_meter_from") @db.Decimal(14, 2)
+  feedPriceFrom     Decimal?     @map("feed_price_from") @db.Decimal(14, 2)
+  feedPricePerMeterFrom Decimal? @map("feed_price_per_meter_from") @db.Decimal(14, 2)
+  feedAreaRange     String?      @map("feed_area_range") @db.VarChar(120)
+  feedFloorRange    String?      @map("feed_floor_range") @db.VarChar(120)
+  feedUnitsCount    Int?         @map("feed_units_count")
+  feedUnitsCountText String?     @map("feed_units_count_text") @db.VarChar(120)
+  feedCompletionYear Int?        @map("feed_completion_year")
+  feedCompletionQuarter Int?     @map("feed_completion_quarter")
+  feedUpdatedAt     DateTime?    @map("feed_updated_at")
   completionYear    Int?         @map("completion_year")
   completionQuarter Int?         @map("completion_quarter")
   address           String?
@@ -267,11 +309,16 @@ model RealEstateObject {
   files           ObjectFile[]
   auditLogs       AuditLog[]           @relation("ObjectAuditLogs")
   catalogQuickLinks CatalogQuickLink[]
+  feedSources     FeedSource[]
+  feedUnits       FeedUnit[]
 
   @@index([status])
   @@index([developerId])
   @@index([primaryLocationId])
   @@index([priceFrom])
+  @@index([feedPriceFrom])
+  @@index([feedPricePerMeterFrom])
+  @@index([feedUpdatedAt])
   @@index([completionYear])
   @@index([latitude, longitude])
   @@map("real_estate_objects")
@@ -327,6 +374,156 @@ model CatalogQuickLink {
   @@map("catalog_quick_links")
 }
 
+model FeedSource {
+  id            String    @id @default(uuid()) @db.Uuid
+  sourceKind    FeedSourceKind @default(URL) @map("source_kind")
+  url           String?   @db.VarChar(2048)
+  xmlFileId     String?   @map("xml_file_id") @db.Uuid
+  format        FeedFormat
+  developerId   String    @map("developer_id") @db.Uuid
+  objectId      String    @map("object_id") @db.Uuid
+  isActive      Boolean   @default(true) @map("is_active")
+  lastPreviewAt DateTime? @map("last_preview_at")
+  lastRunAt     DateTime? @map("last_run_at")
+  lastSuccessAt DateTime? @map("last_success_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  developer Developer        @relation(fields: [developerId], references: [id], onDelete: Restrict)
+  object    RealEstateObject @relation(fields: [objectId], references: [id], onDelete: Cascade)
+  xmlFile   File?            @relation("FeedXmlFile", fields: [xmlFileId], references: [id], onDelete: Restrict)
+  runs      FeedImportRun[]
+  units     FeedUnit[]
+
+  @@index([sourceKind])
+  @@index([xmlFileId])
+  @@index([developerId])
+  @@index([objectId, isActive])
+  @@index([format])
+  @@map("feed_sources")
+}
+
+model FeedImportRun {
+  id           String       @id @default(uuid()) @db.Uuid
+  sourceId     String       @map("source_id") @db.Uuid
+  mode         ImportMode
+  status       ImportStatus @default(PENDING)
+  startedAt    DateTime     @default(now()) @map("started_at")
+  finishedAt   DateTime?    @map("finished_at")
+  summaryJson  Json?        @map("summary_json")
+  warningsJson Json?        @map("warnings_json")
+  errorsJson   Json?        @map("errors_json")
+  createdAt    DateTime     @default(now()) @map("created_at")
+
+  source FeedSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@index([sourceId, startedAt])
+  @@index([mode, status])
+  @@index([createdAt])
+  @@map("feed_import_runs")
+}
+
+model FeedUnit {
+  id                String         @id @default(uuid()) @db.Uuid
+  sourceId          String         @map("source_id") @db.Uuid
+  objectId          String         @map("object_id") @db.Uuid
+  externalId        String         @map("external_id") @db.VarChar(255)
+  type              FeedUnitType
+  status            FeedUnitStatus @default(UNKNOWN)
+  title             String?        @db.VarChar(300)
+  address           String?        @db.VarChar(512)
+  building          String?        @db.VarChar(120)
+  section           String?        @db.VarChar(120)
+  floor             Int?
+  rooms             Int?
+  price             Decimal?       @db.Decimal(14, 2)
+  currency          String?        @db.VarChar(12)
+  area              Decimal?       @db.Decimal(10, 2)
+  pricePerMeter     Decimal?       @map("price_per_meter") @db.Decimal(14, 2)
+  completionYear    Int?           @map("completion_year")
+  completionQuarter Int?           @map("completion_quarter")
+  rawPayload        Json?          @map("raw_payload")
+  archivedAt        DateTime?      @map("archived_at")
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+
+  source            FeedSource                 @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  object            RealEstateObject           @relation(fields: [objectId], references: [id], onDelete: Cascade)
+  residentialDetails FeedResidentialUnitDetails?
+  commercialDetails  FeedCommercialUnitDetails?
+  media             FeedUnitMedia[]
+
+  @@unique([sourceId, externalId])
+  @@index([objectId, status])
+  @@index([sourceId, status])
+  @@index([type])
+  @@index([status])
+  @@index([price])
+  @@index([pricePerMeter])
+  @@index([area])
+  @@map("feed_units")
+}
+
+model FeedResidentialUnitDetails {
+  unitId          String   @id @map("unit_id") @db.Uuid
+  apartmentNumber String?  @map("apartment_number") @db.VarChar(120)
+  layoutType      String?  @map("layout_type") @db.VarChar(120)
+  livingArea      Decimal? @map("living_area") @db.Decimal(10, 2)
+  kitchenArea     Decimal? @map("kitchen_area") @db.Decimal(10, 2)
+  balconyCount    Int?     @map("balcony_count")
+  detailsJson     Json     @default("{}") @map("details_json")
+
+  unit FeedUnit @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  @@map("feed_residential_unit_details")
+}
+
+model FeedCommercialUnitDetails {
+  unitId           String   @id @map("unit_id") @db.Uuid
+  commercialType   String?  @map("commercial_type") @db.VarChar(120)
+  entrance         String?  @db.VarChar(120)
+  ceilingHeight    Decimal? @map("ceiling_height") @db.Decimal(5, 2)
+  powerKw          Decimal? @map("power_kw") @db.Decimal(8, 2)
+  separateEntrance Boolean? @map("separate_entrance")
+  detailsJson      Json     @default("{}") @map("details_json")
+
+  unit FeedUnit @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  @@map("feed_commercial_unit_details")
+}
+
+model FeedMediaAsset {
+  id          String   @id @default(uuid()) @db.Uuid
+  sourceUrl   String   @unique @map("source_url") @db.VarChar(2048)
+  fileId      String?  @map("file_id") @db.Uuid
+  contentType String?  @map("content_type") @db.VarChar(120)
+  checksum    String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  file      File?           @relation("FeedMediaFile", fields: [fileId], references: [id], onDelete: SetNull)
+  unitLinks FeedUnitMedia[]
+
+  @@index([fileId])
+  @@map("feed_media_assets")
+}
+
+model FeedUnitMedia {
+  unitId       String   @map("unit_id") @db.Uuid
+  mediaAssetId String   @map("media_asset_id") @db.Uuid
+  sortOrder    Int      @default(0) @map("sort_order")
+  label        String?  @db.VarChar(120)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  unit       FeedUnit       @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  mediaAsset FeedMediaAsset @relation(fields: [mediaAssetId], references: [id], onDelete: Cascade)
+
+  @@id([unitId, mediaAssetId])
+  @@index([mediaAssetId])
+  @@index([unitId, sortOrder])
+  @@map("feed_unit_media")
+}
+
 model File {
   id             String      @id @default(uuid()) @db.Uuid
   wpAttachmentId Int?        @unique @map("wp_attachment_id")
@@ -347,6 +544,8 @@ model File {
   objectImages       ObjectImage[]
   objectFiles        ObjectFile[]
   variants           FileVariant[]
+  feedXmlSources     FeedSource[] @relation("FeedXmlFile")
+  feedMediaAssets    FeedMediaAsset[] @relation("FeedMediaFile")
 
   @@unique([storage, bucket, key])
   @@index([uploadedById])

@@ -22,11 +22,13 @@ test('feed import workspace package exposes first-stage scripts and XML parser d
   assert.equal(rootPackage.scripts['feed-import:run'], 'pnpm --filter @platforma/feed-import run run');
   assert.equal(feedImportPackage.name, '@platforma/feed-import');
   assert.equal(feedImportPackage.private, true);
-  assert.equal(feedImportPackage.scripts.build, 'tsc -p tsconfig.json');
+  assert.equal(feedImportPackage.scripts.build, 'pnpm --filter @platforma/api prisma:generate && tsc -p tsconfig.json');
   assert.equal(feedImportPackage.scripts.preview, 'pnpm build && node dist/index.js preview');
   assert.equal(feedImportPackage.scripts.run, 'pnpm build && node dist/index.js run');
   assert.equal(feedImportPackage.scripts.test, 'pnpm build && node --test tests/*.test.cjs');
+  assert.equal(feedImportPackage.dependencies['@prisma/client'], '6.19.3');
   assert.equal(feedImportPackage.dependencies['fast-xml-parser'], '^5.3.2');
+  assert.equal(feedImportPackage.dependencies.sharp, '^0.34.5');
 });
 
 test('feed import package keeps source feed fixtures close to parser tests', () => {

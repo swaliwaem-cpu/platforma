@@ -6,6 +6,8 @@ import test from 'node:test';
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(resolve(currentDir, '../src/objects/ObjectDetailPage.tsx'), 'utf8');
+const objectImageCarouselSource =
+  source.match(/function ObjectImageCarousel[\s\S]*?\nfunction ObjectFeedUnitsSection/)?.[0] ?? '';
 
 test('object detail carousel opens a dialog lightbox from the main image', () => {
   assert.match(source, /const \[lightboxIndex,\s*setLightboxIndex\] = useState<number \| null>\(null\);/);
@@ -16,8 +18,8 @@ test('object detail carousel opens a dialog lightbox from the main image', () =>
 });
 
 test('object detail carousel lightbox uses detail image variant and keyboard close', () => {
-  assert.match(source, /className="carousel-modal-image"[\s\S]*?variant="detail"/);
-  assert.doesNotMatch(source, /variant="original"/);
+  assert.match(objectImageCarouselSource, /className="carousel-modal-image"[\s\S]*?variant="detail"/);
+  assert.doesNotMatch(objectImageCarouselSource, /variant="original"/);
   assert.match(source, /function closeLightbox\(\)\s*\{[\s\S]*?setLightboxIndex\(null\);[\s\S]*?\}/);
   assert.match(source, /event\.key === 'Escape'/);
   assert.match(source, /className="carousel-modal-backdrop"/);

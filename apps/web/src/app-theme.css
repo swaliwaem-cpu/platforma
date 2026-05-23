@@ -166,9 +166,11 @@ html[data-app-theme] :is(
   .admin-users .page-header,
   .admin-objects .page-header,
   .admin-catalog-links .page-header,
+  .admin-feeds .page-header,
   .admin-import .page-header,
   .admin-users .toolbar,
   .admin-objects .toolbar,
+  .admin-feeds .toolbar,
   .admin-import .toolbar,
   .table-panel,
   .editor-panel,
@@ -185,6 +187,7 @@ html[data-app-theme] :is(
   .object-image-carousel,
   .gallery-modal,
   .gallery-close-confirm,
+  .object-feed-media-carousel,
   .map-object-card
 ) {
   border-color: var(--app-theme-border);
@@ -226,6 +229,9 @@ html[data-app-theme] :is(
   .object-detail-metrics div,
   .object-layouts-cta,
   .object-parameters-grid div,
+  .object-feed-media-carousel-thumb,
+  .object-feed-media-carousel-nav,
+  .object-feed-media-carousel-close,
   .feature-grid div,
   .empty-detail-block,
   .detail-file-list li,
@@ -356,6 +362,14 @@ html[data-app-theme] td {
   color: var(--app-theme-ink-800);
 }
 
+html[data-app-theme] .object-feed-units-table [data-slot="table-head"] {
+  color: var(--app-theme-ink-700);
+}
+
+html[data-app-theme] .object-feed-units-table [data-slot="table-cell"] {
+  color: var(--app-theme-ink-800);
+}
+
 html[data-app-theme] tbody tr:hover td {
   background: color-mix(in srgb, var(--app-theme-primary-soft) 62%, var(--app-theme-surface));
 }
@@ -369,7 +383,7 @@ html[data-app-theme] tr.user-row--deactivated td {
   color: var(--app-theme-ink-600);
 }
 
-html[data-app-theme] :is(.user-identity-cell strong, .object-title-cell strong, .object-price-cell, .import-start-cell strong, .import-metric-cell strong, .catalog-card-price, .catalog-card h3, .catalog-list-item h3, .catalog-list-item-price, .object-detail-metrics dd, .object-parameters-grid dd, .preview-facts dd, .report-summary dd) {
+html[data-app-theme] :is(.user-identity-cell strong, .object-title-cell strong, .object-price-cell, .import-start-cell strong, .import-metric-cell strong, .feed-source-cell strong, .feed-run-date-cell strong, .feed-unit-cell strong, .object-feed-unit-cell strong, .catalog-card-price, .catalog-card h3, .catalog-list-item h3, .catalog-list-item-price, .object-detail-metrics dd, .object-parameters-grid dd, .preview-facts dd, .report-summary dd) {
   color: var(--app-theme-ink-900);
   font-variant-numeric: tabular-nums;
 }
@@ -378,32 +392,61 @@ html[data-app-theme] :is(.object-description, .object-content-section-text) {
   color: var(--app-theme-ink-800);
 }
 
-html[data-app-theme] :is(.table-subtext, .muted-cell, .cabinet-section-main span, .admin-action-card p, .user-form-section-header p, .role-permissions-title p, .object-form-section-header p, .catalog-link-column-header p, .preview-meta, .preview-detail-list span, .file-actions span, .gallery-close-confirm strong, .gallery-close-confirm span, .import-metric-cell span, .import-report-user span, .report-section-header span, .report-issue-meta dt, .detail-file-list span, .metro-list span, .detail-file-action span, .object-detail-action span, .permission-chip--role code, .map-object-card dt, .map-object-card-image--empty, .map-fallback, .map-loading) {
+html[data-app-theme] :is(.table-subtext, .muted-cell, .cabinet-section-main span, .admin-action-card p, .user-form-section-header p, .role-permissions-title p, .object-form-section-header p, .catalog-link-column-header p, .feed-form-section-header p, .feed-source-cell span, .feed-run-date-cell span, .feed-unit-cell span, .object-feed-unit-cell span, .object-feed-media-button, .object-feed-media-empty, .object-feed-media-carousel-caption span, .feed-source-cell code, .preview-meta, .preview-detail-list span, .file-actions span, .gallery-close-confirm strong, .gallery-close-confirm span, .import-metric-cell span, .import-report-user span, .report-section-header span, .report-issue-meta dt, .detail-file-list span, .metro-list span, .detail-file-action span, .object-detail-action span, .permission-chip--role code, .map-object-card dt, .map-object-card-image--empty, .map-fallback, .map-loading) {
   color: var(--app-theme-ink-700);
 }
 
-html[data-app-theme] :is(.role-pill, .import-mode-pill--preview, .catalog-view-toggle--list, .table-sort-button--active) {
+html[data-app-theme] :is(.role-pill, .import-mode-pill--preview, .feed-format-pill--yandex_realty, .catalog-view-toggle--list, .table-sort-button--active) {
   border-color: color-mix(in srgb, var(--app-theme-primary) 24%, var(--app-theme-border));
   background: var(--app-theme-primary-soft);
   color: var(--app-theme-primary-deep);
 }
 
-html[data-app-theme] :is(.permission-chip, .panel-count, .gallery-tile-status, .import-mode-pill, .report-issue-code, .report-issue-severity) {
+html[data-app-theme] :is(.permission-chip, .panel-count, .gallery-tile-status, .import-mode-pill, .feed-format-pill, .object-feed-status--archived, .object-feed-status--unknown, .report-issue-code, .report-issue-severity) {
   border-color: var(--app-theme-border-soft);
   background: var(--app-theme-surface-muted);
   color: var(--app-theme-ink-700);
 }
 
-html[data-app-theme] :is(.status-pill--active, .object-status--published, .gallery-tile-status--section, .import-mode-pill--run, .import-status--success) {
+html[data-app-theme] :is(.status-pill--active, .object-status--published, .gallery-tile-status--section, .import-mode-pill--run, .feed-format-pill--cian_xml, .feed-source-status--active, .feed-unit-status--available, .feed-unit-status--booked, .feed-unit-status--reserved, .object-feed-status--available, .object-feed-status--booked, .object-feed-status--reserved, .import-status--success) {
   border-color: color-mix(in srgb, var(--app-theme-success) 28%, var(--app-theme-border));
   background: var(--app-theme-success-soft);
   color: var(--app-theme-success);
 }
 
-html[data-app-theme] :is(.status-pill--blocked, .object-detail-action-button--disabled, .danger-button, .admin-button--danger, .admin-alert--error, .deactivation-confirm, .report-summary-item--danger, .report-issue-card--error, .import-status--failed) {
+html[data-app-theme] :is(.status-pill--blocked, .object-detail-action-button--disabled, .danger-button, .admin-button--danger, .admin-alert--error, .deactivation-confirm, .report-summary-item--danger, .report-issue-card--error, .feed-unit-status--sold, .object-feed-status--sold, .import-status--failed) {
   border-color: color-mix(in srgb, var(--app-theme-danger) 32%, var(--app-theme-border));
   background: var(--app-theme-danger-soft);
   color: var(--app-theme-danger);
+}
+
+html[data-app-theme] :is(.object-feed-sort-button.is-active, .object-feed-media-carousel-header h3, .object-feed-media-carousel-caption strong) {
+  color: var(--app-theme-ink-900);
+}
+
+html[data-app-theme] :is(.object-feed-sort-button svg, .object-feed-media-carousel-header span) {
+  color: var(--app-theme-ink-600);
+}
+
+html[data-app-theme] .object-feed-media-preview {
+  border-color: var(--app-theme-border-soft);
+  background: var(--app-theme-surface-muted);
+}
+
+html[data-app-theme] .object-feed-media-button:hover .object-feed-media-preview {
+  border-color: color-mix(in srgb, var(--app-theme-primary) 40%, var(--app-theme-border));
+  background: color-mix(in srgb, var(--app-theme-primary-soft) 56%, var(--app-theme-surface));
+}
+
+html[data-app-theme] :is(.object-feed-sort-button:focus-visible, .object-feed-media-button:focus-visible, .object-feed-media-carousel-close:focus-visible, .object-feed-media-carousel-nav:focus-visible, .object-feed-media-fullscreen-close:focus-visible) {
+  outline-color: var(--app-theme-primary);
+}
+
+html[data-app-theme] .object-feed-media-carousel-thumb:hover,
+html[data-app-theme] .object-feed-media-carousel-thumb:focus-visible,
+html[data-app-theme] .object-feed-media-carousel-thumb.is-active {
+  border-color: color-mix(in srgb, var(--app-theme-primary) 40%, var(--app-theme-border));
+  background: color-mix(in srgb, var(--app-theme-primary-soft) 56%, var(--app-theme-surface));
 }
 
 html[data-app-theme] .object-files-section .object-detail-action-button {
@@ -440,7 +483,7 @@ html[data-app-theme] :is(.status-pill--invited, .object-status--draft, .report-s
   color: var(--app-theme-warning);
 }
 
-html[data-app-theme] :is(.status-pill--deactivated, .object-status--archived) {
+html[data-app-theme] :is(.status-pill--deactivated, .object-status--archived, .feed-source-status--inactive, .feed-unit-status--archived, .feed-unit-status--unknown) {
   border-color: var(--app-theme-border-soft);
   background: var(--app-theme-surface-muted);
   color: var(--app-theme-ink-700);

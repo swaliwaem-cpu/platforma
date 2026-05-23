@@ -3,13 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "pnpm --filter @platforma/api prisma:generate && tsc -p tsconfig.json",
     "preview": "pnpm build && node dist/index.js preview",
     "run": "pnpm build && node dist/index.js run",
     "test": "pnpm build && node --test tests/*.test.cjs"
   },
   "dependencies": {
-    "fast-xml-parser": "^5.3.2"
+    "@prisma/client": "6.19.3",
+    "fast-xml-parser": "^5.3.2",
+    "sharp": "^0.34.5"
   },
   "devDependencies": {
     "@types/node": "25.6.0",

@@ -13,6 +13,8 @@ import { AuthenticatedUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   ALLOWED_FILE_MIME_TYPES,
+  FEED_XML_MAX_SIZE_BYTES,
+  FEED_XML_MIME_TYPES,
   IMAGE_MAX_SIZE_BYTES,
   IMAGE_MIME_TYPES,
   PDF_MAX_SIZE_BYTES,
@@ -22,7 +24,7 @@ import { generateImageVariants, isImageVariantSourceMimeType } from './image-var
 import { S3StorageService } from './s3-storage.service';
 import { UploadedFile } from './uploaded-file.type';
 
-export type UploadFileKind = 'generic' | 'image' | 'pdf';
+export type UploadFileKind = 'generic' | 'image' | 'pdf' | 'feed-xml';
 export type ServedFileVariant = 'original' | 'original-fallback' | 'thumbnail' | 'card' | 'detail';
 
 type RequestedFileVariant =
@@ -165,6 +167,7 @@ export class FilesService {
             profilePhotoUsers: true,
             objectImages: true,
             objectFiles: true,
+            feedXmlSources: true,
           },
         },
       },
@@ -174,7 +177,12 @@ export class FilesService {
       throw new NotFoundException('File not found');
     }
 
-    if (file._count.profilePhotoUsers > 0 || file._count.objectImages > 0 || file._count.objectFiles > 0) {
+    if (
+      file._count.profilePhotoUsers > 0 ||
+      file._count.objectImages > 0 ||
+      file._count.objectFiles > 0 ||
+      file._count.feedXmlSources > 0
+    ) {
       throw new ConflictException('File is linked and cannot be deleted');
     }
 
@@ -218,6 +226,30 @@ export class FilesService {
 
     const mimeType = file.mimetype.trim().toLowerCase();
     const size = file.size || file.buffer.length;
+    const originalname = basename(file.originalname || 'file');
+
+    if (kind === 'feed-xml') {
+      if (!this.isAllowedFeedXmlFile(originalname, mimeType)) {
+        throw new BadRequestException(this.getMimeTypeError(kind));
+      }
+
+      if (size > FEED_XML_MAX_SIZE_BYTES) {
+        throw new BadRequestException(`File size cannot exceed ${FEED_XML_MAX_SIZE_BYTES} bytes`);
+      }
+
+      if (!file.buffer.toString('utf8', 0, Math.min(file.buffer.length, 256)).trimStart().startsWith('<')) {
+        throw new BadRequestException('Only XML files are allowed');
+      }
+
+      return {
+        ...file,
+        mimetype: mimeType,
+        originalname,
+        size,
+        buffer: file.buffer,
+      };
+    }
+
     const allowedMimeTypes = this.getAllowedMimeTypes(kind);
     const maxSize = this.getMaxSize(kind, mimeType);
 
@@ -232,13 +264,17 @@ export class FilesService {
     return {
       ...file,
       mimetype: mimeType,
-      originalname: basename(file.originalname || 'file'),
+      originalname,
       size,
       buffer: file.buffer,
     };
   }
 
   private getAllowedMimeTypes(kind: UploadFileKind) {
+    if (kind === 'feed-xml') {
+      return new Set<string>(FEED_XML_MIME_TYPES);
+    }
+
     if (kind === 'image') {
       return new Set<string>(IMAGE_MIME_TYPES);
     }
@@ -251,6 +287,10 @@ export class FilesService {
   }
 
   private getMaxSize(kind: UploadFileKind, mimeType: string) {
+    if (kind === 'feed-xml') {
+      return FEED_XML_MAX_SIZE_BYTES;
+    }
+
     if (kind === 'image' || IMAGE_MIME_TYPES.includes(mimeType as (typeof IMAGE_MIME_TYPES)[number])) {
       return IMAGE_MAX_SIZE_BYTES;
     }
@@ -259,6 +299,10 @@ export class FilesService {
   }
 
   private getMimeTypeError(kind: UploadFileKind) {
+    if (kind === 'feed-xml') {
+      return 'Only XML files are allowed';
+    }
+
     if (kind === 'image') {
       return 'Only JPEG, PNG and WebP images are allowed';
     }
@@ -303,6 +347,10 @@ export class FilesService {
       return '.webp';
     }
 
+    if (this.isFeedXmlMimeType(mimeType)) {
+      return '.xml';
+    }
+
     return '';
   }
 
@@ -323,7 +371,19 @@ export class FilesService {
       return ['.webp'];
     }
 
+    if (this.isFeedXmlMimeType(mimeType)) {
+      return ['.xml'];
+    }
+
     return [];
+  }
+
+  private isAllowedFeedXmlFile(originalName: string, mimeType: string) {
+    return extname(originalName).toLowerCase() === '.xml' && this.isFeedXmlMimeType(mimeType);
+  }
+
+  private isFeedXmlMimeType(mimeType: string) {
+    return FEED_XML_MIME_TYPES.includes(mimeType as (typeof FEED_XML_MIME_TYPES)[number]) || mimeType.endsWith('+xml');
   }
 
   private async findExistingFile(id: string) {

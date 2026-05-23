@@ -211,12 +211,7 @@ export class MapService {
         throw new BadRequestException('Price from min cannot be greater than max');
       }
 
-      filters.push({
-        priceFrom: {
-          ...(priceFromMin ? { gte: priceFromMin } : {}),
-          ...(priceFromMax ? { lte: priceFromMax } : {}),
-        },
-      });
+      filters.push(this.createFeedFallbackPriceFilter('priceFrom', 'feedPriceFrom', priceFromMin, priceFromMax));
     }
 
     const hasPresentation = this.parseOptionalBoolean(query.hasPresentation, 'Has presentation is invalid');
@@ -304,6 +299,33 @@ export class MapService {
     return result === '-0' ? '0' : result;
   }
 
+  private createFeedFallbackPriceFilter(
+    manualField: 'priceFrom',
+    feedField: 'feedPriceFrom',
+    min: string | null | undefined,
+    max: string | null | undefined,
+  ): Prisma.RealEstateObjectWhereInput {
+    const rangeFilter = {
+      ...(min ? { gte: min } : {}),
+      ...(max ? { lte: max } : {}),
+    };
+
+    return {
+      OR: [
+        {
+          [feedField]: {
+            not: null,
+            ...rangeFilter,
+          },
+        },
+        {
+          [feedField]: null,
+          [manualField]: rangeFilter,
+        },
+      ],
+    };
+  }
+
   private parseUuid(value: string, message: string) {
     const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -359,6 +381,16 @@ export class MapService {
       longitude: object.longitude?.toNumber() ?? 0,
       priceFrom: object.priceFrom?.toString() ?? null,
       pricePerMeterFrom: object.pricePerMeterFrom?.toString() ?? null,
+      apartmentAreaRange: object.apartmentAreaRange,
+      feedPriceFrom: object.feedPriceFrom?.toString() ?? null,
+      feedPricePerMeterFrom: object.feedPricePerMeterFrom?.toString() ?? null,
+      feedAreaRange: object.feedAreaRange,
+      feedFloorRange: object.feedFloorRange,
+      feedUnitsCount: object.feedUnitsCount,
+      feedUnitsCountText: object.feedUnitsCountText,
+      feedCompletionYear: object.feedCompletionYear,
+      feedCompletionQuarter: object.feedCompletionQuarter,
+      feedUpdatedAt: object.feedUpdatedAt?.toISOString() ?? null,
       completionYear: object.completionYear,
       completionQuarter: object.completionQuarter,
       developer: object.developer

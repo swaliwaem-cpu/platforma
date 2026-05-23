@@ -62,6 +62,15 @@ type DirectoryState = {
   metroStations: ObjectMetroStation[];
 };
 
+type CatalogFeedFallbackObject = {
+  priceFrom: string | null;
+  pricePerMeterFrom: string | null;
+  apartmentAreaRange: string | null;
+  feedPriceFrom: string | null;
+  feedPricePerMeterFrom: string | null;
+  feedAreaRange: string | null;
+};
+
 const defaultFilters: CatalogFilters = {
   search: '',
   developerId: '',
@@ -1128,7 +1137,7 @@ function CatalogMapView({
                     {object.title}
                   </button>
                   <span>{getObjectDistrictLabel(object)}</span>
-                  <strong>{formatMapListPricePerMeter(object.pricePerMeterFrom)}</strong>
+                  <strong>{formatMapListPricePerMeter(getCatalogPricePerMeterFrom(object))}</strong>
                 </li>
               ))}
             </ul>
@@ -1176,6 +1185,7 @@ function MapObjectCard({
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const metroLabel = formatMetroStations(object.metroStations ?? []);
   const districtLabel = getObjectDistrictLabel(object);
+  const areaLabel = getCatalogAreaRange(object) ?? 'Не указано';
   const galleryImages = object.images.length > 0 ? object.images : object.coverImage ? [object.coverImage] : [];
   const activeImage = galleryImages[activeImageIndex] ?? galleryImages[0] ?? null;
   const hasGalleryNavigation = galleryImages.length > 1;
@@ -1262,10 +1272,14 @@ function MapObjectCard({
             <dt>Завершение строительства</dt>
             <dd>{formatCompletion(object.completionYear, object.completionQuarter)}</dd>
           </div>
+          <div>
+            <dt>Площадь</dt>
+            <dd>{areaLabel}</dd>
+          </div>
         </dl>
         <p>
-          Цена от: <strong>{formatPrice(object.priceFrom)}</strong> | Цена за метр от:{' '}
-          <strong>{formatMapCardPricePerMeter(object.pricePerMeterFrom)}</strong>
+          Цена от: <strong>{formatPrice(getCatalogPriceFrom(object))}</strong> | Цена за метр от:{' '}
+          <strong>{formatMapCardPricePerMeter(getCatalogPricePerMeterFrom(object))}</strong>
         </p>
         <button className="catalog-card-link map-object-card-link" type="button" onClick={onOpen}>
           Подробнее
@@ -1289,6 +1303,7 @@ function CatalogListItem({
   const developerLabel = object.developer?.name ?? 'Не указан';
   const districtLabel = getObjectDistrictLabel(object);
   const metroLabel = formatListMetroStations(object.metroStations);
+  const areaLabel = getCatalogAreaRange(object) ?? 'Не указано';
 
   function handleOpen(event: MouseEvent<HTMLAnchorElement>) {
     event.preventDefault();
@@ -1333,10 +1348,14 @@ function CatalogListItem({
             <dt>Завершение строительства</dt>
             <dd>{formatListCompletion(object.completionYear, object.completionQuarter)}</dd>
           </div>
+          <div>
+            <dt>Площадь</dt>
+            <dd>{areaLabel}</dd>
+          </div>
         </dl>
         <p className="catalog-list-item-price">
-          Цена от: {formatRequestedPrice(object.priceFrom)} | Цена за метр от:{' '}
-          {formatRequestedPrice(object.pricePerMeterFrom)}
+          Цена от: {formatRequestedPrice(getCatalogPriceFrom(object))} | Цена за метр от:{' '}
+          {formatRequestedPrice(getCatalogPricePerMeterFrom(object))}
         </p>
       </div>
 
@@ -1363,6 +1382,7 @@ function CatalogCard({
   const hasPresentation = Boolean(object.presentationFile);
   const hasVisibleBadges = object.status !== 'PUBLISHED' || hasPresentation;
   const districtLabel = getObjectDistrictLabel(object);
+  const areaLabel = getCatalogAreaRange(object) ?? 'Не указано';
 
   function handleOpen(event: MouseEvent<HTMLAnchorElement>) {
     event.preventDefault();
@@ -1403,8 +1423,8 @@ function CatalogCard({
           </h3>
         </div>
         <div className="catalog-card-price-row">
-          <p className="catalog-card-price">{formatPrice(object.priceFrom)}</p>
-          <span>{formatPricePerMeter(object.pricePerMeterFrom)}</span>
+          <p className="catalog-card-price">{formatPrice(getCatalogPriceFrom(object))}</p>
+          <span>{formatPricePerMeter(getCatalogPricePerMeterFrom(object))}</span>
         </div>
         <div className="catalog-card-location" aria-label="Район и метро">
           <span title={districtLabel}>{districtLabel}</span>
@@ -1414,6 +1434,10 @@ function CatalogCard({
           <div>
             <dt>Срок</dt>
             <dd>{formatCompletion(object.completionYear, object.completionQuarter)}</dd>
+          </div>
+          <div>
+            <dt>Площадь</dt>
+            <dd>{areaLabel}</dd>
           </div>
           <div>
             <dt>Застройщик</dt>
@@ -1609,6 +1633,18 @@ function buildObjectsParams(filters: CatalogFilters, includePage: boolean) {
   return params;
 }
 
+function getCatalogPriceFrom(object: CatalogFeedFallbackObject) {
+  return object.feedPriceFrom ?? object.priceFrom;
+}
+
+function getCatalogPricePerMeterFrom(object: CatalogFeedFallbackObject) {
+  return object.feedPricePerMeterFrom ?? object.pricePerMeterFrom;
+}
+
+function getCatalogAreaRange(object: CatalogFeedFallbackObject) {
+  return object.feedAreaRange ?? object.apartmentAreaRange;
+}
+
 function mapObjectToPoint(object: MapObject): YandexMapPoint {
   return {
     id: object.id,
@@ -1616,7 +1652,7 @@ function mapObjectToPoint(object: MapObject): YandexMapPoint {
     hint: object.title,
     coordinates: [object.latitude, object.longitude],
     balloonHtml: buildMapBalloon(object),
-    markerLabel: formatMapMarkerPrice(object.pricePerMeterFrom),
+    markerLabel: formatMapMarkerPrice(getCatalogPricePerMeterFrom(object)),
   };
 }
 
@@ -1640,7 +1676,7 @@ function buildMapBalloon(object: MapObject) {
   const title = escapeHtml(object.title);
   const district = escapeHtml(getObjectDistrictLabel(object));
   const developer = escapeHtml(object.developer?.name ?? 'Застройщик не указан');
-  const price = escapeHtml(formatPrice(object.priceFrom));
+  const price = escapeHtml(formatPrice(getCatalogPriceFrom(object)));
   const completion = escapeHtml(formatCompletion(object.completionYear, object.completionQuarter));
   const href = escapeHtml(`/objects/${encodeURIComponent(object.slug)}`);
 

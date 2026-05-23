@@ -2,11 +2,14 @@ require('reflect-metadata');
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { BadRequestException, ForbiddenException } = require('@nestjs/common');
 const { UserStatus } = require('@prisma/client');
 
 const { AuthController } = require('../dist/auth/auth.controller.js');
 const { CatalogLinksController } = require('../dist/catalog-links/catalog-links.controller.js');
+const { FeedsController } = require('../dist/feeds/feeds.controller.js');
 const { getMediaCookieName, getRefreshCookieName } = require('../dist/auth/cookies.js');
 const { MediaController } = require('../dist/files/media.controller.js');
 const { PERMISSIONS_KEY } = require('../dist/auth/permissions.decorator.js');
@@ -14,6 +17,11 @@ const { PermissionsGuard } = require('../dist/auth/permissions.guard.js');
 const { ObjectsController } = require('../dist/objects/objects.controller.js');
 const { UsersController } = require('../dist/users/users.controller.js');
 const { WordpressImportController } = require('../dist/wordpress-import/wordpress-import.controller.js');
+
+const rootDir = path.resolve(__dirname, '../../..');
+const sharedTypesPath = path.join(rootDir, 'packages/shared/src/index.ts');
+const seedPath = path.join(rootDir, 'apps/api/src/prisma/seed.ts');
+const feedsModulePath = path.join(rootDir, 'apps/api/src/feeds/feeds.module.ts');
 
 const user = {
   id: '11111111-1111-4111-8111-111111111111',
@@ -35,6 +43,10 @@ function makeResponse() {
       this.clearedCookies.push({ name, options });
     },
   };
+}
+
+function readProjectFile(filePath) {
+  return fs.readFileSync(filePath, 'utf8');
 }
 
 function getPermissions(controller, methodName) {
@@ -238,6 +250,7 @@ test('API controllers expose expected permission contracts', () => {
   assert.deepEqual(getPermissions(CatalogLinksController, 'listAdmin'), ['admin:access', 'objects:update']);
   assert.deepEqual(getPermissions(CatalogLinksController, 'updateAdmin'), ['admin:access', 'objects:update']);
   assert.deepEqual(getPermissions(ObjectsController, 'list'), ['objects:read']);
+  assert.deepEqual(getPermissions(ObjectsController, 'listFeedUnits'), ['objects:read']);
   assert.deepEqual(getPermissions(ObjectsController, 'create'), ['objects:create']);
   assert.deepEqual(getPermissions(ObjectsController, 'publish'), ['objects:publish']);
   assert.deepEqual(getPermissions(ObjectsController, 'updateStatus'), ['objects:publish']);
@@ -247,7 +260,62 @@ test('API controllers expose expected permission contracts', () => {
   assert.deepEqual(getPermissions(UsersController, 'deactivate'), ['users:delete']);
   assert.deepEqual(getPermissions(WordpressImportController, 'runPreview'), ['import:preview']);
   assert.deepEqual(getPermissions(WordpressImportController, 'runImport'), ['import:run']);
+  assert.deepEqual(getPermissions(FeedsController, 'listSources'), ['feeds:read']);
+  assert.deepEqual(getPermissions(FeedsController, 'createSource'), ['feeds:manage']);
+  assert.deepEqual(getPermissions(FeedsController, 'updateSource'), ['feeds:manage']);
+  assert.deepEqual(getPermissions(FeedsController, 'runPreview'), ['feeds:run']);
+  assert.deepEqual(getPermissions(FeedsController, 'runImport'), ['feeds:run']);
+  assert.deepEqual(getPermissions(FeedsController, 'listSourceRuns'), ['feeds:read']);
+  assert.deepEqual(getPermissions(FeedsController, 'getRun'), ['feeds:read']);
+  assert.deepEqual(getPermissions(FeedsController, 'listUnits'), ['feeds:read']);
   assert.deepEqual(getPermissions(MediaController, 'getContent'), []);
+});
+
+test('seed includes feed permissions for admin role', () => {
+  const seed = readProjectFile(seedPath);
+
+  assert.match(seed, /\['feeds:read', 'Read feed sources and units'\]/);
+  assert.match(seed, /\['feeds:manage', 'Manage feed sources'\]/);
+  assert.match(seed, /\['feeds:run', 'Run feed imports'\]/);
+  assert.match(seed, /admin: permissions\.map\(\(\[key\]\) => key\)/);
+});
+
+test('FeedsModule imports AuthModule for guarded feed routes', () => {
+  const moduleSource = readProjectFile(feedsModulePath);
+
+  assert.match(moduleSource, /import \{ AuthModule \} from '\.\.\/auth\/auth\.module';/);
+  assert.match(moduleSource, /import \{ FilesModule \} from '\.\.\/files\/files\.module';/);
+  assert.match(moduleSource, /imports: \[AuthModule, FilesModule, PrismaModule\]/);
+});
+
+test('shared package exports feed API contracts', () => {
+  const sharedTypes = readProjectFile(sharedTypesPath);
+
+  assert.match(sharedTypes, /export type FeedFormat = 'YANDEX_REALTY' \| 'CIAN_XML';/);
+  assert.match(sharedTypes, /export type FeedSourceKind = 'URL' \| 'FILE';/);
+  assert.match(sharedTypes, /export type FeedUnitType = 'RESIDENTIAL' \| 'COMMERCIAL';/);
+  assert.match(sharedTypes, /export type FeedUnitStatus = 'AVAILABLE' \| 'BOOKED' \| 'RESERVED' \| 'SOLD' \| 'ARCHIVED' \| 'UNKNOWN';/);
+  assert.match(sharedTypes, /export type FeedSource = \{[\s\S]*sourceKind: FeedSourceKind;[\s\S]*url: string \| null;[\s\S]*xmlFileId: string \| null;[\s\S]*xmlFile: ObjectStoredFile \| null;[\s\S]*format: FeedFormat;[\s\S]*developerId: string;[\s\S]*objectId: string;[\s\S]*isActive: boolean;[\s\S]*lastPreviewAt: string \| null;[\s\S]*lastRunAt: string \| null;[\s\S]*lastSuccessAt: string \| null;[\s\S]*developer: ObjectDeveloper;[\s\S]*object: FeedSourceObject;[\s\S]*\};/);
+  assert.match(sharedTypes, /export type FeedImportRun = \{[\s\S]*sourceId: string;[\s\S]*mode: ImportMode;[\s\S]*status: ImportStatus;[\s\S]*summaryJson: JsonValue;[\s\S]*warningsJson: JsonValue;[\s\S]*errorsJson: JsonValue;[\s\S]*\};/);
+  assert.match(sharedTypes, /export type FeedUnit = \{[\s\S]*externalId: string;[\s\S]*type: FeedUnitType;[\s\S]*status: FeedUnitStatus;[\s\S]*price: string \| null;[\s\S]*area: string \| null;[\s\S]*pricePerMeter: string \| null;[\s\S]*residentialDetails: FeedResidentialUnitDetails \| null;[\s\S]*commercialDetails: FeedCommercialUnitDetails \| null;[\s\S]*media: FeedMedia\[\];[\s\S]*\};/);
+  assert.match(sharedTypes, /export type FeedMedia = \{[\s\S]*sourceUrl: string;[\s\S]*file: ObjectStoredFile \| null;[\s\S]*sortOrder: number;[\s\S]*\};/);
+});
+
+test('shared package exports feed response contracts', () => {
+  const sharedTypes = readProjectFile(sharedTypesPath);
+
+  assert.match(sharedTypes, /export type FeedSourcesResponse = \{[\s\S]*items: FeedSource\[\];[\s\S]*total: number;[\s\S]*page: number;[\s\S]*limit: number;[\s\S]*totalPages: number;[\s\S]*\};/);
+  assert.match(sharedTypes, /export type FeedSourceResponse = \{[\s\S]*source: FeedSource;[\s\S]*\};/);
+  assert.match(sharedTypes, /export type FeedImportRunsResponse = \{[\s\S]*items: FeedImportRun\[\];[\s\S]*total: number;[\s\S]*page: number;[\s\S]*limit: number;[\s\S]*totalPages: number;[\s\S]*\};/);
+  assert.match(sharedTypes, /export type FeedImportRunResponse = \{[\s\S]*run: FeedImportRun;[\s\S]*\};/);
+  assert.match(sharedTypes, /export type FeedUnitsResponse = \{[\s\S]*items: FeedUnit\[\];[\s\S]*total: number;[\s\S]*page: number;[\s\S]*limit: number;[\s\S]*totalPages: number;[\s\S]*\};/);
+});
+
+test('shared object contracts include feed aggregates', () => {
+  const sharedTypes = readProjectFile(sharedTypesPath);
+
+  assert.match(sharedTypes, /export type RealEstateObjectBase = \{[\s\S]*feedPriceFrom: string \| null;[\s\S]*feedPricePerMeterFrom: string \| null;[\s\S]*feedAreaRange: string \| null;[\s\S]*feedFloorRange: string \| null;[\s\S]*feedUnitsCount: number \| null;[\s\S]*feedUnitsCountText: string \| null;[\s\S]*feedCompletionYear: number \| null;[\s\S]*feedCompletionQuarter: number \| null;[\s\S]*feedUpdatedAt: string \| null;[\s\S]*\};/);
+  assert.match(sharedTypes, /export type MapObject = \{[\s\S]*feedPriceFrom: string \| null;[\s\S]*feedPricePerMeterFrom: string \| null;[\s\S]*feedAreaRange: string \| null;[\s\S]*feedFloorRange: string \| null;[\s\S]*feedUnitsCount: number \| null;[\s\S]*feedUnitsCountText: string \| null;[\s\S]*feedCompletionYear: number \| null;[\s\S]*feedCompletionQuarter: number \| null;[\s\S]*feedUpdatedAt: string \| null;[\s\S]*\};/);
 });
 
 test('CatalogLinksController delegates public and admin endpoints to the service', async () => {
@@ -321,6 +389,10 @@ test('ObjectsController delegates catalog and admin object endpoints to the serv
       calls.push(['getBySlug', slug]);
       return { object: { slug } };
     },
+    listFeedUnits: async (id, query) => {
+      calls.push(['listFeedUnits', id, query]);
+      return { items: [], total: 0, page: 1, limit: 20, totalPages: 1 };
+    },
     create: async (body, actor, request) => {
       calls.push(['create', body, actor, request]);
       return { object: { id: 'object-id', ...body } };
@@ -349,6 +421,7 @@ test('ObjectsController delegates catalog and admin object endpoints to the serv
 
   await controller.list({ status: 'published' });
   await controller.getBySlug('zhk-testovyy');
+  await controller.listFeedUnits('object-id', { status: 'available' });
   await controller.create({ title: 'ЖК Тестовый' }, user, request);
   await controller.publish('object-id', user, request);
   await controller.updateStatus('object-id', { status: 'ARCHIVED' }, user, request);
@@ -357,6 +430,7 @@ test('ObjectsController delegates catalog and admin object endpoints to the serv
   assert.deepEqual(calls.map((call) => call[0]), [
     'list',
     'getBySlug',
+    'listFeedUnits',
     'create',
     'publish',
     'updateStatus',
@@ -364,10 +438,11 @@ test('ObjectsController delegates catalog and admin object endpoints to the serv
   ]);
   assert.deepEqual(calls[0][1], { status: 'published' });
   assert.equal(calls[1][1], 'zhk-testovyy');
-  assert.equal(calls[2][2], user);
-  assert.equal(calls[3][1], 'object-id');
-  assert.deepEqual(calls[4], ['updateStatus', 'object-id', { status: 'ARCHIVED' }, user, request]);
-  assert.deepEqual(calls[5], ['updateGalleryLayout', 'object-id', galleryLayoutBody, user, request]);
+  assert.deepEqual(calls[2], ['listFeedUnits', 'object-id', { status: 'available' }]);
+  assert.equal(calls[3][2], user);
+  assert.equal(calls[4][1], 'object-id');
+  assert.deepEqual(calls[5], ['updateStatus', 'object-id', { status: 'ARCHIVED' }, user, request]);
+  assert.deepEqual(calls[6], ['updateGalleryLayout', 'object-id', galleryLayoutBody, user, request]);
 });
 
 test('UsersController delegates user management endpoints to the service', async () => {

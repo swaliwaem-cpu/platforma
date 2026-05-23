@@ -10,6 +10,12 @@ export type ObjectImageSection = 'ARCHITECTURE' | 'INTERIORS' | 'FILLING';
 export type ImportMode = 'PREVIEW' | 'RUN';
 export type ImportStatus = 'PENDING' | 'SUCCESS' | 'PARTIAL' | 'FAILED';
 export type CatalogQuickLinkType = 'DEVELOPER' | 'KRT' | 'SALES_START';
+export type FeedFormat = 'YANDEX_REALTY' | 'CIAN_XML';
+export type FeedSourceKind = 'URL' | 'FILE';
+export type FeedUnitType = 'RESIDENTIAL' | 'COMMERCIAL';
+export type FeedUnitStatus = 'AVAILABLE' | 'BOOKED' | 'RESERVED' | 'SOLD' | 'ARCHIVED' | 'UNKNOWN';
+
+export type JsonValue = { [key: string]: JsonValue } | JsonValue[] | string | number | boolean | null;
 
 export type ProfilePhotoFile = {
   id: string;
@@ -207,6 +213,15 @@ export type RealEstateObjectBase = {
   apartmentsCountText: string | null;
   priceFrom: string | null;
   pricePerMeterFrom: string | null;
+  feedPriceFrom: string | null;
+  feedPricePerMeterFrom: string | null;
+  feedAreaRange: string | null;
+  feedFloorRange: string | null;
+  feedUnitsCount: number | null;
+  feedUnitsCountText: string | null;
+  feedCompletionYear: number | null;
+  feedCompletionQuarter: number | null;
+  feedUpdatedAt: string | null;
   completionYear: number | null;
   completionQuarter: number | null;
   address: string | null;
@@ -243,6 +258,137 @@ export type ObjectsResponse = {
 
 export type ObjectResponse = {
   object: RealEstateObjectDetail;
+};
+
+export type FeedSourceObject = {
+  id: string;
+  title: string;
+  slug: string;
+  status: ObjectStatus;
+};
+
+export type FeedSource = {
+  id: string;
+  sourceKind: FeedSourceKind;
+  url: string | null;
+  xmlFileId: string | null;
+  xmlFile: ObjectStoredFile | null;
+  format: FeedFormat;
+  developerId: string;
+  objectId: string;
+  isActive: boolean;
+  lastPreviewAt: string | null;
+  lastRunAt: string | null;
+  lastSuccessAt: string | null;
+  developer: ObjectDeveloper;
+  object: FeedSourceObject;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type FeedImportRun = {
+  id: string;
+  sourceId: string;
+  mode: ImportMode;
+  status: ImportStatus;
+  startedAt: string;
+  finishedAt: string | null;
+  summaryJson: JsonValue;
+  warningsJson: JsonValue;
+  errorsJson: JsonValue;
+  createdAt: string;
+};
+
+export type FeedResidentialUnitDetails = {
+  unitId: string;
+  apartmentNumber: string | null;
+  layoutType: string | null;
+  livingArea: string | null;
+  kitchenArea: string | null;
+  balconyCount: number | null;
+  detailsJson: JsonValue;
+};
+
+export type FeedCommercialUnitDetails = {
+  unitId: string;
+  commercialType: string | null;
+  entrance: string | null;
+  ceilingHeight: string | null;
+  powerKw: string | null;
+  separateEntrance: boolean | null;
+  detailsJson: JsonValue;
+};
+
+export type FeedMedia = {
+  id: string;
+  sourceUrl: string;
+  file: ObjectStoredFile | null;
+  contentType: string | null;
+  checksum: string | null;
+  sortOrder: number;
+  label: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type FeedUnit = {
+  id: string;
+  sourceId: string;
+  objectId: string;
+  externalId: string;
+  type: FeedUnitType;
+  status: FeedUnitStatus;
+  title: string | null;
+  address: string | null;
+  building: string | null;
+  section: string | null;
+  floor: number | null;
+  rooms: number | null;
+  price: string | null;
+  currency: string | null;
+  area: string | null;
+  pricePerMeter: string | null;
+  completionYear: number | null;
+  completionQuarter: number | null;
+  rawPayload: JsonValue;
+  archivedAt: string | null;
+  residentialDetails: FeedResidentialUnitDetails | null;
+  commercialDetails: FeedCommercialUnitDetails | null;
+  media: FeedMedia[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type FeedSourcesResponse = {
+  items: FeedSource[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};
+
+export type FeedSourceResponse = {
+  source: FeedSource;
+};
+
+export type FeedImportRunsResponse = {
+  items: FeedImportRun[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};
+
+export type FeedImportRunResponse = {
+  run: FeedImportRun;
+};
+
+export type FeedUnitsResponse = {
+  items: FeedUnit[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
 };
 
 export type PublicCatalogQuickLink = {
@@ -310,6 +456,16 @@ export type MapObject = {
   longitude: number;
   priceFrom: string | null;
   pricePerMeterFrom: string | null;
+  apartmentAreaRange: string | null;
+  feedPriceFrom: string | null;
+  feedPricePerMeterFrom: string | null;
+  feedAreaRange: string | null;
+  feedFloorRange: string | null;
+  feedUnitsCount: number | null;
+  feedUnitsCountText: string | null;
+  feedCompletionYear: number | null;
+  feedCompletionQuarter: number | null;
+  feedUpdatedAt: string | null;
   completionYear: number | null;
   completionQuarter: number | null;
   developer: ObjectDeveloper | null;

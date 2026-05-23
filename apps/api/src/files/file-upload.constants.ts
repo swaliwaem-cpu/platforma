@@ -1,5 +1,11 @@
 export const IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
 export const PDF_MIME_TYPES = ['application/pdf'] as const;
+export const FEED_XML_MIME_TYPES = [
+  'application/xml',
+  'text/xml',
+  'application/octet-stream',
+  'text/plain',
+] as const;
 export const ALLOWED_FILE_MIME_TYPES = [...IMAGE_MIME_TYPES, ...PDF_MIME_TYPES] as const;
 
 export const IMAGE_MAX_SIZE_BYTES = parseSizeLimit(
@@ -9,6 +15,10 @@ export const IMAGE_MAX_SIZE_BYTES = parseSizeLimit(
 export const PDF_MAX_SIZE_BYTES = parseSizeLimit(
   process.env.FILE_PDF_MAX_SIZE_BYTES,
   50 * 1024 * 1024,
+);
+export const FEED_XML_MAX_SIZE_BYTES = parseSizeLimit(
+  process.env.FEED_XML_MAX_SIZE_BYTES,
+  100 * 1024 * 1024,
 );
 export const GENERIC_MAX_SIZE_BYTES = Math.max(IMAGE_MAX_SIZE_BYTES, PDF_MAX_SIZE_BYTES);
 

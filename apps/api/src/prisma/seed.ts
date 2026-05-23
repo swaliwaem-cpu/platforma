@@ -20,6 +20,9 @@ const permissions = [
   ['files:delete', 'Delete files'],
   ['import:preview', 'Run WordPress import preview'],
   ['import:run', 'Run WordPress import'],
+  ['feeds:read', 'Read feed sources and units'],
+  ['feeds:manage', 'Manage feed sources'],
+  ['feeds:run', 'Run feed imports'],
   ['audit-log:read', 'Read audit log'],
 ] as const;
 

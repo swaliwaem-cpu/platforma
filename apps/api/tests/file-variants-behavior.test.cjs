@@ -151,6 +151,7 @@ test('FilesService.delete removes image variants before deleting original object
           profilePhotoUsers: 0,
           objectImages: 0,
           objectFiles: 0,
+          feedXmlSources: 0,
         },
       }),
       delete: async (args) => {

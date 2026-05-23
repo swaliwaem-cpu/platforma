@@ -21,124 +21,124 @@
 
 ### Этап 2. Prisma schema и миграция
 
-- [ ] Добавить enum для формата фида: `YANDEX_REALTY`, `CIAN_XML`.
-- [ ] Добавить enum для типа лота: `RESIDENTIAL`, `COMMERCIAL`.
-- [ ] Добавить enum для статуса лота: `AVAILABLE`, `BOOKED`, `RESERVED`, `SOLD`, `ARCHIVED`, `UNKNOWN`.
-- [ ] Добавить `FeedSource` с URL, форматом, `developerId`, `objectId`, активностью и датами запусков.
-- [ ] Добавить `FeedImportRun` для отчётов preview/run.
-- [ ] Добавить общую таблицу `FeedUnit`.
-- [ ] Добавить `FeedResidentialUnitDetails`.
-- [ ] Добавить `FeedCommercialUnitDetails`.
-- [ ] Добавить `FeedMediaAsset` с unique `sourceUrl`.
-- [ ] Добавить `FeedUnitMedia`.
-- [ ] Добавить feed-агрегаты в `RealEstateObject`: цена от, цена за метр, диапазоны, количество, срок, `feedUpdatedAt`.
-- [ ] Добавить индексы для `sourceId + externalId`, `objectId + status`, цены, площади и media URL.
-- [ ] Создать миграцию.
-- [ ] Запустить `pnpm db:generate`.
-- [ ] Добавить schema/tests на новые таблицы и индексы.
+- [x] Добавить enum для формата фида: `YANDEX_REALTY`, `CIAN_XML`.
+- [x] Добавить enum для типа лота: `RESIDENTIAL`, `COMMERCIAL`.
+- [x] Добавить enum для статуса лота: `AVAILABLE`, `BOOKED`, `RESERVED`, `SOLD`, `ARCHIVED`, `UNKNOWN`.
+- [x] Добавить `FeedSource` с URL, форматом, `developerId`, `objectId`, активностью и датами запусков.
+- [x] Добавить `FeedImportRun` для отчётов preview/run.
+- [x] Добавить общую таблицу `FeedUnit`.
+- [x] Добавить `FeedResidentialUnitDetails`.
+- [x] Добавить `FeedCommercialUnitDetails`.
+- [x] Добавить `FeedMediaAsset` с unique `sourceUrl`.
+- [x] Добавить `FeedUnitMedia`.
+- [x] Добавить feed-агрегаты в `RealEstateObject`: цена от, цена за метр, диапазоны, количество, срок, `feedUpdatedAt`.
+- [x] Добавить индексы для `sourceId + externalId`, `objectId + status`, цены, площади и media URL.
+- [x] Создать миграцию.
+- [x] Запустить `pnpm db:generate`.
+- [x] Добавить schema/tests на новые таблицы и индексы.
 
 ### Этап 3. Shared-типы
 
-- [ ] Добавить feed enums/types в `packages/shared`.
-- [ ] Добавить типы `FeedSource`, `FeedImportRun`, `FeedUnit`, `FeedMedia`.
-- [ ] Добавить response types для списка источников, отчётов и лотов.
-- [ ] Расширить типы объекта feed-агрегатами.
-- [ ] Обновить API contract tests.
+- [x] Добавить feed enums/types в `packages/shared`.
+- [x] Добавить типы `FeedSource`, `FeedImportRun`, `FeedUnit`, `FeedMedia`.
+- [x] Добавить response types для списка источников, отчётов и лотов.
+- [x] Расширить типы объекта feed-агрегатами.
+- [x] Обновить API contract tests.
 
 ### Этап 4. Парсеры XML
 
-- [ ] В `tools/feed-import` добавить общий тип `NormalizedFeedUnit`.
-- [ ] Добавить общий интерфейс `FeedParser`.
-- [ ] Реализовать загрузку XML по публичному URL.
-- [ ] Реализовать `YandexRealtyFeedParser`.
-- [ ] Реализовать `CianXmlFeedParser`.
-- [ ] Нормализовать статусы: `free -> AVAILABLE`, `booked -> BOOKED`, неизвестное -> `UNKNOWN`.
-- [ ] Нормализовать цену, валюту, площадь, этаж, комнаты, срок сдачи, адрес, корпус/секцию.
-- [ ] Собирать все media URL из фида.
-- [ ] Добавить parser tests на оба fixture.
-- [ ] Добавить tests на неизвестные/битые поля и warnings.
+- [x] В `tools/feed-import` добавить общий тип `NormalizedFeedUnit`.
+- [x] Добавить общий интерфейс `FeedParser`.
+- [x] Реализовать загрузку XML по публичному URL.
+- [x] Реализовать `YandexRealtyFeedParser`.
+- [x] Реализовать `CianXmlFeedParser`.
+- [x] Нормализовать статусы: `free -> AVAILABLE`, `booked -> BOOKED`, неизвестное -> `UNKNOWN`.
+- [x] Нормализовать цену, валюту, площадь, этаж, комнаты, срок сдачи, адрес, корпус/секцию.
+- [x] Собирать все media URL из фида.
+- [x] Добавить parser tests на оба fixture.
+- [x] Добавить tests на неизвестные/битые поля и warnings.
 
 ### Этап 5. Import engine
 
-- [ ] Добавить CLI: `preview --source <id>` и `run --source <id>`.
-- [ ] Загружать `FeedSource` из основной БД.
-- [ ] В preview считать created/updated/archived/media/warnings/errors без записи лотов.
-- [ ] В run делать upsert `FeedUnit` по `sourceId + externalId`.
-- [ ] В run обновлять residential/commercial detail-таблицы.
-- [ ] Архивировать лоты источника, которых нет в новом фиде.
-- [ ] Дедуплицировать media по `sourceUrl`.
-- [ ] Скачивать все media в MinIO.
-- [ ] Генерировать image variants так же, как в текущем файловом пайплайне.
-- [ ] Ошибки отдельных media писать в warnings, не валить весь импорт.
-- [ ] Создавать `FeedImportRun` для preview и run.
-- [ ] Обновлять `FeedSource.lastPreviewAt`, `lastRunAt`, `lastSuccessAt`.
-- [ ] Добавить tests на preview, run, архивирование, media dedupe и partial status.
+- [x] Добавить CLI: `preview --source <id>` и `run --source <id>`.
+- [x] Загружать `FeedSource` из основной БД.
+- [x] В preview считать created/updated/archived/media/warnings/errors без записи лотов.
+- [x] В run делать upsert `FeedUnit` по `sourceId + externalId`.
+- [x] В run обновлять residential/commercial detail-таблицы.
+- [x] Архивировать лоты источника, которых нет в новом фиде.
+- [x] Дедуплицировать media по `sourceUrl`.
+- [x] Скачивать все media в MinIO.
+- [x] Генерировать image variants так же, как в текущем файловом пайплайне.
+- [x] Ошибки отдельных media писать в warnings, не валить весь импорт.
+- [x] Создавать `FeedImportRun` для preview и run.
+- [x] Обновлять `FeedSource.lastPreviewAt`, `lastRunAt`, `lastSuccessAt`.
+- [x] Добавить tests на preview, run, архивирование, media dedupe и partial status.
 
 ### Этап 6. Feed-агрегаты ЖК
 
-- [ ] Реализовать пересчёт агрегатов после успешного run.
-- [ ] Считать агрегаты только по `AVAILABLE`, `BOOKED`, `RESERVED`.
-- [ ] Считать `feedPriceFrom`.
-- [ ] Считать `feedPricePerMeterFrom`.
-- [ ] Считать `feedAreaRange`.
-- [ ] Считать `feedFloorRange`.
-- [ ] Считать `feedUnitsCountText`.
-- [ ] Считать `feedCompletionYear` и `feedCompletionQuarter`.
-- [ ] При отсутствии активных лотов очищать feed-агрегаты.
-- [ ] Добавить tests на агрегаты.
+- [x] Реализовать пересчёт агрегатов после успешного run.
+- [x] Считать агрегаты только по `AVAILABLE`, `BOOKED`, `RESERVED`.
+- [x] Считать `feedPriceFrom`.
+- [x] Считать `feedPricePerMeterFrom`.
+- [x] Считать `feedAreaRange`.
+- [x] Считать `feedFloorRange`.
+- [x] Считать `feedUnitsCountText`.
+- [x] Считать `feedCompletionYear` и `feedCompletionQuarter`.
+- [x] При отсутствии активных лотов очищать feed-агрегаты.
+- [x] Добавить tests на агрегаты.
 
 ### Этап 7. Backend feeds module
 
-- [ ] Добавить `FeedsModule`.
-- [ ] Добавить permissions: `feeds:read`, `feeds:manage`, `feeds:run`.
-- [ ] Обновить seed ролей.
-- [ ] Добавить `GET /feeds/sources`.
-- [ ] Добавить `POST /feeds/sources`.
-- [ ] Добавить `PATCH /feeds/sources/:id`.
-- [ ] Добавить `POST /feeds/sources/:id/preview`.
-- [ ] Добавить `POST /feeds/sources/:id/run`.
-- [ ] Добавить `GET /feeds/sources/:id/runs`.
-- [ ] Добавить `GET /feeds/runs/:id`.
-- [ ] Добавить `GET /feeds/units`.
-- [ ] Добавить защиту от параллельного запуска одного source.
-- [ ] Добавить API tests на permissions, CRUD, run endpoints и отчёты.
+- [x] Добавить `FeedsModule`.
+- [x] Добавить permissions: `feeds:read`, `feeds:manage`, `feeds:run`.
+- [x] Обновить seed ролей.
+- [x] Добавить `GET /feeds/sources`.
+- [x] Добавить `POST /feeds/sources`.
+- [x] Добавить `PATCH /feeds/sources/:id`.
+- [x] Добавить `POST /feeds/sources/:id/preview`.
+- [x] Добавить `POST /feeds/sources/:id/run`.
+- [x] Добавить `GET /feeds/sources/:id/runs`.
+- [x] Добавить `GET /feeds/runs/:id`.
+- [x] Добавить `GET /feeds/units`.
+- [x] Добавить защиту от параллельного запуска одного source.
+- [x] Добавить API tests на permissions, CRUD, run endpoints и отчёты.
 
 ### Этап 8. Объекты, каталог и карта
 
-- [ ] Расширить serialization объекта feed-агрегатами.
-- [ ] В каталоге для отображения цены/площади использовать feed-значение, если оно есть.
-- [ ] В фильтрах цены использовать feed-значение как приоритетное над ручным.
-- [ ] В сортировке цены использовать feed-значение как приоритетное над ручным.
-- [ ] Не менять ручные поля объекта в админской форме.
-- [ ] Добавить `GET /objects/:id/feed-units`.
-- [ ] Проверить, что карта не ломается от новых полей.
-- [ ] Добавить tests на catalog fallback/filter/sort.
+- [x] Расширить serialization объекта feed-агрегатами.
+- [x] В каталоге для отображения цены/площади использовать feed-значение, если оно есть.
+- [x] В фильтрах цены использовать feed-значение как приоритетное над ручным.
+- [x] В сортировке цены использовать feed-значение как приоритетное над ручным.
+- [x] Не менять ручные поля объекта в админской форме.
+- [x] Добавить `GET /objects/:id/feed-units`.
+- [x] Проверить, что карта не ломается от новых полей.
+- [x] Добавить tests на catalog fallback/filter/sort.
 
 ### Этап 9. Админка фидов
 
-- [ ] Добавить пункт навигации `Фиды`.
-- [ ] Добавить страницу списка источников.
-- [ ] Добавить форму создания источника.
-- [ ] Добавить форму редактирования источника.
-- [ ] В форме выбирать формат, URL, застройщика и связанный ЖК.
-- [ ] Добавить кнопки `Preview` и `Run`.
-- [ ] Добавить список отчётов по source.
-- [ ] Добавить экран деталей отчёта с summary, warnings, errors.
-- [ ] Добавить таблицу лотов источника.
-- [ ] Добавить фильтры лотов по статусу и типу.
-- [ ] Добавить web tests на навигацию, форму, запуск и отчёты.
+- [x] Добавить пункт навигации `Фиды`.
+- [x] Добавить страницу списка источников.
+- [x] Добавить форму создания источника.
+- [x] Добавить форму редактирования источника.
+- [x] В форме выбирать формат, URL, застройщика и связанный ЖК.
+- [x] Добавить кнопки `Preview` и `Run`.
+- [x] Добавить список отчётов по source.
+- [x] Добавить экран деталей отчёта с summary, warnings, errors.
+- [x] Добавить таблицу лотов источника.
+- [x] Добавить фильтры лотов по статусу и типу.
+- [x] Добавить web tests на навигацию, форму, запуск и отчёты.
 
 ### Этап 10. Лоты на странице ЖК
 
-- [ ] Добавить блок лотов в `/objects/:slug`.
-- [ ] По умолчанию показывать `AVAILABLE`, `BOOKED`, `RESERVED`.
-- [ ] Не показывать `ARCHIVED` брокерам.
-- [ ] Добавить фильтр по статусу.
-- [ ] Добавить фильтр по типу `RESIDENTIAL/COMMERCIAL`.
-- [ ] Добавить колонки: статус, цена, площадь, комнаты/тип, этаж, корпус/секция, медиа.
-- [ ] Использовать `SecureImage` для импортированных media.
-- [ ] Добавить empty/loading/error states.
-- [ ] Добавить web tests на блок лотов и фильтры.
+- [x] Добавить блок лотов в `/objects/:slug`.
+- [x] По умолчанию показывать `AVAILABLE`, `BOOKED`, `RESERVED`.
+- [x] Не показывать `ARCHIVED` брокерам.
+- [x] Добавить фильтр по статусу.
+- [x] Добавить фильтр по типу `RESIDENTIAL/COMMERCIAL`.
+- [x] Добавить колонки: статус, цена, площадь, комнаты/тип, этаж, корпус/секция, медиа.
+- [x] Использовать `SecureImage` для импортированных media.
+- [x] Добавить empty/loading/error states.
+- [x] Добавить web tests на блок лотов и фильтры.
 
 ### Этап 11. Проверки
 

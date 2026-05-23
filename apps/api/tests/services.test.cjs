@@ -3,7 +3,7 @@ require('reflect-metadata');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { BadRequestException, ConflictException } = require('@nestjs/common');
-const { LocationType, ObjectFileType, ObjectStatus, UserStatus } = require('@prisma/client');
+const { FeedUnitStatus, FeedUnitType, LocationType, ObjectFileType, ObjectStatus, UserStatus } = require('@prisma/client');
 
 const { DirectoriesService } = require('../dist/directories/directories.service.js');
 const { CatalogLinksService } = require('../dist/catalog-links/catalog-links.service.js');
@@ -80,6 +80,15 @@ function objectRecord(overrides = {}) {
     apartmentsCountText: null,
     priceFrom: null,
     pricePerMeterFrom: null,
+    feedPriceFrom: null,
+    feedPricePerMeterFrom: null,
+    feedAreaRange: null,
+    feedFloorRange: null,
+    feedUnitsCount: null,
+    feedUnitsCountText: null,
+    feedCompletionYear: null,
+    feedCompletionQuarter: null,
+    feedUpdatedAt: null,
     completionYear: null,
     completionQuarter: null,
     address: null,
@@ -480,13 +489,29 @@ test('ObjectsService.list builds catalog filters for status, price, presentation
   assert.equal(result.limit, 5);
   assert.equal(calls.findMany.skip, 5);
   assert.equal(calls.findMany.take, 5);
-  assert.deepEqual(calls.findMany.orderBy, [{ priceFrom: { sort: 'asc', nulls: 'last' } }, { createdAt: 'desc' }]);
+  assert.deepEqual(calls.findMany.orderBy, [
+    { feedPriceFrom: { sort: 'asc', nulls: 'last' } },
+    { priceFrom: { sort: 'asc', nulls: 'last' } },
+    { createdAt: 'desc' },
+  ]);
   assert.deepEqual(calls.count.where, calls.findMany.where);
 
   const filters = calls.findMany.where.AND;
   assert.equal(filters.some((filter) => filter.status === ObjectStatus.PUBLISHED), true);
   assert.equal(
-    filters.some((filter) => filter.priceFrom?.gte === '1000000' && filter.priceFrom?.lte === '2000000'),
+    filters.some(
+      (filter) =>
+        filter.OR?.some(
+          (item) =>
+            item.feedPriceFrom?.gte === '1000000' &&
+            item.feedPriceFrom?.lte === '2000000' &&
+            item.feedPriceFrom?.not === null,
+        ) &&
+        filter.OR?.some(
+          (item) =>
+            item.feedPriceFrom === null && item.priceFrom?.gte === '1000000' && item.priceFrom?.lte === '2000000',
+        ),
+    ),
     true,
   );
   assert.equal(filters.some((filter) => filter.files?.none?.type === ObjectFileType.PRESENTATION), true);
@@ -498,6 +523,84 @@ test('ObjectsService.list builds catalog filters for status, price, presentation
   assert.match(calls.searchQuery.strings.join('?'), /replace\(lower\(coalesce\(o\.address, ''\)\), '\.', ''\)/);
   assert.match(calls.searchQuery.strings.join('?'), /object_locations ol/);
   assert.match(calls.searchQuery.strings.join('?'), /l\.type::text = 'district'/);
+});
+
+test('ObjectsService.list serializes feed aggregates and uses feed price for catalog fallback filters and sort', async () => {
+  const calls = {};
+  const feedUpdatedAt = new Date('2026-05-02T12:00:00.000Z');
+  const prisma = {
+    realEstateObject: {
+      findMany: async (args) => {
+        calls.findMany = args;
+
+        return [
+          objectRecord({
+            priceFrom: decimal('15000000'),
+            pricePerMeterFrom: decimal('300000'),
+            feedPriceFrom: decimal('12000000'),
+            feedPricePerMeterFrom: decimal('250000'),
+            feedAreaRange: '35-80 м²',
+            feedFloorRange: '2-12',
+            feedUnitsCount: 7,
+            feedUnitsCountText: '7 лотов',
+            feedCompletionYear: 2028,
+            feedCompletionQuarter: 3,
+            feedUpdatedAt,
+          }),
+        ];
+      },
+      count: async (args) => {
+        calls.count = args;
+        return 1;
+      },
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  const result = await service.list({
+    priceFromMin: '10 000 000',
+    priceFromMax: '13 000 000',
+    sortBy: 'priceFrom',
+    sortDirection: 'asc',
+  });
+
+  assert.equal(result.items[0].feedPriceFrom, '12000000');
+  assert.equal(result.items[0].feedPricePerMeterFrom, '250000');
+  assert.equal(result.items[0].feedAreaRange, '35-80 м²');
+  assert.equal(result.items[0].feedFloorRange, '2-12');
+  assert.equal(result.items[0].feedUnitsCount, 7);
+  assert.equal(result.items[0].feedUnitsCountText, '7 лотов');
+  assert.equal(result.items[0].feedCompletionYear, 2028);
+  assert.equal(result.items[0].feedCompletionQuarter, 3);
+  assert.equal(result.items[0].feedUpdatedAt, feedUpdatedAt.toISOString());
+  assert.deepEqual(calls.findMany.orderBy, [
+    { feedPriceFrom: { sort: 'asc', nulls: 'last' } },
+    { priceFrom: { sort: 'asc', nulls: 'last' } },
+    { createdAt: 'desc' },
+  ]);
+  assert.deepEqual(
+    calls.findMany.where.AND.find((filter) => Array.isArray(filter.OR) && filter.OR.some((item) => item.feedPriceFrom)),
+    {
+      OR: [
+        {
+          feedPriceFrom: {
+            not: null,
+            gte: '10000000',
+            lte: '13000000',
+          },
+        },
+        {
+          feedPriceFrom: null,
+          priceFrom: {
+            gte: '10000000',
+            lte: '13000000',
+          },
+        },
+      ],
+    },
+  );
+  assert.deepEqual(calls.count.where, calls.findMany.where);
 });
 
 test('ObjectsService.list ignores dots in object catalog search', async () => {
@@ -557,6 +660,7 @@ test('ObjectsService.list sorts catalog price per meter and completion date with
   });
 
   assert.deepEqual(calls[0].orderBy, [
+    { feedPricePerMeterFrom: { sort: 'desc', nulls: 'last' } },
     { pricePerMeterFrom: { sort: 'desc', nulls: 'last' } },
     { createdAt: 'desc' },
   ]);
@@ -699,6 +803,292 @@ test('MapService.listObjects returns linked locations with type and supports are
     ],
   );
   assert.deepEqual(calls.count.where, calls.findMany.where);
+});
+
+test('MapService.listObjects serializes feed aggregates and filters price by feed fallback', async () => {
+  const calls = {};
+  const feedUpdatedAt = new Date('2026-05-02T12:00:00.000Z');
+  const mapObject = objectRecord({
+    latitude: decimal('55.751244'),
+    longitude: decimal('37.618423'),
+    priceFrom: decimal('15000000'),
+    pricePerMeterFrom: decimal('300000'),
+    apartmentAreaRange: '40-90 м²',
+    feedPriceFrom: decimal('12000000'),
+    feedPricePerMeterFrom: decimal('250000'),
+    feedAreaRange: '35-80 м²',
+    feedFloorRange: '2-12',
+    feedUnitsCount: 7,
+    feedUnitsCountText: '7 лотов',
+    feedCompletionYear: 2028,
+    feedCompletionQuarter: 3,
+    feedUpdatedAt,
+  });
+  const prisma = {
+    realEstateObject: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [mapObject];
+      },
+      count: async (args) => {
+        calls.count = args;
+        return 1;
+      },
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new MapService(prisma);
+
+  const result = await service.listObjects({
+    priceFromMin: '10 000 000',
+    priceFromMax: '13 000 000',
+  });
+
+  assert.equal(result.items[0].feedPriceFrom, '12000000');
+  assert.equal(result.items[0].feedPricePerMeterFrom, '250000');
+  assert.equal(result.items[0].apartmentAreaRange, '40-90 м²');
+  assert.equal(result.items[0].feedAreaRange, '35-80 м²');
+  assert.equal(result.items[0].feedFloorRange, '2-12');
+  assert.equal(result.items[0].feedUnitsCount, 7);
+  assert.equal(result.items[0].feedUnitsCountText, '7 лотов');
+  assert.equal(result.items[0].feedCompletionYear, 2028);
+  assert.equal(result.items[0].feedCompletionQuarter, 3);
+  assert.equal(result.items[0].feedUpdatedAt, feedUpdatedAt.toISOString());
+  assert.deepEqual(
+    calls.findMany.where.AND.find((filter) => Array.isArray(filter.OR) && filter.OR.some((item) => item.feedPriceFrom)),
+    {
+      OR: [
+        {
+          feedPriceFrom: {
+            not: null,
+            gte: '10000000',
+            lte: '13000000',
+          },
+        },
+        {
+          feedPriceFrom: null,
+          priceFrom: {
+            gte: '10000000',
+            lte: '13000000',
+          },
+        },
+      ],
+    },
+  );
+  assert.deepEqual(calls.count.where, calls.findMany.where);
+});
+
+test('ObjectsService.listFeedUnits returns feed units for one object with filters and media', async () => {
+  const calls = {};
+  const objectId = '11111111-1111-4111-8111-111111111111';
+  const unitId = '55555555-5555-4555-8555-555555555555';
+  const now = new Date('2026-05-23T10:00:00.000Z');
+  const prisma = {
+    realEstateObject: {
+      count: async (args) => {
+        calls.objectCount = args;
+        return args.where.id === objectId && args.where.deletedAt === null ? 1 : 0;
+      },
+    },
+    feedUnit: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [
+          {
+            id: unitId,
+            sourceId: '22222222-2222-4222-8222-222222222222',
+            objectId,
+            externalId: 'flat-1',
+            type: FeedUnitType.RESIDENTIAL,
+            status: FeedUnitStatus.AVAILABLE,
+            title: 'Квартира 1',
+            address: 'Москва',
+            building: 'Корпус 1',
+            section: '1',
+            floor: 7,
+            rooms: 2,
+            price: decimal('10000000'),
+            currency: 'RUR',
+            area: decimal('50'),
+            pricePerMeter: decimal('200000'),
+            completionYear: 2028,
+            completionQuarter: 4,
+            rawPayload: { externalId: 'flat-1' },
+            archivedAt: null,
+            residentialDetails: {
+              unitId,
+              apartmentNumber: '11',
+              layoutType: '2k',
+              livingArea: decimal('30'),
+              kitchenArea: decimal('10'),
+              balconyCount: 1,
+              detailsJson: { renovation: 'whitebox' },
+            },
+            commercialDetails: null,
+            media: [
+              {
+                unitId,
+                mediaAssetId: '77777777-7777-4777-8777-777777777777',
+                sortOrder: 0,
+                label: 'plan',
+                mediaAsset: {
+                  id: '77777777-7777-4777-8777-777777777777',
+                  sourceUrl: 'https://cdn.example.test/image.jpg',
+                  fileId: '66666666-6666-4666-8666-666666666666',
+                  contentType: 'image/jpeg',
+                  checksum: 'checksum',
+                  file: fileRecord(),
+                  createdAt: now,
+                  updatedAt: now,
+                },
+              },
+            ],
+            createdAt: now,
+            updatedAt: now,
+          },
+        ];
+      },
+      count: async (args) => {
+        calls.count = args;
+        return 1;
+      },
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  const result = await service.listFeedUnits(objectId, {
+    page: '2',
+    limit: '5',
+    status: 'available',
+    type: 'residential',
+    search: 'flat',
+  });
+
+  assert.deepEqual(calls.objectCount, {
+    where: {
+      id: objectId,
+      deletedAt: null,
+    },
+  });
+  assert.equal(calls.findMany.skip, 5);
+  assert.equal(calls.findMany.take, 5);
+  assert.equal(calls.findMany.include.media.include.mediaAsset.include.file, true);
+  assert.deepEqual(calls.findMany.where.AND[0], { objectId });
+  assert.equal(calls.findMany.where.AND.some((filter) => filter.status === FeedUnitStatus.AVAILABLE), true);
+  assert.equal(calls.findMany.where.AND.some((filter) => filter.type === FeedUnitType.RESIDENTIAL), true);
+  assert.equal(
+    calls.findMany.where.AND.some((filter) => filter.OR?.some((item) => item.externalId?.contains === 'flat')),
+    true,
+  );
+  assert.equal(result.items[0].price, '10000000');
+  assert.equal(result.items[0].area, '50');
+  assert.equal(result.items[0].residentialDetails.livingArea, '30');
+  assert.equal(result.items[0].media[0].file.id, '55555555-5555-4555-8555-555555555555');
+  assert.equal(result.total, 1);
+  assert.equal(result.page, 2);
+  assert.equal(result.limit, 5);
+  assert.equal(result.totalPages, 1);
+});
+
+test('ObjectsService.listFeedUnits accepts comma separated feed unit statuses', async () => {
+  const calls = {};
+  const objectId = '11111111-1111-4111-8111-111111111111';
+  const prisma = {
+    realEstateObject: {
+      count: async (args) => {
+        calls.objectCount = args;
+        return args.where.id === objectId && args.where.deletedAt === null ? 1 : 0;
+      },
+    },
+    feedUnit: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [];
+      },
+      count: async (args) => {
+        calls.count = args;
+        return 0;
+      },
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await service.listFeedUnits(objectId, {
+    status: 'available,booked,reserved',
+  });
+
+  assert.deepEqual(calls.objectCount, {
+    where: {
+      id: objectId,
+      deletedAt: null,
+    },
+  });
+  assert.equal(
+    calls.findMany.where.AND.some((filter) =>
+      Array.isArray(filter.status?.in) &&
+      filter.status.in.includes(FeedUnitStatus.AVAILABLE) &&
+      filter.status.in.includes(FeedUnitStatus.BOOKED) &&
+      filter.status.in.includes(FeedUnitStatus.RESERVED)
+    ),
+    true,
+  );
+  assert.deepEqual(calls.count.where, calls.findMany.where);
+});
+
+test('ObjectsService.listFeedUnits applies sortable order for feed unit columns', async () => {
+  const calls = [];
+  const objectId = '11111111-1111-4111-8111-111111111111';
+  const prisma = {
+    realEstateObject: {
+      count: async (args) => {
+        calls.push({ model: 'object', args });
+        return 1;
+      },
+    },
+    feedUnit: {
+      findMany: async (args) => {
+        calls.push({ model: 'feedUnit.findMany', args });
+        return [];
+      },
+      count: async (args) => {
+        calls.push({ model: 'feedUnit.count', args });
+        return 0;
+      },
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await service.listFeedUnits(objectId, {
+    sortBy: 'price',
+    sortDirection: 'desc',
+  });
+  await service.listFeedUnits(objectId, {
+    sortBy: 'area',
+    sortDirection: 'asc',
+  });
+  await service.listFeedUnits(objectId, {
+    sortBy: 'building',
+    sortDirection: 'desc',
+  });
+
+  const orderByCalls = calls.filter((call) => call.model === 'feedUnit.findMany').map((call) => call.args.orderBy);
+
+  assert.deepEqual(orderByCalls[0], [
+    { price: { sort: 'desc', nulls: 'last' } },
+    { createdAt: 'desc' },
+  ]);
+  assert.deepEqual(orderByCalls[1], [
+    { area: { sort: 'asc', nulls: 'last' } },
+    { createdAt: 'desc' },
+  ]);
+  assert.deepEqual(orderByCalls[2], [
+    { building: { sort: 'desc', nulls: 'last' } },
+    { section: { sort: 'desc', nulls: 'last' } },
+    { createdAt: 'desc' },
+  ]);
 });
 
 test('MapService.listObjects serializes all map gallery images for popup previews', async () => {

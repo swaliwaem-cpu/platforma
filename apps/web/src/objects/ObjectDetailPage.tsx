@@ -1,6 +1,19 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { PencilIcon } from 'lucide-react';
+import {
+  ArrowDownIcon,
+  ArrowUpDownIcon,
+  ArrowUpIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  ExternalLinkIcon,
+  PencilIcon,
+  XIcon,
+} from 'lucide-react';
 import type {
+  FeedUnit,
+  FeedUnitStatus,
+  FeedUnitType,
+  FeedUnitsResponse,
   ObjectFileType,
   ObjectImageSection,
   ObjectLinkedFile,
@@ -8,6 +21,16 @@ import type {
   ObjectResponse,
   RealEstateObjectDetail,
 } from '@platforma/shared';
+
+import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 
 import { apiRequest } from '../admin/api';
 import { useAuth } from '../auth/AuthProvider';
@@ -41,6 +64,47 @@ const fileTypeLabels: Record<ObjectFileType, string> = {
   DOCUMENT: 'Документ',
   OTHER: 'Файл',
 };
+
+const objectFeedUnitsPageSize = 20;
+
+type ObjectFeedUnitSortBy = 'title' | 'status' | 'price' | 'area' | 'rooms' | 'floor' | 'building';
+type ObjectFeedUnitSortDirection = 'asc' | 'desc';
+type FeedMediaWithFile = FeedUnit['media'][number] & {
+  file: NonNullable<FeedUnit['media'][number]['file']>;
+};
+
+const feedUnitStatusLabels: Record<FeedUnitStatus, string> = {
+  AVAILABLE: 'Доступен',
+  BOOKED: 'Забронирован',
+  RESERVED: 'Резерв',
+  SOLD: 'Продан',
+  ARCHIVED: 'Архив',
+  UNKNOWN: 'Неизвестно',
+};
+
+const feedUnitTypeLabels: Record<FeedUnitType, string> = {
+  RESIDENTIAL: 'Жилой',
+  COMMERCIAL: 'Коммерческий',
+};
+
+const publicFeedUnitStatuses: FeedUnitStatus[] = [
+  'AVAILABLE',
+  'BOOKED',
+  'RESERVED',
+];
+
+const feedUnitStatusFilterOptions = publicFeedUnitStatuses.map((status) => ({
+  value: status,
+  label: feedUnitStatusLabels[status],
+}));
+
+const feedUnitTypeFilterOptions: {
+  value: FeedUnitType;
+  label: string;
+}[] = [
+  { value: 'RESIDENTIAL', label: feedUnitTypeLabels.RESIDENTIAL },
+  { value: 'COMMERCIAL', label: feedUnitTypeLabels.COMMERCIAL },
+];
 
 const sectionOptions: {
   value: ObjectImageSection;
@@ -259,6 +323,8 @@ function ObjectDetail({
           )}
         </section>
       </div>
+
+      <ObjectFeedUnitsSection accessToken={accessToken} object={object} />
 
       <section className="detail-section object-map-section" aria-labelledby="object-map-title">
         <div>
@@ -606,6 +672,730 @@ function ObjectImageCarousel({
   );
 }
 
+function ObjectFeedUnitsSection({
+  accessToken,
+  object,
+}: {
+  accessToken: string;
+  object: RealEstateObjectDetail;
+}) {
+  const [units, setUnits] = useState<FeedUnit[]>([]);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [statusFilter, setStatusFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
+  const [sortBy, setSortBy] = useState<ObjectFeedUnitSortBy>('price');
+  const [sortDirection, setSortDirection] = useState<ObjectFeedUnitSortDirection>('asc');
+  const [mediaCarouselUnit, setMediaCarouselUnit] = useState<FeedUnit | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const hasActiveFilters = Boolean(statusFilter || typeFilter);
+  const showFeedUnitsSkeleton = isLoading && units.length === 0;
+  const sortedUnits = useMemo(
+    () => sortFeedUnitsForDisplay(units, sortBy, sortDirection),
+    [sortBy, sortDirection, units],
+  );
+
+  useEffect(() => {
+    if (!accessToken) {
+      return;
+    }
+
+    const token = accessToken;
+    let isCancelled = false;
+
+    async function loadFeedUnits() {
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        const params = new URLSearchParams({
+          page: String(page),
+          limit: String(objectFeedUnitsPageSize),
+        });
+        params.set('sortBy', sortBy);
+        params.set('sortDirection', sortDirection);
+
+        if (statusFilter) {
+          params.set('status', statusFilter);
+        } else {
+          params.set('status', publicFeedUnitStatuses.join(','));
+        }
+
+        if (typeFilter) {
+          params.set('type', typeFilter);
+        }
+
+        const data = await apiRequest<FeedUnitsResponse>(`/objects/${object.id}/feed-units?${params.toString()}`, token);
+
+        if (!isCancelled) {
+          setUnits(data.items);
+          setTotal(data.total);
+          setTotalPages(data.totalPages);
+        }
+      } catch (caughtError) {
+        if (!isCancelled) {
+          setUnits([]);
+          setTotal(0);
+          setTotalPages(1);
+          setError(caughtError instanceof Error ? caughtError.message : 'Не удалось загрузить лоты');
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    void loadFeedUnits();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [accessToken, object.id, page, sortBy, sortDirection, statusFilter, typeFilter]);
+
+  function resetFilters() {
+    setStatusFilter('');
+    setTypeFilter('');
+    setPage(1);
+  }
+
+  function handleSort(field: ObjectFeedUnitSortBy) {
+    const nextDirection: ObjectFeedUnitSortDirection = sortBy === field && sortDirection === 'desc' ? 'asc' : 'desc';
+
+    setSortBy(field);
+    setSortDirection(nextDirection);
+    setPage(1);
+  }
+
+  return (
+    <section className="detail-section object-feed-units-section" aria-labelledby="object-feed-units-title">
+      <div className="object-feed-units-heading">
+        <div>
+          <p className="eyebrow">Фид</p>
+          <h3 id="object-feed-units-title">Лоты</h3>
+        </div>
+        <span>{isLoading ? 'Загрузка лотов' : `Лотов: ${formatNumber(total)}`}</span>
+      </div>
+
+      <div className="object-feed-units-toolbar" aria-label="Фильтры лотов">
+        <label className="object-feed-units-filter">
+          <span>Статус</span>
+          <select
+            aria-label="Фильтр лотов по статусу"
+            value={statusFilter}
+            onChange={(event) => {
+              setStatusFilter(event.target.value);
+              setPage(1);
+            }}
+          >
+            <option value="">Доступные и резерв</option>
+            {feedUnitStatusFilterOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="object-feed-units-filter">
+          <span>Тип</span>
+          <select
+            aria-label="Фильтр лотов по типу"
+            value={typeFilter}
+            onChange={(event) => {
+              setTypeFilter(event.target.value);
+              setPage(1);
+            }}
+          >
+            <option value="">Все типы</option>
+            {feedUnitTypeFilterOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <button className="text-button" disabled={!hasActiveFilters} type="button" onClick={resetFilters}>
+          Сбросить
+        </button>
+      </div>
+
+      <div className="table-scroll object-feed-units-table-wrap">
+        <Table className="object-feed-units-table">
+          <TableHeader>
+            <TableRow>
+              <ObjectFeedSortableHead
+                field="title"
+                sortBy={sortBy}
+                sortDirection={sortDirection}
+                onSort={handleSort}
+              >
+                Лот
+              </ObjectFeedSortableHead>
+              <ObjectFeedSortableHead
+                field="status"
+                sortBy={sortBy}
+                sortDirection={sortDirection}
+                onSort={handleSort}
+              >
+                Статус
+              </ObjectFeedSortableHead>
+              <ObjectFeedSortableHead
+                field="price"
+                sortBy={sortBy}
+                sortDirection={sortDirection}
+                onSort={handleSort}
+              >
+                Цена
+              </ObjectFeedSortableHead>
+              <ObjectFeedSortableHead
+                field="area"
+                sortBy={sortBy}
+                sortDirection={sortDirection}
+                onSort={handleSort}
+              >
+                Площадь
+              </ObjectFeedSortableHead>
+              <ObjectFeedSortableHead
+                field="rooms"
+                sortBy={sortBy}
+                sortDirection={sortDirection}
+                onSort={handleSort}
+              >
+                Комнаты/тип
+              </ObjectFeedSortableHead>
+              <ObjectFeedSortableHead
+                field="floor"
+                sortBy={sortBy}
+                sortDirection={sortDirection}
+                onSort={handleSort}
+              >
+                Этаж
+              </ObjectFeedSortableHead>
+              <ObjectFeedSortableHead
+                field="building"
+                sortBy={sortBy}
+                sortDirection={sortDirection}
+                onSort={handleSort}
+              >
+                Корпус/секция
+              </ObjectFeedSortableHead>
+              <TableHead>Медиа</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {showFeedUnitsSkeleton ? <ObjectFeedUnitsTableSkeleton /> : null}
+
+            {!error
+              ? sortedUnits.map((unit) => (
+                  <ObjectFeedUnitRow
+                    accessToken={accessToken}
+                    key={unit.id}
+                    unit={unit}
+                    onOpenMedia={setMediaCarouselUnit}
+                  />
+                ))
+              : null}
+
+            {!showFeedUnitsSkeleton && error ? (
+              <TableRow>
+                <TableCell colSpan={8}>
+                  <div className="object-feed-units-state object-feed-units-state--error">
+                    <strong>Не удалось загрузить лоты</strong>
+                    <span>{error}</span>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ) : null}
+
+            {!showFeedUnitsSkeleton && !error && units.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={8}>
+                  <div className="object-feed-units-state">
+                    <strong>Лоты не найдены</strong>
+                    <span>Запустите импорт фида или измените фильтры.</span>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ) : null}
+          </TableBody>
+        </Table>
+      </div>
+
+      <div className="object-feed-units-pagination">
+        <span>
+          Страница {page} из {totalPages}
+        </span>
+        <div>
+          <button
+            className="text-button"
+            disabled={page <= 1 || isLoading}
+            type="button"
+            onClick={() => setPage((currentPage) => Math.max(1, currentPage - 1))}
+          >
+            Назад
+          </button>
+          <button
+            className="text-button"
+            disabled={page >= totalPages || isLoading}
+            type="button"
+            onClick={() => setPage((currentPage) => currentPage + 1)}
+          >
+            Вперёд
+          </button>
+        </div>
+      </div>
+
+      <ObjectFeedMediaCarousel
+        accessToken={accessToken}
+        unit={mediaCarouselUnit}
+        onClose={() => setMediaCarouselUnit(null)}
+      />
+    </section>
+  );
+}
+
+function ObjectFeedSortableHead({
+  children,
+  field,
+  sortBy,
+  sortDirection,
+  onSort,
+}: {
+  children: ReactNode;
+  field: ObjectFeedUnitSortBy;
+  sortBy: ObjectFeedUnitSortBy;
+  sortDirection: ObjectFeedUnitSortDirection;
+  onSort: (field: ObjectFeedUnitSortBy) => void;
+}) {
+  const isActive = sortBy === field;
+  const ariaSort: 'ascending' | 'descending' | 'none' = isActive
+    ? sortDirection === 'desc'
+      ? 'descending'
+      : 'ascending'
+    : 'none';
+
+  return (
+    <TableHead aria-sort={ariaSort}>
+      <button
+        className={`object-feed-sort-button${isActive ? ' is-active' : ''}`}
+        type="button"
+        onClick={() => onSort(field)}
+      >
+        <span>{children}</span>
+        {isActive ? (
+          sortDirection === 'desc' ? (
+            <ArrowDownIcon aria-hidden="true" />
+          ) : (
+            <ArrowUpIcon aria-hidden="true" />
+          )
+        ) : (
+          <ArrowUpDownIcon aria-hidden="true" />
+        )}
+      </button>
+    </TableHead>
+  );
+}
+
+function ObjectFeedUnitRow({
+  accessToken,
+  unit,
+  onOpenMedia,
+}: {
+  accessToken: string;
+  unit: FeedUnit;
+  onOpenMedia: (unit: FeedUnit) => void;
+}) {
+  const primaryMedia = unit.media.find((media) => media.file) ?? null;
+  const title = getFeedUnitTitle(unit);
+  const mediaButtonLabel = `Открыть файлы лота ${title}`;
+
+  return (
+    <TableRow>
+      <TableCell>
+        <div className="object-feed-unit-cell">
+          <strong>{title}</strong>
+          {unit.address ? <span>{unit.address}</span> : null}
+        </div>
+      </TableCell>
+      <TableCell>
+        <span className={`object-feed-status object-feed-status--${unit.status.toLowerCase()}`}>
+          {feedUnitStatusLabels[unit.status]}
+        </span>
+      </TableCell>
+      <TableCell>{formatFeedUnitPrice(unit.price, unit.currency)}</TableCell>
+      <TableCell>{formatArea(unit.area)}</TableCell>
+      <TableCell>{getUnitRoomsOrType(unit)}</TableCell>
+      <TableCell>{unit.floor ?? 'Не указан'}</TableCell>
+      <TableCell>{formatBuildingSection(unit)}</TableCell>
+      <TableCell>
+        {primaryMedia?.file ? (
+          <button
+            aria-label={mediaButtonLabel}
+            className="object-feed-media-button"
+            type="button"
+            onClick={() => onOpenMedia(unit)}
+          >
+            <span className="object-feed-media-preview">
+              <SecureImage
+                accessToken={accessToken}
+                alt={primaryMedia.label ?? unit.title ?? 'Медиа лота'}
+                className="object-feed-media-image"
+                fileId={primaryMedia.file.id}
+                lazy
+                placeholderClassName="object-feed-media-placeholder"
+                variant="thumbnail"
+              />
+            </span>
+            <span>{formatMediaCount(unit.media.length)}</span>
+          </button>
+        ) : (
+          <span className="object-feed-media-empty">{formatMediaCount(0)}</span>
+        )}
+      </TableCell>
+    </TableRow>
+  );
+}
+
+function ObjectFeedMediaCarousel({
+  accessToken,
+  unit,
+  onClose,
+}: {
+  accessToken: string;
+  unit: FeedUnit | null;
+  onClose: () => void;
+}) {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [fullscreenMedia, setFullscreenMedia] = useState<FeedUnit['media'][number] | null>(null);
+  const mediaItems = useMemo(() => unit?.media.filter(hasFeedMediaFile) ?? [], [unit]);
+  const activeMedia = mediaItems[activeIndex] ?? mediaItems[0] ?? null;
+  const hasManyMedia = mediaItems.length > 1;
+
+  useEffect(() => {
+    if (!unit) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        if (fullscreenMedia) {
+          setFullscreenMedia(null);
+          return;
+        }
+
+        onClose();
+      }
+
+      if (event.key === 'ArrowLeft') {
+        setActiveIndex((currentIndex) => wrapCarouselIndex(currentIndex - 1, mediaItems.length));
+      }
+
+      if (event.key === 'ArrowRight') {
+        setActiveIndex((currentIndex) => wrapCarouselIndex(currentIndex + 1, mediaItems.length));
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [fullscreenMedia, mediaItems.length, onClose, unit]);
+
+  useEffect(() => {
+    setActiveIndex(0);
+    setFullscreenMedia(null);
+  }, [unit?.id]);
+
+  if (!unit) {
+    return null;
+  }
+
+  const title = getFeedUnitTitle(unit);
+
+  function showPreviousMedia() {
+    setActiveIndex((currentIndex) => wrapCarouselIndex(currentIndex - 1, mediaItems.length));
+  }
+
+  function showNextMedia() {
+    setActiveIndex((currentIndex) => wrapCarouselIndex(currentIndex + 1, mediaItems.length));
+  }
+
+  return (
+    <div className="object-feed-media-carousel-backdrop" onClick={onClose}>
+      <section
+        aria-labelledby="object-feed-media-carousel-title"
+        className="object-feed-media-carousel"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="object-feed-media-carousel-header">
+          <div>
+            <p className="eyebrow">Медиа лота</p>
+            <h3 id="object-feed-media-carousel-title">{title}</h3>
+            <span>{formatMediaCount(mediaItems.length)}</span>
+          </div>
+          <button
+            aria-label="Закрыть карусель файлов"
+            className="object-feed-media-carousel-close"
+            type="button"
+            onClick={onClose}
+          >
+            <XIcon aria-hidden="true" />
+          </button>
+        </header>
+
+        {activeMedia ? (
+          <>
+            <div className="object-feed-media-carousel-stage">
+              {hasManyMedia ? (
+                <button
+                  aria-label="Предыдущий файл лота"
+                  className="object-feed-media-carousel-nav object-feed-media-carousel-nav--previous"
+                  type="button"
+                  onClick={showPreviousMedia}
+                >
+                  <ChevronLeftIcon aria-hidden="true" />
+                </button>
+              ) : null}
+
+              <button
+                aria-label="Открыть фото лота на полный экран"
+                className="object-feed-media-carousel-image-button"
+                type="button"
+                onClick={() => setFullscreenMedia(activeMedia)}
+              >
+                <SecureImage
+                  accessToken={accessToken}
+                  alt={getFeedMediaTitle(activeMedia)}
+                  className="object-feed-media-carousel-image"
+                  fileId={activeMedia.file.id}
+                  placeholderClassName="object-feed-media-placeholder"
+                  variant="original"
+                />
+              </button>
+
+              {hasManyMedia ? (
+                <button
+                  aria-label="Следующий файл лота"
+                  className="object-feed-media-carousel-nav object-feed-media-carousel-nav--next"
+                  type="button"
+                  onClick={showNextMedia}
+                >
+                  <ChevronRightIcon aria-hidden="true" />
+                </button>
+              ) : null}
+            </div>
+
+            <div className="object-feed-media-carousel-caption">
+              <strong>{getFeedMediaTitle(activeMedia)}</strong>
+              <span>
+                {activeIndex + 1} / {mediaItems.length}
+              </span>
+            </div>
+
+            {hasManyMedia ? (
+              <div className="object-feed-media-carousel-thumbs" aria-label="Файлы лота">
+                {unit.media.map((media) => {
+                  if (!hasFeedMediaFile(media)) {
+                    return null;
+                  }
+
+                  const mediaIndex = mediaItems.findIndex((item) => item.id === media.id);
+                  const mediaTitle = getFeedMediaTitle(media);
+
+                  return (
+                    <button
+                      aria-label={`Показать файл ${mediaTitle}`}
+                      className={`object-feed-media-carousel-thumb${mediaIndex === activeIndex ? ' is-active' : ''}`}
+                      key={media.id}
+                      type="button"
+                      onClick={() => setActiveIndex(mediaIndex)}
+                    >
+                      <SecureImage
+                        accessToken={accessToken}
+                        alt={mediaTitle}
+                        className="object-feed-media-carousel-thumb-image"
+                        fileId={media.file.id}
+                        lazy
+                        placeholderClassName="object-feed-media-placeholder"
+                        variant="thumbnail"
+                      />
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <div className="object-feed-media-carousel-empty">Файлы не найдены.</div>
+        )}
+      </section>
+
+      {fullscreenMedia?.file ? (
+        <div className="object-feed-media-fullscreen" onClick={(event) => event.stopPropagation()}>
+          <button
+            aria-label="Закрыть полноэкранное фото"
+            className="object-feed-media-fullscreen-close"
+            type="button"
+            onClick={() => setFullscreenMedia(null)}
+          >
+            <XIcon aria-hidden="true" />
+          </button>
+          <a
+            className="object-feed-media-fullscreen-open"
+            href={buildMediaFileContentUrl(fullscreenMedia.file.id)}
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            <ExternalLinkIcon aria-hidden="true" />
+            Открыть оригинал
+          </a>
+          <button
+            aria-label="Закрыть полноэкранное фото"
+            className="object-feed-media-fullscreen-image-button"
+            type="button"
+            onClick={() => setFullscreenMedia(null)}
+          >
+            <SecureImage
+              accessToken={accessToken}
+              alt={getFeedMediaTitle(fullscreenMedia)}
+              className="object-feed-media-fullscreen-image"
+              fileId={fullscreenMedia.file.id}
+              placeholderClassName="object-feed-media-placeholder"
+              variant="original"
+            />
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function hasFeedMediaFile(media: FeedUnit['media'][number]): media is FeedMediaWithFile {
+  return Boolean(media.file);
+}
+
+function wrapCarouselIndex(index: number, itemsCount: number) {
+  if (itemsCount <= 0) {
+    return 0;
+  }
+
+  if (index < 0) {
+    return itemsCount - 1;
+  }
+
+  if (index >= itemsCount) {
+    return 0;
+  }
+
+  return index;
+}
+
+function sortFeedUnitsForDisplay(
+  units: FeedUnit[],
+  sortBy: ObjectFeedUnitSortBy,
+  sortDirection: ObjectFeedUnitSortDirection,
+) {
+  const directionMultiplier = sortDirection === 'desc' ? -1 : 1;
+
+  return [...units].sort((leftUnit, rightUnit) => {
+    const result = compareFeedUnitsByField(leftUnit, rightUnit, sortBy);
+
+    if (result !== 0) {
+      return result * directionMultiplier;
+    }
+
+    return compareNullableText(leftUnit.title, rightUnit.title) || compareNullableText(leftUnit.id, rightUnit.id);
+  });
+}
+
+function compareFeedUnitsByField(leftUnit: FeedUnit, rightUnit: FeedUnit, sortBy: ObjectFeedUnitSortBy) {
+  if (sortBy === 'status') {
+    return compareNullableText(feedUnitStatusLabels[leftUnit.status], feedUnitStatusLabels[rightUnit.status]);
+  }
+
+  if (sortBy === 'title') {
+    return compareNullableText(getFeedUnitTitle(leftUnit), getFeedUnitTitle(rightUnit));
+  }
+
+  if (sortBy === 'building') {
+    return (
+      compareNullableText(formatBuildingSection(leftUnit), formatBuildingSection(rightUnit)) ||
+      compareNullableNumber(leftUnit.floor, rightUnit.floor)
+    );
+  }
+
+  if (sortBy === 'rooms') {
+    return compareNullableNumber(leftUnit.rooms, rightUnit.rooms) || compareNullableText(leftUnit.type, rightUnit.type);
+  }
+
+  if (sortBy === 'price') {
+    return compareNullableNumber(parseNullableNumber(leftUnit.price), parseNullableNumber(rightUnit.price));
+  }
+
+  if (sortBy === 'area') {
+    return compareNullableNumber(parseNullableNumber(leftUnit.area), parseNullableNumber(rightUnit.area));
+  }
+
+  return compareNullableNumber(leftUnit.floor, rightUnit.floor);
+}
+
+function compareNullableText(leftValue: string | null | undefined, rightValue: string | null | undefined) {
+  if (!leftValue && !rightValue) {
+    return 0;
+  }
+
+  if (!leftValue) {
+    return 1;
+  }
+
+  if (!rightValue) {
+    return -1;
+  }
+
+  return leftValue.localeCompare(rightValue, 'ru', { numeric: true, sensitivity: 'base' });
+}
+
+function compareNullableNumber(leftValue: number | null | undefined, rightValue: number | null | undefined) {
+  if (leftValue === null || leftValue === undefined) {
+    return rightValue === null || rightValue === undefined ? 0 : 1;
+  }
+
+  if (rightValue === null || rightValue === undefined) {
+    return -1;
+  }
+
+  return leftValue - rightValue;
+}
+
+function parseNullableNumber(value: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const parsedValue = Number(value);
+
+  return Number.isFinite(parsedValue) ? parsedValue : null;
+}
+
+function ObjectFeedUnitsTableSkeleton() {
+  return (
+    <>
+      {Array.from({ length: 4 }, (_, index) => (
+        <TableRow key={index}>
+          <TableCell colSpan={8}>
+            <Skeleton className="object-feed-units-skeleton" />
+          </TableCell>
+        </TableRow>
+      ))}
+    </>
+  );
+}
+
 function FileList({
   accessToken,
   files,
@@ -678,6 +1468,101 @@ function SecureFileButton({
       </a>
     </div>
   );
+}
+
+function formatFeedUnitPrice(value: string | null, currency: string | null) {
+  if (!value) {
+    return 'По запросу';
+  }
+
+  if (currency && !['RUB', 'RUR'].includes(currency.toUpperCase())) {
+    return `${formatNumber(Number(value))} ${currency}`;
+  }
+
+  return formatPrice(value);
+}
+
+function formatArea(value: string | null) {
+  if (!value) {
+    return 'Не указана';
+  }
+
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed)) {
+    return `${value} м²`;
+  }
+
+  return `${formatNumber(parsed)} м²`;
+}
+
+function getUnitRoomsOrType(unit: FeedUnit) {
+  if (unit.type === 'RESIDENTIAL') {
+    if (unit.rooms === 0) {
+      return 'Студия';
+    }
+
+    if (unit.rooms) {
+      return `${unit.rooms}-комн.`;
+    }
+
+    return unit.residentialDetails?.layoutType ?? feedUnitTypeLabels.RESIDENTIAL;
+  }
+
+  return unit.commercialDetails?.commercialType ?? feedUnitTypeLabels.COMMERCIAL;
+}
+
+function getFeedUnitTitle(unit: FeedUnit) {
+  return unit.title?.trim() || 'Лот без названия';
+}
+
+function formatBuildingSection(unit: FeedUnit) {
+  const building = unit.building ? `Корпус ${unit.building}` : null;
+  const section = unit.section ? `Секция ${unit.section}` : null;
+  const parts = [building, section].filter((part): part is string => Boolean(part));
+
+  return parts.length > 0 ? parts.join(' / ') : 'Не указаны';
+}
+
+function formatMediaCount(value: number) {
+  if (value === 0) {
+    return 'Нет';
+  }
+
+  return `${formatNumber(value)} ${formatPlural(value, ['файл', 'файла', 'файлов'])}`;
+}
+
+function getFeedMediaTitle(media: FeedUnit['media'][number]) {
+  return media.label ?? media.file?.originalName ?? media.file?.mimeType ?? media.contentType ?? 'Файл';
+}
+
+function formatNumber(value: number) {
+  if (!Number.isFinite(value)) {
+    return 'Не указано';
+  }
+
+  return new Intl.NumberFormat('ru-RU', {
+    maximumFractionDigits: value < 100 ? 1 : 0,
+  }).format(value);
+}
+
+function formatPlural(value: number, forms: [string, string, string]) {
+  const normalizedValue = Math.abs(value) % 100;
+  const lastDigit = normalizedValue % 10;
+
+  if (normalizedValue > 10 && normalizedValue < 20) {
+    return forms[2];
+  }
+
+  if (lastDigit > 1 && lastDigit < 5) {
+    return forms[1];
+  }
+
+  if (lastDigit === 1) {
+    return forms[0];
+  }
+
+  return forms[2];
 }
 
 function getDescriptionParagraphs(object: RealEstateObjectDetail) {
