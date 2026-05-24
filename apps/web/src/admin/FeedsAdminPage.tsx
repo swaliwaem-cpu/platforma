@@ -179,6 +179,13 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
   const selectedRunWarnings = useMemo(() => toJsonArray(selectedRun?.warningsJson), [selectedRun]);
   const selectedRunErrors = useMemo(() => toJsonArray(selectedRun?.errorsJson), [selectedRun]);
   const hasActiveUnitFilters = Boolean(unitStatusFilter || unitTypeFilter);
+  const filteredObjects = useMemo(() => {
+    if (!form.developerId) {
+      return [];
+    }
+
+    return objects.filter((object) => object.developer?.id === form.developerId);
+  }, [form.developerId, objects]);
 
   useEffect(() => {
     if (!accessToken) {
@@ -689,7 +696,18 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                       name="developerId"
                       value={form.developerId}
                       onChange={(event) =>
-                        setForm((currentForm) => ({ ...currentForm, developerId: event.target.value }))
+                        setForm((currentForm) => {
+                          const developerId = event.target.value;
+                          const selectedObjectMatchesDeveloper = objects.some(
+                            (object) => object.id === currentForm.objectId && object.developer?.id === developerId,
+                          );
+
+                          return {
+                            ...currentForm,
+                            developerId,
+                            objectId: selectedObjectMatchesDeveloper ? currentForm.objectId : '',
+                          };
+                        })
                       }
                     >
                       <option value="">Выберите застройщика</option>
@@ -704,6 +722,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                   <label>
                     Связанный ЖК
                     <select
+                      disabled={!form.developerId}
                       name="objectId"
                       value={form.objectId}
                       onChange={(event) =>
@@ -711,7 +730,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                       }
                     >
                       <option value="">Выберите ЖК</option>
-                      {objects.map((object) => (
+                      {filteredObjects.map((object) => (
                         <option key={object.id} value={object.id}>
                           {object.title}
                         </option>

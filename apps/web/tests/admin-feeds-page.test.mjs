@@ -62,6 +62,17 @@ test('feeds admin page loads every object page for the linked object selector', 
   assert.doesNotMatch(source, /apiRequest<ObjectsResponse>\('\/objects\?limit=500&sortBy=title&sortDirection=asc'/);
 });
 
+test('feeds admin page filters linked object options by selected developer', () => {
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.match(source, /const filteredObjects = useMemo\(\(\) =>/);
+  assert.match(source, /object\.developer\?\.id === form\.developerId/);
+  assert.match(source, /const selectedObjectMatchesDeveloper =/);
+  assert.match(source, /objectId: selectedObjectMatchesDeveloper \? currentForm\.objectId : ''/);
+  assert.match(source, /filteredObjects\.map\(\(object\) =>/);
+  assert.doesNotMatch(source, /objects\.map\(\(object\) =>/);
+});
+
 test('feeds admin page renders report details with summary, warnings, errors, and unit table labels', () => {
   const source = readFileSync(sourcePath, 'utf8');
 
