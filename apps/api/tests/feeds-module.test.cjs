@@ -523,6 +523,60 @@ test('FeedsService protects one source from parallel preview/run commands', asyn
   assert.equal(result.run.id, runId);
 });
 
+test('FeedsService returns a pending run command before the feed-import CLI finishes', async () => {
+  let resolveCommand;
+  const commandStarted = new Promise((resolve) => {
+    resolveCommand = resolve;
+  });
+  let finishCommand;
+  const commandFinished = new Promise((resolve) => {
+    finishCommand = resolve;
+  });
+  let commandHasStarted = false;
+  const prisma = {
+    feedSource: {
+      findUnique: async () => ({ id: sourceId }),
+    },
+    feedImportRun: {
+      findFirst: async () =>
+        commandHasStarted
+          ? runRecord({
+              mode: 'RUN',
+              status: 'PENDING',
+              finishedAt: null,
+              summaryJson: null,
+            })
+          : null,
+    },
+  };
+  const service = new FeedsService(prisma);
+  service.runFeedImportCli = async () => {
+    commandHasStarted = true;
+    resolveCommand();
+    await commandFinished;
+  };
+
+  const resultPromise = service.runFeedImportCommand(sourceId, 'run');
+
+  await commandStarted;
+
+  try {
+    const resultBeforeCliFinished = await Promise.race([
+      resultPromise.then((result) => ({ type: 'resolved', result })),
+      new Promise((resolve) => {
+        setTimeout(() => resolve({ type: 'pending' }), 20);
+      }),
+    ]);
+
+    assert.equal(resultBeforeCliFinished.type, 'resolved');
+    assert.equal(resultBeforeCliFinished.result.run.mode, 'RUN');
+    assert.equal(resultBeforeCliFinished.result.run.status, 'PENDING');
+  } finally {
+    finishCommand();
+    await resultPromise.catch(() => {});
+  }
+});
+
 test('FeedsService validates missing sources and reports', async () => {
   const prisma = {
     feedSource: {

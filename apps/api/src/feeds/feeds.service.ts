@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
 import {
@@ -8,6 +9,7 @@ import {
   ConflictException,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { FeedFormat, FeedSourceKind, FeedUnitStatus, FeedUnitType, ImportMode, ImportStatus, Prisma } from '@prisma/client';
@@ -18,6 +20,8 @@ import { UploadedFile } from '../files/uploaded-file.type';
 import { PrismaService } from '../prisma/prisma.service';
 
 const execFileAsync = promisify(execFile);
+const feedRunStartWaitMs = 10_000;
+const feedRunStartPollMs = 200;
 
 type FeedImportCommand = 'preview' | 'run';
 
@@ -95,6 +99,7 @@ type FeedMediaFileRecord = NonNullable<FeedUnitRecord['media'][number]['mediaAss
 
 @Injectable()
 export class FeedsService {
+  private readonly logger = new Logger(FeedsService.name);
   private readonly activeSourceCommands = new Map<string, FeedImportCommand>();
 
   constructor(
@@ -338,6 +343,7 @@ export class FeedsService {
     }
 
     this.activeSourceCommands.set(sourceId, mode);
+    let shouldReleaseActiveCommand = true;
 
     try {
       const source = await this.prisma.feedSource.findUnique({
@@ -354,6 +360,12 @@ export class FeedsService {
       }
 
       const startedAt = new Date();
+
+      if (mode === 'run') {
+        shouldReleaseActiveCommand = false;
+
+        return await this.startFeedImportRunCommand(sourceId, startedAt);
+      }
 
       try {
         await this.runFeedImportCli(mode, sourceId);
@@ -375,7 +387,31 @@ export class FeedsService {
         throw new InternalServerErrorException(getCommandErrorMessage(error));
       }
     } finally {
-      this.activeSourceCommands.delete(sourceId);
+      if (shouldReleaseActiveCommand) {
+        this.activeSourceCommands.delete(sourceId);
+      }
+    }
+  }
+
+  private async startFeedImportRunCommand(sourceId: string, startedAt: Date) {
+    const commandPromise = this.runFeedImportCli('run', sourceId);
+
+    void commandPromise
+      .catch((error) => {
+        this.logger.error(`Feed import run failed for source ${sourceId}: ${getCommandErrorMessage(error)}`);
+      })
+      .finally(() => {
+        this.activeSourceCommands.delete(sourceId);
+      });
+
+    try {
+      const run = await this.waitForLatestRun(sourceId, 'run', startedAt);
+
+      return {
+        run: this.serializeRun(run),
+      };
+    } catch (error) {
+      throw new InternalServerErrorException(getCommandErrorMessage(error));
     }
   }
 
@@ -543,7 +579,33 @@ export class FeedsService {
   }
 
   private async findLatestRun(sourceId: string, mode: FeedImportCommand, startedAt: Date) {
-    const run = await this.prisma.feedImportRun.findFirst({
+    const run = await this.findLatestRunOrNull(sourceId, mode, startedAt);
+
+    if (!run) {
+      throw new NotFoundException('Feed import run not found');
+    }
+
+    return run;
+  }
+
+  private async waitForLatestRun(sourceId: string, mode: FeedImportCommand, startedAt: Date) {
+    const deadline = Date.now() + feedRunStartWaitMs;
+
+    while (Date.now() <= deadline) {
+      const run = await this.findLatestRunOrNull(sourceId, mode, startedAt);
+
+      if (run) {
+        return run;
+      }
+
+      await delay(feedRunStartPollMs);
+    }
+
+    throw new NotFoundException('Feed import run not found');
+  }
+
+  private async findLatestRunOrNull(sourceId: string, mode: FeedImportCommand, startedAt: Date) {
+    return this.prisma.feedImportRun.findFirst({
       where: {
         sourceId,
         mode: mode === 'preview' ? ImportMode.PREVIEW : ImportMode.RUN,
@@ -555,12 +617,6 @@ export class FeedsService {
         createdAt: 'desc',
       },
     });
-
-    if (!run) {
-      throw new NotFoundException('Feed import run not found');
-    }
-
-    return run;
   }
 
   private async ensureDeveloperExists(developerId: string) {

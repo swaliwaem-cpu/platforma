@@ -99,3 +99,10 @@ test('feeds admin page shows latest preview lot and media counts in source meta'
   assert.match(source, /unitsParsed/);
   assert.match(source, /media\.created/);
 });
+
+test('feeds admin page reports pending run commands as started instead of finished', () => {
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.match(source, /setNotice\(getFeedCommandNotice\(mode, data\.run\.status\)\)/);
+  assert.match(source, /Run фида запущен/);
+});

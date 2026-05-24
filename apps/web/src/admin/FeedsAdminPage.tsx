@@ -517,7 +517,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
             });
 
       setSelectedRun(data.run);
-      setNotice(mode === 'preview' ? 'Preview фида завершён' : 'Run фида завершён');
+      setNotice(getFeedCommandNotice(mode, data.run.status));
 
       if (isListRoute) {
         await Promise.all([loadSources(), loadSourceRuns(sourceId), loadUnits(sourceId)]);
@@ -1515,6 +1515,14 @@ function formatNumber(value: number) {
 
 function formatOptionalNumber(value: number | null) {
   return value === null ? 'Нет данных' : formatNumber(value);
+}
+
+function getFeedCommandNotice(mode: FeedCommandMode, status: ImportStatus) {
+  if (mode === 'preview') {
+    return 'Preview фида завершён';
+  }
+
+  return status === 'PENDING' ? 'Run фида запущен' : 'Run фида завершён';
 }
 
 function formatSummaryKey(key: string) {
