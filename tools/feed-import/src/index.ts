@@ -824,11 +824,11 @@ export type FeedImportDatabase = {
     update: (args: {
       where: { id: string };
       data: {
-        status: ImportStatusValue;
-        finishedAt: Date;
-        summaryJson: Record<string, unknown>;
-        warningsJson: FeedParserWarning[];
-        errorsJson: FeedParserWarning[];
+        status?: ImportStatusValue;
+        finishedAt?: Date;
+        summaryJson?: Record<string, unknown>;
+        warningsJson?: FeedParserWarning[];
+        errorsJson?: FeedParserWarning[];
       };
     }) => Promise<unknown>;
   };
@@ -963,6 +963,24 @@ export type FeedImportMediaStats = {
   variantsCreated: number;
 };
 
+export type FeedImportProgressStage =
+  | 'PROCESSING_UNITS'
+  | 'ARCHIVING_UNITS'
+  | 'REFRESHING_OBJECT'
+  | 'COMPLETED'
+  | 'FAILED';
+
+export type FeedImportProgress = {
+  stage: FeedImportProgressStage;
+  unitsTotal: number;
+  unitsProcessed: number;
+  unitsRemaining: number;
+  mediaTotal: number;
+  mediaProcessed: number;
+  mediaRemaining: number;
+  updatedAt: string;
+};
+
 export type FeedImportSummary = {
   sourceId: string;
   sourceUrl: string;
@@ -974,6 +992,7 @@ export type FeedImportSummary = {
   updated: number;
   archived: number;
   media: FeedImportMediaStats;
+  progress?: FeedImportProgress;
   warningsCount: number;
   errorsCount: number;
   durationMs: number;
@@ -1012,6 +1031,7 @@ type FeedImportPlan = {
 
 type PersistFeedImportContext = {
   db: FeedImportDatabase;
+  reportId: string;
   source: FeedSourceRecord;
   storage: FeedImportStorageClient;
   warnings: FeedParserWarning[];
@@ -1148,8 +1168,14 @@ export async function executeFeedImport(options: ExecuteFeedImportOptions): Prom
         throw new Error('Feed import run requires storage client');
       }
 
+      await updateFeedImportProgress(
+        options.db,
+        report.id,
+        createFeedImportProgress('PROCESSING_UNITS', parsed.units.length, 0, plan, now()),
+      );
       await persistFeedImportRun(parsed.units, plan, {
         db: options.db,
+        reportId: report.id,
         source,
         storage: options.storage,
         warnings,
@@ -1160,6 +1186,11 @@ export async function executeFeedImport(options: ExecuteFeedImportOptions): Prom
         imageVariantGenerator: options.imageVariantGenerator ?? generateImageVariants,
         now,
       });
+      await updateFeedImportProgress(
+        options.db,
+        report.id,
+        createFeedImportProgress('REFRESHING_OBJECT', parsed.units.length, parsed.units.length, plan, now()),
+      );
       await refreshRealEstateObjectFeedAggregates(options.db, source.objectId, now());
     }
 
@@ -1261,13 +1292,26 @@ async function persistFeedImportRun(
   plan: FeedImportPlan,
   context: PersistFeedImportContext,
 ) {
+  let unitsProcessed = 0;
+
   for (const unit of units) {
     const unitId = await upsertFeedUnit(context.db, context.source, unit, context.now());
 
     await syncFeedUnitDetails(context.db, unitId, unit);
     await syncFeedUnitMedia(context, unitId, unit);
+    unitsProcessed += 1;
+    await updateFeedImportProgress(
+      context.db,
+      context.reportId,
+      createFeedImportProgress('PROCESSING_UNITS', units.length, unitsProcessed, plan, context.now()),
+    );
   }
 
+  await updateFeedImportProgress(
+    context.db,
+    context.reportId,
+    createFeedImportProgress('ARCHIVING_UNITS', units.length, unitsProcessed, plan, context.now()),
+  );
   await context.db.feedUnit.updateMany({
     where: {
       sourceId: context.source.id,
@@ -1854,7 +1898,7 @@ function createFeedImportSummary(params: {
   startedAt: Date;
   finishedAt: Date;
 }): FeedImportSummary {
-  return {
+  const summary: FeedImportSummary = {
     sourceId: params.source.id,
     sourceUrl: params.source.url ?? params.source.xmlFile?.url ?? params.source.xmlFile?.key ?? '',
     format: params.source.format,
@@ -1871,6 +1915,57 @@ function createFeedImportSummary(params: {
     errorsCount: params.errors.length,
     durationMs: params.finishedAt.getTime() - params.startedAt.getTime(),
   };
+
+  if (params.mode === 'run') {
+    summary.progress = createFeedImportProgress('COMPLETED', params.unitsParsed, params.unitsParsed, params.plan, params.finishedAt);
+  }
+
+  return summary;
+}
+
+function createFeedImportProgress(
+  stage: FeedImportProgressStage,
+  unitsTotal: number,
+  unitsProcessed: number,
+  plan: FeedImportPlan,
+  updatedAt: Date,
+): FeedImportProgress {
+  const safeUnitsTotal = Math.max(0, unitsTotal);
+  const safeUnitsProcessed = clampNumber(unitsProcessed, 0, safeUnitsTotal);
+  const mediaTotal = Math.max(0, plan.media.created);
+  const mediaProcessed = clampNumber(plan.media.downloaded + plan.media.failed, 0, mediaTotal);
+
+  return {
+    stage,
+    unitsTotal: safeUnitsTotal,
+    unitsProcessed: safeUnitsProcessed,
+    unitsRemaining: Math.max(safeUnitsTotal - safeUnitsProcessed, 0),
+    mediaTotal,
+    mediaProcessed,
+    mediaRemaining: Math.max(mediaTotal - mediaProcessed, 0),
+    updatedAt: updatedAt.toISOString(),
+  };
+}
+
+async function updateFeedImportProgress(
+  db: FeedImportDatabase,
+  reportId: string,
+  progress: FeedImportProgress,
+) {
+  await db.feedImportRun.update({
+    where: {
+      id: reportId,
+    },
+    data: {
+      summaryJson: {
+        progress,
+      },
+    },
+  });
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
 }
 
 function createFailedFeedImportSummary(
@@ -1881,7 +1976,7 @@ function createFailedFeedImportSummary(
   warnings: FeedParserWarning[],
   errors: FeedParserWarning[],
 ): FeedImportSummary {
-  return {
+  const summary: FeedImportSummary = {
     sourceId: source.id,
     sourceUrl: source.url ?? source.xmlFile?.url ?? source.xmlFile?.key ?? '',
     format: source.format,
@@ -1904,6 +1999,21 @@ function createFailedFeedImportSummary(
     errorsCount: errors.length,
     durationMs: finishedAt.getTime() - startedAt.getTime(),
   };
+
+  if (mode === 'run') {
+    summary.progress = {
+      stage: 'FAILED',
+      unitsTotal: 0,
+      unitsProcessed: 0,
+      unitsRemaining: 0,
+      mediaTotal: 0,
+      mediaProcessed: 0,
+      mediaRemaining: 0,
+      updatedAt: finishedAt.toISOString(),
+    };
+  }
+
+  return summary;
 }
 
 async function finishFeedImportRun(

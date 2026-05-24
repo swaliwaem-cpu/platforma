@@ -115,3 +115,17 @@ test('feeds admin page reports pending run commands as started instead of finish
   assert.match(source, /setNotice\(getFeedCommandNotice\(mode, data\.run\.status\)\)/);
   assert.match(source, /Run фида запущен/);
 });
+
+test('feeds admin page polls pending runs and renders compact run progress', () => {
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.match(source, /const feedRunPollMs = 2000/);
+  assert.match(source, /selectedRun\.status !== 'PENDING'/);
+  assert.match(source, /apiRequest<FeedImportRunResponse>\(`\/feeds\/runs\/\$\{selectedRun\.id\}`/);
+  assert.match(source, /function FeedRunProgressCard/);
+  assert.match(source, /role="progressbar"/);
+  assert.match(source, /aria-valuemax=\{100\}/);
+  assert.match(source, />Осталось мин:</);
+  assert.match(source, /getFeedRunProgress\(selectedRun, source\.id\)/);
+  assert.match(source, /formatRemainingProgressMinutes/);
+});

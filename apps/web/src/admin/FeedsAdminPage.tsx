@@ -63,11 +63,19 @@ type SourceFormState = {
 
 type FeedCommandMode = 'preview' | 'run';
 
+type FeedRunProgress = {
+  stage: string;
+  unitsTotal: number;
+  unitsProcessed: number;
+  unitsRemaining: number;
+};
+
 const sourceListPageSize = 20;
 const sourceLookupLimit = 100;
 const objectDirectoryPageSize = 100;
 const runsPageSize = 10;
 const unitsPageSize = 20;
+const feedRunPollMs = 2000;
 
 const emptySourceForm: SourceFormState = {
   sourceKind: 'URL',
@@ -253,6 +261,44 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
     void loadUnits(selectedSourceId);
   }, [accessToken, isListRoute, selectedSourceId, unitsPage, unitStatusFilter, unitTypeFilter]);
 
+  useEffect(() => {
+    if (!accessToken || !selectedRun || selectedRun.status !== 'PENDING') {
+      return;
+    }
+
+    let isCancelled = false;
+    let didRefreshSettledRun = false;
+
+    const pollSelectedRun = async () => {
+      try {
+        const data = await apiRequest<FeedImportRunResponse>(`/feeds/runs/${selectedRun.id}`, accessToken);
+
+        if (isCancelled) {
+          return;
+        }
+
+        setSelectedRun(data.run);
+
+        if (data.run.status !== 'PENDING' && !didRefreshSettledRun) {
+          didRefreshSettledRun = true;
+          void refreshAfterRunSettled(data.run);
+        }
+      } catch (caughtError) {
+        if (!isCancelled) {
+          setError(caughtError instanceof Error ? caughtError.message : 'Не удалось обновить прогресс фида');
+        }
+      }
+    };
+
+    const intervalId = window.setInterval(() => void pollSelectedRun(), feedRunPollMs);
+    void pollSelectedRun();
+
+    return () => {
+      isCancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [accessToken, selectedRun?.id, selectedRun?.status]);
+
   async function loadDirectories() {
     if (!accessToken) {
       return;
@@ -307,7 +353,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
     }
   }
 
-  async function loadSourceForEdit(sourceId: string) {
+  async function loadSourceForEdit(sourceId: string, options: { loadPreviewRun?: boolean } = {}) {
     if (!accessToken) {
       return;
     }
@@ -342,7 +388,9 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
       setSources(lookupItems);
       setSelectedSourceId(source.id);
       setForm(createFormFromSource(source));
-      void loadLatestPreviewRun(source.id);
+      if (options.loadPreviewRun ?? true) {
+        void loadLatestPreviewRun(source.id);
+      }
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Не удалось открыть источник фида');
     } finally {
@@ -522,7 +570,12 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
       if (isListRoute) {
         await Promise.all([loadSources(), loadSourceRuns(sourceId), loadUnits(sourceId)]);
       } else if (editSourceId) {
-        await loadSourceForEdit(editSourceId);
+        if (mode === 'preview') {
+          await loadSourceForEdit(editSourceId);
+        } else if (data.run.status !== 'PENDING') {
+          await loadSourceForEdit(editSourceId, { loadPreviewRun: false });
+          setSelectedRun(data.run);
+        }
       }
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Команда фида не выполнена');
@@ -543,6 +596,19 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
       setSelectedRun(data.run);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Не удалось открыть отчёт фида');
+    }
+  }
+
+  async function refreshAfterRunSettled(run: FeedImportRun) {
+    if (isListRoute) {
+      await Promise.all([loadSources(), loadSourceRuns(run.sourceId), loadUnits(run.sourceId)]);
+      setSelectedRun(run);
+      return;
+    }
+
+    if (editSourceId) {
+      await loadSourceForEdit(editSourceId, { loadPreviewRun: false });
+      setSelectedRun(run);
     }
   }
 
@@ -778,7 +844,12 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                 </div>
               </section>
 
-              {editorSource ? <SourceMeta source={editorSource} previewSummary={editorPreviewSummary} /> : null}
+              {editorSource ? (
+                <>
+                  <SourceMeta source={editorSource} previewSummary={editorPreviewSummary} />
+                  <SourceRunProgress source={editorSource} selectedRun={selectedRun} />
+                </>
+              ) : null}
             </AdminPanel>
           </fieldset>
         </form>
@@ -938,6 +1009,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
               </div>
 
               <SourceMeta source={selectedSource} previewSummary={selectedSourcePreviewSummary} />
+              <SourceRunProgress source={selectedSource} selectedRun={selectedRun} />
 
               <div className="feed-command-actions">
                 <AdminButton
@@ -1237,6 +1309,60 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
   );
 }
 
+function SourceRunProgress({ source, selectedRun }: { source: FeedSource; selectedRun: FeedImportRun | null }) {
+  const progress = getFeedRunProgress(selectedRun, source.id);
+
+  if (!progress || !selectedRun) {
+    return null;
+  }
+
+  return <FeedRunProgressCard run={selectedRun} progress={progress} />;
+}
+
+function FeedRunProgressCard({ run, progress }: { run: FeedImportRun; progress: FeedRunProgress }) {
+  const progressPercent = getFeedRunProgressPercent(progress);
+
+  return (
+    <section className="feed-run-progress-card" aria-live="polite">
+      <div className="feed-run-progress-heading">
+        <div>
+          <h4>Импорт фида</h4>
+          <p>{getFeedRunProgressStageLabel(progress.stage)}</p>
+        </div>
+        <strong>{formatNumber(progressPercent)}%</strong>
+      </div>
+
+      <div
+        aria-label="Прогресс импорта фида"
+        aria-valuemax={100}
+        aria-valuemin={0}
+        aria-valuenow={progressPercent}
+        className="feed-run-progress-track"
+        role="progressbar"
+      >
+        <span className="feed-run-progress-fill" style={{ width: `${progressPercent}%` }} />
+      </div>
+
+      <div className="feed-run-progress-stats">
+        <div>
+          <span>Объекты</span>
+          <strong>
+            {formatNumber(progress.unitsProcessed)} / {formatNumber(progress.unitsTotal)}
+          </strong>
+        </div>
+        <div>
+          <span>Осталось</span>
+          <strong>{formatNumber(progress.unitsRemaining)}</strong>
+        </div>
+        <div>
+          <span>Осталось мин:</span>
+          <strong>{formatRemainingProgressMinutes(run, progress)}</strong>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function SourceMeta({ source, previewSummary }: { source: FeedSource; previewSummary?: Record<string, unknown> | null }) {
   const previewMetrics = getFeedPreviewMetrics(previewSummary);
 
@@ -1467,6 +1593,88 @@ function getFeedPreviewMetrics(summary: Record<string, unknown> | null | undefin
     mediaCreated: toPreviewMetricNumber(mediaCreated),
     mediaExisting: toPreviewMetricNumber(mediaExisting),
   };
+}
+
+function getFeedRunProgress(run: FeedImportRun | null, sourceId: string) {
+  if (!run || run.sourceId !== sourceId || run.mode !== 'RUN' || run.status !== 'PENDING') {
+    return null;
+  }
+
+  const summary = isPlainObject(run.summaryJson) ? run.summaryJson : null;
+  const progress = isPlainObject(summary?.progress) ? summary.progress : null;
+
+  if (!progress) {
+    return null;
+  }
+
+  const unitsTotal = toProgressMetricNumber(progress.unitsTotal);
+  const unitsProcessed = toProgressMetricNumber(progress.unitsProcessed);
+  const unitsRemaining = toProgressMetricNumber(progress.unitsRemaining);
+
+  if (unitsTotal === null || unitsProcessed === null || unitsRemaining === null) {
+    return null;
+  }
+
+  return {
+    stage: typeof progress.stage === 'string' ? progress.stage : 'PROCESSING_UNITS',
+    unitsTotal,
+    unitsProcessed,
+    unitsRemaining,
+  };
+}
+
+function getFeedRunProgressPercent(progress: FeedRunProgress) {
+  if (progress.unitsTotal <= 0) {
+    return 0;
+  }
+
+  return clampProgressPercent(Math.round((progress.unitsProcessed / progress.unitsTotal) * 100));
+}
+
+function formatRemainingProgressMinutes(run: FeedImportRun, progress: FeedRunProgress) {
+  if (progress.unitsRemaining <= 0) {
+    return '0';
+  }
+
+  if (progress.unitsProcessed <= 0) {
+    return 'считается';
+  }
+
+  const startedAt = new Date(run.startedAt).getTime();
+  const elapsedMs = Date.now() - startedAt;
+
+  if (!Number.isFinite(startedAt) || !Number.isFinite(elapsedMs) || elapsedMs <= 0) {
+    return 'считается';
+  }
+
+  const remainingMs = (elapsedMs / progress.unitsProcessed) * progress.unitsRemaining;
+  const remainingMinutes = Math.max(1, Math.ceil(remainingMs / 60_000));
+
+  return `~${formatNumber(remainingMinutes)}`;
+}
+
+function getFeedRunProgressStageLabel(stage: string) {
+  if (stage === 'ARCHIVING_UNITS') {
+    return 'Архивация отсутствующих лотов';
+  }
+
+  if (stage === 'REFRESHING_OBJECT') {
+    return 'Обновление данных ЖК';
+  }
+
+  return 'Обработка лотов и медиа';
+}
+
+function toProgressMetricNumber(value: unknown) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    return null;
+  }
+
+  return Math.floor(value);
+}
+
+function clampProgressPercent(value: number) {
+  return Math.min(Math.max(value, 0), 100);
 }
 
 function toPreviewMetricNumber(value: unknown) {

@@ -231,6 +231,48 @@ test('executeFeedImport run upserts units, details, archives stale units and ded
   assert.deepEqual(state.source.lastSuccessAt, fixedDate);
 });
 
+test('executeFeedImport run writes pending progress while processing units', async () => {
+  const { db, state } = createFakeDb();
+
+  const result = await executeFeedImport({
+    mode: 'run',
+    sourceId: 'source-1',
+    db,
+    storage: state.storage,
+    xmlFetcher: async () => makeYandexFeed(),
+    mediaDownloader: async (url) => ({
+      body: Buffer.from(`body:${url}`),
+      contentType: 'image/png',
+      originalName: 'image.png',
+    }),
+    imageVariantGenerator: async () => [],
+    now: () => fixedDate,
+  });
+
+  const progressUpdates = state.runUpdates
+    .map((update) => update.summaryJson?.progress)
+    .filter(Boolean);
+
+  assert.ok(progressUpdates.length >= 3);
+  assert.deepEqual(progressUpdates[0], {
+    stage: 'PROCESSING_UNITS',
+    unitsTotal: 2,
+    unitsProcessed: 0,
+    unitsRemaining: 2,
+    mediaTotal: 2,
+    mediaProcessed: 0,
+    mediaRemaining: 2,
+    updatedAt: fixedDate.toISOString(),
+  });
+  assert.equal(progressUpdates.some((progress) => progress.unitsProcessed === 1 && progress.unitsRemaining === 1), true);
+  assert.equal(progressUpdates.some((progress) => progress.stage === 'REFRESHING_OBJECT'), true);
+  assert.equal(result.summary.progress.stage, 'COMPLETED');
+  assert.equal(result.summary.progress.unitsProcessed, 2);
+  assert.equal(result.summary.progress.unitsRemaining, 0);
+  assert.equal(result.summary.progress.mediaProcessed, 2);
+  assert.equal(result.summary.progress.mediaRemaining, 0);
+});
+
 test('executeFeedImport run recalculates object feed aggregates from active units', async () => {
   const { db, state } = createFakeDb({
     units: [
@@ -399,6 +441,7 @@ function createFakeDb({ source = {}, object = {}, units = [], mediaAssets = [] }
     files: [],
     fileVariants: [],
     runs: [],
+    runUpdates: [],
     storagePuts: [],
     storageGets: [],
     storageObjects: new Map(),
@@ -438,6 +481,7 @@ function createFakeDb({ source = {}, object = {}, units = [], mediaAssets = [] }
       },
       update: async ({ where, data }) => {
         const run = state.runs.find((currentRun) => currentRun.id === where.id);
+        state.runUpdates.push(data);
         Object.assign(run, data);
         return { ...run };
       },
