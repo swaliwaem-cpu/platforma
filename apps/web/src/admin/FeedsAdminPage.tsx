@@ -1263,8 +1263,28 @@ function SourceMeta({ source, previewSummary }: { source: FeedSource; previewSum
         <dd>{formatOptionalNumber(previewMetrics.unitsCount)}</dd>
       </div>
       <div>
+        <dt>Новые лоты</dt>
+        <dd>{formatOptionalNumber(previewMetrics.unitsCreated)}</dd>
+      </div>
+      <div>
+        <dt>Обновятся</dt>
+        <dd>{formatOptionalNumber(previewMetrics.unitsUpdated)}</dd>
+      </div>
+      <div>
+        <dt>В архив</dt>
+        <dd>{formatOptionalNumber(previewMetrics.unitsArchived)}</dd>
+      </div>
+      <div>
         <dt>Медиа к загрузке</dt>
         <dd>{formatOptionalNumber(previewMetrics.mediaCount)}</dd>
+      </div>
+      <div>
+        <dt>Новые медиа</dt>
+        <dd>{formatOptionalNumber(previewMetrics.mediaCreated)}</dd>
+      </div>
+      <div>
+        <dt>Медиа уже есть</dt>
+        <dd>{formatOptionalNumber(previewMetrics.mediaExisting)}</dd>
       </div>
       <div>
         <dt>Run</dt>
@@ -1430,13 +1450,22 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 function getFeedPreviewMetrics(summary: Record<string, unknown> | null | undefined) {
   const media = isPlainObject(summary?.media) ? summary.media : null;
   const unitsCount = toPreviewMetricNumber(summary?.unitsParsed);
+  const unitsCreated = toPreviewMetricNumber(summary?.created);
+  const unitsUpdated = toPreviewMetricNumber(summary?.updated);
+  const unitsArchived = toPreviewMetricNumber(summary?.archived);
   const mediaCreated = media ? media.created : null;
+  const mediaExisting = media ? media.existing : null;
   const mediaUnique = media ? media.unique : null;
-  const mediaCount = toPreviewMetricNumber(mediaCreated) ?? toPreviewMetricNumber(mediaUnique);
+  const mediaCount = toPreviewMetricNumber(mediaUnique) ?? toPreviewMetricNumber(mediaCreated);
 
   return {
     unitsCount,
+    unitsCreated,
+    unitsUpdated,
+    unitsArchived,
     mediaCount,
+    mediaCreated: toPreviewMetricNumber(mediaCreated),
+    mediaExisting: toPreviewMetricNumber(mediaExisting),
   };
 }
 

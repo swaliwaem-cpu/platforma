@@ -96,8 +96,17 @@ test('feeds admin page shows latest preview lot and media counts in source meta'
   assert.match(source, /const previewMetrics = getFeedPreviewMetrics\(previewSummary\)/);
   assert.match(source, />Лотов к загрузке</);
   assert.match(source, />Медиа к загрузке</);
+  assert.match(source, />Новые лоты</);
+  assert.match(source, />Обновятся</);
+  assert.match(source, />В архив</);
+  assert.match(source, />Новые медиа</);
+  assert.match(source, />Медиа уже есть</);
   assert.match(source, /unitsParsed/);
+  assert.match(source, /summary\?\.created/);
+  assert.match(source, /summary\?\.updated/);
+  assert.match(source, /summary\?\.archived/);
   assert.match(source, /media\.created/);
+  assert.match(source, /media\.existing/);
 });
 
 test('feeds admin page reports pending run commands as started instead of finished', () => {
