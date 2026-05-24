@@ -176,6 +176,20 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
     () => (isPlainObject(selectedRun?.summaryJson) ? selectedRun.summaryJson : null),
     [selectedRun],
   );
+  const editorPreviewSummary = useMemo(() => {
+    if (!editorSource || selectedRun?.sourceId !== editorSource.id || selectedRun.mode !== 'PREVIEW') {
+      return null;
+    }
+
+    return selectedRunSummary;
+  }, [editorSource, selectedRun, selectedRunSummary]);
+  const selectedSourcePreviewSummary = useMemo(() => {
+    if (!selectedSource || selectedRun?.sourceId !== selectedSource.id || selectedRun.mode !== 'PREVIEW') {
+      return null;
+    }
+
+    return selectedRunSummary;
+  }, [selectedRun, selectedRunSummary, selectedSource]);
   const selectedRunWarnings = useMemo(() => toJsonArray(selectedRun?.warningsJson), [selectedRun]);
   const selectedRunErrors = useMemo(() => toJsonArray(selectedRun?.errorsJson), [selectedRun]);
   const hasActiveUnitFilters = Boolean(unitStatusFilter || unitTypeFilter);
@@ -328,11 +342,35 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
       setSources(lookupItems);
       setSelectedSourceId(source.id);
       setForm(createFormFromSource(source));
+      void loadLatestPreviewRun(source.id);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Не удалось открыть источник фида');
     } finally {
       setIsLoadingSources(false);
       setIsLoadingForm(false);
+    }
+  }
+
+  async function loadLatestPreviewRun(sourceId: string) {
+    if (!accessToken) {
+      return;
+    }
+
+    setIsLoadingRuns(true);
+
+    try {
+      const params = new URLSearchParams({
+        page: '1',
+        limit: '1',
+        mode: 'preview',
+      });
+      const data = await apiRequest<FeedImportRunsResponse>(`/feeds/sources/${sourceId}/runs?${params.toString()}`, accessToken);
+
+      setSelectedRun(data.items[0] ?? null);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Не удалось загрузить последний preview фида');
+    } finally {
+      setIsLoadingRuns(false);
     }
   }
 
@@ -740,7 +778,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                 </div>
               </section>
 
-              {editorSource ? <SourceMeta source={editorSource} /> : null}
+              {editorSource ? <SourceMeta source={editorSource} previewSummary={editorPreviewSummary} /> : null}
             </AdminPanel>
           </fieldset>
         </form>
@@ -899,7 +937,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                 </AdminStatusBadge>
               </div>
 
-              <SourceMeta source={selectedSource} />
+              <SourceMeta source={selectedSource} previewSummary={selectedSourcePreviewSummary} />
 
               <div className="feed-command-actions">
                 <AdminButton
@@ -1199,7 +1237,9 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
   );
 }
 
-function SourceMeta({ source }: { source: FeedSource }) {
+function SourceMeta({ source, previewSummary }: { source: FeedSource; previewSummary?: Record<string, unknown> | null }) {
+  const previewMetrics = getFeedPreviewMetrics(previewSummary);
+
   return (
     <dl className="details-list feed-details">
       <div>
@@ -1217,6 +1257,14 @@ function SourceMeta({ source }: { source: FeedSource }) {
       <div>
         <dt>Preview</dt>
         <dd>{source.lastPreviewAt ? formatDateTime(source.lastPreviewAt) : 'Не запускался'}</dd>
+      </div>
+      <div>
+        <dt>Лотов к загрузке</dt>
+        <dd>{formatOptionalNumber(previewMetrics.unitsCount)}</dd>
+      </div>
+      <div>
+        <dt>Медиа к загрузке</dt>
+        <dd>{formatOptionalNumber(previewMetrics.mediaCount)}</dd>
       </div>
       <div>
         <dt>Run</dt>
@@ -1379,6 +1427,27 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function getFeedPreviewMetrics(summary: Record<string, unknown> | null | undefined) {
+  const media = isPlainObject(summary?.media) ? summary.media : null;
+  const unitsCount = toPreviewMetricNumber(summary?.unitsParsed);
+  const mediaCreated = media ? media.created : null;
+  const mediaUnique = media ? media.unique : null;
+  const mediaCount = toPreviewMetricNumber(mediaCreated) ?? toPreviewMetricNumber(mediaUnique);
+
+  return {
+    unitsCount,
+    mediaCount,
+  };
+}
+
+function toPreviewMetricNumber(value: unknown) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    return null;
+  }
+
+  return value;
+}
+
 function formatDateTime(value: string) {
   const date = new Date(value);
 
@@ -1442,6 +1511,10 @@ function formatIssueCount(jsonValue: JsonValue, summaryJson: JsonValue, summaryK
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat('ru-RU').format(value);
+}
+
+function formatOptionalNumber(value: number | null) {
+  return value === null ? 'Нет данных' : formatNumber(value);
 }
 
 function formatSummaryKey(key: string) {

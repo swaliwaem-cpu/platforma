@@ -85,3 +85,17 @@ test('feeds admin page renders report details with summary, warnings, errors, an
   assert.match(source, />Комнаты\/тип</);
   assert.match(source, />Медиа</);
 });
+
+test('feeds admin page shows latest preview lot and media counts in source meta', () => {
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.match(source, /async function loadLatestPreviewRun\(sourceId: string\)/);
+  assert.match(source, /mode:\s*'preview'/);
+  assert.match(source, /<SourceMeta source=\{editorSource\} previewSummary=\{editorPreviewSummary\} \/>/);
+  assert.match(source, /function SourceMeta\(\{ source, previewSummary \}/);
+  assert.match(source, /const previewMetrics = getFeedPreviewMetrics\(previewSummary\)/);
+  assert.match(source, />Лотов к загрузке</);
+  assert.match(source, />Медиа к загрузке</);
+  assert.match(source, /unitsParsed/);
+  assert.match(source, /media\.created/);
+});
