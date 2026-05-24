@@ -61,6 +61,7 @@ test('app theme stylesheet covers contrast-sensitive dark theme selectors', () =
     '.object-feed-media-carousel',
     '.object-feed-media-fullscreen',
     '.object-feed-status--available',
+    '.feed-details dd',
     '.metro-list strong',
     '.carousel-thumbnail',
     '.gallery-close-confirm strong',

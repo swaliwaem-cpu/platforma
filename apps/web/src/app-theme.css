@@ -383,7 +383,7 @@ html[data-app-theme] tr.user-row--deactivated td {
   color: var(--app-theme-ink-600);
 }
 
-html[data-app-theme] :is(.user-identity-cell strong, .object-title-cell strong, .object-price-cell, .import-start-cell strong, .import-metric-cell strong, .feed-source-cell strong, .feed-run-date-cell strong, .feed-unit-cell strong, .object-feed-unit-cell strong, .catalog-card-price, .catalog-card h3, .catalog-list-item h3, .catalog-list-item-price, .object-detail-metrics dd, .object-parameters-grid dd, .preview-facts dd, .report-summary dd) {
+html[data-app-theme] :is(.user-identity-cell strong, .object-title-cell strong, .object-price-cell, .import-start-cell strong, .import-metric-cell strong, .feed-source-cell strong, .feed-run-date-cell strong, .feed-unit-cell strong, .object-feed-unit-cell strong, .catalog-card-price, .catalog-card h3, .catalog-list-item h3, .catalog-list-item-price, .object-detail-metrics dd, .object-parameters-grid dd, .preview-facts dd, .feed-details dd, .report-summary dd) {
   color: var(--app-theme-ink-900);
   font-variant-numeric: tabular-nums;
 }

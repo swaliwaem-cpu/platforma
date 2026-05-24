@@ -10,6 +10,7 @@ const { FeedsController } = require('../dist/feeds/feeds.controller.js');
 const { FeedsService } = require('../dist/feeds/feeds.service.js');
 
 const feedsServiceSourcePath = resolve(__dirname, '../src/feeds/feeds.service.ts');
+const apiDockerfilePath = resolve(__dirname, '../Dockerfile');
 
 const now = new Date('2026-05-23T10:00:00.000Z');
 const sourceId = '11111111-1111-4111-8111-111111111111';
@@ -225,8 +226,16 @@ test('FeedsController delegates CRUD, run endpoints and reports to the service',
 test('FeedsService passes source id to feed-import CLI without an extra argv separator', () => {
   const source = readFileSync(feedsServiceSourcePath, 'utf8');
 
-  assert.match(source, /\['--filter', '@platforma\/feed-import', 'run', mode, '--source', sourceId\]/);
+  assert.match(source, /\['--filter', '@platforma\/feed-import', '--fail-if-no-match', 'run', mode, '--source', sourceId\]/);
   assert.doesNotMatch(source, /mode,\s*'--',\s*'--source'/);
+});
+
+test('API Docker image includes the feed-import workspace used by feed preview and run', () => {
+  const dockerfile = readFileSync(apiDockerfilePath, 'utf8');
+
+  assert.match(dockerfile, /COPY tools\/feed-import\/package\.json tools\/feed-import\/package\.json/);
+  assert.match(dockerfile, /COPY --from=deps \/app\/tools\/feed-import\/node_modules \.\/tools\/feed-import\/node_modules/);
+  assert.match(dockerfile, /COPY tools\/feed-import \.\/tools\/feed-import/);
 });
 
 test('FeedsService lists sources with filters and serializes related developer and object', async () => {

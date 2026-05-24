@@ -380,7 +380,7 @@ export class FeedsService {
   }
 
   async runFeedImportCli(mode: FeedImportCommand, sourceId: string) {
-    await execFileAsync('pnpm', ['--filter', '@platforma/feed-import', 'run', mode, '--source', sourceId], {
+    await execFileAsync('pnpm', ['--filter', '@platforma/feed-import', '--fail-if-no-match', 'run', mode, '--source', sourceId], {
       cwd: findWorkspaceRoot(),
       env: {
         ...process.env,
