@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, InternalServerErrorException, Unauthor
 import { JwtService } from '@nestjs/jwt';
 import { Prisma, UserStatus } from '@prisma/client';
 import * as argon2 from 'argon2';
-import { createHmac, randomBytes, randomInt } from 'crypto';
+import { createHmac, randomBytes, randomInt, randomUUID } from 'crypto';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { getCookieValue, getRefreshCookieName } from './cookies';
@@ -38,6 +38,16 @@ const authUserInclude = {
 } as const;
 
 type AuthUserWithRole = Prisma.UserGetPayload<{ include: typeof authUserInclude }>;
+type RefreshSessionRecord = {
+  id: string;
+  userId: string;
+  refreshTokenHash: string;
+  refreshTokenExpiresAt: Date;
+};
+type IssueTokensOptions = {
+  sessionId?: string;
+  refreshToken?: string;
+};
 
 type RequestWithAudit = RequestWithAuth & {
   ip?: string;
@@ -93,23 +103,18 @@ export class AuthService {
     const payload = await this.verifyRefreshToken(refreshToken);
     const user = await this.findActiveUserById(payload.sub);
 
-    if (!user?.refreshTokenHash || !user.refreshTokenExpiresAt) {
-      throw new UnauthorizedException('Refresh session is not active');
+    if (!user) {
+      throw new UnauthorizedException('User is not active');
     }
 
-    if (user.refreshTokenExpiresAt.getTime() <= Date.now()) {
-      await this.clearRefreshSession(user.id);
-      throw new UnauthorizedException('Refresh session expired');
-    }
-
-    const refreshTokenMatches = await argon2.verify(user.refreshTokenHash, refreshToken);
-
-    if (!refreshTokenMatches) {
-      throw new UnauthorizedException('Invalid refresh token');
-    }
+    const session = await this.resolveRefreshSession(user, payload, refreshToken);
 
     const authUser = this.toAuthenticatedUser(user);
-    const tokens = await this.issueTokens(authUser);
+    const tokens = await this.issueTokens(authUser, session);
+
+    if (!payload.sessionId) {
+      await this.clearLegacyRefreshSession(user.id);
+    }
 
     return {
       accessToken: tokens.accessToken,
@@ -128,7 +133,13 @@ export class AuthService {
 
     try {
       const payload = await this.verifyRefreshToken(refreshToken);
-      await this.clearRefreshSession(payload.sub);
+
+      if (payload.sessionId) {
+        await this.deleteUserSession(payload.sub, payload.sessionId);
+        return;
+      }
+
+      await this.clearLegacyRefreshSession(payload.sub);
     } catch {
       return;
     }
@@ -361,9 +372,10 @@ export class AuthService {
     };
   }
 
-  private async issueTokens(user: AuthenticatedUser) {
+  private async issueTokens(user: AuthenticatedUser, options: IssueTokensOptions = {}) {
     const refreshTtlDays = Number(process.env.JWT_REFRESH_TTL_DAYS ?? DEFAULT_REFRESH_TTL_DAYS);
     const refreshExpiresAt = new Date(Date.now() + refreshTtlDays * 24 * 60 * 60 * 1000);
+    const sessionId = options.sessionId ?? randomUUID();
     const accessPayload: AccessTokenPayload = {
       sub: user.id,
       email: user.email,
@@ -373,6 +385,7 @@ export class AuthService {
       sub: user.id,
       email: user.email,
       type: 'refresh',
+      sessionId,
     };
     const mediaPayload: MediaTokenPayload = {
       sub: user.id,
@@ -388,10 +401,13 @@ export class AuthService {
         secret: process.env.JWT_ACCESS_SECRET ?? 'change-me-access-secret',
         expiresIn: this.getAccessTokenTtlSeconds(),
       }),
-      this.jwtService.signAsync(refreshPayload, {
-        secret: process.env.JWT_REFRESH_SECRET ?? 'change-me-refresh-secret',
-        expiresIn: refreshTtlDays * 24 * 60 * 60,
-      }),
+      options.refreshToken
+        ? Promise.resolve(options.refreshToken)
+        // Refresh tokens are server-side sessions: the database row and cookie
+        // own expiration, so the JWT itself must not cut an active session short.
+        : this.jwtService.signAsync(refreshPayload, {
+            secret: process.env.JWT_REFRESH_SECRET ?? 'change-me-refresh-secret',
+          }),
       shouldIssueMediaToken
         ? this.jwtService.signAsync(mediaPayload, {
             secret: process.env.JWT_MEDIA_SECRET ?? 'change-me-media-secret',
@@ -400,13 +416,31 @@ export class AuthService {
         : Promise.resolve(null),
     ]);
 
-    await this.prisma.user.update({
-      where: { id: user.id },
-      data: {
-        refreshTokenHash: await argon2.hash(refreshToken, { type: argon2.argon2id }),
-        refreshTokenExpiresAt: refreshExpiresAt,
-      },
-    });
+    const now = new Date();
+    const refreshTokenHash = options.refreshToken
+      ? null
+      : await argon2.hash(refreshToken, { type: argon2.argon2id });
+
+    if (options.sessionId) {
+      await this.prisma.userSession.update({
+        where: { id: sessionId },
+        data: {
+          ...(refreshTokenHash ? { refreshTokenHash } : {}),
+          refreshTokenExpiresAt: refreshExpiresAt,
+          lastUsedAt: now,
+        },
+      });
+    } else {
+      await this.prisma.userSession.create({
+        data: {
+          id: sessionId,
+          userId: user.id,
+          refreshTokenHash: refreshTokenHash ?? await argon2.hash(refreshToken, { type: argon2.argon2id }),
+          refreshTokenExpiresAt: refreshExpiresAt,
+          lastUsedAt: now,
+        },
+      });
+    }
 
     return {
       accessToken,
@@ -436,7 +470,75 @@ export class AuthService {
     }
   }
 
-  private async clearRefreshSession(userId: string) {
+  private async resolveRefreshSession(
+    user: AuthUserWithRole,
+    payload: RefreshTokenPayload,
+    refreshToken: string,
+  ): Promise<IssueTokensOptions> {
+    if (!payload.sessionId) {
+      return this.resolveLegacyRefreshSession(user, refreshToken);
+    }
+
+    const session = await this.prisma.userSession.findFirst({
+      where: {
+        id: payload.sessionId,
+        userId: user.id,
+      },
+    });
+
+    if (!session) {
+      throw new UnauthorizedException('Refresh session is not active');
+    }
+
+    if (session.refreshTokenExpiresAt.getTime() <= Date.now()) {
+      await this.deleteUserSession(user.id, session.id);
+      throw new UnauthorizedException('Refresh session expired');
+    }
+
+    const tokenMatchesCurrent = await argon2.verify(session.refreshTokenHash, refreshToken);
+
+    if (tokenMatchesCurrent) {
+      return {
+        sessionId: session.id,
+        refreshToken,
+      };
+    }
+
+    throw new UnauthorizedException('Invalid refresh token');
+  }
+
+  private async resolveLegacyRefreshSession(
+    user: AuthUserWithRole,
+    refreshToken: string,
+  ): Promise<IssueTokensOptions> {
+    if (!user.refreshTokenHash || !user.refreshTokenExpiresAt) {
+      throw new UnauthorizedException('Refresh session is not active');
+    }
+
+    if (user.refreshTokenExpiresAt.getTime() <= Date.now()) {
+      await this.clearLegacyRefreshSession(user.id);
+      throw new UnauthorizedException('Refresh session expired');
+    }
+
+    const refreshTokenMatches = await argon2.verify(user.refreshTokenHash, refreshToken);
+
+    if (!refreshTokenMatches) {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+
+    return {};
+  }
+
+  private async deleteUserSession(userId: string, sessionId: string) {
+    await this.prisma.userSession.deleteMany({
+      where: {
+        id: sessionId,
+        userId,
+      },
+    });
+  }
+
+  private async clearLegacyRefreshSession(userId: string) {
     await this.prisma.user.updateMany({
       where: { id: userId },
       data: {

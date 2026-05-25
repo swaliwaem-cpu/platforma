@@ -251,6 +251,9 @@ export class UsersService {
         data.status = status;
         data.refreshTokenHash = null;
         data.refreshTokenExpiresAt = null;
+        data.sessions = {
+          deleteMany: {},
+        };
         changes.status = this.change(user.status, status);
         statusChanged = true;
         hasChanges = true;
@@ -262,6 +265,9 @@ export class UsersService {
       data.passwordHash = await argon2.hash(password, { type: argon2.argon2id });
       data.refreshTokenHash = null;
       data.refreshTokenExpiresAt = null;
+      data.sessions = {
+        deleteMany: {},
+      };
       changes.password = {
         changed: true,
       };
@@ -474,6 +480,9 @@ export class UsersService {
         status: UserStatus.DEACTIVATED,
         refreshTokenHash: null,
         refreshTokenExpiresAt: null,
+        sessions: {
+          deleteMany: {},
+        },
       },
       include: userInclude,
     });

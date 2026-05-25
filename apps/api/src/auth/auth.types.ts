@@ -47,6 +47,7 @@ export type RefreshTokenPayload = {
   sub: string;
   email: string;
   type: 'refresh';
+  sessionId?: string;
 };
 
 export type MediaTokenPayload = {

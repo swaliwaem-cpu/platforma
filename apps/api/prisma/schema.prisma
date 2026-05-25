@@ -138,6 +138,7 @@ model User {
   profilePhotoFile File?          @relation("UserProfilePhoto", fields: [profilePhotoFileId], references: [id], onDelete: SetNull)
   auditLogs        AuditLog[]     @relation("AuditActor")
   emailAuthChallenges EmailAuthChallenge[]
+  sessions        UserSession[]
   importReports    ImportReport[] @relation("ImportReportCreator")
   uploadedFiles    File[]         @relation("FileUploader")
 
@@ -145,6 +146,22 @@ model User {
   @@index([profilePhotoFileId])
   @@index([status])
   @@map("users")
+}
+
+model UserSession {
+  id                            String   @id @default(uuid()) @db.Uuid
+  userId                        String   @map("user_id") @db.Uuid
+  refreshTokenHash              String   @map("refresh_token_hash")
+  refreshTokenExpiresAt         DateTime @map("refresh_token_expires_at")
+  lastUsedAt                    DateTime @default(now()) @map("last_used_at")
+  createdAt                     DateTime @default(now()) @map("created_at")
+  updatedAt                     DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([refreshTokenExpiresAt])
+  @@map("user_sessions")
 }
 
 model EmailAuthChallenge {

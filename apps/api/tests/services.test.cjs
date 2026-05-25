@@ -2638,6 +2638,7 @@ test('UsersService.deactivate archives access by status and clears refresh sessi
   assert.equal(calls.update.data.status, UserStatus.DEACTIVATED);
   assert.equal(calls.update.data.refreshTokenHash, null);
   assert.equal(calls.update.data.refreshTokenExpiresAt, null);
+  assert.deepEqual(calls.update.data.sessions, { deleteMany: {} });
   assert.equal(calls.auditLog.data.action, 'user.deactivate');
 });
 
@@ -2775,9 +2776,21 @@ test('AuthService.verifyEmailRegistration consumes magic token and activates inv
         return activeUser;
       },
     },
+    userSession: {
+      create: async (args) => {
+        calls.push(['session.create', args]);
+
+        return {};
+      },
+    },
   };
+  const signCalls = [];
   const jwtService = {
-    signAsync: async (payload) => `${payload.type}-token`,
+    signAsync: async (payload, options) => {
+      signCalls.push({ payload, options });
+
+      return `${payload.type}-token`;
+    },
   };
   const service = new AuthService(prisma, jwtService, { sendEmailLogin: async () => {} });
 
@@ -2798,6 +2811,151 @@ test('AuthService.verifyEmailRegistration consumes magic token and activates inv
   assert.equal(calls[2][0], 'user.update');
   assert.equal(calls[2][1].data.status, UserStatus.ACTIVE);
   assert.match(calls[2][1].data.passwordHash, /^\$argon2/);
-  assert.equal(calls[3][0], 'user.update');
+  assert.equal(calls[3][0], 'session.create');
+  assert.equal(calls[3][1].data.userId, activeUser.id);
   assert.match(calls[3][1].data.refreshTokenHash, /^\$argon2/);
+  const refreshSignCall = signCalls.find(({ payload }) => payload.type === 'refresh');
+  assert.equal('expiresIn' in refreshSignCall.options, false);
+});
+
+test('AuthService.refresh updates only the current user session and keeps another device signed in', async () => {
+  const argon2 = require('argon2');
+  const user = userRecord({
+    refreshTokenHash: null,
+    refreshTokenExpiresAt: null,
+    role: {
+      id: '44444444-4444-4444-8444-444444444444',
+      name: 'editor',
+      description: 'Editor',
+      permissions: [
+        {
+          permission: {
+            key: 'objects:read',
+          },
+        },
+      ],
+    },
+    profilePhotoFile: null,
+  });
+  const sessionAId = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
+  const sessionBId = 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb';
+  const tokenA = 'refresh-token-device-a';
+  const tokenB = 'refresh-token-device-b';
+  const sessions = {
+    [sessionAId]: {
+      id: sessionAId,
+      userId: user.id,
+      refreshTokenHash: await argon2.hash(tokenA, { type: argon2.argon2id }),
+      refreshTokenExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      lastUsedAt: new Date('2026-05-01T10:00:00.000Z'),
+    },
+    [sessionBId]: {
+      id: sessionBId,
+      userId: user.id,
+      refreshTokenHash: await argon2.hash(tokenB, { type: argon2.argon2id }),
+      refreshTokenExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      lastUsedAt: new Date('2026-05-01T10:00:00.000Z'),
+    },
+  };
+  const prisma = {
+    user: {
+      findFirst: async () => user,
+      update: async () => user,
+      updateMany: async () => ({}),
+    },
+    userSession: {
+      findFirst: async (args) => sessions[args.where.id],
+      update: async (args) => {
+        sessions[args.where.id] = {
+          ...sessions[args.where.id],
+          ...args.data,
+        };
+
+        return sessions[args.where.id];
+      },
+      deleteMany: async () => ({}),
+    },
+  };
+  const jwtService = {
+    verifyAsync: async (token) => ({
+      sub: user.id,
+      email: user.email,
+      type: 'refresh',
+      sessionId: token === tokenB ? sessionBId : sessionAId,
+    }),
+    signAsync: async (payload) => (payload.type === 'refresh' ? `new-refresh-${payload.sessionId}` : `${payload.type}-token`),
+  };
+  const service = new AuthService(prisma, jwtService, { sendEmailLogin: async () => {} });
+
+  const refreshedA = await service.refresh({ headers: { cookie: `platforma_refresh_token=${tokenA}` } });
+  const refreshedB = await service.refresh({ headers: { cookie: `platforma_refresh_token=${tokenB}` } });
+
+  assert.equal(refreshedA.refreshToken, tokenA);
+  assert.equal(refreshedB.refreshToken, tokenB);
+  assert.equal(await argon2.verify(sessions[sessionAId].refreshTokenHash, tokenA), true);
+  assert.equal(await argon2.verify(sessions[sessionBId].refreshTokenHash, tokenB), true);
+  assert.notEqual(sessions[sessionAId].lastUsedAt.toISOString(), '2026-05-01T10:00:00.000Z');
+});
+
+test('AuthService.refresh accepts repeated refreshes from the same browser session', async () => {
+  const argon2 = require('argon2');
+  const user = userRecord({
+    refreshTokenHash: null,
+    refreshTokenExpiresAt: null,
+    role: {
+      id: '44444444-4444-4444-8444-444444444444',
+      name: 'editor',
+      description: 'Editor',
+      permissions: [
+        {
+          permission: {
+            key: 'objects:read',
+          },
+        },
+      ],
+    },
+    profilePhotoFile: null,
+  });
+  const sessionId = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
+  const currentToken = 'current-refresh-token';
+  const session = {
+    id: sessionId,
+    userId: user.id,
+    refreshTokenHash: await argon2.hash(currentToken, { type: argon2.argon2id }),
+    refreshTokenExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    lastUsedAt: new Date('2026-05-01T10:00:00.000Z'),
+  };
+  const prisma = {
+    user: {
+      findFirst: async () => user,
+      update: async () => user,
+      updateMany: async () => ({}),
+    },
+    userSession: {
+      findFirst: async () => session,
+      update: async (args) => {
+        Object.assign(session, args.data);
+
+        return session;
+      },
+      deleteMany: async () => ({}),
+    },
+  };
+  const jwtService = {
+    verifyAsync: async () => ({
+      sub: user.id,
+      email: user.email,
+      type: 'refresh',
+      sessionId,
+    }),
+    signAsync: async (payload) => (payload.type === 'refresh' ? 'new-refresh-token' : `${payload.type}-token`),
+  };
+  const service = new AuthService(prisma, jwtService, { sendEmailLogin: async () => {} });
+
+  const first = await service.refresh({ headers: { cookie: `platforma_refresh_token=${currentToken}` } });
+  const second = await service.refresh({ headers: { cookie: `platforma_refresh_token=${currentToken}` } });
+
+  assert.equal(first.refreshToken, currentToken);
+  assert.equal(second.refreshToken, currentToken);
+  assert.equal(await argon2.verify(session.refreshTokenHash, currentToken), true);
 });
