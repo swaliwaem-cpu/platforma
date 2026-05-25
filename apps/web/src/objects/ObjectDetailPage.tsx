@@ -506,12 +506,22 @@ function ObjectImageCarousel({
       if (event.key === 'Escape') {
         closeLightbox();
       }
+
+      if (event.key === 'ArrowLeft' && hasManyImages) {
+        event.preventDefault();
+        showPreviousLightboxImage();
+      }
+
+      if (event.key === 'ArrowRight' && hasManyImages) {
+        event.preventDefault();
+        showNextLightboxImage();
+      }
     }
 
     window.addEventListener('keydown', handleKeyDown);
 
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [lightboxIndex]);
+  }, [filteredImages.length, hasManyImages, lightboxIndex]);
 
   if (!activeImage) {
     return (

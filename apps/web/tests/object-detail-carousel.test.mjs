@@ -37,6 +37,12 @@ test('object detail carousel lightbox offers original image download', () => {
   assert.match(objectImageCarouselSource, /Скачать оригинал/);
 });
 
+test('object detail carousel lightbox supports keyboard arrow navigation', () => {
+  assert.match(objectImageCarouselSource, /event\.key === 'ArrowLeft'[\s\S]*?showPreviousLightboxImage\(\);/);
+  assert.match(objectImageCarouselSource, /event\.key === 'ArrowRight'[\s\S]*?showNextLightboxImage\(\);/);
+  assert.match(objectImageCarouselSource, /event\.preventDefault\(\);/);
+});
+
 test('object detail carousel filters images by thematic section', () => {
   assert.match(source, /ObjectImageSection/);
   assert.match(source, /const \[activeSection,\s*setActiveSection\] = useState<ObjectImageSection \| null>\(null\);/);
