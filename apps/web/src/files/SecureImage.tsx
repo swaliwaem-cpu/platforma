@@ -33,6 +33,11 @@ type SecureImageProps = Omit<ImgHTMLAttributes<HTMLImageElement>, 'src'> & {
   variant?: SecureImageVariant;
 };
 
+type BuildMediaFileContentUrlOptions = {
+  download?: boolean;
+  variant?: SecureImageVariant;
+};
+
 const defaultRootMargin = '240px';
 
 export function SecureImage({
@@ -200,12 +205,22 @@ function normalizeVariant(variant: SecureImageVariant): SecureImageVariant {
   return variant === 'original' ? 'original' : variant.toLowerCase() as SecureImageVariant;
 }
 
-export function buildMediaFileContentUrl(fileId: string, variant: SecureImageVariant = 'original') {
+export function buildMediaFileContentUrl(
+  fileId: string,
+  variantOrOptions: SecureImageVariant | BuildMediaFileContentUrlOptions = 'original',
+) {
   const params = new URLSearchParams();
+  const options = typeof variantOrOptions === 'string' ? { variant: variantOrOptions } : variantOrOptions;
+  const variant = options.variant ?? 'original';
 
   if (variant !== 'original') {
     params.set('variant', variant);
   }
+
+  if (options.download) {
+    params.set('download', '1');
+  }
+
   const queryString = params.toString();
 
   return `${apiUrl}/media/files/${encodeURIComponent(fileId)}/content${queryString ? `?${queryString}` : ''}`;

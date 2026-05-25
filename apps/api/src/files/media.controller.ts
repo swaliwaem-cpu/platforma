@@ -1,7 +1,11 @@
 import { Controller, Get, Param, Query, Res, UseGuards } from '@nestjs/common';
 
 import { MediaTokenGuard } from '../auth/media-token.guard';
-import { type FileContentResponse, sendFileContentResponse } from './file-content-response';
+import {
+  type FileContentResponse,
+  getFileContentDisposition,
+  sendFileContentResponse,
+} from './file-content-response';
 import { FilesService } from './files.service';
 
 @Controller('media/files')
@@ -14,11 +18,13 @@ export class MediaController {
     @Param('id') id: string,
     @Query('variant') variant: string | undefined,
     @Res() response: FileContentResponse,
+    @Query('download') download: string | undefined,
   ) {
     const startedAt = Date.now();
     const content = await this.filesService.getContent(id, variant);
 
     sendFileContentResponse(response, content, {
+      disposition: getFileContentDisposition(download),
       serverTimingDurationMs: Date.now() - startedAt,
     });
   }

@@ -17,13 +17,24 @@ test('object detail carousel opens a dialog lightbox from the main image', () =>
   assert.match(source, /aria-modal="true"/);
 });
 
-test('object detail carousel lightbox uses detail image variant and keyboard close', () => {
-  assert.match(objectImageCarouselSource, /className="carousel-modal-image"[\s\S]*?variant="detail"/);
-  assert.doesNotMatch(objectImageCarouselSource, /variant="original"/);
+test('object detail carousel uses original images for main photo and lightbox', () => {
+  assert.match(objectImageCarouselSource, /className="object-carousel-image"[\s\S]*?variant="original"/);
+  assert.match(objectImageCarouselSource, /className="carousel-modal-image"[\s\S]*?variant="original"/);
+  assert.match(objectImageCarouselSource, /variant="thumbnail"/);
   assert.match(source, /function closeLightbox\(\)\s*\{[\s\S]*?setLightboxIndex\(null\);[\s\S]*?\}/);
   assert.match(source, /event\.key === 'Escape'/);
   assert.match(source, /className="carousel-modal-backdrop"/);
   assert.match(source, /className="carousel-modal-image"/);
+});
+
+test('object detail carousel lightbox offers original image download', () => {
+  assert.match(source, /DownloadIcon/);
+  assert.match(
+    objectImageCarouselSource,
+    /className="carousel-modal-download"[\s\S]*?href=\{buildMediaFileContentUrl\(lightboxImage\.file\.id,\s*\{ download: true \}\)\}/,
+  );
+  assert.match(objectImageCarouselSource, /download=\{getImageDownloadFileName\(lightboxImage,\s*objectTitle\)\}/);
+  assert.match(objectImageCarouselSource, /Скачать оригинал/);
 });
 
 test('object detail carousel filters images by thematic section', () => {

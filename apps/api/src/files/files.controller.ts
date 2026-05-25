@@ -20,7 +20,11 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RequirePermissions } from '../auth/permissions.decorator';
 import { PermissionsGuard } from '../auth/permissions.guard';
 import { GENERIC_MAX_SIZE_BYTES } from './file-upload.constants';
-import { type FileContentResponse, sendFileContentResponse } from './file-content-response';
+import {
+  type FileContentResponse,
+  getFileContentDisposition,
+  sendFileContentResponse,
+} from './file-content-response';
 import { FilesService } from './files.service';
 import { UploadedFile as UploadedFileData } from './uploaded-file.type';
 
@@ -51,10 +55,13 @@ export class FilesController {
     @Param('id') id: string,
     @Query('variant') variant: string | undefined,
     @Res() response: FileContentResponse,
+    @Query('download') download: string | undefined,
   ) {
     const content = await this.filesService.getContent(id, variant);
 
-    sendFileContentResponse(response, content);
+    sendFileContentResponse(response, content, {
+      disposition: getFileContentDisposition(download),
+    });
   }
 
   @Delete(':id')

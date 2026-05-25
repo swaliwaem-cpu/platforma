@@ -5,6 +5,7 @@ import {
   ArrowUpIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  DownloadIcon,
   ExternalLinkIcon,
   PencilIcon,
   XIcon,
@@ -534,7 +535,7 @@ function ObjectImageCarousel({
             alt={activeImage.alt ?? objectTitle}
             className="object-carousel-image"
             fileId={activeImage.file.id}
-            variant="detail"
+            variant="original"
           />
         </button>
 
@@ -630,6 +631,15 @@ function ObjectImageCarousel({
               ×
             </button>
 
+            <a
+              className="carousel-modal-download"
+              download={getImageDownloadFileName(lightboxImage, objectTitle)}
+              href={buildMediaFileContentUrl(lightboxImage.file.id, { download: true })}
+            >
+              <DownloadIcon aria-hidden="true" />
+              Скачать оригинал
+            </a>
+
             {hasManyImages ? (
               <button
                 aria-label="Предыдущее полноразмерное фото"
@@ -646,7 +656,7 @@ function ObjectImageCarousel({
                 accessToken={accessToken}
                 alt={lightboxImage.alt ?? objectTitle}
                 fileId={lightboxImage.file.id}
-                variant="detail"
+                variant="original"
               />
             </div>
 
@@ -670,6 +680,10 @@ function ObjectImageCarousel({
       ) : null}
     </section>
   );
+}
+
+function getImageDownloadFileName(image: RealEstateObjectDetail['images'][number], objectTitle: string) {
+  return image.file.originalName?.trim() || `${objectTitle.trim() || 'object-image'}.jpg`;
 }
 
 function ObjectFeedUnitsSection({

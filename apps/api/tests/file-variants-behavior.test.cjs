@@ -332,6 +332,41 @@ test('MediaController.getContent delegates to FilesService and shares content he
   assert.deepEqual(response.body, Buffer.from('media body'));
 });
 
+test('MediaController.getContent can force original file downloads', async () => {
+  const calls = [];
+  const controller = new MediaController({
+    getContent: async (id, variant) => {
+      calls.push({ id, variant });
+
+      return {
+        file: createFileRecord({
+          mimeType: 'image/png',
+          originalName: 'Original.PNG',
+        }),
+        buffer: Buffer.from('original body'),
+        variant: 'original',
+      };
+    },
+  });
+  const headers = {};
+  const response = {
+    setHeader: (name, value) => {
+      headers[name] = value;
+    },
+    send: (body) => {
+      response.body = body;
+    },
+  };
+
+  await controller.getContent('11111111-1111-4111-8111-111111111111', undefined, response, '1');
+
+  assert.deepEqual(calls, [{ id: '11111111-1111-4111-8111-111111111111', variant: undefined }]);
+  assert.equal(headers['Content-Type'], 'image/png');
+  assert.equal(headers['Content-Disposition'], 'attachment; filename="Original.PNG"');
+  assert.equal(headers['X-Platforma-File-Variant'], undefined);
+  assert.deepEqual(response.body, Buffer.from('original body'));
+});
+
 test('MediaController.getContent adds image server timing without changing PDF headers', async () => {
   const imageController = new MediaController({
     getContent: async () => ({

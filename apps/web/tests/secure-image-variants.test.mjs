@@ -27,6 +27,14 @@ test('web has shared secure image helper with variant-aware file content URL', (
   assert.doesNotMatch(secureImageSource, /URL\.createObjectURL/);
 });
 
+test('secure image URL helper can request attachment downloads', () => {
+  const secureImageSource = readFileSync(secureImagePath, 'utf8');
+
+  assert.match(secureImageSource, /type BuildMediaFileContentUrlOptions/);
+  assert.match(secureImageSource, /download\?:\s*boolean/);
+  assert.match(secureImageSource, /params\.set\('download', '1'\)/);
+});
+
 test('secure image default loading state does not show visible copy', () => {
   const secureImageSource = readFileSync(secureImagePath, 'utf8');
 
@@ -66,8 +74,12 @@ test('catalog map popup gallery uses card variants for sharp large previews', ()
   assert.doesNotMatch(mapObjectCardSource, /variant="thumbnail"/);
 });
 
-test('detail page requests detail image for main photo and thumbnail image for carousel thumbs', () => {
-  assert.match(detailSource, /variant="detail"/);
+test('detail page requests original image for main photo and thumbnail image for carousel thumbs', () => {
+  const objectImageCarouselSource =
+    detailSource.match(/function ObjectImageCarousel[\s\S]*?\nfunction ObjectFeedUnitsSection/)?.[0] ?? '';
+
+  assert.match(objectImageCarouselSource, /className="object-carousel-image"[\s\S]*?variant="original"/);
+  assert.match(objectImageCarouselSource, /className="carousel-modal-image"[\s\S]*?variant="original"/);
   assert.match(detailSource, /variant="thumbnail"/);
 });
 

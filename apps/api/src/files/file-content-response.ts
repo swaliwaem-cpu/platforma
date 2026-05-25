@@ -13,6 +13,7 @@ export type FileContentResult = {
 };
 
 export type FileContentResponseOptions = {
+  disposition?: 'attachment' | 'inline';
   serverTimingDurationMs?: number;
 };
 
@@ -36,11 +37,19 @@ export function sendFileContentResponse(
     response.setHeader('X-Platforma-File-Variant', content.variant);
   }
 
+  const disposition = options.disposition ?? 'inline';
+
   response.setHeader(
     'Content-Disposition',
-    `inline; filename="${sanitizeHeaderFilename(content.file.originalName)}"`,
+    `${disposition}; filename="${sanitizeHeaderFilename(content.file.originalName)}"`,
   );
   response.send(content.buffer);
+}
+
+export function getFileContentDisposition(download: string | null | undefined) {
+  const normalizedDownload = download?.trim().toLowerCase();
+
+  return normalizedDownload === '1' || normalizedDownload === 'true' ? 'attachment' : 'inline';
 }
 
 function sanitizeHeaderFilename(value: string | null) {

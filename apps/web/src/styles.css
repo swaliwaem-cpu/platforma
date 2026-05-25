@@ -4821,7 +4821,7 @@ tr.user-row--deactivated .text-button {
 .carousel-section-filters {
   position: absolute;
   right: auto;
-  bottom: 78px;
+  bottom: 106px;
   left: 50%;
   display: flex;
   width: min(calc(100% - 28px), 720px);
@@ -4963,7 +4963,8 @@ tr.user-row--deactivated .text-button {
 
 .carousel-modal-close,
 .carousel-modal-button,
-.carousel-modal-counter {
+.carousel-modal-counter,
+.carousel-modal-download {
   position: absolute;
   z-index: 2;
   border: 1px solid rgb(255 255 255 / 42%);
@@ -4986,6 +4987,44 @@ tr.user-row--deactivated .text-button {
   height: 42px;
   font-size: 28px;
   line-height: 1;
+}
+
+.carousel-modal-download {
+  top: 0;
+  left: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  border-radius: 999px;
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  text-decoration: none;
+}
+
+.carousel-modal-download svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.carousel-modal-download:hover,
+.carousel-modal-download:focus-visible,
+.carousel-modal-close:hover,
+.carousel-modal-close:focus-visible,
+.carousel-modal-button:hover,
+.carousel-modal-button:focus-visible {
+  border-color: rgb(255 255 255 / 70%);
+  background: rgb(24 32 42 / 88%);
+}
+
+.carousel-modal-download:focus-visible,
+.carousel-modal-close:focus-visible,
+.carousel-modal-button:focus-visible {
+  outline: 3px solid rgb(37 99 235 / 52%);
+  outline-offset: 2px;
 }
 
 .carousel-modal-button {
@@ -7143,7 +7182,7 @@ tr.user-row--deactivated .text-button {
   }
 
   .carousel-section-filters {
-    bottom: 64px;
+    bottom: 88px;
     justify-content: flex-start;
     overflow-x: auto;
   }
@@ -7171,6 +7210,11 @@ tr.user-row--deactivated .text-button {
   .carousel-modal-close {
     width: 38px;
     height: 38px;
+  }
+
+  .carousel-modal-download {
+    min-height: 38px;
+    padding: 0 12px;
   }
 
   .object-detail-facts div,

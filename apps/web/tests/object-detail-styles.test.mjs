@@ -44,7 +44,7 @@ test('object detail carousel is a framed standalone media section', () => {
 test('object detail carousel centers the active image crop', () => {
   assert.match(
     objectDetailSource,
-    /className="object-carousel-image"[\s\S]*?variant="detail"/,
+    /className="object-carousel-image"[\s\S]*?variant="original"/,
   );
 
   assert.match(
@@ -83,7 +83,7 @@ test('object detail carousel hides thumbnails until lower hover or focus zone', 
 test('object detail carousel section filter pills share lower hover and touch behavior', () => {
   assert.match(
     styles,
-    /\.carousel-section-filters\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?left:\s*50%;[\s\S]*?opacity:\s*0;[\s\S]*?pointer-events:\s*none;[\s\S]*?\}/,
+    /\.carousel-section-filters\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?bottom:\s*106px;[\s\S]*?left:\s*50%;[\s\S]*?opacity:\s*0;[\s\S]*?pointer-events:\s*none;[\s\S]*?\}/,
   );
 
   assert.match(
@@ -104,6 +104,18 @@ test('object detail carousel section filter pills share lower hover and touch be
   assert.match(
     styles,
     /@media\s*\(hover:\s*none\)\s*\{[\s\S]*?\.carousel-section-filters\s*\{[\s\S]*?opacity:\s*1;[\s\S]*?pointer-events:\s*auto;[\s\S]*?\}/,
+  );
+});
+
+test('object detail carousel modal download action stays at the top edge', () => {
+  assert.match(
+    styles,
+    /\.carousel-modal-download\s*\{[\s\S]*?top:\s*0;[\s\S]*?left:\s*0;[\s\S]*?min-height:\s*42px;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.carousel-modal-download svg\s*\{[\s\S]*?width:\s*18px;[\s\S]*?height:\s*18px;[\s\S]*?\}/,
   );
 });
 

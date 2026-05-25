@@ -573,7 +573,7 @@ html[data-app-theme] :is(.map-balloon strong, .map-object-card dd, .map-object-c
   color: var(--app-theme-ink-900);
 }
 
-html[data-app-theme] :is(.carousel-button, .carousel-counter, .carousel-section-filter, .carousel-modal-close, .carousel-modal-button, .carousel-modal-counter, .object-gallery-item figcaption) {
+html[data-app-theme] :is(.carousel-button, .carousel-counter, .carousel-section-filter, .carousel-modal-close, .carousel-modal-button, .carousel-modal-counter, .carousel-modal-download, .object-gallery-item figcaption) {
   border-color: color-mix(in srgb, var(--app-theme-surface) 42%, transparent);
   background: color-mix(in srgb, var(--app-theme-ink-900) 78%, transparent);
   color: var(--app-theme-surface);
@@ -583,7 +583,7 @@ html[data-app-theme="dark-premium"] :is(.sidebar-logo, .catalog-card-media img, 
   filter: saturate(0.92) contrast(1.02);
 }
 
-html[data-app-theme="dark-premium"] :is(.carousel-button, .carousel-counter, .carousel-section-filter, .carousel-modal-close, .carousel-modal-button, .carousel-modal-counter, .object-gallery-item figcaption) {
+html[data-app-theme="dark-premium"] :is(.carousel-button, .carousel-counter, .carousel-section-filter, .carousel-modal-close, .carousel-modal-button, .carousel-modal-counter, .carousel-modal-download, .object-gallery-item figcaption) {
   background: rgb(0 0 0 / 72%);
   color: #ffffff;
 }
