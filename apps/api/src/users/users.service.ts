@@ -12,6 +12,7 @@ import { AuthenticatedUser, RequestWithAuth } from '../auth/auth.types';
 import { FilesService } from '../files/files.service';
 import { UploadedFile } from '../files/uploaded-file.type';
 import { PrismaService } from '../prisma/prisma.service';
+import { createSearchContainsFilters } from '../search/search-filters';
 
 const userInclude = {
   role: true,
@@ -90,20 +91,7 @@ export class UsersService {
     const search = query.search?.trim();
 
     if (search) {
-      where.OR = [
-        {
-          email: {
-            contains: search,
-            mode: 'insensitive',
-          },
-        },
-        {
-          name: {
-            contains: search,
-            mode: 'insensitive',
-          },
-        },
-      ];
+      where.OR = createSearchContainsFilters(search, ['email', 'name']);
     }
 
     if (query.status) {

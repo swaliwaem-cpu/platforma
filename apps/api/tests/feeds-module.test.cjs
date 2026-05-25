@@ -489,6 +489,30 @@ test('FeedsService lists runs, reads a run and lists units with media details', 
   assert.equal(units.items[0].media[0].file.sizeBytes, '1000');
 });
 
+test('FeedsService.listUnits expands search for transliteration and wrong keyboard layout', async () => {
+  const calls = {};
+  const prisma = {
+    feedUnit: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [unitRecord()];
+      },
+      count: async (args) => {
+        calls.count = args;
+        return 1;
+      },
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new FeedsService(prisma);
+
+  await service.listUnits({ search: 'Ifufk' });
+
+  assert.equal(calls.findMany.where.AND.some((filter) => filter.OR?.some((item) => item.title?.contains === 'шагал')), true);
+  assert.equal(calls.findMany.where.AND.some((filter) => filter.OR?.some((item) => item.address?.contains === 'shagal')), true);
+  assert.deepEqual(calls.count.where, calls.findMany.where);
+});
+
 test('FeedsService protects one source from parallel preview/run commands', async () => {
   let resolveCommand;
   const commandStarted = new Promise((resolve) => {

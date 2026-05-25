@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { LocationType, Prisma } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
+import { createSearchContainsFilters } from '../search/search-filters';
 
 type DirectoryQuery = {
   search?: string;
@@ -18,20 +19,7 @@ export class DirectoriesService {
     const limit = this.parseLimit(query.limit);
     const where: Prisma.DeveloperWhereInput = search
       ? {
-          OR: [
-            {
-              name: {
-                contains: search,
-                mode: 'insensitive',
-              },
-            },
-            {
-              slug: {
-                contains: search,
-                mode: 'insensitive',
-              },
-            },
-          ],
+          OR: createSearchContainsFilters(search, ['name', 'slug']),
         }
       : {};
 
@@ -65,20 +53,7 @@ export class DirectoriesService {
 
     if (search) {
       filters.push({
-        OR: [
-          {
-            name: {
-              contains: search,
-              mode: 'insensitive',
-            },
-          },
-          {
-            slug: {
-              contains: search,
-              mode: 'insensitive',
-            },
-          },
-        ],
+        OR: createSearchContainsFilters(search, ['name', 'slug']),
       });
     }
 
@@ -112,26 +87,7 @@ export class DirectoriesService {
     const limit = this.parseLimit(query.limit);
     const where: Prisma.MetroStationWhereInput = search
       ? {
-          OR: [
-            {
-              name: {
-                contains: search,
-                mode: 'insensitive',
-              },
-            },
-            {
-              slug: {
-                contains: search,
-                mode: 'insensitive',
-              },
-            },
-            {
-              lineName: {
-                contains: search,
-                mode: 'insensitive',
-              },
-            },
-          ],
+          OR: createSearchContainsFilters(search, ['name', 'slug', 'lineName']),
         }
       : {};
 

@@ -1,3 +1,5 @@
+import { matchesSearchVariants, normalizeSearchText } from '@platforma/shared/search-normalization';
+
 export type QuickEditCompletionValue = {
   completionQuarter: string | null;
   completionYear: string | null;
@@ -8,17 +10,11 @@ const quickEditCompletionYearPattern = /^(\d{4})$/u;
 const apartmentAreaUnitPattern = /\s*(?:м²|м2|м\^2|кв\.?\s*м\.?)\s*$/iu;
 
 export function normalizeQuickEditSearchTerm(value: string) {
-  return value.replace(/\./g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+  return normalizeSearchText(value);
 }
 
 export function matchesQuickEditSearch(query: string, values: Array<string | null | undefined>) {
-  const normalizedQuery = normalizeQuickEditSearchTerm(query);
-
-  if (!normalizedQuery) {
-    return true;
-  }
-
-  return values.some((value) => normalizeQuickEditSearchTerm(value ?? '').includes(normalizedQuery));
+  return matchesSearchVariants(query, values);
 }
 
 export function parseQuickEditCompletion(value: string): QuickEditCompletionValue {

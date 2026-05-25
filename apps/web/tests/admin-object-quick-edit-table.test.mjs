@@ -14,6 +14,10 @@ const transformsPath = resolve(currentDir, '../src/admin/objectQuickEditTransfor
 const transformsSource = existsSync(transformsPath) ? readFileSync(transformsPath, 'utf8') : '';
 const persistencePath = resolve(currentDir, '../src/admin/objectQuickEditPersistence.ts');
 const persistenceSource = existsSync(persistencePath) ? readFileSync(persistencePath, 'utf8') : '';
+const sharedPackagePath = resolve(currentDir, '../../../packages/shared/package.json');
+const sharedPackage = JSON.parse(readFileSync(sharedPackagePath, 'utf8'));
+const sharedSearchEsmPath = resolve(currentDir, '../../../packages/shared/src/search-normalization.mjs');
+const sharedSearchEsmSource = existsSync(sharedSearchEsmPath) ? readFileSync(sharedSearchEsmPath, 'utf8') : '';
 
 test('objects admin list renders through ObjectQuickEditTable component', () => {
   assert.match(pageSource, /import \{[\s\S]*ObjectQuickEditTable,[\s\S]*objectStatusLabels,[\s\S]*type SortDirection,[\s\S]*type SortField,[\s\S]*\} from '\.\/ObjectQuickEditTable';/);
@@ -89,11 +93,18 @@ test('quick edit table exposes inline editors for text, status, class, developer
 test('quick edit transform helpers normalize search, completion and apartment area drafts', async () => {
   assert.equal(existsSync(transformsPath), true);
 
+  const searchHelpers = await import('@platforma/shared/search-normalization');
   const helpers = await import(pathToFileURL(transformsPath).href);
 
+  assert.equal(searchHelpers.createSearchVariants('Shagal').includes('шагал'), true);
+  assert.equal(searchHelpers.createSearchVariants('Ifufk').includes('шагал'), true);
+  assert.equal(searchHelpers.matchesSearchVariants('Ifufk', ['Шагал']), true);
   assert.equal(helpers.normalizeQuickEditSearchTerm(' Ж.К.  Ария '), 'жк ария');
   assert.equal(helpers.matchesQuickEditSearch('жк ар', ['Ж.К. Ария', 'ariya']), true);
-  assert.equal(helpers.matchesQuickEditSearch('nov', ['Новая линия', 'new-line']), false);
+  assert.equal(helpers.matchesQuickEditSearch('Shagal', ['Шагал']), true);
+  assert.equal(helpers.matchesQuickEditSearch('Ifufk', ['Шагал']), true);
+  assert.equal(helpers.matchesQuickEditSearch('nov', ['Новая линия', 'new-line']), true);
+  assert.equal(helpers.matchesQuickEditSearch('west', ['Новая линия', 'new-line']), false);
   assert.deepEqual(helpers.parseQuickEditCompletion('2 кв 2029'), {
     completionQuarter: '2',
     completionYear: '2029',
@@ -106,10 +117,19 @@ test('quick edit transform helpers normalize search, completion and apartment ar
   assert.equal(helpers.normalizeApartmentAreaRange('44-170 м²'), '44-170 м²');
 });
 
+test('shared search normalization exposes browser-safe named ESM exports', () => {
+  assert.equal(sharedPackage.exports['./search-normalization'].import, './src/search-normalization.mjs');
+  assert.equal(sharedPackage.exports['./search-normalization'].require, './src/search-normalization.cjs');
+  assert.match(sharedSearchEsmSource, /export const matchesSearchVariants/);
+  assert.match(sharedSearchEsmSource, /export const normalizeSearchText/);
+  assert.doesNotMatch(sharedSearchEsmSource, /search-normalization\.cjs/);
+});
+
 test('quick edit table uses normalized search and draft transforms before commit', () => {
+  assert.match(transformsSource, /from '@platforma\/shared\/search-normalization'/);
   assert.match(transformsSource, /export function normalizeQuickEditSearchTerm/);
-  assert.match(transformsSource, /replace\(\/\\\.\/g, ''\)/);
-  assert.match(transformsSource, /replace\(\/\\s\+\/g, ' '\)/);
+  assert.match(transformsSource, /normalizeSearchText\(value\)/);
+  assert.match(transformsSource, /matchesSearchVariants\(query,\s*values\)/);
   assert.match(transformsSource, /export function parseQuickEditCompletion/);
   assert.match(transformsSource, /export function normalizeApartmentAreaRange/);
 

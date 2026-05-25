@@ -17,6 +17,7 @@ import { AuthenticatedUser, RequestWithAuth } from '../auth/auth.types';
 import { FilesService } from '../files/files.service';
 import { UploadedFile } from '../files/uploaded-file.type';
 import { PrismaService } from '../prisma/prisma.service';
+import { createSearchContainsFilters } from '../search/search-filters';
 import { findCatalogSearchObjectIds } from './object-search';
 
 const objectPdfUploadLimit = 10;
@@ -517,26 +518,7 @@ export class ObjectsService {
 
     if (search) {
       filters.push({
-        OR: [
-          {
-            externalId: {
-              contains: search,
-              mode: 'insensitive',
-            },
-          },
-          {
-            title: {
-              contains: search,
-              mode: 'insensitive',
-            },
-          },
-          {
-            address: {
-              contains: search,
-              mode: 'insensitive',
-            },
-          },
-        ],
+        OR: createSearchContainsFilters(search, ['externalId', 'title', 'address']),
       });
     }
 

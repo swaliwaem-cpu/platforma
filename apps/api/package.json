@@ -17,6 +17,7 @@
     "@nestjs/core": "11.1.19",
     "@nestjs/jwt": "^11.0.2",
     "@nestjs/platform-express": "11.1.19",
+    "@platforma/shared": "workspace:*",
     "@prisma/client": "6.19.3",
     "argon2": "^0.44.0",
     "nodemailer": "^8.0.7",

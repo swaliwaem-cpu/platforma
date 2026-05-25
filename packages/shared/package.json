@@ -4,7 +4,12 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./search-normalization": {
+      "types": "./src/search-normalization.d.cts",
+      "import": "./src/search-normalization.mjs",
+      "require": "./src/search-normalization.cjs"
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json --noEmit"

@@ -222,6 +222,25 @@ test('DirectoriesService.listLocations filters district and area directories by 
   assert.equal(calls[0].take, 500);
 });
 
+test('DirectoriesService.listDevelopers expands search for transliteration and wrong keyboard layout', async () => {
+  const calls = {};
+  const prisma = {
+    developer: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [];
+      },
+    },
+  };
+  const service = new DirectoriesService(prisma);
+
+  await service.listDevelopers({ search: 'Ifufk' });
+
+  const containsValues = calls.findMany.where.OR.map((filter) => filter.name?.contains ?? filter.slug?.contains);
+  assert.equal(containsValues.includes('шагал'), true);
+  assert.equal(containsValues.includes('shagal'), true);
+});
+
 test('CatalogLinksService.listPublic returns enabled links with valid public targets', async () => {
   const developerId = '55555555-5555-4555-8555-555555555555';
   const publishedObject = objectRecord({
@@ -517,7 +536,8 @@ test('ObjectsService.list builds catalog filters for status, price, presentation
   assert.equal(filters.some((filter) => filter.files?.none?.type === ObjectFileType.PRESENTATION), true);
   assert.equal(filters.some((filter) => filter.OR?.some((item) => item.latitude === null)), true);
   assert.equal(filters.some((filter) => filter.id?.in?.includes(objectId)), true);
-  assert.equal(calls.searchQuery.values.every((value) => value === '%центр%'), true);
+  assert.equal(calls.searchQuery.values.includes('%центр%'), true);
+  assert.equal(calls.searchQuery.values.includes('%tsentr%'), true);
   assert.match(calls.searchQuery.strings.join('?'), /replace\(lower\(coalesce\(o\.title, ''\)\), '\.', ''\)/);
   assert.match(calls.searchQuery.strings.join('?'), /replace\(lower\(coalesce\(d\.name, ''\)\), '\.', ''\)/);
   assert.match(calls.searchQuery.strings.join('?'), /replace\(lower\(coalesce\(o\.address, ''\)\), '\.', ''\)/);
@@ -673,7 +693,38 @@ test('ObjectsService.list ignores dots in object catalog search', async () => {
 
   await service.list({ search: ' ул. Новая ' });
 
-  assert.equal(calls.searchQuery.values.every((value) => value === '%ул новая%'), true);
+  assert.equal(calls.searchQuery.values.includes('%ул новая%'), true);
+  assert.equal(calls.searchQuery.values.includes('%ul novaya%'), true);
+  assert.equal(
+    calls.findMany.where.AND.some((filter) =>
+      filter.id?.in?.includes('11111111-1111-4111-8111-111111111111'),
+    ),
+    true,
+  );
+});
+
+test('ObjectsService.list expands catalog search for transliteration and wrong keyboard layout', async () => {
+  const calls = {};
+  const prisma = {
+    $queryRaw: async (query) => {
+      calls.searchQuery = query;
+      return [{ id: '11111111-1111-4111-8111-111111111111' }];
+    },
+    realEstateObject: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [objectRecord()];
+      },
+      count: async () => 1,
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await service.list({ search: 'Ifufk' });
+
+  assert.equal(calls.searchQuery.values.includes('%шагал%'), true);
+  assert.equal(calls.searchQuery.values.includes('%shagal%'), true);
   assert.equal(
     calls.findMany.where.AND.some((filter) =>
       filter.id?.in?.includes('11111111-1111-4111-8111-111111111111'),
@@ -1067,7 +1118,7 @@ test('ObjectsService.listFeedUnits returns feed units for one object with filter
     limit: '5',
     status: 'available',
     type: 'residential',
-    search: 'flat',
+    search: 'Ifufk',
   });
 
   assert.deepEqual(calls.objectCount, {
@@ -1083,7 +1134,11 @@ test('ObjectsService.listFeedUnits returns feed units for one object with filter
   assert.equal(calls.findMany.where.AND.some((filter) => filter.status === FeedUnitStatus.AVAILABLE), true);
   assert.equal(calls.findMany.where.AND.some((filter) => filter.type === FeedUnitType.RESIDENTIAL), true);
   assert.equal(
-    calls.findMany.where.AND.some((filter) => filter.OR?.some((item) => item.externalId?.contains === 'flat')),
+    calls.findMany.where.AND.some((filter) => filter.OR?.some((item) => item.externalId?.contains === 'шагал')),
+    true,
+  );
+  assert.equal(
+    calls.findMany.where.AND.some((filter) => filter.OR?.some((item) => item.externalId?.contains === 'shagal')),
     true,
   );
   assert.equal(result.items[0].price, '10000000');
@@ -1398,7 +1453,8 @@ test('MapService.listObjects uses dot-insensitive search for map catalog objects
 
   await service.listObjects({ search: ' ж.к. Ари ' });
 
-  assert.equal(calls.searchQuery.values.every((value) => value === '%жк ари%'), true);
+  assert.equal(calls.searchQuery.values.includes('%жк ари%'), true);
+  assert.equal(calls.searchQuery.values.includes('%zhk ari%'), true);
   assert.equal(calls.findMany.where.AND.some((filter) => filter.id?.in?.includes(objectId)), true);
   assert.match(calls.searchQuery.strings.join('?'), /replace\(lower\(coalesce\(o\.title, ''\)\), '\.', ''\)/);
   assert.match(calls.searchQuery.strings.join('?'), /replace\(lower\(coalesce\(d\.name, ''\)\), '\.', ''\)/);
@@ -2457,7 +2513,7 @@ test('UsersService.list builds filters for search, status and role', async () =>
   const result = await service.list({
     page: '3',
     limit: '10',
-    search: 'editor',
+    search: 'Ifufk',
     status: 'blocked',
     roleId: '44444444-4444-4444-8444-444444444444',
   });
@@ -2469,7 +2525,8 @@ test('UsersService.list builds filters for search, status and role', async () =>
   assert.equal(calls.findMany.take, 10);
   assert.equal(calls.findMany.where.status, UserStatus.BLOCKED);
   assert.equal(calls.findMany.where.roleId, '44444444-4444-4444-8444-444444444444');
-  assert.equal(calls.findMany.where.OR[0].email.contains, 'editor');
+  assert.equal(calls.findMany.where.OR.some((filter) => filter.email?.contains === 'шагал'), true);
+  assert.equal(calls.findMany.where.OR.some((filter) => filter.name?.contains === 'shagal'), true);
   assert.deepEqual(calls.count.where, calls.findMany.where);
 });
 
