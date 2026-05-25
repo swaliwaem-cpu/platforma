@@ -38,6 +38,20 @@ function getStandaloneStyleBlock(selector) {
   assert.fail(`Expected to find standalone style block for ${selector}`);
 }
 
+function extractSourceBetween(sourceText, startMarker, endMarker) {
+  const startIndex = sourceText.indexOf(startMarker);
+  const endIndex = sourceText.indexOf(endMarker, startIndex + startMarker.length);
+
+  assert.notEqual(startIndex, -1, `${startMarker} should exist`);
+  assert.notEqual(endIndex, -1, `${endMarker} should exist after ${startMarker}`);
+
+  return sourceText.slice(startIndex, endIndex);
+}
+
+function countMatches(sourceText, pattern) {
+  return sourceText.match(pattern)?.length ?? 0;
+}
+
 test('catalog page loads public quick links on catalog and map routes', () => {
   assert.match(source, /CatalogLinksResponse/);
   assert.match(source, /const isCatalogRoute = pathname === '\/catalog';/);
@@ -54,6 +68,35 @@ test('catalog quick link clicks reset filters and preserve the current list view
   assert.match(source, /const nextFilters = \{\s*\.\.\.defaultFilters,\s*developerId,\s*\};[\s\S]*buildCatalogQuery\(nextFilters, viewMode\)/);
   assert.match(source, /function openCatalogKrtLink\(krtName: string\)/);
   assert.match(source, /const nextFilters = \{\s*\.\.\.defaultFilters,\s*krtName,\s*\};[\s\S]*buildCatalogQuery\(nextFilters, viewMode\)/);
+});
+
+test('catalog object detail links open in new browser tabs', () => {
+  const quickLinkSource = extractSourceBetween(source, 'function CatalogQuickLinkItem', 'function CatalogFilters');
+  const listItemSource = extractSourceBetween(source, 'function CatalogListItem', 'function CatalogCard');
+  const cardSource = extractSourceBetween(source, 'function CatalogCard', 'function CatalogCardMetroLabel');
+  const mapCardSource = extractSourceBetween(source, 'function MapObjectCard', 'function CatalogListItem');
+  const mapBalloonSource = extractSourceBetween(source, 'function buildMapBalloon', 'type CatalogObjectWithLocations');
+
+  assert.equal(countMatches(quickLinkSource, /target="_blank"/g), 1);
+  assert.equal(countMatches(quickLinkSource, /rel="noopener noreferrer"/g), 1);
+  assert.doesNotMatch(quickLinkSource, /event\.preventDefault/);
+
+  assert.equal(countMatches(listItemSource, /target="_blank"/g), 3);
+  assert.equal(countMatches(listItemSource, /rel="noopener noreferrer"/g), 3);
+  assert.doesNotMatch(listItemSource, /event\.preventDefault/);
+
+  assert.equal(countMatches(cardSource, /target="_blank"/g), 3);
+  assert.equal(countMatches(cardSource, /rel="noopener noreferrer"/g), 3);
+  assert.doesNotMatch(cardSource, /event\.preventDefault/);
+
+  assert.equal(countMatches(mapCardSource, /target="_blank"/g), 1);
+  assert.equal(countMatches(mapCardSource, /rel="noopener noreferrer"/g), 1);
+  assert.match(mapCardSource, /<a className="catalog-card-link map-object-card-link" href=\{objectHref\}/);
+  assert.doesNotMatch(mapCardSource, /<button className="catalog-card-link map-object-card-link"/);
+
+  assert.match(mapBalloonSource, /target="_blank"/);
+  assert.match(mapBalloonSource, /rel="noopener noreferrer"/);
+  assert.doesNotMatch(mapBalloonSource, /data-map-point-id/);
 });
 
 test('catalog view controls render below quick links instead of inside the header', () => {

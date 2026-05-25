@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ArrowDownIcon, ArrowUpDownIcon, ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon } from 'lucide-react';
 import type {
   CatalogLinksResponse,
@@ -441,7 +441,6 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
           links={catalogLinks}
           onOpenDeveloper={openCatalogDeveloperLink}
           onOpenKrt={openCatalogKrtLink}
-          onOpenObject={(slug) => navigate(`/objects/${encodeURIComponent(slug)}`)}
         />
       ) : null}
 
@@ -473,7 +472,6 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
           isLoading={isMapLoading}
           objects={mapObjects}
           total={mapTotal}
-          onOpenObject={(slug) => navigate(`/objects/${encodeURIComponent(slug)}`)}
         />
       ) : (
         <CatalogListView
@@ -491,7 +489,6 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
           onLimitChange={(limit) => updateFilters({ limit })}
           onLoadMore={loadMoreObjects}
           onPageChange={(page) => updateFilters({ page }, { resetPage: false })}
-          onOpenObject={(slug) => navigate(`/objects/${encodeURIComponent(slug)}`)}
         />
       )}
     </div>
@@ -553,14 +550,12 @@ function CatalogQuickLinks({
   links,
   onOpenDeveloper,
   onOpenKrt,
-  onOpenObject,
 }: {
   error: string | null;
   isLoading: boolean;
   links: PublicCatalogQuickLink[];
   onOpenDeveloper: (developerId: string) => void;
   onOpenKrt: (krtName: string) => void;
-  onOpenObject: (slug: string) => void;
 }) {
   if (error) {
     return <p className="form-error">{error}</p>;
@@ -588,7 +583,6 @@ function CatalogQuickLinks({
                       link={link}
                       onOpenDeveloper={onOpenDeveloper}
                       onOpenKrt={onOpenKrt}
-                      onOpenObject={onOpenObject}
                     />
                   </li>
                 ))}
@@ -607,12 +601,10 @@ function CatalogQuickLinkItem({
   link,
   onOpenDeveloper,
   onOpenKrt,
-  onOpenObject,
 }: {
   link: PublicCatalogQuickLink;
   onOpenDeveloper: (developerId: string) => void;
   onOpenKrt: (krtName: string) => void;
-  onOpenObject: (slug: string) => void;
 }) {
   const developerId = link.developerId;
   const krtName = link.krtName;
@@ -641,10 +633,8 @@ function CatalogQuickLinkItem({
       <a
         className="text-button"
         href={objectHref}
-        onClick={(event) => {
-          event.preventDefault();
-          onOpenObject(objectSlug);
-        }}
+        rel="noopener noreferrer"
+        target="_blank"
       >
         {link.label}
       </a>
@@ -905,7 +895,6 @@ function CatalogListView({
   onLimitChange,
   onLoadMore,
   onPageChange,
-  onOpenObject,
 }: {
   accessToken: string;
   error: string | null;
@@ -921,7 +910,6 @@ function CatalogListView({
   onLimitChange: (limit: CatalogPageSize) => void;
   onLoadMore: () => void;
   onPageChange: (page: number) => void;
-  onOpenObject: (slug: string) => void;
 }) {
   const hasNextPage = loadedThroughPage < totalPages;
   const pageOptions = Array.from({ length: totalPages }, (_, index) => index + 1);
@@ -959,14 +947,13 @@ function CatalogListView({
               key={object.id}
               object={object}
               accessToken={accessToken}
-              onOpen={() => onOpenObject(object.slug)}
             />
           ))}
         </div>
       ) : (
         <div className="catalog-grid" aria-label="Объекты карточками">
           {objects.map((object) => (
-            <CatalogCard key={object.id} object={object} accessToken={accessToken} onOpen={() => onOpenObject(object.slug)} />
+            <CatalogCard key={object.id} object={object} accessToken={accessToken} />
           ))}
         </div>
       )}
@@ -1051,7 +1038,6 @@ function CatalogMapView({
   isLoading,
   objects,
   total,
-  onOpenObject,
 }: {
   accessToken: string;
   error: string | null;
@@ -1059,7 +1045,6 @@ function CatalogMapView({
   isLoading: boolean;
   objects: MapObject[];
   total: number;
-  onOpenObject: (slug: string) => void;
 }) {
   const [visibleBounds, setVisibleBounds] = useState<YandexMapBounds | null>(null);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
@@ -1114,7 +1099,6 @@ function CatalogMapView({
           accessToken={accessToken}
           object={selectedObject}
           onClose={() => setSelectedObjectId(null)}
-          onOpen={() => onOpenObject(selectedObject.slug)}
         />
       ) : null}
 
@@ -1175,17 +1159,16 @@ function MapObjectCard({
   accessToken,
   object,
   onClose,
-  onOpen,
 }: {
   accessToken: string;
   object: MapObject;
   onClose: () => void;
-  onOpen: () => void;
 }) {
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const metroLabel = formatMetroStations(object.metroStations ?? []);
   const districtLabel = getObjectDistrictLabel(object);
   const areaLabel = getCatalogAreaRange(object) ?? 'Не указано';
+  const objectHref = `/objects/${encodeURIComponent(object.slug)}`;
   const galleryImages = object.images.length > 0 ? object.images : object.coverImage ? [object.coverImage] : [];
   const activeImage = galleryImages[activeImageIndex] ?? galleryImages[0] ?? null;
   const hasGalleryNavigation = galleryImages.length > 1;
@@ -1281,9 +1264,9 @@ function MapObjectCard({
           Цена от: <strong>{formatPrice(getCatalogPriceFrom(object))}</strong> | Цена за метр от:{' '}
           <strong>{formatMapCardPricePerMeter(getCatalogPricePerMeterFrom(object))}</strong>
         </p>
-        <button className="catalog-card-link map-object-card-link" type="button" onClick={onOpen}>
+        <a className="catalog-card-link map-object-card-link" href={objectHref} rel="noopener noreferrer" target="_blank">
           Подробнее
-        </button>
+        </a>
       </div>
     </article>
   );
@@ -1292,11 +1275,9 @@ function MapObjectCard({
 function CatalogListItem({
   accessToken,
   object,
-  onOpen,
 }: {
   accessToken: string;
   object: RealEstateObjectSummary;
-  onOpen: () => void;
 }) {
   const coverImage = object.coverImage;
   const objectHref = `/objects/${encodeURIComponent(object.slug)}`;
@@ -1305,18 +1286,14 @@ function CatalogListItem({
   const metroLabel = formatListMetroStations(object.metroStations);
   const areaLabel = getCatalogAreaRange(object) ?? 'Не указано';
 
-  function handleOpen(event: MouseEvent<HTMLAnchorElement>) {
-    event.preventDefault();
-    onOpen();
-  }
-
   return (
     <article className="catalog-list-item">
       <a
         aria-label={`Открыть объект ${object.title}`}
         className="catalog-list-item-media"
         href={objectHref}
-        onClick={handleOpen}
+        rel="noopener noreferrer"
+        target="_blank"
       >
         {coverImage ? (
           <CatalogCoverImage accessToken={accessToken} alt={coverImage.alt ?? object.title} fileId={coverImage.file.id} />
@@ -1327,7 +1304,7 @@ function CatalogListItem({
 
       <div className="catalog-list-item-body">
         <h3>
-          <a href={objectHref} onClick={handleOpen}>
+          <a href={objectHref} rel="noopener noreferrer" target="_blank">
             {object.title}
           </a>
         </h3>
@@ -1360,7 +1337,7 @@ function CatalogListItem({
       </div>
 
       <div className="catalog-list-item-action">
-        <a className="catalog-list-item-link" href={objectHref} onClick={handleOpen}>
+        <a className="catalog-list-item-link" href={objectHref} rel="noopener noreferrer" target="_blank">
           Подробнее
         </a>
       </div>
@@ -1371,11 +1348,9 @@ function CatalogListItem({
 function CatalogCard({
   accessToken,
   object,
-  onOpen,
 }: {
   accessToken: string;
   object: RealEstateObjectSummary;
-  onOpen: () => void;
 }) {
   const coverImage = object.coverImage;
   const objectHref = `/objects/${encodeURIComponent(object.slug)}`;
@@ -1384,18 +1359,14 @@ function CatalogCard({
   const districtLabel = getObjectDistrictLabel(object);
   const areaLabel = getCatalogAreaRange(object) ?? 'Не указано';
 
-  function handleOpen(event: MouseEvent<HTMLAnchorElement>) {
-    event.preventDefault();
-    onOpen();
-  }
-
   return (
     <article className="catalog-card">
       <a
         aria-label={`Открыть объект ${object.title}`}
         className="catalog-card-media catalog-card-media-link"
         href={objectHref}
-        onClick={handleOpen}
+        rel="noopener noreferrer"
+        target="_blank"
       >
         {coverImage ? (
           <CatalogCoverImage accessToken={accessToken} alt={coverImage.alt ?? object.title} fileId={coverImage.file.id} />
@@ -1417,7 +1388,7 @@ function CatalogCard({
       <div className="catalog-card-body">
         <div className="catalog-card-heading">
           <h3>
-            <a href={objectHref} title={object.title} onClick={handleOpen}>
+            <a href={objectHref} rel="noopener noreferrer" target="_blank" title={object.title}>
               {object.title}
             </a>
           </h3>
@@ -1445,7 +1416,7 @@ function CatalogCard({
           </div>
         </dl>
         <div className="catalog-card-actions">
-          <a className="catalog-card-link" href={objectHref} onClick={handleOpen}>
+          <a className="catalog-card-link" href={objectHref} rel="noopener noreferrer" target="_blank">
             Подробнее
           </a>
         </div>
@@ -1672,7 +1643,6 @@ function isMapObjectInBounds(object: MapObject, bounds: YandexMapBounds) {
 }
 
 function buildMapBalloon(object: MapObject) {
-  const pointId = escapeHtml(object.id);
   const title = escapeHtml(object.title);
   const district = escapeHtml(getObjectDistrictLabel(object));
   const developer = escapeHtml(object.developer?.name ?? 'Застройщик не указан');
@@ -1686,7 +1656,7 @@ function buildMapBalloon(object: MapObject) {
     `<span>${district}</span>`,
     `<span>${developer}</span>`,
     `<span>${price}, ${completion}</span>`,
-    `<a href="${href}" data-map-point-id="${pointId}">Открыть объект</a>`,
+    `<a href="${href}" rel="noopener noreferrer" target="_blank">Открыть объект</a>`,
     '</div>',
   ].join('');
 }

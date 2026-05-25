@@ -11,7 +11,17 @@ test('catalog links admin page loads editable data and saves via catalog-links a
   assert.match(source, /apiRequest<AdminCatalogLinksResponse>\('\/catalog-links\/admin'/);
   assert.match(source, /apiRequest<AdminCatalogLinksResponse>\('\/catalog-links\/admin'[\s\S]*method:\s*'PUT'/);
   assert.match(source, /apiRequest<DevelopersResponse>\('\/developers\?limit=500'/);
-  assert.match(source, /apiRequest<ObjectsResponse>\('\/objects\?status=PUBLISHED&limit=100&sortBy=title&sortDirection=asc'/);
+  assert.match(source, /loadPublishedCatalogObjects\(accessToken\)/);
+});
+
+test('sales start object options load every published object page', () => {
+  assert.match(source, /const catalogLinkObjectPageSize = 100;/);
+  assert.match(source, /async function loadPublishedCatalogObjects\(accessToken: string\)/);
+  assert.match(source, /status:\s*'PUBLISHED'/);
+  assert.match(source, /limit:\s*String\(catalogLinkObjectPageSize\)/);
+  assert.match(source, /const firstPage = await apiRequest<ObjectsResponse>\(`\/objects\?\$\{createParams\(1\)\.toString\(\)\}`/);
+  assert.match(source, /for \(let page = 2; page <= firstPage\.totalPages; page \+= 1\)/);
+  assert.match(source, /return \[firstPage, \.\.\.remainingPages\][\s\S]*?\.flatMap\(\(page\) => page\.items\)/);
 });
 
 test('catalog links admin page renders three editable columns with row controls', () => {

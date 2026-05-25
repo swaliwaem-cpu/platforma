@@ -35,6 +35,8 @@ type CatalogLinkColumnConfig = {
 
 type CatalogTargetObject = Pick<RealEstateObjectSummary, 'id' | 'title' | 'slug' | 'status'>;
 
+const catalogLinkObjectPageSize = 100;
+
 const catalogLinkColumns = [
   {
     type: 'DEVELOPER',
@@ -60,6 +62,36 @@ const catalogLinkColumns = [
 ] as const satisfies readonly CatalogLinkColumnConfig[];
 
 let newLinkCounter = 0;
+
+async function loadPublishedCatalogObjects(accessToken: string) {
+  const createParams = (page: number) =>
+    new URLSearchParams({
+      page: String(page),
+      limit: String(catalogLinkObjectPageSize),
+      status: 'PUBLISHED',
+      sortBy: 'title',
+      sortDirection: 'asc',
+    });
+
+  const firstPage = await apiRequest<ObjectsResponse>(`/objects?${createParams(1).toString()}`, accessToken);
+  const remainingPageRequests: Array<Promise<ObjectsResponse>> = [];
+
+  for (let page = 2; page <= firstPage.totalPages; page += 1) {
+    remainingPageRequests.push(apiRequest<ObjectsResponse>(`/objects?${createParams(page).toString()}`, accessToken));
+  }
+
+  const remainingPages = await Promise.all(remainingPageRequests);
+
+  return [firstPage, ...remainingPages]
+    .flatMap((page) => page.items)
+    .filter((object) => object.status === 'PUBLISHED')
+    .map((object) => ({
+      id: object.id,
+      title: object.title,
+      slug: object.slug,
+      status: object.status,
+    }));
+}
 
 export function CatalogLinksAdminPage({ onBack }: { onBack: () => void }) {
   const { accessToken } = useAuth();
@@ -98,12 +130,12 @@ export function CatalogLinksAdminPage({ onBack }: { onBack: () => void }) {
       const [linksData, developersData, objectsData] = await Promise.all([
         apiRequest<AdminCatalogLinksResponse>('/catalog-links/admin', accessToken),
         apiRequest<DevelopersResponse>('/developers?limit=500', accessToken),
-        apiRequest<ObjectsResponse>('/objects?status=PUBLISHED&limit=100&sortBy=title&sortDirection=asc', accessToken),
+        loadPublishedCatalogObjects(accessToken),
       ]);
 
       setLinks(linksData.items.map(createCatalogLinkDraft));
       setDevelopers(developersData.items);
-      setPublishedObjects(objectsData.items.filter((object) => object.status === 'PUBLISHED'));
+      setPublishedObjects(objectsData);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Не удалось загрузить ссылки каталога');
     } finally {
