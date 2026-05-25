@@ -156,6 +156,10 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
   const [form, setForm] = useState<ObjectFormState>(emptyForm);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [isObjectFiltersExpanded, setIsObjectFiltersExpanded] = useState(false);
+  const [districtSearch, setDistrictSearch] = useState('');
+  const [areaSearch, setAreaSearch] = useState('');
+  const [metroSearch, setMetroSearch] = useState('');
   const [sortBy, setSortBy] = useState<SortField>('createdAt');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [page, setPage] = useState(1);
@@ -191,7 +195,8 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
   }, [pathname]);
   const isCreateRoute = pathname === '/admin/objects/new';
   const isListRoute = pathname === '/admin/objects';
-  const hasActiveListFilters = Boolean(search.trim() || statusFilter);
+  const hasActiveAdvancedListFilters = Boolean(districtSearch.trim() || areaSearch.trim() || metroSearch.trim());
+  const hasActiveListFilters = Boolean(search.trim() || statusFilter || hasActiveAdvancedListFilters);
 
   useEffect(() => {
     if (!accessToken) {
@@ -213,7 +218,18 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
     }, 180);
 
     return () => window.clearTimeout(timeoutId);
-  }, [accessToken, isListRoute, page, search, sortBy, sortDirection, statusFilter]);
+  }, [
+    accessToken,
+    areaSearch,
+    districtSearch,
+    isListRoute,
+    metroSearch,
+    page,
+    search,
+    sortBy,
+    sortDirection,
+    statusFilter,
+  ]);
 
   useEffect(() => {
     if (!accessToken) {
@@ -631,6 +647,18 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
         params.set('status', statusFilter);
       }
 
+      if (districtSearch.trim()) {
+        params.set('districtSearch', districtSearch.trim());
+      }
+
+      if (areaSearch.trim()) {
+        params.set('areaSearch', areaSearch.trim());
+      }
+
+      if (metroSearch.trim()) {
+        params.set('metroSearch', metroSearch.trim());
+      }
+
       const data = await apiRequest<ObjectsResponse>(`/objects?${params.toString()}`, accessToken);
 
       setObjects(data.items);
@@ -984,6 +1012,9 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
   function resetListFilters() {
     setSearch('');
     setStatusFilter('');
+    setDistrictSearch('');
+    setAreaSearch('');
+    setMetroSearch('');
     setPage(1);
   }
 
@@ -1093,6 +1124,25 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
         </div>
 
         <div className="object-toolbar-actions">
+          <AdminButton
+            aria-controls="object-location-filters"
+            aria-expanded={isObjectFiltersExpanded}
+            tone="secondary"
+            type="button"
+            onClick={() => setIsObjectFiltersExpanded((isExpanded) => !isExpanded)}
+          >
+            {isObjectFiltersExpanded ? (
+              <>
+                <ChevronUpIcon data-icon="inline-start" />
+                Скрыть фильтры
+              </>
+            ) : (
+              <>
+                <ChevronDownIcon data-icon="inline-start" />
+                + Фильтры
+              </>
+            )}
+          </AdminButton>
           <AdminButton disabled={!hasActiveListFilters} tone="secondary" type="button" onClick={resetListFilters}>
             Сбросить
           </AdminButton>
@@ -1106,6 +1156,52 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
             Новый объект
           </AdminButton>
         </div>
+
+        {isObjectFiltersExpanded ? (
+          <div className="object-toolbar-advanced" id="object-location-filters">
+            <label className="toolbar-field">
+              <span>Районы</span>
+              <Input
+                aria-label="Поиск по районам"
+                placeholder="Название или slug"
+                type="search"
+                value={districtSearch}
+                onChange={(event) => {
+                  setDistrictSearch(event.target.value);
+                  setPage(1);
+                }}
+              />
+            </label>
+
+            <label className="toolbar-field">
+              <span>Окружение</span>
+              <Input
+                aria-label="Поиск по окружению"
+                placeholder="Название или slug"
+                type="search"
+                value={areaSearch}
+                onChange={(event) => {
+                  setAreaSearch(event.target.value);
+                  setPage(1);
+                }}
+              />
+            </label>
+
+            <label className="toolbar-field">
+              <span>Метро</span>
+              <Input
+                aria-label="Поиск по метро"
+                placeholder="Станция, линия или slug"
+                type="search"
+                value={metroSearch}
+                onChange={(event) => {
+                  setMetroSearch(event.target.value);
+                  setPage(1);
+                }}
+              />
+            </label>
+          </div>
+        ) : null}
       </section>
 
       {error ? <AdminAlert tone="error">{error}</AdminAlert> : null}

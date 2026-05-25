@@ -810,6 +810,56 @@ test('ObjectsService.list filters locationId and areaId through linked locations
   assert.deepEqual(calls.count.where, calls.findMany.where);
 });
 
+test('ObjectsService.list filters admin object locations and metro by unified text search', async () => {
+  const calls = {};
+  const prisma = {
+    realEstateObject: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [objectRecord()];
+      },
+      count: async (args) => {
+        calls.count = args;
+        return 1;
+      },
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await service.list({
+    districtSearch: 'Ifufk',
+    areaSearch: 'Shagal',
+    metroSearch: 'Ifufk',
+  });
+
+  const filters = calls.findMany.where.AND;
+  const districtFilter = filters.find((filter) =>
+    filter.OR?.some((item) => item.primaryLocation?.is?.type === LocationType.DISTRICT),
+  );
+  const areaFilter = filters.find((filter) => filter.locations?.some?.location?.type === LocationType.AREA);
+  const metroFilter = filters.find((filter) => filter.metroStations?.some?.metroStation?.OR);
+
+  assert.equal(
+    districtFilter.OR.some((item) =>
+      item.primaryLocation?.is?.OR?.some((condition) => condition.name?.contains === 'шагал'),
+    ),
+    true,
+  );
+  assert.equal(
+    districtFilter.OR.some((item) =>
+      item.locations?.some?.location?.OR?.some((condition) => condition.slug?.contains === 'shagal'),
+    ),
+    true,
+  );
+  assert.equal(areaFilter.locations.some.location.OR.some((condition) => condition.name?.contains === 'шагал'), true);
+  assert.equal(
+    metroFilter.metroStations.some.metroStation.OR.some((condition) => condition.lineName?.contains === 'shagal'),
+    true,
+  );
+  assert.deepEqual(calls.count.where, calls.findMany.where);
+});
+
 test('ObjectsService.list filters krtName by exact case-insensitive trimmed value', async () => {
   const calls = {};
   const prisma = {

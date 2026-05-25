@@ -146,6 +146,9 @@ type ListObjectsQuery = {
   locationId?: string;
   areaId?: string;
   metroStationId?: string;
+  districtSearch?: string;
+  areaSearch?: string;
+  metroSearch?: string;
   completionYear?: string;
   completionQuarter?: string;
   priceFromMin?: string;
@@ -330,11 +333,69 @@ export class ObjectsService {
       });
     }
 
+    const districtSearch = query.districtSearch?.trim();
+
+    if (districtSearch) {
+      const locationSearchFilters = createSearchContainsFilters(districtSearch, ['name', 'slug']);
+
+      filters.push({
+        OR: [
+          {
+            primaryLocation: {
+              is: {
+                type: LocationType.DISTRICT,
+                OR: locationSearchFilters,
+              },
+            },
+          },
+          {
+            locations: {
+              some: {
+                location: {
+                  type: LocationType.DISTRICT,
+                  OR: locationSearchFilters,
+                },
+              },
+            },
+          },
+        ],
+      });
+    }
+
+    const areaSearch = query.areaSearch?.trim();
+
+    if (areaSearch) {
+      filters.push({
+        locations: {
+          some: {
+            location: {
+              type: LocationType.AREA,
+              OR: createSearchContainsFilters(areaSearch, ['name', 'slug']),
+            },
+          },
+        },
+      });
+    }
+
     if (query.metroStationId) {
       filters.push({
         metroStations: {
           some: {
             metroStationId: this.parseUuid(query.metroStationId, 'Metro station is invalid'),
+          },
+        },
+      });
+    }
+
+    const metroSearch = query.metroSearch?.trim();
+
+    if (metroSearch) {
+      filters.push({
+        metroStations: {
+          some: {
+            metroStation: {
+              OR: createSearchContainsFilters(metroSearch, ['name', 'slug', 'lineName']),
+            },
           },
         },
       });

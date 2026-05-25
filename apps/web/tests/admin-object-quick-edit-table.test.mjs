@@ -139,6 +139,29 @@ test('quick edit table uses normalized search and draft transforms before commit
   assert.match(tableSource, /normalizeApartmentAreaRange\(value\)/);
 });
 
+test('objects admin list exposes expandable location filters and sends API params', () => {
+  const listToolbarSource =
+    pageSource.match(/<section className="toolbar" aria-label="Фильтры объектов">[\s\S]*?<\/section>/)?.[0] ?? '';
+
+  assert.notEqual(listToolbarSource, '');
+  assert.match(pageSource, /const \[isObjectFiltersExpanded,\s*setIsObjectFiltersExpanded\] = useState\(false\)/);
+  assert.match(pageSource, /const \[districtSearch,\s*setDistrictSearch\] = useState\(''\)/);
+  assert.match(pageSource, /const \[areaSearch,\s*setAreaSearch\] = useState\(''\)/);
+  assert.match(pageSource, /const \[metroSearch,\s*setMetroSearch\] = useState\(''\)/);
+  assert.match(pageSource, /districtSearch\.trim\(\)/);
+  assert.match(pageSource, /params\.set\('districtSearch',\s*districtSearch\.trim\(\)\)/);
+  assert.match(pageSource, /params\.set\('areaSearch',\s*areaSearch\.trim\(\)\)/);
+  assert.match(pageSource, /params\.set\('metroSearch',\s*metroSearch\.trim\(\)\)/);
+  assert.match(pageSource, /setDistrictSearch\(''\)/);
+  assert.match(pageSource, /setAreaSearch\(''\)/);
+  assert.match(pageSource, /setMetroSearch\(''\)/);
+  assert.match(listToolbarSource, />\s*\+ Фильтры\s*</);
+  assert.match(listToolbarSource, />\s*Районы\s*</);
+  assert.match(listToolbarSource, />\s*Окружение\s*</);
+  assert.match(listToolbarSource, />\s*Метро\s*</);
+  assert.doesNotMatch(listToolbarSource, />\s*Основной район\s*</);
+});
+
 test('quick edit persistence helpers build minimal PATCH requests for edited cells', async () => {
   assert.equal(existsSync(persistencePath), true);
 
