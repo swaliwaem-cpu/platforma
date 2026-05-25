@@ -73,36 +73,36 @@ export function getObjectParameterRows(object: RealEstateObjectDetail): FeatureR
       value: object.developer?.name ?? emptyValueLabel,
     },
     {
-      label: 'КРТ',
-      value: object.krtName ?? emptyValueLabel,
-    },
-    {
-      label: 'Площадь квартир',
-      value: object.apartmentAreaRange ?? emptyValueLabel,
-    },
-    {
-      label: 'Высота потолков',
-      value: object.ceilingHeight ?? emptyValueLabel,
-    },
-    {
       label: 'За метр от',
       value: formatPrice(object.pricePerMeterFrom),
-    },
-    {
-      label: 'Срок сдачи',
-      value: formatCompletion(object.completionYear, object.completionQuarter),
     },
     {
       label: 'Класс недвижимости',
       value: object.propertyClass ?? emptyValueLabel,
     },
     {
-      label: 'Этажность',
-      value: object.floorRange ?? emptyValueLabel,
+      label: 'Площадь квартир',
+      value: object.apartmentAreaRange ?? emptyValueLabel,
+    },
+    {
+      label: 'КРТ',
+      value: object.krtName ?? emptyValueLabel,
+    },
+    {
+      label: 'Высота потолков',
+      value: object.ceilingHeight ?? emptyValueLabel,
+    },
+    {
+      label: 'Срок сдачи',
+      value: formatCompletion(object.completionYear, object.completionQuarter),
     },
     {
       label: 'Количество квартир',
       value: object.apartmentsCountText ?? emptyValueLabel,
+    },
+    {
+      label: 'Этажность',
+      value: object.floorRange ?? emptyValueLabel,
     },
   ];
 }
