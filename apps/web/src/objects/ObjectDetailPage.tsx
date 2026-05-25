@@ -107,6 +107,21 @@ const feedUnitTypeFilterOptions: {
   { value: 'COMMERCIAL', label: feedUnitTypeLabels.COMMERCIAL },
 ];
 
+const feedUnitRoomFilterOptions = [
+  { value: '0', label: 'Студия' },
+  { value: '1', label: '1 спальня' },
+  { value: '2', label: '2 спальни' },
+  { value: '3', label: '3 спальни' },
+  { value: '4', label: '4 спальни' },
+];
+
+const feedUnitQuarterFilterOptions = [
+  { value: '1', label: '1 кв.' },
+  { value: '2', label: '2 кв.' },
+  { value: '3', label: '3 кв.' },
+  { value: '4', label: '4 кв.' },
+];
+
 const sectionOptions: {
   value: ObjectImageSection;
   label: string;
@@ -709,12 +724,37 @@ function ObjectFeedUnitsSection({
   const [totalPages, setTotalPages] = useState(1);
   const [statusFilter, setStatusFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
+  const [priceMinFilter, setPriceMinFilter] = useState('');
+  const [priceMaxFilter, setPriceMaxFilter] = useState('');
+  const [pricePerMeterMinFilter, setPricePerMeterMinFilter] = useState('');
+  const [pricePerMeterMaxFilter, setPricePerMeterMaxFilter] = useState('');
+  const [areaMinFilter, setAreaMinFilter] = useState('');
+  const [areaMaxFilter, setAreaMaxFilter] = useState('');
+  const [roomFilter, setRoomFilter] = useState('');
+  const [floorMinFilter, setFloorMinFilter] = useState('');
+  const [floorMaxFilter, setFloorMaxFilter] = useState('');
+  const [completionYearFilter, setCompletionYearFilter] = useState('');
+  const [completionQuarterFilter, setCompletionQuarterFilter] = useState('');
   const [sortBy, setSortBy] = useState<ObjectFeedUnitSortBy>('price');
   const [sortDirection, setSortDirection] = useState<ObjectFeedUnitSortDirection>('asc');
   const [mediaCarouselUnit, setMediaCarouselUnit] = useState<FeedUnit | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const hasActiveFilters = Boolean(statusFilter || typeFilter);
+  const hasActiveFilters = Boolean(
+    statusFilter ||
+      typeFilter ||
+      priceMinFilter ||
+      priceMaxFilter ||
+      pricePerMeterMinFilter ||
+      pricePerMeterMaxFilter ||
+      areaMinFilter ||
+      areaMaxFilter ||
+      roomFilter ||
+      floorMinFilter ||
+      floorMaxFilter ||
+      completionYearFilter ||
+      completionQuarterFilter,
+  );
   const showFeedUnitsSkeleton = isLoading && units.length === 0;
   const sortedUnits = useMemo(
     () => sortFeedUnitsForDisplay(units, sortBy, sortDirection),
@@ -751,6 +791,18 @@ function ObjectFeedUnitsSection({
           params.set('type', typeFilter);
         }
 
+        setOptionalParam(params, 'priceMin', priceMinFilter);
+        setOptionalParam(params, 'priceMax', priceMaxFilter);
+        setOptionalParam(params, 'pricePerMeterMin', pricePerMeterMinFilter);
+        setOptionalParam(params, 'pricePerMeterMax', pricePerMeterMaxFilter);
+        setOptionalParam(params, 'areaMin', areaMinFilter);
+        setOptionalParam(params, 'areaMax', areaMaxFilter);
+        setOptionalParam(params, 'rooms', roomFilter);
+        setOptionalParam(params, 'floorMin', floorMinFilter);
+        setOptionalParam(params, 'floorMax', floorMaxFilter);
+        setOptionalParam(params, 'completionYear', completionYearFilter);
+        setOptionalParam(params, 'completionQuarter', completionQuarterFilter);
+
         const data = await apiRequest<FeedUnitsResponse>(`/objects/${object.id}/feed-units?${params.toString()}`, token);
 
         if (!isCancelled) {
@@ -777,11 +829,41 @@ function ObjectFeedUnitsSection({
     return () => {
       isCancelled = true;
     };
-  }, [accessToken, object.id, page, sortBy, sortDirection, statusFilter, typeFilter]);
+  }, [
+    accessToken,
+    areaMaxFilter,
+    areaMinFilter,
+    completionQuarterFilter,
+    completionYearFilter,
+    floorMaxFilter,
+    floorMinFilter,
+    object.id,
+    page,
+    priceMaxFilter,
+    priceMinFilter,
+    pricePerMeterMaxFilter,
+    pricePerMeterMinFilter,
+    roomFilter,
+    sortBy,
+    sortDirection,
+    statusFilter,
+    typeFilter,
+  ]);
 
   function resetFilters() {
     setStatusFilter('');
     setTypeFilter('');
+    setPriceMinFilter('');
+    setPriceMaxFilter('');
+    setPricePerMeterMinFilter('');
+    setPricePerMeterMaxFilter('');
+    setAreaMinFilter('');
+    setAreaMaxFilter('');
+    setRoomFilter('');
+    setFloorMinFilter('');
+    setFloorMaxFilter('');
+    setCompletionYearFilter('');
+    setCompletionQuarterFilter('');
     setPage(1);
   }
 
@@ -835,6 +917,176 @@ function ObjectFeedUnitsSection({
           >
             <option value="">Все типы</option>
             {feedUnitTypeFilterOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="object-feed-units-filter">
+          <span>Цена от</span>
+          <input
+            inputMode="decimal"
+            placeholder="0"
+            type="text"
+            value={priceMinFilter}
+            onChange={(event) => {
+              setPriceMinFilter(sanitizeDecimalText(event.target.value));
+              setPage(1);
+            }}
+          />
+        </label>
+
+        <label className="object-feed-units-filter">
+          <span>Цена до</span>
+          <input
+            inputMode="decimal"
+            placeholder="50000000"
+            type="text"
+            value={priceMaxFilter}
+            onChange={(event) => {
+              setPriceMaxFilter(sanitizeDecimalText(event.target.value));
+              setPage(1);
+            }}
+          />
+        </label>
+
+        <label className="object-feed-units-filter">
+          <span>Цена за метр от</span>
+          <input
+            inputMode="decimal"
+            placeholder="0"
+            type="text"
+            value={pricePerMeterMinFilter}
+            onChange={(event) => {
+              setPricePerMeterMinFilter(sanitizeDecimalText(event.target.value));
+              setPage(1);
+            }}
+          />
+        </label>
+
+        <label className="object-feed-units-filter">
+          <span>Цена за метр до</span>
+          <input
+            inputMode="decimal"
+            placeholder="500000"
+            type="text"
+            value={pricePerMeterMaxFilter}
+            onChange={(event) => {
+              setPricePerMeterMaxFilter(sanitizeDecimalText(event.target.value));
+              setPage(1);
+            }}
+          />
+        </label>
+
+        <label className="object-feed-units-filter">
+          <span>Площадь от</span>
+          <input
+            inputMode="decimal"
+            placeholder="30"
+            type="text"
+            value={areaMinFilter}
+            onChange={(event) => {
+              setAreaMinFilter(sanitizeDecimalText(event.target.value));
+              setPage(1);
+            }}
+          />
+        </label>
+
+        <label className="object-feed-units-filter">
+          <span>Площадь до</span>
+          <input
+            inputMode="decimal"
+            placeholder="120"
+            type="text"
+            value={areaMaxFilter}
+            onChange={(event) => {
+              setAreaMaxFilter(sanitizeDecimalText(event.target.value));
+              setPage(1);
+            }}
+          />
+        </label>
+
+        <label className="object-feed-units-filter">
+          <span>Комнаты</span>
+          <select
+            aria-label="Фильтр лотов по комнатам"
+            value={roomFilter}
+            onChange={(event) => {
+              setRoomFilter(event.target.value);
+              setPage(1);
+            }}
+          >
+            <option value="">Любые</option>
+            {feedUnitRoomFilterOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="object-feed-units-filter">
+          <span>Этаж от</span>
+          <input
+            inputMode="numeric"
+            placeholder="1"
+            type="text"
+            value={floorMinFilter}
+            onChange={(event) => {
+              setFloorMinFilter(sanitizeIntegerText(event.target.value, 3));
+              setPage(1);
+            }}
+          />
+        </label>
+
+        <label className="object-feed-units-filter">
+          <span>Этаж до</span>
+          <input
+            inputMode="numeric"
+            placeholder="25"
+            type="text"
+            value={floorMaxFilter}
+            onChange={(event) => {
+              setFloorMaxFilter(sanitizeIntegerText(event.target.value, 3));
+              setPage(1);
+            }}
+          />
+        </label>
+
+        <label className="object-feed-units-filter">
+          <span>Год сдачи</span>
+          <input
+            inputMode="numeric"
+            placeholder="2028"
+            type="text"
+            value={completionYearFilter}
+            onChange={(event) => {
+              const nextYear = sanitizeIntegerText(event.target.value, 4);
+
+              setCompletionYearFilter(nextYear);
+              if (!nextYear) {
+                setCompletionQuarterFilter('');
+              }
+              setPage(1);
+            }}
+          />
+        </label>
+
+        <label className="object-feed-units-filter">
+          <span>Квартал</span>
+          <select
+            aria-label="Фильтр лотов по кварталу сдачи"
+            disabled={!completionYearFilter}
+            value={completionQuarterFilter}
+            onChange={(event) => {
+              setCompletionQuarterFilter(event.target.value);
+              setPage(1);
+            }}
+          >
+            <option value="">Любой</option>
+            {feedUnitQuarterFilterOptions.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
               </option>
@@ -1404,6 +1656,20 @@ function parseNullableNumber(value: string | null) {
   const parsedValue = Number(value);
 
   return Number.isFinite(parsedValue) ? parsedValue : null;
+}
+
+function setOptionalParam(params: URLSearchParams, key: string, value: string) {
+  if (value.trim()) {
+    params.set(key, value);
+  }
+}
+
+function sanitizeIntegerText(value: string, maxLength: number) {
+  return value.replace(/\D/g, '').slice(0, maxLength);
+}
+
+function sanitizeDecimalText(value: string) {
+  return value.replace(/[^\d,.]/g, '').replace(',', '.').slice(0, 15);
 }
 
 function ObjectFeedUnitsTableSkeleton() {

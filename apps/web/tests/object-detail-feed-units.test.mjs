@@ -21,6 +21,47 @@ test('object detail page loads active feed units with public filters', () => {
   assert.doesNotMatch(source, /feedUnitStatusFilterOptions[\s\S]*?ARCHIVED/);
 });
 
+test('object detail feed units expose detailed lot filters in API request and reset', () => {
+  assert.match(source, /const feedUnitRoomFilterOptions = \[/);
+  assert.match(source, /\{ value:\s*'0',\s*label:\s*'Студия'\s*\}/);
+  assert.match(source, /\{ value:\s*'4',\s*label:\s*'4 спальни'\s*\}/);
+  assert.match(source, /const \[priceMinFilter,\s*setPriceMinFilter\] = useState\(''\);/);
+  assert.match(source, /const \[priceMaxFilter,\s*setPriceMaxFilter\] = useState\(''\);/);
+  assert.match(source, /const \[pricePerMeterMinFilter,\s*setPricePerMeterMinFilter\] = useState\(''\);/);
+  assert.match(source, /const \[pricePerMeterMaxFilter,\s*setPricePerMeterMaxFilter\] = useState\(''\);/);
+  assert.match(source, /const \[areaMinFilter,\s*setAreaMinFilter\] = useState\(''\);/);
+  assert.match(source, /const \[areaMaxFilter,\s*setAreaMaxFilter\] = useState\(''\);/);
+  assert.match(source, /const \[roomFilter,\s*setRoomFilter\] = useState\(''\);/);
+  assert.match(source, /const \[floorMinFilter,\s*setFloorMinFilter\] = useState\(''\);/);
+  assert.match(source, /const \[floorMaxFilter,\s*setFloorMaxFilter\] = useState\(''\);/);
+  assert.match(source, /const \[completionYearFilter,\s*setCompletionYearFilter\] = useState\(''\);/);
+  assert.match(source, /const \[completionQuarterFilter,\s*setCompletionQuarterFilter\] = useState\(''\);/);
+  assert.match(source, /setOptionalParam\(params,\s*'priceMin',\s*priceMinFilter\);/);
+  assert.match(source, /setOptionalParam\(params,\s*'priceMax',\s*priceMaxFilter\);/);
+  assert.match(source, /setOptionalParam\(params,\s*'pricePerMeterMin',\s*pricePerMeterMinFilter\);/);
+  assert.match(source, /setOptionalParam\(params,\s*'pricePerMeterMax',\s*pricePerMeterMaxFilter\);/);
+  assert.match(source, /setOptionalParam\(params,\s*'areaMin',\s*areaMinFilter\);/);
+  assert.match(source, /setOptionalParam\(params,\s*'areaMax',\s*areaMaxFilter\);/);
+  assert.match(source, /setOptionalParam\(params,\s*'rooms',\s*roomFilter\);/);
+  assert.match(source, /setOptionalParam\(params,\s*'floorMin',\s*floorMinFilter\);/);
+  assert.match(source, /setOptionalParam\(params,\s*'floorMax',\s*floorMaxFilter\);/);
+  assert.match(source, /setOptionalParam\(params,\s*'completionYear',\s*completionYearFilter\);/);
+  assert.match(source, /setOptionalParam\(params,\s*'completionQuarter',\s*completionQuarterFilter\);/);
+  assert.match(source, />\s*Цена от\s*</);
+  assert.match(source, />\s*Цена до\s*</);
+  assert.match(source, />\s*Цена за метр от\s*</);
+  assert.match(source, />\s*Цена за метр до\s*</);
+  assert.match(source, />\s*Площадь от\s*</);
+  assert.match(source, />\s*Площадь до\s*</);
+  assert.match(source, />\s*Комнаты\s*</);
+  assert.match(source, />\s*Этаж от\s*</);
+  assert.match(source, />\s*Этаж до\s*</);
+  assert.match(source, />\s*Год сдачи\s*</);
+  assert.match(source, />\s*Квартал\s*</);
+  assert.match(source, /setPriceMinFilter\(''\);/);
+  assert.match(source, /setCompletionQuarterFilter\(''\);/);
+});
+
 test('object detail feed units block renders expected columns and media thumbnails', () => {
   assert.match(source, /<section className="detail-section object-feed-units-section"/);
   assert.match(source, /id="object-feed-units-title">Лоты<\/h3>/);

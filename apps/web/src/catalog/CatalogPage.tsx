@@ -44,8 +44,11 @@ type CatalogFilters = {
   metroStationId: string;
   completionYear: string;
   completionQuarter: string;
-  priceFromMin: string;
-  priceFromMax: string;
+  lotPriceMin: string;
+  lotPriceMax: string;
+  lotRooms: string;
+  lotFloorMin: string;
+  lotFloorMax: string;
   status: CatalogStatusFilter;
   hasPresentation: BooleanFilter;
   hasCoordinates: BooleanFilter;
@@ -80,8 +83,11 @@ const defaultFilters: CatalogFilters = {
   metroStationId: '',
   completionYear: '',
   completionQuarter: '',
-  priceFromMin: '',
-  priceFromMax: '',
+  lotPriceMin: '',
+  lotPriceMax: '',
+  lotRooms: '',
+  lotFloorMin: '',
+  lotFloorMax: '',
   status: 'PUBLISHED',
   hasPresentation: '',
   hasCoordinates: '',
@@ -92,6 +98,14 @@ const defaultFilters: CatalogFilters = {
 };
 
 const catalogPageSizeOptions = [25, 50, 75] as const;
+
+const catalogRoomOptions = [
+  { value: '0', label: 'Студия' },
+  { value: '1', label: '1 спальня' },
+  { value: '2', label: '2 спальни' },
+  { value: '3', label: '3 спальни' },
+  { value: '4', label: '4 спальни' },
+];
 
 const objectStatusLabels: Record<ObjectStatus, string> = {
   DRAFT: 'Черновик',
@@ -763,24 +777,58 @@ function CatalogFilters({
           </label>
 
           <label>
-            Цена от
+            Цена лота от
             <input
               inputMode="decimal"
               placeholder="0"
               type="text"
-              value={filters.priceFromMin}
-              onChange={(event) => onChange({ priceFromMin: sanitizeDecimalText(event.target.value) })}
+              value={filters.lotPriceMin}
+              onChange={(event) => onChange({ lotPriceMin: sanitizeDecimalText(event.target.value) })}
             />
           </label>
 
           <label>
-            Цена до
+            Цена лота до
             <input
               inputMode="decimal"
               placeholder="50000000"
               type="text"
-              value={filters.priceFromMax}
-              onChange={(event) => onChange({ priceFromMax: sanitizeDecimalText(event.target.value) })}
+              value={filters.lotPriceMax}
+              onChange={(event) => onChange({ lotPriceMax: sanitizeDecimalText(event.target.value) })}
+            />
+          </label>
+
+          <label>
+            Сколько комнат
+            <select value={filters.lotRooms} onChange={(event) => onChange({ lotRooms: event.target.value })}>
+              <option value="">Любые лоты</option>
+              {catalogRoomOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            Этаж от
+            <input
+              inputMode="numeric"
+              placeholder="1"
+              type="text"
+              value={filters.lotFloorMin}
+              onChange={(event) => onChange({ lotFloorMin: sanitizeIntegerText(event.target.value, 3) })}
+            />
+          </label>
+
+          <label>
+            Этаж до
+            <input
+              inputMode="numeric"
+              placeholder="25"
+              type="text"
+              value={filters.lotFloorMax}
+              onChange={(event) => onChange({ lotFloorMax: sanitizeIntegerText(event.target.value, 3) })}
             />
           </label>
 
@@ -1514,8 +1562,11 @@ function parseCatalogFilters(queryString: string): CatalogFilters {
     metroStationId: parseTextParam(params.get('metroStationId')),
     completionYear: sanitizeIntegerText(params.get('completionYear') ?? '', 4),
     completionQuarter: defaultFilters.completionQuarter,
-    priceFromMin: sanitizeDecimalText(params.get('priceFromMin') ?? ''),
-    priceFromMax: sanitizeDecimalText(params.get('priceFromMax') ?? ''),
+    lotPriceMin: sanitizeDecimalText(params.get('lotPriceMin') ?? ''),
+    lotPriceMax: sanitizeDecimalText(params.get('lotPriceMax') ?? ''),
+    lotRooms: parseCatalogRoomsParam(params.get('lotRooms')),
+    lotFloorMin: sanitizeIntegerText(params.get('lotFloorMin') ?? '', 3),
+    lotFloorMax: sanitizeIntegerText(params.get('lotFloorMax') ?? '', 3),
     status: defaultFilters.status,
     hasPresentation: defaultFilters.hasPresentation,
     hasCoordinates: defaultFilters.hasCoordinates,
@@ -1542,8 +1593,11 @@ function buildCatalogQuery(filters: CatalogFilters, viewMode: CatalogViewMode = 
   setParam(params, 'areaId', filters.areaId);
   setParam(params, 'metroStationId', filters.metroStationId);
   setParam(params, 'completionYear', filters.completionYear);
-  setParam(params, 'priceFromMin', filters.priceFromMin);
-  setParam(params, 'priceFromMax', filters.priceFromMax);
+  setParam(params, 'lotPriceMin', filters.lotPriceMin);
+  setParam(params, 'lotPriceMax', filters.lotPriceMax);
+  setParam(params, 'lotRooms', filters.lotRooms);
+  setParam(params, 'lotFloorMin', filters.lotFloorMin);
+  setParam(params, 'lotFloorMax', filters.lotFloorMax);
   setCatalogSortParams(params, filters);
 
   if (filters.page > 1) {
@@ -1571,8 +1625,11 @@ function countActiveAdvancedFilters(filters: CatalogFilters) {
     filters.areaId,
     filters.metroStationId,
     filters.completionYear,
-    filters.priceFromMin,
-    filters.priceFromMax,
+    filters.lotPriceMin,
+    filters.lotPriceMax,
+    filters.lotRooms,
+    filters.lotFloorMin,
+    filters.lotFloorMax,
   ].filter((value) => value.trim().length > 0).length;
 }
 
@@ -1594,8 +1651,11 @@ function buildObjectsParams(filters: CatalogFilters, includePage: boolean) {
   setParam(params, 'areaId', filters.areaId);
   setParam(params, 'metroStationId', filters.metroStationId);
   setParam(params, 'completionYear', filters.completionYear);
-  setParam(params, 'priceFromMin', filters.priceFromMin);
-  setParam(params, 'priceFromMax', filters.priceFromMax);
+  setParam(params, 'lotPriceMin', filters.lotPriceMin);
+  setParam(params, 'lotPriceMax', filters.lotPriceMax);
+  setParam(params, 'lotRooms', filters.lotRooms);
+  setParam(params, 'lotFloorMin', filters.lotFloorMin);
+  setParam(params, 'lotFloorMax', filters.lotFloorMax);
 
   if (filters.status !== 'ALL') {
     params.set('status', filters.status);
@@ -1737,6 +1797,10 @@ function parseTextParam(value: string | null) {
 
 function parseSearchParam(value: string | null) {
   return value ?? '';
+}
+
+function parseCatalogRoomsParam(value: string | null) {
+  return catalogRoomOptions.some((option) => option.value === value) ? (value ?? '') : '';
 }
 
 function parsePositiveInteger(value: string | null, fallback: number) {

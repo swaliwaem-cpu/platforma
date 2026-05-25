@@ -149,6 +149,11 @@ type ListObjectsQuery = {
   completionQuarter?: string;
   priceFromMin?: string;
   priceFromMax?: string;
+  lotPriceMin?: string;
+  lotPriceMax?: string;
+  lotRooms?: string;
+  lotFloorMin?: string;
+  lotFloorMax?: string;
   hasCoordinates?: string;
   hasPresentation?: string;
 };
@@ -161,6 +166,17 @@ type ListObjectFeedUnitsQuery = {
   search?: string;
   sortBy?: string;
   sortDirection?: string;
+  priceMin?: string;
+  priceMax?: string;
+  pricePerMeterMin?: string;
+  pricePerMeterMax?: string;
+  areaMin?: string;
+  areaMax?: string;
+  rooms?: string;
+  floorMin?: string;
+  floorMax?: string;
+  completionYear?: string;
+  completionQuarter?: string;
 };
 
 type CreateObjectBody = {
@@ -347,6 +363,18 @@ export class ObjectsService {
       filters.push(this.createFeedFallbackPriceFilter('priceFrom', 'feedPriceFrom', priceFromMin, priceFromMax));
     }
 
+    const lotFilter = this.createObjectLotFilter({
+      priceMin: query.lotPriceMin,
+      priceMax: query.lotPriceMax,
+      rooms: query.lotRooms,
+      floorMin: query.lotFloorMin,
+      floorMax: query.lotFloorMax,
+    });
+
+    if (lotFilter) {
+      filters.push(lotFilter);
+    }
+
     const hasCoordinates = this.parseOptionalBoolean(query.hasCoordinates, 'Has coordinates is invalid');
 
     if (hasCoordinates === true) {
@@ -510,6 +538,57 @@ export class ObjectsService {
           },
         ],
       });
+    }
+
+    const priceFilter = this.createFeedUnitDecimalRangeFilter('price', query.priceMin, query.priceMax, 'Price', 14, 2);
+    const pricePerMeterFilter = this.createFeedUnitDecimalRangeFilter(
+      'pricePerMeter',
+      query.pricePerMeterMin,
+      query.pricePerMeterMax,
+      'Price per meter',
+      14,
+      2,
+    );
+    const areaFilter = this.createFeedUnitDecimalRangeFilter('area', query.areaMin, query.areaMax, 'Area', 10, 2);
+    const rooms = this.parseOptionalInteger(query.rooms, 'Rooms is invalid', 0, 4);
+    const floorMin = this.parseOptionalInteger(query.floorMin, 'Floor min is invalid', 1, 300);
+    const floorMax = this.parseOptionalInteger(query.floorMax, 'Floor max is invalid', 1, 300);
+    const completionYear = this.parseOptionalInteger(query.completionYear, 'Completion year is invalid', 1900, 2200);
+    const completionQuarter = this.parseOptionalInteger(query.completionQuarter, 'Completion quarter is invalid', 1, 4);
+
+    if (floorMin !== undefined && floorMax !== undefined && floorMin > floorMax) {
+      throw new BadRequestException('Floor min cannot be greater than max');
+    }
+
+    if (completionQuarter !== undefined && completionYear === undefined) {
+      throw new BadRequestException('Completion year is required when completion quarter is set');
+    }
+
+    for (const filter of [priceFilter, pricePerMeterFilter, areaFilter]) {
+      if (filter) {
+        filters.push(filter);
+      }
+    }
+
+    if (rooms !== undefined) {
+      filters.push({ rooms });
+    }
+
+    if (floorMin !== undefined || floorMax !== undefined) {
+      filters.push({
+        floor: {
+          ...(floorMin !== undefined ? { gte: floorMin } : {}),
+          ...(floorMax !== undefined ? { lte: floorMax } : {}),
+        },
+      });
+    }
+
+    if (completionYear !== undefined) {
+      filters.push({ completionYear });
+    }
+
+    if (completionQuarter !== undefined) {
+      filters.push({ completionQuarter });
     }
 
     const where: Prisma.FeedUnitWhereInput = {
@@ -2015,6 +2094,97 @@ export class ObjectsService {
         },
       ],
     };
+  }
+
+  private createObjectLotFilter(query: {
+    priceMin?: string;
+    priceMax?: string;
+    rooms?: string;
+    floorMin?: string;
+    floorMax?: string;
+  }): Prisma.RealEstateObjectWhereInput | null {
+    const priceMin = this.parseNullableDecimal(query.priceMin, 'Lot price min', 14, 2);
+    const priceMax = this.parseNullableDecimal(query.priceMax, 'Lot price max', 14, 2);
+    const rooms = this.parseOptionalInteger(query.rooms, 'Lot rooms is invalid', 0, 4);
+    const floorMin = this.parseOptionalInteger(query.floorMin, 'Lot floor min is invalid', 1, 300);
+    const floorMax = this.parseOptionalInteger(query.floorMax, 'Lot floor max is invalid', 1, 300);
+
+    if (priceMin === null || priceMax === null) {
+      throw new BadRequestException('Lot price filters are invalid');
+    }
+
+    if (priceMin !== undefined && priceMax !== undefined && Number(priceMin) > Number(priceMax)) {
+      throw new BadRequestException('Lot price min cannot be greater than max');
+    }
+
+    if (floorMin !== undefined && floorMax !== undefined && floorMin > floorMax) {
+      throw new BadRequestException('Lot floor min cannot be greater than max');
+    }
+
+    const lotWhere: Prisma.FeedUnitWhereInput = {
+      ...(priceMin !== undefined || priceMax !== undefined
+        ? {
+            price: {
+              ...(priceMin !== undefined ? { gte: priceMin } : {}),
+              ...(priceMax !== undefined ? { lte: priceMax } : {}),
+            },
+          }
+        : {}),
+      ...(rooms !== undefined ? { rooms } : {}),
+      ...(floorMin !== undefined || floorMax !== undefined
+        ? {
+            floor: {
+              ...(floorMin !== undefined ? { gte: floorMin } : {}),
+              ...(floorMax !== undefined ? { lte: floorMax } : {}),
+            },
+          }
+        : {}),
+    };
+
+    return Object.keys(lotWhere).length > 0
+      ? {
+          feedUnits: {
+            some: lotWhere,
+          },
+        }
+      : null;
+  }
+
+  private createFeedUnitDecimalRangeFilter(
+    field: 'price' | 'pricePerMeter' | 'area',
+    minValue: string | undefined,
+    maxValue: string | undefined,
+    fieldName: string,
+    precision: number,
+    scale: number,
+  ): Prisma.FeedUnitWhereInput | null {
+    const min = this.parseNullableDecimal(minValue, `${fieldName} min`, precision, scale);
+    const max = this.parseNullableDecimal(maxValue, `${fieldName} max`, precision, scale);
+
+    if (min === null || max === null) {
+      throw new BadRequestException(`${fieldName} filters are invalid`);
+    }
+
+    if (min !== undefined && max !== undefined && Number(min) > Number(max)) {
+      throw new BadRequestException(`${fieldName} min cannot be greater than max`);
+    }
+
+    return min !== undefined || max !== undefined
+      ? ({
+          [field]: {
+            ...(min !== undefined ? { gte: min } : {}),
+            ...(max !== undefined ? { lte: max } : {}),
+          },
+        } as Prisma.FeedUnitWhereInput)
+      : null;
+  }
+
+  private parseOptionalInteger(value: string | undefined, message: string, min: number, max: number) {
+    if (value === undefined || value.trim() === '') {
+      return undefined;
+    }
+
+    return this.parseInteger(value, message, min, max);
   }
 
   private parseNullableUuidField(value: unknown, message: string) {

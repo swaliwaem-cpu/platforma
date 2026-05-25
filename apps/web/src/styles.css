@@ -5367,7 +5367,7 @@ tr.user-row--deactivated .text-button {
 
 .object-feed-units-toolbar {
   display: grid;
-  grid-template-columns: repeat(2, minmax(170px, 220px)) auto;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   align-items: end;
   gap: 12px;
   border-bottom: 1px solid #e0e6ed;
@@ -5382,7 +5382,8 @@ tr.user-row--deactivated .text-button {
   font-weight: 850;
 }
 
-.object-feed-units-filter select {
+.object-feed-units-filter :is(input, select) {
+  width: 100%;
   min-height: 42px;
   border: 1px solid #c6d0dc;
   border-radius: 8px;

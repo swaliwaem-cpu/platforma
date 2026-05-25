@@ -55,6 +55,11 @@ type MapObjectsQuery = {
   completionQuarter?: string;
   priceFromMin?: string;
   priceFromMax?: string;
+  lotPriceMin?: string;
+  lotPriceMax?: string;
+  lotRooms?: string;
+  lotFloorMin?: string;
+  lotFloorMax?: string;
   hasPresentation?: string;
   limit?: string;
 };
@@ -214,6 +219,18 @@ export class MapService {
       filters.push(this.createFeedFallbackPriceFilter('priceFrom', 'feedPriceFrom', priceFromMin, priceFromMax));
     }
 
+    const lotFilter = this.createObjectLotFilter({
+      priceMin: query.lotPriceMin,
+      priceMax: query.lotPriceMax,
+      rooms: query.lotRooms,
+      floorMin: query.lotFloorMin,
+      floorMax: query.lotFloorMax,
+    });
+
+    if (lotFilter) {
+      filters.push(lotFilter);
+    }
+
     const hasPresentation = this.parseOptionalBoolean(query.hasPresentation, 'Has presentation is invalid');
 
     if (hasPresentation === true) {
@@ -324,6 +341,68 @@ export class MapService {
         },
       ],
     };
+  }
+
+  private createObjectLotFilter(query: {
+    priceMin?: string;
+    priceMax?: string;
+    rooms?: string;
+    floorMin?: string;
+    floorMax?: string;
+  }): Prisma.RealEstateObjectWhereInput | null {
+    const priceMin = this.parseNullableDecimal(query.priceMin, 'Lot price min', 14, 2);
+    const priceMax = this.parseNullableDecimal(query.priceMax, 'Lot price max', 14, 2);
+    const rooms = this.parseOptionalInteger(query.rooms, 'Lot rooms is invalid', 0, 4);
+    const floorMin = this.parseOptionalInteger(query.floorMin, 'Lot floor min is invalid', 1, 300);
+    const floorMax = this.parseOptionalInteger(query.floorMax, 'Lot floor max is invalid', 1, 300);
+
+    if (priceMin === null || priceMax === null) {
+      throw new BadRequestException('Lot price filters are invalid');
+    }
+
+    if (priceMin !== undefined && priceMax !== undefined && Number(priceMin) > Number(priceMax)) {
+      throw new BadRequestException('Lot price min cannot be greater than max');
+    }
+
+    if (floorMin !== undefined && floorMax !== undefined && floorMin > floorMax) {
+      throw new BadRequestException('Lot floor min cannot be greater than max');
+    }
+
+    const lotWhere: Prisma.FeedUnitWhereInput = {
+      ...(priceMin !== undefined || priceMax !== undefined
+        ? {
+            price: {
+              ...(priceMin !== undefined ? { gte: priceMin } : {}),
+              ...(priceMax !== undefined ? { lte: priceMax } : {}),
+            },
+          }
+        : {}),
+      ...(rooms !== undefined ? { rooms } : {}),
+      ...(floorMin !== undefined || floorMax !== undefined
+        ? {
+            floor: {
+              ...(floorMin !== undefined ? { gte: floorMin } : {}),
+              ...(floorMax !== undefined ? { lte: floorMax } : {}),
+            },
+          }
+        : {}),
+    };
+
+    return Object.keys(lotWhere).length > 0
+      ? {
+          feedUnits: {
+            some: lotWhere,
+          },
+        }
+      : null;
+  }
+
+  private parseOptionalInteger(value: string | undefined, message: string, min: number, max: number) {
+    if (value === undefined || value.trim() === '') {
+      return undefined;
+    }
+
+    return this.parseInteger(value, message, min, max);
   }
 
   private parseUuid(value: string, message: string) {

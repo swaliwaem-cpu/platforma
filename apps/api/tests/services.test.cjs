@@ -603,6 +603,56 @@ test('ObjectsService.list serializes feed aggregates and uses feed price for cat
   assert.deepEqual(calls.count.where, calls.findMany.where);
 });
 
+test('ObjectsService.list filters objects by matching lot price rooms and floor', async () => {
+  const calls = {};
+  const prisma = {
+    realEstateObject: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [objectRecord()];
+      },
+      count: async (args) => {
+        calls.count = args;
+        return 1;
+      },
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await service.list({
+    lotPriceMin: '10 000 000',
+    lotPriceMax: '12 500 000',
+    lotRooms: '2',
+    lotFloorMin: '5',
+    lotFloorMax: '12',
+  });
+
+  const filters = calls.findMany.where.AND;
+  const lotFilter = filters.find((filter) => filter.feedUnits?.some);
+
+  assert.deepEqual(lotFilter, {
+    feedUnits: {
+      some: {
+        price: {
+          gte: '10000000',
+          lte: '12500000',
+        },
+        rooms: 2,
+        floor: {
+          gte: 5,
+          lte: 12,
+        },
+      },
+    },
+  });
+  assert.equal(
+    filters.some((filter) => Array.isArray(filter.OR) && filter.OR.some((item) => item.feedPriceFrom || item.priceFrom)),
+    false,
+  );
+  assert.deepEqual(calls.count.where, calls.findMany.where);
+});
+
 test('ObjectsService.list ignores dots in object catalog search', async () => {
   const calls = {};
   const prisma = {
@@ -878,6 +928,61 @@ test('MapService.listObjects serializes feed aggregates and filters price by fee
   assert.deepEqual(calls.count.where, calls.findMany.where);
 });
 
+test('MapService.listObjects filters objects by matching lot price rooms and floor', async () => {
+  const calls = {};
+  const mapObject = objectRecord({
+    latitude: decimal('55.751244'),
+    longitude: decimal('37.618423'),
+  });
+  const prisma = {
+    realEstateObject: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [mapObject];
+      },
+      count: async (args) => {
+        calls.count = args;
+        return 1;
+      },
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new MapService(prisma);
+
+  await service.listObjects({
+    lotPriceMin: '10 000 000',
+    lotPriceMax: '12 500 000',
+    lotRooms: '2',
+    lotFloorMin: '5',
+    lotFloorMax: '12',
+  });
+
+  const filters = calls.findMany.where.AND;
+  const lotFilter = filters.find((filter) => filter.feedUnits?.some);
+
+  assert.deepEqual(lotFilter, {
+    feedUnits: {
+      some: {
+        price: {
+          gte: '10000000',
+          lte: '12500000',
+        },
+        rooms: 2,
+        floor: {
+          gte: 5,
+          lte: 12,
+        },
+      },
+    },
+  });
+  assert.equal(filters.some((filter) => filter.latitude?.not === null && filter.longitude?.not === null), true);
+  assert.equal(
+    filters.some((filter) => Array.isArray(filter.OR) && filter.OR.some((item) => item.feedPriceFrom || item.priceFrom)),
+    false,
+  );
+  assert.deepEqual(calls.count.where, calls.findMany.where);
+});
+
 test('ObjectsService.listFeedUnits returns feed units for one object with filters and media', async () => {
   const calls = {};
   const objectId = '11111111-1111-4111-8111-111111111111';
@@ -1035,6 +1140,104 @@ test('ObjectsService.listFeedUnits accepts comma separated feed unit statuses', 
     true,
   );
   assert.deepEqual(calls.count.where, calls.findMany.where);
+});
+
+test('ObjectsService.listFeedUnits filters by numeric ranges rooms floor and completion', async () => {
+  const calls = {};
+  const objectId = '11111111-1111-4111-8111-111111111111';
+  const prisma = {
+    realEstateObject: {
+      count: async (args) => {
+        calls.objectCount = args;
+        return args.where.id === objectId && args.where.deletedAt === null ? 1 : 0;
+      },
+    },
+    feedUnit: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [];
+      },
+      count: async (args) => {
+        calls.count = args;
+        return 0;
+      },
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await service.listFeedUnits(objectId, {
+    priceMin: '10 000 000',
+    priceMax: '12 500 000',
+    pricePerMeterMin: '200 000',
+    pricePerMeterMax: '300 000',
+    areaMin: '42.5',
+    areaMax: '76',
+    rooms: '2',
+    floorMin: '5',
+    floorMax: '12',
+    completionYear: '2028',
+    completionQuarter: '4',
+  });
+
+  const filters = calls.findMany.where.AND;
+
+  assert.deepEqual(filters.find((filter) => filter.price), {
+    price: {
+      gte: '10000000',
+      lte: '12500000',
+    },
+  });
+  assert.deepEqual(filters.find((filter) => filter.pricePerMeter), {
+    pricePerMeter: {
+      gte: '200000',
+      lte: '300000',
+    },
+  });
+  assert.deepEqual(filters.find((filter) => filter.area), {
+    area: {
+      gte: '42.5',
+      lte: '76',
+    },
+  });
+  assert.equal(filters.some((filter) => filter.rooms === 2), true);
+  assert.deepEqual(filters.find((filter) => filter.floor), {
+    floor: {
+      gte: 5,
+      lte: 12,
+    },
+  });
+  assert.equal(filters.some((filter) => filter.completionYear === 2028), true);
+  assert.equal(filters.some((filter) => filter.completionQuarter === 4), true);
+  assert.deepEqual(calls.count.where, calls.findMany.where);
+});
+
+test('ObjectsService.listFeedUnits rejects invalid range filters and quarter without year', async () => {
+  const objectId = '11111111-1111-4111-8111-111111111111';
+  const prisma = {
+    realEstateObject: {
+      count: async () => 1,
+    },
+    feedUnit: {
+      findMany: async () => [],
+      count: async () => 0,
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await assert.rejects(
+    () => service.listFeedUnits(objectId, { priceMin: '12', priceMax: '10' }),
+    BadRequestException,
+  );
+  await assert.rejects(
+    () => service.listFeedUnits(objectId, { floorMin: '12', floorMax: '5' }),
+    BadRequestException,
+  );
+  await assert.rejects(
+    () => service.listFeedUnits(objectId, { completionQuarter: '4' }),
+    BadRequestException,
+  );
 });
 
 test('ObjectsService.listFeedUnits applies sortable order for feed unit columns', async () => {
