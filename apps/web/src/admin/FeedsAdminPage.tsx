@@ -198,8 +198,6 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
 
     return selectedRunSummary;
   }, [selectedRun, selectedRunSummary, selectedSource]);
-  const selectedRunWarnings = useMemo(() => toJsonArray(selectedRun?.warningsJson), [selectedRun]);
-  const selectedRunErrors = useMemo(() => toJsonArray(selectedRun?.errorsJson), [selectedRun]);
   const hasActiveUnitFilters = Boolean(unitStatusFilter || unitTypeFilter);
   const filteredObjects = useMemo(() => {
     if (!form.developerId) {
@@ -652,16 +650,6 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                   <EyeIcon data-icon="inline-start" />
                   {runningMode === 'preview' ? 'Preview...' : 'Preview'}
                 </AdminButton>
-                <AdminButton
-                  disabled={!canRun || isRunning}
-                  title={canRun ? undefined : 'Нет права feeds:run'}
-                  tone="primary"
-                  type="button"
-                  onClick={() => void runSourceCommand(editorSource.id, 'run')}
-                >
-                  <PlayIcon data-icon="inline-start" />
-                  {runningMode === 'run' ? 'Run...' : 'Run'}
-                </AdminButton>
               </>
             ) : null}
             <AdminButton disabled={isSubmitting || isRunning} tone="secondary" type="button" onClick={() => navigate('/admin/feeds')}>
@@ -736,6 +724,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                     <label className="field-wide">
                       URL
                       <input
+                        key="feed-source-url-input"
                         name="url"
                         placeholder="https://example.com/feed.xml"
                         type="url"
@@ -747,6 +736,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                     <label className="field-wide">
                       XML-файл
                       <input
+                        key="feed-source-file-input"
                         accept=".xml,application/xml,text/xml"
                         name="xmlFile"
                         type="file"
@@ -847,7 +837,6 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
               {editorSource ? (
                 <>
                   <SourceMeta source={editorSource} previewSummary={editorPreviewSummary} />
-                  <SourceRunProgress source={editorSource} selectedRun={selectedRun} />
                 </>
               ) : null}
             </AdminPanel>
@@ -895,105 +884,208 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
       {notice ? <AdminAlert tone="notice">{notice}</AdminAlert> : null}
 
       <div className="feeds-layout">
-        <AdminPanel className="table-panel feed-sources-panel" role="region" aria-label="Источники фидов">
-          <div className="table-meta">
-            <span>{isLoadingSources ? 'Загрузка источников' : `Всего: ${sourceTotal}`}</span>
-            <span>
-              Страница {sourcePage} из {sourceTotalPages}
-            </span>
-          </div>
+        <div className="feeds-primary-column">
+          <AdminPanel className="table-panel feed-sources-panel" role="region" aria-label="Источники фидов">
+            <div className="table-meta">
+              <span>{isLoadingSources ? 'Загрузка источников' : `Всего: ${sourceTotal}`}</span>
+              <span>
+                Страница {sourcePage} из {sourceTotalPages}
+              </span>
+            </div>
 
-          <div className="table-scroll">
-            <Table className="admin-table feed-sources-table">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Источник</TableHead>
-                  <TableHead>Формат</TableHead>
-                  <TableHead>Статус</TableHead>
-                  <TableHead>Последний запуск</TableHead>
-                  <TableHead>
-                    <span className="sr-only">Действия</span>
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {isLoadingSources ? <TableSkeleton columns={5} rows={4} /> : null}
-
-                {!isLoadingSources
-                  ? sources.map((source) => (
-                      <TableRow
-                        key={source.id}
-                        aria-selected={selectedSourceId === source.id}
-                        className={selectedSourceId === source.id ? 'is-selected' : undefined}
-                        data-state={selectedSourceId === source.id ? 'selected' : undefined}
-                      >
-                        <TableCell>
-                          <div className="feed-source-cell">
-                            <strong>{source.object.title}</strong>
-                            <span>{source.developer.name}</span>
-                            <code>{getSourceDisplay(source)}</code>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <span className={`feed-format-pill feed-format-pill--${source.format.toLowerCase()}`}>
-                            {feedFormatLabels[source.format]}
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          <AdminStatusBadge className={source.isActive ? 'feed-source-status--active' : 'feed-source-status--inactive'}>
-                            {source.isActive ? 'Активен' : 'Отключён'}
-                          </AdminStatusBadge>
-                        </TableCell>
-                        <TableCell>
-                          <div className="feed-run-date-cell">
-                            <strong>{source.lastRunAt ? formatDateTime(source.lastRunAt) : 'Не запускался'}</strong>
-                            <span>Preview: {source.lastPreviewAt ? formatDateTime(source.lastPreviewAt) : 'нет'}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="feed-action-column">
-                          <div className="feed-row-actions">
-                            <AdminButton tone="text" type="button" onClick={() => selectSource(source.id)}>
-                              Выбрать
-                            </AdminButton>
-                            <AdminButton tone="text" type="button" onClick={() => navigate(`/admin/feeds/${source.id}/edit`)}>
-                              Редактировать
-                            </AdminButton>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  : null}
-
-                {!isLoadingSources && sources.length === 0 ? (
+            <div className="table-scroll">
+              <Table className="admin-table feed-sources-table">
+                <TableHeader>
                   <TableRow>
-                    <TableCell colSpan={5}>
-                      <AdminEmptyState title="Источники не найдены" description="Создайте первый источник фида." />
-                    </TableCell>
+                    <TableHead>Источник</TableHead>
+                    <TableHead>Формат</TableHead>
+                    <TableHead>Статус</TableHead>
+                    <TableHead>Последний запуск</TableHead>
+                    <TableHead>
+                      <span className="sr-only">Действия</span>
+                    </TableHead>
                   </TableRow>
-                ) : null}
-              </TableBody>
-            </Table>
-          </div>
+                </TableHeader>
+                <TableBody>
+                  {isLoadingSources ? <TableSkeleton columns={5} rows={4} /> : null}
 
-          <div className="pagination">
-            <AdminButton
-              disabled={sourcePage <= 1}
-              tone="secondary"
-              type="button"
-              onClick={() => setSourcePage((currentPage) => Math.max(1, currentPage - 1))}
-            >
-              Назад
-            </AdminButton>
-            <AdminButton
-              disabled={sourcePage >= sourceTotalPages}
-              tone="secondary"
-              type="button"
-              onClick={() => setSourcePage((currentPage) => currentPage + 1)}
-            >
-              Вперёд
-            </AdminButton>
-          </div>
-        </AdminPanel>
+                  {!isLoadingSources
+                    ? sources.map((source) => (
+                        <TableRow
+                          key={source.id}
+                          aria-selected={selectedSourceId === source.id}
+                          className={selectedSourceId === source.id ? 'is-selected' : undefined}
+                          data-state={selectedSourceId === source.id ? 'selected' : undefined}
+                        >
+                          <TableCell>
+                            <div className="feed-source-cell">
+                              <strong>{source.object.title}</strong>
+                              <span>{source.developer.name}</span>
+                              <code>{getSourceDisplay(source)}</code>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <span className={`feed-format-pill feed-format-pill--${source.format.toLowerCase()}`}>
+                              {feedFormatLabels[source.format]}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <AdminStatusBadge className={source.isActive ? 'feed-source-status--active' : 'feed-source-status--inactive'}>
+                              {source.isActive ? 'Активен' : 'Отключён'}
+                            </AdminStatusBadge>
+                          </TableCell>
+                          <TableCell>
+                            <div className="feed-run-date-cell">
+                              <strong>{source.lastRunAt ? formatDateTime(source.lastRunAt) : 'Не запускался'}</strong>
+                              <span>Preview: {source.lastPreviewAt ? formatDateTime(source.lastPreviewAt) : 'нет'}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="feed-action-column">
+                            <div className="feed-row-actions">
+                              <AdminButton tone="text" type="button" onClick={() => selectSource(source.id)}>
+                                Выбрать
+                              </AdminButton>
+                              <AdminButton tone="text" type="button" onClick={() => navigate(`/admin/feeds/${source.id}/edit`)}>
+                                Редактировать
+                              </AdminButton>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    : null}
+
+                  {!isLoadingSources && sources.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={5}>
+                        <AdminEmptyState title="Источники не найдены" description="Создайте первый источник фида." />
+                      </TableCell>
+                    </TableRow>
+                  ) : null}
+                </TableBody>
+              </Table>
+            </div>
+
+            <div className="pagination">
+              <AdminButton
+                disabled={sourcePage <= 1}
+                tone="secondary"
+                type="button"
+                onClick={() => setSourcePage((currentPage) => Math.max(1, currentPage - 1))}
+              >
+                Назад
+              </AdminButton>
+              <AdminButton
+                disabled={sourcePage >= sourceTotalPages}
+                tone="secondary"
+                type="button"
+                onClick={() => setSourcePage((currentPage) => currentPage + 1)}
+              >
+                Вперёд
+              </AdminButton>
+            </div>
+          </AdminPanel>
+
+          <SourceRunControlPanel
+            canRun={canRun}
+            runningMode={runningMode}
+            selectedRun={selectedRun}
+            source={selectedSource}
+            onPreview={() => (selectedSource ? void runSourceCommand(selectedSource.id, 'preview') : undefined)}
+            onRun={() => (selectedSource ? void runSourceCommand(selectedSource.id, 'run') : undefined)}
+          />
+
+          <AdminPanel className="table-panel feed-runs-panel" role="region" aria-label="Отчёты фида">
+            <div className="table-meta">
+              <span>{isLoadingRuns ? 'Загрузка отчётов' : `Отчётов: ${runsTotal}`}</span>
+              <span>
+                Страница {runsPage} из {runsTotalPages}
+              </span>
+            </div>
+
+            <div className="table-scroll">
+              <Table className="admin-table feed-runs-table">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Старт</TableHead>
+                    <TableHead>Режим</TableHead>
+                    <TableHead>Статус</TableHead>
+                    <TableHead>Warnings</TableHead>
+                    <TableHead>Errors</TableHead>
+                    <TableHead>
+                      <span className="sr-only">Действия</span>
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {isLoadingRuns ? <TableSkeleton columns={6} rows={3} /> : null}
+
+                  {!isLoadingRuns
+                    ? runs.map((run) => (
+                        <TableRow
+                          key={run.id}
+                          aria-selected={selectedRun?.id === run.id}
+                          className={selectedRun?.id === run.id ? 'is-selected' : undefined}
+                          data-state={selectedRun?.id === run.id ? 'selected' : undefined}
+                        >
+                          <TableCell>
+                            <div className="feed-run-date-cell">
+                              <strong>{formatDateTime(run.startedAt)}</strong>
+                              <span>{formatRunDuration(run)}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <span className={`import-mode-pill import-mode-pill--${run.mode.toLowerCase()}`}>
+                              {importModeLabels[run.mode]}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <AdminStatusBadge className={`import-status import-status--${run.status.toLowerCase()}`}>
+                              {importStatusLabels[run.status]}
+                            </AdminStatusBadge>
+                          </TableCell>
+                          <TableCell>{formatIssueCount(run.warningsJson, run.summaryJson, 'warningsCount')}</TableCell>
+                          <TableCell>{formatIssueCount(run.errorsJson, run.summaryJson, 'errorsCount')}</TableCell>
+                          <TableCell className="feed-action-column">
+                            <AdminButton tone="text" type="button" onClick={() => void openRun(run.id)}>
+                              <FileTextIcon data-icon="inline-start" />
+                              Открыть
+                            </AdminButton>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    : null}
+
+                  {!isLoadingRuns && selectedSource && runs.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6}>
+                        <AdminEmptyState title="Отчётов нет" description="Запустите Preview или Run для выбранного источника." />
+                      </TableCell>
+                    </TableRow>
+                  ) : null}
+                </TableBody>
+              </Table>
+            </div>
+
+            <div className="pagination">
+              <AdminButton
+                disabled={runsPage <= 1}
+                tone="secondary"
+                type="button"
+                onClick={() => setRunsPage((currentPage) => Math.max(1, currentPage - 1))}
+              >
+                Назад
+              </AdminButton>
+              <AdminButton
+                disabled={runsPage >= runsTotalPages}
+                tone="secondary"
+                type="button"
+                onClick={() => setRunsPage((currentPage) => currentPage + 1)}
+              >
+                Вперёд
+              </AdminButton>
+            </div>
+          </AdminPanel>
+        </div>
 
         <AdminPanel className="editor-panel feed-source-side-panel" role="region" aria-label="Действия источника">
           {selectedSource ? (
@@ -1009,29 +1101,8 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
               </div>
 
               <SourceMeta source={selectedSource} previewSummary={selectedSourcePreviewSummary} />
-              <SourceRunProgress source={selectedSource} selectedRun={selectedRun} />
 
               <div className="feed-command-actions">
-                <AdminButton
-                  disabled={!canRun || runningMode !== null}
-                  title={canRun ? undefined : 'Нет права feeds:run'}
-                  tone="secondary"
-                  type="button"
-                  onClick={() => void runSourceCommand(selectedSource.id, 'preview')}
-                >
-                  <EyeIcon data-icon="inline-start" />
-                  {runningMode === 'preview' ? 'Preview...' : 'Preview'}
-                </AdminButton>
-                <AdminButton
-                  disabled={!canRun || runningMode !== null}
-                  title={canRun ? undefined : 'Нет права feeds:run'}
-                  tone="primary"
-                  type="button"
-                  onClick={() => void runSourceCommand(selectedSource.id, 'run')}
-                >
-                  <PlayIcon data-icon="inline-start" />
-                  {runningMode === 'run' ? 'Run...' : 'Run'}
-                </AdminButton>
                 <AdminButton type="button" onClick={() => navigate(`/admin/feeds/${selectedSource.id}/edit`)}>
                   Редактировать
                 </AdminButton>
@@ -1039,137 +1110,6 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
             </>
           ) : (
             <AdminEmptyState title="Источник не выбран" description="Выберите строку или создайте новый источник." />
-          )}
-        </AdminPanel>
-      </div>
-
-      <div className="feed-reports-layout">
-        <AdminPanel className="table-panel feed-runs-panel" role="region" aria-label="Отчёты фида">
-          <div className="table-meta">
-            <span>{isLoadingRuns ? 'Загрузка отчётов' : `Отчётов: ${runsTotal}`}</span>
-            <span>
-              Страница {runsPage} из {runsTotalPages}
-            </span>
-          </div>
-
-          <div className="table-scroll">
-            <Table className="admin-table feed-runs-table">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Старт</TableHead>
-                  <TableHead>Режим</TableHead>
-                  <TableHead>Статус</TableHead>
-                  <TableHead>Warnings</TableHead>
-                  <TableHead>Errors</TableHead>
-                  <TableHead>
-                    <span className="sr-only">Действия</span>
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {isLoadingRuns ? <TableSkeleton columns={6} rows={3} /> : null}
-
-                {!isLoadingRuns
-                  ? runs.map((run) => (
-                      <TableRow
-                        key={run.id}
-                        aria-selected={selectedRun?.id === run.id}
-                        className={selectedRun?.id === run.id ? 'is-selected' : undefined}
-                        data-state={selectedRun?.id === run.id ? 'selected' : undefined}
-                      >
-                        <TableCell>
-                          <div className="feed-run-date-cell">
-                            <strong>{formatDateTime(run.startedAt)}</strong>
-                            <span>{formatRunDuration(run)}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <span className={`import-mode-pill import-mode-pill--${run.mode.toLowerCase()}`}>
-                            {importModeLabels[run.mode]}
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          <AdminStatusBadge className={`import-status import-status--${run.status.toLowerCase()}`}>
-                            {importStatusLabels[run.status]}
-                          </AdminStatusBadge>
-                        </TableCell>
-                        <TableCell>{formatIssueCount(run.warningsJson, run.summaryJson, 'warningsCount')}</TableCell>
-                        <TableCell>{formatIssueCount(run.errorsJson, run.summaryJson, 'errorsCount')}</TableCell>
-                        <TableCell className="feed-action-column">
-                          <AdminButton tone="text" type="button" onClick={() => void openRun(run.id)}>
-                            <FileTextIcon data-icon="inline-start" />
-                            Открыть
-                          </AdminButton>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  : null}
-
-                {!isLoadingRuns && selectedSource && runs.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={6}>
-                      <AdminEmptyState title="Отчётов нет" description="Запустите Preview или Run для выбранного источника." />
-                    </TableCell>
-                  </TableRow>
-                ) : null}
-              </TableBody>
-            </Table>
-          </div>
-
-          <div className="pagination">
-            <AdminButton
-              disabled={runsPage <= 1}
-              tone="secondary"
-              type="button"
-              onClick={() => setRunsPage((currentPage) => Math.max(1, currentPage - 1))}
-            >
-              Назад
-            </AdminButton>
-            <AdminButton
-              disabled={runsPage >= runsTotalPages}
-              tone="secondary"
-              type="button"
-              onClick={() => setRunsPage((currentPage) => currentPage + 1)}
-            >
-              Вперёд
-            </AdminButton>
-          </div>
-        </AdminPanel>
-
-        <AdminPanel className="editor-panel feed-run-detail-panel" role="region" aria-label="Детали отчёта фида">
-          {selectedRun ? (
-            <>
-              <div className="feed-panel-heading">
-                <div>
-                  <p className="eyebrow">{importModeLabels[selectedRun.mode]}</p>
-                  <h3>{importStatusLabels[selectedRun.status]}</h3>
-                </div>
-                <AdminStatusBadge className={`import-status import-status--${selectedRun.status.toLowerCase()}`}>
-                  {selectedRun.status}
-                </AdminStatusBadge>
-              </div>
-
-              <dl className="details-list feed-details">
-                <div>
-                  <dt>Старт</dt>
-                  <dd>{formatDateTime(selectedRun.startedAt)}</dd>
-                </div>
-                <div>
-                  <dt>Финиш</dt>
-                  <dd>{selectedRun.finishedAt ? formatDateTime(selectedRun.finishedAt) : 'Не завершён'}</dd>
-                </div>
-                <div>
-                  <dt>Длительность</dt>
-                  <dd>{formatRunDuration(selectedRun)}</dd>
-                </div>
-              </dl>
-
-              <ReportSummary summary={selectedRunSummary} />
-              <ReportIssues title="Warnings" issues={selectedRunWarnings} />
-              <ReportIssues title="Errors" issues={selectedRunErrors} />
-            </>
-          ) : (
-            <AdminEmptyState title="Отчёт не выбран" description="Откройте строку отчёта выбранного источника." />
           )}
         </AdminPanel>
       </div>
@@ -1309,25 +1249,75 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
   );
 }
 
-function SourceRunProgress({ source, selectedRun }: { source: FeedSource; selectedRun: FeedImportRun | null }) {
-  const progress = getFeedRunProgress(selectedRun, source.id);
+function SourceRunControlPanel({
+  source,
+  selectedRun,
+  canRun,
+  runningMode,
+  onPreview,
+  onRun,
+}: {
+  source: FeedSource | null;
+  selectedRun: FeedImportRun | null;
+  canRun: boolean;
+  runningMode: FeedCommandMode | null;
+  onPreview: () => void;
+  onRun: () => void;
+}) {
+  const progress = source ? getFeedRunProgress(selectedRun, source.id) : null;
+  const isCommandDisabled = !source || !canRun || runningMode !== null;
 
-  if (!progress || !selectedRun) {
-    return null;
-  }
+  return (
+    <AdminPanel className="feed-source-run-panel" role="region" aria-label="Запуск выбранного фида">
+      <div className="feed-source-run-header">
+        <div>
+          <p className="eyebrow">Запуск</p>
+          <h3>{source ? source.object.title : 'Источник не выбран'}</h3>
+        </div>
 
-  return <FeedRunProgressCard run={selectedRun} progress={progress} />;
+        <div className="feed-source-run-actions">
+          <AdminButton
+            disabled={isCommandDisabled}
+            title={canRun ? undefined : 'Нет права feeds:run'}
+            tone="secondary"
+            type="button"
+            onClick={onPreview}
+          >
+            <EyeIcon data-icon="inline-start" />
+            {runningMode === 'preview' ? 'Preview...' : 'Preview'}
+          </AdminButton>
+          <AdminButton
+            disabled={isCommandDisabled}
+            title={canRun ? undefined : 'Нет права feeds:run'}
+            tone="primary"
+            type="button"
+            onClick={onRun}
+          >
+            <PlayIcon data-icon="inline-start" />
+            {runningMode === 'run' ? 'Run...' : 'Run'}
+          </AdminButton>
+        </div>
+      </div>
+
+      {source ? (
+        <FeedRunProgressCard run={selectedRun} progress={progress} />
+      ) : (
+        <AdminEmptyState title="Источник не выбран" description="Выберите строку фида для запуска Preview или Run." />
+      )}
+    </AdminPanel>
+  );
 }
 
-function FeedRunProgressCard({ run, progress }: { run: FeedImportRun; progress: FeedRunProgress }) {
-  const progressPercent = getFeedRunProgressPercent(progress);
+function FeedRunProgressCard({ run, progress }: { run: FeedImportRun | null; progress: FeedRunProgress | null }) {
+  const progressPercent = progress ? getFeedRunProgressPercent(progress) : 0;
+  const progressStageLabel = progress ? getFeedRunProgressStageLabel(progress.stage) : 'Ожидает запуска Run';
 
   return (
     <section className="feed-run-progress-card" aria-live="polite">
       <div className="feed-run-progress-heading">
         <div>
           <h4>Импорт фида</h4>
-          <p>{getFeedRunProgressStageLabel(progress.stage)}</p>
+          <p>{progressStageLabel}</p>
         </div>
         <strong>{formatNumber(progressPercent)}%</strong>
       </div>
@@ -1347,16 +1337,16 @@ function FeedRunProgressCard({ run, progress }: { run: FeedImportRun; progress: 
         <div>
           <span>Объекты</span>
           <strong>
-            {formatNumber(progress.unitsProcessed)} / {formatNumber(progress.unitsTotal)}
+            {progress ? `${formatNumber(progress.unitsProcessed)} / ${formatNumber(progress.unitsTotal)}` : 'нет данных'}
           </strong>
         </div>
         <div>
           <span>Осталось</span>
-          <strong>{formatNumber(progress.unitsRemaining)}</strong>
+          <strong>{progress ? formatNumber(progress.unitsRemaining) : 'нет данных'}</strong>
         </div>
         <div>
           <span>Осталось мин:</span>
-          <strong>{formatRemainingProgressMinutes(run, progress)}</strong>
+          <strong>{run && progress ? formatRemainingProgressMinutes(run, progress) : 'нет данных'}</strong>
         </div>
       </div>
     </section>
@@ -1435,73 +1425,6 @@ function TableSkeleton({ columns, rows }: { columns: number; rows: number }) {
         </TableRow>
       ))}
     </>
-  );
-}
-
-function ReportSummary({ summary }: { summary: Record<string, unknown> | null }) {
-  return (
-    <section className="report-summary-section">
-      <div className="report-section-header">
-        <h4>Summary</h4>
-        <span>{summary ? Object.keys(summary).length : 0}</span>
-      </div>
-      {summary ? (
-        <dl className="report-summary">
-          {Object.entries(summary).map(([key, value]) => (
-            <div key={key} className={key.toLowerCase().includes('error') ? 'report-summary-item--danger' : undefined}>
-              <dt>{formatSummaryKey(key)}</dt>
-              <dd>{formatSummaryValue(value)}</dd>
-            </div>
-          ))}
-        </dl>
-      ) : (
-        <p className="helper-text">Summary отсутствует в отчёте.</p>
-      )}
-    </section>
-  );
-}
-
-function ReportIssues({ title, issues }: { title: string; issues: unknown[] }) {
-  return (
-    <section className="report-issues">
-      <div className="report-section-header">
-        <h4>{title}</h4>
-        <span>{formatNumber(issues.length)}</span>
-      </div>
-      {issues.length > 0 ? (
-        <ul className="report-issue-list">
-          {issues.map((issue, index) => {
-            const issueView = toIssueView(issue, index);
-
-            return (
-              <li key={index} className={`report-issue-card report-issue-card--${issueView.severity}`}>
-                <div className="report-issue-heading">
-                  <span className="report-issue-code">{issueView.code}</span>
-                  <span className="report-issue-severity">{issueView.severity}</span>
-                </div>
-                <p>{issueView.message}</p>
-                {issueView.meta.length > 0 ? (
-                  <dl className="report-issue-meta">
-                    {issueView.meta.map(([label, value]) => (
-                      <div key={label}>
-                        <dt>{label}</dt>
-                        <dd>{value}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                ) : null}
-                <details className="report-issue-raw">
-                  <summary>Исходные данные</summary>
-                  <pre>{issueView.raw}</pre>
-                </details>
-              </li>
-            );
-          })}
-        </ul>
-      ) : (
-        <p className="helper-text">Нет</p>
-      )}
-    </section>
   );
 }
 
@@ -1596,7 +1519,7 @@ function getFeedPreviewMetrics(summary: Record<string, unknown> | null | undefin
 }
 
 function getFeedRunProgress(run: FeedImportRun | null, sourceId: string) {
-  if (!run || run.sourceId !== sourceId || run.mode !== 'RUN' || run.status !== 'PENDING') {
+  if (!run || run.sourceId !== sourceId || run.mode !== 'RUN') {
     return null;
   }
 
@@ -1654,6 +1577,14 @@ function formatRemainingProgressMinutes(run: FeedImportRun, progress: FeedRunPro
 }
 
 function getFeedRunProgressStageLabel(stage: string) {
+  if (stage === 'COMPLETED') {
+    return 'Импорт завершён';
+  }
+
+  if (stage === 'FAILED') {
+    return 'Импорт остановлен с ошибкой';
+  }
+
   if (stage === 'ARCHIVING_UNITS') {
     return 'Архивация отсутствующих лотов';
   }
@@ -1762,33 +1693,6 @@ function getFeedCommandNotice(mode: FeedCommandMode, status: ImportStatus) {
   return status === 'PENDING' ? 'Run фида запущен' : 'Run фида завершён';
 }
 
-function formatSummaryKey(key: string) {
-  return key
-    .replace(/([a-z])([A-Z])/g, '$1 $2')
-    .replace(/_/g, ' ')
-    .toLowerCase();
-}
-
-function formatSummaryValue(value: unknown) {
-  if (typeof value === 'number') {
-    return formatNumber(value);
-  }
-
-  if (typeof value === 'boolean') {
-    return value ? 'Да' : 'Нет';
-  }
-
-  if (typeof value === 'string') {
-    return value || 'Не указано';
-  }
-
-  if (value === null || value === undefined) {
-    return '0';
-  }
-
-  return stringifyJson(value);
-}
-
 function formatMoney(value: string | null, currency: string | null) {
   if (!value) {
     return 'Не указана';
@@ -1836,46 +1740,4 @@ function formatMediaCount(count: number) {
   }
 
   return formatNumber(count);
-}
-
-function toIssueView(issue: unknown, index: number) {
-  const raw = stringifyJson(issue);
-
-  if (!isPlainObject(issue)) {
-    return {
-      code: `item-${index + 1}`,
-      message: formatSummaryValue(issue),
-      meta: [] as [string, string][],
-      raw,
-      severity: 'info',
-    };
-  }
-
-  const severityValue = issue.severity;
-  const severity =
-    severityValue === 'error' || severityValue === 'warning' || severityValue === 'info'
-      ? severityValue
-      : 'info';
-  const code = typeof issue.code === 'string' && issue.code.trim() ? issue.code : `item-${index + 1}`;
-  const message =
-    typeof issue.message === 'string' && issue.message.trim() ? issue.message : formatSummaryValue(issue);
-  const meta = Object.entries(issue)
-    .filter(([key]) => !['severity', 'code', 'message'].includes(key))
-    .map(([key, value]) => [formatSummaryKey(key), formatSummaryValue(value)] as [string, string]);
-
-  return {
-    code,
-    message,
-    meta,
-    raw,
-    severity,
-  };
-}
-
-function stringifyJson(value: unknown) {
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
 }

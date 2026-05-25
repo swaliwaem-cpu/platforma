@@ -51,6 +51,13 @@ test('feeds admin page submits multipart form data for uploaded XML sources', ()
   assert.match(source, /source\.sourceKind === 'FILE'/);
 });
 
+test('feeds admin page keeps URL and file source inputs as separate React elements', () => {
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.match(source, /key="feed-source-url-input"/);
+  assert.match(source, /key="feed-source-file-input"/);
+});
+
 test('feeds admin page loads every object page for the linked object selector', () => {
   const source = readFileSync(sourcePath, 'utf8');
 
@@ -73,12 +80,20 @@ test('feeds admin page filters linked object options by selected developer', () 
   assert.doesNotMatch(source, /objects\.map\(\(object\) =>/);
 });
 
-test('feeds admin page renders report details with summary, warnings, errors, and unit table labels', () => {
+test('feeds admin page renders reports table without the right report detail column', () => {
   const source = readFileSync(sourcePath, 'utf8');
+  const reportsIndex = source.indexOf('<AdminPanel className="table-panel feed-runs-panel"');
+  const runControlsIndex = source.indexOf('<SourceRunControlPanel');
+  const sourceSidePanelIndex = source.indexOf('<AdminPanel className="editor-panel feed-source-side-panel"');
 
-  assert.match(source, /<ReportSummary summary=\{selectedRunSummary\} \/>/);
-  assert.match(source, /<ReportIssues title="Warnings" issues=\{selectedRunWarnings\} \/>/);
-  assert.match(source, /<ReportIssues title="Errors" issues=\{selectedRunErrors\} \/>/);
+  assert.match(source, /<AdminPanel className="table-panel feed-runs-panel"/);
+  assert.match(source, /<span>\{isLoadingRuns \? 'Загрузка отчётов' : `Отчётов: \$\{runsTotal\}`\}<\/span>/);
+  assert.ok(reportsIndex > runControlsIndex);
+  assert.ok(reportsIndex < sourceSidePanelIndex);
+  assert.doesNotMatch(source, /feed-reports-layout/);
+  assert.doesNotMatch(source, /feed-run-detail-panel/);
+  assert.doesNotMatch(source, /aria-label="Детали отчёта фида"/);
+  assert.doesNotMatch(source, /<ReportSummary summary=\{selectedRunSummary\} \/>/);
   assert.match(source, />Статус</);
   assert.match(source, />Цена</);
   assert.match(source, />Площадь</);
@@ -128,4 +143,18 @@ test('feeds admin page polls pending runs and renders compact run progress', () 
   assert.match(source, />Осталось мин:</);
   assert.match(source, /getFeedRunProgress\(selectedRun, source\.id\)/);
   assert.match(source, /formatRemainingProgressMinutes/);
+});
+
+test('feeds admin page keeps source run controls and persistent progress below the source list', () => {
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.match(source, /<SourceRunControlPanel[\s\S]*source=\{selectedSource\}/);
+  assert.match(source, /className="feed-source-run-panel"/);
+  assert.match(source, /aria-label="Запуск выбранного фида"/);
+  assert.match(source, /progress \? getFeedRunProgressPercent\(progress\) : 0/);
+  assert.match(source, /progress \? getFeedRunProgressStageLabel\(progress\.stage\) : 'Ожидает запуска Run'/);
+  assert.match(source, /runSourceCommand\(selectedSource\.id, 'preview'\)/);
+  assert.match(source, /runSourceCommand\(selectedSource\.id, 'run'\)/);
+  assert.doesNotMatch(source, /runSourceCommand\(editorSource\.id, 'run'\)/);
+  assert.doesNotMatch(source, /<SourceRunProgress source=\{editorSource\} selectedRun=\{selectedRun\} \/>/);
 });
