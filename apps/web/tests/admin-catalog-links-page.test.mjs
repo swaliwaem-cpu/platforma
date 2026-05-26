@@ -39,7 +39,29 @@ test('catalog links admin page renders three editable columns with row controls'
 
 test('sales start rows use published object targets and expose object detail links', () => {
   assert.match(source, /row\.type === 'SALES_START'/);
-  assert.match(source, /value=\{row\.objectId \?\? ''\}/);
-  assert.match(source, /publishedObjects\.map\(\(object\)/);
+  assert.match(source, /const selectedObject = publishedObjects\.find\(\(object\) => object\.id === row\.objectId\) \?\? null;/);
+  assert.match(source, /selectedId=\{row\.objectId \?\? ''\}/);
+  assert.match(source, /onSelectedIdChange=\{\(objectId\) =>/);
   assert.match(source, /\/objects\/\$\{encodeURIComponent\(selectedObject\.slug\)\}/);
+});
+
+test('catalog links target fields use normalized searchable entity pickers', () => {
+  assert.match(source, /import \{ matchesQuickEditSearch \} from '\.\/objectQuickEditTransforms';/);
+  assert.match(source, /const catalogLinkSearchResultLimit = 24;/);
+  assert.match(source, /function CatalogLinkSearchSelect/);
+  assert.match(source, /matchesQuickEditSearch\(query,\s*getSearchValues\(option\)\)/);
+  assert.doesNotMatch(source, /<select[\s>]/);
+
+  assert.match(source, /options=\{developers\}/);
+  assert.match(source, /placeholder="Найти застройщика"/);
+  assert.match(source, /getSearchValues=\{\(developer\) => \[developer\.name,\s*developer\.slug\]\}/);
+
+  assert.match(source, /const krtOptions = useMemo\(\(\) => mergeKrtOptions\(publishedObjects,\s*links\), \[links,\s*publishedObjects\]\);/);
+  assert.match(source, /options=\{krtOptions\}/);
+  assert.match(source, /placeholder="Найти КРТ"/);
+  assert.match(source, /getSearchValues=\{\(krt\) => \[krt\.name\]\}/);
+
+  assert.match(source, /options=\{publishedObjects\}/);
+  assert.match(source, /placeholder="Найти объект"/);
+  assert.match(source, /getSearchValues=\{\(object\) => \[object\.title,\s*object\.slug\]\}/);
 });

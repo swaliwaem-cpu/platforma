@@ -1,5 +1,5 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { ArrowLeftIcon, PlusIcon, SaveIcon, Trash2Icon } from 'lucide-react';
+import { FocusEvent, FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeftIcon, ChevronDownIcon, PlusIcon, SaveIcon, Trash2Icon, XIcon } from 'lucide-react';
 import type {
   AdminCatalogLinksResponse,
   AdminCatalogQuickLink,
@@ -18,6 +18,7 @@ import { Input } from '@/components/ui/input';
 import { useAuth } from '../auth/AuthProvider';
 import { AdminAlert, AdminButton, AdminEmptyState, AdminPanel, AdminStatusBadge } from './AdminUi';
 import { apiRequest } from './api';
+import { matchesQuickEditSearch } from './objectQuickEditTransforms';
 
 type CatalogLinkDraft = UpdateCatalogQuickLinkInput & {
   clientId: string;
@@ -33,9 +34,15 @@ type CatalogLinkColumnConfig = {
   addLabel: string;
 };
 
-type CatalogTargetObject = Pick<RealEstateObjectSummary, 'id' | 'title' | 'slug' | 'status'>;
+type CatalogTargetObject = Pick<RealEstateObjectSummary, 'id' | 'title' | 'slug' | 'status' | 'krtName'>;
+
+type CatalogKrtOption = {
+  id: string;
+  name: string;
+};
 
 const catalogLinkObjectPageSize = 100;
+const catalogLinkSearchResultLimit = 24;
 
 const catalogLinkColumns = [
   {
@@ -90,6 +97,7 @@ async function loadPublishedCatalogObjects(accessToken: string) {
       title: object.title,
       slug: object.slug,
       status: object.status,
+      krtName: object.krtName,
     }));
 }
 
@@ -108,6 +116,7 @@ export function CatalogLinksAdminPage({ onBack }: { onBack: () => void }) {
     () => mergePublishedObjects(publishedObjects, links),
     [links, publishedObjects],
   );
+  const krtOptions = useMemo(() => mergeKrtOptions(publishedObjects, links), [links, publishedObjects]);
 
   useEffect(() => {
     if (!accessToken) {
@@ -234,6 +243,7 @@ export function CatalogLinksAdminPage({ onBack }: { onBack: () => void }) {
                     key={column.type}
                     column={column}
                     developers={developerOptions}
+                    krtOptions={krtOptions}
                     links={getLinksByType(links, column.type)}
                     publishedObjects={publishedObjectOptions}
                     onAddLink={addLink}
@@ -253,6 +263,7 @@ export function CatalogLinksAdminPage({ onBack }: { onBack: () => void }) {
 function CatalogLinkColumnEditor({
   column,
   developers,
+  krtOptions,
   links,
   publishedObjects,
   onAddLink,
@@ -261,6 +272,7 @@ function CatalogLinkColumnEditor({
 }: {
   column: CatalogLinkColumnConfig;
   developers: ObjectDeveloper[];
+  krtOptions: CatalogKrtOption[];
   links: CatalogLinkDraft[];
   publishedObjects: CatalogTargetObject[];
   onAddLink: (type: CatalogQuickLinkType) => void;
@@ -284,6 +296,7 @@ function CatalogLinkColumnEditor({
               key={row.clientId}
               column={column}
               developers={developers}
+              krtOptions={krtOptions}
               publishedObjects={publishedObjects}
               row={row}
               onDeleteLink={onDeleteLink}
@@ -306,6 +319,7 @@ function CatalogLinkColumnEditor({
 function CatalogLinkRowEditor({
   column,
   developers,
+  krtOptions,
   publishedObjects,
   row,
   onDeleteLink,
@@ -313,6 +327,7 @@ function CatalogLinkRowEditor({
 }: {
   column: CatalogLinkColumnConfig;
   developers: ObjectDeveloper[];
+  krtOptions: CatalogKrtOption[];
   publishedObjects: CatalogTargetObject[];
   row: CatalogLinkDraft;
   onDeleteLink: (clientId: string) => void;
@@ -341,6 +356,7 @@ function CatalogLinkRowEditor({
       <CatalogLinkTargetField
         column={column}
         developers={developers}
+        krtOptions={krtOptions}
         publishedObjects={publishedObjects}
         row={row}
         onUpdateLink={onUpdateLink}
@@ -397,12 +413,14 @@ function CatalogLinkRowEditor({
 function CatalogLinkTargetField({
   column,
   developers,
+  krtOptions,
   publishedObjects,
   row,
   onUpdateLink,
 }: {
   column: CatalogLinkColumnConfig;
   developers: ObjectDeveloper[];
+  krtOptions: CatalogKrtOption[];
   publishedObjects: CatalogTargetObject[];
   row: CatalogLinkDraft;
   onUpdateLink: (clientId: string, updater: (link: CatalogLinkDraft) => CatalogLinkDraft) => void;
@@ -411,54 +429,54 @@ function CatalogLinkTargetField({
 
   if (row.type === 'DEVELOPER') {
     return (
-      <label className="catalog-link-field">
+      <div className="catalog-link-field">
         <span>{column.targetLabel}</span>
-        <select
-          aria-label={`Целевой застройщик ${rowLabel}`}
-          value={row.developerId ?? ''}
-          onChange={(event) => {
-            const developerId = event.target.value || null;
+        <CatalogLinkSearchSelect
+          ariaLabel={`Целевой застройщик ${rowLabel}`}
+          emptyLabel="Застройщики не найдены"
+          getOptionLabel={(developer) => developer.name}
+          getSearchValues={(developer) => [developer.name, developer.slug]}
+          options={developers}
+          placeholder="Найти застройщика"
+          selectedId={row.developerId ?? ''}
+          onSelectedIdChange={(developerId) => {
             const selectedDeveloper = developers.find((developer) => developer.id === developerId) ?? null;
 
             onUpdateLink(row.clientId, (currentLink) => ({
               ...currentLink,
-              developerId,
+              developerId: developerId || null,
               developer: selectedDeveloper,
               label: currentLink.label.trim() ? currentLink.label : (selectedDeveloper?.name ?? currentLink.label),
             }));
           }}
-        >
-          <option value="">Не выбран</option>
-          {developers.map((developer) => (
-            <option key={developer.id} value={developer.id}>
-              {developer.name}
-            </option>
-          ))}
-        </select>
-      </label>
+        />
+      </div>
     );
   }
 
   if (row.type === 'KRT') {
     return (
-      <label className="catalog-link-field">
+      <div className="catalog-link-field">
         <span>{column.targetLabel}</span>
-        <Input
-          aria-label={`Целевая КРТ ${rowLabel}`}
-          maxLength={240}
-          type="text"
-          value={row.krtName ?? ''}
-          onChange={(event) => {
-            const nextKrtName = event.target.value;
+        <CatalogLinkSearchSelect
+          ariaLabel={`Целевая КРТ ${rowLabel}`}
+          emptyLabel="КРТ не найдены"
+          getOptionLabel={(krt) => krt.name}
+          getSearchValues={(krt) => [krt.name]}
+          options={krtOptions}
+          placeholder="Найти КРТ"
+          selectedId={row.krtName?.trim() ?? ''}
+          onSelectedIdChange={(krtName) => {
+            const selectedKrt = krtOptions.find((krt) => krt.id === krtName) ?? null;
 
             onUpdateLink(row.clientId, (currentLink) => ({
               ...currentLink,
-              krtName: nextKrtName,
-              label: currentLink.label.trim() ? currentLink.label : nextKrtName,
+              krtName: krtName || null,
+              label: currentLink.label.trim() ? currentLink.label : (selectedKrt?.name ?? currentLink.label),
             }));
           }}
         />
-      </label>
+      </div>
     );
   }
 
@@ -466,40 +484,200 @@ function CatalogLinkTargetField({
     const selectedObject = publishedObjects.find((object) => object.id === row.objectId) ?? null;
 
     return (
-      <label className="catalog-link-field">
+      <div className="catalog-link-field">
         <span>{column.targetLabel}</span>
-        <select
-          aria-label={`Целевой объект ${rowLabel}`}
-          value={row.objectId ?? ''}
-          onChange={(event) => {
-            const objectId = event.target.value || null;
+        <CatalogLinkSearchSelect
+          ariaLabel={`Целевой объект ${rowLabel}`}
+          emptyLabel="Объекты не найдены"
+          getOptionLabel={(object) => `${object.title} / ${object.slug}`}
+          getSearchValues={(object) => [object.title, object.slug]}
+          options={publishedObjects}
+          placeholder="Найти объект"
+          selectedId={row.objectId ?? ''}
+          onSelectedIdChange={(objectId) => {
             const nextObject = publishedObjects.find((object) => object.id === objectId) ?? null;
 
             onUpdateLink(row.clientId, (currentLink) => ({
               ...currentLink,
-              objectId,
+              objectId: objectId || null,
               object: nextObject,
               label: currentLink.label.trim() ? currentLink.label : (nextObject?.title ?? currentLink.label),
             }));
           }}
-        >
-          <option value="">Не выбран</option>
-          {publishedObjects.map((object) => (
-            <option key={object.id} value={object.id}>
-              {object.title} / {object.slug}
-            </option>
-          ))}
-        </select>
+        />
         {selectedObject ? (
           <a className="catalog-link-public-url" href={`/objects/${encodeURIComponent(selectedObject.slug)}`}>
             /objects/{selectedObject.slug}
           </a>
         ) : null}
-      </label>
+      </div>
     );
   }
 
   return null;
+}
+
+type CatalogLinkSearchSelectOption = {
+  id: string;
+};
+
+function CatalogLinkSearchSelect<T extends CatalogLinkSearchSelectOption>({
+  ariaLabel,
+  emptyLabel,
+  getOptionLabel,
+  getSearchValues,
+  options,
+  placeholder,
+  selectedId,
+  onSelectedIdChange,
+}: {
+  ariaLabel: string;
+  emptyLabel: string;
+  getOptionLabel: (option: T) => string;
+  getSearchValues: (option: T) => Array<string | null | undefined>;
+  options: T[];
+  placeholder: string;
+  selectedId: string;
+  onSelectedIdChange: (id: string) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const selectedOption = useMemo(
+    () => options.find((option) => option.id === selectedId) ?? null,
+    [options, selectedId],
+  );
+  const filteredOptions = useMemo(() => {
+    const matchedOptions = options.filter((option) => matchesQuickEditSearch(query, getSearchValues(option)));
+
+    return matchedOptions.slice(0, catalogLinkSearchResultLimit);
+  }, [getSearchValues, options, query]);
+
+  function selectOption(optionId: string) {
+    onSelectedIdChange(optionId);
+    setQuery('');
+    setIsOpen(false);
+  }
+
+  function clearSelection() {
+    onSelectedIdChange('');
+    setQuery('');
+    inputRef.current?.focus();
+  }
+
+  function handleBlur(event: FocusEvent<HTMLDivElement>) {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      return;
+    }
+
+    setIsOpen(false);
+    setQuery('');
+  }
+
+  function handleInputKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'Escape') {
+      setIsOpen(false);
+      setQuery('');
+      return;
+    }
+
+    if (event.key === 'Enter' && isOpen && filteredOptions[0]) {
+      event.preventDefault();
+      selectOption(filteredOptions[0].id);
+      return;
+    }
+
+    if (event.key === 'Backspace' && !query && selectedId) {
+      clearSelection();
+    }
+  }
+
+  return (
+    <div className="searchable-multi-select" onBlur={handleBlur}>
+      <div
+        className={isOpen ? 'searchable-multi-select-control is-open' : 'searchable-multi-select-control'}
+        onClick={() => {
+          setIsOpen(true);
+          inputRef.current?.focus();
+        }}
+      >
+        <div className="searchable-multi-select-value">
+          {selectedOption ? (
+            <button
+              className="searchable-multi-select-chip"
+              type="button"
+              aria-label={`Убрать ${getOptionLabel(selectedOption)}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                clearSelection();
+              }}
+            >
+              <span>{getOptionLabel(selectedOption)}</span>
+              <XIcon aria-hidden="true" />
+            </button>
+          ) : null}
+          <input
+            ref={inputRef}
+            aria-expanded={isOpen}
+            aria-label={ariaLabel}
+            role="combobox"
+            type="search"
+            value={query}
+            placeholder={selectedOption ? '' : placeholder}
+            onChange={(event) => {
+              setQuery(event.currentTarget.value);
+              setIsOpen(true);
+            }}
+            onFocus={() => setIsOpen(true)}
+            onKeyDown={handleInputKeyDown}
+          />
+        </div>
+        {selectedOption ? (
+          <button
+            className="searchable-multi-select-clear"
+            type="button"
+            aria-label={`Очистить ${ariaLabel}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              clearSelection();
+            }}
+          >
+            <XIcon aria-hidden="true" />
+          </button>
+        ) : null}
+        <ChevronDownIcon className="searchable-multi-select-chevron" aria-hidden="true" />
+      </div>
+      {isOpen ? (
+        <div className="searchable-multi-select-menu" role="listbox">
+          {filteredOptions.length > 0 ? (
+            filteredOptions.map((option) => {
+              const isSelected = option.id === selectedId;
+
+              return (
+                <button
+                  key={option.id}
+                  className={
+                    isSelected
+                      ? 'searchable-multi-select-option searchable-multi-select-option--selected'
+                      : 'searchable-multi-select-option'
+                  }
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  onClick={() => selectOption(option.id)}
+                >
+                  <span>{getOptionLabel(option)}</span>
+                  {isSelected ? <span className="searchable-multi-select-check">Выбрано</span> : null}
+                </button>
+              );
+            })
+          ) : (
+            <p className="searchable-multi-select-empty">{emptyLabel}</p>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function createCatalogLinkDraft(link: AdminCatalogQuickLink): CatalogLinkDraft {
@@ -622,11 +800,42 @@ function mergePublishedObjects(publishedObjects: CatalogTargetObject[], links: C
 
   for (const link of links) {
     if (link.object && link.object.status === 'PUBLISHED' && !byId.has(link.object.id)) {
-      byId.set(link.object.id, link.object);
+      byId.set(link.object.id, {
+        ...link.object,
+        krtName: null,
+      });
     }
   }
 
   return Array.from(byId.values()).sort((firstObject, secondObject) =>
     firstObject.title.localeCompare(secondObject.title, 'ru'),
   );
+}
+
+function mergeKrtOptions(publishedObjects: CatalogTargetObject[], links: CatalogLinkDraft[]) {
+  const byName = new Map<string, CatalogKrtOption>();
+
+  for (const object of publishedObjects) {
+    const krtName = object.krtName?.trim();
+
+    if (krtName) {
+      byName.set(krtName.toLocaleLowerCase('ru'), {
+        id: krtName,
+        name: krtName,
+      });
+    }
+  }
+
+  for (const link of links) {
+    const krtName = link.type === 'KRT' ? link.krtName?.trim() : '';
+
+    if (krtName) {
+      byName.set(krtName.toLocaleLowerCase('ru'), {
+        id: krtName,
+        name: krtName,
+      });
+    }
+  }
+
+  return Array.from(byName.values()).sort((firstKrt, secondKrt) => firstKrt.name.localeCompare(secondKrt.name, 'ru'));
 }

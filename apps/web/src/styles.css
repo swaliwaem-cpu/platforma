@@ -1876,7 +1876,7 @@ tr.user-row--deactivated .text-button {
 
 .catalog-links-panel {
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
   padding: 0;
 }
 
@@ -1943,6 +1943,7 @@ tr.user-row--deactivated .text-button {
 }
 
 .catalog-link-field {
+  display: grid;
   min-width: 0;
   gap: 6px;
   color: #536172;
@@ -1952,7 +1953,8 @@ tr.user-row--deactivated .text-button {
 }
 
 .catalog-link-field input,
-.catalog-link-field select {
+.catalog-link-field select,
+.catalog-link-field .searchable-multi-select {
   background: #ffffff;
   text-transform: none;
 }
