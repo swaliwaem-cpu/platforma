@@ -41,10 +41,15 @@ test('object detail carousel is a framed standalone media section', () => {
   assert.match(styles, /\.object-detail-location-line\s*\{/);
 });
 
-test('object detail carousel centers the active image crop', () => {
+test('object detail carousel crops active images inside a fixed sixteen by nine frame', () => {
   assert.match(
     objectDetailSource,
     /className="object-carousel-image"[\s\S]*?variant="original"/,
+  );
+
+  assert.match(
+    styles,
+    /\.object-image-carousel\s*\{[\s\S]*?aspect-ratio:\s*16 \/ 9;[\s\S]*?height:\s*auto;[\s\S]*?min-height:\s*0;[\s\S]*?\}/,
   );
 
   assert.match(
@@ -54,7 +59,12 @@ test('object detail carousel centers the active image crop', () => {
 
   assert.match(
     styles,
-    /\.object-carousel-media-button \.object-carousel-image\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?top:\s*50%;[\s\S]*?left:\s*50%;[\s\S]*?min-width:\s*100%;[\s\S]*?min-height:\s*100%;[\s\S]*?transform:\s*translate\(-50%,\s*-50%\);[\s\S]*?\}/,
+    /\.object-carousel-media-button \.object-carousel-image\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?inset:\s*0;[\s\S]*?width:\s*100%;[\s\S]*?height:\s*100%;[\s\S]*?object-fit:\s*cover;[\s\S]*?object-position:\s*center center;[\s\S]*?\}/,
+  );
+
+  assert.doesNotMatch(
+    styles,
+    /\.object-carousel-media-button \.object-carousel-image\s*\{[\s\S]*?min-width:\s*100%;[\s\S]*?min-height:\s*100%;[\s\S]*?\}/,
   );
 });
 
