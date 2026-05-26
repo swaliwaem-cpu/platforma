@@ -46,6 +46,12 @@ export class ObjectsController {
     return this.objectsService.listFeedUnits(id, query);
   }
 
+  @Get(':id/feed-units/:unitId')
+  @RequirePermissions('objects:read')
+  async getFeedUnit(@Param('id') id: string, @Param('unitId') unitId: string) {
+    return this.objectsService.getFeedUnit(id, unitId);
+  }
+
   @Get(':id')
   @RequirePermissions('objects:read')
   async getById(@Param('id') id: string) {

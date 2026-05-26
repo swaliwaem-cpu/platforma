@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import {
   ArrowDownIcon,
   ArrowUpDownIcon,
@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import type {
   FeedUnit,
+  FeedUnitResponse,
   FeedUnitStatus,
   FeedUnitType,
   FeedUnitsResponse,
@@ -50,6 +51,12 @@ import {
 
 type ObjectDetailPageProps = {
   slug: string;
+  onBack: () => void;
+};
+
+type ObjectLotDetailPageProps = {
+  slug: string;
+  unitId: string;
   onBack: () => void;
 };
 
@@ -212,6 +219,126 @@ export function ObjectDetailPage({ slug, onBack }: ObjectDetailPageProps) {
       object={object}
       onBack={onBack}
     />
+  );
+}
+
+export function ObjectLotDetailPage({ slug, unitId, onBack }: ObjectLotDetailPageProps) {
+  const { accessToken } = useAuth();
+  const [object, setObject] = useState<RealEstateObjectDetail | null>(null);
+  const [unit, setUnit] = useState<FeedUnit | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!accessToken) {
+      return;
+    }
+
+    const token = accessToken;
+    let isCancelled = false;
+
+    async function loadLot() {
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        const objectData = await apiRequest<ObjectResponse>(`/objects/slug/${encodeURIComponent(slug)}`, token);
+        const unitData = await apiRequest<FeedUnitResponse>(
+          `/objects/${objectData.object.id}/feed-units/${encodeURIComponent(unitId)}`,
+          token,
+        );
+
+        if (!isCancelled) {
+          setObject(objectData.object);
+          setUnit(unitData.unit);
+        }
+      } catch (caughtError) {
+        if (!isCancelled) {
+          setObject(null);
+          setUnit(null);
+          setError(caughtError instanceof Error ? caughtError.message : 'Не удалось загрузить лот');
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    void loadLot();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [accessToken, slug, unitId]);
+
+  if (isLoading) {
+    return (
+      <div className="object-detail-page object-lot-page">
+        <button className="text-button" type="button" onClick={onBack}>
+          Вернуться к объекту
+        </button>
+        <div className="content-panel">
+          <p className="eyebrow">Лот</p>
+          <h2>Загрузка</h2>
+          <p className="muted-text">Получаем данные лота.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !object || !unit) {
+    return (
+      <div className="object-detail-page object-lot-page">
+        <button className="text-button" type="button" onClick={onBack}>
+          Вернуться к объекту
+        </button>
+        <div className="content-panel">
+          <p className="eyebrow">Лот</p>
+          <h2>Не удалось открыть лот</h2>
+          <p className="muted-text">{error ?? 'Лот не найден или больше недоступен.'}</p>
+        </div>
+      </div>
+    );
+  }
+
+  const title = getFeedUnitTitle(unit);
+  const subtitle = [object.title, unit.address].filter(Boolean).join(' · ');
+  const factRows = getObjectLotFactRows(unit);
+
+  return (
+    <div className="object-detail-page object-lot-page">
+      <header className="page-header object-detail-header object-lot-header">
+        <div>
+          <button className="text-button" type="button" onClick={onBack}>
+            Вернуться к объекту
+          </button>
+          <p className="eyebrow">Карточка лота</p>
+          <h2>{title}</h2>
+          <p className="object-detail-location-line">{subtitle}</p>
+        </div>
+        <span className={`object-feed-status object-feed-status--${unit.status.toLowerCase()}`}>
+          {feedUnitStatusLabels[unit.status]}
+        </span>
+      </header>
+
+      <ObjectLotMediaCarousel accessToken={accessToken ?? ''} unit={unit} />
+
+      <section className="detail-section object-lot-summary-section" aria-labelledby="object-lot-facts-title">
+        <div>
+          <h3 id="object-lot-facts-title">Параметры лота</h3>
+        </div>
+
+        <dl className="object-parameters-grid object-lot-facts">
+          {factRows.map((row) => (
+            <div key={row.label}>
+              <dt>{row.label}</dt>
+              <dd>{row.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </section>
+    </div>
   );
 }
 
@@ -1170,6 +1297,7 @@ function ObjectFeedUnitsSection({
                   <ObjectFeedUnitRow
                     accessToken={accessToken}
                     key={unit.id}
+                    objectSlug={object.slug}
                     unit={unit}
                     onOpenMedia={setMediaCarouselUnit}
                   />
@@ -1278,22 +1406,53 @@ function ObjectFeedSortableHead({
 
 function ObjectFeedUnitRow({
   accessToken,
+  objectSlug,
   unit,
   onOpenMedia,
 }: {
   accessToken: string;
+  objectSlug: string;
   unit: FeedUnit;
   onOpenMedia: (unit: FeedUnit) => void;
 }) {
   const primaryMedia = unit.media.find((media) => media.file) ?? null;
   const title = getFeedUnitTitle(unit);
   const mediaButtonLabel = `Открыть файлы лота ${title}`;
+  const lotHref = buildObjectLotPath(objectSlug, unit.id);
+
+  function openLotInNewTab() {
+    window.open(lotHref, '_blank', 'noopener,noreferrer');
+  }
+
+  function handleRowKeyDown(event: ReactKeyboardEvent<HTMLTableRowElement>) {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return;
+    }
+
+    event.preventDefault();
+    openLotInNewTab();
+  }
 
   return (
-    <TableRow>
+    <TableRow
+      aria-label={`Открыть карточку лота ${title}`}
+      className="object-feed-unit-row"
+      role="link"
+      tabIndex={0}
+      onClick={openLotInNewTab}
+      onKeyDown={handleRowKeyDown}
+    >
       <TableCell>
         <div className="object-feed-unit-cell">
-          <strong>{title}</strong>
+          <a
+            className="object-feed-unit-link"
+            href={lotHref}
+            rel="noopener noreferrer"
+            target="_blank"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <strong>{title}</strong>
+          </a>
           {unit.address ? <span>{unit.address}</span> : null}
         </div>
       </TableCell>
@@ -1313,7 +1472,10 @@ function ObjectFeedUnitRow({
             aria-label={mediaButtonLabel}
             className="object-feed-media-button"
             type="button"
-            onClick={() => onOpenMedia(unit)}
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenMedia(unit);
+            }}
           >
             <span className="object-feed-media-preview">
               <SecureImage
@@ -1548,6 +1710,167 @@ function ObjectFeedMediaCarousel({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function ObjectLotMediaCarousel({ accessToken, unit }: { accessToken: string; unit: FeedUnit }) {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [fullscreenMedia, setFullscreenMedia] = useState<FeedMediaWithFile | null>(null);
+  const mediaItems = useMemo(() => unit.media.filter(hasFeedMediaFile), [unit.media]);
+  const activeMedia = mediaItems[activeIndex] ?? mediaItems[0] ?? null;
+  const hasManyMedia = mediaItems.length > 1;
+
+  useEffect(() => {
+    setActiveIndex(0);
+    setFullscreenMedia(null);
+  }, [unit.id]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setFullscreenMedia(null);
+      }
+
+      if (!fullscreenMedia && event.key === 'ArrowLeft' && hasManyMedia) {
+        setActiveIndex((currentIndex) => wrapCarouselIndex(currentIndex - 1, mediaItems.length));
+      }
+
+      if (!fullscreenMedia && event.key === 'ArrowRight' && hasManyMedia) {
+        setActiveIndex((currentIndex) => wrapCarouselIndex(currentIndex + 1, mediaItems.length));
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [fullscreenMedia, hasManyMedia, mediaItems.length]);
+
+  function showPreviousMedia() {
+    setActiveIndex((currentIndex) => wrapCarouselIndex(currentIndex - 1, mediaItems.length));
+  }
+
+  function showNextMedia() {
+    setActiveIndex((currentIndex) => wrapCarouselIndex(currentIndex + 1, mediaItems.length));
+  }
+
+  if (!activeMedia) {
+    return (
+      <section className="object-lot-media-carousel object-lot-media-carousel--empty" aria-label="Медиа лота">
+        <span>Медиа лота пока не загружены</span>
+      </section>
+    );
+  }
+
+  return (
+    <section className="object-lot-media-carousel" aria-label="Медиа лота">
+      <div className="object-lot-media-stage">
+        {hasManyMedia ? (
+          <button
+            aria-label="Предыдущее медиа лота"
+            className="carousel-button carousel-button--previous object-lot-media-nav"
+            type="button"
+            onClick={showPreviousMedia}
+          >
+            ‹
+          </button>
+        ) : null}
+
+        <button
+          aria-label="Открыть медиа лота на полный экран"
+          className="object-lot-media-button"
+          type="button"
+          onClick={() => setFullscreenMedia(activeMedia)}
+        >
+          <SecureImage
+            accessToken={accessToken}
+            alt={getFeedMediaTitle(activeMedia)}
+            className="object-lot-media-image"
+            fileId={activeMedia.file.id}
+            placeholderClassName="object-feed-media-placeholder"
+            variant="original"
+          />
+        </button>
+
+        {hasManyMedia ? (
+          <>
+            <button
+              aria-label="Следующее медиа лота"
+              className="carousel-button carousel-button--next object-lot-media-nav"
+              type="button"
+              onClick={showNextMedia}
+            >
+              ›
+            </button>
+            <span className="carousel-counter">
+              {activeIndex + 1} / {mediaItems.length}
+            </span>
+          </>
+        ) : null}
+      </div>
+
+      {hasManyMedia ? (
+        <div className="carousel-thumbnail-zone object-lot-thumbnail-zone">
+          <div className="carousel-thumbnails object-lot-thumbnails" aria-label="Миниатюры медиа лота">
+            {mediaItems.map((media, index) => (
+              <button
+                key={media.id}
+                aria-label={`Медиа ${index + 1}`}
+                className={index === activeIndex ? 'carousel-thumbnail carousel-thumbnail--active' : 'carousel-thumbnail'}
+                type="button"
+                onClick={() => setActiveIndex(index)}
+              >
+                <SecureImage
+                  accessToken={accessToken}
+                  alt={getFeedMediaTitle(media)}
+                  fileId={media.file.id}
+                  placeholderClassName="object-feed-media-placeholder"
+                  variant="thumbnail"
+                />
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {fullscreenMedia ? (
+        <div className="object-feed-media-fullscreen">
+          <button
+            aria-label="Закрыть полноэкранное медиа"
+            className="object-feed-media-fullscreen-close"
+            type="button"
+            onClick={() => setFullscreenMedia(null)}
+          >
+            <XIcon aria-hidden="true" />
+          </button>
+          <a
+            className="object-feed-media-fullscreen-open"
+            href={buildMediaFileContentUrl(fullscreenMedia.file.id)}
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            <ExternalLinkIcon aria-hidden="true" />
+            Открыть оригинал
+          </a>
+          <button
+            aria-label="Закрыть полноэкранное медиа"
+            className="object-feed-media-fullscreen-image-button"
+            type="button"
+            onClick={() => setFullscreenMedia(null)}
+          >
+            <SecureImage
+              accessToken={accessToken}
+              alt={getFeedMediaTitle(fullscreenMedia)}
+              className="object-feed-media-fullscreen-image"
+              fileId={fullscreenMedia.file.id}
+              placeholderClassName="object-feed-media-placeholder"
+              variant="original"
+            />
+          </button>
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -1786,6 +2109,54 @@ function formatArea(value: string | null) {
   return `${formatNumber(parsed)} м²`;
 }
 
+function formatComputedFeedUnitPricePerMeter(unit: FeedUnit) {
+  const price = parseNullableNumber(unit.price);
+  const area = parseNullableNumber(unit.area);
+
+  if (price === null || area === null || area <= 0) {
+    return 'По запросу';
+  }
+
+  return formatFeedUnitPrice(String(price / area), unit.currency);
+}
+
+function getObjectLotFactRows(unit: FeedUnit) {
+  return [
+    {
+      label: 'Цена',
+      value: formatFeedUnitPrice(unit.price, unit.currency),
+    },
+    {
+      label: 'Цена за м²',
+      value: formatComputedFeedUnitPricePerMeter(unit),
+    },
+    {
+      label: 'Площадь',
+      value: formatArea(unit.area),
+    },
+    {
+      label: 'Тип лота',
+      value: getUnitRoomsOrType(unit),
+    },
+    {
+      label: 'Этаж',
+      value: unit.floor === null ? 'Не указан' : String(unit.floor),
+    },
+    {
+      label: 'Корпус/секция',
+      value: formatBuildingSection(unit),
+    },
+    {
+      label: 'Адрес',
+      value: unit.address ?? 'Не указан',
+    },
+    {
+      label: 'Статус',
+      value: feedUnitStatusLabels[unit.status],
+    },
+  ];
+}
+
 function getUnitRoomsOrType(unit: FeedUnit) {
   if (unit.type === 'RESIDENTIAL') {
     if (unit.rooms === 0) {
@@ -1804,6 +2175,10 @@ function getUnitRoomsOrType(unit: FeedUnit) {
 
 function getFeedUnitTitle(unit: FeedUnit) {
   return unit.title?.trim() || 'Лот без названия';
+}
+
+function buildObjectLotPath(objectSlug: string, unitId: string) {
+  return `/objects/${encodeURIComponent(objectSlug)}/lots/${encodeURIComponent(unitId)}`;
 }
 
 function formatBuildingSection(unit: FeedUnit) {

@@ -13,7 +13,7 @@ import { apiRequest } from './admin/api';
 import { AuthProvider, useAuth } from './auth/AuthProvider';
 import { CatalogPage } from './catalog/CatalogPage';
 import { buildMediaFileContentUrl } from './files/SecureImage';
-import { ObjectDetailPage } from './objects/ObjectDetailPage';
+import { ObjectDetailPage, ObjectLotDetailPage } from './objects/ObjectDetailPage';
 import { getAppliedAppTheme, getNextAppTheme, setAppTheme } from './appTheme';
 import './styles.css';
 import './app-theme.css';
@@ -237,7 +237,8 @@ function AppRoutes() {
     : pathname.startsWith('/catalog') || pathname.startsWith('/objects/')
       ? 'catalog'
       : 'cabinet';
-  const objectSlug = parseObjectSlug(pathname);
+  const objectLotRoute = parseObjectLotRoute(pathname);
+  const objectSlug = objectLotRoute ? null : parseObjectSlug(pathname);
   const visibleNavItems = navItems.filter((item) => canAccessPermissions(hasPermission, item.requiredPermissions));
 
   return (
@@ -345,6 +346,16 @@ function AppRoutes() {
           ) : (
             <AccessDenied />
           )
+        ) : objectLotRoute ? (
+          hasPermission('objects:read') ? (
+            <ObjectLotDetailPage
+              slug={objectLotRoute.slug}
+              unitId={objectLotRoute.unitId}
+              onBack={() => navigate(`/objects/${encodeURIComponent(objectLotRoute.slug)}`)}
+            />
+          ) : (
+            <AccessDenied />
+          )
         ) : objectSlug ? (
           hasPermission('objects:read') ? (
             <ObjectDetailPage slug={objectSlug} onBack={() => navigate('/catalog')} />
@@ -389,6 +400,26 @@ function parseObjectSlug(pathname: string) {
     return decodeURIComponent(match[1]);
   } catch {
     return match[1];
+  }
+}
+
+function parseObjectLotRoute(pathname: string) {
+  const match = pathname.match(/^\/objects\/([^/]+)\/lots\/([^/]+)\/?$/u);
+
+  if (!match?.[1] || !match[2]) {
+    return null;
+  }
+
+  try {
+    return {
+      slug: decodeURIComponent(match[1]),
+      unitId: decodeURIComponent(match[2]),
+    };
+  } catch {
+    return {
+      slug: match[1],
+      unitId: match[2],
+    };
   }
 }
 

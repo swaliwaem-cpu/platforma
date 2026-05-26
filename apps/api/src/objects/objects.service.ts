@@ -659,6 +659,28 @@ export class ObjectsService {
     };
   }
 
+  async getFeedUnit(id: string, unitId: string) {
+    const objectId = this.parseUuid(id, 'Object is invalid');
+    const normalizedUnitId = this.parseUuid(unitId, 'Feed unit is invalid');
+    await this.ensureObjectExists(objectId);
+
+    const unit = await this.prisma.feedUnit.findFirst({
+      where: {
+        id: normalizedUnitId,
+        objectId,
+      },
+      include: feedUnitInclude,
+    });
+
+    if (!unit) {
+      throw new NotFoundException('Feed unit not found');
+    }
+
+    return {
+      unit: this.serializeFeedUnit(unit),
+    };
+  }
+
   async create(body: CreateObjectBody, actor: AuthenticatedUser, request: RequestWithAudit) {
     if ('status' in body) {
       const status = this.parseObjectStatus(body.status);

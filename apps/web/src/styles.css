@@ -4813,6 +4813,14 @@ tr.user-row--deactivated .text-button {
   margin-left: auto;
 }
 
+.object-lot-page {
+  color: #18202a;
+}
+
+.object-lot-header .object-feed-status {
+  margin-left: auto;
+}
+
 .object-detail-edit-link {
   display: inline-flex;
   min-height: 42px;
@@ -4932,6 +4940,87 @@ tr.user-row--deactivated .text-button {
   max-width: none;
   object-fit: cover;
   object-position: center center;
+}
+
+.object-lot-media-carousel {
+  position: relative;
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  place-items: center;
+  border: 1px solid #d6dde5;
+  border-radius: 8px;
+  background: #0f1720;
+  color: #aab6c4;
+  box-shadow: 0 16px 40px rgb(24 32 42 / 8%);
+}
+
+.object-lot-media-carousel--empty {
+  display: grid;
+  place-items: center;
+}
+
+.object-lot-media-stage {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  overflow: hidden;
+  place-items: center;
+  background: #0b1118;
+}
+
+.object-lot-media-button {
+  position: relative;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: zoom-in;
+}
+
+.object-lot-media-button:focus-visible {
+  outline: 3px solid rgb(179 138 69 / 74%);
+  outline-offset: -6px;
+}
+
+.object-lot-media-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  object-position: center center;
+}
+
+.object-lot-media-nav {
+  background: rgb(10 15 22 / 72%);
+}
+
+.object-lot-thumbnail-zone {
+  height: 98px;
+}
+
+.object-lot-thumbnail-zone .carousel-thumbnails,
+.object-lot-thumbnail-zone:hover .carousel-thumbnails,
+.object-lot-thumbnail-zone:focus-within .carousel-thumbnails {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%, 0);
+}
+
+.object-lot-summary-section {
+  align-content: start;
+}
+
+.object-lot-facts {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .carousel-button {
@@ -5639,10 +5728,31 @@ tr.user-row--deactivated .text-button {
   outline-offset: 3px;
 }
 
+.object-feed-unit-row {
+  cursor: pointer;
+}
+
+.object-feed-unit-row:focus-visible {
+  outline: 2px solid #b38a45;
+  outline-offset: -2px;
+}
+
 .object-feed-unit-cell {
   display: grid;
   min-width: 190px;
   gap: 4px;
+}
+
+.object-feed-unit-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.object-feed-unit-link:hover,
+.object-feed-unit-link:focus-visible {
+  color: #174ea6;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .object-feed-unit-cell strong {
@@ -6079,6 +6189,10 @@ tr.user-row--deactivated .text-button {
   }
 
   .object-parameters-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .object-lot-facts {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -7324,6 +7438,10 @@ tr.user-row--deactivated .text-button {
   }
 
   .object-parameters-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .object-lot-facts {
     grid-template-columns: 1fr;
   }
 

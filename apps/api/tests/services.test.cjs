@@ -1201,6 +1201,98 @@ test('ObjectsService.listFeedUnits returns feed units for one object with filter
   assert.equal(result.totalPages, 1);
 });
 
+test('ObjectsService.getFeedUnit returns one feed unit for an object with media', async () => {
+  const calls = {};
+  const objectId = '11111111-1111-4111-8111-111111111111';
+  const unitId = '55555555-5555-4555-8555-555555555555';
+  const now = new Date('2026-05-23T10:00:00.000Z');
+  const prisma = {
+    realEstateObject: {
+      count: async (args) => {
+        calls.objectCount = args;
+        return args.where.id === objectId && args.where.deletedAt === null ? 1 : 0;
+      },
+    },
+    feedUnit: {
+      findFirst: async (args) => {
+        calls.findFirst = args;
+        return {
+          id: unitId,
+          sourceId: '22222222-2222-4222-8222-222222222222',
+          objectId,
+          externalId: 'flat-1',
+          type: FeedUnitType.RESIDENTIAL,
+          status: FeedUnitStatus.AVAILABLE,
+          title: 'Квартира 1',
+          address: 'Москва',
+          building: 'Корпус 1',
+          section: '1',
+          floor: 7,
+          rooms: 2,
+          price: decimal('10000000'),
+          currency: 'RUR',
+          area: decimal('50'),
+          pricePerMeter: decimal('200000'),
+          completionYear: 2028,
+          completionQuarter: 4,
+          rawPayload: { externalId: 'flat-1' },
+          archivedAt: null,
+          residentialDetails: {
+            unitId,
+            apartmentNumber: '11',
+            layoutType: '2k',
+            livingArea: decimal('30'),
+            kitchenArea: decimal('10'),
+            balconyCount: 1,
+            detailsJson: { renovation: 'whitebox' },
+          },
+          commercialDetails: null,
+          media: [
+            {
+              unitId,
+              mediaAssetId: '77777777-7777-4777-8777-777777777777',
+              sortOrder: 0,
+              label: 'plan',
+              mediaAsset: {
+                id: '77777777-7777-4777-8777-777777777777',
+                sourceUrl: 'https://cdn.example.test/image.jpg',
+                fileId: '66666666-6666-4666-8666-666666666666',
+                contentType: 'image/jpeg',
+                checksum: 'checksum',
+                file: fileRecord(),
+                createdAt: now,
+                updatedAt: now,
+              },
+            },
+          ],
+          createdAt: now,
+          updatedAt: now,
+        };
+      },
+    },
+  };
+  const service = new ObjectsService(prisma, {});
+
+  const result = await service.getFeedUnit(objectId, unitId);
+
+  assert.deepEqual(calls.objectCount, {
+    where: {
+      id: objectId,
+      deletedAt: null,
+    },
+  });
+  assert.deepEqual(calls.findFirst.where, {
+    id: unitId,
+    objectId,
+  });
+  assert.equal(calls.findFirst.include.media.include.mediaAsset.include.file, true);
+  assert.equal(result.unit.id, unitId);
+  assert.equal(result.unit.objectId, objectId);
+  assert.equal(result.unit.price, '10000000');
+  assert.equal(result.unit.area, '50');
+  assert.equal(result.unit.media[0].file.id, '55555555-5555-4555-8555-555555555555');
+});
+
 test('ObjectsService.listFeedUnits accepts comma separated feed unit statuses', async () => {
   const calls = {};
   const objectId = '11111111-1111-4111-8111-111111111111';

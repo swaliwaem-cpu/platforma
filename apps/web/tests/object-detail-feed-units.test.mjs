@@ -70,7 +70,7 @@ test('object detail feed units block renders expected columns and media thumbnai
   assert.doesNotMatch(source, /<strong>\{unit\.title \|\| unit\.externalId\}<\/strong>/);
   assert.match(source, /function getFeedUnitTitle\(unit: FeedUnit\)/);
   assert.match(source, /className="object-feed-media-button"/);
-  assert.match(source, /type="button"[\s\S]*?onClick=\{\(\) => onOpenMedia\(unit\)\}/);
+  assert.match(source, /onClick=\{\(event\) => \{[\s\S]*?event\.stopPropagation\(\);[\s\S]*?onOpenMedia\(unit\);[\s\S]*?\}\}/);
   assert.match(source, /<SecureImage[\s\S]*?className="object-feed-media-image"[\s\S]*?fileId=\{primaryMedia\.file\.id\}[\s\S]*?variant="thumbnail"/);
   assert.match(source, /Лоты не найдены/);
   assert.match(source, /Загрузка лотов/);
@@ -83,6 +83,21 @@ test('object detail feed units block renders expected columns and media thumbnai
   assert.match(styles, /\.object-feed-media-button:focus-visible\s*\{/);
   assert.match(styles, /\.object-feed-media-preview\s*\{/);
   assert.match(styles, /\.object-feed-units-table\s*\{/);
+});
+
+test('object detail feed unit rows open lot cards in a new tab', () => {
+  assert.match(source, /function buildObjectLotPath\(objectSlug: string, unitId: string\)/);
+  assert.match(source, /const lotHref = buildObjectLotPath\(objectSlug, unit\.id\);/);
+  assert.match(source, /window\.open\(lotHref, '_blank', 'noopener,noreferrer'\);/);
+  assert.match(source, /className="object-feed-unit-row"/);
+  assert.match(source, /role="link"/);
+  assert.match(source, /tabIndex=\{0\}/);
+  assert.match(source, /href=\{lotHref\}/);
+  assert.match(source, /target="_blank"/);
+  assert.match(source, /rel="noopener noreferrer"/);
+  assert.match(source, /objectSlug=\{object\.slug\}/);
+  assert.match(styles, /\.object-feed-unit-row\s*\{/);
+  assert.match(styles, /\.object-feed-unit-link\s*\{/);
 });
 
 test('object detail feed units support server sorting from sortable headers', () => {

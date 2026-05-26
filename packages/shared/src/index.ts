@@ -391,6 +391,10 @@ export type FeedUnitsResponse = {
   totalPages: number;
 };
 
+export type FeedUnitResponse = {
+  unit: FeedUnit;
+};
+
 export type PublicCatalogQuickLink = {
   id: string;
   type: CatalogQuickLinkType;
