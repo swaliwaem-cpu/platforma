@@ -1,4 +1,14 @@
-import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react';
+import {
+  FormEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type FocusEvent,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react';
 import {
   ArrowDownIcon,
   ArrowLeftIcon,
@@ -52,6 +62,7 @@ import {
   shouldRemoveObjectQuickEditRow,
   updateObjectQuickEditRows,
 } from './objectQuickEditPersistence';
+import { matchesQuickEditSearch } from './objectQuickEditTransforms';
 
 type ObjectsAdminPageProps = {
   pathname: string;
@@ -107,6 +118,7 @@ const fileTypeLabels: Record<ObjectFileType, string> = {
 
 const objectPdfUploadLimit = 10;
 const objectListPageSize = 20;
+const searchableMultiSelectResultLimit = 24;
 
 const gallerySectionOptions: {
   value: ObjectImageSection;
@@ -1619,72 +1631,69 @@ function ObjectEditor(props: ObjectEditorProps) {
 
                   <Field>
                     <FieldLabel htmlFor="object-primary-location">Основной район</FieldLabel>
-                    <select
+                    <SearchableSelect
                       id="object-primary-location"
-                      value={props.form.primaryLocationId}
-                      onChange={(event) => props.onFormChange({ ...props.form, primaryLocationId: event.target.value })}
-                    >
-                      <option value="">Не выбрана</option>
-                      {props.districtLocations.map((location) => (
-                        <option key={location.id} value={location.id}>
-                          {location.name}
-                        </option>
-                      ))}
-                    </select>
+                      emptyLabel="Районы не найдены"
+                      label="основной район"
+                      options={props.districtLocations}
+                      placeholder="Поиск основного района"
+                      selectedIds={props.form.primaryLocationId ? [props.form.primaryLocationId] : []}
+                      onSelectedIdsChange={(ids) =>
+                        props.onFormChange({ ...props.form, primaryLocationId: ids[0] ?? '' })
+                      }
+                      getOptionLabel={(location) => location.name}
+                      getSearchValues={(location) => [location.name, location.slug]}
+                    />
                   </Field>
 
                   <Field>
                     <FieldLabel htmlFor="object-districts">Районы</FieldLabel>
-                    <select
+                    <SearchableSelect
                       id="object-districts"
                       multiple
-                      value={props.form.districtLocationIds}
-                      onChange={(event) =>
-                        props.onFormChange({ ...props.form, districtLocationIds: getSelectedValues(event) })
+                      emptyLabel="Районы не найдены"
+                      label="район"
+                      options={props.districtLocations}
+                      placeholder="Поиск районов"
+                      selectedIds={props.form.districtLocationIds}
+                      onSelectedIdsChange={(ids) =>
+                        props.onFormChange({ ...props.form, districtLocationIds: ids })
                       }
-                    >
-                      {props.districtLocations.map((location) => (
-                        <option key={location.id} value={location.id}>
-                          {location.name}
-                        </option>
-                      ))}
-                    </select>
+                      getOptionLabel={(location) => location.name}
+                      getSearchValues={(location) => [location.name, location.slug]}
+                    />
                   </Field>
 
                   <Field>
                     <FieldLabel htmlFor="object-areas">Окружение</FieldLabel>
-                    <select
+                    <SearchableSelect
                       id="object-areas"
                       multiple
-                      value={props.form.areaLocationIds}
-                      onChange={(event) =>
-                        props.onFormChange({ ...props.form, areaLocationIds: getSelectedValues(event) })
-                      }
-                    >
-                      {props.areaLocations.map((location) => (
-                        <option key={location.id} value={location.id}>
-                          {location.name}
-                        </option>
-                      ))}
-                    </select>
+                      emptyLabel="Окружение не найдено"
+                      label="окружение"
+                      options={props.areaLocations}
+                      placeholder="Поиск окружения"
+                      selectedIds={props.form.areaLocationIds}
+                      onSelectedIdsChange={(ids) => props.onFormChange({ ...props.form, areaLocationIds: ids })}
+                      getOptionLabel={(location) => location.name}
+                      getSearchValues={(location) => [location.name, location.slug]}
+                    />
                   </Field>
 
                   <Field className="field-wide">
                     <FieldLabel htmlFor="object-metro">Метро</FieldLabel>
-                    <select
+                    <SearchableSelect
                       id="object-metro"
                       multiple
-                      value={props.form.metroStationIds}
-                      onChange={(event) =>
-                        props.onFormChange({ ...props.form, metroStationIds: getSelectedValues(event) })
-                      }
-                    >
-                      {props.metroStations.map((station) => (
-                        <option key={station.id} value={station.id}>
-                          {station.lineName ? `${station.name}, ${station.lineName}` : station.name}
-                        </option>
-                      ))}
-                    </select>
+                      emptyLabel="Метро не найдено"
+                      label="метро"
+                      options={props.metroStations}
+                      placeholder="Поиск метро"
+                      selectedIds={props.form.metroStationIds}
+                      onSelectedIdsChange={(ids) => props.onFormChange({ ...props.form, metroStationIds: ids })}
+                      getOptionLabel={(station) => (station.lineName ? `${station.name}, ${station.lineName}` : station.name)}
+                      getSearchValues={(station) => [station.name, station.slug, station.lineName]}
+                    />
                   </Field>
                 </FieldGroup>
               </ObjectFormSection>
@@ -2375,6 +2384,208 @@ function GalleryDraftPreview({
   return <span>Фото</span>;
 }
 
+type SearchableSelectOption = {
+  id: string;
+};
+
+function SearchableSelect<T extends SearchableSelectOption>({
+  emptyLabel,
+  getOptionLabel,
+  getSearchValues,
+  id,
+  label,
+  multiple = false,
+  onSelectedIdsChange,
+  options,
+  placeholder,
+  selectedIds,
+}: {
+  emptyLabel: string;
+  getOptionLabel: (option: T) => string;
+  getSearchValues: (option: T) => Array<string | null | undefined>;
+  id: string;
+  label: string;
+  multiple?: boolean;
+  onSelectedIdsChange: (ids: string[]) => void;
+  options: T[];
+  placeholder: string;
+  selectedIds: string[];
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const listboxId = `${id}-results`;
+  const optionById = useMemo(() => new Map(options.map((option) => [option.id, option])), [options]);
+  const selectedOptions = useMemo(
+    () => selectedIds.map((selectedId) => optionById.get(selectedId)).filter((option): option is T => Boolean(option)),
+    [optionById, selectedIds],
+  );
+  const filteredOptions = useMemo(() => {
+    const matchedOptions = options.filter((option) => matchesQuickEditSearch(query, getSearchValues(option)));
+
+    return matchedOptions.slice(0, searchableMultiSelectResultLimit);
+  }, [getSearchValues, options, query]);
+
+  function changeSelectedIds(ids: string[]) {
+    onSelectedIdsChange(multiple ? ids : ids.slice(0, 1));
+  }
+
+  function toggleOption(optionId: string) {
+    if (!multiple) {
+      changeSelectedIds([optionId]);
+      setQuery('');
+      setIsOpen(false);
+      return;
+    }
+
+    const nextIds = selectedIds.includes(optionId)
+      ? selectedIds.filter((selectedId) => selectedId !== optionId)
+      : [...selectedIds, optionId];
+
+    changeSelectedIds(nextIds);
+    setQuery('');
+    setIsOpen(true);
+    inputRef.current?.focus();
+  }
+
+  function removeOption(optionId: string) {
+    if (!optionId) {
+      return;
+    }
+
+    changeSelectedIds(selectedIds.filter((selectedId) => selectedId !== optionId));
+    inputRef.current?.focus();
+  }
+
+  function clearSelection() {
+    changeSelectedIds([]);
+    setQuery('');
+    inputRef.current?.focus();
+  }
+
+  function handleBlur(event: FocusEvent<HTMLDivElement>) {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      return;
+    }
+
+    setIsOpen(false);
+    setQuery('');
+  }
+
+  function handleInputKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'Escape') {
+      setIsOpen(false);
+      setQuery('');
+      return;
+    }
+
+    if (event.key === 'Enter' && isOpen && filteredOptions[0]) {
+      event.preventDefault();
+      toggleOption(filteredOptions[0].id);
+      return;
+    }
+
+    if (event.key === 'Backspace' && !query && selectedIds.length > 0) {
+      removeOption(selectedIds[selectedIds.length - 1] ?? '');
+    }
+  }
+
+  return (
+    <div className="searchable-multi-select" onBlur={handleBlur}>
+      <div
+        className={isOpen ? 'searchable-multi-select-control is-open' : 'searchable-multi-select-control'}
+        onClick={() => {
+          setIsOpen(true);
+          inputRef.current?.focus();
+        }}
+      >
+        <div className="searchable-multi-select-value">
+          {selectedOptions.map((option) => (
+            <button
+              key={option.id}
+              className="searchable-multi-select-chip"
+              type="button"
+              aria-label={`Убрать ${getOptionLabel(option)}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                removeOption(option.id);
+              }}
+            >
+              <span>{getOptionLabel(option)}</span>
+              <XIcon aria-hidden="true" />
+            </button>
+          ))}
+          <input
+            id={id}
+            ref={inputRef}
+            aria-controls={listboxId}
+            aria-expanded={isOpen}
+            aria-label={label}
+            role="combobox"
+            type="search"
+            value={query}
+            placeholder={selectedOptions.length === 0 ? placeholder : ''}
+            onChange={(event) => {
+              setQuery(event.currentTarget.value);
+              setIsOpen(true);
+            }}
+            onFocus={() => setIsOpen(true)}
+            onKeyDown={handleInputKeyDown}
+          />
+        </div>
+        {selectedIds.length > 0 ? (
+          <button
+            className="searchable-multi-select-clear"
+            type="button"
+            aria-label={`Очистить ${label}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              clearSelection();
+            }}
+          >
+            <XIcon aria-hidden="true" />
+          </button>
+        ) : null}
+        <ChevronDownIcon className="searchable-multi-select-chevron" aria-hidden="true" />
+      </div>
+      {isOpen ? (
+        <div
+          id={listboxId}
+          className="searchable-multi-select-menu"
+          role="listbox"
+          aria-multiselectable={multiple ? true : undefined}
+        >
+          {filteredOptions.length > 0 ? (
+            filteredOptions.map((option) => {
+              const isSelected = selectedIds.includes(option.id);
+
+              return (
+                <button
+                  key={option.id}
+                  className={
+                    isSelected
+                      ? 'searchable-multi-select-option searchable-multi-select-option--selected'
+                      : 'searchable-multi-select-option'
+                  }
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  onClick={() => toggleOption(option.id)}
+                >
+                  <span>{getOptionLabel(option)}</span>
+                  {isSelected ? <span className="searchable-multi-select-check">Выбрано</span> : null}
+                </button>
+              );
+            })
+          ) : (
+            <p className="searchable-multi-select-empty">{emptyLabel}</p>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ObjectFormSection({
   action,
   children,
@@ -2667,10 +2878,6 @@ function validateObjectForm(form: ObjectFormState) {
   }
 
   return null;
-}
-
-function getSelectedValues(event: ChangeEvent<HTMLSelectElement>) {
-  return Array.from(event.target.selectedOptions, (option) => option.value);
 }
 
 function emptyToNull(value: string) {
