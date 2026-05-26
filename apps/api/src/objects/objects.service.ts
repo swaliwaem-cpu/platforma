@@ -593,7 +593,7 @@ export class ObjectsService {
       2,
     );
     const areaFilter = this.createFeedUnitDecimalRangeFilter('area', query.areaMin, query.areaMax, 'Area', 10, 2);
-    const rooms = this.parseOptionalInteger(query.rooms, 'Rooms is invalid', 0, 4);
+    const rooms = this.parseOptionalInteger(query.rooms, 'Rooms is invalid', 0, 5);
     const floorMin = this.parseOptionalInteger(query.floorMin, 'Floor min is invalid', 1, 300);
     const floorMax = this.parseOptionalInteger(query.floorMax, 'Floor max is invalid', 1, 300);
     const completionYear = this.parseOptionalInteger(query.completionYear, 'Completion year is invalid', 1900, 2200);
@@ -2170,7 +2170,7 @@ export class ObjectsService {
   }): Prisma.RealEstateObjectWhereInput | null {
     const priceMin = this.parseNullableDecimal(query.priceMin, 'Lot price min', 14, 2);
     const priceMax = this.parseNullableDecimal(query.priceMax, 'Lot price max', 14, 2);
-    const rooms = this.parseOptionalInteger(query.rooms, 'Lot rooms is invalid', 0, 4);
+    const rooms = this.parseOptionalInteger(query.rooms, 'Lot rooms is invalid', 0, 5);
     const floorMin = this.parseOptionalInteger(query.floorMin, 'Lot floor min is invalid', 1, 300);
     const floorMax = this.parseOptionalInteger(query.floorMax, 'Lot floor max is invalid', 1, 300);
 

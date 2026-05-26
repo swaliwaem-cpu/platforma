@@ -6,6 +6,7 @@ const { test } = require('node:test');
 const {
   CianXmlFeedParser,
   YandexRealtyFeedParser,
+  createFeedSourceAnalysis,
   loadXmlFromUrl,
   normalizeFeedUnitStatus,
 } = require('../dist/index.js');
@@ -59,6 +60,109 @@ test('YandexRealtyFeedParser normalizes residential units from fixture', () => {
   assert.equal(first.residentialDetails.apartmentNumber, '611');
   assert.equal(first.residentialDetails.livingArea, '29.00');
   assert.equal(first.commercialDetails, null);
+});
+
+test('YandexRealtyFeedParser normalizes Etalon-style Yandex fields', () => {
+  const parser = new YandexRealtyFeedParser();
+  const xml = `<?xml version="1.0"?>
+    <realty-feed>
+      <offer internal-id="97420">
+        <type>продажа</type>
+        <property-type>жилая</property-type>
+        <category>квартира</category>
+        <location>
+          <country>Россия</country>
+          <locality-name>Москва</locality-name>
+          <latitude>55.688233</latitude>
+          <longitude>37.654625</longitude>
+        </location>
+        <Address>Москва, ЮАО, Даниловский, пр-кт Андропова</Address>
+        <price><value>17597954</value><currency>RUB</currency></price>
+        <area><value>25.3</value><unit>кв. м</unit></area>
+        <living-space><value>12.9</value><unit>кв. м</unit></living-space>
+        <kitchen-space><value>5.1</value><unit>кв. м</unit></kitchen-space>
+        <description>Продается квартира 1017, по адресу Москва, ЮАО, Даниловский.</description>
+        <floor>29</floor>
+        <studio>true</studio>
+        <building-name>Нагатино Ай-Лэнд</building-name>
+        <yandex-building-id>2133018</yandex-building-id>
+        <yandex-house-id>2923598</yandex-house-id>
+        <ceiling-height>3</ceiling-height>
+        <image tag="plan">https://imgs.etalongroup.ru/plan.png</image>
+      </offer>
+    </realty-feed>`;
+
+  const result = parser.parse(xml);
+  const unit = result.units[0];
+
+  assert.deepEqual(result.warnings, []);
+  assert.equal(unit.externalId, '97420');
+  assert.equal(unit.address, 'Москва, ЮАО, Даниловский, пр-кт Андропова');
+  assert.equal(unit.rooms, 0);
+  assert.equal(unit.title, 'Нагатино Ай-Лэнд, квартира, № 1017');
+  assert.equal(unit.residentialDetails.apartmentNumber, '1017');
+  assert.equal(unit.residentialDetails.kitchenArea, '5.10');
+  assert.equal(unit.residentialDetails.detailsJson.yandexBuildingId, '2133018');
+});
+
+test('createFeedSourceAnalysis summarizes Yandex developer and object groups', () => {
+  const parser = new YandexRealtyFeedParser();
+  const xml = `<?xml version="1.0"?>
+    <realty-feed>
+      <offer internal-id="flat-1">
+        <property-type>жилая</property-type>
+        <category>квартира</category>
+        <sales-agent><organization>АО «ГК «ЭТАЛОН»</organization></sales-agent>
+        <Address>Москва, пр-кт Андропова</Address>
+        <building-name>Нагатино Ай-Лэнд</building-name>
+        <yandex-building-id>2133018</yandex-building-id>
+        <yandex-house-id>2923598</yandex-house-id>
+        <price><value>10000000</value><currency>RUB</currency></price>
+        <area><value>40</value></area>
+      </offer>
+      <offer internal-id="flat-2">
+        <property-type>жилая</property-type>
+        <category>квартира</category>
+        <sales-agent><organization>АО «ГК «ЭТАЛОН»</organization></sales-agent>
+        <Address>Москва, пр-кт Андропова</Address>
+        <building-name>Нагатино Ай-Лэнд</building-name>
+        <yandex-building-id>2133018</yandex-building-id>
+        <yandex-house-id>2923285</yandex-house-id>
+        <price><value>11000000</value><currency>RUB</currency></price>
+        <area><value>42</value></area>
+      </offer>
+      <offer internal-id="flat-3">
+        <property-type>жилая</property-type>
+        <category>квартира</category>
+        <sales-agent><organization>АО «ГК «ЭТАЛОН»</organization></sales-agent>
+        <Address>ЦАО, ул. Летниковская</Address>
+        <building-name>Воксхолл</building-name>
+        <yandex-building-id>2708049</yandex-building-id>
+        <yandex-house-id>2708699</yandex-house-id>
+        <price><value>12000000</value><currency>RUB</currency></price>
+        <area><value>44</value></area>
+      </offer>
+    </realty-feed>`;
+  const parsed = parser.parse(xml);
+
+  const analysis = createFeedSourceAnalysis('YANDEX_REALTY', parsed);
+
+  assert.equal(analysis.developerName, 'АО «ГК «ЭТАЛОН»');
+  assert.equal(analysis.unitsCount, 3);
+  assert.equal(analysis.objects.length, 2);
+  assert.deepEqual(
+    analysis.objects.map((object) => [object.title, object.unitsCount]),
+    [
+      ['Нагатино Ай-Лэнд', 2],
+      ['Воксхолл', 1],
+    ],
+  );
+  assert.deepEqual(analysis.objects[0].filterJson, {
+    buildingNames: ['Нагатино Ай-Лэнд'],
+    yandexBuildingIds: ['2133018'],
+    yandexHouseIds: ['2923598', '2923285'],
+    addressIncludes: ['Москва, пр-кт Андропова'],
+  });
 });
 
 test('CianXmlFeedParser normalizes commercial units from fixture', () => {

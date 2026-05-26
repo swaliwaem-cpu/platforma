@@ -25,6 +25,7 @@ test('catalog global lot filters render controls and count as active advanced fi
   assert.match(source, /const catalogRoomOptions = \[/);
   assert.match(source, /\{ value:\s*'0',\s*label:\s*'Студия'\s*\}/);
   assert.match(source, /\{ value:\s*'4',\s*label:\s*'4 спальни'\s*\}/);
+  assert.match(source, /\{ value:\s*'5',\s*label:\s*'5 спален'\s*\}/);
   assert.match(source, />\s*Цена лота от\s*</);
   assert.match(source, />\s*Цена лота до\s*</);
   assert.match(source, />\s*Сколько комнат\s*</);

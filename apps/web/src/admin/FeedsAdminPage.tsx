@@ -16,6 +16,9 @@ import type {
   FeedImportRunResponse,
   FeedImportRunsResponse,
   FeedSource,
+  FeedSourceAnalysis,
+  FeedSourceAnalysisObject,
+  FeedSourceAnalysisResponse,
   FeedSourceResponse,
   FeedSourcesResponse,
   FeedSourceKind,
@@ -56,9 +59,18 @@ type SourceFormState = {
   url: string;
   xmlFile: File | null;
   format: FeedFormat;
+  filterJson: string;
   developerId: string;
   objectId: string;
+  mappings: SourceMappingFormState[];
   isActive: boolean;
+};
+
+type SourceMappingFormState = {
+  sourceKey: string;
+  sourceTitle: string;
+  filterJson: Record<string, string[]>;
+  objectId: string;
 };
 
 type FeedCommandMode = 'preview' | 'run';
@@ -82,8 +94,10 @@ const emptySourceForm: SourceFormState = {
   url: '',
   xmlFile: null,
   format: 'YANDEX_REALTY',
+  filterJson: '',
   developerId: '',
   objectId: '',
+  mappings: [],
   isActive: true,
 };
 
@@ -144,6 +158,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
   const [developers, setDevelopers] = useState<ObjectDeveloper[]>([]);
   const [objects, setObjects] = useState<RealEstateObjectSummary[]>([]);
   const [form, setForm] = useState<SourceFormState>(emptySourceForm);
+  const [sourceAnalysis, setSourceAnalysis] = useState<FeedSourceAnalysis | null>(null);
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const [runs, setRuns] = useState<FeedImportRun[]>([]);
   const [selectedRun, setSelectedRun] = useState<FeedImportRun | null>(null);
@@ -165,6 +180,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
   const [isLoadingRuns, setIsLoadingRuns] = useState(false);
   const [isLoadingUnits, setIsLoadingUnits] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isAnalyzingSource, setIsAnalyzingSource] = useState(false);
   const [runningMode, setRunningMode] = useState<FeedCommandMode | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -226,6 +242,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
       setSelectedRun(null);
       setRuns([]);
       setUnits([]);
+      setSourceAnalysis(null);
       setIsLoadingSources(false);
       setIsLoadingForm(false);
       setError(null);
@@ -386,6 +403,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
       setSources(lookupItems);
       setSelectedSourceId(source.id);
       setForm(createFormFromSource(source));
+      setSourceAnalysis(null);
       if (options.loadPreviewRun ?? true) {
         void loadLatestPreviewRun(source.id);
       }
@@ -537,6 +555,52 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
     }
   }
 
+  async function analyzeSourceFeed() {
+    if (!accessToken) {
+      return;
+    }
+
+    const validationError = validateSourceAnalysisForm(form);
+
+    if (validationError) {
+      setError(validationError);
+      setNotice(null);
+      return;
+    }
+
+    setIsAnalyzingSource(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const data = await apiRequest<FeedSourceAnalysisResponse>('/feeds/analyze', accessToken, {
+        method: 'POST',
+        body: createSourceAnalysisRequestBody(form),
+      });
+
+      setSourceAnalysis(data.analysis);
+      setForm((currentForm) => ({
+        ...currentForm,
+        mappings: createSourceMappingsFromAnalysis(data.analysis, currentForm.mappings),
+      }));
+      setNotice(`Фид разобран: ${data.analysis.objects.length} объектов, ${data.analysis.unitsCount} лотов`);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Не удалось разобрать фид');
+    } finally {
+      setIsAnalyzingSource(false);
+    }
+  }
+
+  function updateAnalysisMapping(sourceKey: string, objectId: string) {
+    setForm((currentForm) => ({
+      ...currentForm,
+      mappings: currentForm.mappings.map((mapping) =>
+        mapping.sourceKey === sourceKey ? { ...mapping, objectId } : mapping,
+      ),
+    }));
+    setError(null);
+  }
+
   async function runSourceCommand(sourceId: string, mode: FeedCommandMode) {
     if (!accessToken) {
       return;
@@ -629,6 +693,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
     const editorTitle = isCreateRoute ? 'Новый источник фида' : 'Редактирование фида';
     const isFormDisabled = isLoadingDirectories || isLoadingForm || isSubmitting;
     const isRunning = runningMode !== null;
+    const hasFilterJson = form.filterJson.trim().length > 0;
 
     return (
       <div className="admin-feeds admin-feeds--editor">
@@ -691,13 +756,15 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                           name="sourceKind"
                           type="radio"
                           value="URL"
-                          onChange={() =>
+                          onChange={() => {
+                            setSourceAnalysis(null);
                             setForm((currentForm) => ({
                               ...currentForm,
                               sourceKind: 'URL',
                               xmlFile: null,
-                            }))
-                          }
+                              mappings: [],
+                            }));
+                          }}
                         />
                         URL
                       </label>
@@ -707,13 +774,15 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                           name="sourceKind"
                           type="radio"
                           value="FILE"
-                          onChange={() =>
+                          onChange={() => {
+                            setSourceAnalysis(null);
                             setForm((currentForm) => ({
                               ...currentForm,
                               sourceKind: 'FILE',
                               url: '',
-                            }))
-                          }
+                              mappings: [],
+                            }));
+                          }}
                         />
                         XML-файл
                       </label>
@@ -729,7 +798,10 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                         placeholder="https://example.com/feed.xml"
                         type="url"
                         value={form.url}
-                        onChange={(event) => setForm((currentForm) => ({ ...currentForm, url: event.target.value }))}
+                        onChange={(event) => {
+                          setSourceAnalysis(null);
+                          setForm((currentForm) => ({ ...currentForm, url: event.target.value, mappings: [] }));
+                        }}
                       />
                     </label>
                   ) : (
@@ -740,12 +812,14 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                         accept=".xml,application/xml,text/xml"
                         name="xmlFile"
                         type="file"
-                        onChange={(event) =>
+                        onChange={(event) => {
+                          setSourceAnalysis(null);
                           setForm((currentForm) => ({
                             ...currentForm,
                             xmlFile: event.target.files?.[0] ?? null,
-                          }))
-                        }
+                            mappings: [],
+                          }));
+                        }}
                       />
                       {form.xmlFile ? (
                         <span className="feed-source-file-current">{form.xmlFile.name}</span>
@@ -760,9 +834,14 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                     <select
                       name="format"
                       value={form.format}
-                      onChange={(event) =>
-                        setForm((currentForm) => ({ ...currentForm, format: event.target.value as FeedFormat }))
-                      }
+                      onChange={(event) => {
+                        setSourceAnalysis(null);
+                        setForm((currentForm) => ({
+                          ...currentForm,
+                          format: event.target.value as FeedFormat,
+                          mappings: [],
+                        }));
+                      }}
                     >
                       {Object.entries(feedFormatLabels).map(([value, label]) => (
                         <option key={value} value={value}>
@@ -784,6 +863,52 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                     Активен
                   </label>
 
+                  <FeedSourceAnalysisPanel
+                    analysis={sourceAnalysis}
+                    mappingValues={form.mappings}
+                    objectOptions={filteredObjects}
+                    isObjectSelectDisabled={!form.developerId}
+                    isLoading={isAnalyzingSource}
+                    onAnalyze={() => void analyzeSourceFeed()}
+                    onMappingChange={updateAnalysisMapping}
+                  />
+
+                  {hasFilterJson ? (
+                    <details className="field-wide feed-source-filter-json" open>
+                      <summary>Фильтр Yandex</summary>
+                      <label className="feed-source-filter-json-field">
+                        JSON
+                        <textarea
+                          name="filterJson"
+                          placeholder={`{
+  "buildingNames": ["Нагатино Ай-Лэнд"],
+  "yandexBuildingIds": ["2133018"],
+  "yandexHouseIds": ["2923598"],
+  "addressIncludes": ["пр-кт Андропова"]
+}`}
+                          rows={7}
+                          spellCheck={false}
+                          value={form.filterJson}
+                          onChange={(event) =>
+                            setForm((currentForm) => ({ ...currentForm, filterJson: event.target.value }))
+                          }
+                        />
+                      </label>
+                      <div className="feed-source-filter-json-footer">
+                        <span className="feed-source-file-current">
+                          buildingNames, yandexBuildingIds, yandexHouseIds, addressIncludes
+                        </span>
+                        <AdminButton
+                          tone="text"
+                          type="button"
+                          onClick={() => setForm((currentForm) => ({ ...currentForm, filterJson: '' }))}
+                        >
+                          Очистить фильтр
+                        </AdminButton>
+                      </div>
+                    </details>
+                  ) : null}
+
                   <label>
                     Застройщик
                     <select
@@ -800,6 +925,13 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                             ...currentForm,
                             developerId,
                             objectId: selectedObjectMatchesDeveloper ? currentForm.objectId : '',
+                            mappings: currentForm.mappings.map((mapping) => {
+                              const selectedMappingObjectMatchesDeveloper = objects.some(
+                                (object) => object.id === mapping.objectId && object.developer?.id === developerId,
+                              );
+
+                              return selectedMappingObjectMatchesDeveloper ? mapping : { ...mapping, objectId: '' };
+                            }),
                           };
                         })
                       }
@@ -919,7 +1051,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                         >
                           <TableCell>
                             <div className="feed-source-cell">
-                              <strong>{source.object.title}</strong>
+                              <strong>{getSourceObjectTitle(source)}</strong>
                               <span>{source.developer.name}</span>
                               <code>{getSourceDisplay(source)}</code>
                             </div>
@@ -1093,7 +1225,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
               <div className="feed-panel-heading">
                 <div>
                   <p className="eyebrow">{feedFormatLabels[selectedSource.format]}</p>
-                  <h3>{selectedSource.object.title}</h3>
+                  <h3>{getSourceObjectTitle(selectedSource)}</h3>
                 </div>
                 <AdminStatusBadge className={selectedSource.isActive ? 'feed-source-status--active' : 'feed-source-status--inactive'}>
                   {selectedSource.isActive ? 'Active' : 'Off'}
@@ -1272,7 +1404,7 @@ function SourceRunControlPanel({
       <div className="feed-source-run-header">
         <div>
           <p className="eyebrow">Запуск</p>
-          <h3>{source ? source.object.title : 'Источник не выбран'}</h3>
+          <h3>{source ? getSourceObjectTitle(source) : 'Источник не выбран'}</h3>
         </div>
 
         <div className="feed-source-run-actions">
@@ -1353,6 +1485,99 @@ function FeedRunProgressCard({ run, progress }: { run: FeedImportRun | null; pro
   );
 }
 
+function FeedSourceAnalysisPanel({
+  analysis,
+  mappingValues,
+  objectOptions,
+  isObjectSelectDisabled,
+  isLoading,
+  onAnalyze,
+  onMappingChange,
+}: {
+  analysis: FeedSourceAnalysis | null;
+  mappingValues: SourceMappingFormState[];
+  objectOptions: RealEstateObjectSummary[];
+  isObjectSelectDisabled: boolean;
+  isLoading: boolean;
+  onAnalyze: () => void;
+  onMappingChange: (sourceKey: string, objectId: string) => void;
+}) {
+  return (
+    <section className="field-wide feed-source-analysis" aria-label="Разбор фида">
+      <div className="feed-source-analysis-header">
+        <div>
+          <strong>Разбор фида</strong>
+          <span>
+            {analysis
+              ? `${analysis.developerName ?? 'Застройщик не указан'} · ${formatNumber(analysis.unitsCount)} лотов`
+              : 'Застройщик, объекты и количество лотов появятся после разбора'}
+          </span>
+        </div>
+        <AdminButton disabled={isLoading} tone="secondary" type="button" onClick={onAnalyze}>
+          <RefreshCwIcon data-icon="inline-start" />
+          {isLoading ? 'Разбираем...' : 'Разобрать'}
+        </AdminButton>
+      </div>
+
+      {analysis ? (
+        <>
+          <dl className="feed-source-analysis-summary">
+            <div>
+              <dt>Застройщик</dt>
+              <dd>{analysis.developerName ?? 'не указан'}</dd>
+            </div>
+            <div>
+              <dt>Объектов</dt>
+              <dd>{formatNumber(analysis.objects.length)}</dd>
+            </div>
+            <div>
+              <dt>Лотов</dt>
+              <dd>{formatNumber(analysis.unitsCount)}</dd>
+            </div>
+            <div>
+              <dt>Warnings</dt>
+              <dd>{formatNumber(analysis.warningsCount)}</dd>
+            </div>
+          </dl>
+
+          <div className="feed-source-analysis-list">
+            {analysis.objects.map((feedObject) => {
+              const sourceKey = createFeedAnalysisObjectKey(feedObject);
+              const mapping = mappingValues.find((currentMapping) => currentMapping.sourceKey === sourceKey);
+
+              return (
+                <article className="feed-source-analysis-object" key={sourceKey}>
+                  <div className="feed-source-analysis-object-main">
+                    <strong>{feedObject.title}</strong>
+                    <span>{formatNumber(feedObject.unitsCount)} лотов</span>
+                    <code>{formatFeedAnalysisObjectMeta(feedObject)}</code>
+                  </div>
+                  <label className="feed-source-analysis-mapping">
+                    Связанный ЖК
+                    <select
+                      aria-label={`Связанный ЖК для ${feedObject.title}`}
+                      disabled={isObjectSelectDisabled || !feedObject.filterJson}
+                      value={mapping?.objectId ?? ''}
+                      onChange={(event) => onMappingChange(sourceKey, event.target.value)}
+                    >
+                      <option value="">Исключить из загрузки</option>
+                      {objectOptions.map((object) => (
+                        <option key={object.id} value={object.id}>
+                          {object.title}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </article>
+              );
+            })}
+          </div>
+        </>
+      ) : null}
+    </section>
+  );
+}
+
 function SourceMeta({ source, previewSummary }: { source: FeedSource; previewSummary?: Record<string, unknown> | null }) {
   const previewMetrics = getFeedPreviewMetrics(previewSummary);
 
@@ -1364,7 +1589,7 @@ function SourceMeta({ source, previewSummary }: { source: FeedSource; previewSum
       </div>
       <div>
         <dt>ЖК</dt>
-        <dd>{source.object.title}</dd>
+        <dd>{getSourceObjectTitle(source)}</dd>
       </div>
       <div>
         <dt>Источник</dt>
@@ -1434,8 +1659,15 @@ function createFormFromSource(source: FeedSource): SourceFormState {
     url: source.url ?? '',
     xmlFile: null,
     format: source.format,
+    filterJson: formatFilterJsonForForm(source.filterJson),
     developerId: source.developerId,
-    objectId: source.objectId,
+    objectId: source.objectId ?? '',
+    mappings: source.mappings.map((mapping) => ({
+      sourceKey: mapping.sourceKey,
+      sourceTitle: mapping.sourceTitle,
+      filterJson: formatMappingFilterJsonForForm(mapping.filterJson),
+      objectId: mapping.objectId,
+    })),
     isActive: source.isActive,
   };
 }
@@ -1453,8 +1685,32 @@ function validateSourceForm(form: SourceFormState, existingSource?: FeedSource |
     return 'Выберите застройщика';
   }
 
-  if (!form.objectId) {
-    return 'Выберите связанный ЖК';
+  if (!form.objectId && getSelectedSourceMappings(form).length === 0) {
+    return 'Выберите связанный ЖК или сопоставьте хотя бы один объект фида';
+  }
+
+  if (form.filterJson.trim()) {
+    try {
+      const parsedFilter = JSON.parse(form.filterJson);
+
+      if (!isPlainObject(parsedFilter)) {
+        return 'Фильтр Yandex должен быть JSON-объектом';
+      }
+    } catch {
+      return 'Фильтр Yandex должен быть валидным JSON';
+    }
+  }
+
+  return null;
+}
+
+function validateSourceAnalysisForm(form: SourceFormState) {
+  if (form.sourceKind === 'URL' && !form.url.trim()) {
+    return 'Укажите URL фида';
+  }
+
+  if (form.sourceKind === 'FILE' && !form.xmlFile) {
+    return 'Выберите XML-файл фида для разбора';
   }
 
   return null;
@@ -1462,11 +1718,14 @@ function validateSourceForm(form: SourceFormState, existingSource?: FeedSource |
 
 function createSourceRequestBody(form: SourceFormState) {
   const formData = new FormData();
+  const selectedMappings = getSelectedSourceMappings(form);
 
   formData.append('sourceKind', form.sourceKind);
   formData.append('format', form.format);
+  formData.append('filterJson', form.filterJson.trim());
   formData.append('developerId', form.developerId);
   formData.append('objectId', form.objectId);
+  formData.append('mappings', JSON.stringify(selectedMappings));
   formData.append('isActive', String(form.isActive));
 
   if (form.sourceKind === 'URL') {
@@ -1480,12 +1739,128 @@ function createSourceRequestBody(form: SourceFormState) {
   return formData;
 }
 
+function createSourceAnalysisRequestBody(form: SourceFormState) {
+  const formData = new FormData();
+
+  formData.append('sourceKind', form.sourceKind);
+  formData.append('format', form.format);
+
+  if (form.sourceKind === 'URL') {
+    formData.append('url', form.url.trim());
+  }
+
+  if (form.sourceKind === 'FILE' && form.xmlFile) {
+    formData.append('xmlFile', form.xmlFile);
+  }
+
+  return formData;
+}
+
+function createSourceMappingsFromAnalysis(
+  analysis: FeedSourceAnalysis,
+  currentMappings: SourceMappingFormState[],
+): SourceMappingFormState[] {
+  return analysis.objects
+    .filter((feedObject) => feedObject.filterJson)
+    .map((feedObject) => {
+      const sourceKey = createFeedAnalysisObjectKey(feedObject);
+      const currentMapping = currentMappings.find((mapping) => mapping.sourceKey === sourceKey);
+
+      return {
+        sourceKey,
+        sourceTitle: feedObject.title,
+        filterJson: feedObject.filterJson ?? {},
+        objectId: currentMapping?.objectId ?? '',
+      };
+    });
+}
+
+function getSelectedSourceMappings(form: SourceFormState) {
+  return form.mappings
+    .filter((mapping) => mapping.objectId)
+    .map((mapping) => ({
+      sourceKey: mapping.sourceKey,
+      sourceTitle: mapping.sourceTitle,
+      objectId: mapping.objectId,
+      filterJson: mapping.filterJson,
+      isActive: true,
+    }));
+}
+
+function formatMappingFilterJsonForForm(value: JsonValue): Record<string, string[]> {
+  if (!isPlainObject(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter((entry): entry is [string, JsonValue[]] => Array.isArray(entry[1]))
+      .map(([key, items]) => [
+        key,
+        items.map((item) => (typeof item === 'string' ? item : String(item))).filter((item) => item.length > 0),
+      ]),
+  );
+}
+
+function formatFilterJsonForForm(value: JsonValue | null) {
+  if (!isPlainObject(value)) {
+    return '';
+  }
+
+  return JSON.stringify(value, null, 2);
+}
+
 function getSourceDisplay(source: FeedSource) {
   if (source.sourceKind === 'FILE') {
     return source.xmlFile?.originalName ?? source.xmlFile?.key ?? 'XML-файл';
   }
 
   return source.url ?? 'URL не указан';
+}
+
+function getSourceObjectTitle(source: FeedSource) {
+  if (source.mappings.length > 0) {
+    const firstMapping = source.mappings[0];
+
+    return source.mappings.length === 1 && firstMapping
+      ? firstMapping.object.title
+      : `${source.mappings.length} ЖК в сопоставлении`;
+  }
+
+  return source.object?.title ?? 'ЖК не выбран';
+}
+
+function createFeedAnalysisObjectKey(feedObject: FeedSourceAnalysisObject) {
+  const rawKey = [
+    feedObject.title,
+    feedObject.buildingNames.join('|'),
+    feedObject.yandexBuildingIds.join('|'),
+    feedObject.yandexHouseIds.join('|'),
+    feedObject.addresses.join('|'),
+  ].join(':');
+
+  return `feed-${hashText(rawKey)}`;
+}
+
+function hashText(value: string) {
+  let hash = 0;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash = Math.imul(hash, 31) + value.charCodeAt(index);
+  }
+
+  return (hash >>> 0).toString(36);
+}
+
+function formatFeedAnalysisObjectMeta(feedObject: FeedSourceAnalysisObject) {
+  const parts = [
+    feedObject.buildingNames.length > 0 ? `buildingNames: ${feedObject.buildingNames.join(', ')}` : null,
+    feedObject.yandexBuildingIds.length > 0 ? `buildingIds: ${feedObject.yandexBuildingIds.join(', ')}` : null,
+    feedObject.yandexHouseIds.length > 0 ? `houseIds: ${feedObject.yandexHouseIds.join(', ')}` : null,
+    feedObject.addresses.length > 0 ? `addresses: ${feedObject.addresses.join(' / ')}` : null,
+  ].filter((part): part is string => part !== null);
+
+  return parts.join(' · ') || 'нет фильтрующих полей';
 }
 
 function toJsonArray(value: JsonValue | undefined) {

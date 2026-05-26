@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { readFile, writeFile } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
 
 import { PrismaClient } from '@prisma/client';
@@ -13,6 +14,7 @@ import {
 import { FeedImportStorage } from './storage';
 
 type FeedImportCommand = 'preview' | 'run';
+type FeedAnalyzeCommand = 'analyze';
 
 export type NormalizedFeedUnitType = 'RESIDENTIAL' | 'COMMERCIAL';
 export type NormalizedFeedUnitStatus = 'AVAILABLE' | 'BOOKED' | 'RESERVED' | 'SOLD' | 'ARCHIVED' | 'UNKNOWN';
@@ -218,17 +220,18 @@ export class YandexRealtyFeedParser implements FeedParser {
     const price = normalizeDecimal(offer.price, 'price', externalId, warnings);
     const area = normalizeDecimal(offer.area, 'area', externalId, warnings);
     const floor = normalizeInteger(offer.floor, 'floor', externalId, warnings);
-    const rooms = normalizeInteger(offer.rooms, 'rooms', externalId, warnings);
+    const rooms = normalizeYandexRooms(offer, externalId, warnings);
     const completionYear = normalizeInteger(offer['built-year'], 'completionYear', externalId, warnings);
     const completionQuarter = normalizeQuarter(offer['ready-quarter'], externalId, warnings);
     const livingArea = normalizeDecimal(offer['living-space'], 'livingArea', externalId, warnings);
+    const apartmentNumber = getYandexApartmentNumber(offer, location);
 
     return {
       externalId,
       type: getYandexUnitType(offer),
       status: 'AVAILABLE',
       title: buildYandexTitle(offer, location),
-      address: getText(location?.address),
+      address: getText(location?.address) ?? getText(offer.Address),
       building: getText(offer['building-name']),
       section: getText(offer['building-section']),
       floor,
@@ -244,7 +247,7 @@ export class YandexRealtyFeedParser implements FeedParser {
       residentialDetails:
         getYandexUnitType(offer) === 'RESIDENTIAL'
           ? {
-              apartmentNumber: getText(location?.apartment),
+              apartmentNumber,
               layoutType: getText(offer['rooms-type']),
               livingArea,
               kitchenArea: normalizeDecimal(offer['kitchen-space'], 'kitchenArea', externalId, warnings),
@@ -535,6 +538,18 @@ function normalizeBoolean(value: unknown): boolean | null {
   return null;
 }
 
+function normalizeYandexRooms(
+  offer: XmlRecord,
+  externalId: string,
+  warnings: FeedParserWarning[],
+): number | null {
+  if (getText(offer.rooms) !== null) {
+    return normalizeInteger(offer.rooms, 'rooms', externalId, warnings);
+  }
+
+  return normalizeBoolean(offer.studio) === true ? 0 : null;
+}
+
 function formatDecimal(value: number): string {
   return value.toFixed(2);
 }
@@ -597,9 +612,19 @@ function getCianUnitType(object: XmlRecord): NormalizedFeedUnitType {
 function buildYandexTitle(offer: XmlRecord, location: XmlRecord | null): string | null {
   const building = getText(offer['building-name']);
   const category = getText(offer.category);
-  const apartment = getText(location?.apartment);
+  const apartment = getYandexApartmentNumber(offer, location);
 
   return joinTitleParts([building, category, apartment ? `№ ${apartment}` : null]);
+}
+
+function getYandexApartmentNumber(offer: XmlRecord, location: XmlRecord | null) {
+  return getText(location?.apartment) ?? extractYandexApartmentNumber(getText(offer.description));
+}
+
+function extractYandexApartmentNumber(description: string | null) {
+  const match = description?.match(/(?:квартира|апартамент(?:ы)?)\s+([A-Za-zА-Яа-яЁё0-9][A-Za-zА-Яа-яЁё0-9./-]*)/iu);
+
+  return match?.[1] ?? null;
 }
 
 function buildCianTitle(object: XmlRecord): string | null {
@@ -717,12 +742,29 @@ type FeedSourceRecord = {
   xmlFileId: string | null;
   xmlFile?: FeedSourceXmlFileRecord | null;
   format: FeedSourceFormat;
+  filterJson?: Record<string, unknown> | null;
   developerId: string;
-  objectId: string;
+  objectId: string | null;
+  mappings?: FeedSourceMappingRecord[];
   isActive: boolean;
   lastPreviewAt: Date | null;
   lastRunAt: Date | null;
   lastSuccessAt: Date | null;
+};
+
+type FeedSourceMappingRecord = {
+  id: string;
+  sourceId: string;
+  objectId: string;
+  sourceKey: string;
+  sourceTitle: string;
+  filterJson: Record<string, unknown>;
+  isActive: boolean;
+};
+
+type RoutedFeedUnit = {
+  unit: NormalizedFeedUnit;
+  objectId: string;
 };
 
 type ExistingFeedUnitRecord = {
@@ -808,6 +850,11 @@ export type FeedImportDatabase = {
       where: { id: string };
       include?: {
         xmlFile?: true;
+        mappings?: true | {
+          orderBy: {
+            sourceTitle: 'asc';
+          };
+        };
       };
     }) => Promise<FeedSourceRecord | null>;
     update: (args: { where: { id: string }; data: Partial<FeedSourceRecord> }) => Promise<unknown>;
@@ -1007,6 +1054,25 @@ export type FeedImportResult = {
   reportId: string;
 };
 
+export type FeedSourceAnalysisObject = {
+  title: string;
+  unitsCount: number;
+  buildingNames: string[];
+  yandexBuildingIds: string[];
+  yandexHouseIds: string[];
+  addresses: string[];
+  filterJson: Record<string, string[]> | null;
+};
+
+export type FeedSourceAnalysis = {
+  format: FeedSourceFormat;
+  developerName: string | null;
+  unitsCount: number;
+  objects: FeedSourceAnalysisObject[];
+  warningsCount: number;
+  warnings: FeedParserWarning[];
+};
+
 export type ExecuteFeedImportOptions = {
   mode: FeedImportCommand;
   sourceId: string;
@@ -1021,6 +1087,7 @@ export type ExecuteFeedImportOptions = {
 type FeedImportPlan = {
   existingByExternalId: Map<string, ExistingFeedUnitRecord>;
   parsedExternalIds: Set<string>;
+  affectedObjectIds: string[];
   uniqueMediaUrls: string[];
   mediaAssetBySourceUrl: Map<string, FeedMediaAssetRecord>;
   created: number;
@@ -1046,6 +1113,14 @@ type PersistFeedImportContext = {
 export type ParsedFeedImportCliArgs = {
   command: FeedImportCommand;
   sourceId: string;
+};
+
+export type ParsedFeedAnalyzeCliArgs = {
+  command: FeedAnalyzeCommand;
+  format: FeedSourceFormat;
+  url: string | null;
+  filePath: string | null;
+  outputPath: string | null;
 };
 
 export function parseFeedImportCliArgs(args: string[]): ParsedFeedImportCliArgs | null {
@@ -1096,6 +1171,98 @@ export function parseFeedImportCliArgs(args: string[]): ParsedFeedImportCliArgs 
   };
 }
 
+export function parseFeedAnalyzeCliArgs(args: string[]): ParsedFeedAnalyzeCliArgs | null {
+  if (args[0] !== 'analyze') {
+    return null;
+  }
+
+  let format: FeedSourceFormat | null = null;
+  let url: string | null = null;
+  let filePath: string | null = null;
+  let outputPath: string | null = null;
+
+  for (let index = 1; index < args.length; index += 1) {
+    const arg = args[index];
+    const nextValue = args[index + 1];
+
+    if (arg === '--') {
+      continue;
+    }
+
+    if (arg === '--format' && nextValue) {
+      format = parseFeedSourceFormatCliValue(nextValue);
+      index += 1;
+      continue;
+    }
+
+    if (arg?.startsWith('--format=')) {
+      format = parseFeedSourceFormatCliValue(arg.slice('--format='.length));
+      continue;
+    }
+
+    if (arg === '--url' && nextValue) {
+      url = nextValue.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg?.startsWith('--url=')) {
+      url = arg.slice('--url='.length).trim();
+      continue;
+    }
+
+    if (arg === '--file' && nextValue) {
+      filePath = nextValue.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg?.startsWith('--file=')) {
+      filePath = arg.slice('--file='.length).trim();
+      continue;
+    }
+
+    if (arg === '--output' && nextValue) {
+      outputPath = nextValue.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg?.startsWith('--output=')) {
+      outputPath = arg.slice('--output='.length).trim();
+      continue;
+    }
+
+    return null;
+  }
+
+  if (!format || Boolean(url) === Boolean(filePath)) {
+    return null;
+  }
+
+  if (url && !isHttpUrl(url)) {
+    return null;
+  }
+
+  return {
+    command: 'analyze',
+    format,
+    url,
+    filePath,
+    outputPath,
+  };
+}
+
+function parseFeedSourceFormatCliValue(value: string): FeedSourceFormat | null {
+  const normalized = value.trim().toUpperCase();
+
+  if (normalized === 'YANDEX_REALTY' || normalized === 'CIAN_XML') {
+    return normalized;
+  }
+
+  return null;
+}
+
 export function createFeedParserForFormat(format: FeedSourceFormat): FeedParser {
   if (format === 'YANDEX_REALTY') {
     return new YandexRealtyFeedParser();
@@ -1106,6 +1273,202 @@ export function createFeedParserForFormat(format: FeedSourceFormat): FeedParser 
   }
 
   throw new Error(`Unsupported feed format: ${format satisfies never}`);
+}
+
+export async function analyzeFeedSourceInput(params: {
+  format: FeedSourceFormat;
+  url?: string | null;
+  filePath?: string | null;
+  xmlFetcher?: (url: string) => Promise<string>;
+}) {
+  const xml = params.filePath
+    ? await readFile(params.filePath, 'utf8')
+    : await (params.xmlFetcher ?? loadXmlFromUrl)(params.url ?? '');
+  const parser = createFeedParserForFormat(params.format);
+
+  return createFeedSourceAnalysis(params.format, parser.parse(xml));
+}
+
+export function createFeedSourceAnalysis(format: FeedSourceFormat, parsed: FeedParseResult): FeedSourceAnalysis {
+  const groups = new Map<string, FeedSourceAnalysisObject>();
+
+  for (const unit of parsed.units) {
+    const groupKey = getFeedAnalysisGroupKey(unit);
+    const group = groups.get(groupKey) ?? createFeedAnalysisObject(unit);
+
+    group.unitsCount += 1;
+    pushUniqueText(group.buildingNames, unit.building);
+    pushUniqueText(group.yandexBuildingIds, getText(unit.rawPayload['yandex-building-id']));
+    pushUniqueText(group.yandexHouseIds, getText(unit.rawPayload['yandex-house-id']));
+    pushUniqueText(group.addresses, unit.address ?? getText(unit.rawPayload.Address));
+    groups.set(groupKey, group);
+  }
+
+  const objects = [...groups.values()]
+    .map((object) => ({
+      ...object,
+      filterJson: format === 'YANDEX_REALTY' ? createYandexAnalysisFilterJson(object) : null,
+    }))
+    .sort((left, right) => right.unitsCount - left.unitsCount || left.title.localeCompare(right.title, 'ru'));
+
+  return {
+    format,
+    developerName: getMostFrequentText(parsed.units.map(getFeedUnitDeveloperName)),
+    unitsCount: parsed.units.length,
+    objects,
+    warningsCount: parsed.warnings.length,
+    warnings: parsed.warnings,
+  };
+}
+
+function createFeedAnalysisObject(unit: NormalizedFeedUnit): FeedSourceAnalysisObject {
+  return {
+    title: unit.building ?? unit.address ?? 'Без названия',
+    unitsCount: 0,
+    buildingNames: [],
+    yandexBuildingIds: [],
+    yandexHouseIds: [],
+    addresses: [],
+    filterJson: null,
+  };
+}
+
+function getFeedAnalysisGroupKey(unit: NormalizedFeedUnit) {
+  const yandexBuildingId = getText(unit.rawPayload['yandex-building-id']);
+  const building = unit.building ?? getText(unit.rawPayload['building-name']);
+  const address = unit.address ?? getText(unit.rawPayload.Address);
+
+  return normalizeFilterText(building ?? yandexBuildingId ?? address ?? unit.externalId);
+}
+
+function createYandexAnalysisFilterJson(object: FeedSourceAnalysisObject) {
+  const filter: Record<string, string[]> = {};
+
+  if (object.buildingNames.length > 0) {
+    filter.buildingNames = object.buildingNames;
+  }
+
+  if (object.yandexBuildingIds.length > 0) {
+    filter.yandexBuildingIds = object.yandexBuildingIds;
+  }
+
+  if (object.yandexHouseIds.length > 0) {
+    filter.yandexHouseIds = object.yandexHouseIds;
+  }
+
+  if (object.addresses.length === 1) {
+    filter.addressIncludes = object.addresses;
+  }
+
+  return Object.keys(filter).length > 0 ? filter : null;
+}
+
+function getFeedUnitDeveloperName(unit: NormalizedFeedUnit) {
+  return getText(asRecord(unit.rawPayload['sales-agent'])?.organization);
+}
+
+function getMostFrequentText(values: Array<string | null>) {
+  const counts = new Map<string, number>();
+
+  for (const value of values) {
+    if (!value) {
+      continue;
+    }
+
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+
+  return [...counts.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0], 'ru'))[0]?.[0] ?? null;
+}
+
+function pushUniqueText(target: string[], value: string | null) {
+  const normalizedValue = value?.trim();
+
+  if (normalizedValue && !target.includes(normalizedValue)) {
+    target.push(normalizedValue);
+  }
+}
+
+function filterFeedUnitsForSource(units: NormalizedFeedUnit[], source: FeedSourceRecord) {
+  if (source.format !== 'YANDEX_REALTY') {
+    return units;
+  }
+
+  const filter = normalizeYandexSourceFilter(source.filterJson);
+
+  if (!filter) {
+    return units;
+  }
+
+  return units.filter((unit) => matchesYandexSourceFilter(unit, filter));
+}
+
+type NormalizedYandexSourceFilter = {
+  externalIds: string[];
+  buildingNames: string[];
+  yandexBuildingIds: string[];
+  yandexHouseIds: string[];
+  addressIncludes: string[];
+};
+
+function normalizeYandexSourceFilter(value: Record<string, unknown> | null | undefined): NormalizedYandexSourceFilter | null {
+  const filter = asRecord(value);
+
+  if (!filter) {
+    return null;
+  }
+
+  const normalized = {
+    externalIds: normalizeFilterStringArray(filter.externalIds),
+    buildingNames: normalizeFilterStringArray(filter.buildingNames),
+    yandexBuildingIds: normalizeFilterStringArray(filter.yandexBuildingIds),
+    yandexHouseIds: normalizeFilterStringArray(filter.yandexHouseIds),
+    addressIncludes: normalizeFilterStringArray(filter.addressIncludes),
+  };
+
+  return Object.values(normalized).some((items) => items.length > 0) ? normalized : null;
+}
+
+function normalizeFilterStringArray(value: unknown) {
+  return toArray(value)
+    .map((item) => getText(item))
+    .filter((item): item is string => item !== null)
+    .map(normalizeFilterText)
+    .filter((item) => item.length > 0);
+}
+
+function matchesYandexSourceFilter(unit: NormalizedFeedUnit, filter: NormalizedYandexSourceFilter) {
+  const payload = unit.rawPayload;
+
+  return (
+    matchesFilterExact(unit.externalId, filter.externalIds) &&
+    matchesFilterExact(unit.building ?? getText(payload['building-name']), filter.buildingNames) &&
+    matchesFilterExact(getText(payload['yandex-building-id']), filter.yandexBuildingIds) &&
+    matchesFilterExact(getText(payload['yandex-house-id']), filter.yandexHouseIds) &&
+    matchesFilterIncludes(unit.address ?? getText(payload.Address), filter.addressIncludes)
+  );
+}
+
+function matchesFilterExact(value: string | null, allowedValues: string[]) {
+  return allowedValues.length === 0 || (value !== null && allowedValues.includes(normalizeFilterText(value)));
+}
+
+function matchesFilterIncludes(value: string | null, needles: string[]) {
+  if (needles.length === 0) {
+    return true;
+  }
+
+  if (value === null) {
+    return false;
+  }
+
+  const normalizedValue = normalizeFilterText(value);
+
+  return needles.some((needle) => normalizedValue.includes(needle));
+}
+
+function normalizeFilterText(value: string) {
+  return value.trim().replace(/\s+/gu, ' ').toLowerCase();
 }
 
 async function loadXmlForFeedSource(source: FeedSourceRecord, options: ExecuteFeedImportOptions) {
@@ -1128,6 +1491,38 @@ async function loadXmlForFeedSource(source: FeedSourceRecord, options: ExecuteFe
   return (options.xmlFetcher ?? loadXmlFromUrl)(source.url);
 }
 
+function routeFeedUnitsForSource(units: NormalizedFeedUnit[], source: FeedSourceRecord): RoutedFeedUnit[] {
+  const activeMappings = (source.mappings ?? []).filter((mapping) => mapping.isActive);
+
+  if (activeMappings.length > 0) {
+    const normalizedMappings = activeMappings
+      .map((mapping) => ({
+        objectId: mapping.objectId,
+        filter: normalizeYandexSourceFilter(mapping.filterJson),
+      }))
+      .filter((mapping): mapping is { objectId: string; filter: NormalizedYandexSourceFilter } => mapping.filter !== null);
+
+    if (normalizedMappings.length === 0) {
+      return [];
+    }
+
+    return units.flatMap((unit) => {
+      const mapping = normalizedMappings.find((candidate) => matchesYandexSourceFilter(unit, candidate.filter));
+
+      return mapping ? [{ unit, objectId: mapping.objectId }] : [];
+    });
+  }
+
+  if (!source.objectId) {
+    return [];
+  }
+
+  return filterFeedUnitsForSource(units, source).map((unit) => ({
+    unit,
+    objectId: source.objectId as string,
+  }));
+}
+
 export async function executeFeedImport(options: ExecuteFeedImportOptions): Promise<FeedImportResult> {
   const now = options.now ?? (() => new Date());
   const startedAt = now();
@@ -1137,6 +1532,11 @@ export async function executeFeedImport(options: ExecuteFeedImportOptions): Prom
     },
     include: {
       xmlFile: true,
+      mappings: {
+        orderBy: {
+          sourceTitle: 'asc',
+        },
+      },
     },
   });
 
@@ -1160,8 +1560,9 @@ export async function executeFeedImport(options: ExecuteFeedImportOptions): Prom
     const parser = createFeedParserForFormat(source.format);
     const parsed = parser.parse(xml);
     warnings.push(...parsed.warnings);
+    const routedUnits = routeFeedUnitsForSource(parsed.units, source);
 
-    const plan = await buildFeedImportPlan(options.db, source.id, parsed.units);
+    const plan = await buildFeedImportPlan(options.db, source.id, routedUnits);
 
     if (options.mode === 'run') {
       if (!options.storage) {
@@ -1169,11 +1570,11 @@ export async function executeFeedImport(options: ExecuteFeedImportOptions): Prom
       }
 
       await updateFeedImportProgress(
-        options.db,
-        report.id,
-        createFeedImportProgress('PROCESSING_UNITS', parsed.units.length, 0, plan, now()),
+          options.db,
+          report.id,
+          createFeedImportProgress('PROCESSING_UNITS', routedUnits.length, 0, plan, now()),
       );
-      await persistFeedImportRun(parsed.units, plan, {
+      await persistFeedImportRun(routedUnits, plan, {
         db: options.db,
         reportId: report.id,
         source,
@@ -1189,9 +1590,9 @@ export async function executeFeedImport(options: ExecuteFeedImportOptions): Prom
       await updateFeedImportProgress(
         options.db,
         report.id,
-        createFeedImportProgress('REFRESHING_OBJECT', parsed.units.length, parsed.units.length, plan, now()),
+        createFeedImportProgress('REFRESHING_OBJECT', routedUnits.length, routedUnits.length, plan, now()),
       );
-      await refreshRealEstateObjectFeedAggregates(options.db, source.objectId, now());
+      await refreshAffectedRealEstateObjectFeedAggregates(options.db, plan.affectedObjectIds, now());
     }
 
     const finishedAt = now();
@@ -1199,7 +1600,7 @@ export async function executeFeedImport(options: ExecuteFeedImportOptions): Prom
     const summary = createFeedImportSummary({
       source,
       mode: options.mode,
-      unitsParsed: parsed.units.length,
+      unitsParsed: routedUnits.length,
       plan,
       warnings,
       errors,
@@ -1232,7 +1633,7 @@ export async function executeFeedImport(options: ExecuteFeedImportOptions): Prom
 async function buildFeedImportPlan(
   db: FeedImportDatabase,
   sourceId: string,
-  units: NormalizedFeedUnit[],
+  units: RoutedFeedUnit[],
 ): Promise<FeedImportPlan> {
   const existingUnits = await db.feedUnit.findMany({
     where: {
@@ -1247,13 +1648,19 @@ async function buildFeedImportPlan(
     },
   });
   const existingByExternalId = new Map(existingUnits.map((unit) => [unit.externalId, unit]));
-  const parsedExternalIds = new Set(units.map((unit) => unit.externalId));
-  const created = units.filter((unit) => !existingByExternalId.has(unit.externalId)).length;
+  const parsedExternalIds = new Set(units.map(({ unit }) => unit.externalId));
+  const created = units.filter(({ unit }) => !existingByExternalId.has(unit.externalId)).length;
   const updated = units.length - created;
   const archived = existingUnits.filter(
     (unit) => !parsedExternalIds.has(unit.externalId) && unit.status !== 'ARCHIVED',
   ).length;
-  const mediaUrls = units.flatMap((unit) => unit.media.map((media) => media.sourceUrl));
+  const affectedObjectIds = Array.from(
+    new Set([
+      ...existingUnits.map((unit) => unit.objectId),
+      ...units.map((unit) => unit.objectId),
+    ]),
+  );
+  const mediaUrls = units.flatMap(({ unit }) => unit.media.map((media) => media.sourceUrl));
   const uniqueMediaUrls = Array.from(new Set(mediaUrls));
   const existingMediaAssets =
     uniqueMediaUrls.length > 0
@@ -1270,6 +1677,7 @@ async function buildFeedImportPlan(
   return {
     existingByExternalId,
     parsedExternalIds,
+    affectedObjectIds,
     uniqueMediaUrls,
     mediaAssetBySourceUrl,
     created,
@@ -1288,17 +1696,17 @@ async function buildFeedImportPlan(
 }
 
 async function persistFeedImportRun(
-  units: NormalizedFeedUnit[],
+  units: RoutedFeedUnit[],
   plan: FeedImportPlan,
   context: PersistFeedImportContext,
 ) {
   let unitsProcessed = 0;
 
-  for (const unit of units) {
-    const unitId = await upsertFeedUnit(context.db, context.source, unit, context.now());
+  for (const routedUnit of units) {
+    const unitId = await upsertFeedUnit(context.db, context.source, routedUnit, context.now());
 
-    await syncFeedUnitDetails(context.db, unitId, unit);
-    await syncFeedUnitMedia(context, unitId, unit);
+    await syncFeedUnitDetails(context.db, unitId, routedUnit.unit);
+    await syncFeedUnitMedia(context, unitId, routedUnit.unit);
     unitsProcessed += 1;
     await updateFeedImportProgress(
       context.db,
@@ -1384,6 +1792,16 @@ async function refreshRealEstateObjectFeedAggregates(
       feedUpdatedAt: updatedAt,
     },
   });
+}
+
+async function refreshAffectedRealEstateObjectFeedAggregates(
+  db: FeedImportDatabase,
+  objectIds: string[],
+  updatedAt: Date,
+) {
+  for (const objectId of objectIds) {
+    await refreshRealEstateObjectFeedAggregates(db, objectId, updatedAt);
+  }
 }
 
 function createEmptyFeedObjectAggregates(): FeedObjectAggregateWriteData {
@@ -1516,21 +1934,21 @@ function formatLotsCount(count: number) {
 async function upsertFeedUnit(
   db: FeedImportDatabase,
   source: FeedSourceRecord,
-  unit: NormalizedFeedUnit,
+  routedUnit: RoutedFeedUnit,
   now: Date,
 ) {
-  const writeData = createFeedUnitWriteData(source, unit, now);
+  const writeData = createFeedUnitWriteData(routedUnit, now);
   const persisted = await db.feedUnit.upsert({
     where: {
       sourceId_externalId: {
         sourceId: source.id,
-        externalId: unit.externalId,
+        externalId: routedUnit.unit.externalId,
       },
     },
     update: writeData,
     create: {
       sourceId: source.id,
-      externalId: unit.externalId,
+      externalId: routedUnit.unit.externalId,
       ...writeData,
     },
     select: {
@@ -1542,12 +1960,13 @@ async function upsertFeedUnit(
 }
 
 function createFeedUnitWriteData(
-  source: FeedSourceRecord,
-  unit: NormalizedFeedUnit,
+  routedUnit: RoutedFeedUnit,
   now: Date,
 ): FeedUnitWriteData {
+  const { unit } = routedUnit;
+
   return {
-    objectId: source.objectId,
+    objectId: routedUnit.objectId,
     type: unit.type,
     status: unit.status,
     title: unit.title,
@@ -2184,10 +2603,37 @@ function getExtensionByContentType(contentType: string) {
 
 function printUsage() {
   console.error('Usage: pnpm --filter @platforma/feed-import run <preview|run> --source <feedSourceId>');
+  console.error('Usage: pnpm --filter @platforma/feed-import run analyze --format <format> (--url <url> | --file <path>) [--output <path>]');
 }
 
 async function main() {
-  const cliArgs = parseFeedImportCliArgs(process.argv.slice(2));
+  const args = process.argv.slice(2);
+  const analyzeArgs = parseFeedAnalyzeCliArgs(args);
+
+  if (analyzeArgs) {
+    if (!isXmlParserAvailable()) {
+      console.error('XML parser dependency is unavailable');
+      process.exitCode = 1;
+      return;
+    }
+
+    const analysis = await analyzeFeedSourceInput({
+      format: analyzeArgs.format,
+      url: analyzeArgs.url,
+      filePath: analyzeArgs.filePath,
+    });
+    const output = JSON.stringify({ analysis }, null, 2);
+
+    if (analyzeArgs.outputPath) {
+      await writeFile(analyzeArgs.outputPath, output);
+    } else {
+      console.log(output);
+    }
+
+    return;
+  }
+
+  const cliArgs = parseFeedImportCliArgs(args);
 
   if (!cliArgs) {
     printUsage();

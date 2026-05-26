@@ -3,6 +3,7 @@ const { test } = require('node:test');
 
 const {
   executeFeedImport,
+  parseFeedAnalyzeCliArgs,
   parseFeedImportCliArgs,
 } = require('../dist/index.js');
 
@@ -41,6 +42,38 @@ function makeYandexFeed({ secondMediaUrl = 'https://cdn.test/b.png' } = {}) {
     </realty-feed>`;
 }
 
+function makeMultiBuildingYandexFeed() {
+  return `<?xml version="1.0"?>
+    <realty-feed>
+      <offer internal-id="nagatino-1">
+        <type>продажа</type>
+        <property-type>жилая</property-type>
+        <category>квартира</category>
+        <Address>Москва, ЮАО, Даниловский, пр-кт Андропова</Address>
+        <price><value>10000000</value><currency>RUB</currency></price>
+        <area><value>25.3</value></area>
+        <floor>29</floor>
+        <studio>true</studio>
+        <building-name>Нагатино Ай-Лэнд</building-name>
+        <yandex-building-id>2133018</yandex-building-id>
+        <yandex-house-id>2923598</yandex-house-id>
+      </offer>
+      <offer internal-id="shagal-1">
+        <type>продажа</type>
+        <property-type>жилая</property-type>
+        <category>квартира</category>
+        <Address>г. Москва, ЮАО, ул. Автозаводская, вл. 23</Address>
+        <price><value>12000000</value><currency>RUB</currency></price>
+        <area><value>40.1</value></area>
+        <floor>7</floor>
+        <rooms>2</rooms>
+        <building-name>Шагал</building-name>
+        <yandex-building-id>2577904</yandex-building-id>
+        <yandex-house-id>3401695</yandex-house-id>
+      </offer>
+    </realty-feed>`;
+}
+
 test('parseFeedImportCliArgs accepts preview/run with source id', () => {
   assert.deepEqual(parseFeedImportCliArgs(['preview', '--source', 'source-1']), {
     command: 'preview',
@@ -52,6 +85,28 @@ test('parseFeedImportCliArgs accepts preview/run with source id', () => {
   });
   assert.equal(parseFeedImportCliArgs(['preview']), null);
   assert.equal(parseFeedImportCliArgs(['bad', '--source', 'source-1']), null);
+});
+
+test('parseFeedAnalyzeCliArgs accepts pnpm argument separator', () => {
+  assert.deepEqual(
+    parseFeedAnalyzeCliArgs([
+      'analyze',
+      '--',
+      '--format',
+      'YANDEX_REALTY',
+      '--file',
+      '/tmp/feed.xml',
+      '--output',
+      '/tmp/analysis.json',
+    ]),
+    {
+      command: 'analyze',
+      format: 'YANDEX_REALTY',
+      url: null,
+      filePath: '/tmp/feed.xml',
+      outputPath: '/tmp/analysis.json',
+    },
+  );
 });
 
 test('executeFeedImport preview counts changes without writing feed units or media', async () => {
@@ -101,6 +156,107 @@ test('executeFeedImport preview counts changes without writing feed units or med
   assert.equal(state.runs[0].status, 'SUCCESS');
   assert.deepEqual(state.source.lastPreviewAt, fixedDate);
   assert.equal(state.source.lastRunAt, null);
+});
+
+test('executeFeedImport applies Yandex source filter before planning changes', async () => {
+  const { db } = createFakeDb({
+    source: {
+      filterJson: {
+        buildingNames: ['Нагатино Ай-Лэнд'],
+        yandexBuildingIds: ['2133018'],
+      },
+    },
+  });
+
+  const result = await executeFeedImport({
+    mode: 'preview',
+    sourceId: 'source-1',
+    db,
+    xmlFetcher: async () => makeMultiBuildingYandexFeed(),
+    now: () => fixedDate,
+  });
+
+  assert.equal(result.status, 'SUCCESS');
+  assert.equal(result.summary.unitsParsed, 1);
+  assert.equal(result.summary.created, 1);
+  assert.equal(result.summary.updated, 0);
+  assert.equal(result.summary.archived, 0);
+  assert.deepEqual(result.warnings, []);
+});
+
+test('executeFeedImport routes Yandex units through active source mappings', async () => {
+  const { db, state } = createFakeDb({
+    source: {
+      objectId: null,
+      mappings: [
+        makeSourceMapping({
+          id: 'mapping-nagatino',
+          objectId: 'object-1',
+          sourceKey: 'nagatino',
+          sourceTitle: 'Нагатино Ай-Лэнд',
+          filterJson: {
+            buildingNames: ['Нагатино Ай-Лэнд'],
+            yandexBuildingIds: ['2133018'],
+          },
+        }),
+        makeSourceMapping({
+          id: 'mapping-shagal',
+          objectId: 'object-2',
+          sourceKey: 'shagal',
+          sourceTitle: 'Шагал',
+          filterJson: {
+            buildingNames: ['Шагал'],
+            yandexBuildingIds: ['2577904'],
+          },
+        }),
+      ],
+    },
+    objects: [
+      makeObjectAggregate({ id: 'object-1' }),
+      makeObjectAggregate({ id: 'object-2' }),
+      makeObjectAggregate({
+        id: 'object-3',
+        feedUnitsCount: 1,
+        feedUnitsCountText: '1 лот',
+        feedUpdatedAt: new Date('2026-05-22T10:00:00.000Z'),
+      }),
+    ],
+    units: [
+      makeUnit({
+        id: 'stale-removed-mapping',
+        objectId: 'object-3',
+        externalId: 'removed-mapping-1',
+        status: 'AVAILABLE',
+        price: '5000000.00',
+        area: '20.00',
+        floor: 3,
+      }),
+    ],
+  });
+
+  const result = await executeFeedImport({
+    mode: 'run',
+    sourceId: 'source-1',
+    db,
+    storage: state.storage,
+    xmlFetcher: async () => makeMultiBuildingYandexFeed(),
+    now: () => fixedDate,
+  });
+
+  const nagatinoUnit = state.units.find((unit) => unit.externalId === 'nagatino-1');
+  const shagalUnit = state.units.find((unit) => unit.externalId === 'shagal-1');
+  const staleUnit = state.units.find((unit) => unit.externalId === 'removed-mapping-1');
+
+  assert.equal(result.status, 'SUCCESS');
+  assert.equal(result.summary.unitsParsed, 2);
+  assert.equal(nagatinoUnit.objectId, 'object-1');
+  assert.equal(shagalUnit.objectId, 'object-2');
+  assert.equal(staleUnit.status, 'ARCHIVED');
+  assert.deepEqual(staleUnit.archivedAt, fixedDate);
+  assert.equal(state.objects.get('object-1').feedUnitsCount, 1);
+  assert.equal(state.objects.get('object-2').feedUnitsCount, 1);
+  assert.equal(state.objects.get('object-3').feedUnitsCount, null);
+  assert.deepEqual(state.refreshedObjectIds.sort(), ['object-1', 'object-2', 'object-3']);
 });
 
 test('executeFeedImport reads uploaded XML feed sources from storage', async () => {
@@ -403,7 +559,11 @@ test('executeFeedImport run records media failures as warnings and partial statu
   assert.deepEqual(state.source.lastSuccessAt, fixedDate);
 });
 
-function createFakeDb({ source = {}, object = {}, units = [], mediaAssets = [] } = {}) {
+function createFakeDb({ source = {}, object = {}, objects = null, units = [], mediaAssets = [] } = {}) {
+  const primaryObject = makeObjectAggregate({
+    ...object,
+    id: object.id ?? 'object-1',
+  });
   const state = {
     source: {
       id: 'source-1',
@@ -412,27 +572,20 @@ function createFakeDb({ source = {}, object = {}, units = [], mediaAssets = [] }
       xmlFileId: null,
       xmlFile: null,
       format: 'YANDEX_REALTY',
+      filterJson: null,
       developerId: 'developer-1',
       objectId: 'object-1',
+      mappings: [],
       isActive: true,
       lastPreviewAt: null,
       lastRunAt: null,
       lastSuccessAt: null,
       ...source,
     },
-    object: {
-      id: 'object-1',
-      feedPriceFrom: null,
-      feedPricePerMeterFrom: null,
-      feedAreaRange: null,
-      feedFloorRange: null,
-      feedUnitsCount: null,
-      feedUnitsCountText: null,
-      feedCompletionYear: null,
-      feedCompletionQuarter: null,
-      feedUpdatedAt: null,
-      ...object,
-    },
+    object: primaryObject,
+    objects: new Map(
+      (objects ?? [primaryObject]).map((currentObject) => [currentObject.id, makeObjectAggregate(currentObject)]),
+    ),
     units: units.map((unit) => ({ ...unit })),
     mediaAssets: mediaAssets.map((asset) => ({ ...asset })),
     residentialDetails: new Map(),
@@ -445,7 +598,9 @@ function createFakeDb({ source = {}, object = {}, units = [], mediaAssets = [] }
     storagePuts: [],
     storageGets: [],
     storageObjects: new Map(),
+    refreshedObjectIds: [],
   };
+  state.object = state.objects.get(primaryObject.id);
   state.storage = {
     getBucket: () => 'platforma',
     getPublicUrl: (key) => `https://minio.test/platforma/${key}`,
@@ -638,14 +793,51 @@ function createFakeDb({ source = {}, object = {}, units = [], mediaAssets = [] }
     },
     realEstateObject: {
       update: async ({ where, data }) => {
-        assert.equal(where.id, state.object.id);
-        Object.assign(state.object, data);
-        return { ...state.object };
+        const target = state.objects.get(where.id);
+        assert.ok(target, `Object ${where.id} must exist in fake db`);
+        state.refreshedObjectIds.push(where.id);
+        Object.assign(target, data);
+        return { ...target };
       },
     },
   };
 
   return { db, state };
+}
+
+function makeSourceMapping({
+  id,
+  objectId,
+  sourceKey,
+  sourceTitle,
+  filterJson,
+  isActive = true,
+}) {
+  return {
+    id,
+    sourceId: 'source-1',
+    objectId,
+    sourceKey,
+    sourceTitle,
+    filterJson,
+    isActive,
+  };
+}
+
+function makeObjectAggregate(overrides = {}) {
+  return {
+    id: 'object-1',
+    feedPriceFrom: null,
+    feedPricePerMeterFrom: null,
+    feedAreaRange: null,
+    feedFloorRange: null,
+    feedUnitsCount: null,
+    feedUnitsCountText: null,
+    feedCompletionYear: null,
+    feedCompletionQuarter: null,
+    feedUpdatedAt: null,
+    ...overrides,
+  };
 }
 
 function makeUnit({

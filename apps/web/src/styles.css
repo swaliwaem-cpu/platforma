@@ -6573,6 +6573,133 @@ tr.user-row--deactivated .text-button {
   padding: 0;
 }
 
+.feed-source-filter-json {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #d6dde5;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 12px;
+}
+
+.feed-source-filter-json summary {
+  color: #303b47;
+  font-size: 14px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.feed-source-filter-json-field {
+  display: grid;
+  gap: 8px;
+}
+
+.feed-source-filter-json-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.feed-source-analysis {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #d6dde5;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 14px;
+}
+
+.feed-source-analysis-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.feed-source-analysis-header > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.feed-source-analysis-header strong,
+.feed-source-analysis-object strong {
+  color: #18202a;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.feed-source-analysis-header span,
+.feed-source-analysis-object span,
+.feed-source-analysis-object code,
+.feed-source-analysis-summary dt {
+  color: #536172;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.4;
+}
+
+.feed-source-analysis-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.feed-source-analysis-summary div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.feed-source-analysis-summary dd {
+  margin: 0;
+  color: #18202a;
+  font-size: 13px;
+  font-weight: 850;
+  overflow-wrap: anywhere;
+}
+
+.feed-source-analysis-list {
+  display: grid;
+  gap: 8px;
+}
+
+.feed-source-analysis-object {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 320px);
+  gap: 12px;
+  align-items: center;
+  border: 1px solid #e3e8ef;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px 12px;
+}
+
+.feed-source-analysis-object-main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.feed-source-analysis-object code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.feed-source-analysis-mapping {
+  display: grid;
+  gap: 6px;
+  color: #536172;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.feed-source-analysis-mapping select {
+  width: 100%;
+}
+
 .feed-source-cell,
 .feed-run-date-cell,
 .feed-unit-cell {
@@ -7066,6 +7193,8 @@ tr.user-row--deactivated .text-button {
   .object-toolbar-main,
   .user-toolbar-main,
   .feed-source-run-header,
+  .feed-source-analysis-summary,
+  .feed-source-analysis-object,
   .feed-units-toolbar-main,
   .feed-run-progress-stats,
   .import-toolbar-main,
@@ -7077,6 +7206,9 @@ tr.user-row--deactivated .text-button {
 
   .object-toolbar-actions,
   .user-toolbar-actions,
+  .feed-source-filter-json-footer,
+  .feed-source-analysis-header,
+  .feed-source-analysis-object,
   .feed-source-run-actions,
   .feed-units-toolbar-actions,
   .import-toolbar-actions {
@@ -7086,7 +7218,10 @@ tr.user-row--deactivated .text-button {
 
   .object-toolbar-actions .admin-button,
   .user-toolbar-actions .admin-button,
+  .feed-source-filter-json-footer .admin-button,
   .feed-source-run-actions .admin-button,
+  .feed-source-analysis-header .admin-button,
+  .feed-source-analysis-object .admin-button,
   .feed-units-toolbar-actions .admin-button,
   .admin-feeds .header-actions .admin-button,
   .import-toolbar-actions .admin-button,

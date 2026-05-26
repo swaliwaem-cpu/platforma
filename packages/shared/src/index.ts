@@ -267,6 +267,19 @@ export type FeedSourceObject = {
   status: ObjectStatus;
 };
 
+export type FeedSourceMapping = {
+  id: string;
+  sourceId: string;
+  objectId: string;
+  sourceKey: string;
+  sourceTitle: string;
+  filterJson: JsonValue;
+  isActive: boolean;
+  object: FeedSourceObject;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type FeedSource = {
   id: string;
   sourceKind: FeedSourceKind;
@@ -274,14 +287,16 @@ export type FeedSource = {
   xmlFileId: string | null;
   xmlFile: ObjectStoredFile | null;
   format: FeedFormat;
+  filterJson: JsonValue | null;
   developerId: string;
-  objectId: string;
+  objectId: string | null;
   isActive: boolean;
   lastPreviewAt: string | null;
   lastRunAt: string | null;
   lastSuccessAt: string | null;
   developer: ObjectDeveloper;
-  object: FeedSourceObject;
+  object: FeedSourceObject | null;
+  mappings: FeedSourceMapping[];
   createdAt: string;
   updatedAt: string;
 };
@@ -359,6 +374,33 @@ export type FeedUnit = {
   updatedAt: string;
 };
 
+export type FeedParserWarning = {
+  code: string;
+  message: string;
+  externalId?: string;
+  field?: string;
+  value?: JsonValue;
+};
+
+export type FeedSourceAnalysisObject = {
+  title: string;
+  unitsCount: number;
+  buildingNames: string[];
+  yandexBuildingIds: string[];
+  yandexHouseIds: string[];
+  addresses: string[];
+  filterJson: Record<string, string[]> | null;
+};
+
+export type FeedSourceAnalysis = {
+  format: FeedFormat;
+  developerName: string | null;
+  unitsCount: number;
+  objects: FeedSourceAnalysisObject[];
+  warningsCount: number;
+  warnings: FeedParserWarning[];
+};
+
 export type FeedSourcesResponse = {
   items: FeedSource[];
   total: number;
@@ -369,6 +411,10 @@ export type FeedSourcesResponse = {
 
 export type FeedSourceResponse = {
   source: FeedSource;
+};
+
+export type FeedSourceAnalysisResponse = {
+  analysis: FeedSourceAnalysis;
 };
 
 export type FeedImportRunsResponse = {

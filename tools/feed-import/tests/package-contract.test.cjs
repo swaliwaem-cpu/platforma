@@ -23,6 +23,7 @@ test('feed import workspace package exposes first-stage scripts and XML parser d
   assert.equal(feedImportPackage.name, '@platforma/feed-import');
   assert.equal(feedImportPackage.private, true);
   assert.equal(feedImportPackage.scripts.build, 'pnpm --filter @platforma/api prisma:generate && tsc -p tsconfig.json');
+  assert.equal(feedImportPackage.scripts.analyze, 'pnpm build && node dist/index.js analyze');
   assert.equal(feedImportPackage.scripts.preview, 'pnpm build && node dist/index.js preview');
   assert.equal(feedImportPackage.scripts.run, 'pnpm build && node dist/index.js run');
   assert.equal(feedImportPackage.scripts.test, 'pnpm build && node --test tests/*.test.cjs');

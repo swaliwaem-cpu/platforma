@@ -264,6 +264,7 @@ test('API controllers expose expected permission contracts', () => {
   assert.deepEqual(getPermissions(FeedsController, 'listSources'), ['feeds:read']);
   assert.deepEqual(getPermissions(FeedsController, 'createSource'), ['feeds:manage']);
   assert.deepEqual(getPermissions(FeedsController, 'updateSource'), ['feeds:manage']);
+  assert.deepEqual(getPermissions(FeedsController, 'analyzeFeed'), ['feeds:manage']);
   assert.deepEqual(getPermissions(FeedsController, 'runPreview'), ['feeds:run']);
   assert.deepEqual(getPermissions(FeedsController, 'runImport'), ['feeds:run']);
   assert.deepEqual(getPermissions(FeedsController, 'listSourceRuns'), ['feeds:read']);
@@ -296,9 +297,11 @@ test('shared package exports feed API contracts', () => {
   assert.match(sharedTypes, /export type FeedSourceKind = 'URL' \| 'FILE';/);
   assert.match(sharedTypes, /export type FeedUnitType = 'RESIDENTIAL' \| 'COMMERCIAL';/);
   assert.match(sharedTypes, /export type FeedUnitStatus = 'AVAILABLE' \| 'BOOKED' \| 'RESERVED' \| 'SOLD' \| 'ARCHIVED' \| 'UNKNOWN';/);
-  assert.match(sharedTypes, /export type FeedSource = \{[\s\S]*sourceKind: FeedSourceKind;[\s\S]*url: string \| null;[\s\S]*xmlFileId: string \| null;[\s\S]*xmlFile: ObjectStoredFile \| null;[\s\S]*format: FeedFormat;[\s\S]*developerId: string;[\s\S]*objectId: string;[\s\S]*isActive: boolean;[\s\S]*lastPreviewAt: string \| null;[\s\S]*lastRunAt: string \| null;[\s\S]*lastSuccessAt: string \| null;[\s\S]*developer: ObjectDeveloper;[\s\S]*object: FeedSourceObject;[\s\S]*\};/);
+  assert.match(sharedTypes, /export type FeedSourceMapping = \{[\s\S]*id: string;[\s\S]*sourceId: string;[\s\S]*objectId: string;[\s\S]*sourceKey: string;[\s\S]*sourceTitle: string;[\s\S]*filterJson: JsonValue;[\s\S]*isActive: boolean;[\s\S]*object: FeedSourceObject;[\s\S]*\};/);
+  assert.match(sharedTypes, /export type FeedSource = \{[\s\S]*sourceKind: FeedSourceKind;[\s\S]*url: string \| null;[\s\S]*xmlFileId: string \| null;[\s\S]*xmlFile: ObjectStoredFile \| null;[\s\S]*format: FeedFormat;[\s\S]*filterJson: JsonValue \| null;[\s\S]*developerId: string;[\s\S]*objectId: string \| null;[\s\S]*isActive: boolean;[\s\S]*lastPreviewAt: string \| null;[\s\S]*lastRunAt: string \| null;[\s\S]*lastSuccessAt: string \| null;[\s\S]*developer: ObjectDeveloper;[\s\S]*object: FeedSourceObject \| null;[\s\S]*mappings: FeedSourceMapping\[\];[\s\S]*\};/);
   assert.match(sharedTypes, /export type FeedImportRun = \{[\s\S]*sourceId: string;[\s\S]*mode: ImportMode;[\s\S]*status: ImportStatus;[\s\S]*summaryJson: JsonValue;[\s\S]*warningsJson: JsonValue;[\s\S]*errorsJson: JsonValue;[\s\S]*\};/);
   assert.match(sharedTypes, /export type FeedUnit = \{[\s\S]*externalId: string;[\s\S]*type: FeedUnitType;[\s\S]*status: FeedUnitStatus;[\s\S]*price: string \| null;[\s\S]*area: string \| null;[\s\S]*pricePerMeter: string \| null;[\s\S]*residentialDetails: FeedResidentialUnitDetails \| null;[\s\S]*commercialDetails: FeedCommercialUnitDetails \| null;[\s\S]*media: FeedMedia\[\];[\s\S]*\};/);
+  assert.match(sharedTypes, /export type FeedSourceAnalysis = \{[\s\S]*developerName: string \| null;[\s\S]*unitsCount: number;[\s\S]*objects: FeedSourceAnalysisObject\[\];[\s\S]*warningsCount: number;[\s\S]*\};/);
   assert.match(sharedTypes, /export type FeedMedia = \{[\s\S]*sourceUrl: string;[\s\S]*file: ObjectStoredFile \| null;[\s\S]*sortOrder: number;[\s\S]*\};/);
 });
 
@@ -307,6 +310,7 @@ test('shared package exports feed response contracts', () => {
 
   assert.match(sharedTypes, /export type FeedSourcesResponse = \{[\s\S]*items: FeedSource\[\];[\s\S]*total: number;[\s\S]*page: number;[\s\S]*limit: number;[\s\S]*totalPages: number;[\s\S]*\};/);
   assert.match(sharedTypes, /export type FeedSourceResponse = \{[\s\S]*source: FeedSource;[\s\S]*\};/);
+  assert.match(sharedTypes, /export type FeedSourceAnalysisResponse = \{[\s\S]*analysis: FeedSourceAnalysis;[\s\S]*\};/);
   assert.match(sharedTypes, /export type FeedImportRunsResponse = \{[\s\S]*items: FeedImportRun\[\];[\s\S]*total: number;[\s\S]*page: number;[\s\S]*limit: number;[\s\S]*totalPages: number;[\s\S]*\};/);
   assert.match(sharedTypes, /export type FeedImportRunResponse = \{[\s\S]*run: FeedImportRun;[\s\S]*\};/);
   assert.match(sharedTypes, /export type FeedUnitsResponse = \{[\s\S]*items: FeedUnit\[\];[\s\S]*total: number;[\s\S]*page: number;[\s\S]*limit: number;[\s\S]*totalPages: number;[\s\S]*\};/);

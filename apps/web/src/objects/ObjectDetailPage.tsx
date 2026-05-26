@@ -120,6 +120,7 @@ const feedUnitRoomFilterOptions = [
   { value: '2', label: '2 спальни' },
   { value: '3', label: '3 спальни' },
   { value: '4', label: '4 спальни' },
+  { value: '5', label: '5 спален' },
 ];
 
 const feedUnitQuarterFilterOptions = [

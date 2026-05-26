@@ -16,6 +16,7 @@ const now = new Date('2026-05-23T10:00:00.000Z');
 const sourceId = '11111111-1111-4111-8111-111111111111';
 const developerId = '22222222-2222-4222-8222-222222222222';
 const objectId = '33333333-3333-4333-8333-333333333333';
+const secondObjectId = '33333333-3333-4333-8333-444444444444';
 const runId = '44444444-4444-4444-8444-444444444444';
 const unitId = '55555555-5555-4555-8555-555555555555';
 const xmlFileId = '88888888-8888-4888-8888-888888888888';
@@ -63,6 +64,7 @@ function sourceRecord(overrides = {}) {
     url: 'https://feeds.example.test/yandex.xml',
     xmlFileId: null,
     format: 'YANDEX_REALTY',
+    filterJson: null,
     developerId,
     objectId,
     isActive: true,
@@ -71,7 +73,27 @@ function sourceRecord(overrides = {}) {
     lastSuccessAt: null,
     developer: developerRecord(),
     object: objectRecord(),
+    mappings: [],
     xmlFile: null,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
+function sourceMappingRecord(overrides = {}) {
+  return {
+    id: '99999999-9999-4999-8999-111111111111',
+    sourceId,
+    objectId,
+    sourceKey: 'shagal',
+    sourceTitle: 'Шагал',
+    filterJson: {
+      buildingNames: ['Шагал'],
+      yandexBuildingIds: ['2577904'],
+    },
+    isActive: true,
+    object: objectRecord(),
     createdAt: now,
     updatedAt: now,
     ...overrides,
@@ -184,6 +206,10 @@ test('FeedsController delegates CRUD, run endpoints and reports to the service',
       calls.push(['updateSource', id, body]);
       return { source: { id, ...body } };
     },
+    analyzeSource: async (body) => {
+      calls.push(['analyzeSource', body]);
+      return { analysis: { developerName: 'АО «ГК «ЭТАЛОН»', unitsCount: 3, objects: [] } };
+    },
     runFeedImportCommand: async (id, mode) => {
       calls.push(['runFeedImportCommand', id, mode]);
       return { run: { id: runId, sourceId: id, mode: mode === 'preview' ? 'PREVIEW' : 'RUN' } };
@@ -205,6 +231,7 @@ test('FeedsController delegates CRUD, run endpoints and reports to the service',
   await controller.listSources({ page: '1' });
   await controller.createSource({ url: 'https://feeds.example.test/yandex.xml' });
   await controller.updateSource(sourceId, { isActive: false });
+  await controller.analyzeFeed({ sourceKind: 'URL', url: 'https://feeds.example.test/yandex.xml', format: 'YANDEX_REALTY' });
   await controller.runPreview(sourceId);
   await controller.runImport(sourceId);
   await controller.listSourceRuns(sourceId, { status: 'success' });
@@ -215,6 +242,7 @@ test('FeedsController delegates CRUD, run endpoints and reports to the service',
     ['listSources', { page: '1' }],
     ['createSource', { url: 'https://feeds.example.test/yandex.xml' }],
     ['updateSource', sourceId, { isActive: false }],
+    ['analyzeSource', { sourceKind: 'URL', url: 'https://feeds.example.test/yandex.xml', format: 'YANDEX_REALTY' }],
     ['runFeedImportCommand', sourceId, 'preview'],
     ['runFeedImportCommand', sourceId, 'run'],
     ['listSourceRuns', sourceId, { status: 'success' }],
@@ -228,6 +256,53 @@ test('FeedsService passes source id to feed-import CLI without an extra argv sep
 
   assert.match(source, /\['--filter', '@platforma\/feed-import', '--fail-if-no-match', 'run', mode, '--source', sourceId\]/);
   assert.doesNotMatch(source, /mode,\s*'--',\s*'--source'/);
+});
+
+test('FeedsService analyzes a feed source without developer and object mapping', async () => {
+  const calls = [];
+  const service = new FeedsService({});
+  service.runFeedAnalyzeCli = async (params) => {
+    calls.push(params);
+
+    return {
+      developerName: 'АО «ГК «ЭТАЛОН»',
+      unitsCount: 493,
+      objects: [
+        {
+          title: 'Шагал',
+          unitsCount: 259,
+          buildingNames: ['Шагал'],
+          yandexBuildingIds: ['2577904'],
+          yandexHouseIds: ['2895484'],
+          addresses: [],
+          filterJson: {
+            buildingNames: ['Шагал'],
+            yandexBuildingIds: ['2577904'],
+            yandexHouseIds: ['2895484'],
+          },
+        },
+      ],
+      warningsCount: 0,
+      warnings: [],
+    };
+  };
+
+  const result = await service.analyzeSource({
+    sourceKind: 'URL',
+    url: 'https://feeds.example.test/yandex.xml',
+    format: 'YANDEX_REALTY',
+  });
+
+  assert.deepEqual(calls, [
+    {
+      format: 'YANDEX_REALTY',
+      url: 'https://feeds.example.test/yandex.xml',
+      xmlFile: null,
+    },
+  ]);
+  assert.equal(result.analysis.developerName, 'АО «ГК «ЭТАЛОН»');
+  assert.equal(result.analysis.objects[0].title, 'Шагал');
+  assert.equal(result.analysis.objects[0].unitsCount, 259);
 });
 
 test('API Docker image includes the feed-import workspace used by feed preview and run', () => {
@@ -267,7 +342,16 @@ test('FeedsService lists sources with filters and serializes related developer a
   assert.deepEqual(calls[0][1].where, {
     format: 'YANDEX_REALTY',
     developerId,
-    objectId,
+    OR: [
+      { objectId },
+      {
+        mappings: {
+          some: {
+            objectId,
+          },
+        },
+      },
+    ],
     isActive: true,
   });
   assert.equal(calls[0][1].skip, 10);
@@ -298,6 +382,7 @@ test('FeedsService creates and updates feed sources with validation', async () =
         return sourceRecord({
           url: args.data.url,
           format: args.data.format,
+          filterJson: args.data.filterJson,
           isActive: args.data.isActive,
         });
       },
@@ -309,6 +394,7 @@ test('FeedsService creates and updates feed sources with validation', async () =
         calls.push(['feedSource.update', args]);
         return sourceRecord({
           url: args.data.url,
+          filterJson: args.data.filterJson,
           isActive: args.data.isActive,
         });
       },
@@ -319,12 +405,19 @@ test('FeedsService creates and updates feed sources with validation', async () =
   const created = await service.createSource({
     url: ' https://feeds.example.test/yandex.xml ',
     format: 'yandex_realty',
+    filterJson: JSON.stringify({
+      buildingNames: ['Нагатино Ай-Лэнд'],
+      yandexBuildingIds: ['2133018'],
+    }),
     developerId,
     objectId,
     isActive: false,
   });
   const updated = await service.updateSource(sourceId, {
     url: 'https://feeds.example.test/cian.xml',
+    filterJson: {
+      buildingNames: ['Шагал'],
+    },
     isActive: false,
   });
 
@@ -332,8 +425,15 @@ test('FeedsService creates and updates feed sources with validation', async () =
   assert.equal(created.source.sourceKind, 'URL');
   assert.equal(created.source.xmlFile, null);
   assert.equal(created.source.format, 'YANDEX_REALTY');
+  assert.deepEqual(created.source.filterJson, {
+    buildingNames: ['Нагатино Ай-Лэнд'],
+    yandexBuildingIds: ['2133018'],
+  });
   assert.equal(created.source.isActive, false);
   assert.equal(updated.source.url, 'https://feeds.example.test/cian.xml');
+  assert.deepEqual(updated.source.filterJson, {
+    buildingNames: ['Шагал'],
+  });
   assert.equal(updated.source.isActive, false);
   assert.equal(calls.some(([name]) => name === 'feedSource.create'), true);
   assert.equal(calls.some(([name]) => name === 'feedSource.update'), true);
@@ -348,6 +448,86 @@ test('FeedsService creates and updates feed sources with validation', async () =
       }),
     BadRequestException,
   );
+});
+
+test('FeedsService creates feed sources with multi-object mappings and no fallback object', async () => {
+  const calls = [];
+  const prisma = {
+    developer: {
+      count: async (args) => {
+        calls.push(['developer.count', args]);
+        return args.where.id === developerId ? 1 : 0;
+      },
+    },
+    realEstateObject: {
+      count: async (args) => {
+        calls.push(['realEstateObject.count', args]);
+        return [objectId, secondObjectId].includes(args.where.id) && args.where.deletedAt === null ? 1 : 0;
+      },
+    },
+    feedSource: {
+      create: async (args) => {
+        calls.push(['feedSource.create', args]);
+        return sourceRecord({
+          objectId: null,
+          object: null,
+          mappings: args.data.mappings.create.map((mapping, index) =>
+            sourceMappingRecord({
+              ...mapping,
+              id: `mapping-${index + 1}`,
+              sourceId,
+              objectId: mapping.object.connect.id,
+              object: objectRecord({
+                id: mapping.object.connect.id,
+                title: index === 0 ? 'Нагатино Ай-Лэнд' : 'Шагал',
+                slug: index === 0 ? 'nagatino' : 'shagal',
+              }),
+            }),
+          ),
+        });
+      },
+    },
+  };
+  const service = new FeedsService(prisma);
+
+  const created = await service.createSource({
+    url: 'https://feeds.example.test/yandex.xml',
+    format: 'YANDEX_REALTY',
+    developerId,
+    objectId: '',
+    mappings: JSON.stringify([
+      {
+        sourceKey: 'nagatino',
+        sourceTitle: 'Нагатино Ай-Лэнд',
+        objectId,
+        filterJson: {
+          buildingNames: ['Нагатино Ай-Лэнд'],
+          yandexBuildingIds: ['2133018'],
+        },
+      },
+      {
+        sourceKey: 'shagal',
+        sourceTitle: 'Шагал',
+        objectId: secondObjectId,
+        filterJson: {
+          buildingNames: ['Шагал'],
+          yandexBuildingIds: ['2577904'],
+        },
+      },
+    ]),
+  });
+
+  const createCall = calls.find(([name]) => name === 'feedSource.create')[1];
+
+  assert.equal('object' in createCall.data, false);
+  assert.equal(createCall.data.mappings.create.length, 2);
+  assert.deepEqual(createCall.data.mappings.create[0].object, { connect: { id: objectId } });
+  assert.deepEqual(createCall.data.mappings.create[1].object, { connect: { id: secondObjectId } });
+  assert.equal(created.source.objectId, null);
+  assert.equal(created.source.object, null);
+  assert.equal(created.source.mappings.length, 2);
+  assert.equal(created.source.mappings[0].object.title, 'Нагатино Ай-Лэнд');
+  assert.equal(created.source.mappings[1].objectId, secondObjectId);
 });
 
 test('FeedsService creates file feed sources with uploaded XML file', async () => {

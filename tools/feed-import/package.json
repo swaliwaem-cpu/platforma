@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "build": "pnpm --filter @platforma/api prisma:generate && tsc -p tsconfig.json",
+    "analyze": "pnpm build && node dist/index.js analyze",
     "preview": "pnpm build && node dist/index.js preview",
     "run": "pnpm build && node dist/index.js run",
     "test": "pnpm build && node --test tests/*.test.cjs"

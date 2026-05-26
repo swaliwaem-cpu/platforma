@@ -9,6 +9,14 @@ const migrationPath = path.join(
   rootDir,
   'apps/api/prisma/migrations/20260523100000_add_feed_schema/migration.sql',
 );
+const feedSourceFilterMigrationPath = path.join(
+  rootDir,
+  'apps/api/prisma/migrations/20260526190000_add_feed_source_filter_json/migration.sql',
+);
+const feedSourceMappingsMigrationPath = path.join(
+  rootDir,
+  'apps/api/prisma/migrations/20260526210000_add_feed_source_mappings/migration.sql',
+);
 
 function readProjectFile(filePath) {
   return fs.readFileSync(filePath, 'utf8');
@@ -26,10 +34,10 @@ test('Prisma schema defines feed enums', () => {
 test('Prisma schema defines feed sources and import runs', () => {
   const schema = readProjectFile(schemaPath);
 
-  assert.match(schema, /model FeedSource \{[\s\S]*id\s+String\s+@id @default\(uuid\(\)\) @db\.Uuid[\s\S]*sourceKind\s+FeedSourceKind\s+@default\(URL\) @map\("source_kind"\)[\s\S]*url\s+String\?\s+@db\.VarChar\(2048\)[\s\S]*xmlFileId\s+String\?\s+@map\("xml_file_id"\) @db\.Uuid[\s\S]*format\s+FeedFormat[\s\S]*developerId\s+String\s+@map\("developer_id"\) @db\.Uuid[\s\S]*objectId\s+String\s+@map\("object_id"\) @db\.Uuid[\s\S]*isActive\s+Boolean\s+@default\(true\) @map\("is_active"\)[\s\S]*lastPreviewAt\s+DateTime\?\s+@map\("last_preview_at"\)[\s\S]*lastRunAt\s+DateTime\?\s+@map\("last_run_at"\)[\s\S]*lastSuccessAt\s+DateTime\?\s+@map\("last_success_at"\)[\s\S]*\}/);
+  assert.match(schema, /model FeedSource \{[\s\S]*id\s+String\s+@id @default\(uuid\(\)\) @db\.Uuid[\s\S]*sourceKind\s+FeedSourceKind\s+@default\(URL\) @map\("source_kind"\)[\s\S]*url\s+String\?\s+@db\.VarChar\(2048\)[\s\S]*xmlFileId\s+String\?\s+@map\("xml_file_id"\) @db\.Uuid[\s\S]*format\s+FeedFormat[\s\S]*filterJson\s+Json\?\s+@map\("filter_json"\)[\s\S]*developerId\s+String\s+@map\("developer_id"\) @db\.Uuid[\s\S]*objectId\s+String\?\s+@map\("object_id"\) @db\.Uuid[\s\S]*isActive\s+Boolean\s+@default\(true\) @map\("is_active"\)[\s\S]*lastPreviewAt\s+DateTime\?\s+@map\("last_preview_at"\)[\s\S]*lastRunAt\s+DateTime\?\s+@map\("last_run_at"\)[\s\S]*lastSuccessAt\s+DateTime\?\s+@map\("last_success_at"\)[\s\S]*mappings\s+FeedSourceMapping\[\][\s\S]*\}/);
   assert.match(schema, /xmlFile\s+File\?\s+@relation\("FeedXmlFile", fields: \[xmlFileId\], references: \[id\], onDelete: Restrict\)/);
   assert.match(schema, /developer\s+Developer\s+@relation\(fields: \[developerId\], references: \[id\], onDelete: Restrict\)/);
-  assert.match(schema, /object\s+RealEstateObject\s+@relation\(fields: \[objectId\], references: \[id\], onDelete: Cascade\)/);
+  assert.match(schema, /object\s+RealEstateObject\?\s+@relation\(fields: \[objectId\], references: \[id\], onDelete: SetNull\)/);
   assert.match(schema, /@@index\(\[sourceKind\]\)/);
   assert.match(schema, /@@index\(\[xmlFileId\]\)/);
   assert.match(schema, /@@index\(\[developerId\]\)/);
@@ -42,6 +50,19 @@ test('Prisma schema defines feed sources and import runs', () => {
   assert.match(schema, /@@index\(\[mode, status\]\)/);
   assert.match(schema, /@@map\("feed_import_runs"\)/);
 });
+
+test('Prisma schema defines feed source mappings for multi-object routing', () => {
+  const schema = readProjectFile(schemaPath);
+
+  assert.match(schema, /model FeedSourceMapping \{[\s\S]*id\s+String\s+@id @default\(uuid\(\)\) @db\.Uuid[\s\S]*sourceId\s+String\s+@map\("source_id"\) @db\.Uuid[\s\S]*objectId\s+String\s+@map\("object_id"\) @db\.Uuid[\s\S]*sourceKey\s+String\s+@map\("source_key"\) @db\.VarChar\(255\)[\s\S]*sourceTitle\s+String\s+@map\("source_title"\) @db\.VarChar\(300\)[\s\S]*filterJson\s+Json\s+@map\("filter_json"\)[\s\S]*isActive\s+Boolean\s+@default\(true\) @map\("is_active"\)[\s\S]*\}/);
+  assert.match(schema, /source\s+FeedSource\s+@relation\(fields: \[sourceId\], references: \[id\], onDelete: Cascade\)/);
+  assert.match(schema, /object\s+RealEstateObject\s+@relation\(fields: \[objectId\], references: \[id\], onDelete: Cascade\)/);
+  assert.match(schema, /@@unique\(\[sourceId, sourceKey\]\)/);
+  assert.match(schema, /@@index\(\[sourceId, isActive\]\)/);
+  assert.match(schema, /@@index\(\[objectId\]\)/);
+  assert.match(schema, /@@map\("feed_source_mappings"\)/);
+}
+);
 
 test('Prisma schema defines feed units, details and media', () => {
   const schema = readProjectFile(schemaPath);
@@ -112,4 +133,27 @@ test('feed file source migration adds source kind and XML file relation', () => 
   assert.match(migration, /CREATE INDEX "feed_sources_source_kind_idx" ON "feed_sources"\("source_kind"\)/);
   assert.match(migration, /CREATE INDEX "feed_sources_xml_file_id_idx" ON "feed_sources"\("xml_file_id"\)/);
   assert.match(migration, /CONSTRAINT "feed_sources_source_payload_check"/);
+});
+
+test('feed source filter migration adds optional JSON filter payload', () => {
+  assert.equal(fs.existsSync(feedSourceFilterMigrationPath), true);
+
+  const migration = readProjectFile(feedSourceFilterMigrationPath);
+
+  assert.match(migration, /ALTER TABLE "feed_sources" ADD COLUMN "filter_json" JSONB/);
+});
+
+test('feed source mappings migration makes source object optional and creates mapping table', () => {
+  assert.equal(fs.existsSync(feedSourceMappingsMigrationPath), true);
+
+  const migration = readProjectFile(feedSourceMappingsMigrationPath);
+
+  assert.match(migration, /ALTER TABLE "feed_sources" ALTER COLUMN "object_id" DROP NOT NULL/);
+  assert.match(migration, /CREATE TABLE "feed_source_mappings"/);
+  assert.match(migration, /"source_key" VARCHAR\(255\) NOT NULL/);
+  assert.match(migration, /"filter_json" JSONB NOT NULL/);
+  assert.match(migration, /CREATE UNIQUE INDEX "feed_source_mappings_source_id_source_key_key" ON "feed_source_mappings"\("source_id", "source_key"\)/);
+  assert.match(migration, /CREATE INDEX "feed_source_mappings_source_id_is_active_idx" ON "feed_source_mappings"\("source_id", "is_active"\)/);
+  assert.match(migration, /FOREIGN KEY \("source_id"\) REFERENCES "feed_sources"\("id"\) ON DELETE CASCADE ON UPDATE CASCADE/);
+  assert.match(migration, /FOREIGN KEY \("object_id"\) REFERENCES "real_estate_objects"\("id"\) ON DELETE CASCADE ON UPDATE CASCADE/);
 });

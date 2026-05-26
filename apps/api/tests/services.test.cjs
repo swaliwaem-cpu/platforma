@@ -643,7 +643,7 @@ test('ObjectsService.list filters objects by matching lot price rooms and floor'
   await service.list({
     lotPriceMin: '10 000 000',
     lotPriceMax: '12 500 000',
-    lotRooms: '2',
+    lotRooms: '5',
     lotFloorMin: '5',
     lotFloorMax: '12',
   });
@@ -658,7 +658,7 @@ test('ObjectsService.list filters objects by matching lot price rooms and floor'
           gte: '10000000',
           lte: '12500000',
         },
-        rooms: 2,
+        rooms: 5,
         floor: {
           gte: 5,
           lte: 12,
@@ -1053,7 +1053,7 @@ test('MapService.listObjects filters objects by matching lot price rooms and flo
   await service.listObjects({
     lotPriceMin: '10 000 000',
     lotPriceMax: '12 500 000',
-    lotRooms: '2',
+    lotRooms: '5',
     lotFloorMin: '5',
     lotFloorMax: '12',
   });
@@ -1068,7 +1068,7 @@ test('MapService.listObjects filters objects by matching lot price rooms and flo
           gte: '10000000',
           lte: '12500000',
         },
-        rooms: 2,
+        rooms: 5,
         floor: {
           gte: 5,
           lte: 12,
@@ -1370,7 +1370,7 @@ test('ObjectsService.listFeedUnits filters by numeric ranges rooms floor and com
     pricePerMeterMax: '300 000',
     areaMin: '42.5',
     areaMax: '76',
-    rooms: '2',
+    rooms: '5',
     floorMin: '5',
     floorMax: '12',
     completionYear: '2028',
@@ -1397,7 +1397,7 @@ test('ObjectsService.listFeedUnits filters by numeric ranges rooms floor and com
       lte: '76',
     },
   });
-  assert.equal(filters.some((filter) => filter.rooms === 2), true);
+  assert.equal(filters.some((filter) => filter.rooms === 5), true);
   assert.deepEqual(filters.find((filter) => filter.floor), {
     floor: {
       gte: 5,

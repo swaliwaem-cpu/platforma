@@ -25,6 +25,7 @@ test('object detail feed units expose detailed lot filters in API request and re
   assert.match(source, /const feedUnitRoomFilterOptions = \[/);
   assert.match(source, /\{ value:\s*'0',\s*label:\s*'Студия'\s*\}/);
   assert.match(source, /\{ value:\s*'4',\s*label:\s*'4 спальни'\s*\}/);
+  assert.match(source, /\{ value:\s*'5',\s*label:\s*'5 спален'\s*\}/);
   assert.match(source, /const \[priceMinFilter,\s*setPriceMinFilter\] = useState\(''\);/);
   assert.match(source, /const \[priceMaxFilter,\s*setPriceMaxFilter\] = useState\(''\);/);
   assert.match(source, /const \[pricePerMeterMinFilter,\s*setPricePerMeterMinFilter\] = useState\(''\);/);

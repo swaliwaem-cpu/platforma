@@ -19,6 +19,7 @@ test('feeds admin page wires source CRUD, preview, run, reports, and units API c
   assert.match(source, /method:\s*'POST'/);
   assert.match(source, /apiRequest<FeedSourceResponse>\(`\/feeds\/sources\/\$\{sourceId\}`/);
   assert.match(source, /method:\s*'PATCH'/);
+  assert.match(source, /apiRequest<FeedSourceAnalysisResponse>\('\/feeds\/analyze'/);
   assert.match(source, /apiRequest<FeedImportRunResponse>\(`\/feeds\/sources\/\$\{sourceId\}\/preview`/);
   assert.match(source, /apiRequest<FeedImportRunResponse>\(`\/feeds\/sources\/\$\{sourceId\}\/run`/);
   assert.match(source, /apiRequest<FeedImportRunsResponse>\(`\/feeds\/sources\/\$\{sourceId\}\/runs\?\$\{params\.toString\(\)\}`/);
@@ -33,6 +34,7 @@ test('feeds admin page exposes required source form fields and unit filters', ()
   assert.match(source, /name="url"/);
   assert.match(source, /name="xmlFile"/);
   assert.match(source, /name="format"/);
+  assert.match(source, /name="filterJson"/);
   assert.match(source, /name="developerId"/);
   assert.match(source, /name="objectId"/);
   assert.match(source, /name="isActive"/);
@@ -46,9 +48,36 @@ test('feeds admin page submits multipart form data for uploaded XML sources', ()
   assert.match(source, /xmlFile: File \| null/);
   assert.match(source, /const formData = new FormData\(\)/);
   assert.match(source, /formData\.append\('sourceKind', form\.sourceKind\)/);
+  assert.match(source, /formData\.append\('filterJson', form\.filterJson\.trim\(\)\)/);
+  assert.match(source, /formData\.append\('mappings', JSON\.stringify\(selectedMappings\)\)/);
   assert.match(source, /formData\.append\('xmlFile', form\.xmlFile\)/);
   assert.match(source, /body: createSourceRequestBody\(form\)/);
   assert.match(source, /source\.sourceKind === 'FILE'/);
+});
+
+test('feeds admin page includes Yandex source filter help fields', () => {
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.match(source, /filterJson: string;/);
+  assert.match(source, /mappings: SourceMappingFormState\[\];/);
+  assert.match(source, /Фильтр Yandex/);
+  assert.match(source, /Разбор фида/);
+  assert.match(source, /Исключить из загрузки/);
+  assert.match(source, /onMappingChange/);
+  assert.match(source, /developerName/);
+  assert.match(source, /objects\.map\(\(feedObject\) =>/);
+  assert.match(source, /buildingNames/);
+  assert.match(source, /yandexBuildingIds/);
+  assert.match(source, /yandexHouseIds/);
+  assert.match(source, /addressIncludes/);
+});
+
+test('feeds admin page keeps raw Yandex filter hidden until it has data', () => {
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.match(source, /const hasFilterJson = form\.filterJson\.trim\(\)\.length > 0/);
+  assert.match(source, /hasFilterJson \? \(/);
+  assert.match(source, /Очистить фильтр/);
 });
 
 test('feeds admin page keeps URL and file source inputs as separate React elements', () => {

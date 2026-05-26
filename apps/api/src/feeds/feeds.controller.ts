@@ -43,6 +43,16 @@ export class FeedsController {
     return this.feedsService.createSource(body, xmlFile, actor);
   }
 
+  @Post('analyze')
+  @RequirePermissions('feeds:manage')
+  @UseInterceptors(FileInterceptor('xmlFile', { limits: { fileSize: FEED_XML_MAX_SIZE_BYTES } }))
+  async analyzeFeed(
+    @Body() body: Record<string, unknown>,
+    @UploadedFile() xmlFile: UploadedFileData | undefined,
+  ) {
+    return this.feedsService.analyzeSource(body, xmlFile);
+  }
+
   @Patch('sources/:id')
   @RequirePermissions('feeds:manage')
   @UseInterceptors(FileInterceptor('xmlFile', { limits: { fileSize: FEED_XML_MAX_SIZE_BYTES } }))

@@ -1,6 +1,8 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
@@ -25,6 +27,7 @@ const feedRunStartWaitMs = 10_000;
 const feedRunStartPollMs = 200;
 
 type FeedImportCommand = 'preview' | 'run';
+type BufferedUploadedFile = UploadedFile & { buffer: Buffer };
 
 type ListFeedSourcesQuery = {
   page?: string;
@@ -39,12 +42,20 @@ type CreateFeedSourceBody = {
   sourceKind?: unknown;
   url?: unknown;
   format?: unknown;
+  filterJson?: unknown;
   developerId?: unknown;
   objectId?: unknown;
+  mappings?: unknown;
   isActive?: unknown;
 };
 
 type UpdateFeedSourceBody = Partial<CreateFeedSourceBody>;
+
+type AnalyzeFeedSourceBody = {
+  sourceKind?: unknown;
+  url?: unknown;
+  format?: unknown;
+};
 
 type ListFeedRunsQuery = {
   page?: string;
@@ -63,6 +74,14 @@ type ListFeedUnitsQuery = {
   search?: string;
 };
 
+type ParsedFeedSourceMappingInput = {
+  objectId: string;
+  sourceKey: string;
+  sourceTitle: string;
+  filterJson: Record<string, unknown>;
+  isActive: boolean;
+};
+
 const sourceInclude = {
   xmlFile: true,
   developer: true,
@@ -72,6 +91,21 @@ const sourceInclude = {
       title: true,
       slug: true,
       status: true,
+    },
+  },
+  mappings: {
+    include: {
+      object: {
+        select: {
+          id: true,
+          title: true,
+          slug: true,
+          status: true,
+        },
+      },
+    },
+    orderBy: {
+      sourceTitle: 'asc' as const,
     },
   },
 } as const;
@@ -122,7 +156,19 @@ export class FeedsService {
     }
 
     if (query.objectId) {
-      where.objectId = this.parseUuid(query.objectId, 'Object is invalid');
+      const objectId = this.parseUuid(query.objectId, 'Object is invalid');
+      where.OR = [
+        {
+          objectId,
+        },
+        {
+          mappings: {
+            some: {
+              objectId,
+            },
+          },
+        },
+      ];
     }
 
     if (query.isActive !== undefined) {
@@ -160,12 +206,14 @@ export class FeedsService {
     const uploadedXmlFile = sourceKind === FeedSourceKind.FILE ? await this.uploadFeedXmlFile(xmlFile, actor) : null;
     const url = sourceKind === FeedSourceKind.URL ? this.parseHttpUrl(body.url, 'Feed source URL is required') : null;
     const format = this.parseFormat(body.format);
+    const filterJson = this.parseFeedSourceFilterJson(body.filterJson);
     const developerId = this.parseUuid(this.parseRequiredString(body.developerId, 'Developer is required'), 'Developer is invalid');
-    const objectId = this.parseUuid(this.parseRequiredString(body.objectId, 'Object is required'), 'Object is invalid');
+    const mappings = this.parseFeedSourceMappings(body.mappings);
+    const objectId = this.parseOptionalUuid(body.objectId, 'Object is invalid');
     const isActive = this.parseBoolean(body.isActive, true, 'Feed source active flag is invalid');
 
     await this.ensureDeveloperExists(developerId);
-    await this.ensureObjectExists(objectId);
+    await this.ensureSourceHasObjectOrMappings(objectId, mappings);
 
     const source = await this.prisma.feedSource.create({
       data: {
@@ -181,17 +229,29 @@ export class FeedsService {
             }
           : {}),
         format,
+        filterJson: this.toNullableJsonInput(filterJson),
         isActive,
         developer: {
           connect: {
             id: developerId,
           },
         },
-        object: {
-          connect: {
-            id: objectId,
-          },
-        },
+        ...(objectId
+          ? {
+              object: {
+                connect: {
+                  id: objectId,
+                },
+              },
+            }
+          : {}),
+        ...(mappings.length > 0
+          ? {
+              mappings: {
+                create: mappings.map((mapping) => this.createMappingWriteInput(mapping)),
+              },
+            }
+          : {}),
       },
       include: sourceInclude,
     });
@@ -277,6 +337,13 @@ export class FeedsService {
       }
     }
 
+    if ('filterJson' in body) {
+      data.filterJson = this.toNullableJsonInput(this.parseFeedSourceFilterJson(body.filterJson));
+      hasChanges = true;
+    }
+
+    const mappings = 'mappings' in body ? this.parseFeedSourceMappings(body.mappings) : null;
+
     if ('developerId' in body) {
       const developerId = this.parseUuid(
         this.parseRequiredString(body.developerId, 'Developer is required'),
@@ -294,18 +361,35 @@ export class FeedsService {
       }
     }
 
+    let nextObjectId = source.objectId;
+
     if ('objectId' in body) {
-      const objectId = this.parseUuid(this.parseRequiredString(body.objectId, 'Object is required'), 'Object is invalid');
-      await this.ensureObjectExists(objectId);
+      const objectId = this.parseOptionalUuid(body.objectId, 'Object is invalid');
 
       if (objectId !== source.objectId) {
-        data.object = {
-          connect: {
-            id: objectId,
-          },
-        };
+        data.object = objectId
+          ? {
+              connect: {
+                id: objectId,
+              },
+            }
+          : {
+              disconnect: true,
+            };
         hasChanges = true;
       }
+
+      nextObjectId = objectId;
+    }
+
+    await this.ensureSourceHasObjectOrMappings(nextObjectId, mappings ?? source.mappings);
+
+    if (mappings) {
+      data.mappings = {
+        deleteMany: {},
+        create: mappings.map((mapping) => this.createMappingWriteInput(mapping)),
+      };
+      hasChanges = true;
     }
 
     if ('isActive' in body) {
@@ -334,6 +418,27 @@ export class FeedsService {
     return {
       source: this.serializeSource(updatedSource),
     };
+  }
+
+  async analyzeSource(body: AnalyzeFeedSourceBody, xmlFile?: UploadedFile) {
+    const sourceKind = this.parseSourceKind(body.sourceKind, xmlFile ? FeedSourceKind.FILE : FeedSourceKind.URL);
+    const format = this.parseFormat(body.format);
+    const url = sourceKind === FeedSourceKind.URL ? this.parseHttpUrl(body.url, 'Feed source URL is required') : null;
+    const analysisXmlFile = sourceKind === FeedSourceKind.FILE ? this.validateAnalysisXmlFile(xmlFile) : null;
+
+    try {
+      const analysis = await this.runFeedAnalyzeCli({
+        format,
+        url,
+        xmlFile: analysisXmlFile,
+      });
+
+      return {
+        analysis,
+      };
+    } catch (error) {
+      throw new InternalServerErrorException(getCommandErrorMessage(error));
+    }
   }
 
   async runFeedImportCommand(sourceIdValue: string, mode: FeedImportCommand) {
@@ -426,6 +531,49 @@ export class FeedsService {
       maxBuffer: 1024 * 1024 * 50,
       timeout: 1000 * 60 * 30,
     });
+  }
+
+  async runFeedAnalyzeCli(params: { format: FeedFormat; url: string | null; xmlFile: BufferedUploadedFile | null }) {
+    const tempDir = await mkdtemp(join(tmpdir(), 'platforma-feed-analyze-'));
+    const outputPath = join(tempDir, 'analysis.json');
+    const args = [
+      '--filter',
+      '@platforma/feed-import',
+      '--fail-if-no-match',
+      'run',
+      'analyze',
+      '--',
+      '--format',
+      params.format,
+      '--output',
+      outputPath,
+    ];
+
+    try {
+      if (params.xmlFile) {
+        const inputPath = join(tempDir, 'feed.xml');
+        await writeFile(inputPath, params.xmlFile.buffer);
+        args.push('--file', inputPath);
+      } else if (params.url) {
+        args.push('--url', params.url);
+      } else {
+        throw new BadRequestException('Feed source URL or XML file is required');
+      }
+
+      await execFileAsync('pnpm', args, {
+        cwd: findWorkspaceRoot(),
+        env: {
+          ...process.env,
+          PRISMA_HIDE_UPDATE_MESSAGE: 'true',
+        },
+        maxBuffer: 1024 * 1024 * 50,
+        timeout: 1000 * 60 * 5,
+      });
+
+      return this.parseFeedAnalysisCliOutput(await readFile(outputPath, 'utf8'));
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   }
 
   async listSourceRuns(sourceIdValue: string, query: ListFeedRunsQuery) {
@@ -646,6 +794,7 @@ export class FeedsService {
       xmlFileId: source.xmlFileId,
       xmlFile: source.xmlFile ? this.serializeFile(source.xmlFile) : null,
       format: source.format,
+      filterJson: source.filterJson ?? null,
       developerId: source.developerId,
       objectId: source.objectId,
       isActive: source.isActive,
@@ -658,12 +807,31 @@ export class FeedsService {
         name: source.developer.name,
         slug: source.developer.slug,
       },
-      object: {
-        id: source.object.id,
-        title: source.object.title,
-        slug: source.object.slug,
-        status: source.object.status,
-      },
+      object: source.object
+        ? {
+            id: source.object.id,
+            title: source.object.title,
+            slug: source.object.slug,
+            status: source.object.status,
+          }
+        : null,
+      mappings: source.mappings.map((mapping) => ({
+        id: mapping.id,
+        sourceId: mapping.sourceId,
+        objectId: mapping.objectId,
+        sourceKey: mapping.sourceKey,
+        sourceTitle: mapping.sourceTitle,
+        filterJson: mapping.filterJson,
+        isActive: mapping.isActive,
+        object: {
+          id: mapping.object.id,
+          title: mapping.object.title,
+          slug: mapping.object.slug,
+          status: mapping.object.status,
+        },
+        createdAt: mapping.createdAt.toISOString(),
+        updatedAt: mapping.updatedAt.toISOString(),
+      })),
       createdAt: source.createdAt.toISOString(),
       updatedAt: source.updatedAt.toISOString(),
     };
@@ -775,6 +943,152 @@ export class FeedsService {
     return format as FeedFormat;
   }
 
+  private parseFeedSourceFilterJson(value: unknown) {
+    if (value === undefined || value === null || value === '') {
+      return null;
+    }
+
+    const parsedValue = typeof value === 'string' ? this.parseJsonString(value) : value;
+
+    if (!this.isPlainJsonObject(parsedValue)) {
+      throw new BadRequestException('Feed source filter must be a JSON object');
+    }
+
+    return parsedValue as Prisma.InputJsonObject;
+  }
+
+  private parseFeedSourceMappings(value: unknown): ParsedFeedSourceMappingInput[] {
+    if (value === undefined || value === null || value === '') {
+      return [];
+    }
+
+    const parsedValue = typeof value === 'string' ? this.parseJsonString(value) : value;
+
+    if (!Array.isArray(parsedValue)) {
+      throw new BadRequestException('Feed source mappings must be a JSON array');
+    }
+
+    const seenSourceKeys = new Set<string>();
+
+    return parsedValue.map((mapping, index) => {
+      if (!this.isPlainJsonObject(mapping)) {
+        throw new BadRequestException(`Feed source mapping #${index + 1} is invalid`);
+      }
+
+      const objectId = this.parseUuid(
+        this.parseRequiredString(mapping.objectId, `Feed source mapping #${index + 1} object is required`),
+        `Feed source mapping #${index + 1} object is invalid`,
+      );
+      const sourceKey = this.parseLimitedRequiredString(
+        mapping.sourceKey,
+        `Feed source mapping #${index + 1} key is required`,
+        255,
+      );
+      const sourceTitle = this.parseLimitedRequiredString(
+        mapping.sourceTitle,
+        `Feed source mapping #${index + 1} title is required`,
+        300,
+      );
+      const filterJson = mapping.filterJson;
+
+      if (!this.isPlainJsonObject(filterJson)) {
+        throw new BadRequestException(`Feed source mapping #${index + 1} filter must be a JSON object`);
+      }
+
+      if (seenSourceKeys.has(sourceKey)) {
+        throw new BadRequestException(`Feed source mapping key "${sourceKey}" is duplicated`);
+      }
+
+      seenSourceKeys.add(sourceKey);
+
+      return {
+        objectId,
+        sourceKey,
+        sourceTitle,
+        filterJson,
+        isActive: this.parseBoolean(mapping.isActive, true, `Feed source mapping #${index + 1} active flag is invalid`),
+      };
+    });
+  }
+
+  private createMappingWriteInput(mapping: ParsedFeedSourceMappingInput) {
+    return {
+      sourceKey: mapping.sourceKey,
+      sourceTitle: mapping.sourceTitle,
+      filterJson: mapping.filterJson as Prisma.InputJsonObject,
+      isActive: mapping.isActive,
+      object: {
+        connect: {
+          id: mapping.objectId,
+        },
+      },
+    };
+  }
+
+  private async ensureSourceHasObjectOrMappings(
+    objectId: string | null,
+    mappings: Array<{ objectId: string }>,
+  ) {
+    const mappingObjectIds = Array.from(new Set(mappings.map((mapping) => mapping.objectId)));
+
+    if (!objectId && mappingObjectIds.length === 0) {
+      throw new BadRequestException('Choose a linked object or at least one feed mapping');
+    }
+
+    if (objectId) {
+      await this.ensureObjectExists(objectId);
+    }
+
+    await Promise.all(mappingObjectIds.map((mappingObjectId) => this.ensureObjectExists(mappingObjectId)));
+  }
+
+  private validateAnalysisXmlFile(file: UploadedFile | undefined): BufferedUploadedFile {
+    if (!file?.buffer || file.buffer.length === 0) {
+      throw new BadRequestException('XML file is required');
+    }
+
+    if (!file.buffer.toString('utf8', 0, Math.min(file.buffer.length, 256)).trimStart().startsWith('<')) {
+      throw new BadRequestException('Only XML files are allowed');
+    }
+
+    return {
+      ...file,
+      buffer: file.buffer,
+    };
+  }
+
+  private parseFeedAnalysisCliOutput(value: string) {
+    const parsedValue = this.parseJsonString(value);
+
+    if (!this.isPlainJsonObject(parsedValue) || !this.isPlainJsonObject(parsedValue.analysis)) {
+      throw new InternalServerErrorException('Feed analysis command returned invalid response');
+    }
+
+    return parsedValue.analysis;
+  }
+
+  private parseJsonString(value: string) {
+    const trimmedValue = value.trim();
+
+    if (!trimmedValue) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(trimmedValue) as unknown;
+    } catch {
+      throw new BadRequestException('Feed source filter must be valid JSON');
+    }
+  }
+
+  private isPlainJsonObject(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+  }
+
+  private toNullableJsonInput(value: Prisma.InputJsonObject | null) {
+    return value ?? Prisma.DbNull;
+  }
+
   private parseSourceKind(value: unknown, fallback: FeedSourceKind) {
     if (value === undefined || value === null || value === '') {
       return fallback;
@@ -875,6 +1189,16 @@ export class FeedsService {
     return normalized;
   }
 
+  private parseLimitedRequiredString(value: unknown, message: string, maxLength: number) {
+    const normalized = this.parseRequiredString(value, message);
+
+    if (normalized.length > maxLength) {
+      throw new BadRequestException(message);
+    }
+
+    return normalized;
+  }
+
   private parseBoolean(value: unknown, fallback: boolean, message: string) {
     if (value === undefined || value === null || value === '') {
       return fallback;
@@ -935,6 +1259,18 @@ export class FeedsService {
     }
 
     return normalized;
+  }
+
+  private parseOptionalUuid(value: unknown, message: string) {
+    if (value === undefined || value === null || value === '') {
+      return null;
+    }
+
+    if (typeof value !== 'string') {
+      throw new BadRequestException(message);
+    }
+
+    return this.parseUuid(value, message);
   }
 
   private decimalToString(value: Prisma.Decimal | null) {
