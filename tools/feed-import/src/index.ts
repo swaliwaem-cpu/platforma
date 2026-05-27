@@ -387,6 +387,111 @@ export class CianXmlFeedParser implements FeedParser {
   }
 }
 
+export class AvitoXmlFeedParser implements FeedParser {
+  parse(xml: string): FeedParseResult {
+    const root = parseXml(xml);
+    const feed = asRecord(root.Ads);
+
+    if (!feed) {
+      throw new Error('Avito XML feed must contain <Ads>');
+    }
+
+    const warnings: FeedParserWarning[] = [];
+    const units = toArray(feed.Ad)
+      .map(asRecord)
+      .filter((ad): ad is XmlRecord => ad !== null)
+      .flatMap((ad, index) => {
+        const externalId = getText(ad.Id);
+
+        if (!externalId) {
+          warnings.push({
+            code: 'MISSING_EXTERNAL_ID',
+            field: 'externalId',
+            message: `Avito ad at index ${index} is missing Id`,
+          });
+          return [];
+        }
+
+        return [this.normalizeAd(ad, externalId, warnings)];
+      });
+
+    return { units, warnings };
+  }
+
+  private normalizeAd(ad: XmlRecord, externalId: string, warnings: FeedParserWarning[]): NormalizedFeedUnit {
+    const type = getAvitoUnitType(ad);
+    const price = normalizeDecimal(ad.Price, 'price', externalId, warnings);
+    const area = normalizeDecimal(ad.Square, 'area', externalId, warnings);
+    const floor = normalizeInteger(ad.Floor, 'floor', externalId, warnings);
+    const rooms = normalizeAvitoRooms(ad.Rooms, externalId, warnings);
+    const livingArea = normalizeDecimal(ad.LivingSpace, 'livingArea', externalId, warnings);
+    const kitchenArea = normalizeDecimal(ad.KitchenSpace, 'kitchenArea', externalId, warnings);
+    const ceilingHeight = normalizeDecimal(ad.CeilingHeight, 'ceilingHeight', externalId, warnings);
+    const floorsTotal = normalizeInteger(ad.Floors, 'floorsTotal', externalId, warnings);
+    const bathroomCount = normalizeInteger(ad.BathroomCount, 'bathroomCount', externalId, warnings);
+    const address = getText(ad.Address);
+
+    return {
+      externalId,
+      type,
+      status: 'AVAILABLE',
+      title: buildAvitoTitle(ad, externalId),
+      projectName: null,
+      address,
+      building: extractAvitoBuilding(address),
+      section: null,
+      floor,
+      rooms,
+      price,
+      currency: 'RUR',
+      area,
+      pricePerMeter: calculatePricePerMeter(price, area),
+      completionYear: null,
+      completionQuarter: null,
+      rawPayload: ad,
+      media: collectAvitoMedia(ad, externalId, warnings),
+      residentialDetails:
+        type === 'RESIDENTIAL'
+          ? {
+              apartmentNumber: null,
+              layoutType: getText(ad.Rooms),
+              livingArea,
+              kitchenArea,
+              balconyCount: getAvitoBalconyCount(ad),
+              detailsJson: {
+                avitoDevelopmentId: getText(ad.NewDevelopmentId),
+                marketType: getText(ad.MarketType),
+                decoration: getText(ad.Decoration),
+                ceilingHeight,
+                status: getText(ad.Status),
+                floorsTotal,
+                bathroomCount,
+                bathroomType: getText(ad.BathroomType),
+              },
+            }
+          : null,
+      commercialDetails:
+        type === 'COMMERCIAL'
+          ? {
+              commercialType: getText(ad.Category) ?? getText(ad.Status),
+              entrance: null,
+              ceilingHeight,
+              powerKw: normalizeDecimal(ad.Power, 'powerKw', externalId, warnings),
+              separateEntrance: normalizeBoolean(ad.SeparateEntrance),
+              detailsJson: {
+                avitoDevelopmentId: getText(ad.NewDevelopmentId),
+                marketType: getText(ad.MarketType),
+                decoration: getText(ad.Decoration),
+                status: getText(ad.Status),
+                floorsTotal,
+                bathroomCount,
+              },
+            }
+          : null,
+    };
+  }
+}
+
 function getGlobalFetch(): FeedFetch {
   if (typeof globalThis.fetch !== 'function') {
     throw new Error('Global fetch is unavailable for feed XML download');
@@ -580,6 +685,30 @@ function normalizeCianRooms(
   return flatRoomsCount === 9 ? 0 : flatRoomsCount;
 }
 
+function normalizeAvitoRooms(
+  value: unknown,
+  externalId: string,
+  warnings: FeedParserWarning[],
+): number | null {
+  const text = getText(value);
+
+  if (text === null) {
+    return null;
+  }
+
+  const normalized = normalizeFilterText(text);
+
+  if (normalized.includes('студ')) {
+    return 0;
+  }
+
+  if (normalized.includes('свобод')) {
+    return null;
+  }
+
+  return normalizeInteger(value, 'rooms', externalId, warnings);
+}
+
 function formatDecimal(value: number): string {
   return value.toFixed(2);
 }
@@ -639,6 +768,24 @@ function getCianUnitType(object: XmlRecord): NormalizedFeedUnitType {
   return 'COMMERCIAL';
 }
 
+function getAvitoUnitType(ad: XmlRecord): NormalizedFeedUnitType {
+  const text = [getText(ad.Category), getText(ad.Status), getText(ad.ObjectType)]
+    .filter((value): value is string => value !== null)
+    .join(' ')
+    .toLowerCase();
+
+  if (
+    text.includes('квартир') ||
+    text.includes('апартамент') ||
+    text.includes('комнат') ||
+    text.includes('студ')
+  ) {
+    return 'RESIDENTIAL';
+  }
+
+  return 'COMMERCIAL';
+}
+
 function buildYandexTitle(offer: XmlRecord, location: XmlRecord | null): string | null {
   const building = getText(offer['building-name']);
   const category = getText(offer.category);
@@ -659,6 +806,16 @@ function extractYandexApartmentNumber(description: string | null) {
 
 function buildCianTitle(object: XmlRecord): string | null {
   return joinTitleParts([getText(object.Address), getText(object.Category), getText(object.ExternalId)]);
+}
+
+function buildAvitoTitle(ad: XmlRecord, externalId: string): string | null {
+  return joinTitleParts([getText(ad.Address), getText(ad.Category) ?? getText(ad.Status), externalId]);
+}
+
+function extractAvitoBuilding(address: string | null) {
+  const match = address?.match(/(?:^|[,;\s])((?:корпус|корп\.?|к\.)\s*[A-Za-zА-Яа-яЁё0-9./-]+)/iu);
+
+  return match?.[1]?.trim() ?? null;
 }
 
 function joinTitleParts(parts: Array<string | null>): string | null {
@@ -715,6 +872,34 @@ function collectCianMedia(
   return media;
 }
 
+function collectAvitoMedia(
+  ad: XmlRecord,
+  externalId: string,
+  warnings: FeedParserWarning[],
+): NormalizedFeedMedia[] {
+  const media: NormalizedFeedMedia[] = [];
+  const seen = new Set<string>();
+  const images = asRecord(ad.Images);
+
+  for (const image of toArray(images?.Image ?? ad.Image)) {
+    const imageRecord = asRecord(image);
+    const sourceUrl = getText(imageRecord?.['@_url']) ?? getText(image);
+    const label = getText(imageRecord?.['@_tag']) ?? 'photo';
+    addMedia(media, seen, sourceUrl, label, externalId, warnings);
+  }
+
+  return media;
+}
+
+function getAvitoBalconyCount(ad: XmlRecord) {
+  const values = [
+    ...getTextValues(ad.BalconyOrLoggiaMulti),
+    ...getTextValues(ad.BalconyOrLoggia),
+  ];
+
+  return values.length > 0 ? values.length : null;
+}
+
 function getTextValues(value: unknown) {
   return toArray(value)
     .map((item) => getText(item))
@@ -767,7 +952,7 @@ function isHttpUrl(value: string) {
 
 type ImportModeValue = 'PREVIEW' | 'RUN';
 type ImportStatusValue = 'PENDING' | 'SUCCESS' | 'PARTIAL' | 'FAILED';
-type FeedSourceFormat = 'YANDEX_REALTY' | 'CIAN_XML';
+type FeedSourceFormat = 'YANDEX_REALTY' | 'CIAN_XML' | 'AVITO_XML';
 type FeedSourceKind = 'URL' | 'FILE';
 type FeedUnitStatusValue = NormalizedFeedUnitStatus;
 type DecimalLike = string | number | { toString: () => string };
@@ -1109,6 +1294,7 @@ export type FeedSourceAnalysisObject = {
   buildingNames: string[];
   yandexBuildingIds: string[];
   yandexHouseIds: string[];
+  avitoDevelopmentIds: string[];
   addresses: string[];
   filterJson: Record<string, string[]> | null;
 };
@@ -1305,7 +1491,7 @@ export function parseFeedAnalyzeCliArgs(args: string[]): ParsedFeedAnalyzeCliArg
 function parseFeedSourceFormatCliValue(value: string): FeedSourceFormat | null {
   const normalized = value.trim().toUpperCase();
 
-  if (normalized === 'YANDEX_REALTY' || normalized === 'CIAN_XML') {
+  if (normalized === 'YANDEX_REALTY' || normalized === 'CIAN_XML' || normalized === 'AVITO_XML') {
     return normalized;
   }
 
@@ -1319,6 +1505,10 @@ export function createFeedParserForFormat(format: FeedSourceFormat): FeedParser 
 
   if (format === 'CIAN_XML') {
     return new CianXmlFeedParser();
+  }
+
+  if (format === 'AVITO_XML') {
+    return new AvitoXmlFeedParser();
   }
 
   throw new Error(`Unsupported feed format: ${format satisfies never}`);
@@ -1351,6 +1541,7 @@ export function createFeedSourceAnalysis(format: FeedSourceFormat, parsed: FeedP
     pushUniqueText(group.buildingNames, unit.building);
     pushUniqueText(group.yandexBuildingIds, getText(unit.rawPayload['yandex-building-id']));
     pushUniqueText(group.yandexHouseIds, getText(unit.rawPayload['yandex-house-id']));
+    pushUniqueText(group.avitoDevelopmentIds, getText(unit.rawPayload.NewDevelopmentId));
     pushUniqueText(group.addresses, unit.address ?? getText(unit.rawPayload.Address));
     groups.set(groupKey, group);
   }
@@ -1373,24 +1564,37 @@ export function createFeedSourceAnalysis(format: FeedSourceFormat, parsed: FeedP
 }
 
 function createFeedAnalysisObject(unit: NormalizedFeedUnit): FeedSourceAnalysisObject {
+  const avitoDevelopmentId = getText(unit.rawPayload.NewDevelopmentId);
+
   return {
-    title: getFeedUnitProjectName(unit) ?? unit.building ?? unit.address ?? 'Без названия',
+    title:
+      getFeedUnitProjectName(unit) ??
+      (avitoDevelopmentId ? `Avito ЖК ${avitoDevelopmentId}` : null) ??
+      unit.building ??
+      unit.address ??
+      'Без названия',
     unitsCount: 0,
     projectNames: [],
     externalIds: [],
     buildingNames: [],
     yandexBuildingIds: [],
     yandexHouseIds: [],
+    avitoDevelopmentIds: [],
     addresses: [],
     filterJson: null,
   };
 }
 
 function getFeedAnalysisGroupKey(unit: NormalizedFeedUnit) {
+  const avitoDevelopmentId = getText(unit.rawPayload.NewDevelopmentId);
   const yandexBuildingId = getText(unit.rawPayload['yandex-building-id']);
   const projectName = getFeedUnitProjectName(unit);
   const building = unit.building ?? getText(unit.rawPayload['building-name']);
   const address = unit.address ?? getText(unit.rawPayload.Address);
+
+  if (avitoDevelopmentId) {
+    return normalizeFilterText(`avito:${avitoDevelopmentId}`);
+  }
 
   return normalizeFilterText(projectName ?? building ?? yandexBuildingId ?? address ?? unit.externalId);
 }
@@ -1401,6 +1605,10 @@ function createFeedAnalysisFilterJson(
 ): Record<string, string[]> | null {
   if (format === 'YANDEX_REALTY') {
     return createYandexAnalysisFilterJson(object);
+  }
+
+  if (format === 'AVITO_XML') {
+    return createAvitoAnalysisFilterJson(object);
   }
 
   return createGenericAnalysisFilterJson(object);
@@ -1456,8 +1664,35 @@ function createGenericAnalysisFilterJson(object: FeedSourceAnalysisObject): Reco
   return null;
 }
 
+function createAvitoAnalysisFilterJson(object: FeedSourceAnalysisObject): Record<string, string[]> | null {
+  if (object.avitoDevelopmentIds.length > 0) {
+    return {
+      avitoDevelopmentIds: object.avitoDevelopmentIds,
+    };
+  }
+
+  if (object.addresses.length === 1) {
+    return {
+      addressIncludes: object.addresses,
+    };
+  }
+
+  if (object.externalIds.length > 0) {
+    return {
+      externalIds: object.externalIds,
+    };
+  }
+
+  return null;
+}
+
 function getFeedUnitDeveloperName(unit: NormalizedFeedUnit) {
-  return getText(asRecord(unit.rawPayload['sales-agent'])?.organization) ?? getText(asRecord(unit.rawPayload.Developer)?.Name);
+  return (
+    getText(asRecord(unit.rawPayload['sales-agent'])?.organization) ??
+    getText(asRecord(unit.rawPayload.Developer)?.Name) ??
+    getText(unit.rawPayload.CompanyName) ??
+    getText(unit.rawPayload.DeveloperName)
+  );
 }
 
 function getFeedUnitProjectName(unit: NormalizedFeedUnit) {
@@ -1502,6 +1737,7 @@ type NormalizedFeedSourceFilter = {
   buildingNames: string[];
   yandexBuildingIds: string[];
   yandexHouseIds: string[];
+  avitoDevelopmentIds: string[];
   addressIncludes: string[];
 };
 
@@ -1518,6 +1754,7 @@ function normalizeFeedSourceFilter(value: Record<string, unknown> | null | undef
     buildingNames: normalizeFilterStringArray(filter.buildingNames),
     yandexBuildingIds: normalizeFilterStringArray(filter.yandexBuildingIds),
     yandexHouseIds: normalizeFilterStringArray(filter.yandexHouseIds),
+    avitoDevelopmentIds: normalizeFilterStringArray(filter.avitoDevelopmentIds),
     addressIncludes: normalizeFilterStringArray(filter.addressIncludes),
   };
 
@@ -1543,6 +1780,7 @@ function matchesFeedSourceFilter(unit: NormalizedFeedUnit, filter: NormalizedFee
     matchesFilterExact(unit.building ?? getText(payload['building-name']) ?? getText(cianHouse?.Name), filter.buildingNames) &&
     matchesFilterExact(getText(payload['yandex-building-id']), filter.yandexBuildingIds) &&
     matchesFilterExact(getText(payload['yandex-house-id']), filter.yandexHouseIds) &&
+    matchesFilterExact(getText(payload.NewDevelopmentId), filter.avitoDevelopmentIds) &&
     matchesFilterIncludes(unit.address ?? getText(payload.Address), filter.addressIncludes)
   );
 }

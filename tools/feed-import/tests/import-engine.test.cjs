@@ -102,6 +102,42 @@ function makeMultiProjectCianFeed() {
     </feed>`;
 }
 
+function makeMultiDevelopmentAvitoFeed() {
+  return `<?xml version="1.0" encoding="utf-8"?>
+    <Ads target="Avito.ru" formatVersion="3">
+      <Ad>
+        <Id>bg-1</Id>
+        <Address>Челобитьево, корпус 12.1</Address>
+        <Price>6520000</Price>
+        <Category>Квартиры</Category>
+        <NewDevelopmentId>8605163</NewDevelopmentId>
+        <Square>24.7</Square>
+        <Rooms>Студия</Rooms>
+        <Floor>2</Floor>
+      </Ad>
+      <Ad>
+        <Id>bg-2</Id>
+        <Address>Челобитьево, корпус 11.1</Address>
+        <Price>7000000</Price>
+        <Category>Квартиры</Category>
+        <NewDevelopmentId>8605163</NewDevelopmentId>
+        <Square>30</Square>
+        <Rooms>1</Rooms>
+        <Floor>3</Floor>
+      </Ad>
+      <Ad>
+        <Id>other-1</Id>
+        <Address>Москва, другой корпус</Address>
+        <Price>9000000</Price>
+        <Category>Квартиры</Category>
+        <NewDevelopmentId>1234567</NewDevelopmentId>
+        <Square>45</Square>
+        <Rooms>2</Rooms>
+        <Floor>5</Floor>
+      </Ad>
+    </Ads>`;
+}
+
 test('parseFeedImportCliArgs accepts preview/run with source id', () => {
   assert.deepEqual(parseFeedImportCliArgs(['preview', '--source', 'source-1']), {
     command: 'preview',
@@ -336,6 +372,61 @@ test('executeFeedImport routes CIAN units through project name source mappings',
   assert.equal(shagalUnit.objectId, 'object-1');
   assert.equal(nagatinoUnit.objectId, 'object-2');
   assert.equal(state.objects.get('object-1').feedUnitsCount, 1);
+  assert.equal(state.objects.get('object-2').feedUnitsCount, 1);
+});
+
+test('executeFeedImport routes Avito units through development id source mappings', async () => {
+  const { db, state } = createFakeDb({
+    source: {
+      format: 'AVITO_XML',
+      objectId: null,
+      mappings: [
+        makeSourceMapping({
+          id: 'mapping-beliy-grad',
+          objectId: 'object-1',
+          sourceKey: 'avito-beliy-grad',
+          sourceTitle: 'Avito ЖК 8605163',
+          filterJson: {
+            avitoDevelopmentIds: ['8605163'],
+          },
+        }),
+        makeSourceMapping({
+          id: 'mapping-other',
+          objectId: 'object-2',
+          sourceKey: 'avito-other',
+          sourceTitle: 'Avito ЖК 1234567',
+          filterJson: {
+            avitoDevelopmentIds: ['1234567'],
+          },
+        }),
+      ],
+    },
+    objects: [
+      makeObjectAggregate({ id: 'object-1' }),
+      makeObjectAggregate({ id: 'object-2' }),
+    ],
+  });
+
+  const result = await executeFeedImport({
+    mode: 'run',
+    sourceId: 'source-1',
+    db,
+    storage: state.storage,
+    xmlFetcher: async () => makeMultiDevelopmentAvitoFeed(),
+    now: () => fixedDate,
+  });
+
+  const firstBeliyGradUnit = state.units.find((unit) => unit.externalId === 'bg-1');
+  const secondBeliyGradUnit = state.units.find((unit) => unit.externalId === 'bg-2');
+  const otherUnit = state.units.find((unit) => unit.externalId === 'other-1');
+
+  assert.equal(result.status, 'SUCCESS');
+  assert.equal(result.summary.unitsParsed, 3);
+  assert.equal(firstBeliyGradUnit.objectId, 'object-1');
+  assert.equal(secondBeliyGradUnit.objectId, 'object-1');
+  assert.equal(otherUnit.objectId, 'object-2');
+  assert.equal(firstBeliyGradUnit.rooms, 0);
+  assert.equal(state.objects.get('object-1').feedUnitsCount, 2);
   assert.equal(state.objects.get('object-2').feedUnitsCount, 1);
 });
 

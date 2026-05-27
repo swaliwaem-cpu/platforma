@@ -4,6 +4,7 @@ const { resolve } = require('node:path');
 const { test } = require('node:test');
 
 const {
+  AvitoXmlFeedParser,
   CianXmlFeedParser,
   YandexRealtyFeedParser,
   createFeedSourceAnalysis,
@@ -315,6 +316,117 @@ test('CianXmlFeedParser normalizes Etalon-style project, house, rooms and media 
   assert.deepEqual(analysis.objects[0].buildingNames, ['Корпус 8', 'Корпус 9']);
   assert.deepEqual(analysis.objects[0].filterJson, {
     projectNames: ['Шагал'],
+  });
+});
+
+test('AvitoXmlFeedParser normalizes residential units, studio rooms and media', () => {
+  const parser = new AvitoXmlFeedParser();
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
+    <Ads target="Avito.ru" formatVersion="3">
+      <Ad>
+        <Id>000080284</Id>
+        <Status>Квартира</Status>
+        <Address>Челобитьево, корпус 12.1</Address>
+        <Price>6520000</Price>
+        <Category>Квартиры</Category>
+        <MarketType>Новостройка</MarketType>
+        <NewDevelopmentId>8605163</NewDevelopmentId>
+        <Square>24.7</Square>
+        <LivingSpace>10.4</LivingSpace>
+        <KitchenSpace>5.4</KitchenSpace>
+        <Rooms>Студия</Rooms>
+        <Floor>2</Floor>
+        <Decoration>Без отделки</Decoration>
+        <CeilingHeight>2.82</CeilingHeight>
+        <Images>
+          <Image url="https://feeds.example.test/plan.jpg"/>
+        </Images>
+      </Ad>
+    </Ads>`;
+
+  const result = parser.parse(xml);
+  const unit = result.units[0];
+
+  assert.deepEqual(result.warnings, []);
+  assert.equal(unit.externalId, '000080284');
+  assert.equal(unit.type, 'RESIDENTIAL');
+  assert.equal(unit.status, 'AVAILABLE');
+  assert.equal(unit.title, 'Челобитьево, корпус 12.1, Квартиры, 000080284');
+  assert.equal(unit.address, 'Челобитьево, корпус 12.1');
+  assert.equal(unit.building, 'корпус 12.1');
+  assert.equal(unit.floor, 2);
+  assert.equal(unit.rooms, 0);
+  assert.equal(unit.price, '6520000.00');
+  assert.equal(unit.currency, 'RUR');
+  assert.equal(unit.area, '24.70');
+  assert.equal(unit.pricePerMeter, '263967.61');
+  assert.deepEqual(unit.media, [
+    {
+      sourceUrl: 'https://feeds.example.test/plan.jpg',
+      sortOrder: 0,
+      label: 'photo',
+    },
+  ]);
+  assert.equal(unit.residentialDetails.layoutType, 'Студия');
+  assert.equal(unit.residentialDetails.livingArea, '10.40');
+  assert.equal(unit.residentialDetails.kitchenArea, '5.40');
+  assert.equal(unit.residentialDetails.detailsJson.avitoDevelopmentId, '8605163');
+  assert.equal(unit.residentialDetails.detailsJson.ceilingHeight, '2.82');
+  assert.equal(unit.commercialDetails, null);
+});
+
+test('createFeedSourceAnalysis summarizes Avito development groups', () => {
+  const parser = new AvitoXmlFeedParser();
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
+    <Ads target="Avito.ru" formatVersion="3">
+      <Ad>
+        <Id>flat-1</Id>
+        <Address>Челобитьево, корпус 12.1</Address>
+        <Price>6520000</Price>
+        <Category>Квартиры</Category>
+        <NewDevelopmentId>8605163</NewDevelopmentId>
+        <Square>24.7</Square>
+        <Rooms>Студия</Rooms>
+        <Floor>2</Floor>
+      </Ad>
+      <Ad>
+        <Id>flat-2</Id>
+        <Address>Челобитьево, корпус 11.1</Address>
+        <Price>7000000</Price>
+        <Category>Квартиры</Category>
+        <NewDevelopmentId>8605163</NewDevelopmentId>
+        <Square>30</Square>
+        <Rooms>1</Rooms>
+        <Floor>3</Floor>
+      </Ad>
+      <Ad>
+        <Id>flat-3</Id>
+        <Address>Москва, другой корпус</Address>
+        <Price>9000000</Price>
+        <Category>Квартиры</Category>
+        <NewDevelopmentId>1234567</NewDevelopmentId>
+        <Square>45</Square>
+        <Rooms>2</Rooms>
+        <Floor>5</Floor>
+      </Ad>
+    </Ads>`;
+  const parsed = parser.parse(xml);
+
+  const analysis = createFeedSourceAnalysis('AVITO_XML', parsed);
+
+  assert.equal(analysis.format, 'AVITO_XML');
+  assert.equal(analysis.unitsCount, 3);
+  assert.equal(analysis.objects.length, 2);
+  assert.deepEqual(
+    analysis.objects.map((object) => [object.title, object.unitsCount]),
+    [
+      ['Avito ЖК 8605163', 2],
+      ['Avito ЖК 1234567', 1],
+    ],
+  );
+  assert.deepEqual(analysis.objects[0].avitoDevelopmentIds, ['8605163']);
+  assert.deepEqual(analysis.objects[0].filterJson, {
+    avitoDevelopmentIds: ['8605163'],
   });
 });
 

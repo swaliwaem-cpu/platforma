@@ -104,6 +104,7 @@ const emptySourceForm: SourceFormState = {
 const feedFormatLabels: Record<FeedFormat, string> = {
   YANDEX_REALTY: 'Yandex Realty',
   CIAN_XML: 'Cian XML',
+  AVITO_XML: 'Avito XML',
 };
 
 const feedUnitTypeLabels: Record<FeedUnitType, string> = {
@@ -889,6 +890,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
   "buildingNames": ["Нагатино Ай-Лэнд"],
   "yandexBuildingIds": ["2133018"],
   "yandexHouseIds": ["2923598"],
+  "avitoDevelopmentIds": ["8605163"],
   "addressIncludes": ["пр-кт Андропова"]
 }`}
                           rows={7}
@@ -901,7 +903,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                       </label>
                       <div className="feed-source-filter-json-footer">
                         <span className="feed-source-file-current">
-                          buildingNames, yandexBuildingIds, yandexHouseIds, addressIncludes
+                          buildingNames, yandexBuildingIds, yandexHouseIds, avitoDevelopmentIds, addressIncludes
                         </span>
                         <AdminButton
                           tone="text"
@@ -1845,6 +1847,7 @@ function createFeedAnalysisObjectKey(feedObject: FeedSourceAnalysisObject) {
     feedObject.buildingNames.join('|'),
     feedObject.yandexBuildingIds.join('|'),
     feedObject.yandexHouseIds.join('|'),
+    feedObject.avitoDevelopmentIds.join('|'),
     feedObject.addresses.join('|'),
   ].join(':');
 
@@ -1869,6 +1872,7 @@ function formatFeedAnalysisObjectMeta(feedObject: FeedSourceAnalysisObject) {
     feedObject.buildingNames.length > 0 ? `buildingNames: ${feedObject.buildingNames.join(', ')}` : null,
     feedObject.yandexBuildingIds.length > 0 ? `buildingIds: ${feedObject.yandexBuildingIds.join(', ')}` : null,
     feedObject.yandexHouseIds.length > 0 ? `houseIds: ${feedObject.yandexHouseIds.join(', ')}` : null,
+    feedObject.avitoDevelopmentIds.length > 0 ? `developmentIds: ${feedObject.avitoDevelopmentIds.join(', ')}` : null,
     feedObject.addresses.length > 0 ? `addresses: ${feedObject.addresses.join(' / ')}` : null,
   ].filter((part): part is string => part !== null);
 
@@ -1881,6 +1885,7 @@ function shouldUseFeedAnalysisExternalIds(feedObject: FeedSourceAnalysisObject) 
     feedObject.buildingNames.length === 0 &&
     feedObject.yandexBuildingIds.length === 0 &&
     feedObject.yandexHouseIds.length === 0 &&
+    feedObject.avitoDevelopmentIds.length === 0 &&
     feedObject.addresses.length === 0
   );
 }

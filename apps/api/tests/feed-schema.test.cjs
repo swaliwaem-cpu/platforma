@@ -17,6 +17,10 @@ const feedSourceMappingsMigrationPath = path.join(
   rootDir,
   'apps/api/prisma/migrations/20260526210000_add_feed_source_mappings/migration.sql',
 );
+const avitoFeedFormatMigrationPath = path.join(
+  rootDir,
+  'apps/api/prisma/migrations/20260527000000_add_avito_feed_format/migration.sql',
+);
 
 function readProjectFile(filePath) {
   return fs.readFileSync(filePath, 'utf8');
@@ -25,7 +29,7 @@ function readProjectFile(filePath) {
 test('Prisma schema defines feed enums', () => {
   const schema = readProjectFile(schemaPath);
 
-  assert.match(schema, /enum FeedFormat \{[\s\S]*YANDEX_REALTY\s+@map\("yandex_realty"\)[\s\S]*CIAN_XML\s+@map\("cian_xml"\)[\s\S]*@@map\("feed_format"\)[\s\S]*\}/);
+  assert.match(schema, /enum FeedFormat \{[\s\S]*YANDEX_REALTY\s+@map\("yandex_realty"\)[\s\S]*CIAN_XML\s+@map\("cian_xml"\)[\s\S]*AVITO_XML\s+@map\("avito_xml"\)[\s\S]*@@map\("feed_format"\)[\s\S]*\}/);
   assert.match(schema, /enum FeedSourceKind \{[\s\S]*URL\s+@map\("url"\)[\s\S]*FILE\s+@map\("file"\)[\s\S]*@@map\("feed_source_kind"\)[\s\S]*\}/);
   assert.match(schema, /enum FeedUnitType \{[\s\S]*RESIDENTIAL\s+@map\("residential"\)[\s\S]*COMMERCIAL\s+@map\("commercial"\)[\s\S]*@@map\("feed_unit_type"\)[\s\S]*\}/);
   assert.match(schema, /enum FeedUnitStatus \{[\s\S]*AVAILABLE\s+@map\("available"\)[\s\S]*BOOKED\s+@map\("booked"\)[\s\S]*RESERVED\s+@map\("reserved"\)[\s\S]*SOLD\s+@map\("sold"\)[\s\S]*ARCHIVED\s+@map\("archived"\)[\s\S]*UNKNOWN\s+@map\("unknown"\)[\s\S]*@@map\("feed_unit_status"\)[\s\S]*\}/);
@@ -156,4 +160,12 @@ test('feed source mappings migration makes source object optional and creates ma
   assert.match(migration, /CREATE INDEX "feed_source_mappings_source_id_is_active_idx" ON "feed_source_mappings"\("source_id", "is_active"\)/);
   assert.match(migration, /FOREIGN KEY \("source_id"\) REFERENCES "feed_sources"\("id"\) ON DELETE CASCADE ON UPDATE CASCADE/);
   assert.match(migration, /FOREIGN KEY \("object_id"\) REFERENCES "real_estate_objects"\("id"\) ON DELETE CASCADE ON UPDATE CASCADE/);
+});
+
+test('Avito feed format migration adds avito_xml enum value', () => {
+  assert.equal(fs.existsSync(avitoFeedFormatMigrationPath), true);
+
+  const migration = readProjectFile(avitoFeedFormatMigrationPath);
+
+  assert.match(migration, /ALTER TYPE "feed_format" ADD VALUE 'avito_xml'/);
 });

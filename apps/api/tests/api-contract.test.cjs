@@ -293,7 +293,7 @@ test('FeedsModule imports AuthModule for guarded feed routes', () => {
 test('shared package exports feed API contracts', () => {
   const sharedTypes = readProjectFile(sharedTypesPath);
 
-  assert.match(sharedTypes, /export type FeedFormat = 'YANDEX_REALTY' \| 'CIAN_XML';/);
+  assert.match(sharedTypes, /export type FeedFormat = 'YANDEX_REALTY' \| 'CIAN_XML' \| 'AVITO_XML';/);
   assert.match(sharedTypes, /export type FeedSourceKind = 'URL' \| 'FILE';/);
   assert.match(sharedTypes, /export type FeedUnitType = 'RESIDENTIAL' \| 'COMMERCIAL';/);
   assert.match(sharedTypes, /export type FeedUnitStatus = 'AVAILABLE' \| 'BOOKED' \| 'RESERVED' \| 'SOLD' \| 'ARCHIVED' \| 'UNKNOWN';/);
@@ -301,7 +301,7 @@ test('shared package exports feed API contracts', () => {
   assert.match(sharedTypes, /export type FeedSource = \{[\s\S]*sourceKind: FeedSourceKind;[\s\S]*url: string \| null;[\s\S]*xmlFileId: string \| null;[\s\S]*xmlFile: ObjectStoredFile \| null;[\s\S]*format: FeedFormat;[\s\S]*filterJson: JsonValue \| null;[\s\S]*developerId: string;[\s\S]*objectId: string \| null;[\s\S]*isActive: boolean;[\s\S]*lastPreviewAt: string \| null;[\s\S]*lastRunAt: string \| null;[\s\S]*lastSuccessAt: string \| null;[\s\S]*developer: ObjectDeveloper;[\s\S]*object: FeedSourceObject \| null;[\s\S]*mappings: FeedSourceMapping\[\];[\s\S]*\};/);
   assert.match(sharedTypes, /export type FeedImportRun = \{[\s\S]*sourceId: string;[\s\S]*mode: ImportMode;[\s\S]*status: ImportStatus;[\s\S]*summaryJson: JsonValue;[\s\S]*warningsJson: JsonValue;[\s\S]*errorsJson: JsonValue;[\s\S]*\};/);
   assert.match(sharedTypes, /export type FeedUnit = \{[\s\S]*externalId: string;[\s\S]*type: FeedUnitType;[\s\S]*status: FeedUnitStatus;[\s\S]*price: string \| null;[\s\S]*area: string \| null;[\s\S]*pricePerMeter: string \| null;[\s\S]*residentialDetails: FeedResidentialUnitDetails \| null;[\s\S]*commercialDetails: FeedCommercialUnitDetails \| null;[\s\S]*media: FeedMedia\[\];[\s\S]*\};/);
-  assert.match(sharedTypes, /export type FeedSourceAnalysisObject = \{[\s\S]*projectNames: string\[\];[\s\S]*externalIds: string\[\];[\s\S]*buildingNames: string\[\];[\s\S]*filterJson: Record<string, string\[\]> \| null;[\s\S]*\};/);
+  assert.match(sharedTypes, /export type FeedSourceAnalysisObject = \{[\s\S]*projectNames: string\[\];[\s\S]*externalIds: string\[\];[\s\S]*buildingNames: string\[\];[\s\S]*avitoDevelopmentIds: string\[\];[\s\S]*filterJson: Record<string, string\[\]> \| null;[\s\S]*\};/);
   assert.match(sharedTypes, /export type FeedSourceAnalysis = \{[\s\S]*developerName: string \| null;[\s\S]*unitsCount: number;[\s\S]*objects: FeedSourceAnalysisObject\[\];[\s\S]*warningsCount: number;[\s\S]*\};/);
   assert.match(sharedTypes, /export type FeedMedia = \{[\s\S]*sourceUrl: string;[\s\S]*file: ObjectStoredFile \| null;[\s\S]*sortOrder: number;[\s\S]*\};/);
 });

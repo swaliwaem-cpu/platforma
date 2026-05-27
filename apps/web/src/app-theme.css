@@ -417,6 +417,12 @@ html[data-app-theme] :is(.status-pill--active, .object-status--published, .galle
   color: var(--app-theme-success);
 }
 
+html[data-app-theme] :is(.feed-format-pill--avito_xml) {
+  border-color: color-mix(in srgb, var(--app-theme-warning) 32%, var(--app-theme-border));
+  background: var(--app-theme-warning-soft);
+  color: var(--app-theme-warning);
+}
+
 html[data-app-theme] :is(.status-pill--blocked, .object-detail-action-button--disabled, .danger-button, .admin-button--danger, .admin-alert--error, .deactivation-confirm, .report-summary-item--danger, .report-issue-card--error, .feed-unit-status--sold, .object-feed-status--sold, .import-status--failed) {
   border-color: color-mix(in srgb, var(--app-theme-danger) 32%, var(--app-theme-border));
   background: var(--app-theme-danger-soft);

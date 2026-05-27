@@ -10,7 +10,7 @@ export type ObjectImageSection = 'ARCHITECTURE' | 'INTERIORS' | 'FILLING';
 export type ImportMode = 'PREVIEW' | 'RUN';
 export type ImportStatus = 'PENDING' | 'SUCCESS' | 'PARTIAL' | 'FAILED';
 export type CatalogQuickLinkType = 'DEVELOPER' | 'KRT' | 'SALES_START';
-export type FeedFormat = 'YANDEX_REALTY' | 'CIAN_XML';
+export type FeedFormat = 'YANDEX_REALTY' | 'CIAN_XML' | 'AVITO_XML';
 export type FeedSourceKind = 'URL' | 'FILE';
 export type FeedUnitType = 'RESIDENTIAL' | 'COMMERCIAL';
 export type FeedUnitStatus = 'AVAILABLE' | 'BOOKED' | 'RESERVED' | 'SOLD' | 'ARCHIVED' | 'UNKNOWN';
@@ -390,6 +390,7 @@ export type FeedSourceAnalysisObject = {
   buildingNames: string[];
   yandexBuildingIds: string[];
   yandexHouseIds: string[];
+  avitoDevelopmentIds: string[];
   addresses: string[];
   filterJson: Record<string, string[]> | null;
 };

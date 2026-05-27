@@ -81,6 +81,14 @@ test('feeds admin page includes CIAN project mapping fields in source analysis',
   assert.doesNotMatch(source, /<dt>Warnings<\/dt>/);
 });
 
+test('feeds admin page includes Avito feed format and development id mapping fields', () => {
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.match(source, /AVITO_XML:\s*'Avito XML'/);
+  assert.match(source, /avitoDevelopmentIds/);
+  assert.match(source, /developmentIds:/);
+});
+
 test('feeds admin page clears fallback object when analysis mappings exist', () => {
   const source = readFileSync(sourcePath, 'utf8');
 

@@ -6758,6 +6758,11 @@ tr.user-row--deactivated .text-button {
   color: #19733d;
 }
 
+.feed-format-pill--avito_xml {
+  background: #fff6db;
+  color: #7b5b18;
+}
+
 .feed-source-status--active,
 .feed-unit-status--available,
 .feed-unit-status--booked,
