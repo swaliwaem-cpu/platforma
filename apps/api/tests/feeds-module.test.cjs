@@ -258,6 +258,14 @@ test('FeedsService passes source id to feed-import CLI without an extra argv sep
   assert.doesNotMatch(source, /mode,\s*'--',\s*'--source'/);
 });
 
+test('FeedsService validates feed source kind literals without relying on generated Prisma enum values', () => {
+  const source = readFileSync(feedsServiceSourcePath, 'utf8');
+
+  assert.match(source, /const supportedFeedSourceKinds = \['URL', 'FILE', 'INDEX_URL'\] as const;/);
+  assert.match(source, /supportedFeedSourceKinds\.includes\(sourceKind as SupportedFeedSourceKind\)/);
+  assert.doesNotMatch(source, /Object\.values\(FeedSourceKind\)\.includes\(sourceKind as FeedSourceKind\)/);
+});
+
 test('FeedsService analyzes a feed source without developer and object mapping', async () => {
   const calls = [];
   const service = new FeedsService({});

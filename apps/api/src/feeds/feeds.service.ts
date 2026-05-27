@@ -25,10 +25,12 @@ import { createSearchContainsFilters } from '../search/search-filters';
 const execFileAsync = promisify(execFile);
 const feedRunStartWaitMs = 10_000;
 const feedRunStartPollMs = 200;
+const supportedFeedSourceKinds = ['URL', 'FILE', 'INDEX_URL'] as const;
 
 type FeedImportCommand = 'preview' | 'run';
 type AnalyzeFeedFormat = FeedFormat | 'AUTO';
 type BufferedUploadedFile = UploadedFile & { buffer: Buffer };
+type SupportedFeedSourceKind = (typeof supportedFeedSourceKinds)[number];
 
 type ListFeedSourcesQuery = {
   page?: string;
@@ -1132,7 +1134,7 @@ export class FeedsService {
 
     const sourceKind = value.trim().toUpperCase();
 
-    if (!Object.values(FeedSourceKind).includes(sourceKind as FeedSourceKind)) {
+    if (!supportedFeedSourceKinds.includes(sourceKind as SupportedFeedSourceKind)) {
       throw new BadRequestException('Feed source kind is invalid');
     }
 
@@ -1140,7 +1142,7 @@ export class FeedsService {
   }
 
   private isUrlBackedSourceKind(sourceKind: FeedSourceKind) {
-    return sourceKind === FeedSourceKind.URL || sourceKind === FeedSourceKind.INDEX_URL;
+    return sourceKind === 'URL' || sourceKind === 'INDEX_URL';
   }
 
   private parseImportMode(value: string) {
