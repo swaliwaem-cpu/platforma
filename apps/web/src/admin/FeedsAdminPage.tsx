@@ -579,10 +579,15 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
       });
 
       setSourceAnalysis(data.analysis);
-      setForm((currentForm) => ({
-        ...currentForm,
-        mappings: createSourceMappingsFromAnalysis(data.analysis, currentForm.mappings),
-      }));
+      setForm((currentForm) => {
+        const mappings = createSourceMappingsFromAnalysis(data.analysis, currentForm.mappings);
+
+        return {
+          ...currentForm,
+          objectId: mappings.length > 0 ? '' : currentForm.objectId,
+          mappings,
+        };
+      });
       setNotice(`Фид разобран: ${data.analysis.objects.length} объектов, ${data.analysis.unitsCount} лотов`);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Не удалось разобрать фид');
@@ -1719,12 +1724,13 @@ function validateSourceAnalysisForm(form: SourceFormState) {
 function createSourceRequestBody(form: SourceFormState) {
   const formData = new FormData();
   const selectedMappings = getSelectedSourceMappings(form);
+  const objectId = selectedMappings.length > 0 ? '' : form.objectId;
 
   formData.append('sourceKind', form.sourceKind);
   formData.append('format', form.format);
   formData.append('filterJson', form.filterJson.trim());
   formData.append('developerId', form.developerId);
-  formData.append('objectId', form.objectId);
+  formData.append('objectId', objectId);
   formData.append('mappings', JSON.stringify(selectedMappings));
   formData.append('isActive', String(form.isActive));
 

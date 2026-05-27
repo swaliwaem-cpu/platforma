@@ -494,7 +494,7 @@ test('FeedsService creates feed sources with multi-object mappings and no fallba
     url: 'https://feeds.example.test/yandex.xml',
     format: 'YANDEX_REALTY',
     developerId,
-    objectId: '',
+    objectId,
     mappings: JSON.stringify([
       {
         sourceKey: 'nagatino',
@@ -601,6 +601,128 @@ test('FeedsService creates file feed sources with uploaded XML file', async () =
   assert.equal(created.source.url, null);
   assert.equal(created.source.xmlFile.id, xmlFileId);
   assert.equal(created.source.xmlFile.originalName, 'developer-feed.xml');
+});
+
+test('FeedsService switches file feed sources to URL without violating source payload constraint', async () => {
+  const calls = [];
+  const xmlFile = fileRecord({
+    id: xmlFileId,
+    key: 'uploads/2026/05/old-feed.xml',
+    originalName: 'old-feed.xml',
+    mimeType: 'application/xml',
+  });
+  const prisma = {
+    developer: {
+      count: async () => 1,
+    },
+    realEstateObject: {
+      count: async () => 1,
+    },
+    feedSource: {
+      findUnique: async (args) => {
+        calls.push(['feedSource.findUnique', args]);
+        return sourceRecord({
+          sourceKind: 'FILE',
+          url: null,
+          xmlFileId,
+          xmlFile,
+        });
+      },
+      update: async (args) => {
+        calls.push(['feedSource.update', args]);
+
+        if (args.data.sourceKind === 'URL' && args.data.url && args.data.xmlFileId !== null) {
+          throw new Error('feed_sources_source_payload_check');
+        }
+
+        return sourceRecord({
+          sourceKind: args.data.sourceKind,
+          url: args.data.url,
+          xmlFileId: args.data.xmlFileId,
+          xmlFile: null,
+        });
+      },
+    },
+  };
+  const service = new FeedsService(prisma);
+
+  const updated = await service.updateSource(sourceId, {
+    sourceKind: 'URL',
+    url: 'https://newfeed.6feeds.ru/feeds/static/muza_mangazey/yandex',
+    format: 'YANDEX_REALTY',
+    developerId,
+    objectId,
+    mappings: '[]',
+    isActive: true,
+  });
+  const updateCall = calls.find(([name]) => name === 'feedSource.update')[1];
+
+  assert.equal(updateCall.data.sourceKind, 'URL');
+  assert.equal(updateCall.data.url, 'https://newfeed.6feeds.ru/feeds/static/muza_mangazey/yandex');
+  assert.equal(updateCall.data.xmlFileId, null);
+  assert.equal('xmlFile' in updateCall.data, false);
+  assert.equal(updated.source.sourceKind, 'URL');
+  assert.equal(updated.source.xmlFileId, null);
+});
+
+test('FeedsService clears fallback object when source mappings are provided', async () => {
+  const calls = [];
+  const prisma = {
+    developer: {
+      count: async () => 1,
+    },
+    realEstateObject: {
+      count: async () => 1,
+    },
+    feedSource: {
+      findUnique: async (args) => {
+        calls.push(['feedSource.findUnique', args]);
+        return sourceRecord({
+          objectId,
+          object: objectRecord({ id: objectId, title: 'ЖК АУРА' }),
+          mappings: [],
+        });
+      },
+      update: async (args) => {
+        calls.push(['feedSource.update', args]);
+        return sourceRecord({
+          objectId: args.data.objectId,
+          object: null,
+          mappings: [
+            sourceMappingRecord({
+              objectId: secondObjectId,
+              object: objectRecord({ id: secondObjectId, title: 'Жилой комплекс Муза' }),
+            }),
+          ],
+        });
+      },
+    },
+  };
+  const service = new FeedsService(prisma);
+
+  await service.updateSource(sourceId, {
+    sourceKind: 'URL',
+    url: 'https://newfeed.6feeds.ru/feeds/static/muza_mangazey/yandex',
+    format: 'YANDEX_REALTY',
+    developerId,
+    objectId,
+    mappings: JSON.stringify([
+      {
+        sourceKey: 'muza',
+        sourceTitle: 'МУЗА',
+        objectId: secondObjectId,
+        filterJson: {
+          projectNames: ['МУЗА'],
+        },
+        isActive: true,
+      },
+    ]),
+    isActive: true,
+  });
+  const updateCall = calls.find(([name]) => name === 'feedSource.update')[1];
+
+  assert.equal(updateCall.data.objectId, null);
+  assert.equal(updateCall.data.mappings.create[0].objectId, secondObjectId);
 });
 
 test('FeedsService rejects file source creation without XML upload', async () => {

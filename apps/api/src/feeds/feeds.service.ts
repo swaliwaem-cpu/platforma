@@ -209,7 +209,8 @@ export class FeedsService {
     const filterJson = this.parseFeedSourceFilterJson(body.filterJson);
     const developerId = this.parseUuid(this.parseRequiredString(body.developerId, 'Developer is required'), 'Developer is invalid');
     const mappings = this.parseFeedSourceMappings(body.mappings);
-    const objectId = this.parseOptionalUuid(body.objectId, 'Object is invalid');
+    const requestedObjectId = this.parseOptionalUuid(body.objectId, 'Object is invalid');
+    const objectId = mappings.length > 0 ? null : requestedObjectId;
     const isActive = this.parseBoolean(body.isActive, true, 'Feed source active flag is invalid');
 
     await this.ensureDeveloperExists(developerId);
@@ -269,7 +270,7 @@ export class FeedsService {
   ) {
     const sourceId = this.parseUuid(id, 'Feed source is invalid');
     const source = await this.findExistingSource(sourceId);
-    const data: Prisma.FeedSourceUpdateInput = {};
+    const data: Prisma.FeedSourceUncheckedUpdateInput = {};
     let hasChanges = false;
     const sourceKind = this.parseSourceKind(
       body.sourceKind,
@@ -292,9 +293,7 @@ export class FeedsService {
       }
 
       if (source.xmlFileId) {
-        data.xmlFile = {
-          disconnect: true,
-        };
+        data.xmlFileId = null;
         hasChanges = true;
       }
     } else {
@@ -319,11 +318,7 @@ export class FeedsService {
       }
 
       if (uploadedXmlFile) {
-        data.xmlFile = {
-          connect: {
-            id: uploadedXmlFile.file.id,
-          },
-        };
+        data.xmlFileId = uploadedXmlFile.file.id;
         hasChanges = true;
       }
     }
@@ -352,42 +347,28 @@ export class FeedsService {
       await this.ensureDeveloperExists(developerId);
 
       if (developerId !== source.developerId) {
-        data.developer = {
-          connect: {
-            id: developerId,
-          },
-        };
+        data.developerId = developerId;
         hasChanges = true;
       }
     }
 
-    let nextObjectId = source.objectId;
+    const nextMappings = mappings ?? source.mappings;
+    const requestedObjectId = 'objectId' in body
+      ? this.parseOptionalUuid(body.objectId, 'Object is invalid')
+      : source.objectId;
+    const nextObjectId = nextMappings.length > 0 ? null : requestedObjectId;
 
-    if ('objectId' in body) {
-      const objectId = this.parseOptionalUuid(body.objectId, 'Object is invalid');
-
-      if (objectId !== source.objectId) {
-        data.object = objectId
-          ? {
-              connect: {
-                id: objectId,
-              },
-            }
-          : {
-              disconnect: true,
-            };
-        hasChanges = true;
-      }
-
-      nextObjectId = objectId;
+    if (nextObjectId !== source.objectId) {
+      data.objectId = nextObjectId;
+      hasChanges = true;
     }
 
-    await this.ensureSourceHasObjectOrMappings(nextObjectId, mappings ?? source.mappings);
+    await this.ensureSourceHasObjectOrMappings(nextObjectId, nextMappings);
 
     if (mappings) {
       data.mappings = {
         deleteMany: {},
-        create: mappings.map((mapping) => this.createMappingWriteInput(mapping)),
+        create: mappings.map((mapping) => this.createUncheckedMappingWriteInput(mapping)),
       };
       hasChanges = true;
     }
@@ -1022,6 +1003,16 @@ export class FeedsService {
           id: mapping.objectId,
         },
       },
+    };
+  }
+
+  private createUncheckedMappingWriteInput(mapping: ParsedFeedSourceMappingInput) {
+    return {
+      sourceKey: mapping.sourceKey,
+      sourceTitle: mapping.sourceTitle,
+      filterJson: mapping.filterJson as Prisma.InputJsonObject,
+      isActive: mapping.isActive,
+      objectId: mapping.objectId,
     };
   }
 

@@ -81,6 +81,14 @@ test('feeds admin page includes CIAN project mapping fields in source analysis',
   assert.doesNotMatch(source, /<dt>Warnings<\/dt>/);
 });
 
+test('feeds admin page clears fallback object when analysis mappings exist', () => {
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.match(source, /objectId: mappings\.length > 0 \? '' : currentForm\.objectId/);
+  assert.match(source, /const objectId = selectedMappings\.length > 0 \? '' : form\.objectId/);
+  assert.match(source, /formData\.append\('objectId', objectId\)/);
+});
+
 test('feeds admin page keeps raw Yandex filter hidden until it has data', () => {
   const source = readFileSync(sourcePath, 'utf8');
 
