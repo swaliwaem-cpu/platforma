@@ -57,6 +57,7 @@ test('catalog result cards show matched lot count only for lot-filtered results'
   assert.match(source, /matchedFeedUnitsCount/);
   assert.match(source, /function hasActiveCatalogLotFilters\(filters: CatalogFilters\)/);
   assert.match(source, /function getCatalogMatchedLotsLabel\(object: RealEstateObjectSummary, filters: CatalogFilters\)/);
+  assert.match(source, /typeof object\.matchedFeedUnitsCount !== 'number'/);
   assert.match(source, /Найдено лотов: \$\{formatNumber\(object\.matchedFeedUnitsCount\)\}/);
   assert.match(source, /className="catalog-matched-lots-badge"/);
   assert.match(source, /const matchedLotsLabel = getCatalogMatchedLotsLabel\(object, filters\);/);

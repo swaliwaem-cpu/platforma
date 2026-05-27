@@ -706,6 +706,76 @@ test('ObjectsService.list filters objects by matching lot price rooms and floor'
   assert.equal(result.items[0].matchedFeedUnitsCount, 3);
 });
 
+test('ObjectsService.list treats Aura separate-room layouts as studios in lot filters', async () => {
+  const calls = {};
+  const prisma = {
+    realEstateObject: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [objectRecord()];
+      },
+      count: async (args) => {
+        calls.count = args;
+        return 1;
+      },
+    },
+    feedUnit: {
+      groupBy: async (args) => {
+        calls.feedUnitGroupBy = args;
+
+        return [];
+      },
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await service.list({ lotRooms: '0' });
+
+  const lotWhere = calls.findMany.where.AND.find((filter) => filter.feedUnits?.some).feedUnits.some;
+
+  assert.deepEqual(lotWhere, {
+    OR: [
+      {
+        rooms: 0,
+      },
+      {
+        rooms: null,
+        residentialDetails: {
+          is: {
+            layoutType: {
+              equals: 'раздельные',
+              mode: 'insensitive',
+            },
+          },
+        },
+        object: {
+          OR: [
+            {
+              title: {
+                contains: 'аура',
+                mode: 'insensitive',
+              },
+            },
+            {
+              developer: {
+                is: {
+                  name: {
+                    contains: 'мангазея',
+                    mode: 'insensitive',
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+    ],
+  });
+  assert.deepEqual(calls.feedUnitGroupBy.where.OR, lotWhere.OR);
+  assert.deepEqual(calls.count.where, calls.findMany.where);
+});
+
 test('ObjectsService.list ignores dots in object catalog search', async () => {
   const calls = {};
   const prisma = {
@@ -1117,6 +1187,39 @@ test('MapService.listObjects filters objects by matching lot price rooms and flo
   assert.deepEqual(calls.count.where, calls.findMany.where);
 });
 
+test('MapService.listObjects treats Aura separate-room layouts as studios in lot filters', async () => {
+  const calls = {};
+  const mapObject = objectRecord({
+    latitude: decimal('55.751244'),
+    longitude: decimal('37.618423'),
+  });
+  const prisma = {
+    realEstateObject: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [mapObject];
+      },
+      count: async (args) => {
+        calls.count = args;
+        return 1;
+      },
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new MapService(prisma);
+
+  await service.listObjects({ lotRooms: '0' });
+
+  const lotWhere = calls.findMany.where.AND.find((filter) => filter.feedUnits?.some).feedUnits.some;
+
+  assert.equal(lotWhere.OR.some((filter) => filter.rooms === 0), true);
+  assert.equal(
+    lotWhere.OR.some((filter) => filter.residentialDetails?.is?.layoutType?.equals === 'раздельные'),
+    true,
+  );
+  assert.deepEqual(calls.count.where, calls.findMany.where);
+});
+
 test('ObjectsService.listFeedUnits returns feed units for one object with filters and media', async () => {
   const calls = {};
   const objectId = '11111111-1111-4111-8111-111111111111';
@@ -1439,6 +1542,75 @@ test('ObjectsService.listFeedUnits filters by numeric ranges rooms floor and com
   });
   assert.equal(filters.some((filter) => filter.completionYear === 2028), true);
   assert.equal(filters.some((filter) => filter.completionQuarter === 4), true);
+  assert.deepEqual(calls.count.where, calls.findMany.where);
+});
+
+test('ObjectsService.listFeedUnits treats Aura separate-room layouts as studios', async () => {
+  const calls = {};
+  const objectId = '11111111-1111-4111-8111-111111111111';
+  const prisma = {
+    realEstateObject: {
+      count: async (args) => {
+        calls.objectCount = args;
+        return args.where.id === objectId && args.where.deletedAt === null ? 1 : 0;
+      },
+    },
+    feedUnit: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [];
+      },
+      count: async (args) => {
+        calls.count = args;
+        return 0;
+      },
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await service.listFeedUnits(objectId, { rooms: '0' });
+
+  const roomsFilter = calls.findMany.where.AND.find((filter) => filter.OR?.some((item) => item.rooms === 0));
+
+  assert.deepEqual(roomsFilter, {
+    OR: [
+      {
+        rooms: 0,
+      },
+      {
+        rooms: null,
+        residentialDetails: {
+          is: {
+            layoutType: {
+              equals: 'раздельные',
+              mode: 'insensitive',
+            },
+          },
+        },
+        object: {
+          OR: [
+            {
+              title: {
+                contains: 'аура',
+                mode: 'insensitive',
+              },
+            },
+            {
+              developer: {
+                is: {
+                  name: {
+                    contains: 'мангазея',
+                    mode: 'insensitive',
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+    ],
+  });
   assert.deepEqual(calls.count.where, calls.findMany.where);
 });
 

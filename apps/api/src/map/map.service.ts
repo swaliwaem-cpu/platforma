@@ -377,7 +377,7 @@ export class MapService {
             },
           }
         : {}),
-      ...(rooms !== undefined ? { rooms } : {}),
+      ...(rooms !== undefined ? this.createFeedUnitRoomsFilter(rooms) : {}),
       ...(floorMin !== undefined || floorMax !== undefined
         ? {
             floor: {
@@ -403,6 +403,51 @@ export class MapService {
     }
 
     return this.parseInteger(value, message, min, max);
+  }
+
+  private createFeedUnitRoomsFilter(rooms: number): Prisma.FeedUnitWhereInput {
+    if (rooms !== 0) {
+      return { rooms };
+    }
+
+    return {
+      OR: [
+        {
+          rooms: 0,
+        },
+        {
+          rooms: null,
+          residentialDetails: {
+            is: {
+              layoutType: {
+                equals: 'раздельные',
+                mode: 'insensitive',
+              },
+            },
+          },
+          object: {
+            OR: [
+              {
+                title: {
+                  contains: 'аура',
+                  mode: 'insensitive',
+                },
+              },
+              {
+                developer: {
+                  is: {
+                    name: {
+                      contains: 'мангазея',
+                      mode: 'insensitive',
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      ],
+    };
   }
 
   private parseUuid(value: string, message: string) {

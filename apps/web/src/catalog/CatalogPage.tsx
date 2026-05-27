@@ -1659,7 +1659,11 @@ function hasActiveCatalogLotFilters(filters: CatalogFilters) {
 }
 
 function getCatalogMatchedLotsLabel(object: RealEstateObjectSummary, filters: CatalogFilters) {
-  if (!hasActiveCatalogLotFilters(filters) || object.matchedFeedUnitsCount === null) {
+  if (
+    !hasActiveCatalogLotFilters(filters) ||
+    typeof object.matchedFeedUnitsCount !== 'number' ||
+    !Number.isFinite(object.matchedFeedUnitsCount)
+  ) {
     return null;
   }
 

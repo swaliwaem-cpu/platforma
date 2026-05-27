@@ -83,6 +83,8 @@ test('object detail feed units block renders expected columns and media thumbnai
   assert.doesNotMatch(source, /<span>ID \{unit\.externalId\}<\/span>/);
   assert.doesNotMatch(source, /<strong>\{unit\.title \|\| unit\.externalId\}<\/strong>/);
   assert.match(source, /function getFeedUnitTitle\(unit: FeedUnit\)/);
+  assert.match(source, /function isSeparateRoomsStudio\(unit: FeedUnit\)/);
+  assert.match(source, /unit\.rooms === 0 \|\| isSeparateRoomsStudio\(unit\)[\s\S]*?return 'Студия';/);
   assert.match(source, /className="object-feed-media-button"/);
   assert.match(source, /onClick=\{\(event\) => \{[\s\S]*?event\.stopPropagation\(\);[\s\S]*?onOpenMedia\(unit\);[\s\S]*?\}\}/);
   assert.match(source, /<SecureImage[\s\S]*?className="object-feed-media-image"[\s\S]*?fileId=\{primaryMedia\.file\.id\}[\s\S]*?variant="thumbnail"/);

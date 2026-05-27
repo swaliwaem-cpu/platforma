@@ -624,7 +624,7 @@ export class ObjectsService {
     }
 
     if (rooms !== undefined) {
-      filters.push({ rooms });
+      filters.push(this.createFeedUnitRoomsFilter(rooms));
     }
 
     if (floorMin !== undefined || floorMax !== undefined) {
@@ -2205,7 +2205,7 @@ export class ObjectsService {
             },
           }
         : {}),
-      ...(rooms !== undefined ? { rooms } : {}),
+      ...(rooms !== undefined ? this.createFeedUnitRoomsFilter(rooms) : {}),
       ...(floorMin !== undefined || floorMax !== undefined
         ? {
             floor: {
@@ -2241,6 +2241,55 @@ export class ObjectsService {
     });
 
     return new Map(rows.map((row) => [row.objectId, row._count._all]));
+  }
+
+  private createFeedUnitRoomsFilter(rooms: number): Prisma.FeedUnitWhereInput {
+    if (rooms !== 0) {
+      return { rooms };
+    }
+
+    return {
+      OR: [
+        {
+          rooms: 0,
+        },
+        this.createAuraSeparateRoomsStudioFilter(),
+      ],
+    };
+  }
+
+  private createAuraSeparateRoomsStudioFilter(): Prisma.FeedUnitWhereInput {
+    return {
+      rooms: null,
+      residentialDetails: {
+        is: {
+          layoutType: {
+            equals: 'раздельные',
+            mode: 'insensitive',
+          },
+        },
+      },
+      object: {
+        OR: [
+          {
+            title: {
+              contains: 'аура',
+              mode: 'insensitive',
+            },
+          },
+          {
+            developer: {
+              is: {
+                name: {
+                  contains: 'мангазея',
+                  mode: 'insensitive',
+                },
+              },
+            },
+          },
+        ],
+      },
+    };
   }
 
   private createFeedUnitDecimalRangeFilter(

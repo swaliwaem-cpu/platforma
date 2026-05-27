@@ -2222,7 +2222,7 @@ function getObjectLotFactRows(unit: FeedUnit) {
 
 function getUnitRoomsOrType(unit: FeedUnit) {
   if (unit.type === 'RESIDENTIAL') {
-    if (unit.rooms === 0) {
+    if (unit.rooms === 0 || isSeparateRoomsStudio(unit)) {
       return 'Студия';
     }
 
@@ -2234,6 +2234,10 @@ function getUnitRoomsOrType(unit: FeedUnit) {
   }
 
   return unit.commercialDetails?.commercialType ?? feedUnitTypeLabels.COMMERCIAL;
+}
+
+function isSeparateRoomsStudio(unit: FeedUnit) {
+  return unit.residentialDetails?.layoutType?.trim().toLocaleLowerCase('ru-RU') === 'раздельные';
 }
 
 function getFeedUnitTitle(unit: FeedUnit) {
