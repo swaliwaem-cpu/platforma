@@ -26,15 +26,10 @@ test('object detail feed units expose detailed lot filters in API request and re
   assert.match(source, /\{ value:\s*'0',\s*label:\s*'Студия'\s*\}/);
   assert.match(source, /\{ value:\s*'4',\s*label:\s*'4 спальни'\s*\}/);
   assert.match(source, /\{ value:\s*'5',\s*label:\s*'5 спален'\s*\}/);
-  assert.match(source, /const \[priceMinFilter,\s*setPriceMinFilter\] = useState\(''\);/);
-  assert.match(source, /const \[priceMaxFilter,\s*setPriceMaxFilter\] = useState\(''\);/);
   assert.match(source, /const \[pricePerMeterMinFilter,\s*setPricePerMeterMinFilter\] = useState\(''\);/);
   assert.match(source, /const \[pricePerMeterMaxFilter,\s*setPricePerMeterMaxFilter\] = useState\(''\);/);
   assert.match(source, /const \[areaMinFilter,\s*setAreaMinFilter\] = useState\(''\);/);
   assert.match(source, /const \[areaMaxFilter,\s*setAreaMaxFilter\] = useState\(''\);/);
-  assert.match(source, /const \[roomFilter,\s*setRoomFilter\] = useState\(''\);/);
-  assert.match(source, /const \[floorMinFilter,\s*setFloorMinFilter\] = useState\(''\);/);
-  assert.match(source, /const \[floorMaxFilter,\s*setFloorMaxFilter\] = useState\(''\);/);
   assert.match(source, /const \[completionYearFilter,\s*setCompletionYearFilter\] = useState\(''\);/);
   assert.match(source, /const \[completionQuarterFilter,\s*setCompletionQuarterFilter\] = useState\(''\);/);
   assert.match(source, /setOptionalParam\(params,\s*'priceMin',\s*priceMinFilter\);/);
@@ -61,6 +56,22 @@ test('object detail feed units expose detailed lot filters in API request and re
   assert.match(source, />\s*Квартал\s*</);
   assert.match(source, /setPriceMinFilter\(''\);/);
   assert.match(source, /setCompletionQuarterFilter\(''\);/);
+});
+
+test('object detail feed units initialize from catalog lot filters in URL', () => {
+  assert.match(source, /type InitialObjectFeedUnitFilters = \{/);
+  assert.match(source, /function getInitialObjectFeedUnitFiltersFromLocation\(\): InitialObjectFeedUnitFilters/);
+  assert.match(source, /params\.get\('lotPriceMin'\)/);
+  assert.match(source, /params\.get\('lotPriceMax'\)/);
+  assert.match(source, /params\.get\('lotRooms'\)/);
+  assert.match(source, /params\.get\('lotFloorMin'\)/);
+  assert.match(source, /params\.get\('lotFloorMax'\)/);
+  assert.match(source, /const initialFilters = useMemo\(\(\) => getInitialObjectFeedUnitFiltersFromLocation\(\), \[\]\);/);
+  assert.match(source, /const \[priceMinFilter,\s*setPriceMinFilter\] = useState\(initialFilters\.priceMin\);/);
+  assert.match(source, /const \[priceMaxFilter,\s*setPriceMaxFilter\] = useState\(initialFilters\.priceMax\);/);
+  assert.match(source, /const \[roomFilter,\s*setRoomFilter\] = useState\(initialFilters\.rooms\);/);
+  assert.match(source, /const \[floorMinFilter,\s*setFloorMinFilter\] = useState\(initialFilters\.floorMin\);/);
+  assert.match(source, /const \[floorMaxFilter,\s*setFloorMaxFilter\] = useState\(initialFilters\.floorMax\);/);
 });
 
 test('object detail feed units block renders expected columns and media thumbnails', () => {

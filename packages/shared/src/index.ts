@@ -219,6 +219,7 @@ export type RealEstateObjectBase = {
   feedFloorRange: string | null;
   feedUnitsCount: number | null;
   feedUnitsCountText: string | null;
+  matchedFeedUnitsCount: number | null;
   feedCompletionYear: number | null;
   feedCompletionQuarter: number | null;
   feedUpdatedAt: string | null;

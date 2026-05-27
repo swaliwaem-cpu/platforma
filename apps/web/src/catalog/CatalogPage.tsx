@@ -996,13 +996,14 @@ function CatalogListView({
               key={object.id}
               object={object}
               accessToken={accessToken}
+              filters={filters}
             />
           ))}
         </div>
       ) : (
         <div className="catalog-grid" aria-label="Объекты карточками">
           {objects.map((object) => (
-            <CatalogCard key={object.id} object={object} accessToken={accessToken} />
+            <CatalogCard key={object.id} object={object} accessToken={accessToken} filters={filters} />
           ))}
         </div>
       )}
@@ -1098,7 +1099,7 @@ function CatalogMapView({
   const [visibleBounds, setVisibleBounds] = useState<YandexMapBounds | null>(null);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [isListVisible, setIsListVisible] = useState(true);
-  const points = useMemo(() => objects.map((object) => mapObjectToPoint(object)), [objects]);
+  const points = useMemo(() => objects.map((object) => mapObjectToPoint(object, filters)), [filters, objects]);
   const visibleObjects = useMemo(
     () => (visibleBounds ? objects.filter((object) => isMapObjectInBounds(object, visibleBounds)) : objects),
     [objects, visibleBounds],
@@ -1146,6 +1147,7 @@ function CatalogMapView({
       {selectedObject ? (
         <MapObjectCard
           accessToken={accessToken}
+          filters={filters}
           object={selectedObject}
           onClose={() => setSelectedObjectId(null)}
         />
@@ -1206,10 +1208,12 @@ function CatalogMapView({
 
 function MapObjectCard({
   accessToken,
+  filters,
   object,
   onClose,
 }: {
   accessToken: string;
+  filters: CatalogFilters;
   object: MapObject;
   onClose: () => void;
 }) {
@@ -1217,7 +1221,7 @@ function MapObjectCard({
   const metroLabel = formatMetroStations(object.metroStations ?? []);
   const districtLabel = getObjectDistrictLabel(object);
   const areaLabel = getCatalogAreaRange(object) ?? 'Не указано';
-  const objectHref = `/objects/${encodeURIComponent(object.slug)}`;
+  const objectHref = buildCatalogObjectHref(object.slug, filters);
   const galleryImages = object.images.length > 0 ? object.images : object.coverImage ? [object.coverImage] : [];
   const activeImage = galleryImages[activeImageIndex] ?? galleryImages[0] ?? null;
   const hasGalleryNavigation = galleryImages.length > 1;
@@ -1323,13 +1327,16 @@ function MapObjectCard({
 
 function CatalogListItem({
   accessToken,
+  filters,
   object,
 }: {
   accessToken: string;
+  filters: CatalogFilters;
   object: RealEstateObjectSummary;
 }) {
   const coverImage = object.coverImage;
-  const objectHref = `/objects/${encodeURIComponent(object.slug)}`;
+  const objectHref = buildCatalogObjectHref(object.slug, filters);
+  const matchedLotsLabel = getCatalogMatchedLotsLabel(object, filters);
   const developerLabel = object.developer?.name ?? 'Не указан';
   const districtLabel = getObjectDistrictLabel(object);
   const metroLabel = formatListMetroStations(object.metroStations);
@@ -1383,6 +1390,7 @@ function CatalogListItem({
           Цена: {formatRequestedPriceFrom(getCatalogPriceFrom(object))} | Цена за м²:{' '}
           {formatRequestedPricePerMeterFrom(getCatalogPricePerMeterFrom(object))}
         </p>
+        {matchedLotsLabel ? <span className="catalog-matched-lots-badge">{matchedLotsLabel}</span> : null}
       </div>
 
       <div className="catalog-list-item-action">
@@ -1396,13 +1404,16 @@ function CatalogListItem({
 
 function CatalogCard({
   accessToken,
+  filters,
   object,
 }: {
   accessToken: string;
+  filters: CatalogFilters;
   object: RealEstateObjectSummary;
 }) {
   const coverImage = object.coverImage;
-  const objectHref = `/objects/${encodeURIComponent(object.slug)}`;
+  const objectHref = buildCatalogObjectHref(object.slug, filters);
+  const matchedLotsLabel = getCatalogMatchedLotsLabel(object, filters);
   const hasPresentation = Boolean(object.presentationFile);
   const hasVisibleBadges = object.status !== 'PUBLISHED' || hasPresentation;
   const districtLabel = getObjectDistrictLabel(object);
@@ -1464,6 +1475,7 @@ function CatalogCard({
             <dd>{object.developer?.name ?? 'Не указан'}</dd>
           </div>
         </dl>
+        {matchedLotsLabel ? <div className="catalog-matched-lots-badge">{matchedLotsLabel}</div> : null}
         <div className="catalog-card-actions">
           <a className="catalog-card-link" href={objectHref} rel="noopener noreferrer" target="_blank">
             Подробнее
@@ -1618,6 +1630,42 @@ function buildCatalogQuery(filters: CatalogFilters, viewMode: CatalogViewMode = 
   return query ? `?${query}` : '';
 }
 
+function buildCatalogObjectHref(slug: string, filters: CatalogFilters) {
+  return `/objects/${encodeURIComponent(slug)}${buildCatalogLotFilterQuery(filters)}`;
+}
+
+function buildCatalogLotFilterQuery(filters: CatalogFilters) {
+  const params = new URLSearchParams();
+
+  setParam(params, 'lotPriceMin', filters.lotPriceMin);
+  setParam(params, 'lotPriceMax', filters.lotPriceMax);
+  setParam(params, 'lotRooms', filters.lotRooms);
+  setParam(params, 'lotFloorMin', filters.lotFloorMin);
+  setParam(params, 'lotFloorMax', filters.lotFloorMax);
+
+  const query = params.toString();
+
+  return query ? `?${query}` : '';
+}
+
+function hasActiveCatalogLotFilters(filters: CatalogFilters) {
+  return [
+    filters.lotPriceMin,
+    filters.lotPriceMax,
+    filters.lotRooms,
+    filters.lotFloorMin,
+    filters.lotFloorMax,
+  ].some((value) => value.trim().length > 0);
+}
+
+function getCatalogMatchedLotsLabel(object: RealEstateObjectSummary, filters: CatalogFilters) {
+  if (!hasActiveCatalogLotFilters(filters) || object.matchedFeedUnitsCount === null) {
+    return null;
+  }
+
+  return `Найдено лотов: ${formatNumber(object.matchedFeedUnitsCount)}`;
+}
+
 function countActiveAdvancedFilters(filters: CatalogFilters) {
   return [
     filters.developerId,
@@ -1677,13 +1725,13 @@ function getCatalogAreaRange(object: CatalogFeedFallbackObject) {
   return object.feedAreaRange ?? object.apartmentAreaRange;
 }
 
-function mapObjectToPoint(object: MapObject): YandexMapPoint {
+function mapObjectToPoint(object: MapObject, filters: CatalogFilters): YandexMapPoint {
   return {
     id: object.id,
     title: object.title,
     hint: object.title,
     coordinates: [object.latitude, object.longitude],
-    balloonHtml: buildMapBalloon(object),
+    balloonHtml: buildMapBalloon(object, filters),
     markerLabel: formatMapMarkerPrice(getCatalogPricePerMeterFrom(object)),
   };
 }
@@ -1703,13 +1751,13 @@ function isMapObjectInBounds(object: MapObject, bounds: YandexMapBounds) {
   );
 }
 
-function buildMapBalloon(object: MapObject) {
+function buildMapBalloon(object: MapObject, filters: CatalogFilters) {
   const title = escapeHtml(object.title);
   const district = escapeHtml(getObjectDistrictLabel(object));
   const developer = escapeHtml(object.developer?.name ?? 'Застройщик не указан');
   const price = escapeHtml(formatPriceFrom(getCatalogPriceFrom(object)));
   const completion = escapeHtml(formatCompletion(object.completionYear, object.completionQuarter));
-  const href = escapeHtml(`/objects/${encodeURIComponent(object.slug)}`);
+  const href = escapeHtml(buildCatalogObjectHref(object.slug, filters));
 
   return [
     '<div class="map-balloon">',
@@ -1846,6 +1894,10 @@ function appendUniqueCatalogObjects(
 
 function formatCatalogCount(isLoading: boolean, total: number) {
   return isLoading ? 'Загрузка' : `Всего: ${total}`;
+}
+
+function formatNumber(value: number) {
+  return new Intl.NumberFormat('ru-RU').format(value);
 }
 
 function formatPrice(value: string | null) {

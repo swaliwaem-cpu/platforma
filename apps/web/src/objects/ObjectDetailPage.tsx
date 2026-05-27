@@ -78,6 +78,13 @@ const objectFeedUnitsPageSize = 20;
 
 type ObjectFeedUnitSortBy = 'title' | 'status' | 'price' | 'pricePerMeter' | 'area' | 'rooms' | 'floor' | 'building';
 type ObjectFeedUnitSortDirection = 'asc' | 'desc';
+type InitialObjectFeedUnitFilters = {
+  priceMin: string;
+  priceMax: string;
+  rooms: string;
+  floorMin: string;
+  floorMax: string;
+};
 type FeedMediaWithFile = FeedUnit['media'][number] & {
   file: NonNullable<FeedUnit['media'][number]['file']>;
 };
@@ -848,20 +855,21 @@ function ObjectFeedUnitsSection({
   object: RealEstateObjectDetail;
 }) {
   const [units, setUnits] = useState<FeedUnit[]>([]);
+  const initialFilters = useMemo(() => getInitialObjectFeedUnitFiltersFromLocation(), []);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [statusFilter, setStatusFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
-  const [priceMinFilter, setPriceMinFilter] = useState('');
-  const [priceMaxFilter, setPriceMaxFilter] = useState('');
+  const [priceMinFilter, setPriceMinFilter] = useState(initialFilters.priceMin);
+  const [priceMaxFilter, setPriceMaxFilter] = useState(initialFilters.priceMax);
   const [pricePerMeterMinFilter, setPricePerMeterMinFilter] = useState('');
   const [pricePerMeterMaxFilter, setPricePerMeterMaxFilter] = useState('');
   const [areaMinFilter, setAreaMinFilter] = useState('');
   const [areaMaxFilter, setAreaMaxFilter] = useState('');
-  const [roomFilter, setRoomFilter] = useState('');
-  const [floorMinFilter, setFloorMinFilter] = useState('');
-  const [floorMaxFilter, setFloorMaxFilter] = useState('');
+  const [roomFilter, setRoomFilter] = useState(initialFilters.rooms);
+  const [floorMinFilter, setFloorMinFilter] = useState(initialFilters.floorMin);
+  const [floorMaxFilter, setFloorMaxFilter] = useState(initialFilters.floorMax);
   const [completionYearFilter, setCompletionYearFilter] = useState('');
   const [completionQuarterFilter, setCompletionQuarterFilter] = useState('');
   const [sortBy, setSortBy] = useState<ObjectFeedUnitSortBy>('price');
@@ -1984,6 +1992,36 @@ function compareNullableNumber(leftValue: number | null | undefined, rightValue:
   }
 
   return leftValue - rightValue;
+}
+
+function getInitialObjectFeedUnitFiltersFromLocation(): InitialObjectFeedUnitFilters {
+  const emptyFilters: InitialObjectFeedUnitFilters = {
+    priceMin: '',
+    priceMax: '',
+    rooms: '',
+    floorMin: '',
+    floorMax: '',
+  };
+
+  if (typeof window === 'undefined') {
+    return emptyFilters;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+
+  return {
+    priceMin: sanitizeDecimalText(params.get('lotPriceMin') ?? ''),
+    priceMax: sanitizeDecimalText(params.get('lotPriceMax') ?? ''),
+    rooms: parseInitialObjectFeedUnitRooms(params.get('lotRooms')),
+    floorMin: sanitizeIntegerText(params.get('lotFloorMin') ?? '', 3),
+    floorMax: sanitizeIntegerText(params.get('lotFloorMax') ?? '', 3),
+  };
+}
+
+function parseInitialObjectFeedUnitRooms(value: string | null) {
+  const normalizedValue = sanitizeIntegerText(value ?? '', 1);
+
+  return feedUnitRoomFilterOptions.some((option) => option.value === normalizedValue) ? normalizedValue : '';
 }
 
 function parseNullableNumber(value: string | null) {

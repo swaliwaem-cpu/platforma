@@ -636,11 +636,23 @@ test('ObjectsService.list filters objects by matching lot price rooms and floor'
         return 1;
       },
     },
+    feedUnit: {
+      groupBy: async (args) => {
+        calls.feedUnitGroupBy = args;
+
+        return [
+          {
+            objectId: '11111111-1111-4111-8111-111111111111',
+            _count: { _all: 3 },
+          },
+        ];
+      },
+    },
     $transaction: async (queries) => Promise.all(queries),
   };
   const service = new ObjectsService(prisma, {});
 
-  await service.list({
+  const result = await service.list({
     lotPriceMin: '10 000 000',
     lotPriceMax: '12 500 000',
     lotRooms: '5',
@@ -671,6 +683,27 @@ test('ObjectsService.list filters objects by matching lot price rooms and floor'
     false,
   );
   assert.deepEqual(calls.count.where, calls.findMany.where);
+  assert.deepEqual(calls.feedUnitGroupBy, {
+    by: ['objectId'],
+    where: {
+      objectId: {
+        in: ['11111111-1111-4111-8111-111111111111'],
+      },
+      price: {
+        gte: '10000000',
+        lte: '12500000',
+      },
+      rooms: 5,
+      floor: {
+        gte: 5,
+        lte: 12,
+      },
+    },
+    _count: {
+      _all: true,
+    },
+  });
+  assert.equal(result.items[0].matchedFeedUnitsCount, 3);
 });
 
 test('ObjectsService.list ignores dots in object catalog search', async () => {

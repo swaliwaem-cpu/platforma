@@ -37,3 +37,27 @@ test('catalog global lot filters render controls and count as active advanced fi
   assert.match(source, /filters\.lotFloorMin,/);
   assert.match(source, /filters\.lotFloorMax,/);
 });
+
+test('catalog passes active lot filters through object links', () => {
+  assert.match(source, /function buildCatalogObjectHref\(slug: string, filters: CatalogFilters\)/);
+  assert.match(source, /function buildCatalogLotFilterQuery\(filters: CatalogFilters\)/);
+  assert.match(source, /setParam\(params,\s*'lotPriceMin',\s*filters\.lotPriceMin\);/);
+  assert.match(source, /setParam\(params,\s*'lotPriceMax',\s*filters\.lotPriceMax\);/);
+  assert.match(source, /setParam\(params,\s*'lotRooms',\s*filters\.lotRooms\);/);
+  assert.match(source, /setParam\(params,\s*'lotFloorMin',\s*filters\.lotFloorMin\);/);
+  assert.match(source, /setParam\(params,\s*'lotFloorMax',\s*filters\.lotFloorMax\);/);
+  assert.match(source, /const objectHref = buildCatalogObjectHref\(object\.slug, filters\);/);
+  assert.match(source, /<CatalogListItem[\s\S]*?filters=\{filters\}/);
+  assert.match(source, /<CatalogCard[\s\S]*?filters=\{filters\}/);
+  assert.match(source, /<MapObjectCard[\s\S]*?filters=\{filters\}/);
+  assert.match(source, /balloonHtml: buildMapBalloon\(object, filters\)/);
+});
+
+test('catalog result cards show matched lot count only for lot-filtered results', () => {
+  assert.match(source, /matchedFeedUnitsCount/);
+  assert.match(source, /function hasActiveCatalogLotFilters\(filters: CatalogFilters\)/);
+  assert.match(source, /function getCatalogMatchedLotsLabel\(object: RealEstateObjectSummary, filters: CatalogFilters\)/);
+  assert.match(source, /Найдено лотов: \$\{formatNumber\(object\.matchedFeedUnitsCount\)\}/);
+  assert.match(source, /className="catalog-matched-lots-badge"/);
+  assert.match(source, /const matchedLotsLabel = getCatalogMatchedLotsLabel\(object, filters\);/);
+});

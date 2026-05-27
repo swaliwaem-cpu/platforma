@@ -324,7 +324,7 @@ test('shared package exports feed response contracts', () => {
 test('shared object contracts include feed aggregates', () => {
   const sharedTypes = readProjectFile(sharedTypesPath);
 
-  assert.match(sharedTypes, /export type RealEstateObjectBase = \{[\s\S]*feedPriceFrom: string \| null;[\s\S]*feedPricePerMeterFrom: string \| null;[\s\S]*feedAreaRange: string \| null;[\s\S]*feedFloorRange: string \| null;[\s\S]*feedUnitsCount: number \| null;[\s\S]*feedUnitsCountText: string \| null;[\s\S]*feedCompletionYear: number \| null;[\s\S]*feedCompletionQuarter: number \| null;[\s\S]*feedUpdatedAt: string \| null;[\s\S]*\};/);
+  assert.match(sharedTypes, /export type RealEstateObjectBase = \{[\s\S]*feedPriceFrom: string \| null;[\s\S]*feedPricePerMeterFrom: string \| null;[\s\S]*feedAreaRange: string \| null;[\s\S]*feedFloorRange: string \| null;[\s\S]*feedUnitsCount: number \| null;[\s\S]*feedUnitsCountText: string \| null;[\s\S]*matchedFeedUnitsCount: number \| null;[\s\S]*feedCompletionYear: number \| null;[\s\S]*feedCompletionQuarter: number \| null;[\s\S]*feedUpdatedAt: string \| null;[\s\S]*\};/);
   assert.match(sharedTypes, /export type MapObject = \{[\s\S]*feedPriceFrom: string \| null;[\s\S]*feedPricePerMeterFrom: string \| null;[\s\S]*feedAreaRange: string \| null;[\s\S]*feedFloorRange: string \| null;[\s\S]*feedUnitsCount: number \| null;[\s\S]*feedUnitsCountText: string \| null;[\s\S]*feedCompletionYear: number \| null;[\s\S]*feedCompletionQuarter: number \| null;[\s\S]*feedUpdatedAt: string \| null;[\s\S]*\};/);
 });
 

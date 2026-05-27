@@ -425,7 +425,7 @@ export class ObjectsService {
       filters.push(this.createFeedFallbackPriceFilter('priceFrom', 'feedPriceFrom', priceFromMin, priceFromMax));
     }
 
-    const lotFilter = this.createObjectLotFilter({
+    const lotWhere = this.createObjectLotWhere({
       priceMin: query.lotPriceMin,
       priceMax: query.lotPriceMax,
       rooms: query.lotRooms,
@@ -433,8 +433,12 @@ export class ObjectsService {
       floorMax: query.lotFloorMax,
     });
 
-    if (lotFilter) {
-      filters.push(lotFilter);
+    if (lotWhere) {
+      filters.push({
+        feedUnits: {
+          some: lotWhere,
+        },
+      });
     }
 
     const hasCoordinates = this.parseOptionalBoolean(query.hasCoordinates, 'Has coordinates is invalid');
@@ -499,9 +503,15 @@ export class ObjectsService {
       }),
       this.prisma.realEstateObject.count({ where }),
     ]);
+    const matchedFeedUnitsCountByObjectId = await this.countMatchedFeedUnitsByObjectId(
+      items.map((object) => object.id),
+      lotWhere,
+    );
 
     return {
-      items: items.map((object) => this.serializeObjectSummary(object)),
+      items: items.map((object) =>
+        this.serializeObjectSummary(object, matchedFeedUnitsCountByObjectId.get(object.id) ?? null),
+      ),
       total,
       page,
       limit,
@@ -2161,13 +2171,13 @@ export class ObjectsService {
     };
   }
 
-  private createObjectLotFilter(query: {
+  private createObjectLotWhere(query: {
     priceMin?: string;
     priceMax?: string;
     rooms?: string;
     floorMin?: string;
     floorMax?: string;
-  }): Prisma.RealEstateObjectWhereInput | null {
+  }): Prisma.FeedUnitWhereInput | null {
     const priceMin = this.parseNullableDecimal(query.priceMin, 'Lot price min', 14, 2);
     const priceMax = this.parseNullableDecimal(query.priceMax, 'Lot price max', 14, 2);
     const rooms = this.parseOptionalInteger(query.rooms, 'Lot rooms is invalid', 0, 5);
@@ -2206,13 +2216,31 @@ export class ObjectsService {
         : {}),
     };
 
-    return Object.keys(lotWhere).length > 0
-      ? {
-          feedUnits: {
-            some: lotWhere,
-          },
-        }
-      : null;
+    return Object.keys(lotWhere).length > 0 ? lotWhere : null;
+  }
+
+  private async countMatchedFeedUnitsByObjectId(
+    objectIds: string[],
+    lotWhere: Prisma.FeedUnitWhereInput | null,
+  ): Promise<Map<string, number>> {
+    if (!lotWhere || objectIds.length === 0) {
+      return new Map();
+    }
+
+    const rows = await this.prisma.feedUnit.groupBy({
+      by: ['objectId'],
+      where: {
+        objectId: {
+          in: objectIds,
+        },
+        ...lotWhere,
+      },
+      _count: {
+        _all: true,
+      },
+    });
+
+    return new Map(rows.map((row) => [row.objectId, row._count._all]));
   }
 
   private createFeedUnitDecimalRangeFilter(
@@ -2812,12 +2840,12 @@ export class ObjectsService {
     };
   }
 
-  private serializeObjectSummary(object: ObjectListRecord) {
+  private serializeObjectSummary(object: ObjectListRecord, matchedFeedUnitsCount: number | null = null) {
     const coverImage = object.images[0] ?? null;
     const presentationFile = object.files[0] ?? null;
 
     return {
-      ...this.serializeObjectBase(object),
+      ...this.serializeObjectBase(object, matchedFeedUnitsCount),
       coverImage: coverImage ? this.serializeObjectImage(coverImage) : null,
       presentationFile: presentationFile ? this.serializeObjectFile(presentationFile) : null,
     };
@@ -2831,7 +2859,7 @@ export class ObjectsService {
     };
   }
 
-  private serializeObjectBase(object: ObjectListRecord | ObjectDetailRecord) {
+  private serializeObjectBase(object: ObjectListRecord | ObjectDetailRecord, matchedFeedUnitsCount: number | null = null) {
     return {
       id: object.id,
       wpPostId: object.wpPostId,
@@ -2858,6 +2886,7 @@ export class ObjectsService {
       feedFloorRange: object.feedFloorRange,
       feedUnitsCount: object.feedUnitsCount,
       feedUnitsCountText: object.feedUnitsCountText,
+      matchedFeedUnitsCount,
       feedCompletionYear: object.feedCompletionYear,
       feedCompletionQuarter: object.feedCompletionQuarter,
       feedUpdatedAt: object.feedUpdatedAt?.toISOString() ?? null,

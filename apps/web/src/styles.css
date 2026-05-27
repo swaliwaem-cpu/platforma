@@ -3572,6 +3572,23 @@ tr.user-row--deactivated .text-button {
   overflow-wrap: anywhere;
 }
 
+.catalog-matched-lots-badge {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 34px;
+  align-items: center;
+  border: 1px solid color-mix(in oklch, var(--catalog-gold) 56%, var(--catalog-border));
+  border-radius: var(--catalog-radius-sm);
+  background: color-mix(in oklch, var(--catalog-gold) 28%, var(--catalog-panel));
+  color: var(--catalog-ink-900);
+  padding: 7px 10px;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
 .catalog-list-item-action {
   display: flex;
   justify-content: flex-end;
