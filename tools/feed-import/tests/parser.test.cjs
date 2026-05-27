@@ -50,6 +50,27 @@ function makeIndexCianXml(externalId = 'cian-1', projectName = 'Муза') {
     </feed>`;
 }
 
+function makeStoneCianLikeRealtyFeedXml() {
+  return `<?xml version="1.0" encoding="utf-8"?>
+    <realty-feed xmlns="http://webmaster.yandex.ru/schemas/feed/realty/2010-06">
+      <object>
+        <Category>officeSale</Category>
+        <ExternalId>COM_SALE11188_v2</ExternalId>
+        <Address>&#x41C;&#x43E;&#x441;&#x43A;&#x432;&#x430;, &#x411;&#x443;&#x43C;&#x430;&#x436;&#x43D;&#x44B;&#x439; &#x43F;&#x440;&#x43E;&#x435;&#x437;&#x434;, &#x432;&#x43B;.19</Address>
+        <FloorNumber>8</FloorNumber>
+        <Building><CeilingHeight>3.65</CeilingHeight></Building>
+        <BargainTerms><Price>45240000.00</Price><Currency>RUR</Currency></BargainTerms>
+        <TotalArea>69.60</TotalArea>
+        <Photos>
+          <PhotoSchema>
+            <FullUrl>https://img.example.com/photo.jpg?x=1&amp;y=2</FullUrl>
+            <isDefault>true</isDefault>
+          </PhotoSchema>
+        </Photos>
+      </object>
+    </realty-feed>`;
+}
+
 function makeIndexAvitoXml() {
   return `<?xml version="1.0" encoding="utf-8"?>
     <Ads target="Avito.ru" formatVersion="3">
@@ -150,6 +171,39 @@ test('YandexRealtyFeedParser normalizes Etalon-style Yandex fields', () => {
   assert.equal(unit.residentialDetails.apartmentNumber, '1017');
   assert.equal(unit.residentialDetails.kitchenArea, '5.10');
   assert.equal(unit.residentialDetails.detailsJson.yandexBuildingId, '2133018');
+});
+
+test('YandexRealtyFeedParser treats Aura separate rooms type as studio only when room count is missing', () => {
+  const parser = new YandexRealtyFeedParser();
+  const xml = `<?xml version="1.0"?>
+    <realty-feed>
+      <offer internal-id="aura-studio">
+        <property-type>жилая</property-type>
+        <category>квартира</category>
+        <building-name>Аура</building-name>
+        <location><apartment>17</apartment></location>
+        <price><value>25099560</value><currency>RUR</currency></price>
+        <area><value>33.9</value></area>
+        <rooms-type>раздельные</rooms-type>
+      </offer>
+      <offer internal-id="aura-two-room">
+        <property-type>жилая</property-type>
+        <category>квартира</category>
+        <building-name>Аура</building-name>
+        <location><apartment>611</apartment></location>
+        <price><value>49775900</value><currency>RUR</currency></price>
+        <area><value>69.5</value></area>
+        <rooms>2</rooms>
+        <rooms-type>раздельные</rooms-type>
+      </offer>
+    </realty-feed>`;
+
+  const result = parser.parse(xml);
+
+  assert.deepEqual(result.warnings, []);
+  assert.equal(result.units[0].rooms, 0);
+  assert.equal(result.units[0].residentialDetails.layoutType, 'раздельные');
+  assert.equal(result.units[1].rooms, 2);
 });
 
 test('createFeedSourceAnalysis summarizes Yandex developer and object groups', () => {
@@ -365,6 +419,33 @@ test('CianXmlFeedParser normalizes Etalon-style project, house, rooms and media 
   });
 });
 
+test('CianXmlFeedParser normalizes CIAN-like realty-feed objects and decodes XML entities', () => {
+  const parser = new CianXmlFeedParser();
+
+  const result = parser.parse(makeStoneCianLikeRealtyFeedXml());
+  const unit = result.units[0];
+
+  assert.deepEqual(result.warnings, []);
+  assert.equal(result.units.length, 1);
+  assert.equal(unit.externalId, 'COM_SALE11188_v2');
+  assert.equal(unit.type, 'COMMERCIAL');
+  assert.equal(unit.status, 'AVAILABLE');
+  assert.equal(unit.price, '45240000.00');
+  assert.equal(unit.currency, 'RUR');
+  assert.equal(unit.area, '69.60');
+  assert.equal(unit.pricePerMeter, '650000.00');
+  assert.equal(unit.floor, 8);
+  assert.equal(unit.address, 'Москва, Бумажный проезд, вл.19');
+  assert.equal(unit.commercialDetails.ceilingHeight, '3.65');
+  assert.deepEqual(unit.media, [
+    {
+      sourceUrl: 'https://img.example.com/photo.jpg?x=1&y=2',
+      sortOrder: 0,
+      label: 'photo',
+    },
+  ]);
+});
+
 test('AvitoXmlFeedParser normalizes residential units, studio rooms and media', () => {
   const parser = new AvitoXmlFeedParser();
   const xml = `<?xml version="1.0" encoding="utf-8"?>
@@ -479,6 +560,7 @@ test('createFeedSourceAnalysis summarizes Avito development groups', () => {
 test('detectFeedFormatFromXml detects supported XML roots', () => {
   assert.equal(detectFeedFormatFromXml(makeIndexYandexXml()), 'YANDEX_REALTY');
   assert.equal(detectFeedFormatFromXml(makeIndexCianXml()), 'CIAN_XML');
+  assert.equal(detectFeedFormatFromXml(makeStoneCianLikeRealtyFeedXml()), 'CIAN_XML');
   assert.equal(detectFeedFormatFromXml(makeIndexAvitoXml()), 'AVITO_XML');
   assert.equal(detectFeedFormatFromXml('<unknown-feed />'), null);
 });
@@ -581,6 +663,23 @@ test('analyzeFeedSourceInput analyzes selected index platform files together', a
       ['Аура', 1],
       ['Муза', 1],
     ],
+  );
+});
+
+test('analyzeFeedSourceInput auto analyzes CIAN-like realty-feed objects', async () => {
+  const result = await analyzeFeedSourceInput({
+    format: 'AUTO',
+    sourceKind: 'URL',
+    url: 'https://feeds.test/stone.xml',
+    xmlFetcher: async () => makeStoneCianLikeRealtyFeedXml(),
+  });
+
+  assert.equal(result.discovery, null);
+  assert.equal(result.analysis.format, 'CIAN_XML');
+  assert.equal(result.analysis.unitsCount, 1);
+  assert.deepEqual(
+    result.analysis.objects.map((object) => [object.title, object.unitsCount]),
+    [['Москва, Бумажный проезд, вл.19', 1]],
   );
 });
 

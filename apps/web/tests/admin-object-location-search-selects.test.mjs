@@ -9,7 +9,7 @@ const source = readFileSync(resolve(currentDir, '../src/admin/ObjectsAdminPage.t
 const styles = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
 
 test('object editor uses searchable fields instead of long location and metro multi-selects', () => {
-  assert.match(source, /import \{ matchesQuickEditSearch \} from '\.\/objectQuickEditTransforms';/);
+  assert.match(source, /import \{[\s\S]*matchesQuickEditSearch[\s\S]*\} from '\.\/objectQuickEditTransforms';/);
   assert.match(source, /function SearchableSelect/);
   assert.match(source, /const searchableMultiSelectResultLimit = 24;/);
   assert.match(source, /matchesQuickEditSearch\(query,/);

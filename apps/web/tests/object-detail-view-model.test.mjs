@@ -4,6 +4,9 @@ import test from 'node:test';
 import {
   formatCompletion,
   formatPrice,
+  formatPriceFrom,
+  formatPricePerMeterFrom,
+  formatCeilingHeight,
   getObjectContentSections,
   getObjectLocationLine,
   getObjectParameterRows,
@@ -94,13 +97,13 @@ test('getObjectParameterRows returns ten rows in public order', () => {
   assert.deepEqual(
     rows.map((row) => row.value),
     [
-      formatPrice('12000000'),
+      formatPriceFrom('12000000'),
       'Level Group',
-      formatPrice('350000'),
+      formatPricePerMeterFrom('350000'),
       'Премиум-класс',
       'От 35 м²',
       'Большое Сити',
-      '3,1 метра',
+      formatCeilingHeight('3,1 метра'),
       '1 кв. 2027',
       '672 квартиры',
       '8 - 25 этажей',
@@ -110,6 +113,10 @@ test('getObjectParameterRows returns ten rows in public order', () => {
 
 test('format helpers use neutral empty fallback', () => {
   assert.equal(formatPrice(null), 'Не указано');
+  assert.equal(formatPriceFrom('12000000'), `от ${formatPrice('12000000')}`);
+  assert.equal(formatPricePerMeterFrom('350000'), `от ${formatPrice('350000')}/м²`);
+  assert.equal(formatCeilingHeight('3,1 метра'), 'от 3,1 м');
+  assert.equal(formatCeilingHeight(null), 'Не указано');
   assert.equal(formatCompletion(null, null), 'Не указано');
 });
 

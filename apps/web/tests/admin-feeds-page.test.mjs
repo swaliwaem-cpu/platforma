@@ -92,6 +92,12 @@ test('feeds admin page includes Avito feed format and development id mapping fie
   assert.match(source, /developmentIds:/);
 });
 
+test('feeds admin page defaults new feed sources to automatic format detection', () => {
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.match(source, /const emptySourceForm[\s\S]*?format:\s*'AUTO',\n\s*filterJson:/);
+});
+
 test('feeds admin page renders index discovery platform selection', () => {
   const source = readFileSync(sourcePath, 'utf8');
 
@@ -173,9 +179,11 @@ test('feeds admin page renders reports table without the right report detail col
   assert.doesNotMatch(source, /<ReportSummary summary=\{selectedRunSummary\} \/>/);
   assert.match(source, />Статус</);
   assert.match(source, />Цена</);
+  assert.match(source, />Цена за м²</);
   assert.match(source, />Площадь</);
   assert.match(source, />Комнаты\/тип</);
   assert.match(source, />Медиа</);
+  assert.match(source, /<TableCell>\{formatFeedUnitPricePerMeter\(unit\)\}<\/TableCell>/);
 });
 
 test('feeds admin page shows latest preview lot and media counts in source meta', () => {

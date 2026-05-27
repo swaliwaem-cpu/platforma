@@ -42,6 +42,7 @@ import { YandexMap, type YandexMapPoint } from '../map/YandexMap';
 import {
   formatCompletion,
   formatPrice,
+  formatPriceFrom,
   getLocationRows,
   getObjectContentSections,
   getObjectDistrictLocation,
@@ -75,7 +76,7 @@ const fileTypeLabels: Record<ObjectFileType, string> = {
 
 const objectFeedUnitsPageSize = 20;
 
-type ObjectFeedUnitSortBy = 'title' | 'status' | 'price' | 'area' | 'rooms' | 'floor' | 'building';
+type ObjectFeedUnitSortBy = 'title' | 'status' | 'price' | 'pricePerMeter' | 'area' | 'rooms' | 'floor' | 'building';
 type ObjectFeedUnitSortDirection = 'asc' | 'desc';
 type FeedMediaWithFile = FeedUnit['media'][number] & {
   file: NonNullable<FeedUnit['media'][number]['file']>;
@@ -1256,6 +1257,14 @@ function ObjectFeedUnitsSection({
                 Цена
               </ObjectFeedSortableHead>
               <ObjectFeedSortableHead
+                field="pricePerMeter"
+                sortBy={sortBy}
+                sortDirection={sortDirection}
+                onSort={handleSort}
+              >
+                Цена за м²
+              </ObjectFeedSortableHead>
+              <ObjectFeedSortableHead
                 field="area"
                 sortBy={sortBy}
                 sortDirection={sortDirection}
@@ -1307,7 +1316,7 @@ function ObjectFeedUnitsSection({
 
             {!showFeedUnitsSkeleton && error ? (
               <TableRow>
-                <TableCell colSpan={8}>
+                <TableCell colSpan={9}>
                   <div className="object-feed-units-state object-feed-units-state--error">
                     <strong>Не удалось загрузить лоты</strong>
                     <span>{error}</span>
@@ -1318,7 +1327,7 @@ function ObjectFeedUnitsSection({
 
             {!showFeedUnitsSkeleton && !error && units.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8}>
+                <TableCell colSpan={9}>
                   <div className="object-feed-units-state">
                     <strong>Лоты не найдены</strong>
                     <span>Запустите импорт фида или измените фильтры.</span>
@@ -1463,6 +1472,7 @@ function ObjectFeedUnitRow({
         </span>
       </TableCell>
       <TableCell>{formatFeedUnitPrice(unit.price, unit.currency)}</TableCell>
+      <TableCell>{formatFeedUnitPricePerMeter(unit)}</TableCell>
       <TableCell>{formatArea(unit.area)}</TableCell>
       <TableCell>{getUnitRoomsOrType(unit)}</TableCell>
       <TableCell>{unit.floor ?? 'Не указан'}</TableCell>
@@ -1937,6 +1947,10 @@ function compareFeedUnitsByField(leftUnit: FeedUnit, rightUnit: FeedUnit, sortBy
     return compareNullableNumber(parseNullableNumber(leftUnit.price), parseNullableNumber(rightUnit.price));
   }
 
+  if (sortBy === 'pricePerMeter') {
+    return compareNullableNumber(getFeedUnitPricePerMeterValue(leftUnit), getFeedUnitPricePerMeterValue(rightUnit));
+  }
+
   if (sortBy === 'area') {
     return compareNullableNumber(parseNullableNumber(leftUnit.area), parseNullableNumber(rightUnit.area));
   }
@@ -2001,7 +2015,7 @@ function ObjectFeedUnitsTableSkeleton() {
     <>
       {Array.from({ length: 4 }, (_, index) => (
         <TableRow key={index}>
-          <TableCell colSpan={8}>
+          <TableCell colSpan={9}>
             <Skeleton className="object-feed-units-skeleton" />
           </TableCell>
         </TableRow>
@@ -2110,15 +2124,25 @@ function formatArea(value: string | null) {
   return `${formatNumber(parsed)} м²`;
 }
 
-function formatComputedFeedUnitPricePerMeter(unit: FeedUnit) {
+function getFeedUnitPricePerMeterValue(unit: FeedUnit) {
   const price = parseNullableNumber(unit.price);
   const area = parseNullableNumber(unit.area);
 
-  if (price === null || area === null || area <= 0) {
-    return 'По запросу';
+  if (price !== null && area !== null && area > 0) {
+    return price / area;
   }
 
-  return formatFeedUnitPrice(String(price / area), unit.currency);
+  return parseNullableNumber(unit.pricePerMeter);
+}
+
+function formatFeedUnitPricePerMeter(unit: FeedUnit) {
+  const pricePerMeter = getFeedUnitPricePerMeterValue(unit);
+
+  return pricePerMeter === null ? 'По запросу' : formatFeedUnitPrice(String(pricePerMeter), unit.currency);
+}
+
+function formatComputedFeedUnitPricePerMeter(unit: FeedUnit) {
+  return formatFeedUnitPricePerMeter(unit);
 }
 
 function getObjectLotFactRows(unit: FeedUnit) {
@@ -2270,7 +2294,7 @@ function buildObjectMapBalloon(object: RealEstateObjectDetail, imageUrl: string 
   const location = escapeHtml(getObjectDistrictLocation(object)?.name ?? 'Район не указан');
   const address = object.address ? escapeHtml(object.address) : null;
   const developer = escapeHtml(object.developer?.name ?? 'Застройщик не указан');
-  const price = escapeHtml(formatPrice(object.priceFrom));
+  const price = escapeHtml(formatPriceFrom(object.priceFrom));
   const completion = escapeHtml(formatCompletion(object.completionYear, object.completionQuarter));
   const image = imageUrl ? `<img class="map-balloon-image" src="${escapeHtml(imageUrl)}" alt="${title}" />` : '';
 

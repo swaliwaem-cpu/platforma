@@ -95,7 +95,7 @@ const emptySourceForm: SourceFormState = {
   sourceKind: 'URL',
   url: '',
   xmlFile: null,
-  format: 'YANDEX_REALTY',
+  format: 'AUTO',
   filterJson: '',
   developerId: '',
   objectId: '',
@@ -817,7 +817,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                               ...currentForm,
                               sourceKind: 'URL',
                               xmlFile: null,
-                              format: currentForm.format === 'AUTO' ? 'YANDEX_REALTY' : currentForm.format,
+                              format: currentForm.format,
                               mappings: [],
                             }));
                           }}
@@ -857,7 +857,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                               ...currentForm,
                               sourceKind: 'FILE',
                               url: '',
-                              format: currentForm.format === 'AUTO' ? 'YANDEX_REALTY' : currentForm.format,
+                              format: currentForm.format,
                               mappings: [],
                             }));
                           }}
@@ -1399,6 +1399,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                 <TableHead>Статус</TableHead>
                 <TableHead>Тип</TableHead>
                 <TableHead>Цена</TableHead>
+                <TableHead>Цена за м²</TableHead>
                 <TableHead>Площадь</TableHead>
                 <TableHead>Комнаты/тип</TableHead>
                 <TableHead>Этаж</TableHead>
@@ -1407,7 +1408,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
               </TableRow>
             </TableHeader>
             <TableBody>
-              {isLoadingUnits ? <TableSkeleton columns={9} rows={4} /> : null}
+              {isLoadingUnits ? <TableSkeleton columns={10} rows={4} /> : null}
 
               {!isLoadingUnits
                 ? units.map((unit) => (
@@ -1426,6 +1427,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                       </TableCell>
                       <TableCell>{feedUnitTypeLabels[unit.type]}</TableCell>
                       <TableCell>{formatMoney(unit.price, unit.currency)}</TableCell>
+                      <TableCell>{formatFeedUnitPricePerMeter(unit)}</TableCell>
                       <TableCell>{formatArea(unit.area)}</TableCell>
                       <TableCell>{getUnitRoomsOrType(unit)}</TableCell>
                       <TableCell>{unit.floor ?? 'Не указан'}</TableCell>
@@ -1437,7 +1439,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
 
               {!isLoadingUnits && selectedSource && units.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9}>
+                  <TableCell colSpan={10}>
                     <AdminEmptyState title="Лоты не найдены" description="Запустите Run или измените фильтры." />
                   </TableCell>
                 </TableRow>
@@ -1821,7 +1823,7 @@ function validateSourceForm(form: SourceFormState, existingSource?: FeedSource |
   }
 
   if (form.format === 'AUTO') {
-    return 'Выберите площадку фида перед сохранением';
+    return 'Сначала запустите разбор фида, чтобы формат определился автоматически';
   }
 
   if (!form.developerId) {
@@ -2313,6 +2315,33 @@ function formatArea(value: string | null) {
   const formattedValue = Number.isFinite(numberValue) ? formatNumber(numberValue) : value;
 
   return `${formattedValue} м²`;
+}
+
+function parseNullableNumber(value: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const parsedValue = Number(value);
+
+  return Number.isFinite(parsedValue) ? parsedValue : null;
+}
+
+function getFeedUnitPricePerMeterValue(unit: FeedUnit) {
+  const price = parseNullableNumber(unit.price);
+  const area = parseNullableNumber(unit.area);
+
+  if (price !== null && area !== null && area > 0) {
+    return price / area;
+  }
+
+  return parseNullableNumber(unit.pricePerMeter);
+}
+
+function formatFeedUnitPricePerMeter(unit: FeedUnit) {
+  const pricePerMeter = getFeedUnitPricePerMeterValue(unit);
+
+  return pricePerMeter === null ? 'Не указана' : formatMoney(String(pricePerMeter), unit.currency);
 }
 
 function getUnitRoomsOrType(unit: FeedUnit) {

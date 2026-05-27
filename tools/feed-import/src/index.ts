@@ -285,10 +285,10 @@ export class YandexRealtyFeedParser implements FeedParser {
 export class CianXmlFeedParser implements FeedParser {
   parse(xml: string): FeedParseResult {
     const root = parseXml(xml);
-    const feed = asRecord(root.feed);
+    const feed = getCianFeedRoot(root);
 
     if (!feed) {
-      throw new Error('Cian XML feed must contain <feed>');
+      throw new Error('Cian XML feed must contain <feed> or CIAN-like <realty-feed>');
     }
 
     const warnings: FeedParserWarning[] = [];
@@ -529,7 +529,7 @@ function toArray(value: unknown): unknown[] {
 
 function getText(value: unknown): string | null {
   if (typeof value === 'string') {
-    const trimmed = value.trim();
+    const trimmed = decodeXmlText(value).trim();
     return trimmed.length > 0 ? trimmed : null;
   }
 
@@ -544,6 +544,44 @@ function getText(value: unknown): string | null {
   }
 
   return null;
+}
+
+function decodeXmlText(value: string): string {
+  return value.replace(/&(#x[\da-f]+|#\d+|amp|lt|gt|quot|apos);/giu, (entity, body: string) => {
+    if (body.startsWith('#x') || body.startsWith('#X')) {
+      const codePoint = Number.parseInt(body.slice(2), 16);
+
+      return decodeXmlCodePoint(entity, codePoint);
+    }
+
+    if (body.startsWith('#')) {
+      const codePoint = Number.parseInt(body.slice(1), 10);
+
+      return decodeXmlCodePoint(entity, codePoint);
+    }
+
+    const namedEntities: Record<string, string> = {
+      amp: '&',
+      lt: '<',
+      gt: '>',
+      quot: '"',
+      apos: "'",
+    };
+
+    return namedEntities[body.toLowerCase()] ?? entity;
+  });
+}
+
+function decodeXmlCodePoint(entity: string, codePoint: number): string {
+  if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff) {
+    return entity;
+  }
+
+  try {
+    return String.fromCodePoint(codePoint);
+  } catch {
+    return entity;
+  }
 }
 
 function normalizeDecimal(
@@ -658,7 +696,32 @@ function normalizeYandexRooms(
     return normalizeInteger(offer.rooms, 'rooms', externalId, warnings);
   }
 
-  return normalizeBoolean(offer.studio) === true ? 0 : null;
+  if (normalizeBoolean(offer.studio) === true || isMangazeyaSeparateRoomsStudio(offer)) {
+    return 0;
+  }
+
+  return null;
+}
+
+function isMangazeyaSeparateRoomsStudio(offer: XmlRecord) {
+  const roomsType = normalizeFilterText(getText(offer['rooms-type']) ?? '');
+
+  if (roomsType !== 'раздельные') {
+    return false;
+  }
+
+  const salesAgent = asRecord(offer['sales-agent']);
+  const developerName = normalizeFilterText(
+    [
+      getText(salesAgent?.organization),
+      getText(salesAgent?.name),
+      getText(offer['building-name']),
+    ]
+      .filter((value): value is string => value !== null)
+      .join(' '),
+  );
+
+  return developerName.includes('мангазея') || developerName.includes('аура');
 }
 
 function normalizeCianFeedUnitStatus(object: XmlRecord): FeedStatusNormalizationResult {
@@ -1585,8 +1648,17 @@ export function createFeedParserForFormat(format: FeedSourceFormat): FeedParser 
 export function detectFeedFormatFromXml(xml: string): FeedSourceFormat | null {
   try {
     const root = parseXml(xml);
+    const yandexFeed = asRecord(root['realty-feed']);
 
-    if (asRecord(root['realty-feed'])) {
+    if (yandexFeed) {
+      if (hasXmlNodes(yandexFeed.object)) {
+        return 'CIAN_XML';
+      }
+
+      if (hasXmlNodes(yandexFeed.offer)) {
+        return 'YANDEX_REALTY';
+      }
+
       return 'YANDEX_REALTY';
     }
 
@@ -1602,6 +1674,26 @@ export function detectFeedFormatFromXml(xml: string): FeedSourceFormat | null {
   }
 
   return null;
+}
+
+function getCianFeedRoot(root: XmlRecord): XmlRecord | null {
+  const feed = asRecord(root.feed);
+
+  if (feed) {
+    return feed;
+  }
+
+  const realtyFeed = asRecord(root['realty-feed']);
+
+  if (realtyFeed && hasXmlNodes(realtyFeed.object)) {
+    return realtyFeed;
+  }
+
+  return null;
+}
+
+function hasXmlNodes(value: unknown): boolean {
+  return toArray(value).some((item) => asRecord(item) !== null);
 }
 
 export function discoverFeedIndexLinks(html: string, baseUrl: string): string[] {

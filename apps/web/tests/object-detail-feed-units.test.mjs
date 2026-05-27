@@ -66,6 +66,8 @@ test('object detail feed units expose detailed lot filters in API request and re
 test('object detail feed units block renders expected columns and media thumbnails', () => {
   assert.match(source, /<section className="detail-section object-feed-units-section"/);
   assert.match(source, /id="object-feed-units-title">Лоты<\/h3>/);
+  assert.match(source, /field="pricePerMeter"[\s\S]*?>\s*Цена за м²\s*<\/ObjectFeedSortableHead>/);
+  assert.match(source, /<TableCell>\{formatFeedUnitPricePerMeter\(unit\)\}<\/TableCell>/);
   assert.match(source, /<TableHead>Медиа<\/TableHead>/);
   assert.doesNotMatch(source, /<span>ID \{unit\.externalId\}<\/span>/);
   assert.doesNotMatch(source, /<strong>\{unit\.title \|\| unit\.externalId\}<\/strong>/);
@@ -102,7 +104,7 @@ test('object detail feed unit rows open lot cards in a new tab', () => {
 });
 
 test('object detail feed units support server sorting from sortable headers', () => {
-  assert.match(source, /type ObjectFeedUnitSortBy = 'title' \| 'status' \| 'price' \| 'area' \| 'rooms' \| 'floor' \| 'building';/);
+  assert.match(source, /type ObjectFeedUnitSortBy = 'title' \| 'status' \| 'price' \| 'pricePerMeter' \| 'area' \| 'rooms' \| 'floor' \| 'building';/);
   assert.match(source, /type ObjectFeedUnitSortDirection = 'asc' \| 'desc';/);
   assert.match(source, /const \[sortBy,\s*setSortBy\] = useState<ObjectFeedUnitSortBy>\('price'\);/);
   assert.match(source, /const \[sortDirection,\s*setSortDirection\] = useState<ObjectFeedUnitSortDirection>\('asc'\);/);
@@ -113,6 +115,7 @@ test('object detail feed units support server sorting from sortable headers', ()
   assert.match(source, /<ObjectFeedSortableHead[\s\S]*?field="title"[\s\S]*?>\s*Лот\s*<\/ObjectFeedSortableHead>/);
   assert.match(source, /<ObjectFeedSortableHead[\s\S]*?field="status"[\s\S]*?>\s*Статус\s*<\/ObjectFeedSortableHead>/);
   assert.match(source, /<ObjectFeedSortableHead[\s\S]*?field="price"[\s\S]*?>\s*Цена\s*<\/ObjectFeedSortableHead>/);
+  assert.match(source, /<ObjectFeedSortableHead[\s\S]*?field="pricePerMeter"[\s\S]*?>\s*Цена за м²\s*<\/ObjectFeedSortableHead>/);
   assert.match(source, /<ObjectFeedSortableHead[\s\S]*?field="area"[\s\S]*?>\s*Площадь\s*<\/ObjectFeedSortableHead>/);
   assert.match(source, /<ObjectFeedSortableHead[\s\S]*?field="rooms"[\s\S]*?>\s*Комнаты\/тип\s*<\/ObjectFeedSortableHead>/);
   assert.match(source, /<ObjectFeedSortableHead[\s\S]*?field="floor"[\s\S]*?>\s*Этаж\s*<\/ObjectFeedSortableHead>/);

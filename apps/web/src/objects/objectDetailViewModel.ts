@@ -21,6 +21,8 @@ export type ObjectLocationLine = {
 
 const emptyValueLabel = 'Не указано';
 const emptyContentSectionLabel = 'Не заполнено';
+const ceilingHeightPrefixPattern = /^от(?:\.|\s|$)\s*/iu;
+const ceilingHeightUnitPattern = /\s*(?:м|метр(?:а|ов)?\.?)\s*$/iu;
 
 export function getObjectContentSections(object: RealEstateObjectDetail): ObjectContentSection[] {
   return [
@@ -66,7 +68,7 @@ export function getObjectParameterRows(object: RealEstateObjectDetail): FeatureR
   return [
     {
       label: 'Цена от',
-      value: formatPrice(object.priceFrom),
+      value: formatPriceFrom(object.priceFrom),
     },
     {
       label: 'Застройщик',
@@ -74,7 +76,7 @@ export function getObjectParameterRows(object: RealEstateObjectDetail): FeatureR
     },
     {
       label: 'За метр от',
-      value: formatPrice(object.pricePerMeterFrom),
+      value: formatPricePerMeterFrom(object.pricePerMeterFrom),
     },
     {
       label: 'Класс недвижимости',
@@ -90,7 +92,7 @@ export function getObjectParameterRows(object: RealEstateObjectDetail): FeatureR
     },
     {
       label: 'Высота потолков',
-      value: object.ceilingHeight ?? emptyValueLabel,
+      value: formatCeilingHeight(object.ceilingHeight),
     },
     {
       label: 'Срок сдачи',
@@ -188,6 +190,42 @@ export function formatPrice(value: string | null) {
     style: 'currency',
     currency: 'RUB',
   }).format(parsed);
+}
+
+export function formatPriceFrom(value: string | null) {
+  if (!value) {
+    return emptyValueLabel;
+  }
+
+  return `от ${formatPrice(value)}`;
+}
+
+export function formatPricePerMeterFrom(value: string | null) {
+  if (!value) {
+    return emptyValueLabel;
+  }
+
+  return `от ${formatPrice(value)}/м²`;
+}
+
+export function formatCeilingHeight(value: string | null) {
+  if (!value) {
+    return emptyValueLabel;
+  }
+
+  const normalizedValue = value.trim().replace(/\s+/g, ' ');
+
+  if (!/^(?:от(?:\.|\s|$)|\d)/iu.test(normalizedValue)) {
+    return normalizedValue;
+  }
+
+  const valueWithoutPrefix = normalizedValue.replace(ceilingHeightPrefixPattern, '').trim();
+  const valueWithoutUnit = valueWithoutPrefix
+    .replace(ceilingHeightUnitPattern, '')
+    .trim()
+    .replace(/(\d)\.(\d)/g, '$1,$2');
+
+  return valueWithoutUnit ? `от ${valueWithoutUnit} м` : normalizedValue;
 }
 
 export function formatCompletion(year: number | null, quarter: number | null) {

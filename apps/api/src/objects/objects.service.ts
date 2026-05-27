@@ -2592,7 +2592,12 @@ export class ObjectsService {
       ] satisfies Prisma.FeedUnitOrderByWithRelationInput[];
     }
 
-    if (normalizedSortBy === 'price' || normalizedSortBy === 'area' || normalizedSortBy === 'floor') {
+    if (
+      normalizedSortBy === 'price' ||
+      normalizedSortBy === 'pricePerMeter' ||
+      normalizedSortBy === 'area' ||
+      normalizedSortBy === 'floor'
+    ) {
       return [
         {
           [normalizedSortBy]: {

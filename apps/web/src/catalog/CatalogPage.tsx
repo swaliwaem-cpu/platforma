@@ -1310,7 +1310,7 @@ function MapObjectCard({
           </div>
         </dl>
         <p>
-          Цена от: <strong>{formatPrice(getCatalogPriceFrom(object))}</strong> | Цена за метр от:{' '}
+          Цена: <strong>{formatPriceFrom(getCatalogPriceFrom(object))}</strong> | Цена за м²:{' '}
           <strong>{formatMapCardPricePerMeter(getCatalogPricePerMeterFrom(object))}</strong>
         </p>
         <a className="catalog-card-link map-object-card-link" href={objectHref} rel="noopener noreferrer" target="_blank">
@@ -1380,8 +1380,8 @@ function CatalogListItem({
           </div>
         </dl>
         <p className="catalog-list-item-price">
-          Цена от: {formatRequestedPrice(getCatalogPriceFrom(object))} | Цена за метр от:{' '}
-          {formatRequestedPrice(getCatalogPricePerMeterFrom(object))}
+          Цена: {formatRequestedPriceFrom(getCatalogPriceFrom(object))} | Цена за м²:{' '}
+          {formatRequestedPricePerMeterFrom(getCatalogPricePerMeterFrom(object))}
         </p>
       </div>
 
@@ -1443,8 +1443,8 @@ function CatalogCard({
           </h3>
         </div>
         <div className="catalog-card-price-row">
-          <p className="catalog-card-price">{formatPrice(getCatalogPriceFrom(object))}</p>
-          <span>{formatPricePerMeter(getCatalogPricePerMeterFrom(object))}</span>
+          <p className="catalog-card-price">{formatPriceFrom(getCatalogPriceFrom(object))}</p>
+          <span>{formatPricePerMeterFrom(getCatalogPricePerMeterFrom(object))}</span>
         </div>
         <div className="catalog-card-location" aria-label="Район и метро">
           <span title={districtLabel}>{districtLabel}</span>
@@ -1707,7 +1707,7 @@ function buildMapBalloon(object: MapObject) {
   const title = escapeHtml(object.title);
   const district = escapeHtml(getObjectDistrictLabel(object));
   const developer = escapeHtml(object.developer?.name ?? 'Застройщик не указан');
-  const price = escapeHtml(formatPrice(getCatalogPriceFrom(object)));
+  const price = escapeHtml(formatPriceFrom(getCatalogPriceFrom(object)));
   const completion = escapeHtml(formatCompletion(object.completionYear, object.completionQuarter));
   const href = escapeHtml(`/objects/${encodeURIComponent(object.slug)}`);
 
@@ -1866,12 +1866,12 @@ function formatPrice(value: string | null) {
   }).format(parsed);
 }
 
-function formatPricePerMeter(value: string | null) {
-  if (!value) {
-    return 'за м² не указана';
-  }
+function formatPriceFrom(value: string | null) {
+  return value ? `от ${formatPrice(value)}` : 'Не указана';
+}
 
-  return `${formatPrice(value)}/м²`;
+function formatPricePerMeterFrom(value: string | null) {
+  return value ? `от ${formatPrice(value)}/м²` : 'за м² не указана';
 }
 
 function formatMapMarkerPrice(value: string | null) {
@@ -1889,15 +1889,19 @@ function formatMapMarkerPrice(value: string | null) {
 }
 
 function formatMapListPricePerMeter(value: string | null) {
-  return value ? `Цена за м²: ${formatPrice(value)}` : 'Цена за м²: по запросу';
+  return value ? `Цена за м²: ${formatPricePerMeterFrom(value)}` : 'Цена за м²: по запросу';
 }
 
 function formatMapCardPricePerMeter(value: string | null) {
-  return value ? formatPrice(value) : 'по запросу';
+  return value ? formatPricePerMeterFrom(value) : 'по запросу';
 }
 
-function formatRequestedPrice(value: string | null) {
-  return value ? formatPrice(value) : 'по запросу';
+function formatRequestedPriceFrom(value: string | null) {
+  return value ? formatPriceFrom(value) : 'по запросу';
+}
+
+function formatRequestedPricePerMeterFrom(value: string | null) {
+  return value ? formatPricePerMeterFrom(value) : 'по запросу';
 }
 
 function formatCompactRussianNumber(value: number) {

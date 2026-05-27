@@ -20,6 +20,8 @@ import { AdminButton, AdminEmptyState, AdminStatusBadge } from './AdminUi';
 import {
   matchesQuickEditSearch,
   normalizeApartmentAreaRange,
+  normalizeCeilingHeight,
+  normalizeObjectPriceValue,
   parseQuickEditCompletion,
   type QuickEditCompletionValue,
 } from './objectQuickEditTransforms';
@@ -651,15 +653,23 @@ function getTextCellCommitValue(columnKey: ObjectQuickEditColumnKey, value: stri
     return normalizeApartmentAreaRange(value);
   }
 
+  if (columnKey === 'priceFrom' || columnKey === 'pricePerMeterFrom') {
+    return normalizeObjectPriceValue(value);
+  }
+
+  if (columnKey === 'ceilingHeight') {
+    return normalizeCeilingHeight(value);
+  }
+
   return value;
 }
 
 function getCellDisplayValue(object: RealEstateObjectSummary, columnKey: ObjectQuickEditColumnKey) {
   switch (columnKey) {
     case 'priceFrom':
-      return formatPrice(object.priceFrom);
+      return formatPriceFrom(object.priceFrom);
     case 'pricePerMeterFrom':
-      return formatPrice(object.pricePerMeterFrom);
+      return formatPricePerMeterFrom(object.pricePerMeterFrom);
     case 'developer':
       return object.developer?.name ?? null;
     case 'krtName':
@@ -675,7 +685,7 @@ function getCellDisplayValue(object: RealEstateObjectSummary, columnKey: ObjectQ
     case 'apartmentAreaRange':
       return object.apartmentAreaRange;
     case 'ceilingHeight':
-      return object.ceilingHeight;
+      return formatCeilingHeight(object.ceilingHeight);
     case 'floorRange':
       return object.floorRange;
     case 'coordinates':
@@ -748,6 +758,22 @@ function formatPrice(value: string | null) {
     style: 'currency',
     currency: 'RUB',
   }).format(parsed);
+}
+
+function formatPriceFrom(value: string | null) {
+  const price = formatPrice(value);
+
+  return price ? `от ${price}` : null;
+}
+
+function formatPricePerMeterFrom(value: string | null) {
+  const price = formatPrice(value);
+
+  return price ? `от ${price}/м²` : null;
+}
+
+function formatCeilingHeight(value: string | null) {
+  return value ? normalizeCeilingHeight(value) : null;
 }
 
 function formatCompletion(year: number | string | null, quarter: number | string | null) {

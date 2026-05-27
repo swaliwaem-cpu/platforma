@@ -14,12 +14,15 @@ test('catalog cards, list and map prefer feed aggregate values for public price 
     /function getCatalogPricePerMeterFrom\([\s\S]*?return object\.feedPricePerMeterFrom \?\? object\.pricePerMeterFrom;/,
   );
   assert.match(source, /function getCatalogAreaRange\([\s\S]*?return object\.feedAreaRange \?\? object\.apartmentAreaRange;/);
-  assert.match(source, /formatPrice\(getCatalogPriceFrom\(object\)\)/);
-  assert.match(source, /formatPricePerMeter\(getCatalogPricePerMeterFrom\(object\)\)/);
-  assert.match(source, /formatRequestedPrice\(getCatalogPriceFrom\(object\)\)/);
-  assert.match(source, /formatRequestedPrice\(getCatalogPricePerMeterFrom\(object\)\)/);
+  assert.match(source, /formatPriceFrom\(getCatalogPriceFrom\(object\)\)/);
+  assert.match(source, /formatPricePerMeterFrom\(getCatalogPricePerMeterFrom\(object\)\)/);
+  assert.match(source, /formatRequestedPriceFrom\(getCatalogPriceFrom\(object\)\)/);
+  assert.match(source, /formatRequestedPricePerMeterFrom\(getCatalogPricePerMeterFrom\(object\)\)/);
   assert.match(source, /formatMapListPricePerMeter\(getCatalogPricePerMeterFrom\(object\)\)/);
   assert.match(source, /formatMapCardPricePerMeter\(getCatalogPricePerMeterFrom\(object\)\)/);
   assert.match(source, /markerLabel: formatMapMarkerPrice\(getCatalogPricePerMeterFrom\(object\)\)/);
   assert.match(source, /const areaLabel = getCatalogAreaRange\(object\) \?\? 'Не указано';/);
+  assert.match(source, /function formatPriceFrom/);
+  assert.match(source, /return value \? `от \$\{formatPrice\(value\)\}` : 'Не указана';/);
+  assert.match(source, /return value \? `от \$\{formatPrice\(value\)\}\/м²` : 'за м² не указана';/);
 });

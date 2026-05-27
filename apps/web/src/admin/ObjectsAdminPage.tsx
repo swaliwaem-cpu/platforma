@@ -62,7 +62,11 @@ import {
   shouldRemoveObjectQuickEditRow,
   updateObjectQuickEditRows,
 } from './objectQuickEditPersistence';
-import { matchesQuickEditSearch } from './objectQuickEditTransforms';
+import {
+  matchesQuickEditSearch,
+  normalizeCeilingHeight,
+  normalizeObjectPriceValue,
+} from './objectQuickEditTransforms';
 
 type ObjectsAdminPageProps = {
   pathname: string;
@@ -1464,6 +1468,12 @@ function ObjectEditor(props: ObjectEditorProps) {
                       inputMode="decimal"
                       type="text"
                       value={props.form.priceFrom}
+                      onBlur={() =>
+                        props.onFormChange({
+                          ...props.form,
+                          priceFrom: normalizeObjectPriceValue(props.form.priceFrom),
+                        })
+                      }
                       onChange={(event) => props.onFormChange({ ...props.form, priceFrom: event.target.value })}
                     />
                   </Field>
@@ -1475,6 +1485,12 @@ function ObjectEditor(props: ObjectEditorProps) {
                       inputMode="decimal"
                       type="text"
                       value={props.form.pricePerMeterFrom}
+                      onBlur={() =>
+                        props.onFormChange({
+                          ...props.form,
+                          pricePerMeterFrom: normalizeObjectPriceValue(props.form.pricePerMeterFrom),
+                        })
+                      }
                       onChange={(event) => props.onFormChange({ ...props.form, pricePerMeterFrom: event.target.value })}
                     />
                   </Field>
@@ -1545,6 +1561,12 @@ function ObjectEditor(props: ObjectEditorProps) {
                       placeholder="3,1 метра"
                       type="text"
                       value={props.form.ceilingHeight}
+                      onBlur={() =>
+                        props.onFormChange({
+                          ...props.form,
+                          ceilingHeight: normalizeCeilingHeight(props.form.ceilingHeight),
+                        })
+                      }
                       onChange={(event) => props.onFormChange({ ...props.form, ceilingHeight: event.target.value })}
                     />
                   </Field>
@@ -1781,11 +1803,11 @@ function ObjectEditor(props: ObjectEditorProps) {
             <dl className="preview-facts">
               <div>
                 <dt>Цена</dt>
-                <dd>{formatPrice(props.form.priceFrom)}</dd>
+                <dd>{formatPriceFrom(props.form.priceFrom)}</dd>
               </div>
               <div>
                 <dt>За м²</dt>
-                <dd>{formatPrice(props.form.pricePerMeterFrom)}</dd>
+                <dd>{formatPricePerMeterFrom(props.form.pricePerMeterFrom)}</dd>
               </div>
               <div>
                 <dt>Срок</dt>
@@ -2709,12 +2731,12 @@ function createPayloadFromForm(form: ObjectFormState) {
     layoutsUrl: emptyToNull(form.layoutsUrl),
     krtName: emptyToNull(form.krtName),
     apartmentAreaRange: emptyToNull(form.apartmentAreaRange),
-    ceilingHeight: emptyToNull(form.ceilingHeight),
+    ceilingHeight: emptyToNull(normalizeCeilingHeight(form.ceilingHeight)),
     propertyClass: emptyToNull(form.propertyClass),
     floorRange: emptyToNull(form.floorRange),
     apartmentsCountText: emptyToNull(form.apartmentsCountText),
-    priceFrom: emptyToNull(form.priceFrom),
-    pricePerMeterFrom: emptyToNull(form.pricePerMeterFrom),
+    priceFrom: emptyToNull(normalizeObjectPriceValue(form.priceFrom)),
+    pricePerMeterFrom: emptyToNull(normalizeObjectPriceValue(form.pricePerMeterFrom)),
     completionYear: emptyToNull(form.completionYear),
     completionQuarter: emptyToNull(form.completionQuarter),
     address: emptyToNull(form.address),
@@ -3079,6 +3101,22 @@ function formatPrice(value: string | null) {
     style: 'currency',
     currency: 'RUB',
   }).format(parsed);
+}
+
+function formatPriceFrom(value: string | null) {
+  if (!value) {
+    return 'Не указана';
+  }
+
+  return `от ${formatPrice(value)}`;
+}
+
+function formatPricePerMeterFrom(value: string | null) {
+  if (!value) {
+    return 'за м² не указана';
+  }
+
+  return `от ${formatPrice(value)}/м²`;
 }
 
 function formatFileSize(value: string) {

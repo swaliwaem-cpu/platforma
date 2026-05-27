@@ -115,6 +115,12 @@ test('quick edit transform helpers normalize search, completion and apartment ar
   });
   assert.equal(helpers.normalizeApartmentAreaRange('44-170'), '44-170 м²');
   assert.equal(helpers.normalizeApartmentAreaRange('44-170 м²'), '44-170 м²');
+  assert.equal(helpers.normalizeObjectPriceValue('от 12 000 000 ₽'), '12000000');
+  assert.equal(helpers.normalizeObjectPriceValue('350 000 ₽/м²'), '350000');
+  assert.equal(helpers.normalizeObjectPriceValue('350000,50'), '350000.50');
+  assert.equal(helpers.normalizeCeilingHeight('3,1 метра'), 'от 3,1 м');
+  assert.equal(helpers.normalizeCeilingHeight('от 3,1 м'), 'от 3,1 м');
+  assert.equal(helpers.normalizeCeilingHeight(''), '');
 });
 
 test('shared search normalization exposes browser-safe named ESM exports', () => {
@@ -132,11 +138,18 @@ test('quick edit table uses normalized search and draft transforms before commit
   assert.match(transformsSource, /matchesSearchVariants\(query,\s*values\)/);
   assert.match(transformsSource, /export function parseQuickEditCompletion/);
   assert.match(transformsSource, /export function normalizeApartmentAreaRange/);
+  assert.match(transformsSource, /export function normalizeObjectPriceValue/);
+  assert.match(transformsSource, /export function normalizeCeilingHeight/);
 
   assert.match(tableSource, /matchesQuickEditSearch\(draftValue,\s*\[developer\.name,\s*developer\.slug\]\)/);
   assert.match(tableSource, /matchesQuickEditSearch\(query,\s*\[station\.name,\s*station\.slug,\s*station\.lineName\]\)/);
   assert.match(tableSource, /parseQuickEditCompletion\(value\)/);
   assert.match(tableSource, /normalizeApartmentAreaRange\(value\)/);
+  assert.match(tableSource, /normalizeObjectPriceValue\(value\)/);
+  assert.match(tableSource, /normalizeCeilingHeight\(value\)/);
+  assert.match(pageSource, /priceFrom:\s*emptyToNull\(normalizeObjectPriceValue\(form\.priceFrom\)\)/);
+  assert.match(pageSource, /pricePerMeterFrom:\s*emptyToNull\(normalizeObjectPriceValue\(form\.pricePerMeterFrom\)\)/);
+  assert.match(pageSource, /ceilingHeight:\s*emptyToNull\(normalizeCeilingHeight\(form\.ceilingHeight\)\)/);
 });
 
 test('objects admin list exposes expandable location filters and sends API params', () => {
