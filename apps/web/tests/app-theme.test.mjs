@@ -71,6 +71,32 @@ test('app theme stylesheet covers contrast-sensitive dark theme selectors', () =
   });
 });
 
+test('app theme suppresses pressed-state flicker for interactive controls', () => {
+  const themeStyles = readFileSync(resolve(srcDir, 'app-theme.css'), 'utf8');
+  const baseStyles = readFileSync(resolve(srcDir, 'styles.css'), 'utf8');
+  const buttonSource = readFileSync(resolve(srcDir, 'components/ui/button.tsx'), 'utf8');
+
+  assert.match(
+    baseStyles,
+    /button\s*\{[\s\S]*?appearance:\s*none;[\s\S]*?background:\s*transparent;[\s\S]*?-webkit-tap-highlight-color:\s*transparent;[\s\S]*?touch-action:\s*manipulation;[\s\S]*?\}/,
+  );
+  assert.match(
+    themeStyles,
+    /html\[data-app-theme\] :is\(button, \[role="button"\], \[data-slot="button"\], summary\)\s*\{[\s\S]*?-webkit-tap-highlight-color:\s*transparent;[\s\S]*?\}/,
+  );
+  assert.match(
+    themeStyles,
+    /html\[data-app-theme\] :is\(button, \[role="button"\], \[data-slot="button"\]\):active\s*\{[\s\S]*?transform:\s*none;[\s\S]*?translate:\s*none;[\s\S]*?\}/,
+  );
+  assert.match(
+    themeStyles,
+    /html\[data-app-theme\] :is\(\[data-slot="skeleton"\], \.feed-table-skeleton, \.import-table-skeleton, \.object-feed-units-skeleton\)\s*\{[\s\S]*?background:\s*color-mix\(in srgb,\s*var\(--app-theme-surface-muted\) 78%,\s*var\(--app-theme-border-soft\)\);[\s\S]*?\}/,
+  );
+  assert.match(buttonSource, /transition-colors/);
+  assert.doesNotMatch(buttonSource, /active:not-aria-\[haspopup\]:translate-y-px/);
+  assert.doesNotMatch(buttonSource, /transition-all/);
+});
+
 test('app initialization uses the production theme before mounting React', () => {
   const mainSource = readFileSync(resolve(srcDir, 'main.tsx'), 'utf8');
 

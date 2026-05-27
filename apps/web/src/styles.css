@@ -238,7 +238,12 @@ textarea {
 }
 
 button {
+  appearance: none;
+  background: transparent;
+  color: inherit;
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
 
 .app-shell {

@@ -272,6 +272,19 @@ html[data-app-theme] :is(input, select, textarea, [data-slot="input"]):focus-vis
   box-shadow: var(--app-theme-focus-primary);
 }
 
+html[data-app-theme] :is(button, [role="button"], [data-slot="button"], summary) {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html[data-app-theme] :is(button, [role="button"], [data-slot="button"]):active {
+  transform: none;
+  translate: none;
+}
+
+html[data-app-theme] :is([data-slot="skeleton"], .feed-table-skeleton, .import-table-skeleton, .object-feed-units-skeleton) {
+  background: color-mix(in srgb, var(--app-theme-surface-muted) 78%, var(--app-theme-border-soft));
+}
+
 html[data-app-theme] :is(.primary-button, .admin-button--primary, .catalog-filter-toggle, .catalog-map-button, .catalog-card-link, .catalog-list-item-link:hover, .catalog-list-item-link:focus-visible) {
   border-color: var(--app-theme-primary);
   background: var(--app-theme-primary);
