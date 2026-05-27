@@ -97,8 +97,9 @@ enum FeedFormat {
 }
 
 enum FeedSourceKind {
-  URL  @map("url")
-  FILE @map("file")
+  URL       @map("url")
+  FILE      @map("file")
+  INDEX_URL @map("index_url")
 
   @@map("feed_source_kind")
 }

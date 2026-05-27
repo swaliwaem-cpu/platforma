@@ -19,11 +19,11 @@
 - Modify: `apps/api/tests/api-contract.test.cjs`
 - Modify: `apps/api/tests/feed-schema.test.cjs`
 
-- [ ] **Step 1: Write failing contract/schema tests**
+- [x] **Step 1: Write failing contract/schema tests**
 
 Add expectations that `FeedSourceKind` includes `INDEX_URL`, `FeedSourceAnalysisResponse` can carry `discovery: FeedIndexDiscovery | null` and `analysis: FeedSourceAnalysis | null`, and Prisma maps `INDEX_URL @map("index_url")`.
 
-- [ ] **Step 2: Run tests and verify red**
+- [x] **Step 2: Run tests and verify red**
 
 Run:
 
@@ -33,7 +33,7 @@ pnpm --filter @platforma/api test
 
 Expected: API contract/schema tests fail on missing `INDEX_URL`, discovery types, and migration.
 
-- [ ] **Step 3: Implement contracts and migration**
+- [x] **Step 3: Implement contracts and migration**
 
 Update shared `FeedSourceKind`, add `FeedIndexFileCandidate`, `FeedIndexPlatformCandidate`, `FeedIndexDiscovery`, and widen `FeedSourceAnalysisResponse`. Add Prisma enum value and migration:
 
@@ -41,7 +41,7 @@ Update shared `FeedSourceKind`, add `FeedIndexFileCandidate`, `FeedIndexPlatform
 ALTER TYPE "feed_source_kind" ADD VALUE 'index_url';
 ```
 
-- [ ] **Step 4: Run API tests**
+- [x] **Step 4: Run API tests**
 
 Run:
 
@@ -58,7 +58,7 @@ Expected: contract/schema tests pass.
 - Modify: `tools/feed-import/tests/parser.test.cjs`
 - Modify: `tools/feed-import/tests/import-engine.test.cjs`
 
-- [ ] **Step 1: Write failing feed-import tests**
+- [x] **Step 1: Write failing feed-import tests**
 
 Add tests for:
 
@@ -68,7 +68,7 @@ Add tests for:
 - `analyzeFeedSourceInput({ format: 'CIAN_XML', sourceKind: 'INDEX_URL', url })` returning merged analysis for only CIAN XML files;
 - `executeFeedImport` importing only selected platform files for an `INDEX_URL` source.
 
-- [ ] **Step 2: Run tests and verify red**
+- [x] **Step 2: Run tests and verify red**
 
 Run:
 
@@ -78,7 +78,7 @@ pnpm --filter @platforma/feed-import test
 
 Expected: tests fail because helpers, `AUTO`, and `INDEX_URL` are not implemented.
 
-- [ ] **Step 3: Implement feed-import detection and discovery**
+- [x] **Step 3: Implement feed-import detection and discovery**
 
 Add focused helpers in `tools/feed-import/src/index.ts`:
 
@@ -88,11 +88,11 @@ Add focused helpers in `tools/feed-import/src/index.ts`:
 - `analyzeFeedSourceInput` support for `format: 'AUTO'` and `sourceKind: 'INDEX_URL'`;
 - CLI args `--source-kind INDEX_URL` and `--format AUTO`.
 
-- [ ] **Step 4: Implement INDEX_URL import path**
+- [x] **Step 4: Implement INDEX_URL import path**
 
 In `executeFeedImport`, replace direct single-XML parsing with `parseFeedSource(source, options)`. For `INDEX_URL`, re-read the index, keep only XML files with `source.format`, parse them, namespace `externalId` with a stable XML URL hash, and merge warnings.
 
-- [ ] **Step 5: Run feed-import tests**
+- [x] **Step 5: Run feed-import tests**
 
 Run:
 
@@ -108,7 +108,7 @@ Expected: feed-import tests pass.
 - Modify: `apps/api/src/feeds/feeds.service.ts`
 - Modify: `apps/api/tests/feeds-module.test.cjs`
 
-- [ ] **Step 1: Write failing API service tests**
+- [x] **Step 1: Write failing API service tests**
 
 Add tests that:
 
@@ -117,7 +117,7 @@ Add tests that:
 - `createSource` accepts `INDEX_URL` with URL and concrete format;
 - `createSource` rejects persisted `format=AUTO`.
 
-- [ ] **Step 2: Run tests and verify red**
+- [x] **Step 2: Run tests and verify red**
 
 Run:
 
@@ -127,11 +127,11 @@ pnpm --filter @platforma/api test
 
 Expected: feeds module tests fail on `INDEX_URL`/`AUTO` handling.
 
-- [ ] **Step 3: Implement API support**
+- [x] **Step 3: Implement API support**
 
 Update `parseFormat` usage so persisted sources require a real `FeedFormat`, while analyze allows `AUTO`. Treat `INDEX_URL` as URL-backed in create/update/analyze. Pass `--source-kind` and `--format` through `runFeedAnalyzeCli`, and parse CLI output as the full `{ discovery, analysis }` response.
 
-- [ ] **Step 4: Run API tests**
+- [x] **Step 4: Run API tests**
 
 Run:
 
@@ -147,7 +147,7 @@ Expected: API tests pass.
 - Modify: `apps/web/src/admin/FeedsAdminPage.tsx`
 - Modify: `apps/web/tests/admin-feeds-page.test.mjs`
 
-- [ ] **Step 1: Write failing web tests**
+- [x] **Step 1: Write failing web tests**
 
 Add tests for:
 
@@ -157,7 +157,7 @@ Add tests for:
 - source save refusing `AUTO`;
 - conservative matching helpers: developer preselection, object suggestion by normalized title, unmatched rows staying excluded.
 
-- [ ] **Step 2: Run tests and verify red**
+- [x] **Step 2: Run tests and verify red**
 
 Run:
 
@@ -167,11 +167,11 @@ pnpm --filter @platforma/web test
 
 Expected: web tests fail on missing UI and helpers.
 
-- [ ] **Step 3: Implement admin flow**
+- [x] **Step 3: Implement admin flow**
 
 Extend form state with `format: FeedFormat | 'AUTO'` for UI only and add `sourceDiscovery` state. Add `INDEX_URL` source-kind radio. Initial analyze with index and `AUTO` shows platform candidates; selecting one platform sets concrete `format` and re-runs analysis. Create local matching helpers that normalize names, preselect a developer when one clear existing match exists, and preselect ЖК only for high-confidence matches under that developer.
 
-- [ ] **Step 4: Run web tests**
+- [x] **Step 4: Run web tests**
 
 Run:
 
@@ -186,7 +186,7 @@ Expected: web tests pass.
 **Files:**
 - All files changed in previous tasks.
 
-- [ ] **Step 1: Run full tests**
+- [x] **Step 1: Run full tests**
 
 Run:
 
@@ -196,7 +196,7 @@ pnpm test
 
 Expected: all workspace tests pass.
 
-- [ ] **Step 2: Run build**
+- [x] **Step 2: Run build**
 
 Run:
 
@@ -206,7 +206,7 @@ pnpm build
 
 Expected: all workspace builds pass.
 
-- [ ] **Step 3: Run diff check**
+- [x] **Step 3: Run diff check**
 
 Run:
 
@@ -216,7 +216,7 @@ git diff --check
 
 Expected: no whitespace errors.
 
-- [ ] **Step 4: Commit implementation**
+- [x] **Step 4: Commit implementation**
 
 Run:
 
@@ -226,4 +226,3 @@ git commit -m "feat: add unified feed index import"
 ```
 
 Expected: implementation committed on `on-ser`.
-

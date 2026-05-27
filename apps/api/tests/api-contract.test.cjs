@@ -294,7 +294,7 @@ test('shared package exports feed API contracts', () => {
   const sharedTypes = readProjectFile(sharedTypesPath);
 
   assert.match(sharedTypes, /export type FeedFormat = 'YANDEX_REALTY' \| 'CIAN_XML' \| 'AVITO_XML';/);
-  assert.match(sharedTypes, /export type FeedSourceKind = 'URL' \| 'FILE';/);
+  assert.match(sharedTypes, /export type FeedSourceKind = 'URL' \| 'FILE' \| 'INDEX_URL';/);
   assert.match(sharedTypes, /export type FeedUnitType = 'RESIDENTIAL' \| 'COMMERCIAL';/);
   assert.match(sharedTypes, /export type FeedUnitStatus = 'AVAILABLE' \| 'BOOKED' \| 'RESERVED' \| 'SOLD' \| 'ARCHIVED' \| 'UNKNOWN';/);
   assert.match(sharedTypes, /export type FeedSourceMapping = \{[\s\S]*id: string;[\s\S]*sourceId: string;[\s\S]*objectId: string;[\s\S]*sourceKey: string;[\s\S]*sourceTitle: string;[\s\S]*filterJson: JsonValue;[\s\S]*isActive: boolean;[\s\S]*object: FeedSourceObject;[\s\S]*\};/);
@@ -303,6 +303,9 @@ test('shared package exports feed API contracts', () => {
   assert.match(sharedTypes, /export type FeedUnit = \{[\s\S]*externalId: string;[\s\S]*type: FeedUnitType;[\s\S]*status: FeedUnitStatus;[\s\S]*price: string \| null;[\s\S]*area: string \| null;[\s\S]*pricePerMeter: string \| null;[\s\S]*residentialDetails: FeedResidentialUnitDetails \| null;[\s\S]*commercialDetails: FeedCommercialUnitDetails \| null;[\s\S]*media: FeedMedia\[\];[\s\S]*\};/);
   assert.match(sharedTypes, /export type FeedSourceAnalysisObject = \{[\s\S]*projectNames: string\[\];[\s\S]*externalIds: string\[\];[\s\S]*buildingNames: string\[\];[\s\S]*avitoDevelopmentIds: string\[\];[\s\S]*filterJson: Record<string, string\[\]> \| null;[\s\S]*\};/);
   assert.match(sharedTypes, /export type FeedSourceAnalysis = \{[\s\S]*developerName: string \| null;[\s\S]*unitsCount: number;[\s\S]*objects: FeedSourceAnalysisObject\[\];[\s\S]*warningsCount: number;[\s\S]*\};/);
+  assert.match(sharedTypes, /export type FeedIndexFileCandidate = \{[\s\S]*url: string;[\s\S]*format: FeedFormat \| null;[\s\S]*unitsCount: number;[\s\S]*warningsCount: number;[\s\S]*error: string \| null;[\s\S]*\};/);
+  assert.match(sharedTypes, /export type FeedIndexPlatformCandidate = \{[\s\S]*format: FeedFormat;[\s\S]*label: string;[\s\S]*filesCount: number;[\s\S]*unitsCount: number;[\s\S]*warningsCount: number;[\s\S]*errorsCount: number;[\s\S]*files: FeedIndexFileCandidate\[\];[\s\S]*\};/);
+  assert.match(sharedTypes, /export type FeedIndexDiscovery = \{[\s\S]*sourceUrl: string;[\s\S]*files: FeedIndexFileCandidate\[\];[\s\S]*platforms: FeedIndexPlatformCandidate\[\];[\s\S]*\};/);
   assert.match(sharedTypes, /export type FeedMedia = \{[\s\S]*sourceUrl: string;[\s\S]*file: ObjectStoredFile \| null;[\s\S]*sortOrder: number;[\s\S]*\};/);
 });
 
@@ -311,7 +314,7 @@ test('shared package exports feed response contracts', () => {
 
   assert.match(sharedTypes, /export type FeedSourcesResponse = \{[\s\S]*items: FeedSource\[\];[\s\S]*total: number;[\s\S]*page: number;[\s\S]*limit: number;[\s\S]*totalPages: number;[\s\S]*\};/);
   assert.match(sharedTypes, /export type FeedSourceResponse = \{[\s\S]*source: FeedSource;[\s\S]*\};/);
-  assert.match(sharedTypes, /export type FeedSourceAnalysisResponse = \{[\s\S]*analysis: FeedSourceAnalysis;[\s\S]*\};/);
+  assert.match(sharedTypes, /export type FeedSourceAnalysisResponse = \{[\s\S]*discovery: FeedIndexDiscovery \| null;[\s\S]*analysis: FeedSourceAnalysis \| null;[\s\S]*\};/);
   assert.match(sharedTypes, /export type FeedImportRunsResponse = \{[\s\S]*items: FeedImportRun\[\];[\s\S]*total: number;[\s\S]*page: number;[\s\S]*limit: number;[\s\S]*totalPages: number;[\s\S]*\};/);
   assert.match(sharedTypes, /export type FeedImportRunResponse = \{[\s\S]*run: FeedImportRun;[\s\S]*\};/);
   assert.match(sharedTypes, /export type FeedUnitsResponse = \{[\s\S]*items: FeedUnit\[\];[\s\S]*total: number;[\s\S]*page: number;[\s\S]*limit: number;[\s\S]*totalPages: number;[\s\S]*\};/);

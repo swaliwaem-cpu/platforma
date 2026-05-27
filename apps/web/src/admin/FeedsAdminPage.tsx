@@ -15,6 +15,7 @@ import type {
   FeedImportRun,
   FeedImportRunResponse,
   FeedImportRunsResponse,
+  FeedIndexDiscovery,
   FeedSource,
   FeedSourceAnalysis,
   FeedSourceAnalysisObject,
@@ -58,7 +59,7 @@ type SourceFormState = {
   sourceKind: FeedSourceKind;
   url: string;
   xmlFile: File | null;
-  format: FeedFormat;
+  format: FeedFormatChoice;
   filterJson: string;
   developerId: string;
   objectId: string;
@@ -74,6 +75,7 @@ type SourceMappingFormState = {
 };
 
 type FeedCommandMode = 'preview' | 'run';
+type FeedFormatChoice = FeedFormat | 'AUTO';
 
 type FeedRunProgress = {
   stage: string;
@@ -105,6 +107,11 @@ const feedFormatLabels: Record<FeedFormat, string> = {
   YANDEX_REALTY: 'Yandex Realty',
   CIAN_XML: 'Cian XML',
   AVITO_XML: 'Avito XML',
+};
+
+const feedFormatChoiceLabels: Record<FeedFormatChoice, string> = {
+  ...feedFormatLabels,
+  AUTO: 'Авто',
 };
 
 const feedUnitTypeLabels: Record<FeedUnitType, string> = {
@@ -160,6 +167,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
   const [objects, setObjects] = useState<RealEstateObjectSummary[]>([]);
   const [form, setForm] = useState<SourceFormState>(emptySourceForm);
   const [sourceAnalysis, setSourceAnalysis] = useState<FeedSourceAnalysis | null>(null);
+  const [sourceDiscovery, setSourceDiscovery] = useState<FeedIndexDiscovery | null>(null);
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const [runs, setRuns] = useState<FeedImportRun[]>([]);
   const [selectedRun, setSelectedRun] = useState<FeedImportRun | null>(null);
@@ -244,6 +252,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
       setRuns([]);
       setUnits([]);
       setSourceAnalysis(null);
+      setSourceDiscovery(null);
       setIsLoadingSources(false);
       setIsLoadingForm(false);
       setError(null);
@@ -405,6 +414,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
       setSelectedSourceId(source.id);
       setForm(createFormFromSource(source));
       setSourceAnalysis(null);
+      setSourceDiscovery(null);
       if (options.loadPreviewRun ?? true) {
         void loadLatestPreviewRun(source.id);
       }
@@ -556,12 +566,13 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
     }
   }
 
-  async function analyzeSourceFeed() {
+  async function analyzeSourceFeed(formatOverride?: FeedFormatChoice) {
     if (!accessToken) {
       return;
     }
 
-    const validationError = validateSourceAnalysisForm(form);
+    const analysisForm = formatOverride ? { ...form, format: formatOverride } : form;
+    const validationError = validateSourceAnalysisForm(analysisForm);
 
     if (validationError) {
       setError(validationError);
@@ -576,25 +587,62 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
     try {
       const data = await apiRequest<FeedSourceAnalysisResponse>('/feeds/analyze', accessToken, {
         method: 'POST',
-        body: createSourceAnalysisRequestBody(form),
+        body: createSourceAnalysisRequestBody(analysisForm),
       });
 
-      setSourceAnalysis(data.analysis);
+      if (data.discovery && !data.analysis) {
+        setSourceDiscovery(data.discovery);
+        setSourceAnalysis(null);
+        setForm((currentForm) => ({
+          ...currentForm,
+          format: analysisForm.format,
+          mappings: [],
+        }));
+        setNotice(`Найдено площадок: ${formatNumber(data.discovery.platforms.length)}. Выберите площадку для разбора.`);
+        return;
+      }
+
+      if (!data.analysis) {
+        throw new Error('Разбор фида не вернул объекты');
+      }
+
+      const analysis = data.analysis;
+      const suggestedDeveloperId = findDeveloperSuggestion(analysis, developers);
+
+      setSourceDiscovery(null);
+      setSourceAnalysis(analysis);
       setForm((currentForm) => {
-        const mappings = createSourceMappingsFromAnalysis(data.analysis, currentForm.mappings);
+        const developerId = currentForm.developerId || suggestedDeveloperId;
+        const objectOptions = developerId
+          ? objects.filter((object) => object.developer?.id === developerId)
+          : [];
+        const mappings = createSourceMappingsFromAnalysis(analysis, currentForm.mappings, objectOptions);
 
         return {
           ...currentForm,
+          format: analysis.format,
+          developerId,
           objectId: mappings.length > 0 ? '' : currentForm.objectId,
           mappings,
         };
       });
-      setNotice(`Фид разобран: ${data.analysis.objects.length} объектов, ${data.analysis.unitsCount} лотов`);
+      setNotice(`Фид разобран: ${analysis.objects.length} объектов, ${analysis.unitsCount} лотов`);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Не удалось разобрать фид');
     } finally {
       setIsAnalyzingSource(false);
     }
+  }
+
+  function selectIndexFeedPlatform(format: FeedFormat) {
+    setSourceDiscovery(null);
+    setSourceAnalysis(null);
+    setForm((currentForm) => ({
+      ...currentForm,
+      format,
+      mappings: [],
+    }));
+    void analyzeSourceFeed(format);
   }
 
   function updateAnalysisMapping(sourceKey: string, objectId: string) {
@@ -764,15 +812,37 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                           value="URL"
                           onChange={() => {
                             setSourceAnalysis(null);
+                            setSourceDiscovery(null);
                             setForm((currentForm) => ({
                               ...currentForm,
                               sourceKind: 'URL',
                               xmlFile: null,
+                              format: currentForm.format === 'AUTO' ? 'YANDEX_REALTY' : currentForm.format,
                               mappings: [],
                             }));
                           }}
                         />
                         URL
+                      </label>
+                      <label className={form.sourceKind === 'INDEX_URL' ? 'feed-source-kind-option is-selected' : 'feed-source-kind-option'}>
+                        <input
+                          checked={form.sourceKind === 'INDEX_URL'}
+                          name="sourceKind"
+                          type="radio"
+                          value="INDEX_URL"
+                          onChange={() => {
+                            setSourceAnalysis(null);
+                            setSourceDiscovery(null);
+                            setForm((currentForm) => ({
+                              ...currentForm,
+                              sourceKind: 'INDEX_URL',
+                              xmlFile: null,
+                              format: 'AUTO',
+                              mappings: [],
+                            }));
+                          }}
+                        />
+                        Индекс XML
                       </label>
                       <label className={form.sourceKind === 'FILE' ? 'feed-source-kind-option is-selected' : 'feed-source-kind-option'}>
                         <input
@@ -782,10 +852,12 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                           value="FILE"
                           onChange={() => {
                             setSourceAnalysis(null);
+                            setSourceDiscovery(null);
                             setForm((currentForm) => ({
                               ...currentForm,
                               sourceKind: 'FILE',
                               url: '',
+                              format: currentForm.format === 'AUTO' ? 'YANDEX_REALTY' : currentForm.format,
                               mappings: [],
                             }));
                           }}
@@ -795,7 +867,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                     </div>
                   </div>
 
-                  {form.sourceKind === 'URL' ? (
+                  {isUrlBackedSourceKind(form.sourceKind) ? (
                     <label className="field-wide">
                       URL
                       <input
@@ -806,6 +878,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                         value={form.url}
                         onChange={(event) => {
                           setSourceAnalysis(null);
+                          setSourceDiscovery(null);
                           setForm((currentForm) => ({ ...currentForm, url: event.target.value, mappings: [] }));
                         }}
                       />
@@ -820,6 +893,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                         type="file"
                         onChange={(event) => {
                           setSourceAnalysis(null);
+                          setSourceDiscovery(null);
                           setForm((currentForm) => ({
                             ...currentForm,
                             xmlFile: event.target.files?.[0] ?? null,
@@ -842,14 +916,15 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                       value={form.format}
                       onChange={(event) => {
                         setSourceAnalysis(null);
+                        setSourceDiscovery(null);
                         setForm((currentForm) => ({
                           ...currentForm,
-                          format: event.target.value as FeedFormat,
+                          format: event.target.value as FeedFormatChoice,
                           mappings: [],
                         }));
                       }}
                     >
-                      {Object.entries(feedFormatLabels).map(([value, label]) => (
+                      {Object.entries(feedFormatChoiceLabels).map(([value, label]) => (
                         <option key={value} value={value}>
                           {label}
                         </option>
@@ -877,6 +952,12 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                     isLoading={isAnalyzingSource}
                     onAnalyze={() => void analyzeSourceFeed()}
                     onMappingChange={updateAnalysisMapping}
+                  />
+
+                  <FeedSourceDiscoveryPanel
+                    discovery={sourceDiscovery}
+                    isLoading={isAnalyzingSource}
+                    onSelectPlatform={(format) => void selectIndexFeedPlatform(format)}
                   />
 
                   {hasFilterJson ? (
@@ -1585,6 +1666,57 @@ function FeedSourceAnalysisPanel({
   );
 }
 
+function FeedSourceDiscoveryPanel({
+  discovery,
+  isLoading,
+  onSelectPlatform,
+}: {
+  discovery: FeedIndexDiscovery | null;
+  isLoading: boolean;
+  onSelectPlatform: (format: FeedFormat) => void;
+}) {
+  if (!discovery) {
+    return null;
+  }
+
+  return (
+    <section className="field-wide feed-source-discovery" aria-label="Выбор площадки фида">
+      <div className="feed-source-analysis-header">
+        <div>
+          <strong>Площадки в индексе</strong>
+          <span>
+            {formatNumber(discovery.platforms.length)} площадок · {formatNumber(discovery.files.length)} XML-файлов
+          </span>
+        </div>
+      </div>
+
+      <div className="feed-source-discovery-list">
+        {discovery.platforms.map((platform) => (
+          <article className="feed-source-discovery-platform" key={platform.format}>
+            <div className="feed-source-analysis-object-main">
+              <strong>{feedFormatLabels[platform.format]}</strong>
+              <span>
+                {formatNumber(platform.filesCount)} файлов · {formatNumber(platform.unitsCount)} лотов
+              </span>
+              <code>
+                Предупреждения: {formatNumber(platform.warningsCount)} · Ошибки: {formatNumber(platform.errorsCount)}
+              </code>
+            </div>
+            <AdminButton
+              disabled={isLoading}
+              tone="secondary"
+              type="button"
+              onClick={() => onSelectPlatform(platform.format)}
+            >
+              Выбрать площадку
+            </AdminButton>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function SourceMeta({ source, previewSummary }: { source: FeedSource; previewSummary?: Record<string, unknown> | null }) {
   const previewMetrics = getFeedPreviewMetrics(previewSummary);
 
@@ -1680,12 +1812,16 @@ function createFormFromSource(source: FeedSource): SourceFormState {
 }
 
 function validateSourceForm(form: SourceFormState, existingSource?: FeedSource | null) {
-  if (form.sourceKind === 'URL' && !form.url.trim()) {
+  if (isUrlBackedSourceKind(form.sourceKind) && !form.url.trim()) {
     return 'Укажите URL фида';
   }
 
   if (form.sourceKind === 'FILE' && !form.xmlFile && existingSource?.sourceKind !== 'FILE') {
     return 'Выберите XML-файл фида';
+  }
+
+  if (form.format === 'AUTO') {
+    return 'Выберите площадку фида перед сохранением';
   }
 
   if (!form.developerId) {
@@ -1712,7 +1848,7 @@ function validateSourceForm(form: SourceFormState, existingSource?: FeedSource |
 }
 
 function validateSourceAnalysisForm(form: SourceFormState) {
-  if (form.sourceKind === 'URL' && !form.url.trim()) {
+  if (isUrlBackedSourceKind(form.sourceKind) && !form.url.trim()) {
     return 'Укажите URL фида';
   }
 
@@ -1729,14 +1865,14 @@ function createSourceRequestBody(form: SourceFormState) {
   const objectId = selectedMappings.length > 0 ? '' : form.objectId;
 
   formData.append('sourceKind', form.sourceKind);
-  formData.append('format', form.format);
+  formData.append('format', getConcreteFeedFormat(form.format));
   formData.append('filterJson', form.filterJson.trim());
   formData.append('developerId', form.developerId);
   formData.append('objectId', objectId);
   formData.append('mappings', JSON.stringify(selectedMappings));
   formData.append('isActive', String(form.isActive));
 
-  if (form.sourceKind === 'URL') {
+  if (isUrlBackedSourceKind(form.sourceKind)) {
     formData.append('url', form.url.trim());
   }
 
@@ -1753,7 +1889,7 @@ function createSourceAnalysisRequestBody(form: SourceFormState) {
   formData.append('sourceKind', form.sourceKind);
   formData.append('format', form.format);
 
-  if (form.sourceKind === 'URL') {
+  if (isUrlBackedSourceKind(form.sourceKind)) {
     formData.append('url', form.url.trim());
   }
 
@@ -1764,9 +1900,22 @@ function createSourceAnalysisRequestBody(form: SourceFormState) {
   return formData;
 }
 
+function getConcreteFeedFormat(format: FeedFormatChoice): FeedFormat {
+  if (format === 'AUTO') {
+    throw new Error('Feed format AUTO cannot be saved');
+  }
+
+  return format;
+}
+
+function isUrlBackedSourceKind(sourceKind: FeedSourceKind) {
+  return sourceKind === 'URL' || sourceKind === 'INDEX_URL';
+}
+
 function createSourceMappingsFromAnalysis(
   analysis: FeedSourceAnalysis,
   currentMappings: SourceMappingFormState[],
+  objectOptions: RealEstateObjectSummary[],
 ): SourceMappingFormState[] {
   return analysis.objects
     .filter((feedObject) => feedObject.filterJson)
@@ -1778,9 +1927,57 @@ function createSourceMappingsFromAnalysis(
         sourceKey,
         sourceTitle: feedObject.title,
         filterJson: feedObject.filterJson ?? {},
-        objectId: currentMapping?.objectId ?? '',
+        objectId: findObjectSuggestion(feedObject, objectOptions, currentMapping?.objectId),
       };
     });
+}
+
+function findDeveloperSuggestion(analysis: FeedSourceAnalysis, developers: ObjectDeveloper[]) {
+  const normalizedDeveloperName = analysis.developerName ? normalizeFeedMatchText(analysis.developerName) : '';
+
+  if (!normalizedDeveloperName) {
+    return '';
+  }
+
+  const matches = developers.filter((developer) => normalizeFeedMatchText(developer.name) === normalizedDeveloperName);
+
+  return matches.length === 1 ? matches[0]?.id ?? '' : '';
+}
+
+function findObjectSuggestion(
+  feedObject: FeedSourceAnalysisObject,
+  objectOptions: RealEstateObjectSummary[],
+  currentObjectId = '',
+) {
+  if (currentObjectId) {
+    return currentObjectId;
+  }
+
+  const feedNames = [
+    feedObject.title,
+    ...feedObject.projectNames,
+    ...feedObject.buildingNames,
+  ]
+    .map(normalizeFeedMatchText)
+    .filter((value) => value.length > 0);
+
+  if (feedNames.length === 0) {
+    return '';
+  }
+
+  const matches = objectOptions.filter((object) => feedNames.includes(normalizeFeedMatchText(object.title)));
+
+  return matches.length === 1 ? matches[0]?.id ?? '' : '';
+}
+
+function normalizeFeedMatchText(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[«»"']/gu, ' ')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/(?:^|\s)(?:ао|ооо|пао|гк|группа|компаний|жк|жилой|комплекс)(?=\s|$)/gu, ' ')
+    .trim()
+    .replace(/\s+/gu, ' ');
 }
 
 function getSelectedSourceMappings(form: SourceFormState) {

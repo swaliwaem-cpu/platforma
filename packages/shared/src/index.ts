@@ -11,7 +11,7 @@ export type ImportMode = 'PREVIEW' | 'RUN';
 export type ImportStatus = 'PENDING' | 'SUCCESS' | 'PARTIAL' | 'FAILED';
 export type CatalogQuickLinkType = 'DEVELOPER' | 'KRT' | 'SALES_START';
 export type FeedFormat = 'YANDEX_REALTY' | 'CIAN_XML' | 'AVITO_XML';
-export type FeedSourceKind = 'URL' | 'FILE';
+export type FeedSourceKind = 'URL' | 'FILE' | 'INDEX_URL';
 export type FeedUnitType = 'RESIDENTIAL' | 'COMMERCIAL';
 export type FeedUnitStatus = 'AVAILABLE' | 'BOOKED' | 'RESERVED' | 'SOLD' | 'ARCHIVED' | 'UNKNOWN';
 
@@ -404,6 +404,30 @@ export type FeedSourceAnalysis = {
   warnings: FeedParserWarning[];
 };
 
+export type FeedIndexFileCandidate = {
+  url: string;
+  format: FeedFormat | null;
+  unitsCount: number;
+  warningsCount: number;
+  error: string | null;
+};
+
+export type FeedIndexPlatformCandidate = {
+  format: FeedFormat;
+  label: string;
+  filesCount: number;
+  unitsCount: number;
+  warningsCount: number;
+  errorsCount: number;
+  files: FeedIndexFileCandidate[];
+};
+
+export type FeedIndexDiscovery = {
+  sourceUrl: string;
+  files: FeedIndexFileCandidate[];
+  platforms: FeedIndexPlatformCandidate[];
+};
+
 export type FeedSourcesResponse = {
   items: FeedSource[];
   total: number;
@@ -417,7 +441,8 @@ export type FeedSourceResponse = {
 };
 
 export type FeedSourceAnalysisResponse = {
-  analysis: FeedSourceAnalysis;
+  discovery: FeedIndexDiscovery | null;
+  analysis: FeedSourceAnalysis | null;
 };
 
 export type FeedImportRunsResponse = {

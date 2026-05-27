@@ -21,6 +21,10 @@ const avitoFeedFormatMigrationPath = path.join(
   rootDir,
   'apps/api/prisma/migrations/20260527000000_add_avito_feed_format/migration.sql',
 );
+const indexFeedSourceKindMigrationPath = path.join(
+  rootDir,
+  'apps/api/prisma/migrations/20260527010000_add_index_feed_source_kind/migration.sql',
+);
 
 function readProjectFile(filePath) {
   return fs.readFileSync(filePath, 'utf8');
@@ -30,7 +34,7 @@ test('Prisma schema defines feed enums', () => {
   const schema = readProjectFile(schemaPath);
 
   assert.match(schema, /enum FeedFormat \{[\s\S]*YANDEX_REALTY\s+@map\("yandex_realty"\)[\s\S]*CIAN_XML\s+@map\("cian_xml"\)[\s\S]*AVITO_XML\s+@map\("avito_xml"\)[\s\S]*@@map\("feed_format"\)[\s\S]*\}/);
-  assert.match(schema, /enum FeedSourceKind \{[\s\S]*URL\s+@map\("url"\)[\s\S]*FILE\s+@map\("file"\)[\s\S]*@@map\("feed_source_kind"\)[\s\S]*\}/);
+  assert.match(schema, /enum FeedSourceKind \{[\s\S]*URL\s+@map\("url"\)[\s\S]*FILE\s+@map\("file"\)[\s\S]*INDEX_URL\s+@map\("index_url"\)[\s\S]*@@map\("feed_source_kind"\)[\s\S]*\}/);
   assert.match(schema, /enum FeedUnitType \{[\s\S]*RESIDENTIAL\s+@map\("residential"\)[\s\S]*COMMERCIAL\s+@map\("commercial"\)[\s\S]*@@map\("feed_unit_type"\)[\s\S]*\}/);
   assert.match(schema, /enum FeedUnitStatus \{[\s\S]*AVAILABLE\s+@map\("available"\)[\s\S]*BOOKED\s+@map\("booked"\)[\s\S]*RESERVED\s+@map\("reserved"\)[\s\S]*SOLD\s+@map\("sold"\)[\s\S]*ARCHIVED\s+@map\("archived"\)[\s\S]*UNKNOWN\s+@map\("unknown"\)[\s\S]*@@map\("feed_unit_status"\)[\s\S]*\}/);
 });
@@ -168,4 +172,15 @@ test('Avito feed format migration adds avito_xml enum value', () => {
   const migration = readProjectFile(avitoFeedFormatMigrationPath);
 
   assert.match(migration, /ALTER TYPE "feed_format" ADD VALUE 'avito_xml'/);
+});
+
+test('index feed source kind migration adds index_url enum value', () => {
+  assert.equal(fs.existsSync(indexFeedSourceKindMigrationPath), true);
+
+  const migration = readProjectFile(indexFeedSourceKindMigrationPath);
+
+  assert.match(migration, /ALTER TYPE "feed_source_kind" ADD VALUE 'index_url'/);
+  assert.match(migration, /ALTER TABLE "feed_sources" DROP CONSTRAINT "feed_sources_source_payload_check"/);
+  assert.match(migration, /"source_kind"::text IN \('url', 'index_url'\) AND "url" IS NOT NULL AND "xml_file_id" IS NULL/);
+  assert.match(migration, /"source_kind" = 'file' AND "url" IS NULL AND "xml_file_id" IS NOT NULL/);
 });

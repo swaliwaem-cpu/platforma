@@ -27,6 +27,7 @@ const feedRunStartWaitMs = 10_000;
 const feedRunStartPollMs = 200;
 
 type FeedImportCommand = 'preview' | 'run';
+type AnalyzeFeedFormat = FeedFormat | 'AUTO';
 type BufferedUploadedFile = UploadedFile & { buffer: Buffer };
 
 type ListFeedSourcesQuery = {
@@ -204,7 +205,9 @@ export class FeedsService {
   ) {
     const sourceKind = this.parseSourceKind(body.sourceKind, xmlFile ? FeedSourceKind.FILE : FeedSourceKind.URL);
     const uploadedXmlFile = sourceKind === FeedSourceKind.FILE ? await this.uploadFeedXmlFile(xmlFile, actor) : null;
-    const url = sourceKind === FeedSourceKind.URL ? this.parseHttpUrl(body.url, 'Feed source URL is required') : null;
+    const url = this.isUrlBackedSourceKind(sourceKind)
+      ? this.parseHttpUrl(body.url, 'Feed source URL is required')
+      : null;
     const format = this.parseFormat(body.format);
     const filterJson = this.parseFeedSourceFilterJson(body.filterJson);
     const developerId = this.parseUuid(this.parseRequiredString(body.developerId, 'Developer is required'), 'Developer is invalid');
@@ -277,13 +280,13 @@ export class FeedsService {
       xmlFile ? FeedSourceKind.FILE : source.sourceKind,
     );
 
-    if (sourceKind === FeedSourceKind.URL) {
+    if (this.isUrlBackedSourceKind(sourceKind)) {
       const url = 'url' in body
         ? this.parseHttpUrl(body.url, 'Feed source URL is required')
         : this.parseHttpUrl(source.url, 'Feed source URL is required');
 
-      if (source.sourceKind !== FeedSourceKind.URL) {
-        data.sourceKind = FeedSourceKind.URL;
+      if (source.sourceKind !== sourceKind) {
+        data.sourceKind = sourceKind;
         hasChanges = true;
       }
 
@@ -403,20 +406,19 @@ export class FeedsService {
 
   async analyzeSource(body: AnalyzeFeedSourceBody, xmlFile?: UploadedFile) {
     const sourceKind = this.parseSourceKind(body.sourceKind, xmlFile ? FeedSourceKind.FILE : FeedSourceKind.URL);
-    const format = this.parseFormat(body.format);
-    const url = sourceKind === FeedSourceKind.URL ? this.parseHttpUrl(body.url, 'Feed source URL is required') : null;
+    const format = this.parseAnalyzeFormat(body.format);
+    const url = this.isUrlBackedSourceKind(sourceKind)
+      ? this.parseHttpUrl(body.url, 'Feed source URL is required')
+      : null;
     const analysisXmlFile = sourceKind === FeedSourceKind.FILE ? this.validateAnalysisXmlFile(xmlFile) : null;
 
     try {
-      const analysis = await this.runFeedAnalyzeCli({
+      return await this.runFeedAnalyzeCli({
         format,
+        sourceKind,
         url,
         xmlFile: analysisXmlFile,
       });
-
-      return {
-        analysis,
-      };
     } catch (error) {
       throw new InternalServerErrorException(getCommandErrorMessage(error));
     }
@@ -514,7 +516,12 @@ export class FeedsService {
     });
   }
 
-  async runFeedAnalyzeCli(params: { format: FeedFormat; url: string | null; xmlFile: BufferedUploadedFile | null }) {
+  async runFeedAnalyzeCli(params: {
+    format: AnalyzeFeedFormat;
+    sourceKind: FeedSourceKind;
+    url: string | null;
+    xmlFile: BufferedUploadedFile | null;
+  }) {
     const tempDir = await mkdtemp(join(tmpdir(), 'platforma-feed-analyze-'));
     const outputPath = join(tempDir, 'analysis.json');
     const args = [
@@ -526,6 +533,8 @@ export class FeedsService {
       '--',
       '--format',
       params.format,
+      '--source-kind',
+      params.sourceKind,
       '--output',
       outputPath,
     ];
@@ -924,6 +933,24 @@ export class FeedsService {
     return format as FeedFormat;
   }
 
+  private parseAnalyzeFormat(value: unknown): AnalyzeFeedFormat {
+    if (typeof value !== 'string') {
+      throw new BadRequestException('Feed format is invalid');
+    }
+
+    const format = value.trim().toUpperCase();
+
+    if (format === 'AUTO') {
+      return format;
+    }
+
+    if (!Object.values(FeedFormat).includes(format as FeedFormat)) {
+      throw new BadRequestException('Feed format is invalid');
+    }
+
+    return format as FeedFormat;
+  }
+
   private parseFeedSourceFilterJson(value: unknown) {
     if (value === undefined || value === null || value === '') {
       return null;
@@ -1051,11 +1078,25 @@ export class FeedsService {
   private parseFeedAnalysisCliOutput(value: string) {
     const parsedValue = this.parseJsonString(value);
 
-    if (!this.isPlainJsonObject(parsedValue) || !this.isPlainJsonObject(parsedValue.analysis)) {
+    if (!this.isPlainJsonObject(parsedValue)) {
       throw new InternalServerErrorException('Feed analysis command returned invalid response');
     }
 
-    return parsedValue.analysis;
+    const discovery = parsedValue.discovery ?? null;
+    const analysis = parsedValue.analysis ?? null;
+
+    if (discovery !== null && !this.isPlainJsonObject(discovery)) {
+      throw new InternalServerErrorException('Feed analysis command returned invalid response');
+    }
+
+    if (analysis !== null && !this.isPlainJsonObject(analysis)) {
+      throw new InternalServerErrorException('Feed analysis command returned invalid response');
+    }
+
+    return {
+      discovery,
+      analysis,
+    };
   }
 
   private parseJsonString(value: string) {
@@ -1096,6 +1137,10 @@ export class FeedsService {
     }
 
     return sourceKind as FeedSourceKind;
+  }
+
+  private isUrlBackedSourceKind(sourceKind: FeedSourceKind) {
+    return sourceKind === FeedSourceKind.URL || sourceKind === FeedSourceKind.INDEX_URL;
   }
 
   private parseImportMode(value: string) {

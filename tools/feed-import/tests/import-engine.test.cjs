@@ -102,6 +102,22 @@ function makeMultiProjectCianFeed() {
     </feed>`;
 }
 
+function makeIndexCianFeed(externalId, projectName = 'Муза') {
+  return `<?xml version="1.0"?>
+    <feed>
+      <object>
+        <ExternalId>${externalId}</ExternalId>
+        <title>Квартира ${externalId}</title>
+        <Category>flatSale</Category>
+        <Address>Красноармейская, вл. 11</Address>
+        <TotalArea>45</TotalArea>
+        <BargainTerms><Price>12000000</Price><Currency>RUR</Currency></BargainTerms>
+        <Developer><Name>Смайнекс</Name></Developer>
+        <JKSchema><Name>${projectName}</Name><House><Name>Корпус 1</Name></House></JKSchema>
+      </object>
+    </feed>`;
+}
+
 function makeMultiDevelopmentAvitoFeed() {
   return `<?xml version="1.0" encoding="utf-8"?>
     <Ads target="Avito.ru" formatVersion="3">
@@ -166,9 +182,30 @@ test('parseFeedAnalyzeCliArgs accepts pnpm argument separator', () => {
     {
       command: 'analyze',
       format: 'YANDEX_REALTY',
+      sourceKind: 'FILE',
       url: null,
       filePath: '/tmp/feed.xml',
       outputPath: '/tmp/analysis.json',
+    },
+  );
+});
+
+test('parseFeedAnalyzeCliArgs accepts auto format for index URLs', () => {
+  assert.deepEqual(
+    parseFeedAnalyzeCliArgs([
+      'analyze',
+      '--format=AUTO',
+      '--source-kind=INDEX_URL',
+      '--url',
+      'https://feeds.test/xml/',
+    ]),
+    {
+      command: 'analyze',
+      format: 'AUTO',
+      sourceKind: 'INDEX_URL',
+      url: 'https://feeds.test/xml/',
+      filePath: null,
+      outputPath: null,
     },
   );
 });
@@ -373,6 +410,64 @@ test('executeFeedImport routes CIAN units through project name source mappings',
   assert.equal(nagatinoUnit.objectId, 'object-2');
   assert.equal(state.objects.get('object-1').feedUnitsCount, 1);
   assert.equal(state.objects.get('object-2').feedUnitsCount, 1);
+});
+
+test('executeFeedImport imports selected platform files from index sources', async () => {
+  const indexUrl = 'https://feeds.test/xml/';
+  const { db, state } = createFakeDb({
+    source: {
+      sourceKind: 'INDEX_URL',
+      url: indexUrl,
+      format: 'CIAN_XML',
+      objectId: null,
+      mappings: [
+        makeSourceMapping({
+          id: 'mapping-muza',
+          objectId: 'object-1',
+          sourceKey: 'muza',
+          sourceTitle: 'Муза',
+          filterJson: {
+            projectNames: ['Муза'],
+          },
+        }),
+      ],
+    },
+  });
+  const responses = new Map([
+    [
+      indexUrl,
+      `<html><body>
+        <a href="yandex.xml">Yandex</a>
+        <a href="cian-a.xml">Cian A</a>
+        <a href="cian-b.xml">Cian B</a>
+      </body></html>`,
+    ],
+    ['https://feeds.test/xml/yandex.xml', makeMultiBuildingYandexFeed()],
+    ['https://feeds.test/xml/cian-a.xml', makeIndexCianFeed('cian-1')],
+    ['https://feeds.test/xml/cian-b.xml', makeIndexCianFeed('cian-2')],
+  ]);
+
+  const result = await executeFeedImport({
+    mode: 'run',
+    sourceId: 'source-1',
+    db,
+    storage: state.storage,
+    xmlFetcher: async (url) => responses.get(url),
+    now: () => fixedDate,
+  });
+
+  const importedUnits = state.units.filter((unit) => unit.rawPayload?.__feedIndexSourceUrl);
+
+  assert.equal(result.status, 'SUCCESS');
+  assert.equal(result.summary.unitsParsed, 2);
+  assert.equal(importedUnits.length, 2);
+  assert.deepEqual(
+    importedUnits.map((unit) => unit.rawPayload.__rawExternalId).sort(),
+    ['cian-1', 'cian-2'],
+  );
+  assert.equal(importedUnits.every((unit) => unit.externalId.endsWith(`:${unit.rawPayload.__rawExternalId}`)), true);
+  assert.equal(importedUnits.every((unit) => unit.objectId === 'object-1'), true);
+  assert.equal(state.units.some((unit) => unit.externalId === 'nagatino-1'), false);
 });
 
 test('executeFeedImport routes Avito units through development id source mappings', async () => {

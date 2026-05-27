@@ -7,7 +7,10 @@ const {
   AvitoXmlFeedParser,
   CianXmlFeedParser,
   YandexRealtyFeedParser,
+  analyzeFeedSourceInput,
   createFeedSourceAnalysis,
+  detectFeedFormatFromXml,
+  discoverFeedIndexLinks,
   loadXmlFromUrl,
   normalizeFeedUnitStatus,
 } = require('../dist/index.js');
@@ -16,6 +19,49 @@ const fixtureDir = resolve(__dirname, 'fixtures');
 
 function readFixture(name) {
   return readFileSync(resolve(fixtureDir, name), 'utf8');
+}
+
+function makeIndexYandexXml() {
+  return `<?xml version="1.0"?>
+    <realty-feed>
+      <offer internal-id="yandex-1">
+        <property-type>жилая</property-type>
+        <category>квартира</category>
+        <sales-agent><organization>Смайнекс</organization></sales-agent>
+        <building-name>Лаврушинский</building-name>
+        <price><value>10000000</value><currency>RUR</currency></price>
+        <area><value>40</value></area>
+      </offer>
+    </realty-feed>`;
+}
+
+function makeIndexCianXml(externalId = 'cian-1', projectName = 'Муза') {
+  return `<?xml version="1.0"?>
+    <feed>
+      <object>
+        <ExternalId>${externalId}</ExternalId>
+        <Category>flatSale</Category>
+        <Address>Красноармейская, вл. 11</Address>
+        <TotalArea>45</TotalArea>
+        <BargainTerms><Price>12000000</Price><Currency>RUR</Currency></BargainTerms>
+        <Developer><Name>Смайнекс</Name></Developer>
+        <JKSchema><Name>${projectName}</Name><House><Name>Корпус 1</Name></House></JKSchema>
+      </object>
+    </feed>`;
+}
+
+function makeIndexAvitoXml() {
+  return `<?xml version="1.0" encoding="utf-8"?>
+    <Ads target="Avito.ru" formatVersion="3">
+      <Ad>
+        <Id>avito-1</Id>
+        <Address>Красноармейская, вл. 11</Address>
+        <Price>9000000</Price>
+        <Category>Квартиры</Category>
+        <NewDevelopmentId>1234567</NewDevelopmentId>
+        <Square>30</Square>
+      </Ad>
+    </Ads>`;
 }
 
 test('YandexRealtyFeedParser normalizes residential units from fixture', () => {
@@ -428,6 +474,114 @@ test('createFeedSourceAnalysis summarizes Avito development groups', () => {
   assert.deepEqual(analysis.objects[0].filterJson, {
     avitoDevelopmentIds: ['8605163'],
   });
+});
+
+test('detectFeedFormatFromXml detects supported XML roots', () => {
+  assert.equal(detectFeedFormatFromXml(makeIndexYandexXml()), 'YANDEX_REALTY');
+  assert.equal(detectFeedFormatFromXml(makeIndexCianXml()), 'CIAN_XML');
+  assert.equal(detectFeedFormatFromXml(makeIndexAvitoXml()), 'AVITO_XML');
+  assert.equal(detectFeedFormatFromXml('<unknown-feed />'), null);
+});
+
+test('discoverFeedIndexLinks resolves same-origin XML links from index HTML', () => {
+  const links = discoverFeedIndexLinks(
+    `<html>
+      <body>
+        <a href="yandex.xml">Yandex</a>
+        <a href="/xml/cian.xml?token=1">Cian</a>
+        <a href="https://feeds.example.test/xml/avito.XML">Avito</a>
+        <a href="https://other.example.test/xml/ignored.xml">Ignored</a>
+        <a href="/xml/cian.xml?token=1">Duplicate</a>
+      </body>
+    </html>`,
+    'https://feeds.example.test/xml/',
+  );
+
+  assert.deepEqual(links, [
+    'https://feeds.example.test/xml/yandex.xml',
+    'https://feeds.example.test/xml/cian.xml?token=1',
+    'https://feeds.example.test/xml/avito.XML',
+  ]);
+});
+
+test('analyzeFeedSourceInput returns index discovery for auto format', async () => {
+  const indexUrl = 'https://feeds.test/xml/';
+  const responses = new Map([
+    [
+      indexUrl,
+      `<html><body>
+        <a href="yandex.xml">Yandex</a>
+        <a href="cian.xml">Cian</a>
+        <a href="avito.xml">Avito</a>
+        <a href="bad.xml">Broken</a>
+      </body></html>`,
+    ],
+    ['https://feeds.test/xml/yandex.xml', makeIndexYandexXml()],
+    ['https://feeds.test/xml/cian.xml', makeIndexCianXml()],
+    ['https://feeds.test/xml/avito.xml', makeIndexAvitoXml()],
+    ['https://feeds.test/xml/bad.xml', '<not-xml'],
+  ]);
+
+  const result = await analyzeFeedSourceInput({
+    format: 'AUTO',
+    sourceKind: 'INDEX_URL',
+    url: indexUrl,
+    xmlFetcher: async (url) => responses.get(url),
+  });
+
+  assert.equal(result.analysis, null);
+  assert.equal(result.discovery.sourceUrl, indexUrl);
+  assert.equal(result.discovery.files.length, 4);
+
+  const platformsByFormat = Object.fromEntries(
+    result.discovery.platforms.map((platform) => [platform.format, platform]),
+  );
+  assert.equal(platformsByFormat.YANDEX_REALTY.filesCount, 1);
+  assert.equal(platformsByFormat.YANDEX_REALTY.unitsCount, 1);
+  assert.equal(platformsByFormat.CIAN_XML.filesCount, 1);
+  assert.equal(platformsByFormat.CIAN_XML.unitsCount, 1);
+  assert.equal(platformsByFormat.AVITO_XML.filesCount, 1);
+  assert.equal(platformsByFormat.AVITO_XML.unitsCount, 1);
+
+  const brokenFile = result.discovery.files.find((file) => file.url.endsWith('/bad.xml'));
+  assert.equal(brokenFile.format, null);
+  assert.equal(typeof brokenFile.error, 'string');
+});
+
+test('analyzeFeedSourceInput analyzes selected index platform files together', async () => {
+  const indexUrl = 'https://feeds.test/xml/';
+  const responses = new Map([
+    [
+      indexUrl,
+      `<html><body>
+        <a href="yandex.xml">Yandex</a>
+        <a href="cian-a.xml">Cian A</a>
+        <a href="cian-b.xml">Cian B</a>
+      </body></html>`,
+    ],
+    ['https://feeds.test/xml/yandex.xml', makeIndexYandexXml()],
+    ['https://feeds.test/xml/cian-a.xml', makeIndexCianXml('cian-1', 'Муза')],
+    ['https://feeds.test/xml/cian-b.xml', makeIndexCianXml('cian-2', 'Аура')],
+  ]);
+
+  const result = await analyzeFeedSourceInput({
+    format: 'CIAN_XML',
+    sourceKind: 'INDEX_URL',
+    url: indexUrl,
+    xmlFetcher: async (url) => responses.get(url),
+  });
+
+  assert.equal(result.discovery, null);
+  assert.equal(result.analysis.format, 'CIAN_XML');
+  assert.equal(result.analysis.developerName, 'Смайнекс');
+  assert.equal(result.analysis.unitsCount, 2);
+  assert.deepEqual(
+    result.analysis.objects.map((object) => [object.title, object.unitsCount]),
+    [
+      ['Аура', 1],
+      ['Муза', 1],
+    ],
+  );
 });
 
 test('parsers report unknown statuses and broken numeric/media fields as warnings', () => {

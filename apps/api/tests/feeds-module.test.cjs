@@ -265,25 +265,28 @@ test('FeedsService analyzes a feed source without developer and object mapping',
     calls.push(params);
 
     return {
-      developerName: 'АО «ГК «ЭТАЛОН»',
-      unitsCount: 493,
-      objects: [
-        {
-          title: 'Шагал',
-          unitsCount: 259,
-          buildingNames: ['Шагал'],
-          yandexBuildingIds: ['2577904'],
-          yandexHouseIds: ['2895484'],
-          addresses: [],
-          filterJson: {
+      discovery: null,
+      analysis: {
+        developerName: 'АО «ГК «ЭТАЛОН»',
+        unitsCount: 493,
+        objects: [
+          {
+            title: 'Шагал',
+            unitsCount: 259,
             buildingNames: ['Шагал'],
             yandexBuildingIds: ['2577904'],
             yandexHouseIds: ['2895484'],
+            addresses: [],
+            filterJson: {
+              buildingNames: ['Шагал'],
+              yandexBuildingIds: ['2577904'],
+              yandexHouseIds: ['2895484'],
+            },
           },
-        },
-      ],
-      warningsCount: 0,
-      warnings: [],
+        ],
+        warningsCount: 0,
+        warnings: [],
+      },
     };
   };
 
@@ -296,6 +299,7 @@ test('FeedsService analyzes a feed source without developer and object mapping',
   assert.deepEqual(calls, [
     {
       format: 'YANDEX_REALTY',
+      sourceKind: 'URL',
       url: 'https://feeds.example.test/yandex.xml',
       xmlFile: null,
     },
@@ -303,6 +307,78 @@ test('FeedsService analyzes a feed source without developer and object mapping',
   assert.equal(result.analysis.developerName, 'АО «ГК «ЭТАЛОН»');
   assert.equal(result.analysis.objects[0].title, 'Шагал');
   assert.equal(result.analysis.objects[0].unitsCount, 259);
+});
+
+test('FeedsService analyzes index URL discovery and selected platform', async () => {
+  const calls = [];
+  const indexUrl = 'https://feeds.sminex.test/xml/';
+  const service = new FeedsService({});
+  service.runFeedAnalyzeCli = async (params) => {
+    calls.push(params);
+
+    if (params.format === 'AUTO') {
+      return {
+        discovery: {
+          sourceUrl: params.url,
+          files: [],
+          platforms: [
+            {
+              format: 'CIAN_XML',
+              label: 'Cian XML',
+              filesCount: 2,
+              unitsCount: 22,
+              warningsCount: 0,
+              errorsCount: 0,
+              files: [],
+            },
+          ],
+        },
+        analysis: null,
+      };
+    }
+
+    return {
+      discovery: null,
+      analysis: {
+        format: 'CIAN_XML',
+        developerName: 'Смайнекс',
+        unitsCount: 22,
+        objects: [{ title: 'Муза', unitsCount: 22, filterJson: { projectNames: ['Муза'] } }],
+        warningsCount: 0,
+        warnings: [],
+      },
+    };
+  };
+
+  const discovery = await service.analyzeSource({
+    sourceKind: 'INDEX_URL',
+    url: indexUrl,
+    format: 'AUTO',
+  });
+  const selected = await service.analyzeSource({
+    sourceKind: 'INDEX_URL',
+    url: indexUrl,
+    format: 'CIAN_XML',
+  });
+
+  assert.deepEqual(calls, [
+    {
+      format: 'AUTO',
+      sourceKind: 'INDEX_URL',
+      url: indexUrl,
+      xmlFile: null,
+    },
+    {
+      format: 'CIAN_XML',
+      sourceKind: 'INDEX_URL',
+      url: indexUrl,
+      xmlFile: null,
+    },
+  ]);
+  assert.equal(discovery.discovery.platforms[0].format, 'CIAN_XML');
+  assert.equal(discovery.analysis, null);
+  assert.equal(selected.discovery, null);
+  assert.equal(selected.analysis.objects[0].title, 'Муза');
 });
 
 test('API Docker image includes the feed-import workspace used by feed preview and run', () => {
@@ -528,6 +604,63 @@ test('FeedsService creates feed sources with multi-object mappings and no fallba
   assert.equal(created.source.mappings.length, 2);
   assert.equal(created.source.mappings[0].object.title, 'Нагатино Ай-Лэнд');
   assert.equal(created.source.mappings[1].objectId, secondObjectId);
+});
+
+test('FeedsService creates index URL feed sources with concrete format', async () => {
+  const calls = [];
+  const prisma = {
+    developer: {
+      count: async () => 1,
+    },
+    realEstateObject: {
+      count: async () => 1,
+    },
+    feedSource: {
+      create: async (args) => {
+        calls.push(['feedSource.create', args]);
+        return sourceRecord({
+          sourceKind: args.data.sourceKind,
+          url: args.data.url,
+          xmlFileId: null,
+          xmlFile: null,
+          format: args.data.format,
+        });
+      },
+    },
+  };
+  const service = new FeedsService(prisma);
+
+  const created = await service.createSource({
+    sourceKind: 'index_url',
+    url: 'https://feeds.sminex.test/xml/',
+    format: 'CIAN_XML',
+    developerId,
+    objectId,
+  });
+  const createCall = calls.find(([name]) => name === 'feedSource.create')[1];
+
+  assert.equal(createCall.data.sourceKind, 'INDEX_URL');
+  assert.equal(createCall.data.url, 'https://feeds.sminex.test/xml/');
+  assert.equal('xmlFile' in createCall.data, false);
+  assert.equal(createCall.data.format, 'CIAN_XML');
+  assert.equal(created.source.sourceKind, 'INDEX_URL');
+  assert.equal(created.source.url, 'https://feeds.sminex.test/xml/');
+});
+
+test('FeedsService rejects persisted auto feed format', async () => {
+  const service = new FeedsService({});
+
+  await assert.rejects(
+    () =>
+      service.createSource({
+        sourceKind: 'INDEX_URL',
+        url: 'https://feeds.sminex.test/xml/',
+        format: 'AUTO',
+        developerId,
+        objectId,
+      }),
+    BadRequestException,
+  );
 });
 
 test('FeedsService creates file feed sources with uploaded XML file', async () => {

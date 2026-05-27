@@ -31,6 +31,8 @@ test('feeds admin page exposes required source form fields and unit filters', ()
   const source = readFileSync(sourcePath, 'utf8');
 
   assert.match(source, /name="sourceKind"/);
+  assert.match(source, /value="INDEX_URL"/);
+  assert.match(source, /Индекс XML/);
   assert.match(source, /name="url"/);
   assert.match(source, /name="xmlFile"/);
   assert.match(source, /name="format"/);
@@ -85,8 +87,29 @@ test('feeds admin page includes Avito feed format and development id mapping fie
   const source = readFileSync(sourcePath, 'utf8');
 
   assert.match(source, /AVITO_XML:\s*'Avito XML'/);
+  assert.match(source, /AUTO:\s*'Авто'/);
   assert.match(source, /avitoDevelopmentIds/);
   assert.match(source, /developmentIds:/);
+});
+
+test('feeds admin page renders index discovery platform selection', () => {
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.match(source, /sourceDiscovery/);
+  assert.match(source, /function FeedSourceDiscoveryPanel/);
+  assert.match(source, /onSelectPlatform/);
+  assert.match(source, /platforms\.map\(\(platform\) =>/);
+  assert.match(source, /Выбрать площадку/);
+});
+
+test('feeds admin page keeps auto format analysis-only and conservative automapping explicit', () => {
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.match(source, /form\.format === 'AUTO'/);
+  assert.match(source, /findDeveloperSuggestion/);
+  assert.match(source, /findObjectSuggestion/);
+  assert.match(source, /normalizeFeedMatchText/);
+  assert.match(source, /objectId: findObjectSuggestion/);
 });
 
 test('feeds admin page clears fallback object when analysis mappings exist', () => {

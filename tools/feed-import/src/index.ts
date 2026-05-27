@@ -953,7 +953,8 @@ function isHttpUrl(value: string) {
 type ImportModeValue = 'PREVIEW' | 'RUN';
 type ImportStatusValue = 'PENDING' | 'SUCCESS' | 'PARTIAL' | 'FAILED';
 type FeedSourceFormat = 'YANDEX_REALTY' | 'CIAN_XML' | 'AVITO_XML';
-type FeedSourceKind = 'URL' | 'FILE';
+type FeedAnalyzeFormat = FeedSourceFormat | 'AUTO';
+type FeedSourceKind = 'URL' | 'FILE' | 'INDEX_URL';
 type FeedUnitStatusValue = NormalizedFeedUnitStatus;
 type DecimalLike = string | number | { toString: () => string };
 
@@ -1308,6 +1309,35 @@ export type FeedSourceAnalysis = {
   warnings: FeedParserWarning[];
 };
 
+export type FeedIndexFileCandidate = {
+  url: string;
+  format: FeedSourceFormat | null;
+  unitsCount: number;
+  warningsCount: number;
+  error: string | null;
+};
+
+export type FeedIndexPlatformCandidate = {
+  format: FeedSourceFormat;
+  label: string;
+  filesCount: number;
+  unitsCount: number;
+  warningsCount: number;
+  errorsCount: number;
+  files: FeedIndexFileCandidate[];
+};
+
+export type FeedIndexDiscovery = {
+  sourceUrl: string;
+  files: FeedIndexFileCandidate[];
+  platforms: FeedIndexPlatformCandidate[];
+};
+
+export type FeedSourceAnalyzeResult = {
+  discovery: FeedIndexDiscovery | null;
+  analysis: FeedSourceAnalysis | null;
+};
+
 export type ExecuteFeedImportOptions = {
   mode: FeedImportCommand;
   sourceId: string;
@@ -1352,7 +1382,8 @@ export type ParsedFeedImportCliArgs = {
 
 export type ParsedFeedAnalyzeCliArgs = {
   command: FeedAnalyzeCommand;
-  format: FeedSourceFormat;
+  format: FeedAnalyzeFormat;
+  sourceKind: FeedSourceKind;
   url: string | null;
   filePath: string | null;
   outputPath: string | null;
@@ -1411,7 +1442,8 @@ export function parseFeedAnalyzeCliArgs(args: string[]): ParsedFeedAnalyzeCliArg
     return null;
   }
 
-  let format: FeedSourceFormat | null = null;
+  let format: FeedAnalyzeFormat | null = null;
+  let sourceKind: FeedSourceKind | null = null;
   let url: string | null = null;
   let filePath: string | null = null;
   let outputPath: string | null = null;
@@ -1432,6 +1464,17 @@ export function parseFeedAnalyzeCliArgs(args: string[]): ParsedFeedAnalyzeCliArg
 
     if (arg?.startsWith('--format=')) {
       format = parseFeedSourceFormatCliValue(arg.slice('--format='.length));
+      continue;
+    }
+
+    if (arg === '--source-kind' && nextValue) {
+      sourceKind = parseFeedSourceKindCliValue(nextValue);
+      index += 1;
+      continue;
+    }
+
+    if (arg?.startsWith('--source-kind=')) {
+      sourceKind = parseFeedSourceKindCliValue(arg.slice('--source-kind='.length));
       continue;
     }
 
@@ -1479,19 +1522,44 @@ export function parseFeedAnalyzeCliArgs(args: string[]): ParsedFeedAnalyzeCliArg
     return null;
   }
 
+  const resolvedSourceKind = sourceKind ?? (filePath ? 'FILE' : 'URL');
+
+  if (resolvedSourceKind === 'FILE' && !filePath) {
+    return null;
+  }
+
+  if (resolvedSourceKind !== 'FILE' && !url) {
+    return null;
+  }
+
   return {
     command: 'analyze',
     format,
+    sourceKind: resolvedSourceKind,
     url,
     filePath,
     outputPath,
   };
 }
 
-function parseFeedSourceFormatCliValue(value: string): FeedSourceFormat | null {
+function parseFeedSourceFormatCliValue(value: string): FeedAnalyzeFormat | null {
   const normalized = value.trim().toUpperCase();
 
   if (normalized === 'YANDEX_REALTY' || normalized === 'CIAN_XML' || normalized === 'AVITO_XML') {
+    return normalized;
+  }
+
+  if (normalized === 'AUTO') {
+    return normalized;
+  }
+
+  return null;
+}
+
+function parseFeedSourceKindCliValue(value: string): FeedSourceKind | null {
+  const normalized = value.trim().toUpperCase();
+
+  if (normalized === 'URL' || normalized === 'FILE' || normalized === 'INDEX_URL') {
     return normalized;
   }
 
@@ -1514,18 +1582,286 @@ export function createFeedParserForFormat(format: FeedSourceFormat): FeedParser 
   throw new Error(`Unsupported feed format: ${format satisfies never}`);
 }
 
+export function detectFeedFormatFromXml(xml: string): FeedSourceFormat | null {
+  try {
+    const root = parseXml(xml);
+
+    if (asRecord(root['realty-feed'])) {
+      return 'YANDEX_REALTY';
+    }
+
+    if (asRecord(root.feed)) {
+      return 'CIAN_XML';
+    }
+
+    if (asRecord(root.Ads)) {
+      return 'AVITO_XML';
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+export function discoverFeedIndexLinks(html: string, baseUrl: string): string[] {
+  const base = new URL(baseUrl);
+  const urls: string[] = [];
+  const seen = new Set<string>();
+  const hrefPattern = /\bhref\s*=\s*["']([^"']+\.xml(?:\?[^"']*)?)["']/giu;
+
+  for (const match of html.matchAll(hrefPattern)) {
+    const href = match[1]?.trim();
+
+    if (!href) {
+      continue;
+    }
+
+    try {
+      const resolved = new URL(href, base);
+
+      if (resolved.origin !== base.origin) {
+        continue;
+      }
+
+      const url = resolved.toString();
+
+      if (!seen.has(url)) {
+        seen.add(url);
+        urls.push(url);
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return urls;
+}
+
 export async function analyzeFeedSourceInput(params: {
-  format: FeedSourceFormat;
+  format: FeedAnalyzeFormat;
+  sourceKind?: FeedSourceKind;
   url?: string | null;
   filePath?: string | null;
   xmlFetcher?: (url: string) => Promise<string>;
-}) {
+}): Promise<FeedSourceAnalyzeResult> {
+  const sourceKind = params.sourceKind ?? (params.filePath ? 'FILE' : 'URL');
+
+  if (sourceKind === 'INDEX_URL') {
+    if (!params.url) {
+      throw new Error('Index feed analysis requires URL');
+    }
+
+    if (params.format === 'AUTO') {
+      return {
+        discovery: await createFeedIndexDiscovery({
+          sourceUrl: params.url,
+          xmlFetcher: params.xmlFetcher,
+        }),
+        analysis: null,
+      };
+    }
+
+    const parsed = await parseFeedIndexForFormat({
+      sourceUrl: params.url,
+      format: params.format,
+      xmlFetcher: params.xmlFetcher,
+      namespaceExternalIds: false,
+    });
+
+    return {
+      discovery: null,
+      analysis: createFeedSourceAnalysis(params.format, parsed),
+    };
+  }
+
   const xml = params.filePath
     ? await readFile(params.filePath, 'utf8')
-    : await (params.xmlFetcher ?? loadXmlFromUrl)(params.url ?? '');
-  const parser = createFeedParserForFormat(params.format);
+    : await fetchFeedText(params.url ?? '', params.xmlFetcher);
+  const format = params.format === 'AUTO' ? detectFeedFormatFromXml(xml) : params.format;
 
-  return createFeedSourceAnalysis(params.format, parser.parse(xml));
+  if (!format) {
+    throw new Error('Could not detect feed XML format');
+  }
+
+  const parser = createFeedParserForFormat(format);
+
+  return {
+    discovery: null,
+    analysis: createFeedSourceAnalysis(format, parser.parse(xml)),
+  };
+}
+
+async function createFeedIndexDiscovery(params: {
+  sourceUrl: string;
+  xmlFetcher?: (url: string) => Promise<string>;
+}): Promise<FeedIndexDiscovery> {
+  const indexHtml = await fetchFeedText(params.sourceUrl, params.xmlFetcher);
+  const links = discoverFeedIndexLinks(indexHtml, params.sourceUrl);
+  const files: FeedIndexFileCandidate[] = [];
+
+  for (const url of links) {
+    files.push(await analyzeFeedIndexFile(url, params.xmlFetcher));
+  }
+
+  return {
+    sourceUrl: params.sourceUrl,
+    files,
+    platforms: createFeedIndexPlatformCandidates(files),
+  };
+}
+
+async function analyzeFeedIndexFile(
+  url: string,
+  xmlFetcher?: (url: string) => Promise<string>,
+): Promise<FeedIndexFileCandidate> {
+  try {
+    const xml = await fetchFeedText(url, xmlFetcher);
+    const format = detectFeedFormatFromXml(xml);
+
+    if (!format) {
+      return {
+        url,
+        format: null,
+        unitsCount: 0,
+        warningsCount: 0,
+        error: 'Unsupported XML feed format',
+      };
+    }
+
+    const parsed = createFeedParserForFormat(format).parse(xml);
+
+    return {
+      url,
+      format,
+      unitsCount: parsed.units.length,
+      warningsCount: parsed.warnings.length,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      url,
+      format: null,
+      unitsCount: 0,
+      warningsCount: 0,
+      error: getErrorMessage(error),
+    };
+  }
+}
+
+function createFeedIndexPlatformCandidates(files: FeedIndexFileCandidate[]): FeedIndexPlatformCandidate[] {
+  const formats: FeedSourceFormat[] = ['YANDEX_REALTY', 'CIAN_XML', 'AVITO_XML'];
+
+  return formats.flatMap((format) => {
+    const formatFiles = files.filter((file) => file.format === format);
+
+    if (formatFiles.length === 0) {
+      return [];
+    }
+
+    return [
+      {
+        format,
+        label: getFeedFormatLabel(format),
+        filesCount: formatFiles.length,
+        unitsCount: formatFiles.reduce((sum, file) => sum + file.unitsCount, 0),
+        warningsCount: formatFiles.reduce((sum, file) => sum + file.warningsCount, 0),
+        errorsCount: formatFiles.filter((file) => file.error !== null).length,
+        files: formatFiles,
+      },
+    ];
+  });
+}
+
+function getFeedFormatLabel(format: FeedSourceFormat) {
+  if (format === 'YANDEX_REALTY') {
+    return 'Yandex Realty';
+  }
+
+  if (format === 'CIAN_XML') {
+    return 'Cian XML';
+  }
+
+  if (format === 'AVITO_XML') {
+    return 'Avito XML';
+  }
+
+  return format satisfies never;
+}
+
+async function parseFeedIndexForFormat(params: {
+  sourceUrl: string;
+  format: FeedSourceFormat;
+  xmlFetcher?: (url: string) => Promise<string>;
+  namespaceExternalIds: boolean;
+}): Promise<FeedParseResult> {
+  const indexHtml = await fetchFeedText(params.sourceUrl, params.xmlFetcher);
+  const links = discoverFeedIndexLinks(indexHtml, params.sourceUrl);
+  const urls = links.length > 0 ? links : [params.sourceUrl];
+  const units: NormalizedFeedUnit[] = [];
+  const warnings: FeedParserWarning[] = [];
+  let matchedFilesCount = 0;
+
+  for (const url of urls) {
+    try {
+      const xml = url === params.sourceUrl && links.length === 0
+        ? indexHtml
+        : await fetchFeedText(url, params.xmlFetcher);
+      const detectedFormat = detectFeedFormatFromXml(xml);
+
+      if (detectedFormat !== params.format) {
+        continue;
+      }
+
+      matchedFilesCount += 1;
+      const parsed = createFeedParserForFormat(params.format).parse(xml);
+      warnings.push(...parsed.warnings);
+      units.push(
+        ...parsed.units.map((unit) =>
+          params.namespaceExternalIds ? namespaceIndexFeedUnitExternalId(url, unit) : unit,
+        ),
+      );
+    } catch (error) {
+      warnings.push({
+        code: 'INDEX_XML_FAILED',
+        field: 'url',
+        message: `Failed to parse index XML file ${url}: ${getErrorMessage(error)}`,
+        value: url,
+      });
+    }
+  }
+
+  if (matchedFilesCount === 0) {
+    throw new Error(`Index URL ${params.sourceUrl} does not contain ${params.format} XML files`);
+  }
+
+  return { units, warnings };
+}
+
+function namespaceIndexFeedUnitExternalId(sourceUrl: string, unit: NormalizedFeedUnit): NormalizedFeedUnit {
+  const namespace = createHash('sha1').update(sourceUrl).digest('hex').slice(0, 12);
+  const maxRawLength = 255 - namespace.length - 1;
+  const rawExternalId = unit.externalId;
+
+  return {
+    ...unit,
+    externalId: `${namespace}:${rawExternalId.slice(0, maxRawLength)}`,
+    rawPayload: {
+      ...unit.rawPayload,
+      __feedIndexSourceUrl: sourceUrl,
+      __rawExternalId: rawExternalId,
+    },
+  };
+}
+
+async function fetchFeedText(url: string, xmlFetcher?: (url: string) => Promise<string>) {
+  const text = await (xmlFetcher ?? loadXmlFromUrl)(url);
+
+  if (typeof text !== 'string') {
+    throw new Error(`Feed URL ${url} returned empty response`);
+  }
+
+  return text;
 }
 
 export function createFeedSourceAnalysis(format: FeedSourceFormat, parsed: FeedParseResult): FeedSourceAnalysis {
@@ -1827,6 +2163,29 @@ async function loadXmlForFeedSource(source: FeedSourceRecord, options: ExecuteFe
   return (options.xmlFetcher ?? loadXmlFromUrl)(source.url);
 }
 
+async function parseFeedSourceForImport(
+  source: FeedSourceRecord,
+  options: ExecuteFeedImportOptions,
+): Promise<FeedParseResult> {
+  if (source.sourceKind === 'INDEX_URL') {
+    if (!source.url) {
+      throw new Error(`FeedSource ${source.id} URL is empty`);
+    }
+
+    return parseFeedIndexForFormat({
+      sourceUrl: source.url,
+      format: source.format,
+      xmlFetcher: options.xmlFetcher,
+      namespaceExternalIds: true,
+    });
+  }
+
+  const xml = await loadXmlForFeedSource(source, options);
+  const parser = createFeedParserForFormat(source.format);
+
+  return parser.parse(xml);
+}
+
 function routeFeedUnitsForSource(units: NormalizedFeedUnit[], source: FeedSourceRecord): RoutedFeedUnit[] {
   const activeMappings = (source.mappings ?? []).filter((mapping) => mapping.isActive);
 
@@ -1892,9 +2251,7 @@ export async function executeFeedImport(options: ExecuteFeedImportOptions): Prom
   const errors: FeedParserWarning[] = [];
 
   try {
-    const xml = await loadXmlForFeedSource(source, options);
-    const parser = createFeedParserForFormat(source.format);
-    const parsed = parser.parse(xml);
+    const parsed = await parseFeedSourceForImport(source, options);
     warnings.push(...parsed.warnings);
     const routedUnits = routeFeedUnitsForSource(parsed.units, source);
 
@@ -2939,7 +3296,7 @@ function getExtensionByContentType(contentType: string) {
 
 function printUsage() {
   console.error('Usage: pnpm --filter @platforma/feed-import run <preview|run> --source <feedSourceId>');
-  console.error('Usage: pnpm --filter @platforma/feed-import run analyze --format <format> (--url <url> | --file <path>) [--output <path>]');
+  console.error('Usage: pnpm --filter @platforma/feed-import run analyze --format <format|AUTO> [--source-kind <URL|FILE|INDEX_URL>] (--url <url> | --file <path>) [--output <path>]');
 }
 
 async function main() {
@@ -2955,10 +3312,11 @@ async function main() {
 
     const analysis = await analyzeFeedSourceInput({
       format: analyzeArgs.format,
+      sourceKind: analyzeArgs.sourceKind,
       url: analyzeArgs.url,
       filePath: analyzeArgs.filePath,
     });
-    const output = JSON.stringify({ analysis }, null, 2);
+    const output = JSON.stringify(analysis, null, 2);
 
     if (analyzeArgs.outputPath) {
       await writeFile(analyzeArgs.outputPath, output);

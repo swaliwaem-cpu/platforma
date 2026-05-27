@@ -6601,7 +6601,8 @@ tr.user-row--deactivated .text-button {
   gap: 12px;
 }
 
-.feed-source-analysis {
+.feed-source-analysis,
+.feed-source-discovery {
   display: grid;
   gap: 12px;
   border: 1px solid #d6dde5;
@@ -6666,7 +6667,13 @@ tr.user-row--deactivated .text-button {
   gap: 8px;
 }
 
-.feed-source-analysis-object {
+.feed-source-discovery-list {
+  display: grid;
+  gap: 8px;
+}
+
+.feed-source-analysis-object,
+.feed-source-discovery-platform {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(220px, 320px);
   gap: 12px;
@@ -7200,6 +7207,7 @@ tr.user-row--deactivated .text-button {
   .feed-source-run-header,
   .feed-source-analysis-summary,
   .feed-source-analysis-object,
+  .feed-source-discovery-platform,
   .feed-units-toolbar-main,
   .feed-run-progress-stats,
   .import-toolbar-main,
@@ -7214,6 +7222,7 @@ tr.user-row--deactivated .text-button {
   .feed-source-filter-json-footer,
   .feed-source-analysis-header,
   .feed-source-analysis-object,
+  .feed-source-discovery-platform,
   .feed-source-run-actions,
   .feed-units-toolbar-actions,
   .import-toolbar-actions {
@@ -7227,6 +7236,7 @@ tr.user-row--deactivated .text-button {
   .feed-source-run-actions .admin-button,
   .feed-source-analysis-header .admin-button,
   .feed-source-analysis-object .admin-button,
+  .feed-source-discovery-platform .admin-button,
   .feed-units-toolbar-actions .admin-button,
   .admin-feeds .header-actions .admin-button,
   .import-toolbar-actions .admin-button,
