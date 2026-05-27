@@ -61,6 +61,7 @@ export type NormalizedFeedUnit = {
   type: NormalizedFeedUnitType;
   status: NormalizedFeedUnitStatus;
   title: string | null;
+  projectName: string | null;
   address: string | null;
   building: string | null;
   section: string | null;
@@ -231,6 +232,7 @@ export class YandexRealtyFeedParser implements FeedParser {
       type: getYandexUnitType(offer),
       status: 'AVAILABLE',
       title: buildYandexTitle(offer, location),
+      projectName: getText(offer['building-name']),
       address: getText(location?.address) ?? getText(offer.Address),
       building: getText(offer['building-name']),
       section: getText(offer['building-section']),
@@ -314,7 +316,10 @@ export class CianXmlFeedParser implements FeedParser {
   private normalizeObject(object: XmlRecord, externalId: string, warnings: FeedParserWarning[]): NormalizedFeedUnit {
     const building = asRecord(object.Building);
     const bargainTerms = asRecord(object.BargainTerms);
-    const statusResult = normalizeFeedUnitStatus(asRecord(object.Booking)?.Status);
+    const jkSchema = asRecord(object.JKSchema);
+    const cianHouse = asRecord(jkSchema?.House);
+    const cianFlat = asRecord(cianHouse?.Flat);
+    const statusResult = normalizeCianFeedUnitStatus(object);
 
     if (statusResult.warning) {
       warnings.push(withExternalId(statusResult.warning, externalId));
@@ -331,12 +336,13 @@ export class CianXmlFeedParser implements FeedParser {
       externalId,
       type,
       status: statusResult.status,
-      title: buildCianTitle(object),
+      title: getText(object.title) ?? getText(object.Title) ?? buildCianTitle(object),
+      projectName: getText(jkSchema?.Name),
       address: getText(object.Address),
-      building: getText(building?.Name),
-      section: getText(object.Section),
+      building: getText(building?.Name) ?? getText(cianHouse?.Name),
+      section: getText(object.Section) ?? getText(cianFlat?.SectionNumber),
       floor,
-      rooms: normalizeInteger(object.RoomsCount, 'rooms', externalId, warnings),
+      rooms: normalizeCianRooms(object, externalId, warnings),
       price,
       currency: getText(bargainTerms?.Currency),
       area,
@@ -348,7 +354,7 @@ export class CianXmlFeedParser implements FeedParser {
       residentialDetails:
         type === 'RESIDENTIAL'
           ? {
-              apartmentNumber: getText(object.FlatNumber),
+              apartmentNumber: getText(object.FlatNumber) ?? getText(cianFlat?.FlatNumber),
               layoutType: getText(object.Layout),
               livingArea: normalizeDecimal(object.LivingArea, 'livingArea', externalId, warnings),
               kitchenArea: normalizeDecimal(object.KitchenArea, 'kitchenArea', externalId, warnings),
@@ -550,6 +556,30 @@ function normalizeYandexRooms(
   return normalizeBoolean(offer.studio) === true ? 0 : null;
 }
 
+function normalizeCianFeedUnitStatus(object: XmlRecord): FeedStatusNormalizationResult {
+  const rawStatus = asRecord(object.Booking)?.Status;
+
+  if (getText(rawStatus) === null) {
+    return { status: 'AVAILABLE' };
+  }
+
+  return normalizeFeedUnitStatus(rawStatus);
+}
+
+function normalizeCianRooms(
+  object: XmlRecord,
+  externalId: string,
+  warnings: FeedParserWarning[],
+): number | null {
+  if (getText(object.RoomsCount) !== null) {
+    return normalizeInteger(object.RoomsCount, 'rooms', externalId, warnings);
+  }
+
+  const flatRoomsCount = normalizeInteger(object.FlatRoomsCount, 'rooms', externalId, warnings);
+
+  return flatRoomsCount === 9 ? 0 : flatRoomsCount;
+}
+
 function formatDecimal(value: number): string {
   return value.toFixed(2);
 }
@@ -661,17 +691,34 @@ function collectCianMedia(
 ): NormalizedFeedMedia[] {
   const media: NormalizedFeedMedia[] = [];
   const seen = new Set<string>();
-  const layoutPhoto = asRecord(object.LayoutPhoto);
 
-  addMedia(media, seen, getText(layoutPhoto?.FullUrl), 'layout-photo', externalId, warnings);
+  for (const layoutPhotoNode of toArray(object.LayoutPhoto)) {
+    const layoutPhoto = asRecord(layoutPhotoNode);
 
-  const photos = asRecord(object.Photos);
-  for (const photo of toArray(photos?.PhotoSchema)) {
-    const photoRecord = asRecord(photo);
-    addMedia(media, seen, getText(photoRecord?.FullUrl), 'photo', externalId, warnings);
+    for (const sourceUrl of getTextValues(layoutPhoto?.FullUrl)) {
+      addMedia(media, seen, sourceUrl, 'layout-photo', externalId, warnings);
+    }
+  }
+
+  for (const photosNode of toArray(object.Photos)) {
+    const photos = asRecord(photosNode);
+
+    for (const photo of toArray(photos?.PhotoSchema)) {
+      const photoRecord = asRecord(photo);
+
+      for (const sourceUrl of getTextValues(photoRecord?.FullUrl)) {
+        addMedia(media, seen, sourceUrl, 'photo', externalId, warnings);
+      }
+    }
   }
 
   return media;
+}
+
+function getTextValues(value: unknown) {
+  return toArray(value)
+    .map((item) => getText(item))
+    .filter((item): item is string => item !== null);
 }
 
 function addMedia(
@@ -1057,6 +1104,8 @@ export type FeedImportResult = {
 export type FeedSourceAnalysisObject = {
   title: string;
   unitsCount: number;
+  projectNames: string[];
+  externalIds: string[];
   buildingNames: string[];
   yandexBuildingIds: string[];
   yandexHouseIds: string[];
@@ -1297,6 +1346,8 @@ export function createFeedSourceAnalysis(format: FeedSourceFormat, parsed: FeedP
     const group = groups.get(groupKey) ?? createFeedAnalysisObject(unit);
 
     group.unitsCount += 1;
+    pushUniqueText(group.projectNames, getFeedUnitProjectName(unit));
+    pushUniqueText(group.externalIds, unit.externalId);
     pushUniqueText(group.buildingNames, unit.building);
     pushUniqueText(group.yandexBuildingIds, getText(unit.rawPayload['yandex-building-id']));
     pushUniqueText(group.yandexHouseIds, getText(unit.rawPayload['yandex-house-id']));
@@ -1307,7 +1358,7 @@ export function createFeedSourceAnalysis(format: FeedSourceFormat, parsed: FeedP
   const objects = [...groups.values()]
     .map((object) => ({
       ...object,
-      filterJson: format === 'YANDEX_REALTY' ? createYandexAnalysisFilterJson(object) : null,
+      filterJson: createFeedAnalysisFilterJson(format, object),
     }))
     .sort((left, right) => right.unitsCount - left.unitsCount || left.title.localeCompare(right.title, 'ru'));
 
@@ -1323,8 +1374,10 @@ export function createFeedSourceAnalysis(format: FeedSourceFormat, parsed: FeedP
 
 function createFeedAnalysisObject(unit: NormalizedFeedUnit): FeedSourceAnalysisObject {
   return {
-    title: unit.building ?? unit.address ?? 'Без названия',
+    title: getFeedUnitProjectName(unit) ?? unit.building ?? unit.address ?? 'Без названия',
     unitsCount: 0,
+    projectNames: [],
+    externalIds: [],
     buildingNames: [],
     yandexBuildingIds: [],
     yandexHouseIds: [],
@@ -1335,13 +1388,25 @@ function createFeedAnalysisObject(unit: NormalizedFeedUnit): FeedSourceAnalysisO
 
 function getFeedAnalysisGroupKey(unit: NormalizedFeedUnit) {
   const yandexBuildingId = getText(unit.rawPayload['yandex-building-id']);
+  const projectName = getFeedUnitProjectName(unit);
   const building = unit.building ?? getText(unit.rawPayload['building-name']);
   const address = unit.address ?? getText(unit.rawPayload.Address);
 
-  return normalizeFilterText(building ?? yandexBuildingId ?? address ?? unit.externalId);
+  return normalizeFilterText(projectName ?? building ?? yandexBuildingId ?? address ?? unit.externalId);
 }
 
-function createYandexAnalysisFilterJson(object: FeedSourceAnalysisObject) {
+function createFeedAnalysisFilterJson(
+  format: FeedSourceFormat,
+  object: FeedSourceAnalysisObject,
+): Record<string, string[]> | null {
+  if (format === 'YANDEX_REALTY') {
+    return createYandexAnalysisFilterJson(object);
+  }
+
+  return createGenericAnalysisFilterJson(object);
+}
+
+function createYandexAnalysisFilterJson(object: FeedSourceAnalysisObject): Record<string, string[]> | null {
   const filter: Record<string, string[]> = {};
 
   if (object.buildingNames.length > 0) {
@@ -1363,8 +1428,40 @@ function createYandexAnalysisFilterJson(object: FeedSourceAnalysisObject) {
   return Object.keys(filter).length > 0 ? filter : null;
 }
 
+function createGenericAnalysisFilterJson(object: FeedSourceAnalysisObject): Record<string, string[]> | null {
+  if (object.projectNames.length > 0) {
+    return {
+      projectNames: object.projectNames,
+    };
+  }
+
+  if (object.buildingNames.length > 0) {
+    return {
+      buildingNames: object.buildingNames,
+    };
+  }
+
+  if (object.addresses.length === 1) {
+    return {
+      addressIncludes: object.addresses,
+    };
+  }
+
+  if (object.externalIds.length > 0) {
+    return {
+      externalIds: object.externalIds,
+    };
+  }
+
+  return null;
+}
+
 function getFeedUnitDeveloperName(unit: NormalizedFeedUnit) {
-  return getText(asRecord(unit.rawPayload['sales-agent'])?.organization);
+  return getText(asRecord(unit.rawPayload['sales-agent'])?.organization) ?? getText(asRecord(unit.rawPayload.Developer)?.Name);
+}
+
+function getFeedUnitProjectName(unit: NormalizedFeedUnit) {
+  return unit.projectName ?? getText(asRecord(unit.rawPayload.JKSchema)?.Name);
 }
 
 function getMostFrequentText(values: Array<string | null>) {
@@ -1390,28 +1487,25 @@ function pushUniqueText(target: string[], value: string | null) {
 }
 
 function filterFeedUnitsForSource(units: NormalizedFeedUnit[], source: FeedSourceRecord) {
-  if (source.format !== 'YANDEX_REALTY') {
-    return units;
-  }
-
-  const filter = normalizeYandexSourceFilter(source.filterJson);
+  const filter = normalizeFeedSourceFilter(source.filterJson);
 
   if (!filter) {
     return units;
   }
 
-  return units.filter((unit) => matchesYandexSourceFilter(unit, filter));
+  return units.filter((unit) => matchesFeedSourceFilter(unit, filter));
 }
 
-type NormalizedYandexSourceFilter = {
+type NormalizedFeedSourceFilter = {
   externalIds: string[];
+  projectNames: string[];
   buildingNames: string[];
   yandexBuildingIds: string[];
   yandexHouseIds: string[];
   addressIncludes: string[];
 };
 
-function normalizeYandexSourceFilter(value: Record<string, unknown> | null | undefined): NormalizedYandexSourceFilter | null {
+function normalizeFeedSourceFilter(value: Record<string, unknown> | null | undefined): NormalizedFeedSourceFilter | null {
   const filter = asRecord(value);
 
   if (!filter) {
@@ -1420,6 +1514,7 @@ function normalizeYandexSourceFilter(value: Record<string, unknown> | null | und
 
   const normalized = {
     externalIds: normalizeFilterStringArray(filter.externalIds),
+    projectNames: normalizeFilterStringArray(filter.projectNames),
     buildingNames: normalizeFilterStringArray(filter.buildingNames),
     yandexBuildingIds: normalizeFilterStringArray(filter.yandexBuildingIds),
     yandexHouseIds: normalizeFilterStringArray(filter.yandexHouseIds),
@@ -1437,12 +1532,15 @@ function normalizeFilterStringArray(value: unknown) {
     .filter((item) => item.length > 0);
 }
 
-function matchesYandexSourceFilter(unit: NormalizedFeedUnit, filter: NormalizedYandexSourceFilter) {
+function matchesFeedSourceFilter(unit: NormalizedFeedUnit, filter: NormalizedFeedSourceFilter) {
   const payload = unit.rawPayload;
+  const cianSchema = asRecord(payload.JKSchema);
+  const cianHouse = asRecord(cianSchema?.House);
 
   return (
     matchesFilterExact(unit.externalId, filter.externalIds) &&
-    matchesFilterExact(unit.building ?? getText(payload['building-name']), filter.buildingNames) &&
+    matchesFilterExact(unit.projectName ?? getText(cianSchema?.Name), filter.projectNames) &&
+    matchesFilterExact(unit.building ?? getText(payload['building-name']) ?? getText(cianHouse?.Name), filter.buildingNames) &&
     matchesFilterExact(getText(payload['yandex-building-id']), filter.yandexBuildingIds) &&
     matchesFilterExact(getText(payload['yandex-house-id']), filter.yandexHouseIds) &&
     matchesFilterIncludes(unit.address ?? getText(payload.Address), filter.addressIncludes)
@@ -1498,16 +1596,16 @@ function routeFeedUnitsForSource(units: NormalizedFeedUnit[], source: FeedSource
     const normalizedMappings = activeMappings
       .map((mapping) => ({
         objectId: mapping.objectId,
-        filter: normalizeYandexSourceFilter(mapping.filterJson),
+        filter: normalizeFeedSourceFilter(mapping.filterJson),
       }))
-      .filter((mapping): mapping is { objectId: string; filter: NormalizedYandexSourceFilter } => mapping.filter !== null);
+      .filter((mapping): mapping is { objectId: string; filter: NormalizedFeedSourceFilter } => mapping.filter !== null);
 
     if (normalizedMappings.length === 0) {
       return [];
     }
 
     return units.flatMap((unit) => {
-      const mapping = normalizedMappings.find((candidate) => matchesYandexSourceFilter(unit, candidate.filter));
+      const mapping = normalizedMappings.find((candidate) => matchesFeedSourceFilter(unit, candidate.filter));
 
       return mapping ? [{ unit, objectId: mapping.objectId }] : [];
     });

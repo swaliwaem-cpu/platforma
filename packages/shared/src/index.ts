@@ -385,6 +385,8 @@ export type FeedParserWarning = {
 export type FeedSourceAnalysisObject = {
   title: string;
   unitsCount: number;
+  projectNames: string[];
+  externalIds: string[];
   buildingNames: string[];
   yandexBuildingIds: string[];
   yandexHouseIds: string[];

@@ -72,6 +72,15 @@ test('feeds admin page includes Yandex source filter help fields', () => {
   assert.match(source, /addressIncludes/);
 });
 
+test('feeds admin page includes CIAN project mapping fields in source analysis', () => {
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.match(source, /projectNames/);
+  assert.match(source, /externalIds/);
+  assert.match(source, />Предупреждения</);
+  assert.doesNotMatch(source, /<dt>Warnings<\/dt>/);
+});
+
 test('feeds admin page keeps raw Yandex filter hidden until it has data', () => {
   const source = readFileSync(sourcePath, 'utf8');
 

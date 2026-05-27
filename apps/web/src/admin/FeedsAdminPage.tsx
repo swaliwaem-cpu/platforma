@@ -1535,7 +1535,7 @@ function FeedSourceAnalysisPanel({
               <dd>{formatNumber(analysis.unitsCount)}</dd>
             </div>
             <div>
-              <dt>Warnings</dt>
+              <dt>Предупреждения</dt>
               <dd>{formatNumber(analysis.warningsCount)}</dd>
             </div>
           </dl>
@@ -1831,8 +1831,11 @@ function getSourceObjectTitle(source: FeedSource) {
 }
 
 function createFeedAnalysisObjectKey(feedObject: FeedSourceAnalysisObject) {
+  const useExternalIds = shouldUseFeedAnalysisExternalIds(feedObject);
   const rawKey = [
     feedObject.title,
+    feedObject.projectNames.join('|'),
+    useExternalIds ? feedObject.externalIds.join('|') : '',
     feedObject.buildingNames.join('|'),
     feedObject.yandexBuildingIds.join('|'),
     feedObject.yandexHouseIds.join('|'),
@@ -1853,7 +1856,10 @@ function hashText(value: string) {
 }
 
 function formatFeedAnalysisObjectMeta(feedObject: FeedSourceAnalysisObject) {
+  const useExternalIds = shouldUseFeedAnalysisExternalIds(feedObject);
   const parts = [
+    feedObject.projectNames.length > 0 ? `projectNames: ${feedObject.projectNames.join(', ')}` : null,
+    useExternalIds && feedObject.externalIds.length > 0 ? `externalIds: ${feedObject.externalIds.join(', ')}` : null,
     feedObject.buildingNames.length > 0 ? `buildingNames: ${feedObject.buildingNames.join(', ')}` : null,
     feedObject.yandexBuildingIds.length > 0 ? `buildingIds: ${feedObject.yandexBuildingIds.join(', ')}` : null,
     feedObject.yandexHouseIds.length > 0 ? `houseIds: ${feedObject.yandexHouseIds.join(', ')}` : null,
@@ -1861,6 +1867,16 @@ function formatFeedAnalysisObjectMeta(feedObject: FeedSourceAnalysisObject) {
   ].filter((part): part is string => part !== null);
 
   return parts.join(' · ') || 'нет фильтрующих полей';
+}
+
+function shouldUseFeedAnalysisExternalIds(feedObject: FeedSourceAnalysisObject) {
+  return (
+    feedObject.projectNames.length === 0 &&
+    feedObject.buildingNames.length === 0 &&
+    feedObject.yandexBuildingIds.length === 0 &&
+    feedObject.yandexHouseIds.length === 0 &&
+    feedObject.addresses.length === 0
+  );
 }
 
 function toJsonArray(value: JsonValue | undefined) {

@@ -206,6 +206,118 @@ test('CianXmlFeedParser normalizes commercial units from fixture', () => {
   assert.equal(booked.status, 'BOOKED');
 });
 
+test('CianXmlFeedParser normalizes Etalon-style project, house, rooms and media fields', () => {
+  const parser = new CianXmlFeedParser();
+  const xml = `<?xml version="1.0"?>
+    <feed>
+      <object>
+        <ExternalId>shagal-659</ExternalId>
+        <title>Квартира №659</title>
+        <Category>flatSale</Category>
+        <Address>г. Москва, ЮАО, ул. Автозаводская, вл. 23/75</Address>
+        <FloorNumber>12</FloorNumber>
+        <FlatRoomsCount>9</FlatRoomsCount>
+        <TotalArea>31.4</TotalArea>
+        <LivingArea>18.2</LivingArea>
+        <KitchenArea>5.1</KitchenArea>
+        <BargainTerms><Price>15000000</Price><Currency>RUR</Currency></BargainTerms>
+        <Developer><Name>Группа Эталон</Name></Developer>
+        <JKSchema>
+          <Name>Шагал</Name>
+          <House>
+            <Name>Корпус 8</Name>
+            <Flat>
+              <FlatNumber>659</FlatNumber>
+              <SectionNumber>2</SectionNumber>
+            </Flat>
+          </House>
+        </JKSchema>
+        <LayoutPhoto>
+          <FullUrl>https://img.example.com/layout-1.png</FullUrl>
+          <FullUrl>https://img.example.com/layout-2.png</FullUrl>
+        </LayoutPhoto>
+        <Photos>
+          <PhotoSchema><FullUrl>https://img.example.com/photo-1.jpg</FullUrl></PhotoSchema>
+        </Photos>
+      </object>
+      <object>
+        <ExternalId>shagal-701</ExternalId>
+        <title>Квартира №701</title>
+        <Category>flatSale</Category>
+        <Address>г. Москва, ЮАО, ул. Автозаводская, вл. 23/74</Address>
+        <FloorNumber>14</FloorNumber>
+        <FlatRoomsCount>2</FlatRoomsCount>
+        <TotalArea>54.2</TotalArea>
+        <BargainTerms><Price>23000000</Price><Currency>RUR</Currency></BargainTerms>
+        <Developer><Name>Группа Эталон</Name></Developer>
+        <JKSchema>
+          <Name>Шагал</Name>
+          <House><Name>Корпус 9</Name><Flat><FlatNumber>701</FlatNumber></Flat></House>
+        </JKSchema>
+      </object>
+      <object>
+        <ExternalId>nag-1017</ExternalId>
+        <title>Квартира №1017</title>
+        <Category>flatSale</Category>
+        <Address>Москва, ЮАО, Даниловский, пр-кт Андропова</Address>
+        <FloorNumber>29</FloorNumber>
+        <FlatRoomsCount>1</FlatRoomsCount>
+        <TotalArea>25.3</TotalArea>
+        <BargainTerms><Price>17597954</Price><Currency>RUR</Currency></BargainTerms>
+        <Developer><Name>Группа Эталон</Name></Developer>
+        <JKSchema>
+          <Name>Нагатино Ай-Лэнд</Name>
+          <House><Name>Корпус 1</Name><Flat><FlatNumber>1017</FlatNumber></Flat></House>
+        </JKSchema>
+      </object>
+    </feed>`;
+
+  const result = parser.parse(xml);
+  const first = result.units[0];
+
+  assert.deepEqual(result.warnings, []);
+  assert.equal(first.status, 'AVAILABLE');
+  assert.equal(first.title, 'Квартира №659');
+  assert.equal(first.projectName, 'Шагал');
+  assert.equal(first.building, 'Корпус 8');
+  assert.equal(first.section, '2');
+  assert.equal(first.rooms, 0);
+  assert.equal(first.residentialDetails.apartmentNumber, '659');
+  assert.deepEqual(first.media, [
+    {
+      sourceUrl: 'https://img.example.com/layout-1.png',
+      sortOrder: 0,
+      label: 'layout-photo',
+    },
+    {
+      sourceUrl: 'https://img.example.com/layout-2.png',
+      sortOrder: 1,
+      label: 'layout-photo',
+    },
+    {
+      sourceUrl: 'https://img.example.com/photo-1.jpg',
+      sortOrder: 2,
+      label: 'photo',
+    },
+  ]);
+
+  const analysis = createFeedSourceAnalysis('CIAN_XML', result);
+
+  assert.equal(analysis.developerName, 'Группа Эталон');
+  assert.deepEqual(
+    analysis.objects.map((object) => [object.title, object.unitsCount]),
+    [
+      ['Шагал', 2],
+      ['Нагатино Ай-Лэнд', 1],
+    ],
+  );
+  assert.deepEqual(analysis.objects[0].projectNames, ['Шагал']);
+  assert.deepEqual(analysis.objects[0].buildingNames, ['Корпус 8', 'Корпус 9']);
+  assert.deepEqual(analysis.objects[0].filterJson, {
+    projectNames: ['Шагал'],
+  });
+});
+
 test('parsers report unknown statuses and broken numeric/media fields as warnings', () => {
   const parser = new CianXmlFeedParser();
   const xml = `<?xml version="1.0"?>

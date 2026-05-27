@@ -74,6 +74,34 @@ function makeMultiBuildingYandexFeed() {
     </realty-feed>`;
 }
 
+function makeMultiProjectCianFeed() {
+  return `<?xml version="1.0"?>
+    <feed>
+      <object>
+        <ExternalId>shagal-1</ExternalId>
+        <title>Квартира №659</title>
+        <Category>flatSale</Category>
+        <Address>г. Москва, ЮАО, ул. Автозаводская, вл. 23/75</Address>
+        <FloorNumber>12</FloorNumber>
+        <FlatRoomsCount>9</FlatRoomsCount>
+        <TotalArea>31.4</TotalArea>
+        <BargainTerms><Price>15000000</Price><Currency>RUR</Currency></BargainTerms>
+        <JKSchema><Name>Шагал</Name><House><Name>Корпус 8</Name></House></JKSchema>
+      </object>
+      <object>
+        <ExternalId>nagatino-1</ExternalId>
+        <title>Квартира №1017</title>
+        <Category>flatSale</Category>
+        <Address>Москва, ЮАО, Даниловский, пр-кт Андропова</Address>
+        <FloorNumber>29</FloorNumber>
+        <FlatRoomsCount>1</FlatRoomsCount>
+        <TotalArea>25.3</TotalArea>
+        <BargainTerms><Price>17597954</Price><Currency>RUR</Currency></BargainTerms>
+        <JKSchema><Name>Нагатино Ай-Лэнд</Name><House><Name>Корпус 1</Name></House></JKSchema>
+      </object>
+    </feed>`;
+}
+
 test('parseFeedImportCliArgs accepts preview/run with source id', () => {
   assert.deepEqual(parseFeedImportCliArgs(['preview', '--source', 'source-1']), {
     command: 'preview',
@@ -257,6 +285,58 @@ test('executeFeedImport routes Yandex units through active source mappings', asy
   assert.equal(state.objects.get('object-2').feedUnitsCount, 1);
   assert.equal(state.objects.get('object-3').feedUnitsCount, null);
   assert.deepEqual(state.refreshedObjectIds.sort(), ['object-1', 'object-2', 'object-3']);
+});
+
+test('executeFeedImport routes CIAN units through project name source mappings', async () => {
+  const { db, state } = createFakeDb({
+    source: {
+      format: 'CIAN_XML',
+      objectId: null,
+      mappings: [
+        makeSourceMapping({
+          id: 'mapping-shagal',
+          objectId: 'object-1',
+          sourceKey: 'shagal',
+          sourceTitle: 'Шагал',
+          filterJson: {
+            projectNames: ['Шагал'],
+          },
+        }),
+        makeSourceMapping({
+          id: 'mapping-nagatino',
+          objectId: 'object-2',
+          sourceKey: 'nagatino',
+          sourceTitle: 'Нагатино Ай-Лэнд',
+          filterJson: {
+            projectNames: ['Нагатино Ай-Лэнд'],
+          },
+        }),
+      ],
+    },
+    objects: [
+      makeObjectAggregate({ id: 'object-1' }),
+      makeObjectAggregate({ id: 'object-2' }),
+    ],
+  });
+
+  const result = await executeFeedImport({
+    mode: 'run',
+    sourceId: 'source-1',
+    db,
+    storage: state.storage,
+    xmlFetcher: async () => makeMultiProjectCianFeed(),
+    now: () => fixedDate,
+  });
+
+  const shagalUnit = state.units.find((unit) => unit.externalId === 'shagal-1');
+  const nagatinoUnit = state.units.find((unit) => unit.externalId === 'nagatino-1');
+
+  assert.equal(result.status, 'SUCCESS');
+  assert.equal(result.summary.unitsParsed, 2);
+  assert.equal(shagalUnit.objectId, 'object-1');
+  assert.equal(nagatinoUnit.objectId, 'object-2');
+  assert.equal(state.objects.get('object-1').feedUnitsCount, 1);
+  assert.equal(state.objects.get('object-2').feedUnitsCount, 1);
 });
 
 test('executeFeedImport reads uploaded XML feed sources from storage', async () => {
