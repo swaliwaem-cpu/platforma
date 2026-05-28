@@ -78,7 +78,7 @@ test('detail page requests original image for main photo and thumbnail image for
   const objectImageCarouselSource =
     detailSource.match(/function ObjectImageCarousel[\s\S]*?\nfunction ObjectFeedUnitsSection/)?.[0] ?? '';
 
-  assert.match(objectImageCarouselSource, /className="object-carousel-image"[\s\S]*?variant="original"/);
+  assert.match(objectImageCarouselSource, /className="media-gallery-image object-carousel-image"[\s\S]*?variant="original"/);
   assert.match(objectImageCarouselSource, /className="carousel-modal-image"[\s\S]*?variant="original"/);
   assert.match(detailSource, /variant="thumbnail"/);
 });

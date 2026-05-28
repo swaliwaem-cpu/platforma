@@ -677,25 +677,25 @@ function ObjectImageCarousel({
 
   if (!activeImage) {
     return (
-      <div className="object-image-carousel object-image-carousel--empty">
+      <div className="media-gallery-frame object-image-carousel object-image-carousel--empty">
         <span>Фотографии пока не загружены</span>
       </div>
     );
   }
 
   return (
-    <section className="object-image-carousel" aria-label="Галерея объекта">
-      <div className="object-carousel-media">
+    <section className="media-gallery-frame object-image-carousel" aria-label="Галерея объекта">
+      <div className="media-gallery-stage object-carousel-media">
         <button
           aria-label="Открыть фото в полном размере"
-          className="object-carousel-media-button"
+          className="media-gallery-button object-carousel-media-button"
           type="button"
           onClick={openLightbox}
         >
           <SecureImage
             accessToken={accessToken}
             alt={activeImage.alt ?? objectTitle}
-            className="object-carousel-image"
+            className="media-gallery-image object-carousel-image"
             fileId={activeImage.file.id}
             variant="original"
           />
@@ -1543,12 +1543,26 @@ function ObjectFeedMediaCarousel({
         onClose();
       }
 
-      if (event.key === 'ArrowLeft') {
-        setActiveIndex((currentIndex) => wrapCarouselIndex(currentIndex - 1, mediaItems.length));
+      if (event.key === 'ArrowLeft' && hasManyMedia) {
+        event.preventDefault();
+
+        if (fullscreenMedia) {
+          showPreviousFullscreenMedia();
+          return;
+        }
+
+        showPreviousMedia();
       }
 
-      if (event.key === 'ArrowRight') {
-        setActiveIndex((currentIndex) => wrapCarouselIndex(currentIndex + 1, mediaItems.length));
+      if (event.key === 'ArrowRight' && hasManyMedia) {
+        event.preventDefault();
+
+        if (fullscreenMedia) {
+          showNextFullscreenMedia();
+          return;
+        }
+
+        showNextMedia();
       }
     }
 
@@ -1557,7 +1571,7 @@ function ObjectFeedMediaCarousel({
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [fullscreenMedia, mediaItems.length, onClose, unit]);
+  }, [activeIndex, fullscreenMedia, hasManyMedia, mediaItems, onClose, unit]);
 
   useEffect(() => {
     setActiveIndex(0);
@@ -1576,6 +1590,31 @@ function ObjectFeedMediaCarousel({
 
   function showNextMedia() {
     setActiveIndex((currentIndex) => wrapCarouselIndex(currentIndex + 1, mediaItems.length));
+  }
+
+  function getFullscreenMediaIndex() {
+    if (!fullscreenMedia) {
+      return activeIndex;
+    }
+
+    const fullscreenMediaIndex = mediaItems.findIndex((media) => media.id === fullscreenMedia.id);
+
+    return fullscreenMediaIndex === -1 ? activeIndex : fullscreenMediaIndex;
+  }
+
+  function showFullscreenMediaByOffset(offset: number) {
+    const nextIndex = wrapCarouselIndex(getFullscreenMediaIndex() + offset, mediaItems.length);
+
+    setActiveIndex(nextIndex);
+    setFullscreenMedia(mediaItems[nextIndex] ?? null);
+  }
+
+  function showPreviousFullscreenMedia() {
+    showFullscreenMediaByOffset(-1);
+  }
+
+  function showNextFullscreenMedia() {
+    showFullscreenMediaByOffset(1);
   }
 
   return (
@@ -1707,6 +1746,26 @@ function ObjectFeedMediaCarousel({
             <ExternalLinkIcon aria-hidden="true" />
             Открыть оригинал
           </a>
+          {hasManyMedia ? (
+            <>
+              <button
+                aria-label="Предыдущее полноэкранное медиа лота"
+                className="object-feed-media-fullscreen-nav object-feed-media-fullscreen-nav--previous"
+                type="button"
+                onClick={showPreviousFullscreenMedia}
+              >
+                <ChevronLeftIcon aria-hidden="true" />
+              </button>
+              <button
+                aria-label="Следующее полноэкранное медиа лота"
+                className="object-feed-media-fullscreen-nav object-feed-media-fullscreen-nav--next"
+                type="button"
+                onClick={showNextFullscreenMedia}
+              >
+                <ChevronRightIcon aria-hidden="true" />
+              </button>
+            </>
+          ) : null}
           <button
             aria-label="Закрыть полноэкранное фото"
             className="object-feed-media-fullscreen-image-button"
@@ -1746,12 +1805,26 @@ function ObjectLotMediaCarousel({ accessToken, unit }: { accessToken: string; un
         setFullscreenMedia(null);
       }
 
-      if (!fullscreenMedia && event.key === 'ArrowLeft' && hasManyMedia) {
-        setActiveIndex((currentIndex) => wrapCarouselIndex(currentIndex - 1, mediaItems.length));
+      if (event.key === 'ArrowLeft' && hasManyMedia) {
+        event.preventDefault();
+
+        if (fullscreenMedia) {
+          showPreviousFullscreenMedia();
+          return;
+        }
+
+        showPreviousMedia();
       }
 
-      if (!fullscreenMedia && event.key === 'ArrowRight' && hasManyMedia) {
-        setActiveIndex((currentIndex) => wrapCarouselIndex(currentIndex + 1, mediaItems.length));
+      if (event.key === 'ArrowRight' && hasManyMedia) {
+        event.preventDefault();
+
+        if (fullscreenMedia) {
+          showNextFullscreenMedia();
+          return;
+        }
+
+        showNextMedia();
       }
     }
 
@@ -1760,7 +1833,7 @@ function ObjectLotMediaCarousel({ accessToken, unit }: { accessToken: string; un
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [fullscreenMedia, hasManyMedia, mediaItems.length]);
+  }, [activeIndex, fullscreenMedia, hasManyMedia, mediaItems]);
 
   function showPreviousMedia() {
     setActiveIndex((currentIndex) => wrapCarouselIndex(currentIndex - 1, mediaItems.length));
@@ -1770,17 +1843,42 @@ function ObjectLotMediaCarousel({ accessToken, unit }: { accessToken: string; un
     setActiveIndex((currentIndex) => wrapCarouselIndex(currentIndex + 1, mediaItems.length));
   }
 
+  function getFullscreenMediaIndex() {
+    if (!fullscreenMedia) {
+      return activeIndex;
+    }
+
+    const fullscreenMediaIndex = mediaItems.findIndex((media) => media.id === fullscreenMedia.id);
+
+    return fullscreenMediaIndex === -1 ? activeIndex : fullscreenMediaIndex;
+  }
+
+  function showFullscreenMediaByOffset(offset: number) {
+    const nextIndex = wrapCarouselIndex(getFullscreenMediaIndex() + offset, mediaItems.length);
+
+    setActiveIndex(nextIndex);
+    setFullscreenMedia(mediaItems[nextIndex] ?? null);
+  }
+
+  function showPreviousFullscreenMedia() {
+    showFullscreenMediaByOffset(-1);
+  }
+
+  function showNextFullscreenMedia() {
+    showFullscreenMediaByOffset(1);
+  }
+
   if (!activeMedia) {
     return (
-      <section className="object-lot-media-carousel object-lot-media-carousel--empty" aria-label="Медиа лота">
+      <section className="media-gallery-frame object-lot-media-carousel object-lot-media-carousel--empty" aria-label="Медиа лота">
         <span>Медиа лота пока не загружены</span>
       </section>
     );
   }
 
   return (
-    <section className="object-lot-media-carousel" aria-label="Медиа лота">
-      <div className="object-lot-media-stage">
+    <section className="media-gallery-frame object-lot-media-carousel" aria-label="Медиа лота">
+      <div className="media-gallery-stage object-lot-media-stage">
         {hasManyMedia ? (
           <button
             aria-label="Предыдущее медиа лота"
@@ -1794,14 +1892,14 @@ function ObjectLotMediaCarousel({ accessToken, unit }: { accessToken: string; un
 
         <button
           aria-label="Открыть медиа лота на полный экран"
-          className="object-lot-media-button"
+          className="media-gallery-button object-lot-media-button"
           type="button"
           onClick={() => setFullscreenMedia(activeMedia)}
         >
           <SecureImage
             accessToken={accessToken}
             alt={getFeedMediaTitle(activeMedia)}
-            className="object-lot-media-image"
+            className="media-gallery-image object-lot-media-image"
             fileId={activeMedia.file.id}
             placeholderClassName="object-feed-media-placeholder"
             variant="original"
@@ -1868,6 +1966,26 @@ function ObjectLotMediaCarousel({ accessToken, unit }: { accessToken: string; un
             <ExternalLinkIcon aria-hidden="true" />
             Открыть оригинал
           </a>
+          {hasManyMedia ? (
+            <>
+              <button
+                aria-label="Предыдущее полноэкранное медиа лота"
+                className="object-feed-media-fullscreen-nav object-feed-media-fullscreen-nav--previous"
+                type="button"
+                onClick={showPreviousFullscreenMedia}
+              >
+                <ChevronLeftIcon aria-hidden="true" />
+              </button>
+              <button
+                aria-label="Следующее полноэкранное медиа лота"
+                className="object-feed-media-fullscreen-nav object-feed-media-fullscreen-nav--next"
+                type="button"
+                onClick={showNextFullscreenMedia}
+              >
+                <ChevronRightIcon aria-hidden="true" />
+              </button>
+            </>
+          ) : null}
           <button
             aria-label="Закрыть полноэкранное медиа"
             className="object-feed-media-fullscreen-image-button"

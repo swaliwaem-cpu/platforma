@@ -33,9 +33,11 @@ test('object detail page uses the approved desktop and mobile width', () => {
 });
 
 test('object detail carousel is a framed standalone media section', () => {
+  assert.match(objectDetailSource, /className="media-gallery-frame object-image-carousel"/);
+
   assert.match(
     styles,
-    /\.object-image-carousel\s*\{[\s\S]*?border:\s*1px solid #d6dde5;[\s\S]*?border-radius:\s*8px;[\s\S]*?box-shadow:\s*0 16px 40px rgb\(24 32 42 \/ 8%\);[\s\S]*?overflow:\s*hidden;[\s\S]*?\}/,
+    /\.media-gallery-frame\s*\{[\s\S]*?border:\s*1px solid #d6dde5;[\s\S]*?border-radius:\s*8px;[\s\S]*?box-shadow:\s*0 16px 40px rgb\(24 32 42 \/ 8%\);[\s\S]*?overflow:\s*hidden;[\s\S]*?\}/,
   );
 
   assert.match(styles, /\.object-detail-location-line\s*\{/);
@@ -44,27 +46,27 @@ test('object detail carousel is a framed standalone media section', () => {
 test('object detail carousel crops active images inside a fixed sixteen by nine frame', () => {
   assert.match(
     objectDetailSource,
-    /className="object-carousel-image"[\s\S]*?variant="original"/,
+    /className="media-gallery-image object-carousel-image"[\s\S]*?variant="original"/,
   );
 
   assert.match(
     styles,
-    /\.object-image-carousel\s*\{[\s\S]*?aspect-ratio:\s*16 \/ 9;[\s\S]*?height:\s*auto;[\s\S]*?min-height:\s*0;[\s\S]*?\}/,
+    /\.media-gallery-frame\s*\{[\s\S]*?aspect-ratio:\s*16 \/ 9;[\s\S]*?height:\s*auto;[\s\S]*?min-height:\s*0;[\s\S]*?\}/,
   );
 
   assert.match(
     styles,
-    /\.object-carousel-media-button\s*\{[\s\S]*?position:\s*relative;[\s\S]*?display:\s*grid;[\s\S]*?overflow:\s*hidden;[\s\S]*?\}/,
+    /\.media-gallery-button\s*\{[\s\S]*?position:\s*relative;[\s\S]*?display:\s*grid;[\s\S]*?overflow:\s*hidden;[\s\S]*?\}/,
   );
 
   assert.match(
     styles,
-    /\.object-carousel-media-button \.object-carousel-image\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?inset:\s*0;[\s\S]*?width:\s*100%;[\s\S]*?height:\s*100%;[\s\S]*?object-fit:\s*cover;[\s\S]*?object-position:\s*center center;[\s\S]*?\}/,
+    /\.media-gallery-image\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?inset:\s*0;[\s\S]*?width:\s*100%;[\s\S]*?height:\s*100%;[\s\S]*?object-fit:\s*cover;[\s\S]*?object-position:\s*center center;[\s\S]*?\}/,
   );
 
   assert.doesNotMatch(
     styles,
-    /\.object-carousel-media-button \.object-carousel-image\s*\{[\s\S]*?min-width:\s*100%;[\s\S]*?min-height:\s*100%;[\s\S]*?\}/,
+    /\.media-gallery-image\s*\{[\s\S]*?min-width:\s*100%;[\s\S]*?min-height:\s*100%;[\s\S]*?\}/,
   );
 });
 

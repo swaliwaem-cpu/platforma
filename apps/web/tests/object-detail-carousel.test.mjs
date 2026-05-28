@@ -12,13 +12,13 @@ const objectImageCarouselSource =
 test('object detail carousel opens a dialog lightbox from the main image', () => {
   assert.match(source, /const \[lightboxIndex,\s*setLightboxIndex\] = useState<number \| null>\(null\);/);
   assert.match(source, /function openLightbox\(\)\s*\{[\s\S]*?setLightboxIndex\(activeIndex\);[\s\S]*?\}/);
-  assert.match(source, /className="object-carousel-media-button"[\s\S]*?onClick=\{openLightbox\}/);
+  assert.match(source, /className="media-gallery-button object-carousel-media-button"[\s\S]*?onClick=\{openLightbox\}/);
   assert.match(source, /role="dialog"/);
   assert.match(source, /aria-modal="true"/);
 });
 
 test('object detail carousel uses original images for main photo and lightbox', () => {
-  assert.match(objectImageCarouselSource, /className="object-carousel-image"[\s\S]*?variant="original"/);
+  assert.match(objectImageCarouselSource, /className="media-gallery-image object-carousel-image"[\s\S]*?variant="original"/);
   assert.match(objectImageCarouselSource, /className="carousel-modal-image"[\s\S]*?variant="original"/);
   assert.match(objectImageCarouselSource, /variant="thumbnail"/);
   assert.match(source, /function closeLightbox\(\)\s*\{[\s\S]*?setLightboxIndex\(null\);[\s\S]*?\}/);

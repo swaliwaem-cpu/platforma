@@ -5010,9 +5010,8 @@ tr.user-row--deactivated .text-button {
   min-height: 420px;
 }
 
-.object-image-carousel,
-.object-image-carousel--empty,
-.object-carousel-media,
+.media-gallery-frame,
+.media-gallery-stage,
 .object-gallery-item {
   display: grid;
   overflow: hidden;
@@ -5023,29 +5022,29 @@ tr.user-row--deactivated .text-button {
   font-weight: 800;
 }
 
-.object-image-carousel {
+.media-gallery-frame {
   position: relative;
   width: 100%;
   min-width: 0;
   aspect-ratio: 16 / 9;
   height: auto;
   min-height: 0;
-  overflow: hidden;
   border: 1px solid #d6dde5;
   border-radius: 8px;
   box-shadow: 0 16px 40px rgb(24 32 42 / 8%);
+  overflow: hidden;
 }
 
 .object-image-carousel--empty {
   min-height: 0;
 }
 
-.object-carousel-media {
+.media-gallery-stage {
   position: absolute;
   inset: 0;
 }
 
-.object-carousel-media-button {
+.media-gallery-button {
   position: relative;
   display: grid;
   width: 100%;
@@ -5062,8 +5061,7 @@ tr.user-row--deactivated .text-button {
   outline-offset: -6px;
 }
 
-.object-carousel-media-button img,
-.object-carousel-media img,
+.media-gallery-stage img,
 .object-gallery-item img {
   width: 100%;
   height: 100%;
@@ -5071,56 +5069,32 @@ tr.user-row--deactivated .text-button {
   object-position: center center;
 }
 
-.object-carousel-media-button .object-carousel-image {
+.media-gallery-image {
   position: absolute;
   inset: 0;
   display: block;
   width: 100%;
   height: 100%;
   max-width: none;
+  max-height: none;
   object-fit: cover;
   object-position: center center;
 }
 
 .object-lot-media-carousel {
-  position: relative;
-  display: grid;
-  width: 100%;
-  min-width: 0;
-  aspect-ratio: 16 / 9;
-  overflow: hidden;
-  place-items: center;
-  border: 1px solid #d6dde5;
-  border-radius: 8px;
   background: #0f1720;
   color: #aab6c4;
-  box-shadow: 0 16px 40px rgb(24 32 42 / 8%);
 }
 
 .object-lot-media-carousel--empty {
-  display: grid;
   place-items: center;
 }
 
 .object-lot-media-stage {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  overflow: hidden;
-  place-items: center;
   background: #0b1118;
 }
 
 .object-lot-media-button {
-  position: relative;
-  display: grid;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  place-items: center;
-  border: 0;
-  background: transparent;
-  padding: 0;
   cursor: zoom-in;
 }
 
@@ -5130,13 +5104,8 @@ tr.user-row--deactivated .text-button {
 }
 
 .object-lot-media-image {
-  display: block;
-  width: 100%;
-  height: 100%;
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
-  object-position: center center;
+  max-width: none;
+  max-height: none;
 }
 
 .object-lot-media-nav {
@@ -6061,7 +6030,8 @@ tr.user-row--deactivated .text-button {
 
 .object-feed-media-carousel-close svg,
 .object-feed-media-carousel-nav svg,
-.object-feed-media-fullscreen-close svg {
+.object-feed-media-fullscreen-close svg,
+.object-feed-media-fullscreen-nav svg {
   width: 18px;
   height: 18px;
 }
@@ -6071,7 +6041,9 @@ tr.user-row--deactivated .text-button {
 .object-feed-media-carousel-nav:hover,
 .object-feed-media-carousel-nav:focus-visible,
 .object-feed-media-fullscreen-close:hover,
-.object-feed-media-fullscreen-close:focus-visible {
+.object-feed-media-fullscreen-close:focus-visible,
+.object-feed-media-fullscreen-nav:hover,
+.object-feed-media-fullscreen-nav:focus-visible {
   border-color: #b38a45;
   background: rgb(179 138 69 / 22%);
   color: #ffffff;
@@ -6249,6 +6221,41 @@ tr.user-row--deactivated .text-button {
 .object-feed-media-fullscreen-open svg {
   width: 16px;
   height: 16px;
+}
+
+.object-feed-media-fullscreen-nav {
+  position: fixed;
+  top: 50%;
+  z-index: 2;
+  display: inline-grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 8%);
+  color: #f4f7fa;
+  padding: 0;
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.object-feed-media-fullscreen-nav:focus-visible {
+  outline: 3px solid rgb(179 138 69 / 40%);
+  outline-offset: 3px;
+}
+
+.object-feed-media-fullscreen-nav svg {
+  width: 22px;
+  height: 22px;
+}
+
+.object-feed-media-fullscreen-nav--previous {
+  left: 32px;
+}
+
+.object-feed-media-fullscreen-nav--next {
+  right: 32px;
 }
 
 .object-feed-media-fullscreen-image-button {

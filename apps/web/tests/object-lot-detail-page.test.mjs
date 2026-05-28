@@ -8,6 +8,8 @@ const currentDir = dirname(fileURLToPath(import.meta.url));
 const appSource = readFileSync(resolve(currentDir, '../src/App.tsx'), 'utf8');
 const objectDetailSource = readFileSync(resolve(currentDir, '../src/objects/ObjectDetailPage.tsx'), 'utf8');
 const styles = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
+const objectLotMediaCarouselSource =
+  objectDetailSource.match(/function ObjectLotMediaCarousel[\s\S]*?\nfunction hasFeedMediaFile/)?.[0] ?? '';
 
 test('app routes object lot URLs to lot detail page', () => {
   assert.match(appSource, /import \{ ObjectDetailPage, ObjectLotDetailPage \} from '\.\/objects\/ObjectDetailPage';/);
@@ -33,9 +35,9 @@ test('lot detail page loads object and one feed unit', () => {
 test('lot detail page renders media carousel and required fact cards', () => {
   assert.match(objectDetailSource, /className="object-detail-page object-lot-page"/);
   assert.match(objectDetailSource, /function ObjectLotMediaCarousel/);
-  assert.match(objectDetailSource, /className="object-lot-media-carousel"/);
-  assert.match(objectDetailSource, /className="object-lot-media-stage"/);
-  assert.match(objectDetailSource, /className="object-lot-media-image"/);
+  assert.match(objectDetailSource, /className="media-gallery-frame object-lot-media-carousel"/);
+  assert.match(objectDetailSource, /className="media-gallery-stage object-lot-media-stage"/);
+  assert.match(objectDetailSource, /className="media-gallery-image object-lot-media-image"/);
   assert.match(objectDetailSource, /function getObjectLotFactRows\(unit: FeedUnit\)/);
   assert.match(objectDetailSource, /formatComputedFeedUnitPricePerMeter\(unit\)/);
   assert.match(objectDetailSource, /label: 'Цена'/);
@@ -49,4 +51,52 @@ test('lot detail page renders media carousel and required fact cards', () => {
   assert.match(styles, /\.object-lot-page\s*\{/);
   assert.match(styles, /\.object-lot-media-carousel\s*\{/);
   assert.match(styles, /\.object-lot-facts\s*\{/);
+});
+
+test('lot detail media carousel uses the shared gallery alignment contract', () => {
+  assert.match(objectDetailSource, /className="media-gallery-frame object-lot-media-carousel"/);
+  assert.match(objectDetailSource, /className="media-gallery-stage object-lot-media-stage"/);
+  assert.match(objectDetailSource, /className="media-gallery-button object-lot-media-button"/);
+  assert.match(objectDetailSource, /className="media-gallery-image object-lot-media-image"/);
+
+  assert.match(
+    styles,
+    /\.media-gallery-frame\s*\{[\s\S]*?aspect-ratio:\s*16 \/ 9;[\s\S]*?overflow:\s*hidden;[\s\S]*?\}/,
+  );
+  assert.match(
+    styles,
+    /\.media-gallery-button\s*\{[\s\S]*?position:\s*relative;[\s\S]*?display:\s*grid;[\s\S]*?overflow:\s*hidden;[\s\S]*?\}/,
+  );
+  assert.match(
+    styles,
+    /\.media-gallery-image\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?inset:\s*0;[\s\S]*?width:\s*100%;[\s\S]*?height:\s*100%;[\s\S]*?object-fit:\s*cover;[\s\S]*?object-position:\s*center center;[\s\S]*?\}/,
+  );
+  assert.doesNotMatch(styles, /\.object-lot-media-image\s*\{[^}]*object-fit:\s*contain;[^}]*\}/);
+});
+
+test('lot detail fullscreen media supports arrow buttons and keyboard navigation', () => {
+  assert.match(objectLotMediaCarouselSource, /function showPreviousFullscreenMedia\(\)/);
+  assert.match(objectLotMediaCarouselSource, /function showNextFullscreenMedia\(\)/);
+  assert.match(
+    objectLotMediaCarouselSource,
+    /event\.key === 'ArrowLeft'[\s\S]*?fullscreenMedia[\s\S]*?showPreviousFullscreenMedia\(\);[\s\S]*?showPreviousMedia\(\);/,
+  );
+  assert.match(
+    objectLotMediaCarouselSource,
+    /event\.key === 'ArrowRight'[\s\S]*?fullscreenMedia[\s\S]*?showNextFullscreenMedia\(\);[\s\S]*?showNextMedia\(\);/,
+  );
+  assert.match(
+    objectLotMediaCarouselSource,
+    /aria-label="Предыдущее полноэкранное медиа лота"[\s\S]*?className="object-feed-media-fullscreen-nav object-feed-media-fullscreen-nav--previous"/,
+  );
+  assert.match(
+    objectLotMediaCarouselSource,
+    /aria-label="Следующее полноэкранное медиа лота"[\s\S]*?className="object-feed-media-fullscreen-nav object-feed-media-fullscreen-nav--next"/,
+  );
+
+  const fullscreenNavBlock = styles.match(/\.object-feed-media-fullscreen-nav\s*\{[^}]*\}/)?.[0] ?? '';
+  assert.match(fullscreenNavBlock, /position:\s*fixed;/);
+  assert.match(fullscreenNavBlock, /top:\s*50%;/);
+  assert.match(fullscreenNavBlock, /border-radius:\s*999px;/);
+  assert.match(fullscreenNavBlock, /transform:\s*translateY\(-50%\);/);
 });

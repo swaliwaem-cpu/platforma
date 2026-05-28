@@ -8,6 +8,8 @@ const currentDir = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(resolve(currentDir, '../src/objects/ObjectDetailPage.tsx'), 'utf8');
 const multiSelectSource = readFileSync(resolve(currentDir, '../src/components/MultiSelectDropdown.tsx'), 'utf8');
 const styles = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
+const objectFeedMediaCarouselSource =
+  source.match(/function ObjectFeedMediaCarousel[\s\S]*?\nfunction ObjectLotMediaCarousel/)?.[0] ?? '';
 
 test('object detail page loads active feed units with public filters', () => {
   assert.match(source, /FeedUnitsResponse/);
@@ -217,4 +219,33 @@ test('object detail feed media opens lot files in a carousel with fullscreen pre
   assert.match(fullscreenImageBlock, /max-height:\s*100%;/);
   assert.match(fullscreenImageBlock, /object-fit:\s*contain;/);
   assert.doesNotMatch(styles, /\.object-feed-media-modal\s*\{/);
+});
+
+test('object detail feed media fullscreen supports arrow buttons and keyboard navigation', () => {
+  assert.match(objectFeedMediaCarouselSource, /function showPreviousFullscreenMedia\(\)/);
+  assert.match(objectFeedMediaCarouselSource, /function showNextFullscreenMedia\(\)/);
+  assert.match(
+    objectFeedMediaCarouselSource,
+    /event\.key === 'ArrowLeft'[\s\S]*?fullscreenMedia[\s\S]*?showPreviousFullscreenMedia\(\);[\s\S]*?showPreviousMedia\(\);/,
+  );
+  assert.match(
+    objectFeedMediaCarouselSource,
+    /event\.key === 'ArrowRight'[\s\S]*?fullscreenMedia[\s\S]*?showNextFullscreenMedia\(\);[\s\S]*?showNextMedia\(\);/,
+  );
+  assert.match(
+    objectFeedMediaCarouselSource,
+    /aria-label="Предыдущее полноэкранное медиа лота"[\s\S]*?className="object-feed-media-fullscreen-nav object-feed-media-fullscreen-nav--previous"/,
+  );
+  assert.match(
+    objectFeedMediaCarouselSource,
+    /aria-label="Следующее полноэкранное медиа лота"[\s\S]*?className="object-feed-media-fullscreen-nav object-feed-media-fullscreen-nav--next"/,
+  );
+
+  const fullscreenNavBlock = styles.match(/\.object-feed-media-fullscreen-nav\s*\{[^}]*\}/)?.[0] ?? '';
+  assert.match(fullscreenNavBlock, /position:\s*fixed;/);
+  assert.match(fullscreenNavBlock, /top:\s*50%;/);
+  assert.match(fullscreenNavBlock, /border-radius:\s*999px;/);
+  assert.match(fullscreenNavBlock, /transform:\s*translateY\(-50%\);/);
+  assert.match(styles, /\.object-feed-media-fullscreen-nav--previous\s*\{[\s\S]*?left:\s*32px;[\s\S]*?\}/);
+  assert.match(styles, /\.object-feed-media-fullscreen-nav--next\s*\{[\s\S]*?right:\s*32px;[\s\S]*?\}/);
 });
