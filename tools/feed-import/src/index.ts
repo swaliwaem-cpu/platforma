@@ -331,12 +331,13 @@ export class CianXmlFeedParser implements FeedParser {
     const ceilingHeight = normalizeDecimal(building?.CeilingHeight, 'ceilingHeight', externalId, warnings);
     const powerKw = normalizeDecimal(object.Power, 'powerKw', externalId, warnings);
     const type = getCianUnitType(object);
+    const apartmentNumber = type === 'RESIDENTIAL' ? getText(object.FlatNumber) ?? getText(cianFlat?.FlatNumber) : null;
 
     return {
       externalId,
       type,
       status: statusResult.status,
-      title: getText(object.title) ?? getText(object.Title) ?? buildCianTitle(object),
+      title: buildCianUnitTitle(object, type, apartmentNumber),
       projectName: getText(jkSchema?.Name),
       address: getText(object.Address),
       building: getText(building?.Name) ?? getText(cianHouse?.Name),
@@ -354,7 +355,7 @@ export class CianXmlFeedParser implements FeedParser {
       residentialDetails:
         type === 'RESIDENTIAL'
           ? {
-              apartmentNumber: getText(object.FlatNumber) ?? getText(cianFlat?.FlatNumber),
+              apartmentNumber,
               layoutType: getText(object.Layout),
               livingArea: normalizeDecimal(object.LivingArea, 'livingArea', externalId, warnings),
               kitchenArea: normalizeDecimal(object.KitchenArea, 'kitchenArea', externalId, warnings),
@@ -869,6 +870,25 @@ function extractYandexApartmentNumber(description: string | null) {
 
 function buildCianTitle(object: XmlRecord): string | null {
   return joinTitleParts([getText(object.Address), getText(object.Category), getText(object.ExternalId)]);
+}
+
+function buildCianUnitTitle(
+  object: XmlRecord,
+  type: NormalizedFeedUnitType,
+  apartmentNumber: string | null,
+): string | null {
+  if (type === 'RESIDENTIAL' && apartmentNumber && isSminexCianObject(object)) {
+    return `Квартира №${apartmentNumber}`;
+  }
+
+  return getText(object.title) ?? getText(object.Title) ?? buildCianTitle(object);
+}
+
+function isSminexCianObject(object: XmlRecord) {
+  const developerName = getText(asRecord(object.Developer)?.Name) ?? getText(object.DeveloperName);
+  const normalizedDeveloperName = developerName?.trim().toLocaleLowerCase('ru-RU') ?? '';
+
+  return normalizedDeveloperName.includes('sminex') || normalizedDeveloperName.includes('смайнекс');
 }
 
 function buildAvitoTitle(ad: XmlRecord, externalId: string): string | null {

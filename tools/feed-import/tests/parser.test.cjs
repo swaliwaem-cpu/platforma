@@ -419,6 +419,42 @@ test('CianXmlFeedParser normalizes Etalon-style project, house, rooms and media 
   });
 });
 
+test('CianXmlFeedParser forces Sminex residential titles to apartment number', () => {
+  const parser = new CianXmlFeedParser();
+  const xml = `<?xml version="1.0"?>
+    <feed>
+      <object>
+        <ExternalId>000029025</ExternalId>
+        <title>Электрический 1, newBuildingFlatSale, 000029025</title>
+        <Category>newBuildingFlatSale</Category>
+        <Address>Электрический 1</Address>
+        <FloorNumber>2</FloorNumber>
+        <FlatRoomsCount>1</FlatRoomsCount>
+        <TotalArea>45.6</TotalArea>
+        <BargainTerms><Price>72150000</Price><Currency>RUR</Currency></BargainTerms>
+        <Developer><Name>Sminex</Name></Developer>
+        <JKSchema>
+          <Name>Электрический 1</Name>
+          <House>
+            <Name>К4С1</Name>
+            <Flat>
+              <FlatNumber>193</FlatNumber>
+              <SectionNumber>1</SectionNumber>
+            </Flat>
+          </House>
+        </JKSchema>
+      </object>
+    </feed>`;
+
+  const result = parser.parse(xml);
+  const unit = result.units[0];
+
+  assert.equal(unit.title, 'Квартира №193');
+  assert.equal(unit.address, 'Электрический 1');
+  assert.equal(unit.externalId, '000029025');
+  assert.equal(unit.residentialDetails.apartmentNumber, '193');
+});
+
 test('CianXmlFeedParser normalizes CIAN-like realty-feed objects and decodes XML entities', () => {
   const parser = new CianXmlFeedParser();
 
