@@ -222,6 +222,10 @@ test('FeedsController delegates CRUD, run endpoints and reports to the service',
       calls.push(['getRun', id]);
       return { run: { id } };
     },
+    stopFeedImportRun: async (id) => {
+      calls.push(['stopFeedImportRun', id]);
+      return { run: { id, status: 'FAILED' } };
+    },
     listUnits: async (query) => {
       calls.push(['listUnits', query]);
       return { items: [], total: 0, page: 1, limit: 20, totalPages: 1 };
@@ -236,6 +240,7 @@ test('FeedsController delegates CRUD, run endpoints and reports to the service',
   await controller.runImport(sourceId);
   await controller.listSourceRuns(sourceId, { status: 'success' });
   await controller.getRun(runId);
+  await controller.stopRun(runId);
   await controller.listUnits({ sourceId });
 
   assert.deepEqual(calls, [
@@ -247,6 +252,7 @@ test('FeedsController delegates CRUD, run endpoints and reports to the service',
     ['runFeedImportCommand', sourceId, 'run'],
     ['listSourceRuns', sourceId, { status: 'success' }],
     ['getRun', runId],
+    ['stopFeedImportRun', runId],
     ['listUnits', { sourceId }],
   ]);
 });
@@ -1117,6 +1123,55 @@ test('FeedsService queues feed run commands and starts at most three at once', a
     runs.slice(0, 3).map((run) => run.id),
   );
   assert.equal(runs[3].summaryJson.progress.stage, 'QUEUED');
+});
+
+test('FeedsService stops a queued feed run before it starts', async () => {
+  const sources = Array.from({ length: 4 }, (_, index) => `11111111-1111-4111-8111-11111111121${index + 1}`);
+  const runs = [];
+  const startedCommands = [];
+  const prisma = {
+    $transaction: async (queries) => Promise.all(queries),
+    feedSource: {
+      findUnique: async ({ where }) => ({ id: where.id }),
+      update: async ({ data }) => sourceRecord(data),
+    },
+    feedImportRun: {
+      create: async ({ data }) => {
+        const run = runRecord({
+          id: `44444444-4444-4444-8444-44444444445${runs.length + 1}`,
+          sourceId: data.sourceId,
+          mode: data.mode,
+          status: data.status,
+          startedAt: data.startedAt,
+          finishedAt: null,
+          summaryJson: data.summaryJson,
+        });
+        runs.push(run);
+        return run;
+      },
+      findUnique: async ({ where }) => runs.find((run) => run.id === where.id) ?? null,
+      update: async ({ where, data }) => {
+        const run = runs.find((currentRun) => currentRun.id === where.id);
+        Object.assign(run, data);
+        return run;
+      },
+    },
+  };
+  const service = new FeedsService(prisma);
+  service.runFeedImportCli = async (mode, queuedSourceId, queuedRunId) => {
+    startedCommands.push({ mode, sourceId: queuedSourceId, runId: queuedRunId });
+    await new Promise(() => {});
+  };
+
+  await Promise.all(sources.map((currentSourceId) => service.runFeedImportCommand(currentSourceId, 'run')));
+
+  const stopped = await service.stopFeedImportRun(runs[3].id);
+
+  assert.equal(startedCommands.length, 3);
+  assert.equal(startedCommands.some((command) => command.runId === runs[3].id), false);
+  assert.equal(stopped.run.status, 'FAILED');
+  assert.equal(stopped.run.summaryJson.progress.stage, 'STOPPED');
+  assert.equal(stopped.run.errorsJson[0].code, 'FEED_IMPORT_STOPPED');
 });
 
 test('FeedsService does not overwrite queued run details after the importer records a failure', async () => {

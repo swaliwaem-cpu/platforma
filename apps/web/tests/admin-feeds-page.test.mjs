@@ -22,6 +22,7 @@ test('feeds admin page wires source CRUD, preview, run, reports, and units API c
   assert.match(source, /apiRequest<FeedSourceAnalysisResponse>\('\/feeds\/analyze'/);
   assert.match(source, /apiRequest<FeedImportRunResponse>\(`\/feeds\/sources\/\$\{sourceId\}\/preview`/);
   assert.match(source, /apiRequest<FeedImportRunResponse>\(`\/feeds\/sources\/\$\{sourceId\}\/run`/);
+  assert.match(source, /apiRequest<FeedImportRunResponse>\(`\/feeds\/runs\/\$\{selectedRun\.id\}\/stop`/);
   assert.match(source, /apiRequest<FeedImportRunsResponse>\(`\/feeds\/sources\/\$\{sourceId\}\/runs\?\$\{params\.toString\(\)\}`/);
   assert.match(source, /apiRequest<FeedImportRunResponse>\(`\/feeds\/runs\/\$\{runId\}`/);
   assert.match(source, /apiRequest<FeedUnitsResponse>\(`\/feeds\/units\?\$\{params\.toString\(\)\}`/);
@@ -240,6 +241,11 @@ test('feeds admin page keeps source run controls and persistent progress below t
   assert.match(source, /progress \? getFeedRunProgressStageLabel\(progress\.stage\) : 'Ожидает запуска Run'/);
   assert.match(source, /stage === 'QUEUED'/);
   assert.match(source, /В очереди на импорт/);
+  assert.match(source, /const canStopRun = Boolean/);
+  assert.match(source, /<SquareIcon data-icon="inline-start" \/>/);
+  assert.match(source, /stoppingRunId \? 'Stop\.\.\.' : 'Stop'/);
+  assert.match(source, /stage === 'STOPPED'/);
+  assert.match(source, /Импорт остановлен/);
   assert.match(source, /runSourceCommand\(selectedSource\.id, 'preview'\)/);
   assert.match(source, /runSourceCommand\(selectedSource\.id, 'run'\)/);
   assert.doesNotMatch(source, /runSourceCommand\(editorSource\.id, 'run'\)/);

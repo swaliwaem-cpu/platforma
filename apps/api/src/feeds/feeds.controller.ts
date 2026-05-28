@@ -89,6 +89,12 @@ export class FeedsController {
     return this.feedsService.getRun(id);
   }
 
+  @Post('runs/:id/stop')
+  @RequirePermissions('feeds:run')
+  async stopRun(@Param('id') id: string) {
+    return this.feedsService.stopFeedImportRun(id);
+  }
+
   @Get('units')
   @RequirePermissions('feeds:read')
   async listUnits(@Query() query: Record<string, string | undefined>) {

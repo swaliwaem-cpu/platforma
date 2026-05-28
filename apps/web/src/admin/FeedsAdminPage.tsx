@@ -8,6 +8,7 @@ import {
   RefreshCwIcon,
   RotateCcwIcon,
   SaveIcon,
+  SquareIcon,
 } from 'lucide-react';
 import type {
   DevelopersResponse,
@@ -191,6 +192,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isAnalyzingSource, setIsAnalyzingSource] = useState(false);
   const [runningMode, setRunningMode] = useState<FeedCommandMode | null>(null);
+  const [stoppingRunId, setStoppingRunId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const canManage = hasPermission('feeds:manage');
@@ -697,6 +699,36 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
       setError(caughtError instanceof Error ? caughtError.message : 'Команда фида не выполнена');
     } finally {
       setRunningMode(null);
+    }
+  }
+
+  async function stopSelectedRun() {
+    if (!accessToken || !selectedRun || selectedRun.mode !== 'RUN' || selectedRun.status !== 'PENDING') {
+      return;
+    }
+
+    const confirmed = window.confirm('Остановить загрузку фида?');
+
+    if (!confirmed) {
+      return;
+    }
+
+    setStoppingRunId(selectedRun.id);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const data = await apiRequest<FeedImportRunResponse>(`/feeds/runs/${selectedRun.id}/stop`, accessToken, {
+        method: 'POST',
+      });
+
+      setSelectedRun(data.run);
+      setNotice('Загрузка фида остановлена');
+      await Promise.all([loadSources(), loadSourceRuns(data.run.sourceId), loadUnits(data.run.sourceId)]);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Загрузка фида не остановлена');
+    } finally {
+      setStoppingRunId(null);
     }
   }
 
@@ -1210,8 +1242,10 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
             runningMode={runningMode}
             selectedRun={selectedRun}
             source={selectedSource}
+            stoppingRunId={stoppingRunId}
             onPreview={() => (selectedSource ? void runSourceCommand(selectedSource.id, 'preview') : undefined)}
             onRun={() => (selectedSource ? void runSourceCommand(selectedSource.id, 'run') : undefined)}
+            onStop={() => void stopSelectedRun()}
           />
 
           <AdminPanel className="table-panel feed-runs-panel" role="region" aria-label="Отчёты фида">
@@ -1476,18 +1510,26 @@ function SourceRunControlPanel({
   selectedRun,
   canRun,
   runningMode,
+  stoppingRunId,
   onPreview,
   onRun,
+  onStop,
 }: {
   source: FeedSource | null;
   selectedRun: FeedImportRun | null;
   canRun: boolean;
   runningMode: FeedCommandMode | null;
+  stoppingRunId: string | null;
   onPreview: () => void;
   onRun: () => void;
+  onStop: () => void;
 }) {
   const progress = source ? getFeedRunProgress(selectedRun, source.id) : null;
-  const isCommandDisabled = !source || !canRun || runningMode !== null;
+  const canStopRun = Boolean(
+    source && selectedRun?.sourceId === source.id && selectedRun.mode === 'RUN' && selectedRun.status === 'PENDING',
+  );
+  const isCommandDisabled = !source || !canRun || runningMode !== null || canStopRun || stoppingRunId !== null;
+  const isStopDisabled = !canRun || !canStopRun || stoppingRunId !== null || runningMode !== null;
 
   return (
     <AdminPanel className="feed-source-run-panel" role="region" aria-label="Запуск выбранного фида">
@@ -1517,6 +1559,16 @@ function SourceRunControlPanel({
           >
             <PlayIcon data-icon="inline-start" />
             {runningMode === 'run' ? 'Run...' : 'Run'}
+          </AdminButton>
+          <AdminButton
+            disabled={isStopDisabled}
+            title={canRun ? undefined : 'Нет права feeds:run'}
+            tone="danger"
+            type="button"
+            onClick={onStop}
+          >
+            <SquareIcon data-icon="inline-start" />
+            {stoppingRunId ? 'Stop...' : 'Stop'}
           </AdminButton>
         </div>
       </div>
@@ -2188,6 +2240,10 @@ function getFeedRunProgressStageLabel(stage: string) {
 
   if (stage === 'FAILED') {
     return 'Импорт остановлен с ошибкой';
+  }
+
+  if (stage === 'STOPPED') {
+    return 'Импорт остановлен';
   }
 
   if (stage === 'ARCHIVING_UNITS') {

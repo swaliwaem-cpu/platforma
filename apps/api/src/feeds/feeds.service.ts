@@ -1,6 +1,6 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -145,6 +145,7 @@ export class FeedsService {
   private readonly logger = new Logger(FeedsService.name);
   private readonly activeSourceCommands = new Map<string, FeedImportCommand>();
   private readonly feedRunQueue: FeedImportRunQueueJob[] = [];
+  private readonly activeFeedRunProcesses = new Map<string, ChildProcess>();
   private activeFeedRunCommands = 0;
 
   constructor(
@@ -610,6 +611,123 @@ export class FeedsService {
     });
   }
 
+  private async markFeedImportRunStopped(run: FeedImportRunRecord) {
+    const finishedAt = new Date();
+
+    return this.prisma.feedImportRun.update({
+      where: {
+        id: run.id,
+      },
+      data: {
+        status: ImportStatus.FAILED,
+        finishedAt,
+        errorsJson: [
+          {
+            code: 'FEED_IMPORT_STOPPED',
+            message: 'Загрузка фида остановлена пользователем',
+          },
+        ],
+        summaryJson: this.createStoppedFeedRunSummary(run.summaryJson, finishedAt),
+      },
+    });
+  }
+
+  private createStoppedFeedRunSummary(summaryJson: unknown, finishedAt: Date) {
+    const summary = this.isPlainJsonObject(summaryJson) ? { ...summaryJson } : {};
+    const progress = this.isPlainJsonObject(summary.progress) ? { ...summary.progress } : {};
+
+    return {
+      ...summary,
+      progress: {
+        ...progress,
+        stage: 'STOPPED',
+        updatedAt: finishedAt.toISOString(),
+      },
+    };
+  }
+
+  private async stopFeedRunProcesses(runId: string) {
+    let didSignalProcess = false;
+    const activeProcess = this.activeFeedRunProcesses.get(runId);
+
+    if (activeProcess) {
+      didSignalProcess = this.signalFeedRunProcess(activeProcess.pid) || didSignalProcess;
+    }
+
+    const processIds = await this.findFeedRunProcessIds(runId);
+
+    for (const processId of processIds) {
+      didSignalProcess = this.signalFeedRunProcess(processId) || didSignalProcess;
+    }
+
+    return didSignalProcess;
+  }
+
+  private signalFeedRunProcess(processId: number | undefined) {
+    if (!processId || processId === process.pid) {
+      return false;
+    }
+
+    try {
+      process.kill(-processId, 'SIGTERM');
+      return true;
+    } catch {
+      try {
+        process.kill(processId, 'SIGTERM');
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  }
+
+  private async findFeedRunProcessIds(runId: string) {
+    const processIds = new Set<number>();
+
+    await this.findFeedRunProcessIdsWithProcfs(runId, processIds);
+    await this.findFeedRunProcessIdsWithPgrep(runId, processIds);
+
+    return [...processIds].filter((processId) => processId !== process.pid);
+  }
+
+  private async findFeedRunProcessIdsWithProcfs(runId: string, processIds: Set<number>) {
+    if (!existsSync('/proc')) {
+      return;
+    }
+
+    const entries = await readdir('/proc', { withFileTypes: true }).catch(() => []);
+
+    await Promise.all(
+      entries.map(async (entry) => {
+        if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) {
+          return;
+        }
+
+        const commandLine = await readFile(`/proc/${entry.name}/cmdline`, 'utf8').catch(() => '');
+
+        if (commandLine.includes('--run-id') && commandLine.includes(runId)) {
+          processIds.add(Number(entry.name));
+        }
+      }),
+    );
+  }
+
+  private async findFeedRunProcessIdsWithPgrep(runId: string, processIds: Set<number>) {
+    const result = await execFileAsync('pgrep', ['-f', runId]).catch(() => null);
+
+    if (!result) {
+      return;
+    }
+
+    for (const line of result.stdout.split(/\r?\n/)) {
+      const processId = Number(line.trim());
+
+      if (Number.isInteger(processId) && processId > 0) {
+        processIds.add(processId);
+      }
+    }
+  }
+
   async runFeedImportCli(mode: FeedImportCommand, sourceId: string, runId?: string | null) {
     const args = ['--filter', '@platforma/feed-import', '--fail-if-no-match', 'run', mode, '--source', sourceId];
 
@@ -617,14 +735,60 @@ export class FeedsService {
       args.push('--run-id', runId);
     }
 
-    await execFileAsync('pnpm', args, {
-      cwd: findWorkspaceRoot(),
-      env: {
-        ...process.env,
-        PRISMA_HIDE_UPDATE_MESSAGE: 'true',
-      },
-      maxBuffer: 1024 * 1024 * 50,
-      timeout: mode === 'run' ? feedRunCommandTimeoutMs : feedPreviewCommandTimeoutMs,
+    await new Promise<void>((resolvePromise, rejectPromise) => {
+      let commandOutput = '';
+      let didSettle = false;
+      const timeoutMs = mode === 'run' ? feedRunCommandTimeoutMs : feedPreviewCommandTimeoutMs;
+      const isDetachedRun = mode === 'run' && Boolean(runId);
+      const childProcess = spawn('pnpm', args, {
+        cwd: findWorkspaceRoot(),
+        detached: isDetachedRun,
+        env: {
+          ...process.env,
+          PRISMA_HIDE_UPDATE_MESSAGE: 'true',
+        },
+        stdio: isDetachedRun ? 'ignore' : ['ignore', 'pipe', 'pipe'],
+      });
+      const appendCommandOutput = (chunk: Buffer) => {
+        if (commandOutput.length < 4000) {
+          commandOutput += chunk.toString('utf8');
+        }
+      };
+      const timeoutId = setTimeout(() => {
+        if (!didSettle) {
+          this.signalFeedRunProcess(childProcess.pid);
+        }
+      }, timeoutMs);
+      const cleanup = () => {
+        clearTimeout(timeoutId);
+
+        if (runId) {
+          this.activeFeedRunProcesses.delete(runId);
+        }
+      };
+
+      childProcess.stdout?.on('data', appendCommandOutput);
+      childProcess.stderr?.on('data', appendCommandOutput);
+      childProcess.once('error', (error) => {
+        didSettle = true;
+        cleanup();
+        rejectPromise(error);
+      });
+      childProcess.once('close', (code, signal) => {
+        didSettle = true;
+        cleanup();
+
+        if (code === 0) {
+          resolvePromise();
+          return;
+        }
+
+        rejectPromise(new Error(commandOutput.trim() || `Feed import command failed with code ${code ?? signal}`));
+      });
+
+      if (runId) {
+        this.activeFeedRunProcesses.set(runId, childProcess);
+      }
     });
   }
 
@@ -731,6 +895,42 @@ export class FeedsService {
 
     return {
       run: this.serializeRun(run),
+    };
+  }
+
+  async stopFeedImportRun(id: string) {
+    const runId = this.parseUuid(id, 'Feed import run is invalid');
+    const run = await this.prisma.feedImportRun.findUnique({
+      where: {
+        id: runId,
+      },
+    });
+
+    if (!run) {
+      throw new NotFoundException('Feed import run not found');
+    }
+
+    if (run.mode !== ImportMode.RUN || run.status !== ImportStatus.PENDING) {
+      throw new ConflictException('Feed import run is not active');
+    }
+
+    const queuedIndex = this.feedRunQueue.findIndex((job) => job.runId === run.id);
+
+    if (queuedIndex >= 0) {
+      this.feedRunQueue.splice(queuedIndex, 1);
+      this.activeSourceCommands.delete(run.sourceId);
+    } else {
+      const didSignalProcess = await this.stopFeedRunProcesses(run.id);
+
+      if (!didSignalProcess) {
+        throw new ConflictException('Feed import run process was not found');
+      }
+    }
+
+    const stoppedRun = await this.markFeedImportRunStopped(run);
+
+    return {
+      run: this.serializeRun(stoppedRun),
     };
   }
 
