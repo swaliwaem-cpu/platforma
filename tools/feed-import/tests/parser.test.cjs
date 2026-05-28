@@ -596,6 +596,7 @@ test('createFeedSourceAnalysis summarizes Avito development groups', () => {
 test('detectFeedFormatFromXml detects supported XML roots', () => {
   assert.equal(detectFeedFormatFromXml(makeIndexYandexXml()), 'YANDEX_REALTY');
   assert.equal(detectFeedFormatFromXml(makeIndexCianXml()), 'CIAN_XML');
+  assert.equal(detectFeedFormatFromXml('<Feed><Object><ExternalId>1</ExternalId></Object></Feed>'), 'CIAN_XML');
   assert.equal(detectFeedFormatFromXml(makeStoneCianLikeRealtyFeedXml()), 'CIAN_XML');
   assert.equal(detectFeedFormatFromXml(makeIndexAvitoXml()), 'AVITO_XML');
   assert.equal(detectFeedFormatFromXml('<unknown-feed />'), null);

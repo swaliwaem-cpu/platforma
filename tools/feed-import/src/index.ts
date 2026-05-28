@@ -288,11 +288,11 @@ export class CianXmlFeedParser implements FeedParser {
     const feed = getCianFeedRoot(root);
 
     if (!feed) {
-      throw new Error('Cian XML feed must contain <feed> or CIAN-like <realty-feed>');
+      throw new Error('Cian XML feed must contain <feed>, <Feed> or CIAN-like <realty-feed>');
     }
 
     const warnings: FeedParserWarning[] = [];
-    const units = toArray(feed.object)
+    const units = toArray(feed.object ?? feed.Object)
       .map(asRecord)
       .filter((object): object is XmlRecord => object !== null)
       .flatMap((object, index) => {
@@ -1060,6 +1060,10 @@ type FeedSourceRecord = {
   format: FeedSourceFormat;
   filterJson?: Record<string, unknown> | null;
   developerId: string;
+  developer?: {
+    name: string;
+    normalizedName?: string | null;
+  } | null;
   objectId: string | null;
   mappings?: FeedSourceMappingRecord[];
   isActive: boolean;
@@ -1166,6 +1170,12 @@ export type FeedImportDatabase = {
       where: { id: string };
       include?: {
         xmlFile?: true;
+        developer?: {
+          select: {
+            name: true;
+            normalizedName: true;
+          };
+        };
         mappings?: true | {
           orderBy: {
             sourceTitle: 'asc';
@@ -1682,7 +1692,7 @@ export function detectFeedFormatFromXml(xml: string): FeedSourceFormat | null {
       return 'YANDEX_REALTY';
     }
 
-    if (asRecord(root.feed)) {
+    if (asRecord(root.feed) || asRecord(root.Feed)) {
       return 'CIAN_XML';
     }
 
@@ -1697,7 +1707,7 @@ export function detectFeedFormatFromXml(xml: string): FeedSourceFormat | null {
 }
 
 function getCianFeedRoot(root: XmlRecord): XmlRecord | null {
-  const feed = asRecord(root.feed);
+  const feed = asRecord(root.feed) ?? asRecord(root.Feed);
 
   if (feed) {
     return feed;
@@ -2279,23 +2289,67 @@ async function parseFeedSourceForImport(
   source: FeedSourceRecord,
   options: ExecuteFeedImportOptions,
 ): Promise<FeedParseResult> {
+  let parsed: FeedParseResult;
+
   if (source.sourceKind === 'INDEX_URL') {
     if (!source.url) {
       throw new Error(`FeedSource ${source.id} URL is empty`);
     }
 
-    return parseFeedIndexForFormat({
+    parsed = await parseFeedIndexForFormat({
       sourceUrl: source.url,
       format: source.format,
       xmlFetcher: options.xmlFetcher,
       namespaceExternalIds: true,
     });
+  } else {
+    const xml = await loadXmlForFeedSource(source, options);
+    const parser = createFeedParserForFormat(source.format);
+
+    parsed = parser.parse(xml);
   }
 
-  const xml = await loadXmlForFeedSource(source, options);
-  const parser = createFeedParserForFormat(source.format);
+  return applyFeedSourceUnitRules(parsed, source);
+}
 
-  return parser.parse(xml);
+function applyFeedSourceUnitRules(parsed: FeedParseResult, source: FeedSourceRecord): FeedParseResult {
+  return {
+    ...parsed,
+    units: parsed.units.map((unit) => applyFeedSourceUnitTitleRules(unit, source)),
+  };
+}
+
+function applyFeedSourceUnitTitleRules(unit: NormalizedFeedUnit, source: FeedSourceRecord): NormalizedFeedUnit {
+  if (shouldUseApartmentNumberTitleForSource(unit, source)) {
+    return {
+      ...unit,
+      title: `Квартира №${unit.residentialDetails?.apartmentNumber}`,
+    };
+  }
+
+  return unit;
+}
+
+function shouldUseApartmentNumberTitleForSource(unit: NormalizedFeedUnit, source: FeedSourceRecord) {
+  return (
+    source.format === 'CIAN_XML' &&
+    unit.type === 'RESIDENTIAL' &&
+    Boolean(unit.residentialDetails?.apartmentNumber) &&
+    isMrGroupFeedSource(source)
+  );
+}
+
+function isMrGroupFeedSource(source: FeedSourceRecord) {
+  const normalizedSourceText = [source.developer?.normalizedName, source.developer?.name, source.url]
+    .filter((value): value is string => Boolean(value))
+    .join(' ')
+    .toLocaleLowerCase('ru-RU');
+
+  return (
+    /(?:^|[^a-z0-9])mr[\s.-]*group(?:$|[^a-z0-9])/iu.test(normalizedSourceText) ||
+    normalizedSourceText.includes('мр групп') ||
+    normalizedSourceText.includes('мр-групп')
+  );
 }
 
 function routeFeedUnitsForSource(units: NormalizedFeedUnit[], source: FeedSourceRecord): RoutedFeedUnit[] {
@@ -2339,6 +2393,12 @@ export async function executeFeedImport(options: ExecuteFeedImportOptions): Prom
     },
     include: {
       xmlFile: true,
+      developer: {
+        select: {
+          name: true,
+          normalizedName: true,
+        },
+      },
       mappings: {
         orderBy: {
           sourceTitle: 'asc',

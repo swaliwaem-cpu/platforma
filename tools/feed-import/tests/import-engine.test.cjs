@@ -118,6 +118,32 @@ function makeIndexCianFeed(externalId, projectName = 'Муза') {
     </feed>`;
 }
 
+function makeMrGroupCianFeed() {
+  return `<?xml version="1.0"?>
+    <Feed>
+      <Object>
+        <Category>newBuildingFlatSale</Category>
+        <ExternalId>9a9d0581-87a1-ed11-be7d-00155dfc99c4</ExternalId>
+        <Address>город Москва, Волоколамское шоссе, дом 97</Address>
+        <RoomType>separate</RoomType>
+        <FlatRoomsCount>2</FlatRoomsCount>
+        <TotalArea>52.54</TotalArea>
+        <FloorNumber>12</FloorNumber>
+        <JKSchema>
+          <Name>City Bay</Name>
+          <House>
+            <Name>City Bay 2 корпус 3</Name>
+            <Flat>
+              <FlatNumber>89</FlatNumber>
+              <SectionNumber>1</SectionNumber>
+            </Flat>
+          </House>
+        </JKSchema>
+        <BargainTerms><Price>23995737.80</Price><Currency>rur</Currency></BargainTerms>
+      </Object>
+    </Feed>`;
+}
+
 function makeMultiDevelopmentAvitoFeed() {
   return `<?xml version="1.0" encoding="utf-8"?>
     <Ads target="Avito.ru" formatVersion="3">
@@ -651,6 +677,38 @@ test('executeFeedImport run upserts units, details, archives stale units and ded
   assert.equal(state.unitMedia.length, 2);
   assert.deepEqual(state.source.lastRunAt, fixedDate);
   assert.deepEqual(state.source.lastSuccessAt, fixedDate);
+});
+
+test('executeFeedImport run titles MR Group CIAN residential units by apartment number', async () => {
+  const { db, state } = createFakeDb({
+    source: {
+      format: 'CIAN_XML',
+      url: 'https://crm-api.mr-group.ru/feed/api/v1/cianfeed/get/1f7aca01-a18f-ea11-bdf5-00155dfc99c4',
+      developer: {
+        name: 'MR Group',
+        normalizedName: 'mr-group',
+      },
+    },
+  });
+
+  await executeFeedImport({
+    mode: 'run',
+    sourceId: 'source-1',
+    db,
+    storage: state.storage,
+    xmlFetcher: async () => makeMrGroupCianFeed(),
+    mediaDownloader: async () => {
+      throw new Error('media should not be downloaded in this test');
+    },
+    imageVariantGenerator: async () => [],
+    now: () => fixedDate,
+  });
+
+  const unit = state.units.find((currentUnit) => currentUnit.externalId === '9a9d0581-87a1-ed11-be7d-00155dfc99c4');
+
+  assert.equal(unit.title, 'Квартира №89');
+  assert.equal(unit.address, 'город Москва, Волоколамское шоссе, дом 97');
+  assert.equal(state.residentialDetails.get(unit.id).apartmentNumber, '89');
 });
 
 test('executeFeedImport run writes pending progress while processing units', async () => {
