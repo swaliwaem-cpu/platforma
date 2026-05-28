@@ -77,6 +77,7 @@ type SourceMappingFormState = {
 
 type FeedCommandMode = 'preview' | 'run';
 type FeedFormatChoice = FeedFormat | 'AUTO';
+type FeedSourceMetaSummaryMap = Record<string, Record<string, unknown>>;
 
 type FeedRunProgress = {
   stage: string;
@@ -169,6 +170,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
   const [form, setForm] = useState<SourceFormState>(emptySourceForm);
   const [sourceAnalysis, setSourceAnalysis] = useState<FeedSourceAnalysis | null>(null);
   const [sourceDiscovery, setSourceDiscovery] = useState<FeedIndexDiscovery | null>(null);
+  const [sourceMetaSummaries, setSourceMetaSummaries] = useState<FeedSourceMetaSummaryMap>({});
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const [runs, setRuns] = useState<FeedImportRun[]>([]);
   const [selectedRun, setSelectedRun] = useState<FeedImportRun | null>(null);
@@ -207,24 +209,8 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
   const isFormRoute = isCreateRoute || Boolean(editSourceId);
   const selectedSource = sources.find((source) => source.id === selectedSourceId) ?? null;
   const editorSource = editSourceId ? sources.find((source) => source.id === editSourceId) ?? null : null;
-  const selectedRunSummary = useMemo(
-    () => (isPlainObject(selectedRun?.summaryJson) ? selectedRun.summaryJson : null),
-    [selectedRun],
-  );
-  const editorPreviewSummary = useMemo(() => {
-    if (!editorSource || selectedRun?.sourceId !== editorSource.id || selectedRun.mode !== 'PREVIEW') {
-      return null;
-    }
-
-    return selectedRunSummary;
-  }, [editorSource, selectedRun, selectedRunSummary]);
-  const selectedSourcePreviewSummary = useMemo(() => {
-    if (!selectedSource || selectedRun?.sourceId !== selectedSource.id || selectedRun.mode !== 'PREVIEW') {
-      return null;
-    }
-
-    return selectedRunSummary;
-  }, [selectedRun, selectedRunSummary, selectedSource]);
+  const editorSourceMetaSummary = editorSource ? sourceMetaSummaries[editorSource.id] ?? null : null;
+  const selectedSourceMetaSummary = selectedSource ? sourceMetaSummaries[selectedSource.id] ?? null : null;
   const hasActiveUnitFilters = Boolean(unitStatusFilter || unitTypeFilter);
   const filteredObjects = useMemo(() => {
     if (!form.developerId) {
@@ -305,6 +291,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
         }
 
         setSelectedRun(data.run);
+        rememberSourceMetaSummary(data.run);
 
         if (data.run.status !== 'PENDING' && !didRefreshSettledRun) {
           didRefreshSettledRun = true;
@@ -380,7 +367,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
     }
   }
 
-  async function loadSourceForEdit(sourceId: string, options: { loadPreviewRun?: boolean } = {}) {
+  async function loadSourceForEdit(sourceId: string, options: { loadSourceMeta?: boolean } = {}) {
     if (!accessToken) {
       return;
     }
@@ -417,8 +404,8 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
       setForm(createFormFromSource(source));
       setSourceAnalysis(null);
       setSourceDiscovery(null);
-      if (options.loadPreviewRun ?? true) {
-        void loadLatestPreviewRun(source.id);
+      if (options.loadSourceMeta ?? true) {
+        void loadLatestSourceMetaRun(source.id);
       }
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Не удалось открыть источник фида');
@@ -428,7 +415,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
     }
   }
 
-  async function loadLatestPreviewRun(sourceId: string) {
+  async function loadLatestSourceMetaRun(sourceId: string) {
     if (!accessToken) {
       return;
     }
@@ -438,14 +425,13 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
     try {
       const params = new URLSearchParams({
         page: '1',
-        limit: '1',
-        mode: 'preview',
+        limit: '20',
       });
       const data = await apiRequest<FeedImportRunsResponse>(`/feeds/sources/${sourceId}/runs?${params.toString()}`, accessToken);
 
-      setSelectedRun(data.items[0] ?? null);
+      rememberSourceMetaSummaryFromRuns(sourceId, data.items);
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Не удалось загрузить последний preview фида');
+      setError(caughtError instanceof Error ? caughtError.message : 'Не удалось загрузить последние данные фида');
     } finally {
       setIsLoadingRuns(false);
     }
@@ -465,6 +451,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
       });
       const data = await apiRequest<FeedImportRunsResponse>(`/feeds/sources/${sourceId}/runs?${params.toString()}`, accessToken);
 
+      rememberSourceMetaSummaryFromRuns(sourceId, data.items);
       setRuns(data.items);
       setRunsTotal(data.total);
       setRunsTotalPages(data.totalPages);
@@ -683,6 +670,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
             });
 
       setSelectedRun(data.run);
+      rememberSourceMetaSummary(data.run);
       setNotice(getFeedCommandNotice(mode, data.run.status));
 
       if (isListRoute) {
@@ -691,7 +679,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
         if (mode === 'preview') {
           await loadSourceForEdit(editSourceId);
         } else if (data.run.status !== 'PENDING') {
-          await loadSourceForEdit(editSourceId, { loadPreviewRun: false });
+          await loadSourceForEdit(editSourceId, { loadSourceMeta: false });
           setSelectedRun(data.run);
         }
       }
@@ -723,6 +711,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
       });
 
       setSelectedRun(data.run);
+      rememberSourceMetaSummary(data.run);
       setNotice('Загрузка фида остановлена');
       await Promise.all([loadSources(), loadSourceRuns(data.run.sourceId), loadUnits(data.run.sourceId)]);
     } catch (caughtError) {
@@ -742,12 +731,15 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
     try {
       const data = await apiRequest<FeedImportRunResponse>(`/feeds/runs/${runId}`, accessToken);
       setSelectedRun(data.run);
+      rememberSourceMetaSummary(data.run);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Не удалось открыть отчёт фида');
     }
   }
 
   async function refreshAfterRunSettled(run: FeedImportRun) {
+    rememberSourceMetaSummary(run);
+
     if (isListRoute) {
       await Promise.all([loadSources(), loadSourceRuns(run.sourceId), loadUnits(run.sourceId)]);
       setSelectedRun(run);
@@ -755,7 +747,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
     }
 
     if (editSourceId) {
-      await loadSourceForEdit(editSourceId, { loadPreviewRun: false });
+      await loadSourceForEdit(editSourceId, { loadSourceMeta: false });
       setSelectedRun(run);
     }
   }
@@ -773,6 +765,44 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
     setUnitStatusFilter('');
     setUnitTypeFilter('');
     setUnitsPage(1);
+  }
+
+  function rememberSourceMetaSummary(run: FeedImportRun | null | undefined) {
+    if (!run) {
+      return;
+    }
+
+    const summary = getFeedSourceMetaSummaryFromRun(run);
+
+    if (!summary) {
+      return;
+    }
+
+    setSourceMetaSummaries((currentSummaries) =>
+      currentSummaries[run.sourceId] === summary
+        ? currentSummaries
+        : {
+            ...currentSummaries,
+            [run.sourceId]: summary,
+          },
+    );
+  }
+
+  function rememberSourceMetaSummaryFromRuns(sourceId: string, sourceRuns: FeedImportRun[]) {
+    const summary = getLatestFeedSourceMetaSummary(sourceRuns);
+
+    if (!summary) {
+      return;
+    }
+
+    setSourceMetaSummaries((currentSummaries) =>
+      currentSummaries[sourceId] === summary
+        ? currentSummaries
+        : {
+            ...currentSummaries,
+            [sourceId]: summary,
+          },
+    );
   }
 
   if (isFormRoute) {
@@ -1088,7 +1118,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
 
               {editorSource ? (
                 <>
-                  <SourceMeta source={editorSource} previewSummary={editorPreviewSummary} />
+                  <SourceMeta source={editorSource} metaSummary={editorSourceMetaSummary} />
                 </>
               ) : null}
             </AdminPanel>
@@ -1354,7 +1384,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                 </AdminStatusBadge>
               </div>
 
-              <SourceMeta source={selectedSource} previewSummary={selectedSourcePreviewSummary} />
+              <SourceMeta source={selectedSource} metaSummary={selectedSourceMetaSummary} />
 
               <div className="feed-command-actions">
                 <AdminButton type="button" onClick={() => navigate(`/admin/feeds/${selectedSource.id}/edit`)}>
@@ -1771,8 +1801,8 @@ function FeedSourceDiscoveryPanel({
   );
 }
 
-function SourceMeta({ source, previewSummary }: { source: FeedSource; previewSummary?: Record<string, unknown> | null }) {
-  const previewMetrics = getFeedPreviewMetrics(previewSummary);
+function SourceMeta({ source, metaSummary }: { source: FeedSource; metaSummary?: Record<string, unknown> | null }) {
+  const previewMetrics = getFeedPreviewMetrics(metaSummary);
 
   return (
     <dl className="details-list feed-details">
@@ -2169,6 +2199,34 @@ function getFeedPreviewMetrics(summary: Record<string, unknown> | null | undefin
     mediaCreated: toPreviewMetricNumber(mediaCreated),
     mediaExisting: toPreviewMetricNumber(mediaExisting),
   };
+}
+
+function getLatestFeedSourceMetaSummary(sourceRuns: FeedImportRun[]) {
+  for (const run of sourceRuns) {
+    const summary = getFeedSourceMetaSummaryFromRun(run);
+
+    if (summary) {
+      return summary;
+    }
+  }
+
+  return null;
+}
+
+function getFeedSourceMetaSummaryFromRun(run: FeedImportRun) {
+  const summary = isPlainObject(run.summaryJson) ? run.summaryJson : null;
+
+  return hasFeedMetaMetrics(summary) ? summary : null;
+}
+
+function hasFeedMetaMetrics(summary: Record<string, unknown> | null | undefined) {
+  if (!summary) {
+    return false;
+  }
+
+  const metrics = getFeedPreviewMetrics(summary);
+
+  return Object.values(metrics).some((value) => value !== null);
 }
 
 function getFeedRunProgress(run: FeedImportRun | null, sourceId: string) {

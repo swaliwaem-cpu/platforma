@@ -190,11 +190,16 @@ test('feeds admin page renders reports table without the right report detail col
 test('feeds admin page shows latest preview lot and media counts in source meta', () => {
   const source = readFileSync(sourcePath, 'utf8');
 
-  assert.match(source, /async function loadLatestPreviewRun\(sourceId: string\)/);
-  assert.match(source, /mode:\s*'preview'/);
-  assert.match(source, /<SourceMeta source=\{editorSource\} previewSummary=\{editorPreviewSummary\} \/>/);
-  assert.match(source, /function SourceMeta\(\{ source, previewSummary \}/);
-  assert.match(source, /const previewMetrics = getFeedPreviewMetrics\(previewSummary\)/);
+  assert.match(source, /type FeedSourceMetaSummaryMap = Record<string, Record<string, unknown>>/);
+  assert.match(source, /const \[sourceMetaSummaries, setSourceMetaSummaries\] = useState<FeedSourceMetaSummaryMap>\(\{\}\)/);
+  assert.match(source, /async function loadLatestSourceMetaRun\(sourceId: string\)/);
+  assert.match(source, /limit:\s*'20'/);
+  assert.match(source, /rememberSourceMetaSummaryFromRuns\(sourceId, data\.items\)/);
+  assert.match(source, /const editorSourceMetaSummary = editorSource \? sourceMetaSummaries\[editorSource\.id\] \?\? null : null/);
+  assert.match(source, /const selectedSourceMetaSummary = selectedSource \? sourceMetaSummaries\[selectedSource\.id\] \?\? null : null/);
+  assert.match(source, /<SourceMeta source=\{editorSource\} metaSummary=\{editorSourceMetaSummary\} \/>/);
+  assert.match(source, /function SourceMeta\(\{ source, metaSummary \}/);
+  assert.match(source, /const previewMetrics = getFeedPreviewMetrics\(metaSummary\)/);
   assert.match(source, />Лотов к загрузке</);
   assert.match(source, />Медиа к загрузке</);
   assert.match(source, />Новые лоты</);
@@ -208,6 +213,8 @@ test('feeds admin page shows latest preview lot and media counts in source meta'
   assert.match(source, /summary\?\.archived/);
   assert.match(source, /media\.created/);
   assert.match(source, /media\.existing/);
+  assert.match(source, /function hasFeedMetaMetrics/);
+  assert.match(source, /Object\.values\(metrics\)\.some\(\(value\) => value !== null\)/);
 });
 
 test('feeds admin page reports pending run commands as started instead of finished', () => {
@@ -246,6 +253,8 @@ test('feeds admin page keeps source run controls and persistent progress below t
   assert.match(source, /stoppingRunId \? 'Stop\.\.\.' : 'Stop'/);
   assert.match(source, /stage === 'STOPPED'/);
   assert.match(source, /Импорт остановлен/);
+  assert.match(source, /rememberSourceMetaSummary\(data\.run\)/);
+  assert.match(source, /rememberSourceMetaSummary\(run\)/);
   assert.match(source, /runSourceCommand\(selectedSource\.id, 'preview'\)/);
   assert.match(source, /runSourceCommand\(selectedSource\.id, 'run'\)/);
   assert.doesNotMatch(source, /runSourceCommand\(editorSource\.id, 'run'\)/);
