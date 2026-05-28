@@ -61,6 +61,7 @@ test('app theme stylesheet covers contrast-sensitive dark theme selectors', () =
     '.object-feed-media-carousel',
     '.object-feed-media-fullscreen',
     '.object-feed-status--available',
+    '.multi-select-dropdown-button',
     '.feed-details dd',
     '.metro-list strong',
     '.carousel-thumbnail',
@@ -69,6 +70,15 @@ test('app theme stylesheet covers contrast-sensitive dark theme selectors', () =
   ].forEach((selector) => {
     assert.match(styles, new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   });
+
+  assert.match(
+    styles,
+    /html\[data-app-theme\] :is\([\s\S]*?\.catalog-filter-fields \.multi-select-dropdown-button[\s\S]*?\.object-feed-units-filter \.multi-select-dropdown-button[\s\S]*?\)\s*\{[\s\S]*?background:\s*var\(--app-theme-control\);[\s\S]*?color:\s*var\(--app-theme-ink-900\);[\s\S]*?\}/,
+  );
+  assert.match(
+    styles,
+    /html\[data-app-theme\] \.multi-select-dropdown-button:is\(:hover,\s*:focus-visible,\s*\.is-open\)\s*\{[\s\S]*?background:\s*var\(--app-theme-control\);[\s\S]*?\}/,
+  );
 });
 
 test('app theme suppresses pressed-state flicker for interactive controls', () => {

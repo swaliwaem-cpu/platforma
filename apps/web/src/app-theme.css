@@ -251,7 +251,7 @@ html[data-app-theme] :is(
   color: var(--app-theme-ink-800);
 }
 
-html[data-app-theme] :is(input, select, textarea, [data-slot="input"], .catalog-filter-search input, .catalog-filter-fields input, .catalog-filter-fields select, .catalog-link-field input, .catalog-link-field select) {
+html[data-app-theme] :is(input, select, textarea, [data-slot="input"], .catalog-filter-search input, .catalog-filter-fields input, .catalog-filter-fields select, .catalog-filter-fields .multi-select-dropdown-button, .catalog-link-field input, .catalog-link-field select, .object-feed-units-filter .multi-select-dropdown-button) {
   border-color: var(--app-theme-border-strong);
   background: var(--app-theme-control);
   color: var(--app-theme-ink-900);
@@ -269,6 +269,13 @@ html[data-app-theme] :is(input, select, textarea, [data-slot="input"]):hover {
 html[data-app-theme] :is(input, select, textarea, [data-slot="input"]):focus,
 html[data-app-theme] :is(input, select, textarea, [data-slot="input"]):focus-visible {
   border-color: var(--app-theme-primary);
+  box-shadow: var(--app-theme-focus-primary);
+}
+
+html[data-app-theme] .multi-select-dropdown-button:is(:hover, :focus-visible, .is-open) {
+  border-color: var(--app-theme-primary);
+  background: var(--app-theme-control);
+  color: var(--app-theme-ink-900);
   box-shadow: var(--app-theme-focus-primary);
 }
 
