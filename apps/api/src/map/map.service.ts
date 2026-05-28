@@ -352,7 +352,7 @@ export class MapService {
   }): Prisma.RealEstateObjectWhereInput | null {
     const priceMin = this.parseNullableDecimal(query.priceMin, 'Lot price min', 14, 2);
     const priceMax = this.parseNullableDecimal(query.priceMax, 'Lot price max', 14, 2);
-    const rooms = this.parseOptionalInteger(query.rooms, 'Lot rooms is invalid', 0, 5);
+    const rooms = this.parseOptionalIntegerList(query.rooms, 'Lot rooms is invalid', 0, 5);
     const floorMin = this.parseOptionalInteger(query.floorMin, 'Lot floor min is invalid', 1, 300);
     const floorMax = this.parseOptionalInteger(query.floorMax, 'Lot floor max is invalid', 1, 300);
 
@@ -405,13 +405,44 @@ export class MapService {
     return this.parseInteger(value, message, min, max);
   }
 
-  private createFeedUnitRoomsFilter(rooms: number): Prisma.FeedUnitWhereInput {
-    if (rooms !== 0) {
-      return { rooms };
+  private parseOptionalIntegerList(value: string | undefined, message: string, min: number, max: number) {
+    if (value === undefined || value.trim() === '') {
+      return undefined;
     }
 
-    return {
-      OR: [
+    const parsedValues = value.split(',').map((item) => {
+      const normalizedItem = item.trim();
+
+      if (!normalizedItem) {
+        throw new BadRequestException(message);
+      }
+
+      return this.parseInteger(normalizedItem, message, min, max);
+    });
+
+    return [...new Set(parsedValues)];
+  }
+
+  private createFeedUnitRoomsFilter(rooms: number | number[]): Prisma.FeedUnitWhereInput {
+    const roomValues = Array.isArray(rooms) ? rooms : [rooms];
+    const hasStudio = roomValues.includes(0);
+    const directRoomValues = roomValues.filter((room) => room !== 0);
+    const filters: Prisma.FeedUnitWhereInput[] = [];
+
+    if (directRoomValues.length === 1) {
+      filters.push({
+        rooms: directRoomValues[0],
+      });
+    } else if (directRoomValues.length > 1) {
+      filters.push({
+        rooms: {
+          in: directRoomValues,
+        },
+      });
+    }
+
+    if (hasStudio) {
+      filters.push(
         {
           rooms: 0,
         },
@@ -446,8 +477,10 @@ export class MapService {
             ],
           },
         },
-      ],
-    };
+      );
+    }
+
+    return filters.length === 1 ? filters[0]! : { OR: filters };
   }
 
   private parseUuid(value: string, message: string) {

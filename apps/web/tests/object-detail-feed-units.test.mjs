@@ -6,6 +6,7 @@ import test from 'node:test';
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(resolve(currentDir, '../src/objects/ObjectDetailPage.tsx'), 'utf8');
+const multiSelectSource = readFileSync(resolve(currentDir, '../src/components/MultiSelectDropdown.tsx'), 'utf8');
 const styles = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
 
 test('object detail page loads active feed units with public filters', () => {
@@ -26,6 +27,9 @@ test('object detail feed units expose detailed lot filters in API request and re
   assert.match(source, /\{ value:\s*'0',\s*label:\s*'Студия'\s*\}/);
   assert.match(source, /\{ value:\s*'4',\s*label:\s*'4 спальни'\s*\}/);
   assert.match(source, /\{ value:\s*'5',\s*label:\s*'5 спален'\s*\}/);
+  assert.match(source, /import \{ MultiSelectDropdown \} from '\.\.\/components\/MultiSelectDropdown';/);
+  assert.match(source, /<MultiSelectDropdown[\s\S]*?ariaLabel="Фильтр лотов по комнатам"[\s\S]*?values=\{getFeedUnitRoomFilterValues\(roomFilter\)\}[\s\S]*?onChange=\{\(values\) => \{[\s\S]*?setRoomFilter\(formatFeedUnitRoomFilterValues\(values\)\);/);
+  assert.match(multiSelectSource, /aria-multiselectable=\{true\}/);
   assert.match(source, /const \[pricePerMeterMinFilter,\s*setPricePerMeterMinFilter\] = useState\(''\);/);
   assert.match(source, /const \[pricePerMeterMaxFilter,\s*setPricePerMeterMaxFilter\] = useState\(''\);/);
   assert.match(source, /const \[areaMinFilter,\s*setAreaMinFilter\] = useState\(''\);/);
@@ -70,6 +74,8 @@ test('object detail feed units initialize from catalog lot filters in URL', () =
   assert.match(source, /const \[priceMinFilter,\s*setPriceMinFilter\] = useState\(initialFilters\.priceMin\);/);
   assert.match(source, /const \[priceMaxFilter,\s*setPriceMaxFilter\] = useState\(initialFilters\.priceMax\);/);
   assert.match(source, /const \[roomFilter,\s*setRoomFilter\] = useState\(initialFilters\.rooms\);/);
+  assert.match(source, /function getFeedUnitRoomFilterValues\(value: string\)/);
+  assert.match(source, /function formatFeedUnitRoomFilterValues\(values: string\[\]\)/);
   assert.match(source, /const \[floorMinFilter,\s*setFloorMinFilter\] = useState\(initialFilters\.floorMin\);/);
   assert.match(source, /const \[floorMaxFilter,\s*setFloorMaxFilter\] = useState\(initialFilters\.floorMax\);/);
 });
@@ -84,7 +90,7 @@ test('object detail feed units block renders expected columns and media thumbnai
   assert.doesNotMatch(source, /<strong>\{unit\.title \|\| unit\.externalId\}<\/strong>/);
   assert.match(source, /function getFeedUnitTitle\(unit: FeedUnit\)/);
   assert.match(source, /function isSeparateRoomsStudio\(unit: FeedUnit\)/);
-  assert.match(source, /unit\.rooms === 0 \|\| isSeparateRoomsStudio\(unit\)[\s\S]*?return 'Студия';/);
+  assert.match(source, /unit\.rooms === 0 \|\| \(unit\.rooms === null && isSeparateRoomsStudio\(unit\)\)[\s\S]*?return 'Студия';/);
   assert.match(source, /className="object-feed-media-button"/);
   assert.match(source, /onClick=\{\(event\) => \{[\s\S]*?event\.stopPropagation\(\);[\s\S]*?onOpenMedia\(unit\);[\s\S]*?\}\}/);
   assert.match(source, /<SecureImage[\s\S]*?className="object-feed-media-image"[\s\S]*?fileId=\{primaryMedia\.file\.id\}[\s\S]*?variant="thumbnail"/);

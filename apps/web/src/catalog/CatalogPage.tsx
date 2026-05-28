@@ -20,6 +20,7 @@ import type {
 
 import { apiRequest } from '../admin/api';
 import { useAuth } from '../auth/AuthProvider';
+import { MultiSelectDropdown } from '../components/MultiSelectDropdown';
 import { SecureImage } from '../files/SecureImage';
 import { YandexMap, type YandexMapBounds, type YandexMapPoint } from '../map/YandexMap';
 
@@ -801,14 +802,13 @@ function CatalogFilters({
 
           <label>
             Сколько комнат
-            <select value={filters.lotRooms} onChange={(event) => onChange({ lotRooms: event.target.value })}>
-              <option value="">Любые лоты</option>
-              {catalogRoomOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+            <MultiSelectDropdown
+              ariaLabel="Фильтр каталога по комнатам"
+              options={catalogRoomOptions}
+              placeholder="Любые лоты"
+              values={getRoomFilterValues(filters.lotRooms)}
+              onChange={(values) => onChange({ lotRooms: formatRoomFilterValues(values) })}
+            />
           </label>
 
           <label>
@@ -1413,7 +1413,7 @@ function CatalogCard({
 }) {
   const coverImage = object.coverImage;
   const objectHref = buildCatalogObjectHref(object.slug, filters);
-  const matchedLotsLabel = getCatalogMatchedLotsLabel(object, filters);
+  const matchedLotsCount = getCatalogMatchedLotsCount(object, filters);
   const hasPresentation = Boolean(object.presentationFile);
   const hasVisibleBadges = object.status !== 'PUBLISHED' || hasPresentation;
   const districtLabel = getObjectDistrictLabel(object);
@@ -1474,8 +1474,13 @@ function CatalogCard({
             <dt>Застройщик</dt>
             <dd>{object.developer?.name ?? 'Не указан'}</dd>
           </div>
+          {matchedLotsCount !== null ? (
+            <div className="catalog-card-matched-lots-badge">
+              <dt>Найдено лотов</dt>
+              <dd>{formatNumber(matchedLotsCount)}</dd>
+            </div>
+          ) : null}
         </dl>
-        {matchedLotsLabel ? <div className="catalog-matched-lots-badge">{matchedLotsLabel}</div> : null}
         <div className="catalog-card-actions">
           <a className="catalog-card-link" href={objectHref} rel="noopener noreferrer" target="_blank">
             Подробнее
@@ -1659,6 +1664,16 @@ function hasActiveCatalogLotFilters(filters: CatalogFilters) {
 }
 
 function getCatalogMatchedLotsLabel(object: RealEstateObjectSummary, filters: CatalogFilters) {
+  const matchedLotsCount = getCatalogMatchedLotsCount(object, filters);
+
+  if (matchedLotsCount === null) {
+    return null;
+  }
+
+  return `Найдено лотов: ${formatNumber(matchedLotsCount)}`;
+}
+
+function getCatalogMatchedLotsCount(object: RealEstateObjectSummary, filters: CatalogFilters) {
   if (
     !hasActiveCatalogLotFilters(filters) ||
     typeof object.matchedFeedUnitsCount !== 'number' ||
@@ -1667,7 +1682,7 @@ function getCatalogMatchedLotsLabel(object: RealEstateObjectSummary, filters: Ca
     return null;
   }
 
-  return `Найдено лотов: ${formatNumber(object.matchedFeedUnitsCount)}`;
+  return object.matchedFeedUnitsCount;
 }
 
 function countActiveAdvancedFilters(filters: CatalogFilters) {
@@ -1853,7 +1868,27 @@ function parseSearchParam(value: string | null) {
 }
 
 function parseCatalogRoomsParam(value: string | null) {
-  return catalogRoomOptions.some((option) => option.value === value) ? (value ?? '') : '';
+  return formatRoomFilterValues(getRoomFilterValues(value ?? ''));
+}
+
+function getRoomFilterValues(value: string) {
+  const valueSet = new Set(
+    value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean),
+  );
+
+  return catalogRoomOptions.filter((option) => valueSet.has(option.value)).map((option) => option.value);
+}
+
+function formatRoomFilterValues(values: string[]) {
+  const valueSet = new Set(values);
+
+  return catalogRoomOptions
+    .filter((option) => valueSet.has(option.value))
+    .map((option) => option.value)
+    .join(',');
 }
 
 function parsePositiveInteger(value: string | null, fallback: number) {

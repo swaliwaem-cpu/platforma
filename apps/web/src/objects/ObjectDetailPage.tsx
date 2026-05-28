@@ -36,6 +36,7 @@ import {
 
 import { apiRequest } from '../admin/api';
 import { useAuth } from '../auth/AuthProvider';
+import { MultiSelectDropdown } from '../components/MultiSelectDropdown';
 import { getLinkedFileTitle } from '../files/fileDisplay';
 import { SecureImage, buildMediaFileContentUrl, useSecureImageObjectUrl } from '../files/SecureImage';
 import { YandexMap, type YandexMapPoint } from '../map/YandexMap';
@@ -1147,21 +1148,16 @@ function ObjectFeedUnitsSection({
 
         <label className="object-feed-units-filter">
           <span>Комнаты</span>
-          <select
-            aria-label="Фильтр лотов по комнатам"
-            value={roomFilter}
-            onChange={(event) => {
-              setRoomFilter(event.target.value);
+          <MultiSelectDropdown
+            ariaLabel="Фильтр лотов по комнатам"
+            options={feedUnitRoomFilterOptions}
+            placeholder="Любые"
+            values={getFeedUnitRoomFilterValues(roomFilter)}
+            onChange={(values) => {
+              setRoomFilter(formatFeedUnitRoomFilterValues(values));
               setPage(1);
             }}
-          >
-            <option value="">Любые</option>
-            {feedUnitRoomFilterOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+          />
         </label>
 
         <label className="object-feed-units-filter">
@@ -2019,9 +2015,27 @@ function getInitialObjectFeedUnitFiltersFromLocation(): InitialObjectFeedUnitFil
 }
 
 function parseInitialObjectFeedUnitRooms(value: string | null) {
-  const normalizedValue = sanitizeIntegerText(value ?? '', 1);
+  return formatFeedUnitRoomFilterValues(getFeedUnitRoomFilterValues(value ?? ''));
+}
 
-  return feedUnitRoomFilterOptions.some((option) => option.value === normalizedValue) ? normalizedValue : '';
+function getFeedUnitRoomFilterValues(value: string) {
+  const valueSet = new Set(
+    value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean),
+  );
+
+  return feedUnitRoomFilterOptions.filter((option) => valueSet.has(option.value)).map((option) => option.value);
+}
+
+function formatFeedUnitRoomFilterValues(values: string[]) {
+  const valueSet = new Set(values);
+
+  return feedUnitRoomFilterOptions
+    .filter((option) => valueSet.has(option.value))
+    .map((option) => option.value)
+    .join(',');
 }
 
 function parseNullableNumber(value: string | null) {
@@ -2222,7 +2236,7 @@ function getObjectLotFactRows(unit: FeedUnit) {
 
 function getUnitRoomsOrType(unit: FeedUnit) {
   if (unit.type === 'RESIDENTIAL') {
-    if (unit.rooms === 0 || isSeparateRoomsStudio(unit)) {
+    if (unit.rooms === 0 || (unit.rooms === null && isSeparateRoomsStudio(unit))) {
       return 'Студия';
     }
 

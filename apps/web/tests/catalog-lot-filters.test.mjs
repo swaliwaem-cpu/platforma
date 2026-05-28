@@ -6,6 +6,7 @@ import test from 'node:test';
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(resolve(currentDir, '../src/catalog/CatalogPage.tsx'), 'utf8');
+const multiSelectSource = readFileSync(resolve(currentDir, '../src/components/MultiSelectDropdown.tsx'), 'utf8');
 
 test('catalog global filters include lot price rooms and floor URL and API params', () => {
   assert.match(source, /lotPriceMin:\s*string;/);
@@ -14,6 +15,8 @@ test('catalog global filters include lot price rooms and floor URL and API param
   assert.match(source, /lotFloorMin:\s*string;/);
   assert.match(source, /lotFloorMax:\s*string;/);
   assert.match(source, /lotRooms:\s*parseCatalogRoomsParam\(params\.get\('lotRooms'\)\)/);
+  assert.match(source, /function getRoomFilterValues\(value: string\)/);
+  assert.match(source, /function formatRoomFilterValues\(values: string\[\]\)/);
   assert.match(source, /setParam\(params,\s*'lotPriceMin',\s*filters\.lotPriceMin\);/);
   assert.match(source, /setParam\(params,\s*'lotPriceMax',\s*filters\.lotPriceMax\);/);
   assert.match(source, /setParam\(params,\s*'lotRooms',\s*filters\.lotRooms\);/);
@@ -26,6 +29,9 @@ test('catalog global lot filters render controls and count as active advanced fi
   assert.match(source, /\{ value:\s*'0',\s*label:\s*'Студия'\s*\}/);
   assert.match(source, /\{ value:\s*'4',\s*label:\s*'4 спальни'\s*\}/);
   assert.match(source, /\{ value:\s*'5',\s*label:\s*'5 спален'\s*\}/);
+  assert.match(source, /import \{ MultiSelectDropdown \} from '\.\.\/components\/MultiSelectDropdown';/);
+  assert.match(source, /<MultiSelectDropdown[\s\S]*?ariaLabel="Фильтр каталога по комнатам"[\s\S]*?values=\{getRoomFilterValues\(filters\.lotRooms\)\}[\s\S]*?onChange=\{\(values\) => onChange\(\{ lotRooms: formatRoomFilterValues\(values\) \}\)\}/);
+  assert.match(multiSelectSource, /aria-multiselectable=\{true\}/);
   assert.match(source, />\s*Цена лота от\s*</);
   assert.match(source, />\s*Цена лота до\s*</);
   assert.match(source, />\s*Сколько комнат\s*</);
@@ -57,8 +63,11 @@ test('catalog result cards show matched lot count only for lot-filtered results'
   assert.match(source, /matchedFeedUnitsCount/);
   assert.match(source, /function hasActiveCatalogLotFilters\(filters: CatalogFilters\)/);
   assert.match(source, /function getCatalogMatchedLotsLabel\(object: RealEstateObjectSummary, filters: CatalogFilters\)/);
+  assert.match(source, /function getCatalogMatchedLotsCount\(object: RealEstateObjectSummary, filters: CatalogFilters\)/);
   assert.match(source, /typeof object\.matchedFeedUnitsCount !== 'number'/);
-  assert.match(source, /Найдено лотов: \$\{formatNumber\(object\.matchedFeedUnitsCount\)\}/);
+  assert.match(source, /Найдено лотов: \$\{formatNumber\(matchedLotsCount\)\}/);
   assert.match(source, /className="catalog-matched-lots-badge"/);
+  assert.match(source, /className="catalog-card-matched-lots-badge"/);
   assert.match(source, /const matchedLotsLabel = getCatalogMatchedLotsLabel\(object, filters\);/);
+  assert.match(source, /const matchedLotsCount = getCatalogMatchedLotsCount\(object, filters\);/);
 });

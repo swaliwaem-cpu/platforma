@@ -706,6 +706,78 @@ test('ObjectsService.list filters objects by matching lot price rooms and floor'
   assert.equal(result.items[0].matchedFeedUnitsCount, 3);
 });
 
+test('ObjectsService.list filters objects by several selected lot rooms', async () => {
+  const calls = {};
+  const prisma = {
+    realEstateObject: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [objectRecord()];
+      },
+      count: async (args) => {
+        calls.count = args;
+        return 1;
+      },
+    },
+    feedUnit: {
+      groupBy: async (args) => {
+        calls.feedUnitGroupBy = args;
+
+        return [];
+      },
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await service.list({ lotRooms: '2,3' });
+
+  const lotWhere = calls.findMany.where.AND.find((filter) => filter.feedUnits?.some).feedUnits.some;
+
+  assert.deepEqual(lotWhere, {
+    rooms: {
+      in: [2, 3],
+    },
+  });
+  assert.deepEqual(calls.feedUnitGroupBy.where, {
+    objectId: {
+      in: ['11111111-1111-4111-8111-111111111111'],
+    },
+    rooms: {
+      in: [2, 3],
+    },
+  });
+});
+
+test('ObjectsService.list combines selected studios with other lot rooms', async () => {
+  const calls = {};
+  const prisma = {
+    realEstateObject: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [objectRecord()];
+      },
+      count: async () => 1,
+    },
+    feedUnit: {
+      groupBy: async () => [],
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await service.list({ lotRooms: '0,2' });
+
+  const lotWhere = calls.findMany.where.AND.find((filter) => filter.feedUnits?.some).feedUnits.some;
+
+  assert.equal(lotWhere.OR.some((filter) => filter.rooms === 0), true);
+  assert.equal(lotWhere.OR.some((filter) => filter.rooms === 2), true);
+  assert.equal(
+    lotWhere.OR.some((filter) => filter.residentialDetails?.is?.layoutType?.equals === 'раздельные'),
+    true,
+  );
+});
+
 test('ObjectsService.list treats Aura separate-room layouts as studios in lot filters', async () => {
   const calls = {};
   const prisma = {
@@ -1187,6 +1259,35 @@ test('MapService.listObjects filters objects by matching lot price rooms and flo
   assert.deepEqual(calls.count.where, calls.findMany.where);
 });
 
+test('MapService.listObjects filters objects by several selected lot rooms', async () => {
+  const calls = {};
+  const mapObject = objectRecord({
+    latitude: decimal('55.751244'),
+    longitude: decimal('37.618423'),
+  });
+  const prisma = {
+    realEstateObject: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [mapObject];
+      },
+      count: async () => 1,
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new MapService(prisma);
+
+  await service.listObjects({ lotRooms: '2,3' });
+
+  const lotWhere = calls.findMany.where.AND.find((filter) => filter.feedUnits?.some).feedUnits.some;
+
+  assert.deepEqual(lotWhere, {
+    rooms: {
+      in: [2, 3],
+    },
+  });
+});
+
 test('MapService.listObjects treats Aura separate-room layouts as studios in lot filters', async () => {
   const calls = {};
   const mapObject = objectRecord({
@@ -1542,6 +1643,37 @@ test('ObjectsService.listFeedUnits filters by numeric ranges rooms floor and com
   });
   assert.equal(filters.some((filter) => filter.completionYear === 2028), true);
   assert.equal(filters.some((filter) => filter.completionQuarter === 4), true);
+  assert.deepEqual(calls.count.where, calls.findMany.where);
+});
+
+test('ObjectsService.listFeedUnits filters by several selected rooms', async () => {
+  const calls = {};
+  const objectId = '11111111-1111-4111-8111-111111111111';
+  const prisma = {
+    realEstateObject: {
+      count: async () => 1,
+    },
+    feedUnit: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [];
+      },
+      count: async (args) => {
+        calls.count = args;
+        return 0;
+      },
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await service.listFeedUnits(objectId, { rooms: '2,3' });
+
+  assert.deepEqual(calls.findMany.where.AND.find((filter) => filter.rooms), {
+    rooms: {
+      in: [2, 3],
+    },
+  });
   assert.deepEqual(calls.count.where, calls.findMany.where);
 });
 
