@@ -22,6 +22,7 @@ import { apiRequest } from '../admin/api';
 import { useAuth } from '../auth/AuthProvider';
 import { MultiSelectDropdown } from '../components/MultiSelectDropdown';
 import { SecureImage } from '../files/SecureImage';
+import { formatGroupedNumberInputValue } from '../lib/numberInput';
 import { YandexMap, type YandexMapBounds, type YandexMapPoint } from '../map/YandexMap';
 
 type CatalogPageProps = {
@@ -784,7 +785,7 @@ function CatalogFilters({
               inputMode="decimal"
               placeholder="0"
               type="text"
-              value={filters.lotPriceMin}
+              value={formatGroupedNumberInputValue(filters.lotPriceMin)}
               onChange={(event) => onChange({ lotPriceMin: sanitizeDecimalText(event.target.value) })}
             />
           </label>
@@ -793,9 +794,9 @@ function CatalogFilters({
             Цена лота до
             <input
               inputMode="decimal"
-              placeholder="50000000"
+              placeholder="50 000 000"
               type="text"
-              value={filters.lotPriceMax}
+              value={formatGroupedNumberInputValue(filters.lotPriceMax)}
               onChange={(event) => onChange({ lotPriceMax: sanitizeDecimalText(event.target.value) })}
             />
           </label>

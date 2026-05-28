@@ -38,6 +38,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { MultiSelectDropdown } from '../components/MultiSelectDropdown';
 import { getLinkedFileTitle } from '../files/fileDisplay';
 import { SecureImage, buildMediaFileContentUrl, useSecureImageObjectUrl } from '../files/SecureImage';
+import { formatGroupedNumberInputValue } from '../lib/numberInput';
 import { YandexMap, type YandexMapPoint } from '../map/YandexMap';
 import {
   formatCompletion,
@@ -1067,7 +1068,7 @@ function ObjectFeedUnitsSection({
             inputMode="decimal"
             placeholder="0"
             type="text"
-            value={priceMinFilter}
+            value={formatGroupedNumberInputValue(priceMinFilter)}
             onChange={(event) => {
               setPriceMinFilter(sanitizeDecimalText(event.target.value));
               setPage(1);
@@ -1079,9 +1080,9 @@ function ObjectFeedUnitsSection({
           <span>Цена до</span>
           <input
             inputMode="decimal"
-            placeholder="50000000"
+            placeholder="50 000 000"
             type="text"
-            value={priceMaxFilter}
+            value={formatGroupedNumberInputValue(priceMaxFilter)}
             onChange={(event) => {
               setPriceMaxFilter(sanitizeDecimalText(event.target.value));
               setPage(1);
@@ -1095,7 +1096,7 @@ function ObjectFeedUnitsSection({
             inputMode="decimal"
             placeholder="0"
             type="text"
-            value={pricePerMeterMinFilter}
+            value={formatGroupedNumberInputValue(pricePerMeterMinFilter)}
             onChange={(event) => {
               setPricePerMeterMinFilter(sanitizeDecimalText(event.target.value));
               setPage(1);
@@ -1107,9 +1108,9 @@ function ObjectFeedUnitsSection({
           <span>Цена за метр до</span>
           <input
             inputMode="decimal"
-            placeholder="500000"
+            placeholder="500 000"
             type="text"
-            value={pricePerMeterMaxFilter}
+            value={formatGroupedNumberInputValue(pricePerMeterMaxFilter)}
             onChange={(event) => {
               setPricePerMeterMaxFilter(sanitizeDecimalText(event.target.value));
               setPage(1);
