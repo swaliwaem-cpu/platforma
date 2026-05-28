@@ -1193,7 +1193,22 @@ export type FeedImportDatabase = {
         status: ImportStatusValue;
         startedAt: Date;
       };
-    }) => Promise<{ id: string }>;
+    }) => Promise<{
+      id: string;
+      sourceId: string;
+      mode: ImportModeValue;
+      status: ImportStatusValue;
+      startedAt: Date;
+    }>;
+    findUnique: (args: {
+      where: { id: string };
+    }) => Promise<{
+      id: string;
+      sourceId: string;
+      mode: ImportModeValue;
+      status: ImportStatusValue;
+      startedAt: Date;
+    } | null>;
     update: (args: {
       where: { id: string };
       data: {
@@ -1434,6 +1449,7 @@ export type FeedSourceAnalyzeResult = {
 export type ExecuteFeedImportOptions = {
   mode: FeedImportCommand;
   sourceId: string;
+  reportId?: string | null;
   db: FeedImportDatabase;
   storage?: FeedImportStorageClient;
   xmlFetcher?: (url: string) => Promise<string>;
@@ -1471,6 +1487,7 @@ type PersistFeedImportContext = {
 export type ParsedFeedImportCliArgs = {
   command: FeedImportCommand;
   sourceId: string;
+  runId: string | null;
 };
 
 export type ParsedFeedAnalyzeCliArgs = {
@@ -1490,6 +1507,7 @@ export function parseFeedImportCliArgs(args: string[]): ParsedFeedImportCliArgs 
   }
 
   let sourceId: string | null = null;
+  let runId: string | null = null;
 
   for (let index = 1; index < args.length; index += 1) {
     const arg = args[index];
@@ -1517,6 +1535,29 @@ export function parseFeedImportCliArgs(args: string[]): ParsedFeedImportCliArgs 
       continue;
     }
 
+    if (arg === '--run-id') {
+      const nextValue = args[index + 1];
+
+      if (!nextValue) {
+        return null;
+      }
+
+      runId = nextValue;
+      index += 1;
+      continue;
+    }
+
+    if (arg?.startsWith('--run-id=')) {
+      const value = arg.slice('--run-id='.length).trim();
+
+      if (!value) {
+        return null;
+      }
+
+      runId = value;
+      continue;
+    }
+
     return null;
   }
 
@@ -1527,6 +1568,7 @@ export function parseFeedImportCliArgs(args: string[]): ParsedFeedImportCliArgs 
   return {
     command,
     sourceId,
+    runId,
   };
 }
 
@@ -2386,7 +2428,6 @@ function routeFeedUnitsForSource(units: NormalizedFeedUnit[], source: FeedSource
 
 export async function executeFeedImport(options: ExecuteFeedImportOptions): Promise<FeedImportResult> {
   const now = options.now ?? (() => new Date());
-  const startedAt = now();
   const source = await options.db.feedSource.findUnique({
     where: {
       id: options.sourceId,
@@ -2411,14 +2452,18 @@ export async function executeFeedImport(options: ExecuteFeedImportOptions): Prom
     throw new Error(`FeedSource ${options.sourceId} was not found`);
   }
 
-  const report = await options.db.feedImportRun.create({
-    data: {
-      sourceId: source.id,
-      mode: toImportModeValue(options.mode),
-      status: 'PENDING',
-      startedAt,
-    },
-  });
+  const mode = toImportModeValue(options.mode);
+  const report = options.reportId
+    ? await getExistingFeedImportRun(options.db, options.reportId, source.id, mode)
+    : await options.db.feedImportRun.create({
+        data: {
+          sourceId: source.id,
+          mode,
+          status: 'PENDING',
+          startedAt: now(),
+        },
+      });
+  const startedAt = report.startedAt;
   const warnings: FeedParserWarning[] = [];
   const errors: FeedParserWarning[] = [];
 
@@ -2493,6 +2538,33 @@ export async function executeFeedImport(options: ExecuteFeedImportOptions): Prom
 
     throw error;
   }
+}
+
+async function getExistingFeedImportRun(
+  db: FeedImportDatabase,
+  reportId: string,
+  sourceId: string,
+  mode: ImportModeValue,
+) {
+  const report = await db.feedImportRun.findUnique({
+    where: {
+      id: reportId,
+    },
+  });
+
+  if (!report) {
+    throw new Error(`FeedImportRun ${reportId} was not found`);
+  }
+
+  if (report.sourceId !== sourceId || report.mode !== mode) {
+    throw new Error(`FeedImportRun ${reportId} does not match feed source ${sourceId}`);
+  }
+
+  if (report.status !== 'PENDING') {
+    throw new Error(`FeedImportRun ${reportId} is not pending`);
+  }
+
+  return report;
 }
 
 async function buildFeedImportPlan(
@@ -3467,7 +3539,7 @@ function getExtensionByContentType(contentType: string) {
 }
 
 function printUsage() {
-  console.error('Usage: pnpm --filter @platforma/feed-import run <preview|run> --source <feedSourceId>');
+  console.error('Usage: pnpm --filter @platforma/feed-import run <preview|run> --source <feedSourceId> [--run-id <feedImportRunId>]');
   console.error('Usage: pnpm --filter @platforma/feed-import run analyze --format <format|AUTO> [--source-kind <URL|FILE|INDEX_URL>] (--url <url> | --file <path>) [--output <path>]');
 }
 
@@ -3520,6 +3592,7 @@ async function main() {
     const result = await executeFeedImport({
       mode: cliArgs.command,
       sourceId: cliArgs.sourceId,
+      reportId: cliArgs.runId,
       db: prisma as unknown as FeedImportDatabase,
       storage: new FeedImportStorage(config.s3),
     });

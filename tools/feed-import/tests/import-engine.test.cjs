@@ -184,10 +184,17 @@ test('parseFeedImportCliArgs accepts preview/run with source id', () => {
   assert.deepEqual(parseFeedImportCliArgs(['preview', '--source', 'source-1']), {
     command: 'preview',
     sourceId: 'source-1',
+    runId: null,
   });
   assert.deepEqual(parseFeedImportCliArgs(['run', '--source=source-1']), {
     command: 'run',
     sourceId: 'source-1',
+    runId: null,
+  });
+  assert.deepEqual(parseFeedImportCliArgs(['run', '--source=source-1', '--run-id=run-1']), {
+    command: 'run',
+    sourceId: 'source-1',
+    runId: 'run-1',
   });
   assert.equal(parseFeedImportCliArgs(['preview']), null);
   assert.equal(parseFeedImportCliArgs(['bad', '--source', 'source-1']), null);
@@ -957,6 +964,10 @@ function createFakeDb({ source = {}, object = {}, objects = null, units = [], me
         const run = { id: `run-${state.runs.length + 1}`, ...data };
         state.runs.push(run);
         return { ...run };
+      },
+      findUnique: async ({ where }) => {
+        const run = state.runs.find((currentRun) => currentRun.id === where.id);
+        return run ? { ...run } : null;
       },
       update: async ({ where, data }) => {
         const run = state.runs.find((currentRun) => currentRun.id === where.id);

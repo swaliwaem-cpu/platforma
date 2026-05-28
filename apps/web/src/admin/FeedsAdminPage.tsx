@@ -2178,6 +2178,10 @@ function formatRemainingProgressMinutes(run: FeedImportRun, progress: FeedRunPro
 }
 
 function getFeedRunProgressStageLabel(stage: string) {
+  if (stage === 'QUEUED') {
+    return 'В очереди на импорт';
+  }
+
   if (stage === 'COMPLETED') {
     return 'Импорт завершён';
   }

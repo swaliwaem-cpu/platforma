@@ -1000,11 +1000,29 @@ test('FeedsService returns a pending run command before the feed-import CLI fini
     finishCommand = resolve;
   });
   let commandHasStarted = false;
+  const runs = [];
   const prisma = {
     feedSource: {
       findUnique: async () => ({ id: sourceId }),
     },
     feedImportRun: {
+      create: async ({ data }) => {
+        const run = runRecord({
+          sourceId: data.sourceId,
+          mode: data.mode,
+          status: data.status,
+          startedAt: data.startedAt,
+          finishedAt: null,
+          summaryJson: data.summaryJson,
+        });
+        runs.push(run);
+        return run;
+      },
+      update: async ({ where, data }) => {
+        const run = runs.find((currentRun) => currentRun.id === where.id);
+        Object.assign(run, data);
+        return run;
+      },
       findFirst: async () =>
         commandHasStarted
           ? runRecord({
@@ -1042,6 +1060,98 @@ test('FeedsService returns a pending run command before the feed-import CLI fini
     finishCommand();
     await resultPromise.catch(() => {});
   }
+});
+
+test('FeedsService queues feed run commands and starts at most three at once', async () => {
+  const sources = Array.from({ length: 4 }, (_, index) => `11111111-1111-4111-8111-11111111111${index + 1}`);
+  const runs = [];
+  const startedCommands = [];
+  const prisma = {
+    feedSource: {
+      findUnique: async ({ where }) => ({ id: where.id }),
+    },
+    feedImportRun: {
+      create: async ({ data }) => {
+        const run = runRecord({
+          id: `44444444-4444-4444-8444-44444444444${runs.length + 1}`,
+          sourceId: data.sourceId,
+          mode: data.mode,
+          status: data.status,
+          startedAt: data.startedAt,
+          finishedAt: null,
+          summaryJson: data.summaryJson,
+        });
+        runs.push(run);
+        return run;
+      },
+      update: async ({ where, data }) => {
+        const run = runs.find((currentRun) => currentRun.id === where.id);
+        Object.assign(run, data);
+        return run;
+      },
+      findFirst: async ({ where }) => runs.find((run) => run.sourceId === where.sourceId && run.mode === where.mode) ?? null,
+    },
+  };
+  const service = new FeedsService(prisma);
+  service.runFeedImportCli = async (mode, queuedSourceId, queuedRunId) => {
+    startedCommands.push({ mode, sourceId: queuedSourceId, runId: queuedRunId });
+    await new Promise(() => {});
+  };
+
+  const results = await Promise.all(sources.map((currentSourceId) => service.runFeedImportCommand(currentSourceId, 'run')));
+
+  assert.equal(results.length, 4);
+  assert.equal(runs.length, 4);
+  assert.equal(startedCommands.length, 3);
+  assert.deepEqual(
+    startedCommands.map((command) => command.runId),
+    runs.slice(0, 3).map((run) => run.id),
+  );
+  assert.equal(runs[3].summaryJson.progress.stage, 'QUEUED');
+});
+
+test('FeedsService does not overwrite queued run details after the importer records a failure', async () => {
+  let resolveStatusChecked;
+  const statusChecked = new Promise((resolve) => {
+    resolveStatusChecked = resolve;
+  });
+  const updateCalls = [];
+  const prisma = {
+    feedSource: {
+      findUnique: async () => ({ id: sourceId }),
+    },
+    feedImportRun: {
+      create: async ({ data }) =>
+        runRecord({
+          sourceId: data.sourceId,
+          mode: data.mode,
+          status: data.status,
+          startedAt: data.startedAt,
+          finishedAt: null,
+          summaryJson: data.summaryJson,
+        }),
+      findUnique: async () => {
+        resolveStatusChecked();
+        return { status: 'FAILED' };
+      },
+      update: async (args) => {
+        updateCalls.push(args);
+        return runRecord(args.data);
+      },
+    },
+  };
+  const service = new FeedsService(prisma);
+  service.runFeedImportCli = async () => {
+    throw new Error('importer failed');
+  };
+
+  await service.runFeedImportCommand(sourceId, 'run');
+  await statusChecked;
+  await new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+
+  assert.equal(updateCalls.length, 0);
 });
 
 test('FeedsService validates missing sources and reports', async () => {

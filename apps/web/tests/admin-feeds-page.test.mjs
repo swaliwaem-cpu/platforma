@@ -238,6 +238,8 @@ test('feeds admin page keeps source run controls and persistent progress below t
   assert.match(source, /aria-label="Запуск выбранного фида"/);
   assert.match(source, /progress \? getFeedRunProgressPercent\(progress\) : 0/);
   assert.match(source, /progress \? getFeedRunProgressStageLabel\(progress\.stage\) : 'Ожидает запуска Run'/);
+  assert.match(source, /stage === 'QUEUED'/);
+  assert.match(source, /В очереди на импорт/);
   assert.match(source, /runSourceCommand\(selectedSource\.id, 'preview'\)/);
   assert.match(source, /runSourceCommand\(selectedSource\.id, 'run'\)/);
   assert.doesNotMatch(source, /runSourceCommand\(editorSource\.id, 'run'\)/);

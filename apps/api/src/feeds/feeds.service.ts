@@ -3,7 +3,6 @@ import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
 import {
@@ -23,14 +22,20 @@ import { PrismaService } from '../prisma/prisma.service';
 import { createSearchContainsFilters } from '../search/search-filters';
 
 const execFileAsync = promisify(execFile);
-const feedRunStartWaitMs = 10_000;
-const feedRunStartPollMs = 200;
+const feedRunQueueConcurrency = 3;
+const feedPreviewCommandTimeoutMs = 1000 * 60 * 30;
+const feedRunCommandTimeoutMs = 1000 * 60 * 180;
 const supportedFeedSourceKinds = ['URL', 'FILE', 'INDEX_URL'] as const;
 
 type FeedImportCommand = 'preview' | 'run';
 type AnalyzeFeedFormat = FeedFormat | 'AUTO';
 type BufferedUploadedFile = UploadedFile & { buffer: Buffer };
 type SupportedFeedSourceKind = (typeof supportedFeedSourceKinds)[number];
+
+type FeedImportRunQueueJob = {
+  sourceId: string;
+  runId: string;
+};
 
 type ListFeedSourcesQuery = {
   page?: string;
@@ -139,6 +144,8 @@ type FeedMediaFileRecord = NonNullable<FeedUnitRecord['media'][number]['mediaAss
 export class FeedsService {
   private readonly logger = new Logger(FeedsService.name);
   private readonly activeSourceCommands = new Map<string, FeedImportCommand>();
+  private readonly feedRunQueue: FeedImportRunQueueJob[] = [];
+  private activeFeedRunCommands = 0;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -453,9 +460,10 @@ export class FeedsService {
       const startedAt = new Date();
 
       if (mode === 'run') {
+        const result = await this.enqueueFeedImportRunCommand(sourceId, startedAt);
         shouldReleaseActiveCommand = false;
 
-        return await this.startFeedImportRunCommand(sourceId, startedAt);
+        return result;
       }
 
       try {
@@ -484,37 +492,129 @@ export class FeedsService {
     }
   }
 
-  private async startFeedImportRunCommand(sourceId: string, startedAt: Date) {
-    const commandPromise = this.runFeedImportCli('run', sourceId);
+  private async enqueueFeedImportRunCommand(sourceId: string, startedAt: Date) {
+    const run = await this.prisma.feedImportRun.create({
+      data: {
+        sourceId,
+        mode: ImportMode.RUN,
+        status: ImportStatus.PENDING,
+        startedAt,
+        summaryJson: {
+          progress: this.createQueuedFeedRunProgress(startedAt),
+        },
+      },
+    });
 
-    void commandPromise
-      .catch((error) => {
-        this.logger.error(`Feed import run failed for source ${sourceId}: ${getCommandErrorMessage(error)}`);
-      })
-      .finally(() => {
-        this.activeSourceCommands.delete(sourceId);
-      });
+    this.feedRunQueue.push({
+      sourceId,
+      runId: run.id,
+    });
+    this.drainFeedRunQueue();
 
-    try {
-      const run = await this.waitForLatestRun(sourceId, 'run', startedAt);
+    return {
+      run: this.serializeRun(run),
+    };
+  }
 
-      return {
-        run: this.serializeRun(run),
-      };
-    } catch (error) {
-      throw new InternalServerErrorException(getCommandErrorMessage(error));
+  private drainFeedRunQueue() {
+    while (this.activeFeedRunCommands < feedRunQueueConcurrency && this.feedRunQueue.length > 0) {
+      const job = this.feedRunQueue.shift();
+
+      if (!job) {
+        return;
+      }
+
+      this.activeFeedRunCommands += 1;
+      void this.executeQueuedFeedImportRun(job);
     }
   }
 
-  async runFeedImportCli(mode: FeedImportCommand, sourceId: string) {
-    await execFileAsync('pnpm', ['--filter', '@platforma/feed-import', '--fail-if-no-match', 'run', mode, '--source', sourceId], {
+  private async executeQueuedFeedImportRun(job: FeedImportRunQueueJob) {
+    try {
+      await this.runFeedImportCli('run', job.sourceId, job.runId);
+    } catch (error) {
+      this.logger.error(`Feed import run failed for source ${job.sourceId}: ${getCommandErrorMessage(error)}`);
+      await this.markPendingQueuedFeedImportRunFailed(job.runId, error);
+    } finally {
+      this.activeFeedRunCommands = Math.max(0, this.activeFeedRunCommands - 1);
+      this.activeSourceCommands.delete(job.sourceId);
+      this.drainFeedRunQueue();
+    }
+  }
+
+  private createQueuedFeedRunProgress(date: Date) {
+    return {
+      stage: 'QUEUED',
+      unitsTotal: 0,
+      unitsProcessed: 0,
+      unitsRemaining: 0,
+      mediaTotal: 0,
+      mediaProcessed: 0,
+      mediaRemaining: 0,
+      updatedAt: date.toISOString(),
+    };
+  }
+
+  private async markPendingQueuedFeedImportRunFailed(runId: string, error: unknown) {
+    const currentRun = await this.prisma.feedImportRun.findUnique({
+      where: {
+        id: runId,
+      },
+      select: {
+        status: true,
+      },
+    });
+
+    if (!currentRun || currentRun.status !== ImportStatus.PENDING) {
+      return;
+    }
+
+    const finishedAt = new Date();
+
+    await this.prisma.feedImportRun.update({
+      where: {
+        id: runId,
+      },
+      data: {
+        status: ImportStatus.FAILED,
+        finishedAt,
+        errorsJson: [
+          {
+            code: 'FEED_IMPORT_QUEUE_FAILED',
+            message: getCommandErrorMessage(error),
+          },
+        ],
+        summaryJson: {
+          progress: {
+            stage: 'FAILED',
+            unitsTotal: 0,
+            unitsProcessed: 0,
+            unitsRemaining: 0,
+            mediaTotal: 0,
+            mediaProcessed: 0,
+            mediaRemaining: 0,
+            updatedAt: finishedAt.toISOString(),
+          },
+        },
+      },
+    });
+  }
+
+  async runFeedImportCli(mode: FeedImportCommand, sourceId: string, runId?: string | null) {
+    const args = ['--filter', '@platforma/feed-import', '--fail-if-no-match', 'run', mode, '--source', sourceId];
+
+    if (runId) {
+      args.push('--run-id', runId);
+    }
+
+    await execFileAsync('pnpm', args, {
       cwd: findWorkspaceRoot(),
       env: {
         ...process.env,
         PRISMA_HIDE_UPDATE_MESSAGE: 'true',
       },
       maxBuffer: 1024 * 1024 * 50,
-      timeout: 1000 * 60 * 30,
+      timeout: mode === 'run' ? feedRunCommandTimeoutMs : feedPreviewCommandTimeoutMs,
     });
   }
 
@@ -708,22 +808,6 @@ export class FeedsService {
     }
 
     return run;
-  }
-
-  private async waitForLatestRun(sourceId: string, mode: FeedImportCommand, startedAt: Date) {
-    const deadline = Date.now() + feedRunStartWaitMs;
-
-    while (Date.now() <= deadline) {
-      const run = await this.findLatestRunOrNull(sourceId, mode, startedAt);
-
-      if (run) {
-        return run;
-      }
-
-      await delay(feedRunStartPollMs);
-    }
-
-    throw new NotFoundException('Feed import run not found');
   }
 
   private async findLatestRunOrNull(sourceId: string, mode: FeedImportCommand, startedAt: Date) {
