@@ -493,17 +493,27 @@ export class FeedsService {
   }
 
   private async enqueueFeedImportRunCommand(sourceId: string, startedAt: Date) {
-    const run = await this.prisma.feedImportRun.create({
-      data: {
-        sourceId,
-        mode: ImportMode.RUN,
-        status: ImportStatus.PENDING,
-        startedAt,
-        summaryJson: {
-          progress: this.createQueuedFeedRunProgress(startedAt),
+    const [run] = await this.prisma.$transaction([
+      this.prisma.feedImportRun.create({
+        data: {
+          sourceId,
+          mode: ImportMode.RUN,
+          status: ImportStatus.PENDING,
+          startedAt,
+          summaryJson: {
+            progress: this.createQueuedFeedRunProgress(startedAt),
+          },
         },
-      },
-    });
+      }),
+      this.prisma.feedSource.update({
+        where: {
+          id: sourceId,
+        },
+        data: {
+          lastRunAt: startedAt,
+        },
+      }),
+    ]);
 
     this.feedRunQueue.push({
       sourceId,

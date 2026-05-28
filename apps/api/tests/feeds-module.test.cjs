@@ -1001,9 +1001,15 @@ test('FeedsService returns a pending run command before the feed-import CLI fini
   });
   let commandHasStarted = false;
   const runs = [];
+  const sourceUpdates = [];
   const prisma = {
+    $transaction: async (queries) => Promise.all(queries),
     feedSource: {
       findUnique: async () => ({ id: sourceId }),
+      update: async ({ data }) => {
+        sourceUpdates.push(data);
+        return sourceRecord(data);
+      },
     },
     feedImportRun: {
       create: async ({ data }) => {
@@ -1056,6 +1062,7 @@ test('FeedsService returns a pending run command before the feed-import CLI fini
     assert.equal(resultBeforeCliFinished.type, 'resolved');
     assert.equal(resultBeforeCliFinished.result.run.mode, 'RUN');
     assert.equal(resultBeforeCliFinished.result.run.status, 'PENDING');
+    assert.equal(sourceUpdates[0].lastRunAt instanceof Date, true);
   } finally {
     finishCommand();
     await resultPromise.catch(() => {});
@@ -1067,8 +1074,10 @@ test('FeedsService queues feed run commands and starts at most three at once', a
   const runs = [];
   const startedCommands = [];
   const prisma = {
+    $transaction: async (queries) => Promise.all(queries),
     feedSource: {
       findUnique: async ({ where }) => ({ id: where.id }),
+      update: async ({ data }) => sourceRecord(data),
     },
     feedImportRun: {
       create: async ({ data }) => {
@@ -1117,8 +1126,10 @@ test('FeedsService does not overwrite queued run details after the importer reco
   });
   const updateCalls = [];
   const prisma = {
+    $transaction: async (queries) => Promise.all(queries),
     feedSource: {
       findUnique: async () => ({ id: sourceId }),
+      update: async ({ data }) => sourceRecord(data),
     },
     feedImportRun: {
       create: async ({ data }) =>
