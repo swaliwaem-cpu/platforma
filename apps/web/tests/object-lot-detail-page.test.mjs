@@ -53,7 +53,7 @@ test('lot detail page renders media carousel and required fact cards', () => {
   assert.match(styles, /\.object-lot-facts\s*\{/);
 });
 
-test('lot detail media carousel uses the shared gallery alignment contract', () => {
+test('lot detail media carousel fits media without cropping', () => {
   assert.match(objectDetailSource, /className="media-gallery-frame object-lot-media-carousel"/);
   assert.match(objectDetailSource, /className="media-gallery-stage object-lot-media-stage"/);
   assert.match(objectDetailSource, /className="media-gallery-button object-lot-media-button"/);
@@ -71,7 +71,7 @@ test('lot detail media carousel uses the shared gallery alignment contract', () 
     styles,
     /\.media-gallery-image\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?inset:\s*0;[\s\S]*?width:\s*100%;[\s\S]*?height:\s*100%;[\s\S]*?object-fit:\s*cover;[\s\S]*?object-position:\s*center center;[\s\S]*?\}/,
   );
-  assert.doesNotMatch(styles, /\.object-lot-media-image\s*\{[^}]*object-fit:\s*contain;[^}]*\}/);
+  assert.match(styles, /\.object-lot-media-carousel\s+\.object-lot-media-image\s*\{[^}]*object-fit:\s*contain;[^}]*\}/);
 });
 
 test('lot detail fullscreen media supports arrow buttons and keyboard navigation', () => {
@@ -92,6 +92,10 @@ test('lot detail fullscreen media supports arrow buttons and keyboard navigation
   assert.match(
     objectLotMediaCarouselSource,
     /aria-label="Следующее полноэкранное медиа лота"[\s\S]*?className="object-feed-media-fullscreen-nav object-feed-media-fullscreen-nav--next"/,
+  );
+  assert.match(
+    objectLotMediaCarouselSource,
+    /aria-label="Скачать оригинал полноэкранного медиа"[\s\S]*?download=\{getFeedMediaDownloadFileName\(fullscreenMedia\)\}[\s\S]*?href=\{buildMediaFileContentUrl\(fullscreenMedia\.file\.id,\s*\{ download: true \}\)\}[\s\S]*?Скачать оригинал/,
   );
 
   const fullscreenNavBlock = styles.match(/\.object-feed-media-fullscreen-nav\s*\{[^}]*\}/)?.[0] ?? '';

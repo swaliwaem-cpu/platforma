@@ -169,7 +169,11 @@ test('object detail feed media opens lot files in a carousel with fullscreen pre
   assert.match(source, /className="object-feed-media-carousel-image"[\s\S]*?variant="original"/);
   assert.match(source, /className="object-feed-media-fullscreen-image"[\s\S]*?variant="original"/);
   assert.match(source, /unit\.media\.map\(\(media\) =>/);
-  assert.match(source, /href=\{buildMediaFileContentUrl\(fullscreenMedia\.file\.id\)\}/);
+  assert.match(source, /function getFeedMediaDownloadFileName\(media: FeedUnit\['media'\]\[number\]\)/);
+  assert.match(source, /download=\{getFeedMediaDownloadFileName\(fullscreenMedia\)\}/);
+  assert.match(source, /href=\{buildMediaFileContentUrl\(fullscreenMedia\.file\.id,\s*\{ download: true \}\)\}/);
+  assert.match(source, /Скачать оригинал/);
+  assert.doesNotMatch(source, /Открыть оригинал/);
   assert.doesNotMatch(source, /function ObjectFeedMediaModal/);
   assert.doesNotMatch(source, /object-feed-media-modal/);
   assert.match(styles, /\.object-feed-media-carousel-backdrop\s*\{/);

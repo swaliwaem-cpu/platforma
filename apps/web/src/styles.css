@@ -5103,9 +5103,10 @@ tr.user-row--deactivated .text-button {
   outline-offset: -6px;
 }
 
-.object-lot-media-image {
+.object-lot-media-carousel .object-lot-media-image {
   max-width: none;
   max-height: none;
+  object-fit: contain;
 }
 
 .object-lot-media-nav {

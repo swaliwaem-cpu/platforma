@@ -6,7 +6,6 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   DownloadIcon,
-  ExternalLinkIcon,
   PencilIcon,
   XIcon,
 } from 'lucide-react';
@@ -1738,13 +1737,13 @@ function ObjectFeedMediaCarousel({
             <XIcon aria-hidden="true" />
           </button>
           <a
+            aria-label="Скачать оригинал полноэкранного медиа лота"
             className="object-feed-media-fullscreen-open"
-            href={buildMediaFileContentUrl(fullscreenMedia.file.id)}
-            rel="noopener noreferrer"
-            target="_blank"
+            download={getFeedMediaDownloadFileName(fullscreenMedia)}
+            href={buildMediaFileContentUrl(fullscreenMedia.file.id, { download: true })}
           >
-            <ExternalLinkIcon aria-hidden="true" />
-            Открыть оригинал
+            <DownloadIcon aria-hidden="true" />
+            Скачать оригинал
           </a>
           {hasManyMedia ? (
             <>
@@ -1958,13 +1957,13 @@ function ObjectLotMediaCarousel({ accessToken, unit }: { accessToken: string; un
             <XIcon aria-hidden="true" />
           </button>
           <a
+            aria-label="Скачать оригинал полноэкранного медиа"
             className="object-feed-media-fullscreen-open"
-            href={buildMediaFileContentUrl(fullscreenMedia.file.id)}
-            rel="noopener noreferrer"
-            target="_blank"
+            download={getFeedMediaDownloadFileName(fullscreenMedia)}
+            href={buildMediaFileContentUrl(fullscreenMedia.file.id, { download: true })}
           >
-            <ExternalLinkIcon aria-hidden="true" />
-            Открыть оригинал
+            <DownloadIcon aria-hidden="true" />
+            Скачать оригинал
           </a>
           {hasManyMedia ? (
             <>
@@ -2398,6 +2397,10 @@ function formatMediaCount(value: number) {
 
 function getFeedMediaTitle(media: FeedUnit['media'][number]) {
   return media.label ?? media.file?.originalName ?? media.file?.mimeType ?? media.contentType ?? 'Файл';
+}
+
+function getFeedMediaDownloadFileName(media: FeedUnit['media'][number]) {
+  return media.file?.originalName?.trim() || media.label?.trim() || 'original-media';
 }
 
 function formatNumber(value: number) {
