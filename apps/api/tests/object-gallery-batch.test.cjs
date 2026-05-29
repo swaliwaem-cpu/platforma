@@ -16,20 +16,33 @@ test('objects service replaces gallery in one transaction after uploads are prep
   const replaceGallerySource = extractFunctionSource(serviceSource, 'async replaceGallery');
 
   assert.match(replaceGallerySource, /const uploadedFiles: Awaited<ReturnType<FilesService\['uploadFile'\]>>\[\] = \[\];/);
+  assert.match(replaceGallerySource, /const stagedFileIds = layout\.items[\s\S]*?item\.kind === 'staged'[\s\S]*?item\.fileId/);
+  assert.match(replaceGallerySource, /const stagedFilesById = await this\.findStagedGalleryFiles\(stagedFileIds,\s*actor\);/);
   assert.match(replaceGallerySource, /for \(const file of normalizedFiles\) \{[\s\S]*?uploadedFiles\.push\(await this\.filesService\.uploadFile\(file,\s*actor,\s*'image'\)\);[\s\S]*?\}/);
   assert.match(replaceGallerySource, /const updatedObject = await this\.prisma\.\$transaction\(async \(tx\) => \{/);
   assert.match(replaceGallerySource, /await tx\.objectImage\.deleteMany\(\{[\s\S]*?id:\s*\{[\s\S]*?in:\s*deletedImageIds[\s\S]*?\}/);
   assert.match(replaceGallerySource, /tx\.objectImage\.create\(\{[\s\S]*?objectId:\s*object\.id[\s\S]*?fileId:\s*uploadedFile\.file\.id[\s\S]*?sortOrder:\s*index[\s\S]*?isCover:\s*index === layout\.coverIndex[\s\S]*?section:\s*item\.section/);
+  assert.match(replaceGallerySource, /if \(item\.kind === 'staged'\) \{[\s\S]*?const stagedFile = stagedFilesById\.get\(item\.fileId\)[\s\S]*?tx\.objectImage\.create\(\{[\s\S]*?fileId:\s*stagedFile\.id[\s\S]*?sortOrder:\s*index[\s\S]*?isCover:\s*index === layout\.coverIndex[\s\S]*?section:\s*item\.section/);
   assert.match(replaceGallerySource, /tx\.objectImage\.update\(\{[\s\S]*?sortOrder:\s*index[\s\S]*?isCover:\s*index === layout\.coverIndex[\s\S]*?section:\s*item\.section/);
   assert.match(replaceGallerySource, /for \(const uploadedFile of uploadedFiles\) \{[\s\S]*?await this\.filesService\.deleteUnlinkedFile\(uploadedFile\.file\.id\);[\s\S]*?\}/);
+  assert.match(replaceGallerySource, /for \(const stagedFileId of stagedFileIds\) \{[\s\S]*?await this\.filesService\.deleteUnlinkedFile\(stagedFileId\);[\s\S]*?\}/);
 });
 
 test('objects service validates batch permissions dynamically', () => {
   const replaceGallerySource = extractFunctionSource(serviceSource, 'async replaceGallery');
 
-  assert.match(replaceGallerySource, /if \(layout\.items\.some\(\(item\) => item\.kind === 'new'\) && !actor\.permissions\.includes\('files:upload'\)\) \{/);
+  assert.match(replaceGallerySource, /if \(layout\.items\.some\(\(item\) => item\.kind === 'new' \|\| item\.kind === 'staged'\) && !actor\.permissions\.includes\('files:upload'\)\) \{/);
   assert.match(replaceGallerySource, /throw new ForbiddenException\('Insufficient permissions'\);/);
   assert.match(replaceGallerySource, /if \(deletedImageIds\.length > 0 && !actor\.permissions\.includes\('files:delete'\)\) \{/);
+});
+
+test('objects service parses staged gallery files in batch layout', () => {
+  const parseLayoutSource = extractFunctionSource(serviceSource, 'private parseGalleryBatchLayout');
+
+  assert.match(parseLayoutSource, /const usedStagedFileIds = new Set<string>\(\);/);
+  assert.match(parseLayoutSource, /if \(item\.kind === 'staged'\) \{[\s\S]*?const fileId = this\.parseUuid\(item\.fileId\.trim\(\), 'Gallery staged file is invalid'\)/);
+  assert.match(parseLayoutSource, /usedStagedFileIds\.has\(fileId\)/);
+  assert.match(parseLayoutSource, /kind:\s*'staged'[\s\S]*?fileId[\s\S]*?section/);
 });
 
 function extractFunctionSource(sourceText, marker) {

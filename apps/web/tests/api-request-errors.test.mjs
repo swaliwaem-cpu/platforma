@@ -12,3 +12,7 @@ test('apiRequest converts fetch failures into readable Russian connection errors
   assert.match(source, /try \{[\s\S]*?response = await sendApiRequest\(path, initialToken, options\);[\s\S]*?\} catch \{[\s\S]*?throw new Error\(apiConnectionErrorMessage\);[\s\S]*?\}/);
   assert.match(source, /try \{[\s\S]*?response = await sendApiRequest\(path, refreshedSession\.accessToken, options\);[\s\S]*?\} catch \{[\s\S]*?throw new Error\(apiConnectionErrorMessage\);[\s\S]*?\}/);
 });
+
+test('apiRequest bypasses browser cache for JSON API state', () => {
+  assert.match(source, /cache:\s*options\.cache \?\? 'no-store'/);
+});

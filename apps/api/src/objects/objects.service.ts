@@ -15,6 +15,7 @@ import {
 } from '@prisma/client';
 
 import { AuthenticatedUser, RequestWithAuth } from '../auth/auth.types';
+import { IMAGE_MIME_TYPES } from '../files/file-upload.constants';
 import { FilesService, UploadedFileStream } from '../files/files.service';
 import { UploadedFile } from '../files/uploaded-file.type';
 import { PrismaService } from '../prisma/prisma.service';
@@ -245,6 +246,11 @@ type GalleryBatchItem =
   | {
       kind: 'new';
       fileIndex: number;
+      section: ObjectImageSection | null;
+    }
+  | {
+      kind: 'staged';
+      fileId: string;
       section: ObjectImageSection | null;
     };
 
@@ -1402,46 +1408,19 @@ export class ObjectsService {
     );
 
     try {
-      const updatedObject = await this.prisma.$transaction(async (tx) => {
-        const maxSortOrder = await tx.objectImage.aggregate({
-          where: {
-            objectId: object.id,
-          },
-          _max: {
-            sortOrder: true,
-          },
-        });
-
-        await tx.objectImage.create({
-          data: {
-            objectId: object.id,
-            fileId: uploadedFile.file.id,
-            sortOrder: (maxSortOrder._max.sortOrder ?? -1) + 1,
-            isCover: false,
-          },
-        });
-
-        return this.findExistingObject(object.id, tx);
-      });
-      const uploadedImage = updatedObject.images.find((image) => image.file.id === uploadedFile.file.id);
-
-      if (!uploadedImage) {
-        throw new BadRequestException('Uploaded gallery image is invalid');
-      }
-
       await this.logObjectAction({
         action: 'object.gallery.upload',
         actor,
         request,
-        objectId: updatedObject.id,
+        objectId: object.id,
         metadata: {
           fileId: uploadedFile.file.id,
         },
       });
 
       return {
-        object: this.serializeObjectDetail(updatedObject),
-        image: this.serializeObjectImage(uploadedImage),
+        object: this.serializeObjectDetail(object),
+        file: uploadedFile.file,
       };
     } catch (error) {
       await this.filesService.deleteUnlinkedFile(uploadedFile.file.id);
@@ -1601,6 +1580,9 @@ export class ObjectsService {
     const existingImageIds = layout.items
       .filter((item): item is Extract<GalleryBatchItem, { kind: 'existing' }> => item.kind === 'existing')
       .map((item) => item.imageId);
+    const stagedFileIds = layout.items
+      .filter((item): item is Extract<GalleryBatchItem, { kind: 'staged' }> => item.kind === 'staged')
+      .map((item) => item.fileId);
     const existingImageIdSet = new Set(existingImageIds);
     const deletedImages = object.images.filter((image) => !existingImageIdSet.has(image.id));
     const deletedImageIds = deletedImages.map((image) => image.id);
@@ -1614,7 +1596,7 @@ export class ObjectsService {
       }
     }
 
-    if (layout.items.some((item) => item.kind === 'new') && !actor.permissions.includes('files:upload')) {
+    if (layout.items.some((item) => item.kind === 'new' || item.kind === 'staged') && !actor.permissions.includes('files:upload')) {
       throw new ForbiddenException('Insufficient permissions');
     }
 
@@ -1622,6 +1604,7 @@ export class ObjectsService {
       throw new ForbiddenException('Insufficient permissions');
     }
 
+    const stagedFilesById = await this.findStagedGalleryFiles(stagedFileIds, actor);
     const uploadedFiles: Awaited<ReturnType<FilesService['uploadFile']>>[] = [];
 
     try {
@@ -1654,6 +1637,24 @@ export class ObjectsService {
                 data: {
                   objectId: object.id,
                   fileId: uploadedFile.file.id,
+                  sortOrder: index,
+                  isCover: index === layout.coverIndex,
+                  section: item.section,
+                },
+              });
+            }
+
+            if (item.kind === 'staged') {
+              const stagedFile = stagedFilesById.get(item.fileId);
+
+              if (!stagedFile) {
+                throw new BadRequestException('Gallery staged file is invalid');
+              }
+
+              return tx.objectImage.create({
+                data: {
+                  objectId: object.id,
+                  fileId: stagedFile.id,
                   sortOrder: index,
                   isCover: index === layout.coverIndex,
                   section: item.section,
@@ -1702,7 +1703,7 @@ export class ObjectsService {
             imageSections: nextImageSections,
           },
           deletedImageIds,
-          uploadedFileIds: uploadedFiles.map((uploadedFile) => uploadedFile.file.id),
+          uploadedFileIds: [...uploadedFiles.map((uploadedFile) => uploadedFile.file.id), ...stagedFileIds],
         },
       });
 
@@ -1714,8 +1715,58 @@ export class ObjectsService {
         await this.filesService.deleteUnlinkedFile(uploadedFile.file.id);
       }
 
+      for (const stagedFileId of stagedFileIds) {
+        await this.filesService.deleteUnlinkedFile(stagedFileId);
+      }
+
       throw error;
     }
+  }
+
+  private async findStagedGalleryFiles(fileIds: string[], actor: AuthenticatedUser) {
+    if (fileIds.length === 0) {
+      return new Map<string, { id: string }>();
+    }
+
+    const files = await this.prisma.file.findMany({
+      where: {
+        id: {
+          in: fileIds,
+        },
+      },
+      include: {
+        _count: {
+          select: {
+            profilePhotoUsers: true,
+            objectImages: true,
+            objectFiles: true,
+            feedXmlSources: true,
+            feedMediaAssets: true,
+          },
+        },
+      },
+    });
+
+    if (files.length !== fileIds.length) {
+      throw new BadRequestException('Gallery staged file is invalid');
+    }
+
+    for (const file of files) {
+      const isImage = IMAGE_MIME_TYPES.includes(file.mimeType as (typeof IMAGE_MIME_TYPES)[number]);
+      const isOwnedByActor = file.uploadedById === actor.id;
+      const isUnlinked =
+        file._count.profilePhotoUsers === 0 &&
+        file._count.objectImages === 0 &&
+        file._count.objectFiles === 0 &&
+        file._count.feedXmlSources === 0 &&
+        file._count.feedMediaAssets === 0;
+
+      if (!isImage || !isOwnedByActor || !isUnlinked) {
+        throw new BadRequestException('Gallery staged file is invalid');
+      }
+    }
+
+    return new Map(files.map((file) => [file.id, file]));
   }
 
   async deleteGalleryImage(
@@ -2712,6 +2763,7 @@ export class ObjectsService {
     const coverIndex = this.parseGalleryBatchCoverIndex(rawLayout.coverIndex, rawItems.length);
     const usedImageIds = new Set<string>();
     const usedFileIndexes = new Set<number>();
+    const usedStagedFileIds = new Set<string>();
     const items = rawItems.map((rawItem) => {
       if (rawItem === null || typeof rawItem !== 'object' || Array.isArray(rawItem)) {
         throw new BadRequestException('Gallery batch item is invalid');
@@ -2752,6 +2804,26 @@ export class ObjectsService {
         return {
           kind: 'new',
           fileIndex,
+          section,
+        } as const;
+      }
+
+      if (item.kind === 'staged') {
+        if (typeof item.fileId !== 'string') {
+          throw new BadRequestException('Gallery staged file is invalid');
+        }
+
+        const fileId = this.parseUuid(item.fileId.trim(), 'Gallery staged file is invalid');
+
+        if (usedStagedFileIds.has(fileId)) {
+          throw new BadRequestException('Gallery staged file ids must be unique');
+        }
+
+        usedStagedFileIds.add(fileId);
+
+        return {
+          kind: 'staged',
+          fileId,
           section,
         } as const;
       }

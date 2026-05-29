@@ -38,6 +38,7 @@ import {
   ObjectLocation,
   ObjectMetroStation,
   ObjectResponse,
+  ObjectStoredFile,
   ObjectsResponse,
   RealEstateObjectDetail,
   RealEstateObjectSummary,
@@ -106,8 +107,9 @@ type ObjectFormState = {
 
 type GalleryDraftItem = {
   draftId: string;
-  kind: 'existing' | 'new';
+  kind: 'existing' | 'new' | 'staged';
   imageId: string | null;
+  stagedFileId?: string | null;
   file: File | null;
   previewUrl: string | null;
   name: string;
@@ -116,7 +118,7 @@ type GalleryDraftItem = {
 };
 
 type GalleryStreamUploadResponse = ObjectResponse & {
-  image: ObjectImage;
+  file: ObjectStoredFile;
 };
 
 const fileTypeLabels: Record<ObjectFileType, string> = {
@@ -599,18 +601,30 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
     galleryDraftItemsRef.current = uploadedDraft.draftItems;
     setGalleryDraftItems(uploadedDraft.draftItems);
 
-    const batchBody = createGalleryBatchBody(uploadedDraft.draftItems, reconciledDraft.coverDraftId);
+    let savedData: ObjectResponse;
 
-    if (batchBody.fileCount !== 0) {
-      throw new Error('Не удалось подготовить галерею к сохранению');
+    try {
+      const batchBody = createGalleryBatchBody(uploadedDraft.draftItems, reconciledDraft.coverDraftId);
+
+      if (batchBody.fileCount !== 0) {
+        throw new Error('Не удалось подготовить галерею к сохранению');
+      }
+
+      setGallerySaveProgress('Сохранение галереи', 95);
+
+      savedData = await apiRequest<ObjectResponse>(`/objects/${objectId}/gallery/batch`, accessToken, {
+        method: 'PATCH',
+        body: batchBody.formData,
+      });
+    } catch (caughtError) {
+      await cleanupStagedGalleryFiles(uploadedDraft.stagedFileIds);
+
+      const restoredDraftItems = restoreStagedGalleryDraftItems(uploadedDraft.draftItems, uploadedDraft.stagedFileIds);
+      galleryDraftItemsRef.current = restoredDraftItems;
+      setGalleryDraftItems(restoredDraftItems);
+
+      throw caughtError;
     }
-
-    setGallerySaveProgress('Сохранение галереи', 95);
-
-    const savedData = await apiRequest<ObjectResponse>(`/objects/${objectId}/gallery/batch`, accessToken, {
-      method: 'PATCH',
-      body: batchBody.formData,
-    });
 
     setGallerySaveProgress('Галерея сохранена', 100);
 
@@ -627,17 +641,18 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
     if (newItems.length === 0) {
       return {
         draftItems,
+        stagedFileIds: [],
       };
     }
 
-    const uploadedImages = new Map<string, ObjectImage>();
-    const uploadedImageIds: string[] = [];
+    const uploadedFiles = new Map<string, ObjectStoredFile>();
+    const stagedFileIds: string[] = [];
 
     try {
       for (const item of newItems) {
         setGallerySaveProgress(
-          `Загрузка изображений ${uploadedImages.size + 1}/${newItems.length}`,
-          calculateGalleryUploadProgressPercent(uploadedImages.size, newItems.length),
+          `Загрузка изображений ${uploadedFiles.size + 1}/${newItems.length}`,
+          calculateGalleryUploadProgressPercent(uploadedFiles.size, newItems.length),
         );
 
         const uploadedData = await apiRequest<GalleryStreamUploadResponse>(
@@ -653,11 +668,11 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
           },
         );
 
-        uploadedImages.set(item.draftId, uploadedData.image);
-        uploadedImageIds.push(uploadedData.image.id);
+        uploadedFiles.set(item.draftId, uploadedData.file);
+        stagedFileIds.push(uploadedData.file.id);
       }
     } catch (caughtError) {
-      await cleanupUploadedGalleryImages(objectId, uploadedImageIds);
+      await cleanupStagedGalleryFiles(stagedFileIds);
       throw caughtError;
     }
 
@@ -666,35 +681,37 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
         return item;
       }
 
-      const uploadedImage = uploadedImages.get(item.draftId);
+      const uploadedFile = uploadedFiles.get(item.draftId);
 
-      if (!uploadedImage) {
+      if (!uploadedFile) {
         throw new Error('Не удалось сохранить изображение галереи');
       }
 
       return {
         ...item,
-        kind: 'existing',
-        imageId: uploadedImage.id,
-        file: null,
-        name: getGalleryDraftImageName(uploadedImage),
+        kind: 'staged',
+        imageId: null,
+        stagedFileId: uploadedFile.id,
+        file: item.file,
+        name: getGalleryDraftFileName(uploadedFile, item.name),
         section: item.section,
       };
     });
 
     return {
       draftItems: nextDraftItems,
+      stagedFileIds,
     };
   }
 
-  async function cleanupUploadedGalleryImages(objectId: string, imageIds: string[]) {
-    if (!accessToken || !canDeleteMedia || imageIds.length === 0) {
+  async function cleanupStagedGalleryFiles(fileIds: string[]) {
+    if (!accessToken || !canDeleteMedia || fileIds.length === 0) {
       return;
     }
 
     await Promise.all(
-      imageIds.map((imageId) =>
-        apiRequest<ObjectResponse>(`/objects/${objectId}/gallery/${imageId}`, accessToken, {
+      fileIds.map((fileId) =>
+        apiRequest<void>(`/files/${fileId}`, accessToken, {
           method: 'DELETE',
         }).catch(() => undefined),
       ),
@@ -3268,7 +3285,7 @@ function reconcileGalleryDraftItemsWithCurrentGallery(
 ) {
   const currentImageIds = new Set(currentImages.map((image) => image.id));
   const reconciledDraftItems = draftItems.filter(
-    (item) => item.kind === 'new' || (item.imageId !== null && currentImageIds.has(item.imageId)),
+    (item) => (item.kind === 'new' || item.kind === 'staged') || (item.imageId !== null && currentImageIds.has(item.imageId)),
   );
   const reconciledCoverDraftId = coverDraftId && reconciledDraftItems.some((item) => item.draftId === coverDraftId)
     ? coverDraftId
@@ -3290,6 +3307,18 @@ function createGalleryBatchBody(draftItems: GalleryDraftItem[], coverDraftId: st
   }
 
   const items = draftItems.map((item) => {
+    if (item.kind === 'staged') {
+      if (!item.stagedFileId) {
+        throw new Error('Не удалось сохранить изображение галереи');
+      }
+
+      return {
+        kind: 'staged',
+        fileId: item.stagedFileId,
+        section: item.section,
+      };
+    }
+
     if (item.kind === 'new') {
       if (!item.file) {
         throw new Error('Не удалось прочитать файл галереи');
@@ -3326,6 +3355,23 @@ function createGalleryBatchBody(draftItems: GalleryDraftItem[], coverDraftId: st
     fileCount: files.length,
     formData,
   };
+}
+
+function restoreStagedGalleryDraftItems(draftItems: GalleryDraftItem[], stagedFileIds: string[]): GalleryDraftItem[] {
+  const stagedFileIdSet = new Set(stagedFileIds);
+
+  return draftItems.map((item) => {
+    if (item.kind !== 'staged' || !item.stagedFileId || !stagedFileIdSet.has(item.stagedFileId)) {
+      return item;
+    }
+
+    return {
+      ...item,
+      kind: 'new' as const,
+      imageId: null,
+      stagedFileId: null,
+    };
+  });
 }
 
 function calculateGalleryUploadProgressPercent(uploadedCount: number, totalCount: number) {
@@ -3387,12 +3433,16 @@ function getGalleryDraftImageName(image: ObjectImage) {
   return image.title || image.file.originalName || `Фото ${image.sortOrder + 1}`;
 }
 
+function getGalleryDraftFileName(file: ObjectStoredFile, fallbackName: string) {
+  return file.originalName ?? fallbackName;
+}
+
 function getGallerySectionLabel(section: ObjectImageSection | null) {
   return gallerySectionOptions.find((option) => option.value === section)?.label ?? null;
 }
 
 function revokeGalleryDraftPreviewUrl(item: GalleryDraftItem) {
-  if (item.kind !== 'new' || !item.previewUrl) {
+  if ((item.kind !== 'new' && item.kind !== 'staged') || !item.previewUrl) {
     return;
   }
 

@@ -8,7 +8,7 @@ const currentDir = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(resolve(currentDir, '../src/admin/ObjectsAdminPage.tsx'), 'utf8');
 
 test('object editor stores gallery changes in modal draft state', () => {
-  assert.match(source, /type GalleryDraftItem\s*=\s*\{[\s\S]*?draftId:\s*string;[\s\S]*?kind:\s*'existing' \| 'new';[\s\S]*?imageId:\s*string \| null;[\s\S]*?file:\s*File \| null;[\s\S]*?previewUrl:\s*string \| null;[\s\S]*?name:\s*string;[\s\S]*?section:\s*ObjectImageSection \| null;[\s\S]*?isUploading\?:\s*boolean;[\s\S]*?\};/);
+  assert.match(source, /type GalleryDraftItem\s*=\s*\{[\s\S]*?draftId:\s*string;[\s\S]*?kind:\s*'existing' \| 'new' \| 'staged';[\s\S]*?imageId:\s*string \| null;[\s\S]*?stagedFileId\?:\s*string \| null;[\s\S]*?file:\s*File \| null;[\s\S]*?previewUrl:\s*string \| null;[\s\S]*?name:\s*string;[\s\S]*?section:\s*ObjectImageSection \| null;[\s\S]*?isUploading\?:\s*boolean;[\s\S]*?\};/);
 
   assert.match(source, /const \[isGalleryModalOpen,\s*setIsGalleryModalOpen\] = useState\(false\);/);
   assert.match(source, /const \[galleryDraftItems,\s*setGalleryDraftItems\] = useState<GalleryDraftItem\[\]>\(\[\]\);/);
@@ -150,14 +150,15 @@ test('gallery modal save flow persists edited object gallery layout', () => {
 });
 
 test('gallery modal uploads new draft files one by one before final layout save', () => {
-  assert.match(source, /type GalleryStreamUploadResponse = ObjectResponse & \{[\s\S]*?image: ObjectImage;[\s\S]*?\};/);
+  assert.match(source, /type GalleryStreamUploadResponse = ObjectResponse & \{[\s\S]*?file: ObjectStoredFile;[\s\S]*?\};/);
   assert.match(source, /async function uploadGalleryDraftFiles\(objectId: string,\s*draftItems: GalleryDraftItem\[\]\)/);
   assert.match(source, /const newItems = draftItems\.filter\(\(item\): item is GalleryDraftItem & \{ kind: 'new'; file: File \} => item\.kind === 'new' && item\.file !== null\);/);
-  assert.match(source, /setGallerySaveProgress\(\s*`Загрузка изображений \$\{uploadedImages\.size \+ 1\}\/\$\{newItems\.length\}`,\s*calculateGalleryUploadProgressPercent\(uploadedImages\.size,\s*newItems\.length\),\s*\);/);
+  assert.match(source, /setGallerySaveProgress\(\s*`Загрузка изображений \$\{uploadedFiles\.size \+ 1\}\/\$\{newItems\.length\}`,\s*calculateGalleryUploadProgressPercent\(uploadedFiles\.size,\s*newItems\.length\),\s*\);/);
   assert.match(source, /apiRequest<GalleryStreamUploadResponse>\(\s*`\/objects\/\$\{objectId\}\/gallery\/stream`,\s*accessToken,\s*\{[\s\S]*?method:\s*'POST'[\s\S]*?body:\s*item\.file[\s\S]*?headers:\s*\{[\s\S]*?'Content-Type': item\.file\.type \|\| 'application\/octet-stream'[\s\S]*?'X-File-Name': encodeURIComponent\(item\.file\.name \|\| 'image'\)/);
-  assert.match(source, /kind:\s*'existing'[\s\S]*?imageId:\s*uploadedImage\.id[\s\S]*?file:\s*null[\s\S]*?section:\s*item\.section/);
-  assert.match(source, /async function cleanupUploadedGalleryImages\(objectId: string,\s*imageIds: string\[\]\)/);
-  assert.match(source, /apiRequest<ObjectResponse>\(`\/objects\/\$\{objectId\}\/gallery\/\$\{imageId\}`,\s*accessToken,\s*\{[\s\S]*?method:\s*'DELETE'/);
+  assert.match(source, /kind:\s*'staged'[\s\S]*?stagedFileId:\s*uploadedFile\.id[\s\S]*?file:\s*item\.file[\s\S]*?section:\s*item\.section/);
+  assert.match(source, /function restoreStagedGalleryDraftItems\(draftItems: GalleryDraftItem\[\],\s*stagedFileIds: string\[\]\)/);
+  assert.match(source, /async function cleanupStagedGalleryFiles\(fileIds: string\[\]\)/);
+  assert.match(source, /apiRequest<void>\(`\/files\/\$\{fileId\}`,\s*accessToken,\s*\{[\s\S]*?method:\s*'DELETE'/);
 });
 
 test('gallery modal builds multipart layout payload and keeps file fallback compatibility', () => {
@@ -167,6 +168,7 @@ test('gallery modal builds multipart layout payload and keeps file fallback comp
   assert.match(source, /const fileIndex = files\.length;/);
   assert.match(source, /files\.push\(item\.file\);/);
   assert.match(source, /return \{[\s\S]*?kind:\s*'new'[\s\S]*?fileIndex[\s\S]*?section:\s*item\.section[\s\S]*?\};/);
+  assert.match(source, /return \{[\s\S]*?kind:\s*'staged'[\s\S]*?fileId:\s*item\.stagedFileId[\s\S]*?section:\s*item\.section[\s\S]*?\};/);
   assert.match(source, /return \{[\s\S]*?kind:\s*'existing'[\s\S]*?imageId:\s*item\.imageId[\s\S]*?section:\s*item\.section[\s\S]*?\};/);
   assert.match(source, /formData\.append\('layout', JSON\.stringify\(\{[\s\S]*?items[\s\S]*?coverIndex[\s\S]*?\}\)\);/);
   assert.match(source, /files\.forEach\(\(file\) => formData\.append\('files', file\)\);/);
@@ -180,7 +182,7 @@ test('gallery modal refreshes current gallery before batch save and drops stale 
   assert.match(source, /setGalleryCoverDraftId\(reconciledDraft\.coverDraftId\);/);
   assert.match(source, /uploadGalleryDraftFiles\(objectId,\s*reconciledDraft\.draftItems\);/);
   assert.match(source, /createGalleryBatchBody\(uploadedDraft\.draftItems,\s*reconciledDraft\.coverDraftId\);/);
-  assert.match(source, /function reconcileGalleryDraftItemsWithCurrentGallery\([\s\S]*?const currentImageIds = new Set\(currentImages\.map\(\(image\) => image\.id\)\);[\s\S]*?item\.kind === 'new' \|\| \(item\.imageId !== null && currentImageIds\.has\(item\.imageId\)\)/);
+  assert.match(source, /function reconcileGalleryDraftItemsWithCurrentGallery\([\s\S]*?const currentImageIds = new Set\(currentImages\.map\(\(image\) => image\.id\)\);[\s\S]*?\(item\.kind === 'new' \|\| item\.kind === 'staged'\) \|\| \(item\.imageId !== null && currentImageIds\.has\(item\.imageId\)\)/);
 });
 
 test('gallery modal blocks duplicate save submissions synchronously', () => {

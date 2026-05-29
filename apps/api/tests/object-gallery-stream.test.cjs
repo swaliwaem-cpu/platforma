@@ -15,13 +15,14 @@ test('objects controller exposes raw stream gallery upload endpoint', () => {
   assert.match(controllerSource, /return this\.objectsService\.uploadGalleryImageStream\(id,\s*request,\s*actor,\s*request\);/);
 });
 
-test('objects service stores one streamed gallery image and returns its serialized image', () => {
+test('objects service stages one streamed gallery file without mutating object images', () => {
   const uploadStreamSource = extractFunctionSource(serviceSource, 'async uploadGalleryImageStream');
 
   assert.match(uploadStreamSource, /const uploadedFile = await this\.filesService\.uploadFileStream\(/);
-  assert.match(uploadStreamSource, /objectImage\.create\(\{[\s\S]*?fileId:\s*uploadedFile\.file\.id[\s\S]*?sortOrder:\s*\(maxSortOrder\._max\.sortOrder \?\? -1\) \+ 1/);
-  assert.match(uploadStreamSource, /const uploadedImage = updatedObject\.images\.find\(\(image\) => image\.file\.id === uploadedFile\.file\.id\)/);
-  assert.match(uploadStreamSource, /image:\s*this\.serializeObjectImage\(uploadedImage\)/);
+  assert.doesNotMatch(uploadStreamSource, /objectImage\.create\(/);
+  assert.doesNotMatch(uploadStreamSource, /maxSortOrder/);
+  assert.match(uploadStreamSource, /object:\s*this\.serializeObjectDetail\(object\)/);
+  assert.match(uploadStreamSource, /file:\s*uploadedFile\.file/);
   assert.match(uploadStreamSource, /await this\.filesService\.deleteUnlinkedFile\(uploadedFile\.file\.id\);/);
 });
 

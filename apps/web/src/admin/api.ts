@@ -53,6 +53,7 @@ async function sendApiRequest(path: string, accessToken: string, options: Reques
 
   return fetch(`${apiUrl}${path}`, {
     ...options,
+    cache: options.cache ?? 'no-store',
     credentials: 'include',
     headers: {
       ...(options.body && !isFormData ? { 'Content-Type': 'application/json' } : {}),
