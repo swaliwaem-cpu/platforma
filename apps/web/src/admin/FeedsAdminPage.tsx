@@ -17,7 +17,6 @@ import type {
   FeedImportRun,
   FeedImportRunResponse,
   FeedImportRunsResponse,
-  FeedIndexDiscovery,
   FeedSource,
   FeedSourceAnalysis,
   FeedSourceAnalysisObject,
@@ -110,17 +109,6 @@ const emptySourceForm: SourceFormState = {
   isActive: true,
 };
 
-const feedFormatLabels: Record<FeedFormat, string> = {
-  YANDEX_REALTY: 'Yandex Realty',
-  CIAN_XML: 'Cian XML',
-  AVITO_XML: 'Avito XML',
-};
-
-const feedFormatChoiceLabels: Record<FeedFormatChoice, string> = {
-  ...feedFormatLabels,
-  AUTO: 'Авто',
-};
-
 const feedUnitTypeLabels: Record<FeedUnitType, string> = {
   RESIDENTIAL: 'Жилой',
   COMMERCIAL: 'Коммерческий',
@@ -174,7 +162,6 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
   const [objects, setObjects] = useState<RealEstateObjectSummary[]>([]);
   const [form, setForm] = useState<SourceFormState>(emptySourceForm);
   const [sourceAnalysis, setSourceAnalysis] = useState<FeedSourceAnalysis | null>(null);
-  const [sourceDiscovery, setSourceDiscovery] = useState<FeedIndexDiscovery | null>(null);
   const [sourceMetaSummaries, setSourceMetaSummaries] = useState<FeedSourceMetaSummaryMap>({});
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const [runs, setRuns] = useState<FeedImportRun[]>([]);
@@ -245,7 +232,6 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
       setRuns([]);
       setUnits([]);
       setSourceAnalysis(null);
-      setSourceDiscovery(null);
       setIsLoadingSources(false);
       setIsLoadingForm(false);
       setError(null);
@@ -408,7 +394,6 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
       setSelectedSourceId(source.id);
       setForm(createFormFromSource(source));
       setSourceAnalysis(null);
-      setSourceDiscovery(null);
       if (options.loadSourceMeta ?? true) {
         void loadLatestSourceMetaRun(source.id);
       }
@@ -560,13 +545,12 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
     }
   }
 
-  async function analyzeSourceFeed(formatOverride?: FeedFormatChoice) {
+  async function analyzeSourceFeed() {
     if (!accessToken) {
       return;
     }
 
-    const analysisForm = formatOverride ? { ...form, format: formatOverride } : form;
-    const validationError = validateSourceAnalysisForm(analysisForm);
+    const validationError = validateSourceAnalysisForm(form);
 
     if (validationError) {
       setError(validationError);
@@ -583,7 +567,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
       let resolvedAnalysisForm: SourceFormState | null = null;
       let lastAnalysisError: unknown = null;
 
-      for (const analysisAttemptForm of createSourceAnalysisFormAttempts(analysisForm)) {
+      for (const analysisAttemptForm of createSourceAnalysisFormAttempts(form)) {
         try {
           data = await apiRequest<FeedSourceAnalysisResponse>('/feeds/analyze', accessToken, {
             method: 'POST',
@@ -600,19 +584,6 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
         throw lastAnalysisError instanceof Error ? lastAnalysisError : new Error('Не удалось разобрать фид');
       }
 
-      if (data.discovery && !data.analysis) {
-        setSourceDiscovery(data.discovery);
-        setSourceAnalysis(null);
-        setForm((currentForm) => ({
-          ...currentForm,
-          sourceKind: resolvedAnalysisForm.sourceKind,
-          format: resolvedAnalysisForm.format,
-          mappings: [],
-        }));
-        setNotice(`Найдено площадок: ${formatNumber(data.discovery.platforms.length)}. Выберите площадку для разбора.`);
-        return;
-      }
-
       if (!data.analysis) {
         throw new Error('Разбор фида не вернул объекты');
       }
@@ -620,7 +591,6 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
       const analysis = data.analysis;
       const suggestedDeveloperId = findFeedDeveloperSuggestion(analysis, developers, objects);
 
-      setSourceDiscovery(null);
       setSourceAnalysis(analysis);
       setForm((currentForm) => {
         const developerId = currentForm.developerId || suggestedDeveloperId;
@@ -656,17 +626,6 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
     } finally {
       setIsAnalyzingSource(false);
     }
-  }
-
-  function selectIndexFeedPlatform(format: FeedFormat) {
-    setSourceDiscovery(null);
-    setSourceAnalysis(null);
-    setForm((currentForm) => ({
-      ...currentForm,
-      format,
-      mappings: [],
-    }));
-    void analyzeSourceFeed(format);
   }
 
   function updateAnalysisMapping(sourceKey: string, objectId: string) {
@@ -910,7 +869,6 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                         value={form.url}
                         onChange={(event) => {
                           setSourceAnalysis(null);
-                          setSourceDiscovery(null);
                           setForm((currentForm) => ({
                             ...currentForm,
                             sourceKind: 'URL',
@@ -936,7 +894,6 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                             }
 
                             setSourceAnalysis(null);
-                            setSourceDiscovery(null);
                             setForm((currentForm) => ({
                               ...currentForm,
                               sourceKind: 'FILE',
@@ -951,29 +908,6 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                     {getSelectedFeedXmlFileName(form, editorSource) ? (
                       <span className="feed-source-file-current">{getSelectedFeedXmlFileName(form, editorSource)}</span>
                     ) : null}
-                  </label>
-
-                  <label>
-                    Формат
-                    <select
-                      name="format"
-                      value={form.format}
-                      onChange={(event) => {
-                        setSourceAnalysis(null);
-                        setSourceDiscovery(null);
-                        setForm((currentForm) => ({
-                          ...currentForm,
-                          format: event.target.value as FeedFormatChoice,
-                          mappings: [],
-                        }));
-                      }}
-                    >
-                      {Object.entries(feedFormatChoiceLabels).map(([value, label]) => (
-                        <option key={value} value={value}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
                   </label>
 
                   <label className="feed-source-active">
@@ -997,12 +931,6 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                     isLoading={isAnalyzingSource}
                     onAnalyze={() => void analyzeSourceFeed()}
                     onMappingChange={updateAnalysisMapping}
-                  />
-
-                  <FeedSourceDiscoveryPanel
-                    discovery={sourceDiscovery}
-                    isLoading={isAnalyzingSource}
-                    onSelectPlatform={(format) => void selectIndexFeedPlatform(format)}
                   />
 
                   {hasFilterJson ? (
@@ -1164,7 +1092,6 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                 <TableHeader>
                   <TableRow>
                     <TableHead>Источник</TableHead>
-                    <TableHead>Формат</TableHead>
                     <TableHead>Статус</TableHead>
                     <TableHead>Последний запуск</TableHead>
                     <TableHead>
@@ -1173,7 +1100,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {isLoadingSources ? <TableSkeleton columns={5} rows={4} /> : null}
+                  {isLoadingSources ? <TableSkeleton columns={4} rows={4} /> : null}
 
                   {!isLoadingSources
                     ? sources.map((source) => (
@@ -1189,11 +1116,6 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                               <span>{source.developer.name}</span>
                               <code>{getSourceDisplay(source)}</code>
                             </div>
-                          </TableCell>
-                          <TableCell>
-                            <span className={`feed-format-pill feed-format-pill--${source.format.toLowerCase()}`}>
-                              {feedFormatLabels[source.format]}
-                            </span>
                           </TableCell>
                           <TableCell>
                             <AdminStatusBadge className={source.isActive ? 'feed-source-status--active' : 'feed-source-status--inactive'}>
@@ -1360,7 +1282,6 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
             <>
               <div className="feed-panel-heading">
                 <div>
-                  <p className="eyebrow">{feedFormatLabels[selectedSource.format]}</p>
                   <h3>{getSourceObjectTitle(selectedSource)}</h3>
                 </div>
                 <AdminStatusBadge className={selectedSource.isActive ? 'feed-source-status--active' : 'feed-source-status--inactive'}>
@@ -1738,57 +1659,6 @@ function FeedSourceAnalysisPanel({
   );
 }
 
-function FeedSourceDiscoveryPanel({
-  discovery,
-  isLoading,
-  onSelectPlatform,
-}: {
-  discovery: FeedIndexDiscovery | null;
-  isLoading: boolean;
-  onSelectPlatform: (format: FeedFormat) => void;
-}) {
-  if (!discovery) {
-    return null;
-  }
-
-  return (
-    <section className="field-wide feed-source-discovery" aria-label="Выбор площадки фида">
-      <div className="feed-source-analysis-header">
-        <div>
-          <strong>Площадки в индексе</strong>
-          <span>
-            {formatNumber(discovery.platforms.length)} площадок · {formatNumber(discovery.files.length)} XML-файлов
-          </span>
-        </div>
-      </div>
-
-      <div className="feed-source-discovery-list">
-        {discovery.platforms.map((platform) => (
-          <article className="feed-source-discovery-platform" key={platform.format}>
-            <div className="feed-source-analysis-object-main">
-              <strong>{feedFormatLabels[platform.format]}</strong>
-              <span>
-                {formatNumber(platform.filesCount)} файлов · {formatNumber(platform.unitsCount)} лотов
-              </span>
-              <code>
-                Предупреждения: {formatNumber(platform.warningsCount)} · Ошибки: {formatNumber(platform.errorsCount)}
-              </code>
-            </div>
-            <AdminButton
-              disabled={isLoading}
-              tone="secondary"
-              type="button"
-              onClick={() => onSelectPlatform(platform.format)}
-            >
-              Выбрать площадку
-            </AdminButton>
-          </article>
-        ))}
-      </div>
-    </section>
-  );
-}
-
 function SourceMeta({ source, metaSummary }: { source: FeedSource; metaSummary?: Record<string, unknown> | null }) {
   const previewMetrics = getFeedPreviewMetrics(metaSummary);
 
@@ -1965,7 +1835,7 @@ function createSourceAnalysisRequestBody(form: SourceFormState) {
   const sourceKind = getConcreteFeedSourceKind(form);
 
   formData.append('sourceKind', sourceKind);
-  formData.append('format', form.format);
+  formData.append('format', 'AUTO');
 
   if (isUrlBackedSourceKind(sourceKind)) {
     formData.append('url', form.url.trim());

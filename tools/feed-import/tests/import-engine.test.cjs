@@ -561,6 +561,76 @@ test('executeFeedImport imports public Google Sheets index rows through source U
   assert.equal(state.units.find((unit) => unit.rawPayload.__rawExternalId === 'one-1').objectId, 'object-2');
 });
 
+test('executeFeedImport auto imports mixed index feed formats through source URL mappings', async () => {
+  const indexUrl = 'https://feeds.test/xml/';
+  const yandexUrl = 'https://feeds.test/xml/yandex.xml';
+  const cianUrl = 'https://feeds.test/xml/cian.xml';
+  const { db, state } = createFakeDb({
+    source: {
+      sourceKind: 'INDEX_URL',
+      url: indexUrl,
+      format: 'CIAN_XML',
+      objectId: null,
+      mappings: [
+        makeSourceMapping({
+          id: 'mapping-yandex',
+          objectId: 'object-1',
+          sourceKey: 'sheet-yandex',
+          sourceTitle: 'ЖК Yandex',
+          filterJson: {
+            feedIndexSourceUrls: [yandexUrl],
+          },
+        }),
+        makeSourceMapping({
+          id: 'mapping-cian',
+          objectId: 'object-2',
+          sourceKey: 'sheet-cian',
+          sourceTitle: 'ЖК Cian',
+          filterJson: {
+            feedIndexSourceUrls: [cianUrl],
+          },
+        }),
+      ],
+    },
+    objects: [
+      makeObjectAggregate({ id: 'object-1' }),
+      makeObjectAggregate({ id: 'object-2' }),
+    ],
+  });
+  const responses = new Map([
+    [
+      indexUrl,
+      `<html><body>
+        <a href="yandex.xml">Yandex</a>
+        <a href="cian.xml">Cian</a>
+      </body></html>`,
+    ],
+    [yandexUrl, makeYandexFeed()],
+    [cianUrl, makeIndexCianFeed('cian-1', 'Feed Cian')],
+  ]);
+
+  const result = await executeFeedImport({
+    mode: 'run',
+    sourceId: 'source-1',
+    db,
+    storage: state.storage,
+    xmlFetcher: async (url) => responses.get(url),
+    mediaDownloader: async (url) => ({
+      body: Buffer.from(`body:${url}`),
+      contentType: 'image/png',
+      originalName: 'feed.png',
+    }),
+    imageVariantGenerator: async () => [],
+    now: () => fixedDate,
+  });
+
+  assert.equal(result.status, 'SUCCESS');
+  assert.equal(result.summary.unitsParsed, 3);
+  assert.equal(state.units.find((unit) => unit.rawPayload.__rawExternalId === 'unit-1').objectId, 'object-1');
+  assert.equal(state.units.find((unit) => unit.rawPayload.__rawExternalId === 'unit-2').objectId, 'object-1');
+  assert.equal(state.units.find((unit) => unit.rawPayload.__rawExternalId === 'cian-1').objectId, 'object-2');
+});
+
 test('executeFeedImport routes Avito units through development id source mappings', async () => {
   const { db, state } = createFakeDb({
     source: {

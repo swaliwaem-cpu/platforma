@@ -1040,6 +1040,10 @@ type FeedAnalyzeFormat = FeedSourceFormat | 'AUTO';
 type FeedSourceKind = 'URL' | 'FILE' | 'INDEX_URL';
 type FeedUnitStatusValue = NormalizedFeedUnitStatus;
 type DecimalLike = string | number | { toString: () => string };
+type ParsedFeedIndexResult = {
+  format: FeedSourceFormat;
+  parsed: FeedParseResult;
+};
 
 type FeedIndexLinkCandidate = {
   url: string;
@@ -1047,6 +1051,7 @@ type FeedIndexLinkCandidate = {
 };
 
 const activeFeedUnitStatuses: FeedUnitStatusValue[] = ['AVAILABLE', 'BOOKED', 'RESERVED'];
+const supportedFeedSourceFormats: FeedSourceFormat[] = ['YANDEX_REALTY', 'CIAN_XML', 'AVITO_XML'];
 
 type FeedSourceXmlFileRecord = {
   id: string;
@@ -1923,12 +1928,15 @@ export async function analyzeFeedSourceInput(params: {
     }
 
     if (params.format === 'AUTO') {
+      const { format, parsed } = await parseFeedIndexAutomatically({
+        sourceUrl: params.url,
+        xmlFetcher: params.xmlFetcher,
+        namespaceExternalIds: false,
+      });
+
       return {
-        discovery: await createFeedIndexDiscovery({
-          sourceUrl: params.url,
-          xmlFetcher: params.xmlFetcher,
-        }),
-        analysis: null,
+        discovery: null,
+        analysis: createFeedSourceAnalysis(format, parsed),
       };
     }
 
@@ -2020,9 +2028,7 @@ async function analyzeFeedIndexFile(
 }
 
 function createFeedIndexPlatformCandidates(files: FeedIndexFileCandidate[]): FeedIndexPlatformCandidate[] {
-  const formats: FeedSourceFormat[] = ['YANDEX_REALTY', 'CIAN_XML', 'AVITO_XML'];
-
-  return formats.flatMap((format) => {
+  return supportedFeedSourceFormats.flatMap((format) => {
     const formatFiles = files.filter((file) => file.format === format);
 
     if (formatFiles.length === 0) {
@@ -2088,7 +2094,7 @@ async function parseFeedIndexForFormat(params: {
       warnings.push(...parsed.warnings);
       units.push(
         ...parsed.units.map((unit) =>
-          applyFeedIndexSourceMetadata(source, unit, params.namespaceExternalIds),
+          applyFeedIndexSourceMetadata(source, unit, params.namespaceExternalIds, detectedFormat),
         ),
       );
     } catch (error) {
@@ -2106,6 +2112,77 @@ async function parseFeedIndexForFormat(params: {
   }
 
   return { units, warnings };
+}
+
+async function parseFeedIndexAutomatically(params: {
+  sourceUrl: string;
+  xmlFetcher?: (url: string) => Promise<string>;
+  namespaceExternalIds: boolean;
+}): Promise<ParsedFeedIndexResult> {
+  const indexContent = await fetchFeedText(getFeedIndexContentUrl(params.sourceUrl), params.xmlFetcher);
+  const links = discoverFeedIndexLinkCandidates(indexContent, params.sourceUrl);
+  const sources = links.length > 0 ? links : [{ url: params.sourceUrl, objectName: null }];
+  const units: NormalizedFeedUnit[] = [];
+  const warnings: FeedParserWarning[] = [];
+  const formatUnitsCounts = new Map<FeedSourceFormat, number>();
+  let matchedFilesCount = 0;
+
+  for (const source of sources) {
+    try {
+      const xml = source.url === params.sourceUrl && links.length === 0
+        ? indexContent
+        : await fetchFeedText(source.url, params.xmlFetcher);
+      const detectedFormat = detectFeedFormatFromXml(xml);
+
+      if (!detectedFormat) {
+        warnings.push({
+          code: 'INDEX_XML_FAILED',
+          field: 'url',
+          message: `Failed to parse index XML file ${source.url}: Unsupported XML feed format`,
+          value: source.url,
+        });
+        continue;
+      }
+
+      const parsed = createFeedParserForFormat(detectedFormat).parse(xml);
+
+      matchedFilesCount += 1;
+      formatUnitsCounts.set(detectedFormat, (formatUnitsCounts.get(detectedFormat) ?? 0) + parsed.units.length);
+      warnings.push(...parsed.warnings);
+      units.push(
+        ...parsed.units.map((unit) =>
+          applyFeedIndexSourceMetadata(source, unit, params.namespaceExternalIds, detectedFormat),
+        ),
+      );
+    } catch (error) {
+      warnings.push({
+        code: 'INDEX_XML_FAILED',
+        field: 'url',
+        message: `Failed to parse index XML file ${source.url}: ${getErrorMessage(error)}`,
+        value: source.url,
+      });
+    }
+  }
+
+  if (matchedFilesCount === 0) {
+    throw new Error(`Index URL ${params.sourceUrl} does not contain supported XML files`);
+  }
+
+  return {
+    format: getDominantFeedIndexFormat(formatUnitsCounts),
+    parsed: { units, warnings },
+  };
+}
+
+function getDominantFeedIndexFormat(formatUnitsCounts: Map<FeedSourceFormat, number>): FeedSourceFormat {
+  const dominant = supportedFeedSourceFormats
+    .map((format) => ({
+      format,
+      unitsCount: formatUnitsCounts.get(format) ?? 0,
+    }))
+    .sort((left, right) => right.unitsCount - left.unitsCount)[0];
+
+  return dominant?.format ?? 'YANDEX_REALTY';
 }
 
 function getFeedIndexContentUrl(sourceUrl: string) {
@@ -2147,19 +2224,17 @@ function applyFeedIndexSourceMetadata(
   source: FeedIndexLinkCandidate,
   unit: NormalizedFeedUnit,
   namespaceExternalIds: boolean,
+  detectedFormat: FeedSourceFormat,
 ): NormalizedFeedUnit {
   const nextUnit = namespaceExternalIds ? namespaceIndexFeedUnitExternalId(source.url, unit) : unit;
-
-  if (!source.objectName) {
-    return nextUnit;
-  }
 
   return {
     ...nextUnit,
     rawPayload: {
       ...nextUnit.rawPayload,
       __feedIndexSourceUrl: source.url,
-      __feedIndexObjectName: source.objectName,
+      __feedDetectedFormat: detectedFormat,
+      ...(source.objectName ? { __feedIndexObjectName: source.objectName } : {}),
     },
   };
 }
@@ -2521,12 +2596,11 @@ async function parseFeedSourceForImport(
       throw new Error(`FeedSource ${source.id} URL is empty`);
     }
 
-    parsed = await parseFeedIndexForFormat({
+    parsed = (await parseFeedIndexAutomatically({
       sourceUrl: source.url,
-      format: source.format,
       xmlFetcher: options.xmlFetcher,
       namespaceExternalIds: true,
-    });
+    })).parsed;
   } else {
     const xml = await loadXmlForFeedSource(source, options);
     const parser = createFeedParserForFormat(source.format);
@@ -2556,8 +2630,10 @@ function applyFeedSourceUnitTitleRules(unit: NormalizedFeedUnit, source: FeedSou
 }
 
 function shouldUseApartmentNumberTitleForSource(unit: NormalizedFeedUnit, source: FeedSourceRecord) {
+  const unitFormat = getText(unit.rawPayload.__feedDetectedFormat) ?? source.format;
+
   return (
-    source.format === 'CIAN_XML' &&
+    unitFormat === 'CIAN_XML' &&
     unit.type === 'RESIDENTIAL' &&
     Boolean(unit.residentialDetails?.apartmentNumber) &&
     isMrGroupFeedSource(source)

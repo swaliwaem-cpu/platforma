@@ -35,7 +35,7 @@ test('feeds admin page exposes required source form fields and unit filters', ()
   assert.match(source, /className="feed-source-input-row"/);
   assert.match(source, /aria-label="Загрузить XML-файл"/);
   assert.match(source, /name="xmlFile"/);
-  assert.match(source, /name="format"/);
+  assert.doesNotMatch(source, /name="format"/);
   assert.match(source, /name="filterJson"/);
   assert.match(source, /name="developerId"/);
   assert.match(source, /name="objectId"/);
@@ -84,11 +84,9 @@ test('feeds admin page includes CIAN project mapping fields in source analysis',
   assert.doesNotMatch(source, /<dt>Warnings<\/dt>/);
 });
 
-test('feeds admin page includes Avito feed format and development id mapping fields', () => {
+test('feeds admin page includes Avito development id mapping fields', () => {
   const source = readFileSync(sourcePath, 'utf8');
 
-  assert.match(source, /AVITO_XML:\s*'Avito XML'/);
-  assert.match(source, /AUTO:\s*'Авто'/);
   assert.match(source, /avitoDevelopmentIds/);
   assert.match(source, /developmentIds:/);
 });
@@ -99,20 +97,22 @@ test('feeds admin page defaults new feed sources to automatic format detection',
   assert.match(source, /const emptySourceForm[\s\S]*?format:\s*'AUTO',\n\s*filterJson:/);
 });
 
-test('feeds admin page renders index discovery platform selection', () => {
+test('feeds admin page hides manual format and index platform selection', () => {
   const source = readFileSync(sourcePath, 'utf8');
 
-  assert.match(source, /sourceDiscovery/);
-  assert.match(source, /function FeedSourceDiscoveryPanel/);
-  assert.match(source, /onSelectPlatform/);
-  assert.match(source, /platforms\.map\(\(platform\) =>/);
-  assert.match(source, /Выбрать площадку/);
+  assert.doesNotMatch(source, />Формат</);
+  assert.doesNotMatch(source, /feedFormatChoiceLabels/);
+  assert.doesNotMatch(source, /sourceDiscovery/);
+  assert.doesNotMatch(source, /function FeedSourceDiscoveryPanel/);
+  assert.doesNotMatch(source, /onSelectPlatform/);
+  assert.doesNotMatch(source, /platforms\.map\(\(platform\) =>/);
+  assert.doesNotMatch(source, /Выбрать площадку/);
 });
 
 test('feeds admin page keeps auto format analysis-only and conservative automapping explicit', () => {
   const source = readFileSync(sourcePath, 'utf8');
 
-  assert.match(source, /form\.format === 'AUTO'/);
+  assert.match(source, /formData\.append\('format', 'AUTO'\)/);
   assert.match(source, /createSourceAnalysisFormAttempts/);
   assert.match(source, /findFeedDeveloperSuggestion/);
   assert.match(source, /findFeedObjectSuggestion/);
@@ -166,7 +166,7 @@ test('feeds admin page uses one source input row instead of source kind buttons'
 test('feeds admin page auto-detects URL feed kind before falling back to index XML', () => {
   const source = readFileSync(sourcePath, 'utf8');
 
-  assert.match(source, /createSourceAnalysisFormAttempts\(analysisForm\)/);
+  assert.match(source, /createSourceAnalysisFormAttempts\(form\)/);
   assert.match(source, /sourceKind:\s*'URL'/);
   assert.match(source, /sourceKind:\s*'INDEX_URL'/);
   assert.match(source, /resolvedAnalysisForm/);

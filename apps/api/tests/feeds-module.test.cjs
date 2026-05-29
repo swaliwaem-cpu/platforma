@@ -323,33 +323,12 @@ test('FeedsService analyzes a feed source without developer and object mapping',
   assert.equal(result.analysis.objects[0].unitsCount, 259);
 });
 
-test('FeedsService analyzes index URL discovery and selected platform', async () => {
+test('FeedsService analyzes index URLs automatically', async () => {
   const calls = [];
   const indexUrl = 'https://feeds.sminex.test/xml/';
   const service = new FeedsService({});
   service.runFeedAnalyzeCli = async (params) => {
     calls.push(params);
-
-    if (params.format === 'AUTO') {
-      return {
-        discovery: {
-          sourceUrl: params.url,
-          files: [],
-          platforms: [
-            {
-              format: 'CIAN_XML',
-              label: 'Cian XML',
-              filesCount: 2,
-              unitsCount: 22,
-              warningsCount: 0,
-              errorsCount: 0,
-              files: [],
-            },
-          ],
-        },
-        analysis: null,
-      };
-    }
 
     return {
       discovery: null,
@@ -364,15 +343,10 @@ test('FeedsService analyzes index URL discovery and selected platform', async ()
     };
   };
 
-  const discovery = await service.analyzeSource({
+  const result = await service.analyzeSource({
     sourceKind: 'INDEX_URL',
     url: indexUrl,
     format: 'AUTO',
-  });
-  const selected = await service.analyzeSource({
-    sourceKind: 'INDEX_URL',
-    url: indexUrl,
-    format: 'CIAN_XML',
   });
 
   assert.deepEqual(calls, [
@@ -382,17 +356,9 @@ test('FeedsService analyzes index URL discovery and selected platform', async ()
       url: indexUrl,
       xmlFile: null,
     },
-    {
-      format: 'CIAN_XML',
-      sourceKind: 'INDEX_URL',
-      url: indexUrl,
-      xmlFile: null,
-    },
   ]);
-  assert.equal(discovery.discovery.platforms[0].format, 'CIAN_XML');
-  assert.equal(discovery.analysis, null);
-  assert.equal(selected.discovery, null);
-  assert.equal(selected.analysis.objects[0].title, 'Муза');
+  assert.equal(result.discovery, null);
+  assert.equal(result.analysis.objects[0].title, 'Муза');
 });
 
 test('API Docker image includes the feed-import workspace used by feed preview and run', () => {

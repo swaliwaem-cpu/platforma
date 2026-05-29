@@ -623,7 +623,7 @@ test('discoverFeedIndexLinks resolves same-origin XML links from index HTML', ()
   ]);
 });
 
-test('analyzeFeedSourceInput returns index discovery for auto format', async () => {
+test('analyzeFeedSourceInput auto analyzes every supported index XML format', async () => {
   const indexUrl = 'https://feeds.test/xml/';
   const responses = new Map([
     [
@@ -648,23 +648,21 @@ test('analyzeFeedSourceInput returns index discovery for auto format', async () 
     xmlFetcher: async (url) => responses.get(url),
   });
 
-  assert.equal(result.analysis, null);
-  assert.equal(result.discovery.sourceUrl, indexUrl);
-  assert.equal(result.discovery.files.length, 4);
-
-  const platformsByFormat = Object.fromEntries(
-    result.discovery.platforms.map((platform) => [platform.format, platform]),
+  assert.equal(result.discovery, null);
+  assert.equal(result.analysis.format, 'YANDEX_REALTY');
+  assert.equal(result.analysis.unitsCount, 3);
+  assert.equal(result.analysis.warningsCount, 1);
+  assert.deepEqual(
+    result.analysis.objects.map((object) => [object.title, object.unitsCount]).sort(([leftTitle], [rightTitle]) =>
+      leftTitle.localeCompare(rightTitle, 'ru'),
+    ),
+    [
+      ['Лаврушинский', 1],
+      ['Муза', 1],
+      ['Avito ЖК 1234567', 1],
+    ],
   );
-  assert.equal(platformsByFormat.YANDEX_REALTY.filesCount, 1);
-  assert.equal(platformsByFormat.YANDEX_REALTY.unitsCount, 1);
-  assert.equal(platformsByFormat.CIAN_XML.filesCount, 1);
-  assert.equal(platformsByFormat.CIAN_XML.unitsCount, 1);
-  assert.equal(platformsByFormat.AVITO_XML.filesCount, 1);
-  assert.equal(platformsByFormat.AVITO_XML.unitsCount, 1);
-
-  const brokenFile = result.discovery.files.find((file) => file.url.endsWith('/bad.xml'));
-  assert.equal(brokenFile.format, null);
-  assert.equal(typeof brokenFile.error, 'string');
+  assert.equal(result.analysis.warnings[0].code, 'INDEX_XML_FAILED');
 });
 
 test('analyzeFeedSourceInput analyzes selected index platform files together', async () => {
@@ -721,28 +719,16 @@ test('analyzeFeedSourceInput reads public Google Sheets index rows with object n
     [oneUrl, makeIndexCianXml('one-1', 'Feed One')],
   ]);
 
-  const discovery = await analyzeFeedSourceInput({
+  const result = await analyzeFeedSourceInput({
     format: 'AUTO',
     sourceKind: 'INDEX_URL',
     url: sheetUrl,
     xmlFetcher: async (url) => responses.get(url),
   });
-  const selected = await analyzeFeedSourceInput({
-    format: 'CIAN_XML',
-    sourceKind: 'INDEX_URL',
-    url: sheetUrl,
-    xmlFetcher: async (url) => responses.get(url),
-  });
 
-  assert.equal(discovery.analysis, null);
+  assert.equal(result.discovery, null);
   assert.deepEqual(
-    discovery.discovery.files.map((file) => file.url),
-    [cityzenUrl, oneUrl],
-  );
-  assert.equal(discovery.discovery.platforms[0].format, 'CIAN_XML');
-  assert.equal(selected.discovery, null);
-  assert.deepEqual(
-    selected.analysis.objects.map((object) => [object.title, object.filterJson]),
+    result.analysis.objects.map((object) => [object.title, object.filterJson]),
     [
       ['ЖК Оне', { feedIndexSourceUrls: [oneUrl] }],
       ['ЖК Ситидзен', { feedIndexSourceUrls: [cityzenUrl] }],
