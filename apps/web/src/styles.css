@@ -5205,7 +5205,7 @@ tr.user-row--deactivated .text-button {
   justify-content: center;
   gap: 8px;
   opacity: 0;
-  pointer-events: none;
+  pointer-events: auto;
   transform: translate(-50%, 8px);
   transition:
     opacity 160ms ease,
@@ -5226,7 +5226,7 @@ tr.user-row--deactivated .text-button {
   overflow-x: auto;
   padding: 2px;
   opacity: 0;
-  pointer-events: none;
+  pointer-events: auto;
   transform: translate(-50%, 8px);
   transition:
     opacity 160ms ease,

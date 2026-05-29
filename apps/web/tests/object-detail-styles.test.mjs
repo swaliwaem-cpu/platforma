@@ -83,7 +83,7 @@ test('object detail carousel hides thumbnails until lower hover or focus zone', 
 
   assert.match(
     styles,
-    /\.carousel-thumbnails\s*\{[\s\S]*?z-index:\s*1;[\s\S]*?left:\s*50%;[\s\S]*?width:\s*min\(calc\(100% - 28px\),\s*1240px\);[\s\S]*?justify-content:\s*center;[\s\S]*?opacity:\s*0;[\s\S]*?pointer-events:\s*none;[\s\S]*?transform:\s*translate\(-50%,\s*8px\);[\s\S]*?\}/,
+    /\.carousel-thumbnails\s*\{[\s\S]*?z-index:\s*1;[\s\S]*?left:\s*50%;[\s\S]*?width:\s*min\(calc\(100% - 28px\),\s*1240px\);[\s\S]*?justify-content:\s*center;[\s\S]*?opacity:\s*0;[\s\S]*?pointer-events:\s*auto;[\s\S]*?transform:\s*translate\(-50%,\s*8px\);[\s\S]*?\}/,
   );
 
   assert.match(
@@ -100,7 +100,7 @@ test('object detail carousel hides thumbnails until lower hover or focus zone', 
 test('object detail carousel section filter pills share lower hover and touch behavior', () => {
   assert.match(
     styles,
-    /\.carousel-section-filters\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?z-index:\s*1;[\s\S]*?bottom:\s*106px;[\s\S]*?left:\s*50%;[\s\S]*?opacity:\s*0;[\s\S]*?pointer-events:\s*none;[\s\S]*?\}/,
+    /\.carousel-section-filters\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?z-index:\s*1;[\s\S]*?bottom:\s*106px;[\s\S]*?left:\s*50%;[\s\S]*?opacity:\s*0;[\s\S]*?pointer-events:\s*auto;[\s\S]*?\}/,
   );
 
   assert.match(
