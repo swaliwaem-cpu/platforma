@@ -591,7 +591,7 @@ html[data-app-theme] .map-price-marker-dot {
 }
 
 html[data-app-theme] .map-price-marker-pin-label {
-  color: var(--app-theme-ink-900);
+  color: #000000;
 }
 
 html[data-app-theme] :is(.catalog-map-list, .map-object-card, .map-loading) {

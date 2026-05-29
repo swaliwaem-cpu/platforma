@@ -116,11 +116,11 @@ test('map marker CSS starts as a small SVG dot and swaps to SVG pin on close zoo
   );
   assert.match(
     styles,
-    /\.map-price-marker-pin\s*\{[\s\S]*?width:\s*88px;[\s\S]*?height:\s*45px;[\s\S]*?background-image:\s*url\("\/map-marker-pin\.svg"\);[\s\S]*?opacity:\s*0;[\s\S]*?\}/,
+    /\.map-price-marker-pin\s*\{[\s\S]*?width:\s*70\.4px;[\s\S]*?height:\s*36px;[\s\S]*?background-image:\s*url\("\/map-marker-pin\.svg"\);[\s\S]*?opacity:\s*0;[\s\S]*?\}/,
   );
   assert.match(
     styles,
-    /\.map-price-marker-pin-label\s*\{[\s\S]*?font-size:\s*8px;[\s\S]*?overflow:\s*hidden;[\s\S]*?text-overflow:\s*ellipsis;[\s\S]*?\}/,
+    /\.map-price-marker-pin-label\s*\{[\s\S]*?color:\s*#000000;[\s\S]*?font-size:\s*8px;[\s\S]*?overflow:\s*hidden;[\s\S]*?text-overflow:\s*ellipsis;[\s\S]*?\}/,
   );
   assert.match(
     styles,
@@ -140,10 +140,10 @@ test('map marker pin is anchored by the bottom center tail point', () => {
   assert.match(mapSource, /'<span class="map-price-marker-pin-label">\$\[properties\.markerLabel\]<\/span>',/);
   assert.match(
     mapSource,
-    /iconOffset:\s*\[-44,\s*-45\],\s*iconShape:\s*\{\s*type:\s*'Rectangle',\s*coordinates:\s*\[\s*\[0,\s*0\],\s*\[88,\s*45\],\s*\],\s*\}/,
+    /iconOffset:\s*\[-35\.2,\s*-36\],\s*iconShape:\s*\{\s*type:\s*'Rectangle',\s*coordinates:\s*\[\s*\[0,\s*0\],\s*\[70\.4,\s*36\],\s*\],\s*\}/,
   );
-  assert.match(styles, /\.map-price-marker-anchor\s*\{[\s\S]*?width:\s*88px;[\s\S]*?height:\s*45px;[\s\S]*?\}/);
-  assert.match(styles, /\.map-price-marker\s*\{[\s\S]*?width:\s*88px;[\s\S]*?height:\s*45px;[\s\S]*?\}/);
+  assert.match(styles, /\.map-price-marker-anchor\s*\{[\s\S]*?width:\s*70\.4px;[\s\S]*?height:\s*36px;[\s\S]*?\}/);
+  assert.match(styles, /\.map-price-marker\s*\{[\s\S]*?width:\s*70\.4px;[\s\S]*?height:\s*36px;[\s\S]*?\}/);
 });
 
 test('catalog map layout stays bounded after fullscreen exits', () => {

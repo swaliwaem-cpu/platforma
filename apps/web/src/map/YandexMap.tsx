@@ -281,12 +281,12 @@ function YandexMapApi({
             },
             {
               iconLayout: markerLayout,
-              iconOffset: [-44, -45],
+              iconOffset: [-35.2, -36],
               iconShape: {
                 type: 'Rectangle',
                 coordinates: [
                   [0, 0],
-                  [88, 45],
+                  [70.4, 36],
                 ],
               },
               openBalloonOnClick: false,

@@ -4523,8 +4523,8 @@ tr.user-row--deactivated .text-button {
 
 .map-price-marker-anchor {
   position: relative;
-  width: 88px;
-  height: 45px;
+  width: 70.4px;
+  height: 36px;
 }
 
 .map-price-marker {
@@ -4533,8 +4533,8 @@ tr.user-row--deactivated .text-button {
   left: 0;
   top: 0;
   display: inline-flex;
-  width: 88px;
-  height: 45px;
+  width: 70.4px;
+  height: 36px;
   align-items: center;
   justify-content: center;
   border: 0;
@@ -4573,8 +4573,8 @@ tr.user-row--deactivated .text-button {
 .map-price-marker-pin {
   inset: 0;
   z-index: 2;
-  width: 88px;
-  height: 45px;
+  width: 70.4px;
+  height: 36px;
   background-image: url("/map-marker-pin.svg");
   filter: drop-shadow(0 10px 18px rgb(24 32 42 / 22%));
   opacity: 0;
@@ -4584,13 +4584,13 @@ tr.user-row--deactivated .text-button {
 .map-price-marker-pin-label {
   position: absolute;
   top: 0;
-  left: 8px;
+  left: 6.4px;
   display: flex;
-  width: 72px;
-  height: 34px;
+  width: 57.6px;
+  height: 27.2px;
   align-items: center;
   justify-content: center;
-  color: #161616;
+  color: #000000;
   font-size: 8px;
   font-weight: 900;
   line-height: 1;
