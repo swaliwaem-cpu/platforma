@@ -210,6 +210,12 @@ html[data-app-theme] :is(.catalog-card:hover, .catalog-card:focus-within, .catal
   box-shadow: var(--app-theme-shadow-card-hover);
 }
 
+html[data-app-theme] .admin-empty-state {
+  border-color: var(--app-theme-border-soft);
+  background: var(--app-theme-surface-soft);
+  color: var(--app-theme-ink-700);
+}
+
 html[data-app-theme] :is(
   .admin-action-card,
   .cabinet-section-list li,

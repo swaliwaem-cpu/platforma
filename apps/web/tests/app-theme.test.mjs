@@ -64,6 +64,7 @@ test('app theme stylesheet covers contrast-sensitive dark theme selectors', () =
     '.multi-select-dropdown-button',
     '.feed-details dd',
     '.feed-source-upload-button',
+    '.admin-empty-state',
     '.metro-list strong',
     '.carousel-thumbnail',
     '.gallery-close-confirm strong',
@@ -79,6 +80,10 @@ test('app theme stylesheet covers contrast-sensitive dark theme selectors', () =
   assert.match(
     styles,
     /html\[data-app-theme\] \.multi-select-dropdown-button:is\(:hover,\s*:focus-visible,\s*\.is-open\)\s*\{[\s\S]*?background:\s*var\(--app-theme-control\);[\s\S]*?\}/,
+  );
+  assert.match(
+    styles,
+    /html\[data-app-theme\] \.admin-empty-state\s*\{[\s\S]*?border-color:\s*var\(--app-theme-border-soft\);[\s\S]*?background:\s*var\(--app-theme-surface-soft\);[\s\S]*?color:\s*var\(--app-theme-ink-700\);[\s\S]*?\}/,
   );
 });
 
