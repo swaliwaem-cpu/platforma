@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -226,6 +227,27 @@ type GalleryLayoutBody = {
   imageIds?: unknown;
   coverImageId?: unknown;
   imageSections?: unknown;
+};
+
+type GalleryBatchBody = {
+  layout?: unknown;
+};
+
+type GalleryBatchItem =
+  | {
+      kind: 'existing';
+      imageId: string;
+      section: ObjectImageSection | null;
+    }
+  | {
+      kind: 'new';
+      fileIndex: number;
+      section: ObjectImageSection | null;
+    };
+
+type GalleryBatchLayout = {
+  items: GalleryBatchItem[];
+  coverIndex: number | null;
 };
 
 type UploadObjectFileBody = {
@@ -1489,6 +1511,137 @@ export class ObjectsService {
     };
   }
 
+  async replaceGallery(
+    id: string,
+    body: GalleryBatchBody,
+    files: UploadedFile[] | undefined,
+    actor: AuthenticatedUser,
+    request: RequestWithAudit,
+  ) {
+    const object = await this.findExistingObject(id);
+    const normalizedFiles = files ?? [];
+    const layout = this.parseGalleryBatchLayout(body.layout, normalizedFiles.length);
+    const currentImagesById = new Map(object.images.map((image) => [image.id, image]));
+    const existingImageIds = layout.items
+      .filter((item): item is Extract<GalleryBatchItem, { kind: 'existing' }> => item.kind === 'existing')
+      .map((item) => item.imageId);
+    const existingImageIdSet = new Set(existingImageIds);
+    const deletedImages = object.images.filter((image) => !existingImageIdSet.has(image.id));
+    const deletedImageIds = deletedImages.map((image) => image.id);
+    const currentImageIds = object.images.map((image) => image.id);
+    const currentCoverImageId = object.images.find((image) => image.isCover)?.id ?? null;
+    const currentImageSections = this.createImageSectionMap(object.images);
+
+    for (const imageId of existingImageIds) {
+      if (!currentImagesById.has(imageId)) {
+        throw new BadRequestException('Gallery image ids must match current object gallery');
+      }
+    }
+
+    if (layout.items.some((item) => item.kind === 'new') && !actor.permissions.includes('files:upload')) {
+      throw new ForbiddenException('Insufficient permissions');
+    }
+
+    if (deletedImageIds.length > 0 && !actor.permissions.includes('files:delete')) {
+      throw new ForbiddenException('Insufficient permissions');
+    }
+
+    const uploadedFiles: Awaited<ReturnType<FilesService['uploadFile']>>[] = [];
+
+    try {
+      for (const file of normalizedFiles) {
+        uploadedFiles.push(await this.filesService.uploadFile(file, actor, 'image'));
+      }
+
+      const updatedObject = await this.prisma.$transaction(async (tx) => {
+        if (deletedImageIds.length > 0) {
+          await tx.objectImage.deleteMany({
+            where: {
+              objectId: object.id,
+              id: {
+                in: deletedImageIds,
+              },
+            },
+          });
+        }
+
+        await Promise.all(
+          layout.items.map((item, index) => {
+            if (item.kind === 'new') {
+              const uploadedFile = uploadedFiles[item.fileIndex];
+
+              if (!uploadedFile) {
+                throw new BadRequestException('Gallery batch file is invalid');
+              }
+
+              return tx.objectImage.create({
+                data: {
+                  objectId: object.id,
+                  fileId: uploadedFile.file.id,
+                  sortOrder: index,
+                  isCover: index === layout.coverIndex,
+                  section: item.section,
+                },
+              });
+            }
+
+            return tx.objectImage.update({
+              where: {
+                id: item.imageId,
+              },
+              data: {
+                sortOrder: index,
+                isCover: index === layout.coverIndex,
+                section: item.section,
+              },
+            });
+          }),
+        );
+
+        return this.findExistingObject(object.id, tx);
+      });
+
+      for (const image of deletedImages) {
+        await this.filesService.deleteUnlinkedFile(image.file.id);
+      }
+
+      const nextImageIds = updatedObject.images.map((image) => image.id);
+      const nextCoverImageId = updatedObject.images.find((image) => image.isCover)?.id ?? null;
+      const nextImageSections = this.createImageSectionMap(updatedObject.images);
+
+      await this.logObjectAction({
+        action: 'object.gallery.batch',
+        actor,
+        request,
+        objectId: updatedObject.id,
+        metadata: {
+          before: {
+            imageIds: currentImageIds,
+            coverImageId: currentCoverImageId,
+            imageSections: currentImageSections,
+          },
+          after: {
+            imageIds: nextImageIds,
+            coverImageId: nextCoverImageId,
+            imageSections: nextImageSections,
+          },
+          deletedImageIds,
+          uploadedFileIds: uploadedFiles.map((uploadedFile) => uploadedFile.file.id),
+        },
+      });
+
+      return {
+        object: this.serializeObjectDetail(updatedObject),
+      };
+    } catch (error) {
+      for (const uploadedFile of uploadedFiles) {
+        await this.filesService.deleteUnlinkedFile(uploadedFile.file.id);
+      }
+
+      throw error;
+    }
+  }
+
   async deleteGalleryImage(
     id: string,
     imageId: string,
@@ -2466,6 +2619,141 @@ export class ObjectsService {
     }
 
     return parsedSections;
+  }
+
+  private parseGalleryBatchLayout(value: unknown, fileCount: number): GalleryBatchLayout {
+    if (value === undefined) {
+      throw new BadRequestException('Gallery batch layout is required');
+    }
+
+    const rawLayout = this.parseJsonObject(value, 'Gallery batch layout is invalid');
+    const rawItems = rawLayout.items;
+
+    if (!Array.isArray(rawItems)) {
+      throw new BadRequestException('Gallery batch items are invalid');
+    }
+
+    const coverIndex = this.parseGalleryBatchCoverIndex(rawLayout.coverIndex, rawItems.length);
+    const usedImageIds = new Set<string>();
+    const usedFileIndexes = new Set<number>();
+    const items = rawItems.map((rawItem) => {
+      if (rawItem === null || typeof rawItem !== 'object' || Array.isArray(rawItem)) {
+        throw new BadRequestException('Gallery batch item is invalid');
+      }
+
+      const item = rawItem as Record<string, unknown>;
+      const section = this.parseGalleryBatchSection(item.section);
+
+      if (item.kind === 'existing') {
+        if (typeof item.imageId !== 'string') {
+          throw new BadRequestException('Gallery image is invalid');
+        }
+
+        const imageId = this.parseUuid(item.imageId.trim(), 'Gallery image is invalid');
+
+        if (usedImageIds.has(imageId)) {
+          throw new BadRequestException('Gallery image ids must be unique');
+        }
+
+        usedImageIds.add(imageId);
+
+        return {
+          kind: 'existing',
+          imageId,
+          section,
+        } as const;
+      }
+
+      if (item.kind === 'new') {
+        const fileIndex = this.parseGalleryBatchFileIndex(item.fileIndex, fileCount);
+
+        if (usedFileIndexes.has(fileIndex)) {
+          throw new BadRequestException('Gallery batch file indexes must be unique');
+        }
+
+        usedFileIndexes.add(fileIndex);
+
+        return {
+          kind: 'new',
+          fileIndex,
+          section,
+        } as const;
+      }
+
+      throw new BadRequestException('Gallery batch item kind is invalid');
+    });
+
+    if (items.length > 0 && coverIndex === null) {
+      throw new BadRequestException('Cover image is required');
+    }
+
+    if (usedFileIndexes.size !== fileCount) {
+      throw new BadRequestException('Gallery batch files must match new gallery items');
+    }
+
+    for (let fileIndex = 0; fileIndex < fileCount; fileIndex += 1) {
+      if (!usedFileIndexes.has(fileIndex)) {
+        throw new BadRequestException('Gallery batch files must match new gallery items');
+      }
+    }
+
+    return {
+      items,
+      coverIndex,
+    };
+  }
+
+  private parseJsonObject(value: unknown, message: string) {
+    const parsedValue = typeof value === 'string' ? this.parseJson(value, message) : value;
+
+    if (parsedValue === null || typeof parsedValue !== 'object' || Array.isArray(parsedValue)) {
+      throw new BadRequestException(message);
+    }
+
+    return parsedValue as Record<string, unknown>;
+  }
+
+  private parseJson(value: string, message: string) {
+    try {
+      return JSON.parse(value) as unknown;
+    } catch {
+      throw new BadRequestException(message);
+    }
+  }
+
+  private parseGalleryBatchCoverIndex(value: unknown, itemCount: number) {
+    if (value === null && itemCount === 0) {
+      return null;
+    }
+
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value >= itemCount) {
+      throw new BadRequestException('Cover image is invalid');
+    }
+
+    return value;
+  }
+
+  private parseGalleryBatchFileIndex(value: unknown, fileCount: number) {
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value >= fileCount) {
+      throw new BadRequestException('Gallery batch file is invalid');
+    }
+
+    return value;
+  }
+
+  private parseGalleryBatchSection(value: unknown) {
+    if (value === undefined || value === null || value === '') {
+      return null;
+    }
+
+    if (
+      typeof value !== 'string' ||
+      !Object.values(ObjectImageSection).includes(value as ObjectImageSection)
+    ) {
+      throw new BadRequestException('Gallery image section is invalid');
+    }
+
+    return value as ObjectImageSection;
   }
 
   private createImageSectionMap(images: ObjectDetailRecord['images']) {

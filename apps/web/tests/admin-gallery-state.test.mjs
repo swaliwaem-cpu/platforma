@@ -134,23 +134,28 @@ test('gallery modal save flow persists edited object gallery layout', () => {
   assert.match(source, /async function persistGalleryDraftForObject\(objectId: string/);
   assert.match(source, /draftItems\.length > 0 && !galleryCoverDraftId/);
   assert.match(source, /setGalleryModalError\('Выберите обложку для галереи'\)/);
-  assert.match(source, /const deletedImageCount = galleryDeletedImageIds\.length;/);
-  assert.match(source, /for \(const \[deletedImageIndex,\s*imageId\] of galleryDeletedImageIds\.entries\(\)\)/);
-  assert.match(source, /setGalleryModalProgress\(`Удаление изображений \$\{deletedImageIndex \+ 1\}\/\$\{deletedImageCount\}`\)/);
-  assert.match(source, /apiRequest<ObjectResponse>\(`\/objects\/\$\{objectId\}\/gallery\/\$\{imageId\}`,\s*accessToken,\s*\{[\s\S]*?method:\s*'DELETE'/);
-  assert.match(source, /setGalleryModalProgress\('Загрузка обложки'/);
-  assert.match(source, /uploadObjectMedia\(objectId,\s*'cover',\s*coverDraftItem\.file\)/);
-  assert.match(source, /const galleryUploadCount = galleryUploadItems\.length;/);
-  assert.match(source, /for \(const \[galleryUploadIndex,\s*item\] of galleryUploadItems\.entries\(\)\)/);
-  assert.match(source, /setGalleryModalProgress\(`Загрузка изображений \$\{galleryUploadIndex \+ 1\}\/\$\{galleryUploadCount\}`\)/);
-  assert.match(source, /uploadObjectMedia\(objectId,\s*'gallery',\s*item\.file\)/);
-  assert.match(source, /setGalleryModalProgress\('Сохранение порядка'/);
-  assert.match(source, /const imageSections = draftItems\.reduce<Record<string,\s*ObjectImageSection \| null>>/);
-  assert.match(source, /imageSections\[imageId\] = item\.section;/);
-  assert.match(source, /apiRequest<ObjectResponse>\(`\/objects\/\$\{objectId\}\/gallery\/layout`,\s*accessToken,\s*\{[\s\S]*?method:\s*'PATCH'[\s\S]*?body:\s*JSON\.stringify\(\{[\s\S]*?imageIds[\s\S]*?coverImageId[\s\S]*?imageSections/);
+  assert.match(source, /const batchBody = createGalleryBatchBody\(draftItems,\s*galleryCoverDraftId\);/);
+  assert.match(source, /setGalleryModalProgress\([\s\S]*?batchBody\.fileCount > 0 \? `Загрузка и сохранение галереи: \$\{batchBody\.fileCount\} фото` : 'Сохранение галереи'[\s\S]*?\);/);
+  assert.match(source, /apiRequest<ObjectResponse>\(`\/objects\/\$\{objectId\}\/gallery\/batch`,\s*accessToken,\s*\{[\s\S]*?method:\s*'PATCH'[\s\S]*?body:\s*batchBody\.formData/);
+  assert.doesNotMatch(source, /apiRequest<ObjectResponse>\(`\/objects\/\$\{objectId\}\/gallery\/\$\{imageId\}`/);
+  assert.doesNotMatch(source, /apiRequest<ObjectResponse>\(`\/objects\/\$\{objectId\}\/gallery\/layout`/);
+  assert.doesNotMatch(source, /uploadObjectMedia\(objectId,\s*'cover'/);
+  assert.doesNotMatch(source, /uploadObjectMedia\(objectId,\s*'gallery'/);
   assert.match(source, /setObject\(layoutData\.object\)/);
   assert.match(source, /resetGalleryModalDraft\(\)/);
   assert.match(source, /setNotice\('Галерея сохранена'\)/);
+});
+
+test('gallery modal builds one multipart batch payload for existing and new images', () => {
+  assert.match(source, /function createGalleryBatchBody\(draftItems: GalleryDraftItem\[\],\s*coverDraftId: string \| null\)/);
+  assert.match(source, /const formData = new FormData\(\);/);
+  assert.match(source, /const items = draftItems\.map\(\(item\) => \{/);
+  assert.match(source, /const fileIndex = files\.length;/);
+  assert.match(source, /files\.push\(item\.file\);/);
+  assert.match(source, /return \{[\s\S]*?kind:\s*'new'[\s\S]*?fileIndex[\s\S]*?section:\s*item\.section[\s\S]*?\};/);
+  assert.match(source, /return \{[\s\S]*?kind:\s*'existing'[\s\S]*?imageId:\s*item\.imageId[\s\S]*?section:\s*item\.section[\s\S]*?\};/);
+  assert.match(source, /formData\.append\('layout', JSON\.stringify\(\{[\s\S]*?items[\s\S]*?coverIndex[\s\S]*?\}\)\);/);
+  assert.match(source, /files\.forEach\(\(file\) => formData\.append\('files', file\)\);/);
 });
 
 test('gallery modal previews avoid eager decoding of every thumbnail', () => {
@@ -162,7 +167,7 @@ test('gallery modal save flow creates new object before uploading draft media', 
   assert.match(source, /if \(isCreateRoute\) \{[\s\S]*?const validationError = validateObjectForm\(form\);[\s\S]*?setGalleryModalError\(validationError\);[\s\S]*?return;/);
   assert.match(source, /if \(isCreateRoute\) \{[\s\S]*?const payload = createPayloadFromForm\(form\);[\s\S]*?apiRequest<ObjectResponse>\('\/objects',\s*accessToken,\s*\{[\s\S]*?method:\s*'POST'[\s\S]*?body:\s*JSON\.stringify\(payload\)/);
   assert.match(source, /setGalleryModalProgress\('Создание объекта'\)/);
-  assert.match(source, /persistGalleryDraftForObject\(createData\.object\.id,\s*createData\.object\.images\)/);
+  assert.match(source, /persistGalleryDraftForObject\(createData\.object\.id\)/);
   assert.match(source, /navigate\(`\/admin\/objects\/\$\{layoutData\.object\.id\}\/edit`\)/);
   assert.match(source, /setNotice\('Объект создан, галерея сохранена'\)/);
 });

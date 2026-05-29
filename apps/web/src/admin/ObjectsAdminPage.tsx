@@ -486,7 +486,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
         setForm(createFormFromObject(createData.object));
 
         try {
-          const layoutData = await persistGalleryDraftForObject(createData.object.id, createData.object.images);
+          const layoutData = await persistGalleryDraftForObject(createData.object.id);
 
           setObject(layoutData.object);
           setForm(createFormFromObject(layoutData.object));
@@ -511,7 +511,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
         return;
       }
 
-      const layoutData = await persistGalleryDraftForObject(editObjectId, object?.images ?? []);
+      const layoutData = await persistGalleryDraftForObject(editObjectId);
 
       setObject(layoutData.object);
       setForm(createFormFromObject(layoutData.object));
@@ -525,103 +525,21 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
     }
   }
 
-  async function persistGalleryDraftForObject(objectId: string, initialImages: ObjectImage[]) {
+  async function persistGalleryDraftForObject(objectId: string) {
     if (!accessToken) {
       throw new Error('Нет доступа');
     }
 
     const draftItems = galleryDraftItemsRef.current;
-    const coverDraftItem = galleryCoverDraftId
-      ? draftItems.find((item) => item.draftId === galleryCoverDraftId) ?? null
-      : null;
-    const imageIdByDraftId = new Map<string, string>();
-    let currentImages = initialImages;
+    const batchBody = createGalleryBatchBody(draftItems, galleryCoverDraftId);
 
-    draftItems.forEach((item) => {
-      if (item.kind === 'existing' && item.imageId) {
-        imageIdByDraftId.set(item.draftId, item.imageId);
-      }
-    });
+    setGalleryModalProgress(
+      batchBody.fileCount > 0 ? `Загрузка и сохранение галереи: ${batchBody.fileCount} фото` : 'Сохранение галереи',
+    );
 
-    const deletedImageCount = galleryDeletedImageIds.length;
-
-    for (const [deletedImageIndex, imageId] of galleryDeletedImageIds.entries()) {
-      setGalleryModalProgress(`Удаление изображений ${deletedImageIndex + 1}/${deletedImageCount}`);
-
-      const deleteData = await apiRequest<ObjectResponse>(`/objects/${objectId}/gallery/${imageId}`, accessToken, {
-        method: 'DELETE',
-      });
-
-      currentImages = deleteData.object.images;
-    }
-
-    if (coverDraftItem?.kind === 'new') {
-      if (!coverDraftItem.file) {
-        throw new Error('Не удалось прочитать файл обложки');
-      }
-
-      setGalleryModalProgress('Загрузка обложки');
-
-      const coverData = await uploadObjectMedia(objectId, 'cover', coverDraftItem.file);
-      const uploadedCoverImage = findUploadedGalleryImage(currentImages, coverData.object.images);
-
-      imageIdByDraftId.set(coverDraftItem.draftId, uploadedCoverImage.id);
-      currentImages = coverData.object.images;
-    }
-
-    const galleryUploadItems = draftItems.filter((item) => item.kind === 'new' && item.draftId !== galleryCoverDraftId);
-
-    const galleryUploadCount = galleryUploadItems.length;
-
-    for (const [galleryUploadIndex, item] of galleryUploadItems.entries()) {
-      if (!item.file) {
-        throw new Error('Не удалось прочитать файл галереи');
-      }
-
-      setGalleryModalProgress(`Загрузка изображений ${galleryUploadIndex + 1}/${galleryUploadCount}`);
-
-      const galleryData = await uploadObjectMedia(objectId, 'gallery', item.file);
-      const uploadedGalleryImage = findUploadedGalleryImage(currentImages, galleryData.object.images);
-
-      imageIdByDraftId.set(item.draftId, uploadedGalleryImage.id);
-      currentImages = galleryData.object.images;
-    }
-
-    const imageIds = draftItems.map((item) => {
-      const imageId = imageIdByDraftId.get(item.draftId);
-
-      if (!imageId) {
-        throw new Error('Не удалось сохранить изображение галереи');
-      }
-
-      return imageId;
-    });
-    const coverImageId = coverDraftItem ? imageIdByDraftId.get(coverDraftItem.draftId) ?? null : null;
-    const imageSections = draftItems.reduce<Record<string, ObjectImageSection | null>>((imageSections, item) => {
-      const imageId = imageIdByDraftId.get(item.draftId);
-
-      if (!imageId) {
-        return imageSections;
-      }
-
-      imageSections[imageId] = item.section;
-
-      return imageSections;
-    }, {});
-
-    if (draftItems.length > 0 && !coverImageId) {
-      throw new Error('Не удалось сохранить обложку галереи');
-    }
-
-    setGalleryModalProgress('Сохранение порядка');
-
-    return apiRequest<ObjectResponse>(`/objects/${objectId}/gallery/layout`, accessToken, {
+    return apiRequest<ObjectResponse>(`/objects/${objectId}/gallery/batch`, accessToken, {
       method: 'PATCH',
-      body: JSON.stringify({
-        imageIds,
-        coverImageId,
-        imageSections,
-      }),
+      body: batchBody.formData,
     });
   }
 
@@ -837,20 +755,6 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
       setError(inlineEditErrorMessage);
       throw new Error(inlineEditErrorMessage);
     }
-  }
-
-  async function uploadObjectMedia(objectId: string, kind: 'cover' | 'gallery', file: File) {
-    if (!accessToken) {
-      throw new Error('Нет доступа');
-    }
-
-    const body = new FormData();
-    body.append('file', file);
-
-    return apiRequest<ObjectResponse>(`/objects/${objectId}/${kind}`, accessToken, {
-      method: 'POST',
-      body,
-    });
   }
 
   async function uploadLinkedFiles(selectedFiles: FileList | File[]) {
@@ -3014,15 +2918,52 @@ function createNewGalleryDraftItems(files: FileList | File[]): GalleryDraftItem[
   }));
 }
 
-function findUploadedGalleryImage(previousImages: ObjectImage[], nextImages: ObjectImage[]) {
-  const previousImageIds = new Set(previousImages.map((image) => image.id));
-  const uploadedImage = nextImages.find((image) => !previousImageIds.has(image.id));
+function createGalleryBatchBody(draftItems: GalleryDraftItem[], coverDraftId: string | null) {
+  const formData = new FormData();
+  const files: File[] = [];
+  const coverIndex = coverDraftId ? draftItems.findIndex((item) => item.draftId === coverDraftId) : null;
 
-  if (!uploadedImage) {
-    throw new Error('Не удалось определить загруженное изображение');
+  if (draftItems.length > 0 && (coverIndex === null || coverIndex === -1)) {
+    throw new Error('Не удалось сохранить обложку галереи');
   }
 
-  return uploadedImage;
+  const items = draftItems.map((item) => {
+    if (item.kind === 'new') {
+      if (!item.file) {
+        throw new Error('Не удалось прочитать файл галереи');
+      }
+
+      const fileIndex = files.length;
+      files.push(item.file);
+
+      return {
+        kind: 'new',
+        fileIndex,
+        section: item.section,
+      };
+    }
+
+    if (!item.imageId) {
+      throw new Error('Не удалось сохранить изображение галереи');
+    }
+
+    return {
+      kind: 'existing',
+      imageId: item.imageId,
+      section: item.section,
+    };
+  });
+
+  formData.append('layout', JSON.stringify({
+    items,
+    coverIndex,
+  }));
+  files.forEach((file) => formData.append('files', file));
+
+  return {
+    fileCount: files.length,
+    formData,
+  };
 }
 
 function getInitialGalleryCoverDraftId(images: ObjectImage[]) {
