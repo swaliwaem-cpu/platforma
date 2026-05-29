@@ -103,7 +103,7 @@ test('catalog map marker label falls back to cleaned object title', async () => 
 
   assert.equal(resolveMapMarkerLabel({ title: 'ЖК «Ария»', mapName: '  Река  ' }), 'Река');
   assert.equal(resolveMapMarkerLabel({ title: 'ЖК Клубный дом «Ария»', mapName: null }), 'Ария');
-  assert.equal(resolveMapMarkerLabel({ title: 'Жилой комплекс Квартал Событие', mapName: '' }), 'Событи');
+  assert.equal(resolveMapMarkerLabel({ title: 'Жилой комплекс Квартал Событие', mapName: '' }), 'Событие');
   assert.equal(resolveMapMarkerLabel({ title: 'Дом', mapName: null }), 'Дом');
 });
 

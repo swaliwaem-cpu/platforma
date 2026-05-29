@@ -4,7 +4,7 @@ type MapMarkerLabelSource = {
 };
 
 const maxMapNameLength = 16;
-const fallbackLabelLength = 6;
+const fallbackLabelLength = 7;
 const leadingObjectTypePattern =
   /^(?:ж\.?\s*к\.?|жилой\s+комплекс|клубный\s+дом|клубная\s+резиденция|апарт-комплекс|апартаменты|квартал|резиденция|дом)(?:\s+|$)/iu;
 
