@@ -134,12 +134,15 @@ test('gallery modal save flow persists edited object gallery layout', () => {
   assert.match(source, /async function persistGalleryDraftForObject\(objectId: string/);
   assert.match(source, /draftItems\.length > 0 && !galleryCoverDraftId/);
   assert.match(source, /setGalleryModalError\('Выберите обложку для галереи'\)/);
-  assert.match(source, /setGalleryModalProgress\('Удаление изображений'/);
-  assert.match(source, /for \(const imageId of galleryDeletedImageIds\)/);
+  assert.match(source, /const deletedImageCount = galleryDeletedImageIds\.length;/);
+  assert.match(source, /for \(const \[deletedImageIndex,\s*imageId\] of galleryDeletedImageIds\.entries\(\)\)/);
+  assert.match(source, /setGalleryModalProgress\(`Удаление изображений \$\{deletedImageIndex \+ 1\}\/\$\{deletedImageCount\}`\)/);
   assert.match(source, /apiRequest<ObjectResponse>\(`\/objects\/\$\{objectId\}\/gallery\/\$\{imageId\}`,\s*accessToken,\s*\{[\s\S]*?method:\s*'DELETE'/);
   assert.match(source, /setGalleryModalProgress\('Загрузка обложки'/);
   assert.match(source, /uploadObjectMedia\(objectId,\s*'cover',\s*coverDraftItem\.file\)/);
-  assert.match(source, /setGalleryModalProgress\('Загрузка изображений'/);
+  assert.match(source, /const galleryUploadCount = galleryUploadItems\.length;/);
+  assert.match(source, /for \(const \[galleryUploadIndex,\s*item\] of galleryUploadItems\.entries\(\)\)/);
+  assert.match(source, /setGalleryModalProgress\(`Загрузка изображений \$\{galleryUploadIndex \+ 1\}\/\$\{galleryUploadCount\}`\)/);
   assert.match(source, /uploadObjectMedia\(objectId,\s*'gallery',\s*item\.file\)/);
   assert.match(source, /setGalleryModalProgress\('Сохранение порядка'/);
   assert.match(source, /const imageSections = draftItems\.reduce<Record<string,\s*ObjectImageSection \| null>>/);
@@ -148,6 +151,11 @@ test('gallery modal save flow persists edited object gallery layout', () => {
   assert.match(source, /setObject\(layoutData\.object\)/);
   assert.match(source, /resetGalleryModalDraft\(\)/);
   assert.match(source, /setNotice\('Галерея сохранена'\)/);
+});
+
+test('gallery modal previews avoid eager decoding of every thumbnail', () => {
+  assert.match(source, /return <img alt=\{item\.name\} decoding="async" loading="lazy" src=\{item\.previewUrl\} \/>;/);
+  assert.match(source, /<SecureImage[\s\S]*?decoding="async"[\s\S]*?lazy=\{variant === 'thumbnail'\}[\s\S]*?loading="lazy"[\s\S]*?variant=\{variant\}/);
 });
 
 test('gallery modal save flow creates new object before uploading draft media', () => {

@@ -543,11 +543,11 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
       }
     });
 
-    if (galleryDeletedImageIds.length > 0) {
-      setGalleryModalProgress('Удаление изображений');
-    }
+    const deletedImageCount = galleryDeletedImageIds.length;
 
-    for (const imageId of galleryDeletedImageIds) {
+    for (const [deletedImageIndex, imageId] of galleryDeletedImageIds.entries()) {
+      setGalleryModalProgress(`Удаление изображений ${deletedImageIndex + 1}/${deletedImageCount}`);
+
       const deleteData = await apiRequest<ObjectResponse>(`/objects/${objectId}/gallery/${imageId}`, accessToken, {
         method: 'DELETE',
       });
@@ -571,14 +571,14 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
 
     const galleryUploadItems = draftItems.filter((item) => item.kind === 'new' && item.draftId !== galleryCoverDraftId);
 
-    if (galleryUploadItems.length > 0) {
-      setGalleryModalProgress('Загрузка изображений');
-    }
+    const galleryUploadCount = galleryUploadItems.length;
 
-    for (const item of galleryUploadItems) {
+    for (const [galleryUploadIndex, item] of galleryUploadItems.entries()) {
       if (!item.file) {
         throw new Error('Не удалось прочитать файл галереи');
       }
+
+      setGalleryModalProgress(`Загрузка изображений ${galleryUploadIndex + 1}/${galleryUploadCount}`);
 
       const galleryData = await uploadObjectMedia(objectId, 'gallery', item.file);
       const uploadedGalleryImage = findUploadedGalleryImage(currentImages, galleryData.object.images);
@@ -2389,7 +2389,7 @@ function GalleryDraftPreview({
   variant: 'card' | 'thumbnail';
 }) {
   if (item.kind === 'new') {
-    return <img alt={item.name} src={item.previewUrl} />;
+    return <img alt={item.name} decoding="async" loading="lazy" src={item.previewUrl} />;
   }
 
   if (accessToken && existingImage) {
@@ -2397,7 +2397,10 @@ function GalleryDraftPreview({
       <SecureImage
         accessToken={accessToken}
         alt={existingImage.alt ?? existingImage.title ?? item.name}
+        decoding="async"
         fileId={existingImage.file.id}
+        lazy={variant === 'thumbnail'}
+        loading="lazy"
         variant={variant}
       />
     );
