@@ -5184,6 +5184,7 @@ tr.user-row--deactivated .text-button {
 
 .carousel-thumbnail-zone::before {
   position: absolute;
+  z-index: 0;
   right: 0;
   bottom: 0;
   left: 0;
@@ -5194,6 +5195,7 @@ tr.user-row--deactivated .text-button {
 
 .carousel-section-filters {
   position: absolute;
+  z-index: 1;
   right: auto;
   bottom: 106px;
   left: 50%;
@@ -5212,6 +5214,7 @@ tr.user-row--deactivated .text-button {
 
 .carousel-thumbnails {
   position: absolute;
+  z-index: 1;
   right: auto;
   bottom: 14px;
   left: 50%;
