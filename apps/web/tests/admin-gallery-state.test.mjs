@@ -134,7 +134,7 @@ test('gallery modal save flow persists edited object gallery layout', () => {
   assert.match(source, /async function persistGalleryDraftForObject\(objectId: string/);
   assert.match(source, /draftItems\.length > 0 && !galleryCoverDraftId/);
   assert.match(source, /setGalleryModalError\('Выберите обложку для галереи'\)/);
-  assert.match(source, /const batchBody = createGalleryBatchBody\(draftItems,\s*galleryCoverDraftId\);/);
+  assert.match(source, /const batchBody = createGalleryBatchBody\(reconciledDraft\.draftItems,\s*reconciledDraft\.coverDraftId\);/);
   assert.match(source, /setGalleryModalProgress\([\s\S]*?batchBody\.fileCount > 0 \? `Загрузка и сохранение галереи: \$\{batchBody\.fileCount\} фото` : 'Сохранение галереи'[\s\S]*?\);/);
   assert.match(source, /apiRequest<ObjectResponse>\(`\/objects\/\$\{objectId\}\/gallery\/batch`,\s*accessToken,\s*\{[\s\S]*?method:\s*'PATCH'[\s\S]*?body:\s*batchBody\.formData/);
   assert.doesNotMatch(source, /apiRequest<ObjectResponse>\(`\/objects\/\$\{objectId\}\/gallery\/\$\{imageId\}`/);
@@ -156,6 +156,23 @@ test('gallery modal builds one multipart batch payload for existing and new imag
   assert.match(source, /return \{[\s\S]*?kind:\s*'existing'[\s\S]*?imageId:\s*item\.imageId[\s\S]*?section:\s*item\.section[\s\S]*?\};/);
   assert.match(source, /formData\.append\('layout', JSON\.stringify\(\{[\s\S]*?items[\s\S]*?coverIndex[\s\S]*?\}\)\);/);
   assert.match(source, /files\.forEach\(\(file\) => formData\.append\('files', file\)\);/);
+});
+
+test('gallery modal refreshes current gallery before batch save and drops stale existing ids', () => {
+  assert.match(source, /const currentData = await apiRequest<ObjectResponse>\(`\/objects\/\$\{objectId\}`,\s*accessToken\);/);
+  assert.match(source, /const reconciledDraft = reconcileGalleryDraftItemsWithCurrentGallery\([\s\S]*?galleryDraftItemsRef\.current[\s\S]*?galleryCoverDraftId[\s\S]*?currentData\.object\.images[\s\S]*?\);/);
+  assert.match(source, /galleryDraftItemsRef\.current = reconciledDraft\.draftItems;/);
+  assert.match(source, /setGalleryDraftItems\(reconciledDraft\.draftItems\);/);
+  assert.match(source, /setGalleryCoverDraftId\(reconciledDraft\.coverDraftId\);/);
+  assert.match(source, /createGalleryBatchBody\(reconciledDraft\.draftItems,\s*reconciledDraft\.coverDraftId\);/);
+  assert.match(source, /function reconcileGalleryDraftItemsWithCurrentGallery\([\s\S]*?const currentImageIds = new Set\(currentImages\.map\(\(image\) => image\.id\)\);[\s\S]*?item\.kind === 'new' \|\| \(item\.imageId !== null && currentImageIds\.has\(item\.imageId\)\)/);
+});
+
+test('gallery modal blocks duplicate save submissions synchronously', () => {
+  assert.match(source, /const galleryModalSaveInFlightRef = useRef\(false\);/);
+  assert.match(source, /if \(galleryModalProgress \|\| galleryModalSaveInFlightRef\.current\) \{/);
+  assert.match(source, /galleryModalSaveInFlightRef\.current = true;/);
+  assert.match(source, /galleryModalSaveInFlightRef\.current = false;/);
 });
 
 test('gallery modal previews avoid eager decoding of every thumbnail', () => {

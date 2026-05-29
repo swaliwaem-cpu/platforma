@@ -196,6 +196,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
   const [objectFileType, setObjectFileType] = useState<ObjectFileType>('PRESENTATION');
   const [objectFileTitle, setObjectFileTitle] = useState('');
   const galleryDraftItemsRef = useRef<GalleryDraftItem[]>([]);
+  const galleryModalSaveInFlightRef = useRef(false);
   const pendingEditorErrorRef = useRef<string | null>(null);
   const pendingEditorNoticeRef = useRef<string | null>(null);
 
@@ -407,6 +408,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
   function resetGalleryModalDraft() {
     revokeGalleryDraftPreviewUrls(galleryDraftItemsRef.current);
     galleryDraftItemsRef.current = [];
+    galleryModalSaveInFlightRef.current = false;
     setIsGalleryModalOpen(false);
     setGalleryDraftItems([]);
     setGalleryCoverDraftId(null);
@@ -421,7 +423,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
       return;
     }
 
-    if (galleryModalProgress) {
+    if (galleryModalProgress || galleryModalSaveInFlightRef.current) {
       return;
     }
 
@@ -458,6 +460,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
 
     setGalleryModalError(null);
     setNotice(null);
+    galleryModalSaveInFlightRef.current = true;
 
     try {
       if (isCreateRoute) {
@@ -520,6 +523,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
     } catch (caughtError) {
       setGalleryModalError(caughtError instanceof Error ? caughtError.message : 'Не удалось сохранить галерею');
     } finally {
+      galleryModalSaveInFlightRef.current = false;
       setGalleryModalProgress(null);
       setIsSubmitting(false);
     }
@@ -530,8 +534,20 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
       throw new Error('Нет доступа');
     }
 
-    const draftItems = galleryDraftItemsRef.current;
-    const batchBody = createGalleryBatchBody(draftItems, galleryCoverDraftId);
+    setGalleryModalProgress('Проверка актуальной галереи');
+
+    const currentData = await apiRequest<ObjectResponse>(`/objects/${objectId}`, accessToken);
+    const reconciledDraft = reconcileGalleryDraftItemsWithCurrentGallery(
+      galleryDraftItemsRef.current,
+      galleryCoverDraftId,
+      currentData.object.images,
+    );
+
+    galleryDraftItemsRef.current = reconciledDraft.draftItems;
+    setGalleryDraftItems(reconciledDraft.draftItems);
+    setGalleryCoverDraftId(reconciledDraft.coverDraftId);
+
+    const batchBody = createGalleryBatchBody(reconciledDraft.draftItems, reconciledDraft.coverDraftId);
 
     setGalleryModalProgress(
       batchBody.fileCount > 0 ? `Загрузка и сохранение галереи: ${batchBody.fileCount} фото` : 'Сохранение галереи',
@@ -2916,6 +2932,25 @@ function createNewGalleryDraftItems(files: FileList | File[]): GalleryDraftItem[
     name: file.name || 'Новое изображение',
     section: null,
   }));
+}
+
+function reconcileGalleryDraftItemsWithCurrentGallery(
+  draftItems: GalleryDraftItem[],
+  coverDraftId: string | null,
+  currentImages: ObjectImage[],
+) {
+  const currentImageIds = new Set(currentImages.map((image) => image.id));
+  const reconciledDraftItems = draftItems.filter(
+    (item) => item.kind === 'new' || (item.imageId !== null && currentImageIds.has(item.imageId)),
+  );
+  const reconciledCoverDraftId = coverDraftId && reconciledDraftItems.some((item) => item.draftId === coverDraftId)
+    ? coverDraftId
+    : reconciledDraftItems[0]?.draftId ?? null;
+
+  return {
+    draftItems: reconciledDraftItems,
+    coverDraftId: reconciledCoverDraftId,
+  };
 }
 
 function createGalleryBatchBody(draftItems: GalleryDraftItem[], coverDraftId: string | null) {
