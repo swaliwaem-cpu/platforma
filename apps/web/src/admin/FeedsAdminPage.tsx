@@ -9,6 +9,7 @@ import {
   RotateCcwIcon,
   SaveIcon,
   SquareIcon,
+  UploadIcon,
 } from 'lucide-react';
 import type {
   DevelopersResponse,
@@ -49,6 +50,10 @@ import {
 import { useAuth } from '../auth/AuthProvider';
 import { AdminAlert, AdminButton, AdminEmptyState, AdminPanel, AdminStatusBadge } from './AdminUi';
 import { apiRequest } from './api';
+import {
+  findFeedDeveloperSuggestion,
+  findFeedObjectSuggestion,
+} from './feedSourceMatching';
 
 type FeedsAdminPageProps = {
   pathname: string;
@@ -574,17 +579,34 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
     setNotice(null);
 
     try {
-      const data = await apiRequest<FeedSourceAnalysisResponse>('/feeds/analyze', accessToken, {
-        method: 'POST',
-        body: createSourceAnalysisRequestBody(analysisForm),
-      });
+      let data: FeedSourceAnalysisResponse | null = null;
+      let resolvedAnalysisForm: SourceFormState | null = null;
+      let lastAnalysisError: unknown = null;
+
+      for (const analysisAttemptForm of createSourceAnalysisFormAttempts(analysisForm)) {
+        try {
+          data = await apiRequest<FeedSourceAnalysisResponse>('/feeds/analyze', accessToken, {
+            method: 'POST',
+            body: createSourceAnalysisRequestBody(analysisAttemptForm),
+          });
+          resolvedAnalysisForm = analysisAttemptForm;
+          break;
+        } catch (caughtError) {
+          lastAnalysisError = caughtError;
+        }
+      }
+
+      if (!data || !resolvedAnalysisForm) {
+        throw lastAnalysisError instanceof Error ? lastAnalysisError : new Error('Не удалось разобрать фид');
+      }
 
       if (data.discovery && !data.analysis) {
         setSourceDiscovery(data.discovery);
         setSourceAnalysis(null);
         setForm((currentForm) => ({
           ...currentForm,
-          format: analysisForm.format,
+          sourceKind: resolvedAnalysisForm.sourceKind,
+          format: resolvedAnalysisForm.format,
           mappings: [],
         }));
         setNotice(`Найдено площадок: ${formatNumber(data.discovery.platforms.length)}. Выберите площадку для разбора.`);
@@ -596,21 +618,34 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
       }
 
       const analysis = data.analysis;
-      const suggestedDeveloperId = findDeveloperSuggestion(analysis, developers);
+      const suggestedDeveloperId = findFeedDeveloperSuggestion(analysis, developers, objects);
 
       setSourceDiscovery(null);
       setSourceAnalysis(analysis);
       setForm((currentForm) => {
         const developerId = currentForm.developerId || suggestedDeveloperId;
-        const objectOptions = developerId
+        const initialObjectOptions = developerId
           ? objects.filter((object) => object.developer?.id === developerId)
-          : [];
-        const mappings = createSourceMappingsFromAnalysis(analysis, currentForm.mappings, objectOptions);
+          : objects;
+        const initialMappings = createSourceMappingsFromAnalysis(
+          analysis,
+          currentForm.mappings,
+          initialObjectOptions,
+        );
+        const mappedDeveloperId = findMappedDeveloperSuggestion(initialMappings, objects);
+        const mappings = developerId || !mappedDeveloperId
+          ? initialMappings
+          : createSourceMappingsFromAnalysis(
+              analysis,
+              initialMappings,
+              objects.filter((object) => object.developer?.id === mappedDeveloperId),
+            );
 
         return {
           ...currentForm,
+          sourceKind: resolvedAnalysisForm.sourceKind,
           format: analysis.format,
-          developerId,
+          developerId: developerId || mappedDeveloperId,
           objectId: mappings.length > 0 ? '' : currentForm.objectId,
           mappings,
         };
@@ -863,113 +898,60 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                 </div>
 
                 <div className="form-grid feed-source-form-grid">
-                  <div className="field-wide feed-source-kind-field">
-                    <span>Способ</span>
-                    <div className="feed-source-kind-options" role="radiogroup" aria-label="Способ подключения фида">
-                      <label className={form.sourceKind === 'URL' ? 'feed-source-kind-option is-selected' : 'feed-source-kind-option'}>
+                  <label className="field-wide feed-source-input-field">
+                    Источник
+                    <div className="feed-source-input-row">
+                      <input
+                        key="feed-source-input"
+                        inputMode="url"
+                        name="feedSourceInput"
+                        placeholder="https://example.com/feed.xml или https://example.com/xml/"
+                        type="text"
+                        value={form.url}
+                        onChange={(event) => {
+                          setSourceAnalysis(null);
+                          setSourceDiscovery(null);
+                          setForm((currentForm) => ({
+                            ...currentForm,
+                            sourceKind: 'URL',
+                            url: event.target.value,
+                            xmlFile: null,
+                            mappings: [],
+                          }));
+                        }}
+                      />
+                      <label className="feed-source-upload-button" title="Загрузить XML-файл" aria-label="Загрузить XML-файл">
+                        <UploadIcon aria-hidden="true" size={18} />
                         <input
-                          checked={form.sourceKind === 'URL'}
-                          name="sourceKind"
-                          type="radio"
-                          value="URL"
-                          onChange={() => {
-                            setSourceAnalysis(null);
-                            setSourceDiscovery(null);
-                            setForm((currentForm) => ({
-                              ...currentForm,
-                              sourceKind: 'URL',
-                              xmlFile: null,
-                              format: currentForm.format,
-                              mappings: [],
-                            }));
-                          }}
-                        />
-                        URL
-                      </label>
-                      <label className={form.sourceKind === 'INDEX_URL' ? 'feed-source-kind-option is-selected' : 'feed-source-kind-option'}>
-                        <input
-                          checked={form.sourceKind === 'INDEX_URL'}
-                          name="sourceKind"
-                          type="radio"
-                          value="INDEX_URL"
-                          onChange={() => {
-                            setSourceAnalysis(null);
-                            setSourceDiscovery(null);
-                            setForm((currentForm) => ({
-                              ...currentForm,
-                              sourceKind: 'INDEX_URL',
-                              xmlFile: null,
-                              format: 'AUTO',
-                              mappings: [],
-                            }));
-                          }}
-                        />
-                        Индекс XML
-                      </label>
-                      <label className={form.sourceKind === 'FILE' ? 'feed-source-kind-option is-selected' : 'feed-source-kind-option'}>
-                        <input
-                          checked={form.sourceKind === 'FILE'}
-                          name="sourceKind"
-                          type="radio"
-                          value="FILE"
-                          onChange={() => {
+                          key="feed-source-file-input"
+                          accept=".xml,application/xml,text/xml"
+                          className="feed-source-file-input"
+                          name="xmlFile"
+                          type="file"
+                          onChange={(event) => {
+                            const xmlFile = event.target.files?.[0] ?? null;
+
+                            if (!xmlFile) {
+                              return;
+                            }
+
                             setSourceAnalysis(null);
                             setSourceDiscovery(null);
                             setForm((currentForm) => ({
                               ...currentForm,
                               sourceKind: 'FILE',
                               url: '',
-                              format: currentForm.format,
+                              xmlFile,
                               mappings: [],
                             }));
                           }}
                         />
-                        XML-файл
                       </label>
                     </div>
-                  </div>
-
-                  {isUrlBackedSourceKind(form.sourceKind) ? (
-                    <label className="field-wide">
-                      URL
-                      <input
-                        key="feed-source-url-input"
-                        name="url"
-                        placeholder="https://example.com/feed.xml"
-                        type="url"
-                        value={form.url}
-                        onChange={(event) => {
-                          setSourceAnalysis(null);
-                          setSourceDiscovery(null);
-                          setForm((currentForm) => ({ ...currentForm, url: event.target.value, mappings: [] }));
-                        }}
-                      />
-                    </label>
-                  ) : (
-                    <label className="field-wide">
-                      XML-файл
-                      <input
-                        key="feed-source-file-input"
-                        accept=".xml,application/xml,text/xml"
-                        name="xmlFile"
-                        type="file"
-                        onChange={(event) => {
-                          setSourceAnalysis(null);
-                          setSourceDiscovery(null);
-                          setForm((currentForm) => ({
-                            ...currentForm,
-                            xmlFile: event.target.files?.[0] ?? null,
-                            mappings: [],
-                          }));
-                        }}
-                      />
-                      {form.xmlFile ? (
-                        <span className="feed-source-file-current">{form.xmlFile.name}</span>
-                      ) : editorSource?.xmlFile ? (
-                        <span className="feed-source-file-current">{editorSource.xmlFile.originalName ?? editorSource.xmlFile.key}</span>
-                      ) : null}
-                    </label>
-                  )}
+                    {getSelectedFeedXmlFileName(form, editorSource) ? (
+                      <span className="feed-source-file-current">{getSelectedFeedXmlFileName(form, editorSource)}</span>
+                    ) : null}
+                  </label>
 
                   <label>
                     Формат
@@ -1009,6 +991,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                   <FeedSourceAnalysisPanel
                     analysis={sourceAnalysis}
                     mappingValues={form.mappings}
+                    selectedDeveloper={developers.find((developer) => developer.id === form.developerId) ?? null}
                     objectOptions={filteredObjects}
                     isObjectSelectDisabled={!form.developerId}
                     isLoading={isAnalyzingSource}
@@ -1034,6 +1017,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
   "yandexBuildingIds": ["2133018"],
   "yandexHouseIds": ["2923598"],
   "avitoDevelopmentIds": ["8605163"],
+  "feedIndexSourceUrls": ["https://example.com/feed.xml"],
   "addressIncludes": ["пр-кт Андропова"]
 }`}
                           rows={7}
@@ -1046,7 +1030,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                       </label>
                       <div className="feed-source-filter-json-footer">
                         <span className="feed-source-file-current">
-                          buildingNames, yandexBuildingIds, yandexHouseIds, avitoDevelopmentIds, addressIncludes
+                          buildingNames, yandexBuildingIds, yandexHouseIds, avitoDevelopmentIds, feedIndexSourceUrls, addressIncludes
                         </span>
                         <AdminButton
                           tone="text"
@@ -1660,6 +1644,7 @@ function FeedRunProgressCard({ run, progress }: { run: FeedImportRun | null; pro
 function FeedSourceAnalysisPanel({
   analysis,
   mappingValues,
+  selectedDeveloper,
   objectOptions,
   isObjectSelectDisabled,
   isLoading,
@@ -1668,12 +1653,15 @@ function FeedSourceAnalysisPanel({
 }: {
   analysis: FeedSourceAnalysis | null;
   mappingValues: SourceMappingFormState[];
+  selectedDeveloper: ObjectDeveloper | null;
   objectOptions: RealEstateObjectSummary[];
   isObjectSelectDisabled: boolean;
   isLoading: boolean;
   onAnalyze: () => void;
   onMappingChange: (sourceKey: string, objectId: string) => void;
 }) {
+  const analysisDeveloperName = analysis?.developerName ?? selectedDeveloper?.name ?? null;
+
   return (
     <section className="field-wide feed-source-analysis" aria-label="Разбор фида">
       <div className="feed-source-analysis-header">
@@ -1681,7 +1669,7 @@ function FeedSourceAnalysisPanel({
           <strong>Разбор фида</strong>
           <span>
             {analysis
-              ? `${analysis.developerName ?? 'Застройщик не указан'} · ${formatNumber(analysis.unitsCount)} лотов`
+              ? `${analysisDeveloperName ?? 'Застройщик не указан'} · ${formatNumber(analysis.unitsCount)} лотов`
               : 'Застройщик, объекты и количество лотов появятся после разбора'}
           </span>
         </div>
@@ -1696,7 +1684,7 @@ function FeedSourceAnalysisPanel({
           <dl className="feed-source-analysis-summary">
             <div>
               <dt>Застройщик</dt>
-              <dd>{analysis.developerName ?? 'не указан'}</dd>
+              <dd>{analysisDeveloperName ?? 'не указан'}</dd>
             </div>
             <div>
               <dt>Объектов</dt>
@@ -1896,11 +1884,13 @@ function createFormFromSource(source: FeedSource): SourceFormState {
 }
 
 function validateSourceForm(form: SourceFormState, existingSource?: FeedSource | null) {
-  if (isUrlBackedSourceKind(form.sourceKind) && !form.url.trim()) {
+  const sourceKind = getConcreteFeedSourceKind(form);
+
+  if (isUrlBackedSourceKind(sourceKind) && !form.url.trim()) {
     return 'Укажите URL фида';
   }
 
-  if (form.sourceKind === 'FILE' && !form.xmlFile && existingSource?.sourceKind !== 'FILE') {
+  if (sourceKind === 'FILE' && !form.xmlFile && existingSource?.sourceKind !== 'FILE') {
     return 'Выберите XML-файл фида';
   }
 
@@ -1932,11 +1922,13 @@ function validateSourceForm(form: SourceFormState, existingSource?: FeedSource |
 }
 
 function validateSourceAnalysisForm(form: SourceFormState) {
-  if (isUrlBackedSourceKind(form.sourceKind) && !form.url.trim()) {
+  const sourceKind = getConcreteFeedSourceKind(form);
+
+  if (isUrlBackedSourceKind(sourceKind) && !form.url.trim()) {
     return 'Укажите URL фида';
   }
 
-  if (form.sourceKind === 'FILE' && !form.xmlFile) {
+  if (sourceKind === 'FILE' && !form.xmlFile) {
     return 'Выберите XML-файл фида для разбора';
   }
 
@@ -1947,8 +1939,9 @@ function createSourceRequestBody(form: SourceFormState) {
   const formData = new FormData();
   const selectedMappings = getSelectedSourceMappings(form);
   const objectId = selectedMappings.length > 0 ? '' : form.objectId;
+  const sourceKind = getConcreteFeedSourceKind(form);
 
-  formData.append('sourceKind', form.sourceKind);
+  formData.append('sourceKind', sourceKind);
   formData.append('format', getConcreteFeedFormat(form.format));
   formData.append('filterJson', form.filterJson.trim());
   formData.append('developerId', form.developerId);
@@ -1956,11 +1949,11 @@ function createSourceRequestBody(form: SourceFormState) {
   formData.append('mappings', JSON.stringify(selectedMappings));
   formData.append('isActive', String(form.isActive));
 
-  if (isUrlBackedSourceKind(form.sourceKind)) {
+  if (isUrlBackedSourceKind(sourceKind)) {
     formData.append('url', form.url.trim());
   }
 
-  if (form.sourceKind === 'FILE' && form.xmlFile) {
+  if (sourceKind === 'FILE' && form.xmlFile) {
     formData.append('xmlFile', form.xmlFile);
   }
 
@@ -1969,19 +1962,37 @@ function createSourceRequestBody(form: SourceFormState) {
 
 function createSourceAnalysisRequestBody(form: SourceFormState) {
   const formData = new FormData();
+  const sourceKind = getConcreteFeedSourceKind(form);
 
-  formData.append('sourceKind', form.sourceKind);
+  formData.append('sourceKind', sourceKind);
   formData.append('format', form.format);
 
-  if (isUrlBackedSourceKind(form.sourceKind)) {
+  if (isUrlBackedSourceKind(sourceKind)) {
     formData.append('url', form.url.trim());
   }
 
-  if (form.sourceKind === 'FILE' && form.xmlFile) {
+  if (sourceKind === 'FILE' && form.xmlFile) {
     formData.append('xmlFile', form.xmlFile);
   }
 
   return formData;
+}
+
+function createSourceAnalysisFormAttempts(form: SourceFormState): SourceFormState[] {
+  const sourceKind = getConcreteFeedSourceKind(form);
+
+  if (sourceKind === 'FILE') {
+    return [{ ...form, sourceKind }];
+  }
+
+  return [
+    { ...form, sourceKind: 'URL' },
+    { ...form, sourceKind: 'INDEX_URL' },
+  ];
+}
+
+function getConcreteFeedSourceKind(form: SourceFormState): FeedSourceKind {
+  return form.xmlFile ? 'FILE' : form.sourceKind;
 }
 
 function getConcreteFeedFormat(format: FeedFormatChoice): FeedFormat {
@@ -1994,6 +2005,18 @@ function getConcreteFeedFormat(format: FeedFormatChoice): FeedFormat {
 
 function isUrlBackedSourceKind(sourceKind: FeedSourceKind) {
   return sourceKind === 'URL' || sourceKind === 'INDEX_URL';
+}
+
+function getSelectedFeedXmlFileName(form: SourceFormState, source?: FeedSource | null) {
+  if (form.xmlFile) {
+    return form.xmlFile.name;
+  }
+
+  if (form.sourceKind === 'FILE' && source?.xmlFile) {
+    return source.xmlFile.originalName ?? source.xmlFile.key;
+  }
+
+  return '';
 }
 
 function createSourceMappingsFromAnalysis(
@@ -2011,57 +2034,28 @@ function createSourceMappingsFromAnalysis(
         sourceKey,
         sourceTitle: feedObject.title,
         filterJson: feedObject.filterJson ?? {},
-        objectId: findObjectSuggestion(feedObject, objectOptions, currentMapping?.objectId),
+        objectId: findFeedObjectSuggestion(feedObject, objectOptions, currentMapping?.objectId),
       };
     });
 }
 
-function findDeveloperSuggestion(analysis: FeedSourceAnalysis, developers: ObjectDeveloper[]) {
-  const normalizedDeveloperName = analysis.developerName ? normalizeFeedMatchText(analysis.developerName) : '';
-
-  if (!normalizedDeveloperName) {
-    return '';
-  }
-
-  const matches = developers.filter((developer) => normalizeFeedMatchText(developer.name) === normalizedDeveloperName);
-
-  return matches.length === 1 ? matches[0]?.id ?? '' : '';
-}
-
-function findObjectSuggestion(
-  feedObject: FeedSourceAnalysisObject,
-  objectOptions: RealEstateObjectSummary[],
-  currentObjectId = '',
+function findMappedDeveloperSuggestion(
+  mappings: SourceMappingFormState[],
+  objects: RealEstateObjectSummary[],
 ) {
-  if (currentObjectId) {
-    return currentObjectId;
+  const objectById = new Map<string, RealEstateObjectSummary>();
+
+  for (const object of objects) {
+    objectById.set(object.id, object);
   }
 
-  const feedNames = [
-    feedObject.title,
-    ...feedObject.projectNames,
-    ...feedObject.buildingNames,
-  ]
-    .map(normalizeFeedMatchText)
-    .filter((value) => value.length > 0);
+  const developerIds = new Set(
+    mappings
+      .map((mapping) => objectById.get(mapping.objectId)?.developer?.id)
+      .filter((developerId): developerId is string => Boolean(developerId)),
+  );
 
-  if (feedNames.length === 0) {
-    return '';
-  }
-
-  const matches = objectOptions.filter((object) => feedNames.includes(normalizeFeedMatchText(object.title)));
-
-  return matches.length === 1 ? matches[0]?.id ?? '' : '';
-}
-
-function normalizeFeedMatchText(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[«»"']/gu, ' ')
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
-    .replace(/(?:^|\s)(?:ао|ооо|пао|гк|группа|компаний|жк|жилой|комплекс)(?=\s|$)/gu, ' ')
-    .trim()
-    .replace(/\s+/gu, ' ');
+  return developerIds.size === 1 ? [...developerIds][0] ?? '' : '';
 }
 
 function getSelectedSourceMappings(form: SourceFormState) {
@@ -2123,6 +2117,7 @@ function createFeedAnalysisObjectKey(feedObject: FeedSourceAnalysisObject) {
   const useExternalIds = shouldUseFeedAnalysisExternalIds(feedObject);
   const rawKey = [
     feedObject.title,
+    feedObject.feedIndexSourceUrls.join('|'),
     feedObject.projectNames.join('|'),
     useExternalIds ? feedObject.externalIds.join('|') : '',
     feedObject.buildingNames.join('|'),
@@ -2148,6 +2143,7 @@ function hashText(value: string) {
 function formatFeedAnalysisObjectMeta(feedObject: FeedSourceAnalysisObject) {
   const useExternalIds = shouldUseFeedAnalysisExternalIds(feedObject);
   const parts = [
+    feedObject.feedIndexSourceUrls.length > 0 ? `sheetUrls: ${feedObject.feedIndexSourceUrls.length}` : null,
     feedObject.projectNames.length > 0 ? `projectNames: ${feedObject.projectNames.join(', ')}` : null,
     useExternalIds && feedObject.externalIds.length > 0 ? `externalIds: ${feedObject.externalIds.join(', ')}` : null,
     feedObject.buildingNames.length > 0 ? `buildingNames: ${feedObject.buildingNames.join(', ')}` : null,
@@ -2163,6 +2159,7 @@ function formatFeedAnalysisObjectMeta(feedObject: FeedSourceAnalysisObject) {
 function shouldUseFeedAnalysisExternalIds(feedObject: FeedSourceAnalysisObject) {
   return (
     feedObject.projectNames.length === 0 &&
+    feedObject.feedIndexSourceUrls.length === 0 &&
     feedObject.buildingNames.length === 0 &&
     feedObject.yandexBuildingIds.length === 0 &&
     feedObject.yandexHouseIds.length === 0 &&

@@ -31,10 +31,9 @@ test('feeds admin page wires source CRUD, preview, run, reports, and units API c
 test('feeds admin page exposes required source form fields and unit filters', () => {
   const source = readFileSync(sourcePath, 'utf8');
 
-  assert.match(source, /name="sourceKind"/);
-  assert.match(source, /value="INDEX_URL"/);
-  assert.match(source, /Индекс XML/);
-  assert.match(source, /name="url"/);
+  assert.match(source, /name="feedSourceInput"/);
+  assert.match(source, /className="feed-source-input-row"/);
+  assert.match(source, /aria-label="Загрузить XML-файл"/);
   assert.match(source, /name="xmlFile"/);
   assert.match(source, /name="format"/);
   assert.match(source, /name="filterJson"/);
@@ -50,7 +49,8 @@ test('feeds admin page submits multipart form data for uploaded XML sources', ()
 
   assert.match(source, /xmlFile: File \| null/);
   assert.match(source, /const formData = new FormData\(\)/);
-  assert.match(source, /formData\.append\('sourceKind', form\.sourceKind\)/);
+  assert.match(source, /const sourceKind = getConcreteFeedSourceKind\(form\)/);
+  assert.match(source, /formData\.append\('sourceKind', sourceKind\)/);
   assert.match(source, /formData\.append\('filterJson', form\.filterJson\.trim\(\)\)/);
   assert.match(source, /formData\.append\('mappings', JSON\.stringify\(selectedMappings\)\)/);
   assert.match(source, /formData\.append\('xmlFile', form\.xmlFile\)/);
@@ -113,10 +113,28 @@ test('feeds admin page keeps auto format analysis-only and conservative automapp
   const source = readFileSync(sourcePath, 'utf8');
 
   assert.match(source, /form\.format === 'AUTO'/);
-  assert.match(source, /findDeveloperSuggestion/);
-  assert.match(source, /findObjectSuggestion/);
-  assert.match(source, /normalizeFeedMatchText/);
-  assert.match(source, /objectId: findObjectSuggestion/);
+  assert.match(source, /createSourceAnalysisFormAttempts/);
+  assert.match(source, /findFeedDeveloperSuggestion/);
+  assert.match(source, /findFeedObjectSuggestion/);
+  assert.match(source, /objectId: findFeedObjectSuggestion/);
+});
+
+test('feeds admin page automaps sheet objects before deriving developer from mapped objects', () => {
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.match(source, /const initialObjectOptions = developerId[\s\S]*: objects/);
+  assert.match(source, /const mappedDeveloperId = findMappedDeveloperSuggestion/);
+  assert.match(source, /developerId: developerId \|\| mappedDeveloperId/);
+  assert.match(source, /function findMappedDeveloperSuggestion/);
+});
+
+test('feeds admin page shows linked developer in analysis summary when feed omits developer', () => {
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.match(source, /selectedDeveloper={developers\.find\(\(developer\) => developer\.id === form\.developerId\) \?\? null}/);
+  assert.match(source, /const analysisDeveloperName = analysis\?\.developerName \?\? selectedDeveloper\?\.name \?\? null/);
+  assert.match(source, /analysisDeveloperName \?\? 'Застройщик не указан'/);
+  assert.match(source, /analysisDeveloperName \?\? 'не указан'/);
 });
 
 test('feeds admin page clears fallback object when analysis mappings exist', () => {
@@ -135,11 +153,23 @@ test('feeds admin page keeps raw Yandex filter hidden until it has data', () => 
   assert.match(source, /Очистить фильтр/);
 });
 
-test('feeds admin page keeps URL and file source inputs as separate React elements', () => {
+test('feeds admin page uses one source input row instead of source kind buttons', () => {
   const source = readFileSync(sourcePath, 'utf8');
 
-  assert.match(source, /key="feed-source-url-input"/);
+  assert.match(source, /key="feed-source-input"/);
   assert.match(source, /key="feed-source-file-input"/);
+  assert.doesNotMatch(source, /role="radiogroup"/);
+  assert.doesNotMatch(source, /feed-source-kind-option/);
+  assert.doesNotMatch(source, />Способ</);
+});
+
+test('feeds admin page auto-detects URL feed kind before falling back to index XML', () => {
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.match(source, /createSourceAnalysisFormAttempts\(analysisForm\)/);
+  assert.match(source, /sourceKind:\s*'URL'/);
+  assert.match(source, /sourceKind:\s*'INDEX_URL'/);
+  assert.match(source, /resolvedAnalysisForm/);
 });
 
 test('feeds admin page loads every object page for the linked object selector', () => {

@@ -6661,39 +6661,53 @@ tr.user-row--deactivated .text-button {
   line-height: 1.45;
 }
 
-.feed-source-kind-field {
+.feed-source-input-field {
   display: grid;
-  gap: 9px;
-}
-
-.feed-source-kind-options {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
-.feed-source-kind-option {
-  display: inline-flex;
-  min-height: 44px;
-  align-items: center;
-  justify-content: center;
+.feed-source-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  align-items: stretch;
+}
+
+.feed-source-input-row input[name="feedSourceInput"] {
+  min-width: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.feed-source-upload-button {
+  display: grid;
+  width: 44px;
+  min-height: 45px;
+  place-items: center;
   border: 1px solid #d6dde5;
-  border-radius: 8px;
+  border-left: 0;
+  border-radius: 0 8px 8px 0;
   background: #f8fafc;
-  color: #303b47;
-  font-size: 14px;
-  font-weight: 850;
+  color: #536172;
   cursor: pointer;
+  transition:
+    background 140ms ease,
+    color 140ms ease,
+    box-shadow 140ms ease;
 }
 
-.feed-source-kind-option.is-selected {
-  border-color: #c6a761;
-  background: #f3ead0;
-  color: #15191f;
+.feed-source-upload-button:hover {
+  background: #eef3f8;
+  color: #18202a;
 }
 
-.feed-source-kind-option input {
+.feed-source-upload-button:focus-within {
+  box-shadow: 0 0 0 3px rgb(198 167 97 / 22%);
+}
+
+.feed-source-file-input {
   position: absolute;
+  width: 1px;
+  height: 1px;
   opacity: 0;
   pointer-events: none;
 }

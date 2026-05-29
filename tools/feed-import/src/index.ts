@@ -1041,6 +1041,11 @@ type FeedSourceKind = 'URL' | 'FILE' | 'INDEX_URL';
 type FeedUnitStatusValue = NormalizedFeedUnitStatus;
 type DecimalLike = string | number | { toString: () => string };
 
+type FeedIndexLinkCandidate = {
+  url: string;
+  objectName: string | null;
+};
+
 const activeFeedUnitStatuses: FeedUnitStatusValue[] = ['AVAILABLE', 'BOOKED', 'RESERVED'];
 
 type FeedSourceXmlFileRecord = {
@@ -1398,6 +1403,7 @@ export type FeedImportResult = {
 export type FeedSourceAnalysisObject = {
   title: string;
   unitsCount: number;
+  feedIndexSourceUrls: string[];
   projectNames: string[];
   externalIds: string[];
   buildingNames: string[];
@@ -1769,8 +1775,20 @@ function hasXmlNodes(value: unknown): boolean {
 }
 
 export function discoverFeedIndexLinks(html: string, baseUrl: string): string[] {
+  return discoverFeedIndexLinkCandidates(html, baseUrl).map((candidate) => candidate.url);
+}
+
+function discoverFeedIndexLinkCandidates(content: string, baseUrl: string): FeedIndexLinkCandidate[] {
+  if (isGoogleSheetsUrl(baseUrl)) {
+    return discoverGoogleSheetsFeedIndexLinks(content);
+  }
+
+  return discoverHtmlFeedIndexLinks(content, baseUrl);
+}
+
+function discoverHtmlFeedIndexLinks(html: string, baseUrl: string): FeedIndexLinkCandidate[] {
   const base = new URL(baseUrl);
-  const urls: string[] = [];
+  const urls: FeedIndexLinkCandidate[] = [];
   const seen = new Set<string>();
   const hrefPattern = /\bhref\s*=\s*["']([^"']+\.xml(?:\?[^"']*)?)["']/giu;
 
@@ -1792,7 +1810,10 @@ export function discoverFeedIndexLinks(html: string, baseUrl: string): string[] 
 
       if (!seen.has(url)) {
         seen.add(url);
-        urls.push(url);
+        urls.push({
+          url,
+          objectName: null,
+        });
       }
     } catch {
       continue;
@@ -1800,6 +1821,91 @@ export function discoverFeedIndexLinks(html: string, baseUrl: string): string[] 
   }
 
   return urls;
+}
+
+function discoverGoogleSheetsFeedIndexLinks(csv: string): FeedIndexLinkCandidate[] {
+  const urls: FeedIndexLinkCandidate[] = [];
+  const seen = new Set<string>();
+
+  for (const row of parseCsvRows(csv)) {
+    const objectName = row[0]?.trim() ?? '';
+    const feedUrl = row[1]?.trim() ?? '';
+
+    if (!isHttpUrl(feedUrl) || seen.has(feedUrl)) {
+      continue;
+    }
+
+    seen.add(feedUrl);
+    urls.push({
+      url: feedUrl,
+      objectName: objectName || null,
+    });
+  }
+
+  return urls;
+}
+
+function parseCsvRows(csv: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = '';
+  let inQuotes = false;
+
+  for (let index = 0; index < csv.length; index += 1) {
+    const char = csv[index];
+
+    if (inQuotes) {
+      if (char === '"' && csv[index + 1] === '"') {
+        field += '"';
+        index += 1;
+        continue;
+      }
+
+      if (char === '"') {
+        inQuotes = false;
+        continue;
+      }
+
+      field += char;
+      continue;
+    }
+
+    if (char === '"') {
+      inQuotes = true;
+      continue;
+    }
+
+    if (char === ',') {
+      row.push(field);
+      field = '';
+      continue;
+    }
+
+    if (char === '\n' || char === '\r') {
+      if (char === '\r' && csv[index + 1] === '\n') {
+        index += 1;
+      }
+
+      row.push(field);
+      pushCsvRow(rows, row);
+      row = [];
+      field = '';
+      continue;
+    }
+
+    field += char;
+  }
+
+  row.push(field);
+  pushCsvRow(rows, row);
+
+  return rows;
+}
+
+function pushCsvRow(rows: string[][], row: string[]) {
+  if (row.some((field) => field.trim().length > 0)) {
+    rows.push(row);
+  }
 }
 
 export async function analyzeFeedSourceInput(params: {
@@ -1860,12 +1966,12 @@ async function createFeedIndexDiscovery(params: {
   sourceUrl: string;
   xmlFetcher?: (url: string) => Promise<string>;
 }): Promise<FeedIndexDiscovery> {
-  const indexHtml = await fetchFeedText(params.sourceUrl, params.xmlFetcher);
-  const links = discoverFeedIndexLinks(indexHtml, params.sourceUrl);
+  const indexContent = await fetchFeedText(getFeedIndexContentUrl(params.sourceUrl), params.xmlFetcher);
+  const links = discoverFeedIndexLinkCandidates(indexContent, params.sourceUrl);
   const files: FeedIndexFileCandidate[] = [];
 
-  for (const url of links) {
-    files.push(await analyzeFeedIndexFile(url, params.xmlFetcher));
+  for (const link of links) {
+    files.push(await analyzeFeedIndexFile(link.url, params.xmlFetcher));
   }
 
   return {
@@ -1959,18 +2065,18 @@ async function parseFeedIndexForFormat(params: {
   xmlFetcher?: (url: string) => Promise<string>;
   namespaceExternalIds: boolean;
 }): Promise<FeedParseResult> {
-  const indexHtml = await fetchFeedText(params.sourceUrl, params.xmlFetcher);
-  const links = discoverFeedIndexLinks(indexHtml, params.sourceUrl);
-  const urls = links.length > 0 ? links : [params.sourceUrl];
+  const indexContent = await fetchFeedText(getFeedIndexContentUrl(params.sourceUrl), params.xmlFetcher);
+  const links = discoverFeedIndexLinkCandidates(indexContent, params.sourceUrl);
+  const sources = links.length > 0 ? links : [{ url: params.sourceUrl, objectName: null }];
   const units: NormalizedFeedUnit[] = [];
   const warnings: FeedParserWarning[] = [];
   let matchedFilesCount = 0;
 
-  for (const url of urls) {
+  for (const source of sources) {
     try {
-      const xml = url === params.sourceUrl && links.length === 0
-        ? indexHtml
-        : await fetchFeedText(url, params.xmlFetcher);
+      const xml = source.url === params.sourceUrl && links.length === 0
+        ? indexContent
+        : await fetchFeedText(source.url, params.xmlFetcher);
       const detectedFormat = detectFeedFormatFromXml(xml);
 
       if (detectedFormat !== params.format) {
@@ -1982,15 +2088,15 @@ async function parseFeedIndexForFormat(params: {
       warnings.push(...parsed.warnings);
       units.push(
         ...parsed.units.map((unit) =>
-          params.namespaceExternalIds ? namespaceIndexFeedUnitExternalId(url, unit) : unit,
+          applyFeedIndexSourceMetadata(source, unit, params.namespaceExternalIds),
         ),
       );
     } catch (error) {
       warnings.push({
         code: 'INDEX_XML_FAILED',
         field: 'url',
-        message: `Failed to parse index XML file ${url}: ${getErrorMessage(error)}`,
-        value: url,
+        message: `Failed to parse index XML file ${source.url}: ${getErrorMessage(error)}`,
+        value: source.url,
       });
     }
   }
@@ -2000,6 +2106,62 @@ async function parseFeedIndexForFormat(params: {
   }
 
   return { units, warnings };
+}
+
+function getFeedIndexContentUrl(sourceUrl: string) {
+  return createGoogleSheetsCsvExportUrl(sourceUrl) ?? sourceUrl;
+}
+
+function isGoogleSheetsUrl(sourceUrl: string) {
+  return createGoogleSheetsCsvExportUrl(sourceUrl) !== null;
+}
+
+function createGoogleSheetsCsvExportUrl(sourceUrl: string) {
+  try {
+    const url = new URL(sourceUrl);
+
+    if (url.hostname !== 'docs.google.com') {
+      return null;
+    }
+
+    const spreadsheetId = url.pathname.match(/\/spreadsheets\/d\/([^/]+)/u)?.[1];
+
+    if (!spreadsheetId) {
+      return null;
+    }
+
+    const hashParams = new URLSearchParams(url.hash.replace(/^#/u, ''));
+    const gid = url.searchParams.get('gid') ?? hashParams.get('gid') ?? '0';
+    const exportUrl = new URL(`https://docs.google.com/spreadsheets/d/${spreadsheetId}/export`);
+
+    exportUrl.searchParams.set('format', 'csv');
+    exportUrl.searchParams.set('gid', gid);
+
+    return exportUrl.toString();
+  } catch {
+    return null;
+  }
+}
+
+function applyFeedIndexSourceMetadata(
+  source: FeedIndexLinkCandidate,
+  unit: NormalizedFeedUnit,
+  namespaceExternalIds: boolean,
+): NormalizedFeedUnit {
+  const nextUnit = namespaceExternalIds ? namespaceIndexFeedUnitExternalId(source.url, unit) : unit;
+
+  if (!source.objectName) {
+    return nextUnit;
+  }
+
+  return {
+    ...nextUnit,
+    rawPayload: {
+      ...nextUnit.rawPayload,
+      __feedIndexSourceUrl: source.url,
+      __feedIndexObjectName: source.objectName,
+    },
+  };
 }
 
 function namespaceIndexFeedUnitExternalId(sourceUrl: string, unit: NormalizedFeedUnit): NormalizedFeedUnit {
@@ -2036,7 +2198,8 @@ export function createFeedSourceAnalysis(format: FeedSourceFormat, parsed: FeedP
     const group = groups.get(groupKey) ?? createFeedAnalysisObject(unit);
 
     group.unitsCount += 1;
-    pushUniqueText(group.projectNames, getFeedUnitProjectName(unit));
+    pushUniqueText(group.feedIndexSourceUrls, getText(unit.rawPayload.__feedIndexSourceUrl));
+    pushUniqueText(group.projectNames, getFeedIndexObjectName(unit) ?? getFeedUnitProjectName(unit));
     pushUniqueText(group.externalIds, unit.externalId);
     pushUniqueText(group.buildingNames, unit.building);
     pushUniqueText(group.yandexBuildingIds, getText(unit.rawPayload['yandex-building-id']));
@@ -2068,12 +2231,14 @@ function createFeedAnalysisObject(unit: NormalizedFeedUnit): FeedSourceAnalysisO
 
   return {
     title:
+      getFeedIndexObjectName(unit) ??
       getFeedUnitProjectName(unit) ??
       (avitoDevelopmentId ? `Avito ЖК ${avitoDevelopmentId}` : null) ??
       unit.building ??
       unit.address ??
       'Без названия',
     unitsCount: 0,
+    feedIndexSourceUrls: [],
     projectNames: [],
     externalIds: [],
     buildingNames: [],
@@ -2086,11 +2251,16 @@ function createFeedAnalysisObject(unit: NormalizedFeedUnit): FeedSourceAnalysisO
 }
 
 function getFeedAnalysisGroupKey(unit: NormalizedFeedUnit) {
+  const feedIndexObjectName = getFeedIndexObjectName(unit);
   const avitoDevelopmentId = getText(unit.rawPayload.NewDevelopmentId);
   const yandexBuildingId = getText(unit.rawPayload['yandex-building-id']);
   const projectName = getFeedUnitProjectName(unit);
   const building = unit.building ?? getText(unit.rawPayload['building-name']);
   const address = unit.address ?? getText(unit.rawPayload.Address);
+
+  if (feedIndexObjectName) {
+    return normalizeFilterText(`sheet:${feedIndexObjectName}`);
+  }
 
   if (avitoDevelopmentId) {
     return normalizeFilterText(`avito:${avitoDevelopmentId}`);
@@ -2103,6 +2273,12 @@ function createFeedAnalysisFilterJson(
   format: FeedSourceFormat,
   object: FeedSourceAnalysisObject,
 ): Record<string, string[]> | null {
+  if (object.feedIndexSourceUrls.length > 0) {
+    return {
+      feedIndexSourceUrls: object.feedIndexSourceUrls,
+    };
+  }
+
   if (format === 'YANDEX_REALTY') {
     return createYandexAnalysisFilterJson(object);
   }
@@ -2199,6 +2375,10 @@ function getFeedUnitProjectName(unit: NormalizedFeedUnit) {
   return unit.projectName ?? getText(asRecord(unit.rawPayload.JKSchema)?.Name);
 }
 
+function getFeedIndexObjectName(unit: NormalizedFeedUnit) {
+  return getText(unit.rawPayload.__feedIndexObjectName);
+}
+
 function getMostFrequentText(values: Array<string | null>) {
   const counts = new Map<string, number>();
 
@@ -2233,6 +2413,7 @@ function filterFeedUnitsForSource(units: NormalizedFeedUnit[], source: FeedSourc
 
 type NormalizedFeedSourceFilter = {
   externalIds: string[];
+  feedIndexSourceUrls: string[];
   projectNames: string[];
   buildingNames: string[];
   yandexBuildingIds: string[];
@@ -2250,6 +2431,7 @@ function normalizeFeedSourceFilter(value: Record<string, unknown> | null | undef
 
   const normalized = {
     externalIds: normalizeFilterStringArray(filter.externalIds),
+    feedIndexSourceUrls: normalizeFilterStringArray(filter.feedIndexSourceUrls),
     projectNames: normalizeFilterStringArray(filter.projectNames),
     buildingNames: normalizeFilterStringArray(filter.buildingNames),
     yandexBuildingIds: normalizeFilterStringArray(filter.yandexBuildingIds),
@@ -2276,6 +2458,7 @@ function matchesFeedSourceFilter(unit: NormalizedFeedUnit, filter: NormalizedFee
 
   return (
     matchesFilterExact(unit.externalId, filter.externalIds) &&
+    matchesFilterExact(getText(payload.__feedIndexSourceUrl), filter.feedIndexSourceUrls) &&
     matchesFilterExact(unit.projectName ?? getText(cianSchema?.Name), filter.projectNames) &&
     matchesFilterExact(unit.building ?? getText(payload['building-name']) ?? getText(cianHouse?.Name), filter.buildingNames) &&
     matchesFilterExact(getText(payload['yandex-building-id']), filter.yandexBuildingIds) &&

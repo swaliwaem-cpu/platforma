@@ -503,6 +503,64 @@ test('executeFeedImport imports selected platform files from index sources', asy
   assert.equal(state.units.some((unit) => unit.externalId === 'nagatino-1'), false);
 });
 
+test('executeFeedImport imports public Google Sheets index rows through source URL mappings', async () => {
+  const sheetUrl = 'https://docs.google.com/spreadsheets/d/sheet-id/edit?gid=456#gid=456';
+  const csvUrl = 'https://docs.google.com/spreadsheets/d/sheet-id/export?format=csv&gid=456';
+  const cityzenUrl = 'https://feeds.test/cityzen.xml';
+  const oneUrl = 'https://feeds.test/one.xml';
+  const { db, state } = createFakeDb({
+    source: {
+      sourceKind: 'INDEX_URL',
+      url: sheetUrl,
+      format: 'CIAN_XML',
+      objectId: null,
+      mappings: [
+        makeSourceMapping({
+          id: 'mapping-cityzen',
+          objectId: 'object-1',
+          sourceKey: 'sheet-cityzen',
+          sourceTitle: 'ЖК Ситидзен',
+          filterJson: {
+            feedIndexSourceUrls: [cityzenUrl],
+          },
+        }),
+        makeSourceMapping({
+          id: 'mapping-one',
+          objectId: 'object-2',
+          sourceKey: 'sheet-one',
+          sourceTitle: 'ЖК Оне',
+          filterJson: {
+            feedIndexSourceUrls: [oneUrl],
+          },
+        }),
+      ],
+    },
+    objects: [
+      makeObjectAggregate({ id: 'object-1' }),
+      makeObjectAggregate({ id: 'object-2' }),
+    ],
+  });
+  const responses = new Map([
+    [csvUrl, `ЖК,Фид\n"ЖК Ситидзен","${cityzenUrl}"\n"ЖК Оне","${oneUrl}"`],
+    [cityzenUrl, makeIndexCianFeed('cityzen-1', 'Feed Cityzen')],
+    [oneUrl, makeIndexCianFeed('one-1', 'Feed One')],
+  ]);
+
+  const result = await executeFeedImport({
+    mode: 'run',
+    sourceId: 'source-1',
+    db,
+    storage: state.storage,
+    xmlFetcher: async (url) => responses.get(url),
+    now: () => fixedDate,
+  });
+
+  assert.equal(result.status, 'SUCCESS');
+  assert.equal(result.summary.unitsParsed, 2);
+  assert.equal(state.units.find((unit) => unit.rawPayload.__rawExternalId === 'cityzen-1').objectId, 'object-1');
+  assert.equal(state.units.find((unit) => unit.rawPayload.__rawExternalId === 'one-1').objectId, 'object-2');
+});
+
 test('executeFeedImport routes Avito units through development id source mappings', async () => {
   const { db, state } = createFakeDb({
     source: {

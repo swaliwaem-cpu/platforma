@@ -63,6 +63,7 @@ test('app theme stylesheet covers contrast-sensitive dark theme selectors', () =
     '.object-feed-status--available',
     '.multi-select-dropdown-button',
     '.feed-details dd',
+    '.feed-source-upload-button',
     '.metro-list strong',
     '.carousel-thumbnail',
     '.gallery-close-confirm strong',

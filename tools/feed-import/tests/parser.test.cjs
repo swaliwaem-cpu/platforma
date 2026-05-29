@@ -703,6 +703,53 @@ test('analyzeFeedSourceInput analyzes selected index platform files together', a
   );
 });
 
+test('analyzeFeedSourceInput reads public Google Sheets index rows with object names', async () => {
+  const sheetUrl = 'https://docs.google.com/spreadsheets/d/sheet-id/edit?gid=123#gid=123';
+  const csvUrl = 'https://docs.google.com/spreadsheets/d/sheet-id/export?format=csv&gid=123';
+  const cityzenUrl = 'https://feeds.test/cityzen.xml';
+  const oneUrl = 'https://feeds.test/one.xml';
+  const responses = new Map([
+    [
+      csvUrl,
+      [
+        'ЖК,Фид',
+        `"ЖК Ситидзен","${cityzenUrl}"`,
+        `"ЖК Оне","${oneUrl}"`,
+      ].join('\n'),
+    ],
+    [cityzenUrl, makeIndexCianXml('cityzen-1', 'Feed Cityzen')],
+    [oneUrl, makeIndexCianXml('one-1', 'Feed One')],
+  ]);
+
+  const discovery = await analyzeFeedSourceInput({
+    format: 'AUTO',
+    sourceKind: 'INDEX_URL',
+    url: sheetUrl,
+    xmlFetcher: async (url) => responses.get(url),
+  });
+  const selected = await analyzeFeedSourceInput({
+    format: 'CIAN_XML',
+    sourceKind: 'INDEX_URL',
+    url: sheetUrl,
+    xmlFetcher: async (url) => responses.get(url),
+  });
+
+  assert.equal(discovery.analysis, null);
+  assert.deepEqual(
+    discovery.discovery.files.map((file) => file.url),
+    [cityzenUrl, oneUrl],
+  );
+  assert.equal(discovery.discovery.platforms[0].format, 'CIAN_XML');
+  assert.equal(selected.discovery, null);
+  assert.deepEqual(
+    selected.analysis.objects.map((object) => [object.title, object.filterJson]),
+    [
+      ['ЖК Оне', { feedIndexSourceUrls: [oneUrl] }],
+      ['ЖК Ситидзен', { feedIndexSourceUrls: [cityzenUrl] }],
+    ],
+  );
+});
+
 test('analyzeFeedSourceInput auto analyzes CIAN-like realty-feed objects', async () => {
   const result = await analyzeFeedSourceInput({
     format: 'AUTO',

@@ -279,6 +279,18 @@ html[data-app-theme] .multi-select-dropdown-button:is(:hover, :focus-visible, .i
   box-shadow: var(--app-theme-focus-primary);
 }
 
+html[data-app-theme="dark-premium"] .feed-source-upload-button {
+  border-color: var(--app-theme-border-strong);
+  background: var(--app-theme-control);
+  color: var(--app-theme-ink-700);
+}
+
+html[data-app-theme="dark-premium"] .feed-source-upload-button:hover {
+  border-color: color-mix(in srgb, var(--app-theme-primary) 34%, var(--app-theme-border-strong));
+  background: var(--app-theme-surface-soft);
+  color: var(--app-theme-ink-900);
+}
+
 html[data-app-theme] :is(button, [role="button"], [data-slot="button"], summary) {
   -webkit-tap-highlight-color: transparent;
 }
