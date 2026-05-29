@@ -115,6 +115,10 @@ type GalleryDraftItem = {
   isUploading?: boolean;
 };
 
+type GalleryStreamUploadResponse = ObjectResponse & {
+  image: ObjectImage;
+};
+
 const fileTypeLabels: Record<ObjectFileType, string> = {
   PRESENTATION: 'Презентация',
   FLOOR_PLAN: 'Планировка',
@@ -197,6 +201,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
   const [galleryDeletedImageIds, setGalleryDeletedImageIds] = useState<string[]>([]);
   const [galleryModalError, setGalleryModalError] = useState<string | null>(null);
   const [galleryModalProgress, setGalleryModalProgress] = useState<string | null>(null);
+  const [galleryModalProgressPercent, setGalleryModalProgressPercent] = useState<number | null>(null);
   const [objectFiles, setObjectFiles] = useState<File[]>([]);
   const [objectFileType, setObjectFileType] = useState<ObjectFileType>('PRESENTATION');
   const [objectFileTitle, setObjectFileTitle] = useState('');
@@ -295,6 +300,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
     setGalleryDeletedImageIds([]);
     setGalleryModalError(null);
     setGalleryModalProgress(null);
+    setGalleryModalProgressPercent(null);
     setIsGalleryModalOpen(true);
   }
 
@@ -449,6 +455,12 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
     setGalleryDeletedImageIds([]);
     setGalleryModalError(null);
     setGalleryModalProgress(null);
+    setGalleryModalProgressPercent(null);
+  }
+
+  function setGallerySaveProgress(message: string, percent: number | null) {
+    setGalleryModalProgress(message);
+    setGalleryModalProgressPercent(percent);
   }
 
   async function saveGalleryModalChanges() {
@@ -511,7 +523,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
         }
 
         setIsSubmitting(true);
-        setGalleryModalProgress('Создание объекта');
+        setGallerySaveProgress('Создание объекта', 5);
 
         const payload = createPayloadFromForm(form);
         const createData = await apiRequest<ObjectResponse>('/objects', accessToken, {
@@ -559,6 +571,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
     } finally {
       galleryModalSaveInFlightRef.current = false;
       setGalleryModalProgress(null);
+      setGalleryModalProgressPercent(null);
       setIsSubmitting(false);
     }
   }
@@ -568,7 +581,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
       throw new Error('Нет доступа');
     }
 
-    setGalleryModalProgress('Проверка актуальной галереи');
+    setGallerySaveProgress('Проверка актуальной галереи', 10);
 
     const currentData = await apiRequest<ObjectResponse>(`/objects/${objectId}`, accessToken);
     const reconciledDraft = reconcileGalleryDraftItemsWithCurrentGallery(
@@ -581,16 +594,111 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
     setGalleryDraftItems(reconciledDraft.draftItems);
     setGalleryCoverDraftId(reconciledDraft.coverDraftId);
 
-    const batchBody = createGalleryBatchBody(reconciledDraft.draftItems, reconciledDraft.coverDraftId);
+    const uploadedDraft = await uploadGalleryDraftFiles(objectId, reconciledDraft.draftItems);
 
-    setGalleryModalProgress(
-      batchBody.fileCount > 0 ? `Загрузка и сохранение галереи: ${batchBody.fileCount} фото` : 'Сохранение галереи',
-    );
+    galleryDraftItemsRef.current = uploadedDraft.draftItems;
+    setGalleryDraftItems(uploadedDraft.draftItems);
 
-    return apiRequest<ObjectResponse>(`/objects/${objectId}/gallery/batch`, accessToken, {
+    const batchBody = createGalleryBatchBody(uploadedDraft.draftItems, reconciledDraft.coverDraftId);
+
+    if (batchBody.fileCount !== 0) {
+      throw new Error('Не удалось подготовить галерею к сохранению');
+    }
+
+    setGallerySaveProgress('Сохранение галереи', 95);
+
+    const savedData = await apiRequest<ObjectResponse>(`/objects/${objectId}/gallery/batch`, accessToken, {
       method: 'PATCH',
       body: batchBody.formData,
     });
+
+    setGallerySaveProgress('Галерея сохранена', 100);
+
+    return savedData;
+  }
+
+  async function uploadGalleryDraftFiles(objectId: string, draftItems: GalleryDraftItem[]) {
+    if (!accessToken) {
+      throw new Error('Нет доступа');
+    }
+
+    const newItems = draftItems.filter((item): item is GalleryDraftItem & { kind: 'new'; file: File } => item.kind === 'new' && item.file !== null);
+
+    if (newItems.length === 0) {
+      return {
+        draftItems,
+      };
+    }
+
+    const uploadedImages = new Map<string, ObjectImage>();
+    const uploadedImageIds: string[] = [];
+
+    try {
+      for (const item of newItems) {
+        setGallerySaveProgress(
+          `Загрузка изображений ${uploadedImages.size + 1}/${newItems.length}`,
+          calculateGalleryUploadProgressPercent(uploadedImages.size, newItems.length),
+        );
+
+        const uploadedData = await apiRequest<GalleryStreamUploadResponse>(
+          `/objects/${objectId}/gallery/stream`,
+          accessToken,
+          {
+            method: 'POST',
+            body: item.file,
+            headers: {
+              'Content-Type': item.file.type || 'application/octet-stream',
+              'X-File-Name': encodeURIComponent(item.file.name || 'image'),
+            },
+          },
+        );
+
+        uploadedImages.set(item.draftId, uploadedData.image);
+        uploadedImageIds.push(uploadedData.image.id);
+      }
+    } catch (caughtError) {
+      await cleanupUploadedGalleryImages(objectId, uploadedImageIds);
+      throw caughtError;
+    }
+
+    const nextDraftItems: GalleryDraftItem[] = draftItems.map((item) => {
+      if (item.kind !== 'new') {
+        return item;
+      }
+
+      const uploadedImage = uploadedImages.get(item.draftId);
+
+      if (!uploadedImage) {
+        throw new Error('Не удалось сохранить изображение галереи');
+      }
+
+      return {
+        ...item,
+        kind: 'existing',
+        imageId: uploadedImage.id,
+        file: null,
+        name: getGalleryDraftImageName(uploadedImage),
+        section: item.section,
+      };
+    });
+
+    return {
+      draftItems: nextDraftItems,
+    };
+  }
+
+  async function cleanupUploadedGalleryImages(objectId: string, imageIds: string[]) {
+    if (!accessToken || !canDeleteMedia || imageIds.length === 0) {
+      return;
+    }
+
+    await Promise.all(
+      imageIds.map((imageId) =>
+        apiRequest<ObjectResponse>(`/objects/${objectId}/gallery/${imageId}`, accessToken, {
+          method: 'DELETE',
+        }).catch(() => undefined),
+      ),
+    );
   }
 
   async function loadDirectories(token: string) {
@@ -1004,6 +1112,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
         galleryDraftItems={galleryDraftItems}
         galleryModalError={galleryModalError}
         galleryModalProgress={galleryModalProgress}
+        galleryModalProgressPercent={galleryModalProgressPercent}
         isGalleryModalOpen={isGalleryModalOpen}
         isCreateRoute={isCreateRoute}
         isLoading={isLoading}
@@ -1237,6 +1346,7 @@ type ObjectEditorProps = {
   galleryDraftItems: GalleryDraftItem[];
   galleryModalError: string | null;
   galleryModalProgress: string | null;
+  galleryModalProgressPercent: number | null;
   isGalleryModalOpen: boolean;
   isCreateRoute: boolean;
   isLoading: boolean;
@@ -1903,6 +2013,7 @@ function ObjectEditor(props: ObjectEditorProps) {
           existingImages={props.object?.images ?? []}
           isSaving={Boolean(props.galleryModalProgress)}
           progress={props.galleryModalProgress}
+          progressPercent={props.galleryModalProgressPercent}
           onAddFiles={props.onGalleryFilesAdd}
           onCancel={props.onGalleryModalClose}
           onClose={props.onGalleryModalClose}
@@ -1928,6 +2039,7 @@ function GalleryManagementModal({
   existingImages,
   isSaving,
   progress,
+  progressPercent,
   onAddFiles,
   onCancel,
   onClose,
@@ -1947,6 +2059,7 @@ function GalleryManagementModal({
   existingImages: ObjectImage[];
   isSaving: boolean;
   progress: string | null;
+  progressPercent: number | null;
   onAddFiles: (files: FileList | File[]) => void;
   onCancel: () => void;
   onClose: () => void;
@@ -2190,6 +2303,21 @@ function GalleryManagementModal({
 
         {error ? <AdminAlert tone="error">{error}</AdminAlert> : null}
         {progress ? <AdminAlert tone="notice">{progress}</AdminAlert> : null}
+        {progressPercent !== null ? (
+          <div className="gallery-modal-progress-row">
+            <div
+              aria-label={progress ?? 'Загрузка галереи'}
+              aria-valuemax={100}
+              aria-valuemin={0}
+              aria-valuenow={progressPercent}
+              className="gallery-modal-progress"
+              role="progressbar"
+            >
+              <span className="gallery-modal-progress-fill" style={{ width: `${progressPercent}%` }} />
+            </div>
+            <span className="gallery-modal-progress-value">{progressPercent}%</span>
+          </div>
+        ) : null}
 
         <div
           className={coverSlotClassName}
@@ -2451,6 +2579,10 @@ function GalleryDraftPreview({
     }
 
     return <span>Фото</span>;
+  }
+
+  if (item.previewUrl) {
+    return <img alt={item.name} decoding="async" loading="lazy" src={item.previewUrl} />;
   }
 
   if (accessToken && existingImage) {
@@ -3194,6 +3326,18 @@ function createGalleryBatchBody(draftItems: GalleryDraftItem[], coverDraftId: st
     fileCount: files.length,
     formData,
   };
+}
+
+function calculateGalleryUploadProgressPercent(uploadedCount: number, totalCount: number) {
+  if (totalCount <= 0) {
+    return 35;
+  }
+
+  const progressStart = 15;
+  const progressSpan = 75;
+  const percent = progressStart + Math.round((uploadedCount / totalCount) * progressSpan);
+
+  return Math.min(90, Math.max(progressStart, percent));
 }
 
 function getInitialGalleryCoverDraftId(images: ObjectImage[]) {

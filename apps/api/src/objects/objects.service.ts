@@ -15,7 +15,7 @@ import {
 } from '@prisma/client';
 
 import { AuthenticatedUser, RequestWithAuth } from '../auth/auth.types';
-import { FilesService } from '../files/files.service';
+import { FilesService, UploadedFileStream } from '../files/files.service';
 import { UploadedFile } from '../files/uploaded-file.type';
 import { PrismaService } from '../prisma/prisma.service';
 import { createSearchContainsFilters } from '../search/search-filters';
@@ -134,6 +134,8 @@ type RequestWithAudit = RequestWithAuth & {
     remoteAddress?: string;
   };
 };
+
+type GalleryStreamUploadRequest = RequestWithAudit & NodeJS.ReadableStream;
 
 type ListObjectsQuery = {
   page?: string;
@@ -1379,6 +1381,67 @@ export class ObjectsService {
 
       return {
         object: this.serializeObjectDetail(updatedObject),
+      };
+    } catch (error) {
+      await this.filesService.deleteUnlinkedFile(uploadedFile.file.id);
+      throw error;
+    }
+  }
+
+  async uploadGalleryImageStream(
+    id: string,
+    fileStream: GalleryStreamUploadRequest,
+    actor: AuthenticatedUser,
+    request: RequestWithAudit,
+  ) {
+    const object = await this.findExistingObject(id);
+    const uploadedFile = await this.filesService.uploadFileStream(
+      this.createUploadedFileStream(fileStream),
+      actor,
+      'image',
+    );
+
+    try {
+      const updatedObject = await this.prisma.$transaction(async (tx) => {
+        const maxSortOrder = await tx.objectImage.aggregate({
+          where: {
+            objectId: object.id,
+          },
+          _max: {
+            sortOrder: true,
+          },
+        });
+
+        await tx.objectImage.create({
+          data: {
+            objectId: object.id,
+            fileId: uploadedFile.file.id,
+            sortOrder: (maxSortOrder._max.sortOrder ?? -1) + 1,
+            isCover: false,
+          },
+        });
+
+        return this.findExistingObject(object.id, tx);
+      });
+      const uploadedImage = updatedObject.images.find((image) => image.file.id === uploadedFile.file.id);
+
+      if (!uploadedImage) {
+        throw new BadRequestException('Uploaded gallery image is invalid');
+      }
+
+      await this.logObjectAction({
+        action: 'object.gallery.upload',
+        actor,
+        request,
+        objectId: updatedObject.id,
+        metadata: {
+          fileId: uploadedFile.file.id,
+        },
+      });
+
+      return {
+        object: this.serializeObjectDetail(updatedObject),
+        image: this.serializeObjectImage(uploadedImage),
       };
     } catch (error) {
       await this.filesService.deleteUnlinkedFile(uploadedFile.file.id);
@@ -2767,6 +2830,41 @@ export class ObjectsService {
     }
 
     return value as ObjectImageSection;
+  }
+
+  private createUploadedFileStream(request: GalleryStreamUploadRequest): UploadedFileStream {
+    return {
+      stream: request,
+      originalname: this.getHeaderValue(request.headers['x-file-name']) ?? 'image',
+      mimetype: this.getHeaderValue(request.headers['content-type']) ?? 'application/octet-stream',
+      size: this.parseOptionalContentLength(request.headers['content-length']),
+    };
+  }
+
+  private getHeaderValue(value: string | string[] | undefined) {
+    const headerValue = Array.isArray(value) ? value[0] : value;
+
+    if (!headerValue) {
+      return null;
+    }
+
+    try {
+      return decodeURIComponent(headerValue);
+    } catch {
+      return headerValue;
+    }
+  }
+
+  private parseOptionalContentLength(value: string | string[] | undefined) {
+    const headerValue = this.getHeaderValue(value);
+
+    if (!headerValue) {
+      return undefined;
+    }
+
+    const contentLength = Number(headerValue);
+
+    return Number.isInteger(contentLength) && contentLength >= 0 ? contentLength : undefined;
   }
 
   private createImageSectionMap(images: ObjectDetailRecord['images']) {

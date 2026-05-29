@@ -6,7 +6,7 @@ const test = require('node:test');
 const controllerSource = readFileSync(resolve(__dirname, '../src/objects/objects.controller.ts'), 'utf8');
 const serviceSource = readFileSync(resolve(__dirname, '../src/objects/objects.service.ts'), 'utf8');
 
-test('objects controller exposes one multipart gallery batch endpoint', () => {
+test('objects controller keeps multipart gallery batch endpoint for layout and compatibility', () => {
   assert.match(controllerSource, /import \{ FileInterceptor,\s*FilesInterceptor \} from '@nestjs\/platform-express';/);
   assert.match(controllerSource, /@Patch\(':id\/gallery\/batch'\)[\s\S]*?@RequirePermissions\('objects:update'\)[\s\S]*?@UseInterceptors\(FilesInterceptor\('files', objectGalleryBatchFileLimit, \{ limits: \{ fileSize: IMAGE_MAX_SIZE_BYTES, files: objectGalleryBatchFileLimit \} \}\)\)[\s\S]*?async replaceGallery\(/);
   assert.match(controllerSource, /return this\.objectsService\.replaceGallery\(id,\s*body,\s*files,\s*actor,\s*request\);/);

@@ -1,4 +1,5 @@
 import { createHmac, createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
 
 import { Injectable, InternalServerErrorException, OnModuleInit } from '@nestjs/common';
 
@@ -6,8 +7,10 @@ type SignedRequestOptions = {
   method: 'DELETE' | 'GET' | 'HEAD' | 'PUT';
   bucket: string;
   key?: string;
-  body?: Buffer;
+  body?: Buffer | NodeJS.ReadableStream;
   contentType?: string;
+  contentLength?: number;
+  payloadHash?: string;
 };
 
 @Injectable()
@@ -81,6 +84,24 @@ export class S3StorageService implements OnModuleInit {
     }
   }
 
+  async putObjectFromFile(params: { key: string; filePath: string; contentType: string; checksum: string; contentLength: number }) {
+    await this.ensureBucket();
+
+    const response = await this.signedFetch({
+      method: 'PUT',
+      bucket: this.bucket,
+      key: params.key,
+      body: createReadStream(params.filePath),
+      contentType: params.contentType,
+      payloadHash: params.checksum,
+      contentLength: params.contentLength,
+    });
+
+    if (!response.ok) {
+      await this.throwStorageError('Cannot upload file to MinIO', response);
+    }
+  }
+
   async getObject(key: string) {
     await this.ensureBucket();
 
@@ -112,8 +133,8 @@ export class S3StorageService implements OnModuleInit {
   }
 
   private async signedFetch(options: SignedRequestOptions) {
-    const body = options.body ?? Buffer.alloc(0);
-    const payloadHash = createHash('sha256').update(body).digest('hex');
+    const body = options.body;
+    const payloadHash = options.payloadHash ?? createHash('sha256').update(Buffer.isBuffer(body) ? body : Buffer.alloc(0)).digest('hex');
     const now = new Date();
     const amzDate = toAmzDate(now);
     const shortDate = amzDate.slice(0, 8);
@@ -131,6 +152,13 @@ export class S3StorageService implements OnModuleInit {
     if (options.contentType) {
       signableHeaders['content-type'] = options.contentType;
       requestHeaders['Content-Type'] = options.contentType;
+    }
+
+    if (options.contentLength !== undefined) {
+      const contentLength = String(options.contentLength);
+
+      signableHeaders['content-length'] = contentLength;
+      requestHeaders['Content-Length'] = contentLength;
     }
 
     const signedHeaderNames = Object.keys(signableHeaders).sort();
@@ -163,13 +191,14 @@ export class S3StorageService implements OnModuleInit {
       `Signature=${signature}`,
     ].join(', ');
 
-    const requestBody = options.body ? new Uint8Array(options.body) : undefined;
-
-    return fetch(url, {
+    const requestInit: RequestInit & { duplex?: 'half' } = {
       method: options.method,
       headers: requestHeaders,
-      body: requestBody,
-    });
+      body: (Buffer.isBuffer(body) ? new Uint8Array(body) : body) as BodyInit | undefined,
+      ...(body && !Buffer.isBuffer(body) ? { duplex: 'half' } : {}),
+    };
+
+    return fetch(url, requestInit);
   }
 
   private buildObjectUrl(bucket: string, key?: string) {

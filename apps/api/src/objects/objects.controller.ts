@@ -127,6 +127,16 @@ export class ObjectsController {
     return this.objectsService.uploadGalleryImage(id, file, actor, request);
   }
 
+  @Post(':id/gallery/stream')
+  @RequirePermissions('objects:update', 'files:upload')
+  async uploadGalleryImageStream(
+    @Param('id') id: string,
+    @Req() request: RequestWithAuth & NodeJS.ReadableStream,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.objectsService.uploadGalleryImageStream(id, request, actor, request);
+  }
+
   @Patch(':id/gallery/batch')
   @RequirePermissions('objects:update')
   @UseInterceptors(FilesInterceptor('files', objectGalleryBatchFileLimit, { limits: { fileSize: IMAGE_MAX_SIZE_BYTES, files: objectGalleryBatchFileLimit } }))

@@ -16,6 +16,7 @@ test('object editor stores gallery changes in modal draft state', () => {
   assert.match(source, /const \[galleryDeletedImageIds,\s*setGalleryDeletedImageIds\] = useState<string\[\]>\(\[\]\);/);
   assert.match(source, /const \[galleryModalError,\s*setGalleryModalError\] = useState<string \| null>\(null\);/);
   assert.match(source, /const \[galleryModalProgress,\s*setGalleryModalProgress\] = useState<string \| null>\(null\);/);
+  assert.match(source, /const \[galleryModalProgressPercent,\s*setGalleryModalProgressPercent\] = useState<number \| null>\(null\);/);
 
   assert.doesNotMatch(source, /const \[galleryFile,\s*setGalleryFile\] = useState<File \| null>\(null\);/);
 });
@@ -134,10 +135,12 @@ test('gallery modal save flow persists edited object gallery layout', () => {
   assert.match(source, /async function persistGalleryDraftForObject\(objectId: string/);
   assert.match(source, /draftItems\.length > 0 && !galleryCoverDraftId/);
   assert.match(source, /setGalleryModalError\('Выберите обложку для галереи'\)/);
-  assert.match(source, /const batchBody = createGalleryBatchBody\(reconciledDraft\.draftItems,\s*reconciledDraft\.coverDraftId\);/);
-  assert.match(source, /setGalleryModalProgress\([\s\S]*?batchBody\.fileCount > 0 \? `Загрузка и сохранение галереи: \$\{batchBody\.fileCount\} фото` : 'Сохранение галереи'[\s\S]*?\);/);
+  assert.match(source, /const uploadedDraft = await uploadGalleryDraftFiles\(objectId,\s*reconciledDraft\.draftItems\);/);
+  assert.match(source, /galleryDraftItemsRef\.current = uploadedDraft\.draftItems;/);
+  assert.match(source, /const batchBody = createGalleryBatchBody\(uploadedDraft\.draftItems,\s*reconciledDraft\.coverDraftId\);/);
+  assert.match(source, /if \(batchBody\.fileCount !== 0\) \{[\s\S]*?throw new Error\('Не удалось подготовить галерею к сохранению'\);[\s\S]*?\}/);
+  assert.match(source, /setGallerySaveProgress\('Сохранение галереи',\s*95\);/);
   assert.match(source, /apiRequest<ObjectResponse>\(`\/objects\/\$\{objectId\}\/gallery\/batch`,\s*accessToken,\s*\{[\s\S]*?method:\s*'PATCH'[\s\S]*?body:\s*batchBody\.formData/);
-  assert.doesNotMatch(source, /apiRequest<ObjectResponse>\(`\/objects\/\$\{objectId\}\/gallery\/\$\{imageId\}`/);
   assert.doesNotMatch(source, /apiRequest<ObjectResponse>\(`\/objects\/\$\{objectId\}\/gallery\/layout`/);
   assert.doesNotMatch(source, /uploadObjectMedia\(objectId,\s*'cover'/);
   assert.doesNotMatch(source, /uploadObjectMedia\(objectId,\s*'gallery'/);
@@ -146,7 +149,18 @@ test('gallery modal save flow persists edited object gallery layout', () => {
   assert.match(source, /setNotice\('Галерея сохранена'\)/);
 });
 
-test('gallery modal builds one multipart batch payload for existing and new images', () => {
+test('gallery modal uploads new draft files one by one before final layout save', () => {
+  assert.match(source, /type GalleryStreamUploadResponse = ObjectResponse & \{[\s\S]*?image: ObjectImage;[\s\S]*?\};/);
+  assert.match(source, /async function uploadGalleryDraftFiles\(objectId: string,\s*draftItems: GalleryDraftItem\[\]\)/);
+  assert.match(source, /const newItems = draftItems\.filter\(\(item\): item is GalleryDraftItem & \{ kind: 'new'; file: File \} => item\.kind === 'new' && item\.file !== null\);/);
+  assert.match(source, /setGallerySaveProgress\(\s*`Загрузка изображений \$\{uploadedImages\.size \+ 1\}\/\$\{newItems\.length\}`,\s*calculateGalleryUploadProgressPercent\(uploadedImages\.size,\s*newItems\.length\),\s*\);/);
+  assert.match(source, /apiRequest<GalleryStreamUploadResponse>\(\s*`\/objects\/\$\{objectId\}\/gallery\/stream`,\s*accessToken,\s*\{[\s\S]*?method:\s*'POST'[\s\S]*?body:\s*item\.file[\s\S]*?headers:\s*\{[\s\S]*?'Content-Type': item\.file\.type \|\| 'application\/octet-stream'[\s\S]*?'X-File-Name': encodeURIComponent\(item\.file\.name \|\| 'image'\)/);
+  assert.match(source, /kind:\s*'existing'[\s\S]*?imageId:\s*uploadedImage\.id[\s\S]*?file:\s*null[\s\S]*?section:\s*item\.section/);
+  assert.match(source, /async function cleanupUploadedGalleryImages\(objectId: string,\s*imageIds: string\[\]\)/);
+  assert.match(source, /apiRequest<ObjectResponse>\(`\/objects\/\$\{objectId\}\/gallery\/\$\{imageId\}`,\s*accessToken,\s*\{[\s\S]*?method:\s*'DELETE'/);
+});
+
+test('gallery modal builds multipart layout payload and keeps file fallback compatibility', () => {
   assert.match(source, /function createGalleryBatchBody\(draftItems: GalleryDraftItem\[\],\s*coverDraftId: string \| null\)/);
   assert.match(source, /const formData = new FormData\(\);/);
   assert.match(source, /const items = draftItems\.map\(\(item\) => \{/);
@@ -164,7 +178,8 @@ test('gallery modal refreshes current gallery before batch save and drops stale 
   assert.match(source, /galleryDraftItemsRef\.current = reconciledDraft\.draftItems;/);
   assert.match(source, /setGalleryDraftItems\(reconciledDraft\.draftItems\);/);
   assert.match(source, /setGalleryCoverDraftId\(reconciledDraft\.coverDraftId\);/);
-  assert.match(source, /createGalleryBatchBody\(reconciledDraft\.draftItems,\s*reconciledDraft\.coverDraftId\);/);
+  assert.match(source, /uploadGalleryDraftFiles\(objectId,\s*reconciledDraft\.draftItems\);/);
+  assert.match(source, /createGalleryBatchBody\(uploadedDraft\.draftItems,\s*reconciledDraft\.coverDraftId\);/);
   assert.match(source, /function reconcileGalleryDraftItemsWithCurrentGallery\([\s\S]*?const currentImageIds = new Set\(currentImages\.map\(\(image\) => image\.id\)\);[\s\S]*?item\.kind === 'new' \|\| \(item\.imageId !== null && currentImageIds\.has\(item\.imageId\)\)/);
 });
 
@@ -199,7 +214,7 @@ test('gallery modal isolates tile rerenders and avoids repeated drag-over state 
 test('gallery modal save flow creates new object before uploading draft media', () => {
   assert.match(source, /if \(isCreateRoute\) \{[\s\S]*?const validationError = validateObjectForm\(form\);[\s\S]*?setGalleryModalError\(validationError\);[\s\S]*?return;/);
   assert.match(source, /if \(isCreateRoute\) \{[\s\S]*?const payload = createPayloadFromForm\(form\);[\s\S]*?apiRequest<ObjectResponse>\('\/objects',\s*accessToken,\s*\{[\s\S]*?method:\s*'POST'[\s\S]*?body:\s*JSON\.stringify\(payload\)/);
-  assert.match(source, /setGalleryModalProgress\('Создание объекта'\)/);
+  assert.match(source, /setGallerySaveProgress\('Создание объекта',\s*5\)/);
   assert.match(source, /persistGalleryDraftForObject\(createData\.object\.id\)/);
   assert.match(source, /navigate\(`\/admin\/objects\/\$\{layoutData\.object\.id\}\/edit`\)/);
   assert.match(source, /setNotice\('Объект создан, галерея сохранена'\)/);
@@ -232,4 +247,18 @@ test('gallery modal save button is enabled and disabled while saving', () => {
   assert.match(source, /isSaving: boolean;/);
   assert.match(source, /<AdminButton[\s\S]*?disabled=\{isSaving\}[\s\S]*?onClick=\{onSave\}[\s\S]*?>[\s\S]*?Сохранить/);
   assert.doesNotMatch(source, /disabled=\{true\}[\s\S]*?Сохранить/);
+});
+
+test('gallery modal shows upload progress as accessible percent bar', () => {
+  assert.match(source, /galleryModalProgressPercent=\{galleryModalProgressPercent\}/);
+  assert.match(source, /progressPercent=\{props\.galleryModalProgressPercent\}/);
+  assert.match(source, /progressPercent: number \| null;/);
+  assert.match(source, /function setGallerySaveProgress\(message: string,\s*percent: number \| null\)/);
+  assert.match(source, /setGalleryModalProgress\(message\);[\s\S]*?setGalleryModalProgressPercent\(percent\);/);
+  assert.match(source, /setGalleryModalProgressPercent\(null\);/);
+  assert.match(source, /role="progressbar"/);
+  assert.match(source, /aria-valuemin=\{0\}/);
+  assert.match(source, /aria-valuemax=\{100\}/);
+  assert.match(source, /aria-valuenow=\{progressPercent\}/);
+  assert.match(source, /className="gallery-modal-progress-fill"[\s\S]*?style=\{\{ width: `\$\{progressPercent\}%` \}\}/);
 });

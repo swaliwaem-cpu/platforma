@@ -1,5 +1,11 @@
 import { basename, extname } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
+import { createWriteStream } from 'node:fs';
+import { mkdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 
 import {
   BadRequestException,
@@ -20,12 +26,18 @@ import {
   PDF_MAX_SIZE_BYTES,
   PDF_MIME_TYPES,
 } from './file-upload.constants';
-import { generateImageVariants, isImageVariantSourceMimeType } from './image-variants';
+import { generateImageVariants, generateImageVariantsFromFile, isImageVariantSourceMimeType } from './image-variants';
 import { S3StorageService } from './s3-storage.service';
 import { UploadedFile } from './uploaded-file.type';
 
 export type UploadFileKind = 'generic' | 'image' | 'pdf' | 'feed-xml';
 export type ServedFileVariant = 'original' | 'original-fallback' | 'thumbnail' | 'card' | 'detail';
+export type UploadedFileStream = {
+  stream: NodeJS.ReadableStream;
+  originalname: string;
+  mimetype: string;
+  size?: number;
+};
 
 type RequestedFileVariant =
   | {
@@ -36,6 +48,10 @@ type RequestedFileVariant =
       variant: FileVariantKind;
       headerValue: Exclude<ServedFileVariant, 'original' | 'original-fallback'>;
     };
+
+type ValidatedUploadedFileStream = UploadedFileStream & {
+  maxSize: number;
+};
 
 @Injectable()
 export class FilesService {
@@ -101,6 +117,72 @@ export class FilesService {
     return {
       file: this.serializeFile(storedFile),
     };
+  }
+
+  async uploadFileStream(file: UploadedFileStream, actor: AuthenticatedUser, kind: UploadFileKind) {
+    const validatedFile = this.validateUploadedFileStream(file, kind);
+    const persistedFile = await this.persistUploadedFileStream(validatedFile);
+
+    try {
+      const key = this.createStorageKey(validatedFile.originalname, validatedFile.mimetype);
+      const variants = isImageVariantSourceMimeType(validatedFile.mimetype)
+        ? await generateImageVariantsFromFile(persistedFile.path, key)
+        : [];
+
+      await this.storage.putObjectFromFile({
+        key,
+        filePath: persistedFile.path,
+        contentType: validatedFile.mimetype,
+        checksum: persistedFile.checksum,
+        contentLength: persistedFile.size,
+      });
+
+      for (const variant of variants) {
+        await this.storage.putObject({
+          key: variant.key,
+          body: variant.body,
+          contentType: variant.mimeType,
+        });
+      }
+
+      const storedFile = await this.prisma.file.create({
+        data: {
+          storage: FileStorage.MINIO,
+          bucket: this.storage.getBucket(),
+          key,
+          url: this.storage.getPublicUrl(key),
+          originalName: validatedFile.originalname,
+          mimeType: validatedFile.mimetype,
+          sizeBytes: BigInt(persistedFile.size),
+          checksum: persistedFile.checksum,
+          uploadedById: actor.id,
+          ...(variants.length > 0
+            ? {
+                variants: {
+                  create: variants.map((variant) => ({
+                    variant: variant.variant,
+                    storage: FileStorage.MINIO,
+                    bucket: this.storage.getBucket(),
+                    key: variant.key,
+                    url: this.storage.getPublicUrl(variant.key),
+                    mimeType: variant.mimeType,
+                    width: variant.width,
+                    height: variant.height,
+                    sizeBytes: variant.sizeBytes,
+                    checksum: variant.checksum,
+                  })),
+                },
+              }
+            : {}),
+        },
+      });
+
+      return {
+        file: this.serializeFile(storedFile),
+      };
+    } finally {
+      await persistedFile.cleanup();
+    }
   }
 
   async getById(id: string) {
@@ -268,6 +350,103 @@ export class FilesService {
       size,
       buffer: file.buffer,
     };
+  }
+
+  private validateUploadedFileStream(file: UploadedFileStream | undefined, kind: UploadFileKind): ValidatedUploadedFileStream {
+    if (!file?.stream) {
+      throw new BadRequestException('File is required');
+    }
+
+    const mimeType = file.mimetype.trim().toLowerCase().split(';')[0] ?? '';
+    const originalname = basename(file.originalname || 'file');
+    const size = typeof file.size === 'number' && Number.isFinite(file.size) ? file.size : undefined;
+
+    if (kind === 'feed-xml') {
+      if (!this.isAllowedFeedXmlFile(originalname, mimeType)) {
+        throw new BadRequestException(this.getMimeTypeError(kind));
+      }
+
+      if (size !== undefined && size > FEED_XML_MAX_SIZE_BYTES) {
+        throw new BadRequestException(`File size cannot exceed ${FEED_XML_MAX_SIZE_BYTES} bytes`);
+      }
+
+      return {
+        ...file,
+        mimetype: mimeType,
+        originalname,
+        size,
+        maxSize: FEED_XML_MAX_SIZE_BYTES,
+      };
+    }
+
+    const allowedMimeTypes = this.getAllowedMimeTypes(kind);
+    const maxSize = this.getMaxSize(kind, mimeType);
+
+    if (!allowedMimeTypes.has(mimeType)) {
+      throw new BadRequestException(this.getMimeTypeError(kind));
+    }
+
+    if (size !== undefined && size > maxSize) {
+      throw new BadRequestException(`File size cannot exceed ${maxSize} bytes`);
+    }
+
+    if (size === 0) {
+      throw new BadRequestException('File is required');
+    }
+
+    return {
+      ...file,
+      mimetype: mimeType,
+      originalname,
+      size,
+      maxSize,
+    };
+  }
+
+  private async persistUploadedFileStream(file: ValidatedUploadedFileStream) {
+    const directory = join(tmpdir(), 'platforma-uploads', randomUUID());
+    const path = join(directory, 'upload');
+    const checksum = createHash('sha256');
+    let size = 0;
+
+    await mkdir(directory, { recursive: true });
+
+    const sizeLimitStream = new Transform({
+      transform(
+        chunk: Buffer | string,
+        encoding: BufferEncoding,
+        callback: (error?: Error | null, data?: Buffer) => void,
+      ) {
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding);
+        size += buffer.length;
+
+        if (size > file.maxSize) {
+          callback(new BadRequestException(`File size cannot exceed ${file.maxSize} bytes`));
+          return;
+        }
+
+        checksum.update(buffer);
+        callback(null, buffer);
+      },
+    });
+
+    try {
+      await pipeline(file.stream, sizeLimitStream, createWriteStream(path));
+
+      if (size === 0) {
+        throw new BadRequestException('File is required');
+      }
+
+      return {
+        path,
+        size,
+        checksum: checksum.digest('hex'),
+        cleanup: () => rm(directory, { recursive: true, force: true }),
+      };
+    } catch (error) {
+      await rm(directory, { recursive: true, force: true });
+      throw error;
+    }
   }
 
   private getAllowedMimeTypes(kind: UploadFileKind) {

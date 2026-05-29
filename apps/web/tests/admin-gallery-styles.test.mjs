@@ -140,3 +140,15 @@ test('admin gallery modal lets the browser skip offscreen tile rendering work', 
     /\.gallery-tile\s*\{[\s\S]*?content-visibility:\s*auto;[\s\S]*?contain-intrinsic-size:\s*260px 220px;[\s\S]*?\}/,
   );
 });
+
+test('admin gallery modal displays compact upload progress bar', () => {
+  assert.match(
+    styles,
+    /\.gallery-modal-progress\s*\{[\s\S]*?height:\s*8px;[\s\S]*?overflow:\s*hidden;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.gallery-modal-progress-fill\s*\{[\s\S]*?display:\s*block;[\s\S]*?height:\s*100%;[\s\S]*?transition:\s*width 180ms ease;[\s\S]*?\}/,
+  );
+});

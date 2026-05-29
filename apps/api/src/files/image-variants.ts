@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import { FileVariantKind } from '@prisma/client';
-import sharp from 'sharp';
+import sharp, { type Sharp } from 'sharp';
 
 export const IMAGE_VARIANT_MIME_TYPE = 'image/webp';
 
@@ -59,11 +59,20 @@ export function createImageVariantKey(originalKey: string, variant: FileVariantK
 }
 
 export async function generateImageVariants(input: Buffer, originalKey: string) {
+  return generateImageVariantsFromSharp(sharp(input), originalKey);
+}
+
+export async function generateImageVariantsFromFile(filePath: string, originalKey: string) {
+  return generateImageVariantsFromSharp(sharp(filePath), originalKey);
+}
+
+async function generateImageVariantsFromSharp(image: Sharp, originalKey: string) {
   const variants: GeneratedImageVariant[] = [];
 
   for (const variant of IMAGE_VARIANT_ORDER) {
     const spec = IMAGE_VARIANT_SPECS[variant];
-    const { data, info } = await sharp(input)
+    const { data, info } = await image
+      .clone()
       .rotate()
       .resize({
         width: spec.width,

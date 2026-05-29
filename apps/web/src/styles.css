@@ -2828,6 +2828,36 @@ tr.user-row--deactivated .text-button {
   font-size: 12px;
 }
 
+.gallery-modal-progress-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.gallery-modal-progress {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e7edf5;
+}
+
+.gallery-modal-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #2563eb;
+  transition: width 180ms ease;
+}
+
+.gallery-modal-progress-value {
+  min-width: 42px;
+  color: #174ea6;
+  font-size: 12px;
+  font-weight: 900;
+  text-align: right;
+}
+
 .gallery-cover-slot {
   display: grid;
   min-height: 180px;
