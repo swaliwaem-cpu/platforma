@@ -30,14 +30,11 @@ RUN VITE_API_URL="$VITE_API_URL" VITE_YANDEX_MAPS_API_KEY="$VITE_YANDEX_MAPS_API
 FROM node:22-alpine AS runner
 
 WORKDIR /app
-RUN corepack enable
+ENV NODE_ENV=production
+ENV PORT=5173
 
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/apps/web/node_modules ./apps/web/node_modules
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
-COPY apps/web/package.json apps/web/package.json
-COPY packages/shared/package.json packages/shared/package.json
+COPY apps/web/server.mjs ./apps/web/server.mjs
 COPY --from=builder /app/apps/web/dist ./apps/web/dist
 
 EXPOSE 5173
-CMD ["pnpm", "--filter", "@platforma/web", "exec", "vite", "preview", "--host", "0.0.0.0", "--port", "5173"]
+CMD ["node", "apps/web/server.mjs"]
