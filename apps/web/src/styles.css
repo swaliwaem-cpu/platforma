@@ -2961,6 +2961,8 @@ tr.user-row--deactivated .text-button {
   display: grid;
   min-width: 0;
   gap: 8px;
+  content-visibility: auto;
+  contain-intrinsic-size: 260px 220px;
 }
 
 .gallery-tile-remove-button {

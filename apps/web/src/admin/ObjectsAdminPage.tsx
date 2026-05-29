@@ -1,5 +1,7 @@
 import {
   FormEvent,
+  memo,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -107,7 +109,7 @@ type GalleryDraftItem = {
   kind: 'existing' | 'new';
   imageId: string | null;
   file: File | null;
-  previewUrl: string;
+  previewUrl: string | null;
   name: string;
   section: ObjectImageSection | null;
   isUploading?: boolean;
@@ -123,6 +125,9 @@ const fileTypeLabels: Record<ObjectFileType, string> = {
 const objectPdfUploadLimit = 10;
 const objectListPageSize = 20;
 const searchableMultiSelectResultLimit = 24;
+const galleryPreviewMaxDimension = 640;
+const galleryPreviewMimeType = 'image/jpeg';
+const galleryPreviewQuality = 0.82;
 
 const gallerySectionOptions: {
   value: ObjectImageSection;
@@ -308,9 +313,38 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
     galleryDraftItemsRef.current = nextDraftItems;
     setGalleryDraftItems(nextDraftItems);
     setGalleryModalError(null);
+    void hydrateNewGalleryDraftPreviews(nextNewItems);
 
     if (!galleryCoverDraftId) {
       setGalleryCoverDraftId(nextNewItems[0]?.draftId ?? null);
+    }
+  }
+
+  async function hydrateNewGalleryDraftPreviews(items: GalleryDraftItem[]) {
+    for (const item of items) {
+      if (item.kind !== 'new' || !item.file) {
+        continue;
+      }
+
+      const previewUrl = await createGalleryPreviewUrl(item.file);
+      const currentItems = galleryDraftItemsRef.current;
+      const currentItem = currentItems.find((draftItem) => draftItem.draftId === item.draftId);
+
+      if (!currentItem || currentItem.kind !== 'new') {
+        URL.revokeObjectURL(previewUrl);
+        continue;
+      }
+
+      const nextDraftItems = currentItems.map((draftItem) =>
+        draftItem.draftId === item.draftId ? { ...draftItem, previewUrl } : draftItem,
+      );
+
+      galleryDraftItemsRef.current = nextDraftItems;
+      setGalleryDraftItems(nextDraftItems);
+
+      if (currentItem.previewUrl) {
+        URL.revokeObjectURL(currentItem.previewUrl);
+      }
     }
   }
 
@@ -1927,6 +1961,11 @@ function GalleryManagementModal({
   const [dropTargetDraftId, setDropTargetDraftId] = useState<string | null>(null);
   const [isCoverDropTarget, setIsCoverDropTarget] = useState(false);
   const [isCloseConfirmOpen, setIsCloseConfirmOpen] = useState(false);
+  const draggedDraftIdRef = useRef<string | null>(null);
+  const dropTargetDraftIdRef = useRef<string | null>(null);
+  const isCoverDropTargetRef = useRef(false);
+  const isSavingRef = useRef(isSaving);
+  const draftItemsRef = useRef(draftItems);
   const existingImageById = useMemo(() => new Map(existingImages.map((image) => [image.id, image])), [existingImages]);
   const hasUnsavedChanges = useMemo(
     () => hasGalleryDraftChanges(draftItems, coverDraftId, existingImages),
@@ -1948,41 +1987,67 @@ function GalleryManagementModal({
     }
   }, [hasUnsavedChanges]);
 
-  function clearGalleryDragState() {
+  useEffect(() => {
+    isSavingRef.current = isSaving;
+  }, [isSaving]);
+
+  useEffect(() => {
+    draftItemsRef.current = draftItems;
+  }, [draftItems]);
+
+  const clearGalleryDragState = useCallback(() => {
+    draggedDraftIdRef.current = null;
+    dropTargetDraftIdRef.current = null;
+    isCoverDropTargetRef.current = false;
     setDraggedDraftId(null);
     setDropTargetDraftId(null);
     setIsCoverDropTarget(false);
-  }
+  }, []);
 
-  function getDraggedDraftId(event: DragEvent<HTMLElement>) {
-    return event.dataTransfer.getData('text/plain') || draggedDraftId;
-  }
+  const getDraggedDraftId = useCallback(
+    (event: DragEvent<HTMLElement>) => event.dataTransfer.getData('text/plain') || draggedDraftIdRef.current,
+    [],
+  );
 
-  function handleTileDragStart(event: DragEvent<HTMLLIElement>, draftId: string) {
-    if (isSaving) {
+  const handleTileDragStart = useCallback((event: DragEvent<HTMLLIElement>, draftId: string) => {
+    if (isSavingRef.current) {
       event.preventDefault();
       return;
     }
 
+    draggedDraftIdRef.current = draftId;
+    dropTargetDraftIdRef.current = null;
+    isCoverDropTargetRef.current = false;
     setDraggedDraftId(draftId);
     setDropTargetDraftId(null);
     setIsCoverDropTarget(false);
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', draftId);
-  }
+  }, []);
 
-  function handleTileDragOver(event: DragEvent<HTMLLIElement>, targetDraftId: string) {
-    if (isSaving || !draggedDraftId || draggedDraftId === targetDraftId) {
+  const handleTileDragOver = useCallback((event: DragEvent<HTMLLIElement>, targetDraftId: string) => {
+    const draggedDraftId = draggedDraftIdRef.current;
+    const dropTargetDraftId = dropTargetDraftIdRef.current;
+    const isCoverDropTarget = isCoverDropTargetRef.current;
+
+    if (isSavingRef.current || !draggedDraftId || draggedDraftId === targetDraftId) {
       return;
     }
 
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
+
+    if (dropTargetDraftId === targetDraftId && !isCoverDropTarget) {
+      return;
+    }
+
+    dropTargetDraftIdRef.current = targetDraftId;
+    isCoverDropTargetRef.current = false;
     setDropTargetDraftId(targetDraftId);
     setIsCoverDropTarget(false);
-  }
+  }, []);
 
-  function handleTileDrop(event: DragEvent<HTMLLIElement>, targetDraftId: string) {
+  const handleTileDrop = useCallback((event: DragEvent<HTMLLIElement>, targetDraftId: string) => {
     event.preventDefault();
 
     const nextDraggedDraftId = getDraggedDraftId(event);
@@ -1994,40 +2059,48 @@ function GalleryManagementModal({
     }
 
     onDraftReorder(nextDraggedDraftId, targetDraftId);
-  }
+  }, [clearGalleryDragState, getDraggedDraftId, onDraftReorder]);
 
-  function handleCoverSlotDragOver(event: DragEvent<HTMLDivElement>) {
-    if (isSaving || !draggedDraftId) {
+  const handleCoverSlotDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (isSavingRef.current || !draggedDraftIdRef.current) {
       return;
     }
 
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
+
+    if (isCoverDropTargetRef.current && dropTargetDraftIdRef.current === null) {
+      return;
+    }
+
+    dropTargetDraftIdRef.current = null;
+    isCoverDropTargetRef.current = true;
     setDropTargetDraftId(null);
     setIsCoverDropTarget(true);
-  }
+  }, []);
 
-  function handleCoverSlotDrop(event: DragEvent<HTMLDivElement>) {
+  const handleCoverSlotDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
 
     const nextDraggedDraftId = getDraggedDraftId(event);
 
     clearGalleryDragState();
 
-    if (!nextDraggedDraftId || !draftItems.some((item) => item.draftId === nextDraggedDraftId)) {
+    if (!nextDraggedDraftId || !draftItemsRef.current.some((item) => item.draftId === nextDraggedDraftId)) {
       return;
     }
 
     onCoverChange(nextDraggedDraftId);
-  }
+  }, [clearGalleryDragState, getDraggedDraftId, onCoverChange]);
 
-  function handleCoverSlotDragLeave(event: DragEvent<HTMLDivElement>) {
+  const handleCoverSlotDragLeave = useCallback((event: DragEvent<HTMLDivElement>) => {
     if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
       return;
     }
 
+    isCoverDropTargetRef.current = false;
     setIsCoverDropTarget(false);
-  }
+  }, []);
 
   function requestGalleryModalClose() {
     if (hasUnsavedChanges) {
@@ -2169,113 +2242,29 @@ function GalleryManagementModal({
             {draftItems.map((item, itemIndex) => {
               const existingImage = item.imageId ? existingImageById.get(item.imageId) ?? null : null;
               const isCover = item.draftId === coverDraftId;
-              const sectionLabel = getGallerySectionLabel(item.section);
-              const tileClassName = [
-                'gallery-tile',
-                isCover ? 'gallery-tile--cover' : null,
-                item.draftId === draggedDraftId ? 'gallery-tile--dragging' : null,
-                item.draftId === dropTargetDraftId ? 'gallery-tile--drop-target' : null,
-              ]
-                .filter(Boolean)
-                .join(' ');
 
               return (
-                <li
+                <GalleryDraftTile
                   key={item.draftId}
-                  className={tileClassName}
-                  draggable={!isSaving}
+                  accessToken={accessToken}
+                  canDeleteMedia={canDeleteMedia}
+                  existingImage={existingImage}
+                  handleTileDragOver={handleTileDragOver}
+                  handleTileDragStart={handleTileDragStart}
+                  handleTileDrop={handleTileDrop}
+                  isCover={isCover}
+                  isDragging={item.draftId === draggedDraftId}
+                  isDropTarget={item.draftId === dropTargetDraftId}
+                  isFirst={itemIndex === 0}
+                  isLast={itemIndex === draftItems.length - 1}
+                  isSaving={isSaving}
+                  item={item}
+                  onCoverChange={onCoverChange}
+                  onDraftMove={onDraftMove}
+                  onDraftRemove={onDraftRemove}
                   onDragEnd={clearGalleryDragState}
-                  onDragOver={(event) => handleTileDragOver(event, item.draftId)}
-                  onDragStart={(event) => handleTileDragStart(event, item.draftId)}
-                  onDrop={(event) => handleTileDrop(event, item.draftId)}
-                >
-                  <AdminButton
-                    aria-label={`Удалить ${item.name}`}
-                    className="gallery-tile-remove-button"
-                    disabled={isSaving || (item.kind === 'existing' && !canDeleteMedia)}
-                    fit={false}
-                    size="icon"
-                    title="Удалить"
-                    tone="danger"
-                    type="button"
-                    onClick={() => onDraftRemove(item.draftId)}
-                  >
-                    <Trash2Icon />
-                  </AdminButton>
-                  <button
-                    aria-pressed={isCover}
-                    className="gallery-tile-button"
-                    disabled={isSaving}
-                    type="button"
-                    onClick={() => onCoverChange(item.draftId)}
-                  >
-                    <div className="gallery-tile-preview">
-                      <GalleryDraftPreview
-                        accessToken={accessToken}
-                        existingImage={existingImage}
-                        item={item}
-                        variant="thumbnail"
-                      />
-                    </div>
-                    <span className="gallery-tile-name">{item.name}</span>
-                    <span className="gallery-tile-status-row">
-                      {item.kind === 'new' ? <span className="gallery-tile-status">Новое</span> : null}
-                      {isCover ? <span className="gallery-tile-status">Обложка</span> : null}
-                      {sectionLabel ? (
-                        <span className="gallery-tile-status gallery-tile-status--section">{sectionLabel}</span>
-                      ) : null}
-                    </span>
-                  </button>
-                  <label className="gallery-tile-section-field">
-                    <span>Раздел</span>
-                    <select
-                      className="gallery-tile-section-select"
-                      disabled={isSaving}
-                      value={item.section ?? ''}
-                      onChange={(event) =>
-                        onSectionChange(
-                          item.draftId,
-                          event.currentTarget.value ? (event.currentTarget.value as ObjectImageSection) : null,
-                        )
-                      }
-                    >
-                      <option value="">Без раздела</option>
-                      {gallerySectionOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <div className="gallery-tile-order-actions" aria-label={`Порядок ${item.name}`}>
-                    <AdminButton
-                      aria-label={`Поднять ${item.name}`}
-                      className="gallery-tile-order-button"
-                      disabled={isSaving || itemIndex === 0}
-                      fit={false}
-                      size="icon"
-                      title="Выше"
-                      tone="text"
-                      type="button"
-                      onClick={() => onDraftMove(item.draftId, 'up')}
-                    >
-                      <ArrowUpIcon />
-                    </AdminButton>
-                    <AdminButton
-                      aria-label={`Опустить ${item.name}`}
-                      className="gallery-tile-order-button"
-                      disabled={isSaving || itemIndex === draftItems.length - 1}
-                      fit={false}
-                      size="icon"
-                      title="Ниже"
-                      tone="text"
-                      type="button"
-                      onClick={() => onDraftMove(item.draftId, 'down')}
-                    >
-                      <ArrowDownIcon />
-                    </AdminButton>
-                  </div>
-                </li>
+                  onSectionChange={onSectionChange}
+                />
               );
             })}
           </ul>
@@ -2297,6 +2286,154 @@ function GalleryManagementModal({
   );
 }
 
+const GalleryDraftTile = memo(function GalleryDraftTile({
+  accessToken,
+  canDeleteMedia,
+  existingImage,
+  handleTileDragOver,
+  handleTileDragStart,
+  handleTileDrop,
+  isCover,
+  isDragging,
+  isDropTarget,
+  isFirst,
+  isLast,
+  isSaving,
+  item,
+  onCoverChange,
+  onDraftMove,
+  onDraftRemove,
+  onDragEnd,
+  onSectionChange,
+}: {
+  accessToken: string | null;
+  canDeleteMedia: boolean;
+  existingImage: ObjectImage | null;
+  handleTileDragOver: (event: DragEvent<HTMLLIElement>, targetDraftId: string) => void;
+  handleTileDragStart: (event: DragEvent<HTMLLIElement>, draftId: string) => void;
+  handleTileDrop: (event: DragEvent<HTMLLIElement>, targetDraftId: string) => void;
+  isCover: boolean;
+  isDragging: boolean;
+  isDropTarget: boolean;
+  isFirst: boolean;
+  isLast: boolean;
+  isSaving: boolean;
+  item: GalleryDraftItem;
+  onCoverChange: (draftId: string) => void;
+  onDraftMove: (draftId: string, direction: 'up' | 'down') => void;
+  onDraftRemove: (draftId: string) => void;
+  onDragEnd: () => void;
+  onSectionChange: (draftId: string, section: ObjectImageSection | null) => void;
+}) {
+  const sectionLabel = getGallerySectionLabel(item.section);
+  const tileClassName = [
+    'gallery-tile',
+    isCover ? 'gallery-tile--cover' : null,
+    isDragging ? 'gallery-tile--dragging' : null,
+    isDropTarget ? 'gallery-tile--drop-target' : null,
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  return (
+    <li
+      className={tileClassName}
+      draggable={!isSaving}
+      onDragEnd={onDragEnd}
+      onDragOver={(event) => handleTileDragOver(event, item.draftId)}
+      onDragStart={(event) => handleTileDragStart(event, item.draftId)}
+      onDrop={(event) => handleTileDrop(event, item.draftId)}
+    >
+      <AdminButton
+        aria-label={`Удалить ${item.name}`}
+        className="gallery-tile-remove-button"
+        disabled={isSaving || (item.kind === 'existing' && !canDeleteMedia)}
+        fit={false}
+        size="icon"
+        title="Удалить"
+        tone="danger"
+        type="button"
+        onClick={() => onDraftRemove(item.draftId)}
+      >
+        <Trash2Icon />
+      </AdminButton>
+      <button
+        aria-pressed={isCover}
+        className="gallery-tile-button"
+        disabled={isSaving}
+        type="button"
+        onClick={() => onCoverChange(item.draftId)}
+      >
+        <div className="gallery-tile-preview">
+          <GalleryDraftPreview
+            accessToken={accessToken}
+            existingImage={existingImage}
+            item={item}
+            variant="thumbnail"
+          />
+        </div>
+        <span className="gallery-tile-name">{item.name}</span>
+        <span className="gallery-tile-status-row">
+          {item.kind === 'new' ? <span className="gallery-tile-status">Новое</span> : null}
+          {isCover ? <span className="gallery-tile-status">Обложка</span> : null}
+          {sectionLabel ? (
+            <span className="gallery-tile-status gallery-tile-status--section">{sectionLabel}</span>
+          ) : null}
+        </span>
+      </button>
+      <label className="gallery-tile-section-field">
+        <span>Раздел</span>
+        <select
+          className="gallery-tile-section-select"
+          disabled={isSaving}
+          value={item.section ?? ''}
+          onChange={(event) =>
+            onSectionChange(
+              item.draftId,
+              event.currentTarget.value ? (event.currentTarget.value as ObjectImageSection) : null,
+            )
+          }
+        >
+          <option value="">Без раздела</option>
+          {gallerySectionOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="gallery-tile-order-actions" aria-label={`Порядок ${item.name}`}>
+        <AdminButton
+          aria-label={`Поднять ${item.name}`}
+          className="gallery-tile-order-button"
+          disabled={isSaving || isFirst}
+          fit={false}
+          size="icon"
+          title="Выше"
+          tone="text"
+          type="button"
+          onClick={() => onDraftMove(item.draftId, 'up')}
+        >
+          <ArrowUpIcon />
+        </AdminButton>
+        <AdminButton
+          aria-label={`Опустить ${item.name}`}
+          className="gallery-tile-order-button"
+          disabled={isSaving || isLast}
+          fit={false}
+          size="icon"
+          title="Ниже"
+          tone="text"
+          type="button"
+          onClick={() => onDraftMove(item.draftId, 'down')}
+        >
+          <ArrowDownIcon />
+        </AdminButton>
+      </div>
+    </li>
+  );
+});
+
 function GalleryDraftPreview({
   accessToken,
   existingImage,
@@ -2309,7 +2446,11 @@ function GalleryDraftPreview({
   variant: 'card' | 'thumbnail';
 }) {
   if (item.kind === 'new') {
-    return <img alt={item.name} decoding="async" loading="lazy" src={item.previewUrl} />;
+    if (item.previewUrl) {
+      return <img alt={item.name} decoding="async" loading="lazy" src={item.previewUrl} />;
+    }
+
+    return <span>Фото</span>;
   }
 
   if (accessToken && existingImage) {
@@ -2928,10 +3069,64 @@ function createNewGalleryDraftItems(files: FileList | File[]): GalleryDraftItem[
     kind: 'new',
     imageId: null,
     file,
-    previewUrl: URL.createObjectURL(file),
+    previewUrl: null,
     name: file.name || 'Новое изображение',
     section: null,
   }));
+}
+
+async function createGalleryPreviewUrl(file: File) {
+  const createOriginalPreviewUrl = () => URL.createObjectURL(file);
+
+  if (typeof document === 'undefined' || typeof createImageBitmap !== 'function') {
+    return createOriginalPreviewUrl();
+  }
+
+  try {
+    const imageBitmap = await createImageBitmap(file);
+
+    try {
+      const previewSize = getGalleryPreviewSize(imageBitmap.width, imageBitmap.height);
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+
+      if (!context) {
+        return createOriginalPreviewUrl();
+      }
+
+      canvas.width = previewSize.width;
+      canvas.height = previewSize.height;
+      context.fillStyle = '#eef3f7';
+      context.fillRect(0, 0, previewSize.width, previewSize.height);
+      context.drawImage(imageBitmap, 0, 0, previewSize.width, previewSize.height);
+
+      const previewBlob = await new Promise<Blob | null>((resolve) => {
+        canvas.toBlob(resolve, galleryPreviewMimeType, galleryPreviewQuality);
+      });
+
+      return previewBlob ? URL.createObjectURL(previewBlob) : createOriginalPreviewUrl();
+    } finally {
+      imageBitmap.close();
+    }
+  } catch {
+    return createOriginalPreviewUrl();
+  }
+}
+
+function getGalleryPreviewSize(width: number, height: number) {
+  if (width <= 0 || height <= 0) {
+    return {
+      width: galleryPreviewMaxDimension,
+      height: galleryPreviewMaxDimension,
+    };
+  }
+
+  const scale = Math.min(1, galleryPreviewMaxDimension / Math.max(width, height));
+
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
 }
 
 function reconcileGalleryDraftItemsWithCurrentGallery(
@@ -3053,7 +3248,7 @@ function getGallerySectionLabel(section: ObjectImageSection | null) {
 }
 
 function revokeGalleryDraftPreviewUrl(item: GalleryDraftItem) {
-  if (item.kind !== 'new') {
+  if (item.kind !== 'new' || !item.previewUrl) {
     return;
   }
 

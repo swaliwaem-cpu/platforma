@@ -8,7 +8,7 @@ const currentDir = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(resolve(currentDir, '../src/admin/ObjectsAdminPage.tsx'), 'utf8');
 
 test('object editor stores gallery changes in modal draft state', () => {
-  assert.match(source, /type GalleryDraftItem\s*=\s*\{[\s\S]*?draftId:\s*string;[\s\S]*?kind:\s*'existing' \| 'new';[\s\S]*?imageId:\s*string \| null;[\s\S]*?file:\s*File \| null;[\s\S]*?previewUrl:\s*string;[\s\S]*?name:\s*string;[\s\S]*?section:\s*ObjectImageSection \| null;[\s\S]*?isUploading\?:\s*boolean;[\s\S]*?\};/);
+  assert.match(source, /type GalleryDraftItem\s*=\s*\{[\s\S]*?draftId:\s*string;[\s\S]*?kind:\s*'existing' \| 'new';[\s\S]*?imageId:\s*string \| null;[\s\S]*?file:\s*File \| null;[\s\S]*?previewUrl:\s*string \| null;[\s\S]*?name:\s*string;[\s\S]*?section:\s*ObjectImageSection \| null;[\s\S]*?isUploading\?:\s*boolean;[\s\S]*?\};/);
 
   assert.match(source, /const \[isGalleryModalOpen,\s*setIsGalleryModalOpen\] = useState\(false\);/);
   assert.match(source, /const \[galleryDraftItems,\s*setGalleryDraftItems\] = useState<GalleryDraftItem\[\]>\(\[\]\);/);
@@ -23,7 +23,7 @@ test('object editor stores gallery changes in modal draft state', () => {
 test('gallery modal draft lifecycle creates and revokes local preview URLs', () => {
   assert.match(source, /function openGalleryModal\(\)[\s\S]*?createGalleryDraftItems\(object\?\.images \?\? \[\]\)/);
   assert.match(source, /function createGalleryDraftItems\(images: ObjectImage\[\]\)[\s\S]*?images\.map\(\(image\) => \(\{[\s\S]*?kind:\s*'existing'[\s\S]*?section:\s*image\.section/);
-  assert.match(source, /function createNewGalleryDraftItems\(files: FileList \| File\[\]\)[\s\S]*?URL\.createObjectURL\(file\)[\s\S]*?section:\s*null/);
+  assert.match(source, /function createNewGalleryDraftItems\(files: FileList \| File\[\]\)[\s\S]*?previewUrl:\s*null[\s\S]*?section:\s*null/);
   assert.match(source, /function removeGalleryDraftItem\(draftId: string\)[\s\S]*?revokeGalleryDraftPreviewUrl\(removedItem\)/);
   assert.match(source, /function closeGalleryModal\(\)[\s\S]*?resetGalleryModalDraft\(\)/);
   assert.match(source, /useEffect\(\(\) => \(\) => \{[\s\S]*?revokeGalleryDraftPreviewUrls\(galleryDraftItemsRef\.current\);[\s\S]*?\}, \[\]\);/);
@@ -178,6 +178,22 @@ test('gallery modal blocks duplicate save submissions synchronously', () => {
 test('gallery modal previews avoid eager decoding of every thumbnail', () => {
   assert.match(source, /return <img alt=\{item\.name\} decoding="async" loading="lazy" src=\{item\.previewUrl\} \/>;/);
   assert.match(source, /<SecureImage[\s\S]*?decoding="async"[\s\S]*?lazy=\{variant === 'thumbnail'\}[\s\S]*?loading="lazy"[\s\S]*?variant=\{variant\}/);
+});
+
+test('gallery modal prepares lightweight local previews for new files asynchronously', () => {
+  assert.match(source, /function createNewGalleryDraftItems\(files: FileList \| File\[\]\)[\s\S]*?previewUrl:\s*null/);
+  assert.doesNotMatch(source, /previewUrl:\s*URL\.createObjectURL\(file\)/);
+  assert.match(source, /void hydrateNewGalleryDraftPreviews\(nextNewItems\);/);
+  assert.match(source, /async function hydrateNewGalleryDraftPreviews\(items: GalleryDraftItem\[\]\)/);
+  assert.match(source, /async function createGalleryPreviewUrl\(file: File\)/);
+  assert.match(source, /canvas\.toBlob\([\s\S]*?galleryPreviewMimeType[\s\S]*?galleryPreviewQuality/);
+});
+
+test('gallery modal isolates tile rerenders and avoids repeated drag-over state churn', () => {
+  assert.match(source, /memo,/);
+  assert.match(source, /const GalleryDraftTile = memo\(function GalleryDraftTile/);
+  assert.match(source, /<GalleryDraftTile[\s\S]*?item=\{item\}/);
+  assert.match(source, /if \(dropTargetDraftId === targetDraftId && !isCoverDropTarget\) \{/);
 });
 
 test('gallery modal save flow creates new object before uploading draft media', () => {

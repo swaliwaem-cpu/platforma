@@ -133,3 +133,10 @@ test('admin gallery modal keeps tile remove action compact and anchored', () => 
     /\.gallery-tile-remove-button\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?top:\s*8px;[\s\S]*?right:\s*8px;[\s\S]*?width:\s*32px;[\s\S]*?height:\s*32px;[\s\S]*?\}/,
   );
 });
+
+test('admin gallery modal lets the browser skip offscreen tile rendering work', () => {
+  assert.match(
+    styles,
+    /\.gallery-tile\s*\{[\s\S]*?content-visibility:\s*auto;[\s\S]*?contain-intrinsic-size:\s*260px 220px;[\s\S]*?\}/,
+  );
+});

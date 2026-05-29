@@ -342,7 +342,7 @@ apt install -y nginx certbot python3-certbot-nginx</pre>
   <pre>server {
   server_name api.platform.example.ru;
 
-  client_max_body_size 60m;
+  client_max_body_size 200m;
 
   location / {
     proxy_pass http://127.0.0.1:3000;

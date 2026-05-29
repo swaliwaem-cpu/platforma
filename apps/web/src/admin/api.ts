@@ -4,6 +4,8 @@ export const apiUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 export const apiAuthUpdatedEventName = 'platforma-auth-updated';
 export const apiAuthClearedEventName = 'platforma-auth-cleared';
 
+const apiConnectionErrorMessage = 'Не удалось связаться с сервером';
+
 let currentAccessToken: string | null = null;
 let refreshSessionPromise: Promise<AuthResponse> | null = null;
 
@@ -17,12 +19,22 @@ export async function apiRequest<T = unknown>(
   options: RequestInit = {},
 ) {
   const initialToken = currentAccessToken ?? accessToken;
-  let response = await sendApiRequest(path, initialToken, options);
+  let response: Response;
+
+  try {
+    response = await sendApiRequest(path, initialToken, options);
+  } catch {
+    throw new Error(apiConnectionErrorMessage);
+  }
 
   if (response.status === 401) {
     const refreshedSession = await refreshApiSession();
 
-    response = await sendApiRequest(path, refreshedSession.accessToken, options);
+    try {
+      response = await sendApiRequest(path, refreshedSession.accessToken, options);
+    } catch {
+      throw new Error(apiConnectionErrorMessage);
+    }
   }
 
   if (!response.ok) {
@@ -86,6 +98,10 @@ async function refreshApiSession() {
 }
 
 async function resolveErrorMessage(response: Response) {
+  if (response.status === 413) {
+    return 'Слишком большой запрос: уменьшите размер файлов или загрузите меньше изображений';
+  }
+
   try {
     const data = (await response.json()) as { message?: string | string[] };
     const message = Array.isArray(data.message) ? data.message.join(', ') : data.message;
