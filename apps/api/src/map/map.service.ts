@@ -534,6 +534,7 @@ export class MapService {
       slug: object.slug,
       status: object.status,
       address: object.address,
+      mapName: object.mapName,
       latitude: object.latitude?.toNumber() ?? 0,
       longitude: object.longitude?.toNumber() ?? 0,
       priceFrom: object.priceFrom?.toString() ?? null,

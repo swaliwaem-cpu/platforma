@@ -36,6 +36,7 @@ const textPayloadColumns = new Set<ObjectQuickEditColumnKey>([
   'apartmentAreaRange',
   'ceilingHeight',
   'floorRange',
+  'mapName',
 ]);
 
 export function createObjectQuickEditRequest({

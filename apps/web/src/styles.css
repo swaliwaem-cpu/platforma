@@ -1257,7 +1257,7 @@ table {
 
 .compact-table {
   table-layout: fixed;
-  min-width: 1180px;
+  min-width: 1260px;
 }
 
 .compact-table :is([data-slot="table-head"], [data-slot="table-cell"]) {
@@ -1333,6 +1333,10 @@ table {
 
 .object-quick-column--coordinates {
   width: 8%;
+}
+
+.object-quick-column--mapName {
+  width: 6%;
 }
 
 .admin-table [data-slot="table-cell"] {
@@ -4519,8 +4523,8 @@ tr.user-row--deactivated .text-button {
 
 .map-price-marker-anchor {
   position: relative;
-  width: 124px;
-  height: 36px;
+  width: 88px;
+  height: 45px;
 }
 
 .map-price-marker {
@@ -4529,110 +4533,111 @@ tr.user-row--deactivated .text-button {
   left: 0;
   top: 0;
   display: inline-flex;
-  width: 36px;
-  height: 36px;
+  width: 88px;
+  height: 45px;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: center;
   border: 0;
-  border-radius: 999px;
   background: transparent;
-  color: oklch(98.5% 0.006 230);
   padding: 0;
-  font-size: 13px;
-  font-weight: 900;
-  line-height: 1;
-  white-space: nowrap;
-  text-align: left;
   transform: translateZ(0);
   overflow: visible;
-  transition: width 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  cursor: pointer;
 }
 
-.map-price-marker::before {
+.map-price-marker-dot,
+.map-price-marker-pin {
   position: absolute;
-  top: 50%;
-  content: "";
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
   pointer-events: none;
-}
-
-.map-price-marker::before {
-  z-index: 2;
-  left: 0;
-  width: 36px;
-  aspect-ratio: 1;
-  border: 2px solid oklch(98.5% 0.006 230);
-  border-radius: 50%;
-  background: var(--catalog-blue-deep);
-  box-shadow: 0 6px 14px rgb(24 32 42 / 18%);
-  transform: translateY(-50%);
-}
-
-.map-price-marker-label {
-  position: absolute;
-  z-index: 1;
-  top: 50%;
-  left: 18px;
-  display: inline-flex;
-  width: 104px;
-  height: 34px;
-  align-items: center;
-  border: 2px solid oklch(98.5% 0.006 230);
-  border-radius: 999px;
-  background: var(--catalog-blue);
-  color: oklch(98.5% 0.006 230);
-  box-shadow: 0 10px 22px rgb(24 32 42 / 22%);
-  pointer-events: none;
-  opacity: 0;
-  transform-origin: left center;
-  transform: translateY(-50%) scaleX(0);
   transition:
     opacity 160ms ease,
     transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.map-price-marker-label span {
-  display: inline-flex;
-  min-width: 0;
-  margin-left: 24px;
+.map-price-marker-dot {
+  left: 50%;
+  bottom: 0;
+  z-index: 3;
+  width: 25px;
+  height: 25px;
+  border: 1px solid #000000;
+  border-radius: 50%;
+  background-image: url("/map-marker-dot.svg");
+  box-shadow: 0 6px 14px rgb(24 32 42 / 18%);
+  transform: translate(-50%, 0);
+}
+
+.map-price-marker-pin {
+  inset: 0;
+  z-index: 2;
+  width: 88px;
+  height: 45px;
+  background-image: url("/map-marker-pin.svg");
+  filter: drop-shadow(0 10px 18px rgb(24 32 42 / 22%));
   opacity: 0;
-  transform: translateX(-10px);
-  transition:
-    opacity 140ms ease,
-    transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  transform: translateY(4px) scale(0.92);
 }
 
-.yandex-map--markers-expanded .map-price-marker-label {
-  opacity: 1;
-  transform: translateY(-50%) scaleX(1);
+.map-price-marker-pin-label {
+  position: absolute;
+  top: 0;
+  left: 8px;
+  display: flex;
+  width: 72px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  color: #161616;
+  font-size: 8px;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: 0;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
-.yandex-map--markers-expanded .map-price-marker-label span {
+.yandex-map--markers-expanded .map-price-marker-dot {
+  opacity: 0;
+  transform: translate(-50%, 3px) scale(0.6);
+}
+
+.yandex-map--markers-expanded .map-price-marker-pin {
   opacity: 1;
-  transform: translateX(0);
+  transform: none;
 }
 
 .map-price-marker:focus-visible {
   outline: 0;
 }
 
-.map-price-marker:focus-visible::before {
+.map-price-marker:focus-visible .map-price-marker-dot,
+.map-price-marker:focus-visible .map-price-marker-pin {
   box-shadow:
     0 0 0 3px color-mix(in oklch, var(--catalog-blue) 20%, transparent),
     0 6px 14px rgb(24 32 42 / 18%);
 }
 
-.map-price-marker--selected + .map-price-marker-label {
-  background: var(--catalog-copper);
+.map-price-marker--selected .map-price-marker-dot {
+  border-color: #ffffff;
+  background-color: var(--catalog-copper);
 }
 
-.map-price-marker--selected::before {
-  background: color-mix(in oklch, var(--catalog-copper) 78%, var(--catalog-ink-900));
+.map-price-marker--selected .map-price-marker-pin {
+  filter:
+    drop-shadow(0 0 0 #ffffff)
+    drop-shadow(0 10px 18px rgb(24 32 42 / 24%));
 }
 
 @media (prefers-reduced-motion: reduce) {
   .map-price-marker,
-  .map-price-marker-label,
-  .map-price-marker-label span {
+  .map-price-marker-dot,
+  .map-price-marker-pin {
     transition: none;
   }
 }

@@ -23,6 +23,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { MultiSelectDropdown } from '../components/MultiSelectDropdown';
 import { SecureImage } from '../files/SecureImage';
 import { formatGroupedNumberInputValue } from '../lib/numberInput';
+import { resolveMapMarkerLabel } from '../map/mapMarkerLabels';
 import { YandexMap, type YandexMapBounds, type YandexMapPoint } from '../map/YandexMap';
 
 type CatalogPageProps = {
@@ -1752,7 +1753,7 @@ function mapObjectToPoint(object: MapObject, filters: CatalogFilters): YandexMap
     hint: object.title,
     coordinates: [object.latitude, object.longitude],
     balloonHtml: buildMapBalloon(object, filters),
-    markerLabel: formatMapMarkerPrice(getCatalogPricePerMeterFrom(object)),
+    markerLabel: resolveMapMarkerLabel(object),
   };
 }
 
@@ -1964,20 +1965,6 @@ function formatPriceFrom(value: string | null) {
 
 function formatPricePerMeterFrom(value: string | null) {
   return value ? `от ${formatPrice(value)}/м²` : 'за м² не указана';
-}
-
-function formatMapMarkerPrice(value: string | null) {
-  if (!value) {
-    return 'по запросу';
-  }
-
-  const parsed = Number(value);
-
-  if (!Number.isFinite(parsed)) {
-    return `от ${value}`;
-  }
-
-  return `от ${formatCompactRussianNumber(parsed / 1000)}т`;
 }
 
 function formatMapListPricePerMeter(value: string | null) {

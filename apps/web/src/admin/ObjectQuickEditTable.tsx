@@ -42,7 +42,8 @@ export type ObjectQuickEditColumnKey =
   | 'apartmentAreaRange'
   | 'ceilingHeight'
   | 'floorRange'
-  | 'coordinates';
+  | 'coordinates'
+  | 'mapName';
 export type ObjectQuickEditCellValue = string | string[] | ObjectStatus | QuickEditCompletionValue;
 
 type ObjectQuickEditEditor = 'text' | 'status' | 'class' | 'developer' | 'metro';
@@ -69,6 +70,7 @@ export const objectQuickEditColumns = [
   { key: 'ceilingHeight', label: 'Высота потолков', editor: 'text' },
   { key: 'floorRange', label: 'Этажность', editor: 'text' },
   { key: 'coordinates', label: 'Координаты', editor: 'text' },
+  { key: 'mapName', label: 'Имя карты', editor: 'text' },
 ] as const satisfies readonly ObjectQuickEditColumn[];
 
 export const objectStatusLabels: Record<ObjectStatus, string> = {
@@ -253,6 +255,7 @@ function renderQuickEditCell({
         <div className="quick-edit-editor quick-edit-editor--title">
           <EditableTextCell
             value={getCellDraftValue(item, column.key)}
+            maxLength={getTextCellMaxLength(column.key)}
             onCancel={onCancel}
             onCommit={(value) => onCommit(getTextCellCommitValue(column.key, value))}
           />
@@ -307,6 +310,7 @@ function renderQuickEditCell({
       editor = (
         <EditableTextCell
           value={getCellDraftValue(item, column.key)}
+          maxLength={getTextCellMaxLength(column.key)}
           onCancel={onCancel}
           onCommit={(value) => onCommit(getTextCellCommitValue(column.key, value))}
         />
@@ -342,10 +346,12 @@ function renderQuickEditCell({
 }
 
 function EditableTextCell({
+  maxLength,
   value,
   onCancel,
   onCommit,
 }: {
+  maxLength?: number;
   value: string;
   onCancel: () => void;
   onCommit: (value: string) => void;
@@ -370,6 +376,7 @@ function EditableTextCell({
     <input
       autoFocus
       className="quick-edit-input"
+      maxLength={maxLength}
       type="text"
       value={draftValue}
       onBlur={handleEditorBlur}
@@ -690,6 +697,8 @@ function getCellDisplayValue(object: RealEstateObjectSummary, columnKey: ObjectQ
       return object.floorRange;
     case 'coordinates':
       return formatCoordinatePair(object.latitude, object.longitude);
+    case 'mapName':
+      return object.mapName;
     case 'status':
       return objectStatusLabels[object.status];
     case 'title':
@@ -721,8 +730,19 @@ function getCellDraftValue(object: RealEstateObjectSummary, columnKey: ObjectQui
       return object.floorRange ?? '';
     case 'coordinates':
       return formatCoordinatePair(object.latitude, object.longitude) ?? '';
+    case 'mapName':
+      return object.mapName ?? '';
     default:
       return '';
+  }
+}
+
+function getTextCellMaxLength(columnKey: ObjectQuickEditColumnKey) {
+  switch (columnKey) {
+    case 'mapName':
+      return 16;
+    default:
+      return undefined;
   }
 }
 

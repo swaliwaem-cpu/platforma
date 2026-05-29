@@ -1,14 +1,18 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const mapSource = readFileSync(resolve(currentDir, '../src/map/YandexMap.tsx'), 'utf8');
+const markerLabelsPath = resolve(currentDir, '../src/map/mapMarkerLabels.ts');
+const markerLabelsSource = existsSync(markerLabelsPath) ? readFileSync(markerLabelsPath, 'utf8') : '';
 const catalogSource = readFileSync(resolve(currentDir, '../src/catalog/CatalogPage.tsx'), 'utf8');
 const objectDetailSource = readFileSync(resolve(currentDir, '../src/objects/ObjectDetailPage.tsx'), 'utf8');
 const styles = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
+const dotAssetPath = resolve(currentDir, '../public/map-marker-dot.svg');
+const pinAssetPath = resolve(currentDir, '../public/map-marker-pin.svg');
 
 function getFunctionBody(source, functionName) {
   const functionStart = source.indexOf(`function ${functionName}`);
@@ -87,57 +91,59 @@ test('catalog map overlays render through the yandex map element for fullscreen'
   assert.match(catalogSource, /const mapOverlay = \([\s\S]*?<MapObjectCard[\s\S]*?<aside className="catalog-map-list"/);
 });
 
-test('map marker labels omit price-per-meter suffixes', () => {
-  const catalogMarkerFormatter = getFunctionBody(catalogSource, 'formatMapMarkerPrice');
-  const objectMarkerFormatter = getFunctionBody(objectDetailSource, 'formatObjectMapMarkerPrice');
+test('catalog map marker label falls back to cleaned object title', async () => {
+  assert.equal(existsSync(markerLabelsPath), true);
+  assert.match(markerLabelsSource, /export function resolveMapMarkerLabel/);
+  assert.match(catalogSource, /import \{ resolveMapMarkerLabel \} from '\.\.\/map\/mapMarkerLabels';/);
+  assert.match(objectDetailSource, /import \{ resolveMapMarkerLabel \} from '\.\.\/map\/mapMarkerLabels';/);
+  assert.match(catalogSource, /markerLabel:\s*resolveMapMarkerLabel\(object\)/);
+  assert.match(objectDetailSource, /markerLabel:\s*resolveMapMarkerLabel\(object\)/);
 
-  for (const formatterBody of [catalogMarkerFormatter, objectMarkerFormatter]) {
-    assert.doesNotMatch(formatterBody, /\/м²/);
-    assert.match(formatterBody, /return 'по запросу';/);
-    assert.match(formatterBody, /return `от \$\{formatCompactRussianNumber\(parsed \/ 1000\)\}т`;/);
-  }
+  const { resolveMapMarkerLabel } = await import(pathToFileURL(markerLabelsPath).href);
+
+  assert.equal(resolveMapMarkerLabel({ title: 'ЖК «Ария»', mapName: '  Река  ' }), 'Река');
+  assert.equal(resolveMapMarkerLabel({ title: 'ЖК Клубный дом «Ария»', mapName: null }), 'Ария');
+  assert.equal(resolveMapMarkerLabel({ title: 'Жилой комплекс Квартал Событие', mapName: '' }), 'Событи');
+  assert.equal(resolveMapMarkerLabel({ title: 'Дом', mapName: null }), 'Дом');
 });
 
-test('map marker CSS starts as a circle and animates an oval label from it', () => {
+test('map marker CSS starts as a small SVG dot and swaps to SVG pin on close zoom', () => {
+  assert.equal(existsSync(dotAssetPath), true);
+  assert.equal(existsSync(pinAssetPath), true);
   assert.match(
     styles,
-    /\.map-price-marker\s*\{[\s\S]*?width:\s*36px;[\s\S]*?height:\s*36px;[\s\S]*?background:\s*transparent;[\s\S]*?overflow:\s*visible;[\s\S]*?\}/,
+    /\.map-price-marker-dot\s*\{[\s\S]*?width:\s*25px;[\s\S]*?height:\s*25px;[\s\S]*?border:\s*1px solid #000000;[\s\S]*?background-image:\s*url\("\/map-marker-dot\.svg"\);[\s\S]*?\}/,
   );
   assert.match(
     styles,
-    /\.map-price-marker::before\s*\{[\s\S]*?width:\s*36px;[\s\S]*?border-radius:\s*50%;[\s\S]*?\}/,
+    /\.map-price-marker-pin\s*\{[\s\S]*?width:\s*88px;[\s\S]*?height:\s*45px;[\s\S]*?background-image:\s*url\("\/map-marker-pin\.svg"\);[\s\S]*?opacity:\s*0;[\s\S]*?\}/,
   );
   assert.match(
     styles,
-    /\.map-price-marker-label\s*\{[\s\S]*?pointer-events:\s*none;[\s\S]*?transform-origin:\s*left center;[\s\S]*?scaleX\(0\);[\s\S]*?\}/,
+    /\.map-price-marker-pin-label\s*\{[\s\S]*?font-size:\s*8px;[\s\S]*?overflow:\s*hidden;[\s\S]*?text-overflow:\s*ellipsis;[\s\S]*?\}/,
   );
   assert.match(
     styles,
-    /\.map-price-marker-label span\s*\{[\s\S]*?opacity:\s*0;[\s\S]*?transform:\s*translateX\(-10px\);[\s\S]*?\}/,
+    /\.yandex-map--markers-expanded \.map-price-marker-dot\s*\{[\s\S]*?opacity:\s*0;[\s\S]*?\}/,
   );
   assert.match(
     styles,
-    /\.yandex-map--markers-expanded \.map-price-marker-label\s*\{[\s\S]*?opacity:\s*1;[\s\S]*?transform:\s*translateY\(-50%\) scaleX\(1\);[\s\S]*?\}/,
-  );
-  assert.match(
-    styles,
-    /\.yandex-map--markers-expanded \.map-price-marker-label span\s*\{[\s\S]*?opacity:\s*1;[\s\S]*?transform:\s*translateX\(0\);[\s\S]*?\}/,
+    /\.yandex-map--markers-expanded \.map-price-marker-pin\s*\{[\s\S]*?opacity:\s*1;[\s\S]*?transform:\s*none;[\s\S]*?\}/,
   );
 });
 
-test('map marker click target stays limited to the visible circle', () => {
+test('map marker pin is anchored by the bottom center tail point', () => {
   assert.match(mapSource, /'<div class="map-price-marker-anchor">',/);
   assert.match(mapSource, /'<button class="map-price-marker" type="button"',/);
-  assert.match(mapSource, /'<\/button>',\s*'<span class="map-price-marker-label" aria-hidden="true">',\s*'<span>\$\[properties\.markerLabel\]<\/span>',\s*'<\/span>',\s*'<\/div>',/);
+  assert.match(mapSource, /'<span class="map-price-marker-dot" aria-hidden="true"><\/span>',/);
+  assert.match(mapSource, /'<span class="map-price-marker-pin" aria-hidden="true">',/);
+  assert.match(mapSource, /'<span class="map-price-marker-pin-label">\$\[properties\.markerLabel\]<\/span>',/);
   assert.match(
     mapSource,
-    /iconOffset:\s*\[-18,\s*-18\],\s*iconShape:\s*\{\s*type:\s*'Circle',\s*coordinates:\s*\[18,\s*18\],\s*radius:\s*18,\s*\}/,
+    /iconOffset:\s*\[-44,\s*-45\],\s*iconShape:\s*\{\s*type:\s*'Rectangle',\s*coordinates:\s*\[\s*\[0,\s*0\],\s*\[88,\s*45\],\s*\],\s*\}/,
   );
-  assert.doesNotMatch(mapSource, /\[128,\s*18\]/);
-  assert.match(styles, /\.map-price-marker-anchor\s*\{[\s\S]*?position:\s*relative;[\s\S]*?width:\s*124px;[\s\S]*?height:\s*36px;[\s\S]*?\}/);
-  assert.match(styles, /\.map-price-marker\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?left:\s*0;[\s\S]*?top:\s*0;[\s\S]*?width:\s*36px;[\s\S]*?height:\s*36px;[\s\S]*?\}/);
-  assert.match(styles, /\.map-price-marker-label\s*\{[\s\S]*?left:\s*18px;[\s\S]*?width:\s*104px;[\s\S]*?height:\s*34px;[\s\S]*?pointer-events:\s*none;[\s\S]*?\}/);
-  assert.doesNotMatch(styles, /\.yandex-map--markers-expanded \.map-price-marker\s*\{[\s\S]*?width:\s*124px;[\s\S]*?\}/);
+  assert.match(styles, /\.map-price-marker-anchor\s*\{[\s\S]*?width:\s*88px;[\s\S]*?height:\s*45px;[\s\S]*?\}/);
+  assert.match(styles, /\.map-price-marker\s*\{[\s\S]*?width:\s*88px;[\s\S]*?height:\s*45px;[\s\S]*?\}/);
 });
 
 test('catalog map layout stays bounded after fullscreen exits', () => {

@@ -72,6 +72,7 @@ function objectRecord(overrides = {}) {
     infrastructureDescription: null,
     fillingDescription: null,
     shortDescription: null,
+    mapName: null,
     krtName: null,
     apartmentAreaRange: null,
     ceilingHeight: null,
@@ -1135,6 +1136,7 @@ test('MapService.listObjects serializes feed aggregates and filters price by fee
   const calls = {};
   const feedUpdatedAt = new Date('2026-05-02T12:00:00.000Z');
   const mapObject = objectRecord({
+    mapName: 'Ария',
     latitude: decimal('55.751244'),
     longitude: decimal('37.618423'),
     priceFrom: decimal('15000000'),
@@ -1171,6 +1173,7 @@ test('MapService.listObjects serializes feed aggregates and filters price by fee
   });
 
   assert.equal(result.items[0].feedPriceFrom, '12000000');
+  assert.equal(result.items[0].mapName, 'Ария');
   assert.equal(result.items[0].feedPricePerMeterFrom, '250000');
   assert.equal(result.items[0].apartmentAreaRange, '40-90 м²');
   assert.equal(result.items[0].feedAreaRange, '35-80 м²');
@@ -2139,6 +2142,100 @@ test('ObjectsService.update clears empty manual detail parameters', async () => 
   assert.equal(calls.update.data.propertyClass, null);
   assert.equal(calls.update.data.floorRange, null);
   assert.equal(calls.update.data.apartmentsCountText, null);
+});
+
+test('ObjectsService.update saves and clears map name', async () => {
+  const calls = {};
+  const existingObject = objectRecord({
+    mapName: null,
+  });
+  const updatedObject = objectRecord({
+    mapName: 'Ария',
+  });
+  let findFirstCount = 0;
+  const prisma = {
+    realEstateObject: {
+      findFirst: async () => {
+        findFirstCount += 1;
+
+        return findFirstCount === 1 ? existingObject : updatedObject;
+      },
+      update: async (args) => {
+        calls.update = args;
+
+        return updatedObject;
+      },
+    },
+    auditLog: {
+      create: async (args) => {
+        calls.auditLog = args;
+      },
+    },
+    $transaction: async (callback) => callback(prisma),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  const result = await service.update(existingObject.id, { mapName: ' Ария ' }, actor, request);
+
+  assert.ok(calls.update, 'Object update must be called for map name');
+  assert.equal(calls.update.data.mapName, 'Ария');
+  assert.equal(result.object.mapName, 'Ария');
+  assert.deepEqual(calls.auditLog.data.metadata.changes.mapName, { from: null, to: 'Ария' });
+
+  const clearedCalls = {};
+  const objectWithMapName = objectRecord({
+    mapName: 'Ария',
+  });
+  const clearedObject = objectRecord({
+    mapName: null,
+  });
+  let clearFindFirstCount = 0;
+  const clearPrisma = {
+    realEstateObject: {
+      findFirst: async () => {
+        clearFindFirstCount += 1;
+
+        return clearFindFirstCount === 1 ? objectWithMapName : clearedObject;
+      },
+      update: async (args) => {
+        clearedCalls.update = args;
+
+        return clearedObject;
+      },
+    },
+    auditLog: {
+      create: async (args) => {
+        clearedCalls.auditLog = args;
+      },
+    },
+    $transaction: async (callback) => callback(clearPrisma),
+  };
+  const clearService = new ObjectsService(clearPrisma, {});
+
+  const clearedResult = await clearService.update(objectWithMapName.id, { mapName: '' }, actor, request);
+
+  assert.ok(clearedCalls.update, 'Object update must be called for cleared map name');
+  assert.equal(clearedCalls.update.data.mapName, null);
+  assert.equal(clearedResult.object.mapName, null);
+});
+
+test('ObjectsService.update rejects too long map name', async () => {
+  const prisma = {
+    realEstateObject: {
+      findFirst: async () => objectRecord(),
+      update: async () => assert.fail('Object must not be updated with too long map name'),
+    },
+    auditLog: {
+      create: async () => assert.fail('Audit log must not be written for invalid map name'),
+    },
+    $transaction: async (callback) => callback(prisma),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await assert.rejects(
+    () => service.update('11111111-1111-4111-8111-111111111111', { mapName: 'Слишком длинное имя' }, actor, request),
+    /Map name is too long/,
+  );
 });
 
 test('ObjectsService.update clears empty content sections', async () => {

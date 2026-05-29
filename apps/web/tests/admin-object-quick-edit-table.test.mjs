@@ -31,7 +31,7 @@ test('objects admin list renders through ObjectQuickEditTable component', () => 
   assert.match(tableSource, /function SortButton/);
 });
 
-test('quick edit table defines the fourteen object columns in mockup order', () => {
+test('quick edit table defines the fifteen object columns in mockup order', () => {
   const configSource = tableSource.match(/export const objectQuickEditColumns = \[[\s\S]*?\] as const/)?.[0] ?? '';
   const labels = [...configSource.matchAll(/label: '([^']+)'/g)].map((match) => match[1]);
 
@@ -50,6 +50,7 @@ test('quick edit table defines the fourteen object columns in mockup order', () 
     'Высота потолков',
     'Этажность',
     'Координаты',
+    'Имя карты',
   ]);
 });
 
@@ -147,6 +148,10 @@ test('quick edit table uses normalized search and draft transforms before commit
   assert.match(tableSource, /normalizeApartmentAreaRange\(value\)/);
   assert.match(tableSource, /normalizeObjectPriceValue\(value\)/);
   assert.match(tableSource, /normalizeCeilingHeight\(value\)/);
+  assert.match(tableSource, /case 'mapName':\s*return object\.mapName;/);
+  assert.match(tableSource, /case 'mapName':\s*return object\.mapName \?\? '';/);
+  assert.match(tableSource, /maxLength=\{getTextCellMaxLength\(column\.key\)\}/);
+  assert.match(tableSource, /case 'mapName':\s*return 16;/);
   assert.match(pageSource, /priceFrom:\s*emptyToNull\(normalizeObjectPriceValue\(form\.priceFrom\)\)/);
   assert.match(pageSource, /pricePerMeterFrom:\s*emptyToNull\(normalizeObjectPriceValue\(form\.pricePerMeterFrom\)\)/);
   assert.match(pageSource, /ceilingHeight:\s*emptyToNull\(normalizeCeilingHeight\(form\.ceilingHeight\)\)/);
@@ -270,6 +275,26 @@ test('quick edit persistence helpers build minimal PATCH requests for edited cel
     }).payload,
     { apartmentAreaRange: '44-170 м²' },
   );
+  assert.deepEqual(
+    helpers.createObjectQuickEditRequest({
+      objectId: 'object-1',
+      columnKey: 'mapName',
+      value: ' Ария ',
+      developers,
+      parseCoordinates,
+    }).payload,
+    { mapName: 'Ария' },
+  );
+  assert.deepEqual(
+    helpers.createObjectQuickEditRequest({
+      objectId: 'object-1',
+      columnKey: 'mapName',
+      value: '',
+      developers,
+      parseCoordinates,
+    }).payload,
+    { mapName: null },
+  );
 });
 
 test('quick edit persistence helpers update local rows and remove status mismatches', async () => {
@@ -322,8 +347,8 @@ test('objects quick edit panel uses ninety viewport width without widening the w
   assert.match(stylesSource, /\.admin-objects\s*\{[\s\S]*width:\s*min\(100%, 1320px\);[\s\S]*max-width:\s*1320px;/);
 });
 
-test('quick edit compact CSS keeps fourteen columns dense and scrolls only on narrow screens', () => {
-  assert.match(stylesSource, /\.compact-table\s*\{[\s\S]*table-layout:\s*fixed;[\s\S]*min-width:\s*1180px;/);
+test('quick edit compact CSS keeps fifteen columns dense and scrolls only on narrow screens', () => {
+  assert.match(stylesSource, /\.compact-table\s*\{[\s\S]*table-layout:\s*fixed;[\s\S]*min-width:\s*1260px;/);
   assert.match(stylesSource, /\.compact-table :is\(\[data-slot="table-head"\], \[data-slot="table-cell"\]\)\s*\{[\s\S]*padding:/);
   assert.match(stylesSource, /\.object-quick-edit-table/);
   assert.match(stylesSource, /\.object-quick-column--title/);
@@ -340,6 +365,7 @@ test('quick edit columns are distributed for the wider object panel', () => {
   assert.match(stylesSource, /\.object-quick-column--metro\s*\{[\s\S]*width:\s*12%;/);
   assert.match(stylesSource, /\.object-quick-column--coordinates\s*\{[\s\S]*width:\s*8%;/);
   assert.match(stylesSource, /\.object-quick-column--krtName\s*\{[\s\S]*width:\s*5%;/);
+  assert.match(stylesSource, /\.object-quick-column--mapName\s*\{[\s\S]*width:\s*6%;/);
 });
 
 test('quick edit compact CSS keeps headers and tags small enough for dense table', () => {

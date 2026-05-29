@@ -39,6 +39,7 @@ import { MultiSelectDropdown } from '../components/MultiSelectDropdown';
 import { getLinkedFileTitle } from '../files/fileDisplay';
 import { SecureImage, buildMediaFileContentUrl, useSecureImageObjectUrl } from '../files/SecureImage';
 import { formatGroupedNumberInputValue } from '../lib/numberInput';
+import { resolveMapMarkerLabel } from '../map/mapMarkerLabels';
 import { YandexMap, type YandexMapPoint } from '../map/YandexMap';
 import {
   formatCompletion,
@@ -2462,7 +2463,7 @@ function getObjectMapPoints(object: RealEstateObjectDetail, imageUrl: string | n
       hint: object.title,
       coordinates: [object.latitude, object.longitude],
       balloonHtml: buildObjectMapBalloon(object, imageUrl),
-      markerLabel: formatObjectMapMarkerPrice(object.pricePerMeterFrom),
+      markerLabel: resolveMapMarkerLabel(object),
     },
   ];
 }
@@ -2488,20 +2489,6 @@ function buildObjectMapBalloon(object: RealEstateObjectDetail, imageUrl: string 
   ]
     .filter(Boolean)
     .join('');
-}
-
-function formatObjectMapMarkerPrice(value: string | null) {
-  if (!value) {
-    return 'по запросу';
-  }
-
-  const parsed = Number(value);
-
-  if (!Number.isFinite(parsed)) {
-    return `от ${value}`;
-  }
-
-  return `от ${formatCompactRussianNumber(parsed / 1000)}т`;
 }
 
 function formatCompactRussianNumber(value: number) {

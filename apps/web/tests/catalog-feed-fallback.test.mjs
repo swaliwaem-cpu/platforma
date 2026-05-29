@@ -20,7 +20,7 @@ test('catalog cards, list and map prefer feed aggregate values for public price 
   assert.match(source, /formatRequestedPricePerMeterFrom\(getCatalogPricePerMeterFrom\(object\)\)/);
   assert.match(source, /formatMapListPricePerMeter\(getCatalogPricePerMeterFrom\(object\)\)/);
   assert.match(source, /formatMapCardPricePerMeter\(getCatalogPricePerMeterFrom\(object\)\)/);
-  assert.match(source, /markerLabel: formatMapMarkerPrice\(getCatalogPricePerMeterFrom\(object\)\)/);
+  assert.match(source, /markerLabel: resolveMapMarkerLabel\(object\)/);
   assert.match(source, /const areaLabel = getCatalogAreaRange\(object\) \?\? 'Не указано';/);
   assert.match(source, /function formatPriceFrom/);
   assert.match(source, /return value \? `от \$\{formatPrice\(value\)\}` : 'Не указана';/);

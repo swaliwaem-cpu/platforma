@@ -262,10 +262,11 @@ function YandexMapApi({
             ' data-map-point-id="$[properties.pointId]"',
             ' data-yandex-point-id="$[properties.pointId]"',
             ' aria-label="$[properties.hintContent]">',
-            '</button>',
-            '<span class="map-price-marker-label" aria-hidden="true">',
-            '<span>$[properties.markerLabel]</span>',
+            '<span class="map-price-marker-dot" aria-hidden="true"></span>',
+            '<span class="map-price-marker-pin" aria-hidden="true">',
+            '<span class="map-price-marker-pin-label">$[properties.markerLabel]</span>',
             '</span>',
+            '</button>',
             '</div>',
           ].join(''),
         );
@@ -280,11 +281,13 @@ function YandexMapApi({
             },
             {
               iconLayout: markerLayout,
-              iconOffset: [-18, -18],
+              iconOffset: [-44, -45],
               iconShape: {
-                type: 'Circle',
-                coordinates: [18, 18],
-                radius: 18,
+                type: 'Rectangle',
+                coordinates: [
+                  [0, 0],
+                  [88, 45],
+                ],
               },
               openBalloonOnClick: false,
             },

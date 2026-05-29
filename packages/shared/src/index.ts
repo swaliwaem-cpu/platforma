@@ -204,6 +204,7 @@ export type RealEstateObjectBase = {
   infrastructureDescription: string | null;
   fillingDescription: string | null;
   shortDescription: string | null;
+  mapName: string | null;
   layoutsUrl: string | null;
   krtName: string | null;
   apartmentAreaRange: string | null;
@@ -532,6 +533,7 @@ export type MapObject = {
   slug: string;
   status: ObjectStatus;
   address: string | null;
+  mapName: string | null;
   latitude: number;
   longitude: number;
   priceFrom: string | null;

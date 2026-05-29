@@ -583,30 +583,15 @@ html[data-app-theme] :is(.catalog-card-media-shade) {
 html[data-app-theme] :is(.map-price-marker) {
   border-color: transparent;
   background: transparent;
-  color: var(--app-theme-primary-foreground);
   box-shadow: none;
 }
 
-html[data-app-theme] .map-price-marker::before {
-  border-color: var(--app-theme-surface);
-  background: var(--app-theme-primary-deep);
+html[data-app-theme] .map-price-marker-dot {
   box-shadow: var(--app-theme-shadow-card);
 }
 
-html[data-app-theme] .map-price-marker-label {
-  border-color: var(--app-theme-surface);
-  background: var(--app-theme-primary);
-  color: var(--app-theme-primary-foreground);
-  box-shadow: var(--app-theme-shadow-card);
-}
-
-html[data-app-theme] .map-price-marker--selected::before {
-  background: color-mix(in srgb, var(--app-theme-accent) 74%, var(--app-theme-ink-900));
-}
-
-html[data-app-theme] .map-price-marker--selected + .map-price-marker-label {
-  border-color: color-mix(in srgb, var(--app-theme-accent) 32%, var(--app-theme-border));
-  background: var(--app-theme-accent);
+html[data-app-theme] .map-price-marker-pin-label {
+  color: var(--app-theme-ink-900);
 }
 
 html[data-app-theme] :is(.catalog-map-list, .map-object-card, .map-loading) {

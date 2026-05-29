@@ -192,6 +192,7 @@ type CreateObjectBody = {
   infrastructureDescription?: unknown;
   fillingDescription?: unknown;
   shortDescription?: unknown;
+  mapName?: unknown;
   layoutsUrl?: unknown;
   krtName?: unknown;
   apartmentAreaRange?: unknown;
@@ -733,6 +734,7 @@ export class ObjectsService {
     );
     const fillingDescription = this.parseNullableText(body.fillingDescription, 'Filling description', 10000);
     const shortDescription = this.parseNullableText(body.shortDescription, 'Short description', 2000);
+    const mapName = this.parseNullableText(body.mapName, 'Map name', 16);
     const layoutsUrl = this.parseNullableUrl(body.layoutsUrl, 'Layouts URL', 2048);
     const krtName = this.parseNullableText(body.krtName, 'KRT name', 240);
     const apartmentAreaRange = this.parseNullableText(body.apartmentAreaRange, 'Apartment area range', 120);
@@ -781,6 +783,7 @@ export class ObjectsService {
           ...(infrastructureDescription !== undefined ? { infrastructureDescription } : {}),
           ...(fillingDescription !== undefined ? { fillingDescription } : {}),
           ...(shortDescription !== undefined ? { shortDescription } : {}),
+          ...(mapName !== undefined ? { mapName } : {}),
           ...(layoutsUrl !== undefined ? { layoutsUrl } : {}),
           ...(krtName !== undefined ? { krtName } : {}),
           ...(apartmentAreaRange !== undefined ? { apartmentAreaRange } : {}),
@@ -901,6 +904,16 @@ export class ObjectsService {
       if (shortDescription !== object.shortDescription) {
         data.shortDescription = shortDescription;
         changes.shortDescription = this.change(object.shortDescription, shortDescription);
+        hasScalarChanges = true;
+      }
+    }
+
+    if ('mapName' in body) {
+      const mapName = this.parseNullableText(body.mapName, 'Map name', 16) ?? null;
+
+      if (mapName !== object.mapName) {
+        data.mapName = mapName;
+        changes.mapName = this.change(object.mapName, mapName);
         hasScalarChanges = true;
       }
     }
@@ -3241,6 +3254,7 @@ export class ObjectsService {
       infrastructureDescription: object.infrastructureDescription,
       fillingDescription: object.fillingDescription,
       shortDescription: object.shortDescription,
+      mapName: object.mapName,
       layoutsUrl: object.layoutsUrl,
       krtName: object.krtName,
       apartmentAreaRange: object.apartmentAreaRange,
@@ -3382,6 +3396,7 @@ export class ObjectsService {
       infrastructureDescription: object.infrastructureDescription,
       fillingDescription: object.fillingDescription,
       shortDescription: object.shortDescription,
+      mapName: object.mapName,
       layoutsUrl: object.layoutsUrl,
       krtName: object.krtName,
       apartmentAreaRange: object.apartmentAreaRange,
