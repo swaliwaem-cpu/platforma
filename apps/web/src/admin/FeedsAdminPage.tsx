@@ -9,6 +9,7 @@ import {
   RotateCcwIcon,
   SaveIcon,
   SquareIcon,
+  Trash2Icon,
   UploadIcon,
 } from 'lucide-react';
 import type {
@@ -184,6 +185,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
   const [isLoadingRuns, setIsLoadingRuns] = useState(false);
   const [isLoadingUnits, setIsLoadingUnits] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDeletingSource, setIsDeletingSource] = useState(false);
   const [isAnalyzingSource, setIsAnalyzingSource] = useState(false);
   const [runningMode, setRunningMode] = useState<FeedCommandMode | null>(null);
   const [stoppingRunId, setStoppingRunId] = useState<string | null>(null);
@@ -545,6 +547,41 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
     }
   }
 
+  async function handleDeleteSource(sourceId: string) {
+    if (!accessToken) {
+      return;
+    }
+
+    const confirmed = window.confirm('Удалить фид? Объекты и лоты останутся без изменений.');
+
+    if (!confirmed) {
+      return;
+    }
+
+    setIsDeletingSource(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      await apiRequest<void>(`/feeds/sources/${sourceId}`, accessToken, {
+        method: 'DELETE',
+      });
+
+      setSources((currentSources) => currentSources.filter((source) => source.id !== sourceId));
+      setSelectedSourceId((currentSourceId) => (currentSourceId === sourceId ? null : currentSourceId));
+      setSelectedRun(null);
+      setRuns([]);
+      setUnits([]);
+      setSourceAnalysis(null);
+      setNotice('Фид удалён');
+      navigate('/admin/feeds');
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Не удалось удалить фид');
+    } finally {
+      setIsDeletingSource(false);
+    }
+  }
+
   async function analyzeSourceFeed() {
     if (!accessToken) {
       return;
@@ -801,7 +838,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
 
   if (isFormRoute) {
     const editorTitle = isCreateRoute ? 'Новый источник фида' : 'Редактирование фида';
-    const isFormDisabled = isLoadingDirectories || isLoadingForm || isSubmitting;
+    const isFormDisabled = isLoadingDirectories || isLoadingForm || isSubmitting || isDeletingSource;
     const isRunning = runningMode !== null;
     const hasFilterJson = form.filterJson.trim().length > 0;
 
@@ -827,7 +864,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                 </AdminButton>
               </>
             ) : null}
-            <AdminButton disabled={isSubmitting || isRunning} tone="secondary" type="button" onClick={() => navigate('/admin/feeds')}>
+            <AdminButton disabled={isSubmitting || isDeletingSource || isRunning} tone="secondary" type="button" onClick={() => navigate('/admin/feeds')}>
               <ArrowLeftIcon data-icon="inline-start" />
               К списку
             </AdminButton>
@@ -841,6 +878,18 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
               <SaveIcon data-icon="inline-start" />
               {isSubmitting ? 'Сохранение' : 'Сохранить'}
             </AdminButton>
+            {editorSource ? (
+              <AdminButton
+                disabled={isFormDisabled || !canManage || isRunning}
+                title={canManage ? undefined : 'Нет права feeds:manage'}
+                tone="danger"
+                type="button"
+                onClick={() => void handleDeleteSource(editorSource.id)}
+              >
+                <Trash2Icon data-icon="inline-start" />
+                {isDeletingSource ? 'Удаление' : 'Удалить фид'}
+              </AdminButton>
+            ) : null}
           </div>
         </header>
 

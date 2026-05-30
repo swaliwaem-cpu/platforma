@@ -156,7 +156,9 @@ export class FeedsService {
   async listSources(query: ListFeedSourcesQuery) {
     const page = this.parsePositiveInteger(query.page, 1);
     const limit = Math.min(this.parsePositiveInteger(query.limit, 20), 100);
-    const where: Prisma.FeedSourceWhereInput = {};
+    const where: Prisma.FeedSourceWhereInput = {
+      deletedAt: null,
+    };
 
     if (query.format) {
       where.format = this.parseFormat(query.format);
@@ -414,6 +416,26 @@ export class FeedsService {
     };
   }
 
+  async deleteSource(id: string) {
+    const sourceId = this.parseUuid(id, 'Feed source is invalid');
+    const source = await this.findExistingSource(sourceId);
+    const deletedAt = new Date();
+    const deletedSource = await this.prisma.feedSource.update({
+      where: {
+        id: source.id,
+      },
+      data: {
+        deletedAt,
+        isActive: false,
+      },
+      include: sourceInclude,
+    });
+
+    return {
+      source: this.serializeSource(deletedSource),
+    };
+  }
+
   async analyzeSource(body: AnalyzeFeedSourceBody, xmlFile?: UploadedFile) {
     const sourceKind = this.parseSourceKind(body.sourceKind, xmlFile ? FeedSourceKind.FILE : FeedSourceKind.URL);
     const format = this.parseAnalyzeFormat(body.format);
@@ -451,10 +473,11 @@ export class FeedsService {
         },
         select: {
           id: true,
+          deletedAt: true,
         },
       });
 
-      if (!source) {
+      if (!source || source.deletedAt) {
         throw new NotFoundException('Feed source not found');
       }
 
@@ -1003,7 +1026,7 @@ export class FeedsService {
       include: sourceInclude,
     });
 
-    if (!source) {
+    if (!source || source.deletedAt) {
       throw new NotFoundException('Feed source not found');
     }
 
@@ -1064,6 +1087,7 @@ export class FeedsService {
     const count = await this.prisma.feedSource.count({
       where: {
         id: sourceId,
+        deletedAt: null,
       },
     });
 
@@ -1084,6 +1108,7 @@ export class FeedsService {
       developerId: source.developerId,
       objectId: source.objectId,
       isActive: source.isActive,
+      deletedAt: source.deletedAt?.toISOString() ?? null,
       lastPreviewAt: source.lastPreviewAt?.toISOString() ?? null,
       lastRunAt: source.lastRunAt?.toISOString() ?? null,
       lastSuccessAt: source.lastSuccessAt?.toISOString() ?? null,

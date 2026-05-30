@@ -68,6 +68,7 @@ function sourceRecord(overrides = {}) {
     developerId,
     objectId,
     isActive: true,
+    deletedAt: null,
     lastPreviewAt: null,
     lastRunAt: null,
     lastSuccessAt: null,
@@ -206,6 +207,10 @@ test('FeedsController delegates CRUD, run endpoints and reports to the service',
       calls.push(['updateSource', id, body]);
       return { source: { id, ...body } };
     },
+    deleteSource: async (id) => {
+      calls.push(['deleteSource', id]);
+      return { source: { id, deletedAt: now.toISOString(), isActive: false } };
+    },
     analyzeSource: async (body) => {
       calls.push(['analyzeSource', body]);
       return { analysis: { developerName: 'АО «ГК «ЭТАЛОН»', unitsCount: 3, objects: [] } };
@@ -235,6 +240,7 @@ test('FeedsController delegates CRUD, run endpoints and reports to the service',
   await controller.listSources({ page: '1' });
   await controller.createSource({ url: 'https://feeds.example.test/yandex.xml' });
   await controller.updateSource(sourceId, { isActive: false });
+  await controller.deleteSource(sourceId);
   await controller.analyzeFeed({ sourceKind: 'URL', url: 'https://feeds.example.test/yandex.xml', format: 'YANDEX_REALTY' });
   await controller.runPreview(sourceId);
   await controller.runImport(sourceId);
@@ -247,6 +253,7 @@ test('FeedsController delegates CRUD, run endpoints and reports to the service',
     ['listSources', { page: '1' }],
     ['createSource', { url: 'https://feeds.example.test/yandex.xml' }],
     ['updateSource', sourceId, { isActive: false }],
+    ['deleteSource', sourceId],
     ['analyzeSource', { sourceKind: 'URL', url: 'https://feeds.example.test/yandex.xml', format: 'YANDEX_REALTY' }],
     ['runFeedImportCommand', sourceId, 'preview'],
     ['runFeedImportCommand', sourceId, 'run'],
@@ -396,6 +403,7 @@ test('FeedsService lists sources with filters and serializes related developer a
   });
 
   assert.deepEqual(calls[0][1].where, {
+    deletedAt: null,
     format: 'YANDEX_REALTY',
     developerId,
     OR: [
@@ -414,7 +422,39 @@ test('FeedsService lists sources with filters and serializes related developer a
   assert.equal(calls[0][1].take, 10);
   assert.equal(result.items[0].developer.name, 'ФСК');
   assert.equal(result.items[0].object.slug, 'zhk-feed');
+  assert.equal(result.items[0].deletedAt, null);
   assert.equal(result.items[0].createdAt, now.toISOString());
+});
+
+test('FeedsService soft deletes feed sources without deleting units', async () => {
+  const calls = [];
+  const prisma = {
+    feedSource: {
+      findUnique: async (args) => {
+        calls.push(['feedSource.findUnique', args]);
+        return sourceRecord();
+      },
+      update: async (args) => {
+        calls.push(['feedSource.update', args]);
+        return sourceRecord({
+          isActive: args.data.isActive,
+          deletedAt: args.data.deletedAt,
+        });
+      },
+    },
+  };
+  const service = new FeedsService(prisma);
+
+  const result = await service.deleteSource(sourceId);
+  const updateCall = calls.find(([name]) => name === 'feedSource.update')[1];
+
+  assert.equal(updateCall.where.id, sourceId);
+  assert.equal(updateCall.data.isActive, false);
+  assert.equal(updateCall.data.deletedAt instanceof Date, true);
+  assert.equal('units' in updateCall.data, false);
+  assert.equal('deleteMany' in updateCall.data, false);
+  assert.equal(result.source.isActive, false);
+  assert.equal(result.source.deletedAt, updateCall.data.deletedAt.toISOString());
 });
 
 test('FeedsService creates and updates feed sources with validation', async () => {

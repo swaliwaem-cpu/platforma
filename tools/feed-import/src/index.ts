@@ -1077,6 +1077,7 @@ type FeedSourceRecord = {
   objectId: string | null;
   mappings?: FeedSourceMappingRecord[];
   isActive: boolean;
+  deletedAt?: Date | null;
   lastPreviewAt: Date | null;
   lastRunAt: Date | null;
   lastSuccessAt: Date | null;
@@ -2707,7 +2708,7 @@ export async function executeFeedImport(options: ExecuteFeedImportOptions): Prom
     },
   });
 
-  if (!source) {
+  if (!source || source.deletedAt) {
     throw new Error(`FeedSource ${options.sourceId} was not found`);
   }
 

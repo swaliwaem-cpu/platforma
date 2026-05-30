@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -63,6 +64,12 @@ export class FeedsController {
     @CurrentUser() actor: AuthenticatedUser,
   ) {
     return this.feedsService.updateSource(id, body, xmlFile, actor);
+  }
+
+  @Delete('sources/:id')
+  @RequirePermissions('feeds:manage')
+  async deleteSource(@Param('id') id: string) {
+    return this.feedsService.deleteSource(id);
   }
 
   @Post('sources/:id/preview')

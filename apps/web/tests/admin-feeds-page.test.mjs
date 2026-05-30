@@ -11,7 +11,7 @@ test('feeds admin page source exists', () => {
   assert.equal(existsSync(sourcePath), true);
 });
 
-test('feeds admin page wires source CRUD, preview, run, reports, and units API calls', () => {
+test('feeds admin page wires source CRUD, delete, preview, run, reports, and units API calls', () => {
   const source = readFileSync(sourcePath, 'utf8');
 
   assert.match(source, /apiRequest<FeedSourcesResponse>\(`\/feeds\/sources\?\$\{params\.toString\(\)\}`/);
@@ -19,6 +19,8 @@ test('feeds admin page wires source CRUD, preview, run, reports, and units API c
   assert.match(source, /method:\s*'POST'/);
   assert.match(source, /apiRequest<FeedSourceResponse>\(`\/feeds\/sources\/\$\{sourceId\}`/);
   assert.match(source, /method:\s*'PATCH'/);
+  assert.match(source, /apiRequest<void>\(`\/feeds\/sources\/\$\{sourceId\}`/);
+  assert.match(source, /method:\s*'DELETE'/);
   assert.match(source, /apiRequest<FeedSourceAnalysisResponse>\('\/feeds\/analyze'/);
   assert.match(source, /apiRequest<FeedImportRunResponse>\(`\/feeds\/sources\/\$\{sourceId\}\/preview`/);
   assert.match(source, /apiRequest<FeedImportRunResponse>\(`\/feeds\/sources\/\$\{sourceId\}\/run`/);
@@ -26,6 +28,16 @@ test('feeds admin page wires source CRUD, preview, run, reports, and units API c
   assert.match(source, /apiRequest<FeedImportRunsResponse>\(`\/feeds\/sources\/\$\{sourceId\}\/runs\?\$\{params\.toString\(\)\}`/);
   assert.match(source, /apiRequest<FeedImportRunResponse>\(`\/feeds\/runs\/\$\{runId\}`/);
   assert.match(source, /apiRequest<FeedUnitsResponse>\(`\/feeds\/units\?\$\{params\.toString\(\)\}`/);
+});
+
+test('feeds admin editor confirms soft delete and renders the rightmost delete action', () => {
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.match(source, /Trash2Icon/);
+  assert.match(source, /window\.confirm\('Удалить фид\? Объекты и лоты останутся без изменений\.'\)/);
+  assert.match(source, /setNotice\('Фид удалён'\)/);
+  assert.match(source, /navigate\('\/admin\/feeds'\)/);
+  assert.match(source, /tone="primary"[\s\S]*<SaveIcon data-icon="inline-start" \/>[\s\S]*\{isSubmitting \? 'Сохранение' : 'Сохранить'\}[\s\S]*tone="danger"[\s\S]*<Trash2Icon data-icon="inline-start" \/>[\s\S]*Удалить фид/);
 });
 
 test('feeds admin page exposes required source form fields and unit filters', () => {

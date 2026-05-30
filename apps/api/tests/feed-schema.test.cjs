@@ -25,6 +25,10 @@ const indexFeedSourceKindMigrationPath = path.join(
   rootDir,
   'apps/api/prisma/migrations/20260527010000_add_index_feed_source_kind/migration.sql',
 );
+const feedSourceSoftDeleteMigrationPath = path.join(
+  rootDir,
+  'apps/api/prisma/migrations/20260530120000_add_feed_source_soft_delete/migration.sql',
+);
 
 function readProjectFile(filePath) {
   return fs.readFileSync(filePath, 'utf8');
@@ -42,7 +46,7 @@ test('Prisma schema defines feed enums', () => {
 test('Prisma schema defines feed sources and import runs', () => {
   const schema = readProjectFile(schemaPath);
 
-  assert.match(schema, /model FeedSource \{[\s\S]*id\s+String\s+@id @default\(uuid\(\)\) @db\.Uuid[\s\S]*sourceKind\s+FeedSourceKind\s+@default\(URL\) @map\("source_kind"\)[\s\S]*url\s+String\?\s+@db\.VarChar\(2048\)[\s\S]*xmlFileId\s+String\?\s+@map\("xml_file_id"\) @db\.Uuid[\s\S]*format\s+FeedFormat[\s\S]*filterJson\s+Json\?\s+@map\("filter_json"\)[\s\S]*developerId\s+String\s+@map\("developer_id"\) @db\.Uuid[\s\S]*objectId\s+String\?\s+@map\("object_id"\) @db\.Uuid[\s\S]*isActive\s+Boolean\s+@default\(true\) @map\("is_active"\)[\s\S]*lastPreviewAt\s+DateTime\?\s+@map\("last_preview_at"\)[\s\S]*lastRunAt\s+DateTime\?\s+@map\("last_run_at"\)[\s\S]*lastSuccessAt\s+DateTime\?\s+@map\("last_success_at"\)[\s\S]*mappings\s+FeedSourceMapping\[\][\s\S]*\}/);
+  assert.match(schema, /model FeedSource \{[\s\S]*id\s+String\s+@id @default\(uuid\(\)\) @db\.Uuid[\s\S]*sourceKind\s+FeedSourceKind\s+@default\(URL\) @map\("source_kind"\)[\s\S]*url\s+String\?\s+@db\.VarChar\(2048\)[\s\S]*xmlFileId\s+String\?\s+@map\("xml_file_id"\) @db\.Uuid[\s\S]*format\s+FeedFormat[\s\S]*filterJson\s+Json\?\s+@map\("filter_json"\)[\s\S]*developerId\s+String\s+@map\("developer_id"\) @db\.Uuid[\s\S]*objectId\s+String\?\s+@map\("object_id"\) @db\.Uuid[\s\S]*isActive\s+Boolean\s+@default\(true\) @map\("is_active"\)[\s\S]*deletedAt\s+DateTime\?\s+@map\("deleted_at"\)[\s\S]*lastPreviewAt\s+DateTime\?\s+@map\("last_preview_at"\)[\s\S]*lastRunAt\s+DateTime\?\s+@map\("last_run_at"\)[\s\S]*lastSuccessAt\s+DateTime\?\s+@map\("last_success_at"\)[\s\S]*mappings\s+FeedSourceMapping\[\][\s\S]*\}/);
   assert.match(schema, /xmlFile\s+File\?\s+@relation\("FeedXmlFile", fields: \[xmlFileId\], references: \[id\], onDelete: Restrict\)/);
   assert.match(schema, /developer\s+Developer\s+@relation\(fields: \[developerId\], references: \[id\], onDelete: Restrict\)/);
   assert.match(schema, /object\s+RealEstateObject\?\s+@relation\(fields: \[objectId\], references: \[id\], onDelete: SetNull\)/);
@@ -50,6 +54,7 @@ test('Prisma schema defines feed sources and import runs', () => {
   assert.match(schema, /@@index\(\[xmlFileId\]\)/);
   assert.match(schema, /@@index\(\[developerId\]\)/);
   assert.match(schema, /@@index\(\[objectId, isActive\]\)/);
+  assert.match(schema, /@@index\(\[deletedAt\]\)/);
   assert.match(schema, /@@map\("feed_sources"\)/);
 
   assert.match(schema, /model FeedImportRun \{[\s\S]*sourceId\s+String\s+@map\("source_id"\) @db\.Uuid[\s\S]*mode\s+ImportMode[\s\S]*status\s+ImportStatus\s+@default\(PENDING\)[\s\S]*summaryJson\s+Json\?\s+@map\("summary_json"\)[\s\S]*warningsJson\s+Json\?\s+@map\("warnings_json"\)[\s\S]*errorsJson\s+Json\?\s+@map\("errors_json"\)[\s\S]*\}/);
@@ -183,4 +188,15 @@ test('index feed source kind migration adds index_url enum value', () => {
   assert.match(migration, /ALTER TABLE "feed_sources" DROP CONSTRAINT "feed_sources_source_payload_check"/);
   assert.match(migration, /"source_kind"::text IN \('url', 'index_url'\) AND "url" IS NOT NULL AND "xml_file_id" IS NULL/);
   assert.match(migration, /"source_kind" = 'file' AND "url" IS NULL AND "xml_file_id" IS NOT NULL/);
+});
+
+test('feed source soft delete migration adds deleted timestamp without touching feed units', () => {
+  assert.equal(fs.existsSync(feedSourceSoftDeleteMigrationPath), true);
+
+  const migration = readProjectFile(feedSourceSoftDeleteMigrationPath);
+
+  assert.match(migration, /ALTER TABLE "feed_sources" ADD COLUMN "deleted_at" TIMESTAMP\(3\)/);
+  assert.match(migration, /CREATE INDEX "feed_sources_deleted_at_idx" ON "feed_sources"\("deleted_at"\)/);
+  assert.doesNotMatch(migration, /DROP TABLE "feed_units"/);
+  assert.doesNotMatch(migration, /DELETE FROM "feed_units"/);
 });

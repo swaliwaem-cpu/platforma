@@ -293,6 +293,7 @@ export type FeedSource = {
   developerId: string;
   objectId: string | null;
   isActive: boolean;
+  deletedAt: string | null;
   lastPreviewAt: string | null;
   lastRunAt: string | null;
   lastSuccessAt: string | null;

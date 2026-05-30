@@ -405,6 +405,7 @@ model FeedSource {
   developerId   String    @map("developer_id") @db.Uuid
   objectId      String?   @map("object_id") @db.Uuid
   isActive      Boolean   @default(true) @map("is_active")
+  deletedAt     DateTime? @map("deleted_at")
   lastPreviewAt DateTime? @map("last_preview_at")
   lastRunAt     DateTime? @map("last_run_at")
   lastSuccessAt DateTime? @map("last_success_at")
@@ -422,6 +423,7 @@ model FeedSource {
   @@index([xmlFileId])
   @@index([developerId])
   @@index([objectId, isActive])
+  @@index([deletedAt])
   @@index([format])
   @@map("feed_sources")
 }
