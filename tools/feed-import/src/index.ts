@@ -2637,7 +2637,7 @@ function shouldUseApartmentNumberTitleForSource(unit: NormalizedFeedUnit, source
     unitFormat === 'CIAN_XML' &&
     unit.type === 'RESIDENTIAL' &&
     Boolean(unit.residentialDetails?.apartmentNumber) &&
-    isMrGroupFeedSource(source)
+    (isMrGroupFeedSource(source) || isMangazeyaFeedSource(source))
   );
 }
 
@@ -2652,6 +2652,15 @@ function isMrGroupFeedSource(source: FeedSourceRecord) {
     normalizedSourceText.includes('мр групп') ||
     normalizedSourceText.includes('мр-групп')
   );
+}
+
+function isMangazeyaFeedSource(source: FeedSourceRecord) {
+  const normalizedSourceText = [source.developer?.normalizedName, source.developer?.name, source.url]
+    .filter((value): value is string => Boolean(value))
+    .join(' ')
+    .toLocaleLowerCase('ru-RU');
+
+  return normalizedSourceText.includes('mangazeya') || normalizedSourceText.includes('мангазея');
 }
 
 function routeFeedUnitsForSource(units: NormalizedFeedUnit[], source: FeedSourceRecord): RoutedFeedUnit[] {

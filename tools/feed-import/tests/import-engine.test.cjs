@@ -144,6 +144,30 @@ function makeMrGroupCianFeed() {
     </Feed>`;
 }
 
+function makeMangazeyaCianFeed() {
+  return `<?xml version="1.0"?>
+    <feed>
+      <object>
+        <Category>newBuildingFlatSale</Category>
+        <ExternalId>1323ff84-468e-46bd-bceb-a24573e4d766</ExternalId>
+        <Address>Москва, Большая Тульская улица д. 8</Address>
+        <Title>Квартиры в премиальной доминанте</Title>
+        <FlatRoomsCount>2</FlatRoomsCount>
+        <TotalArea>69.50</TotalArea>
+        <FloorNumber>18</FloorNumber>
+        <JKSchema>
+          <Name>Аура</Name>
+          <House>
+            <Flat>
+              <FlatNumber>611</FlatNumber>
+            </Flat>
+          </House>
+        </JKSchema>
+        <BargainTerms><Price>49775900</Price><Currency>rur</Currency></BargainTerms>
+      </object>
+    </feed>`;
+}
+
 function makeMultiDevelopmentAvitoFeed() {
   return `<?xml version="1.0" encoding="utf-8"?>
     <Ads target="Avito.ru" formatVersion="3">
@@ -844,6 +868,38 @@ test('executeFeedImport run titles MR Group CIAN residential units by apartment 
   assert.equal(unit.title, 'Квартира №89');
   assert.equal(unit.address, 'город Москва, Волоколамское шоссе, дом 97');
   assert.equal(state.residentialDetails.get(unit.id).apartmentNumber, '89');
+});
+
+test('executeFeedImport run titles Mangazeya CIAN residential units by apartment number', async () => {
+  const { db, state } = createFakeDb({
+    source: {
+      format: 'CIAN_XML',
+      url: 'https://newfeed.6feeds.ru/feeds/static/aura/cian',
+      developer: {
+        name: 'Мангазея',
+        normalizedName: 'mangazeya',
+      },
+    },
+  });
+
+  await executeFeedImport({
+    mode: 'run',
+    sourceId: 'source-1',
+    db,
+    storage: state.storage,
+    xmlFetcher: async () => makeMangazeyaCianFeed(),
+    mediaDownloader: async () => {
+      throw new Error('media should not be downloaded in this test');
+    },
+    imageVariantGenerator: async () => [],
+    now: () => fixedDate,
+  });
+
+  const unit = state.units.find((currentUnit) => currentUnit.externalId === '1323ff84-468e-46bd-bceb-a24573e4d766');
+
+  assert.equal(unit.title, 'Квартира №611');
+  assert.equal(unit.address, 'Москва, Большая Тульская улица д. 8');
+  assert.equal(state.residentialDetails.get(unit.id).apartmentNumber, '611');
 });
 
 test('executeFeedImport run writes pending progress while processing units', async () => {
