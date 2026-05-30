@@ -31,6 +31,14 @@ test('gallery modal draft lifecycle creates and revokes local preview URLs', () 
   assert.match(source, /function revokeGalleryDraftPreviewUrl\(item: GalleryDraftItem\)[\s\S]*?URL\.revokeObjectURL\(item\.previewUrl\)/);
 });
 
+test('existing gallery draft items use secure media previews instead of stored public URLs', () => {
+  const createDraftItemsSource = extractFunctionSource(source, 'function createGalleryDraftItems');
+
+  assert.match(createDraftItemsSource, /kind:\s*'existing'/);
+  assert.match(createDraftItemsSource, /previewUrl:\s*null/);
+  assert.doesNotMatch(createDraftItemsSource, /previewUrl:\s*image\.file\.url/);
+});
+
 test('object editor opens gallery management modal instead of inline image upload', () => {
   assert.match(source, /<AdminButton[\s\S]*?onClick=\{props\.onGalleryModalOpen\}[\s\S]*?>[\s\S]*?Управлять галереей[\s\S]*?<\/AdminButton>/);
   assert.match(source, /props\.isGalleryModalOpen \? \([\s\S]*?<GalleryManagementModal/);
@@ -264,3 +272,13 @@ test('gallery modal shows upload progress as accessible percent bar', () => {
   assert.match(source, /aria-valuenow=\{progressPercent\}/);
   assert.match(source, /className="gallery-modal-progress-fill"[\s\S]*?style=\{\{ width: `\$\{progressPercent\}%` \}\}/);
 });
+
+function extractFunctionSource(sourceText, marker) {
+  const markerIndex = sourceText.indexOf(marker);
+
+  assert.notEqual(markerIndex, -1, `${marker} should exist`);
+
+  const nextFunctionIndex = sourceText.indexOf('\nfunction ', markerIndex + marker.length);
+
+  return sourceText.slice(markerIndex, nextFunctionIndex === -1 ? sourceText.length : nextFunctionIndex);
+}

@@ -3206,7 +3206,7 @@ function createGalleryDraftItems(images: ObjectImage[]): GalleryDraftItem[] {
     kind: 'existing',
     imageId: image.id,
     file: null,
-    previewUrl: image.file.url ?? '',
+    previewUrl: null,
     name: getGalleryDraftImageName(image),
     section: image.section,
   }));
