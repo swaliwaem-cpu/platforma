@@ -170,3 +170,10 @@ test('catalog map list leaves room for yandex fullscreen control', () => {
   assert.match(styles, /\.catalog-map-list\s*\{[\s\S]*?top:\s*64px;[\s\S]*?right:\s*24px;[\s\S]*?max-height:\s*calc\(100% - 88px\);/);
   assert.match(styles, /\.catalog-map-list-toggle\s*\{[\s\S]*?top:\s*64px;[\s\S]*?right:\s*24px;/);
 });
+
+test('map object card gallery arrows stay visually static on interaction', () => {
+  assert.match(
+    styles,
+    /\.map-object-card-gallery-button:hover,\s*\.map-object-card-gallery-button:focus-visible,\s*\.map-object-card-gallery-button:active\s*\{[\s\S]*?background:\s*color-mix\(in oklch,\s*var\(--catalog-panel\)\s*92%,\s*transparent\);[\s\S]*?color:\s*var\(--catalog-ink-900\);[\s\S]*?\}/,
+  );
+});

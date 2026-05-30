@@ -306,6 +306,11 @@ html[data-app-theme] :is(button, [role="button"], [data-slot="button"]):active {
   translate: none;
 }
 
+html[data-app-theme] :is(.carousel-button, .map-object-card-gallery-button):active {
+  transform: translateY(-50%);
+  translate: none;
+}
+
 html[data-app-theme] :is([data-slot="skeleton"], .feed-table-skeleton, .import-table-skeleton, .object-feed-units-skeleton) {
   background: color-mix(in srgb, var(--app-theme-surface-muted) 78%, var(--app-theme-border-soft));
 }

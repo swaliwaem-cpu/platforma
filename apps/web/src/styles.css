@@ -4749,8 +4749,9 @@ tr.user-row--deactivated .text-button {
 }
 
 .map-object-card-gallery-button:hover,
-.map-object-card-gallery-button:focus-visible {
-  background: var(--catalog-gold);
+.map-object-card-gallery-button:focus-visible,
+.map-object-card-gallery-button:active {
+  background: color-mix(in oklch, var(--catalog-panel) 92%, transparent);
   color: var(--catalog-ink-900);
 }
 
