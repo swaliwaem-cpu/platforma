@@ -168,6 +168,34 @@ function makeMangazeyaCianFeed() {
     </feed>`;
 }
 
+function makeFskFeed() {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+    <Data>
+      <FlatTypes>
+        <FlatType ID="0" Name="Квартира"/>
+        <FlatType ID="7" Name="Студия"/>
+      </FlatTypes>
+      <Regions>
+        <Region Region_name="Москва и МО">
+          <Object Complex_name="Режиссер" Complex_id="67" ID1C="00320" Ready="true">
+            <Info>
+              <Complex_address>г. Москва, ул. Вильгельма Пика, д. 1</Complex_address>
+            </Info>
+            <Buildings>
+              <Corpus Num="3" Corpus_Delivery="2024-08-30">
+                <Section Num="5" Floor_Count="38">
+                  <Floor Num="3">
+                    <Flat Id="61c97b374e2acff6814913c2" Id1C="141281" Type="0" Number="656" Floor="3" Rooms="2" Price_tot_sale="48979840" Square_tot="83.2"/>
+                  </Floor>
+                </Section>
+              </Corpus>
+            </Buildings>
+          </Object>
+        </Region>
+      </Regions>
+    </Data>`;
+}
+
 function makeMultiDevelopmentAvitoFeed() {
   return `<?xml version="1.0" encoding="utf-8"?>
     <Ads target="Avito.ru" formatVersion="3">
@@ -900,6 +928,38 @@ test('executeFeedImport run titles Mangazeya CIAN residential units by apartment
   assert.equal(unit.title, 'Квартира №611');
   assert.equal(unit.address, 'Москва, Большая Тульская улица д. 8');
   assert.equal(state.residentialDetails.get(unit.id).apartmentNumber, '611');
+});
+
+test('executeFeedImport run titles FSK residential units by apartment number', async () => {
+  const { db, state } = createFakeDb({
+    source: {
+      format: 'FSK_XML',
+      url: 'https://export.fsk.ru/production/v3/fsk_sale.xml',
+      developer: {
+        name: 'ФСК',
+        normalizedName: 'fsk',
+      },
+    },
+  });
+
+  await executeFeedImport({
+    mode: 'run',
+    sourceId: 'source-1',
+    db,
+    storage: state.storage,
+    xmlFetcher: async () => makeFskFeed(),
+    mediaDownloader: async () => {
+      throw new Error('media should not be downloaded in this test');
+    },
+    imageVariantGenerator: async () => [],
+    now: () => fixedDate,
+  });
+
+  const unit = state.units.find((currentUnit) => currentUnit.externalId === '141281');
+
+  assert.equal(unit.title, 'Квартира №656');
+  assert.equal(unit.address, 'г. Москва, ул. Вильгельма Пика, д. 1');
+  assert.equal(state.residentialDetails.get(unit.id).apartmentNumber, '656');
 });
 
 test('executeFeedImport run writes pending progress while processing units', async () => {

@@ -295,7 +295,7 @@ test('FeedsModule imports AuthModule for guarded feed routes', () => {
 test('shared package exports feed API contracts', () => {
   const sharedTypes = readProjectFile(sharedTypesPath);
 
-  assert.match(sharedTypes, /export type FeedFormat = 'YANDEX_REALTY' \| 'CIAN_XML' \| 'AVITO_XML';/);
+  assert.match(sharedTypes, /export type FeedFormat = 'YANDEX_REALTY' \| 'CIAN_XML' \| 'AVITO_XML' \| 'FSK_XML';/);
   assert.match(sharedTypes, /export type FeedSourceKind = 'URL' \| 'FILE' \| 'INDEX_URL';/);
   assert.match(sharedTypes, /export type FeedUnitType = 'RESIDENTIAL' \| 'COMMERCIAL';/);
   assert.match(sharedTypes, /export type FeedUnitStatus = 'AVAILABLE' \| 'BOOKED' \| 'RESERVED' \| 'SOLD' \| 'ARCHIVED' \| 'UNKNOWN';/);

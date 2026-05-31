@@ -493,6 +493,192 @@ export class AvitoXmlFeedParser implements FeedParser {
   }
 }
 
+type FskUnitContext = {
+  flatTypeNames: Map<string, string>;
+  regionName: string | null;
+  complexName: string | null;
+  complexId: string | null;
+  complexId1C: string | null;
+  address: string | null;
+  corpusNumber: string | null;
+  corpusDelivery: string | null;
+  sectionNumber: string | null;
+  floorNumber: string | null;
+};
+
+const fskResidentialFlatTypeIds = new Set(['0', '1', '3', '4', '5', '7', '50']);
+const fskStudioFlatTypeIds = new Set(['7']);
+
+export class FskXmlFeedParser implements FeedParser {
+  parse(xml: string): FeedParseResult {
+    const root = parseXml(xml);
+    const data = asRecord(root.Data);
+
+    if (!data) {
+      throw new Error('FSK XML feed must contain <Data>');
+    }
+
+    const warnings: FeedParserWarning[] = [];
+    const units: NormalizedFeedUnit[] = [];
+    const flatTypeNames = collectFskFlatTypeNames(data);
+    const regions = asRecord(data.Regions);
+
+    for (const regionNode of toArray(regions?.Region)) {
+      const region = asRecord(regionNode);
+
+      if (!region) {
+        continue;
+      }
+
+      for (const objectNode of toArray(region.Object)) {
+        const object = asRecord(objectNode);
+
+        if (!object) {
+          continue;
+        }
+
+        units.push(...this.normalizeObject(object, flatTypeNames, getXmlAttribute(region, 'Region_name'), warnings));
+      }
+    }
+
+    return { units, warnings };
+  }
+
+  private normalizeObject(
+    object: XmlRecord,
+    flatTypeNames: Map<string, string>,
+    regionName: string | null,
+    warnings: FeedParserWarning[],
+  ) {
+    const info = asRecord(object.Info);
+    const buildings = asRecord(object.Buildings);
+    const contextBase = {
+      flatTypeNames,
+      regionName,
+      complexName: getXmlAttribute(object, 'Complex_name'),
+      complexId: getXmlAttribute(object, 'Complex_id'),
+      complexId1C: getXmlAttribute(object, 'ID1C'),
+      address: getText(info?.Complex_address) ?? getText(object.Complex_address),
+    };
+    const units: NormalizedFeedUnit[] = [];
+
+    for (const corpusNode of toArray(buildings?.Corpus)) {
+      const corpus = asRecord(corpusNode);
+
+      if (!corpus) {
+        continue;
+      }
+
+      for (const sectionNode of toArray(corpus.Section)) {
+        const section = asRecord(sectionNode);
+
+        if (!section) {
+          continue;
+        }
+
+        for (const floorNode of toArray(section.Floor)) {
+          const floor = asRecord(floorNode);
+
+          if (!floor) {
+            continue;
+          }
+
+          for (const flatNode of toArray(floor.Flat)) {
+            const flat = asRecord(flatNode);
+
+            if (!flat || !isFskResidentialFlat(flat)) {
+              continue;
+            }
+
+            const context: FskUnitContext = {
+              ...contextBase,
+              corpusNumber: getXmlAttribute(corpus, 'Num'),
+              corpusDelivery: getXmlAttribute(corpus, 'Corpus_Delivery'),
+              sectionNumber: getXmlAttribute(section, 'Num'),
+              floorNumber: getXmlAttribute(floor, 'Num'),
+            };
+            const unit = this.normalizeFlat(flat, context, warnings);
+
+            if (unit) {
+              units.push(unit);
+            }
+          }
+        }
+      }
+    }
+
+    return units;
+  }
+
+  private normalizeFlat(
+    flat: XmlRecord,
+    context: FskUnitContext,
+    warnings: FeedParserWarning[],
+  ): NormalizedFeedUnit | null {
+    const externalId = getXmlAttribute(flat, 'Id1C') ?? getXmlAttribute(flat, 'Id');
+
+    if (!externalId) {
+      warnings.push({
+        code: 'MISSING_EXTERNAL_ID',
+        field: 'externalId',
+        message: 'FSK flat is missing Id1C and Id',
+      });
+      return null;
+    }
+
+    const fskTypeId = getXmlAttribute(flat, 'Type');
+    const flatTypeName = getFskFlatTypeName(context.flatTypeNames, fskTypeId);
+    const price = normalizeDecimal(getXmlAttribute(flat, 'Price_tot_sale') ?? getXmlAttribute(flat, 'Price_tot'), 'price', externalId, warnings);
+    const area = normalizeDecimal(getXmlAttribute(flat, 'Square_tot'), 'area', externalId, warnings);
+    const completion = parseFskCompletion(context.corpusDelivery);
+
+    return {
+      externalId,
+      type: 'RESIDENTIAL',
+      status: 'AVAILABLE',
+      title: buildFskTitle(context, flatTypeName, externalId),
+      projectName: context.complexName,
+      address: context.address,
+      building: context.corpusNumber,
+      section: context.sectionNumber,
+      floor: normalizeInteger(getXmlAttribute(flat, 'Floor') ?? context.floorNumber, 'floor', externalId, warnings),
+      rooms: normalizeFskRooms(flat, externalId, warnings),
+      price,
+      currency: 'RUR',
+      area,
+      pricePerMeter: calculatePricePerMeter(price, area),
+      completionYear: completion.year,
+      completionQuarter: completion.quarter,
+      rawPayload: {
+        ...flat,
+        DeveloperName: 'ФСК',
+        FskRegionName: context.regionName,
+        FskComplexName: context.complexName,
+        FskComplexId: context.complexId,
+        FskComplexId1C: context.complexId1C,
+        FskFlatTypeName: flatTypeName,
+      },
+      media: collectFskMedia(flat, externalId, warnings),
+      residentialDetails: {
+        apartmentNumber: getXmlAttribute(flat, 'Number'),
+        layoutType: flatTypeName,
+        livingArea: normalizeDecimal(getXmlAttribute(flat, 'Square_live'), 'livingArea', externalId, warnings),
+        kitchenArea: normalizeDecimal(getXmlAttribute(flat, 'Square_kitchen'), 'kitchenArea', externalId, warnings),
+        balconyCount: normalizeInteger(getXmlAttribute(flat, 'Balcony_quantity'), 'balconyCount', externalId, warnings),
+        detailsJson: {
+          fskTypeId,
+          fskTypeName: flatTypeName,
+          numberOnFloor: getXmlAttribute(flat, 'Num_on_floor'),
+          decoration: getXmlAttribute(flat, 'Decoration'),
+          salePercent: getXmlAttribute(flat, 'Sale_percent'),
+          corpusDelivery: context.corpusDelivery,
+        },
+      },
+      commercialDetails: null,
+    };
+  }
+}
+
 function getGlobalFetch(): FeedFetch {
   if (typeof globalThis.fetch !== 'function') {
     throw new Error('Global fetch is unavailable for feed XML download');
@@ -983,6 +1169,92 @@ function getAvitoBalconyCount(ad: XmlRecord) {
   return values.length > 0 ? values.length : null;
 }
 
+function collectFskFlatTypeNames(data: XmlRecord) {
+  const flatTypes = asRecord(data.FlatTypes);
+  const names = new Map<string, string>();
+
+  for (const flatTypeNode of toArray(flatTypes?.FlatType)) {
+    const flatType = asRecord(flatTypeNode);
+    const id = flatType ? getXmlAttribute(flatType, 'ID') : null;
+    const name = flatType ? getXmlAttribute(flatType, 'Name') : null;
+
+    if (id && name) {
+      names.set(id, name);
+    }
+  }
+
+  return names;
+}
+
+function isFskResidentialFlat(flat: XmlRecord) {
+  const typeId = getXmlAttribute(flat, 'Type');
+
+  return Boolean(typeId && fskResidentialFlatTypeIds.has(typeId));
+}
+
+function getFskFlatTypeName(flatTypeNames: Map<string, string>, typeId: string | null) {
+  return (typeId ? flatTypeNames.get(typeId) : null) ?? 'Жилой лот';
+}
+
+function buildFskTitle(context: FskUnitContext, flatTypeName: string, externalId: string) {
+  return joinTitleParts([context.complexName, flatTypeName, externalId]);
+}
+
+function normalizeFskRooms(flat: XmlRecord, externalId: string, warnings: FeedParserWarning[]) {
+  const typeId = getXmlAttribute(flat, 'Type');
+
+  if (typeId && fskStudioFlatTypeIds.has(typeId)) {
+    return 0;
+  }
+
+  return normalizeInteger(getXmlAttribute(flat, 'Rooms'), 'rooms', externalId, warnings);
+}
+
+function parseFskCompletion(value: string | null): { year: number | null; quarter: number | null } {
+  const match = value?.match(/^(\d{4})-(\d{2})-\d{2}/u);
+
+  if (!match) {
+    return { year: null, quarter: null };
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+    return { year: null, quarter: null };
+  }
+
+  return {
+    year,
+    quarter: Math.floor((month - 1) / 3) + 1,
+  };
+}
+
+function collectFskMedia(
+  flat: XmlRecord,
+  externalId: string,
+  warnings: FeedParserWarning[],
+): NormalizedFeedMedia[] {
+  const media: NormalizedFeedMedia[] = [];
+  const seen = new Set<string>();
+  const mediaAttributes: Array<[string, string]> = [
+    ['Flat_plan', 'flat-plan'],
+    ['Floor_plan', 'floor-plan'],
+    ['Flat_plan_furniture', 'flat-plan-furniture'],
+    ['Flat_plan_3d', 'flat-plan-3d'],
+  ];
+
+  for (const [attributeName, label] of mediaAttributes) {
+    addMedia(media, seen, getXmlAttribute(flat, attributeName), label, externalId, warnings);
+  }
+
+  return media;
+}
+
+function getXmlAttribute(record: XmlRecord, name: string) {
+  return getText(record[`@_${name}`]);
+}
+
 function getTextValues(value: unknown) {
   return toArray(value)
     .map((item) => getText(item))
@@ -1035,7 +1307,7 @@ function isHttpUrl(value: string) {
 
 type ImportModeValue = 'PREVIEW' | 'RUN';
 type ImportStatusValue = 'PENDING' | 'SUCCESS' | 'PARTIAL' | 'FAILED';
-type FeedSourceFormat = 'YANDEX_REALTY' | 'CIAN_XML' | 'AVITO_XML';
+type FeedSourceFormat = 'YANDEX_REALTY' | 'CIAN_XML' | 'AVITO_XML' | 'FSK_XML';
 type FeedAnalyzeFormat = FeedSourceFormat | 'AUTO';
 type FeedSourceKind = 'URL' | 'FILE' | 'INDEX_URL';
 type FeedUnitStatusValue = NormalizedFeedUnitStatus;
@@ -1051,7 +1323,7 @@ type FeedIndexLinkCandidate = {
 };
 
 const activeFeedUnitStatuses: FeedUnitStatusValue[] = ['AVAILABLE', 'BOOKED', 'RESERVED'];
-const supportedFeedSourceFormats: FeedSourceFormat[] = ['YANDEX_REALTY', 'CIAN_XML', 'AVITO_XML'];
+const supportedFeedSourceFormats: FeedSourceFormat[] = ['YANDEX_REALTY', 'CIAN_XML', 'AVITO_XML', 'FSK_XML'];
 
 type FeedSourceXmlFileRecord = {
   id: string;
@@ -1692,7 +1964,7 @@ export function parseFeedAnalyzeCliArgs(args: string[]): ParsedFeedAnalyzeCliArg
 function parseFeedSourceFormatCliValue(value: string): FeedAnalyzeFormat | null {
   const normalized = value.trim().toUpperCase();
 
-  if (normalized === 'YANDEX_REALTY' || normalized === 'CIAN_XML' || normalized === 'AVITO_XML') {
+  if (normalized === 'YANDEX_REALTY' || normalized === 'CIAN_XML' || normalized === 'AVITO_XML' || normalized === 'FSK_XML') {
     return normalized;
   }
 
@@ -1726,6 +1998,10 @@ export function createFeedParserForFormat(format: FeedSourceFormat): FeedParser 
     return new AvitoXmlFeedParser();
   }
 
+  if (format === 'FSK_XML') {
+    return new FskXmlFeedParser();
+  }
+
   throw new Error(`Unsupported feed format: ${format satisfies never}`);
 }
 
@@ -1753,6 +2029,12 @@ export function detectFeedFormatFromXml(xml: string): FeedSourceFormat | null {
     if (asRecord(root.Ads)) {
       return 'AVITO_XML';
     }
+
+    const fskData = asRecord(root.Data);
+
+    if (fskData && isFskFeedRoot(fskData)) {
+      return 'FSK_XML';
+    }
   } catch {
     return null;
   }
@@ -1774,6 +2056,25 @@ function getCianFeedRoot(root: XmlRecord): XmlRecord | null {
   }
 
   return null;
+}
+
+function isFskFeedRoot(data: XmlRecord) {
+  const flatTypes = asRecord(data.FlatTypes);
+  const regions = asRecord(data.Regions);
+
+  if (!hasXmlNodes(flatTypes?.FlatType) || !regions) {
+    return false;
+  }
+
+  return toArray(regions.Region)
+    .map(asRecord)
+    .filter((region): region is XmlRecord => region !== null)
+    .some((region) =>
+      toArray(region.Object)
+        .map(asRecord)
+        .filter((object): object is XmlRecord => object !== null)
+        .some((object) => hasXmlNodes(asRecord(object.Buildings)?.Corpus)),
+    );
 }
 
 function hasXmlNodes(value: unknown): boolean {
@@ -2061,6 +2362,10 @@ function getFeedFormatLabel(format: FeedSourceFormat) {
 
   if (format === 'AVITO_XML') {
     return 'Avito XML';
+  }
+
+  if (format === 'FSK_XML') {
+    return 'FSK XML';
   }
 
   return format satisfies never;
@@ -2634,10 +2939,10 @@ function shouldUseApartmentNumberTitleForSource(unit: NormalizedFeedUnit, source
   const unitFormat = getText(unit.rawPayload.__feedDetectedFormat) ?? source.format;
 
   return (
-    unitFormat === 'CIAN_XML' &&
     unit.type === 'RESIDENTIAL' &&
     Boolean(unit.residentialDetails?.apartmentNumber) &&
-    (isMrGroupFeedSource(source) || isMangazeyaFeedSource(source))
+    (unitFormat === 'FSK_XML' ||
+      (unitFormat === 'CIAN_XML' && (isMrGroupFeedSource(source) || isMangazeyaFeedSource(source))))
   );
 }
 

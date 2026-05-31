@@ -6,6 +6,7 @@ const { test } = require('node:test');
 const {
   AvitoXmlFeedParser,
   CianXmlFeedParser,
+  FskXmlFeedParser,
   YandexRealtyFeedParser,
   analyzeFeedSourceInput,
   createFeedSourceAnalysis,
@@ -83,6 +84,42 @@ function makeIndexAvitoXml() {
         <Square>30</Square>
       </Ad>
     </Ads>`;
+}
+
+function makeFskXml() {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+    <Data>
+      <Generation-date>2026-05-31T04:00:00.121Z</Generation-date>
+      <FlatTypes>
+        <FlatType ID="0" Name="Квартира"/>
+        <FlatType ID="2" Name="Нежилое"/>
+        <FlatType ID="7" Name="Студия"/>
+      </FlatTypes>
+      <Regions>
+        <Region Region_name="Москва и МО">
+          <Object Complex_name="Режиссер" Complex_id="67" ID1C="00320" Ready="true">
+            <Info>
+              <Complex_address>г. Москва, ул. Вильгельма Пика, д. 1</Complex_address>
+            </Info>
+            <Buildings>
+              <Corpus Num="3" Corpus_Delivery="2024-08-30">
+                <Section Num="5" Floor_Count="38">
+                  <Floor Num="3">
+                    <Flat Id="61c97b374e2acff6814913c2" Id1C="141281" Type="0" Number="656" Floor="3" Rooms="2" Price_metr_sale="588700" Price_tot_sale="48979840" Square_tot="83.2" Square_live="46.3" Square_kitchen="14.3" Balcony_quantity="1" Flat_plan="https://cdn.fsk.ru/plans/flat.png" Floor_plan="https://cdn.fsk.ru/plans/floor.png"/>
+                  </Floor>
+                  <Floor Num="17">
+                    <Flat Id="61caaa36ec8c5874694603e6" Id1C="145526" Type="7" Number="260" Floor="17" Rooms="1" Price_metr_sale="362430" Price_tot_sale="8952021" Square_tot="24.7" Square_live="9.8" Square_kitchen="6.8"/>
+                  </Floor>
+                  <Floor Num="2">
+                    <Flat Id="67ec137b0b9889d30df128ad" Id1C="248212" Type="2" Number="1.1" Floor="2" Rooms="1" Price_metr_sale="425750" Price_tot_sale="258217375" Square_tot="606.5"/>
+                  </Floor>
+                </Section>
+              </Corpus>
+            </Buildings>
+          </Object>
+        </Region>
+      </Regions>
+    </Data>`;
 }
 
 test('YandexRealtyFeedParser normalizes residential units from fixture', () => {
@@ -593,12 +630,82 @@ test('createFeedSourceAnalysis summarizes Avito development groups', () => {
   });
 });
 
+test('FskXmlFeedParser normalizes only residential units and maps FSK studios to room zero', () => {
+  const parser = new FskXmlFeedParser();
+
+  const result = parser.parse(makeFskXml());
+
+  assert.deepEqual(result.warnings, []);
+  assert.equal(result.units.length, 2);
+
+  const flat = result.units[0];
+  assert.equal(flat.externalId, '141281');
+  assert.equal(flat.type, 'RESIDENTIAL');
+  assert.equal(flat.status, 'AVAILABLE');
+  assert.equal(flat.title, 'Режиссер, Квартира, 141281');
+  assert.equal(flat.projectName, 'Режиссер');
+  assert.equal(flat.address, 'г. Москва, ул. Вильгельма Пика, д. 1');
+  assert.equal(flat.building, '3');
+  assert.equal(flat.section, '5');
+  assert.equal(flat.floor, 3);
+  assert.equal(flat.rooms, 2);
+  assert.equal(flat.price, '48979840.00');
+  assert.equal(flat.currency, 'RUR');
+  assert.equal(flat.area, '83.20');
+  assert.equal(flat.pricePerMeter, '588700.00');
+  assert.equal(flat.completionYear, 2024);
+  assert.equal(flat.completionQuarter, 3);
+  assert.equal(flat.residentialDetails.apartmentNumber, '656');
+  assert.equal(flat.residentialDetails.layoutType, 'Квартира');
+  assert.equal(flat.residentialDetails.livingArea, '46.30');
+  assert.equal(flat.residentialDetails.kitchenArea, '14.30');
+  assert.equal(flat.residentialDetails.balconyCount, 1);
+  assert.deepEqual(flat.media, [
+    {
+      sourceUrl: 'https://cdn.fsk.ru/plans/flat.png',
+      sortOrder: 0,
+      label: 'flat-plan',
+    },
+    {
+      sourceUrl: 'https://cdn.fsk.ru/plans/floor.png',
+      sortOrder: 1,
+      label: 'floor-plan',
+    },
+  ]);
+
+  const studio = result.units[1];
+  assert.equal(studio.externalId, '145526');
+  assert.equal(studio.rooms, 0);
+  assert.equal(studio.residentialDetails.apartmentNumber, '260');
+  assert.equal(studio.residentialDetails.layoutType, 'Студия');
+  assert.equal(result.units.some((unit) => unit.externalId === '248212'), false);
+});
+
+test('createFeedSourceAnalysis summarizes FSK objects for automatic mapping', () => {
+  const parser = new FskXmlFeedParser();
+  const parsed = parser.parse(makeFskXml());
+
+  const analysis = createFeedSourceAnalysis('FSK_XML', parsed);
+
+  assert.equal(analysis.format, 'FSK_XML');
+  assert.equal(analysis.unitsCount, 2);
+  assert.deepEqual(
+    analysis.objects.map((object) => [object.title, object.unitsCount]),
+    [['Режиссер', 2]],
+  );
+  assert.deepEqual(analysis.objects[0].projectNames, ['Режиссер']);
+  assert.deepEqual(analysis.objects[0].filterJson, {
+    projectNames: ['Режиссер'],
+  });
+});
+
 test('detectFeedFormatFromXml detects supported XML roots', () => {
   assert.equal(detectFeedFormatFromXml(makeIndexYandexXml()), 'YANDEX_REALTY');
   assert.equal(detectFeedFormatFromXml(makeIndexCianXml()), 'CIAN_XML');
   assert.equal(detectFeedFormatFromXml('<Feed><Object><ExternalId>1</ExternalId></Object></Feed>'), 'CIAN_XML');
   assert.equal(detectFeedFormatFromXml(makeStoneCianLikeRealtyFeedXml()), 'CIAN_XML');
   assert.equal(detectFeedFormatFromXml(makeIndexAvitoXml()), 'AVITO_XML');
+  assert.equal(detectFeedFormatFromXml(makeFskXml()), 'FSK_XML');
   assert.equal(detectFeedFormatFromXml('<unknown-feed />'), null);
 });
 

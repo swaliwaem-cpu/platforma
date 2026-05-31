@@ -279,6 +279,14 @@ test('FeedsService validates feed source kind literals without relying on genera
   assert.doesNotMatch(source, /Object\.values\(FeedSourceKind\)\.includes\(sourceKind as FeedSourceKind\)/);
 });
 
+test('FeedsService validates feed format literals without relying on generated Prisma enum values', () => {
+  const source = readFileSync(feedsServiceSourcePath, 'utf8');
+
+  assert.match(source, /const supportedFeedSourceFormats = \['YANDEX_REALTY', 'CIAN_XML', 'AVITO_XML', 'FSK_XML'\] as const;/);
+  assert.match(source, /supportedFeedSourceFormats\.includes\(format as SupportedFeedSourceFormat\)/);
+  assert.doesNotMatch(source, /Object\.values\(FeedFormat\)\.includes\(format as FeedFormat\)/);
+});
+
 test('FeedsService analyzes a feed source without developer and object mapping', async () => {
   const calls = [];
   const service = new FeedsService({});

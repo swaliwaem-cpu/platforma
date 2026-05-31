@@ -92,6 +92,7 @@ enum FeedFormat {
   YANDEX_REALTY @map("yandex_realty")
   CIAN_XML      @map("cian_xml")
   AVITO_XML     @map("avito_xml")
+  FSK_XML       @map("fsk_xml")
 
   @@map("feed_format")
 }
