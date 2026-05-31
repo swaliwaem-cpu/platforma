@@ -53,7 +53,10 @@ function createStorageMock() {
 test('api package exposes media variants backfill script', () => {
   const apiPackage = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf8'));
 
-  assert.equal(apiPackage.scripts['media:variants:backfill'], 'pnpm build && node dist/files/backfill-image-variants.js');
+  assert.equal(
+    apiPackage.scripts['media:variants:backfill'],
+    'pnpm build && node --env-file-if-exists=.env dist/files/backfill-image-variants.js',
+  );
 });
 
 test('backfillImageVariants creates only missing image variants and skips complete files', async () => {
