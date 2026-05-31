@@ -861,6 +861,7 @@ function ObjectFeedUnitsSection({
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
+  const [hasDiscountPrices, setHasDiscountPrices] = useState(false);
   const [statusFilter, setStatusFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [priceMinFilter, setPriceMinFilter] = useState(initialFilters.priceMin);
@@ -895,7 +896,6 @@ function ObjectFeedUnitsSection({
       completionQuarterFilter,
   );
   const showFeedUnitsSkeleton = isLoading && units.length === 0;
-  const hasDiscountPrices = units.some((unit) => Boolean(unit.discountPrice));
   const feedUnitsTableColumnCount = hasDiscountPrices ? 10 : 9;
   const sortedUnits = useMemo(
     () => sortFeedUnitsForDisplay(units, sortBy, sortDirection),
@@ -950,12 +950,14 @@ function ObjectFeedUnitsSection({
           setUnits(data.items);
           setTotal(data.total);
           setTotalPages(data.totalPages);
+          setHasDiscountPrices(data.hasDiscountPrices);
         }
       } catch (caughtError) {
         if (!isCancelled) {
           setUnits([]);
           setTotal(0);
           setTotalPages(1);
+          setHasDiscountPrices(false);
           setError(caughtError instanceof Error ? caughtError.message : 'Не удалось загрузить лоты');
         }
       } finally {

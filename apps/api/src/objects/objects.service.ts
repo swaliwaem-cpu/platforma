@@ -678,9 +678,19 @@ export class ObjectsService {
     const where: Prisma.FeedUnitWhereInput = {
       AND: filters,
     };
+    const discountWhere: Prisma.FeedUnitWhereInput = {
+      AND: [
+        { objectId },
+        {
+          discountPrice: {
+            not: null,
+          },
+        },
+      ],
+    };
     const orderBy = this.parseFeedUnitOrderBy(query.sortBy, query.sortDirection);
 
-    const [items, total] = await this.prisma.$transaction([
+    const [items, discountedUnitsCount, total] = await this.prisma.$transaction([
       this.prisma.feedUnit.findMany({
         where,
         include: feedUnitInclude,
@@ -688,6 +698,7 @@ export class ObjectsService {
         skip: (page - 1) * limit,
         take: limit,
       }),
+      this.prisma.feedUnit.count({ where: discountWhere }),
       this.prisma.feedUnit.count({ where }),
     ]);
 
@@ -697,7 +708,7 @@ export class ObjectsService {
       page,
       limit,
       totalPages: Math.max(1, Math.ceil(total / limit)),
-      hasDiscountPrices: items.some((unit) => unit.discountPrice !== null),
+      hasDiscountPrices: discountedUnitsCount > 0,
     };
   }
 

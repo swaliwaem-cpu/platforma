@@ -961,6 +961,47 @@ test('FeedsService lists runs, reads a run and lists units with media details', 
   assert.equal(units.items[0].media[0].file.sizeBytes, '1000');
 });
 
+test('FeedsService.listUnits calculates discount flag from source scope instead of current page', async () => {
+  const calls = [];
+  const prisma = {
+    $transaction: async (queries) => Promise.all(queries),
+    feedUnit: {
+      findMany: async (args) => {
+        calls.push(['feedUnit.findMany', args]);
+        return [
+          unitRecord({
+            discountPrice: null,
+            discountPricePerMeter: null,
+          }),
+        ];
+      },
+      count: async (args) => {
+        calls.push(['feedUnit.count', args]);
+        return JSON.stringify(args.where).includes('discountPrice') ? 1 : 2;
+      },
+    },
+  };
+  const service = new FeedsService(prisma);
+
+  const units = await service.listUnits({ sourceId, status: 'available' });
+  const discountCountCall = calls.find(
+    ([name, args]) => name === 'feedUnit.count' && JSON.stringify(args.where).includes('discountPrice'),
+  );
+
+  assert.equal(units.items[0].discountPrice, null);
+  assert.equal(units.hasDiscountPrices, true);
+  assert.deepEqual(discountCountCall[1].where, {
+    AND: [
+      { sourceId },
+      {
+        discountPrice: {
+          not: null,
+        },
+      },
+    ],
+  });
+});
+
 test('FeedsService.listUnits expands search for transliteration and wrong keyboard layout', async () => {
   const calls = {};
   const prisma = {

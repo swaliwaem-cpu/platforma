@@ -85,7 +85,9 @@ test('object detail feed units initialize from catalog lot filters in URL', () =
 test('object detail feed units block renders expected columns and media thumbnails', () => {
   assert.match(source, /<section className="detail-section object-feed-units-section"/);
   assert.match(source, /id="object-feed-units-title">Лоты<\/h3>/);
-  assert.match(source, /const hasDiscountPrices = units\.some\(\(unit\) => Boolean\(unit\.discountPrice\)\);/);
+  assert.match(source, /const \[hasDiscountPrices,\s*setHasDiscountPrices\] = useState\(false\);/);
+  assert.match(source, /setHasDiscountPrices\(data\.hasDiscountPrices\);/);
+  assert.doesNotMatch(source, /units\.some\(\(unit\) => Boolean\(unit\.discountPrice\)\)/);
   assert.match(source, /\{hasDiscountPrices \? \([\s\S]*?<ObjectFeedSortableHead[\s\S]*?field="price"[\s\S]*?>\s*Цена со скидкой\s*<\/ObjectFeedSortableHead>[\s\S]*?\) : null\}/);
   assert.match(source, /field="pricePerMeter"[\s\S]*?>\s*Цена за м²\s*<\/ObjectFeedSortableHead>/);
   assert.match(source, /showDiscountPrice=\{hasDiscountPrices\}/);

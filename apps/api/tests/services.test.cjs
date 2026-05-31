@@ -1450,6 +1450,89 @@ test('ObjectsService.listFeedUnits returns feed units for one object with filter
   assert.equal(result.totalPages, 1);
 });
 
+test('ObjectsService.listFeedUnits calculates discount flag from object scope instead of current page', async () => {
+  const calls = {};
+  const objectId = '11111111-1111-4111-8111-111111111111';
+  const unitId = '55555555-5555-4555-8555-555555555555';
+  const now = new Date('2026-05-23T10:00:00.000Z');
+  const prisma = {
+    realEstateObject: {
+      count: async (args) => {
+        calls.objectCount = args;
+        return 1;
+      },
+    },
+    feedUnit: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [
+          {
+            id: unitId,
+            sourceId: '22222222-2222-4222-8222-222222222222',
+            objectId,
+            externalId: 'flat-1',
+            type: FeedUnitType.RESIDENTIAL,
+            status: FeedUnitStatus.AVAILABLE,
+            title: 'Квартира 1',
+            address: 'Москва',
+            building: 'Корпус 1',
+            section: '1',
+            floor: 7,
+            rooms: 2,
+            price: decimal('10000000'),
+            discountPrice: null,
+            effectivePrice: decimal('10000000'),
+            currency: 'RUR',
+            area: decimal('50'),
+            pricePerMeter: decimal('200000'),
+            discountPricePerMeter: null,
+            effectivePricePerMeter: decimal('200000'),
+            completionYear: 2028,
+            completionQuarter: 4,
+            rawPayload: { externalId: 'flat-1' },
+            archivedAt: null,
+            residentialDetails: null,
+            commercialDetails: null,
+            media: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        ];
+      },
+      count: async (args) => {
+        if (JSON.stringify(args.where).includes('discountPrice')) {
+          calls.discountCount = args;
+          return 1;
+        }
+
+        calls.count = args;
+        return 2;
+      },
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  const result = await service.listFeedUnits(objectId, {
+    page: '1',
+    limit: '1',
+    status: 'booked',
+  });
+
+  assert.equal(result.items[0].discountPrice, null);
+  assert.equal(result.hasDiscountPrices, true);
+  assert.deepEqual(calls.discountCount.where, {
+    AND: [
+      { objectId },
+      {
+        discountPrice: {
+          not: null,
+        },
+      },
+    ],
+  });
+});
+
 test('ObjectsService.getFeedUnit returns one feed unit for an object with media', async () => {
   const calls = {};
   const objectId = '11111111-1111-4111-8111-111111111111';

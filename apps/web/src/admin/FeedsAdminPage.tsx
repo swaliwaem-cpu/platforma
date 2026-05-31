@@ -177,6 +177,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
   const [unitsPage, setUnitsPage] = useState(1);
   const [unitsTotal, setUnitsTotal] = useState(0);
   const [unitsTotalPages, setUnitsTotalPages] = useState(1);
+  const [hasDiscountUnitPrices, setHasDiscountUnitPrices] = useState(false);
   const [unitStatusFilter, setUnitStatusFilter] = useState('');
   const [unitTypeFilter, setUnitTypeFilter] = useState('');
   const [isLoadingDirectories, setIsLoadingDirectories] = useState(true);
@@ -206,7 +207,6 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
   const editorSourceMetaSummary = editorSource ? sourceMetaSummaries[editorSource.id] ?? null : null;
   const selectedSourceMetaSummary = selectedSource ? sourceMetaSummaries[selectedSource.id] ?? null : null;
   const hasActiveUnitFilters = Boolean(unitStatusFilter || unitTypeFilter);
-  const hasDiscountUnitPrices = units.some((unit) => Boolean(unit.discountPrice));
   const unitTableColumns = hasDiscountUnitPrices ? 11 : 10;
   const filteredObjects = useMemo(() => {
     if (!form.developerId) {
@@ -235,6 +235,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
       setSelectedRun(null);
       setRuns([]);
       setUnits([]);
+      setHasDiscountUnitPrices(false);
       setSourceAnalysis(null);
       setIsLoadingSources(false);
       setIsLoadingForm(false);
@@ -490,7 +491,9 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
       setUnits(data.items);
       setUnitsTotal(data.total);
       setUnitsTotalPages(data.totalPages);
+      setHasDiscountUnitPrices(data.hasDiscountPrices);
     } catch (caughtError) {
+      setHasDiscountUnitPrices(false);
       setError(caughtError instanceof Error ? caughtError.message : 'Не удалось загрузить лоты фида');
     } finally {
       setIsLoadingUnits(false);
@@ -574,6 +577,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
       setSelectedRun(null);
       setRuns([]);
       setUnits([]);
+      setHasDiscountUnitPrices(false);
       setSourceAnalysis(null);
       setNotice('Фид удалён');
       navigate('/admin/feeds');

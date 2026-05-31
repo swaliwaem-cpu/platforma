@@ -222,6 +222,9 @@ test('feeds admin page renders reports table without the right report detail col
   assert.doesNotMatch(source, /<ReportSummary summary=\{selectedRunSummary\} \/>/);
   assert.match(source, />Статус</);
   assert.match(source, />Цена</);
+  assert.match(source, /const \[hasDiscountUnitPrices,\s*setHasDiscountUnitPrices\] = useState\(false\);/);
+  assert.match(source, /setHasDiscountUnitPrices\(data\.hasDiscountPrices\);/);
+  assert.doesNotMatch(source, /units\.some\(\(unit\) => Boolean\(unit\.discountPrice\)\)/);
   assert.match(source, /hasDiscountUnitPrices \? <TableHead>Цена со скидкой<\/TableHead> : null/);
   assert.match(source, /hasDiscountUnitPrices \? <TableCell>\{formatMoney\(unit\.discountPrice, unit\.currency\)\}<\/TableCell> : null/);
   assert.match(source, />Цена за м²</);

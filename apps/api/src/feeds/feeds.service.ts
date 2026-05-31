@@ -963,16 +963,25 @@ export class FeedsService {
     const page = this.parsePositiveInteger(query.page, 1);
     const limit = Math.min(this.parsePositiveInteger(query.limit, 20), 100);
     const filters: Prisma.FeedUnitWhereInput[] = [];
+    const discountScopeFilters: Prisma.FeedUnitWhereInput[] = [];
 
     if (query.sourceId) {
+      const sourceId = this.parseUuid(query.sourceId, 'Feed source is invalid');
       filters.push({
-        sourceId: this.parseUuid(query.sourceId, 'Feed source is invalid'),
+        sourceId,
+      });
+      discountScopeFilters.push({
+        sourceId,
       });
     }
 
     if (query.objectId) {
+      const objectId = this.parseUuid(query.objectId, 'Object is invalid');
       filters.push({
-        objectId: this.parseUuid(query.objectId, 'Object is invalid'),
+        objectId,
+      });
+      discountScopeFilters.push({
+        objectId,
       });
     }
 
@@ -997,8 +1006,25 @@ export class FeedsService {
     }
 
     const where: Prisma.FeedUnitWhereInput = filters.length > 0 ? { AND: filters } : {};
+    const discountWhere: Prisma.FeedUnitWhereInput =
+      discountScopeFilters.length > 0
+        ? {
+            AND: [
+              ...discountScopeFilters,
+              {
+                discountPrice: {
+                  not: null,
+                },
+              },
+            ],
+          }
+        : {
+            discountPrice: {
+              not: null,
+            },
+          };
 
-    const [items, total] = await this.prisma.$transaction([
+    const [items, discountedUnitsCount, total] = await this.prisma.$transaction([
       this.prisma.feedUnit.findMany({
         where,
         include: unitInclude,
@@ -1008,6 +1034,7 @@ export class FeedsService {
         skip: (page - 1) * limit,
         take: limit,
       }),
+      this.prisma.feedUnit.count({ where: discountWhere }),
       this.prisma.feedUnit.count({ where }),
     ]);
 
@@ -1017,7 +1044,7 @@ export class FeedsService {
       page,
       limit,
       totalPages: Math.max(1, Math.ceil(total / limit)),
-      hasDiscountPrices: items.some((unit) => unit.discountPrice !== null),
+      hasDiscountPrices: discountedUnitsCount > 0,
     };
   }
 
