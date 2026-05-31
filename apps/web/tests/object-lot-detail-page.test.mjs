@@ -41,6 +41,7 @@ test('lot detail page renders media carousel and required fact cards', () => {
   assert.match(objectDetailSource, /function getObjectLotFactRows\(unit: FeedUnit\)/);
   assert.match(objectDetailSource, /formatComputedFeedUnitPricePerMeter\(unit\)/);
   assert.match(objectDetailSource, /label: 'Цена'/);
+  assert.match(objectDetailSource, /unit\.discountPrice[\s\S]*?label: 'Цена со скидкой'[\s\S]*?formatFeedUnitPrice\(unit\.discountPrice, unit\.currency\)/);
   assert.match(objectDetailSource, /label: 'Цена за м²'/);
   assert.match(objectDetailSource, /label: 'Площадь'/);
   assert.match(objectDetailSource, /label: 'Тип лота'/);

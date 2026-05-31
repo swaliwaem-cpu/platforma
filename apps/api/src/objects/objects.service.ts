@@ -624,9 +624,9 @@ export class ObjectsService {
       });
     }
 
-    const priceFilter = this.createFeedUnitDecimalRangeFilter('price', query.priceMin, query.priceMax, 'Price', 14, 2);
+    const priceFilter = this.createFeedUnitDecimalRangeFilter('effectivePrice', query.priceMin, query.priceMax, 'Price', 14, 2);
     const pricePerMeterFilter = this.createFeedUnitDecimalRangeFilter(
-      'pricePerMeter',
+      'effectivePricePerMeter',
       query.pricePerMeterMin,
       query.pricePerMeterMax,
       'Price per meter',
@@ -697,6 +697,7 @@ export class ObjectsService {
       page,
       limit,
       totalPages: Math.max(1, Math.ceil(total / limit)),
+      hasDiscountPrices: items.some((unit) => unit.discountPrice !== null),
     };
   }
 
@@ -2479,7 +2480,7 @@ export class ObjectsService {
     const lotWhere: Prisma.FeedUnitWhereInput = {
       ...(priceMin !== undefined || priceMax !== undefined
         ? {
-            price: {
+            effectivePrice: {
               ...(priceMin !== undefined ? { gte: priceMin } : {}),
               ...(priceMax !== undefined ? { lte: priceMax } : {}),
             },
@@ -2588,7 +2589,7 @@ export class ObjectsService {
   }
 
   private createFeedUnitDecimalRangeFilter(
-    field: 'price' | 'pricePerMeter' | 'area',
+    field: 'effectivePrice' | 'effectivePricePerMeter' | 'area',
     minValue: string | undefined,
     maxValue: string | undefined,
     fieldName: string,
@@ -3097,7 +3098,7 @@ export class ObjectsService {
           status: 'asc',
         },
         {
-          price: {
+          effectivePrice: {
             sort: 'asc',
             nulls: 'last',
           },
@@ -3179,9 +3180,16 @@ export class ObjectsService {
       normalizedSortBy === 'area' ||
       normalizedSortBy === 'floor'
     ) {
+      const sortField =
+        normalizedSortBy === 'price'
+          ? 'effectivePrice'
+          : normalizedSortBy === 'pricePerMeter'
+            ? 'effectivePricePerMeter'
+            : normalizedSortBy;
+
       return [
         {
-          [normalizedSortBy]: {
+          [sortField]: {
             sort: direction,
             nulls: 'last',
           },
@@ -3197,7 +3205,7 @@ export class ObjectsService {
         status: 'asc',
       },
       {
-        price: {
+        effectivePrice: {
           sort: 'asc',
           nulls: 'last',
         },
@@ -3331,9 +3339,13 @@ export class ObjectsService {
       floor: unit.floor,
       rooms: unit.rooms,
       price: this.decimalToString(unit.price),
+      discountPrice: this.decimalToString(unit.discountPrice),
+      effectivePrice: this.decimalToString(unit.effectivePrice),
       currency: unit.currency,
       area: this.decimalToString(unit.area),
       pricePerMeter: this.decimalToString(unit.pricePerMeter),
+      discountPricePerMeter: this.decimalToString(unit.discountPricePerMeter),
+      effectivePricePerMeter: this.decimalToString(unit.effectivePricePerMeter),
       completionYear: unit.completionYear,
       completionQuarter: unit.completionQuarter,
       rawPayload: unit.rawPayload ?? null,

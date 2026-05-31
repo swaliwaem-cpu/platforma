@@ -68,9 +68,13 @@ export type NormalizedFeedUnit = {
   floor: number | null;
   rooms: number | null;
   price: string | null;
+  discountPrice: string | null;
+  effectivePrice: string | null;
   currency: string | null;
   area: string | null;
   pricePerMeter: string | null;
+  discountPricePerMeter: string | null;
+  effectivePricePerMeter: string | null;
   completionYear: number | null;
   completionQuarter: number | null;
   rawPayload: Record<string, unknown>;
@@ -219,7 +223,13 @@ export class YandexRealtyFeedParser implements FeedParser {
   private normalizeOffer(offer: XmlRecord, externalId: string, warnings: FeedParserWarning[]): NormalizedFeedUnit {
     const location = asRecord(offer.location);
     const price = normalizeDecimal(offer.price, 'price', externalId, warnings);
+    const discount = asRecord(offer.discount);
+    const discountPrice = normalizeDecimal(discount?.['final-price'], 'discountPrice', externalId, warnings);
+    const effectivePrice = discountPrice ?? price;
     const area = normalizeDecimal(offer.area, 'area', externalId, warnings);
+    const pricePerMeter = calculatePricePerMeter(price, area);
+    const discountPricePerMeter = calculatePricePerMeter(discountPrice, area);
+    const effectivePricePerMeter = calculatePricePerMeter(effectivePrice, area);
     const floor = normalizeInteger(offer.floor, 'floor', externalId, warnings);
     const rooms = normalizeYandexRooms(offer, externalId, warnings);
     const completionYear = normalizeInteger(offer['built-year'], 'completionYear', externalId, warnings);
@@ -239,9 +249,13 @@ export class YandexRealtyFeedParser implements FeedParser {
       floor,
       rooms,
       price,
+      discountPrice,
+      effectivePrice,
       currency: getText(asRecord(offer.price)?.currency),
       area,
-      pricePerMeter: calculatePricePerMeter(price, area),
+      pricePerMeter,
+      discountPricePerMeter,
+      effectivePricePerMeter,
       completionYear,
       completionQuarter,
       rawPayload: offer,
@@ -253,7 +267,7 @@ export class YandexRealtyFeedParser implements FeedParser {
               layoutType: getText(offer['rooms-type']),
               livingArea,
               kitchenArea: normalizeDecimal(offer['kitchen-space'], 'kitchenArea', externalId, warnings),
-              balconyCount: normalizeInteger(offer.balconies, 'balconyCount', externalId, warnings),
+              balconyCount: normalizeInteger(offer.balconies ?? offer.balcony, 'balconyCount', externalId, warnings),
               detailsJson: {
                 buildingType: getText(offer['building-type']),
                 ceilingHeight: normalizeDecimal(offer['ceiling-height'], 'ceilingHeight', externalId, warnings),
@@ -345,9 +359,13 @@ export class CianXmlFeedParser implements FeedParser {
       floor,
       rooms: normalizeCianRooms(object, externalId, warnings),
       price,
+      discountPrice: null,
+      effectivePrice: price,
       currency: getText(bargainTerms?.Currency),
       area,
       pricePerMeter: calculatePricePerMeter(price, area),
+      discountPricePerMeter: null,
+      effectivePricePerMeter: calculatePricePerMeter(price, area),
       completionYear: normalizeInteger(object.CompletionYear, 'completionYear', externalId, warnings),
       completionQuarter: normalizeQuarter(object.CompletionQuarter, externalId, warnings),
       rawPayload: object,
@@ -444,9 +462,13 @@ export class AvitoXmlFeedParser implements FeedParser {
       floor,
       rooms,
       price,
+      discountPrice: null,
+      effectivePrice: price,
       currency: 'RUR',
       area,
       pricePerMeter: calculatePricePerMeter(price, area),
+      discountPricePerMeter: null,
+      effectivePricePerMeter: calculatePricePerMeter(price, area),
       completionYear: null,
       completionQuarter: null,
       rawPayload: ad,
@@ -644,9 +666,13 @@ export class FskXmlFeedParser implements FeedParser {
       floor: normalizeInteger(getXmlAttribute(flat, 'Floor') ?? context.floorNumber, 'floor', externalId, warnings),
       rooms: normalizeFskRooms(flat, externalId, warnings),
       price,
+      discountPrice: null,
+      effectivePrice: price,
       currency: 'RUR',
       area,
       pricePerMeter: calculatePricePerMeter(price, area),
+      discountPricePerMeter: null,
+      effectivePricePerMeter: calculatePricePerMeter(price, area),
       completionYear: completion.year,
       completionQuarter: completion.quarter,
       rawPayload: {
@@ -1045,7 +1071,7 @@ function buildYandexTitle(offer: XmlRecord, location: XmlRecord | null): string 
 }
 
 function getYandexApartmentNumber(offer: XmlRecord, location: XmlRecord | null) {
-  return getText(location?.apartment) ?? extractYandexApartmentNumber(getText(offer.description));
+  return getText(location?.apartment) ?? getText(offer['flat-number']) ?? extractYandexApartmentNumber(getText(offer.description));
 }
 
 function extractYandexApartmentNumber(description: string | null) {
@@ -1377,8 +1403,12 @@ type ExistingFeedUnitRecord = {
   externalId: string;
   status: FeedUnitStatusValue;
   price?: DecimalLike | null;
+  discountPrice?: DecimalLike | null;
+  effectivePrice?: DecimalLike | null;
   area?: DecimalLike | null;
   pricePerMeter?: DecimalLike | null;
+  discountPricePerMeter?: DecimalLike | null;
+  effectivePricePerMeter?: DecimalLike | null;
   floor?: number | null;
   completionYear?: number | null;
   completionQuarter?: number | null;
@@ -1395,9 +1425,13 @@ type FeedUnitWriteData = {
   floor: number | null;
   rooms: number | null;
   price: string | null;
+  discountPrice: string | null;
+  effectivePrice: string | null;
   currency: string | null;
   area: string | null;
   pricePerMeter: string | null;
+  discountPricePerMeter: string | null;
+  effectivePricePerMeter: string | null;
   completionYear: number | null;
   completionQuarter: number | null;
   rawPayload: Record<string, unknown>;
@@ -3267,7 +3301,11 @@ async function refreshRealEstateObjectFeedAggregates(
       externalId: true,
       status: true,
       price: true,
+      discountPrice: true,
+      effectivePrice: true,
       pricePerMeter: true,
+      discountPricePerMeter: true,
+      effectivePricePerMeter: true,
       area: true,
       floor: true,
       completionYear: true,
@@ -3292,8 +3330,10 @@ async function refreshRealEstateObjectFeedAggregates(
       id: objectId,
     },
     data: {
-      feedPriceFrom: minDecimalString(activeUnits.map((unit) => unit.price ?? null)),
-      feedPricePerMeterFrom: minDecimalString(activeUnits.map((unit) => unit.pricePerMeter ?? null)),
+      feedPriceFrom: minDecimalString(activeUnits.map((unit) => unit.effectivePrice ?? unit.discountPrice ?? unit.price ?? null)),
+      feedPricePerMeterFrom: minDecimalString(
+        activeUnits.map((unit) => unit.effectivePricePerMeter ?? unit.discountPricePerMeter ?? unit.pricePerMeter ?? null),
+      ),
       feedAreaRange: formatDecimalRange(activeUnits.map((unit) => unit.area ?? null), 'м²'),
       feedFloorRange: formatFloorRange(activeUnits.map((unit) => unit.floor ?? null)),
       feedUnitsCount: activeUnits.length,
@@ -3487,9 +3527,13 @@ function createFeedUnitWriteData(
     floor: unit.floor,
     rooms: unit.rooms,
     price: unit.price,
+    discountPrice: unit.discountPrice,
+    effectivePrice: unit.effectivePrice,
     currency: unit.currency,
     area: unit.area,
     pricePerMeter: unit.pricePerMeter,
+    discountPricePerMeter: unit.discountPricePerMeter,
+    effectivePricePerMeter: unit.effectivePricePerMeter,
     completionYear: unit.completionYear,
     completionQuarter: unit.completionQuarter,
     rawPayload: unit.rawPayload,

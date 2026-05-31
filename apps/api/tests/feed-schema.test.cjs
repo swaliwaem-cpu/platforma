@@ -33,6 +33,10 @@ const feedSourceSoftDeleteMigrationPath = path.join(
   rootDir,
   'apps/api/prisma/migrations/20260530120000_add_feed_source_soft_delete/migration.sql',
 );
+const feedUnitDiscountPricesMigrationPath = path.join(
+  rootDir,
+  'apps/api/prisma/migrations/20260531120000_add_feed_unit_discount_prices/migration.sql',
+);
 
 function readProjectFile(filePath) {
   return fs.readFileSync(filePath, 'utf8');
@@ -84,10 +88,12 @@ test('Prisma schema defines feed source mappings for multi-object routing', () =
 test('Prisma schema defines feed units, details and media', () => {
   const schema = readProjectFile(schemaPath);
 
-  assert.match(schema, /model FeedUnit \{[\s\S]*sourceId\s+String\s+@map\("source_id"\) @db\.Uuid[\s\S]*objectId\s+String\s+@map\("object_id"\) @db\.Uuid[\s\S]*externalId\s+String\s+@map\("external_id"\) @db\.VarChar\(255\)[\s\S]*type\s+FeedUnitType[\s\S]*status\s+FeedUnitStatus\s+@default\(UNKNOWN\)[\s\S]*price\s+Decimal\?\s+@db\.Decimal\(14, 2\)[\s\S]*area\s+Decimal\?\s+@db\.Decimal\(10, 2\)[\s\S]*pricePerMeter\s+Decimal\?\s+@map\("price_per_meter"\) @db\.Decimal\(14, 2\)[\s\S]*rawPayload\s+Json\?\s+@map\("raw_payload"\)[\s\S]*\}/);
+  assert.match(schema, /model FeedUnit \{[\s\S]*sourceId\s+String\s+@map\("source_id"\) @db\.Uuid[\s\S]*objectId\s+String\s+@map\("object_id"\) @db\.Uuid[\s\S]*externalId\s+String\s+@map\("external_id"\) @db\.VarChar\(255\)[\s\S]*type\s+FeedUnitType[\s\S]*status\s+FeedUnitStatus\s+@default\(UNKNOWN\)[\s\S]*price\s+Decimal\?\s+@db\.Decimal\(14, 2\)[\s\S]*discountPrice\s+Decimal\?\s+@map\("discount_price"\) @db\.Decimal\(14, 2\)[\s\S]*effectivePrice\s+Decimal\?\s+@map\("effective_price"\) @db\.Decimal\(14, 2\)[\s\S]*area\s+Decimal\?\s+@db\.Decimal\(10, 2\)[\s\S]*pricePerMeter\s+Decimal\?\s+@map\("price_per_meter"\) @db\.Decimal\(14, 2\)[\s\S]*discountPricePerMeter\s+Decimal\?\s+@map\("discount_price_per_meter"\) @db\.Decimal\(14, 2\)[\s\S]*effectivePricePerMeter\s+Decimal\?\s+@map\("effective_price_per_meter"\) @db\.Decimal\(14, 2\)[\s\S]*rawPayload\s+Json\?\s+@map\("raw_payload"\)[\s\S]*\}/);
   assert.match(schema, /@@unique\(\[sourceId, externalId\]\)/);
   assert.match(schema, /@@index\(\[objectId, status\]\)/);
   assert.match(schema, /@@index\(\[price\]\)/);
+  assert.match(schema, /@@index\(\[discountPrice\]\)/);
+  assert.match(schema, /@@index\(\[effectivePrice\]\)/);
   assert.match(schema, /@@index\(\[area\]\)/);
   assert.match(schema, /@@map\("feed_units"\)/);
 
@@ -211,4 +217,18 @@ test('feed source soft delete migration adds deleted timestamp without touching 
   assert.match(migration, /CREATE INDEX "feed_sources_deleted_at_idx" ON "feed_sources"\("deleted_at"\)/);
   assert.doesNotMatch(migration, /DROP TABLE "feed_units"/);
   assert.doesNotMatch(migration, /DELETE FROM "feed_units"/);
+});
+
+test('feed unit discount price migration adds persisted effective prices', () => {
+  assert.equal(fs.existsSync(feedUnitDiscountPricesMigrationPath), true);
+
+  const migration = readProjectFile(feedUnitDiscountPricesMigrationPath);
+
+  assert.match(migration, /ALTER TABLE "feed_units" ADD COLUMN "discount_price" DECIMAL\(14,2\)/);
+  assert.match(migration, /ALTER TABLE "feed_units" ADD COLUMN "effective_price" DECIMAL\(14,2\)/);
+  assert.match(migration, /ALTER TABLE "feed_units" ADD COLUMN "discount_price_per_meter" DECIMAL\(14,2\)/);
+  assert.match(migration, /ALTER TABLE "feed_units" ADD COLUMN "effective_price_per_meter" DECIMAL\(14,2\)/);
+  assert.match(migration, /UPDATE "feed_units" SET "effective_price" = "price", "effective_price_per_meter" = "price_per_meter"/);
+  assert.match(migration, /CREATE INDEX "feed_units_discount_price_idx" ON "feed_units"\("discount_price"\)/);
+  assert.match(migration, /CREATE INDEX "feed_units_effective_price_idx" ON "feed_units"\("effective_price"\)/);
 });

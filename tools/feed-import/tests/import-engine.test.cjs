@@ -42,6 +42,41 @@ function makeYandexFeed({ secondMediaUrl = 'https://cdn.test/b.png' } = {}) {
     </realty-feed>`;
 }
 
+function makeYandexDiscountFeed() {
+  return `<?xml version="1.0"?>
+    <realty-feed>
+      <offer internal-id="discount-1">
+        <type>продажа</type>
+        <property-type>жилая</property-type>
+        <category>квартира</category>
+        <location><address>Москва</address></location>
+        <building-name>ЖК Скидочный</building-name>
+        <price><value>10000000</value><currency>RUR</currency></price>
+        <discount><final-price>8000000</final-price></discount>
+        <area><value>40</value></area>
+        <floor>7</floor>
+        <rooms>2</rooms>
+        <built-year>2028</built-year>
+        <ready-quarter>4</ready-quarter>
+        <flat-number>42</flat-number>
+      </offer>
+      <offer internal-id="base-1">
+        <type>продажа</type>
+        <property-type>жилая</property-type>
+        <category>квартира</category>
+        <location><address>Москва</address></location>
+        <building-name>ЖК Скидочный</building-name>
+        <price><value>9000000</value><currency>RUR</currency></price>
+        <area><value>45</value></area>
+        <floor>8</floor>
+        <rooms>2</rooms>
+        <built-year>2028</built-year>
+        <ready-quarter>4</ready-quarter>
+        <flat-number>43</flat-number>
+      </offer>
+    </realty-feed>`;
+}
+
 function makeMultiBuildingYandexFeed() {
   return `<?xml version="1.0"?>
     <realty-feed>
@@ -866,6 +901,39 @@ test('executeFeedImport run upserts units, details, archives stale units and ded
   assert.deepEqual(state.source.lastSuccessAt, fixedDate);
 });
 
+test('executeFeedImport run persists discount prices and aggregates by effective price', async () => {
+  const { db, state } = createFakeDb();
+
+  await executeFeedImport({
+    mode: 'run',
+    sourceId: 'source-1',
+    db,
+    storage: state.storage,
+    xmlFetcher: async () => makeYandexDiscountFeed(),
+    mediaDownloader: async () => {
+      throw new Error('media should not be downloaded in this test');
+    },
+    imageVariantGenerator: async () => [],
+    now: () => fixedDate,
+  });
+
+  const discountedUnit = state.units.find((unit) => unit.externalId === 'discount-1');
+  const baseUnit = state.units.find((unit) => unit.externalId === 'base-1');
+
+  assert.equal(discountedUnit.title, 'ЖК Скидочный, квартира, № 42');
+  assert.equal(discountedUnit.price, '10000000.00');
+  assert.equal(discountedUnit.discountPrice, '8000000.00');
+  assert.equal(discountedUnit.effectivePrice, '8000000.00');
+  assert.equal(discountedUnit.pricePerMeter, '250000.00');
+  assert.equal(discountedUnit.discountPricePerMeter, '200000.00');
+  assert.equal(discountedUnit.effectivePricePerMeter, '200000.00');
+  assert.equal(baseUnit.discountPrice, null);
+  assert.equal(baseUnit.effectivePrice, '9000000.00');
+  assert.equal(state.residentialDetails.get(discountedUnit.id).apartmentNumber, '42');
+  assert.equal(state.object.feedPriceFrom, '8000000.00');
+  assert.equal(state.object.feedPricePerMeterFrom, '200000.00');
+});
+
 test('executeFeedImport run titles MR Group CIAN residential units by apartment number', async () => {
   const { db, state } = createFakeDb({
     source: {
@@ -1426,7 +1494,11 @@ function makeUnit({
   externalId,
   status,
   price = null,
+  discountPrice = null,
+  effectivePrice = price,
   pricePerMeter = null,
+  discountPricePerMeter = null,
+  effectivePricePerMeter = pricePerMeter,
   area = null,
   floor = null,
   completionYear = null,
@@ -1446,9 +1518,13 @@ function makeUnit({
     floor,
     rooms: null,
     price,
+    discountPrice,
+    effectivePrice,
     currency: null,
     area,
     pricePerMeter,
+    discountPricePerMeter,
+    effectivePricePerMeter,
     completionYear,
     completionQuarter,
     rawPayload: null,

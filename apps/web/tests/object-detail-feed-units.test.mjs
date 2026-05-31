@@ -85,7 +85,12 @@ test('object detail feed units initialize from catalog lot filters in URL', () =
 test('object detail feed units block renders expected columns and media thumbnails', () => {
   assert.match(source, /<section className="detail-section object-feed-units-section"/);
   assert.match(source, /id="object-feed-units-title">Лоты<\/h3>/);
+  assert.match(source, /const hasDiscountPrices = units\.some\(\(unit\) => Boolean\(unit\.discountPrice\)\);/);
+  assert.match(source, /\{hasDiscountPrices \? \([\s\S]*?<ObjectFeedSortableHead[\s\S]*?field="price"[\s\S]*?>\s*Цена со скидкой\s*<\/ObjectFeedSortableHead>[\s\S]*?\) : null\}/);
   assert.match(source, /field="pricePerMeter"[\s\S]*?>\s*Цена за м²\s*<\/ObjectFeedSortableHead>/);
+  assert.match(source, /showDiscountPrice=\{hasDiscountPrices\}/);
+  assert.match(source, /showDiscountPrice: boolean;/);
+  assert.match(source, /\{showDiscountPrice \? <TableCell>\{formatFeedUnitPrice\(unit\.discountPrice, unit\.currency\)\}<\/TableCell> : null\}/);
   assert.match(source, /<TableCell>\{formatFeedUnitPricePerMeter\(unit\)\}<\/TableCell>/);
   assert.match(source, /<TableHead>Медиа<\/TableHead>/);
   assert.doesNotMatch(source, /<span>ID \{unit\.externalId\}<\/span>/);
@@ -136,6 +141,7 @@ test('object detail feed units support server sorting from sortable headers', ()
   assert.match(source, /<ObjectFeedSortableHead[\s\S]*?field="title"[\s\S]*?>\s*Лот\s*<\/ObjectFeedSortableHead>/);
   assert.match(source, /<ObjectFeedSortableHead[\s\S]*?field="status"[\s\S]*?>\s*Статус\s*<\/ObjectFeedSortableHead>/);
   assert.match(source, /<ObjectFeedSortableHead[\s\S]*?field="price"[\s\S]*?>\s*Цена\s*<\/ObjectFeedSortableHead>/);
+  assert.match(source, /<ObjectFeedSortableHead[\s\S]*?field="price"[\s\S]*?>\s*Цена со скидкой\s*<\/ObjectFeedSortableHead>/);
   assert.match(source, /<ObjectFeedSortableHead[\s\S]*?field="pricePerMeter"[\s\S]*?>\s*Цена за м²\s*<\/ObjectFeedSortableHead>/);
   assert.match(source, /<ObjectFeedSortableHead[\s\S]*?field="area"[\s\S]*?>\s*Площадь\s*<\/ObjectFeedSortableHead>/);
   assert.match(source, /<ObjectFeedSortableHead[\s\S]*?field="rooms"[\s\S]*?>\s*Комнаты\/тип\s*<\/ObjectFeedSortableHead>/);
@@ -149,10 +155,17 @@ test('object detail feed unit sorting keeps existing rows visible while reloadin
   assert.match(source, /const showFeedUnitsSkeleton = isLoading && units\.length === 0;/);
   assert.match(source, /const sortedUnits = useMemo\(/);
   assert.match(source, /sortFeedUnitsForDisplay\(units, sortBy, sortDirection\)/);
-  assert.match(source, /\{showFeedUnitsSkeleton \? <ObjectFeedUnitsTableSkeleton \/> : null\}/);
+  assert.match(source, /\{showFeedUnitsSkeleton \? <ObjectFeedUnitsTableSkeleton columnsCount=\{feedUnitsTableColumnCount\} \/> : null\}/);
   assert.match(source, /!\s*error[\s\S]*?\? sortedUnits\.map\(\(unit\) =>/);
   assert.doesNotMatch(source, /isLoading \? <ObjectFeedUnitsTableSkeleton \/> : null/);
   assert.doesNotMatch(source, /!isLoading && !error[\s\S]*?\? units\.map\(\(unit\) =>/);
+});
+
+test('object detail feed units use effective prices for sorting and price per meter', () => {
+  assert.match(source, /function getEffectiveFeedUnitPrice\(unit: FeedUnit\)/);
+  assert.match(source, /return parseNullableNumber\(unit\.effectivePrice\) \?\? parseNullableNumber\(unit\.discountPrice\) \?\? parseNullableNumber\(unit\.price\);/);
+  assert.match(source, /compareNullableNumber\(getEffectiveFeedUnitPrice\(leftUnit\), getEffectiveFeedUnitPrice\(rightUnit\)\)/);
+  assert.match(source, /parseNullableNumber\(unit\.effectivePricePerMeter\)/);
 });
 
 test('object detail feed media opens lot files in a carousel with fullscreen preview', () => {

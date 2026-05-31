@@ -167,6 +167,43 @@ test('YandexRealtyFeedParser normalizes residential units from fixture', () => {
   assert.equal(first.commercialDetails, null);
 });
 
+test('YandexRealtyFeedParser keeps base and discount prices and reads flat-number fields', () => {
+  const parser = new YandexRealtyFeedParser();
+  const xml = `<?xml version="1.0"?>
+    <realty-feed>
+      <offer internal-id="forma-1">
+        <type>продажа</type>
+        <property-type>жилая</property-type>
+        <category>квартира</category>
+        <location><address>г. Москва, улица Южнопортовая 42</address></location>
+        <building-name>ЖК ПОРТЛЕНД</building-name>
+        <price><value>10000000</value><currency>RUR</currency></price>
+        <discount><final-price>8000000</final-price></discount>
+        <area><value>40</value></area>
+        <floor>12</floor>
+        <rooms>1</rooms>
+        <built-year>2026</built-year>
+        <ready-quarter>2</ready-quarter>
+        <flat-number>679</flat-number>
+        <balcony>1</balcony>
+      </offer>
+    </realty-feed>`;
+
+  const result = parser.parse(xml);
+  const unit = result.units[0];
+
+  assert.deepEqual(result.warnings, []);
+  assert.equal(unit.title, 'ЖК ПОРТЛЕНД, квартира, № 679');
+  assert.equal(unit.price, '10000000.00');
+  assert.equal(unit.discountPrice, '8000000.00');
+  assert.equal(unit.effectivePrice, '8000000.00');
+  assert.equal(unit.pricePerMeter, '250000.00');
+  assert.equal(unit.discountPricePerMeter, '200000.00');
+  assert.equal(unit.effectivePricePerMeter, '200000.00');
+  assert.equal(unit.residentialDetails.apartmentNumber, '679');
+  assert.equal(unit.residentialDetails.balconyCount, 1);
+});
+
 test('YandexRealtyFeedParser normalizes Etalon-style Yandex fields', () => {
   const parser = new YandexRealtyFeedParser();
   const xml = `<?xml version="1.0"?>

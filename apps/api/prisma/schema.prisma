@@ -483,9 +483,13 @@ model FeedUnit {
   floor             Int?
   rooms             Int?
   price             Decimal?       @db.Decimal(14, 2)
+  discountPrice     Decimal?       @map("discount_price") @db.Decimal(14, 2)
+  effectivePrice    Decimal?       @map("effective_price") @db.Decimal(14, 2)
   currency          String?        @db.VarChar(12)
   area              Decimal?       @db.Decimal(10, 2)
   pricePerMeter     Decimal?       @map("price_per_meter") @db.Decimal(14, 2)
+  discountPricePerMeter  Decimal?  @map("discount_price_per_meter") @db.Decimal(14, 2)
+  effectivePricePerMeter Decimal?  @map("effective_price_per_meter") @db.Decimal(14, 2)
   completionYear    Int?           @map("completion_year")
   completionQuarter Int?           @map("completion_quarter")
   rawPayload        Json?          @map("raw_payload")
@@ -506,6 +510,10 @@ model FeedUnit {
   @@index([status])
   @@index([price])
   @@index([pricePerMeter])
+  @@index([discountPrice])
+  @@index([effectivePrice])
+  @@index([discountPricePerMeter])
+  @@index([effectivePricePerMeter])
   @@index([area])
   @@map("feed_units")
 }

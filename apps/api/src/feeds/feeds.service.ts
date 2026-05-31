@@ -1017,6 +1017,7 @@ export class FeedsService {
       page,
       limit,
       totalPages: Math.max(1, Math.ceil(total / limit)),
+      hasDiscountPrices: items.some((unit) => unit.discountPrice !== null),
     };
   }
 
@@ -1180,9 +1181,13 @@ export class FeedsService {
       floor: unit.floor,
       rooms: unit.rooms,
       price: this.decimalToString(unit.price),
+      discountPrice: this.decimalToString(unit.discountPrice),
+      effectivePrice: this.decimalToString(unit.effectivePrice),
       currency: unit.currency,
       area: this.decimalToString(unit.area),
       pricePerMeter: this.decimalToString(unit.pricePerMeter),
+      discountPricePerMeter: this.decimalToString(unit.discountPricePerMeter),
+      effectivePricePerMeter: this.decimalToString(unit.effectivePricePerMeter),
       completionYear: unit.completionYear,
       completionQuarter: unit.completionQuarter,
       rawPayload: unit.rawPayload ?? null,

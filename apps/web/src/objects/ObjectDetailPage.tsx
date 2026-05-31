@@ -895,6 +895,8 @@ function ObjectFeedUnitsSection({
       completionQuarterFilter,
   );
   const showFeedUnitsSkeleton = isLoading && units.length === 0;
+  const hasDiscountPrices = units.some((unit) => Boolean(unit.discountPrice));
+  const feedUnitsTableColumnCount = hasDiscountPrices ? 10 : 9;
   const sortedUnits = useMemo(
     () => sortFeedUnitsForDisplay(units, sortBy, sortDirection),
     [sortBy, sortDirection, units],
@@ -1261,6 +1263,16 @@ function ObjectFeedUnitsSection({
               >
                 Цена
               </ObjectFeedSortableHead>
+              {hasDiscountPrices ? (
+                <ObjectFeedSortableHead
+                  field="price"
+                  sortBy={sortBy}
+                  sortDirection={sortDirection}
+                  onSort={handleSort}
+                >
+                  Цена со скидкой
+                </ObjectFeedSortableHead>
+              ) : null}
               <ObjectFeedSortableHead
                 field="pricePerMeter"
                 sortBy={sortBy}
@@ -1305,7 +1317,7 @@ function ObjectFeedUnitsSection({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {showFeedUnitsSkeleton ? <ObjectFeedUnitsTableSkeleton /> : null}
+            {showFeedUnitsSkeleton ? <ObjectFeedUnitsTableSkeleton columnsCount={feedUnitsTableColumnCount} /> : null}
 
             {!error
               ? sortedUnits.map((unit) => (
@@ -1313,6 +1325,7 @@ function ObjectFeedUnitsSection({
                     accessToken={accessToken}
                     key={unit.id}
                     objectSlug={object.slug}
+                    showDiscountPrice={hasDiscountPrices}
                     unit={unit}
                     onOpenMedia={setMediaCarouselUnit}
                   />
@@ -1321,7 +1334,7 @@ function ObjectFeedUnitsSection({
 
             {!showFeedUnitsSkeleton && error ? (
               <TableRow>
-                <TableCell colSpan={9}>
+                <TableCell colSpan={feedUnitsTableColumnCount}>
                   <div className="object-feed-units-state object-feed-units-state--error">
                     <strong>Не удалось загрузить лоты</strong>
                     <span>{error}</span>
@@ -1332,7 +1345,7 @@ function ObjectFeedUnitsSection({
 
             {!showFeedUnitsSkeleton && !error && units.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={9}>
+                <TableCell colSpan={feedUnitsTableColumnCount}>
                   <div className="object-feed-units-state">
                     <strong>Лоты не найдены</strong>
                     <span>Запустите импорт фида или измените фильтры.</span>
@@ -1422,11 +1435,13 @@ function ObjectFeedSortableHead({
 function ObjectFeedUnitRow({
   accessToken,
   objectSlug,
+  showDiscountPrice,
   unit,
   onOpenMedia,
 }: {
   accessToken: string;
   objectSlug: string;
+  showDiscountPrice: boolean;
   unit: FeedUnit;
   onOpenMedia: (unit: FeedUnit) => void;
 }) {
@@ -1477,6 +1492,7 @@ function ObjectFeedUnitRow({
         </span>
       </TableCell>
       <TableCell>{formatFeedUnitPrice(unit.price, unit.currency)}</TableCell>
+      {showDiscountPrice ? <TableCell>{formatFeedUnitPrice(unit.discountPrice, unit.currency)}</TableCell> : null}
       <TableCell>{formatFeedUnitPricePerMeter(unit)}</TableCell>
       <TableCell>{formatArea(unit.area)}</TableCell>
       <TableCell>{getUnitRoomsOrType(unit)}</TableCell>
@@ -2067,7 +2083,7 @@ function compareFeedUnitsByField(leftUnit: FeedUnit, rightUnit: FeedUnit, sortBy
   }
 
   if (sortBy === 'price') {
-    return compareNullableNumber(parseNullableNumber(leftUnit.price), parseNullableNumber(rightUnit.price));
+    return compareNullableNumber(getEffectiveFeedUnitPrice(leftUnit), getEffectiveFeedUnitPrice(rightUnit));
   }
 
   if (sortBy === 'pricePerMeter') {
@@ -2167,6 +2183,10 @@ function parseNullableNumber(value: string | null) {
   return Number.isFinite(parsedValue) ? parsedValue : null;
 }
 
+function getEffectiveFeedUnitPrice(unit: FeedUnit) {
+  return parseNullableNumber(unit.effectivePrice) ?? parseNullableNumber(unit.discountPrice) ?? parseNullableNumber(unit.price);
+}
+
 function setOptionalParam(params: URLSearchParams, key: string, value: string) {
   if (value.trim()) {
     params.set(key, value);
@@ -2181,12 +2201,12 @@ function sanitizeDecimalText(value: string) {
   return value.replace(/[^\d,.]/g, '').replace(',', '.').slice(0, 15);
 }
 
-function ObjectFeedUnitsTableSkeleton() {
+function ObjectFeedUnitsTableSkeleton({ columnsCount }: { columnsCount: number }) {
   return (
     <>
       {Array.from({ length: 4 }, (_, index) => (
         <TableRow key={index}>
-          <TableCell colSpan={9}>
+          <TableCell colSpan={columnsCount}>
             <Skeleton className="object-feed-units-skeleton" />
           </TableCell>
         </TableRow>
@@ -2296,14 +2316,20 @@ function formatArea(value: string | null) {
 }
 
 function getFeedUnitPricePerMeterValue(unit: FeedUnit) {
-  const price = parseNullableNumber(unit.price);
+  const effectivePricePerMeter = parseNullableNumber(unit.effectivePricePerMeter);
+
+  if (effectivePricePerMeter !== null) {
+    return effectivePricePerMeter;
+  }
+
+  const price = getEffectiveFeedUnitPrice(unit);
   const area = parseNullableNumber(unit.area);
 
   if (price !== null && area !== null && area > 0) {
     return price / area;
   }
 
-  return parseNullableNumber(unit.pricePerMeter);
+  return parseNullableNumber(unit.discountPricePerMeter) ?? parseNullableNumber(unit.pricePerMeter);
 }
 
 function formatFeedUnitPricePerMeter(unit: FeedUnit) {
@@ -2322,6 +2348,14 @@ function getObjectLotFactRows(unit: FeedUnit) {
       label: 'Цена',
       value: formatFeedUnitPrice(unit.price, unit.currency),
     },
+    ...(unit.discountPrice
+      ? [
+          {
+            label: 'Цена со скидкой',
+            value: formatFeedUnitPrice(unit.discountPrice, unit.currency),
+          },
+        ]
+      : []),
     {
       label: 'Цена за м²',
       value: formatComputedFeedUnitPricePerMeter(unit),

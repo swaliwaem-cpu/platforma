@@ -667,7 +667,7 @@ test('ObjectsService.list filters objects by matching lot price rooms and floor'
   assert.deepEqual(lotFilter, {
     feedUnits: {
       some: {
-        price: {
+        effectivePrice: {
           gte: '10000000',
           lte: '12500000',
         },
@@ -690,7 +690,7 @@ test('ObjectsService.list filters objects by matching lot price rooms and floor'
       objectId: {
         in: ['11111111-1111-4111-8111-111111111111'],
       },
-      price: {
+      effectivePrice: {
         gte: '10000000',
         lte: '12500000',
       },
@@ -1242,7 +1242,7 @@ test('MapService.listObjects filters objects by matching lot price rooms and flo
   assert.deepEqual(lotFilter, {
     feedUnits: {
       some: {
-        price: {
+        effectivePrice: {
           gte: '10000000',
           lte: '12500000',
         },
@@ -1354,9 +1354,13 @@ test('ObjectsService.listFeedUnits returns feed units for one object with filter
             floor: 7,
             rooms: 2,
             price: decimal('10000000'),
+            discountPrice: decimal('8000000'),
+            effectivePrice: decimal('8000000'),
             currency: 'RUR',
             area: decimal('50'),
             pricePerMeter: decimal('200000'),
+            discountPricePerMeter: decimal('160000'),
+            effectivePricePerMeter: decimal('160000'),
             completionYear: 2028,
             completionQuarter: 4,
             rawPayload: { externalId: 'flat-1' },
@@ -1432,7 +1436,12 @@ test('ObjectsService.listFeedUnits returns feed units for one object with filter
     true,
   );
   assert.equal(result.items[0].price, '10000000');
+  assert.equal(result.items[0].discountPrice, '8000000');
+  assert.equal(result.items[0].effectivePrice, '8000000');
   assert.equal(result.items[0].area, '50');
+  assert.equal(result.items[0].discountPricePerMeter, '160000');
+  assert.equal(result.items[0].effectivePricePerMeter, '160000');
+  assert.equal(result.hasDiscountPrices, true);
   assert.equal(result.items[0].residentialDetails.livingArea, '30');
   assert.equal(result.items[0].media[0].file.id, '55555555-5555-4555-8555-555555555555');
   assert.equal(result.total, 1);
@@ -1470,9 +1479,13 @@ test('ObjectsService.getFeedUnit returns one feed unit for an object with media'
           floor: 7,
           rooms: 2,
           price: decimal('10000000'),
+          discountPrice: decimal('8000000'),
+          effectivePrice: decimal('8000000'),
           currency: 'RUR',
           area: decimal('50'),
           pricePerMeter: decimal('200000'),
+          discountPricePerMeter: decimal('160000'),
+          effectivePricePerMeter: decimal('160000'),
           completionYear: 2028,
           completionQuarter: 4,
           rawPayload: { externalId: 'flat-1' },
@@ -1529,7 +1542,11 @@ test('ObjectsService.getFeedUnit returns one feed unit for an object with media'
   assert.equal(result.unit.id, unitId);
   assert.equal(result.unit.objectId, objectId);
   assert.equal(result.unit.price, '10000000');
+  assert.equal(result.unit.discountPrice, '8000000');
+  assert.equal(result.unit.effectivePrice, '8000000');
   assert.equal(result.unit.area, '50');
+  assert.equal(result.unit.discountPricePerMeter, '160000');
+  assert.equal(result.unit.effectivePricePerMeter, '160000');
   assert.equal(result.unit.media[0].file.id, '55555555-5555-4555-8555-555555555555');
 });
 
@@ -1619,14 +1636,14 @@ test('ObjectsService.listFeedUnits filters by numeric ranges rooms floor and com
 
   const filters = calls.findMany.where.AND;
 
-  assert.deepEqual(filters.find((filter) => filter.price), {
-    price: {
+  assert.deepEqual(filters.find((filter) => filter.effectivePrice), {
+    effectivePrice: {
       gte: '10000000',
       lte: '12500000',
     },
   });
-  assert.deepEqual(filters.find((filter) => filter.pricePerMeter), {
-    pricePerMeter: {
+  assert.deepEqual(filters.find((filter) => filter.effectivePricePerMeter), {
+    effectivePricePerMeter: {
       gte: '200000',
       lte: '300000',
     },
@@ -1821,11 +1838,11 @@ test('ObjectsService.listFeedUnits applies sortable order for feed unit columns'
   const orderByCalls = calls.filter((call) => call.model === 'feedUnit.findMany').map((call) => call.args.orderBy);
 
   assert.deepEqual(orderByCalls[0], [
-    { price: { sort: 'desc', nulls: 'last' } },
+    { effectivePrice: { sort: 'desc', nulls: 'last' } },
     { createdAt: 'desc' },
   ]);
   assert.deepEqual(orderByCalls[1], [
-    { pricePerMeter: { sort: 'asc', nulls: 'last' } },
+    { effectivePricePerMeter: { sort: 'asc', nulls: 'last' } },
     { createdAt: 'desc' },
   ]);
   assert.deepEqual(orderByCalls[2], [

@@ -363,9 +363,13 @@ export type FeedUnit = {
   floor: number | null;
   rooms: number | null;
   price: string | null;
+  discountPrice: string | null;
+  effectivePrice: string | null;
   currency: string | null;
   area: string | null;
   pricePerMeter: string | null;
+  discountPricePerMeter: string | null;
+  effectivePricePerMeter: string | null;
   completionYear: number | null;
   completionQuarter: number | null;
   rawPayload: JsonValue;
@@ -467,6 +471,7 @@ export type FeedUnitsResponse = {
   page: number;
   limit: number;
   totalPages: number;
+  hasDiscountPrices: boolean;
 };
 
 export type FeedUnitResponse = {

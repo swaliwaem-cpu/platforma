@@ -371,7 +371,7 @@ export class MapService {
     const lotWhere: Prisma.FeedUnitWhereInput = {
       ...(priceMin !== undefined || priceMax !== undefined
         ? {
-            price: {
+            effectivePrice: {
               ...(priceMin !== undefined ? { gte: priceMin } : {}),
               ...(priceMax !== undefined ? { lte: priceMax } : {}),
             },

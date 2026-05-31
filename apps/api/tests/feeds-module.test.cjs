@@ -150,9 +150,13 @@ function unitRecord(overrides = {}) {
     floor: 7,
     rooms: 2,
     price: decimal('10000000.00'),
+    discountPrice: decimal('8000000.00'),
+    effectivePrice: decimal('8000000.00'),
     currency: 'RUR',
     area: decimal('50.00'),
     pricePerMeter: decimal('200000.00'),
+    discountPricePerMeter: decimal('160000.00'),
+    effectivePricePerMeter: decimal('160000.00'),
     completionYear: 2028,
     completionQuarter: 4,
     rawPayload: { externalId: 'flat-1' },
@@ -948,6 +952,11 @@ test('FeedsService lists runs, reads a run and lists units with media details', 
     AND: [{ sourceId }, { status: 'AVAILABLE' }, { type: 'RESIDENTIAL' }],
   });
   assert.equal(units.items[0].price, '10000000.00');
+  assert.equal(units.items[0].discountPrice, '8000000.00');
+  assert.equal(units.items[0].effectivePrice, '8000000.00');
+  assert.equal(units.items[0].discountPricePerMeter, '160000.00');
+  assert.equal(units.items[0].effectivePricePerMeter, '160000.00');
+  assert.equal(units.hasDiscountPrices, true);
   assert.equal(units.items[0].residentialDetails.livingArea, '30.00');
   assert.equal(units.items[0].media[0].file.sizeBytes, '1000');
 });

@@ -206,6 +206,8 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
   const editorSourceMetaSummary = editorSource ? sourceMetaSummaries[editorSource.id] ?? null : null;
   const selectedSourceMetaSummary = selectedSource ? sourceMetaSummaries[selectedSource.id] ?? null : null;
   const hasActiveUnitFilters = Boolean(unitStatusFilter || unitTypeFilter);
+  const hasDiscountUnitPrices = units.some((unit) => Boolean(unit.discountPrice));
+  const unitTableColumns = hasDiscountUnitPrices ? 11 : 10;
   const filteredObjects = useMemo(() => {
     if (!form.developerId) {
       return [];
@@ -1417,6 +1419,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                 <TableHead>Статус</TableHead>
                 <TableHead>Тип</TableHead>
                 <TableHead>Цена</TableHead>
+                {hasDiscountUnitPrices ? <TableHead>Цена со скидкой</TableHead> : null}
                 <TableHead>Цена за м²</TableHead>
                 <TableHead>Площадь</TableHead>
                 <TableHead>Комнаты/тип</TableHead>
@@ -1426,7 +1429,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
               </TableRow>
             </TableHeader>
             <TableBody>
-              {isLoadingUnits ? <TableSkeleton columns={10} rows={4} /> : null}
+              {isLoadingUnits ? <TableSkeleton columns={unitTableColumns} rows={4} /> : null}
 
               {!isLoadingUnits
                 ? units.map((unit) => (
@@ -1445,6 +1448,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                       </TableCell>
                       <TableCell>{feedUnitTypeLabels[unit.type]}</TableCell>
                       <TableCell>{formatMoney(unit.price, unit.currency)}</TableCell>
+                      {hasDiscountUnitPrices ? <TableCell>{formatMoney(unit.discountPrice, unit.currency)}</TableCell> : null}
                       <TableCell>{formatFeedUnitPricePerMeter(unit)}</TableCell>
                       <TableCell>{formatArea(unit.area)}</TableCell>
                       <TableCell>{getUnitRoomsOrType(unit)}</TableCell>
@@ -1457,7 +1461,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
 
               {!isLoadingUnits && selectedSource && units.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={10}>
+                  <TableCell colSpan={unitTableColumns}>
                     <AdminEmptyState title="Лоты не найдены" description="Запустите Run или измените фильтры." />
                   </TableCell>
                 </TableRow>
@@ -2362,14 +2366,20 @@ function parseNullableNumber(value: string | null) {
 }
 
 function getFeedUnitPricePerMeterValue(unit: FeedUnit) {
-  const price = parseNullableNumber(unit.price);
+  const effectivePricePerMeter = parseNullableNumber(unit.effectivePricePerMeter);
+
+  if (effectivePricePerMeter !== null) {
+    return effectivePricePerMeter;
+  }
+
+  const price = parseNullableNumber(unit.effectivePrice) ?? parseNullableNumber(unit.discountPrice) ?? parseNullableNumber(unit.price);
   const area = parseNullableNumber(unit.area);
 
   if (price !== null && area !== null && area > 0) {
     return price / area;
   }
 
-  return parseNullableNumber(unit.pricePerMeter);
+  return parseNullableNumber(unit.discountPricePerMeter) ?? parseNullableNumber(unit.pricePerMeter);
 }
 
 function formatFeedUnitPricePerMeter(unit: FeedUnit) {
