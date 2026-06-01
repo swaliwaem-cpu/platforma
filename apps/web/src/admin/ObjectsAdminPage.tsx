@@ -48,7 +48,7 @@ import { Input } from '@/components/ui/input';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 
 import { useAuth } from '../auth/AuthProvider';
-import { SecureImage } from '../files/SecureImage';
+import { SecureImage, buildMediaFileContentUrl } from '../files/SecureImage';
 import { AdminAlert, AdminButton, AdminEmptyState, AdminPanel, AdminStatusBadge } from './AdminUi';
 import {
   ObjectQuickEditTable,
@@ -2471,6 +2471,7 @@ const GalleryDraftTile = memo(function GalleryDraftTile({
   onSectionChange: (draftId: string, section: ObjectImageSection | null) => void;
 }) {
   const sectionLabel = getGallerySectionLabel(item.section);
+  const fullSizeHref = getGalleryDraftFullSizeHref(item, existingImage);
   const tileClassName = [
     'gallery-tile',
     isCover ? 'gallery-tile--cover' : null,
@@ -2502,6 +2503,19 @@ const GalleryDraftTile = memo(function GalleryDraftTile({
       >
         <Trash2Icon />
       </AdminButton>
+      {fullSizeHref ? (
+        <a
+          aria-label={`Открыть ${item.name} в полном размере`}
+          className="gallery-tile-open-original"
+          draggable={false}
+          href={fullSizeHref}
+          rel="noreferrer"
+          target="_blank"
+          title="Открыть оригинал"
+        >
+          <ExternalLinkIcon />
+        </a>
+      ) : null}
       <button
         aria-pressed={isCover}
         className="gallery-tile-button"
@@ -2578,6 +2592,12 @@ const GalleryDraftTile = memo(function GalleryDraftTile({
     </li>
   );
 });
+
+function getGalleryDraftFullSizeHref(item: GalleryDraftItem, existingImage: ObjectImage | null) {
+  const fileId = item.kind === 'staged' ? item.stagedFileId : existingImage?.file.id ?? null;
+
+  return fileId ? buildMediaFileContentUrl(fileId, 'original') : null;
+}
 
 function GalleryDraftPreview({
   accessToken,

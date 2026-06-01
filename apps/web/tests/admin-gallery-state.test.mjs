@@ -205,6 +205,15 @@ test('gallery modal previews avoid eager decoding of every thumbnail', () => {
   assert.match(source, /<SecureImage[\s\S]*?decoding="async"[\s\S]*?lazy=\{variant === 'thumbnail'\}[\s\S]*?loading="lazy"[\s\S]*?variant=\{variant\}/);
 });
 
+test('gallery modal opens persisted images in full size from tile overlay', () => {
+  assert.match(source, /import \{ SecureImage, buildMediaFileContentUrl \} from '\.\.\/files\/SecureImage';/);
+  assert.match(source, /const fullSizeHref = getGalleryDraftFullSizeHref\(item,\s*existingImage\);/);
+  assert.match(source, /className="gallery-tile-open-original"/);
+  assert.match(source, /target="_blank"/);
+  assert.match(source, /rel="noreferrer"/);
+  assert.match(source, /function getGalleryDraftFullSizeHref\(item: GalleryDraftItem,\s*existingImage: ObjectImage \| null\)[\s\S]*?buildMediaFileContentUrl\(fileId,\s*'original'\)/);
+});
+
 test('gallery modal prepares lightweight local previews for new files asynchronously', () => {
   assert.match(source, /function createNewGalleryDraftItems\(files: FileList \| File\[\]\)[\s\S]*?previewUrl:\s*null/);
   assert.doesNotMatch(source, /previewUrl:\s*URL\.createObjectURL\(file\)/);

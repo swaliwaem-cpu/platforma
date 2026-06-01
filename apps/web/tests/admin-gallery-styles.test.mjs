@@ -6,6 +6,7 @@ import test from 'node:test';
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const styles = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
+const appThemeStyles = readFileSync(resolve(currentDir, '../src/app-theme.css'), 'utf8');
 
 test('admin gallery item keeps preview text readable next to action buttons', () => {
   assert.match(
@@ -47,12 +48,17 @@ test('admin gallery modal uses stable cover slot and large responsive tile grid'
 
   assert.match(
     styles,
-    /\.gallery-cover-slot\s*\{[\s\S]*?min-height:\s*180px;[\s\S]*?border:\s*1px dashed[\s\S]*?\}/,
+    /\.gallery-cover-slot\s*\{[\s\S]*?min-height:\s*234px;[\s\S]*?grid-template-columns:\s*minmax\(234px,\s*364px\) minmax\(0,\s*1fr\);[\s\S]*?border:\s*1px dashed[\s\S]*?\}/,
   );
 
   assert.match(
     styles,
-    /\.gallery-tile-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(140px,\s*1fr\)\);[\s\S]*?\}/,
+    /\.gallery-tile-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(182px,\s*1fr\)\);[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.gallery-tile-button\s*\{[\s\S]*?min-height:\s*244px;[\s\S]*?\}/,
   );
 
   assert.match(
@@ -62,12 +68,29 @@ test('admin gallery modal uses stable cover slot and large responsive tile grid'
 
   assert.match(
     styles,
+    /\.gallery-tile-preview img\s*\{[\s\S]*?object-fit:\s*contain;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.gallery-cover-preview img,\s*\.gallery-cover-placeholder img\s*\{[\s\S]*?object-fit:\s*contain;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
     /\.gallery-tile-name\s*\{[\s\S]*?overflow-wrap:\s*anywhere;[\s\S]*?\}/,
   );
 
   assert.match(
     styles,
-    /@media\s*\(max-width:\s*640px\)\s*\{[\s\S]*?\.gallery-tile-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(120px,\s*1fr\)\);[\s\S]*?\}/,
+    /@media\s*\(max-width:\s*640px\)\s*\{[\s\S]*?\.gallery-tile-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(156px,\s*1fr\)\);[\s\S]*?\}/,
+  );
+});
+
+test('admin gallery modal keeps text white in dark theme', () => {
+  assert.match(
+    appThemeStyles,
+    /html\[data-app-theme="dark-premium"\] :is\(\.gallery-modal,[\s\S]*?\.gallery-tile-status,[\s\S]*?\.gallery-tile-section-select,[\s\S]*?\.gallery-tile-order-button\)\s*\{[\s\S]*?color:\s*#ffffff;[\s\S]*?\}/,
   );
 });
 
@@ -134,10 +157,22 @@ test('admin gallery modal keeps tile remove action compact and anchored', () => 
   );
 });
 
+test('admin gallery modal anchors full-size image overlay in preview corner', () => {
+  assert.match(
+    styles,
+    /\.gallery-tile-open-original\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?top:\s*16px;[\s\S]*?left:\s*16px;[\s\S]*?width:\s*32px;[\s\S]*?height:\s*32px;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.gallery-tile-open-original svg\s*\{[\s\S]*?width:\s*16px;[\s\S]*?height:\s*16px;[\s\S]*?\}/,
+  );
+});
+
 test('admin gallery modal lets the browser skip offscreen tile rendering work', () => {
   assert.match(
     styles,
-    /\.gallery-tile\s*\{[\s\S]*?content-visibility:\s*auto;[\s\S]*?contain-intrinsic-size:\s*260px 220px;[\s\S]*?\}/,
+    /\.gallery-tile\s*\{[\s\S]*?content-visibility:\s*auto;[\s\S]*?contain-intrinsic-size:\s*338px 286px;[\s\S]*?\}/,
   );
 });
 

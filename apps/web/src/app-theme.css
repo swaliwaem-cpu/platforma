@@ -571,6 +571,10 @@ html[data-app-theme] :is(.catalog-card-media, .catalog-list-item-media, .map-obj
   color: var(--app-theme-ink-700);
 }
 
+html[data-app-theme="dark-premium"] :is(.gallery-modal, .gallery-modal .eyebrow, .gallery-cover-meta span, .gallery-cover-meta strong, .gallery-upload-dropzone, .gallery-tile-button, .gallery-tile-preview, .gallery-tile-name, .gallery-tile-status, .gallery-tile-section-field span, .gallery-tile-section-select, .gallery-tile-order-button) {
+  color: #ffffff;
+}
+
 html[data-app-theme] .carousel-thumbnail--active {
   border-color: var(--app-theme-primary);
 }

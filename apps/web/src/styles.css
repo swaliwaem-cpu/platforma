@@ -2860,9 +2860,9 @@ tr.user-row--deactivated .text-button {
 
 .gallery-cover-slot {
   display: grid;
-  min-height: 180px;
+  min-height: 234px;
   overflow: hidden;
-  grid-template-columns: minmax(180px, 280px) minmax(0, 1fr);
+  grid-template-columns: minmax(234px, 364px) minmax(0, 1fr);
   gap: 16px;
   align-items: stretch;
   border: 1px dashed #c6d0dc;
@@ -2885,7 +2885,7 @@ tr.user-row--deactivated .text-button {
 .gallery-cover-preview,
 .gallery-cover-placeholder {
   display: grid;
-  min-height: 156px;
+  min-height: 203px;
   overflow: hidden;
   place-items: center;
   border: 1px solid #d6dde5;
@@ -2898,7 +2898,7 @@ tr.user-row--deactivated .text-button {
 .gallery-cover-placeholder img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .gallery-cover-placeholder {
@@ -2979,7 +2979,7 @@ tr.user-row--deactivated .text-button {
 
 .gallery-tile-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(182px, 1fr));
   gap: 12px;
   margin: 0;
   padding: 0;
@@ -2992,7 +2992,7 @@ tr.user-row--deactivated .text-button {
   min-width: 0;
   gap: 8px;
   content-visibility: auto;
-  contain-intrinsic-size: 260px 220px;
+  contain-intrinsic-size: 338px 286px;
 }
 
 .gallery-tile-remove-button {
@@ -3012,10 +3012,44 @@ tr.user-row--deactivated .text-button {
   height: 15px;
 }
 
+.gallery-tile-open-original {
+  position: absolute;
+  z-index: 2;
+  top: 16px;
+  left: 16px;
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid rgb(255 255 255 / 42%);
+  border-radius: 6px;
+  background: rgb(15 20 26 / 70%);
+  color: #ffffff;
+  text-decoration: none;
+  box-shadow: 0 8px 18px rgb(24 32 42 / 18%);
+}
+
+.gallery-tile-open-original:hover,
+.gallery-tile-open-original:focus-visible {
+  border-color: rgb(255 255 255 / 68%);
+  background: rgb(15 20 26 / 84%);
+  color: #ffffff;
+}
+
+.gallery-tile-open-original:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px rgb(37 99 235 / 24%), 0 8px 18px rgb(24 32 42 / 18%);
+}
+
+.gallery-tile-open-original svg {
+  width: 16px;
+  height: 16px;
+}
+
 .gallery-tile-button {
   display: grid;
   width: 100%;
-  min-height: 188px;
+  min-height: 244px;
   gap: 8px;
   align-content: start;
   border: 1px solid #d6dde5;
@@ -3075,7 +3109,7 @@ tr.user-row--deactivated .text-button {
 .gallery-tile-preview img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .gallery-tile-name {
@@ -3199,7 +3233,7 @@ tr.user-row--deactivated .text-button {
   }
 
   .gallery-tile-grid {
-    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(156px, 1fr));
   }
 
   .gallery-modal-actions {
