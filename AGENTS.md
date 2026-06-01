@@ -6,12 +6,13 @@
 
 1. Прочитай `AGENTS.md`.
 2. Прочитай `rules/*`.
-3. Прочитай `docs/PROJECT_INDEX.md`.
-4. Прочитай конкретные `docs` по зоне задачи.
-5. Проверь `docs/RISK_ZONES.md`.
-6. Найди все использования файлов, которые планируешь менять.
-7. Для изменений больше 3 файлов сначала предложи план.
-8. После завершения обнови `docs/CODEX_LOG.md`.
+3. Прочитай и соблюдай `docs/CODEX_TASK_PROTOCOL.md`.
+4. Прочитай `docs/PROJECT_INDEX.md`.
+5. Прочитай конкретные `docs` по зоне задачи.
+6. Проверь `docs/RISK_ZONES.md`.
+7. Найди все использования файлов, которые планируешь менять.
+8. Для изменений больше 3 файлов сначала предложи план.
+9. После завершения обнови `docs/CODEX_LOG.md`.
 
 ## Основные правила
 
@@ -29,6 +30,7 @@
 
 ## Карта проекта
 
+- [docs/CODEX_TASK_PROTOCOL.md](docs/CODEX_TASK_PROTOCOL.md) - постоянный рабочий протокол Codex.
 - [docs/PROJECT_INDEX.md](docs/PROJECT_INDEX.md) - главный индекс проекта.
 - [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) - структура папок и точек входа.
 - [docs/PAGES_AND_ROUTES.md](docs/PAGES_AND_ROUTES.md) - frontend routes и страницы.

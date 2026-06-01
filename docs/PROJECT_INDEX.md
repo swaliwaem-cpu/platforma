@@ -14,6 +14,7 @@
 
 Инженерные индексы, созданные для Codex:
 
+- `docs/CODEX_TASK_PROTOCOL.md` - постоянный рабочий протокол Codex.
 - `docs/PROJECT_INDEX.md` - главный входной индекс.
 - `docs/PROJECT_STRUCTURE.md` - карта структуры проекта.
 - `docs/PAGES_AND_ROUTES.md` - frontend routes и их связи.
@@ -25,7 +26,7 @@
 - `docs/IMPORT_INDEX.md` - WordPress import, repair и feed import.
 - `docs/CODEX_LOG.md` - журнал изменений документации.
 
-Правила Codex перед любой работой: `AGENTS.md`, `rules/communication.md`, `rules/workflow.md`, `rules/code-style.md`, `rules/project.md`, `rules/commands.md`, `rules/frontend.md`, `rules/backend.md`, `rules/files-and-secrets.md`, `rules/final-response.md`.
+Правила Codex перед любой работой: `AGENTS.md`, `docs/CODEX_TASK_PROTOCOL.md`, `rules/communication.md`, `rules/workflow.md`, `rules/code-style.md`, `rules/project.md`, `rules/commands.md`, `rules/frontend.md`, `rules/backend.md`, `rules/files-and-secrets.md`, `rules/final-response.md`.
 
 Код остается источником истины для фактического поведения: `apps/web/src`, `apps/api/src`, `apps/api/prisma/schema.prisma`, `packages/shared/src`, `tools/wp-import/src`, `tools/feed-import/src`.
 
@@ -60,7 +61,7 @@
 
 | Тип задачи | Читать сначала | Затем читать |
 | --- | --- | --- |
-| Любая задача | `AGENTS.md`, `rules/*.md`, `docs/DOCS_INVENTORY.md`, `docs/PROJECT_INDEX.md` | `docs/CODEX_LOG.md` |
+| Любая задача | `AGENTS.md`, `docs/CODEX_TASK_PROTOCOL.md`, `rules/*.md`, `docs/DOCS_INVENTORY.md`, `docs/PROJECT_INDEX.md` | `docs/FEATURE_MAP.md`, `docs/RISK_ZONES.md`, `docs/CODEX_LOG.md` |
 | Frontend route/UI | `rules/frontend.md`, `docs/PRODUCT_AND_UI_CONTEXT.md`, `docs/PAGES_AND_ROUTES.md`, `docs/STATE_AND_LOGIC.md` | `apps/web/src/App.tsx`, нужный файл в `apps/web/src` |
 | Catalog/map/object detail | `rules/frontend.md`, `docs/PRODUCT_AND_UI_CONTEXT.md`, `docs/PAGES_AND_ROUTES.md`, `docs/FEATURE_MAP.md`, `docs/RISK_ZONES.md` | `apps/web/src/catalog/CatalogPage.tsx`, `apps/web/src/map/YandexMap.tsx`, `apps/web/src/objects/ObjectDetailPage.tsx` |
 | Backend/API | `rules/backend.md`, `docs/API_AND_DATA.md`, `docs/FEATURE_MAP.md` | нужный controller/service в `apps/api/src` |

@@ -27,6 +27,7 @@ find . -name "*.md" -not -path "./node_modules/*" -not -path "./dist/*"
 | `rules/final-response.md` | Обязательная структура финального ответа пользователю. | `active` | `always` |
 | `docs/DOCS_INVENTORY.md` | Текущий индекс markdown-документации и найденных проблем ссылок. | `active` | `always` |
 | `docs/CODEX_LOG.md` | Журнал изменений документации, выполненных Codex. | `active` | `always` |
+| `docs/CODEX_TASK_PROTOCOL.md` | Постоянный рабочий протокол Codex перед задачами, изменениями и финальным отчетом. | `active` | `always` |
 | `docs/PROJECT_INDEX.md` | Главный инженерный индекс проекта для Codex: назначение, стек, зоны, документы и команды. | `active` | `always` |
 | `docs/PROJECT_STRUCTURE.md` | Карта структуры monorepo, entry points, env examples, Prisma, tests и docker/config. | `active` | `always` |
 | `docs/PAGES_AND_ROUTES.md` | Карта frontend routes, компонентов, permissions, API consumers, states и route-рисков. | `active` | `frontend` |
@@ -66,6 +67,7 @@ find . -name "*.md" -not -path "./node_modules/*" -not -path "./dist/*"
 Создан полный инженерный индекс проекта:
 
 - `docs/PROJECT_INDEX.md`
+- `docs/CODEX_TASK_PROTOCOL.md`
 - `docs/PROJECT_STRUCTURE.md`
 - `docs/PAGES_AND_ROUTES.md`
 - `docs/FEATURE_MAP.md`
