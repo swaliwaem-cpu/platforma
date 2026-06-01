@@ -7,8 +7,10 @@
 - Все тесты, где есть scripts: `pnpm test`
 - API tests: `pnpm --filter @platforma/api test`
 - WordPress import tests: `pnpm --filter @platforma/wp-import test`
+- Feed import tests: `pnpm --filter @platforma/feed-import test`
 - Dev web: `pnpm dev:web -- --port 5173 --strictPort`
 - Dev API: `pnpm dev:api`
+- Feed analyze package command: `pnpm --filter @platforma/feed-import run analyze`
 
 ## Dev server
 
