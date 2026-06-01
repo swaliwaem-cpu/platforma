@@ -203,6 +203,29 @@ function makeMangazeyaCianFeed() {
     </feed>`;
 }
 
+function makePioneerCianFeed() {
+  return `<?xml version="1.0"?>
+    <feed>
+      <object>
+        <Category>newBuildingFlatSale</Category>
+        <ExternalId>1-1-2-2</ExternalId>
+        <Address>Москва, Дербеневская улица</Address>
+        <FlatRoomsCount>1</FlatRoomsCount>
+        <TotalArea>32.22</TotalArea>
+        <FloorNumber>2</FloorNumber>
+        <JKSchema>
+          <Name>Премиум-квартал SHIFT</Name>
+          <House>
+            <Name>Корпус 1</Name>
+            <Flat><SectionNumber>1</SectionNumber></Flat>
+          </House>
+        </JKSchema>
+        <Apartment>КВ-1/002</Apartment>
+        <BargainTerms><Price>24000000</Price><Currency>rur</Currency></BargainTerms>
+      </object>
+    </feed>`;
+}
+
 function makeFskFeed() {
   return `<?xml version="1.0" encoding="UTF-8"?>
     <Data>
@@ -996,6 +1019,38 @@ test('executeFeedImport run titles Mangazeya CIAN residential units by apartment
   assert.equal(unit.title, 'Квартира №611');
   assert.equal(unit.address, 'Москва, Большая Тульская улица д. 8');
   assert.equal(state.residentialDetails.get(unit.id).apartmentNumber, '611');
+});
+
+test('executeFeedImport run titles Pioneer CIAN residential units by apartment number', async () => {
+  const { db, state } = createFakeDb({
+    source: {
+      format: 'CIAN_XML',
+      url: 'https://shift-home.ru/api/apart_manager/get_feed/living/Cian/2',
+      developer: {
+        name: 'Пионер',
+        normalizedName: 'pioner',
+      },
+    },
+  });
+
+  await executeFeedImport({
+    mode: 'run',
+    sourceId: 'source-1',
+    db,
+    storage: state.storage,
+    xmlFetcher: async () => makePioneerCianFeed(),
+    mediaDownloader: async () => {
+      throw new Error('media should not be downloaded in this test');
+    },
+    imageVariantGenerator: async () => [],
+    now: () => fixedDate,
+  });
+
+  const unit = state.units.find((currentUnit) => currentUnit.externalId === '1-1-2-2');
+
+  assert.equal(unit.title, 'Квартира №КВ-1/002');
+  assert.equal(unit.address, 'Москва, Дербеневская улица');
+  assert.equal(state.residentialDetails.get(unit.id).apartmentNumber, 'КВ-1/002');
 });
 
 test('executeFeedImport run titles FSK residential units by apartment number', async () => {

@@ -345,7 +345,7 @@ export class CianXmlFeedParser implements FeedParser {
     const ceilingHeight = normalizeDecimal(building?.CeilingHeight, 'ceilingHeight', externalId, warnings);
     const powerKw = normalizeDecimal(object.Power, 'powerKw', externalId, warnings);
     const type = getCianUnitType(object);
-    const apartmentNumber = type === 'RESIDENTIAL' ? getText(object.FlatNumber) ?? getText(cianFlat?.FlatNumber) : null;
+    const apartmentNumber = type === 'RESIDENTIAL' ? getCianApartmentNumber(object, cianFlat) : null;
 
     return {
       externalId,
@@ -1264,16 +1264,34 @@ function buildCianTitle(object: XmlRecord): string | null {
   return joinTitleParts([getText(object.Address), getText(object.Category), getText(object.ExternalId)]);
 }
 
+function getCianApartmentNumber(object: XmlRecord, cianFlat: XmlRecord | null) {
+  return getText(object.FlatNumber) ?? getText(cianFlat?.FlatNumber) ?? getText(object.Apartment);
+}
+
 function buildCianUnitTitle(
   object: XmlRecord,
   type: NormalizedFeedUnitType,
   apartmentNumber: string | null,
 ): string | null {
-  if (type === 'RESIDENTIAL' && apartmentNumber && isSminexCianObject(object)) {
+  if (type === 'RESIDENTIAL' && apartmentNumber && shouldUseApartmentNumberTitleForCianObject(object)) {
     return `Квартира №${apartmentNumber}`;
   }
 
-  return getText(object.title) ?? getText(object.Title) ?? buildCianTitle(object);
+  const title = getText(object.title) ?? getText(object.Title);
+
+  if (title) {
+    return title;
+  }
+
+  if (type === 'RESIDENTIAL' && apartmentNumber) {
+    return `Квартира №${apartmentNumber}`;
+  }
+
+  return buildCianTitle(object);
+}
+
+function shouldUseApartmentNumberTitleForCianObject(object: XmlRecord) {
+  return isSminexCianObject(object) || isPioneerCianObject(object);
 }
 
 function isSminexCianObject(object: XmlRecord) {
@@ -1281,6 +1299,22 @@ function isSminexCianObject(object: XmlRecord) {
   const normalizedDeveloperName = developerName?.trim().toLocaleLowerCase('ru-RU') ?? '';
 
   return normalizedDeveloperName.includes('sminex') || normalizedDeveloperName.includes('смайнекс');
+}
+
+function isPioneerCianObject(object: XmlRecord) {
+  const subAgent = asRecord(object.SubAgent);
+  const normalizedSourceText = [
+    getText(asRecord(object.Developer)?.Name),
+    getText(object.DeveloperName),
+    getText(subAgent?.FirstName),
+    getText(subAgent?.LastName),
+    getText(subAgent?.CompanyName),
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join(' ')
+    .toLocaleLowerCase('ru-RU');
+
+  return isPioneerText(normalizedSourceText);
 }
 
 function buildAvitoTitle(ad: XmlRecord, externalId: string): string | null {
@@ -3334,7 +3368,8 @@ function shouldUseApartmentNumberTitleForSource(unit: NormalizedFeedUnit, source
     Boolean(unit.residentialDetails?.apartmentNumber) &&
     (unitFormat === 'FSK_XML' ||
       unitFormat === 'TEKTA_XML' ||
-      (unitFormat === 'CIAN_XML' && (isMrGroupFeedSource(source) || isMangazeyaFeedSource(source))))
+      (unitFormat === 'CIAN_XML' &&
+        (isMrGroupFeedSource(source) || isMangazeyaFeedSource(source) || isPioneerFeedSource(source))))
   );
 }
 
@@ -3358,6 +3393,26 @@ function isMangazeyaFeedSource(source: FeedSourceRecord) {
     .toLocaleLowerCase('ru-RU');
 
   return normalizedSourceText.includes('mangazeya') || normalizedSourceText.includes('мангазея');
+}
+
+function isPioneerFeedSource(source: FeedSourceRecord) {
+  const normalizedSourceText = [source.developer?.normalizedName, source.developer?.name, source.url]
+    .filter((value): value is string => Boolean(value))
+    .join(' ')
+    .toLocaleLowerCase('ru-RU');
+
+  return (
+    isPioneerText(normalizedSourceText) ||
+    normalizedSourceText.includes('varshavskaya.life') ||
+    normalizedSourceText.includes('pride-home.ru') ||
+    normalizedSourceText.includes('highlife.ru') ||
+    normalizedSourceText.includes('opus-home.ru') ||
+    normalizedSourceText.includes('shift-home.ru')
+  );
+}
+
+function isPioneerText(value: string) {
+  return value.includes('пионер') || value.includes('pioneer') || value.includes('pioner');
 }
 
 function routeFeedUnitsForSource(units: NormalizedFeedUnit[], source: FeedSourceRecord): RoutedFeedUnit[] {

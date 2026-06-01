@@ -530,6 +530,65 @@ test('CianXmlFeedParser forces Sminex residential titles to apartment number', (
   assert.equal(unit.residentialDetails.apartmentNumber, '193');
 });
 
+test('CianXmlFeedParser uses Pioneer Apartment field as apartment number', () => {
+  const parser = new CianXmlFeedParser();
+  const xml = `<?xml version="1.0"?>
+    <feed>
+      <object>
+        <ExternalId>261-1-2-6</ExternalId>
+        <Category>newBuildingFlatSale</Category>
+        <Address>Москва, переулок Котляковский 2-й</Address>
+        <FloorNumber>2</FloorNumber>
+        <FlatRoomsCount>1</FlatRoomsCount>
+        <TotalArea>39.79</TotalArea>
+        <SubAgent><FirstName>Компания Пионер</FirstName></SubAgent>
+        <JKSchema>
+          <Name>Жилой квартал LIFE-Варшавская</Name>
+          <House>
+            <Name>Корпус 261</Name>
+            <Flat><SectionNumber>1</SectionNumber></Flat>
+          </House>
+        </JKSchema>
+        <Apartment>КВ-01006</Apartment>
+        <BargainTerms><Price>23782483</Price><Currency>RUR</Currency></BargainTerms>
+      </object>
+    </feed>`;
+
+  const result = parser.parse(xml);
+  const unit = result.units[0];
+
+  assert.equal(unit.title, 'Квартира №КВ-01006');
+  assert.equal(unit.externalId, '261-1-2-6');
+  assert.equal(unit.residentialDetails.apartmentNumber, 'КВ-01006');
+});
+
+test('CianXmlFeedParser falls back to apartment number title when title is missing', () => {
+  const parser = new CianXmlFeedParser();
+  const xml = `<?xml version="1.0"?>
+    <feed>
+      <object>
+        <ExternalId>1-1-2-2</ExternalId>
+        <Category>newBuildingFlatSale</Category>
+        <Address>Москва, 2-й Донской проезд, 10</Address>
+        <FloorNumber>2</FloorNumber>
+        <FlatRoomsCount>1</FlatRoomsCount>
+        <TotalArea>32.22</TotalArea>
+        <JKSchema>
+          <Name>Премиум-квартал SHIFT</Name>
+          <House><Name>Корпус 1</Name></House>
+        </JKSchema>
+        <Apartment>КВ-1/002</Apartment>
+        <BargainTerms><Price>24000000</Price><Currency>RUR</Currency></BargainTerms>
+      </object>
+    </feed>`;
+
+  const result = parser.parse(xml);
+  const unit = result.units[0];
+
+  assert.equal(unit.title, 'Квартира №КВ-1/002');
+  assert.equal(unit.residentialDetails.apartmentNumber, 'КВ-1/002');
+});
+
 test('CianXmlFeedParser normalizes CIAN-like realty-feed objects and decodes XML entities', () => {
   const parser = new CianXmlFeedParser();
 

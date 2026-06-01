@@ -2,6 +2,19 @@
 
 ## 2026-06-01
 
+Исправлено название квартир в CIAN-фидах Пионера.
+
+Изменены файлы:
+
+- `tools/feed-import/src/index.ts` - CIAN parser теперь читает номер квартиры из `<Apartment>` после `FlatNumber`; при отсутствии явного `title` residential title становится `Квартира №<номер>`, а для объектов/источников Пионера это правило применяется принудительно.
+- `tools/feed-import/tests/parser.test.cjs` - добавлены parser-регрессы на Pioneer XML с `<Apartment>КВ-01006</Apartment>` и CIAN XML без явного `title`.
+- `tools/feed-import/tests/import-engine.test.cjs` - добавлен run-регресс на Pioneer CIAN source без `SubAgent`, чтобы title переписывался по source developer/url.
+- `docs/CODEX_LOG.md` - добавлена текущая запись.
+
+Проверено:
+
+- `pnpm --filter @platforma/feed-import test`.
+
 Добавлен новый формат feed import `TEKTA_XML` для XML фидов Tekta.
 
 Изменены файлы:
