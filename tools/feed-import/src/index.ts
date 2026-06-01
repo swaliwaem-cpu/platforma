@@ -334,6 +334,7 @@ export class CianXmlFeedParser implements FeedParser {
     const cianHouse = asRecord(jkSchema?.House);
     const cianFlat = asRecord(cianHouse?.Flat);
     const statusResult = normalizeCianFeedUnitStatus(object);
+    const completion = normalizeCianCompletion(object, building, externalId, warnings);
 
     if (statusResult.warning) {
       warnings.push(withExternalId(statusResult.warning, externalId));
@@ -366,8 +367,8 @@ export class CianXmlFeedParser implements FeedParser {
       pricePerMeter: calculatePricePerMeter(price, area),
       discountPricePerMeter: null,
       effectivePricePerMeter: calculatePricePerMeter(price, area),
-      completionYear: normalizeInteger(object.CompletionYear, 'completionYear', externalId, warnings),
-      completionQuarter: normalizeQuarter(object.CompletionQuarter, externalId, warnings),
+      completionYear: completion.year,
+      completionQuarter: completion.quarter,
       rawPayload: object,
       media: collectCianMedia(object, externalId, warnings),
       residentialDetails:
@@ -1045,7 +1046,40 @@ function normalizeInteger(
   return numeric;
 }
 
+function normalizeFirstInteger(
+  values: unknown[],
+  field: string,
+  externalId: string,
+  warnings: FeedParserWarning[],
+): number | null {
+  for (const value of values) {
+    if (getText(value) === null) {
+      continue;
+    }
+
+    const integer = normalizeInteger(value, field, externalId, warnings);
+
+    if (integer !== null) {
+      return integer;
+    }
+  }
+
+  return null;
+}
+
 function normalizeQuarter(value: unknown, externalId: string, warnings: FeedParserWarning[]): number | null {
+  const raw = getText(value);
+
+  if (raw === null) {
+    return null;
+  }
+
+  const textQuarter = normalizeQuarterText(raw);
+
+  if (textQuarter !== null) {
+    return textQuarter;
+  }
+
   const quarter = normalizeInteger(value, 'completionQuarter', externalId, warnings);
 
   if (quarter === null) {
@@ -1064,6 +1098,66 @@ function normalizeQuarter(value: unknown, externalId: string, warnings: FeedPars
   }
 
   return quarter;
+}
+
+function normalizeFirstQuarter(values: unknown[], externalId: string, warnings: FeedParserWarning[]): number | null {
+  for (const value of values) {
+    if (getText(value) === null) {
+      continue;
+    }
+
+    const quarter = normalizeQuarter(value, externalId, warnings);
+
+    if (quarter !== null) {
+      return quarter;
+    }
+  }
+
+  return null;
+}
+
+function normalizeQuarterText(value: string): number | null {
+  const normalized = normalizeFilterText(value).replace(/[\s._-]+/gu, '');
+  const numericQuarter = normalized.match(/^([1-4])(?:й|ый|ой)?(?:кв|квартал)?$/u);
+
+  if (numericQuarter) {
+    return Number(numericQuarter[1]);
+  }
+
+  const quarterAliases: Record<string, number | undefined> = {
+    i: 1,
+    iкв: 1,
+    iквартал: 1,
+    first: 1,
+    q1: 1,
+    первый: 1,
+    первыйквартал: 1,
+    ii: 2,
+    iiкв: 2,
+    iiквартал: 2,
+    second: 2,
+    q2: 2,
+    второй: 2,
+    второйквартал: 2,
+    iii: 3,
+    iiiкв: 3,
+    iiiквартал: 3,
+    third: 3,
+    q3: 3,
+    третий: 3,
+    третийквартал: 3,
+    iv: 4,
+    ivкв: 4,
+    ivквартал: 4,
+    fourth: 4,
+    q4: 4,
+    четвертый: 4,
+    четвертыйквартал: 4,
+    четвёртый: 4,
+    четвёртыйквартал: 4,
+  };
+
+  return quarterAliases[normalized] ?? null;
 }
 
 function normalizeBoolean(value: unknown): boolean | null {
@@ -1168,6 +1262,59 @@ function normalizeCianNumericStatus(value: unknown): FeedStatusNormalizationResu
       message: `Unknown Cian numeric feed unit status: ${rawStatus}`,
       value: rawStatus,
     },
+  };
+}
+
+function normalizeCianCompletion(
+  object: XmlRecord,
+  building: XmlRecord | null,
+  externalId: string,
+  warnings: FeedParserWarning[],
+) {
+  const deadline = asRecord(building?.Deadline) ?? asRecord(object.Deadline);
+
+  return {
+    year: normalizeFirstInteger(
+      [
+        object.CompletionYear,
+        object.completionYear,
+        object.completion_year,
+        object['built-year'],
+        object.built_year,
+        object.BuildYear,
+        object.BuiltYear,
+        object.buildYear,
+        object.build_year,
+        building?.CompletionYear,
+        building?.BuildYear,
+        building?.BuiltYear,
+        building?.buildYear,
+        building?.build_year,
+        deadline?.Year,
+        deadline?.year,
+      ],
+      'completionYear',
+      externalId,
+      warnings,
+    ),
+    quarter: normalizeFirstQuarter(
+      [
+        object.CompletionQuarter,
+        object.completionQuarter,
+        object.completion_quarter,
+        object['ready-quarter'],
+        object.ready_quarter,
+        object.ReadyQuarter,
+        object.readyQuarter,
+        building?.CompletionQuarter,
+        building?.ReadyQuarter,
+        building?.readyQuarter,
+        deadline?.Quarter,
+        deadline?.quarter,
+      ],
+      externalId,
+      warnings,
+    ),
   };
 }
 

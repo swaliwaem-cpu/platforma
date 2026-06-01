@@ -60,6 +60,7 @@ test('object detail feed units expose detailed lot filters in API request and re
   assert.match(source, />\s*Этаж до\s*</);
   assert.match(source, />\s*Год сдачи\s*</);
   assert.match(source, />\s*Квартал\s*</);
+  assert.match(source, /\{ value:\s*'1',\s*label:\s*'1кв'\s*\}/);
   assert.match(source, /setPriceMinFilter\(''\);/);
   assert.match(source, /setCompletionQuarterFilter\(''\);/);
 });
@@ -94,7 +95,11 @@ test('object detail feed units block renders expected columns and media thumbnai
   assert.match(source, /showDiscountPrice: boolean;/);
   assert.match(source, /\{showDiscountPrice \? <TableCell>\{formatFeedUnitPrice\(unit\.discountPrice, unit\.currency\)\}<\/TableCell> : null\}/);
   assert.match(source, /<TableCell>\{formatFeedUnitPricePerMeter\(unit\)\}<\/TableCell>/);
-  assert.match(source, /<TableHead>Медиа<\/TableHead>/);
+  assert.match(source, /const feedUnitsTableColumnCount = hasDiscountPrices \? 11 : 10;/);
+  assert.match(source, /<TableHead>Срок сдачи<\/TableHead>[\s\S]*?<TableHead>Медиа<\/TableHead>/);
+  assert.match(source, /<TableCell>\{formatFeedUnitCompletion\(unit\)\}<\/TableCell>[\s\S]*?<TableCell>[\s\S]*?\{primaryMedia\?\.file \? \(/);
+  assert.match(source, /function formatFeedUnitCompletion\(unit: FeedUnit\)/);
+  assert.match(source, /return `\$\{unit\.completionQuarter\}кв \$\{unit\.completionYear\}`;/);
   assert.doesNotMatch(source, /<span>ID \{unit\.externalId\}<\/span>/);
   assert.doesNotMatch(source, /<strong>\{unit\.title \|\| unit\.externalId\}<\/strong>/);
   assert.match(source, /function getFeedUnitTitle\(unit: FeedUnit\)/);

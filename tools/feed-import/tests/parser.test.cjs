@@ -382,6 +382,63 @@ test('CianXmlFeedParser normalizes commercial units from fixture', () => {
   assert.equal(booked.status, 'BOOKED');
 });
 
+test('CianXmlFeedParser reads completion from building deadline and snake case fields', () => {
+  const parser = new CianXmlFeedParser();
+  const xml = `<?xml version="1.0"?>
+    <feed>
+      <object>
+        <ExternalId>deadline-1</ExternalId>
+        <Category>flatSale</Category>
+        <Address>Москва, пример 1</Address>
+        <FloorNumber>10</FloorNumber>
+        <FlatRoomsCount>2</FlatRoomsCount>
+        <TotalArea>52.4</TotalArea>
+        <BargainTerms><Price>20000000</Price><Currency>RUR</Currency></BargainTerms>
+        <Building>
+          <Name>Корпус 1</Name>
+          <Deadline>
+            <Year>2027</Year>
+            <Quarter>third</Quarter>
+          </Deadline>
+        </Building>
+      </object>
+      <object>
+        <ExternalId>deadline-2</ExternalId>
+        <Category>flatSale</Category>
+        <Address>Москва, пример 2</Address>
+        <FloorNumber>11</FloorNumber>
+        <FlatRoomsCount>1</FlatRoomsCount>
+        <TotalArea>39.1</TotalArea>
+        <BargainTerms><Price>15000000</Price><Currency>RUR</Currency></BargainTerms>
+        <built_year>2026</built_year>
+        <ready_quarter>2кв</ready_quarter>
+      </object>
+      <object>
+        <ExternalId>deadline-3</ExternalId>
+        <Category>officeSale</Category>
+        <Address>Москва, пример 3</Address>
+        <FloorNumber>2</FloorNumber>
+        <TotalArea>80.5</TotalArea>
+        <BargainTerms><Price>30000000</Price><Currency>RUR</Currency></BargainTerms>
+        <Building>
+          <Name>Офисы</Name>
+          <BuildYear>2028</BuildYear>
+        </Building>
+      </object>
+    </feed>`;
+
+  const result = parser.parse(xml);
+  const [deadlineUnit, snakeCaseUnit, buildYearUnit] = result.units;
+
+  assert.deepEqual(result.warnings, []);
+  assert.equal(deadlineUnit.completionYear, 2027);
+  assert.equal(deadlineUnit.completionQuarter, 3);
+  assert.equal(snakeCaseUnit.completionYear, 2026);
+  assert.equal(snakeCaseUnit.completionQuarter, 2);
+  assert.equal(buildYearUnit.completionYear, 2028);
+  assert.equal(buildYearUnit.completionQuarter, null);
+});
+
 test('CianXmlFeedParser normalizes Etalon-style project, house, rooms and media fields', () => {
   const parser = new CianXmlFeedParser();
   const xml = `<?xml version="1.0"?>

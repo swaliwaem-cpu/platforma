@@ -319,6 +319,7 @@ test('feeds admin page keeps source run controls and persistent progress below t
   assert.match(source, /<SourceRunControlPanel[\s\S]*source=\{selectedSource\}/);
   assert.match(source, /className="feed-source-run-panel"/);
   assert.match(source, /aria-label="Запуск выбранного фида"/);
+  assert.match(source, /<h3>\{source \? source\.developer\.name : 'Источник не выбран'\}<\/h3>/);
   assert.match(source, /progress \? getFeedRunProgressPercent\(progress\) : 0/);
   assert.match(source, /progress \? getFeedRunProgressStageLabel\(progress\.stage\) : 'Ожидает запуска Run'/);
   assert.match(source, /stage === 'QUEUED'/);

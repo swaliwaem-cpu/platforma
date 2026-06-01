@@ -555,3 +555,49 @@ Markdown-файлы, реально найденные до создания н�
 Ручная проверка:
 
 - Открыть лоты любого фида в `/admin/feeds` и убедиться, что под названием лота больше нет строки `ID ...`.
+
+## 2026-06-01 - Feed lot completion display
+
+Задача:
+
+- Выводить срок сдачи лота из фидов в списке лотов и карточке лота.
+- Формат квартала на frontend: `1кв`, `2кв`, `3кв`, `4кв`; если квартала нет, показывать только год.
+
+Изменения:
+
+- `tools/feed-import/src/index.ts` - CIAN parser теперь берет срок сдачи из `CompletionYear/CompletionQuarter`, `BuildYear`, snake case полей и fallback `Building.Deadline.Year/Quarter`.
+- `tools/feed-import/src/index.ts` - нормализация квартала поддерживает числовой формат `1кв..4кв` и текстовые значения CIAN `first/second/third/fourth`.
+- `apps/web/src/objects/ObjectDetailPage.tsx` - в таблицу лотов добавлена колонка `Срок сдачи` перед `Медиа`.
+- `apps/web/src/objects/ObjectDetailPage.tsx` - в карточку лота добавлена отдельная плашка `Срок сдачи`.
+- `tools/feed-import/tests/parser.test.cjs`, `apps/web/tests/object-detail-feed-units.test.mjs`, `apps/web/tests/object-lot-detail-page.test.mjs` - обновлены проверки парсинга и отображения.
+
+Проверки:
+
+- `pnpm --filter @platforma/feed-import test` - 53/53 passed.
+- `pnpm --filter @platforma/web test` - 214/214 passed.
+- `pnpm build:web` - production build successful.
+
+Ручная проверка:
+
+- Открыть `/objects/:slug`, проверить колонку `Срок сдачи` в таблице лотов перед `Медиа`.
+- Открыть `/objects/:slug/lots/:unitId`, проверить плашку `Срок сдачи` в параметрах лота.
+
+## 2026-06-01 - Feed run panel developer title
+
+Задача:
+
+- В блоке запуска выбранного фида показывать застройщика, а не количество ЖК в сопоставлении.
+
+Изменения:
+
+- `apps/web/src/admin/FeedsAdminPage.tsx` - заголовок `SourceRunControlPanel` теперь выводит `source.developer.name`.
+- `apps/web/tests/admin-feeds-page.test.mjs` - добавлена проверка заголовка блока запуска.
+
+Проверки:
+
+- `pnpm --filter @platforma/web test` - 214/214 passed.
+- `pnpm build:web` - production build successful.
+
+Ручная проверка:
+
+- Открыть `/admin/feeds`, выбрать источник и убедиться, что в блоке `Запуск` видно название застройщика.

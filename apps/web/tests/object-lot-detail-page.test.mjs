@@ -47,6 +47,7 @@ test('lot detail page renders media carousel and required fact cards', () => {
   assert.match(objectDetailSource, /label: 'Тип лота'/);
   assert.match(objectDetailSource, /label: 'Этаж'/);
   assert.match(objectDetailSource, /label: 'Корпус\/секция'/);
+  assert.match(objectDetailSource, /label: 'Срок сдачи'[\s\S]*?formatFeedUnitCompletion\(unit\)/);
   assert.match(objectDetailSource, /label: 'Адрес'/);
   assert.match(objectDetailSource, /label: 'Статус'/);
   assert.match(styles, /\.object-lot-page\s*\{/);

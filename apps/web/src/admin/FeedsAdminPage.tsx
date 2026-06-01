@@ -1544,7 +1544,7 @@ function SourceRunControlPanel({
       <div className="feed-source-run-header">
         <div>
           <p className="eyebrow">Запуск</p>
-          <h3>{source ? getSourceObjectTitle(source) : 'Источник не выбран'}</h3>
+          <h3>{source ? source.developer.name : 'Источник не выбран'}</h3>
         </div>
 
         <div className="feed-source-run-actions">

@@ -134,10 +134,10 @@ const feedUnitRoomFilterOptions = [
 ];
 
 const feedUnitQuarterFilterOptions = [
-  { value: '1', label: '1 кв.' },
-  { value: '2', label: '2 кв.' },
-  { value: '3', label: '3 кв.' },
-  { value: '4', label: '4 кв.' },
+  { value: '1', label: '1кв' },
+  { value: '2', label: '2кв' },
+  { value: '3', label: '3кв' },
+  { value: '4', label: '4кв' },
 ];
 
 const sectionOptions: {
@@ -896,7 +896,7 @@ function ObjectFeedUnitsSection({
       completionQuarterFilter,
   );
   const showFeedUnitsSkeleton = isLoading && units.length === 0;
-  const feedUnitsTableColumnCount = hasDiscountPrices ? 10 : 9;
+  const feedUnitsTableColumnCount = hasDiscountPrices ? 11 : 10;
   const sortedUnits = useMemo(
     () => sortFeedUnitsForDisplay(units, sortBy, sortDirection),
     [sortBy, sortDirection, units],
@@ -1315,6 +1315,7 @@ function ObjectFeedUnitsSection({
               >
                 Корпус/секция
               </ObjectFeedSortableHead>
+              <TableHead>Срок сдачи</TableHead>
               <TableHead>Медиа</TableHead>
             </TableRow>
           </TableHeader>
@@ -1500,6 +1501,7 @@ function ObjectFeedUnitRow({
       <TableCell>{getUnitRoomsOrType(unit)}</TableCell>
       <TableCell>{unit.floor ?? 'Не указан'}</TableCell>
       <TableCell>{formatBuildingSection(unit)}</TableCell>
+      <TableCell>{formatFeedUnitCompletion(unit)}</TableCell>
       <TableCell>
         {primaryMedia?.file ? (
           <button
@@ -2344,6 +2346,18 @@ function formatComputedFeedUnitPricePerMeter(unit: FeedUnit) {
   return formatFeedUnitPricePerMeter(unit);
 }
 
+function formatFeedUnitCompletion(unit: FeedUnit) {
+  if (!unit.completionYear) {
+    return 'Не указан';
+  }
+
+  if (!unit.completionQuarter) {
+    return String(unit.completionYear);
+  }
+
+  return `${unit.completionQuarter}кв ${unit.completionYear}`;
+}
+
 function getObjectLotFactRows(unit: FeedUnit) {
   return [
     {
@@ -2377,6 +2391,10 @@ function getObjectLotFactRows(unit: FeedUnit) {
     {
       label: 'Корпус/секция',
       value: formatBuildingSection(unit),
+    },
+    {
+      label: 'Срок сдачи',
+      value: formatFeedUnitCompletion(unit),
     },
     {
       label: 'Адрес',
