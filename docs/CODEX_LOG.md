@@ -2,6 +2,58 @@
 
 ## 2026-06-01
 
+Добавлен новый формат feed import `TEKTA_XML` для XML фидов Tekta.
+
+Изменены файлы:
+
+- `tools/feed-import/src/index.ts` - добавлен `TektaXmlFeedParser`, auto-detect корня `<projects>`, нормализация квартир и офисов, пропуск машиномест, пропуск статусов `Сдан` и `Скрывать на сайте`, маппинг `Устная бронь` и `Платная бронь` в `BOOKED`.
+- `tools/feed-import/tests/fixtures/tekta.xml` - добавлен fixture формата Tekta.
+- `tools/feed-import/tests/parser.test.cjs` и `tools/feed-import/tests/package-contract.test.cjs` - добавлены проверки parser, analysis, detect и fixture contract.
+- `packages/shared/src/index.ts`, `apps/api/src/feeds/feeds.service.ts`, `apps/api/prisma/schema.prisma` - `TEKTA_XML` добавлен в shared/API/Prisma формат.
+- `apps/api/prisma/migrations/20260601120000_add_tekta_feed_format/migration.sql` - добавлено значение `tekta_xml` в enum `feed_format`.
+- `apps/api/tests/feed-schema.test.cjs`, `apps/api/tests/feeds-module.test.cjs`, `apps/api/tests/api-contract.test.cjs` - обновлены schema/API/shared проверки; добавлена проверка сохранения `INDEX_URL` источника с `TEKTA_XML`.
+- `docs/PROJECT_INDEX.md`, `docs/PROJECT_STRUCTURE.md`, `docs/IMPORT_INDEX.md`, `docs/CODEX_LOG.md` - обновлены import-документы.
+
+Проверено:
+
+- `pnpm --filter @platforma/feed-import test`;
+- `pnpm --filter @platforma/api test`;
+- `pnpm --filter @platforma/web test`;
+- `pnpm --filter @platforma/shared build`;
+- `pnpm --filter @platforma/web build`;
+- `node tools/feed-import/dist/index.js analyze --format AUTO --url <Tekta URL>` для `twelve`, `era`, `ever`, `air2`, `пыжёвский`.
+
+Результат live-analyze:
+
+- `twelve` -> `TEKTA_XML`, 934 лота;
+- `era` -> `TEKTA_XML`, 2040 лотов;
+- `ever` -> `TEKTA_XML`, 186 лотов;
+- `air2` -> `TEKTA_XML`, 77 лотов;
+- `пыжёвский` -> `TEKTA_XML`, 57 лотов.
+
+Ограничения:
+
+- Машиноместа Tekta игнорируются по решению задачи.
+- Медиа/планировки импортируются только при публичных HTTP(S) URL; внутренние `\\crm-storage\...` пути не импортируются.
+
+Исправлен баг формы нового источника фида: ссылка больше не очищается при разборе, если во время запроса обновился access token.
+
+Изменены файлы:
+
+- `apps/web/src/admin/FeedsAdminPage.tsx` - reset формы ограничен сменой маршрута формы; результат `/feeds/analyze` возвращает в форму `url` и `xmlFile` из отправленного снимка.
+- `apps/web/tests/admin-feeds-page.test.mjs` - добавлены регрессионные проверки на сохранение источника после разбора и отсутствие reset формы при refresh токена.
+- `docs/CODEX_LOG.md` - добавлена текущая запись.
+
+Проверено:
+
+- `pnpm --filter @platforma/web exec node --test tests/admin-feeds-page.test.mjs`;
+- `pnpm --filter @platforma/web test`;
+- `pnpm --filter @platforma/web build`.
+
+Ручная проверка:
+
+- На `/admin/feeds/new` вставить URL, нажать `Разобрать`, дождаться анализа и проверить, что ссылка остается в поле, а `Сохранить` не требует вводить источник заново.
+
 Создан постоянный task protocol для Codex, чтобы не вставлять стартовый контекстный промт вручную перед каждой задачей.
 
 Изменены документы:

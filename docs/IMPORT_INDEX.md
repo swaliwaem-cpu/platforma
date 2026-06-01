@@ -141,7 +141,7 @@ Source feed files:
 
 Format:
 
-- Supported import formats are `YANDEX_REALTY`, `CIAN_XML`, `AVITO_XML`, `FSK_XML`, confirmed by `tools/feed-import/src/index.ts` and `apps/api/src/feeds/feeds.service.ts`.
+- Supported import formats are `YANDEX_REALTY`, `CIAN_XML`, `AVITO_XML`, `FSK_XML`, `TEKTA_XML`, confirmed by `tools/feed-import/src/index.ts` and `apps/api/src/feeds/feeds.service.ts`.
 - Analyze supports `AUTO`, confirmed by `parseAnalyzeFormat()` in `apps/api/src/feeds/feeds.service.ts` and `parseFeedAnalyzeCliArgs()` in `tools/feed-import/src/index.ts`.
 - XML parsing uses `fast-xml-parser` in `tools/feed-import/src/index.ts`.
 - Format-specific parsers are `YandexRealtyFeedParser`, `CianXmlFeedParser`, `AvitoXmlFeedParser`, `FskXmlFeedParser` in `tools/feed-import/src/index.ts`.

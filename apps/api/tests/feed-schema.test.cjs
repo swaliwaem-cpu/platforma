@@ -25,6 +25,10 @@ const fskFeedFormatMigrationPath = path.join(
   rootDir,
   'apps/api/prisma/migrations/20260531090000_add_fsk_feed_format/migration.sql',
 );
+const tektaFeedFormatMigrationPath = path.join(
+  rootDir,
+  'apps/api/prisma/migrations/20260601120000_add_tekta_feed_format/migration.sql',
+);
 const indexFeedSourceKindMigrationPath = path.join(
   rootDir,
   'apps/api/prisma/migrations/20260527010000_add_index_feed_source_kind/migration.sql',
@@ -45,7 +49,7 @@ function readProjectFile(filePath) {
 test('Prisma schema defines feed enums', () => {
   const schema = readProjectFile(schemaPath);
 
-  assert.match(schema, /enum FeedFormat \{[\s\S]*YANDEX_REALTY\s+@map\("yandex_realty"\)[\s\S]*CIAN_XML\s+@map\("cian_xml"\)[\s\S]*AVITO_XML\s+@map\("avito_xml"\)[\s\S]*FSK_XML\s+@map\("fsk_xml"\)[\s\S]*@@map\("feed_format"\)[\s\S]*\}/);
+  assert.match(schema, /enum FeedFormat \{[\s\S]*YANDEX_REALTY\s+@map\("yandex_realty"\)[\s\S]*CIAN_XML\s+@map\("cian_xml"\)[\s\S]*AVITO_XML\s+@map\("avito_xml"\)[\s\S]*FSK_XML\s+@map\("fsk_xml"\)[\s\S]*TEKTA_XML\s+@map\("tekta_xml"\)[\s\S]*@@map\("feed_format"\)[\s\S]*\}/);
   assert.match(schema, /enum FeedSourceKind \{[\s\S]*URL\s+@map\("url"\)[\s\S]*FILE\s+@map\("file"\)[\s\S]*INDEX_URL\s+@map\("index_url"\)[\s\S]*@@map\("feed_source_kind"\)[\s\S]*\}/);
   assert.match(schema, /enum FeedUnitType \{[\s\S]*RESIDENTIAL\s+@map\("residential"\)[\s\S]*COMMERCIAL\s+@map\("commercial"\)[\s\S]*@@map\("feed_unit_type"\)[\s\S]*\}/);
   assert.match(schema, /enum FeedUnitStatus \{[\s\S]*AVAILABLE\s+@map\("available"\)[\s\S]*BOOKED\s+@map\("booked"\)[\s\S]*RESERVED\s+@map\("reserved"\)[\s\S]*SOLD\s+@map\("sold"\)[\s\S]*ARCHIVED\s+@map\("archived"\)[\s\S]*UNKNOWN\s+@map\("unknown"\)[\s\S]*@@map\("feed_unit_status"\)[\s\S]*\}/);
@@ -195,6 +199,14 @@ test('FSK feed format migration adds fsk_xml enum value', () => {
   const migration = readProjectFile(fskFeedFormatMigrationPath);
 
   assert.match(migration, /ALTER TYPE "feed_format" ADD VALUE 'fsk_xml'/);
+});
+
+test('Tekta feed format migration adds tekta_xml enum value', () => {
+  assert.equal(fs.existsSync(tektaFeedFormatMigrationPath), true);
+
+  const migration = readProjectFile(tektaFeedFormatMigrationPath);
+
+  assert.match(migration, /ALTER TYPE "feed_format" ADD VALUE 'tekta_xml'/);
 });
 
 test('index feed source kind migration adds index_url enum value', () => {

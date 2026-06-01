@@ -39,7 +39,7 @@
 | Backend | NestJS 11, TypeScript, Prisma 6, PostgreSQL/PostGIS, JWT/cookies, S3/MinIO storage | `apps/api/package.json`, `apps/api/src/main.ts`, `apps/api/src/app.module.ts`, `apps/api/prisma/schema.prisma`, `docker-compose.yml` |
 | Shared contracts | TypeScript shared package with domain types and search normalization | `packages/shared/package.json`, `packages/shared/src/index.ts`, `packages/shared/src/search-normalization.mjs` |
 | WordPress import | Node CLI, Prisma, MySQL readonly source, S3/MinIO media import, preview/run/repair modes | `tools/wp-import/package.json`, `tools/wp-import/src/index.ts`, `tools/wp-import/src/importer.ts`, `tools/wp-import/src/repair.ts` |
-| Feed import | Node CLI, `fast-xml-parser`, Prisma, S3/MinIO media import, Yandex/CIAN/Avito/FSK formats | `tools/feed-import/package.json`, `tools/feed-import/src/index.ts` |
+| Feed import | Node CLI, `fast-xml-parser`, Prisma, S3/MinIO media import, Yandex/CIAN/Avito/FSK/Tekta formats | `tools/feed-import/package.json`, `tools/feed-import/src/index.ts` |
 | Containers | Docker Compose with PostGIS, Redis, MinIO, API, Web | `docker-compose.yml`, `apps/api/Dockerfile`, `apps/web/Dockerfile`, `docker/postgres/init/01-enable-postgis.sql` |
 
 `REDIS_URL` есть в env examples и compose, но прямое использование Redis в `apps/api/src` при текущем скане не найдено: неясно.

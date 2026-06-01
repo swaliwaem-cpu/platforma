@@ -35,9 +35,12 @@ test('feed import workspace package exposes first-stage scripts and XML parser d
 test('feed import package keeps source feed fixtures close to parser tests', () => {
   const yandexFixture = resolve(fixtureDir, 'yandex.xml');
   const cianFixture = resolve(fixtureDir, 'MNF_Cian_5827_.xml');
+  const tektaFixture = resolve(fixtureDir, 'tekta.xml');
 
   assert.equal(existsSync(yandexFixture), true);
   assert.equal(existsSync(cianFixture), true);
+  assert.equal(existsSync(tektaFixture), true);
   assert.match(readFileSync(yandexFixture, 'utf8'), /<realty-feed\b/);
   assert.match(readFileSync(cianFixture, 'utf8'), /<feed>/);
+  assert.match(readFileSync(tektaFixture, 'utf8'), /<projects>\s*<project>/);
 });

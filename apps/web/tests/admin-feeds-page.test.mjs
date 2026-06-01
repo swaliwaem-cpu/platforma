@@ -184,6 +184,20 @@ test('feeds admin page auto-detects URL feed kind before falling back to index X
   assert.match(source, /resolvedAnalysisForm/);
 });
 
+test('feeds admin page keeps the submitted source after feed analysis', () => {
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.match(source, /url:\s*resolvedAnalysisForm\.url/);
+  assert.match(source, /xmlFile:\s*resolvedAnalysisForm\.xmlFile/);
+});
+
+test('feeds admin page does not reset the create form on access token refresh', () => {
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.match(source, /didFormRouteChange/);
+  assert.doesNotMatch(source, /if \(isCreateRoute\) \{\n\s*setForm\(emptySourceForm\)/);
+});
+
 test('feeds admin page loads every object page for the linked object selector', () => {
   const source = readFileSync(sourcePath, 'utf8');
 

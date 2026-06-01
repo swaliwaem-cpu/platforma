@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeftIcon,
   EyeIcon,
@@ -199,6 +199,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
 
     return match?.[1] ?? null;
   }, [pathname]);
+  const previousSourceFormRouteKeyRef = useRef<string | null>(null);
   const isCreateRoute = pathname === '/admin/feeds/new';
   const isListRoute = pathname === '/admin/feeds';
   const isFormRoute = isCreateRoute || Boolean(editSourceId);
@@ -229,23 +230,33 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
       return;
     }
 
+    const currentSourceFormRouteKey = isCreateRoute ? 'new' : editSourceId ? `edit:${editSourceId}` : 'list';
+    const didFormRouteChange = previousSourceFormRouteKeyRef.current !== currentSourceFormRouteKey;
+    previousSourceFormRouteKeyRef.current = currentSourceFormRouteKey;
+
     if (isCreateRoute) {
-      setForm(emptySourceForm);
-      setSelectedSourceId(null);
-      setSelectedRun(null);
-      setRuns([]);
-      setUnits([]);
-      setHasDiscountUnitPrices(false);
-      setSourceAnalysis(null);
+      if (didFormRouteChange) {
+        setForm(emptySourceForm);
+        setSelectedSourceId(null);
+        setSelectedRun(null);
+        setRuns([]);
+        setUnits([]);
+        setHasDiscountUnitPrices(false);
+        setSourceAnalysis(null);
+        setError(null);
+        setNotice(null);
+      }
+
       setIsLoadingSources(false);
       setIsLoadingForm(false);
-      setError(null);
-      setNotice(null);
       return;
     }
 
     if (editSourceId) {
-      void loadSourceForEdit(editSourceId);
+      if (didFormRouteChange) {
+        void loadSourceForEdit(editSourceId);
+      }
+
       return;
     }
 
@@ -657,6 +668,8 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
         return {
           ...currentForm,
           sourceKind: resolvedAnalysisForm.sourceKind,
+          url: resolvedAnalysisForm.url,
+          xmlFile: resolvedAnalysisForm.xmlFile,
           format: analysis.format,
           developerId: developerId || mappedDeveloperId,
           objectId: mappings.length > 0 ? '' : currentForm.objectId,

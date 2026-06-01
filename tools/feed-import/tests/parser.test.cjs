@@ -7,6 +7,7 @@ const {
   AvitoXmlFeedParser,
   CianXmlFeedParser,
   FskXmlFeedParser,
+  TektaXmlFeedParser,
   YandexRealtyFeedParser,
   analyzeFeedSourceInput,
   createFeedSourceAnalysis,
@@ -736,6 +737,79 @@ test('createFeedSourceAnalysis summarizes FSK objects for automatic mapping', ()
   });
 });
 
+test('TektaXmlFeedParser normalizes flats and offices while skipping hidden statuses and parking', () => {
+  const parser = new TektaXmlFeedParser();
+
+  const result = parser.parse(readFixture('tekta.xml'));
+  const first = result.units[0];
+  const office = result.units.find((unit) => unit.externalId === 'tekta-office-201');
+
+  assert.equal(result.units.length, 6);
+  assert.deepEqual(result.warnings, []);
+  assert.equal(first.externalId, 'tekta-flat-101');
+  assert.equal(first.type, 'RESIDENTIAL');
+  assert.equal(first.status, 'AVAILABLE');
+  assert.equal(first.title, 'Квартира №101');
+  assert.equal(first.projectName, 'TWELVE');
+  assert.equal(first.address, 'г. Москва, ЮАО, Электролитный');
+  assert.equal(first.building, 'TW1');
+  assert.equal(first.section, '1');
+  assert.equal(first.floor, 12);
+  assert.equal(first.rooms, 2);
+  assert.equal(first.price, '25000000.00');
+  assert.equal(first.discountPrice, '24000000.00');
+  assert.equal(first.effectivePrice, '24000000.00');
+  assert.equal(first.pricePerMeter, '500000.00');
+  assert.equal(first.discountPricePerMeter, '480000.00');
+  assert.equal(first.effectivePricePerMeter, '480000.00');
+  assert.equal(first.area, '50.00');
+  assert.equal(first.completionYear, 2026);
+  assert.equal(first.completionQuarter, 1);
+  assert.equal(first.residentialDetails.apartmentNumber, '101');
+  assert.equal(first.residentialDetails.layoutType, '2Е');
+  assert.equal(first.residentialDetails.livingArea, '30.00');
+  assert.equal(first.residentialDetails.balconyCount, 1);
+  assert.equal(first.commercialDetails, null);
+  assert.equal(office.type, 'COMMERCIAL');
+  assert.equal(office.title, 'Офис №201');
+  assert.equal(office.commercialDetails.commercialType, 'Офис');
+  assert.equal(office.commercialDetails.ceilingHeight, '4.20');
+  assert.equal(office.commercialDetails.powerKw, '25.00');
+  assert.deepEqual(
+    result.units.map((unit) => [unit.externalId, unit.status]),
+    [
+      ['tekta-flat-101', 'AVAILABLE'],
+      ['tekta-flat-102', 'BOOKED'],
+      ['tekta-flat-103', 'BOOKED'],
+      ['tekta-flat-104', 'RESERVED'],
+      ['tekta-flat-105', 'SOLD'],
+      ['tekta-office-201', 'AVAILABLE'],
+    ],
+  );
+  assert.equal(result.units.some((unit) => unit.externalId === 'tekta-flat-106'), false);
+  assert.equal(result.units.some((unit) => unit.externalId === 'tekta-flat-107'), false);
+  assert.equal(result.units.some((unit) => unit.externalId === 'tekta-parking-301'), false);
+});
+
+test('createFeedSourceAnalysis summarizes Tekta XML objects for automatic mapping', () => {
+  const parser = new TektaXmlFeedParser();
+  const parsed = parser.parse(readFixture('tekta.xml'));
+
+  const analysis = createFeedSourceAnalysis('TEKTA_XML', parsed);
+
+  assert.equal(analysis.format, 'TEKTA_XML');
+  assert.equal(analysis.developerName, 'Tekta');
+  assert.equal(analysis.unitsCount, 6);
+  assert.deepEqual(
+    analysis.objects.map((object) => [object.title, object.unitsCount]),
+    [['TWELVE', 6]],
+  );
+  assert.deepEqual(analysis.objects[0].projectNames, ['TWELVE']);
+  assert.deepEqual(analysis.objects[0].filterJson, {
+    projectNames: ['TWELVE'],
+  });
+});
+
 test('detectFeedFormatFromXml detects supported XML roots', () => {
   assert.equal(detectFeedFormatFromXml(makeIndexYandexXml()), 'YANDEX_REALTY');
   assert.equal(detectFeedFormatFromXml(makeIndexCianXml()), 'CIAN_XML');
@@ -743,6 +817,7 @@ test('detectFeedFormatFromXml detects supported XML roots', () => {
   assert.equal(detectFeedFormatFromXml(makeStoneCianLikeRealtyFeedXml()), 'CIAN_XML');
   assert.equal(detectFeedFormatFromXml(makeIndexAvitoXml()), 'AVITO_XML');
   assert.equal(detectFeedFormatFromXml(makeFskXml()), 'FSK_XML');
+  assert.equal(detectFeedFormatFromXml(readFixture('tekta.xml')), 'TEKTA_XML');
   assert.equal(detectFeedFormatFromXml('<unknown-feed />'), null);
 });
 

@@ -26,7 +26,7 @@ const feedRunQueueConcurrency = 3;
 const feedPreviewCommandTimeoutMs = 1000 * 60 * 30;
 const feedRunCommandTimeoutMs = 1000 * 60 * 180;
 const supportedFeedSourceKinds = ['URL', 'FILE', 'INDEX_URL'] as const;
-const supportedFeedSourceFormats = ['YANDEX_REALTY', 'CIAN_XML', 'AVITO_XML', 'FSK_XML'] as const;
+const supportedFeedSourceFormats = ['YANDEX_REALTY', 'CIAN_XML', 'AVITO_XML', 'FSK_XML', 'TEKTA_XML'] as const;
 
 type FeedImportCommand = 'preview' | 'run';
 type AnalyzeFeedFormat = FeedFormat | 'AUTO';

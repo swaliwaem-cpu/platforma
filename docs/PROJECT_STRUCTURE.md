@@ -176,7 +176,7 @@ Env example: `tools/wp-import/.env.example`.
 - `tools/feed-import/src/storage.ts` - media storage.
 - `tools/feed-import/src/image-variants.ts` - image variants.
 
-Поддержанные форматы подтверждены `tools/feed-import/src/index.ts`: `YANDEX_REALTY`, `CIAN_XML`, `AVITO_XML`, `FSK_XML`.
+Поддержанные форматы подтверждены `tools/feed-import/src/index.ts`: `YANDEX_REALTY`, `CIAN_XML`, `AVITO_XML`, `FSK_XML`, `TEKTA_XML`.
 
 Tests: `tools/feed-import/tests`.
 

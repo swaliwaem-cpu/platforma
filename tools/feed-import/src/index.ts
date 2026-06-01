@@ -705,6 +705,175 @@ export class FskXmlFeedParser implements FeedParser {
   }
 }
 
+type TektaProjectContext = {
+  projectName: string | null;
+  address: string | null;
+  completionYear: number | null;
+  completionQuarter: number | null;
+};
+
+type TektaUnitKind = 'flat' | 'office';
+
+export class TektaXmlFeedParser implements FeedParser {
+  parse(xml: string): FeedParseResult {
+    const root = parseXml(xml);
+    const projects = asRecord(root.projects);
+
+    if (!projects) {
+      throw new Error('Tekta XML feed must contain <projects>');
+    }
+
+    const warnings: FeedParserWarning[] = [];
+    const units: NormalizedFeedUnit[] = [];
+
+    for (const projectNode of toArray(projects.project)) {
+      const project = asRecord(projectNode);
+
+      if (!project) {
+        continue;
+      }
+
+      const context = createTektaProjectContext(project);
+      const flats = asRecord(project.flats);
+      const offices = asRecord(project.offices);
+
+      for (const flatNode of toArray(flats?.flat)) {
+        const flat = asRecord(flatNode);
+
+        if (!flat) {
+          continue;
+        }
+
+        const unit = this.normalizeUnit(flat, 'flat', context, warnings);
+
+        if (unit) {
+          units.push(unit);
+        }
+      }
+
+      for (const officeNode of toArray(offices?.office)) {
+        const office = asRecord(officeNode);
+
+        if (!office) {
+          continue;
+        }
+
+        const unit = this.normalizeUnit(office, 'office', context, warnings);
+
+        if (unit) {
+          units.push(unit);
+        }
+      }
+    }
+
+    return { units, warnings };
+  }
+
+  private normalizeUnit(
+    unit: XmlRecord,
+    kind: TektaUnitKind,
+    context: TektaProjectContext,
+    warnings: FeedParserWarning[],
+  ): NormalizedFeedUnit | null {
+    const externalId = getTektaExternalId(unit, kind);
+
+    if (!externalId) {
+      warnings.push({
+        code: 'MISSING_EXTERNAL_ID',
+        field: 'externalId',
+        message: `Tekta ${kind} is missing id`,
+      });
+      return null;
+    }
+
+    const statusResult = normalizeTektaFeedUnitStatus(unit.Status);
+
+    if (!statusResult) {
+      return null;
+    }
+
+    if (statusResult.warning) {
+      warnings.push(withExternalId(statusResult.warning, externalId));
+    }
+
+    const type: NormalizedFeedUnitType = kind === 'office' ? 'COMMERCIAL' : 'RESIDENTIAL';
+    const price = normalizeDecimal(unit.IntCost, 'price', externalId, warnings);
+    const discountPrice = normalizePositiveDecimal(unit.IntDiscountedCostForSite, 'discountPrice', externalId, warnings);
+    const effectivePrice = discountPrice ?? price;
+    const area = normalizeDecimal(unit.IntProjectedArea, 'area', externalId, warnings);
+    const pricePerMeter = normalizeDecimal(unit.IntPerSquareMeterPrice, 'pricePerMeter', externalId, warnings) ?? calculatePricePerMeter(price, area);
+    const discountPricePerMeter =
+      normalizePositiveDecimal(unit.IntDiscountedPriceForSite, 'discountPricePerMeter', externalId, warnings) ??
+      calculatePricePerMeter(discountPrice, area);
+    const effectivePricePerMeter = discountPricePerMeter ?? pricePerMeter;
+    const apartmentNumber = getTektaUnitNumber(unit, kind);
+
+    return {
+      externalId,
+      type,
+      status: statusResult.status,
+      title: buildTektaTitle(unit, kind, apartmentNumber),
+      projectName: getText(unit.Project) ?? context.projectName,
+      address: context.address,
+      building: getText(unit.Korpus),
+      section: getText(unit.IntSection),
+      floor: normalizeInteger(unit.IntStorey, 'floor', externalId, warnings),
+      rooms: kind === 'flat' ? normalizeTektaRooms(unit, externalId, warnings) : null,
+      price,
+      discountPrice,
+      effectivePrice,
+      currency: 'RUR',
+      area,
+      pricePerMeter,
+      discountPricePerMeter,
+      effectivePricePerMeter,
+      completionYear: context.completionYear,
+      completionQuarter: context.completionQuarter,
+      rawPayload: {
+        ...unit,
+        DeveloperName: 'Tekta',
+        TektaProjectName: context.projectName,
+      },
+      media: collectTektaMedia(unit),
+      residentialDetails:
+        type === 'RESIDENTIAL'
+          ? {
+              apartmentNumber,
+              layoutType: getText(unit.Roominess),
+              livingArea: normalizeDecimal(unit.IntLivingAreaByBTI, 'livingArea', externalId, warnings),
+              kitchenArea: null,
+              balconyCount: normalizeInteger(unit.IntLoggia, 'balconyCount', externalId, warnings),
+              detailsJson: {
+                objectIntName: getText(unit.ObjectIntName),
+                objectType: getText(unit.ObjectType),
+                roominess: getText(unit.Roominess),
+                numberOnVenue: getText(unit.IntNumberOnVenue),
+                decoration: getText(unit.IntDecorationType),
+                ceilingHeight: normalizeDecimal(unit.IntCeilingHeight, 'ceilingHeight', externalId, warnings),
+                corpusNumber: getText(unit.Korpusnumber),
+              },
+            }
+          : null,
+      commercialDetails:
+        type === 'COMMERCIAL'
+          ? {
+              commercialType: getText(unit.IntOfficeType) ?? getText(unit.ObjectType),
+              entrance: null,
+              ceilingHeight: normalizeDecimal(unit.IntCeilingHeight, 'ceilingHeight', externalId, warnings),
+              powerKw: normalizeDecimal(unit.IntPowerSupplyKW, 'powerKw', externalId, warnings),
+              separateEntrance: normalizeBoolean(unit.IntSeparateInput),
+              detailsJson: {
+                officeIntName: getText(unit.officeIntName),
+                objectType: getText(unit.ObjectType),
+                numberOnVenue: getText(unit.IntNumberOnVenue),
+                corpusNumber: getText(unit.Korpusnumber),
+              },
+            }
+          : null,
+    };
+  }
+}
+
 function getGlobalFetch(): FeedFetch {
   if (typeof globalThis.fetch !== 'function') {
     throw new Error('Global fetch is unavailable for feed XML download');
@@ -824,6 +993,17 @@ function normalizeDecimal(
   }
 
   return formatDecimal(numeric);
+}
+
+function normalizePositiveDecimal(
+  value: unknown,
+  field: string,
+  externalId: string,
+  warnings: FeedParserWarning[],
+) {
+  const decimal = normalizeDecimal(value, field, externalId, warnings);
+
+  return decimal !== null && Number(decimal) > 0 ? decimal : null;
 }
 
 function getDecimalText(value: unknown): string | null {
@@ -1277,6 +1457,151 @@ function collectFskMedia(
   return media;
 }
 
+function createTektaProjectContext(project: XmlRecord): TektaProjectContext {
+  const completion = parseTektaCompletion(getText(project.IntEstimatedCompletionDate));
+
+  return {
+    projectName: getText(project.IntName),
+    address: getText(project.IntBuildingAddress) ?? getText(project.IntPostAdress),
+    completionYear: completion.year,
+    completionQuarter: completion.quarter,
+  };
+}
+
+function getTektaExternalId(unit: XmlRecord, kind: TektaUnitKind) {
+  return (
+    getText(kind === 'office' ? unit.officeId : unit.ObjectId) ??
+    getText(kind === 'office' ? unit.officeIntName : unit.ObjectIntName)
+  );
+}
+
+function getTektaUnitNumber(unit: XmlRecord, kind: TektaUnitKind) {
+  return (
+    getText(unit.IntProjectNumber) ??
+    getText(kind === 'office' ? unit.officeIntName : unit.IntBTINumber) ??
+    getText(kind === 'office' ? unit.officeId : unit.ObjectId)
+  );
+}
+
+function normalizeTektaFeedUnitStatus(value: unknown): FeedStatusNormalizationResult | null {
+  const rawStatus = getText(value);
+  const normalized = normalizeFilterText(rawStatus ?? '');
+
+  if (normalized === 'сдан' || normalized === 'скрывать на сайте') {
+    return null;
+  }
+
+  if (normalized === 'свободен') {
+    return { status: 'AVAILABLE' };
+  }
+
+  if (normalized === 'устная бронь' || normalized === 'платная бронь') {
+    return { status: 'BOOKED' };
+  }
+
+  if (normalized === 'резерв') {
+    return { status: 'RESERVED' };
+  }
+
+  if (normalized === 'продан') {
+    return { status: 'SOLD' };
+  }
+
+  if (normalized === 'снято с продажи') {
+    return { status: 'ARCHIVED' };
+  }
+
+  return {
+    status: 'UNKNOWN',
+    warning: {
+      code: 'UNKNOWN_STATUS',
+      field: 'status',
+      message: `Unknown Tekta feed unit status: ${rawStatus ?? 'empty'}`,
+      value: rawStatus,
+    },
+  };
+}
+
+function buildTektaTitle(unit: XmlRecord, kind: TektaUnitKind, number: string | null) {
+  const label = kind === 'office' ? 'Офис' : 'Квартира';
+
+  if (number) {
+    return `${label} №${number}`;
+  }
+
+  return joinTitleParts([label, getText(unit.Project), getText(unit.Korpus)]);
+}
+
+function normalizeTektaRooms(unit: XmlRecord, externalId: string, warnings: FeedParserWarning[]) {
+  const layoutType = normalizeFilterText(getText(unit.Roominess) ?? '');
+
+  if (layoutType.includes('ст') || /^[0-9]*с$/u.test(layoutType)) {
+    return 0;
+  }
+
+  return normalizeInteger(unit.IntRoomCount, 'rooms', externalId, warnings);
+}
+
+function parseTektaCompletion(value: string | null): { year: number | null; quarter: number | null } {
+  if (!value) {
+    return { year: null, quarter: null };
+  }
+
+  const yearMatch = value.match(/\b(20\d{2})\b/u);
+  const year = yearMatch ? Number(yearMatch[1]) : null;
+
+  if (!year) {
+    return { year: null, quarter: null };
+  }
+
+  const normalized = normalizeFilterText(value);
+  const monthQuarters: Array<[string, number]> = [
+    ['январ', 1],
+    ['феврал', 1],
+    ['март', 1],
+    ['апрел', 2],
+    ['май', 2],
+    ['мая', 2],
+    ['июн', 2],
+    ['июл', 3],
+    ['август', 3],
+    ['сентябр', 3],
+    ['октябр', 4],
+    ['ноябр', 4],
+    ['декабр', 4],
+  ];
+  const quarter = monthQuarters.find(([month]) => normalized.includes(month))?.[1] ?? null;
+
+  return { year, quarter };
+}
+
+function collectTektaMedia(unit: XmlRecord): NormalizedFeedMedia[] {
+  const media: NormalizedFeedMedia[] = [];
+  const seen = new Set<string>();
+  const mediaFields: Array<[unknown, string]> = [
+    [unit.IntLayoutCode, 'layout'],
+    [unit.IntLinkPhoto, 'photo'],
+    [unit.IntProjectPhoto, 'photo'],
+  ];
+
+  for (const [value, label] of mediaFields) {
+    const sourceUrl = getText(value);
+
+    if (!sourceUrl || !isHttpUrl(sourceUrl) || seen.has(sourceUrl)) {
+      continue;
+    }
+
+    seen.add(sourceUrl);
+    media.push({
+      sourceUrl,
+      sortOrder: media.length,
+      label,
+    });
+  }
+
+  return media;
+}
+
 function getXmlAttribute(record: XmlRecord, name: string) {
   return getText(record[`@_${name}`]);
 }
@@ -1333,7 +1658,7 @@ function isHttpUrl(value: string) {
 
 type ImportModeValue = 'PREVIEW' | 'RUN';
 type ImportStatusValue = 'PENDING' | 'SUCCESS' | 'PARTIAL' | 'FAILED';
-type FeedSourceFormat = 'YANDEX_REALTY' | 'CIAN_XML' | 'AVITO_XML' | 'FSK_XML';
+type FeedSourceFormat = 'YANDEX_REALTY' | 'CIAN_XML' | 'AVITO_XML' | 'FSK_XML' | 'TEKTA_XML';
 type FeedAnalyzeFormat = FeedSourceFormat | 'AUTO';
 type FeedSourceKind = 'URL' | 'FILE' | 'INDEX_URL';
 type FeedUnitStatusValue = NormalizedFeedUnitStatus;
@@ -1349,7 +1674,7 @@ type FeedIndexLinkCandidate = {
 };
 
 const activeFeedUnitStatuses: FeedUnitStatusValue[] = ['AVAILABLE', 'BOOKED', 'RESERVED'];
-const supportedFeedSourceFormats: FeedSourceFormat[] = ['YANDEX_REALTY', 'CIAN_XML', 'AVITO_XML', 'FSK_XML'];
+const supportedFeedSourceFormats: FeedSourceFormat[] = ['YANDEX_REALTY', 'CIAN_XML', 'AVITO_XML', 'FSK_XML', 'TEKTA_XML'];
 
 type FeedSourceXmlFileRecord = {
   id: string;
@@ -1998,7 +2323,13 @@ export function parseFeedAnalyzeCliArgs(args: string[]): ParsedFeedAnalyzeCliArg
 function parseFeedSourceFormatCliValue(value: string): FeedAnalyzeFormat | null {
   const normalized = value.trim().toUpperCase();
 
-  if (normalized === 'YANDEX_REALTY' || normalized === 'CIAN_XML' || normalized === 'AVITO_XML' || normalized === 'FSK_XML') {
+  if (
+    normalized === 'YANDEX_REALTY' ||
+    normalized === 'CIAN_XML' ||
+    normalized === 'AVITO_XML' ||
+    normalized === 'FSK_XML' ||
+    normalized === 'TEKTA_XML'
+  ) {
     return normalized;
   }
 
@@ -2036,6 +2367,10 @@ export function createFeedParserForFormat(format: FeedSourceFormat): FeedParser 
     return new FskXmlFeedParser();
   }
 
+  if (format === 'TEKTA_XML') {
+    return new TektaXmlFeedParser();
+  }
+
   throw new Error(`Unsupported feed format: ${format satisfies never}`);
 }
 
@@ -2068,6 +2403,12 @@ export function detectFeedFormatFromXml(xml: string): FeedSourceFormat | null {
 
     if (fskData && isFskFeedRoot(fskData)) {
       return 'FSK_XML';
+    }
+
+    const tektaProjects = asRecord(root.projects);
+
+    if (tektaProjects && isTektaFeedRoot(tektaProjects)) {
+      return 'TEKTA_XML';
     }
   } catch {
     return null;
@@ -2109,6 +2450,18 @@ function isFskFeedRoot(data: XmlRecord) {
         .filter((object): object is XmlRecord => object !== null)
         .some((object) => hasXmlNodes(asRecord(object.Buildings)?.Corpus)),
     );
+}
+
+function isTektaFeedRoot(projects: XmlRecord) {
+  return toArray(projects.project)
+    .map(asRecord)
+    .filter((project): project is XmlRecord => project !== null)
+    .some((project) => {
+      const flats = asRecord(project.flats);
+      const offices = asRecord(project.offices);
+
+      return hasXmlNodes(flats?.flat) || hasXmlNodes(offices?.office);
+    });
 }
 
 function hasXmlNodes(value: unknown): boolean {
@@ -2400,6 +2753,10 @@ function getFeedFormatLabel(format: FeedSourceFormat) {
 
   if (format === 'FSK_XML') {
     return 'FSK XML';
+  }
+
+  if (format === 'TEKTA_XML') {
+    return 'Tekta XML';
   }
 
   return format satisfies never;
@@ -2976,6 +3333,7 @@ function shouldUseApartmentNumberTitleForSource(unit: NormalizedFeedUnit, source
     unit.type === 'RESIDENTIAL' &&
     Boolean(unit.residentialDetails?.apartmentNumber) &&
     (unitFormat === 'FSK_XML' ||
+      unitFormat === 'TEKTA_XML' ||
       (unitFormat === 'CIAN_XML' && (isMrGroupFeedSource(source) || isMangazeyaFeedSource(source))))
   );
 }

@@ -286,7 +286,7 @@ test('FeedsService validates feed source kind literals without relying on genera
 test('FeedsService validates feed format literals without relying on generated Prisma enum values', () => {
   const source = readFileSync(feedsServiceSourcePath, 'utf8');
 
-  assert.match(source, /const supportedFeedSourceFormats = \['YANDEX_REALTY', 'CIAN_XML', 'AVITO_XML', 'FSK_XML'\] as const;/);
+  assert.match(source, /const supportedFeedSourceFormats = \['YANDEX_REALTY', 'CIAN_XML', 'AVITO_XML', 'FSK_XML', 'TEKTA_XML'\] as const;/);
   assert.match(source, /supportedFeedSourceFormats\.includes\(format as SupportedFeedSourceFormat\)/);
   assert.doesNotMatch(source, /Object\.values\(FeedFormat\)\.includes\(format as FeedFormat\)/);
 });
@@ -638,7 +638,7 @@ test('FeedsService creates feed sources with multi-object mappings and no fallba
   assert.equal(created.source.mappings[1].objectId, secondObjectId);
 });
 
-test('FeedsService creates index URL feed sources with concrete format', async () => {
+test('FeedsService creates index URL feed sources with concrete Tekta format', async () => {
   const calls = [];
   const prisma = {
     developer: {
@@ -664,19 +664,26 @@ test('FeedsService creates index URL feed sources with concrete format', async (
 
   const created = await service.createSource({
     sourceKind: 'index_url',
-    url: 'https://feeds.sminex.test/xml/',
-    format: 'CIAN_XML',
+    url: 'https://docs.google.com/spreadsheets/d/19LTUwo4AN-jxuaoofAr5NlAG3RVweRixFTe5Gt0Exk0/edit?usp=sharing',
+    format: 'TEKTA_XML',
     developerId,
     objectId,
   });
   const createCall = calls.find(([name]) => name === 'feedSource.create')[1];
 
   assert.equal(createCall.data.sourceKind, 'INDEX_URL');
-  assert.equal(createCall.data.url, 'https://feeds.sminex.test/xml/');
+  assert.equal(
+    createCall.data.url,
+    'https://docs.google.com/spreadsheets/d/19LTUwo4AN-jxuaoofAr5NlAG3RVweRixFTe5Gt0Exk0/edit?usp=sharing',
+  );
   assert.equal('xmlFile' in createCall.data, false);
-  assert.equal(createCall.data.format, 'CIAN_XML');
+  assert.equal(createCall.data.format, 'TEKTA_XML');
   assert.equal(created.source.sourceKind, 'INDEX_URL');
-  assert.equal(created.source.url, 'https://feeds.sminex.test/xml/');
+  assert.equal(
+    created.source.url,
+    'https://docs.google.com/spreadsheets/d/19LTUwo4AN-jxuaoofAr5NlAG3RVweRixFTe5Gt0Exk0/edit?usp=sharing',
+  );
+  assert.equal(created.source.format, 'TEKTA_XML');
 });
 
 test('FeedsService rejects persisted auto feed format', async () => {
