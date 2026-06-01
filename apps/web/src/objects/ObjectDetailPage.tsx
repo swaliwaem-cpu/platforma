@@ -3,6 +3,7 @@ import {
   ArrowDownIcon,
   ArrowUpDownIcon,
   ArrowUpIcon,
+  ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   DownloadIcon,
@@ -11,10 +12,12 @@ import {
 } from 'lucide-react';
 import type {
   FeedUnit,
+  FeedUnitGroupSummary,
+  FeedUnitGroupsResponse,
+  FeedUnitRoomGroupSummary,
   FeedUnitResponse,
   FeedUnitStatus,
   FeedUnitType,
-  FeedUnitsResponse,
   ObjectFileType,
   ObjectImageSection,
   ObjectLinkedFile,
@@ -856,12 +859,13 @@ function ObjectFeedUnitsSection({
   accessToken: string;
   object: RealEstateObjectDetail;
 }) {
-  const [units, setUnits] = useState<FeedUnit[]>([]);
+  const [groups, setGroups] = useState<FeedUnitGroupSummary[]>([]);
   const initialFilters = useMemo(() => getInitialObjectFeedUnitFiltersFromLocation(), []);
-  const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
   const [hasDiscountPrices, setHasDiscountPrices] = useState(false);
+  const [expandedCompletionGroups, setExpandedCompletionGroups] = useState<Set<string>>(() => new Set());
+  const [expandedRoomGroups, setExpandedRoomGroups] = useState<Set<string>>(() => new Set());
+  const [visibleRoomLotCounts, setVisibleRoomLotCounts] = useState<Record<string, number>>({});
   const [statusFilter, setStatusFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [priceMinFilter, setPriceMinFilter] = useState(initialFilters.priceMin);
@@ -895,12 +899,8 @@ function ObjectFeedUnitsSection({
       completionYearFilter ||
       completionQuarterFilter,
   );
-  const showFeedUnitsSkeleton = isLoading && units.length === 0;
-  const feedUnitsTableColumnCount = hasDiscountPrices ? 11 : 10;
-  const sortedUnits = useMemo(
-    () => sortFeedUnitsForDisplay(units, sortBy, sortDirection),
-    [sortBy, sortDirection, units],
-  );
+  const showFeedUnitsSkeleton = isLoading && groups.length === 0;
+  const feedUnitsTableColumnCount = 10;
 
   useEffect(() => {
     if (!accessToken) {
@@ -915,10 +915,7 @@ function ObjectFeedUnitsSection({
       setError(null);
 
       try {
-        const params = new URLSearchParams({
-          page: String(page),
-          limit: String(objectFeedUnitsPageSize),
-        });
+        const params = new URLSearchParams();
         params.set('sortBy', sortBy);
         params.set('sortDirection', sortDirection);
 
@@ -944,20 +941,23 @@ function ObjectFeedUnitsSection({
         setOptionalParam(params, 'completionYear', completionYearFilter);
         setOptionalParam(params, 'completionQuarter', completionQuarterFilter);
 
-        const data = await apiRequest<FeedUnitsResponse>(`/objects/${object.id}/feed-units?${params.toString()}`, token);
+        const data = await apiRequest<FeedUnitGroupsResponse>(`/objects/${object.id}/feed-units/groups?${params.toString()}`, token);
 
         if (!isCancelled) {
-          setUnits(data.items);
+          setGroups(data.groups);
           setTotal(data.total);
-          setTotalPages(data.totalPages);
           setHasDiscountPrices(data.hasDiscountPrices);
+          setVisibleRoomLotCounts({});
+          setDefaultExpandedLotGroups(data.groups);
         }
       } catch (caughtError) {
         if (!isCancelled) {
-          setUnits([]);
+          setGroups([]);
           setTotal(0);
-          setTotalPages(1);
           setHasDiscountPrices(false);
+          setExpandedCompletionGroups(new Set());
+          setExpandedRoomGroups(new Set());
+          setVisibleRoomLotCounts({});
           setError(caughtError instanceof Error ? caughtError.message : 'Не удалось загрузить лоты');
         }
       } finally {
@@ -981,7 +981,6 @@ function ObjectFeedUnitsSection({
     floorMaxFilter,
     floorMinFilter,
     object.id,
-    page,
     priceMaxFilter,
     priceMinFilter,
     pricePerMeterMaxFilter,
@@ -992,6 +991,18 @@ function ObjectFeedUnitsSection({
     statusFilter,
     typeFilter,
   ]);
+
+  function setDefaultExpandedLotGroups(nextGroups: FeedUnitGroupSummary[]) {
+    const firstCompletionGroup = nextGroups[0];
+    const firstRoomGroup = firstCompletionGroup?.roomGroups[0];
+
+    setExpandedCompletionGroups(firstCompletionGroup ? new Set([firstCompletionGroup.key]) : new Set());
+    setExpandedRoomGroups(
+      firstCompletionGroup && firstRoomGroup
+        ? new Set([makeRoomGroupExpansionKey(firstCompletionGroup.key, firstRoomGroup.key)])
+        : new Set(),
+    );
+  }
 
   function resetFilters() {
     setStatusFilter('');
@@ -1007,7 +1018,7 @@ function ObjectFeedUnitsSection({
     setFloorMaxFilter('');
     setCompletionYearFilter('');
     setCompletionQuarterFilter('');
-    setPage(1);
+    setVisibleRoomLotCounts({});
   }
 
   function handleSort(field: ObjectFeedUnitSortBy) {
@@ -1015,7 +1026,35 @@ function ObjectFeedUnitsSection({
 
     setSortBy(field);
     setSortDirection(nextDirection);
-    setPage(1);
+    setVisibleRoomLotCounts({});
+  }
+
+  function toggleCompletionGroup(groupKey: string) {
+    setExpandedCompletionGroups((currentGroups) => {
+      const nextGroups = new Set(currentGroups);
+
+      if (nextGroups.has(groupKey)) {
+        nextGroups.delete(groupKey);
+      } else {
+        nextGroups.add(groupKey);
+      }
+
+      return nextGroups;
+    });
+  }
+
+  function toggleRoomGroup(roomExpansionKey: string) {
+    setExpandedRoomGroups((currentGroups) => {
+      const nextGroups = new Set(currentGroups);
+
+      if (nextGroups.has(roomExpansionKey)) {
+        nextGroups.delete(roomExpansionKey);
+      } else {
+        nextGroups.add(roomExpansionKey);
+      }
+
+      return nextGroups;
+    });
   }
 
   return (
@@ -1036,7 +1075,7 @@ function ObjectFeedUnitsSection({
             value={statusFilter}
             onChange={(event) => {
               setStatusFilter(event.target.value);
-              setPage(1);
+              setVisibleRoomLotCounts({});
             }}
           >
             <option value="">Доступные и резерв</option>
@@ -1055,7 +1094,7 @@ function ObjectFeedUnitsSection({
             value={typeFilter}
             onChange={(event) => {
               setTypeFilter(event.target.value);
-              setPage(1);
+              setVisibleRoomLotCounts({});
             }}
           >
             <option value="">Все типы</option>
@@ -1076,7 +1115,7 @@ function ObjectFeedUnitsSection({
             value={formatGroupedNumberInputValue(priceMinFilter)}
             onChange={(event) => {
               setPriceMinFilter(sanitizeDecimalText(event.target.value));
-              setPage(1);
+              setVisibleRoomLotCounts({});
             }}
           />
         </label>
@@ -1090,7 +1129,7 @@ function ObjectFeedUnitsSection({
             value={formatGroupedNumberInputValue(priceMaxFilter)}
             onChange={(event) => {
               setPriceMaxFilter(sanitizeDecimalText(event.target.value));
-              setPage(1);
+              setVisibleRoomLotCounts({});
             }}
           />
         </label>
@@ -1104,7 +1143,7 @@ function ObjectFeedUnitsSection({
             value={formatGroupedNumberInputValue(pricePerMeterMinFilter)}
             onChange={(event) => {
               setPricePerMeterMinFilter(sanitizeDecimalText(event.target.value));
-              setPage(1);
+              setVisibleRoomLotCounts({});
             }}
           />
         </label>
@@ -1118,7 +1157,7 @@ function ObjectFeedUnitsSection({
             value={formatGroupedNumberInputValue(pricePerMeterMaxFilter)}
             onChange={(event) => {
               setPricePerMeterMaxFilter(sanitizeDecimalText(event.target.value));
-              setPage(1);
+              setVisibleRoomLotCounts({});
             }}
           />
         </label>
@@ -1132,7 +1171,7 @@ function ObjectFeedUnitsSection({
             value={areaMinFilter}
             onChange={(event) => {
               setAreaMinFilter(sanitizeDecimalText(event.target.value));
-              setPage(1);
+              setVisibleRoomLotCounts({});
             }}
           />
         </label>
@@ -1146,7 +1185,7 @@ function ObjectFeedUnitsSection({
             value={areaMaxFilter}
             onChange={(event) => {
               setAreaMaxFilter(sanitizeDecimalText(event.target.value));
-              setPage(1);
+              setVisibleRoomLotCounts({});
             }}
           />
         </label>
@@ -1160,7 +1199,7 @@ function ObjectFeedUnitsSection({
             values={getFeedUnitRoomFilterValues(roomFilter)}
             onChange={(values) => {
               setRoomFilter(formatFeedUnitRoomFilterValues(values));
-              setPage(1);
+              setVisibleRoomLotCounts({});
             }}
           />
         </label>
@@ -1174,7 +1213,7 @@ function ObjectFeedUnitsSection({
             value={floorMinFilter}
             onChange={(event) => {
               setFloorMinFilter(sanitizeIntegerText(event.target.value, 3));
-              setPage(1);
+              setVisibleRoomLotCounts({});
             }}
           />
         </label>
@@ -1188,7 +1227,7 @@ function ObjectFeedUnitsSection({
             value={floorMaxFilter}
             onChange={(event) => {
               setFloorMaxFilter(sanitizeIntegerText(event.target.value, 3));
-              setPage(1);
+              setVisibleRoomLotCounts({});
             }}
           />
         </label>
@@ -1207,7 +1246,7 @@ function ObjectFeedUnitsSection({
               if (!nextYear) {
                 setCompletionQuarterFilter('');
               }
-              setPage(1);
+              setVisibleRoomLotCounts({});
             }}
           />
         </label>
@@ -1220,7 +1259,7 @@ function ObjectFeedUnitsSection({
             value={completionQuarterFilter}
             onChange={(event) => {
               setCompletionQuarterFilter(event.target.value);
-              setPage(1);
+              setVisibleRoomLotCounts({});
             }}
           >
             <option value="">Любой</option>
@@ -1237,158 +1276,245 @@ function ObjectFeedUnitsSection({
         </button>
       </div>
 
-      <div className="table-scroll object-feed-units-table-wrap">
-        <Table className="object-feed-units-table">
-          <TableHeader>
-            <TableRow>
-              <ObjectFeedSortableHead
-                field="title"
-                sortBy={sortBy}
-                sortDirection={sortDirection}
-                onSort={handleSort}
-              >
-                Лот
-              </ObjectFeedSortableHead>
-              <ObjectFeedSortableHead
-                field="status"
-                sortBy={sortBy}
-                sortDirection={sortDirection}
-                onSort={handleSort}
-              >
-                Статус
-              </ObjectFeedSortableHead>
-              <ObjectFeedSortableHead
-                field="price"
-                sortBy={sortBy}
-                sortDirection={sortDirection}
-                onSort={handleSort}
-              >
-                Цена
-              </ObjectFeedSortableHead>
-              {hasDiscountPrices ? (
-                <ObjectFeedSortableHead
-                  field="price"
-                  sortBy={sortBy}
-                  sortDirection={sortDirection}
-                  onSort={handleSort}
-                >
-                  Цена со скидкой
-                </ObjectFeedSortableHead>
-              ) : null}
-              <ObjectFeedSortableHead
-                field="pricePerMeter"
-                sortBy={sortBy}
-                sortDirection={sortDirection}
-                onSort={handleSort}
-              >
-                Цена за м²
-              </ObjectFeedSortableHead>
-              <ObjectFeedSortableHead
-                field="area"
-                sortBy={sortBy}
-                sortDirection={sortDirection}
-                onSort={handleSort}
-              >
-                Площадь
-              </ObjectFeedSortableHead>
-              <ObjectFeedSortableHead
-                field="rooms"
-                sortBy={sortBy}
-                sortDirection={sortDirection}
-                onSort={handleSort}
-              >
-                Комнаты/тип
-              </ObjectFeedSortableHead>
-              <ObjectFeedSortableHead
-                field="floor"
-                sortBy={sortBy}
-                sortDirection={sortDirection}
-                onSort={handleSort}
-              >
-                Этаж
-              </ObjectFeedSortableHead>
-              <ObjectFeedSortableHead
-                field="building"
-                sortBy={sortBy}
-                sortDirection={sortDirection}
-                onSort={handleSort}
-              >
-                Корпус/секция
-              </ObjectFeedSortableHead>
-              <TableHead>Срок сдачи</TableHead>
-              <TableHead>Медиа</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {showFeedUnitsSkeleton ? <ObjectFeedUnitsTableSkeleton columnsCount={feedUnitsTableColumnCount} /> : null}
-
-            {!error
-              ? sortedUnits.map((unit) => (
-                  <ObjectFeedUnitRow
-                    accessToken={accessToken}
-                    key={unit.id}
-                    objectSlug={object.slug}
-                    showDiscountPrice={hasDiscountPrices}
-                    unit={unit}
-                    onOpenMedia={setMediaCarouselUnit}
-                  />
-                ))
-              : null}
-
-            {!showFeedUnitsSkeleton && error ? (
-              <TableRow>
-                <TableCell colSpan={feedUnitsTableColumnCount}>
-                  <div className="object-feed-units-state object-feed-units-state--error">
-                    <strong>Не удалось загрузить лоты</strong>
-                    <span>{error}</span>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ) : null}
-
-            {!showFeedUnitsSkeleton && !error && units.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={feedUnitsTableColumnCount}>
-                  <div className="object-feed-units-state">
-                    <strong>Лоты не найдены</strong>
-                    <span>Запустите импорт фида или измените фильтры.</span>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ) : null}
-          </TableBody>
-        </Table>
-      </div>
-
-      <div className="object-feed-units-pagination">
-        <span>
-          Страница {page} из {totalPages}
-        </span>
-        <div>
-          <button
-            className="text-button"
-            disabled={page <= 1 || isLoading}
-            type="button"
-            onClick={() => setPage((currentPage) => Math.max(1, currentPage - 1))}
-          >
-            Назад
-          </button>
-          <button
-            className="text-button"
-            disabled={page >= totalPages || isLoading}
-            type="button"
-            onClick={() => setPage((currentPage) => currentPage + 1)}
-          >
-            Вперёд
-          </button>
+      {showFeedUnitsSkeleton ? (
+        <div className="table-scroll object-feed-units-table-wrap">
+          <Table className="object-feed-units-table">
+            <TableBody>
+              <ObjectFeedUnitsTableSkeleton columnsCount={feedUnitsTableColumnCount} />
+            </TableBody>
+          </Table>
         </div>
-      </div>
+      ) : null}
+
+      {!showFeedUnitsSkeleton && error ? (
+        <div className="object-feed-units-state object-feed-units-state--error">
+          <strong>Не удалось загрузить лоты</strong>
+          <span>{error}</span>
+        </div>
+      ) : null}
+
+      {!showFeedUnitsSkeleton && !error && groups.length === 0 ? (
+        <div className="object-feed-units-state">
+          <strong>Лоты не найдены</strong>
+          <span>Запустите импорт фида или измените фильтры.</span>
+        </div>
+      ) : null}
+
+      {!showFeedUnitsSkeleton && !error && groups.length > 0 ? (
+        <div className="object-feed-groups">
+          {groups.map((group) => (
+            <ObjectFeedCompletionGroup
+              accessToken={accessToken}
+              expandedRoomGroups={expandedRoomGroups}
+              group={group}
+              isExpanded={expandedCompletionGroups.has(group.key)}
+              key={group.key}
+              objectSlug={object.slug}
+              sortBy={sortBy}
+              sortDirection={sortDirection}
+              visibleRoomLotCounts={visibleRoomLotCounts}
+              onOpenMedia={setMediaCarouselUnit}
+              onShowMoreLots={(roomExpansionKey, visibleCount) => {
+                setVisibleRoomLotCounts((currentCounts) => ({
+                  ...currentCounts,
+                  [roomExpansionKey]: visibleCount + objectFeedUnitsPageSize,
+                }));
+              }}
+              onSort={handleSort}
+              onToggleCompletionGroup={toggleCompletionGroup}
+              onToggleRoomGroup={toggleRoomGroup}
+            />
+          ))}
+        </div>
+      ) : null}
 
       <ObjectFeedMediaCarousel
         accessToken={accessToken}
         unit={mediaCarouselUnit}
         onClose={() => setMediaCarouselUnit(null)}
       />
+    </section>
+  );
+}
+
+function ObjectFeedCompletionGroup({
+  accessToken,
+  expandedRoomGroups,
+  group,
+  isExpanded,
+  objectSlug,
+  sortBy,
+  sortDirection,
+  visibleRoomLotCounts,
+  onOpenMedia,
+  onShowMoreLots,
+  onSort,
+  onToggleCompletionGroup,
+  onToggleRoomGroup,
+}: {
+  accessToken: string;
+  expandedRoomGroups: Set<string>;
+  group: FeedUnitGroupSummary;
+  isExpanded: boolean;
+  objectSlug: string;
+  sortBy: ObjectFeedUnitSortBy;
+  sortDirection: ObjectFeedUnitSortDirection;
+  visibleRoomLotCounts: Record<string, number>;
+  onOpenMedia: (unit: FeedUnit) => void;
+  onShowMoreLots: (roomExpansionKey: string, visibleCount: number) => void;
+  onSort: (field: ObjectFeedUnitSortBy) => void;
+  onToggleCompletionGroup: (groupKey: string) => void;
+  onToggleRoomGroup: (roomExpansionKey: string) => void;
+}) {
+  const buildingsLabel = group.buildings.length > 0 ? group.buildings.join(', ') : 'Корпуса не указаны';
+
+  return (
+    <section className="object-feed-completion-group">
+      <button
+        aria-expanded={isExpanded}
+        className="object-feed-completion-button"
+        type="button"
+        onClick={() => onToggleCompletionGroup(group.key)}
+      >
+        {isExpanded ? <ChevronDownIcon aria-hidden="true" /> : <ChevronRightIcon aria-hidden="true" />}
+        <span>
+          <strong>{buildingsLabel}</strong>
+          <small>{group.label}</small>
+        </span>
+        <b>{formatNumber(group.total)}</b>
+      </button>
+
+      {isExpanded ? (
+        <div className="object-feed-room-groups">
+          {group.roomGroups.map((roomGroup) => {
+            const roomExpansionKey = makeRoomGroupExpansionKey(group.key, roomGroup.key);
+
+            return (
+              <ObjectFeedRoomGroup
+                accessToken={accessToken}
+                isExpanded={expandedRoomGroups.has(roomExpansionKey)}
+                key={roomExpansionKey}
+                objectSlug={objectSlug}
+                roomExpansionKey={roomExpansionKey}
+                roomGroup={roomGroup}
+                sortBy={sortBy}
+                sortDirection={sortDirection}
+                visibleCount={visibleRoomLotCounts[roomExpansionKey] ?? objectFeedUnitsPageSize}
+                onOpenMedia={onOpenMedia}
+                onShowMoreLots={onShowMoreLots}
+                onSort={onSort}
+                onToggleRoomGroup={onToggleRoomGroup}
+              />
+            );
+          })}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function ObjectFeedRoomGroup({
+  accessToken,
+  isExpanded,
+  objectSlug,
+  roomExpansionKey,
+  roomGroup,
+  sortBy,
+  sortDirection,
+  visibleCount,
+  onOpenMedia,
+  onShowMoreLots,
+  onSort,
+  onToggleRoomGroup,
+}: {
+  accessToken: string;
+  isExpanded: boolean;
+  objectSlug: string;
+  roomExpansionKey: string;
+  roomGroup: FeedUnitRoomGroupSummary;
+  sortBy: ObjectFeedUnitSortBy;
+  sortDirection: ObjectFeedUnitSortDirection;
+  visibleCount: number;
+  onOpenMedia: (unit: FeedUnit) => void;
+  onShowMoreLots: (roomExpansionKey: string, visibleCount: number) => void;
+  onSort: (field: ObjectFeedUnitSortBy) => void;
+  onToggleRoomGroup: (roomExpansionKey: string) => void;
+}) {
+  const visibleItems = roomGroup.items.slice(0, visibleCount);
+  const hiddenItemsCount = Math.max(0, roomGroup.items.length - visibleItems.length);
+
+  return (
+    <section className="object-feed-room-group">
+      <button
+        aria-expanded={isExpanded}
+        className="object-feed-room-row"
+        type="button"
+        onClick={() => onToggleRoomGroup(roomExpansionKey)}
+      >
+        {isExpanded ? <ChevronDownIcon aria-hidden="true" /> : <ChevronRightIcon aria-hidden="true" />}
+        <strong>{roomGroup.label}</strong>
+        <span>{formatFeedUnitRange(roomGroup.areaMin, roomGroup.areaMax, formatArea)}</span>
+        <span>{formatFeedUnitRange(roomGroup.priceMin, roomGroup.priceMax, (value) => formatFeedUnitPrice(value, null))}</span>
+        <b>{formatNumber(roomGroup.total)}</b>
+      </button>
+
+      {isExpanded ? (
+        <>
+          <div className="table-scroll object-feed-units-table-wrap">
+            <Table className="object-feed-units-table">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>План</TableHead>
+                  <ObjectFeedSortableHead field="building" sortBy={sortBy} sortDirection={sortDirection} onSort={onSort}>
+                    Корпус
+                  </ObjectFeedSortableHead>
+                  <TableHead>Секц.</TableHead>
+                  <ObjectFeedSortableHead field="floor" sortBy={sortBy} sortDirection={sortDirection} onSort={onSort}>
+                    Эт.
+                  </ObjectFeedSortableHead>
+                  <ObjectFeedSortableHead field="title" sortBy={sortBy} sortDirection={sortDirection} onSort={onSort}>
+                    Номер квартиры
+                  </ObjectFeedSortableHead>
+                  <ObjectFeedSortableHead field="area" sortBy={sortBy} sortDirection={sortDirection} onSort={onSort}>
+                    Площадь
+                  </ObjectFeedSortableHead>
+                  <ObjectFeedSortableHead field="price" sortBy={sortBy} sortDirection={sortDirection} onSort={onSort}>
+                    Цена
+                  </ObjectFeedSortableHead>
+                  <ObjectFeedSortableHead field="pricePerMeter" sortBy={sortBy} sortDirection={sortDirection} onSort={onSort}>
+                    За м²
+                  </ObjectFeedSortableHead>
+                  <ObjectFeedSortableHead field="status" sortBy={sortBy} sortDirection={sortDirection} onSort={onSort}>
+                    Статус
+                  </ObjectFeedSortableHead>
+                  <TableHead>Медиа</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {visibleItems.map((unit) => (
+                  <ObjectFeedUnitRow
+                    accessToken={accessToken}
+                    key={unit.id}
+                    objectSlug={objectSlug}
+                    unit={unit}
+                    onOpenMedia={onOpenMedia}
+                  />
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+
+          {hiddenItemsCount > 0 ? (
+            <button
+              className="text-button object-feed-room-show-more"
+              type="button"
+              onClick={() => onShowMoreLots(roomExpansionKey, visibleCount)}
+            >
+              Показать еще {formatNumber(Math.min(objectFeedUnitsPageSize, hiddenItemsCount))}
+            </button>
+          ) : null}
+        </>
+      ) : null}
     </section>
   );
 }
@@ -1438,13 +1564,11 @@ function ObjectFeedSortableHead({
 function ObjectFeedUnitRow({
   accessToken,
   objectSlug,
-  showDiscountPrice,
   unit,
   onOpenMedia,
 }: {
   accessToken: string;
   objectSlug: string;
-  showDiscountPrice: boolean;
   unit: FeedUnit;
   onOpenMedia: (unit: FeedUnit) => void;
 }) {
@@ -1476,6 +1600,36 @@ function ObjectFeedUnitRow({
       onKeyDown={handleRowKeyDown}
     >
       <TableCell>
+        {primaryMedia?.file ? (
+          <button
+            aria-label={mediaButtonLabel}
+            className="object-feed-media-button object-feed-media-button--preview"
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenMedia(unit);
+            }}
+          >
+            <span className="object-feed-media-preview">
+              <SecureImage
+                accessToken={accessToken}
+                alt={primaryMedia.label ?? unit.title ?? 'Медиа лота'}
+                className="object-feed-media-image"
+                fileId={primaryMedia.file.id}
+                lazy
+                placeholderClassName="object-feed-media-placeholder"
+                variant="thumbnail"
+              />
+            </span>
+          </button>
+        ) : (
+          <span className="object-feed-media-empty">Нет</span>
+        )}
+      </TableCell>
+      <TableCell>{formatFeedUnitBuildingValue(unit.building)}</TableCell>
+      <TableCell>{formatFeedUnitShortValue(unit.section)}</TableCell>
+      <TableCell>{unit.floor ?? 'Не указан'}</TableCell>
+      <TableCell>
         <div className="object-feed-unit-cell">
           <a
             className="object-feed-unit-link"
@@ -1489,19 +1643,14 @@ function ObjectFeedUnitRow({
           {unit.address ? <span>{unit.address}</span> : null}
         </div>
       </TableCell>
+      <TableCell>{formatArea(unit.area)}</TableCell>
+      <TableCell>{formatFeedUnitPrice(unit.effectivePrice ?? unit.discountPrice ?? unit.price, unit.currency)}</TableCell>
+      <TableCell>{formatFeedUnitPricePerMeter(unit)}</TableCell>
       <TableCell>
         <span className={`object-feed-status object-feed-status--${unit.status.toLowerCase()}`}>
           {feedUnitStatusLabels[unit.status]}
         </span>
       </TableCell>
-      <TableCell>{formatFeedUnitPrice(unit.price, unit.currency)}</TableCell>
-      {showDiscountPrice ? <TableCell>{formatFeedUnitPrice(unit.discountPrice, unit.currency)}</TableCell> : null}
-      <TableCell>{formatFeedUnitPricePerMeter(unit)}</TableCell>
-      <TableCell>{formatArea(unit.area)}</TableCell>
-      <TableCell>{getUnitRoomsOrType(unit)}</TableCell>
-      <TableCell>{unit.floor ?? 'Не указан'}</TableCell>
-      <TableCell>{formatBuildingSection(unit)}</TableCell>
-      <TableCell>{formatFeedUnitCompletion(unit)}</TableCell>
       <TableCell>
         {primaryMedia?.file ? (
           <button
@@ -2157,6 +2306,22 @@ function parseInitialObjectFeedUnitRooms(value: string | null) {
   return formatFeedUnitRoomFilterValues(getFeedUnitRoomFilterValues(value ?? ''));
 }
 
+function makeRoomGroupExpansionKey(completionGroupKey: string, roomGroupKey: string) {
+  return `${completionGroupKey}:${roomGroupKey}`;
+}
+
+function formatFeedUnitRange(valueMin: string | null, valueMax: string | null, formatter: (value: string) => string) {
+  if (!valueMin && !valueMax) {
+    return 'Не указано';
+  }
+
+  if (valueMin && valueMax && valueMin !== valueMax) {
+    return `${formatter(valueMin)} - ${formatter(valueMax)}`;
+  }
+
+  return formatter(valueMin ?? valueMax ?? '');
+}
+
 function getFeedUnitRoomFilterValues(value: string) {
   const valueSet = new Set(
     value
@@ -2356,6 +2521,14 @@ function formatFeedUnitCompletion(unit: FeedUnit) {
   }
 
   return `${unit.completionQuarter}кв ${unit.completionYear}`;
+}
+
+function formatFeedUnitShortValue(value: string | null) {
+  return value?.trim() || 'Не указано';
+}
+
+function formatFeedUnitBuildingValue(value: string | null) {
+  return value?.trim() || 'Корпус не указан';
 }
 
 function getObjectLotFactRows(unit: FeedUnit) {

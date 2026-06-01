@@ -474,6 +474,31 @@ export type FeedUnitsResponse = {
   hasDiscountPrices: boolean;
 };
 
+export type FeedUnitRoomGroupSummary = {
+  key: string;
+  label: string;
+  total: number;
+  areaMin: string | null;
+  areaMax: string | null;
+  priceMin: string | null;
+  priceMax: string | null;
+  items: FeedUnit[];
+};
+
+export type FeedUnitGroupSummary = {
+  key: string;
+  label: string;
+  buildings: string[];
+  total: number;
+  roomGroups: FeedUnitRoomGroupSummary[];
+};
+
+export type FeedUnitGroupsResponse = {
+  groups: FeedUnitGroupSummary[];
+  total: number;
+  hasDiscountPrices: boolean;
+};
+
 export type FeedUnitResponse = {
   unit: FeedUnit;
 };

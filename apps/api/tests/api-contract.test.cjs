@@ -251,6 +251,7 @@ test('API controllers expose expected permission contracts', () => {
   assert.deepEqual(getPermissions(CatalogLinksController, 'updateAdmin'), ['admin:access', 'objects:update']);
   assert.deepEqual(getPermissions(ObjectsController, 'list'), ['objects:read']);
   assert.deepEqual(getPermissions(ObjectsController, 'listFeedUnits'), ['objects:read']);
+  assert.deepEqual(getPermissions(ObjectsController, 'listFeedUnitGroups'), ['objects:read']);
   assert.deepEqual(getPermissions(ObjectsController, 'getFeedUnit'), ['objects:read']);
   assert.deepEqual(getPermissions(ObjectsController, 'create'), ['objects:create']);
   assert.deepEqual(getPermissions(ObjectsController, 'publish'), ['objects:publish']);
@@ -320,6 +321,9 @@ test('shared package exports feed response contracts', () => {
   assert.match(sharedTypes, /export type FeedImportRunsResponse = \{[\s\S]*items: FeedImportRun\[\];[\s\S]*total: number;[\s\S]*page: number;[\s\S]*limit: number;[\s\S]*totalPages: number;[\s\S]*\};/);
   assert.match(sharedTypes, /export type FeedImportRunResponse = \{[\s\S]*run: FeedImportRun;[\s\S]*\};/);
   assert.match(sharedTypes, /export type FeedUnitsResponse = \{[\s\S]*items: FeedUnit\[\];[\s\S]*total: number;[\s\S]*page: number;[\s\S]*limit: number;[\s\S]*totalPages: number;[\s\S]*hasDiscountPrices: boolean;[\s\S]*\};/);
+  assert.match(sharedTypes, /export type FeedUnitRoomGroupSummary = \{[\s\S]*key: string;[\s\S]*label: string;[\s\S]*total: number;[\s\S]*areaMin: string \| null;[\s\S]*areaMax: string \| null;[\s\S]*priceMin: string \| null;[\s\S]*priceMax: string \| null;[\s\S]*items: FeedUnit\[\];[\s\S]*\};/);
+  assert.match(sharedTypes, /export type FeedUnitGroupSummary = \{[\s\S]*key: string;[\s\S]*label: string;[\s\S]*buildings: string\[\];[\s\S]*total: number;[\s\S]*roomGroups: FeedUnitRoomGroupSummary\[\];[\s\S]*\};/);
+  assert.match(sharedTypes, /export type FeedUnitGroupsResponse = \{[\s\S]*groups: FeedUnitGroupSummary\[\];[\s\S]*total: number;[\s\S]*hasDiscountPrices: boolean;[\s\S]*\};/);
   assert.match(sharedTypes, /export type FeedUnitResponse = \{[\s\S]*unit: FeedUnit;[\s\S]*\};/);
 });
 
@@ -405,6 +409,10 @@ test('ObjectsController delegates catalog and admin object endpoints to the serv
       calls.push(['listFeedUnits', id, query]);
       return { items: [], total: 0, page: 1, limit: 20, totalPages: 1 };
     },
+    listFeedUnitGroups: async (id, query) => {
+      calls.push(['listFeedUnitGroups', id, query]);
+      return { groups: [], total: 0, hasDiscountPrices: false };
+    },
     getFeedUnit: async (id, unitId) => {
       calls.push(['getFeedUnit', id, unitId]);
       return { unit: { id: unitId, objectId: id } };
@@ -442,7 +450,9 @@ test('ObjectsController delegates catalog and admin object endpoints to the serv
   await controller.list({ status: 'published' });
   await controller.getBySlug('zhk-testovyy');
   await controller.listFeedUnits('object-id', { status: 'available' });
+  await controller.listFeedUnitGroups('object-id', { rooms: '2' });
   await controller.getFeedUnit('object-id', 'unit-id');
+  await controller.getFeedUnit('object-id', 'groups', { completionYear: '2028' });
   await controller.create({ title: 'ЖК Тестовый' }, user, request);
   await controller.publish('object-id', user, request);
   await controller.updateStatus('object-id', { status: 'ARCHIVED' }, user, request);
@@ -453,7 +463,9 @@ test('ObjectsController delegates catalog and admin object endpoints to the serv
     'list',
     'getBySlug',
     'listFeedUnits',
+    'listFeedUnitGroups',
     'getFeedUnit',
+    'listFeedUnitGroups',
     'create',
     'publish',
     'updateStatus',
@@ -463,12 +475,14 @@ test('ObjectsController delegates catalog and admin object endpoints to the serv
   assert.deepEqual(calls[0][1], { status: 'published' });
   assert.equal(calls[1][1], 'zhk-testovyy');
   assert.deepEqual(calls[2], ['listFeedUnits', 'object-id', { status: 'available' }]);
-  assert.deepEqual(calls[3], ['getFeedUnit', 'object-id', 'unit-id']);
-  assert.equal(calls[4][2], user);
-  assert.equal(calls[5][1], 'object-id');
-  assert.deepEqual(calls[6], ['updateStatus', 'object-id', { status: 'ARCHIVED' }, user, request]);
-  assert.deepEqual(calls[7], ['updateGalleryLayout', 'object-id', galleryLayoutBody, user, request]);
-  assert.deepEqual(calls[8], ['uploadGalleryImageStream', 'object-id', request, user, request]);
+  assert.deepEqual(calls[3], ['listFeedUnitGroups', 'object-id', { rooms: '2' }]);
+  assert.deepEqual(calls[4], ['getFeedUnit', 'object-id', 'unit-id']);
+  assert.deepEqual(calls[5], ['listFeedUnitGroups', 'object-id', { completionYear: '2028' }]);
+  assert.equal(calls[6][2], user);
+  assert.equal(calls[7][1], 'object-id');
+  assert.deepEqual(calls[8], ['updateStatus', 'object-id', { status: 'ARCHIVED' }, user, request]);
+  assert.deepEqual(calls[9], ['updateGalleryLayout', 'object-id', galleryLayoutBody, user, request]);
+  assert.deepEqual(calls[10], ['uploadGalleryImageStream', 'object-id', request, user, request]);
 });
 
 test('UsersController delegates user management endpoints to the service', async () => {

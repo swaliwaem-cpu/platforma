@@ -23,6 +23,7 @@ import { createSearchContainsFilters } from '../search/search-filters';
 import { findCatalogSearchObjectIds } from './object-search';
 
 const objectPdfUploadLimit = 10;
+const feedUnitBuildingCollator = new Intl.Collator('ru', { numeric: true, sensitivity: 'base' });
 
 const objectListInclude = {
   developer: true,
@@ -185,6 +186,27 @@ type ListObjectFeedUnitsQuery = {
   floorMax?: string;
   completionYear?: string;
   completionQuarter?: string;
+};
+
+type FeedUnitFilterContext = {
+  where: Prisma.FeedUnitWhereInput;
+  discountWhere: Prisma.FeedUnitWhereInput;
+};
+
+type FeedUnitCompletionGroupDraft = {
+  key: string;
+  label: string;
+  sortYear: number | null;
+  sortQuarter: number | null;
+  buildings: Set<string>;
+  items: ObjectFeedUnitRecord[];
+};
+
+type FeedUnitRoomGroupDraft = {
+  key: string;
+  label: string;
+  sortOrder: number;
+  items: ObjectFeedUnitRecord[];
 };
 
 type CreateObjectBody = {
@@ -588,106 +610,7 @@ export class ObjectsService {
 
     const page = this.parsePositiveInteger(query.page, 1);
     const limit = Math.min(this.parsePositiveInteger(query.limit, 20), 100);
-    const filters: Prisma.FeedUnitWhereInput[] = [
-      {
-        objectId,
-      },
-    ];
-
-    if (query.status) {
-      const statuses = this.parseFeedUnitStatuses(query.status);
-
-      filters.push(
-        statuses.length === 1
-          ? {
-              status: statuses[0],
-            }
-          : {
-              status: {
-                in: statuses,
-              },
-            },
-      );
-    }
-
-    if (query.type) {
-      filters.push({
-        type: this.parseFeedUnitType(query.type),
-      });
-    }
-
-    const search = query.search?.trim();
-
-    if (search) {
-      filters.push({
-        OR: createSearchContainsFilters(search, ['externalId', 'title', 'address']),
-      });
-    }
-
-    const priceFilter = this.createFeedUnitDecimalRangeFilter('effectivePrice', query.priceMin, query.priceMax, 'Price', 14, 2);
-    const pricePerMeterFilter = this.createFeedUnitDecimalRangeFilter(
-      'effectivePricePerMeter',
-      query.pricePerMeterMin,
-      query.pricePerMeterMax,
-      'Price per meter',
-      14,
-      2,
-    );
-    const areaFilter = this.createFeedUnitDecimalRangeFilter('area', query.areaMin, query.areaMax, 'Area', 10, 2);
-    const rooms = this.parseOptionalIntegerList(query.rooms, 'Rooms is invalid', 0, 5);
-    const floorMin = this.parseOptionalInteger(query.floorMin, 'Floor min is invalid', 1, 300);
-    const floorMax = this.parseOptionalInteger(query.floorMax, 'Floor max is invalid', 1, 300);
-    const completionYear = this.parseOptionalInteger(query.completionYear, 'Completion year is invalid', 1900, 2200);
-    const completionQuarter = this.parseOptionalInteger(query.completionQuarter, 'Completion quarter is invalid', 1, 4);
-
-    if (floorMin !== undefined && floorMax !== undefined && floorMin > floorMax) {
-      throw new BadRequestException('Floor min cannot be greater than max');
-    }
-
-    if (completionQuarter !== undefined && completionYear === undefined) {
-      throw new BadRequestException('Completion year is required when completion quarter is set');
-    }
-
-    for (const filter of [priceFilter, pricePerMeterFilter, areaFilter]) {
-      if (filter) {
-        filters.push(filter);
-      }
-    }
-
-    if (rooms !== undefined) {
-      filters.push(this.createFeedUnitRoomsFilter(rooms));
-    }
-
-    if (floorMin !== undefined || floorMax !== undefined) {
-      filters.push({
-        floor: {
-          ...(floorMin !== undefined ? { gte: floorMin } : {}),
-          ...(floorMax !== undefined ? { lte: floorMax } : {}),
-        },
-      });
-    }
-
-    if (completionYear !== undefined) {
-      filters.push({ completionYear });
-    }
-
-    if (completionQuarter !== undefined) {
-      filters.push({ completionQuarter });
-    }
-
-    const where: Prisma.FeedUnitWhereInput = {
-      AND: filters,
-    };
-    const discountWhere: Prisma.FeedUnitWhereInput = {
-      AND: [
-        { objectId },
-        {
-          discountPrice: {
-            not: null,
-          },
-        },
-      ],
-    };
+    const { where, discountWhere } = this.createFeedUnitFilterContext(objectId, query);
     const orderBy = this.parseFeedUnitOrderBy(query.sortBy, query.sortDirection);
 
     const [items, discountedUnitsCount, total] = await this.prisma.$transaction([
@@ -708,6 +631,28 @@ export class ObjectsService {
       page,
       limit,
       totalPages: Math.max(1, Math.ceil(total / limit)),
+      hasDiscountPrices: discountedUnitsCount > 0,
+    };
+  }
+
+  async listFeedUnitGroups(id: string, query: ListObjectFeedUnitsQuery) {
+    const objectId = this.parseUuid(id, 'Object is invalid');
+    await this.ensureObjectExists(objectId);
+
+    const { where, discountWhere } = this.createFeedUnitFilterContext(objectId, query);
+    const orderBy = this.parseFeedUnitOrderBy(query.sortBy, query.sortDirection);
+    const [items, discountedUnitsCount] = await Promise.all([
+      this.prisma.feedUnit.findMany({
+        where,
+        include: feedUnitInclude,
+        orderBy,
+      }),
+      this.prisma.feedUnit.count({ where: discountWhere }),
+    ]);
+
+    return {
+      groups: this.createFeedUnitGroups(items),
+      total: items.length,
       hasDiscountPrices: discountedUnitsCount > 0,
     };
   }
@@ -2533,6 +2478,282 @@ export class ObjectsService {
     });
 
     return new Map(rows.map((row) => [row.objectId, row._count._all]));
+  }
+
+  private createFeedUnitFilterContext(objectId: string, query: ListObjectFeedUnitsQuery): FeedUnitFilterContext {
+    const filters: Prisma.FeedUnitWhereInput[] = [
+      {
+        objectId,
+      },
+    ];
+
+    if (query.status) {
+      const statuses = this.parseFeedUnitStatuses(query.status);
+
+      filters.push(
+        statuses.length === 1
+          ? {
+              status: statuses[0],
+            }
+          : {
+              status: {
+                in: statuses,
+              },
+            },
+      );
+    }
+
+    if (query.type) {
+      filters.push({
+        type: this.parseFeedUnitType(query.type),
+      });
+    }
+
+    const search = query.search?.trim();
+
+    if (search) {
+      filters.push({
+        OR: createSearchContainsFilters(search, ['externalId', 'title', 'address']),
+      });
+    }
+
+    const priceFilter = this.createFeedUnitDecimalRangeFilter('effectivePrice', query.priceMin, query.priceMax, 'Price', 14, 2);
+    const pricePerMeterFilter = this.createFeedUnitDecimalRangeFilter(
+      'effectivePricePerMeter',
+      query.pricePerMeterMin,
+      query.pricePerMeterMax,
+      'Price per meter',
+      14,
+      2,
+    );
+    const areaFilter = this.createFeedUnitDecimalRangeFilter('area', query.areaMin, query.areaMax, 'Area', 10, 2);
+    const rooms = this.parseOptionalIntegerList(query.rooms, 'Rooms is invalid', 0, 5);
+    const floorMin = this.parseOptionalInteger(query.floorMin, 'Floor min is invalid', 1, 300);
+    const floorMax = this.parseOptionalInteger(query.floorMax, 'Floor max is invalid', 1, 300);
+    const completionYear = this.parseOptionalInteger(query.completionYear, 'Completion year is invalid', 1900, 2200);
+    const completionQuarter = this.parseOptionalInteger(query.completionQuarter, 'Completion quarter is invalid', 1, 4);
+
+    if (floorMin !== undefined && floorMax !== undefined && floorMin > floorMax) {
+      throw new BadRequestException('Floor min cannot be greater than max');
+    }
+
+    if (completionQuarter !== undefined && completionYear === undefined) {
+      throw new BadRequestException('Completion year is required when completion quarter is set');
+    }
+
+    for (const filter of [priceFilter, pricePerMeterFilter, areaFilter]) {
+      if (filter) {
+        filters.push(filter);
+      }
+    }
+
+    if (rooms !== undefined) {
+      filters.push(this.createFeedUnitRoomsFilter(rooms));
+    }
+
+    if (floorMin !== undefined || floorMax !== undefined) {
+      filters.push({
+        floor: {
+          ...(floorMin !== undefined ? { gte: floorMin } : {}),
+          ...(floorMax !== undefined ? { lte: floorMax } : {}),
+        },
+      });
+    }
+
+    if (completionYear !== undefined) {
+      filters.push({ completionYear });
+    }
+
+    if (completionQuarter !== undefined) {
+      filters.push({ completionQuarter });
+    }
+
+    return {
+      where: {
+        AND: filters,
+      },
+      discountWhere: {
+        AND: [
+          { objectId },
+          {
+            discountPrice: {
+              not: null,
+            },
+          },
+        ],
+      },
+    };
+  }
+
+  private createFeedUnitGroups(items: ObjectFeedUnitRecord[]) {
+    const completionGroups = new Map<string, FeedUnitCompletionGroupDraft>();
+
+    for (const unit of items) {
+      const completionGroupInfo = this.getFeedUnitCompletionGroupInfo(unit);
+      const completionGroup = completionGroups.get(completionGroupInfo.key) ?? {
+        ...completionGroupInfo,
+        buildings: new Set<string>(),
+        items: [],
+      };
+      const building = unit.building?.trim();
+
+      if (building) {
+        completionGroup.buildings.add(building);
+      }
+
+      completionGroup.items.push(unit);
+      completionGroups.set(completionGroup.key, completionGroup);
+    }
+
+    return Array.from(completionGroups.values())
+      .sort((leftGroup, rightGroup) => this.compareFeedUnitCompletionGroups(leftGroup, rightGroup))
+      .map((group) => ({
+        key: group.key,
+        label: group.label,
+        buildings: Array.from(group.buildings).sort(feedUnitBuildingCollator.compare),
+        total: group.items.length,
+        roomGroups: this.createFeedUnitRoomGroups(group.items),
+      }));
+  }
+
+  private getFeedUnitCompletionGroupInfo(unit: ObjectFeedUnitRecord) {
+    if (unit.completionYear && unit.completionQuarter) {
+      return {
+        key: `${unit.completionYear}-q${unit.completionQuarter}`,
+        label: `${unit.completionQuarter} кв. ${unit.completionYear}`,
+        sortYear: unit.completionYear,
+        sortQuarter: unit.completionQuarter,
+      };
+    }
+
+    if (unit.completionYear) {
+      return {
+        key: `${unit.completionYear}`,
+        label: String(unit.completionYear),
+        sortYear: unit.completionYear,
+        sortQuarter: 0,
+      };
+    }
+
+    return {
+      key: 'unknown',
+      label: 'Срок не указан',
+      sortYear: null,
+      sortQuarter: null,
+    };
+  }
+
+  private compareFeedUnitCompletionGroups(leftGroup: FeedUnitCompletionGroupDraft, rightGroup: FeedUnitCompletionGroupDraft) {
+    if (leftGroup.sortYear === null && rightGroup.sortYear === null) {
+      return 0;
+    }
+
+    if (leftGroup.sortYear === null) {
+      return 1;
+    }
+
+    if (rightGroup.sortYear === null) {
+      return -1;
+    }
+
+    if (leftGroup.sortYear !== rightGroup.sortYear) {
+      return leftGroup.sortYear - rightGroup.sortYear;
+    }
+
+    return (leftGroup.sortQuarter ?? 0) - (rightGroup.sortQuarter ?? 0);
+  }
+
+  private createFeedUnitRoomGroups(items: ObjectFeedUnitRecord[]) {
+    const roomGroups = new Map<string, FeedUnitRoomGroupDraft>();
+
+    for (const unit of items) {
+      const roomGroupInfo = this.getFeedUnitRoomGroupInfo(unit);
+      const roomGroup = roomGroups.get(roomGroupInfo.key) ?? {
+        ...roomGroupInfo,
+        items: [],
+      };
+
+      roomGroup.items.push(unit);
+      roomGroups.set(roomGroup.key, roomGroup);
+    }
+
+    return Array.from(roomGroups.values())
+      .sort((leftGroup, rightGroup) => leftGroup.sortOrder - rightGroup.sortOrder)
+      .map((group) => ({
+        key: group.key,
+        label: group.label,
+        total: group.items.length,
+        areaMin: this.findFeedUnitDecimalBoundary(group.items, 'area', 'min'),
+        areaMax: this.findFeedUnitDecimalBoundary(group.items, 'area', 'max'),
+        priceMin: this.findFeedUnitDecimalBoundary(group.items, 'effectivePrice', 'min'),
+        priceMax: this.findFeedUnitDecimalBoundary(group.items, 'effectivePrice', 'max'),
+        items: group.items.map((unit) => this.serializeFeedUnit(unit)),
+      }));
+  }
+
+  private getFeedUnitRoomGroupInfo(unit: ObjectFeedUnitRecord) {
+    if (unit.type === FeedUnitType.COMMERCIAL) {
+      return {
+        key: 'commercial',
+        label: 'Коммерция',
+        sortOrder: 100,
+      };
+    }
+
+    if (unit.rooms === 0) {
+      return {
+        key: 'rooms-0',
+        label: 'Студии',
+        sortOrder: 0,
+      };
+    }
+
+    if (unit.rooms && unit.rooms >= 1) {
+      return {
+        key: `rooms-${unit.rooms}`,
+        label: `${unit.rooms}-к.кв`,
+        sortOrder: unit.rooms,
+      };
+    }
+
+    return {
+      key: 'unknown',
+      label: 'Тип не указан',
+      sortOrder: 101,
+    };
+  }
+
+  private findFeedUnitDecimalBoundary(
+    items: ObjectFeedUnitRecord[],
+    field: 'area' | 'effectivePrice',
+    direction: 'min' | 'max',
+  ) {
+    let boundary: ObjectFeedUnitRecord[typeof field] | null = null;
+    let boundaryNumber: number | null = null;
+
+    for (const item of items) {
+      const value = item[field];
+
+      if (!value) {
+        continue;
+      }
+
+      const valueNumber = Number(value);
+
+      if (!Number.isFinite(valueNumber)) {
+        continue;
+      }
+
+      if (
+        boundaryNumber === null ||
+        (direction === 'min' ? valueNumber < boundaryNumber : valueNumber > boundaryNumber)
+      ) {
+        boundary = value;
+        boundaryNumber = valueNumber;
+      }
+    }
+
+    return this.decimalToString(boundary);
   }
 
   private createFeedUnitRoomsFilter(rooms: number | number[]): Prisma.FeedUnitWhereInput {

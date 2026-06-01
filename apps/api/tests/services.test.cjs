@@ -1939,6 +1939,230 @@ test('ObjectsService.listFeedUnits applies sortable order for feed unit columns'
   ]);
 });
 
+test('ObjectsService.listFeedUnitGroups returns completion and room groups across all filtered units', async () => {
+  const calls = {};
+  const objectId = '11111111-1111-4111-8111-111111111111';
+  const now = new Date('2026-05-23T10:00:00.000Z');
+  const makeUnit = (overrides) => ({
+    id: overrides.id,
+    sourceId: '22222222-2222-4222-8222-222222222222',
+    objectId,
+    externalId: overrides.externalId ?? overrides.id,
+    type: overrides.type ?? FeedUnitType.RESIDENTIAL,
+    status: overrides.status ?? FeedUnitStatus.AVAILABLE,
+    title: overrides.title ?? null,
+    address: null,
+    building: overrides.building ?? null,
+    section: overrides.section ?? null,
+    floor: overrides.floor ?? null,
+    rooms: overrides.rooms ?? null,
+    price: overrides.price ? decimal(overrides.price) : null,
+    discountPrice: null,
+    effectivePrice: overrides.effectivePrice ? decimal(overrides.effectivePrice) : null,
+    currency: 'RUR',
+    area: overrides.area ? decimal(overrides.area) : null,
+    pricePerMeter: null,
+    discountPricePerMeter: null,
+    effectivePricePerMeter: overrides.effectivePricePerMeter ? decimal(overrides.effectivePricePerMeter) : null,
+    completionYear: overrides.completionYear ?? null,
+    completionQuarter: overrides.completionQuarter ?? null,
+    rawPayload: {},
+    archivedAt: null,
+    residentialDetails: null,
+    commercialDetails: null,
+    media: [],
+    createdAt: now,
+    updatedAt: now,
+  });
+  const units = [
+    makeUnit({
+      id: '55555555-5555-4555-8555-555555555551',
+      title: 'Квартира 1',
+      building: 'Корпус 2',
+      rooms: 2,
+      area: '58.4',
+      effectivePrice: '12000000',
+      completionYear: 2027,
+      completionQuarter: 3,
+    }),
+    makeUnit({
+      id: '55555555-5555-4555-8555-555555555552',
+      title: 'Квартира 2',
+      building: 'Корпус 10',
+      rooms: 2,
+      area: '62.1',
+      effectivePrice: '14000000',
+      completionYear: 2027,
+      completionQuarter: 3,
+    }),
+    makeUnit({
+      id: '55555555-5555-4555-8555-555555555553',
+      title: 'Студия',
+      building: 'Корпус 1',
+      rooms: 0,
+      area: '28',
+      effectivePrice: '7000000',
+      completionYear: 2027,
+      completionQuarter: 3,
+    }),
+    makeUnit({
+      id: '55555555-5555-4555-8555-555555555554',
+      title: 'Офис',
+      type: FeedUnitType.COMMERCIAL,
+      building: null,
+      rooms: null,
+      area: '80',
+      effectivePrice: '20000000',
+      completionYear: 2028,
+      completionQuarter: null,
+    }),
+    makeUnit({
+      id: '55555555-5555-4555-8555-555555555555',
+      title: 'Без срока',
+      building: null,
+      rooms: null,
+      area: null,
+      effectivePrice: null,
+      completionYear: null,
+      completionQuarter: null,
+    }),
+  ];
+  const prisma = {
+    realEstateObject: {
+      count: async (args) => {
+        calls.objectCount = args;
+        return args.where.id === objectId && args.where.deletedAt === null ? 1 : 0;
+      },
+    },
+    feedUnit: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return units;
+      },
+      count: async (args) => {
+        calls.count = args;
+        return 1;
+      },
+    },
+  };
+  const service = new ObjectsService(prisma, {});
+
+  const result = await service.listFeedUnitGroups(objectId, {
+    status: 'available,reserved',
+    priceMin: '5 000 000',
+    sortBy: 'price',
+    sortDirection: 'desc',
+  });
+
+  assert.deepEqual(calls.objectCount, {
+    where: {
+      id: objectId,
+      deletedAt: null,
+    },
+  });
+  assert.equal(calls.findMany.skip, undefined);
+  assert.equal(calls.findMany.take, undefined);
+  assert.equal(calls.findMany.include.media.include.mediaAsset.include.file, true);
+  assert.deepEqual(calls.findMany.orderBy, [
+    { effectivePrice: { sort: 'desc', nulls: 'last' } },
+    { createdAt: 'desc' },
+  ]);
+  assert.equal(calls.findMany.where.AND.some((filter) => filter.effectivePrice?.gte === '5000000'), true);
+  assert.deepEqual(result.groups.map((group) => group.label), ['3 кв. 2027', '2028', 'Срок не указан']);
+  assert.deepEqual(result.groups[0].buildings, ['Корпус 1', 'Корпус 2', 'Корпус 10']);
+  assert.equal(result.groups[0].total, 3);
+  assert.deepEqual(result.groups[0].roomGroups.map((group) => group.label), ['Студии', '2-к.кв']);
+  assert.deepEqual(result.groups[0].roomGroups[1], {
+    key: 'rooms-2',
+    label: '2-к.кв',
+    total: 2,
+    areaMin: '58.4',
+    areaMax: '62.1',
+    priceMin: '12000000',
+    priceMax: '14000000',
+    items: [result.groups[0].roomGroups[1].items[0], result.groups[0].roomGroups[1].items[1]],
+  });
+  assert.deepEqual(result.groups[1].roomGroups.map((group) => group.label), ['Коммерция']);
+  assert.deepEqual(result.groups[2].buildings, []);
+  assert.deepEqual(result.groups[2].roomGroups.map((group) => group.label), ['Тип не указан']);
+  assert.equal(result.total, 5);
+  assert.equal(result.hasDiscountPrices, true);
+});
+
+test('ObjectsService.listFeedUnitGroups applies room and completion filters before grouping', async () => {
+  const calls = {};
+  const objectId = '11111111-1111-4111-8111-111111111111';
+  const prisma = {
+    realEstateObject: {
+      count: async () => 1,
+    },
+    feedUnit: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [];
+      },
+      count: async (args) => {
+        calls.count = args;
+        return 0;
+      },
+    },
+  };
+  const service = new ObjectsService(prisma, {});
+
+  const result = await service.listFeedUnitGroups(objectId, {
+    rooms: '0,3',
+    completionYear: '2028',
+    completionQuarter: '4',
+  });
+
+  const filters = calls.findMany.where.AND;
+
+  assert.deepEqual(filters.find((filter) => filter.OR?.some((item) => item.rooms === 0)), {
+    OR: [
+      {
+        rooms: 3,
+      },
+      {
+        rooms: 0,
+      },
+      {
+        rooms: null,
+        residentialDetails: {
+          is: {
+            layoutType: {
+              equals: 'раздельные',
+              mode: 'insensitive',
+            },
+          },
+        },
+        object: {
+          OR: [
+            {
+              title: {
+                contains: 'аура',
+                mode: 'insensitive',
+              },
+            },
+            {
+              developer: {
+                is: {
+                  name: {
+                    contains: 'мангазея',
+                    mode: 'insensitive',
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+    ],
+  });
+  assert.equal(filters.some((filter) => filter.completionYear === 2028), true);
+  assert.equal(filters.some((filter) => filter.completionQuarter === 4), true);
+  assert.equal(result.total, 0);
+});
+
 test('MapService.listObjects serializes all map gallery images for popup previews', async () => {
   const coverImage = objectImageRecord({
     id: '22222222-2222-4222-8222-222222222222',

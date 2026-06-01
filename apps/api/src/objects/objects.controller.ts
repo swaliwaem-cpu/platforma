@@ -49,9 +49,23 @@ export class ObjectsController {
     return this.objectsService.listFeedUnits(id, query);
   }
 
+  @Get(':id/feed-units/groups')
+  @RequirePermissions('objects:read')
+  async listFeedUnitGroups(@Param('id') id: string, @Query() query: Record<string, string | undefined>) {
+    return this.objectsService.listFeedUnitGroups(id, query);
+  }
+
   @Get(':id/feed-units/:unitId')
   @RequirePermissions('objects:read')
-  async getFeedUnit(@Param('id') id: string, @Param('unitId') unitId: string) {
+  async getFeedUnit(
+    @Param('id') id: string,
+    @Param('unitId') unitId: string,
+    @Query() query: Record<string, string | undefined> = {},
+  ) {
+    if (unitId === 'groups') {
+      return this.objectsService.listFeedUnitGroups(id, query);
+    }
+
     return this.objectsService.getFeedUnit(id, unitId);
   }
 
