@@ -174,7 +174,7 @@ export function normalizeFeedUnitStatus(value: unknown): FeedStatusNormalization
     return { status: 'SOLD' };
   }
 
-  if (normalized === 'archived' || normalized === 'archive') {
+  if (normalized === 'archived' || normalized === 'archive' || normalized === 'unavailable') {
     return { status: 'ARCHIVED' };
   }
 
@@ -1118,13 +1118,57 @@ function isMangazeyaSeparateRoomsStudio(offer: XmlRecord) {
 }
 
 function normalizeCianFeedUnitStatus(object: XmlRecord): FeedStatusNormalizationResult {
-  const rawStatus = asRecord(object.Booking)?.Status;
+  const bookingStatus = asRecord(object.Booking)?.Status;
 
-  if (getText(rawStatus) === null) {
+  if (getText(bookingStatus) !== null) {
+    return normalizeFeedUnitStatus(bookingStatus);
+  }
+
+  if (getText(object.fl_status) !== null) {
+    return normalizeFeedUnitStatus(object.fl_status);
+  }
+
+  const numericStatus = normalizeCianNumericStatus(object.Status);
+
+  if (numericStatus) {
+    return numericStatus;
+  }
+
+  return { status: 'AVAILABLE' };
+}
+
+function normalizeCianNumericStatus(value: unknown): FeedStatusNormalizationResult | null {
+  const rawStatus = getText(value);
+
+  if (rawStatus === null) {
+    return null;
+  }
+
+  if (rawStatus === '0') {
     return { status: 'AVAILABLE' };
   }
 
-  return normalizeFeedUnitStatus(rawStatus);
+  if (rawStatus === '1') {
+    return { status: 'BOOKED' };
+  }
+
+  if (rawStatus === '2') {
+    return { status: 'SOLD' };
+  }
+
+  if (!/^\d+$/u.test(rawStatus)) {
+    return null;
+  }
+
+  return {
+    status: 'UNKNOWN',
+    warning: {
+      code: 'UNKNOWN_STATUS',
+      field: 'status',
+      message: `Unknown Cian numeric feed unit status: ${rawStatus}`,
+      value: rawStatus,
+    },
+  };
 }
 
 function normalizeCianRooms(

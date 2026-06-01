@@ -616,6 +616,64 @@ test('CianXmlFeedParser normalizes CIAN-like realty-feed objects and decodes XML
   ]);
 });
 
+test('CianXmlFeedParser normalizes Regions Development fl_status values', () => {
+  const parser = new CianXmlFeedParser();
+  const xml = `<?xml version="1.0"?>
+    <feed>
+      <object>
+        <ExternalId>booking-priority</ExternalId>
+        <Category>newBuildingFlatSale</Category>
+        <fl_status>AVAILABLE</fl_status>
+        <Status>0</Status>
+        <Booking><Status>sold</Status></Booking>
+      </object>
+      <object>
+        <ExternalId>regions-available</ExternalId>
+        <Category>newBuildingFlatSale</Category>
+        <fl_status>AVAILABLE</fl_status>
+        <Status>0</Status>
+      </object>
+      <object>
+        <ExternalId>regions-booked</ExternalId>
+        <Category>newBuildingFlatSale</Category>
+        <fl_status>BOOKED</fl_status>
+        <Status>1</Status>
+      </object>
+      <object>
+        <ExternalId>regions-sold</ExternalId>
+        <Category>newBuildingFlatSale</Category>
+        <fl_status>SOLD</fl_status>
+        <Status>2</Status>
+      </object>
+      <object>
+        <ExternalId>regions-unavailable</ExternalId>
+        <Category>newBuildingFlatSale</Category>
+        <fl_status>UNAVAILABLE</fl_status>
+        <Status>1</Status>
+      </object>
+      <object>
+        <ExternalId>regions-numeric-fallback</ExternalId>
+        <Category>newBuildingFlatSale</Category>
+        <Status>2</Status>
+      </object>
+    </feed>`;
+
+  const result = parser.parse(xml);
+
+  assert.deepEqual(result.warnings, []);
+  assert.deepEqual(
+    result.units.map((unit) => [unit.externalId, unit.status]),
+    [
+      ['booking-priority', 'SOLD'],
+      ['regions-available', 'AVAILABLE'],
+      ['regions-booked', 'BOOKED'],
+      ['regions-sold', 'SOLD'],
+      ['regions-unavailable', 'ARCHIVED'],
+      ['regions-numeric-fallback', 'SOLD'],
+    ],
+  );
+});
+
 test('AvitoXmlFeedParser normalizes residential units, studio rooms and media', () => {
   const parser = new AvitoXmlFeedParser();
   const xml = `<?xml version="1.0" encoding="utf-8"?>
@@ -1077,6 +1135,7 @@ test('normalizeFeedUnitStatus maps known feed statuses and reports unknown value
   assert.equal(normalizeFeedUnitStatus('reserved').status, 'RESERVED');
   assert.equal(normalizeFeedUnitStatus('sold').status, 'SOLD');
   assert.equal(normalizeFeedUnitStatus('archived').status, 'ARCHIVED');
+  assert.equal(normalizeFeedUnitStatus('unavailable').status, 'ARCHIVED');
   assert.deepEqual(normalizeFeedUnitStatus('mystery'), {
     status: 'UNKNOWN',
     warning: {
