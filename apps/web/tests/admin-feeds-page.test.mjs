@@ -178,7 +178,7 @@ test('feeds admin page uses one source input row instead of source kind buttons'
 test('feeds admin page auto-detects URL feed kind before falling back to index XML', () => {
   const source = readFileSync(sourcePath, 'utf8');
 
-  assert.match(source, /createSourceAnalysisFormAttempts\(form\)/);
+  assert.match(source, /createSourceAnalysisFormAttempts\(analysisForm\)/);
   assert.match(source, /sourceKind:\s*'URL'/);
   assert.match(source, /sourceKind:\s*'INDEX_URL'/);
   assert.match(source, /resolvedAnalysisForm/);
@@ -187,8 +187,12 @@ test('feeds admin page auto-detects URL feed kind before falling back to index X
 test('feeds admin page keeps the submitted source after feed analysis', () => {
   const source = readFileSync(sourcePath, 'utf8');
 
-  assert.match(source, /url:\s*resolvedAnalysisForm\.url/);
+  assert.match(source, /const analysisForm = syncFormWithLiveSourceInput\(form, sourceInputRef\.current\?\.value\)/);
+  assert.match(source, /setForm\(\(currentForm\) => syncFormWithLiveSourceInput\(currentForm, sourceInputRef\.current\?\.value\)\)/);
+  assert.match(source, /createSourceAnalysisFormAttempts\(analysisForm\)/);
+  assert.match(source, /url:\s*resolvedAnalysisForm\.url \|\| analysisForm\.url \|\| currentForm\.url/);
   assert.match(source, /xmlFile:\s*resolvedAnalysisForm\.xmlFile/);
+  assert.match(source, /ref=\{sourceInputRef\}/);
 });
 
 test('feeds admin page does not reset the create form on access token refresh', () => {

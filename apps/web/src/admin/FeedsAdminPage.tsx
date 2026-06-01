@@ -199,6 +199,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
 
     return match?.[1] ?? null;
   }, [pathname]);
+  const sourceInputRef = useRef<HTMLInputElement | null>(null);
   const previousSourceFormRouteKeyRef = useRef<string | null>(null);
   const isCreateRoute = pathname === '/admin/feeds/new';
   const isListRoute = pathname === '/admin/feeds';
@@ -604,7 +605,8 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
       return;
     }
 
-    const validationError = validateSourceAnalysisForm(form);
+    const analysisForm = syncFormWithLiveSourceInput(form, sourceInputRef.current?.value);
+    const validationError = validateSourceAnalysisForm(analysisForm);
 
     if (validationError) {
       setError(validationError);
@@ -612,6 +614,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
       return;
     }
 
+    setForm((currentForm) => syncFormWithLiveSourceInput(currentForm, sourceInputRef.current?.value));
     setIsAnalyzingSource(true);
     setError(null);
     setNotice(null);
@@ -621,7 +624,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
       let resolvedAnalysisForm: SourceFormState | null = null;
       let lastAnalysisError: unknown = null;
 
-      for (const analysisAttemptForm of createSourceAnalysisFormAttempts(form)) {
+      for (const analysisAttemptForm of createSourceAnalysisFormAttempts(analysisForm)) {
         try {
           data = await apiRequest<FeedSourceAnalysisResponse>('/feeds/analyze', accessToken, {
             method: 'POST',
@@ -668,7 +671,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
         return {
           ...currentForm,
           sourceKind: resolvedAnalysisForm.sourceKind,
-          url: resolvedAnalysisForm.url,
+          url: resolvedAnalysisForm.url || analysisForm.url || currentForm.url,
           xmlFile: resolvedAnalysisForm.xmlFile,
           format: analysis.format,
           developerId: developerId || mappedDeveloperId,
@@ -930,6 +933,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                     <div className="feed-source-input-row">
                       <input
                         key="feed-source-input"
+                        ref={sourceInputRef}
                         inputMode="url"
                         name="feedSourceInput"
                         placeholder="https://example.com/feed.xml или https://example.com/xml/"
@@ -1929,6 +1933,27 @@ function createSourceAnalysisFormAttempts(form: SourceFormState): SourceFormStat
     { ...form, sourceKind: 'URL' },
     { ...form, sourceKind: 'INDEX_URL' },
   ];
+}
+
+function syncFormWithLiveSourceInput(form: SourceFormState, sourceInputValue: string | undefined): SourceFormState {
+  const liveUrl = sourceInputValue?.trim();
+
+  if (!liveUrl || form.xmlFile) {
+    return form;
+  }
+
+  const sourceKind = isUrlBackedSourceKind(form.sourceKind) ? form.sourceKind : 'URL';
+
+  if (form.url === liveUrl && form.sourceKind === sourceKind) {
+    return form;
+  }
+
+  return {
+    ...form,
+    sourceKind,
+    url: liveUrl,
+    xmlFile: null,
+  };
 }
 
 function getConcreteFeedSourceKind(form: SourceFormState): FeedSourceKind {

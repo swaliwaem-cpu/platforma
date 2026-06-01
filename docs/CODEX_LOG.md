@@ -493,3 +493,24 @@ Markdown-файлы, реально найденные до создания н�
 Ручная проверка:
 
 - Перед production run проверить preview/run источника Regions Development в админке и убедиться, что активное наличие по объекту показывает только `AVAILABLE`/`BOOKED`/`RESERVED`, без проданных `SOLD`.
+
+## 2026-06-01 - Feed source URL preserved during analysis
+
+Задача:
+
+- Исправить production-баг в `/admin/feeds/new`, где после вставки URL и нажатия `Разобрать` поле источника могло очиститься.
+
+Изменения:
+
+- `apps/web/src/admin/FeedsAdminPage.tsx` - добавлен ref на input источника и синхронизация формы с живым значением поля перед запуском анализа.
+- `apps/web/src/admin/FeedsAdminPage.tsx` - результат анализа больше не может перезаписать непустой URL пустым значением из stale state.
+- `apps/web/tests/admin-feeds-page.test.mjs` - обновлены проверки формы разбора фида под новую защиту.
+
+Проверки:
+
+- `pnpm --filter @platforma/web test` - 213/213 passed.
+- `pnpm build:web` - production build successful.
+
+Ручная проверка:
+
+- На production открыть `/admin/feeds/new`, вставить URL фида, нажать `Разобрать` и убедиться, что поле источника остается заполненным во время и после разбора.
