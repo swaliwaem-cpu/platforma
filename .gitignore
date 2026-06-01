@@ -8,5 +8,6 @@ pnpm-debug.log
 *.tsbuildinfo
 .worktrees/
 backups/
+.superpowers/
 tools/wp-import/uploads/*
 !tools/wp-import/uploads/.gitkeep
