@@ -514,3 +514,44 @@ Markdown-файлы, реально найденные до создания н�
 Ручная проверка:
 
 - На production открыть `/admin/feeds/new`, вставить URL фида, нажать `Разобрать` и убедиться, что поле источника остается заполненным во время и после разбора.
+
+## 2026-06-01 - Feed source list developer title
+
+Задача:
+
+- В списке фидов поменять местами заголовок и подпись источника: сверху показывать застройщика, ниже - количество/название сопоставленных ЖК.
+
+Изменения:
+
+- `apps/web/src/admin/FeedsAdminPage.tsx` - в ячейке источника главным текстом теперь выводится `source.developer.name`, а строкой ниже `getSourceObjectTitle(source)`.
+- `apps/web/tests/admin-feeds-page.test.mjs` - добавлена проверка порядка строк в списке источников.
+
+Проверки:
+
+- `pnpm --filter @platforma/web test` - 214/214 passed.
+- `pnpm build:web` - production build successful.
+
+Ручная проверка:
+
+- Открыть `/admin/feeds` и убедиться, что в таблице сверху идет застройщик, под ним количество/название ЖК, а URL остается третьей строкой.
+
+## 2026-06-01 - Feed lot external id hidden
+
+Задача:
+
+- Скрыть строку `ID` в списке лотов фидов для всех застройщиков.
+
+Изменения:
+
+- `apps/web/src/admin/FeedsAdminPage.tsx` - из строки лота удален вывод `ID {unit.externalId}`.
+- `apps/web/src/admin/FeedsAdminPage.tsx` - заголовок лота теперь использует `getFeedUnitTitle(unit)` с fallback `Лот без названия`, чтобы внешний ID не всплывал вместо названия.
+- `apps/web/tests/admin-feeds-page.test.mjs` - добавлена проверка, что строка ID не рендерится в админском списке лотов.
+
+Проверки:
+
+- `pnpm --filter @platforma/web test` - 214/214 passed.
+- `pnpm build:web` - production build successful.
+
+Ручная проверка:
+
+- Открыть лоты любого фида в `/admin/feeds` и убедиться, что под названием лота больше нет строки `ID ...`.

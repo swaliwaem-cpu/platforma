@@ -56,6 +56,12 @@ test('feeds admin page exposes required source form fields and unit filters', ()
   assert.match(source, /aria-label="Фильтр лотов по типу"/);
 });
 
+test('feeds admin source list uses developer as row title', () => {
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.match(source, /<div className="feed-source-cell">[\s\S]*<strong>\{source\.developer\.name\}<\/strong>[\s\S]*<span>\{getSourceObjectTitle\(source\)\}<\/span>[\s\S]*<code>\{getSourceDisplay\(source\)\}<\/code>/);
+});
+
 test('feeds admin page submits multipart form data for uploaded XML sources', () => {
   const source = readFileSync(sourcePath, 'utf8');
 
@@ -250,6 +256,10 @@ test('feeds admin page renders reports table without the right report detail col
   assert.match(source, />Комнаты\/тип</);
   assert.match(source, />Медиа</);
   assert.match(source, /<TableCell>\{formatFeedUnitPricePerMeter\(unit\)\}<\/TableCell>/);
+  assert.match(source, /<strong>\{getFeedUnitTitle\(unit\)\}<\/strong>/);
+  assert.match(source, /function getFeedUnitTitle\(unit: FeedUnit\)/);
+  assert.doesNotMatch(source, /<span>ID \{unit\.externalId\}<\/span>/);
+  assert.doesNotMatch(source, /<strong>\{unit\.title \|\| unit\.externalId\}<\/strong>/);
 });
 
 test('feeds admin page shows latest preview lot and media counts in source meta', () => {

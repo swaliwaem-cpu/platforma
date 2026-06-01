@@ -1184,8 +1184,8 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                         >
                           <TableCell>
                             <div className="feed-source-cell">
-                              <strong>{getSourceObjectTitle(source)}</strong>
-                              <span>{source.developer.name}</span>
+                              <strong>{source.developer.name}</strong>
+                              <span>{getSourceObjectTitle(source)}</span>
                               <code>{getSourceDisplay(source)}</code>
                             </div>
                           </TableCell>
@@ -1457,8 +1457,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                     <TableRow key={unit.id}>
                       <TableCell>
                         <div className="feed-unit-cell">
-                          <strong>{unit.title || unit.externalId}</strong>
-                          <span>ID {unit.externalId}</span>
+                          <strong>{getFeedUnitTitle(unit)}</strong>
                           {unit.address ? <span>{unit.address}</span> : null}
                         </div>
                       </TableCell>
@@ -2428,6 +2427,10 @@ function formatFeedUnitPricePerMeter(unit: FeedUnit) {
   const pricePerMeter = getFeedUnitPricePerMeterValue(unit);
 
   return pricePerMeter === null ? 'Не указана' : formatMoney(String(pricePerMeter), unit.currency);
+}
+
+function getFeedUnitTitle(unit: FeedUnit) {
+  return unit.title?.trim() || 'Лот без названия';
 }
 
 function getUnitRoomsOrType(unit: FeedUnit) {
