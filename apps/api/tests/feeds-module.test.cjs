@@ -14,6 +14,8 @@ const apiDockerfilePath = resolve(__dirname, '../Dockerfile');
 
 const now = new Date('2026-05-23T10:00:00.000Z');
 const sourceId = '11111111-1111-4111-8111-111111111111';
+const secondSourceId = '11111111-1111-4111-8111-111111111112';
+const thirdSourceId = '11111111-1111-4111-8111-111111111113';
 const developerId = '22222222-2222-4222-8222-222222222222';
 const objectId = '33333333-3333-4333-8333-333333333333';
 const secondObjectId = '33333333-3333-4333-8333-444444444444';
@@ -1065,6 +1067,215 @@ test('FeedsService protects one source from parallel preview/run commands', asyn
   const result = await first;
 
   assert.equal(result.run.id, runId);
+});
+
+test('FeedsService auto import cycle previews active sources and queues runs only for changed previews', async () => {
+  let sourceFindArgs;
+  const calls = [];
+  const prisma = {
+    feedSource: {
+      findMany: async (args) => {
+        sourceFindArgs = args;
+        return [{ id: sourceId }, { id: secondSourceId }, { id: thirdSourceId }];
+      },
+    },
+  };
+  const service = new FeedsService(prisma);
+  service.runFeedImportCommand = async (currentSourceId, mode) => {
+    calls.push([currentSourceId, mode]);
+
+    if (mode === 'run') {
+      return {
+        run: runRecord({
+          sourceId: currentSourceId,
+          mode: 'RUN',
+          status: 'PENDING',
+          finishedAt: null,
+        }),
+      };
+    }
+
+    const summaryJson =
+      currentSourceId === sourceId
+        ? {
+            created: 0,
+            updated: 2,
+            archived: 0,
+            media: {
+              created: 1,
+            },
+          }
+        : {
+            created: 0,
+            updated: 0,
+            archived: 0,
+            media: {
+              created: 0,
+            },
+          };
+
+    return {
+      run: runRecord({
+        sourceId: currentSourceId,
+        mode: 'PREVIEW',
+        status: currentSourceId === thirdSourceId ? 'FAILED' : 'SUCCESS',
+        summaryJson,
+      }),
+    };
+  };
+
+  const result = await service.runFeedAutoImportCycle();
+
+  assert.deepEqual(sourceFindArgs, {
+    where: {
+      deletedAt: null,
+      isActive: true,
+    },
+    select: {
+      id: true,
+    },
+    orderBy: {
+      createdAt: 'asc',
+    },
+  });
+  assert.deepEqual(calls, [
+    [sourceId, 'preview'],
+    [sourceId, 'run'],
+    [secondSourceId, 'preview'],
+    [thirdSourceId, 'preview'],
+  ]);
+  assert.deepEqual(result, {
+    sources: 3,
+    previewed: 3,
+    runsQueued: 1,
+    skipped: 0,
+    failed: 1,
+    isAlreadyRunning: false,
+  });
+});
+
+test('FeedsService auto import cycle skips overlapping scheduler ticks', async () => {
+  let releaseCommand;
+  const commandBlocked = new Promise((resolve) => {
+    releaseCommand = resolve;
+  });
+  let commandStarted;
+  const commandStartedPromise = new Promise((resolve) => {
+    commandStarted = resolve;
+  });
+  const prisma = {
+    feedSource: {
+      findMany: async () => [{ id: sourceId }],
+    },
+  };
+  const service = new FeedsService(prisma);
+  service.runFeedImportCommand = async () => {
+    commandStarted();
+    await commandBlocked;
+
+    return {
+      run: runRecord({
+        summaryJson: {
+          created: 0,
+          updated: 0,
+          archived: 0,
+          media: {
+            created: 0,
+          },
+        },
+      }),
+    };
+  };
+
+  const firstCycle = service.runFeedAutoImportCycle();
+  await commandStartedPromise;
+  const overlappingCycle = await service.runFeedAutoImportCycle();
+
+  assert.deepEqual(overlappingCycle, {
+    sources: 0,
+    previewed: 0,
+    runsQueued: 0,
+    skipped: 0,
+    failed: 0,
+    isAlreadyRunning: true,
+  });
+
+  releaseCommand();
+  await firstCycle;
+});
+
+test('FeedsService starts production auto import scheduler every two hours and clears it on destroy', async () => {
+  const originalNodeEnv = process.env.NODE_ENV;
+  const originalEnabled = process.env.FEED_AUTO_IMPORT_ENABLED;
+  const originalSetInterval = global.setInterval;
+  const originalClearInterval = global.clearInterval;
+  let intervalCallback;
+  let intervalMs;
+  let clearIntervalTimer;
+  let didUnref = false;
+  const timer = {
+    unref: () => {
+      didUnref = true;
+    },
+  };
+
+  try {
+    process.env.NODE_ENV = 'production';
+    delete process.env.FEED_AUTO_IMPORT_ENABLED;
+    global.setInterval = (callback, delay) => {
+      intervalCallback = callback;
+      intervalMs = delay;
+
+      return timer;
+    };
+    global.clearInterval = (currentTimer) => {
+      clearIntervalTimer = currentTimer;
+    };
+
+    const service = new FeedsService({
+      feedSource: {
+        findMany: async () => [],
+      },
+    });
+    let cycles = 0;
+    service.runFeedAutoImportCycle = async () => {
+      cycles += 1;
+
+      return {
+        sources: 0,
+        previewed: 0,
+        runsQueued: 0,
+        skipped: 0,
+        failed: 0,
+        isAlreadyRunning: false,
+      };
+    };
+
+    service.onModuleInit();
+
+    assert.equal(intervalMs, 1000 * 60 * 60 * 2);
+    assert.equal(didUnref, true);
+    assert.equal(cycles, 1);
+
+    await intervalCallback();
+
+    assert.equal(cycles, 2);
+
+    service.onModuleDestroy();
+
+    assert.equal(clearIntervalTimer, timer);
+  } finally {
+    process.env.NODE_ENV = originalNodeEnv;
+
+    if (originalEnabled === undefined) {
+      delete process.env.FEED_AUTO_IMPORT_ENABLED;
+    } else {
+      process.env.FEED_AUTO_IMPORT_ENABLED = originalEnabled;
+    }
+
+    global.setInterval = originalSetInterval;
+    global.clearInterval = originalClearInterval;
+  }
 });
 
 test('FeedsService returns a pending run command before the feed-import CLI finishes', async () => {

@@ -12,6 +12,8 @@ import {
   InternalServerErrorException,
   Logger,
   NotFoundException,
+  type OnModuleDestroy,
+  type OnModuleInit,
 } from '@nestjs/common';
 import { FeedFormat, FeedSourceKind, FeedUnitStatus, FeedUnitType, ImportMode, ImportStatus, Prisma } from '@prisma/client';
 
@@ -23,6 +25,7 @@ import { createSearchContainsFilters } from '../search/search-filters';
 
 const execFileAsync = promisify(execFile);
 const feedRunQueueConcurrency = 3;
+const feedAutoImportIntervalMs = 1000 * 60 * 60 * 2;
 const feedPreviewCommandTimeoutMs = 1000 * 60 * 30;
 const feedRunCommandTimeoutMs = 1000 * 60 * 180;
 const supportedFeedSourceKinds = ['URL', 'FILE', 'INDEX_URL'] as const;
@@ -37,6 +40,15 @@ type SupportedFeedSourceFormat = (typeof supportedFeedSourceFormats)[number];
 type FeedImportRunQueueJob = {
   sourceId: string;
   runId: string;
+};
+
+type FeedAutoImportCycleResult = {
+  sources: number;
+  previewed: number;
+  runsQueued: number;
+  skipped: number;
+  failed: number;
+  isAlreadyRunning: boolean;
 };
 
 type ListFeedSourcesQuery = {
@@ -143,17 +155,118 @@ type FeedUnitRecord = Prisma.FeedUnitGetPayload<{ include: typeof unitInclude }>
 type FeedMediaFileRecord = NonNullable<FeedUnitRecord['media'][number]['mediaAsset']['file']>;
 
 @Injectable()
-export class FeedsService {
+export class FeedsService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(FeedsService.name);
   private readonly activeSourceCommands = new Map<string, FeedImportCommand>();
   private readonly feedRunQueue: FeedImportRunQueueJob[] = [];
   private readonly activeFeedRunProcesses = new Map<string, ChildProcess>();
+  private feedAutoImportTimer: ReturnType<typeof setInterval> | null = null;
+  private isFeedAutoImportCycleRunning = false;
   private activeFeedRunCommands = 0;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly filesService?: FilesService,
   ) {}
+
+  onModuleInit() {
+    if (!this.isFeedAutoImportSchedulerEnabled() || this.feedAutoImportTimer) {
+      return;
+    }
+
+    this.feedAutoImportTimer = setInterval(() => {
+      void this.runFeedAutoImportCycle();
+    }, feedAutoImportIntervalMs);
+    (this.feedAutoImportTimer as { unref?: () => void }).unref?.();
+    void this.runFeedAutoImportCycle();
+  }
+
+  onModuleDestroy() {
+    if (!this.feedAutoImportTimer) {
+      return;
+    }
+
+    clearInterval(this.feedAutoImportTimer);
+    this.feedAutoImportTimer = null;
+  }
+
+  async runFeedAutoImportCycle(): Promise<FeedAutoImportCycleResult> {
+    if (this.isFeedAutoImportCycleRunning) {
+      return {
+        sources: 0,
+        previewed: 0,
+        runsQueued: 0,
+        skipped: 0,
+        failed: 0,
+        isAlreadyRunning: true,
+      };
+    }
+
+    this.isFeedAutoImportCycleRunning = true;
+    const result: FeedAutoImportCycleResult = {
+      sources: 0,
+      previewed: 0,
+      runsQueued: 0,
+      skipped: 0,
+      failed: 0,
+      isAlreadyRunning: false,
+    };
+
+    try {
+      const sources = await this.prisma.feedSource.findMany({
+        where: {
+          deletedAt: null,
+          isActive: true,
+        },
+        select: {
+          id: true,
+        },
+        orderBy: {
+          createdAt: 'asc',
+        },
+      });
+
+      result.sources = sources.length;
+
+      for (const source of sources) {
+        if (this.activeSourceCommands.has(source.id)) {
+          result.skipped += 1;
+          continue;
+        }
+
+        try {
+          const previewResult = await this.runFeedImportCommand(source.id, 'preview');
+          result.previewed += 1;
+
+          if (previewResult.run.status !== ImportStatus.SUCCESS && previewResult.run.status !== ImportStatus.PARTIAL) {
+            result.failed += 1;
+            continue;
+          }
+
+          if (this.shouldRunFeedImportAfterPreview(previewResult.run)) {
+            await this.runFeedImportCommand(source.id, 'run');
+            result.runsQueued += 1;
+          }
+        } catch (error) {
+          if (error instanceof ConflictException) {
+            result.skipped += 1;
+            continue;
+          }
+
+          result.failed += 1;
+          this.logger.error(`Scheduled feed import failed for source ${source.id}: ${getCommandErrorMessage(error)}`);
+        }
+      }
+
+      this.logger.log(
+        `Scheduled feed import cycle finished: sources=${result.sources}, previewed=${result.previewed}, runsQueued=${result.runsQueued}, skipped=${result.skipped}, failed=${result.failed}`,
+      );
+
+      return result;
+    } finally {
+      this.isFeedAutoImportCycleRunning = false;
+    }
+  }
 
   async listSources(query: ListFeedSourcesQuery) {
     const page = this.parsePositiveInteger(query.page, 1);
@@ -589,6 +702,42 @@ export class FeedsService {
       mediaRemaining: 0,
       updatedAt: date.toISOString(),
     };
+  }
+
+  private isFeedAutoImportSchedulerEnabled() {
+    const flag = process.env.FEED_AUTO_IMPORT_ENABLED?.trim().toLowerCase();
+
+    if (flag) {
+      return !['0', 'false', 'no', 'off'].includes(flag);
+    }
+
+    return process.env.NODE_ENV === 'production';
+  }
+
+  private shouldRunFeedImportAfterPreview(run: { status: ImportStatus; summaryJson: unknown }) {
+    if (run.status !== ImportStatus.SUCCESS && run.status !== ImportStatus.PARTIAL) {
+      return false;
+    }
+
+    if (!this.isPlainJsonObject(run.summaryJson)) {
+      return false;
+    }
+
+    const media = this.isPlainJsonObject(run.summaryJson.media) ? run.summaryJson.media : {};
+
+    return (
+      this.getPositiveJsonNumber(run.summaryJson.created) > 0 ||
+      this.getPositiveJsonNumber(run.summaryJson.updated) > 0 ||
+      this.getPositiveJsonNumber(run.summaryJson.archived) > 0 ||
+      this.getPositiveJsonNumber(media.created) > 0 ||
+      this.getPositiveJsonNumber(media.downloaded) > 0 ||
+      this.getPositiveJsonNumber(media.failed) > 0 ||
+      this.getPositiveJsonNumber(media.variantsCreated) > 0
+    );
+  }
+
+  private getPositiveJsonNumber(value: unknown) {
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
   }
 
   private async markPendingQueuedFeedImportRunFailed(runId: string, error: unknown) {
