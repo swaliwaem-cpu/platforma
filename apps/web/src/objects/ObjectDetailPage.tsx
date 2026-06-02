@@ -901,6 +901,7 @@ function ObjectFeedUnitsSection({
   );
   const showFeedUnitsSkeleton = isLoading && groups.length === 0;
   const feedUnitsTableColumnCount = 10;
+  const feedUnitsUpdatedAt = object.feedUpdatedAt ? formatObjectFeedUpdatedAt(object.feedUpdatedAt) : null;
 
   useEffect(() => {
     if (!accessToken) {
@@ -1049,9 +1050,12 @@ function ObjectFeedUnitsSection({
   return (
     <section className="detail-section object-feed-units-section" aria-labelledby="object-feed-units-title">
       <div className="object-feed-units-heading">
-        <div>
+        <div className="object-feed-units-heading-title">
           <p className="eyebrow">Фид</p>
           <h3 id="object-feed-units-title">Лоты</h3>
+          {feedUnitsUpdatedAt ? (
+            <p className="object-feed-updated-at">Обновлено: {feedUnitsUpdatedAt}</p>
+          ) : null}
         </div>
         <span>{isLoading ? 'Загрузка лотов' : `Лотов: ${formatNumber(total)}`}</span>
       </div>
@@ -2589,6 +2593,26 @@ function formatMediaCount(value: number) {
   }
 
   return `${formatNumber(value)} ${formatPlural(value, ['файл', 'файла', 'файлов'])}`;
+}
+
+function formatObjectFeedUpdatedAt(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  const day = padDatePart(date.getDate());
+  const month = padDatePart(date.getMonth() + 1);
+  const year = date.getFullYear();
+  const hours = padDatePart(date.getHours());
+  const minutes = padDatePart(date.getMinutes());
+
+  return `${day}.${month}.${year} ${hours}:${minutes}`;
+}
+
+function padDatePart(value: number) {
+  return String(value).padStart(2, '0');
 }
 
 function getFeedMediaTitle(media: FeedUnit['media'][number]) {

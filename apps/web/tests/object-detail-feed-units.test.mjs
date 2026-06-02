@@ -157,6 +157,16 @@ test('object detail feed units block renders expected columns and media thumbnai
   assert.match(styles, /\.object-feed-units-table\s*\{/);
 });
 
+test('object detail feed units show the latest lot update timestamp under the title', () => {
+  assert.match(objectFeedUnitsSectionSource, /const feedUnitsUpdatedAt = object\.feedUpdatedAt \? formatObjectFeedUpdatedAt\(object\.feedUpdatedAt\) : null;/);
+  assert.match(objectFeedUnitsSectionSource, /feedUnitsUpdatedAt \? \([\s\S]*?<p className="object-feed-updated-at">Обновлено: \{feedUnitsUpdatedAt\}<\/p>[\s\S]*?\) : null/);
+  assert.match(source, /function formatObjectFeedUpdatedAt\(value: string\)/);
+  assert.match(source, /return `\$\{day\}\.\$\{month\}\.\$\{year\} \$\{hours\}:\$\{minutes\}`;/);
+  assert.match(source, /function padDatePart\(value: number\)/);
+  assert.match(styles, /\.object-feed-updated-at\s*\{/);
+  assert.match(styles, /\.object-feed-units-heading-title\s*\{/);
+});
+
 test('object detail feed units grouped surfaces use theme-aware colors', () => {
   const groupedStyles =
     styles.match(/\.object-feed-units-heading span[\s\S]*?\.object-feed-unit-cell span\s*\{[^}]*\}/)?.[0] ?? '';

@@ -5820,6 +5820,20 @@ tr.user-row--deactivated .text-button {
   padding: 24px 24px 0;
 }
 
+.object-feed-units-heading-title {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.object-feed-updated-at {
+  margin: 0;
+  color: var(--app-theme-ink-600, #6d7885);
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
 .object-feed-units-heading span {
   flex: 0 0 auto;
   border: 1px solid var(--app-theme-border-soft, #d6dde5);
