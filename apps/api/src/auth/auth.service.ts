@@ -9,6 +9,7 @@ import { getCookieValue, getRefreshCookieName } from './cookies';
 import {
   AccessTokenPayload,
   AuthenticatedUser,
+  EmailRegistrationRequestInput,
   EmailRegistrationRequestResponse,
   EmailRegistrationVerifyInput,
   LoginResponse,
@@ -150,13 +151,16 @@ export class AuthService {
   }
 
   async requestEmailRegistration(
-    email: string,
+    input: EmailRegistrationRequestInput,
     request: RequestWithAudit,
   ): Promise<EmailRegistrationRequestResponse> {
-    const normalizedEmail = email.trim().toLowerCase();
-    const user = await this.findOrCreateEmailRegistrationUser(normalizedEmail);
+    this.assertValidEmailRegistrationPassword(input.password, input.passwordConfirmation);
 
-    if (!user || user.status === UserStatus.BLOCKED || user.status === UserStatus.DEACTIVATED) {
+    const normalizedEmail = input.email.trim().toLowerCase();
+    const passwordHash = await argon2.hash(input.password, { type: argon2.argon2id });
+    const user = await this.findOrCreateEmailRegistrationUser(normalizedEmail, passwordHash);
+
+    if (!user) {
       return { ok: true };
     }
 
@@ -177,10 +181,9 @@ export class AuthService {
       },
     });
 
-    await this.mailService.sendEmailLogin({
+    await this.mailService.sendEmailRegistrationActivation({
       to: normalizedEmail,
-      code,
-      loginUrl: this.buildEmailLoginUrl(token),
+      activationUrl: this.buildEmailLoginUrl(token),
       expiresInMinutes,
     });
 
@@ -190,8 +193,6 @@ export class AuthService {
   async verifyEmailRegistration(
     input: EmailRegistrationVerifyInput,
   ): Promise<LoginResponse & { refreshToken: string; mediaToken: string | null }> {
-    this.assertValidEmailRegistrationPassword(input.password, input.passwordConfirmation);
-
     const challenge = await this.findValidEmailAuthChallenge(input);
 
     if (!challenge || challenge.user.deletedAt) {
@@ -209,14 +210,16 @@ export class AuthService {
       },
     });
 
-    const sessionUser = await this.prisma.user.update({
-      where: { id: challenge.user.id },
-      data: {
-        passwordHash: await argon2.hash(input.password, { type: argon2.argon2id }),
-        ...(challenge.user.status === UserStatus.INVITED ? { status: UserStatus.ACTIVE } : {}),
-      },
-      include: authUserInclude,
-    });
+    const sessionUser =
+      challenge.user.status === UserStatus.INVITED
+        ? await this.prisma.user.update({
+            where: { id: challenge.user.id },
+            data: {
+              status: UserStatus.ACTIVE,
+            },
+            include: authUserInclude,
+          })
+        : challenge.user;
     const authUser = this.toAuthenticatedUser(sessionUser);
     const tokens = await this.issueTokens(authUser);
 
@@ -271,7 +274,7 @@ export class AuthService {
     }
   }
 
-  private async findOrCreateEmailRegistrationUser(email: string) {
+  private async findOrCreateEmailRegistrationUser(email: string, passwordHash: string) {
     const existingUser = await this.prisma.user.findFirst({
       where: {
         email,
@@ -281,7 +284,19 @@ export class AuthService {
     });
 
     if (existingUser) {
-      return existingUser;
+      if (existingUser.status !== UserStatus.INVITED) {
+        return null;
+      }
+
+      return this.prisma.user.update({
+        where: {
+          id: existingUser.id,
+        },
+        data: {
+          passwordHash,
+        },
+        include: authUserInclude,
+      });
     }
 
     const userRole = await this.prisma.role.findUnique({
@@ -300,7 +315,7 @@ export class AuthService {
     return this.prisma.user.create({
       data: {
         email,
-        passwordHash: await argon2.hash(randomBytes(32).toString('hex'), { type: argon2.argon2id }),
+        passwordHash,
         roleId: userRole.id,
         status: UserStatus.INVITED,
       },

@@ -15,7 +15,7 @@ State fields:
 Main flows:
 
 - On mount, frontend calls `POST /auth/refresh` through `apiRequest`/fetch with credentials.
-- Login and registration verification apply `AuthResponse`.
+- Login and registration activation verification apply `AuthResponse`.
 - Logout calls `POST /auth/logout`, clears local state.
 - `apiRequest` in `apps/web/src/admin/api.ts` retries once on 401 by calling `POST /auth/refresh`.
 - Auth update/clear is propagated with browser events `platforma-auth-updated` and `platforma-auth-cleared`.
@@ -287,7 +287,7 @@ Flow:
 
 - Auth state lives in `apps/web/src/auth/AuthProvider.tsx`: `accessToken`, `user`, `isLoading`.
 - Initial session refresh is `POST /auth/refresh` in `apps/web/src/auth/AuthProvider.tsx`; frontend does not call `GET /auth/me` in current `apps/web/src`.
-- Login and email registration mutate auth through `applyAuthResponse()` in `apps/web/src/auth/AuthProvider.tsx`.
+- Login and email registration activation mutate auth through `applyAuthResponse()` in `apps/web/src/auth/AuthProvider.tsx`; registration request itself only stores a hashed password and sends an activation link.
 - Global API token lives outside React in `currentAccessToken` inside `apps/web/src/admin/api.ts`.
 - Refresh retry state uses `refreshSessionPromise` singleton in `apps/web/src/admin/api.ts`, preventing parallel refresh storms.
 - Auth cross-component sync uses browser events `platforma-auth-updated` and `platforma-auth-cleared`, declared in `apps/web/src/admin/api.ts` and listened to in `apps/web/src/auth/AuthProvider.tsx`.

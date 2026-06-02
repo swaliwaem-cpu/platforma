@@ -16,13 +16,13 @@
 - Назначение: login, email registration, logout, refresh access token, media cookie issuance.
 - Frontend files: `apps/web/src/App.tsx`, `apps/web/src/auth/AuthProvider.tsx`, `apps/web/src/admin/api.ts`.
 - Backend files: `apps/api/src/auth/auth.controller.ts`, `apps/api/src/auth/auth.service.ts`, `apps/api/src/auth/jwt-auth.guard.ts`, `apps/api/src/auth/cookies.ts`, `apps/api/src/auth/media-token.guard.ts`.
-- Shared types: `AuthUser`, `AuthResponse`, `EmailRegistrationVerifyInput`, `ProfilePhotoFile` in `packages/shared/src/index.ts`.
+- Shared types: `AuthUser`, `AuthResponse`, `EmailRegistrationRequestInput`, `EmailRegistrationVerifyInput`, `ProfilePhotoFile` in `packages/shared/src/index.ts`.
 - Prisma models: `User`, `UserSession`, `EmailAuthChallenge`, `Role`, `Permission`, `RolePermission`, `File` in `apps/api/prisma/schema.prisma`.
 - API endpoints: `POST /auth/login`, `POST /auth/register/request`, `POST /auth/register/verify`, `POST /auth/logout`, `POST /auth/refresh`, `GET /auth/me`.
 - Tests: `apps/api/tests/auth-rbac.test.cjs`, `apps/api/tests/auth-session-schema.test.cjs`, `apps/web/tests/api-request-errors.test.mjs`, `apps/web/tests/login-copy.test.mjs`.
 - Связанные docs: `docs/API_AND_DATA.md`, `docs/STATE_AND_LOGIC.md`, `docs/RISK_ZONES.md`.
 - Риски: refresh cookie/media cookie/cross-origin credentials must align across `apps/web/src/admin/api.ts`, `apps/api/src/auth/cookies.ts`, `apps/api/src/main.ts`.
-- Проверки: login, refresh after expired access token, logout, media images, registration token/code flow.
+- Проверки: login, refresh after expired access token, logout, media images, registration request with password, activation token flow.
 
 ## RBAC and Permissions
 
@@ -230,9 +230,9 @@
 - Назначение: session bootstrap, login/logout, email registration, profile, password, photo, permission visibility.
 - Frontend files: `apps/web/src/auth/AuthProvider.tsx`, `apps/web/src/admin/api.ts`, `apps/web/src/App.tsx`, `apps/web/src/files/SecureImage.tsx`.
 - Backend files: `apps/api/src/auth/auth.controller.ts`, `apps/api/src/auth/auth.service.ts`, `apps/api/src/auth/cookies.ts`, `apps/api/src/users/users.controller.ts`, `apps/api/src/users/users.service.ts`, `apps/api/src/files/media.controller.ts`.
-- Shared types: `AuthResponse`, `AuthUser`, `EmailRegistrationVerifyInput`, `ProfilePhotoFile` in `packages/shared/src/index.ts`.
+- Shared types: `AuthResponse`, `AuthUser`, `EmailRegistrationRequestInput`, `EmailRegistrationVerifyInput`, `ProfilePhotoFile` in `packages/shared/src/index.ts`.
 - API endpoints: `POST /auth/refresh`, `POST /auth/login`, `POST /auth/register/request`, `POST /auth/register/verify`, `POST /auth/logout`, `PATCH /users/me`, `PATCH /users/me/password`, `POST /users/me/profile-photo`, media content URL from `apps/web/src/files/SecureImage.tsx`.
-- Frontend states: `accessToken`, `user`, `isLoading`, profile submitting/error/notice, photo uploading, password submitting/error/notice, registration code/password state.
+- Frontend states: `accessToken`, `user`, `isLoading`, profile submitting/error/notice, photo uploading, password submitting/error/notice, registration email/password/activation state.
 - Permission display: `cabinetSections` and `permission-chip-list` in `apps/web/src/App.tsx`; role permission grouping in `apps/web/src/admin/UsersAdminPage.tsx`.
 - Tests: `apps/web/tests/login-copy.test.mjs`, `apps/web/tests/api-request-errors.test.mjs`, `apps/web/tests/secure-image-variants.test.mjs`, `apps/web/tests/sidebar-navigation.test.mjs`.
 - Риски: frontend uses refresh as initial session source; `GET /auth/me` frontend consumer was not found in `apps/web/src`; media image `src` cannot carry bearer token and relies on cookies/backend media guard.
@@ -332,7 +332,7 @@
 - Backend files: `apps/api/src/auth/auth.controller.ts`, `apps/api/src/auth/auth.service.ts`, `apps/api/src/auth/cookies.ts`, `apps/api/src/auth/jwt-auth.guard.ts`, `apps/api/src/auth/permissions.guard.ts`, `apps/api/src/auth/media-token.guard.ts`, `apps/api/prisma/seed.ts`.
 - API endpoints: `POST /auth/login`, `POST /auth/register/request`, `POST /auth/register/verify`, `POST /auth/logout`, `POST /auth/refresh`, `GET /auth/me`, `GET /media/files/:id/content`.
 - Prisma models: `User`, `UserSession`, `EmailAuthChallenge`, `Role`, `Permission`, `RolePermission`, `File`.
-- Shared types: `AuthUser`, `AuthResponse`, `EmailRegistrationVerifyInput`, `EmailRegistrationRequestResponse`, `ProfilePhotoFile` in `packages/shared/src/index.ts`.
+- Shared types: `AuthUser`, `AuthResponse`, `EmailRegistrationRequestInput`, `EmailRegistrationVerifyInput`, `EmailRegistrationRequestResponse`, `ProfilePhotoFile` in `packages/shared/src/index.ts`.
 - Frontend consumers: `apps/web/src/auth/AuthProvider.tsx`, `apps/web/src/admin/api.ts`, `apps/web/src/App.tsx`, `apps/web/src/files/SecureImage.tsx`.
 - Tests: `apps/api/tests/auth-rbac.test.cjs`, `apps/api/tests/auth-session-schema.test.cjs`, `apps/api/tests/api-contract.test.cjs`, `apps/web/tests/secure-image-variants.test.mjs`.
 - Риски: refresh cookie, media cookie, CORS credentials, ACTIVE user check, seeded permissions and frontend route gates can drift.

@@ -113,19 +113,30 @@ test('AuthController validates login body', async () => {
 test('AuthController starts email registration with normalized email', async () => {
   const calls = {};
   const controller = new AuthController({
-    requestEmailRegistration: async (email, request) => {
-      calls.requestEmailRegistration = { email, request };
+    requestEmailRegistration: async (input, request) => {
+      calls.requestEmailRegistration = { input, request };
 
       return { ok: true };
     },
   });
   const request = { headers: { 'user-agent': 'node-test' }, ip: '127.0.0.1' };
 
-  const result = await controller.requestEmailRegistration({ email: ' User@Example.Test ' }, request);
+  const result = await controller.requestEmailRegistration(
+    {
+      email: ' User@Example.Test ',
+      password: 'Strong!1',
+      passwordConfirmation: 'Strong!1',
+    },
+    request,
+  );
 
   assert.deepEqual(result, { ok: true });
   assert.deepEqual(calls.requestEmailRegistration, {
-    email: 'user@example.test',
+    input: {
+      email: 'user@example.test',
+      password: 'Strong!1',
+      passwordConfirmation: 'Strong!1',
+    },
     request,
   });
 });
@@ -148,19 +159,13 @@ test('AuthController verifies email registration and sets auth cookies', async (
 
   const result = await controller.verifyEmailRegistration(
     {
-      email: ' User@Example.Test ',
-      code: '123456',
-      password: 'Strong!1',
-      passwordConfirmation: 'Strong!1',
+      token: 'magic-token',
     },
     response,
   );
 
   assert.deepEqual(calls.verifyEmailRegistration, {
-    email: 'user@example.test',
-    code: '123456',
-    password: 'Strong!1',
-    passwordConfirmation: 'Strong!1',
+    token: 'magic-token',
   });
   assert.deepEqual(result, { accessToken: 'access-token', user });
   assert.equal('refreshToken' in result, false);
@@ -181,6 +186,30 @@ test('AuthController validates email registration bodies', async () => {
     BadRequestException,
   );
   await assert.rejects(
+    () =>
+      controller.requestEmailRegistration(
+        {
+          email: 'user@example.test',
+          password: 'weak',
+          passwordConfirmation: 'weak',
+        },
+        { headers: {} },
+      ),
+    BadRequestException,
+  );
+  await assert.rejects(
+    () =>
+      controller.requestEmailRegistration(
+        {
+          email: 'user@example.test',
+          password: 'Strong!1',
+          passwordConfirmation: 'Strong!2',
+        },
+        { headers: {} },
+      ),
+    BadRequestException,
+  );
+  await assert.rejects(
     () => controller.verifyEmailRegistration({ email: 'user@example.test' }, makeResponse()),
     BadRequestException,
   );
@@ -189,21 +218,7 @@ test('AuthController validates email registration bodies', async () => {
       controller.verifyEmailRegistration(
         {
           email: 'user@example.test',
-          code: '123456',
-          password: 'weak',
-          passwordConfirmation: 'weak',
-        },
-        makeResponse(),
-      ),
-    BadRequestException,
-  );
-  await assert.rejects(
-    () =>
-      controller.verifyEmailRegistration(
-        {
-          token: 'magic-token',
-          password: 'Strong!1',
-          passwordConfirmation: 'Strong!2',
+          code: '12345',
         },
         makeResponse(),
       ),

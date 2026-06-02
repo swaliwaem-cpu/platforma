@@ -429,32 +429,54 @@ function LoginPage({ onSuccess }: { onSuccess: () => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [registrationEmail, setRegistrationEmail] = useState('');
-  const [registrationCode, setRegistrationCode] = useState('');
   const [registrationAuthToken, setRegistrationAuthToken] = useState<string | null>(null);
   const [registrationPassword, setRegistrationPassword] = useState('');
   const [registrationPasswordConfirmation, setRegistrationPasswordConfirmation] = useState('');
-  const [isRegistrationCodeSent, setIsRegistrationCodeSent] = useState(false);
+  const [isRegistrationRequestSent, setIsRegistrationRequestSent] = useState(false);
+  const [showRegistrationPassword, setShowRegistrationPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const shouldShowRegistrationPasswordStep = mode === 'register' && Boolean(registrationAuthToken || registrationCode.length === 6);
+  const registrationActivationHandledRef = useRef(false);
 
   useEffect(() => {
+    if (registrationActivationHandledRef.current) {
+      return;
+    }
+
     const token = new URLSearchParams(window.location.search).get('auth_token');
 
     if (!token) {
       return;
     }
 
+    const activationToken = token;
+
+    registrationActivationHandledRef.current = true;
     setMode('register');
-    setRegistrationAuthToken(token);
-    setRegistrationCode('');
+    setRegistrationAuthToken(activationToken);
     setRegistrationPassword('');
     setRegistrationPasswordConfirmation('');
-    setIsRegistrationCodeSent(true);
+    setIsRegistrationRequestSent(false);
     setError(null);
-    setNotice('Придумайте пароль для завершения регистрации');
-  }, []);
+    setNotice('Подтверждаем регистрацию');
+
+    async function activateRegistration() {
+      setIsSubmitting(true);
+
+      try {
+        await verifyEmailRegistration({ token: activationToken });
+        onSuccess();
+      } catch {
+        setRegistrationAuthToken(null);
+        setError('Ссылка подтверждения недействительна или устарела. Запросите письмо еще раз.');
+      } finally {
+        setIsSubmitting(false);
+      }
+    }
+
+    void activateRegistration();
+  }, [onSuccess, verifyEmailRegistration]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -469,16 +491,7 @@ function LoginPage({ onSuccess }: { onSuccess: () => void }) {
         return;
       }
 
-      if (!registrationAuthToken && !isRegistrationCodeSent) {
-        setIsSubmitting(true);
-        await requestEmailRegistration(registrationEmail);
-        setIsRegistrationCodeSent(true);
-        setNotice('Письмо отправлено');
-        return;
-      }
-
-      if (!registrationAuthToken && registrationCode.length !== 6) {
-        setError('Введите код из письма');
+      if (registrationAuthToken) {
         return;
       }
 
@@ -490,21 +503,15 @@ function LoginPage({ onSuccess }: { onSuccess: () => void }) {
       }
 
       setIsSubmitting(true);
-      await verifyEmailRegistration({
-        ...(registrationAuthToken
-          ? {
-              token: registrationAuthToken,
-            }
-          : {
-              email: registrationEmail,
-              code: registrationCode,
-            }),
+      await requestEmailRegistration({
+        email: registrationEmail,
         password: registrationPassword,
         passwordConfirmation: registrationPasswordConfirmation,
       });
-      onSuccess();
+      setIsRegistrationRequestSent(true);
+      setNotice('Письмо отправлено. Перейдите по ссылке из письма, чтобы активировать аккаунт.');
     } catch {
-      setError(mode === 'login' ? 'Проверьте email и пароль' : 'Проверьте email, код и пароль');
+      setError(mode === 'login' ? 'Проверьте email и пароль' : 'Не удалось отправить письмо. Проверьте email и пароль');
     } finally {
       setIsSubmitting(false);
     }
@@ -517,15 +524,27 @@ function LoginPage({ onSuccess }: { onSuccess: () => void }) {
     setRegistrationAuthToken(null);
     setRegistrationPassword('');
     setRegistrationPasswordConfirmation('');
+    setIsRegistrationRequestSent(false);
   }
 
   function handleRegistrationEmailChange(value: string) {
     setRegistrationEmail(value);
-    setRegistrationCode('');
     setRegistrationAuthToken(null);
     setRegistrationPassword('');
     setRegistrationPasswordConfirmation('');
-    setIsRegistrationCodeSent(false);
+    setIsRegistrationRequestSent(false);
+    setNotice(null);
+  }
+
+  function handleRegistrationPasswordChange(value: string) {
+    setRegistrationPassword(value);
+    setIsRegistrationRequestSent(false);
+    setNotice(null);
+  }
+
+  function handleRegistrationPasswordConfirmationChange(value: string) {
+    setRegistrationPasswordConfirmation(value);
+    setIsRegistrationRequestSent(false);
     setNotice(null);
   }
 
@@ -581,7 +600,10 @@ function LoginPage({ onSuccess }: { onSuccess: () => void }) {
             </>
           ) : (
             <>
-              {registrationAuthToken ? null : (
+              {registrationAuthToken ? (
+                <p className="helper-text">Активируем аккаунт по ссылке из письма.</p>
+              ) : (
+                <>
                 <label>
                   Введите ваш email
                   <input
@@ -592,74 +614,65 @@ function LoginPage({ onSuccess }: { onSuccess: () => void }) {
                     onChange={(event) => handleRegistrationEmailChange(event.target.value)}
                   />
                 </label>
-              )}
 
-              {!registrationAuthToken && isRegistrationCodeSent ? (
-                <label>
-                  Введите код из письма
-                  <input
-                    autoComplete="one-time-code"
-                    inputMode="numeric"
-                    maxLength={6}
-                    name="registration-code"
-                    pattern="[0-9]*"
-                    type="text"
-                    value={registrationCode}
-                    onChange={(event) => setRegistrationCode(event.target.value.replace(/\D/gu, '').slice(0, 6))}
-                  />
-                </label>
-              ) : null}
-
-              {shouldShowRegistrationPasswordStep ? (
                 <div className="registration-password-panel" role="group" aria-labelledby="registration-password-title">
                   <p id="registration-password-title" className="registration-password-title">
-                    Придумайте пароль
+                    Пароль для входа
                   </p>
                   <p className="helper-text">
                     Пароль должен быть от 8 символов, на английском языке, с заглавной буквой и спецсимволом.
                   </p>
                   <div className="registration-password-grid">
                     <label>
-                      Пароль
+                      Придумайте пароль
                       <input
                         autoComplete="new-password"
                         name="registration-password"
-                        type="password"
+                        type={showRegistrationPassword ? 'text' : 'password'}
                         value={registrationPassword}
-                        onChange={(event) => setRegistrationPassword(event.target.value)}
+                        onChange={(event) => handleRegistrationPasswordChange(event.target.value)}
                       />
                     </label>
                     <label>
-                      Повторите пароль
+                      Подтвердите пароль
                       <input
                         autoComplete="new-password"
                         name="registration-password-confirmation"
-                        type="password"
+                        type={showRegistrationPassword ? 'text' : 'password'}
                         value={registrationPasswordConfirmation}
-                        onChange={(event) => setRegistrationPasswordConfirmation(event.target.value)}
+                        onChange={(event) => handleRegistrationPasswordConfirmationChange(event.target.value)}
                       />
                     </label>
                   </div>
+                  <label className="password-visibility-toggle">
+                    <input
+                      checked={showRegistrationPassword}
+                      type="checkbox"
+                      onChange={(event) => setShowRegistrationPassword(event.target.checked)}
+                    />
+                    <span>Показать пароль</span>
+                  </label>
                 </div>
-              ) : null}
+                </>
+              )}
             </>
           )}
 
           {error ? <p className="form-error">{error}</p> : null}
           {notice ? <p className="form-notice">{notice}</p> : null}
 
-          <button className="primary-button" disabled={isSubmitting} type="submit">
+          <button className="primary-button" disabled={isSubmitting || Boolean(registrationAuthToken)} type="submit">
             {isSubmitting
               ? mode === 'login'
                 ? 'Вход'
-                : 'Отправка'
+                : registrationAuthToken
+                  ? 'Подтверждение'
+                  : 'Отправка'
               : mode === 'login'
                 ? 'Войти'
-                : isRegistrationCodeSent
-                  ? shouldShowRegistrationPasswordStep
-                    ? 'Завершить регистрацию'
-                    : 'Проверить код'
-                  : 'Отправить код'}
+                : isRegistrationRequestSent
+                  ? 'Отправить письмо еще раз'
+                  : 'Зарегистрироваться'}
           </button>
         </form>
       </section>

@@ -55,19 +55,21 @@ export type EmailRegistrationRequestResponse = {
   ok: true;
 };
 
+export type EmailRegistrationRequestInput = {
+  email: string;
+  password: string;
+  passwordConfirmation: string;
+};
+
 export type EmailRegistrationVerifyInput =
   | {
       token: string;
-      password: string;
-      passwordConfirmation: string;
       email?: never;
       code?: never;
     }
   | {
       email: string;
       code: string;
-      password: string;
-      passwordConfirmation: string;
       token?: never;
     };
 

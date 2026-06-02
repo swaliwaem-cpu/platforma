@@ -529,6 +529,24 @@ h2 {
   gap: 12px;
 }
 
+.password-visibility-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 8px;
+  color: #536172;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.password-visibility-toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #2563eb;
+}
+
 label {
   display: grid;
   gap: 8px;

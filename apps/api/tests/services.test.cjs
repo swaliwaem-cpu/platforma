@@ -3500,7 +3500,7 @@ test('UsersService.deactivate archives access by status and clears refresh sessi
   assert.equal(calls.auditLog.data.action, 'user.deactivate');
 });
 
-test('AuthService.requestEmailRegistration creates invited user role and sends login email', async () => {
+test('AuthService.requestEmailRegistration creates invited user role and sends activation email', async () => {
   const calls = {};
   const userRole = { id: '55555555-5555-4555-8555-555555555555' };
   const createdUser = userRecord({
@@ -3545,7 +3545,7 @@ test('AuthService.requestEmailRegistration creates invited user role and sends l
     },
   };
   const mailer = {
-    sendEmailLogin: async (message) => {
+    sendEmailRegistrationActivation: async (message) => {
       calls.mailer = message;
     },
   };
@@ -3554,11 +3554,20 @@ test('AuthService.requestEmailRegistration creates invited user role and sends l
 
   try {
     const service = new AuthService(prisma, {}, mailer);
-    const result = await service.requestEmailRegistration('new@example.test', request);
+    const result = await service.requestEmailRegistration(
+      {
+        email: 'new@example.test',
+        password: 'Strong!1',
+        passwordConfirmation: 'Strong!1',
+      },
+      request,
+    );
 
     assert.deepEqual(result, { ok: true });
     assert.deepEqual(calls.roleFindUnique, { where: { name: 'user' }, select: { id: true } });
     assert.equal(calls.userCreate.data.email, 'new@example.test');
+    assert.match(calls.userCreate.data.passwordHash, /^\$argon2/);
+    assert.notEqual(calls.userCreate.data.passwordHash, 'Strong!1');
     assert.equal(calls.userCreate.data.roleId, userRole.id);
     assert.equal(calls.userCreate.data.status, UserStatus.INVITED);
     assert.equal(calls.challengeCreate.data.email, 'new@example.test');
@@ -3568,8 +3577,9 @@ test('AuthService.requestEmailRegistration creates invited user role and sends l
     assert.equal(calls.challengeCreate.data.ipAddress, '127.0.0.1');
     assert.equal(calls.challengeCreate.data.userAgent, 'node-test');
     assert.equal(calls.mailer.to, 'new@example.test');
-    assert.match(calls.mailer.code, /^\d{6}$/);
-    assert.match(calls.mailer.loginUrl, /^https:\/\/broker\.fluffywhite\.moscow\/login\?auth_token=/);
+    assert.equal('code' in calls.mailer, false);
+    assert.equal('password' in calls.mailer, false);
+    assert.match(calls.mailer.activationUrl, /^https:\/\/broker\.fluffywhite\.moscow\/login\?auth_token=/);
   } finally {
     if (previousPublicAppUrl === undefined) {
       delete process.env.PUBLIC_APP_URL;
@@ -3650,12 +3660,10 @@ test('AuthService.verifyEmailRegistration consumes magic token and activates inv
       return `${payload.type}-token`;
     },
   };
-  const service = new AuthService(prisma, jwtService, { sendEmailLogin: async () => {} });
+  const service = new AuthService(prisma, jwtService, { sendEmailRegistrationActivation: async () => {} });
 
   const result = await service.verifyEmailRegistration({
     token: 'magic-token',
-    password: 'Strong!1',
-    passwordConfirmation: 'Strong!1',
   });
 
   assert.equal(result.accessToken, 'access-token');
@@ -3667,8 +3675,7 @@ test('AuthService.verifyEmailRegistration consumes magic token and activates inv
   assert.equal(calls[1][0], 'challenge.update');
   assert.equal(calls[1][1].data.consumedAt instanceof Date, true);
   assert.equal(calls[2][0], 'user.update');
-  assert.equal(calls[2][1].data.status, UserStatus.ACTIVE);
-  assert.match(calls[2][1].data.passwordHash, /^\$argon2/);
+  assert.deepEqual(calls[2][1].data, { status: UserStatus.ACTIVE });
   assert.equal(calls[3][0], 'session.create');
   assert.equal(calls[3][1].data.userId, activeUser.id);
   assert.match(calls[3][1].data.refreshTokenHash, /^\$argon2/);
@@ -3743,7 +3750,7 @@ test('AuthService.refresh updates only the current user session and keeps anothe
     }),
     signAsync: async (payload) => (payload.type === 'refresh' ? `new-refresh-${payload.sessionId}` : `${payload.type}-token`),
   };
-  const service = new AuthService(prisma, jwtService, { sendEmailLogin: async () => {} });
+  const service = new AuthService(prisma, jwtService, { sendEmailRegistrationActivation: async () => {} });
 
   const refreshedA = await service.refresh({ headers: { cookie: `platforma_refresh_token=${tokenA}` } });
   const refreshedB = await service.refresh({ headers: { cookie: `platforma_refresh_token=${tokenB}` } });
@@ -3808,7 +3815,7 @@ test('AuthService.refresh accepts repeated refreshes from the same browser sessi
     }),
     signAsync: async (payload) => (payload.type === 'refresh' ? 'new-refresh-token' : `${payload.type}-token`),
   };
-  const service = new AuthService(prisma, jwtService, { sendEmailLogin: async () => {} });
+  const service = new AuthService(prisma, jwtService, { sendEmailRegistrationActivation: async () => {} });
 
   const first = await service.refresh({ headers: { cookie: `platforma_refresh_token=${currentToken}` } });
   const second = await service.refresh({ headers: { cookie: `platforma_refresh_token=${currentToken}` } });

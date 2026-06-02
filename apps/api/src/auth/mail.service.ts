@@ -1,10 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import nodemailer, { Transporter } from 'nodemailer';
 
-export type EmailLoginMessage = {
+export type EmailRegistrationActivationMessage = {
   to: string;
-  code: string;
-  loginUrl: string;
+  activationUrl: string;
   expiresInMinutes: number;
 };
 
@@ -12,7 +11,7 @@ export type EmailLoginMessage = {
 export class MailService {
   private transporter: Transporter | null = null;
 
-  async sendEmailLogin(message: EmailLoginMessage) {
+  async sendEmailRegistrationActivation(message: EmailRegistrationActivationMessage) {
     const from = process.env.MAIL_FROM ?? process.env.SMTP_USER;
 
     if (!this.hasSmtpConfig() || !from) {
@@ -20,16 +19,14 @@ export class MailService {
         throw new Error('SMTP is not configured');
       }
 
-      console.info(
-        `Email login code for ${message.to}: ${message.code}. Link: ${message.loginUrl}`,
-      );
+      console.info(`Email registration activation link for ${message.to}: ${message.activationUrl}`);
       return;
     }
 
     await this.getTransporter().sendMail({
       from,
       to: message.to,
-      subject: 'Код входа в Platforma',
+      subject: 'Подтверждение регистрации в Platforma',
       text: this.renderText(message),
       html: this.renderHtml(message),
     });
@@ -65,29 +62,28 @@ export class MailService {
     return value === 'true' || value === '1';
   }
 
-  private renderText(message: EmailLoginMessage) {
+  private renderText(message: EmailRegistrationActivationMessage) {
     return [
-      'Ваш код входа в Platforma:',
+      'Подтвердите регистрацию в Platforma:',
       '',
-      message.code,
+      message.activationUrl,
       '',
-      `Код действует ${message.expiresInMinutes} минут.`,
+      `Ссылка действует ${message.expiresInMinutes} минут.`,
       '',
-      'Можно также войти по ссылке:',
-      message.loginUrl,
+      'Ваш пароль: тот, который вы указали при регистрации.',
       '',
-      'Если вы не запрашивали вход, просто проигнорируйте это письмо.',
+      'Если вы не запрашивали регистрацию, просто проигнорируйте это письмо.',
     ].join('\n');
   }
 
-  private renderHtml(message: EmailLoginMessage) {
+  private renderHtml(message: EmailRegistrationActivationMessage) {
     return [
       '<div style="font-family: Arial, sans-serif; color: #18202a; line-height: 1.5;">',
-      '<p>Ваш код входа в Platforma:</p>',
-      `<p style="font-size: 28px; font-weight: 700; letter-spacing: 4px;">${this.escapeHtml(message.code)}</p>`,
-      `<p>Код действует ${message.expiresInMinutes} минут.</p>`,
-      `<p><a href="${this.escapeHtml(message.loginUrl)}">Войти в платформу</a></p>`,
-      '<p style="color: #536172;">Если вы не запрашивали вход, просто проигнорируйте это письмо.</p>',
+      '<p>Подтвердите регистрацию в Platforma:</p>',
+      `<p><a href="${this.escapeHtml(message.activationUrl)}">Активировать аккаунт</a></p>`,
+      `<p>Ссылка действует ${message.expiresInMinutes} минут.</p>`,
+      '<p>Ваш пароль: тот, который вы указали при регистрации.</p>',
+      '<p style="color: #536172;">Если вы не запрашивали регистрацию, просто проигнорируйте это письмо.</p>',
       '</div>',
     ].join('');
   }

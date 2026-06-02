@@ -1,5 +1,10 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { AuthResponse, AuthUser, EmailRegistrationVerifyInput } from '@platforma/shared';
+import {
+  AuthResponse,
+  AuthUser,
+  EmailRegistrationRequestInput,
+  EmailRegistrationVerifyInput,
+} from '@platforma/shared';
 
 import {
   apiAuthClearedEventName,
@@ -13,7 +18,7 @@ type AuthContextValue = {
   user: AuthUser | null;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  requestEmailRegistration: (email: string) => Promise<void>;
+  requestEmailRegistration: (input: EmailRegistrationRequestInput) => Promise<void>;
   verifyEmailRegistration: (input: EmailRegistrationVerifyInput) => Promise<void>;
   logout: () => Promise<void>;
   updateUser: (user: AuthUser) => void;
@@ -111,18 +116,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [applyAuthResponse],
   );
 
-  const requestEmailRegistration = useCallback(async (email: string) => {
+  const requestEmailRegistration = useCallback(async (input: EmailRegistrationRequestInput) => {
     const response = await fetch(`${apiUrl}/auth/register/request`, {
       method: 'POST',
       credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ email }),
+      body: JSON.stringify(input),
     });
 
     if (!response.ok) {
-      throw new Error('Не удалось отправить код');
+      throw new Error('Не удалось отправить письмо');
     }
   }, []);
 

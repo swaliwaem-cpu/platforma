@@ -12,7 +12,12 @@ import {
 } from '@nestjs/common';
 
 import { AuthService } from './auth.service';
-import { CookieResponse, EmailRegistrationVerifyInput, RequestWithAuth } from './auth.types';
+import {
+  CookieResponse,
+  EmailRegistrationRequestInput,
+  EmailRegistrationVerifyInput,
+  RequestWithAuth,
+} from './auth.types';
 import { CurrentUser } from './current-user.decorator';
 import {
   getMediaCookieName,
@@ -29,14 +34,14 @@ type LoginBody = {
 
 type EmailRegistrationRequestBody = {
   email?: unknown;
+  password?: unknown;
+  passwordConfirmation?: unknown;
 };
 
 type EmailRegistrationVerifyBody = {
   email?: unknown;
   code?: unknown;
   token?: unknown;
-  password?: unknown;
-  passwordConfirmation?: unknown;
 };
 
 const DEFAULT_MEDIA_TTL_MINUTES = 200;
@@ -72,7 +77,7 @@ export class AuthController {
     @Body() body: EmailRegistrationRequestBody,
     @Req() request: RequestWithAuth,
   ) {
-    return this.authService.requestEmailRegistration(this.parseEmail(body.email), request);
+    return this.authService.requestEmailRegistration(this.parseEmailRegistrationRequestBody(body), request);
   }
 
   @Post('register/verify')
@@ -120,13 +125,17 @@ export class AuthController {
     return this.authService.getMe(user);
   }
 
-  private parseEmailRegistrationVerifyBody(body: EmailRegistrationVerifyBody): EmailRegistrationVerifyInput {
-    const password = this.parseRegistrationPassword(body.password, body.passwordConfirmation);
+  private parseEmailRegistrationRequestBody(body: EmailRegistrationRequestBody): EmailRegistrationRequestInput {
+    return {
+      email: this.parseEmail(body.email),
+      ...this.parseRegistrationPassword(body.password, body.passwordConfirmation),
+    };
+  }
 
+  private parseEmailRegistrationVerifyBody(body: EmailRegistrationVerifyBody): EmailRegistrationVerifyInput {
     if (typeof body.token === 'string' && body.token.trim().length > 0) {
       return {
         token: body.token.trim(),
-        ...password,
       };
     }
 
@@ -139,7 +148,6 @@ export class AuthController {
     return {
       email,
       code: body.code.trim(),
-      ...password,
     };
   }
 
