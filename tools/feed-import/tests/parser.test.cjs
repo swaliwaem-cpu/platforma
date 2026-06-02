@@ -439,6 +439,48 @@ test('CianXmlFeedParser reads completion from building deadline and snake case f
   assert.equal(buildYearUnit.completionQuarter, null);
 });
 
+test('CianXmlFeedParser reads discount price and house deadline fields', () => {
+  const parser = new CianXmlFeedParser();
+  const xml = `<?xml version="1.0"?>
+    <feed>
+      <object>
+        <ExternalId>discount-deadline-1</ExternalId>
+        <Category>flatSale</Category>
+        <Address>Москва, пример скидки</Address>
+        <FloorNumber>7</FloorNumber>
+        <FlatRoomsCount>2</FlatRoomsCount>
+        <TotalArea>45</TotalArea>
+        <BargainTerms>
+          <Price>10000000</Price>
+          <DiscountPrice>9000000</DiscountPrice>
+          <Currency>RUR</Currency>
+        </BargainTerms>
+        <JKSchema>
+          <Name>Скидочный корпус</Name>
+          <House>
+            <Name>Корпус 2</Name>
+            <Deadline>
+              <Date>2028-12-31</Date>
+            </Deadline>
+          </House>
+        </JKSchema>
+      </object>
+    </feed>`;
+
+  const result = parser.parse(xml);
+  const unit = result.units[0];
+
+  assert.deepEqual(result.warnings, []);
+  assert.equal(unit.price, '10000000.00');
+  assert.equal(unit.discountPrice, '9000000.00');
+  assert.equal(unit.effectivePrice, '9000000.00');
+  assert.equal(unit.pricePerMeter, '222222.22');
+  assert.equal(unit.discountPricePerMeter, '200000.00');
+  assert.equal(unit.effectivePricePerMeter, '200000.00');
+  assert.equal(unit.completionYear, 2028);
+  assert.equal(unit.completionQuarter, 4);
+});
+
 test('CianXmlFeedParser normalizes Etalon-style project, house, rooms and media fields', () => {
   const parser = new CianXmlFeedParser();
   const xml = `<?xml version="1.0"?>
@@ -891,6 +933,54 @@ test('FskXmlFeedParser normalizes only residential units and maps FSK studios to
   assert.equal(studio.residentialDetails.apartmentNumber, '260');
   assert.equal(studio.residentialDetails.layoutType, 'Студия');
   assert.equal(result.units.some((unit) => unit.externalId === '248212'), false);
+});
+
+test('FskXmlFeedParser keeps base price and sale price as discount price', () => {
+  const parser = new FskXmlFeedParser();
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+    <Data>
+      <FlatTypes><FlatType ID="0" Name="Квартира"/></FlatTypes>
+      <Regions>
+        <Region Region_name="Москва и МО">
+          <Object Complex_name="Режиссер" Complex_id="67" ID1C="00320">
+            <Buildings>
+              <Corpus Num="1" Corpus_Delivery="2027-03-31">
+                <Section Num="1">
+                  <Floor Num="5">
+                    <Flat
+                      Id="discount-fsk-id"
+                      Id1C="discount-fsk-1"
+                      Type="0"
+                      Number="501"
+                      Floor="5"
+                      Rooms="1"
+                      Price_metr="250000"
+                      Price_metr_sale="200000"
+                      Price_tot="10000000"
+                      Price_tot_sale="8000000"
+                      Square_tot="40"
+                    />
+                  </Floor>
+                </Section>
+              </Corpus>
+            </Buildings>
+          </Object>
+        </Region>
+      </Regions>
+    </Data>`;
+
+  const result = parser.parse(xml);
+  const unit = result.units[0];
+
+  assert.deepEqual(result.warnings, []);
+  assert.equal(unit.price, '10000000.00');
+  assert.equal(unit.discountPrice, '8000000.00');
+  assert.equal(unit.effectivePrice, '8000000.00');
+  assert.equal(unit.pricePerMeter, '250000.00');
+  assert.equal(unit.discountPricePerMeter, '200000.00');
+  assert.equal(unit.effectivePricePerMeter, '200000.00');
+  assert.equal(unit.completionYear, 2027);
+  assert.equal(unit.completionQuarter, 1);
 });
 
 test('createFeedSourceAnalysis summarizes FSK objects for automatic mapping', () => {

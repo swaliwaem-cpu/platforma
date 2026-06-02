@@ -10,6 +10,8 @@ const multiSelectSource = readFileSync(resolve(currentDir, '../src/components/Mu
 const styles = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
 const objectFeedUnitsSectionSource =
   source.match(/function ObjectFeedUnitsSection[\s\S]*?\nfunction ObjectFeedSortableHead/)?.[0] ?? '';
+const objectFeedUnitRowSource =
+  source.match(/function ObjectFeedUnitRow[\s\S]*?\nfunction ObjectFeedMediaCarousel/)?.[0] ?? '';
 const objectFeedMediaCarouselSource =
   source.match(/function ObjectFeedMediaCarousel[\s\S]*?\nfunction ObjectLotMediaCarousel/)?.[0] ?? '';
 
@@ -31,7 +33,9 @@ test('object detail feed units render grouped completion and room rows', () => {
   assert.match(source, /const \[expandedCompletionGroups,\s*setExpandedCompletionGroups\] = useState<Set<string>>/);
   assert.match(source, /const \[expandedRoomGroups,\s*setExpandedRoomGroups\] = useState<Set<string>>/);
   assert.match(source, /const \[visibleRoomLotCounts,\s*setVisibleRoomLotCounts\] = useState<Record<string, number>>\(\{\}\);/);
-  assert.match(source, /setDefaultExpandedLotGroups\(data\.groups\);/);
+  assert.doesNotMatch(objectFeedUnitsSectionSource, /setDefaultExpandedLotGroups\(data\.groups\);/);
+  assert.doesNotMatch(source, /function setDefaultExpandedLotGroups/);
+  assert.match(objectFeedUnitsSectionSource, /setGroups\(data\.groups\);[\s\S]*setExpandedCompletionGroups\(new Set\(\)\);[\s\S]*setExpandedRoomGroups\(new Set\(\)\);/);
   assert.match(source, /function makeRoomGroupExpansionKey\(completionGroupKey: string, roomGroupKey: string\)/);
   assert.match(source, /className="object-feed-completion-group"/);
   assert.match(source, /className="object-feed-completion-button"/);
@@ -115,18 +119,21 @@ test('object detail feed units block renders expected columns and media thumbnai
   assert.match(source, /const \[hasDiscountPrices,\s*setHasDiscountPrices\] = useState\(false\);/);
   assert.match(source, /setHasDiscountPrices\(data\.hasDiscountPrices\);/);
   assert.doesNotMatch(source, /units\.some\(\(unit\) => Boolean\(unit\.discountPrice\)\)/);
-  assert.doesNotMatch(objectFeedUnitsSectionSource, /Цена со скидкой/);
+  assert.match(objectFeedUnitsSectionSource, /Цена со скидкой/);
   assert.match(source, /field="pricePerMeter"[\s\S]*?>\s*За м²\s*<\/ObjectFeedSortableHead>/);
   assert.doesNotMatch(source, /showDiscountPrice=\{hasDiscountPrices\}/);
   assert.doesNotMatch(source, /showDiscountPrice: boolean;/);
   assert.match(source, /<TableCell>\{formatFeedUnitPricePerMeter\(unit\)\}<\/TableCell>/);
   assert.match(source, /const feedUnitsTableColumnCount = 10;/);
-  assert.match(source, /<TableHead>План<\/TableHead>/);
+  assert.doesNotMatch(objectFeedUnitsSectionSource, /<TableHead>План<\/TableHead>/);
+  assert.match(objectFeedUnitsSectionSource, /<TableHead>Медиа<\/TableHead>[\s\S]*?<ObjectFeedSortableHead field="building"/);
   assert.match(source, /field="building"[\s\S]*?>\s*Корпус\s*<\/ObjectFeedSortableHead>/);
   assert.match(source, /<TableHead>Секц\.<\/TableHead>/);
   assert.match(source, /field="floor"[\s\S]*?>\s*Эт\.\s*<\/ObjectFeedSortableHead>/);
   assert.match(source, /field="title"[\s\S]*?>\s*Номер квартиры\s*<\/ObjectFeedSortableHead>/);
-  assert.match(source, /<TableCell>\{formatFeedUnitPrice\(unit\.effectivePrice \?\? unit\.discountPrice \?\? unit\.price, unit\.currency\)\}<\/TableCell>/);
+  assert.match(objectFeedUnitRowSource, /<TableCell>\{formatFeedUnitPrice\(unit\.price, unit\.currency\)\}<\/TableCell>/);
+  assert.match(objectFeedUnitRowSource, /<TableCell>\{formatFeedUnitDiscountPrice\(unit\)\}<\/TableCell>/);
+  assert.doesNotMatch(objectFeedUnitRowSource, /formatFeedUnitPrice\(unit\.effectivePrice \?\? unit\.discountPrice \?\? unit\.price, unit\.currency\)/);
   assert.match(source, /function formatFeedUnitCompletion\(unit: FeedUnit\)/);
   assert.match(source, /return `\$\{unit\.completionQuarter\}кв \$\{unit\.completionYear\}`;/);
   assert.doesNotMatch(source, /<span>ID \{unit\.externalId\}<\/span>/);
@@ -190,6 +197,7 @@ test('object detail feed units support server sorting from sortable headers', ()
   assert.match(source, /<ObjectFeedSortableHead[\s\S]*?field="title"[\s\S]*?>\s*Номер квартиры\s*<\/ObjectFeedSortableHead>/);
   assert.match(source, /<ObjectFeedSortableHead[\s\S]*?field="status"[\s\S]*?>\s*Статус\s*<\/ObjectFeedSortableHead>/);
   assert.match(source, /<ObjectFeedSortableHead[\s\S]*?field="price"[\s\S]*?>\s*Цена\s*<\/ObjectFeedSortableHead>/);
+  assert.match(source, /<TableHead>Цена со скидкой<\/TableHead>/);
   assert.doesNotMatch(source, /<ObjectFeedSortableHead[\s\S]*?field="price"[\s\S]*?>\s*Цена со скидкой\s*<\/ObjectFeedSortableHead>/);
   assert.match(source, /<ObjectFeedSortableHead[\s\S]*?field="pricePerMeter"[\s\S]*?>\s*За м²\s*<\/ObjectFeedSortableHead>/);
   assert.match(source, /<ObjectFeedSortableHead[\s\S]*?field="area"[\s\S]*?>\s*Площадь\s*<\/ObjectFeedSortableHead>/);
@@ -214,6 +222,8 @@ test('object detail feed units use effective prices for sorting and price per me
   assert.match(source, /return parseNullableNumber\(unit\.effectivePrice\) \?\? parseNullableNumber\(unit\.discountPrice\) \?\? parseNullableNumber\(unit\.price\);/);
   assert.match(source, /compareNullableNumber\(getEffectiveFeedUnitPrice\(leftUnit\), getEffectiveFeedUnitPrice\(rightUnit\)\)/);
   assert.match(source, /parseNullableNumber\(unit\.effectivePricePerMeter\)/);
+  assert.match(source, /function formatFeedUnitDiscountPrice\(unit: FeedUnit\)/);
+  assert.match(source, /formatFeedUnitPrice\(unit\.discountPrice \?\? unit\.price, unit\.currency\)/);
 });
 
 test('object detail feed media opens lot files in a carousel with fullscreen preview', () => {

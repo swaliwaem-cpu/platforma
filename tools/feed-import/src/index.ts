@@ -334,13 +334,15 @@ export class CianXmlFeedParser implements FeedParser {
     const cianHouse = asRecord(jkSchema?.House);
     const cianFlat = asRecord(cianHouse?.Flat);
     const statusResult = normalizeCianFeedUnitStatus(object);
-    const completion = normalizeCianCompletion(object, building, externalId, warnings);
+    const completion = normalizeCianCompletion(object, building, cianHouse, externalId, warnings);
 
     if (statusResult.warning) {
       warnings.push(withExternalId(statusResult.warning, externalId));
     }
 
     const price = normalizeDecimal(bargainTerms?.Price, 'price', externalId, warnings);
+    const discountPrice = normalizeCianDiscountPrice(object, bargainTerms, price, externalId, warnings);
+    const effectivePrice = discountPrice ?? price;
     const floor = normalizeInteger(object.FloorNumber, 'floor', externalId, warnings);
     const area = normalizeDecimal(object.TotalArea, 'area', externalId, warnings);
     const ceilingHeight = normalizeDecimal(building?.CeilingHeight, 'ceilingHeight', externalId, warnings);
@@ -360,13 +362,13 @@ export class CianXmlFeedParser implements FeedParser {
       floor,
       rooms: normalizeCianRooms(object, externalId, warnings),
       price,
-      discountPrice: null,
-      effectivePrice: price,
+      discountPrice,
+      effectivePrice,
       currency: getText(bargainTerms?.Currency),
       area,
       pricePerMeter: calculatePricePerMeter(price, area),
-      discountPricePerMeter: null,
-      effectivePricePerMeter: calculatePricePerMeter(price, area),
+      discountPricePerMeter: calculatePricePerMeter(discountPrice, area),
+      effectivePricePerMeter: calculatePricePerMeter(effectivePrice, area),
       completionYear: completion.year,
       completionQuarter: completion.quarter,
       rawPayload: object,
@@ -651,9 +653,22 @@ export class FskXmlFeedParser implements FeedParser {
 
     const fskTypeId = getXmlAttribute(flat, 'Type');
     const flatTypeName = getFskFlatTypeName(context.flatTypeNames, fskTypeId);
-    const price = normalizeDecimal(getXmlAttribute(flat, 'Price_tot_sale') ?? getXmlAttribute(flat, 'Price_tot'), 'price', externalId, warnings);
+    const basePrice = normalizeDecimal(getXmlAttribute(flat, 'Price_tot'), 'price', externalId, warnings);
+    const salePrice = normalizePositiveDecimal(getXmlAttribute(flat, 'Price_tot_sale'), 'discountPrice', externalId, warnings);
+    const price = basePrice ?? salePrice;
+    const discountPrice = basePrice ? getLowerPositiveDecimal(salePrice, basePrice) : null;
+    const effectivePrice = discountPrice ?? price;
     const area = normalizeDecimal(getXmlAttribute(flat, 'Square_tot'), 'area', externalId, warnings);
     const completion = parseFskCompletion(context.corpusDelivery);
+    const basePricePerMeter =
+      normalizeDecimal(getXmlAttribute(flat, 'Price_metr'), 'pricePerMeter', externalId, warnings) ??
+      calculatePricePerMeter(price, area);
+    const salePricePerMeter = normalizePositiveDecimal(getXmlAttribute(flat, 'Price_metr_sale'), 'discountPricePerMeter', externalId, warnings);
+    const pricePerMeter = basePricePerMeter ?? salePricePerMeter;
+    const discountPricePerMeter = basePricePerMeter
+      ? getLowerPositiveDecimal(salePricePerMeter, basePricePerMeter) ?? calculatePricePerMeter(discountPrice, area)
+      : null;
+    const effectivePricePerMeter = discountPricePerMeter ?? pricePerMeter ?? calculatePricePerMeter(effectivePrice, area);
 
     return {
       externalId,
@@ -667,13 +682,13 @@ export class FskXmlFeedParser implements FeedParser {
       floor: normalizeInteger(getXmlAttribute(flat, 'Floor') ?? context.floorNumber, 'floor', externalId, warnings),
       rooms: normalizeFskRooms(flat, externalId, warnings),
       price,
-      discountPrice: null,
-      effectivePrice: price,
+      discountPrice,
+      effectivePrice,
       currency: 'RUR',
       area,
-      pricePerMeter: calculatePricePerMeter(price, area),
-      discountPricePerMeter: null,
-      effectivePricePerMeter: calculatePricePerMeter(price, area),
+      pricePerMeter,
+      discountPricePerMeter,
+      effectivePricePerMeter,
       completionYear: completion.year,
       completionQuarter: completion.quarter,
       rawPayload: {
@@ -1007,6 +1022,18 @@ function normalizePositiveDecimal(
   return decimal !== null && Number(decimal) > 0 ? decimal : null;
 }
 
+function getLowerPositiveDecimal(value: string | null, baseValue: string | null) {
+  if (value === null) {
+    return null;
+  }
+
+  if (baseValue === null) {
+    return value;
+  }
+
+  return Number(value) < Number(baseValue) ? value : null;
+}
+
 function getDecimalText(value: unknown): string | null {
   const record = asRecord(value);
 
@@ -1231,6 +1258,55 @@ function normalizeCianFeedUnitStatus(object: XmlRecord): FeedStatusNormalization
   return { status: 'AVAILABLE' };
 }
 
+function normalizeCianDiscountPrice(
+  object: XmlRecord,
+  bargainTerms: XmlRecord | null,
+  price: string | null,
+  externalId: string,
+  warnings: FeedParserWarning[],
+) {
+  const discountPrice = normalizeFirstPositiveDecimal(
+    [
+      bargainTerms?.DiscountPrice,
+      bargainTerms?.discountPrice,
+      bargainTerms?.DiscountedPrice,
+      bargainTerms?.discountedPrice,
+      bargainTerms?.FinalPrice,
+      bargainTerms?.finalPrice,
+      object.DiscountPrice,
+      object.discountPrice,
+      object.DiscountedPrice,
+      object.discountedPrice,
+    ],
+    'discountPrice',
+    externalId,
+    warnings,
+  );
+
+  return getLowerPositiveDecimal(discountPrice, price);
+}
+
+function normalizeFirstPositiveDecimal(
+  values: unknown[],
+  field: string,
+  externalId: string,
+  warnings: FeedParserWarning[],
+) {
+  for (const value of values) {
+    if (getText(value) === null) {
+      continue;
+    }
+
+    const decimal = normalizePositiveDecimal(value, field, externalId, warnings);
+
+    if (decimal !== null) {
+      return decimal;
+    }
+  }
+
+  return null;
+}
+
 function normalizeCianNumericStatus(value: unknown): FeedStatusNormalizationResult | null {
   const rawStatus = getText(value);
 
@@ -1268,10 +1344,12 @@ function normalizeCianNumericStatus(value: unknown): FeedStatusNormalizationResu
 function normalizeCianCompletion(
   object: XmlRecord,
   building: XmlRecord | null,
+  house: XmlRecord | null,
   externalId: string,
   warnings: FeedParserWarning[],
 ) {
-  const deadline = asRecord(building?.Deadline) ?? asRecord(object.Deadline);
+  const deadline = asRecord(building?.Deadline) ?? asRecord(house?.Deadline) ?? asRecord(object.Deadline);
+  const deadlineDateCompletion = parseCompletionDate(getText(deadline?.Date ?? deadline?.date));
 
   return {
     year: normalizeFirstInteger(
@@ -1290,8 +1368,14 @@ function normalizeCianCompletion(
         building?.BuiltYear,
         building?.buildYear,
         building?.build_year,
+        house?.CompletionYear,
+        house?.BuildYear,
+        house?.BuiltYear,
+        house?.buildYear,
+        house?.build_year,
         deadline?.Year,
         deadline?.year,
+        deadlineDateCompletion.year,
       ],
       'completionYear',
       externalId,
@@ -1309,12 +1393,36 @@ function normalizeCianCompletion(
         building?.CompletionQuarter,
         building?.ReadyQuarter,
         building?.readyQuarter,
+        house?.CompletionQuarter,
+        house?.ReadyQuarter,
+        house?.readyQuarter,
         deadline?.Quarter,
         deadline?.quarter,
+        deadlineDateCompletion.quarter,
       ],
       externalId,
       warnings,
     ),
+  };
+}
+
+function parseCompletionDate(value: string | null): { year: number | null; quarter: number | null } {
+  const match = value?.match(/\b(20\d{2})-(\d{2})-\d{2}\b/u);
+
+  if (!match) {
+    return { year: null, quarter: null };
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+    return { year: null, quarter: null };
+  }
+
+  return {
+    year,
+    quarter: Math.floor((month - 1) / 3) + 1,
   };
 }
 

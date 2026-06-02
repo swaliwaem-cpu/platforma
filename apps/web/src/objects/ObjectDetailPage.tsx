@@ -948,7 +948,8 @@ function ObjectFeedUnitsSection({
           setTotal(data.total);
           setHasDiscountPrices(data.hasDiscountPrices);
           setVisibleRoomLotCounts({});
-          setDefaultExpandedLotGroups(data.groups);
+          setExpandedCompletionGroups(new Set());
+          setExpandedRoomGroups(new Set());
         }
       } catch (caughtError) {
         if (!isCancelled) {
@@ -991,18 +992,6 @@ function ObjectFeedUnitsSection({
     statusFilter,
     typeFilter,
   ]);
-
-  function setDefaultExpandedLotGroups(nextGroups: FeedUnitGroupSummary[]) {
-    const firstCompletionGroup = nextGroups[0];
-    const firstRoomGroup = firstCompletionGroup?.roomGroups[0];
-
-    setExpandedCompletionGroups(firstCompletionGroup ? new Set([firstCompletionGroup.key]) : new Set());
-    setExpandedRoomGroups(
-      firstCompletionGroup && firstRoomGroup
-        ? new Set([makeRoomGroupExpansionKey(firstCompletionGroup.key, firstRoomGroup.key)])
-        : new Set(),
-    );
-  }
 
   function resetFilters() {
     setStatusFilter('');
@@ -1464,7 +1453,7 @@ function ObjectFeedRoomGroup({
             <Table className="object-feed-units-table">
               <TableHeader>
                 <TableRow>
-                  <TableHead>План</TableHead>
+                  <TableHead>Медиа</TableHead>
                   <ObjectFeedSortableHead field="building" sortBy={sortBy} sortDirection={sortDirection} onSort={onSort}>
                     Корпус
                   </ObjectFeedSortableHead>
@@ -1481,13 +1470,13 @@ function ObjectFeedRoomGroup({
                   <ObjectFeedSortableHead field="price" sortBy={sortBy} sortDirection={sortDirection} onSort={onSort}>
                     Цена
                   </ObjectFeedSortableHead>
+                  <TableHead>Цена со скидкой</TableHead>
                   <ObjectFeedSortableHead field="pricePerMeter" sortBy={sortBy} sortDirection={sortDirection} onSort={onSort}>
                     За м²
                   </ObjectFeedSortableHead>
                   <ObjectFeedSortableHead field="status" sortBy={sortBy} sortDirection={sortDirection} onSort={onSort}>
                     Статус
                   </ObjectFeedSortableHead>
-                  <TableHead>Медиа</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -1603,58 +1592,6 @@ function ObjectFeedUnitRow({
         {primaryMedia?.file ? (
           <button
             aria-label={mediaButtonLabel}
-            className="object-feed-media-button object-feed-media-button--preview"
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              onOpenMedia(unit);
-            }}
-          >
-            <span className="object-feed-media-preview">
-              <SecureImage
-                accessToken={accessToken}
-                alt={primaryMedia.label ?? unit.title ?? 'Медиа лота'}
-                className="object-feed-media-image"
-                fileId={primaryMedia.file.id}
-                lazy
-                placeholderClassName="object-feed-media-placeholder"
-                variant="thumbnail"
-              />
-            </span>
-          </button>
-        ) : (
-          <span className="object-feed-media-empty">Нет</span>
-        )}
-      </TableCell>
-      <TableCell>{formatFeedUnitBuildingValue(unit.building)}</TableCell>
-      <TableCell>{formatFeedUnitShortValue(unit.section)}</TableCell>
-      <TableCell>{unit.floor ?? 'Не указан'}</TableCell>
-      <TableCell>
-        <div className="object-feed-unit-cell">
-          <a
-            className="object-feed-unit-link"
-            href={lotHref}
-            rel="noopener noreferrer"
-            target="_blank"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <strong>{title}</strong>
-          </a>
-          {unit.address ? <span>{unit.address}</span> : null}
-        </div>
-      </TableCell>
-      <TableCell>{formatArea(unit.area)}</TableCell>
-      <TableCell>{formatFeedUnitPrice(unit.effectivePrice ?? unit.discountPrice ?? unit.price, unit.currency)}</TableCell>
-      <TableCell>{formatFeedUnitPricePerMeter(unit)}</TableCell>
-      <TableCell>
-        <span className={`object-feed-status object-feed-status--${unit.status.toLowerCase()}`}>
-          {feedUnitStatusLabels[unit.status]}
-        </span>
-      </TableCell>
-      <TableCell>
-        {primaryMedia?.file ? (
-          <button
-            aria-label={mediaButtonLabel}
             className="object-feed-media-button"
             type="button"
             onClick={(event) => {
@@ -1678,6 +1615,32 @@ function ObjectFeedUnitRow({
         ) : (
           <span className="object-feed-media-empty">{formatMediaCount(0)}</span>
         )}
+      </TableCell>
+      <TableCell>{formatFeedUnitBuildingValue(unit.building)}</TableCell>
+      <TableCell>{formatFeedUnitShortValue(unit.section)}</TableCell>
+      <TableCell>{unit.floor ?? 'Не указан'}</TableCell>
+      <TableCell>
+        <div className="object-feed-unit-cell">
+          <a
+            className="object-feed-unit-link"
+            href={lotHref}
+            rel="noopener noreferrer"
+            target="_blank"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <strong>{title}</strong>
+          </a>
+          {unit.address ? <span>{unit.address}</span> : null}
+        </div>
+      </TableCell>
+      <TableCell>{formatArea(unit.area)}</TableCell>
+      <TableCell>{formatFeedUnitPrice(unit.price, unit.currency)}</TableCell>
+      <TableCell>{formatFeedUnitDiscountPrice(unit)}</TableCell>
+      <TableCell>{formatFeedUnitPricePerMeter(unit)}</TableCell>
+      <TableCell>
+        <span className={`object-feed-status object-feed-status--${unit.status.toLowerCase()}`}>
+          {feedUnitStatusLabels[unit.status]}
+        </span>
       </TableCell>
     </TableRow>
   );
@@ -2468,6 +2431,10 @@ function formatFeedUnitPrice(value: string | null, currency: string | null) {
   }
 
   return formatPrice(value);
+}
+
+function formatFeedUnitDiscountPrice(unit: FeedUnit) {
+  return formatFeedUnitPrice(unit.discountPrice ?? unit.price, unit.currency);
 }
 
 function formatArea(value: string | null) {
