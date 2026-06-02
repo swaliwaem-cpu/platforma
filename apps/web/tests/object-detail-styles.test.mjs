@@ -70,10 +70,10 @@ test('object detail carousel crops active images inside a fixed sixteen by nine 
   );
 });
 
-test('object detail carousel arrows keep centered transform while pressed', () => {
+test('gallery navigation arrows keep centered transform while pressed', () => {
   assert.match(
     appThemeStyles,
-    /html\[data-app-theme\]\s*:is\(\.carousel-button,\s*\.map-object-card-gallery-button\):active\s*\{[\s\S]*?transform:\s*translateY\(-50%\);[\s\S]*?translate:\s*none;[\s\S]*?\}/,
+    /html\[data-app-theme\]\s*:is\(\.carousel-button,\s*\.carousel-modal-button,\s*\.map-object-card-gallery-button,\s*\.object-feed-media-carousel-nav,\s*\.object-feed-media-fullscreen-nav\):active\s*\{[\s\S]*?transform:\s*translateY\(-50%\);[\s\S]*?translate:\s*none;[\s\S]*?\}/,
   );
 });
 

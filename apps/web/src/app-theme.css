@@ -306,7 +306,7 @@ html[data-app-theme] :is(button, [role="button"], [data-slot="button"]):active {
   translate: none;
 }
 
-html[data-app-theme] :is(.carousel-button, .map-object-card-gallery-button):active {
+html[data-app-theme] :is(.carousel-button, .carousel-modal-button, .map-object-card-gallery-button, .object-feed-media-carousel-nav, .object-feed-media-fullscreen-nav):active {
   transform: translateY(-50%);
   translate: none;
 }

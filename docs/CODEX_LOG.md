@@ -1,5 +1,46 @@
 # Codex Log
 
+## 2026-06-02 - Dark theme grouped lots contrast
+
+Задача:
+
+- Исправить белые поверхности и плохо читаемый текст в grouped list лотов в темной теме.
+
+Изменения:
+
+- `apps/web/src/styles.css` - grouped lot list переведен с жестких светлых цветов на `--app-theme-*` токены для summary rows, фильтров, таблицы, строк, media preview, статусов, skeleton/error/empty states.
+- `apps/web/tests/object-detail-feed-units.test.mjs` - добавлена регрессия, запрещающая прямые белые фоны и темный текст в grouped lot surfaces.
+- `docs/CODEX_LOG.md` - добавлена текущая запись.
+
+Проверки:
+
+- `pnpm --filter @platforma/web test -- object-detail-feed-units` - сначала fail на старом CSS, после правки 220/220 passed.
+- `pnpm build:web` - production build successful; осталось штатное предупреждение Vite о чанке больше 500 kB.
+- Rendered fallback через Playwright: темная тема `dark-premium`, проверены computed styles для grouped list; белые фоны не обнаружены, скрин `/tmp/platforma-dark-lots-check.png`.
+
+## 2026-06-02 - Gallery navigation static active state
+
+Задача:
+
+- Исправить прыжок кнопок переключения при нажатии во всех галереях.
+
+Изменения:
+
+- `apps/web/src/app-theme.css` - расширено `:active`-исключение для навигационных кнопок галерей, чтобы centered-кнопки сохраняли `transform: translateY(-50%)` при нажатии.
+- `apps/web/tests/object-detail-styles.test.mjs` - обновлен регрессионный тест на обычную карусель, lightbox, карту, feed media carousel и fullscreen media navigation.
+- `docs/CODEX_LOG.md` - добавлена текущая запись.
+
+Проверки:
+
+- `pnpm --filter @platforma/web exec node --test tests/object-detail-styles.test.mjs` - сначала fail на старом CSS, после правки 12/12 passed.
+- `pnpm --filter @platforma/web test` - 219/219 passed.
+- `pnpm build:web` - production build successful; осталось штатное предупреждение Vite о чанке больше 500 kB.
+- Rendered fallback через Playwright на `http://localhost:5173`: для `.carousel-button`, `.carousel-modal-button`, `.map-object-card-gallery-button`, `.object-feed-media-carousel-nav`, `.object-feed-media-fullscreen-nav` при зажатом клике `topDelta=0`, `leftDelta=0`.
+
+Ограничения:
+
+- Browser plugin не смог подключиться к in-app browser: `Browser is not available: iab`; визуальная проверка выполнена через Playwright fallback.
+
 ## 2026-06-01 - Lot grouped list implementation
 
 Задача:

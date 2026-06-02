@@ -150,6 +150,19 @@ test('object detail feed units block renders expected columns and media thumbnai
   assert.match(styles, /\.object-feed-units-table\s*\{/);
 });
 
+test('object detail feed units grouped surfaces use theme-aware colors', () => {
+  const groupedStyles =
+    styles.match(/\.object-feed-units-heading span[\s\S]*?\.object-feed-unit-cell span\s*\{[^}]*\}/)?.[0] ?? '';
+
+  assert.match(groupedStyles, /var\(--app-theme-surface/);
+  assert.match(groupedStyles, /var\(--app-theme-control/);
+  assert.match(groupedStyles, /var\(--app-theme-ink-900/);
+  assert.match(groupedStyles, /var\(--app-theme-ink-700/);
+  assert.match(groupedStyles, /var\(--app-theme-border/);
+  assert.doesNotMatch(groupedStyles, /background:\s*#(?:fff|ffffff|f8fafc|fbfcfd|f2f5f8|edf1f5)/i);
+  assert.doesNotMatch(groupedStyles, /color:\s*#(?:18202a|303b47|536172|6d7885|174ea6)/i);
+});
+
 test('object detail feed unit rows open lot cards in a new tab', () => {
   assert.match(source, /function buildObjectLotPath\(objectSlug: string, unitId: string\)/);
   assert.match(source, /const lotHref = buildObjectLotPath\(objectSlug, unit\.id\);/);
