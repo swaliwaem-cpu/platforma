@@ -1,5 +1,28 @@
 # Codex Log
 
+## 2026-06-03 - Theme-aware gallery backgrounds
+
+Задача:
+
+- Сделать фон галерей соответствующим активной теме: в темной теме оставить темный фон, в светлой использовать светлый.
+
+Изменения:
+
+- `apps/web/src/app-theme.css` - добавлены theme variables для gallery backdrop/surface/stage и переопределения для object carousel lightbox, lot media carousel, feed media carousel/fullscreen.
+- `apps/web/tests/app-theme.test.mjs` - добавлена регрессия на theme-aware фоны галерей.
+
+Проверки:
+
+- `pnpm --filter @platforma/web test -- app-theme.test.mjs` - сначала expected failure на отсутствующих gallery theme variables/overrides, после правки 224/224 passed.
+- `pnpm build:web` - production build successful; осталось штатное предупреждение Vite о чанке больше 500 kB.
+- Browser visual QA не выполнена: Browser plugin target list пустой, `iab` недоступен. Локальные web/API процессы при этом слушают `5173` и `3000`.
+
+Ручная проверка:
+
+- Открыть страницу лота и объектную галерею в `theme=d` и `theme=c`.
+- В светлой теме проверить фон вокруг `contain`-изображений, thumbnails zone и lightbox/fullscreen.
+- В темной теме проверить, что фон остался темным как раньше.
+
 ## 2026-06-03 - Local API dev auth repair
 
 Задача:

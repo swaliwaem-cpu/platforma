@@ -33,6 +33,9 @@ html[data-app-theme="dark-premium"] {
   --app-theme-shadow-overlay: 0 30px 82px rgb(0 0 0 / 54%);
   --app-theme-focus-primary: 0 0 0 3px rgb(200 166 106 / 23%);
   --app-theme-focus-object: 0 0 0 3px rgb(114 189 167 / 22%);
+  --app-theme-gallery-backdrop: rgb(10 15 22 / 88%);
+  --app-theme-gallery-surface: #0f1720;
+  --app-theme-gallery-stage: #0b1118;
   --app-theme-radius-sm: 6px;
   --app-theme-radius-md: 8px;
 }
@@ -72,6 +75,9 @@ html[data-app-theme="minimal-luxury"] {
   --app-theme-shadow-overlay: 0 24px 72px rgb(29 34 40 / 14%);
   --app-theme-focus-primary: 0 0 0 3px rgb(34 40 49 / 14%);
   --app-theme-focus-object: 0 0 0 3px rgb(52 95 87 / 16%);
+  --app-theme-gallery-backdrop: rgb(247 246 242 / 94%);
+  --app-theme-gallery-surface: var(--app-theme-surface);
+  --app-theme-gallery-stage: var(--app-theme-surface-muted);
   --app-theme-radius-sm: 5px;
   --app-theme-radius-md: 7px;
 }
@@ -569,6 +575,18 @@ html[data-app-theme] :is(.catalog-card-media, .catalog-list-item-media, .map-obj
     linear-gradient(135deg, color-mix(in srgb, var(--app-theme-object) 10%, transparent), color-mix(in srgb, var(--app-theme-accent) 10%, transparent)),
     var(--app-theme-surface-muted);
   color: var(--app-theme-ink-700);
+}
+
+html[data-app-theme] :is(.carousel-modal-backdrop, .object-feed-media-carousel-backdrop, .object-feed-media-fullscreen) {
+  background: var(--app-theme-gallery-backdrop);
+}
+
+html[data-app-theme] :is(.object-lot-media-panel, .object-lot-media-carousel, .object-feed-media-carousel) {
+  background: var(--app-theme-gallery-surface);
+}
+
+html[data-app-theme] :is(.object-lot-media-stage, .object-feed-media-carousel-stage, .object-feed-media-carousel-image-button) {
+  background: var(--app-theme-gallery-stage);
 }
 
 html[data-app-theme="dark-premium"] :is(.gallery-modal, .gallery-modal .eyebrow, .gallery-cover-meta span, .gallery-cover-meta strong, .gallery-upload-dropzone, .gallery-tile-button, .gallery-tile-preview, .gallery-tile-name, .gallery-tile-status, .gallery-tile-section-field span, .gallery-tile-section-select, .gallery-tile-order-button) {

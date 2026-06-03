@@ -87,6 +87,31 @@ test('app theme stylesheet covers contrast-sensitive dark theme selectors', () =
   );
 });
 
+test('app theme stylesheet gives galleries theme-aware backgrounds', () => {
+  const styles = readFileSync(resolve(srcDir, 'app-theme.css'), 'utf8');
+
+  assert.match(
+    styles,
+    /html\[data-app-theme="dark-premium"\]\s*\{[\s\S]*?--app-theme-gallery-backdrop:\s*rgb\(10 15 22 \/ 88%\);[\s\S]*?--app-theme-gallery-surface:\s*#0f1720;[\s\S]*?--app-theme-gallery-stage:\s*#0b1118;[\s\S]*?\}/,
+  );
+  assert.match(
+    styles,
+    /html\[data-app-theme="minimal-luxury"\]\s*\{[\s\S]*?--app-theme-gallery-backdrop:\s*rgb\(247 246 242 \/ 94%\);[\s\S]*?--app-theme-gallery-surface:\s*var\(--app-theme-surface\);[\s\S]*?--app-theme-gallery-stage:\s*var\(--app-theme-surface-muted\);[\s\S]*?\}/,
+  );
+  assert.match(
+    styles,
+    /html\[data-app-theme\] :is\(\.carousel-modal-backdrop,\s*\.object-feed-media-carousel-backdrop,\s*\.object-feed-media-fullscreen\)\s*\{[\s\S]*?background:\s*var\(--app-theme-gallery-backdrop\);[\s\S]*?\}/,
+  );
+  assert.match(
+    styles,
+    /html\[data-app-theme\] :is\(\.object-lot-media-panel,\s*\.object-lot-media-carousel,\s*\.object-feed-media-carousel\)\s*\{[\s\S]*?background:\s*var\(--app-theme-gallery-surface\);[\s\S]*?\}/,
+  );
+  assert.match(
+    styles,
+    /html\[data-app-theme\] :is\(\.object-lot-media-stage,\s*\.object-feed-media-carousel-stage,\s*\.object-feed-media-carousel-image-button\)\s*\{[\s\S]*?background:\s*var\(--app-theme-gallery-stage\);[\s\S]*?\}/,
+  );
+});
+
 test('app theme suppresses pressed-state flicker for interactive controls', () => {
   const themeStyles = readFileSync(resolve(srcDir, 'app-theme.css'), 'utf8');
   const baseStyles = readFileSync(resolve(srcDir, 'styles.css'), 'utf8');
