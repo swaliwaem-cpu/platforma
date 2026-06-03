@@ -89,8 +89,12 @@ test('catalog object detail links open in new browser tabs', () => {
   assert.equal(countMatches(cardSource, /rel="noopener noreferrer"/g), 3);
   assert.doesNotMatch(cardSource, /event\.preventDefault/);
 
-  assert.equal(countMatches(mapCardSource, /target="_blank"/g), 1);
-  assert.equal(countMatches(mapCardSource, /rel="noopener noreferrer"/g), 1);
+  assert.equal(countMatches(mapCardSource, /target="_blank"/g), 2);
+  assert.equal(countMatches(mapCardSource, /rel="noopener noreferrer"/g), 2);
+  assert.match(
+    mapCardSource,
+    /<h3>\s*<a className="map-object-card-title-link" href=\{objectHref\} rel="noopener noreferrer" target="_blank">[\s\S]*?\{object\.title\}[\s\S]*?<\/a>\s*<\/h3>/,
+  );
   assert.match(mapCardSource, /<a className="catalog-card-link map-object-card-link" href=\{objectHref\}/);
   assert.doesNotMatch(mapCardSource, /<button className="catalog-card-link map-object-card-link"/);
 

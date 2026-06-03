@@ -1499,7 +1499,11 @@ function MapObjectCard({
         ) : null}
       </div>
       <div className="map-object-card-body">
-        <h3>{object.title}</h3>
+        <h3>
+          <a className="map-object-card-title-link" href={objectHref} rel="noopener noreferrer" target="_blank">
+            {object.title}
+          </a>
+        </h3>
         <dl>
           <div>
             <dt>Застройщик</dt>

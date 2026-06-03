@@ -61,7 +61,7 @@ test('getObjectLocationLine returns district and area line with fallback', () =>
   assert.equal(getObjectLocationLine(createObject()).line, 'Район и окружение не указаны');
 });
 
-test('getObjectParameterRows returns ten rows in public order', () => {
+test('getObjectParameterRows excludes hidden public parameter rows', () => {
   const rows = getObjectParameterRows(
     createObject({
       priceFrom: '12000000',
@@ -86,10 +86,8 @@ test('getObjectParameterRows returns ten rows in public order', () => {
       'За метр от',
       'Класс недвижимости',
       'Площадь квартир',
-      'КРТ',
       'Высота потолков',
       'Срок сдачи',
-      'Количество квартир',
       'Этажность',
     ],
   );
@@ -102,10 +100,8 @@ test('getObjectParameterRows returns ten rows in public order', () => {
       formatPricePerMeterFrom('350000'),
       'Премиум-класс',
       'От 35 м²',
-      'Большое Сити',
       formatCeilingHeight('3,1 метра'),
       '1 кв. 2027',
-      '672 квартиры',
       '8 - 25 этажей',
     ],
   );

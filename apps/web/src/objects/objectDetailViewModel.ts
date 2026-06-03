@@ -87,20 +87,12 @@ export function getObjectParameterRows(object: RealEstateObjectDetail): FeatureR
       value: object.apartmentAreaRange ?? emptyValueLabel,
     },
     {
-      label: 'КРТ',
-      value: object.krtName ?? emptyValueLabel,
-    },
-    {
       label: 'Высота потолков',
       value: formatCeilingHeight(object.ceilingHeight),
     },
     {
       label: 'Срок сдачи',
       value: formatCompletion(object.completionYear, object.completionQuarter),
-    },
-    {
-      label: 'Количество квартир',
-      value: object.apartmentsCountText ?? emptyValueLabel,
     },
     {
       label: 'Этажность',

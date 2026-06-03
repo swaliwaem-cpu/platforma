@@ -4843,6 +4843,11 @@ tr.user-row--deactivated .text-button {
   overflow-wrap: anywhere;
 }
 
+.map-object-card-title-link {
+  color: inherit;
+  text-decoration: none;
+}
+
 .map-object-card dl {
   display: grid;
   gap: 8px;
