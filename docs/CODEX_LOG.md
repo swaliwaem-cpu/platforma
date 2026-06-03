@@ -1,5 +1,25 @@
 # Codex Log
 
+## 2026-06-03 - Web favicon
+
+Задача:
+
+- Сделать favicon из существующего `_Fluffy_White_1-02.svg`.
+
+Изменения:
+
+- `apps/web/public/favicon.svg` - добавлен public favicon на основе существующего SVG-логотипа.
+- `apps/web/index.html` - подключен favicon через `<link rel="icon" type="image/svg+xml" href="/favicon.svg" />`.
+
+Проверки:
+
+- `pnpm build:web` - production build successful; осталось штатное предупреждение Vite о чанке больше 500 kB.
+- Проверено, что `apps/web/dist/favicon.svg` появляется после сборки.
+
+Ручная проверка:
+
+- Открыть приложение в браузере и проверить иконку вкладки; если белый SVG плохо виден на светлой теме браузера, сделать отдельную favicon-версию с темным фоном.
+
 ## 2026-06-03 - Production rebuild after latest patches
 
 Задача:
