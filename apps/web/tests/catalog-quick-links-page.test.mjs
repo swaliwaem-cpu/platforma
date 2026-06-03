@@ -138,6 +138,13 @@ test('catalog search clears stale results and shows loading before URL fetch fin
   assert.match(source, /if \(shouldResetSearchResults && isMapView\) \{[\s\S]*?setMapObjects\(\[\]\);[\s\S]*?setMapTotal\(0\);[\s\S]*?setMapError\(null\);[\s\S]*?setIsMapLoading\(nextFilters\.hasCoordinates !== 'false'\);[\s\S]*?\}/);
 });
 
+test('catalog keeps current results visible while directory filters reload', () => {
+  assert.match(source, /const showInitialCatalogLoading = isLoading && objects\.length === 0;/);
+  assert.match(source, /if \(showInitialCatalogLoading\) \{/);
+  assert.match(source, /if \(!isLoading && objects\.length === 0\) \{/);
+  assert.doesNotMatch(source, /if \(isLoading\) \{[\s\S]*?<h2>Загрузка<\/h2>[\s\S]*?\}/);
+});
+
 test('catalog search ignores stale object responses from previous characters', () => {
   assert.match(source, /useRef/);
   assert.match(source, /const objectsRequestIdRef = useRef\(0\);/);

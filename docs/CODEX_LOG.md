@@ -1,5 +1,26 @@
 # Codex Log
 
+## 2026-06-03 - Catalog directory filter reload stability
+
+Задача:
+
+- Убрать моргание и подергивание экрана при кликах по нескольким выбранным пунктам в справочных dropdown-фильтрах каталога.
+
+Изменения:
+
+- `apps/web/src/catalog/CatalogPage.tsx` - `CatalogListView` больше не заменяет текущую выдачу на full loading panel во время фоновой перезагрузки фильтров; loading panel показывается только при первичной загрузке/очищенных результатах.
+- `apps/web/tests/catalog-quick-links-page.test.mjs` - добавлена регрессия на то, что текущие результаты остаются видимыми во время перезагрузки справочных фильтров.
+
+Проверки:
+
+- `pnpm --filter @platforma/web test -- catalog-quick-links-page.test.mjs` - сначала RED на старом `if (isLoading)`, после фикса 227/227 passed.
+- `pnpm --filter @platforma/web test -- catalog-directory-filter-search.test.mjs` - 227/227 passed.
+- `pnpm build:web` - production build successful; осталось штатное предупреждение Vite о чанке больше 500 kB.
+
+Ручная проверка:
+
+- В `/catalog` выбрать несколько значений в справочном dropdown и убедиться, что область выдачи не моргает loading-блоком и не дергает страницу при каждом клике.
+
 ## 2026-06-03 - Catalog directory filter multiselect bugfixes
 
 Задача:

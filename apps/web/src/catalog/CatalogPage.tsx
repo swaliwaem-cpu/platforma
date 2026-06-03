@@ -1172,12 +1172,13 @@ function CatalogListView({
 }) {
   const hasNextPage = loadedThroughPage < totalPages;
   const pageOptions = Array.from({ length: totalPages }, (_, index) => index + 1);
+  const showInitialCatalogLoading = isLoading && objects.length === 0;
 
   if (error) {
     return <p className="form-error">{error}</p>;
   }
 
-  if (isLoading) {
+  if (showInitialCatalogLoading) {
     return (
       <div className="content-panel">
         <p className="eyebrow">Каталог</p>
@@ -1187,7 +1188,7 @@ function CatalogListView({
     );
   }
 
-  if (objects.length === 0) {
+  if (!isLoading && objects.length === 0) {
     return (
       <div className="content-panel">
         <p className="eyebrow">Каталог</p>
