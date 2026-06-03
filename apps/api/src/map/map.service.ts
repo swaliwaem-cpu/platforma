@@ -42,15 +42,16 @@ const mapObjectInclude = {
 } satisfies Prisma.RealEstateObjectInclude;
 
 type MapObjectRecord = Prisma.RealEstateObjectGetPayload<{ include: typeof mapObjectInclude }>;
+type CatalogDirectoryQueryValue = string | string[];
 
 type MapObjectsQuery = {
   search?: string;
   status?: string;
-  developerId?: string;
+  developerId?: CatalogDirectoryQueryValue;
   krtName?: string;
-  locationId?: string;
-  areaId?: string;
-  metroStationId?: string;
+  locationId?: CatalogDirectoryQueryValue;
+  areaId?: CatalogDirectoryQueryValue;
+  metroStationId?: CatalogDirectoryQueryValue;
   completionYear?: string;
   completionQuarter?: string;
   priceFromMin?: string;
@@ -501,24 +502,52 @@ export class MapService {
     return value;
   }
 
-  private parseUuidQueryList(value: string | undefined, message: string) {
-    if (value === undefined || value.trim() === '') {
+  private parseUuidQueryList(value: CatalogDirectoryQueryValue | undefined, message: string) {
+    if (value === undefined) {
+      return undefined;
+    }
+
+    const rawValues = Array.isArray(value) ? value : [value];
+
+    if (rawValues.every((rawValue) => rawValue.trim() === '')) {
       return undefined;
     }
 
     return Array.from(
       new Set(
-        value.split(',').map((item) => {
-          const normalizedItem = item.trim();
+        rawValues.flatMap((rawValue) =>
+          this.decodeQueryValue(rawValue, message).split(',').map((item) => {
+            const normalizedItem = item.trim();
 
-          if (!normalizedItem) {
-            throw new BadRequestException(message);
-          }
+            if (!normalizedItem) {
+              throw new BadRequestException(message);
+            }
 
-          return this.parseUuid(normalizedItem, message);
-        }),
+            return this.parseUuid(normalizedItem, message);
+          }),
+        ),
       ),
     );
+  }
+
+  private decodeQueryValue(value: string, message: string) {
+    try {
+      let decodedValue = value;
+
+      for (let decodeAttempt = 0; decodeAttempt < 3; decodeAttempt += 1) {
+        const nextDecodedValue = decodeURIComponent(decodedValue);
+
+        if (nextDecodedValue === decodedValue) {
+          return decodedValue;
+        }
+
+        decodedValue = nextDecodedValue;
+      }
+
+      return decodedValue;
+    } catch {
+      throw new BadRequestException(message);
+    }
   }
 
   private createUuidWhereValue(values: string[]): string | Prisma.StringFilter {

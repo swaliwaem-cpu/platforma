@@ -138,6 +138,7 @@ type RequestWithAudit = RequestWithAuth & {
 };
 
 type GalleryStreamUploadRequest = RequestWithAudit & NodeJS.ReadableStream;
+type CatalogDirectoryQueryValue = string | string[];
 
 type ListObjectsQuery = {
   page?: string;
@@ -146,11 +147,11 @@ type ListObjectsQuery = {
   status?: string;
   sortBy?: string;
   sortDirection?: string;
-  developerId?: string;
+  developerId?: CatalogDirectoryQueryValue;
   krtName?: string;
-  locationId?: string;
-  areaId?: string;
-  metroStationId?: string;
+  locationId?: CatalogDirectoryQueryValue;
+  areaId?: CatalogDirectoryQueryValue;
+  metroStationId?: CatalogDirectoryQueryValue;
   districtSearch?: string;
   areaSearch?: string;
   metroSearch?: string;
@@ -2963,13 +2964,19 @@ export class ObjectsService {
     });
   }
 
-  private parseUuidQueryList(value: string | undefined, message: string) {
-    if (value === undefined || value.trim() === '') {
+  private parseUuidQueryList(value: CatalogDirectoryQueryValue | undefined, message: string) {
+    if (value === undefined) {
       return undefined;
     }
 
-    return this.unique(
-      value.split(',').map((item) => {
+    const rawValues = Array.isArray(value) ? value : [value];
+
+    if (rawValues.every((rawValue) => rawValue.trim() === '')) {
+      return undefined;
+    }
+
+    const parsedValues = rawValues.flatMap((rawValue) =>
+      this.decodeQueryValue(rawValue, message).split(',').map((item) => {
         const normalizedItem = item.trim();
 
         if (!normalizedItem) {
@@ -2979,6 +2986,28 @@ export class ObjectsService {
         return this.parseUuid(normalizedItem, message);
       }),
     );
+
+    return this.unique(parsedValues);
+  }
+
+  private decodeQueryValue(value: string, message: string) {
+    try {
+      let decodedValue = value;
+
+      for (let decodeAttempt = 0; decodeAttempt < 3; decodeAttempt += 1) {
+        const nextDecodedValue = decodeURIComponent(decodedValue);
+
+        if (nextDecodedValue === decodedValue) {
+          return decodedValue;
+        }
+
+        decodedValue = nextDecodedValue;
+      }
+
+      return decodedValue;
+    } catch {
+      throw new BadRequestException(message);
+    }
   }
 
   private createUuidWhereValue(values: string[]): string | Prisma.StringFilter {

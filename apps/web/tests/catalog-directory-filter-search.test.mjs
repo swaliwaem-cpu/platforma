@@ -18,6 +18,10 @@ test('catalog directory filters use searchable dropdowns with normalized matchin
   assert.match(source, /developerId:\s*parseCatalogFilterIdParam\(params\.get\('developerId'\)\)/);
   assert.match(source, /setParam\(params,\s*'developerId',\s*filters\.developerId\);/);
 
+  const toggleOptionBody = source.match(/function toggleOption\(optionId: string\) \{[\s\S]*?\n  \}/)?.[0] ?? '';
+  assert.doesNotMatch(toggleOptionBody, /setQuery\(''\)/);
+  assert.doesNotMatch(toggleOptionBody, /searchInputRef\.current\?\.focus/);
+
   assert.match(source, /ariaLabel="Фильтр каталога по застройщику"[\s\S]*?placeholder="Все застройщики"[\s\S]*?searchPlaceholder="Поиск застройщика"[\s\S]*?selectedIds=\{getCatalogFilterIdValues\(filters\.developerId\)\}[\s\S]*?onSelectedIdsChange=\{\(developerIds\) =>[\s\S]*?onChange\(\{ developerId: formatCatalogFilterIdValues\(developerIds\) \}\)[\s\S]*?\}/);
   assert.match(source, /ariaLabel="Фильтр каталога по району"[\s\S]*?placeholder="Все районы"[\s\S]*?searchPlaceholder="Поиск района"[\s\S]*?selectedIds=\{getCatalogFilterIdValues\(filters\.locationId\)\}[\s\S]*?onSelectedIdsChange=\{\(locationIds\) =>[\s\S]*?onChange\(\{ locationId: formatCatalogFilterIdValues\(locationIds\) \}\)[\s\S]*?\}/);
   assert.match(source, /ariaLabel="Фильтр каталога по окружению"[\s\S]*?placeholder="Все окружения"[\s\S]*?searchPlaceholder="Поиск окружения"[\s\S]*?selectedIds=\{getCatalogFilterIdValues\(filters\.areaId\)\}[\s\S]*?onSelectedIdsChange=\{\(areaIds\) => onChange\(\{ areaId: formatCatalogFilterIdValues\(areaIds\) \}\)\}/);

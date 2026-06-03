@@ -952,9 +952,7 @@ function CatalogFilterSearchSelect<T extends CatalogFilterSearchSelectOption>({
       : [...selectedIds, optionId];
 
     onSelectedIdsChange(nextIds);
-    setQuery('');
     setIsOpen(true);
-    window.setTimeout(() => searchInputRef.current?.focus(), 0);
   }
 
   function handleBlur(event: FocusEvent<HTMLDivElement>) {

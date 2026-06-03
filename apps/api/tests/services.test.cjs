@@ -1027,10 +1027,10 @@ test('ObjectsService.list supports multiple catalog directory ids in comma-separ
   const service = new ObjectsService(prisma, {});
 
   await service.list({
-    developerId: `${firstDeveloperId},${secondDeveloperId}`,
-    locationId: `${firstDistrictId},${secondDistrictId}`,
-    areaId: `${firstAreaId},${secondAreaId}`,
-    metroStationId: `${firstMetroId},${secondMetroId}`,
+    developerId: encodeURIComponent(`${firstDeveloperId},${secondDeveloperId}`),
+    locationId: encodeURIComponent(`${firstDistrictId},${secondDistrictId}`),
+    areaId: encodeURIComponent(`${firstAreaId},${secondAreaId}`),
+    metroStationId: encodeURIComponent(`${firstMetroId},${secondMetroId}`),
   });
 
   const filters = calls.findMany.where.AND;
@@ -1051,6 +1051,43 @@ test('ObjectsService.list supports multiple catalog directory ids in comma-separ
   assert.deepEqual(areaFilter.locations.some.locationId.in, [firstAreaId, secondAreaId]);
   assert.deepEqual(metroFilter.metroStations.some.metroStationId.in, [firstMetroId, secondMetroId]);
   assert.deepEqual(calls.count.where, calls.findMany.where);
+});
+
+test('ObjectsService.list accepts repeated and double encoded catalog directory filters', async () => {
+  const calls = {};
+  const firstDeveloperId = '55555555-5555-4555-8555-555555555555';
+  const secondDeveloperId = '88888888-8888-4888-8888-888888888888';
+  const firstDistrictId = '66666666-6666-4666-8666-666666666666';
+  const secondDistrictId = '99999999-9999-4999-8999-999999999999';
+  const prisma = {
+    realEstateObject: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [objectRecord()];
+      },
+      count: async (args) => {
+        calls.count = args;
+        return 1;
+      },
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await service.list({
+    developerId: encodeURIComponent(encodeURIComponent(`${firstDeveloperId},${secondDeveloperId}`)),
+    locationId: [firstDistrictId, secondDistrictId],
+  });
+
+  const filters = calls.findMany.where.AND;
+  const developerFilter = filters.find((filter) => filter.developerId?.in);
+  const locationFilter = filters.find((filter) => filter.OR?.some((item) => item.primaryLocationId?.in));
+
+  assert.deepEqual(developerFilter.developerId.in, [firstDeveloperId, secondDeveloperId]);
+  assert.deepEqual(locationFilter.OR.find((item) => item.primaryLocationId?.in).primaryLocationId.in, [
+    firstDistrictId,
+    secondDistrictId,
+  ]);
 });
 
 test('ObjectsService.list filters admin object locations and metro by unified text search', async () => {
@@ -1230,10 +1267,10 @@ test('MapService.listObjects supports multiple catalog directory ids in comma-se
   const service = new MapService(prisma);
 
   await service.listObjects({
-    developerId: `${firstDeveloperId},${secondDeveloperId}`,
-    locationId: `${firstDistrictId},${secondDistrictId}`,
-    areaId: `${firstAreaId},${secondAreaId}`,
-    metroStationId: `${firstMetroId},${secondMetroId}`,
+    developerId: encodeURIComponent(`${firstDeveloperId},${secondDeveloperId}`),
+    locationId: encodeURIComponent(`${firstDistrictId},${secondDistrictId}`),
+    areaId: encodeURIComponent(`${firstAreaId},${secondAreaId}`),
+    metroStationId: encodeURIComponent(`${firstMetroId},${secondMetroId}`),
   });
 
   const filters = calls.findMany.where.AND;
@@ -1254,6 +1291,48 @@ test('MapService.listObjects supports multiple catalog directory ids in comma-se
   assert.deepEqual(areaFilter.locations.some.locationId.in, [firstAreaId, secondAreaId]);
   assert.deepEqual(metroFilter.metroStations.some.metroStationId.in, [firstMetroId, secondMetroId]);
   assert.deepEqual(calls.count.where, calls.findMany.where);
+});
+
+test('MapService.listObjects accepts repeated and double encoded catalog directory filters', async () => {
+  const calls = {};
+  const firstDeveloperId = '55555555-5555-4555-8555-555555555555';
+  const secondDeveloperId = '88888888-8888-4888-8888-888888888888';
+  const firstDistrictId = '66666666-6666-4666-8666-666666666666';
+  const secondDistrictId = '99999999-9999-4999-8999-999999999999';
+  const prisma = {
+    realEstateObject: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [
+          objectRecord({
+            latitude: decimal('55.751244'),
+            longitude: decimal('37.618423'),
+          }),
+        ];
+      },
+      count: async (args) => {
+        calls.count = args;
+        return 1;
+      },
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new MapService(prisma);
+
+  await service.listObjects({
+    developerId: encodeURIComponent(encodeURIComponent(`${firstDeveloperId},${secondDeveloperId}`)),
+    locationId: [firstDistrictId, secondDistrictId],
+  });
+
+  const filters = calls.findMany.where.AND;
+  const developerFilter = filters.find((filter) => filter.developerId?.in);
+  const locationFilter = filters.find((filter) => filter.OR?.some((item) => item.primaryLocationId?.in));
+
+  assert.deepEqual(developerFilter.developerId.in, [firstDeveloperId, secondDeveloperId]);
+  assert.deepEqual(locationFilter.OR.find((item) => item.primaryLocationId?.in).primaryLocationId.in, [
+    firstDistrictId,
+    secondDistrictId,
+  ]);
 });
 
 test('MapService.listObjects serializes feed aggregates and filters price by feed fallback', async () => {

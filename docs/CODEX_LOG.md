@@ -1,5 +1,28 @@
 # Codex Log
 
+## 2026-06-03 - Catalog directory filter multiselect bugfixes
+
+Задача:
+
+- Исправить два бага мультиселекта в справочных фильтрах каталога: dropdown прокручивался к началу после выбора пункта, а при двух и более выбранных значениях API возвращал `Developer/Location/Area/Metro station is invalid`.
+
+Изменения:
+
+- `apps/web/src/catalog/CatalogPage.tsx` - при toggle пункта больше не очищается поисковая строка и не вызывается повторный focus на поле поиска, чтобы scroll dropdown не прыгал к началу.
+- `apps/api/src/objects/objects.service.ts`, `apps/api/src/map/map.service.ts` - CSV-фильтры id перед разбором нормализуют query-значение, чтобы принимать значения из `URLSearchParams` с encoded comma `%2C`, double-encoded значения и повторные query-параметры.
+- `apps/web/tests/catalog-directory-filter-search.test.mjs`, `apps/api/tests/services.test.cjs` - добавлены регрессии на сохранение позиции dropdown, encoded/double-encoded CSV и повторные query-параметры для нескольких id.
+
+Проверки:
+
+- `pnpm --filter @platforma/web test -- catalog-directory-filter-search.test.mjs` - сначала RED на scroll-регрессию, после фикса 226/226 passed.
+- `pnpm --filter @platforma/api test -- services.test.cjs` - сначала RED на encoded/double-encoded CSV и repeated query values, после фикса 178/178 passed.
+- `pnpm build:web` - production build successful; осталось штатное предупреждение Vite о чанке больше 500 kB.
+
+Ручная проверка:
+
+- В `/catalog` открыть dropdown любого из полей `Застройщик`, `Район`, `Окружение`, `Метро`, прокрутить вниз, выбрать пункт и убедиться, что список не возвращается к началу.
+- Выбрать два и более значения в каждом справочном фильтре и убедиться, что ошибки `... is invalid` больше не появляются, а выдача обновляется.
+
 ## 2026-06-03 - Catalog directory filter multiselects
 
 Задача:
