@@ -1,5 +1,23 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ArrowDownIcon, ArrowUpDownIcon, ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon } from 'lucide-react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type FocusEvent,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react';
+import {
+  ArrowDownIcon,
+  ArrowUpDownIcon,
+  ArrowUpIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+} from 'lucide-react';
 import type {
   CatalogLinksResponse,
   DevelopersResponse,
@@ -17,6 +35,7 @@ import type {
   PublicCatalogQuickLink,
   RealEstateObjectSummary,
 } from '@platforma/shared';
+import { matchesSearchVariants } from '@platforma/shared/search-normalization';
 
 import { apiRequest } from '../admin/api';
 import { useAuth } from '../auth/AuthProvider';
@@ -101,6 +120,7 @@ const defaultFilters: CatalogFilters = {
 };
 
 const catalogPageSizeOptions = [25, 50, 75] as const;
+const catalogFilterSearchResultLimit = 24;
 
 const catalogRoomOptions = [
   { value: '0', label: 'Студия' },
@@ -707,66 +727,72 @@ function CatalogFilters({
         <div className="catalog-filter-fields">
           <label>
             Застройщик
-            <select
+            <CatalogFilterSearchSelect
+              ariaLabel="Фильтр каталога по застройщику"
               disabled={isDirectoriesLoading}
-              value={filters.developerId}
-              onChange={(event) => onChange({ developerId: event.target.value })}
-            >
-              <option value="">Все застройщики</option>
-              {directories.developers.map((developer) => (
-                <option key={developer.id} value={developer.id}>
-                  {developer.name}
-                </option>
-              ))}
-            </select>
+              emptyLabel="Застройщики не найдены"
+              getOptionLabel={(developer) => developer.name}
+              getSearchValues={(developer) => [developer.name, developer.slug]}
+              options={directories.developers}
+              placeholder="Все застройщики"
+              searchPlaceholder="Поиск застройщика"
+              selectedIds={getCatalogFilterIdValues(filters.developerId)}
+              onSelectedIdsChange={(developerIds) =>
+                onChange({ developerId: formatCatalogFilterIdValues(developerIds) })
+              }
+            />
           </label>
 
           <label>
             Район
-            <select
+            <CatalogFilterSearchSelect
+              ariaLabel="Фильтр каталога по району"
               disabled={isDirectoriesLoading}
-              value={filters.locationId}
-              onChange={(event) => onChange({ locationId: event.target.value })}
-            >
-              <option value="">Все районы</option>
-              {directories.districtLocations.map((location) => (
-                <option key={location.id} value={location.id}>
-                  {location.name}
-                </option>
-              ))}
-            </select>
+              emptyLabel="Районы не найдены"
+              getOptionLabel={(location) => location.name}
+              getSearchValues={(location) => [location.name, location.slug]}
+              options={directories.districtLocations}
+              placeholder="Все районы"
+              searchPlaceholder="Поиск района"
+              selectedIds={getCatalogFilterIdValues(filters.locationId)}
+              onSelectedIdsChange={(locationIds) =>
+                onChange({ locationId: formatCatalogFilterIdValues(locationIds) })
+              }
+            />
           </label>
 
           <label>
             Окружение
-            <select
+            <CatalogFilterSearchSelect
+              ariaLabel="Фильтр каталога по окружению"
               disabled={isDirectoriesLoading}
-              value={filters.areaId}
-              onChange={(event) => onChange({ areaId: event.target.value })}
-            >
-              <option value="">Все окружения</option>
-              {directories.areaLocations.map((location) => (
-                <option key={location.id} value={location.id}>
-                  {location.name}
-                </option>
-              ))}
-            </select>
+              emptyLabel="Окружение не найдено"
+              getOptionLabel={(location) => location.name}
+              getSearchValues={(location) => [location.name, location.slug]}
+              options={directories.areaLocations}
+              placeholder="Все окружения"
+              searchPlaceholder="Поиск окружения"
+              selectedIds={getCatalogFilterIdValues(filters.areaId)}
+              onSelectedIdsChange={(areaIds) => onChange({ areaId: formatCatalogFilterIdValues(areaIds) })}
+            />
           </label>
 
           <label>
             Метро
-            <select
+            <CatalogFilterSearchSelect
+              ariaLabel="Фильтр каталога по метро"
               disabled={isDirectoriesLoading}
-              value={filters.metroStationId}
-              onChange={(event) => onChange({ metroStationId: event.target.value })}
-            >
-              <option value="">Все станции</option>
-              {directories.metroStations.map((station) => (
-                <option key={station.id} value={station.id}>
-                  {station.lineName ? `${station.name}, ${station.lineName}` : station.name}
-                </option>
-              ))}
-            </select>
+              emptyLabel="Метро не найдено"
+              getOptionLabel={(station) => (station.lineName ? `${station.name}, ${station.lineName}` : station.name)}
+              getSearchValues={(station) => [station.name, station.slug, station.lineName]}
+              options={directories.metroStations}
+              placeholder="Все станции"
+              searchPlaceholder="Поиск метро"
+              selectedIds={getCatalogFilterIdValues(filters.metroStationId)}
+              onSelectedIdsChange={(metroStationIds) =>
+                onChange({ metroStationId: formatCatalogFilterIdValues(metroStationIds) })
+              }
+            />
           </label>
 
           <label>
@@ -843,6 +869,190 @@ function CatalogFilters({
         </div>
       ) : null}
     </section>
+  );
+}
+
+type CatalogFilterSearchSelectOption = {
+  id: string;
+};
+
+function CatalogFilterSearchSelect<T extends CatalogFilterSearchSelectOption>({
+  ariaLabel,
+  disabled = false,
+  emptyLabel,
+  getOptionLabel,
+  getSearchValues,
+  options,
+  placeholder,
+  searchPlaceholder,
+  selectedIds,
+  onSelectedIdsChange,
+}: {
+  ariaLabel: string;
+  disabled?: boolean;
+  emptyLabel: string;
+  getOptionLabel: (option: T) => string;
+  getSearchValues: (option: T) => Array<string | null | undefined>;
+  options: T[];
+  placeholder: string;
+  searchPlaceholder: string;
+  selectedIds: string[];
+  onSelectedIdsChange: (ids: string[]) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const listboxId = useId();
+  const selectedValueSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const selectedOptions = useMemo(
+    () => options.filter((option) => selectedValueSet.has(option.id)),
+    [options, selectedValueSet],
+  );
+  const hasSelectedOptions = selectedOptions.length > 0;
+  const selectedLabel = selectedOptions.map((option) => getOptionLabel(option)).join(', ');
+  const filteredOptions = useMemo(() => {
+    const matchedOptions = options.filter((option) => matchesSearchVariants(query, getSearchValues(option)));
+
+    return matchedOptions.slice(0, catalogFilterSearchResultLimit);
+  }, [getSearchValues, options, query]);
+
+  function openDropdown() {
+    if (disabled) {
+      return;
+    }
+
+    setIsOpen(true);
+    window.setTimeout(() => searchInputRef.current?.focus(), 0);
+  }
+
+  function toggleDropdown() {
+    if (disabled) {
+      return;
+    }
+
+    if (isOpen) {
+      setIsOpen(false);
+      setQuery('');
+      return;
+    }
+
+    openDropdown();
+  }
+
+  function clearSelection() {
+    onSelectedIdsChange([]);
+    setQuery('');
+    setIsOpen(true);
+    window.setTimeout(() => searchInputRef.current?.focus(), 0);
+  }
+
+  function toggleOption(optionId: string) {
+    const nextIds = selectedValueSet.has(optionId)
+      ? selectedIds.filter((id) => id !== optionId)
+      : [...selectedIds, optionId];
+
+    onSelectedIdsChange(nextIds);
+    setQuery('');
+    setIsOpen(true);
+    window.setTimeout(() => searchInputRef.current?.focus(), 0);
+  }
+
+  function handleBlur(event: FocusEvent<HTMLDivElement>) {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      return;
+    }
+
+    setIsOpen(false);
+    setQuery('');
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'Escape') {
+      setIsOpen(false);
+      setQuery('');
+      return;
+    }
+
+    if (event.key === 'Enter' && isOpen && document.activeElement === searchInputRef.current && filteredOptions[0]) {
+      event.preventDefault();
+      toggleOption(filteredOptions[0].id);
+    }
+  }
+
+  return (
+    <div className="multi-select-dropdown" onBlur={handleBlur} onKeyDown={handleKeyDown}>
+      <button
+        aria-controls={isOpen ? listboxId : undefined}
+        aria-expanded={isOpen}
+        aria-haspopup="listbox"
+        aria-label={ariaLabel}
+        className={isOpen ? 'multi-select-dropdown-button is-open' : 'multi-select-dropdown-button'}
+        disabled={disabled}
+        type="button"
+        onClick={toggleDropdown}
+      >
+        <span className={hasSelectedOptions ? 'multi-select-dropdown-value' : 'multi-select-dropdown-value is-empty'}>
+          {hasSelectedOptions ? selectedLabel : placeholder}
+        </span>
+        <ChevronDownIcon aria-hidden="true" className="multi-select-dropdown-chevron" />
+      </button>
+
+      {isOpen ? (
+        <div className="multi-select-dropdown-menu">
+          <input
+            ref={searchInputRef}
+            aria-label={`${ariaLabel}: поиск`}
+            placeholder={searchPlaceholder}
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.currentTarget.value)}
+            onFocus={openDropdown}
+          />
+          <div id={listboxId} role="listbox" aria-multiselectable={true}>
+            <button
+              className={
+                hasSelectedOptions
+                  ? 'multi-select-dropdown-option'
+                  : 'multi-select-dropdown-option multi-select-dropdown-option--selected'
+              }
+              type="button"
+              role="option"
+              aria-selected={!hasSelectedOptions}
+              onClick={clearSelection}
+            >
+              <span>{placeholder}</span>
+              {!hasSelectedOptions ? <CheckIcon aria-hidden="true" className="multi-select-dropdown-check" /> : null}
+            </button>
+
+            {filteredOptions.length > 0 ? (
+              filteredOptions.map((option) => {
+                const isSelected = selectedValueSet.has(option.id);
+
+                return (
+                  <button
+                    key={option.id}
+                    className={
+                      isSelected
+                        ? 'multi-select-dropdown-option multi-select-dropdown-option--selected'
+                        : 'multi-select-dropdown-option'
+                    }
+                    type="button"
+                    role="option"
+                    aria-selected={isSelected}
+                    onClick={() => toggleOption(option.id)}
+                  >
+                    <span>{getOptionLabel(option)}</span>
+                    {isSelected ? <CheckIcon aria-hidden="true" className="multi-select-dropdown-check" /> : null}
+                  </button>
+                );
+              })
+            ) : (
+              <p className="searchable-multi-select-empty">{emptyLabel}</p>
+            )}
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -1575,11 +1785,11 @@ function parseCatalogFilters(queryString: string): CatalogFilters {
 
   return {
     search: parseSearchParam(params.get('search')),
-    developerId: parseTextParam(params.get('developerId')),
+    developerId: parseCatalogFilterIdParam(params.get('developerId')),
     krtName: parseTextParam(params.get('krtName')),
-    locationId: parseTextParam(params.get('locationId')),
-    areaId: parseTextParam(params.get('areaId')),
-    metroStationId: parseTextParam(params.get('metroStationId')),
+    locationId: parseCatalogFilterIdParam(params.get('locationId')),
+    areaId: parseCatalogFilterIdParam(params.get('areaId')),
+    metroStationId: parseCatalogFilterIdParam(params.get('metroStationId')),
     completionYear: sanitizeIntegerText(params.get('completionYear') ?? '', 4),
     completionQuarter: defaultFilters.completionQuarter,
     lotPriceMin: sanitizeDecimalText(params.get('lotPriceMin') ?? ''),
@@ -1871,6 +2081,25 @@ function parseSearchParam(value: string | null) {
 
 function parseCatalogRoomsParam(value: string | null) {
   return formatRoomFilterValues(getRoomFilterValues(value ?? ''));
+}
+
+function parseCatalogFilterIdParam(value: string | null) {
+  return formatCatalogFilterIdValues(getCatalogFilterIdValues(value ?? ''));
+}
+
+function getCatalogFilterIdValues(value: string) {
+  return Array.from(
+    new Set(
+      value
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function formatCatalogFilterIdValues(values: string[]) {
+  return getCatalogFilterIdValues(values.join(',')).join(',');
 }
 
 function getRoomFilterValues(value: string) {

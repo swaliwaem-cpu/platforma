@@ -1,5 +1,53 @@
 # Codex Log
 
+## 2026-06-03 - Catalog directory filter multiselects
+
+Задача:
+
+- Разрешить выбирать несколько пунктов в поисковых фильтрах каталога `Застройщик`, `Район`, `Окружение`, `Метро`.
+
+Изменения:
+
+- `apps/web/src/catalog/CatalogPage.tsx` - searchable dropdown справочных фильтров переведен на мультивыбор; выбранные id нормализуются в CSV-строку в прежних query/API параметрах.
+- `apps/api/src/objects/objects.service.ts` - фильтры каталога `developerId`, `locationId`, `areaId`, `metroStationId` принимают одиночный id или CSV-список id и строят Prisma-фильтры через `in` для нескольких значений.
+- `apps/api/src/map/map.service.ts` - такая же поддержка CSV-списков добавлена для фильтров объектов на карте.
+- `apps/web/tests/catalog-directory-filter-search.test.mjs`, `apps/api/tests/services.test.cjs` - добавлены/обновлены регрессии на мультивыбор и CSV-фильтры.
+
+Проверки:
+
+- `pnpm --filter @platforma/web test -- catalog-directory-filter-search.test.mjs` - 226/226 passed.
+- `pnpm --filter @platforma/api test -- services.test.cjs` - 176/176 passed.
+- `pnpm build:web` - production build successful; осталось штатное предупреждение Vite о чанке больше 500 kB.
+- `git diff --check` - без whitespace-ошибок.
+- Browser visual QA не выполнена полноценно: доступные Browser tools показали только `about:blank` и не дали инструментов для DOM-кликов/скриншота каталога.
+
+Ручная проверка:
+
+- В `/catalog` раскрыть фильтры, выбрать несколько значений в каждом из полей `Застройщик`, `Район`, `Окружение`, `Метро`, убедиться, что меню не закрывается после выбора и URL содержит CSV в соответствующем параметре.
+- Проверить, что выдача каталога и карта учитывают несколько значений внутри одного фильтра как `любой из выбранных`.
+
+## 2026-06-03 - Catalog directory filter searchable dropdowns
+
+Задача:
+
+- Добавить поиск внутри выпадающих фильтров каталога для полей `Застройщик`, `Район`, `Метро`, `Окружение`, как в админских ссылках каталога.
+
+Изменения:
+
+- `apps/web/src/catalog/CatalogPage.tsx` - четыре справочных фильтра каталога переведены с native `<select>` на локальный searchable dropdown с нормализованным поиском, ограничением выдачи до 24 вариантов, сбросом через пункт `Все ...` и сохранением прежних query/API параметров.
+- `apps/web/tests/catalog-directory-filter-search.test.mjs` - добавлена регрессия на searchable dropdown для `developerId`, `locationId`, `areaId`, `metroStationId` и отсутствие старых native select в этих полях.
+
+Проверки:
+
+- `pnpm --filter @platforma/web test -- catalog-directory-filter-search.test.mjs` - сначала expected failure на новом тесте, после правки весь текущий web test suite прошел: 226/226 passed.
+- `pnpm build:web` - production build successful; осталось штатное предупреждение Vite о чанке больше 500 kB.
+- Browser visual QA не выполнена: Browser plugin runtime поднялся, но список browser targets пустой (`agent.browsers.list()` вернул `[]`, `iab` недоступен).
+
+Ручная проверка:
+
+- Открыть `/catalog`, раскрыть фильтры и проверить поиск/выбор/сброс в полях `Застройщик`, `Район`, `Окружение`, `Метро`.
+- Проверить, что после выбора фильтра URL обновляется теми же параметрами и выдача каталога фильтруется.
+
 ## 2026-06-03 - Production lot gallery thumbnails deploy
 
 Задача:

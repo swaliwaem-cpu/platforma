@@ -335,9 +335,11 @@ export class ObjectsService {
       });
     }
 
-    if (query.developerId) {
+    const developerIds = this.parseUuidQueryList(query.developerId, 'Developer is invalid');
+
+    if (developerIds) {
       filters.push({
-        developerId: this.parseUuid(query.developerId, 'Developer is invalid'),
+        developerId: this.createUuidWhereValue(developerIds),
       });
     }
 
@@ -352,18 +354,20 @@ export class ObjectsService {
       });
     }
 
-    if (query.locationId) {
-      const locationId = this.parseUuid(query.locationId, 'Location is invalid');
+    const locationIds = this.parseUuidQueryList(query.locationId, 'Location is invalid');
+
+    if (locationIds) {
+      const locationIdFilter = this.createUuidWhereValue(locationIds);
 
       filters.push({
         OR: [
           {
-            primaryLocationId: locationId,
+            primaryLocationId: locationIdFilter,
           },
           {
             locations: {
               some: {
-                locationId,
+                locationId: locationIdFilter,
               },
             },
           },
@@ -371,13 +375,15 @@ export class ObjectsService {
       });
     }
 
-    if (query.areaId) {
-      const areaId = this.parseUuid(query.areaId, 'Area is invalid');
+    const areaIds = this.parseUuidQueryList(query.areaId, 'Area is invalid');
+
+    if (areaIds) {
+      const areaIdFilter = this.createUuidWhereValue(areaIds);
 
       filters.push({
         locations: {
           some: {
-            locationId: areaId,
+            locationId: areaIdFilter,
             location: {
               type: LocationType.AREA,
             },
@@ -430,11 +436,13 @@ export class ObjectsService {
       });
     }
 
-    if (query.metroStationId) {
+    const metroStationIds = this.parseUuidQueryList(query.metroStationId, 'Metro station is invalid');
+
+    if (metroStationIds) {
       filters.push({
         metroStations: {
           some: {
-            metroStationId: this.parseUuid(query.metroStationId, 'Metro station is invalid'),
+            metroStationId: this.createUuidWhereValue(metroStationIds),
           },
         },
       });
@@ -2953,6 +2961,28 @@ export class ObjectsService {
 
       return this.parseUuid(item.trim(), message);
     });
+  }
+
+  private parseUuidQueryList(value: string | undefined, message: string) {
+    if (value === undefined || value.trim() === '') {
+      return undefined;
+    }
+
+    return this.unique(
+      value.split(',').map((item) => {
+        const normalizedItem = item.trim();
+
+        if (!normalizedItem) {
+          throw new BadRequestException(message);
+        }
+
+        return this.parseUuid(normalizedItem, message);
+      }),
+    );
+  }
+
+  private createUuidWhereValue(values: string[]): string | Prisma.StringFilter {
+    return values.length === 1 ? values[0]! : { in: values };
   }
 
   private parseUuid(value: string, message: string) {

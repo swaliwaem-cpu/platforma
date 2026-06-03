@@ -1001,6 +1001,58 @@ test('ObjectsService.list filters locationId and areaId through linked locations
   assert.deepEqual(calls.count.where, calls.findMany.where);
 });
 
+test('ObjectsService.list supports multiple catalog directory ids in comma-separated filters', async () => {
+  const calls = {};
+  const firstDeveloperId = '55555555-5555-4555-8555-555555555555';
+  const secondDeveloperId = '88888888-8888-4888-8888-888888888888';
+  const firstDistrictId = '66666666-6666-4666-8666-666666666666';
+  const secondDistrictId = '99999999-9999-4999-8999-999999999999';
+  const firstAreaId = '77777777-7777-4777-8777-777777777777';
+  const secondAreaId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const firstMetroId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const secondMetroId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const prisma = {
+    realEstateObject: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [objectRecord()];
+      },
+      count: async (args) => {
+        calls.count = args;
+        return 1;
+      },
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await service.list({
+    developerId: `${firstDeveloperId},${secondDeveloperId}`,
+    locationId: `${firstDistrictId},${secondDistrictId}`,
+    areaId: `${firstAreaId},${secondAreaId}`,
+    metroStationId: `${firstMetroId},${secondMetroId}`,
+  });
+
+  const filters = calls.findMany.where.AND;
+  const developerFilter = filters.find((filter) => filter.developerId?.in);
+  const locationFilter = filters.find((filter) => filter.OR?.some((item) => item.primaryLocationId?.in));
+  const areaFilter = filters.find((filter) => filter.locations?.some?.location?.type === LocationType.AREA);
+  const metroFilter = filters.find((filter) => filter.metroStations?.some?.metroStationId?.in);
+
+  assert.deepEqual(developerFilter.developerId.in, [firstDeveloperId, secondDeveloperId]);
+  assert.deepEqual(locationFilter.OR.find((item) => item.primaryLocationId?.in).primaryLocationId.in, [
+    firstDistrictId,
+    secondDistrictId,
+  ]);
+  assert.deepEqual(locationFilter.OR.find((item) => item.locations?.some?.locationId?.in).locations.some.locationId.in, [
+    firstDistrictId,
+    secondDistrictId,
+  ]);
+  assert.deepEqual(areaFilter.locations.some.locationId.in, [firstAreaId, secondAreaId]);
+  assert.deepEqual(metroFilter.metroStations.some.metroStationId.in, [firstMetroId, secondMetroId]);
+  assert.deepEqual(calls.count.where, calls.findMany.where);
+});
+
 test('ObjectsService.list filters admin object locations and metro by unified text search', async () => {
   const calls = {};
   const prisma = {
@@ -1144,6 +1196,63 @@ test('MapService.listObjects returns linked locations with type and supports are
       ['На Патриарших', LocationType.AREA, false],
     ],
   );
+  assert.deepEqual(calls.count.where, calls.findMany.where);
+});
+
+test('MapService.listObjects supports multiple catalog directory ids in comma-separated filters', async () => {
+  const calls = {};
+  const firstDeveloperId = '55555555-5555-4555-8555-555555555555';
+  const secondDeveloperId = '88888888-8888-4888-8888-888888888888';
+  const firstDistrictId = '66666666-6666-4666-8666-666666666666';
+  const secondDistrictId = '99999999-9999-4999-8999-999999999999';
+  const firstAreaId = '77777777-7777-4777-8777-777777777777';
+  const secondAreaId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const firstMetroId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const secondMetroId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const prisma = {
+    realEstateObject: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [
+          objectRecord({
+            latitude: decimal('55.751244'),
+            longitude: decimal('37.618423'),
+          }),
+        ];
+      },
+      count: async (args) => {
+        calls.count = args;
+        return 1;
+      },
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new MapService(prisma);
+
+  await service.listObjects({
+    developerId: `${firstDeveloperId},${secondDeveloperId}`,
+    locationId: `${firstDistrictId},${secondDistrictId}`,
+    areaId: `${firstAreaId},${secondAreaId}`,
+    metroStationId: `${firstMetroId},${secondMetroId}`,
+  });
+
+  const filters = calls.findMany.where.AND;
+  const developerFilter = filters.find((filter) => filter.developerId?.in);
+  const locationFilter = filters.find((filter) => filter.OR?.some((item) => item.primaryLocationId?.in));
+  const areaFilter = filters.find((filter) => filter.locations?.some?.location?.type === LocationType.AREA);
+  const metroFilter = filters.find((filter) => filter.metroStations?.some?.metroStationId?.in);
+
+  assert.deepEqual(developerFilter.developerId.in, [firstDeveloperId, secondDeveloperId]);
+  assert.deepEqual(locationFilter.OR.find((item) => item.primaryLocationId?.in).primaryLocationId.in, [
+    firstDistrictId,
+    secondDistrictId,
+  ]);
+  assert.deepEqual(locationFilter.OR.find((item) => item.locations?.some?.locationId?.in).locations.some.locationId.in, [
+    firstDistrictId,
+    secondDistrictId,
+  ]);
+  assert.deepEqual(areaFilter.locations.some.locationId.in, [firstAreaId, secondAreaId]);
+  assert.deepEqual(metroFilter.metroStations.some.metroStationId.in, [firstMetroId, secondMetroId]);
   assert.deepEqual(calls.count.where, calls.findMany.where);
 });
 
