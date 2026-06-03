@@ -1,5 +1,38 @@
 # Codex Log
 
+## 2026-06-03 - Production rebuild after latest patches
+
+Задача:
+
+- Довезти последние патчи на production, потому что изменения не были видны в интерфейсе.
+
+Диагностика:
+
+- Production `/opt/platforma` был на `1bdc4a5`, а локальная ветка `on-ser` была на `82bf0bd`.
+- `origin/on-ser` сначала был на `4dfd763`; локальный `82bf0bd` не был запушен.
+- Production `.env` использует `broker.fluffywhite.moscow` и `api.broker.fluffywhite.moscow`; домен `.ru` отвечает другим старым HTML.
+
+Действия:
+
+- Запушен `on-ser` в `origin` до `82bf0bd`.
+- На production выполнен fast-forward pull `1bdc4a5..82bf0bd`.
+- Пересобраны и пересозданы production контейнеры `api` и `web` через `docker compose -f docker-compose.prod.yml up -d --build api web`.
+
+Проверки:
+
+- `docker compose -f docker-compose.prod.yml ps` - `api` healthy, `web` up, `postgres`/`redis`/`minio` healthy.
+- `GET http://127.0.0.1:3000/health` - `status=ok`, `database=ok`, `postgis=true`.
+- `GET https://api.broker.fluffywhite.moscow/health` - `status=ok`, `database=ok`, `postgis=true`.
+- `GET https://broker.fluffywhite.moscow/` - `200 OK`, отдает production HTML с новым CSS asset.
+- API log подтвердил scheduler: `Scheduled feed import cycle finished: sources=9, previewed=9, runsQueued=9, skipped=0, failed=0`.
+- Production DB показала свежие feed runs после рестарта: preview `success/partial`, run `success/partial`, без pending за последние 10 минут на момент проверки.
+
+Ручная проверка:
+
+- Открыть `https://broker.fluffywhite.moscow/`, при необходимости сделать hard refresh из-за браузерного кеша.
+- Проверить страницу лота `/objects/:slug/lots/:unitId` и галереи в светлой/темной теме.
+- Проверить `/admin/feeds`, что новые preview/run появились после production scheduler.
+
 ## 2026-06-03 - Theme-aware gallery backgrounds
 
 Задача:
