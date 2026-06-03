@@ -98,6 +98,29 @@ test('lot detail media carousel fits media without cropping', () => {
   assert.match(styles, /\.object-lot-media-carousel\s+\.object-lot-media-image\s*\{[^}]*object-fit:\s*contain;[^}]*\}/);
 });
 
+test('lot detail media thumbnails sit below the active media stage', () => {
+  assert.match(objectDetailSource, /className="carousel-thumbnail-zone object-lot-thumbnail-zone"/);
+  assert.match(objectDetailSource, /className="carousel-thumbnails object-lot-thumbnails"/);
+
+  assert.match(
+    styles,
+    /\.object-lot-media-carousel\s*\{[\s\S]*?display:\s*flex;[\s\S]*?flex-direction:\s*column;[\s\S]*?overflow:\s*hidden;[\s\S]*?\}/,
+  );
+  assert.match(
+    styles,
+    /\.object-lot-media-stage\s*\{[\s\S]*?position:\s*relative;[\s\S]*?inset:\s*auto;[\s\S]*?flex:\s*1 1 auto;[\s\S]*?min-height:\s*0;[\s\S]*?\}/,
+  );
+  assert.match(
+    styles,
+    /\.object-lot-media-carousel\s*>\s*\.object-lot-thumbnail-zone\s*\{[\s\S]*?position:\s*relative;[\s\S]*?inset:\s*auto;[\s\S]*?height:\s*auto;[\s\S]*?padding:\s*12px 16px 16px;[\s\S]*?pointer-events:\s*auto;[\s\S]*?\}/,
+  );
+  assert.match(styles, /\.object-lot-media-carousel\s*>\s*\.object-lot-thumbnail-zone::before\s*\{[\s\S]*?display:\s*none;[\s\S]*?\}/);
+  assert.match(
+    styles,
+    /\.object-lot-media-carousel\s*>\s*\.object-lot-thumbnail-zone \.carousel-thumbnails,\s*\.object-lot-media-carousel\s*>\s*\.object-lot-thumbnail-zone:hover \.carousel-thumbnails,\s*\.object-lot-media-carousel\s*>\s*\.object-lot-thumbnail-zone:focus-within \.carousel-thumbnails\s*\{[\s\S]*?position:\s*relative;[\s\S]*?bottom:\s*auto;[\s\S]*?left:\s*auto;[\s\S]*?width:\s*min\(100%,\s*680px\);[\s\S]*?opacity:\s*1;[\s\S]*?transform:\s*none;[\s\S]*?\}/,
+  );
+});
+
 test('lot detail fullscreen media supports arrow buttons and keyboard navigation', () => {
   assert.match(objectLotMediaCarouselSource, /function showPreviousFullscreenMedia\(\)/);
   assert.match(objectLotMediaCarouselSource, /function showNextFullscreenMedia\(\)/);

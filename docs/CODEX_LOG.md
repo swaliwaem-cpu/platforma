@@ -1,5 +1,26 @@
 # Codex Log
 
+## 2026-06-03 - Lot gallery thumbnails below media
+
+Задача:
+
+- Опустить миниатюры галереи на странице отдельного лота ниже контейнера изображения, чтобы они не перекрывали планировку/фото.
+
+Изменения:
+
+- `apps/web/src/styles.css` - lot media carousel переведен в вертикальный flex-flow; активный media stage стал обычным flex-элементом, а `object-lot-thumbnail-zone` вынесена в отдельную строку под stage с явным `relative`-позиционированием.
+- `apps/web/tests/object-lot-detail-page.test.mjs` - добавлена регрессия на то, что thumbnails отдельного лота не наследуют глобальное overlay-позиционирование общей галереи.
+
+Проверки:
+
+- `pnpm --filter @platforma/web test -- object-lot-detail-page.test.mjs` - сначала expected failure на новом тесте, после CSS-правки 225/225 passed.
+- `pnpm build:web` - production build successful; осталось штатное предупреждение Vite о чанке больше 500 kB.
+- Playwright visual QA на локальном лоте `zhiloj-kompleks-aura/lots/4a00f84d-5d32-4944-8d20-848a25e16a41`: desktop `overlapsStage=false`, mobile `overlapsStage=false`; `.object-lot-media-stage`, `.object-lot-thumbnail-zone` и `.carousel-thumbnails` рендерятся как `position: relative`.
+
+Ручная проверка:
+
+- Открыть production страницу лота с несколькими media и убедиться, что миниатюры идут под изображением, а не поверх нижней части планировки/фото.
+
 ## 2026-06-03 - Production favicon deploy
 
 Задача:

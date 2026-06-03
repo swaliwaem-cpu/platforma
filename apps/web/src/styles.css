@@ -5249,6 +5249,10 @@ tr.user-row--deactivated .text-button {
 }
 
 .object-lot-media-carousel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  align-items: stretch;
   background: #0f1720;
   color: #aab6c4;
 }
@@ -5267,6 +5271,11 @@ tr.user-row--deactivated .text-button {
 }
 
 .object-lot-media-stage {
+  position: relative;
+  inset: auto;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
   background: #0b1118;
 }
 
@@ -5289,16 +5298,36 @@ tr.user-row--deactivated .text-button {
   background: rgb(10 15 22 / 72%);
 }
 
-.object-lot-thumbnail-zone {
-  height: 98px;
+.object-lot-media-carousel > .object-lot-thumbnail-zone {
+  position: relative;
+  inset: auto;
+  z-index: 2;
+  display: flex;
+  height: auto;
+  flex: 0 0 auto;
+  justify-content: center;
+  padding: 12px 16px 16px;
+  background: inherit;
+  pointer-events: auto;
 }
 
-.object-lot-thumbnail-zone .carousel-thumbnails,
-.object-lot-thumbnail-zone:hover .carousel-thumbnails,
-.object-lot-thumbnail-zone:focus-within .carousel-thumbnails {
+.object-lot-media-carousel > .object-lot-thumbnail-zone::before {
+  display: none;
+}
+
+.object-lot-media-carousel > .object-lot-thumbnail-zone .carousel-thumbnails,
+.object-lot-media-carousel > .object-lot-thumbnail-zone:hover .carousel-thumbnails,
+.object-lot-media-carousel > .object-lot-thumbnail-zone:focus-within .carousel-thumbnails {
+  position: relative;
+  right: auto;
+  bottom: auto;
+  left: auto;
+  width: min(100%, 680px);
+  max-width: 100%;
+  justify-content: flex-start;
   opacity: 1;
   pointer-events: auto;
-  transform: translate(-50%, 0);
+  transform: none;
 }
 
 .object-lot-facts {
