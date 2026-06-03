@@ -667,6 +667,9 @@ test('ObjectsService.list filters objects by matching lot price rooms and floor'
   assert.deepEqual(lotFilter, {
     feedUnits: {
       some: {
+        source: {
+          deletedAt: null,
+        },
         effectivePrice: {
           gte: '10000000',
           lte: '12500000',
@@ -689,6 +692,9 @@ test('ObjectsService.list filters objects by matching lot price rooms and floor'
     where: {
       objectId: {
         in: ['11111111-1111-4111-8111-111111111111'],
+      },
+      source: {
+        deletedAt: null,
       },
       effectivePrice: {
         gte: '10000000',
@@ -736,6 +742,9 @@ test('ObjectsService.list filters objects by several selected lot rooms', async 
   const lotWhere = calls.findMany.where.AND.find((filter) => filter.feedUnits?.some).feedUnits.some;
 
   assert.deepEqual(lotWhere, {
+    source: {
+      deletedAt: null,
+    },
     rooms: {
       in: [2, 3],
     },
@@ -743,6 +752,9 @@ test('ObjectsService.list filters objects by several selected lot rooms', async 
   assert.deepEqual(calls.feedUnitGroupBy.where, {
     objectId: {
       in: ['11111111-1111-4111-8111-111111111111'],
+    },
+    source: {
+      deletedAt: null,
     },
     rooms: {
       in: [2, 3],
@@ -808,6 +820,9 @@ test('ObjectsService.list treats Aura separate-room layouts as studios in lot fi
   const lotWhere = calls.findMany.where.AND.find((filter) => filter.feedUnits?.some).feedUnits.some;
 
   assert.deepEqual(lotWhere, {
+    source: {
+      deletedAt: null,
+    },
     OR: [
       {
         rooms: 0,
@@ -1525,6 +1540,11 @@ test('ObjectsService.listFeedUnits calculates discount flag from object scope in
     AND: [
       { objectId },
       {
+        source: {
+          deletedAt: null,
+        },
+      },
+      {
         discountPrice: {
           not: null,
         },
@@ -1620,6 +1640,9 @@ test('ObjectsService.getFeedUnit returns one feed unit for an object with media'
   assert.deepEqual(calls.findFirst.where, {
     id: unitId,
     objectId,
+    source: {
+      deletedAt: null,
+    },
   });
   assert.equal(calls.findFirst.include.media.include.mediaAsset.include.file, true);
   assert.equal(result.unit.id, unitId);

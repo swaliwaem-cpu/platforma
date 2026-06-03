@@ -440,9 +440,10 @@ test('FeedsService lists sources with filters and serializes related developer a
   assert.equal(result.items[0].createdAt, now.toISOString());
 });
 
-test('FeedsService soft deletes feed sources without deleting units', async () => {
+test('FeedsService soft deletes feed sources and archives their units', async () => {
   const calls = [];
   const prisma = {
+    $transaction: async (operations) => Promise.all(operations),
     feedSource: {
       findUnique: async (args) => {
         calls.push(['feedSource.findUnique', args]);
@@ -456,17 +457,34 @@ test('FeedsService soft deletes feed sources without deleting units', async () =
         });
       },
     },
+    feedUnit: {
+      updateMany: async (args) => {
+        calls.push(['feedUnit.updateMany', args]);
+        return { count: 3 };
+      },
+    },
   };
   const service = new FeedsService(prisma);
 
   const result = await service.deleteSource(sourceId);
   const updateCall = calls.find(([name]) => name === 'feedSource.update')[1];
+  const archiveCall = calls.find(([name]) => name === 'feedUnit.updateMany')[1];
 
   assert.equal(updateCall.where.id, sourceId);
   assert.equal(updateCall.data.isActive, false);
   assert.equal(updateCall.data.deletedAt instanceof Date, true);
   assert.equal('units' in updateCall.data, false);
   assert.equal('deleteMany' in updateCall.data, false);
+  assert.deepEqual(archiveCall.where, {
+    sourceId,
+    status: {
+      not: 'ARCHIVED',
+    },
+  });
+  assert.deepEqual(archiveCall.data, {
+    status: 'ARCHIVED',
+    archivedAt: updateCall.data.deletedAt,
+  });
   assert.equal(result.source.isActive, false);
   assert.equal(result.source.deletedAt, updateCall.data.deletedAt.toISOString());
 });

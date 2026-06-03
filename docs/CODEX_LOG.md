@@ -1,5 +1,175 @@
 # Codex Log
 
+## 2026-06-02 - Object lot feed update timestamp
+
+Задача:
+
+- В блоке лотов на странице объекта показать мелкую строку с временем последнего обновления лотов ЖК.
+
+Изменения:
+
+- `apps/web/src/objects/ObjectDetailPage.tsx` - под заголовком `Лоты` добавлен вывод `Обновлено: DD.MM.YYYY HH:mm` из существующего `object.feedUpdatedAt`; если дата отсутствует или некорректна, строка не отображается.
+- `apps/web/src/styles.css` - добавлены компактные стили для подписи обновления.
+- `apps/web/tests/object-detail-feed-units.test.mjs` - добавлена RED/GREEN проверка на вывод подписи и форматтер даты.
+
+Проверки:
+
+- `pnpm --filter @platforma/web test -- object-detail-feed-units.test.mjs` - сначала expected failure на отсутствующей подписи, после правки 221/221 passed.
+- `pnpm --filter @platforma/web build` - production build successful; осталось штатное предупреждение Vite о чанке больше 500 kB.
+
+Ручная проверка:
+
+- Открыть страницу объекта с импортированными лотами и проверить строку под заголовком `Лоты` в светлой и темной теме.
+
+## 2026-06-02 - Production feed auto preview and conditional run
+
+Задача:
+
+- На production автоматически запускать preview активных feed sources каждые 2 часа.
+- Если preview показывает изменения, автоматически запускать run фида.
+
+Изменения:
+
+- `apps/api/src/feeds/feeds.service.ts` - добавлен production-only scheduler без новых зависимостей: при старте API запускает первый цикл, затем повторяет каждые 2 часа.
+- Scheduler берет активные не удаленные `FeedSource`, последовательно запускает preview и ставит run в существующую очередь только если preview summary содержит изменения: `created`, `updated`, `archived` или новые/обработанные media counters.
+- Scheduler пропускает источник, если по нему уже идет ручной/автоматический preview/run, и не запускает run после failed preview.
+- `apps/api/tests/feeds-module.test.cjs` - добавлены RED/GREEN регрессии на conditional run, overlap guard и production lifecycle таймера.
+
+Проверки:
+
+- `pnpm --filter @platforma/api test -- feeds-module` - сначала expected failures на отсутствующих scheduler methods и failed-preview counter, после правки 174/174 passed.
+
+Ручная проверка:
+
+- После deploy production проверить `docker compose -f docker-compose.prod.yml logs --since ... api` на строку `Scheduled feed import cycle finished`.
+- В `/admin/feeds` проверить появление PREVIEW runs и RUN только для источников с изменениями.
+
+## 2026-06-02 - Feed discounts and grouped lot table update
+
+Задача:
+
+- Для активных production feed sources закрепить парсинг обычной цены, цены со скидкой и срока сдачи.
+- На странице объекта в grouped list лотов заменить колонку `План` на `Медиа`, добавить `Цена со скидкой` после `Цена`, считать `За м²` от effective/discount price и не раскрывать группы автоматически при загрузке.
+
+Production-инвентаризация:
+
+- Production проверен в режиме чтения, application code и данные на сервере не менялись.
+- Активные не удаленные источники фидов: 9.
+- Активные форматы: `CIAN_XML`, `YANDEX_REALTY`, `FSK_XML`, `TEKTA_XML`.
+- Production и локальный workspace на одном commit `57e058b`.
+- В production feed units уже есть скидки у `YANDEX_REALTY`, `TEKTA_XML` и части index-источников MR Group, а сроки сдачи заполнены у `YANDEX_REALTY`, `FSK_XML`, части `CIAN_XML` и Tekta Twelve.
+
+Изменения:
+
+- `tools/feed-import/src/index.ts` - CIAN parser теперь читает скидочную цену из common discount fields и срок сдачи из `JKSchema.House.Deadline.Date`; FSK parser хранит базовую `Price_tot` как `price`, а меньшую `Price_tot_sale` как `discountPrice`, сохраняя старый fallback, когда есть только sale-поля.
+- `tools/feed-import/tests/parser.test.cjs` - добавлены RED/GREEN регрессии на CIAN discount/house deadline и FSK base/sale price.
+- `apps/web/src/objects/ObjectDetailPage.tsx` - grouped lots больше не раскрываются автоматически после загрузки; `Медиа` перенесена на место `План`; после `Цена` добавлена `Цена со скидкой`; `Цена` показывает базовую цену, скидочная колонка использует `discountPrice ?? price`, `За м²` остается от effective price.
+- `apps/web/tests/object-detail-feed-units.test.mjs` - обновлены регрессии grouped lots под свернутое состояние и новый порядок/смысл колонок.
+- `docs/superpowers/plans/2026-06-02-feed-discount-lot-table-implementation.md` - добавлен рабочий implementation plan с чекбоксами.
+- `docs/CODEX_LOG.md` - добавлена текущая запись.
+
+Проверки:
+
+- `pnpm --filter @platforma/feed-import test -- parser` - сначала 2 expected fail, после правки 55/55 passed.
+- `pnpm --filter @platforma/web test -- object-detail-feed-units` - сначала 4 expected fail, после правки 220/220 passed.
+- `pnpm --filter @platforma/feed-import test` - 55/55 passed.
+- `pnpm --filter @platforma/api test -- api-contract services` - 171/171 passed.
+- `pnpm build:web` - production build successful; осталось штатное предупреждение Vite о чанке больше 500 kB.
+
+Ручная проверка:
+
+- Открыть объект с лотами и проверить, что при загрузке все сроки/комнатности свернуты.
+- Раскрыть группу вручную и проверить порядок колонок: `Медиа`, `Корпус`, `Секц.`, `Эт.`, `Номер квартиры`, `Площадь`, `Цена`, `Цена со скидкой`, `За м²`, `Статус`.
+- На лотах без скидки проверить, что `Цена` и `Цена со скидкой` одинаковые.
+- После deploy/run feed imports на production проверить несколько объектов Tekta, Forma/Yandex, FSK и CIAN index sources.
+
+## 2026-06-02 - Tekta Era feed field map
+
+Задача:
+
+- Дать полный список полей фида `https://tekta.ru/xml/era/Era.xml` и сопоставить их с текущим `TektaXmlFeedParser`.
+
+Диагностика:
+
+- Свежий XML успешно скачан; размер около 5.86 MB, `last-modified: Tue, 02 Jun 2026 09:39:09 GMT`.
+- Фид содержит 1 проект, 6 корпусов, 30 account-записей, 2048 квартир, 16 commerce-записей, 63 `mhmts`, 238 кладовок и 387 машиномест.
+- Текущий `TektaXmlFeedParser` импортирует только `projects.project.flats.flat` и ожидаемый путь `projects.project.offices.office`; в Era-фиде `offices.office` отсутствует.
+- `commerces.commerce`, `mhmtses.mhmts`, `pantries.pantry`, `parkings.parking`, `korpuses.korpus` и `accounts.account` текущим parser'ом не нормализуются в `FeedUnit`.
+- Все поля импортированной квартиры сохраняются в `rawPayload`; типизированно раскладывается только часть полей.
+
+Изменения:
+
+- `docs/TEKTA_ERA_FEED_FIELD_MAP.md` - добавлена карта полей Tekta Era с описанием и parser mapping.
+- `docs/CODEX_LOG.md` - добавлена текущая запись.
+
+## 2026-06-02 - Tekta Era discount price inspection
+
+Задача:
+
+- Проверить, отдает ли фид `https://tekta.ru/xml/era/Era.xml` цену со скидкой.
+
+Диагностика:
+
+- В фиде 2048 `flat`, из них 1041 с активными для продажи/бронирования статусами.
+- Основная цена есть в `IntCost` для всех 2048 лотов.
+- Скидочная цена для сайта есть в `IntDiscountedCostForSite`; найдено 61 лот со скидкой во всем фиде и 33 активных лота со скидкой.
+- Скидочная цена за м² есть в `IntDiscountedPriceForSite`; количество совпадает с `IntDiscountedCostForSite`.
+- Размер скидки также отдается в `IntDiscountSiteRub` и `IntDiscountSitePercentage`.
+- Текущий `TektaXmlFeedParser` уже читает `IntDiscountedCostForSite` как `discountPrice`, `IntDiscountedPriceForSite` как `discountPricePerMeter`, а `effectivePrice` берет скидочную цену при наличии.
+- `IntConclusionContractPriceCost` тоже часто меньше `IntCost`, но текущий parser его не использует как скидку; это похоже на отдельную договорную/контрактную цену, особенно часто у проданных лотов.
+
+Изменения:
+
+- Application code не менялся.
+- `docs/CODEX_LOG.md` - добавлена текущая запись о диагностике.
+
+## 2026-06-02 - Tekta Era feed media and completion inspection
+
+Задача:
+
+- Детально проверить фид `https://tekta.ru/xml/era/Era.xml`: отдает ли он media и срок сдачи.
+
+Диагностика:
+
+- Фид успешно скачан, размер около 5.86 MB, корень XML: `<projects>`.
+- Структура распознана текущим CLI как `TEKTA_XML`; `analyze` нашел 2040 импортируемых юнитов, `warningsCount=0`.
+- В сыром XML найдено 2048 непустых `IntLayoutCode`, но все значения являются внутренними UNC-путями `\\crm-storage\CRM\Era\...`, а не публичными `http(s)` URL.
+- В сыром XML нет публичных media URL, кроме `IntProjectSite=http://era.center/`; `IntLinkPhoto` и `IntProjectPhoto` пустые.
+- `IntEstimatedCompletionDate` и `IntTermLeaseAgreement` присутствуют на уровне проекта, но пустые.
+- Прямой прогон `TektaXmlFeedParser` по скачанному XML вернул `mediaItems=0`, `completionUnits=0`.
+
+Изменения:
+
+- Application code не менялся.
+- `docs/CODEX_LOG.md` - добавлена текущая запись о диагностике.
+
+Вывод:
+
+- Фид отдает планировки только как внутренние пути `crm-storage`, которые importer не может скачать как media.
+- Срок сдачи в этом фиде не отдается в заполненном виде; текущий parser берет Tekta-срок из `IntEstimatedCompletionDate`.
+
+## 2026-06-02 - Local auth server diagnosis
+
+Задача:
+
+- Разобраться, почему локальный сервер показывает ошибку неверного пароля при входе.
+
+Диагностика:
+
+- `localhost:5173` отвечал как Vite web server, но `localhost:3000` сначала не слушал API.
+- Запущен `pnpm dev:api`; NestJS успешно смонтировал auth routes и другие backend routes.
+- `GET /health` после запуска API вернул `status=ok`, `database=ok`, `postgis=true`.
+- Прямой `POST /auth/login` с `ADMIN_EMAIL`/`ADMIN_PASSWORD` из `apps/api/.env` вернул `200`, активного пользователя с ролью `admin` и access token.
+
+Изменения:
+
+- Application code не менялся.
+- `docs/CODEX_LOG.md` - добавлена текущая запись о диагностике.
+
+Вывод:
+
+- Причина была в том, что локальный API на `3000` не был запущен; frontend показывал общий текст ошибки входа.
+
 ## 2026-06-02 - Registration password activation flow
 
 Задача:
@@ -759,3 +929,123 @@ Markdown-файлы, реально найденные до создания н�
 Ручная проверка:
 
 - Открыть `/admin/feeds`, выбрать источник и убедиться, что в блоке `Запуск` видно название застройщика.
+
+## 2026-06-03 - MR Group feed lot duplicate investigation
+
+Задача:
+
+- На production выяснить, почему в grouped lot table по объектам MR Group видны дубли лотов.
+
+Вывод:
+
+- Production-данные не менялись; выполнялась только диагностика.
+- Причина дублей: старые индивидуальные URL `FeedSource` были soft-deleted, но их `FeedUnit` остались в публичных активных статусах.
+- Новый MR Group `INDEX_URL` source импортирует те же лоты под другим `sourceId` и с namespaced `externalId`, поэтому уникальность `(sourceId, externalId)` не дедуплицирует старые и новые строки.
+- Object detail lot endpoint выбирает `FeedUnit` по `objectId/status` и не исключает units, чей `source.deletedAt` не `null`.
+
+Проверки:
+
+- На production проверены `developers`, `real_estate_objects`, `feed_sources`, `feed_units`, `feed_source_mappings`, `feed_import_runs`.
+- Для `zhk-cityzen`: текущий source дает 126 лотов в `3 кв. 2027` и 206 в `3 кв. 2029`, удаленный source дает 335 лотов в `Срок не указан`; 332 лота совпадают по исходному external id.
+
+Ручная проверка:
+
+- После будущего исправления открыть `/objects/zhk-cityzen` и другие MR Group объекты с lot groups и убедиться, что лоты из soft-deleted sources не попадают в публичные группы и агрегаты.
+
+## 2026-06-03 - Remove soft-deleted feed source lots from public data
+
+Задача:
+
+- Убрать production-дубли лотов из soft-deleted feed sources и не допускать их повторного попадания в публичные списки/агрегаты.
+
+Изменения:
+
+- `apps/api/src/objects/objects.service.ts` - публичные lot endpoints, lot detail и catalog lot filters теперь исключают `FeedUnit` из sources с `deletedAt`.
+- `apps/api/src/feeds/feeds.service.ts` - удаление feed source теперь архивирует связанные неархивные `FeedUnit`.
+- `tools/feed-import/src/index.ts` - пересчет object feed aggregates теперь учитывает только units из не удаленных sources.
+- `apps/api/tests/feeds-module.test.cjs`, `apps/api/tests/services.test.cjs`, `tools/feed-import/tests/import-engine.test.cjs` - обновлены регрессии под новое правило.
+
+Production repair:
+
+- В production архивированы 4 929 неархивных `FeedUnit` из soft-deleted sources.
+- Пересчитаны feed aggregates для 16 затронутых объектов.
+- После repair у soft-deleted sources осталось 0 публично активных units.
+- Для `zhk-cityzen` осталось 332 актуальных лота: 126 в `3 кв. 2027` и 206 в `3 кв. 2029`; группа `Срок не указан` из старого source убрана.
+
+Проверки:
+
+- `pnpm --filter @platforma/api test -- services feeds-module` - 174/174 passed.
+- `pnpm --filter @platforma/feed-import test` - 55/55 passed.
+- Production SQL checks: `deleted_source_public_units = 0` по MR Group; `zhk-cityzen.feed_units_count = 332`.
+
+Ручная проверка:
+
+- Открыть `/objects/zhk-cityzen` и убедиться, что в блоке `Лоты` нет группы `Срок не указан` на 335 лотов.
+- Проверить несколько других MR Group объектов из каталога: количество лотов должно совпадать с active non-deleted source units.
+
+## 2026-06-03 - Production feed duplicate audit
+
+Задача:
+
+- После удаления дублей MR Group пройтись по всем production feed sources и проверить, нет ли аналогичных случаев.
+
+Диагностика:
+
+- Проверены все 9 active non-deleted feed sources: Forma, MR Group, Regions Development, Sminex, Tekta Group, Мангазея, Пионер, ФСК, Эталон.
+- У soft-deleted sources осталось 0 public/non-archived units.
+- Inconsistent flags не найдены: нет deleted-but-active sources и нет not-deleted inactive sources.
+- Расхождений `real_estate_objects.feed_units_count` с active non-deleted public `FeedUnit` не найдено.
+- Active source URL duplicates не найдены.
+- Дублей по исходному raw external id между active non-deleted sources не найдено.
+- Один и тот же raw external id из одного feed scope не маршрутизирован в разные объекты.
+- Пересечений active URL source с active index source URLs не найдено.
+- Strict duplicates по объекту/корпусу/секции/номеру/этажу/площади/цене не найдены.
+
+Наблюдения:
+
+- Есть 127 групп с одинаковым объектом/корпусом/секцией/номером квартиры внутри одного active Sminex source, но у пар отличаются external id, площадь и цена; cross-source дублей среди них нет.
+- Есть лоты без срока сдачи у Tekta Group и Эталон, но они не дублируются с лотами со сроком по raw external id.
+
+Изменения:
+
+- Application code и production data не менялись.
+- `docs/CODEX_LOG.md` - добавлена запись о production-аудите.
+
+## 2026-06-03 - MR Group Veer room grouping production diagnosis
+
+Задача:
+
+- Проверить production-сигнал, что у `Жилой комплекс Веер 2` после удаления дублей MR Group лоты будто попадают только в `2-к.кв`, а студии и другие комнатности исчезли.
+
+Вывод:
+
+- Production-данные `veer-2` не схлопнулись: публичные active units из non-deleted MR Group source распределены как `rooms=0` - 94, `rooms=1` - 400, `rooms=2` - 287, `rooms=3` - 74, `rooms=4` - 2.
+- По срокам сдачи распределение тоже корректное: `3 кв. 2028` и `3 кв. 2030` содержат несколько room groups, включая студии.
+- Raw payload MR Group для студий приходит как `FlatRoomsCount=9`, importer сохраняет их в `rooms=0`; `FlatRoomsCount=1..4` сохраняется в соответствующие `rooms=1..4`.
+- Backend room grouping подписывает `rooms=0` как `Студии`, `rooms=1..5` как `{n}-к.кв`; отдельной логики, которая превращает все в `2-к.кв`, не найдено.
+- Вероятная причина наблюдения в UI: объект открыт из каталога или по URL с query-параметром `lotRooms=2`. `CatalogPage` добавляет текущие lot-фильтры в ссылку объекта, а `ObjectFeedUnitsSection` читает `lotRooms` из `window.location.search` и отправляет его в API как `rooms`.
+
+Изменения:
+
+- Application code и production data не менялись.
+- `docs/CODEX_LOG.md` - добавлена запись о диагностике `Жилой комплекс Веер 2`.
+
+## 2026-06-03 - Preserve expanded lot groups while sorting
+
+Задача:
+
+- Исправить поведение grouped lot table на странице объекта: при клике по сортировке колонок список должен обновляться по сортировке без схлопывания раскрытых групп лотов.
+
+Изменения:
+
+- `apps/web/src/objects/ObjectDetailPage.tsx` - сортировка больше не очищает `visibleRoomLotCounts`; успешный reload лотов сбрасывает раскрытые completion/room groups только при изменении объекта или lot-фильтров, но не при изменении `sortBy/sortDirection`.
+- `apps/web/tests/object-detail-feed-units.test.mjs` - добавлена регрессия, что сортировка сохраняет раскрытые группы лотов.
+
+Проверки:
+
+- `pnpm --filter @platforma/web test -- object-detail-feed-units.test.mjs` - 222/222 passed.
+- `pnpm --filter @platforma/web build` - passed.
+
+Ручная проверка:
+
+- На странице объекта раскрыть срок сдачи и room group, нажать сортировку по нескольким колонкам и убедиться, что раскрытая таблица остается видимой, а строки меняют порядок.

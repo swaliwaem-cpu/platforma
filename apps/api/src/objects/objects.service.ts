@@ -666,6 +666,9 @@ export class ObjectsService {
       where: {
         id: normalizedUnitId,
         objectId,
+        source: {
+          deletedAt: null,
+        },
       },
       include: feedUnitInclude,
     });
@@ -2433,7 +2436,7 @@ export class ObjectsService {
       throw new BadRequestException('Lot floor min cannot be greater than max');
     }
 
-    const lotWhere: Prisma.FeedUnitWhereInput = {
+    const lotFilters: Prisma.FeedUnitWhereInput = {
       ...(priceMin !== undefined || priceMax !== undefined
         ? {
             effectivePrice: {
@@ -2453,7 +2456,14 @@ export class ObjectsService {
         : {}),
     };
 
-    return Object.keys(lotWhere).length > 0 ? lotWhere : null;
+    return Object.keys(lotFilters).length > 0
+      ? {
+          source: {
+            deletedAt: null,
+          },
+          ...lotFilters,
+        }
+      : null;
   }
 
   private async countMatchedFeedUnitsByObjectId(
@@ -2484,6 +2494,11 @@ export class ObjectsService {
     const filters: Prisma.FeedUnitWhereInput[] = [
       {
         objectId,
+      },
+      {
+        source: {
+          deletedAt: null,
+        },
       },
     ];
 
@@ -2575,6 +2590,11 @@ export class ObjectsService {
       discountWhere: {
         AND: [
           { objectId },
+          {
+            source: {
+              deletedAt: null,
+            },
+          },
           {
             discountPrice: {
               not: null,

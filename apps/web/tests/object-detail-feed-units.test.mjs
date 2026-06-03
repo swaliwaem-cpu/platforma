@@ -35,7 +35,9 @@ test('object detail feed units render grouped completion and room rows', () => {
   assert.match(source, /const \[visibleRoomLotCounts,\s*setVisibleRoomLotCounts\] = useState<Record<string, number>>\(\{\}\);/);
   assert.doesNotMatch(objectFeedUnitsSectionSource, /setDefaultExpandedLotGroups\(data\.groups\);/);
   assert.doesNotMatch(source, /function setDefaultExpandedLotGroups/);
-  assert.match(objectFeedUnitsSectionSource, /setGroups\(data\.groups\);[\s\S]*setExpandedCompletionGroups\(new Set\(\)\);[\s\S]*setExpandedRoomGroups\(new Set\(\)\);/);
+  assert.match(objectFeedUnitsSectionSource, /const previousFeedUnitFiltersKeyRef = useRef<string \| null>\(null\);/);
+  assert.match(objectFeedUnitsSectionSource, /const shouldResetExpandedGroups = previousFeedUnitFiltersKeyRef\.current !== feedUnitFiltersKey;/);
+  assert.match(objectFeedUnitsSectionSource, /if \(shouldResetExpandedGroups\) \{[\s\S]*?setExpandedCompletionGroups\(new Set\(\)\);[\s\S]*?setExpandedRoomGroups\(new Set\(\)\);/);
   assert.match(source, /function makeRoomGroupExpansionKey\(completionGroupKey: string, roomGroupKey: string\)/);
   assert.match(source, /className="object-feed-completion-group"/);
   assert.match(source, /className="object-feed-completion-button"/);
@@ -225,6 +227,18 @@ test('object detail feed unit sorting keeps existing rows visible while reloadin
   assert.match(source, /visibleItems\.map\(\(unit\) =>/);
   assert.doesNotMatch(source, /isLoading \? <ObjectFeedUnitsTableSkeleton \/> : null/);
   assert.doesNotMatch(source, /!isLoading && !error[\s\S]*?\? units\.map\(\(unit\) =>/);
+});
+
+test('object detail feed unit sorting preserves expanded lot groups', () => {
+  const handleSortSource = source.match(/function handleSort[\s\S]*?\n  \}/)?.[0] ?? '';
+
+  assert.doesNotMatch(handleSortSource, /setExpandedCompletionGroups\(new Set\(\)\);/);
+  assert.doesNotMatch(handleSortSource, /setExpandedRoomGroups\(new Set\(\)\);/);
+  assert.doesNotMatch(handleSortSource, /setVisibleRoomLotCounts\(\{\}\);/);
+  assert.match(objectFeedUnitsSectionSource, /const feedUnitFiltersKey = \[/);
+  assert.match(objectFeedUnitsSectionSource, /const previousFeedUnitFiltersKeyRef = useRef<string \| null>\(null\);/);
+  assert.match(objectFeedUnitsSectionSource, /const shouldResetExpandedGroups = previousFeedUnitFiltersKeyRef\.current !== feedUnitFiltersKey;/);
+  assert.match(objectFeedUnitsSectionSource, /if \(shouldResetExpandedGroups\) \{[\s\S]*?setExpandedCompletionGroups\(new Set\(\)\);[\s\S]*?setExpandedRoomGroups\(new Set\(\)\);/);
 });
 
 test('object detail feed units use effective prices for sorting and price per meter', () => {

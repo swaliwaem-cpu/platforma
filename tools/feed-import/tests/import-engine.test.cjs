@@ -1153,6 +1153,10 @@ test('executeFeedImport run recalculates object feed aggregates from active unit
     now: () => fixedDate,
   });
 
+  assert.deepEqual(
+    state.feedUnitFindManyCalls.find((where) => where.objectId === 'object-1')?.source,
+    { deletedAt: null },
+  );
   assert.deepEqual(state.object, {
     id: 'object-1',
     feedPriceFrom: '9000000.00',
@@ -1293,6 +1297,7 @@ function createFakeDb({ source = {}, object = {}, objects = null, units = [], me
     fileVariants: [],
     runs: [],
     runUpdates: [],
+    feedUnitFindManyCalls: [],
     storagePuts: [],
     storageGets: [],
     storageObjects: new Map(),
@@ -1344,8 +1349,10 @@ function createFakeDb({ source = {}, object = {}, objects = null, units = [], me
       },
     },
     feedUnit: {
-      findMany: async ({ where }) =>
-        state.units
+      findMany: async ({ where }) => {
+        state.feedUnitFindManyCalls.push(where);
+
+        return state.units
           .filter((unit) => {
             if (where.sourceId) {
               return unit.sourceId === where.sourceId;
@@ -1358,7 +1365,8 @@ function createFakeDb({ source = {}, object = {}, objects = null, units = [], me
 
             return true;
           })
-          .map((unit) => ({ ...unit })),
+          .map((unit) => ({ ...unit }));
+      },
       upsert: async ({ where, update, create }) => {
         const unique = where.sourceId_externalId;
         let unit = state.units.find(

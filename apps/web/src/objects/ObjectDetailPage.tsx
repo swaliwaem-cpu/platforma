@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import {
   ArrowDownIcon,
   ArrowUpDownIcon,
@@ -902,6 +902,23 @@ function ObjectFeedUnitsSection({
   const showFeedUnitsSkeleton = isLoading && groups.length === 0;
   const feedUnitsTableColumnCount = 10;
   const feedUnitsUpdatedAt = object.feedUpdatedAt ? formatObjectFeedUpdatedAt(object.feedUpdatedAt) : null;
+  const feedUnitFiltersKey = [
+    object.id,
+    statusFilter,
+    typeFilter,
+    priceMinFilter,
+    priceMaxFilter,
+    pricePerMeterMinFilter,
+    pricePerMeterMaxFilter,
+    areaMinFilter,
+    areaMaxFilter,
+    roomFilter,
+    floorMinFilter,
+    floorMaxFilter,
+    completionYearFilter,
+    completionQuarterFilter,
+  ].join('\u001f');
+  const previousFeedUnitFiltersKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!accessToken) {
@@ -945,12 +962,17 @@ function ObjectFeedUnitsSection({
         const data = await apiRequest<FeedUnitGroupsResponse>(`/objects/${object.id}/feed-units/groups?${params.toString()}`, token);
 
         if (!isCancelled) {
+          const shouldResetExpandedGroups = previousFeedUnitFiltersKeyRef.current !== feedUnitFiltersKey;
+
+          previousFeedUnitFiltersKeyRef.current = feedUnitFiltersKey;
           setGroups(data.groups);
           setTotal(data.total);
           setHasDiscountPrices(data.hasDiscountPrices);
-          setVisibleRoomLotCounts({});
-          setExpandedCompletionGroups(new Set());
-          setExpandedRoomGroups(new Set());
+          if (shouldResetExpandedGroups) {
+            setVisibleRoomLotCounts({});
+            setExpandedCompletionGroups(new Set());
+            setExpandedRoomGroups(new Set());
+          }
         }
       } catch (caughtError) {
         if (!isCancelled) {
@@ -980,6 +1002,7 @@ function ObjectFeedUnitsSection({
     areaMinFilter,
     completionQuarterFilter,
     completionYearFilter,
+    feedUnitFiltersKey,
     floorMaxFilter,
     floorMinFilter,
     object.id,
@@ -1016,7 +1039,6 @@ function ObjectFeedUnitsSection({
 
     setSortBy(field);
     setSortDirection(nextDirection);
-    setVisibleRoomLotCounts({});
   }
 
   function toggleCompletionGroup(groupKey: string) {

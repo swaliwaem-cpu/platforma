@@ -535,16 +535,30 @@ export class FeedsService implements OnModuleInit, OnModuleDestroy {
     const sourceId = this.parseUuid(id, 'Feed source is invalid');
     const source = await this.findExistingSource(sourceId);
     const deletedAt = new Date();
-    const deletedSource = await this.prisma.feedSource.update({
-      where: {
-        id: source.id,
-      },
-      data: {
-        deletedAt,
-        isActive: false,
-      },
-      include: sourceInclude,
-    });
+    const [deletedSource] = await this.prisma.$transaction([
+      this.prisma.feedSource.update({
+        where: {
+          id: source.id,
+        },
+        data: {
+          deletedAt,
+          isActive: false,
+        },
+        include: sourceInclude,
+      }),
+      this.prisma.feedUnit.updateMany({
+        where: {
+          sourceId: source.id,
+          status: {
+            not: FeedUnitStatus.ARCHIVED,
+          },
+        },
+        data: {
+          status: FeedUnitStatus.ARCHIVED,
+          archivedAt: deletedAt,
+        },
+      }),
+    ]);
 
     return {
       source: this.serializeSource(deletedSource),

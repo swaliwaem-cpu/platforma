@@ -2200,6 +2200,9 @@ export type FeedImportDatabase = {
       where: {
         sourceId?: string;
         objectId?: string;
+        source?: {
+          deletedAt: null;
+        };
         status?: {
           in: FeedUnitStatusValue[];
         };
@@ -4002,6 +4005,9 @@ async function refreshRealEstateObjectFeedAggregates(
   const activeUnits = await db.feedUnit.findMany({
     where: {
       objectId,
+      source: {
+        deletedAt: null,
+      },
       status: {
         in: activeFeedUnitStatuses,
       },
