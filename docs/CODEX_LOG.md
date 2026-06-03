@@ -1,5 +1,29 @@
 # Codex Log
 
+## 2026-06-03 - Production favicon deploy
+
+Задача:
+
+- Задеплоить favicon на production.
+
+Действия:
+
+- `d49af38 feat(web): add favicon` запушен в `origin/on-ser`.
+- На production `/opt/platforma` выполнен fast-forward pull до `d49af38`.
+- Выполнен `docker compose -f docker-compose.prod.yml up -d --build web`; из-за compose dependency graph пересоздались `web` и `api`.
+
+Проверки:
+
+- `docker compose -f docker-compose.prod.yml ps` - `web` up, `api` healthy, `postgres`/`redis`/`minio` healthy.
+- `GET http://127.0.0.1:3000/health` и `GET https://api.broker.fluffywhite.moscow/health` - `status=ok`, `database=ok`, `postgis=true`.
+- `GET https://broker.fluffywhite.moscow/` содержит `<link rel="icon" type="image/svg+xml" href="/favicon.svg" />`.
+- `GET https://broker.fluffywhite.moscow/favicon.svg` - `200`, `image/svg+xml`, `54273` bytes; checksum совпадает с `apps/web/public/favicon.svg`.
+- После API restart production feed scheduler завершил цикл: `sources=9, previewed=9, runsQueued=9, skipped=0, failed=0`; свежих pending runs после ожидания не осталось.
+
+Ручная проверка:
+
+- Открыть `https://broker.fluffywhite.moscow/`, сделать hard refresh и проверить иконку вкладки.
+
 ## 2026-06-03 - Web favicon
 
 Задача:
