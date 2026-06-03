@@ -319,6 +319,7 @@ export function ObjectLotDetailPage({ slug, unitId, onBack }: ObjectLotDetailPag
   const title = getFeedUnitTitle(unit);
   const subtitle = [object.title, unit.address].filter(Boolean).join(' · ');
   const factRows = getObjectLotFactRows(unit);
+  const priceSummary = getObjectLotPriceSummary(unit);
 
   return (
     <div className="object-detail-page object-lot-page">
@@ -331,26 +332,41 @@ export function ObjectLotDetailPage({ slug, unitId, onBack }: ObjectLotDetailPag
           <h2>{title}</h2>
           <p className="object-detail-location-line">{subtitle}</p>
         </div>
-        <span className={`object-feed-status object-feed-status--${unit.status.toLowerCase()}`}>
-          {feedUnitStatusLabels[unit.status]}
-        </span>
       </header>
 
-      <ObjectLotMediaCarousel accessToken={accessToken ?? ''} unit={unit} />
-
-      <section className="detail-section object-lot-summary-section" aria-labelledby="object-lot-facts-title">
-        <div>
-          <h3 id="object-lot-facts-title">Параметры лота</h3>
+      <section className="object-lot-split-card" aria-labelledby="object-lot-facts-title">
+        <div className="object-lot-media-panel">
+          <ObjectLotMediaCarousel accessToken={accessToken ?? ''} unit={unit} />
         </div>
 
-        <dl className="object-parameters-grid object-lot-facts">
-          {factRows.map((row) => (
-            <div key={row.label}>
-              <dt>{row.label}</dt>
-              <dd>{row.value}</dd>
-            </div>
-          ))}
-        </dl>
+        <aside className="object-lot-info-panel">
+          <div className="object-lot-status-row">
+            <span className="object-lot-code">{getUnitRoomsOrType(unit)}</span>
+            <span className={`object-feed-status object-feed-status--${unit.status.toLowerCase()}`}>
+              {feedUnitStatusLabels[unit.status]}
+            </span>
+          </div>
+
+          <div className="object-lot-price-summary">
+            <span>{priceSummary.label}</span>
+            <strong>{priceSummary.primaryPrice}</strong>
+            {priceSummary.secondaryPrice ? <small>Обычная цена {priceSummary.secondaryPrice}</small> : null}
+          </div>
+
+          <div className="object-lot-facts-heading">
+            <h3 id="object-lot-facts-title">Параметры лота</h3>
+          </div>
+
+          <dl className="object-lot-facts">
+            {factRows.map((row) => (
+              <div className="object-lot-fact-row" key={row.label}>
+                <dt>{row.label}</dt>
+                <span className="object-lot-fact-line" aria-hidden="true" />
+                <dd>{row.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </aside>
       </section>
     </div>
   );
@@ -2504,6 +2520,27 @@ function formatComputedFeedUnitPricePerMeter(unit: FeedUnit) {
   return formatFeedUnitPricePerMeter(unit);
 }
 
+function hasFeedUnitRealDiscount(unit: FeedUnit) {
+  if (!unit.price || !unit.discountPrice) {
+    return false;
+  }
+
+  const price = Number(unit.price);
+  const discountPrice = Number(unit.discountPrice);
+
+  return Number.isFinite(price) && Number.isFinite(discountPrice) && price > 0 && discountPrice > 0 && discountPrice < price;
+}
+
+function getObjectLotPriceSummary(unit: FeedUnit) {
+  const hasRealDiscount = hasFeedUnitRealDiscount(unit);
+
+  return {
+    label: hasRealDiscount ? 'Цена со скидкой' : 'Цена',
+    primaryPrice: formatFeedUnitPrice(hasRealDiscount ? unit.discountPrice : unit.price, unit.currency),
+    secondaryPrice: hasRealDiscount ? formatFeedUnitPrice(unit.price, unit.currency) : null,
+  };
+}
+
 function formatFeedUnitCompletion(unit: FeedUnit) {
   if (!unit.completionYear) {
     return 'Не указан';
@@ -2526,18 +2563,6 @@ function formatFeedUnitBuildingValue(value: string | null) {
 
 function getObjectLotFactRows(unit: FeedUnit) {
   return [
-    {
-      label: 'Цена',
-      value: formatFeedUnitPrice(unit.price, unit.currency),
-    },
-    ...(unit.discountPrice
-      ? [
-          {
-            label: 'Цена со скидкой',
-            value: formatFeedUnitPrice(unit.discountPrice, unit.currency),
-          },
-        ]
-      : []),
     {
       label: 'Цена за м²',
       value: formatComputedFeedUnitPricePerMeter(unit),

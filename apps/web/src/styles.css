@@ -5047,8 +5047,85 @@ tr.user-row--deactivated .text-button {
   color: #18202a;
 }
 
-.object-lot-header .object-feed-status {
-  margin-left: auto;
+.object-lot-split-card {
+  display: grid;
+  overflow: hidden;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-height: 520px;
+  border: 1px solid var(--app-theme-border, #d6dde5);
+  border-radius: var(--app-theme-radius-md, 8px);
+  background: var(--app-theme-surface, #ffffff);
+  box-shadow: var(--app-theme-shadow-panel, 0 16px 40px rgb(24 32 42 / 8%));
+}
+
+.object-lot-media-panel {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid var(--app-theme-border-soft, #e6ebf0);
+  background: #0f1720;
+}
+
+.object-lot-info-panel {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  padding: 30px 34px 34px;
+}
+
+.object-lot-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 22px;
+}
+
+.object-lot-code {
+  min-width: 0;
+  color: var(--app-theme-ink-700, #6d7885);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.object-lot-price-summary {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 24px;
+}
+
+.object-lot-price-summary span {
+  color: var(--app-theme-ink-700, #6d7885);
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1.25;
+}
+
+.object-lot-price-summary strong {
+  color: var(--app-theme-ink-900, #18202a);
+  font-size: 34px;
+  font-weight: 900;
+  line-height: 1.08;
+}
+
+.object-lot-price-summary small {
+  color: var(--app-theme-accent, #9a6a43);
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
+.object-lot-facts-heading {
+  margin-bottom: 6px;
+}
+
+.object-lot-facts-heading h3 {
+  margin: 0;
+  color: var(--app-theme-ink-900, #18202a);
+  font-size: 16px;
+  font-weight: 900;
+  line-height: 1.25;
 }
 
 .object-detail-edit-link {
@@ -5176,6 +5253,15 @@ tr.user-row--deactivated .text-button {
   color: #aab6c4;
 }
 
+.object-lot-media-panel .object-lot-media-carousel {
+  height: 100%;
+  min-height: 520px;
+  aspect-ratio: auto;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
 .object-lot-media-carousel--empty {
   place-items: center;
 }
@@ -5215,12 +5301,43 @@ tr.user-row--deactivated .text-button {
   transform: translate(-50%, 0);
 }
 
-.object-lot-summary-section {
-  align-content: start;
+.object-lot-facts {
+  display: grid;
+  gap: 0;
+  margin: 0;
 }
 
-.object-lot-facts {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+.object-lot-fact-row {
+  display: grid;
+  grid-template-columns: minmax(118px, auto) minmax(24px, 1fr) minmax(120px, auto);
+  align-items: end;
+  gap: 10px;
+  padding: 13px 0;
+}
+
+.object-lot-fact-row dt {
+  min-width: 0;
+  color: var(--app-theme-ink-700, #6d7885);
+  font-size: 14px;
+  font-weight: 720;
+  line-height: 1.35;
+}
+
+.object-lot-fact-row dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--app-theme-ink-900, #18202a);
+  font-size: 15px;
+  font-weight: 850;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.object-lot-fact-line {
+  min-width: 24px;
+  border-bottom: 1px dotted var(--app-theme-border-strong, #bcc7d3);
+  transform: translateY(-5px);
 }
 
 .carousel-button {
@@ -6585,6 +6702,20 @@ tr.user-row--deactivated .text-button {
 }
 
 @media (max-width: 1100px) {
+  .object-lot-split-card {
+    grid-template-columns: 1fr;
+  }
+
+  .object-lot-media-panel {
+    border-right: 0;
+    border-bottom: 1px solid var(--app-theme-border-soft, #e6ebf0);
+  }
+
+  .object-lot-media-panel .object-lot-media-carousel {
+    min-height: 420px;
+    aspect-ratio: 16 / 9;
+  }
+
   .object-parameters-files-grid {
     grid-template-columns: 1fr;
   }
@@ -6594,7 +6725,7 @@ tr.user-row--deactivated .text-button {
   }
 
   .object-lot-facts {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
   }
 
   .object-feed-units-toolbar {
@@ -8002,6 +8133,26 @@ tr.user-row--deactivated .text-button {
 
   .cabinet-badges {
     justify-content: flex-start;
+  }
+
+  .object-lot-info-panel {
+    padding: 22px;
+  }
+
+  .object-lot-status-row {
+    align-items: flex-start;
+  }
+
+  .object-lot-price-summary strong {
+    font-size: 28px;
+  }
+
+  .object-lot-fact-row {
+    grid-template-columns: minmax(92px, auto) minmax(18px, 1fr) minmax(96px, auto);
+  }
+
+  .object-lot-media-panel .object-lot-media-carousel {
+    min-height: 320px;
   }
 
   .object-detail-hero {

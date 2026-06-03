@@ -34,14 +34,18 @@ test('lot detail page loads object and one feed unit', () => {
 
 test('lot detail page renders media carousel and required fact cards', () => {
   assert.match(objectDetailSource, /className="object-detail-page object-lot-page"/);
+  assert.match(objectDetailSource, /className="object-lot-split-card"/);
+  assert.match(objectDetailSource, /className="object-lot-media-panel"/);
+  assert.match(objectDetailSource, /className="object-lot-info-panel"/);
+  assert.match(objectDetailSource, /className="object-lot-price-summary"/);
   assert.match(objectDetailSource, /function ObjectLotMediaCarousel/);
   assert.match(objectDetailSource, /className="media-gallery-frame object-lot-media-carousel"/);
   assert.match(objectDetailSource, /className="media-gallery-stage object-lot-media-stage"/);
   assert.match(objectDetailSource, /className="media-gallery-image object-lot-media-image"/);
   assert.match(objectDetailSource, /function getObjectLotFactRows\(unit: FeedUnit\)/);
+  assert.match(objectDetailSource, /className="object-lot-fact-row"/);
+  assert.match(objectDetailSource, /className="object-lot-fact-line"/);
   assert.match(objectDetailSource, /formatComputedFeedUnitPricePerMeter\(unit\)/);
-  assert.match(objectDetailSource, /label: 'Цена'/);
-  assert.match(objectDetailSource, /unit\.discountPrice[\s\S]*?label: 'Цена со скидкой'[\s\S]*?formatFeedUnitPrice\(unit\.discountPrice, unit\.currency\)/);
   assert.match(objectDetailSource, /label: 'Цена за м²'/);
   assert.match(objectDetailSource, /label: 'Площадь'/);
   assert.match(objectDetailSource, /label: 'Тип лота'/);
@@ -51,8 +55,26 @@ test('lot detail page renders media carousel and required fact cards', () => {
   assert.match(objectDetailSource, /label: 'Адрес'/);
   assert.match(objectDetailSource, /label: 'Статус'/);
   assert.match(styles, /\.object-lot-page\s*\{/);
+  assert.match(styles, /\.object-lot-split-card\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\)\s+minmax\(0,\s*1fr\);[\s\S]*?\}/);
+  assert.match(styles, /\.object-lot-info-panel\s*\{/);
+  assert.match(styles, /\.object-lot-price-summary\s*\{/);
+  assert.match(styles, /\.object-lot-fact-row\s*\{/);
+  assert.match(styles, /\.object-lot-fact-line\s*\{/);
+  assert.match(styles, /@media \(max-width:\s*1100px\)\s*\{[\s\S]*?\.object-lot-split-card\s*\{[\s\S]*?grid-template-columns:\s*1fr;[\s\S]*?\}/);
   assert.match(styles, /\.object-lot-media-carousel\s*\{/);
   assert.match(styles, /\.object-lot-facts\s*\{/);
+});
+
+test('lot detail price summary shows discount only when discount price is lower', () => {
+  assert.match(objectDetailSource, /function hasFeedUnitRealDiscount\(unit: FeedUnit\)/);
+  assert.match(
+    objectDetailSource,
+    /const price = Number\(unit\.price\);[\s\S]*?const discountPrice = Number\(unit\.discountPrice\);[\s\S]*?discountPrice < price/,
+  );
+  assert.match(objectDetailSource, /function getObjectLotPriceSummary\(unit: FeedUnit\)/);
+  assert.match(objectDetailSource, /const hasRealDiscount = hasFeedUnitRealDiscount\(unit\);/);
+  assert.match(objectDetailSource, /label: hasRealDiscount \? 'Цена со скидкой' : 'Цена'/);
+  assert.match(objectDetailSource, /secondaryPrice: hasRealDiscount \? formatFeedUnitPrice\(unit\.price, unit\.currency\) : null/);
 });
 
 test('lot detail media carousel fits media without cropping', () => {

@@ -1,5 +1,56 @@
 # Codex Log
 
+## 2026-06-03 - Local API dev auth repair
+
+Задача:
+
+- Восстановить локальный вход `admin@example.com` после того, как frontend на `localhost:5173` показывал ошибку проверки email/password.
+
+Диагностика:
+
+- Frontend был запущен и ходил в `VITE_API_URL=http://localhost:3000`.
+- API на `localhost:3000` не был запущен; из-за этого в web log были `Failed to fetch` на `/auth/refresh`.
+- После запуска API прямой login показал, что локальный admin password hash не совпадал с ожидаемым dev-паролем.
+
+Изменения:
+
+- Запущен локальный API в `screen`-сессии `platforma-api`; лог: `/tmp/platforma-api.log`.
+- В ignored local env `apps/api/.env` восстановлено ожидаемое значение `ADMIN_PASSWORD`.
+- В локальной Postgres DB обновлен password hash пользователя `admin@example.com`.
+
+Проверки:
+
+- `GET http://localhost:3000/health` - `status=ok`, `database=ok`, `postgis=true`.
+- `POST http://localhost:3000/auth/login` для `admin@example.com` с ожидаемым dev-паролем - `200 OK`.
+- Login со старым неверным значением - `401 Unauthorized`.
+
+## 2026-06-03 - Object lot split card layout
+
+Задача:
+
+- Перестроить карточку отдельного лота по выбранному варианту A: галерея слева, паспорт характеристик справа.
+- Показывать `Цена со скидкой` только когда `discountPrice` реально меньше обычной `price`; иначе показывать просто `Цена`.
+
+Изменения:
+
+- `apps/web/src/objects/ObjectDetailPage.tsx` - страница лота теперь рендерит единый `object-lot-split-card` с media panel и info panel; статус перенесен в правую колонку.
+- `apps/web/src/objects/ObjectDetailPage.tsx` - добавлены `hasFeedUnitRealDiscount()` и `getObjectLotPriceSummary()` для строгой логики отображения скидки.
+- `apps/web/src/styles.css` - добавлены стили двух равных колонок, правой паспортной колонки с пунктирными линиями и мобильного stacking.
+- `apps/web/tests/object-lot-detail-page.test.mjs` - обновлены проверки layout и условия показа скидочной цены.
+- `docs/superpowers/plans/2026-06-03-lot-card-split-layout.md` - сохранен рабочий implementation plan.
+
+Проверки:
+
+- `pnpm --filter @platforma/web test -- object-lot-detail-page.test.mjs` - сначала expected failures на отсутствующем split layout и discount helper, после правки 223/223 passed.
+- `pnpm build:web` - production build successful; осталось штатное предупреждение Vite о чанке больше 500 kB.
+
+Ручная проверка:
+
+- Открыть `/objects/:slug/lots/:unitId` и проверить desktop/mobile layout.
+- Проверить лот с реальной скидкой: справа должно быть `Цена со скидкой` и строка `Обычная цена`.
+- Проверить лот без скидки, с равной скидочной ценой или с большей скидочной ценой: справа должно быть только `Цена`.
+- Проверить лот без медиа и лот с несколькими медиа.
+
 ## 2026-06-02 - Object lot feed update timestamp
 
 Задача:
