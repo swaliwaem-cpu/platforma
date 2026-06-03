@@ -1,5 +1,29 @@
 # Codex Log
 
+## 2026-06-03 - Production lot gallery thumbnails deploy
+
+Задача:
+
+- Задеплоить исправление миниатюр галереи на странице отдельного лота.
+
+Действия:
+
+- `6186262 fix(web): place lot gallery thumbnails below media` запушен в `origin/on-ser`.
+- На production `/opt/platforma` выполнен fast-forward pull `07220ee..6186262`.
+- Выполнен `docker compose -f docker-compose.prod.yml up -d --build web`; compose пересоздал `web` и `api`.
+
+Проверки:
+
+- `docker compose -f docker-compose.prod.yml ps` - `api` healthy, `web` up, `postgres`/`redis`/`minio` healthy.
+- `GET http://127.0.0.1:3000/health` и `GET https://api.broker.fluffywhite.moscow/health` - `status=ok`, `database=ok`, `postgis=true`.
+- `GET https://broker.fluffywhite.moscow/` отдает CSS asset `/assets/index-CDtAFUhq.css`.
+- Production CSS содержит lot gallery правила `object-lot-media-carousel`, `display:flex`, `flex-direction:column`.
+- Свежий API log после restart: `Scheduled feed import cycle finished: sources=9, previewed=9, runsQueued=9, skipped=0, failed=0`.
+
+Ручная проверка:
+
+- Открыть production страницу лота с несколькими media, сделать hard refresh и проверить, что миниатюры расположены под изображением.
+
 ## 2026-06-03 - Lot gallery thumbnails below media
 
 Задача:
