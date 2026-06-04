@@ -3823,17 +3823,34 @@ function getFeedIndexRawExternalId(unit: NormalizedFeedUnit) {
 }
 
 function mergeSminexIndexDuplicateGroup(group: RoutedFeedUnit[]): RoutedFeedUnit[] {
-  if (group.length < 2 || !canMergeSminexIndexDuplicateGroup(group)) {
+  if (group.length < 2) {
     return group;
   }
 
-  const canonical = chooseSminexIndexCanonicalUnit(group);
+  const clusters = new Map<string, RoutedFeedUnit[]>();
+
+  for (const routedUnit of group) {
+    const signature = getSminexIndexDuplicateSignature(routedUnit.unit);
+    const cluster = clusters.get(signature) ?? [];
+    cluster.push(routedUnit);
+    clusters.set(signature, cluster);
+  }
+
+  return Array.from(clusters.values()).flatMap((cluster) => mergeSminexIndexDuplicateCluster(cluster));
+}
+
+function mergeSminexIndexDuplicateCluster(cluster: RoutedFeedUnit[]): RoutedFeedUnit[] {
+  if (cluster.length < 2 || !canMergeSminexIndexDuplicateCluster(cluster)) {
+    return cluster;
+  }
+
+  const canonical = chooseSminexIndexCanonicalUnit(cluster);
 
   if (!canonical) {
-    return group;
+    return cluster;
   }
 
-  const donors = group.filter((routedUnit) => routedUnit !== canonical);
+  const donors = cluster.filter((routedUnit) => routedUnit !== canonical);
 
   return [
     {
@@ -3843,34 +3860,23 @@ function mergeSminexIndexDuplicateGroup(group: RoutedFeedUnit[]): RoutedFeedUnit
   ];
 }
 
-function canMergeSminexIndexDuplicateGroup(group: RoutedFeedUnit[]) {
-  const formats = new Set(group.map((routedUnit) => getText(routedUnit.unit.rawPayload.__feedDetectedFormat)).filter(Boolean));
+function canMergeSminexIndexDuplicateCluster(cluster: RoutedFeedUnit[]) {
+  const formats = new Set(cluster.map((routedUnit) => getText(routedUnit.unit.rawPayload.__feedDetectedFormat)).filter(Boolean));
 
-  if (!formats.has('CIAN_XML') || !formats.has('YANDEX_REALTY')) {
-    return false;
-  }
-
-  const reference = group[0]?.unit;
-
-  if (!reference) {
-    return false;
-  }
-
-  return group.every((routedUnit) => haveSameSminexIndexDuplicateSignature(reference, routedUnit.unit));
+  return formats.has('CIAN_XML') && formats.has('YANDEX_REALTY');
 }
 
-function haveSameSminexIndexDuplicateSignature(left: NormalizedFeedUnit, right: NormalizedFeedUnit) {
-  return (
-    left.status === right.status &&
-    left.type === right.type &&
-    left.residentialDetails?.apartmentNumber === right.residentialDetails?.apartmentNumber &&
-    left.floor === right.floor &&
-    left.rooms === right.rooms &&
-    left.area === right.area &&
-    left.effectivePrice === right.effectivePrice &&
-    left.completionYear === right.completionYear &&
-    left.completionQuarter === right.completionQuarter
-  );
+function getSminexIndexDuplicateSignature(unit: NormalizedFeedUnit) {
+  return [
+    unit.type,
+    unit.residentialDetails?.apartmentNumber ?? '',
+    unit.floor ?? '',
+    unit.rooms ?? '',
+    unit.area ?? '',
+    unit.effectivePrice ?? '',
+    unit.completionYear ?? '',
+    unit.completionQuarter ?? '',
+  ].join('\u001f');
 }
 
 function chooseSminexIndexCanonicalUnit(group: RoutedFeedUnit[]) {

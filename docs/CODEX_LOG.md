@@ -11,13 +11,15 @@
 - `tools/feed-import/src/index.ts` - для Sminex `INDEX_URL` после routing добавлен merge duplicate-групп по `objectId + raw externalId`; merge срабатывает только если в группе есть CIAN и Yandex Realty и совпадают apartment number, floor, rooms, area, effective price и completion.
 - `tools/feed-import/src/index.ts` - canonical unit выбирается из CIAN; из Yandex добирается осмысленный `building`, media URL объединяются без дублей, а CIAN `section`, title и residential details остаются основой.
 - `tools/feed-import/src/index.ts` - placeholder values `-`, `—`, `–` в building/project/section полях нормализуются в `null`, чтобы дефисы из фида не попадали в group header.
-- `tools/feed-import/tests/import-engine.test.cjs` - добавлена регрессия на Sminex `Палашёвский 11`: existing CIAN + Yandex строки с raw id `000110621` становятся одним активным CIAN-лотом, Yandex external id архивируется, building берется из Yandex, media объединяются.
+- `tools/feed-import/src/index.ts` - duplicate-группы внутри raw external id дополнительно кластеризуются по параметрам лота, чтобы совместимая CIAN/Yandex-пара мерджилась, даже если рядом есть отдельный CIAN-вариант с тем же raw id, но другой ценой.
+- `tools/feed-import/tests/import-engine.test.cjs` - добавлена регрессия на Sminex `Палашёвский 11`: existing CIAN + Yandex строки с raw id `000110621` становятся одним активным CIAN-лотом, Yandex external id архивируется, building берется из Yandex, media объединяются, а второй CIAN-вариант с другой ценой остается отдельным лотом.
 
 Проверки:
 
 - RED: новый `executeFeedImport merges Sminex index duplicates by raw external id using CIAN as canonical unit` падал на текущем коде с `2 !== 1`.
 - GREEN: `pnpm --filter @platforma/feed-import build && node --test tools/feed-import/tests/import-engine.test.cjs` - 24/24 passed.
 - `pnpm --filter @platforma/feed-import test` - 56/56 passed.
+- RED для production-хвоста с третьим CIAN-вариантом падал с `3 !== 2`; после кластеризации `pnpm --filter @platforma/feed-import test` - 56/56 passed.
 
 Ручная проверка:
 

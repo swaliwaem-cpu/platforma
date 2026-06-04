@@ -178,7 +178,7 @@ function makeSminexIndexYandexFeed() {
     </realty-feed>`;
 }
 
-function makeSminexIndexCianFeed() {
+function makeSminexIndexCianFeed({ price = '264130000', planUrl = 'https://cdn.test/cian-plan.jpg' } = {}) {
   return `<?xml version="1.0"?>
     <feed>
       <object>
@@ -203,9 +203,9 @@ function makeSminexIndexCianFeed() {
         <Building>
           <Deadline><Quarter>first</Quarter><Year>2030</Year></Deadline>
         </Building>
-        <BargainTerms><Price>264130000</Price><Currency>RUR</Currency></BargainTerms>
+        <BargainTerms><Price>${price}</Price><Currency>RUR</Currency></BargainTerms>
         <LayoutPhoto>
-          <FullUrl>https://cdn.test/cian-plan.jpg</FullUrl>
+          <FullUrl>${planUrl}</FullUrl>
           <IsDefault>true</IsDefault>
         </LayoutPhoto>
       </object>
@@ -804,8 +804,10 @@ test('executeFeedImport merges Sminex index duplicates by raw external id using 
   const indexUrl = 'https://feeds.sminex.com/xml/';
   const yandexUrl = 'https://feeds.sminex.com/xml/PLSH_YandexRealty_4194373_.xml';
   const cianUrl = 'https://feeds.sminex.com/xml/PLSH_Cian_5763981_.xml';
+  const secondCianUrl = 'https://feeds.sminex.com/xml/PLSH_Cian_second_price.xml';
   const yandexExternalId = `${createIndexNamespace(yandexUrl)}:000110621`;
   const cianExternalId = `${createIndexNamespace(cianUrl)}:000110621`;
+  const secondCianExternalId = `${createIndexNamespace(secondCianUrl)}:000110621`;
   const { db, state } = createFakeDb({
     source: {
       sourceKind: 'INDEX_URL',
@@ -839,10 +841,12 @@ test('executeFeedImport merges Sminex index duplicates by raw external id using 
       `<html><body>
         <a href="PLSH_YandexRealty_4194373_.xml">Yandex</a>
         <a href="PLSH_Cian_5763981_.xml">Cian</a>
+        <a href="PLSH_Cian_second_price.xml">Second Cian price</a>
       </body></html>`,
     ],
     [yandexUrl, makeSminexIndexYandexFeed()],
     [cianUrl, makeSminexIndexCianFeed()],
+    [secondCianUrl, makeSminexIndexCianFeed({ price: '250000000', planUrl: 'https://cdn.test/cian-second-plan.jpg' })],
   ]);
 
   const result = await executeFeedImport({
@@ -861,6 +865,7 @@ test('executeFeedImport merges Sminex index duplicates by raw external id using 
   });
 
   const cianUnit = state.units.find((unit) => unit.externalId === cianExternalId);
+  const secondCianUnit = state.units.find((unit) => unit.externalId === secondCianExternalId);
   const yandexUnit = state.units.find((unit) => unit.externalId === yandexExternalId);
   const linkedMediaUrls = state.unitMedia
     .filter((link) => link.unitId === cianUnit.id)
@@ -868,9 +873,9 @@ test('executeFeedImport merges Sminex index duplicates by raw external id using 
     .sort();
 
   assert.equal(result.status, 'SUCCESS');
-  assert.equal(result.summary.unitsParsed, 1);
+  assert.equal(result.summary.unitsParsed, 2);
   assert.equal(result.summary.updated, 1);
-  assert.equal(result.summary.created, 0);
+  assert.equal(result.summary.created, 1);
   assert.equal(result.summary.archived, 1);
   assert.equal(cianUnit.status, 'AVAILABLE');
   assert.equal(cianUnit.rawPayload.__feedDetectedFormat, 'CIAN_XML');
@@ -880,9 +885,12 @@ test('executeFeedImport merges Sminex index duplicates by raw external id using 
   assert.equal(cianUnit.section, '1');
   assert.equal(state.residentialDetails.get(cianUnit.id).apartmentNumber, '18');
   assert.deepEqual(linkedMediaUrls, ['https://cdn.test/cian-plan.jpg', 'https://cdn.test/yandex-plan.jpg']);
+  assert.equal(secondCianUnit.status, 'AVAILABLE');
+  assert.equal(secondCianUnit.price, '250000000.00');
+  assert.equal(secondCianUnit.building, null);
   assert.equal(yandexUnit.status, 'ARCHIVED');
   assert.deepEqual(yandexUnit.archivedAt, fixedDate);
-  assert.equal(state.object.feedUnitsCount, 1);
+  assert.equal(state.object.feedUnitsCount, 2);
 });
 
 test('executeFeedImport routes Avito units through development id source mappings', async () => {
