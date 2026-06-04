@@ -1,5 +1,34 @@
 # Codex Log
 
+## 2026-06-04 - Production deploy discount lot updates
+
+Задача:
+
+- Залить на production изменения по сортировке скидочной цены и обычной цене за м² в карточке лота.
+
+Деплой:
+
+- Локальная ветка `on-ser` запушена в `origin/on-ser` с `7ec47f7` до `893e335`.
+- Production checkout `/opt/platforma` обновлен fast-forward до `893e335`.
+- Перед пересборкой создан production backup `/opt/platforma-deploy-backups/20260604T083152Z`: `git-head-before.txt`, `git-log-before.txt`, `compose-ps-before.txt`, `api-health-before.json`, `platforma.sql.gz`.
+- Выполнено `docker compose -f docker-compose.prod.yml up -d --build api web`; контейнеры `platforma-api-1` и `platforma-web-1` пересозданы.
+
+Проверки:
+
+- Локально: `pnpm --filter @platforma/api test -- services.test.cjs` - 178/178 passed.
+- Локально: `pnpm --filter @platforma/web test -- object-detail-feed-units.test.mjs object-lot-detail-page.test.mjs` - 227/227 passed.
+- Локально: `pnpm --filter @platforma/web build` - passed, осталось штатное предупреждение Vite о чанке больше 500 kB.
+- Локально: `pnpm --filter @platforma/api build` - passed.
+- Production: `docker compose -f docker-compose.prod.yml ps` - `api`, `postgres`, `redis`, `minio` healthy; `web` up.
+- Production: `http://127.0.0.1:3000/health` и `https://api.broker.fluffywhite.moscow/health` вернули `status: ok`, `database: ok`, `postgis: true`.
+- Production: `http://127.0.0.1:5173/` и `https://broker.fluffywhite.moscow/` вернули `200 OK`.
+- Production: хвост логов API без ошибок, `Nest application successfully started`; web слушает `0.0.0.0:5173`.
+
+Ручная проверка:
+
+- Открыть страницу объекта с лотами, раскрыть группу, проверить сортировку по `Цена со скидкой` и жирное выделение только реальной скидки.
+- Открыть карточку лота с реальной скидкой и проверить обычную цену за м² в строке `Обычная цена`.
+
 ## 2026-06-04 - Lot discount ordinary price per meter
 
 Задача:
