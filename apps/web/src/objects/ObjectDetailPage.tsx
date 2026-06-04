@@ -81,7 +81,7 @@ const fileTypeLabels: Record<ObjectFileType, string> = {
 
 const objectFeedUnitsPageSize = 20;
 
-type ObjectFeedUnitSortBy = 'title' | 'status' | 'price' | 'pricePerMeter' | 'area' | 'rooms' | 'floor' | 'building';
+type ObjectFeedUnitSortBy = 'title' | 'status' | 'price' | 'discountPrice' | 'pricePerMeter' | 'area' | 'rooms' | 'floor' | 'building';
 type ObjectFeedUnitSortDirection = 'asc' | 'desc';
 type InitialObjectFeedUnitFilters = {
   priceMin: string;
@@ -1512,7 +1512,9 @@ function ObjectFeedRoomGroup({
                   <ObjectFeedSortableHead field="price" sortBy={sortBy} sortDirection={sortDirection} onSort={onSort}>
                     Цена
                   </ObjectFeedSortableHead>
-                  <TableHead>Цена со скидкой</TableHead>
+                  <ObjectFeedSortableHead field="discountPrice" sortBy={sortBy} sortDirection={sortDirection} onSort={onSort}>
+                    Цена со скидкой
+                  </ObjectFeedSortableHead>
                   <ObjectFeedSortableHead field="pricePerMeter" sortBy={sortBy} sortDirection={sortDirection} onSort={onSort}>
                     За м²
                   </ObjectFeedSortableHead>
@@ -1677,7 +1679,13 @@ function ObjectFeedUnitRow({
       </TableCell>
       <TableCell>{formatArea(unit.area)}</TableCell>
       <TableCell>{formatFeedUnitPrice(unit.price, unit.currency)}</TableCell>
-      <TableCell>{formatFeedUnitDiscountPrice(unit)}</TableCell>
+      <TableCell>
+        {hasFeedUnitRealDiscount(unit) ? (
+          <strong>{formatFeedUnitDiscountPrice(unit)}</strong>
+        ) : (
+          formatFeedUnitDiscountPrice(unit)
+        )}
+      </TableCell>
       <TableCell>{formatFeedUnitPricePerMeter(unit)}</TableCell>
       <TableCell>
         <span className={`object-feed-status object-feed-status--${unit.status.toLowerCase()}`}>
@@ -2241,6 +2249,10 @@ function compareFeedUnitsByField(leftUnit: FeedUnit, rightUnit: FeedUnit, sortBy
   }
 
   if (sortBy === 'price') {
+    return compareNullableNumber(getEffectiveFeedUnitPrice(leftUnit), getEffectiveFeedUnitPrice(rightUnit));
+  }
+
+  if (sortBy === 'discountPrice') {
     return compareNullableNumber(getEffectiveFeedUnitPrice(leftUnit), getEffectiveFeedUnitPrice(rightUnit));
   }
 

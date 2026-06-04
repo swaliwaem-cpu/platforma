@@ -2117,6 +2117,10 @@ test('ObjectsService.listFeedUnits applies sortable order for feed unit columns'
     sortDirection: 'desc',
   });
   await service.listFeedUnits(objectId, {
+    sortBy: 'discountPrice',
+    sortDirection: 'asc',
+  });
+  await service.listFeedUnits(objectId, {
     sortBy: 'pricePerMeter',
     sortDirection: 'asc',
   });
@@ -2136,14 +2140,18 @@ test('ObjectsService.listFeedUnits applies sortable order for feed unit columns'
     { createdAt: 'desc' },
   ]);
   assert.deepEqual(orderByCalls[1], [
-    { effectivePricePerMeter: { sort: 'asc', nulls: 'last' } },
+    { effectivePrice: { sort: 'asc', nulls: 'last' } },
     { createdAt: 'desc' },
   ]);
   assert.deepEqual(orderByCalls[2], [
-    { area: { sort: 'asc', nulls: 'last' } },
+    { effectivePricePerMeter: { sort: 'asc', nulls: 'last' } },
     { createdAt: 'desc' },
   ]);
   assert.deepEqual(orderByCalls[3], [
+    { area: { sort: 'asc', nulls: 'last' } },
+    { createdAt: 'desc' },
+  ]);
+  assert.deepEqual(orderByCalls[4], [
     { building: { sort: 'desc', nulls: 'last' } },
     { section: { sort: 'desc', nulls: 'last' } },
     { createdAt: 'desc' },

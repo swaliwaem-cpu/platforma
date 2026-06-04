@@ -3487,12 +3487,13 @@ export class ObjectsService {
 
     if (
       normalizedSortBy === 'price' ||
+      normalizedSortBy === 'discountPrice' ||
       normalizedSortBy === 'pricePerMeter' ||
       normalizedSortBy === 'area' ||
       normalizedSortBy === 'floor'
     ) {
       const sortField =
-        normalizedSortBy === 'price'
+        normalizedSortBy === 'price' || normalizedSortBy === 'discountPrice'
           ? 'effectivePrice'
           : normalizedSortBy === 'pricePerMeter'
             ? 'effectivePricePerMeter'

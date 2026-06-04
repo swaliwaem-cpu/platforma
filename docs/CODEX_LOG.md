@@ -1,5 +1,29 @@
 # Codex Log
 
+## 2026-06-04 - Discount price emphasis and sorting
+
+Задача:
+
+- В таблице лотов выделять жирным реальную цену со скидкой.
+- Добавить сортировку по колонке `Цена со скидкой`.
+
+Изменения:
+
+- `apps/web/src/objects/ObjectDetailPage.tsx` - колонка `Цена со скидкой` теперь использует `ObjectFeedSortableHead` с `sortBy=discountPrice`.
+- `apps/web/src/objects/ObjectDetailPage.tsx` - значение скидочной цены оборачивается в `<strong>` только когда `hasFeedUnitRealDiscount(unit)` подтверждает скидку ниже базовой цены.
+- `apps/api/src/objects/objects.service.ts` - `sortBy=discountPrice` для feed lots мапится на `effectivePrice`, чтобы сортировать по фактической цене с учетом скидки и fallback на обычную цену.
+- `apps/web/tests/object-detail-feed-units.test.mjs`, `apps/api/tests/services.test.cjs` - добавлены RED/GREEN регрессии на новый sortable header, жирное выделение и backend `orderBy`.
+
+Проверки:
+
+- `pnpm --filter @platforma/web test -- object-detail-feed-units.test.mjs` - сначала 3 expected fail, после правки 227/227 passed.
+- `pnpm --filter @platforma/api test -- services.test.cjs` - сначала 1 expected fail, после правки 178/178 passed.
+- `pnpm build:web` - production build successful; осталось штатное предупреждение Vite о чанке больше 500 kB.
+
+Ручная проверка:
+
+- Открыть страницу объекта с лотами, раскрыть группу, проверить жирное выделение только у строк с реальной скидкой и сортировку по заголовку `Цена со скидкой`.
+
 ## 2026-06-04 - Production slow loading diagnosis and nginx gzip hotfix
 
 Задача:

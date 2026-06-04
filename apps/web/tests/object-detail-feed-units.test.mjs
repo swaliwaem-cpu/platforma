@@ -134,7 +134,10 @@ test('object detail feed units block renders expected columns and media thumbnai
   assert.match(source, /field="floor"[\s\S]*?>\s*Эт\.\s*<\/ObjectFeedSortableHead>/);
   assert.match(source, /field="title"[\s\S]*?>\s*Номер квартиры\s*<\/ObjectFeedSortableHead>/);
   assert.match(objectFeedUnitRowSource, /<TableCell>\{formatFeedUnitPrice\(unit\.price, unit\.currency\)\}<\/TableCell>/);
-  assert.match(objectFeedUnitRowSource, /<TableCell>\{formatFeedUnitDiscountPrice\(unit\)\}<\/TableCell>/);
+  assert.match(
+    objectFeedUnitRowSource,
+    /<TableCell>\s*\{hasFeedUnitRealDiscount\(unit\) \? \([\s\S]*?<strong>\{formatFeedUnitDiscountPrice\(unit\)\}<\/strong>[\s\S]*?\) : \([\s\S]*?formatFeedUnitDiscountPrice\(unit\)[\s\S]*?\)\}[\s\S]*?<\/TableCell>/,
+  );
   assert.doesNotMatch(objectFeedUnitRowSource, /formatFeedUnitPrice\(unit\.effectivePrice \?\? unit\.discountPrice \?\? unit\.price, unit\.currency\)/);
   assert.match(source, /function formatFeedUnitCompletion\(unit: FeedUnit\)/);
   assert.match(source, /return `\$\{unit\.completionQuarter\}кв \$\{unit\.completionYear\}`;/);
@@ -198,7 +201,7 @@ test('object detail feed unit rows open lot cards in a new tab', () => {
 });
 
 test('object detail feed units support server sorting from sortable headers', () => {
-  assert.match(source, /type ObjectFeedUnitSortBy = 'title' \| 'status' \| 'price' \| 'pricePerMeter' \| 'area' \| 'rooms' \| 'floor' \| 'building';/);
+  assert.match(source, /type ObjectFeedUnitSortBy = 'title' \| 'status' \| 'price' \| 'discountPrice' \| 'pricePerMeter' \| 'area' \| 'rooms' \| 'floor' \| 'building';/);
   assert.match(source, /type ObjectFeedUnitSortDirection = 'asc' \| 'desc';/);
   assert.match(source, /const \[sortBy,\s*setSortBy\] = useState<ObjectFeedUnitSortBy>\('price'\);/);
   assert.match(source, /const \[sortDirection,\s*setSortDirection\] = useState<ObjectFeedUnitSortDirection>\('asc'\);/);
@@ -209,8 +212,7 @@ test('object detail feed units support server sorting from sortable headers', ()
   assert.match(source, /<ObjectFeedSortableHead[\s\S]*?field="title"[\s\S]*?>\s*Номер квартиры\s*<\/ObjectFeedSortableHead>/);
   assert.match(source, /<ObjectFeedSortableHead[\s\S]*?field="status"[\s\S]*?>\s*Статус\s*<\/ObjectFeedSortableHead>/);
   assert.match(source, /<ObjectFeedSortableHead[\s\S]*?field="price"[\s\S]*?>\s*Цена\s*<\/ObjectFeedSortableHead>/);
-  assert.match(source, /<TableHead>Цена со скидкой<\/TableHead>/);
-  assert.doesNotMatch(source, /<ObjectFeedSortableHead[\s\S]*?field="price"[\s\S]*?>\s*Цена со скидкой\s*<\/ObjectFeedSortableHead>/);
+  assert.match(source, /<ObjectFeedSortableHead[\s\S]*?field="discountPrice"[\s\S]*?>\s*Цена со скидкой\s*<\/ObjectFeedSortableHead>/);
   assert.match(source, /<ObjectFeedSortableHead[\s\S]*?field="pricePerMeter"[\s\S]*?>\s*За м²\s*<\/ObjectFeedSortableHead>/);
   assert.match(source, /<ObjectFeedSortableHead[\s\S]*?field="area"[\s\S]*?>\s*Площадь\s*<\/ObjectFeedSortableHead>/);
   assert.doesNotMatch(source, /<ObjectFeedSortableHead[\s\S]*?field="rooms"[\s\S]*?>\s*Комнаты\/тип\s*<\/ObjectFeedSortableHead>/);
@@ -245,6 +247,7 @@ test('object detail feed units use effective prices for sorting and price per me
   assert.match(source, /function getEffectiveFeedUnitPrice\(unit: FeedUnit\)/);
   assert.match(source, /return parseNullableNumber\(unit\.effectivePrice\) \?\? parseNullableNumber\(unit\.discountPrice\) \?\? parseNullableNumber\(unit\.price\);/);
   assert.match(source, /compareNullableNumber\(getEffectiveFeedUnitPrice\(leftUnit\), getEffectiveFeedUnitPrice\(rightUnit\)\)/);
+  assert.match(source, /if \(sortBy === 'discountPrice'\) \{[\s\S]*?compareNullableNumber\(getEffectiveFeedUnitPrice\(leftUnit\), getEffectiveFeedUnitPrice\(rightUnit\)\)/);
   assert.match(source, /parseNullableNumber\(unit\.effectivePricePerMeter\)/);
   assert.match(source, /function formatFeedUnitDiscountPrice\(unit: FeedUnit\)/);
   assert.match(source, /formatFeedUnitPrice\(unit\.discountPrice \?\? unit\.price, unit\.currency\)/);
