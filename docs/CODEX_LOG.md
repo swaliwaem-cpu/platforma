@@ -20,6 +20,11 @@
 - GREEN: `pnpm --filter @platforma/feed-import build && node --test tools/feed-import/tests/import-engine.test.cjs` - 24/24 passed.
 - `pnpm --filter @platforma/feed-import test` - 56/56 passed.
 - RED для production-хвоста с третьим CIAN-вариантом падал с `3 !== 2`; после кластеризации `pnpm --filter @platforma/feed-import test` - 56/56 passed.
+- Production: перед изменением данных создан backup `/opt/platforma-deploy-backups/20260604T114741Z-sminex-dedupe/platforma.sql.gz`.
+- Production: `/opt/platforma` fast-forwarded до `24b2185`, затем до `14f9732`; `api` пересобран и перезапущен через `docker compose -f docker-compose.prod.yml up -d --build api`.
+- Production Sminex source `28bae656-f2d2-4750-8742-c7dae2954245`: preview/run после первого коммита давали `unitsParsed=1425`, первый run заархивировал `478` строк; после кластеризации preview давал `unitsParsed=1390`, `archived=35`, следующий run убрал оставшийся хвост.
+- Production final SQL: active Sminex duplicate signatures `0`, extra rows `0`; `Дом «Палашёвский 11»` имеет `feed_units_count=49`, active units `49`, buildings только `Палашёвский 11`.
+- Production health: `api`, `postgres`, `redis`, `minio` healthy; local/public API `/health` ok; public web `/` вернул `200`.
 
 Ручная проверка:
 
