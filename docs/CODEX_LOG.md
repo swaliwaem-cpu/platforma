@@ -1,5 +1,84 @@
 # Codex Log
 
+## 2026-06-04 - Production slow loading diagnosis and nginx gzip hotfix
+
+Задача:
+
+- Проверить жалобы на медленную загрузку production, хотя раньше интерфейс грузился быстро.
+
+Диагностика:
+
+- Production containers healthy; host load/RAM/disk/IO нормальные: CPU idle высокий, swap 0, IO wait 0.
+- Локальные health/web checks внутри сервера отвечали примерно за 5 ms, публичные `/` и `/health` примерно за 0.6 s с учетом TLS/сети.
+- Основные приватные endpoints после авторизации быстрые: `/objects?limit=24` около 0.10-0.12 s через public API после gzip, справочники `/developers`, `/locations`, `/metro` около 0.04-0.05 s.
+- Медленный кандидат найден в `/map/objects?limit=500`: endpoint возвращал 299 объектов с координатами и 4702 `object_images` records, потому что `MapService` сериализует всю галерею каждого объекта для popup previews.
+- До hotfix public `/map/objects?limit=500` отдавался без сжатия: `Content-Length` около 4.5 MB, TTFB около 1.1 s.
+- В nginx `gzip on`, но `gzip_types` был закомментирован, поэтому `application/json` не сжимался.
+
+Production hotfix:
+
+- На production сделан backup `/etc/nginx/nginx.conf.bak-20260604-0729-platforma-gzip`.
+- В `/etc/nginx/nginx.conf` включены `gzip_vary`, `gzip_proxied`, `gzip_comp_level`, `gzip_buffers`, `gzip_http_version` и `gzip_types` для `application/json`, JS/CSS/XML.
+- `nginx -t` успешен, выполнен `systemctl reload nginx`.
+
+Проверки:
+
+- После reload `/map/objects?limit=500` с `Accept-Encoding: gzip` возвращает `Content-Encoding: gzip`.
+- Сетевой размер `/map/objects?limit=500` уменьшился примерно с 4.5 MB до 0.9 MB.
+- Остальные API checks после gzip успешны: `/objects`, `/developers`, `/locations`, `/metro`.
+
+Рекомендация:
+
+- Сделать кодовый performance-fix для карты: не отдавать всю галерею всех объектов в `/map/objects`, а возвращать только `coverImage` или лениво подгружать галерею выбранного объекта. Оценка по production response: `coverOnly` уменьшает JSON примерно до 0.95 MB raw / 0.14 MB gzip.
+
+## 2026-06-04 - Admin gallery batch upload concurrency
+
+Задача:
+
+- Разобрать жалобы того же сотрудника на общую медленность платформы во время загрузки фотографий в разные ЖК.
+
+Диагностика:
+
+- Production-аудит показал, что проблема проявляется именно в рабочих upload-сессиях галереи: например, `Клубный дом OPUS (Опус)` грузился 29 фото за ~303 s и 39 фото за ~385 s, то есть около 10 s на файл.
+- Серверные ресурсы в момент проверки были нормальными; многие другие пачки того же пользователя проходили быстро, поэтому это не постоянная деградация CPU/RAM/DB.
+- Frontend `uploadGalleryDraftFiles()` загружал новые изображения строго последовательно, а API для каждого файла синхронно сохраняет оригинал и генерирует 3 image variants через `sharp`.
+
+Изменения:
+
+- `apps/web/src/admin/ObjectsAdminPage.tsx` - загрузка новых файлов галереи переведена на ограниченный параллелизм `galleryUploadConcurrency = 3`; финальный `gallery/batch`, порядок draft items и cleanup staged files сохранены.
+- `apps/web/tests/admin-gallery-state.test.mjs` - обновлена регрессия на bounded concurrency перед финальным сохранением layout.
+
+Проверки:
+
+- `pnpm --filter @platforma/web test -- admin-gallery-state.test.mjs` - фактически прогнал весь текущий web test suite, 227/227 passed.
+- `pnpm build:web` - production build successful; осталось штатное предупреждение Vite о чанке больше 500 kB.
+
+Ручная проверка:
+
+- После deploy загрузить пачку 20-40 фото в админке объекта и убедиться, что прогресс идет быстрее и интерфейс не выглядит зависшим на одном файле.
+
+## 2026-06-04 - Production OPUS gallery empty-save diagnosis
+
+Задача:
+
+- Проверить жалобу сотрудника: при загрузке фотографий в `Клубный дом OPUS (Опус)` кажется, что ничего не сохраняется.
+
+Диагностика:
+
+- Production-данные не менялись; выполнялись только read-only SSH/SQL/log checks.
+- Объект `klubnyj-dom-opus` найден на production, текущих `object_images` у него 0.
+- Audit log показал, что `2026-06-04 06:46 UTC` пользователь `seethers@yandex.ru` успешно сохранил 29 фото через `object.gallery.batch`, а `2026-06-04 07:00 UTC` тот же пользователь из того же браузера отправил пустой `object.gallery.batch`, который удалил все 29 изображений.
+- Аналогичная последовательность у `Опус` была `2026-06-04 06:35 UTC` -> 29 фото и `2026-06-04 06:40 UTC` -> пустая галерея.
+- Загруженные `files` после пустого batch отсутствуют в текущей БД: backend удаляет unlinked gallery files после удаления `object_images`.
+- За последние 7 дней найдены другие пустые destructive `object.gallery.batch` у того же пользователя; на момент проверки текущих фото нет у `klubnyj-dom-opus` и `famous`.
+- Вероятная причина в UI: кнопка `Управлять галереей` на странице редактирования не блокируется во время `isLoading`, `openGalleryModal()` строит draft из `object?.images ?? []`, а пустой draft можно сохранить; backend трактует пустой layout как удаление всей текущей галереи.
+
+Рекомендация:
+
+- Добавить frontend guard: не открывать/не сохранять галерею до загрузки `object`, блокировать пустой destructive save без явного подтверждения.
+- Добавить backend/API guard или явный флаг подтверждения для batch, который удаляет все существующие изображения без новых/staged/existing items.
+- Для восстановления фото `Опус` нужны свежие backup/WAL/MinIO snapshots или повторная загрузка: в текущих production tables файлы уже удалены.
+
 ## 2026-06-03 - Catalog directory filter reload stability
 
 Задача:

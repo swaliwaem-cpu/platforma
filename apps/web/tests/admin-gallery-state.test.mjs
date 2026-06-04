@@ -157,11 +157,14 @@ test('gallery modal save flow persists edited object gallery layout', () => {
   assert.match(source, /setNotice\('Галерея сохранена'\)/);
 });
 
-test('gallery modal uploads new draft files one by one before final layout save', () => {
+test('gallery modal uploads new draft files with bounded concurrency before final layout save', () => {
   assert.match(source, /type GalleryStreamUploadResponse = ObjectResponse & \{[\s\S]*?file: ObjectStoredFile;[\s\S]*?\};/);
+  assert.match(source, /const galleryUploadConcurrency = 3;/);
   assert.match(source, /async function uploadGalleryDraftFiles\(objectId: string,\s*draftItems: GalleryDraftItem\[\]\)/);
   assert.match(source, /const newItems = draftItems\.filter\(\(item\): item is GalleryDraftItem & \{ kind: 'new'; file: File \} => item\.kind === 'new' && item\.file !== null\);/);
-  assert.match(source, /setGallerySaveProgress\(\s*`Загрузка изображений \$\{uploadedFiles\.size \+ 1\}\/\$\{newItems\.length\}`,\s*calculateGalleryUploadProgressPercent\(uploadedFiles\.size,\s*newItems\.length\),\s*\);/);
+  assert.match(source, /const uploadWorkerCount = Math\.min\(galleryUploadConcurrency,\s*newItems\.length\);/);
+  assert.match(source, /await Promise\.all\(Array\.from\(\{ length: uploadWorkerCount \},\s*\(\) => uploadNextItem\(\)\)\);/);
+  assert.match(source, /setGallerySaveProgress\(\s*`Загружено изображений \$\{completedUploads\}\/\$\{newItems\.length\}`,\s*calculateGalleryUploadProgressPercent\(completedUploads,\s*newItems\.length\),\s*\);/);
   assert.match(source, /apiRequest<GalleryStreamUploadResponse>\(\s*`\/objects\/\$\{objectId\}\/gallery\/stream`,\s*accessToken,\s*\{[\s\S]*?method:\s*'POST'[\s\S]*?body:\s*item\.file[\s\S]*?headers:\s*\{[\s\S]*?'Content-Type': item\.file\.type \|\| 'application\/octet-stream'[\s\S]*?'X-File-Name': encodeURIComponent\(item\.file\.name \|\| 'image'\)/);
   assert.match(source, /kind:\s*'staged'[\s\S]*?stagedFileId:\s*uploadedFile\.id[\s\S]*?file:\s*item\.file[\s\S]*?section:\s*item\.section/);
   assert.match(source, /function restoreStagedGalleryDraftItems\(draftItems: GalleryDraftItem\[\],\s*stagedFileIds: string\[\]\)/);

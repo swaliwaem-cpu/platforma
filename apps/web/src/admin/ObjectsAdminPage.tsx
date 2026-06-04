@@ -134,6 +134,7 @@ const searchableMultiSelectResultLimit = 24;
 const galleryPreviewMaxDimension = 640;
 const galleryPreviewMimeType = 'image/jpeg';
 const galleryPreviewQuality = 0.82;
+const galleryUploadConcurrency = 3;
 
 const gallerySectionOptions: {
   value: ObjectImageSection;
@@ -649,27 +650,55 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
     const stagedFileIds: string[] = [];
 
     try {
-      for (const item of newItems) {
-        setGallerySaveProgress(
-          `Загрузка изображений ${uploadedFiles.size + 1}/${newItems.length}`,
-          calculateGalleryUploadProgressPercent(uploadedFiles.size, newItems.length),
-        );
+      let nextItemIndex = 0;
+      let completedUploads = 0;
+      let uploadError: unknown = null;
+      const uploadWorkerCount = Math.min(galleryUploadConcurrency, newItems.length);
+      const uploadNextItem = async () => {
+        while (!uploadError && nextItemIndex < newItems.length) {
+          const item = newItems[nextItemIndex];
+          nextItemIndex += 1;
 
-        const uploadedData = await apiRequest<GalleryStreamUploadResponse>(
-          `/objects/${objectId}/gallery/stream`,
-          accessToken,
-          {
-            method: 'POST',
-            body: item.file,
-            headers: {
-              'Content-Type': item.file.type || 'application/octet-stream',
-              'X-File-Name': encodeURIComponent(item.file.name || 'image'),
-            },
-          },
-        );
+          if (!item) {
+            continue;
+          }
 
-        uploadedFiles.set(item.draftId, uploadedData.file);
-        stagedFileIds.push(uploadedData.file.id);
+          try {
+            const uploadedData = await apiRequest<GalleryStreamUploadResponse>(
+              `/objects/${objectId}/gallery/stream`,
+              accessToken,
+              {
+                method: 'POST',
+                body: item.file,
+                headers: {
+                  'Content-Type': item.file.type || 'application/octet-stream',
+                  'X-File-Name': encodeURIComponent(item.file.name || 'image'),
+                },
+              },
+            );
+
+            uploadedFiles.set(item.draftId, uploadedData.file);
+            stagedFileIds.push(uploadedData.file.id);
+            completedUploads += 1;
+            setGallerySaveProgress(
+              `Загружено изображений ${completedUploads}/${newItems.length}`,
+              calculateGalleryUploadProgressPercent(completedUploads, newItems.length),
+            );
+          } catch (caughtError) {
+            uploadError = caughtError;
+          }
+        }
+      };
+
+      setGallerySaveProgress(
+        `Загрузка изображений 0/${newItems.length}`,
+        calculateGalleryUploadProgressPercent(0, newItems.length),
+      );
+
+      await Promise.all(Array.from({ length: uploadWorkerCount }, () => uploadNextItem()));
+
+      if (uploadError) {
+        throw uploadError;
       }
     } catch (caughtError) {
       await cleanupStagedGalleryFiles(stagedFileIds);
