@@ -205,6 +205,37 @@ test('YandexRealtyFeedParser keeps base and discount prices and reads flat-numbe
   assert.equal(unit.residentialDetails.balconyCount, 1);
 });
 
+test('YandexRealtyFeedParser treats hand-over buildings as delivered without completion date', () => {
+  const parser = new YandexRealtyFeedParser();
+  const xml = `<?xml version="1.0"?>
+    <realty-feed>
+      <offer internal-id="soul-1">
+        <type>продажа</type>
+        <property-type>жилая</property-type>
+        <category>квартира</category>
+        <location><address>г. Москва, Часовая улица</address></location>
+        <building-name>ЖК СОУЛ</building-name>
+        <building-section>Корпус 1</building-section>
+        <building-state>hand_over</building-state>
+        <price><value>10000000</value><currency>RUR</currency></price>
+        <area><value>40</value></area>
+        <floor>12</floor>
+        <rooms>1</rooms>
+        <built-year>1970</built-year>
+        <ready-quarter>1</ready-quarter>
+        <flat-number>250</flat-number>
+      </offer>
+    </realty-feed>`;
+
+  const result = parser.parse(xml);
+  const unit = result.units[0];
+
+  assert.deepEqual(result.warnings, []);
+  assert.equal(unit.completionYear, null);
+  assert.equal(unit.completionQuarter, null);
+  assert.equal(unit.rawPayload['building-state'], 'hand_over');
+});
+
 test('YandexRealtyFeedParser normalizes Etalon-style Yandex fields', () => {
   const parser = new YandexRealtyFeedParser();
   const xml = `<?xml version="1.0"?>
@@ -425,10 +456,27 @@ test('CianXmlFeedParser reads completion from building deadline and snake case f
           <BuildYear>2028</BuildYear>
         </Building>
       </object>
+      <object>
+        <ExternalId>deadline-4</ExternalId>
+        <Category>flatSale</Category>
+        <Address>Москва, пример 4</Address>
+        <FloorNumber>3</FloorNumber>
+        <FlatRoomsCount>1</FlatRoomsCount>
+        <TotalArea>41</TotalArea>
+        <BargainTerms><Price>12000000</Price><Currency>RUR</Currency></BargainTerms>
+        <Building>
+          <Name>Сданный корпус</Name>
+          <Deadline>
+            <IsComplete>true</IsComplete>
+            <Year>1</Year>
+            <Quarter>first</Quarter>
+          </Deadline>
+        </Building>
+      </object>
     </feed>`;
 
   const result = parser.parse(xml);
-  const [deadlineUnit, snakeCaseUnit, buildYearUnit] = result.units;
+  const [deadlineUnit, snakeCaseUnit, buildYearUnit, deliveredUnit] = result.units;
 
   assert.deepEqual(result.warnings, []);
   assert.equal(deadlineUnit.completionYear, 2027);
@@ -437,6 +485,9 @@ test('CianXmlFeedParser reads completion from building deadline and snake case f
   assert.equal(snakeCaseUnit.completionQuarter, 2);
   assert.equal(buildYearUnit.completionYear, 2028);
   assert.equal(buildYearUnit.completionQuarter, null);
+  assert.equal(deliveredUnit.completionYear, null);
+  assert.equal(deliveredUnit.completionQuarter, null);
+  assert.equal(deliveredUnit.rawPayload.Building.Deadline.IsComplete, 'true');
 });
 
 test('CianXmlFeedParser reads discount price and house deadline fields', () => {

@@ -1531,6 +1531,34 @@ Production repair:
 - Application code и production data не менялись.
 - `docs/CODEX_LOG.md` - добавлена запись о диагностике `Жилой комплекс Веер 2`.
 
+## 2026-06-04 - Normalize delivered feed completion groups
+
+Задача:
+
+- На production проверить `ЖК СОУЛ`, где сданный корпус отображался как `1 кв. 1970`, пройтись по фидам на такие же проблемы и исправить отображение.
+
+Диагностика:
+
+- Production scan показал, что у Forma/Yandex для `ЖК СОУЛ` два активных лота имеют `building-state=hand_over`, `built-year=1970`, `ready-quarter=1`.
+- Дополнительная проверка активных лотов нашла сданные корпуса по raw-флагам у Forma, MR Group и Sminex; у Sminex West Garden часть лотов была с техническим `completion_year=1`.
+
+Изменения:
+
+- `tools/feed-import/src/index.ts` - Yandex `building-state=hand_over/hand-over` и CIAN `Deadline.IsComplete=true` теперь считаются сданными корпусами и не переносят технические `completionYear/completionQuarter` в импортированные лоты.
+- `apps/api/src/objects/objects.service.ts` - группы лотов по сроку сдачи теперь показывают `Сдан` для сданных корпусов по `rawPayload`, а также для уже сохраненных технических годов `< 1900`.
+- `tools/feed-import/tests/parser.test.cjs` - добавлены регрессии на Yandex `hand_over` и CIAN `IsComplete=true`.
+- `apps/api/tests/services.test.cjs` - добавлена регрессия, что старые production-значения `1970`/`1` с raw-флагами группируются как `Сдан`.
+
+Проверки:
+
+- `pnpm --filter @platforma/feed-import test -- --test-name-pattern "YandexRealtyFeedParser treats hand-over|CianXmlFeedParser reads completion"` - 57/57 passed.
+- `pnpm --filter @platforma/api test -- --test-name-pattern "ObjectsService.listFeedUnitGroups labels delivered"` - 179/179 passed.
+
+Ручная проверка:
+
+- После деплоя открыть `ЖК СОУЛ` на production и убедиться, что группа сданного корпуса отображается как `Сдан`, а не `1 кв. 1970`.
+- Проверить другие объекты со сданными корпусами из MR Group/Sminex/Forma, чтобы в блоке фида не осталось групп вида `1 кв. 1` или старых кварталов для `IsComplete=true`.
+
 ## 2026-06-03 - Preserve expanded lot groups while sorting
 
 Задача:

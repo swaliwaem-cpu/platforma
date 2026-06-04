@@ -24,6 +24,88 @@ import { findCatalogSearchObjectIds } from './object-search';
 
 const objectPdfUploadLimit = 10;
 const feedUnitBuildingCollator = new Intl.Collator('ru', { numeric: true, sensitivity: 'base' });
+const deliveredFeedBuildingStates = new Set([
+  'hand_over',
+  'handover',
+  'ready',
+  'built',
+  'complete',
+  'completed',
+  'сдан',
+  'сдано',
+]);
+
+function isDeliveredFeedUnitRawPayload(rawPayload: Prisma.JsonValue) {
+  const payload = asJsonRecord(rawPayload);
+
+  if (!payload) {
+    return false;
+  }
+
+  return (
+    isDeliveredBuildingState(payload['building-state'] ?? payload.buildingState ?? payload.building_state) ||
+    isTrueJsonValue(getNestedJsonValue(payload, ['Building', 'Deadline', 'IsComplete'])) ||
+    isTrueJsonValue(getNestedJsonValue(payload, ['Building', 'Deadline', 'isComplete'])) ||
+    isTrueJsonValue(getNestedJsonValue(payload, ['JKSchema', 'House', 'Deadline', 'IsComplete'])) ||
+    isTrueJsonValue(getNestedJsonValue(payload, ['JKSchema', 'House', 'Deadline', 'isComplete'])) ||
+    isTrueJsonValue(getNestedJsonValue(payload, ['Deadline', 'IsComplete'])) ||
+    isTrueJsonValue(getNestedJsonValue(payload, ['Deadline', 'isComplete']))
+  );
+}
+
+function isDeliveredBuildingState(value: unknown) {
+  const text = getJsonText(value);
+
+  if (text === null) {
+    return false;
+  }
+
+  const normalized = text.trim().replace(/\s+/gu, ' ').toLowerCase().replace(/[\s-]+/gu, '_');
+
+  return deliveredFeedBuildingStates.has(normalized);
+}
+
+function isTrueJsonValue(value: unknown) {
+  const text = getJsonText(value)?.trim().toLowerCase();
+
+  return text === 'true' || text === '1' || text === 'yes' || text === 'да';
+}
+
+function getNestedJsonValue(record: Record<string, unknown>, path: string[]) {
+  let current: unknown = record;
+
+  for (const segment of path) {
+    const currentRecord = asJsonRecord(current);
+
+    if (!currentRecord) {
+      return undefined;
+    }
+
+    current = currentRecord[segment];
+  }
+
+  return current;
+}
+
+function asJsonRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+
+  return null;
+}
+
+function getJsonText(value: unknown): string | null {
+  if (typeof value === 'string') {
+    return value.trim().length > 0 ? value : null;
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+
+  return null;
+}
 
 const objectListInclude = {
   developer: true,
@@ -2646,6 +2728,15 @@ export class ObjectsService {
   }
 
   private getFeedUnitCompletionGroupInfo(unit: ObjectFeedUnitRecord) {
+    if (this.isDeliveredFeedUnit(unit)) {
+      return {
+        key: 'delivered',
+        label: 'Сдан',
+        sortYear: 0,
+        sortQuarter: 0,
+      };
+    }
+
     if (unit.completionYear && unit.completionQuarter) {
       return {
         key: `${unit.completionYear}-q${unit.completionQuarter}`,
@@ -2670,6 +2761,14 @@ export class ObjectsService {
       sortYear: null,
       sortQuarter: null,
     };
+  }
+
+  private isDeliveredFeedUnit(unit: ObjectFeedUnitRecord) {
+    if (unit.completionYear !== null && unit.completionYear < 1900) {
+      return true;
+    }
+
+    return isDeliveredFeedUnitRawPayload(unit.rawPayload);
   }
 
   private compareFeedUnitCompletionGroups(leftGroup: FeedUnitCompletionGroupDraft, rightGroup: FeedUnitCompletionGroupDraft) {

@@ -2308,6 +2308,96 @@ test('ObjectsService.listFeedUnitGroups returns completion and room groups acros
   assert.equal(result.hasDiscountPrices, true);
 });
 
+test('ObjectsService.listFeedUnitGroups labels delivered buildings as handed over', async () => {
+  const objectId = '11111111-1111-4111-8111-111111111111';
+  const now = new Date('2026-06-04T00:00:00Z');
+  const makeUnit = (overrides) => ({
+    id: overrides.id,
+    sourceId: '22222222-2222-4222-8222-222222222222',
+    objectId,
+    externalId: overrides.externalId,
+    type: FeedUnitType.RESIDENTIAL,
+    status: FeedUnitStatus.AVAILABLE,
+    title: overrides.title,
+    address: null,
+    building: overrides.building,
+    section: null,
+    floor: null,
+    rooms: 1,
+    price: decimal('10000000'),
+    discountPrice: null,
+    effectivePrice: decimal('10000000'),
+    currency: 'RUR',
+    area: decimal('40'),
+    pricePerMeter: null,
+    discountPricePerMeter: null,
+    effectivePricePerMeter: null,
+    completionYear: overrides.completionYear,
+    completionQuarter: overrides.completionQuarter,
+    rawPayload: overrides.rawPayload,
+    archivedAt: null,
+    residentialDetails: null,
+    commercialDetails: null,
+    media: [],
+    createdAt: now,
+    updatedAt: now,
+  });
+  const units = [
+    makeUnit({
+      id: '55555555-5555-4555-8555-555555555556',
+      externalId: 'soul-250',
+      title: 'Квартира 250',
+      building: 'ЖК СОУЛ',
+      completionYear: 1970,
+      completionQuarter: 1,
+      rawPayload: {
+        'building-state': 'hand_over',
+      },
+    }),
+    makeUnit({
+      id: '55555555-5555-4555-8555-555555555557',
+      externalId: 'west-garden-1',
+      title: 'Квартира 1',
+      building: 'West Garden',
+      completionYear: 1,
+      completionQuarter: 1,
+      rawPayload: {
+        Building: {
+          Deadline: {
+            IsComplete: 'true',
+          },
+        },
+      },
+    }),
+    makeUnit({
+      id: '55555555-5555-4555-8555-555555555558',
+      externalId: 'future-1',
+      title: 'Квартира 2',
+      building: 'Корпус 2',
+      completionYear: 2027,
+      completionQuarter: 2,
+      rawPayload: {},
+    }),
+  ];
+  const prisma = {
+    realEstateObject: {
+      count: async () => 1,
+    },
+    feedUnit: {
+      findMany: async () => units,
+      count: async () => units.length,
+    },
+  };
+  const service = new ObjectsService(prisma, {});
+
+  const result = await service.listFeedUnitGroups(objectId, {});
+
+  assert.deepEqual(result.groups.map((group) => group.label), ['Сдан', '2 кв. 2027']);
+  assert.equal(result.groups[0].key, 'delivered');
+  assert.deepEqual(result.groups[0].buildings, ['ЖК СОУЛ', 'West Garden']);
+  assert.equal(result.groups[0].total, 2);
+});
+
 test('ObjectsService.listFeedUnitGroups applies room and completion filters before grouping', async () => {
   const calls = {};
   const objectId = '11111111-1111-4111-8111-111111111111';

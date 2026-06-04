@@ -234,8 +234,7 @@ export class YandexRealtyFeedParser implements FeedParser {
     const effectivePricePerMeter = calculatePricePerMeter(effectivePrice, area);
     const floor = normalizeInteger(offer.floor, 'floor', externalId, warnings);
     const rooms = normalizeYandexRooms(offer, externalId, warnings);
-    const completionYear = normalizeInteger(offer['built-year'], 'completionYear', externalId, warnings);
-    const completionQuarter = normalizeQuarter(offer['ready-quarter'], externalId, warnings);
+    const completion = normalizeYandexCompletion(offer, externalId, warnings);
     const livingArea = normalizeDecimal(offer['living-space'], 'livingArea', externalId, warnings);
     const apartmentNumber = getYandexApartmentNumber(offer, location);
 
@@ -258,8 +257,8 @@ export class YandexRealtyFeedParser implements FeedParser {
       pricePerMeter,
       discountPricePerMeter,
       effectivePricePerMeter,
-      completionYear,
-      completionQuarter,
+      completionYear: completion.year,
+      completionQuarter: completion.quarter,
       rawPayload: offer,
       media: collectYandexMedia(offer, externalId, warnings),
       residentialDetails:
@@ -1252,6 +1251,17 @@ function isMangazeyaSeparateRoomsStudio(offer: XmlRecord) {
   return developerName.includes('мангазея') || developerName.includes('аура');
 }
 
+function normalizeYandexCompletion(offer: XmlRecord, externalId: string, warnings: FeedParserWarning[]) {
+  if (isDeliveredBuildingState(offer['building-state'] ?? offer.buildingState ?? offer.building_state)) {
+    return { year: null, quarter: null };
+  }
+
+  return {
+    year: normalizeInteger(offer['built-year'], 'completionYear', externalId, warnings),
+    quarter: normalizeQuarter(offer['ready-quarter'], externalId, warnings),
+  };
+}
+
 function normalizeCianFeedUnitStatus(object: XmlRecord): FeedStatusNormalizationResult {
   const bookingStatus = asRecord(object.Booking)?.Status;
 
@@ -1365,6 +1375,10 @@ function normalizeCianCompletion(
   const deadline = asRecord(building?.Deadline) ?? asRecord(house?.Deadline) ?? asRecord(object.Deadline);
   const deadlineDateCompletion = parseCompletionDate(getText(deadline?.Date ?? deadline?.date));
 
+  if (isCianDeadlineComplete(deadline)) {
+    return { year: null, quarter: null };
+  }
+
   return {
     year: normalizeFirstInteger(
       [
@@ -1419,6 +1433,33 @@ function normalizeCianCompletion(
     ),
   };
 }
+
+function isCianDeadlineComplete(deadline: XmlRecord | null) {
+  return normalizeBoolean(deadline?.IsComplete ?? deadline?.isComplete ?? deadline?.is_complete) === true;
+}
+
+function isDeliveredBuildingState(value: unknown) {
+  const text = getText(value);
+
+  if (text === null) {
+    return false;
+  }
+
+  const normalized = normalizeFilterText(text).replace(/[\s-]+/gu, '_');
+
+  return deliveredBuildingStates.has(normalized);
+}
+
+const deliveredBuildingStates = new Set([
+  'hand_over',
+  'handover',
+  'ready',
+  'built',
+  'complete',
+  'completed',
+  'сдан',
+  'сдано',
+]);
 
 function parseCompletionDate(value: string | null): { year: number | null; quarter: number | null } {
   const match = value?.match(/\b(20\d{2})-(\d{2})-\d{2}\b/u);
