@@ -350,7 +350,12 @@ export function ObjectLotDetailPage({ slug, unitId, onBack }: ObjectLotDetailPag
           <div className="object-lot-price-summary">
             <span>{priceSummary.label}</span>
             <strong>{priceSummary.primaryPrice}</strong>
-            {priceSummary.secondaryPrice ? <small>Обычная цена {priceSummary.secondaryPrice}</small> : null}
+            {priceSummary.secondaryPrice ? (
+              <small>
+                Обычная цена {priceSummary.secondaryPrice}
+                {priceSummary.secondaryPricePerMeter ? ` · ${priceSummary.secondaryPricePerMeter}/м²` : ''}
+              </small>
+            ) : null}
           </div>
 
           <div className="object-lot-facts-heading">
@@ -2532,6 +2537,29 @@ function formatComputedFeedUnitPricePerMeter(unit: FeedUnit) {
   return formatFeedUnitPricePerMeter(unit);
 }
 
+function getFeedUnitBasePricePerMeterValue(unit: FeedUnit) {
+  const pricePerMeter = parseNullableNumber(unit.pricePerMeter);
+
+  if (pricePerMeter !== null) {
+    return pricePerMeter;
+  }
+
+  const price = parseNullableNumber(unit.price);
+  const area = parseNullableNumber(unit.area);
+
+  if (price !== null && area !== null && area > 0) {
+    return price / area;
+  }
+
+  return null;
+}
+
+function formatFeedUnitBasePricePerMeter(unit: FeedUnit) {
+  const pricePerMeter = getFeedUnitBasePricePerMeterValue(unit);
+
+  return pricePerMeter === null ? null : formatFeedUnitPrice(String(pricePerMeter), unit.currency);
+}
+
 function hasFeedUnitRealDiscount(unit: FeedUnit) {
   if (!unit.price || !unit.discountPrice) {
     return false;
@@ -2550,6 +2578,7 @@ function getObjectLotPriceSummary(unit: FeedUnit) {
     label: hasRealDiscount ? 'Цена со скидкой' : 'Цена',
     primaryPrice: formatFeedUnitPrice(hasRealDiscount ? unit.discountPrice : unit.price, unit.currency),
     secondaryPrice: hasRealDiscount ? formatFeedUnitPrice(unit.price, unit.currency) : null,
+    secondaryPricePerMeter: hasRealDiscount ? formatFeedUnitBasePricePerMeter(unit) : null,
   };
 }
 

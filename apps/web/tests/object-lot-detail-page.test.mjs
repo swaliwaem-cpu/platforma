@@ -75,6 +75,14 @@ test('lot detail price summary shows discount only when discount price is lower'
   assert.match(objectDetailSource, /const hasRealDiscount = hasFeedUnitRealDiscount\(unit\);/);
   assert.match(objectDetailSource, /label: hasRealDiscount \? 'Цена со скидкой' : 'Цена'/);
   assert.match(objectDetailSource, /secondaryPrice: hasRealDiscount \? formatFeedUnitPrice\(unit\.price, unit\.currency\) : null/);
+  assert.match(objectDetailSource, /secondaryPricePerMeter: hasRealDiscount \? formatFeedUnitBasePricePerMeter\(unit\) : null/);
+  assert.match(objectDetailSource, /priceSummary\.secondaryPricePerMeter \? ` · \$\{priceSummary\.secondaryPricePerMeter\}\/м²` : ''/);
+  assert.match(objectDetailSource, /function getFeedUnitBasePricePerMeterValue\(unit: FeedUnit\)/);
+  assert.match(objectDetailSource, /const pricePerMeter = parseNullableNumber\(unit\.pricePerMeter\);[\s\S]*?return pricePerMeter;/);
+  assert.match(
+    objectDetailSource,
+    /const price = parseNullableNumber\(unit\.price\);[\s\S]*?const area = parseNullableNumber\(unit\.area\);[\s\S]*?return price \/ area;/,
+  );
 });
 
 test('lot detail media carousel fits media without cropping', () => {

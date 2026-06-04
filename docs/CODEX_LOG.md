@@ -1,5 +1,26 @@
 # Codex Log
 
+## 2026-06-04 - Lot discount ordinary price per meter
+
+Задача:
+
+- В карточке лота со скидкой добавить к строке обычной цены обычную цену за м² тем же шрифтом и цветом.
+
+Изменения:
+
+- `apps/web/src/objects/ObjectDetailPage.tsx` - строка `Обычная цена` в карточке лота теперь дополнительно показывает `· .../м²`, если у лота есть реальная скидка и можно определить обычную цену за м².
+- `apps/web/src/objects/ObjectDetailPage.tsx` - добавлены helpers для обычной цены за м²: сначала используется `unit.pricePerMeter`, затем fallback `unit.price / unit.area`.
+- `apps/web/tests/object-lot-detail-page.test.mjs` - расширена регрессия для карточки лота со скидкой.
+
+Проверки:
+
+- `pnpm --filter @platforma/web test -- object-lot-detail-page.test.mjs` - сначала expected fail на новом поле, после правки 227/227 passed.
+- `pnpm build:web` - production build successful; осталось штатное предупреждение Vite о чанке больше 500 kB.
+
+Ручная проверка:
+
+- Открыть карточку лота с реальной скидкой и проверить, что строка обычной цены показывает обычную цену за м² рядом с обычной ценой, в том же стиле.
+
 ## 2026-06-04 - Discount price emphasis and sorting
 
 Задача:
