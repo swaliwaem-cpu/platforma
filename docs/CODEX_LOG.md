@@ -52,6 +52,9 @@ Production hotfix:
 
 - `pnpm --filter @platforma/web test -- admin-gallery-state.test.mjs` - фактически прогнал весь текущий web test suite, 227/227 passed.
 - `pnpm build:web` - production build successful; осталось штатное предупреждение Vite о чанке больше 500 kB.
+- Production `/opt/platforma` fast-forwarded to `c73f643`; rebuilt and restarted `api` and `web` via `docker compose -f docker-compose.prod.yml up -d --build api web`.
+- Post-deploy checks: `api` container healthy, `web` container up, local API `/health` `200` за ~13 ms, public API `/health` `200` за ~130 ms, public web `/` `200` за ~63 ms.
+- Production web bundle contains the updated gallery upload progress text `Загружено изображений`; fresh API logs after restart show normal Nest startup without errors in the checked window.
 
 Ручная проверка:
 
