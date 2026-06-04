@@ -1531,6 +1531,26 @@ Production repair:
 - Application code и production data не менялись.
 - `docs/CODEX_LOG.md` - добавлена запись о диагностике `Жилой комплекс Веер 2`.
 
+## 2026-06-04 - Lot card media safe area
+
+Задача:
+
+- В галерее внутри карточки лота добавить внутреннюю охранную зону 15px по периметру между контейнером и изображением.
+
+Изменения:
+
+- `apps/web/src/styles.css` - для `.object-lot-media-carousel .object-lot-media-image` добавлен `inset: 15px` и уменьшение `width/height` на 30px, чтобы основное изображение лота не прижималось к краям контейнера.
+- `apps/web/tests/object-lot-detail-page.test.mjs` - обновлена регрессия на CSS-правило лотовой галереи.
+
+Проверки:
+
+- `pnpm --filter @platforma/web test -- object-lot-detail-page.test.mjs` - 227/227 passed.
+- `pnpm build:web` - passed.
+
+Ручная проверка:
+
+- Открыть `/objects/:slug/lots/:unitId` с медиа и убедиться, что основное изображение в карточке лота имеет внутренний отступ 15px со всех сторон.
+
 ## 2026-06-04 - Normalize delivered feed completion groups
 
 Задача:

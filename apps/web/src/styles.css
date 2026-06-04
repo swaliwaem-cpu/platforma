@@ -5294,6 +5294,9 @@ tr.user-row--deactivated .text-button {
 }
 
 .object-lot-media-carousel .object-lot-media-image {
+  inset: 15px;
+  width: calc(100% - 30px);
+  height: calc(100% - 30px);
   max-width: none;
   max-height: none;
   object-fit: contain;

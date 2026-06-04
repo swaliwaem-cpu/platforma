@@ -103,7 +103,10 @@ test('lot detail media carousel fits media without cropping', () => {
     styles,
     /\.media-gallery-image\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?inset:\s*0;[\s\S]*?width:\s*100%;[\s\S]*?height:\s*100%;[\s\S]*?object-fit:\s*cover;[\s\S]*?object-position:\s*center center;[\s\S]*?\}/,
   );
-  assert.match(styles, /\.object-lot-media-carousel\s+\.object-lot-media-image\s*\{[^}]*object-fit:\s*contain;[^}]*\}/);
+  assert.match(
+    styles,
+    /\.object-lot-media-carousel\s+\.object-lot-media-image\s*\{[^}]*inset:\s*15px;[^}]*width:\s*calc\(100% - 30px\);[^}]*height:\s*calc\(100% - 30px\);[^}]*object-fit:\s*contain;[^}]*\}/,
+  );
 });
 
 test('lot detail media thumbnails sit below the active media stage', () => {
