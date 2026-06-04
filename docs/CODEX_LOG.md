@@ -1,5 +1,55 @@
 # Codex Log
 
+## 2026-06-04 - Sminex index feed duplicate merge
+
+Задача:
+
+- Исправить production-причину дублей Sminex: в `index_url` один и тот же лот приходит из CIAN и Yandex Realty дочерних XML с одинаковым raw external id, но разными namespaced `externalId`.
+
+Изменения:
+
+- `tools/feed-import/src/index.ts` - для Sminex `INDEX_URL` после routing добавлен merge duplicate-групп по `objectId + raw externalId`; merge срабатывает только если в группе есть CIAN и Yandex Realty и совпадают apartment number, floor, rooms, area, effective price и completion.
+- `tools/feed-import/src/index.ts` - canonical unit выбирается из CIAN; из Yandex добирается осмысленный `building`, media URL объединяются без дублей, а CIAN `section`, title и residential details остаются основой.
+- `tools/feed-import/src/index.ts` - placeholder values `-`, `—`, `–` в building/project/section полях нормализуются в `null`, чтобы дефисы из фида не попадали в group header.
+- `tools/feed-import/tests/import-engine.test.cjs` - добавлена регрессия на Sminex `Палашёвский 11`: existing CIAN + Yandex строки с raw id `000110621` становятся одним активным CIAN-лотом, Yandex external id архивируется, building берется из Yandex, media объединяются.
+
+Проверки:
+
+- RED: новый `executeFeedImport merges Sminex index duplicates by raw external id using CIAN as canonical unit` падал на текущем коде с `2 !== 1`.
+- GREEN: `pnpm --filter @platforma/feed-import build && node --test tools/feed-import/tests/import-engine.test.cjs` - 24/24 passed.
+- `pnpm --filter @platforma/feed-import test` - 56/56 passed.
+
+Ручная проверка:
+
+- После production deploy и Sminex run открыть `dom-palashyovskij-11`: `feed_units_count` должен снизиться с 98 до 49, заголовок группы должен быть `Палашёвский 11`, строки квартир №1/18/34 должны быть без парных дублей.
+- Проверить остальные затронутые Sminex объекты: `Тишинский бульвар`, `LIFE TIME`, `Лаврушинский`, `Ильинка 3/8`, `Чистые Пруды`, `Достижение`, `Обыденский 1`.
+
+## 2026-06-04 - Production Sminex feed duplicate diagnosis
+
+Задача:
+
+- Проверить production-жалобу: в объектах Sminex видны дубли лотов, а в заголовке группы у `Палашёвский 11` отображается `-, Палашёвский 11`.
+
+Диагностика:
+
+- Production-проверки выполнялись read-only: SQL по `feed_sources`, `feed_source_mappings`, `feed_import_runs`, `feed_units`, `feed_residential_unit_details`, `feed_unit_media`; плюс выборочная проверка внешних XML Sminex.
+- У Sminex активен один source `index_url` `https://feeds.sminex.com/xml/`, последний успешный run `2026-06-04 10:36 UTC`, `unitsParsed: 1924`.
+- `Дом «Палашёвский 11»` подключен через mapping `{"projectNames": ["Палашёвский 11"]}` и имеет `feed_units_count = 98`.
+- Для `Палашёвский 11` найдено 49 duplicate signatures: 98 активных строк вместо 49 уникальных лотов. Пример: `000110621` приходит как `92759562754a:000110621` из `PLSH_YandexRealty_4194373_.xml` и как `fa577960a2d7:000110621` из `PLSH_Cian_5763981_.xml`; номер квартиры, этаж, комнатность, площадь, цена и срок сдачи совпадают.
+- Та же схема затрагивает 8 объектов Sminex: `Тишинский бульвар` 214 лишних строк, `LIFE TIME` 123, `Лаврушинский` 74, `Палашёвский 11` 49, `Ильинка 3/8` 24, `Чистые Пруды` 13, `Достижение` 9, `Обыденский 1` 7.
+- Причина `-, Палашёвский 11`: в CIAN XML для этих строк `JKSchema/House/Name` равен `-`; parser кладет это в `FeedUnit.building`, а API группирует заголовок по уникальным `building`.
+
+Рекомендация:
+
+- Добавить dedupe/merge для routed units внутри `index_url` Sminex: группировать по `objectId + raw/un-namespaced externalId` и подтверждать совпадением apartment number, floor, rooms, area, effective price и completion. В merged unit сохранять один стабильный `externalId`, брать осмысленный `building` из Yandex, секцию/номер из более структурированного CIAN, объединять media URL и нормализовать residential title до `Квартира №...`.
+- Нормализовать placeholder text вроде `-`/`—`/пустых значений в building/project/house fields, чтобы они не попадали в заголовки групп даже без dedupe.
+- После фикса прогнать Sminex preview, затем run: лишние external ids должны уйти из parsed set и автоматически архивироваться штатной логикой `persistFeedImportRun`.
+
+Ручная проверка:
+
+- После фикса открыть `dom-palashyovskij-11`: группа должна показывать `Палашёвский 11` без `-,`, а строки квартир №1/18/34 должны быть по одной.
+- Проверить остальные 7 затронутых объектов Sminex на отсутствие пар CIAN/Yandex дублей.
+
 ## 2026-06-04 - Production deploy discount lot updates
 
 Задача:

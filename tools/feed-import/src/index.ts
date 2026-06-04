@@ -222,6 +222,8 @@ export class YandexRealtyFeedParser implements FeedParser {
 
   private normalizeOffer(offer: XmlRecord, externalId: string, warnings: FeedParserWarning[]): NormalizedFeedUnit {
     const location = asRecord(offer.location);
+    const buildingName = normalizePlaceholderText(getText(offer['building-name']));
+    const buildingSection = normalizePlaceholderText(getText(offer['building-section']));
     const price = normalizeDecimal(offer.price, 'price', externalId, warnings);
     const discount = asRecord(offer.discount);
     const discountPrice = normalizeDecimal(discount?.['final-price'], 'discountPrice', externalId, warnings);
@@ -242,10 +244,10 @@ export class YandexRealtyFeedParser implements FeedParser {
       type: getYandexUnitType(offer),
       status: 'AVAILABLE',
       title: buildYandexTitle(offer, location),
-      projectName: getText(offer['building-name']),
+      projectName: buildingName,
       address: getText(location?.address) ?? getText(offer.Address),
-      building: getText(offer['building-name']),
-      section: getText(offer['building-section']),
+      building: buildingName,
+      section: buildingSection,
       floor,
       rooms,
       price,
@@ -335,6 +337,8 @@ export class CianXmlFeedParser implements FeedParser {
     const cianFlat = asRecord(cianHouse?.Flat);
     const statusResult = normalizeCianFeedUnitStatus(object);
     const completion = normalizeCianCompletion(object, building, cianHouse, externalId, warnings);
+    const buildingName = normalizePlaceholderText(getText(building?.Name) ?? getText(cianHouse?.Name));
+    const section = normalizePlaceholderText(getText(object.Section) ?? getText(cianFlat?.SectionNumber));
 
     if (statusResult.warning) {
       warnings.push(withExternalId(statusResult.warning, externalId));
@@ -355,10 +359,10 @@ export class CianXmlFeedParser implements FeedParser {
       type,
       status: statusResult.status,
       title: buildCianUnitTitle(object, type, apartmentNumber),
-      projectName: getText(jkSchema?.Name),
+      projectName: normalizePlaceholderText(getText(jkSchema?.Name)),
       address: getText(object.Address),
-      building: getText(building?.Name) ?? getText(cianHouse?.Name),
-      section: getText(object.Section) ?? getText(cianFlat?.SectionNumber),
+      building: buildingName,
+      section,
       floor,
       rooms: normalizeCianRooms(object, externalId, warnings),
       price,
@@ -942,6 +946,16 @@ function getText(value: unknown): string | null {
   }
 
   return null;
+}
+
+function normalizePlaceholderText(value: string | null): string | null {
+  if (value === null) {
+    return null;
+  }
+
+  const normalized = value.trim();
+
+  return normalized === '-' || normalized === '—' || normalized === '–' ? null : normalized;
 }
 
 function decodeXmlText(value: string): string {
@@ -3719,6 +3733,7 @@ function isPioneerText(value: string) {
 
 function routeFeedUnitsForSource(units: NormalizedFeedUnit[], source: FeedSourceRecord): RoutedFeedUnit[] {
   const activeMappings = (source.mappings ?? []).filter((mapping) => mapping.isActive);
+  let routedUnits: RoutedFeedUnit[];
 
   if (activeMappings.length > 0) {
     const normalizedMappings = activeMappings
@@ -3732,21 +3747,173 @@ function routeFeedUnitsForSource(units: NormalizedFeedUnit[], source: FeedSource
       return [];
     }
 
-    return units.flatMap((unit) => {
+    routedUnits = units.flatMap((unit) => {
       const mapping = normalizedMappings.find((candidate) => matchesFeedSourceFilter(unit, candidate.filter));
 
       return mapping ? [{ unit, objectId: mapping.objectId }] : [];
     });
-  }
-
-  if (!source.objectId) {
+  } else if (!source.objectId) {
     return [];
+  } else {
+    routedUnits = filterFeedUnitsForSource(units, source).map((unit) => ({
+      unit,
+      objectId: source.objectId as string,
+    }));
   }
 
-  return filterFeedUnitsForSource(units, source).map((unit) => ({
-    unit,
-    objectId: source.objectId as string,
-  }));
+  return applyRoutedFeedUnitRules(routedUnits, source);
+}
+
+function applyRoutedFeedUnitRules(units: RoutedFeedUnit[], source: FeedSourceRecord): RoutedFeedUnit[] {
+  if (shouldMergeSminexIndexDuplicates(source)) {
+    return mergeSminexIndexDuplicates(units);
+  }
+
+  return units;
+}
+
+function shouldMergeSminexIndexDuplicates(source: FeedSourceRecord) {
+  return source.sourceKind === 'INDEX_URL' && isSminexFeedSource(source);
+}
+
+function isSminexFeedSource(source: FeedSourceRecord) {
+  const normalizedSourceText = [source.developer?.normalizedName, source.developer?.name, source.url]
+    .filter((value): value is string => Boolean(value))
+    .join(' ')
+    .toLocaleLowerCase('ru-RU');
+
+  return normalizedSourceText.includes('sminex') || normalizedSourceText.includes('смайнекс');
+}
+
+function mergeSminexIndexDuplicates(units: RoutedFeedUnit[]): RoutedFeedUnit[] {
+  const groups = new Map<string, RoutedFeedUnit[]>();
+  const passthrough: RoutedFeedUnit[] = [];
+
+  for (const routedUnit of units) {
+    const key = getSminexIndexDuplicateKey(routedUnit);
+
+    if (!key) {
+      passthrough.push(routedUnit);
+      continue;
+    }
+
+    const group = groups.get(key) ?? [];
+    group.push(routedUnit);
+    groups.set(key, group);
+  }
+
+  return [
+    ...passthrough,
+    ...Array.from(groups.values()).flatMap((group) => mergeSminexIndexDuplicateGroup(group)),
+  ];
+}
+
+function getSminexIndexDuplicateKey(routedUnit: RoutedFeedUnit) {
+  const rawExternalId = getFeedIndexRawExternalId(routedUnit.unit);
+
+  if (!rawExternalId || routedUnit.unit.type !== 'RESIDENTIAL') {
+    return null;
+  }
+
+  return [routedUnit.objectId, rawExternalId].join('\u001f');
+}
+
+function getFeedIndexRawExternalId(unit: NormalizedFeedUnit) {
+  return getText(unit.rawPayload.__rawExternalId);
+}
+
+function mergeSminexIndexDuplicateGroup(group: RoutedFeedUnit[]): RoutedFeedUnit[] {
+  if (group.length < 2 || !canMergeSminexIndexDuplicateGroup(group)) {
+    return group;
+  }
+
+  const canonical = chooseSminexIndexCanonicalUnit(group);
+
+  if (!canonical) {
+    return group;
+  }
+
+  const donors = group.filter((routedUnit) => routedUnit !== canonical);
+
+  return [
+    {
+      ...canonical,
+      unit: mergeSminexIndexDuplicateUnits(canonical.unit, donors.map((donor) => donor.unit)),
+    },
+  ];
+}
+
+function canMergeSminexIndexDuplicateGroup(group: RoutedFeedUnit[]) {
+  const formats = new Set(group.map((routedUnit) => getText(routedUnit.unit.rawPayload.__feedDetectedFormat)).filter(Boolean));
+
+  if (!formats.has('CIAN_XML') || !formats.has('YANDEX_REALTY')) {
+    return false;
+  }
+
+  const reference = group[0]?.unit;
+
+  if (!reference) {
+    return false;
+  }
+
+  return group.every((routedUnit) => haveSameSminexIndexDuplicateSignature(reference, routedUnit.unit));
+}
+
+function haveSameSminexIndexDuplicateSignature(left: NormalizedFeedUnit, right: NormalizedFeedUnit) {
+  return (
+    left.status === right.status &&
+    left.type === right.type &&
+    left.residentialDetails?.apartmentNumber === right.residentialDetails?.apartmentNumber &&
+    left.floor === right.floor &&
+    left.rooms === right.rooms &&
+    left.area === right.area &&
+    left.effectivePrice === right.effectivePrice &&
+    left.completionYear === right.completionYear &&
+    left.completionQuarter === right.completionQuarter
+  );
+}
+
+function chooseSminexIndexCanonicalUnit(group: RoutedFeedUnit[]) {
+  return (
+    group.find((routedUnit) => getText(routedUnit.unit.rawPayload.__feedDetectedFormat) === 'CIAN_XML') ??
+    group[0]
+  );
+}
+
+function mergeSminexIndexDuplicateUnits(canonical: NormalizedFeedUnit, donors: NormalizedFeedUnit[]): NormalizedFeedUnit {
+  const donorWithBuilding = donors.find((unit) => unit.building);
+
+  return {
+    ...canonical,
+    building: canonical.building ?? donorWithBuilding?.building ?? null,
+    media: mergeFeedUnitMedia([canonical, ...donors].flatMap((unit) => unit.media)),
+    rawPayload: {
+      ...canonical.rawPayload,
+      __mergedFeedIndexSourceUrls: [canonical, ...donors]
+        .map((unit) => getText(unit.rawPayload.__feedIndexSourceUrl))
+        .filter((value): value is string => value !== null),
+      __mergedExternalIds: [canonical, ...donors].map((unit) => unit.externalId),
+    },
+  };
+}
+
+function mergeFeedUnitMedia(mediaItems: NormalizedFeedMedia[]) {
+  const seen = new Set<string>();
+  const merged: NormalizedFeedMedia[] = [];
+
+  for (const media of mediaItems) {
+    if (seen.has(media.sourceUrl)) {
+      continue;
+    }
+
+    seen.add(media.sourceUrl);
+    merged.push({
+      ...media,
+      sortOrder: merged.length,
+    });
+  }
+
+  return merged;
 }
 
 export async function executeFeedImport(options: ExecuteFeedImportOptions): Promise<FeedImportResult> {

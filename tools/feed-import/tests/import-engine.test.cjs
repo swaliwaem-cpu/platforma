@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
 const { test } = require('node:test');
 
 const {
@@ -149,6 +150,64 @@ function makeIndexCianFeed(externalId, projectName = 'Муза') {
         <BargainTerms><Price>12000000</Price><Currency>RUR</Currency></BargainTerms>
         <Developer><Name>Смайнекс</Name></Developer>
         <JKSchema><Name>${projectName}</Name><House><Name>Корпус 1</Name></House></JKSchema>
+      </object>
+    </feed>`;
+}
+
+function makeSminexIndexYandexFeed() {
+  return `<?xml version="1.0"?>
+    <realty-feed>
+      <offer internal-id="000110621">
+        <type>Продажа</type>
+        <property-type>Жилая</property-type>
+        <category>Квартира</category>
+        <location>
+          <address>г. Москва, пер. Большой Палашёвский, д. 11</address>
+          <apartment>18</apartment>
+        </location>
+        <price><value>264130000</value><currency>RUR</currency></price>
+        <area><value>72.4</value><unit>кв. м</unit></area>
+        <rooms>1</rooms>
+        <floor>6</floor>
+        <built-year>2030</built-year>
+        <ready-quarter>1</ready-quarter>
+        <building-name>Палашёвский 11</building-name>
+        <building-section>11</building-section>
+        <image tag="plan">https://cdn.test/yandex-plan.jpg</image>
+      </offer>
+    </realty-feed>`;
+}
+
+function makeSminexIndexCianFeed() {
+  return `<?xml version="1.0"?>
+    <feed>
+      <object>
+        <ExternalId>000110621</ExternalId>
+        <Address>г. Москва, пер. Большой Палашёвский, д. 11</Address>
+        <Developer><Name>Sminex</Name></Developer>
+        <Booking><Status>free</Status></Booking>
+        <Category>newBuildingFlatSale</Category>
+        <FlatRoomsCount>1</FlatRoomsCount>
+        <TotalArea>72.4</TotalArea>
+        <FloorNumber>6</FloorNumber>
+        <JKSchema>
+          <Name>Палашёвский 11</Name>
+          <House>
+            <Name>-</Name>
+            <Flat>
+              <FlatNumber>18</FlatNumber>
+              <SectionNumber>1</SectionNumber>
+            </Flat>
+          </House>
+        </JKSchema>
+        <Building>
+          <Deadline><Quarter>first</Quarter><Year>2030</Year></Deadline>
+        </Building>
+        <BargainTerms><Price>264130000</Price><Currency>RUR</Currency></BargainTerms>
+        <LayoutPhoto>
+          <FullUrl>https://cdn.test/cian-plan.jpg</FullUrl>
+          <IsDefault>true</IsDefault>
+        </LayoutPhoto>
       </object>
     </feed>`;
 }
@@ -739,6 +798,91 @@ test('executeFeedImport auto imports mixed index feed formats through source URL
   assert.equal(state.units.find((unit) => unit.rawPayload.__rawExternalId === 'unit-1').objectId, 'object-1');
   assert.equal(state.units.find((unit) => unit.rawPayload.__rawExternalId === 'unit-2').objectId, 'object-1');
   assert.equal(state.units.find((unit) => unit.rawPayload.__rawExternalId === 'cian-1').objectId, 'object-2');
+});
+
+test('executeFeedImport merges Sminex index duplicates by raw external id using CIAN as canonical unit', async () => {
+  const indexUrl = 'https://feeds.sminex.com/xml/';
+  const yandexUrl = 'https://feeds.sminex.com/xml/PLSH_YandexRealty_4194373_.xml';
+  const cianUrl = 'https://feeds.sminex.com/xml/PLSH_Cian_5763981_.xml';
+  const yandexExternalId = `${createIndexNamespace(yandexUrl)}:000110621`;
+  const cianExternalId = `${createIndexNamespace(cianUrl)}:000110621`;
+  const { db, state } = createFakeDb({
+    source: {
+      sourceKind: 'INDEX_URL',
+      url: indexUrl,
+      format: 'CIAN_XML',
+      objectId: null,
+      developer: {
+        name: 'Sminex',
+        normalizedName: 'sminex',
+      },
+      mappings: [
+        makeSourceMapping({
+          id: 'mapping-palashevsky',
+          objectId: 'object-1',
+          sourceKey: 'palashevsky',
+          sourceTitle: 'Палашёвский 11',
+          filterJson: {
+            projectNames: ['Палашёвский 11'],
+          },
+        }),
+      ],
+    },
+    units: [
+      makeUnit({ id: 'existing-cian', externalId: cianExternalId, status: 'AVAILABLE' }),
+      makeUnit({ id: 'existing-yandex', externalId: yandexExternalId, status: 'AVAILABLE' }),
+    ],
+  });
+  const responses = new Map([
+    [
+      indexUrl,
+      `<html><body>
+        <a href="PLSH_YandexRealty_4194373_.xml">Yandex</a>
+        <a href="PLSH_Cian_5763981_.xml">Cian</a>
+      </body></html>`,
+    ],
+    [yandexUrl, makeSminexIndexYandexFeed()],
+    [cianUrl, makeSminexIndexCianFeed()],
+  ]);
+
+  const result = await executeFeedImport({
+    mode: 'run',
+    sourceId: 'source-1',
+    db,
+    storage: state.storage,
+    xmlFetcher: async (url) => responses.get(url),
+    mediaDownloader: async (url) => ({
+      body: Buffer.from(`body:${url}`),
+      contentType: 'image/jpeg',
+      originalName: 'plan.jpg',
+    }),
+    imageVariantGenerator: async () => [],
+    now: () => fixedDate,
+  });
+
+  const cianUnit = state.units.find((unit) => unit.externalId === cianExternalId);
+  const yandexUnit = state.units.find((unit) => unit.externalId === yandexExternalId);
+  const linkedMediaUrls = state.unitMedia
+    .filter((link) => link.unitId === cianUnit.id)
+    .map((link) => state.mediaAssets.find((asset) => asset.id === link.mediaAssetId).sourceUrl)
+    .sort();
+
+  assert.equal(result.status, 'SUCCESS');
+  assert.equal(result.summary.unitsParsed, 1);
+  assert.equal(result.summary.updated, 1);
+  assert.equal(result.summary.created, 0);
+  assert.equal(result.summary.archived, 1);
+  assert.equal(cianUnit.status, 'AVAILABLE');
+  assert.equal(cianUnit.rawPayload.__feedDetectedFormat, 'CIAN_XML');
+  assert.equal(cianUnit.rawPayload.__rawExternalId, '000110621');
+  assert.equal(cianUnit.title, 'Квартира №18');
+  assert.equal(cianUnit.building, 'Палашёвский 11');
+  assert.equal(cianUnit.section, '1');
+  assert.equal(state.residentialDetails.get(cianUnit.id).apartmentNumber, '18');
+  assert.deepEqual(linkedMediaUrls, ['https://cdn.test/cian-plan.jpg', 'https://cdn.test/yandex-plan.jpg']);
+  assert.equal(yandexUnit.status, 'ARCHIVED');
+  assert.deepEqual(yandexUnit.archivedAt, fixedDate);
+  assert.equal(state.object.feedUnitsCount, 1);
 });
 
 test('executeFeedImport routes Avito units through development id source mappings', async () => {
@@ -1532,6 +1676,10 @@ function makeSourceMapping({
     filterJson,
     isActive,
   };
+}
+
+function createIndexNamespace(sourceUrl) {
+  return createHash('sha1').update(sourceUrl).digest('hex').slice(0, 12);
 }
 
 function makeObjectAggregate(overrides = {}) {
