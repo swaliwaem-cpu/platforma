@@ -19,6 +19,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/web/node_modules ./apps/web/node_modules
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY _Fluffy_White_1-02.svg ./_Fluffy_White_1-02.svg
+COPY floor-plan.svg ./floor-plan.svg
 COPY apps/web ./apps/web
 COPY packages/shared ./packages/shared
 

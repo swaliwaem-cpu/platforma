@@ -44,6 +44,7 @@ import { SecureImage } from '../files/SecureImage';
 import { formatCurrencyInputValue, getCurrencyInputBackspaceValue } from '../lib/numberInput';
 import { resolveMapMarkerLabel } from '../map/mapMarkerLabels';
 import { YandexMap, type YandexMapBounds, type YandexMapPoint } from '../map/YandexMap';
+import floorPlanIconUrl from '../../../../floor-plan.svg';
 
 type CatalogPageProps = {
   navigate: (nextPathname: string) => void;
@@ -1684,7 +1685,8 @@ function CatalogCard({
   const objectHref = buildCatalogObjectHref(object.slug, filters);
   const matchedLotsCount = getCatalogMatchedLotsCount(object, filters);
   const hasPresentation = Boolean(object.presentationFile);
-  const hasVisibleBadges = object.status !== 'PUBLISHED' || hasPresentation;
+  const hasImportedLotsBadge = hasImportedLots(object);
+  const hasVisibleBadges = object.status !== 'PUBLISHED' || hasPresentation || hasImportedLotsBadge;
   const districtLabel = getObjectDistrictLabel(object);
   const areaLabel = getCatalogAreaRange(object) ?? 'Не указано';
 
@@ -1710,7 +1712,25 @@ function CatalogCard({
                 {objectStatusLabels[object.status]}
               </span>
             )}
-            {hasPresentation ? <span className="catalog-card-pdf-badge catalog-card-pdf-badge--active">PDF</span> : null}
+            {hasPresentation || hasImportedLotsBadge ? (
+              <span className="catalog-card-document-badges">
+                {hasImportedLotsBadge ? (
+                  <span
+                    className="catalog-card-floor-plan-badge"
+                    aria-label="Есть импортированные лоты"
+                    title="Есть импортированные лоты"
+                  >
+                    <img
+                      alt=""
+                      aria-hidden="true"
+                      className="catalog-card-floor-plan-icon"
+                      src={floorPlanIconUrl}
+                    />
+                  </span>
+                ) : null}
+                {hasPresentation ? <span className="catalog-card-pdf-badge catalog-card-pdf-badge--active">PDF</span> : null}
+              </span>
+            ) : null}
           </span>
         ) : null}
       </a>
@@ -1960,6 +1980,12 @@ function getCatalogMatchedLotsCount(object: RealEstateObjectSummary, filters: Ca
   }
 
   return object.matchedFeedUnitsCount;
+}
+
+function hasImportedLots(object: RealEstateObjectSummary) {
+  return typeof object.feedUnitsCount !== 'number' || !Number.isFinite(object.feedUnitsCount)
+    ? false
+    : object.feedUnitsCount > 0;
 }
 
 function countActiveAdvancedFilters(filters: CatalogFilters) {

@@ -563,6 +563,20 @@ html[data-app-theme] :is(.profile-avatar, .catalog-card-location > span, .catalo
   color: var(--app-theme-ink-800);
 }
 
+html[data-app-theme="minimal-luxury"] .catalog-card-floor-plan-badge {
+  --catalog-floor-plan-badge-bg: var(--app-theme-accent);
+  --catalog-floor-plan-badge-border: var(--app-theme-accent);
+  --catalog-floor-plan-badge-color: #fffefa;
+  --catalog-floor-plan-icon-filter: brightness(0) invert(1);
+}
+
+html[data-app-theme="dark-premium"] .catalog-card-floor-plan-badge {
+  --catalog-floor-plan-badge-bg: var(--app-theme-primary);
+  --catalog-floor-plan-badge-border: var(--app-theme-primary);
+  --catalog-floor-plan-badge-color: #000000;
+  --catalog-floor-plan-icon-filter: brightness(0);
+}
+
 html[data-app-theme] :is(.catalog-card-pdf-badge--active) {
   border-color: color-mix(in srgb, var(--app-theme-accent) 32%, var(--app-theme-border));
   background: var(--app-theme-accent);
@@ -642,6 +656,11 @@ html[data-app-theme] :is(.carousel-button, .carousel-counter, .carousel-section-
 
 html[data-app-theme="dark-premium"] :is(.sidebar-logo, .catalog-card-media img, .catalog-list-item-media img, .object-carousel-media img, .object-gallery-item img, .map-object-card-image, .preview-media img, .gallery-thumb img) {
   filter: saturate(0.92) contrast(1.02);
+}
+
+html[data-app-theme] .catalog-card-media .catalog-card-floor-plan-icon {
+  filter: var(--catalog-floor-plan-icon-filter);
+  object-fit: contain;
 }
 
 html[data-app-theme="dark-premium"] :is(.carousel-button, .carousel-counter, .carousel-section-filter, .carousel-modal-close, .carousel-modal-button, .carousel-modal-counter, .carousel-modal-download, .object-gallery-item figcaption) {

@@ -3912,23 +3912,57 @@ tr.user-row--deactivated .text-button {
   pointer-events: none;
 }
 
+.catalog-card-document-badges {
+  display: flex;
+  margin-left: auto;
+  align-items: center;
+  gap: 8px;
+}
+
 .catalog-card-status,
-.catalog-card-pdf-badge {
+.catalog-card-pdf-badge,
+.catalog-card-floor-plan-badge {
   min-height: 26px;
   border: 1px solid var(--catalog-border);
   background: color-mix(in oklch, var(--catalog-panel) 94%, transparent);
   box-shadow: 0 8px 18px rgb(28 37 36 / 10%);
 }
 
-.catalog-card-pdf-badge {
+.catalog-card-pdf-badge,
+.catalog-card-floor-plan-badge {
   display: inline-flex;
   align-items: center;
-  margin-left: auto;
   border-radius: 999px;
+}
+
+.catalog-card-pdf-badge {
   color: var(--catalog-ink-700);
   padding: 4px 10px;
   font-size: 12px;
   font-weight: 850;
+}
+
+.catalog-card-floor-plan-badge {
+  --catalog-floor-plan-badge-bg: var(--catalog-copper);
+  --catalog-floor-plan-badge-border: var(--catalog-copper);
+  --catalog-floor-plan-badge-color: oklch(98.5% 0.006 230);
+  --catalog-floor-plan-icon-filter: brightness(0) invert(1);
+
+  width: 38px;
+  min-width: 38px;
+  min-height: 28px;
+  justify-content: center;
+  border-color: var(--catalog-floor-plan-badge-border);
+  background: var(--catalog-floor-plan-badge-bg);
+  color: var(--catalog-floor-plan-badge-color);
+}
+
+.catalog-card-media .catalog-card-floor-plan-icon {
+  display: block;
+  width: 14.4px;
+  height: 14.4px;
+  filter: var(--catalog-floor-plan-icon-filter);
+  object-fit: contain;
 }
 
 .catalog-card-pdf-badge--active {

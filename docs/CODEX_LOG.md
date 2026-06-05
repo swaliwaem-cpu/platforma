@@ -1,5 +1,51 @@
 # Codex Log
 
+## 2026-06-05 - Catalog imported lots floor plan badge
+
+Задача:
+
+- Добавить на карточки ЖК в каталоге иконку планировки рядом с PDF, если у объекта есть импортированные лоты.
+- Иконку сделать SVG-ассетом в корне проекта и задать отдельные цвета для светлой и темной темы.
+
+Изменения:
+
+- `floor-plan.svg` - добавлен корневой SVG-ассет планировки.
+- `apps/web/src/catalog/CatalogPage.tsx` - карточка каталога импортирует SVG и показывает бейдж планировки при `feedUnitsCount > 0`; `null`, `0` и некорректные значения бейдж не показывают. PDF-бейдж и бейдж планировки объединены в правую группу документов.
+- `apps/web/src/styles.css` - добавлены стили группы документных бейджей; иконка планировки рендерится как `img`, а не CSS mask, чтобы не превращаться в залитый квадрат при сбое mask/custom property. Для иконки усилен селектор внутри `.catalog-card-media`, чтобы ее не перебивали стили карточного изображения.
+- `apps/web/src/app-theme.css` - добавлены отдельные цвета/фон/бордер для бейджа планировки в `minimal-luxury` и `dark-premium`, а также theme override для `filter`/`object-fit`, чтобы общий dark media filter не применялся к иконке.
+- `apps/web/Dockerfile` - корневой `floor-plan.svg` копируется в Docker build context рядом с логотипом.
+- `apps/web/tests/catalog-card-badges.test.mjs` - добавлена регрессия на условие `feedUnitsCount > 0`, SVG-ассет, Docker copy, theme-aware стили и защиту от перебивания иконки стилями `.catalog-card-media img`.
+
+Исправление после визуального фидбека:
+
+- Старый SVG был не похож на предоставленный референс, а CSS mask не применился в браузере, из-за чего бейдж выглядел как однотонный квадрат.
+- `floor-plan.svg` заменен на SVG-силуэт, построенный по alpha mask исходной PNG-иконки `noun_floor_plan_658525_000000.png`.
+- Рендер переведен с `span` + CSS mask на обычный `<img src={floorPlanIconUrl}>` с theme-aware `filter`.
+- Иконка внутри овала уменьшена с `24px` до `14.4px` - на 40%.
+- Темная тема: фон бейджа планировки переведен на `--app-theme-primary`, как у кнопки `+ Фильтры`, сама иконка стала черной.
+- Светлая тема: фон бейджа планировки переведен на золотой `--app-theme-accent`, сама иконка стала белой.
+
+Проверки:
+
+- RED: `pnpm --filter @platforma/web test -- catalog-card-badges.test.mjs` падал на отсутствующем импорте/ассете.
+- RED: обновленный `catalog-card-badges.test.mjs` падал на старой stroke-иконке и на перебивании иконки общими media-стилями.
+- GREEN: `pnpm --filter @platforma/web exec node --test tests/catalog-card-badges.test.mjs` - 3/3 passed.
+- `pnpm --filter @platforma/web test` - 231/231 passed.
+- `pnpm build:web` - passed, осталось штатное предупреждение Vite о чанке больше 500 kB.
+- `git diff --check` - clean.
+- Browser plugin path не сработал: `Browser is not available: iab`; выполнен fallback через Playwright MCP.
+- Playwright fallback: `/catalog?search=Жилой комплекс Dream Riva` проверен на `390x844` и `1440x900`; бейдж планировки рендерится как `IMG`, использует новый SVG path из `floor-plan.svg`, имеет `object-fit: contain`, находится на одной строке с PDF, gap `8px`.
+- Playwright screenshot: `/tmp/platforma-catalog-badges-mobile-card-scrolled-fixed-icon.png` и `/tmp/platforma-catalog-badges-desktop-fixed-icon.png` - иконка визуально отображается как планировка, не как квадрат.
+- Изолированная Chrome/Playwright проверка на реальных `styles.css` и `app-theme.css`: dark фон бейджа `rgb(200, 166, 106)` совпадает с фоном `+ Фильтры`, иконка `14.4px`, `filter: brightness(0)`; light фон золотой, иконка `filter: brightness(0) invert(1)`.
+- Изолированные screenshots: `/tmp/platforma-floor-plan-badge-dark-adjusted.png` и `/tmp/platforma-floor-plan-badge-light-adjusted.png`.
+- Console health: только React DevTools info и ожидаемый Vite reconnect после перезапуска dev-сервера, ошибок приложения нет.
+
+Ручная проверка:
+
+- Открыть `/catalog` в светлой и темной теме и проверить цвет бейджа планировки.
+- Найти объект с импортированными лотами и PDF, например `Жилой комплекс Dream Riva`, и убедиться, что иконка планировки стоит рядом с PDF.
+- Открыть объект без импортированных лотов и убедиться, что иконка планировки не показывается.
+
 ## 2026-06-05 - Ruble masks in public price filters
 
 Задача:
