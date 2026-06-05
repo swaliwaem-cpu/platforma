@@ -227,7 +227,15 @@ test('object files block keeps primary actions inline and labels additional file
     /<section className="detail-section object-files-section"[\s\S]*?<h3 id="object-files-title">Файлы и документы<\/h3>/,
   );
   assert.match(objectDetailSource, /<FileActionLabel>Презентация<\/FileActionLabel>/);
+  assert.match(objectDetailSource, /<FileActionLabel>Аэротур<\/FileActionLabel>/);
   assert.match(objectDetailSource, /<FileActionLabel>Планировки<\/FileActionLabel>/);
+  assert.match(objectDetailSource, /const aerotourUrl = getExternalObjectUrl\(object\.aerotourUrl\);/);
+  assert.match(objectDetailSource, /aerotourUrl \? \(/);
+  assert.match(objectDetailSource, /href=\{aerotourUrl\}/);
+  assert.match(
+    objectDetailSource,
+    /function getExternalObjectUrl\(value: string \| null\) \{[\s\S]*?const trimmedValue = value\?\.trim\(\);[\s\S]*?if \(!trimmedValue\) \{[\s\S]*?return null;[\s\S]*?url\.protocol === 'http:' \|\| url\.protocol === 'https:' \? trimmedValue : null;[\s\S]*?\}/,
+  );
   assert.match(objectDetailSource, /import \{ getLinkedFileTitle \} from '\.\.\/files\/fileDisplay';/);
   assert.match(objectDetailSource, /const primaryPresentationFile = object\.files\.find\(\(file\) => file\.type === 'PRESENTATION'\) \?\? null;/);
   assert.match(objectDetailSource, /const listedFiles = object\.files\.filter\(\(file\) => file\.id !== primaryPresentationFile\?\.id\);/);
@@ -249,7 +257,7 @@ test('object files block keeps primary actions inline and labels additional file
 
   assert.match(
     styles,
-    /\.object-files-section \.object-files-primary-actions\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);[\s\S]*?align-items:\s*start;[\s\S]*?\}/,
+    /\.object-files-section \.object-files-primary-actions\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\);[\s\S]*?align-items:\s*start;[\s\S]*?\}/,
   );
 
   assert.match(

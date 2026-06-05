@@ -1,5 +1,121 @@
 # Codex Log
 
+## 2026-06-05 - Object aerotour link and catalog badge
+
+Задача:
+
+- Добавить для ЖК ссылку на аэротур/аэропанораму.
+- Показывать поле в админке, кнопку в публичной карточке ЖК и бейдж на обложке карточки каталога только при заполненной ссылке.
+
+Изменения:
+
+- `apps/api/prisma/schema.prisma` и миграция `20260605190000_add_object_aerotour_url` - добавлено nullable-поле `aerotour_url`.
+- `packages/shared/src/index.ts` - публичный контракт `RealEstateObjectBase` расширен полем `aerotourUrl`.
+- `apps/api/src/objects/objects.service.ts` - ссылка нормализуется, валидируется как `http://`/`https://`, сохраняется, очищается и попадает в сериализацию/audit snapshot.
+- `apps/web/src/admin/ObjectsAdminPage.tsx` - поле `Аэротур` добавлено между блоками `Наполнение` и `Планировки и цены`.
+- `apps/web/src/objects/ObjectDetailPage.tsx` - в блоке файлов публичной карточки добавлена кнопка `Аэротур`; она видна только при заполненной ссылке и открывается в новой вкладке.
+- `apps/web/src/catalog/CatalogPage.tsx`, `apps/web/src/styles.css`, `apps/web/src/app-theme.css` - добавлен бейдж аэротура рядом с бейджами планировок/PDF; цвета разделены для светлой и темной темы.
+- Follow-up: публичная кнопка и бейдж аэротура теперь проверяют не просто truthy-значение, а непустой валидный `http://`/`https://` URL после `trim()`, чтобы пустые/пробельные/старые некорректные значения не занимали слот.
+- `aerotour-icon.png` - добавлена корневая PNG-иконка из предоставленного источника; запеченный фон исходника преобразован в прозрачный alpha-канал.
+- `apps/web/Dockerfile` - новый PNG-asset копируется в production build.
+- Добавлены и обновлены API/web-регрессии на схему, миграцию, контракт, сохранение, валидацию, админское поле, публичную кнопку и бейдж каталога.
+
+Проверки:
+
+- RED: targeted API/web тесты сначала падали на отсутствующем поле, миграции, контракте, админском поле, публичной кнопке и бейдже.
+- GREEN: `pnpm --filter @platforma/api build && node --test apps/api/tests/object-aerotour-schema.test.cjs apps/api/tests/api-contract.test.cjs apps/api/tests/services.test.cjs` - 92/92 passed.
+- GREEN: `pnpm --filter @platforma/web exec node --test tests/catalog-card-badges.test.mjs tests/admin-object-content-sections.test.mjs tests/object-detail-styles.test.mjs` - 21/21 passed.
+- `pnpm test` - passed: feed-import 57/57, wp-import 17/17, web 234/234, api 183/183.
+- `pnpm build:web` - passed, осталось штатное предупреждение Vite о чанке больше 500 kB.
+- `git diff --check` - clean.
+- `docker compose up -d --build api web` - пересобраны и перезапущены локальные контейнеры.
+- `curl http://localhost:3000/health` - `status: ok`, `database: ok`, `postgis: true`.
+- `curl -I http://localhost:5173/` - `200 OK`.
+- Postgres check: колонка `real_estate_objects.aerotour_url` существует как `varchar(2048)`.
+- Browser plugin path не сработал: `Browser is not available: iab`; выполнен fallback через Playwright.
+- Playwright fallback: временно заполнен `aerotour_url` у `Жилой комплекс Dream Riva`, проверен бейдж в `/catalog?search=Dream%20Riva` - PNG asset отдается из production build, овал золотой, иконка `14.4px`, `filter: brightness(0)`.
+- Playwright fallback: `/objects/zhiloj-kompleks-dream-riva` показывает `Презентация`, `Аэротур`, `Планировки` в одной строке; ссылка `Аэротур` имеет `target="_blank"` и `rel="noopener noreferrer nofollow"`.
+- После визуальной проверки тестовое значение `aerotour_url` у Dream Riva возвращено в `NULL`.
+- Playwright screenshots: `/tmp/platforma-aerotour-catalog.png`, `/tmp/platforma-aerotour-object-detail.png`.
+- Follow-up GREEN: `pnpm --filter @platforma/web exec node --test tests/catalog-card-badges.test.mjs tests/object-detail-styles.test.mjs` - 17/17 passed.
+- Follow-up: `pnpm build:web` - passed, осталось штатное предупреждение Vite о чанке больше 500 kB.
+- Follow-up: `docker compose up -d --build web` - локальный production web bundle пересобран.
+- Follow-up Playwright fallback: у `Мангазея в Богородском` с `aerotour_url = NULL` в `/objects/zhk-mangazeya-v-bogorodskom` нет ни ссылки, ни кнопки `Аэротур`, блок файлов показывает `ПрезентацияПланировки`.
+- Follow-up Playwright fallback: при временно заполненном `aerotour_url` кнопка `Аэротур` появляется с корректным `href`, `target="_blank"` и `rel="noopener noreferrer nofollow"`; после проверки поле возвращено в `NULL`.
+- Lot follow-up: в header карточки лота добавлена кликабельная иконка аэротура, использующая `aerotourUrl` родительского ЖК; без валидной `http://`/`https://` ссылки иконка полностью скрыта.
+- Lot follow-up GREEN: `pnpm --filter @platforma/web test` - 235/235 passed.
+- Lot follow-up: `pnpm build:web` - passed, осталось штатное предупреждение Vite о чанке больше 500 kB.
+- Lot follow-up: `docker compose up -d --build web` - локальный production web bundle пересобран.
+- Lot follow-up Playwright fallback: `/objects/zhiloj-kompleks-aura/lots/4a00f84d-5d32-4944-8d20-848a25e16a41` с заполненным `aerotour_url` показывает icon-link `Открыть аэротур` с `href=https://www.avito.ru/`, `target="_blank"`, золотым овалом и PNG-иконкой.
+- Lot follow-up Playwright fallback: при временно очищенном `aerotour_url` у `ЖК АУРА` icon-link на лоте отсутствует; после проверки исходное значение `https://www.avito.ru/` восстановлено.
+
+Ручная проверка:
+
+- В админке ЖК заполнить `Аэротур`, сохранить и убедиться, что поле восстанавливается после перезагрузки.
+- В публичной карточке ЖК проверить, что `Аэротур` появляется в строке файлов рядом с презентацией и планировками и открывается в новой вкладке.
+- В каталоге проверить бейдж аэротура на карточке с заполненной ссылкой в светлой и темной теме; на объектах без ссылки бейджа быть не должно.
+
+## 2026-06-05 - Local full-stack dev server startup
+
+Задача:
+
+- Поднять локальный сервер со всеми зависимостями.
+
+Действия:
+
+- Запущен Docker Desktop, так как Docker daemon сначала был недоступен.
+- Проверены workspace-зависимости через `pnpm install --frozen-lockfile`; lockfile был актуален, `node_modules` уже присутствовал.
+- Подняты инфраструктурные сервисы `postgres`, `redis`, `minio` через `docker compose up -d postgres redis minio`.
+- Сгенерирован Prisma Client через `pnpm db:generate`.
+- `pnpm db:migrate` был остановлен, потому что `prisma migrate dev` запросил имя новой миграции; новые миграции в рамках задачи запуска не создавались.
+- Применение существующих миграций проверено через `pnpm --filter @platforma/api exec prisma migrate deploy`; pending migrations не было.
+- Запущен seed через `pnpm db:seed`.
+- Локальные `pnpm dev:api` и `pnpm dev:web -- --port 5173 --strictPort` были запущены и проверены, но затем остановлены, чтобы не оставлять интерактивные tool-сессии.
+- Финальный full-stack поднят detached-командой `docker compose up -d --build api web`.
+
+Проверки:
+
+- `curl http://localhost:3000/health` - `status: ok`, `database: ok`, `postgis: true`.
+- `curl -I http://localhost:5173/` - `200 OK`.
+- `docker compose ps` - `api`, `postgres`, `redis`, `minio` healthy; `web` running.
+- `lsof -nP -iTCP:3000 -sTCP:LISTEN` - порт слушает Docker.
+- `lsof -nP -iTCP:5173 -sTCP:LISTEN` - порт слушает Docker.
+
+Ручная проверка:
+
+- Открыть `http://localhost:5173/` и залогиниться локальным seeded admin.
+- Учесть, что текущий финальный web-процесс - Docker-сборка, а не Vite HMR dev server.
+- Если потребуется привести Prisma schema к migrations, отдельно решить, создавать ли новую миграцию.
+
+## 2026-06-05 - Local web dev server availability check
+
+Задача:
+
+- Проверить, почему локальная web-страница недоступна.
+
+Диагностика:
+
+- `localhost:5173` не слушался: `lsof -nP -iTCP:5173 -sTCP:LISTEN` не нашел процесса, `curl http://localhost:5173/` возвращал connection refused.
+- API был доступен: `localhost:3000/health` вернул `status: ok`, `database: ok`, `postgis: true`.
+- Docker-сервисы `api`, `postgres`, `redis`, `minio` были запущены и healthy.
+
+Действия:
+
+- Запущен web dev server командой `pnpm dev:web -- --port 5173 --strictPort`.
+- Vite поднялся на `http://localhost:5173/`.
+
+Проверки:
+
+- `curl -I http://localhost:5173/` - `200 OK`.
+- `curl http://localhost:3000/health` - `status: ok`, `database: ok`, `postgis: true`.
+- `lsof -nP -iTCP:5173 -sTCP:LISTEN` - порт слушает `node`.
+- Browser plugin path не сработал: `Browser is not available: iab`; standalone Playwright fallback не использовался, потому что для задачи хватило HTTP/runtime-проверок.
+
+Ручная проверка:
+
+- Открыть `http://localhost:5173/` в браузере и залогиниться/перейти в нужный раздел.
+- Если страница снова станет недоступной, проверить, не остановилась ли текущая `pnpm dev:web` сессия.
+
 ## 2026-06-05 - Catalog imported lots floor plan badge
 
 Задача:

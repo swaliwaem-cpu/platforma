@@ -291,6 +291,7 @@ model RealEstateObject {
   fillingDescription String? @map("filling_description")
   shortDescription  String?      @map("short_description")
   mapName           String?      @map("map_name") @db.VarChar(16)
+  aerotourUrl       String?      @map("aerotour_url") @db.VarChar(2048)
   layoutsUrl        String?      @map("layouts_url") @db.VarChar(2048)
   krtName           String?      @map("krt_name") @db.VarChar(240)
   apartmentAreaRange String?     @map("apartment_area_range") @db.VarChar(120)

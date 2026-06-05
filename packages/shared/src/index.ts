@@ -207,6 +207,7 @@ export type RealEstateObjectBase = {
   fillingDescription: string | null;
   shortDescription: string | null;
   mapName: string | null;
+  aerotourUrl: string | null;
   layoutsUrl: string | null;
   krtName: string | null;
   apartmentAreaRange: string | null;

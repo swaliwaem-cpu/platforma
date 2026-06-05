@@ -23,16 +23,19 @@ test('objects admin editor places content section textareas after description an
   const architectureIndex = indexOfRequired('htmlFor="object-architecture-description"');
   const infrastructureIndex = indexOfRequired('htmlFor="object-infrastructure-description"');
   const fillingIndex = indexOfRequired('htmlFor="object-filling-description"');
+  const aerotourIndex = indexOfRequired('htmlFor="object-aerotour-url"');
   const layoutsIndex = indexOfRequired('htmlFor="object-layouts-url"');
 
   assert.ok(descriptionIndex < architectureIndex);
   assert.ok(architectureIndex < infrastructureIndex);
   assert.ok(infrastructureIndex < fillingIndex);
-  assert.ok(fillingIndex < layoutsIndex);
+  assert.ok(fillingIndex < aerotourIndex);
+  assert.ok(aerotourIndex < layoutsIndex);
 
   assert.match(source, /<FieldLabel htmlFor="object-architecture-description">Архитектура<\/FieldLabel>/);
   assert.match(source, /<FieldLabel htmlFor="object-infrastructure-description">Инфраструктура<\/FieldLabel>/);
   assert.match(source, /<FieldLabel htmlFor="object-filling-description">Наполнение<\/FieldLabel>/);
+  assert.match(source, /<FieldLabel htmlFor="object-aerotour-url">Аэротур<\/FieldLabel>/);
 });
 
 test('objects admin form persists and validates content section fields', () => {
@@ -52,6 +55,16 @@ test('objects admin form persists and validates content section fields', () => {
   assert.match(source, /\['Инфраструктура',\s*form\.infrastructureDescription\]/);
   assert.match(source, /\['Наполнение',\s*form\.fillingDescription\]/);
   assert.match(source, /trim\(\)\.length > 10000/);
+});
+
+test('objects admin form persists and validates aerotour url', () => {
+  assert.match(source, /aerotourUrl:\s*string;/);
+  assert.match(source, /aerotourUrl:\s*''/);
+  assert.match(source, /aerotourUrl:\s*object\.aerotourUrl \?\? ''/);
+  assert.match(source, /aerotourUrl:\s*emptyToNull\(form\.aerotourUrl\)/);
+  assert.match(source, /value=\{props\.form\.aerotourUrl\}/);
+  assert.match(source, /props\.onFormChange\(\{ \.\.\.props\.form, aerotourUrl: event\.target\.value \}\)/);
+  assert.match(source, /if \(form\.aerotourUrl\.trim\(\)\) \{[\s\S]*?return 'Ссылка на аэротур должна начинаться с http:\/\/ или https:\/\/';[\s\S]*?return 'Ссылка на аэротур некорректна';[\s\S]*?\}/);
 });
 
 test('public object detail renders files beside parameters and content sections after description', () => {

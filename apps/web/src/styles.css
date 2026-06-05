@@ -3921,7 +3921,8 @@ tr.user-row--deactivated .text-button {
 
 .catalog-card-status,
 .catalog-card-pdf-badge,
-.catalog-card-floor-plan-badge {
+.catalog-card-floor-plan-badge,
+.catalog-card-aerotour-badge {
   min-height: 26px;
   border: 1px solid var(--catalog-border);
   background: color-mix(in oklch, var(--catalog-panel) 94%, transparent);
@@ -3929,7 +3930,8 @@ tr.user-row--deactivated .text-button {
 }
 
 .catalog-card-pdf-badge,
-.catalog-card-floor-plan-badge {
+.catalog-card-floor-plan-badge,
+.catalog-card-aerotour-badge {
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
@@ -3957,11 +3959,34 @@ tr.user-row--deactivated .text-button {
   color: var(--catalog-floor-plan-badge-color);
 }
 
+.catalog-card-aerotour-badge {
+  --catalog-aerotour-badge-bg: var(--catalog-copper);
+  --catalog-aerotour-badge-border: var(--catalog-copper);
+  --catalog-aerotour-badge-color: oklch(98.5% 0.006 230);
+  --catalog-aerotour-icon-filter: brightness(0) invert(1);
+
+  width: 38px;
+  min-width: 38px;
+  min-height: 28px;
+  justify-content: center;
+  border-color: var(--catalog-aerotour-badge-border);
+  background: var(--catalog-aerotour-badge-bg);
+  color: var(--catalog-aerotour-badge-color);
+}
+
 .catalog-card-media .catalog-card-floor-plan-icon {
   display: block;
   width: 14.4px;
   height: 14.4px;
   filter: var(--catalog-floor-plan-icon-filter);
+  object-fit: contain;
+}
+
+.catalog-card-media .catalog-card-aerotour-icon {
+  display: block;
+  width: 14.4px;
+  height: 14.4px;
+  filter: var(--catalog-aerotour-icon-filter);
   object-fit: contain;
 }
 
@@ -5107,6 +5132,48 @@ tr.user-row--deactivated .text-button {
   margin-left: auto;
 }
 
+.object-lot-aerotour-link {
+  --object-lot-aerotour-bg: var(--app-theme-accent, #c8a66a);
+  --object-lot-aerotour-border: var(--app-theme-accent, #c8a66a);
+  --object-lot-aerotour-icon-filter: brightness(0) invert(1);
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 48px;
+  height: 36px;
+  margin-left: auto;
+  border: 1px solid var(--object-lot-aerotour-border);
+  border-radius: 999px;
+  background: var(--object-lot-aerotour-bg);
+  box-shadow: 0 12px 28px rgb(0 0 0 / 14%);
+  text-decoration: none;
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
+}
+
+.object-lot-aerotour-link:hover,
+.object-lot-aerotour-link:focus-visible {
+  box-shadow: 0 16px 34px rgb(0 0 0 / 20%);
+  transform: translateY(-1px);
+}
+
+.object-lot-aerotour-link:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--object-lot-aerotour-bg) 72%, white);
+  outline-offset: 3px;
+}
+
+.object-lot-aerotour-icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+  filter: var(--object-lot-aerotour-icon-filter);
+  object-fit: contain;
+}
+
 .object-lot-page {
   color: #18202a;
 }
@@ -5920,7 +5987,7 @@ tr.user-row--deactivated .text-button {
 }
 
 .object-files-section .object-files-primary-actions {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: start;
 }
 

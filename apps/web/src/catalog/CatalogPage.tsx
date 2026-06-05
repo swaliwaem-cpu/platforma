@@ -44,6 +44,7 @@ import { SecureImage } from '../files/SecureImage';
 import { formatCurrencyInputValue, getCurrencyInputBackspaceValue } from '../lib/numberInput';
 import { resolveMapMarkerLabel } from '../map/mapMarkerLabels';
 import { YandexMap, type YandexMapBounds, type YandexMapPoint } from '../map/YandexMap';
+import aerotourIconUrl from '../../../../aerotour-icon.png';
 import floorPlanIconUrl from '../../../../floor-plan.svg';
 
 type CatalogPageProps = {
@@ -1686,7 +1687,8 @@ function CatalogCard({
   const matchedLotsCount = getCatalogMatchedLotsCount(object, filters);
   const hasPresentation = Boolean(object.presentationFile);
   const hasImportedLotsBadge = hasImportedLots(object);
-  const hasVisibleBadges = object.status !== 'PUBLISHED' || hasPresentation || hasImportedLotsBadge;
+  const hasAerotourBadge = hasExternalObjectUrl(object.aerotourUrl);
+  const hasVisibleBadges = object.status !== 'PUBLISHED' || hasPresentation || hasImportedLotsBadge || hasAerotourBadge;
   const districtLabel = getObjectDistrictLabel(object);
   const areaLabel = getCatalogAreaRange(object) ?? 'Не указано';
 
@@ -1712,7 +1714,7 @@ function CatalogCard({
                 {objectStatusLabels[object.status]}
               </span>
             )}
-            {hasPresentation || hasImportedLotsBadge ? (
+            {hasPresentation || hasImportedLotsBadge || hasAerotourBadge ? (
               <span className="catalog-card-document-badges">
                 {hasImportedLotsBadge ? (
                   <span
@@ -1725,6 +1727,16 @@ function CatalogCard({
                       aria-hidden="true"
                       className="catalog-card-floor-plan-icon"
                       src={floorPlanIconUrl}
+                    />
+                  </span>
+                ) : null}
+                {hasAerotourBadge ? (
+                  <span className="catalog-card-aerotour-badge" aria-label="Есть аэротур" title="Есть аэротур">
+                    <img
+                      alt=""
+                      aria-hidden="true"
+                      className="catalog-card-aerotour-icon"
+                      src={aerotourIconUrl}
                     />
                   </span>
                 ) : null}
@@ -2321,6 +2333,22 @@ function normalizeLineColor(value: string | null) {
   const trimmedValue = value.trim();
 
   return /^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/iu.test(trimmedValue) ? trimmedValue : null;
+}
+
+function hasExternalObjectUrl(value: string | null) {
+  const trimmedValue = value?.trim();
+
+  if (!trimmedValue) {
+    return false;
+  }
+
+  try {
+    const url = new URL(trimmedValue);
+
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
 function formatMetroStations(stations: ObjectMetroStationLink[]) {

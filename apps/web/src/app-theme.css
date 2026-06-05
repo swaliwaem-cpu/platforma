@@ -570,11 +570,42 @@ html[data-app-theme="minimal-luxury"] .catalog-card-floor-plan-badge {
   --catalog-floor-plan-icon-filter: brightness(0) invert(1);
 }
 
+html[data-app-theme="minimal-luxury"] .catalog-card-aerotour-badge {
+  --catalog-aerotour-badge-bg: var(--app-theme-accent);
+  --catalog-aerotour-badge-border: var(--app-theme-accent);
+  --catalog-aerotour-badge-color: #fffefa;
+  --catalog-aerotour-icon-filter: brightness(0) invert(1);
+}
+
 html[data-app-theme="dark-premium"] .catalog-card-floor-plan-badge {
   --catalog-floor-plan-badge-bg: var(--app-theme-primary);
   --catalog-floor-plan-badge-border: var(--app-theme-primary);
   --catalog-floor-plan-badge-color: #000000;
   --catalog-floor-plan-icon-filter: brightness(0);
+}
+
+html[data-app-theme="dark-premium"] .catalog-card-aerotour-badge {
+  --catalog-aerotour-badge-bg: var(--app-theme-primary);
+  --catalog-aerotour-badge-border: var(--app-theme-primary);
+  --catalog-aerotour-badge-color: #000000;
+  --catalog-aerotour-icon-filter: brightness(0);
+}
+
+html[data-app-theme] .catalog-card-media .catalog-card-aerotour-icon {
+  filter: var(--catalog-aerotour-icon-filter);
+  object-fit: contain;
+}
+
+html[data-app-theme="minimal-luxury"] .object-lot-aerotour-link {
+  --object-lot-aerotour-bg: var(--app-theme-accent);
+  --object-lot-aerotour-border: var(--app-theme-accent);
+  --object-lot-aerotour-icon-filter: brightness(0) invert(1);
+}
+
+html[data-app-theme="dark-premium"] .object-lot-aerotour-link {
+  --object-lot-aerotour-bg: var(--app-theme-primary);
+  --object-lot-aerotour-border: var(--app-theme-primary);
+  --object-lot-aerotour-icon-filter: brightness(0);
 }
 
 html[data-app-theme] :is(.catalog-card-pdf-badge--active) {

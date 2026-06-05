@@ -303,6 +303,7 @@ type CreateObjectBody = {
   fillingDescription?: unknown;
   shortDescription?: unknown;
   mapName?: unknown;
+  aerotourUrl?: unknown;
   layoutsUrl?: unknown;
   krtName?: unknown;
   apartmentAreaRange?: unknown;
@@ -798,6 +799,7 @@ export class ObjectsService {
     const fillingDescription = this.parseNullableText(body.fillingDescription, 'Filling description', 10000);
     const shortDescription = this.parseNullableText(body.shortDescription, 'Short description', 2000);
     const mapName = this.parseNullableText(body.mapName, 'Map name', 16);
+    const aerotourUrl = this.parseNullableUrl(body.aerotourUrl, 'Aerotour URL', 2048);
     const layoutsUrl = this.parseNullableUrl(body.layoutsUrl, 'Layouts URL', 2048);
     const krtName = this.parseNullableText(body.krtName, 'KRT name', 240);
     const apartmentAreaRange = this.parseNullableText(body.apartmentAreaRange, 'Apartment area range', 120);
@@ -847,6 +849,7 @@ export class ObjectsService {
           ...(fillingDescription !== undefined ? { fillingDescription } : {}),
           ...(shortDescription !== undefined ? { shortDescription } : {}),
           ...(mapName !== undefined ? { mapName } : {}),
+          ...(aerotourUrl !== undefined ? { aerotourUrl } : {}),
           ...(layoutsUrl !== undefined ? { layoutsUrl } : {}),
           ...(krtName !== undefined ? { krtName } : {}),
           ...(apartmentAreaRange !== undefined ? { apartmentAreaRange } : {}),
@@ -977,6 +980,16 @@ export class ObjectsService {
       if (mapName !== object.mapName) {
         data.mapName = mapName;
         changes.mapName = this.change(object.mapName, mapName);
+        hasScalarChanges = true;
+      }
+    }
+
+    if ('aerotourUrl' in body) {
+      const aerotourUrl = this.parseNullableUrl(body.aerotourUrl, 'Aerotour URL', 2048) ?? null;
+
+      if (aerotourUrl !== object.aerotourUrl) {
+        data.aerotourUrl = aerotourUrl;
+        changes.aerotourUrl = this.change(object.aerotourUrl, aerotourUrl);
         hasScalarChanges = true;
       }
     }
@@ -3863,6 +3876,7 @@ export class ObjectsService {
       fillingDescription: object.fillingDescription,
       shortDescription: object.shortDescription,
       mapName: object.mapName,
+      aerotourUrl: object.aerotourUrl,
       layoutsUrl: object.layoutsUrl,
       krtName: object.krtName,
       apartmentAreaRange: object.apartmentAreaRange,
@@ -4005,6 +4019,7 @@ export class ObjectsService {
       fillingDescription: object.fillingDescription,
       shortDescription: object.shortDescription,
       mapName: object.mapName,
+      aerotourUrl: object.aerotourUrl,
       layoutsUrl: object.layoutsUrl,
       krtName: object.krtName,
       apartmentAreaRange: object.apartmentAreaRange,

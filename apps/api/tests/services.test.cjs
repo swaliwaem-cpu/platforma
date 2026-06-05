@@ -73,6 +73,7 @@ function objectRecord(overrides = {}) {
     fillingDescription: null,
     shortDescription: null,
     mapName: null,
+    aerotourUrl: null,
     krtName: null,
     apartmentAreaRange: null,
     ceilingHeight: null,
@@ -2884,6 +2885,103 @@ test('ObjectsService.update rejects too long map name', async () => {
   await assert.rejects(
     () => service.update('11111111-1111-4111-8111-111111111111', { mapName: 'Слишком длинное имя' }, actor, request),
     /Map name is too long/,
+  );
+});
+
+test('ObjectsService.update saves and clears aerotour url', async () => {
+  const calls = {};
+  const existingObject = objectRecord({
+    aerotourUrl: null,
+  });
+  const updatedObject = objectRecord({
+    aerotourUrl: 'https://developer.example/aerotour',
+  });
+  let findFirstCount = 0;
+  const prisma = {
+    realEstateObject: {
+      findFirst: async () => {
+        findFirstCount += 1;
+
+        return findFirstCount === 1 ? existingObject : updatedObject;
+      },
+      update: async (args) => {
+        calls.update = args;
+
+        return updatedObject;
+      },
+    },
+    auditLog: {
+      create: async (args) => {
+        calls.auditLog = args;
+      },
+    },
+    $transaction: async (callback) => callback(prisma),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  const result = await service.update(existingObject.id, { aerotourUrl: ' https://developer.example/aerotour ' }, actor, request);
+
+  assert.ok(calls.update, 'Object update must be called for aerotour url');
+  assert.equal(calls.update.data.aerotourUrl, 'https://developer.example/aerotour');
+  assert.equal(result.object.aerotourUrl, 'https://developer.example/aerotour');
+  assert.deepEqual(calls.auditLog.data.metadata.changes.aerotourUrl, {
+    from: null,
+    to: 'https://developer.example/aerotour',
+  });
+
+  const clearedCalls = {};
+  const objectWithAerotourUrl = objectRecord({
+    aerotourUrl: 'https://developer.example/aerotour',
+  });
+  const clearedObject = objectRecord({
+    aerotourUrl: null,
+  });
+  let clearFindFirstCount = 0;
+  const clearPrisma = {
+    realEstateObject: {
+      findFirst: async () => {
+        clearFindFirstCount += 1;
+
+        return clearFindFirstCount === 1 ? objectWithAerotourUrl : clearedObject;
+      },
+      update: async (args) => {
+        clearedCalls.update = args;
+
+        return clearedObject;
+      },
+    },
+    auditLog: {
+      create: async (args) => {
+        clearedCalls.auditLog = args;
+      },
+    },
+    $transaction: async (callback) => callback(clearPrisma),
+  };
+  const clearService = new ObjectsService(clearPrisma, {});
+
+  const clearedResult = await clearService.update(objectWithAerotourUrl.id, { aerotourUrl: '' }, actor, request);
+
+  assert.ok(clearedCalls.update, 'Object update must be called for cleared aerotour url');
+  assert.equal(clearedCalls.update.data.aerotourUrl, null);
+  assert.equal(clearedResult.object.aerotourUrl, null);
+});
+
+test('ObjectsService.update rejects invalid aerotour url', async () => {
+  const prisma = {
+    realEstateObject: {
+      findFirst: async () => objectRecord(),
+      update: async () => assert.fail('Object must not be updated with invalid aerotour url'),
+    },
+    auditLog: {
+      create: async () => assert.fail('Audit log must not be written for invalid aerotour url'),
+    },
+    $transaction: async (callback) => callback(prisma),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await assert.rejects(
+    () => service.update('11111111-1111-4111-8111-111111111111', { aerotourUrl: 'ftp://example.test/tour' }, actor, request),
+    /Aerotour URL must start with http:\/\/ or https:\/\//,
   );
 });
 

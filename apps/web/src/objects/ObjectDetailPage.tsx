@@ -54,6 +54,7 @@ import {
   getObjectLocationLine,
   getObjectParameterRows,
 } from './objectDetailViewModel';
+import aerotourIconUrl from '../../../../aerotour-icon.png';
 
 type ObjectDetailPageProps = {
   slug: string;
@@ -322,6 +323,7 @@ export function ObjectLotDetailPage({ slug, unitId, onBack }: ObjectLotDetailPag
   const subtitle = [object.title, unit.address].filter(Boolean).join(' · ');
   const factRows = getObjectLotFactRows(unit);
   const priceSummary = getObjectLotPriceSummary(unit);
+  const aerotourUrl = getExternalObjectUrl(object.aerotourUrl);
 
   return (
     <div className="object-detail-page object-lot-page">
@@ -334,6 +336,19 @@ export function ObjectLotDetailPage({ slug, unitId, onBack }: ObjectLotDetailPag
           <h2>{title}</h2>
           <p className="object-detail-location-line">{subtitle}</p>
         </div>
+        {aerotourUrl ? (
+          <a
+            className="object-lot-aerotour-link"
+            href={aerotourUrl}
+            aria-label="Открыть аэротур"
+            title="Открыть аэротур"
+            referrerPolicy="no-referrer"
+            rel="noopener noreferrer nofollow"
+            target="_blank"
+          >
+            <img alt="" aria-hidden="true" className="object-lot-aerotour-icon" src={aerotourIconUrl} />
+          </a>
+        ) : null}
       </header>
 
       <section className="object-lot-split-card" aria-labelledby="object-lot-facts-title">
@@ -397,6 +412,7 @@ function ObjectDetail({
   const parameterRows = useMemo(() => getObjectParameterRows(object), [object]);
   const primaryPresentationFile = object.files.find((file) => file.type === 'PRESENTATION') ?? null;
   const listedFiles = object.files.filter((file) => file.id !== primaryPresentationFile?.id);
+  const aerotourUrl = getExternalObjectUrl(object.aerotourUrl);
   const carouselImages = useMemo(() => getCarouselImages(object), [object]);
   const { src: mapBalloonImageUrl } = useSecureImageObjectUrl({
     accessToken,
@@ -471,6 +487,18 @@ function ObjectDetail({
                 <FileActionLabel>Презентация</FileActionLabel>
               </button>
             )}
+
+            {aerotourUrl ? (
+              <a
+                className="object-detail-action-button object-detail-action-button--secondary"
+                href={aerotourUrl}
+                referrerPolicy="no-referrer"
+                rel="noopener noreferrer nofollow"
+                target="_blank"
+              >
+                <FileActionLabel>Аэротур</FileActionLabel>
+              </a>
+            ) : null}
 
             {object.layoutsUrl ? (
               <a
@@ -2838,6 +2866,22 @@ function normalizeLineColor(value: string | null) {
   const trimmedValue = value.trim();
 
   return /^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/iu.test(trimmedValue) ? trimmedValue : null;
+}
+
+function getExternalObjectUrl(value: string | null) {
+  const trimmedValue = value?.trim();
+
+  if (!trimmedValue) {
+    return null;
+  }
+
+  try {
+    const url = new URL(trimmedValue);
+
+    return url.protocol === 'http:' || url.protocol === 'https:' ? trimmedValue : null;
+  } catch {
+    return null;
+  }
 }
 
 function escapeHtml(value: string) {

@@ -83,6 +83,7 @@ type ObjectFormState = {
   architectureDescription: string;
   infrastructureDescription: string;
   fillingDescription: string;
+  aerotourUrl: string;
   layoutsUrl: string;
   krtName: string;
   apartmentAreaRange: string;
@@ -151,6 +152,7 @@ const emptyForm: ObjectFormState = {
   architectureDescription: '',
   infrastructureDescription: '',
   fillingDescription: '',
+  aerotourUrl: '',
   layoutsUrl: '',
   krtName: '',
   apartmentAreaRange: '',
@@ -1556,6 +1558,18 @@ function ObjectEditor(props: ObjectEditorProps) {
                   </Field>
 
                   <Field className="field-wide">
+                    <FieldLabel htmlFor="object-aerotour-url">Аэротур</FieldLabel>
+                    <Input
+                      id="object-aerotour-url"
+                      inputMode="url"
+                      placeholder="https://developer.example/aerotour"
+                      type="url"
+                      value={props.form.aerotourUrl}
+                      onChange={(event) => props.onFormChange({ ...props.form, aerotourUrl: event.target.value })}
+                    />
+                  </Field>
+
+                  <Field className="field-wide">
                     <FieldLabel htmlFor="object-layouts-url">Планировки и цены</FieldLabel>
                     <Input
                       id="object-layouts-url"
@@ -2951,6 +2965,7 @@ function createFormFromObject(object: RealEstateObjectDetail): ObjectFormState {
     architectureDescription: object.architectureDescription ?? '',
     infrastructureDescription: object.infrastructureDescription ?? '',
     fillingDescription: object.fillingDescription ?? '',
+    aerotourUrl: object.aerotourUrl ?? '',
     layoutsUrl: object.layoutsUrl ?? '',
     krtName: object.krtName ?? '',
     apartmentAreaRange: object.apartmentAreaRange ?? '',
@@ -2990,6 +3005,7 @@ function createPayloadFromForm(form: ObjectFormState) {
     architectureDescription: emptyToNull(form.architectureDescription),
     infrastructureDescription: emptyToNull(form.infrastructureDescription),
     fillingDescription: emptyToNull(form.fillingDescription),
+    aerotourUrl: emptyToNull(form.aerotourUrl),
     layoutsUrl: emptyToNull(form.layoutsUrl),
     krtName: emptyToNull(form.krtName),
     apartmentAreaRange: emptyToNull(form.apartmentAreaRange),
@@ -3107,6 +3123,18 @@ function validateObjectForm(form: ObjectFormState) {
 
   if (coordinateParse.error) {
     return coordinateParse.error;
+  }
+
+  if (form.aerotourUrl.trim()) {
+    try {
+      const url = new URL(form.aerotourUrl.trim());
+
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        return 'Ссылка на аэротур должна начинаться с http:// или https://';
+      }
+    } catch {
+      return 'Ссылка на аэротур некорректна';
+    }
   }
 
   if (form.layoutsUrl.trim()) {

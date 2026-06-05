@@ -65,6 +65,24 @@ test('lot detail page renders media carousel and required fact cards', () => {
   assert.match(styles, /\.object-lot-facts\s*\{/);
 });
 
+test('lot detail page shows aerotour icon link only when object aerotour url is valid', () => {
+  assert.match(objectDetailSource, /import aerotourIconUrl from '\.\.\/\.\.\/\.\.\/\.\.\/aerotour-icon\.png';/);
+  assert.match(objectDetailSource, /const aerotourUrl = getExternalObjectUrl\(object\.aerotourUrl\);/);
+  assert.match(
+    objectDetailSource,
+    /aerotourUrl \? \([\s\S]*className="object-lot-aerotour-link"[\s\S]*href=\{aerotourUrl\}[\s\S]*aria-label="Открыть аэротур"[\s\S]*target="_blank"[\s\S]*<img[\s\S]*className="object-lot-aerotour-icon"[\s\S]*src=\{aerotourIconUrl\}/,
+  );
+  assert.doesNotMatch(objectDetailSource, /object\.aerotourUrl \? \([\s\S]*className="object-lot-aerotour-link"/);
+  assert.match(
+    styles,
+    /\.object-lot-aerotour-link\s*\{[\s\S]*?display:\s*inline-flex;[\s\S]*?width:\s*48px;[\s\S]*?height:\s*36px;[\s\S]*?border-radius:\s*999px;[\s\S]*?background:\s*var\(--object-lot-aerotour-bg\);[\s\S]*?\}/,
+  );
+  assert.match(
+    styles,
+    /\.object-lot-aerotour-icon\s*\{[\s\S]*?width:\s*16px;[\s\S]*?height:\s*16px;[\s\S]*?filter:\s*var\(--object-lot-aerotour-icon-filter\);[\s\S]*?object-fit:\s*contain;[\s\S]*?\}/,
+  );
+});
+
 test('lot detail price summary shows discount only when discount price is lower', () => {
   assert.match(objectDetailSource, /function hasFeedUnitRealDiscount\(unit: FeedUnit\)/);
   assert.match(
