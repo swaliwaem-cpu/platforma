@@ -74,6 +74,8 @@ Query params are the primary source of truth for public catalog state:
 - `completionYear`
 - `lotPriceMin`
 - `lotPriceMax`
+- `lotPricePerMeterMin`
+- `lotPricePerMeterMax`
 - `lotRooms`
 - `lotFloorMin`
 - `lotFloorMax`
@@ -95,7 +97,7 @@ Backend filtering is in `apps/api/src/objects/objects.service.ts` and map filter
 
 - Query param names must match backend query parser.
 - Lot filters rely on `FeedUnit` fields.
-- Catalog object links carry lot filters into `/objects/:slug`.
+- Catalog object links carry price, price-per-meter, room and floor lot filters into `/objects/:slug`.
 - Map and list filters must stay aligned.
 
 ## View models
@@ -319,7 +321,7 @@ Flow:
 - Request race protection uses `objectsRequestIdRef` and `mapObjectsRequestIdRef` in `apps/web/src/catalog/CatalogPage.tsx`.
 - `updateFilters()` in `apps/web/src/catalog/CatalogPage.tsx` rewrites URL with `window.history.pushState`, resets page by default and aggressively clears old results for search changes.
 - `loadMoreObjects()` appends results with `appendUniqueCatalogObjects()` in `apps/web/src/catalog/CatalogPage.tsx`.
-- Lot filters are serialized into object links by `buildCatalogLotFilterQuery()` in `apps/web/src/catalog/CatalogPage.tsx`; only `lotPriceMin`, `lotPriceMax`, `lotRooms`, `lotFloorMin`, `lotFloorMax` are carried to object detail.
+- Lot filters are serialized into object links by `buildCatalogLotFilterQuery()` in `apps/web/src/catalog/CatalogPage.tsx`; `lotPriceMin`, `lotPriceMax`, `lotPricePerMeterMin`, `lotPricePerMeterMax`, `lotRooms`, `lotFloorMin`, `lotFloorMax` are carried to object detail.
 - Risk: current public catalog UI does not serialize internal `completionQuarter`, `status`, `hasPresentation`, `hasCoordinates`; changing these fields needs explicit route/query design.
 
 ### Catalog map state

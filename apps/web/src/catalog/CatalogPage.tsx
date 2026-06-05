@@ -68,6 +68,8 @@ type CatalogFilters = {
   completionQuarter: string;
   lotPriceMin: string;
   lotPriceMax: string;
+  lotPricePerMeterMin: string;
+  lotPricePerMeterMax: string;
   lotRooms: string;
   lotFloorMin: string;
   lotFloorMax: string;
@@ -107,6 +109,8 @@ const defaultFilters: CatalogFilters = {
   completionQuarter: '',
   lotPriceMin: '',
   lotPriceMax: '',
+  lotPricePerMeterMin: '',
+  lotPricePerMeterMax: '',
   lotRooms: '',
   lotFloorMin: '',
   lotFloorMax: '',
@@ -712,15 +716,20 @@ function CatalogFilters({
           />
         </label>
 
-        <button
-          aria-expanded={isExpanded}
-          className="catalog-filter-toggle"
-          type="button"
-          onClick={() => setIsExpanded((currentValue) => !currentValue)}
-        >
-          {filterButtonLabel}
-          {activeAdvancedFilterCount > 0 ? <span>{activeAdvancedFilterCount}</span> : null}
-        </button>
+        <div className="catalog-filter-header-actions">
+          <button className="catalog-filter-reset" type="button" onClick={onReset}>
+            Сбросить
+          </button>
+          <button
+            aria-expanded={isExpanded}
+            className="catalog-filter-toggle"
+            type="button"
+            onClick={() => setIsExpanded((currentValue) => !currentValue)}
+          >
+            {filterButtonLabel}
+            {activeAdvancedFilterCount > 0 ? <span>{activeAdvancedFilterCount}</span> : null}
+          </button>
+        </div>
       </div>
 
       {isExpanded ? (
@@ -806,27 +815,29 @@ function CatalogFilters({
             />
           </label>
 
-          <label>
-            Цена лота от
-            <input
-              inputMode="decimal"
-              placeholder="0"
-              type="text"
-              value={formatGroupedNumberInputValue(filters.lotPriceMin)}
-              onChange={(event) => onChange({ lotPriceMin: sanitizeDecimalText(event.target.value) })}
-            />
-          </label>
+          <div className="catalog-filter-range" aria-label="Диапазон цены лота">
+            <label>
+              Цена от
+              <input
+                inputMode="decimal"
+                placeholder="0"
+                type="text"
+                value={formatGroupedNumberInputValue(filters.lotPriceMin)}
+                onChange={(event) => onChange({ lotPriceMin: sanitizeDecimalText(event.target.value) })}
+              />
+            </label>
 
-          <label>
-            Цена лота до
-            <input
-              inputMode="decimal"
-              placeholder="50 000 000"
-              type="text"
-              value={formatGroupedNumberInputValue(filters.lotPriceMax)}
-              onChange={(event) => onChange({ lotPriceMax: sanitizeDecimalText(event.target.value) })}
-            />
-          </label>
+            <label>
+              Цена до
+              <input
+                inputMode="decimal"
+                placeholder="50 000 000"
+                type="text"
+                value={formatGroupedNumberInputValue(filters.lotPriceMax)}
+                onChange={(event) => onChange({ lotPriceMax: sanitizeDecimalText(event.target.value) })}
+              />
+            </label>
+          </div>
 
           <label>
             Сколько комнат
@@ -839,32 +850,52 @@ function CatalogFilters({
             />
           </label>
 
-          <label>
-            Этаж от
-            <input
-              inputMode="numeric"
-              placeholder="1"
-              type="text"
-              value={filters.lotFloorMin}
-              onChange={(event) => onChange({ lotFloorMin: sanitizeIntegerText(event.target.value, 3) })}
-            />
-          </label>
+          <div className="catalog-filter-range" aria-label="Диапазон этажа лота">
+            <label>
+              Этаж от
+              <input
+                inputMode="numeric"
+                placeholder="1"
+                type="text"
+                value={filters.lotFloorMin}
+                onChange={(event) => onChange({ lotFloorMin: sanitizeIntegerText(event.target.value, 3) })}
+              />
+            </label>
 
-          <label>
-            Этаж до
-            <input
-              inputMode="numeric"
-              placeholder="25"
-              type="text"
-              value={filters.lotFloorMax}
-              onChange={(event) => onChange({ lotFloorMax: sanitizeIntegerText(event.target.value, 3) })}
-            />
-          </label>
+            <label>
+              Этаж до
+              <input
+                inputMode="numeric"
+                placeholder="25"
+                type="text"
+                value={filters.lotFloorMax}
+                onChange={(event) => onChange({ lotFloorMax: sanitizeIntegerText(event.target.value, 3) })}
+              />
+            </label>
+          </div>
 
-          <div className="catalog-filter-actions">
-            <button className="secondary-button secondary-button--fit" type="button" onClick={onReset}>
-              Сбросить
-            </button>
+          <div className="catalog-filter-range" aria-label="Диапазон цены за метр лота">
+            <label>
+              Цена за метр от
+              <input
+                inputMode="decimal"
+                placeholder="0"
+                type="text"
+                value={formatGroupedNumberInputValue(filters.lotPricePerMeterMin)}
+                onChange={(event) => onChange({ lotPricePerMeterMin: sanitizeDecimalText(event.target.value) })}
+              />
+            </label>
+
+            <label>
+              Цена за метр до
+              <input
+                inputMode="decimal"
+                placeholder="500 000"
+                type="text"
+                value={formatGroupedNumberInputValue(filters.lotPricePerMeterMax)}
+                onChange={(event) => onChange({ lotPricePerMeterMax: sanitizeDecimalText(event.target.value) })}
+              />
+            </label>
           </div>
         </div>
       ) : null}
@@ -1797,6 +1828,8 @@ function parseCatalogFilters(queryString: string): CatalogFilters {
     completionQuarter: defaultFilters.completionQuarter,
     lotPriceMin: sanitizeDecimalText(params.get('lotPriceMin') ?? ''),
     lotPriceMax: sanitizeDecimalText(params.get('lotPriceMax') ?? ''),
+    lotPricePerMeterMin: sanitizeDecimalText(params.get('lotPricePerMeterMin') ?? ''),
+    lotPricePerMeterMax: sanitizeDecimalText(params.get('lotPricePerMeterMax') ?? ''),
     lotRooms: parseCatalogRoomsParam(params.get('lotRooms')),
     lotFloorMin: sanitizeIntegerText(params.get('lotFloorMin') ?? '', 3),
     lotFloorMax: sanitizeIntegerText(params.get('lotFloorMax') ?? '', 3),
@@ -1828,6 +1861,8 @@ function buildCatalogQuery(filters: CatalogFilters, viewMode: CatalogViewMode = 
   setParam(params, 'completionYear', filters.completionYear);
   setParam(params, 'lotPriceMin', filters.lotPriceMin);
   setParam(params, 'lotPriceMax', filters.lotPriceMax);
+  setParam(params, 'lotPricePerMeterMin', filters.lotPricePerMeterMin);
+  setParam(params, 'lotPricePerMeterMax', filters.lotPricePerMeterMax);
   setParam(params, 'lotRooms', filters.lotRooms);
   setParam(params, 'lotFloorMin', filters.lotFloorMin);
   setParam(params, 'lotFloorMax', filters.lotFloorMax);
@@ -1859,6 +1894,8 @@ function buildCatalogLotFilterQuery(filters: CatalogFilters) {
 
   setParam(params, 'lotPriceMin', filters.lotPriceMin);
   setParam(params, 'lotPriceMax', filters.lotPriceMax);
+  setParam(params, 'lotPricePerMeterMin', filters.lotPricePerMeterMin);
+  setParam(params, 'lotPricePerMeterMax', filters.lotPricePerMeterMax);
   setParam(params, 'lotRooms', filters.lotRooms);
   setParam(params, 'lotFloorMin', filters.lotFloorMin);
   setParam(params, 'lotFloorMax', filters.lotFloorMax);
@@ -1872,6 +1909,8 @@ function hasActiveCatalogLotFilters(filters: CatalogFilters) {
   return [
     filters.lotPriceMin,
     filters.lotPriceMax,
+    filters.lotPricePerMeterMin,
+    filters.lotPricePerMeterMax,
     filters.lotRooms,
     filters.lotFloorMin,
     filters.lotFloorMax,
@@ -1910,6 +1949,8 @@ function countActiveAdvancedFilters(filters: CatalogFilters) {
     filters.completionYear,
     filters.lotPriceMin,
     filters.lotPriceMax,
+    filters.lotPricePerMeterMin,
+    filters.lotPricePerMeterMax,
     filters.lotRooms,
     filters.lotFloorMin,
     filters.lotFloorMax,
@@ -1936,6 +1977,8 @@ function buildObjectsParams(filters: CatalogFilters, includePage: boolean) {
   setParam(params, 'completionYear', filters.completionYear);
   setParam(params, 'lotPriceMin', filters.lotPriceMin);
   setParam(params, 'lotPriceMax', filters.lotPriceMax);
+  setParam(params, 'lotPricePerMeterMin', filters.lotPricePerMeterMin);
+  setParam(params, 'lotPricePerMeterMax', filters.lotPricePerMeterMax);
   setParam(params, 'lotRooms', filters.lotRooms);
   setParam(params, 'lotFloorMin', filters.lotFloorMin);
   setParam(params, 'lotFloorMax', filters.lotFloorMax);

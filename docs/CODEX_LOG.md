@@ -1,5 +1,86 @@
 # Codex Log
 
+## 2026-06-05 - Object lot filter visual layout
+
+Задача:
+
+- Перестроить визуал фильтра лотов на странице объекта: перенести `Сбросить` вправо, выровнять ширину полей цены с полями цены за метр, поставить `Цена за метр от/до` под ценой, а `Комнаты` под `Тип`.
+
+Изменения:
+
+- `apps/web/src/objects/ObjectDetailPage.tsx` - добавлены layout-классы полям фильтра лотов, `Комнаты` и `Цена за метр от/до` переставлены в разметке под нужные колонки, reset-кнопка получила отдельный класс.
+- `apps/web/src/styles.css` - фильтр лотов переведен на явную CSS grid-раскладку с парными колонками цены/цены за метр, правым reset и адаптивными сбросами grid-позиций.
+- `apps/web/tests/object-detail-feed-units.test.mjs` - обновлены регрессии на классы и позиции ключевых элементов фильтра лотов.
+
+Проверки:
+
+- `pnpm --filter @platforma/web test -- object-detail-feed-units.test.mjs` - 228/228 passed.
+- `pnpm build:web` - passed, осталось штатное предупреждение Vite о чанке больше 500 kB.
+- `git diff --check` - clean.
+- Playwright fallback: открыт `http://localhost:5173/objects/zhiloj-kvartal-foriver-residence`, проверены bounding boxes фильтра; `Тип` и `Комнаты` совпадают по X, `Цена от/до` и `Цена за метр от/до` совпадают по X/width, reset находится справа.
+
+Ручная проверка:
+
+- Открыть страницу объекта с блоком `Лоты` и убедиться, что визуал фильтра соответствует макету на desktop и не ломается на узкой ширине.
+
+## 2026-06-05 - Catalog filter reset button placement
+
+Задача:
+
+- Переместить кнопку `Сбросить` рядом с кнопкой `Скрыть фильтры` в фильтре каталога и сделать ее такого же размера.
+
+Изменения:
+
+- `apps/web/src/catalog/CatalogPage.tsx` - кнопка `Сбросить` вынесена из нижней части раскрытых фильтров в верхнюю строку действий рядом с toggle-кнопкой фильтров.
+- `apps/web/src/styles.css` - добавлены стили для верхней группы действий и одинаковых габаритов кнопок `Сбросить` / `Скрыть фильтры`, включая мобильную раскладку.
+- `apps/web/tests/catalog-lot-filters.test.mjs` - добавлена регрессия на новое расположение reset-кнопки и общую геометрию кнопок.
+
+Проверки:
+
+- `pnpm --filter @platforma/web test -- catalog-lot-filters.test.mjs` - 228/228 passed.
+- `pnpm build:web` - passed, осталось штатное предупреждение Vite о чанке больше 500 kB.
+- `git diff --check` - clean.
+
+Ручная проверка:
+
+- Открыть `/catalog`, раскрыть фильтры и убедиться, что `Сбросить` находится рядом с `Скрыть фильтры`, обе кнопки одинаковой высоты и ширины.
+- Проверить мобильную ширину: поиск остается сверху, кнопки стоят под ним на всю ширину.
+
+## 2026-06-05 - Catalog lot price-per-meter filters
+
+Задача:
+
+- Переделать фильтры лотов в каталоге: пары цены и этажа сделать визуально половинными.
+- Исправить неверную трактовку `М2`: вместо площади лота в каталоге нужен фильтр цены за квадратный метр, как уже было в фильтре лотов объекта.
+- Сделать фильтр `Цена за метр от` / `Цена за метр до` сквозным из каталога в блок лотов объекта.
+
+Изменения:
+
+- `apps/web/src/catalog/CatalogPage.tsx` - добавлены `lotPricePerMeterMin` и `lotPricePerMeterMax`, поля `Цена за метр от/до`, сериализация в URL, API params и ссылки на объект; ошибочные `lotAreaMin/lotAreaMax` удалены из каталога.
+- `apps/web/src/objects/ObjectDetailPage.tsx` - существующие поля `Цена за метр от/до` инициализируются из `lotPricePerMeterMin/lotPricePerMeterMax` при переходе из каталога; `М2 от/до` в фильтре лотов объекта не добавлялись.
+- `apps/api/src/objects/objects.service.ts` - `GET /objects` фильтрует объекты по цене за метр лота через `FeedUnit.effectivePricePerMeter` и учитывает этот фильтр в `matchedFeedUnitsCount`.
+- `apps/api/src/map/map.service.ts` - `GET /map/objects` поддерживает те же `lotPricePerMeterMin/lotPricePerMeterMax`.
+- `apps/web/src/styles.css` - добавлены локальные сетки для половинных пар полей.
+- `apps/web/tests/catalog-lot-filters.test.mjs`, `apps/web/tests/object-detail-feed-units.test.mjs`, `apps/api/tests/services.test.cjs` - обновлены регрессии на price-per-meter параметры, UI и сквозную инициализацию объектного фильтра.
+- `docs/PAGES_AND_ROUTES.md`, `docs/FEATURE_MAP.md`, `docs/STATE_AND_LOGIC.md` - актуализированы query params для lot-фильтров.
+
+Проверки:
+
+- `pnpm --filter @platforma/web test -- catalog-lot-filters.test.mjs object-detail-feed-units.test.mjs` - 227/227 passed.
+- `pnpm --filter @platforma/api test -- --test-name-pattern "filters objects by matching lot price per meter|MapService.listObjects filters objects by matching lot price per meter"` - 179/179 passed.
+- `pnpm build:web` - passed, осталось штатное предупреждение Vite о чанке больше 500 kB.
+- `pnpm build:api` - passed.
+- `curl -I http://localhost:5173/catalog` - 200 OK.
+- `docker compose up -d --build api` - API rebuilt and started; `platforma-api-1` health is `healthy`, container dist contains `lotPricePerMeterMin`.
+- Browser QA не выполнен: Browser-подключение вернуло `Browser is not available: iab`.
+- Диагностика: красные тесты подтвердили, что прежняя реализация искала площадь лота, а не цену за метр; после правки каталог и карта строят фильтр `effectivePricePerMeter`.
+
+Ручная проверка:
+
+- Открыть `/catalog`, раскрыть фильтры и проверить, что `Цена от/до`, `Цена за метр от/до`, `Этаж от/до` стоят половинными парами и корректно пишутся в query params.
+- Перейти из каталога в объект с заполненными `lotPricePerMeterMin/lotPricePerMeterMax` и убедиться, что в блоке `Лоты` заполнены существующие поля `Цена за метр от/до`.
+- Проверить `/catalog/map` с этими же фильтрами цены за метр.
+
 ## 2026-06-04 - Sminex index feed duplicate merge
 
 Задача:

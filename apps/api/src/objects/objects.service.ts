@@ -243,6 +243,8 @@ type ListObjectsQuery = {
   priceFromMax?: string;
   lotPriceMin?: string;
   lotPriceMax?: string;
+  lotPricePerMeterMin?: string;
+  lotPricePerMeterMax?: string;
   lotRooms?: string;
   lotFloorMin?: string;
   lotFloorMax?: string;
@@ -572,6 +574,8 @@ export class ObjectsService {
     const lotWhere = this.createObjectLotWhere({
       priceMin: query.lotPriceMin,
       priceMax: query.lotPriceMax,
+      pricePerMeterMin: query.lotPricePerMeterMin,
+      pricePerMeterMax: query.lotPricePerMeterMax,
       rooms: query.lotRooms,
       floorMin: query.lotFloorMin,
       floorMax: query.lotFloorMax,
@@ -2505,12 +2509,22 @@ export class ObjectsService {
   private createObjectLotWhere(query: {
     priceMin?: string;
     priceMax?: string;
+    pricePerMeterMin?: string;
+    pricePerMeterMax?: string;
     rooms?: string;
     floorMin?: string;
     floorMax?: string;
   }): Prisma.FeedUnitWhereInput | null {
     const priceMin = this.parseNullableDecimal(query.priceMin, 'Lot price min', 14, 2);
     const priceMax = this.parseNullableDecimal(query.priceMax, 'Lot price max', 14, 2);
+    const pricePerMeterFilter = this.createFeedUnitDecimalRangeFilter(
+      'effectivePricePerMeter',
+      query.pricePerMeterMin,
+      query.pricePerMeterMax,
+      'Lot price per meter',
+      14,
+      2,
+    );
     const rooms = this.parseOptionalIntegerList(query.rooms, 'Lot rooms is invalid', 0, 5);
     const floorMin = this.parseOptionalInteger(query.floorMin, 'Lot floor min is invalid', 1, 300);
     const floorMax = this.parseOptionalInteger(query.floorMax, 'Lot floor max is invalid', 1, 300);
@@ -2536,6 +2550,7 @@ export class ObjectsService {
             },
           }
         : {}),
+      ...(pricePerMeterFilter ?? {}),
       ...(rooms !== undefined ? this.createFeedUnitRoomsFilter(rooms) : {}),
       ...(floorMin !== undefined || floorMax !== undefined
         ? {

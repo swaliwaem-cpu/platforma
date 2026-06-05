@@ -245,7 +245,7 @@
 - Backend files: `apps/api/src/objects/objects.controller.ts`, `apps/api/src/objects/objects.service.ts`, `apps/api/src/objects/object-search.ts`, `apps/api/src/search/search-filters.ts`, `apps/api/src/directories/directories.controller.ts`, `apps/api/src/catalog-links/catalog-links.controller.ts`.
 - Shared types: `ObjectsResponse`, `RealEstateObjectSummary`, `DevelopersResponse`, `LocationsResponse`, `MetroStationsResponse`, `CatalogLinksResponse`, `PublicCatalogQuickLink` in `packages/shared/src/index.ts`.
 - API endpoints: `GET /objects`, `GET /catalog-links`, `GET /developers`, `GET /locations`, `GET /metro`.
-- Query params: `search`, `developerId`, `krtName`, `locationId`, `areaId`, `metroStationId`, `completionYear`, `lotPriceMin`, `lotPriceMax`, `lotRooms`, `lotFloorMin`, `lotFloorMax`, `sortBy`, `sortDirection`, `page`, `limit`, `view=list`.
+- Query params: `search`, `developerId`, `krtName`, `locationId`, `areaId`, `metroStationId`, `completionYear`, `lotPriceMin`, `lotPriceMax`, `lotPricePerMeterMin`, `lotPricePerMeterMax`, `lotRooms`, `lotFloorMin`, `lotFloorMax`, `sortBy`, `sortDirection`, `page`, `limit`, `view=list`.
 - UI modes: cards default, list via `view=list`, map via route `/catalog/map`.
 - States: initial loading, load more loading, directory loading/error, catalog links loading/error, empty state, API error, image loading/error placeholders.
 - Tests: `apps/web/tests/catalog-feed-fallback.test.mjs`, `apps/web/tests/catalog-lot-filters.test.mjs`, `apps/web/tests/catalog-pagination-controls.test.mjs`, `apps/web/tests/catalog-quick-links-page.test.mjs`.

@@ -3416,6 +3416,12 @@ tr.user-row--deactivated .text-button {
   min-width: 0;
 }
 
+.catalog-filter-header-actions {
+  display: flex;
+  gap: 10px;
+  align-items: end;
+}
+
 .catalog-filter-search input,
 .catalog-filter-fields input,
 .catalog-filter-fields select,
@@ -3424,16 +3430,15 @@ tr.user-row--deactivated .text-button {
   background: oklch(99% 0.005 230);
 }
 
-.catalog-filter-toggle {
+.catalog-filter-toggle,
+.catalog-filter-reset {
   display: inline-flex;
+  flex: 0 0 190px;
   min-height: 44px;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  border: 1px solid var(--catalog-ink-900);
   border-radius: var(--catalog-radius-sm);
-  background: var(--catalog-ink-900);
-  color: oklch(98.5% 0.006 230);
   padding: 0 16px;
   font-family: var(--platforma-font-sans);
   font-weight: 700;
@@ -3444,10 +3449,28 @@ tr.user-row--deactivated .text-button {
     box-shadow 180ms ease;
 }
 
+.catalog-filter-toggle {
+  border: 1px solid var(--catalog-ink-900);
+  background: var(--catalog-ink-900);
+  color: oklch(98.5% 0.006 230);
+}
+
+.catalog-filter-reset {
+  border: 1px solid var(--catalog-border-strong);
+  background: var(--catalog-panel);
+  color: var(--catalog-ink-900);
+}
+
 .catalog-filter-toggle:hover,
 .catalog-filter-toggle:focus-visible {
   background: var(--catalog-ink-800);
   box-shadow: 0 0 0 3px rgb(24 32 42 / 12%);
+}
+
+.catalog-filter-reset:hover,
+.catalog-filter-reset:focus-visible {
+  border-color: var(--catalog-ink-700);
+  box-shadow: 0 0 0 3px rgb(24 32 42 / 8%);
 }
 
 .catalog-filter-toggle span {
@@ -3471,16 +3494,18 @@ tr.user-row--deactivated .text-button {
   padding-top: 14px;
 }
 
+.catalog-filter-range {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
 .catalog-filters label {
   min-width: 0;
   color: var(--catalog-ink-700);
   font-size: 13px;
   font-weight: 850;
-}
-
-.catalog-filter-actions {
-  display: flex;
-  align-items: end;
 }
 
 .catalog-sort-bar {
@@ -6002,7 +6027,13 @@ tr.user-row--deactivated .text-button {
 
 .object-feed-units-toolbar {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns:
+    minmax(160px, 1fr)
+    minmax(160px, 1fr)
+    repeat(2, minmax(104px, 0.7fr))
+    repeat(2, minmax(92px, 0.58fr))
+    minmax(150px, 0.75fr)
+    auto;
   align-items: end;
   gap: 12px;
   border-bottom: 1px solid var(--app-theme-border-soft, #e0e6ed);
@@ -6015,6 +6046,53 @@ tr.user-row--deactivated .text-button {
   color: var(--app-theme-ink-700, #536172);
   font-size: 12px;
   font-weight: 850;
+}
+
+.object-feed-units-filter-range {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.object-feed-units-filter--status {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.object-feed-units-filter--type {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.object-feed-units-filter--completion-quarter {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.object-feed-units-filter--rooms {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.object-feed-units-filter-range--price {
+  grid-column: 3 / span 2;
+  grid-row: 1;
+}
+
+.object-feed-units-filter-range--price-meter {
+  grid-column: 3 / span 2;
+  grid-row: 2;
+}
+
+.object-feed-units-filter-range--floor {
+  grid-column: 5 / span 2;
+  grid-row: 1;
+}
+
+.object-feed-units-filter--completion-year {
+  grid-column: 7;
+  grid-row: 1;
 }
 
 .object-feed-units-filter :is(input, select),
@@ -6030,8 +6108,11 @@ tr.user-row--deactivated .text-button {
   font-weight: 750;
 }
 
-.object-feed-units-toolbar .text-button {
+.object-feed-units-reset-button {
+  grid-column: 8;
+  grid-row: 2;
   min-height: 42px;
+  min-width: 128px;
   justify-self: end;
 }
 
@@ -6769,8 +6850,27 @@ tr.user-row--deactivated .text-button {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .object-feed-units-toolbar .text-button {
-    justify-self: start;
+  .object-feed-units-filter--status,
+  .object-feed-units-filter--type,
+  .object-feed-units-filter--completion-quarter,
+  .object-feed-units-filter--rooms,
+  .object-feed-units-filter--completion-year,
+  .object-feed-units-filter-range--price,
+  .object-feed-units-filter-range--price-meter,
+  .object-feed-units-filter-range--floor,
+  .object-feed-units-reset-button {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .object-feed-units-filter-range--price,
+  .object-feed-units-filter-range--price-meter,
+  .object-feed-units-filter-range--floor {
+    grid-column: 1 / -1;
+  }
+
+  .object-feed-units-reset-button {
+    justify-self: stretch;
   }
 }
 
@@ -7884,11 +7984,17 @@ tr.user-row--deactivated .text-button {
     padding: 16px;
   }
 
+  .object-feed-units-filter-range--price,
+  .object-feed-units-filter-range--price-meter,
+  .object-feed-units-filter-range--floor {
+    grid-column: auto;
+  }
+
   .object-feed-units-heading {
     padding: 18px 16px 0;
   }
 
-  .object-feed-units-toolbar .text-button {
+  .object-feed-units-reset-button {
     width: 100%;
   }
 
@@ -7932,16 +8038,20 @@ tr.user-row--deactivated .text-button {
     grid-template-columns: 1fr;
   }
 
-  .catalog-filter-actions {
-    align-items: stretch;
-  }
-
   .catalog-filter-search-row,
   .catalog-filter-fields {
     grid-template-columns: 1fr;
   }
 
-  .catalog-filter-toggle {
+  .catalog-filter-header-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .catalog-filter-toggle,
+  .catalog-filter-reset {
+    flex-basis: auto;
+    min-width: 0;
     width: 100%;
   }
 

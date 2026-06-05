@@ -86,6 +86,8 @@ type ObjectFeedUnitSortDirection = 'asc' | 'desc';
 type InitialObjectFeedUnitFilters = {
   priceMin: string;
   priceMax: string;
+  pricePerMeterMin: string;
+  pricePerMeterMax: string;
   rooms: string;
   floorMin: string;
   floorMax: string;
@@ -891,10 +893,8 @@ function ObjectFeedUnitsSection({
   const [typeFilter, setTypeFilter] = useState('');
   const [priceMinFilter, setPriceMinFilter] = useState(initialFilters.priceMin);
   const [priceMaxFilter, setPriceMaxFilter] = useState(initialFilters.priceMax);
-  const [pricePerMeterMinFilter, setPricePerMeterMinFilter] = useState('');
-  const [pricePerMeterMaxFilter, setPricePerMeterMaxFilter] = useState('');
-  const [areaMinFilter, setAreaMinFilter] = useState('');
-  const [areaMaxFilter, setAreaMaxFilter] = useState('');
+  const [pricePerMeterMinFilter, setPricePerMeterMinFilter] = useState(initialFilters.pricePerMeterMin);
+  const [pricePerMeterMaxFilter, setPricePerMeterMaxFilter] = useState(initialFilters.pricePerMeterMax);
   const [roomFilter, setRoomFilter] = useState(initialFilters.rooms);
   const [floorMinFilter, setFloorMinFilter] = useState(initialFilters.floorMin);
   const [floorMaxFilter, setFloorMaxFilter] = useState(initialFilters.floorMax);
@@ -912,8 +912,6 @@ function ObjectFeedUnitsSection({
       priceMaxFilter ||
       pricePerMeterMinFilter ||
       pricePerMeterMaxFilter ||
-      areaMinFilter ||
-      areaMaxFilter ||
       roomFilter ||
       floorMinFilter ||
       floorMaxFilter ||
@@ -931,8 +929,6 @@ function ObjectFeedUnitsSection({
     priceMaxFilter,
     pricePerMeterMinFilter,
     pricePerMeterMaxFilter,
-    areaMinFilter,
-    areaMaxFilter,
     roomFilter,
     floorMinFilter,
     floorMaxFilter,
@@ -972,8 +968,6 @@ function ObjectFeedUnitsSection({
         setOptionalParam(params, 'priceMax', priceMaxFilter);
         setOptionalParam(params, 'pricePerMeterMin', pricePerMeterMinFilter);
         setOptionalParam(params, 'pricePerMeterMax', pricePerMeterMaxFilter);
-        setOptionalParam(params, 'areaMin', areaMinFilter);
-        setOptionalParam(params, 'areaMax', areaMaxFilter);
         setOptionalParam(params, 'rooms', roomFilter);
         setOptionalParam(params, 'floorMin', floorMinFilter);
         setOptionalParam(params, 'floorMax', floorMaxFilter);
@@ -1019,8 +1013,6 @@ function ObjectFeedUnitsSection({
     };
   }, [
     accessToken,
-    areaMaxFilter,
-    areaMinFilter,
     completionQuarterFilter,
     completionYearFilter,
     feedUnitFiltersKey,
@@ -1045,8 +1037,6 @@ function ObjectFeedUnitsSection({
     setPriceMaxFilter('');
     setPricePerMeterMinFilter('');
     setPricePerMeterMaxFilter('');
-    setAreaMinFilter('');
-    setAreaMaxFilter('');
     setRoomFilter('');
     setFloorMinFilter('');
     setFloorMaxFilter('');
@@ -1104,7 +1094,7 @@ function ObjectFeedUnitsSection({
       </div>
 
       <div className="object-feed-units-toolbar" aria-label="Фильтры лотов">
-        <label className="object-feed-units-filter">
+        <label className="object-feed-units-filter object-feed-units-filter--status">
           <span>Статус</span>
           <select
             aria-label="Фильтр лотов по статусу"
@@ -1123,7 +1113,7 @@ function ObjectFeedUnitsSection({
           </select>
         </label>
 
-        <label className="object-feed-units-filter">
+        <label className="object-feed-units-filter object-feed-units-filter--type">
           <span>Тип</span>
           <select
             aria-label="Фильтр лотов по типу"
@@ -1142,133 +1132,73 @@ function ObjectFeedUnitsSection({
           </select>
         </label>
 
-        <label className="object-feed-units-filter">
-          <span>Цена от</span>
-          <input
-            inputMode="decimal"
-            placeholder="0"
-            type="text"
-            value={formatGroupedNumberInputValue(priceMinFilter)}
-            onChange={(event) => {
-              setPriceMinFilter(sanitizeDecimalText(event.target.value));
-              setVisibleRoomLotCounts({});
-            }}
-          />
-        </label>
+        <div
+          className="object-feed-units-filter-range object-feed-units-filter-range--price"
+          aria-label="Диапазон цены лота"
+        >
+          <label className="object-feed-units-filter">
+            <span>Цена от</span>
+            <input
+              inputMode="decimal"
+              placeholder="0"
+              type="text"
+              value={formatGroupedNumberInputValue(priceMinFilter)}
+              onChange={(event) => {
+                setPriceMinFilter(sanitizeDecimalText(event.target.value));
+                setVisibleRoomLotCounts({});
+              }}
+            />
+          </label>
 
-        <label className="object-feed-units-filter">
-          <span>Цена до</span>
-          <input
-            inputMode="decimal"
-            placeholder="50 000 000"
-            type="text"
-            value={formatGroupedNumberInputValue(priceMaxFilter)}
-            onChange={(event) => {
-              setPriceMaxFilter(sanitizeDecimalText(event.target.value));
-              setVisibleRoomLotCounts({});
-            }}
-          />
-        </label>
+          <label className="object-feed-units-filter">
+            <span>Цена до</span>
+            <input
+              inputMode="decimal"
+              placeholder="50 000 000"
+              type="text"
+              value={formatGroupedNumberInputValue(priceMaxFilter)}
+              onChange={(event) => {
+                setPriceMaxFilter(sanitizeDecimalText(event.target.value));
+                setVisibleRoomLotCounts({});
+              }}
+            />
+          </label>
+        </div>
 
-        <label className="object-feed-units-filter">
-          <span>Цена за метр от</span>
-          <input
-            inputMode="decimal"
-            placeholder="0"
-            type="text"
-            value={formatGroupedNumberInputValue(pricePerMeterMinFilter)}
-            onChange={(event) => {
-              setPricePerMeterMinFilter(sanitizeDecimalText(event.target.value));
-              setVisibleRoomLotCounts({});
-            }}
-          />
-        </label>
+        <div
+          className="object-feed-units-filter-range object-feed-units-filter-range--floor"
+          aria-label="Диапазон этажа лота"
+        >
+          <label className="object-feed-units-filter">
+            <span>Этаж от</span>
+            <input
+              inputMode="numeric"
+              placeholder="1"
+              type="text"
+              value={floorMinFilter}
+              onChange={(event) => {
+                setFloorMinFilter(sanitizeIntegerText(event.target.value, 3));
+                setVisibleRoomLotCounts({});
+              }}
+            />
+          </label>
 
-        <label className="object-feed-units-filter">
-          <span>Цена за метр до</span>
-          <input
-            inputMode="decimal"
-            placeholder="500 000"
-            type="text"
-            value={formatGroupedNumberInputValue(pricePerMeterMaxFilter)}
-            onChange={(event) => {
-              setPricePerMeterMaxFilter(sanitizeDecimalText(event.target.value));
-              setVisibleRoomLotCounts({});
-            }}
-          />
-        </label>
+          <label className="object-feed-units-filter">
+            <span>Этаж до</span>
+            <input
+              inputMode="numeric"
+              placeholder="25"
+              type="text"
+              value={floorMaxFilter}
+              onChange={(event) => {
+                setFloorMaxFilter(sanitizeIntegerText(event.target.value, 3));
+                setVisibleRoomLotCounts({});
+              }}
+            />
+          </label>
+        </div>
 
-        <label className="object-feed-units-filter">
-          <span>Площадь от</span>
-          <input
-            inputMode="decimal"
-            placeholder="30"
-            type="text"
-            value={areaMinFilter}
-            onChange={(event) => {
-              setAreaMinFilter(sanitizeDecimalText(event.target.value));
-              setVisibleRoomLotCounts({});
-            }}
-          />
-        </label>
-
-        <label className="object-feed-units-filter">
-          <span>Площадь до</span>
-          <input
-            inputMode="decimal"
-            placeholder="120"
-            type="text"
-            value={areaMaxFilter}
-            onChange={(event) => {
-              setAreaMaxFilter(sanitizeDecimalText(event.target.value));
-              setVisibleRoomLotCounts({});
-            }}
-          />
-        </label>
-
-        <label className="object-feed-units-filter">
-          <span>Комнаты</span>
-          <MultiSelectDropdown
-            ariaLabel="Фильтр лотов по комнатам"
-            options={feedUnitRoomFilterOptions}
-            placeholder="Любые"
-            values={getFeedUnitRoomFilterValues(roomFilter)}
-            onChange={(values) => {
-              setRoomFilter(formatFeedUnitRoomFilterValues(values));
-              setVisibleRoomLotCounts({});
-            }}
-          />
-        </label>
-
-        <label className="object-feed-units-filter">
-          <span>Этаж от</span>
-          <input
-            inputMode="numeric"
-            placeholder="1"
-            type="text"
-            value={floorMinFilter}
-            onChange={(event) => {
-              setFloorMinFilter(sanitizeIntegerText(event.target.value, 3));
-              setVisibleRoomLotCounts({});
-            }}
-          />
-        </label>
-
-        <label className="object-feed-units-filter">
-          <span>Этаж до</span>
-          <input
-            inputMode="numeric"
-            placeholder="25"
-            type="text"
-            value={floorMaxFilter}
-            onChange={(event) => {
-              setFloorMaxFilter(sanitizeIntegerText(event.target.value, 3));
-              setVisibleRoomLotCounts({});
-            }}
-          />
-        </label>
-
-        <label className="object-feed-units-filter">
+        <label className="object-feed-units-filter object-feed-units-filter--completion-year">
           <span>Год сдачи</span>
           <input
             inputMode="numeric"
@@ -1287,7 +1217,7 @@ function ObjectFeedUnitsSection({
           />
         </label>
 
-        <label className="object-feed-units-filter">
+        <label className="object-feed-units-filter object-feed-units-filter--completion-quarter">
           <span>Квартал</span>
           <select
             aria-label="Фильтр лотов по кварталу сдачи"
@@ -1307,7 +1237,59 @@ function ObjectFeedUnitsSection({
           </select>
         </label>
 
-        <button className="text-button" disabled={!hasActiveFilters} type="button" onClick={resetFilters}>
+        <label className="object-feed-units-filter object-feed-units-filter--rooms">
+          <span>Комнаты</span>
+          <MultiSelectDropdown
+            ariaLabel="Фильтр лотов по комнатам"
+            options={feedUnitRoomFilterOptions}
+            placeholder="Любые"
+            values={getFeedUnitRoomFilterValues(roomFilter)}
+            onChange={(values) => {
+              setRoomFilter(formatFeedUnitRoomFilterValues(values));
+              setVisibleRoomLotCounts({});
+            }}
+          />
+        </label>
+
+        <div
+          className="object-feed-units-filter-range object-feed-units-filter-range--price-meter"
+          aria-label="Диапазон цены за метр лота"
+        >
+          <label className="object-feed-units-filter">
+            <span>Цена за метр от</span>
+            <input
+              inputMode="decimal"
+              placeholder="0"
+              type="text"
+              value={formatGroupedNumberInputValue(pricePerMeterMinFilter)}
+              onChange={(event) => {
+                setPricePerMeterMinFilter(sanitizeDecimalText(event.target.value));
+                setVisibleRoomLotCounts({});
+              }}
+            />
+          </label>
+
+          <label className="object-feed-units-filter">
+            <span>Цена за метр до</span>
+            <input
+              inputMode="decimal"
+              placeholder="500 000"
+              type="text"
+              value={formatGroupedNumberInputValue(pricePerMeterMaxFilter)}
+              onChange={(event) => {
+                setPricePerMeterMaxFilter(sanitizeDecimalText(event.target.value));
+                setVisibleRoomLotCounts({});
+              }}
+            />
+          </label>
+        </div>
+
+        <button
+          className="text-button object-feed-units-reset-button"
+          disabled={!hasActiveFilters}
+          type="button"
+          onClick={resetFilters}
+        >
           Сбросить
         </button>
       </div>
@@ -2304,6 +2286,8 @@ function getInitialObjectFeedUnitFiltersFromLocation(): InitialObjectFeedUnitFil
   const emptyFilters: InitialObjectFeedUnitFilters = {
     priceMin: '',
     priceMax: '',
+    pricePerMeterMin: '',
+    pricePerMeterMax: '',
     rooms: '',
     floorMin: '',
     floorMax: '',
@@ -2318,6 +2302,8 @@ function getInitialObjectFeedUnitFiltersFromLocation(): InitialObjectFeedUnitFil
   return {
     priceMin: sanitizeDecimalText(params.get('lotPriceMin') ?? ''),
     priceMax: sanitizeDecimalText(params.get('lotPriceMax') ?? ''),
+    pricePerMeterMin: sanitizeDecimalText(params.get('lotPricePerMeterMin') ?? ''),
+    pricePerMeterMax: sanitizeDecimalText(params.get('lotPricePerMeterMax') ?? ''),
     rooms: parseInitialObjectFeedUnitRooms(params.get('lotRooms')),
     floorMin: sanitizeIntegerText(params.get('lotFloorMin') ?? '', 3),
     floorMax: sanitizeIntegerText(params.get('lotFloorMax') ?? '', 3),

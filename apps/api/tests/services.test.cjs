@@ -624,7 +624,7 @@ test('ObjectsService.list serializes feed aggregates and uses feed price for cat
   assert.deepEqual(calls.count.where, calls.findMany.where);
 });
 
-test('ObjectsService.list filters objects by matching lot price rooms and floor', async () => {
+test('ObjectsService.list filters objects by matching lot price per meter rooms and floor', async () => {
   const calls = {};
   const prisma = {
     realEstateObject: {
@@ -656,6 +656,8 @@ test('ObjectsService.list filters objects by matching lot price rooms and floor'
   const result = await service.list({
     lotPriceMin: '10 000 000',
     lotPriceMax: '12 500 000',
+    lotPricePerMeterMin: '200 000',
+    lotPricePerMeterMax: '300 000',
     lotRooms: '5',
     lotFloorMin: '5',
     lotFloorMax: '12',
@@ -673,6 +675,10 @@ test('ObjectsService.list filters objects by matching lot price rooms and floor'
         effectivePrice: {
           gte: '10000000',
           lte: '12500000',
+        },
+        effectivePricePerMeter: {
+          gte: '200000',
+          lte: '300000',
         },
         rooms: 5,
         floor: {
@@ -699,6 +705,10 @@ test('ObjectsService.list filters objects by matching lot price rooms and floor'
       effectivePrice: {
         gte: '10000000',
         lte: '12500000',
+      },
+      effectivePricePerMeter: {
+        gte: '200000',
+        lte: '300000',
       },
       rooms: 5,
       floor: {
@@ -1410,7 +1420,7 @@ test('MapService.listObjects serializes feed aggregates and filters price by fee
   assert.deepEqual(calls.count.where, calls.findMany.where);
 });
 
-test('MapService.listObjects filters objects by matching lot price rooms and floor', async () => {
+test('MapService.listObjects filters objects by matching lot price per meter rooms and floor', async () => {
   const calls = {};
   const mapObject = objectRecord({
     latitude: decimal('55.751244'),
@@ -1434,6 +1444,8 @@ test('MapService.listObjects filters objects by matching lot price rooms and flo
   await service.listObjects({
     lotPriceMin: '10 000 000',
     lotPriceMax: '12 500 000',
+    lotPricePerMeterMin: '200 000',
+    lotPricePerMeterMax: '300 000',
     lotRooms: '5',
     lotFloorMin: '5',
     lotFloorMax: '12',
@@ -1448,6 +1460,10 @@ test('MapService.listObjects filters objects by matching lot price rooms and flo
         effectivePrice: {
           gte: '10000000',
           lte: '12500000',
+        },
+        effectivePricePerMeter: {
+          gte: '200000',
+          lte: '300000',
         },
         rooms: 5,
         floor: {

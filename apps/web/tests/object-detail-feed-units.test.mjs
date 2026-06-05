@@ -64,18 +64,18 @@ test('object detail feed units expose detailed lot filters in API request and re
   assert.match(source, /import \{ MultiSelectDropdown \} from '\.\.\/components\/MultiSelectDropdown';/);
   assert.match(source, /<MultiSelectDropdown[\s\S]*?ariaLabel="Фильтр лотов по комнатам"[\s\S]*?values=\{getFeedUnitRoomFilterValues\(roomFilter\)\}[\s\S]*?onChange=\{\(values\) => \{[\s\S]*?setRoomFilter\(formatFeedUnitRoomFilterValues\(values\)\);/);
   assert.match(multiSelectSource, /aria-multiselectable=\{true\}/);
-  assert.match(source, /const \[pricePerMeterMinFilter,\s*setPricePerMeterMinFilter\] = useState\(''\);/);
-  assert.match(source, /const \[pricePerMeterMaxFilter,\s*setPricePerMeterMaxFilter\] = useState\(''\);/);
-  assert.match(source, /const \[areaMinFilter,\s*setAreaMinFilter\] = useState\(''\);/);
-  assert.match(source, /const \[areaMaxFilter,\s*setAreaMaxFilter\] = useState\(''\);/);
+  assert.match(source, /const \[pricePerMeterMinFilter,\s*setPricePerMeterMinFilter\] = useState\(initialFilters\.pricePerMeterMin\);/);
+  assert.match(source, /const \[pricePerMeterMaxFilter,\s*setPricePerMeterMaxFilter\] = useState\(initialFilters\.pricePerMeterMax\);/);
+  assert.doesNotMatch(source, /const \[areaMinFilter,\s*setAreaMinFilter\]/);
+  assert.doesNotMatch(source, /const \[areaMaxFilter,\s*setAreaMaxFilter\]/);
   assert.match(source, /const \[completionYearFilter,\s*setCompletionYearFilter\] = useState\(''\);/);
   assert.match(source, /const \[completionQuarterFilter,\s*setCompletionQuarterFilter\] = useState\(''\);/);
   assert.match(source, /setOptionalParam\(params,\s*'priceMin',\s*priceMinFilter\);/);
   assert.match(source, /setOptionalParam\(params,\s*'priceMax',\s*priceMaxFilter\);/);
   assert.match(source, /setOptionalParam\(params,\s*'pricePerMeterMin',\s*pricePerMeterMinFilter\);/);
   assert.match(source, /setOptionalParam\(params,\s*'pricePerMeterMax',\s*pricePerMeterMaxFilter\);/);
-  assert.match(source, /setOptionalParam\(params,\s*'areaMin',\s*areaMinFilter\);/);
-  assert.match(source, /setOptionalParam\(params,\s*'areaMax',\s*areaMaxFilter\);/);
+  assert.doesNotMatch(source, /setOptionalParam\(params,\s*'areaMin'/);
+  assert.doesNotMatch(source, /setOptionalParam\(params,\s*'areaMax'/);
   assert.match(source, /setOptionalParam\(params,\s*'rooms',\s*roomFilter\);/);
   assert.match(source, /setOptionalParam\(params,\s*'floorMin',\s*floorMinFilter\);/);
   assert.match(source, /setOptionalParam\(params,\s*'floorMax',\s*floorMaxFilter\);/);
@@ -85,9 +85,31 @@ test('object detail feed units expose detailed lot filters in API request and re
   assert.match(source, />\s*Цена до\s*</);
   assert.match(source, />\s*Цена за метр от\s*</);
   assert.match(source, />\s*Цена за метр до\s*</);
-  assert.match(source, />\s*Площадь от\s*</);
-  assert.match(source, />\s*Площадь до\s*</);
+  assert.match(source, /className="object-feed-units-filter object-feed-units-filter--type"/);
+  assert.match(source, /className="object-feed-units-filter object-feed-units-filter--rooms"/);
+  assert.match(
+    source,
+    /className="object-feed-units-filter-range object-feed-units-filter-range--price"[\s\S]*aria-label="Диапазон цены лота"/,
+  );
+  assert.match(
+    source,
+    /className="object-feed-units-filter-range object-feed-units-filter-range--price-meter"[\s\S]*aria-label="Диапазон цены за метр лота"/,
+  );
+  assert.doesNotMatch(source, /aria-label="Диапазон площади лота"/);
+  assert.doesNotMatch(source, />\s*М2 от\s*</);
+  assert.doesNotMatch(source, />\s*М2 до\s*</);
+  assert.doesNotMatch(source, />\s*Площадь от\s*</);
+  assert.doesNotMatch(source, />\s*Площадь до\s*</);
   assert.match(source, />\s*Комнаты\s*</);
+  assert.match(
+    source,
+    /className="object-feed-units-filter-range object-feed-units-filter-range--floor"[\s\S]*aria-label="Диапазон этажа лота"/,
+  );
+  assert.match(source, /className="text-button object-feed-units-reset-button"/);
+  assert.match(styles, /\.object-feed-units-filter-range--price\s*\{[\s\S]*?grid-column:\s*3 \/ span 2;[\s\S]*?grid-row:\s*1;/);
+  assert.match(styles, /\.object-feed-units-filter-range--price-meter\s*\{[\s\S]*?grid-column:\s*3 \/ span 2;[\s\S]*?grid-row:\s*2;/);
+  assert.match(styles, /\.object-feed-units-filter--rooms\s*\{[\s\S]*?grid-column:\s*2;[\s\S]*?grid-row:\s*2;/);
+  assert.match(styles, /\.object-feed-units-reset-button\s*\{[\s\S]*?grid-column:\s*8;[\s\S]*?justify-self:\s*end;/);
   assert.match(source, />\s*Этаж от\s*</);
   assert.match(source, />\s*Этаж до\s*</);
   assert.match(source, />\s*Год сдачи\s*</);
@@ -102,12 +124,18 @@ test('object detail feed units initialize from catalog lot filters in URL', () =
   assert.match(source, /function getInitialObjectFeedUnitFiltersFromLocation\(\): InitialObjectFeedUnitFilters/);
   assert.match(source, /params\.get\('lotPriceMin'\)/);
   assert.match(source, /params\.get\('lotPriceMax'\)/);
+  assert.match(source, /params\.get\('lotPricePerMeterMin'\)/);
+  assert.match(source, /params\.get\('lotPricePerMeterMax'\)/);
+  assert.doesNotMatch(source, /params\.get\('lotAreaMin'\)/);
+  assert.doesNotMatch(source, /params\.get\('lotAreaMax'\)/);
   assert.match(source, /params\.get\('lotRooms'\)/);
   assert.match(source, /params\.get\('lotFloorMin'\)/);
   assert.match(source, /params\.get\('lotFloorMax'\)/);
   assert.match(source, /const initialFilters = useMemo\(\(\) => getInitialObjectFeedUnitFiltersFromLocation\(\), \[\]\);/);
   assert.match(source, /const \[priceMinFilter,\s*setPriceMinFilter\] = useState\(initialFilters\.priceMin\);/);
   assert.match(source, /const \[priceMaxFilter,\s*setPriceMaxFilter\] = useState\(initialFilters\.priceMax\);/);
+  assert.match(source, /const \[pricePerMeterMinFilter,\s*setPricePerMeterMinFilter\] = useState\(initialFilters\.pricePerMeterMin\);/);
+  assert.match(source, /const \[pricePerMeterMaxFilter,\s*setPricePerMeterMaxFilter\] = useState\(initialFilters\.pricePerMeterMax\);/);
   assert.match(source, /const \[roomFilter,\s*setRoomFilter\] = useState\(initialFilters\.rooms\);/);
   assert.match(source, /function getFeedUnitRoomFilterValues\(value: string\)/);
   assert.match(source, /function formatFeedUnitRoomFilterValues\(values: string\[\]\)/);

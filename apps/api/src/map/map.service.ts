@@ -58,6 +58,8 @@ type MapObjectsQuery = {
   priceFromMax?: string;
   lotPriceMin?: string;
   lotPriceMax?: string;
+  lotPricePerMeterMin?: string;
+  lotPricePerMeterMax?: string;
   lotRooms?: string;
   lotFloorMin?: string;
   lotFloorMax?: string;
@@ -231,6 +233,8 @@ export class MapService {
     const lotFilter = this.createObjectLotFilter({
       priceMin: query.lotPriceMin,
       priceMax: query.lotPriceMax,
+      pricePerMeterMin: query.lotPricePerMeterMin,
+      pricePerMeterMax: query.lotPricePerMeterMax,
       rooms: query.lotRooms,
       floorMin: query.lotFloorMin,
       floorMax: query.lotFloorMax,
@@ -355,12 +359,16 @@ export class MapService {
   private createObjectLotFilter(query: {
     priceMin?: string;
     priceMax?: string;
+    pricePerMeterMin?: string;
+    pricePerMeterMax?: string;
     rooms?: string;
     floorMin?: string;
     floorMax?: string;
   }): Prisma.RealEstateObjectWhereInput | null {
     const priceMin = this.parseNullableDecimal(query.priceMin, 'Lot price min', 14, 2);
     const priceMax = this.parseNullableDecimal(query.priceMax, 'Lot price max', 14, 2);
+    const pricePerMeterMin = this.parseNullableDecimal(query.pricePerMeterMin, 'Lot price per meter min', 14, 2);
+    const pricePerMeterMax = this.parseNullableDecimal(query.pricePerMeterMax, 'Lot price per meter max', 14, 2);
     const rooms = this.parseOptionalIntegerList(query.rooms, 'Lot rooms is invalid', 0, 5);
     const floorMin = this.parseOptionalInteger(query.floorMin, 'Lot floor min is invalid', 1, 300);
     const floorMax = this.parseOptionalInteger(query.floorMax, 'Lot floor max is invalid', 1, 300);
@@ -369,8 +377,20 @@ export class MapService {
       throw new BadRequestException('Lot price filters are invalid');
     }
 
+    if (pricePerMeterMin === null || pricePerMeterMax === null) {
+      throw new BadRequestException('Lot price per meter filters are invalid');
+    }
+
     if (priceMin !== undefined && priceMax !== undefined && Number(priceMin) > Number(priceMax)) {
       throw new BadRequestException('Lot price min cannot be greater than max');
+    }
+
+    if (
+      pricePerMeterMin !== undefined &&
+      pricePerMeterMax !== undefined &&
+      Number(pricePerMeterMin) > Number(pricePerMeterMax)
+    ) {
+      throw new BadRequestException('Lot price per meter min cannot be greater than max');
     }
 
     if (floorMin !== undefined && floorMax !== undefined && floorMin > floorMax) {
@@ -383,6 +403,14 @@ export class MapService {
             effectivePrice: {
               ...(priceMin !== undefined ? { gte: priceMin } : {}),
               ...(priceMax !== undefined ? { lte: priceMax } : {}),
+            },
+          }
+        : {}),
+      ...(pricePerMeterMin !== undefined || pricePerMeterMax !== undefined
+        ? {
+            effectivePricePerMeter: {
+              ...(pricePerMeterMin !== undefined ? { gte: pricePerMeterMin } : {}),
+              ...(pricePerMeterMax !== undefined ? { lte: pricePerMeterMax } : {}),
             },
           }
         : {}),
