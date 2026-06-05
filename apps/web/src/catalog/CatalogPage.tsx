@@ -41,7 +41,7 @@ import { apiRequest } from '../admin/api';
 import { useAuth } from '../auth/AuthProvider';
 import { MultiSelectDropdown } from '../components/MultiSelectDropdown';
 import { SecureImage } from '../files/SecureImage';
-import { formatGroupedNumberInputValue } from '../lib/numberInput';
+import { formatCurrencyInputValue, getCurrencyInputBackspaceValue } from '../lib/numberInput';
 import { resolveMapMarkerLabel } from '../map/mapMarkerLabels';
 import { YandexMap, type YandexMapBounds, type YandexMapPoint } from '../map/YandexMap';
 
@@ -703,6 +703,25 @@ function CatalogFilters({
   const activeAdvancedFilterCount = countActiveAdvancedFilters(filters);
   const filterButtonLabel = isExpanded ? 'Скрыть фильтры' : '+ Фильтры';
 
+  function handleCurrencyInputBackspace(event: KeyboardEvent<HTMLInputElement>, patchKey: keyof CatalogFilters) {
+    if (event.key !== 'Backspace' || event.altKey || event.ctrlKey || event.metaKey) {
+      return;
+    }
+
+    const nextValue = getCurrencyInputBackspaceValue(
+      event.currentTarget.value,
+      event.currentTarget.selectionStart,
+      event.currentTarget.selectionEnd,
+    );
+
+    if (nextValue === null) {
+      return;
+    }
+
+    event.preventDefault();
+    onChange({ [patchKey]: sanitizeDecimalText(nextValue) });
+  }
+
   return (
     <section className={`catalog-filters${isExpanded ? ' catalog-filters--expanded' : ''}`} aria-label="Фильтры каталога">
       <div className="catalog-filter-search-row">
@@ -820,10 +839,11 @@ function CatalogFilters({
               Цена от
               <input
                 inputMode="decimal"
-                placeholder="0"
+                placeholder="0 ₽"
                 type="text"
-                value={formatGroupedNumberInputValue(filters.lotPriceMin)}
+                value={formatCurrencyInputValue(filters.lotPriceMin)}
                 onChange={(event) => onChange({ lotPriceMin: sanitizeDecimalText(event.target.value) })}
+                onKeyDown={(event) => handleCurrencyInputBackspace(event, 'lotPriceMin')}
               />
             </label>
 
@@ -831,10 +851,11 @@ function CatalogFilters({
               Цена до
               <input
                 inputMode="decimal"
-                placeholder="50 000 000"
+                placeholder="50 000 000 ₽"
                 type="text"
-                value={formatGroupedNumberInputValue(filters.lotPriceMax)}
+                value={formatCurrencyInputValue(filters.lotPriceMax)}
                 onChange={(event) => onChange({ lotPriceMax: sanitizeDecimalText(event.target.value) })}
+                onKeyDown={(event) => handleCurrencyInputBackspace(event, 'lotPriceMax')}
               />
             </label>
           </div>
@@ -879,10 +900,11 @@ function CatalogFilters({
               Цена за метр от
               <input
                 inputMode="decimal"
-                placeholder="0"
+                placeholder="0 ₽"
                 type="text"
-                value={formatGroupedNumberInputValue(filters.lotPricePerMeterMin)}
+                value={formatCurrencyInputValue(filters.lotPricePerMeterMin)}
                 onChange={(event) => onChange({ lotPricePerMeterMin: sanitizeDecimalText(event.target.value) })}
+                onKeyDown={(event) => handleCurrencyInputBackspace(event, 'lotPricePerMeterMin')}
               />
             </label>
 
@@ -890,10 +912,11 @@ function CatalogFilters({
               Цена за метр до
               <input
                 inputMode="decimal"
-                placeholder="500 000"
+                placeholder="500 000 ₽"
                 type="text"
-                value={formatGroupedNumberInputValue(filters.lotPricePerMeterMax)}
+                value={formatCurrencyInputValue(filters.lotPricePerMeterMax)}
                 onChange={(event) => onChange({ lotPricePerMeterMax: sanitizeDecimalText(event.target.value) })}
+                onKeyDown={(event) => handleCurrencyInputBackspace(event, 'lotPricePerMeterMax')}
               />
             </label>
           </div>

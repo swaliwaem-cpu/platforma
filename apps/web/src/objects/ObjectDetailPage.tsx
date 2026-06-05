@@ -41,7 +41,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { MultiSelectDropdown } from '../components/MultiSelectDropdown';
 import { getLinkedFileTitle } from '../files/fileDisplay';
 import { SecureImage, buildMediaFileContentUrl, useSecureImageObjectUrl } from '../files/SecureImage';
-import { formatGroupedNumberInputValue } from '../lib/numberInput';
+import { formatCurrencyInputValue, getCurrencyInputBackspaceValue } from '../lib/numberInput';
 import { resolveMapMarkerLabel } from '../map/mapMarkerLabels';
 import { YandexMap, type YandexMapPoint } from '../map/YandexMap';
 import {
@@ -1045,6 +1045,29 @@ function ObjectFeedUnitsSection({
     setVisibleRoomLotCounts({});
   }
 
+  function handleCurrencyInputBackspace(
+    event: ReactKeyboardEvent<HTMLInputElement>,
+    setNextValue: (nextValue: string) => void,
+  ) {
+    if (event.key !== 'Backspace' || event.altKey || event.ctrlKey || event.metaKey) {
+      return;
+    }
+
+    const nextValue = getCurrencyInputBackspaceValue(
+      event.currentTarget.value,
+      event.currentTarget.selectionStart,
+      event.currentTarget.selectionEnd,
+    );
+
+    if (nextValue === null) {
+      return;
+    }
+
+    event.preventDefault();
+    setNextValue(sanitizeDecimalText(nextValue));
+    setVisibleRoomLotCounts({});
+  }
+
   function handleSort(field: ObjectFeedUnitSortBy) {
     const nextDirection: ObjectFeedUnitSortDirection = sortBy === field && sortDirection === 'desc' ? 'asc' : 'desc';
 
@@ -1140,13 +1163,14 @@ function ObjectFeedUnitsSection({
             <span>Цена от</span>
             <input
               inputMode="decimal"
-              placeholder="0"
+              placeholder="0 ₽"
               type="text"
-              value={formatGroupedNumberInputValue(priceMinFilter)}
+              value={formatCurrencyInputValue(priceMinFilter)}
               onChange={(event) => {
                 setPriceMinFilter(sanitizeDecimalText(event.target.value));
                 setVisibleRoomLotCounts({});
               }}
+              onKeyDown={(event) => handleCurrencyInputBackspace(event, setPriceMinFilter)}
             />
           </label>
 
@@ -1154,13 +1178,14 @@ function ObjectFeedUnitsSection({
             <span>Цена до</span>
             <input
               inputMode="decimal"
-              placeholder="50 000 000"
+              placeholder="50 000 000 ₽"
               type="text"
-              value={formatGroupedNumberInputValue(priceMaxFilter)}
+              value={formatCurrencyInputValue(priceMaxFilter)}
               onChange={(event) => {
                 setPriceMaxFilter(sanitizeDecimalText(event.target.value));
                 setVisibleRoomLotCounts({});
               }}
+              onKeyDown={(event) => handleCurrencyInputBackspace(event, setPriceMaxFilter)}
             />
           </label>
         </div>
@@ -1259,13 +1284,14 @@ function ObjectFeedUnitsSection({
             <span>Цена за метр от</span>
             <input
               inputMode="decimal"
-              placeholder="0"
+              placeholder="0 ₽"
               type="text"
-              value={formatGroupedNumberInputValue(pricePerMeterMinFilter)}
+              value={formatCurrencyInputValue(pricePerMeterMinFilter)}
               onChange={(event) => {
                 setPricePerMeterMinFilter(sanitizeDecimalText(event.target.value));
                 setVisibleRoomLotCounts({});
               }}
+              onKeyDown={(event) => handleCurrencyInputBackspace(event, setPricePerMeterMinFilter)}
             />
           </label>
 
@@ -1273,13 +1299,14 @@ function ObjectFeedUnitsSection({
             <span>Цена за метр до</span>
             <input
               inputMode="decimal"
-              placeholder="500 000"
+              placeholder="500 000 ₽"
               type="text"
-              value={formatGroupedNumberInputValue(pricePerMeterMaxFilter)}
+              value={formatCurrencyInputValue(pricePerMeterMaxFilter)}
               onChange={(event) => {
                 setPricePerMeterMaxFilter(sanitizeDecimalText(event.target.value));
                 setVisibleRoomLotCounts({});
               }}
+              onKeyDown={(event) => handleCurrencyInputBackspace(event, setPricePerMeterMaxFilter)}
             />
           </label>
         </div>

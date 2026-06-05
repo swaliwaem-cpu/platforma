@@ -1,5 +1,32 @@
 # Codex Log
 
+## 2026-06-05 - Ruble masks in public price filters
+
+Задача:
+
+- Добавить символ рубля в ценовые поля фильтра каталога и фильтра лотов: в пустом поле он должен быть серым placeholder, а при наборе сохраняться в отображаемом значении.
+- Исправить удаление цифр через Backspace, когда курсор стоит после символа `₽`.
+
+Изменения:
+
+- `apps/web/src/lib/numberInput.ts` - добавлен `formatCurrencyInputValue()`, который возвращает пустую строку для пустого значения и `число ₽` для введенного значения; добавлен `getCurrencyInputBackspaceValue()` для удаления последней цифры, когда курсор находится после `₽`.
+- `apps/web/src/catalog/CatalogPage.tsx` - ценовые поля каталога (`Цена от/до`, `Цена за метр от/до`) используют рублевые placeholders и display-маску, raw state/query остаются числовыми; Backspace после `₽` обрабатывается отдельно.
+- `apps/web/src/objects/ObjectDetailPage.tsx` - ценовые поля фильтра лотов объекта используют те же рублевые placeholders, display-маску и обработку Backspace после `₽`.
+- `apps/web/tests/price-input-formatting.test.mjs` - обновлена регрессия на рублевую маску, сохранение raw-значений и подключение обработчика Backspace.
+
+Проверки:
+
+- `pnpm --filter @platforma/web test -- price-input-formatting.test.mjs catalog-lot-filters.test.mjs object-detail-feed-units.test.mjs` - 228/228 passed.
+- `pnpm build:web` - passed, осталось штатное предупреждение Vite о чанке больше 500 kB.
+- `git diff --check` - clean.
+- Browser/Playwright visual fallback не завершился: страница Playwright была закрыта до проверки.
+
+Ручная проверка:
+
+- Открыть `/catalog`, раскрыть фильтры и проверить, что четыре ценовых поля показывают серый placeholder с `₽` пустыми и `123 ₽` при вводе.
+- В этих же полях поставить курсор после `₽`, нажать Backspace и проверить, что удаляется последняя цифра, а не только временно исчезает знак рубля.
+- Открыть страницу объекта с блоком `Лоты` и проверить такое же поведение в `Цена от/до` и `Цена за метр от/до`.
+
 ## 2026-06-05 - Object lot filter visual layout
 
 Задача:
