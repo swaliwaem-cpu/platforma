@@ -1,5 +1,41 @@
 # Codex Log
 
+## 2026-06-06 - Production deploy aerotour and latest on-ser updates
+
+Задача:
+
+- Залить на production последние 4 коммита ветки `on-ser`: lot filters/ruble mask/floor-plan badge/aerotour links.
+
+Деплой:
+
+- Локальная ветка `on-ser` была на 4 коммита впереди `origin/on-ser`: `6352f88`, `7f5c47e`, `2a1cac5`, `09343b7`.
+- Перед push прогнаны свежие локальные проверки: `pnpm test`, `pnpm build`, `git diff --check`.
+- `on-ser` запушен в `origin/on-ser` с `0520aab` до `09343b7`.
+- Production checkout `/opt/platforma` был на `0520aab` и fast-forwarded до `09343b7`.
+- Перед пересборкой создан production backup `/opt/platforma-deploy-backups/20260605T201854Z-aerotour-deploy`: git state, compose state, API health и `platforma.sql.gz` размером 28 MB.
+- Выполнен `docker compose -f docker-compose.prod.yml up -d --build api web`; контейнеры `platforma-api-1` и `platforma-web-1` пересозданы.
+
+Проверки:
+
+- Production `docker compose -f docker-compose.prod.yml ps` - `api`, `postgres`, `redis`, `minio` healthy; `web` up.
+- Production local API `/health` и public API `https://api.broker.fluffywhite.moscow/health` вернули `status=ok`, `database=ok`, `postgis=true`.
+- Production public web `https://broker.fluffywhite.moscow/` вернул `200 OK`.
+- Prisma migration `20260605190000_add_object_aerotour_url` применена; API log показывает `All migrations have been successfully applied` и `Nest application successfully started`.
+- Production DB check: `real_estate_objects.aerotour_url` существует как `character varying(2048)`.
+- Production web bundle содержит `aerotour-icon-7fw9A1GP.png`, `index-IxrDLll8.css`, `index-C39g35Mh.js`.
+- Public asset `https://broker.fluffywhite.moscow/assets/aerotour-icon-7fw9A1GP.png` вернул `200 OK`, `Content-Type: image/png`, `Content-Length: 13261`.
+- Production feed scheduler после API restart завершил цикл с `sources=9`, `previewed=8`, `runsQueued=8`, `failed=1`; свежие feed run statuses за 15 минут: `success=8`, `partial=8`.
+
+Спорное:
+
+- В свежем API log после рестарта есть отдельная ошибка scheduler по feed source `90699a52-7849-4979-af3a-8c7b13d440a5`: `Feed import run not found`. Web/API health и deploy не пострадали, но source стоит проверить отдельно в `/admin/feeds`.
+
+Ручная проверка:
+
+- Открыть production каталог и объект с заполненным `Аэротур`, проверить бейдж в каталоге, кнопку/иконку на карточке ЖК и лота.
+- В админке заполнить/очистить поле `Аэротур` у тестового ЖК и убедиться, что значение сохраняется и публичный UI появляется/скрывается.
+- Открыть `/admin/feeds` и посмотреть source `90699a52-7849-4979-af3a-8c7b13d440a5`, который дал scheduler `partial/error`.
+
 ## 2026-06-05 - Object aerotour link and catalog badge
 
 Задача:
