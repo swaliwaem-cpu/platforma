@@ -6,6 +6,8 @@ import test from 'node:test';
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const sourcePath = resolve(currentDir, '../src/admin/FeedsAdminPage.tsx');
+const stylesPath = resolve(currentDir, '../src/styles.css');
+const themeStylesPath = resolve(currentDir, '../src/app-theme.css');
 
 test('feeds admin page source exists', () => {
   assert.equal(existsSync(sourcePath), true);
@@ -301,11 +303,25 @@ test('feeds admin editor can reopen and inspect saved source mappings', () => {
   assert.match(source, /Редактировать сопоставление/);
   assert.match(source, /<SourceMeta[\s\S]*onEditMappings=\{openSourceMappingsEditor\}/);
   assert.match(source, /function SourceMappingsSummary/);
+  assert.match(source, /if \(!onEditMappings\) \{[\s\S]*?return <span>\{getSourceObjectTitle\(source\)\}<\/span>/);
   assert.match(source, /source\.mappings\.map\(\(mapping\) =>/);
   assert.match(source, /<span>\{mapping\.sourceTitle\}<\/span>/);
   assert.match(source, /<strong>\{mapping\.object\.title\}<\/strong>/);
   assert.match(source, /ref=\{analysisPanelRef\}/);
   assert.match(source, /onAnalyze=\{\(\) => void analyzeSourceFeed\(\{ scrollToAnalysis: true \}\)\}/);
+});
+
+test('feeds admin source mappings summary is not affected by details row grid styles', () => {
+  const styles = readFileSync(stylesPath, 'utf8');
+  const themeStyles = readFileSync(themeStylesPath, 'utf8');
+
+  assert.match(styles, /\.details-list > div\s*\{/);
+  assert.doesNotMatch(styles, /\.details-list div\s*\{/);
+  assert.match(styles, /\.feed-details > div\s*\{[\s\S]*?grid-template-columns:\s*minmax\(88px,\s*120px\) minmax\(0,\s*1fr\);[\s\S]*?\}/);
+  assert.doesNotMatch(styles, /\.feed-details div\s*\{/);
+  assert.match(styles, /\.feed-source-mappings-summary\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\);[\s\S]*?\}/);
+  assert.match(themeStyles, /\.details-list > div/);
+  assert.doesNotMatch(themeStyles, /\.details-list div/);
 });
 
 test('feeds admin page reports pending run commands as started instead of finished', () => {

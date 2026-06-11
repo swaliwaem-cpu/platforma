@@ -680,7 +680,7 @@ fieldset {
   margin: 24px 0 0;
 }
 
-.details-list div {
+.details-list > div {
   display: grid;
   grid-template-columns: minmax(100px, 160px) minmax(0, 1fr);
   gap: 16px;
@@ -7602,7 +7602,7 @@ tr.user-row--deactivated .text-button {
   margin: 0;
 }
 
-.feed-details div {
+.feed-details > div {
   grid-template-columns: minmax(88px, 120px) minmax(0, 1fr);
 }
 
@@ -7615,6 +7615,7 @@ tr.user-row--deactivated .text-button {
 
 .feed-source-mappings-summary {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   min-width: 0;
 }
@@ -8399,7 +8400,7 @@ tr.user-row--deactivated .text-button {
     width: 100%;
   }
 
-  .details-list div {
+  .details-list > div {
     grid-template-columns: 1fr;
     gap: 6px;
   }

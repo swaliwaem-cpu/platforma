@@ -1842,16 +1842,18 @@ function SourceMappingsSummary({
     return <span>{source.object?.title ?? 'ЖК не выбран'}</span>;
   }
 
+  if (!onEditMappings) {
+    return <span>{getSourceObjectTitle(source)}</span>;
+  }
+
   return (
     <div className="feed-source-mappings-summary">
       <div className="feed-source-mappings-summary-header">
         <span>{getSourceObjectTitle(source)}</span>
-        {onEditMappings ? (
-          <AdminButton fit={false} tone="text" type="button" onClick={onEditMappings}>
-            <PencilIcon data-icon="inline-start" />
-            Редактировать сопоставление
-          </AdminButton>
-        ) : null}
+        <AdminButton fit={false} tone="text" type="button" onClick={onEditMappings}>
+          <PencilIcon data-icon="inline-start" />
+          Редактировать сопоставление
+        </AdminButton>
       </div>
       <ul className="feed-source-mappings-list">
         {source.mappings.map((mapping) => (
