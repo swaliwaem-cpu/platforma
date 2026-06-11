@@ -268,7 +268,7 @@ export class YandexRealtyFeedParser implements FeedParser {
               layoutType: getText(offer['rooms-type']),
               livingArea,
               kitchenArea: normalizeDecimal(offer['kitchen-space'], 'kitchenArea', externalId, warnings),
-              balconyCount: normalizeInteger(offer.balconies ?? offer.balcony, 'balconyCount', externalId, warnings),
+              balconyCount: normalizeYandexBalconyCount(offer, externalId, warnings),
               detailsJson: {
                 buildingType: getText(offer['building-type']),
                 ceilingHeight: normalizeDecimal(offer['ceiling-height'], 'ceilingHeight', externalId, warnings),
@@ -1230,6 +1230,32 @@ function normalizeYandexRooms(
   return null;
 }
 
+function normalizeYandexBalconyCount(
+  offer: XmlRecord,
+  externalId: string,
+  warnings: FeedParserWarning[],
+): number | null {
+  const value = offer.balconies ?? offer.balcony;
+  const raw = getText(value);
+
+  if (raw === null) {
+    return null;
+  }
+
+  const normalized = normalizeFilterText(raw);
+  const leadingInteger = normalized.match(/^(\d+)/u);
+
+  if (leadingInteger) {
+    return Number(leadingInteger[1]);
+  }
+
+  if (normalized === 'балкон' || normalized === 'лоджия') {
+    return 1;
+  }
+
+  return normalizeInteger(value, 'balconyCount', externalId, warnings);
+}
+
 function isMangazeyaSeparateRoomsStudio(offer: XmlRecord) {
   const roomsType = normalizeFilterText(getText(offer['rooms-type']) ?? '');
 
@@ -1598,10 +1624,26 @@ function getAvitoUnitType(ad: XmlRecord): NormalizedFeedUnitType {
 
 function buildYandexTitle(offer: XmlRecord, location: XmlRecord | null): string | null {
   const building = getText(offer['building-name']);
-  const category = getText(offer.category);
+  const category = normalizeYandexCategoryLabel(getText(offer.category));
   const apartment = getYandexApartmentNumber(offer, location);
 
   return joinTitleParts([building, category, apartment ? `№ ${apartment}` : null]);
+}
+
+function normalizeYandexCategoryLabel(value: string | null): string | null {
+  if (value === null) {
+    return null;
+  }
+
+  const normalized = normalizeFilterText(value);
+  const categoryLabels: Record<string, string> = {
+    apartment: 'квартира',
+    flat: 'квартира',
+    room: 'комната',
+    studio: 'студия',
+  };
+
+  return categoryLabels[normalized] ?? value;
 }
 
 function getYandexApartmentNumber(offer: XmlRecord, location: XmlRecord | null) {

@@ -272,8 +272,8 @@ test('feeds admin page shows latest preview lot and media counts in source meta'
   assert.match(source, /rememberSourceMetaSummaryFromRuns\(sourceId, data\.items\)/);
   assert.match(source, /const editorSourceMetaSummary = editorSource \? sourceMetaSummaries\[editorSource\.id\] \?\? null : null/);
   assert.match(source, /const selectedSourceMetaSummary = selectedSource \? sourceMetaSummaries\[selectedSource\.id\] \?\? null : null/);
-  assert.match(source, /<SourceMeta source=\{editorSource\} metaSummary=\{editorSourceMetaSummary\} \/>/);
-  assert.match(source, /function SourceMeta\(\{ source, metaSummary \}/);
+  assert.match(source, /<SourceMeta[\s\S]*source=\{editorSource\}[\s\S]*metaSummary=\{editorSourceMetaSummary\}/);
+  assert.match(source, /function SourceMeta\(\{\s*source,\s*metaSummary,/);
   assert.match(source, /const previewMetrics = getFeedPreviewMetrics\(metaSummary\)/);
   assert.match(source, />Лотов к загрузке</);
   assert.match(source, />Медиа к загрузке</);
@@ -290,6 +290,22 @@ test('feeds admin page shows latest preview lot and media counts in source meta'
   assert.match(source, /media\.existing/);
   assert.match(source, /function hasFeedMetaMetrics/);
   assert.match(source, /Object\.values\(metrics\)\.some\(\(value\) => value !== null\)/);
+});
+
+test('feeds admin editor can reopen and inspect saved source mappings', () => {
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.match(source, /function openSourceMappingsEditor/);
+  assert.match(source, /const analysisPanelRef = useRef<HTMLElement \| null>\(null\)/);
+  assert.match(source, /analysisPanelRef\.current\?\.scrollIntoView/);
+  assert.match(source, /Редактировать сопоставление/);
+  assert.match(source, /<SourceMeta[\s\S]*onEditMappings=\{openSourceMappingsEditor\}/);
+  assert.match(source, /function SourceMappingsSummary/);
+  assert.match(source, /source\.mappings\.map\(\(mapping\) =>/);
+  assert.match(source, /<span>\{mapping\.sourceTitle\}<\/span>/);
+  assert.match(source, /<strong>\{mapping\.object\.title\}<\/strong>/);
+  assert.match(source, /ref=\{analysisPanelRef\}/);
+  assert.match(source, /onAnalyze=\{\(\) => void analyzeSourceFeed\(\{ scrollToAnalysis: true \}\)\}/);
 });
 
 test('feeds admin page reports pending run commands as started instead of finished', () => {

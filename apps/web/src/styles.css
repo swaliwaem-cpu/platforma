@@ -7613,6 +7613,51 @@ tr.user-row--deactivated .text-button {
   overflow-wrap: anywhere;
 }
 
+.feed-source-mappings-summary {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.feed-source-mappings-summary-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.feed-source-mappings-summary-header span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.feed-source-mappings-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.feed-source-mappings-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.feed-source-mappings-list span,
+.feed-source-mappings-list strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.feed-source-mappings-list span {
+  color: #536172;
+  font-weight: 700;
+}
+
 .feed-command-actions {
   display: grid;
   gap: 10px;
@@ -7992,6 +8037,7 @@ tr.user-row--deactivated .text-button {
   .feed-source-analysis-summary,
   .feed-source-analysis-object,
   .feed-source-discovery-platform,
+  .feed-source-mappings-list li,
   .feed-units-toolbar-main,
   .feed-run-progress-stats,
   .import-toolbar-main,

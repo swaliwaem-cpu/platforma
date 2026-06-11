@@ -205,6 +205,51 @@ test('YandexRealtyFeedParser keeps base and discount prices and reads flat-numbe
   assert.equal(unit.residentialDetails.balconyCount, 1);
 });
 
+test('YandexRealtyFeedParser normalizes Brusnika flat category and textual balcony values', () => {
+  const parser = new YandexRealtyFeedParser();
+  const xml = `<?xml version="1.0"?>
+    <realty-feed>
+      <offer internal-id="brusnika-1">
+        <property-type>жилая</property-type>
+        <category>flat</category>
+        <location><address>Калиновая, 11</address><apartment>31</apartment></location>
+        <building-name>Первый квартал</building-name>
+        <price><value>18520000</value><currency>RUB</currency></price>
+        <area><value>127,7</value><unit>кв. м</unit></area>
+        <rooms>2</rooms>
+        <balcony>лоджия</balcony>
+      </offer>
+      <offer internal-id="brusnika-2">
+        <property-type>жилая</property-type>
+        <category>flat</category>
+        <location><address>ул. Тагильская, владение 6</address><apartment>828</apartment></location>
+        <building-name>Квартал «Метроном»</building-name>
+        <price><value>12000000</value><currency>RUB</currency></price>
+        <area><value>42,2</value><unit>кв. м</unit></area>
+        <rooms>1</rooms>
+        <balcony>2 балкона</balcony>
+      </offer>
+      <offer internal-id="brusnika-3">
+        <property-type>жилая</property-type>
+        <category>flat</category>
+        <location><address>жилой комплекс Квартал Герцена, к1</address><apartment>101</apartment></location>
+        <building-name>Квартал Герцена</building-name>
+        <price><value>14000000</value><currency>RUB</currency></price>
+        <area><value>57,1</value><unit>кв. м</unit></area>
+        <rooms>2</rooms>
+        <balcony>2 лоджии</balcony>
+      </offer>
+    </realty-feed>`;
+
+  const result = parser.parse(xml);
+
+  assert.deepEqual(result.warnings, []);
+  assert.equal(result.units[0].title, 'Первый квартал, квартира, № 31');
+  assert.equal(result.units[0].residentialDetails.balconyCount, 1);
+  assert.equal(result.units[1].residentialDetails.balconyCount, 2);
+  assert.equal(result.units[2].residentialDetails.balconyCount, 2);
+});
+
 test('YandexRealtyFeedParser treats hand-over buildings as delivered without completion date', () => {
   const parser = new YandexRealtyFeedParser();
   const xml = `<?xml version="1.0"?>

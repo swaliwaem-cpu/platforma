@@ -1,5 +1,60 @@
 # Codex Log
 
+## 2026-06-11 - Feed source mapping editor from edit mode
+
+Задача:
+
+- В режиме редактирования фида показать, какие ЖК сохранены в сопоставлении, и добавить кнопку для повторного открытия режима сопоставления как при первичной настройке.
+
+Изменения:
+
+- `apps/web/src/admin/FeedsAdminPage.tsx` - в метаданных source строка `ЖК` теперь показывает список сохраненных связок `объект фида -> ЖК`; добавлена кнопка `Редактировать сопоставление`, которая запускает тот же разбор фида и скроллит к `FeedSourceAnalysisPanel`.
+- `apps/web/src/styles.css` - добавлены компактные responsive-стили для списка сопоставлений.
+- `apps/web/src/app-theme.css` - новые элементы включены в theme-aware селекторы для темной админки.
+- `apps/web/tests/admin-feeds-page.test.mjs` - добавлена регрессия на повторное открытие редактора сопоставлений из режима редактирования фида.
+
+Проверки:
+
+- RED: новый тест `feeds admin editor can reopen and inspect saved source mappings` сначала падал на отсутствии `openSourceMappingsEditor`.
+- GREEN: `pnpm --filter @platforma/web test -- admin-feeds-page.test.mjs` - 236/236 passed.
+- `pnpm build:web` - passed, осталось штатное предупреждение Vite о чанке больше 500 kB.
+- Browser fallback: `http://localhost:5174/admin/feeds` открылся до экрана входа без UI crash; полноценная проверка админки не выполнена, потому что backend CORS разрешает `localhost:5173`, а временный Vite поднялся на `5174`.
+
+Ручная проверка:
+
+- Открыть `/admin/feeds/:id/edit` у source с несколькими mappings, убедиться, что в поле `ЖК` виден список связок и кнопка `Редактировать сопоставление`.
+- Нажать кнопку, дождаться разбора фида, проверить, что открылся блок `Разбор фида` с текущими select-сопоставлениями и сохранение применяет измененные mappings.
+
+## 2026-06-10 - Brusnika Yandex feed compatibility
+
+Задача:
+
+- Проверить фид Брусники `https://moskva.brusnika.ru/feed/yandex-msk/` на совместимость с текущим feed importer и адаптировать парсер при необходимости.
+
+Диагностика:
+
+- Фид скачался как XML `realty-feed` размером около 5.18 MB и определяется как `YANDEX_REALTY`.
+- До правки парсер вытаскивал 975 лотов и 6 объектов, но давал 607 предупреждений `INVALID_INTEGER` по `balconyCount`: значения Брусники приходят как `балкон`, `лоджия`, `2 балкона`, `2 лоджии` и похожие текстовые формы.
+- Также `<category>flat</category>` попадал в `FeedUnit.title` как английское `flat`.
+
+Изменения:
+
+- `tools/feed-import/src/index.ts` - Yandex-парсер нормализует `category=flat` в `квартира` для заголовка лота и переводит текстовые значения `balcony`/`balconies` в числовой `balconyCount` без warnings.
+- `tools/feed-import/tests/parser.test.cjs` - добавлена регрессия на Brusnika-style Yandex XML с `category=flat`, `лоджия`, `2 балкона`, `2 лоджии`.
+- `docs/CODEX_LOG.md` - добавлена эта запись.
+
+Проверки:
+
+- RED: новая регрессия `YandexRealtyFeedParser normalizes Brusnika flat category and textual balcony values` сначала падала на старом коде с `INVALID_INTEGER` по `balconyCount`.
+- GREEN: `pnpm --filter @platforma/feed-import build && cd tools/feed-import && node --test --test-name-pattern "Brusnika" tests/parser.test.cjs` - 1/1 passed.
+- `pnpm --filter @platforma/feed-import test` - 58/58 passed.
+- `pnpm --filter @platforma/feed-import run analyze -- --format AUTO --source-kind URL --url https://moskva.brusnika.ru/feed/yandex-msk/ --output /tmp/brusnika-feed-analysis.json` - format `YANDEX_REALTY`, developer `Брусника`, 975 лотов, 6 объектов, 0 warnings.
+
+Ручная проверка:
+
+- В `/admin/feeds` создать URL source для Брусники с format `YANDEX_REALTY` или `AUTO`, проверить suggested mappings: `Первый квартал`, `Квартал «Метроном»`, `Квартал Герцена`, `Квартал «МОНС»`, `Дом «А»`, `Квартал «Издание»`.
+- Перед production run выполнить preview по source и сверить привязку mappings к существующим объектам Platforma.
+
 ## 2026-06-06 - Production deploy aerotour and latest on-ser updates
 
 Задача:

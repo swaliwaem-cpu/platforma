@@ -1,8 +1,9 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, forwardRef, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeftIcon,
   EyeIcon,
   FileTextIcon,
+  PencilIcon,
   PlayIcon,
   PlusIcon,
   RefreshCwIcon,
@@ -200,6 +201,7 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
     return match?.[1] ?? null;
   }, [pathname]);
   const sourceInputRef = useRef<HTMLInputElement | null>(null);
+  const analysisPanelRef = useRef<HTMLElement | null>(null);
   const previousSourceFormRouteKeyRef = useRef<string | null>(null);
   const isCreateRoute = pathname === '/admin/feeds/new';
   const isListRoute = pathname === '/admin/feeds';
@@ -600,7 +602,13 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
     }
   }
 
-  async function analyzeSourceFeed() {
+  function scrollToAnalysisPanel() {
+    window.requestAnimationFrame(() => {
+      analysisPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
+
+  async function analyzeSourceFeed(options: { scrollToAnalysis?: boolean } = {}) {
     if (!accessToken) {
       return;
     }
@@ -680,11 +688,24 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
         };
       });
       setNotice(`Фид разобран: ${analysis.objects.length} объектов, ${analysis.unitsCount} лотов`);
+      if (options.scrollToAnalysis) {
+        scrollToAnalysisPanel();
+      }
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Не удалось разобрать фид');
     } finally {
       setIsAnalyzingSource(false);
     }
+  }
+
+  function openSourceMappingsEditor() {
+    scrollToAnalysisPanel();
+
+    if (sourceAnalysis || isAnalyzingSource) {
+      return;
+    }
+
+    void analyzeSourceFeed({ scrollToAnalysis: true });
   }
 
   function updateAnalysisMapping(sourceKey: string, objectId: string) {
@@ -995,13 +1016,14 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
                   </label>
 
                   <FeedSourceAnalysisPanel
+                    ref={analysisPanelRef}
                     analysis={sourceAnalysis}
                     mappingValues={form.mappings}
                     selectedDeveloper={developers.find((developer) => developer.id === form.developerId) ?? null}
                     objectOptions={filteredObjects}
                     isObjectSelectDisabled={!form.developerId}
                     isLoading={isAnalyzingSource}
-                    onAnalyze={() => void analyzeSourceFeed()}
+                    onAnalyze={() => void analyzeSourceFeed({ scrollToAnalysis: true })}
                     onMappingChange={updateAnalysisMapping}
                   />
 
@@ -1102,7 +1124,11 @@ export function FeedsAdminPage({ pathname, navigate, onBack }: FeedsAdminPagePro
 
               {editorSource ? (
                 <>
-                  <SourceMeta source={editorSource} metaSummary={editorSourceMetaSummary} />
+                  <SourceMeta
+                    source={editorSource}
+                    metaSummary={editorSourceMetaSummary}
+                    onEditMappings={openSourceMappingsEditor}
+                  />
                 </>
               ) : null}
             </AdminPanel>
@@ -1635,16 +1661,7 @@ function FeedRunProgressCard({ run, progress }: { run: FeedImportRun | null; pro
   );
 }
 
-function FeedSourceAnalysisPanel({
-  analysis,
-  mappingValues,
-  selectedDeveloper,
-  objectOptions,
-  isObjectSelectDisabled,
-  isLoading,
-  onAnalyze,
-  onMappingChange,
-}: {
+type FeedSourceAnalysisPanelProps = {
   analysis: FeedSourceAnalysis | null;
   mappingValues: SourceMappingFormState[];
   selectedDeveloper: ObjectDeveloper | null;
@@ -1653,11 +1670,22 @@ function FeedSourceAnalysisPanel({
   isLoading: boolean;
   onAnalyze: () => void;
   onMappingChange: (sourceKey: string, objectId: string) => void;
-}) {
+};
+
+const FeedSourceAnalysisPanel = forwardRef<HTMLElement, FeedSourceAnalysisPanelProps>(function FeedSourceAnalysisPanel({
+  analysis,
+  mappingValues,
+  selectedDeveloper,
+  objectOptions,
+  isObjectSelectDisabled,
+  isLoading,
+  onAnalyze,
+  onMappingChange,
+}, ref) {
   const analysisDeveloperName = analysis?.developerName ?? selectedDeveloper?.name ?? null;
 
   return (
-    <section className="field-wide feed-source-analysis" aria-label="Разбор фида">
+    <section ref={ref} className="field-wide feed-source-analysis" aria-label="Разбор фида">
       <div className="feed-source-analysis-header">
         <div>
           <strong>Разбор фида</strong>
@@ -1730,9 +1758,17 @@ function FeedSourceAnalysisPanel({
       ) : null}
     </section>
   );
-}
+});
 
-function SourceMeta({ source, metaSummary }: { source: FeedSource; metaSummary?: Record<string, unknown> | null }) {
+function SourceMeta({
+  source,
+  metaSummary,
+  onEditMappings,
+}: {
+  source: FeedSource;
+  metaSummary?: Record<string, unknown> | null;
+  onEditMappings?: () => void;
+}) {
   const previewMetrics = getFeedPreviewMetrics(metaSummary);
 
   return (
@@ -1743,7 +1779,9 @@ function SourceMeta({ source, metaSummary }: { source: FeedSource; metaSummary?:
       </div>
       <div>
         <dt>ЖК</dt>
-        <dd>{getSourceObjectTitle(source)}</dd>
+        <dd>
+          <SourceMappingsSummary source={source} onEditMappings={onEditMappings} />
+        </dd>
       </div>
       <div>
         <dt>Источник</dt>
@@ -1790,6 +1828,40 @@ function SourceMeta({ source, metaSummary }: { source: FeedSource; metaSummary?:
         <dd>{source.lastSuccessAt ? formatDateTime(source.lastSuccessAt) : 'Нет данных'}</dd>
       </div>
     </dl>
+  );
+}
+
+function SourceMappingsSummary({
+  source,
+  onEditMappings,
+}: {
+  source: FeedSource;
+  onEditMappings?: () => void;
+}) {
+  if (source.mappings.length === 0) {
+    return <span>{source.object?.title ?? 'ЖК не выбран'}</span>;
+  }
+
+  return (
+    <div className="feed-source-mappings-summary">
+      <div className="feed-source-mappings-summary-header">
+        <span>{getSourceObjectTitle(source)}</span>
+        {onEditMappings ? (
+          <AdminButton fit={false} tone="text" type="button" onClick={onEditMappings}>
+            <PencilIcon data-icon="inline-start" />
+            Редактировать сопоставление
+          </AdminButton>
+        ) : null}
+      </div>
+      <ul className="feed-source-mappings-list">
+        {source.mappings.map((mapping) => (
+          <li key={mapping.id}>
+            <span>{mapping.sourceTitle}</span>
+            <strong>{mapping.object.title}</strong>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
