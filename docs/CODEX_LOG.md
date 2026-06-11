@@ -1,5 +1,35 @@
 # Codex Log
 
+## 2026-06-11 - Production deploy Kortros TATE CIAN parser fix
+
+Задача:
+
+- Залить на production исправление `CianXmlFeedParser` для фида Kortros TATE `https://feeds.kortros.ru/brk/?obj=tate`.
+
+Деплой:
+
+- Локально на `on-ser` создан commit `fa9514a fix(feed-import): parse kortros tate discounts` и запушен в `origin/on-ser`.
+- Production `/opt/platforma` был на `46baea0`, рабочее дерево было чистым.
+- Production fast-forwarded до `fa9514a`.
+- Выполнено `docker compose -f docker-compose.prod.yml up -d --build api`; пересобран и перезапущен только `api`, `web` не менялся.
+
+Проверки:
+
+- Перед push: `pnpm --filter @platforma/feed-import test` - 61/61 passed; `git diff --check` - clean.
+- Production compose после деплоя: `api`, `postgres`, `redis`, `minio` healthy; `web` up.
+- Production local `/health` и public `https://api.broker.fluffywhite.moscow/health` вернули `status=ok`, `database=ok`, `postgis=true`.
+- Production API log после рестарта содержит `Nest application successfully started`.
+- Production parser smoke внутри API-контейнера на `https://feeds.kortros.ru/brk/?obj=tate`: `format=CIAN_XML`, `units=255`, `warnings=0`, `withPrice=255`, `withDiscountPrice=249`, `withEffectivePrice=255`, `gluedMediaTotal=0`, first `price=47681058.00`, `discountPrice=39575278.00`, `effectivePrice=39575278.00`.
+
+Спорное:
+
+- `realtyFloorLayout` из фида TATE по-прежнему не импортируется; текущая правка касается CIAN prices и склеенных `FullUrl` image URLs.
+- Production runtime-деплой выполнен на commit `fa9514a`; эта запись является doc-only follow-up.
+
+Ручная проверка:
+
+- В `/admin/feeds` создать или обновить source для `ЖК ТАТЕ (Тейт)`, выполнить preview/run и проверить, что у акционных лотов появились `discountPrice`/`effectivePrice`, а фото Башни Б не дают `MEDIA_DOWNLOAD_FAILED` по склеенным URL.
+
 ## 2026-06-11 - Kortros TATE CIAN feed compatibility check
 
 Задача:
