@@ -19,6 +19,7 @@
 - GREEN: `pnpm --filter @platforma/web test -- admin-feeds-page.test.mjs` - 236/236 passed.
 - `pnpm build:web` - passed, осталось штатное предупреждение Vite о чанке больше 500 kB.
 - Browser fallback: `http://localhost:5174/admin/feeds` открылся до экрана входа без UI crash; полноценная проверка админки не выполнена, потому что backend CORS разрешает `localhost:5173`, а временный Vite поднялся на `5174`.
+- Production follow-up: commit `687e656` запушен в `origin/on-ser`, production `/opt/platforma` fast-forwarded с `b0bd6ed` до `687e656`, пересобраны и перезапущены контейнеры `api` и `web`; публичный bundle `/assets/index-DLxokO5-.js` содержит `Редактировать сопоставление`.
 
 Ручная проверка:
 
