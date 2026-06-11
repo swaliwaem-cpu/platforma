@@ -1,5 +1,53 @@
 # Codex Log
 
+## 2026-06-11 - Kortros TATE CIAN feed compatibility check
+
+Задача:
+
+- Проверить фид `https://feeds.kortros.ru/brk/?obj=tate` на совместимость с текущим feed importer.
+
+Диагностика:
+
+- Фид доступен по URL, возвращает `200 OK`, `Content-Type: text/xml; charset=utf-8`, размер скачанного XML `671696` bytes.
+- XML имеет CIAN-подобную структуру `<feed><object>` и определяется автоанализом как `CIAN_XML`.
+- `@platforma/feed-import analyze` с `AUTO` и с явным `CIAN_XML` разобрал 255 residential лотов по одному объекту `ЖК "TATE"`, warnings `0`.
+- Все 255 лотов имеют `externalId`, `price/effectivePrice`, `area`, `floor`, `rooms`, `currency`, `address`, `projectName`, `building`, номер квартиры и `kitchenArea`.
+- Диапазоны нормализованных данных: цены `19154871.00-230934080.00`, площади `30.08-206.56`, этажи `3-47`, комнаты `1/2/3/4/5`; корпуса `Башня A` и `Башня Б`.
+- Analyze предложил `filterJson: {"projectNames":["ЖК \"TATE\""]}`.
+- В локальной базе найден published object `ЖК ТАТЕ (Тейт)` и developer `Кортрос`; существующего `FeedSource` для `feeds.kortros.ru/brk/?obj=tate` не найдено, текущих `FeedUnit` для объекта `0`.
+- Найдено 4 уникальные склеенные image-ссылки вида `http://feeds.kortros.ru/uploadshttp://feeds.kortros.ru/uploads/img/tate/cian/1.jpeg`; в сыром XML нет пробела между `uploads` и `http`, а вариант с пробелом все равно был бы двумя URL в одном поле.
+- В `promotion_date` у 249 лотов есть текстовая старая цена `Стоимость без акции ...`; до правки CIAN parser не считал это `discountPrice`, потому что цена не передана отдельным структурным полем `oldprice`/`DiscountPrice`.
+- В фиде нет completion-полей, поэтому `completionYear`/`completionQuarter` будут `null`; `realtyFloorLayout` в текущем `collectCianMedia()` не импортируется, импортируются `LayoutPhoto` и `Photos`.
+- После правки parser-а все 255 лотов имеют `price` и `effectivePrice`, 249 лотов имеют `discountPrice`; склеенных media URL в нормализованном результате `0`.
+
+Изменения:
+
+- `tools/feed-import/src/index.ts` - CIAN parser теперь извлекает old/base price из `promotion_date` по тексту `Стоимость без акции ...`, а `BargainTerms.Price` сохраняет как `discountPrice`, если он ниже base price; media URL с несколькими `http(s)://` в одном `FullUrl` разбираются на candidates, лишний URL-префикс отбрасывается.
+- `tools/feed-import/tests/parser.test.cjs` - добавлены регрессии на Kortros TATE `promotion_date` prices и склеенный/разделенный пробелом absolute media URL.
+- `docs/CODEX_LOG.md` - добавлена текущая запись о диагностике.
+
+Проверки:
+
+- `curl -L --fail --max-time 120 -I https://feeds.kortros.ru/brk/?obj=tate` - `200 OK`.
+- `curl -L --fail --max-time 120 https://feeds.kortros.ru/brk/?obj=tate -o /tmp/platforma-kortros-tate-feed.xml` - XML скачан.
+- `pnpm --filter @platforma/feed-import run analyze -- --format AUTO --source-kind URL --url https://feeds.kortros.ru/brk/?obj=tate --output /tmp/platforma-kortros-tate-analysis.json` - passed, `CIAN_XML`, 255 units, 0 warnings.
+- `pnpm --filter @platforma/feed-import run analyze -- --format CIAN_XML --source-kind FILE --file /tmp/platforma-kortros-tate-feed.xml --output /tmp/platforma-kortros-tate-analysis-cian.json` - passed, 255 units, 0 warnings.
+- RED: `pnpm --filter @platforma/feed-import build && cd tools/feed-import && node --test --test-name-pattern "Kortros promotion_date|duplicated absolute prefix" tests/parser.test.cjs` сначала падал на старом `price` и склеенном media URL.
+- GREEN: тот же targeted test passed; warning regression test passed.
+- `pnpm --filter @platforma/feed-import test` - 61/61 passed.
+- `pnpm --filter @platforma/feed-import run analyze -- --format AUTO --source-kind FILE --file /tmp/platforma-kortros-tate-feed-latest.xml --output /tmp/platforma-kortros-tate-analysis-fixed.json` - passed, `CIAN_XML`, 255 units, 0 warnings.
+- `node` script через `createFeedParserForFormat('CIAN_XML')` - normalized parse stats checked.
+- `node` script после правки по реальному TATE XML - `withPrice=255`, `withDiscountPrice=249`, `withEffectivePrice=255`, `gluedMediaTotal=0`, first lot `price=47681058.00`, `discountPrice=39575278.00`.
+- `curl -I` для корректных media examples - `200`; для старой склеенной ссылки `uploadshttp://.../1.jpeg` - `404`.
+- Read-only local DB query по `real_estate_objects`, `developers`, `feed_sources`, `feed_units`.
+
+Ручная проверка:
+
+- В `/admin/feeds` создать URL source с format `CIAN_XML`, developer `Кортрос`, object `ЖК ТАТЕ (Тейт)`, при желании с source filter `{"projectNames":["ЖК \"TATE\""]}`.
+- Перед production run выполнить preview и проверить, что 255 лотов попали в нужный ЖК.
+- После деплоя правки выполнить preview/run по source и проверить, что у 249 акционных лотов появились `discountPrice`/`effectivePrice`, а фото Башни Б скачиваются без `MEDIA_DOWNLOAD_FAILED` по склеенным URL.
+- Если нужны floor layout media из `realtyFloorLayout`, нужна отдельная доработка parser-а.
+
 ## 2026-06-11 - Production deploy Strana CIAN price parser fix
 
 Задача:

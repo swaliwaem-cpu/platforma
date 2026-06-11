@@ -343,7 +343,7 @@ export class CianXmlFeedParser implements FeedParser {
       warnings.push(withExternalId(statusResult.warning, externalId));
     }
 
-    const price = normalizeCianPrice(bargainTerms, externalId, warnings);
+    const price = normalizeCianPrice(object, bargainTerms, externalId, warnings);
     const discountPrice = normalizeCianDiscountPrice(object, bargainTerms, price, externalId, warnings);
     const effectivePrice = discountPrice ?? price;
     const floor = normalizeInteger(object.FloorNumber, 'floor', externalId, warnings);
@@ -1309,6 +1309,7 @@ function normalizeCianFeedUnitStatus(object: XmlRecord): FeedStatusNormalization
 }
 
 function normalizeCianPrice(
+  object: XmlRecord,
   bargainTerms: XmlRecord | null,
   externalId: string,
   warnings: FeedParserWarning[],
@@ -1320,7 +1321,13 @@ function normalizeCianPrice(
     warnings,
   );
   const oldPrice = normalizeFirstPositiveDecimal(
-    [bargainTerms?.OldPrice, bargainTerms?.oldPrice, bargainTerms?.Oldprice, bargainTerms?.oldprice],
+    [
+      bargainTerms?.OldPrice,
+      bargainTerms?.oldPrice,
+      bargainTerms?.Oldprice,
+      bargainTerms?.oldprice,
+      getCianPromotionOldPrice(object),
+    ],
     'price',
     externalId,
     warnings,
@@ -1340,7 +1347,7 @@ function normalizeCianDiscountPrice(
   externalId: string,
   warnings: FeedParserWarning[],
 ) {
-  const discountPrice = normalizeFirstPositiveDecimal(
+  const explicitDiscountPrice = normalizeFirstLowerPositiveDecimal(
     [
       bargainTerms?.DiscountPrice,
       bargainTerms?.discountPrice,
@@ -1348,18 +1355,22 @@ function normalizeCianDiscountPrice(
       bargainTerms?.discountedPrice,
       bargainTerms?.FinalPrice,
       bargainTerms?.finalPrice,
-      bargainTerms?.price,
       object.DiscountPrice,
       object.discountPrice,
       object.DiscountedPrice,
       object.discountedPrice,
     ],
+    price,
     'discountPrice',
     externalId,
     warnings,
   );
 
-  return getLowerPositiveDecimal(discountPrice, price);
+  if (explicitDiscountPrice !== null) {
+    return explicitDiscountPrice;
+  }
+
+  return getLowerPositiveDecimal(normalizeCianCurrentPriceSilently(bargainTerms), price);
 }
 
 function getCianCurrency(bargainTerms: XmlRecord | null) {
@@ -1398,6 +1409,62 @@ function normalizeFirstPositiveDecimal(
   }
 
   return null;
+}
+
+function normalizeFirstLowerPositiveDecimal(
+  values: unknown[],
+  baseValue: string | null,
+  field: string,
+  externalId: string,
+  warnings: FeedParserWarning[],
+) {
+  for (const value of values) {
+    if (getDecimalText(value) === null) {
+      continue;
+    }
+
+    const decimal = normalizePositiveDecimal(value, field, externalId, warnings);
+    const lowerDecimal = getLowerPositiveDecimal(decimal, baseValue);
+
+    if (lowerDecimal !== null) {
+      return lowerDecimal;
+    }
+  }
+
+  return null;
+}
+
+function normalizeCianCurrentPriceSilently(bargainTerms: XmlRecord | null) {
+  return normalizeFirstPositiveDecimalSilently([bargainTerms?.price, bargainTerms?.Price]);
+}
+
+function normalizeFirstPositiveDecimalSilently(values: unknown[]) {
+  for (const value of values) {
+    const raw = getDecimalText(value);
+
+    if (raw === null) {
+      continue;
+    }
+
+    const normalized = raw.replace(/\s+/g, '').replace(',', '.');
+    const numeric = Number(normalized);
+
+    if (Number.isFinite(numeric) && numeric > 0) {
+      return formatDecimal(numeric);
+    }
+  }
+
+  return null;
+}
+
+function getCianPromotionOldPrice(object: XmlRecord) {
+  const text =
+    getText(object.promotion_date) ??
+    getText(object.PromotionDate) ??
+    getText(object.promotionDate);
+  const match = text?.match(/стоимость\s+без\s+акции\s+([0-9][0-9\s.,]*)/iu);
+
+  return match?.[1]?.trim() ?? null;
 }
 
 function normalizeCianNumericStatus(value: unknown): FeedStatusNormalizationResult | null {
@@ -2097,27 +2164,70 @@ function addMedia(
     return;
   }
 
-  if (!isHttpUrl(sourceUrl)) {
-    warnings.push({
-      code: 'INVALID_MEDIA_URL',
-      externalId,
-      field: 'media',
-      message: `Invalid media URL: ${sourceUrl}`,
-      value: sourceUrl,
+  for (const candidateUrl of getMediaSourceUrlCandidates(sourceUrl)) {
+    if (!isHttpUrl(candidateUrl)) {
+      warnings.push({
+        code: 'INVALID_MEDIA_URL',
+        externalId,
+        field: 'media',
+        message: `Invalid media URL: ${candidateUrl}`,
+        value: candidateUrl,
+      });
+      continue;
+    }
+
+    if (seen.has(candidateUrl)) {
+      continue;
+    }
+
+    seen.add(candidateUrl);
+    media.push({
+      sourceUrl: candidateUrl,
+      sortOrder: media.length,
+      label,
     });
-    return;
+  }
+}
+
+function getMediaSourceUrlCandidates(sourceUrl: string) {
+  const trimmed = sourceUrl.trim();
+  const urlStarts = [...trimmed.matchAll(/https?:\/\//giu)]
+    .map((match) => match.index)
+    .filter((index): index is number => typeof index === 'number');
+
+  if (urlStarts.length <= 1) {
+    return [trimmed];
   }
 
-  if (seen.has(sourceUrl)) {
-    return;
-  }
+  const candidates = urlStarts.map((start, index) =>
+    trimmed
+      .slice(start, urlStarts[index + 1] ?? trimmed.length)
+      .trim()
+      .replace(/^[,\s]+|[,\s]+$/gu, ''),
+  );
 
-  seen.add(sourceUrl);
-  media.push({
-    sourceUrl,
-    sortOrder: media.length,
-    label,
-  });
+  return candidates.filter((candidate, index) =>
+    !candidates.some((otherCandidate, otherIndex) =>
+      index !== otherIndex && isMediaUrlPrefix(candidate, otherCandidate),
+    ),
+  );
+}
+
+function isMediaUrlPrefix(prefixCandidate: string, sourceCandidate: string) {
+  try {
+    const prefixUrl = new URL(prefixCandidate);
+    const sourceUrl = new URL(sourceCandidate);
+
+    if (prefixUrl.origin !== sourceUrl.origin || prefixUrl.pathname === '/') {
+      return false;
+    }
+
+    const prefixPath = prefixUrl.pathname.endsWith('/') ? prefixUrl.pathname : `${prefixUrl.pathname}/`;
+
+    return sourceUrl.pathname.startsWith(prefixPath);
+  } catch {
+    return false;
+  }
 }
 
 function isHttpUrl(value: string) {

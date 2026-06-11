@@ -577,6 +577,47 @@ test('CianXmlFeedParser reads discount price and house deadline fields', () => {
   assert.equal(unit.completionQuarter, 4);
 });
 
+test('CianXmlFeedParser reads Kortros promotion_date old price as base price', () => {
+  const parser = new CianXmlFeedParser();
+  const xml = `<?xml version="1.0"?>
+    <feed>
+      <object>
+        <ExternalId>kortros-tate-39</ExternalId>
+        <Category>newBuildingFlatSale</Category>
+        <Address>Москва, ул. Веткина, д. 2</Address>
+        <FlatRoomsCount>3</FlatRoomsCount>
+        <TotalArea>79,14</TotalArea>
+        <FloorNumber>5</FloorNumber>
+        <JKSchema>
+          <Name>ЖК "TATE"</Name>
+          <House>
+            <Name>Башня A</Name>
+            <Flat>
+              <FlatNumber>39</FlatNumber>
+              <SectionNumber>1</SectionNumber>
+            </Flat>
+          </House>
+        </JKSchema>
+        <BargainTerms>
+          <Price>39575278</Price>
+          <Currency>rur</Currency>
+        </BargainTerms>
+        <promotion_date>Указанная акционная стоимость доступна при 100% оплате. Стоимость без акции 47681058.</promotion_date>
+      </object>
+    </feed>`;
+
+  const result = parser.parse(xml);
+  const unit = result.units[0];
+
+  assert.deepEqual(result.warnings, []);
+  assert.equal(unit.price, '47681058.00');
+  assert.equal(unit.discountPrice, '39575278.00');
+  assert.equal(unit.effectivePrice, '39575278.00');
+  assert.equal(unit.pricePerMeter, '602489.99');
+  assert.equal(unit.discountPricePerMeter, '500066.69');
+  assert.equal(unit.effectivePricePerMeter, '500066.69');
+});
+
 test('CianXmlFeedParser reads Strana lowercase price and oldprice values', () => {
   const parser = new CianXmlFeedParser();
   const xml = `<?xml version="1.0"?>
@@ -735,6 +776,44 @@ test('CianXmlFeedParser normalizes Etalon-style project, house, rooms and media 
   assert.deepEqual(analysis.objects[0].filterJson, {
     projectNames: ['Шагал'],
   });
+});
+
+test('CianXmlFeedParser recovers media urls with duplicated absolute prefix', () => {
+  const parser = new CianXmlFeedParser();
+  const xml = `<?xml version="1.0"?>
+    <feed>
+      <object>
+        <ExternalId>kortros-tate-media-1</ExternalId>
+        <Category>newBuildingFlatSale</Category>
+        <Address>Москва, ул. Веткина, д. 2</Address>
+        <FlatRoomsCount>2</FlatRoomsCount>
+        <TotalArea>62,18</TotalArea>
+        <FloorNumber>22</FloorNumber>
+        <BargainTerms><Price>31971765</Price><Currency>rur</Currency></BargainTerms>
+        <JKSchema><Name>ЖК "TATE"</Name><House><Name>Башня Б</Name></House></JKSchema>
+        <Photos>
+          <PhotoSchema><FullUrl>http://feeds.kortros.ru/uploads http://feeds.kortros.ru/uploads/img/tate/cian/1.jpeg</FullUrl></PhotoSchema>
+          <PhotoSchema><FullUrl>http://feeds.kortros.ru/uploadshttp://feeds.kortros.ru/uploads/img/tate/cian/2.jpeg</FullUrl></PhotoSchema>
+        </Photos>
+      </object>
+    </feed>`;
+
+  const result = parser.parse(xml);
+  const unit = result.units[0];
+
+  assert.deepEqual(result.warnings, []);
+  assert.deepEqual(unit.media, [
+    {
+      sourceUrl: 'http://feeds.kortros.ru/uploads/img/tate/cian/1.jpeg',
+      sortOrder: 0,
+      label: 'photo',
+    },
+    {
+      sourceUrl: 'http://feeds.kortros.ru/uploads/img/tate/cian/2.jpeg',
+      sortOrder: 1,
+      label: 'photo',
+    },
+  ]);
 });
 
 test('CianXmlFeedParser forces Sminex residential titles to apartment number', () => {
