@@ -1,5 +1,39 @@
 # Codex Log
 
+## 2026-06-11 - Production deploy Strana CIAN price parser fix
+
+Задача:
+
+- Залить на production исправление `CianXmlFeedParser` для lower-case `price/oldprice` в фидах Страны.
+
+Деплой:
+
+- Локально проверен `on-ser`, выполнен commit `eb77c45 fix(feed-import): read lowercase cian prices` и push в `origin/on-ser`.
+- Production `/opt/platforma` был на `d97b196`, рабочее дерево было чистым.
+- Production fast-forwarded до `eb77c45`.
+- Выполнено `docker compose -f docker-compose.prod.yml up -d --build api`; пересобран и перезапущен только `api`, `web` не менялся.
+
+Проверки:
+
+- Перед push: `pnpm --filter @platforma/feed-import test` - 59/59 passed; `git diff --check` - clean.
+- Production compose: `api`, `postgres`, `redis`, `minio` healthy; `web` up.
+- Production local `/health` и public `https://api.broker.fluffywhite.moscow/health` вернули `status=ok`, `database=ok`, `postgis=true`.
+- Production API log после рестарта содержит `Nest application successfully started`.
+- Production parser smoke внутри API-контейнера на `https://sk.mgcom.ru/strana-dev/cian_city.xml`: `format=CIAN_XML`, `units=181`, `warnings=0`, `missingPrice=0`, `missingEffectivePrice=0`, first `price=60760000.00`, `effectivePrice=49820000.00`.
+- Production source `83d1d6af-c8eb-4c67-a8e5-c18d1cf3c006` (`INDEX_URL` на Google Sheet Страны) после рестарта автоматически получил preview/run: run `bc3203ff-38d1-4a03-9816-0309753c7b3a` success, `updated=1053`, `warningsCount=0`, `errorsCount=0`.
+- Production DB после run: `feed_units` source `83d1d6af-c8eb-4c67-a8e5-c18d1cf3c006` - `units=1053`, `with_price=1053`, `with_discount_price=1053`, `with_effective_price=1053`, min effective price `9658027.00`, max `280400000.00`.
+- Object feed aggregates обновлены для 4 mapped objects: `АУРУС Резиденции`, `Репаблик`, `ЖК Страна.Парковая`, `Страна.Заречная`.
+
+Спорное:
+
+- В production source настроены 4 active mappings из 5 строк Google Sheet; `Страна Озерная` из таблицы не была в active mappings, поэтому ее агрегаты не обновлялись этим source.
+- Финальная production проверка после runtime-деплоя была на commit `eb77c45`; эта запись является doc-only follow-up.
+
+Ручная проверка:
+
+- Открыть `/admin/feeds` source `83d1d6af-c8eb-4c67-a8e5-c18d1cf3c006`, проверить список mappings и добавить/исправить mapping для `Страна Озерная`, если этот ЖК должен импортироваться из таблицы.
+- Открыть публичные карточки mapped ЖК и убедиться, что цены/диапазоны лотов отображаются.
+
 ## 2026-06-11 - Strana CIAN feeds lowercase price import fix
 
 Задача:
