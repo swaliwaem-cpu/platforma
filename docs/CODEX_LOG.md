@@ -1,5 +1,70 @@
 # Codex Log
 
+## 2026-06-11 - Strana CIAN feeds lowercase price import fix
+
+Задача:
+
+- Проверить фиды из Google Sheets `1gAQe9RqES84w_CL4JflyKEgTvi_btFmj2uc8LAPvQ_g`, где после импорта не появились цены, и найти причину.
+
+Диагностика:
+
+- В таблице найдены 5 CIAN URL: `cian_zarechnaya_broker.xml`, `cian_parkovaya_broker.xml`, `cian_republic_broker.xml`, `cian_ozernaya_broker.xml`, `cian_city.xml`.
+- Все 5 XML скачиваются, определяются как `CIAN_XML` и содержат лоты в `<feed><object>`.
+- В XML цены есть, но в формате `<BargainTerms><price><value>...</value><currency>RUR</currency></price><oldprice><value>...</value>...</oldprice></BargainTerms>`.
+- До правки `CianXmlFeedParser` читал только `BargainTerms.Price` и `BargainTerms.Currency`, поэтому на этих фидах `price`, `discountPrice`, `effectivePrice`, `pricePerMeter` и `currency` становились `null` без warnings.
+- После правки на всех 5 реальных XML `missingPrice=0`, `missingEffectivePrice=0`, `warnings=0`; `oldprice` сохраняется как base `price`, `price` сохраняется как `discountPrice/effectivePrice`.
+- В локальной БД read-only проверка не нашла `FeedSource` с этими 5 URL, поэтому существующие локальные импортированные units не обновлялись.
+
+Изменения:
+
+- `tools/feed-import/src/index.ts` - CIAN parser теперь читает lower-case `price.value`, lower-case `oldprice.value`, currency из вложенного lower-case price и считает текущую lower-case `price` скидочной ценой, если `oldprice` больше.
+- `tools/feed-import/tests/parser.test.cjs` - добавлена регрессия на Strana-style CIAN `price/oldprice`.
+- `docs/CODEX_LOG.md` - добавлена текущая запись.
+
+Проверки:
+
+- RED: `pnpm --filter @platforma/feed-import build && cd tools/feed-import && node --test --test-name-pattern "Strana lowercase price" tests/parser.test.cjs` сначала падал на `unit.price === null`.
+- GREEN: тот же targeted test passed.
+- `pnpm --filter @platforma/feed-import test` - 59/59 passed.
+- `node` parse script по 5 скачанным Strana CIAN XML - все цены и effective prices заполнены, warnings `0`.
+- Read-only local DB query по `feed_sources.url` для этих 5 URL - 0 rows.
+
+Ручная проверка:
+
+- После деплоя правки выполнить `preview`, затем `run` по созданным production sources; если units уже были импортированы с `null` prices, только `run` обновит `FeedUnit` и объектные feed aggregates.
+
+## 2026-06-11 - Strana Development Yandex feed compatibility check
+
+Задача:
+
+- Проверить фид `https://sk.mgcom.ru/strana-dev/ya_realty_city.xml` на совместимость с текущим feed importer.
+
+Диагностика:
+
+- Фид доступен по URL, возвращает `200 OK`, `Content-Type: text/xml`, размер `710075` bytes, `Last-Modified: Thu, 11 Jun 2026 07:26:00 GMT`.
+- XML имеет root `realty-feed` и определяется автоанализом как `YANDEX_REALTY`.
+- `@platforma/feed-import analyze` разобрал 181 лот, 1 объект `АУРУС Резиденции`, developer `Страна Девелопмент`, warnings `0`.
+- Анализатор предложил filterJson по `buildingNames: ["АУРУС Резиденции"]`, `yandexBuildingIds: ["4538694"]`, `yandexHouseIds: ["4538765"]`, `addressIncludes: ["2-й Красногвардейский проезд"]`.
+- Нормализованные лоты: residential `181`, available `181`, rooms `1/2/3`, prices/discount prices заполнены у всех, area/floor/rooms/projectName/address/building заполнены у всех, completion `2031 Q4`.
+- Медиа: 1447 image-ссылок, 7-8 на лот; выборочные HEAD-проверки plan image и project image вернули `200` и `image/jpeg`.
+- В локальной базе read-only найден published object `Жилой комплекс АУРУС Резиденции (Страна.Сити)` и developer `Страна Девелопмент`, к которым source можно привязать.
+
+Изменения:
+
+- `docs/CODEX_LOG.md` - добавлена текущая запись о диагностике.
+
+Проверки:
+
+- `curl -L --fail --max-time 120 https://sk.mgcom.ru/strana-dev/ya_realty_city.xml` - XML скачан.
+- `pnpm --filter @platforma/feed-import run analyze -- --format AUTO --source-kind URL --url https://sk.mgcom.ru/strana-dev/ya_realty_city.xml --output /tmp/platforma-mgcom-strana-analysis.json` - passed, `YANDEX_REALTY`, 181 units, 1 object, 0 warnings.
+- `node` script через `createFeedParserForFormat('YANDEX_REALTY')` - normalized parse passed, 181 units, 0 parser warnings.
+- `docker compose exec -T postgres psql ... select ... from real_estate_objects/developers` - read-only проверка существующих object/developer.
+
+Ручная проверка:
+
+- В `/admin/feeds` выполнить analyze с `AUTO` или сразу выбрать `YANDEX_REALTY`; сам URL source сохранить с format `YANDEX_REALTY`, developer `Страна Девелопмент`, object `Жилой комплекс АУРУС Резиденции (Страна.Сити)`.
+- Перед production run выполнить preview по source и сверить, что 181 лот попали в нужный ЖК; run не запускался в рамках диагностики.
+
 ## 2026-06-11 - Feed source mapping editor from edit mode
 
 Задача:

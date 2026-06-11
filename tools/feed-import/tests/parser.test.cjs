@@ -577,6 +577,54 @@ test('CianXmlFeedParser reads discount price and house deadline fields', () => {
   assert.equal(unit.completionQuarter, 4);
 });
 
+test('CianXmlFeedParser reads Strana lowercase price and oldprice values', () => {
+  const parser = new CianXmlFeedParser();
+  const xml = `<?xml version="1.0"?>
+    <feed>
+      <object>
+        <ExternalId>strana-city-1</ExternalId>
+        <Category>newBuildingFlatSale</Category>
+        <Address>Россия, Москва, 2-й Красногвардейский проезд</Address>
+        <FlatRoomsCount>1</FlatRoomsCount>
+        <TotalArea>53.8</TotalArea>
+        <FloorNumber>9</FloorNumber>
+        <JKSchema>
+          <Name>АУРУС Резиденции</Name>
+          <House>
+            <Name>Башня Б</Name>
+            <Flat>
+              <SectionNumber>2</SectionNumber>
+              <FlatNumber>2.9.2</FlatNumber>
+            </Flat>
+          </House>
+        </JKSchema>
+        <BargainTerms>
+          <SaleType>fz214</SaleType>
+          <price>
+            <value>49820000</value>
+            <currency>RUR</currency>
+          </price>
+          <oldprice>
+            <value>60760000</value>
+            <currency>RUR</currency>
+          </oldprice>
+        </BargainTerms>
+      </object>
+    </feed>`;
+
+  const result = parser.parse(xml);
+  const unit = result.units[0];
+
+  assert.deepEqual(result.warnings, []);
+  assert.equal(unit.price, '60760000.00');
+  assert.equal(unit.discountPrice, '49820000.00');
+  assert.equal(unit.effectivePrice, '49820000.00');
+  assert.equal(unit.currency, 'RUR');
+  assert.equal(unit.pricePerMeter, '1129368.03');
+  assert.equal(unit.discountPricePerMeter, '926022.30');
+  assert.equal(unit.effectivePricePerMeter, '926022.30');
+});
+
 test('CianXmlFeedParser normalizes Etalon-style project, house, rooms and media fields', () => {
   const parser = new CianXmlFeedParser();
   const xml = `<?xml version="1.0"?>

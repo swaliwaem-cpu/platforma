@@ -343,7 +343,7 @@ export class CianXmlFeedParser implements FeedParser {
       warnings.push(withExternalId(statusResult.warning, externalId));
     }
 
-    const price = normalizeDecimal(bargainTerms?.Price, 'price', externalId, warnings);
+    const price = normalizeCianPrice(bargainTerms, externalId, warnings);
     const discountPrice = normalizeCianDiscountPrice(object, bargainTerms, price, externalId, warnings);
     const effectivePrice = discountPrice ?? price;
     const floor = normalizeInteger(object.FloorNumber, 'floor', externalId, warnings);
@@ -367,7 +367,7 @@ export class CianXmlFeedParser implements FeedParser {
       price,
       discountPrice,
       effectivePrice,
-      currency: getText(bargainTerms?.Currency),
+      currency: getCianCurrency(bargainTerms),
       area,
       pricePerMeter: calculatePricePerMeter(price, area),
       discountPricePerMeter: calculatePricePerMeter(discountPrice, area),
@@ -1308,6 +1308,31 @@ function normalizeCianFeedUnitStatus(object: XmlRecord): FeedStatusNormalization
   return { status: 'AVAILABLE' };
 }
 
+function normalizeCianPrice(
+  bargainTerms: XmlRecord | null,
+  externalId: string,
+  warnings: FeedParserWarning[],
+) {
+  const currentPrice = normalizeFirstPositiveDecimal(
+    [bargainTerms?.Price, bargainTerms?.price],
+    'price',
+    externalId,
+    warnings,
+  );
+  const oldPrice = normalizeFirstPositiveDecimal(
+    [bargainTerms?.OldPrice, bargainTerms?.oldPrice, bargainTerms?.Oldprice, bargainTerms?.oldprice],
+    'price',
+    externalId,
+    warnings,
+  );
+
+  if (oldPrice !== null && (currentPrice === null || Number(oldPrice) > Number(currentPrice))) {
+    return oldPrice;
+  }
+
+  return currentPrice ?? oldPrice;
+}
+
 function normalizeCianDiscountPrice(
   object: XmlRecord,
   bargainTerms: XmlRecord | null,
@@ -1323,6 +1348,7 @@ function normalizeCianDiscountPrice(
       bargainTerms?.discountedPrice,
       bargainTerms?.FinalPrice,
       bargainTerms?.finalPrice,
+      bargainTerms?.price,
       object.DiscountPrice,
       object.discountPrice,
       object.DiscountedPrice,
@@ -1336,6 +1362,23 @@ function normalizeCianDiscountPrice(
   return getLowerPositiveDecimal(discountPrice, price);
 }
 
+function getCianCurrency(bargainTerms: XmlRecord | null) {
+  const priceRecord =
+    asRecord(bargainTerms?.Price) ??
+    asRecord(bargainTerms?.price) ??
+    asRecord(bargainTerms?.OldPrice) ??
+    asRecord(bargainTerms?.oldPrice) ??
+    asRecord(bargainTerms?.Oldprice) ??
+    asRecord(bargainTerms?.oldprice);
+
+  return (
+    getText(bargainTerms?.Currency) ??
+    getText(bargainTerms?.currency) ??
+    getText(priceRecord?.Currency) ??
+    getText(priceRecord?.currency)
+  );
+}
+
 function normalizeFirstPositiveDecimal(
   values: unknown[],
   field: string,
@@ -1343,7 +1386,7 @@ function normalizeFirstPositiveDecimal(
   warnings: FeedParserWarning[],
 ) {
   for (const value of values) {
-    if (getText(value) === null) {
+    if (getDecimalText(value) === null) {
       continue;
     }
 
