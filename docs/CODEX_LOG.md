@@ -1,5 +1,42 @@
 # Codex Log
 
+## 2026-06-12 - Catalog search ё normalization diagnosis and fix
+
+Задача:
+
+- Проверить production-ошибку на каталоге с поиском `Пыжёвский`, где UI показывал `Не удалось связаться с сервером`.
+
+Диагностика:
+
+- Production checkout `/opt/platforma` на `b458f77`, рабочее дерево чистое.
+- Production containers: `api`, `postgres`, `redis`, `minio` healthy; `web` up.
+- Public `https://api.broker.fluffywhite.moscow/health` возвращает `status=ok`, `database=ok`, `postgis=true`.
+- Production CORS preflight для `https://broker.fluffywhite.moscow` на `/objects` возвращает `204` с `Access-Control-Allow-Origin: https://broker.fluffywhite.moscow`.
+- Production web bundle собран с `https://api.broker.fluffywhite.moscow`; runtime env: `WEB_ORIGIN=https://broker.fluffywhite.moscow`, `VITE_API_URL=https://api.broker.fluffywhite.moscow`.
+- Nginx/API логи не показали 5xx или upstream errors; реальные браузерные `/objects`, `/map/objects`, directory и media requests отвечали `200/204`.
+- По точному request `search=Пыжёвский` production API отвечал `200`, но пустой выдачей.
+- В production DB объект есть: `Клубный дом Пыжёвский`, slug `klubnyj-dom-pyzhyovskij`.
+- Root cause для пустой выдачи: input search нормализуется `ё -> е`, а SQL-поля `title/developer/address/location` нормализовали только case/dots. Поэтому pattern `%пыжевский%` не матчился с DB value `Пыжёвский`.
+- Production read-only SQL check: старое условие дало `old_match=0`, новое `replace(... 'ё','е')` дало `new_match=1`.
+- Текст `Не удалось связаться с сервером` остался классифицирован как client-side fetch failure/CORS/network symptom: server-side evidence for current production API outage не найдено.
+
+Изменения:
+
+- `apps/api/src/objects/object-search.ts` - catalog/map raw SQL search fields now normalize `ё -> е` before dot removal and LIKE matching.
+- `apps/api/tests/services.test.cjs` - добавлена регрессия на `Пыжёвский`; существующие search SQL expectations обновлены под `ё` normalization.
+- `docs/CODEX_LOG.md` - добавлена текущая запись.
+
+Проверки:
+
+- RED: `pnpm --filter @platforma/api build && cd apps/api && node --test --test-name-pattern "normalizes ё" tests/services.test.cjs` - сначала падал на старой SQL-форме без `replace(... 'ё','е')`.
+- GREEN targeted: `pnpm --filter @platforma/api build && cd apps/api && node --test --test-name-pattern "normalizes ё|ignores dots|transliteration" tests/services.test.cjs` - 4/4 passed.
+- Full API: `pnpm --filter @platforma/api test` - 184/184 passed.
+
+Ручная проверка:
+
+- После deploy открыть `/catalog?search=Пыжёвский` и `/catalog/map?search=Пыжёвский`, убедиться, что `Клубный дом Пыжёвский` находится в списке/на карте.
+- Если UI снова покажет `Не удалось связаться с сервером`, проверить DevTools Network на фактический failed request/origin, потому что server-side API/CORS/nginx health в ходе диагностики были нормальными.
+
 ## 2026-06-11 - Production deploy Kortros TATE CIAN parser fix
 
 Задача:

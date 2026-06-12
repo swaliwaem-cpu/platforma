@@ -16,15 +16,15 @@ export async function findCatalogSearchObjectIds(client: ObjectSearchClient, sea
     return [];
   }
 
-  const titleSearch = createLikeSearchCondition(Prisma.sql`replace(lower(coalesce(o.title, '')), '.', '')`, patterns);
-  const developerSearch = createLikeSearchCondition(Prisma.sql`replace(lower(coalesce(d.name, '')), '.', '')`, patterns);
-  const addressSearch = createLikeSearchCondition(Prisma.sql`replace(lower(coalesce(o.address, '')), '.', '')`, patterns);
+  const titleSearch = createLikeSearchCondition(createNormalizedSearchField(Prisma.sql`coalesce(o.title, '')`), patterns);
+  const developerSearch = createLikeSearchCondition(createNormalizedSearchField(Prisma.sql`coalesce(d.name, '')`), patterns);
+  const addressSearch = createLikeSearchCondition(createNormalizedSearchField(Prisma.sql`coalesce(o.address, '')`), patterns);
   const primaryDistrictSearch = createLikeSearchCondition(
-    Prisma.sql`replace(lower(coalesce(pl.name, '')), '.', '')`,
+    createNormalizedSearchField(Prisma.sql`coalesce(pl.name, '')`),
     patterns,
   );
   const linkedDistrictSearch = createLikeSearchCondition(
-    Prisma.sql`replace(lower(coalesce(l.name, '')), '.', '')`,
+    createNormalizedSearchField(Prisma.sql`coalesce(l.name, '')`),
     patterns,
   );
   const rows = await client.$queryRaw<Array<{ id: string }>>(Prisma.sql`
@@ -59,6 +59,10 @@ export async function findCatalogSearchObjectIds(client: ObjectSearchClient, sea
 
 function createLikeSearchCondition(field: Prisma.Sql, patterns: string[]) {
   return Prisma.sql`(${Prisma.join(patterns.map((pattern) => Prisma.sql`${field} LIKE ${pattern} ESCAPE '\\'`), ' OR ')})`;
+}
+
+function createNormalizedSearchField(field: Prisma.Sql) {
+  return Prisma.sql`replace(replace(lower(${field}), 'ё', 'е'), '.', '')`;
 }
 
 function escapeLikePattern(value: string) {

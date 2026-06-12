@@ -540,9 +540,9 @@ test('ObjectsService.list builds catalog filters for status, price, presentation
   assert.equal(filters.some((filter) => filter.id?.in?.includes(objectId)), true);
   assert.equal(calls.searchQuery.values.includes('%центр%'), true);
   assert.equal(calls.searchQuery.values.includes('%tsentr%'), true);
-  assert.match(calls.searchQuery.strings.join('?'), /replace\(lower\(coalesce\(o\.title, ''\)\), '\.', ''\)/);
-  assert.match(calls.searchQuery.strings.join('?'), /replace\(lower\(coalesce\(d\.name, ''\)\), '\.', ''\)/);
-  assert.match(calls.searchQuery.strings.join('?'), /replace\(lower\(coalesce\(o\.address, ''\)\), '\.', ''\)/);
+  assert.match(calls.searchQuery.strings.join('?'), /replace\(replace\(lower\(coalesce\(o\.title, ''\)\), 'ё', 'е'\), '\.', ''\)/);
+  assert.match(calls.searchQuery.strings.join('?'), /replace\(replace\(lower\(coalesce\(d\.name, ''\)\), 'ё', 'е'\), '\.', ''\)/);
+  assert.match(calls.searchQuery.strings.join('?'), /replace\(replace\(lower\(coalesce\(o\.address, ''\)\), 'ё', 'е'\), '\.', ''\)/);
   assert.match(calls.searchQuery.strings.join('?'), /object_locations ol/);
   assert.match(calls.searchQuery.strings.join('?'), /l\.type::text = 'district'/);
 });
@@ -897,6 +897,37 @@ test('ObjectsService.list ignores dots in object catalog search', async () => {
 
   assert.equal(calls.searchQuery.values.includes('%ул новая%'), true);
   assert.equal(calls.searchQuery.values.includes('%ul novaya%'), true);
+  assert.equal(
+    calls.findMany.where.AND.some((filter) =>
+      filter.id?.in?.includes('11111111-1111-4111-8111-111111111111'),
+    ),
+    true,
+  );
+});
+
+test('ObjectsService.list normalizes ё in object catalog search fields', async () => {
+  const calls = {};
+  const prisma = {
+    $queryRaw: async (query) => {
+      calls.searchQuery = query;
+      return [{ id: '11111111-1111-4111-8111-111111111111' }];
+    },
+    realEstateObject: {
+      findMany: async (args) => {
+        calls.findMany = args;
+        return [objectRecord({ title: 'Клубный дом Пыжёвский' })];
+      },
+      count: async () => 1,
+    },
+    $transaction: async (queries) => Promise.all(queries),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  await service.list({ search: 'Пыжёвский' });
+
+  assert.equal(calls.searchQuery.values.includes('%пыжевский%'), true);
+  assert.match(calls.searchQuery.strings.join('?'), /replace\(replace\(lower\(coalesce\(o\.title, ''\)\), 'ё', 'е'\), '\.', ''\)/);
+  assert.match(calls.searchQuery.strings.join('?'), /replace\(replace\(lower\(coalesce\(o\.address, ''\)\), 'ё', 'е'\), '\.', ''\)/);
   assert.equal(
     calls.findMany.where.AND.some((filter) =>
       filter.id?.in?.includes('11111111-1111-4111-8111-111111111111'),
@@ -2596,9 +2627,9 @@ test('MapService.listObjects uses dot-insensitive search for map catalog objects
   assert.equal(calls.searchQuery.values.includes('%жк ари%'), true);
   assert.equal(calls.searchQuery.values.includes('%zhk ari%'), true);
   assert.equal(calls.findMany.where.AND.some((filter) => filter.id?.in?.includes(objectId)), true);
-  assert.match(calls.searchQuery.strings.join('?'), /replace\(lower\(coalesce\(o\.title, ''\)\), '\.', ''\)/);
-  assert.match(calls.searchQuery.strings.join('?'), /replace\(lower\(coalesce\(d\.name, ''\)\), '\.', ''\)/);
-  assert.match(calls.searchQuery.strings.join('?'), /replace\(lower\(coalesce\(o\.address, ''\)\), '\.', ''\)/);
+  assert.match(calls.searchQuery.strings.join('?'), /replace\(replace\(lower\(coalesce\(o\.title, ''\)\), 'ё', 'е'\), '\.', ''\)/);
+  assert.match(calls.searchQuery.strings.join('?'), /replace\(replace\(lower\(coalesce\(d\.name, ''\)\), 'ё', 'е'\), '\.', ''\)/);
+  assert.match(calls.searchQuery.strings.join('?'), /replace\(replace\(lower\(coalesce\(o\.address, ''\)\), 'ё', 'е'\), '\.', ''\)/);
   assert.match(calls.searchQuery.strings.join('?'), /object_locations ol/);
   assert.deepEqual(calls.count.where, calls.findMany.where);
 });
