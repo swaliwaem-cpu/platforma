@@ -26,11 +26,21 @@
 - `apps/api/tests/services.test.cjs` - добавлена регрессия на `Пыжёвский`; существующие search SQL expectations обновлены под `ё` normalization.
 - `docs/CODEX_LOG.md` - добавлена текущая запись.
 
+Деплой:
+
+- Локально создан commit `245bc66 fix(api): normalize yo in catalog search` и запушен в `origin/on-ser`.
+- Production `/opt/platforma` fast-forwarded с `b458f77` до `245bc66`.
+- Выполнено `docker compose -f docker-compose.prod.yml up -d --build api`; пересобран и перезапущен только `api`, `web` не менялся.
+
 Проверки:
 
 - RED: `pnpm --filter @platforma/api build && cd apps/api && node --test --test-name-pattern "normalizes ё" tests/services.test.cjs` - сначала падал на старой SQL-форме без `replace(... 'ё','е')`.
 - GREEN targeted: `pnpm --filter @platforma/api build && cd apps/api && node --test --test-name-pattern "normalizes ё|ignores dots|transliteration" tests/services.test.cjs` - 4/4 passed.
 - Full API: `pnpm --filter @platforma/api test` - 184/184 passed.
+- Production compose after deploy: `api`, `postgres`, `redis`, `minio` healthy; `web` up.
+- Production public `https://api.broker.fluffywhite.moscow/health` вернул `status=ok`, `database=ok`, `postgis=true`.
+- Production logs after deploy: `No pending migrations to apply`, `Nest application successfully started`.
+- Production protected API smoke with temporary access token: `/objects?search=Пыжёвский&status=PUBLISHED` and `/map/objects?search=Пыжёвский&status=PUBLISHED` both returned `total=1`, title `Клубный дом Пыжёвский`.
 
 Ручная проверка:
 
