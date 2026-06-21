@@ -1,0 +1,673 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Create Collection Modal Options</title>
+    <style>
+      :root {
+        --canvas: #0f141a;
+        --surface: #151b23;
+        --surface-soft: #1b2330;
+        --control: #121922;
+        --ink-900: #f3f6f8;
+        --ink-800: #d8e0e8;
+        --ink-700: #a9b6c4;
+        --ink-600: #8291a2;
+        --border-strong: #455263;
+        --border: #313d4b;
+        --border-soft: #283341;
+        --primary: #c8a66a;
+        --primary-deep: #e3c681;
+        --primary-soft: #2d271c;
+        --primary-foreground: #11161c;
+        --shadow-panel: 0 30px 82px rgb(0 0 0 / 46%);
+        color: var(--ink-900);
+        background: var(--canvas);
+        font-family:
+          "Google Sans",
+          "Helvetica Neue",
+          Arial,
+          sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background:
+          linear-gradient(180deg, rgb(15 20 26 / 96%), var(--canvas)),
+          var(--canvas);
+      }
+
+      button,
+      input {
+        font: inherit;
+      }
+
+      main {
+        width: min(1460px, calc(100vw - 40px));
+        margin: 0 auto;
+        padding: 28px 0 44px;
+      }
+
+      .intro {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 24px;
+        margin-bottom: 22px;
+      }
+
+      .intro h1,
+      .intro p,
+      .mock-title h2,
+      .modal h3,
+      .modal p {
+        margin: 0;
+      }
+
+      .eyebrow {
+        margin: 0 0 10px;
+        color: var(--ink-700);
+        font-size: 12px;
+        font-weight: 850;
+        letter-spacing: 0;
+        text-transform: uppercase;
+      }
+
+      .intro h1 {
+        max-width: 720px;
+        font-size: 30px;
+        line-height: 1.08;
+        letter-spacing: 0;
+      }
+
+      .intro p {
+        max-width: 520px;
+        color: var(--ink-700);
+        font-size: 13px;
+        font-weight: 700;
+        line-height: 1.5;
+        text-align: right;
+      }
+
+      .options {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .option {
+        display: grid;
+        gap: 12px;
+      }
+
+      .mock-title {
+        display: flex;
+        min-height: 54px;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 14px;
+        border: 1px solid var(--border-soft);
+        border-radius: 8px;
+        background: rgb(21 27 35 / 64%);
+        padding: 13px 14px;
+      }
+
+      .mock-title h2 {
+        font-size: 16px;
+        line-height: 1.25;
+      }
+
+      .mock-title span {
+        color: var(--ink-600);
+        font-size: 12px;
+        font-weight: 750;
+        line-height: 1.35;
+        text-align: right;
+      }
+
+      .stage {
+        position: relative;
+        min-height: 620px;
+        overflow: hidden;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: #0d1218;
+        box-shadow: 0 24px 70px rgb(0 0 0 / 22%);
+      }
+
+      .app {
+        display: grid;
+        height: 100%;
+        min-height: 620px;
+        grid-template-columns: 270px 1fr;
+        gap: 16px;
+        padding: 30px 28px;
+      }
+
+      .sidebar,
+      .workspace {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+      }
+
+      .sidebar {
+        display: grid;
+        align-content: start;
+        gap: 14px;
+        padding: 28px 26px;
+      }
+
+      .sidebar-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .sidebar h3,
+      .workspace h3 {
+        margin: 0;
+        font-size: 20px;
+        line-height: 1.2;
+      }
+
+      .plus {
+        display: inline-grid;
+        width: 44px;
+        height: 44px;
+        place-items: center;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--control);
+        color: var(--ink-900);
+      }
+
+      .plus svg,
+      .modal-icon svg,
+      .button svg {
+        width: 17px;
+        height: 17px;
+      }
+
+      .collection {
+        display: grid;
+        gap: 4px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--control);
+        padding: 14px 12px;
+      }
+
+      .collection strong {
+        overflow: hidden;
+        font-size: 15px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .collection span {
+        color: var(--ink-700);
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .collection.is-active {
+        border-color: var(--primary);
+        background: color-mix(in srgb, var(--primary-soft) 40%, var(--surface));
+      }
+
+      .workspace {
+        display: grid;
+        align-content: start;
+        gap: 16px;
+        padding: 28px 30px;
+      }
+
+      .workbar {
+        display: grid;
+        grid-template-columns: 1fr auto auto;
+        gap: 10px;
+      }
+
+      .search,
+      .ghost-button,
+      .empty {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--control);
+      }
+
+      .search {
+        min-height: 44px;
+      }
+
+      .ghost-button {
+        min-width: 114px;
+        min-height: 44px;
+      }
+
+      .empty {
+        border-style: dashed;
+        background: var(--surface-soft);
+        padding: 20px;
+      }
+
+      .empty strong {
+        display: block;
+        margin-bottom: 8px;
+      }
+
+      .empty span {
+        color: var(--ink-700);
+        font-size: 13px;
+        font-weight: 750;
+      }
+
+      .overlay {
+        position: absolute;
+        inset: 0;
+        background: rgb(6 9 13 / 58%);
+      }
+
+      .modal {
+        position: absolute;
+        z-index: 2;
+        display: grid;
+        gap: 14px;
+        border: 1px solid var(--border-strong);
+        border-radius: 8px;
+        background: var(--surface);
+        box-shadow: var(--shadow-panel);
+        padding: 18px;
+      }
+
+      .modal--center {
+        top: 50%;
+        left: 50%;
+        width: min(368px, calc(100% - 40px));
+        transform: translate(-50%, -50%);
+      }
+
+      .modal--anchored {
+        top: 116px;
+        left: 36px;
+        width: calc(100% - 72px);
+      }
+
+      .modal--anchored::before {
+        position: absolute;
+        top: -9px;
+        right: 76px;
+        width: 16px;
+        height: 16px;
+        border-top: 1px solid var(--border-strong);
+        border-left: 1px solid var(--border-strong);
+        background: var(--surface);
+        content: "";
+        transform: rotate(45deg);
+      }
+
+      .modal--compact {
+        top: 104px;
+        right: 34px;
+        width: 332px;
+      }
+
+      .modal-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 14px;
+      }
+
+      .modal-heading {
+        display: grid;
+        gap: 5px;
+      }
+
+      .modal h3 {
+        font-size: 19px;
+        line-height: 1.2;
+      }
+
+      .modal p {
+        color: var(--ink-700);
+        font-size: 12px;
+        font-weight: 750;
+        line-height: 1.45;
+      }
+
+      .modal-icon {
+        display: inline-grid;
+        width: 34px;
+        height: 34px;
+        flex: 0 0 auto;
+        place-items: center;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--control);
+        color: var(--primary-deep);
+      }
+
+      .field {
+        display: grid;
+        gap: 7px;
+      }
+
+      .field label {
+        color: var(--ink-700);
+        font-size: 12px;
+        font-weight: 850;
+      }
+
+      .field input {
+        width: 100%;
+        min-height: 42px;
+        border: 1px solid var(--border-strong);
+        border-radius: 8px;
+        background: var(--control);
+        color: var(--ink-900);
+        padding: 0 12px;
+        outline: none;
+      }
+
+      .field input:focus {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px rgb(200 166 106 / 23%);
+      }
+
+      .actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+
+      .actions--split {
+        justify-content: space-between;
+      }
+
+      .button {
+        display: inline-flex;
+        min-height: 38px;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        color: var(--ink-800);
+        padding: 0 13px;
+        font-size: 13px;
+        font-weight: 850;
+        line-height: 1;
+        white-space: nowrap;
+      }
+
+      .button--primary {
+        border-color: var(--primary);
+        background: var(--primary);
+        color: var(--primary-foreground);
+      }
+
+      .button--quiet {
+        color: var(--ink-700);
+      }
+
+      .button--wide {
+        min-width: 116px;
+      }
+
+      .inline-close {
+        display: inline-grid;
+        width: 34px;
+        height: 34px;
+        place-items: center;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--control);
+        color: var(--ink-700);
+      }
+
+      .hint-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        border-top: 1px solid var(--border-soft);
+        padding-top: 12px;
+      }
+
+      .hint-row span {
+        color: var(--ink-600);
+        font-size: 12px;
+        font-weight: 750;
+      }
+
+      @media (max-width: 1180px) {
+        .options {
+          grid-template-columns: 1fr;
+        }
+
+        .stage,
+        .app {
+          min-height: 560px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="intro" aria-labelledby="page-title">
+        <div>
+          <p class="eyebrow">Подборки / создание</p>
+          <h1 id="page-title">3 варианта небольшой модалки для добавления подборки</h1>
+        </div>
+        <p>Все варианты оставляют рабочий экран на месте: пользователь нажимает плюс, вводит название и выбирает компактное действие.</p>
+      </section>
+
+      <section class="options" aria-label="Варианты модального окна">
+        <article class="option">
+          <div class="mock-title">
+            <div>
+              <p class="eyebrow">Вариант 1</p>
+              <h2>Центральная компактная</h2>
+            </div>
+            <span>Самый привычный<br />и спокойный</span>
+          </div>
+          <div class="stage">
+            <div class="app" aria-hidden="true">
+              <aside class="sidebar">
+                <div class="sidebar-head">
+                  <div>
+                    <p class="eyebrow">Коллекции</p>
+                    <h3>Подборки</h3>
+                  </div>
+                  <span class="plus">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+                      <path d="M12 5v14M5 12h14" />
+                    </svg>
+                  </span>
+                </div>
+                <div class="collection is-active"><strong>СОКОЛ</strong><span>3 лотов</span></div>
+                <div class="collection"><strong>Клиент Петров</strong><span>5 лотов</span></div>
+              </aside>
+              <section class="workspace">
+                <div>
+                  <p class="eyebrow">Рабочая зона</p>
+                  <h3>СОКОЛ</h3>
+                </div>
+                <div class="workbar">
+                  <div class="search"></div>
+                  <div class="ghost-button"></div>
+                  <div class="ghost-button"></div>
+                </div>
+                <div class="empty"><strong>В подборке пока нет лотов</strong><span>Добавьте лоты через поиск сверху.</span></div>
+              </section>
+            </div>
+            <div class="overlay"></div>
+            <form class="modal modal--center" aria-label="Новая подборка">
+              <div class="modal-header">
+                <div class="modal-heading">
+                  <h3>Новая подборка</h3>
+                  <p>Название будет видно в списке слева.</p>
+                </div>
+                <span class="modal-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
+                </span>
+              </div>
+              <div class="field">
+                <label for="collection-name-1">Название подборки</label>
+                <input id="collection-name-1" value="Сокол для Иванова" />
+              </div>
+              <div class="actions">
+                <button class="button button--quiet" type="button">Отмена</button>
+                <button class="button button--primary" type="button">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="m5 12 4 4L19 6" />
+                  </svg>
+                  Создать
+                </button>
+              </div>
+            </form>
+          </div>
+        </article>
+
+        <article class="option">
+          <div class="mock-title">
+            <div>
+              <p class="eyebrow">Вариант 2</p>
+              <h2>Контекстная от плюсика</h2>
+            </div>
+            <span>Меньше движения<br />глазами</span>
+          </div>
+          <div class="stage">
+            <div class="app" aria-hidden="true">
+              <aside class="sidebar">
+                <div class="sidebar-head">
+                  <div>
+                    <p class="eyebrow">Коллекции</p>
+                    <h3>Подборки</h3>
+                  </div>
+                  <span class="plus">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+                      <path d="M12 5v14M5 12h14" />
+                    </svg>
+                  </span>
+                </div>
+                <div class="collection is-active"><strong>СОКОЛ</strong><span>3 лотов</span></div>
+                <div class="collection"><strong>Клиент Петров</strong><span>5 лотов</span></div>
+              </aside>
+              <section class="workspace">
+                <div>
+                  <p class="eyebrow">Рабочая зона</p>
+                  <h3>СОКОЛ</h3>
+                </div>
+                <div class="workbar">
+                  <div class="search"></div>
+                  <div class="ghost-button"></div>
+                  <div class="ghost-button"></div>
+                </div>
+                <div class="empty"><strong>В подборке пока нет лотов</strong><span>Добавьте лоты через поиск сверху.</span></div>
+              </section>
+            </div>
+            <div class="overlay"></div>
+            <form class="modal modal--anchored" aria-label="Новая подборка">
+              <div class="modal-header">
+                <div class="modal-heading">
+                  <h3>Создать подборку</h3>
+                  <p>Быстрое создание рядом со списком.</p>
+                </div>
+                <button class="inline-close" type="button" aria-label="Закрыть">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+                    <path d="M18 6 6 18M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <div class="field">
+                <label for="collection-name-2">Название</label>
+                <input id="collection-name-2" placeholder="Например, Клиент Петров" />
+              </div>
+              <div class="actions actions--split">
+                <button class="button button--quiet" type="button">Отмена</button>
+                <button class="button button--primary button--wide" type="button">Создать</button>
+              </div>
+            </form>
+          </div>
+        </article>
+
+        <article class="option">
+          <div class="mock-title">
+            <div>
+              <p class="eyebrow">Вариант 3</p>
+              <h2>Плотная рабочая панель</h2>
+            </div>
+            <span>Самая компактная<br />по высоте</span>
+          </div>
+          <div class="stage">
+            <div class="app" aria-hidden="true">
+              <aside class="sidebar">
+                <div class="sidebar-head">
+                  <div>
+                    <p class="eyebrow">Коллекции</p>
+                    <h3>Подборки</h3>
+                  </div>
+                  <span class="plus">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+                      <path d="M12 5v14M5 12h14" />
+                    </svg>
+                  </span>
+                </div>
+                <div class="collection is-active"><strong>СОКОЛ</strong><span>3 лотов</span></div>
+                <div class="collection"><strong>Клиент Петров</strong><span>5 лотов</span></div>
+              </aside>
+              <section class="workspace">
+                <div>
+                  <p class="eyebrow">Рабочая зона</p>
+                  <h3>СОКОЛ</h3>
+                </div>
+                <div class="workbar">
+                  <div class="search"></div>
+                  <div class="ghost-button"></div>
+                  <div class="ghost-button"></div>
+                </div>
+                <div class="empty"><strong>В подборке пока нет лотов</strong><span>Добавьте лоты через поиск сверху.</span></div>
+              </section>
+            </div>
+            <div class="overlay"></div>
+            <form class="modal modal--compact" aria-label="Новая подборка">
+              <div class="modal-header">
+                <div class="modal-heading">
+                  <h3>Новая подборка</h3>
+                </div>
+                <button class="inline-close" type="button" aria-label="Закрыть">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+                    <path d="M18 6 6 18M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <div class="field">
+                <label for="collection-name-3">Название подборки</label>
+                <input id="collection-name-3" value="Инвест подборка" />
+              </div>
+              <div class="hint-row">
+                <span>Enter создаст подборку</span>
+                <div class="actions">
+                  <button class="button button--quiet" type="button">Отмена</button>
+                  <button class="button button--primary" type="button">Создать</button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

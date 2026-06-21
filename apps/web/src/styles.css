@@ -8565,6 +8565,1039 @@ tr.user-row--deactivated .text-button {
   }
 }
 
+.icon-action-button {
+  display: inline-flex;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--app-theme-border, #d6dde5);
+  border-radius: 8px;
+  background: var(--app-theme-control, #ffffff);
+  color: var(--app-theme-ink-800, #303b47);
+  cursor: pointer;
+}
+
+.icon-action-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.icon-action-button:hover,
+.icon-action-button:focus-visible {
+  border-color: var(--app-theme-primary, #b38a45);
+  color: var(--app-theme-primary-deep, #775a28);
+  outline: none;
+}
+
+.icon-action-button:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-theme-primary, #b38a45) 22%, transparent);
+}
+
+.icon-action-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.icon-action-button--danger:hover,
+.icon-action-button--danger:focus-visible {
+  border-color: var(--catalog-danger, #b42318);
+  color: var(--catalog-danger, #b42318);
+}
+
+.object-lot-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.lot-collection-icon-button {
+  display: inline-flex;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--app-theme-border, #d6dde5);
+  border-radius: 999px;
+  background: var(--app-theme-control, #ffffff);
+  color: var(--app-theme-ink-700, #536172);
+  cursor: pointer;
+}
+
+.lot-collection-icon-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.lot-collection-icon-button:hover,
+.lot-collection-icon-button:focus-visible,
+.lot-collection-icon-button--added {
+  border-color: var(--app-theme-primary, #b38a45);
+  color: var(--app-theme-primary-deep, #775a28);
+  outline: none;
+}
+
+.lot-collection-modal-backdrop {
+  position: fixed;
+  z-index: 80;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgb(16 24 33 / 48%);
+  padding: 20px;
+}
+
+.lot-collection-modal {
+  display: grid;
+  width: min(480px, 100%);
+  max-height: min(720px, calc(100vh - 40px));
+  overflow: auto;
+  gap: 16px;
+  border: 1px solid var(--app-theme-border-strong, var(--app-theme-border, #d6dde5));
+  border-radius: 8px;
+  background: var(--app-theme-surface, #ffffff);
+  color: var(--app-theme-ink-900, #18202a);
+  box-shadow: 0 24px 80px rgb(0 0 0 / 34%), var(--catalog-shadow-overlay, 0 18px 50px rgb(24 32 42 / 15%));
+  padding: 20px;
+}
+
+.lot-collection-modal-header,
+.lot-presentations-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.lot-collection-modal-header h3,
+.lot-presentations-panel-header h3 {
+  margin: 0;
+  color: var(--app-theme-ink-900, #18202a);
+}
+
+.lot-collection-modal-close {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--app-theme-border, #d6dde5);
+  border-radius: 8px;
+  background: var(--app-theme-control, #ffffff);
+  color: var(--app-theme-ink-800, #303b47);
+  cursor: pointer;
+}
+
+.lot-collection-modal-close svg {
+  width: 16px;
+  height: 16px;
+}
+
+.lot-collection-modal-close:hover,
+.lot-collection-modal-close:focus-visible {
+  border-color: var(--app-theme-primary, #b38a45);
+  background: var(--app-theme-primary-soft, #f7f0df);
+  color: var(--app-theme-primary-deep, #775a28);
+  outline: none;
+  box-shadow: var(--app-theme-focus-primary, 0 0 0 3px rgb(179 138 69 / 20%));
+}
+
+.lot-collection-list,
+.lot-presentations-collection-list,
+.lot-presentations-lot-list,
+.lot-presentations-history {
+  display: grid;
+  gap: 10px;
+}
+
+.lot-collection-choice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--app-theme-border, #d6dde5);
+  border-radius: 8px;
+  background: var(--app-theme-surface, #ffffff);
+  color: inherit;
+  padding: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lot-collection-choice strong {
+  color: var(--app-theme-ink-900, #18202a);
+}
+
+.lot-collection-choice span,
+.lot-presentations-document span {
+  display: grid;
+  gap: 3px;
+}
+
+.lot-collection-choice small,
+.lot-presentations-document small,
+.lot-presentations-search-lot small,
+.lot-presentations-lot-body small {
+  color: var(--app-theme-ink-700, #6d7885);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.lot-collection-choice svg {
+  width: 16px;
+  height: 16px;
+  color: var(--app-theme-primary, #b38a45);
+}
+
+.lot-collection-choice:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
+.lot-collection-create-form,
+.lot-presentations-rename-form {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+}
+
+.lot-collection-create-form label {
+  display: grid;
+  flex: 1;
+  gap: 7px;
+  color: var(--app-theme-ink-800, #303b47);
+}
+
+.lot-collection-create-form input {
+  min-width: 0;
+  border-color: var(--app-theme-border-strong, #c6d0dc);
+  background: var(--app-theme-control, #ffffff);
+  color: var(--app-theme-ink-900, #18202a);
+  caret-color: var(--app-theme-primary, #b38a45);
+}
+
+.lot-collection-create-form input::placeholder {
+  color: var(--app-theme-ink-600, #8a95a3);
+}
+
+.lot-collection-modal .eyebrow,
+.lot-collection-modal .muted-text {
+  color: var(--app-theme-ink-700, #536172);
+}
+
+.lot-collection-modal .form-error {
+  color: var(--catalog-danger, #b42318);
+}
+
+.lot-presentations-page {
+  display: grid;
+  gap: 20px;
+}
+
+.lot-presentations-warning {
+  display: grid;
+  gap: 4px;
+  border-color: color-mix(in srgb, var(--catalog-warning, #8a621d) 34%, var(--app-theme-border, #d6dde5));
+  background: var(--catalog-warning-soft, #fff8e8);
+}
+
+.lot-presentations-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.lot-presentations-sidebar,
+.lot-presentations-main {
+  display: grid;
+  width: 100%;
+  gap: 16px;
+  min-width: 0;
+}
+
+.lot-presentations-documents-trigger {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 16px;
+  white-space: nowrap;
+}
+
+.lot-presentations-documents-trigger svg {
+  width: 17px;
+  height: 17px;
+}
+
+.lot-presentations-sidebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lot-presentations-collection-count {
+  display: inline-flex;
+  min-width: 32px;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--app-theme-border-soft, #e0e6ed);
+  border-radius: 999px;
+  color: var(--app-theme-ink-700, #536172);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.lot-presentations-create-inline {
+  display: inline-flex;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--app-theme-border, #d6dde5);
+  border-radius: 8px;
+  background: var(--app-theme-control, #ffffff);
+  color: var(--app-theme-ink-900, #18202a);
+  cursor: pointer;
+}
+
+.lot-presentations-create-inline svg {
+  width: 18px;
+  height: 18px;
+}
+
+.lot-presentations-create-inline:hover,
+.lot-presentations-create-inline:focus-visible {
+  border-color: var(--app-theme-primary, #b38a45);
+  color: var(--app-theme-primary-deep, #775a28);
+  outline: none;
+  box-shadow: var(--app-theme-focus-primary, 0 0 0 3px rgb(179 138 69 / 20%));
+}
+
+.lot-presentations-create-inline:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.lot-presentations-create-modal-backdrop {
+  position: fixed;
+  z-index: 90;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgb(16 24 33 / 52%);
+  padding: 20px;
+}
+
+.lot-presentations-create-modal {
+  display: grid;
+  width: min(380px, calc(100vw - 40px));
+  gap: 14px;
+  border: 1px solid var(--app-theme-border-strong, #c6d0dc);
+  border-radius: 8px;
+  background: var(--app-theme-surface, #ffffff);
+  color: var(--app-theme-ink-900, #18202a);
+  box-shadow: 0 30px 82px rgb(0 0 0 / 42%), var(--catalog-shadow-overlay, 0 18px 50px rgb(24 32 42 / 15%));
+  padding: 18px;
+}
+
+.lot-presentations-create-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.lot-presentations-create-modal-header h3,
+.lot-presentations-create-modal-header p {
+  margin: 0;
+}
+
+.lot-presentations-create-modal-header h3 {
+  color: var(--app-theme-ink-900, #18202a);
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.lot-presentations-create-modal-header p {
+  margin-top: 5px;
+  color: var(--app-theme-ink-700, #6d7885);
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.45;
+}
+
+.lot-presentations-create-modal-icon {
+  display: inline-flex;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--app-theme-border, #d6dde5);
+  border-radius: 8px;
+  background: var(--app-theme-control, #ffffff);
+  color: var(--app-theme-primary-deep, #775a28);
+}
+
+.lot-presentations-create-modal-icon svg,
+.lot-presentations-create-modal-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.lot-presentations-create-modal-field {
+  display: grid;
+  gap: 7px;
+  color: var(--app-theme-ink-800, #303b47);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.lot-presentations-create-modal-field input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--app-theme-border-strong, #c6d0dc);
+  border-radius: 8px;
+  background: var(--app-theme-control, #ffffff);
+  color: var(--app-theme-ink-900, #18202a);
+  caret-color: var(--app-theme-primary, #b38a45);
+  padding: 0 12px;
+}
+
+.lot-presentations-create-modal-field input::placeholder {
+  color: var(--app-theme-ink-600, #8a95a3);
+}
+
+.lot-presentations-create-modal-field input:focus {
+  border-color: var(--app-theme-primary, #b38a45);
+  outline: none;
+  box-shadow: var(--app-theme-focus-primary, 0 0 0 3px rgb(179 138 69 / 20%));
+}
+
+.lot-presentations-create-modal-error {
+  margin: 0;
+}
+
+.lot-presentations-create-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.lot-presentations-create-modal-button {
+  width: auto;
+  flex: 0 0 auto;
+  min-height: 38px;
+  gap: 8px;
+  border-radius: 8px;
+  padding: 0 13px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.lot-presentations-rename-form input {
+  min-width: 0;
+}
+
+.lot-presentations-collection {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--app-theme-border, #d6dde5);
+  border-radius: 8px;
+  background: var(--app-theme-surface, #ffffff);
+  padding: 8px;
+}
+
+.lot-presentations-collection.is-active {
+  border-color: var(--app-theme-primary, #b38a45);
+  background: color-mix(in srgb, var(--app-theme-primary-soft, #f7f0df) 38%, var(--app-theme-surface, #ffffff));
+}
+
+.lot-presentations-collection > button {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 4px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lot-presentations-collection > button strong {
+  overflow: hidden;
+  color: var(--app-theme-ink-900, #18202a);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lot-presentations-collection > button span {
+  color: var(--app-theme-ink-700, #6d7885);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.lot-presentations-collection-actions,
+.lot-presentations-actions,
+.lot-presentations-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lot-presentations-actions {
+  flex-wrap: nowrap;
+  align-items: stretch;
+  justify-content: flex-end;
+}
+
+.lot-presentations-actions .primary-button,
+.lot-presentations-actions .secondary-button {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 8px;
+  padding: 0 16px;
+  white-space: nowrap;
+}
+
+.lot-presentations-actions svg {
+  width: 16px;
+  height: 16px;
+}
+
+.lot-presentations-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(74px, 1fr));
+  gap: 10px;
+}
+
+.lot-presentations-summary span {
+  display: grid;
+  min-height: 78px;
+  align-content: center;
+  gap: 5px;
+  border: 1px solid var(--app-theme-border, #d6dde5);
+  border-radius: 8px;
+  background: var(--app-theme-surface-soft, #f8fafc);
+  padding: 10px 14px;
+}
+
+.lot-presentations-summary strong {
+  color: var(--app-theme-ink-900, #18202a);
+  font-size: 24px;
+  line-height: 1;
+}
+
+.lot-presentations-summary small {
+  color: var(--app-theme-ink-700, #6d7885);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.lot-presentations-workbar {
+  display: grid;
+  grid-template-columns: minmax(480px, 1fr) max-content;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.lot-presentations-search-area {
+  position: relative;
+  min-width: 0;
+}
+
+.lot-presentations-lot-row {
+  display: grid;
+  grid-template-columns: 28px 64px minmax(0, 1fr) minmax(136px, auto) auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--app-theme-border, #d6dde5);
+  border-radius: 8px;
+  background: var(--app-theme-surface, #ffffff);
+  padding: 10px;
+}
+
+.lot-presentations-checkbox {
+  display: grid;
+  place-items: center;
+}
+
+.lot-presentations-checkbox input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--app-theme-primary, #b38a45);
+}
+
+.lot-presentations-thumb {
+  display: grid;
+  width: 64px;
+  aspect-ratio: 1.2;
+  overflow: hidden;
+  place-items: center;
+  border: 1px solid var(--app-theme-border-soft, #e0e6ed);
+  border-radius: 8px;
+  background: var(--app-theme-surface-soft, #f8fafc);
+  color: var(--app-theme-ink-600, #8a95a3);
+  font-size: 11px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.lot-presentations-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.lot-presentations-lot-body,
+.lot-presentations-lot-price,
+.lot-presentations-search-lot > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.lot-presentations-lot-body strong,
+.lot-presentations-search-lot strong,
+.lot-presentations-document strong {
+  overflow: hidden;
+  color: var(--app-theme-ink-900, #18202a);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lot-presentations-lot-body span,
+.lot-presentations-search-lot span {
+  overflow: hidden;
+  color: var(--app-theme-ink-700, #6d7885);
+  font-size: 13px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lot-presentations-lot-price {
+  text-align: right;
+}
+
+.lot-presentations-lot-price span {
+  color: var(--app-theme-ink-700, #6d7885);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.lot-presentations-empty {
+  display: grid;
+  gap: 4px;
+  border: 1px dashed var(--app-theme-border-strong, #c6d0dc);
+  border-radius: 8px;
+  background: var(--app-theme-surface-soft, #f8fafc);
+  padding: 18px;
+}
+
+.lot-presentations-empty span {
+  color: var(--app-theme-ink-700, #6d7885);
+  font-size: 13px;
+}
+
+.lot-presentations-search {
+  position: relative;
+  display: grid;
+}
+
+.lot-presentations-search svg {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  width: 16px;
+  height: 16px;
+  color: var(--app-theme-ink-600, #8a95a3);
+  transform: translateY(-50%);
+}
+
+.lot-presentations-search input {
+  padding-left: 36px;
+}
+
+.lot-presentations-search-popover {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  display: grid;
+  max-height: min(420px, calc(100vh - 320px));
+  overflow: auto;
+  gap: 8px;
+  border: 1px solid var(--app-theme-border-strong, #c6d0dc);
+  border-radius: 8px;
+  background: var(--app-theme-surface, #ffffff);
+  box-shadow: 0 24px 70px rgb(0 0 0 / 28%), var(--catalog-shadow-overlay, 0 18px 50px rgb(24 32 42 / 15%));
+  padding: 8px;
+}
+
+.lot-presentations-search-empty {
+  margin: 0;
+  border: 1px dashed var(--app-theme-border-soft, #e0e6ed);
+  border-radius: 8px;
+  color: var(--app-theme-ink-700, #6d7885);
+  padding: 14px;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.lot-presentations-search-project {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--app-theme-border, #d6dde5);
+  border-radius: 8px;
+  background: var(--app-theme-surface, #ffffff);
+  color: inherit;
+  padding: 11px 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lot-presentations-search-project span {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.lot-presentations-search-project strong {
+  overflow: hidden;
+  color: var(--app-theme-ink-900, #18202a);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lot-presentations-search-project small {
+  overflow: hidden;
+  color: var(--app-theme-ink-700, #6d7885);
+  font-size: 12px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lot-presentations-search-project b {
+  display: inline-flex;
+  min-width: 40px;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--app-theme-border-soft, #e0e6ed);
+  border-radius: 999px;
+  background: var(--app-theme-surface-soft, #f8fafc);
+  color: var(--app-theme-ink-700, #536172);
+  padding: 4px 9px;
+  font-size: 12px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.lot-presentations-search-project svg {
+  width: 17px;
+  height: 17px;
+  color: var(--app-theme-ink-600, #8a95a3);
+}
+
+.lot-presentations-search-lot {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--app-theme-border, #d6dde5);
+  border-radius: 8px;
+  background: var(--app-theme-surface, #ffffff);
+  padding: 8px;
+}
+
+.lot-presentations-search-lot .lot-presentations-thumb {
+  width: 54px;
+}
+
+.lot-presentations-project-modal-backdrop {
+  position: fixed;
+  z-index: 95;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgb(16 24 33 / 58%);
+  padding: 24px;
+}
+
+.lot-presentations-project-modal {
+  display: grid;
+  width: min(1320px, calc(100vw - 48px));
+  max-height: min(860px, calc(100vh - 48px));
+  overflow: auto;
+  gap: 16px;
+  border: 1px solid var(--app-theme-border-strong, #c6d0dc);
+  border-radius: 8px;
+  background: var(--app-theme-surface, #ffffff);
+  color: var(--app-theme-ink-900, #18202a);
+  box-shadow: 0 34px 90px rgb(0 0 0 / 44%), var(--catalog-shadow-overlay, 0 18px 50px rgb(24 32 42 / 15%));
+}
+
+.lot-presentations-project-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--app-theme-border-soft, #e0e6ed);
+  padding: 20px 22px 0;
+}
+
+.lot-presentations-project-modal-header > div {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  padding-bottom: 18px;
+}
+
+.lot-presentations-project-modal-header h3 {
+  margin: 0;
+  color: var(--app-theme-ink-900, #18202a);
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.lot-presentations-project-modal-header strong {
+  overflow: hidden;
+  color: var(--app-theme-ink-900, #18202a);
+  font-size: 15px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lot-presentations-project-modal-header span {
+  overflow: hidden;
+  color: var(--app-theme-ink-700, #6d7885);
+  font-size: 13px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lot-presentations-project-modal-close {
+  display: inline-flex;
+  width: 38px;
+  min-width: 38px;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--app-theme-border, #d6dde5);
+  border-radius: 8px;
+  background: var(--app-theme-control, #ffffff);
+  color: var(--app-theme-ink-800, #303b47);
+  cursor: pointer;
+}
+
+.lot-presentations-project-modal-close svg {
+  width: 17px;
+  height: 17px;
+}
+
+.lot-presentations-project-modal-close:hover,
+.lot-presentations-project-modal-close:focus-visible {
+  border-color: var(--app-theme-primary, #b38a45);
+  color: var(--app-theme-primary-deep, #775a28);
+  outline: none;
+  box-shadow: var(--app-theme-focus-primary, 0 0 0 3px rgb(179 138 69 / 20%));
+}
+
+.lot-presentations-project-modal-summary {
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) minmax(180px, 1fr);
+  gap: 10px;
+  padding: 0 22px;
+}
+
+.lot-presentations-project-modal-summary span {
+  display: grid;
+  min-width: 0;
+  min-height: 58px;
+  align-content: center;
+  gap: 4px;
+  border: 1px solid var(--app-theme-border, #d6dde5);
+  border-radius: 8px;
+  background: var(--app-theme-surface-soft, #f8fafc);
+  padding: 9px 12px;
+}
+
+.lot-presentations-project-modal-summary strong {
+  overflow: hidden;
+  color: var(--app-theme-ink-900, #18202a);
+  font-size: 16px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lot-presentations-project-modal-summary small {
+  color: var(--app-theme-ink-700, #6d7885);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.lot-presentations-project-groups {
+  padding: 0 22px 22px;
+}
+
+.lot-presentations-project-table {
+  min-width: 1120px;
+}
+
+.lot-presentations-project-lot-row .object-feed-media-preview {
+  width: 54px;
+  height: 42px;
+}
+
+.lot-presentations-project-add-button.is-added {
+  border-color: var(--app-theme-primary, #b38a45);
+  background: var(--app-theme-primary-soft, #f7f0df);
+  color: var(--app-theme-primary-deep, #775a28);
+}
+
+.lot-presentations-history {
+  padding-top: 8px;
+  border-top: 1px solid var(--app-theme-border-soft, #e0e6ed);
+}
+
+.lot-presentations-documents-backdrop {
+  position: fixed;
+  z-index: 90;
+  inset: 0;
+  display: flex;
+  justify-content: flex-end;
+  background: rgb(16 24 33 / 48%);
+}
+
+.lot-presentations-documents-panel {
+  display: grid;
+  width: min(440px, 100%);
+  height: 100%;
+  align-content: start;
+  gap: 16px;
+  overflow: auto;
+  border-left: 1px solid var(--app-theme-border-strong, #c6d0dc);
+  background: var(--app-theme-surface, #ffffff);
+  color: var(--app-theme-ink-900, #18202a);
+  box-shadow: -24px 0 80px rgb(0 0 0 / 34%);
+  padding: 24px;
+}
+
+.lot-presentations-documents-list {
+  display: grid;
+  gap: 10px;
+}
+
+.lot-presentations-document {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--app-theme-border, #d6dde5);
+  border-radius: 8px;
+  background: var(--app-theme-surface, #ffffff);
+  color: inherit;
+  padding: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lot-presentations-document > svg {
+  width: 18px;
+  height: 18px;
+  color: var(--app-theme-primary, #b38a45);
+}
+
+.lot-presentations-document:hover,
+.lot-presentations-document:focus-visible,
+.lot-presentations-search-project:hover,
+.lot-presentations-search-project:focus-visible,
+.lot-presentations-search-lot:hover,
+.lot-presentations-lot-row:hover,
+.lot-collection-choice:hover,
+.lot-collection-choice:focus-visible {
+  border-color: var(--app-theme-primary, #b38a45);
+  outline: none;
+}
+
+@media (max-width: 1180px) {
+  .lot-presentations-layout {
+    grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 780px) {
+  .lot-presentations-layout,
+  .lot-presentations-workbar,
+  .lot-presentations-lot-row {
+    grid-template-columns: 1fr;
+  }
+
+  .lot-presentations-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .lot-presentations-lot-price {
+    text-align: left;
+  }
+
+  .lot-presentations-actions,
+  .lot-presentations-row-actions {
+    justify-content: flex-start;
+  }
+
+  .lot-presentations-actions {
+    flex-wrap: wrap;
+  }
+
+  .lot-presentations-search-popover {
+    position: static;
+    max-height: none;
+    margin-top: 8px;
+  }
+
+  .lot-presentations-project-modal-backdrop {
+    padding: 12px;
+  }
+
+  .lot-presentations-project-modal {
+    width: calc(100vw - 24px);
+    max-height: calc(100vh - 24px);
+  }
+
+  .lot-presentations-project-modal-header,
+  .lot-presentations-project-modal-summary,
+  .lot-presentations-project-groups {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+
+  .lot-presentations-project-modal-summary {
+    grid-template-columns: 1fr;
+  }
+}
+
 @theme inline {
   --font-heading: var(--font-sans);
   --font-sans: var(--platforma-font-sans);

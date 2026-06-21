@@ -131,6 +131,8 @@ model User {
   refreshTokenHash      String?    @map("refresh_token_hash")
   refreshTokenExpiresAt DateTime?  @map("refresh_token_expires_at")
   name                  String?
+  brokerPhone           String?    @map("broker_phone") @db.VarChar(64)
+  brokerEmail           String?    @map("broker_email") @db.VarChar(320)
   profilePhotoFileId    String?    @map("profile_photo_file_id") @db.Uuid
   status                UserStatus @default(INVITED)
   roleId                String     @map("role_id") @db.Uuid
@@ -138,13 +140,15 @@ model User {
   updatedAt             DateTime   @updatedAt @map("updated_at")
   deletedAt             DateTime?  @map("deleted_at")
 
-  role             Role           @relation(fields: [roleId], references: [id], onDelete: Restrict)
-  profilePhotoFile File?          @relation("UserProfilePhoto", fields: [profilePhotoFileId], references: [id], onDelete: SetNull)
-  auditLogs        AuditLog[]     @relation("AuditActor")
-  emailAuthChallenges EmailAuthChallenge[]
-  sessions        UserSession[]
-  importReports    ImportReport[] @relation("ImportReportCreator")
-  uploadedFiles    File[]         @relation("FileUploader")
+  role                       Role                        @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  profilePhotoFile           File?                       @relation("UserProfilePhoto", fields: [profilePhotoFileId], references: [id], onDelete: SetNull)
+  auditLogs                  AuditLog[]                  @relation("AuditActor")
+  emailAuthChallenges        EmailAuthChallenge[]
+  sessions                   UserSession[]
+  importReports              ImportReport[]              @relation("ImportReportCreator")
+  uploadedFiles              File[]                      @relation("FileUploader")
+  lotPresentationCollections LotPresentationCollection[]
+  lotPresentationDocuments   LotPresentationDocument[]
 
   @@index([roleId])
   @@index([profilePhotoFileId])
@@ -153,13 +157,13 @@ model User {
 }
 
 model UserSession {
-  id                            String   @id @default(uuid()) @db.Uuid
-  userId                        String   @map("user_id") @db.Uuid
-  refreshTokenHash              String   @map("refresh_token_hash")
-  refreshTokenExpiresAt         DateTime @map("refresh_token_expires_at")
-  lastUsedAt                    DateTime @default(now()) @map("last_used_at")
-  createdAt                     DateTime @default(now()) @map("created_at")
-  updatedAt                     DateTime @updatedAt @map("updated_at")
+  id                    String   @id @default(uuid()) @db.Uuid
+  userId                String   @map("user_id") @db.Uuid
+  refreshTokenHash      String   @map("refresh_token_hash")
+  refreshTokenExpiresAt DateTime @map("refresh_token_expires_at")
+  lastUsedAt            DateTime @default(now()) @map("last_used_at")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -280,61 +284,61 @@ model MetroStation {
 }
 
 model RealEstateObject {
-  id                String       @id @default(uuid()) @db.Uuid
-  wpPostId          Int?         @unique @map("wp_post_id")
-  title             String
-  slug              String       @unique
-  status            ObjectStatus @default(DRAFT)
-  description       String?
-  architectureDescription String? @map("architecture_description")
-  infrastructureDescription String? @map("infrastructure_description")
-  fillingDescription String? @map("filling_description")
-  shortDescription  String?      @map("short_description")
-  mapName           String?      @map("map_name") @db.VarChar(16)
-  aerotourUrl       String?      @map("aerotour_url") @db.VarChar(2048)
-  layoutsUrl        String?      @map("layouts_url") @db.VarChar(2048)
-  krtName           String?      @map("krt_name") @db.VarChar(240)
-  apartmentAreaRange String?     @map("apartment_area_range") @db.VarChar(120)
-  ceilingHeight     String?      @map("ceiling_height") @db.VarChar(120)
-  propertyClass     String?      @map("property_class") @db.VarChar(120)
-  floorRange        String?      @map("floor_range") @db.VarChar(120)
-  apartmentsCountText String?    @map("apartments_count_text") @db.VarChar(120)
-  priceFrom         Decimal?     @map("price_from") @db.Decimal(14, 2)
-  pricePerMeterFrom Decimal?     @map("price_per_meter_from") @db.Decimal(14, 2)
-  feedPriceFrom     Decimal?     @map("feed_price_from") @db.Decimal(14, 2)
-  feedPricePerMeterFrom Decimal? @map("feed_price_per_meter_from") @db.Decimal(14, 2)
-  feedAreaRange     String?      @map("feed_area_range") @db.VarChar(120)
-  feedFloorRange    String?      @map("feed_floor_range") @db.VarChar(120)
-  feedUnitsCount    Int?         @map("feed_units_count")
-  feedUnitsCountText String?     @map("feed_units_count_text") @db.VarChar(120)
-  feedCompletionYear Int?        @map("feed_completion_year")
-  feedCompletionQuarter Int?     @map("feed_completion_quarter")
-  feedUpdatedAt     DateTime?    @map("feed_updated_at")
-  completionYear    Int?         @map("completion_year")
-  completionQuarter Int?         @map("completion_quarter")
-  address           String?
-  latitude          Decimal?     @db.Decimal(9, 6)
-  longitude         Decimal?     @db.Decimal(9, 6)
-  featuresJson      Json         @default("{}") @map("features_json")
-  developerId       String?      @map("developer_id") @db.Uuid
-  primaryLocationId String?      @map("primary_location_id") @db.Uuid
-  publishedAt       DateTime?    @map("published_at")
-  archivedAt        DateTime?    @map("archived_at")
-  createdAt         DateTime     @default(now()) @map("created_at")
-  updatedAt         DateTime     @updatedAt @map("updated_at")
-  deletedAt         DateTime?    @map("deleted_at")
+  id                        String       @id @default(uuid()) @db.Uuid
+  wpPostId                  Int?         @unique @map("wp_post_id")
+  title                     String
+  slug                      String       @unique
+  status                    ObjectStatus @default(DRAFT)
+  description               String?
+  architectureDescription   String?      @map("architecture_description")
+  infrastructureDescription String?      @map("infrastructure_description")
+  fillingDescription        String?      @map("filling_description")
+  shortDescription          String?      @map("short_description")
+  mapName                   String?      @map("map_name") @db.VarChar(16)
+  aerotourUrl               String?      @map("aerotour_url") @db.VarChar(2048)
+  layoutsUrl                String?      @map("layouts_url") @db.VarChar(2048)
+  krtName                   String?      @map("krt_name") @db.VarChar(240)
+  apartmentAreaRange        String?      @map("apartment_area_range") @db.VarChar(120)
+  ceilingHeight             String?      @map("ceiling_height") @db.VarChar(120)
+  propertyClass             String?      @map("property_class") @db.VarChar(120)
+  floorRange                String?      @map("floor_range") @db.VarChar(120)
+  apartmentsCountText       String?      @map("apartments_count_text") @db.VarChar(120)
+  priceFrom                 Decimal?     @map("price_from") @db.Decimal(14, 2)
+  pricePerMeterFrom         Decimal?     @map("price_per_meter_from") @db.Decimal(14, 2)
+  feedPriceFrom             Decimal?     @map("feed_price_from") @db.Decimal(14, 2)
+  feedPricePerMeterFrom     Decimal?     @map("feed_price_per_meter_from") @db.Decimal(14, 2)
+  feedAreaRange             String?      @map("feed_area_range") @db.VarChar(120)
+  feedFloorRange            String?      @map("feed_floor_range") @db.VarChar(120)
+  feedUnitsCount            Int?         @map("feed_units_count")
+  feedUnitsCountText        String?      @map("feed_units_count_text") @db.VarChar(120)
+  feedCompletionYear        Int?         @map("feed_completion_year")
+  feedCompletionQuarter     Int?         @map("feed_completion_quarter")
+  feedUpdatedAt             DateTime?    @map("feed_updated_at")
+  completionYear            Int?         @map("completion_year")
+  completionQuarter         Int?         @map("completion_quarter")
+  address                   String?
+  latitude                  Decimal?     @db.Decimal(9, 6)
+  longitude                 Decimal?     @db.Decimal(9, 6)
+  featuresJson              Json         @default("{}") @map("features_json")
+  developerId               String?      @map("developer_id") @db.Uuid
+  primaryLocationId         String?      @map("primary_location_id") @db.Uuid
+  publishedAt               DateTime?    @map("published_at")
+  archivedAt                DateTime?    @map("archived_at")
+  createdAt                 DateTime     @default(now()) @map("created_at")
+  updatedAt                 DateTime     @updatedAt @map("updated_at")
+  deletedAt                 DateTime?    @map("deleted_at")
 
-  developer       Developer?           @relation(fields: [developerId], references: [id], onDelete: SetNull)
-  primaryLocation Location?            @relation("PrimaryObjectLocation", fields: [primaryLocationId], references: [id], onDelete: SetNull)
-  locations       ObjectLocation[]
-  metroStations   ObjectMetroStation[]
-  images          ObjectImage[]
-  files           ObjectFile[]
-  auditLogs       AuditLog[]           @relation("ObjectAuditLogs")
-  catalogQuickLinks CatalogQuickLink[]
-  feedSources     FeedSource[]
+  developer          Developer?           @relation(fields: [developerId], references: [id], onDelete: SetNull)
+  primaryLocation    Location?            @relation("PrimaryObjectLocation", fields: [primaryLocationId], references: [id], onDelete: SetNull)
+  locations          ObjectLocation[]
+  metroStations      ObjectMetroStation[]
+  images             ObjectImage[]
+  files              ObjectFile[]
+  auditLogs          AuditLog[]           @relation("ObjectAuditLogs")
+  catalogQuickLinks  CatalogQuickLink[]
+  feedSources        FeedSource[]
   feedSourceMappings FeedSourceMapping[]
-  feedUnits       FeedUnit[]
+  feedUnits          FeedUnit[]
 
   @@index([status])
   @@index([developerId])
@@ -399,25 +403,25 @@ model CatalogQuickLink {
 }
 
 model FeedSource {
-  id            String    @id @default(uuid()) @db.Uuid
+  id            String         @id @default(uuid()) @db.Uuid
   sourceKind    FeedSourceKind @default(URL) @map("source_kind")
-  url           String?   @db.VarChar(2048)
-  xmlFileId     String?   @map("xml_file_id") @db.Uuid
+  url           String?        @db.VarChar(2048)
+  xmlFileId     String?        @map("xml_file_id") @db.Uuid
   format        FeedFormat
-  filterJson    Json?     @map("filter_json")
-  developerId   String    @map("developer_id") @db.Uuid
-  objectId      String?   @map("object_id") @db.Uuid
-  isActive      Boolean   @default(true) @map("is_active")
-  deletedAt     DateTime? @map("deleted_at")
-  lastPreviewAt DateTime? @map("last_preview_at")
-  lastRunAt     DateTime? @map("last_run_at")
-  lastSuccessAt DateTime? @map("last_success_at")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
+  filterJson    Json?          @map("filter_json")
+  developerId   String         @map("developer_id") @db.Uuid
+  objectId      String?        @map("object_id") @db.Uuid
+  isActive      Boolean        @default(true) @map("is_active")
+  deletedAt     DateTime?      @map("deleted_at")
+  lastPreviewAt DateTime?      @map("last_preview_at")
+  lastRunAt     DateTime?      @map("last_run_at")
+  lastSuccessAt DateTime?      @map("last_success_at")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
 
-  developer Developer        @relation(fields: [developerId], references: [id], onDelete: Restrict)
-  object    RealEstateObject? @relation(fields: [objectId], references: [id], onDelete: SetNull)
-  xmlFile   File?            @relation("FeedXmlFile", fields: [xmlFileId], references: [id], onDelete: Restrict)
+  developer Developer           @relation(fields: [developerId], references: [id], onDelete: Restrict)
+  object    RealEstateObject?   @relation(fields: [objectId], references: [id], onDelete: SetNull)
+  xmlFile   File?               @relation("FeedXmlFile", fields: [xmlFileId], references: [id], onDelete: Restrict)
   mappings  FeedSourceMapping[]
   runs      FeedImportRun[]
   units     FeedUnit[]
@@ -472,38 +476,40 @@ model FeedImportRun {
 }
 
 model FeedUnit {
-  id                String         @id @default(uuid()) @db.Uuid
-  sourceId          String         @map("source_id") @db.Uuid
-  objectId          String         @map("object_id") @db.Uuid
-  externalId        String         @map("external_id") @db.VarChar(255)
-  type              FeedUnitType
-  status            FeedUnitStatus @default(UNKNOWN)
-  title             String?        @db.VarChar(300)
-  address           String?        @db.VarChar(512)
-  building          String?        @db.VarChar(120)
-  section           String?        @db.VarChar(120)
-  floor             Int?
-  rooms             Int?
-  price             Decimal?       @db.Decimal(14, 2)
-  discountPrice     Decimal?       @map("discount_price") @db.Decimal(14, 2)
-  effectivePrice    Decimal?       @map("effective_price") @db.Decimal(14, 2)
-  currency          String?        @db.VarChar(12)
-  area              Decimal?       @db.Decimal(10, 2)
-  pricePerMeter     Decimal?       @map("price_per_meter") @db.Decimal(14, 2)
-  discountPricePerMeter  Decimal?  @map("discount_price_per_meter") @db.Decimal(14, 2)
-  effectivePricePerMeter Decimal?  @map("effective_price_per_meter") @db.Decimal(14, 2)
-  completionYear    Int?           @map("completion_year")
-  completionQuarter Int?           @map("completion_quarter")
-  rawPayload        Json?          @map("raw_payload")
-  archivedAt        DateTime?      @map("archived_at")
-  createdAt         DateTime       @default(now()) @map("created_at")
-  updatedAt         DateTime       @updatedAt @map("updated_at")
+  id                     String         @id @default(uuid()) @db.Uuid
+  sourceId               String         @map("source_id") @db.Uuid
+  objectId               String         @map("object_id") @db.Uuid
+  externalId             String         @map("external_id") @db.VarChar(255)
+  type                   FeedUnitType
+  status                 FeedUnitStatus @default(UNKNOWN)
+  title                  String?        @db.VarChar(300)
+  address                String?        @db.VarChar(512)
+  building               String?        @db.VarChar(120)
+  section                String?        @db.VarChar(120)
+  floor                  Int?
+  rooms                  Int?
+  price                  Decimal?       @db.Decimal(14, 2)
+  discountPrice          Decimal?       @map("discount_price") @db.Decimal(14, 2)
+  effectivePrice         Decimal?       @map("effective_price") @db.Decimal(14, 2)
+  currency               String?        @db.VarChar(12)
+  area                   Decimal?       @db.Decimal(10, 2)
+  pricePerMeter          Decimal?       @map("price_per_meter") @db.Decimal(14, 2)
+  discountPricePerMeter  Decimal?       @map("discount_price_per_meter") @db.Decimal(14, 2)
+  effectivePricePerMeter Decimal?       @map("effective_price_per_meter") @db.Decimal(14, 2)
+  completionYear         Int?           @map("completion_year")
+  completionQuarter      Int?           @map("completion_quarter")
+  rawPayload             Json?          @map("raw_payload")
+  archivedAt             DateTime?      @map("archived_at")
+  createdAt              DateTime       @default(now()) @map("created_at")
+  updatedAt              DateTime       @updatedAt @map("updated_at")
 
-  source            FeedSource                 @relation(fields: [sourceId], references: [id], onDelete: Cascade)
-  object            RealEstateObject           @relation(fields: [objectId], references: [id], onDelete: Cascade)
-  residentialDetails FeedResidentialUnitDetails?
-  commercialDetails  FeedCommercialUnitDetails?
-  media             FeedUnitMedia[]
+  source                       FeedSource                      @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  object                       RealEstateObject                @relation(fields: [objectId], references: [id], onDelete: Cascade)
+  residentialDetails           FeedResidentialUnitDetails?
+  commercialDetails            FeedCommercialUnitDetails?
+  media                        FeedUnitMedia[]
+  lotPresentationItems         LotPresentationCollectionItem[]
+  lotPresentationDocumentItems LotPresentationDocumentItem[]
 
   @@unique([sourceId, externalId])
   @@index([objectId, status])
@@ -595,13 +601,14 @@ model File {
   createdAt      DateTime    @default(now()) @map("created_at")
   updatedAt      DateTime    @updatedAt @map("updated_at")
 
-  uploadedBy         User?         @relation("FileUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
-  profilePhotoUsers  User[]        @relation("UserProfilePhoto")
-  objectImages       ObjectImage[]
-  objectFiles        ObjectFile[]
-  variants           FileVariant[]
-  feedXmlSources     FeedSource[] @relation("FeedXmlFile")
-  feedMediaAssets    FeedMediaAsset[] @relation("FeedMediaFile")
+  uploadedBy               User?                     @relation("FileUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  profilePhotoUsers        User[]                    @relation("UserProfilePhoto")
+  objectImages             ObjectImage[]
+  objectFiles              ObjectFile[]
+  variants                 FileVariant[]
+  feedXmlSources           FeedSource[]              @relation("FeedXmlFile")
+  feedMediaAssets          FeedMediaAsset[]          @relation("FeedMediaFile")
+  lotPresentationDocuments LotPresentationDocument[]
 
   @@unique([storage, bucket, key])
   @@index([uploadedById])
@@ -631,17 +638,17 @@ model FileVariant {
 }
 
 model ObjectImage {
-  id            String   @id @default(uuid()) @db.Uuid
-  objectId      String   @map("object_id") @db.Uuid
-  fileId        String   @map("file_id") @db.Uuid
-  sortOrder     Int      @default(0) @map("sort_order")
-  isCover       Boolean  @default(false) @map("is_cover")
+  id            String              @id @default(uuid()) @db.Uuid
+  objectId      String              @map("object_id") @db.Uuid
+  fileId        String              @map("file_id") @db.Uuid
+  sortOrder     Int                 @default(0) @map("sort_order")
+  isCover       Boolean             @default(false) @map("is_cover")
   section       ObjectImageSection? @map("section")
   alt           String?
   title         String?
-  sourceMetaKey String?  @map("source_meta_key")
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
+  sourceMetaKey String?             @map("source_meta_key")
+  createdAt     DateTime            @default(now()) @map("created_at")
+  updatedAt     DateTime            @updatedAt @map("updated_at")
 
   object RealEstateObject @relation(fields: [objectId], references: [id], onDelete: Cascade)
   file   File             @relation(fields: [fileId], references: [id], onDelete: Restrict)
@@ -671,6 +678,71 @@ model ObjectFile {
   @@index([fileId])
   @@index([objectId, type])
   @@map("object_files")
+}
+
+model LotPresentationCollection {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  name      String   @db.VarChar(120)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user      User                            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items     LotPresentationCollectionItem[]
+  documents LotPresentationDocument[]
+
+  @@index([userId, createdAt])
+  @@map("lot_presentation_collections")
+}
+
+model LotPresentationCollectionItem {
+  id           String   @id @default(uuid()) @db.Uuid
+  collectionId String   @map("collection_id") @db.Uuid
+  unitId       String   @map("unit_id") @db.Uuid
+  sortOrder    Int      @default(0) @map("sort_order")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  collection LotPresentationCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  unit       FeedUnit                  @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  @@unique([collectionId, unitId])
+  @@index([collectionId, sortOrder])
+  @@index([unitId])
+  @@map("lot_presentation_collection_items")
+}
+
+model LotPresentationDocument {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  collectionId String?  @map("collection_id") @db.Uuid
+  fileId       String   @map("file_id") @db.Uuid
+  title        String   @db.VarChar(180)
+  unitsCount   Int      @map("units_count")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  user       User                          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  collection LotPresentationCollection?    @relation(fields: [collectionId], references: [id], onDelete: SetNull)
+  file       File                          @relation(fields: [fileId], references: [id], onDelete: Restrict)
+  items      LotPresentationDocumentItem[]
+
+  @@index([userId, createdAt])
+  @@index([collectionId])
+  @@index([fileId])
+  @@map("lot_presentation_documents")
+}
+
+model LotPresentationDocumentItem {
+  documentId String @map("document_id") @db.Uuid
+  unitId     String @map("unit_id") @db.Uuid
+  sortOrder  Int    @map("sort_order")
+
+  document LotPresentationDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  unit     FeedUnit                @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  @@id([documentId, unitId])
+  @@index([unitId])
+  @@map("lot_presentation_document_items")
 }
 
 model AuditLog {

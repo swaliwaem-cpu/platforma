@@ -70,6 +70,8 @@ type UpdateUserBody = {
 
 type UpdateOwnProfileBody = {
   name?: unknown;
+  brokerPhone?: unknown;
+  brokerEmail?: unknown;
 };
 
 type ChangeOwnPasswordBody = {
@@ -228,6 +230,26 @@ export class UsersService {
       }
     }
 
+    if ('brokerPhone' in body) {
+      const brokerPhone = this.parseNullableBrokerPhone(body.brokerPhone);
+
+      if (brokerPhone !== user.brokerPhone) {
+        data.brokerPhone = brokerPhone;
+        changes.brokerPhone = this.change(user.brokerPhone, brokerPhone);
+        hasChanges = true;
+      }
+    }
+
+    if ('brokerEmail' in body) {
+      const brokerEmail = this.parseNullableBrokerEmail(body.brokerEmail);
+
+      if (brokerEmail !== user.brokerEmail) {
+        data.brokerEmail = brokerEmail;
+        changes.brokerEmail = this.change(user.brokerEmail, brokerEmail);
+        hasChanges = true;
+      }
+    }
+
     if ('roleId' in body) {
       const roleId = this.parseUuid(this.parseRequiredString(body.roleId, 'Role is required'), 'Role is invalid');
       await this.ensureRoleExists(roleId);
@@ -351,6 +373,26 @@ export class UsersService {
       if (name !== user.name) {
         data.name = name;
         changes.name = this.change(user.name, name);
+        hasChanges = true;
+      }
+    }
+
+    if ('brokerPhone' in body) {
+      const brokerPhone = this.parseNullableBrokerPhone(body.brokerPhone);
+
+      if (brokerPhone !== user.brokerPhone) {
+        data.brokerPhone = brokerPhone;
+        changes.brokerPhone = this.change(user.brokerPhone, brokerPhone);
+        hasChanges = true;
+      }
+    }
+
+    if ('brokerEmail' in body) {
+      const brokerEmail = this.parseNullableBrokerEmail(body.brokerEmail);
+
+      if (brokerEmail !== user.brokerEmail) {
+        data.brokerEmail = brokerEmail;
+        changes.brokerEmail = this.change(user.brokerEmail, brokerEmail);
         hasChanges = true;
       }
     }
@@ -627,6 +669,50 @@ export class UsersService {
     return name.length > 0 ? name : null;
   }
 
+  private parseNullableBrokerPhone(value: unknown) {
+    if (value === undefined || value === null) {
+      return null;
+    }
+
+    if (typeof value !== 'string') {
+      throw new BadRequestException('Broker phone must be a string');
+    }
+
+    const brokerPhone = value.trim().replace(/\s+/gu, ' ');
+
+    if (!brokerPhone) {
+      return null;
+    }
+
+    if (brokerPhone.length > 64 || !/^[0-9+() .-]+$/u.test(brokerPhone)) {
+      throw new BadRequestException('Broker phone is invalid');
+    }
+
+    return brokerPhone;
+  }
+
+  private parseNullableBrokerEmail(value: unknown) {
+    if (value === undefined || value === null) {
+      return null;
+    }
+
+    if (typeof value !== 'string') {
+      throw new BadRequestException('Broker email must be a string');
+    }
+
+    const brokerEmail = value.trim().toLowerCase();
+
+    if (!brokerEmail) {
+      return null;
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(brokerEmail) || brokerEmail.length > 320) {
+      throw new BadRequestException('Broker email is invalid');
+    }
+
+    return brokerEmail;
+  }
+
   private parseRequiredString(value: unknown, message: string) {
     if (typeof value !== 'string' || value.trim().length === 0) {
       throw new BadRequestException(message);
@@ -682,6 +768,8 @@ export class UsersService {
       id: user.id,
       email: user.email,
       name: user.name,
+      brokerPhone: user.brokerPhone,
+      brokerEmail: user.brokerEmail,
       status: user.status,
       role: {
         id: user.role.id,
@@ -698,6 +786,8 @@ export class UsersService {
       id: user.id,
       email: user.email,
       name: user.name,
+      brokerPhone: user.brokerPhone,
+      brokerEmail: user.brokerEmail,
       status: user.status,
       role: {
         id: user.role.id,
@@ -730,6 +820,8 @@ export class UsersService {
       id: user.id,
       email: user.email,
       name: user.name,
+      brokerPhone: user.brokerPhone,
+      brokerEmail: user.brokerEmail,
       status: user.status,
       roleId: user.roleId,
       roleName: user.role.name,

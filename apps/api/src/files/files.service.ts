@@ -250,6 +250,7 @@ export class FilesService {
             objectImages: true,
             objectFiles: true,
             feedXmlSources: true,
+            lotPresentationDocuments: true,
           },
         },
       },
@@ -263,7 +264,8 @@ export class FilesService {
       file._count.profilePhotoUsers > 0 ||
       file._count.objectImages > 0 ||
       file._count.objectFiles > 0 ||
-      file._count.feedXmlSources > 0
+      file._count.feedXmlSources > 0 ||
+      file._count.lotPresentationDocuments > 0
     ) {
       throw new ConflictException('File is linked and cannot be deleted');
     }

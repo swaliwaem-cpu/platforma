@@ -21,6 +21,7 @@ COPY --from=deps /app/apps/api/node_modules ./apps/api/node_modules
 COPY --from=deps /app/tools/feed-import/node_modules ./tools/feed-import/node_modules
 COPY --from=deps /app/tools/wp-import/node_modules ./tools/wp-import/node_modules
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
+COPY _Fluffy_White_1-02.svg ./_Fluffy_White_1-02.svg
 COPY apps/api ./apps/api
 COPY packages/shared ./packages/shared
 COPY tools/feed-import ./tools/feed-import

@@ -1,0 +1,824 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lot Presentation Template Options</title>
+    <style>
+      :root {
+        color: #201f1c;
+        background: #efede7;
+        font-family:
+          "Google Sans",
+          "Helvetica Neue",
+          Arial,
+          sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: #efede7;
+      }
+
+      main {
+        width: min(1480px, calc(100vw - 40px));
+        margin: 0 auto;
+        padding: 28px 0 48px;
+      }
+
+      .intro {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 24px;
+        margin-bottom: 24px;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        max-width: 760px;
+        font-size: 28px;
+        line-height: 1.05;
+        letter-spacing: 0;
+      }
+
+      .intro p {
+        max-width: 520px;
+        color: #625f56;
+        font-size: 13px;
+        line-height: 1.55;
+      }
+
+      .options {
+        display: grid;
+        gap: 20px;
+      }
+
+      .option {
+        border: 1px solid rgba(32, 31, 28, 0.14);
+        background: rgba(255, 255, 255, 0.42);
+        padding: 16px;
+      }
+
+      .option-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        margin-bottom: 14px;
+      }
+
+      .option-title h2 {
+        font-size: 17px;
+        line-height: 1.15;
+      }
+
+      .option-title span {
+        color: #6d695f;
+        font-size: 12px;
+        line-height: 1.35;
+        text-align: right;
+      }
+
+      .spread {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .page {
+        position: relative;
+        min-height: 620px;
+        overflow: hidden;
+        border: 1px solid rgba(0, 0, 0, 0.12);
+        background: #fff;
+        box-shadow: 0 18px 40px rgba(43, 40, 32, 0.12);
+      }
+
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+      }
+
+      .brand img {
+        width: 28px;
+        height: 34px;
+        object-fit: contain;
+      }
+
+      .brand strong {
+        display: block;
+        font-size: 10px;
+        line-height: 1;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .brand small,
+      .broker small {
+        color: inherit;
+        display: block;
+        font-size: 10px;
+        line-height: 1.35;
+        opacity: 0.72;
+      }
+
+      .broker {
+        font-size: 11px;
+        line-height: 1.3;
+        text-align: right;
+      }
+
+      .kicker {
+        color: #7b766c;
+        font-size: 10px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      .lot-title {
+        font-size: 30px;
+        line-height: 1.02;
+        letter-spacing: 0;
+      }
+
+      .plan,
+      .photo {
+        position: relative;
+        overflow: hidden;
+        background:
+          linear-gradient(90deg, rgba(255, 255, 255, 0.32) 1px, transparent 1px),
+          linear-gradient(rgba(255, 255, 255, 0.32) 1px, transparent 1px),
+          #c9c4b8;
+        background-size: 22px 22px;
+      }
+
+      .plan::before {
+        content: "";
+        position: absolute;
+        inset: 18%;
+        border: 6px solid rgba(32, 31, 28, 0.46);
+      }
+
+      .plan::after {
+        content: "";
+        position: absolute;
+        inset: 34% 18% 18% 50%;
+        border-left: 4px solid rgba(32, 31, 28, 0.4);
+        border-top: 4px solid rgba(32, 31, 28, 0.4);
+      }
+
+      .photo {
+        background:
+          linear-gradient(135deg, rgba(255, 255, 255, 0.22), transparent 42%),
+          linear-gradient(145deg, #8f9b93, #d8c7aa);
+      }
+
+      .photo:nth-child(2n) {
+        background:
+          linear-gradient(135deg, rgba(255, 255, 255, 0.2), transparent 46%),
+          linear-gradient(145deg, #a9928b, #d9d5c7);
+      }
+
+      .photo:nth-child(3n) {
+        background:
+          linear-gradient(135deg, rgba(255, 255, 255, 0.2), transparent 44%),
+          linear-gradient(145deg, #6f7d83, #d7d1bf);
+      }
+
+      .photo span,
+      .plan span {
+        position: absolute;
+        left: 10px;
+        bottom: 9px;
+        padding: 4px 7px;
+        color: #fff;
+        background: rgba(20, 20, 18, 0.58);
+        font-size: 9px;
+        line-height: 1;
+      }
+
+      .facts {
+        display: grid;
+        gap: 8px;
+      }
+
+      .fact {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 14px;
+        border-bottom: 1px solid rgba(32, 31, 28, 0.12);
+        padding-bottom: 7px;
+      }
+
+      .fact dt {
+        color: #6e6a61;
+        font-size: 10px;
+      }
+
+      .fact dd {
+        margin: 0;
+        font-size: 12px;
+        font-weight: 650;
+        text-align: right;
+      }
+
+      .project-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-rows: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .project-copy {
+        color: #4f4a42;
+        font-size: 12px;
+        line-height: 1.55;
+      }
+
+      .option-a .page {
+        background: #fbf8ef;
+        padding: 28px;
+      }
+
+      .option-a .page::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        width: 10px;
+        background: #2a2a25;
+      }
+
+      .option-a .lot-title {
+        margin: 46px 0 18px;
+        max-width: 470px;
+      }
+
+      .option-a .plan {
+        height: 280px;
+        margin-bottom: 22px;
+        border: 1px solid rgba(32, 31, 28, 0.16);
+      }
+
+      .option-a .price-block {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 16px;
+        align-items: end;
+        margin-bottom: 14px;
+        border-left: 4px solid #2a2a25;
+        background: #ebe6d8;
+        padding: 14px 16px;
+      }
+
+      .option-a .price-block span {
+        display: block;
+        color: #665f53;
+        font-size: 10px;
+        line-height: 1.3;
+      }
+
+      .option-a .price-block strong {
+        display: block;
+        margin-top: 4px;
+        font-size: 24px;
+        line-height: 1;
+      }
+
+      .option-a .price-block small {
+        color: #665f53;
+        display: block;
+        font-size: 10px;
+        line-height: 1.35;
+        text-align: right;
+      }
+
+      .option-a .section-heading {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 10px;
+      }
+
+      .option-a .section-heading h3 {
+        font-size: 16px;
+      }
+
+      .option-a .facts {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px 18px;
+      }
+
+      .option-a .project-grid {
+        height: 330px;
+        margin: 34px 0 24px;
+      }
+
+      .option-a .project-copy {
+        columns: 2;
+        column-gap: 28px;
+      }
+
+      .option-b .page {
+        padding: 0;
+        background: #fafafa;
+      }
+
+      .option-b .header {
+        padding: 18px 22px;
+        color: #f5f2e9;
+        background: #1f2623;
+      }
+
+      .option-b .brand img {
+        filter: invert(1);
+      }
+
+      .option-b .body {
+        padding: 22px;
+      }
+
+      .option-b .lot-top {
+        display: grid;
+        grid-template-columns: 1fr 210px;
+        gap: 18px;
+        align-items: end;
+        margin-bottom: 20px;
+      }
+
+      .option-b .lot-title {
+        font-size: 28px;
+      }
+
+      .option-b .price-block {
+        border-left: 4px solid #4b7b69;
+        background: #e8eee9;
+        padding: 14px;
+      }
+
+      .option-b .price-block span {
+        display: block;
+        color: #536058;
+        font-size: 10px;
+        margin-bottom: 4px;
+      }
+
+      .option-b .price-block strong {
+        display: block;
+        font-size: 22px;
+        line-height: 1;
+      }
+
+      .option-b .plan {
+        height: 300px;
+        margin-bottom: 18px;
+      }
+
+      .option-b .facts {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0;
+        border-top: 1px solid rgba(32, 31, 28, 0.15);
+        border-left: 1px solid rgba(32, 31, 28, 0.15);
+      }
+
+      .option-b .fact {
+        display: block;
+        min-height: 62px;
+        border-right: 1px solid rgba(32, 31, 28, 0.15);
+        border-bottom: 1px solid rgba(32, 31, 28, 0.15);
+        padding: 10px;
+      }
+
+      .option-b .fact dd {
+        margin-top: 7px;
+        text-align: left;
+      }
+
+      .option-b .project-grid {
+        height: 330px;
+        margin: 24px 22px 18px;
+      }
+
+      .option-b .project-page-title {
+        display: flex;
+        justify-content: space-between;
+        padding: 26px 22px 0;
+      }
+
+      .option-b .project-page-title h3 {
+        font-size: 26px;
+      }
+
+      .option-b .project-copy {
+        margin: 0 22px;
+        padding: 16px 0 0;
+        border-top: 1px solid rgba(32, 31, 28, 0.14);
+      }
+
+      .option-c .page {
+        display: grid;
+        grid-template-columns: 92px 1fr;
+        background: #fffdf8;
+      }
+
+      .option-c .rail {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        padding: 24px 16px;
+        color: #fff8ed;
+        background: #4a1f2e;
+      }
+
+      .option-c .rail img {
+        width: 38px;
+        height: 46px;
+        object-fit: contain;
+        filter: invert(1);
+      }
+
+      .option-c .rail span {
+        writing-mode: vertical-rl;
+        transform: rotate(180deg);
+        font-size: 10px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      .option-c .body {
+        padding: 26px;
+      }
+
+      .option-c .header {
+        align-items: flex-start;
+        margin-bottom: 28px;
+      }
+
+      .option-c .lot-title {
+        max-width: 470px;
+        margin-bottom: 18px;
+        font-size: 34px;
+      }
+
+      .option-c .plan {
+        height: 300px;
+        margin-bottom: 0;
+      }
+
+      .option-c .info-strip {
+        display: grid;
+        grid-template-columns: 1.2fr 1fr;
+        gap: 18px;
+        margin-top: 18px;
+      }
+
+      .option-c .price-panel {
+        color: #fffaf2;
+        background: #4a1f2e;
+        padding: 16px;
+      }
+
+      .option-c .price-panel span {
+        color: #d9c9bf;
+        display: block;
+        font-size: 10px;
+        margin-bottom: 6px;
+      }
+
+      .option-c .price-panel strong {
+        display: block;
+        font-size: 24px;
+        line-height: 1;
+      }
+
+      .option-c .facts {
+        gap: 7px;
+      }
+
+      .option-c .project-grid {
+        height: 338px;
+        margin: 22px 0 22px;
+      }
+
+      .option-c .project-copy {
+        padding-left: 16px;
+        border-left: 3px solid #4a1f2e;
+      }
+
+      @media (max-width: 1080px) {
+        .intro {
+          display: block;
+        }
+
+        .intro p {
+          margin-top: 12px;
+        }
+
+        .spread {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 720px) {
+        main {
+          width: min(100vw - 20px, 520px);
+          padding-top: 18px;
+        }
+
+        .option {
+          padding: 10px;
+        }
+
+        .page {
+          min-height: 560px;
+        }
+
+        .option-a .facts,
+        .option-b .facts,
+        .option-c .info-strip {
+          grid-template-columns: 1fr;
+        }
+
+        .option-b .lot-top {
+          grid-template-columns: 1fr;
+        }
+
+        .option-c .page {
+          grid-template-columns: 72px 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="intro" aria-labelledby="page-title">
+        <div>
+          <p class="kicker">Черновые варианты PDF-шаблона</p>
+          <h1 id="page-title">Три направления для презентации одного или нескольких лотов</h1>
+        </div>
+        <p>
+          В каждом варианте показаны две страницы: лот с планировкой и блоком «О квартире», затем проект с
+          заголовком «Описание проекта», сеткой 3×2 и текстом описания.
+        </p>
+      </section>
+
+      <section class="options">
+        <article class="option option-a" aria-labelledby="option-a-title">
+          <header class="option-title">
+            <h2 id="option-a-title">Вариант 1. Спокойный editorial</h2>
+            <span>Больше воздуха, премиальная подача, хорошо для отправки клиенту как аккуратный PDF.</span>
+          </header>
+
+          <div class="spread">
+            <section class="page" aria-label="Вариант 1, страница лота">
+              <header class="header">
+                <div class="brand">
+                  <img src="../_Fluffy_White_1-02.svg" alt="" />
+                  <div>
+                    <strong>Fluffy White</strong>
+                    <small>презентация лота</small>
+                  </div>
+                </div>
+                <div class="broker">
+                  <small>Брокер</small>
+                  <strong>Александр Орлов</strong>
+                </div>
+              </header>
+
+              <p class="kicker">Лот A-1204</p>
+              <h3 class="lot-title">2-комнатная квартира, 68,4 м²</h3>
+              <div class="price-block">
+                <div>
+                  <span>Стоимость</span>
+                  <strong>24 900 000 ₽</strong>
+                </div>
+                <small>Обычная цена 27 400 000 ₽<br />364 035 ₽/м²</small>
+              </div>
+              <div class="plan"><span>Первая пикча из галереи лота</span></div>
+
+              <div class="section-heading">
+                <h3>О квартире:</h3>
+                <span class="kicker">акционная цена</span>
+              </div>
+
+              <dl class="facts">
+                <div class="fact"><dt>Стоимость</dt><dd>24 900 000 ₽</dd></div>
+                <div class="fact"><dt>Обычная цена</dt><dd>27 400 000 ₽</dd></div>
+                <div class="fact"><dt>Стоимость за м²</dt><dd>364 035 ₽/м²</dd></div>
+                <div class="fact"><dt>Площадь</dt><dd>68,4 м²</dd></div>
+                <div class="fact"><dt>Этаж</dt><dd>12</dd></div>
+                <div class="fact"><dt>Корпус / секция</dt><dd>Башня A / 2</dd></div>
+              </dl>
+            </section>
+
+            <section class="page" aria-label="Вариант 1, страница проекта">
+              <header class="header">
+                <div class="brand">
+                  <img src="../_Fluffy_White_1-02.svg" alt="" />
+                  <div>
+                    <strong>Fluffy White</strong>
+                    <small>описание проекта</small>
+                  </div>
+                </div>
+                <div class="broker">
+                  <small>Брокер</small>
+                  <strong>Александр Орлов</strong>
+                </div>
+              </header>
+
+              <h3 class="lot-title">Описание проекта</h3>
+              <div class="project-grid">
+                <div class="photo"><span>Архитектура</span></div>
+                <div class="photo"><span>Архитектура</span></div>
+                <div class="photo"><span>Интерьеры</span></div>
+                <div class="photo"><span>Интерьеры</span></div>
+                <div class="photo"><span>Наполнение</span></div>
+                <div class="photo"><span>Наполнение</span></div>
+              </div>
+              <p class="project-copy">
+                Проект расположен в развитом районе с камерной жилой средой, выразительной архитектурой и
+                приватными общественными пространствами. В описании выводится текст из блока «Описание и
+                особенности» без маркетингового переформатирования.
+              </p>
+            </section>
+          </div>
+        </article>
+
+        <article class="option option-b" aria-labelledby="option-b-title">
+          <header class="option-title">
+            <h2 id="option-b-title">Вариант 2. Деловой data sheet</h2>
+            <span>Плотнее, табличнее, удобно сравнивать несколько выбранных лотов в одной презентации.</span>
+          </header>
+
+          <div class="spread">
+            <section class="page" aria-label="Вариант 2, страница лота">
+              <header class="header">
+                <div class="brand">
+                  <img src="../_Fluffy_White_1-02.svg" alt="" />
+                  <div>
+                    <strong>Fluffy White</strong>
+                    <small>лот / PDF</small>
+                  </div>
+                </div>
+                <div class="broker">
+                  <small>Подготовил брокер</small>
+                  <strong>Александр Орлов</strong>
+                </div>
+              </header>
+
+              <div class="body">
+                <div class="lot-top">
+                  <div>
+                    <p class="kicker">Квартира</p>
+                    <h3 class="lot-title">2-комнатная, 68,4 м², 12 этаж</h3>
+                  </div>
+                  <div class="price-block">
+                    <span>Стоимость</span>
+                    <strong>24,9 млн ₽</strong>
+                    <span>27,4 млн ₽ без акции</span>
+                  </div>
+                </div>
+                <div class="plan"><span>Планировка</span></div>
+                <dl class="facts">
+                  <div class="fact"><dt>Цена за м²</dt><dd>364 035 ₽</dd></div>
+                  <div class="fact"><dt>Площадь</dt><dd>68,4 м²</dd></div>
+                  <div class="fact"><dt>Комнаты</dt><dd>2</dd></div>
+                  <div class="fact"><dt>Этаж</dt><dd>12</dd></div>
+                  <div class="fact"><dt>Корпус</dt><dd>Башня A</dd></div>
+                  <div class="fact"><dt>Секция</dt><dd>2</dd></div>
+                  <div class="fact"><dt>Срок</dt><dd>4 кв. 2027</dd></div>
+                  <div class="fact"><dt>Статус</dt><dd>Доступен</dd></div>
+                </dl>
+              </div>
+            </section>
+
+            <section class="page" aria-label="Вариант 2, страница проекта">
+              <header class="header">
+                <div class="brand">
+                  <img src="../_Fluffy_White_1-02.svg" alt="" />
+                  <div>
+                    <strong>Fluffy White</strong>
+                    <small>проект / PDF</small>
+                  </div>
+                </div>
+                <div class="broker">
+                  <small>Подготовил брокер</small>
+                  <strong>Александр Орлов</strong>
+                </div>
+              </header>
+
+              <div class="project-page-title">
+                <h3>Описание проекта</h3>
+                <span class="kicker">6 изображений</span>
+              </div>
+              <div class="project-grid">
+                <div class="photo"><span>Архитектура</span></div>
+                <div class="photo"><span>Архитектура</span></div>
+                <div class="photo"><span>Интерьеры</span></div>
+                <div class="photo"><span>Интерьеры</span></div>
+                <div class="photo"><span>Наполнение</span></div>
+                <div class="photo"><span>Наполнение</span></div>
+              </div>
+              <p class="project-copy">
+                Этот вариант делает проектную часть похожей на справочный лист: крупная сетка изображений,
+                затем короткое описание. Если текст длинный, его можно переносить на дополнительную страницу
+                или обрезать по согласованному лимиту.
+              </p>
+            </section>
+          </div>
+        </article>
+
+        <article class="option option-c" aria-labelledby="option-c-title">
+          <header class="option-title">
+            <h2 id="option-c-title">Вариант 3. Акцентная галерейная подача</h2>
+            <span>Более брендовый и заметный, с вертикальной плашкой, но без перегруза и декоративности.</span>
+          </header>
+
+          <div class="spread">
+            <section class="page" aria-label="Вариант 3, страница лота">
+              <aside class="rail">
+                <img src="../_Fluffy_White_1-02.svg" alt="" />
+                <span>Fluffy White</span>
+              </aside>
+              <div class="body">
+                <header class="header">
+                  <p class="kicker">Личная подборка</p>
+                  <div class="broker">
+                    <small>Брокер</small>
+                    <strong>Александр Орлов</strong>
+                  </div>
+                </header>
+                <h3 class="lot-title">2-комнатная квартира, 68,4 м²</h3>
+                <div class="plan"><span>Первая пикча из галереи лота</span></div>
+                <div class="info-strip">
+                  <div class="price-panel">
+                    <span>Стоимость</span>
+                    <strong>24 900 000 ₽</strong>
+                    <span>Обычная цена 27 400 000 ₽</span>
+                  </div>
+                  <dl class="facts">
+                    <div class="fact"><dt>За м²</dt><dd>364 035 ₽</dd></div>
+                    <div class="fact"><dt>Площадь</dt><dd>68,4 м²</dd></div>
+                    <div class="fact"><dt>Этаж</dt><dd>12</dd></div>
+                    <div class="fact"><dt>Корпус</dt><dd>Башня A</dd></div>
+                  </dl>
+                </div>
+              </div>
+            </section>
+
+            <section class="page" aria-label="Вариант 3, страница проекта">
+              <aside class="rail">
+                <img src="../_Fluffy_White_1-02.svg" alt="" />
+                <span>Project</span>
+              </aside>
+              <div class="body">
+                <header class="header">
+                  <p class="kicker">ЖК Example Residence</p>
+                  <div class="broker">
+                    <small>Брокер</small>
+                    <strong>Александр Орлов</strong>
+                  </div>
+                </header>
+                <h3 class="lot-title">Описание проекта</h3>
+                <div class="project-grid">
+                  <div class="photo"><span>Архитектура</span></div>
+                  <div class="photo"><span>Архитектура</span></div>
+                  <div class="photo"><span>Интерьеры</span></div>
+                  <div class="photo"><span>Интерьеры</span></div>
+                  <div class="photo"><span>Наполнение</span></div>
+                  <div class="photo"><span>Наполнение</span></div>
+                </div>
+                <p class="project-copy">
+                  Галерейный вариант лучше работает, если у проектов стабильно есть качественные изображения.
+                  Текст описания выводится ниже, чтобы визуальная часть оставалась главным первым впечатлением.
+                </p>
+              </div>
+            </section>
+          </div>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

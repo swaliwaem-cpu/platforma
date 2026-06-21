@@ -37,6 +37,8 @@ export type AuthUser = {
   id: string;
   email: string;
   name: string | null;
+  brokerPhone: string | null;
+  brokerEmail: string | null;
   status: UserStatus;
   role: {
     id: string;
@@ -504,6 +506,104 @@ export type FeedUnitGroupsResponse = {
 
 export type FeedUnitResponse = {
   unit: FeedUnit;
+};
+
+export type LotPresentationObject = {
+  id: string;
+  title: string;
+  slug: string;
+  address: string | null;
+  developer: ObjectDeveloper | null;
+  primaryLocation: ObjectLocation | null;
+};
+
+export type LotPresentationLot = FeedUnit & {
+  object: LotPresentationObject;
+  hasPlanImage: boolean;
+  collectionIds: string[];
+};
+
+export type LotPresentationCollectionItem = {
+  id: string;
+  collectionId: string;
+  unitId: string;
+  sortOrder: number;
+  unit: LotPresentationLot;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type LotPresentationCollection = {
+  id: string;
+  userId: string;
+  name: string;
+  itemsCount: number;
+  containsRequestedUnit: boolean | null;
+  items: LotPresentationCollectionItem[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type LotPresentationCollectionsResponse = {
+  items: LotPresentationCollection[];
+};
+
+export type LotPresentationCollectionResponse = {
+  collection: LotPresentationCollection;
+};
+
+export type CreateLotPresentationCollectionInput = {
+  name: string;
+};
+
+export type UpdateLotPresentationCollectionInput = {
+  name: string;
+};
+
+export type AddLotPresentationCollectionItemInput = {
+  unitId: string;
+};
+
+export type LotPresentationLotsResponse = {
+  items: LotPresentationLot[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};
+
+export type LotPresentationDocumentItem = {
+  unitId: string;
+  sortOrder: number;
+};
+
+export type LotPresentationDocument = {
+  id: string;
+  userId: string;
+  collectionId: string | null;
+  file: ObjectStoredFile;
+  title: string;
+  unitsCount: number;
+  items: LotPresentationDocumentItem[];
+  createdAt: string;
+};
+
+export type LotPresentationDocumentsResponse = {
+  items: LotPresentationDocument[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};
+
+export type LotPresentationDocumentResponse = {
+  document: LotPresentationDocument;
+};
+
+export type CreateLotPresentationDocumentInput = {
+  collectionId?: string | null;
+  unitIds?: string[];
+  title?: string | null;
 };
 
 export type PublicCatalogQuickLink = {

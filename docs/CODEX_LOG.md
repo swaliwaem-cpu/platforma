@@ -1,5 +1,24 @@
 # Codex Log
 
+## 2026-06-18 - Lot presentation template visual options
+
+Задача:
+
+- Подготовить визуальные варианты шаблона PDF-презентации лотов перед проектированием новой фичи.
+
+Изменения:
+
+- `docs/lot-presentation-template-options.html` - добавлен статический preview с тремя направлениями оформления: спокойный editorial, деловой data sheet и акцентная галерейная подача; в выбранный вариант 1 добавлена ценовая плашка над планировкой из варианта 2.
+- `docs/CODEX_LOG.md` - добавлена текущая запись.
+
+Проверки:
+
+- Application code не менялся, сборка и тесты не запускались.
+
+Ручная проверка:
+
+- Открыть `docs/lot-presentation-template-options.html` и выбрать один из трех вариантов как основу для будущего PDF-шаблона.
+
 ## 2026-06-12 - Catalog search ё normalization diagnosis and fix
 
 Задача:
@@ -2227,3 +2246,277 @@ Production repair:
 Ручная проверка:
 
 - Открыть страницу любого ЖК и убедиться, что в блоке `Основные параметры` не отображаются плашки `КРТ` и `Количество квартир`.
+
+## 2026-06-18 - Lot PDF presentation collections
+
+Задача:
+
+- Добавить именованные подборки лотов и генерацию PDF-презентаций по одному, выбранным или всем лотам подборки.
+- Подтянуть в PDF данные текущего брокера, контакты из профиля, планировку лота и описание проекта.
+
+Изменения:
+
+- `apps/api/prisma/schema.prisma`, `apps/api/prisma/migrations/20260618120000_add_lot_presentations/migration.sql` - добавлены контакты брокера в `User`, таблицы подборок, позиций подборок, PDF-документов и связей документов с лотами.
+- `apps/api/src/lot-presentations/*` - добавлены guarded API для лотов/подборок/PDF и генератор PDF на `pdfkit` с Noto Sans Cyrillic, логотипом FluffyWhite, ценовой плашкой, страницами лотов и страницами проектов.
+- `apps/api/src/lot-presentations/lot-presentations.module.ts` - модуль импортирует `AuthModule`, чтобы `JwtAuthGuard` корректно поднимался в runtime.
+- `apps/api/src/users/users.service.ts`, auth/shared contracts - контакты брокера сохраняются в профиле текущего пользователя и доступны в `AuthUser`.
+- `apps/web/src/presentations/*`, `apps/web/src/App.tsx`, `apps/web/src/objects/ObjectDetailPage.tsx`, `apps/web/src/styles.css` - добавлен раздел `Подборки`, UI управления подборками/PDF, кнопка на карточке лота и иконка в таблице лотов.
+- `apps/web/src/styles.css` - модалка добавления лота в подборку переведена на `app-theme` цвета, чтобы окно читалось в темной теме.
+- `apps/api/Dockerfile`, `apps/api/package.json`, `pnpm-lock.yaml` - API image включает логотип, добавлены `pdfkit` и шрифты.
+- `apps/api/tests/lot-presentations-schema.test.cjs`, `apps/api/tests/services.test.cjs`, `apps/web/tests/lot-presentations-page.test.mjs`, `apps/web/tests/object-detail-feed-units.test.mjs` - добавлены и обновлены регрессии на новые контракты и UI-входы.
+
+Проверки:
+
+- `pnpm db:generate` - passed.
+- `pnpm --filter @platforma/api test` - 190/190 passed.
+- `pnpm --filter @platforma/web test` - 242/242 passed.
+- `node --test apps/web/tests/lot-presentations-page.test.mjs` - 6/6 passed.
+- `pnpm build:web` - passed; Vite оставил только предупреждение о размере чанка.
+- `curl -I http://localhost:5174/presentations` - 200 OK.
+- `docker compose up -d --build api web` - контейнеры пересобраны; миграция `20260618120000_add_lot_presentations` применена.
+- `docker compose up -d --build web` - web-контейнер пересобран для `http://localhost:5173`.
+- `curl -fsS http://localhost:3000/health` - `{"status":"ok","database":"ok","postgis":true}`.
+- `curl -I http://localhost:5173/presentations` - 200 OK.
+
+Ручная проверка:
+
+- Применить миграцию, войти брокером, заполнить телефон/почту в профиле, создать несколько подборок, добавить лот из карточки и из таблицы лотов.
+- В темной теме открыть модалку `Добавить в подборку` и проверить контраст заголовков, текста, поля ввода и кнопки закрытия.
+- Скачать PDF для одного лота, выбранных лотов и всей подборки; проверить предупреждение при лоте без планировки.
+- Проверить PDF для лотов из одного ЖК и из разных ЖК: порядок групп по цене, страницы лотов перед страницей проекта, описание из `object.description`, до 6 изображений проекта.
+
+Спорные места:
+
+- Визуальную проверку через in-app Browser выполнить не удалось: в окружении не было доступного browser target (`iab` недоступен). Docker web пересобран и доступен на `http://localhost:5173/`.
+
+## 2026-06-18 - Fix PDF presentation font coverage
+
+Задача:
+
+- Исправить квадраты в PDF-презентациях лотов: subset-шрифт `noto-sans-cyrillic` покрывал кириллицу, но не покрывал цифры, латиницу и символы вроде `₽`, `№`, `²`.
+
+Изменения:
+
+- `apps/api/assets/fonts/NotoSans-Regular.ttf`, `apps/api/assets/fonts/NotoSans-Bold.ttf`, `apps/api/assets/fonts/OFL.txt` - добавлены полноценные TTF-шрифты Noto Sans для PDF-генератора и лицензия OFL.
+- `apps/api/src/lot-presentations/lot-presentations-pdf.service.ts` - PDF-генератор переключен с `@fontsource` subset `.woff` на локальные TTF assets с fallback-поиском пути для `src`/`dist`/Docker-сценариев.
+- `apps/api/tests/lot-presentations-schema.test.cjs` - регрессия теперь проверяет наличие локальных TTF/OFL и запрещает возврат к `noto-sans-cyrillic-*.woff`.
+- `apps/api/package.json`, `pnpm-lock.yaml` - удалена больше не используемая зависимость `@fontsource/noto-sans`.
+
+Проверки:
+
+- `pnpm --filter @platforma/api test -- --test-name-pattern "lot presentation service enforces"` - passed, фактически прошел весь API-набор `190/190`; повторно passed после удаления `@fontsource/noto-sans`.
+- Cmap-проверка через `fontkit` подтвердила, что оба TTF покрывают пример `Соколин Парк квартира № 12 28 000 000 ₽ За м² FW user@example.com`.
+- Сгенерирован временный PDF с новым шрифтом без ошибок, затем удален.
+
+Ручная проверка:
+
+- Скачать свежую PDF-презентацию лота и проверить, что в цене, площади, номере квартиры, контактах брокера и заголовках нет квадратов.
+
+Спорные места:
+
+- В окружении не было `pdftotext`/`mutool`/`qpdf`, поэтому автоматическое извлечение текста из PDF не запускалось.
+
+## 2026-06-20 - Rebuild API with fixed PDF fonts
+
+Задача:
+
+- Повторно проверить квадраты в PDF после font fix: запущенный API всё ещё генерировал презентации старым `noto-sans-cyrillic` subset.
+
+Изменения:
+
+- Код не менялся; пересобран и пересоздан Docker `api`-контейнер, чтобы в runtime попал текущий `lot-presentations-pdf.service.ts` с локальными `NotoSans-Regular.ttf`/`NotoSans-Bold.ttf`.
+
+Проверки:
+
+- До пересборки `docker compose exec api grep ...` показал в контейнере старые ссылки на `@fontsource/noto-sans/files/noto-sans-cyrillic-*.woff`.
+- `docker compose up -d --build api` - passed.
+- После пересборки `dist/lot-presentations-pdf.service.js` в контейнере использует `NotoSans-Regular.ttf` и `NotoSans-Bold.ttf`; файлы `apps/api/assets/fonts/*` присутствуют внутри контейнера.
+- `curl -fsS http://localhost:3000/health` - `status=ok`, `database=ok`, `postgis=true`.
+- Smoke-генерация PDF внутри контейнера со строками `Квартал «Метроном», flat, № 1272` и `28 000 000 ₽ За м²` - `pdf-smoke-ok`.
+
+Ручная проверка:
+
+- Сгенерировать новый PDF-документ после пересборки API. Уже созданные ранее PDF в истории остаются старыми файлами и могут продолжать показывать квадраты.
+
+Спорные места:
+
+- Визуальный просмотр нового PDF вручную всё ещё нужен; автоматический PDF renderer/text extractor в окружении не установлен.
+
+## 2026-06-21 - Refine lot PDF presentations UI
+
+Задача:
+
+- Переработать экран `Подборки` по согласованному варианту 2: убрать простыню лотов, оставить единый поиск, убрать кнопку `Контакты брокера`, добавить понятный просмотр созданных PDF и перенести создание подборки в блок подборок как кнопку `+`.
+
+Изменения:
+
+- `apps/web/src/presentations/LotPresentationsPage.tsx` - экран переведен на двухколоночный layout: слева подборки с кнопкой `+`, справа рабочая зона с поиском, действиями PDF и списком выбранных лотов. История созданных PDF открывается отдельной боковой панелью по кнопке `Созданные PDF`.
+- `apps/web/src/styles.css` - обновлены стили для двухколоночной сетки, компактного поиска с popover-результатами, summary-счетчиков и drawer-панели PDF.
+- `apps/web/tests/lot-presentations-page.test.mjs` - добавлена регрессия на согласованный layout: отсутствие `Контакты брокера`, отсутствие правой простыни лотов, наличие `+` в блоке подборок и popover-поиска.
+- `apps/web/src/presentations/LotPresentationsPage.tsx`, `apps/web/src/styles.css` - по визуальным правкам варианта 2 кнопка `Созданные PDF` сделана компактнее с иконкой в одну строку, действия `Вся подборка`/`Выбранные` зафиксированы в одной строке, строка поиска расширена в рабочей зоне.
+- `apps/web/tests/lot-presentations-page.test.mjs` - регрессия дополнена проверками компактной верхней кнопки, широкой поисковой колонки и горизонтальной группы PDF-действий.
+
+Проверки:
+
+- `node --test apps/web/tests/lot-presentations-page.test.mjs` - 7/7 passed.
+- `pnpm --filter @platforma/web build` - passed; Vite оставил только предупреждение о размере чанка.
+- `docker compose up -d --build web` - web пересобран и поднят на `http://localhost:5173`; compose также пересоздал API-контейнер.
+- `curl -fsS http://localhost:3000/health` - `status=ok`, `database=ok`, `postgis=true`.
+- `curl -I http://localhost:5173/presentations` - 200 OK.
+- Повторно после визуальных правок: `node --test apps/web/tests/lot-presentations-page.test.mjs` - 7/7 passed.
+- Повторно после визуальных правок: `pnpm --filter @platforma/web build` - passed; Vite оставил только предупреждение о размере чанка.
+- Повторно после визуальных правок: `docker compose up -d --build web` - web/API контейнеры пересобраны и запущены.
+- Повторно после визуальных правок: `curl -fsS http://localhost:3000/health` - `status=ok`, `database=ok`, `postgis=true`.
+- Повторно после визуальных правок: `curl -I http://localhost:5173/presentations` - 200 OK.
+
+Ручная проверка:
+
+- Открыть `http://localhost:5173/presentations`, проверить двухколоночный layout, создание подборки через `+`, поиск лотов в рабочей зоне, добавление лота из popover, скачивание `Вся подборка`/`Выбранные`, открытие и закрытие панели `Созданные PDF`.
+
+Спорные места:
+
+- DevTools Browser открыл `http://localhost:5173/presentations`, но без авторизованной сессии показал `/login`; доступные DevTools-команды не позволили выполнить логин, поэтому визуальная проверка самого экрана `Подборки` остается ручной.
+
+## 2026-06-21 - Install Playwright for web QA
+
+Задача:
+
+- Установить Playwright и проверить, что он запускается на локальном web-приложении.
+
+Изменения:
+
+- `apps/web/package.json`, `pnpm-lock.yaml` - добавлен `@playwright/test` в devDependencies web-пакета.
+- Локально через `pnpm --filter @platforma/web exec playwright install chromium` установлен Chromium/Headless Shell в cache Playwright пользователя.
+
+Проверки:
+
+- `pnpm --filter @platforma/web exec playwright --version` - `Version 1.61.0`.
+- `curl -I http://localhost:5173/presentations` - 200 OK.
+- `pnpm --filter @platforma/web exec playwright screenshot --browser=chromium http://localhost:5173/presentations /tmp/platforma-playwright-presentations.png` - passed, screenshot login screen created.
+- Playwright API smoke через `chromium.launch()` открыл `http://localhost:5173/presentations`, подтвердил title `Platforma`, видимость `FluffyWhite` и кнопки `Войти`; неожиданных console errors нет.
+- `pnpm --filter @platforma/web test` - 244/244 passed.
+
+Ручная проверка:
+
+- При необходимости использовать `/tmp/platforma-playwright-presentations.png` как быстрый smoke-скрин текущего unauthenticated состояния.
+
+Спорные места:
+
+- В unauthenticated smoke ожидаемо появляется console сообщение `401 (Unauthorized)` от auth refresh; оно отфильтровано как ожидаемое состояние без сессии.
+
+## 2026-06-21 - Compact collection rename confirm button
+
+Задача:
+
+- В режиме переименования подборки заменить крупную кнопку `OK` на компактную icon-кнопку с галочкой, размером как кнопка редактирования.
+
+Изменения:
+
+- `apps/web/src/presentations/LotPresentationsPage.tsx` - submit-кнопка формы переименования теперь использует `icon-action-button`, `CheckIcon` и доступное имя `Сохранить название подборки`.
+- `apps/web/tests/lot-presentations-page.test.mjs` - добавлена регрессия, запрещающая возврат к текстовой `OK`-кнопке.
+
+Проверки:
+
+- `node --test apps/web/tests/lot-presentations-page.test.mjs` - 7/7 passed.
+- `pnpm --filter @platforma/web build` - passed; Vite оставил только предупреждение о размере чанка.
+- `docker compose up -d --build web` - web/API контейнеры пересобраны и запущены.
+- `curl -fsS http://localhost:3000/health` - `status=ok`, `database=ok`, `postgis=true`.
+- `curl -I http://localhost:5173/presentations` - 200 OK.
+- Playwright desktop smoke в светлой теме - кнопка сохранения переименования `36x36`, без текста, внутри 1 SVG.
+- Playwright desktop smoke в `dark-premium` - кнопка сохранения переименования `36x36`, без текста, внутри 1 SVG.
+
+Ручная проверка:
+
+- На `http://localhost:5173/presentations` нажать карандаш у подборки и проверить, что справа от поля названия видна компактная кнопка с галочкой.
+
+Спорные места:
+
+- Playwright smoke использовал локальную admin seed-учетку `admin@example.com` / `12345`; в другом окружении для визуальной проверки понадобится актуальная учетная запись.
+
+## 2026-06-21 - Create collection modal visual options
+
+Задача:
+
+- Подготовить 3 визуальных варианта небольшой модалки создания подборки перед изменением рабочей логики.
+
+Изменения:
+
+- `docs/create-collection-modal-options.html` - добавлен интерактивно открываемый HTML-preview с тремя вариантами: центральная компактная модалка, контекстный поповер от плюса и плотная рабочая панель.
+
+Проверки:
+
+- `pnpm --filter @platforma/web exec playwright screenshot --browser=chromium file:///Users/nick/Documents/platforma/docs/create-collection-modal-options.html /tmp/create-collection-modal-options.png` - passed, все 3 варианта отрисованы.
+- `open /Users/nick/Documents/platforma/docs/create-collection-modal-options.html` - preview открыт локально в браузере.
+
+Ручная проверка:
+
+- Выбрать один из трех вариантов в открытом HTML-preview перед внедрением в `LotPresentationsPage`.
+
+Спорные места:
+
+- Рабочая логика `/presentations` пока не менялась: это только визуальное согласование модалки.
+
+## 2026-06-21 - Implement compact create collection modal
+
+Задача:
+
+- Внедрить выбранный вариант 1: при нажатии `+` в блоке подборок открывать небольшую центральную модалку с полем названия и компактными кнопками `Создать`/`Отмена`.
+
+Изменения:
+
+- `apps/web/src/presentations/LotPresentationsPage.tsx` - создание подборки переведено с мгновенного автосоздания на modal-flow: `+` открывает форму, пустое название валидируется внутри модалки, `Escape`, фон и `Отмена` закрывают окно без запроса.
+- `apps/web/src/styles.css` - добавлены стили компактной центральной модалки, поля и маленьких кнопок без растягивания.
+- `apps/web/tests/lot-presentations-page.test.mjs` - добавлена регрессия на modal-flow создания подборки и запрет возврата к прямому `handleCreateCollection()` по клику на `+`.
+
+Проверки:
+
+- `node --test apps/web/tests/lot-presentations-page.test.mjs` - 8/8 passed.
+- `pnpm --filter @platforma/web build` - passed; Vite оставил только предупреждение о размере чанка.
+- `docker compose up -d --build web` - web/API контейнеры пересобраны и запущены.
+- `curl -fsS http://localhost:3000/health` - `status=ok`, `database=ok`, `postgis=true`.
+- `curl -I http://localhost:5173/presentations` - 200 OK.
+- Playwright desktop smoke в светлой теме - модалка `380x217`, поле `342x42`, кнопки `80x38` и `84x38`, ошибка пустого названия внутри модалки.
+- Playwright desktop smoke в `dark-premium` - модалка `380x217`, кнопки `78x38` и `81x38`, неожиданных console errors нет.
+- Playwright mobile smoke `390x844` в `dark-premium` - модалка `350x217`, кнопки остаются в одной строке.
+- Playwright submit smoke - через UI создана подборка `Playwright modal ...`, она стала выбранной по `collectionId`, после проверки удалена через API; неожиданных console errors нет.
+
+Ручная проверка:
+
+- На `http://localhost:5173/presentations` нажать `+`, ввести название подборки, нажать `Создать` и проверить, что новая подборка появилась слева и стала выбранной.
+
+Спорные места:
+
+- Playwright smoke использовал локальную admin seed-учетку `admin@example.com` / `12345`; в другом окружении для визуальной проверки понадобится актуальная учетная запись.
+
+## 2026-06-21 - Open project lots modal from presentation search
+
+Задача:
+
+- Изменить строку поиска на экране `Подборки`: при поиске и выборе ЖК открывать модалку со всеми лотами проекта во вложенной структуре, с добавлением в текущую подборку и кнопкой закрытия. Быстрое добавление отдельного лота из popover убрано.
+
+Изменения:
+
+- `apps/web/src/presentations/LotPresentationsPage.tsx` - поиск переведен с отдельных лотов на результаты проектов; выбор проекта открывает modal-flow с группировкой по сроку сдачи и комнатности, таблицей лотов в стиле блока `Лоты` на странице объекта и кнопками добавления в активную подборку.
+- `apps/api/src/lot-presentations/lot-presentations.service.ts` - `GET /lot-presentations/lots` получил фильтр `objectId` и лимит до 500 лотов для загрузки лотов одного ЖК без зависимости от `objects:read`.
+- `apps/web/src/styles.css` - добавлены стили проектных результатов поиска и большой модалки лотов ЖК, переиспользующие существующие `object-feed-*` таблицы/группы.
+- `apps/web/tests/lot-presentations-page.test.mjs`, `apps/api/tests/lot-presentations-schema.test.cjs` - добавлены регрессии на проектный поиск, модалку лотов ЖК и backend-фильтр `objectId`.
+
+Проверки:
+
+- `node --test apps/web/tests/lot-presentations-page.test.mjs` - 9/9 passed.
+- `node --test apps/api/tests/lot-presentations-schema.test.cjs` - 5/5 passed.
+- `pnpm --filter @platforma/web build` - passed; Vite оставил только предупреждение о размере чанка.
+- `pnpm --filter @platforma/api test` - 190/190 passed.
+- `docker compose up -d --build api web` - fresh API/Web контейнеры пересобраны и запущены.
+- `curl -fsS http://localhost:3000/health` - `status=ok`, `database=ok`, `postgis=true`.
+- `curl -I http://localhost:5173/presentations` - 200 OK.
+- Playwright smoke на `http://localhost:5173/presentations` с локальной admin seed-учеткой: поиск `Жилой квартал СИТИДЗЕН`, найден 1 проект, открыта модалка `Лоты ЖК`, найдено 2 completion-группы и 5 room-групп после раскрытия, неожиданных console errors нет.
+
+Ручная проверка:
+
+- На `http://localhost:5173/presentations` ввести название ЖК в строку поиска, выбрать проект, раскрыть группы лотов, добавить несколько лотов в активную подборку, закрыть модалку кнопкой `X` и проверить обновление счетчика/списка подборки.
+
+Спорные места:
+
+- Поиск проектов строится поверх доступных для презентаций лотов: ЖК без доступных лотов в выдачу не попадет.
+- In-app Browser в текущей сессии был недоступен (`iab`), поэтому визуальный smoke выполнен через Playwright fallback.

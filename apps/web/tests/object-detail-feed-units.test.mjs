@@ -154,13 +154,14 @@ test('object detail feed units block renders expected columns and media thumbnai
   assert.doesNotMatch(source, /showDiscountPrice=\{hasDiscountPrices\}/);
   assert.doesNotMatch(source, /showDiscountPrice: boolean;/);
   assert.match(source, /<TableCell>\{formatFeedUnitPricePerMeter\(unit\)\}<\/TableCell>/);
-  assert.match(source, /const feedUnitsTableColumnCount = 10;/);
+  assert.match(source, /const feedUnitsTableColumnCount = 11;/);
   assert.doesNotMatch(objectFeedUnitsSectionSource, /<TableHead>План<\/TableHead>/);
   assert.match(objectFeedUnitsSectionSource, /<TableHead>Медиа<\/TableHead>[\s\S]*?<ObjectFeedSortableHead field="building"/);
   assert.match(source, /field="building"[\s\S]*?>\s*Корпус\s*<\/ObjectFeedSortableHead>/);
   assert.match(source, /<TableHead>Секц\.<\/TableHead>/);
   assert.match(source, /field="floor"[\s\S]*?>\s*Эт\.\s*<\/ObjectFeedSortableHead>/);
   assert.match(source, /field="title"[\s\S]*?>\s*Номер квартиры\s*<\/ObjectFeedSortableHead>/);
+  assert.match(objectFeedUnitsSectionSource, /<TableHead aria-label="Подборка" \/>/);
   assert.match(objectFeedUnitRowSource, /<TableCell>\{formatFeedUnitPrice\(unit\.price, unit\.currency\)\}<\/TableCell>/);
   assert.match(
     objectFeedUnitRowSource,
@@ -177,6 +178,7 @@ test('object detail feed units block renders expected columns and media thumbnai
   assert.match(source, /className="object-feed-media-button"/);
   assert.match(source, /onClick=\{\(event\) => \{[\s\S]*?event\.stopPropagation\(\);[\s\S]*?onOpenMedia\(unit\);[\s\S]*?\}\}/);
   assert.match(source, /<SecureImage[\s\S]*?className="object-feed-media-image"[\s\S]*?fileId=\{primaryMedia\.file\.id\}[\s\S]*?variant="thumbnail"/);
+  assert.match(objectFeedUnitRowSource, /<LotCollectionAction mode="icon" navigate=\{navigate\} unitId=\{unit\.id\} \/>/);
   assert.match(source, /Лоты не найдены/);
   assert.match(source, /Загрузка лотов/);
   assert.match(source, /Не удалось загрузить лоты/);

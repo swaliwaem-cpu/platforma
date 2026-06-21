@@ -14,11 +14,12 @@ import { AuthProvider, useAuth } from './auth/AuthProvider';
 import { CatalogPage } from './catalog/CatalogPage';
 import { buildMediaFileContentUrl } from './files/SecureImage';
 import { ObjectDetailPage, ObjectLotDetailPage } from './objects/ObjectDetailPage';
+import { LotPresentationsPage } from './presentations/LotPresentationsPage';
 import { getAppliedAppTheme, getNextAppTheme, setAppTheme } from './appTheme';
 import './styles.css';
 import './app-theme.css';
 
-type AppSection = 'cabinet' | 'catalog' | 'admin';
+type AppSection = 'cabinet' | 'catalog' | 'presentations' | 'admin';
 type LoginMode = 'login' | 'register';
 
 const userStatusLabels: Record<UserStatus, string> = {
@@ -42,6 +43,13 @@ const navItems = [
     path: '/catalog',
     section: 'catalog',
     requiredPermissions: ['objects:read'],
+  },
+  {
+    id: 'presentations',
+    label: 'Подборки',
+    path: '/presentations',
+    section: 'presentations',
+    requiredPermissions: [],
   },
   {
     id: 'admin',
@@ -79,6 +87,13 @@ const cabinetSections = [
     group: 'Каталог',
     path: '/catalog/map',
     requiredPermissions: ['objects:read'],
+  },
+  {
+    id: 'presentations',
+    label: 'Подборки лотов',
+    group: 'Презентации',
+    path: '/presentations',
+    requiredPermissions: [],
   },
   {
     id: 'admin-objects',
@@ -234,6 +249,8 @@ function AppRoutes() {
 
   const activeSection: AppSection = pathname.startsWith('/admin')
     ? 'admin'
+    : pathname.startsWith('/presentations')
+      ? 'presentations'
     : pathname.startsWith('/catalog') || pathname.startsWith('/objects/')
       ? 'catalog'
       : 'cabinet';
@@ -349,6 +366,7 @@ function AppRoutes() {
         ) : objectLotRoute ? (
           hasPermission('objects:read') ? (
             <ObjectLotDetailPage
+              navigate={navigate}
               slug={objectLotRoute.slug}
               unitId={objectLotRoute.unitId}
               onBack={() => navigate(`/objects/${encodeURIComponent(objectLotRoute.slug)}`)}
@@ -358,10 +376,12 @@ function AppRoutes() {
           )
         ) : objectSlug ? (
           hasPermission('objects:read') ? (
-            <ObjectDetailPage slug={objectSlug} onBack={() => navigate('/catalog')} />
+            <ObjectDetailPage navigate={navigate} slug={objectSlug} onBack={() => navigate('/catalog')} />
           ) : (
             <AccessDenied />
           )
+        ) : activeSection === 'presentations' ? (
+          <LotPresentationsPage navigate={navigate} />
         ) : activeSection === 'catalog' ? (
           hasPermission('objects:read') ? (
             <CatalogPage navigate={navigate} pathname={pathname} />
@@ -383,6 +403,8 @@ function isAppRoute(pathname: string) {
     pathname === '/cabinet' ||
     pathname === '/catalog' ||
     pathname.startsWith('/catalog/') ||
+    pathname === '/presentations' ||
+    pathname.startsWith('/presentations/') ||
     pathname === '/admin' ||
     pathname.startsWith('/admin/') ||
     pathname.startsWith('/objects/')
@@ -705,6 +727,8 @@ function CabinetHome({ navigate }: { navigate: (nextPathname: string) => void })
   const { accessToken, user, updateUser } = useAuth();
   const [areSectionsVisible, setAreSectionsVisible] = useState(false);
   const [profileName, setProfileName] = useState('');
+  const [brokerPhone, setBrokerPhone] = useState('');
+  const [brokerEmail, setBrokerEmail] = useState('');
   const [profilePhotoFile, setProfilePhotoFile] = useState<File | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [profileNotice, setProfileNotice] = useState<string | null>(null);
@@ -719,7 +743,9 @@ function CabinetHome({ navigate }: { navigate: (nextPathname: string) => void })
 
   useEffect(() => {
     setProfileName(user?.name ?? '');
-  }, [user?.id, user?.name]);
+    setBrokerPhone(user?.brokerPhone ?? '');
+    setBrokerEmail(user?.brokerEmail ?? '');
+  }, [user?.brokerEmail, user?.brokerPhone, user?.id, user?.name]);
 
   if (!user) {
     return null;
@@ -744,11 +770,13 @@ function CabinetHome({ navigate }: { navigate: (nextPathname: string) => void })
         method: 'PATCH',
         body: JSON.stringify({
           name: profileName,
+          brokerPhone,
+          brokerEmail,
         }),
       });
 
       updateUser(data.user);
-      setProfileNotice('Имя обновлено');
+      setProfileNotice('Профиль обновлен');
     } catch (caughtError) {
       setProfileError(caughtError instanceof Error ? caughtError.message : 'Не удалось обновить профиль');
     } finally {
@@ -859,8 +887,32 @@ function CabinetHome({ navigate }: { navigate: (nextPathname: string) => void })
             />
           </label>
 
+          <label>
+            Телефон брокера
+            <input
+              autoComplete="tel"
+              name="brokerPhone"
+              placeholder="+7 999 000-00-00"
+              type="tel"
+              value={brokerPhone}
+              onChange={(event) => setBrokerPhone(event.target.value)}
+            />
+          </label>
+
+          <label>
+            Почта брокера
+            <input
+              autoComplete="email"
+              name="brokerEmail"
+              placeholder="broker@example.com"
+              type="email"
+              value={brokerEmail}
+              onChange={(event) => setBrokerEmail(event.target.value)}
+            />
+          </label>
+
           <button className="primary-button primary-button--fit" disabled={isProfileSubmitting} type="submit">
-            {isProfileSubmitting ? 'Сохранение' : 'Сохранить имя'}
+            {isProfileSubmitting ? 'Сохранение' : 'Сохранить профиль'}
           </button>
         </form>
 
@@ -891,6 +943,14 @@ function CabinetHome({ navigate }: { navigate: (nextPathname: string) => void })
           <div>
             <dt>Email</dt>
             <dd>{user.email}</dd>
+          </div>
+          <div>
+            <dt>Телефон брокера</dt>
+            <dd>{user.brokerPhone ?? 'Не заполнен'}</dd>
+          </div>
+          <div>
+            <dt>Почта брокера</dt>
+            <dd>{user.brokerEmail ?? 'Не заполнена'}</dd>
           </div>
           <div>
             <dt>Роль</dt>

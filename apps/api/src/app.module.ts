@@ -6,6 +6,7 @@ import { DirectoriesModule } from './directories/directories.module';
 import { FeedsModule } from './feeds/feeds.module';
 import { FilesModule } from './files/files.module';
 import { HealthController } from './health/health.controller';
+import { LotPresentationsModule } from './lot-presentations/lot-presentations.module';
 import { MapModule } from './map/map.module';
 import { ObjectsModule } from './objects/objects.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -21,6 +22,7 @@ import { WordpressImportModule } from './wordpress-import/wordpress-import.modul
     DirectoriesModule,
     FeedsModule,
     FilesModule,
+    LotPresentationsModule,
     ObjectsModule,
     MapModule,
     WordpressImportModule,

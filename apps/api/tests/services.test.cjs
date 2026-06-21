@@ -163,11 +163,14 @@ function userRecord(overrides = {}) {
     id: '33333333-3333-4333-8333-333333333333',
     email: 'editor@example.test',
     name: 'Editor',
+    brokerPhone: null,
+    brokerEmail: null,
     passwordHash: 'hash',
     refreshTokenHash: 'refresh-hash',
     refreshTokenExpiresAt: new Date('2026-06-01T10:00:00.000Z'),
     status: UserStatus.ACTIVE,
     roleId: '44444444-4444-4444-8444-444444444444',
+    profilePhotoFile: null,
     createdAt: now,
     updatedAt: now,
     deletedAt: null,
@@ -175,6 +178,7 @@ function userRecord(overrides = {}) {
       id: '44444444-4444-4444-8444-444444444444',
       name: 'editor',
       description: 'Editor',
+      permissions: [],
     },
     ...overrides,
   };
@@ -3916,6 +3920,62 @@ test('UsersService.create rejects duplicate emails', async () => {
       ),
     ConflictException,
   );
+});
+
+test('UsersService.updateOwnProfile saves broker contacts for presentations', async () => {
+  const calls = {};
+  const activeUser = userRecord({
+    id: actor.id,
+    brokerPhone: null,
+    brokerEmail: null,
+  });
+  const updatedUser = userRecord({
+    id: actor.id,
+    brokerPhone: '+7 999 123-45-67',
+    brokerEmail: 'broker@example.test',
+  });
+  const prisma = {
+    user: {
+      findFirst: async (args) => {
+        calls.findFirst = args;
+        return activeUser;
+      },
+      update: async (args) => {
+        calls.update = args;
+        return updatedUser;
+      },
+    },
+    auditLog: {
+      create: async (args) => {
+        calls.auditLog = args;
+      },
+    },
+  };
+  const service = new UsersService(prisma);
+
+  const result = await service.updateOwnProfile(
+    {
+      brokerPhone: ' +7 999  123-45-67 ',
+      brokerEmail: ' Broker@Example.Test ',
+    },
+    actor,
+    request,
+  );
+
+  assert.deepEqual(calls.findFirst.where, {
+    id: actor.id,
+    status: UserStatus.ACTIVE,
+    deletedAt: null,
+  });
+  assert.equal(calls.update.data.brokerPhone, '+7 999 123-45-67');
+  assert.equal(calls.update.data.brokerEmail, 'broker@example.test');
+  assert.equal(result.user.brokerPhone, '+7 999 123-45-67');
+  assert.equal(result.user.brokerEmail, 'broker@example.test');
+  assert.equal(calls.auditLog.data.action, 'user.profile_update');
+  assert.deepEqual(calls.auditLog.data.metadata.changes.brokerEmail, {
+    from: null,
+    to: 'broker@example.test',
+  });
 });
 
 test('UsersService.deactivate archives access by status and clears refresh session', async () => {

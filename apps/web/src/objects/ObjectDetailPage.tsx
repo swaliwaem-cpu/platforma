@@ -44,6 +44,7 @@ import { SecureImage, buildMediaFileContentUrl, useSecureImageObjectUrl } from '
 import { formatCurrencyInputValue, getCurrencyInputBackspaceValue } from '../lib/numberInput';
 import { resolveMapMarkerLabel } from '../map/mapMarkerLabels';
 import { YandexMap, type YandexMapPoint } from '../map/YandexMap';
+import { LotCollectionAction } from '../presentations/LotCollectionAction';
 import {
   formatCompletion,
   formatPrice,
@@ -58,12 +59,14 @@ import aerotourIconUrl from '../../../../aerotour-icon.png';
 
 type ObjectDetailPageProps = {
   slug: string;
+  navigate: (nextPathname: string) => void;
   onBack: () => void;
 };
 
 type ObjectLotDetailPageProps = {
   slug: string;
   unitId: string;
+  navigate: (nextPathname: string) => void;
   onBack: () => void;
 };
 
@@ -155,7 +158,7 @@ const sectionOptions: {
   { value: 'FILLING', label: 'Наполнение' },
 ];
 
-export function ObjectDetailPage({ slug, onBack }: ObjectDetailPageProps) {
+export function ObjectDetailPage({ navigate, slug, onBack }: ObjectDetailPageProps) {
   const { accessToken, hasPermission } = useAuth();
   const [object, setObject] = useState<RealEstateObjectDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -233,13 +236,14 @@ export function ObjectDetailPage({ slug, onBack }: ObjectDetailPageProps) {
     <ObjectDetail
       accessToken={accessToken ?? ''}
       canEditObject={canEditObject}
+      navigate={navigate}
       object={object}
       onBack={onBack}
     />
   );
 }
 
-export function ObjectLotDetailPage({ slug, unitId, onBack }: ObjectLotDetailPageProps) {
+export function ObjectLotDetailPage({ navigate, slug, unitId, onBack }: ObjectLotDetailPageProps) {
   const { accessToken } = useAuth();
   const [object, setObject] = useState<RealEstateObjectDetail | null>(null);
   const [unit, setUnit] = useState<FeedUnit | null>(null);
@@ -336,19 +340,22 @@ export function ObjectLotDetailPage({ slug, unitId, onBack }: ObjectLotDetailPag
           <h2>{title}</h2>
           <p className="object-detail-location-line">{subtitle}</p>
         </div>
-        {aerotourUrl ? (
-          <a
-            className="object-lot-aerotour-link"
-            href={aerotourUrl}
-            aria-label="Открыть аэротур"
-            title="Открыть аэротур"
-            referrerPolicy="no-referrer"
-            rel="noopener noreferrer nofollow"
-            target="_blank"
-          >
-            <img alt="" aria-hidden="true" className="object-lot-aerotour-icon" src={aerotourIconUrl} />
-          </a>
-        ) : null}
+        <div className="object-lot-header-actions">
+          <LotCollectionAction loadStateOnMount navigate={navigate} unitId={unit.id} />
+          {aerotourUrl ? (
+            <a
+              className="object-lot-aerotour-link"
+              href={aerotourUrl}
+              aria-label="Открыть аэротур"
+              title="Открыть аэротур"
+              referrerPolicy="no-referrer"
+              rel="noopener noreferrer nofollow"
+              target="_blank"
+            >
+              <img alt="" aria-hidden="true" className="object-lot-aerotour-icon" src={aerotourIconUrl} />
+            </a>
+          ) : null}
+        </div>
       </header>
 
       <section className="object-lot-split-card" aria-labelledby="object-lot-facts-title">
@@ -397,11 +404,13 @@ export function ObjectLotDetailPage({ slug, unitId, onBack }: ObjectLotDetailPag
 function ObjectDetail({
   accessToken,
   canEditObject,
+  navigate,
   object,
   onBack,
 }: {
   accessToken: string;
   canEditObject: boolean;
+  navigate: (nextPathname: string) => void;
   object: RealEstateObjectDetail;
   onBack: () => void;
 }) {
@@ -532,7 +541,7 @@ function ObjectDetail({
         </section>
       </div>
 
-      <ObjectFeedUnitsSection accessToken={accessToken} object={object} />
+      <ObjectFeedUnitsSection accessToken={accessToken} navigate={navigate} object={object} />
 
       <section className="detail-section object-map-section" aria-labelledby="object-map-title">
         <div>
@@ -905,9 +914,11 @@ function getImageDownloadFileName(image: RealEstateObjectDetail['images'][number
 
 function ObjectFeedUnitsSection({
   accessToken,
+  navigate,
   object,
 }: {
   accessToken: string;
+  navigate: (nextPathname: string) => void;
   object: RealEstateObjectDetail;
 }) {
   const [groups, setGroups] = useState<FeedUnitGroupSummary[]>([]);
@@ -947,7 +958,7 @@ function ObjectFeedUnitsSection({
       completionQuarterFilter,
   );
   const showFeedUnitsSkeleton = isLoading && groups.length === 0;
-  const feedUnitsTableColumnCount = 10;
+  const feedUnitsTableColumnCount = 11;
   const feedUnitsUpdatedAt = object.feedUpdatedAt ? formatObjectFeedUpdatedAt(object.feedUpdatedAt) : null;
   const feedUnitFiltersKey = [
     object.id,
@@ -1382,6 +1393,7 @@ function ObjectFeedUnitsSection({
               group={group}
               isExpanded={expandedCompletionGroups.has(group.key)}
               key={group.key}
+              navigate={navigate}
               objectSlug={object.slug}
               sortBy={sortBy}
               sortDirection={sortDirection}
@@ -1415,6 +1427,7 @@ function ObjectFeedCompletionGroup({
   expandedRoomGroups,
   group,
   isExpanded,
+  navigate,
   objectSlug,
   sortBy,
   sortDirection,
@@ -1429,6 +1442,7 @@ function ObjectFeedCompletionGroup({
   expandedRoomGroups: Set<string>;
   group: FeedUnitGroupSummary;
   isExpanded: boolean;
+  navigate: (nextPathname: string) => void;
   objectSlug: string;
   sortBy: ObjectFeedUnitSortBy;
   sortDirection: ObjectFeedUnitSortDirection;
@@ -1467,6 +1481,7 @@ function ObjectFeedCompletionGroup({
                 accessToken={accessToken}
                 isExpanded={expandedRoomGroups.has(roomExpansionKey)}
                 key={roomExpansionKey}
+                navigate={navigate}
                 objectSlug={objectSlug}
                 roomExpansionKey={roomExpansionKey}
                 roomGroup={roomGroup}
@@ -1489,6 +1504,7 @@ function ObjectFeedCompletionGroup({
 function ObjectFeedRoomGroup({
   accessToken,
   isExpanded,
+  navigate,
   objectSlug,
   roomExpansionKey,
   roomGroup,
@@ -1502,6 +1518,7 @@ function ObjectFeedRoomGroup({
 }: {
   accessToken: string;
   isExpanded: boolean;
+  navigate: (nextPathname: string) => void;
   objectSlug: string;
   roomExpansionKey: string;
   roomGroup: FeedUnitRoomGroupSummary;
@@ -1563,6 +1580,7 @@ function ObjectFeedRoomGroup({
                   <ObjectFeedSortableHead field="status" sortBy={sortBy} sortDirection={sortDirection} onSort={onSort}>
                     Статус
                   </ObjectFeedSortableHead>
+                  <TableHead aria-label="Подборка" />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -1570,6 +1588,7 @@ function ObjectFeedRoomGroup({
                   <ObjectFeedUnitRow
                     accessToken={accessToken}
                     key={unit.id}
+                    navigate={navigate}
                     objectSlug={objectSlug}
                     unit={unit}
                     onOpenMedia={onOpenMedia}
@@ -1638,11 +1657,13 @@ function ObjectFeedSortableHead({
 
 function ObjectFeedUnitRow({
   accessToken,
+  navigate,
   objectSlug,
   unit,
   onOpenMedia,
 }: {
   accessToken: string;
+  navigate: (nextPathname: string) => void;
   objectSlug: string;
   unit: FeedUnit;
   onOpenMedia: (unit: FeedUnit) => void;
@@ -1733,6 +1754,9 @@ function ObjectFeedUnitRow({
         <span className={`object-feed-status object-feed-status--${unit.status.toLowerCase()}`}>
           {feedUnitStatusLabels[unit.status]}
         </span>
+      </TableCell>
+      <TableCell>
+        <LotCollectionAction mode="icon" navigate={navigate} unitId={unit.id} />
       </TableCell>
     </TableRow>
   );

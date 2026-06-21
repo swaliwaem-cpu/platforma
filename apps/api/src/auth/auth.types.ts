@@ -4,6 +4,8 @@ export type AuthenticatedUser = {
   id: string;
   email: string;
   name: string | null;
+  brokerPhone: string | null;
+  brokerEmail: string | null;
   status: UserStatus;
   role: {
     id: string;
