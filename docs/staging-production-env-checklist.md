@@ -33,15 +33,21 @@
 
 ## Web
 
-- `VITE_API_URL` points to the public API origin.
+- `VITE_API_URL` points to the API entrypoint reachable by browsers. For production behind the same nginx origin, prefer `/api` and proxy `/api/*` to the API container to avoid cross-origin browser issues.
 - `VITE_YANDEX_MAPS_API_KEY` is optional: if it is empty, maps render through the no-key Yandex widget mode with app-side markers and balloons.
 - The frontend origin matches `WEB_ORIGIN` on the API.
+
+## Nginx / Proxy
+
+- The frontend host should proxy `/api/` to the API upstream with the `/api/` prefix stripped before reaching NestJS endpoints, for example `/api/auth/refresh` -> `/auth/refresh`.
+- Keep the dedicated API host available only as a fallback if needed; the browser-facing web bundle should use the same-origin `/api` path in production.
 
 ## Deployment Checks
 
 - Prisma migrations are applied before starting the API.
 - Seed is run once per environment and default credentials are rotated.
 - Healthcheck `/health` returns database `ok` and `postgis: true`.
+- Same-origin healthcheck `/api/health` returns database `ok` and `postgis: true` after proxy changes.
 - `/auth/login`, `/auth/refresh`, and `/auth/logout` work with secure cookies behind the target proxy.
 - Admin import preview creates an `ImportReport` and does not write objects in preview mode.
 - Repeated import run is idempotent by `wpPostId` and `wpAttachmentId`.

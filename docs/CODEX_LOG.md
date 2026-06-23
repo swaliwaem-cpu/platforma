@@ -2404,6 +2404,42 @@ Production repair:
 
 - В unauthenticated smoke ожидаемо появляется console сообщение `401 (Unauthorized)` от auth refresh; оно отфильтровано как ожидаемое состояние без сессии.
 
+## 2026-06-23 - Production same-origin API proxy
+
+Задача:
+
+- Убрать для браузера отдельный API-поддомен на production и перевести web bundle на same-origin `/api`, чтобы снизить риск iPad/WebKit/CORS-сбоев при загрузке каталога.
+
+Изменения:
+
+- Production nginx: добавлен `location /api/` на `broker.fluffywhite.moscow` с проксированием в `127.0.0.1:3000` и снятием `/api/`-префикса.
+- Production env: `VITE_API_URL` изменен с `https://api.broker.fluffywhite.moscow` на `/api`.
+- `.env.example` - добавлен комментарий про production `VITE_API_URL=/api`.
+- `docs/staging-production-env-checklist.md` - добавлено правило same-origin `/api` и проверка `/api/health`.
+
+Бэкап:
+
+- `/root/platforma-backups/20260623T160946Z-same-origin-api` на production: nginx config, compose/env и `platforma-db.dump`.
+
+Проверки:
+
+- `nginx -t` на production - passed.
+- `curl -fsS https://broker.fluffywhite.moscow/api/health` - `status=ok`, `database=ok`, `postgis=true`.
+- `curl -fsS https://api.broker.fluffywhite.moscow/health` - fallback API-домен жив.
+- `docker compose --env-file .env -f docker-compose.prod.yml up -d --build web` на production - web image rebuilt with `VITE_API_URL="/api"`; compose также пересоздал API-контейнер из cached image.
+- Production containers после deploy: `platforma-web-1` up, `platforma-api-1` healthy, Postgres/Redis/MinIO healthy.
+- Новый web bundle `index-DeFRxFvR.js` содержит `/api` и не содержит `api.broker.fluffywhite.moscow`.
+- `curl https://broker.fluffywhite.moscow/api/objects` с invalid bearer возвращает ожидаемый `401` через same-origin path.
+
+Ручная проверка:
+
+- На iPad очистить данные сайтов `broker.fluffywhite.moscow` и `api.broker.fluffywhite.moscow`, перелогиниться и открыть `/catalog`.
+
+Спорные места:
+
+- После перехода cookies будут выдаваться на `broker.fluffywhite.moscow`; пользователям может понадобиться повторный вход.
+- Dedicated `api.broker.fluffywhite.moscow` оставлен как fallback, но production web bundle больше не зависит от него.
+
 ## 2026-06-21 - Compact collection rename confirm button
 
 Задача:
