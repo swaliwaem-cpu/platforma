@@ -105,6 +105,12 @@ function sortCollectionsByLatestChange(left: LotPresentationCollection, right: L
   return Date.parse(right.createdAt) - Date.parse(left.createdAt);
 }
 
+function getLotCollectionNames(collectionIds: string[], collectionNameById: Map<string, string>) {
+  return collectionIds
+    .map((collectionId) => collectionNameById.get(collectionId))
+    .filter((name): name is string => Boolean(name));
+}
+
 export function LotPresentationsPage(_props: LotPresentationsPageProps) {
   const { accessToken, user } = useAuth();
   const [activeTab, setActiveTab] = useState<'workspace' | 'collections'>('workspace');
@@ -139,6 +145,10 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
   const selectedCollection = useMemo(
     () => collections.find((collection) => collection.id === selectedCollectionId) ?? collections[0] ?? null,
     [collections, selectedCollectionId],
+  );
+  const collectionNameById = useMemo(
+    () => new Map(collections.map((collection) => [collection.id, collection.name])),
+    [collections],
   );
   const hasBrokerContacts = Boolean(user?.brokerPhone && user.brokerEmail);
   const projectLotGroups = useMemo(() => createProjectLotGroups(projectLots), [projectLots]);
@@ -842,6 +852,7 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
               {workspaceItems.map((item) => (
                 <LotPresentationLotTile
                   accessToken={accessToken ?? ''}
+                  collectionNames={getLotCollectionNames(item.unit.collectionIds, collectionNameById)}
                   comment={item.comment}
                   key={item.id}
                   lot={item.unit}
@@ -1761,6 +1772,7 @@ function ProjectLotRow({
 
 function LotPresentationLotTile({
   accessToken,
+  collectionNames = [],
   comment,
   lot,
   onDownloadOne,
@@ -1769,6 +1781,7 @@ function LotPresentationLotTile({
   onRemove,
 }: {
   accessToken: string;
+  collectionNames?: string[];
   comment: string | null;
   lot: LotPresentationLot;
   onDownloadOne: () => void;
@@ -1776,6 +1789,9 @@ function LotPresentationLotTile({
   onOpenComment: () => void;
   onRemove: () => void;
 }) {
+  const collectionTooltipId = `lot-collection-tooltip-${lot.id}`;
+  const hasCollectionTooltip = Boolean(onOpenCollectionPicker && collectionNames.length > 0);
+
   return (
     <article className="lot-presentations-lot-tile">
       <LotThumb accessToken={accessToken} lot={lot} />
@@ -1791,14 +1807,25 @@ function LotPresentationLotTile({
           <DownloadIcon aria-hidden="true" />
         </button>
         {onOpenCollectionPicker ? (
-          <button
-            className="icon-action-button"
-            type="button"
-            aria-label="Добавить в подборку"
-            onClick={onOpenCollectionPicker}
-          >
-            <FolderPlusIcon aria-hidden="true" />
-          </button>
+          <span className="lot-presentations-collection-action">
+            <button
+              className="icon-action-button"
+              type="button"
+              aria-label="Добавить в подборку"
+              aria-describedby={hasCollectionTooltip ? collectionTooltipId : undefined}
+              onClick={onOpenCollectionPicker}
+            >
+              <FolderPlusIcon aria-hidden="true" />
+            </button>
+            {hasCollectionTooltip ? (
+              <span className="lot-presentations-collection-tooltip" id={collectionTooltipId} role="tooltip">
+                <strong>Подборка:</strong>
+                {collectionNames.map((name, index) => (
+                  <span key={`${name}-${index}`}>{name}</span>
+                ))}
+              </span>
+            ) : null}
+          </span>
         ) : null}
         <button
           className={

@@ -162,6 +162,28 @@ test('workspace collection picker updates locally after adding a lot', () => {
   assert.match(createActionsRule, /grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/);
 });
 
+test('workspace lot add-to-collection button shows delayed collection names tooltip', () => {
+  const tileSource = pageSource.match(/function LotPresentationLotTile[\s\S]*?function LotThumb/)?.[0] ?? '';
+  const tooltipRule = styles.match(/\.lot-presentations-collection-tooltip\s*\{[^}]*\}/)?.[0] ?? '';
+  const tooltipHoverRule =
+    styles.match(
+      /\.lot-presentations-collection-action:hover \.lot-presentations-collection-tooltip,\s*\.lot-presentations-collection-action:focus-within \.lot-presentations-collection-tooltip\s*\{[^}]*\}/,
+    )?.[0] ?? '';
+
+  assert.match(pageSource, /const collectionNameById = useMemo/);
+  assert.match(pageSource, /collectionNames=\{getLotCollectionNames\(item\.unit\.collectionIds, collectionNameById\)\}/);
+  assert.doesNotMatch(pageSource, /collectionNames=\{collectionTooltipNames\}/);
+  assert.match(tileSource, /collectionNames/);
+  assert.match(tileSource, /const collectionTooltipId = `lot-collection-tooltip-\$\{lot\.id\}`;/);
+  assert.match(tileSource, /aria-describedby=\{hasCollectionTooltip \? collectionTooltipId : undefined\}/);
+  assert.match(tileSource, /role="tooltip"/);
+  assert.match(tileSource, /Подборка:/);
+  assert.match(tileSource, /collectionNames\.map/);
+  assert.match(tooltipRule, /position:\s*absolute;/);
+  assert.match(tooltipRule, /visibility:\s*hidden;/);
+  assert.match(tooltipHoverRule, /transition-delay:\s*0\.5s,\s*0\.5s,\s*0s;/);
+});
+
 test('presentation comments are contextual and limited to 1000 characters', () => {
   assert.match(pageSource, /const commentMaxLength = 1000;/);
   assert.match(pageSource, /commentDraft\.length > commentMaxLength/);
