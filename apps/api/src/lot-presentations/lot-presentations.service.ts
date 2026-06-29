@@ -67,6 +67,12 @@ const collectionInclude = {
   },
 } as const;
 
+const workspaceInclude = {
+  unit: {
+    include: presentationLotInclude,
+  },
+} satisfies Prisma.LotPresentationWorkspaceItemInclude;
+
 const documentInclude = {
   file: true,
   items: {
@@ -114,6 +120,9 @@ const pdfUnitInclude = {
 type PresentationLotRecord = Prisma.FeedUnitGetPayload<{ include: typeof presentationLotInclude }>;
 type PresentationFeedMediaFileRecord = NonNullable<PresentationLotRecord['media'][number]['mediaAsset']['file']>;
 type PresentationCollectionRecord = Prisma.LotPresentationCollectionGetPayload<{ include: typeof collectionInclude }>;
+type PresentationWorkspaceItemRecord = Prisma.LotPresentationWorkspaceItemGetPayload<{
+  include: typeof workspaceInclude;
+}>;
 type PresentationDocumentRecord = Prisma.LotPresentationDocumentGetPayload<{ include: typeof documentInclude }>;
 type PdfUnitRecord = Prisma.FeedUnitGetPayload<{ include: typeof pdfUnitInclude }>;
 
@@ -147,6 +156,114 @@ export class LotPresentationsService {
       page,
       limit,
       totalPages: Math.max(1, Math.ceil(total / limit)),
+    };
+  }
+
+  async getWorkspace(actor: AuthenticatedUser) {
+    const items = await this.prisma.lotPresentationWorkspaceItem.findMany({
+      where: {
+        userId: actor.id,
+      },
+      include: workspaceInclude,
+      orderBy: [
+        {
+          sortOrder: 'asc',
+        },
+        {
+          createdAt: 'asc',
+        },
+      ],
+    });
+    const collectionIdsByUnitId = await this.getCollectionIdsByUnitId(items.map((item) => item.unitId), actor.id);
+
+    return {
+      items: items.map((item) => this.serializeWorkspaceItem(item, collectionIdsByUnitId.get(item.unitId) ?? [])),
+    };
+  }
+
+  async addWorkspaceItem(body: Record<string, unknown>, actor: AuthenticatedUser) {
+    const unitId = this.parseUuid(this.parseRequiredString(body.unitId, 'Lot is required'), 'Lot is invalid');
+
+    await this.ensurePresentationUnitExists(unitId);
+
+    const currentMaxOrder = await this.prisma.lotPresentationWorkspaceItem.aggregate({
+      where: {
+        userId: actor.id,
+      },
+      _max: {
+        sortOrder: true,
+      },
+    });
+
+    await this.prisma.lotPresentationWorkspaceItem.upsert({
+      where: {
+        userId_unitId: {
+          userId: actor.id,
+          unitId,
+        },
+      },
+      update: {},
+      create: {
+        userId: actor.id,
+        unitId,
+        sortOrder: (currentMaxOrder._max.sortOrder ?? -1) + 1,
+      },
+    });
+
+    return this.getWorkspace(actor);
+  }
+
+  async clearWorkspace(actor: AuthenticatedUser) {
+    await this.prisma.lotPresentationWorkspaceItem.deleteMany({
+      where: {
+        userId: actor.id,
+      },
+    });
+  }
+
+  async removeWorkspaceItem(unitId: string, actor: AuthenticatedUser) {
+    const normalizedUnitId = this.parseUuid(unitId, 'Lot is invalid');
+
+    await this.prisma.lotPresentationWorkspaceItem.deleteMany({
+      where: {
+        userId: actor.id,
+        unitId: normalizedUnitId,
+      },
+    });
+  }
+
+  async updateWorkspaceItemComment(unitId: string, body: Record<string, unknown>, actor: AuthenticatedUser) {
+    const normalizedUnitId = this.parseUuid(unitId, 'Lot is invalid');
+    const comment = this.parseOptionalComment(body.comment);
+    const existingItem = await this.prisma.lotPresentationWorkspaceItem.findUnique({
+      where: {
+        userId_unitId: {
+          userId: actor.id,
+          unitId: normalizedUnitId,
+        },
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!existingItem) {
+      throw new NotFoundException('Workspace item not found');
+    }
+
+    const updatedItem = await this.prisma.lotPresentationWorkspaceItem.update({
+      where: {
+        id: existingItem.id,
+      },
+      data: {
+        comment,
+      },
+      include: workspaceInclude,
+    });
+    const collectionIdsByUnitId = await this.getCollectionIdsByUnitId([updatedItem.unitId], actor.id);
+
+    return {
+      item: this.serializeWorkspaceItem(updatedItem, collectionIdsByUnitId.get(updatedItem.unitId) ?? []),
     };
   }
 
@@ -254,6 +371,27 @@ export class LotPresentationsService {
     });
 
     return this.getCollectionResponse(collection.id, actor.id, unitId);
+  }
+
+  async updateCollectionItemComment(collectionId: string, unitId: string, body: Record<string, unknown>, actor: AuthenticatedUser) {
+    const collection = await this.findCollectionForActor(collectionId, actor.id);
+    const normalizedUnitId = this.parseUuid(unitId, 'Lot is invalid');
+    const comment = this.parseOptionalComment(body.comment);
+    const updateResult = await this.prisma.lotPresentationCollectionItem.updateMany({
+      where: {
+        collectionId: collection.id,
+        unitId: normalizedUnitId,
+      },
+      data: {
+        comment,
+      },
+    });
+
+    if (updateResult.count === 0) {
+      throw new NotFoundException('Collection item not found');
+    }
+
+    return this.getCollectionResponse(collection.id, actor.id, normalizedUnitId);
   }
 
   async removeCollectionItem(collectionId: string, unitId: string, actor: AuthenticatedUser) {
@@ -677,6 +815,19 @@ export class LotPresentationsService {
     return collectionIdsByUnitId;
   }
 
+  private serializeWorkspaceItem(item: PresentationWorkspaceItemRecord, collectionIds: string[]) {
+    return {
+      id: item.id,
+      userId: item.userId,
+      unitId: item.unitId,
+      sortOrder: item.sortOrder,
+      comment: item.comment,
+      unit: this.serializeLot(item.unit, collectionIds),
+      createdAt: item.createdAt.toISOString(),
+      updatedAt: item.updatedAt.toISOString(),
+    };
+  }
+
   private serializeCollection(
     collection: PresentationCollectionRecord,
     collectionIdsByUnitId: Map<string, string[]>,
@@ -693,6 +844,7 @@ export class LotPresentationsService {
         collectionId: item.collectionId,
         unitId: item.unitId,
         sortOrder: item.sortOrder,
+        comment: item.comment,
         unit: this.serializeLot(item.unit, collectionIdsByUnitId.get(item.unitId) ?? []),
         createdAt: item.createdAt.toISOString(),
         updatedAt: item.updatedAt.toISOString(),
@@ -842,6 +994,28 @@ export class LotPresentationsService {
     }
 
     return title;
+  }
+
+  private parseOptionalComment(value: unknown) {
+    if (value === undefined || value === null) {
+      return null;
+    }
+
+    if (typeof value !== 'string') {
+      throw new BadRequestException('Comment is invalid');
+    }
+
+    const comment = value.trim();
+
+    if (!comment) {
+      return null;
+    }
+
+    if (comment.length > 1000) {
+      throw new BadRequestException('Comment is too long');
+    }
+
+    return comment;
   }
 
   private getDocumentTitle(collectionName: string | null, groups: PdfPresentationGroup[]) {

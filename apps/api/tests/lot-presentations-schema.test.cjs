@@ -114,6 +114,25 @@ test('lot presentation API is guarded, registered and exposes collection/documen
   assert.match(dockerfile, /COPY _Fluffy_White_1-02\.svg \.\/_Fluffy_White_1-02\.svg/);
 });
 
+test('lot presentation API exposes workspace and item comment routes', () => {
+  const controller = readProjectFile(controllerPath);
+  const service = readProjectFile(servicePath);
+
+  assert.match(controller, /@Get\('workspace'\)[\s\S]*getWorkspace/);
+  assert.match(controller, /@Post\('workspace\/items'\)[\s\S]*addWorkspaceItem/);
+  assert.match(controller, /@Delete\('workspace\/items'\)[\s\S]*clearWorkspace/);
+  assert.match(controller, /@Delete\('workspace\/items\/:unitId'\)[\s\S]*removeWorkspaceItem/);
+  assert.match(controller, /@Patch\('workspace\/items\/:unitId'\)[\s\S]*updateWorkspaceItemComment/);
+  assert.match(controller, /@Patch\('collections\/:collectionId\/items\/:unitId'\)[\s\S]*updateCollectionItemComment/);
+  assert.match(service, /async getWorkspace\(actor: AuthenticatedUser\)/);
+  assert.match(service, /async addWorkspaceItem\(body: Record<string, unknown>, actor: AuthenticatedUser\)/);
+  assert.match(service, /async clearWorkspace\(actor: AuthenticatedUser\)/);
+  assert.match(service, /async updateWorkspaceItemComment\(unitId: string, body: Record<string, unknown>, actor: AuthenticatedUser\)/);
+  assert.match(service, /async updateCollectionItemComment\(collectionId: string, unitId: string, body: Record<string, unknown>, actor: AuthenticatedUser\)/);
+  assert.match(service, /parseOptionalComment\(body\.comment\)/);
+  assert.match(service, /Comment is too long/);
+});
+
 test('lot presentation service enforces available lots, plan images and broker contacts', () => {
   const service = readProjectFile(servicePath);
   const pdfService = readProjectFile(pdfServicePath);

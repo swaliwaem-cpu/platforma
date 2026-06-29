@@ -36,6 +36,43 @@ export class LotPresentationsController {
     return this.lotPresentationsService.listLots(query, actor);
   }
 
+  @Get('workspace')
+  async getWorkspace(@CurrentUser() actor: AuthenticatedUser) {
+    return this.lotPresentationsService.getWorkspace(actor);
+  }
+
+  @Post('workspace/items')
+  async addWorkspaceItem(
+    @Body() body: Record<string, unknown>,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.lotPresentationsService.addWorkspaceItem(body, actor);
+  }
+
+  @Delete('workspace/items')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async clearWorkspace(@CurrentUser() actor: AuthenticatedUser) {
+    await this.lotPresentationsService.clearWorkspace(actor);
+  }
+
+  @Delete('workspace/items/:unitId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async removeWorkspaceItem(
+    @Param('unitId') unitId: string,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    await this.lotPresentationsService.removeWorkspaceItem(unitId, actor);
+  }
+
+  @Patch('workspace/items/:unitId')
+  async updateWorkspaceItemComment(
+    @Param('unitId') unitId: string,
+    @Body() body: Record<string, unknown>,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.lotPresentationsService.updateWorkspaceItemComment(unitId, body, actor);
+  }
+
   @Get('collections')
   async listCollections(
     @Query() query: Record<string, string | undefined>,
@@ -77,6 +114,16 @@ export class LotPresentationsController {
     @CurrentUser() actor: AuthenticatedUser,
   ) {
     return this.lotPresentationsService.addCollectionItem(collectionId, body, actor);
+  }
+
+  @Patch('collections/:collectionId/items/:unitId')
+  async updateCollectionItemComment(
+    @Param('collectionId') collectionId: string,
+    @Param('unitId') unitId: string,
+    @Body() body: Record<string, unknown>,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.lotPresentationsService.updateCollectionItemComment(collectionId, unitId, body, actor);
   }
 
   @Delete('collections/:collectionId/items/:unitId')
