@@ -1,5 +1,35 @@
 # Codex Log
 
+## 2026-06-29 - Lot presentation workspace implementation
+
+Задача:
+
+- Реализовать сохранённую пользовательскую вкладку `В работе` для PDF-презентаций лотов, плиточный вид лотов в работе и подборках, прямое добавление лота из объекта и контекстные комментарии.
+
+Изменения:
+
+- `apps/api/prisma/schema.prisma`, `apps/api/prisma/migrations/20260629140000_add_lot_presentation_workspace/migration.sql` - добавлены workspace items и comments для presentation collection items.
+- `packages/shared/src/index.ts` - добавлены контракты workspace/comment.
+- `apps/api/src/lot-presentations/lot-presentations.controller.ts`, `apps/api/src/lot-presentations/lot-presentations.service.ts` - добавлены workspace endpoints и comment endpoints.
+- `apps/web/src/presentations/LotCollectionAction.tsx`, `apps/web/src/presentations/LotPresentationsPage.tsx`, `apps/web/src/objects/ObjectDetailPage.tsx`, `apps/web/src/styles.css` - добавлен UI `В работе`, плитки лотов, direct add action, comment modal и collection picker.
+- `apps/api/tests/lot-presentations-schema.test.cjs`, `apps/web/tests/lot-presentations-page.test.mjs`, `apps/web/tests/object-detail-feed-units.test.mjs` - обновлены регрессии.
+
+Проверки:
+
+- `node --test apps/api/tests/lot-presentations-schema.test.cjs`
+- `pnpm --filter @platforma/api prisma:generate`
+- `pnpm --filter @platforma/api build`
+- `node --test apps/web/tests/lot-presentations-page.test.mjs apps/web/tests/object-detail-feed-units.test.mjs`
+- `pnpm --filter @platforma/web build`
+- `pnpm --filter @platforma/api test`
+- `pnpm --filter @platforma/web test`
+- `pnpm build`
+
+Ручная проверка:
+
+- `pnpm dev:web -- --port 5173 --strictPort` не был оставлен запущенным: порт `5173` уже занят процессом `com.docke`, а Vite автоматически ушёл на `5174`; этот процесс был остановлен, чтобы не использовать неутверждённый порт.
+- Перед приёмкой вручную проверить `/presentations`, добавление лота из объекта, скачивание PDF, комментарии, добавление в подборку и очистку `В работе`.
+
 ## 2026-06-29 - Lot presentation workspace implementation plan
 
 Задача:
