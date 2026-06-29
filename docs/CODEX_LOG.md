@@ -1,5 +1,24 @@
 # Codex Log
 
+## 2026-06-29 - Lot presentation workspace implementation plan
+
+Задача:
+
+- Подготовить детальный implementation plan для реализации сохранённой вкладки `В работе`, плиточных лотов и контекстных комментариев в PDF-презентациях.
+
+Изменения:
+
+- `docs/superpowers/plans/2026-06-29-lot-presentation-workspace-implementation.md` - добавлен пошаговый план реализации с задачами по Prisma/shared/API/frontend/tests/docs.
+- `docs/CODEX_LOG.md` - добавлена текущая запись.
+
+Проверки:
+
+- Application code не менялся, сборка и тесты не запускались.
+
+Ручная проверка:
+
+- Перед началом реализации выбрать способ исполнения плана: subagent-driven или inline execution.
+
 ## 2026-06-29 - Lot presentation workspace design
 
 Задача:
