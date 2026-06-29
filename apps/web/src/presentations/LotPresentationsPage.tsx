@@ -5,6 +5,8 @@ import {
   ChevronRightIcon,
   DownloadIcon,
   FileTextIcon,
+  FolderPlusIcon,
+  MessageSquareIcon,
   PencilIcon,
   PlusIcon,
   SearchIcon,
@@ -22,6 +24,8 @@ import type {
   LotPresentationDocumentsResponse,
   LotPresentationLot,
   LotPresentationLotsResponse,
+  LotPresentationWorkspaceItem,
+  LotPresentationWorkspaceResponse,
 } from '@platforma/shared';
 
 import { apiRequest, apiUrl } from '../admin/api';
@@ -63,6 +67,20 @@ type LotPresentationProjectCompletionGroup = {
   roomGroups: LotPresentationProjectRoomGroup[];
 };
 
+type CommentTarget =
+  | {
+      context: 'workspace';
+      unitId: string;
+      collectionId: null;
+      comment: string | null;
+    }
+  | {
+      context: 'collection';
+      unitId: string;
+      collectionId: string;
+      comment: string | null;
+    };
+
 const feedUnitStatusLabels: Record<LotPresentationLot['status'], string> = {
   AVAILABLE: 'Доступен',
   BOOKED: 'Забронирован',
@@ -75,19 +93,25 @@ const feedUnitStatusLabels: Record<LotPresentationLot['status'], string> = {
 const presentationProjectSearchLimit = 80;
 const presentationProjectLotsLimit = 500;
 const presentationProjectModalPageSize = 20;
+const commentMaxLength = 1000;
 
 export function LotPresentationsPage(_props: LotPresentationsPageProps) {
   const { accessToken, user } = useAuth();
+  const [activeTab, setActiveTab] = useState<'workspace' | 'collections'>('workspace');
   const [collections, setCollections] = useState<LotPresentationCollection[]>([]);
   const [selectedCollectionId, setSelectedCollectionId] = useState(() => getCollectionIdFromLocation());
-  const [lots, setLots] = useState<LotPresentationLot[]>([]);
+  const [workspaceItems, setWorkspaceItems] = useState<LotPresentationWorkspaceItem[]>([]);
   const [documents, setDocuments] = useState<LotPresentationDocument[]>([]);
-  const [checkedUnitIds, setCheckedUnitIds] = useState<Set<string>>(() => new Set());
   const [renamingCollectionId, setRenamingCollectionId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [isCreateCollectionModalOpen, setIsCreateCollectionModalOpen] = useState(false);
   const [newCollectionName, setNewCollectionName] = useState('');
   const [createCollectionError, setCreateCollectionError] = useState<string | null>(null);
+  const [activeCommentTarget, setActiveCommentTarget] = useState<CommentTarget | null>(null);
+  const [commentDraft, setCommentDraft] = useState('');
+  const [isCollectionPickerOpenFor, setIsCollectionPickerOpenFor] = useState<LotPresentationLot | null>(null);
+  const [pickerCollectionName, setPickerCollectionName] = useState('');
+  const [pickerError, setPickerError] = useState<string | null>(null);
   const [projectSearch, setProjectSearch] = useState('');
   const [projectResults, setProjectResults] = useState<LotPresentationProjectResult[]>([]);
   const [selectedProject, setSelectedProject] = useState<LotPresentationProjectResult | null>(null);
@@ -98,6 +122,7 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
   const [isDocumentsPanelOpen, setIsDocumentsPanelOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(true);
   const [isCollectionsLoading, setIsCollectionsLoading] = useState(true);
   const [isDocumentsLoading, setIsDocumentsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -105,19 +130,24 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
     () => collections.find((collection) => collection.id === selectedCollectionId) ?? collections[0] ?? null,
     [collections, selectedCollectionId],
   );
-  const checkedLots = useMemo(() => {
-    const unitIds = checkedUnitIds;
-
-    return selectedCollection?.items
-      .map((item) => item.unit)
-      .filter((unit) => unitIds.has(unit.id)) ?? [];
-  }, [checkedUnitIds, selectedCollection]);
   const hasBrokerContacts = Boolean(user?.brokerPhone && user.brokerEmail);
   const projectLotGroups = useMemo(() => createProjectLotGroups(projectLots), [projectLots]);
   const shouldShowProjectSearchResults = projectSearch.trim().length > 0;
 
   useEffect(() => {
-    const handlePopState = () => setSelectedCollectionId(getCollectionIdFromLocation());
+    const handlePopState = () => {
+      const nextCollectionId = getCollectionIdFromLocation();
+
+      setSelectedCollectionId(nextCollectionId);
+
+      if (nextCollectionId) {
+        setActiveTab('collections');
+      }
+    };
+
+    if (selectedCollectionId) {
+      setActiveTab('collections');
+    }
 
     window.addEventListener('popstate', handlePopState);
 
@@ -129,6 +159,7 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
       return;
     }
 
+    void loadWorkspace();
     void loadCollections();
     void loadDocuments();
   }, [accessToken]);
@@ -155,13 +186,9 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
     const firstCollection = collections[0];
 
     if (!selectedCollection && firstCollection) {
-      selectCollection(firstCollection.id);
+      setSelectedCollectionId(firstCollection.id);
     }
   }, [collections, selectedCollection]);
-
-  useEffect(() => {
-    setCheckedUnitIds(new Set(selectedCollection?.items.map((item) => item.unitId) ?? []));
-  }, [selectedCollection?.id]);
 
   useEffect(() => {
     if (!isDocumentsPanelOpen) {
@@ -196,6 +223,77 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
 
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isCreateCollectionModalOpen, isSubmitting]);
+
+  async function loadWorkspace() {
+    if (!accessToken) {
+      return;
+    }
+
+    setIsWorkspaceLoading(true);
+    setError(null);
+
+    try {
+      const data = await apiRequest<LotPresentationWorkspaceResponse>('/lot-presentations/workspace', accessToken);
+
+      setWorkspaceItems(data.items);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Не удалось загрузить лоты в работе');
+    } finally {
+      setIsWorkspaceLoading(false);
+    }
+  }
+
+  function getWorkspaceLots(items: LotPresentationWorkspaceItem[]) {
+    return items.map((item) => item.unit);
+  }
+
+  async function clearWorkspace() {
+    if (!accessToken || workspaceItems.length === 0) {
+      return;
+    }
+
+    const confirmed = window.confirm('Очистить все лоты в работе? Подборки и PDF останутся.');
+
+    if (!confirmed) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError(null);
+
+    try {
+      await apiRequest('/lot-presentations/workspace/items', accessToken, {
+        method: 'DELETE',
+      });
+      setWorkspaceItems([]);
+      setNotice('Рабочая зона очищена');
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Не удалось очистить рабочую зону');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function removeWorkspaceItem(unitId: string) {
+    if (!accessToken) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError(null);
+
+    try {
+      await apiRequest(`/lot-presentations/workspace/items/${encodeURIComponent(unitId)}`, accessToken, {
+        method: 'DELETE',
+      });
+      setWorkspaceItems((currentItems) => currentItems.filter((item) => item.unitId !== unitId));
+      setNotice('Лот удален из работы');
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Не удалось удалить лот из работы');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
 
   async function loadCollections() {
     if (!accessToken) {
@@ -305,6 +403,7 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
   }
 
   function selectCollection(collectionId: string) {
+    setActiveTab('collections');
     setSelectedCollectionId(collectionId);
     window.history.pushState(null, '', `/presentations?collectionId=${encodeURIComponent(collectionId)}`);
   }
@@ -447,6 +546,77 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
     }
   }
 
+  async function addLotToCollection(collectionId: string, unitId: string) {
+    if (!accessToken) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError(null);
+    setPickerError(null);
+
+    try {
+      await apiRequest<LotPresentationCollectionResponse>(
+        `/lot-presentations/collections/${encodeURIComponent(collectionId)}/items`,
+        accessToken,
+        {
+          method: 'POST',
+          body: JSON.stringify({ unitId }),
+        },
+      );
+      await loadCollections();
+      await loadWorkspace();
+      setIsCollectionPickerOpenFor(null);
+      setPickerCollectionName('');
+      setNotice('Лот добавлен в подборку');
+    } catch (caughtError) {
+      setPickerError(caughtError instanceof Error ? caughtError.message : 'Не удалось добавить лот в подборку');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function createCollectionAndAddPickerLot() {
+    if (!accessToken || !isCollectionPickerOpenFor) {
+      return;
+    }
+
+    const name = pickerCollectionName.trim();
+
+    if (!name) {
+      setPickerError('Введите название подборки');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setPickerError(null);
+
+    try {
+      const data = await apiRequest<LotPresentationCollectionResponse>('/lot-presentations/collections', accessToken, {
+        method: 'POST',
+        body: JSON.stringify({ name }),
+      });
+
+      await apiRequest<LotPresentationCollectionResponse>(
+        `/lot-presentations/collections/${encodeURIComponent(data.collection.id)}/items`,
+        accessToken,
+        {
+          method: 'POST',
+          body: JSON.stringify({ unitId: isCollectionPickerOpenFor.id }),
+        },
+      );
+      await loadCollections();
+      await loadWorkspace();
+      setIsCollectionPickerOpenFor(null);
+      setPickerCollectionName('');
+      setNotice('Подборка создана, лот добавлен');
+    } catch (caughtError) {
+      setPickerError(caughtError instanceof Error ? caughtError.message : 'Не удалось создать подборку');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   async function removeLotFromSelectedCollection(unitId: string) {
     if (!accessToken || !selectedCollection || isSubmitting) {
       return;
@@ -467,6 +637,53 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
       setNotice('Лот удален из подборки');
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Не удалось удалить лот');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  function openComment(target: CommentTarget) {
+    setActiveCommentTarget(target);
+    setCommentDraft(target.comment ?? '');
+    setError(null);
+    setNotice(null);
+  }
+
+  async function saveComment() {
+    if (!accessToken || !activeCommentTarget) {
+      return;
+    }
+
+    if (commentDraft.length > commentMaxLength) {
+      setError('Комментарий не может быть длиннее 1000 символов');
+      return;
+    }
+
+    const body = JSON.stringify({ comment: commentDraft.trim() || null });
+    const endpoint = activeCommentTarget.context === 'workspace'
+      ? `/lot-presentations/workspace/items/${encodeURIComponent(activeCommentTarget.unitId)}`
+      : `/lot-presentations/collections/${encodeURIComponent(activeCommentTarget.collectionId)}/items/${encodeURIComponent(activeCommentTarget.unitId)}`;
+
+    setIsSubmitting(true);
+    setError(null);
+
+    try {
+      await apiRequest(endpoint, accessToken, {
+        method: 'PATCH',
+        body,
+      });
+
+      if (activeCommentTarget.context === 'workspace') {
+        await loadWorkspace();
+      } else {
+        await loadCollections();
+      }
+
+      setActiveCommentTarget(null);
+      setCommentDraft('');
+      setNotice('Комментарий сохранён');
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Не удалось сохранить комментарий');
     } finally {
       setIsSubmitting(false);
     }
@@ -530,240 +747,282 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
       {error ? <p className="form-error">{error}</p> : null}
       {notice ? <p className="form-notice">{notice}</p> : null}
 
-      <div className="lot-presentations-layout">
-        <aside className="content-panel lot-presentations-sidebar">
-          <div className="lot-presentations-panel-header">
-            <div>
-              <p className="eyebrow">Коллекции</p>
-              <h3>Подборки</h3>
-            </div>
-            <div className="lot-presentations-sidebar-actions">
-              <span className="lot-presentations-collection-count">{collections.length}</span>
-              <button
-                className="lot-presentations-create-inline"
-                disabled={isSubmitting}
-                type="button"
-                aria-label="Создать подборку"
-                title="Создать подборку"
-                onClick={openCreateCollectionModal}
-              >
-                <PlusIcon aria-hidden="true" />
-              </button>
-            </div>
-          </div>
+      <div className="lot-presentations-tabs" role="tablist" aria-label="Разделы презентаций">
+        <button
+          className={activeTab === 'workspace' ? 'lot-presentations-tab is-active' : 'lot-presentations-tab'}
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'workspace'}
+          onClick={() => setActiveTab('workspace')}
+        >
+          В работе
+        </button>
+        <button
+          className={activeTab === 'collections' ? 'lot-presentations-tab is-active' : 'lot-presentations-tab'}
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'collections'}
+          onClick={() => setActiveTab('collections')}
+        >
+          Мои подборки
+        </button>
+      </div>
 
-          {isCollectionsLoading ? <p className="muted-text">Загрузка подборок</p> : null}
-
-          <div className="lot-presentations-collection-list">
-            {collections.map((collection) => (
-              <article
-                key={collection.id}
-                className={
-                  selectedCollection?.id === collection.id
-                    ? 'lot-presentations-collection is-active'
-                    : 'lot-presentations-collection'
-                }
-              >
-                {renamingCollectionId === collection.id ? (
-                  <form
-                    className="lot-presentations-rename-form"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      void renameCollection(collection);
-                    }}
-                  >
-                    <input
-                      autoFocus
-                      aria-label="Новое название подборки"
-                      value={renameValue}
-                      onChange={(event) => setRenameValue(event.currentTarget.value)}
-                    />
-                    <button
-                      className="icon-action-button"
-                      aria-label="Сохранить название подборки"
-                      title="Сохранить название подборки"
-                      disabled={isSubmitting}
-                      type="submit"
-                    >
-                      <CheckIcon aria-hidden="true" />
-                    </button>
-                  </form>
-                ) : (
-                  <>
-                    <button type="button" onClick={() => selectCollection(collection.id)}>
-                      <strong>{collection.name}</strong>
-                      <span>{collection.itemsCount} лотов</span>
-                    </button>
-                    <div className="lot-presentations-collection-actions">
-                      <button
-                        className="icon-action-button"
-                        type="button"
-                        aria-label="Переименовать подборку"
-                        onClick={() => {
-                          setRenamingCollectionId(collection.id);
-                          setRenameValue(collection.name);
-                        }}
-                      >
-                        <PencilIcon aria-hidden="true" />
-                      </button>
-                      <button
-                        className="icon-action-button icon-action-button--danger"
-                        type="button"
-                        aria-label="Удалить подборку"
-                        onClick={() => void deleteCollection(collection)}
-                      >
-                        <Trash2Icon aria-hidden="true" />
-                      </button>
-                    </div>
-                  </>
-                )}
-              </article>
-            ))}
-          </div>
-        </aside>
-
+      {activeTab === 'workspace' ? (
         <section className="content-panel lot-presentations-main">
-          <div className="lot-presentations-panel-header">
-            <div>
-              <p className="eyebrow">Рабочая зона</p>
-              <h3>{selectedCollection?.name ?? 'Подборка не выбрана'}</h3>
-            </div>
-            <div className="lot-presentations-summary">
-              <span>
-                <strong>{selectedCollection?.items.length ?? 0}</strong>
-                <small>лота</small>
-              </span>
-              <span>
-                <strong>{checkedLots.length}</strong>
-                <small>выбрано</small>
-              </span>
-              <span>
-                <strong>{documents.length}</strong>
-                <small>PDF</small>
-              </span>
-            </div>
+          <div className="lot-presentations-workspace-toolbar">
+            <button
+              className="secondary-button secondary-button--fit"
+              disabled={!hasBrokerContacts || workspaceItems.length === 0 || isSubmitting}
+              type="button"
+              onClick={() =>
+                void createAndDownloadDocument(
+                  { unitIds: workspaceItems.map((item) => item.unitId), title: 'В работе' },
+                  getWorkspaceLots(workspaceItems),
+                )
+              }
+            >
+              <DownloadIcon aria-hidden="true" />
+              Скачать все
+            </button>
+            <button
+              className="secondary-button secondary-button--fit"
+              disabled={workspaceItems.length === 0 || isSubmitting}
+              type="button"
+              onClick={() => void clearWorkspace()}
+            >
+              Очистить всё
+            </button>
+            <button className="primary-button primary-button--fit" type="button" onClick={openCreateCollectionModal}>
+              <PlusIcon aria-hidden="true" />
+              Добавить подборку
+            </button>
           </div>
 
-          <div className="lot-presentations-workbar">
-            <div className="lot-presentations-search-area">
-              <label className="lot-presentations-search">
-                <SearchIcon aria-hidden="true" />
-                <input
-                  placeholder="Найти ЖК и открыть лоты"
-                  type="search"
-                  value={projectSearch}
-                  onChange={(event) => setProjectSearch(event.currentTarget.value)}
-                />
-              </label>
+          {isWorkspaceLoading ? <p className="muted-text">Загрузка лотов в работе</p> : null}
 
-              {shouldShowProjectSearchResults ? (
-                <div className="lot-presentations-search-popover">
-                  {isProjectSearchLoading ? <p className="muted-text">Загрузка ЖК</p> : null}
-                  {!isProjectSearchLoading && projectResults.length === 0 ? (
-                    <p className="lot-presentations-search-empty">Проекты не найдены</p>
-                  ) : null}
-                  {projectResults.map((project) => (
-                    <button
-                      className="lot-presentations-search-project"
-                      key={project.id}
-                      type="button"
-                      onClick={() => openProjectLotsModal(project)}
-                    >
-                      <span>
-                        <strong>{project.title}</strong>
-                        <small>{formatProjectLocation(project)}</small>
-                      </span>
-                      <b>{formatProjectLotsCount(project.lotsCount)}</b>
-                      <ChevronRightIcon aria-hidden="true" />
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-
-            <div className="lot-presentations-actions">
-              <button
-                className="secondary-button secondary-button--fit"
-                disabled={!selectedCollection || selectedCollection.items.length === 0 || isSubmitting}
-                type="button"
-                onClick={() =>
-                  selectedCollection
-                    ? void createAndDownloadDocument(
-                        { collectionId: selectedCollection.id, title: selectedCollection.name },
-                        selectedCollection.items.map((item) => item.unit),
-                      )
-                    : undefined
-                }
-              >
-                <FileTextIcon aria-hidden="true" />
-                Вся подборка
-              </button>
-              <button
-                className="primary-button primary-button--fit"
-                disabled={checkedLots.length === 0 || isSubmitting}
-                type="button"
-                onClick={() =>
-                  selectedCollection
-                    ? void createAndDownloadDocument(
-                        {
-                          collectionId: selectedCollection.id,
-                          unitIds: checkedLots.map((lot) => lot.id),
-                          title: selectedCollection.name,
-                        },
-                        checkedLots,
-                      )
-                    : undefined
-                }
-              >
-                <DownloadIcon aria-hidden="true" />
-                Выбранные
-              </button>
-            </div>
-          </div>
-
-          {selectedCollection?.items.length ? (
-            <div className="lot-presentations-lot-list">
-              {selectedCollection.items.map((item) => (
-                <LotPresentationLotRow
-                  key={item.id}
+          {workspaceItems.length ? (
+            <div className="lot-presentations-grid">
+              {workspaceItems.map((item) => (
+                <LotPresentationLotTile
                   accessToken={accessToken ?? ''}
-                  checked={checkedUnitIds.has(item.unitId)}
+                  comment={item.comment}
+                  key={item.id}
                   lot={item.unit}
-                  onCheckedChange={(checked) => {
-                    setCheckedUnitIds((current) => {
-                      const next = new Set(current);
-
-                      if (checked) {
-                        next.add(item.unitId);
-                      } else {
-                        next.delete(item.unitId);
-                      }
-
-                      return next;
-                    });
-                  }}
-                  onDownload={() =>
-                    void createAndDownloadDocument(
-                      {
-                        collectionId: selectedCollection.id,
-                        unitIds: [item.unitId],
-                        title: getLotTitle(item.unit),
-                      },
-                      [item.unit],
-                    )
+                  onDownloadOne={() =>
+                    void createAndDownloadDocument({ unitIds: [item.unitId], title: getLotTitle(item.unit) }, [item.unit])
                   }
-                  onRemove={() => void removeLotFromSelectedCollection(item.unitId)}
+                  onOpenCollectionPicker={() => setIsCollectionPickerOpenFor(item.unit)}
+                  onOpenComment={() =>
+                    openComment({ context: 'workspace', unitId: item.unitId, collectionId: null, comment: item.comment })
+                  }
+                  onRemove={() => void removeWorkspaceItem(item.unitId)}
                 />
               ))}
             </div>
           ) : (
             <div className="lot-presentations-empty">
-              <strong>В подборке пока нет лотов</strong>
-              <span>Добавьте лоты через поиск сверху, со страницы лота или из таблицы лотов объекта.</span>
+              <strong>В работе пока нет лотов</strong>
+              <span>Добавьте лоты со страницы объекта или из таблицы лотов.</span>
             </div>
           )}
         </section>
-      </div>
+      ) : (
+        <div className="lot-presentations-layout">
+          <aside className="content-panel lot-presentations-sidebar">
+            <div className="lot-presentations-panel-header">
+              <div>
+                <p className="eyebrow">Коллекции</p>
+                <h3>Подборки</h3>
+              </div>
+              <div className="lot-presentations-sidebar-actions">
+                <span className="lot-presentations-collection-count">{collections.length}</span>
+                <button
+                  className="lot-presentations-create-inline"
+                  disabled={isSubmitting}
+                  type="button"
+                  aria-label="Создать подборку"
+                  title="Создать подборку"
+                  onClick={openCreateCollectionModal}
+                >
+                  <PlusIcon aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+
+            {isCollectionsLoading ? <p className="muted-text">Загрузка подборок</p> : null}
+
+            <div className="lot-presentations-collection-list">
+              {collections.map((collection) => (
+                <article
+                  key={collection.id}
+                  className={
+                    selectedCollection?.id === collection.id
+                      ? 'lot-presentations-collection is-active'
+                      : 'lot-presentations-collection'
+                  }
+                >
+                  {renamingCollectionId === collection.id ? (
+                    <form
+                      className="lot-presentations-rename-form"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void renameCollection(collection);
+                      }}
+                    >
+                      <input
+                        autoFocus
+                        aria-label="Новое название подборки"
+                        value={renameValue}
+                        onChange={(event) => setRenameValue(event.currentTarget.value)}
+                      />
+                      <button
+                        className="icon-action-button"
+                        aria-label="Сохранить название подборки"
+                        title="Сохранить название подборки"
+                        disabled={isSubmitting}
+                        type="submit"
+                      >
+                        <CheckIcon aria-hidden="true" />
+                      </button>
+                    </form>
+                  ) : (
+                    <>
+                      <button type="button" onClick={() => selectCollection(collection.id)}>
+                        <strong>{collection.name}</strong>
+                        <span>{collection.itemsCount} лотов</span>
+                      </button>
+                      <div className="lot-presentations-collection-actions">
+                        <button
+                          className="icon-action-button"
+                          type="button"
+                          aria-label="Переименовать подборку"
+                          onClick={() => {
+                            setRenamingCollectionId(collection.id);
+                            setRenameValue(collection.name);
+                          }}
+                        >
+                          <PencilIcon aria-hidden="true" />
+                        </button>
+                        <button
+                          className="icon-action-button icon-action-button--danger"
+                          type="button"
+                          aria-label="Удалить подборку"
+                          onClick={() => void deleteCollection(collection)}
+                        >
+                          <Trash2Icon aria-hidden="true" />
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </article>
+              ))}
+            </div>
+          </aside>
+
+          <section className="content-panel lot-presentations-main">
+            <div className="lot-presentations-panel-header">
+              <div>
+                <p className="eyebrow">Мои подборки</p>
+                <h3>{selectedCollection?.name ?? 'Подборка не выбрана'}</h3>
+              </div>
+              <div className="lot-presentations-actions">
+                <button
+                  className="secondary-button secondary-button--fit"
+                  disabled={!hasBrokerContacts || !selectedCollection || selectedCollection.items.length === 0 || isSubmitting}
+                  type="button"
+                  onClick={() =>
+                    selectedCollection
+                      ? void createAndDownloadDocument(
+                          { collectionId: selectedCollection.id, title: selectedCollection.name },
+                          selectedCollection.items.map((item) => item.unit),
+                        )
+                      : undefined
+                  }
+                >
+                  <FileTextIcon aria-hidden="true" />
+                  Вся подборка
+                </button>
+              </div>
+            </div>
+
+            <div className="lot-presentations-workbar">
+              <div className="lot-presentations-search-area">
+                <label className="lot-presentations-search">
+                  <SearchIcon aria-hidden="true" />
+                  <input
+                    placeholder="Найти ЖК и открыть лоты"
+                    type="search"
+                    value={projectSearch}
+                    onChange={(event) => setProjectSearch(event.currentTarget.value)}
+                  />
+                </label>
+
+                {shouldShowProjectSearchResults ? (
+                  <div className="lot-presentations-search-popover">
+                    {isProjectSearchLoading ? <p className="muted-text">Загрузка ЖК</p> : null}
+                    {!isProjectSearchLoading && projectResults.length === 0 ? (
+                      <p className="lot-presentations-search-empty">Проекты не найдены</p>
+                    ) : null}
+                    {projectResults.map((project) => (
+                      <button
+                        className="lot-presentations-search-project"
+                        key={project.id}
+                        type="button"
+                        onClick={() => openProjectLotsModal(project)}
+                      >
+                        <span>
+                          <strong>{project.title}</strong>
+                          <small>{formatProjectLocation(project)}</small>
+                        </span>
+                        <b>{formatProjectLotsCount(project.lotsCount)}</b>
+                        <ChevronRightIcon aria-hidden="true" />
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            {selectedCollection?.items.length ? (
+              <div className="lot-presentations-grid">
+                {selectedCollection.items.map((item) => (
+                  <LotPresentationLotTile
+                    accessToken={accessToken ?? ''}
+                    comment={item.comment}
+                    key={item.id}
+                    lot={item.unit}
+                    onDownloadOne={() =>
+                      void createAndDownloadDocument(
+                        {
+                          collectionId: selectedCollection.id,
+                          unitIds: [item.unitId],
+                          title: getLotTitle(item.unit),
+                        },
+                        [item.unit],
+                      )
+                    }
+                    onOpenComment={() =>
+                      openComment({
+                        context: 'collection',
+                        unitId: item.unitId,
+                        collectionId: selectedCollection.id,
+                        comment: item.comment,
+                      })
+                    }
+                    onRemove={() => void removeLotFromSelectedCollection(item.unitId)}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="lot-presentations-empty">
+                <strong>В подборке пока нет лотов</strong>
+                <span>Добавьте лоты из вкладки В работе или через поиск проекта.</span>
+              </div>
+            )}
+          </section>
+        </div>
+      )}
 
       {selectedProject ? (
         <ProjectLotsModal
@@ -834,6 +1093,146 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
               </button>
             </div>
           </form>
+        </div>
+      ) : null}
+
+      {activeCommentTarget ? (
+        <div
+          className="lot-presentations-create-modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setActiveCommentTarget(null);
+            }
+          }}
+        >
+          <div
+            className="lot-presentations-comment-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="lot-presentations-comment-title"
+          >
+            <div className="lot-presentations-create-modal-header">
+              <div>
+                <h3 id="lot-presentations-comment-title">Комментарий</h3>
+                <p>{commentDraft.length}/{commentMaxLength}</p>
+              </div>
+              <button
+                className="lot-presentations-project-modal-close"
+                type="button"
+                aria-label="Закрыть комментарий"
+                onClick={() => setActiveCommentTarget(null)}
+              >
+                <XIcon aria-hidden="true" />
+              </button>
+            </div>
+            <textarea
+              className="lot-presentations-comment-textarea"
+              maxLength={commentMaxLength}
+              value={commentDraft}
+              onChange={(event) => setCommentDraft(event.currentTarget.value)}
+            />
+            {commentDraft.length > commentMaxLength ? (
+              <p className="form-error">Комментарий не может быть длиннее 1000 символов</p>
+            ) : null}
+            <div className="lot-presentations-create-modal-actions">
+              <button
+                className="secondary-button secondary-button--fit"
+                type="button"
+                onClick={() => setActiveCommentTarget(null)}
+              >
+                Отмена
+              </button>
+              <button
+                className="primary-button primary-button--fit"
+                disabled={isSubmitting || commentDraft.length > commentMaxLength}
+                type="button"
+                onClick={() => void saveComment()}
+              >
+                Сохранить
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {isCollectionPickerOpenFor ? (
+        <div
+          className="lot-collection-modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setIsCollectionPickerOpenFor(null);
+              setPickerCollectionName('');
+              setPickerError(null);
+            }
+          }}
+        >
+          <div className="lot-collection-modal" role="dialog" aria-modal="true" aria-labelledby="lot-collection-picker-title">
+            <header className="lot-collection-modal-header">
+              <div>
+                <p className="eyebrow">Подборки</p>
+                <h3 id="lot-collection-picker-title">Добавить в подборку</h3>
+              </div>
+              <button
+                className="lot-collection-modal-close"
+                type="button"
+                aria-label="Закрыть"
+                onClick={() => {
+                  setIsCollectionPickerOpenFor(null);
+                  setPickerCollectionName('');
+                  setPickerError(null);
+                }}
+              >
+                <XIcon aria-hidden="true" />
+              </button>
+            </header>
+
+            <div className="lot-collection-list" aria-label="Список подборок">
+              {collections.map((collection) => {
+                const isAlreadyAdded = isCollectionPickerOpenFor.collectionIds.includes(collection.id);
+
+                return (
+                  <button
+                    key={collection.id}
+                    className="lot-collection-choice"
+                    disabled={isSubmitting || isAlreadyAdded}
+                    type="button"
+                    onClick={() => void addLotToCollection(collection.id, isCollectionPickerOpenFor.id)}
+                  >
+                    <span>
+                      <strong>{collection.name}</strong>
+                      <small>{collection.itemsCount} лотов</small>
+                    </span>
+                    {isAlreadyAdded ? <CheckIcon aria-hidden="true" /> : <FolderPlusIcon aria-hidden="true" />}
+                  </button>
+                );
+              })}
+            </div>
+
+            <form
+              className="lot-collection-create-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void createCollectionAndAddPickerLot();
+              }}
+            >
+              <label>
+                Новая подборка
+                <input
+                  placeholder="Например: Клиент Иванов"
+                  type="text"
+                  value={pickerCollectionName}
+                  onChange={(event) => setPickerCollectionName(event.currentTarget.value)}
+                />
+              </label>
+              <button className="secondary-button secondary-button--fit" disabled={isSubmitting} type="submit">
+                Создать и добавить
+              </button>
+            </form>
+
+            {pickerError ? <p className="form-error">{pickerError}</p> : null}
+          </div>
         </div>
       ) : null}
 
@@ -1325,45 +1724,66 @@ function ProjectLotRow({
   );
 }
 
-function LotPresentationLotRow({
+function LotPresentationLotTile({
   accessToken,
-  checked,
+  comment,
   lot,
-  onCheckedChange,
-  onDownload,
+  onDownloadOne,
+  onOpenCollectionPicker,
+  onOpenComment,
   onRemove,
 }: {
   accessToken: string;
-  checked: boolean;
+  comment: string | null;
   lot: LotPresentationLot;
-  onCheckedChange: (checked: boolean) => void;
-  onDownload: () => void;
+  onDownloadOne: () => void;
+  onOpenCollectionPicker?: () => void;
+  onOpenComment: () => void;
   onRemove: () => void;
 }) {
   return (
-    <article className="lot-presentations-lot-row">
-      <label className="lot-presentations-checkbox">
-        <input type="checkbox" checked={checked} onChange={(event) => onCheckedChange(event.currentTarget.checked)} />
-        <span />
-      </label>
+    <article className="lot-presentations-lot-tile">
       <LotThumb accessToken={accessToken} lot={lot} />
-      <div className="lot-presentations-lot-body">
-        <strong>{getLotTitle(lot)}</strong>
+      <div className="lot-presentations-lot-tile-body">
+        <h3>{getLotTitle(lot)}</h3>
         <span>{lot.object.title}</span>
-        <small>{[formatArea(lot.area), formatFloor(lot.floor), feedUnitStatusLabels[lot.status]].filter(Boolean).join(' / ')}</small>
-      </div>
-      <div className="lot-presentations-lot-price">
         <strong>{formatPrice(lot.effectivePrice ?? lot.discountPrice ?? lot.price, lot.currency)}</strong>
-        <span>{formatPricePerMeter(lot)}</span>
+        <small>{[formatArea(lot.area), formatFloor(lot.floor)].filter(Boolean).join(' / ')}</small>
+        <p>{feedUnitStatusLabels[lot.status]}</p>
       </div>
-      <div className="lot-presentations-row-actions">
-        <button className="secondary-button secondary-button--fit" type="button" onClick={onDownload}>
-          PDF
+      <div className="lot-presentations-tile-actions">
+        <button className="icon-action-button" type="button" aria-label="Скачать PDF лота" onClick={onDownloadOne}>
+          <DownloadIcon aria-hidden="true" />
         </button>
-        <button className="icon-action-button icon-action-button--danger" type="button" aria-label="Удалить из подборки" onClick={onRemove}>
+        {onOpenCollectionPicker ? (
+          <button
+            className="icon-action-button"
+            type="button"
+            aria-label="Добавить в подборку"
+            onClick={onOpenCollectionPicker}
+          >
+            <FolderPlusIcon aria-hidden="true" />
+          </button>
+        ) : null}
+        <button
+          className={
+            comment
+              ? 'icon-action-button lot-presentations-comment-action is-active'
+              : 'icon-action-button lot-presentations-comment-action'
+          }
+          type="button"
+          aria-label={comment ? 'Открыть комментарий' : 'Добавить комментарий'}
+          onClick={onOpenComment}
+        >
+          <MessageSquareIcon aria-hidden="true" />
+        </button>
+        <button className="icon-action-button icon-action-button--danger" type="button" aria-label="Удалить лот" onClick={onRemove}>
           <Trash2Icon aria-hidden="true" />
         </button>
       </div>
+      <button className="lot-presentations-comment-button" type="button" onClick={onOpenComment}>
+        {comment ? 'Изменить комментарий' : 'Добавить комментарий'}
+      </button>
     </article>
   );
 }

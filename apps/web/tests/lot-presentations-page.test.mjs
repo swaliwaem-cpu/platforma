@@ -68,41 +68,71 @@ test('lot collection modal uses app theme colors instead of a light fallback', (
   assert.match(inputRule, /color:\s*var\(--app-theme-ink-900, #18202a\);/);
 });
 
-test('lot presentations page manages selections, downloads and validation warnings', () => {
+test('lot presentations page manages workspace, downloads and validation warnings', () => {
+  assert.match(pageSource, /apiRequest<LotPresentationWorkspaceResponse>\('\/lot-presentations\/workspace'/);
   assert.match(pageSource, /apiRequest<LotPresentationCollectionsResponse>\('\/lot-presentations\/collections'/);
   assert.match(pageSource, /apiRequest<LotPresentationLotsResponse>\(`\/lot-presentations\/lots\?\$\{params\.toString\(\)\}`/);
   assert.match(pageSource, /apiRequest<LotPresentationDocumentsResponse>\('\/lot-presentations\/documents\?limit=12'/);
   assert.match(pageSource, /apiRequest<LotPresentationDocumentResponse>\('\/lot-presentations\/documents'/);
-  assert.match(pageSource, /collectionId: selectedCollection\.id/);
-  assert.match(pageSource, /unitIds: checkedLots\.map\(\(lot\) => lot\.id\)/);
+  assert.match(pageSource, /title: 'В работе'/);
+  assert.match(pageSource, /unitIds: workspaceItems\.map\(\(item\) => item\.unitId\)/);
   assert.match(pageSource, /unitIds: \[item\.unitId\]/);
   assert.match(pageSource, /if \(!user\?\.brokerPhone \|\| !user\.brokerEmail\)/);
   assert.match(pageSource, /Заполните телефон и почту брокера в профиле/);
   assert.match(pageSource, /Планировка отсутствует в лоте/);
   assert.match(pageSource, /downloadDocument\(data\.document, accessToken\)/);
-  assert.match(styles, /\.lot-presentations-layout\s*\{/);
-  assert.match(styles, /\.lot-presentations-lot-row\s*\{/);
+  assert.match(styles, /\.lot-presentations-grid\s*\{/);
+  assert.match(styles, /\.lot-presentations-lot-tile\s*\{/);
 });
 
-test('lot presentations page uses the approved two-column layout', () => {
+test('lot presentations page has workspace and collection tabs with compact lot tiles', () => {
   assert.doesNotMatch(pageSource, /Контакты брокера/);
   assert.match(pageSource, /setIsDocumentsPanelOpen\(true\)[\s\S]*Созданные PDF/);
+  assert.match(pageSource, /const \[activeTab,\s*setActiveTab\] = useState<'workspace' \| 'collections'>\('workspace'\);/);
+  assert.match(pageSource, /В работе/);
+  assert.match(pageSource, /Мои подборки/);
+  assert.match(pageSource, /role="tablist"/);
+  assert.match(pageSource, /className="lot-presentations-grid"/);
+  assert.match(pageSource, /function LotPresentationLotTile/);
+  assert.match(pageSource, /onDownloadOne/);
+  assert.match(pageSource, /onOpenCollectionPicker/);
+  assert.match(pageSource, /onOpenComment/);
+  assert.match(pageSource, /onRemove/);
   assert.match(pageSource, /className="lot-presentations-create-inline"[\s\S]*aria-label="Создать подборку"[\s\S]*<PlusIcon aria-hidden="true" \/>/);
   assert.match(pageSource, /import \{[\s\S]*CheckIcon,[\s\S]*\} from 'lucide-react';/);
   assert.match(pageSource, /className="icon-action-button"[\s\S]*aria-label="Сохранить название подборки"[\s\S]*type="submit"[\s\S]*<CheckIcon aria-hidden="true" \/>/);
   assert.doesNotMatch(pageSource, /<button className="secondary-button secondary-button--fit" disabled=\{isSubmitting\} type="submit">\s*OK\s*<\/button>/);
-  assert.match(pageSource, /className="content-panel lot-presentations-sidebar"[\s\S]*className="content-panel lot-presentations-main"/);
+  assert.match(pageSource, /className="content-panel lot-presentations-main"[\s\S]*className="content-panel lot-presentations-sidebar"/);
   assert.doesNotMatch(pageSource, /content-panel lot-presentations-aside/);
   assert.match(pageSource, /const shouldShowProjectSearchResults = projectSearch\.trim\(\)\.length > 0;/);
   assert.match(pageSource, /className="lot-presentations-search-popover"/);
   assert.match(pageSource, /className="secondary-button secondary-button--fit lot-presentations-documents-trigger"/);
-  assert.match(styles, /\.lot-presentations-layout\s*\{[\s\S]*?grid-template-columns:\s*minmax\(220px, 300px\) minmax\(0, 1fr\);/);
+  assert.match(styles, /\.lot-presentations-tabs\s*\{/);
+  assert.match(styles, /\.lot-presentations-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(5, minmax\(0, 1fr\)\);/);
+  assert.match(styles, /\.lot-presentations-comment-modal\s*\{/);
   assert.match(styles, /\.lot-presentations-documents-trigger\s*\{[\s\S]*?display:\s*inline-flex;[\s\S]*?min-height:\s*44px;[\s\S]*?white-space:\s*nowrap;/);
-  assert.match(styles, /\.lot-presentations-workbar\s*\{[\s\S]*?grid-template-columns:\s*minmax\(480px, 1fr\) max-content;/);
   assert.match(styles, /\.lot-presentations-actions\s*\{[\s\S]*?flex-wrap:\s*nowrap;[\s\S]*?align-items:\s*stretch;/);
   assert.match(styles, /\.lot-presentations-actions \.primary-button,\s*\.lot-presentations-actions \.secondary-button\s*\{[\s\S]*?display:\s*inline-flex;[\s\S]*?min-height:\s*44px;/);
   assert.match(styles, /\.lot-presentations-search-popover\s*\{/);
   assert.match(styles, /\.lot-presentations-documents-backdrop\s*\{/);
+});
+
+test('workspace actions download all, clear workspace and keep collections separate', () => {
+  assert.match(pageSource, /function getWorkspaceLots\(/);
+  assert.match(pageSource, /DELETE'[\s\S]*\/lot-presentations\/workspace\/items/);
+  assert.match(pageSource, /Очистить всё/);
+  assert.match(pageSource, /Скачать все/);
+  assert.match(pageSource, /disabled=\{!hasBrokerContacts \|\| workspaceItems\.length === 0 \|\| isSubmitting\}/);
+  assert.match(pageSource, /await loadCollections\(\);[\s\S]*await loadWorkspace\(\);[\s\S]*setIsCollectionPickerOpenFor\(null\);/);
+});
+
+test('presentation comments are contextual and limited to 1000 characters', () => {
+  assert.match(pageSource, /const commentMaxLength = 1000;/);
+  assert.match(pageSource, /commentDraft\.length > commentMaxLength/);
+  assert.match(pageSource, /\/lot-presentations\/workspace\/items\/\$\{encodeURIComponent\(activeCommentTarget\.unitId\)\}/);
+  assert.match(pageSource, /\/lot-presentations\/collections\/\$\{encodeURIComponent\(activeCommentTarget\.collectionId\)\}\/items\/\$\{encodeURIComponent\(activeCommentTarget\.unitId\)\}/);
+  assert.match(pageSource, /Комментарий сохранён/);
+  assert.match(pageSource, /lot-presentations-comment-action is-active/);
 });
 
 test('lot presentations creates collections through the compact modal', () => {
