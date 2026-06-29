@@ -161,7 +161,7 @@ test('object detail feed units block renders expected columns and media thumbnai
   assert.match(source, /<TableHead>Секц\.<\/TableHead>/);
   assert.match(source, /field="floor"[\s\S]*?>\s*Эт\.\s*<\/ObjectFeedSortableHead>/);
   assert.match(source, /field="title"[\s\S]*?>\s*Номер квартиры\s*<\/ObjectFeedSortableHead>/);
-  assert.match(objectFeedUnitsSectionSource, /<TableHead aria-label="Подборка" \/>/);
+  assert.match(objectFeedUnitsSectionSource, /<TableHead aria-label="В работе" \/>/);
   assert.match(objectFeedUnitRowSource, /<TableCell>\{formatFeedUnitPrice\(unit\.price, unit\.currency\)\}<\/TableCell>/);
   assert.match(
     objectFeedUnitRowSource,

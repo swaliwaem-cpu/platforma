@@ -1,10 +1,6 @@
-import { FormEvent, useEffect, useState } from 'react';
-import { CheckIcon, FolderPlusIcon, XIcon } from 'lucide-react';
-import type {
-  LotPresentationCollection,
-  LotPresentationCollectionResponse,
-  LotPresentationCollectionsResponse,
-} from '@platforma/shared';
+import { useEffect, useState } from 'react';
+import { CheckIcon, FolderPlusIcon } from 'lucide-react';
+import type { LotPresentationWorkspaceResponse } from '@platforma/shared';
 
 import { apiRequest } from '../admin/api';
 import { useAuth } from '../auth/AuthProvider';
@@ -25,12 +21,8 @@ export function LotCollectionAction({
   onChanged,
 }: LotCollectionActionProps) {
   const { accessToken } = useAuth();
-  const [collections, setCollections] = useState<LotPresentationCollection[]>([]);
-  const [addedCollectionId, setAddedCollectionId] = useState<string | null>(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isAdded, setIsAdded] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [newCollectionName, setNewCollectionName] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -38,101 +30,51 @@ export function LotCollectionAction({
       return;
     }
 
-    void loadCollections();
+    void loadWorkspaceState();
   }, [accessToken, loadStateOnMount, unitId]);
 
-  async function loadCollections() {
+  async function loadWorkspaceState() {
     if (!accessToken) {
       return;
     }
 
-    setIsLoading(true);
-    setError(null);
-
     try {
-      const data = await apiRequest<LotPresentationCollectionsResponse>(
-        `/lot-presentations/collections?unitId=${encodeURIComponent(unitId)}`,
-        accessToken,
-      );
-      const containingCollection = data.items.find((collection) => collection.containsRequestedUnit);
-
-      setCollections(data.items);
-      setAddedCollectionId(containingCollection?.id ?? null);
+      const data = await apiRequest<LotPresentationWorkspaceResponse>('/lot-presentations/workspace', accessToken);
+      setIsAdded(data.items.some((item) => item.unitId === unitId));
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Не удалось загрузить подборки');
-    } finally {
-      setIsLoading(false);
+      setError(caughtError instanceof Error ? caughtError.message : 'Не удалось проверить лот');
     }
   }
 
-  async function openPicker() {
-    if (addedCollectionId) {
-      navigate(`/presentations?collectionId=${encodeURIComponent(addedCollectionId)}`);
-      return;
-    }
-
-    setIsModalOpen(true);
-    await loadCollections();
-  }
-
-  async function addToCollection(collectionId: string) {
-    if (!accessToken) {
-      return;
-    }
-
-    setIsSubmitting(true);
-    setError(null);
-
-    try {
-      await apiRequest<LotPresentationCollectionResponse>(
-        `/lot-presentations/collections/${encodeURIComponent(collectionId)}/items`,
-        accessToken,
-        {
-          method: 'POST',
-          body: JSON.stringify({ unitId }),
-        },
-      );
-
-      setAddedCollectionId(collectionId);
-      setIsModalOpen(false);
-      onChanged?.();
-    } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Не удалось добавить лот');
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
-  async function handleCreateCollection(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
+  async function addToWorkspace() {
     if (!accessToken || isSubmitting) {
       return;
     }
 
-    const name = newCollectionName.trim() || 'Новая подборка';
+    if (isAdded) {
+      navigate('/presentations');
+      return;
+    }
 
     setIsSubmitting(true);
     setError(null);
 
     try {
-      const data = await apiRequest<LotPresentationCollectionResponse>('/lot-presentations/collections', accessToken, {
+      await apiRequest<LotPresentationWorkspaceResponse>('/lot-presentations/workspace/items', accessToken, {
         method: 'POST',
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ unitId }),
       });
-
-      setNewCollectionName('');
-      await addToCollection(data.collection.id);
+      setIsAdded(true);
+      onChanged?.();
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Не удалось создать подборку');
+      setError(caughtError instanceof Error ? caughtError.message : 'Не удалось добавить лот в работу');
+    } finally {
       setIsSubmitting(false);
     }
   }
 
-  const isAdded = Boolean(addedCollectionId);
-
   return (
-    <>
+    <span className="lot-workspace-action">
       <button
         className={
           mode === 'icon'
@@ -141,88 +83,24 @@ export function LotCollectionAction({
               ? 'secondary-button secondary-button--fit'
               : 'primary-button primary-button--fit'
         }
+        disabled={isSubmitting}
         type="button"
-        aria-label={isAdded ? 'Перейти в подборку' : 'Добавить в подборку'}
-        title={isAdded ? 'Перейти в подборку' : 'Добавить в подборку'}
+        aria-label={isAdded ? 'Перейти в работу' : 'Добавить в работу'}
+        title={isAdded ? 'Перейти в работу' : 'Добавить в работу'}
         onClick={(event) => {
           event.stopPropagation();
-          void openPicker();
+          void addToWorkspace();
         }}
       >
         {mode === 'icon' ? (
           isAdded ? <CheckIcon aria-hidden="true" /> : <FolderPlusIcon aria-hidden="true" />
         ) : isAdded ? (
-          'Перейти в подборку'
+          'В работе'
         ) : (
-          'Добавить в подборку'
+          'Добавить в работу'
         )}
       </button>
-
-      {isModalOpen ? (
-        <div className="lot-collection-modal-backdrop" role="presentation" onMouseDown={(event) => {
-          if (event.target === event.currentTarget) {
-            setIsModalOpen(false);
-          }
-        }}>
-          <div className="lot-collection-modal" role="dialog" aria-modal="true" aria-labelledby="lot-collection-modal-title">
-            <header className="lot-collection-modal-header">
-              <div>
-                <p className="eyebrow">Подборки</p>
-                <h3 id="lot-collection-modal-title">Добавить лот</h3>
-              </div>
-              <button
-                className="lot-collection-modal-close"
-                type="button"
-                aria-label="Закрыть"
-                onClick={() => setIsModalOpen(false)}
-              >
-                <XIcon aria-hidden="true" />
-              </button>
-            </header>
-
-            {isLoading ? <p className="muted-text">Загрузка подборок</p> : null}
-
-            {collections.length > 0 ? (
-              <div className="lot-collection-list" aria-label="Список подборок">
-                {collections.map((collection) => (
-                  <button
-                    key={collection.id}
-                    className="lot-collection-choice"
-                    disabled={isSubmitting || Boolean(collection.containsRequestedUnit)}
-                    type="button"
-                    onClick={() => void addToCollection(collection.id)}
-                  >
-                    <span>
-                      <strong>{collection.name}</strong>
-                      <small>{collection.itemsCount} лотов</small>
-                    </span>
-                    {collection.containsRequestedUnit ? <CheckIcon aria-hidden="true" /> : <FolderPlusIcon aria-hidden="true" />}
-                  </button>
-                ))}
-              </div>
-            ) : !isLoading ? (
-              <p className="muted-text">Создайте первую подборку для этого лота.</p>
-            ) : null}
-
-            <form className="lot-collection-create-form" onSubmit={(event) => void handleCreateCollection(event)}>
-              <label>
-                Новая подборка
-                <input
-                  placeholder="Например: Клиент Иванов"
-                  type="text"
-                  value={newCollectionName}
-                  onChange={(event) => setNewCollectionName(event.currentTarget.value)}
-                />
-              </label>
-              <button className="secondary-button secondary-button--fit" disabled={isSubmitting} type="submit">
-                Создать и добавить
-              </button>
-            </form>
-
-            {error ? <p className="form-error">{error}</p> : null}
-          </div>
-        </div>
-      ) : null}
-    </>
+      {error ? <span className="lot-workspace-action-error">{error}</span> : null}
+    </span>
   );
 }

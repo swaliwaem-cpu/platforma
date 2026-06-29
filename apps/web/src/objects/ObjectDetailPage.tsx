@@ -1580,7 +1580,7 @@ function ObjectFeedRoomGroup({
                   <ObjectFeedSortableHead field="status" sortBy={sortBy} sortDirection={sortDirection} onSort={onSort}>
                     Статус
                   </ObjectFeedSortableHead>
-                  <TableHead aria-label="Подборка" />
+                  <TableHead aria-label="В работе" />
                 </TableRow>
               </TableHeader>
               <TableBody>

@@ -31,26 +31,27 @@ test('cabinet profile stores broker contacts used by PDFs', () => {
   assert.match(appSource, /<dt>Почта брокера<\/dt>[\s\S]*<dd>\{user\.brokerEmail \?\? 'Не заполнена'\}<\/dd>/);
 });
 
-test('lot pages and feed rows expose add to collection actions', () => {
+test('lot pages and feed rows expose add to workspace actions', () => {
   assert.match(objectDetailSource, /import \{ LotCollectionAction \} from '\.\.\/presentations\/LotCollectionAction';/);
   assert.match(objectDetailSource, /export function ObjectLotDetailPage\(\{ navigate, slug, unitId, onBack \}: ObjectLotDetailPageProps\)/);
   assert.match(objectDetailSource, /className="object-lot-header-actions"[\s\S]*<LotCollectionAction[\s\S]*loadStateOnMount[\s\S]*navigate=\{navigate\}[\s\S]*unitId=\{unit\.id\}/);
   assert.match(objectDetailSource, /const feedUnitsTableColumnCount = 11;/);
-  assert.match(objectDetailSource, /<TableHead aria-label="Подборка" \/>/);
+  assert.match(objectDetailSource, /<TableHead aria-label="В работе" \/>/);
   assert.match(objectDetailSource, /<LotCollectionAction mode="icon" navigate=\{navigate\} unitId=\{unit\.id\} \/>/);
   assert.match(styles, /\.object-lot-header-actions\s*\{/);
   assert.match(styles, /\.lot-collection-icon-button\s*\{/);
 });
 
-test('lot collection action creates named collections and turns into a collection link after adding', () => {
-  assert.match(actionSource, /\/lot-presentations\/collections\?unitId=\$\{encodeURIComponent\(unitId\)\}/);
-  assert.match(actionSource, /\/lot-presentations\/collections\/\$\{encodeURIComponent\(collectionId\)\}\/items/);
+test('lot workspace action adds lots directly to the saved workspace', () => {
+  assert.match(actionSource, /export function LotCollectionAction/);
+  assert.match(actionSource, /\/lot-presentations\/workspace\/items/);
   assert.match(actionSource, /body: JSON\.stringify\(\{ unitId \}\)/);
-  assert.match(actionSource, /const name = newCollectionName\.trim\(\) \|\| 'Новая подборка';/);
-  assert.match(actionSource, /body: JSON\.stringify\(\{ name \}\)/);
-  assert.match(actionSource, /navigate\(`\/presentations\?collectionId=\$\{encodeURIComponent\(addedCollectionId\)\}`\)/);
-  assert.match(actionSource, /aria-label=\{isAdded \? 'Перейти в подборку' : 'Добавить в подборку'\}/);
-  assert.match(actionSource, /isAdded \? \([\s\S]*'Перейти в подборку'[\s\S]*\) : \([\s\S]*'Добавить в подборку'[\s\S]*\)/);
+  assert.match(actionSource, /navigate\('\/presentations'\)/);
+  assert.match(actionSource, /aria-label=\{isAdded \? 'Перейти в работу' : 'Добавить в работу'\}/);
+  assert.match(actionSource, /isAdded \? \([\s\S]*'В работе'[\s\S]*\) : \([\s\S]*'Добавить в работу'[\s\S]*\)/);
+  assert.doesNotMatch(actionSource, /\/lot-presentations\/collections\?unitId=/);
+  assert.doesNotMatch(actionSource, /lot-collection-modal/);
+  assert.doesNotMatch(actionSource, /Создать и добавить/);
 });
 
 test('lot collection modal uses app theme colors instead of a light fallback', () => {
