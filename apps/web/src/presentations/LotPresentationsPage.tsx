@@ -95,6 +95,16 @@ const presentationProjectLotsLimit = 500;
 const presentationProjectModalPageSize = 20;
 const commentMaxLength = 1000;
 
+function sortCollectionsByLatestChange(left: LotPresentationCollection, right: LotPresentationCollection) {
+  const updatedDiff = Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+
+  if (updatedDiff !== 0) {
+    return updatedDiff;
+  }
+
+  return Date.parse(right.createdAt) - Date.parse(left.createdAt);
+}
+
 export function LotPresentationsPage(_props: LotPresentationsPageProps) {
   const { accessToken, user } = useAuth();
   const [activeTab, setActiveTab] = useState<'workspace' | 'collections'>('workspace');
@@ -144,10 +154,6 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
         setActiveTab('collections');
       }
     };
-
-    if (selectedCollectionId) {
-      setActiveTab('collections');
-    }
 
     window.addEventListener('popstate', handlePopState);
 
@@ -314,6 +320,34 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
     }
   }
 
+  function upsertCollection(updatedCollection: LotPresentationCollection) {
+    setCollections((currentCollections) => {
+      const hasCollection = currentCollections.some((collection) => collection.id === updatedCollection.id);
+      const nextCollections = hasCollection
+        ? currentCollections.map((collection) => (collection.id === updatedCollection.id ? updatedCollection : collection))
+        : [...currentCollections, updatedCollection];
+
+      return [...nextCollections].sort(sortCollectionsByLatestChange);
+    });
+  }
+
+  function markLotAddedToCollection(unitId: string, collectionId: string) {
+    const withCollectionId = (collectionIds: string[]) =>
+      collectionIds.includes(collectionId) ? collectionIds : [...collectionIds, collectionId];
+
+    setWorkspaceItems((currentItems) =>
+      currentItems.map((item) =>
+        item.unitId === unitId ? { ...item, unit: { ...item.unit, collectionIds: withCollectionId(item.unit.collectionIds) } } : item,
+      ),
+    );
+    setProjectLots((currentLots) =>
+      currentLots.map((lot) => (lot.id === unitId ? { ...lot, collectionIds: withCollectionId(lot.collectionIds) } : lot)),
+    );
+    setIsCollectionPickerOpenFor((currentLot) =>
+      currentLot?.id === unitId ? { ...currentLot, collectionIds: withCollectionId(currentLot.collectionIds) } : currentLot,
+    );
+  }
+
   async function loadProjects() {
     const search = projectSearch.trim();
 
@@ -382,6 +416,12 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
     setSelectedProject(null);
     setProjectLots([]);
     setProjectLotsError(null);
+  }
+
+  function closeCollectionPicker() {
+    setIsCollectionPickerOpenFor(null);
+    setPickerCollectionName('');
+    setPickerError(null);
   }
 
   async function loadDocuments() {
@@ -529,7 +569,7 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
     setError(null);
 
     try {
-      await apiRequest<LotPresentationCollectionResponse>(
+      const data = await apiRequest<LotPresentationCollectionResponse>(
         `/lot-presentations/collections/${encodeURIComponent(selectedCollection.id)}/items`,
         accessToken,
         {
@@ -537,8 +577,8 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
           body: JSON.stringify({ unitId }),
         },
       );
-      await loadCollections();
-      setNotice('Лот добавлен в подборку');
+      upsertCollection(data.collection);
+      markLotAddedToCollection(unitId, selectedCollection.id);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Не удалось добавить лот');
     } finally {
@@ -556,7 +596,7 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
     setPickerError(null);
 
     try {
-      await apiRequest<LotPresentationCollectionResponse>(
+      const data = await apiRequest<LotPresentationCollectionResponse>(
         `/lot-presentations/collections/${encodeURIComponent(collectionId)}/items`,
         accessToken,
         {
@@ -564,11 +604,9 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
           body: JSON.stringify({ unitId }),
         },
       );
-      await loadCollections();
-      await loadWorkspace();
-      setIsCollectionPickerOpenFor(null);
-      setPickerCollectionName('');
-      setNotice('Лот добавлен в подборку');
+      upsertCollection(data.collection);
+      markLotAddedToCollection(unitId, collectionId);
+      closeCollectionPicker();
     } catch (caughtError) {
       setPickerError(caughtError instanceof Error ? caughtError.message : 'Не удалось добавить лот в подборку');
     } finally {
@@ -597,7 +635,7 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
         body: JSON.stringify({ name }),
       });
 
-      await apiRequest<LotPresentationCollectionResponse>(
+      const addedData = await apiRequest<LotPresentationCollectionResponse>(
         `/lot-presentations/collections/${encodeURIComponent(data.collection.id)}/items`,
         accessToken,
         {
@@ -605,11 +643,9 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
           body: JSON.stringify({ unitId: isCollectionPickerOpenFor.id }),
         },
       );
-      await loadCollections();
-      await loadWorkspace();
-      setIsCollectionPickerOpenFor(null);
-      setPickerCollectionName('');
-      setNotice('Подборка создана, лот добавлен');
+      upsertCollection(addedData.collection);
+      markLotAddedToCollection(isCollectionPickerOpenFor.id, addedData.collection.id);
+      closeCollectionPicker();
     } catch (caughtError) {
       setPickerError(caughtError instanceof Error ? caughtError.message : 'Не удалось создать подборку');
     } finally {
@@ -1162,9 +1198,7 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
           role="presentation"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) {
-              setIsCollectionPickerOpenFor(null);
-              setPickerCollectionName('');
-              setPickerError(null);
+              closeCollectionPicker();
             }
           }}
         >
@@ -1178,11 +1212,7 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
                 className="lot-collection-modal-close"
                 type="button"
                 aria-label="Закрыть"
-                onClick={() => {
-                  setIsCollectionPickerOpenFor(null);
-                  setPickerCollectionName('');
-                  setPickerError(null);
-                }}
+                onClick={closeCollectionPicker}
               >
                 <XIcon aria-hidden="true" />
               </button>
@@ -1226,9 +1256,14 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
                   onChange={(event) => setPickerCollectionName(event.currentTarget.value)}
                 />
               </label>
-              <button className="secondary-button secondary-button--fit" disabled={isSubmitting} type="submit">
-                Создать и добавить
-              </button>
+              <div className="lot-collection-create-actions">
+                <button className="secondary-button" disabled={isSubmitting} type="button" onClick={closeCollectionPicker}>
+                  Отмена
+                </button>
+                <button className="primary-button" disabled={isSubmitting} type="submit">
+                  ОК
+                </button>
+              </div>
             </form>
 
             {pickerError ? <p className="form-error">{pickerError}</p> : null}

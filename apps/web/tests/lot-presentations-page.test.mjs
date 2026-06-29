@@ -86,9 +86,17 @@ test('lot presentations page manages workspace, downloads and validation warning
 });
 
 test('lot presentations page has workspace and collection tabs with compact lot tiles', () => {
+  const initialTabEffect = pageSource.match(
+    /useEffect\(\(\) => \{[\s\S]*?window\.addEventListener\('popstate', handlePopState\);[\s\S]*?\}, \[\]\);/,
+  )?.[0] ?? '';
+  const workspaceToolbarRule = styles.match(/\.lot-presentations-workspace-toolbar\s*\{[^}]*\}/)?.[0] ?? '';
+  const workspaceToolbarButtonRule =
+    styles.match(/\.lot-presentations-workspace-toolbar \.primary-button,\s*\.lot-presentations-workspace-toolbar \.secondary-button\s*\{[^}]*\}/)?.[0] ?? '';
+
   assert.doesNotMatch(pageSource, /Контакты брокера/);
   assert.match(pageSource, /setIsDocumentsPanelOpen\(true\)[\s\S]*Созданные PDF/);
   assert.match(pageSource, /const \[activeTab,\s*setActiveTab\] = useState<'workspace' \| 'collections'>\('workspace'\);/);
+  assert.doesNotMatch(initialTabEffect, /if \(selectedCollectionId\)/);
   assert.match(pageSource, /В работе/);
   assert.match(pageSource, /Мои подборки/);
   assert.match(pageSource, /role="tablist"/);
@@ -108,6 +116,10 @@ test('lot presentations page has workspace and collection tabs with compact lot 
   assert.match(pageSource, /className="lot-presentations-search-popover"/);
   assert.match(pageSource, /className="secondary-button secondary-button--fit lot-presentations-documents-trigger"/);
   assert.match(styles, /\.lot-presentations-tabs\s*\{/);
+  assert.match(workspaceToolbarRule, /justify-self:\s*end;/);
+  assert.match(workspaceToolbarRule, /align-items:\s*center;/);
+  assert.match(workspaceToolbarButtonRule, /width:\s*auto;/);
+  assert.match(workspaceToolbarButtonRule, /flex:\s*0 0 auto;/);
   assert.match(styles, /\.lot-presentations-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(5, minmax\(0, 1fr\)\);/);
   assert.match(styles, /\.lot-presentations-comment-modal\s*\{/);
   assert.match(styles, /\.lot-presentations-documents-trigger\s*\{[\s\S]*?display:\s*inline-flex;[\s\S]*?min-height:\s*44px;[\s\S]*?white-space:\s*nowrap;/);
@@ -123,7 +135,31 @@ test('workspace actions download all, clear workspace and keep collections separ
   assert.match(pageSource, /Очистить всё/);
   assert.match(pageSource, /Скачать все/);
   assert.match(pageSource, /disabled=\{!hasBrokerContacts \|\| workspaceItems\.length === 0 \|\| isSubmitting\}/);
-  assert.match(pageSource, /await loadCollections\(\);[\s\S]*await loadWorkspace\(\);[\s\S]*setIsCollectionPickerOpenFor\(null\);/);
+});
+
+test('workspace collection picker updates locally after adding a lot', () => {
+  const addLotToCollectionBody = pageSource.match(
+    /async function addLotToCollection\(collectionId: string, unitId: string\)[\s\S]*?\n  async function createCollectionAndAddPickerLot/,
+  )?.[0] ?? '';
+  const createFormSource = pageSource.match(
+    /className="lot-collection-create-form"[\s\S]*?<\/form>/,
+  )?.[0] ?? '';
+  const createFormRule = styles.match(/\.lot-collection-create-form\s*\{[^}]*\}/)?.[0] ?? '';
+  const createActionsRule = styles.match(/\.lot-collection-create-actions\s*\{[^}]*\}/)?.[0] ?? '';
+
+  assert.match(addLotToCollectionBody, /const data = await apiRequest<LotPresentationCollectionResponse>/);
+  assert.match(addLotToCollectionBody, /upsertCollection\(data\.collection\);/);
+  assert.match(addLotToCollectionBody, /markLotAddedToCollection\(unitId, collectionId\);/);
+  assert.doesNotMatch(addLotToCollectionBody, /await loadCollections\(\);/);
+  assert.doesNotMatch(addLotToCollectionBody, /await loadWorkspace\(\);/);
+  assert.match(pageSource, /function sortCollectionsByLatestChange/);
+  assert.match(pageSource, /\[\.\.\.nextCollections\]\.sort\(sortCollectionsByLatestChange\)/);
+  assert.match(createFormSource, /Новая подборка/);
+  assert.match(createFormSource, /ОК/);
+  assert.match(createFormSource, /Отмена/);
+  assert.doesNotMatch(createFormSource, /Создать и добавить/);
+  assert.match(createFormRule, /display:\s*grid;/);
+  assert.match(createActionsRule, /grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/);
 });
 
 test('presentation comments are contextual and limited to 1000 characters', () => {

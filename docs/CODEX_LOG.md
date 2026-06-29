@@ -2624,3 +2624,54 @@ Production repair:
 
 - Поиск проектов строится поверх доступных для презентаций лотов: ЖК без доступных лотов в выдачу не попадет.
 - In-app Browser в текущей сессии был недоступен (`iab`), поэтому визуальный smoke выполнен через Playwright fallback.
+
+## 2026-06-29 - Remove presentation picker reload flicker
+
+Задача:
+
+- Убрать мигание экрана при добавлении лота из рабочей зоны в подборку.
+
+Изменения:
+
+- `apps/web/src/presentations/LotPresentationsPage.tsx` - добавление лота в подборку больше не вызывает полный `loadCollections()` и `loadWorkspace()` в успешном пути; обновляется только измененная подборка, `collectionIds` нужного лота и локальный порядок подборок.
+- `apps/web/tests/lot-presentations-page.test.mjs` - добавлена регрессия, запрещающая полный reload рабочей зоны при добавлении лота через picker.
+
+Проверки:
+
+- `node --test apps/web/tests/lot-presentations-page.test.mjs` - 12/12 passed.
+- `pnpm --filter @platforma/web build` - passed; Vite оставил только предупреждение о размере чанка.
+- `pnpm --filter @platforma/web test` - 249/249 passed.
+
+Ручная проверка:
+
+- На `http://localhost:5173/presentations` открыть picker подборок у лота, добавить лот в существующую подборку и убедиться, что фон под модалкой не мигает.
+
+Спорные места:
+
+- Для одиночного добавления лота page-level success notice убран, чтобы не сдвигать контент под модалкой; ошибки по-прежнему отображаются в модалке.
+
+## 2026-06-29 - Polish presentation workspace controls
+
+Задача:
+
+- Оставлять вкладку `В работе` открытой по умолчанию, выровнять кнопки рабочей зоны в одну аккуратную строку и упростить нижнюю форму создания подборки в picker-модалке.
+
+Изменения:
+
+- `apps/web/src/presentations/LotPresentationsPage.tsx` - убран initial auto-switch во вкладку `Мои подборки` при наличии `collectionId`; закрытие picker-а вынесено в единый обработчик; форма создания подборки внутри picker-а получила кнопки `ОК` и `Отмена`.
+- `apps/web/src/styles.css` - toolbar рабочей зоны больше не растягивает кнопки на всю ширину; нижняя форма picker-а переведена в вертикальный layout: поле названия сверху, две кнопки снизу.
+- `apps/web/tests/lot-presentations-page.test.mjs` - добавлены регрессии на дефолтную вкладку `В работе`, компактный toolbar и новую форму picker-а.
+
+Проверки:
+
+- `node --test apps/web/tests/lot-presentations-page.test.mjs` - 12/12 passed.
+- `pnpm --filter @platforma/web build` - passed; Vite оставил только предупреждение о размере чанка.
+- `pnpm --filter @platforma/web test` - 249/249 passed.
+
+Ручная проверка:
+
+- На `http://localhost:5173/presentations` обновить страницу и проверить, что активна вкладка `В работе`, кнопки `Скачать все`, `Очистить всё`, `Добавить подборку` стоят рядом, а в picker-е новая подборка создается через поле названия и кнопки `ОК` / `Отмена`.
+
+Спорные места:
+
+- Прямое открытие URL с `collectionId` больше не переключает страницу в `Мои подборки` при загрузке; переключение остается при клике по подборке внутри интерфейса и при `popstate`.

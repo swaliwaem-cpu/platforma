@@ -8755,7 +8755,11 @@ tr.user-row--deactivated .text-button {
   opacity: 0.72;
 }
 
-.lot-collection-create-form,
+.lot-collection-create-form {
+  display: grid;
+  gap: 10px;
+}
+
 .lot-presentations-rename-form {
   display: flex;
   align-items: end;
@@ -8764,7 +8768,6 @@ tr.user-row--deactivated .text-button {
 
 .lot-collection-create-form label {
   display: grid;
-  flex: 1;
   gap: 7px;
   color: var(--app-theme-ink-800, #303b47);
 }
@@ -8779,6 +8782,21 @@ tr.user-row--deactivated .text-button {
 
 .lot-collection-create-form input::placeholder {
   color: var(--app-theme-ink-600, #8a95a3);
+}
+
+.lot-collection-create-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.lot-collection-create-actions .primary-button,
+.lot-collection-create-actions .secondary-button {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
 }
 
 .lot-collection-modal .eyebrow,
@@ -9168,6 +9186,8 @@ tr.user-row--deactivated .text-button {
 .lot-presentations-workspace-toolbar {
   display: flex;
   flex-wrap: wrap;
+  justify-self: end;
+  align-items: center;
   justify-content: flex-end;
   gap: 10px;
 }
@@ -9176,6 +9196,8 @@ tr.user-row--deactivated .text-button {
 .lot-presentations-workspace-toolbar .secondary-button {
   display: inline-flex;
   min-height: 44px;
+  width: auto;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   gap: 8px;
