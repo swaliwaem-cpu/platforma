@@ -528,6 +528,7 @@ export type LotPresentationCollectionItem = {
   collectionId: string;
   unitId: string;
   sortOrder: number;
+  comment: string | null;
   unit: LotPresentationLot;
   createdAt: string;
   updatedAt: string;
@@ -552,6 +553,21 @@ export type LotPresentationCollectionResponse = {
   collection: LotPresentationCollection;
 };
 
+export type LotPresentationWorkspaceItem = {
+  id: string;
+  userId: string;
+  unitId: string;
+  sortOrder: number;
+  comment: string | null;
+  unit: LotPresentationLot;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type LotPresentationWorkspaceResponse = {
+  items: LotPresentationWorkspaceItem[];
+};
+
 export type CreateLotPresentationCollectionInput = {
   name: string;
 };
@@ -562,6 +578,10 @@ export type UpdateLotPresentationCollectionInput = {
 
 export type AddLotPresentationCollectionItemInput = {
   unitId: string;
+};
+
+export type UpdateLotPresentationItemCommentInput = {
+  comment: string | null;
 };
 
 export type LotPresentationLotsResponse = {

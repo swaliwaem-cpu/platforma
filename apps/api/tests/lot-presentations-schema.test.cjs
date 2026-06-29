@@ -10,6 +10,10 @@ const migrationPath = path.join(
   rootDir,
   'apps/api/prisma/migrations/20260618120000_add_lot_presentations/migration.sql',
 );
+const workspaceMigrationPath = path.join(
+  rootDir,
+  'apps/api/prisma/migrations/20260629140000_add_lot_presentation_workspace/migration.sql',
+);
 const appModulePath = path.join(rootDir, 'apps/api/src/app.module.ts');
 const modulePath = path.join(rootDir, 'apps/api/src/lot-presentations/lot-presentations.module.ts');
 const controllerPath = path.join(rootDir, 'apps/api/src/lot-presentations/lot-presentations.controller.ts');
@@ -58,6 +62,34 @@ test('shared package exports lot presentation contracts', () => {
   assert.match(sharedTypes, /export type LotPresentationCollection = \{[\s\S]*name: string;[\s\S]*itemsCount: number;[\s\S]*containsRequestedUnit: boolean \| null;[\s\S]*items: LotPresentationCollectionItem\[\];[\s\S]*\};/);
   assert.match(sharedTypes, /export type LotPresentationDocument = \{[\s\S]*collectionId: string \| null;[\s\S]*file: ObjectStoredFile;[\s\S]*unitsCount: number;[\s\S]*items: LotPresentationDocumentItem\[\];[\s\S]*\};/);
   assert.match(sharedTypes, /export type CreateLotPresentationDocumentInput = \{[\s\S]*collectionId\?: string \| null;[\s\S]*unitIds\?: string\[\];[\s\S]*\};/);
+});
+
+test('Prisma schema defines lot presentation workspace items and item comments', () => {
+  const schema = readProjectFile(schemaPath);
+
+  assert.match(schema, /lotPresentationWorkspaceItems\s+LotPresentationWorkspaceItem\[\]/);
+  assert.match(schema, /comment\s+String\?\s+@db\.VarChar\(1000\)/);
+  assert.match(schema, /model LotPresentationWorkspaceItem \{[\s\S]*userId\s+String\s+@map\("user_id"\)\s+@db\.Uuid[\s\S]*unitId\s+String\s+@map\("unit_id"\)\s+@db\.Uuid[\s\S]*comment\s+String\?\s+@db\.VarChar\(1000\)[\s\S]*@@unique\(\[userId, unitId\]\)[\s\S]*@@index\(\[userId, sortOrder\]\)[\s\S]*@@map\("lot_presentation_workspace_items"\)[\s\S]*\}/);
+});
+
+test('lot presentation workspace migration creates workspace table and collection comments', () => {
+  const migration = readProjectFile(workspaceMigrationPath);
+
+  assert.match(migration, /ALTER TABLE "lot_presentation_collection_items" ADD COLUMN "comment" VARCHAR\(1000\)/);
+  assert.match(migration, /CREATE TABLE "lot_presentation_workspace_items"/);
+  assert.match(migration, /CREATE UNIQUE INDEX "lot_presentation_workspace_items_user_id_unit_id_key"/);
+  assert.match(migration, /CREATE INDEX "lot_presentation_workspace_items_user_id_sort_order_idx"/);
+  assert.match(migration, /FOREIGN KEY \("user_id"\) REFERENCES "users"\("id"\) ON DELETE CASCADE ON UPDATE CASCADE/);
+  assert.match(migration, /FOREIGN KEY \("unit_id"\) REFERENCES "feed_units"\("id"\) ON DELETE CASCADE ON UPDATE CASCADE/);
+});
+
+test('shared package exports lot presentation workspace and comment contracts', () => {
+  const sharedTypes = readProjectFile(sharedTypesPath);
+
+  assert.match(sharedTypes, /export type LotPresentationCollectionItem = \{[\s\S]*comment: string \| null;[\s\S]*\};/);
+  assert.match(sharedTypes, /export type LotPresentationWorkspaceItem = \{[\s\S]*unitId: string;[\s\S]*comment: string \| null;[\s\S]*unit: LotPresentationLot;[\s\S]*\};/);
+  assert.match(sharedTypes, /export type LotPresentationWorkspaceResponse = \{[\s\S]*items: LotPresentationWorkspaceItem\[\];[\s\S]*\};/);
+  assert.match(sharedTypes, /export type UpdateLotPresentationItemCommentInput = \{[\s\S]*comment: string \| null;[\s\S]*\};/);
 });
 
 test('lot presentation API is guarded, registered and exposes collection/document routes', () => {

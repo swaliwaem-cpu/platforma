@@ -140,15 +140,16 @@ model User {
   updatedAt             DateTime   @updatedAt @map("updated_at")
   deletedAt             DateTime?  @map("deleted_at")
 
-  role                       Role                        @relation(fields: [roleId], references: [id], onDelete: Restrict)
-  profilePhotoFile           File?                       @relation("UserProfilePhoto", fields: [profilePhotoFileId], references: [id], onDelete: SetNull)
-  auditLogs                  AuditLog[]                  @relation("AuditActor")
-  emailAuthChallenges        EmailAuthChallenge[]
-  sessions                   UserSession[]
-  importReports              ImportReport[]              @relation("ImportReportCreator")
-  uploadedFiles              File[]                      @relation("FileUploader")
-  lotPresentationCollections LotPresentationCollection[]
-  lotPresentationDocuments   LotPresentationDocument[]
+  role                          Role                           @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  profilePhotoFile              File?                          @relation("UserProfilePhoto", fields: [profilePhotoFileId], references: [id], onDelete: SetNull)
+  auditLogs                     AuditLog[]                     @relation("AuditActor")
+  emailAuthChallenges           EmailAuthChallenge[]
+  sessions                      UserSession[]
+  importReports                 ImportReport[]                 @relation("ImportReportCreator")
+  uploadedFiles                 File[]                         @relation("FileUploader")
+  lotPresentationCollections    LotPresentationCollection[]
+  lotPresentationDocuments      LotPresentationDocument[]
+  lotPresentationWorkspaceItems LotPresentationWorkspaceItem[]
 
   @@index([roleId])
   @@index([profilePhotoFileId])
@@ -503,13 +504,14 @@ model FeedUnit {
   createdAt              DateTime       @default(now()) @map("created_at")
   updatedAt              DateTime       @updatedAt @map("updated_at")
 
-  source                       FeedSource                      @relation(fields: [sourceId], references: [id], onDelete: Cascade)
-  object                       RealEstateObject                @relation(fields: [objectId], references: [id], onDelete: Cascade)
-  residentialDetails           FeedResidentialUnitDetails?
-  commercialDetails            FeedCommercialUnitDetails?
-  media                        FeedUnitMedia[]
-  lotPresentationItems         LotPresentationCollectionItem[]
-  lotPresentationDocumentItems LotPresentationDocumentItem[]
+  source                        FeedSource                      @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  object                        RealEstateObject                @relation(fields: [objectId], references: [id], onDelete: Cascade)
+  residentialDetails            FeedResidentialUnitDetails?
+  commercialDetails             FeedCommercialUnitDetails?
+  media                         FeedUnitMedia[]
+  lotPresentationItems          LotPresentationCollectionItem[]
+  lotPresentationWorkspaceItems LotPresentationWorkspaceItem[]
+  lotPresentationDocumentItems  LotPresentationDocumentItem[]
 
   @@unique([sourceId, externalId])
   @@index([objectId, status])
@@ -700,6 +702,7 @@ model LotPresentationCollectionItem {
   collectionId String   @map("collection_id") @db.Uuid
   unitId       String   @map("unit_id") @db.Uuid
   sortOrder    Int      @default(0) @map("sort_order")
+  comment      String?  @db.VarChar(1000)
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
@@ -710,6 +713,24 @@ model LotPresentationCollectionItem {
   @@index([collectionId, sortOrder])
   @@index([unitId])
   @@map("lot_presentation_collection_items")
+}
+
+model LotPresentationWorkspaceItem {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  unitId    String   @map("unit_id") @db.Uuid
+  sortOrder Int      @default(0) @map("sort_order")
+  comment   String?  @db.VarChar(1000)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  unit FeedUnit @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, unitId])
+  @@index([userId, sortOrder])
+  @@index([unitId])
+  @@map("lot_presentation_workspace_items")
 }
 
 model LotPresentationDocument {
