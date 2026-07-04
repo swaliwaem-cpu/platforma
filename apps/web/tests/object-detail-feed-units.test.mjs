@@ -5,15 +5,20 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
-const source = readFileSync(resolve(currentDir, '../src/objects/ObjectDetailPage.tsx'), 'utf8');
+const pageSource = readFileSync(resolve(currentDir, '../src/objects/ObjectDetailPage.tsx'), 'utf8');
+const viewModelSource = readFileSync(resolve(currentDir, '../src/objects/objectDetailViewModel.ts'), 'utf8');
+const source = `${pageSource}\n${viewModelSource}`;
 const multiSelectSource = readFileSync(resolve(currentDir, '../src/components/MultiSelectDropdown.tsx'), 'utf8');
 const styles = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
 const objectFeedUnitsSectionSource =
-  source.match(/function ObjectFeedUnitsSection[\s\S]*?\nfunction ObjectFeedSortableHead/)?.[0] ?? '';
+  pageSource.match(/function ObjectFeedUnitsSection[\s\S]*?\nfunction ObjectFeedSortableHead/)?.[0] ?? '';
 const objectFeedUnitRowSource =
-  source.match(/function ObjectFeedUnitRow[\s\S]*?\nfunction ObjectFeedMediaCarousel/)?.[0] ?? '';
+  pageSource.match(/function ObjectFeedUnitRow[\s\S]*?\nfunction ObjectFeedMediaCarousel/)?.[0] ?? '';
 const objectFeedMediaCarouselSource =
-  source.match(/function ObjectFeedMediaCarousel[\s\S]*?\nfunction ObjectLotMediaCarousel/)?.[0] ?? '';
+  pageSource.match(/function ObjectFeedMediaCarousel[\s\S]*?\nfunction ObjectLotMediaCarousel/)?.[0] ?? '';
+const feedUnitStatusFilterOptionsSource =
+  viewModelSource.match(/export const publicFeedUnitStatuses[\s\S]*?\nexport const feedUnitTypeFilterOptions/)?.[0] ??
+  '';
 
 test('object detail page loads active feed units with public filters', () => {
   assert.match(source, /FeedUnitGroupsResponse/);
@@ -25,7 +30,7 @@ test('object detail page loads active feed units with public filters', () => {
   assert.match(source, /feedUnitStatusFilterOptions/);
   assert.match(source, /AVAILABLE: 'Доступен'/);
   assert.match(source, /RESERVED: 'Резерв'/);
-  assert.doesNotMatch(source, /feedUnitStatusFilterOptions[\s\S]*?ARCHIVED/);
+  assert.doesNotMatch(feedUnitStatusFilterOptionsSource, /ARCHIVED/);
 });
 
 test('object detail feed units render grouped completion and room rows', () => {
@@ -231,7 +236,7 @@ test('object detail feed unit rows open lot cards in a new tab', () => {
 });
 
 test('object detail feed units support server sorting from sortable headers', () => {
-  assert.match(source, /type ObjectFeedUnitSortBy = 'title' \| 'status' \| 'price' \| 'discountPrice' \| 'pricePerMeter' \| 'area' \| 'rooms' \| 'floor' \| 'building';/);
+  assert.match(source, /type ObjectFeedUnitSortBy =[\s\S]*?'title'[\s\S]*?'status'[\s\S]*?'price'[\s\S]*?'discountPrice'[\s\S]*?'pricePerMeter'[\s\S]*?'area'[\s\S]*?'rooms'[\s\S]*?'floor'[\s\S]*?'building';/);
   assert.match(source, /type ObjectFeedUnitSortDirection = 'asc' \| 'desc';/);
   assert.match(source, /const \[sortBy,\s*setSortBy\] = useState<ObjectFeedUnitSortBy>\('price'\);/);
   assert.match(source, /const \[sortDirection,\s*setSortDirection\] = useState<ObjectFeedUnitSortDirection>\('asc'\);/);

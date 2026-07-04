@@ -2730,3 +2730,32 @@ Production repair:
 
 - Визуальную проверку не запускал, потому что в этом срезе не менялись разметка и CSS.
 - Следующий безопасный frontend-срез: pure helpers из `ObjectDetailPage.tsx` или `LotPresentationsPage.tsx`; API/data-flow и защищённые media/download/map flows лучше не дробить первым шагом.
+
+## 2026-07-05 - Extract object detail feed unit helpers
+
+Задача:
+
+- Продолжить оптимизацию фронтенда следующим безопасным срезом: уменьшить `ObjectDetailPage.tsx`, вынеся pure helpers для лотов и фильтров в существующий view-model без изменения UI, CSS и data-flow.
+
+Изменения:
+
+- `apps/web/src/objects/objectDetailViewModel.ts` - вынесены типы sort/filter, labels/options, парсинг initial lot filters из URL, room filter helpers, lot path builder, price/area/fact formatters и discount helpers.
+- `apps/web/src/objects/ObjectDetailPage.tsx` - страница теперь импортирует feed unit helpers из view-model; компоненты, JSX, className, API-запросы и состояние загрузки не менялись.
+- `apps/web/tests/object-detail-feed-units.test.mjs`, `apps/web/tests/object-lot-detail-page.test.mjs` - source-based проверки перенаправлены на view-model там, где проверяется вынесенная pure logic.
+- `apps/web/tests/object-detail-view-model.test.mjs` - добавлены прямые unit-проверки lot view-model helpers, включая legacy empty labels и дробное форматирование.
+
+Проверки:
+
+- `node --test apps/web/tests/object-detail-view-model.test.mjs apps/web/tests/object-detail-feed-units.test.mjs apps/web/tests/object-lot-detail-page.test.mjs` - 30/30 passed.
+- `pnpm --filter @platforma/web exec tsc -p tsconfig.json --noEmit --pretty false` - passed.
+- `pnpm --filter @platforma/web test` - 253/253 passed.
+- `pnpm --filter @platforma/web build` - passed; Vite оставил прежнее предупреждение о большом JS chunk.
+
+Ручная проверка:
+
+- Открыть `/objects/:slug` и проверить блок `Лоты`: initial filters из URL каталога, фильтры, сортировку, раскрытие групп, media carousel и переход в `/objects/:slug/lots/:unitId`.
+
+Спорные места:
+
+- Route-level lazy imports отложены в отдельный срез, потому что это runtime-изменение `App.tsx` и manual routing/loading behavior.
+- Визуальную проверку не запускал, потому что CSS/разметка не менялись.

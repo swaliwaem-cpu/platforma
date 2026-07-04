@@ -3,13 +3,21 @@ import test from 'node:test';
 
 import {
   formatCompletion,
+  formatArea,
+  formatFeedUnitPrice,
   formatPrice,
   formatPriceFrom,
   formatPricePerMeterFrom,
   formatCeilingHeight,
+  getFeedUnitRoomFilterValues,
   getObjectContentSections,
   getObjectLocationLine,
+  getObjectLotFactRows,
+  getObjectLotPriceSummary,
   getObjectParameterRows,
+  hasFeedUnitRealDiscount,
+  buildObjectLotPath,
+  formatFeedUnitRoomFilterValues,
 } from '../src/objects/objectDetailViewModel.ts';
 
 const districtLocation = {
@@ -145,4 +153,78 @@ test('getObjectContentSections returns public content sections with empty fallba
     paragraphs: ['Не заполнено'],
     isEmpty: true,
   });
+});
+
+function createFeedUnit(overrides = {}) {
+  return {
+    id: 'unit-1',
+    title: 'Апартамент 42',
+    type: 'RESIDENTIAL',
+    status: 'AVAILABLE',
+    price: '12000000',
+    discountPrice: null,
+    effectivePrice: null,
+    currency: 'RUB',
+    area: '42.5',
+    pricePerMeter: null,
+    discountPricePerMeter: null,
+    effectivePricePerMeter: null,
+    rooms: 1,
+    floor: 7,
+    building: '1',
+    section: '2',
+    address: 'Москва',
+    completionYear: 2027,
+    completionQuarter: 2,
+    residentialDetails: null,
+    commercialDetails: null,
+    media: [],
+    ...overrides,
+  };
+}
+
+test('object lot view model formats prices facts and paths', () => {
+  const unit = createFeedUnit({
+    discountPrice: '11000000',
+    pricePerMeter: '282353',
+  });
+
+  assert.equal(formatArea('42.5'), '42,5 м²');
+  assert.equal(formatFeedUnitPrice('12000000', 'RUB'), formatPrice('12000000'));
+  assert.equal(formatFeedUnitPrice('900000', 'USD'), '900 000 USD');
+  assert.equal(hasFeedUnitRealDiscount(unit), true);
+  assert.deepEqual(getObjectLotPriceSummary(unit), {
+    label: 'Цена со скидкой',
+    primaryPrice: formatPrice('11000000'),
+    secondaryPrice: formatPrice('12000000'),
+    secondaryPricePerMeter: `${formatPrice('282353')}`,
+  });
+  assert.deepEqual(
+    getObjectLotFactRows(unit).map((row) => row.label),
+    ['Цена за м²', 'Площадь', 'Тип лота', 'Этаж', 'Корпус/секция', 'Срок сдачи', 'Адрес', 'Статус'],
+  );
+  assert.equal(buildObjectLotPath('level-michurinskiy', 'unit 1'), '/objects/level-michurinskiy/lots/unit%201');
+});
+
+test('object lot view model keeps legacy empty labels and fractional formatting', () => {
+  const rows = getObjectLotFactRows(
+    createFeedUnit({
+      area: '42.55',
+      completionYear: null,
+      completionQuarter: null,
+      floor: null,
+      price: null,
+      pricePerMeter: null,
+    }),
+  );
+
+  assert.equal(rows.find((row) => row.label === 'Площадь')?.value, '42,6 м²');
+  assert.equal(rows.find((row) => row.label === 'Этаж')?.value, 'Не указан');
+  assert.equal(rows.find((row) => row.label === 'Срок сдачи')?.value, 'Не указан');
+  assert.equal(rows.find((row) => row.label === 'Цена за м²')?.value, 'По запросу');
+});
+
+test('object feed room filters preserve known option order', () => {
+  assert.deepEqual(getFeedUnitRoomFilterValues('2,0,unknown,2,5'), ['0', '2', '5']);
+  assert.equal(formatFeedUnitRoomFilterValues(['5', '0', '2', '5']), '0,2,5');
 });

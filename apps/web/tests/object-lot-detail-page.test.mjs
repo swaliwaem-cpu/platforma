@@ -6,10 +6,12 @@ import test from 'node:test';
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const appSource = readFileSync(resolve(currentDir, '../src/App.tsx'), 'utf8');
-const objectDetailSource = readFileSync(resolve(currentDir, '../src/objects/ObjectDetailPage.tsx'), 'utf8');
+const objectDetailPageSource = readFileSync(resolve(currentDir, '../src/objects/ObjectDetailPage.tsx'), 'utf8');
+const objectDetailViewModelSource = readFileSync(resolve(currentDir, '../src/objects/objectDetailViewModel.ts'), 'utf8');
+const objectDetailSource = `${objectDetailPageSource}\n${objectDetailViewModelSource}`;
 const styles = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
 const objectLotMediaCarouselSource =
-  objectDetailSource.match(/function ObjectLotMediaCarousel[\s\S]*?\nfunction hasFeedMediaFile/)?.[0] ?? '';
+  objectDetailPageSource.match(/function ObjectLotMediaCarousel[\s\S]*?\nfunction hasFeedMediaFile/)?.[0] ?? '';
 
 test('app routes object lot URLs to lot detail page', () => {
   assert.match(appSource, /import \{ ObjectDetailPage, ObjectLotDetailPage \} from '\.\/objects\/ObjectDetailPage';/);
