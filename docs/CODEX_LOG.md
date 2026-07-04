@@ -2703,3 +2703,30 @@ Production repair:
 Спорные места:
 
 - Если конкретный лот еще не находится ни в одной подборке, tooltip не показывается, чтобы не добавлять пустое окно; модалка добавления по клику продолжает показывать все подборки.
+
+## 2026-07-04 - Extract catalog filter helpers
+
+Задача:
+
+- Начать оптимизацию фронтенда в отдельной ветке с безопасного первого среза: уменьшить перегруженный `CatalogPage.tsx` без изменения UI, CSS и поведения каталога.
+
+Изменения:
+
+- `apps/web/src/catalog/catalogFilters.ts` - вынесены типы фильтров каталога, default state, options и чистые helpers для URL/query/API params, sort, page size, room/id filters и sanitizing.
+- `apps/web/src/catalog/CatalogPage.tsx` - страница теперь импортирует catalog filter helpers из отдельного модуля; JSX, className, стили и public flow не менялись.
+- `apps/web/tests/catalog-lot-filters.test.mjs`, `apps/web/tests/catalog-directory-filter-search.test.mjs`, `apps/web/tests/catalog-pagination-controls.test.mjs`, `apps/web/tests/catalog-quick-links-page.test.mjs` - source-based проверки перенаправлены на новый helper-модуль там, где проверяется логика фильтров.
+
+Проверки:
+
+- `node --test apps/web/tests/catalog-lot-filters.test.mjs apps/web/tests/catalog-directory-filter-search.test.mjs apps/web/tests/catalog-pagination-controls.test.mjs apps/web/tests/catalog-quick-links-page.test.mjs` - 23/23 passed.
+- `pnpm --filter @platforma/web test` - 250/250 passed.
+- `pnpm --filter @platforma/web exec tsc -p tsconfig.json --noEmit --pretty false` - passed.
+
+Ручная проверка:
+
+- Открыть `/catalog`, `/catalog?view=list`, `/catalog/map`; проверить поиск, advanced filters, sort, pagination, переключение cards/list и переход в `/objects/:slug` с активными lot filters.
+
+Спорные места:
+
+- Визуальную проверку не запускал, потому что в этом срезе не менялись разметка и CSS.
+- Следующий безопасный frontend-срез: pure helpers из `ObjectDetailPage.tsx` или `LotPresentationsPage.tsx`; API/data-flow и защищённые media/download/map flows лучше не дробить первым шагом.

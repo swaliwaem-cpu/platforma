@@ -5,7 +5,9 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
-const source = readFileSync(resolve(currentDir, '../src/catalog/CatalogPage.tsx'), 'utf8');
+const pageSource = readFileSync(resolve(currentDir, '../src/catalog/CatalogPage.tsx'), 'utf8');
+const catalogFiltersSource = readFileSync(resolve(currentDir, '../src/catalog/catalogFilters.ts'), 'utf8');
+const source = `${pageSource}\n${catalogFiltersSource}`;
 
 test('catalog directory filters use searchable dropdowns with normalized matching', () => {
   assert.match(source, /import \{ matchesSearchVariants \} from '@platforma\/shared\/search-normalization';/);

@@ -5,11 +5,14 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
-const source = readFileSync(resolve(currentDir, '../src/catalog/CatalogPage.tsx'), 'utf8');
+const pageSource = readFileSync(resolve(currentDir, '../src/catalog/CatalogPage.tsx'), 'utf8');
+const catalogFiltersSource = readFileSync(resolve(currentDir, '../src/catalog/catalogFilters.ts'), 'utf8');
+const source = `${pageSource}\n${catalogFiltersSource}`;
 const stylesSource = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
 const multiSelectSource = readFileSync(resolve(currentDir, '../src/components/MultiSelectDropdown.tsx'), 'utf8');
 const catalogLotFilterQuerySource =
-  source.match(/function buildCatalogLotFilterQuery[\s\S]*?\nfunction hasActiveCatalogLotFilters/)?.[0] ?? '';
+  catalogFiltersSource.match(/function buildCatalogLotFilterQuery[\s\S]*?\nexport function hasActiveCatalogLotFilters/)?.[0] ??
+  '';
 
 test('catalog global filters include lot price per meter rooms and floor URL and API params', () => {
   assert.match(source, /lotPriceMin:\s*string;/);
