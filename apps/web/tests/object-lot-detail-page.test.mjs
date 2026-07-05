@@ -11,7 +11,7 @@ const objectDetailViewModelSource = readFileSync(resolve(currentDir, '../src/obj
 const objectDetailSource = `${objectDetailPageSource}\n${objectDetailViewModelSource}`;
 const styles = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
 const objectLotMediaCarouselSource =
-  objectDetailPageSource.match(/function ObjectLotMediaCarousel[\s\S]*?\nfunction hasFeedMediaFile/)?.[0] ?? '';
+  objectDetailPageSource.match(/function ObjectLotMediaCarousel[\s\S]*?\nfunction ObjectFeedUnitsTableSkeleton/)?.[0] ?? '';
 
 test('app routes object lot URLs to lot detail page', () => {
   assert.match(appSource, /import \{ ObjectDetailPage, ObjectLotDetailPage \} from '\.\/objects\/ObjectDetailPage';/);

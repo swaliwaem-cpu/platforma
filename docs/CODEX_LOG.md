@@ -1,5 +1,31 @@
 # Codex Log
 
+## 2026-07-05 - Object detail helper extraction
+
+Задача:
+
+- Продолжить безопасное дробление frontend: вынести чистые helper-функции из `ObjectDetailPage.tsx` в `objectDetailViewModel.ts` без изменения JSX, CSS, API, роутинга и map/balloon логики.
+
+Изменения:
+
+- `apps/web/src/objects/objectDetailViewModel.ts` - добавлены exports для media/date/file/url/carousel/content helpers: `FeedMediaWithFile`, `hasFeedMediaFile`, `wrapCarouselIndex`, `formatMediaCount`, `formatObjectFeedUpdatedAt`, `getFeedMediaTitle`, `getFeedMediaDownloadFileName`, `getDescriptionParagraphs`, `getCarouselImages`, `getImageDownloadFileName`, `formatFileSize`, `getExternalObjectUrl`.
+- `apps/web/src/objects/ObjectDetailPage.tsx` - удалены локальные дубликаты этих helpers и подключены exports из view model; `getObjectMapPoints`, `buildObjectMapBalloon`, `escapeHtml`, `normalizeLineColor`, CSS и JSX не менялись.
+- `apps/web/tests/object-detail-view-model.test.mjs` - добавлены прямые regression-тесты на вынесенные helpers.
+- `apps/web/tests/object-detail-styles.test.mjs`, `apps/web/tests/object-lot-detail-page.test.mjs` - обновлены source-based проверки под новую границу view model.
+
+Проверки:
+
+- RED: `cd apps/web && node --test tests/object-detail-view-model.test.mjs` сначала падал на отсутствующем export `formatFileSize`.
+- `cd apps/web && node --test tests/object-detail-view-model.test.mjs tests/object-detail-feed-units.test.mjs tests/object-lot-detail-page.test.mjs tests/object-detail-styles.test.mjs tests/object-detail-carousel.test.mjs`
+- `pnpm --filter @platforma/web exec tsc -p tsconfig.json --noEmit --pretty false`
+- `pnpm --filter @platforma/web test`
+- `pnpm --filter @platforma/web build`
+
+Ручная проверка:
+
+- Перед приёмкой открыть `/objects/:slug` и `/objects/:slug/lots/:unitId`, проверить галерею, скачивание оригинала, файлы/размеры, aerotour link, timestamp обновления лотов, feed media carousel/fullscreen и объект с координатами/без координат.
+- `pnpm --filter @platforma/web build` сохраняет прежнее Vite warning про chunk больше 500 kB; это следующий отдельный шаг оптимизации route-level code splitting.
+
 ## 2026-06-29 - Lot presentation workspace implementation
 
 Задача:

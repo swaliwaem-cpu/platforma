@@ -4,20 +4,31 @@ import test from 'node:test';
 import {
   formatCompletion,
   formatArea,
+  formatFileSize,
+  formatMediaCount,
+  formatObjectFeedUpdatedAt,
   formatFeedUnitPrice,
   formatPrice,
   formatPriceFrom,
   formatPricePerMeterFrom,
   formatCeilingHeight,
+  getCarouselImages,
+  getDescriptionParagraphs,
+  getExternalObjectUrl,
+  getFeedMediaDownloadFileName,
+  getFeedMediaTitle,
   getFeedUnitRoomFilterValues,
+  getImageDownloadFileName,
   getObjectContentSections,
   getObjectLocationLine,
   getObjectLotFactRows,
   getObjectLotPriceSummary,
   getObjectParameterRows,
   hasFeedUnitRealDiscount,
+  hasFeedMediaFile,
   buildObjectLotPath,
   formatFeedUnitRoomFilterValues,
+  wrapCarouselIndex,
 } from '../src/objects/objectDetailViewModel.ts';
 
 const districtLocation = {
@@ -227,4 +238,71 @@ test('object lot view model keeps legacy empty labels and fractional formatting'
 test('object feed room filters preserve known option order', () => {
   assert.deepEqual(getFeedUnitRoomFilterValues('2,0,unknown,2,5'), ['0', '2', '5']);
   assert.equal(formatFeedUnitRoomFilterValues(['5', '0', '2', '5']), '0,2,5');
+});
+
+test('object detail media helpers preserve carousel and file behavior', () => {
+  const mediaWithFile = {
+    id: 'media-1',
+    label: 'Планировка',
+    contentType: 'image/jpeg',
+    file: {
+      id: 'file-1',
+      originalName: 'layout.jpg',
+      mimeType: 'image/jpeg',
+    },
+  };
+  const mediaWithoutFile = {
+    id: 'media-2',
+    label: null,
+    contentType: 'image/png',
+    file: null,
+  };
+
+  assert.equal(hasFeedMediaFile(mediaWithFile), true);
+  assert.equal(hasFeedMediaFile(mediaWithoutFile), false);
+  assert.equal(getFeedMediaTitle(mediaWithFile), 'Планировка');
+  assert.equal(getFeedMediaTitle({ ...mediaWithFile, label: null }), 'layout.jpg');
+  assert.equal(getFeedMediaTitle({ ...mediaWithoutFile, contentType: 'image/png' }), 'image/png');
+  assert.equal(getFeedMediaDownloadFileName(mediaWithFile), 'layout.jpg');
+  assert.equal(getFeedMediaDownloadFileName({ ...mediaWithFile, file: null, label: '  Рендер  ' }), 'Рендер');
+  assert.equal(getFeedMediaDownloadFileName({ ...mediaWithoutFile, label: null }), 'original-media');
+  assert.equal(wrapCarouselIndex(-1, 3), 2);
+  assert.equal(wrapCarouselIndex(3, 3), 0);
+  assert.equal(wrapCarouselIndex(1, 3), 1);
+  assert.equal(wrapCarouselIndex(2, 0), 0);
+});
+
+test('object detail formatting helpers keep public labels and file names', () => {
+  assert.equal(formatMediaCount(0), 'Нет');
+  assert.equal(formatMediaCount(1), '1 файл');
+  assert.equal(formatMediaCount(2), '2 файла');
+  assert.equal(formatMediaCount(5), '5 файлов');
+  assert.equal(formatObjectFeedUpdatedAt('2026-07-05T08:09:00'), '05.07.2026 08:09');
+  assert.equal(formatObjectFeedUpdatedAt('not-a-date'), null);
+  assert.equal(formatFileSize('512'), '1 КБ');
+  assert.equal(formatFileSize('1536'), '2 КБ');
+  assert.equal(formatFileSize(String(2.5 * 1024 * 1024)), '2.5 МБ');
+  assert.equal(formatFileSize('unknown'), 'unknown');
+  assert.equal(getImageDownloadFileName({ file: { originalName: ' cover.png ' } }, 'Object Title'), 'cover.png');
+  assert.equal(getImageDownloadFileName({ file: { originalName: '  ' } }, 'Object Title'), 'Object Title.jpg');
+  assert.equal(getImageDownloadFileName({ file: { originalName: null } }, '  '), 'object-image.jpg');
+});
+
+test('object detail content helpers keep description, gallery and external url behavior', () => {
+  const firstImage = { id: 'image-1', isCover: false };
+  const coverImage = { id: 'image-2', isCover: true };
+  const thirdImage = { id: 'image-3', isCover: false };
+
+  assert.deepEqual(
+    getDescriptionParagraphs({
+      description: 'Первый абзац\n\n  Второй абзац  \n\n\n',
+    }),
+    ['Первый абзац', 'Второй абзац'],
+  );
+  assert.deepEqual(getDescriptionParagraphs({ description: null }), []);
+  assert.deepEqual(getCarouselImages({ images: [firstImage, coverImage, thirdImage] }), [coverImage, firstImage, thirdImage]);
+  assert.deepEqual(getCarouselImages({ images: [] }), []);
+  assert.equal(getExternalObjectUrl(' https://example.com/tour '), 'https://example.com/tour');
+  assert.equal(getExternalObjectUrl('ftp://example.com/tour'), null);
+  assert.equal(getExternalObjectUrl('not-url'), null);
 });

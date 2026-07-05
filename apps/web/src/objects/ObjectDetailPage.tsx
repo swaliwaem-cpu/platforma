@@ -53,6 +53,7 @@ import {
   formatBuildingSection,
   formatCompletion,
   formatComputedFeedUnitPricePerMeter,
+  formatFileSize,
   formatFeedUnitBuildingValue,
   formatFeedUnitCompletion,
   formatFeedUnitDiscountPrice,
@@ -61,11 +62,19 @@ import {
   formatFeedUnitRange,
   formatFeedUnitRoomFilterValues,
   formatFeedUnitShortValue,
+  formatMediaCount,
+  formatObjectFeedUpdatedAt,
   formatPrice,
   formatPriceFrom,
+  getCarouselImages,
+  getDescriptionParagraphs,
+  getExternalObjectUrl,
+  getFeedMediaDownloadFileName,
+  getFeedMediaTitle,
   getFeedUnitRoomFilterValues,
   getFeedUnitTitle,
   getInitialObjectFeedUnitFiltersFromLocation,
+  getImageDownloadFileName,
   getUnitRoomsOrType,
   getLocationRows,
   getObjectContentSections,
@@ -74,12 +83,15 @@ import {
   getObjectLotFactRows,
   getObjectLotPriceSummary,
   getObjectParameterRows,
+  hasFeedMediaFile,
   hasFeedUnitRealDiscount,
   makeRoomGroupExpansionKey,
   publicFeedUnitStatuses,
   sanitizeDecimalText,
   sanitizeIntegerText,
   setOptionalParam,
+  wrapCarouselIndex,
+  type FeedMediaWithFile,
   type ObjectFeedUnitSortBy,
   type ObjectFeedUnitSortDirection,
 } from './objectDetailViewModel';
@@ -112,10 +124,6 @@ const fileTypeLabels: Record<ObjectFileType, string> = {
 };
 
 const objectFeedUnitsPageSize = 20;
-
-type FeedMediaWithFile = FeedUnit['media'][number] & {
-  file: NonNullable<FeedUnit['media'][number]['file']>;
-};
 
 const feedUnitQuarterFilterOptions = [
   { value: '1', label: '1кв' },
@@ -881,10 +889,6 @@ function ObjectImageCarousel({
       ) : null}
     </section>
   );
-}
-
-function getImageDownloadFileName(image: RealEstateObjectDetail['images'][number], objectTitle: string) {
-  return image.file.originalName?.trim() || `${objectTitle.trim() || 'object-image'}.jpg`;
 }
 
 function ObjectFeedUnitsSection({
@@ -2231,26 +2235,6 @@ function ObjectLotMediaCarousel({ accessToken, unit }: { accessToken: string; un
   );
 }
 
-function hasFeedMediaFile(media: FeedUnit['media'][number]): media is FeedMediaWithFile {
-  return Boolean(media.file);
-}
-
-function wrapCarouselIndex(index: number, itemsCount: number) {
-  if (itemsCount <= 0) {
-    return 0;
-  }
-
-  if (index < 0) {
-    return itemsCount - 1;
-  }
-
-  if (index >= itemsCount) {
-    return 0;
-  }
-
-  return index;
-}
-
 function ObjectFeedUnitsTableSkeleton({ columnsCount }: { columnsCount: number }) {
   return (
     <>
@@ -2339,42 +2323,6 @@ function SecureFileButton({
   );
 }
 
-function formatMediaCount(value: number) {
-  if (value === 0) {
-    return 'Нет';
-  }
-
-  return `${formatNumber(value)} ${formatPlural(value, ['файл', 'файла', 'файлов'])}`;
-}
-
-function formatObjectFeedUpdatedAt(value: string) {
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return null;
-  }
-
-  const day = padDatePart(date.getDate());
-  const month = padDatePart(date.getMonth() + 1);
-  const year = date.getFullYear();
-  const hours = padDatePart(date.getHours());
-  const minutes = padDatePart(date.getMinutes());
-
-  return `${day}.${month}.${year} ${hours}:${minutes}`;
-}
-
-function padDatePart(value: number) {
-  return String(value).padStart(2, '0');
-}
-
-function getFeedMediaTitle(media: FeedUnit['media'][number]) {
-  return media.label ?? media.file?.originalName ?? media.file?.mimeType ?? media.contentType ?? 'Файл';
-}
-
-function getFeedMediaDownloadFileName(media: FeedUnit['media'][number]) {
-  return media.file?.originalName?.trim() || media.label?.trim() || 'original-media';
-}
-
 function formatNumber(value: number) {
   if (!Number.isFinite(value)) {
     return 'Не указано';
@@ -2383,42 +2331,6 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat('ru-RU', {
     maximumFractionDigits: value < 100 ? 1 : 0,
   }).format(value);
-}
-
-function formatPlural(value: number, forms: [string, string, string]) {
-  const normalizedValue = Math.abs(value) % 100;
-  const lastDigit = normalizedValue % 10;
-
-  if (normalizedValue > 10 && normalizedValue < 20) {
-    return forms[2];
-  }
-
-  if (lastDigit > 1 && lastDigit < 5) {
-    return forms[1];
-  }
-
-  if (lastDigit === 1) {
-    return forms[0];
-  }
-
-  return forms[2];
-}
-
-function getDescriptionParagraphs(object: RealEstateObjectDetail) {
-  return (object.description ?? '')
-    .split(/\n{2,}/u)
-    .map((paragraph) => paragraph.trim())
-    .filter(Boolean);
-}
-
-function getCarouselImages(object: RealEstateObjectDetail) {
-  const coverImage = object.images.find((image) => image.isCover) ?? object.images[0] ?? null;
-
-  if (!coverImage) {
-    return [];
-  }
-
-  return [coverImage, ...object.images.filter((image) => image.id !== coverImage.id)];
 }
 
 function getObjectMapPoints(object: RealEstateObjectDetail, imageUrl: string | null): YandexMapPoint[] {
@@ -2467,20 +2379,6 @@ function formatCompactRussianNumber(value: number) {
   }).format(value);
 }
 
-function formatFileSize(value: string) {
-  const size = Number(value);
-
-  if (!Number.isFinite(size)) {
-    return value;
-  }
-
-  if (size < 1024 * 1024) {
-    return `${Math.max(1, Math.round(size / 1024))} КБ`;
-  }
-
-  return `${(size / 1024 / 1024).toFixed(1)} МБ`;
-}
-
 function normalizeLineColor(value: string | null) {
   if (!value) {
     return null;
@@ -2489,22 +2387,6 @@ function normalizeLineColor(value: string | null) {
   const trimmedValue = value.trim();
 
   return /^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/iu.test(trimmedValue) ? trimmedValue : null;
-}
-
-function getExternalObjectUrl(value: string | null) {
-  const trimmedValue = value?.trim();
-
-  if (!trimmedValue) {
-    return null;
-  }
-
-  try {
-    const url = new URL(trimmedValue);
-
-    return url.protocol === 'http:' || url.protocol === 'https:' ? trimmedValue : null;
-  } catch {
-    return null;
-  }
 }
 
 function escapeHtml(value: string) {

@@ -41,6 +41,10 @@ export type InitialObjectFeedUnitFilters = {
   floorMax: string;
 };
 
+export type FeedMediaWithFile = FeedUnit['media'][number] & {
+  file: NonNullable<FeedUnit['media'][number]['file']>;
+};
+
 export const feedUnitStatusLabels: Record<FeedUnitStatus, string> = {
   AVAILABLE: 'Доступен',
   BOOKED: 'Забронирован',
@@ -290,6 +294,106 @@ export function formatCompletion(year: number | null, quarter: number | null) {
   }
 
   return quarter ? `${quarter} кв. ${year}` : String(year);
+}
+
+export function getImageDownloadFileName(image: RealEstateObjectDetail['images'][number], objectTitle: string) {
+  return image.file.originalName?.trim() || `${objectTitle.trim() || 'object-image'}.jpg`;
+}
+
+export function hasFeedMediaFile(media: FeedUnit['media'][number]): media is FeedMediaWithFile {
+  return Boolean(media.file);
+}
+
+export function wrapCarouselIndex(index: number, itemsCount: number) {
+  if (itemsCount <= 0) {
+    return 0;
+  }
+
+  if (index < 0) {
+    return itemsCount - 1;
+  }
+
+  if (index >= itemsCount) {
+    return 0;
+  }
+
+  return index;
+}
+
+export function formatMediaCount(value: number) {
+  if (value === 0) {
+    return 'Нет';
+  }
+
+  return `${formatNumber(value)} ${formatPlural(value, ['файл', 'файла', 'файлов'])}`;
+}
+
+export function formatObjectFeedUpdatedAt(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  const day = padDatePart(date.getDate());
+  const month = padDatePart(date.getMonth() + 1);
+  const year = date.getFullYear();
+  const hours = padDatePart(date.getHours());
+  const minutes = padDatePart(date.getMinutes());
+
+  return `${day}.${month}.${year} ${hours}:${minutes}`;
+}
+
+export function getFeedMediaTitle(media: FeedUnit['media'][number]) {
+  return media.label ?? media.file?.originalName ?? media.file?.mimeType ?? media.contentType ?? 'Файл';
+}
+
+export function getFeedMediaDownloadFileName(media: FeedUnit['media'][number]) {
+  return media.file?.originalName?.trim() || media.label?.trim() || 'original-media';
+}
+
+export function getDescriptionParagraphs(object: Pick<RealEstateObjectDetail, 'description'>) {
+  return getTextParagraphs(object.description);
+}
+
+export function getCarouselImages(object: Pick<RealEstateObjectDetail, 'images'>) {
+  const coverImage = object.images.find((image) => image.isCover) ?? object.images[0] ?? null;
+
+  if (!coverImage) {
+    return [];
+  }
+
+  return [coverImage, ...object.images.filter((image) => image.id !== coverImage.id)];
+}
+
+export function formatFileSize(value: string) {
+  const size = Number(value);
+
+  if (!Number.isFinite(size)) {
+    return value;
+  }
+
+  if (size < 1024 * 1024) {
+    return `${Math.max(1, Math.round(size / 1024))} КБ`;
+  }
+
+  return `${(size / 1024 / 1024).toFixed(1)} МБ`;
+}
+
+export function getExternalObjectUrl(value: string | null) {
+  const trimmedValue = value?.trim();
+
+  if (!trimmedValue) {
+    return null;
+  }
+
+  try {
+    const url = new URL(trimmedValue);
+
+    return url.protocol === 'http:' || url.protocol === 'https:' ? trimmedValue : null;
+  } catch {
+    return null;
+  }
 }
 
 export function sortFeedUnitsForDisplay(
@@ -673,6 +777,29 @@ export function getUnitRoomsOrType(unit: FeedUnit) {
 
 function isSeparateRoomsStudio(unit: FeedUnit) {
   return unit.residentialDetails?.layoutType?.trim().toLocaleLowerCase('ru-RU') === 'раздельные';
+}
+
+function padDatePart(value: number) {
+  return String(value).padStart(2, '0');
+}
+
+function formatPlural(value: number, forms: [string, string, string]) {
+  const normalizedValue = Math.abs(value) % 100;
+  const lastDigit = normalizedValue % 10;
+
+  if (normalizedValue > 10 && normalizedValue < 20) {
+    return forms[2];
+  }
+
+  if (lastDigit > 1 && lastDigit < 5) {
+    return forms[1];
+  }
+
+  if (lastDigit === 1) {
+    return forms[0];
+  }
+
+  return forms[2];
 }
 
 function formatNumber(value: number) {

@@ -3,11 +3,13 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import test from 'node:test';
+import { getExternalObjectUrl } from '../src/objects/objectDetailViewModel.ts';
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const styles = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
 const appThemeStyles = readFileSync(resolve(currentDir, '../src/app-theme.css'), 'utf8');
 const objectDetailSource = readFileSync(resolve(currentDir, '../src/objects/ObjectDetailPage.tsx'), 'utf8');
+const objectDetailViewModelSource = readFileSync(resolve(currentDir, '../src/objects/objectDetailViewModel.ts'), 'utf8');
 
 function getRuleBody(selector) {
   const startIndex = styles.indexOf(`${selector} {`);
@@ -232,10 +234,8 @@ test('object files block keeps primary actions inline and labels additional file
   assert.match(objectDetailSource, /const aerotourUrl = getExternalObjectUrl\(object\.aerotourUrl\);/);
   assert.match(objectDetailSource, /aerotourUrl \? \(/);
   assert.match(objectDetailSource, /href=\{aerotourUrl\}/);
-  assert.match(
-    objectDetailSource,
-    /function getExternalObjectUrl\(value: string \| null\) \{[\s\S]*?const trimmedValue = value\?\.trim\(\);[\s\S]*?if \(!trimmedValue\) \{[\s\S]*?return null;[\s\S]*?url\.protocol === 'http:' \|\| url\.protocol === 'https:' \? trimmedValue : null;[\s\S]*?\}/,
-  );
+  assert.equal(getExternalObjectUrl(' https://example.com/tour '), 'https://example.com/tour');
+  assert.equal(getExternalObjectUrl('ftp://example.com/tour'), null);
   assert.match(objectDetailSource, /import \{ getLinkedFileTitle \} from '\.\.\/files\/fileDisplay';/);
   assert.match(objectDetailSource, /const primaryPresentationFile = object\.files\.find\(\(file\) => file\.type === 'PRESENTATION'\) \?\? null;/);
   assert.match(objectDetailSource, /const listedFiles = object\.files\.filter\(\(file\) => file\.id !== primaryPresentationFile\?\.id\);/);
