@@ -8,7 +8,7 @@ const currentDir = dirname(fileURLToPath(import.meta.url));
 const appSource = readFileSync(resolve(currentDir, '../src/App.tsx'), 'utf8');
 
 test('admin catalog links route is registered in app routing and admin home', () => {
-  assert.match(appSource, /import \{ CatalogLinksAdminPage \} from '\.\/admin\/CatalogLinksAdminPage';/);
+  assert.match(appSource, /const CatalogLinksAdminPage = lazy\(\(\) => import\('\.\/admin\/CatalogLinksAdminPage'\)\.then\(\(module\) => \(\{ default: module\.CatalogLinksAdminPage \}\)\)\);/);
   assert.match(appSource, /pathname\.startsWith\('\/admin\/catalog-links'\)/);
   assert.match(appSource, /<CatalogLinksAdminPage onBack=\{\(\) => navigate\('\/admin'\)\} \/>/);
   assert.match(appSource, /onOpenCatalogLinks=\{\(\) => navigate\('\/admin\/catalog-links'\)\}/);

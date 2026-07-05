@@ -8,7 +8,7 @@ const currentDir = dirname(fileURLToPath(import.meta.url));
 const appSource = readFileSync(resolve(currentDir, '../src/App.tsx'), 'utf8');
 
 test('admin feeds route is registered in app routing, cabinet navigation, and admin home', () => {
-  assert.match(appSource, /import \{ FeedsAdminPage \} from '\.\/admin\/FeedsAdminPage';/);
+  assert.match(appSource, /const FeedsAdminPage = lazy\(\(\) => import\('\.\/admin\/FeedsAdminPage'\)\.then\(\(module\) => \(\{ default: module\.FeedsAdminPage \}\)\)\);/);
   assert.match(appSource, /pathname\.startsWith\('\/admin\/feeds'\)/);
   assert.match(appSource, /<FeedsAdminPage pathname=\{pathname\} navigate=\{navigate\} onBack=\{\(\) => navigate\('\/admin'\)\} \/>/);
   assert.match(appSource, /onOpenFeeds=\{\(\) => navigate\('\/admin\/feeds'\)\}/);

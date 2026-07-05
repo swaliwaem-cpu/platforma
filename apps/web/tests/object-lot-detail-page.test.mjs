@@ -14,7 +14,8 @@ const objectLotMediaCarouselSource =
   objectDetailPageSource.match(/function ObjectLotMediaCarousel[\s\S]*?\nfunction ObjectFeedUnitsTableSkeleton/)?.[0] ?? '';
 
 test('app routes object lot URLs to lot detail page', () => {
-  assert.match(appSource, /import \{ ObjectDetailPage, ObjectLotDetailPage \} from '\.\/objects\/ObjectDetailPage';/);
+  assert.match(appSource, /const ObjectDetailPage = lazy\(\(\) => import\('\.\/objects\/ObjectDetailPage'\)\.then\(\(module\) => \(\{ default: module\.ObjectDetailPage \}\)\)\);/);
+  assert.match(appSource, /const ObjectLotDetailPage = lazy\(\(\) => import\('\.\/objects\/ObjectDetailPage'\)\.then\(\(module\) => \(\{ default: module\.ObjectLotDetailPage \}\)\)\);/);
   assert.match(appSource, /const objectLotRoute = parseObjectLotRoute\(pathname\);/);
   assert.match(appSource, /function parseObjectLotRoute\(pathname: string\)/);
   assert.match(appSource, /\^\\\/objects\\\/\(\[\^\/\]\+\)\\\/lots\\\/\(\[\^\/\]\+\)\\\/\?\$/);

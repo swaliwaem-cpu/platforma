@@ -1,5 +1,35 @@
 # Codex Log
 
+## 2026-07-05 - Web route-level code splitting
+
+Задача:
+
+- Сделать отдельный безопасный route-level lazy/code-splitting шаг для Vite chunk warning, не трогая незавершённую зону лотов-презентаций.
+
+Изменения:
+
+- `apps/web/src/App.tsx` - тяжёлые route pages переведены на `React.lazy`: `CatalogPage`, `ObjectDetailPage`, `ObjectLotDetailPage`, `UsersAdminPage`, `ObjectsAdminPage`, `CatalogLinksAdminPage`, `FeedsAdminPage`, `ImportAdminPage`; добавлен общий `Suspense` fallback внутри `workspace`.
+- `apps/web/src/App.tsx` - auth shell, sidebar, login, cabinet/admin home, permission gates и `LotPresentationsPage` оставлены синхронными; порядок route branches и checks по правам сохранён.
+- `apps/web/tests/app-route-code-splitting.test.mjs` - добавлена regression-проверка lazy imports, `Suspense` boundary и static import для `LotPresentationsPage`.
+- `apps/web/tests/admin-catalog-links-route.test.mjs`, `apps/web/tests/admin-feeds-route.test.mjs`, `apps/web/tests/object-lot-detail-page.test.mjs` - route source checks обновлены под lazy imports без изменения ожидаемых маршрутов.
+
+Проверки:
+
+- RED: `cd apps/web && node --test tests/app-route-code-splitting.test.mjs tests/admin-feeds-route.test.mjs tests/admin-catalog-links-route.test.mjs tests/object-lot-detail-page.test.mjs tests/lot-presentations-page.test.mjs` сначала падал на отсутствующих lazy imports и `Suspense`.
+- `cd apps/web && node --test tests/app-route-code-splitting.test.mjs tests/admin-feeds-route.test.mjs tests/admin-catalog-links-route.test.mjs tests/object-lot-detail-page.test.mjs tests/lot-presentations-page.test.mjs tests/sidebar-navigation.test.mjs tests/docker-logo-asset.test.mjs`
+- `pnpm --filter @platforma/web exec tsc -p tsconfig.json --noEmit --pretty false`
+- `pnpm --filter @platforma/web test`
+- `pnpm --filter @platforma/web build`
+- `git diff --check`
+- В build output главный `index` chunk стал `263.08 kB`; route chunks вынесены отдельно: `CatalogPage`, `ObjectDetailPage`, `ObjectsAdminPage`, `FeedsAdminPage`, `UsersAdminPage`, `CatalogLinksAdminPage`, `ImportAdminPage`.
+- В `/tmp/platforma-web-build.log` строка `Some chunks are larger than 500 kB` не найдена.
+
+Ручная проверка:
+
+- Перед приёмкой открыть `/catalog`, `/catalog?view=list`, `/catalog/map`, `/objects/:slug`, `/objects/:slug/lots/:unitId`, `/admin/users`, `/admin/objects`, `/admin/objects/new`, `/admin/objects/:id/edit`, `/admin/catalog-links`, `/admin/feeds`, `/admin/feeds/new`, `/admin/feeds/:id/edit`, `/admin/import` под пользователем с нужными правами.
+- Отдельно проверить denied state для admin/object routes под пользователем без прав: lazy page chunk не должен менять поведение `AccessDenied`.
+- `LotPresentationsPage` в этом шаге не дробился и не менялся.
+
 ## 2026-07-05 - Object detail helper extraction
 
 Задача:

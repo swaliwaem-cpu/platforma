@@ -1,23 +1,25 @@
-import { FormEvent, useEffect, useRef, useState } from 'react';
+import { FormEvent, lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { MenuIcon, MoonIcon, SunIcon } from 'lucide-react';
 import type { AuthUser, UserStatus } from '@platforma/shared';
 
 import platformLogoUrl from '../../../_Fluffy_White_1-02.svg';
-import { CatalogLinksAdminPage } from './admin/CatalogLinksAdminPage';
-import { FeedsAdminPage } from './admin/FeedsAdminPage';
-import { ImportAdminPage } from './admin/ImportAdminPage';
 import { AdminButton, AdminPanel, AdminStatusBadge } from './admin/AdminUi';
-import { ObjectsAdminPage } from './admin/ObjectsAdminPage';
-import { UsersAdminPage } from './admin/UsersAdminPage';
 import { apiRequest } from './admin/api';
 import { AuthProvider, useAuth } from './auth/AuthProvider';
-import { CatalogPage } from './catalog/CatalogPage';
 import { buildMediaFileContentUrl } from './files/SecureImage';
-import { ObjectDetailPage, ObjectLotDetailPage } from './objects/ObjectDetailPage';
 import { LotPresentationsPage } from './presentations/LotPresentationsPage';
 import { getAppliedAppTheme, getNextAppTheme, setAppTheme } from './appTheme';
 import './styles.css';
 import './app-theme.css';
+
+const CatalogPage = lazy(() => import('./catalog/CatalogPage').then((module) => ({ default: module.CatalogPage })));
+const ObjectDetailPage = lazy(() => import('./objects/ObjectDetailPage').then((module) => ({ default: module.ObjectDetailPage })));
+const ObjectLotDetailPage = lazy(() => import('./objects/ObjectDetailPage').then((module) => ({ default: module.ObjectLotDetailPage })));
+const UsersAdminPage = lazy(() => import('./admin/UsersAdminPage').then((module) => ({ default: module.UsersAdminPage })));
+const ObjectsAdminPage = lazy(() => import('./admin/ObjectsAdminPage').then((module) => ({ default: module.ObjectsAdminPage })));
+const CatalogLinksAdminPage = lazy(() => import('./admin/CatalogLinksAdminPage').then((module) => ({ default: module.CatalogLinksAdminPage })));
+const FeedsAdminPage = lazy(() => import('./admin/FeedsAdminPage').then((module) => ({ default: module.FeedsAdminPage })));
+const ImportAdminPage = lazy(() => import('./admin/ImportAdminPage').then((module) => ({ default: module.ImportAdminPage })));
 
 type AppSection = 'cabinet' | 'catalog' | 'presentations' | 'admin';
 type LoginMode = 'login' | 'register';
@@ -195,6 +197,16 @@ export function App() {
   );
 }
 
+function RouteLoadingFallback() {
+  return (
+    <div className="content-panel">
+      <p className="eyebrow">Раздел</p>
+      <h2>Загрузка</h2>
+      <p className="muted-text">Открываем данные.</p>
+    </div>
+  );
+}
+
 function AppRoutes() {
   const { pathname, navigate } = usePathname();
   const { user, isLoading, logout, hasPermission } = useAuth();
@@ -319,78 +331,80 @@ function AppRoutes() {
       </aside>
 
       <section className="workspace">
-        {activeSection === 'admin' ? (
-          hasPermission('admin:access') ? (
-            pathname.startsWith('/admin/users') ? (
-              hasPermission('users:read') ? (
-                <UsersAdminPage onBack={() => navigate('/admin')} />
+        <Suspense fallback={<RouteLoadingFallback />}>
+          {activeSection === 'admin' ? (
+            hasPermission('admin:access') ? (
+              pathname.startsWith('/admin/users') ? (
+                hasPermission('users:read') ? (
+                  <UsersAdminPage onBack={() => navigate('/admin')} />
+                ) : (
+                  <AccessDenied />
+                )
+              ) : pathname.startsWith('/admin/objects') ? (
+                hasPermission('objects:read') ? (
+                  <ObjectsAdminPage pathname={pathname} navigate={navigate} onBack={() => navigate('/admin')} />
+                ) : (
+                  <AccessDenied />
+                )
+              ) : pathname.startsWith('/admin/catalog-links') ? (
+                hasPermission('objects:update') ? (
+                  <CatalogLinksAdminPage onBack={() => navigate('/admin')} />
+                ) : (
+                  <AccessDenied />
+                )
+              ) : pathname.startsWith('/admin/feeds') ? (
+                hasPermission('feeds:read') ? (
+                  <FeedsAdminPage pathname={pathname} navigate={navigate} onBack={() => navigate('/admin')} />
+                ) : (
+                  <AccessDenied />
+                )
+              ) : pathname.startsWith('/admin/import') ? (
+                hasPermission('import:preview') ? (
+                  <ImportAdminPage onBack={() => navigate('/admin')} />
+                ) : (
+                  <AccessDenied />
+                )
               ) : (
-                <AccessDenied />
-              )
-            ) : pathname.startsWith('/admin/objects') ? (
-              hasPermission('objects:read') ? (
-                <ObjectsAdminPage pathname={pathname} navigate={navigate} onBack={() => navigate('/admin')} />
-              ) : (
-                <AccessDenied />
-              )
-            ) : pathname.startsWith('/admin/catalog-links') ? (
-              hasPermission('objects:update') ? (
-                <CatalogLinksAdminPage onBack={() => navigate('/admin')} />
-              ) : (
-                <AccessDenied />
-              )
-            ) : pathname.startsWith('/admin/feeds') ? (
-              hasPermission('feeds:read') ? (
-                <FeedsAdminPage pathname={pathname} navigate={navigate} onBack={() => navigate('/admin')} />
-              ) : (
-                <AccessDenied />
-              )
-            ) : pathname.startsWith('/admin/import') ? (
-              hasPermission('import:preview') ? (
-                <ImportAdminPage onBack={() => navigate('/admin')} />
-              ) : (
-                <AccessDenied />
+                <AdminHome
+                  onOpenCatalogLinks={() => navigate('/admin/catalog-links')}
+                  onOpenFeeds={() => navigate('/admin/feeds')}
+                  onOpenImport={() => navigate('/admin/import')}
+                  onOpenObjects={() => navigate('/admin/objects')}
+                  onOpenUsers={() => navigate('/admin/users')}
+                />
               )
             ) : (
-              <AdminHome
-                onOpenCatalogLinks={() => navigate('/admin/catalog-links')}
-                onOpenFeeds={() => navigate('/admin/feeds')}
-                onOpenImport={() => navigate('/admin/import')}
-                onOpenObjects={() => navigate('/admin/objects')}
-                onOpenUsers={() => navigate('/admin/users')}
+              <AccessDenied />
+            )
+          ) : objectLotRoute ? (
+            hasPermission('objects:read') ? (
+              <ObjectLotDetailPage
+                navigate={navigate}
+                slug={objectLotRoute.slug}
+                unitId={objectLotRoute.unitId}
+                onBack={() => navigate(`/objects/${encodeURIComponent(objectLotRoute.slug)}`)}
               />
+            ) : (
+              <AccessDenied />
+            )
+          ) : objectSlug ? (
+            hasPermission('objects:read') ? (
+              <ObjectDetailPage navigate={navigate} slug={objectSlug} onBack={() => navigate('/catalog')} />
+            ) : (
+              <AccessDenied />
+            )
+          ) : activeSection === 'presentations' ? (
+            <LotPresentationsPage navigate={navigate} />
+          ) : activeSection === 'catalog' ? (
+            hasPermission('objects:read') ? (
+              <CatalogPage navigate={navigate} pathname={pathname} />
+            ) : (
+              <AccessDenied />
             )
           ) : (
-            <AccessDenied />
-          )
-        ) : objectLotRoute ? (
-          hasPermission('objects:read') ? (
-            <ObjectLotDetailPage
-              navigate={navigate}
-              slug={objectLotRoute.slug}
-              unitId={objectLotRoute.unitId}
-              onBack={() => navigate(`/objects/${encodeURIComponent(objectLotRoute.slug)}`)}
-            />
-          ) : (
-            <AccessDenied />
-          )
-        ) : objectSlug ? (
-          hasPermission('objects:read') ? (
-            <ObjectDetailPage navigate={navigate} slug={objectSlug} onBack={() => navigate('/catalog')} />
-          ) : (
-            <AccessDenied />
-          )
-        ) : activeSection === 'presentations' ? (
-          <LotPresentationsPage navigate={navigate} />
-        ) : activeSection === 'catalog' ? (
-          hasPermission('objects:read') ? (
-            <CatalogPage navigate={navigate} pathname={pathname} />
-          ) : (
-            <AccessDenied />
-          )
-        ) : (
-          <CabinetHome navigate={navigate} />
-        )}
+            <CabinetHome navigate={navigate} />
+          )}
+        </Suspense>
       </section>
     </main>
   );
