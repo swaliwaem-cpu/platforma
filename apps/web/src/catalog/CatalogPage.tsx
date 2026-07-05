@@ -71,6 +71,7 @@ import {
   type CatalogViewMode,
   type SortDirection,
 } from './catalogFilters';
+import './catalog-route.css';
 import aerotourIconUrl from '../../../../aerotour-icon.png';
 import floorPlanIconUrl from '../../../../floor-plan.svg';
 

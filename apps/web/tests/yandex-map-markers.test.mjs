@@ -10,7 +10,9 @@ const markerLabelsPath = resolve(currentDir, '../src/map/mapMarkerLabels.ts');
 const markerLabelsSource = existsSync(markerLabelsPath) ? readFileSync(markerLabelsPath, 'utf8') : '';
 const catalogSource = readFileSync(resolve(currentDir, '../src/catalog/CatalogPage.tsx'), 'utf8');
 const objectDetailSource = readFileSync(resolve(currentDir, '../src/objects/ObjectDetailPage.tsx'), 'utf8');
-const styles = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
+const baseStyles = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
+const catalogRouteStyles = readFileSync(resolve(currentDir, '../src/catalog/catalog-route.css'), 'utf8');
+const styles = `${baseStyles}\n${catalogRouteStyles}`;
 const dotAssetPath = resolve(currentDir, '../public/map-marker-dot.svg');
 const pinAssetPath = resolve(currentDir, '../public/map-marker-pin.svg');
 

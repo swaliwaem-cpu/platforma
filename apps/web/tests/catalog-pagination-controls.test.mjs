@@ -8,7 +8,9 @@ const currentDir = dirname(fileURLToPath(import.meta.url));
 const pageSource = readFileSync(resolve(currentDir, '../src/catalog/CatalogPage.tsx'), 'utf8');
 const catalogFiltersSource = readFileSync(resolve(currentDir, '../src/catalog/catalogFilters.ts'), 'utf8');
 const source = `${pageSource}\n${catalogFiltersSource}`;
-const styles = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
+const baseStyles = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
+const catalogRouteStyles = readFileSync(resolve(currentDir, '../src/catalog/catalog-route.css'), 'utf8');
+const styles = `${baseStyles}\n${catalogRouteStyles}`;
 
 function extractFunctionSource(sourceText, marker) {
   const markerIndex = sourceText.indexOf(marker);

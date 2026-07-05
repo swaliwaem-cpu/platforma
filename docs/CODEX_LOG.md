@@ -1,5 +1,37 @@
 # Codex Log
 
+## 2026-07-05 - Web catalog route CSS splitting
+
+Задача:
+
+- Продолжить безопасный route-level CSS split для Vite chunk warning: вынести стили публичного `CatalogPage` в lazy route CSS, не трогая незавершённые лоты и `LotPresentationsPage`.
+
+Изменения:
+
+- `apps/web/src/catalog/catalog-route.css` - добавлен route-local CSS slice для `CatalogPage`: root/header/view controls, filters, sort, quick links, grid/list/cards, pagination, catalog map overlay/list и route-owned `.map-object-card`.
+- `apps/web/src/catalog/CatalogPage.tsx` - добавлен lazy route CSS import `./catalog-route.css`.
+- `apps/web/src/styles.css` - удалены вынесенные catalog selectors; global shell/shared стили оставлены: `.workspace:has(.catalog-page)`, `:root --catalog-*`, `multi-select-dropdown`, `panel-count`, `YandexMap`, markers, fallback, balloon, object/detail/lots/presentations/admin styles.
+- `apps/web/tests/catalog-route-css-splitting.test.mjs` - добавлена regression-проверка отдельного catalog route CSS, отсутствия root/object/presentations imports, отсутствия catalog selectors в `styles.css` и protected shared selectors в route CSS.
+- `apps/web/tests/catalog-quick-links-page.test.mjs`, `apps/web/tests/catalog-pagination-controls.test.mjs`, `apps/web/tests/catalog-lot-filters.test.mjs`, `apps/web/tests/catalog-card-badges.test.mjs`, `apps/web/tests/yandex-map-markers.test.mjs` - source-based style checks теперь читают базовый и catalog route CSS.
+
+Проверки:
+
+- RED: `cd apps/web && node --test tests/catalog-route-css-splitting.test.mjs` сначала падал на отсутствующем `catalog-route.css`/import и catalog selectors в глобальном `styles.css`.
+- `cd apps/web && node --test tests/catalog-route-css-splitting.test.mjs tests/catalog-quick-links-page.test.mjs tests/catalog-pagination-controls.test.mjs tests/catalog-lot-filters.test.mjs tests/catalog-card-badges.test.mjs tests/yandex-map-markers.test.mjs tests/app-route-code-splitting.test.mjs tests/object-detail-styles.test.mjs tests/object-lot-detail-page.test.mjs tests/lot-presentations-page.test.mjs`
+- `pnpm --filter @platforma/web test`
+- `pnpm --filter @platforma/web exec tsc -p tsconfig.json --noEmit --pretty false`
+- `pnpm --filter @platforma/web build`
+- `git diff --check`
+- В build output CSS разделён на `dist/assets/index-BsUWvFJc.css` (`164.87 kB`), `dist/assets/CatalogPage-CQJlh0Xx.css` (`30.83 kB`), `dist/assets/admin-route-pages-BgFmrFRd.css` (`13.89 kB`) и `dist/assets/ObjectsAdminPage-GQ5zloYi.css` (`17.76 kB`).
+- В `/tmp/platforma-web-catalog-css-split-build.log` строка `Some chunks are larger than 500 kB` не найдена.
+
+Ручная проверка:
+
+- Перед приёмкой открыть `/catalog`, `/catalog?view=list`, `/catalog/map` и проверить filters/sort/quick links/cards/list/pagination/map overlay/selected map card.
+- Smoke-check shared routes: `/objects/:slug` с картой, `/objects/:slug/lots/:unitId`, `/presentations`, `/admin/objects`, `/admin/catalog-links`, `/admin/feeds`, `/admin/import`.
+- Проверить темы `minimal-luxury` и `dark-premium`, а также mobile widths около `980px`, `760px`, `700px`.
+- `LotPresentationsPage` и лоты в этом шаге не менялись и не импортируют catalog route CSS.
+
 ## 2026-07-05 - Web objects admin route CSS splitting
 
 Задача:

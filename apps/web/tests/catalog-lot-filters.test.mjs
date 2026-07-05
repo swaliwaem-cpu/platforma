@@ -8,7 +8,9 @@ const currentDir = dirname(fileURLToPath(import.meta.url));
 const pageSource = readFileSync(resolve(currentDir, '../src/catalog/CatalogPage.tsx'), 'utf8');
 const catalogFiltersSource = readFileSync(resolve(currentDir, '../src/catalog/catalogFilters.ts'), 'utf8');
 const source = `${pageSource}\n${catalogFiltersSource}`;
-const stylesSource = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
+const baseStylesSource = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
+const catalogRouteStylesSource = readFileSync(resolve(currentDir, '../src/catalog/catalog-route.css'), 'utf8');
+const stylesSource = `${baseStylesSource}\n${catalogRouteStylesSource}`;
 const multiSelectSource = readFileSync(resolve(currentDir, '../src/components/MultiSelectDropdown.tsx'), 'utf8');
 const catalogLotFilterQuerySource =
   catalogFiltersSource.match(/function buildCatalogLotFilterQuery[\s\S]*?\nexport function hasActiveCatalogLotFilters/)?.[0] ??
