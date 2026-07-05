@@ -1,5 +1,36 @@
 # Codex Log
 
+## 2026-07-05 - Web objects admin route CSS splitting
+
+Задача:
+
+- Продолжить route-level CSS split для Vite chunk warning: вынести стили `ObjectsAdminPage` в отдельный lazy route CSS, не трогая незавершённые лоты и `LotPresentationsPage`.
+
+Изменения:
+
+- `apps/web/src/admin/objects-admin-route.css` - добавлен route-local CSS slice для `ObjectsAdminPage`: root layout `.admin-objects`, quick edit table, object editor/form/preview, media upload, file list, gallery modal/tile grid и object-specific responsive rules.
+- `apps/web/src/admin/ObjectsAdminPage.tsx` - добавлен lazy route CSS import `./objects-admin-route.css`.
+- `apps/web/src/styles.css` - удалены вынесенные object-admin selectors; global shell/shared стили оставлены: `.workspace:has(.admin-objects)`, `admin-ui`, `searchable-multi-select`, `multi-select-dropdown`, `panel-count`, public catalog/object/detail/lots/presentations styles.
+- `apps/web/tests/objects-admin-route-css-splitting.test.mjs` - добавлена regression-проверка отдельного object route CSS, отсутствия root/presentations imports, отсутствия object selectors в `styles.css` и protected selectors в route CSS.
+- `apps/web/tests/admin-object-quick-edit-table.test.mjs`, `apps/web/tests/admin-gallery-styles.test.mjs`, `apps/web/tests/admin-file-list-styles.test.mjs` - source-based style checks теперь читают базовый и object route CSS.
+
+Проверки:
+
+- RED: `cd apps/web && node --test tests/objects-admin-route-css-splitting.test.mjs` сначала падал на отсутствующем `objects-admin-route.css`/import и object selectors в глобальном `styles.css`.
+- `cd apps/web && node --test tests/objects-admin-route-css-splitting.test.mjs tests/admin-object-quick-edit-table.test.mjs tests/admin-gallery-styles.test.mjs tests/admin-file-list-styles.test.mjs tests/admin-gallery-state.test.mjs tests/admin-object-file-upload.test.mjs tests/admin-object-create-route.test.mjs tests/admin-object-location-search-selects.test.mjs tests/app-route-code-splitting.test.mjs tests/lot-presentations-page.test.mjs`
+- `pnpm --filter @platforma/web test`
+- `pnpm --filter @platforma/web exec tsc -p tsconfig.json --noEmit --pretty false`
+- `pnpm --filter @platforma/web build`
+- `git diff --check`
+- В build output CSS разделён на `dist/assets/index-DTrPdpdi.css` (`201.05 kB`), `dist/assets/admin-route-pages-BgFmrFRd.css` (`13.89 kB`) и `dist/assets/ObjectsAdminPage-GQ5zloYi.css` (`17.76 kB`).
+- В `/tmp/platforma-web-objects-css-split-build.log` строка `Some chunks are larger than 500 kB` не найдена.
+
+Ручная проверка:
+
+- Перед приёмкой открыть `/admin/objects`, `/admin/objects/new`, `/admin/objects/:id/edit` и проверить quick edit table, create-before-upload flow, gallery modal, PDF upload/delete, mobile layout.
+- Smoke-check shared/public routes: `/admin/catalog-links`, `/admin/feeds`, `/admin/import`, `/catalog`, `/catalog?view=list`, `/catalog/map`, `/objects/:slug`, `/objects/:slug/lots/:unitId`, `/presentations`.
+- `LotPresentationsPage` и лоты в этом шаге не менялись и не импортируют object route CSS.
+
 ## 2026-07-05 - Web admin route CSS splitting
 
 Задача:

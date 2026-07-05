@@ -70,6 +70,7 @@ import {
   normalizeCeilingHeight,
   normalizeObjectPriceValue,
 } from './objectQuickEditTransforms';
+import './objects-admin-route.css';
 
 type ObjectsAdminPageProps = {
   pathname: string;

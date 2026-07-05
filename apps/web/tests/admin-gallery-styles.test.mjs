@@ -5,7 +5,9 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
-const styles = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
+const baseStyles = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
+const objectsRouteStyles = readFileSync(resolve(currentDir, '../src/admin/objects-admin-route.css'), 'utf8');
+const styles = `${baseStyles}\n${objectsRouteStyles}`;
 const appThemeStyles = readFileSync(resolve(currentDir, '../src/app-theme.css'), 'utf8');
 
 test('admin gallery item keeps preview text readable next to action buttons', () => {
