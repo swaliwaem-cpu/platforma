@@ -19,6 +19,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { AdminAlert, AdminButton, AdminEmptyState, AdminPanel, AdminStatusBadge } from './AdminUi';
 import { apiRequest } from './api';
 import { matchesQuickEditSearch } from './objectQuickEditTransforms';
+import './admin-route-pages.css';
 
 type CatalogLinkDraft = UpdateCatalogQuickLinkInput & {
   clientId: string;

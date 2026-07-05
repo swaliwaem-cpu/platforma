@@ -28,6 +28,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useAuth } from '../auth/AuthProvider';
 import { AdminAlert, AdminButton, AdminEmptyState, AdminPanel, AdminStatusBadge } from './AdminUi';
 import { apiRequest } from './api';
+import './admin-route-pages.css';
 
 type ImportAdminPageProps = {
   onBack: () => void;

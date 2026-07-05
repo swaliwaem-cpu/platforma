@@ -1,5 +1,38 @@
 # Codex Log
 
+## 2026-07-05 - Web admin route CSS splitting
+
+Задача:
+
+- Сделать отдельный безопасный CSS route-level split для ленивых admin routes после Vite code-splitting шага, не трогая незавершённые лоты и `LotPresentationsPage`.
+
+Изменения:
+
+- `apps/web/src/admin/admin-route-pages.css` - вынесен первый безопасный route-local CSS slice для `CatalogLinksAdminPage`, `FeedsAdminPage`, `ImportAdminPage`: catalog links, feed source/editor/import/progress/status styles.
+- `apps/web/src/admin/CatalogLinksAdminPage.tsx`, `apps/web/src/admin/FeedsAdminPage.tsx`, `apps/web/src/admin/ImportAdminPage.tsx` - добавлен lazy route CSS import `./admin-route-pages.css`.
+- `apps/web/src/styles.css` - удалён вынесенный admin-only slice; глобальные shell/theme, object/detail/catalog/map/lots/presentations styles оставлены в основном stylesheet.
+- `apps/web/tests/admin-route-css-splitting.test.mjs` - добавлена regression-проверка: `App.tsx` сохраняет глобальные CSS imports, admin lazy pages импортируют route CSS, `LotPresentationsPage` его не импортирует, protected selectors не попали в route CSS.
+- `apps/web/tests/admin-feeds-page.test.mjs` - source-based feed style check теперь читает базовый и route-local CSS.
+- `apps/web/tests/object-detail-styles.test.mjs` - source-based проверка приведена к существующей группировке object-detail CSS, где общие grid-свойства и per-grid columns находятся в отдельных правилах.
+
+Проверки:
+
+- RED: `cd apps/web && node --test tests/admin-route-css-splitting.test.mjs` сначала падал на отсутствующем route CSS file/import и на admin selectors в глобальном `styles.css`.
+- `cd apps/web && node --test tests/admin-route-css-splitting.test.mjs tests/admin-feeds-page.test.mjs tests/admin-catalog-links-page.test.mjs tests/admin-catalog-links-route.test.mjs tests/admin-feeds-route.test.mjs tests/app-route-code-splitting.test.mjs tests/lot-presentations-page.test.mjs`
+- `cd apps/web && node --test tests/object-detail-styles.test.mjs tests/admin-route-css-splitting.test.mjs`
+- `pnpm --filter @platforma/web test`
+- `pnpm --filter @platforma/web exec tsc -p tsconfig.json --noEmit --pretty false`
+- `pnpm --filter @platforma/web build`
+- `git diff --check`
+- В build output CSS разделён на `dist/assets/index-CM242Zg1.css` (`218.43 kB`) и `dist/assets/admin-route-pages-BgFmrFRd.css` (`13.89 kB`).
+- В `/tmp/platforma-web-css-split-build.log` строка `Some chunks are larger than 500 kB` не найдена.
+
+Ручная проверка:
+
+- Перед приёмкой открыть `/admin/catalog-links`, `/admin/feeds`, `/admin/feeds/new`, `/admin/feeds/:id/edit`, `/admin/import` и проверить layout/form/table/progress states.
+- Smoke-check после CSS split: `/admin`, `/catalog`, `/catalog?view=list`, `/catalog/map`, `/objects/:slug`, `/objects/:slug/lots/:unitId`, `/presentations`.
+- `LotPresentationsPage` и лоты в этом шаге не менялись и не импортируют route-local admin CSS.
+
 ## 2026-07-05 - Web route-level code splitting
 
 Задача:

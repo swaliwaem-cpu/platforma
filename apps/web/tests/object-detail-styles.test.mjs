@@ -184,7 +184,12 @@ test('object parameters and files share a desktop row before the map', () => {
 
   assert.match(
     styles,
-    /\.object-parameters-files-grid\s*\{[\s\S]*?display:\s*grid;[\s\S]*?grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);[\s\S]*?gap:\s*18px;[\s\S]*?align-items:\s*stretch;[\s\S]*?\}/,
+    /\.object-parameters-files-grid,\s*\.object-description-location-grid\s*\{[\s\S]*?display:\s*grid;[\s\S]*?gap:\s*18px;[\s\S]*?align-items:\s*stretch;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.object-parameters-files-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);[\s\S]*?\}/,
   );
 
   assert.match(
@@ -318,7 +323,12 @@ test('object description and location share a desktop row with two-third and one
 
   assert.match(
     styles,
-    /\.object-description-location-grid\s*\{[\s\S]*?display:\s*grid;[\s\S]*?grid-template-columns:\s*minmax\(0,\s*2fr\)\s+minmax\(280px,\s*1fr\);[\s\S]*?gap:\s*18px;[\s\S]*?align-items:\s*stretch;[\s\S]*?\}/,
+    /\.object-parameters-files-grid,\s*\.object-description-location-grid\s*\{[\s\S]*?display:\s*grid;[\s\S]*?gap:\s*18px;[\s\S]*?align-items:\s*stretch;[\s\S]*?\}/,
+  );
+
+  assert.match(
+    styles,
+    /\.object-description-location-grid\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*2fr\)\s+minmax\(280px,\s*1fr\);[\s\S]*?\}/,
   );
 
   assert.match(

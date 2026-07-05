@@ -7,6 +7,7 @@ import test from 'node:test';
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const sourcePath = resolve(currentDir, '../src/admin/FeedsAdminPage.tsx');
 const stylesPath = resolve(currentDir, '../src/styles.css');
+const adminRouteStylesPath = resolve(currentDir, '../src/admin/admin-route-pages.css');
 const themeStylesPath = resolve(currentDir, '../src/app-theme.css');
 
 test('feeds admin page source exists', () => {
@@ -312,7 +313,7 @@ test('feeds admin editor can reopen and inspect saved source mappings', () => {
 });
 
 test('feeds admin source mappings summary is not affected by details row grid styles', () => {
-  const styles = readFileSync(stylesPath, 'utf8');
+  const styles = `${readFileSync(stylesPath, 'utf8')}\n${readFileSync(adminRouteStylesPath, 'utf8')}`;
   const themeStyles = readFileSync(themeStylesPath, 'utf8');
 
   assert.match(styles, /\.details-list > div\s*\{/);
