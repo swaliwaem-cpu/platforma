@@ -1,5 +1,37 @@
 # Codex Log
 
+## 2026-07-07 - Web users admin route CSS splitting
+
+Задача:
+
+- Продолжить безопасный route-level CSS split после catalog/admin/object splits: вынести стили `UsersAdminPage` в lazy route CSS, не трогая незавершённые лоты, `LotPresentationsPage`, shared карту, object/detail flows и theme overrides.
+
+Изменения:
+
+- `apps/web/src/admin/users-admin-route.css` - добавлен route-local CSS slice для `UsersAdminPage`: `.admin-users`, users toolbar/layout/table columns, deactivated row state, user form, role permissions panel, role permission chips, deactivation confirm и users mobile rules.
+- `apps/web/src/admin/UsersAdminPage.tsx` - добавлен lazy route CSS import `./users-admin-route.css`.
+- `apps/web/src/styles.css` - удалены вынесенные users-only selectors; global/shared стили оставлены: `.workspace:has(.admin-users)`, shell/sidebar, generic toolbar/table/panel/status/form styles, base `.role-pill`, base `.permission-chip`, `panel-count`, shared map/object/detail/lots/presentations styles.
+- `apps/web/tests/users-admin-route-css-splitting.test.mjs` - добавлена regression-проверка отдельного users route CSS, отсутствия root/object/presentations imports, отсутствия users selectors в `styles.css` и protected shared selectors в route CSS.
+- `apps/web/tests/admin-route-css-splitting.test.mjs` - добавлен guard, что общий admin route CSS не содержит users-admin selectors.
+
+Проверки:
+
+- RED: `cd apps/web && node --test tests/users-admin-route-css-splitting.test.mjs` сначала падал на отсутствующем `users-admin-route.css`/import и users selectors в глобальном `styles.css`.
+- `cd apps/web && node --test tests/users-admin-route-css-splitting.test.mjs tests/objects-admin-route-css-splitting.test.mjs tests/admin-route-css-splitting.test.mjs tests/app-route-code-splitting.test.mjs tests/app-theme.test.mjs tests/sidebar-outside-click.test.mjs tests/sidebar-navigation.test.mjs tests/secure-image-variants.test.mjs tests/lot-presentations-page.test.mjs`
+- `pnpm --filter @platforma/web test`
+- `pnpm --filter @platforma/web exec tsc -p tsconfig.json --noEmit --pretty false`
+- `pnpm --filter @platforma/web build`
+- `git diff --check`
+- В build output CSS разделён на `dist/assets/index-CHaWrkID.css` (`161.52 kB`), `dist/assets/UsersAdminPage-CK2Ipv1u.css` (`3.68 kB`), `dist/assets/CatalogPage-CQJlh0Xx.css` (`30.83 kB`), `dist/assets/admin-route-pages-BgFmrFRd.css` (`13.89 kB`) и `dist/assets/ObjectsAdminPage-GQ5zloYi.css` (`17.76 kB`).
+- В `/tmp/platforma-web-users-css-split-build.log` строка `Some chunks are larger than 500 kB` не найдена.
+
+Ручная проверка:
+
+- Перед приёмкой открыть `/admin/users` и проверить list/table, filters, create/edit form, role permissions panel, deactivation confirmation.
+- Проверить `/admin/users` в обеих темах и mobile width около `760px`.
+- Smoke-check shared routes: `/cabinet`, `/admin/objects`, `/admin/catalog-links`, `/admin/feeds`, `/admin/import`, `/catalog`, `/catalog/map`, `/objects/:slug`, `/objects/:slug/lots/:unitId`, `/presentations`.
+- `LotPresentationsPage` и лоты в этом шаге не менялись и не импортируют users route CSS.
+
 ## 2026-07-05 - Web catalog route CSS splitting
 
 Задача:

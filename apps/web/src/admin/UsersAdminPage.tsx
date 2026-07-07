@@ -31,6 +31,7 @@ import {
 import { useAuth } from '../auth/AuthProvider';
 import { AdminAlert, AdminButton, AdminEmptyState, AdminPanel, AdminStatusBadge } from './AdminUi';
 import { apiRequest } from './api';
+import './users-admin-route.css';
 
 const statusLabels: Record<UserStatus, string> = {
   ACTIVE: 'Активен',

@@ -51,6 +51,10 @@ test('admin route CSS is split out of the global stylesheet', () => {
   assert.doesNotMatch(adminRouteStyles, /\.object-/);
   assert.doesNotMatch(adminRouteStyles, /\.object-detail-/);
   assert.doesNotMatch(adminRouteStyles, /\.admin-objects/);
+  assert.doesNotMatch(adminRouteStyles, /\.admin-users/);
+  assert.doesNotMatch(adminRouteStyles, /\.user-/);
+  assert.doesNotMatch(adminRouteStyles, /\.role-permissions-/);
+  assert.doesNotMatch(adminRouteStyles, /\.permission-group/);
   assert.doesNotMatch(adminRouteStyles, /\.gallery-/);
   assert.doesNotMatch(adminRouteStyles, /\.object-quick-edit-/);
 });
