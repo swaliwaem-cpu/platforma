@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { LocationType, ObjectFileType, ObjectStatus, Prisma } from '@prisma/client';
+import { LocationType, ObjectFileType, ObjectStatus, Prisma, RealEstateObjectType } from '@prisma/client';
 
 import { findCatalogSearchObjectIds } from '../objects/object-search';
 import { PrismaService } from '../prisma/prisma.service';
@@ -47,6 +47,7 @@ type CatalogDirectoryQueryValue = string | string[];
 type MapObjectsQuery = {
   search?: string;
   status?: string;
+  type?: string;
   developerId?: CatalogDirectoryQueryValue;
   krtName?: string;
   locationId?: CatalogDirectoryQueryValue;
@@ -134,6 +135,12 @@ export class MapService {
     if (query.status) {
       filters.push({
         status: this.parseObjectStatus(query.status),
+      });
+    }
+
+    if (query.type) {
+      filters.push({
+        type: this.parseObjectType(query.type),
       });
     }
 
@@ -277,6 +284,16 @@ export class MapService {
     }
 
     return normalizedStatus as ObjectStatus;
+  }
+
+  private parseObjectType(value: string) {
+    const normalizedType = value.trim().toUpperCase();
+
+    if (!Object.values(RealEstateObjectType).includes(normalizedType as RealEstateObjectType)) {
+      throw new BadRequestException('Object type is invalid');
+    }
+
+    return normalizedType as RealEstateObjectType;
   }
 
   private parseInteger(value: string, message: string, min: number, max: number) {
@@ -619,6 +636,7 @@ export class MapService {
 
     return {
       id: object.id,
+      type: object.type,
       title: object.title,
       slug: object.slug,
       status: object.status,

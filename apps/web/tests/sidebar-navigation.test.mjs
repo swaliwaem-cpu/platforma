@@ -14,3 +14,12 @@ test('sidebar keeps cabinet navigation available for the plain user role', () =>
   );
   assert.doesNotMatch(appSource, /user\.role\.name\s*===\s*'user'[\s\S]*?item\.id\s*===\s*'cabinet'/);
 });
+
+test('sidebar catalog navigation exposes residential commercial and all sections', () => {
+  assert.match(appSource, /children:\s*\[[\s\S]*id:\s*'catalog-life'[\s\S]*label:\s*'Жилая'[\s\S]*path:\s*'\/catalog\/life'/);
+  assert.match(appSource, /children:\s*\[[\s\S]*id:\s*'catalog-comm'[\s\S]*label:\s*'Коммерция'[\s\S]*path:\s*'\/catalog\/comm'/);
+  assert.match(appSource, /children:\s*\[[\s\S]*id:\s*'catalog-all'[\s\S]*label:\s*'Все'[\s\S]*path:\s*'\/catalog'/);
+  assert.match(appSource, /className="nav-group"/);
+  assert.match(appSource, /className="nav-submenu" role="menu" aria-label="Разделы каталога"/);
+  assert.match(appSource, /className=\{pathname === child\.path \? 'nav-subitem nav-subitem--active' : 'nav-subitem'\}/);
+});

@@ -1,5 +1,450 @@
 # Codex Log
 
+## 2026-07-10 - Apsis Globe developer production/local insert and 5173 check
+
+Задача:
+
+- Добавить застройщика `Apsis Globe` на production и в локальную базу.
+- Проверить локальный web dev server на обязательном порту `5173`.
+
+Диагностика:
+
+- `developers` имеет уникальные поля `name`, `slug`, `normalized_name`; у `id` нет DB-default в текущей локальной схеме, поэтому для ручной вставки нужен UUID.
+- Локальная проверка до вставки не нашла `Apsis Globe`, `apsis-globe` или `apsis globe`.
+- Production API health доступен через `https://broker.fluffywhite.moscow/api/health` и `https://api.broker.fluffywhite.moscow/health`.
+- После предоставления production SSH-доступа проверен deploy path `/opt/platforma` и compose service `postgres`.
+- Production `.env` не source-compatible для shell, поэтому SQL выполнялся через `docker compose --env-file .env ... exec -T postgres sh -lc ...` с переменными Postgres внутри контейнера.
+- `rules/commands.md` уже фиксирует правило: web dev server запускать только на `5173` с `--strictPort`; если порт занят, перезапускать процесс на этом порту и не уходить на `5174`.
+
+Изменения:
+
+- Локальная БД Docker `platforma-postgres-1` - добавлен `developers` row:
+  - `id = a2b8ed32-cc34-4e2e-8306-4d5e366a1388`
+  - `name = Apsis Globe`
+  - `slug = apsis-globe`
+  - `normalized_name = apsis globe`
+- Production БД `/opt/platforma` - перед изменением создан data-only backup таблицы `developers`: `/opt/platforma-deploy-backups/developer-apsis-globe-20260710-090946/developers-before.sql`.
+- Production БД - добавлен такой же `developers` row для `Apsis Globe`.
+- Локальный web dev server проверен на `5173`; он уже был поднят в detached `screen`-сессии `platforma-web-5173`.
+- `docs/CODEX_LOG.md` - обновлена текущая запись.
+- Код приложения не изменялся.
+
+Проверки:
+
+- `docker exec platforma-postgres-1 psql ... select ... from developers where normalized_name = 'apsis globe' ...` - локальная запись найдена.
+- Production `SELECT ... FROM developers WHERE normalized_name = 'apsis globe' OR slug = 'apsis-globe' ...` до upsert - `0 rows`.
+- Production upsert - вернул `a2b8ed32-cc34-4e2e-8306-4d5e366a1388 | Apsis Globe | apsis-globe | apsis globe`.
+- Production повторный `SELECT ...` после upsert - `1 row`.
+- `lsof -nP -iTCP:5173 -sTCP:LISTEN` - порт `5173` слушает `node`.
+- `ps -fp <web-pid>` - Vite запущен командой `pnpm --filter @platforma/web dev --port 5173 --strictPort`.
+- `curl -I http://localhost:5173/` - `200 OK`.
+- `curl -fsS http://localhost:3000/health` - `status=ok`, `database=ok`, `postgis=true`.
+- `screen -ls` - active detached sessions `platforma-web-5173` и `platforma-api-3000`.
+
+Ручная проверка:
+
+- В локальной и production админке открыть создание/редактирование объекта и убедиться, что `Apsis Globe` доступен в списке застройщиков.
+- В локальном UI открыть `http://localhost:5173/`, войти и проверить сценарий создания объекта.
+
+Спорные места:
+
+- Код не менялся: справочник застройщиков читается из таблицы `developers`, поэтому отдельный deploy/restart приложения для появления строки не нужен.
+
+## 2026-07-09 - Local 5173 dev server restart rule
+
+Задача:
+
+- Поднять локальную платформу и зафиксировать правило, что web dev server всегда работает на порту `5173`; если порт занят, процесс на этом порту нужно перезапустить.
+
+Диагностика:
+
+- `lsof -nP -iTCP:5173 -sTCP:LISTEN` - порт `5173` сначала не слушался.
+- `curl -I http://127.0.0.1:5173/` - сначала вернул connection refused.
+- `curl http://127.0.0.1:3000/health` - сначала API на `3000` тоже не отвечал.
+- `docker compose ps` - Postgres, Redis и MinIO уже были запущены и healthy.
+
+Изменения:
+
+- `rules/commands.md` - правило dev web server усилено: использовать только `5173`, запускать прямой командой `pnpm --filter @platforma/web dev --port 5173 --strictPort`, при занятом `5173` перезапускать процесс на этом порту и не уходить на `5174`.
+- `docs/CODEX_LOG.md` - добавлена текущая запись.
+- Код приложения не изменялся.
+
+Проверки:
+
+- API запущен в detached `screen`-сессии `platforma-api-3000` командой `pnpm dev:api`.
+- Web запущен в detached `screen`-сессии `platforma-web-5173` командой `pnpm --filter @platforma/web dev --port 5173 --strictPort`.
+- `lsof -nP -iTCP:5173 -sTCP:LISTEN` - порт `5173` слушает `node`.
+- `ps -p <web-pid> -o command` - Vite запущен с `--host 0.0.0.0 --port 5173 --strictPort`.
+- `curl -I http://127.0.0.1:5173/` - `200 OK`.
+- `lsof -nP -iTCP:3000 -sTCP:LISTEN` - порт `3000` слушает `node`.
+- `curl -fsS http://127.0.0.1:3000/health` - `status=ok`, `database=ok`, `postgis=true`.
+
+Ручная проверка:
+
+- Открыть `http://localhost:5173/`, войти в приложение и проверить нужный локальный сценарий.
+
+Спорные места:
+
+- В рабочем дереве до задачи уже были незакоммиченные изменения в коде и `docs/CODEX_LOG.md`; они не откатывались и не редактировались, кроме добавления этой записи.
+
+## 2026-07-09 - Production backup cleanup
+
+Задача:
+
+- Освободить место на production, удалив старые ненужные backup-файлы и Docker cache.
+
+Изменения:
+
+- Production `/opt/platforma/backups` - удалены старые майские MinIO/deploy backups:
+  - `minio-platforma.tar.gz`
+  - `deploy-20260518-121909`
+  - `deploy-20260520-080917`
+  - `prod-minio-sync-20260521-101827.tar.gz`
+  - `predeploy-20260524-101715-bec10db`
+- Production `/opt/platforma-deploy-backups` - удалены старые deploy backups от 2026-06-02, 2026-06-04 и 2026-06-05.
+- Production `/root/platforma-db-backup-20260601T062907Z.sql` - удален старый DB backup.
+- Docker на production - удалены старые `platforma-api/web:pre-deploy-20260602*` images и очищен build cache.
+- Живые Docker volumes `platforma_minio_data`, `platforma_postgres_data`, текущие `latest` images и свежие rollback backups от 2026-06-30..2026-07-02 не трогались.
+- `docs/CODEX_LOG.md` - добавлена запись о production cleanup.
+
+Проверки:
+
+- До очистки: `df -h /` - `/dev/vda1` использовал 86G из 96G, `Use% = 90%`, свободно 11G.
+- Перед удалением точечных путей: `du -sch ...` - выбранные filesystem backups занимали 15G.
+- `docker image rm platforma-api/web:pre-deploy-20260602*` - старые pre-deploy images удалены.
+- `docker builder prune -af` - очищено 10.22GB build cache.
+- После очистки: `df -h /` - `/dev/vda1` использует 62G из 96G, `Use% = 65%`, свободно 34G.
+- `docker system df` - `Build Cache = 0B`, Docker volumes reclaimable `0B`.
+- `docker ps` - `platforma-api-1`, `platforma-web-1`, `platforma-postgres-1`, `platforma-redis-1`, `platforma-minio-1` запущены; API/Postgres/Redis/MinIO healthy.
+- `curl -fsS http://127.0.0.1:3000/health` - `status=ok`, `database=ok`, `postgis=true`.
+
+Ручная проверка:
+
+- Открыть production web и проверить логин, каталог, карточку объекта с медиа и админку файлов/объектов.
+
+Спорные места:
+
+- Удалены старые MinIO backup snapshots за 2026-05-12..2026-05-24, поэтому восстановление медиа именно на эти даты теперь недоступно.
+- В `/opt/platforma/backups` остался маленький `prod-minio-before-catalog-import-20260512-172206.tar.gz` на 8K, потому он не влияет на место и выглядит как metadata/empty snapshot.
+
+## 2026-07-09 - Local development server startup
+
+Задача:
+
+- Запустить локальный сервер со всеми зависимостями.
+
+Изменения:
+
+- `docs/CODEX_LOG.md` - добавлена запись о запуске локального окружения.
+- Код приложения, env-файлы и lockfile не изменялись.
+
+Проверки:
+
+- `pnpm install --frozen-lockfile` - lockfile актуален, зависимости синхронизированы.
+- `docker compose up -d postgres redis minio` - Postgres, Redis и MinIO запущены.
+- `pnpm db:generate` - Prisma Client сгенерирован.
+- `pnpm --filter @platforma/api exec prisma migrate status` - database schema is up to date.
+- `pnpm dev:api` - API запущен на `http://localhost:3000`.
+- `pnpm --filter @platforma/web dev --port 5173 --strictPort` - web запущен на `http://localhost:5173`.
+- `curl http://127.0.0.1:3000/health` - `status=ok`, `database=ok`, `postgis=true`.
+- `curl -I http://127.0.0.1:5173/` - `200 OK`.
+
+Ручная проверка:
+
+- Открыть `http://localhost:5173/`, войти в приложение и проверить основной сценарий с текущими локальными данными.
+
+Спорные места:
+
+- `pnpm install` показал предупреждение об ignored build scripts по текущей pnpm policy; Prisma Client после этого успешно сгенерирован.
+- База уже содержала пользователей/роли/permissions, поэтому seed не запускался, чтобы не трогать локальные данные.
+
+## 2026-07-03 - Frontend architecture and CSS audit
+
+Задача:
+
+- Провести read-only анализ frontend, особенно больших файлов и глобальной таблицы стилей, разбив аудит на субагентов и не меняя код.
+
+Диагностика:
+
+- Подтвержден frontend-монолит в нескольких центрах тяжести: `apps/web/src/styles.css` (~10023 строк), `apps/web/src/admin/ObjectsAdminPage.tsx` (~3599), `apps/web/src/objects/ObjectDetailPage.tsx` (~2923), `apps/web/src/admin/FeedsAdminPage.tsx` (~2534), `apps/web/src/catalog/CatalogPage.tsx` (~2397), `apps/web/src/presentations/LotPresentationsPage.tsx` (~2292), `apps/web/src/App.tsx` (~1219).
+- `apps/web/src/styles.css` смешивает shell, admin, catalog, map, object detail, object feed, modals and presentations; `apps/web/src/app-theme.css` добавляет широкий theme override layer через `html[data-app-theme]`.
+- `apps/web/src/App.tsx` синхронно импортирует крупные route-компоненты, а `dynamic import` / `React.lazy` в `apps/web/src` не найден.
+- Основные архитектурные риски: ручной router/pathname state, отдельный query state в `CatalogPage`, дубли permission gates, API/data-flow внутри page-компонентов, source/regex-heavy web tests.
+- CSS-аудит отметил возможный неописанный token `--catalog-gold` в `apps/web/src/styles.css`; это требует отдельной проверки перед правкой.
+
+Изменения:
+
+- Код не изменялся.
+- `docs/CODEX_LOG.md` - добавлена запись о read-only аудите.
+
+Проверки:
+
+- `pnpm --filter @platforma/web test` - 252/252 passed.
+- Build не запускался, чтобы не перезаписывать `dist` в read-only задаче.
+
+Ручная проверка:
+
+- Перед любым frontend-рефакторингом проверить `/catalog`, `/catalog?view=list`, `/catalog/map`, `/objects/:slug`, `/objects/:slug/lots/:unitId`, `/admin/objects`, `/admin/users`, `/admin/catalog-links`, `/admin/import`, `/admin/feeds`, `/presentations`, обе темы, mobile widths and Safari/WebKit.
+
+Спорные места:
+
+- Разделение CSS и route-splitting требуют отдельного согласования плана; без свежего `pnpm build:web` нельзя честно назвать текущий production bundle size.
+- Удалять CSS-классы по статическому поиску нельзя без ручной проверки, потому часть классов может собираться динамически.
+
+## 2026-07-01 - Optional primary location for object publication
+
+Задача:
+
+- На production разрешить сохранять и публиковать объект без заполненного района/primary location.
+
+Изменения:
+
+- `apps/api/src/objects/objects.service.ts` - `primaryLocationId` убран из publish-required fields и из внутреннего `ObjectLifecycleState`; если район указан, обычная валидация location id и связи объектов с локациями сохраняется.
+- `apps/api/tests/services.test.cjs` - добавлены регрессии на публикацию объекта без основного района и очистку основного района у опубликованного объекта.
+- Production `/opt/platforma` - точечно пропатчен `apps/api/src/objects/objects.service.ts`; backup сохранен в `/opt/platforma-deploy-backups/object-location-optional-20260701/objects.service.ts.before`.
+
+Проверки:
+
+- RED: `pnpm --filter @platforma/api build && node --test --test-name-pattern "primary location" apps/api/tests/services.test.cjs` - оба новых сценария падали с `Missing fields: primaryLocationId`.
+- GREEN targeted: `pnpm --filter @platforma/api build && node --test --test-name-pattern "primary location" apps/api/tests/services.test.cjs` - 2/2 passed.
+- Full API: `pnpm --filter @platforma/api test` - 198/198 passed.
+- Production deploy: `docker compose -f docker-compose.prod.yml up -d --build api` - `platforma-api-1` пересобран и запущен.
+- Production health: `curl -fsS http://127.0.0.1:3000/health` - `status=ok`, `database=ok`, `postgis=true`.
+- Production runtime smoke inside `platforma-api-1`: mock `ObjectsService.publish()` с `primaryLocationId: null` вернул `PUBLISHED`.
+
+Ручная проверка:
+
+- В админке открыть объект, оставить `Основной район` пустым, сохранить и опубликовать.
+
+Спорные места:
+
+- Старые индексные docs про lifecycle еще могут упоминать `primary location` как обязательное publish-поле; backend-поведение уже изменено и покрыто тестами/журналом.
+
+## 2026-06-30 - Optional developer for object publication
+
+Задача:
+
+- На production разрешить сохранять и публиковать объект без заполненного застройщика, чтобы объект `Капельский 5` можно было опубликовать без выбора developer.
+
+Изменения:
+
+- `apps/api/src/objects/objects.service.ts` - `developerId` убран из publish-required fields и из внутреннего `ObjectLifecycleState`; если застройщик указан, его существование по-прежнему валидируется.
+- `apps/api/tests/services.test.cjs` - добавлены регрессии на публикацию объекта без застройщика и очистку застройщика у опубликованного объекта.
+- Production `/opt/platforma` - точечно пропатчен `apps/api/src/objects/objects.service.ts`; backup сохранен в `/opt/platforma-deploy-backups/object-developer-optional-20260630/objects.service.ts.before`.
+
+Проверки:
+
+- RED: `node --test --test-name-pattern "developer" apps/api/tests/services.test.cjs` - оба новых сценария падали с `Missing fields: developerId`.
+- GREEN targeted: `node --test --test-name-pattern "developer" apps/api/tests/services.test.cjs` - 2/2 passed.
+- Full API: `pnpm --filter @platforma/api test` - 196/196 passed.
+- Production deploy: `docker compose -f docker-compose.prod.yml up -d --build api` - `platforma-api-1` пересобран и запущен.
+- Production health: `curl -fsS http://127.0.0.1:3000/health` - `status=ok`, `database=ok`, `postgis=true`.
+- Production runtime smoke inside `platforma-api-1`: mock `ObjectsService.publish()` с `developerId: null` вернул `PUBLISHED`.
+
+Ручная проверка:
+
+- В админке открыть объект `Капельский 5`, оставить `Застройщик` в состоянии `Не выбран`, сохранить и нажать публикацию.
+
+Спорные места:
+
+- Старые индексные docs про lifecycle еще могут упоминать `developer` как обязательное publish-поле; поведение backend уже изменено и зафиксировано в тестах/журнале.
+
+## 2026-06-30 - Safari catalog and lot table layout fix
+
+Задача:
+
+- Исправить Safari-отображение каталога и таблицы лотов на production: выезд кнопок фильтра, неодинаковую высоту строк лотов и смешение веса шрифта на кириллице/латинице.
+
+Изменения:
+
+- `apps/web/src/styles.css` - фильтр каталога переведен на сжимаемую grid-схему; кнопки `Сбросить` / `+ Фильтры` получили адаптивную ширину и мобильный layout; для Safari/WebKit добавлен системный font stack; строки таблицы лотов стабилизированы по высоте, название и адрес лота ограничены клампами.
+- `apps/web/tests/catalog-lot-filters.test.mjs` - добавлены регрессии на Safari-safe layout кнопок фильтра и системный font stack для Safari.
+- `apps/web/tests/object-detail-feed-units.test.mjs` - добавлена регрессия на стабильную высоту строк таблицы лотов.
+- Production `/opt/platforma` - точечно пропатчен только `apps/web/src/styles.css` без копирования локального файла целиком; backup сохранен в `/opt/platforma-deploy-backups/safari-layout-20260630/styles.css.before`.
+
+Проверки:
+
+- RED: `node --test apps/web/tests/catalog-lot-filters.test.mjs` - новые проверки падали на старом fixed layout и отсутствии Safari font override.
+- RED: `node --test apps/web/tests/object-detail-feed-units.test.mjs` - новая проверка падала на отсутствии фиксированной высоты строк.
+- GREEN targeted: `node --test apps/web/tests/catalog-lot-filters.test.mjs` - 6/6 passed.
+- GREEN targeted: `node --test apps/web/tests/object-detail-feed-units.test.mjs` - 16/16 passed.
+- `pnpm --filter @platforma/web test` - 252/252 passed.
+- `pnpm --filter @platforma/web build` - passed; Vite оставил только предупреждение о размере чанка.
+- Playwright MCP fixture с реальным `styles.css`: кнопки фильтра внутри панели (`actionsInsidePanel=true`), высоты строк `[80,80,80,80,80]`, spread `0`.
+- Production deploy: `docker compose -f docker-compose.prod.yml up -d --build web` - `platforma-web-1` и зависимый `platforma-api-1` пересозданы и запущены.
+- Production smoke: `curl -I http://127.0.0.1:5173/` - `200 OK`; `curl http://127.0.0.1:3000/health` - `status=ok`, `database=ok`; новый CSS найден в bundle `index-Bv4LCoyd.css` (`clamp(140px,13vw,190px)`, `height:80px`, `webkit-touch-callout`, `webkit-hyphens`).
+
+Ручная проверка:
+
+- В Safari с авторизованной сессией открыть каталог и объект с лотами: проверить, что `+ Фильтры` не выезжает за панель, заголовки/карточки не смешивают вес латиницы и кириллицы, строки лотов одинаковой высоты.
+
+Спорные места:
+
+- Полная автоматическая проверка именно в Safari не выполнена: `safaridriver` вернул требование включить `Allow remote automation` в настройках Safari. Геометрия проверена через Playwright MCP fixture, production проверен через сборку, bundle grep и health checks.
+
+## 2026-06-30 - OBJ-N missing feeds PDF
+
+Задача:
+
+- Сформировать локальный PDF-отчет со списком объектов, у которых на production нет лотов и feed sources.
+
+Изменения:
+
+- `OBJ-N.pdf` - создан в корне проекта на основе production CSV-выгрузки.
+- `docs/CODEX_LOG.md` - добавлена запись о создании отчета.
+
+Проверки:
+
+- Production SQL export: 227 объектов без `feed_units` и `feed_sources`.
+- `file OBJ-N.pdf` - PDF document, version 1.4, 8 pages.
+- `mdls OBJ-N.pdf` - `kMDItemNumberOfPages = 8`, `kMDItemFSSize = 226651`.
+- Quick Look thumbnail первой страницы визуально проверен: заголовок `OBJ-N`, 227 объектов, 110 застройщиков, список читается.
+
+Ручная проверка:
+
+- Открыть `OBJ-N.pdf` из корня проекта и при необходимости отфильтровать `archived` объекты отдельно.
+
+## 2026-06-30 - MR Group feed media order repair
+
+Задача:
+
+- Для 14 ЖК MR Group поднять планировку конкретного лота перед поэтажным планом в уже импортированных media и закрепить такой порядок для следующих CIAN feed imports.
+
+Изменения:
+
+- `tools/feed-import/src/index.ts` - добавлено source-specific правило для MR Group + `CIAN_XML`: media с label `photo` поднимается перед `layout-photo`, затем `sortOrder` пересчитывается последовательно.
+- `tools/feed-import/tests/import-engine.test.cjs` - существующий MR Group regression test расширен проверкой порядка `FeedUnitMedia.sortOrder`.
+- Production `/opt/platforma` - обновлены `tools/feed-import/src/index.ts` и `tools/feed-import/tests/import-engine.test.cjs` без git-операций; backup файлов сохранен в `/opt/platforma-deploy-backups/mrgroup-media-20260630/`.
+- Production DB - создана backup table `feed_unit_media_mrgroup_order_backup_20260630` со всеми 18 401 media-связями целевых 14 объектов; обновлено 10 060 строк `feed_unit_media.sort_order` для 5 030 лотов.
+
+Проверки:
+
+- RED: `pnpm --filter @platforma/feed-import build && cd tools/feed-import && node --test --test-name-pattern "MR Group CIAN" tests/import-engine.test.cjs` - сначала падал на порядке `layout-photo` перед `photo`.
+- GREEN targeted: `pnpm --filter @platforma/feed-import build && cd tools/feed-import && node --test --test-name-pattern "MR Group CIAN" tests/import-engine.test.cjs` - 1/1 passed.
+- Full feed import: `pnpm --filter @platforma/feed-import test` - 63/63 passed.
+- Production deploy: `docker compose -f docker-compose.prod.yml up -d --build api` - `platforma-api-1` пересоздан и запущен.
+- Production targeted test inside `api`: `node --test --test-name-pattern 'MR Group CIAN' tools/feed-import/tests/import-engine.test.cjs` - 1/1 passed.
+- Production DB verification: после repair `remaining_wrong_units=0` для целевых объектов; sample из backup показал swap `layout-photo/photo` с `0/1` на `1/0`.
+- Production health: `platforma-api-1` `healthy`; `curl -fsS http://127.0.0.1:3000/health` - `status=ok`, `database=ok`, `postgis=true`.
+
+Ручная проверка:
+
+- Открыть несколько лотов в объектах `Веер 2`, `Сити Бэй`, `СИТИДЗЕН`, `ЖК СЕТ` и убедиться, что первым media отображается планировка конкретного лота, а поэтажный план идет вторым.
+
+Спорные места:
+
+- Правило применено только для MR Group `CIAN_XML`; для других CIAN sources порядок `LayoutPhoto` перед `Photos` оставлен прежним.
+- У двух объектов есть отдельные лоты с нестандартным набором labels, но проверка `layout-photo раньше photo` после repair вернула 0.
+
+## 2026-06-30 - Kortros Secret Garden feed compatibility check
+
+Задача:
+
+- Проверить XML feed `https://feeds.kortros.ru/ya/?obj=secretgarden` на совместимость с текущим feed importer.
+
+Диагностика:
+
+- URL доступен, возвращает `200 OK`, `Content-Type: text/xml; charset=utf-8`, размер XML `332523` bytes.
+- XML имеет корневой `<realty-feed>` и 192 `<offer internal-id="...">`, поэтому `AUTO` определяет формат как `YANDEX_REALTY`.
+- `@platforma/feed-import analyze` по файлу и по URL успешно разобрал 192 units, 0 parser warnings, 1 object group `Сикрет Гарден`.
+- Suggested `filterJson`: `{"buildingNames":["Сикрет Гарден"],"yandexBuildingIds":["4872943"],"yandexHouseIds":["4872949"]}`.
+- Ключевые поля парсятся: price/effectivePrice/pricePerMeter/area/rooms/floor/completion/media заполнены у 192/192 лотов; media label `3d plan` сохраняется.
+- Ограничение: в сыром XML у 192/192 лотов есть прямой `<apartment>`, но текущий Yandex parser не переносит его в `residentialDetails.apartmentNumber`, поэтому в таблицах лотов номер квартиры будет отображаться как общий title `Сикрет Гарден, квартира`.
+- Адрес в самом XML пустой (`<address/>`), `sales-agent/organization` тоже пустой; статуса и скидок в фиде нет, поэтому importer нормализует все лоты как `AVAILABLE` без `discountPrice`.
+
+Вывод:
+
+- Фид подходит текущему parser/importer как `YANDEX_REALTY` для анализа, preview/run и маппинга к одному объекту, но для полного качества lot detail желательно доработать чтение прямого `offer.apartment`.
+
+Изменения:
+
+- `docs/CODEX_LOG.md` - добавлена текущая запись о проверке.
+
+Проверки:
+
+- `curl -L --fail --connect-timeout 20 --max-time 120 -D /tmp/kortros-feed.headers -o /tmp/kortros-secretgarden.xml https://feeds.kortros.ru/ya/?obj=secretgarden`
+- `pnpm --filter @platforma/feed-import build`
+- `node tools/feed-import/dist/index.js analyze --format AUTO --source-kind FILE --file /tmp/kortros-secretgarden.xml --output /tmp/kortros-secretgarden-analysis-file.json`
+- `node tools/feed-import/dist/index.js analyze --format AUTO --source-kind URL --url https://feeds.kortros.ru/ya/?obj=secretgarden --output /tmp/kortros-secretgarden-analysis-url.json`
+- Node parser smoke через `YandexRealtyFeedParser` по `/tmp/kortros-secretgarden.xml`.
+
+Ручная проверка:
+
+- В `/admin/feeds` создать URL source с format `AUTO` или `YANDEX_REALTY`, привязать к объекту `Сикрет Гарден` или использовать suggested filter, выполнить preview и проверить, что количество лотов 192 и что отсутствие номера квартиры приемлемо до parser-fix.
+
+## 2026-06-30 - Profitbase feed parser adaptation
+
+Задача:
+
+- Адаптировать Profitbase XML feed `https://pb20909.profitbase.ru/export/profitbase_xml/15158b2542e32931007737e7ca1e8eae?scheme=https` к текущему feed importer без добавления нового публичного формата.
+
+Изменения:
+
+- `tools/feed-import/src/index.ts` - Yandex Realty parser теперь поддерживает Profitbase-поля внутри `<realty-feed type="profitbase_xml">`:
+  - берет object/building/address из `<object><name>`, `<object><location>`, `<house>`;
+  - читает completion из `<house><built-year>` и `<house><ready-quarter>`;
+  - нормализует `status` (`AVAILABLE`, `SOLD`, `UNAVAILABLE`, `BOOKED`);
+  - читает скидочные цены из `<promo-price>` и `special-offers/special-offer/discount-price`, выбирая минимальную цену ниже базовой;
+  - берет apartment number из `<number>`;
+  - читает `ceiling_height`;
+  - сохраняет media labels из `image type="plan|plan floor|house"`.
+- `tools/feed-import/tests/parser.test.cjs` - добавлены regression tests для Profitbase offer fields и анализа объекта/mapping.
+- `docs/CODEX_LOG.md` - добавлена запись о доработке.
+- Production `/opt/platforma` - обновлены `tools/feed-import/src/index.ts` и `tools/feed-import/tests/parser.test.cjs` без git-операций; backup сохранен в `/opt/platforma-deploy-backups/profitbase-feed-20260630/`.
+
+Проверки:
+
+- RED: `pnpm --filter @platforma/feed-import build && cd tools/feed-import && node --test --test-name-pattern "Profitbase" tests/parser.test.cjs` - сначала падал на `title=null` и разбиении Profitbase feed на отдельные группы.
+- GREEN targeted: `pnpm --filter @platforma/feed-import build && cd tools/feed-import && node --test --test-name-pattern "Profitbase" tests/parser.test.cjs` - 2/2 passed.
+- Full feed import: `pnpm --filter @platforma/feed-import test` - 63/63 passed.
+- File analyze: `pnpm --filter @platforma/feed-import run analyze -- --format AUTO --source-kind FILE --file /tmp/platforma-profitbase-feed.xml --output /tmp/platforma-profitbase-analysis-after.json` - `YANDEX_REALTY`, 866 units, 0 warnings, 1 object `ЖК Дом Дау`.
+- URL analyze: `pnpm --filter @platforma/feed-import run analyze -- --format AUTO --source-kind URL --url https://pb20909.profitbase.ru/export/profitbase_xml/15158b2542e32931007737e7ca1e8eae?scheme=https --output /tmp/platforma-profitbase-analysis-url-after.json` - `YANDEX_REALTY`, 866 units, 0 warnings, 1 object `ЖК Дом Дау`.
+- Parser smoke по реальному XML: статусы `AVAILABLE` 277, `SOLD` 304, `ARCHIVED` 282, `BOOKED` 3; project/address/building/completion/apartment number заполнены у 866/866; discountPrice заполнен у 866/866; media labels сохранены.
+- `git diff --check` - clean.
+- Production deploy: `docker compose -f docker-compose.prod.yml up -d --build api` - `platforma-api-1` пересоздан и запущен.
+- Production health: `docker ps --format ...` - `platforma-api-1` `Up` и `healthy`; `curl -fsS http://127.0.0.1:3000/health` - `status=ok`, `database=ok`, `postgis=true`.
+- Production URL analyze inside `api`: `YANDEX_REALTY`, 866 units, 0 warnings, 1 object `ЖК Дом Дау`, `filterJson={"buildingNames":["ЖК Дом Дау"],"addressIncludes":["1-й Красногвардейский проезд"]}`.
+
+Ручная проверка:
+
+- В `/admin/feeds` создать/обновить URL source с format `AUTO` или `YANDEX_REALTY`, привязать к объекту `ЖК Дом Дау` или использовать suggested filter `{"buildingNames":["ЖК Дом Дау"],"addressIncludes":["1-й Красногвардейский проезд"]}`, выполнить preview и проверить counts/statuses перед run.
+
+## 2026-06-30 - Profitbase feed compatibility check
+
+Задача:
+
+- Проверить Profitbase XML feed `https://pb20909.profitbase.ru/export/profitbase_xml/15158b2542e32931007737e7ca1e8eae?scheme=https` на совместимость с текущим feed importer.
+
+Диагностика:
+
+- URL доступен, возвращает `200 OK`, `Content-Type: application/xml; charset=UTF-8`, размер XML `13283150` bytes, файл `30.06.2026 Profitbase XML. ЖК Дом Дау - ЖК Дом Дау.xml`.
+- XML имеет корневой `<realty-feed type="profitbase_xml">` и 866 `<offer internal-id="...">`, поэтому `AUTO` определяет формат как `YANDEX_REALTY`.
+- `@platforma/feed-import analyze` успешно разобрал 866 units и не выдал parser warnings.
+- При этом analyze сгруппировал 866 объектов `Без названия` по 1 лоту и не предложил `filterJson`: текущий Yandex parser не читает Profitbase-поля `<object><name>`, `<object><location>`, `<house>`.
+- Нормализованные лоты теряют `projectName`, `building`, `address`, `title`, `completionYear`, `completionQuarter`, apartment number и ceiling height, хотя эти данные есть в сыром Profitbase XML.
+- Все 866 normalized units получили статус `AVAILABLE`, хотя в сыром XML статусы: `AVAILABLE` 277, `SOLD` 304, `UNAVAILABLE` 282, `BOOKED` 3.
+- Скидки не импортируются: 373 лота имеют `<promo-price>`, все 866 имеют `special-offers/special-offer/discount-price`, но normalized `discountPrice` пустой.
+- Media URL читаются, всего 2600 links, но `image type="plan|plan floor|house"` теряется как label.
+
+Вывод:
+
+- Фид нельзя безопасно запускать в текущем importer как production source без доработки Profitbase/Yandex parser: будут некорректные статусы, скидки, completion, object grouping/mapping и часть detail fields.
+
+Изменения:
+
+- `docs/CODEX_LOG.md` - добавлена запись о проверке.
+
+Проверки:
+
+- `curl -L --fail --max-time 120 -I https://pb20909.profitbase.ru/export/profitbase_xml/15158b2542e32931007737e7ca1e8eae?scheme=https`
+- `curl -L --fail --max-time 120 https://pb20909.profitbase.ru/export/profitbase_xml/15158b2542e32931007737e7ca1e8eae?scheme=https -o /tmp/platforma-profitbase-feed.xml`
+- `pnpm --filter @platforma/feed-import run analyze -- --format AUTO --source-kind FILE --file /tmp/platforma-profitbase-feed.xml --output /tmp/platforma-profitbase-analysis.json`
+- Node parser smoke через `YandexRealtyFeedParser` по `/tmp/platforma-profitbase-feed.xml`.
+
+Ручная проверка:
+
+- Перед import run доработать parser под Profitbase XML и повторить analyze/preview, проверив route к объекту `ЖК Дом Дау`, статусы, скидочные цены, completion, media labels и lot detail fields.
+
 ## 2026-06-29 - Lot presentation workspace implementation
 
 Задача:
@@ -2703,3 +3148,145 @@ Production repair:
 Спорные места:
 
 - Если конкретный лот еще не находится ни в одной подборке, tooltip не показывается, чтобы не добавлять пустое окно; модалка добавления по клику продолжает показывать все подборки.
+
+## 2026-07-10 - Commercial WordPress object import profile
+
+Задача:
+
+- Добавить импорт коммерческих объектов из локального WordPress по аналогии с жилыми объектами, не импортировать PDF и разделить объекты платформы на `RESIDENTIAL` / `COMMERCIAL`.
+
+Изменения:
+
+- `apps/api/prisma/schema.prisma`, `apps/api/prisma/migrations/20260710120000_add_real_estate_object_type/migration.sql` - добавлен `RealEstateObjectType` и поле `RealEstateObject.type` с default `RESIDENTIAL`.
+- `packages/shared/src/index.ts`, `apps/api/src/objects/objects.service.ts`, `apps/api/src/map/map.service.ts` - object type добавлен в contracts, create/update/list/map serialization и фильтры.
+- `tools/wp-import/src/profiles.ts`, `tools/wp-import/src/env.ts`, `tools/wp-import/src/wordpress-client.ts`, `tools/wp-import/src/mapper.ts`, `tools/wp-import/src/importer.ts` - добавлены профили `residential`/`commercial`; commercial читает `commercials`, taxonomies `commercial/custom_tag-three`, пишет `COMMERCIAL`, не маппит files/PDF и архивирует только объекты своего типа.
+- `apps/web/src/admin/ObjectsAdminPage.tsx`, `apps/web/src/catalog/CatalogPage.tsx`, `apps/web/src/admin/ImportAdminPage.tsx` - добавлены выбор типа в форме объекта, фильтры раздела в админке/каталоге и отображение profile/objectType/postType в отчётах импорта.
+- `.env.example`, `tools/wp-import/.env.example` - `WP_IMPORT_PROFILE` заменяет legacy `WP_POST_TYPE` в примерах.
+
+Проверки:
+
+- `pnpm --filter @platforma/wp-import test` - 21/21 passed.
+- `pnpm --filter @platforma/api build && pnpm --filter @platforma/api test` - 201/201 passed.
+- `pnpm --filter @platforma/web build && pnpm --filter @platforma/web test` - 255/255 passed; Vite оставил только предупреждение о размере чанка.
+- `pnpm build` - passed; Vite оставил только предупреждение о размере чанка.
+- `WP_IMPORT_PROFILE=commercial ... pnpm --filter @platforma/wp-import run preview` - `SUCCESS`, `objectsFound=18`, `objectsMapped=18`, `validImagesMapped=265`, `validFilesMapped=0`, `warnings=0`, `errors=0`.
+- Локальная Prisma DB миграция `20260710120000_add_real_estate_object_type` применена; `prisma migrate status` показал `Database schema is up to date`.
+
+Ручная проверка:
+
+- В админке создать/открыть объект, проверить поле `Тип`; в списке объектов и каталоге проверить фильтр `Раздел`.
+- После `run` коммерческого импорта проверить несколько объектов `COMMERCIAL` в админке и убедиться, что PDF/files не появились.
+
+Спорные места:
+
+- `WP_POST_TYPE` больше не перебивает профиль: post type берётся из `WP_IMPORT_PROFILE`, чтобы commercial запуск не мог случайно прочитать жилые записи.
+
+## 2026-07-10 - Refresh API after commercial import
+
+Задача:
+
+- Проверить, почему импортированные коммерческие объекты отображаются в админке как `Жилая`.
+
+Изменения:
+
+- Код не менялся; перезапущен локальный API dev server на `:3000`, чтобы он работал с актуальной сборкой, где serializers отдают `RealEstateObject.type`.
+
+Проверки:
+
+- Prisma DB check: `Деловой центр Twist` имеет `type=COMMERCIAL`.
+- Prisma DB check: импортированные WP-объекты распределены как `RESIDENTIAL=303`, `COMMERCIAL=18`.
+- `apps/api/dist/objects/objects.service.js` и `apps/api/dist/map/map.service.js` содержат `type: object.type`.
+
+Ручная проверка:
+
+- Обновить страницу редактирования импортированного коммерческого объекта в админке и проверить, что поле `Тип` показывает `Коммерция`.
+
+Спорные места:
+
+- Если браузер держит старый ответ, может понадобиться hard refresh страницы админки.
+
+## 2026-07-10 - Split catalog entry into residential commercial and all
+
+Задача:
+
+- Разделить каталог на явные входы `/catalog/life`, `/catalog/comm` и `/catalog`, а в боковом меню раскрывать под `Каталог` пункты `Жилая`, `Коммерция`, `Все`.
+
+Изменения:
+
+- `apps/web/src/App.tsx` - пункт `Каталог` в sidebar получил submenu с переходами на `/catalog/life`, `/catalog/comm`, `/catalog`.
+- `apps/web/src/catalog/CatalogPage.tsx` - typed routes мапятся в `RESIDENTIAL` / `COMMERCIAL`, `/catalog` остается общим списком; reset, quick links и переход list/map сохраняют текущий раздел.
+- `apps/web/src/styles.css`, `apps/web/src/app-theme.css` - добавлены спокойные hover/focus стили submenu без новых зависимостей.
+- `apps/web/tests/sidebar-navigation.test.mjs`, `apps/web/tests/catalog-lot-filters.test.mjs`, `apps/web/tests/catalog-quick-links-page.test.mjs` - добавлены регрессии на submenu, typed routes, reset, quick links и map switch.
+
+Проверки:
+
+- `node --test apps/web/tests/sidebar-navigation.test.mjs apps/web/tests/catalog-quick-links-page.test.mjs apps/web/tests/catalog-lot-filters.test.mjs` - 26/26 passed.
+- `pnpm --filter @platforma/web build` - passed; Vite оставил только предупреждение о размере чанка.
+- `pnpm --filter @platforma/web test` - 260/260 passed.
+
+Ручная проверка:
+
+- В sidebar навести/focus на `Каталог`, открыть `Жилая`, `Коммерция`, `Все`; проверить, что `/catalog/life` показывает только жилые, `/catalog/comm` только коммерческие, `/catalog` все.
+- С typed routes проверить `Сбросить`, quick links и переход на карту: карта должна открываться как `/catalog/map?type=RESIDENTIAL` или `/catalog/map?type=COMMERCIAL`.
+
+Спорные места:
+
+- Для карты оставлен один маршрут `/catalog/map`, а выбранный раздел передается query-параметром `type`, чтобы не плодить дополнительные map routes.
+
+## 2026-07-10 - Merge MR Office developer into MR Group
+
+Задача:
+
+- Объединить застройщика `MR Office` с `MR Group` и убрать `MR Office` из справочника.
+
+Изменения:
+
+- `tools/wp-import/developer-aliases.json` - добавлен алиас `MR Office` -> `MR Group`, чтобы будущие WordPress imports не создавали отдельного застройщика.
+- `tools/wp-import/tests/mapper.test.cjs` - добавлена регрессия на default developer aliases для `MR Office`.
+- Локальная Prisma DB - 3 коммерческих объекта перенесены с `MR Office` на `MR Group`, пустая запись `MR Office` удалена.
+
+Проверки:
+
+- DB check: `MR Office` отсутствует, `MR Group` содержит 27 объектов.
+- DB check: `Деловые небоскрёбы iCity`, `Офисная недвижимость JOIS`, `Офисный небоскрёб Top Tower` теперь привязаны к `MR Group`.
+- `pnpm --filter @platforma/wp-import test` - 22/22 passed.
+
+Ручная проверка:
+
+- В админке и каталоге открыть фильтр застройщиков и убедиться, что `MR Office` больше не отображается, а коммерческие MR-объекты показывают `MR Group`.
+
+Спорные места:
+
+- `MR Private` не объединялся с `MR Group`: у него отдельные жилые объекты, а задача была только про `MR Office`.
+
+## 2026-07-10 - Restrict lot presentations to main admin
+
+Задача:
+
+- Перед production-релизом PDF/`Подборок` сделать раздел доступным только главному аккаунту `admin@fluffywhite.moscow`.
+
+Изменения:
+
+- `apps/web/src/presentations/presentationAccess.ts` - добавлен единый frontend helper доступа к `Подборкам` по email.
+- `apps/web/src/App.tsx` - пункт sidebar `Подборки`, ссылка в кабинете и прямой route `/presentations` теперь доступны только разрешенному email.
+- `apps/web/src/presentations/LotCollectionAction.tsx` - кнопка добавления лота в работу скрывается для остальных пользователей.
+- `apps/api/src/lot-presentations/lot-presentations-access.guard.ts`, `apps/api/src/lot-presentations/lot-presentations.controller.ts`, `apps/api/src/lot-presentations/lot-presentations.module.ts` - API `/lot-presentations/*` закрыт отдельным guard поверх `JwtAuthGuard`.
+- `apps/web/tests/lot-presentations-page.test.mjs`, `apps/api/tests/lot-presentations-schema.test.cjs` - добавлены регрессии на frontend и backend ограничения.
+
+Проверки:
+
+- RED: `pnpm --filter @platforma/web test -- tests/lot-presentations-page.test.mjs` - падал на отсутствующем `presentationAccess.ts`.
+- `pnpm --filter @platforma/web test` - 260/260 passed.
+- `node --test apps/api/tests/lot-presentations-schema.test.cjs` - 10/10 passed.
+- `pnpm db:generate` - Prisma Client сгенерирован.
+- `pnpm test` - passed: web 260/260, api 202/202, wp-import 22/22, feed-import 63/63.
+- `pnpm build` - passed; Vite оставил только предупреждение о размере client chunk.
+
+Ручная проверка:
+
+- На production проверить, что `admin@fluffywhite.moscow` видит `Подборки`, открывает `/presentations` и работает с PDF.
+- Под другим пользователем проверить отсутствие пункта `Подборки`, отсутствие кнопок добавления лота в работу, `AccessDenied` на `/presentations` и `403` на `/api/lot-presentations/workspace`.
+
+Спорные места:
+
+- Доступ зафиксирован по email, без нового RBAC permission, потому что требование касается одного главного аккаунта и не требует расширяемой роли.

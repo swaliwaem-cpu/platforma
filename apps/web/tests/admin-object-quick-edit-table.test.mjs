@@ -163,16 +163,24 @@ test('objects admin list exposes expandable location filters and sends API param
 
   assert.notEqual(listToolbarSource, '');
   assert.match(pageSource, /const \[isObjectFiltersExpanded,\s*setIsObjectFiltersExpanded\] = useState\(false\)/);
+  assert.match(pageSource, /const \[typeFilter,\s*setTypeFilter\] = useState\(''\)/);
   assert.match(pageSource, /const \[districtSearch,\s*setDistrictSearch\] = useState\(''\)/);
   assert.match(pageSource, /const \[areaSearch,\s*setAreaSearch\] = useState\(''\)/);
   assert.match(pageSource, /const \[metroSearch,\s*setMetroSearch\] = useState\(''\)/);
+  assert.match(pageSource, /params\.set\('type',\s*typeFilter\)/);
   assert.match(pageSource, /districtSearch\.trim\(\)/);
   assert.match(pageSource, /params\.set\('districtSearch',\s*districtSearch\.trim\(\)\)/);
   assert.match(pageSource, /params\.set\('areaSearch',\s*areaSearch\.trim\(\)\)/);
   assert.match(pageSource, /params\.set\('metroSearch',\s*metroSearch\.trim\(\)\)/);
+  assert.match(pageSource, /setTypeFilter\(''\)/);
   assert.match(pageSource, /setDistrictSearch\(''\)/);
   assert.match(pageSource, /setAreaSearch\(''\)/);
   assert.match(pageSource, /setMetroSearch\(''\)/);
+  assert.match(listToolbarSource, />\s*Раздел\s*</);
+  assert.match(listToolbarSource, /value=\{typeFilter\}/);
+  assert.match(listToolbarSource, /setTypeFilter\(event\.target\.value\)/);
+  assert.match(listToolbarSource, /<option value="RESIDENTIAL">Жилая<\/option>/);
+  assert.match(listToolbarSource, /<option value="COMMERCIAL">Коммерция<\/option>/);
   assert.match(listToolbarSource, />\s*\+ Фильтры\s*</);
   assert.match(listToolbarSource, />\s*Районы\s*</);
   assert.match(listToolbarSource, />\s*Окружение\s*</);

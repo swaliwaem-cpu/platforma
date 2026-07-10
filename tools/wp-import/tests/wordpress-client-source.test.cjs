@@ -12,3 +12,10 @@ test('WordPress import reads only published site objects', () => {
   assert.doesNotMatch(source, /'private'/);
   assert.doesNotMatch(source, /post_status IN \(\?, \?, \?\)/);
 });
+
+test('WordPress import reads terms from the selected import profile taxonomies', () => {
+  assert.match(source, /const taxonomyPlaceholders = this\.config\.taxonomies\.map/);
+  assert.match(source, /\.\.\.this\.config\.taxonomies/);
+  assert.doesNotMatch(source, /\['nedvizhimost', 'custom_tag-two'\]/);
+  assert.doesNotMatch(source, /\[ids, 'nedvizhimost', 'custom_tag-two'\]/);
+});

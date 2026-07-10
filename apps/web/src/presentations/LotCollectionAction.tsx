@@ -4,6 +4,7 @@ import type { LotPresentationWorkspaceResponse } from '@platforma/shared';
 
 import { apiRequest } from '../admin/api';
 import { useAuth } from '../auth/AuthProvider';
+import { canAccessLotPresentations } from './presentationAccess';
 
 type LotCollectionActionProps = {
   unitId: string;
@@ -20,18 +21,23 @@ export function LotCollectionAction({
   loadStateOnMount = false,
   onChanged,
 }: LotCollectionActionProps) {
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
+  const canAccess = canAccessLotPresentations(user);
   const [isAdded, setIsAdded] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!loadStateOnMount || !accessToken) {
+    if (!canAccess || !loadStateOnMount || !accessToken) {
       return;
     }
 
     void loadWorkspaceState();
-  }, [accessToken, loadStateOnMount, unitId]);
+  }, [accessToken, canAccess, loadStateOnMount, unitId]);
+
+  if (!canAccessLotPresentations(user)) {
+    return null;
+  }
 
   async function loadWorkspaceState() {
     if (!accessToken) {

@@ -1,4 +1,4 @@
-import { ObjectFileType, ObjectStatus, LocationType, Prisma } from '@prisma/client';
+import { ObjectFileType, ObjectStatus, LocationType, Prisma, RealEstateObjectType } from '@prisma/client';
 
 export type ImportModeName = 'preview' | 'run';
 
@@ -117,6 +117,7 @@ export type MappedFile = {
 
 export type MappedObject = {
   wpPostId: number;
+  type: RealEstateObjectType;
   title: string;
   slug: string;
   status: ObjectStatus;
@@ -144,6 +145,8 @@ export type MappedObject = {
 
 export type ImportSummary = {
   source: 'wordpress';
+  profile: string;
+  objectType: RealEstateObjectType;
   postType: string;
   dryRun: boolean;
   objectsFound: number;
@@ -163,6 +166,8 @@ export type ImportSummary = {
 };
 
 export type MappedImport = {
+  profileName: string;
+  objectType: RealEstateObjectType;
   objects: MappedObject[];
   warnings: ImportIssue[];
   errors: ImportIssue[];

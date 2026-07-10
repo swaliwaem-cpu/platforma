@@ -57,6 +57,24 @@ test('objects admin form persists and validates content section fields', () => {
   assert.match(source, /trim\(\)\.length > 10000/);
 });
 
+test('objects admin form persists object type in editor payload', () => {
+  const titleIndex = indexOfRequired('htmlFor="object-title"');
+  const typeIndex = indexOfRequired('htmlFor="object-type"');
+  const descriptionIndex = indexOfRequired('htmlFor="object-description"');
+
+  assert.ok(titleIndex < typeIndex);
+  assert.ok(typeIndex < descriptionIndex);
+  assert.match(source, /RealEstateObjectType/);
+  assert.match(source, /type:\s*RealEstateObjectType;/);
+  assert.match(source, /type:\s*'RESIDENTIAL'/);
+  assert.match(source, /type:\s*object\.type \?\? 'RESIDENTIAL'/);
+  assert.match(source, /type:\s*form\.type/);
+  assert.match(source, /value=\{props\.form\.type\}/);
+  assert.match(source, /props\.onFormChange\(\{ \.\.\.props\.form, type: event\.target\.value as RealEstateObjectType \}\)/);
+  assert.match(source, /<option value="RESIDENTIAL">Жилая<\/option>/);
+  assert.match(source, /<option value="COMMERCIAL">Коммерция<\/option>/);
+});
+
 test('objects admin form persists and validates aerotour url', () => {
   assert.match(source, /aerotourUrl:\s*string;/);
   assert.match(source, /aerotourUrl:\s*''/);

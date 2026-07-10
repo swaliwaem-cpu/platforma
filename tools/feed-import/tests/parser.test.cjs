@@ -357,6 +357,142 @@ test('YandexRealtyFeedParser treats Aura separate rooms type as studio only when
   assert.equal(result.units[1].rooms, 2);
 });
 
+test('YandexRealtyFeedParser normalizes Profitbase XML offer fields', () => {
+  const parser = new YandexRealtyFeedParser();
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+    <realty-feed type="profitbase_xml">
+      <offer internal-id="pb-available">
+        <property_type>Квартира</property_type>
+        <object>
+          <id>53645</id>
+          <name>ЖК Дом Дау</name>
+          <location>
+            <country>Россия</country>
+            <locality-name>Москва</locality-name>
+            <address>1-й Красногвардейский проезд</address>
+          </location>
+        </object>
+        <house>
+          <id>138696</id>
+          <name>ЖК Дом Дау</name>
+          <built-year>2027</built-year>
+          <ready-quarter>2</ready-quarter>
+          <building-state>unfinished</building-state>
+        </house>
+        <price><value>104328349</value><currency>RUB</currency></price>
+        <promo-price><value>85912400</value><currency>RUB</currency></promo-price>
+        <special-offers>
+          <special-offer>
+            <discount-price>84194152</discount-price>
+          </special-offer>
+        </special-offers>
+        <area><value>100.6</value><unit>кв. м</unit></area>
+        <number>1001</number>
+        <rooms>3</rooms>
+        <floor>5</floor>
+        <building-section>1</building-section>
+        <ceiling_height>3.23</ceiling_height>
+        <status>AVAILABLE</status>
+        <image type="plan">https://pb.example.test/plan.png</image>
+        <image type="plan floor">https://pb.example.test/floor.jpg</image>
+        <image type="house">https://pb.example.test/house.jpg</image>
+      </offer>
+      <offer internal-id="pb-sold">
+        <property_type>Квартира</property_type>
+        <object><name>ЖК Дом Дау</name><location><address>1-й Красногвардейский проезд</address></location></object>
+        <house><name>ЖК Дом Дау</name><built-year>2027</built-year><ready-quarter>2</ready-quarter></house>
+        <price><value>57303540</value><currency>RUB</currency></price>
+        <area><value>53.4</value></area>
+        <number>1002</number>
+        <rooms>1</rooms>
+        <floor>5</floor>
+        <status>SOLD</status>
+      </offer>
+      <offer internal-id="pb-unavailable">
+        <object><name>ЖК Дом Дау</name></object>
+        <house><name>ЖК Дом Дау</name></house>
+        <price><value>60000000</value><currency>RUB</currency></price>
+        <area><value>55</value></area>
+        <status>UNAVAILABLE</status>
+      </offer>
+      <offer internal-id="pb-booked">
+        <object><name>ЖК Дом Дау</name></object>
+        <house><name>ЖК Дом Дау</name></house>
+        <price><value>70000000</value><currency>RUB</currency></price>
+        <area><value>60</value></area>
+        <status>BOOKED</status>
+      </offer>
+    </realty-feed>`;
+
+  const result = parser.parse(xml);
+  const [available, sold, unavailable, booked] = result.units;
+
+  assert.deepEqual(result.warnings, []);
+  assert.equal(available.title, 'ЖК Дом Дау, Квартира, № 1001');
+  assert.equal(available.projectName, 'ЖК Дом Дау');
+  assert.equal(available.building, 'ЖК Дом Дау');
+  assert.equal(available.address, '1-й Красногвардейский проезд');
+  assert.equal(available.status, 'AVAILABLE');
+  assert.equal(available.price, '104328349.00');
+  assert.equal(available.discountPrice, '84194152.00');
+  assert.equal(available.effectivePrice, '84194152.00');
+  assert.equal(available.completionYear, 2027);
+  assert.equal(available.completionQuarter, 2);
+  assert.equal(available.residentialDetails.apartmentNumber, '1001');
+  assert.equal(available.residentialDetails.detailsJson.ceilingHeight, '3.23');
+  assert.deepEqual(available.media, [
+    {
+      sourceUrl: 'https://pb.example.test/plan.png',
+      sortOrder: 0,
+      label: 'plan',
+    },
+    {
+      sourceUrl: 'https://pb.example.test/floor.jpg',
+      sortOrder: 1,
+      label: 'plan floor',
+    },
+    {
+      sourceUrl: 'https://pb.example.test/house.jpg',
+      sortOrder: 2,
+      label: 'house',
+    },
+  ]);
+  assert.equal(sold.status, 'SOLD');
+  assert.equal(unavailable.status, 'ARCHIVED');
+  assert.equal(booked.status, 'BOOKED');
+});
+
+test('createFeedSourceAnalysis summarizes Profitbase XML as one Yandex object group', () => {
+  const parser = new YandexRealtyFeedParser();
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+    <realty-feed type="profitbase_xml">
+      <offer internal-id="pb-1">
+        <object><name>ЖК Дом Дау</name><location><address>1-й Красногвардейский проезд</address></location></object>
+        <house><name>ЖК Дом Дау</name></house>
+        <price><value>10000000</value><currency>RUB</currency></price>
+        <area><value>40</value></area>
+      </offer>
+      <offer internal-id="pb-2">
+        <object><name>ЖК Дом Дау</name><location><address>1-й Красногвардейский проезд</address></location></object>
+        <house><name>ЖК Дом Дау</name></house>
+        <price><value>12000000</value><currency>RUB</currency></price>
+        <area><value>42</value></area>
+      </offer>
+    </realty-feed>`;
+
+  const parsed = parser.parse(xml);
+  const analysis = createFeedSourceAnalysis('YANDEX_REALTY', parsed);
+
+  assert.equal(analysis.unitsCount, 2);
+  assert.equal(analysis.objects.length, 1);
+  assert.equal(analysis.objects[0].title, 'ЖК Дом Дау');
+  assert.equal(analysis.objects[0].unitsCount, 2);
+  assert.deepEqual(analysis.objects[0].filterJson, {
+    buildingNames: ['ЖК Дом Дау'],
+    addressIncludes: ['1-й Красногвардейский проезд'],
+  });
+});
+
 test('createFeedSourceAnalysis summarizes Yandex developer and object groups', () => {
   const parser = new YandexRealtyFeedParser();
   const xml = `<?xml version="1.0"?>

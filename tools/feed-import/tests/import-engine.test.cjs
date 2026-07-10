@@ -234,6 +234,12 @@ function makeMrGroupCianFeed() {
           </House>
         </JKSchema>
         <BargainTerms><Price>23995737.80</Price><Currency>rur</Currency></BargainTerms>
+        <LayoutPhoto>
+          <FullUrl>https://cdn.mrgroup.test/city-bay/floor-plan.png</FullUrl>
+        </LayoutPhoto>
+        <Photos>
+          <PhotoSchema><FullUrl>https://cdn.mrgroup.test/city-bay/flat-plan.png</FullUrl></PhotoSchema>
+        </Photos>
       </Object>
     </Feed>`;
 }
@@ -1119,6 +1125,22 @@ test('executeFeedImport run titles MR Group CIAN residential units by apartment 
         normalizedName: 'mr-group',
       },
     },
+    mediaAssets: [
+      {
+        id: 'asset-mr-floor-plan',
+        sourceUrl: 'https://cdn.mrgroup.test/city-bay/floor-plan.png',
+        fileId: 'file-mr-floor-plan',
+        contentType: 'image/png',
+        checksum: 'checksum-floor',
+      },
+      {
+        id: 'asset-mr-flat-plan',
+        sourceUrl: 'https://cdn.mrgroup.test/city-bay/flat-plan.png',
+        fileId: 'file-mr-flat-plan',
+        contentType: 'image/png',
+        checksum: 'checksum-flat',
+      },
+    ],
   });
 
   await executeFeedImport({
@@ -1139,6 +1161,27 @@ test('executeFeedImport run titles MR Group CIAN residential units by apartment 
   assert.equal(unit.title, 'Квартира №89');
   assert.equal(unit.address, 'город Москва, Волоколамское шоссе, дом 97');
   assert.equal(state.residentialDetails.get(unit.id).apartmentNumber, '89');
+  assert.deepEqual(
+    state.unitMedia
+      .map((link) => ({
+        sourceUrl: state.mediaAssets.find((asset) => asset.id === link.mediaAssetId).sourceUrl,
+        sortOrder: link.sortOrder,
+        label: link.label,
+      }))
+      .sort((left, right) => left.sortOrder - right.sortOrder),
+    [
+      {
+        sourceUrl: 'https://cdn.mrgroup.test/city-bay/flat-plan.png',
+        sortOrder: 0,
+        label: 'photo',
+      },
+      {
+        sourceUrl: 'https://cdn.mrgroup.test/city-bay/floor-plan.png',
+        sortOrder: 1,
+        label: 'layout-photo',
+      },
+    ],
+  );
 });
 
 test('executeFeedImport run titles Mangazeya CIAN residential units by apartment number', async () => {

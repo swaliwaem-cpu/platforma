@@ -7,6 +7,10 @@ import {
   resolveDeveloperName,
 } from './developer-aliases';
 import {
+  residentialWordPressImportProfile,
+  WordPressImportProfile,
+} from './profiles';
+import {
   ImportIssue,
   MappedDeveloper,
   MappedFile,
@@ -30,10 +34,13 @@ export function mapWordPressSource(
   postType: string,
   dryRun: boolean,
   developerAliases: DeveloperAliases = emptyDeveloperAliases,
+  profile: WordPressImportProfile = residentialWordPressImportProfile,
 ) {
   const warnings: ImportIssue[] = [];
   const errors: ImportIssue[] = [];
-  const objects = source.objects.map((post) => mapObject(post, source, warnings, errors, developerAliases));
+  const objects = source.objects.map((post) =>
+    mapObject(post, source, warnings, errors, developerAliases, profile, postType),
+  );
 
   warnAboutPotentialDeveloperDuplicates(objects, warnings);
 
@@ -57,11 +64,15 @@ export function mapWordPressSource(
   }
 
   return {
+    profileName: profile.name,
+    objectType: profile.objectType,
     objects,
     warnings,
     errors,
     summary: {
       source: 'wordpress',
+      profile: profile.name,
+      objectType: profile.objectType,
       postType,
       dryRun,
       objectsFound: source.objects.length,
@@ -88,6 +99,8 @@ function mapObject(
   warnings: ImportIssue[],
   errors: ImportIssue[],
   developerAliases: DeveloperAliases,
+  profile: WordPressImportProfile,
+  postType: string,
 ) {
   const meta = source.metaByPostId.get(post.ID) ?? new Map<string, string[]>();
   const objectTerms = source.termsByObjectId.get(post.ID) ?? [];
@@ -100,7 +113,7 @@ function mapObject(
   const developer = mapDeveloper(firstText(meta, 'imya_zastrojshhika'), developerAliases);
   const coordinates = parseCoordinates(firstText(meta, 'karta_koordinaty'));
   const images = collectImages(meta, source, post.ID, warnings);
-  const files = collectFiles(meta, source, post.ID, warnings);
+  const files = profile.importFiles ? collectFiles(meta, source, post.ID, warnings) : [];
   const primaryLocation = selectPrimaryLocation(classifiedTerms.locations);
 
   if (!developer) {
@@ -125,6 +138,7 @@ function mapObject(
 
   const mappedObject = {
     wpPostId: post.ID,
+    type: profile.objectType,
     title,
     slug: normalizeSlug(post.post_name) ?? `${slugify(title)}-${post.ID}`,
     status: mapObjectStatus(post.post_status),
@@ -147,7 +161,7 @@ function mapObject(
     metroStations: classifiedTerms.metroStations,
     images,
     files,
-    featuresJson: buildFeaturesJson(post, meta, objectTerms, classifiedTerms, source),
+    featuresJson: buildFeaturesJson(post, meta, objectTerms, classifiedTerms, source, profile, postType),
   } satisfies MappedObject;
 
   if (!mappedObject.slug) {
@@ -581,6 +595,8 @@ function buildFeaturesJson(
   objectTerms: WpObjectTerm[],
   classifiedTerms: ReturnType<typeof classifyTerms>,
   source: WpSourceData,
+  profile: WordPressImportProfile,
+  postType: string,
 ) {
   const groupedTerms = groupFeatureTerms(objectTerms, source);
 
@@ -588,9 +604,11 @@ function buildFeaturesJson(
     wp: {
       postId: post.ID,
       postStatus: post.post_status,
+      postType,
+      importProfile: profile.name,
       postDate: post.post_date,
       postModified: post.post_modified,
-      sourceUrl: source.siteUrl && post.post_name ? `${source.siteUrl.replace(/\/+$/u, '')}/${post.post_name}/` : null,
+      sourceUrl: buildSourceUrl(source.siteUrl, post.post_name, profile.sourcePathPrefix),
     },
     h1: firstText(meta, 'zagolovok_1'),
     optionalPrice: parseBoolean(firstMeta(meta, 'czena_opczionalna')),
@@ -617,6 +635,18 @@ function buildFeaturesJson(
     locationWpTermIds: classifiedTerms.locations.map((location) => location.wpTermId),
     metroWpTermIds: classifiedTerms.metroStations.map((station) => station.wpTermId),
   }) as Prisma.InputJsonObject;
+}
+
+function buildSourceUrl(siteUrl: string | null, postName: string | null, sourcePathPrefix: string) {
+  if (!siteUrl || !postName) {
+    return null;
+  }
+
+  const baseUrl = siteUrl.replace(/\/+$/u, '');
+  const pathPrefix = sourcePathPrefix.replace(/^\/+|\/+$/gu, '');
+  const pathParts = pathPrefix ? [pathPrefix, postName] : [postName];
+
+  return `${baseUrl}/${pathParts.join('/')}/`;
 }
 
 function groupFeatureTerms(objectTerms: WpObjectTerm[], source: WpSourceData) {

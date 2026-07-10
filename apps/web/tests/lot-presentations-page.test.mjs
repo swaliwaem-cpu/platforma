@@ -7,18 +7,24 @@ import test from 'node:test';
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const appSource = readFileSync(resolve(currentDir, '../src/App.tsx'), 'utf8');
 const objectDetailSource = readFileSync(resolve(currentDir, '../src/objects/ObjectDetailPage.tsx'), 'utf8');
+const accessSource = readFileSync(resolve(currentDir, '../src/presentations/presentationAccess.ts'), 'utf8');
 const pageSource = readFileSync(resolve(currentDir, '../src/presentations/LotPresentationsPage.tsx'), 'utf8');
 const actionSource = readFileSync(resolve(currentDir, '../src/presentations/LotCollectionAction.tsx'), 'utf8');
 const styles = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
 
 test('lot presentations route is available from sidebar and cabinet navigation', () => {
   assert.match(appSource, /import \{ LotPresentationsPage \} from '\.\/presentations\/LotPresentationsPage';/);
+  assert.match(appSource, /import \{ MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL, canAccessLotPresentations \} from '\.\/presentations\/presentationAccess';/);
   assert.match(appSource, /type AppSection = 'cabinet' \| 'catalog' \| 'presentations' \| 'admin';/);
-  assert.match(appSource, /id:\s*'presentations'[\s\S]*label:\s*'Подборки'[\s\S]*path:\s*'\/presentations'[\s\S]*requiredPermissions:\s*\[\]/);
-  assert.match(appSource, /id:\s*'presentations'[\s\S]*label:\s*'Подборки лотов'[\s\S]*group:\s*'Презентации'[\s\S]*path:\s*'\/presentations'[\s\S]*requiredPermissions:\s*\[\]/);
+  assert.match(accessSource, /export const MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL = 'admin@fluffywhite\.moscow';/);
+  assert.match(accessSource, /export function canAccessLotPresentations\(user: Pick<AuthUser, 'email'> \| null \| undefined\)/);
+  assert.match(appSource, /id:\s*'presentations'[\s\S]*label:\s*'Подборки'[\s\S]*path:\s*'\/presentations'[\s\S]*requiredPermissions:\s*\[\][\s\S]*requiredUserEmail:\s*MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL/);
+  assert.match(appSource, /id:\s*'presentations'[\s\S]*label:\s*'Подборки лотов'[\s\S]*group:\s*'Презентации'[\s\S]*path:\s*'\/presentations'[\s\S]*requiredPermissions:\s*\[\][\s\S]*requiredUserEmail:\s*MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL/);
   assert.match(appSource, /pathname\.startsWith\('\/presentations'\)[\s\S]*\? 'presentations'/);
   assert.match(appSource, /pathname\.startsWith\('\/presentations\/'\)/);
-  assert.match(appSource, /<LotPresentationsPage navigate=\{navigate\} \/>/);
+  assert.match(appSource, /activeSection === 'presentations' \? \([\s\S]*canAccessLotPresentations\(user\) \? \([\s\S]*<LotPresentationsPage navigate=\{navigate\} \/>[\s\S]*\) : \([\s\S]*<AccessDenied \/>/);
+  assert.match(appSource, /navItems\.filter\(\(item\) => canAccessNavigationItem\(user, hasPermission, item\)\)/);
+  assert.match(appSource, /return cabinetSections\.filter\(\(section\) => canAccessCabinetSection\(user, section\)\);/);
 });
 
 test('cabinet profile stores broker contacts used by PDFs', () => {
@@ -44,6 +50,9 @@ test('lot pages and feed rows expose add to workspace actions', () => {
 
 test('lot workspace action adds lots directly to the saved workspace', () => {
   assert.match(actionSource, /export function LotCollectionAction/);
+  assert.match(actionSource, /import \{ canAccessLotPresentations \} from '\.\/presentationAccess';/);
+  assert.match(actionSource, /const \{ accessToken, user \} = useAuth\(\);/);
+  assert.match(actionSource, /if \(!canAccessLotPresentations\(user\)\) \{[\s\S]*return null;[\s\S]*\}/);
   assert.match(actionSource, /\/lot-presentations\/workspace\/items/);
   assert.match(actionSource, /body: JSON\.stringify\(\{ unitId \}\)/);
   assert.match(actionSource, /navigate\('\/presentations'\)/);

@@ -12,6 +12,7 @@ import {
   ObjectImageSection,
   ObjectStatus,
   Prisma,
+  RealEstateObjectType,
 } from '@prisma/client';
 
 import { AuthenticatedUser, RequestWithAuth } from '../auth/auth.types';
@@ -227,6 +228,7 @@ type ListObjectsQuery = {
   limit?: string;
   search?: string;
   status?: string;
+  type?: string;
   sortBy?: string;
   sortDirection?: string;
   developerId?: CatalogDirectoryQueryValue;
@@ -297,6 +299,7 @@ type FeedUnitRoomGroupDraft = {
 type CreateObjectBody = {
   title?: unknown;
   status?: unknown;
+  type?: unknown;
   description?: unknown;
   architectureDescription?: unknown;
   infrastructureDescription?: unknown;
@@ -376,8 +379,6 @@ type ObjectLifecycleState = {
   title: string;
   slug: string;
   status: ObjectStatus;
-  developerId: string | null;
-  primaryLocationId: string | null;
   address: string | null;
   latitude: string | null;
   longitude: string | null;
@@ -418,6 +419,12 @@ export class ObjectsService {
     if (query.status) {
       filters.push({
         status: this.parseObjectStatus(query.status),
+      });
+    }
+
+    if (query.type) {
+      filters.push({
+        type: this.parseObjectType(query.type),
       });
     }
 
@@ -788,6 +795,7 @@ export class ObjectsService {
     }
 
     const title = this.parseRequiredString(body.title, 'Title is required', 240);
+    const type = 'type' in body ? this.parseObjectType(body.type) : RealEstateObjectType.RESIDENTIAL;
     const slug = await this.generateUniqueSlug(title);
     const description = this.parseNullableText(body.description, 'Description', 30000);
     const architectureDescription = this.parseNullableText(body.architectureDescription, 'Architecture description', 10000);
@@ -841,6 +849,7 @@ export class ObjectsService {
       const createdObject = await tx.realEstateObject.create({
         data: {
           title,
+          type,
           slug,
           status: ObjectStatus.DRAFT,
           ...(description !== undefined ? { description } : {}),
@@ -917,6 +926,16 @@ export class ObjectsService {
       if (title !== object.title) {
         data.title = title;
         changes.title = this.change(object.title, title);
+        hasScalarChanges = true;
+      }
+    }
+
+    if ('type' in body) {
+      const type = this.parseObjectType(body.type);
+
+      if (type !== object.type) {
+        data.type = type;
+        changes.type = this.change(object.type, type);
         hasScalarChanges = true;
       }
     }
@@ -1219,8 +1238,6 @@ export class ObjectsService {
           title: object.title,
           slug: object.slug,
           status: object.status,
-          developerId: object.developerId,
-          primaryLocationId: object.primaryLocationId,
           address: object.address,
           latitude: this.decimalToString(object.latitude),
           longitude: this.decimalToString(object.longitude),
@@ -1231,8 +1248,6 @@ export class ObjectsService {
           title: nextTitle,
           slug: object.slug,
           status: object.status,
-          developerId: nextDeveloperId,
-          primaryLocationId: nextPrimaryLocationId,
           address: nextAddress,
           latitude: nextLatitude,
           longitude: nextLongitude,
@@ -1313,8 +1328,6 @@ export class ObjectsService {
         title: object.title,
         slug: object.slug,
         status: object.status,
-        developerId: object.developerId,
-        primaryLocationId: object.primaryLocationId,
         address: object.address,
         latitude: this.decimalToString(object.latitude),
         longitude: this.decimalToString(object.longitude),
@@ -2294,14 +2307,6 @@ export class ObjectsService {
 
     if (!state.slug.trim()) {
       missingFields.push('slug');
-    }
-
-    if (!state.developerId) {
-      missingFields.push('developerId');
-    }
-
-    if (!state.primaryLocationId) {
-      missingFields.push('primaryLocationId');
     }
 
     if (!state.address?.trim()) {
@@ -3400,6 +3405,20 @@ export class ObjectsService {
     return normalizedStatus as ObjectStatus;
   }
 
+  private parseObjectType(value: unknown) {
+    if (typeof value !== 'string') {
+      throw new BadRequestException('Object type is required');
+    }
+
+    const normalizedType = value.trim().toUpperCase();
+
+    if (!Object.values(RealEstateObjectType).includes(normalizedType as RealEstateObjectType)) {
+      throw new BadRequestException('Object type is invalid');
+    }
+
+    return normalizedType as RealEstateObjectType;
+  }
+
   private parseQuickEditStatus(value: unknown) {
     const status = this.parseObjectStatus(value);
 
@@ -3867,6 +3886,7 @@ export class ObjectsService {
     return {
       id: object.id,
       wpPostId: object.wpPostId,
+      type: object.type,
       title: object.title,
       slug: object.slug,
       status: object.status,
@@ -4010,6 +4030,7 @@ export class ObjectsService {
     return {
       id: object.id,
       wpPostId: object.wpPostId,
+      type: object.type,
       title: object.title,
       slug: object.slug,
       status: object.status,

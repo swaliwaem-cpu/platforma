@@ -221,12 +221,12 @@ export class YandexRealtyFeedParser implements FeedParser {
   }
 
   private normalizeOffer(offer: XmlRecord, externalId: string, warnings: FeedParserWarning[]): NormalizedFeedUnit {
-    const location = asRecord(offer.location);
-    const buildingName = normalizePlaceholderText(getText(offer['building-name']));
+    const profitbaseObject = asRecord(offer.object);
+    const location = asRecord(offer.location) ?? asRecord(profitbaseObject?.location);
+    const buildingName = getYandexBuildingName(offer);
     const buildingSection = normalizePlaceholderText(getText(offer['building-section']));
     const price = normalizeDecimal(offer.price, 'price', externalId, warnings);
-    const discount = asRecord(offer.discount);
-    const discountPrice = normalizeDecimal(discount?.['final-price'], 'discountPrice', externalId, warnings);
+    const discountPrice = normalizeYandexDiscountPrice(offer, price, externalId, warnings);
     const effectivePrice = discountPrice ?? price;
     const area = normalizeDecimal(offer.area, 'area', externalId, warnings);
     const pricePerMeter = calculatePricePerMeter(price, area);
@@ -237,14 +237,23 @@ export class YandexRealtyFeedParser implements FeedParser {
     const completion = normalizeYandexCompletion(offer, externalId, warnings);
     const livingArea = normalizeDecimal(offer['living-space'], 'livingArea', externalId, warnings);
     const apartmentNumber = getYandexApartmentNumber(offer, location);
+    const unitType = getYandexUnitType(offer);
+    const statusResult = normalizeYandexFeedUnitStatus(offer);
+
+    if (statusResult.warning) {
+      warnings.push({
+        ...statusResult.warning,
+        externalId,
+      });
+    }
 
     return {
       externalId,
-      type: getYandexUnitType(offer),
-      status: 'AVAILABLE',
+      type: unitType,
+      status: statusResult.status,
       title: buildYandexTitle(offer, location),
       projectName: buildingName,
-      address: getText(location?.address) ?? getText(offer.Address),
+      address: getYandexAddress(offer, location),
       building: buildingName,
       section: buildingSection,
       floor,
@@ -262,7 +271,7 @@ export class YandexRealtyFeedParser implements FeedParser {
       rawPayload: offer,
       media: collectYandexMedia(offer, externalId, warnings),
       residentialDetails:
-        getYandexUnitType(offer) === 'RESIDENTIAL'
+        unitType === 'RESIDENTIAL'
           ? {
               apartmentNumber,
               layoutType: getText(offer['rooms-type']),
@@ -271,7 +280,7 @@ export class YandexRealtyFeedParser implements FeedParser {
               balconyCount: normalizeYandexBalconyCount(offer, externalId, warnings),
               detailsJson: {
                 buildingType: getText(offer['building-type']),
-                ceilingHeight: normalizeDecimal(offer['ceiling-height'], 'ceilingHeight', externalId, warnings),
+                ceilingHeight: normalizeDecimal(getYandexCeilingHeightValue(offer), 'ceilingHeight', externalId, warnings),
                 renovation: getText(offer.renovation),
                 yandexBuildingId: getText(offer['yandex-building-id']),
                 yandexHouseId: getText(offer['yandex-house-id']),
@@ -279,11 +288,11 @@ export class YandexRealtyFeedParser implements FeedParser {
             }
           : null,
       commercialDetails:
-        getYandexUnitType(offer) === 'COMMERCIAL'
+        unitType === 'COMMERCIAL'
           ? {
               commercialType: getText(offer.category),
               entrance: null,
-              ceilingHeight: normalizeDecimal(offer['ceiling-height'], 'ceilingHeight', externalId, warnings),
+              ceilingHeight: normalizeDecimal(getYandexCeilingHeightValue(offer), 'ceilingHeight', externalId, warnings),
               powerKw: null,
               separateEntrance: null,
               detailsJson: {
@@ -1256,6 +1265,40 @@ function normalizeYandexBalconyCount(
   return normalizeInteger(value, 'balconyCount', externalId, warnings);
 }
 
+function normalizeYandexDiscountPrice(
+  offer: XmlRecord,
+  price: string | null,
+  externalId: string,
+  warnings: FeedParserWarning[],
+) {
+  const discount = asRecord(offer.discount);
+
+  return normalizeLowestLowerPositiveDecimal(
+    [discount?.['final-price'], offer['promo-price'], ...getProfitbaseSpecialOfferDiscountPrices(offer)],
+    price,
+    'discountPrice',
+    externalId,
+    warnings,
+  );
+}
+
+function getProfitbaseSpecialOfferDiscountPrices(offer: XmlRecord) {
+  const specialOffers = asRecord(offer['special-offers']);
+
+  return toArray(specialOffers?.['special-offer'])
+    .map(asRecord)
+    .filter((specialOffer): specialOffer is XmlRecord => specialOffer !== null)
+    .map((specialOffer) => specialOffer['discount-price']);
+}
+
+function normalizeYandexFeedUnitStatus(offer: XmlRecord): FeedStatusNormalizationResult {
+  if (getText(offer.status) !== null) {
+    return normalizeFeedUnitStatus(offer.status);
+  }
+
+  return { status: 'AVAILABLE' };
+}
+
 function isMangazeyaSeparateRoomsStudio(offer: XmlRecord) {
   const roomsType = normalizeFilterText(getText(offer['rooms-type']) ?? '');
 
@@ -1278,13 +1321,19 @@ function isMangazeyaSeparateRoomsStudio(offer: XmlRecord) {
 }
 
 function normalizeYandexCompletion(offer: XmlRecord, externalId: string, warnings: FeedParserWarning[]) {
-  if (isDeliveredBuildingState(offer['building-state'] ?? offer.buildingState ?? offer.building_state)) {
+  const house = asRecord(offer.house);
+
+  if (
+    isDeliveredBuildingState(
+      offer['building-state'] ?? offer.buildingState ?? offer.building_state ?? house?.['building-state'],
+    )
+  ) {
     return { year: null, quarter: null };
   }
 
   return {
-    year: normalizeInteger(offer['built-year'], 'completionYear', externalId, warnings),
-    quarter: normalizeQuarter(offer['ready-quarter'], externalId, warnings),
+    year: normalizeInteger(offer['built-year'] ?? house?.['built-year'], 'completionYear', externalId, warnings),
+    quarter: normalizeQuarter(offer['ready-quarter'] ?? house?.['ready-quarter'], externalId, warnings),
   };
 }
 
@@ -1432,6 +1481,31 @@ function normalizeFirstLowerPositiveDecimal(
   }
 
   return null;
+}
+
+function normalizeLowestLowerPositiveDecimal(
+  values: unknown[],
+  baseValue: string | null,
+  field: string,
+  externalId: string,
+  warnings: FeedParserWarning[],
+) {
+  let lowestDecimal: string | null = null;
+
+  for (const value of values) {
+    if (getDecimalText(value) === null) {
+      continue;
+    }
+
+    const decimal = normalizePositiveDecimal(value, field, externalId, warnings);
+    const lowerDecimal = getLowerPositiveDecimal(decimal, baseValue);
+
+    if (lowerDecimal !== null && (lowestDecimal === null || Number(lowerDecimal) < Number(lowestDecimal))) {
+      lowestDecimal = lowerDecimal;
+    }
+  }
+
+  return lowestDecimal;
 }
 
 function normalizeCianCurrentPriceSilently(bargainTerms: XmlRecord | null) {
@@ -1733,11 +1807,28 @@ function getAvitoUnitType(ad: XmlRecord): NormalizedFeedUnitType {
 }
 
 function buildYandexTitle(offer: XmlRecord, location: XmlRecord | null): string | null {
-  const building = getText(offer['building-name']);
-  const category = normalizeYandexCategoryLabel(getText(offer.category));
+  const building = getYandexBuildingName(offer);
+  const category = normalizeYandexCategoryLabel(getText(offer.category) ?? getText(offer.property_type));
   const apartment = getYandexApartmentNumber(offer, location);
 
   return joinTitleParts([building, category, apartment ? `№ ${apartment}` : null]);
+}
+
+function getYandexBuildingName(offer: XmlRecord) {
+  const profitbaseObject = asRecord(offer.object);
+  const house = asRecord(offer.house);
+
+  return normalizePlaceholderText(
+    getText(offer['building-name']) ?? getText(profitbaseObject?.name) ?? getText(house?.name),
+  );
+}
+
+function getYandexAddress(offer: XmlRecord, location: XmlRecord | null) {
+  return getText(location?.address) ?? getText(offer.Address);
+}
+
+function getYandexCeilingHeightValue(offer: XmlRecord) {
+  return offer['ceiling-height'] ?? offer.ceiling_height;
 }
 
 function normalizeYandexCategoryLabel(value: string | null): string | null {
@@ -1757,7 +1848,12 @@ function normalizeYandexCategoryLabel(value: string | null): string | null {
 }
 
 function getYandexApartmentNumber(offer: XmlRecord, location: XmlRecord | null) {
-  return getText(location?.apartment) ?? getText(offer['flat-number']) ?? extractYandexApartmentNumber(getText(offer.description));
+  return (
+    getText(location?.apartment) ??
+    getText(offer['flat-number']) ??
+    getText(offer.number) ??
+    extractYandexApartmentNumber(getText(offer.description))
+  );
 }
 
 function extractYandexApartmentNumber(description: string | null) {
@@ -1849,7 +1945,7 @@ function collectYandexMedia(
   for (const image of toArray(offer.image)) {
     const record = asRecord(image);
     const sourceUrl = record ? getText(record[textNodeName]) : getText(image);
-    const label = getText(record?.['@_tag']);
+    const label = getText(record?.['@_tag']) ?? getText(record?.['@_type']);
     addMedia(media, seen, sourceUrl, label, externalId, warnings);
   }
 
@@ -3897,7 +3993,7 @@ async function parseFeedSourceForImport(
 function applyFeedSourceUnitRules(parsed: FeedParseResult, source: FeedSourceRecord): FeedParseResult {
   return {
     ...parsed,
-    units: parsed.units.map((unit) => applyFeedSourceUnitTitleRules(unit, source)),
+    units: parsed.units.map((unit) => applyFeedSourceUnitMediaRules(applyFeedSourceUnitTitleRules(unit, source), source)),
   };
 }
 
@@ -3910,6 +4006,54 @@ function applyFeedSourceUnitTitleRules(unit: NormalizedFeedUnit, source: FeedSou
   }
 
   return unit;
+}
+
+function applyFeedSourceUnitMediaRules(unit: NormalizedFeedUnit, source: FeedSourceRecord): NormalizedFeedUnit {
+  const unitFormat = getText(unit.rawPayload.__feedDetectedFormat) ?? source.format;
+
+  if (unitFormat === 'CIAN_XML' && isMrGroupFeedSource(source)) {
+    return reorderMrGroupCianMedia(unit);
+  }
+
+  return unit;
+}
+
+function reorderMrGroupCianMedia(unit: NormalizedFeedUnit): NormalizedFeedUnit {
+  const hasFlatPlanMedia = unit.media.some((media) => getMrGroupCianMediaPriority(media) === 0);
+  const hasFloorPlanMedia = unit.media.some((media) => getMrGroupCianMediaPriority(media) === 1);
+
+  if (!hasFlatPlanMedia || !hasFloorPlanMedia) {
+    return unit;
+  }
+
+  const reorderedMedia = [...unit.media]
+    .sort(
+      (left, right) =>
+        getMrGroupCianMediaPriority(left) - getMrGroupCianMediaPriority(right) || left.sortOrder - right.sortOrder,
+    )
+    .map((media, index) => ({
+      ...media,
+      sortOrder: index,
+    }));
+
+  return {
+    ...unit,
+    media: reorderedMedia,
+  };
+}
+
+function getMrGroupCianMediaPriority(media: NormalizedFeedMedia) {
+  const label = media.label?.trim().toLocaleLowerCase('ru-RU');
+
+  if (label === 'photo') {
+    return 0;
+  }
+
+  if (label === 'layout-photo') {
+    return 1;
+  }
+
+  return 2;
 }
 
 function shouldUseApartmentNumberTitleForSource(unit: NormalizedFeedUnit, source: FeedSourceRecord) {

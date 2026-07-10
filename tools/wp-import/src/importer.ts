@@ -141,7 +141,13 @@ export async function executeWordPressImport(mode: ImportModeName) {
     const developerAliases = await loadDeveloperAliases();
     wpClient = new WordPressReadonlyClient(config.wp);
     const source = await wpClient.fetchSourceData();
-    const mapped = mapWordPressSource(source, config.wp.postType, mode === 'preview', developerAliases);
+    const mapped = mapWordPressSource(
+      source,
+      config.wp.postType,
+      mode === 'preview',
+      developerAliases,
+      config.wp.profile,
+    );
     const counters: ImportCounters = {
       objectsImported: 0,
       objectsCreated: 0,
@@ -194,6 +200,8 @@ export async function executeWordPressImport(mode: ImportModeName) {
       ImportStatus.FAILED,
       {
         source: 'wordpress',
+        profile: config.wp.profileName,
+        objectType: config.wp.objectType,
         postType: config.wp.postType,
         dryRun: mode === 'preview',
         durationMs: Date.now() - startedAt.getTime(),
@@ -264,6 +272,7 @@ async function archiveImportedObjectsMissingFromSource(mapped: MappedImport, con
   const archived = await context.prisma.realEstateObject.updateMany({
     where: {
       deletedAt: null,
+      type: mapped.objectType,
       status: {
         not: ObjectStatus.ARCHIVED,
       },
@@ -506,7 +515,7 @@ async function upsertObject(
   let slug = object.slug;
 
   if (!existingObject && existingBySlug) {
-    if (!existingBySlug.wpPostId || existingBySlug.wpPostId === object.wpPostId) {
+    if (existingBySlug.type === object.type && (!existingBySlug.wpPostId || existingBySlug.wpPostId === object.wpPostId)) {
       existingObject = existingBySlug;
     } else {
       slug = await getUniqueObjectSlug(tx, object.slug, object.wpPostId);
@@ -644,6 +653,7 @@ export function resolveImportedObjectData(params: {
   } = params;
   const data: Prisma.RealEstateObjectUncheckedCreateInput = {
     wpPostId: object.wpPostId,
+    type: object.type,
     title: object.title,
     slug,
     status: object.status,

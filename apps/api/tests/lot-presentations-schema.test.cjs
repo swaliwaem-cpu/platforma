@@ -17,6 +17,7 @@ const workspaceMigrationPath = path.join(
 const appModulePath = path.join(rootDir, 'apps/api/src/app.module.ts');
 const modulePath = path.join(rootDir, 'apps/api/src/lot-presentations/lot-presentations.module.ts');
 const controllerPath = path.join(rootDir, 'apps/api/src/lot-presentations/lot-presentations.controller.ts');
+const accessGuardPath = path.join(rootDir, 'apps/api/src/lot-presentations/lot-presentations-access.guard.ts');
 const servicePath = path.join(rootDir, 'apps/api/src/lot-presentations/lot-presentations.service.ts');
 const pdfServicePath = path.join(rootDir, 'apps/api/src/lot-presentations/lot-presentations-pdf.service.ts');
 const dockerfilePath = path.join(rootDir, 'apps/api/Dockerfile');
@@ -100,10 +101,12 @@ test('lot presentation API is guarded, registered and exposes collection/documen
 
   assert.match(appModule, /LotPresentationsModule/);
   assert.match(moduleSource, /import \{ AuthModule \} from '\.\.\/auth\/auth\.module';/);
+  assert.match(moduleSource, /import \{ LotPresentationsAccessGuard \} from '\.\/lot-presentations-access\.guard';/);
   assert.match(moduleSource, /imports: \[AuthModule, PrismaModule, FilesModule\]/);
   assert.match(moduleSource, /controllers: \[LotPresentationsController\]/);
-  assert.match(moduleSource, /providers: \[LotPresentationsService, LotPresentationsPdfService\]/);
-  assert.match(controller, /@Controller\('lot-presentations'\)[\s\S]*@UseGuards\(JwtAuthGuard\)/);
+  assert.match(moduleSource, /providers: \[[^\]]*LotPresentationsService[\s\S]*LotPresentationsPdfService[\s\S]*LotPresentationsAccessGuard[\s\S]*\]/);
+  assert.match(controller, /import \{ LotPresentationsAccessGuard \} from '\.\/lot-presentations-access\.guard';/);
+  assert.match(controller, /@Controller\('lot-presentations'\)[\s\S]*@UseGuards\(JwtAuthGuard, LotPresentationsAccessGuard\)/);
   assert.match(controller, /@Get\('lots'\)[\s\S]*listLots/);
   assert.match(controller, /@Get\('collections'\)[\s\S]*listCollections/);
   assert.match(controller, /@Post\('collections'\)[\s\S]*createCollection/);
@@ -112,6 +115,19 @@ test('lot presentation API is guarded, registered and exposes collection/documen
   assert.match(controller, /@Post\('documents'\)[\s\S]*createDocument/);
   assert.match(controller, /@Get\('documents\/:documentId\/content'\)[\s\S]*Content-Disposition/);
   assert.match(dockerfile, /COPY _Fluffy_White_1-02\.svg \.\/_Fluffy_White_1-02\.svg/);
+});
+
+test('lot presentation access guard allows only admin email', () => {
+  assert.ok(fs.existsSync(accessGuardPath), 'lot presentation access guard file should exist');
+
+  const guard = readProjectFile(accessGuardPath);
+
+  assert.match(guard, /@Injectable\(\)[\s\S]*export class LotPresentationsAccessGuard implements CanActivate/);
+  assert.match(guard, /ForbiddenException/);
+  assert.match(guard, /const allowedEmail = 'admin@fluffywhite\.moscow';/);
+  assert.match(guard, /request\.user\.email/);
+  assert.match(guard, /\.trim\(\)\.toLowerCase\(\)/);
+  assert.match(guard, /email !== allowedEmail[\s\S]*throw new ForbiddenException/);
 });
 
 test('lot presentation API exposes workspace and item comment routes', () => {

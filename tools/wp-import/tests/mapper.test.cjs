@@ -1,9 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { LocationType, ObjectFileType, ObjectStatus } = require('@prisma/client');
+const { LocationType, ObjectFileType, ObjectStatus, RealEstateObjectType } = require('@prisma/client');
 const { mapWordPressSource, slugify } = require('../dist/mapper.js');
-const { createDeveloperAliases } = require('../dist/developer-aliases.js');
+const { createDeveloperAliases, loadDeveloperAliases, resolveDeveloperName } = require('../dist/developer-aliases.js');
+const { commercialWordPressImportProfile } = require('../dist/profiles.js');
 
 function makePost(overrides) {
   return {
@@ -177,7 +178,10 @@ test('mapWordPressSource maps object fields, taxonomies, images and files', () =
   assert.equal(mapped.summary.validFilesMapped, 1);
   assert.equal(mapped.summary.referencedAttachments, 4);
   assert.equal(mapped.summary.dryRun, true);
+  assert.equal(mapped.summary.profile, 'residential');
+  assert.equal(mapped.summary.objectType, RealEstateObjectType.RESIDENTIAL);
 
+  assert.equal(object.type, RealEstateObjectType.RESIDENTIAL);
   assert.equal(object.title, 'ЖК "Северный"');
   assert.equal(object.slug, 'zhk-severnyy');
   assert.equal(object.status, ObjectStatus.PUBLISHED);
@@ -211,6 +215,29 @@ test('mapWordPressSource maps object fields, taxonomies, images and files', () =
   assert.equal(object.files[0].type, ObjectFileType.PRESENTATION);
   assert.equal(object.files[0].attachment.ID, 301);
   assert.equal(mapped.warnings.some((warning) => warning.code === 'missing_local_file'), true);
+});
+
+test('mapWordPressSource maps commercial profile without importing PDFs', () => {
+  const mapped = mapWordPressSource(
+    makeSource(),
+    'commercials',
+    true,
+    undefined,
+    commercialWordPressImportProfile,
+  );
+  const [object] = mapped.objects;
+
+  assert.equal(mapped.summary.profile, 'commercial');
+  assert.equal(mapped.summary.objectType, RealEstateObjectType.COMMERCIAL);
+  assert.equal(mapped.summary.postType, 'commercials');
+  assert.equal(mapped.summary.validImagesMapped, 2);
+  assert.equal(mapped.summary.validFilesMapped, 0);
+  assert.equal(object.type, RealEstateObjectType.COMMERCIAL);
+  assert.deepEqual(object.files, []);
+  assert.equal(object.featuresJson.wp.importProfile, 'commercial');
+  assert.equal(object.featuresJson.wp.postType, 'commercials');
+  assert.equal(object.featuresJson.wp.sourceUrl, 'https://example.test/commercial/zhk-severnyy/');
+  assert.equal(mapped.warnings.some((warning) => warning.code === 'missing_local_file'), false);
 });
 
 test('mapWordPressSource ignores WordPress short description meta when description content is empty', () => {
@@ -405,6 +432,12 @@ test('mapWordPressSource applies explicit developer aliases only', () => {
     mapped.warnings.some((warning) => warning.code === 'possible_developer_duplicate'),
     false,
   );
+});
+
+test('default developer aliases merge MR Office into MR Group', async () => {
+  const aliases = await loadDeveloperAliases();
+
+  assert.equal(resolveDeveloperName('MR Office', aliases), 'MR Group');
 });
 
 test('mapWordPressSource reports missing optional data without failing the import', () => {

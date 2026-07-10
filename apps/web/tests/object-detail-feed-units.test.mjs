@@ -192,6 +192,26 @@ test('object detail feed units block renders expected columns and media thumbnai
   assert.match(styles, /\.object-feed-units-table\s*\{/);
 });
 
+test('object detail feed unit table keeps Safari row heights stable', () => {
+  assert.match(styles, /\.object-feed-unit-row\s*\{[\s\S]*?height:\s*80px;/);
+  assert.match(
+    styles,
+    /\.object-feed-units-table \[data-slot="table-cell"\]\s*\{[\s\S]*?height:\s*80px;[\s\S]*?padding-top:\s*10px;[\s\S]*?padding-bottom:\s*10px;/,
+  );
+  assert.match(
+    styles,
+    /\.object-feed-unit-cell\s*\{[\s\S]*?max-width:\s*270px;[\s\S]*?min-height:\s*52px;[\s\S]*?align-content:\s*center;/,
+  );
+  assert.match(
+    styles,
+    /\.object-feed-unit-cell strong,\n\.object-feed-unit-cell span\s*\{[\s\S]*?display:\s*-webkit-box;[\s\S]*?-webkit-box-orient:\s*vertical;[\s\S]*?overflow:\s*hidden;/,
+  );
+  assert.match(styles, /\.object-feed-unit-cell strong\s*\{[\s\S]*?-webkit-line-clamp:\s*1;/);
+  assert.match(styles, /\.object-feed-unit-cell span\s*\{[\s\S]*?-webkit-line-clamp:\s*2;/);
+  assert.match(styles, /\.object-feed-media-button\s*\{[\s\S]*?min-height:\s*52px;/);
+  assert.match(styles, /\.object-feed-media-preview\s*\{[\s\S]*?flex:\s*0 0 54px;/);
+});
+
 test('object detail feed units show the latest lot update timestamp under the title', () => {
   assert.match(objectFeedUnitsSectionSource, /const feedUnitsUpdatedAt = object\.feedUpdatedAt \? formatObjectFeedUpdatedAt\(object\.feedUpdatedAt\) : null;/);
   assert.match(objectFeedUnitsSectionSource, /feedUnitsUpdatedAt \? \([\s\S]*?<p className="object-feed-updated-at">Обновлено: \{feedUnitsUpdatedAt\}<\/p>[\s\S]*?\) : null/);

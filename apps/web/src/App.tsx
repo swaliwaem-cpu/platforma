@@ -15,12 +15,35 @@ import { CatalogPage } from './catalog/CatalogPage';
 import { buildMediaFileContentUrl } from './files/SecureImage';
 import { ObjectDetailPage, ObjectLotDetailPage } from './objects/ObjectDetailPage';
 import { LotPresentationsPage } from './presentations/LotPresentationsPage';
+import { MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL, canAccessLotPresentations } from './presentations/presentationAccess';
 import { getAppliedAppTheme, getNextAppTheme, setAppTheme } from './appTheme';
 import './styles.css';
 import './app-theme.css';
 
 type AppSection = 'cabinet' | 'catalog' | 'presentations' | 'admin';
 type LoginMode = 'login' | 'register';
+type NavChildItem = {
+  id: string;
+  label: string;
+  path: string;
+};
+type NavItem = {
+  id: string;
+  label: string;
+  path: string;
+  section: AppSection;
+  requiredPermissions: readonly string[];
+  requiredUserEmail?: string;
+  children?: readonly NavChildItem[];
+};
+type CabinetSection = {
+  id: string;
+  label: string;
+  group: string;
+  path: string;
+  requiredPermissions: readonly string[];
+  requiredUserEmail?: string;
+};
 
 const userStatusLabels: Record<UserStatus, string> = {
   ACTIVE: 'Активен',
@@ -29,7 +52,7 @@ const userStatusLabels: Record<UserStatus, string> = {
   DEACTIVATED: 'Отключён',
 };
 
-const navItems = [
+const navItems: readonly NavItem[] = [
   {
     id: 'cabinet',
     label: 'Кабинет',
@@ -43,6 +66,23 @@ const navItems = [
     path: '/catalog',
     section: 'catalog',
     requiredPermissions: ['objects:read'],
+    children: [
+      {
+        id: 'catalog-life',
+        label: 'Жилая',
+        path: '/catalog/life',
+      },
+      {
+        id: 'catalog-comm',
+        label: 'Коммерция',
+        path: '/catalog/comm',
+      },
+      {
+        id: 'catalog-all',
+        label: 'Все',
+        path: '/catalog',
+      },
+    ],
   },
   {
     id: 'presentations',
@@ -50,6 +90,7 @@ const navItems = [
     path: '/presentations',
     section: 'presentations',
     requiredPermissions: [],
+    requiredUserEmail: MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL,
   },
   {
     id: 'admin',
@@ -58,13 +99,7 @@ const navItems = [
     section: 'admin',
     requiredPermissions: ['admin:access'],
   },
-] as const satisfies ReadonlyArray<{
-  id: string;
-  label: string;
-  path: string;
-  section: AppSection;
-  requiredPermissions: readonly string[];
-}>;
+];
 
 const cabinetSections = [
   {
@@ -94,6 +129,7 @@ const cabinetSections = [
     group: 'Презентации',
     path: '/presentations',
     requiredPermissions: [],
+    requiredUserEmail: MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL,
   },
   {
     id: 'admin-objects',
@@ -130,13 +166,7 @@ const cabinetSections = [
     path: '/admin/import',
     requiredPermissions: ['admin:access', 'import:preview'],
   },
-] as const satisfies ReadonlyArray<{
-  id: string;
-  label: string;
-  group: string;
-  path: string;
-  requiredPermissions: readonly string[];
-}>;
+] as const satisfies readonly CabinetSection[];
 
 function usePathname() {
   const [pathname, setPathname] = useState(window.location.pathname);
@@ -256,7 +286,7 @@ function AppRoutes() {
       : 'cabinet';
   const objectLotRoute = parseObjectLotRoute(pathname);
   const objectSlug = objectLotRoute ? null : parseObjectSlug(pathname);
-  const visibleNavItems = navItems.filter((item) => canAccessPermissions(hasPermission, item.requiredPermissions));
+  const visibleNavItems = navItems.filter((item) => canAccessNavigationItem(user, hasPermission, item));
 
   return (
     <main className="app-shell">
@@ -294,17 +324,45 @@ function AppRoutes() {
           </button>
 
           <nav className="nav-list">
-            {visibleNavItems.map((item) => (
-              <button
-                key={item.id}
-                className={activeSection === item.section ? 'nav-item nav-item--active' : 'nav-item'}
-                type="button"
-                tabIndex={isSidebarOpen ? 0 : -1}
-                onClick={() => navigate(item.path)}
-              >
-                {item.label}
-              </button>
-            ))}
+            {visibleNavItems.map((item) =>
+              item.children?.length ? (
+                <div className="nav-group" key={item.id}>
+                  <button
+                    aria-haspopup="menu"
+                    className={activeSection === item.section ? 'nav-item nav-item--active' : 'nav-item'}
+                    type="button"
+                    tabIndex={isSidebarOpen ? 0 : -1}
+                    onClick={() => navigate(item.path)}
+                  >
+                    {item.label}
+                  </button>
+                  <div className="nav-submenu" role="menu" aria-label="Разделы каталога">
+                    {item.children.map((child) => (
+                      <button
+                        key={child.id}
+                        className={pathname === child.path ? 'nav-subitem nav-subitem--active' : 'nav-subitem'}
+                        role="menuitem"
+                        type="button"
+                        tabIndex={isSidebarOpen ? 0 : -1}
+                        onClick={() => navigate(child.path)}
+                      >
+                        {child.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <button
+                  key={item.id}
+                  className={activeSection === item.section ? 'nav-item nav-item--active' : 'nav-item'}
+                  type="button"
+                  tabIndex={isSidebarOpen ? 0 : -1}
+                  onClick={() => navigate(item.path)}
+                >
+                  {item.label}
+                </button>
+              ),
+            )}
           </nav>
 
           <button
@@ -381,7 +439,11 @@ function AppRoutes() {
             <AccessDenied />
           )
         ) : activeSection === 'presentations' ? (
-          <LotPresentationsPage navigate={navigate} />
+          canAccessLotPresentations(user) ? (
+            <LotPresentationsPage navigate={navigate} />
+          ) : (
+            <AccessDenied />
+          )
         ) : activeSection === 'catalog' ? (
           hasPermission('objects:read') ? (
             <CatalogPage navigate={navigate} pathname={pathname} />
@@ -1210,10 +1272,27 @@ function canAccessPermissions(
   return requiredPermissions.every((permission) => hasPermission(permission));
 }
 
-function getAvailableCabinetSections(user: AuthUser) {
+function canAccessRequiredUserEmail(user: AuthUser, requiredUserEmail: string | undefined) {
+  return !requiredUserEmail || user.email.trim().toLowerCase() === requiredUserEmail;
+}
+
+function canAccessNavigationItem(
+  user: AuthUser,
+  hasPermission: (permission: string) => boolean,
+  item: Pick<NavItem, 'requiredPermissions' | 'requiredUserEmail'>,
+) {
+  return canAccessRequiredUserEmail(user, item.requiredUserEmail) && canAccessPermissions(hasPermission, item.requiredPermissions);
+}
+
+function canAccessCabinetSection(user: AuthUser, section: CabinetSection) {
   const permissions = new Set(user.permissions);
 
-  return cabinetSections.filter((section) =>
-    section.requiredPermissions.every((permission) => permissions.has(permission)),
+  return (
+    canAccessRequiredUserEmail(user, section.requiredUserEmail) &&
+    section.requiredPermissions.every((permission) => permissions.has(permission))
   );
+}
+
+function getAvailableCabinetSections(user: AuthUser) {
+  return cabinetSections.filter((section) => canAccessCabinetSection(user, section));
 }

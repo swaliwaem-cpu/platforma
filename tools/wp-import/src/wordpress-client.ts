@@ -155,6 +155,11 @@ export class WordPressReadonlyClient {
 
   private async fetchObjectTerms(objectIds: number[]) {
     const rows: WpObjectTerm[] = [];
+    const taxonomyPlaceholders = this.config.taxonomies.map(() => '?').join(', ');
+
+    if (!taxonomyPlaceholders) {
+      return rows;
+    }
 
     for (const ids of chunk(objectIds, 250)) {
       if (ids.length === 0) {
@@ -167,9 +172,9 @@ export class WordPressReadonlyClient {
          INNER JOIN ${this.table('term_taxonomy')} tt ON tt.term_taxonomy_id = tr.term_taxonomy_id
          INNER JOIN ${this.table('terms')} t ON t.term_id = tt.term_id
          WHERE tr.object_id IN (?)
-           AND tt.taxonomy IN (?, ?)
+           AND tt.taxonomy IN (${taxonomyPlaceholders})
          ORDER BY tr.object_id ASC, tt.parent ASC, t.name ASC`,
-        [ids, 'nedvizhimost', 'custom_tag-two'],
+        [ids, ...this.config.taxonomies],
       );
 
       rows.push(
@@ -188,13 +193,19 @@ export class WordPressReadonlyClient {
   }
 
   private async fetchTerms() {
+    const taxonomyPlaceholders = this.config.taxonomies.map(() => '?').join(', ');
+
+    if (!taxonomyPlaceholders) {
+      return [];
+    }
+
     const rows = await this.query<TermRow[]>(
       `SELECT t.term_id, t.name, t.slug, tt.taxonomy, tt.parent
        FROM ${this.table('terms')} t
        INNER JOIN ${this.table('term_taxonomy')} tt ON tt.term_id = t.term_id
-       WHERE tt.taxonomy IN (?, ?)
+       WHERE tt.taxonomy IN (${taxonomyPlaceholders})
        ORDER BY tt.parent ASC, t.name ASC`,
-      ['nedvizhimost', 'custom_tag-two'],
+      [...this.config.taxonomies],
     );
 
     return rows.map((row) => ({

@@ -20,6 +20,11 @@ const { WordpressImportController } = require('../dist/wordpress-import/wordpres
 
 const rootDir = path.resolve(__dirname, '../../..');
 const sharedTypesPath = path.join(rootDir, 'packages/shared/src/index.ts');
+const schemaPath = path.join(rootDir, 'apps/api/prisma/schema.prisma');
+const objectTypeMigrationPath = path.join(
+  rootDir,
+  'apps/api/prisma/migrations/20260710120000_add_real_estate_object_type/migration.sql',
+);
 const seedPath = path.join(rootDir, 'apps/api/src/prisma/seed.ts');
 const feedsModulePath = path.join(rootDir, 'apps/api/src/feeds/feeds.module.ts');
 
@@ -345,9 +350,22 @@ test('shared package exports feed response contracts', () => {
 test('shared object contracts include feed aggregates', () => {
   const sharedTypes = readProjectFile(sharedTypesPath);
 
+  assert.match(sharedTypes, /export type RealEstateObjectType = 'RESIDENTIAL' \| 'COMMERCIAL';/);
+  assert.match(sharedTypes, /export type RealEstateObjectBase = \{[\s\S]*type: RealEstateObjectType;[\s\S]*\};/);
   assert.match(sharedTypes, /export type RealEstateObjectBase = \{[\s\S]*aerotourUrl: string \| null;[\s\S]*layoutsUrl: string \| null;[\s\S]*\};/);
   assert.match(sharedTypes, /export type RealEstateObjectBase = \{[\s\S]*feedPriceFrom: string \| null;[\s\S]*feedPricePerMeterFrom: string \| null;[\s\S]*feedAreaRange: string \| null;[\s\S]*feedFloorRange: string \| null;[\s\S]*feedUnitsCount: number \| null;[\s\S]*feedUnitsCountText: string \| null;[\s\S]*matchedFeedUnitsCount: number \| null;[\s\S]*feedCompletionYear: number \| null;[\s\S]*feedCompletionQuarter: number \| null;[\s\S]*feedUpdatedAt: string \| null;[\s\S]*\};/);
   assert.match(sharedTypes, /export type MapObject = \{[\s\S]*feedPriceFrom: string \| null;[\s\S]*feedPricePerMeterFrom: string \| null;[\s\S]*feedAreaRange: string \| null;[\s\S]*feedFloorRange: string \| null;[\s\S]*feedUnitsCount: number \| null;[\s\S]*feedUnitsCountText: string \| null;[\s\S]*feedCompletionYear: number \| null;[\s\S]*feedCompletionQuarter: number \| null;[\s\S]*feedUpdatedAt: string \| null;[\s\S]*\};/);
+});
+
+test('object schema exposes residential and commercial object type', () => {
+  const schema = readProjectFile(schemaPath);
+  const migration = readProjectFile(objectTypeMigrationPath);
+
+  assert.match(schema, /enum RealEstateObjectType \{[\s\S]*RESIDENTIAL\s+@map\("residential"\)[\s\S]*COMMERCIAL\s+@map\("commercial"\)[\s\S]*@@map\("real_estate_object_type"\)[\s\S]*\}/);
+  assert.match(schema, /model RealEstateObject \{[\s\S]*type\s+RealEstateObjectType\s+@default\(RESIDENTIAL\)[\s\S]*\}/);
+  assert.match(migration, /CREATE TYPE "real_estate_object_type" AS ENUM \('residential', 'commercial'\)/);
+  assert.match(migration, /ALTER TABLE "real_estate_objects" ADD COLUMN "type" "real_estate_object_type" NOT NULL DEFAULT 'residential'/);
+  assert.match(migration, /CREATE INDEX "real_estate_objects_type_idx" ON "real_estate_objects"\("type"\)/);
 });
 
 test('CatalogLinksController delegates public and admin endpoints to the service', async () => {

@@ -8,12 +8,13 @@
 - API tests: `pnpm --filter @platforma/api test`
 - WordPress import tests: `pnpm --filter @platforma/wp-import test`
 - Feed import tests: `pnpm --filter @platforma/feed-import test`
-- Dev web: `pnpm dev:web -- --port 5173 --strictPort`
+- Dev web: `pnpm --filter @platforma/web dev --port 5173 --strictPort`
 - Dev API: `pnpm dev:api`
 - Feed analyze package command: `pnpm --filter @platforma/feed-import run analyze`
 
 ## Dev server
 
 - Web dev server всегда запускай только на порту `5173`.
-- Запускай Vite со строгим портом: `pnpm dev:web -- --port 5173 --strictPort`.
-- Если порт `5173` занят, не переключайся на другой порт автоматически; сначала останови старый процесс или уточни у пользователя, что делать.
+- Запускай Vite со строгим портом: `pnpm --filter @platforma/web dev --port 5173 --strictPort`.
+- Если порт `5173` занят, сразу перезапусти процесс, который держит этот порт, и снова подними web на `5173`.
+- Никогда не переключай локальный web на `5174` или другой порт без прямого запроса пользователя.

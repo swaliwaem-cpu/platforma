@@ -2,6 +2,7 @@ export const platformName = 'Platforma';
 
 export type UserStatus = 'ACTIVE' | 'BLOCKED' | 'INVITED' | 'DEACTIVATED';
 export type ObjectStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
+export type RealEstateObjectType = 'RESIDENTIAL' | 'COMMERCIAL';
 export type LocationType = 'AREA' | 'DISTRICT' | 'CUSTOM';
 export type FileStorage = 'LOCAL' | 'MINIO';
 export type FileVariant = 'THUMBNAIL' | 'CARD' | 'DETAIL';
@@ -200,6 +201,7 @@ export type ObjectLinkedFile = {
 export type RealEstateObjectBase = {
   id: string;
   wpPostId: number | null;
+  type: RealEstateObjectType;
   title: string;
   slug: string;
   status: ObjectStatus;
@@ -683,6 +685,7 @@ export type UpdateCatalogLinksRequest = {
 
 export type MapObject = {
   id: string;
+  type: RealEstateObjectType;
   title: string;
   slug: string;
   status: ObjectStatus;

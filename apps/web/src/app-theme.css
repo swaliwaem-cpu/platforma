@@ -370,12 +370,12 @@ html[data-app-theme] :is(.text-button:hover, .text-button:focus-visible, .admin-
   box-shadow: var(--app-theme-focus-primary);
 }
 
-html[data-app-theme] :is(.nav-item) {
+html[data-app-theme] :is(.nav-item, .nav-subitem) {
   background: transparent;
   color: var(--app-theme-ink-800);
 }
 
-html[data-app-theme] :is(.nav-item:hover, .nav-item--active) {
+html[data-app-theme] :is(.nav-item:hover, .nav-item--active, .nav-subitem:hover, .nav-subitem:focus-visible, .nav-subitem--active) {
   border-color: var(--app-theme-primary);
   background: var(--app-theme-primary-soft);
   color: var(--app-theme-primary-deep);

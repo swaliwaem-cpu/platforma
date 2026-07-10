@@ -34,6 +34,7 @@ import type {
   ObjectsResponse,
   PublicCatalogQuickLink,
   RealEstateObjectSummary,
+  RealEstateObjectType,
 } from '@platforma/shared';
 import { matchesSearchVariants } from '@platforma/shared/search-normalization';
 
@@ -53,6 +54,7 @@ type CatalogPageProps = {
 };
 
 type BooleanFilter = '' | 'true' | 'false';
+type CatalogObjectTypeFilter = RealEstateObjectType | 'ALL';
 type CatalogStatusFilter = ObjectStatus | 'ALL';
 type CatalogViewMode = 'cards' | 'list';
 type CatalogSortField = 'createdAt' | 'priceFrom' | 'pricePerMeterFrom' | 'completionDate';
@@ -66,6 +68,7 @@ type CatalogFilters = {
   locationId: string;
   areaId: string;
   metroStationId: string;
+  objectType: CatalogObjectTypeFilter;
   completionYear: string;
   completionQuarter: string;
   lotPriceMin: string;
@@ -107,6 +110,7 @@ const defaultFilters: CatalogFilters = {
   locationId: '',
   areaId: '',
   metroStationId: '',
+  objectType: 'ALL',
   completionYear: '',
   completionQuarter: '',
   lotPriceMin: '',
@@ -146,9 +150,10 @@ const objectStatusLabels: Record<ObjectStatus, string> = {
 export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
   const { accessToken } = useAuth();
   const [queryString, setQueryString] = useState(window.location.search);
-  const filters = useMemo(() => parseCatalogFilters(queryString), [queryString]);
+  const routeObjectType = getCatalogRouteObjectType(pathname);
+  const filters = useMemo(() => parseCatalogFilters(queryString, routeObjectType), [queryString, routeObjectType]);
   const viewMode = useMemo(() => parseCatalogViewMode(queryString), [queryString]);
-  const isCatalogRoute = pathname === '/catalog';
+  const isCatalogRoute = isCatalogListPath(pathname);
   const isMapView = pathname === '/catalog/map';
   const canShowCatalogQuickLinks = isCatalogRoute || isMapView;
   const [objects, setObjects] = useState<RealEstateObjectSummary[]>([]);
@@ -396,14 +401,26 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
     }
   }
 
+  function pushCatalogLocation(nextPathname: string, nextSearch: string) {
+    if (nextPathname !== pathname) {
+      navigate(`${nextPathname}${nextSearch}`);
+    } else {
+      window.history.pushState(null, '', `${nextPathname}${nextSearch}`);
+      setQueryString(window.location.search);
+    }
+  }
+
   function updateFilters(patch: Partial<CatalogFilters>, options: { resetPage: boolean } = { resetPage: true }) {
     const nextFilters = {
       ...filters,
       ...patch,
       page: options.resetPage ? 1 : (patch.page ?? filters.page),
     };
+    const nextPathname = getNextCatalogPathname(pathname, nextFilters.objectType);
     const shouldResetSearchResults = 'search' in patch && patch.search !== filters.search;
-    const nextSearch = buildCatalogQuery(nextFilters, viewMode);
+    const nextSearch = buildCatalogQuery(nextFilters, viewMode, {
+      omitObjectType: shouldOmitCatalogObjectTypeParam(nextPathname),
+    });
 
     if (shouldResetSearchResults) {
       objectsRequestIdRef.current += 1;
@@ -425,43 +442,57 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
       setIsMapLoading(nextFilters.hasCoordinates !== 'false');
     }
 
-    window.history.pushState(null, '', `${pathname}${nextSearch}`);
-    setQueryString(window.location.search);
+    pushCatalogLocation(nextPathname, nextSearch);
   }
 
   function resetFilters() {
-    window.history.pushState(null, '', `${pathname}${buildCatalogQuery(defaultFilters, viewMode)}`);
-    setQueryString(window.location.search);
+    const nextFilters = {
+      ...defaultFilters,
+      objectType: routeObjectType ?? filters.objectType,
+    };
+    const nextPathname = getNextCatalogPathname(pathname, nextFilters.objectType);
+    const nextSearch = buildCatalogQuery(nextFilters, viewMode, {
+      omitObjectType: shouldOmitCatalogObjectTypeParam(nextPathname),
+    });
+
+    pushCatalogLocation(nextPathname, nextSearch);
   }
 
   function toggleCatalogViewMode() {
     const nextViewMode: CatalogViewMode = viewMode === 'list' ? 'cards' : 'list';
-    const nextSearch = buildCatalogQuery(filters, nextViewMode);
+    const nextSearch = buildCatalogQuery(filters, nextViewMode, {
+      omitObjectType: shouldOmitCatalogObjectTypeParam(pathname),
+    });
 
-    window.history.pushState(null, '', `${pathname}${nextSearch}`);
-    setQueryString(window.location.search);
+    pushCatalogLocation(pathname, nextSearch);
   }
 
   function openCatalogDeveloperLink(developerId: string) {
     const nextFilters = {
       ...defaultFilters,
+      objectType: filters.objectType,
       developerId,
     };
-    const nextSearch = buildCatalogQuery(nextFilters, viewMode);
+    const nextPathname = getCatalogListPathname(nextFilters.objectType);
+    const nextSearch = buildCatalogQuery(nextFilters, viewMode, {
+      omitObjectType: shouldOmitCatalogObjectTypeParam(nextPathname),
+    });
 
-    window.history.pushState(null, '', `/catalog${nextSearch}`);
-    setQueryString(window.location.search);
+    pushCatalogLocation(nextPathname, nextSearch);
   }
 
   function openCatalogKrtLink(krtName: string) {
     const nextFilters = {
       ...defaultFilters,
+      objectType: filters.objectType,
       krtName,
     };
-    const nextSearch = buildCatalogQuery(nextFilters, viewMode);
+    const nextPathname = getCatalogListPathname(nextFilters.objectType);
+    const nextSearch = buildCatalogQuery(nextFilters, viewMode, {
+      omitObjectType: shouldOmitCatalogObjectTypeParam(nextPathname),
+    });
 
-    window.history.pushState(null, '', `/catalog${nextSearch}`);
-    setQueryString(window.location.search);
+    pushCatalogLocation(nextPathname, nextSearch);
   }
 
   return (
@@ -469,7 +500,7 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
       <header className="page-header">
         <div>
           <p className="eyebrow">Каталог</p>
-          <h2>{isMapView ? 'Объекты на карте' : 'Объекты недвижимости'}</h2>
+          <h2>{getCatalogPageTitle(filters.objectType, isMapView)}</h2>
         </div>
         <div className="header-actions">
           <span className="catalog-count">
@@ -491,8 +522,14 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
       <CatalogViewActions
         isMapView={isMapView}
         viewMode={viewMode}
-        onOpenCatalog={() => navigate(`/catalog${queryString}`)}
-        onOpenMap={() => navigate(`/catalog/map${queryString}`)}
+        onOpenCatalog={() =>
+          navigate(
+            `${getCatalogListPathname(filters.objectType)}${buildCatalogQuery(filters, viewMode, {
+              omitObjectType: filters.objectType !== 'ALL',
+            })}`,
+          )
+        }
+        onOpenMap={() => navigate(`/catalog/map${buildCatalogQuery(filters, viewMode)}`)}
         onToggleViewMode={toggleCatalogViewMode}
       />
 
@@ -755,6 +792,18 @@ function CatalogFilters({
 
       {isExpanded ? (
         <div className="catalog-filter-fields">
+          <label>
+            Раздел
+            <select
+              value={filters.objectType}
+              onChange={(event) => onChange({ objectType: event.target.value as CatalogObjectTypeFilter })}
+            >
+              <option value="ALL">Все</option>
+              <option value="RESIDENTIAL">Жилая</option>
+              <option value="COMMERCIAL">Коммерция</option>
+            </select>
+          </label>
+
           <label>
             Застройщик
             <CatalogFilterSearchSelect
@@ -1869,7 +1918,7 @@ function CatalogCoverImage({ accessToken, alt, fileId }: { accessToken: string; 
   );
 }
 
-function parseCatalogFilters(queryString: string): CatalogFilters {
+function parseCatalogFilters(queryString: string, routeObjectType: RealEstateObjectType | null = null): CatalogFilters {
   const params = new URLSearchParams(queryString);
 
   return {
@@ -1879,6 +1928,7 @@ function parseCatalogFilters(queryString: string): CatalogFilters {
     locationId: parseCatalogFilterIdParam(params.get('locationId')),
     areaId: parseCatalogFilterIdParam(params.get('areaId')),
     metroStationId: parseCatalogFilterIdParam(params.get('metroStationId')),
+    objectType: routeObjectType ?? parseCatalogObjectType(params.get('type')),
     completionYear: sanitizeIntegerText(params.get('completionYear') ?? '', 4),
     completionQuarter: defaultFilters.completionQuarter,
     lotPriceMin: sanitizeDecimalText(params.get('lotPriceMin') ?? ''),
@@ -1904,7 +1954,11 @@ function parseCatalogViewMode(queryString: string): CatalogViewMode {
   return params.get('view') === 'list' ? 'list' : 'cards';
 }
 
-function buildCatalogQuery(filters: CatalogFilters, viewMode: CatalogViewMode = 'cards') {
+function buildCatalogQuery(
+  filters: CatalogFilters,
+  viewMode: CatalogViewMode = 'cards',
+  options: { omitObjectType?: boolean } = {},
+) {
   const params = new URLSearchParams();
 
   setSearchParam(params, 'search', filters.search);
@@ -1913,6 +1967,9 @@ function buildCatalogQuery(filters: CatalogFilters, viewMode: CatalogViewMode = 
   setParam(params, 'locationId', filters.locationId);
   setParam(params, 'areaId', filters.areaId);
   setParam(params, 'metroStationId', filters.metroStationId);
+  if (!options.omitObjectType) {
+    setCatalogObjectTypeParam(params, filters.objectType);
+  }
   setParam(params, 'completionYear', filters.completionYear);
   setParam(params, 'lotPriceMin', filters.lotPriceMin);
   setParam(params, 'lotPriceMax', filters.lotPriceMax);
@@ -1958,6 +2015,58 @@ function buildCatalogLotFilterQuery(filters: CatalogFilters) {
   const query = params.toString();
 
   return query ? `?${query}` : '';
+}
+
+function getCatalogRouteObjectType(pathname: string): RealEstateObjectType | null {
+  if (pathname === '/catalog/life') {
+    return 'RESIDENTIAL';
+  }
+
+  if (pathname === '/catalog/comm') {
+    return 'COMMERCIAL';
+  }
+
+  return null;
+}
+
+function isCatalogListPath(pathname: string) {
+  return pathname === '/catalog' || pathname === '/catalog/life' || pathname === '/catalog/comm';
+}
+
+function getCatalogListPathname(objectType: CatalogObjectTypeFilter) {
+  if (objectType === 'RESIDENTIAL') {
+    return '/catalog/life';
+  }
+
+  if (objectType === 'COMMERCIAL') {
+    return '/catalog/comm';
+  }
+
+  return '/catalog';
+}
+
+function getNextCatalogPathname(currentPathname: string, objectType: CatalogObjectTypeFilter) {
+  if (currentPathname === '/catalog/map') {
+    return currentPathname;
+  }
+
+  return getCatalogListPathname(objectType);
+}
+
+function shouldOmitCatalogObjectTypeParam(pathname: string) {
+  return pathname === '/catalog/life' || pathname === '/catalog/comm';
+}
+
+function getCatalogPageTitle(objectType: CatalogObjectTypeFilter, isMapView: boolean) {
+  if (objectType === 'RESIDENTIAL') {
+    return isMapView ? 'Жилая недвижимость на карте' : 'Жилая недвижимость';
+  }
+
+  if (objectType === 'COMMERCIAL') {
+    return isMapView ? 'Коммерческая недвижимость на карте' : 'Коммерческая недвижимость';
+  }
+
+  return isMapView ? 'Все объекты на карте' : 'Все объекты недвижимости';
 }
 
 function hasActiveCatalogLotFilters(filters: CatalogFilters) {
@@ -2007,6 +2116,7 @@ function countActiveAdvancedFilters(filters: CatalogFilters) {
     filters.locationId,
     filters.areaId,
     filters.metroStationId,
+    filters.objectType === 'ALL' ? '' : filters.objectType,
     filters.completionYear,
     filters.lotPriceMin,
     filters.lotPriceMax,
@@ -2035,6 +2145,7 @@ function buildObjectsParams(filters: CatalogFilters, includePage: boolean) {
   setParam(params, 'locationId', filters.locationId);
   setParam(params, 'areaId', filters.areaId);
   setParam(params, 'metroStationId', filters.metroStationId);
+  setCatalogObjectTypeParam(params, filters.objectType);
   setParam(params, 'completionYear', filters.completionYear);
   setParam(params, 'lotPriceMin', filters.lotPriceMin);
   setParam(params, 'lotPriceMax', filters.lotPriceMax);
@@ -2134,6 +2245,12 @@ function setParam(params: URLSearchParams, key: string, value: string) {
   }
 }
 
+function setCatalogObjectTypeParam(params: URLSearchParams, value: CatalogObjectTypeFilter) {
+  if (value !== defaultFilters.objectType) {
+    params.set('type', value);
+  }
+}
+
 function setSearchParam(params: URLSearchParams, key: string, value: string) {
   if (value.trim()) {
     params.set(key, value);
@@ -2156,6 +2273,10 @@ function parseCatalogSortBy(value: string | null): CatalogSortField {
   }
 
   return defaultFilters.sortBy;
+}
+
+function parseCatalogObjectType(value: string | null) {
+  return value === 'RESIDENTIAL' || value === 'COMMERCIAL' ? value : defaultFilters.objectType;
 }
 
 function parseCatalogSortDirection(value: string | null): SortDirection {

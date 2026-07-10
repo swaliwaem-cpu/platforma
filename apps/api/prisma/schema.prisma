@@ -24,6 +24,13 @@ enum ObjectStatus {
   @@map("object_status")
 }
 
+enum RealEstateObjectType {
+  RESIDENTIAL @map("residential")
+  COMMERCIAL  @map("commercial")
+
+  @@map("real_estate_object_type")
+}
+
 enum LocationType {
   AREA     @map("area")
   DISTRICT @map("district")
@@ -287,6 +294,7 @@ model MetroStation {
 model RealEstateObject {
   id                        String       @id @default(uuid()) @db.Uuid
   wpPostId                  Int?         @unique @map("wp_post_id")
+  type                      RealEstateObjectType @default(RESIDENTIAL)
   title                     String
   slug                      String       @unique
   status                    ObjectStatus @default(DRAFT)
@@ -342,6 +350,7 @@ model RealEstateObject {
   feedUnits          FeedUnit[]
 
   @@index([status])
+  @@index([type])
   @@index([developerId])
   @@index([primaryLocationId])
   @@index([priceFrom])

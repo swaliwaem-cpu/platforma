@@ -42,6 +42,7 @@ import {
   ObjectsResponse,
   RealEstateObjectDetail,
   RealEstateObjectSummary,
+  type RealEstateObjectType,
 } from '@platforma/shared';
 
 import { Input } from '@/components/ui/input';
@@ -78,6 +79,7 @@ type ObjectsAdminPageProps = {
 };
 
 type ObjectFormState = {
+  type: RealEstateObjectType;
   title: string;
   description: string;
   architectureDescription: string;
@@ -147,6 +149,7 @@ const gallerySectionOptions: {
 ];
 
 const emptyForm: ObjectFormState = {
+  type: 'RESIDENTIAL',
   title: '',
   description: '',
   architectureDescription: '',
@@ -186,6 +189,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
   const [form, setForm] = useState<ObjectFormState>(emptyForm);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
   const [isObjectFiltersExpanded, setIsObjectFiltersExpanded] = useState(false);
   const [districtSearch, setDistrictSearch] = useState('');
   const [areaSearch, setAreaSearch] = useState('');
@@ -228,7 +232,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
   const isCreateRoute = pathname === '/admin/objects/new';
   const isListRoute = pathname === '/admin/objects';
   const hasActiveAdvancedListFilters = Boolean(districtSearch.trim() || areaSearch.trim() || metroSearch.trim());
-  const hasActiveListFilters = Boolean(search.trim() || statusFilter || hasActiveAdvancedListFilters);
+  const hasActiveListFilters = Boolean(search.trim() || statusFilter || typeFilter || hasActiveAdvancedListFilters);
 
   useEffect(() => {
     if (!accessToken) {
@@ -261,6 +265,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
     sortBy,
     sortDirection,
     statusFilter,
+    typeFilter,
   ]);
 
   useEffect(() => {
@@ -787,6 +792,10 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
         params.set('status', statusFilter);
       }
 
+      if (typeFilter) {
+        params.set('type', typeFilter);
+      }
+
       if (districtSearch.trim()) {
         params.set('districtSearch', districtSearch.trim());
       }
@@ -1138,6 +1147,7 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
   function resetListFilters() {
     setSearch('');
     setStatusFilter('');
+    setTypeFilter('');
     setDistrictSearch('');
     setAreaSearch('');
     setMetroSearch('');
@@ -1246,6 +1256,22 @@ export function ObjectsAdminPage({ pathname, navigate, onBack }: ObjectsAdminPag
                   {label}
                 </option>
               ))}
+            </select>
+          </label>
+
+          <label className="toolbar-field toolbar-field--status">
+            <span>Раздел</span>
+            <select
+              aria-label="Фильтр по разделу"
+              value={typeFilter}
+              onChange={(event) => {
+                setTypeFilter(event.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="">Все разделы</option>
+              <option value="RESIDENTIAL">Жилая</option>
+              <option value="COMMERCIAL">Коммерция</option>
             </select>
           </label>
         </div>
@@ -1506,6 +1532,20 @@ function ObjectEditor(props: ObjectEditorProps) {
                       value={props.form.title}
                       onChange={(event) => props.onFormChange({ ...props.form, title: event.target.value })}
                     />
+                  </Field>
+
+                  <Field>
+                    <FieldLabel htmlFor="object-type">Тип</FieldLabel>
+                    <select
+                      id="object-type"
+                      value={props.form.type}
+                      onChange={(event) =>
+                        props.onFormChange({ ...props.form, type: event.target.value as RealEstateObjectType })
+                      }
+                    >
+                      <option value="RESIDENTIAL">Жилая</option>
+                      <option value="COMMERCIAL">Коммерция</option>
+                    </select>
                   </Field>
 
                   <Field className="field-wide">
@@ -2960,6 +3000,7 @@ function createFormFromObject(object: RealEstateObjectDetail): ObjectFormState {
   const districtLocation = getObjectDistrictLocation(object);
 
   return {
+    type: object.type ?? 'RESIDENTIAL',
     title: object.title,
     description: object.description ?? '',
     architectureDescription: object.architectureDescription ?? '',
@@ -3000,6 +3041,7 @@ function createPayloadFromForm(form: ObjectFormState) {
   ]);
 
   return {
+    type: form.type,
     title: form.title.trim(),
     description: emptyToNull(form.description),
     architectureDescription: emptyToNull(form.architectureDescription),

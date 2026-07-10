@@ -25,6 +25,10 @@
       "aliases": ["Level group"]
     },
     {
+      "canonicalName": "MR Group",
+      "aliases": ["MR Office"]
+    },
+    {
       "canonicalName": "Stone",
       "aliases": ["STONE", "Stone Hedge"]
     },

@@ -16,6 +16,7 @@ import {
 import { AuthenticatedUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { LotPresentationsAccessGuard } from './lot-presentations-access.guard';
 import { LotPresentationsService } from './lot-presentations.service';
 
 type FileContentResponse = {
@@ -24,7 +25,7 @@ type FileContentResponse = {
 };
 
 @Controller('lot-presentations')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, LotPresentationsAccessGuard)
 export class LotPresentationsController {
   constructor(private readonly lotPresentationsService: LotPresentationsService) {}
 

@@ -297,6 +297,7 @@ export function ImportAdminPage({ onBack }: ImportAdminPageProps) {
                   const summary = isPlainObject(report.summaryJson) ? report.summaryJson : null;
                   const warningsCount = getReportIssueCount(report, 'warnings');
                   const errorsCount = getReportIssueCount(report, 'errors');
+                  const profileLabel = getReportProfileLabel(summary);
 
                   return (
                     <TableRow
@@ -318,6 +319,7 @@ export function ImportAdminPage({ onBack }: ImportAdminPageProps) {
                         <span className={`import-mode-pill import-mode-pill--${report.mode.toLowerCase()}`}>
                           {modeLabels[report.mode]}
                         </span>
+                        {profileLabel ? <span className="table-subtext">{profileLabel}</span> : null}
                       </TableCell>
                       <TableCell className="import-status-column">
                         <AdminStatusBadge className={`import-status import-status--${report.status.toLowerCase()}`}>
@@ -482,6 +484,9 @@ function ReportSummary({ summary }: { summary: Record<string, unknown> | null })
   }
 
   const items: Array<{ label: string; value: unknown; tone?: 'warning' | 'danger' }> = [
+    { label: 'Профиль', value: summary.profile },
+    { label: 'Тип объектов', value: summary.objectType },
+    { label: 'WP post type', value: summary.postType },
     { label: 'Найдено', value: summary.objectsFound },
     { label: 'Сопоставлено', value: summary.objectsMapped },
     { label: 'Импортировано', value: summary.objectsImported },
@@ -507,7 +512,7 @@ function ReportSummary({ summary }: { summary: Record<string, unknown> | null })
         {items.map((item) => (
           <div key={item.label} className={item.tone ? `report-summary-item--${item.tone}` : undefined}>
             <dt>{item.label}</dt>
-            <dd>{formatSummaryNumber(item.value)}</dd>
+            <dd>{formatSummaryValue(item.value)}</dd>
           </div>
         ))}
       </dl>
@@ -587,6 +592,29 @@ function formatSummaryNumber(value: unknown) {
   }
 
   return new Intl.NumberFormat('ru-RU').format(value);
+}
+
+function formatSummaryValue(value: unknown) {
+  if (typeof value === 'number') {
+    return formatSummaryNumber(value);
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    return value;
+  }
+
+  return '0';
+}
+
+function getReportProfileLabel(summary: Record<string, unknown> | null) {
+  if (!summary) {
+    return null;
+  }
+
+  const profile = typeof summary.profile === 'string' && summary.profile.trim() ? summary.profile : null;
+  const objectType = typeof summary.objectType === 'string' && summary.objectType.trim() ? summary.objectType : null;
+
+  return [profile, objectType].filter(Boolean).join(' · ') || null;
 }
 
 function formatDateTime(value: string) {

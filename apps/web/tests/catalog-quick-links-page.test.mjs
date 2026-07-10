@@ -54,7 +54,9 @@ function countMatches(sourceText, pattern) {
 
 test('catalog page loads public quick links on catalog and map routes', () => {
   assert.match(source, /CatalogLinksResponse/);
-  assert.match(source, /const isCatalogRoute = pathname === '\/catalog';/);
+  assert.match(source, /const isCatalogRoute = isCatalogListPath\(pathname\);/);
+  assert.match(source, /function isCatalogListPath\(pathname: string\)/);
+  assert.match(source, /pathname === '\/catalog' \|\| pathname === '\/catalog\/life' \|\| pathname === '\/catalog\/comm'/);
   assert.match(source, /const isMapView = pathname === '\/catalog\/map';/);
   assert.match(source, /const canShowCatalogQuickLinks = isCatalogRoute \|\| isMapView;/);
   assert.match(source, /apiRequest<CatalogLinksResponse>\('\/catalog-links', catalogLinksAccessToken\)/);
@@ -63,11 +65,13 @@ test('catalog page loads public quick links on catalog and map routes', () => {
   assert.match(source, /\{canShowCatalogQuickLinks \? \(\s*<CatalogQuickLinks/);
 });
 
-test('catalog quick link clicks reset filters and preserve the current list view', () => {
+test('catalog quick link clicks reset filters preserve route section and current list view', () => {
   assert.match(source, /function openCatalogDeveloperLink\(developerId: string\)/);
-  assert.match(source, /const nextFilters = \{\s*\.\.\.defaultFilters,\s*developerId,\s*\};[\s\S]*buildCatalogQuery\(nextFilters, viewMode\)/);
+  assert.match(source, /const nextFilters = \{\s*\.\.\.defaultFilters,\s*objectType: filters\.objectType,\s*developerId,\s*\};/);
+  assert.match(source, /const nextPathname = getCatalogListPathname\(nextFilters\.objectType\);/);
+  assert.match(source, /buildCatalogQuery\(nextFilters, viewMode, \{[\s\S]*omitObjectType: shouldOmitCatalogObjectTypeParam\(nextPathname\),[\s\S]*\}\)/);
   assert.match(source, /function openCatalogKrtLink\(krtName: string\)/);
-  assert.match(source, /const nextFilters = \{\s*\.\.\.defaultFilters,\s*krtName,\s*\};[\s\S]*buildCatalogQuery\(nextFilters, viewMode\)/);
+  assert.match(source, /const nextFilters = \{\s*\.\.\.defaultFilters,\s*objectType: filters\.objectType,\s*krtName,\s*\};/);
 });
 
 test('catalog object detail links open in new browser tabs', () => {
@@ -127,6 +131,24 @@ test('catalog filters include krtName in URL and API requests', () => {
   assert.match(source, /krtName: '',/);
   assert.match(source, /krtName: parseTextParam\(params\.get\('krtName'\)\)/);
   assert.match(source, /setParam\(params, 'krtName', filters\.krtName\)/);
+});
+
+test('catalog filters include residential and commercial object type in URL and API requests', () => {
+  assert.match(source, /RealEstateObjectType/);
+  assert.match(source, /type CatalogObjectTypeFilter = RealEstateObjectType \| 'ALL';/);
+  assert.match(source, /objectType: CatalogObjectTypeFilter;/);
+  assert.match(source, /objectType: 'ALL',/);
+  assert.match(source, /objectType: routeObjectType \?\? parseCatalogObjectType\(params\.get\('type'\)\)/);
+  assert.match(source, /function parseCatalogObjectType\(value: string \| null\)/);
+  assert.match(source, /function setCatalogObjectTypeParam\(params: URLSearchParams, value: CatalogObjectTypeFilter\)/);
+  assert.equal(countMatches(source, /setCatalogObjectTypeParam\(params, filters\.objectType\);/g), 2);
+  assert.match(source, /if \(!options\.omitObjectType\) \{/);
+  assert.match(source, />\s*Раздел\s*</);
+  assert.match(source, /value=\{filters\.objectType\}/);
+  assert.match(source, /onChange\(\{ objectType: event\.target\.value as CatalogObjectTypeFilter \}\)/);
+  assert.match(source, /<option value="ALL">Все<\/option>/);
+  assert.match(source, /<option value="RESIDENTIAL">Жилая<\/option>/);
+  assert.match(source, /<option value="COMMERCIAL">Коммерция<\/option>/);
 });
 
 test('catalog search keeps typed spaces while syncing URL and API params', () => {

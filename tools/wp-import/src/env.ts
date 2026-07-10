@@ -1,6 +1,14 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+import { RealEstateObjectType } from '@prisma/client';
+
+import {
+  getWordPressImportProfile,
+  WordPressImportProfile,
+  WordPressImportProfileName,
+} from './profiles';
+
 export type ImportConfig = {
   wp: {
     host: string;
@@ -11,7 +19,13 @@ export type ImportConfig = {
     database: string;
     tablePrefix: string;
     uploadsPath: string;
+    profileName: WordPressImportProfileName;
+    profile: WordPressImportProfile;
     postType: string;
+    taxonomies: readonly string[];
+    sourcePathPrefix: string;
+    objectType: RealEstateObjectType;
+    importFiles: boolean;
     importLimit: number | null;
   };
   postgres: {
@@ -39,6 +53,7 @@ export function loadImportConfig() {
   loadEnvFiles();
 
   const tablePrefix = getEnv('WP_TABLE_PREFIX', 'wp_');
+  const profile = getWordPressImportProfile(getEnv('WP_IMPORT_PROFILE', 'residential'));
 
   if (!/^[a-zA-Z0-9_]+$/u.test(tablePrefix)) {
     throw new Error('WP_TABLE_PREFIX can contain only letters, numbers and underscores');
@@ -54,7 +69,13 @@ export function loadImportConfig() {
       database: getRequiredEnv('WP_DB_NAME'),
       tablePrefix,
       uploadsPath: getRequiredEnv('WP_UPLOADS_PATH'),
-      postType: getEnv('WP_POST_TYPE', 'nedvizhimosts'),
+      profileName: profile.name,
+      profile,
+      postType: profile.postType,
+      taxonomies: profile.taxonomies,
+      sourcePathPrefix: profile.sourcePathPrefix,
+      objectType: profile.objectType,
+      importFiles: profile.importFiles,
       importLimit: getNullablePositiveIntegerEnv('WP_IMPORT_LIMIT'),
     },
     postgres: {

@@ -64,6 +64,7 @@ function objectRecord(overrides = {}) {
   return {
     id: '11111111-1111-4111-8111-111111111111',
     wpPostId: null,
+    type: 'RESIDENTIAL',
     title: 'ЖК Тестовый',
     slug: 'zhk-testovyy',
     status: ObjectStatus.DRAFT,
@@ -2712,6 +2713,82 @@ test('ObjectsService.create saves manual detail parameters and serializes them',
   assert.equal(result.object.apartmentsCountText, manualDetailParameters.apartmentsCountText);
 });
 
+test('ObjectsService.create saves commercial object type and serializes it', async () => {
+  const calls = {};
+  const createdObject = objectRecord({ type: 'COMMERCIAL' });
+  const prisma = {
+    realEstateObject: {
+      findUnique: async () => null,
+      create: async (args) => {
+        calls.create = args;
+
+        return objectRecord({ id: createdObject.id });
+      },
+      findFirst: async () => createdObject,
+    },
+    objectLocation: {
+      deleteMany: async () => {},
+    },
+    objectMetroStation: {
+      deleteMany: async () => {},
+    },
+    auditLog: {
+      create: async (args) => {
+        calls.auditLog = args;
+      },
+    },
+    $transaction: async (callback) => callback(prisma),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  const result = await service.create(
+    {
+      title: 'Офисный центр',
+      type: 'commercial',
+    },
+    actor,
+    request,
+  );
+
+  assert.equal(calls.create.data.type, 'COMMERCIAL');
+  assert.equal(result.object.type, 'COMMERCIAL');
+  assert.equal(calls.auditLog.data.metadata.after.type, 'COMMERCIAL');
+});
+
+test('ObjectsService.update saves object type changes and audits them', async () => {
+  const calls = {};
+  const existingObject = objectRecord({ type: 'RESIDENTIAL' });
+  const updatedObject = objectRecord({ type: 'COMMERCIAL' });
+  let findFirstCount = 0;
+  const prisma = {
+    realEstateObject: {
+      findFirst: async () => {
+        findFirstCount += 1;
+
+        return findFirstCount === 1 ? existingObject : updatedObject;
+      },
+      update: async (args) => {
+        calls.update = args;
+
+        return updatedObject;
+      },
+    },
+    auditLog: {
+      create: async (args) => {
+        calls.auditLog = args;
+      },
+    },
+    $transaction: async (callback) => callback(prisma),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  const result = await service.update(existingObject.id, { type: 'COMMERCIAL' }, actor, request);
+
+  assert.equal(calls.update.data.type, 'COMMERCIAL');
+  assert.equal(result.object.type, 'COMMERCIAL');
+  assert.deepEqual(calls.auditLog.data.metadata.changes.type, { from: 'RESIDENTIAL', to: 'COMMERCIAL' });
+});
+
 test('ObjectsService.create saves content sections and serializes them', async () => {
   const contentSections = {
     architectureDescription: 'Архитектура корпуса',
@@ -3162,6 +3239,150 @@ test('ObjectsService.update allows fixing coordinates on already incomplete publ
   });
 });
 
+test('ObjectsService.update allows clearing developer on published objects', async () => {
+  const calls = {};
+  const district = locationRecord({
+    id: 'cc0580d8-a670-47ff-8f10-d5c4d2522184',
+  });
+  const locationLink = {
+    objectId: '11111111-1111-4111-8111-111111111111',
+    locationId: district.id,
+    isPrimary: true,
+    sortOrder: 0,
+    location: district,
+  };
+  const existingObject = objectRecord({
+    status: ObjectStatus.PUBLISHED,
+    developerId: 'f114fdfc-0478-47c8-a1ed-e614a8499108',
+    primaryLocationId: district.id,
+    primaryLocation: district,
+    locations: [locationLink],
+    address: 'Москва, Капельский пер., 5',
+    latitude: decimal('55.781234'),
+    longitude: decimal('37.631234'),
+    completionYear: 2027,
+  });
+  const updatedObject = objectRecord({
+    ...existingObject,
+    developerId: null,
+    developer: null,
+  });
+  let findFirstCount = 0;
+  const prisma = {
+    realEstateObject: {
+      findFirst: async () => {
+        findFirstCount += 1;
+
+        return findFirstCount === 1 ? existingObject : updatedObject;
+      },
+      update: async (args) => {
+        calls.update = args;
+
+        return updatedObject;
+      },
+    },
+    location: {
+      findMany: async (args) => {
+        calls.locationFindMany = args;
+
+        return [district];
+      },
+    },
+    auditLog: {
+      create: async (args) => {
+        calls.auditLog = args;
+      },
+    },
+    $transaction: async (callback) => callback(prisma),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  const result = await service.update(existingObject.id, { developerId: null }, actor, request);
+
+  assert.ok(calls.update, 'Object update must be called when developer is cleared');
+  assert.equal(calls.update.data.developerId, null);
+  assert.equal(result.object.developer, null);
+  assert.deepEqual(calls.auditLog.data.metadata.changes.developerId, {
+    from: 'f114fdfc-0478-47c8-a1ed-e614a8499108',
+    to: null,
+  });
+});
+
+test('ObjectsService.update allows clearing primary location on published objects', async () => {
+  const calls = {};
+  const district = locationRecord({
+    id: 'cc0580d8-a670-47ff-8f10-d5c4d2522184',
+  });
+  const locationLink = {
+    objectId: '11111111-1111-4111-8111-111111111111',
+    locationId: district.id,
+    isPrimary: true,
+    sortOrder: 0,
+    location: district,
+  };
+  const existingObject = objectRecord({
+    status: ObjectStatus.PUBLISHED,
+    primaryLocationId: district.id,
+    primaryLocation: district,
+    locations: [locationLink],
+    address: 'Москва, Капельский пер., 5',
+    latitude: decimal('55.781234'),
+    longitude: decimal('37.631234'),
+    completionYear: 2027,
+  });
+  const updatedObject = objectRecord({
+    ...existingObject,
+    primaryLocationId: null,
+    primaryLocation: null,
+    locations: [],
+  });
+  let findFirstCount = 0;
+  const prisma = {
+    realEstateObject: {
+      findFirst: async () => {
+        findFirstCount += 1;
+
+        return findFirstCount === 1 ? existingObject : updatedObject;
+      },
+      update: async (args) => {
+        calls.update = args;
+
+        return updatedObject;
+      },
+    },
+    objectLocation: {
+      deleteMany: async (args) => {
+        calls.objectLocationDeleteMany = args;
+      },
+      createMany: async (args) => {
+        calls.objectLocationCreateMany = args;
+      },
+    },
+    objectMetroStation: {
+      deleteMany: async () => {},
+    },
+    auditLog: {
+      create: async (args) => {
+        calls.auditLog = args;
+      },
+    },
+    $transaction: async (callback) => callback(prisma),
+  };
+  const service = new ObjectsService(prisma, {});
+
+  const result = await service.update(existingObject.id, { primaryLocationId: null, locationIds: [] }, actor, request);
+
+  assert.ok(calls.update, 'Object update must be called when primary location is cleared');
+  assert.equal(calls.update.data.primaryLocationId, null);
+  assert.equal(calls.objectLocationDeleteMany.where.objectId, existingObject.id);
+  assert.equal(calls.objectLocationCreateMany, undefined);
+  assert.equal(result.object.primaryLocation, null);
+  assert.deepEqual(calls.auditLog.data.metadata.changes.primaryLocationId, {
+    from: district.id,
+    to: null,
+  });
+});
+
 test('ObjectsService.create rejects too long manual detail parameters', async () => {
   const createService = () => {
     const prisma = {
@@ -3315,6 +3536,94 @@ test('ObjectsService.publish rejects objects without coordinates', async () => {
     () => service.publish('11111111-1111-4111-8111-111111111111', actor, request),
     /Missing fields: coordinates/,
   );
+});
+
+test('ObjectsService.publish allows objects without developer', async () => {
+  const draftObject = objectRecord({
+    developerId: null,
+    developer: null,
+    primaryLocationId: '66666666-6666-4666-8666-666666666666',
+    address: 'Москва, Капельский пер., 5',
+    latitude: decimal('55.781234'),
+    longitude: decimal('37.631234'),
+    completionYear: 2027,
+    completionQuarter: 2,
+  });
+  const publishedObject = objectRecord({
+    ...draftObject,
+    status: ObjectStatus.PUBLISHED,
+    publishedAt: new Date('2026-05-02T10:00:00.000Z'),
+  });
+  const calls = {};
+  const prisma = {
+    realEstateObject: {
+      findFirst: async (args) => {
+        calls.findFirst = args;
+        return draftObject;
+      },
+      update: async (args) => {
+        calls.update = args;
+        return publishedObject;
+      },
+    },
+    auditLog: {
+      create: async (args) => {
+        calls.auditLog = args;
+      },
+    },
+  };
+  const service = new ObjectsService(prisma, {});
+
+  const result = await service.publish(draftObject.id, actor, request);
+
+  assert.equal(result.object.status, ObjectStatus.PUBLISHED);
+  assert.equal(result.object.developer, null);
+  assert.equal(calls.update.data.status, ObjectStatus.PUBLISHED);
+  assert.equal(calls.auditLog.data.action, 'object.publish');
+});
+
+test('ObjectsService.publish allows objects without primary location', async () => {
+  const draftObject = objectRecord({
+    primaryLocationId: null,
+    primaryLocation: null,
+    locations: [],
+    address: 'Москва, Капельский пер., 5',
+    latitude: decimal('55.781234'),
+    longitude: decimal('37.631234'),
+    completionYear: 2027,
+    completionQuarter: 2,
+  });
+  const publishedObject = objectRecord({
+    ...draftObject,
+    status: ObjectStatus.PUBLISHED,
+    publishedAt: new Date('2026-05-02T10:00:00.000Z'),
+  });
+  const calls = {};
+  const prisma = {
+    realEstateObject: {
+      findFirst: async (args) => {
+        calls.findFirst = args;
+        return draftObject;
+      },
+      update: async (args) => {
+        calls.update = args;
+        return publishedObject;
+      },
+    },
+    auditLog: {
+      create: async (args) => {
+        calls.auditLog = args;
+      },
+    },
+  };
+  const service = new ObjectsService(prisma, {});
+
+  const result = await service.publish(draftObject.id, actor, request);
+
+  assert.equal(result.object.status, ObjectStatus.PUBLISHED);
+  assert.equal(result.object.primaryLocation, null);
+  assert.equal(calls.update.data.status, ObjectStatus.PUBLISHED);
+  assert.equal(calls.auditLog.data.action, 'object.publish');
 });
 
 test('ObjectsService.updateStatus publishes through existing publication checks', async () => {
