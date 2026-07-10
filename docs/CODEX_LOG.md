@@ -1,5 +1,52 @@
 # Codex Log
 
+## 2026-07-10 - Production commercial WordPress objects import
+
+Задача:
+
+- Ответить, перенесены ли на production 18 коммерческих объектов, ранее импортированных локально из WordPress/Local.
+- Если не перенесены, перенести их на production сразу как коммерческие и без PDF.
+
+Диагностика:
+
+- Локальная БД содержала ровно 18 `real_estate_objects` с `type = commercial`, `wp_post_id IS NOT NULL`, `status = published`.
+- Production БД до переноса содержала `0` объектов по этим 18 `wp_post_id`; коммерческих объектов на production не было.
+- Разделение жилая/коммерция хранится в колонке `real_estate_objects.type`: `residential` / `commercial`.
+- Коммерческий WordPress-профиль использует `WP_IMPORT_PROFILE=commercial`, `postType=commercials`, `objectType=COMMERCIAL` и `importFiles=false`, поэтому PDF/object files не импортируются.
+
+Изменения:
+
+- Production `/opt/platforma` - перед импортом создан backup:
+  - `/opt/platforma-deploy-backups/commercial-objects-20260710T133436Z/postgres.dump`
+  - `/opt/platforma-deploy-backups/commercial-objects-20260710T133436Z/commercial-core-before.sql`
+- Через временный SSH-туннель к production Postgres/MinIO выполнен `WP_IMPORT_PROFILE=commercial WP_IMPORT_LIMIT=18 pnpm --filter @platforma/wp-import run preview`.
+- Затем выполнен `WP_IMPORT_PROFILE=commercial WP_IMPORT_LIMIT=18 pnpm --filter @platforma/wp-import run run`.
+- Временный локальный файл `/tmp/platforma-prod.env` удален, SSH-туннели `15432` и `19000` закрыты.
+- Код приложения не изменялся.
+
+Проверки:
+
+- Preview на production target: `SUCCESS`, `objectsFound=18`, `objectsMapped=18`, `validImagesMapped=265`, `validFilesMapped=0`, `warningsCount=0`, `errorsCount=0`.
+- Run на production target: `SUCCESS`, `objectsImported=18`, `objectsCreated=18`, `objectsUpdated=0`, `validImagesMapped=265`, `validFilesMapped=0`, `warningsCount=0`, `errorsCount=0`, `objectsArchived=0`, report `914b2fb5-6278-454d-8afa-4e1de345599e`.
+- Production SQL после run:
+  - `commercial/published = 18` по целевым `wp_post_id`;
+  - `object_images = 265`;
+  - `distinct_image_files = 254`;
+  - `file_variants = 762`;
+  - `object_files = 0`.
+- `curl -fsS http://127.0.0.1:3000/health` на production - `status=ok`, `database=ok`, `postgis=true`.
+- `curl -fsS https://broker.fluffywhite.moscow/api/health` - `status=ok`, `database=ok`, `postgis=true`.
+
+Ручная проверка:
+
+- На production открыть `/catalog/comm` и убедиться, что 18 коммерческих объектов видны в разделе коммерции.
+- Открыть несколько карточек, особенно `Деловой центр Twist` и `Мануфактура XIX`, и проверить галерею.
+- Проверить, что PDF/object files у этих объектов не появились.
+
+Спорные места:
+
+- Полный backup MinIO отдельно не делался из-за большого объема хранилища; перенос выполнялся штатным importer'ом, который загрузил нужные изображения и варианты в production MinIO.
+
 ## 2026-07-10 - Apsis Globe developer production/local insert and 5173 check
 
 Задача:
