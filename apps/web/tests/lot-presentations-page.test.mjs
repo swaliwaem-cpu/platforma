@@ -10,6 +10,9 @@ const objectDetailSource = readFileSync(resolve(currentDir, '../src/objects/Obje
 const accessSource = readFileSync(resolve(currentDir, '../src/presentations/presentationAccess.ts'), 'utf8');
 const pageSource = readFileSync(resolve(currentDir, '../src/presentations/LotPresentationsPage.tsx'), 'utf8');
 const actionSource = readFileSync(resolve(currentDir, '../src/presentations/LotCollectionAction.tsx'), 'utf8');
+const finishModalSource = readFileSync(resolve(currentDir, '../src/presentations/LotFinishSelectionModal.tsx'), 'utf8');
+const dialogSource = readFileSync(resolve(currentDir, '../src/components/ui/dialog.tsx'), 'utf8');
+const radioGroupSource = readFileSync(resolve(currentDir, '../src/components/ui/radio-group.tsx'), 'utf8');
 const styles = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
 
 test('lot presentations route is available from sidebar and cabinet navigation', () => {
@@ -17,7 +20,10 @@ test('lot presentations route is available from sidebar and cabinet navigation',
   assert.match(appSource, /import \{ MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL, canAccessLotPresentations \} from '\.\/presentations\/presentationAccess';/);
   assert.match(appSource, /type AppSection = 'cabinet' \| 'catalog' \| 'presentations' \| 'admin';/);
   assert.match(accessSource, /export const MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL = 'admin@fluffywhite\.moscow';/);
-  assert.match(accessSource, /export function canAccessLotPresentations\(user: Pick<AuthUser, 'email'> \| null \| undefined\)/);
+  assert.match(accessSource, /const localHostnames = new Set\(\['localhost', '127\.0\.0\.1', '::1', '\[::1\]'\]\);/);
+  assert.match(accessSource, /export function canAccessLotPresentations\([\s\S]*hostname = window\.location\.hostname/);
+  assert.match(accessSource, /if \(!user\) \{[\s\S]*return false;/);
+  assert.match(accessSource, /import\.meta\.env\.DEV \|\|[\s\S]*localHostnames\.has\(hostname\.trim\(\)\.toLowerCase\(\)\)[\s\S]*user\.email\.trim\(\)\.toLowerCase\(\) === MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL/);
   assert.match(appSource, /id:\s*'presentations'[\s\S]*label:\s*'Подборки'[\s\S]*path:\s*'\/presentations'[\s\S]*requiredPermissions:\s*\[\][\s\S]*requiredUserEmail:\s*MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL/);
   assert.match(appSource, /id:\s*'presentations'[\s\S]*label:\s*'Подборки лотов'[\s\S]*group:\s*'Презентации'[\s\S]*path:\s*'\/presentations'[\s\S]*requiredPermissions:\s*\[\][\s\S]*requiredUserEmail:\s*MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL/);
   assert.match(appSource, /pathname\.startsWith\('\/presentations'\)[\s\S]*\? 'presentations'/);
@@ -25,6 +31,7 @@ test('lot presentations route is available from sidebar and cabinet navigation',
   assert.match(appSource, /activeSection === 'presentations' \? \([\s\S]*canAccessLotPresentations\(user\) \? \([\s\S]*<LotPresentationsPage navigate=\{navigate\} \/>[\s\S]*\) : \([\s\S]*<AccessDenied \/>/);
   assert.match(appSource, /navItems\.filter\(\(item\) => canAccessNavigationItem\(user, hasPermission, item\)\)/);
   assert.match(appSource, /return cabinetSections\.filter\(\(section\) => canAccessCabinetSection\(user, section\)\);/);
+  assert.match(appSource, /requiredUserEmail === MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL[\s\S]*return canAccessLotPresentations\(user\);/);
 });
 
 test('cabinet profile stores broker contacts used by PDFs', () => {
@@ -92,6 +99,65 @@ test('lot presentations page manages workspace, downloads and validation warning
   assert.match(pageSource, /downloadDocument\(data\.document, accessToken\)/);
   assert.match(styles, /\.lot-presentations-grid\s*\{/);
   assert.match(styles, /\.lot-presentations-lot-tile\s*\{/);
+});
+
+test('PDF creation requests a separate finish for every residential lot', () => {
+  const requestDocumentBody = pageSource.match(
+    /function requestDocumentCreation\([\s\S]*?\n  function closeFinishSelectionModal/,
+  )?.[0] ?? '';
+
+  assert.match(pageSource, /import \{ LotFinishSelectionModal \} from '\.\/LotFinishSelectionModal';/);
+  assert.match(requestDocumentBody, /ensureCanDownload\(user, lotsForCheck, setError\)/);
+  assert.match(requestDocumentBody, /lotsForCheck\.filter\(\(lot\) => lot\.type === 'RESIDENTIAL'\)/);
+  assert.match(requestDocumentBody, /setPendingFinishSelection\([\s\S]*lots: residentialLots/);
+  assert.match(requestDocumentBody, /createAndDownloadDocument\(\{ \.\.\.input, unitFinishes: \[\] \}\)/);
+  assert.match(pageSource, /unitIds: workspaceItems\.map\(\(item\) => item\.unitId\)/);
+  assert.match(pageSource, /unitIds: \[item\.unitId\]/);
+  assert.match(pageSource, /collectionId: selectedCollection\.id,[\s\S]*unitIds: selectedCollection\.items\.map\(\(item\) => item\.unitId\)/);
+  assert.match(pageSource, /<LotFinishSelectionModal[\s\S]*pendingFinishSelection\.lots\.map[\s\S]*onSubmit=\{\(unitFinishes\)/);
+  assert.match(pageSource, /\.\.\.pendingFinishSelection\.input,[\s\S]*unitFinishes/);
+  assert.match(pageSource, /documents\.map[\s\S]*downloadDocument\(document, accessToken\)/);
+});
+
+test('finish modal is required, accessible and responsive without image previews', () => {
+  assert.match(finishModalSource, /LOT_PRESENTATION_FINISH_TYPES/);
+  assert.match(finishModalSource, /LOT_PRESENTATION_FINISH_LABELS/);
+  assert.match(finishModalSource, /useState<Record<string, LotPresentationFinishType>>\(\{\}\)/);
+  assert.match(finishModalSource, /<Dialog[\s\S]*open[\s\S]*onOpenChange=/);
+  assert.match(finishModalSource, /<DialogContent[\s\S]*overlayClassName="lot-finish-modal-backdrop"[\s\S]*showCloseButton=\{false\}/);
+  assert.match(finishModalSource, /<FieldSet className="lot-finish-modal-lot"/);
+  assert.match(finishModalSource, /<FieldLegend className="lot-finish-modal-lot-heading" variant="label">/);
+  assert.match(finishModalSource, /<RadioGroup[\s\S]*value=\{selectedFinishes\[lot\.id\]\}[\s\S]*onValueChange=/);
+  assert.match(finishModalSource, /<RadioGroupItem[\s\S]*value=\{finishType\}/);
+  assert.match(finishModalSource, /<FieldTitle className="lot-finish-modal-option-title">/);
+  assert.match(finishModalSource, /Укажите отделку в лоте/);
+  assert.match(finishModalSource, /\{selectedCount\} из \{lots\.length\}/);
+  assert.match(finishModalSource, /disabled=\{!isComplete \|\| isLoading\}/);
+  assert.match(finishModalSource, /onEscapeKeyDown=\{\(event\) => \{[\s\S]*isLoading[\s\S]*event\.preventDefault\(\)/);
+  assert.match(finishModalSource, /onPointerDownOutside=\{\(event\) => \{[\s\S]*isLoading[\s\S]*event\.preventDefault\(\)/);
+  assert.match(finishModalSource, /onOpenAutoFocus=\{\(event\) => \{[\s\S]*firstOptionRef\.current\?\.focus\(\)/);
+  assert.match(finishModalSource, /aria-live="polite"/);
+  assert.match(finishModalSource, /aria-busy=\{isLoading\}/);
+  assert.match(dialogSource, /DialogPrimitive\.Root/);
+  assert.match(dialogSource, /DialogPrimitive\.Content/);
+  assert.match(dialogSource, /DialogPrimitive\.Overlay/);
+  assert.match(radioGroupSource, /RadioGroupPrimitive\.Root/);
+  assert.match(radioGroupSource, /RadioGroupPrimitive\.Item/);
+  assert.match(radioGroupSource, /RadioGroupPrimitive\.Indicator/);
+  assert.doesNotMatch(finishModalSource, /Применить ко всем/);
+  assert.doesNotMatch(finishModalSource, /<img|SecureImage/);
+  assert.doesNotMatch(finishModalSource, /focusableElementSelector|document\.body\.style\.overflow|type="radio"/);
+  assert.match(styles, /\.lot-finish-modal\s*\{[\s\S]*?width:\s*min\(920px, calc\(100vw - 40px\)\);[\s\S]*?overflow:\s*hidden;/);
+  assert.match(styles, /\.lot-finish-modal-list\s*\{[\s\S]*?overflow-y:\s*auto;/);
+  assert.match(styles, /\.lot-finish-modal-lot:not\(:last-child\)\s*\{[\s\S]*?border-bottom:/);
+  assert.match(styles, /\.lot-finish-modal-option\s*\{[\s\S]*?min-height:\s*66px;/);
+  assert.match(styles, /\.lot-finish-modal-option:has\(\[data-slot='radio-group-item'\]\[data-state='checked'\]\)\s*\{[\s\S]*?background:\s*var\(--app-theme-primary-soft/);
+  assert.match(styles, /\.lot-finish-modal-option \[data-slot='radio-group-item'\]\s*\{[\s\S]*?width:\s*20px;[\s\S]*?height:\s*20px;/);
+  assert.match(styles, /\.lot-finish-modal-option \[data-slot='radio-group-item'\]\[data-state='checked'\]\s*\{[\s\S]*?background:\s*var\(--app-theme-primary/);
+  assert.match(styles, /\.lot-finish-modal-option-title\s*\{[\s\S]*?font-size:\s*13px;[\s\S]*?font-weight:\s*750;/);
+  assert.doesNotMatch(styles, /\.lot-finish-modal-option input\[type='radio'\]/);
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.lot-finish-modal,[\s\S]*?\.lot-finish-modal-backdrop[\s\S]*?animation:\s*none;/);
+  assert.match(styles, /@media \(max-width: 560px\)[\s\S]*?\.lot-finish-modal\s*\{[\s\S]*?width:\s*calc\(100vw - 24px\);/);
 });
 
 test('lot presentations page has workspace and collection tabs with compact lot tiles', () => {

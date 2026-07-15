@@ -1,5 +1,9 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { FeedUnitStatus, ObjectStatus, Prisma } from '@prisma/client';
+import type {
+  LotPresentationFinishType,
+  LotPresentationUnitFinish,
+} from '@platforma/shared' with { 'resolution-mode': 'import' };
+import { FeedUnitStatus, FeedUnitType, ObjectStatus, Prisma } from '@prisma/client';
 
 import { AuthenticatedUser } from '../auth/auth.types';
 import { FilesService } from '../files/files.service';
@@ -8,6 +12,7 @@ import { createSearchContainsFilters } from '../search/search-filters';
 import {
   LotPresentationsPdfService,
   PdfPresentationGroup,
+  PdfPresentationNearbyPlace,
   PdfPresentationUnit,
 } from './lot-presentations-pdf.service';
 
@@ -18,6 +23,76 @@ const presentationStatuses = [
 ] as const;
 const maxDocumentUnits = 80;
 const maxPresentationLotsListLimit = 500;
+const maxPdfNearbyPlaces = 4;
+const lotPresentationFinishTypes = new Set<LotPresentationFinishType>(['ROUGH', 'FINE', 'WITH_FINISH']);
+
+export function extractPdfNearbyPlaces(featuresJson: Prisma.JsonValue): PdfPresentationNearbyPlace[] {
+  if (!isRecord(featuresJson) || !Array.isArray(featuresJson.nearbyPlaces)) {
+    return [];
+  }
+
+  const nearbyPlaces: PdfPresentationNearbyPlace[] = [];
+
+  for (const rawPlace of featuresJson.nearbyPlaces) {
+    if (!isRecord(rawPlace)) {
+      continue;
+    }
+
+    const name = normalizeJsonString(rawPlace.nazvanie);
+    const travelTime = normalizeJsonString(rawPlace.skolko_dobiratsya);
+
+    if (!name || !travelTime) {
+      continue;
+    }
+
+    const coordinates = parseNearbyPlaceCoordinates(rawPlace.koordinaty);
+    nearbyPlaces.push({
+      name,
+      travelTime,
+      latitude: coordinates?.latitude ?? null,
+      longitude: coordinates?.longitude ?? null,
+    });
+
+    if (nearbyPlaces.length === maxPdfNearbyPlaces) {
+      break;
+    }
+  }
+
+  return nearbyPlaces;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function normalizeJsonString(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function parseNearbyPlaceCoordinates(value: unknown) {
+  const coordinates = normalizeJsonString(value)?.split(',').map((part) => Number(part.trim()));
+
+  if (!coordinates || coordinates.length !== 2) {
+    return null;
+  }
+
+  const [latitude, longitude] = coordinates;
+
+  if (
+    latitude === undefined ||
+    longitude === undefined ||
+    !Number.isFinite(latitude) ||
+    !Number.isFinite(longitude) ||
+    latitude < -90 ||
+    latitude > 90 ||
+    longitude < -180 ||
+    longitude > 180
+  ) {
+    return null;
+  }
+
+  return { latitude, longitude };
+}
 
 const presentationLotInclude = {
   residentialDetails: true,
@@ -109,13 +184,18 @@ const pdfUnitInclude = {
         include: {
           file: true,
         },
-        orderBy: {
-          sortOrder: 'asc' as const,
-        },
+        orderBy: [
+          {
+            isCover: 'desc' as const,
+          },
+          {
+            sortOrder: 'asc' as const,
+          },
+        ],
       },
     },
   },
-} as const;
+} satisfies Prisma.FeedUnitInclude;
 
 type PresentationLotRecord = Prisma.FeedUnitGetPayload<{ include: typeof presentationLotInclude }>;
 type PresentationFeedMediaFileRecord = NonNullable<PresentationLotRecord['media'][number]['mediaAsset']['file']>;
@@ -431,6 +511,7 @@ export class LotPresentationsService {
     }
 
     const groups = await this.getPdfGroups(unitIds);
+    const unitFinishes = this.parseUnitFinishes(body.unitFinishes, groups.flatMap((group) => group.units));
     const missingPlanUnit = groups.flatMap((group) => group.units).find((unit) => !this.hasPlanImage(unit));
 
     if (missingPlanUnit) {
@@ -443,9 +524,11 @@ export class LotPresentationsService {
         name: actor.name ?? actor.email,
         phone: actor.brokerPhone,
         email: actor.brokerEmail,
+        photoFileId: actor.profilePhotoFile?.id ?? null,
       },
       groups,
       title,
+      unitFinishes,
     });
     const uploadedFile = await this.filesService.uploadFile(
       {
@@ -728,7 +811,21 @@ export class LotPresentationsService {
         }
 
         return {
-          object: firstUnit.object,
+          object: {
+            id: firstUnit.object.id,
+            title: firstUnit.object.title,
+            description: firstUnit.object.description,
+            address: firstUnit.object.address,
+            latitude: firstUnit.object.latitude,
+            longitude: firstUnit.object.longitude,
+            propertyClass: firstUnit.object.propertyClass,
+            ceilingHeight: firstUnit.object.ceilingHeight,
+            completionYear: firstUnit.object.completionYear,
+            completionQuarter: firstUnit.object.completionQuarter,
+            developerName: firstUnit.object.developer?.name ?? null,
+            images: firstUnit.object.images,
+            nearbyPlaces: extractPdfNearbyPlaces(firstUnit.object.featuresJson),
+          },
           units: groupUnits,
         };
       })
@@ -1045,6 +1142,64 @@ export class LotPresentationsService {
     }
 
     return [...new Set(value.map((item) => this.parseUuid(this.parseRequiredString(item, 'Lot is invalid'), 'Lot is invalid')))];
+  }
+
+  private parseUnitFinishes(value: unknown, units: PdfPresentationUnit[]): LotPresentationUnitFinish[] {
+    const entries = value === undefined ? [] : value;
+
+    if (!Array.isArray(entries)) {
+      throw new BadRequestException('Отделки лотов должны быть массивом');
+    }
+
+    const unitsById = new Map(units.map((unit) => [unit.id, unit]));
+    const residentialUnits = units.filter((unit) => unit.type === FeedUnitType.RESIDENTIAL);
+    const finishesByUnitId = new Map<string, LotPresentationFinishType>();
+
+    for (const entry of entries) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        throw new BadRequestException('Выбор отделки лота некорректен');
+      }
+
+      const finish = entry as Record<string, unknown>;
+      const unitId = this.parseUuid(
+        this.parseRequiredString(finish.unitId, 'Лот для отделки не указан'),
+        'Лот для отделки некорректен',
+      );
+      const unit = unitsById.get(unitId);
+
+      if (!unit) {
+        throw new BadRequestException('Отделка указана для лота, который не входит в презентацию');
+      }
+
+      if (unit.type !== FeedUnitType.RESIDENTIAL) {
+        throw new BadRequestException('Отделка для коммерческого лота не указывается');
+      }
+
+      if (finishesByUnitId.has(unitId)) {
+        throw new BadRequestException('Отделка для лота указана больше одного раза');
+      }
+
+      finishesByUnitId.set(unitId, this.parseFinishType(finish.finishType));
+    }
+
+    const missingFinishUnit = residentialUnits.find((unit) => !finishesByUnitId.has(unit.id));
+
+    if (missingFinishUnit) {
+      throw new BadRequestException(`Укажите отделку для лота: ${this.getLotTitle(missingFinishUnit)}`);
+    }
+
+    return residentialUnits.map((unit) => ({
+      unitId: unit.id,
+      finishType: finishesByUnitId.get(unit.id) as LotPresentationFinishType,
+    }));
+  }
+
+  private parseFinishType(value: unknown): LotPresentationFinishType {
+    if (typeof value !== 'string' || !lotPresentationFinishTypes.has(value as LotPresentationFinishType)) {
+      throw new BadRequestException('Тип отделки некорректен');
+    }
+
+    return value as LotPresentationFinishType;
   }
 
   private parseRequiredString(value: unknown, message: string) {

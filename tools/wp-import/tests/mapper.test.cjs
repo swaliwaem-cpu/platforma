@@ -217,6 +217,39 @@ test('mapWordPressSource maps object fields, taxonomies, images and files', () =
   assert.equal(mapped.warnings.some((warning) => warning.code === 'missing_local_file'), true);
 });
 
+test('mapWordPressSource preserves nearby places from the ACF repeater in source order', () => {
+  const source = makeSource({
+    metaByPostId: new Map([
+      [
+        101,
+        makeMeta({
+          czikl_vyvoda_mest_ryadom: '2',
+          czikl_vyvoda_mest_ryadom_1_nazvanie: 'ТЦ Ереван Плаза',
+          czikl_vyvoda_mest_ryadom_1_koordinaty: '55.709328, 37.621255',
+          czikl_vyvoda_mest_ryadom_1_skolko_dobiratsya: '6 мин. пешком',
+          czikl_vyvoda_mest_ryadom_0_nazvanie: 'Даниловский рынок',
+          czikl_vyvoda_mest_ryadom_0_koordinaty: '55.711883, 37.620677',
+          czikl_vyvoda_mest_ryadom_0_skolko_dobiratsya: '10 мин. пешком',
+        }),
+      ],
+    ]),
+  });
+  const [object] = mapWordPressSource(source, 'nedvizhimost', true).objects;
+
+  assert.deepEqual(object.featuresJson.nearbyPlaces, [
+    {
+      nazvanie: 'Даниловский рынок',
+      koordinaty: '55.711883, 37.620677',
+      skolko_dobiratsya: '10 мин. пешком',
+    },
+    {
+      nazvanie: 'ТЦ Ереван Плаза',
+      koordinaty: '55.709328, 37.621255',
+      skolko_dobiratsya: '6 мин. пешком',
+    },
+  ]);
+});
+
 test('mapWordPressSource maps commercial profile without importing PDFs', () => {
   const mapped = mapWordPressSource(
     makeSource(),

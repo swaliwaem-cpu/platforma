@@ -39,6 +39,7 @@ import {
   TableRow,
 } from '../components/ui/table';
 import { SecureImage } from '../files/SecureImage';
+import { LotFinishSelectionModal } from './LotFinishSelectionModal';
 
 type LotPresentationsPageProps = {
   navigate: (nextPathname: string) => void;
@@ -80,6 +81,13 @@ type CommentTarget =
       collectionId: string;
       comment: string | null;
     };
+
+type LotPresentationDocumentDraft = Omit<CreateLotPresentationDocumentInput, 'unitFinishes'>;
+
+type PendingFinishSelection = {
+  input: LotPresentationDocumentDraft;
+  lots: LotPresentationLot[];
+};
 
 const feedUnitStatusLabels: Record<LotPresentationLot['status'], string> = {
   AVAILABLE: 'Доступен',
@@ -136,6 +144,8 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
   const [isProjectLotsLoading, setIsProjectLotsLoading] = useState(false);
   const [projectLotsError, setProjectLotsError] = useState<string | null>(null);
   const [isDocumentsPanelOpen, setIsDocumentsPanelOpen] = useState(false);
+  const [pendingFinishSelection, setPendingFinishSelection] = useState<PendingFinishSelection | null>(null);
+  const [finishSelectionError, setFinishSelectionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(true);
@@ -735,18 +745,53 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
     }
   }
 
-  async function createAndDownloadDocument(input: CreateLotPresentationDocumentInput, lotsForCheck: LotPresentationLot[]) {
+  function requestDocumentCreation(input: LotPresentationDocumentDraft, lotsForCheck: LotPresentationLot[]) {
     if (!accessToken || isSubmitting) {
       return;
     }
 
+    setError(null);
+    setNotice(null);
+    setFinishSelectionError(null);
+
     if (!ensureCanDownload(user, lotsForCheck, setError)) {
+      return;
+    }
+
+    const residentialLots = lotsForCheck.filter((lot) => lot.type === 'RESIDENTIAL');
+
+    if (residentialLots.length > 0) {
+      setPendingFinishSelection({
+        input: {
+          ...input,
+          unitIds: input.unitIds ? [...input.unitIds] : undefined,
+        },
+        lots: residentialLots,
+      });
+      return;
+    }
+
+    void createAndDownloadDocument({ ...input, unitFinishes: [] });
+  }
+
+  function closeFinishSelectionModal() {
+    if (isSubmitting) {
+      return;
+    }
+
+    setPendingFinishSelection(null);
+    setFinishSelectionError(null);
+  }
+
+  async function createAndDownloadDocument(input: CreateLotPresentationDocumentInput) {
+    if (!accessToken || isSubmitting) {
       return;
     }
 
     setIsSubmitting(true);
     setError(null);
     setNotice(null);
+    setFinishSelectionError(null);
 
     try {
       const data = await apiRequest<LotPresentationDocumentResponse>('/lot-presentations/documents', accessToken, {
@@ -756,9 +801,13 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
 
       await loadDocuments();
       await downloadDocument(data.document, accessToken);
+      setPendingFinishSelection(null);
       setNotice('PDF-презентация сформирована');
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Не удалось сформировать PDF');
+      const message = caughtError instanceof Error ? caughtError.message : 'Не удалось сформировать PDF';
+
+      setError(message);
+      setFinishSelectionError(message);
     } finally {
       setIsSubmitting(false);
     }
@@ -822,7 +871,7 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
               disabled={!hasBrokerContacts || workspaceItems.length === 0 || isSubmitting}
               type="button"
               onClick={() =>
-                void createAndDownloadDocument(
+                requestDocumentCreation(
                   { unitIds: workspaceItems.map((item) => item.unitId), title: 'В работе' },
                   getWorkspaceLots(workspaceItems),
                 )
@@ -857,7 +906,7 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
                   key={item.id}
                   lot={item.unit}
                   onDownloadOne={() =>
-                    void createAndDownloadDocument({ unitIds: [item.unitId], title: getLotTitle(item.unit) }, [item.unit])
+                    requestDocumentCreation({ unitIds: [item.unitId], title: getLotTitle(item.unit) }, [item.unit])
                   }
                   onOpenCollectionPicker={() => setIsCollectionPickerOpenFor(item.unit)}
                   onOpenComment={() =>
@@ -980,8 +1029,12 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
                   type="button"
                   onClick={() =>
                     selectedCollection
-                      ? void createAndDownloadDocument(
-                          { collectionId: selectedCollection.id, title: selectedCollection.name },
+                      ? requestDocumentCreation(
+                          {
+                            collectionId: selectedCollection.id,
+                            unitIds: selectedCollection.items.map((item) => item.unitId),
+                            title: selectedCollection.name,
+                          },
                           selectedCollection.items.map((item) => item.unit),
                         )
                       : undefined
@@ -1040,7 +1093,7 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
                     key={item.id}
                     lot={item.unit}
                     onDownloadOne={() =>
-                      void createAndDownloadDocument(
+                      requestDocumentCreation(
                         {
                           collectionId: selectedCollection.id,
                           unitIds: [item.unitId],
@@ -1083,6 +1136,25 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
           total={projectLots.length}
           onAddLot={(unitId) => void addLotToSelectedCollection(unitId)}
           onClose={closeProjectLotsModal}
+        />
+      ) : null}
+
+      {pendingFinishSelection ? (
+        <LotFinishSelectionModal
+          error={finishSelectionError}
+          isLoading={isSubmitting}
+          lots={pendingFinishSelection.lots.map((lot) => ({
+            id: lot.id,
+            title: getLotTitle(lot),
+            projectTitle: lot.object.title,
+          }))}
+          onCancel={closeFinishSelectionModal}
+          onSubmit={(unitFinishes) =>
+            void createAndDownloadDocument({
+              ...pendingFinishSelection.input,
+              unitFinishes,
+            })
+          }
         />
       ) : null}
 

@@ -16,6 +16,14 @@ export type FeedSourceKind = 'URL' | 'FILE' | 'INDEX_URL';
 export type FeedUnitType = 'RESIDENTIAL' | 'COMMERCIAL';
 export type FeedUnitStatus = 'AVAILABLE' | 'BOOKED' | 'RESERVED' | 'SOLD' | 'ARCHIVED' | 'UNKNOWN';
 
+export const LOT_PRESENTATION_FINISH_TYPES = ['ROUGH', 'FINE', 'WITH_FINISH'] as const;
+export type LotPresentationFinishType = (typeof LOT_PRESENTATION_FINISH_TYPES)[number];
+export const LOT_PRESENTATION_FINISH_LABELS = {
+  ROUGH: 'Черновая отделка (бетон)',
+  FINE: 'Предчистовая отделка (вайт-бокс)',
+  WITH_FINISH: 'Чистовая отделка (дизайнерская)',
+} as const satisfies Record<LotPresentationFinishType, string>;
+
 export type JsonValue = { [key: string]: JsonValue } | JsonValue[] | string | number | boolean | null;
 
 export type ProfilePhotoFile = {
@@ -622,9 +630,15 @@ export type LotPresentationDocumentResponse = {
   document: LotPresentationDocument;
 };
 
+export type LotPresentationUnitFinish = {
+  unitId: string;
+  finishType: LotPresentationFinishType;
+};
+
 export type CreateLotPresentationDocumentInput = {
   collectionId?: string | null;
   unitIds?: string[];
+  unitFinishes: LotPresentationUnitFinish[];
   title?: string | null;
 };
 

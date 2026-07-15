@@ -1273,7 +1273,15 @@ function canAccessPermissions(
 }
 
 function canAccessRequiredUserEmail(user: AuthUser, requiredUserEmail: string | undefined) {
-  return !requiredUserEmail || user.email.trim().toLowerCase() === requiredUserEmail;
+  if (!requiredUserEmail) {
+    return true;
+  }
+
+  if (requiredUserEmail === MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL) {
+    return canAccessLotPresentations(user);
+  }
+
+  return user.email.trim().toLowerCase() === requiredUserEmail;
 }
 
 function canAccessNavigationItem(

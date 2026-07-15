@@ -1,5 +1,217 @@
 # Codex Log
 
+## 2026-07-15 - PDF finish labels, lot facts, modal and project gallery
+
+Задача:
+
+- Обновить названия трех вариантов отделки и привести обязательный выбор отделки перед генерацией жилой PDF-презентации к аккуратному доступному modal/radio UI.
+- На основной странице жилого лота заменить `Состояние` на выбранную `Отделку`, расположить ее под `Классом`, сократить характеристики и всегда выводить договор `ДДУ/ДКП`.
+- Оставить коммерческие страницы без изменений и перестроить галерею проекта в обложку плюс шесть тематических фото.
+
+Изменения:
+
+- `packages/shared/src/index.ts`, `apps/api/src/lot-presentations/lot-presentations-pdf.service.ts` - подписи синхронизированы как `Черновая отделка (бетон)`, `Предчистовая отделка (вайт-бокс)`, `Чистовая отделка (дизайнерская)`; выбранное значение передается в основной residential-блок фактов.
+- `apps/web/src/presentations/LotFinishSelectionModal.tsx`, `apps/web/src/components/ui/dialog.tsx`, `apps/web/src/components/ui/radio-group.tsx`, `apps/web/src/styles.css` - modal переведена на уже используемый Radix/shadcn-стек с portal, focus management, Escape/focus return и настоящей RadioGroup; убрана фоновая плашка вокруг вариантов, добавлены четкие selected/unselected состояния, разделители лотов и адаптивный footer.
+- На основной residential-странице факты расположены как `Площадь / Этаж`, затем полноширинные `Класс` и `Отделка`; из характеристик удалены площадь кухни, высота потолков, окна и вид, а договор зафиксирован как `ДДУ/ДКП`. Commercial-ветка сохранена прежней.
+- Галерея использует cover ЖК только в верхнем hero-фрейме. Нижняя плитка состоит из двух фото `Архитектуры`, двух `Интерьеров` и двух `Наполнения`; при полном отсутствии разделов берутся первые шесть фото после cover, при частичной разметке пустые тематические слоты добираются неповторяющимися неразмеченными фото.
+- `apps/api/tests/lot-presentations-schema.test.cjs`, `apps/web/tests/lot-presentations-page.test.mjs` - добавлены регрессии для точных подписей, residential/commercial-разветвления, характеристик, сетки галереи, полного и частичного fallback, shadcn modal/radio wiring, типографики состояний, адаптива и reduced motion.
+- Follow-up: пользовательский `localhost:5173` попадал в Docker-web со старой production-сборкой, одновременно с которым на IPv4 работал свежий Vite. Docker images `web` и `api` пересобраны, оба контейнера пересозданы; исходный код дополнительно менять не потребовалось.
+
+Проверки:
+
+- `pnpm build:api` - passed.
+- `pnpm --filter @platforma/web build` - passed; осталось существующее предупреждение Vite о chunk больше 500 kB.
+- `node --test apps/api/tests/lot-presentations-schema.test.cjs` - 13/13 passed.
+- `node --test apps/web/tests/lot-presentations-page.test.mjs` - 15/15 passed.
+- `pnpm --filter @platforma/api test` - 205/205 passed.
+- `pnpm --filter @platforma/web test` - 262/262 passed.
+- Сформирован четырехстраничный synthetic QA PDF и отрендерен в PNG через macOS PDFKit: длинные названия отделки, новая последовательность фактов, четыре residential-характеристики и сетка cover + 6 проверены без обрезки и наложений.
+- `git diff --check` - passed.
+- После пересборки `localhost:5173` раздает новые hashed assets `index-CzVS3RRe.js` и `index-bHBSyH6R.css`; в фактическом JS подтверждены три новые подписи, а в CSS - новые modal/radio-селекторы. `GET /health` пересозданного API вернул `status=ok`, `database=ok`, `postgis=true`.
+
+Ручная проверка:
+
+- Открыть modal в локальном браузере на desktop и mobile: проверить выбор кликом по всей карточке, стрелки между radio, Escape/backdrop, возврат фокуса и оба визуальных состояния. Автоматический browser-smoke в текущей сессии недоступен.
+- Скачать PDF реального production-ЖК с полной и частичной тематической разметкой и проверить порядок колонок, cover и отсутствие повторов.
+- Отдельно скачать commercial PDF и убедиться, что прежние факты и характеристики не изменились.
+
+Спорные места:
+
+- Cover намеренно не повторяется в нижней плитке. При частичной разметке тематические колонки добираются только неразмеченными фотографиями; фото из другой явно заданной темы не переносятся между колонками.
+
+## 2026-07-15 - Codex skills audit and installation
+
+Задача:
+
+- Проверить и установить только `web-design-guidelines`, `shadcn-ui`, `supabase-postgres-best-practices`, `react-best-practices` и `superpowers`, не меняя код приложения, зависимости и shadcn-конфигурацию проекта.
+
+Диагностика:
+
+- В активном списке skills текущего диалога целевые навыки отсутствовали.
+- `codex plugin list` показывал `superpowers@openai-curated` как `installed, enabled`, но его skills не были загружены в текущую сессию.
+- В `~/.codex/skills` и `~/.agents/skills` точных установок четырёх standalone-skills не было; наличие копий в plugin/marketplace cache не считалось установкой.
+- Канонические соответствия подтверждены по официальным источникам: `react-best-practices` -> `vercel-react-best-practices`, `shadcn-ui` -> `shadcn`.
+
+Изменения:
+
+- Через системный `skill-installer` установлены `web-design-guidelines` и `vercel-react-best-practices` из `vercel-labs/agent-skills`, `supabase-postgres-best-practices` из `supabase/agent-skills`, `shadcn` из `shadcn-ui/ui` в `~/.codex/skills`.
+- `superpowers@openai-curated` точечно переподключён командами `codex plugin remove` / `codex plugin add`; plugin снова зарегистрирован как enabled в `~/.codex/config.toml`.
+- Код приложения, `package.json`, `pnpm-lock.yaml`, `apps/web/package.json` и `apps/web/components.json` не изменялись; `shadcn init` и добавление компонентов не выполнялись.
+
+Проверки:
+
+- Для каждого standalone-skill найден ровно один соответствующий `SKILL.md` в пользовательских каталогах skills; frontmatter names и bundled reference files проверены.
+- `codex plugin list` после переподключения: `superpowers@openai-curated` - `installed, enabled`, версия snapshot `bd2122cb`; `skills/using-superpowers/SKILL.md` и остальные 13 skills присутствуют в installed plugin root.
+- `pnpm dlx shadcn@latest info --json` запущен строго из `apps/web`: распознаны Vite, TypeScript, Tailwind v4, существующий `components.json` и установленный набор компонентов.
+- SHA-256 для `package.json`, `pnpm-lock.yaml`, `apps/web/package.json` и `apps/web/components.json` до и после установки совпали.
+
+Ручная проверка:
+
+- Полностью перезапустить Codex и открыть новый чат, затем убедиться, что четыре standalone-skills и `superpowers:using-superpowers` появились в активном списке skills новой сессии.
+
+Спорные места:
+
+- Текущий диалог не перечитывает каталог skills после установки, поэтому runtime-доступность подтверждается только в новой сессии.
+- Целевой Supabase skill установлен отдельно из официального upstream, а не через полный `supabase@openai-curated`, чтобы не установить дополнительно неразрешённые Supabase skill/app capabilities.
+
+## 2026-07-14 - Nearby places in lot presentation PDF
+
+Задача:
+
+- Найти ACF-repeater мест рядом в локальном WordPress, проверить сохранение по каждому ЖК и вывести четыре места конкретного ЖК только в PDF-презентации лота.
+- Сохранить координаты в данных без визуального вывода, не импортировать `osobnyakis`.
+- Скруглить все image frames PDF на 5 единиц и добавить под примером отделки согласованный дисклеймер в одну строку.
+
+Диагностика:
+
+- ACF-repeater `czikl_vyvoda_mest_ryadom` содержит `nazvanie`, `koordinaty`, `skolko_dobiratsya` и необязательные image-поля; отдельного поля способа передвижения нет.
+- `tools/wp-import/src/mapper.ts` уже сохраняет repeater в `RealEstateObject.featuresJson.nearbyPlaces`; новая Prisma-модель, миграция и повторный import не потребовались.
+- Локальная Platforma DB содержит 315 WP-объектов с непустым `nearbyPlaces` и 977 мест; у `ЖК АУРА` четыре source-строки совпадают с WordPress дословно.
+- Три `osobnyakis` с девятью местами намеренно оставлены вне scope по решению пользователя.
+
+Изменения:
+
+- `apps/api/src/lot-presentations/lot-presentations.service.ts` - добавлена безопасная нормализация `featuresJson.nearbyPlaces`: обязательны название и время, сохраняется исходный ACF-порядок, в PDF передаются ровно первые четыре валидных места; координаты валидируются и остаются во внутренней структуре, но не выводятся.
+- `apps/api/src/lot-presentations/lot-presentations-pdf.service.ts` - старые транспортные заглушки заменены блоком `МЕСТА РЯДОМ` с четырьмя строками `название + время` и fallback для пустого списка; все фото, схемы, карта, отделка и фото брокера получили скругление и clip с radius `5`; под residential-примером отделки добавлен однострочный дисклеймер.
+- `apps/api/tests/lot-presentations-schema.test.cjs` - добавлены runtime-регрессии нормализатора, лимита четырех мест, координат, PDF wiring, fallback, отсутствия старых заглушек, скругления и дисклеймера.
+- `tools/wp-import/tests/mapper.test.cjs` - добавлена регрессия на точный ACF field mapping и исходный порядок строк.
+
+Проверки:
+
+- `pnpm build:api` - passed.
+- `node --test apps/api/tests/lot-presentations-schema.test.cjs` - 12/12 passed.
+- `pnpm --filter @platforma/api test` - 204/204 passed.
+- `pnpm --filter @platforma/wp-import test` - 23/23 passed.
+- `git diff --check` - passed.
+- `docker compose up -d --build api` - локальный API image пересобран, контейнер пересоздан и запущен с новой PDF-логикой.
+- `GET http://127.0.0.1:3000/health` после пересборки - `status=ok`, `database=ok`, `postgis=true`.
+- Сформирован четырехстраничный QA PDF для `ЖК АУРА`; все страницы отрендерены в PNG через macOS PDFKit и визуально проверены. Четыре места, дисклеймер, карта, планы, галерея, отделка и фото брокера помещаются без обрезки/наложений, скругление присутствует во всех image frames.
+- Text extraction QA подтвердил все четыре названия и дисклеймер; строки `ТРАНСПОРТНАЯ ДОСТУПНОСТЬ`, `НА АВТОМОБИЛЕ` и `до аэропорта` отсутствуют.
+- Временные QA PDF/PNG удалены после проверки; БД и MinIO генерацией не изменялись.
+
+Ручная проверка:
+
+- Локально скачать свежую PDF-презентацию реального лота `ЖК АУРА` и проверить четыре места, однострочный дисклеймер и скругление фреймов в используемом PDF viewer.
+- Скачать PDF лота `Voxhall`, где ACF-список пуст, и проверить спокойный fallback `Информация о местах рядом не указана`.
+
+Спорные места:
+
+- В PDF намеренно выводятся только первые четыре валидных места из ACF; координаты и дополнительные строки не визуализируются.
+- Полный WordPress import не запускался: нужные данные уже находятся в локальной Platforma DB, а full run мог бы затронуть draft/private объекты через archive-логику.
+
+## 2026-07-14 - Residential lot finish selection before PDF creation
+
+Задача:
+
+- Перед созданием PDF запросить отдельный тип отделки для каждого жилого лота; коммерческие лоты и скачивание уже созданных PDF не менять.
+
+Изменения:
+
+- `packages/shared/src/index.ts` - добавлены фиксированные типы `ROUGH`, `FINE`, `WITH_FINISH`, русские подписи и обязательный список `unitFinishes` в контракте создания PDF.
+- `apps/api/src/lot-presentations/lot-presentations.service.ts` - сервер проверяет отделку по финальному снимку лотов: ровно одно допустимое значение для каждого жилого лота; пропуски, дубли, чужие ID и значения для коммерции отклоняются. Полностью коммерческий набор принимает пустой список и сохраняет прежнее поведение.
+- `apps/api/src/lot-presentations/lot-presentations-pdf.service.ts` - для каждого жилого лота формируется собственная страница «Отделка и расположение» с названием и характеристиками/номером конкретного лота, выбранным типом и соответствующей фотографией; commercial-страница осталась в старом виде. Фото отделки рендерится через `cover` с обрезкой по рамке и без внутренних полей.
+- `apps/api/assets/lot-presentations/finishes/{rough,fine,with-finish}.png` - исходные изображения отделки добавлены как стабильные runtime-ассеты API.
+- `apps/web/src/presentations/LotFinishSelectionModal.tsx` - добавлена одна прокручиваемая modal-форма со счетчиком заполнения, тремя обязательными radio-вариантами для каждого жилого лота, loading/error состояниями, закрытием по кнопке, backdrop и Escape, focus trap и восстановлением фокуса.
+- `apps/web/src/presentations/LotPresentationsPage.tsx` - выбор отделки подключен ко всем четырем сценариям создания PDF; существующие проверки контактов брокера и планировки выполняются до открытия модалки; полностью коммерческие наборы отправляются сразу с `unitFinishes: []`; полная подборка передает явный снимок `unitIds`; история PDF скачивается напрямую.
+- `apps/web/src/styles.css` - добавлены локальные спокойные premium-стили модалки, touch targets от 44 px, scroll-body, фиксированный footer и адаптив для ширины 375 px без горизонтального скролла.
+- Follow-up: устранена причина овальной формы radio-контрола — глобальный `input` добавлял ему `padding: 12px 14px`. Контрол зафиксирован как `18x18` border-box с одинаковыми min/max-размерами, `aspect-ratio: 1`, нулевым padding и неизменяемой flex-базой; выбранное состояние остаётся круглой точкой, а доступный focus-ring — на всей карточке варианта.
+- `apps/api/tests/lot-presentations-schema.test.cjs`, `apps/web/tests/lot-presentations-page.test.mjs` - добавлены регрессии на контракт и строгую серверную валидацию, наличие PDF-ассетов, residential-only выбор, commercial bypass, snapshot подборки, обязательность radio, отсутствие `Применить ко всем` и фото-превью, доступность и mobile CSS.
+
+Проверки:
+
+- Follow-up после runtime-smoke: браузер на `localhost` попадал по IPv6 в старый Docker web-образ от 2026-07-12, тогда как актуальный Vite слушал IPv4; из-за этого использовался прежний сценарий прямой генерации без модалки.
+- Выполнен `docker compose up -d --build api web`; контейнеры пересозданы из текущего кода, API перешёл в `healthy`, новый web bundle содержит `Укажите отделку в лоте`, все три подписи и `unitFinishes`.
+- `GET /health` после пересборки возвращает `status=ok`, `database=ok` и по IPv4, и по IPv6.
+- `node --test apps/web/tests/lot-presentations-page.test.mjs` - 15/15 passed.
+- Регрессия radio-контрола дополнена проверками `border-box`, строгих размеров `18x18`, квадратного aspect ratio и нулевого padding; повторный запуск - 15/15 passed.
+- `node --test apps/api/tests/lot-presentations-schema.test.cjs` - 11/11 passed.
+- `pnpm build:api` - passed.
+- `pnpm --filter @platforma/web build` - passed; Vite оставил только существующее предупреждение о размере client chunk.
+- После точечного radio-fix web image пересобран и контейнер перезапущен; web доступен на `:5173`, API снова `healthy`, `/health` возвращает `status=ok`.
+- `pnpm --filter @platforma/api test` - 203/203 passed.
+- `pnpm --filter @platforma/web test` - 262/262 passed.
+- `git diff --check` - passed.
+- Сформирован QA PDF из трех жилых лотов одного проекта со всеми тремя вариантами: 8 страниц, отдельные страницы 5-7 содержат `Черновая`, `Чистовая`, `С отделкой`; все три страницы отрендерены и визуально проверены, фотографии заполняют рамку без белых полей, подписи не пересекаются.
+- In-app Browser недоступен в текущей среде: список доступных browser bindings пуст.
+
+Ручная проверка:
+
+- На `/presentations` проверить одиночный жилой лот, несколько жилых лотов, смешанную residential/commercial подборку и полностью коммерческий набор.
+- На ширине 375 px проверить прокрутку большого списка, отсутствие горизонтального скролла, radio touch targets, Escape/backdrop/Cancel, focus trap и заблокированную кнопку до выбора всех отделок.
+- В `Созданные PDF` убедиться, что исторический файл скачивается без модалки.
+
+Спорные места:
+
+- Визуальная browser-проверка в этой сессии не выполнена из-за недоступного browser binding; поведение покрыто сборкой и статическими регрессиями, но требует ручного smoke.
+
+## 2026-07-12 - Lot presentation PDF reference template and local access
+
+Задача:
+
+- Открыть раздел PDF-презентаций всем авторизованным пользователям локально, сохранив production-ограничение на `admin@fluffywhite.moscow`.
+- Пересобрать PDF по четырехстраничному референсу: лот, галерея проекта, отделка/локация/описание и финальная страница брокера.
+
+Изменения:
+
+- `apps/api/src/lot-presentations/lot-presentations-access.guard.ts` - local API доступен любому JWT-пользователю; при `NODE_ENV=production` сохранен email guard.
+- `apps/web/src/presentations/presentationAccess.ts`, `apps/web/src/App.tsx` - Vite dev и local Docker на `localhost`/loopback открывают sidebar, cabinet link, route и lot actions всем авторизованным; на остальных hostname сохранен главный email.
+- `apps/api/src/lot-presentations/lot-presentations-pdf.service.ts` - добавлен светлый A4-шаблон по референсу, `contain`-фреймы для схем, обложка, планировка и план этажа, скидка с зачеркнутой старой ценой, residential/commercial подписи, галерея из 6 фото, заглушки отделки/транспорта, описание проекта, фото и контакты брокера, SVG-логотип и динамическая нумерация.
+- После визуального ревью первая страница приведена к порядку блоков референса: квартирная планировка и цена сверху, план этажа и характеристики снизу; схемы выбираются по feed-меткам, включая `photo`/`layout-photo` текущего фида СИТИДЗЕН.
+- Обложка и фотографии ЖК переведены на центрированный `cover`: каждый заранее заданный фрейм заполнен полностью, без белых полей; схемы лота по-прежнему показываются целиком через `contain`.
+- Фото брокера также переведено на центрированный `cover` без внутренних полей; пропорции портретного фрейма сохранены.
+- Карта и зарезервированный фрейм будущей фотографии отделки подключены к тому же `cover`-рендереру: все фотографии и растровые изображения заполняют фреймы без полей; `contain` остается только у технических схем лота, которые нельзя обрезать.
+- Отступы, размеры шрифтов, разделители, футеры и композиция всех четырех страниц приведены к координатной сетке `pdffw2.pdf`: компактный верхний колонтитул, референсная masonry-галерея, секции отделки/локации и вертикальная структура страницы брокера.
+- Заголовок residential-лота больше не использует feed-поле `layoutType`: он строится как `N-К в проекте PROJECT`, для студии — `Студия в проекте PROJECT`; из названия проекта удаляются приставки `ЖК`, `Жилой комплекс`, `Клубный дом`, `Дом`, `МФК` и аналогичные.
+- Статичная карта запрашивается только PDF-генератором через legacy `static-maps.yandex.ru/1.x/`, с timeout 5 секунд и fallback; frontend-карта не менялась.
+- `apps/api/src/lot-presentations/lot-presentations.service.ts` - в PDF wiring добавлены cover-first галерея, координаты, класс, потолки, застройщик, срок сдачи и фото брокера; комментарии в PDF не передаются.
+- `apps/api/tests/lot-presentations-schema.test.cjs`, `apps/web/tests/lot-presentations-page.test.mjs` - обновлены регрессии доступа, PDF wiring, статической карты, `contain`-изображений и commercial variant.
+
+Проверки:
+
+- `pnpm build:api` - passed.
+- `node --test apps/api/tests/lot-presentations-schema.test.cjs` - 10/10 passed.
+- `pnpm --filter @platforma/api test` - 202/202 passed.
+- `pnpm --filter @platforma/web test` - 260/260 passed.
+- `docker compose up -d --build api web` - local API/Web пересобраны.
+- Local runtime: `admin@example.com`, который не является production-allowed email, получил `200` на `GET /lot-presentations/workspace`.
+- Production guard smoke на compiled class: `admin@example.com` -> `403`, `admin@fluffywhite.moscow` -> allowed.
+- На реальном лоте Rotterdam сформирован PDF из 4 страниц размером ~1.5 MB; в PDF попали обложка, планировка, план этажа, 6 фото, карта с маркером и описание.
+- Все 4 страницы отрендерены в PNG; после итерации убрано пересечение заголовка и имени брокера; финальный render без наложений и обрезанного текста.
+- Follow-up проверен на реальном лоте СИТИДЗЕН: первая страница и галерея отрендерены отдельно, планировки стоят в правильных блоках, все фотографии заполняют фреймы без белых полос.
+- Второй follow-up проверен на реальном лоте `ЖК АУРА`, квартира №185: заголовок отрендерен как `1-К в проекте АУРА`, все четыре страницы визуально сверены с референсом, фото профиля заполняет фрейм без полей, CTA-стрелка отрисовывается вектором без отсутствующего глифа.
+- QA-документы и их файлы удалены из local PostgreSQL/MinIO после проверки; старые пользовательские PDF не трогались.
+
+Ручная проверка:
+
+- Войти локально под обычным пользователем и проверить sidebar, `/presentations`, добавление лота из карточки и скачивание PDF.
+- Загрузить реальное фото брокера и проверить его масштабирование на финальной странице.
+- Сформировать PDF из нескольких лотов/ЖК и commercial-лота после появления commercial feed media.
+
+Спорные места:
+
+- Legacy no-key Static Maps endpoint сейчас работает, но не является текущим официальным key-based API; при его отказе PDF покажет заглушку и продолжит генерацию.
+- Поля отделки, окон, вида, договора и транспорта пока показывают согласованные заглушки до отдельного обсуждения data source.
+
 ## 2026-07-10 - Production commercial WordPress objects import
 
 Задача:

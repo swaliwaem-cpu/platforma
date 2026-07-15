@@ -4,6 +4,9 @@ import { join } from 'node:path';
 
 import { Injectable } from '@nestjs/common';
 import { FeedUnitStatus, FeedUnitType, File, ObjectImageSection, Prisma } from '@prisma/client';
+import type { LotPresentationFinishType, LotPresentationUnitFinish } from '@platforma/shared' with {
+  'resolution-mode': 'import',
+};
 import PDFDocument from 'pdfkit';
 import sharp from 'sharp';
 
@@ -11,10 +14,30 @@ import { FilesService } from '../files/files.service';
 
 const pageWidth = 595.28;
 const pageHeight = 841.89;
-const marginX = 42;
+const marginX = 30;
 const contentWidth = pageWidth - marginX * 2;
+const imageFrameRadius = 5;
+const colors = {
+  paper: '#f3f0e9',
+  white: '#fbfaf7',
+  ink: '#171715',
+  muted: '#77736d',
+  line: '#cfcac0',
+  accent: '#8f7d69',
+  soft: '#e8e2d8',
+};
 const regularFontPath = resolveFontPath('NotoSans-Regular.ttf');
 const boldFontPath = resolveFontPath('NotoSans-Bold.ttf');
+const finishLabels: Record<LotPresentationFinishType, string> = {
+  ROUGH: 'Черновая отделка (бетон)',
+  FINE: 'Предчистовая отделка (вайт-бокс)',
+  WITH_FINISH: 'Чистовая отделка (дизайнерская)',
+};
+const finishAssetPaths: Record<LotPresentationFinishType, string> = {
+  ROUGH: resolveFinishAssetPath('rough.png'),
+  FINE: resolveFinishAssetPath('fine.png'),
+  WITH_FINISH: resolveFinishAssetPath('with-finish.png'),
+};
 
 function resolveFontPath(fileName: string) {
   const candidates = [
@@ -31,26 +54,61 @@ function resolveFontPath(fileName: string) {
   return resolvedPath;
 }
 
-type PdfPresentationBroker = {
+function resolveFinishAssetPath(fileName: string) {
+  const candidates = [
+    join(__dirname, '..', '..', 'assets', 'lot-presentations', 'finishes', fileName),
+    join(process.cwd(), 'assets', 'lot-presentations', 'finishes', fileName),
+    join(process.cwd(), 'apps', 'api', 'assets', 'lot-presentations', 'finishes', fileName),
+  ];
+  const resolvedPath = candidates.find((candidate) => existsSync(candidate));
+
+  if (!resolvedPath) {
+    throw new Error(`Lot presentation finish asset is missing: ${fileName}`);
+  }
+
+  return resolvedPath;
+}
+
+export type PdfPresentationBroker = {
   name: string;
   phone: string;
   email: string;
+  photoFileId?: string | null;
 };
 
 type PdfPresentationObjectImage = {
   id: string;
   sortOrder: number;
+  isCover: boolean;
   section: ObjectImageSection | null;
   file: File;
 };
 
-type PdfPresentationObject = {
+export type PdfPresentationNearbyPlace = {
+  name: string;
+  travelTime: string;
+  latitude: number | null;
+  longitude: number | null;
+};
+
+export type PdfPresentationObject = {
   id: string;
   title: string;
   description: string | null;
   address: string | null;
+  propertyClass?: string | null;
+  ceilingHeight?: string | null;
+  completionYear?: number | null;
+  completionQuarter?: number | null;
+  developerName?: string | null;
+  latitude?: Prisma.Decimal | null;
+  longitude?: Prisma.Decimal | null;
+  developer?: { name: string } | null;
   images: PdfPresentationObjectImage[];
+  nearbyPlaces: PdfPresentationNearbyPlace[];
 };
+
+type PdfPresentationUnitObject = Omit<PdfPresentationObject, 'nearbyPlaces'>;
 
 export type PdfPresentationUnit = {
   id: string;
@@ -90,11 +148,9 @@ export type PdfPresentationUnit = {
   media: Array<{
     sortOrder: number;
     label: string | null;
-    mediaAsset: {
-      file: File | null;
-    };
+    mediaAsset: { file: File | null };
   }>;
-  object: PdfPresentationObject;
+  object: PdfPresentationUnitObject;
 };
 
 export type PdfPresentationGroup = {
@@ -106,7 +162,10 @@ type GeneratePdfInput = {
   broker: PdfPresentationBroker;
   groups: PdfPresentationGroup[];
   title: string;
+  unitFinishes: LotPresentationUnitFinish[];
 };
+
+type PageContext = { current: number; total: number };
 
 @Injectable()
 export class LotPresentationsPdfService {
@@ -115,16 +174,17 @@ export class LotPresentationsPdfService {
   constructor(private readonly filesService: FilesService) {}
 
   async generate(input: GeneratePdfInput) {
+    const finishTypeByUnitId = new Map(input.unitFinishes.map((item) => [item.unitId, item.finishType]));
+    const totalPages = input.groups.reduce(
+      (total, group) => total + group.units.length + 1 + this.getProjectDetailsPageCount(group),
+      1,
+    );
     const doc = new PDFDocument({
       size: 'A4',
       margin: 0,
       bufferPages: false,
       autoFirstPage: true,
-      info: {
-        Title: input.title,
-        Author: input.broker.name,
-        Creator: 'Platforma',
-      },
+      info: { Title: input.title, Author: input.broker.name, Creator: 'Platforma' },
     });
     const chunks: Buffer[] = [];
     const completed = new Promise<Buffer>((resolve, reject) => {
@@ -134,26 +194,55 @@ export class LotPresentationsPdfService {
     });
 
     this.registerFonts(doc);
-
-    let isFirstPage = true;
+    let currentPage = 0;
+    let firstPage = true;
+    const nextPage = () => {
+      if (!firstPage) doc.addPage();
+      firstPage = false;
+      currentPage += 1;
+      doc.rect(0, 0, pageWidth, pageHeight).fill(colors.paper);
+      return { current: currentPage, total: totalPages };
+    };
 
     for (const group of input.groups) {
       for (const unit of group.units) {
-        if (!isFirstPage) {
-          doc.addPage();
+        const finishType = finishTypeByUnitId.get(unit.id) ?? null;
+
+        if (unit.type === FeedUnitType.RESIDENTIAL && !finishType) {
+          throw new Error(`Lot presentation finish is missing for residential unit ${unit.id}`);
         }
 
-        isFirstPage = false;
-        await this.drawLotPage(doc, unit, input.broker);
+        await this.drawLotPage(doc, unit, nextPage(), finishType);
       }
 
-      doc.addPage();
-      await this.drawProjectPage(doc, group.object, input.broker);
+      await this.drawGalleryPage(doc, group.object, nextPage());
+      for (const unit of group.units.filter((item) => item.type === FeedUnitType.RESIDENTIAL)) {
+        const finishType = finishTypeByUnitId.get(unit.id);
+
+        if (!finishType) {
+          throw new Error(`Lot presentation finish is missing for residential unit ${unit.id}`);
+        }
+
+        await this.drawProjectDetailsPage(doc, group.object, nextPage(), unit, finishType);
+      }
+
+      const commercialUnit = group.units.find((item) => item.type === FeedUnitType.COMMERCIAL);
+
+      if (commercialUnit) {
+        await this.drawProjectDetailsPage(doc, group.object, nextPage(), commercialUnit, null);
+      }
     }
 
+    await this.drawBrokerPage(doc, input.broker, nextPage());
     doc.end();
-
     return completed;
+  }
+
+  private getProjectDetailsPageCount(group: PdfPresentationGroup) {
+    const residentialCount = group.units.filter((unit) => unit.type === FeedUnitType.RESIDENTIAL).length;
+    const hasCommercial = group.units.some((unit) => unit.type === FeedUnitType.COMMERCIAL);
+
+    return residentialCount + Number(hasCommercial);
   }
 
   private registerFonts(doc: PDFKit.PDFDocument) {
@@ -162,505 +251,729 @@ export class LotPresentationsPdfService {
     doc.font('NotoSans');
   }
 
-  private async drawLotPage(doc: PDFKit.PDFDocument, unit: PdfPresentationUnit, broker: PdfPresentationBroker) {
-    await this.drawHeader(doc, broker);
+  private async drawLotPage(
+    doc: PDFKit.PDFDocument,
+    unit: PdfPresentationUnit,
+    page: PageContext,
+    finishType: LotPresentationFinishType | null,
+  ) {
+    await this.drawHeader(doc, unit.object.title);
+    const cover = [...unit.object.images].sort((a, b) => Number(b.isCover) - Number(a.isCover) || a.sortOrder - b.sortOrder)[0];
+    const { plan, floorPlan } = this.getLotPlanFiles(unit);
 
-    const title = this.getLotTitle(unit);
-    const priceSummary = this.getPriceSummary(unit);
-    const planFile = unit.media.find((media) => media.mediaAsset.file)?.mediaAsset.file ?? null;
+    doc.fillColor(colors.ink).font('NotoSansBold').fontSize(22).text(this.getLotTitle(unit), marginX, 58, {
+      width: 320,
+      height: 54,
+      ellipsis: true,
+    });
+    doc.fillColor(colors.muted).font('NotoSans').fontSize(7.5).text(this.getLotSubtitle(unit), marginX, 116, {
+      width: 320,
+      height: 22,
+      ellipsis: true,
+    });
+    await this.drawProjectFileFrame(doc, cover?.file ?? null, 368, 53, 197, 108, 'Фото проекта');
 
+    doc.moveTo(marginX, 182).lineTo(pageWidth - marginX, 182).strokeColor(colors.line).lineWidth(0.7).stroke();
+    doc.fillColor(colors.muted).font('NotoSans').fontSize(7).text('ПЛАНИРОВКА', marginX, 199);
+    await this.drawFileFrame(doc, plan, marginX, 223, 303, 278, 'Планировка недоступна');
+    this.drawPriceSummary(doc, unit, 374, 199, 191);
+    this.drawPrimaryFacts(doc, unit, finishType, 374, 292);
     doc
-      .fillColor('#17202a')
-      .font('NotoSansBold')
-      .fontSize(21)
-      .text(title, marginX, 104, { width: contentWidth - 150, lineGap: 2 });
-
-    doc
-      .fillColor('#66707c')
+      .fillColor(colors.muted)
       .font('NotoSans')
-      .fontSize(9)
-      .text([unit.object.title, unit.address].filter(Boolean).join(' / '), marginX, 136, {
-        width: contentWidth,
-        lineGap: 1,
+      .fontSize(6.7)
+      .text('Полная оплата · ипотека · рассрочка', 374, unit.type === FeedUnitType.RESIDENTIAL ? 486 : 454, {
+        width: 191,
       });
 
-    this.drawPriceStrip(doc, priceSummary);
+    doc.moveTo(marginX, 530).lineTo(pageWidth - marginX, 530).strokeColor(colors.line).lineWidth(0.7).stroke();
+    doc.fillColor(colors.ink).font('NotoSansBold').fontSize(7).text('НА ЭТАЖЕ', marginX, 548);
+    doc.fillColor(colors.muted).font('NotoSans').fontSize(7).text('ХАРАКТЕРИСТИКИ', 374, 548);
+    await this.drawFileFrame(doc, floorPlan, marginX, 570, 303, 192, 'План этажа недоступен');
+    this.drawCharacteristics(doc, unit, 374, 570, 191);
 
-    const planY = 238;
-    const planHeight = 284;
-    doc.roundedRect(marginX, planY, contentWidth, planHeight, 8).fill('#f6f5f1');
-    doc.roundedRect(marginX, planY, contentWidth, planHeight, 8).stroke('#d9d4c8');
-
-    if (planFile) {
-      const planImage = await this.safeLoadImage(planFile.id, 'detail');
-
-      if (planImage) {
-        doc.image(planImage, marginX + 16, planY + 16, {
-          fit: [contentWidth - 32, planHeight - 32],
-          align: 'center',
-          valign: 'center',
-        });
-      } else {
-        this.drawImageFallback(doc, marginX, planY, contentWidth, planHeight, 'Планировка недоступна');
-      }
-    }
-
-    doc
-      .fillColor('#17202a')
-      .font('NotoSansBold')
-      .fontSize(15)
-      .text('О квартире:', marginX, 548);
-
-    this.drawLotFacts(doc, unit, 578);
-    this.drawPageMarker(doc);
+    this.drawFooter(
+      doc,
+      page,
+      `Предложение сформировано ${new Intl.DateTimeFormat('ru-RU').format(new Date())}`,
+    );
   }
 
-  private drawPriceStrip(doc: PDFKit.PDFDocument, summary: ReturnType<LotPresentationsPdfService['getPriceSummary']>) {
-    const stripY = 162;
-
-    doc.roundedRect(marginX, stripY, contentWidth, 52, 8).fill('#efe9db');
-    doc.roundedRect(marginX, stripY, contentWidth, 52, 8).stroke('#d2c6ae');
-    doc
-      .fillColor('#7b6951')
-      .font('NotoSans')
-      .fontSize(8)
-      .text(summary.label.toUpperCase(), marginX + 18, stripY + 12, { width: 160 });
-    doc
-      .fillColor('#17202a')
-      .font('NotoSansBold')
-      .fontSize(18)
-      .text(summary.primary, marginX + 18, stripY + 25, { width: 210 });
-
-    if (summary.secondary) {
-      doc
-        .fillColor('#7b6951')
-        .font('NotoSans')
-        .fontSize(8)
-        .text('Вторая цена', marginX + 256, stripY + 12, { width: 120 });
-      doc
-        .fillColor('#4c5561')
-        .font('NotoSansBold')
-        .fontSize(13)
-        .text(summary.secondary, marginX + 256, stripY + 28, { width: 150 });
+  private drawPrimaryFacts(
+    doc: PDFKit.PDFDocument,
+    unit: PdfPresentationUnit,
+    finishType: LotPresentationFinishType | null,
+    x: number,
+    y: number,
+  ) {
+    if (unit.type === FeedUnitType.RESIDENTIAL) {
+      const finishLabel = finishType ? finishLabels[finishType] : '—';
+      this.drawPrimaryFact(doc, 'Площадь', this.formatArea(unit.area) ?? '—', x, y, 91);
+      this.drawPrimaryFact(doc, 'Этаж', unit.floor === null ? '—' : String(unit.floor), x + 99, y, 92);
+      this.drawPrimaryFact(doc, 'Класс', unit.object.propertyClass?.trim() || '—', x, y + 54, 191);
+      this.drawPrimaryFact(doc, 'Отделка', finishLabel, x, y + 108, 191, 32);
+      return;
     }
 
-    doc
-      .fillColor('#7b6951')
-      .font('NotoSans')
-      .fontSize(8)
-      .text('За м²', marginX + 418, stripY + 12, { width: 70 });
-    doc
-      .fillColor('#17202a')
-      .font('NotoSansBold')
-      .fontSize(12)
-      .text(summary.pricePerMeter, marginX + 418, stripY + 28, { width: 94 });
-  }
-
-  private drawLotFacts(doc: PDFKit.PDFDocument, unit: PdfPresentationUnit, startY: number) {
-    const facts = this.getLotFacts(unit);
-    const columnGap = 18;
-    const columnWidth = (contentWidth - columnGap) / 2;
-    const rowHeight = 27;
-
-    facts.forEach((fact, index) => {
+    const facts: Array<[string, string]> = [
+      ['Площадь', this.formatArea(unit.area) ?? '—'],
+      ['Этаж', unit.floor === null ? '—' : String(unit.floor)],
+      ['Класс', unit.object.propertyClass?.trim() || '—'],
+      ['Состояние', '—'],
+    ];
+    const width = 91;
+    facts.forEach(([label, value], index) => {
       const column = index % 2;
       const row = Math.floor(index / 2);
-      const x = marginX + column * (columnWidth + columnGap);
-      const y = startY + row * rowHeight;
-
-      doc
-        .moveTo(x, y + rowHeight - 7)
-        .lineTo(x + columnWidth, y + rowHeight - 7)
-        .strokeColor('#e2ded5')
-        .lineWidth(0.5)
-        .stroke();
-      doc
-        .fillColor('#75808c')
-        .font('NotoSans')
-        .fontSize(7.5)
-        .text(fact.label, x, y, { width: 92, continued: false });
-      doc
-        .fillColor('#17202a')
-        .font('NotoSansBold')
-        .fontSize(8.2)
-        .text(fact.value ?? '', x + 98, y, { width: columnWidth - 98, lineGap: 1 });
+      const itemX = x + column * 99;
+      const itemY = y + row * 78;
+      this.drawPrimaryFact(doc, label, value, itemX, itemY, width);
     });
   }
 
-  private async drawProjectPage(doc: PDFKit.PDFDocument, object: PdfPresentationObject, broker: PdfPresentationBroker) {
-    await this.drawHeader(doc, broker);
-
-    doc
-      .fillColor('#17202a')
-      .font('NotoSansBold')
-      .fontSize(22)
-      .text('Описание проекта', marginX, 104, { width: contentWidth });
-    doc
-      .fillColor('#66707c')
-      .font('NotoSans')
-      .fontSize(9)
-      .text(object.title, marginX, 136, { width: contentWidth });
-
-    const images = this.selectProjectImages(object.images);
-    const tileGap = 8;
-    const tileWidth = (contentWidth - tileGap * 2) / 3;
-    const tileHeight = 102;
-    const galleryTop = 164;
-
-    for (const [index, image] of images.entries()) {
-      const column = index % 3;
-      const row = Math.floor(index / 3);
-      const x = marginX + column * (tileWidth + tileGap);
-      const y = galleryTop + row * (tileHeight + tileGap);
-      const imageBuffer = await this.safeLoadImage(image.file.id, 'detail');
-
-      doc.roundedRect(x, y, tileWidth, tileHeight, 7).fill('#e9e6df');
-
-      if (imageBuffer) {
-        doc.image(imageBuffer, x, y, {
-          cover: [tileWidth, tileHeight],
-          align: 'center',
-          valign: 'center',
-        });
-      } else {
-        this.drawImageFallback(doc, x, y, tileWidth, tileHeight, 'Фото недоступно');
-      }
-    }
-
-    const description = object.description?.trim() || 'Описание проекта пока не заполнено.';
-
-    doc
-      .fillColor('#17202a')
-      .font('NotoSansBold')
-      .fontSize(12)
-      .text('Описание и особенности', marginX, 398);
-
-    await this.drawDescriptionText(doc, description, broker, 424);
-    this.drawPageMarker(doc);
-  }
-
-  private async drawDescriptionText(
+  private drawPrimaryFact(
     doc: PDFKit.PDFDocument,
-    description: string,
-    broker: PdfPresentationBroker,
-    startY: number,
+    label: string,
+    value: string,
+    x: number,
+    y: number,
+    width: number,
+    height = 28,
   ) {
-    let cursorY = startY;
-    const paragraphs = description
-      .split(/\n{2,}/u)
-      .map((paragraph) => paragraph.trim())
-      .filter(Boolean);
-
-    for (const paragraph of paragraphs) {
-      const height = doc.heightOfString(paragraph, {
-        width: contentWidth,
-        lineGap: 3,
-      });
-
-      if (cursorY + height > pageHeight - 58) {
-        doc.addPage();
-        await this.drawHeader(doc, broker);
-        doc
-          .fillColor('#17202a')
-          .font('NotoSansBold')
-          .fontSize(18)
-          .text('Описание проекта', marginX, 104, { width: contentWidth });
-        cursorY = 142;
-      }
-
-      doc
-        .fillColor('#2d3742')
-        .font('NotoSans')
-        .fontSize(10)
-        .text(paragraph, marginX, cursorY, {
-          width: contentWidth,
-          lineGap: 3,
-        });
-
-      cursorY = doc.y + 12;
-    }
+    doc.fillColor(colors.muted).font('NotoSans').fontSize(6.7).text(label, x, y, { width });
+    doc.fillColor(colors.ink).font('NotoSansBold').fontSize(10.5).text(value, x, y + 15, {
+      width,
+      height,
+      ellipsis: true,
+    });
   }
 
-  private async drawHeader(doc: PDFKit.PDFDocument, broker: PdfPresentationBroker) {
-    const logoBuffer = await this.getLogoBuffer();
-
-    doc.rect(0, 0, pageWidth, 76).fill('#17202a');
-
-    if (logoBuffer) {
-      doc.image(logoBuffer, marginX, 22, {
-        fit: [66, 28],
-        valign: 'center',
-      });
-    } else {
-      doc.fillColor('#ffffff').font('NotoSansBold').fontSize(14).text('FW', marginX, 26, { width: 42 });
+  private drawPriceSummary(doc: PDFKit.PDFDocument, unit: PdfPresentationUnit, x: number, y: number, width: number) {
+    const summary = this.getPriceSummary(unit);
+    doc.fillColor(colors.muted).font('NotoSans').fontSize(7).text('СТОИМОСТЬ ПРИ ПОЛНОЙ ОПЛАТЕ', x, y, {
+      width,
+      height: 24,
+    });
+    doc.fillColor(colors.ink).font('NotoSansBold').fontSize(18).text(summary.primary, x, y + 19, {
+      width,
+      height: 29,
+      ellipsis: true,
+    });
+    if (summary.secondary) {
+      doc.fillColor(colors.muted).font('NotoSans').fontSize(7.5).text(summary.secondary, x, y + 50, { width: 100 });
+      const oldWidth = doc.widthOfString(summary.secondary);
+      doc.moveTo(x, y + 55).lineTo(x + Math.min(oldWidth, 100), y + 55).strokeColor(colors.muted).lineWidth(0.7).stroke();
     }
+    doc.fillColor(colors.muted).font('NotoSans').fontSize(8).text(summary.pricePerMeter, x, y + (summary.secondary ? 69 : 51), { width });
+  }
 
-    doc
-      .fillColor('#ffffff')
-      .font('NotoSansBold')
-      .fontSize(10)
-      .text(broker.name, marginX + 90, 20, { width: 218, lineGap: 1 });
-    doc
-      .fillColor('#cfd6de')
-      .font('NotoSans')
-      .fontSize(8)
-      .text([broker.phone, broker.email].join(' / '), marginX + 90, 39, { width: 292, lineGap: 1 });
-    doc
-      .fillColor('#ffffff')
-      .font('NotoSansBold')
-      .fontSize(8)
-      .text('PDF-презентация лота', pageWidth - marginX - 150, 30, {
-        width: 150,
+  private drawCharacteristics(
+    doc: PDFKit.PDFDocument,
+    unit: PdfPresentationUnit,
+    x: number,
+    y: number,
+    width: number,
+  ) {
+    const residential = unit.type === FeedUnitType.RESIDENTIAL;
+    const rows: Array<[string, string | null]> = residential
+      ? [
+          ['Срок сдачи', this.formatCompletion(unit)],
+          ['Застройщик', unit.object.developerName ?? unit.object.developer?.name ?? null],
+          ['Договор', 'ДДУ/ДКП'],
+          ['Оплата', 'Полная оплата · ипотека · рассрочка'],
+        ]
+      : [
+          ['Тип помещения', unit.commercialDetails?.commercialType ?? null],
+          ['Высота потолков', this.formatMeters(unit.commercialDetails?.ceilingHeight ?? null)],
+          ['Мощность', this.formatPower(unit.commercialDetails?.powerKw ?? null)],
+          ['Вход', unit.commercialDetails?.entrance ?? null],
+          ['Срок сдачи', this.formatCompletion(unit)],
+          ['Застройщик', unit.object.developerName ?? unit.object.developer?.name ?? null],
+          ['Отдельный вход', this.formatBoolean(unit.commercialDetails?.separateEntrance)],
+          ['Оплата', 'Полная оплата · ипотека · рассрочка'],
+        ];
+
+    rows.forEach(([label, rawValue], index) => {
+      const itemY = y + index * 24;
+      doc.moveTo(x, itemY + 19).lineTo(x + width, itemY + 19).strokeColor(colors.line).lineWidth(0.45).stroke();
+      doc.fillColor(colors.muted).font('NotoSans').fontSize(6.1).text(label, x, itemY, { width: 72 });
+      doc.fillColor(colors.ink).font('NotoSans').fontSize(6.2).text(rawValue || '—', x + 76, itemY, {
+        width: width - 76,
+        height: 15,
         align: 'right',
+        ellipsis: true,
       });
+    });
   }
 
-  private drawPageMarker(doc: PDFKit.PDFDocument) {
+  private async drawGalleryPage(doc: PDFKit.PDFDocument, object: PdfPresentationObject, page: PageContext) {
+    await this.drawHeader(doc);
+    doc.fillColor(colors.ink).font('NotoSansBold').fontSize(22).text('Проект в деталях', marginX, 59, {
+      width: contentWidth,
+      height: 30,
+    });
     doc
-      .fillColor('#98a1ad')
+      .fillColor(colors.muted)
+      .font('NotoSans')
+      .fontSize(7.5)
+      .text('Архитектура, благоустройство и пространства для жителей', marginX, 89, { width: contentWidth });
+    doc.moveTo(marginX, 117).lineTo(pageWidth - marginX, 117).strokeColor(colors.line).lineWidth(0.5).stroke();
+    const images = this.selectProjectImages(object.images);
+    await this.drawProjectFileFrame(doc, images.hero?.file ?? null, marginX, 136, contentWidth, 223, 'Фото проекта');
+    const galleryFrames = [
+      [marginX, 370, 168, 196],
+      [marginX, 575, 168, 196],
+      [208, 370, 174, 196],
+      [208, 575, 174, 196],
+      [392, 370, 173, 196],
+      [392, 575, 173, 196],
+    ] as const;
+    const galleryImages = [
+      images.architecture[0],
+      images.architecture[1],
+      images.interiors[0],
+      images.interiors[1],
+      images.filling[0],
+      images.filling[1],
+    ];
+
+    for (const [index, frame] of galleryFrames.entries()) {
+      await this.drawProjectFileFrame(
+        doc,
+        galleryImages[index]?.file ?? null,
+        frame[0],
+        frame[1],
+        frame[2],
+        frame[3],
+        'Фото проекта',
+      );
+    }
+    this.drawFooter(doc, page, 'Персональное предложение FluffyWhite');
+  }
+
+  private async drawProjectDetailsPage(
+    doc: PDFKit.PDFDocument,
+    object: PdfPresentationObject,
+    page: PageContext,
+    unit: PdfPresentationUnit,
+    finishType: LotPresentationFinishType | null,
+  ) {
+    await this.drawHeader(doc, object.title);
+    doc.fillColor(colors.ink).font('NotoSansBold').fontSize(22).text('Отделка и расположение', marginX, 59);
+    doc
+      .fillColor(colors.muted)
+      .font('NotoSans')
+      .fontSize(7.5)
+      .text(
+        finishType
+          ? `${this.getLotTitle(unit)} · ${this.getLotSubtitle(unit)}`
+          : 'Состояние квартиры, транспорт и особенности проекта',
+        marginX,
+        89,
+        { width: contentWidth, height: 16, ellipsis: true },
+      );
+    doc.moveTo(marginX, 117).lineTo(pageWidth - marginX, 117).strokeColor(colors.line).lineWidth(0.5).stroke();
+
+    doc
+      .fillColor(colors.muted)
       .font('NotoSans')
       .fontSize(7)
-      .text('Platforma', marginX, pageHeight - 30, { width: contentWidth, align: 'right' });
+      .text('СОСТОЯНИЕ КВАРТИРЫ', marginX, 136);
+    this.drawPhotoBufferFrame(
+      doc,
+      finishType ? finishAssetPaths[finishType] : null,
+      marginX,
+      153,
+      303,
+      164,
+      'Фото отделки',
+    );
+    doc
+      .fillColor(colors.muted)
+      .font('NotoSans')
+      .fontSize(7)
+      .text(finishType ? 'ТИП ОТДЕЛКИ' : 'БАЗОВАЯ ОТДЕЛКА', 374, 136, { width: 191 });
+    doc
+      .fillColor(colors.ink)
+      .font('NotoSansBold')
+      .fontSize(14)
+      .text(finishType ? finishLabels[finishType] : 'Без отделки', 374, 156, { width: 191 });
+
+    if (!finishType) {
+      doc
+        .font('NotoSans')
+        .fontSize(7.7)
+        .fillColor(colors.ink)
+        .text('Информация об отделке будет добавлена позже.', 374, 184, {
+          width: 191,
+          lineGap: 3,
+        });
+    }
+
+    if (finishType) {
+      doc
+        .fillColor(colors.muted)
+        .font('NotoSans')
+        .fontSize(5.2)
+        .text(
+          'Пример состояния отделки представлен для иллюстрации, но не является конечной версией отделки',
+          marginX,
+          322,
+          { width: contentWidth, height: 7, lineBreak: false },
+        );
+    }
+
+    const mapBuffer = await this.loadStaticMap(object);
+    doc.moveTo(marginX, 334).lineTo(pageWidth - marginX, 334).strokeColor(colors.line).lineWidth(0.5).stroke();
+    doc.fillColor(colors.muted).font('NotoSans').fontSize(7).text('РАСПОЛОЖЕНИЕ', marginX, 350);
+    this.drawPhotoBufferFrame(doc, mapBuffer, marginX, 368, 303, 201, 'Карта недоступна');
+    this.drawNearbyPlaces(doc, object.nearbyPlaces, 374, 350, 191);
+
+    doc.fillColor(colors.ink).font('NotoSansBold').fontSize(7.5).text(object.address || 'Адрес не указан', marginX, 579, {
+      width: 303,
+      height: 18,
+      ellipsis: true,
+    });
+    doc.moveTo(marginX, 608).lineTo(pageWidth - marginX, 608).strokeColor(colors.line).lineWidth(0.5).stroke();
+    doc.fillColor(colors.muted).font('NotoSans').fontSize(7).text('О ПРОЕКТЕ', marginX, 624);
+    doc.fillColor(colors.ink).font('NotoSansBold').fontSize(14).text(this.cleanProjectName(object.title), marginX, 641, {
+      width: contentWidth,
+      height: 22,
+      ellipsis: true,
+    });
+    const description = object.description?.trim() || 'Описание проекта пока не заполнено.';
+    doc.fillColor(colors.ink).font('NotoSans').fontSize(7.3).text(description, marginX, 664, {
+      width: contentWidth,
+      height: 112,
+      lineGap: 2,
+      ellipsis: true,
+    });
+    this.drawFooter(doc, page, 'Персональное предложение FluffyWhite');
   }
 
-  private drawImageFallback(
+  private async drawBrokerPage(doc: PDFKit.PDFDocument, broker: PdfPresentationBroker, page: PageContext) {
+    await this.drawHeader(doc);
+    const photo = broker.photoFileId ? await this.safeLoadImage(broker.photoFileId, 'detail') : null;
+    doc.fillColor(colors.ink).font('NotoSansBold').fontSize(22).text('Персональный брокер', marginX, 59, { width: contentWidth });
+    doc
+      .fillColor(colors.muted)
+      .font('NotoSans')
+      .fontSize(7.5)
+      .text('Проверка актуальности, ответы на вопросы и организация просмотра', marginX, 89, { width: contentWidth });
+    doc.moveTo(marginX, 117).lineTo(pageWidth - marginX, 117).strokeColor(colors.line).lineWidth(0.5).stroke();
+    doc.fillColor(colors.muted).font('NotoSans').fontSize(7).text('КОНТАКТ', marginX, 136);
+    doc.fillColor(colors.ink).font('NotoSansBold').fontSize(22).text(broker.name, marginX, 160, {
+      width: 323,
+      height: 58,
+      ellipsis: true,
+    });
+    doc.fillColor(colors.muted).font('NotoSans').fontSize(7.5).text('Персональный брокер FluffyWhite', marginX, 219, { width: 323 });
+    doc.moveTo(marginX, 244).lineTo(353, 244).strokeColor(colors.line).lineWidth(0.5).stroke();
+    doc.fillColor(colors.ink).font('NotoSans').fontSize(10).text([broker.phone, broker.email].filter(Boolean).join('\n'), marginX, 260, {
+      width: 323,
+      lineGap: 3,
+    });
+    doc.moveTo(marginX, 304).lineTo(353, 304).strokeColor(colors.line).lineWidth(0.5).stroke();
+    doc.fillColor(colors.ink).font('NotoSans').fontSize(8).text(`Связаться с ${this.getFirstName(broker.name)}`, marginX, 318, { width: 323 });
+    doc.moveTo(344, 323).lineTo(352, 323).strokeColor(colors.ink).lineWidth(0.7).stroke();
+    doc.moveTo(349, 320).lineTo(352, 323).lineTo(349, 326).strokeColor(colors.ink).lineWidth(0.7).stroke();
+    doc.moveTo(marginX, 338).lineTo(353, 338).strokeColor(colors.line).lineWidth(0.5).stroke();
+    doc.fillColor(colors.muted).font('NotoSans').fontSize(8).text(
+      'Отвечу на вопросы по квартире, актуальным условиям покупки и организую просмотр проекта.',
+      marginX,
+      354,
+      { width: 323, lineGap: 3 },
+    );
+    this.drawPhotoBufferFrame(doc, photo, 373, 134, 192, 303, 'Фото брокера');
+
+    doc.moveTo(marginX, 475).lineTo(pageWidth - marginX, 475).strokeColor(colors.line).lineWidth(0.5).stroke();
+    doc.fillColor(colors.muted).font('NotoSans').fontSize(7).text('О FLUFFYWHITE', marginX, 490);
+    const logo = await this.getLogoBuffer();
+    if (logo) doc.image(logo, 78, 522, { fit: [48, 55], align: 'center', valign: 'center' });
+    doc.fillColor(colors.ink).font('NotoSansBold').fontSize(14).text('Агентство FluffyWhite', 170, 515, { width: 395 });
+    doc.fillColor(colors.muted).font('NotoSans').fontSize(7.5).text('Экспертный подход к недвижимости', 170, 537, { width: 395 });
+    doc.fillColor(colors.ink).font('NotoSans').fontSize(7.5).text(
+      'FluffyWhite — бутиковое агентство недвижимости. Мы подбираем объекты под цели, образ жизни и инвестиционную стратегию клиента, анализируем проект и условия сделки и сопровождаем покупку на ключевых этапах.',
+      170,
+      555,
+      { width: 395, lineGap: 2 },
+    );
+    const advantages: Array<[string, string]> = [
+      ['ПЕРСОНАЛЬНЫЙ ПОДБОР', 'Объекты под цели, бюджет и сценарий жизни клиента.'],
+      ['ЭКСПЕРТНЫЙ АНАЛИЗ', 'Оценка проекта, локации, цены и условий сделки.'],
+      ['ПОЛНОЕ СОПРОВОЖДЕНИЕ', 'Координация коммуникации, документов и этапов покупки.'],
+    ];
+    advantages.forEach(([title, text], index) => {
+      const y = 615 + index * 44;
+      doc.fillColor(colors.ink).font('NotoSansBold').fontSize(7.5).text(title, marginX, y, { width: contentWidth });
+      doc.fillColor(colors.muted).font('NotoSans').fontSize(6.7).text(text, marginX, y + 14, { width: contentWidth });
+      doc.moveTo(marginX, y + 32).lineTo(pageWidth - marginX, y + 32).strokeColor(colors.line).lineWidth(0.45).stroke();
+    });
+    doc.fillColor(colors.accent).font('NotoSansBold').fontSize(10.5).text('fluffywhite.moscow', marginX, 755);
+    doc.fillColor(colors.muted).font('NotoSans').fontSize(5.8).text(
+      'Информация в презентации не является публичной офертой. Стоимость и характеристики объекта необходимо уточнять на дату обращения.',
+      marginX,
+      778,
+      { width: contentWidth - 65, lineGap: 1.5 },
+    );
+    this.drawFooter(doc, page);
+  }
+
+  private async drawHeader(doc: PDFKit.PDFDocument, contextLabel?: string) {
+    if (contextLabel) {
+      const logo = await this.getLogoBuffer();
+      if (logo) {
+        doc.image(logo, marginX, 10, { fit: [18, 24], valign: 'center' });
+      } else {
+        doc.fillColor(colors.ink).font('NotoSansBold').fontSize(8).text('FW', marginX, 20);
+      }
+      doc.fillColor(colors.ink).font('NotoSansBold').fontSize(8.5).text('FluffyWhite', marginX + 28, 20);
+      doc
+        .fillColor(colors.ink)
+        .font('NotoSans')
+        .fontSize(6.7)
+        .text(`${this.cleanProjectName(contextLabel).toUpperCase()} · ПЕРСОНАЛЬНОЕ ПРЕДЛОЖЕНИЕ`, 280, 20, {
+          width: pageWidth - marginX - 280,
+          height: 12,
+          align: 'right',
+          ellipsis: true,
+        });
+    }
+    doc.moveTo(marginX, 39).lineTo(pageWidth - marginX, 39).strokeColor(colors.line).lineWidth(0.6).stroke();
+  }
+
+  private drawFooter(doc: PDFKit.PDFDocument, page: PageContext, label?: string) {
+    if (label) {
+      doc.fillColor(colors.muted).font('NotoSans').fontSize(5.5).text(label, marginX, pageHeight - 27, {
+        width: contentWidth - 70,
+      });
+    }
+    doc.fillColor(colors.muted).font('NotoSans').fontSize(6).text(`${page.current} / ${page.total}`, pageWidth - marginX - 55, pageHeight - 28, {
+      width: 55,
+      align: 'right',
+    });
+  }
+
+  private async drawFileFrame(
     doc: PDFKit.PDFDocument,
+    file: File | null,
     x: number,
     y: number,
     width: number,
     height: number,
-    label: string,
+    fallback: string,
+  ) {
+    const buffer = file ? await this.safeLoadImage(file.id, 'detail') : null;
+    this.drawBufferFrame(doc, buffer, x, y, width, height, fallback);
+  }
+
+  private async drawProjectFileFrame(
+    doc: PDFKit.PDFDocument,
+    file: File | null,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    fallback: string,
+  ) {
+    const buffer = file ? await this.safeLoadImage(file.id, 'detail') : null;
+    this.drawPhotoBufferFrame(doc, buffer, x, y, width, height, fallback);
+  }
+
+  private drawPhotoBufferFrame(
+    doc: PDFKit.PDFDocument,
+    source: Buffer | string | null,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    fallback: string,
+  ) {
+    doc.roundedRect(x, y, width, height, imageFrameRadius).fill(colors.white);
+    if (source) {
+      doc.save();
+      doc.roundedRect(x, y, width, height, imageFrameRadius).clip();
+      doc.image(source, x, y, { cover: [width, height], align: 'center', valign: 'center' });
+      doc.restore();
+      doc.roundedRect(x, y, width, height, imageFrameRadius).strokeColor(colors.line).lineWidth(0.5).stroke();
+    } else {
+      doc.roundedRect(x, y, width, height, imageFrameRadius).strokeColor(colors.line).lineWidth(0.5).stroke();
+      this.drawImageFallback(doc, x, y, width, height, fallback);
+    }
+  }
+
+  private drawBufferFrame(
+    doc: PDFKit.PDFDocument,
+    buffer: Buffer | null,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    fallback: string,
   ) {
     doc
-      .fillColor('#8a949f')
-      .font('NotoSans')
-      .fontSize(9)
-      .text(label, x, y + height / 2 - 6, { width, align: 'center' });
+      .lineWidth(0.5)
+      .roundedRect(x, y, width, height, imageFrameRadius)
+      .fillAndStroke(colors.white, colors.line);
+    if (buffer) {
+      doc.save();
+      doc.roundedRect(x, y, width, height, imageFrameRadius).clip();
+      doc.image(buffer, x + 3, y + 3, { fit: [width - 6, height - 6], align: 'center', valign: 'center' });
+      doc.restore();
+    } else {
+      this.drawImageFallback(doc, x, y, width, height, fallback);
+    }
+  }
+
+  private drawNearbyPlaces(
+    doc: PDFKit.PDFDocument,
+    nearbyPlaces: PdfPresentationNearbyPlace[],
+    x: number,
+    y: number,
+    width: number,
+  ) {
+    doc.fillColor(colors.muted).font('NotoSans').fontSize(7).text('МЕСТА РЯДОМ', x, y, { width });
+
+    if (nearbyPlaces.length === 0) {
+      doc
+        .fillColor(colors.muted)
+        .font('NotoSans')
+        .fontSize(7.2)
+        .text('Информация о местах рядом не указана', x, y + 25, { width, lineGap: 2 });
+      return;
+    }
+
+    nearbyPlaces.forEach((place, index) => {
+      const rowY = y + 25 + index * 43;
+
+      doc.fillColor(colors.ink).font('NotoSansBold').fontSize(7.1).text(place.name, x, rowY, {
+        width,
+        height: 18,
+        ellipsis: true,
+      });
+      doc.fillColor(colors.muted).font('NotoSans').fontSize(6.5).text(place.travelTime, x, rowY + 20, {
+        width,
+        height: 10,
+        ellipsis: true,
+      });
+
+      if (index < nearbyPlaces.length - 1) {
+        doc.moveTo(x, rowY + 35).lineTo(x + width, rowY + 35).strokeColor(colors.line).lineWidth(0.45).stroke();
+      }
+    });
+  }
+
+  private drawImageFallback(doc: PDFKit.PDFDocument, x: number, y: number, width: number, height: number, label: string) {
+    doc.fillColor(colors.muted).font('NotoSans').fontSize(8).text(label, x + 10, y + height / 2 - 5, {
+      width: width - 20,
+      align: 'center',
+    });
   }
 
   private selectProjectImages(images: PdfPresentationObjectImage[]) {
-    const selected = new Map<string, PdfPresentationObjectImage>();
-    const sections: ObjectImageSection[] = [
-      ObjectImageSection.ARCHITECTURE,
-      ObjectImageSection.INTERIORS,
-      ObjectImageSection.FILLING,
-    ];
+    const sorted = [...images].sort((left, right) => Number(right.isCover) - Number(left.isCover) || left.sortOrder - right.sortOrder);
+    const hero = sorted.find((image) => image.isCover) ?? sorted[0] ?? null;
+    const galleryImages = hero ? sorted.filter((image) => image.id !== hero.id) : sorted;
+    const hasThematicSections = galleryImages.some((image) => image.section !== null);
 
-    for (const section of sections) {
-      for (const image of images.filter((item) => item.section === section).slice(0, 2)) {
-        selected.set(image.id, image);
-      }
+    if (!hasThematicSections) {
+      const fallback = galleryImages.slice(0, 6);
+      return {
+        hero,
+        architecture: fallback.slice(0, 2),
+        interiors: fallback.slice(2, 4),
+        filling: fallback.slice(4, 6),
+      };
     }
 
-    for (const image of images) {
-      if (selected.size >= 6) {
-        break;
+    const unsectionedImages = galleryImages.filter((image) => image.section === null);
+    const usedFallbackImageIds = new Set<string>();
+    const selectSectionImages = (section: ObjectImageSection) => {
+      const selected = galleryImages.filter((image) => image.section === section).slice(0, 2);
+
+      for (const image of unsectionedImages) {
+        if (selected.length >= 2) break;
+        if (usedFallbackImageIds.has(image.id)) continue;
+        usedFallbackImageIds.add(image.id);
+        selected.push(image);
       }
 
-      selected.set(image.id, image);
-    }
+      return selected;
+    };
 
-    return [...selected.values()].slice(0, 6);
+    return {
+      hero,
+      architecture: selectSectionImages(ObjectImageSection.ARCHITECTURE),
+      interiors: selectSectionImages(ObjectImageSection.INTERIORS),
+      filling: selectSectionImages(ObjectImageSection.FILLING),
+    };
+  }
+
+  private getLotPlanFiles(unit: PdfPresentationUnit) {
+    const media = [...unit.media]
+      .filter((item) => item.mediaAsset.file)
+      .sort((left, right) => left.sortOrder - right.sortOrder);
+    const normalizedLabel = (item: (typeof media)[number]) => item.label?.trim().toLowerCase() ?? '';
+    const planItem =
+      media.find((item) => normalizedLabel(item) === 'flat-plan') ??
+      media.find((item) => normalizedLabel(item) === 'photo') ??
+      media.find((item) => normalizedLabel(item).includes('flat-plan') && !normalizedLabel(item).includes('floor')) ??
+      media.find((item) => normalizedLabel(item).includes('plan') && !normalizedLabel(item).includes('floor')) ??
+      media[1] ??
+      media[0];
+    const floorPlanItem =
+      media.find((item) => normalizedLabel(item) === 'floor-plan') ??
+      media.find((item) => normalizedLabel(item) === 'layout-photo') ??
+      media.find((item) => normalizedLabel(item).includes('floor-plan')) ??
+      media.find((item) => item !== planItem);
+
+    return {
+      plan: planItem?.mediaAsset.file ?? null,
+      floorPlan: floorPlanItem?.mediaAsset.file ?? null,
+    };
+  }
+
+  private async loadStaticMap(object: PdfPresentationObject) {
+    const latitude = this.decimalToNumber(object.latitude);
+    const longitude = this.decimalToNumber(object.longitude);
+    if (latitude === null || longitude === null) return null;
+    const params = new URLSearchParams({
+      ll: `${longitude},${latitude}`,
+      z: '15',
+      size: '650,340',
+      l: 'map',
+      lang: 'ru_RU',
+      pt: `${longitude},${latitude},pm2rdm`,
+    });
+    try {
+      const response = await fetch(`https://static-maps.yandex.ru/1.x/?${params.toString()}`, {
+        signal: AbortSignal.timeout(5000),
+        headers: { 'User-Agent': 'Platforma PDF generator' },
+      });
+      if (!response.ok) return null;
+      const source = Buffer.from(await response.arrayBuffer());
+      return sharp(source).jpeg({ quality: 88, mozjpeg: true }).toBuffer();
+    } catch {
+      return null;
+    }
   }
 
   private getPriceSummary(unit: PdfPresentationUnit) {
     const hasDiscount = this.hasRealDiscount(unit);
     const primary = hasDiscount
       ? this.formatMoney(unit.discountPrice, unit.currency)
-      : this.formatMoney(unit.price ?? unit.effectivePrice, unit.currency);
-    const secondary = hasDiscount ? this.formatMoney(unit.price, unit.currency) : null;
-    const pricePerMeter = hasDiscount && unit.discountPricePerMeter
-      ? this.formatMoney(unit.discountPricePerMeter, unit.currency)
-      : this.formatPricePerMeter(unit);
-
+      : this.formatMoney(unit.effectivePrice ?? unit.price, unit.currency);
     return {
-      label: hasDiscount ? 'Цена со скидкой' : 'Цена',
       primary,
-      secondary,
-      pricePerMeter,
+      secondary: hasDiscount ? this.formatMoney(unit.price, unit.currency) : null,
+      pricePerMeter: this.formatPricePerMeter(unit),
     };
   }
 
-  private getLotFacts(unit: PdfPresentationUnit) {
-    const facts: Array<{ label: string; value: string | null }> = [
-      { label: 'Цена', value: this.formatMoney(unit.price, unit.currency) },
-      this.hasRealDiscount(unit)
-        ? { label: 'Цена со скидкой', value: this.formatMoney(unit.discountPrice, unit.currency) }
-        : { label: 'Цена со скидкой', value: null },
-      { label: 'Цена за м²', value: this.formatPricePerMeter(unit) },
-      this.hasRealDiscount(unit)
-        ? { label: 'Цена за м² без скидки', value: this.formatMoney(unit.pricePerMeter, unit.currency) }
-        : { label: 'Цена за м² без скидки', value: null },
-      { label: 'Площадь', value: this.formatArea(unit.area) },
-      { label: 'Комнаты / тип', value: this.getUnitRoomsOrType(unit) },
-      { label: 'Корпус', value: this.formatOptional(unit.building) },
-      { label: 'Секция', value: this.formatOptional(unit.section) },
-      { label: 'Этаж', value: unit.floor === null ? null : String(unit.floor) },
-      { label: 'Номер квартиры', value: unit.residentialDetails?.apartmentNumber ?? unit.title ?? unit.externalId },
-      { label: 'Планировка', value: unit.residentialDetails?.layoutType ?? null },
-      { label: 'Жилая площадь', value: this.formatArea(unit.residentialDetails?.livingArea ?? null) },
-      { label: 'Кухня', value: this.formatArea(unit.residentialDetails?.kitchenArea ?? null) },
-      { label: 'Балконы', value: unit.residentialDetails?.balconyCount === null || unit.residentialDetails?.balconyCount === undefined ? null : String(unit.residentialDetails.balconyCount) },
-      { label: 'Срок сдачи', value: this.formatCompletion(unit) },
-      { label: 'Статус', value: this.formatStatus(unit.status) },
-      { label: 'Адрес', value: unit.address ?? unit.object.address },
-      { label: 'ID лота', value: unit.externalId },
-      { label: 'Коммерческий тип', value: unit.commercialDetails?.commercialType ?? null },
-      { label: 'Вход', value: unit.commercialDetails?.entrance ?? null },
-      { label: 'Потолки', value: this.formatMeters(unit.commercialDetails?.ceilingHeight ?? null) },
-      { label: 'Мощность', value: this.formatPower(unit.commercialDetails?.powerKw ?? null) },
-      {
-        label: 'Отдельный вход',
-        value: unit.commercialDetails?.separateEntrance === null || unit.commercialDetails?.separateEntrance === undefined
-          ? null
-          : unit.commercialDetails.separateEntrance
-            ? 'Да'
-            : 'Нет',
-      },
-    ];
-
-    return facts.filter((fact) => fact.value && fact.value !== 'Не указано');
-  }
-
   private getLotTitle(unit: PdfPresentationUnit) {
-    return unit.title?.trim() || unit.residentialDetails?.apartmentNumber || `Лот ${unit.externalId}`;
+    const projectName = this.cleanProjectName(unit.object.title);
+    if (unit.type === FeedUnitType.COMMERCIAL) {
+      const commercialType = unit.commercialDetails?.commercialType?.trim() || 'Коммерческое помещение';
+      return `${commercialType} в проекте ${projectName}`;
+    }
+    if (unit.rooms === 0) return `Студия в проекте ${projectName}`;
+    if (unit.rooms) return `${unit.rooms}-К в проекте ${projectName}`;
+    return `Квартира в проекте ${projectName}`;
   }
 
-  private getUnitRoomsOrType(unit: PdfPresentationUnit) {
-    if (unit.type === FeedUnitType.RESIDENTIAL) {
-      if (unit.rooms === 0) {
-        return 'Студия';
-      }
+  private cleanProjectName(value: string) {
+    const original = value.trim();
+    let result = original;
+    const prefix = /^(?:(?:премиальный|элитный|жилой|апартаментный)\s+)*(?:жилой\s+(?:комплекс|квартал)|клубный\s+(?:дом|особняк)|многофункциональный\s+комплекс|комплекс\s+апартаментов|апарт-комплекс|резиденци(?:я|и)|жк|кд|мфк|дом)\s*/iu;
 
-      if (unit.rooms) {
-        return `${unit.rooms}-комн.`;
-      }
+    while (prefix.test(result)) result = result.replace(prefix, '').trim();
+    result = result.replace(/^[«„“"']+|[»“"']+$/gu, '').trim();
+    return result || original;
+  }
 
-      return unit.residentialDetails?.layoutType ?? 'Жилой';
-    }
-
-    return unit.commercialDetails?.commercialType ?? 'Коммерческий';
+  private getLotSubtitle(unit: PdfPresentationUnit) {
+    const details = [
+      this.formatArea(unit.area),
+      unit.building?.trim() ? `корпус ${unit.building.trim()}` : null,
+      unit.section?.trim() ? `секция ${unit.section.trim()}` : null,
+      unit.type === FeedUnitType.RESIDENTIAL && unit.residentialDetails?.apartmentNumber
+        ? `квартира № ${unit.residentialDetails.apartmentNumber}`
+        : null,
+    ].filter(Boolean);
+    return details.join(' · ') || unit.object.title;
   }
 
   private formatPricePerMeter(unit: PdfPresentationUnit) {
     const value = unit.effectivePricePerMeter ?? unit.discountPricePerMeter ?? unit.pricePerMeter;
-
-    if (value) {
-      return `${this.formatMoney(value, unit.currency)}/м²`;
-    }
-
-    const price = unit.effectivePrice ?? unit.discountPrice ?? unit.price;
+    if (value) return `${this.formatMoney(value, unit.currency)} / м²`;
+    const price = this.decimalToNumber(unit.effectivePrice ?? unit.discountPrice ?? unit.price);
     const area = this.decimalToNumber(unit.area);
-    const priceValue = this.decimalToNumber(price);
-
-    if (priceValue !== null && area !== null && area > 0) {
-      return `${this.formatNumber(priceValue / area)} ₽/м²`;
-    }
-
-    return 'По запросу';
+    return price !== null && area !== null && area > 0 ? `${this.formatNumber(price / area)} ₽ / м²` : '— / м²';
   }
 
   private formatMoney(value: Prisma.Decimal | null | undefined, currency: string | null) {
-    const numberValue = this.decimalToNumber(value ?? null);
-
-    if (numberValue === null) {
-      return 'По запросу';
-    }
-
-    if (currency && !['RUB', 'RUR'].includes(currency.toUpperCase())) {
-      return `${this.formatNumber(numberValue)} ${currency}`;
-    }
-
-    return `${this.formatNumber(numberValue)} ₽`;
+    const number = this.decimalToNumber(value);
+    if (number === null) return 'По запросу';
+    return currency && !['RUB', 'RUR'].includes(currency.toUpperCase())
+      ? `${this.formatNumber(number)} ${currency}`
+      : `${this.formatNumber(number)} ₽`;
   }
 
   private formatArea(value: Prisma.Decimal | null) {
-    const numberValue = this.decimalToNumber(value);
-
-    return numberValue === null ? null : `${this.formatNumber(numberValue)} м²`;
+    const number = this.decimalToNumber(value);
+    return number === null ? null : `${this.formatNumber(number)} м²`;
   }
 
   private formatMeters(value: Prisma.Decimal | null) {
-    const numberValue = this.decimalToNumber(value);
-
-    return numberValue === null ? null : `${this.formatNumber(numberValue)} м`;
+    const number = this.decimalToNumber(value);
+    return number === null ? null : `${this.formatNumber(number)} м`;
   }
 
   private formatPower(value: Prisma.Decimal | null) {
-    const numberValue = this.decimalToNumber(value);
-
-    return numberValue === null ? null : `${this.formatNumber(numberValue)} кВт`;
+    const number = this.decimalToNumber(value);
+    return number === null ? null : `${this.formatNumber(number)} кВт`;
   }
 
   private formatCompletion(unit: PdfPresentationUnit) {
-    if (!unit.completionYear) {
-      return null;
-    }
-
+    if (!unit.completionYear) return null;
     return unit.completionQuarter ? `${unit.completionQuarter} кв. ${unit.completionYear}` : String(unit.completionYear);
   }
 
-  private formatStatus(status: FeedUnitStatus) {
-    const labels: Record<FeedUnitStatus, string> = {
-      AVAILABLE: 'Доступен',
-      BOOKED: 'Забронирован',
-      RESERVED: 'Резерв',
-      SOLD: 'Продан',
-      ARCHIVED: 'Архив',
-      UNKNOWN: 'Неизвестно',
-    };
-
-    return labels[status];
-  }
-
-  private formatOptional(value: string | null) {
-    return value?.trim() || null;
+  private formatBoolean(value: boolean | null | undefined) {
+    return value === null || value === undefined ? null : value ? 'Да' : 'Нет';
   }
 
   private hasRealDiscount(unit: PdfPresentationUnit) {
     const price = this.decimalToNumber(unit.price);
-    const discountPrice = this.decimalToNumber(unit.discountPrice);
-
-    return price !== null && discountPrice !== null && discountPrice > 0 && discountPrice < price;
+    const discount = this.decimalToNumber(unit.discountPrice);
+    return price !== null && discount !== null && discount > 0 && discount < price;
   }
 
   private decimalToNumber(value: Prisma.Decimal | null | undefined) {
-    if (!value) {
-      return null;
-    }
-
+    if (!value) return null;
     const parsed = Number(value.toString());
-
     return Number.isFinite(parsed) ? parsed : null;
   }
 
   private formatNumber(value: number) {
-    return new Intl.NumberFormat('ru-RU', {
-      maximumFractionDigits: Number.isInteger(value) ? 0 : 1,
-    }).format(value);
+    return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: Number.isInteger(value) ? 0 : 1 }).format(value);
+  }
+
+  private getFirstName(name: string) {
+    return name.trim().split(/\s+/u)[0] || 'брокером';
   }
 
   private async safeLoadImage(fileId: string, variant: 'detail' | 'card' | 'thumbnail') {
     try {
       const { buffer } = await this.filesService.getContent(fileId, variant);
-
-      return sharp(buffer)
-        .rotate()
-        .jpeg({
-          quality: 88,
-          mozjpeg: true,
-        })
-        .toBuffer();
+      return sharp(buffer).rotate().jpeg({ quality: 90, mozjpeg: true }).toBuffer();
     } catch {
       return null;
     }
   }
 
   private async getLogoBuffer() {
-    if (!this.logoBufferPromise) {
-      this.logoBufferPromise = this.loadLogoBuffer();
-    }
-
+    if (!this.logoBufferPromise) this.logoBufferPromise = this.loadLogoBuffer();
     return this.logoBufferPromise;
   }
 
@@ -670,27 +983,15 @@ export class LotPresentationsPdfService {
       join(process.cwd(), '..', '_Fluffy_White_1-02.svg'),
       join(process.cwd(), '..', '..', '_Fluffy_White_1-02.svg'),
     ];
-
     for (const candidate of candidates) {
       if (await this.pathExists(candidate)) {
-        const svg = await readFile(candidate);
-
-        return sharp(svg)
-          .resize({
-            width: 150,
-            withoutEnlargement: true,
-          })
-          .png()
-          .toBuffer();
+        return sharp(await readFile(candidate)).resize({ width: 150, withoutEnlargement: true }).png().toBuffer();
       }
     }
-
     return null;
   }
 
   private async pathExists(path: string) {
-    return access(path)
-      .then(() => true)
-      .catch(() => false);
+    return access(path).then(() => true).catch(() => false);
   }
 }
