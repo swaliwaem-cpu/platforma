@@ -1,5 +1,36 @@
 # Codex Log
 
+## 2026-07-15 - Production PDF title wrapping and plan order hotfix
+
+Задача:
+
+- Убрать многоточие у длинного названия лота: если заголовок не помещается в одну строку, переносить его по словам ровно на две строки.
+- Исправить перепутанные местами планировку квартиры и поэтажный план в PDF-презентации, включая production-лот Мангазеи №1526.
+
+Изменения:
+
+- `apps/api/src/lot-presentations/lot-presentations-pdf.service.ts` - заголовок лота теперь измеряется шрифтом PDFKit, при необходимости делится по границе слов на две сбалансированные строки и выводится без `ellipsis`; для очень длинных строк размер шрифта подбирается под доступную ширину.
+- Выбор схем переведен с ненадежного порядка общих feed-меток на семантику имени/key/url файла: `image_plan`/`flat_plan` выбираются как планировка квартиры, `floor_plan` - как поэтажный план; прежние `flat-plan`/`floor-plan` и `photo`/`layout-photo` оставлены безопасными fallback.
+- `apps/api/tests/lot-presentations-schema.test.cjs` - добавлены runtime-регрессии переноса без потери слов и выбора схем для форматов Мангазеи, MR Group и ФСК.
+- Production `/opt/platforma` fast-forwarded с `063085a` до `6a5d588`; пересобран и пересоздан только контейнер `api`, web, PostgreSQL и файлы не изменялись.
+- Перед деплоем сохранены rollback image `platforma-api:pre-deploy-20260715T110922Z-063085a` и метаданные в `/opt/platforma-deploy-backups/predeploy-20260715T110922Z-063085a-pdf-hotfix`.
+
+Проверки:
+
+- `pnpm --filter @platforma/api test` - 206/206 passed.
+- `git diff --check` - passed.
+- Сформирован одностраничный synthetic QA PDF и отрендерен в PNG через macOS PDFKit: заголовок занимает две строки без многоточия и наложений, `UNIT PLAN / image_plan` находится в блоке `ПЛАНИРОВКА`, `FLOOR PLAN / floor_plan` - в блоке `НА ЭТАЖЕ`; временные QA-файлы удалены.
+- В production-контейнере на реальных данных квартиры №1526 селектор вернул `..._image_plan.jpeg` как `plan` и `..._floor_plan.jpeg` как `floorPlan`; заголовок разложен как `1-К в проекте` / `Назаре́ Мангазея` с исходным размером 22.
+- Production `api` healthy; локальный и публичный `/health` вернули `status=ok`, `database=ok`, `postgis=true`; 30 миграций актуальны, compiled marker присутствует, свежие логи показывают штатный старт без runtime errors.
+
+Ручная проверка:
+
+- Создать новую PDF-презентацию квартиры №1526 и визуально подтвердить перенос заголовка и порядок двух реальных изображений в используемом PDF viewer.
+
+Спорные места:
+
+- Уже сохраненные PDF-файлы не перегенерируются автоматически; исправление применяется к новым презентациям.
+
 ## 2026-07-15 - Production deploy of lot presentation PDF refinements
 
 Задача:
