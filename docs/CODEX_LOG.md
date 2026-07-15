@@ -1,5 +1,36 @@
 # Codex Log
 
+## 2026-07-15 - Production deploy of lot presentation PDF refinements
+
+Задача:
+
+- Задеплоить актуальную ветку `on-ser` на production и проверить работоспособность API/web после обновления PDF-презентаций.
+
+Изменения:
+
+- Production `/opt/platforma` fast-forwarded с `c1b0b3e` до `2ae86bd`; ветка осталась чистой и синхронной с `origin/on-ser`.
+- Перед деплоем создан backup `/opt/platforma-deploy-backups/predeploy-20260715T104134Z-c1b0b3e`: PostgreSQL custom dump с SHA-256, production compose, исходный commit; текущие `platforma-api` и `platforma-web` сохранены rollback-тегами.
+- Production images `api` и `web` пересобраны и оба контейнера пересозданы через `docker compose --env-file .env -f docker-compose.prod.yml up -d --build api web`.
+- Схема Prisma не менялась; при старте API подтверждено отсутствие pending migrations.
+
+Проверки:
+
+- Локально перед деплоем: `pnpm build` и `pnpm test` - passed.
+- Production `docker compose ps`: `api` healthy, `web` up, PostgreSQL/Redis/MinIO healthy.
+- `prisma migrate status`: 30 migrations, `Database schema is up to date`.
+- `GET http://127.0.0.1:3000/health` и `GET https://broker.fluffywhite.moscow/api/health`: `status=ok`, `database=ok`, `postgis=true`.
+- `GET https://broker.fluffywhite.moscow/`: `200`; актуальный asset `index-B47zmIqB.js` содержит маркер новой modal `Укажите отделку в лоте`.
+- Неавторизованный `GET /api/lot-presentations/workspace` вернул ожидаемый `401`; свежие API/web logs показали штатный старт без runtime errors.
+
+Ручная проверка:
+
+- Войти на production под `admin@fluffywhite.moscow`, открыть `/presentations`, выбрать отделку для жилого лота и скачать PDF.
+- Проверить жилой PDF с полной/частичной тематической разметкой фото и отдельно commercial PDF.
+
+Спорные места:
+
+- Authenticated end-to-end генерация реального PDF на production не выполнялась без пароля главного application-аккаунта; деплой проверен сборкой, тестами, healthchecks, bundle-marker и runtime logs.
+
 ## 2026-07-15 - PDF finish labels, lot facts, modal and project gallery
 
 Задача:
