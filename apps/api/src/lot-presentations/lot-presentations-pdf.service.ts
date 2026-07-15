@@ -261,12 +261,16 @@ export class LotPresentationsPdfService {
     const cover = [...unit.object.images].sort((a, b) => Number(b.isCover) - Number(a.isCover) || a.sortOrder - b.sortOrder)[0];
     const { plan, floorPlan } = this.getLotPlanFiles(unit);
 
-    doc.fillColor(colors.ink).font('NotoSansBold').fontSize(22).text(this.getLotTitle(unit), marginX, 58, {
-      width: 320,
-      height: 54,
-      ellipsis: true,
+    const titleLayout = this.getLotTitleLayout(doc, this.getLotTitle(unit), 320);
+    doc.fillColor(colors.ink).font('NotoSansBold').fontSize(titleLayout.fontSize);
+    titleLayout.lines.forEach((line, index) => {
+      doc.text(line, marginX, 58 + index * titleLayout.fontSize * 1.2, {
+        width: 320,
+        lineBreak: false,
+      });
     });
-    doc.fillColor(colors.muted).font('NotoSans').fontSize(7.5).text(this.getLotSubtitle(unit), marginX, 116, {
+    const subtitleY = titleLayout.lines.length === 1 ? 116 : 118;
+    doc.fillColor(colors.muted).font('NotoSans').fontSize(7.5).text(this.getLotSubtitle(unit), marginX, subtitleY, {
       width: 320,
       height: 22,
       ellipsis: true,
@@ -814,22 +818,48 @@ export class LotPresentationsPdfService {
       .filter((item) => item.mediaAsset.file)
       .sort((left, right) => left.sortOrder - right.sortOrder);
     const normalizedLabel = (item: (typeof media)[number]) => item.label?.trim().toLowerCase() ?? '';
-    const planItem =
-      media.find((item) => normalizedLabel(item) === 'flat-plan') ??
-      media.find((item) => normalizedLabel(item) === 'photo') ??
-      media.find((item) => normalizedLabel(item).includes('flat-plan') && !normalizedLabel(item).includes('floor')) ??
-      media.find((item) => normalizedLabel(item).includes('plan') && !normalizedLabel(item).includes('floor')) ??
-      media[1] ??
-      media[0];
+    const normalizedFileReference = (item: (typeof media)[number]) => {
+      const file = item.mediaAsset.file;
+      return [file?.originalName, file?.key, file?.url]
+        .filter((value): value is string => Boolean(value))
+        .join(' ')
+        .toLowerCase();
+    };
+    const hasFloorPlanReference = (item: (typeof media)[number]) =>
+      /(?:^|[\s/_-])floor[\s_-]?plan(?:[\s/_.-]|$)/u.test(normalizedFileReference(item));
+    const hasUnitPlanReference = (item: (typeof media)[number]) =>
+      /(?:^|[\s/_-])(?:flat|image)[\s_-]?plan(?:[\s/_.-]|$)/u.test(normalizedFileReference(item));
     const floorPlanItem =
+      media.find(hasFloorPlanReference) ??
       media.find((item) => normalizedLabel(item) === 'floor-plan') ??
-      media.find((item) => normalizedLabel(item) === 'layout-photo') ??
-      media.find((item) => normalizedLabel(item).includes('floor-plan')) ??
+      media.find((item) => normalizedLabel(item).includes('floor-plan'));
+    const planItem =
+      media.find((item) => item !== floorPlanItem && hasUnitPlanReference(item)) ??
+      media.find((item) => item !== floorPlanItem && normalizedLabel(item) === 'flat-plan') ??
+      media.find(
+        (item) =>
+          item !== floorPlanItem &&
+          normalizedLabel(item).includes('flat-plan') &&
+          !normalizedLabel(item).includes('floor'),
+      ) ??
+      media.find((item) => item !== floorPlanItem && normalizedLabel(item) === 'photo') ??
+      media.find((item) => item !== floorPlanItem && normalizedLabel(item) === 'layout-photo') ??
+      media.find(
+        (item) =>
+          item !== floorPlanItem &&
+          normalizedLabel(item).includes('plan') &&
+          !normalizedLabel(item).includes('floor'),
+      ) ??
+      media.find((item) => item !== floorPlanItem) ??
+      floorPlanItem;
+    const resolvedFloorPlanItem =
+      floorPlanItem ??
+      media.find((item) => item !== planItem && normalizedLabel(item) === 'layout-photo') ??
       media.find((item) => item !== planItem);
 
     return {
       plan: planItem?.mediaAsset.file ?? null,
-      floorPlan: floorPlanItem?.mediaAsset.file ?? null,
+      floorPlan: resolvedFloorPlanItem?.mediaAsset.file ?? null,
     };
   }
 
@@ -879,6 +909,51 @@ export class LotPresentationsPdfService {
     if (unit.rooms === 0) return `Студия в проекте ${projectName}`;
     if (unit.rooms) return `${unit.rooms}-К в проекте ${projectName}`;
     return `Квартира в проекте ${projectName}`;
+  }
+
+  private getLotTitleLayout(doc: PDFKit.PDFDocument, title: string, maxWidth: number) {
+    const normalizedTitle = title.replace(/\s+/gu, ' ').trim();
+    const baseFontSize = 22;
+    const words = normalizedTitle.split(' ');
+
+    doc.font('NotoSansBold').fontSize(baseFontSize);
+    if (doc.widthOfString(normalizedTitle) <= maxWidth || words.length === 1) {
+      const scale = Math.min(1, maxWidth / doc.widthOfString(normalizedTitle));
+      return {
+        lines: [normalizedTitle],
+        fontSize: Math.max(1, Math.floor(baseFontSize * scale * 10) / 10),
+      };
+    }
+
+    const candidates = words.slice(1).map((_, index) => {
+      const splitAt = index + 1;
+      const lines: [string, string] = [
+        words.slice(0, splitAt).join(' '),
+        words.slice(splitAt).join(' '),
+      ];
+      const widths: [number, number] = [doc.widthOfString(lines[0]), doc.widthOfString(lines[1])];
+      return {
+        lines,
+        maxLineWidth: Math.max(...widths),
+        widthDifference: Math.abs(widths[0] - widths[1]),
+      };
+    });
+    const best = candidates.reduce((current, candidate) => {
+      if (candidate.maxLineWidth < current.maxLineWidth) return candidate;
+      if (
+        candidate.maxLineWidth === current.maxLineWidth &&
+        candidate.widthDifference < current.widthDifference
+      ) {
+        return candidate;
+      }
+      return current;
+    });
+    const scale = Math.min(1, maxWidth / best.maxLineWidth);
+
+    return {
+      lines: best.lines,
+      fontSize: Math.max(1, Math.floor(baseFontSize * scale * 10) / 10),
+    };
   }
 
   private cleanProjectName(value: string) {

@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const PDFDocument = require('pdfkit');
 
 const { BadRequestException } = require('@nestjs/common');
 const {
@@ -214,6 +215,58 @@ test('lot presentation gallery keeps the cover separate and maps thematic sectio
     ].map((item) => item.id)).size,
     6,
   );
+});
+
+test('lot presentation titles wrap by whole words and plan media keep their semantic positions', () => {
+  const pdfService = new LotPresentationsPdfService({});
+  const doc = new PDFDocument({ autoFirstPage: false });
+  pdfService.registerFonts(doc);
+
+  const longTitle = '1-К в проекте Назаре́ Мангазея на набережной Москвы';
+  const titleLayout = pdfService.getLotTitleLayout(doc, longTitle, 320);
+
+  assert.equal(titleLayout.lines.length, 2);
+  assert.equal(titleLayout.lines.join(' '), longTitle);
+  doc.font('NotoSansBold').fontSize(titleLayout.fontSize);
+  assert.ok(titleLayout.lines.every((line) => doc.widthOfString(line) <= 320));
+
+  const media = (id, sortOrder, label, originalName) => ({
+    sortOrder,
+    label,
+    mediaAsset: {
+      file: {
+        id,
+        originalName,
+        key: `feed/${originalName}`,
+        url: null,
+      },
+    },
+  });
+  const mangazeyaPlans = pdfService.getLotPlanFiles({
+    media: [
+      media('unit-plan', 0, 'layout-photo', 'nazare_image_plan.jpeg'),
+      media('floor-plan', 1, 'photo', 'nazare_floor_plan.jpeg'),
+    ],
+  });
+  const mrGroupPlans = pdfService.getLotPlanFiles({
+    media: [
+      media('unit-plan', 0, 'photo', 'flat-plan.png'),
+      media('floor-plan', 1, 'layout-photo', 'floor-plan.png'),
+    ],
+  });
+  const fskPlans = pdfService.getLotPlanFiles({
+    media: [
+      media('unit-plan', 0, 'flat-plan', 'flat.png'),
+      media('floor-plan', 1, 'floor-plan', 'floor.png'),
+    ],
+  });
+
+  for (const plans of [mangazeyaPlans, mrGroupPlans, fskPlans]) {
+    assert.equal(plans.plan.id, 'unit-plan');
+    assert.equal(plans.floorPlan.id, 'floor-plan');
+  }
+
+  doc.end();
 });
 
 test('lot presentation nearby places normalize ACF data and keep exactly four valid rows', () => {
@@ -440,6 +493,14 @@ test('lot presentation service enforces available lots, plan images and broker c
   assert.ok(fs.existsSync(finishWithFinishPath));
   assert.match(pdfService, /drawPriceSummary/);
   assert.match(pdfService, /getLotPlanFiles/);
+  assert.match(pdfService, /getLotTitleLayout/);
+  assert.match(pdfService, /titleLayout\.lines\.forEach/);
+  assert.doesNotMatch(
+    pdfService.match(/const titleLayout = this\.getLotTitleLayout[\s\S]*?const subtitleY/)?.[0] ?? '',
+    /ellipsis: true/,
+  );
+  assert.match(pdfService, /drawFileFrame\(doc, plan, marginX, 223, 303, 278, 'Планировка недоступна'\)/);
+  assert.match(pdfService, /drawFileFrame\(doc, floorPlan, marginX, 570, 303, 192, 'План этажа недоступен'\)/);
   assert.match(pdfService, /label.*flat-plan/s);
   assert.match(pdfService, /label.*floor-plan/s);
   assert.match(pdfService, /cover: \[width, height\]/);
