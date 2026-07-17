@@ -1,5 +1,40 @@
 # Codex Log
 
+## 2026-07-17 - Production MR Group target media order swap
+
+Задача:
+
+- Поменять местами первые два media для 14 проектов MR Group: планировка должна идти перед фотографией.
+- Сохранить новый порядок при следующих автоматических импортах и применить изменение на production.
+- По прямому указанию пользователя не создавать backup перед деплоем.
+
+Изменения:
+
+- `tools/feed-import/src/index.ts` - MR Group CIAN media rule ограничен явным allowlist 14 проектов по имени из feed index с fallback на имя проекта; для target-проектов закреплён порядок `layout-photo` -> `photo`, для остальных проектов сохранено прежнее поведение.
+- `tools/feed-import/tests/import-engine.test.cjs` - target-проверка обновлена под новый порядок; добавлена index-feed регрессия, которая подтверждает приоритет `__feedIndexObjectName` и отсутствие изменения для non-target проекта.
+- Commit `2915897` отправлен в `origin/on-ser`; production `/opt/platforma` fast-forwarded до него. Пересобран и пересоздан только контейнер `api`, остальные сервисы не пересоздавались.
+- После рестарта штатный scheduler выполнил MR Group preview `87a9b35e-d6ce-4ef2-b0a8-c7b6f7881e6f` и run `af282a7d-06d6-4ae3-a984-7fb779e3af20`; run обновил 5 474 лота без ошибок записи.
+- Прямая SQL-коррекция данных не понадобилась: штатный importer пересоздал media links с новым идемпотентным порядком.
+
+Проверки:
+
+- `pnpm --filter @platforma/feed-import test` - 64/64 passed.
+- Targeted regression в production API image после сборки feed-import - 2/2 passed.
+- Production run завершил `5474/5474` units, `errorsCount=0`, media `10683/10683`; единственное предупреждение - внешний child-feed `Hide` ответил `400 Bad Request` и не относится к target-проектам.
+- Для 14 target-проектов проверены все 4 748 активных лотов, где присутствуют обе метки: `layout-photo` имеет `sort_order=0`, `photo` - `sort_order=1`; старый порядок найден у 0 лотов.
+- У активных media MR Group найдено 0 дублирующихся `sort_order` в пределах лота.
+- Локальный и публичный `/health` вернули `status=ok`, `database=ok`, `postgis=true`; production `api`, PostgreSQL, Redis и MinIO healthy, checkout чистый.
+
+Ручная проверка:
+
+- Открыть по одному лоту в нескольких target-проектах, например `City Bay`, `Веер`, `МИRА` и `СЕТ`, и визуально подтвердить, что первой показывается планировка, второй - фотография.
+- После следующего двухчасового scheduler cycle выборочно повторить проверку порядка.
+
+Спорные места:
+
+- У 23 активных target-лотов отсутствует одна из двух требуемых меток (`City Bay` - 2, `СЕТ` - 21), поэтому буквальная перестановка пары для них неприменима; все 4 748 полных пар переставлены.
+- Backup намеренно не создавался по прямому указанию пользователя.
+
 ## 2026-07-15 - Production PDF title wrapping and plan order hotfix
 
 Задача:
