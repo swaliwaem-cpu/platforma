@@ -212,19 +212,22 @@ function makeSminexIndexCianFeed({ price = '264130000', planUrl = 'https://cdn.t
     </feed>`;
 }
 
-function makeMrGroupCianFeed() {
+function makeMrGroupCianFeed({
+  externalId = '9a9d0581-87a1-ed11-be7d-00155dfc99c4',
+  projectName = 'City Bay',
+} = {}) {
   return `<?xml version="1.0"?>
     <Feed>
       <Object>
         <Category>newBuildingFlatSale</Category>
-        <ExternalId>9a9d0581-87a1-ed11-be7d-00155dfc99c4</ExternalId>
+        <ExternalId>${externalId}</ExternalId>
         <Address>город Москва, Волоколамское шоссе, дом 97</Address>
         <RoomType>separate</RoomType>
         <FlatRoomsCount>2</FlatRoomsCount>
         <TotalArea>52.54</TotalArea>
         <FloorNumber>12</FloorNumber>
         <JKSchema>
-          <Name>City Bay</Name>
+          <Name>${projectName}</Name>
           <House>
             <Name>City Bay 2 корпус 3</Name>
             <Flat>
@@ -1171,17 +1174,119 @@ test('executeFeedImport run titles MR Group CIAN residential units by apartment 
       .sort((left, right) => left.sortOrder - right.sortOrder),
     [
       {
-        sourceUrl: 'https://cdn.mrgroup.test/city-bay/flat-plan.png',
+        sourceUrl: 'https://cdn.mrgroup.test/city-bay/floor-plan.png',
         sortOrder: 0,
-        label: 'photo',
+        label: 'layout-photo',
       },
       {
-        sourceUrl: 'https://cdn.mrgroup.test/city-bay/floor-plan.png',
+        sourceUrl: 'https://cdn.mrgroup.test/city-bay/flat-plan.png',
         sortOrder: 1,
-        label: 'layout-photo',
+        label: 'photo',
       },
     ],
   );
+});
+
+test('executeFeedImport scopes MR Group CIAN media order by feed index project name', async () => {
+  const sheetUrl = 'https://docs.google.com/spreadsheets/d/mr-group-sheet/edit?gid=0';
+  const csvUrl = 'https://docs.google.com/spreadsheets/d/mr-group-sheet/export?format=csv&gid=0';
+  const cityzenUrl = 'https://feeds.mrgroup.test/cityzen.xml';
+  const forumUrl = 'https://feeds.mrgroup.test/forum.xml';
+  const { db, state } = createFakeDb({
+    source: {
+      sourceKind: 'INDEX_URL',
+      url: sheetUrl,
+      format: 'CIAN_XML',
+      objectId: null,
+      developer: {
+        name: 'MR Group',
+        normalizedName: 'mr-group',
+      },
+      mappings: [
+        makeSourceMapping({
+          id: 'mapping-cityzen',
+          objectId: 'object-1',
+          sourceKey: 'cityzen',
+          sourceTitle: 'Cityzen',
+          filterJson: {
+            feedIndexSourceUrls: [cityzenUrl],
+          },
+        }),
+        makeSourceMapping({
+          id: 'mapping-forum',
+          objectId: 'object-2',
+          sourceKey: 'forum',
+          sourceTitle: 'FORUM',
+          filterJson: {
+            feedIndexSourceUrls: [forumUrl],
+          },
+        }),
+      ],
+    },
+    objects: [
+      makeObjectAggregate({ id: 'object-1' }),
+      makeObjectAggregate({ id: 'object-2' }),
+    ],
+    mediaAssets: [
+      {
+        id: 'asset-mr-floor-plan',
+        sourceUrl: 'https://cdn.mrgroup.test/city-bay/floor-plan.png',
+        fileId: 'file-mr-floor-plan',
+        contentType: 'image/png',
+        checksum: 'checksum-floor',
+      },
+      {
+        id: 'asset-mr-flat-plan',
+        sourceUrl: 'https://cdn.mrgroup.test/city-bay/flat-plan.png',
+        fileId: 'file-mr-flat-plan',
+        contentType: 'image/png',
+        checksum: 'checksum-flat',
+      },
+    ],
+  });
+  const responses = new Map([
+    [csvUrl, `ЖК,Фид\n"Cityzen","${cityzenUrl}"\n"FORUM","${forumUrl}"`],
+    [
+      cityzenUrl,
+      makeMrGroupCianFeed({
+        externalId: 'cityzen-unit',
+        projectName: 'FORUM',
+      }),
+    ],
+    [
+      forumUrl,
+      makeMrGroupCianFeed({
+        externalId: 'forum-unit',
+        projectName: 'City Bay',
+      }),
+    ],
+  ]);
+
+  await executeFeedImport({
+    mode: 'run',
+    sourceId: 'source-1',
+    db,
+    storage: state.storage,
+    xmlFetcher: async (url) => responses.get(url),
+    mediaDownloader: async () => {
+      throw new Error('media should not be downloaded in this test');
+    },
+    imageVariantGenerator: async () => [],
+    now: () => fixedDate,
+  });
+
+  const mediaLabelsByIndexProject = new Map(
+    state.units.map((unit) => [
+      unit.rawPayload.__feedIndexObjectName,
+      state.unitMedia
+        .filter((link) => link.unitId === unit.id)
+        .sort((left, right) => left.sortOrder - right.sortOrder)
+        .map((link) => link.label),
+    ]),
+  );
+
+  assert.deepEqual(mediaLabelsByIndexProject.get('Cityzen'), ['layout-photo', 'photo']);
+  assert.deepEqual(mediaLabelsByIndexProject.get('FORUM'), ['photo', 'layout-photo']);
 });
 
 test('executeFeedImport run titles Mangazeya CIAN residential units by apartment number', async () => {

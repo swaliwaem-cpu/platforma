@@ -4012,15 +4012,50 @@ function applyFeedSourceUnitMediaRules(unit: NormalizedFeedUnit, source: FeedSou
   const unitFormat = getText(unit.rawPayload.__feedDetectedFormat) ?? source.format;
 
   if (unitFormat === 'CIAN_XML' && isMrGroupFeedSource(source)) {
-    return reorderMrGroupCianMedia(unit);
+    return reorderMrGroupCianMedia(unit, shouldPlaceMrGroupCianLayoutFirst(unit));
   }
 
   return unit;
 }
 
-function reorderMrGroupCianMedia(unit: NormalizedFeedUnit): NormalizedFeedUnit {
-  const hasFlatPlanMedia = unit.media.some((media) => getMrGroupCianMediaPriority(media) === 0);
-  const hasFloorPlanMedia = unit.media.some((media) => getMrGroupCianMediaPriority(media) === 1);
+const mrGroupCianLayoutFirstProjectAliases = new Set(
+  [
+    'City Bay',
+    'Cityzen',
+    'Fili City',
+    'JOIS',
+    'Mod',
+    'One',
+    'SLAVA',
+    'Symphony 34',
+    'VEER',
+    'Веер',
+    'Веер 2',
+    'Джойс',
+    'Климашкина',
+    'Климашкина 7',
+    'Климашкина 7/11',
+    'Метрополия',
+    'MIRA',
+    'МИRА',
+    'МИРА',
+    'Селигер Сити',
+    'СЕТ',
+    'SET',
+    'Сити Бэй',
+    'Ситидзен',
+  ].map(normalizeFilterText),
+);
+
+function shouldPlaceMrGroupCianLayoutFirst(unit: NormalizedFeedUnit) {
+  const projectName = getFeedIndexObjectName(unit) ?? getFeedUnitProjectName(unit);
+
+  return projectName !== null && mrGroupCianLayoutFirstProjectAliases.has(normalizeFilterText(projectName));
+}
+
+function reorderMrGroupCianMedia(unit: NormalizedFeedUnit, shouldPlaceLayoutFirst: boolean): NormalizedFeedUnit {
+  const hasFlatPlanMedia = unit.media.some((media) => getMrGroupCianMediaLabel(media) === 'photo');
+  const hasFloorPlanMedia = unit.media.some((media) => getMrGroupCianMediaLabel(media) === 'layout-photo');
 
   if (!hasFlatPlanMedia || !hasFloorPlanMedia) {
     return unit;
@@ -4029,7 +4064,8 @@ function reorderMrGroupCianMedia(unit: NormalizedFeedUnit): NormalizedFeedUnit {
   const reorderedMedia = [...unit.media]
     .sort(
       (left, right) =>
-        getMrGroupCianMediaPriority(left) - getMrGroupCianMediaPriority(right) || left.sortOrder - right.sortOrder,
+        getMrGroupCianMediaPriority(left, shouldPlaceLayoutFirst) -
+          getMrGroupCianMediaPriority(right, shouldPlaceLayoutFirst) || left.sortOrder - right.sortOrder,
     )
     .map((media, index) => ({
       ...media,
@@ -4042,15 +4078,19 @@ function reorderMrGroupCianMedia(unit: NormalizedFeedUnit): NormalizedFeedUnit {
   };
 }
 
-function getMrGroupCianMediaPriority(media: NormalizedFeedMedia) {
-  const label = media.label?.trim().toLocaleLowerCase('ru-RU');
+function getMrGroupCianMediaLabel(media: NormalizedFeedMedia) {
+  return media.label?.trim().toLocaleLowerCase('ru-RU') ?? null;
+}
+
+function getMrGroupCianMediaPriority(media: NormalizedFeedMedia, shouldPlaceLayoutFirst: boolean) {
+  const label = getMrGroupCianMediaLabel(media);
 
   if (label === 'photo') {
-    return 0;
+    return shouldPlaceLayoutFirst ? 1 : 0;
   }
 
   if (label === 'layout-photo') {
-    return 1;
+    return shouldPlaceLayoutFirst ? 0 : 1;
   }
 
   return 2;
