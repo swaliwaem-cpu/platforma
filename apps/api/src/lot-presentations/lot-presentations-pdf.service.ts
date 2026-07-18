@@ -1041,7 +1041,11 @@ export class LotPresentationsPdfService {
   private async safeLoadImage(fileId: string, variant: 'detail' | 'card' | 'thumbnail') {
     try {
       const { buffer } = await this.filesService.getContent(fileId, variant);
-      return sharp(buffer).rotate().jpeg({ quality: 90, mozjpeg: true }).toBuffer();
+      return sharp(buffer)
+        .rotate()
+        .flatten({ background: colors.white })
+        .jpeg({ quality: 90, mozjpeg: true })
+        .toBuffer();
     } catch {
       return null;
     }

@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const PDFDocument = require('pdfkit');
+const sharp = require('sharp');
 
 const { BadRequestException } = require('@nestjs/common');
 const {
@@ -267,6 +268,32 @@ test('lot presentation titles wrap by whole words and plan media keep their sema
   }
 
   doc.end();
+});
+
+test('lot presentation media flattens transparent pixels onto a permanent light background', async () => {
+  const transparentPlan = await sharp({
+    create: {
+      width: 4,
+      height: 4,
+      channels: 4,
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    },
+  })
+    .png()
+    .toBuffer();
+  const pdfService = new LotPresentationsPdfService({
+    getContent: async () => ({ buffer: transparentPlan }),
+  });
+
+  const normalizedMedia = await pdfService.safeLoadImage('transparent-plan', 'detail');
+  const { data, info } = await sharp(normalizedMedia)
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  assert.equal(info.channels, 3);
+  assert.ok(data[0] >= 248, `expected a light red channel, received ${data[0]}`);
+  assert.ok(data[1] >= 248, `expected a light green channel, received ${data[1]}`);
+  assert.ok(data[2] >= 245, `expected a light blue channel, received ${data[2]}`);
 });
 
 test('lot presentation nearby places normalize ACF data and keep exactly four valid rows', () => {
