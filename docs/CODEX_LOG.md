@@ -23,6 +23,15 @@
 - `pnpm --filter @platforma/api test` - 235/235 passed.
 - Сгенерирован synthetic lot PDF из 4 страниц и постранично отрендерен через macOS PDFKit: в блоке `НА ЭТАЖЕ` показано второе фото объекта, все 6 нижних gallery slots заполнены без повторов, CTA и новая стрелка визуально корректны, старой стрелки у фото нет.
 
+Production deploy:
+
+- Commit `87f55eb` отправлен в `origin/on-ser`; production `/opt/platforma` fast-forwarded с `e5e2028` до `87f55eb`.
+- Перед деплоем создан и проверен PostgreSQL custom dump `/opt/platforma-deploy-backups/predeploy-20260721T143242Z-e5e2028-lot-pdf-hotfix/database.dump` с SHA-256 `d0fdaeaacbec3a9cf5ead157df5f8185c2fee66bdb363c96fce87299cae4a9e0`.
+- Сохранён rollback image `platforma-api:pre-deploy-20260721T143242Z-e5e2028-lot-pdf-hotfix` (`sha256:aa7ceda46a6f220dd4b2174fda2b1d15d1d637056c990cef4f434b806b651960`).
+- Пересобран и пересоздан только production-сервис `api`; `web`, PostgreSQL, Redis и MinIO не пересоздавались.
+- В собранном image подтверждены маркеры hotfix и пройдены профильные тесты 16/16; production `api` healthy, локальный и публичный `/health` вернули `status=ok`, `database=ok`, `postgis=true`.
+- Production schema актуальна: 32 migrations, pending migrations нет; стартовые логи без ошибок.
+
 Ручная проверка:
 
 - Создать новый production PDF для лота МЫС и подтвердить, что центральная колонка gallery page заполнена.
