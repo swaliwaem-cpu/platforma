@@ -216,6 +216,29 @@ test('lot presentation gallery keeps the cover separate and maps thematic sectio
     ].map((item) => item.id)).size,
     6,
   );
+
+  const mysSelection = pdfService.selectProjectImages([
+    image('filling-2', 6, 'FILLING'),
+    image('architecture-4', 4, 'ARCHITECTURE'),
+    image('cover', 0, 'ARCHITECTURE', true),
+    image('architecture-2', 2, 'ARCHITECTURE'),
+    image('filling-1', 5, 'FILLING'),
+    image('architecture-1', 1, 'ARCHITECTURE'),
+    image('architecture-3', 3, 'ARCHITECTURE'),
+  ]);
+  const mysGalleryIds = [
+    ...mysSelection.architecture,
+    ...mysSelection.interiors,
+    ...mysSelection.filling,
+  ].map((item) => item.id);
+
+  assert.equal(mysSelection.hero.id, 'cover');
+  assert.deepEqual(mysSelection.architecture.map((item) => item.id), ['architecture-1', 'architecture-2']);
+  assert.deepEqual(mysSelection.interiors.map((item) => item.id), ['architecture-3', 'architecture-4']);
+  assert.deepEqual(mysSelection.filling.map((item) => item.id), ['filling-1', 'filling-2']);
+  assert.equal(mysGalleryIds.length, 6);
+  assert.equal(new Set(mysGalleryIds).size, 6);
+  assert.equal(mysGalleryIds.includes('cover'), false);
 });
 
 test('lot presentation titles wrap by whole words and plan media keep their semantic positions', () => {
@@ -243,31 +266,141 @@ test('lot presentation titles wrap by whole words and plan media keep their sema
       },
     },
   });
-  const mangazeyaPlans = pdfService.getLotPlanFiles({
-    media: [
-      media('unit-plan', 0, 'layout-photo', 'nazare_image_plan.jpeg'),
-      media('floor-plan', 1, 'photo', 'nazare_floor_plan.jpeg'),
-    ],
+  const objectImage = (id, sortOrder, isCover = false) => ({
+    id: `object-image-${id}`,
+    sortOrder,
+    isCover,
+    file: { id },
   });
-  const mrGroupPlans = pdfService.getLotPlanFiles({
-    media: [
-      media('unit-plan', 0, 'photo', 'flat-plan.png'),
-      media('floor-plan', 1, 'layout-photo', 'floor-plan.png'),
-    ],
+  const objectImages = [
+    objectImage('object-third', 9),
+    objectImage('object-floor-fallback', 3),
+    objectImage('object-cover', 100, true),
+  ];
+  const lot = (mediaItems, images = objectImages) => ({
+    media: mediaItems,
+    object: { images },
   });
-  const fskPlans = pdfService.getLotPlanFiles({
-    media: [
-      media('unit-plan', 0, 'flat-plan', 'flat.png'),
-      media('floor-plan', 1, 'floor-plan', 'floor.png'),
-    ],
-  });
+  const mangazeyaPlans = pdfService.getLotPlanFiles(lot([
+    media('unit-plan', 0, 'layout-photo', 'nazare_image_plan.jpeg'),
+    media('floor-plan', 1, 'photo', 'nazare_floor_plan.jpeg'),
+  ]));
+  const mrGroupPlans = pdfService.getLotPlanFiles(lot([
+    media('unit-plan', 0, 'photo', 'flat-plan.png'),
+    media('floor-plan', 1, 'layout-photo', 'floor-plan.png'),
+  ]));
+  const fskPlans = pdfService.getLotPlanFiles(lot([
+    media('unit-plan', 0, 'flat-plan', 'flat.png'),
+    media('floor-plan', 1, 'floor-plan', 'floor.png'),
+  ]));
 
   for (const plans of [mangazeyaPlans, mrGroupPlans, fskPlans]) {
     assert.equal(plans.plan.id, 'unit-plan');
     assert.equal(plans.floorPlan.id, 'floor-plan');
   }
 
+  const floorFallbackPlans = pdfService.getLotPlanFiles(lot([
+    media('unit-plan', 0, 'flat-plan', 'flat-plan.png'),
+    media('unrelated-media', 1, 'photo', 'courtyard-photo.jpg'),
+  ]));
+
+  assert.equal(floorFallbackPlans.plan.id, 'unit-plan');
+  assert.equal(floorFallbackPlans.floorPlan.id, 'object-floor-fallback');
+
+  const explicitFloorPlan = pdfService.getLotPlanFiles(lot([
+    media('unit-plan', 0, 'flat-plan', 'flat-plan.png'),
+    media('explicit-floor-plan', 1, 'floor-plan', 'floor-plan.png'),
+  ]));
+
+  assert.equal(explicitFloorPlan.floorPlan.id, 'explicit-floor-plan');
+
   doc.end();
+});
+
+test('lot presentation broker CTA uses the exact label and an upward vector arrow after the text', async () => {
+  const pdfService = new LotPresentationsPdfService({});
+  const textCalls = [];
+  const lineSegments = [];
+  let currentPoint = null;
+  let documentDouble;
+  const methods = {
+    text(value, x, y, options) {
+      textCalls.push({ value, x, y, options });
+      return documentDouble;
+    },
+    moveTo(x, y) {
+      currentPoint = [x, y];
+      return documentDouble;
+    },
+    lineTo(x, y) {
+      if (currentPoint) {
+        lineSegments.push({ from: currentPoint, to: [x, y] });
+      }
+      currentPoint = [x, y];
+      return documentDouble;
+    },
+    widthOfString(value) {
+      return String(value).length * 4;
+    },
+  };
+  documentDouble = new Proxy(methods, {
+    get(target, property) {
+      if (property in target) return target[property];
+      return () => documentDouble;
+    },
+  });
+
+  pdfService.drawHeader = async () => {};
+  pdfService.safeLoadImage = async () => null;
+  pdfService.getLogoBuffer = async () => null;
+  pdfService.drawPhotoBufferFrame = () => {};
+  pdfService.drawFooter = () => {};
+
+  await pdfService.drawBrokerPage(
+    documentDouble,
+    {
+      name: 'Platform Admin',
+      phone: '+79990000000',
+      email: 'broker@example.com',
+      photoFileId: null,
+    },
+    { current: 1, total: 1 },
+  );
+
+  const contactCalls = textCalls.filter((call) => String(call.value).startsWith('Связаться с'));
+  assert.equal(contactCalls.length, 1);
+  assert.equal(contactCalls[0].value, 'Связаться с брокером');
+
+  const hasLegacyRightArrow = lineSegments.some(
+    ({ from, to }) =>
+      from[1] === to[1] &&
+      to[0] > from[0] &&
+      from[0] >= 340 &&
+      from[1] >= 318 &&
+      from[1] <= 328,
+  );
+  assert.equal(hasLegacyRightArrow, false);
+
+  const cta = contactCalls[0];
+  const upwardShaft = lineSegments.find(
+    ({ from, to }) =>
+      from[0] === to[0] &&
+      to[1] < from[1] &&
+      from[0] > cta.x + 75 &&
+      from[0] < cta.x + cta.options.width,
+  );
+  assert.ok(upwardShaft, 'expected an upward arrow shaft after the CTA text');
+
+  const [tipX, tipY] = upwardShaft.to;
+  const arrowHeadSides = lineSegments.filter(({ from, to }) => {
+    const touchesTip =
+      (from[0] === tipX && from[1] === tipY && to[1] > tipY) ||
+      (to[0] === tipX && to[1] === tipY && from[1] > tipY);
+    const otherX = from[0] === tipX && from[1] === tipY ? to[0] : from[0];
+    return touchesTip && otherX !== tipX;
+  });
+  assert.ok(arrowHeadSides.some(({ from, to }) => Math.min(from[0], to[0]) < tipX));
+  assert.ok(arrowHeadSides.some(({ from, to }) => Math.max(from[0], to[0]) > tipX));
 });
 
 test('lot presentation media flattens transparent pixels onto a permanent light background', async () => {
@@ -506,8 +639,6 @@ test('lot presentation service enforces available lots, plan images and broker c
   assert.match(pdfService, /images\.hero\?\.file \?\? null, marginX, 136, contentWidth, 223/);
   assert.match(pdfService, /\[marginX, 370, 168, 196\],[\s\S]*\[marginX, 575, 168, 196\]/);
   assert.match(pdfService, /images\.architecture\[0\][\s\S]*images\.architecture\[1\][\s\S]*images\.interiors\[0\][\s\S]*images\.interiors\[1\][\s\S]*images\.filling\[0\][\s\S]*images\.filling\[1\]/);
-  assert.match(pdfService, /const hasThematicSections = galleryImages\.some\(\(image\) => image\.section !== null\)/);
-  assert.match(pdfService, /fallback\.slice\(0, 2\)[\s\S]*fallback\.slice\(2, 4\)[\s\S]*fallback\.slice\(4, 6\)/);
   assert.match(pdfService, /'_Fluffy_White_1-02\.svg'/);
   assert.match(pdfService, /NotoSans-Regular\.ttf/);
   assert.match(pdfService, /NotoSans-Bold\.ttf/);

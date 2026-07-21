@@ -578,9 +578,17 @@ export class LotPresentationsPdfService {
       lineGap: 3,
     });
     doc.moveTo(marginX, 304).lineTo(353, 304).strokeColor(colors.line).lineWidth(0.5).stroke();
-    doc.fillColor(colors.ink).font('NotoSans').fontSize(8).text(`Связаться с ${this.getFirstName(broker.name)}`, marginX, 318, { width: 323 });
-    doc.moveTo(344, 323).lineTo(352, 323).strokeColor(colors.ink).lineWidth(0.7).stroke();
-    doc.moveTo(349, 320).lineTo(352, 323).lineTo(349, 326).strokeColor(colors.ink).lineWidth(0.7).stroke();
+    const contactLabel = 'Связаться с брокером';
+    doc.fillColor(colors.ink).font('NotoSans').fontSize(8).text(contactLabel, marginX, 318, { width: 323 });
+    const contactArrowX = marginX + doc.widthOfString(contactLabel) + 7;
+    doc.moveTo(contactArrowX, 329).lineTo(contactArrowX, 316).strokeColor(colors.ink).lineWidth(0.7).stroke();
+    doc
+      .moveTo(contactArrowX - 3, 320)
+      .lineTo(contactArrowX, 316)
+      .lineTo(contactArrowX + 3, 320)
+      .strokeColor(colors.ink)
+      .lineWidth(0.7)
+      .stroke();
     doc.moveTo(marginX, 338).lineTo(353, 338).strokeColor(colors.line).lineWidth(0.5).stroke();
     doc.fillColor(colors.muted).font('NotoSans').fontSize(8).text(
       'Отвечу на вопросы по квартире, актуальным условиям покупки и организую просмотр проекта.',
@@ -778,28 +786,16 @@ export class LotPresentationsPdfService {
     const sorted = [...images].sort((left, right) => Number(right.isCover) - Number(left.isCover) || left.sortOrder - right.sortOrder);
     const hero = sorted.find((image) => image.isCover) ?? sorted[0] ?? null;
     const galleryImages = hero ? sorted.filter((image) => image.id !== hero.id) : sorted;
-    const hasThematicSections = galleryImages.some((image) => image.section !== null);
-
-    if (!hasThematicSections) {
-      const fallback = galleryImages.slice(0, 6);
-      return {
-        hero,
-        architecture: fallback.slice(0, 2),
-        interiors: fallback.slice(2, 4),
-        filling: fallback.slice(4, 6),
-      };
-    }
-
-    const unsectionedImages = galleryImages.filter((image) => image.section === null);
-    const usedFallbackImageIds = new Set<string>();
-    const selectSectionImages = (section: ObjectImageSection) => {
-      const selected = galleryImages.filter((image) => image.section === section).slice(0, 2);
-
-      for (const image of unsectionedImages) {
-        if (selected.length >= 2) break;
-        if (usedFallbackImageIds.has(image.id)) continue;
-        usedFallbackImageIds.add(image.id);
-        selected.push(image);
+    const architecture = galleryImages.filter((image) => image.section === ObjectImageSection.ARCHITECTURE).slice(0, 2);
+    const interiors = galleryImages.filter((image) => image.section === ObjectImageSection.INTERIORS).slice(0, 2);
+    const filling = galleryImages.filter((image) => image.section === ObjectImageSection.FILLING).slice(0, 2);
+    const usedImageIds = new Set([...architecture, ...interiors, ...filling].map((image) => image.id));
+    const fallbackImages = galleryImages.filter((image) => !usedImageIds.has(image.id));
+    const fillSection = (selected: PdfPresentationObjectImage[]) => {
+      while (selected.length < 2) {
+        const fallbackImage = fallbackImages.shift();
+        if (!fallbackImage) break;
+        selected.push(fallbackImage);
       }
 
       return selected;
@@ -807,9 +803,9 @@ export class LotPresentationsPdfService {
 
     return {
       hero,
-      architecture: selectSectionImages(ObjectImageSection.ARCHITECTURE),
-      interiors: selectSectionImages(ObjectImageSection.INTERIORS),
-      filling: selectSectionImages(ObjectImageSection.FILLING),
+      architecture: fillSection(architecture),
+      interiors: fillSection(interiors),
+      filling: fillSection(filling),
     };
   }
 
@@ -854,12 +850,14 @@ export class LotPresentationsPdfService {
       floorPlanItem;
     const resolvedFloorPlanItem =
       floorPlanItem ??
-      media.find((item) => item !== planItem && normalizedLabel(item) === 'layout-photo') ??
-      media.find((item) => item !== planItem);
+      media.find((item) => item !== planItem && normalizedLabel(item) === 'layout-photo');
+    const objectGalleryFallback = [...unit.object.images].sort(
+      (left, right) => Number(right.isCover) - Number(left.isCover) || left.sortOrder - right.sortOrder,
+    )[1]?.file ?? null;
 
     return {
       plan: planItem?.mediaAsset.file ?? null,
-      floorPlan: resolvedFloorPlanItem?.mediaAsset.file ?? null,
+      floorPlan: resolvedFloorPlanItem?.mediaAsset.file ?? objectGalleryFallback,
     };
   }
 
@@ -1032,10 +1030,6 @@ export class LotPresentationsPdfService {
 
   private formatNumber(value: number) {
     return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: Number.isInteger(value) ? 0 : 1 }).format(value);
-  }
-
-  private getFirstName(name: string) {
-    return name.trim().split(/\s+/u)[0] || 'брокером';
   }
 
   private async safeLoadImage(fileId: string, variant: 'detail' | 'card' | 'thumbnail') {
