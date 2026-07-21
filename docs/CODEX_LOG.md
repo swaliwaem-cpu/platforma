@@ -1,5 +1,35 @@
 # Codex Log
 
+## 2026-07-21 - Production deploy of custom project presentation covers
+
+Задача:
+
+- Развернуть на production загрузку собственного фото обложки для PDF-презентаций ЖК и ограничение 10 МБ.
+
+Изменения:
+
+- Commit `414083d` отправлен в `origin/on-ser`; production `/opt/platforma` fast-forwarded с `8010b86` до `414083d`.
+- Перед деплоем создан и проверен PostgreSQL custom dump в `/opt/platforma-deploy-backups/predeploy-20260721T103718Z-8010b86-custom-cover` с SHA-256 `49c5d49c9a35ccd8ef18d5044331451c5070773bda95ef204a194e0c2e9e0045`.
+- Сохранены rollback images `platforma-api:pre-deploy-20260721T103718Z-8010b86-custom-cover` и `platforma-web:pre-deploy-20260721T103718Z-8010b86-custom-cover`.
+- Пересобраны и пересозданы только production-сервисы `api` и `web`; PostgreSQL, Redis и MinIO не пересоздавались.
+- Применена migration `20260721120000_add_project_presentation_custom_cover`; production schema содержит `project_presentation_drafts.cover_file_id`.
+
+Проверки:
+
+- Production migration status — 32/32, schema up to date; новый `/project-presentations/drafts/:draftId/cover` зарегистрирован.
+- `api` healthy; PostgreSQL, Redis и MinIO healthy; публичный `/api/health` вернул `status=ok`, `database=ok`, `postgis=true`.
+- Публичные `/` и `/presentations/projects` вернули HTTP 200; защищённый API без авторизации вернул HTTP 401.
+- Production JS bundle содержит UI загрузки собственного фото и текст ограничения `Максимальный размер фото — 10 МБ`; в свежих логах ошибок запуска или migration нет.
+- Production checkout чистый на `414083d`.
+
+Ручная проверка:
+
+- Авторизованному пользователю загрузить фото меньше 10 МБ и файл больше 10 МБ, затем сформировать PDF и проверить итоговую обложку.
+
+Спорные места:
+
+- Полный signed-in сценарий загрузки и генерации PDF не выполнялся автоматически, чтобы не создавать пользовательские production-данные.
+
 ## 2026-07-21 - Custom cover upload for project presentations
 
 Задача:
