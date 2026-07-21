@@ -765,3 +765,156 @@ export type ImportReportsResponse = {
 export type ImportReportResponse = {
   report: ImportReport;
 };
+
+export type ProjectPresentationDocumentStatus = 'PENDING' | 'RUNNING' | 'READY' | 'FAILED';
+
+export type ProjectPresentationCatalogObject = {
+  id: string;
+  title: string;
+  slug: string;
+  address: string | null;
+  description: string;
+  propertyClass: string | null;
+  completionYear: number | null;
+  completionQuarter: number | null;
+  priceFrom: string | null;
+  pricePerMeterFrom: string | null;
+  areaRange: string | null;
+  developer: ObjectDeveloper | null;
+  primaryLocation: ObjectLocation | null;
+  metroStations: ObjectMetroStationLink[];
+  images: ObjectImage[];
+};
+
+export type ProjectPresentationDraftObjectInput = {
+  objectId: string;
+  manualTitle?: string | null;
+  manualDescription?: string | null;
+  advantages?: string[];
+  imageIds?: string[];
+  propertyClass?: string | null;
+  completion?: string | null;
+  price?: string | null;
+  district?: string | null;
+  developer?: string | null;
+  metro?: string | null;
+};
+
+export type ProjectPresentationDraftObject = ProjectPresentationDraftObjectInput & {
+  id: string;
+  sortOrder: number;
+  manualTitle: string | null;
+  manualDescription: string | null;
+  advantages: string[];
+  imageIds: string[];
+  propertyClass: string | null;
+  completion: string | null;
+  price: string | null;
+  district: string | null;
+  developer: string | null;
+  metro: string | null;
+  object: ProjectPresentationCatalogObject;
+};
+
+export type ProjectPresentationDraft = {
+  id: string;
+  ownerUserId: string;
+  owner: {
+    id: string;
+    name: string | null;
+    email: string;
+  };
+  title: string;
+  coverTitle: string | null;
+  coverSubtitle: string | null;
+  clientName: string | null;
+  issueLabel: string | null;
+  coverImageId: string | null;
+  templateVersion: string;
+  version: number;
+  objectsCount: number;
+  objects: ProjectPresentationDraftObject[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CreateProjectPresentationDraftInput = {
+  title: string;
+  coverTitle?: string | null;
+  coverSubtitle?: string | null;
+  clientName?: string | null;
+  issueLabel?: string | null;
+  coverImageId?: string | null;
+};
+
+export type UpdateProjectPresentationDraftInput = {
+  version: number;
+  title?: string;
+  coverTitle?: string | null;
+  coverSubtitle?: string | null;
+  clientName?: string | null;
+  issueLabel?: string | null;
+  coverImageId?: string | null;
+};
+
+export type ReplaceProjectPresentationDraftObjectsInput = {
+  version: number;
+  objects: ProjectPresentationDraftObjectInput[];
+};
+
+export type ProjectPresentationDraftResponse = {
+  draft: ProjectPresentationDraft;
+};
+
+export type ProjectPresentationDraftsResponse = {
+  items: ProjectPresentationDraft[];
+};
+
+export type ProjectPresentationObjectsResponse = {
+  items: ProjectPresentationCatalogObject[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};
+
+export type CreateProjectPresentationDocumentInput = {
+  version: number;
+  title?: string | null;
+  idempotencyKey?: string | null;
+};
+
+export type ProjectPresentationDocument = {
+  id: string;
+  ownerUserId: string;
+  createdBy: {
+    id: string;
+    name: string | null;
+    email: string;
+  };
+  draftId: string | null;
+  title: string;
+  status: ProjectPresentationDocumentStatus;
+  templateVersion: string;
+  objectsCount: number;
+  progress: number;
+  attempts: number;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  canDownload: boolean;
+};
+
+export type ProjectPresentationDocumentResponse = {
+  document: ProjectPresentationDocument;
+};
+
+export type ProjectPresentationDocumentsResponse = {
+  items: ProjectPresentationDocument[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};

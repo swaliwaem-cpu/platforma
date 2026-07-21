@@ -18,3 +18,18 @@ export function canAccessLotPresentations(
     user.email.trim().toLowerCase() === MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL
   );
 }
+
+export function canAccessProjectPresentations(
+  user: Pick<AuthUser, 'role'> | null | undefined,
+  hostname = window.location.hostname,
+) {
+  if (!user) {
+    return false;
+  }
+
+  return (
+    import.meta.env.DEV ||
+    localHostnames.has(hostname.trim().toLowerCase()) ||
+    user?.role.name.trim().toLowerCase() === 'admin'
+  );
+}

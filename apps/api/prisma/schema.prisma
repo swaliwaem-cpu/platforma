@@ -131,6 +131,15 @@ enum FeedUnitStatus {
   @@map("feed_unit_status")
 }
 
+enum ProjectPresentationDocumentStatus {
+  PENDING
+  RUNNING
+  READY
+  FAILED
+
+  @@map("project_presentation_document_status")
+}
+
 model User {
   id                    String     @id @default(uuid()) @db.Uuid
   email                 String     @unique @db.VarChar(320)
@@ -157,6 +166,8 @@ model User {
   lotPresentationCollections    LotPresentationCollection[]
   lotPresentationDocuments      LotPresentationDocument[]
   lotPresentationWorkspaceItems LotPresentationWorkspaceItem[]
+  projectPresentationDrafts      ProjectPresentationDraft[]       @relation("ProjectPresentationDraftOwner")
+  projectPresentationDocuments   ProjectPresentationDocument[]    @relation("ProjectPresentationDocumentOwner")
 
   @@index([roleId])
   @@index([profilePhotoFileId])
@@ -348,6 +359,8 @@ model RealEstateObject {
   feedSources        FeedSource[]
   feedSourceMappings FeedSourceMapping[]
   feedUnits          FeedUnit[]
+  projectPresentationDraftItems    ProjectPresentationDraftObject[]
+  projectPresentationDocumentItems ProjectPresentationDocumentObject[]
 
   @@index([status])
   @@index([type])
@@ -620,6 +633,8 @@ model File {
   feedXmlSources           FeedSource[]              @relation("FeedXmlFile")
   feedMediaAssets          FeedMediaAsset[]          @relation("FeedMediaFile")
   lotPresentationDocuments LotPresentationDocument[]
+  projectPresentationDocuments ProjectPresentationDocument[]
+  projectPresentationAssets    ProjectPresentationDocumentAsset[]
 
   @@unique([storage, bucket, key])
   @@index([uploadedById])
@@ -773,6 +788,123 @@ model LotPresentationDocumentItem {
   @@id([documentId, unitId])
   @@index([unitId])
   @@map("lot_presentation_document_items")
+}
+
+model ProjectPresentationDraft {
+  id              String   @id @default(uuid()) @db.Uuid
+  ownerUserId     String   @map("owner_user_id") @db.Uuid
+  title           String   @db.VarChar(180)
+  coverTitle      String?  @map("cover_title") @db.VarChar(180)
+  coverSubtitle   String?  @map("cover_subtitle") @db.VarChar(500)
+  clientName      String?  @map("client_name") @db.VarChar(180)
+  issueLabel      String?  @map("issue_label") @db.VarChar(180)
+  coverImageId    String?  @map("cover_image_id") @db.Uuid
+  templateVersion String   @default("project-catalog-4x5-v1") @map("template_version") @db.VarChar(64)
+  version         Int      @default(1)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  owner     User                             @relation("ProjectPresentationDraftOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  objects   ProjectPresentationDraftObject[]
+  documents ProjectPresentationDocument[]
+
+  @@index([ownerUserId, updatedAt])
+  @@index([updatedAt])
+  @@map("project_presentation_drafts")
+}
+
+model ProjectPresentationDraftObject {
+  id                String   @id @default(uuid()) @db.Uuid
+  draftId           String   @map("draft_id") @db.Uuid
+  objectId          String   @map("object_id") @db.Uuid
+  sortOrder         Int      @map("sort_order")
+  manualTitle       String?  @map("manual_title") @db.VarChar(180)
+  manualDescription String?  @map("manual_description") @db.VarChar(2000)
+  manualPropertyClass String? @map("manual_property_class") @db.VarChar(180)
+  manualCompletion  String?  @map("manual_completion") @db.VarChar(180)
+  manualPrice       String?  @map("manual_price") @db.VarChar(180)
+  manualDistrict    String?  @map("manual_district") @db.VarChar(180)
+  manualDeveloper   String?  @map("manual_developer") @db.VarChar(180)
+  manualMetro       String?  @map("manual_metro") @db.VarChar(300)
+  imageIds          Json     @default("[]") @map("image_ids")
+  advantages        Json     @default("[]")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  draft  ProjectPresentationDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  object RealEstateObject         @relation(fields: [objectId], references: [id], onDelete: Cascade)
+
+  @@unique([draftId, objectId])
+  @@unique([draftId, sortOrder])
+  @@index([objectId])
+  @@map("project_presentation_draft_objects")
+}
+
+model ProjectPresentationDocument {
+  id              String                            @id @default(uuid()) @db.Uuid
+  ownerUserId     String                            @map("owner_user_id") @db.Uuid
+  draftId         String?                           @map("draft_id") @db.Uuid
+  fileId          String?                           @map("file_id") @db.Uuid
+  title           String                            @db.VarChar(180)
+  status          ProjectPresentationDocumentStatus @default(PENDING)
+  templateVersion String                            @map("template_version") @db.VarChar(64)
+  snapshotVersion Int                               @default(1) @map("snapshot_version")
+  snapshotJson    Json                              @map("snapshot_json")
+  objectsCount    Int                               @map("objects_count")
+  progress        Int                               @default(0)
+  attempts        Int                               @default(0)
+  idempotencyKey  String?                           @map("idempotency_key") @db.VarChar(80)
+  errorMessage    String?                           @map("error_message") @db.VarChar(1000)
+  heartbeatAt     DateTime?                         @map("heartbeat_at")
+  startedAt       DateTime?                         @map("started_at")
+  finishedAt      DateTime?                         @map("finished_at")
+  createdAt       DateTime                          @default(now()) @map("created_at")
+  updatedAt       DateTime                          @updatedAt @map("updated_at")
+
+  owner  User                       @relation("ProjectPresentationDocumentOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  draft  ProjectPresentationDraft?  @relation(fields: [draftId], references: [id], onDelete: SetNull)
+  file   File?                      @relation(fields: [fileId], references: [id], onDelete: Restrict)
+  objects ProjectPresentationDocumentObject[]
+  assets  ProjectPresentationDocumentAsset[]
+
+  @@unique([ownerUserId, idempotencyKey])
+  @@index([status, createdAt])
+  @@index([ownerUserId, createdAt])
+  @@index([draftId])
+  @@index([fileId])
+  @@map("project_presentation_documents")
+}
+
+model ProjectPresentationDocumentObject {
+  id             String  @id @default(uuid()) @db.Uuid
+  documentId     String  @map("document_id") @db.Uuid
+  objectId       String? @map("object_id") @db.Uuid
+  sourceObjectId String  @map("source_object_id") @db.Uuid
+  sortOrder      Int     @map("sort_order")
+
+  document ProjectPresentationDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  object   RealEstateObject?            @relation(fields: [objectId], references: [id], onDelete: SetNull)
+
+  @@unique([documentId, sourceObjectId])
+  @@unique([documentId, sortOrder])
+  @@index([objectId])
+  @@map("project_presentation_document_objects")
+}
+
+model ProjectPresentationDocumentAsset {
+  id             String  @id @default(uuid()) @db.Uuid
+  documentId     String  @map("document_id") @db.Uuid
+  fileId         String  @map("file_id") @db.Uuid
+  sourceObjectId String? @map("source_object_id") @db.Uuid
+  role           String  @db.VarChar(64)
+  sortOrder      Int     @map("sort_order")
+
+  document ProjectPresentationDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  file     File                        @relation(fields: [fileId], references: [id], onDelete: Restrict)
+
+  @@index([documentId, sortOrder])
+  @@index([fileId])
+  @@map("project_presentation_document_assets")
 }
 
 model AuditLog {

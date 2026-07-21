@@ -175,3 +175,19 @@ Seeded permission names and role defaults: `apps/api/prisma/seed.ts`.
 - Object detail classes: `.object-detail-page`, `.object-detail-header`, `.detail-section`, `.media-gallery-frame`, `.object-image-carousel`, `.carousel-*`, `.object-parameters-grid`, `.object-feed-units-*`, `.object-content-sections` in `apps/web/src/styles.css`.
 - Theme override classes: `apps/web/src/app-theme.css` overrides many global selectors under `html[data-app-theme]`, including `.sidebar`, `.content-panel`, `.catalog-page .page-header`, `.catalog-filters`, `.catalog-quick-links`, `.catalog-map-panel`, `.detail-section`, `.gallery-modal`, `.map-object-card`.
 - Styles not to change without manual check: `apps/web/src/styles.css` sections for `.workspace:has(...)`, catalog cards/list, `catalog-map-*`, `yandex-map-*`, `map-price-marker-*`, `.object-image-carousel`, `.object-feed-media-*`, `.gallery-modal-*`, `.object-quick-edit-table`, plus all theme overrides in `apps/web/src/app-theme.css`.
+
+## Project presentations routes
+
+Дата добавления: 2026-07-20.
+
+| Route | Entry component | Permissions | API consumers | Основные состояния |
+| --- | --- | --- | --- | --- |
+| `/presentations/projects` | `ProjectPresentationsPage` | Локально — любой authenticated user; production — только роль `admin` через frontend helper и `ProjectPresentationsAdminGuard` | drafts/documents list, delete, retry, download | loading, empty, ready, queued/running, failed |
+| `/presentations/projects/new` | `ProjectPresentationEditorPage` | Локально — authenticated user; production — только `admin` | catalog objects, create/update draft, replace ordered objects, generate document | empty draft, autosave, validation, version conflict, generation |
+| `/presentations/projects/:draftId` | `ProjectPresentationEditorPage` | Локально — authenticated user; production — только `admin` | same endpoints plus draft load | loading, editing, autosave, preview, conflict, not found |
+
+- Существующий `/presentations` для PDF по лотам сохранён; в его шапке под «Созданные PDF» есть кнопка «Презентации ЖК». На localhost пункт меню презентаций также ведёт в `/presentations/projects` для любого авторизованного пользователя.
+- Маршруты распознаются ручным роутером в `apps/web/src/App.tsx`; parser находится в `parseProjectPresentationRoute()`.
+- Редактор и список находятся в `apps/web/src/presentations/projects`, стили изолированы в `projectPresentations.css`.
+- Редактор построен как свободно доступные этапы `Выбор ЖК → Карточки → Обложка → Проверка`: каталог встроен в первый этап, карточки ЖК свёрнуты в accordion, а ошибки финальной проверки ведут к нужному полю.
+- На широком desktop предпросмотр 4:5 и сводка закреплены рядом с редактором; ниже `1180px` они скрываются, а preview открывается из адаптивной нижней панели действий.

@@ -154,3 +154,18 @@
 - After WordPress repair code changes: inspect repair preview output before run; dedicated repair tests are currently not found in `tools/wp-import/tests`.
 - After feed parser/import changes: run `pnpm --filter @platforma/feed-import test`, `pnpm --filter @platforma/api test` for feed API changes, then manually verify analyze/preview/run/stop on staging.
 - Before production import actions: verify env with `.env.example`, `apps/api/.env.example`, `tools/wp-import/.env.example`, `docs/staging-production-env-checklist.md`.
+
+## Project presentations risk zone
+
+Дата добавления: 2026-07-20.
+
+| Risk | Files | Required checks |
+| --- | --- | --- |
+| Environment access boundary | `apps/api/src/project-presentations/project-presentations-admin.guard.ts`, `apps/web/src/presentations/presentationAccess.ts`, `apps/web/src/App.tsx` | Локально проверить доступ non-admin; с `NODE_ENV=production` проверить запрет non-admin и доступ admin; frontend visibility не заменяет backend guard |
+| Snapshot correctness | `apps/api/src/project-presentations/project-presentations.service.ts`, `project-presentations.types.ts` | После постановки изменить черновик/объект и убедиться, что document snapshot и PDF не изменились |
+| Worker recovery and retry | `project-presentations-worker.service.ts` | Проверить restart на `PENDING/RUNNING`, CAS claim, failure progress и лимит retry |
+| Storage lifecycle | `project-presentations.service.ts`, `project-presentations-pdf.service.ts`, `apps/api/src/files/files.service.ts` | Проверить missing source file, upload failure, download, delete document и отсутствие orphan File/object |
+| PDF layout and fonts | `project-presentations-pdf.service.ts`, `apps/api/assets/project-presentations` | Сгенерировать 1 и 12 ЖК, проверить `540 x 675`, кириллицу/₽, длинные поля, 0–3 изображения, QR и кликабельные CTA |
+| Optimistic autosave | `ProjectPresentationEditorPage.tsx`, `projectPresentationApi.ts` | Открыть один черновик в двух вкладках и проверить понятный version conflict без тихой потери данных |
+
+После изменений этой зоны обязательны targeted project-presentation tests, `pnpm --filter @platforma/api test`, `pnpm --filter @platforma/web test`, сборка и ручный просмотр реального PDF.

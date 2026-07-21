@@ -8121,6 +8121,10 @@ tr.user-row--deactivated .text-button {
     flex-direction: column;
   }
 
+  .lot-presentations-header-actions {
+    width: 100%;
+  }
+
   .toolbar select,
   .primary-button--fit,
   .secondary-button--fit {
@@ -8945,8 +8949,16 @@ tr.user-row--deactivated .text-button {
   min-width: 0;
 }
 
-.lot-presentations-documents-trigger {
+.lot-presentations-header-actions {
+  display: grid;
+  width: min(280px, 100%);
+  align-items: stretch;
+  gap: 10px;
+}
+
+.lot-presentations-header-trigger {
   display: inline-flex;
+  width: 100%;
   min-height: 44px;
   align-items: center;
   justify-content: center;
@@ -8955,7 +8967,7 @@ tr.user-row--deactivated .text-button {
   white-space: nowrap;
 }
 
-.lot-presentations-documents-trigger svg {
+.lot-presentations-header-trigger svg {
   width: 17px;
   height: 17px;
 }

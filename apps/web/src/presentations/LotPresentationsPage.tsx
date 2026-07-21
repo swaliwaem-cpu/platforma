@@ -1,5 +1,6 @@
 import { type FormEvent, useEffect, useMemo, useState } from 'react';
 import {
+  Building2Icon,
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
@@ -119,7 +120,7 @@ function getLotCollectionNames(collectionIds: string[], collectionNameById: Map<
     .filter((name): name is string => Boolean(name));
 }
 
-export function LotPresentationsPage(_props: LotPresentationsPageProps) {
+export function LotPresentationsPage({ navigate }: LotPresentationsPageProps) {
   const { accessToken, user } = useAuth();
   const [activeTab, setActiveTab] = useState<'workspace' | 'collections'>('workspace');
   const [collections, setCollections] = useState<LotPresentationCollection[]>([]);
@@ -820,14 +821,22 @@ export function LotPresentationsPage(_props: LotPresentationsPageProps) {
           <p className="eyebrow">Подборки</p>
           <h2>PDF-презентации лотов</h2>
         </div>
-        <div className="header-actions">
+        <div className="header-actions lot-presentations-header-actions">
           <button
-            className="secondary-button secondary-button--fit lot-presentations-documents-trigger"
+            className="secondary-button secondary-button--fit lot-presentations-header-trigger lot-presentations-documents-trigger"
             type="button"
             onClick={() => setIsDocumentsPanelOpen(true)}
           >
             <FileTextIcon aria-hidden="true" />
             Созданные PDF
+          </button>
+          <button
+            className="primary-button primary-button--fit lot-presentations-header-trigger lot-presentations-projects-trigger"
+            type="button"
+            onClick={() => navigate('/presentations/projects')}
+          >
+            <Building2Icon aria-hidden="true" />
+            Презентации ЖК
           </button>
         </div>
       </header>

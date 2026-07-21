@@ -170,6 +170,8 @@ test('lot presentations page has workspace and collection tabs with compact lot 
 
   assert.doesNotMatch(pageSource, /Контакты брокера/);
   assert.match(pageSource, /setIsDocumentsPanelOpen\(true\)[\s\S]*Созданные PDF/);
+  assert.match(pageSource, /Building2Icon/);
+  assert.match(pageSource, /navigate\('\/presentations\/projects'\)[\s\S]*Презентации ЖК/);
   assert.match(pageSource, /const \[activeTab,\s*setActiveTab\] = useState<'workspace' \| 'collections'>\('workspace'\);/);
   assert.doesNotMatch(initialTabEffect, /if \(selectedCollectionId\)/);
   assert.match(pageSource, /В работе/);
@@ -189,7 +191,9 @@ test('lot presentations page has workspace and collection tabs with compact lot 
   assert.doesNotMatch(pageSource, /content-panel lot-presentations-aside/);
   assert.match(pageSource, /const shouldShowProjectSearchResults = projectSearch\.trim\(\)\.length > 0;/);
   assert.match(pageSource, /className="lot-presentations-search-popover"/);
-  assert.match(pageSource, /className="secondary-button secondary-button--fit lot-presentations-documents-trigger"/);
+  assert.match(pageSource, /className="secondary-button secondary-button--fit lot-presentations-header-trigger lot-presentations-documents-trigger"/);
+  assert.match(pageSource, /className="primary-button primary-button--fit lot-presentations-header-trigger lot-presentations-projects-trigger"/);
+  assert.match(styles, /\.lot-presentations-header-actions\s*\{[\s\S]*?display:\s*grid;[\s\S]*?width:\s*min\(280px, 100%\);/);
   assert.match(styles, /\.lot-presentations-tabs\s*\{/);
   assert.match(workspaceToolbarRule, /justify-self:\s*end;/);
   assert.match(workspaceToolbarRule, /align-items:\s*center;/);
@@ -197,7 +201,7 @@ test('lot presentations page has workspace and collection tabs with compact lot 
   assert.match(workspaceToolbarButtonRule, /flex:\s*0 0 auto;/);
   assert.match(styles, /\.lot-presentations-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(5, minmax\(0, 1fr\)\);/);
   assert.match(styles, /\.lot-presentations-comment-modal\s*\{/);
-  assert.match(styles, /\.lot-presentations-documents-trigger\s*\{[\s\S]*?display:\s*inline-flex;[\s\S]*?min-height:\s*44px;[\s\S]*?white-space:\s*nowrap;/);
+  assert.match(styles, /\.lot-presentations-header-trigger\s*\{[\s\S]*?display:\s*inline-flex;[\s\S]*?min-height:\s*44px;[\s\S]*?white-space:\s*nowrap;/);
   assert.match(styles, /\.lot-presentations-actions\s*\{[\s\S]*?flex-wrap:\s*nowrap;[\s\S]*?align-items:\s*stretch;/);
   assert.match(styles, /\.lot-presentations-actions \.primary-button,\s*\.lot-presentations-actions \.secondary-button\s*\{[\s\S]*?display:\s*inline-flex;[\s\S]*?min-height:\s*44px;/);
   assert.match(styles, /\.lot-presentations-search-popover\s*\{/);

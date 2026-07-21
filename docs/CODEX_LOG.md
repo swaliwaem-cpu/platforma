@@ -3646,3 +3646,292 @@ Production repair:
 Спорные места:
 
 - Доступ зафиксирован по email, без нового RBAC permission, потому что требование касается одного главного аккаунта и не требует расширяемой роли.
+## 2026-07-20 - Project presentation visual template
+
+Задача:
+
+- Подготовить для согласования визуальный шаблон новой генерации PDF-презентаций по выбранным жилым комплексам из каталога.
+
+Изменения:
+
+- `output/pdf/fluffywhite-project-presentation-template.pdf` - собран пятистраничный прототип формата 4:5: обложка, содержание, страница ЖК, Telegram-вставка и финальная страница контактов.
+- `output/pdf/fluffywhite-project-presentation-template-preview.png` - добавлен обзор всех типов страниц для быстрого согласования.
+- Для страницы ЖК использованы актуальные данные и изображения опубликованного `FORIVER Residence` из локального каталога.
+- CTA в PDF ведут на `https://t.me/FluffyWhite`; QR в согласовательном макете оставлен визуальным маркером и будет генерироваться как рабочий код при реализации фичи.
+
+Проверки:
+
+- PDF повторно отрендерен после генерации и проверен визуально целиком и крупным планом на странице ЖК.
+- PDFKit check: 5 страниц одинакового размера `540 x 675 pt`, ссылки Telegram присутствуют на страницах 3-5.
+- Проверены читаемость русских текстов, сетка, переносы, изображения и отсутствие переполнений.
+
+Ручная проверка:
+
+- Открыть PDF и проверить направление дизайна, состав страниц и кликабельность Telegram-кнопок.
+
+Спорные места:
+
+- После согласования нужно утвердить, остается ли Telegram-промостраница обязательной во всех презентациях или настраиваемой.
+- В готовой генерации число страниц будет динамическим: `N + 4`, где `N` - число выбранных ЖК.
+
+## 2026-07-20 - Full project presentation example
+
+Задача:
+
+- Расширить согласовательный шаблон до полноценного примера со всеми 12 жилыми комплексами из оглавления для промежуточной демонстрации руководителю.
+
+Изменения:
+
+- `output/pdf/fluffywhite-full-project-presentation-example.pdf` - собрана 16-страничная презентация: обложка, оглавление, 12 страниц ЖК, Telegram-вставка и контакты.
+- `output/pdf/fluffywhite-full-project-presentation-example-preview.png` - добавлено обзорное превью всех 16 страниц.
+- Для 10 ЖК использованы реальные изображения, описания и параметры из локального каталога Platforma.
+- Для `Сикрет Гарден` и `МЫС`, у которых в карточках каталога отсутствует галерея, показан фирменный fallback без подстановки посторонних изображений.
+- В презентации локально уточнены класс `Сикрет Гарден` и район/транспортная подпись `МЫС` на основании их описаний; записи объектов в базе не изменялись.
+- Исходные изображения нормализованы в JPEG экранного качества, благодаря чему итоговый PDF уменьшен со 168 МБ до 10 МБ без видимых изменений макета.
+
+Проверки:
+
+- Все 16 страниц повторно отрендерены из итогового PDF и проверены обзорно и группами по четыре страницы.
+- PDFKit check: 16 страниц одного формата `540 x 675 pt`, 15 кликабельных Telegram-ссылок, страниц с неверным размером нет.
+- Проверены длинные заголовки, русские переносы, цены, преимущества, изображения, fallback-страницы и нумерация `01 / 16` - `16 / 16`.
+
+Ручная проверка:
+
+- Открыть PDF и пролистать его в просмотрщике, проверить переход по CTA `Обсудить проект в Telegram`.
+- Перед показом руководителю обратить внимание, что обложка и контакты содержат демонстрационные имена `Анна и Михаил` и `Александр Петров`.
+
+Спорные места:
+
+- В карточках `Сикрет Гарден` и `МЫС` нет проектных изображений; в рабочей фиче fallback должен оставаться до загрузки галереи администратором.
+- QR на Telegram-странице пока является визуальным маркером согласовательного шаблона, а не рабочим QR-кодом.
+
+## 2026-07-20 - Custom project PDF presentations implementation
+
+Задача:
+
+- Реализовать утверждённую admin-фичу генерации кастомных PDF-презентаций по вручную выбранным жилым комплексам из каталога: общие черновики, ручные поля, история, удаление, retry и готовый PDF согласованного дизайна.
+
+Изменения:
+
+- `apps/api/prisma/schema.prisma`, `apps/api/prisma/migrations/20260720120000_add_project_presentations/migration.sql` - добавлены draft/document/snapshot модели, ordered objects/assets, статусы очереди и связи с `User`, `RealEstateObject`, `ObjectImage`, `File`.
+- `apps/api/src/project-presentations/*` - добавлены admin-only API, optimistic locking, каталог доступных ЖК, неизменяемый snapshot, DB-backed worker с восстановлением и retry, S3/MinIO lifecycle и PDF renderer формата 4:5.
+- `apps/api/assets/project-presentations/telegram-qr.png` - добавлен рабочий QR на `https://t.me/FluffyWhite`.
+- `apps/web/src/presentations/projects/*` - добавлены общий список черновиков/истории, редактор с автосохранением, ручным порядком, override-полями, выбором до трёх фотографий, обложкой, responsive preview и генерацией.
+- `apps/web/src/App.tsx`, `apps/web/src/presentations/presentationAccess.ts` - добавлены `/presentations/projects`, `/new`, `/:draftId`, admin navigation и точная role boundary; существующая lot presentation feature сохранена.
+- `packages/shared/src/index.ts` - добавлены shared request/response contracts.
+- `apps/api/src/files/files.service.ts` - прямое удаление файлов теперь учитывает project presentation links.
+- `docs/PAGES_AND_ROUTES.md`, `docs/FEATURE_MAP.md`, `docs/API_AND_DATA.md`, `docs/STATE_AND_LOGIC.md`, `docs/RISK_ZONES.md` - зафиксированы маршруты, API/data model, state machine и release checks.
+- Добавлены backend/frontend регрессии `project-presentations-*.test.*`, включая schema, service, PDF, routing и accessibility.
+
+Проверки:
+
+- `pnpm --filter @platforma/api prisma:generate` - passed.
+- `pnpm --filter @platforma/api exec prisma migrate deploy` - migration применена локально, schema up to date.
+- `pnpm test` - passed: web 274, api 224, wp-import 23, feed-import 64.
+- `pnpm build` - passed; Vite оставил предупреждение о client chunk `672.62 kB`.
+- Реальный E2E через API/PostgreSQL/MinIO: создан черновик из 12 опубликованных жилых ЖК, поставлен job, PDF перешёл в `READY` примерно за 5.9 с и скачался; затем document/draft/output file удалены без остаточных строк.
+- PDF check: 16 страниц (`N + 4`), все MediaBox `540 x 675 pt`, размер 11.58 MB, Telegram links присутствуют; страницы 1, 2, 3, 12, 14, 15 и 16 проверены визуально.
+- QR декодирован системным CoreImage как `https://t.me/FluffyWhite`.
+- `git diff --check` - passed.
+
+Ручная проверка:
+
+- После deploy миграции и пересборки API/web войти под администратором, открыть `/presentations/projects`, создать/перезагрузить черновик, сгенерировать и скачать PDF.
+- Под non-admin проверить отсутствие пункта и `403` на `/api/project-presentations/*`.
+- Открыть один черновик в двух вкладках и проверить понятный optimistic version conflict.
+
+Спорные места:
+
+- In-app Browser runtime был недоступен в текущей сессии, поэтому финальный signed-in browser smoke нужно выполнить вручную; UI покрыт source-level тестами и production-сборкой.
+- SPA по-прежнему собирается одним крупным client chunk; это не блокирует релиз фичи, но code splitting стоит вынести в отдельную техническую задачу.
+
+## 2026-07-20 - Local project presentations rebuild
+
+Задача:
+
+- Пересобрать локальные Docker-сервисы после реализации презентаций ЖК, чтобы браузер перестал получать старые web/API images.
+
+Изменения и проверки:
+
+- `docker compose up -d --build api web` - свежие images `platforma-api` и `platforma-web` собраны, контейнеры пересозданы.
+- `GET /health` - `status=ok`, database `ok`, PostGIS доступен.
+- API startup logs подтверждают `ProjectPresentationsModule` и все `/project-presentations/*` routes.
+- Docker web bundle содержит `/presentations/projects` и подпись `Презентации ЖК`.
+- `prisma migrate status` внутри API-контейнера: 31 migrations, database schema up to date.
+
+Ручная проверка:
+
+- Выполнить hard refresh и открыть `http://localhost:5173/presentations/projects` под пользователем с ролью `admin`.
+
+Спорные места:
+
+- `/presentations` остаётся отдельным существующим экраном презентаций лотов; презентации ЖК открываются по `/presentations/projects`.
+
+## 2026-07-20 - Local project presentation access and visible entry
+
+Задача:
+
+- На локальном окружении убрать role restriction с презентаций ЖК и добавить заметную кнопку перехода из существующего экрана презентаций лотов.
+
+Изменения:
+
+- `apps/web/src/presentations/presentationAccess.ts` - localhost/DEV теперь открывает project presentations любому авторизованному пользователю; production сохраняет роль `admin`.
+- `apps/api/src/project-presentations/project-presentations-admin.guard.ts` - development bypass выровнен с существующим lot presentations guard; `JwtAuthGuard` и production admin check сохранены.
+- `apps/web/src/presentations/LotPresentationsPage.tsx`, `apps/web/src/styles.css` - под «Созданные PDF» добавлена полноширинная кнопка «Презентации ЖК», ведущая на `/presentations/projects`; действия складываются в адаптивную вертикальную группу.
+- Обновлены frontend/backend регрессии и документация access boundary.
+
+Проверки:
+
+- Targeted frontend tests: 27/27 passed.
+- Targeted backend schema/service tests: 14/14 passed.
+- Docker API/web images пересобраны и контейнеры healthy; runtime non-admin user с ролью `user` получил `200` от `GET /project-presentations/drafts` в development.
+- Отдаваемый Docker web bundle содержит «Презентации ЖК» и `/presentations/projects`.
+
+Ручная проверка:
+
+- На `/presentations` проверить вторую кнопку в правой части шапки и переход под локальным non-admin пользователем.
+- С production environment проверить, что non-admin по-прежнему получает `403`.
+
+Спорные места:
+
+- Локально снято только ограничение роли; авторизация остаётся обязательной, потому что черновики и PDF используют данные пользователя и защищённые файлы.
+
+## 2026-07-20 - Project presentation editor UX concepts
+
+Задача:
+
+- Проанализировать неюзабельный экран создания презентации ЖК и подготовить три адаптивных направления дизайна для выбора до изменения production-интерфейса.
+
+Анализ:
+
+- Найдена первичная причина узкой desktop-композиции: `.workspace` центрирует grid-item, а `.project-presentations-page` не задаёт собственную ширину; container query вследствие этого преждевременно скрывает preview, тогда как viewport media query сохраняет двухколоночную форму.
+- Выявлена неверная последовательность зависимостей: обложка запрашивается до выбора ЖК, хотя фото обложки становится доступно только после добавления объекта.
+- Для 6–12 ЖК текущая полностью раскрытая форма создаёт слишком длинный сценарий и плохо связывает поля с итоговой страницей PDF.
+- Независимый UX-критик ранжировал решения: `Guided Composer` → `Split Studio` → `Storyboard`.
+
+Артефакты:
+
+- `output/design-options/project-editor-concepts.html` и `project-editor-concepts.css` - автономные адаптивные HTML/CSS-макеты без влияния на приложение.
+- `output/design-options/project-editor-option-1.png` - `Split Studio`: редактор и sticky preview.
+- `output/design-options/project-editor-option-2.png` - `Storyboard`: страницы, холст и контекстный inspector.
+- `output/design-options/project-editor-option-3.png` - `Guided Composer`: свободно доступные этапы «ЖК → карточки → обложка → проверка» и sticky summary.
+
+Проверки:
+
+- Все три варианта отрендерены Chromium в `1600 × 1000 px` и проверены визуально.
+- В каждом board показаны desktop и mobile состояния; интерактивные цели в mobile-композиции рассчитаны под отдельную нижнюю панель действий.
+
+Ручная проверка:
+
+- Выбрать одно направление; после выбора отдельно согласовать детали шага редактирования карточек и только затем переносить дизайн в production-компоненты.
+
+Спорные места:
+
+- `Storyboard` визуально самый редакторский, но для фиксированной структуры PDF несёт максимальную стоимость и риск рассинхронизации preview.
+- Рекомендуемая основа - `Guided Composer` с accordion-карточками и sticky preview/summary из `Split Studio` на широких экранах.
+
+## 2026-07-20 - Guided project presentation composer
+
+Задача:
+
+- Реализовать согласованную гибридную концепцию редактора презентаций ЖК: основной сценарий `Guided Composer`, accordion-карточки и закреплённый preview/summary из `Split Studio`.
+
+Изменения:
+
+- `apps/web/src/presentations/projects/ProjectPresentationEditorPage.tsx` - редактор разбит на свободно доступные этапы `Выбор ЖК → Карточки → Обложка → Проверка`; каталог перенесён в первый этап, добавлены выбранный список с сортировкой, accordion-карточки, рекомендация обложки, кликабельный preflight и адаптивная нижняя панель действий.
+- `apps/web/src/presentations/projects/ProjectPresentationPreview.tsx` - sticky preview синхронизируется с активным этапом и раскрытым ЖК, при этом ручная навигация внутри preview сохранена.
+- `apps/web/src/presentations/projects/projectPresentations.css` - устранено сжатие страницы внутри центрированного workspace; добавлены широкая двухколоночная композиция, закреплённая сводка, responsive breakpoints, mobile footer и touch targets не меньше 44 px.
+- `apps/web/tests/project-presentations-page.test.mjs`, `apps/web/tests/project-presentations-accessibility.test.mjs` - регрессии обновлены под новый flow, accordion semantics, responsive layout и preview sync.
+- `docs/PAGES_AND_ROUTES.md`, `docs/STATE_AND_LOGIC.md` - зафиксированы этапы редактора, локальное UI-состояние и адаптивное поведение.
+- Backend, PDF renderer, API contracts, optimistic locking и 800 ms autosave не менялись.
+
+Проверки:
+
+- `pnpm --filter @platforma/web test` - 275/275 passed.
+- `pnpm --filter @platforma/api test` - build passed, 224/224 tests passed.
+- Production web build внутри `docker compose up -d --build web` - passed; актуальные web/API containers пересозданы и запущены.
+- `ProjectPresentationEditorPage.tsx` production TypeScript/Vite build - passed; остаётся существующее предупреждение Vite о client chunk больше 500 kB.
+
+Ручная проверка:
+
+- Открыть `http://localhost:5173/presentations/projects`, зайти в черновик и пройти четыре этапа на desktop и mobile ширине.
+- Проверить добавление/удаление/порядок ЖК, раскрытие карточек, выбор обложки, переход из preflight к проблемному полю и генерацию PDF.
+
+Спорные места:
+
+- In-app Browser не был подключён к текущей сессии, поэтому signed-in визуальный smoke нужно выполнить вручную; layout и accessibility покрыты source-level тестами и production-сборкой.
+- Sticky preview намеренно скрывается ниже `1180px`, чтобы форма не сжималась; на этих ширинах preview доступен из нижней панели.
+
+## 2026-07-20 - Cover subtitle input crash fix
+
+Задача:
+
+- Исправить чёрный экран при вводе в поле «Подзаголовок» на третьем шаге редактора презентации ЖК.
+
+Изменения:
+
+- `apps/web/src/presentations/projects/ProjectPresentationEditorPage.tsx` - значение textarea теперь считывается из `event.currentTarget` до передачи функционального обновления в React; отложенный updater больше не обращается к обнулённому DOM event.
+- `apps/web/tests/project-presentations-page.test.mjs` - добавлена регрессия, запрещающая чтение `event.currentTarget.value` внутри updater для `coverSubtitle`.
+
+Проверки:
+
+- Targeted frontend tests: 14/14 passed.
+- `pnpm build:web` - passed; остаётся существующее предупреждение Vite о client chunk больше 500 kB.
+- Локальный web image пересобран, контейнер `platforma-web-1` пересоздан и запущен.
+
+Ручная проверка:
+
+- На третьем шаге ввести и удалить текст в поле «Подзаголовок», дождаться автосохранения и обновить страницу.
+
+Спорные места:
+
+- Нет; API и PDF renderer не менялись.
+
+## 2026-07-20 - Project presentations list header refinement
+
+Задача:
+
+- Перестроить шапку списка презентаций ЖК по визуальным комментариям: убрать служебные подписи, усилить заголовок и поменять местами уровни действий.
+
+Изменения:
+
+- `apps/web/src/presentations/projects/ProjectPresentationsPage.tsx` - удалены eyebrow «Презентации» и подпись о доступе администраторам; «Новая презентация» перенесена под заголовок, а «Подборки лотов» заняла правую позицию шапки.
+- `apps/web/src/presentations/projects/projectPresentations.css` - добавлены внутренние отступы шапки, заголовок увеличен с базовых 28 до 32 px, действия выровнены по верхнему краю и адаптированы для узких экранов.
+
+Проверки:
+
+- `pnpm --filter @platforma/web test` - 276/276 passed.
+- `pnpm build:web` - passed; остаётся существующее предупреждение Vite о client chunk больше 500 kB.
+- Локальный web image пересобран, контейнер `platforma-web-1` пересоздан и запущен.
+
+Ручная проверка:
+
+- Проверить шапку `/presentations/projects` на desktop и mobile: заголовок не касается рамки, основное действие находится под ним, переход к подборкам остаётся справа на desktop и занимает полную ширину на mobile.
+
+Спорные места:
+
+- На mobile действия идут в DOM-порядке: сначала создание новой презентации, затем возврат к подборкам лотов; это сохраняет приоритет основного сценария.
+
+## 2026-07-21 - Solid project presentations header surface
+
+Задача:
+
+- Убрать градиент верхней плашки списка презентаций ЖК и использовать однородный цвет её правого края.
+
+Изменения:
+
+- `apps/web/src/presentations/projects/projectPresentations.css` - для `.project-presentations-header` задан сплошной семантический фон `var(--pp-surface)`; градиент редактора презентации не изменён.
+
+Проверки:
+
+- `pnpm --filter @platforma/web test` - 276/276 passed.
+- `pnpm build:web` - passed; остаётся существующее предупреждение Vite о client chunk больше 500 kB.
+- Локальный web image пересобран, контейнер `platforma-web-1` пересоздан и запущен.
+
+Ручная проверка:
+
+- После hard refresh проверить `/presentations/projects` в текущей теме: фон всей верхней плашки должен совпадать с её прежним правым краем.
+
+Спорные места:
+
+- Нет; изменение изолировано только на шапку списка презентаций ЖК.

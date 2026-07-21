@@ -528,3 +528,18 @@ Flow:
 - WP manual override preservation depends on object update audit metadata shape from `apps/api/src/objects/objects.service.ts` and reader logic in `tools/wp-import/src/importer.ts`.
 - Feed source mappings depend on analysis filter keys generated in `tools/feed-import/src/index.ts`, frontend suggestions in `apps/web/src/admin/feedSourceMatching.ts` and backend validation in `apps/api/src/feeds/feeds.service.ts`.
 - Import UI stale state is possible because WordPress commands are long-running synchronous API calls, while feed run returns a pending run and relies on polling in `apps/web/src/admin/FeedsAdminPage.tsx`.
+
+## Project presentation state and logic
+
+Дата добавления: 2026-07-20.
+
+- List state: `/presentations/projects` параллельно загружает общие черновики и историю документов, затем позволяет открыть, удалить, повторить failed job или скачать ready PDF.
+- Editor state: выбранные ЖК, их порядок, ручные поля, активный этап и раскрытая accordion-карточка живут в `ProjectPresentationEditorPage`; данные сохраняются debounce-автосейвом через 800 мс, а локальная навигация между четырьмя этапами не блокируется валидацией.
+- Validation state: ошибки вычисляются из текущей формы без дублирующего состояния; на этапе проверки клик по проблеме открывает соответствующий этап и фокусирует поле или карточку ЖК. Генерация по-прежнему требует валидную обложку и 1–12 ЖК.
+- Concurrency state: клиент отправляет текущий `version`; backend обновляет только совпавшую версию. При конфликте редактор сообщает об устаревшем черновике и предлагает перезагрузить актуальные данные.
+- Object selection state: черновик допускает 0–12 объектов, генерация — 1–12. Список и изображения повторно валидируются backend, frontend limit не считается security boundary.
+- Generation state: `createDocument()` в транзакции строит snapshot и создаёт `PENDING`; worker атомарно забирает job, переводит в `RUNNING`, пишет progress и завершает в `READY` или `FAILED`.
+- Recovery state: worker при старте возвращает просроченные `RUNNING` документы в очередь; одновременно один документ не должен исполняться двумя worker loops благодаря compare-and-set update.
+- Snapshot state: PDF строится только из зафиксированного JSON snapshot и asset ids, поэтому последующие изменения объекта или черновика не меняют уже поставленный документ.
+- Deletion state: удаление черновика каскадно удаляет его items, но сохраняет документы с `draftId = null`; удаление документа удаляет его snapshot rows и готовый PDF `File`/object storage object.
+- Preview state: браузерный preview повторяет структуру обложки, оглавления, ЖК, Telegram и контактов, но authoritative output создаёт backend PDF renderer.

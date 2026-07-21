@@ -10,12 +10,14 @@ import { LotPresentationsModule } from './lot-presentations/lot-presentations.mo
 import { MapModule } from './map/map.module';
 import { ObjectsModule } from './objects/objects.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { ProjectPresentationsModule } from './project-presentations/project-presentations.module';
 import { UsersModule } from './users/users.module';
 import { WordpressImportModule } from './wordpress-import/wordpress-import.module';
 
 @Module({
   imports: [
     PrismaModule,
+    ProjectPresentationsModule,
     AuthModule,
     UsersModule,
     CatalogLinksModule,

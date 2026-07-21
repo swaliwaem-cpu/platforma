@@ -255,3 +255,28 @@ Feed import warning: separate `POST /feed-import/preview` and `POST /feed-import
 - Preview modes still write report/run records: `ImportReport` for WordPress and `FeedImportRun` for feed, confirmed in `tools/wp-import/src/importer.ts` and `tools/feed-import/src/index.ts`.
 - WordPress run can mutate `RealEstateObject` and related media; feed run mutates `FeedUnit` and object feed aggregate fields; both are visible in catalog/detail through `apps/api/src/objects/objects.service.ts`.
 - Separate `/feed-import/preview` and `/feed-import/run` endpoints were not found in `apps/api/src`; the valid feed import API is `/feeds/sources/:id/preview|run` in `apps/api/src/feeds/feeds.controller.ts`.
+
+## Project presentations API and data
+
+Дата добавления: 2026-07-20.
+
+Все endpoints используют `JwtAuthGuard` и `ProjectPresentationsAdminGuard`. В development guard пропускает любого авторизованного пользователя; в production доступ определяется точной ролью `admin`, а не отдельным permission.
+
+| Endpoint | Назначение |
+| --- | --- |
+| `GET /project-presentations/objects` | Поиск и пагинация опубликованных жилых объектов, доступных редактору |
+| `GET/POST /project-presentations/drafts` | Общий для администраторов список и создание черновика |
+| `GET/PATCH/DELETE /project-presentations/drafts/:draftId` | Чтение, optimistic update и удаление черновика |
+| `PUT /project-presentations/drafts/:draftId/objects` | Полная замена и порядка 0–12 выбранных объектов |
+| `POST /project-presentations/drafts/:draftId/documents` | Snapshot и постановка PDF в очередь; ответ `202 Accepted` |
+| `GET /project-presentations/documents` | История документов с фильтрацией статуса |
+| `GET/DELETE /project-presentations/documents/:documentId` | Статус/прогресс и удаление документа |
+| `POST /project-presentations/documents/:documentId/retry` | Повтор failed generation в пределах лимита попыток |
+| `GET /project-presentations/documents/:documentId/content` | Защищённая загрузка готового PDF с UTF-8 filename |
+
+- `ProjectPresentationDraft` хранит владельца-брокера, поля обложки, cover image, `version` и ordered items.
+- `ProjectPresentationDraftObject` хранит ручные override-поля, до трёх преимуществ и до трёх выбранных image ids.
+- `ProjectPresentationDocument` хранит template/snapshot version, JSON snapshot, статус, progress, attempt count, ошибку и ссылку на готовый `File`.
+- `ProjectPresentationDocumentObject` и `ProjectPresentationDocumentAsset` фиксируют состав и checksums исходных файлов для аудита snapshot.
+- `File` получил связи с обложками черновиков, готовыми документами и snapshot assets; linked-file checks в `FilesService` запрещают удалить такие файлы напрямую.
+- Контакт на финальной странице берётся у владельца черновика; пользователь, нажавший генерацию, сохраняется как creator документа.

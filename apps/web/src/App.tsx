@@ -16,6 +16,9 @@ import { buildMediaFileContentUrl } from './files/SecureImage';
 import { ObjectDetailPage, ObjectLotDetailPage } from './objects/ObjectDetailPage';
 import { LotPresentationsPage } from './presentations/LotPresentationsPage';
 import { MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL, canAccessLotPresentations } from './presentations/presentationAccess';
+import { canAccessProjectPresentations } from './presentations/presentationAccess';
+import { ProjectPresentationEditorPage } from './presentations/projects/ProjectPresentationEditorPage';
+import { ProjectPresentationsPage } from './presentations/projects/ProjectPresentationsPage';
 import { getAppliedAppTheme, getNextAppTheme, setAppTheme } from './appTheme';
 import './styles.css';
 import './app-theme.css';
@@ -286,6 +289,7 @@ function AppRoutes() {
       : 'cabinet';
   const objectLotRoute = parseObjectLotRoute(pathname);
   const objectSlug = objectLotRoute ? null : parseObjectSlug(pathname);
+  const projectPresentationRoute = parseProjectPresentationRoute(pathname);
   const visibleNavItems = navItems.filter((item) => canAccessNavigationItem(user, hasPermission, item));
 
   return (
@@ -357,7 +361,7 @@ function AppRoutes() {
                   className={activeSection === item.section ? 'nav-item nav-item--active' : 'nav-item'}
                   type="button"
                   tabIndex={isSidebarOpen ? 0 : -1}
-                  onClick={() => navigate(item.path)}
+                  onClick={() => navigate(getNavigationPath(user, item))}
                 >
                   {item.label}
                 </button>
@@ -439,7 +443,20 @@ function AppRoutes() {
             <AccessDenied />
           )
         ) : activeSection === 'presentations' ? (
-          canAccessLotPresentations(user) ? (
+          projectPresentationRoute ? (
+            canAccessProjectPresentations(user) ? (
+              projectPresentationRoute.kind === 'list' ? (
+                <ProjectPresentationsPage navigate={navigate} />
+              ) : (
+                <ProjectPresentationEditorPage
+                  draftId={projectPresentationRoute.kind === 'draft' ? projectPresentationRoute.draftId : null}
+                  navigate={navigate}
+                />
+              )
+            ) : (
+              <AccessDenied />
+            )
+          ) : canAccessLotPresentations(user) ? (
             <LotPresentationsPage navigate={navigate} />
           ) : (
             <AccessDenied />
@@ -504,6 +521,28 @@ function parseObjectLotRoute(pathname: string) {
       slug: match[1],
       unitId: match[2],
     };
+  }
+}
+
+function parseProjectPresentationRoute(pathname: string) {
+  if (/^\/presentations\/projects\/?$/u.test(pathname)) {
+    return { kind: 'list' as const };
+  }
+
+  if (/^\/presentations\/projects\/new\/?$/u.test(pathname)) {
+    return { kind: 'new' as const };
+  }
+
+  const match = pathname.match(/^\/presentations\/projects\/([^/]+)\/?$/u);
+
+  if (!match?.[1]) {
+    return null;
+  }
+
+  try {
+    return { kind: 'draft' as const, draftId: decodeURIComponent(match[1]) };
+  } catch {
+    return { kind: 'draft' as const, draftId: match[1] };
   }
 }
 
@@ -1044,7 +1083,7 @@ function CabinetHome({ navigate }: { navigate: (nextPathname: string) => void })
               {availableSections.map((section) => (
                 <li key={section.id}>
                   <div className="cabinet-section-main">
-                    <strong>{section.label}</strong>
+                    <strong>{section.id === 'presentations' && canAccessProjectPresentations(user) ? 'Презентации ЖК' : section.label}</strong>
                     <span>{section.group}</span>
                     {section.requiredPermissions.length ? (
                       <div className="permission-chip-list" aria-label="Права">
@@ -1060,7 +1099,7 @@ function CabinetHome({ navigate }: { navigate: (nextPathname: string) => void })
                   <button
                     className="secondary-button secondary-button--fit"
                     type="button"
-                    onClick={() => navigate(section.path)}
+                    onClick={() => navigate(getCabinetSectionPath(user, section))}
                   >
                     Открыть
                   </button>
@@ -1278,10 +1317,26 @@ function canAccessRequiredUserEmail(user: AuthUser, requiredUserEmail: string | 
   }
 
   if (requiredUserEmail === MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL) {
+    if (canAccessProjectPresentations(user)) {
+      return true;
+    }
+
     return canAccessLotPresentations(user);
   }
 
   return user.email.trim().toLowerCase() === requiredUserEmail;
+}
+
+function getNavigationPath(user: AuthUser, item: NavItem) {
+  return item.id === 'presentations' && canAccessProjectPresentations(user)
+    ? '/presentations/projects'
+    : item.path;
+}
+
+function getCabinetSectionPath(user: AuthUser, section: CabinetSection) {
+  return section.id === 'presentations' && canAccessProjectPresentations(user)
+    ? '/presentations/projects'
+    : section.path;
 }
 
 function canAccessNavigationItem(
