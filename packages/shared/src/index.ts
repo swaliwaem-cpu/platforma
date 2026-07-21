@@ -830,6 +830,8 @@ export type ProjectPresentationDraft = {
   clientName: string | null;
   issueLabel: string | null;
   coverImageId: string | null;
+  coverFileId: string | null;
+  coverFile: ObjectStoredFile | null;
   templateVersion: string;
   version: number;
   objectsCount: number;

@@ -130,14 +130,15 @@ export function ProjectPresentationPreview({
 
 function CoverPage({ accessToken, form }: { accessToken: string; form: ProjectPresentationDraftForm }) {
   const coverImage = findProjectImage(form.objects, form.coverImageId);
+  const coverFileId = form.coverFile?.id ?? coverImage?.file.id ?? null;
 
   return (
     <article className="project-preview-page project-preview-cover">
-      {coverImage ? (
+      {coverFileId ? (
         <SecureImage
           accessToken={accessToken}
           alt=""
-          fileId={coverImage.file.id}
+          fileId={coverFileId}
           variant="detail"
         />
       ) : <div className="project-preview-image-placeholder" />}

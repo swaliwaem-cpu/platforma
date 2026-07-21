@@ -20,6 +20,7 @@ export function createProjectPresentationForm(draft: ProjectPresentationDraft): 
     clientName: draft.clientName ?? '',
     issueLabel: draft.issueLabel ?? '',
     coverImageId: draft.coverImageId,
+    coverFile: draft.coverFile,
     objects: [...draft.objects].sort((left, right) => left.sortOrder - right.sortOrder),
   };
 }
@@ -107,7 +108,7 @@ export function validateProjectPresentationForm(form: ProjectPresentationDraftFo
     issues.push({ path: 'objects', message: `В презентации может быть не больше ${projectPresentationMaxObjects} ЖК` });
   }
 
-  if (!form.coverImageId) {
+  if (!form.coverImageId && !form.coverFile) {
     issues.push({ path: 'coverImageId', message: 'Выберите фотографию для обложки' });
   }
 

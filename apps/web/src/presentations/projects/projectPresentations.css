@@ -233,6 +233,11 @@
   text-underline-offset: 3px;
 }
 
+.project-presentation-back-link:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .project-presentation-save {
   align-items: center;
   color: var(--pp-ink-soft);
@@ -1775,6 +1780,25 @@
   margin-left: auto;
 }
 
+.project-presentation-cover-picker:disabled {
+  cursor: wait;
+  opacity: .76;
+}
+
+.project-presentation-cover-file-input {
+  display: none;
+}
+
+.project-presentation-cover-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.project-presentation-cover-actions > button {
+  min-width: 190px;
+}
+
 .project-presentation-cover-suggestion {
   align-items: center;
   background: var(--pp-surface-soft);
@@ -2349,6 +2373,15 @@
 
   .project-presentation-cover-suggestion > div:last-child > button {
     flex: 1;
+  }
+
+  .project-presentation-cover-actions {
+    display: grid;
+  }
+
+  .project-presentation-cover-actions > button {
+    min-width: 0;
+    width: 100%;
   }
 
   .project-presentation-issue-list {

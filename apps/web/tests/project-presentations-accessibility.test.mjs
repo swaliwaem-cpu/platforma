@@ -81,10 +81,11 @@ test('editor enforces selection limits and validates resolved content before gen
   for (const field of ['propertyClass', 'completion', 'price', 'district', 'developer', 'metro']) {
     assert.ok(editorSource.includes(`['${field}',`), `manual field ${field} must be editable`);
   }
-  assert.match(stateSource, /if \(!form\.coverImageId\)/);
+  assert.match(stateSource, /if \(!form\.coverImageId && !form\.coverFile\)/);
   assert.match(stateSource, /if \(form\.objects\.length === 0\)/);
   assert.match(stateSource, /manualDescription \?\? item\.object\.description/);
   assert.match(editorSource, /openValidationIssue\(issues\[0\]\)/);
+  assert.match(editorSource, /role="status" aria-live="polite"[\s\S]*Загружаем фото обложки/);
   assert.match(
     editorSource,
     /const savedDraft = await persistDraft\(\)[\s\S]*createProjectPresentationDocument\(accessToken, savedDraft\)/,

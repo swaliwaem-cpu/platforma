@@ -633,6 +633,7 @@ model File {
   feedXmlSources           FeedSource[]              @relation("FeedXmlFile")
   feedMediaAssets          FeedMediaAsset[]          @relation("FeedMediaFile")
   lotPresentationDocuments LotPresentationDocument[]
+  projectPresentationDraftCovers ProjectPresentationDraft[]       @relation("ProjectPresentationDraftCover")
   projectPresentationDocuments ProjectPresentationDocument[]
   projectPresentationAssets    ProjectPresentationDocumentAsset[]
 
@@ -799,16 +800,19 @@ model ProjectPresentationDraft {
   clientName      String?  @map("client_name") @db.VarChar(180)
   issueLabel      String?  @map("issue_label") @db.VarChar(180)
   coverImageId    String?  @map("cover_image_id") @db.Uuid
+  coverFileId     String?  @map("cover_file_id") @db.Uuid
   templateVersion String   @default("project-catalog-4x5-v1") @map("template_version") @db.VarChar(64)
   version         Int      @default(1)
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
   owner     User                             @relation("ProjectPresentationDraftOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  coverFile File?                            @relation("ProjectPresentationDraftCover", fields: [coverFileId], references: [id], onDelete: SetNull)
   objects   ProjectPresentationDraftObject[]
   documents ProjectPresentationDocument[]
 
   @@index([ownerUserId, updatedAt])
+  @@index([coverFileId])
   @@index([updatedAt])
   @@map("project_presentation_drafts")
 }

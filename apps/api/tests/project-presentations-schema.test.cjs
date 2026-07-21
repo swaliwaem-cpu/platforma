@@ -13,6 +13,9 @@ const schema = readProjectFile('apps/api/prisma/schema.prisma');
 const migration = readProjectFile(
   'apps/api/prisma/migrations/20260720120000_add_project_presentations/migration.sql',
 );
+const customCoverMigration = readProjectFile(
+  'apps/api/prisma/migrations/20260721120000_add_project_presentation_custom_cover/migration.sql',
+);
 const appModule = readProjectFile('apps/api/src/app.module.ts');
 const moduleSource = readProjectFile(
   'apps/api/src/project-presentations/project-presentations.module.ts',
@@ -43,6 +46,9 @@ test('Prisma schema stores drafts, immutable document snapshots, ordered objects
     schema,
     /model ProjectPresentationDraft \{[\s\S]*ownerUserId[\s\S]*templateVersion[\s\S]*version\s+Int[\s\S]*objects\s+ProjectPresentationDraftObject\[\][\s\S]*documents\s+ProjectPresentationDocument\[\][\s\S]*@@index\(\[ownerUserId, updatedAt\]\)[\s\S]*@@map\("project_presentation_drafts"\)/,
   );
+  assert.match(schema, /coverFileId\s+String\?\s+@map\("cover_file_id"\) @db\.Uuid/);
+  assert.match(schema, /coverFile\s+File\?[\s\S]*@relation\("ProjectPresentationDraftCover"/);
+  assert.match(schema, /projectPresentationDraftCovers\s+ProjectPresentationDraft\[\]/);
   assert.match(
     schema,
     /model ProjectPresentationDraftObject \{[\s\S]*objectId[\s\S]*sortOrder[\s\S]*imageIds\s+Json[\s\S]*advantages\s+Json[\s\S]*@@unique\(\[draftId, objectId\]\)[\s\S]*@@unique\(\[draftId, sortOrder\]\)/,
@@ -105,6 +111,12 @@ test('migration creates project presentation enum, tables, indexes and archival 
     migration,
     /"project_presentation_document_assets_document_id_fkey"[\s\S]*ON DELETE CASCADE/,
   );
+  assert.match(customCoverMigration, /ADD COLUMN "cover_file_id" UUID/);
+  assert.match(customCoverMigration, /project_presentation_drafts_cover_file_id_idx/);
+  assert.match(
+    customCoverMigration,
+    /"project_presentation_drafts_cover_file_id_fkey"[\s\S]*REFERENCES "files"\("id"\)[\s\S]*ON DELETE SET NULL/,
+  );
 });
 
 test('API registers the feature with JWT, local bypass and production admin role', () => {
@@ -137,6 +149,7 @@ test('API exposes catalog, draft editor, async PDF history, retry, download and 
     /@Get\('drafts\/:draftId'\)/,
     /@Patch\('drafts\/:draftId'\)/,
     /@Put\('drafts\/:draftId\/objects'\)/,
+    /@Post\('drafts\/:draftId\/cover'\)/,
     /@Delete\('drafts\/:draftId'\)/,
     /@Post\('drafts\/:draftId\/documents'\)[\s\S]*@HttpCode\(HttpStatus\.ACCEPTED\)/,
     /@Get\('documents'\)/,
@@ -149,6 +162,8 @@ test('API exposes catalog, draft editor, async PDF history, retry, download and 
   for (const pattern of routePatterns) assert.match(controller, pattern);
 
   assert.match(controller, /this\.worker\.kick\(\)/);
+  assert.match(controller, /FileInterceptor\('file', \{ limits: \{ fileSize: IMAGE_MAX_SIZE_BYTES \} \}\)/);
+  assert.match(controller, /service\.uploadDraftCover\(draftId, version, file, actor\)/);
   assert.match(controller, /Content-Type', file\.mimeType \?\? 'application\/pdf'/);
   assert.match(controller, /Content-Disposition', getContentDisposition\(file\.originalName\)/);
   assert.match(controller, /return `attachment; filename="\$\{asciiName\}"; filename\*=UTF-8''/);
@@ -173,9 +188,9 @@ test('all admins see common draft and PDF history while responses retain creator
     service.match(/async listDocuments[\s\S]*?async getDocument/)?.[0] ?? '',
     /ownerUserId:\s*actor\.id/,
   );
-  assert.match(service, /async deleteDraft\([\s\S]*projectPresentationDraft\.deleteMany/);
+  assert.match(service, /async deleteDraft\([\s\S]*projectPresentationDraft\.delete\(/);
   assert.match(service, /async deleteDocument\([\s\S]*Running document cannot be deleted/);
-  assert.match(service, /projectPresentationDocument\.delete\(\{ where: \{ id: document\.id \} \}\)/);
+  assert.match(service, /projectPresentationDocument\.deleteMany\([\s\S]*status: \{ not: ProjectPresentationDocumentStatus\.RUNNING \}/);
   assert.match(service, /filesService\.delete\(document\.fileId\)/);
 });
 
@@ -232,6 +247,7 @@ test('shared API contracts include drafts, status history, ownership and delete/
     /export type ProjectPresentationDocumentStatus = 'PENDING' \| 'RUNNING' \| 'READY' \| 'FAILED'/,
   );
   assert.match(shared, /export type ProjectPresentationDraftObjectInput = \{/);
+  assert.match(shared, /coverFileId: string \| null;[\s\S]*coverFile: ObjectStoredFile \| null;/);
   assert.match(shared, /export type ReplaceProjectPresentationDraftObjectsInput = \{[\s\S]*version: number;[\s\S]*objects: ProjectPresentationDraftObjectInput\[\]/);
   assert.match(shared, /export type ProjectPresentationDocument = \{[\s\S]*ownerUserId: string;[\s\S]*status: ProjectPresentationDocumentStatus;[\s\S]*progress: number;[\s\S]*canDownload: boolean;/);
   assert.match(shared, /export type ProjectPresentationDocumentsResponse = \{[\s\S]*items: ProjectPresentationDocument\[\];[\s\S]*total: number;/);

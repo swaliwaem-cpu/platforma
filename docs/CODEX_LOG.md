@@ -1,5 +1,41 @@
 # Codex Log
 
+## 2026-07-21 - Custom cover upload for project presentations
+
+Задача:
+
+- Добавить в редактор PDF-презентации ЖК загрузку собственного фото обложки.
+- Для файлов больше 10 МБ показать пользователю понятную причину отказа.
+
+Изменения:
+
+- `apps/api/prisma/schema.prisma`, migration `20260721120000_add_project_presentation_custom_cover` - черновик получил nullable-связь `coverFileId -> File` без изменения существующего выбора `ObjectImage`.
+- `apps/api/src/project-presentations` - добавлен versioned multipart endpoint собственной обложки; custom file имеет приоритет в snapshot, а document asset сохраняет его для retry и истории PDF.
+- `apps/api/src/files/files.service.ts` - linked-file protection учитывает custom cover черновиков; замена и удаление освобождают файл только после исчезновения всех draft/document связей, а незавершённая загрузка откатывает уже записанные MinIO objects.
+- Создание snapshot блокирует строку draft до привязки immutable assets; удаление draft/document защищено от гонок с заменой cover и стартом PDF worker.
+- `apps/web/src/presentations/projects` - добавлены загрузка/замена собственного фото, альтернативный выбор из фотографий ЖК, preview custom cover, loading/error states и клиентское предупреждение для файлов больше 10 МБ; autosave и навигация редактора синхронизированы с загрузкой.
+- Обновлены project-presentation API/web regression tests и инженерная документация зоны.
+
+Проверки:
+
+- `pnpm --filter @platforma/api exec prisma validate --schema prisma/schema.prisma` - passed.
+- `pnpm --filter @platforma/api test` - passed.
+- `pnpm --filter @platforma/web test` - 277/277 passed.
+- `pnpm --filter @platforma/api build` - passed.
+- `pnpm --filter @platforma/web build` - passed; остался прежний warning Vite о размере основного chunk.
+- Boundary regression для изображения размером `10 MiB + 1 byte` и lifecycle/concurrency regressions - passed.
+- Локальные Docker services `api` и `web` пересобраны и пересозданы; API healthy, migration status — 32/32, новый `/drafts/:draftId/cover` зарегистрирован, `localhost:5173` отдаёт bundle с custom-cover UI.
+
+Ручная проверка:
+
+- В редакторе загрузить JPEG/PNG/WebP меньше 10 МБ, перезагрузить черновик, сформировать PDF и проверить обложку.
+- Выбрать файл больше 10 МБ и убедиться, что запрос не отправляется, а рядом с полем показано предупреждение.
+- Заменить custom cover и переключиться обратно на фото ЖК; проверить preview, PDF и отсутствие orphan-файлов после удаления draft/document.
+
+Спорные места:
+
+- Ручное позиционирование/crop не добавлялось: собственное фото использует существующее кадрирование cover под формат 4:5.
+
 ## 2026-07-17 - Production MR Group target media order swap
 
 Задача:

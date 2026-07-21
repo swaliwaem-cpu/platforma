@@ -454,8 +454,9 @@
 - Prisma models: `ProjectPresentationDraft`, `ProjectPresentationDraftObject`, `ProjectPresentationDocument`, `ProjectPresentationDocumentObject`, `ProjectPresentationDocumentAsset`; migration `20260720120000_add_project_presentations`.
 - Catalog boundary: выборка включает только `PUBLISHED`, не удалённые объекты категории `RESIDENTIAL`. Источники изображений валидируются по текущим связям объекта.
 - Draft semantics: все администраторы видят все черновики; черновик может быть пустым, но генерация требует 1–12 объектов и обложку. `version` используется для optimistic locking.
+- Cover upload: обложкой может быть как `ObjectImage` выбранного ЖК, так и собственный `File`, привязанный через `ProjectPresentationDraft.coverFileId`; `POST /project-presentations/drafts/:draftId/cover` принимает JPEG/PNG/WebP до 10 МБ и участвует в optimistic versioning.
 - Document semantics: при запуске фиксируется неизменяемый snapshot данных, изображений и контактов владельца черновика. Удаление черновика не удаляет ранее созданные документы.
 - Queue: статусы `PENDING`, `RUNNING`, `READY`, `FAILED`; DB-backed worker восстанавливает зависшие задания, хранит progress и поддерживает ручной retry до трёх попыток.
 - PDF: `N + 4` страниц — обложка, оглавление, `N` страниц ЖК, Telegram, контакты; каждая страница `540 x 675 pt`.
 - Tests: `apps/api/tests/project-presentations-*.test.cjs`, `apps/web/tests/project-presentations-*.test.mjs`.
-- Риски: генерация зависит от доступности S3/MinIO и исходных файлов snapshot; UI должен корректно обработать version conflict и failed document; удаление готового документа затрагивает и строку БД, и PDF-файл в object storage.
+- Риски: генерация зависит от доступности S3/MinIO и исходных файлов snapshot; UI должен корректно обработать version conflict, failed document и ошибку размера custom cover; замена/удаление собственной обложки не должна удалять файл, пока он связан с immutable document asset.

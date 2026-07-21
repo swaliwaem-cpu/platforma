@@ -31,6 +31,7 @@ test('project presentation API covers drafts, catalog search, generation and his
   assert.match(apiSource, /\/documents/u);
   assert.match(apiSource, /\/retry/u);
   assert.match(apiSource, /\/content/u);
+  assert.match(apiSource, /uploadProjectPresentationCover[\s\S]*new FormData\(\)[\s\S]*\/cover`/u);
 });
 
 test('project editor implements versioned autosave and approved field limits', () => {
@@ -56,10 +57,25 @@ test('cover subtitle captures the input value before the deferred form update', 
 });
 
 test('project generation validates cover, project count and resolved descriptions', () => {
-  assert.match(stateSource, /!form\.coverImageId/u);
+  assert.match(stateSource, /!form\.coverImageId && !form\.coverFile/u);
   assert.match(stateSource, /projectPresentationMaxObjects/u);
   assert.match(stateSource, /manualDescription \?\? item\.object\.description/u);
   assert.match(editorSource, /openValidationIssue\(issues\[0\]\)/u);
+});
+
+test('custom cover upload validates 10 MB locally and keeps catalog photos as an alternative', () => {
+  assert.match(editorSource, /projectPresentationMaxCoverFileSizeBytes/u);
+  assert.match(editorSource, /file\.size > projectPresentationMaxCoverFileSizeBytes/u);
+  assert.match(editorSource, /Максимальный размер фото — 10 МБ/u);
+  assert.match(editorSource, /isCoverUploadingRef\.current/u);
+  assert.match(editorSource, /window\.clearTimeout\(autosaveTimerRef\.current\)/u);
+  assert.match(editorSource, /inert=\{isCoverUploading\}/u);
+  assert.match(editorSource, /isGenerating \|\| isCoverUploading/u);
+  assert.match(editorSource, /Загрузить своё фото/u);
+  assert.match(editorSource, /Выбрать из фото ЖК/u);
+  assert.match(editorSource, /coverFile: null/u);
+  assert.match(editorSource, /form\.coverImageId \|\| form\.coverFile \? 'Фото и заголовок выбраны'/u);
+  assert.match(previewSource, /form\.coverFile\?\.id \?\? coverImage\?\.file\.id/u);
 });
 
 test('project preview keeps 4:5 pages, broker contacts and responsive sticky presentation', () => {

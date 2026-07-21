@@ -23,6 +23,7 @@ import {
   SearchIcon,
   Trash2Icon,
   TriangleAlertIcon,
+  UploadIcon,
 } from 'lucide-react';
 
 import { useAuth } from '../../auth/AuthProvider';
@@ -50,6 +51,7 @@ import {
   replaceProjectPresentationObjects,
   searchProjectPresentationObjects,
   updateProjectPresentationDraft,
+  uploadProjectPresentationCover,
 } from './projectPresentationApi';
 import { ProjectPresentationPreview } from './ProjectPresentationPreview';
 import {
@@ -68,6 +70,7 @@ import type {
   ProjectPresentationValidationIssue,
 } from './projectPresentationTypes';
 import {
+  projectPresentationMaxCoverFileSizeBytes,
   projectPresentationMaxImages,
   projectPresentationMaxObjects,
 } from './projectPresentationTypes';
@@ -90,6 +93,8 @@ const editorSteps: Array<{ id: EditorStepId; label: string }> = [
 ];
 
 const activeDocumentStatuses = new Set<ProjectPresentationDocument['status']>(['PENDING', 'RUNNING']);
+const acceptedCoverImageMimeTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const coverImageAccept = [...acceptedCoverImageMimeTypes].join(',');
 
 function formatIssueCount(count: number) {
   const remainder100 = count % 100;
@@ -215,6 +220,8 @@ function ExistingProjectPresentationEditor({
   const [isObjectSearchLoading, setIsObjectSearchLoading] = useState(false);
   const [objectSearchError, setObjectSearchError] = useState<string | null>(null);
   const [imagePickerTarget, setImagePickerTarget] = useState<ImagePickerTarget | null>(null);
+  const [isCoverUploading, setIsCoverUploading] = useState(false);
+  const [coverUploadError, setCoverUploadError] = useState<string | null>(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [document, setDocument] = useState<ProjectPresentationDocument | null>(null);
   const [generationError, setGenerationError] = useState<string | null>(null);
@@ -224,6 +231,8 @@ function ExistingProjectPresentationEditor({
   const formRef = useRef<ProjectPresentationDraftForm | null>(null);
   const revisionRef = useRef(0);
   const isDirtyRef = useRef(false);
+  const isCoverUploadingRef = useRef(false);
+  const autosaveTimerRef = useRef<number | null>(null);
   const savePromiseRef = useRef<Promise<ProjectPresentationDraft | null> | null>(null);
 
   useEffect(() => {
@@ -266,16 +275,32 @@ function ExistingProjectPresentationEditor({
   }, [accessToken, draftId]);
 
   useEffect(() => {
-    if (!form || !draft || !isDirtyRef.current || saveState === 'conflict') {
+    if (!form || !draft || !isDirtyRef.current || saveState === 'conflict' || isCoverUploading) {
       return;
     }
 
     const timerId = window.setTimeout(() => {
+      autosaveTimerRef.current = null;
       void persistDraft().catch(() => undefined);
     }, 800);
+    autosaveTimerRef.current = timerId;
 
-    return () => window.clearTimeout(timerId);
-  }, [draft, form, revision, saveState]);
+    return () => {
+      window.clearTimeout(timerId);
+      if (autosaveTimerRef.current === timerId) autosaveTimerRef.current = null;
+    };
+  }, [draft, form, isCoverUploading, revision, saveState]);
+
+  useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!isDirtyRef.current && !isCoverUploadingRef.current) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
 
   useEffect(() => {
     if (!accessToken || activeStep !== 'objects') {
@@ -413,6 +438,69 @@ function ExistingProjectPresentationEditor({
     }
   }
 
+  async function handleCoverUpload(file: File) {
+    if (!accessToken || isCoverUploadingRef.current) {
+      return;
+    }
+
+    isCoverUploadingRef.current = true;
+    if (autosaveTimerRef.current !== null) {
+      window.clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+    setIsCoverUploading(true);
+    setCoverUploadError(null);
+
+    try {
+      const savedDraft = await persistDraft();
+
+      if (!savedDraft) {
+        throw new Error('Черновик не сохранён');
+      }
+
+      const uploadRevision = revisionRef.current;
+      const hasPendingEditsAtUploadStart = isDirtyRef.current;
+      const response = await uploadProjectPresentationCover(
+        accessToken,
+        savedDraft.id,
+        savedDraft.version,
+        file,
+      );
+      const serverForm = createProjectPresentationForm(response.draft);
+      draftRef.current = response.draft;
+      setDraft(response.draft);
+
+      if (revisionRef.current === uploadRevision && !hasPendingEditsAtUploadStart) {
+        formRef.current = serverForm;
+        isDirtyRef.current = false;
+        setForm(serverForm);
+        setSaveState('saved');
+      } else {
+        setForm((currentForm) => {
+          const nextForm = currentForm
+            ? { ...currentForm, coverImageId: null, coverFile: response.draft.coverFile }
+            : serverForm;
+          formRef.current = nextForm;
+          return nextForm;
+        });
+        isDirtyRef.current = true;
+        setSaveState('pending');
+      }
+    } catch (caughtError) {
+      const message = resolveCoverUploadError(caughtError);
+      const isConflict = /changed|conflict|version|измен/iu.test(message);
+      setCoverUploadError(message);
+
+      if (isConflict) {
+        setSaveError('Черновик уже изменён в другой вкладке. Перезагрузите актуальную версию.');
+        setSaveState('conflict');
+      }
+    } finally {
+      isCoverUploadingRef.current = false;
+      setIsCoverUploading(false);
+    }
+  }
+
   async function reloadDraft() {
     if (!accessToken) {
       return;
@@ -511,7 +599,7 @@ function ExistingProjectPresentationEditor({
   }
 
   async function handleGenerate() {
-    if (!accessToken || !formRef.current || isGenerating) {
+    if (!accessToken || !formRef.current || isGenerating || isCoverUploading) {
       return;
     }
 
@@ -542,7 +630,7 @@ function ExistingProjectPresentationEditor({
   }
 
   async function handleSaveAndExit() {
-    if (isExiting || saveState === 'conflict') {
+    if (isExiting || isCoverUploading || saveState === 'conflict') {
       return;
     }
 
@@ -649,7 +737,7 @@ function ExistingProjectPresentationEditor({
     <div className="project-presentations-page project-presentation-editor">
       <header className="page-header project-presentation-editor-header">
         <div className="project-presentation-editor-title">
-          <button className="project-presentation-back-link" type="button" onClick={() => navigate('/presentations/projects')}>
+          <button className="project-presentation-back-link" disabled={isCoverUploading} type="button" onClick={() => navigate('/presentations/projects')}>
             <ArrowLeftIcon aria-hidden="true" /> К презентациям ЖК
           </button>
           <div className="project-presentation-title-line">
@@ -662,13 +750,16 @@ function ExistingProjectPresentationEditor({
           <Button type="button" variant="outline" onClick={() => setIsPreviewOpen(true)}>
             <EyeIcon data-icon="inline-start" aria-hidden="true" /> Предпросмотр
           </Button>
-          <Button disabled={isExiting || saveState === 'conflict'} type="button" variant="outline" onClick={() => void handleSaveAndExit()}>
+          <Button disabled={isExiting || isCoverUploading || saveState === 'conflict'} type="button" variant="outline" onClick={() => void handleSaveAndExit()}>
             {isExiting ? <LoaderCircleIcon className="project-presentation-spin" data-icon="inline-start" aria-hidden="true" /> : null}
             {isExiting ? 'Сохраняем…' : 'Сохранить и выйти'}
           </Button>
         </div>
       </header>
 
+      <p className="sr-only" role="status" aria-live="polite">
+        {isCoverUploading ? 'Загружаем фото обложки' : ''}
+      </p>
       {generationError ? <p className="form-error" role="alert">{generationError}</p> : null}
       {document ? (
         <GenerationStatus
@@ -684,8 +775,8 @@ function ExistingProjectPresentationEditor({
         onStepChange={(step) => activateStep(step, true)}
       />
 
-      <div className="project-presentation-editor-layout">
-        <main className="project-presentation-editor-form" id="project-presentation-step-content" tabIndex={-1}>
+      <div className="project-presentation-editor-layout" aria-busy={isCoverUploading}>
+        <main className="project-presentation-editor-form" id="project-presentation-step-content" inert={isCoverUploading} tabIndex={-1}>
           {activeStep === 'objects' ? (
             <ObjectSelectionStep
               accessToken={accessToken || ''}
@@ -725,9 +816,15 @@ function ExistingProjectPresentationEditor({
             <ProjectCoverStep
               accessToken={accessToken || ''}
               form={form}
+              isUploading={isCoverUploading}
               issues={coverValidationIssues}
+              uploadError={coverUploadError}
               onChange={changeForm}
-              onChooseCover={() => setImagePickerTarget({ kind: 'cover' })}
+              onChooseCover={() => {
+                setCoverUploadError(null);
+                setImagePickerTarget({ kind: 'cover' });
+              }}
+              onUploadCover={handleCoverUpload}
             />
           ) : null}
 
@@ -768,6 +865,7 @@ function ExistingProjectPresentationEditor({
 
       <footer className="project-presentation-editor-footer">
         <Button
+          disabled={isCoverUploading}
           type="button"
           variant="outline"
           onClick={() => previousStep ? activateStep(previousStep.id, true) : navigate('/presentations/projects')}
@@ -783,11 +881,11 @@ function ExistingProjectPresentationEditor({
             <EyeIcon data-icon="inline-start" aria-hidden="true" /> Preview
           </Button>
           {nextStep ? (
-            <Button type="button" onClick={() => activateStep(nextStep.id, true)}>
+            <Button disabled={isCoverUploading} type="button" onClick={() => activateStep(nextStep.id, true)}>
               Продолжить <span aria-hidden="true">→</span>
             </Button>
           ) : (
-            <Button disabled={isGenerating || saveState === 'conflict'} type="button" onClick={() => void handleGenerate()}>
+            <Button disabled={isGenerating || isCoverUploading || saveState === 'conflict'} type="button" onClick={() => void handleGenerate()}>
               {isGenerating ? <LoaderCircleIcon className="project-presentation-spin" data-icon="inline-start" aria-hidden="true" /> : <FilePlus2Icon data-icon="inline-start" aria-hidden="true" />}
               {isGenerating ? 'Формируем…' : 'Сформировать PDF'}
             </Button>
@@ -820,7 +918,8 @@ function ExistingProjectPresentationEditor({
                     type="button"
                     onClick={() => {
                       if (imagePickerTarget?.kind === 'cover') {
-                        changeForm((current) => ({ ...current, coverImageId: image.id }));
+                        setCoverUploadError(null);
+                        changeForm((current) => ({ ...current, coverImageId: image.id, coverFile: null }));
                       } else if (imagePickerItem) {
                         toggleProjectImage(imagePickerItem.objectId, image.id);
                       }
@@ -905,7 +1004,7 @@ function EditorProgressSummary({
   const descriptions: Record<EditorStepId, string> = {
     objects: form.objects.length ? `${form.objects.length} из ${projectPresentationMaxObjects} выбрано` : 'Добавьте первый объект',
     cards: form.objects.length ? `${form.objects.length} карточек` : 'Появятся после выбора ЖК',
-    cover: form.coverImageId ? 'Фото и заголовок выбраны' : 'Нужно фото и заголовок',
+    cover: form.coverImageId || form.coverFile ? 'Фото и заголовок выбраны' : 'Нужно фото и заголовок',
     review: completedSteps.has('review') ? 'Можно формировать PDF' : 'Проверим обязательные поля',
   };
 
@@ -1109,19 +1208,54 @@ function ProjectCardsStep({
 function ProjectCoverStep({
   accessToken,
   form,
+  isUploading,
   issues,
+  uploadError,
   onChange,
   onChooseCover,
+  onUploadCover,
 }: {
   accessToken: string;
   form: ProjectPresentationDraftForm;
+  isUploading: boolean;
   issues: ProjectPresentationValidationIssue[];
+  uploadError: string | null;
   onChange: (updater: (currentForm: ProjectPresentationDraftForm) => ProjectPresentationDraftForm) => void;
   onChooseCover: () => void;
+  onUploadCover: (file: File) => Promise<void>;
 }) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [fileValidationError, setFileValidationError] = useState<string | null>(null);
   const selectedCover = findProjectImage(form.objects, form.coverImageId);
   const suggestedCover = form.objects.flatMap((item) => item.object.images)[0] ?? null;
   const issueFor = (path: string) => issues.find((issue) => issue.path === path)?.message;
+
+  async function handleFileChange(file: File | undefined) {
+    if (!file) {
+      return;
+    }
+
+    if (file.size > projectPresentationMaxCoverFileSizeBytes) {
+      const sizeMegabytes = Math.ceil((file.size / (1024 * 1024)) * 10) / 10;
+      setFileValidationError(
+        `Размер файла — ${sizeMegabytes} МБ. Максимальный размер фото — 10 МБ. Выберите файл меньшего размера.`,
+      );
+      return;
+    }
+
+    if (!acceptedCoverImageMimeTypes.has(file.type)) {
+      setFileValidationError('Поддерживаются только изображения JPEG, PNG и WebP.');
+      return;
+    }
+
+    setFileValidationError(null);
+    await onUploadCover(file);
+  }
+
+  function chooseProjectCover() {
+    setFileValidationError(null);
+    onChooseCover();
+  }
 
   return (
     <section className="project-presentation-step-panel project-presentation-cover-step">
@@ -1167,10 +1301,41 @@ function ProjectCoverStep({
             <FieldDescription>{form.coverSubtitle.length} / 500</FieldDescription>
           </Field>
 
-          <Field className="project-presentation-cover-field" data-invalid={Boolean(issueFor('coverImageId'))}>
+          <Field
+            className="project-presentation-cover-field"
+            data-invalid={Boolean(issueFor('coverImageId') || fileValidationError || uploadError)}
+          >
             <FieldLabel>Фото обложки</FieldLabel>
-            {selectedCover ? (
-              <button className="project-presentation-cover-picker is-selected" id="project-cover-image" type="button" onClick={onChooseCover}>
+            <input
+              ref={fileInputRef}
+              accept={coverImageAccept}
+              className="project-presentation-cover-file-input"
+              type="file"
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
+                event.currentTarget.value = '';
+                void handleFileChange(file);
+              }}
+            />
+            {form.coverFile ? (
+              <button
+                className="project-presentation-cover-picker is-selected"
+                disabled={isUploading}
+                id="project-cover-image"
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <SecureImage accessToken={accessToken} alt="Загруженная обложка" fileId={form.coverFile.id} variant="detail" />
+                <span>
+                  <strong>{isUploading ? 'Загружаем фото…' : 'Своё фото загружено'}</strong>
+                  <small>{isUploading ? 'Не закрывайте страницу' : 'Нажмите, чтобы заменить'}</small>
+                </span>
+                {isUploading
+                  ? <LoaderCircleIcon className="project-presentation-spin" aria-hidden="true" />
+                  : <CheckCircle2Icon aria-hidden="true" />}
+              </button>
+            ) : selectedCover ? (
+              <button className="project-presentation-cover-picker is-selected" id="project-cover-image" type="button" onClick={chooseProjectCover}>
                 <SecureImage accessToken={accessToken} alt="Выбранная обложка" fileId={selectedCover.file.id} variant="detail" />
                 <span><strong>Фото выбрано</strong><small>Нажмите, чтобы заменить</small></span>
                 <CheckCircle2Icon aria-hidden="true" />
@@ -1179,14 +1344,27 @@ function ProjectCoverStep({
               <div className="project-presentation-cover-suggestion" id="project-cover-image" tabIndex={-1}>
                 <SecureImage accessToken={accessToken} alt="Рекомендуемое фото обложки" fileId={suggestedCover.file.id} variant="detail" />
                 <div><span>РЕКОМЕНДУЕМОЕ ФОТО</span><strong>Первое фото из выбранных ЖК</strong><small>Подтвердите его или откройте остальные варианты.</small></div>
-                <div><Button type="button" onClick={() => onChange((current) => ({ ...current, coverImageId: suggestedCover.id }))}>Использовать</Button><Button type="button" variant="outline" onClick={onChooseCover}>Все фото</Button></div>
+                <div><Button type="button" onClick={() => { setFileValidationError(null); onChange((current) => ({ ...current, coverImageId: suggestedCover.id, coverFile: null })); }}>Использовать</Button><Button type="button" variant="outline" onClick={chooseProjectCover}>Все фото</Button></div>
               </div>
             ) : (
-              <button className="project-presentation-cover-picker" id="project-cover-image" type="button" onClick={onChooseCover}>
-                <ImageIcon aria-hidden="true" /><span><strong>Фото пока недоступно</strong><small>Добавьте ЖК на первом шаге</small></span>
+              <button className="project-presentation-cover-picker" id="project-cover-image" type="button" onClick={() => fileInputRef.current?.click()}>
+                <UploadIcon aria-hidden="true" /><span><strong>Загрузите своё фото</strong><small>JPEG, PNG или WebP до 10 МБ</small></span>
               </button>
             )}
-            {issueFor('coverImageId') ? <FieldError>{issueFor('coverImageId')}</FieldError> : null}
+            <div className="project-presentation-cover-actions">
+              <Button disabled={isUploading} type="button" variant="outline" onClick={() => fileInputRef.current?.click()}>
+                {isUploading
+                  ? <LoaderCircleIcon className="project-presentation-spin" data-icon="inline-start" aria-hidden="true" />
+                  : <UploadIcon data-icon="inline-start" aria-hidden="true" />}
+                {form.coverFile ? 'Заменить своё фото' : 'Загрузить своё фото'}
+              </Button>
+              <Button disabled={isUploading || !suggestedCover} type="button" variant="outline" onClick={chooseProjectCover}>
+                <ImageIcon data-icon="inline-start" aria-hidden="true" /> Выбрать из фото ЖК
+              </Button>
+            </div>
+            <FieldDescription>Фото будет кадрировано под вертикальную обложку 4:5. Максимальный размер — 10 МБ.</FieldDescription>
+            {fileValidationError || uploadError ? <FieldError>{fileValidationError || uploadError}</FieldError> : null}
+            {!fileValidationError && !uploadError && issueFor('coverImageId') ? <FieldError>{issueFor('coverImageId')}</FieldError> : null}
           </Field>
         </CardContent>
       </Card>
@@ -1573,4 +1751,18 @@ function focusValidationIssue(issue: ProjectPresentationValidationIssue | undefi
 
 function resolveError(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
+}
+
+function resolveCoverUploadError(error: unknown) {
+  const message = resolveError(error, 'Не удалось загрузить фото обложки');
+
+  if (/file too large|size cannot exceed|слишком большой|размер файла/iu.test(message)) {
+    return 'Фото не загружено: максимальный размер файла — 10 МБ. Выберите файл меньшего размера.';
+  }
+
+  if (/only jpeg|only.*png|only.*webp|mime|тип файла/iu.test(message)) {
+    return 'Фото не загружено: поддерживаются только изображения JPEG, PNG и WebP.';
+  }
+
+  return message;
 }

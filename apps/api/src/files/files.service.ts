@@ -11,6 +11,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { File, FileStorage, FileVariantKind } from '@prisma/client';
@@ -55,6 +56,8 @@ type ValidatedUploadedFileStream = UploadedFileStream & {
 
 @Injectable()
 export class FilesService {
+  private readonly logger = new Logger(FilesService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: S3StorageService,
@@ -68,55 +71,64 @@ export class FilesService {
       ? await generateImageVariants(validatedFile.buffer, key)
       : [];
 
-    await this.storage.putObject({
-      key,
-      body: validatedFile.buffer,
-      contentType: validatedFile.mimetype,
-    });
+    const storedObjectKeys: string[] = [];
 
-    for (const variant of variants) {
+    try {
       await this.storage.putObject({
-        key: variant.key,
-        body: variant.body,
-        contentType: variant.mimeType,
-      });
-    }
-
-    const storedFile = await this.prisma.file.create({
-      data: {
-        storage: FileStorage.MINIO,
-        bucket: this.storage.getBucket(),
         key,
-        url: this.storage.getPublicUrl(key),
-        originalName: validatedFile.originalname,
-        mimeType: validatedFile.mimetype,
-        sizeBytes: BigInt(validatedFile.size),
-        checksum,
-        uploadedById: actor.id,
-        ...(variants.length > 0
-          ? {
-              variants: {
-                create: variants.map((variant) => ({
-                  variant: variant.variant,
-                  storage: FileStorage.MINIO,
-                  bucket: this.storage.getBucket(),
-                  key: variant.key,
-                  url: this.storage.getPublicUrl(variant.key),
-                  mimeType: variant.mimeType,
-                  width: variant.width,
-                  height: variant.height,
-                  sizeBytes: variant.sizeBytes,
-                  checksum: variant.checksum,
-                })),
-              },
-            }
-          : {}),
-      },
-    });
+        body: validatedFile.buffer,
+        contentType: validatedFile.mimetype,
+      });
+      storedObjectKeys.push(key);
 
-    return {
-      file: this.serializeFile(storedFile),
-    };
+      for (const variant of variants) {
+        await this.storage.putObject({
+          key: variant.key,
+          body: variant.body,
+          contentType: variant.mimeType,
+        });
+        storedObjectKeys.push(variant.key);
+      }
+
+      const storedFile = await this.prisma.file.create({
+        data: {
+          storage: FileStorage.MINIO,
+          bucket: this.storage.getBucket(),
+          key,
+          url: this.storage.getPublicUrl(key),
+          originalName: validatedFile.originalname,
+          mimeType: validatedFile.mimetype,
+          sizeBytes: BigInt(validatedFile.size),
+          checksum,
+          uploadedById: actor.id,
+          ...(variants.length > 0
+            ? {
+                variants: {
+                  create: variants.map((variant) => ({
+                    variant: variant.variant,
+                    storage: FileStorage.MINIO,
+                    bucket: this.storage.getBucket(),
+                    key: variant.key,
+                    url: this.storage.getPublicUrl(variant.key),
+                    mimeType: variant.mimeType,
+                    width: variant.width,
+                    height: variant.height,
+                    sizeBytes: variant.sizeBytes,
+                    checksum: variant.checksum,
+                  })),
+                },
+              }
+            : {}),
+        },
+      });
+
+      return {
+        file: this.serializeFile(storedFile),
+      };
+    } catch (error) {
+      await this.deleteStorageObjects(storedObjectKeys, 'upload rollback');
+      throw error;
+    }
   }
 
   async uploadFileStream(file: UploadedFileStream, actor: AuthenticatedUser, kind: UploadFileKind) {
@@ -251,6 +263,7 @@ export class FilesService {
             objectFiles: true,
             feedXmlSources: true,
             lotPresentationDocuments: true,
+            projectPresentationDraftCovers: true,
             projectPresentationDocuments: true,
             projectPresentationAssets: true,
           },
@@ -268,6 +281,7 @@ export class FilesService {
       file._count.objectFiles > 0 ||
       file._count.feedXmlSources > 0 ||
       file._count.lotPresentationDocuments > 0 ||
+      file._count.projectPresentationDraftCovers > 0 ||
       file._count.projectPresentationDocuments > 0 ||
       file._count.projectPresentationAssets > 0
     ) {
@@ -287,7 +301,18 @@ export class FilesService {
   }
 
   async deleteUnlinkedFile(id: string) {
-    await this.delete(id).catch(() => undefined);
+    try {
+      await this.delete(id);
+    } catch (error) {
+      if (error instanceof ConflictException) return false;
+      this.logger.error(
+        `Failed to delete unlinked file ${id}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+      return false;
+    }
+
+    return true;
   }
 
   serializeFile(file: File) {
@@ -305,6 +330,19 @@ export class FilesService {
       createdAt: file.createdAt.toISOString(),
       updatedAt: file.updatedAt.toISOString(),
     };
+  }
+
+  private async deleteStorageObjects(keys: string[], context: string) {
+    for (const key of [...keys].reverse()) {
+      try {
+        await this.storage.deleteObject(key);
+      } catch (error) {
+        this.logger.error(
+          `Failed to delete storage object ${key} during ${context}`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      }
+    }
   }
 
   private validateUploadedFile(file: UploadedFile | undefined, kind: UploadFileKind) {

@@ -164,7 +164,7 @@
 | Environment access boundary | `apps/api/src/project-presentations/project-presentations-admin.guard.ts`, `apps/web/src/presentations/presentationAccess.ts`, `apps/web/src/App.tsx` | Локально проверить доступ non-admin; с `NODE_ENV=production` проверить запрет non-admin и доступ admin; frontend visibility не заменяет backend guard |
 | Snapshot correctness | `apps/api/src/project-presentations/project-presentations.service.ts`, `project-presentations.types.ts` | После постановки изменить черновик/объект и убедиться, что document snapshot и PDF не изменились |
 | Worker recovery and retry | `project-presentations-worker.service.ts` | Проверить restart на `PENDING/RUNNING`, CAS claim, failure progress и лимит retry |
-| Storage lifecycle | `project-presentations.service.ts`, `project-presentations-pdf.service.ts`, `apps/api/src/files/files.service.ts` | Проверить missing source file, upload failure, download, delete document и отсутствие orphan File/object |
+| Storage lifecycle | `project-presentations.service.ts`, `project-presentations-pdf.service.ts`, `apps/api/src/files/files.service.ts` | Проверить missing source file, custom cover upload/replace, лимит 10 МБ, переключение на фото ЖК, удаление draft/document и отсутствие orphan File/object |
 | PDF layout and fonts | `project-presentations-pdf.service.ts`, `apps/api/assets/project-presentations` | Сгенерировать 1 и 12 ЖК, проверить `540 x 675`, кириллицу/₽, длинные поля, 0–3 изображения, QR и кликабельные CTA |
 | Optimistic autosave | `ProjectPresentationEditorPage.tsx`, `projectPresentationApi.ts` | Открыть один черновик в двух вкладках и проверить понятный version conflict без тихой потери данных |
 

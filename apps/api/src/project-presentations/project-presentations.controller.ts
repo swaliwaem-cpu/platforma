@@ -11,12 +11,17 @@ import {
   Put,
   Query,
   Res,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 
 import { AuthenticatedUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { IMAGE_MAX_SIZE_BYTES } from '../files/file-upload.constants';
+import { UploadedFile as UploadedFileData } from '../files/uploaded-file.type';
 import { ProjectPresentationsAdminGuard } from './project-presentations-admin.guard';
 import { ProjectPresentationsService } from './project-presentations.service';
 import { ProjectPresentationsWorkerService } from './project-presentations-worker.service';
@@ -48,6 +53,17 @@ export class ProjectPresentationsController {
 
   @Put('drafts/:draftId/objects')
   replaceDraftObjects(@Param('draftId') draftId: string, @Body() body: Record<string, unknown>) { return this.service.replaceDraftObjects(draftId, body); }
+
+  @Post('drafts/:draftId/cover')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: IMAGE_MAX_SIZE_BYTES } }))
+  uploadDraftCover(
+    @Param('draftId') draftId: string,
+    @Body('version') version: string,
+    @UploadedFile() file: UploadedFileData | undefined,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.service.uploadDraftCover(draftId, version, file, actor);
+  }
 
   @Delete('drafts/:draftId')
   @HttpCode(HttpStatus.NO_CONTENT)

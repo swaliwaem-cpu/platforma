@@ -3,11 +3,13 @@ import type {
   ObjectImage,
   ObjectLocation,
   ObjectMetroStationLink,
+  ObjectStoredFile,
 } from '@platforma/shared';
 
 export const projectPresentationMaxObjects = 12;
 export const projectPresentationMaxImages = 3;
 export const projectPresentationMaxAdvantages = 3;
+export const projectPresentationMaxCoverFileSizeBytes = 10 * 1024 * 1024;
 
 export type ProjectPresentationOwner = {
   id: string;
@@ -59,6 +61,8 @@ export type ProjectPresentationDraft = {
   clientName: string | null;
   issueLabel: string | null;
   coverImageId: string | null;
+  coverFileId: string | null;
+  coverFile: ObjectStoredFile | null;
   templateVersion: string;
   version: number;
   objectsCount: number;
@@ -138,6 +142,7 @@ export type ProjectPresentationDraftForm = {
   clientName: string;
   issueLabel: string;
   coverImageId: string | null;
+  coverFile: ObjectStoredFile | null;
   objects: ProjectPresentationDraftObject[];
 };
 

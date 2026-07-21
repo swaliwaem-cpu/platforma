@@ -13,6 +13,7 @@ import {
 
 import { AuthenticatedUser } from '../auth/auth.types';
 import { FilesService } from '../files/files.service';
+import { UploadedFile } from '../files/uploaded-file.type';
 import { PrismaService } from '../prisma/prisma.service';
 import { createSearchContainsFilters } from '../search/search-filters';
 import {
@@ -41,6 +42,7 @@ const objectInclude = {
 } satisfies Prisma.RealEstateObjectInclude;
 
 const draftInclude = {
+  coverFile: true,
   owner: {
     select: {
       id: true,
@@ -152,17 +154,22 @@ export class ProjectPresentationsService {
     const draftId = this.parseUuid(id, 'Draft is invalid');
     const version = this.parseVersion(body.version);
     const existing = await this.findDraft(id);
-    const data: Prisma.ProjectPresentationDraftUpdateManyMutationInput = {};
+    const data: Prisma.ProjectPresentationDraftUncheckedUpdateManyInput = {};
 
     if ('title' in body) data.title = this.parseRequiredString(body.title, 'Draft title is required', 180);
     if ('coverTitle' in body) data.coverTitle = this.parseNullableString(body.coverTitle, 'Cover title', 180);
     if ('coverSubtitle' in body) data.coverSubtitle = this.parseNullableString(body.coverSubtitle, 'Cover subtitle', 500);
     if ('clientName' in body) data.clientName = this.parseNullableString(body.clientName, 'Client name', 180);
     if ('issueLabel' in body) data.issueLabel = this.parseNullableString(body.issueLabel, 'Issue label', 180);
+    let previousCustomCoverFileId: string | null = null;
     if ('coverImageId' in body) {
       const coverImageId = this.parseNullableUuid(body.coverImageId, 'Cover image is invalid');
       if (coverImageId) this.ensureImageBelongsToDraft(existing, coverImageId);
       data.coverImageId = coverImageId;
+      if (coverImageId && existing.coverFileId) {
+        data.coverFileId = null;
+        previousCustomCoverFileId = existing.coverFileId;
+      }
     }
     data.version = { increment: 1 };
 
@@ -171,6 +178,43 @@ export class ProjectPresentationsService {
       data,
     });
     if (updated.count !== 1) throw new ConflictException('Draft was changed by another user');
+    const response = await this.getDraft(draftId);
+    if (previousCustomCoverFileId) {
+      await this.filesService.deleteUnlinkedFile(previousCustomCoverFileId);
+    }
+    return response;
+  }
+
+  async uploadDraftCover(
+    id: string,
+    versionValue: unknown,
+    file: UploadedFile | undefined,
+    actor: AuthenticatedUser,
+  ) {
+    const draftId = this.parseUuid(id, 'Draft is invalid');
+    const version = this.parseVersion(versionValue);
+    const existing = await this.findDraft(id);
+    if (existing.version !== version) throw new ConflictException('Draft was changed by another user');
+    const uploaded = await this.filesService.uploadFile(file, actor, 'image');
+
+    try {
+      const updated = await this.prisma.projectPresentationDraft.updateMany({
+        where: { id: draftId, version },
+        data: {
+          coverFileId: uploaded.file.id,
+          coverImageId: null,
+          version: { increment: 1 },
+        },
+      });
+      if (updated.count !== 1) throw new ConflictException('Draft was changed by another user');
+    } catch (error) {
+      await this.filesService.deleteUnlinkedFile(uploaded.file.id);
+      throw error;
+    }
+
+    if (existing.coverFileId && existing.coverFileId !== uploaded.file.id) {
+      await this.filesService.deleteUnlinkedFile(existing.coverFileId);
+    }
     return this.getDraft(draftId);
   }
 
@@ -237,58 +281,82 @@ export class ProjectPresentationsService {
 
   async deleteDraft(id: string) {
     const draftId = this.parseUuid(id, 'Draft is invalid');
-    const deleted = await this.prisma.projectPresentationDraft.deleteMany({ where: { id: draftId } });
-    if (deleted.count !== 1) throw new NotFoundException('Draft not found');
+    let deleted: { coverFileId: string | null };
+    try {
+      deleted = await this.prisma.projectPresentationDraft.delete({
+        where: { id: draftId },
+        select: { coverFileId: true },
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+        throw new NotFoundException('Draft not found');
+      }
+      throw error;
+    }
+    if (deleted.coverFileId) {
+      await this.filesService.deleteUnlinkedFile(deleted.coverFileId);
+    }
   }
 
   async createDocument(id: string, body: Record<string, unknown>, actor: AuthenticatedUser) {
-    const draft = await this.findDraft(id);
+    const draftId = this.parseUuid(id, 'Draft is invalid');
     const version = this.parseVersion(body.version);
-    if (draft.version !== version) throw new ConflictException('Draft was changed by another user');
-    if (draft.objects.length < 1 || draft.objects.length > PROJECT_PRESENTATION_MAX_OBJECTS) {
-      throw new BadRequestException(`Select from 1 to ${PROJECT_PRESENTATION_MAX_OBJECTS} projects`);
-    }
-    if (draft.objects.some((item) => item.object.status !== ObjectStatus.PUBLISHED || item.object.type !== RealEstateObjectType.RESIDENTIAL || item.object.deletedAt)) {
-      throw new BadRequestException('One or more projects are no longer available');
-    }
-    if (!draft.coverImageId) throw new BadRequestException('Select a cover image before generation');
-    this.ensureImageBelongsToDraft(draft, draft.coverImageId);
     const idempotencyKey = this.parseNullableString(body.idempotencyKey, 'Idempotency key', 80);
+    const requestedTitle = this.parseNullableString(body.title, 'Document title', 180);
     if (idempotencyKey) {
       const existing = await this.prisma.projectPresentationDocument.findUnique({
         where: { ownerUserId_idempotencyKey: { ownerUserId: actor.id, idempotencyKey } },
       });
       if (existing) return this.getDocument(existing.id);
     }
-    const title = this.parseNullableString(body.title, 'Document title', 180) ?? draft.title;
-    const snapshot = this.createSnapshot(draft, title);
-    const assets = this.collectSnapshotAssets(snapshot);
-    const document = await this.prisma.projectPresentationDocument.create({
-      data: {
-        ownerUserId: actor.id,
-        draftId: draft.id,
-        title,
-        templateVersion: draft.templateVersion,
-        snapshotVersion: PROJECT_PRESENTATION_SNAPSHOT_VERSION,
-        snapshotJson: snapshot as unknown as Prisma.InputJsonValue,
-        objectsCount: snapshot.objects.length,
-        idempotencyKey,
-        objects: {
-          create: snapshot.objects.map((object) => ({
-            objectId: object.sourceObjectId,
-            sourceObjectId: object.sourceObjectId,
-            sortOrder: object.sortOrder,
-          })),
+
+    const document = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "project_presentation_drafts" WHERE "id" = ${draftId}::uuid FOR SHARE`;
+      const draft = await tx.projectPresentationDraft.findUnique({
+        where: { id: draftId },
+        include: draftInclude,
+      });
+      if (!draft) throw new NotFoundException('Draft not found');
+      if (draft.version !== version) throw new ConflictException('Draft was changed by another user');
+      if (draft.objects.length < 1 || draft.objects.length > PROJECT_PRESENTATION_MAX_OBJECTS) {
+        throw new BadRequestException(`Select from 1 to ${PROJECT_PRESENTATION_MAX_OBJECTS} projects`);
+      }
+      if (draft.objects.some((item) => item.object.status !== ObjectStatus.PUBLISHED || item.object.type !== RealEstateObjectType.RESIDENTIAL || item.object.deletedAt)) {
+        throw new BadRequestException('One or more projects are no longer available');
+      }
+      if (!draft.coverFile && !draft.coverImageId) throw new BadRequestException('Select a cover image before generation');
+      if (!draft.coverFile && draft.coverImageId) this.ensureImageBelongsToDraft(draft, draft.coverImageId);
+      const title = requestedTitle ?? draft.title;
+      const snapshot = this.createSnapshot(draft, title);
+      const assets = this.collectSnapshotAssets(snapshot, draft.coverFileId);
+
+      return tx.projectPresentationDocument.create({
+        data: {
+          ownerUserId: actor.id,
+          draftId: draft.id,
+          title,
+          templateVersion: draft.templateVersion,
+          snapshotVersion: PROJECT_PRESENTATION_SNAPSHOT_VERSION,
+          snapshotJson: snapshot as unknown as Prisma.InputJsonValue,
+          objectsCount: snapshot.objects.length,
+          idempotencyKey,
+          objects: {
+            create: snapshot.objects.map((object) => ({
+              objectId: object.sourceObjectId,
+              sourceObjectId: object.sourceObjectId,
+              sortOrder: object.sortOrder,
+            })),
+          },
+          assets: {
+            create: assets.map((asset) => ({
+              fileId: asset.fileId,
+              sourceObjectId: asset.sourceObjectId,
+              role: asset.role,
+              sortOrder: asset.sortOrder,
+            })),
+          },
         },
-        assets: {
-          create: assets.map((asset) => ({
-            fileId: asset.fileId,
-            sourceObjectId: asset.sourceObjectId,
-            role: asset.role,
-            sortOrder: asset.sortOrder,
-          })),
-        },
-      },
+      });
     });
     return this.getDocument(document.id);
   }
@@ -331,8 +399,22 @@ export class ProjectPresentationsService {
     if (document.status === ProjectPresentationDocumentStatus.RUNNING) {
       throw new ConflictException('Running document cannot be deleted');
     }
-    await this.prisma.projectPresentationDocument.delete({ where: { id: document.id } });
-    if (document.fileId) await this.filesService.delete(document.fileId);
+    const customCoverAssets = await this.prisma.projectPresentationDocumentAsset.findMany({
+      where: { documentId: document.id, role: 'CUSTOM_COVER' },
+      select: { fileId: true },
+    });
+    const deleted = await this.prisma.projectPresentationDocument.deleteMany({
+      where: { id: document.id, status: { not: ProjectPresentationDocumentStatus.RUNNING } },
+    });
+    if (deleted.count !== 1) throw new ConflictException('Running document cannot be deleted');
+    const cleanupTasks: Array<Promise<unknown>> = [];
+    if (document.fileId) cleanupTasks.push(this.filesService.delete(document.fileId));
+    for (const fileId of new Set(customCoverAssets.map((asset) => asset.fileId))) {
+      cleanupTasks.push(this.filesService.deleteUnlinkedFile(fileId));
+    }
+    const cleanupResults = await Promise.allSettled(cleanupTasks);
+    const failedCleanup = cleanupResults.find((result) => result.status === 'rejected');
+    if (failedCleanup?.status === 'rejected') throw failedCleanup.reason;
   }
 
   private async findDraft(id: string) {
@@ -378,6 +460,11 @@ export class ProjectPresentationsService {
     });
     const allImages = draft.objects.flatMap((item) => item.object.images);
     const coverImage = (draft.coverImageId ? allImages.find((image) => image.id === draft.coverImageId) : null) ?? allImages[0] ?? null;
+    const coverSnapshotImage: ProjectPresentationSnapshotImage | null = draft.coverFile
+      ? { fileId: draft.coverFile.id, checksum: draft.coverFile.checksum, role: 'COVER', sortOrder: 0 }
+      : coverImage
+        ? { fileId: coverImage.fileId, checksum: coverImage.file.checksum, role: 'COVER', sortOrder: 0 }
+        : null;
     return {
       schemaVersion: 1,
       templateVersion: draft.templateVersion,
@@ -389,7 +476,7 @@ export class ProjectPresentationsService {
         subtitle: draft.coverSubtitle ?? '',
         clientName: draft.clientName ?? '',
         issueLabel: draft.issueLabel ?? '',
-        image: coverImage ? { fileId: coverImage.fileId, checksum: coverImage.file.checksum, role: 'COVER', sortOrder: 0 } : null,
+        image: coverSnapshotImage,
       },
       cta: { label: '@FluffyWhite', url: 'https://t.me/FluffyWhite' },
       broker: {
@@ -404,9 +491,15 @@ export class ProjectPresentationsService {
     };
   }
 
-  private collectSnapshotAssets(snapshot: ProjectPresentationSnapshotV1) {
-    const assets: Array<ProjectPresentationSnapshotImage & { sourceObjectId: string | null }> = [];
-    if (snapshot.cover.image) assets.push({ ...snapshot.cover.image, sourceObjectId: null });
+  private collectSnapshotAssets(snapshot: ProjectPresentationSnapshotV1, customCoverFileId: string | null) {
+    const assets: Array<Omit<ProjectPresentationSnapshotImage, 'role'> & { sourceObjectId: string | null; role: string }> = [];
+    if (snapshot.cover.image) {
+      assets.push({
+        ...snapshot.cover.image,
+        role: snapshot.cover.image.fileId === customCoverFileId ? 'CUSTOM_COVER' : 'COVER',
+        sourceObjectId: null,
+      });
+    }
     if (snapshot.broker.profilePhoto) assets.push({ ...snapshot.broker.profilePhoto, sourceObjectId: null });
     for (const object of snapshot.objects) {
       for (const image of object.images) assets.push({ ...image, sourceObjectId: object.sourceObjectId });
@@ -450,6 +543,8 @@ export class ProjectPresentationsService {
       clientName: draft.clientName,
       issueLabel: draft.issueLabel,
       coverImageId: draft.coverImageId,
+      coverFileId: draft.coverFileId,
+      coverFile: draft.coverFile ? this.filesService.serializeFile(draft.coverFile) : null,
       templateVersion: draft.templateVersion,
       version: draft.version,
       objectsCount: draft.objects.length,

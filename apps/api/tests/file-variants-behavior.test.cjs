@@ -135,6 +135,41 @@ test('FilesService.uploadFile creates WebP variants for uploaded images', async 
   }
 });
 
+test('FilesService.uploadFile removes stored objects when database persistence fails', async () => {
+  const storage = createStorageMock();
+  const prisma = {
+    file: {
+      create: async () => {
+        throw new Error('database unavailable');
+      },
+    },
+  };
+  const service = new FilesService(prisma, storage.service);
+
+  await assert.rejects(() => service.uploadFile(validImageUpload, actor, 'image'), /database unavailable/);
+
+  assert.deepEqual(
+    storage.deleted,
+    storage.uploaded.map((upload) => upload.key).reverse(),
+  );
+});
+
+test('FilesService.uploadFile rejects an image that exceeds 10 MiB by one byte', async () => {
+  const storage = createStorageMock();
+  const service = new FilesService({}, storage.service);
+  const oversizedImage = {
+    ...validImageUpload,
+    buffer: Buffer.alloc((10 * 1024 * 1024) + 1),
+    size: (10 * 1024 * 1024) + 1,
+  };
+
+  await assert.rejects(
+    () => service.uploadFile(oversizedImage, actor, 'image'),
+    (error) => error instanceof BadRequestException && /10485760 bytes/.test(error.message),
+  );
+  assert.equal(storage.uploaded.length, 0);
+});
+
 test('FilesService.delete removes image variants before deleting original object', async () => {
   const storage = createStorageMock();
   const deletedFileIds = [];

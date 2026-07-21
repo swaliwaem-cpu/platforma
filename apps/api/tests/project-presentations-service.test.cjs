@@ -76,6 +76,8 @@ function createSnapshotDraft() {
     clientName: 'Анна',
     issueLabel: 'Персональная подборка',
     coverImageId: secondImage.id,
+    coverFileId: null,
+    coverFile: null,
     templateVersion: 'project-catalog-4x5-v1',
     version: 7,
     owner: {
@@ -104,6 +106,9 @@ function createSnapshotDraft() {
         advantages: ['Рядом с парком', 'Закрытый двор'],
         imageIds: [secondImage.id, firstImage.id],
         object: {
+          status: 'PUBLISHED',
+          type: 'RESIDENTIAL',
+          deletedAt: null,
           title: 'Название из каталога 1',
           shortDescription: '<p>Описание из каталога</p>',
           description: null,
@@ -133,6 +138,9 @@ function createSnapshotDraft() {
         advantages: [],
         imageIds: [thirdImage.id],
         object: {
+          status: 'PUBLISHED',
+          type: 'RESIDENTIAL',
+          deletedAt: null,
           title: 'Второй ЖК',
           shortDescription: '<p>Каталожное <strong>описание</strong></p>',
           description: null,
@@ -259,6 +267,147 @@ test('snapshot freezes chosen order, manual content, image order, broker and Tel
   assert.equal(snapshot.objects[0].images[0].checksum, 'checksum-second');
 });
 
+test('custom cover file takes priority and is marked for safe lifecycle cleanup', () => {
+  const service = new ProjectPresentationsService({}, {});
+  const draft = createSnapshotDraft();
+  draft.coverFileId = uuid(204);
+  draft.coverFile = { id: uuid(204), checksum: 'checksum-custom-cover' };
+
+  const snapshot = service.createSnapshot(draft, 'PDF со своей обложкой');
+  const assets = service.collectSnapshotAssets(snapshot, draft.coverFileId);
+
+  assert.equal(snapshot.cover.image.fileId, uuid(204));
+  assert.equal(snapshot.cover.image.checksum, 'checksum-custom-cover');
+  assert.equal(assets.find((asset) => asset.fileId === uuid(204)).role, 'CUSTOM_COVER');
+});
+
+test('custom cover upload is versioned, replaces the previous file and clears catalog selection', async () => {
+  const calls = [];
+  const prisma = {
+    projectPresentationDraft: {
+      updateMany: async (args) => {
+        calls.push(['update', args]);
+        return { count: 1 };
+      },
+    },
+  };
+  const filesService = {
+    uploadFile: async (_file, _actor, kind) => {
+      calls.push(['upload', kind]);
+      return { file: { id: uuid(205) } };
+    },
+    deleteUnlinkedFile: async (fileId) => calls.push(['delete-unlinked-file', fileId]),
+  };
+  const service = new ProjectPresentationsService(prisma, filesService);
+  service.findDraft = async () => ({ version: 7, coverFileId: uuid(204) });
+  service.getDraft = async () => ({ draft: { id: uuid(1), coverFileId: uuid(205) } });
+
+  const response = await service.uploadDraftCover(
+    uuid(1),
+    '7',
+    { buffer: Buffer.from('image'), originalname: 'cover.jpg', mimetype: 'image/jpeg', size: 5 },
+    { id: uuid(2) },
+  );
+
+  assert.equal(response.draft.coverFileId, uuid(205));
+  assert.deepEqual(calls[0], ['upload', 'image']);
+  assert.deepEqual(calls[1][1], {
+    where: { id: uuid(1), version: 7 },
+    data: { coverFileId: uuid(205), coverImageId: null, version: { increment: 1 } },
+  });
+  assert.deepEqual(calls[2], ['delete-unlinked-file', uuid(204)]);
+});
+
+test('custom cover upload removes the new file when optimistic locking fails', async () => {
+  const calls = [];
+  const prisma = {
+    projectPresentationDraft: {
+      updateMany: async () => ({ count: 0 }),
+    },
+  };
+  const filesService = {
+    uploadFile: async () => ({ file: { id: uuid(205) } }),
+    deleteUnlinkedFile: async (fileId) => calls.push(fileId),
+  };
+  const service = new ProjectPresentationsService(prisma, filesService);
+  service.findDraft = async () => ({ version: 7, coverFileId: uuid(204) });
+
+  await assert.rejects(
+    () => service.uploadDraftCover(
+      uuid(1),
+      '7',
+      { buffer: Buffer.from('image'), originalname: 'cover.jpg', mimetype: 'image/jpeg', size: 5 },
+      { id: uuid(2) },
+    ),
+    (error) => error instanceof ConflictException,
+  );
+  assert.deepEqual(calls, [uuid(205)]);
+});
+
+test('draft deletion cleans the cover returned by the atomic delete', async () => {
+  const calls = [];
+  const prisma = {
+    projectPresentationDraft: {
+      delete: async (args) => {
+        calls.push(['delete-draft', args]);
+        return { coverFileId: uuid(205) };
+      },
+    },
+  };
+  const filesService = {
+    deleteUnlinkedFile: async (fileId) => calls.push(['delete-unlinked-file', fileId]),
+  };
+  const service = new ProjectPresentationsService(prisma, filesService);
+
+  await service.deleteDraft(uuid(1));
+
+  assert.deepEqual(calls, [
+    ['delete-draft', { where: { id: uuid(1) }, select: { coverFileId: true } }],
+    ['delete-unlinked-file', uuid(205)],
+  ]);
+});
+
+test('document snapshot locks the draft until the custom cover asset is linked', async () => {
+  const calls = [];
+  const draft = createSnapshotDraft();
+  draft.coverFileId = uuid(204);
+  draft.coverFile = { id: uuid(204), checksum: 'checksum-custom-cover' };
+  const tx = {
+    $queryRaw: async (strings) => calls.push(['lock', strings.join('')]),
+    projectPresentationDraft: {
+      findUnique: async () => {
+        calls.push(['read-draft']);
+        return draft;
+      },
+    },
+    projectPresentationDocument: {
+      create: async (args) => {
+        calls.push(['create-document', args]);
+        return { id: uuid(900) };
+      },
+    },
+  };
+  const prisma = {
+    $transaction: async (callback) => callback(tx),
+  };
+  const service = new ProjectPresentationsService(prisma, {});
+  service.getDocument = async (id) => ({ document: { id } });
+
+  const response = await service.createDocument(
+    draft.id,
+    { version: draft.version, title: 'Зафиксированный снимок' },
+    { id: uuid(2) },
+  );
+
+  assert.equal(response.document.id, uuid(900));
+  assert.match(calls[0][1], /FOR SHARE/u);
+  assert.deepEqual(calls.slice(0, 3).map(([name]) => name), ['lock', 'read-draft', 'create-document']);
+  assert.equal(
+    calls[2][1].data.assets.create.find((asset) => asset.fileId === uuid(204)).role,
+    'CUSTOM_COVER',
+  );
+});
+
 test('document history query is global for admins and serializes creator and status', async () => {
   let findManyArgs;
   const readyDocument = createDocumentRecord({
@@ -299,11 +448,18 @@ test('document deletion removes history and unlinked PDF but blocks a running jo
   const prisma = {
     projectPresentationDocument: {
       findUnique: async () => currentDocument,
-      delete: async ({ where }) => calls.push(['delete-record', where.id]),
+      deleteMany: async ({ where }) => {
+        calls.push(['delete-record', where.id]);
+        return { count: 1 };
+      },
+    },
+    projectPresentationDocumentAsset: {
+      findMany: async () => [],
     },
   };
   const filesService = {
     delete: async (fileId) => calls.push(['delete-file', fileId]),
+    deleteUnlinkedFile: async (fileId) => calls.push(['delete-unlinked-file', fileId]),
   };
   const service = new ProjectPresentationsService(prisma, filesService);
 
@@ -319,4 +475,97 @@ test('document deletion removes history and unlinked PDF but blocks a running jo
     ['delete-record', currentDocument.id],
     ['delete-file', uuid(950)],
   ]);
+});
+
+test('document deletion releases a custom cover after snapshot assets are removed', async () => {
+  const calls = [];
+  const currentDocument = createDocumentRecord({
+    status: ProjectPresentationDocumentStatus.READY,
+    fileId: null,
+  });
+  const prisma = {
+    projectPresentationDocument: {
+      findUnique: async () => currentDocument,
+      deleteMany: async ({ where }) => {
+        calls.push(['delete-record', where.id]);
+        return { count: 1 };
+      },
+    },
+    projectPresentationDocumentAsset: {
+      findMany: async () => [{ fileId: uuid(204) }, { fileId: uuid(204) }],
+    },
+  };
+  const filesService = {
+    deleteUnlinkedFile: async (fileId) => calls.push(['delete-unlinked-file', fileId]),
+  };
+  const service = new ProjectPresentationsService(prisma, filesService);
+
+  await service.deleteDocument(currentDocument.id);
+
+  assert.deepEqual(calls, [
+    ['delete-record', currentDocument.id],
+    ['delete-unlinked-file', uuid(204)],
+  ]);
+});
+
+test('document deletion still releases a custom cover when PDF cleanup fails', async () => {
+  const calls = [];
+  const currentDocument = createDocumentRecord({
+    status: ProjectPresentationDocumentStatus.READY,
+    fileId: uuid(950),
+  });
+  const prisma = {
+    projectPresentationDocument: {
+      findUnique: async () => currentDocument,
+      deleteMany: async ({ where }) => {
+        calls.push(['delete-record', where.id]);
+        return { count: 1 };
+      },
+    },
+    projectPresentationDocumentAsset: {
+      findMany: async () => [{ fileId: uuid(204) }],
+    },
+  };
+  const filesService = {
+    delete: async (fileId) => {
+      calls.push(['delete-file', fileId]);
+      throw new Error('storage unavailable');
+    },
+    deleteUnlinkedFile: async (fileId) => calls.push(['delete-unlinked-file', fileId]),
+  };
+  const service = new ProjectPresentationsService(prisma, filesService);
+
+  await assert.rejects(() => service.deleteDocument(currentDocument.id), /storage unavailable/);
+  assert.deepEqual(calls, [
+    ['delete-record', currentDocument.id],
+    ['delete-file', uuid(950)],
+    ['delete-unlinked-file', uuid(204)],
+  ]);
+});
+
+test('document deletion loses the race when a pending worker starts running', async () => {
+  const calls = [];
+  const currentDocument = createDocumentRecord({
+    status: ProjectPresentationDocumentStatus.PENDING,
+    fileId: null,
+  });
+  const prisma = {
+    projectPresentationDocument: {
+      findUnique: async () => currentDocument,
+      deleteMany: async () => ({ count: 0 }),
+    },
+    projectPresentationDocumentAsset: {
+      findMany: async () => [{ fileId: uuid(204) }],
+    },
+  };
+  const filesService = {
+    deleteUnlinkedFile: async (fileId) => calls.push(fileId),
+  };
+  const service = new ProjectPresentationsService(prisma, filesService);
+
+  await assert.rejects(
+    () => service.deleteDocument(currentDocument.id),
+    (error) => error instanceof ConflictException && /Running document/.test(error.message),
+  );
+  assert.deepEqual(calls, []);
 });

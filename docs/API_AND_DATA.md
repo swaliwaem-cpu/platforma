@@ -268,13 +268,14 @@ Feed import warning: separate `POST /feed-import/preview` and `POST /feed-import
 | `GET/POST /project-presentations/drafts` | Общий для администраторов список и создание черновика |
 | `GET/PATCH/DELETE /project-presentations/drafts/:draftId` | Чтение, optimistic update и удаление черновика |
 | `PUT /project-presentations/drafts/:draftId/objects` | Полная замена и порядка 0–12 выбранных объектов |
+| `POST /project-presentations/drafts/:draftId/cover` | Versioned multipart-загрузка собственной обложки (`file`, `version`), JPEG/PNG/WebP до 10 МБ |
 | `POST /project-presentations/drafts/:draftId/documents` | Snapshot и постановка PDF в очередь; ответ `202 Accepted` |
 | `GET /project-presentations/documents` | История документов с фильтрацией статуса |
 | `GET/DELETE /project-presentations/documents/:documentId` | Статус/прогресс и удаление документа |
 | `POST /project-presentations/documents/:documentId/retry` | Повтор failed generation в пределах лимита попыток |
 | `GET /project-presentations/documents/:documentId/content` | Защищённая загрузка готового PDF с UTF-8 filename |
 
-- `ProjectPresentationDraft` хранит владельца-брокера, поля обложки, cover image, `version` и ordered items.
+- `ProjectPresentationDraft` хранит владельца-брокера, поля обложки, выбранный `ObjectImage` либо собственный `coverFile`, `version` и ordered items.
 - `ProjectPresentationDraftObject` хранит ручные override-поля, до трёх преимуществ и до трёх выбранных image ids.
 - `ProjectPresentationDocument` хранит template/snapshot version, JSON snapshot, статус, progress, attempt count, ошибку и ссылку на готовый `File`.
 - `ProjectPresentationDocumentObject` и `ProjectPresentationDocumentAsset` фиксируют состав и checksums исходных файлов для аудита snapshot.

@@ -62,6 +62,23 @@ export function replaceProjectPresentationObjects(
   );
 }
 
+export function uploadProjectPresentationCover(
+  accessToken: string,
+  draftId: string,
+  version: number,
+  file: File,
+) {
+  const formData = new FormData();
+  formData.append('version', String(version));
+  formData.append('file', file);
+
+  return apiRequest<ProjectPresentationDraftResponse>(
+    `${basePath}/drafts/${encodeURIComponent(draftId)}/cover`,
+    accessToken,
+    { method: 'POST', body: formData },
+  );
+}
+
 export function deleteProjectPresentationDraft(accessToken: string, draftId: string) {
   return apiRequest(`${basePath}/drafts/${encodeURIComponent(draftId)}`, accessToken, { method: 'DELETE' });
 }
