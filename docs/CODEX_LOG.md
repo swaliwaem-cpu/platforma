@@ -22,6 +22,16 @@
 - `pnpm --filter @platforma/web test` - 277/277 passed.
 - `pnpm build:web` - passed; сохранён прежний Vite warning о размере основного chunk.
 
+Production deploy:
+
+- Commit `8e738a7` отправлен в `origin/on-ser`; production `/opt/platforma` fast-forwarded с `71600c3` до `8e738a7`.
+- Перед деплоем создан и проверен PostgreSQL custom dump `/opt/platforma-deploy-backups/predeploy-20260722T115216Z-71600c3-presentation-access/database.dump` размером 49 139 286 bytes с SHA-256 `045c960653473a53b53a0cb4e21279719707e80f53807340b6a0bd13a27fb334`.
+- Сохранены rollback images `platforma-api:pre-deploy-20260722T115216Z-71600c3-presentation-access` (`sha256:789ce7b0...`) и `platforma-web:pre-deploy-20260722T115216Z-71600c3-presentation-access` (`sha256:dc217895...`).
+- Пересобраны и пересозданы только production-сервисы `api` и `web`; PostgreSQL, Redis и MinIO не пересоздавались.
+- В production API image пройдены access-регрессии 38/38; web bundle содержит новый authenticated-access текст и не содержит прежний admin email.
+- Production `api` healthy; локальный и публичный `/health` вернули `status=ok`, `database=ok`, `postgis=true`; `/` и `/presentations/projects` вернули HTTP 200.
+- Неавторизованные запросы к `/api/lot-presentations/workspace` и `/api/project-presentations/drafts` вернули HTTP 401; 32 migrations актуальны, стартовые логи без ошибок.
+
 Ручная проверка:
 
 - В production войти под ролями admin/editor/user и проверить `/presentations`, `/presentations/projects`, создание и скачивание PDF.
