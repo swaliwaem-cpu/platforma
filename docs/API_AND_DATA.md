@@ -260,12 +260,12 @@ Feed import warning: separate `POST /feed-import/preview` and `POST /feed-import
 
 Дата добавления: 2026-07-20.
 
-Все endpoints используют `JwtAuthGuard` и `ProjectPresentationsAdminGuard`. В development guard пропускает любого авторизованного пользователя; в production доступ определяется точной ролью `admin`, а не отдельным permission.
+Все endpoints используют `JwtAuthGuard` и `ProjectPresentationsAdminGuard`. Дополнительный guard больше не фильтрует роли или email: во всех окружениях endpoints доступны любому авторизованному пользователю, а запрос без JWT отклоняется `JwtAuthGuard`.
 
 | Endpoint | Назначение |
 | --- | --- |
 | `GET /project-presentations/objects` | Поиск и пагинация опубликованных жилых объектов, доступных редактору |
-| `GET/POST /project-presentations/drafts` | Общий для администраторов список и создание черновика |
+| `GET/POST /project-presentations/drafts` | Общий для авторизованных пользователей список и создание черновика |
 | `GET/PATCH/DELETE /project-presentations/drafts/:draftId` | Чтение, optimistic update и удаление черновика |
 | `PUT /project-presentations/drafts/:draftId/objects` | Полная замена и порядка 0–12 выбранных объектов |
 | `POST /project-presentations/drafts/:draftId/cover` | Versioned multipart-загрузка собственной обложки (`file`, `version`), JPEG/PNG/WebP до 10 МБ |

@@ -119,7 +119,7 @@ test('migration creates project presentation enum, tables, indexes and archival 
   );
 });
 
-test('API registers the feature with JWT, local bypass and production admin role', () => {
+test('API registers the feature with JWT and authenticated-role access', () => {
   assert.match(
     appModule,
     /import \{ ProjectPresentationsModule \} from '\.\/project-presentations\/project-presentations\.module';/,
@@ -135,10 +135,8 @@ test('API registers the feature with JWT, local bypass and production admin role
     controller,
     /@UseGuards\(JwtAuthGuard, ProjectPresentationsAdminGuard\)/,
   );
-  assert.match(guard, /process\.env\.NODE_ENV !== 'production'/);
-  assert.match(guard, /request\.user\?\.role\.name !== 'admin'/);
-  assert.match(guard, /throw new ForbiddenException/);
-  assert.doesNotMatch(guard, /localhost|127\.0\.0\.1|email/);
+  assert.match(guard, /const request = context\.switchToHttp\(\)\.getRequest<RequestWithAuth>\(\);[\s\S]*return Boolean\(request\.user\);/);
+  assert.doesNotMatch(guard, /NODE_ENV|ForbiddenException|localhost|127\.0\.0\.1|email|role\.name/);
 });
 
 test('API exposes catalog, draft editor, async PDF history, retry, download and deletion routes', () => {
@@ -170,7 +168,7 @@ test('API exposes catalog, draft editor, async PDF history, retry, download and 
   assert.match(controller, /@HttpCode\(HttpStatus\.NO_CONTENT\)/);
 });
 
-test('all admins see common draft and PDF history while responses retain creator identity', () => {
+test('all authenticated users see common draft and PDF history while responses retain creator identity', () => {
   assert.match(
     service,
     /async listDrafts\(\)[\s\S]*projectPresentationDraft\.findMany\(\{[\s\S]*include: draftInclude,[\s\S]*orderBy: \{ updatedAt: 'desc' \}/,

@@ -17,21 +17,19 @@ const styles = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
 
 test('lot presentations route is available from sidebar and cabinet navigation', () => {
   assert.match(appSource, /import \{ LotPresentationsPage \} from '\.\/presentations\/LotPresentationsPage';/);
-  assert.match(appSource, /import \{ MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL, canAccessLotPresentations \} from '\.\/presentations\/presentationAccess';/);
+  assert.match(appSource, /import \{ canAccessLotPresentations, canAccessProjectPresentations \} from '\.\/presentations\/presentationAccess';/);
   assert.match(appSource, /type AppSection = 'cabinet' \| 'catalog' \| 'presentations' \| 'admin';/);
-  assert.match(accessSource, /export const MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL = 'admin@fluffywhite\.moscow';/);
-  assert.match(accessSource, /const localHostnames = new Set\(\['localhost', '127\.0\.0\.1', '::1', '\[::1\]'\]\);/);
-  assert.match(accessSource, /export function canAccessLotPresentations\([\s\S]*hostname = window\.location\.hostname/);
-  assert.match(accessSource, /if \(!user\) \{[\s\S]*return false;/);
-  assert.match(accessSource, /import\.meta\.env\.DEV \|\|[\s\S]*localHostnames\.has\(hostname\.trim\(\)\.toLowerCase\(\)\)[\s\S]*user\.email\.trim\(\)\.toLowerCase\(\) === MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL/);
-  assert.match(appSource, /id:\s*'presentations'[\s\S]*label:\s*'Подборки'[\s\S]*path:\s*'\/presentations'[\s\S]*requiredPermissions:\s*\[\][\s\S]*requiredUserEmail:\s*MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL/);
-  assert.match(appSource, /id:\s*'presentations'[\s\S]*label:\s*'Подборки лотов'[\s\S]*group:\s*'Презентации'[\s\S]*path:\s*'\/presentations'[\s\S]*requiredPermissions:\s*\[\][\s\S]*requiredUserEmail:\s*MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL/);
+  assert.match(accessSource, /export function canAccessLotPresentations\([\s\S]*Pick<AuthUser, 'id'>[\s\S]*return Boolean\(user\);/);
+  assert.doesNotMatch(accessSource, /admin@fluffywhite\.moscow|localHostnames|import\.meta\.env\.DEV/);
+  assert.match(appSource, /id:\s*'presentations'[\s\S]*label:\s*'Подборки'[\s\S]*path:\s*'\/presentations'[\s\S]*requiredPermissions:\s*\[\]/);
+  assert.match(appSource, /id:\s*'presentations'[\s\S]*label:\s*'Подборки лотов'[\s\S]*group:\s*'Презентации'[\s\S]*path:\s*'\/presentations'[\s\S]*requiredPermissions:\s*\[\]/);
+  assert.doesNotMatch(appSource, /MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL|requiredUserEmail/);
   assert.match(appSource, /pathname\.startsWith\('\/presentations'\)[\s\S]*\? 'presentations'/);
   assert.match(appSource, /pathname\.startsWith\('\/presentations\/'\)/);
   assert.match(appSource, /activeSection === 'presentations' \? \([\s\S]*canAccessLotPresentations\(user\) \? \([\s\S]*<LotPresentationsPage navigate=\{navigate\} \/>[\s\S]*\) : \([\s\S]*<AccessDenied \/>/);
-  assert.match(appSource, /navItems\.filter\(\(item\) => canAccessNavigationItem\(user, hasPermission, item\)\)/);
+  assert.match(appSource, /navItems\.filter\(\(item\) => canAccessNavigationItem\(hasPermission, item\)\)/);
   assert.match(appSource, /return cabinetSections\.filter\(\(section\) => canAccessCabinetSection\(user, section\)\);/);
-  assert.match(appSource, /requiredUserEmail === MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL[\s\S]*return canAccessLotPresentations\(user\);/);
+  assert.match(appSource, /function canAccessNavigationItem[\s\S]*return canAccessPermissions\(hasPermission, item\.requiredPermissions\);/);
 });
 
 test('cabinet profile stores broker contacts used by PDFs', () => {

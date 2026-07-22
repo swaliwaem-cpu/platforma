@@ -17,15 +17,14 @@ const editorSource = source('presentations/projects/ProjectPresentationEditorPag
 const previewSource = source('presentations/projects/ProjectPresentationPreview.tsx');
 const styles = source('presentations/projects/projectPresentations.css');
 
-test('list, new draft and editor routes use local bypass with production admin access', () => {
+test('list, new draft and editor routes are available to every authenticated role', () => {
   const projectAccessBody = accessSource.match(
     /export function canAccessProjectPresentations[\s\S]*?\n\}/,
   )?.[0] ?? '';
 
-  assert.match(projectAccessBody, /user\?\.role\.name\.trim\(\)\.toLowerCase\(\) === 'admin'/);
-  assert.match(projectAccessBody, /import\.meta\.env\.DEV/);
-  assert.match(projectAccessBody, /localHostnames\.has\(hostname\.trim\(\)\.toLowerCase\(\)\)/);
-  assert.doesNotMatch(projectAccessBody, /email/);
+  assert.match(projectAccessBody, /Pick<AuthUser, 'id'>/);
+  assert.match(projectAccessBody, /return Boolean\(user\);/);
+  assert.doesNotMatch(projectAccessBody, /hostname|import\.meta\.env\.DEV|role|email|admin/);
   assert.match(appSource, /function parseProjectPresentationRoute\(pathname: string\)/);
   assert.match(appSource, /kind: 'list' as const/);
   assert.match(appSource, /kind: 'new' as const/);

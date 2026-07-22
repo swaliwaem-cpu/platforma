@@ -161,7 +161,7 @@
 
 | Risk | Files | Required checks |
 | --- | --- | --- |
-| Environment access boundary | `apps/api/src/project-presentations/project-presentations-admin.guard.ts`, `apps/web/src/presentations/presentationAccess.ts`, `apps/web/src/App.tsx` | Локально проверить доступ non-admin; с `NODE_ENV=production` проверить запрет non-admin и доступ admin; frontend visibility не заменяет backend guard |
+| Authenticated access boundary | `apps/api/src/project-presentations/project-presentations-admin.guard.ts`, `apps/api/src/lot-presentations/lot-presentations-access.guard.ts`, `apps/web/src/presentations/presentationAccess.ts`, `apps/web/src/App.tsx` | Проверить доступ ролей admin/editor/user в production и обязательный 401 без JWT; frontend visibility не заменяет backend `JwtAuthGuard` |
 | Snapshot correctness | `apps/api/src/project-presentations/project-presentations.service.ts`, `project-presentations.types.ts` | После постановки изменить черновик/объект и убедиться, что document snapshot и PDF не изменились |
 | Worker recovery and retry | `project-presentations-worker.service.ts` | Проверить restart на `PENDING/RUNNING`, CAS claim, failure progress и лимит retry |
 | Storage lifecycle | `project-presentations.service.ts`, `project-presentations-pdf.service.ts`, `apps/api/src/files/files.service.ts` | Проверить missing source file, custom cover upload/replace, лимит 10 МБ, переключение на фото ЖК, удаление draft/document и отсутствие orphan File/object |

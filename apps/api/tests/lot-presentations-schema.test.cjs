@@ -545,18 +545,14 @@ test('lot presentation API is guarded, registered and exposes collection/documen
   assert.match(dockerfile, /COPY _Fluffy_White_1-02\.svg \.\/_Fluffy_White_1-02\.svg/);
 });
 
-test('lot presentation access guard opens local API and restricts production by admin email', () => {
+test('lot presentation access guard allows every authenticated role', () => {
   assert.ok(fs.existsSync(accessGuardPath), 'lot presentation access guard file should exist');
 
   const guard = readProjectFile(accessGuardPath);
 
   assert.match(guard, /@Injectable\(\)[\s\S]*export class LotPresentationsAccessGuard implements CanActivate/);
-  assert.match(guard, /ForbiddenException/);
-  assert.match(guard, /const allowedEmail = 'admin@fluffywhite\.moscow';/);
-  assert.match(guard, /process\.env\.NODE_ENV !== 'production'[\s\S]*return true;/);
-  assert.match(guard, /request\.user\.email/);
-  assert.match(guard, /\.trim\(\)\.toLowerCase\(\)/);
-  assert.match(guard, /email !== allowedEmail[\s\S]*throw new ForbiddenException/);
+  assert.match(guard, /const request = context\.switchToHttp\(\)\.getRequest<RequestWithAuth>\(\);[\s\S]*return Boolean\(request\.user\);/);
+  assert.doesNotMatch(guard, /ForbiddenException|NODE_ENV|allowedEmail|admin@fluffywhite\.moscow/);
 });
 
 test('lot presentation API exposes workspace and item comment routes', () => {

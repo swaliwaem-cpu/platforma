@@ -10,11 +10,9 @@ const previewSource = await readFile(new URL('../src/presentations/projects/Proj
 const stateSource = await readFile(new URL('../src/presentations/projects/projectPresentationState.ts', import.meta.url), 'utf8');
 const stylesSource = await readFile(new URL('../src/presentations/projects/projectPresentations.css', import.meta.url), 'utf8');
 
-test('project presentation routes allow localhost and keep production admin restriction', () => {
-  assert.match(accessSource, /canAccessProjectPresentations[\s\S]*hostname = window\.location\.hostname/u);
-  assert.match(accessSource, /import\.meta\.env\.DEV/u);
-  assert.match(accessSource, /localHostnames\.has\(hostname\.trim\(\)\.toLowerCase\(\)\)/u);
-  assert.match(accessSource, /canAccessProjectPresentations[\s\S]*role\.name\.trim\(\)\.toLowerCase\(\) === 'admin'/u);
+test('project presentation routes are available to every authenticated role', () => {
+  assert.match(accessSource, /canAccessProjectPresentations[\s\S]*Pick<AuthUser, 'id'>[\s\S]*return Boolean\(user\);/u);
+  assert.doesNotMatch(accessSource, /hostname|import\.meta\.env\.DEV|role\.name|admin@fluffywhite\.moscow/u);
   assert.match(appSource, /\/presentations\/projects/u);
   assert.match(appSource, /ProjectPresentationsPage/u);
   assert.match(appSource, /ProjectPresentationEditorPage/u);

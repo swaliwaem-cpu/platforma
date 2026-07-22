@@ -182,11 +182,11 @@ Seeded permission names and role defaults: `apps/api/prisma/seed.ts`.
 
 | Route | Entry component | Permissions | API consumers | Основные состояния |
 | --- | --- | --- | --- | --- |
-| `/presentations/projects` | `ProjectPresentationsPage` | Локально — любой authenticated user; production — только роль `admin` через frontend helper и `ProjectPresentationsAdminGuard` | drafts/documents list, delete, retry, download | loading, empty, ready, queued/running, failed |
-| `/presentations/projects/new` | `ProjectPresentationEditorPage` | Локально — authenticated user; production — только `admin` | catalog objects, create/update draft, replace ordered objects, generate document | empty draft, autosave, validation, version conflict, generation |
-| `/presentations/projects/:draftId` | `ProjectPresentationEditorPage` | Локально — authenticated user; production — только `admin` | same endpoints plus draft load | loading, editing, autosave, preview, conflict, not found |
+| `/presentations/projects` | `ProjectPresentationsPage` | Любой authenticated user во всех окружениях | drafts/documents list, delete, retry, download | loading, empty, ready, queued/running, failed |
+| `/presentations/projects/new` | `ProjectPresentationEditorPage` | Любой authenticated user во всех окружениях | catalog objects, create/update draft, replace ordered objects, generate document | empty draft, autosave, validation, version conflict, generation |
+| `/presentations/projects/:draftId` | `ProjectPresentationEditorPage` | Любой authenticated user во всех окружениях | same endpoints plus draft load | loading, editing, autosave, preview, conflict, not found |
 
-- Существующий `/presentations` для PDF по лотам сохранён; в его шапке под «Созданные PDF» есть кнопка «Презентации ЖК». На localhost пункт меню презентаций также ведёт в `/presentations/projects` для любого авторизованного пользователя.
+- Существующий `/presentations` для PDF по лотам сохранён и доступен всем авторизованным ролям; в его шапке под «Созданные PDF» есть кнопка «Презентации ЖК». Пункт меню презентаций во всех окружениях ведёт в `/presentations/projects`.
 - Маршруты распознаются ручным роутером в `apps/web/src/App.tsx`; parser находится в `parseProjectPresentationRoute()`.
 - Редактор и список находятся в `apps/web/src/presentations/projects`, стили изолированы в `projectPresentations.css`.
 - Редактор построен как свободно доступные этапы `Выбор ЖК → Карточки → Обложка → Проверка`: каталог встроен в первый этап, карточки ЖК свёрнуты в accordion, а ошибки финальной проверки ведут к нужному полю.

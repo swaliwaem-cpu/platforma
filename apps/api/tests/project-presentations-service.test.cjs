@@ -4,7 +4,6 @@ const test = require('node:test');
 const {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
 } = require('@nestjs/common');
 const { ProjectPresentationDocumentStatus } = require('@prisma/client');
 const {
@@ -159,23 +158,21 @@ function createSnapshotDraft() {
   };
 }
 
-test('admin guard allows local development and keeps exact admin role in production', () => {
+test('presentation guard allows every authenticated role in every environment', () => {
   const guard = new ProjectPresentationsAdminGuard();
   const previousNodeEnv = process.env.NODE_ENV;
 
   try {
-    process.env.NODE_ENV = 'development';
-    for (const roleName of ['admin', 'broker', 'manager', null]) {
-      assert.equal(guard.canActivate(createContext(roleName)), true);
+    for (const nodeEnv of ['development', 'production']) {
+      process.env.NODE_ENV = nodeEnv;
+      for (const roleName of ['admin', 'ADMIN', 'broker', 'manager', 'user']) {
+        assert.equal(guard.canActivate(createContext(roleName)), true);
+      }
     }
 
-    process.env.NODE_ENV = 'production';
-    assert.equal(guard.canActivate(createContext('admin')), true);
-    for (const roleName of ['ADMIN', 'broker', 'manager', null]) {
-      assert.throws(
-        () => guard.canActivate(createContext(roleName)),
-        (error) => error instanceof ForbiddenException,
-      );
+    for (const nodeEnv of ['development', 'production']) {
+      process.env.NODE_ENV = nodeEnv;
+      assert.equal(guard.canActivate(createContext(null)), false);
     }
   } finally {
     if (previousNodeEnv === undefined) {
@@ -408,7 +405,7 @@ test('document snapshot locks the draft until the custom cover asset is linked',
   );
 });
 
-test('document history query is global for admins and serializes creator and status', async () => {
+test('document history query is global for authenticated users and serializes creator and status', async () => {
   let findManyArgs;
   const readyDocument = createDocumentRecord({
     status: ProjectPresentationDocumentStatus.READY,

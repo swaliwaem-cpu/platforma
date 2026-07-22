@@ -170,7 +170,7 @@ function NewProjectPresentationPage({ navigate }: Pick<ProjectPresentationEditor
       <Card className="project-presentation-new-card">
         <CardHeader>
           <CardTitle>Название черновика</CardTitle>
-          <CardDescription>Его увидят администраторы в общем списке.</CardDescription>
+          <CardDescription>Его увидят авторизованные пользователи в общем списке.</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit}>

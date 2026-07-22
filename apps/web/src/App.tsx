@@ -15,8 +15,7 @@ import { CatalogPage } from './catalog/CatalogPage';
 import { buildMediaFileContentUrl } from './files/SecureImage';
 import { ObjectDetailPage, ObjectLotDetailPage } from './objects/ObjectDetailPage';
 import { LotPresentationsPage } from './presentations/LotPresentationsPage';
-import { MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL, canAccessLotPresentations } from './presentations/presentationAccess';
-import { canAccessProjectPresentations } from './presentations/presentationAccess';
+import { canAccessLotPresentations, canAccessProjectPresentations } from './presentations/presentationAccess';
 import { ProjectPresentationEditorPage } from './presentations/projects/ProjectPresentationEditorPage';
 import { ProjectPresentationsPage } from './presentations/projects/ProjectPresentationsPage';
 import { getAppliedAppTheme, getNextAppTheme, setAppTheme } from './appTheme';
@@ -36,7 +35,6 @@ type NavItem = {
   path: string;
   section: AppSection;
   requiredPermissions: readonly string[];
-  requiredUserEmail?: string;
   children?: readonly NavChildItem[];
 };
 type CabinetSection = {
@@ -45,7 +43,6 @@ type CabinetSection = {
   group: string;
   path: string;
   requiredPermissions: readonly string[];
-  requiredUserEmail?: string;
 };
 
 const userStatusLabels: Record<UserStatus, string> = {
@@ -93,7 +90,6 @@ const navItems: readonly NavItem[] = [
     path: '/presentations',
     section: 'presentations',
     requiredPermissions: [],
-    requiredUserEmail: MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL,
   },
   {
     id: 'admin',
@@ -132,7 +128,6 @@ const cabinetSections = [
     group: 'Презентации',
     path: '/presentations',
     requiredPermissions: [],
-    requiredUserEmail: MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL,
   },
   {
     id: 'admin-objects',
@@ -290,7 +285,7 @@ function AppRoutes() {
   const objectLotRoute = parseObjectLotRoute(pathname);
   const objectSlug = objectLotRoute ? null : parseObjectSlug(pathname);
   const projectPresentationRoute = parseProjectPresentationRoute(pathname);
-  const visibleNavItems = navItems.filter((item) => canAccessNavigationItem(user, hasPermission, item));
+  const visibleNavItems = navItems.filter((item) => canAccessNavigationItem(hasPermission, item));
 
   return (
     <main className="app-shell">
@@ -1311,22 +1306,6 @@ function canAccessPermissions(
   return requiredPermissions.every((permission) => hasPermission(permission));
 }
 
-function canAccessRequiredUserEmail(user: AuthUser, requiredUserEmail: string | undefined) {
-  if (!requiredUserEmail) {
-    return true;
-  }
-
-  if (requiredUserEmail === MAIN_LOT_PRESENTATIONS_ADMIN_EMAIL) {
-    if (canAccessProjectPresentations(user)) {
-      return true;
-    }
-
-    return canAccessLotPresentations(user);
-  }
-
-  return user.email.trim().toLowerCase() === requiredUserEmail;
-}
-
 function getNavigationPath(user: AuthUser, item: NavItem) {
   return item.id === 'presentations' && canAccessProjectPresentations(user)
     ? '/presentations/projects'
@@ -1339,21 +1318,14 @@ function getCabinetSectionPath(user: AuthUser, section: CabinetSection) {
     : section.path;
 }
 
-function canAccessNavigationItem(
-  user: AuthUser,
-  hasPermission: (permission: string) => boolean,
-  item: Pick<NavItem, 'requiredPermissions' | 'requiredUserEmail'>,
-) {
-  return canAccessRequiredUserEmail(user, item.requiredUserEmail) && canAccessPermissions(hasPermission, item.requiredPermissions);
+function canAccessNavigationItem(hasPermission: (permission: string) => boolean, item: Pick<NavItem, 'requiredPermissions'>) {
+  return canAccessPermissions(hasPermission, item.requiredPermissions);
 }
 
 function canAccessCabinetSection(user: AuthUser, section: CabinetSection) {
   const permissions = new Set(user.permissions);
 
-  return (
-    canAccessRequiredUserEmail(user, section.requiredUserEmail) &&
-    section.requiredPermissions.every((permission) => permissions.has(permission))
-  );
+  return section.requiredPermissions.every((permission) => permissions.has(permission));
 }
 
 function getAvailableCabinetSections(user: AuthUser) {

@@ -445,15 +445,15 @@
 
 Дата добавления: 2026-07-20.
 
-- Назначение: администратор вручную выбирает до 12 опубликованных жилых комплексов, задаёт обложку и точечные переопределения, сохраняет черновик и асинхронно получает PDF согласованного формата 4:5.
+- Назначение: авторизованный пользователь вручную выбирает до 12 опубликованных жилых комплексов, задаёт обложку и точечные переопределения, сохраняет черновик и асинхронно получает PDF согласованного формата 4:5.
 - Frontend: `apps/web/src/presentations/projects`, маршруты и menu routing в `apps/web/src/App.tsx`, access helper в `apps/web/src/presentations/presentationAccess.ts`.
 - Backend: `apps/api/src/project-presentations`, регистрация в `apps/api/src/app.module.ts`.
-- Access boundary: на localhost/development раздел доступен любому авторизованному пользователю; в production frontend и backend требуют точную роль `admin`. `JwtAuthGuard` остаётся обязательным во всех окружениях.
+- Access boundary: во всех окружениях frontend показывает раздел любому авторизованному пользователю, а backend допускает все роли после обязательного `JwtAuthGuard`; неавторизованный доступ закрыт.
 - PDF assets: `apps/api/assets/project-presentations/telegram-qr.png`; Telegram CTA и QR ведут на `https://t.me/FluffyWhite`.
 - Shared contracts: `ProjectPresentation*` в `packages/shared/src/index.ts`.
 - Prisma models: `ProjectPresentationDraft`, `ProjectPresentationDraftObject`, `ProjectPresentationDocument`, `ProjectPresentationDocumentObject`, `ProjectPresentationDocumentAsset`; migration `20260720120000_add_project_presentations`.
 - Catalog boundary: выборка включает только `PUBLISHED`, не удалённые объекты категории `RESIDENTIAL`. Источники изображений валидируются по текущим связям объекта.
-- Draft semantics: все администраторы видят все черновики; черновик может быть пустым, но генерация требует 1–12 объектов и обложку. `version` используется для optimistic locking.
+- Draft semantics: все авторизованные пользователи видят общий список черновиков; черновик может быть пустым, но генерация требует 1–12 объектов и обложку. `version` используется для optimistic locking.
 - Cover upload: обложкой может быть как `ObjectImage` выбранного ЖК, так и собственный `File`, привязанный через `ProjectPresentationDraft.coverFileId`; `POST /project-presentations/drafts/:draftId/cover` принимает JPEG/PNG/WebP до 10 МБ и участвует в optimistic versioning.
 - Document semantics: при запуске фиксируется неизменяемый snapshot данных, изображений и контактов владельца черновика. Удаление черновика не удаляет ранее созданные документы.
 - Queue: статусы `PENDING`, `RUNNING`, `READY`, `FAILED`; DB-backed worker восстанавливает зависшие задания, хранит progress и поддерживает ручной retry до трёх попыток.

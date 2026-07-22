@@ -1,5 +1,36 @@
 # Codex Log
 
+## 2026-07-22 - Authenticated access to lot and project PDF presentations
+
+Задача:
+
+- Открыть генерацию PDF из лотов и презентации ЖК для всех авторизованных ролей.
+- Сохранить обязательную JWT-авторизацию и закрытый доступ для гостей.
+
+Изменения:
+
+- `apps/web/src/presentations/presentationAccess.ts`, `apps/web/src/App.tsx` - удалены production-проверки email/роли и localhost bypass; оба раздела и навигация доступны любому `AuthUser`.
+- `apps/api/src/lot-presentations/lot-presentations-access.guard.ts`, `apps/api/src/project-presentations/project-presentations-admin.guard.ts` - guards больше не фильтруют email, роль или окружение и допускают любого пользователя, уже прошедшего `JwtAuthGuard`.
+- Текст общего списка презентаций ЖК и регрессии frontend/API обновлены под общий authenticated access.
+- `docs/FEATURE_MAP.md`, `docs/API_AND_DATA.md`, `docs/PAGES_AND_ROUTES.md`, `docs/RISK_ZONES.md` синхронизированы с новой границей доступа.
+
+Проверки:
+
+- Targeted frontend/API access tests - 54/54 passed.
+- `pnpm build:api` - passed.
+- `pnpm --filter @platforma/api test` - 235/235 passed.
+- `pnpm --filter @platforma/web test` - 277/277 passed.
+- `pnpm build:web` - passed; сохранён прежний Vite warning о размере основного chunk.
+
+Ручная проверка:
+
+- В production войти под ролями admin/editor/user и проверить `/presentations`, `/presentations/projects`, создание и скачивание PDF.
+- Без авторизации проверить, что API презентаций возвращает `401`, а frontend показывает форму входа.
+
+Спорные места:
+
+- Список черновиков и история презентаций ЖК остаются общими: после открытия доступа их видят все авторизованные роли, а не только создатель.
+
 ## 2026-07-21 - Lot PDF gallery, floor plan and broker CTA hotfixes
 
 Задача:
