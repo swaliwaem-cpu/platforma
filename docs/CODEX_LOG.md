@@ -1,5 +1,46 @@
 # Codex Log
 
+## 2026-07-25 - Lot PDF media-order resolver and production deploy
+
+Задача:
+
+- Исправить порядок планировки квартиры и изображения блока «НА ЭТАЖЕ» в PDF лота.
+- Проверить два ЖК из scoped-списка MR Group и два ЖК вне списка.
+- Если настоящий план этажа отсутствует, использовать фотографию без внутренних полей по принципу остальных photo-фреймов PDF.
+
+Изменения:
+
+- `apps/api/src/lot-presentations/lot-presentations-pdf.service.ts` - PDF resolver сначала сохраняет явные `flat-plan` / `floor-plan`, filename-признаки и MR Group `/ddu/`, а для неоднозначных media использует уже нормализованный importer-ом `sortOrder`.
+- Настоящие планы этажа сохраняют `contain`-отрисовку; обычная фотография или gallery fallback при отсутствии плана рисуется через `cover` во весь фрейм без внутренних полей.
+- `apps/api/tests/lot-presentations-schema.test.cjs` - добавлены регрессии для target MR Group, non-target MR Group, Voxhall, одиночных media и выбора `contain` / `cover`.
+- Импортер и scoped allowlist 14 ЖК не изменялись.
+
+Проверки:
+
+- `pnpm --filter @platforma/api test` - 236/236 passed, включая TypeScript build.
+- `git diff --check` - passed.
+- Сгенерированы и визуально проверены локальные PDF: City Bay №334, CITYZEN №10305, Voxhall №54 и Sky Garden №1.
+- Для City Bay и CITYZEN планировка квартиры находится в блоке «ПЛАНИРОВКА», план этажа - в «НА ЭТАЖЕ».
+- Sky Garden сохраняет явные feed labels `flat-plan` / `floor-plan`.
+- После согласованного уточнения повторно сгенерированы Voxhall №54 и City Bay №334: фотография Voxhall заполняет нижний фрейм целиком, а настоящий `/ddu/`-план City Bay не обрезается.
+
+Production deploy:
+
+- Commit `82395ec` отправлен в `origin/on-ser`; production `/opt/platforma` fast-forwarded с `baf87b2` до `82395ec`.
+- Сохранён rollback image `platforma-api:pre-deploy-20260725T093600Z-baf87b2-lot-pdf-media` (`sha256:a89112b75f7f...`).
+- Собран и пересоздан только production-сервис `api`; PostgreSQL, MinIO, web, importer logic, scheduler configuration и данные не менялись.
+- В новом production image профильные lot-presentation тесты прошли 16/16; runtime marker нового resolver подтверждён.
+- Production API healthy; локальный и публичный `/health` вернули `status=ok`, `database=ok`, `postgis=true`; стартовые логи без ошибок.
+
+Ручная проверка:
+
+- Сформировать новый production PDF для Voxhall и одного target MR Group лота; ранее созданные PDF автоматически не перегенерируются.
+
+Спорные места:
+
+- Нет. Для отсутствующего плана этажа согласована фотография во весь фрейм.
+- Шесть документов `DRAFT QA` созданы только в локальном хранилище для проверки.
+
 ## 2026-07-22 - Authenticated access to lot and project PDF presentations
 
 Задача:
