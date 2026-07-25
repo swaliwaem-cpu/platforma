@@ -140,6 +140,149 @@ enum ProjectPresentationDocumentStatus {
   @@map("project_presentation_document_status")
 }
 
+enum TrainingProjectStatus {
+  DRAFT    @map("draft")
+  OPEN     @map("open")
+  CLOSED   @map("closed")
+  ARCHIVED @map("archived")
+
+  @@map("training_project_status")
+}
+
+enum TrainingVersionStatus {
+  DRAFT      @map("draft")
+  PUBLISHED  @map("published")
+  SUPERSEDED @map("superseded")
+
+  @@map("training_version_status")
+}
+
+enum TrainingQuestionType {
+  MAIN      @map("main")
+  FOLLOW_UP @map("follow_up")
+
+  @@map("training_question_type")
+}
+
+enum TrainingAttemptStatus {
+  STARTED              @map("started")
+  AWAITING_MAIN        @map("awaiting_main")
+  PROCESSING_MAIN      @map("processing_main")
+  AWAITING_FOLLOW_UP   @map("awaiting_follow_up")
+  PROCESSING_FOLLOW_UP @map("processing_follow_up")
+  FINALIZING           @map("finalizing")
+  COMPLETED            @map("completed")
+  REQUIRES_REVIEW      @map("requires_review")
+  EXPIRED              @map("expired")
+  TECHNICAL_FAILURE    @map("technical_failure")
+
+  @@map("training_attempt_status")
+}
+
+enum TrainingAttemptQuestionStatus {
+  PENDING         @map("pending")
+  PRESENTED       @map("presented")
+  COLLECTING      @map("collecting")
+  LOCKED          @map("locked")
+  PROCESSING      @map("processing")
+  SCORED          @map("scored")
+  SKIPPED_TIMEOUT @map("skipped_timeout")
+
+  @@map("training_attempt_question_status")
+}
+
+enum TrainingAnswerStatus {
+  COLLECTING   @map("collecting")
+  READY        @map("ready")
+  DOWNLOADING  @map("downloading")
+  TRANSCRIBING @map("transcribing")
+  EVALUATING   @map("evaluating")
+  SCORED       @map("scored")
+  FAILED       @map("failed")
+
+  @@map("training_answer_status")
+}
+
+enum TrainingFactVerdict {
+  CORRECT     @map("correct")
+  PARTIAL     @map("partial")
+  MISSING     @map("missing")
+  INCORRECT   @map("incorrect")
+  UNSUPPORTED @map("unsupported")
+
+  @@map("training_fact_verdict")
+}
+
+enum TrainingReviewStatus {
+  NOT_REQUIRED @map("not_required")
+  PENDING      @map("pending")
+  APPROVED     @map("approved")
+  OVERRIDDEN   @map("overridden")
+
+  @@map("training_review_status")
+}
+
+enum TrainingPassStatus {
+  PENDING @map("pending")
+  PASSED  @map("passed")
+  FAILED  @map("failed")
+
+  @@map("training_pass_status")
+}
+
+enum TrainingJobStatus {
+  PENDING   @map("pending")
+  RUNNING   @map("running")
+  SUCCEEDED @map("succeeded")
+  FAILED    @map("failed")
+  DEAD      @map("dead")
+
+  @@map("training_job_status")
+}
+
+enum TrainingJobKind {
+  TELEGRAM_DOWNLOAD_SEGMENT @map("telegram_download_segment")
+  ASSEMBLE_ANSWER_AUDIO     @map("assemble_answer_audio")
+  TRANSCRIBE_ANSWER         @map("transcribe_answer")
+  ANALYZE_ACOUSTICS         @map("analyze_acoustics")
+  EVALUATE_ANSWER           @map("evaluate_answer")
+  FINALIZE_ATTEMPT          @map("finalize_attempt")
+  SEND_TELEGRAM_MESSAGE     @map("send_telegram_message")
+  SEND_TIMER_WARNING        @map("send_timer_warning")
+  EXPIRE_ATTEMPT            @map("expire_attempt")
+  EXTRACT_SOURCE_DOCUMENT   @map("extract_source_document")
+
+  @@map("training_job_kind")
+}
+
+enum TrainingSourceExtractionStatus {
+  PENDING           @map("pending")
+  PROCESSING        @map("processing")
+  READY             @map("ready")
+  NEEDS_MANUAL_TEXT @map("needs_manual_text")
+  FAILED            @map("failed")
+
+  @@map("training_source_extraction_status")
+}
+
+enum TrainingSourceDocumentType {
+  PDF  @map("pdf")
+  DOCX @map("docx")
+  PPTX @map("pptx")
+  XLSX @map("xlsx")
+
+  @@map("training_source_document_type")
+}
+
+enum TrainingProcessedUpdateStatus {
+  RECEIVED   @map("received")
+  PROCESSING @map("processing")
+  PROCESSED  @map("processed")
+  FAILED     @map("failed")
+
+  @@map("training_processed_update_status")
+}
+
 model User {
   id                    String     @id @default(uuid()) @db.Uuid
   email                 String     @unique @db.VarChar(320)
@@ -166,8 +309,13 @@ model User {
   lotPresentationCollections    LotPresentationCollection[]
   lotPresentationDocuments      LotPresentationDocument[]
   lotPresentationWorkspaceItems LotPresentationWorkspaceItem[]
-  projectPresentationDrafts      ProjectPresentationDraft[]       @relation("ProjectPresentationDraftOwner")
-  projectPresentationDocuments   ProjectPresentationDocument[]    @relation("ProjectPresentationDocumentOwner")
+  projectPresentationDrafts     ProjectPresentationDraft[]     @relation("ProjectPresentationDraftOwner")
+  projectPresentationDocuments  ProjectPresentationDocument[]  @relation("ProjectPresentationDocumentOwner")
+  trainingAttempts              TrainingAttempt[]
+  trainingTelegramAccount       TrainingTelegramAccount?
+  trainingLinkTokens            TrainingLinkToken[]
+  trainingPublishedVersions     TrainingProjectVersion[]       @relation("TrainingVersionPublisher")
+  trainingResultReviews         TrainingResultReview[]         @relation("TrainingResultReviewer")
 
   @@index([roleId])
   @@index([profilePhotoFileId])
@@ -303,64 +451,65 @@ model MetroStation {
 }
 
 model RealEstateObject {
-  id                        String       @id @default(uuid()) @db.Uuid
-  wpPostId                  Int?         @unique @map("wp_post_id")
+  id                        String               @id @default(uuid()) @db.Uuid
+  wpPostId                  Int?                 @unique @map("wp_post_id")
   type                      RealEstateObjectType @default(RESIDENTIAL)
   title                     String
-  slug                      String       @unique
-  status                    ObjectStatus @default(DRAFT)
+  slug                      String               @unique
+  status                    ObjectStatus         @default(DRAFT)
   description               String?
-  architectureDescription   String?      @map("architecture_description")
-  infrastructureDescription String?      @map("infrastructure_description")
-  fillingDescription        String?      @map("filling_description")
-  shortDescription          String?      @map("short_description")
-  mapName                   String?      @map("map_name") @db.VarChar(16)
-  aerotourUrl               String?      @map("aerotour_url") @db.VarChar(2048)
-  layoutsUrl                String?      @map("layouts_url") @db.VarChar(2048)
-  krtName                   String?      @map("krt_name") @db.VarChar(240)
-  apartmentAreaRange        String?      @map("apartment_area_range") @db.VarChar(120)
-  ceilingHeight             String?      @map("ceiling_height") @db.VarChar(120)
-  propertyClass             String?      @map("property_class") @db.VarChar(120)
-  floorRange                String?      @map("floor_range") @db.VarChar(120)
-  apartmentsCountText       String?      @map("apartments_count_text") @db.VarChar(120)
-  priceFrom                 Decimal?     @map("price_from") @db.Decimal(14, 2)
-  pricePerMeterFrom         Decimal?     @map("price_per_meter_from") @db.Decimal(14, 2)
-  feedPriceFrom             Decimal?     @map("feed_price_from") @db.Decimal(14, 2)
-  feedPricePerMeterFrom     Decimal?     @map("feed_price_per_meter_from") @db.Decimal(14, 2)
-  feedAreaRange             String?      @map("feed_area_range") @db.VarChar(120)
-  feedFloorRange            String?      @map("feed_floor_range") @db.VarChar(120)
-  feedUnitsCount            Int?         @map("feed_units_count")
-  feedUnitsCountText        String?      @map("feed_units_count_text") @db.VarChar(120)
-  feedCompletionYear        Int?         @map("feed_completion_year")
-  feedCompletionQuarter     Int?         @map("feed_completion_quarter")
-  feedUpdatedAt             DateTime?    @map("feed_updated_at")
-  completionYear            Int?         @map("completion_year")
-  completionQuarter         Int?         @map("completion_quarter")
+  architectureDescription   String?              @map("architecture_description")
+  infrastructureDescription String?              @map("infrastructure_description")
+  fillingDescription        String?              @map("filling_description")
+  shortDescription          String?              @map("short_description")
+  mapName                   String?              @map("map_name") @db.VarChar(16)
+  aerotourUrl               String?              @map("aerotour_url") @db.VarChar(2048)
+  layoutsUrl                String?              @map("layouts_url") @db.VarChar(2048)
+  krtName                   String?              @map("krt_name") @db.VarChar(240)
+  apartmentAreaRange        String?              @map("apartment_area_range") @db.VarChar(120)
+  ceilingHeight             String?              @map("ceiling_height") @db.VarChar(120)
+  propertyClass             String?              @map("property_class") @db.VarChar(120)
+  floorRange                String?              @map("floor_range") @db.VarChar(120)
+  apartmentsCountText       String?              @map("apartments_count_text") @db.VarChar(120)
+  priceFrom                 Decimal?             @map("price_from") @db.Decimal(14, 2)
+  pricePerMeterFrom         Decimal?             @map("price_per_meter_from") @db.Decimal(14, 2)
+  feedPriceFrom             Decimal?             @map("feed_price_from") @db.Decimal(14, 2)
+  feedPricePerMeterFrom     Decimal?             @map("feed_price_per_meter_from") @db.Decimal(14, 2)
+  feedAreaRange             String?              @map("feed_area_range") @db.VarChar(120)
+  feedFloorRange            String?              @map("feed_floor_range") @db.VarChar(120)
+  feedUnitsCount            Int?                 @map("feed_units_count")
+  feedUnitsCountText        String?              @map("feed_units_count_text") @db.VarChar(120)
+  feedCompletionYear        Int?                 @map("feed_completion_year")
+  feedCompletionQuarter     Int?                 @map("feed_completion_quarter")
+  feedUpdatedAt             DateTime?            @map("feed_updated_at")
+  completionYear            Int?                 @map("completion_year")
+  completionQuarter         Int?                 @map("completion_quarter")
   address                   String?
-  latitude                  Decimal?     @db.Decimal(9, 6)
-  longitude                 Decimal?     @db.Decimal(9, 6)
-  featuresJson              Json         @default("{}") @map("features_json")
-  developerId               String?      @map("developer_id") @db.Uuid
-  primaryLocationId         String?      @map("primary_location_id") @db.Uuid
-  publishedAt               DateTime?    @map("published_at")
-  archivedAt                DateTime?    @map("archived_at")
-  createdAt                 DateTime     @default(now()) @map("created_at")
-  updatedAt                 DateTime     @updatedAt @map("updated_at")
-  deletedAt                 DateTime?    @map("deleted_at")
+  latitude                  Decimal?             @db.Decimal(9, 6)
+  longitude                 Decimal?             @db.Decimal(9, 6)
+  featuresJson              Json                 @default("{}") @map("features_json")
+  developerId               String?              @map("developer_id") @db.Uuid
+  primaryLocationId         String?              @map("primary_location_id") @db.Uuid
+  publishedAt               DateTime?            @map("published_at")
+  archivedAt                DateTime?            @map("archived_at")
+  createdAt                 DateTime             @default(now()) @map("created_at")
+  updatedAt                 DateTime             @updatedAt @map("updated_at")
+  deletedAt                 DateTime?            @map("deleted_at")
 
-  developer          Developer?           @relation(fields: [developerId], references: [id], onDelete: SetNull)
-  primaryLocation    Location?            @relation("PrimaryObjectLocation", fields: [primaryLocationId], references: [id], onDelete: SetNull)
-  locations          ObjectLocation[]
-  metroStations      ObjectMetroStation[]
-  images             ObjectImage[]
-  files              ObjectFile[]
-  auditLogs          AuditLog[]           @relation("ObjectAuditLogs")
-  catalogQuickLinks  CatalogQuickLink[]
-  feedSources        FeedSource[]
-  feedSourceMappings FeedSourceMapping[]
-  feedUnits          FeedUnit[]
+  developer                        Developer?                          @relation(fields: [developerId], references: [id], onDelete: SetNull)
+  primaryLocation                  Location?                           @relation("PrimaryObjectLocation", fields: [primaryLocationId], references: [id], onDelete: SetNull)
+  locations                        ObjectLocation[]
+  metroStations                    ObjectMetroStation[]
+  images                           ObjectImage[]
+  files                            ObjectFile[]
+  auditLogs                        AuditLog[]                          @relation("ObjectAuditLogs")
+  catalogQuickLinks                CatalogQuickLink[]
+  feedSources                      FeedSource[]
+  feedSourceMappings               FeedSourceMapping[]
+  feedUnits                        FeedUnit[]
   projectPresentationDraftItems    ProjectPresentationDraftObject[]
   projectPresentationDocumentItems ProjectPresentationDocumentObject[]
+  trainingProjects                 TrainingProject[]
 
   @@index([status])
   @@index([type])
@@ -625,17 +774,18 @@ model File {
   createdAt      DateTime    @default(now()) @map("created_at")
   updatedAt      DateTime    @updatedAt @map("updated_at")
 
-  uploadedBy               User?                     @relation("FileUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
-  profilePhotoUsers        User[]                    @relation("UserProfilePhoto")
-  objectImages             ObjectImage[]
-  objectFiles              ObjectFile[]
-  variants                 FileVariant[]
-  feedXmlSources           FeedSource[]              @relation("FeedXmlFile")
-  feedMediaAssets          FeedMediaAsset[]          @relation("FeedMediaFile")
-  lotPresentationDocuments LotPresentationDocument[]
-  projectPresentationDraftCovers ProjectPresentationDraft[]       @relation("ProjectPresentationDraftCover")
-  projectPresentationDocuments ProjectPresentationDocument[]
-  projectPresentationAssets    ProjectPresentationDocumentAsset[]
+  uploadedBy                     User?                              @relation("FileUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  profilePhotoUsers              User[]                             @relation("UserProfilePhoto")
+  objectImages                   ObjectImage[]
+  objectFiles                    ObjectFile[]
+  variants                       FileVariant[]
+  feedXmlSources                 FeedSource[]                       @relation("FeedXmlFile")
+  feedMediaAssets                FeedMediaAsset[]                   @relation("FeedMediaFile")
+  lotPresentationDocuments       LotPresentationDocument[]
+  projectPresentationDraftCovers ProjectPresentationDraft[]         @relation("ProjectPresentationDraftCover")
+  projectPresentationDocuments   ProjectPresentationDocument[]
+  projectPresentationAssets      ProjectPresentationDocumentAsset[]
+  trainingSourceDocuments        TrainingSourceDocument[]
 
   @@unique([storage, bucket, key])
   @@index([uploadedById])
@@ -818,22 +968,22 @@ model ProjectPresentationDraft {
 }
 
 model ProjectPresentationDraftObject {
-  id                String   @id @default(uuid()) @db.Uuid
-  draftId           String   @map("draft_id") @db.Uuid
-  objectId          String   @map("object_id") @db.Uuid
-  sortOrder         Int      @map("sort_order")
-  manualTitle       String?  @map("manual_title") @db.VarChar(180)
-  manualDescription String?  @map("manual_description") @db.VarChar(2000)
-  manualPropertyClass String? @map("manual_property_class") @db.VarChar(180)
-  manualCompletion  String?  @map("manual_completion") @db.VarChar(180)
-  manualPrice       String?  @map("manual_price") @db.VarChar(180)
-  manualDistrict    String?  @map("manual_district") @db.VarChar(180)
-  manualDeveloper   String?  @map("manual_developer") @db.VarChar(180)
-  manualMetro       String?  @map("manual_metro") @db.VarChar(300)
-  imageIds          Json     @default("[]") @map("image_ids")
-  advantages        Json     @default("[]")
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
+  id                  String   @id @default(uuid()) @db.Uuid
+  draftId             String   @map("draft_id") @db.Uuid
+  objectId            String   @map("object_id") @db.Uuid
+  sortOrder           Int      @map("sort_order")
+  manualTitle         String?  @map("manual_title") @db.VarChar(180)
+  manualDescription   String?  @map("manual_description") @db.VarChar(2000)
+  manualPropertyClass String?  @map("manual_property_class") @db.VarChar(180)
+  manualCompletion    String?  @map("manual_completion") @db.VarChar(180)
+  manualPrice         String?  @map("manual_price") @db.VarChar(180)
+  manualDistrict      String?  @map("manual_district") @db.VarChar(180)
+  manualDeveloper     String?  @map("manual_developer") @db.VarChar(180)
+  manualMetro         String?  @map("manual_metro") @db.VarChar(300)
+  imageIds            Json     @default("[]") @map("image_ids")
+  advantages          Json     @default("[]")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
 
   draft  ProjectPresentationDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
   object RealEstateObject         @relation(fields: [objectId], references: [id], onDelete: Cascade)
@@ -865,9 +1015,9 @@ model ProjectPresentationDocument {
   createdAt       DateTime                          @default(now()) @map("created_at")
   updatedAt       DateTime                          @updatedAt @map("updated_at")
 
-  owner  User                       @relation("ProjectPresentationDocumentOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
-  draft  ProjectPresentationDraft?  @relation(fields: [draftId], references: [id], onDelete: SetNull)
-  file   File?                      @relation(fields: [fileId], references: [id], onDelete: Restrict)
+  owner   User                                @relation("ProjectPresentationDocumentOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  draft   ProjectPresentationDraft?           @relation(fields: [draftId], references: [id], onDelete: SetNull)
+  file    File?                               @relation(fields: [fileId], references: [id], onDelete: Restrict)
   objects ProjectPresentationDocumentObject[]
   assets  ProjectPresentationDocumentAsset[]
 
@@ -887,7 +1037,7 @@ model ProjectPresentationDocumentObject {
   sortOrder      Int     @map("sort_order")
 
   document ProjectPresentationDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  object   RealEstateObject?            @relation(fields: [objectId], references: [id], onDelete: SetNull)
+  object   RealEstateObject?           @relation(fields: [objectId], references: [id], onDelete: SetNull)
 
   @@unique([documentId, sourceObjectId])
   @@unique([documentId, sortOrder])
@@ -909,6 +1059,456 @@ model ProjectPresentationDocumentAsset {
   @@index([documentId, sortOrder])
   @@index([fileId])
   @@map("project_presentation_document_assets")
+}
+
+model TrainingProject {
+  id                 String                @id @default(uuid()) @db.Uuid
+  realEstateObjectId String?               @map("real_estate_object_id") @db.Uuid
+  slug               String                @unique @db.VarChar(160)
+  title              String                @db.VarChar(240)
+  description        String?               @db.VarChar(2000)
+  status             TrainingProjectStatus @default(DRAFT)
+  sortOrder          Int                   @default(0) @map("sort_order")
+  availableFrom      DateTime?             @map("available_from")
+  deadlineAt         DateTime?             @map("deadline_at")
+  activeVersionId    String?               @unique @map("active_version_id") @db.Uuid
+  archivedAt         DateTime?             @map("archived_at")
+  createdAt          DateTime              @default(now()) @map("created_at")
+  updatedAt          DateTime              @updatedAt @map("updated_at")
+
+  realEstateObject RealEstateObject?        @relation(fields: [realEstateObjectId], references: [id], onDelete: SetNull)
+  activeVersion    TrainingProjectVersion?  @relation("TrainingProjectActiveVersion", fields: [activeVersionId], references: [id], onDelete: SetNull)
+  versions         TrainingProjectVersion[] @relation("TrainingProjectVersions")
+  linkTokens       TrainingLinkToken[]
+  attempts         TrainingAttempt[]
+
+  @@index([realEstateObjectId])
+  @@index([status, sortOrder])
+  @@index([availableFrom, deadlineAt])
+  @@map("training_projects")
+}
+
+model TrainingProjectVersion {
+  id                    String                @id @default(uuid()) @db.Uuid
+  projectId             String                @map("project_id") @db.Uuid
+  versionNumber         Int                   @map("version_number")
+  status                TrainingVersionStatus @default(DRAFT)
+  passScore             Int                   @default(75) @map("pass_score")
+  attemptLimit          Int                   @default(3) @map("attempt_limit")
+  cooldownMinutes       Int                   @default(60) @map("cooldown_minutes")
+  totalTimeLimitSeconds Int                   @default(420) @map("total_time_limit_seconds")
+  finishGraceSeconds    Int                   @default(90) @map("finish_grace_seconds")
+  warningSecondsJson    Json                  @default("[60,20]") @map("warning_seconds_json")
+  allowRetakeAfterPass  Boolean               @default(false) @map("allow_retake_after_pass")
+  mainMaxScore          Int                   @default(55) @map("main_max_score")
+  followUpMaxScore      Int                   @default(15) @map("follow_up_max_score")
+  scoringConfigJson     Json                  @default("{}") @map("scoring_config_json")
+  promptVersion         String                @default("1") @map("prompt_version") @db.VarChar(64)
+  schemaVersion         String                @default("1") @map("schema_version") @db.VarChar(64)
+  publishedById         String?               @map("published_by_id") @db.Uuid
+  publishedAt           DateTime?             @map("published_at")
+  createdAt             DateTime              @default(now()) @map("created_at")
+  updatedAt             DateTime              @updatedAt @map("updated_at")
+
+  project          TrainingProject               @relation("TrainingProjectVersions", fields: [projectId], references: [id], onDelete: Cascade)
+  activeForProject TrainingProject?              @relation("TrainingProjectActiveVersion")
+  publishedBy      User?                         @relation("TrainingVersionPublisher", fields: [publishedById], references: [id], onDelete: SetNull)
+  questions        TrainingQuestion[]
+  facts            TrainingFact[]
+  criteria         TrainingEvaluationCriterion[]
+  sourceDocuments  TrainingSourceDocument[]
+  attempts         TrainingAttempt[]
+
+  @@unique([projectId, versionNumber])
+  @@index([projectId, status])
+  @@index([publishedById])
+  @@index([publishedAt])
+  @@map("training_project_versions")
+}
+
+model TrainingQuestion {
+  id               String               @id @default(uuid()) @db.Uuid
+  projectVersionId String               @map("project_version_id") @db.Uuid
+  type             TrainingQuestionType
+  text             String
+  position         Int
+  isActive         Boolean              @default(true) @map("is_active")
+  maxScore         Int                  @map("max_score")
+  topicCodesJson   Json                 @default("[]") @map("topic_codes_json")
+  createdAt        DateTime             @default(now()) @map("created_at")
+  updatedAt        DateTime             @updatedAt @map("updated_at")
+
+  projectVersion   TrainingProjectVersion     @relation(fields: [projectVersionId], references: [id], onDelete: Cascade)
+  factLinks        TrainingQuestionFactLink[]
+  attemptQuestions TrainingAttemptQuestion[]
+
+  @@unique([projectVersionId, type, position])
+  @@index([projectVersionId, type, isActive])
+  @@map("training_questions")
+}
+
+model TrainingFact {
+  id                  String   @id @default(uuid()) @db.Uuid
+  projectVersionId    String   @map("project_version_id") @db.Uuid
+  code                String   @db.VarChar(120)
+  topicCode           String   @map("topic_code") @db.VarChar(120)
+  statement           String
+  acceptedAliasesJson Json     @default("[]") @map("accepted_aliases_json")
+  importance          Int      @default(1)
+  sourceDocumentId    String?  @map("source_document_id") @db.Uuid
+  sourceLocatorJson   Json?    @map("source_locator_json")
+  isApproved          Boolean  @default(false) @map("is_approved")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  projectVersion  TrainingProjectVersion     @relation(fields: [projectVersionId], references: [id], onDelete: Cascade)
+  sourceDocument  TrainingSourceDocument?    @relation(fields: [sourceDocumentId], references: [id], onDelete: SetNull)
+  questionLinks   TrainingQuestionFactLink[]
+  scoreComponents TrainingScoreComponent[]
+
+  @@unique([projectVersionId, code])
+  @@index([projectVersionId, topicCode])
+  @@index([sourceDocumentId])
+  @@map("training_facts")
+}
+
+model TrainingQuestionFactLink {
+  questionId String   @map("question_id") @db.Uuid
+  factId     String   @map("fact_id") @db.Uuid
+  weight     Decimal? @db.Decimal(6, 3)
+  isRequired Boolean  @default(false) @map("is_required")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  question TrainingQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  fact     TrainingFact     @relation(fields: [factId], references: [id], onDelete: Cascade)
+
+  @@id([questionId, factId])
+  @@index([factId])
+  @@map("training_question_fact_links")
+}
+
+model TrainingEvaluationCriterion {
+  id               String               @id @default(uuid()) @db.Uuid
+  projectVersionId String               @map("project_version_id") @db.Uuid
+  questionType     TrainingQuestionType @map("question_type")
+  code             String               @db.VarChar(120)
+  title            String               @db.VarChar(240)
+  maxPoints        Decimal              @map("max_points") @db.Decimal(6, 2)
+  description      String?
+  anchorsJson      Json                 @default("[]") @map("anchors_json")
+  sortOrder        Int                  @default(0) @map("sort_order")
+  createdAt        DateTime             @default(now()) @map("created_at")
+  updatedAt        DateTime             @updatedAt @map("updated_at")
+
+  projectVersion  TrainingProjectVersion   @relation(fields: [projectVersionId], references: [id], onDelete: Cascade)
+  scoreComponents TrainingScoreComponent[]
+
+  @@unique([projectVersionId, questionType, code], map: "training_criteria_version_type_code_key")
+  @@unique([projectVersionId, questionType, sortOrder], map: "training_criteria_version_type_order_key")
+  @@index([projectVersionId, questionType])
+  @@map("training_evaluation_criteria")
+}
+
+model TrainingSourceDocument {
+  id                     String                         @id @default(uuid()) @db.Uuid
+  projectVersionId       String                         @map("project_version_id") @db.Uuid
+  fileId                 String                         @map("file_id") @db.Uuid
+  documentType           TrainingSourceDocumentType     @map("document_type")
+  checksum               String                         @db.VarChar(128)
+  extractionStatus       TrainingSourceExtractionStatus @default(PENDING) @map("extraction_status")
+  extractedText          String?                        @map("extracted_text")
+  extractionMetadataJson Json                           @default("{}") @map("extraction_metadata_json")
+  errorMessage           String?                        @map("error_message") @db.VarChar(2000)
+  createdAt              DateTime                       @default(now()) @map("created_at")
+  updatedAt              DateTime                       @updatedAt @map("updated_at")
+
+  projectVersion TrainingProjectVersion @relation(fields: [projectVersionId], references: [id], onDelete: Cascade)
+  file           File                   @relation(fields: [fileId], references: [id], onDelete: Restrict)
+  facts          TrainingFact[]
+
+  @@unique([projectVersionId, fileId])
+  @@unique([projectVersionId, checksum])
+  @@index([fileId])
+  @@index([projectVersionId, extractionStatus])
+  @@map("training_source_documents")
+}
+
+model TrainingTelegramAccount {
+  id             String    @id @default(uuid()) @db.Uuid
+  userId         String    @unique @map("user_id") @db.Uuid
+  telegramUserId BigInt    @unique @map("telegram_user_id")
+  chatId         BigInt    @unique @map("chat_id")
+  username       String?   @db.VarChar(64)
+  firstName      String?   @map("first_name") @db.VarChar(128)
+  lastName       String?   @map("last_name") @db.VarChar(128)
+  linkedAt       DateTime  @default(now()) @map("linked_at")
+  revokedAt      DateTime? @map("revoked_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([revokedAt])
+  @@map("training_telegram_accounts")
+}
+
+model TrainingLinkToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  projectId String?   @map("project_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash") @db.VarChar(128)
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user    User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project TrainingProject? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([userId, expiresAt])
+  @@index([projectId])
+  @@index([expiresAt])
+  @@map("training_link_tokens")
+}
+
+model TrainingAttempt {
+  id                   String                @id @default(uuid()) @db.Uuid
+  userId               String                @map("user_id") @db.Uuid
+  projectId            String                @map("project_id") @db.Uuid
+  projectVersionId     String                @map("project_version_id") @db.Uuid
+  attemptNumber        Int                   @map("attempt_number")
+  status               TrainingAttemptStatus @default(STARTED)
+  isConsumed           Boolean               @default(true) @map("is_consumed")
+  startedAt            DateTime              @default(now()) @map("started_at")
+  expiresAt            DateTime              @map("expires_at")
+  graceExpiresAt       DateTime              @map("grace_expires_at")
+  completedAt          DateTime?             @map("completed_at")
+  settingsSnapshotJson Json                  @map("settings_snapshot_json")
+  aiScore              Decimal?              @map("ai_score") @db.Decimal(6, 2)
+  serverScore          Decimal?              @map("server_score") @db.Decimal(6, 2)
+  adminScore           Decimal?              @map("admin_score") @db.Decimal(6, 2)
+  finalScore           Decimal?              @map("final_score") @db.Decimal(6, 2)
+  passStatus           TrainingPassStatus    @default(PENDING) @map("pass_status")
+  reviewStatus         TrainingReviewStatus  @default(NOT_REQUIRED) @map("review_status")
+  summary              String?               @db.VarChar(2000)
+  totalDurationSeconds Int?                  @map("total_duration_seconds")
+  createdAt            DateTime              @default(now()) @map("created_at")
+  updatedAt            DateTime              @updatedAt @map("updated_at")
+
+  user             User                      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  project          TrainingProject           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  projectVersion   TrainingProjectVersion    @relation(fields: [projectVersionId], references: [id], onDelete: Restrict)
+  attemptQuestions TrainingAttemptQuestion[]
+  reviews          TrainingResultReview[]
+
+  @@unique([userId, projectId, attemptNumber])
+  @@index([userId, status])
+  @@index([projectId, status])
+  @@index([projectVersionId])
+  @@index([completedAt])
+  @@index([reviewStatus, completedAt])
+  @@map("training_attempts")
+}
+
+model TrainingAttemptQuestion {
+  id                    String                        @id @default(uuid()) @db.Uuid
+  attemptId             String                        @map("attempt_id") @db.Uuid
+  questionId            String                        @map("question_id") @db.Uuid
+  sequence              Int
+  status                TrainingAttemptQuestionStatus @default(PENDING)
+  presentedAt           DateTime?                     @map("presented_at")
+  firstSegmentAt        DateTime?                     @map("first_segment_at")
+  finishedAt            DateTime?                     @map("finished_at")
+  responseTimeSeconds   Int?                          @map("response_time_seconds")
+  answerDurationSeconds Int?                          @map("answer_duration_seconds")
+  selectionRandomIndex  Int?                          @map("selection_random_index")
+  selectionMetadataJson Json?                         @map("selection_metadata_json")
+  createdAt             DateTime                      @default(now()) @map("created_at")
+  updatedAt             DateTime                      @updatedAt @map("updated_at")
+
+  attempt  TrainingAttempt  @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  question TrainingQuestion @relation(fields: [questionId], references: [id], onDelete: Restrict)
+  answer   TrainingAnswer?
+
+  @@unique([attemptId, sequence])
+  @@unique([attemptId, questionId])
+  @@index([questionId])
+  @@index([attemptId, status])
+  @@map("training_attempt_questions")
+}
+
+model TrainingAnswer {
+  id                     String               @id @default(uuid()) @db.Uuid
+  attemptQuestionId      String               @unique @map("attempt_question_id") @db.Uuid
+  status                 TrainingAnswerStatus @default(COLLECTING)
+  combinedTranscript     String?              @map("combined_transcript")
+  normalizedLanguage     String?              @map("normalized_language") @db.VarChar(16)
+  acousticMetricsJson    Json?                @map("acoustic_metrics_json")
+  transcriptionProvider  String?              @map("transcription_provider") @db.VarChar(64)
+  transcriptionModel     String?              @map("transcription_model") @db.VarChar(120)
+  transcriptionRequestId String?              @map("transcription_request_id") @db.VarChar(160)
+  processingStartedAt    DateTime?            @map("processing_started_at")
+  processingFinishedAt   DateTime?            @map("processing_finished_at")
+  errorCode              String?              @map("error_code") @db.VarChar(120)
+  errorMessage           String?              @map("error_message") @db.VarChar(2000)
+  createdAt              DateTime             @default(now()) @map("created_at")
+  updatedAt              DateTime             @updatedAt @map("updated_at")
+
+  attemptQuestion TrainingAttemptQuestion    @relation(fields: [attemptQuestionId], references: [id], onDelete: Cascade)
+  voiceSegments   TrainingVoiceSegment[]
+  evaluations     TrainingAnswerEvaluation[]
+
+  @@index([status, updatedAt])
+  @@map("training_answers")
+}
+
+model TrainingVoiceSegment {
+  id                    String   @id @default(uuid()) @db.Uuid
+  answerId              String   @map("answer_id") @db.Uuid
+  segmentIndex          Int      @map("segment_index")
+  telegramUpdateId      BigInt   @unique @map("telegram_update_id")
+  telegramMessageId     BigInt   @map("telegram_message_id")
+  telegramChatId        BigInt   @map("telegram_chat_id")
+  telegramFileId        String   @map("telegram_file_id") @db.VarChar(256)
+  fileUniqueId          String   @map("file_unique_id") @db.VarChar(256)
+  originalStorageBucket String?  @map("original_storage_bucket") @db.VarChar(255)
+  originalStorageKey    String?  @map("original_storage_key") @db.VarChar(1024)
+  mimeType              String?  @map("mime_type") @db.VarChar(120)
+  sizeBytes             BigInt?  @map("size_bytes")
+  durationSeconds       Int?     @map("duration_seconds")
+  receivedAt            DateTime @default(now()) @map("received_at")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  answer TrainingAnswer @relation(fields: [answerId], references: [id], onDelete: Cascade)
+
+  @@unique([answerId, segmentIndex])
+  @@unique([telegramChatId, telegramMessageId])
+  @@unique([originalStorageBucket, originalStorageKey])
+  @@index([answerId, receivedAt])
+  @@index([fileUniqueId])
+  @@map("training_voice_segments")
+}
+
+model TrainingAnswerEvaluation {
+  id                   String    @id @default(uuid()) @db.Uuid
+  answerId             String    @map("answer_id") @db.Uuid
+  evaluationNumber     Int       @default(1) @map("evaluation_number")
+  actualModelId        String    @map("actual_model_id") @db.VarChar(120)
+  reasoningEffort      String?   @map("reasoning_effort") @db.VarChar(32)
+  promptVersion        String    @map("prompt_version") @db.VarChar(64)
+  schemaVersion        String    @map("schema_version") @db.VarChar(64)
+  rubricVersion        String    @map("rubric_version") @db.VarChar(64)
+  structuredResultJson Json      @map("structured_result_json")
+  aiSuggestedScore     Decimal   @map("ai_suggested_score") @db.Decimal(6, 2)
+  serverScore          Decimal   @map("server_score") @db.Decimal(6, 2)
+  summary              String?   @db.VarChar(2000)
+  requiresReview       Boolean   @default(false) @map("requires_review")
+  reviewReasonsJson    Json      @default("[]") @map("review_reasons_json")
+  providerUsageJson    Json?     @map("provider_usage_json")
+  latencyMs            Int?      @map("latency_ms")
+  requestId            String?   @unique @map("request_id") @db.VarChar(160)
+  startedAt            DateTime? @map("started_at")
+  completedAt          DateTime? @map("completed_at")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  answer          TrainingAnswer           @relation(fields: [answerId], references: [id], onDelete: Cascade)
+  scoreComponents TrainingScoreComponent[]
+
+  @@unique([answerId, evaluationNumber])
+  @@index([answerId, createdAt])
+  @@index([requiresReview])
+  @@map("training_answer_evaluations")
+}
+
+model TrainingScoreComponent {
+  id            String               @id @default(uuid()) @db.Uuid
+  evaluationId  String               @map("evaluation_id") @db.Uuid
+  criterionId   String?              @map("criterion_id") @db.Uuid
+  factId        String?              @map("fact_id") @db.Uuid
+  componentKey  String               @map("component_key") @db.VarChar(160)
+  title         String?              @db.VarChar(240)
+  awardedPoints Decimal              @map("awarded_points") @db.Decimal(6, 2)
+  maxPoints     Decimal              @map("max_points") @db.Decimal(6, 2)
+  factVerdict   TrainingFactVerdict? @map("fact_verdict")
+  evidenceJson  Json?                @map("evidence_json")
+  penaltyPoints Decimal              @default(0) @map("penalty_points") @db.Decimal(6, 2)
+  createdAt     DateTime             @default(now()) @map("created_at")
+
+  evaluation TrainingAnswerEvaluation     @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  criterion  TrainingEvaluationCriterion? @relation(fields: [criterionId], references: [id], onDelete: SetNull)
+  fact       TrainingFact?                @relation(fields: [factId], references: [id], onDelete: SetNull)
+
+  @@unique([evaluationId, componentKey])
+  @@index([criterionId])
+  @@index([factId])
+  @@map("training_score_components")
+}
+
+model TrainingResultReview {
+  id                             String               @id @default(uuid()) @db.Uuid
+  attemptId                      String               @map("attempt_id") @db.Uuid
+  reviewerId                     String               @map("reviewer_id") @db.Uuid
+  reviewNumber                   Int                  @default(1) @map("review_number")
+  previousFinalScore             Decimal?             @map("previous_final_score") @db.Decimal(6, 2)
+  adminScore                     Decimal?             @map("admin_score") @db.Decimal(6, 2)
+  finalScore                     Decimal              @map("final_score") @db.Decimal(6, 2)
+  decision                       TrainingReviewStatus
+  comment                        String               @db.VarChar(2000)
+  unsupportedClaimsDecisionsJson Json                 @default("[]") @map("unsupported_claims_decisions_json")
+  reviewedAt                     DateTime             @default(now()) @map("reviewed_at")
+  createdAt                      DateTime             @default(now()) @map("created_at")
+
+  attempt  TrainingAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  reviewer User            @relation("TrainingResultReviewer", fields: [reviewerId], references: [id], onDelete: Restrict)
+
+  @@unique([attemptId, reviewNumber])
+  @@index([reviewerId, reviewedAt])
+  @@index([attemptId, reviewedAt])
+  @@map("training_result_reviews")
+}
+
+model TrainingProcessedUpdate {
+  id          String                        @id @default(uuid()) @db.Uuid
+  updateId    BigInt                        @unique @map("update_id")
+  status      TrainingProcessedUpdateStatus @default(RECEIVED)
+  updateType  String?                       @map("update_type") @db.VarChar(64)
+  payloadHash String?                       @map("payload_hash") @db.VarChar(128)
+  receivedAt  DateTime                      @default(now()) @map("received_at")
+  processedAt DateTime?                     @map("processed_at")
+  errorCode   String?                       @map("error_code") @db.VarChar(120)
+  createdAt   DateTime                      @default(now()) @map("created_at")
+  updatedAt   DateTime                      @updatedAt @map("updated_at")
+
+  @@index([status, receivedAt])
+  @@index([processedAt])
+  @@map("training_processed_updates")
+}
+
+model TrainingJob {
+  id               String            @id @default(uuid()) @db.Uuid
+  kind             TrainingJobKind
+  status           TrainingJobStatus @default(PENDING)
+  payloadJson      Json              @map("payload_json")
+  idempotencyKey   String            @unique @map("idempotency_key") @db.VarChar(160)
+  runAt            DateTime          @default(now()) @map("run_at")
+  attempts         Int               @default(0)
+  maxAttempts      Int               @default(3) @map("max_attempts")
+  lockOwner        String?           @map("lock_owner") @db.VarChar(160)
+  lockedAt         DateTime?         @map("locked_at")
+  heartbeatAt      DateTime?         @map("heartbeat_at")
+  lastErrorCode    String?           @map("last_error_code") @db.VarChar(120)
+  lastErrorMessage String?           @map("last_error_message") @db.VarChar(2000)
+  errorDetailsJson Json?             @map("error_details_json")
+  finishedAt       DateTime?         @map("finished_at")
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+
+  @@index([status, runAt, createdAt])
+  @@index([lockedAt])
+  @@index([heartbeatAt])
+  @@map("training_jobs")
 }
 
 model AuditLog {

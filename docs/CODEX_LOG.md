@@ -4469,3 +4469,69 @@ Production repair:
 - Feature flag остаётся backend-источником истины через защищённый config endpoint; permission-разрешённые navigation entries видимы и при выключенном флаге, а shell явно показывает disabled state.
 - `training:data:delete` создаётся в permission catalog, но намеренно не назначается `training_admin` seed-ом; его выдача требует отдельного явного назначения.
 - Этап 2, предметные Prisma models, Telegram, OpenAI, audio worker и полноценный training UI не начинались.
+
+## 2026-07-25 - Training Prisma schema and additive migration
+
+Задача:
+
+- Выполнить только этап 2 training-модуля: Prisma schema, безопасную additive
+  migration, базовые shared/domain/repository types и schema/contract tests.
+
+Изменения:
+
+- В `apps/api/prisma/schema.prisma` добавлены training enums и 18 моделей:
+  проекты/версии, вопросы/факты/критерии/источники, Telegram account/link token,
+  попытки/выбранные вопросы, агрегированные ответы/voice-сегменты, evaluations,
+  score components, reviews, processed updates и PostgreSQL-backed jobs.
+- Training participant использует существующий `User`; отдельной employee model
+  нет. `TrainingProject.realEstateObjectId` nullable и использует `ON DELETE SET
+  NULL`.
+- Попытка хранит `projectVersionId`, snapshot настроек и четыре выбранных
+  `TrainingAttemptQuestion`; voice-ответ поддерживает несколько сегментов.
+- Миграция `20260725210000_add_training_module` создаёт только новые training
+  enums/tables/indexes/constraints/functions/triggers. Реальные проекты,
+  вопросы и другие учебные данные не seed'ятся.
+- PostgreSQL partial unique indexes ограничивают один draft проекта, один
+  активный MAIN в версии и одну активную попытку user+project; job claim index
+  покрывает pending queue.
+- PostgreSQL checks и triggers обеспечивают диапазоны настроек/баллов,
+  idempotency, принадлежность active/attempt/question сущностей одной версии,
+  pin попытки только к published version и неизменяемость published/superseded
+  content.
+- Voice storage хранит только private bucket/key metadata без публичного URL;
+  политика автоматического удаления в этом этапе не добавлялась.
+- `packages/shared/src/training.ts` расширен enum/snapshot contracts; добавлены
+  `training.domain.ts` и `training.repository.types.ts` без controllers или
+  бизнес-сервисов.
+- Добавлены `training-schema.test.cjs` и `training-contracts.test.cjs`;
+  implementation checklist отмечает этап 2 выполненным.
+
+Проверки:
+
+- `pnpm --filter @platforma/api prisma:generate` — passed.
+- `pnpm --filter @platforma/api exec prisma validate` — passed.
+- Targeted training tests — 15/15 passed.
+- `pnpm build` — passed; сохраняется существующее предупреждение Vite о client
+  chunk больше 500 kB.
+- `pnpm test` — 618/618 passed: API 251, Web 280, Feed import 64, WordPress
+  import 23.
+- На чистой временной PostgreSQL БД успешно применены все 33 migrations и
+  проверены nullable ЖК, published pin, active-attempt uniqueness, immutable
+  content, два voice-сегмента, processed update и pending job.
+- Upgrade-копия локальной БД успешно обновлена с 32 до 33 migrations; counts
+  существующих users/objects/files/feed units/presentation documents до и после
+  не изменились. Обе временные БД удалены.
+
+Ручная проверка:
+
+- Перед production deploy проверить migration lock duration на staging и после
+  `prisma migrate deploy` сверить 18 training tables, partial indexes, triggers
+  и отсутствие изменений counts существующих production-сущностей.
+
+Спорные места:
+
+- Ровно 1 MAIN + 10 FOLLOW_UP и суммы criteria 55/15 требуют aggregate
+  publication validation этапа 3; БД уже ограничивает позиции, max score,
+  единственный активный MAIN и уникальные criteria, но не считает строки/суммы.
+- Controllers, frontend, Telegram/OpenAI providers, загрузка документов и
+  обработка аудио не реализовывались и остаются следующими этапами.

@@ -21,7 +21,7 @@
 | --- | --- | --- |
 | 0 | `00_audit.md` | Выполнен по явному списку prompt |
 | 1 | `01_foundation_rbac.md` | Выполнен |
-| 2 | `02_prisma_schema.md` | Не начат |
+| 2 | `02_prisma_schema.md` | Выполнен |
 | 3 | `03_content_backend.md` | Не начат |
 | 4 | `04_content_ui_documents.md` | Не начат |
 | 5 | `05_attempt_engine_fake.md` | Не начат |
@@ -72,19 +72,39 @@
 - `pnpm --filter @platforma/web test` — 280/280;
 - `pnpm test` — 608/608.
 
-Новые Prisma models/migrations и dependencies отсутствуют. Этап 2 не начинался.
+На момент завершения этапа 1 новые Prisma models/migrations и dependencies
+отсутствовали.
 
 ## Этап 2. Prisma schema и additive migration
 
-- [ ] Переиспользовать `User`; не создавать `Employee`.
-- [ ] Добавить nullable relation к `RealEstateObject`.
-- [ ] Разделить draft и immutable published version.
-- [ ] Pin attempt к version и выбранным questions.
-- [ ] Добавить content, Telegram, attempt, answer/segment, review и job models.
-- [ ] Добавить indexes/unique constraints для integrity/idempotency.
-- [ ] Создать additive migration без seed реальных проектов.
-- [ ] Сгенерировать Prisma Client.
-- [ ] Добавить schema/contract tests и запустить build/tests.
+- [x] Переиспользовать `User`; не создавать `Employee`.
+- [x] Добавить nullable relation к `RealEstateObject`.
+- [x] Разделить draft и immutable published version.
+- [x] Pin attempt к version и выбранным questions.
+- [x] Добавить content, Telegram, attempt, answer/segment, review и job models.
+- [x] Добавить indexes/unique constraints для integrity/idempotency.
+- [x] Создать additive migration без seed реальных проектов.
+- [x] Сгенерировать Prisma Client.
+- [x] Добавить schema/contract tests и запустить build/tests.
+
+Проверки этапа 2:
+
+- `pnpm --filter @platforma/api prisma:generate` — passed;
+- `pnpm --filter @platforma/api exec prisma validate` — passed;
+- targeted training tests — 15/15 passed;
+- `pnpm build` — passed; сохраняется существующее предупреждение Vite о
+  client chunk больше 500 kB;
+- `pnpm test` — 618/618 passed: API 251, Web 280, Feed import 64,
+  WordPress import 23;
+- полный migration chain из 33 миграций применён на чистой изолированной БД;
+- upgrade-копия локальной БД успешно обновлена с 32 до 33 миграций без
+  изменения контрольных counts существующих `users`, `real_estate_objects`,
+  `files`, `feed_units` и `project_presentation_documents`;
+- обе временные тестовые БД удалены после проверки.
+
+Новые dependencies, seed учебных проектов/вопросов и реальные training data
+не добавлялись. Controllers, frontend, Telegram/OpenAI и обработка аудио этапа 3+
+не начинались.
 
 ## Этап 3. Backend учебного контента
 
@@ -193,10 +213,10 @@
 
 ## Следующий этап
 
-Точный следующий этап: `docs/training/prompts/01_foundation_rbac.md`.
+Точный следующий этап: `docs/training/prompts/03_content_backend.md`.
 
 Он не начат и не должен выполняться автоматически. Перед ним нужно:
 
 1. получить отдельный запрос пользователя;
-2. решить расхождение по `03-security-and-data-flow.md`;
-3. повторно проверить branch/status и сохранить чужие изменения.
+2. повторно проверить branch/status и сохранить чужие изменения;
+3. прочитать prompt этапа 3 и повторно проверить schema/domain contracts этапа 2.
