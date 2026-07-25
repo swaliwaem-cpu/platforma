@@ -4407,3 +4407,30 @@ Production repair:
 - Четыре тизера обложки пока являются фиксированной редакционной навигацией, а Telegram deep link остаётся системным `https://t.me/FluffyWhite`; отдельных полей редактирования для них в текущей схеме черновика нет.
 - Карта намеренно редакционная: точки рассчитываются из реальных координат выбранных ЖК, но внешняя картографическая подложка не загружается.
 - Изменения выполнены только локально; commit, push и deployment не выполнялись.
+
+## 2026-07-25 - Training module technical plan adaptation
+
+Задача:
+
+- Изучить переданный ChatGPT share-диалог и заполнить техническую часть мастер-плана `codex_training_module_plan_ru.md` по фактическому состоянию Platforma без реализации кода.
+
+Изменения:
+
+- `codex_training_module_plan_ru.md` - восстановлен из вложения диалога и адаптирован под реальный `pnpm`-монорепозиторий, NestJS/Prisma/PostgreSQL/PostGIS, текущие auth/RBAC, MinIO/S3, ручной frontend router, `node:test`, Docker Compose и рабочую ветку `on-ser`.
+- Зафиксированы реальные пути будущего training-модуля, Prisma migrations, shared contracts, frontend, tests и отдельного worker entrypoint.
+- Исправлены ошибочные предположения исходного шаблона: у NestJS нет глобального `/api` prefix; Redis присутствует в Compose, но не используется приложением; готовой durable queue и полноценного Playwright E2E harness нет; аудио не поддерживается текущим file flow; department/team model и общий export отсутствуют.
+- Для MVP предложен PostgreSQL-backed `TrainingJob` по существующему worker-паттерну без автоматического добавления Redis/BullMQ, Telegram/OpenAI SDK, React Router или других зависимостей.
+- Неподтверждаемые бизнес- и infrastructure-решения оставлены отдельным списком вопросов заказчику.
+
+Проверки:
+
+- `git diff --check` - без ошибок.
+- Код, Prisma schema, migrations, dependencies и runtime не изменялись; build/tests не запускались как нерелевантные для документационного изменения.
+
+Ручная проверка:
+
+- Просмотреть список нерешённых вопросов в начале `codex_training_module_plan_ru.md` и заполнить бизнес-часть из второго опросника.
+
+Спорные места:
+
+- Точный production HTTPS domain, приватность storage bucket, OpenAI data controls, retention, нагрузка, роли с новыми permissions и продуктовые параметры из репозитория определить нельзя.
