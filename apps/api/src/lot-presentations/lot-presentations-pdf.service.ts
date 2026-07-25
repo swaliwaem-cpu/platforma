@@ -17,6 +17,8 @@ const pageHeight = 841.89;
 const marginX = 30;
 const contentWidth = pageWidth - marginX * 2;
 const imageFrameRadius = 5;
+const etalonLayoutComparisonSize = 96;
+const etalonLayoutSimilarityThreshold = 0.5;
 const colors = {
   paper: '#f3f0e9',
   white: '#fbfaf7',
@@ -103,7 +105,7 @@ export type PdfPresentationObject = {
   developerName?: string | null;
   latitude?: Prisma.Decimal | null;
   longitude?: Prisma.Decimal | null;
-  developer?: { name: string } | null;
+  developer?: { name: string; slug?: string | null } | null;
   images: PdfPresentationObjectImage[];
   nearbyPlaces: PdfPresentationNearbyPlace[];
 };
@@ -262,7 +264,7 @@ export class LotPresentationsPdfService {
   ) {
     await this.drawHeader(doc, unit.object.title);
     const cover = [...unit.object.images].sort((a, b) => Number(b.isCover) - Number(a.isCover) || a.sortOrder - b.sortOrder)[0];
-    const { plan, floorPlan, floorPlanFillFrame } = this.getLotPlanFiles(unit);
+    const { plan, floorPlan, floorPlanFillFrame } = await this.getLotPlanFiles(unit);
 
     const titleLayout = this.getLotTitleLayout(doc, this.getLotTitle(unit), 320);
     doc.fillColor(colors.ink).font('NotoSansBold').fontSize(titleLayout.fontSize);
@@ -826,11 +828,10 @@ export class LotPresentationsPdfService {
     };
   }
 
-  private getLotPlanFiles(unit: PdfPresentationUnit) {
-    const media = [...unit.media]
-      .filter((item) => item.mediaAsset.file)
-      .sort((left, right) => left.sortOrder - right.sortOrder);
-    const normalizedLabel = (item: (typeof media)[number]) => item.label?.trim().toLowerCase() ?? '';
+  private async getLotPlanFiles(unit: PdfPresentationUnit) {
+    const orderedMedia = [...unit.media].sort((left, right) => left.sortOrder - right.sortOrder);
+    const media = orderedMedia.filter((item) => item.mediaAsset.file);
+    const normalizedLabel = (item: (typeof orderedMedia)[number]) => item.label?.trim().toLowerCase() ?? '';
     const normalizedFileReference = (item: (typeof media)[number]) => {
       const file = item.mediaAsset.file;
       return [item.mediaAsset.sourceUrl, file?.originalName, file?.key, file?.url]
@@ -867,6 +868,54 @@ export class LotPresentationsPdfService {
           normalizedLabel(item).includes('plan') &&
           !normalizedLabel(item).includes('floor'),
       );
+    const objectGalleryFallback = [...unit.object.images].sort(
+      (left, right) => Number(right.isCover) - Number(left.isCover) || left.sortOrder - right.sortOrder,
+    )[1]?.file ?? null;
+    const etalonLayoutItems = this.isEtalonUnit(unit)
+      ? orderedMedia.filter((item) => normalizedLabel(item) === 'layout-photo')
+      : [];
+    const etalonPlanItem =
+      explicitPlanItem ??
+      etalonLayoutItems.find((item) => Boolean(item.mediaAsset.file));
+    let etalonFloorPlanItem = etalonLayoutItems[2]?.mediaAsset.file
+      ? etalonLayoutItems[2]
+      : undefined;
+
+    if (
+      etalonLayoutItems.length === 2 &&
+      etalonLayoutItems[0]?.mediaAsset.file &&
+      etalonLayoutItems[1]?.mediaAsset.file
+    ) {
+      const layoutsAreSimilar = await this.areLayoutFilesVisuallySimilar(
+        etalonLayoutItems[0].mediaAsset.file,
+        etalonLayoutItems[1].mediaAsset.file,
+      );
+
+      if (layoutsAreSimilar === false) {
+        etalonFloorPlanItem = etalonLayoutItems[1];
+      }
+    }
+
+    if (etalonFloorPlanItem === etalonPlanItem) {
+      etalonFloorPlanItem = undefined;
+    }
+
+    if (!floorPlanItem && etalonLayoutItems.length > 0 && etalonPlanItem) {
+      const photoFallbackItem = media.find(
+        (item) => item !== etalonPlanItem && normalizedLabel(item) === 'photo',
+      );
+      const floorPlan =
+        etalonFloorPlanItem?.mediaAsset.file ??
+        photoFallbackItem?.mediaAsset.file ??
+        objectGalleryFallback;
+
+      return {
+        plan: etalonPlanItem.mediaAsset.file,
+        floorPlan,
+        floorPlanFillFrame: floorPlan !== null && !etalonFloorPlanItem,
+      };
+    }
+
     const planItem =
       explicitPlanItem ??
       media.find((item) => item !== floorPlanItem) ??
@@ -874,9 +923,6 @@ export class LotPresentationsPdfService {
     const resolvedFloorPlanItem =
       floorPlanItem ??
       (explicitPlanItem ? null : media.find((item) => item !== planItem));
-    const objectGalleryFallback = [...unit.object.images].sort(
-      (left, right) => Number(right.isCover) - Number(left.isCover) || left.sortOrder - right.sortOrder,
-    )[1]?.file ?? null;
     const floorPlan = resolvedFloorPlanItem?.mediaAsset.file ?? objectGalleryFallback;
 
     return {
@@ -884,6 +930,83 @@ export class LotPresentationsPdfService {
       floorPlan,
       floorPlanFillFrame: floorPlan !== null && floorPlanItem === undefined,
     };
+  }
+
+  private isEtalonUnit(unit: PdfPresentationUnit) {
+    const developerSlug = unit.object.developer?.slug?.trim().toLowerCase() ?? '';
+
+    if (developerSlug === 'etalon') {
+      return true;
+    }
+
+    const developerName = (
+      unit.object.developer?.name ??
+      unit.object.developerName ??
+      ''
+    ).trim().toLocaleLowerCase('ru-RU');
+
+    return ['эталон', 'группа эталон', 'etalon', 'etalon group'].includes(developerName);
+  }
+
+  private async areLayoutFilesVisuallySimilar(leftFile: File, rightFile: File) {
+    const [leftPixels, rightPixels] = await Promise.all([
+      this.loadLayoutComparisonPixels(leftFile),
+      this.loadLayoutComparisonPixels(rightFile),
+    ]);
+
+    if (!leftPixels || !rightPixels || leftPixels.length !== rightPixels.length) {
+      return null;
+    }
+
+    let leftTotal = 0;
+    let rightTotal = 0;
+
+    for (let index = 0; index < leftPixels.length; index += 1) {
+      leftTotal += 255 - leftPixels[index]!;
+      rightTotal += 255 - rightPixels[index]!;
+    }
+
+    const leftMean = leftTotal / leftPixels.length;
+    const rightMean = rightTotal / rightPixels.length;
+    let covariance = 0;
+    let leftVariance = 0;
+    let rightVariance = 0;
+
+    for (let index = 0; index < leftPixels.length; index += 1) {
+      const leftDelta = 255 - leftPixels[index]! - leftMean;
+      const rightDelta = 255 - rightPixels[index]! - rightMean;
+
+      covariance += leftDelta * rightDelta;
+      leftVariance += leftDelta * leftDelta;
+      rightVariance += rightDelta * rightDelta;
+    }
+
+    const varianceProduct = leftVariance * rightVariance;
+
+    if (varianceProduct === 0) {
+      return null;
+    }
+
+    return covariance / Math.sqrt(varianceProduct) >= etalonLayoutSimilarityThreshold;
+  }
+
+  private async loadLayoutComparisonPixels(file: File) {
+    try {
+      const { buffer } = await this.filesService.getContent(file.id, 'detail');
+
+      return sharp(buffer)
+        .rotate()
+        .flatten({ background: colors.white })
+        .resize(etalonLayoutComparisonSize, etalonLayoutComparisonSize, {
+          fit: 'contain',
+          background: colors.white,
+        })
+        .grayscale()
+        .raw()
+        .toBuffer();
+    } catch {
+      return null;
+    }
   }
 
   private async loadStaticMap(object: PdfPresentationObject) {

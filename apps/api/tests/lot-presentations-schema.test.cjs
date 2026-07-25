@@ -241,8 +241,42 @@ test('lot presentation gallery keeps the cover separate and maps thematic sectio
   assert.equal(mysGalleryIds.includes('cover'), false);
 });
 
-test('lot presentation titles wrap by whole words and plan media keep semantic or imported positions', () => {
-  const pdfService = new LotPresentationsPdfService({});
+test('lot presentation titles wrap by whole words and plan media keep semantic or imported positions', async () => {
+  const apartmentPlanBuffer = Buffer.from(`
+    <svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
+      <rect width="100" height="100" fill="white"/>
+      <path d="M18 14H82V86H18ZM18 52H82M48 14V52M62 52V86" fill="none" stroke="black" stroke-width="5"/>
+    </svg>
+  `);
+  const dimensionedApartmentPlanBuffer = Buffer.from(`
+    <svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
+      <rect width="100" height="100" fill="white"/>
+      <path d="M18 14H82V86H18ZM18 52H82M48 14V52M62 52V86" fill="none" stroke="black" stroke-width="5"/>
+      <path d="M22 20H44M52 20H78M22 58H58" fill="none" stroke="#777" stroke-width="1"/>
+    </svg>
+  `);
+  const floorPlanBuffer = Buffer.from(`
+    <svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
+      <rect width="100" height="100" fill="white"/>
+      <path d="M6 42H94V64H6ZM24 42V64M40 42V64M58 42V64M76 42V64" fill="none" stroke="black" stroke-width="3"/>
+    </svg>
+  `);
+  const layoutBuffers = new Map([
+    ['etalon-furnished-unit-plan', apartmentPlanBuffer],
+    ['etalon-dimensioned-unit-plan', dimensionedApartmentPlanBuffer],
+    ['etalon-two-item-floor-plan', floorPlanBuffer],
+  ]);
+  const pdfService = new LotPresentationsPdfService({
+    async getContent(fileId) {
+      const buffer = layoutBuffers.get(fileId);
+
+      if (!buffer) {
+        throw new Error(`Unexpected comparison file: ${fileId}`);
+      }
+
+      return { buffer };
+    },
+  });
   const doc = new PDFDocument({ autoFirstPage: false });
   pdfService.registerFonts(doc);
 
@@ -254,17 +288,19 @@ test('lot presentation titles wrap by whole words and plan media keep semantic o
   doc.font('NotoSansBold').fontSize(titleLayout.fontSize);
   assert.ok(titleLayout.lines.every((line) => doc.widthOfString(line) <= 320));
 
-  const media = (id, sortOrder, label, originalName, sourceUrl = undefined) => ({
+  const media = (id, sortOrder, label, originalName, sourceUrl = undefined, hasFile = true) => ({
     sortOrder,
     label,
     mediaAsset: {
       sourceUrl,
-      file: {
-        id,
-        originalName,
-        key: `feed/${originalName}`,
-        url: null,
-      },
+      file: hasFile
+        ? {
+            id,
+            originalName,
+            key: `feed/${originalName}`,
+            url: null,
+          }
+        : null,
     },
   });
   const objectImage = (id, sortOrder, isCover = false) => ({
@@ -278,23 +314,23 @@ test('lot presentation titles wrap by whole words and plan media keep semantic o
     objectImage('object-floor-fallback', 3),
     objectImage('object-cover', 100, true),
   ];
-  const lot = (mediaItems, images = objectImages) => ({
+  const lot = (mediaItems, { images = objectImages, developer = null } = {}) => ({
     media: mediaItems,
-    object: { images },
+    object: { images, developer },
   });
-  const mangazeyaPlans = pdfService.getLotPlanFiles(lot([
+  const mangazeyaPlans = await pdfService.getLotPlanFiles(lot([
     media('unit-plan', 0, 'layout-photo', 'nazare_image_plan.jpeg'),
     media('floor-plan', 1, 'photo', 'nazare_floor_plan.jpeg'),
   ]));
-  const mrGroupPlans = pdfService.getLotPlanFiles(lot([
+  const mrGroupPlans = await pdfService.getLotPlanFiles(lot([
     media('unit-plan', 0, 'photo', 'flat-plan.png'),
     media('floor-plan', 1, 'layout-photo', 'floor-plan.png'),
   ]));
-  const fskPlans = pdfService.getLotPlanFiles(lot([
+  const fskPlans = await pdfService.getLotPlanFiles(lot([
     media('unit-plan', 0, 'flat-plan', 'flat.png'),
     media('floor-plan', 1, 'floor-plan', 'floor.png'),
   ]));
-  const cityBayPlans = pdfService.getLotPlanFiles(lot([
+  const cityBayPlans = await pdfService.getLotPlanFiles(lot([
     media(
       'city-bay-floor-plan',
       1,
@@ -310,7 +346,7 @@ test('lot presentation titles wrap by whole words and plan media keep semantic o
       'https://s3.mastertel.ru/project/realEstate/fp/СБ-1(К)-1_51_5_334.PNG',
     ),
   ]));
-  const nonTargetMrPlans = pdfService.getLotPlanFiles(lot([
+  const nonTargetMrPlans = await pdfService.getLotPlanFiles(lot([
     media(
       'forum-floor-plan',
       1,
@@ -326,14 +362,46 @@ test('lot presentation titles wrap by whole words and plan media keep semantic o
       'https://s3.mastertel.ru/project/realEstate/fp/forum-plan.png',
     ),
   ]));
-  const voxhallPlans = pdfService.getLotPlanFiles(lot([
+  const etalonDeveloper = { name: 'Эталон', slug: 'etalon' };
+  const voxhallPlans = await pdfService.getLotPlanFiles(lot([
     media('voxhall-project-photo', 1, 'photo', 'arkh_1.jpg'),
     media('voxhall-unit-plan', 0, 'layout-photo', '41000000001526607.png'),
-  ]));
-  const singleLayoutPlans = pdfService.getLotPlanFiles(lot([
+  ], { developer: etalonDeveloper }));
+  const etalonThreeLayoutPlans = await pdfService.getLotPlanFiles(lot([
+    media('etalon-furnished-unit-plan', 0, 'layout-photo', '42500000002511717.png'),
+    media('etalon-dimensioned-unit-plan', 1, 'layout-photo', '42500000002511478.png'),
+    media('etalon-floor-plan', 2, 'layout-photo', '42500000002511201.png'),
+    media('etalon-project-photo', 3, 'photo', 'arkh_1.jpg'),
+  ], { developer: etalonDeveloper }));
+  const etalonTwoLayoutPlans = await pdfService.getLotPlanFiles(lot([
+    media('etalon-furnished-unit-plan', 0, 'layout-photo', '45000000003120290.png'),
+    media('etalon-dimensioned-unit-plan', 1, 'layout-photo', '45000000003120292.gif'),
+    media('etalon-project-photo', 2, 'photo', 'arkh_1.jpg'),
+  ], { developer: { name: 'Группа Эталон' } }));
+  const etalonTwoLayoutsWithoutPhotoPlans = await pdfService.getLotPlanFiles(lot([
+    media('etalon-furnished-unit-plan', 0, 'layout-photo', 'layout-furnished.png'),
+    media('etalon-dimensioned-unit-plan', 1, 'layout-photo', 'layout-dimensions.png'),
+  ], { developer: etalonDeveloper }));
+  const etalonTwoLayoutWithFloorPlans = await pdfService.getLotPlanFiles(lot([
+    media('etalon-furnished-unit-plan', 0, 'layout-photo', 'layout-furnished.png'),
+    media('etalon-two-item-floor-plan', 1, 'layout-photo', 'floor.png'),
+    media('etalon-project-photo', 2, 'photo', 'project.jpg'),
+  ], { developer: etalonDeveloper }));
+  const etalonMissingSecondLayoutFilePlans = await pdfService.getLotPlanFiles(lot([
+    media('etalon-furnished-unit-plan', 0, 'layout-photo', 'layout-furnished.png'),
+    media('etalon-dimensioned-unit-plan', 1, 'layout-photo', 'layout-dimensions.png', undefined, false),
+    media('etalon-floor-plan', 2, 'layout-photo', 'floor.png'),
+    media('etalon-project-photo', 3, 'photo', 'project.jpg'),
+  ], { developer: etalonDeveloper }));
+  const nonEtalonThreeLayoutPlans = await pdfService.getLotPlanFiles(lot([
+    media('other-layout-1', 0, 'layout-photo', 'layout-1.png'),
+    media('other-layout-2', 1, 'layout-photo', 'layout-2.png'),
+    media('other-layout-3', 2, 'layout-photo', 'layout-3.png'),
+  ], { developer: { name: 'Другой застройщик', slug: 'other' } }));
+  const singleLayoutPlans = await pdfService.getLotPlanFiles(lot([
     media('single-layout', 0, 'layout-photo', 'layout.png'),
   ]));
-  const singleFloorPlans = pdfService.getLotPlanFiles(lot([
+  const singleFloorPlans = await pdfService.getLotPlanFiles(lot([
     media('single-floor', 0, 'floor-plan', 'floor-plan.png'),
   ]));
 
@@ -350,6 +418,24 @@ test('lot presentation titles wrap by whole words and plan media keep semantic o
   assert.equal(voxhallPlans.plan.id, 'voxhall-unit-plan');
   assert.equal(voxhallPlans.floorPlan.id, 'voxhall-project-photo');
   assert.equal(voxhallPlans.floorPlanFillFrame, true);
+  assert.equal(etalonThreeLayoutPlans.plan.id, 'etalon-furnished-unit-plan');
+  assert.equal(etalonThreeLayoutPlans.floorPlan.id, 'etalon-floor-plan');
+  assert.equal(etalonThreeLayoutPlans.floorPlanFillFrame, false);
+  assert.equal(etalonTwoLayoutPlans.plan.id, 'etalon-furnished-unit-plan');
+  assert.equal(etalonTwoLayoutPlans.floorPlan.id, 'etalon-project-photo');
+  assert.equal(etalonTwoLayoutPlans.floorPlanFillFrame, true);
+  assert.equal(etalonTwoLayoutsWithoutPhotoPlans.plan.id, 'etalon-furnished-unit-plan');
+  assert.equal(etalonTwoLayoutsWithoutPhotoPlans.floorPlan.id, 'object-floor-fallback');
+  assert.equal(etalonTwoLayoutsWithoutPhotoPlans.floorPlanFillFrame, true);
+  assert.equal(etalonTwoLayoutWithFloorPlans.plan.id, 'etalon-furnished-unit-plan');
+  assert.equal(etalonTwoLayoutWithFloorPlans.floorPlan.id, 'etalon-two-item-floor-plan');
+  assert.equal(etalonTwoLayoutWithFloorPlans.floorPlanFillFrame, false);
+  assert.equal(etalonMissingSecondLayoutFilePlans.plan.id, 'etalon-furnished-unit-plan');
+  assert.equal(etalonMissingSecondLayoutFilePlans.floorPlan.id, 'etalon-floor-plan');
+  assert.equal(etalonMissingSecondLayoutFilePlans.floorPlanFillFrame, false);
+  assert.equal(nonEtalonThreeLayoutPlans.plan.id, 'other-layout-1');
+  assert.equal(nonEtalonThreeLayoutPlans.floorPlan.id, 'other-layout-2');
+  assert.equal(nonEtalonThreeLayoutPlans.floorPlanFillFrame, true);
   assert.equal(singleLayoutPlans.plan.id, 'single-layout');
   assert.equal(singleLayoutPlans.floorPlan.id, 'object-floor-fallback');
   assert.equal(singleLayoutPlans.floorPlanFillFrame, true);
@@ -357,7 +443,7 @@ test('lot presentation titles wrap by whole words and plan media keep semantic o
   assert.equal(singleFloorPlans.floorPlan.id, 'single-floor');
   assert.equal(singleFloorPlans.floorPlanFillFrame, false);
 
-  const floorFallbackPlans = pdfService.getLotPlanFiles(lot([
+  const floorFallbackPlans = await pdfService.getLotPlanFiles(lot([
     media('unit-plan', 0, 'flat-plan', 'flat-plan.png'),
     media('unrelated-media', 1, 'photo', 'courtyard-photo.jpg'),
   ]));
@@ -365,7 +451,7 @@ test('lot presentation titles wrap by whole words and plan media keep semantic o
   assert.equal(floorFallbackPlans.plan.id, 'unit-plan');
   assert.equal(floorFallbackPlans.floorPlan.id, 'object-floor-fallback');
 
-  const explicitFloorPlan = pdfService.getLotPlanFiles(lot([
+  const explicitFloorPlan = await pdfService.getLotPlanFiles(lot([
     media('unit-plan', 0, 'flat-plan', 'flat-plan.png'),
     media('explicit-floor-plan', 1, 'floor-plan', 'floor-plan.png'),
   ]));
