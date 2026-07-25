@@ -4601,3 +4601,95 @@ Production repair:
   равны `null`); если окно задано, обязательны обе даты и длительность 1..7 дней.
 - Этап не добавляет frontend-редактор, document upload/extraction,
   Telegram/OpenAI, audio и attempt engine.
+
+## 2026-07-25 - Training admin UI and document ingestion
+
+Задача:
+
+- Выполнить только этап 4 training-модуля: admin UI для проектов и draft
+  content, private upload PDF/DOCX/PPTX/XLSX, безопасное извлечение текста,
+  preview, publication и UI ошибок валидации.
+
+Изменения:
+
+- Добавлены ручные admin routes `/admin/training`,
+  `/admin/training/new` и `/admin/training/:projectId/edit` без React Router.
+  Редактор использует существующие `AdminUi`, Platforma theme tokens,
+  `apiRequest` и ровно семь утверждённых вкладок.
+- Реализованы создание initial draft, редактирование проекта/settings,
+  nullable связь с `RealEstateObject`, CRUD вопросов/facts/criteria, preview,
+  publication, open/close/archive и создание нового draft из published версии.
+- Серверные validation errors сохраняют структурированный `errors[]` и
+  отображаются в редакторе вместе с клиентской сводкой ошибок.
+- Добавлен защищённый admin API:
+  `GET /training/admin/real-estate-objects`,
+  `GET|POST /training/admin/versions/:versionId/documents`,
+  `GET /training/admin/versions/:versionId/documents/:documentId/text`,
+  `PATCH|DELETE /training/admin/versions/:versionId/documents/:documentId`,
+  `POST /training/admin/versions/:versionId/documents/:documentId/retry` и
+  `GET /training/admin/versions/:versionId/documents/:documentId/content`.
+- Документы сохраняются в отдельном private bucket без публичного URL.
+  Upload проверяет DRAFT status, extension, MIME, magic bytes и размер; download
+  остаётся под JWT/RBAC и отдаётся с `private, no-store`.
+- Добавлен durable EXTRACT worker с атомарным claim, retry/dead состояниями и
+  документными статусами `PENDING`, `PROCESSING`, `READY`,
+  `NEEDS_MANUAL_TEXT`, `FAILED`.
+- PDF извлекается по страницам; DOCX — по секциям/параграфам; PPTX — по
+  слайдам; XLSX — по листам/ячейкам без вычисления formulas. OOXML reader
+  ограничивает количество entries, размер entry и суммарный распакованный
+  объём, отклоняет unsafe paths, encryption, macros, embedded/ActiveX content,
+  external relationships, DTD и entities. Извлечение ограничено timeout,
+  числом segments и длиной текста.
+- Извлечённый или вручную исправленный текст помечен как draft-only и никогда
+  не участвует в scoring. Для оценивания доступны только структурированные
+  facts, явно подтверждённые администратором.
+- Private storage расширен bucket-aware read/delete; linked source documents
+  защищены от общего удаления файлов. Prisma schema/migration не менялись:
+  необходимые модели этапа 2 уже существовали.
+- Добавлены backend unit/runtime fixture tests для PDF/DOCX/PPTX/XLSX,
+  extraction limits, unsafe ZIP и private deletion; frontend tests покрывают
+  routes, вкладки, CRUD, documents, publication и validation UI.
+- `docs/training/02-implementation-checklist.md` отмечает этап 4 выполненным.
+
+Dependencies:
+
+- `pdfjs-dist` — узкий runtime parser PDF text layer и page locators.
+- `yauzl` — потоковое lazy-чтение OOXML ZIP с явными safety limits.
+- `fast-xml-parser` — разбор только нужных XML parts DOCX/PPTX/XLSX с
+  отключёнными entities.
+- `@types/yauzl` — TypeScript types для backend development. Тяжёлые
+  универсальные document frameworks не добавлялись.
+
+Проверки:
+
+- `pnpm build` — passed; сохраняется существующее предупреждение Vite о client
+  chunk `753.03 kB`, больше 500 kB.
+- `pnpm test` — 651/651 passed: API 278, Web 286, Feed import 64, WordPress
+  import 23.
+- Локальный Docker smoke прошёл полный flow: авторизованное создание проекта,
+  upload PDF с HTTP 202, переход worker в `READY`, получение draft-only текста
+  со `scoringEligible=false`, ручная корректировка и удаление документа с HTTP
+  204. Временные project/audit/file записи удалены; private bucket после
+  повторного smoke пуст.
+- Неавторизованный запрос projects вернул HTTP 401; после применения
+  существующего RBAC seed admin-запросы projects и object options вернули
+  HTTP 200.
+
+Ручная проверка:
+
+- Встроенный browser в текущей сессии недоступен, поэтому остаётся визуально
+  пройти editor на desktop/mobile в обеих темах под `admin` и
+  `training_admin`, проверить все четыре формата на реальных документах и HTTP
+  403 для пользователя без `training:projects:manage`.
+- Перед production deploy подтвердить private policy отдельного bucket,
+  production env limits и lifecycle/retention policy исходных документов.
+
+Спорные места:
+
+- Worker запускается внутри API-процесса и использует PostgreSQL job queue; это
+  соответствует этапу 4, но при горизонтальном масштабировании требует общей
+  БД и корректных production health/termination настроек.
+- OCR намеренно отсутствует: PDF без пригодного text layer переходит в
+  `NEEDS_MANUAL_TEXT`.
+- Telegram, audio, transcription, AI evaluation и attempt engine не
+  реализовывались; этап 5 не начинался.

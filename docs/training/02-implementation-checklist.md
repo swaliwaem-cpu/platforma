@@ -23,7 +23,7 @@
 | 1 | `01_foundation_rbac.md` | Выполнен |
 | 2 | `02_prisma_schema.md` | Выполнен |
 | 3 | `03_content_backend.md` | Выполнен |
-| 4 | `04_content_ui_documents.md` | Не начат |
+| 4 | `04_content_ui_documents.md` | Выполнен |
 | 5 | `05_attempt_engine_fake.md` | Не начат |
 | 6 | `06_telegram.md` | Не начат |
 | 7 | `07_audio_worker.md` | Не начат |
@@ -139,16 +139,22 @@ Telegram/OpenAI и audio processing не добавлялись.
 
 ## Этап 4. Admin UI и document ingestion
 
-- [ ] Реализовать список/создание/редактирование training projects.
-- [ ] Добавить утверждённые вкладки content editor.
-- [ ] Поддержать nullable link к `RealEstateObject`.
-- [ ] Реализовать private upload PDF/DOCX/PPTX/XLSX.
-- [ ] Обосновать и согласовать минимальные parser dependencies.
-- [ ] Добавить async extraction status и source locators.
-- [ ] Добавить size/MIME/magic-byte/zip-bomb/text limits.
-- [ ] Поддержать `NEEDS_MANUAL_TEXT`; OCR не добавлять.
-- [ ] Допускать в scoring только подтверждённые facts.
-- [ ] Добавить frontend/backend tests и запустить build/tests.
+- [x] Реализовать список/создание/редактирование training projects.
+- [x] Добавить утверждённые вкладки content editor.
+- [x] Поддержать nullable link к `RealEstateObject`.
+- [x] Реализовать private upload PDF/DOCX/PPTX/XLSX.
+- [x] Обосновать и согласовать минимальные parser dependencies.
+- [x] Добавить async extraction status и source locators.
+- [x] Добавить size/MIME/magic-byte/zip-bomb/text limits.
+- [x] Поддержать `NEEDS_MANUAL_TEXT`; OCR не добавлять.
+- [x] Допускать в scoring только подтверждённые facts.
+- [x] Добавить frontend/backend tests и запустить build/tests.
+
+Добавлены только узкие parser dependencies: `pdfjs-dist` для text layer PDF,
+`yauzl` для контролируемого чтения OOXML ZIP и `fast-xml-parser` для XML внутри
+DOCX/PPTX/XLSX. Извлечённый и вручную скорректированный текст всегда остаётся
+черновым источником; scoring использует только структурированные facts с явным
+подтверждением администратора.
 
 ## Этап 5. Attempt engine с fake providers
 

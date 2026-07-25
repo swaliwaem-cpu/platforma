@@ -9,6 +9,17 @@ const apiConnectionErrorMessage = 'Не удалось связаться с с�
 let currentAccessToken: string | null = null;
 let refreshSessionPromise: Promise<AuthResponse> | null = null;
 
+export class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly errors: string[] = [],
+  ) {
+    super(message);
+    this.name = 'ApiRequestError';
+  }
+}
+
 export function setApiAccessToken(accessToken: string | null) {
   currentAccessToken = accessToken;
 }
@@ -38,7 +49,8 @@ export async function apiRequest<T = unknown>(
   }
 
   if (!response.ok) {
-    throw new Error(await resolveErrorMessage(response));
+    const error = await resolveApiError(response);
+    throw new ApiRequestError(error.message, response.status, error.errors);
   }
 
   if (response.status === 204) {
@@ -46,6 +58,35 @@ export async function apiRequest<T = unknown>(
   }
 
   return (await response.json()) as T;
+}
+
+export async function apiDownload(
+  path: string,
+  accessToken: string,
+): Promise<{ blob: Blob; filename: string | null }> {
+  const initialToken = currentAccessToken ?? accessToken;
+  let response: Response;
+
+  try {
+    response = await sendApiRequest(path, initialToken, {});
+  } catch {
+    throw new ApiRequestError(apiConnectionErrorMessage, 0);
+  }
+
+  if (response.status === 401) {
+    const refreshedSession = await refreshApiSession();
+    response = await sendApiRequest(path, refreshedSession.accessToken, {});
+  }
+
+  if (!response.ok) {
+    const error = await resolveApiError(response);
+    throw new ApiRequestError(error.message, response.status, error.errors);
+  }
+
+  return {
+    blob: await response.blob(),
+    filename: getContentDispositionFilename(response.headers.get('Content-Disposition')),
+  };
 }
 
 async function sendApiRequest(path: string, accessToken: string, options: RequestInit) {
@@ -99,16 +140,44 @@ async function refreshApiSession() {
 }
 
 async function resolveErrorMessage(response: Response) {
+  return (await resolveApiError(response)).message;
+}
+
+async function resolveApiError(response: Response) {
   if (response.status === 413) {
-    return 'Слишком большой запрос: уменьшите размер файлов или загрузите меньше изображений';
+    return {
+      message: 'Слишком большой запрос: уменьшите размер файлов или загрузите меньше изображений',
+      errors: [] as string[],
+    };
   }
 
   try {
-    const data = (await response.json()) as { message?: string | string[] };
+    const data = (await response.json()) as {
+      message?: string | string[];
+      errors?: unknown;
+    };
     const message = Array.isArray(data.message) ? data.message.join(', ') : data.message;
+    const errors = Array.isArray(data.errors)
+      ? data.errors.filter((item): item is string => typeof item === 'string')
+      : [];
 
-    return message || 'Запрос не выполнен';
+    return { message: message || 'Запрос не выполнен', errors };
   } catch {
-    return 'Запрос не выполнен';
+    return { message: 'Запрос не выполнен', errors: [] as string[] };
   }
+}
+
+function getContentDispositionFilename(value: string | null) {
+  if (!value) return null;
+
+  const utf8Match = value.match(/filename\*=UTF-8''([^;]+)/iu);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      return utf8Match[1];
+    }
+  }
+
+  return value.match(/filename="([^"]+)"/iu)?.[1] ?? null;
 }

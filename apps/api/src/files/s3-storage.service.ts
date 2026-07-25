@@ -23,10 +23,13 @@ export class S3StorageService implements OnModuleInit {
   private readonly accessKeyId = process.env.S3_ACCESS_KEY_ID ?? 'platforma';
   private readonly secretAccessKey = process.env.S3_SECRET_ACCESS_KEY ?? 'platforma_password';
   private readonly bucket = process.env.MINIO_BUCKET ?? 'platforma';
-  private bucketReady = false;
+  private readonly trainingDocumentBucket =
+    process.env.TRAINING_DOCUMENT_BUCKET ?? 'platforma-training-private';
+  private readonly readyBuckets = new Set<string>();
 
   async onModuleInit() {
     await this.ensureBucket();
+    await this.ensureBucket(this.trainingDocumentBucket);
   }
 
   getBucket() {
@@ -37,18 +40,22 @@ export class S3StorageService implements OnModuleInit {
     return `${this.publicEndpoint}/${encodePath(this.bucket)}/${encodePath(key)}`;
   }
 
-  async ensureBucket() {
-    if (this.bucketReady) {
+  getTrainingDocumentBucket() {
+    return this.trainingDocumentBucket;
+  }
+
+  async ensureBucket(bucket = this.bucket) {
+    if (this.readyBuckets.has(bucket)) {
       return;
     }
 
     const headResponse = await this.signedFetch({
       method: 'HEAD',
-      bucket: this.bucket,
+      bucket,
     });
 
     if (headResponse.ok) {
-      this.bucketReady = true;
+      this.readyBuckets.add(bucket);
       return;
     }
 
@@ -58,22 +65,23 @@ export class S3StorageService implements OnModuleInit {
 
     const createResponse = await this.signedFetch({
       method: 'PUT',
-      bucket: this.bucket,
+      bucket,
     });
 
     if (!createResponse.ok && createResponse.status !== 409) {
       await this.throwStorageError('Cannot create MinIO bucket', createResponse);
     }
 
-    this.bucketReady = true;
+    this.readyBuckets.add(bucket);
   }
 
-  async putObject(params: { key: string; body: Buffer; contentType: string }) {
-    await this.ensureBucket();
+  async putObject(params: { key: string; body: Buffer; contentType: string; bucket?: string }) {
+    const bucket = params.bucket ?? this.bucket;
+    await this.ensureBucket(bucket);
 
     const response = await this.signedFetch({
       method: 'PUT',
-      bucket: this.bucket,
+      bucket,
       key: params.key,
       body: params.body,
       contentType: params.contentType,
@@ -85,7 +93,7 @@ export class S3StorageService implements OnModuleInit {
   }
 
   async putObjectFromFile(params: { key: string; filePath: string; contentType: string; checksum: string; contentLength: number }) {
-    await this.ensureBucket();
+    await this.ensureBucket(this.bucket);
 
     const response = await this.signedFetch({
       method: 'PUT',
@@ -102,12 +110,12 @@ export class S3StorageService implements OnModuleInit {
     }
   }
 
-  async getObject(key: string) {
-    await this.ensureBucket();
+  async getObject(key: string, bucket = this.bucket) {
+    await this.ensureBucket(bucket);
 
     const response = await this.signedFetch({
       method: 'GET',
-      bucket: this.bucket,
+      bucket,
       key,
     });
 
@@ -118,12 +126,12 @@ export class S3StorageService implements OnModuleInit {
     return Buffer.from(await response.arrayBuffer());
   }
 
-  async deleteObject(key: string) {
-    await this.ensureBucket();
+  async deleteObject(key: string, bucket = this.bucket) {
+    await this.ensureBucket(bucket);
 
     const response = await this.signedFetch({
       method: 'DELETE',
-      bucket: this.bucket,
+      bucket,
       key,
     });
 

@@ -197,6 +197,51 @@ export class FilesService {
     }
   }
 
+  async uploadPrivateTrainingDocument(
+    file: UploadedFile & { buffer: Buffer },
+    actor: AuthenticatedUser,
+    extension: '.pdf' | '.docx' | '.pptx' | '.xlsx',
+  ) {
+    const originalName = basename(file.originalname || `document${extension}`);
+    const checksum = createHash('sha256').update(file.buffer).digest('hex');
+    const key = this.createPrivateTrainingStorageKey(extension);
+    const bucket = this.storage.getTrainingDocumentBucket();
+
+    try {
+      await this.storage.putObject({
+        bucket,
+        key,
+        body: file.buffer,
+        contentType: file.mimetype,
+      });
+
+      return await this.prisma.file.create({
+        data: {
+          storage: FileStorage.MINIO,
+          bucket,
+          key,
+          url: null,
+          originalName,
+          mimeType: file.mimetype,
+          sizeBytes: BigInt(file.buffer.length),
+          checksum,
+          uploadedById: actor.id,
+        },
+      });
+    } catch (error) {
+      await this.storage.deleteObject(key, bucket).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async readStoredFile(file: Pick<File, 'bucket' | 'key'>) {
+    return this.storage.getObject(file.key, file.bucket ?? undefined);
+  }
+
+  async deleteStoredFile(file: Pick<File, 'bucket' | 'key'>) {
+    await this.storage.deleteObject(file.key, file.bucket ?? undefined);
+  }
+
   async getById(id: string) {
     const file = await this.findExistingFile(id);
 
@@ -254,6 +299,7 @@ export class FilesService {
         variants: {
           select: {
             key: true,
+            bucket: true,
           },
         },
         _count: {
@@ -266,6 +312,7 @@ export class FilesService {
             projectPresentationDraftCovers: true,
             projectPresentationDocuments: true,
             projectPresentationAssets: true,
+            trainingSourceDocuments: true,
           },
         },
       },
@@ -283,16 +330,17 @@ export class FilesService {
       file._count.lotPresentationDocuments > 0 ||
       file._count.projectPresentationDraftCovers > 0 ||
       file._count.projectPresentationDocuments > 0 ||
-      file._count.projectPresentationAssets > 0
+      file._count.projectPresentationAssets > 0 ||
+      file._count.trainingSourceDocuments > 0
     ) {
       throw new ConflictException('File is linked and cannot be deleted');
     }
 
     for (const variant of file.variants) {
-      await this.storage.deleteObject(variant.key);
+      await this.storage.deleteObject(variant.key, variant.bucket ?? undefined);
     }
 
-    await this.storage.deleteObject(file.key);
+    await this.storage.deleteObject(file.key, file.bucket ?? undefined);
     await this.prisma.file.delete({
       where: {
         id: file.id,
@@ -544,6 +592,14 @@ export class FilesService {
     const extension = this.getSafeExtension(originalName, mimeType);
 
     return `uploads/${year}/${month}/${randomUUID()}${extension}`;
+  }
+
+  private createPrivateTrainingStorageKey(extension: '.pdf' | '.docx' | '.pptx' | '.xlsx') {
+    const now = new Date();
+    const year = now.getUTCFullYear();
+    const month = String(now.getUTCMonth() + 1).padStart(2, '0');
+
+    return `training-documents/${year}/${month}/${randomUUID()}${extension}`;
   }
 
   private getSafeExtension(originalName: string, mimeType: string) {

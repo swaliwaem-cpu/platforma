@@ -10,6 +10,10 @@ const shellSource = readFileSync(
   resolve(currentDir, '../src/training/TrainingShellPage.tsx'),
   'utf8',
 );
+const adminSource = readFileSync(
+  resolve(currentDir, '../src/training/TrainingAdminPage.tsx'),
+  'utf8',
+);
 
 test('employee training route and navigation require project read permission', () => {
   assert.match(
@@ -31,7 +35,7 @@ test('admin training route and navigation require admin access and project manag
   assert.match(appSource, /pathname\.startsWith\('\/admin\/training'\)/);
   assert.match(
     appSource,
-    /pathname\.startsWith\('\/admin\/training'\)[\s\S]*hasPermission\('training:projects:manage'\)[\s\S]*<TrainingShellPage mode="admin"/,
+    /pathname\.startsWith\('\/admin\/training'\)[\s\S]*hasPermission\('training:projects:manage'\)[\s\S]*<TrainingAdminPage/,
   );
   assert.match(
     appSource,
@@ -44,10 +48,14 @@ test('admin training route and navigation require admin access and project manag
   );
 });
 
-test('training shells use the protected backend config without adding a router dependency', () => {
+test('employee shell and manual admin routes do not add a router dependency', () => {
+  assert.match(appSource, /import \{ TrainingAdminPage \} from '\.\/training\/TrainingAdminPage';/);
   assert.match(appSource, /import \{ TrainingShellPage \} from '\.\/training\/TrainingShellPage';/);
   assert.match(appSource, /pathname === '\/training'/);
   assert.doesNotMatch(appSource, /react-router/);
+  assert.doesNotMatch(adminSource, /react-router/);
+  assert.match(adminSource, /pathname === '\/admin\/training\/new'/);
+  assert.match(adminSource, /\/admin\\\/training\\\/\(\[0-9a-f-\]\+\)\\\/edit/);
   assert.match(
     shellSource,
     /apiRequest<TrainingModuleConfigResponse>\('\/training\/config', accessToken\)/,

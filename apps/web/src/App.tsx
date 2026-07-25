@@ -18,6 +18,7 @@ import { LotPresentationsPage } from './presentations/LotPresentationsPage';
 import { canAccessLotPresentations, canAccessProjectPresentations } from './presentations/presentationAccess';
 import { ProjectPresentationEditorPage } from './presentations/projects/ProjectPresentationEditorPage';
 import { ProjectPresentationsPage } from './presentations/projects/ProjectPresentationsPage';
+import { TrainingAdminPage } from './training/TrainingAdminPage';
 import { TrainingShellPage } from './training/TrainingShellPage';
 import { getAppliedAppTheme, getNextAppTheme, setAppTheme } from './appTheme';
 import './styles.css';
@@ -404,7 +405,11 @@ function AppRoutes() {
           hasPermission('admin:access') ? (
             pathname.startsWith('/admin/training') ? (
               hasPermission('training:projects:manage') ? (
-                <TrainingShellPage mode="admin" onBack={() => navigate('/admin')} />
+                <TrainingAdminPage
+                  pathname={pathname}
+                  navigate={navigate}
+                  onBack={() => navigate('/admin')}
+                />
               ) : (
                 <AccessDenied />
               )

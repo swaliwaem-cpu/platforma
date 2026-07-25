@@ -49,12 +49,14 @@ function createFileRecord(overrides = {}) {
 function createStorageMock() {
   const uploaded = [];
   const deleted = [];
+  const deleteRequests = [];
   const readKeys = [];
   const objects = new Map();
 
   return {
     uploaded,
     deleted,
+    deleteRequests,
     readKeys,
     objects,
     service: {
@@ -68,8 +70,9 @@ function createStorageMock() {
 
         return objects.get(key) ?? Buffer.alloc(0);
       },
-      deleteObject: async (key) => {
+      deleteObject: async (key, bucket) => {
         deleted.push(key);
+        deleteRequests.push({ key, bucket });
       },
     },
   };
@@ -205,6 +208,44 @@ test('FilesService.delete removes image variants before deleting original object
     'uploads/2026/05/original.png',
   ]);
   assert.deepEqual(deletedFileIds, ['11111111-1111-4111-8111-111111111111']);
+});
+
+test('FilesService.delete removes private files from their persisted bucket', async () => {
+  const storage = createStorageMock();
+  const prisma = {
+    file: {
+      findUnique: async () => ({
+        ...createFileRecord({
+          bucket: 'platforma-training-private',
+          key: 'training-documents/private.pdf',
+          url: null,
+        }),
+        variants: [],
+        _count: {
+          profilePhotoUsers: 0,
+          objectImages: 0,
+          objectFiles: 0,
+          feedXmlSources: 0,
+          lotPresentationDocuments: 0,
+          projectPresentationDraftCovers: 0,
+          projectPresentationDocuments: 0,
+          projectPresentationAssets: 0,
+          trainingSourceDocuments: 0,
+        },
+      }),
+      delete: async () => undefined,
+    },
+  };
+  const service = new FilesService(prisma, storage.service);
+
+  await service.delete('11111111-1111-4111-8111-111111111111');
+
+  assert.deepEqual(storage.deleteRequests, [
+    {
+      key: 'training-documents/private.pdf',
+      bucket: 'platforma-training-private',
+    },
+  ]);
 });
 
 test('FilesService.getContent returns requested image variant when it exists', async () => {

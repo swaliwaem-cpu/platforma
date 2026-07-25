@@ -46,6 +46,20 @@ const trainingVersionContentInclude = {
 
 const trainingVersionDetailInclude = {
   ...trainingVersionContentInclude,
+  sourceDocuments: {
+    orderBy: { createdAt: 'asc' },
+    select: {
+      id: true,
+      projectVersionId: true,
+      fileId: true,
+      documentType: true,
+      checksum: true,
+      extractionStatus: true,
+      errorMessage: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  },
   publishedBy: {
     select: {
       id: true,
