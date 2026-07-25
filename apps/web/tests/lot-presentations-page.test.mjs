@@ -18,7 +18,7 @@ const styles = readFileSync(resolve(currentDir, '../src/styles.css'), 'utf8');
 test('lot presentations route is available from sidebar and cabinet navigation', () => {
   assert.match(appSource, /import \{ LotPresentationsPage \} from '\.\/presentations\/LotPresentationsPage';/);
   assert.match(appSource, /import \{ canAccessLotPresentations, canAccessProjectPresentations \} from '\.\/presentations\/presentationAccess';/);
-  assert.match(appSource, /type AppSection = 'cabinet' \| 'catalog' \| 'presentations' \| 'admin';/);
+  assert.match(appSource, /type AppSection = 'cabinet' \| 'catalog' \| 'training' \| 'presentations' \| 'admin';/);
   assert.match(accessSource, /export function canAccessLotPresentations\([\s\S]*Pick<AuthUser, 'id'>[\s\S]*return Boolean\(user\);/);
   assert.doesNotMatch(accessSource, /admin@fluffywhite\.moscow|localHostnames|import\.meta\.env\.DEV/);
   assert.match(appSource, /id:\s*'presentations'[\s\S]*label:\s*'Подборки'[\s\S]*path:\s*'\/presentations'[\s\S]*requiredPermissions:\s*\[\]/);

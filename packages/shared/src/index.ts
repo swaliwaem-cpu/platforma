@@ -1,3 +1,5 @@
+export * from './training.js';
+
 export const platformName = 'Platforma';
 
 export type UserStatus = 'ACTIVE' | 'BLOCKED' | 'INVITED' | 'DEACTIVATED';

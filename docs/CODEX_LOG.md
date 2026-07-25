@@ -4434,3 +4434,38 @@ Production repair:
 Спорные места:
 
 - Точный production HTTPS domain, приватность storage bucket, OpenAI data controls, retention, нагрузка, роли с новыми permissions и продуктовые параметры из репозитория определить нельзя.
+
+## 2026-07-25 - Training foundation, routing and RBAC
+
+Задача:
+
+- Выполнить только этап 1 training-модуля: foundation backend/frontend, feature flag, shared contracts, routing shells, RBAC и связанные tests.
+
+Изменения:
+
+- Добавлен `TrainingModule` с защищённым `GET /training/config`; endpoint требует JWT и `training:projects:read`, не содержит предметной бизнес-логики.
+- `TRAINING_MODULE_ENABLED` строго принимает только `true`/`false`, по умолчанию выключен; env example и Compose plumbing обновлены.
+- Добавлены shared config contracts в `packages/shared/src/training.ts` и реэкспорт из основного entrypoint.
+- В idempotent seed добавлены 11 training permissions и роль `training_admin`: `admin` получает все permissions, `training_admin` получает `admin:access` и все training permissions кроме `training:data:delete`, `user` получает take/own-results/projects-read, `editor` не получает training permissions.
+- В существующий ручной frontend router добавлены protected shells `/training` и `/admin/training`, sidebar/cabinet/admin navigation и состояния enabled/disabled без React Router migration.
+- Добавлены API permission/config contracts и frontend route/navigation tests; обновлён существующий route contract для нового `AppSection`.
+- `docs/training/02-implementation-checklist.md` отмечает этап 1 выполненным.
+
+Проверки:
+
+- `pnpm build` — passed; сохраняется существующее предупреждение Vite о client chunk больше 500 kB.
+- `pnpm --filter @platforma/api test` — 241/241 passed.
+- `pnpm --filter @platforma/web test` — 280/280 passed.
+- `pnpm test` — 608/608 passed.
+- Новые Prisma models/migrations и dependencies отсутствуют.
+
+Ручная проверка:
+
+- В целевом окружении выполнить idempotent seed, войти под `admin`, `training_admin`, `user` и `editor`, проверить видимость и direct access для `/training` и `/admin/training`.
+- С `TRAINING_MODULE_ENABLED=false` проверить disabled shell, затем с `true` — enabled shell.
+
+Спорные места:
+
+- Feature flag остаётся backend-источником истины через защищённый config endpoint; permission-разрешённые navigation entries видимы и при выключенном флаге, а shell явно показывает disabled state.
+- `training:data:delete` создаётся в permission catalog, но намеренно не назначается `training_admin` seed-ом; его выдача требует отдельного явного назначения.
+- Этап 2, предметные Prisma models, Telegram, OpenAI, audio worker и полноценный training UI не начинались.

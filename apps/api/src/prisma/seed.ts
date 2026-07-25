@@ -1,6 +1,12 @@
 import { PrismaClient, UserStatus } from '@prisma/client';
 import * as argon2 from 'argon2';
 
+import {
+  TRAINING_ADMIN_PERMISSION_KEYS,
+  TRAINING_PERMISSION_DEFINITIONS,
+  TRAINING_USER_PERMISSION_KEYS,
+} from '../training/training.permissions';
+
 const prisma = new PrismaClient();
 
 const permissions = [
@@ -24,10 +30,12 @@ const permissions = [
   ['feeds:manage', 'Manage feed sources'],
   ['feeds:run', 'Run feed imports'],
   ['audit-log:read', 'Read audit log'],
+  ...TRAINING_PERMISSION_DEFINITIONS,
 ] as const;
 
 const rolePermissions = {
   admin: permissions.map(([key]) => key),
+  training_admin: ['admin:access', ...TRAINING_ADMIN_PERMISSION_KEYS],
   editor: [
     'admin:access',
     'objects:read',
@@ -40,7 +48,13 @@ const rolePermissions = {
     'files:upload',
     'files:delete',
   ],
-  user: ['objects:read', 'developers:read', 'locations:read', 'metro:read'],
+  user: [
+    'objects:read',
+    'developers:read',
+    'locations:read',
+    'metro:read',
+    ...TRAINING_USER_PERMISSION_KEYS,
+  ],
 } as const;
 
 async function seed() {
@@ -58,14 +72,18 @@ async function seed() {
   }
 
   for (const [name, permissionKeys] of Object.entries(rolePermissions)) {
+    const description =
+      name === 'training_admin'
+        ? 'Training administrator role'
+        : `${name[0]?.toUpperCase()}${name.slice(1)} role`;
     const role = await prisma.role.upsert({
       where: { name },
       update: {
-        description: `${name[0]?.toUpperCase()}${name.slice(1)} role`,
+        description,
       },
       create: {
         name,
-        description: `${name[0]?.toUpperCase()}${name.slice(1)} role`,
+        description,
       },
       select: { id: true },
     });

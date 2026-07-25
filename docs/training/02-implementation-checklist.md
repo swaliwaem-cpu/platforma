@@ -20,7 +20,7 @@
 | Этап | Prompt | Статус |
 | --- | --- | --- |
 | 0 | `00_audit.md` | Выполнен по явному списку prompt |
-| 1 | `01_foundation_rbac.md` | Не начат |
+| 1 | `01_foundation_rbac.md` | Выполнен |
 | 2 | `02_prisma_schema.md` | Не начат |
 | 3 | `03_content_backend.md` | Не начат |
 | 4 | `04_content_ui_documents.md` | Не начат |
@@ -54,16 +54,25 @@
 
 ## Этап 1. Foundation, feature flag, routing и RBAC
 
-- [ ] Создать `TrainingModule` и config/health shell.
-- [ ] Добавить безопасный `TRAINING_MODULE_ENABLED`.
-- [ ] Создать `packages/shared/src/training.ts` и re-export.
-- [ ] Добавить утверждённые training permissions и роль `training_admin`
+- [x] Создать `TrainingModule` и config/health shell.
+- [x] Добавить безопасный `TRAINING_MODULE_ENABLED`.
+- [x] Создать `packages/shared/src/training.ts` и re-export.
+- [x] Добавить утверждённые training permissions и роль `training_admin`
   idempotent seed.
-- [ ] Сохранить полный training access для `admin`.
-- [ ] Добавить protected shells `/training` и `/admin/training`.
-- [ ] Не мигрировать Platforma на React Router.
-- [ ] Добавить permission contract и frontend route/navigation tests.
-- [ ] Запустить релевантные build/tests.
+- [x] Сохранить полный training access для `admin`.
+- [x] Добавить protected shells `/training` и `/admin/training`.
+- [x] Не мигрировать Platforma на React Router.
+- [x] Добавить permission contract и frontend route/navigation tests.
+- [x] Запустить релевантные build/tests.
+
+Проверки этапа 1:
+
+- `pnpm build` — passed;
+- `pnpm --filter @platforma/api test` — 241/241;
+- `pnpm --filter @platforma/web test` — 280/280;
+- `pnpm test` — 608/608.
+
+Новые Prisma models/migrations и dependencies отсутствуют. Этап 2 не начинался.
 
 ## Этап 2. Prisma schema и additive migration
 

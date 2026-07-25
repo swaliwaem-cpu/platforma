@@ -57,6 +57,7 @@ services:
     environment:
       NODE_ENV: development
       FEED_AUTO_IMPORT_ENABLED: ${FEED_AUTO_IMPORT_ENABLED:-true}
+      TRAINING_MODULE_ENABLED: ${TRAINING_MODULE_ENABLED:-false}
       PORT: ${API_PORT:-3000}
       WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5173}
       PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:5173}

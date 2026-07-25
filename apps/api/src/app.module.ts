@@ -11,6 +11,7 @@ import { MapModule } from './map/map.module';
 import { ObjectsModule } from './objects/objects.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProjectPresentationsModule } from './project-presentations/project-presentations.module';
+import { TrainingModule } from './training/training.module';
 import { UsersModule } from './users/users.module';
 import { WordpressImportModule } from './wordpress-import/wordpress-import.module';
 
@@ -18,6 +19,7 @@ import { WordpressImportModule } from './wordpress-import/wordpress-import.modul
   imports: [
     PrismaModule,
     ProjectPresentationsModule,
+    TrainingModule,
     AuthModule,
     UsersModule,
     CatalogLinksModule,
