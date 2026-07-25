@@ -241,7 +241,7 @@ test('lot presentation gallery keeps the cover separate and maps thematic sectio
   assert.equal(mysGalleryIds.includes('cover'), false);
 });
 
-test('lot presentation titles wrap by whole words and plan media keep their semantic positions', () => {
+test('lot presentation titles wrap by whole words and plan media keep semantic or imported positions', () => {
   const pdfService = new LotPresentationsPdfService({});
   const doc = new PDFDocument({ autoFirstPage: false });
   pdfService.registerFonts(doc);
@@ -254,10 +254,11 @@ test('lot presentation titles wrap by whole words and plan media keep their sema
   doc.font('NotoSansBold').fontSize(titleLayout.fontSize);
   assert.ok(titleLayout.lines.every((line) => doc.widthOfString(line) <= 320));
 
-  const media = (id, sortOrder, label, originalName) => ({
+  const media = (id, sortOrder, label, originalName, sourceUrl = undefined) => ({
     sortOrder,
     label,
     mediaAsset: {
+      sourceUrl,
       file: {
         id,
         originalName,
@@ -293,11 +294,68 @@ test('lot presentation titles wrap by whole words and plan media keep their sema
     media('unit-plan', 0, 'flat-plan', 'flat.png'),
     media('floor-plan', 1, 'floor-plan', 'floor.png'),
   ]));
+  const cityBayPlans = pdfService.getLotPlanFiles(lot([
+    media(
+      'city-bay-floor-plan',
+      1,
+      'photo',
+      'СБ-1(К)-1_51_5_334.PNG',
+      'https://s3.mastertel.ru/project/realEstate/ddu/СБ-1(К)-1_51_5_334.PNG',
+    ),
+    media(
+      'city-bay-unit-plan',
+      0,
+      'layout-photo',
+      'СБ-1(К)-1_51_5_334.PNG',
+      'https://s3.mastertel.ru/project/realEstate/fp/СБ-1(К)-1_51_5_334.PNG',
+    ),
+  ]));
+  const nonTargetMrPlans = pdfService.getLotPlanFiles(lot([
+    media(
+      'forum-floor-plan',
+      1,
+      'layout-photo',
+      'forum-plan.png',
+      'https://s3.mastertel.ru/project/realEstate/ddu/forum-plan.png',
+    ),
+    media(
+      'forum-unit-plan',
+      0,
+      'photo',
+      'forum-plan.png',
+      'https://s3.mastertel.ru/project/realEstate/fp/forum-plan.png',
+    ),
+  ]));
+  const voxhallPlans = pdfService.getLotPlanFiles(lot([
+    media('voxhall-project-photo', 1, 'photo', 'arkh_1.jpg'),
+    media('voxhall-unit-plan', 0, 'layout-photo', '41000000001526607.png'),
+  ]));
+  const singleLayoutPlans = pdfService.getLotPlanFiles(lot([
+    media('single-layout', 0, 'layout-photo', 'layout.png'),
+  ]));
+  const singleFloorPlans = pdfService.getLotPlanFiles(lot([
+    media('single-floor', 0, 'floor-plan', 'floor-plan.png'),
+  ]));
 
   for (const plans of [mangazeyaPlans, mrGroupPlans, fskPlans]) {
     assert.equal(plans.plan.id, 'unit-plan');
     assert.equal(plans.floorPlan.id, 'floor-plan');
   }
+  assert.equal(cityBayPlans.plan.id, 'city-bay-unit-plan');
+  assert.equal(cityBayPlans.floorPlan.id, 'city-bay-floor-plan');
+  assert.equal(cityBayPlans.floorPlanFillFrame, false);
+  assert.equal(nonTargetMrPlans.plan.id, 'forum-unit-plan');
+  assert.equal(nonTargetMrPlans.floorPlan.id, 'forum-floor-plan');
+  assert.equal(nonTargetMrPlans.floorPlanFillFrame, false);
+  assert.equal(voxhallPlans.plan.id, 'voxhall-unit-plan');
+  assert.equal(voxhallPlans.floorPlan.id, 'voxhall-project-photo');
+  assert.equal(voxhallPlans.floorPlanFillFrame, true);
+  assert.equal(singleLayoutPlans.plan.id, 'single-layout');
+  assert.equal(singleLayoutPlans.floorPlan.id, 'object-floor-fallback');
+  assert.equal(singleLayoutPlans.floorPlanFillFrame, true);
+  assert.equal(singleFloorPlans.plan, null);
+  assert.equal(singleFloorPlans.floorPlan.id, 'single-floor');
+  assert.equal(singleFloorPlans.floorPlanFillFrame, false);
 
   const floorFallbackPlans = pdfService.getLotPlanFiles(lot([
     media('unit-plan', 0, 'flat-plan', 'flat-plan.png'),
@@ -654,7 +712,10 @@ test('lot presentation service enforces available lots, plan images and broker c
     /ellipsis: true/,
   );
   assert.match(pdfService, /drawFileFrame\(doc, plan, marginX, 223, 303, 278, 'Планировка недоступна'\)/);
-  assert.match(pdfService, /drawFileFrame\(doc, floorPlan, marginX, 570, 303, 192, 'План этажа недоступен'\)/);
+  assert.match(
+    pdfService,
+    /drawFileFrame\([\s\S]*floorPlan,[\s\S]*marginX,[\s\S]*570,[\s\S]*303,[\s\S]*192,[\s\S]*'План этажа недоступен',[\s\S]*floorPlanFillFrame/,
+  );
   assert.match(pdfService, /label.*flat-plan/s);
   assert.match(pdfService, /label.*floor-plan/s);
   assert.match(pdfService, /cover: \[width, height\]/);
@@ -683,6 +744,10 @@ test('lot presentation service enforces available lots, plan images and broker c
   assert.match(pdfService, /https:\/\/static-maps\.yandex\.ru\/1\.x\//);
   assert.match(pdfService, /AbortSignal\.timeout\(5000\)/);
   assert.match(pdfService, /fit: \[width - 6, height - 6\]/);
+  assert.match(
+    pdfService,
+    /if \(fillFrame\) \{[\s\S]*drawPhotoBufferFrame[\s\S]*\} else \{[\s\S]*drawBufferFrame/,
+  );
   assert.match(pdfService, /unit\.type === FeedUnitType\.COMMERCIAL/);
   assert.match(pdfService, /'ХАРАКТЕРИСТИКИ'/);
 });

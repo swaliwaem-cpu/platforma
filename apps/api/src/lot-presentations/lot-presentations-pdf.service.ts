@@ -148,7 +148,10 @@ export type PdfPresentationUnit = {
   media: Array<{
     sortOrder: number;
     label: string | null;
-    mediaAsset: { file: File | null };
+    mediaAsset: {
+      sourceUrl?: string;
+      file: File | null;
+    };
   }>;
   object: PdfPresentationUnitObject;
 };
@@ -259,7 +262,7 @@ export class LotPresentationsPdfService {
   ) {
     await this.drawHeader(doc, unit.object.title);
     const cover = [...unit.object.images].sort((a, b) => Number(b.isCover) - Number(a.isCover) || a.sortOrder - b.sortOrder)[0];
-    const { plan, floorPlan } = this.getLotPlanFiles(unit);
+    const { plan, floorPlan, floorPlanFillFrame } = this.getLotPlanFiles(unit);
 
     const titleLayout = this.getLotTitleLayout(doc, this.getLotTitle(unit), 320);
     doc.fillColor(colors.ink).font('NotoSansBold').fontSize(titleLayout.fontSize);
@@ -293,7 +296,16 @@ export class LotPresentationsPdfService {
     doc.moveTo(marginX, 530).lineTo(pageWidth - marginX, 530).strokeColor(colors.line).lineWidth(0.7).stroke();
     doc.fillColor(colors.ink).font('NotoSansBold').fontSize(7).text('НА ЭТАЖЕ', marginX, 548);
     doc.fillColor(colors.muted).font('NotoSans').fontSize(7).text('ХАРАКТЕРИСТИКИ', 374, 548);
-    await this.drawFileFrame(doc, floorPlan, marginX, 570, 303, 192, 'План этажа недоступен');
+    await this.drawFileFrame(
+      doc,
+      floorPlan,
+      marginX,
+      570,
+      303,
+      192,
+      'План этажа недоступен',
+      floorPlanFillFrame,
+    );
     this.drawCharacteristics(doc, unit, 374, 570, 191);
 
     this.drawFooter(
@@ -674,9 +686,14 @@ export class LotPresentationsPdfService {
     width: number,
     height: number,
     fallback: string,
+    fillFrame = false,
   ) {
     const buffer = file ? await this.safeLoadImage(file.id, 'detail') : null;
-    this.drawBufferFrame(doc, buffer, x, y, width, height, fallback);
+    if (fillFrame) {
+      this.drawPhotoBufferFrame(doc, buffer, x, y, width, height, fallback);
+    } else {
+      this.drawBufferFrame(doc, buffer, x, y, width, height, fallback);
+    }
   }
 
   private async drawProjectFileFrame(
@@ -816,20 +833,26 @@ export class LotPresentationsPdfService {
     const normalizedLabel = (item: (typeof media)[number]) => item.label?.trim().toLowerCase() ?? '';
     const normalizedFileReference = (item: (typeof media)[number]) => {
       const file = item.mediaAsset.file;
-      return [file?.originalName, file?.key, file?.url]
+      return [item.mediaAsset.sourceUrl, file?.originalName, file?.key, file?.url]
         .filter((value): value is string => Boolean(value))
         .join(' ')
         .toLowerCase();
     };
-    const hasFloorPlanReference = (item: (typeof media)[number]) =>
-      /(?:^|[\s/_-])floor[\s_-]?plan(?:[\s/_.-]|$)/u.test(normalizedFileReference(item));
+    const hasFloorPlanReference = (item: (typeof media)[number]) => {
+      const reference = normalizedFileReference(item);
+
+      return (
+        /(?:^|[\s/_-])floor[\s_-]?plan(?:[\s/_.-]|$)/u.test(reference) ||
+        /(?:^|\/)ddu(?:\/|$)/u.test(reference)
+      );
+    };
     const hasUnitPlanReference = (item: (typeof media)[number]) =>
       /(?:^|[\s/_-])(?:flat|image)[\s_-]?plan(?:[\s/_.-]|$)/u.test(normalizedFileReference(item));
     const floorPlanItem =
       media.find(hasFloorPlanReference) ??
       media.find((item) => normalizedLabel(item) === 'floor-plan') ??
       media.find((item) => normalizedLabel(item).includes('floor-plan'));
-    const planItem =
+    const explicitPlanItem =
       media.find((item) => item !== floorPlanItem && hasUnitPlanReference(item)) ??
       media.find((item) => item !== floorPlanItem && normalizedLabel(item) === 'flat-plan') ??
       media.find(
@@ -838,26 +861,28 @@ export class LotPresentationsPdfService {
           normalizedLabel(item).includes('flat-plan') &&
           !normalizedLabel(item).includes('floor'),
       ) ??
-      media.find((item) => item !== floorPlanItem && normalizedLabel(item) === 'photo') ??
-      media.find((item) => item !== floorPlanItem && normalizedLabel(item) === 'layout-photo') ??
       media.find(
         (item) =>
           item !== floorPlanItem &&
           normalizedLabel(item).includes('plan') &&
           !normalizedLabel(item).includes('floor'),
-      ) ??
+      );
+    const planItem =
+      explicitPlanItem ??
       media.find((item) => item !== floorPlanItem) ??
-      floorPlanItem;
+      null;
     const resolvedFloorPlanItem =
       floorPlanItem ??
-      media.find((item) => item !== planItem && normalizedLabel(item) === 'layout-photo');
+      (explicitPlanItem ? null : media.find((item) => item !== planItem));
     const objectGalleryFallback = [...unit.object.images].sort(
       (left, right) => Number(right.isCover) - Number(left.isCover) || left.sortOrder - right.sortOrder,
     )[1]?.file ?? null;
+    const floorPlan = resolvedFloorPlanItem?.mediaAsset.file ?? objectGalleryFallback;
 
     return {
       plan: planItem?.mediaAsset.file ?? null,
-      floorPlan: resolvedFloorPlanItem?.mediaAsset.file ?? objectGalleryFallback,
+      floorPlan,
+      floorPlanFillFrame: floorPlan !== null && floorPlanItem === undefined,
     };
   }
 
