@@ -22,7 +22,7 @@
 | 0 | `00_audit.md` | Выполнен по явному списку prompt |
 | 1 | `01_foundation_rbac.md` | Выполнен |
 | 2 | `02_prisma_schema.md` | Выполнен |
-| 3 | `03_content_backend.md` | Не начат |
+| 3 | `03_content_backend.md` | Выполнен |
 | 4 | `04_content_ui_documents.md` | Не начат |
 | 5 | `05_attempt_engine_fake.md` | Не начат |
 | 6 | `06_telegram.md` | Не начат |
@@ -108,15 +108,34 @@
 
 ## Этап 3. Backend учебного контента
 
-- [ ] Реализовать admin CRUD проектов/drafts/versions.
-- [ ] Реализовать questions, facts, criteria и attempt settings.
-- [ ] Валидировать ровно 1 main + 10 follow-up.
-- [ ] Валидировать веса main 55 и follow-up 15.
-- [ ] Валидировать pass score, limits, timer, cooldown и availability.
-- [ ] Публиковать immutable version.
-- [ ] Ограничить delete неиспользованным draft; остальное архивировать.
-- [ ] Писать privileged actions в `AuditLog`.
-- [ ] Добавить unit/integration tests и запустить build/tests.
+- [x] Реализовать admin CRUD проектов/drafts/versions.
+- [x] Реализовать questions, facts, criteria и attempt settings.
+- [x] Валидировать ровно 1 main + 10 follow-up.
+- [x] Валидировать веса main 55 и follow-up 15.
+- [x] Валидировать pass score, limits, timer, cooldown и availability.
+- [x] Публиковать immutable version.
+- [x] Ограничить delete неиспользованным draft; остальное архивировать.
+- [x] Писать privileged actions в `AuditLog`.
+- [x] Добавить unit/integration tests и запустить build/tests.
+
+Проверки этапа 3:
+
+- targeted content unit/service tests — 15/15 passed;
+- `pnpm --filter @platforma/api test` — 266/266 passed;
+- `pnpm build` — passed; сохраняется существующее предупреждение Vite о
+  client chunk больше 500 kB;
+- `pnpm test` — 633/633 passed: API 266, Web 280, Feed import 64,
+  WordPress import 23;
+- полный migration chain из 33 миграций применён на чистой изолированной БД;
+- на изолированной БД пройден реальный flow create → 1 MAIN + 10 FOLLOW_UP →
+  approved fact → criteria 55/15 → publish → open → clone draft → delete draft
+  → archive;
+- service guard и PostgreSQL trigger независимо запретили изменение
+  published content; проверены 20 `AuditLog` записей flow;
+- временная тестовая БД удалена.
+
+Новые dependencies, Prisma schema/migrations, seed учебного контента, frontend,
+Telegram/OpenAI и audio processing не добавлялись.
 
 ## Этап 4. Admin UI и document ingestion
 
@@ -213,10 +232,11 @@
 
 ## Следующий этап
 
-Точный следующий этап: `docs/training/prompts/03_content_backend.md`.
+Точный следующий этап: `docs/training/prompts/04_content_ui_documents.md`.
 
 Он не начат и не должен выполняться автоматически. Перед ним нужно:
 
 1. получить отдельный запрос пользователя;
 2. повторно проверить branch/status и сохранить чужие изменения;
-3. прочитать prompt этапа 3 и повторно проверить schema/domain contracts этапа 2.
+3. прочитать prompt этапа 4 и отдельно согласовать parser dependencies;
+4. не считать backend этапа 3 готовым frontend-редактором документов.

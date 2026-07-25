@@ -4535,3 +4535,69 @@ Production repair:
   единственный активный MAIN и уникальные criteria, но не считает строки/суммы.
 - Controllers, frontend, Telegram/OpenAI providers, загрузка документов и
   обработка аудио не реализовывались и остаются следующими этапами.
+
+## 2026-07-25 - Training content backend and publication workflow
+
+Задача:
+
+- Выполнить только этап 3 training-модуля: backend управления проектами,
+  draft/published versions, вопросами, фактами, критериями, настройками попыток,
+  publication workflow, архивированием и AuditLog.
+
+Изменения:
+
+- Добавлен защищённый admin API `/training/admin/*`; весь controller использует
+  `JwtAuthGuard`, `PermissionsGuard` и `training:projects:manage`.
+- Реализованы list/create/read/update проектов, nullable связь с
+  `RealEstateObject`, initial draft, update attempt/timer/scoring settings,
+  создание draft из полного immutable snapshot активной версии и удаление
+  только неиспользованного draft.
+- Реализован CRUD вопросов, фактов и критериев. MAIN всегда имеет `maxScore=55`,
+  FOLLOW_UP — `maxScore=15`; fact может связываться только с вопросами и source
+  document той же версии.
+- Публикация выполняется транзакционно: валидирует ровно 1 активный MAIN и 10
+  активных FOLLOW_UP, позиции 1..10, уникальные тексты/codes/positions,
+  approved facts, наличие критериев и суммы MAIN=55/FOLLOW_UP=15, pass score,
+  attempt limit, cooldown 60..1440, timer 300..420, warning/grace и optional
+  availability window 1..7 дней.
+- Новая публикация переводит прежнюю active version в `SUPERSEDED`, назначает
+  новую active version и оставляет проект закрытым до явного `open`. Существующий
+  OPEN проект при публикации новой версии остаётся OPEN.
+- Реализованы явные `open`, `close`, `archive`; hard-delete проекта отсутствует,
+  archived project immutable.
+- Все privileged mutations записывают actor, action, entity, metadata, IP и
+  user-agent в существующий `AuditLog`.
+- Добавлены unit/service tests publication validation, CRUD, RBAC contracts,
+  draft cloning/deletion, transactional publication и AuditLog.
+- `docs/training/02-implementation-checklist.md` отмечает этап 3 выполненным.
+
+Проверки:
+
+- Targeted content tests — 15/15 passed.
+- `pnpm --filter @platforma/api test` — 266/266 passed.
+- `pnpm build` — passed; сохраняется существующее предупреждение Vite о client
+  chunk больше 500 kB.
+- `pnpm test` — 633/633 passed: API 266, Web 280, Feed import 64, WordPress
+  import 23.
+- На чистой изолированной PostgreSQL БД применены все 33 migrations и выполнен
+  реальный flow create/publish/open/new draft/delete/archive; получено 20
+  training AuditLog записей.
+- Service и PostgreSQL trigger независимо отклонили изменение published
+  question. Временная тестовая БД удалена.
+- `git diff --check` — passed.
+
+Ручная проверка:
+
+- После появления frontend этапа 4 пройти CRUD/publish/open/close/archive под
+  `admin` и `training_admin`, отдельно подтвердить HTTP 403 без
+  `training:projects:manage`.
+- До production deploy повторить smoke на staging с реальным seed RBAC.
+
+Спорные места:
+
+- Публикация не открывает проект автоматически: новый проект становится
+  `CLOSED`, открытие выполняется отдельным endpoint.
+- Availability может быть полностью выключена (`availableFrom/deadlineAt`
+  равны `null`); если окно задано, обязательны обе даты и длительность 1..7 дней.
+- Этап не добавляет frontend-редактор, document upload/extraction,
+  Telegram/OpenAI, audio и attempt engine.
