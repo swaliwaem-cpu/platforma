@@ -168,6 +168,35 @@ Production deploy:
 
 - Ранее созданные PDF не перегенерируются; hotfix применится только к новым документам после деплоя.
 
+## 2026-07-21 - Boss-aligned project presentation design variants
+
+Задача:
+
+- Проанализировать 13-минутную Zoom-запись руководителя и два PDF-референса FluffyWhite.
+- Подготовить три варианта арт-дирекции презентации ЖК максимально близко к зафиксированным пожеланиям.
+
+Изменения:
+
+- `output/pdf/fluffywhite-boss-design-variants.pdf` - собран 16-страничный сравнительный PDF формата 3:4: вводная страница и по пять типов страниц для вариантов A/B/C (обложка, editorial/map, карточка ЖК, о компании, финал).
+- Вариант A повторяет warm-ivory/Vogue editorial и отмечен рекомендуемым; вариант B добавляет фирменные тёмно-зелёные микроакценты; вариант C усиливает black/ivory fashion-контраст.
+- Во всех вариантах сохранены обязательные требования из Zoom: bunny-logo на каждой странице, редактируемая датировка, большое фото, display-serif заголовок, четыре факта, два дополнительных фото, четыре преимущества, маленький CTA `Узнать подробности`, отсутствие персональной broker-card и финал только про компанию.
+- В качестве контента и изображений использован светлый `FluffyWhite_catalog_final_4_pages.pdf`; тёмный апрельский каталог использован только как функциональный референс структуры карточки и CTA.
+
+Проверки:
+
+- Итоговый PDF повторно отрендерен полностью и проверен постранично в полном размере; исправлены переполнения, переносы внутри слов, конфликт quote/CTA и неподдерживаемые glyph-стрелки.
+- PDFKit check: 16 страниц одинакового размера `540 x 720 pt`, страниц с неверным размером нет, в документе 12 link-аннотаций.
+
+Ручная проверка:
+
+- Показать руководителю сначала вариант A; затем сравнить с B и C только по арт-дирекции, не меняя согласованную структуру.
+- Уточнить, editorial/map-слайд заменяет оглавление или добавляется перед карточками ЖК.
+
+Спорные места:
+
+- Концепты сделаны в пропорции 3:4 основного светлого референса, тогда как production-генератор сейчас использует 4:5; после выбора направления нужно отдельно утвердить итоговую пропорцию.
+- Для production display-serif нужен бесплатный кириллический Google Font; ближайший кандидат - `Prata`, но шрифт в код и assets пока не добавлялся.
+
 ## 2026-07-21 - Production deploy of custom project presentation covers
 
 Задача:
@@ -234,6 +263,75 @@ Production deploy:
 
 - Ручное позиционирование/crop не добавлялось: собственное фото использует существующее кадрирование cover под формат 4:5.
 
+## 2026-07-18 - Production PDF media light background fix
+
+Задача:
+
+- Убрать чёрный фон у прозрачных планировок и другого lot media в PDF-презентациях.
+- Сделать фон media постоянным светлым независимо от выбранной пользователем темы приложения.
+
+Изменения:
+
+- `apps/api/src/lot-presentations/lot-presentations-pdf.service.ts` - перед JPEG-конвертацией PDF media прозрачные пиксели теперь сводятся на постоянную светлую подложку `colors.white`; непрозрачные фото визуально не меняются.
+- `apps/api/tests/lot-presentations-schema.test.cjs` - добавлена runtime-регрессия на полностью прозрачный PNG: после нормализации проверяется светлый RGB-фон без alpha-канала.
+- Commit `20d7b75` отправлен в `origin/on-ser`; production `/opt/platforma` fast-forwarded до него, пересобран и пересоздан только контейнер `api`.
+- Перед деплоем сохранён rollback image `platforma-api:pre-deploy-20260718T104120Z-pdf-media-light` (`sha256:224a436d...`).
+
+Проверки:
+
+- RED: новая регрессия до исправления получила `RGB(0, 0, 0)` и упала на ожидании светлого фона.
+- `pnpm --filter @platforma/api test` - 207/207 passed.
+- Синтетический PDF с прозрачной планировкой отрендерен через macOS `sips` в PNG и визуально проверен: прозрачные области имеют ровный светлый фон, чёрной подложки нет; временные QA-файлы удалены.
+- Production API image собран успешно; targeted regression внутри нового image - 1/1 passed.
+- Новый production `api` healthy; локальный `GET /health` и публичный `GET /api/health` вернули `status=ok`, `database=ok`, `postgis=true`; checkout `/opt/platforma` чистый.
+
+Ручная проверка:
+
+- В production включить тёмную тему, создать новый PDF реального лота с прозрачной планировкой и поэтажным планом и визуально подтвердить светлый фон обоих media-блоков.
+
+Спорные места:
+
+- Ранее созданные PDF автоматически не перегенерируются; исправление применяется к новым документам.
+- Активная тема браузера не передаётся в backend PDF generator; фактической причиной был сброс alpha-канала в чёрный при JPEG-конвертации.
+
+## 2026-07-17 - Local MR Group media sync and backup inventory
+
+Задача:
+
+- Применить к локальным MR Group данным тот же порядок media, который ранее был задеплоен на production.
+- Найти существующие локальные backups и сообщить их размеры без создания нового backup.
+
+Изменения локального окружения:
+
+- До обновления подтверждён старый порядок у всех 4 748 target-лотов с полной парой: `photo` -> `layout-photo`.
+- Пересобран и пересоздан только локальный контейнер `api`; PostgreSQL, MinIO, Redis и web не пересоздавались.
+- Стартовый scheduler выполнил MR Group preview `40293eff-fadb-4af7-ba36-173368357517` и run `f7462179-fdf3-4680-9a61-6d5510bfae90` на новом importer code.
+- Run обновил 5 474 лота; новый backup не создавался.
+
+Проверки:
+
+- MR Group run завершён со статусом `partial`: `5474/5474` units, `errorsCount=0`, media `10683/10683`; единственное предупреждение - внешний non-target child-feed `Hide` ответил `400 Bad Request`.
+- Во всех 14 target-проектах каждая из 4 748 полных media-пар имеет `layout-photo` на позиции 0 и `photo` на позиции 1; старый порядок найден у 0 лотов.
+- Дублирующихся `sort_order` у активных MR Group media - 0.
+- Локальный `/health` вернул `status=ok`, `database=ok`, `postgis=true`; контейнер `api` healthy.
+- Стартовый scheduler cycle завершён: `sources=14`, `previewed=14`, `runsQueued=14`, `skipped=0`, `failed=0`; незавершённых runs - 0.
+
+Найденные backups:
+
+- `backups/platforma-before-feed-import-20260522-221124.dump` - 1 341 340 bytes.
+- `backups/platforma-before-main-feed-work-20260522-232723.dump` - 1 341 340 bytes.
+- `/Users/nick/Documents/platforma-local-backups/local-before-prod-sync-20260521-152113.dump` - 1 324 758 bytes.
+- Общий размер - 4 007 438 bytes, около 3.82 MiB; все три PostgreSQL custom dumps читаются через `pg_restore --list` и имеют разные SHA-256.
+
+Ручная проверка:
+
+- Выборочно открыть локальные лоты `City Bay`, `Веер`, `МИRА` и `СЕТ` и визуально подтвердить порядок изображений.
+
+Спорные места:
+
+- У 23 target-лотов отсутствует одна из двух меток (`City Bay` - 2, `СЕТ` - 21), поэтому перестановка пары для них неприменима.
+- Активные Docker volumes PostgreSQL, MinIO и Redis не классифицированы как backups.
+
 ## 2026-07-17 - Production MR Group target media order swap
 
 Задача:
@@ -268,6 +366,54 @@ Production deploy:
 
 - У 23 активных target-лотов отсутствует одна из двух требуемых меток (`City Bay` - 2, `СЕТ` - 21), поэтому буквальная перестановка пары для них неприменима; все 4 748 полных пар переставлены.
 - Backup намеренно не создавался по прямому указанию пользователя.
+
+## 2026-07-16 - Production feed sources and scheduler sync to local
+
+Задача:
+
+- Перенести на локальное окружение все актуальные production feed sources, их mappings и лоты.
+- Включить локальное автообновление фидов по тому же расписанию, что и на production.
+- По прямому указанию пользователя не создавать локальный backup из-за ограниченного свободного места.
+
+Диагностика:
+
+- Production обследован только на чтение по SSH: системного `cron` для фидов нет; автообновление встроено в `FeedsService`, запускается при старте API и затем каждые 2 часа.
+- Production и local workspace совпадали на commit `bc75bd15d399c3a2055559a3389e94319b2619f8`; списки применённых Prisma migrations также совпали.
+- На production найдено 14 активных неудалённых источников, 16 soft-deleted источников и 78 mappings активных источников.
+- До синхронизации локально было 10 активных источников; пяти production sources не соответствовали локальные source configs, ещё часть локальных источников была устаревшей/локальной.
+- Для production mappings локально отсутствовали обязательные объекты `МЫС` (`mys`) и `ЖК Сикрет Гарден` (`zhk-sikret-garden`). Нужные developers, locations и metro stations локально существовали.
+
+Изменения данных и окружения:
+
+- Production-конфигурация 14 активных feed sources и 78 mappings прочитана с нормализацией связей через developer name и object slug; production данные не изменялись.
+- Перед записью выполнен полный локальный transactional dry-run с `ROLLBACK`: проверены payload counts, developers, object slugs, UUID collisions, foreign keys и финальные counts.
+- В локальной БД созданы объекты `МЫС` и `ЖК Сикрет Гарден` с production scalar fields, primary/additional locations и metro links; feed aggregates оставлены для штатного пересчёта importer.
+- Прежние 10 локальных источников soft-deleted без физического удаления; 4 769 их неархивных units переведены в `ARCHIVED`, feed aggregates 37 затронутых объектов очищены перед новым пересчётом.
+- Созданы 14 production feed sources и 78 mappings. Canonical config hash локально и на production совпал: `3b077d799215b5ad41393666768bc421`.
+- `docker-compose.yml` передаёт API `FEED_AUTO_IMPORT_ENABLED=true` по умолчанию; `.env.example` документирует локальный production-like scheduler.
+- Пересобран и пересоздан только локальный API. Первый scheduler cycle завершился как `sources=14, previewed=14, runsQueued=14, skipped=0, failed=0`.
+- Повторный scheduler cycle автоматически стартовал ровно через 2 часа, подтвердив реальное расписание.
+- На момент передачи фоновой работы 13 из 14 первоначальных RUN завершены без `FAILED`: 4 `SUCCESS`, 9 `PARTIAL` только с parser/media warnings. MR Group продолжает штатный run: 2 118 / 5 465 units и 3 008 / 9 455 media; в активных локальных sources уже 15 050 units, из них 10 579 публичных.
+- По просьбе пользователя ручной мониторинг остановлен; API importer, его очередь и scheduler продолжают работать в фоне.
+
+Проверки:
+
+- Transactional sync dry-run с `ROLLBACK` - passed; тот же SQL с `COMMIT` - passed.
+- После sync: `active_sources=14`, `active_mappings=78`, `required_objects=2`, invalid active sources `0`.
+- Canonical production/local source config hash - identical.
+- `docker compose up -d --build api` - API image built, Prisma generate/build passed, container healthy.
+- Runtime env: `NODE_ENV=development`, `FEED_AUTO_IMPORT_ENABLED=true`.
+- Первый и второй scheduler cycles подтверждены по API logs и `feed_import_runs`.
+
+Ручная проверка:
+
+- После завершения фонового MR Group run открыть `/admin/feeds` и убедиться, что последний MR Group run имеет terminal status и все 14 sources показывают актуальный `lastSuccessAt`.
+- Открыть `МЫС` и `ЖК Сикрет Гарден`, проверить отображение импортированных лотов и media по мере завершения фоновой загрузки.
+
+Спорные места:
+
+- Локальный backup намеренно не создавался по прямому указанию пользователя.
+- Первичная загрузка MR Group продолжает скачивать и генерировать большое количество media variants; пользователь попросил не ждать её окончания, поскольку importer работает автономно.
 
 ## 2026-07-15 - Production PDF title wrapping and plan order hotfix
 
@@ -3880,6 +4026,7 @@ Production repair:
 Спорные места:
 
 - Доступ зафиксирован по email, без нового RBAC permission, потому что требование касается одного главного аккаунта и не требует расширяемой роли.
+
 ## 2026-07-20 - Project presentation visual template
 
 Задача:
@@ -4169,3 +4316,94 @@ Production repair:
 Спорные места:
 
 - Нет; изменение изолировано только на шапку списка презентаций ЖК.
+
+## 2026-07-21 - Project presentations production deployment
+
+Задача:
+
+- Развернуть утверждённую функцию презентаций ЖК в production.
+
+Изменения:
+
+- Ветка `on-ser` обновлена на production до коммита `8010b86`.
+- Перед выкладкой создан и проверен PostgreSQL dump, а прежние API и web images сохранены rollback-тегами.
+- Применена миграция `20260720120000_add_project_presentations`.
+- Production images `api` и `web` пересобраны, соответствующие контейнеры пересозданы и запущены.
+
+Проверки:
+
+- Все production-контейнеры запущены; API, PostgreSQL, Redis и MinIO имеют статус `healthy`.
+- Локальные и публичные API health endpoints вернули `status: ok`, `database: ok`, `postgis: true`.
+- Публичный frontend и маршрут `/presentations/projects` вернули HTTP 200.
+- `ProjectPresentationsModule` и его API routes зарегистрированы; анонимный запрос к защищённому drafts endpoint вернул ожидаемый HTTP 401.
+- Опубликованный frontend bundle содержит маршрут и интерфейс презентаций ЖК.
+
+Ручная проверка:
+
+- Войти в production под администратором, открыть `/presentations/projects`, создать черновик, выбрать ЖК, сформировать и скачать PDF.
+
+Спорные места:
+
+- Авторизованный end-to-end smoke с созданием production-данных намеренно не выполнялся; серверные маршруты, миграция, health и опубликованный frontend проверены без изменения пользовательских данных.
+
+## 2026-07-24 - Local authorization runtime recovery
+
+Задача:
+
+- Восстановить локальный вход `admin@example.com` после ошибочного сообщения о неверных учётных данных.
+
+Изменения:
+
+- Код и данные пользователя не менялись.
+- Локальный контейнер `api`, ранее завершившийся после временной недоступности PostgreSQL, запущен повторно.
+
+Проверки:
+
+- Контейнер `platforma-api-1` имеет статус `healthy`.
+- `GET http://127.0.0.1:3000/health` вернул HTTP 200.
+- `POST http://127.0.0.1:3000/auth/login` для локального администратора с ожидаемым паролем вернул HTTP 200.
+
+Ручная проверка:
+
+- Обновить страницу `http://localhost:5173` и войти под `admin@example.com`.
+
+Спорные места:
+
+- Форма входа показывает одинаковую пользовательскую ошибку при недоступном API и при реально неверных учётных данных; UI-код в рамках срочного runtime-восстановления не менялся.
+
+## 2026-07-24 - FluffyWhite project catalog variant A
+
+Задача:
+
+- Перенести выбранный редакционный вариант A в рабочий локальный генератор презентаций ЖК и подключить Noto Serif Display с кириллицей.
+
+Изменения:
+
+- `apps/api/src/project-presentations/project-presentations-pdf.service.ts` - PDF renderer полностью переведён на светлый editorial-дизайн 3:4: брендовая обложка, география выбранных ЖК по сохранённым координатам, карточки с одной большой и двумя дополнительными фотографиями, четыре факта и преимущества, страница «О компании» и корпоративный финал без карточки брокера.
+- `apps/api/src/project-presentations/project-presentations.types.ts`, `apps/api/src/project-presentations/project-presentations.service.ts` - добавлена версия шаблона `project-catalog-editorial-a-3x4-v2`, canvas `540 x 720 pt`, лимит четырёх преимуществ и координаты ЖК в immutable snapshot; legacy snapshots без координат продолжают рендериться через fallback-раскладку.
+- `apps/web/src/presentations/projects/ProjectPresentationPreview.tsx`, `apps/web/src/presentations/projects/projectPresentations.css` - live-preview синхронизирован со структурой и визуальным языком нового PDF.
+- `apps/web/src/presentations/projects/ProjectPresentationEditorPage.tsx`, `projectPresentationState.ts`, `projectPresentationTypes.ts` - редактор показывает формат 3:4, четыре преимущества и актуальную структуру служебных страниц.
+- `apps/api/assets/fonts/NotoSerifDisplay-Regular.ttf`, `apps/web/public/fonts/NotoSerifDisplay-Regular.ttf` и соответствующие `NotoSerifDisplay-OFL.txt` - шрифт подключён локально для backend PDF и frontend preview.
+- `apps/api/assets/project-presentations/fluffywhite-logo-gold.png`, `apps/web/public/fluffywhite-logo-gold.png` - добавлен локальный золотой знак FluffyWhite.
+- Документация и контрактные тесты презентаций ЖК обновлены под структуру варианта A.
+- Сформирован локальный проверочный артефакт `output/pdf/fluffywhite-project-presentation-variant-a-local.pdf`.
+
+Проверки:
+
+- `pnpm --filter @platforma/api test` - 236/236 passed.
+- `pnpm --filter @platforma/web test` - 277/277 passed.
+- `pnpm --filter @platforma/api build` - passed.
+- `pnpm --filter @platforma/web build` - passed; сохраняется существующее предупреждение Vite о client chunk больше 500 kB.
+- Дополнительный regression для legacy snapshot без координат - passed.
+- Проверочный PDF из 6 страниц отрендерен в PNG; визуально проверены обложка, карта, короткий и длинный заголовки ЖК, «О компании» и финал.
+- Локальные images `api` и `web` пересобраны, контейнеры пересозданы; API healthy, `/health` вернул `status: ok`, frontend и локальные Noto Serif Display/logo assets отдаются с HTTP 200.
+
+Ручная проверка:
+
+- На локальном `/presentations/projects` открыть новый и существующий черновики, проверить live-preview на desktop/mobile, сформировать PDF с реальными ЖК и перейти по CTA-ссылкам.
+
+Спорные места:
+
+- Четыре тизера обложки пока являются фиксированной редакционной навигацией, а Telegram deep link остаётся системным `https://t.me/FluffyWhite`; отдельных полей редактирования для них в текущей схеме черновика нет.
+- Карта намеренно редакционная: точки рассчитываются из реальных координат выбранных ЖК, но внешняя картографическая подложка не загружается.
+- Изменения выполнены только локально; commit, push и deployment не выполнялись.

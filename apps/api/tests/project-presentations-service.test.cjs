@@ -34,7 +34,7 @@ function createDocumentRecord(overrides = {}) {
     draftId: uuid(902),
     title: 'Подборка для клиента',
     status: ProjectPresentationDocumentStatus.PENDING,
-    templateVersion: 'project-catalog-4x5-v1',
+    templateVersion: 'project-catalog-editorial-a-3x4-v2',
     objectsCount: 2,
     progress: 0,
     attempts: 0,
@@ -77,7 +77,7 @@ function createSnapshotDraft() {
     coverImageId: secondImage.id,
     coverFileId: null,
     coverFile: null,
-    templateVersion: 'project-catalog-4x5-v1',
+    templateVersion: 'project-catalog-editorial-a-3x4-v2',
     version: 7,
     owner: {
       id: uuid(2),
@@ -116,6 +116,8 @@ function createSnapshotDraft() {
           completionQuarter: 2,
           feedPriceFrom: null,
           priceFrom: null,
+          latitude: { toString: () => '55.735' },
+          longitude: { toString: () => '37.545' },
           primaryLocation: { name: 'ЦАО' },
           developer: { name: 'Каталожный девелопер' },
           metroStations: [{ metroStation: { name: 'Лужники' } }],
@@ -148,6 +150,8 @@ function createSnapshotDraft() {
           completionQuarter: 1,
           feedPriceFrom: null,
           priceFrom: null,
+          latitude: null,
+          longitude: null,
           primaryLocation: { name: 'САО' },
           developer: { name: 'Девелопер Б' },
           metroStations: [{ metroStation: { name: 'Динамо' } }],
@@ -223,7 +227,7 @@ test('draft object parser rejects the thirteenth project, duplicates and oversiz
   assert.throws(
     () => service.parseDraftObjects([{
       objectId: uuid(1),
-      advantages: ['1', '2', '3', '4'],
+      advantages: ['1', '2', '3', '4', '5'],
     }]),
     (error) => error instanceof BadRequestException && /Advantages is invalid/.test(error.message),
   );
@@ -236,7 +240,7 @@ test('snapshot freezes chosen order, manual content, image order, broker and Tel
   const snapshot = service.createSnapshot(draft, 'PDF для Анны');
 
   assert.equal(snapshot.schemaVersion, 1);
-  assert.equal(snapshot.page.width / snapshot.page.height, 4 / 5);
+  assert.equal(snapshot.page.width / snapshot.page.height, 3 / 4);
   assert.equal(snapshot.title, 'PDF для Анны');
   assert.equal(snapshot.cover.title, 'Три проекта для жизни');
   assert.equal(snapshot.cover.image.fileId, uuid(202));
@@ -244,6 +248,8 @@ test('snapshot freezes chosen order, manual content, image order, broker and Tel
   assert.deepEqual(snapshot.objects.map((item) => item.sortOrder), [0, 1]);
   assert.equal(snapshot.objects[0].title, 'Первый ЖК');
   assert.equal(snapshot.objects[0].description, 'Ручное описание первого проекта');
+  assert.equal(snapshot.objects[0].latitude, 55.735);
+  assert.equal(snapshot.objects[0].longitude, 37.545);
   assert.deepEqual(snapshot.objects[0].images.map((image) => image.fileId), [uuid(202), uuid(201)]);
   assert.equal(snapshot.objects[1].title, 'Второй ЖК');
   assert.equal(snapshot.objects[1].description, 'Каталожное описание');

@@ -335,7 +335,7 @@ export class ProjectPresentationsService {
           ownerUserId: actor.id,
           draftId: draft.id,
           title,
-          templateVersion: draft.templateVersion,
+          templateVersion: PROJECT_PRESENTATION_TEMPLATE_VERSION,
           snapshotVersion: PROJECT_PRESENTATION_SNAPSHOT_VERSION,
           snapshotJson: snapshot as unknown as Prisma.InputJsonValue,
           objectsCount: snapshot.objects.length,
@@ -455,6 +455,8 @@ export class ProjectPresentationsService {
         district: item.manualDistrict ?? item.object.primaryLocation?.name ?? 'Не указан',
         developer: item.manualDeveloper ?? item.object.developer?.name ?? 'Не указан',
         metro: item.manualMetro ?? (item.object.metroStations.map((link) => link.metroStation.name).join(', ') || 'Не указано'),
+        latitude: this.decimalToNumber(item.object.latitude),
+        longitude: this.decimalToNumber(item.object.longitude),
         images,
       };
     });
@@ -467,7 +469,7 @@ export class ProjectPresentationsService {
         : null;
     return {
       schemaVersion: 1,
-      templateVersion: draft.templateVersion,
+      templateVersion: PROJECT_PRESENTATION_TEMPLATE_VERSION,
       page: { width: PROJECT_PRESENTATION_PAGE_WIDTH, height: PROJECT_PRESENTATION_PAGE_HEIGHT },
       requestedAt: new Date().toISOString(),
       title,
@@ -582,6 +584,8 @@ export class ProjectPresentationsService {
       priceFrom: this.decimalToString(object.feedPriceFrom ?? object.priceFrom),
       pricePerMeterFrom: this.decimalToString(object.feedPricePerMeterFrom ?? object.pricePerMeterFrom),
       areaRange: object.feedAreaRange ?? object.apartmentAreaRange,
+      latitude: this.decimalToNumber(object.latitude),
+      longitude: this.decimalToNumber(object.longitude),
       developer: object.developer ? { id: object.developer.id, wpTermId: object.developer.wpTermId, name: object.developer.name, slug: object.developer.slug } : null,
       primaryLocation: object.primaryLocation ? { id: object.primaryLocation.id, wpTermId: object.primaryLocation.wpTermId, name: object.primaryLocation.name, slug: object.primaryLocation.slug, type: object.primaryLocation.type, parentId: object.primaryLocation.parentId } : null,
       metroStations: object.metroStations.map((link) => ({ id: link.metroStation.id, wpTermId: link.metroStation.wpTermId, name: link.metroStation.name, slug: link.metroStation.slug, lineName: link.metroStation.lineName, lineColor: link.metroStation.lineColor, sortOrder: link.sortOrder })),
@@ -606,6 +610,7 @@ export class ProjectPresentationsService {
   private readStringArray(value: Prisma.JsonValue) { return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []; }
   private parsePositiveInteger(value: string | undefined, fallback: number) { const parsed = Number(value); return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback; }
   private decimalToString(value: Prisma.Decimal | null) { return value?.toString() ?? null; }
+  private decimalToNumber(value: Prisma.Decimal | null) { return value ? Number(value.toString()) : null; }
   private formatPrice(value: Prisma.Decimal | null) { return value ? `от ${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(Number(value.toString()))} ₽` : 'По запросу'; }
   private formatCompletion(year: number | null, quarter: number | null) { return year ? (quarter ? `${quarter} кв. ${year}` : String(year)) : 'Не указан'; }
   private cleanDescription(value: string | null) { return (value ?? '').replace(/<[^>]*>/gu, ' ').replace(/\s+/gu, ' ').trim().slice(0, 2000); }

@@ -1,10 +1,10 @@
-export const PROJECT_PRESENTATION_TEMPLATE_VERSION = 'project-catalog-4x5-v1';
+export const PROJECT_PRESENTATION_TEMPLATE_VERSION = 'project-catalog-editorial-a-3x4-v2';
 export const PROJECT_PRESENTATION_SNAPSHOT_VERSION = 1;
 export const PROJECT_PRESENTATION_PAGE_WIDTH = 540;
-export const PROJECT_PRESENTATION_PAGE_HEIGHT = 675;
+export const PROJECT_PRESENTATION_PAGE_HEIGHT = 720;
 export const PROJECT_PRESENTATION_MAX_OBJECTS = 12;
 export const PROJECT_PRESENTATION_MAX_IMAGES = 3;
-export const PROJECT_PRESENTATION_MAX_ADVANTAGES = 3;
+export const PROJECT_PRESENTATION_MAX_ADVANTAGES = 4;
 
 export type ProjectPresentationSnapshotImage = {
   fileId: string;
@@ -25,6 +25,8 @@ export type ProjectPresentationSnapshotObject = {
   district: string;
   developer: string;
   metro: string;
+  latitude: number | null;
+  longitude: number | null;
   images: ProjectPresentationSnapshotImage[];
 };
 

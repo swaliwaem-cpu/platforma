@@ -947,7 +947,7 @@ function ExistingProjectPresentationEditor({
         <DialogContent className="project-presentation-preview-dialog">
           <DialogHeader>
             <DialogTitle>Предпросмотр презентации</DialogTitle>
-            <DialogDescription>{form.objects.length + 4} страниц в формате 4:5.</DialogDescription>
+            <DialogDescription>{form.objects.length + 4} страниц в формате 3:4.</DialogDescription>
           </DialogHeader>
           {user ? <ProjectPresentationPreview accessToken={accessToken || ''} form={form} user={user} /> : null}
         </DialogContent>
@@ -1362,7 +1362,7 @@ function ProjectCoverStep({
                 <ImageIcon data-icon="inline-start" aria-hidden="true" /> Выбрать из фото ЖК
               </Button>
             </div>
-            <FieldDescription>Фото будет кадрировано под вертикальную обложку 4:5. Максимальный размер — 10 МБ.</FieldDescription>
+            <FieldDescription>Фото будет кадрировано под вертикальную обложку 3:4. Максимальный размер — 10 МБ.</FieldDescription>
             {fileValidationError || uploadError ? <FieldError>{fileValidationError || uploadError}</FieldError> : null}
             {!fileValidationError && !uploadError && issueFor('coverImageId') ? <FieldError>{issueFor('coverImageId')}</FieldError> : null}
           </Field>
@@ -1407,7 +1407,7 @@ function ProjectReviewStep({
 
       <div className="project-presentation-review-grid">
         <article><span>ЖИЛЫЕ КОМПЛЕКСЫ</span><strong>{form.objects.length}</strong><small>до {projectPresentationMaxObjects} объектов</small></article>
-        <article><span>СТРАНИЦЫ PDF</span><strong>{form.objects.length + 4}</strong><small>формат 4:5</small></article>
+        <article><span>СТРАНИЦЫ PDF</span><strong>{form.objects.length + 4}</strong><small>формат 3:4</small></article>
         <article><span>ПЕРСОНАЛИЗАЦИЯ</span><strong>{form.clientName || 'Без имени'}</strong><small>{form.issueLabel || 'Стандартная метка'}</small></article>
       </div>
 
@@ -1416,10 +1416,10 @@ function ProjectReviewStep({
         <CardContent>
           <ol>
             <li><span>01</span><div><strong>Обложка</strong><small>{form.coverTitle || 'Заголовок не заполнен'}</small></div></li>
-            <li><span>02</span><div><strong>Оглавление</strong><small>Сформируется из выбранных ЖК</small></div></li>
+            <li><span>02</span><div><strong>География подборки</strong><small>Редакционная карта выбранных ЖК</small></div></li>
             {form.objects.map((item, index) => <li key={item.objectId}><span>{String(index + 3).padStart(2, '0')}</span><div><strong>{item.manualTitle || item.object.title}</strong><small>{item.object.address || 'Карточка жилого комплекса'}</small></div></li>)}
-            <li><span>{String(form.objects.length + 3).padStart(2, '0')}</span><div><strong>Telegram</strong><small>@FluffyWhite</small></div></li>
-            <li><span>{String(form.objects.length + 4).padStart(2, '0')}</span><div><strong>Контакты</strong><small>Данные владельца черновика</small></div></li>
+            <li><span>{String(form.objects.length + 3).padStart(2, '0')}</span><div><strong>О компании</strong><small>Принципы работы FluffyWhite</small></div></li>
+            <li><span>{String(form.objects.length + 4).padStart(2, '0')}</span><div><strong>Финал</strong><small>Весь путь и контакты компании</small></div></li>
           </ol>
         </CardContent>
       </Card>
@@ -1540,7 +1540,7 @@ function ProjectObjectEditor({
             <span>До трёх коротких тезисов.</span>
           </div>
           <div className="project-presentation-advantages-grid">
-            {[0, 1, 2].map((advantageIndex) => (
+            {[0, 1, 2, 3].map((advantageIndex) => (
               <Input
                 aria-label={`Преимущество ${advantageIndex + 1}`}
                 key={advantageIndex}

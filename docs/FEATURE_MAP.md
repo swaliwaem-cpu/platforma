@@ -445,11 +445,11 @@
 
 Дата добавления: 2026-07-20.
 
-- Назначение: авторизованный пользователь вручную выбирает до 12 опубликованных жилых комплексов, задаёт обложку и точечные переопределения, сохраняет черновик и асинхронно получает PDF согласованного формата 4:5.
+- Назначение: авторизованный пользователь вручную выбирает до 12 опубликованных жилых комплексов, задаёт обложку и точечные переопределения, сохраняет черновик и асинхронно получает PDF редакционного формата 3:4.
 - Frontend: `apps/web/src/presentations/projects`, маршруты и menu routing в `apps/web/src/App.tsx`, access helper в `apps/web/src/presentations/presentationAccess.ts`.
 - Backend: `apps/api/src/project-presentations`, регистрация в `apps/api/src/app.module.ts`.
 - Access boundary: во всех окружениях frontend показывает раздел любому авторизованному пользователю, а backend допускает все роли после обязательного `JwtAuthGuard`; неавторизованный доступ закрыт.
-- PDF assets: `apps/api/assets/project-presentations/telegram-qr.png`; Telegram CTA и QR ведут на `https://t.me/FluffyWhite`.
+- PDF assets: локальные Noto Sans и Noto Serif Display в `apps/api/assets/fonts`, золотой знак FluffyWhite в `apps/api/assets/project-presentations/fluffywhite-logo-gold.png`; Telegram CTA ведёт на `https://t.me/FluffyWhite`.
 - Shared contracts: `ProjectPresentation*` в `packages/shared/src/index.ts`.
 - Prisma models: `ProjectPresentationDraft`, `ProjectPresentationDraftObject`, `ProjectPresentationDocument`, `ProjectPresentationDocumentObject`, `ProjectPresentationDocumentAsset`; migration `20260720120000_add_project_presentations`.
 - Catalog boundary: выборка включает только `PUBLISHED`, не удалённые объекты категории `RESIDENTIAL`. Источники изображений валидируются по текущим связям объекта.
@@ -457,6 +457,6 @@
 - Cover upload: обложкой может быть как `ObjectImage` выбранного ЖК, так и собственный `File`, привязанный через `ProjectPresentationDraft.coverFileId`; `POST /project-presentations/drafts/:draftId/cover` принимает JPEG/PNG/WebP до 10 МБ и участвует в optimistic versioning.
 - Document semantics: при запуске фиксируется неизменяемый snapshot данных, изображений и контактов владельца черновика. Удаление черновика не удаляет ранее созданные документы.
 - Queue: статусы `PENDING`, `RUNNING`, `READY`, `FAILED`; DB-backed worker восстанавливает зависшие задания, хранит progress и поддерживает ручной retry до трёх попыток.
-- PDF: `N + 4` страниц — обложка, оглавление, `N` страниц ЖК, Telegram, контакты; каждая страница `540 x 675 pt`.
+- PDF: `N + 4` страниц — обложка, редакционная карта по координатам выбранных ЖК, `N` страниц ЖК, «О компании», брендовый финал; каждая страница `540 x 720 pt`.
 - Tests: `apps/api/tests/project-presentations-*.test.cjs`, `apps/web/tests/project-presentations-*.test.mjs`.
 - Риски: генерация зависит от доступности S3/MinIO и исходных файлов snapshot; UI должен корректно обработать version conflict, failed document и ошибку размера custom cover; замена/удаление собственной обложки не должна удалять файл, пока он связан с immutable document asset.

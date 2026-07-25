@@ -8,7 +8,7 @@ import type {
 
 export const projectPresentationMaxObjects = 12;
 export const projectPresentationMaxImages = 3;
-export const projectPresentationMaxAdvantages = 3;
+export const projectPresentationMaxAdvantages = 4;
 export const projectPresentationMaxCoverFileSizeBytes = 10 * 1024 * 1024;
 
 export type ProjectPresentationOwner = {
@@ -29,6 +29,8 @@ export type ProjectPresentationObject = {
   priceFrom: string | null;
   pricePerMeterFrom: string | null;
   areaRange: string | null;
+  latitude: number | null;
+  longitude: number | null;
   primaryLocation: ObjectLocation | null;
   developer: ObjectDeveloper | null;
   metroStations: ObjectMetroStationLink[];

@@ -276,8 +276,8 @@ Feed import warning: separate `POST /feed-import/preview` and `POST /feed-import
 | `GET /project-presentations/documents/:documentId/content` | Защищённая загрузка готового PDF с UTF-8 filename |
 
 - `ProjectPresentationDraft` хранит владельца-брокера, поля обложки, выбранный `ObjectImage` либо собственный `coverFile`, `version` и ordered items.
-- `ProjectPresentationDraftObject` хранит ручные override-поля, до трёх преимуществ и до трёх выбранных image ids.
+- `ProjectPresentationDraftObject` хранит ручные override-поля, до четырёх преимуществ и до трёх выбранных image ids.
 - `ProjectPresentationDocument` хранит template/snapshot version, JSON snapshot, статус, progress, attempt count, ошибку и ссылку на готовый `File`.
 - `ProjectPresentationDocumentObject` и `ProjectPresentationDocumentAsset` фиксируют состав и checksums исходных файлов для аудита snapshot.
 - `File` получил связи с обложками черновиков, готовыми документами и snapshot assets; linked-file checks в `FilesService` запрещают удалить такие файлы напрямую.
-- Контакт на финальной странице берётся у владельца черновика; пользователь, нажавший генерацию, сохраняется как creator документа.
+- Snapshot дополнительно фиксирует координаты ЖК для редакционной карты; телефон на финальной корпоративной странице берётся у владельца черновика с брендированным fallback. Пользователь, нажавший генерацию, сохраняется как creator документа.

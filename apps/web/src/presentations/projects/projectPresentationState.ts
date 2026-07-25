@@ -126,7 +126,7 @@ export function validateProjectPresentationForm(form: ProjectPresentationDraftFo
     }
 
     if (item.advantages.filter((value) => value.trim()).length > projectPresentationMaxAdvantages) {
-      issues.push({ path: `objects.${item.objectId}.advantages`, message: `Для ${item.object.title} можно указать не больше 3 преимуществ` });
+      issues.push({ path: `objects.${item.objectId}.advantages`, message: `Для ${item.object.title} можно указать не больше ${projectPresentationMaxAdvantages} преимуществ` });
     }
   }
 

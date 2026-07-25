@@ -543,4 +543,4 @@ Flow:
 - Recovery state: worker при старте возвращает просроченные `RUNNING` документы в очередь; одновременно один документ не должен исполняться двумя worker loops благодаря compare-and-set update.
 - Snapshot state: PDF строится только из зафиксированного JSON snapshot и asset ids, поэтому последующие изменения объекта или черновика не меняют уже поставленный документ.
 - Deletion state: удаление черновика каскадно удаляет его items, но сохраняет документы с `draftId = null`; custom cover удаляется только после исчезновения связей черновика и immutable document assets; удаление документа удаляет его snapshot rows и готовый PDF `File`/object storage object.
-- Preview state: браузерный preview повторяет структуру обложки, оглавления, ЖК, Telegram и контактов, но authoritative output создаёт backend PDF renderer.
+- Preview state: браузерный preview повторяет структуру редакционного варианта A — обложка, география подборки, ЖК, «О компании» и брендовый финал — но authoritative output создаёт backend PDF renderer.

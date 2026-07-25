@@ -13,9 +13,13 @@ const {
 } = require('../dist/project-presentations/project-presentations.types.js');
 
 const rootDir = path.resolve(__dirname, '../../..');
-const qrPath = path.join(
+const logoPath = path.join(
   rootDir,
-  'apps/api/assets/project-presentations/telegram-qr.png',
+  'apps/api/assets/project-presentations/fluffywhite-logo-gold.png',
+);
+const displayFontPath = path.join(
+  rootDir,
+  'apps/api/assets/fonts/NotoSerifDisplay-Regular.ttf',
 );
 const pdfSourcePath = path.join(
   rootDir,
@@ -25,7 +29,7 @@ const pdfSourcePath = path.join(
 function createSnapshot(objectsCount) {
   return {
     schemaVersion: 1,
-    templateVersion: 'project-catalog-4x5-v1',
+    templateVersion: 'project-catalog-editorial-a-3x4-v2',
     page: {
       width: PROJECT_PRESENTATION_PAGE_WIDTH,
       height: PROJECT_PRESENTATION_PAGE_HEIGHT,
@@ -54,13 +58,15 @@ function createSnapshot(objectsCount) {
       sortOrder: index,
       title: `Жилой комплекс ${index + 1}`,
       description: `Краткое описание проекта ${index + 1}`,
-      advantages: ['Рядом с парком', 'Закрытый двор', 'Готовая инфраструктура'],
+      advantages: ['Рядом с парком', 'Закрытый двор', 'Готовая инфраструктура', 'Виды на город'],
       propertyClass: 'Бизнес',
       completion: '4 кв. 2027',
       price: 'от 25 000 000 ₽',
       district: 'Хамовники',
       developer: 'Девелопер',
       metro: 'Спортивная',
+      latitude: 55.73 + index * 0.01,
+      longitude: 37.55 + index * 0.01,
       images: [],
     })),
   };
@@ -76,8 +82,8 @@ function inspectPdf(buffer) {
   };
 }
 
-test('project PDF uses a 4:5 canvas and produces exactly N + 4 pages', async () => {
-  assert.equal(PROJECT_PRESENTATION_PAGE_WIDTH / PROJECT_PRESENTATION_PAGE_HEIGHT, 4 / 5);
+test('project PDF uses a 3:4 canvas and produces exactly N + 4 pages', async () => {
+  assert.equal(PROJECT_PRESENTATION_PAGE_WIDTH / PROJECT_PRESENTATION_PAGE_HEIGHT, 3 / 4);
 
   for (const objectsCount of [1, 12]) {
     const progress = [];
@@ -109,19 +115,32 @@ test('project PDF embeds clickable FluffyWhite Telegram links', async () => {
   const telegramLinks = source.match(/https:\/\/t\.me\/FluffyWhite/g) ?? [];
 
   assert.ok(telegramLinks.length >= 3, `expected at least 3 Telegram links, received ${telegramLinks.length}`);
-  assert.match(
-    fs.readFileSync(pdfSourcePath, 'utf8'),
-    /resolveAsset\('project-presentations\/telegram-qr\.png'\)[\s\S]*doc\.image\(qr,[\s\S]*doc\.link\([\s\S]*cta\.url/,
-  );
+  assert.match(fs.readFileSync(pdfSourcePath, 'utf8'), /УЗНАТЬ ПОДРОБНОСТИ[\s\S]*snapshot\.cta\.url/);
 });
 
-test('Telegram QR asset is a non-empty square PNG used by the PDF template', async () => {
-  const buffer = fs.readFileSync(qrPath);
-  const metadata = await sharp(buffer).metadata();
+test('editorial map keeps legacy snapshots without coordinates renderable', async () => {
+  const snapshot = createSnapshot(2);
+  for (const object of snapshot.objects) {
+    delete object.latitude;
+    delete object.longitude;
+  }
 
-  assert.deepEqual([...buffer.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+  const buffer = await new ProjectPresentationsPdfService({}).generate(snapshot);
+  assert.equal(inspectPdf(buffer).pages.length, 6);
+});
+
+test('editorial template embeds the FluffyWhite logo and local Noto Serif Display font', async () => {
+  const logoBuffer = fs.readFileSync(logoPath);
+  const metadata = await sharp(logoBuffer).metadata();
+  const source = fs.readFileSync(pdfSourcePath, 'utf8');
+
+  assert.deepEqual([...logoBuffer.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
   assert.equal(metadata.format, 'png');
-  assert.equal(metadata.width, metadata.height);
-  assert.ok((metadata.width ?? 0) >= 256);
-  assert.ok(buffer.length > 1_000);
+  assert.ok((metadata.width ?? 0) >= 200);
+  assert.ok((metadata.height ?? 0) >= 200);
+  assert.ok(logoBuffer.length > 1_000);
+  assert.ok(fs.statSync(displayFontPath).size > 100_000);
+  assert.match(source, /resolveAsset\('fonts\/NotoSerifDisplay-Regular\.ttf'\)/);
+  assert.match(source, /resolveAsset\('project-presentations\/fluffywhite-logo-gold\.png'\)/);
+  assert.match(source, /registerFont\('NotoSerifDisplay'/);
 });

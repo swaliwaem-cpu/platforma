@@ -76,14 +76,15 @@ test('custom cover upload validates 10 MB locally and keeps catalog photos as an
   assert.match(previewSource, /form\.coverFile\?\.id \?\? coverImage\?\.file\.id/u);
 });
 
-test('project preview keeps 4:5 pages, broker contacts and responsive sticky presentation', () => {
+test('project preview keeps editorial 3:4 pages, company contacts and responsive sticky presentation', () => {
   assert.match(previewSource, /kind: 'cover'/u);
-  assert.match(previewSource, /kind: 'contents'/u);
-  assert.match(previewSource, /kind: 'telegram'/u);
-  assert.match(previewSource, /kind: 'contacts'/u);
+  assert.match(previewSource, /kind: 'map'/u);
+  assert.match(previewSource, /kind: 'company'/u);
+  assert.match(previewSource, /kind: 'final'/u);
   assert.match(previewSource, /brokerPhone/u);
-  assert.match(previewSource, /brokerEmail/u);
-  assert.match(stylesSource, /aspect-ratio: 4 \/ 5/u);
+  assert.match(previewSource, /fluffywhite-logo-gold\.png/u);
+  assert.match(stylesSource, /NotoSerifDisplay-Regular\.ttf/u);
+  assert.match(stylesSource, /aspect-ratio: 3 \/ 4/u);
   assert.match(stylesSource, /position: sticky/u);
   assert.match(stylesSource, /@container \(max-width: 1180px\)/u);
 });

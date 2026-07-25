@@ -72,11 +72,11 @@ test('editor serializes autosave, preserves explicit order and recovers from ver
 test('editor enforces selection limits and validates resolved content before generation', () => {
   assert.match(typesSource, /projectPresentationMaxObjects = 12/);
   assert.match(typesSource, /projectPresentationMaxImages = 3/);
-  assert.match(typesSource, /projectPresentationMaxAdvantages = 3/);
+  assert.match(typesSource, /projectPresentationMaxAdvantages = 4/);
   assert.match(editorSource, /currentForm\.objects\.length >= projectPresentationMaxObjects/);
   assert.match(editorSource, /!isSelected && item\.imageIds\.length >= projectPresentationMaxImages/);
   assert.match(editorSource, /disabled=\{form\.objects\.length >= projectPresentationMaxObjects\}/);
-  assert.match(editorSource, /\[0, 1, 2\]\.map\(\(advantageIndex\)/);
+  assert.match(editorSource, /\[0, 1, 2, 3\]\.map\(\(advantageIndex\)/);
   for (const field of ['propertyClass', 'completion', 'price', 'district', 'developer', 'metro']) {
     assert.ok(editorSource.includes(`['${field}',`), `manual field ${field} must be editable`);
   }
@@ -129,13 +129,13 @@ test('interactive controls have labels, state announcements and validation focus
   assert.match(previewSource, /aria-current=\{index === safePageIndex \? 'page' : undefined\}/);
 });
 
-test('preview mirrors N + 4 pages in 4:5 and layout has responsive reduced-motion rules', () => {
+test('preview mirrors N + 4 pages in 3:4 and layout has responsive reduced-motion rules', () => {
   assert.match(
     previewSource,
-    /key: 'cover'[\s\S]*key: 'contents'[\s\S]*\.\.\.form\.objects\.map[\s\S]*key: 'telegram'[\s\S]*key: 'contacts'/,
+    /key: 'cover'[\s\S]*key: 'map'[\s\S]*\.\.\.form\.objects\.map[\s\S]*key: 'company'[\s\S]*key: 'final'/,
   );
-  assert.match(editorSource, /\{form\.objects\.length \+ 4\} страниц в формате 4:5/);
-  assert.match(styles, /\.project-preview-frame\s*\{[\s\S]*aspect-ratio:\s*4 \/ 5/);
+  assert.match(editorSource, /\{form\.objects\.length \+ 4\} страниц в формате 3:4/);
+  assert.match(styles, /\.project-preview-frame\s*\{[\s\S]*aspect-ratio:\s*3 \/ 4/);
   assert.match(styles, /\.project-presentation-preview-column\s*\{[\s\S]*position:\s*sticky/);
   assert.match(styles, /@container \(max-width:\s*1180px\)/);
   assert.match(styles, /@media \(prefers-reduced-motion:\s*reduce\)/);
