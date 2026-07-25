@@ -25,9 +25,19 @@
 - Сгенерированы и визуально проверены реальные PDF: Voxhall `55401` с тремя layout, `55710` с duplicate-парой, `132539` с поэтажкой на второй позиции и контрольный City Bay №334.
 - `git diff --check` - passed.
 
+Production deploy:
+
+- Commit `4d72e7e` отправлен в `origin/on-ser`; production `/opt/platforma` fast-forwarded с `fb6a085` до `4d72e7e`.
+- Сохранён rollback image `platforma-api:pre-deploy-20260725T112612Z-fb6a085-etalon-pdf-dedupe` (`sha256:f2403ce976cb...`) и deploy-метаданные в `/opt/platforma-deploy-backups/predeploy-20260725T112612Z-fb6a085-etalon-pdf-dedupe`.
+- Пересобран и пересоздан только production-сервис `api`; web, PostgreSQL, MinIO, importer logic и данные не менялись.
+- В новом production image профильные lot-presentation тесты прошли 16/16.
+- Production runtime-прогон всех 54 актуальных Etalon-пар дал `46` duplicate-fallback, `8` настоящих поэтажек и `0` неопределённых результатов.
+- Реальный production PDF smoke по Voxhall `55401`, `55710`, `132539` и City Bay №334 сформировал валидный PDF 1.3: `4` лота, `2` ЖК, `11` страниц, `7 219 574` bytes.
+- Production API и все зависимости healthy; локальный и публичный `/health` вернули `status=ok`, `database=ok`, `postgis=true`; checkout `/opt/platforma` чистый.
+
 Ручная проверка:
 
-- После будущего deploy сформировать новые production PDF для Voxhall `55401`, `55710`, `132539` и одного target MR Group лота.
+- В production UI сформировать новые PDF для Voxhall `55401`, `55710`, `132539` и одного target MR Group лота и визуально подтвердить оба media-фрейма.
 - Ранее созданные PDF автоматически не перегенерируются.
 
 Спорные места:
