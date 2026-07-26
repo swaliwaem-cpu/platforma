@@ -1,6 +1,6 @@
 # Checklist реализации модуля обучения
 
-Дата актуализации: 2026-07-25.
+Дата актуализации: 2026-07-26.
 
 Источник этапов: `docs/training/prompts/00_audit.md` …
 `10_security_deploy_pilot.md`.
@@ -24,7 +24,7 @@
 | 2 | `02_prisma_schema.md` | Выполнен |
 | 3 | `03_content_backend.md` | Выполнен |
 | 4 | `04_content_ui_documents.md` | Выполнен |
-| 5 | `05_attempt_engine_fake.md` | Выполнен |
+| 5 | `05_attempt_engine_fake.md` | Выполнен; findings независимого review исправлены |
 | 6 | `06_telegram.md` | Не начат |
 | 7 | `07_audio_worker.md` | Не начат |
 | 8 | `08_openai_scoring_review.md` | Не начат |
@@ -192,6 +192,52 @@ unique index остаётся дополнительным барьером ак
 Prisma schema/migration, dependencies, controllers, Telegram/OpenAI/storage
 audio pipeline и frontend на этапе 5 не изменялись. Изолированная PostgreSQL БД
 удалена после integration test.
+
+### Исправления независимого review этапа 5
+
+- [x] Persisted jobs `TRANSCRIBE_ANSWER`, `EVALUATE_ANSWER` и
+  `FINALIZE_ATTEMPT` используют существующую `TrainingJob`: уникальные
+  idempotency keys, `attempts`, `runAt`, lease, heartbeat и возврат stale
+  `RUNNING` jobs в обработку.
+- [x] Recovery после пересоздания service продолжает состояния `READY`,
+  `TRANSCRIBING`, `EVALUATING` и `FINALIZING`, не повторяет уже сохранённый
+  provider result и допускает конкурирующие recovery workers без дублей.
+- [x] Timeout intent сохраняется в payload persisted expire-job; текущая
+  обработка восстанавливается/завершается, остальные вопросы получают
+  `SKIPPED_TIMEOUT`, после чего attempt финализируется.
+- [x] Все score-компоненты, answer/final score, penalties, pass threshold и
+  admin review используют одну политику `Prisma.Decimal`: 2 знака,
+  `ROUND_HALF_UP`.
+- [x] Terminal attempt/refund атомарно закрывает неприменимые pending/running
+  timer и process jobs; stale terminal job является no-op.
+- [x] Стандартный `pnpm --filter @platforma/api test` включает unit suite и
+  реальный PostgreSQL integration suite в уникальной временной БД.
+- [x] Безопасный DB runner разрешает только локальный base PostgreSQL,
+  отказывается от production-like URL, применяет migrations только во
+  временную БД и удаляет её в `finally`, включая обработку `SIGINT/SIGTERM`.
+- [x] Реальный PostgreSQL suite покрывает concurrent start, finish/timeout,
+  duplicate finish/voice, voice/finish, concurrent finalize/refund,
+  конкурентный recovery, restart states, timeout during processing и
+  canonical rounding.
+- [x] Source-regex architecture test заменён runtime/import/provider и
+  transaction-level проверками без новой зависимости.
+- [x] Prisma schema и migrations не менялись: существующих полей
+  `TrainingJob` и JSON payload достаточно для recovery и timeout intent.
+- [x] Этап 6, Telegram/OpenAI/network, audio storage, frontend и новые
+  dependencies не начинались.
+
+Проверки review-fix:
+
+- targeted attempt/scoring unit tests — 38/38 passed;
+- `pnpm --filter @platforma/api test` — 316/316 unit и 18/18 PostgreSQL
+  integration tests passed; integration suite действительно запущен этой
+  стандартной командой;
+- `pnpm build` — passed; сохраняется существующее предупреждение Vite о client
+  chunk `753.03 kB`, больше 500 kB;
+- `pnpm test` — 707/707 passed: API 316 unit + 18 PostgreSQL, Web 286,
+  Feed import 64, WordPress import 23;
+- `git diff --check` — passed;
+- временные PostgreSQL databases удалены после каждого integration run.
 
 ## Этап 6. Telegram linking и webhook
 

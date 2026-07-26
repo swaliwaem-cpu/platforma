@@ -4769,3 +4769,82 @@ Dependencies:
 - Timer jobs на этом этапе только сохраняются domain engine; их доставка через
   Telegram и отдельный worker относятся к следующим этапам.
 - Prisma schema/migrations и dependencies не изменялись; этап 6 не начинался.
+
+## 2026-07-26 - Training stage 5 independent review fixes
+
+Задача:
+
+- Исправить только findings независимого review этапа 5: persisted recovery,
+  единое округление, безопасный PostgreSQL runner, terminal job cleanup,
+  реальные race tests и недостающие domain tests.
+
+Изменения:
+
+- Processing `TRANSCRIBE_ANSWER`, `EVALUATE_ANSWER` и `FINALIZE_ATTEMPT`
+  переведён на существующую PostgreSQL-модель `TrainingJob` с уникальными
+  idempotency keys, persisted status/attempts/runAt, lease, heartbeat,
+  повторным claim stale `RUNNING` jobs и безопасной обработкой lost lease.
+- Provider calls остаются вне транзакций. Полученный transcript/evaluation
+  сохраняется до следующего state transition и повторно используется после
+  restart; duplicate execution не создаёт второй transcript, evaluation,
+  answer score, final result, penalty или follow-up.
+- Startup/recovery восстанавливает `READY`, `TRANSCRIBING`, `EVALUATING` и
+  `FINALIZING`. Timeout intent сохраняется в payload существующей expire-job:
+  текущая обработка завершается/восстанавливается, остальные вопросы
+  помечаются `SKIPPED_TIMEOUT`, затем attempt идемпотентно финализируется.
+- Новые voice-сегменты после expiry отклоняются; сегмент, начатый до expiry,
+  разрешено завершить в grace.
+- Добавлена единая score utility на `Prisma.Decimal`: scale 2,
+  `ROUND_HALF_UP`, canonical clamp и Decimal-сравнение. Политика применяется к
+  components, answer score, штрафу `−5.00`, final sum, pass threshold и
+  reviewed/admin override score без бинарного float как источника истины.
+- Terminal transitions и refund атомарно закрывают неприменимые timer/process
+  jobs. Повторный refund и stale timer/job после terminal state являются
+  no-op. Новое состояние `CANCELLED` не добавлялось: его нет в утверждённой
+  enum/state machine, а расширение домена потребовало бы внеплановой migration.
+- Реализован безопасный runner PostgreSQL tests. Он принимает только локальный
+  non-production-like base URL, создаёт уникальную временную database,
+  применяет туда все Prisma migrations, передаёт её URL только дочернему test
+  process и удаляет database в `finally`/обработчиках `SIGINT` и `SIGTERM`.
+- Стандартный API `test` теперь последовательно выполняет build, unit tests и
+  безопасный PostgreSQL integration suite.
+- PostgreSQL suite проверяет фактические записи/состояния БД в race-сценариях:
+  concurrent confirmStart, finish/timeout, duplicate finish/voice,
+  voice/finish, concurrent finalize/refund и claim recovery двумя workers.
+  Также покрыты реальные restart states, сохранённый provider result, timeout
+  during processing и совпадение canonical rounding с PostgreSQL.
+- Source-regex architecture test заменён runtime/import/provider metadata и
+  фактической проверкой `Serializable` transaction/advisory lock.
+- Prisma schema/migrations, dependencies, controllers, frontend,
+  Telegram/OpenAI/network и audio storage не менялись; этап 6 не начинался.
+
+Проверки:
+
+- Targeted attempt/scoring tests — 38/38 passed.
+- `pnpm --filter @platforma/api test:unit` — 316/316 passed.
+- `pnpm --filter @platforma/api test` — 316/316 unit и 18/18 PostgreSQL
+  integration tests passed; временная database удалена.
+- `pnpm build` — passed; сохраняется существующее предупреждение Vite о client
+  chunk `753.03 kB`, больше 500 kB.
+- `pnpm test` — 707/707 passed: API 316 unit + 18 PostgreSQL, Web 286,
+  Feed import 64, WordPress import 23.
+- `git diff --check` — passed.
+- После полного прогона в application database найдено 0
+  `training-stage5-*` projects/users и 0 databases с префиксом
+  `platforma_training_test_`.
+- Runner отдельно отклонил remote URL и local production-like URL до попытки
+  соединения.
+
+Ручная проверка:
+
+- UI/Telegram ручная проверка не требуется и не входит в scope. Перед
+  production запуском runner не нужен: он намеренно откажется от удалённого
+  или production-like PostgreSQL URL.
+
+Спорные места:
+
+- Timeout intent помещён в JSON payload существующей unique expire-job, поэтому
+  новое поле и migration не потребовались.
+- Terminal cleanup переводит неприменимые jobs в существующий terminal
+  `SUCCEEDED` с `terminalNoop`, поскольку `TrainingJobStatus` не содержит
+  `CANCELLED`; это сохраняет текущую schema и исключает повторное выполнение.

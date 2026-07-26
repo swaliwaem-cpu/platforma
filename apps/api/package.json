@@ -10,7 +10,10 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "start": "node --env-file-if-exists=.env dist/main.js",
-    "test": "pnpm build && node --test tests/*.test.cjs"
+    "test": "pnpm build && pnpm run test:unit && pnpm run test:training:db:run",
+    "test:unit": "node --test tests/*.test.cjs",
+    "test:training:db": "pnpm build && pnpm run test:training:db:run",
+    "test:training:db:run": "node --env-file-if-exists=.env scripts/run-training-db-tests.cjs"
   },
   "dependencies": {
     "@nestjs/common": "11.1.19",

@@ -1,7 +1,6 @@
 const assert = require('node:assert/strict');
-const { readFileSync } = require('node:fs');
-const path = require('node:path');
 const test = require('node:test');
+const { Prisma } = require('@prisma/client');
 
 const {
   CryptoTrainingQuestionSelector,
@@ -12,6 +11,11 @@ const {
   TRAINING_INCORRECT_FACT_PENALTY,
   scoreTrainingEvaluation,
 } = require('../dist/training/training-attempt.scoring.js');
+const {
+  canonicalTrainingScore,
+  clampTrainingScore,
+  trainingScoreMeetsThreshold,
+} = require('../dist/training/training-score-decimal.js');
 const {
   TRAINING_ATTEMPT_SCORE_MAXIMUM,
 } = require('../dist/training/training-attempt-engine.service.js');
@@ -27,52 +31,6 @@ const approvedFact = {
   code: 'main.fact',
   statement: 'Утверждённый факт',
 };
-const rootDir = path.resolve(__dirname, '../../..');
-const engineSource = readFileSync(
-  path.join(
-    rootDir,
-    'apps/api/src/training/training-attempt-engine.service.ts',
-  ),
-  'utf8',
-);
-const providerSource = readFileSync(
-  path.join(rootDir, 'apps/api/src/training/training-attempt.providers.ts'),
-  'utf8',
-);
-const moduleSource = readFileSync(
-  path.join(rootDir, 'apps/api/src/training/training.module.ts'),
-  'utf8',
-);
-const contentServiceSource = readFileSync(
-  path.join(rootDir, 'apps/api/src/training/training-content.service.ts'),
-  'utf8',
-);
-
-test('stage 5 wiring uses short serializable PostgreSQL locks and fake-only providers', () => {
-  assert.match(engineSource, /pg_advisory_xact_lock/u);
-  assert.match(
-    engineSource,
-    /Prisma\.TransactionIsolationLevel\.Serializable/u,
-  );
-  assert.match(engineSource, /crypto-random-without-replacement/u);
-  assert.match(engineSource, /TrainingProjectStatus\.OPEN/u);
-  assert.match(engineSource, /assertProjectAvailable/u);
-  assert.match(
-    contentServiceSource,
-    /orderBy:\s*\[\{ sortOrder: 'asc' \}, \{ title: 'asc' \}\]/u,
-  );
-  assert.doesNotMatch(engineSource, /gapScore|weakness|adaptive/iu);
-  assert.doesNotMatch(providerSource, /\bfetch\s*\(|https?:\/\//u);
-  assert.match(
-    moduleSource,
-    /useClass:\s*DeterministicFakeTrainingTranscriptionProvider/u,
-  );
-  assert.match(
-    moduleSource,
-    /useClass:\s*DeterministicFakeTrainingEvaluationProvider/u,
-  );
-});
-
 test('secure question selector returns three different items without mutating the 10-item pool', () => {
   const selector = new CryptoTrainingQuestionSelector();
   const candidates = Array.from({ length: 10 }, (_, index) => ({
@@ -178,9 +136,9 @@ test('backend scoring applies one minus-five penalty per distinct incorrect fact
     },
   });
 
-  assert.equal(TRAINING_INCORRECT_FACT_PENALTY, 5);
-  assert.equal(score.aiSuggestedScore, 55);
-  assert.equal(score.serverScore, 50);
+  assert.equal(TRAINING_INCORRECT_FACT_PENALTY.toFixed(2), '5.00');
+  assert.equal(score.aiSuggestedScore.toFixed(2), '55.00');
+  assert.equal(score.serverScore.toFixed(2), '50.00');
   assert.equal(
     score.components.filter((component) => component.factVerdict === 'INCORRECT')
       .length,
@@ -215,12 +173,12 @@ test('unsupported claim has no automatic penalty but requires review', () => {
     },
   });
 
-  assert.equal(score.serverScore, 55);
+  assert.equal(score.serverScore.toFixed(2), '55.00');
   assert.equal(score.requiresReview, true);
   assert.equal(
     score.components.find((component) => component.factVerdict === 'UNSUPPORTED')
-      .penaltyPoints,
-    0,
+      .penaltyPoints.toFixed(2),
+    '0.00',
   );
 });
 
@@ -253,10 +211,60 @@ test('backend clamps answer points and fixes the attempt maximum at 55 + 15 + 15
     },
   });
 
-  assert.equal(score.aiSuggestedScore, 15);
-  assert.equal(score.serverScore, 15);
+  assert.equal(score.aiSuggestedScore.toFixed(2), '15.00');
+  assert.equal(score.serverScore.toFixed(2), '15.00');
   assert.equal(TRAINING_ATTEMPT_SCORE_MAXIMUM, 100);
   assert.equal(55 + 15 + 15 + 15, TRAINING_ATTEMPT_SCORE_MAXIMUM);
+});
+
+test('canonical score policy is two decimals with ROUND_HALF_UP', () => {
+  assert.equal(canonicalTrainingScore('10.004').toFixed(2), '10.00');
+  assert.equal(canonicalTrainingScore('10.005').toFixed(2), '10.01');
+  assert.equal(
+    Prisma.Decimal.ROUND_HALF_UP,
+    canonicalTrainingScore('1.005').constructor.ROUND_HALF_UP,
+  );
+});
+
+test('pass threshold compares canonical decimals instead of binary floats', () => {
+  assert.equal(trainingScoreMeetsThreshold('74.994', 75), false);
+  assert.equal(trainingScoreMeetsThreshold('74.995', 75), true);
+});
+
+test('minus five penalty is applied after component normalization', () => {
+  const score = scoreTrainingEvaluation({
+    questionMaxScore: 55,
+    criteria: [mainCriterion],
+    facts: [approvedFact],
+    evaluation: {
+      actualModelId: 'fake',
+      reasoningEffort: null,
+      aiSuggestedScore: 10.005,
+      criterionScores: [
+        {
+          criterionId: mainCriterion.id,
+          awardedPoints: 10.005,
+        },
+      ],
+      factFindings: [
+        {
+          factId: approvedFact.id,
+          verdict: 'INCORRECT',
+        },
+      ],
+      summary: 'fake',
+      requestId: 'request-rounding-penalty',
+      latencyMs: 0,
+    },
+  });
+
+  assert.equal(score.components[0].awardedPoints.toFixed(2), '10.01');
+  assert.equal(score.serverScore.toFixed(2), '5.01');
+});
+
+test('final score clamp stays within canonical zero and one hundred', () => {
+  assert.equal(clampTrainingScore('100.009', 0, 100).toFixed(2), '100.00');
+  assert.equal(clampTrainingScore('-0.009', 0, 100).toFixed(2), '0.00');
 });
 
 test('backend rejects unknown criterion and fact identifiers from a provider', () => {

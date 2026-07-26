@@ -2,6 +2,7 @@ const {
   TrainingAnswerStatus,
   TrainingAttemptQuestionStatus,
   TrainingAttemptStatus,
+  TrainingJobStatus,
   TrainingPassStatus,
   TrainingProjectStatus,
   TrainingQuestionType,
@@ -28,7 +29,10 @@ class FakeTrainingAttemptPrisma {
     this.evaluations = new Map();
     this.scoreComponents = [];
     this.jobs = new Map();
+    this.reviews = [];
     this.auditLogs = [];
+    this.rawQueries = [];
+    this.transactionOptions = [];
 
     const mainFact = {
       id: MAIN_FACT_ID,
@@ -109,8 +113,12 @@ class FakeTrainingAttemptPrisma {
       activeVersion: this.version,
     };
 
-    this.$queryRaw = async () => [{ locked: true }];
-    this.$transaction = async (operation) => {
+    this.$queryRaw = async (query) => {
+      this.rawQueries.push(query);
+      return [{ locked: true }];
+    };
+    this.$transaction = async (operation, options) => {
+      if (options) this.transactionOptions.push(options);
       if (Array.isArray(operation)) {
         return Promise.all(operation);
       }
@@ -133,14 +141,11 @@ class FakeTrainingAttemptPrisma {
         where.id === this.project.id ? this.project : null,
     };
     this.trainingAttempt = {
-      findMany: async ({ where }) =>
+      findMany: async ({ where = {}, include }) =>
         [...this.attempts.values()]
-          .filter(
-            (attempt) =>
-              attempt.userId === where.userId &&
-              attempt.projectId === where.projectId,
-          )
-          .sort((left, right) => right.attemptNumber - left.attemptNumber),
+          .filter((attempt) => matchesAttemptWhere(attempt, where))
+          .sort((left, right) => right.attemptNumber - left.attemptNumber)
+          .map((attempt) => (include ? this.buildAttempt(attempt) : attempt)),
       create: async ({ data }) => {
         const id = this.nextId('attempt');
         const record = {
@@ -179,8 +184,17 @@ class FakeTrainingAttemptPrisma {
       },
       update: async ({ where, data }) => {
         const attempt = required(this.attempts.get(where.id), 'attempt');
-        Object.assign(attempt, materializeData(data), { updatedAt: this.now });
+        Object.assign(attempt, materializeData(data, attempt), { updatedAt: this.now });
         return this.buildAttempt(attempt);
+      },
+      updateMany: async ({ where, data }) => {
+        let count = 0;
+        for (const attempt of this.attempts.values()) {
+          if (!matchesAttemptWhere(attempt, where)) continue;
+          Object.assign(attempt, materializeData(data, attempt), { updatedAt: this.now });
+          count += 1;
+        }
+        return { count };
       },
     };
     this.trainingAttemptQuestion = {
@@ -205,14 +219,14 @@ class FakeTrainingAttemptPrisma {
           this.attemptQuestions.get(where.id),
           'attempt question',
         );
-        Object.assign(question, materializeData(data), { updatedAt: this.now });
+        Object.assign(question, materializeData(data, question), { updatedAt: this.now });
         return this.buildAttemptQuestion(question);
       },
       updateMany: async ({ where, data }) => {
         let count = 0;
         for (const question of this.attemptQuestions.values()) {
           if (matchesAttemptQuestionWhere(question, where)) {
-            Object.assign(question, materializeData(data), {
+            Object.assign(question, materializeData(data, question), {
               updatedAt: this.now,
             });
             count += 1;
@@ -249,7 +263,7 @@ class FakeTrainingAttemptPrisma {
       },
       update: async ({ where, data }) => {
         const answer = required(this.answers.get(where.id), 'answer');
-        Object.assign(answer, materializeData(data), { updatedAt: this.now });
+        Object.assign(answer, materializeData(data, answer), { updatedAt: this.now });
         return this.buildAnswer(answer);
       },
       updateMany: async ({ where, data }) => {
@@ -259,7 +273,7 @@ class FakeTrainingAttemptPrisma {
             (!where.id || answer.id === where.id) &&
             (!where.status || answer.status === where.status)
           ) {
-            Object.assign(answer, materializeData(data), {
+            Object.assign(answer, materializeData(data, answer), {
               updatedAt: this.now,
             });
             count += 1;
@@ -329,7 +343,7 @@ class FakeTrainingAttemptPrisma {
             item.answerId === where.answerId &&
             item.evaluationNumber === where.evaluationNumber,
         );
-        return evaluation ?? null;
+        return evaluation ? this.buildEvaluation(evaluation) : null;
       },
       create: async ({ data }) => {
         const id = this.nextId('evaluation');
@@ -360,24 +374,54 @@ class FakeTrainingAttemptPrisma {
           this.jobs.set(item.idempotencyKey, {
             id: this.nextId('job'),
             ...item,
+            attempts: item.attempts ?? 0,
+            maxAttempts: item.maxAttempts ?? 3,
+            lockOwner: item.lockOwner ?? null,
+            lockedAt: item.lockedAt ?? null,
+            heartbeatAt: item.heartbeatAt ?? null,
+            lastErrorCode: item.lastErrorCode ?? null,
+            lastErrorMessage: item.lastErrorMessage ?? null,
+            errorDetailsJson: item.errorDetailsJson ?? null,
             finishedAt: null,
+            createdAt: this.now,
+            updatedAt: this.now,
           });
           count += 1;
         }
         return { count };
       },
+      findFirst: async ({ where = {}, orderBy }) => {
+        const matches = [...this.jobs.values()].filter((job) =>
+          matchesJobWhere(job, where),
+        );
+        if (orderBy) {
+          matches.sort(
+            (left, right) =>
+              left.runAt.getTime() - right.runAt.getTime() ||
+              left.createdAt.getTime() - right.createdAt.getTime(),
+          );
+        }
+        return matches[0] ?? null;
+      },
       updateMany: async ({ where, data }) => {
         let count = 0;
         for (const job of this.jobs.values()) {
-          if (
-            job.idempotencyKey.startsWith(where.idempotencyKey.startsWith) &&
-            job.status === where.status
-          ) {
-            Object.assign(job, materializeData(data));
-            count += 1;
-          }
+          if (!matchesJobWhere(job, where)) continue;
+          Object.assign(job, materializeData(data, job), { updatedAt: this.now });
+          count += 1;
         }
         return { count };
+      },
+    };
+    this.trainingResultReview = {
+      create: async ({ data }) => {
+        const record = {
+          id: this.nextId('review'),
+          ...data,
+          createdAt: data.reviewedAt ?? this.now,
+        };
+        this.reviews.push(record);
+        return record;
       },
     };
     this.auditLog = {
@@ -408,7 +452,9 @@ class FakeTrainingAttemptPrisma {
         .filter((question) => question.attemptId === attempt.id)
         .sort((left, right) => left.sequence - right.sequence)
         .map((question) => this.buildAttemptQuestion(question)),
-      reviews: [],
+      reviews: this.reviews
+        .filter((review) => review.attemptId === attempt.id)
+        .sort((left, right) => right.reviewNumber - left.reviewNumber),
     };
   }
 
@@ -513,6 +559,7 @@ class DeterministicQuestionSelector {
 }
 
 function matchesAttemptWhere(attempt, where) {
+  if (where.id && attempt.id !== where.id) return false;
   if (where.userId && attempt.userId !== where.userId) return false;
   if (where.projectId && attempt.projectId !== where.projectId) return false;
   if (where.isConsumed !== undefined && attempt.isConsumed !== where.isConsumed) {
@@ -526,6 +573,9 @@ function matchesAttemptWhere(attempt, where) {
     return false;
   }
   if (where.status?.in && !where.status.in.includes(attempt.status)) return false;
+  if (typeof where.status === 'string' && attempt.status !== where.status) {
+    return false;
+  }
   return true;
 }
 
@@ -538,10 +588,66 @@ function matchesAttemptQuestionWhere(question, where) {
   return true;
 }
 
-function materializeData(data) {
+function matchesJobWhere(job, where) {
+  if (where.id) {
+    if (typeof where.id === 'string' && job.id !== where.id) return false;
+    if (where.id.not && job.id === where.id.not) return false;
+  }
+  if (where.idempotencyKey) {
+    if (typeof where.idempotencyKey === 'string') {
+      if (job.idempotencyKey !== where.idempotencyKey) return false;
+    } else {
+      if (
+        where.idempotencyKey.startsWith &&
+        !job.idempotencyKey.startsWith(where.idempotencyKey.startsWith)
+      ) {
+        return false;
+      }
+    }
+  }
+  if (where.kind?.in && !where.kind.in.includes(job.kind)) return false;
+  if (typeof where.kind === 'string' && job.kind !== where.kind) return false;
+  if (where.status?.in && !where.status.in.includes(job.status)) return false;
+  if (typeof where.status === 'string' && job.status !== where.status) {
+    return false;
+  }
+  if (where.attempts !== undefined && job.attempts !== where.attempts) {
+    return false;
+  }
+  if (where.runAt?.lte && job.runAt > where.runAt.lte) return false;
+  if (where.heartbeatAt === null && job.heartbeatAt !== null) return false;
+  if (
+    where.heartbeatAt?.lte &&
+    (job.heartbeatAt === null || job.heartbeatAt > where.heartbeatAt.lte)
+  ) {
+    return false;
+  }
+  if (
+    where.lockOwner !== undefined &&
+    job.lockOwner !== where.lockOwner
+  ) {
+    return false;
+  }
+  if (where.OR && !where.OR.some((condition) => matchesJobWhere(job, condition))) {
+    return false;
+  }
+  return true;
+}
+
+function materializeData(data, current = {}) {
   const result = {};
   for (const [key, value] of Object.entries(data)) {
-    if (value !== undefined) result[key] = value;
+    if (value === undefined) continue;
+    if (
+      typeof value === 'object' &&
+      value !== null &&
+      !Array.isArray(value) &&
+      Object.hasOwn(value, 'increment')
+    ) {
+      result[key] = (current[key] ?? 0) + value.increment;
+      continue;
+    }
+    result[key] = value;
   }
   return result;
 }

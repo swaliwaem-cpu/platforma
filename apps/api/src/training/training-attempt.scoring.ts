@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import { BadRequestException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 
 import type {
   TrainingEvaluationCriterionInput,
@@ -8,16 +9,22 @@ import type {
   TrainingEvaluationFactInput,
   TrainingEvaluationResult,
 } from './training-attempt.providers';
+import {
+  canonicalTrainingScore,
+  clampTrainingScore,
+  subtractTrainingScore,
+  sumTrainingScores,
+} from './training-score-decimal';
 
-export const TRAINING_INCORRECT_FACT_PENALTY = 5;
+export const TRAINING_INCORRECT_FACT_PENALTY = canonicalTrainingScore(5);
 
 export type TrainingScoreComponentInput = {
   criterionId?: string;
   factId?: string;
   componentKey: string;
   title: string;
-  awardedPoints: number;
-  maxPoints: number;
+  awardedPoints: Prisma.Decimal;
+  maxPoints: Prisma.Decimal;
   factVerdict?:
     | 'CORRECT'
     | 'PARTIAL'
@@ -25,12 +32,12 @@ export type TrainingScoreComponentInput = {
     | 'INCORRECT'
     | 'UNSUPPORTED';
   evidence: Record<string, unknown> | null;
-  penaltyPoints: number;
+  penaltyPoints: Prisma.Decimal;
 };
 
 export type TrainingScoredEvaluation = {
-  aiSuggestedScore: number;
-  serverScore: number;
+  aiSuggestedScore: Prisma.Decimal;
+  serverScore: Prisma.Decimal;
   requiresReview: boolean;
   reviewReasons: string[];
   components: TrainingScoreComponentInput[];
@@ -44,7 +51,7 @@ export function scoreTrainingEvaluation(input: {
 }): TrainingScoredEvaluation {
   const criteriaById = new Map(input.criteria.map((criterion) => [criterion.id, criterion]));
   const factsById = new Map(input.facts.map((fact) => [fact.id, fact]));
-  const scoresByCriterion = new Map<string, number>();
+  const scoresByCriterion = new Map<string, Prisma.Decimal>();
 
   for (const score of input.evaluation.criterionScores) {
     const criterion = criteriaById.get(score.criterionId);
@@ -56,7 +63,7 @@ export function scoreTrainingEvaluation(input: {
     }
     scoresByCriterion.set(
       score.criterionId,
-      clampFinite(score.awardedPoints, 0, criterion.maxPoints),
+      clampTrainingScore(score.awardedPoints, 0, criterion.maxPoints),
     );
   }
 
@@ -64,10 +71,11 @@ export function scoreTrainingEvaluation(input: {
     criterionId: criterion.id,
     componentKey: `criterion:${criterion.id}`,
     title: criterion.title,
-    awardedPoints: scoresByCriterion.get(criterion.id) ?? 0,
-    maxPoints: criterion.maxPoints,
+    awardedPoints:
+      scoresByCriterion.get(criterion.id) ?? canonicalTrainingScore(0),
+    maxPoints: canonicalTrainingScore(criterion.maxPoints),
     evidence: null,
-    penaltyPoints: 0,
+    penaltyPoints: canonicalTrainingScore(0),
   }));
   const incorrectFacts = new Set<string>();
   const unsupportedClaims = new Set<string>();
@@ -95,8 +103,8 @@ export function scoreTrainingEvaluation(input: {
       factId,
       componentKey: `fact:${factId}:incorrect`,
       title: fact.code,
-      awardedPoints: 0,
-      maxPoints: 0,
+      awardedPoints: canonicalTrainingScore(0),
+      maxPoints: canonicalTrainingScore(0),
       factVerdict: 'INCORRECT',
       evidence: evidence ? { text: evidence } : null,
       penaltyPoints: TRAINING_INCORRECT_FACT_PENALTY,
@@ -107,27 +115,31 @@ export function scoreTrainingEvaluation(input: {
     components.push({
       componentKey: `unsupported:${createHash('sha256').update(claim).digest('hex').slice(0, 24)}`,
       title: claim.slice(0, 240),
-      awardedPoints: 0,
-      maxPoints: 0,
+      awardedPoints: canonicalTrainingScore(0),
+      maxPoints: canonicalTrainingScore(0),
       factVerdict: 'UNSUPPORTED',
       evidence: { claim },
-      penaltyPoints: 0,
+      penaltyPoints: canonicalTrainingScore(0),
     });
   }
 
-  const criterionTotal = components
-    .filter((component) => component.criterionId)
-    .reduce((total, component) => total + component.awardedPoints, 0);
-  const penaltyTotal = incorrectFacts.size * TRAINING_INCORRECT_FACT_PENALTY;
+  const criterionTotal = sumTrainingScores(
+    components
+      .filter((component) => component.criterionId)
+      .map((component) => component.awardedPoints),
+  );
+  const penaltyTotal = canonicalTrainingScore(
+    TRAINING_INCORRECT_FACT_PENALTY.mul(incorrectFacts.size),
+  );
 
   return {
-    aiSuggestedScore: clampFinite(
+    aiSuggestedScore: clampTrainingScore(
       input.evaluation.aiSuggestedScore,
       0,
       input.questionMaxScore,
     ),
-    serverScore: clampFinite(
-      criterionTotal - penaltyTotal,
+    serverScore: clampTrainingScore(
+      subtractTrainingScore(criterionTotal, penaltyTotal),
       0,
       input.questionMaxScore,
     ),
@@ -137,8 +149,10 @@ export function scoreTrainingEvaluation(input: {
   };
 }
 
-export function clampTrainingAttemptScore(value: number) {
-  return clampFinite(value, 0, 100);
+export function clampTrainingAttemptScore(
+  value: Prisma.Decimal | number | string,
+) {
+  return clampTrainingScore(value, 0, 100);
 }
 
 function validateFactFinding(
@@ -162,11 +176,4 @@ function validateFactFinding(
 
 function normalizeClaim(value: string | undefined) {
   return value?.trim().replace(/\s+/gu, ' ').toLocaleLowerCase('ru-RU') ?? '';
-}
-
-function clampFinite(value: number, minimum: number, maximum: number) {
-  if (!Number.isFinite(value)) {
-    throw new BadRequestException('Fake evaluation returned a non-finite score');
-  }
-  return Math.min(maximum, Math.max(minimum, value));
 }
