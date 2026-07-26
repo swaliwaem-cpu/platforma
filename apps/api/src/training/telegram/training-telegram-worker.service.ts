@@ -166,6 +166,7 @@ export class TrainingTelegramWorkerService
           maxAttempts: true,
         },
       });
+      if (this.destroyed) return null;
       if (!candidate) return null;
       if (candidate.attempts >= candidate.maxAttempts) {
         await this.prisma.trainingJob.updateMany({
@@ -182,9 +183,11 @@ export class TrainingTelegramWorkerService
             errorDetailsJson: { retryable: false },
           },
         });
+        if (this.destroyed) return null;
         continue;
       }
 
+      if (this.destroyed) return null;
       const claimed = await this.prisma.trainingJob.updateMany({
         where: {
           id: candidate.id,

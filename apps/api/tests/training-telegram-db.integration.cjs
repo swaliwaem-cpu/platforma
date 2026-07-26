@@ -1332,6 +1332,88 @@ test('Telegram worker heartbeats prevent takeover and stale exhausted jobs becom
   assert.equal(completed.attempts, 1);
 });
 
+test('shutdown during candidate lookup prevents claim and leaves the job available after restart', async () => {
+  const marker = `shutdown-before-claim-${nextSequence()}`;
+  const key = `telegram:test:${marker}`;
+  await createTelegramDeliveryJob(key, marker);
+  const candidateReady = deferred();
+  const releaseCandidate = deferred();
+  let shutdownStarted = false;
+  let claimsAfterShutdown = 0;
+  let sendsAfterShutdown = 0;
+  const pausedPrisma = proxyPrismaTrainingJob({
+    async findFirst(delegate, args) {
+      const candidate = await delegate.findFirst(args);
+      candidateReady.resolve();
+      await releaseCandidate.promise;
+      return candidate;
+    },
+    async updateMany(delegate, args) {
+      if (
+        shutdownStarted &&
+        args.data?.status === TrainingJobStatus.RUNNING &&
+        args.data?.lockOwner
+      ) {
+        claimsAfterShutdown += 1;
+      }
+      return delegate.updateMany(args);
+    },
+  });
+  const transport = {
+    async sendMessage() {
+      if (shutdownStarted) sendsAfterShutdown += 1;
+    },
+    async answerCallbackQuery() {
+      if (shutdownStarted) sendsAfterShutdown += 1;
+    },
+  };
+  const worker = new TrainingTelegramWorkerService(
+    pausedPrisma,
+    TEST_CONFIG,
+    createHarness().dialog,
+    transport,
+  );
+
+  const poll = worker.drainNow();
+  await candidateReady.promise;
+  const shutdown = worker.onModuleDestroy();
+  shutdownStarted = true;
+  releaseCandidate.resolve();
+  await Promise.all([poll, shutdown]);
+
+  let job = await prisma.trainingJob.findUnique({
+    where: { idempotencyKey: key },
+  });
+  assert.equal(claimsAfterShutdown, 0);
+  assert.equal(sendsAfterShutdown, 0);
+  assert.equal(job.status, TrainingJobStatus.PENDING);
+  assert.equal(job.attempts, 0);
+  assert.equal(job.lockOwner, null);
+  assert.equal(job.lockedAt, null);
+
+  const restartedTransport = new FakeTrainingTelegramTransport();
+  const restartedWorker = new TrainingTelegramWorkerService(
+    prisma,
+    TEST_CONFIG,
+    createHarness().dialog,
+    restartedTransport,
+  );
+  await restartedWorker.drainNow();
+
+  job = await prisma.trainingJob.findUnique({
+    where: { idempotencyKey: key },
+  });
+  assert.equal(job.status, TrainingJobStatus.SUCCEEDED);
+  assert.equal(job.attempts, 1);
+  assert.equal(
+    restartedTransport.deliveries.filter(
+      (delivery) =>
+        delivery.operation === 'SEND_MESSAGE' && delivery.text === marker,
+    ).length,
+    1,
+  );
+});
+
 test('bounded shutdown releases ownership and a restarted worker resumes the job', async () => {
   const marker = `shutdown-${nextSequence()}`;
   const key = `telegram:test:${marker}`;
@@ -1425,6 +1507,8 @@ test('bounded shutdown releases ownership and a restarted worker resumes the job
 test('graceful shutdown waits for an active Telegram job within the drain timeout', async () => {
   const marker = `graceful-shutdown-${nextSequence()}`;
   const key = `telegram:test:${marker}`;
+  const queuedMarker = `graceful-shutdown-queued-${nextSequence()}`;
+  const queuedKey = `telegram:test:${queuedMarker}`;
   await createTelegramDeliveryJob(key, marker);
   const gate = deferred();
   const transport = {
@@ -1445,6 +1529,7 @@ test('graceful shutdown waits for an active Telegram job within the drain timeou
 
   const drain = worker.drainNow();
   await waitForJobStatus(key, TrainingJobStatus.RUNNING);
+  await createTelegramDeliveryJob(queuedKey, queuedMarker);
   let shutdownFinished = false;
   const shutdown = worker.onModuleDestroy().then(() => {
     shutdownFinished = true;
@@ -1454,11 +1539,41 @@ test('graceful shutdown waits for an active Telegram job within the drain timeou
   gate.resolve();
   await Promise.all([drain, shutdown]);
 
-  const job = await prisma.trainingJob.findUnique({
-    where: { idempotencyKey: key },
-  });
+  let [job, queuedJob] = await Promise.all([
+    prisma.trainingJob.findUnique({
+      where: { idempotencyKey: key },
+    }),
+    prisma.trainingJob.findUnique({
+      where: { idempotencyKey: queuedKey },
+    }),
+  ]);
   assert.equal(job.status, TrainingJobStatus.SUCCEEDED);
   assert.equal(job.attempts, 1);
+  assert.equal(queuedJob.status, TrainingJobStatus.PENDING);
+  assert.equal(queuedJob.attempts, 0);
+  assert.equal(queuedJob.lockOwner, null);
+
+  const restartedTransport = new FakeTrainingTelegramTransport();
+  const restartedWorker = new TrainingTelegramWorkerService(
+    prisma,
+    TEST_CONFIG,
+    createHarness().dialog,
+    restartedTransport,
+  );
+  await restartedWorker.drainNow();
+  queuedJob = await prisma.trainingJob.findUnique({
+    where: { idempotencyKey: queuedKey },
+  });
+  assert.equal(queuedJob.status, TrainingJobStatus.SUCCEEDED);
+  assert.equal(queuedJob.attempts, 1);
+  assert.equal(
+    restartedTransport.deliveries.filter(
+      (delivery) =>
+        delivery.operation === 'SEND_MESSAGE' &&
+        delivery.text === queuedMarker,
+    ).length,
+    1,
+  );
 });
 
 test('timeout warning is not sent after terminal state', async () => {
@@ -2071,6 +2186,25 @@ function deferred() {
     resolve = currentResolve;
   });
   return { promise, resolve };
+}
+
+function proxyPrismaTrainingJob(overrides) {
+  const trainingJob = new Proxy(prisma.trainingJob, {
+    get(delegate, property) {
+      if (property in overrides) {
+        return (...args) => overrides[property](delegate, ...args);
+      }
+      const value = Reflect.get(delegate, property, delegate);
+      return typeof value === 'function' ? value.bind(delegate) : value;
+    },
+  });
+  return new Proxy(prisma, {
+    get(client, property) {
+      if (property === 'trainingJob') return trainingJob;
+      const value = Reflect.get(client, property, client);
+      return typeof value === 'function' ? value.bind(client) : value;
+    },
+  });
 }
 
 async function acceptAndDrain(harness, update) {

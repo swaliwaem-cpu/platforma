@@ -5119,3 +5119,55 @@ Dependencies:
   оставшиеся findings этапа 6.
 - Prisma schema/migrations, dependencies, outbox, attempt engine, scoring,
   worker lease/business logic, frontend и этап 7 не изменялись.
+
+## 2026-07-27 - Training Telegram shutdown claim race fix
+
+Задача:
+
+- Исправить только оставшуюся shutdown-гонку Telegram worker этапа 6, когда
+  начатый до shutdown `findFirst()` возвращал кандидата после установки
+  shutdown-флага, а worker всё равно выполнял CAS-claim и отправлял job.
+- Не менять другую бизнес-логику и не начинать этап 7.
+
+Изменения:
+
+- В `TrainingTelegramWorkerService.claimNextJob()` добавлена повторная проверка
+  `destroyed` сразу после `await trainingJob.findFirst()`, после обработки
+  исчерпавшего попытки кандидата и непосредственно перед CAS
+  `PENDING -> RUNNING`.
+- Существующий `drainPromise` остаётся lifecycle coordination для начатого
+  polling/claim и активного job. Если shutdown начался во время candidate
+  lookup, новая проверка завершает iteration без claim; если CAS уже начался,
+  job остаётся активным и завершается через прежний bounded drain flow.
+- Добавлен детерминированный PostgreSQL regression test с приостановленным
+  `findFirst`: после начала shutdown подтверждены `claimsAfterShutdown = 0`,
+  `sendsAfterShutdown = 0`, неизменные `PENDING`, `attempts = 0` и пустой
+  `lockOwner`, затем успешная обработка job новым worker после restart.
+- Соседний PostgreSQL lifecycle test расширен очередным job: захваченный до
+  shutdown job завершается в пределах drain timeout, shutdown ждёт его, а
+  новый job остаётся `PENDING` с `attempts = 0` до restart.
+
+Проверки:
+
+- Targeted PostgreSQL training regression suite — 54/54 passed; временная
+  database создана, все 35 migrations применены и database удалена.
+- `pnpm --filter @platforma/api test` — 331/331 unit и 54/54 PostgreSQL
+  integration tests passed.
+- `pnpm build` — passed; сохраняется существующее предупреждение Vite о client
+  chunk `753.03 kB`, больше 500 kB.
+- `pnpm test` — 758/758 passed: API 331 unit + 54 PostgreSQL, Web 286,
+  Feed import 64, WordPress import 23.
+- `git diff --check` — passed.
+
+Ручная проверка:
+
+- Не требуется для регрессии: обе стороны shutdown/CAS boundary проверены
+  детерминированными PostgreSQL lifecycle tests. Production SIGTERM smoke из
+  `docs/training/telegram-production-deployment.md` остаётся deployment QA.
+
+Спорные места:
+
+- В пределах исправленной shutdown-гонки BLOCKER/HIGH для перехода к этапу 7
+  не осталось. Этап 7, Telegram voice download, audio storage, ffmpeg, OpenAI,
+  schema/migrations, dependencies и другая training business logic не
+  изменялись.
