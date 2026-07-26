@@ -8,6 +8,33 @@ const DEFAULT_WORKER_LEASE_MS = 30_000;
 const DEFAULT_WORKER_HEARTBEAT_MS = 5_000;
 const DEFAULT_WORKER_DRAIN_TIMEOUT_MS = 10_000;
 const DEFAULT_PUBLIC_APP_URL = 'http://localhost:5173';
+const LOCAL_PRODUCTION_HOSTS = new Set([
+  'localhost',
+  '127.0.0.1',
+  '0.0.0.0',
+  '[::1]',
+]);
+const PLACEHOLDER_HOST_LABELS = new Set([
+  'example',
+  'fake',
+  'invalid',
+  'placeholder',
+  'test',
+  'your-domain',
+]);
+const PLACEHOLDER_PRODUCTION_VALUES = [
+  'change-me',
+  'changeme',
+  'fake-secret',
+  'fake-token',
+  'placeholder',
+  'replace-with',
+  'replace_me',
+  'test-secret',
+  'test-token',
+  'your-secret',
+  'your-token',
+] as const;
 
 export type TrainingTelegramTransportMode = 'fake' | 'real';
 
@@ -107,6 +134,13 @@ export class TrainingTelegramConfig {
       assertHttpsUrl('TELEGRAM_WEBHOOK_URL', this.webhookUrl);
       assertHttpsUrl('PUBLIC_APP_URL', env.PUBLIC_APP_URL!);
     }
+    if (nodeEnv === 'production') {
+      assertProductionValue('TELEGRAM_BOT_TOKEN', this.botToken);
+      assertProductionValue('TELEGRAM_BOT_USERNAME', this.botUsername);
+      assertProductionValue('TELEGRAM_WEBHOOK_SECRET', this.webhookSecret);
+      assertProductionUrl('TELEGRAM_WEBHOOK_URL', this.webhookUrl);
+      assertProductionUrl('PUBLIC_APP_URL', env.PUBLIC_APP_URL ?? '');
+    }
     this.publicTrainingUrl = buildPublicTrainingUrl(
       env.PUBLIC_APP_URL ?? DEFAULT_PUBLIC_APP_URL,
       strictRealConfiguration,
@@ -174,6 +208,44 @@ function assertHttpsUrl(name: string, value: string) {
   }
   if (url.protocol !== 'https:') {
     throw new Error(`${name} must use HTTPS`);
+  }
+}
+
+function assertProductionValue(name: string, value: string) {
+  const normalized = value.trim().toLowerCase();
+  const normalizedSeparators = normalized.replace(/[_\s]+/gu, '-');
+  const isPlaceholder =
+    (name === 'TELEGRAM_BOT_USERNAME' &&
+      normalized === 'platforma_training_bot') ||
+    PLACEHOLDER_PRODUCTION_VALUES.some(
+      (placeholder) =>
+        normalized.includes(placeholder) ||
+        normalizedSeparators.includes(placeholder.replaceAll('_', '-')),
+    );
+  if (isPlaceholder) {
+    throw new Error(`${name} must not use a placeholder value in production`);
+  }
+}
+
+function assertProductionUrl(name: string, value: string) {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`${name} must be an absolute HTTPS URL`);
+  }
+  const hostname = url.hostname.toLowerCase();
+  const isLoopbackIpv4 = /^127(?:\.\d{1,3}){3}$/u.test(hostname);
+  const hasPlaceholderLabel = hostname
+    .split('.')
+    .some((label) => PLACEHOLDER_HOST_LABELS.has(label));
+  if (
+    LOCAL_PRODUCTION_HOSTS.has(hostname) ||
+    hostname.endsWith('.localhost') ||
+    isLoopbackIpv4 ||
+    hasPlaceholderLabel
+  ) {
+    throw new Error(`${name} must use a non-placeholder production host`);
   }
 }
 

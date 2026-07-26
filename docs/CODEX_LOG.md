@@ -5034,3 +5034,88 @@ Dependencies:
 - Stage-6 worker остаётся внутри API-процесса и использует существующий
   `TrainingJob`. Отдельный audio worker/container является границей этапа 7 и
   не реализован.
+
+## 2026-07-26 - Training Telegram repeated review deployment and shutdown fixes
+
+Задача:
+
+- Исправить только оставшиеся findings повторного review этапа 6:
+  гарантированный production Telegram config, полный process signal path и
+  пустую PostgreSQL rollback assertion.
+- Не менять подтверждённые transactional outbox, Telegram dialog, attempt
+  engine, scoring, worker lease/business logic; не начинать этап 7.
+
+Изменения:
+
+- Добавлен tracked `docker-compose.production.yml`. Production запускается
+  только вместе с базовым Compose и `.env.production`; override жёстко задаёт
+  `NODE_ENV=production`, `TELEGRAM_TRANSPORT_MODE=real` и required-variable
+  syntax для bot token/username, webhook secret/URL и public app URL.
+- Добавлены `.env.production.example` и ignore реального `.env.production`.
+  Development Compose сохраняет `NODE_ENV=development` и fake transport.
+- `TrainingTelegramConfig` продолжает fail-fast и дополнительно отклоняет
+  production localhost/loopback/example/test/fake hosts, development bot
+  username и известные token/secret placeholders. Validation errors содержат
+  только имена переменных, а не secret values.
+- `main.ts` подключает Nest shutdown hooks для `SIGTERM` и `SIGINT`.
+  API Docker CMD после `prisma migrate deploy` выполняет
+  `exec node apps/api/dist/main.js`, поэтому Node становится PID 1.
+  Compose `stop_grace_period=30s` превышает default Telegram drain timeout
+  `10000ms`.
+- Production worker logic не менялась: существующий `OnModuleDestroy`
+  прекращает polling/claim, bounded ждёт активный drain, останавливает
+  heartbeat и при timeout освобождает owned job для recovery.
+- PostgreSQL shutdown test теперь дополнительно подтверждает, что после начала
+  shutdown второй pending job не claim-ится; активный job либо завершается,
+  либо получает recoverable release и обрабатывается после restart.
+- Rollback test исправлен на production idempotency key
+  `telegram:attempt:<attemptId>:answer-accepted:<attemptQuestionId>`.
+  Assertion также ищет любой `ANSWER_ACCEPTED` delivery payload для конкретных
+  attempt/question/event, поэтому вручную созданный соответствующий job будет
+  обнаружен независимо от ключа.
+- Обновлены root/API env examples, Beget guide, staging/production checklist,
+  training checklist и добавлен
+  `docs/training/telegram-production-deployment.md` с config-only проверкой,
+  полной launch command и ручным `docker compose stop api` сценарием.
+
+Проверки:
+
+- Targeted Telegram unit/contract tests — 15/15 passed.
+- `pnpm --filter @platforma/api test` — 331/331 unit и 53/53 PostgreSQL
+  integration tests passed; все 35 migrations применены к временной локальной
+  database, которая затем удалена.
+- `pnpm build` — passed; сохраняется существующее предупреждение Vite о client
+  chunk `753.03 kB`, больше 500 kB.
+- `pnpm test` — 757/757 passed: API 331 unit + 53 PostgreSQL, Web 286,
+  Feed import 64, WordPress import 23.
+- Development `docker compose config --quiet` — passed.
+- Production Compose без обязательных Telegram/public URL variables —
+  ожидаемо rejected до запуска.
+- Production Compose config rendering с безопасными тестовыми placeholders —
+  passed; production containers и migrations не запускались.
+- `git diff --check` — passed.
+
+Ручная проверка:
+
+- На staging заполнить `.env.production` реальными placeholder-free
+  credentials/HTTPS URLs, проверить `config`, запустить production command и
+  убедиться внутри API, что используются `NODE_ENV=production` и
+  `TELEGRAM_TRANSPORT_MODE=real`.
+- Во время контролируемого Telegram job выполнить `docker compose stop api`,
+  проверить завершение в пределах 30 секунд и состояния `training_jobs` по
+  инструкции. Реальный Bot API call, webhook registration и voice download в
+  этой задаче не выполнялись.
+
+Спорные места:
+
+- Полный child-process SIGTERM test не добавлялся: текущий test stack не имеет
+  стабильной точки инъекции блокируемого transport в отдельный production API
+  process без несоразмерного рефакторинга. Signal wiring покрыт contract test,
+  а drain/recovery — реальными PostgreSQL lifecycle tests и ручным Docker
+  сценарием.
+- Базовый Compose публикует инфраструктурные порты для local development.
+  Production guide явно требует закрыть PostgreSQL, Redis и MinIO внешним
+  firewall/security group; изменение этой сетевой топологии не входило в
+  оставшиеся findings этапа 6.
+- Prisma schema/migrations, dependencies, outbox, attempt engine, scoring,
+  worker lease/business logic, frontend и этап 7 не изменялись.

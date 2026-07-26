@@ -40,6 +40,22 @@ const rootDir = resolve(__dirname, '../../..');
 const apiPackage = JSON.parse(
   readFileSync(resolve(rootDir, 'apps/api/package.json'), 'utf8'),
 );
+const productionCompose = readFileSync(
+  resolve(rootDir, 'docker-compose.production.yml'),
+  'utf8',
+);
+const developmentCompose = readFileSync(
+  resolve(rootDir, 'docker-compose.yml'),
+  'utf8',
+);
+const apiDockerfile = readFileSync(
+  resolve(rootDir, 'apps/api/Dockerfile'),
+  'utf8',
+);
+const bootstrapSource = readFileSync(
+  resolve(rootDir, 'apps/api/src/main.ts'),
+  'utf8',
+);
 
 test('Telegram callback_data stays below 64 bytes and identifies exact entities', () => {
   const projectId = '11111111-1111-4111-8111-111111111111';
@@ -245,9 +261,9 @@ test('Telegram controllers expose employee and unguarded webhook routes', () => 
   );
 });
 
-test('Telegram config permits fake transport for local tests', () => {
+test('Telegram config permits fake transport for local development', () => {
   const config = new TrainingTelegramConfig({
-    NODE_ENV: 'test',
+    NODE_ENV: 'development',
     TRAINING_MODULE_ENABLED: 'false',
     TELEGRAM_TRANSPORT_MODE: 'fake',
     TELEGRAM_BOT_USERNAME: 'platforma_training_bot',
@@ -260,16 +276,69 @@ test('Telegram config permits fake transport for local tests', () => {
   assert.equal(config.publicTrainingUrl, 'http://localhost:5173/training');
 });
 
+test('production Compose fixes real mode and requires every Telegram value', () => {
+  assert.match(
+    developmentCompose,
+    /^\s*NODE_ENV:\s*\$\{NODE_ENV:-development\}\s*$/mu,
+  );
+  assert.match(
+    developmentCompose,
+    /^\s*TELEGRAM_TRANSPORT_MODE:\s*\$\{TELEGRAM_TRANSPORT_MODE:-fake\}\s*$/mu,
+  );
+  assert.match(productionCompose, /^\s*NODE_ENV:\s*production\s*$/mu);
+  assert.match(
+    productionCompose,
+    /^\s*TELEGRAM_TRANSPORT_MODE:\s*real\s*$/mu,
+  );
+  for (const name of [
+    'TELEGRAM_BOT_TOKEN',
+    'TELEGRAM_BOT_USERNAME',
+    'TELEGRAM_WEBHOOK_SECRET',
+    'TELEGRAM_WEBHOOK_URL',
+    'PUBLIC_APP_URL',
+  ]) {
+    const assignment = productionCompose
+      .split('\n')
+      .find((line) => line.trimStart().startsWith(`${name}:`));
+    assert.ok(assignment, `${name} must be present in production Compose`);
+    assert.match(
+      assignment,
+      new RegExp(`\\$\\{${name}:\\?${name} is required\\}`, 'u'),
+    );
+    assert.doesNotMatch(
+      assignment,
+      /localhost|127\.0\.0\.1|platforma_training_bot|\$\{[^}]+:-/iu,
+    );
+  }
+});
+
+test('Docker and Nest bootstrap preserve the complete SIGTERM path', () => {
+  assert.match(
+    bootstrapSource,
+    /app\.enableShutdownHooks\(\['SIGTERM', 'SIGINT'\]\)/u,
+  );
+  assert.match(developmentCompose, /^\s*stop_grace_period:\s*30s\s*$/mu);
+  assert.match(
+    apiDockerfile,
+    /CMD \["sh", "-c", "pnpm --dir apps\/api exec prisma migrate deploy && exec node apps\/api\/dist\/main\.js"\]/u,
+  );
+  assert.doesNotMatch(
+    apiDockerfile,
+    /CMD \[[^\n]*pnpm --filter @platforma\/api start/u,
+  );
+});
+
 test('Telegram config fails fast for unsafe production and incomplete real modes', () => {
   const real = {
     NODE_ENV: 'production',
     TRAINING_MODULE_ENABLED: 'true',
     TELEGRAM_TRANSPORT_MODE: 'real',
     TELEGRAM_BOT_TOKEN: 'secret-token-that-must-not-leak',
-    TELEGRAM_BOT_USERNAME: '@platforma_training_bot',
+    TELEGRAM_BOT_USERNAME: '@platforma_real_bot',
     TELEGRAM_WEBHOOK_SECRET: 'secret-header-that-must-not-leak',
-    TELEGRAM_WEBHOOK_URL: 'https://api.example.test/training/telegram/webhook',
-    PUBLIC_APP_URL: 'https://app.example.test',
+    TELEGRAM_WEBHOOK_URL:
+      'https://api.fluffywhite.moscow/training/telegram/webhook',
+    PUBLIC_APP_URL: 'https://app.fluffywhite.moscow',
   };
 
   assert.throws(
@@ -322,15 +391,18 @@ test('Telegram config fails fast for unsafe production and incomplete real modes
         NODE_ENV: 'staging',
         TRAINING_MODULE_ENABLED: 'true',
         TELEGRAM_TRANSPORT_MODE: 'fake',
-        PUBLIC_APP_URL: 'https://app.example.test',
+        PUBLIC_APP_URL: 'https://app.fluffywhite.moscow',
       }),
     /allowed only for local development and tests/,
   );
 
   const config = new TrainingTelegramConfig(real);
   assert.equal(config.transportMode, 'real');
-  assert.equal(config.botUsername, 'platforma_training_bot');
-  assert.equal(config.publicTrainingUrl, 'https://app.example.test/training');
+  assert.equal(config.botUsername, 'platforma_real_bot');
+  assert.equal(
+    config.publicTrainingUrl,
+    'https://app.fluffywhite.moscow/training',
+  );
   for (const unsafe of [
     'secret-token-that-must-not-leak',
     'secret-header-that-must-not-leak',
@@ -345,6 +417,54 @@ test('Telegram config fails fast for unsafe production and incomplete real modes
       message = error.message;
     }
     assert.equal(message.includes(unsafe), false);
+  }
+});
+
+test('production startup rejects missing secrets, local URLs and placeholders', () => {
+  const real = {
+    NODE_ENV: 'production',
+    TRAINING_MODULE_ENABLED: 'false',
+    TELEGRAM_TRANSPORT_MODE: 'real',
+    TELEGRAM_BOT_TOKEN: '123456789:AAProductionTokenValue',
+    TELEGRAM_BOT_USERNAME: 'platforma_real_bot',
+    TELEGRAM_WEBHOOK_SECRET: 'production-webhook-secret-value',
+    TELEGRAM_WEBHOOK_URL:
+      'https://api.fluffywhite.moscow/training/telegram/webhook',
+    PUBLIC_APP_URL: 'https://app.fluffywhite.moscow',
+  };
+
+  assert.throws(
+    () =>
+      new TrainingTelegramConfig({
+        NODE_ENV: 'production',
+        TRAINING_MODULE_ENABLED: 'false',
+        TELEGRAM_TRANSPORT_MODE: 'real',
+      }),
+    /TELEGRAM_BOT_TOKEN is required/u,
+  );
+  for (const [name, value] of [
+    ['TELEGRAM_BOT_TOKEN', 'REPLACE_WITH_REAL_TELEGRAM_BOT_TOKEN'],
+    ['TELEGRAM_BOT_USERNAME', 'platforma_training_bot'],
+    ['TELEGRAM_WEBHOOK_SECRET', 'fake-secret'],
+  ]) {
+    assert.throws(
+      () => new TrainingTelegramConfig({ ...real, [name]: value }),
+      new RegExp(`${name} must not use a placeholder value`, 'u'),
+    );
+  }
+  for (const [name, value] of [
+    [
+      'TELEGRAM_WEBHOOK_URL',
+      'https://localhost/training/telegram/webhook',
+    ],
+    ['TELEGRAM_WEBHOOK_URL', 'https://127.0.0.1/webhook'],
+    ['TELEGRAM_WEBHOOK_URL', 'https://api.example.ru/webhook'],
+    ['PUBLIC_APP_URL', 'https://app.example.test'],
+  ]) {
+    assert.throws(
+      () => new TrainingTelegramConfig({ ...real, [name]: value }),
+      new RegExp(`${name} must use a non-placeholder production host`, 'u'),
+    );
   }
 });
 

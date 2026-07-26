@@ -327,6 +327,49 @@ Telegram SDK и frontend не добавлялись. Реальные Telegram-
 скачивались, audio storage/MinIO, ffmpeg и OpenAI не подключались. Этап 7 не
 начинался.
 
+### Оставшиеся findings повторного review этапа 6
+
+- [x] Добавлен отдельный `docker-compose.production.yml`, который независимо
+  от development defaults фиксирует `NODE_ENV=production` и
+  `TELEGRAM_TRANSPORT_MODE=real`.
+- [x] Compose required-variable syntax требует bot token/username, webhook
+  secret/URL и public app URL без fake/default fallback.
+- [x] Runtime production validation отклоняет отсутствующие значения, HTTP,
+  localhost/loopback и известные placeholder values/hosts без вывода secrets.
+- [x] Development сохраняет `NODE_ENV=development` и fake transport.
+- [x] Bootstrap включает Nest shutdown hooks для `SIGTERM` и `SIGINT`.
+- [x] API Docker CMD после migrations передаёт PID 1 в
+  `node apps/api/dist/main.js` через `exec`.
+- [x] Compose ждёт `30s`, что превышает default Telegram worker drain timeout
+  `10000ms`.
+- [x] PostgreSQL lifecycle tests подтверждают запрет новых claim после начала
+  shutdown, bounded ожидание активного job и recoverable release после timeout.
+- [x] Rollback test использует реальный deterministic key
+  `telegram:attempt:<attemptId>:answer-accepted:<attemptQuestionId>` и
+  дополнительно ищет любой `ANSWER_ACCEPTED` delivery event для той же
+  attempt/question.
+- [x] Production env/deployment docs содержат полную Compose command,
+  config-only validation, проверку real transport и ручной
+  `docker compose stop api` checklist.
+
+Проверки повторного review:
+
+- Telegram unit/contract tests — 15/15 passed;
+- `pnpm --filter @platforma/api test` — 331/331 unit и 53/53 PostgreSQL
+  integration tests passed;
+- `pnpm build` — passed; сохраняется существующее предупреждение Vite о client
+  chunk `753.03 kB`, больше 500 kB;
+- `pnpm test` — 757/757 passed: API 331 unit + 53 PostgreSQL, Web 286,
+  Feed import 64, WordPress import 23;
+- development Compose config — passed;
+- production Compose без пяти обязательных variables — ожидаемо rejected;
+- production Compose config rendering с безопасными test placeholders —
+  passed; production containers не запускались.
+- `git diff --check` — passed.
+
+Prisma schema/migrations, dependencies, transactional outbox, attempt engine,
+scoring, worker lease/claim business logic, frontend и этап 7 не изменялись.
+
 ## Этап 7. Private audio и отдельный worker
 
 - [ ] Реализовать private bucket/multi-bucket storage без public URL.

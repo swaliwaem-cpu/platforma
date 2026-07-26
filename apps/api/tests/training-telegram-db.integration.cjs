@@ -35,6 +35,9 @@ const {
   TrainingTelegramLinkService,
 } = require('../dist/training/telegram/training-telegram-link.service.js');
 const {
+  TRAINING_TELEGRAM_OUTBOX_OPERATION,
+} = require('../dist/training/telegram/training-telegram-outbox.js');
+const {
   FakeTrainingTelegramTransport,
   TrainingTelegramTransportError,
 } = require('../dist/training/telegram/training-telegram.transport.js');
@@ -996,14 +999,50 @@ test('answer locking rolls back if its outbox event cannot be persisted', async 
     TrainingAttemptQuestionStatus.COLLECTING,
   );
   assert.equal(persisted.answer.status, 'COLLECTING');
-  assert.equal(
-    await prisma.trainingJob.count({
-      where: {
-        idempotencyKey: `telegram:attempt:${attempt.id}:answer:${question.id}:accepted`,
-      },
-    }),
-    0,
-  );
+  const expectedIdempotencyKey =
+    `telegram:attempt:${attempt.id}:answer-accepted:${question.id}`;
+  const matchingDeliveryJobs = await prisma.trainingJob.findMany({
+    where: {
+      kind: TrainingJobKind.SEND_TELEGRAM_MESSAGE,
+      OR: [
+        { idempotencyKey: expectedIdempotencyKey },
+        {
+          AND: [
+            {
+              payloadJson: {
+                path: ['operation'],
+                equals: TRAINING_TELEGRAM_OUTBOX_OPERATION,
+              },
+            },
+            {
+              payloadJson: {
+                path: ['eventType'],
+                equals: 'ANSWER_ACCEPTED',
+              },
+            },
+            {
+              payloadJson: {
+                path: ['attemptId'],
+                equals: attempt.id,
+              },
+            },
+            {
+              payloadJson: {
+                path: ['attemptQuestionId'],
+                equals: question.id,
+              },
+            },
+          ],
+        },
+      ],
+    },
+    select: {
+      id: true,
+      idempotencyKey: true,
+      payloadJson: true,
+    },
+  });
+  assert.deepEqual(matchingDeliveryJobs, []);
 });
 
 test('a worker restart delivers an outbox event committed before the crash window', async () => {
@@ -1296,6 +1335,8 @@ test('Telegram worker heartbeats prevent takeover and stale exhausted jobs becom
 test('bounded shutdown releases ownership and a restarted worker resumes the job', async () => {
   const marker = `shutdown-${nextSequence()}`;
   const key = `telegram:test:${marker}`;
+  const queuedMarker = `shutdown-queued-${nextSequence()}`;
+  const queuedKey = `telegram:test:${queuedMarker}`;
   await createTelegramDeliveryJob(key, marker, { maxAttempts: 3 });
   const gate = deferred();
   const blockedTransport = {
@@ -1320,12 +1361,22 @@ test('bounded shutdown releases ownership and a restarted worker resumes the job
 
   const drain = stoppingWorker.drainNow();
   await waitForJobStatus(key, TrainingJobStatus.RUNNING);
-  await stoppingWorker.onModuleDestroy();
-  let job = await prisma.trainingJob.findUnique({
-    where: { idempotencyKey: key },
+  await createTelegramDeliveryJob(queuedKey, queuedMarker, {
+    maxAttempts: 3,
   });
+  await stoppingWorker.onModuleDestroy();
+  let [job, queuedJob] = await Promise.all([
+    prisma.trainingJob.findUnique({
+      where: { idempotencyKey: key },
+    }),
+    prisma.trainingJob.findUnique({
+      where: { idempotencyKey: queuedKey },
+    }),
+  ]);
   assert.equal(job.status, TrainingJobStatus.PENDING);
   assert.equal(job.lastErrorCode, 'TELEGRAM_SHUTDOWN_RELEASE');
+  assert.equal(queuedJob.status, TrainingJobStatus.PENDING);
+  assert.equal(queuedJob.attempts, 0);
 
   gate.resolve();
   await drain;
@@ -1342,15 +1393,30 @@ test('bounded shutdown releases ownership and a restarted worker resumes the job
     restartedTransport,
   );
   await restartedWorker.drainNow();
-  job = await prisma.trainingJob.findUnique({
-    where: { idempotencyKey: key },
-  });
+  [job, queuedJob] = await Promise.all([
+    prisma.trainingJob.findUnique({
+      where: { idempotencyKey: key },
+    }),
+    prisma.trainingJob.findUnique({
+      where: { idempotencyKey: queuedKey },
+    }),
+  ]);
   assert.equal(job.status, TrainingJobStatus.SUCCEEDED);
   assert.equal(job.attempts, 2);
+  assert.equal(queuedJob.status, TrainingJobStatus.SUCCEEDED);
+  assert.equal(queuedJob.attempts, 1);
   assert.equal(
     restartedTransport.deliveries.filter(
       (delivery) =>
         delivery.operation === 'SEND_MESSAGE' && delivery.text === marker,
+    ).length,
+    1,
+  );
+  assert.equal(
+    restartedTransport.deliveries.filter(
+      (delivery) =>
+        delivery.operation === 'SEND_MESSAGE' &&
+        delivery.text === queuedMarker,
     ).length,
     1,
   );

@@ -2,7 +2,10 @@
 
 ## API
 
-- `NODE_ENV` is set to `production` outside local development.
+- Production uses `.env.production` and both Compose files:
+  `docker-compose.yml` + `docker-compose.production.yml`.
+- `docker-compose.production.yml` fixes `NODE_ENV=production`; it is not
+  inherited from the development default.
 - `PORT` matches the runtime ingress or container port.
 - `WEB_ORIGIN` contains the exact frontend origin and allows credentials.
 - `DATABASE_URL` points to PostgreSQL with PostGIS enabled.
@@ -10,6 +13,24 @@
 - `JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET` are unique strong secrets, not defaults.
 - `JWT_ACCESS_TTL`, `JWT_REFRESH_TTL_DAYS`, and `REFRESH_COOKIE_NAME` are reviewed for the environment.
 - `ADMIN_EMAIL`, `ADMIN_NAME`, and either `ADMIN_PASSWORD` or `ADMIN_PASSWORD_HASH` are set for initial seed only.
+
+## Training Telegram
+
+- `docker compose -f docker-compose.yml -f docker-compose.production.yml --env-file .env.production config`
+  succeeds before containers are started.
+- The production override fixes `TELEGRAM_TRANSPORT_MODE=real`; there is no
+  silent fallback to fake transport.
+- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`,
+  `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_WEBHOOK_URL`, and `PUBLIC_APP_URL`
+  are mandatory Compose variables without defaults.
+- Telegram token/secret values are real, not `fake`, `test`, `change-me`,
+  `REPLACE_WITH_*`, or other placeholders.
+- `TELEGRAM_WEBHOOK_URL` and `PUBLIC_APP_URL` are absolute HTTPS URLs using
+  real production hosts, not localhost, `127.0.0.1`, example/test/fake hosts.
+- Inside the running API container, `NODE_ENV=production` and
+  `TELEGRAM_TRANSPORT_MODE=real` are verified without printing secrets.
+- The Telegram webhook is configured in Bot API with the same HTTPS route and
+  secret header only after the API healthcheck succeeds.
 
 ## Storage
 
@@ -45,6 +66,16 @@
 ## Deployment Checks
 
 - Prisma migrations are applied before starting the API.
+- API Docker CMD finishes migrations and then uses `exec node
+  apps/api/dist/main.js`, so Node is PID 1.
+- Nest shutdown hooks are enabled for `SIGTERM` and `SIGINT`.
+- API `stop_grace_period` is `30s`, exceeding the default Telegram worker drain
+  timeout `TELEGRAM_WORKER_DRAIN_TIMEOUT_MS=10000`.
+- A controlled `docker compose ... stop api` confirms that no new Telegram jobs
+  are claimed after shutdown starts; active work either completes during drain
+  or is returned to `PENDING` with `TELEGRAM_SHUTDOWN_RELEASE`.
+- After API stop, recent `training_jobs` contain no `RUNNING` Telegram job
+  locked by the stopped worker.
 - Seed is run once per environment and default credentials are rotated.
 - Healthcheck `/health` returns database `ok` and `postgis: true`.
 - Same-origin healthcheck `/api/health` returns database `ok` and `postgis: true` after proxy changes.

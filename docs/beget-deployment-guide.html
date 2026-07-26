@@ -158,7 +158,7 @@
       Пошаговая инструкция по загрузке проекта на VPS/VDS Beget, настройке Docker,
       PostgreSQL/PostGIS, Redis, S3/MinIO, Nginx, SSL и первичной проверке платформы.
     </p>
-    <p class="meta">Проект: <code>/Users/nick/Documents/platforma</code>. Дата подготовки: 12 мая 2026.</p>
+    <p class="meta">Проект: <code>/Users/nick/Documents/platforma</code>. Обновлено: 26 июля 2026.</p>
   </section>
 
   <div class="warning">
@@ -174,7 +174,8 @@
     <li><code>apps/api</code> - NestJS API, Prisma, auth/RBAC, объекты, файлы, карта, WordPress import.</li>
     <li><code>packages/shared</code> - общие TypeScript-типы.</li>
     <li><code>tools/wp-import</code> - CLI-инструмент импорта данных из WordPress.</li>
-    <li><code>docker-compose.yml</code> - локальный запуск PostgreSQL/PostGIS, Redis, MinIO, API и web.</li>
+    <li><code>docker-compose.yml</code> - базовая development-конфигурация PostgreSQL/PostGIS, Redis, MinIO, API и web.</li>
+    <li><code>docker-compose.production.yml</code> - обязательный production override для API и Telegram transport.</li>
   </ul>
 
   <h2>1. Подготовьте Beget VPS</h2>
@@ -216,12 +217,17 @@ cd /opt/platforma</pre>
   <p>После загрузки на сервере:</p>
   <pre>cd /opt/platforma</pre>
 
-  <h2>4. Создайте production .env</h2>
+  <h2>4. Создайте обязательный production env</h2>
   <pre>cd /opt/platforma
-cp .env.example .env
-nano .env</pre>
+cp .env.production.example .env.production
+chmod 600 .env.production
+nano .env.production</pre>
 
-  <p>Минимальный пример значений:</p>
+  <p>
+    Замените все <code>REPLACE_WITH_*</code> и <code>your-domain.ru</code>.
+    Значения из development <code>.env.example</code> для production не подходят.
+    Минимальный Telegram-блок:
+  </p>
   <pre>COMPOSE_PROJECT_NAME=platforma
 
 POSTGRES_DB=platforma
@@ -244,6 +250,13 @@ API_PORT=3000
 WEB_PORT=5173
 VITE_API_URL=https://api.platform.example.ru
 WEB_ORIGIN=https://platform.example.ru
+PUBLIC_APP_URL=https://platform.example.ru
+
+TRAINING_MODULE_ENABLED=true
+TELEGRAM_BOT_TOKEN=REAL_BOT_TOKEN_FROM_BOTFATHER
+TELEGRAM_BOT_USERNAME=real_bot_username
+TELEGRAM_WEBHOOK_SECRET=GENERATE_LONG_RANDOM_SECRET
+TELEGRAM_WEBHOOK_URL=https://api.platform.example.ru/training/telegram/webhook
 
 JWT_ACCESS_SECRET=GENERATE_LONG_RANDOM_SECRET
 JWT_REFRESH_SECRET=GENERATE_ANOTHER_LONG_RANDOM_SECRET
@@ -257,43 +270,69 @@ VITE_YANDEX_MAPS_API_KEY=</pre>
   <pre>openssl rand -hex 32</pre>
 
   <div class="warning">
-    Не оставляйте значения <code>change-me-access-secret</code>, <code>change-me-refresh-secret</code>
-    и простые пароли из примера. Не публикуйте файл <code>.env</code> в репозиторий.
+    Не оставляйте значения <code>change-me-access-secret</code>, <code>change-me-refresh-secret</code>,
+    <code>REPLACE_WITH_*</code>, <code>your-domain.ru</code> и простые пароли из примера.
+    Не публикуйте файл <code>.env.production</code> в репозиторий.
   </div>
 
-  <h2>5. Создайте production docker-compose</h2>
+  <h2>5. Используйте production Compose override</h2>
   <p>
-    В текущем <code>docker-compose.yml</code> наружу публикуются порты PostgreSQL, Redis, MinIO, API и web.
-    Для production лучше закрыть базу, Redis и MinIO от интернета, а API/web отдавать через Nginx.
+    Не копируйте и не редактируйте development Compose вручную.
+    Production всегда запускается двумя tracked-файлами:
+    <code>docker-compose.yml</code> и <code>docker-compose.production.yml</code>.
+    Override жёстко задаёт <code>NODE_ENV=production</code> и
+    <code>TELEGRAM_TRANSPORT_MODE=real</code>.
   </p>
 
-  <pre>cp docker-compose.yml docker-compose.prod.yml
-nano docker-compose.prod.yml</pre>
-
-  <p>В <code>docker-compose.prod.yml</code>:</p>
+  <p>Через required-variable syntax обязательны:</p>
   <ul>
-    <li>У сервисов <code>postgres</code>, <code>redis</code>, <code>minio</code> уберите блоки <code>ports</code>.</li>
-    <li>У сервиса <code>api</code> оставьте локальную публикацию:</li>
+    <li><code>TELEGRAM_BOT_TOKEN</code>;</li>
+    <li><code>TELEGRAM_BOT_USERNAME</code>;</li>
+    <li><code>TELEGRAM_WEBHOOK_SECRET</code>;</li>
+    <li><code>TELEGRAM_WEBHOOK_URL</code>;</li>
+    <li><code>PUBLIC_APP_URL</code>.</li>
   </ul>
 
-  <pre>ports:
-  - "127.0.0.1:3000:3000"</pre>
-
-  <ul>
-    <li>У сервиса <code>web</code> оставьте локальную публикацию:</li>
-  </ul>
-
-  <pre>ports:
-  - "127.0.0.1:5173:5173"</pre>
-
-  <div class="note">
-    Это не меняет код проекта, но защищает внутренние сервисы от прямого доступа извне.
+  <div class="warning">
+    <code>TELEGRAM_WEBHOOK_URL</code> и <code>PUBLIC_APP_URL</code> должны использовать HTTPS
+    и реальные production hostnames. <code>localhost</code>, <code>127.0.0.1</code>,
+    example/test/fake placeholders и development username запрещены runtime validation.
+    Закройте PostgreSQL, Redis и MinIO внешним firewall/security group: базовый Compose
+    публикует их порты для локальной разработки.
   </div>
 
-  <h2>6. Запустите проект</h2>
+  <h2>6. Проверьте конфигурацию и запустите проект</h2>
+  <p>Сначала выполните только render/validation без запуска контейнеров:</p>
   <pre>cd /opt/platforma
-docker compose -f docker-compose.prod.yml up -d --build
-docker compose -f docker-compose.prod.yml ps</pre>
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.production.yml \
+  --env-file .env.production \
+  config &gt;/dev/null</pre>
+
+  <p>
+    Команда обязана завершиться ошибкой, если отсутствует любая обязательная
+    Telegram-переменная. После успешной проверки выполните production запуск:
+  </p>
+  <pre>docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.production.yml \
+  --env-file .env.production \
+  up -d --build</pre>
+
+  <p>Проверьте контейнеры и зафиксированный real transport без вывода секретов:</p>
+  <pre>docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.production.yml \
+  --env-file .env.production \
+  ps
+
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.production.yml \
+  --env-file .env.production \
+  exec api sh -c \
+  'test "$NODE_ENV" = production &amp;&amp; test "$TELEGRAM_TRANSPORT_MODE" = real'</pre>
 
   <p>API-контейнер при старте выполнит Prisma migrations через команду из <code>apps/api/Dockerfile</code>.</p>
 
@@ -308,7 +347,11 @@ docker compose -f docker-compose.prod.yml ps</pre>
 }</pre>
 
   <h2>7. Создайте первого admin-пользователя</h2>
-  <pre>docker compose -f docker-compose.prod.yml exec \
+  <pre>docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.production.yml \
+  --env-file .env.production \
+  exec \
   -e ADMIN_EMAIL=admin@example.ru \
   -e ADMIN_NAME="Platform Admin" \
   -e ADMIN_PASSWORD="STRONG_ADMIN_PASSWORD" \
@@ -363,7 +406,7 @@ certbot --nginx -d platform.example.ru -d api.platform.example.ru</pre>
   <ol>
     <li>В панели Beget создайте S3 bucket вручную.</li>
     <li>Скопируйте из панели: URL, имя bucket, Access key и Secret key.</li>
-    <li>В <code>.env</code> замените S3-настройки:</li>
+    <li>В <code>.env.production</code> замените S3-настройки:</li>
   </ol>
 
   <pre>S3_ENDPOINT=https://s3.ru1.storage.beget.cloud
@@ -378,11 +421,15 @@ MINIO_BUCKET=YOUR_BEGET_BUCKET_NAME</pre>
     <code>MINIO_BUCKET</code> к endpoint. Если вставить URL с bucket, ссылки могут получить дубль bucket.
   </div>
 
-  <p>Перезапустите API после изменения <code>.env</code>:</p>
-  <pre>docker compose -f docker-compose.prod.yml up -d --build api</pre>
+  <p>Перезапустите API после изменения <code>.env.production</code>:</p>
+  <pre>docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.production.yml \
+  --env-file .env.production \
+  up -d --build api</pre>
 
   <h2>10. WordPress import</h2>
-  <p>Если нужен импорт из WordPress, заполните в <code>.env</code>:</p>
+  <p>Если нужен импорт из WordPress, заполните в <code>.env.production</code>:</p>
   <pre>WP_DB_HOST=
 WP_DB_PORT=3306
 WP_DB_USER=
@@ -395,38 +442,90 @@ WP_UPLOADS_HOST_PATH=/absolute/path/to/wp-content/uploads
 WP_UPLOADS_PATH=/wp-uploads</pre>
 
   <p>Сначала запускайте preview:</p>
-  <pre>docker compose -f docker-compose.prod.yml exec api pnpm wp-import:preview</pre>
+  <pre>docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.production.yml \
+  --env-file .env.production \
+  exec api pnpm wp-import:preview</pre>
 
   <p>Только после проверки отчета запускайте полный импорт:</p>
-  <pre>docker compose -f docker-compose.prod.yml exec api pnpm wp-import:run</pre>
+  <pre>docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.production.yml \
+  --env-file .env.production \
+  exec api pnpm wp-import:run</pre>
 
   <h2>11. Обновление проекта после изменений</h2>
   <h3>Если проект загружен через Git</h3>
   <pre>cd /opt/platforma
 git pull
-docker compose -f docker-compose.prod.yml up -d --build</pre>
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.production.yml \
+  --env-file .env.production \
+  up -d --build</pre>
 
   <h3>Если проект загружен через rsync</h3>
   <p>Повторите загрузку с локальной машины, затем на сервере:</p>
   <pre>cd /opt/platforma
-docker compose -f docker-compose.prod.yml up -d --build</pre>
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.production.yml \
+  --env-file .env.production \
+  up -d --build</pre>
 
   <h2>12. Диагностика</h2>
-  <pre>docker compose -f docker-compose.prod.yml ps
-docker compose -f docker-compose.prod.yml logs -f api
-docker compose -f docker-compose.prod.yml logs -f web
-docker compose -f docker-compose.prod.yml logs -f postgres
-docker compose -f docker-compose.prod.yml logs -f minio
+  <pre>docker compose -f docker-compose.yml -f docker-compose.production.yml --env-file .env.production ps
+docker compose -f docker-compose.yml -f docker-compose.production.yml --env-file .env.production logs -f api
+docker compose -f docker-compose.yml -f docker-compose.production.yml --env-file .env.production logs -f web
+docker compose -f docker-compose.yml -f docker-compose.production.yml --env-file .env.production logs -f postgres
+docker compose -f docker-compose.yml -f docker-compose.production.yml --env-file .env.production logs -f minio
 curl http://127.0.0.1:3000/health</pre>
 
-  <h2>13. Финальный чеклист</h2>
+  <h2>13. Ручная проверка graceful shutdown</h2>
+  <p>
+    API использует <code>TELEGRAM_WORKER_DRAIN_TIMEOUT_MS=10000</code>, а Docker
+    ждёт до <code>30s</code> перед SIGKILL. Выполните во время контролируемого
+    Telegram job:
+  </p>
+  <pre>docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.production.yml \
+  --env-file .env.production \
+  stop api
+
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.production.yml \
+  --env-file .env.production \
+  logs --tail=200 api
+
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.production.yml \
+  --env-file .env.production \
+  exec postgres sh -c \
+  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT kind, status, attempts, lock_owner, last_error_code FROM training_jobs ORDER BY updated_at DESC LIMIT 20;"'</pre>
+
+  <p>Критерии:</p>
+  <ul>
+    <li>Node получает SIGTERM как PID 1, а Nest вызывает lifecycle hooks.</li>
+    <li>После начала shutdown новые Telegram jobs не переходят в <code>RUNNING</code>.</li>
+    <li>Активный job успевает завершиться в пределах 10 секунд либо возвращается в <code>PENDING</code> с <code>TELEGRAM_SHUTDOWN_RELEASE</code>.</li>
+    <li>После остановки не остаётся Telegram job с lock остановленного worker.</li>
+    <li>Контейнер завершается до истечения Docker <code>30s</code> grace period.</li>
+  </ul>
+
+  <h2>14. Финальный чеклист</h2>
   <ul class="checklist">
     <li>VPS создан именно с Docker, а не обычный shared-хостинг.</li>
     <li>DNS доменов <code>platform.example.ru</code> и <code>api.platform.example.ru</code> указывает на IP сервера.</li>
-    <li>Файл <code>.env</code> заполнен production-значениями.</li>
+    <li>Файл <code>.env.production</code> заполнен production-значениями и имеет mode <code>600</code>.</li>
+    <li><code>NODE_ENV=production</code> и <code>TELEGRAM_TRANSPORT_MODE=real</code> подтверждены внутри API.</li>
+    <li>Все пять обязательных Telegram/public URL переменных заданы без placeholder-значений.</li>
     <li>Пароли PostgreSQL, MinIO/S3, admin и JWT secrets заменены на сильные.</li>
     <li>PostgreSQL, Redis и MinIO не открыты напрямую в интернет.</li>
-    <li><code>docker compose -f docker-compose.prod.yml ps</code> показывает запущенные сервисы.</li>
+    <li>Production Compose command с двумя файлами показывает запущенные сервисы.</li>
     <li><code>/health</code> возвращает <code>database: "ok"</code> и <code>postgis: true</code>.</li>
     <li>SSL выпущен через Certbot для frontend и API доменов.</li>
     <li>Вход под admin работает.</li>
@@ -435,14 +534,14 @@ curl http://127.0.0.1:3000/health</pre>
     <li>Если используется WordPress import, сначала проверен preview.</li>
   </ul>
 
-  <h2>14. Спорные места и что улучшить позже</h2>
+  <h2>15. Спорные места и что улучшить позже</h2>
   <ul>
     <li>Текущий <code>apps/web/Dockerfile</code> запускает <code>pnpm dev</code>. Для настоящего production позже лучше заменить это на сборку <code>pnpm build:web</code> и отдачу статических файлов через Nginx.</li>
     <li>Managed PostgreSQL Beget можно использовать только если подключено расширение <code>PostGIS</code>. Если расширение недоступно, оставляйте <code>postgis/postgis</code> в Docker.</li>
     <li>Beget S3 bucket нужно создать вручную в панели, потому что создание bucket через SDK у Beget ограничено.</li>
   </ul>
 
-  <h2>15. Ссылки на документацию Beget</h2>
+  <h2>16. Ссылки на документацию Beget</h2>
   <ul>
     <li>Docker VPS: <a href="https://beget.com/ru/cloud/marketplace/docker">https://beget.com/ru/cloud/marketplace/docker</a></li>
     <li>VPS/VDS: <a href="https://beget.com/ru/vps">https://beget.com/ru/vps</a></li>
