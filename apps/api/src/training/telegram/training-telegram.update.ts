@@ -78,23 +78,73 @@ export function sanitizeTelegramUpdate(
     .update(JSON.stringify(rawValue), 'utf8')
     .digest('hex');
 
-  const callback = asOptionalRecord(raw.callback_query);
-  if (callback) {
-    return sanitizeCallback(updateId, payloadHash, callback, receivedAt);
+  try {
+    const callback = asOptionalRecord(raw.callback_query);
+    if (callback) {
+      if (!callback.message) {
+        return rejectedIngress(
+          updateId,
+          payloadHash,
+          'callback_query',
+          callback.inline_message_id
+            ? 'INLINE_CALLBACK_UNSUPPORTED'
+            : 'CALLBACK_MESSAGE_REQUIRED',
+        );
+      }
+      return sanitizeCallback(updateId, payloadHash, callback, receivedAt);
+    }
+
+    if (raw.edited_message !== undefined) {
+      return rejectedIngress(
+        updateId,
+        payloadHash,
+        'edited_message',
+        'EDITED_MESSAGE_UNSUPPORTED',
+      );
+    }
+    if (raw.channel_post !== undefined) {
+      return rejectedIngress(
+        updateId,
+        payloadHash,
+        'channel_post',
+        'PRIVATE_CHAT_REQUIRED',
+      );
+    }
+    const message = asOptionalRecord(raw.message);
+    if (message) {
+      if (message.sender_chat !== undefined && message.from === undefined) {
+        return rejectedIngress(
+          updateId,
+          payloadHash,
+          'message',
+          'SENDER_CHAT_UNSUPPORTED',
+        );
+      }
+      if (isTelegramServiceMessage(message)) {
+        return rejectedIngress(
+          updateId,
+          payloadHash,
+          'message',
+          'SERVICE_MESSAGE_UNSUPPORTED',
+        );
+      }
+      return sanitizeMessage(updateId, payloadHash, message, receivedAt);
+    }
+  } catch {
+    return rejectedIngress(
+      updateId,
+      payloadHash,
+      detectTopLevelUpdateType(raw),
+      'MALFORMED_TELEGRAM_UPDATE',
+    );
   }
 
-  const message =
-    asOptionalRecord(raw.message) ?? asOptionalRecord(raw.channel_post);
-  if (message) {
-    return sanitizeMessage(updateId, payloadHash, message, receivedAt);
-  }
-
-  return {
+  return rejectedIngress(
     updateId,
     payloadHash,
-    updateType: 'unsupported',
-    rejectionCode: 'UNSUPPORTED_UPDATE',
-  };
+    'unsupported',
+    'UNSUPPORTED_UPDATE',
+  );
 }
 
 function sanitizeCallback(
@@ -360,4 +410,55 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function asOptionalRecord(value: unknown) {
   return value === undefined || value === null ? null : asRecord(value);
+}
+
+function rejectedIngress(
+  updateId: bigint,
+  payloadHash: string,
+  updateType: string,
+  rejectionCode: string,
+): TelegramUpdateIngress {
+  return {
+    updateId,
+    payloadHash,
+    updateType,
+    rejectionCode,
+  };
+}
+
+function detectTopLevelUpdateType(value: Record<string, unknown>) {
+  for (const key of [
+    'callback_query',
+    'message',
+    'edited_message',
+    'channel_post',
+  ]) {
+    if (value[key] !== undefined) return key;
+  }
+  return 'unsupported';
+}
+
+function isTelegramServiceMessage(value: Record<string, unknown>) {
+  return [
+    'new_chat_members',
+    'left_chat_member',
+    'new_chat_title',
+    'new_chat_photo',
+    'delete_chat_photo',
+    'group_chat_created',
+    'supergroup_chat_created',
+    'channel_chat_created',
+    'message_auto_delete_timer_changed',
+    'migrate_to_chat_id',
+    'migrate_from_chat_id',
+    'pinned_message',
+    'forum_topic_created',
+    'forum_topic_closed',
+    'forum_topic_reopened',
+    'general_forum_topic_hidden',
+    'general_forum_topic_unhidden',
+    'write_access_allowed',
+    'users_shared',
+    'chat_shared',
+  ].some((key) => value[key] !== undefined);
 }

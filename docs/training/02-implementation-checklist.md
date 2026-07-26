@@ -223,8 +223,8 @@ audio pipeline и frontend на этапе 5 не изменялись. Изол
   transaction-level проверками без новой зависимости.
 - [x] Prisma schema и migrations не менялись: существующих полей
   `TrainingJob` и JSON payload достаточно для recovery и timeout intent.
-- [x] Этап 6, Telegram/OpenAI/network, audio storage, frontend и новые
-  dependencies не начинались.
+- [x] На момент завершения этапа 5 Telegram, OpenAI/network, audio storage,
+  frontend и новые dependencies ещё не начинались.
 
 Проверки review-fix:
 
@@ -266,6 +266,15 @@ PostgreSQL worker-ом. Idempotency дополнительно закрепле�
 `chat_id + message_id`, `callback_query.id`, callback с точным
 `attemptQuestionId` и persisted delivery jobs.
 
+После независимого review обязательные сообщения link/start/finish/next
+question/final/review/technical failure переведены на transactional outbox:
+domain transition и `SEND_TELEGRAM_MESSAGE` job фиксируются одной PostgreSQL
+transaction, а сетевой вызов выполняется worker-ом уже после commit. Payload
+содержит только устойчивые domain IDs (`user/account/chat/attempt/question`),
+тип события и детерминированный `idempotencyKey`, без Telegram secrets.
+Timer warning job создаётся в той же start transaction; terminal transitions
+атомарно закрывают pending attempt timer jobs.
+
 Диалог показывает только глобально OPEN проекты с PUBLISHED active version,
 требует отдельный callback подтверждения старта, принимает несколько
 `message.voice` частей и запрещает остальные Telegram message types. Finish,
@@ -273,20 +282,47 @@ timeout/grace, timer warnings и финал используют существ�
 persisted jobs. `REQUIRES_REVIEW` не раскрывает предварительный балл или
 passed/failed status.
 
+`TELEGRAM_TRANSPORT_MODE=fake|real` задаётся явно. Fake разрешён только для
+test/local development; production с включённым training требует real mode,
+bot token/username, webhook secret и HTTPS webhook/public URLs. Telegram
+username нормализуется без `@`, а тексты ошибок не включают secret values.
+
+Каждый входящий update проверяет связанный `User`: разрешены только
+`ACTIVE + deletedAt=null`. Block/deactivate атомарно отзывают account и
+неиспользованные link tokens вместе с audit; повторная активация старую связь
+не восстанавливает. `file_unique_id` дедуплицируется constraint-ом в пределах
+`answerId`, но разрешён для другого вопроса или попытки.
+
+Telegram worker использует уникальный owner, lease и heartbeat с CAS по
+`jobId + RUNNING + lockOwner`. Stale jobs возвращаются в `PENDING` только до
+`maxAttempts`, иначе переходят в `DEAD`; shutdown прекращает claim, ждёт
+активную работу ограниченное время и освобождает незавершённый owned job.
+429 учитывает `retry_after`, 5xx/network/timeout/invalid JSON повторяются с
+bounded backoff, постоянные 4xx сразу завершаются как `DEAD`.
+
+Перед timer warning worker под advisory attempt lock атомарно проверяет
+ownership job и active attempt; transaction завершается до Telegram API call.
+Если terminal transition произошёл до gate, warning становится no-op.
+Остаётся неизбежное для at-least-once доставки микроскопическое окно между
+успешным pre-send gate и фактическим Telegram send: закрыть его полностью без
+distributed transaction с Telegram Bot API невозможно.
+
 Проверки этапа 6:
 
-- Telegram unit/contract tests — 9/9 passed;
-- `pnpm --filter @platforma/api test` — 325/325 unit и 33/33 PostgreSQL
+- Telegram unit/contract tests — 12/12 passed;
+- `pnpm --filter @platforma/api test` — 328/328 unit и 53/53 PostgreSQL
   integration tests passed;
 - `pnpm build` — passed; сохраняется существующее предупреждение Vite о client
   chunk `753.03 kB`, больше 500 kB;
-- `pnpm test` — 731/731 passed: API 325 unit + 33 PostgreSQL, Web 286,
+- `pnpm test` — 754/754 passed: API 328 unit + 53 PostgreSQL, Web 286,
   Feed import 64, WordPress import 23;
 - `git diff --check` — passed;
 - все временные PostgreSQL databases удалены runner-ом.
 
-Добавлена одна additive migration, расширяющая существующий
-`training_job_kind` значением `process_telegram_update`. Новые dependencies,
+Добавлены две additive migrations: stage-6 migration расширяет
+`training_job_kind` значением `process_telegram_update`, review-fix migration
+добавляет scoped unique index
+`training_voice_segments(answer_id, file_unique_id)`. Новые dependencies,
 Telegram SDK и frontend не добавлялись. Реальные Telegram-файлы не
 скачивались, audio storage/MinIO, ffmpeg и OpenAI не подключались. Этап 7 не
 начинался.
@@ -347,12 +383,12 @@ Telegram SDK и frontend не добавлялись. Реальные Telegram-
 
 ## Следующий этап
 
-Точный следующий этап: `docs/training/prompts/06_telegram.md`.
+Точный следующий этап: `docs/training/prompts/07_audio_worker.md`.
 
 Он не начат и не должен выполняться автоматически. Перед ним нужно:
 
 1. получить отдельный запрос пользователя;
 2. повторно проверить branch/status и сохранить чужие изменения;
-3. прочитать prompt этапа 6 и Telegram/security части спецификации;
+3. прочитать prompt этапа 7 и audio/storage/security части спецификации;
 4. сохранить attempt engine provider-agnostic и не добавлять real
-   transcription/evaluation или audio worker из этапов 7–8.
+   transcription/evaluation из этапа 8.

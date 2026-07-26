@@ -1384,6 +1384,7 @@ model TrainingVoiceSegment {
   answer TrainingAnswer @relation(fields: [answerId], references: [id], onDelete: Cascade)
 
   @@unique([answerId, segmentIndex])
+  @@unique([answerId, fileUniqueId], map: "training_voice_segments_answer_id_file_unique_id_key")
   @@unique([telegramChatId, telegramMessageId])
   @@unique([originalStorageBucket, originalStorageKey])
   @@index([answerId, receivedAt])

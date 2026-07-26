@@ -16,6 +16,7 @@ import {
   TrainingProjectStatus,
   TrainingReviewStatus,
   TrainingVersionStatus,
+  UserStatus,
 } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
@@ -32,6 +33,7 @@ import {
   TrainingTelegramLinkService,
   type TrainingTelegramIdentity,
 } from './training-telegram-link.service';
+import type { TrainingTelegramOutboxEvent } from './training-telegram-outbox';
 import type {
   SanitizedTelegramCallbackUpdate,
   SanitizedTelegramMessageUpdate,
@@ -170,6 +172,8 @@ export class TrainingTelegramDialogService {
       !TERMINAL_RESULT_STATUSES.includes(
         attempt.status as (typeof TERMINAL_RESULT_STATUSES)[number],
       ) ||
+      attempt.user.status !== UserStatus.ACTIVE ||
+      attempt.user.deletedAt ||
       !attempt.user.trainingTelegramAccount ||
       attempt.user.trainingTelegramAccount.revokedAt
     ) {
@@ -218,6 +222,8 @@ export class TrainingTelegramDialogService {
       !TRAINING_ACTIVE_ATTEMPT_STATUSES.includes(
         attempt.status as (typeof TRAINING_ACTIVE_ATTEMPT_STATUSES)[number],
       ) ||
+      attempt.user.status !== UserStatus.ACTIVE ||
+      attempt.user.deletedAt ||
       !attempt.user.trainingTelegramAccount ||
       attempt.user.trainingTelegramAccount.revokedAt
     ) {
@@ -231,6 +237,107 @@ export class TrainingTelegramDialogService {
     };
   }
 
+  async buildOutboxEvent(
+    event: TrainingTelegramOutboxEvent,
+  ): Promise<DeliveryPlan | null> {
+    const account = await this.prisma.trainingTelegramAccount.findFirst({
+      where: {
+        id: event.accountId,
+        userId: event.userId,
+        chatId: BigInt(event.chatId),
+        revokedAt: null,
+        user: {
+          status: UserStatus.ACTIVE,
+          deletedAt: null,
+        },
+      },
+      select: { id: true },
+    });
+    if (!account) return null;
+
+    if (event.eventType === 'ACCOUNT_LINKED') {
+      return this.message(
+        event.chatId,
+        'Аккаунт Platforma подключён к Telegram.',
+        this.mainMenuKeyboard(),
+      );
+    }
+    if (event.eventType === 'PROJECT_CONFIRMATION') {
+      try {
+        return await this.projectConfirmation(
+          event.userId,
+          event.projectId,
+          event.chatId,
+        );
+      } catch {
+        return this.message(
+          event.chatId,
+          'Аккаунт подключён, но выбранный проект сейчас недоступен.',
+          this.projectsKeyboard(),
+        );
+      }
+    }
+    if (event.eventType === 'ATTEMPT_QUESTION') {
+      const question = await this.prisma.trainingAttemptQuestion.findFirst({
+        where: {
+          id: event.attemptQuestionId,
+          attemptId: event.attemptId,
+          attempt: { userId: event.userId },
+          status: {
+            in: [
+              TrainingAttemptQuestionStatus.PRESENTED,
+              TrainingAttemptQuestionStatus.COLLECTING,
+            ],
+          },
+        },
+        include: { question: true },
+      });
+      return question ? this.questionMessage(event.chatId, question) : null;
+    }
+    if (event.eventType === 'ANSWER_ACCEPTED') {
+      const question = await this.prisma.trainingAttemptQuestion.findFirst({
+        where: {
+          id: event.attemptQuestionId,
+          attemptId: event.attemptId,
+          attempt: { userId: event.userId },
+          status: {
+            in: [
+              TrainingAttemptQuestionStatus.LOCKED,
+              TrainingAttemptQuestionStatus.PROCESSING,
+              TrainingAttemptQuestionStatus.SCORED,
+              TrainingAttemptQuestionStatus.SKIPPED_TIMEOUT,
+            ],
+          },
+        },
+        select: { id: true },
+      });
+      return question
+        ? this.message(event.chatId, 'Ответ принят')
+        : null;
+    }
+    if (event.eventType === 'ATTEMPT_RESULT') {
+      const plan = await this.deliverAttemptResult(event.attemptId);
+      return plan?.operation === 'SEND_MESSAGE' && plan.chatId === event.chatId
+        ? plan
+        : null;
+    }
+    const attempt = await this.prisma.trainingAttempt.findFirst({
+      where: {
+        id: event.attemptId,
+        userId: event.userId,
+        status: TrainingAttemptStatus.TECHNICAL_FAILURE,
+      },
+      select: { id: true },
+    });
+    return attempt
+      ? this.message(
+          event.chatId,
+          'Произошла техническая ошибка. Попытка передана администратору и не будет списана повторно.',
+          this.platformKeyboard(),
+        )
+      : null;
+  }
+
   private async processMessage(
     update: SanitizedTelegramMessageUpdate,
   ): Promise<DeliveryPlan[]> {
@@ -240,30 +347,11 @@ export class TrainingTelegramDialogService {
       update.content.startTokenHash
     ) {
       try {
-        const linked = await this.links.consumeHashedToken(
+        await this.links.consumeHashedToken(
           update.content.startTokenHash,
           identityFromUpdate(update),
         );
-        if (linked.projectId) {
-          return [
-            this.message(
-              update.chatId,
-              'Аккаунт подключён.',
-            ),
-            await this.projectConfirmation(
-              linked.userId,
-              linked.projectId,
-              update.chatId,
-            ),
-          ];
-        }
-        return [
-          this.message(
-            update.chatId,
-            'Аккаунт Platforma подключён к Telegram.',
-            this.mainMenuKeyboard(),
-          ),
-        ];
+        return [];
       } catch (error) {
         return [
           this.message(
@@ -288,10 +376,18 @@ export class TrainingTelegramDialogService {
       ];
     }
 
-    const account = await this.links.findActiveAccountByTelegramUserId(
+    const account = await this.links.findAccountByTelegramUserId(
       BigInt(update.user.telegramUserId),
     );
-    if (!account || account.chatId !== BigInt(update.chatId)) {
+    if (account && !isActiveTelegramUser(account.user)) {
+      await this.links.revokeInactiveAccount(account.id, account.userId);
+      return [this.accessClosed(update.chatId)];
+    }
+    if (
+      !account ||
+      account.revokedAt ||
+      account.chatId !== BigInt(update.chatId)
+    ) {
       return [this.connectionRequired(update.chatId)];
     }
 
@@ -378,10 +474,18 @@ export class TrainingTelegramDialogService {
       operation: 'ANSWER_CALLBACK',
       callbackQueryId: update.callbackQueryId,
     };
-    const account = await this.links.findActiveAccountByTelegramUserId(
+    const account = await this.links.findAccountByTelegramUserId(
       BigInt(update.user.telegramUserId),
     );
-    if (!account || account.chatId !== BigInt(update.chatId)) {
+    if (account && !isActiveTelegramUser(account.user)) {
+      await this.links.revokeInactiveAccount(account.id, account.userId);
+      return [answerPlan, this.accessClosed(update.chatId)];
+    }
+    if (
+      !account ||
+      account.revokedAt ||
+      account.chatId !== BigInt(update.chatId)
+    ) {
       return [answerPlan, this.connectionRequired(update.chatId)];
     }
     const callback = parseTrainingTelegramCallback(update.callbackData);
@@ -470,7 +574,7 @@ export class TrainingTelegramDialogService {
       if (!question) {
         throw new ConflictException('Training attempt has no current question');
       }
-      return [this.questionMessage(chatId, question)];
+      return [];
     } catch (error) {
       const recovered = await this.findActiveAttempt(userId);
       if (recovered) {
@@ -507,14 +611,11 @@ export class TrainingTelegramDialogService {
       return [this.message(chatId, 'Этот ответ уже завершён.')];
     }
     try {
-      const result = await this.attempts.finishAnswer({
+      await this.attempts.finishAnswer({
         attemptId: target.attempt.id,
         attemptQuestionId,
       });
-      const plans = [this.message(chatId, 'Ответ принят')];
-      const question = currentQuestion(result.attempt);
-      if (question) plans.push(this.questionMessage(chatId, question));
-      return plans;
+      return [];
     } catch (error) {
       return [this.message(chatId, safeUserError(error))];
     }
@@ -830,6 +931,13 @@ export class TrainingTelegramDialogService {
     );
   }
 
+  private accessClosed(chatId: string) {
+    return this.message(
+      chatId,
+      'Доступ к обучению закрыт. Обратитесь к администратору Platforma.',
+    );
+  }
+
   private mainMenuKeyboard(): TelegramInlineKeyboard {
     return {
       inline_keyboard: [
@@ -915,6 +1023,9 @@ function russianPlural(
 function linkErrorMessage(error: unknown) {
   if (error instanceof HttpException) {
     const message = error.message.toLocaleLowerCase('ru-RU');
+    if (message.includes('not active')) {
+      return 'Доступ к обучению закрыт. Обратитесь к администратору Platforma.';
+    }
     if (message.includes('expired')) {
       return 'Срок действия ссылки истёк. Создайте новую ссылку в Platforma.';
     }
@@ -929,6 +1040,13 @@ function linkErrorMessage(error: unknown) {
     }
   }
   return 'Ссылка подключения недействительна. Создайте новую ссылку в Platforma.';
+}
+
+function isActiveTelegramUser(user: {
+  status: UserStatus;
+  deletedAt: Date | null;
+}) {
+  return user.status === UserStatus.ACTIVE && user.deletedAt === null;
 }
 
 function safeUserError(error: unknown) {

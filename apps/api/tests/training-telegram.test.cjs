@@ -27,6 +27,7 @@ const {
   FakeTrainingTelegramTransport,
   FetchTrainingTelegramTransport,
   TRAINING_TELEGRAM_TRANSPORT,
+  TrainingTelegramTransportError,
 } = require('../dist/training/telegram/training-telegram.transport.js');
 const {
   sanitizeTelegramUpdate,
@@ -244,23 +245,308 @@ test('Telegram controllers expose employee and unguarded webhook routes', () => 
   );
 });
 
-test('Telegram config defaults to fake transport without a bot token', () => {
-  const previous = {
-    TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN,
-    TELEGRAM_BOT_USERNAME: process.env.TELEGRAM_BOT_USERNAME,
-    PUBLIC_APP_URL: process.env.PUBLIC_APP_URL,
+test('Telegram config permits fake transport for local tests', () => {
+  const config = new TrainingTelegramConfig({
+    NODE_ENV: 'test',
+    TRAINING_MODULE_ENABLED: 'false',
+    TELEGRAM_TRANSPORT_MODE: 'fake',
+    TELEGRAM_BOT_USERNAME: 'platforma_training_bot',
+    PUBLIC_APP_URL: 'http://localhost:5173',
+  });
+
+  assert.equal(config.transportMode, 'fake');
+  assert.equal(config.usesFakeTransport, true);
+  assert.equal(config.linkTokenTtlMinutes, 15);
+  assert.equal(config.publicTrainingUrl, 'http://localhost:5173/training');
+});
+
+test('Telegram config fails fast for unsafe production and incomplete real modes', () => {
+  const real = {
+    NODE_ENV: 'production',
+    TRAINING_MODULE_ENABLED: 'true',
+    TELEGRAM_TRANSPORT_MODE: 'real',
+    TELEGRAM_BOT_TOKEN: 'secret-token-that-must-not-leak',
+    TELEGRAM_BOT_USERNAME: '@platforma_training_bot',
+    TELEGRAM_WEBHOOK_SECRET: 'secret-header-that-must-not-leak',
+    TELEGRAM_WEBHOOK_URL: 'https://api.example.test/training/telegram/webhook',
+    PUBLIC_APP_URL: 'https://app.example.test',
   };
-  try {
-    delete process.env.TELEGRAM_BOT_TOKEN;
-    process.env.TELEGRAM_BOT_USERNAME = 'platforma_training_bot';
-    process.env.PUBLIC_APP_URL = 'http://localhost:5173';
-    const config = new TrainingTelegramConfig();
-    assert.equal(config.usesFakeTransport, true);
-    assert.equal(config.linkTokenTtlMinutes, 15);
-    assert.equal(config.publicTrainingUrl, 'http://localhost:5173/training');
-  } finally {
-    restoreEnv(previous);
+
+  assert.throws(
+    () =>
+      new TrainingTelegramConfig({
+        ...real,
+        TELEGRAM_TRANSPORT_MODE: undefined,
+      }),
+    /TELEGRAM_TRANSPORT_MODE is required/,
+  );
+  assert.throws(
+    () =>
+      new TrainingTelegramConfig({
+        ...real,
+        TELEGRAM_TRANSPORT_MODE: 'fake',
+      }),
+    /must be real/,
+  );
+  for (const name of [
+    'TELEGRAM_BOT_TOKEN',
+    'TELEGRAM_BOT_USERNAME',
+    'TELEGRAM_WEBHOOK_SECRET',
+    'TELEGRAM_WEBHOOK_URL',
+    'PUBLIC_APP_URL',
+  ]) {
+    assert.throws(
+      () => new TrainingTelegramConfig({ ...real, [name]: '' }),
+      new RegExp(`${name} is required`, 'u'),
+    );
   }
+  assert.throws(
+    () =>
+      new TrainingTelegramConfig({
+        ...real,
+        TELEGRAM_WEBHOOK_URL: 'http://api.example.test/webhook',
+      }),
+    /TELEGRAM_WEBHOOK_URL must use HTTPS/,
+  );
+  assert.throws(
+    () =>
+      new TrainingTelegramConfig({
+        ...real,
+        PUBLIC_APP_URL: 'http://app.example.test',
+      }),
+    /PUBLIC_APP_URL must use HTTPS/,
+  );
+  assert.throws(
+    () =>
+      new TrainingTelegramConfig({
+        NODE_ENV: 'staging',
+        TRAINING_MODULE_ENABLED: 'true',
+        TELEGRAM_TRANSPORT_MODE: 'fake',
+        PUBLIC_APP_URL: 'https://app.example.test',
+      }),
+    /allowed only for local development and tests/,
+  );
+
+  const config = new TrainingTelegramConfig(real);
+  assert.equal(config.transportMode, 'real');
+  assert.equal(config.botUsername, 'platforma_training_bot');
+  assert.equal(config.publicTrainingUrl, 'https://app.example.test/training');
+  for (const unsafe of [
+    'secret-token-that-must-not-leak',
+    'secret-header-that-must-not-leak',
+  ]) {
+    let message = '';
+    try {
+      new TrainingTelegramConfig({
+        ...real,
+        TELEGRAM_WEBHOOK_URL: unsafe,
+      });
+    } catch (error) {
+      message = error.message;
+    }
+    assert.equal(message.includes(unsafe), false);
+  }
+});
+
+test('fetch Telegram transport classifies retryable and permanent failures', async () => {
+  const originalFetch = global.fetch;
+  const cases = [
+    {
+      response: telegramResponse(429, {
+        ok: false,
+        error_code: 429,
+        parameters: { retry_after: 3 },
+      }),
+      code: 'RATE_LIMITED',
+      retryable: true,
+      retryAfterMs: 3_000,
+    },
+    {
+      response: telegramResponse(503, { ok: false, error_code: 503 }),
+      code: 'SERVER_ERROR',
+      retryable: true,
+    },
+    {
+      response: telegramResponse(200, { ok: false, error_code: 400 }),
+      code: 'PERMANENT_CLIENT_ERROR',
+      retryable: false,
+    },
+    {
+      response: telegramResponse(401, { ok: false, error_code: 401 }),
+      code: 'PERMANENT_CLIENT_ERROR',
+      retryable: false,
+    },
+    {
+      response: {
+        ok: true,
+        status: 200,
+        json: async () => {
+          throw new SyntaxError('malformed JSON');
+        },
+      },
+      code: 'INVALID_RESPONSE',
+      retryable: true,
+    },
+    {
+      error: new Error('socket closed'),
+      code: 'NETWORK_ERROR',
+      retryable: true,
+    },
+    {
+      error: Object.assign(new Error('aborted'), { name: 'AbortError' }),
+      code: 'TIMEOUT',
+      retryable: true,
+    },
+  ];
+
+  try {
+    for (const current of cases) {
+      global.fetch = async () => {
+        if (current.error) throw current.error;
+        return current.response;
+      };
+      const transport = new FetchTrainingTelegramTransport(
+        '123456:TEST_TOKEN',
+        'https://telegram.test',
+      );
+      await assert.rejects(
+        transport.sendMessage({
+          idempotencyKey: `classification:${current.code}`,
+          chatId: '100',
+          text: 'Test',
+        }),
+        (error) => {
+          assert.ok(error instanceof TrainingTelegramTransportError);
+          assert.equal(error.code, current.code);
+          assert.equal(error.retryable, current.retryable);
+          assert.equal(error.retryAfterMs, current.retryAfterMs);
+          assert.equal(error.message.includes('123456:TEST_TOKEN'), false);
+          return true;
+        },
+      );
+    }
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('unsupported or malformed Telegram payloads are acknowledged without throwing', async () => {
+  const malformedPayloads = [
+    { update_id: 80, message: { chat: null } },
+    {
+      update_id: 81,
+      callback_query: {
+        id: 'callback-without-message',
+        from: { id: 100 },
+        data: 'tr:projects',
+      },
+    },
+    {
+      update_id: 82,
+      callback_query: {
+        id: 'inline-callback',
+        inline_message_id: 'inline-id',
+        from: { id: 100 },
+        data: 'tr:projects',
+      },
+    },
+    { update_id: 83, edited_message: { message_id: 1 } },
+    { update_id: 84, business_message: { message_id: 1 } },
+    {
+      update_id: 85,
+      message: {
+        message_id: 1,
+        date: 1_785_057_600,
+        chat: { id: 100, type: 'private' },
+        sender_chat: { id: 100, type: 'private' },
+        text: 'sender chat',
+      },
+    },
+    {
+      update_id: 86,
+      message: {
+        message_id: 1,
+        date: 1_785_057_600,
+        chat: { id: 100, type: 'private' },
+        from: { id: 100, first_name: 'User' },
+        pinned_message: { message_id: 2 },
+      },
+    },
+    {
+      update_id: 87,
+      message: {
+        message_id: 1,
+        date: 1_785_057_600,
+        chat: { id: 100, type: 'private' },
+        from: { id: 100, first_name: 'User' },
+        voice: { file_id: '', duration: 'invalid' },
+      },
+    },
+    {
+      update_id: 88,
+      message: {
+        message_id: 1,
+        date: 1_785_057_600,
+        chat: { id: 100, type: 'private' },
+        text: 'missing from',
+      },
+    },
+    {
+      update_id: 89,
+      message: {
+        message_id: 1,
+        date: 1_785_057_600,
+        from: { id: 100, first_name: 'User' },
+        text: 'missing chat',
+      },
+    },
+    {
+      update_id: 90,
+      message: {
+        date: 1_785_057_600,
+        chat: { id: 100, type: 'private' },
+        from: { id: 100, first_name: 'User' },
+        text: 'missing message id',
+      },
+    },
+  ];
+  const expectedCodes = [
+    'MALFORMED_TELEGRAM_UPDATE',
+    'CALLBACK_MESSAGE_REQUIRED',
+    'INLINE_CALLBACK_UNSUPPORTED',
+    'EDITED_MESSAGE_UNSUPPORTED',
+    'UNSUPPORTED_UPDATE',
+    'SENDER_CHAT_UNSUPPORTED',
+    'SERVICE_MESSAGE_UNSUPPORTED',
+    'MALFORMED_TELEGRAM_UPDATE',
+    'MALFORMED_TELEGRAM_UPDATE',
+    'MALFORMED_TELEGRAM_UPDATE',
+    'MALFORMED_TELEGRAM_UPDATE',
+  ];
+
+  malformedPayloads.forEach((payload, index) => {
+    const ingress = sanitizeTelegramUpdate(payload);
+    assert.equal(ingress.rejectionCode, expectedCodes[index]);
+    assert.equal(ingress.payload, undefined);
+  });
+
+  const service = new TrainingTelegramWebhookService(
+    new Proxy(
+      {},
+      {
+        get() {
+          throw new Error('database must not be called');
+        },
+      },
+    ),
+    { webhookSecret: 'test-secret' },
+  );
+  assert.deepEqual(await service.acceptUpdate(null), {
+    ok: true,
+    duplicate: false,
+    queued: false,
+    rejected: true,
+  });
 });
 
 function privateTextUpdate(updateId, messageId, text) {
@@ -276,9 +562,10 @@ function privateTextUpdate(updateId, messageId, text) {
   };
 }
 
-function restoreEnv(values) {
-  for (const [key, value] of Object.entries(values)) {
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
-  }
+function telegramResponse(status, payload) {
+  return {
+    ok: status >= 200 && status <= 299,
+    status,
+    json: async () => payload,
+  };
 }

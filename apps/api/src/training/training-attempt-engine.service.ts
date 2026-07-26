@@ -54,6 +54,7 @@ import {
   TRAINING_TOTAL_MAX_SCORE,
 } from './training.domain';
 import { trainingAttemptRepositoryInclude } from './training.repository.types';
+import { enqueueAttemptTelegramOutboxEvent } from './telegram/training-telegram-outbox';
 
 const TRAINING_TERMINAL_ATTEMPT_STATUSES = [
   TrainingAttemptStatus.COMPLETED,
@@ -382,6 +383,21 @@ export class TrainingAttemptEngineService
           ],
           skipDuplicates: true,
         });
+        const presentedQuestion =
+          await tx.trainingAttemptQuestion.findFirstOrThrow({
+            where: {
+              attemptId: attempt.id,
+              sequence: 1,
+            },
+            select: { id: true },
+          });
+        await enqueueAttemptTelegramOutboxEvent(tx, {
+          eventType: 'ATTEMPT_QUESTION',
+          attemptId: attempt.id,
+          attemptQuestionId: presentedQuestion.id,
+          idempotencyKey: `telegram:attempt:${attempt.id}:question:${presentedQuestion.id}`,
+          runAt: startedAt,
+        });
 
         return attempt.id;
       });
@@ -519,6 +535,17 @@ export class TrainingAttemptEngineService
           currentQuestion.status !== TrainingAttemptQuestionStatus.COLLECTING)
       ) {
         throw new ConflictException('Training attempt is not collecting an answer');
+      }
+      if (
+        currentQuestion.answer?.voiceSegments.some(
+          (segment) => segment.fileUniqueId === fileUniqueId,
+        )
+      ) {
+        return {
+          autoFinish: false,
+          duplicate: true,
+          attemptQuestionId: currentQuestion.id,
+        };
       }
 
       const isExpired = receivedAt >= attempt.expiresAt;
@@ -721,6 +748,13 @@ export class TrainingAttemptEngineService
         answer.id,
         finishedAt,
       );
+      await enqueueAttemptTelegramOutboxEvent(tx, {
+        eventType: 'ANSWER_ACCEPTED',
+        attemptId: attempt.id,
+        attemptQuestionId: targetQuestion.id,
+        idempotencyKey: `telegram:attempt:${attempt.id}:answer-accepted:${targetQuestion.id}`,
+        runAt: finishedAt,
+      });
       return answer.id;
     });
 
@@ -1840,6 +1874,13 @@ export class TrainingAttemptEngineService
       where: { id: attempt.id },
       data: { status: TrainingAttemptStatus.AWAITING_FOLLOW_UP },
     });
+    await enqueueAttemptTelegramOutboxEvent(tx, {
+      eventType: 'ATTEMPT_QUESTION',
+      attemptId: attempt.id,
+      attemptQuestionId: nextQuestion.id,
+      idempotencyKey: `telegram:attempt:${attempt.id}:question:${nextQuestion.id}`,
+      runAt: now,
+    });
   }
 
   private async finalizeWithinTransaction(
@@ -1934,21 +1975,11 @@ export class TrainingAttemptEngineService
         ),
       },
     });
-    await tx.trainingJob.createMany({
-      data: [
-        {
-          kind: TrainingJobKind.SEND_TELEGRAM_MESSAGE,
-          status: TrainingJobStatus.PENDING,
-          payloadJson: {
-            operation: 'ATTEMPT_RESULT',
-            attemptId: attempt.id,
-          },
-          idempotencyKey: `telegram:attempt-result:${attempt.id}`,
-          runAt: new Date(completedAt.getTime() + 100),
-          maxAttempts: 5,
-        },
-      ],
-      skipDuplicates: true,
+    await enqueueAttemptTelegramOutboxEvent(tx, {
+      eventType: 'ATTEMPT_RESULT',
+      attemptId: attempt.id,
+      idempotencyKey: `telegram:attempt-result:${attempt.id}`,
+      runAt: new Date(completedAt.getTime() + 100),
     });
     await this.closeAttemptJobsWithinTransaction(tx, attempt.id, completedAt);
     return true;
@@ -2237,7 +2268,7 @@ export class TrainingAttemptEngineService
         });
       }
       if (payload.attemptId) {
-        await tx.trainingAttempt.updateMany({
+        const transitioned = await tx.trainingAttempt.updateMany({
           where: {
             id: payload.attemptId,
             status: {
@@ -2250,6 +2281,14 @@ export class TrainingAttemptEngineService
             passStatus: TrainingPassStatus.PENDING,
           },
         });
+        if (transitioned.count === 1) {
+          await enqueueAttemptTelegramOutboxEvent(tx, {
+            eventType: 'TECHNICAL_FAILURE',
+            attemptId: payload.attemptId,
+            idempotencyKey: `telegram:attempt-technical-failure:${payload.attemptId}`,
+            runAt: failedAt,
+          });
+        }
         await this.closeAttemptJobsWithinTransaction(
           tx,
           payload.attemptId,

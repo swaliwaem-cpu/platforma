@@ -12,19 +12,25 @@ import {
   TrainingJobKind,
   TrainingJobStatus,
   TrainingProcessedUpdateStatus,
+  UserStatus,
 } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { TRAINING_ACTIVE_ATTEMPT_STATUSES } from '../training.domain';
 import { TrainingTelegramConfig } from './training-telegram.config';
 import { TrainingTelegramDialogService } from './training-telegram-dialog.service';
+import {
+  readTrainingTelegramOutboxEvent,
+  TRAINING_TELEGRAM_OUTBOX_OPERATION,
+  type TrainingTelegramOutboxEvent,
+} from './training-telegram-outbox';
 import type { SanitizedTelegramUpdate } from './training-telegram.update';
 import {
   TRAINING_TELEGRAM_TRANSPORT,
+  TrainingTelegramTransportError,
   type TrainingTelegramTransport,
 } from './training-telegram.transport';
 
-const TELEGRAM_JOB_LEASE_MS = 30_000;
 const TELEGRAM_JOB_LIMIT_PER_DRAIN = 100;
 const TELEGRAM_JOB_KINDS = [
   TrainingJobKind.PROCESS_TELEGRAM_UPDATE,
@@ -51,6 +57,8 @@ export class TrainingTelegramWorkerService
   private drainPromise: Promise<void> | null = null;
   private kickQueued = false;
   private destroyed = false;
+  private readonly heartbeatIntervals = new Map<string, NodeJS.Timeout>();
+  private readonly lostOwnership = new Set<string>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -70,12 +78,26 @@ export class TrainingTelegramWorkerService
     this.kick();
   }
 
-  onModuleDestroy() {
+  async onModuleDestroy() {
     this.destroyed = true;
     if (this.pollInterval) {
       clearInterval(this.pollInterval);
       this.pollInterval = null;
     }
+
+    const drained = this.drainPromise
+      ? await waitForPromise(
+          this.drainPromise,
+          this.config.workerDrainTimeoutMs,
+        )
+      : true;
+    if (!drained) {
+      await this.releaseOwnedJobsAfterShutdown();
+    }
+    for (const interval of this.heartbeatIntervals.values()) {
+      clearInterval(interval);
+    }
+    this.heartbeatIntervals.clear();
   }
 
   kick() {
@@ -91,30 +113,44 @@ export class TrainingTelegramWorkerService
 
   async drainNow() {
     if (this.drainPromise) return this.drainPromise;
-    this.drainPromise = this.drainLoop().finally(() => {
-      this.drainPromise = null;
+    if (this.destroyed) return;
+    const drain = this.drainLoop().finally(() => {
+      if (this.drainPromise === drain) {
+        this.drainPromise = null;
+      }
     });
-    return this.drainPromise;
+    this.drainPromise = drain;
+    return drain;
   }
 
   private async drainLoop() {
+    if (this.destroyed) return;
     await this.recoverStaleJobs();
-    for (let index = 0; index < TELEGRAM_JOB_LIMIT_PER_DRAIN; index += 1) {
+    for (
+      let index = 0;
+      index < TELEGRAM_JOB_LIMIT_PER_DRAIN && !this.destroyed;
+      index += 1
+    ) {
       const job = await this.claimNextJob();
       if (!job) return;
       try {
-        await this.processJob(job);
-        await this.completeJob(job.id);
+        await this.withHeartbeat(job.id, () => this.processJob(job));
+        if (!(await this.refreshOwnership(job.id))) {
+          throw new LostTelegramJobOwnershipError();
+        }
+        await this.completeJob(job);
       } catch (error) {
+        if (error instanceof LostTelegramJobOwnershipError) continue;
         await this.failJob(job, error);
       }
     }
   }
 
   private async claimNextJob(): Promise<ClaimedTelegramJob | null> {
-    const now = new Date();
-    return this.prisma.$transaction(async (tx) => {
-      const candidate = await tx.trainingJob.findFirst({
+    if (this.destroyed) return null;
+    while (!this.destroyed) {
+      const now = new Date();
+      const candidate = await this.prisma.trainingJob.findFirst({
         where: {
           kind: { in: [...TELEGRAM_JOB_KINDS] },
           status: TrainingJobStatus.PENDING,
@@ -131,11 +167,31 @@ export class TrainingTelegramWorkerService
         },
       });
       if (!candidate) return null;
-      const claimed = await tx.trainingJob.updateMany({
+      if (candidate.attempts >= candidate.maxAttempts) {
+        await this.prisma.trainingJob.updateMany({
+          where: {
+            id: candidate.id,
+            status: TrainingJobStatus.PENDING,
+            attempts: candidate.attempts,
+          },
+          data: {
+            status: TrainingJobStatus.DEAD,
+            finishedAt: now,
+            lastErrorCode: 'TELEGRAM_ATTEMPTS_EXHAUSTED',
+            lastErrorMessage: 'Telegram job attempts are exhausted',
+            errorDetailsJson: { retryable: false },
+          },
+        });
+        continue;
+      }
+
+      const claimed = await this.prisma.trainingJob.updateMany({
         where: {
           id: candidate.id,
           status: TrainingJobStatus.PENDING,
           runAt: { lte: now },
+          attempts: candidate.attempts,
+          maxAttempts: candidate.maxAttempts,
         },
         data: {
           status: TrainingJobStatus.RUNNING,
@@ -143,20 +199,29 @@ export class TrainingTelegramWorkerService
           lockOwner: this.workerId,
           lockedAt: now,
           heartbeatAt: now,
+          finishedAt: null,
         },
       });
-      if (claimed.count !== 1) return null;
+      if (claimed.count !== 1) continue;
+      this.lostOwnership.delete(candidate.id);
       return { ...candidate, attempts: candidate.attempts + 1 };
-    });
+    }
+    return null;
   }
 
   private async processJob(job: ClaimedTelegramJob) {
     if (job.kind === TrainingJobKind.PROCESS_TELEGRAM_UPDATE) {
       const update = readUpdatePayload(job.payloadJson);
+      await this.refreshOwnershipOrThrow(job.id);
       await this.prisma.trainingProcessedUpdate.updateMany({
         where: {
           updateId: BigInt(update.updateId),
-          status: TrainingProcessedUpdateStatus.RECEIVED,
+          status: {
+            in: [
+              TrainingProcessedUpdateStatus.RECEIVED,
+              TrainingProcessedUpdateStatus.PROCESSING,
+            ],
+          },
         },
         data: { status: TrainingProcessedUpdateStatus.PROCESSING },
       });
@@ -166,11 +231,15 @@ export class TrainingTelegramWorkerService
 
     if (job.kind === TrainingJobKind.SEND_TIMER_WARNING) {
       const payload = readTimerPayload(job.payloadJson);
+      if (!(await this.preflightTimerWarning(job.id, payload.attemptId))) {
+        return;
+      }
       const plan = await this.dialog.buildTimerWarning(
         payload.attemptId,
         payload.warningSeconds,
       );
       if (plan?.operation === 'SEND_MESSAGE') {
+        await this.refreshOwnershipOrThrow(job.id);
         await this.transport.sendMessage({
           idempotencyKey: job.idempotencyKey,
           chatId: plan.chatId,
@@ -182,9 +251,23 @@ export class TrainingTelegramWorkerService
     }
 
     const payload = readDeliveryPayload(job.payloadJson);
+    if (payload.operation === TRAINING_TELEGRAM_OUTBOX_OPERATION) {
+      const plan = await this.dialog.buildOutboxEvent(payload);
+      if (plan?.operation === 'SEND_MESSAGE') {
+        await this.refreshOwnershipOrThrow(job.id);
+        await this.transport.sendMessage({
+          idempotencyKey: job.idempotencyKey,
+          chatId: plan.chatId,
+          text: plan.text,
+          replyMarkup: plan.replyMarkup,
+        });
+      }
+      return;
+    }
     if (payload.operation === 'ATTEMPT_RESULT') {
       const plan = await this.dialog.deliverAttemptResult(payload.attemptId);
       if (plan?.operation === 'SEND_MESSAGE') {
+        await this.refreshOwnershipOrThrow(job.id);
         await this.transport.sendMessage({
           idempotencyKey: job.idempotencyKey,
           chatId: plan.chatId,
@@ -195,6 +278,7 @@ export class TrainingTelegramWorkerService
       return;
     }
     if (payload.operation === 'ANSWER_CALLBACK') {
+      await this.refreshOwnershipOrThrow(job.id);
       await this.transport.answerCallbackQuery({
         idempotencyKey: job.idempotencyKey,
         callbackQueryId: payload.callbackQueryId,
@@ -208,6 +292,7 @@ export class TrainingTelegramWorkerService
     ) {
       return;
     }
+    await this.refreshOwnershipOrThrow(job.id);
     await this.transport.sendMessage({
       idempotencyKey: job.idempotencyKey,
       chatId: payload.chatId,
@@ -216,16 +301,12 @@ export class TrainingTelegramWorkerService
     });
   }
 
-  private async completeJob(jobId: string) {
+  private async completeJob(job: ClaimedTelegramJob) {
     const completedAt = new Date();
     await this.prisma.$transaction(async (tx) => {
-      const job = await tx.trainingJob.findUnique({
-        where: { id: jobId },
-        select: { kind: true, payloadJson: true },
-      });
       const completed = await tx.trainingJob.updateMany({
         where: {
-          id: jobId,
+          id: job.id,
           status: TrainingJobStatus.RUNNING,
           lockOwner: this.workerId,
         },
@@ -242,7 +323,7 @@ export class TrainingTelegramWorkerService
       });
       if (
         completed.count === 1 &&
-        job?.kind === TrainingJobKind.PROCESS_TELEGRAM_UPDATE
+        job.kind === TrainingJobKind.PROCESS_TELEGRAM_UPDATE
       ) {
         const update = readUpdatePayload(job.payloadJson);
         await tx.trainingProcessedUpdate.updateMany({
@@ -259,13 +340,27 @@ export class TrainingTelegramWorkerService
 
   private async failJob(job: ClaimedTelegramJob, error: unknown) {
     const failedAt = new Date();
-    const retry = job.attempts < job.maxAttempts;
-    const message = safeError(error);
-    const runAt = new Date(
-      failedAt.getTime() + Math.min(30_000, 250 * 2 ** job.attempts),
+    const transportError =
+      error instanceof TrainingTelegramTransportError ? error : null;
+    const retryable = transportError ? transportError.retryable : true;
+    const retry = retryable && job.attempts < job.maxAttempts;
+    const backoffMs = Math.min(
+      30_000,
+      250 * 2 ** Math.max(0, job.attempts - 1) +
+        Math.floor(Math.random() * 250),
     );
+    const retryDelayMs = Math.max(
+      backoffMs,
+      transportError?.retryAfterMs ?? 0,
+    );
+    const runAt = new Date(failedAt.getTime() + retryDelayMs);
+    const errorCode =
+      transportError?.code ??
+      (retry ? 'TELEGRAM_JOB_RETRY' : 'TELEGRAM_JOB_DEAD');
+    const message = safeError(error);
+
     await this.prisma.$transaction(async (tx) => {
-      await tx.trainingJob.updateMany({
+      const failed = await tx.trainingJob.updateMany({
         where: {
           id: job.id,
           status: TrainingJobStatus.RUNNING,
@@ -277,13 +372,20 @@ export class TrainingTelegramWorkerService
           lockOwner: null,
           lockedAt: null,
           heartbeatAt: null,
-          lastErrorCode: retry ? 'TELEGRAM_RETRY' : 'TELEGRAM_DEAD',
+          lastErrorCode: errorCode,
           lastErrorMessage: message,
-          errorDetailsJson: { retryable: retry },
+          errorDetailsJson: {
+            classification: errorCode,
+            retryable,
+            retryAfterMs: transportError?.retryAfterMs ?? null,
+          },
           finishedAt: retry ? null : failedAt,
         },
       });
-      if (job.kind === TrainingJobKind.PROCESS_TELEGRAM_UPDATE) {
+      if (
+        failed.count === 1 &&
+        job.kind === TrainingJobKind.PROCESS_TELEGRAM_UPDATE
+      ) {
         const update = readUpdatePayload(job.payloadJson);
         await tx.trainingProcessedUpdate.updateMany({
           where: { updateId: BigInt(update.updateId) },
@@ -292,7 +394,7 @@ export class TrainingTelegramWorkerService
               ? TrainingProcessedUpdateStatus.RECEIVED
               : TrainingProcessedUpdateStatus.FAILED,
             processedAt: retry ? null : failedAt,
-            errorCode: retry ? 'TELEGRAM_RETRY' : 'TELEGRAM_DEAD',
+            errorCode,
           },
         });
       }
@@ -300,8 +402,8 @@ export class TrainingTelegramWorkerService
   }
 
   private async recoverStaleJobs() {
-    const staleAt = new Date(Date.now() - TELEGRAM_JOB_LEASE_MS);
-    await this.prisma.trainingJob.updateMany({
+    const staleAt = new Date(Date.now() - this.config.workerLeaseMs);
+    const staleJobs = await this.prisma.trainingJob.findMany({
       where: {
         kind: { in: [...TELEGRAM_JOB_KINDS] },
         status: TrainingJobStatus.RUNNING,
@@ -310,15 +412,132 @@ export class TrainingTelegramWorkerService
           { heartbeatAt: null, lockedAt: { lt: staleAt } },
         ],
       },
-      data: {
-        status: TrainingJobStatus.PENDING,
-        lockOwner: null,
-        lockedAt: null,
-        heartbeatAt: null,
-        runAt: new Date(),
-        lastErrorCode: 'STALE_TELEGRAM_JOB',
-        lastErrorMessage: 'Recovered stale Telegram job lease',
+      select: {
+        id: true,
+        attempts: true,
+        maxAttempts: true,
+        heartbeatAt: true,
+        lockedAt: true,
       },
+      take: TELEGRAM_JOB_LIMIT_PER_DRAIN,
+    });
+    for (const job of staleJobs) {
+      const retry = job.attempts < job.maxAttempts;
+      await this.prisma.trainingJob.updateMany({
+        where: {
+          id: job.id,
+          status: TrainingJobStatus.RUNNING,
+          attempts: job.attempts,
+          heartbeatAt: job.heartbeatAt,
+          lockedAt: job.lockedAt,
+        },
+        data: {
+          status: retry ? TrainingJobStatus.PENDING : TrainingJobStatus.DEAD,
+          lockOwner: null,
+          lockedAt: null,
+          heartbeatAt: null,
+          runAt: new Date(),
+          finishedAt: retry ? null : new Date(),
+          lastErrorCode: retry
+            ? 'STALE_TELEGRAM_JOB'
+            : 'STALE_TELEGRAM_JOB_DEAD',
+          lastErrorMessage: retry
+            ? 'Recovered stale Telegram job lease'
+            : 'Stale Telegram job exhausted max attempts',
+          errorDetailsJson: { retryable: retry },
+        },
+      });
+    }
+  }
+
+  private async withHeartbeat<T>(
+    jobId: string,
+    operation: () => Promise<T>,
+  ) {
+    const interval = setInterval(() => {
+      void this.refreshOwnership(jobId).catch((error) => {
+        this.logger.warn(
+          `Telegram job ${jobId} heartbeat failed: ${safeError(error)}`,
+        );
+      });
+    }, this.config.workerHeartbeatMs);
+    interval.unref();
+    this.heartbeatIntervals.set(jobId, interval);
+    try {
+      return await operation();
+    } finally {
+      clearInterval(interval);
+      this.heartbeatIntervals.delete(jobId);
+    }
+  }
+
+  private async refreshOwnership(jobId: string) {
+    if (this.lostOwnership.has(jobId)) return false;
+    const owned = await this.prisma.trainingJob.updateMany({
+      where: {
+        id: jobId,
+        status: TrainingJobStatus.RUNNING,
+        lockOwner: this.workerId,
+      },
+      data: { heartbeatAt: new Date() },
+    });
+    if (owned.count !== 1) {
+      this.lostOwnership.add(jobId);
+      return false;
+    }
+    return true;
+  }
+
+  private async refreshOwnershipOrThrow(jobId: string) {
+    if (!(await this.refreshOwnership(jobId))) {
+      throw new LostTelegramJobOwnershipError();
+    }
+  }
+
+  private async preflightTimerWarning(jobId: string, attemptId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT 1 AS "locked" FROM (SELECT pg_advisory_xact_lock(hashtextextended(${`training-attempt-id:${attemptId}`}, 0))) AS "lock_state"`,
+      );
+      const job = await tx.trainingJob.findFirst({
+        where: {
+          id: jobId,
+          status: TrainingJobStatus.RUNNING,
+          lockOwner: this.workerId,
+          kind: TrainingJobKind.SEND_TIMER_WARNING,
+        },
+        select: { id: true },
+      });
+      if (!job) return false;
+      const attempt = await tx.trainingAttempt.findFirst({
+        where: {
+          id: attemptId,
+          status: { in: [...TRAINING_ACTIVE_ATTEMPT_STATUSES] },
+          user: {
+            status: UserStatus.ACTIVE,
+            deletedAt: null,
+            trainingTelegramAccount: {
+              is: { revokedAt: null },
+            },
+          },
+        },
+        select: { id: true },
+      });
+      if (!attempt) return false;
+      const gated = await tx.trainingJob.updateMany({
+        where: {
+          id: jobId,
+          status: TrainingJobStatus.RUNNING,
+          lockOwner: this.workerId,
+        },
+        data: {
+          heartbeatAt: new Date(),
+          errorDetailsJson: {
+            warningPreSendGate: true,
+          },
+        },
+      });
+      return gated.count === 1;
     });
   }
 
@@ -334,7 +553,47 @@ export class TrainingTelegramWorkerService
         ),
     );
   }
+
+  private async releaseOwnedJobsAfterShutdown() {
+    const jobs = await this.prisma.trainingJob.findMany({
+      where: {
+        kind: { in: [...TELEGRAM_JOB_KINDS] },
+        status: TrainingJobStatus.RUNNING,
+        lockOwner: this.workerId,
+      },
+      select: { id: true, attempts: true, maxAttempts: true },
+    });
+    for (const job of jobs) {
+      this.lostOwnership.add(job.id);
+      const retry = job.attempts < job.maxAttempts;
+      await this.prisma.trainingJob.updateMany({
+        where: {
+          id: job.id,
+          status: TrainingJobStatus.RUNNING,
+          lockOwner: this.workerId,
+          attempts: job.attempts,
+        },
+        data: {
+          status: retry ? TrainingJobStatus.PENDING : TrainingJobStatus.DEAD,
+          runAt: new Date(),
+          lockOwner: null,
+          lockedAt: null,
+          heartbeatAt: null,
+          finishedAt: retry ? null : new Date(),
+          lastErrorCode: retry
+            ? 'TELEGRAM_SHUTDOWN_RELEASE'
+            : 'TELEGRAM_SHUTDOWN_DEAD',
+          lastErrorMessage: retry
+            ? 'Telegram job released during worker shutdown'
+            : 'Telegram job exhausted attempts during worker shutdown',
+          errorDetailsJson: { retryable: retry },
+        },
+      });
+    }
+  }
 }
+
+class LostTelegramJobOwnershipError extends Error {}
 
 function readUpdatePayload(value: Prisma.JsonValue) {
   const payload = readObject(value);
@@ -364,6 +623,7 @@ function readTimerPayload(value: Prisma.JsonValue) {
 }
 
 type DeliveryPayload =
+  | TrainingTelegramOutboxEvent
   | {
       operation: 'ATTEMPT_RESULT';
       attemptId: string;
@@ -390,6 +650,8 @@ type DeliveryPayload =
 
 function readDeliveryPayload(value: Prisma.JsonValue): DeliveryPayload {
   const payload = readObject(value);
+  const outboxEvent = readTrainingTelegramOutboxEvent(payload);
+  if (outboxEvent) return outboxEvent;
   if (
     payload.operation === 'ATTEMPT_RESULT' &&
     typeof payload.attemptId === 'string'
@@ -425,6 +687,22 @@ function readObject(value: Prisma.JsonValue) {
 
 function safeError(error: unknown) {
   return (error instanceof Error ? error.message : String(error))
+    .replace(/https:\/\/api\.telegram\.org\/bot[^/\s]+/giu, '[TELEGRAM_API]')
+    .replace(/\/bot[^/\s]+/giu, '/bot[REDACTED]')
     .replace(/[\r\n]+/gu, ' ')
     .slice(0, 2_000);
+}
+
+async function waitForPromise(promise: Promise<void>, timeoutMs: number) {
+  let timeout: NodeJS.Timeout | null = null;
+  const timedOut = new Promise<false>((resolve) => {
+    timeout = setTimeout(() => resolve(false), timeoutMs);
+    timeout.unref();
+  });
+  const result = await Promise.race([
+    promise.then(() => true as const),
+    timedOut,
+  ]);
+  if (timeout) clearTimeout(timeout);
+  return result;
 }

@@ -36,6 +36,26 @@ export interface TrainingTelegramTransport {
   answerCallbackQuery(input: TrainingTelegramAnswerCallback): Promise<void>;
 }
 
+export type TrainingTelegramTransportErrorCode =
+  | 'RATE_LIMITED'
+  | 'SERVER_ERROR'
+  | 'NETWORK_ERROR'
+  | 'TIMEOUT'
+  | 'PERMANENT_CLIENT_ERROR'
+  | 'INVALID_RESPONSE'
+  | 'NOT_CONFIGURED';
+
+export class TrainingTelegramTransportError extends Error {
+  constructor(
+    readonly code: TrainingTelegramTransportErrorCode,
+    readonly retryable: boolean,
+    readonly retryAfterMs?: number,
+  ) {
+    super(`Telegram transport failed with ${code}`);
+    this.name = 'TrainingTelegramTransportError';
+  }
+}
+
 @Injectable()
 export class FakeTrainingTelegramTransport
   implements TrainingTelegramTransport
@@ -89,28 +109,88 @@ export class FetchTrainingTelegramTransport
 
   private async call(method: string, body: Record<string, unknown>) {
     if (!this.botToken) {
-      throw new Error('Telegram Bot API transport is not configured');
+      throw new TrainingTelegramTransportError('NOT_CONFIGURED', false);
     }
-    const response = await fetch(
-      `${this.apiBaseUrl}/bot${encodeURIComponent(this.botToken)}/${method}`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(5_000),
-      },
-    );
-    const payload = (await response.json().catch(() => null)) as {
+    const controller = new AbortController();
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 5_000);
+    timeout.unref();
+
+    let response: Response;
+    try {
+      response = await fetch(
+        `${this.apiBaseUrl}/bot${encodeURIComponent(this.botToken)}/${method}`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        },
+      );
+    } catch (error) {
+      if (error instanceof TrainingTelegramTransportError) throw error;
+      throw new TrainingTelegramTransportError(
+        timedOut || isAbortError(error) ? 'TIMEOUT' : 'NETWORK_ERROR',
+        true,
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    type TelegramResponsePayload = {
       ok?: boolean;
-      description?: string;
-    } | null;
-    if (!response.ok || payload?.ok !== true) {
-      const description =
-        typeof payload?.description === 'string'
-          ? payload.description.slice(0, 500)
-          : `HTTP ${response.status}`;
-      throw new Error(`Telegram Bot API ${method} failed: ${description}`);
+      error_code?: number;
+      parameters?: { retry_after?: number };
+    };
+    let payload: TelegramResponsePayload | null = null;
+    let invalidJson = false;
+    try {
+      payload = (await response.json()) as TelegramResponsePayload;
+    } catch {
+      invalidJson = true;
     }
+
+    const errorCode =
+      typeof payload?.error_code === 'number'
+        ? payload.error_code
+        : response.status;
+    if (response.status === 429 || errorCode === 429) {
+      const retryAfterSeconds = payload?.parameters?.retry_after;
+      const retryAfterMs =
+        typeof retryAfterSeconds === 'number' &&
+        Number.isFinite(retryAfterSeconds) &&
+        retryAfterSeconds > 0
+          ? Math.ceil(retryAfterSeconds * 1_000)
+          : undefined;
+      throw new TrainingTelegramTransportError(
+        'RATE_LIMITED',
+        true,
+        retryAfterMs,
+      );
+    }
+    if (response.status >= 500 && response.status <= 599) {
+      throw new TrainingTelegramTransportError('SERVER_ERROR', true);
+    }
+    if (response.status >= 400 && response.status <= 499) {
+      throw new TrainingTelegramTransportError(
+        'PERMANENT_CLIENT_ERROR',
+        false,
+      );
+    }
+    if (invalidJson || !payload || typeof payload.ok !== 'boolean') {
+      throw new TrainingTelegramTransportError('INVALID_RESPONSE', true);
+    }
+    if (response.ok && payload.ok === true) return;
+    if (errorCode >= 400 && errorCode <= 499) {
+      throw new TrainingTelegramTransportError(
+        'PERMANENT_CLIENT_ERROR',
+        false,
+      );
+    }
+    throw new TrainingTelegramTransportError('INVALID_RESPONSE', true);
   }
 }
 
@@ -121,4 +201,11 @@ export function createTrainingTelegramTransport(
   return config.usesFakeTransport
     ? fakeTransport
     : new FetchTrainingTelegramTransport(config.botToken);
+}
+
+function isAbortError(error: unknown) {
+  return (
+    error instanceof Error &&
+    (error.name === 'AbortError' || error.name === 'TimeoutError')
+  );
 }

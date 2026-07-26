@@ -234,6 +234,15 @@ class FakeTrainingAttemptPrisma {
         }
         return { count };
       },
+      findFirstOrThrow: async ({ where }) => {
+        const question = [...this.attemptQuestions.values()].find((item) =>
+          matchesAttemptQuestionWhere(item, where),
+        );
+        return required(question, 'attempt question');
+      },
+    };
+    this.trainingTelegramAccount = {
+      findUnique: async () => null,
     };
     this.trainingAnswer = {
       create: async ({ data }) => {

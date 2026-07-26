@@ -302,59 +302,80 @@ export class UsersService {
       };
     }
 
-    const updatedUser = await this.prisma.user.update({
-      where: { id: user.id },
-      data,
-      include: userInclude,
-    });
+    const updatedUser = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id: user.id },
+        data,
+        include: userInclude,
+      });
 
-    await this.logUserAction({
-      action: 'user.update',
-      actor,
-      request,
-      entityId: updatedUser.id,
-      metadata: {
-        before: this.toAuditSnapshot(user),
-        after: this.toAuditSnapshot(updatedUser),
-        changes,
-      },
-    });
-
-    if (roleChanged) {
-      await this.logUserAction({
-        action: 'user.role_change',
-        actor,
-        request,
-        entityId: updatedUser.id,
-        metadata: {
-          before: {
-            roleId: user.roleId,
-            roleName: user.role.name,
-          },
-          after: {
-            roleId: updatedUser.roleId,
-            roleName: updatedUser.role.name,
+      await this.logUserAction(
+        {
+          action: 'user.update',
+          actor,
+          request,
+          entityId: updated.id,
+          metadata: {
+            before: this.toAuditSnapshot(user),
+            after: this.toAuditSnapshot(updated),
+            changes,
           },
         },
-      });
-    }
+        tx,
+      );
 
-    if (statusChanged) {
-      await this.logUserAction({
-        action: 'user.status_change',
-        actor,
-        request,
-        entityId: updatedUser.id,
-        metadata: {
-          before: {
-            status: user.status,
+      if (roleChanged) {
+        await this.logUserAction(
+          {
+            action: 'user.role_change',
+            actor,
+            request,
+            entityId: updated.id,
+            metadata: {
+              before: {
+                roleId: user.roleId,
+                roleName: user.role.name,
+              },
+              after: {
+                roleId: updated.roleId,
+                roleName: updated.role.name,
+              },
+            },
           },
-          after: {
-            status: updatedUser.status,
+          tx,
+        );
+      }
+
+      if (statusChanged) {
+        await this.logUserAction(
+          {
+            action: 'user.status_change',
+            actor,
+            request,
+            entityId: updated.id,
+            metadata: {
+              before: {
+                status: user.status,
+              },
+              after: {
+                status: updated.status,
+              },
+            },
           },
-        },
-      });
-    }
+          tx,
+        );
+        if (updated.status !== UserStatus.ACTIVE) {
+          await this.revokeTelegramAccountWithinTransaction(
+            tx,
+            updated.id,
+            actor.id,
+            `user_status_${updated.status.toLowerCase()}`,
+          );
+        }
+      }
+
+      return updated;
+    });
 
     return {
       user: this.serializeUser(updatedUser),
@@ -515,29 +536,41 @@ export class UsersService {
       };
     }
 
-    const deactivatedUser = await this.prisma.user.update({
-      where: { id: user.id },
-      data: {
-        deletedAt: null,
-        status: UserStatus.DEACTIVATED,
-        refreshTokenHash: null,
-        refreshTokenExpiresAt: null,
-        sessions: {
-          deleteMany: {},
+    const deactivatedUser = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id: user.id },
+        data: {
+          deletedAt: null,
+          status: UserStatus.DEACTIVATED,
+          refreshTokenHash: null,
+          refreshTokenExpiresAt: null,
+          sessions: {
+            deleteMany: {},
+          },
         },
-      },
-      include: userInclude,
-    });
+        include: userInclude,
+      });
 
-    await this.logUserAction({
-      action: 'user.deactivate',
-      actor,
-      request,
-      entityId: deactivatedUser.id,
-      metadata: {
-        before: this.toAuditSnapshot(user),
-        after: this.toAuditSnapshot(deactivatedUser),
-      },
+      await this.logUserAction(
+        {
+          action: 'user.deactivate',
+          actor,
+          request,
+          entityId: updated.id,
+          metadata: {
+            before: this.toAuditSnapshot(user),
+            after: this.toAuditSnapshot(updated),
+          },
+        },
+        tx,
+      );
+      await this.revokeTelegramAccountWithinTransaction(
+        tx,
+        updated.id,
+        actor.id,
+        'user_deactivated',
+      );
+      return updated;
     });
 
     return {
@@ -834,14 +867,17 @@ export class UsersService {
     return { from, to };
   }
 
-  private async logUserAction(params: {
-    action: string;
-    actor: AuthenticatedUser;
-    request: RequestWithAudit;
-    entityId: string;
-    metadata: Prisma.InputJsonObject;
-  }) {
-    await this.prisma.auditLog.create({
+  private async logUserAction(
+    params: {
+      action: string;
+      actor: AuthenticatedUser;
+      request: RequestWithAudit;
+      entityId: string;
+      metadata: Prisma.InputJsonObject;
+    },
+    client: Pick<Prisma.TransactionClient, 'auditLog'> = this.prisma,
+  ) {
+    await client.auditLog.create({
       data: {
         actorUserId: params.actor.id,
         action: params.action,
@@ -852,6 +888,44 @@ export class UsersService {
         userAgent: this.getHeader(params.request, 'user-agent'),
       },
     });
+  }
+
+  private async revokeTelegramAccountWithinTransaction(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    actorUserId: string,
+    reason: string,
+  ) {
+    const account = await tx.trainingTelegramAccount.findUnique({
+      where: { userId },
+      select: { id: true, revokedAt: true },
+    });
+    if (!account || account.revokedAt) return false;
+
+    const revokedAt = new Date();
+    const revoked = await tx.trainingTelegramAccount.updateMany({
+      where: { id: account.id, revokedAt: null },
+      data: { revokedAt },
+    });
+    if (revoked.count !== 1) return false;
+    await tx.trainingLinkToken.updateMany({
+      where: { userId, usedAt: null, revokedAt: null },
+      data: { revokedAt },
+    });
+    await tx.auditLog.create({
+      data: {
+        actorUserId,
+        action: 'training.telegram.auto_revoke',
+        entityType: 'training_telegram_account',
+        entityId: account.id,
+        metadata: {
+          userId,
+          accountId: account.id,
+          reason,
+        },
+      },
+    });
+    return true;
   }
 
   private getRequestIp(request: RequestWithAudit) {

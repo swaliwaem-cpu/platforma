@@ -41,7 +41,17 @@ export class TrainingTelegramWebhookService {
 
   async acceptUpdate(rawUpdate: unknown) {
     const receivedAt = new Date();
-    const ingress = sanitizeTelegramUpdate(rawUpdate, receivedAt);
+    let ingress: ReturnType<typeof sanitizeTelegramUpdate>;
+    try {
+      ingress = sanitizeTelegramUpdate(rawUpdate, receivedAt);
+    } catch {
+      return {
+        ok: true as const,
+        duplicate: false,
+        queued: false,
+        rejected: true,
+      };
+    }
 
     return this.prisma.$transaction(async (tx) => {
       const inserted = await tx.trainingProcessedUpdate.createMany({

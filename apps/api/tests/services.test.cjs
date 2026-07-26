@@ -4309,7 +4309,11 @@ test('UsersService.deactivate archives access by status and clears refresh sessi
         calls.auditLog = args;
       },
     },
+    trainingTelegramAccount: {
+      findUnique: async () => null,
+    },
   };
+  prisma.$transaction = async (callback) => callback(prisma);
   const service = new UsersService(prisma);
 
   const result = await service.deactivate('33333333-3333-4333-8333-333333333333', actor, request);

@@ -4942,3 +4942,95 @@ Dependencies:
   подавляет повторы, но production transport остаётся at-least-once на узком
   crash window после принятого Telegram ответа и до фиксации job success.
 - Frontend намеренно не добавлялся. Этап 7 не начинался.
+
+## 2026-07-26 - Training Telegram independent review fixes
+
+Задача:
+
+- Исправить только findings независимого review этапа 6: transactional
+  Telegram outbox, production fail-fast, active-user revoke, scoped
+  `file_unique_id`, worker lease/heartbeat/shutdown, audit, transport/parser,
+  timer race, документацию и PostgreSQL coverage.
+- Не начинать этап 7 и не добавлять Telegram voice download, MinIO audio,
+  ffmpeg, OpenAI, frontend, SDK, Redis/BullMQ или production webhook
+  registration.
+
+Изменения:
+
+- Устранён crash gap между domain transition и Telegram delivery. Link,
+  confirmStart, finishAnswer, next question, final/`REQUIRES_REVIEW` и
+  technical failure теперь создают deterministic `SEND_TELEGRAM_MESSAGE`
+  domain-event jobs в той же PostgreSQL transaction. Worker строит сообщение
+  по устойчивым `user/account/chat/attempt/question/event` IDs после commit;
+  Telegram API внутри domain transaction не вызывается.
+- Добавлен явный `TELEGRAM_TRANSPORT_MODE=fake|real`. Fake разрешён только в
+  test/local development. Production с включённым training требует real mode,
+  token, нормализованный username, webhook secret, HTTPS webhook URL и HTTPS
+  public app URL; secret values не включаются в validation errors.
+- Каждый Telegram update проверяет `User.status=ACTIVE` и
+  `deletedAt=null`. Block/deactivate атомарно отзывают Telegram account и
+  pending link tokens вместе с `AuditLog`; входящий update дополнительно
+  fail-closed отзывает устаревшую активную связь deleted/inactive user.
+  Повторная активация revoked account не восстанавливает.
+- Link, manual unlink и automatic revoke получили безопасные audit actions без
+  raw token, Telegram payload и secrets. Повторный revoke является no-op.
+- Добавлена additive migration
+  `20260726180000_fix_training_telegram_review_findings`: unique index
+  `training_voice_segments(answer_id, file_unique_id)`. Один Telegram file
+  дедуплицируется внутри текущего answer, но разрешён в другом вопросе или
+  попытке; существующие unique update ID и `chatId + messageId` сохранены.
+- Telegram worker получил уникальный owner ID, CAS claim/heartbeat,
+  configurable lease/heartbeat/drain timeout, stale recovery, terminal `DEAD`
+  на исчерпанной попытке, ограничение `attempts <= maxAttempts`, проверку
+  ownership перед фиксацией результата и bounded graceful shutdown/restart.
+- Native fetch transport различает 429 с `retry_after`, retryable
+  5xx/network/timeout/invalid JSON и permanent 4xx. Retry использует bounded
+  exponential backoff; permanent failure сразу становится `DEAD`; сообщения
+  об ошибках не содержат token URL.
+- Defensive parser ACK/no-op обрабатывает callback без message, inline
+  callback, sender_chat, service/edited/channel/unknown update, malformed
+  voice и отсутствующие from/chat/message ID без domain transition и 500.
+- Timer warning перед send проходит atomic gate под тем же advisory attempt
+  lock: worker повторно проверяет ownership/status/active attempt и active
+  user/account, а terminal transition закрывает pending warnings. DB
+  transaction завершается до Telegram send.
+- Checklist больше не называет этап 6 одновременно выполненным и не начатым:
+  точный следующий этап — `07_audio_worker.md`. Telegram-спецификация
+  унифицирована: `REQUIRES_REVIEW` показывает «Результат отправлен на
+  проверку» без preliminary score и passed/failed.
+- PostgreSQL suite расширен concurrent token consume/relink-revoke,
+  block/deactivate/delete revoke и rollback, audit, scoped file uniqueness,
+  outbox rollback/crash/restart/final/timeout, worker claim/heartbeat/stale/
+  DEAD/lost ownership/shutdown/restart и coordinated terminal-warning races.
+
+Проверки:
+
+- Telegram unit/contract tests — 12/12 passed.
+- `pnpm --filter @platforma/api test` — 328/328 unit и 53/53 PostgreSQL
+  integration tests passed.
+- Все 35 migrations применены `prisma migrate deploy` к уникальной временной
+  локальной PostgreSQL database; runner удалил database после тестов.
+- `pnpm build` — passed; сохраняется существующее предупреждение Vite о client
+  chunk `753.03 kB`, больше 500 kB.
+- `pnpm test` — 754/754 passed: API 328 unit + 53 PostgreSQL, Web 286,
+  Feed import 64, WordPress import 23.
+- `git diff --check` — passed.
+
+Ручная проверка:
+
+- До production rollout проверить реальные placeholder-free Telegram
+  credentials, HTTPS URLs и отдельным разрешённым smoke — Bot API delivery.
+  Webhook registration и реальные сетевые вызовы в этой задаче не
+  выполнялись.
+- Реальные Telegram voice-файлы не проверять до отдельного этапа 7.
+
+Спорные места:
+
+- Telegram Bot API не поддерживает общую транзакцию с PostgreSQL и клиентский
+  idempotency key, поэтому delivery остаётся at-least-once. Сохраняется
+  микроскопическое окно после успешного warning pre-send gate и перед
+  фактическим send, а также после принятого Telegram ответа и до отметки job
+  `SUCCEEDED`; domain transitions и outbox jobs при этом идемпотентны.
+- Stage-6 worker остаётся внутри API-процесса и использует существующий
+  `TrainingJob`. Отдельный audio worker/container является границей этапа 7 и
+  не реализован.

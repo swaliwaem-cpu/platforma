@@ -16,6 +16,10 @@ import {
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { TrainingTelegramConfig } from './training-telegram.config';
+import {
+  enqueueTrainingTelegramOutboxEvent,
+  TRAINING_TELEGRAM_OUTBOX_OPERATION,
+} from './training-telegram-outbox';
 
 const LINK_TOKEN_BYTES = 32;
 const SERIALIZABLE_RETRY_LIMIT = 3;
@@ -222,6 +226,48 @@ export class TrainingTelegramLinkService {
           },
           data: { revokedAt: linkedAt },
         });
+        await tx.auditLog.create({
+          data: {
+            actorUserId: token.userId,
+            action: 'training.telegram.link',
+            entityType: 'training_telegram_account',
+            entityId: account.id,
+            metadata: {
+              userId: token.userId,
+              accountId: account.id,
+              projectId: token.projectId,
+            },
+          },
+        });
+        const welcomeKey = `telegram:link:${token.id}:welcome`;
+        await enqueueTrainingTelegramOutboxEvent(tx, {
+          idempotencyKey: welcomeKey,
+          runAt: linkedAt,
+          event: {
+            operation: TRAINING_TELEGRAM_OUTBOX_OPERATION,
+            eventType: 'ACCOUNT_LINKED',
+            eventId: welcomeKey,
+            userId: token.userId,
+            accountId: account.id,
+            chatId: account.chatId.toString(),
+          },
+        });
+        if (token.projectId) {
+          const projectKey = `telegram:link:${token.id}:project:${token.projectId}`;
+          await enqueueTrainingTelegramOutboxEvent(tx, {
+            idempotencyKey: projectKey,
+            runAt: new Date(linkedAt.getTime() + 1),
+            event: {
+              operation: TRAINING_TELEGRAM_OUTBOX_OPERATION,
+              eventType: 'PROJECT_CONFIRMATION',
+              eventId: projectKey,
+              userId: token.userId,
+              accountId: account.id,
+              chatId: account.chatId.toString(),
+              projectId: token.projectId,
+            },
+          });
+        }
 
         return {
           account: serializeTelegramAccount(account),
@@ -246,15 +292,28 @@ export class TrainingTelegramLinkService {
         where: { userId },
       });
       if (!account || account.revokedAt) {
-        throw new NotFoundException('Active Telegram account was not found');
+        return;
       }
-      await tx.trainingTelegramAccount.update({
-        where: { id: account.id },
+      const revoked = await tx.trainingTelegramAccount.updateMany({
+        where: { id: account.id, revokedAt: null },
         data: { revokedAt },
       });
+      if (revoked.count !== 1) return;
       await tx.trainingLinkToken.updateMany({
         where: { userId, usedAt: null, revokedAt: null },
         data: { revokedAt },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorUserId: userId,
+          action: 'training.telegram.unlink',
+          entityType: 'training_telegram_account',
+          entityId: account.id,
+          metadata: {
+            userId,
+            accountId: account.id,
+          },
+        },
       });
     });
     return { connected: false, account: null };
@@ -268,9 +327,56 @@ export class TrainingTelegramLinkService {
     });
   }
 
-  async findActiveAccountByTelegramUserId(telegramUserId: bigint) {
-    return this.prisma.trainingTelegramAccount.findFirst({
-      where: { telegramUserId, revokedAt: null },
+  async findAccountByTelegramUserId(telegramUserId: bigint) {
+    return this.prisma.trainingTelegramAccount.findUnique({
+      where: { telegramUserId },
+      include: {
+        user: {
+          select: {
+            status: true,
+            deletedAt: true,
+          },
+        },
+      },
+    });
+  }
+
+  async revokeInactiveAccount(accountId: string, userId: string) {
+    const revokedAt = new Date();
+    return this.prisma.$transaction(async (tx) => {
+      const revoked = await tx.trainingTelegramAccount.updateMany({
+        where: {
+          id: accountId,
+          userId,
+          revokedAt: null,
+          user: {
+            OR: [
+              { status: { not: UserStatus.ACTIVE } },
+              { deletedAt: { not: null } },
+            ],
+          },
+        },
+        data: { revokedAt },
+      });
+      if (revoked.count !== 1) return false;
+      await tx.trainingLinkToken.updateMany({
+        where: { userId, usedAt: null, revokedAt: null },
+        data: { revokedAt },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorUserId: null,
+          action: 'training.telegram.auto_revoke',
+          entityType: 'training_telegram_account',
+          entityId: accountId,
+          metadata: {
+            userId,
+            accountId,
+            reason: 'inactive_user_update',
+          },
+        },
+      });
+      return true;
     });
   }
 
