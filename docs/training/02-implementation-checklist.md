@@ -24,7 +24,7 @@
 | 2 | `02_prisma_schema.md` | Выполнен |
 | 3 | `03_content_backend.md` | Выполнен |
 | 4 | `04_content_ui_documents.md` | Выполнен |
-| 5 | `05_attempt_engine_fake.md` | Не начат |
+| 5 | `05_attempt_engine_fake.md` | Выполнен |
 | 6 | `06_telegram.md` | Не начат |
 | 7 | `07_audio_worker.md` | Не начат |
 | 8 | `08_openai_scoring_review.md` | Не начат |
@@ -158,16 +158,40 @@ DOCX/PPTX/XLSX. Извлечённый и вручную скорректиро�
 
 ## Этап 5. Attempt engine с fake providers
 
-- [ ] Реализовать transactional start с немедленным списанием.
-- [ ] Реализовать limit/cooldown/window/pass/retake rules.
-- [ ] Случайно выбирать 3 разных follow-up из 10 на backend.
-- [ ] Реализовать state machine 1 main + 3 follow-up.
-- [ ] Поддержать multi-segment answers и idempotent finish.
-- [ ] Реализовать общий timer, warnings, grace и timeout skip = 0.
-- [ ] Добавить fake transcription/evaluation providers.
-- [ ] Детерминированно считать 55 + 15 + 15 + 15, penalties и review.
-- [ ] Проверить concurrency, retries и fourth-attempt blocking.
-- [ ] Запустить исчерпывающие unit/integration tests.
+- [x] Реализовать transactional start с немедленным списанием.
+- [x] Реализовать limit/cooldown/window/pass/retake rules.
+- [x] Случайно выбирать 3 разных follow-up из 10 на backend.
+- [x] Реализовать state machine 1 main + 3 follow-up.
+- [x] Поддержать multi-segment answers и idempotent finish.
+- [x] Реализовать общий timer, warnings, grace и timeout skip = 0.
+- [x] Добавить fake transcription/evaluation providers.
+- [x] Детерминированно считать 55 + 15 + 15 + 15, penalties и review.
+- [x] Проверить concurrency, retries и fourth-attempt blocking.
+- [x] Запустить исчерпывающие unit/integration tests.
+
+Attempt start использует короткую `Serializable` PostgreSQL-транзакцию и
+transaction-level advisory lock для пары user/project; существующий partial
+unique index остаётся дополнительным барьером активной попытки. Fake providers
+не выполняют внешних вызовов и запускаются вне транзакции. Finish-команда
+адресует конкретный `attemptQuestionId`, поэтому повторный callback после
+перехода к следующему вопросу не создаёт повторную evaluation.
+
+Проверки этапа 5:
+
+- targeted attempt unit/fake integration tests — 20/20 passed;
+- отдельный PostgreSQL integration на чистой БД со всеми 33 migrations —
+  1/1 passed: 12 concurrent starts создали одну consumed attempt, полный flow
+  1 + 3 дал 100, четвёртая consumed attempt заблокирована;
+- `pnpm --filter @platforma/api test` — 298/298 passed;
+- `pnpm build` — passed; сохраняется существующее предупреждение Vite о
+  client chunk `753.03 kB`, больше 500 kB;
+- `pnpm test` — 671/671 passed: API 298, Web 286, Feed import 64,
+  WordPress import 23;
+- `git diff --check` — passed.
+
+Prisma schema/migration, dependencies, controllers, Telegram/OpenAI/storage
+audio pipeline и frontend на этапе 5 не изменялись. Изолированная PostgreSQL БД
+удалена после integration test.
 
 ## Этап 6. Telegram linking и webhook
 
@@ -238,11 +262,12 @@ DOCX/PPTX/XLSX. Извлечённый и вручную скорректиро�
 
 ## Следующий этап
 
-Точный следующий этап: `docs/training/prompts/04_content_ui_documents.md`.
+Точный следующий этап: `docs/training/prompts/06_telegram.md`.
 
 Он не начат и не должен выполняться автоматически. Перед ним нужно:
 
 1. получить отдельный запрос пользователя;
 2. повторно проверить branch/status и сохранить чужие изменения;
-3. прочитать prompt этапа 4 и отдельно согласовать parser dependencies;
-4. не считать backend этапа 3 готовым frontend-редактором документов.
+3. прочитать prompt этапа 6 и Telegram/security части спецификации;
+4. сохранить attempt engine provider-agnostic и не добавлять real
+   transcription/evaluation или audio worker из этапов 7–8.

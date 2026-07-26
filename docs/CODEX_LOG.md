@@ -4693,3 +4693,79 @@ Dependencies:
   `NEEDS_MANUAL_TEXT`.
 - Telegram, audio, transcription, AI evaluation и attempt engine не
   реализовывались; этап 5 не начинался.
+
+## 2026-07-25 - Training attempt engine with fake providers
+
+Задача:
+
+- Выполнить только этап 5 training-модуля: domain engine попытки,
+  deterministic fake transcription/evaluation, backend scoring, timer/grace,
+  concurrency и idempotency без Telegram/OpenAI/storage audio pipeline.
+
+Изменения:
+
+- Добавлен `TrainingAttemptEngineService` с явным подтверждением старта,
+  немедленным `isConsumed=true`, pin активной published version и snapshot
+  attempt settings.
+- Transactional start сериализуется `Serializable`-транзакцией и
+  `pg_advisory_xact_lock` по user/project; существующие unique/partial indexes
+  остаются дополнительными database constraints. Одновременный duplicate
+  start не создаёт вторую попытку.
+- Engine проверяет OPEN/status, availability/deadline, отсутствие активной
+  попытки, consumed attempt limit, cooldown и `allowRetakeAfterPass`.
+  Technical failure можно idempotently refund с AuditLog; refunded row не
+  считается consumed, а `attemptNumber` остаётся монотонным.
+- Backend через crypto random выбирает три разных follow-up из десяти без
+  adaptive/AI gap logic и сохраняет четыре `TrainingAttemptQuestion` в порядке
+  MAIN + 3 FOLLOW_UP.
+- Реализован последовательный state machine: несколько fake voice segments
+  формируют один answer; finish-команда адресует конкретный
+  `attemptQuestionId`, атомарно блокирует ответ и не создаёт duplicate
+  evaluation при повторном callback.
+- При старте создаются idempotent warning/expire jobs из snapshot-настроек.
+  Общий таймер не останавливается на обработке; после expiry новые вопросы не
+  открываются, grace принимает максимум одну часть, начатую до expiry, а
+  оставшиеся вопросы получают `SKIPPED_TIMEOUT` и 0.
+- Добавлены provider interfaces и deterministic fake providers без `fetch` и
+  внешних API. Fake transcription объединяет сегменты по `segmentIndex`;
+  fake evaluation выдаёт structured criterion/fact result.
+- Backend валидирует provider IDs, ограничивает points, считает максимум
+  `55 + 15 + 15 + 15 = 100`, применяет один штраф `−5` на distinct incorrect
+  fact и не штрафует unsupported claim. Unsupported переводит attempt в
+  `REQUIRES_REVIEW`, оставляет `finalScore=null` до review и не вытесняет
+  лучший review-resolved `finalScore`.
+- Финализация, finish, timeout, segment update и refund идемпотентны.
+  Добавлены unit tests, полный fake-store integration flow и отдельный
+  PostgreSQL integration test.
+- `docs/training/02-implementation-checklist.md` отмечает этап 5 выполненным и
+  указывает этап 6 как следующий.
+
+Проверки:
+
+- Targeted attempt tests — 20/20 passed.
+- PostgreSQL integration на чистой временной БД со всеми 33 migrations —
+  1/1 passed: 12 concurrent start-команд создали ровно одну consumed attempt,
+  полный 1 + 3 flow завершился с 100, четвёртая consumed attempt заблокирована.
+- `pnpm --filter @platforma/api test` — 298/298 passed.
+- `pnpm build` — passed; сохраняется существующее предупреждение Vite о client
+  chunk `753.03 kB`, больше 500 kB.
+- `pnpm test` — 671/671 passed: API 298, Web 286, Feed import 64, WordPress
+  import 23.
+- `git diff --check` — passed.
+- Временная PostgreSQL database удалена после integration test.
+
+Ручная проверка:
+
+- Не требуется для этапа 5: HTTP/Telegram/frontend interfaces намеренно не
+  добавлялись. На этапе 6 проверить mapping Telegram callbacks на
+  `attemptId + attemptQuestionId`, voice-only validation и timer notifications.
+
+Спорные места:
+
+- `TrainingReviewStatus.NOT_REQUIRED` считается review-resolved и участвует в
+  best result; `PENDING` unsupported attempt не участвует до admin review.
+- Telegram account linking остаётся boundary этапа 6: domain engine получает
+  уже подтверждённую start-команду и не вызывает Telegram API.
+- Timer jobs на этом этапе только сохраняются domain engine; их доставка через
+  Telegram и отдельный worker относятся к следующим этапам.
+- Prisma schema/migrations и dependencies не изменялись; этап 6 не начинался.
