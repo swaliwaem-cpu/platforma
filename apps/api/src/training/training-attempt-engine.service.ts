@@ -100,6 +100,11 @@ export type AppendFakeTrainingVoiceSegmentCommand = {
   recordingStartedAt: Date;
   receivedAt?: Date;
   durationSeconds?: number;
+  telegramMessageId?: bigint;
+  telegramChatId?: bigint;
+  telegramFileId?: string;
+  fileUniqueId?: string;
+  sizeBytes?: bigint;
 };
 
 export type FinishTrainingAnswerCommand = {
@@ -412,23 +417,66 @@ export class TrainingAttemptEngineService
     ) {
       throw new BadRequestException('Fake voice duration is invalid');
     }
+    if (
+      command.telegramMessageId !== undefined &&
+      command.telegramMessageId <= 0n
+    ) {
+      throw new BadRequestException('Telegram voice message ID must be positive');
+    }
+    if (command.telegramChatId !== undefined && command.telegramChatId <= 0n) {
+      throw new BadRequestException('Telegram voice chat ID must be positive');
+    }
+    if (command.sizeBytes !== undefined && command.sizeBytes < 0n) {
+      throw new BadRequestException('Telegram voice file size is invalid');
+    }
+    const telegramFileId =
+      command.telegramFileId?.trim() ?? `fake:${command.updateId.toString()}`;
+    const fileUniqueId = command.fileUniqueId?.trim() ?? fakeTranscript;
+    if (
+      telegramFileId.length === 0 ||
+      telegramFileId.length > 256 ||
+      fileUniqueId.length === 0 ||
+      fileUniqueId.length > 256
+    ) {
+      throw new BadRequestException('Telegram voice file identity is invalid');
+    }
+    const telegramMessageId = command.telegramMessageId ?? command.updateId;
+    const telegramChatId = command.telegramChatId ?? 1n;
 
     const receivedAt = command.receivedAt ?? this.clock.now();
     const result = await this.runSerializable(async (tx) => {
       await this.acquireAttemptLock(tx, command.attemptId);
 
-      const duplicate = await tx.trainingVoiceSegment.findUnique({
-        where: { telegramUpdateId: command.updateId },
-        include: {
-          answer: {
-            include: {
-              attemptQuestion: {
-                select: { id: true, attemptId: true },
+      const duplicate =
+        (await tx.trainingVoiceSegment.findUnique({
+          where: { telegramUpdateId: command.updateId },
+          include: {
+            answer: {
+              include: {
+                attemptQuestion: {
+                  select: { id: true, attemptId: true },
+                },
               },
             },
           },
-        },
-      });
+        })) ??
+        (await tx.trainingVoiceSegment.findUnique({
+          where: {
+            telegramChatId_telegramMessageId: {
+              telegramChatId,
+              telegramMessageId,
+            },
+          },
+          include: {
+            answer: {
+              include: {
+                attemptQuestion: {
+                  select: { id: true, attemptId: true },
+                },
+              },
+            },
+          },
+        }));
       if (duplicate) {
         if (duplicate.answer.attemptQuestion.attemptId !== command.attemptId) {
           throw new ConflictException('Fake voice update belongs to another attempt');
@@ -527,11 +575,12 @@ export class TrainingAttemptEngineService
           answerId: answer.id,
           segmentIndex,
           telegramUpdateId: command.updateId,
-          telegramMessageId: command.updateId,
-          telegramChatId: 1n,
-          telegramFileId: `fake:${command.updateId.toString()}`,
-          fileUniqueId: fakeTranscript,
+          telegramMessageId,
+          telegramChatId,
+          telegramFileId,
+          fileUniqueId,
           mimeType: 'audio/ogg',
+          sizeBytes: command.sizeBytes ?? null,
           durationSeconds: command.durationSeconds ?? null,
           receivedAt,
         },
@@ -1884,6 +1933,22 @@ export class TrainingAttemptEngineService
           Math.floor((completedAt.getTime() - attempt.startedAt.getTime()) / 1_000),
         ),
       },
+    });
+    await tx.trainingJob.createMany({
+      data: [
+        {
+          kind: TrainingJobKind.SEND_TELEGRAM_MESSAGE,
+          status: TrainingJobStatus.PENDING,
+          payloadJson: {
+            operation: 'ATTEMPT_RESULT',
+            attemptId: attempt.id,
+          },
+          idempotencyKey: `telegram:attempt-result:${attempt.id}`,
+          runAt: new Date(completedAt.getTime() + 100),
+          maxAttempts: 5,
+        },
+      ],
+      skipDuplicates: true,
     });
     await this.closeAttemptJobsWithinTransaction(tx, attempt.id, completedAt);
     return true;

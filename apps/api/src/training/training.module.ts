@@ -19,16 +19,46 @@ import { TrainingContentService } from './training-content.service';
 import { TrainingController } from './training.controller';
 import { TrainingDocumentWorkerService } from './training-document-worker.service';
 import { TrainingDocumentsService } from './training-documents.service';
+import {
+  TrainingTelegramController,
+  TrainingTelegramWebhookController,
+} from './telegram/training-telegram.controller';
+import { TrainingTelegramConfig } from './telegram/training-telegram.config';
+import { TrainingTelegramDialogService } from './telegram/training-telegram-dialog.service';
+import { TrainingTelegramLinkService } from './telegram/training-telegram-link.service';
+import {
+  createTrainingTelegramTransport,
+  FakeTrainingTelegramTransport,
+  TRAINING_TELEGRAM_TRANSPORT,
+} from './telegram/training-telegram.transport';
+import { TrainingTelegramWebhookService } from './telegram/training-telegram-webhook.service';
+import { TrainingTelegramWorkerService } from './telegram/training-telegram-worker.service';
 
 @Module({
   imports: [AuthModule, FilesModule],
-  controllers: [TrainingController, TrainingAdminController],
+  controllers: [
+    TrainingController,
+    TrainingAdminController,
+    TrainingTelegramController,
+    TrainingTelegramWebhookController,
+  ],
   providers: [
     TrainingConfigService,
     TrainingContentService,
     TrainingDocumentsService,
     TrainingDocumentWorkerService,
     TrainingAttemptEngineService,
+    TrainingTelegramConfig,
+    TrainingTelegramLinkService,
+    TrainingTelegramDialogService,
+    TrainingTelegramWebhookService,
+    TrainingTelegramWorkerService,
+    FakeTrainingTelegramTransport,
+    {
+      provide: TRAINING_TELEGRAM_TRANSPORT,
+      inject: [TrainingTelegramConfig, FakeTrainingTelegramTransport],
+      useFactory: createTrainingTelegramTransport,
+    },
     {
       provide: TRAINING_ATTEMPT_CLOCK,
       useClass: SystemTrainingAttemptClock,
@@ -46,6 +76,11 @@ import { TrainingDocumentsService } from './training-documents.service';
       useClass: DeterministicFakeTrainingEvaluationProvider,
     },
   ],
-  exports: [TrainingAttemptEngineService],
+  exports: [
+    TrainingAttemptEngineService,
+    TrainingTelegramLinkService,
+    TrainingTelegramWorkerService,
+    FakeTrainingTelegramTransport,
+  ],
 })
 export class TrainingModule {}

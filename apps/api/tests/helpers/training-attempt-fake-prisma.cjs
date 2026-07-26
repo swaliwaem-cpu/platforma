@@ -284,8 +284,14 @@ class FakeTrainingAttemptPrisma {
     };
     this.trainingVoiceSegment = {
       findUnique: async ({ where }) => {
+        const messageIdentity = where.telegramChatId_telegramMessageId;
         const segment = [...this.segments.values()].find(
-          (item) => item.telegramUpdateId === where.telegramUpdateId,
+          (item) =>
+            (where.telegramUpdateId !== undefined &&
+              item.telegramUpdateId === where.telegramUpdateId) ||
+            (messageIdentity !== undefined &&
+              item.telegramChatId === messageIdentity.telegramChatId &&
+              item.telegramMessageId === messageIdentity.telegramMessageId),
         );
         if (!segment) return null;
         const answer = required(this.answers.get(segment.answerId), 'answer');

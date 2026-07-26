@@ -77,7 +77,9 @@ async function main() {
     ]);
     await runChild('node', [
       '--test',
+      '--test-concurrency=1',
       'tests/training-attempt-db.integration.cjs',
+      'tests/training-telegram-db.integration.cjs',
     ]);
   } catch (error) {
     exitCode = 1;

@@ -9,9 +9,14 @@ const migrationPath = path.join(
   rootDir,
   'apps/api/prisma/migrations/20260725210000_add_training_module/migration.sql',
 );
+const telegramMigrationPath = path.join(
+  rootDir,
+  'apps/api/prisma/migrations/20260726150000_add_training_telegram_update_job/migration.sql',
+);
 
 const schema = fs.readFileSync(schemaPath, 'utf8');
 const migration = fs.readFileSync(migrationPath, 'utf8');
+const telegramMigration = fs.readFileSync(telegramMigrationPath, 'utf8');
 
 test('training schema defines the approved state enums', () => {
   for (const enumName of [
@@ -39,7 +44,11 @@ test('training schema defines the approved state enums', () => {
   );
   assert.match(
     schema,
-    /enum TrainingJobKind \{[\s\S]*TELEGRAM_DOWNLOAD_SEGMENT[\s\S]*ASSEMBLE_ANSWER_AUDIO[\s\S]*TRANSCRIBE_ANSWER[\s\S]*ANALYZE_ACOUSTICS[\s\S]*EVALUATE_ANSWER[\s\S]*FINALIZE_ATTEMPT[\s\S]*SEND_TELEGRAM_MESSAGE[\s\S]*SEND_TIMER_WARNING[\s\S]*EXPIRE_ATTEMPT[\s\S]*EXTRACT_SOURCE_DOCUMENT/,
+    /enum TrainingJobKind \{[\s\S]*PROCESS_TELEGRAM_UPDATE[\s\S]*TELEGRAM_DOWNLOAD_SEGMENT[\s\S]*ASSEMBLE_ANSWER_AUDIO[\s\S]*TRANSCRIBE_ANSWER[\s\S]*ANALYZE_ACOUSTICS[\s\S]*EVALUATE_ANSWER[\s\S]*FINALIZE_ATTEMPT[\s\S]*SEND_TELEGRAM_MESSAGE[\s\S]*SEND_TIMER_WARNING[\s\S]*EXPIRE_ATTEMPT[\s\S]*EXTRACT_SOURCE_DOCUMENT/,
+  );
+  assert.match(
+    telegramMigration,
+    /ALTER TYPE "training_job_kind" ADD VALUE 'process_telegram_update'/,
   );
 });
 

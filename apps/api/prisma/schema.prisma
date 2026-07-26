@@ -241,6 +241,7 @@ enum TrainingJobStatus {
 }
 
 enum TrainingJobKind {
+  PROCESS_TELEGRAM_UPDATE   @map("process_telegram_update")
   TELEGRAM_DOWNLOAD_SEGMENT @map("telegram_download_segment")
   ASSEMBLE_ANSWER_AUDIO     @map("assemble_answer_audio")
   TRANSCRIBE_ANSWER         @map("transcribe_answer")

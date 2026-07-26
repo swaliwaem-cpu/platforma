@@ -25,7 +25,7 @@
 | 3 | `03_content_backend.md` | Выполнен |
 | 4 | `04_content_ui_documents.md` | Выполнен |
 | 5 | `05_attempt_engine_fake.md` | Выполнен; findings независимого review исправлены |
-| 6 | `06_telegram.md` | Не начат |
+| 6 | `06_telegram.md` | Выполнен |
 | 7 | `07_audio_worker.md` | Не начат |
 | 8 | `08_openai_scoring_review.md` | Не начат |
 | 9 | `09_results_ui_rating.md` | Не начат |
@@ -241,16 +241,55 @@ audio pipeline и frontend на этапе 5 не изменялись. Изол
 
 ## Этап 6. Telegram linking и webhook
 
-- [ ] Реализовать opaque one-time link token; хранить только hash.
-- [ ] Обеспечить связь user ↔ Telegram account один-к-одному.
-- [ ] Проверять webhook secret и private chat.
-- [ ] Обеспечить idempotency updates/messages/callbacks.
-- [ ] Принимать только `message.voice` как ответ.
-- [ ] Реализовать multi-part voice UX и кнопку finish.
-- [ ] Запрашивать подтверждение до списания attempt.
-- [ ] Быстро ACK webhook; тяжёлую работу отправлять в jobs.
-- [ ] Использовать fetch provider + fake fixtures без SDK по умолчанию.
-- [ ] Добавить contract/integration tests.
+- [x] Реализовать opaque one-time link token; хранить только hash.
+- [x] Обеспечить связь user ↔ Telegram account один-к-одному.
+- [x] Проверять webhook secret и private chat.
+- [x] Обеспечить idempotency updates/messages/callbacks.
+- [x] Принимать только `message.voice` как ответ.
+- [x] Реализовать multi-part voice UX и кнопку finish.
+- [x] Запрашивать подтверждение до списания attempt.
+- [x] Быстро ACK webhook; тяжёлую работу отправлять в jobs.
+- [x] Использовать fetch provider + fake fixtures без SDK по умолчанию.
+- [x] Добавить contract/integration tests.
+
+Одноразовый token генерируется из 32 криптографически случайных bytes,
+передаётся только при создании deep link и не попадает в job payload:
+`TrainingLinkToken` хранит SHA-256 hash, TTL и признаки atomic consume/revoke.
+Привязка выполняется в короткой `Serializable` транзакции, а уникальные
+`userId`, `telegramUserId` и `chatId` сохраняют one-to-one инвариант. Конфликт
+существующей связи возвращается пользователю и не перепривязывает аккаунты.
+
+Webhook без JWT проверяет `X-Telegram-Bot-Api-Secret-Token`, принимает только
+private chat, сохраняет `update_id` и быстро создаёт
+`PROCESS_TELEGRAM_UPDATE`. Обработка и исходящие сообщения выполняются
+PostgreSQL worker-ом. Idempotency дополнительно закреплена ключами Telegram
+`chat_id + message_id`, `callback_query.id`, callback с точным
+`attemptQuestionId` и persisted delivery jobs.
+
+Диалог показывает только глобально OPEN проекты с PUBLISHED active version,
+требует отдельный callback подтверждения старта, принимает несколько
+`message.voice` частей и запрещает остальные Telegram message types. Finish,
+timeout/grace, timer warnings и финал используют существующий attempt engine и
+persisted jobs. `REQUIRES_REVIEW` не раскрывает предварительный балл или
+passed/failed status.
+
+Проверки этапа 6:
+
+- Telegram unit/contract tests — 9/9 passed;
+- `pnpm --filter @platforma/api test` — 325/325 unit и 33/33 PostgreSQL
+  integration tests passed;
+- `pnpm build` — passed; сохраняется существующее предупреждение Vite о client
+  chunk `753.03 kB`, больше 500 kB;
+- `pnpm test` — 731/731 passed: API 325 unit + 33 PostgreSQL, Web 286,
+  Feed import 64, WordPress import 23;
+- `git diff --check` — passed;
+- все временные PostgreSQL databases удалены runner-ом.
+
+Добавлена одна additive migration, расширяющая существующий
+`training_job_kind` значением `process_telegram_update`. Новые dependencies,
+Telegram SDK и frontend не добавлялись. Реальные Telegram-файлы не
+скачивались, audio storage/MinIO, ffmpeg и OpenAI не подключались. Этап 7 не
+начинался.
 
 ## Этап 7. Private audio и отдельный worker
 

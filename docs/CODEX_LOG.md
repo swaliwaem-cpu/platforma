@@ -4848,3 +4848,97 @@ Dependencies:
 - Terminal cleanup переводит неприменимые jobs в существующий terminal
   `SUCCEEDED` с `terminalNoop`, поскольку `TrainingJobStatus` не содержит
   `CANCELLED`; это сохраняет текущую schema и исключает повторное выполнение.
+
+## 2026-07-26 - Training Telegram linking and exam dialog
+
+Задача:
+
+- Выполнить только этап 6 training-модуля: Telegram account linking, deep
+  links, webhook shell и диалог экзамена поверх готового fake attempt engine
+  без скачивания файлов, audio storage, ffmpeg, OpenAI и frontend.
+
+Изменения:
+
+- Добавлен opaque одноразовый link token из 32 random bytes. API возвращает
+  token только при создании deep link, а БД и Telegram update job сохраняют
+  только SHA-256 hash. Реализованы TTL, atomic consume, reuse/expiry/revoke
+  checks и отзыв предыдущих активных tokens.
+- Привязка существующего активного `User` к Telegram выполняется в короткой
+  `Serializable` транзакции. Existing unique constraints по `userId`,
+  `telegramUserId` и `chatId` сохраняют one-to-one связь; конфликт не
+  перепривязывает аккаунты молча.
+- Добавлены employee endpoints проектов, собственных попыток и Telegram
+  account/link management с JWT/RBAC и ownership-bound result serializer без
+  transcript, errors, unsupported claims, audio/storage keys и admin notes.
+- Добавлен `POST /training/telegram/webhook` без JWT с constant-time проверкой
+  `X-Telegram-Bot-Api-Secret-Token`. Private group/channel updates завершаются
+  без job, а допустимый update после короткой DB transaction получает быстрый
+  HTTP 200; диалог выполняется асинхронно.
+- Существующий `TrainingJob` расширен новым kind
+  `PROCESS_TELEGRAM_UPDATE`. Telegram worker атомарно claim-ит persisted jobs,
+  восстанавливает stale lease, повторяет retryable failures и обрабатывает
+  updates, timer warnings и delivery.
+- Idempotency закреплена unique `update_id`, ключом
+  `chat_id + message_id`, hash `callback_query.id`, compact callback с точным
+  `attemptQuestionId`, engine locks и уникальными delivery jobs. Повторный
+  start/finish/voice/webhook retry не создаёт attempt, answer, segment,
+  evaluation или повторное fake-delivery действие.
+- Диалог поддерживает `/start`, подключение аккаунта, список глобально OPEN
+  проектов с PUBLISHED active version, явное подтверждение и списание attempt,
+  правила, собственные результаты и открытие Platforma.
+- Ответом признаётся только `message.voice`. Text, `message.audio`, document,
+  video, video note, photo и остальные типы отклоняются до создания
+  answer/segment. Несколько voice-сегментов формируют один answer; после каждой
+  части доступна inline-кнопка `Завершить ответ`.
+- Finish callback адресует конкретный `attemptQuestionId`: новые сегменты после
+  finish запрещены, а callback старого вопроса не завершает следующий.
+  Timeout/grace и persisted warning jobs используют уже проверенную логику
+  attempt engine.
+- После finish отправляется отдельное сообщение `Ответ принят` без
+  промежуточного балла. Обычный финал содержит только общий балл, passed/failed,
+  остаток попыток и кнопку Platforma. `REQUIRES_REVIEW` показывает только
+  `Результат отправлен на проверку`, остаток попыток и кнопку, без
+  предварительного балла или passed/failed.
+- Добавлены provider abstraction и server-side native `fetch` transport.
+  Пустой `TELEGRAM_BOT_TOKEN` выбирает deterministic fake transport; Telegram
+  SDK и новые dependencies не добавлялись.
+- Добавлена additive migration
+  `20260726150000_add_training_telegram_update_job`, которая расширяет
+  `training_job_kind` значением `process_telegram_update`.
+- Добавлены unit/contract tests и реальный isolated PostgreSQL suite для token
+  lifecycle, link conflicts, private chat/secret boundaries, update/callback
+  deduplication, voice-only UX, multi-segment/finish/start races,
+  timeout/grace/warnings и безопасного финального результата.
+- `docs/training/02-implementation-checklist.md` отмечает этап 6 выполненным.
+
+Проверки:
+
+- Telegram unit/contract tests — 9/9 passed.
+- `pnpm --filter @platforma/api test` — 325/325 unit и 33/33 PostgreSQL
+  integration tests passed; временная database удалена.
+- `pnpm build` — passed; сохраняется существующее предупреждение Vite о client
+  chunk `753.03 kB`, больше 500 kB.
+- `pnpm test` — 731/731 passed: API 325 unit + 33 PostgreSQL, Web 286,
+  Feed import 64, WordPress import 23.
+- `git diff --check` — passed.
+
+Ручная проверка:
+
+- Реальный Telegram-бот для этапа 6 не требуется. Локальный smoke выполняется
+  с пустым `TELEGRAM_BOT_TOKEN`, fake transport, локальным webhook secret и
+  JSON fixtures; persisted integration runner поднимает уникальную временную
+  PostgreSQL database и удаляет её после проверки.
+- Перед production подключением вручную проверить реальные bot username/token,
+  HTTPS webhook URL, secret header и регистрацию webhook в Bot API. Реальную
+  загрузку voice-файлов не проверять до этапа 7.
+
+Спорные места:
+
+- Worker этапа 6 работает внутри API-процесса и использует существующую
+  PostgreSQL queue. Отдельный worker/container, Telegram file download, MinIO
+  audio, ffmpeg и OpenAI остаются границей следующих этапов.
+- Real Bot API delivery не имеет передаваемого клиентом idempotency key:
+  database actions и jobs идемпотентны, fake transport детерминированно
+  подавляет повторы, но production transport остаётся at-least-once на узком
+  crash window после принятого Telegram ответа и до фиксации job success.
+- Frontend намеренно не добавлялся. Этап 7 не начинался.

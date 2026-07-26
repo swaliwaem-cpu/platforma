@@ -45,6 +45,7 @@ const expectedAttemptStatuses = [
 ];
 
 const expectedJobKinds = [
+  'PROCESS_TELEGRAM_UPDATE',
   'TELEGRAM_DOWNLOAD_SEGMENT',
   'ASSEMBLE_ANSWER_AUDIO',
   'TRANSCRIBE_ANSWER',
