@@ -542,7 +542,6 @@ export class S3StorageService implements OnModuleInit {
   private async assertAnonymousPutDenied(bucket: string) {
     const key = `training-audio/privacy-probe/${randomUUID()}`;
     const body = new Uint8Array(Buffer.from('private-audio-write-probe', 'utf8'));
-    let cleanupRequired = false;
     try {
       const response = await fetch(
         this.buildObjectUrl(bucket, key),
@@ -552,21 +551,34 @@ export class S3StorageService implements OnModuleInit {
           redirect: 'error',
         },
       ).catch(() => null);
-      cleanupRequired = Boolean(response?.ok);
       this.assertAnonymousProbeDenied(
         response,
         'anonymous object PUT',
       );
     } finally {
-      if (cleanupRequired) {
-        await this.cleanupPrivacySentinel(bucket, key);
-      }
+      await this.cleanupPrivacySentinel(bucket, key);
     }
+  }
+
+  private async deletePrivacySentinel(bucket: string, key: string) {
+    const response = await this.signedFetch({
+      method: 'DELETE',
+      bucket,
+      key,
+    });
+    if (response.ok || response.status === 404) {
+      return;
+    }
+    const details = await response.text().catch(() => '');
+    if (containsNoSuchKeyError(details)) {
+      return;
+    }
+    throw new Error('Sentinel delete failed');
   }
 
   private async cleanupPrivacySentinel(bucket: string, key: string) {
     try {
-      await this.deleteObject(key, bucket);
+      await this.deletePrivacySentinel(bucket, key);
       if ((await this.headObject(key, bucket)).exists) {
         throw new Error('Sentinel object still exists after delete');
       }
@@ -634,6 +646,25 @@ function normalizeSha256(value: string | null) {
   return normalized && /^[0-9a-f]{64}$/u.test(normalized)
     ? normalized
     : null;
+}
+
+function containsNoSuchKeyError(value: string) {
+  if (
+    /<(?:[A-Za-z_][\w.-]*:)?Code\b[^>]*>\s*NoSuchKey\s*<\/(?:[A-Za-z_][\w.-]*:)?Code\s*>/iu.test(
+      value,
+    )
+  ) {
+    return true;
+  }
+  try {
+    const parsed = JSON.parse(value) as {
+      Code?: unknown;
+      code?: unknown;
+    };
+    return parsed.Code === 'NoSuchKey' || parsed.code === 'NoSuchKey';
+  } catch {
+    return false;
+  }
 }
 
 const PROTECTED_PUBLIC_S3_ACTIONS = [

@@ -306,6 +306,105 @@ test('training audio bucket anonymous PUT is a mandatory fail-closed gate with s
   }
 });
 
+test('training audio bucket cleans the exact anonymous PUT sentinel after a client timeout', async () => {
+  await withProductionStorageEnvironment(async () => {
+    const originalFetch = global.fetch;
+    const storageFetch = createS3PrivacyFetch({
+      PUT: 'stored-timeout',
+    });
+    global.fetch = storageFetch;
+    try {
+      await assert.rejects(
+        () => new S3StorageService().onModuleInit(),
+        /anonymous object PUT was inconclusive/,
+      );
+      const anonymousPut = storageFetch.calls.find(
+        (call) => !call.signed && call.operation === 'PUT',
+      );
+      assert.ok(anonymousPut);
+      const signedCleanup = storageFetch.calls.find(
+        (call) =>
+          call.signed &&
+          call.operation === 'DELETE' &&
+          call.pathname === anonymousPut.pathname,
+      );
+      assert.ok(signedCleanup);
+      assert.match(
+        signedCleanup.pathname,
+        /^\/audio-private-bucket\/training-audio\/privacy-probe\//,
+      );
+      assert.deepEqual(storageFetch.getStoredProbeKeys(), []);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+});
+
+test('training audio bucket accepts missing sentinel cleanup without changing the anonymous PUT verdict', async (t) => {
+  for (const fixture of [
+    {
+      name: 'denied PUT with signed DELETE 404 remains private',
+      anonymous: { PUT: 'denied' },
+      missingDeleteResponse: '404',
+      succeeds: true,
+      cleanupStatus: 404,
+      cleanupCode: null,
+    },
+    {
+      name: 'public PUT response with signed DELETE NoSuchKey remains unsafe',
+      anonymous: { PUT: 'public' },
+      missingDeleteResponse: 'NoSuchKey',
+      succeeds: false,
+      cleanupStatus: 400,
+      cleanupCode: 'NoSuchKey',
+    },
+  ]) {
+    await t.test(fixture.name, async () => {
+      await withProductionStorageEnvironment(async () => {
+        const originalFetch = global.fetch;
+        const storageFetch = createS3PrivacyFetch(
+          fixture.anonymous,
+          null,
+          null,
+          {
+            storeAnonymousPut: false,
+            missingDeleteResponse: fixture.missingDeleteResponse,
+          },
+        );
+        global.fetch = storageFetch;
+        try {
+          const operation = () => new S3StorageService().onModuleInit();
+          if (fixture.succeeds) {
+            await operation();
+          } else {
+            await assert.rejects(
+              operation,
+              /permits anonymous object PUT/,
+            );
+          }
+          const anonymousPut = storageFetch.calls.find(
+            (call) => !call.signed && call.operation === 'PUT',
+          );
+          assert.ok(anonymousPut);
+          assert.deepEqual(
+            storageFetch
+              .getSignedPrivacyDeleteResults()
+              .find((result) => result.pathname === anonymousPut.pathname),
+            {
+              pathname: anonymousPut.pathname,
+              status: fixture.cleanupStatus,
+              code: fixture.cleanupCode,
+            },
+          );
+          assert.deepEqual(storageFetch.getStoredProbeKeys(), []);
+        } finally {
+          global.fetch = originalFetch;
+        }
+      });
+    });
+  }
+});
+
 test('training audio bucket anonymous PUT cleanup errors are logged and fail startup', async () => {
   await withProductionStorageEnvironment(async () => {
     const originalFetch = global.fetch;
@@ -1424,6 +1523,7 @@ function createS3PrivacyFetch(
 ) {
   const storedObjects = new Map();
   const calls = [];
+  const signedPrivacyDeleteResults = [];
   let signedPrivacyDeletes = 0;
   const storageFetch = async (urlValue, init = {}) => {
     const url = new URL(String(urlValue));
@@ -1434,16 +1534,30 @@ function createS3PrivacyFetch(
       method === 'GET' && url.searchParams.has('list-type')
         ? 'LIST'
         : method;
-    calls.push({ signed, operation, headers });
+    calls.push({ signed, operation, headers, pathname: url.pathname });
     if (!signed) {
       const mode =
         typeof anonymousMode === 'string'
           ? anonymousMode
           : (anonymousMode[operation] ?? 'denied');
+      if (mode === 'stored-timeout' && method === 'PUT') {
+        storedObjects.set(
+          url.pathname,
+          Buffer.from(init.body ?? ''),
+        );
+        throw new DOMException(
+          'anonymous probe timed out',
+          'TimeoutError',
+        );
+      }
       if (mode === 'network') {
         throw new TypeError('anonymous probe unavailable');
       }
-      if (mode === 'public' && method === 'PUT') {
+      if (
+        mode === 'public' &&
+        method === 'PUT' &&
+        options.storeAnonymousPut !== false
+      ) {
         storedObjects.set(
           url.pathname,
           Buffer.from(init.body ?? ''),
@@ -1510,9 +1624,38 @@ function createS3PrivacyFetch(
       if (
         options.failSignedDeleteNumber === signedPrivacyDeletes
       ) {
+        signedPrivacyDeleteResults.push({
+          pathname: url.pathname,
+          status: 500,
+          code: null,
+        });
         return new Response('delete failed', { status: 500 });
       }
-      storedObjects.delete(url.pathname);
+      const existed = storedObjects.delete(url.pathname);
+      if (!existed && options.missingDeleteResponse === '404') {
+        signedPrivacyDeleteResults.push({
+          pathname: url.pathname,
+          status: 404,
+          code: null,
+        });
+        return new Response(null, { status: 404 });
+      }
+      if (!existed && options.missingDeleteResponse === 'NoSuchKey') {
+        signedPrivacyDeleteResults.push({
+          pathname: url.pathname,
+          status: 400,
+          code: 'NoSuchKey',
+        });
+        return new Response(
+          '<Error><Code>NoSuchKey</Code></Error>',
+          { status: 400 },
+        );
+      }
+      signedPrivacyDeleteResults.push({
+        pathname: url.pathname,
+        status: 204,
+        code: null,
+      });
       return new Response(null, { status: 204 });
     }
     return new Response(null, {
@@ -1524,6 +1667,8 @@ function createS3PrivacyFetch(
     [...storedObjects.keys()].filter((key) =>
       key.includes('/training-audio/privacy-probe/'),
     );
+  storageFetch.getSignedPrivacyDeleteResults = () =>
+    signedPrivacyDeleteResults;
   return storageFetch;
 }
 

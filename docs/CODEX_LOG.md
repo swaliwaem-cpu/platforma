@@ -5410,3 +5410,57 @@ Dependencies:
   fail-closed режим.
 - По этим двум finding незакрытых BLOCKER/HIGH/MEDIUM перед этапом 8 нет.
   Этап 8 не начат.
+
+## 2026-07-27 - Anonymous PUT privacy sentinel cleanup
+
+Задача:
+
+- Исправить только cleanup sentinel в anonymous PUT privacy probe этапа 7.
+- Не начинать этап 8 и не менять остальной аудиоконвейер.
+
+Изменения:
+
+- После каждой попытки anonymous PUT signed DELETE теперь безусловно
+  выполняется в `finally` для того же `TRAINING_AUDIO_BUCKET` и exact sentinel
+  key, включая timeout, network error, неоднозначный status и malformed
+  response.
+- Успешный DELETE, `404` и provider response `NoSuchKey` считаются успешным
+  cleanup; после них существующий signed HEAD подтверждает отсутствие объекта.
+  Остальная ошибка сохраняет production startup failed и логируется только
+  безопасным сообщением без credentials, signed headers и endpoint.
+- Исходный privacy verdict не изменён: `2xx` остаётся unsafe, `401/403` —
+  ожидаемым запретом, неоднозначный production result — fail closed.
+- Добавлены regressions для server-side записи с потерянным timeout response,
+  exact bucket/key cleanup, отсутствия sentinel, `404`/`NoSuchKey` cleanup и
+  независимости исходного verdict от результата cleanup.
+
+Изменённые файлы:
+
+- `apps/api/src/files/s3-storage.service.ts`.
+- `apps/api/tests/training-audio.test.cjs`.
+- `docs/CODEX_LOG.md`.
+
+Проверки:
+
+- Targeted `training-audio.test.cjs` — `69/69` passed.
+- `pnpm --filter @platforma/api test` — `400/400` unit и `71/71`
+  PostgreSQL/HTTP integration passed; временная database удалена.
+- `pnpm build` — passed; сохраняется существующее Vite warning о client chunk
+  `753.03 kB`.
+- `pnpm test` — passed: API `400 + 71`, Web `286`, Feed import `64`,
+  WordPress import `23`.
+- `pnpm --filter @platforma/api test:training:audio:docker` — passed: real
+  PostgreSQL/MinIO, privacy probes, signed sentinel cleanup, crash recovery,
+  ffmpeg и process-group timeouts; containers, volumes и network удалены.
+- `git diff --check` — passed.
+
+Ручная проверка:
+
+- Production S3 и credentials не использовались. Перед deploy остаётся
+  provider-specific staging privacy probe; локальный real MinIO Docker gate
+  пройден.
+
+Спорные места:
+
+- Нет. Cleanup не меняет privacy policy и не превращает unsafe/ambiguous PUT в
+  успешную проверку. Этап 8 и остальной аудиоконвейер не изменялись.
