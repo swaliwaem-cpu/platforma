@@ -51,6 +51,7 @@ import {
   TRAINING_EVALUATION_PROMPT_VERSION,
   TRAINING_EVALUATION_SCHEMA_VERSION,
 } from './openai/training-openai-evaluation.provider';
+import { buildSafeTrainingVocabulary } from './openai/training-openai-vocabulary';
 import {
   clampTrainingAttemptScore,
   scoreTrainingEvaluation,
@@ -68,6 +69,7 @@ import {
   TRAINING_TOTAL_MAX_SCORE,
 } from './training.domain';
 import { trainingAttemptRepositoryInclude } from './training.repository.types';
+import { parseTrainingReviewIdempotencyKey } from './training-review-idempotency';
 import { enqueueAttemptTelegramOutboxEvent } from './telegram/training-telegram-outbox';
 
 const TRAINING_TERMINAL_ATTEMPT_STATUSES = [
@@ -136,6 +138,7 @@ export type RefundTechnicalTrainingAttemptCommand = {
 export type ReviewTrainingAttemptCommand = {
   attemptId: string;
   reviewerId: string;
+  idempotencyKey: string;
   decision: 'APPROVED' | 'OVERRIDDEN';
   adminScore?: Prisma.Decimal | number | string;
   comment: string;
@@ -1110,7 +1113,13 @@ export class TrainingAttemptEngineService
   }
 
   async reviewAttempt(command: ReviewTrainingAttemptCommand) {
-    const comment = command.comment.trim();
+    const idempotencyKey = parseTrainingReviewIdempotencyKey(
+      command.idempotencyKey,
+    );
+    const comment = command.comment
+      .normalize('NFC')
+      .replace(/\r\n?/gu, '\n')
+      .trim();
     if (!comment || comment.length > 2_000) {
       throw new BadRequestException('Training review comment is required');
     }
@@ -1126,9 +1135,48 @@ export class TrainingAttemptEngineService
     ) {
       throw new BadRequestException('Overridden review score is required');
     }
+    const suppliedUnsupportedDecisions =
+      parseUnsupportedClaimDecisionPayload(
+        command.unsupportedClaimsDecisions,
+      );
+    const canonicalAdminScore =
+      command.decision === 'OVERRIDDEN'
+        ? clampTrainingAttemptScore(command.adminScore!).toFixed(2)
+        : null;
+    const requestPayloadHash = hashProviderInput({
+      decision: command.decision,
+      adminScore: canonicalAdminScore,
+      comment,
+      unsupportedClaimsDecisions: [
+        ...suppliedUnsupportedDecisions,
+      ].sort((left, right) =>
+        left.componentKey.localeCompare(right.componentKey, 'en'),
+      ),
+    });
 
     await this.runSerializable(async (tx) => {
       await this.acquireAttemptLock(tx, command.attemptId);
+      const existingReview =
+        await tx.trainingResultReview.findFirst({
+          where: {
+            attemptId: command.attemptId,
+            reviewerId: command.reviewerId,
+            idempotencyKey,
+          },
+          select: {
+            requestPayloadHash: true,
+          },
+        });
+      if (existingReview) {
+        if (
+          existingReview.requestPayloadHash !== requestPayloadHash
+        ) {
+          throw new ConflictException(
+            'Idempotency-Key was already used with a different review payload',
+          );
+        }
+        return;
+      }
       const attempt = await tx.trainingAttempt.findUnique({
         where: { id: command.attemptId },
         include: {
@@ -1173,7 +1221,7 @@ export class TrainingAttemptEngineService
           question.answer?.activeEvaluation?.scoreComponents ?? [],
       );
       const unsupportedDecisions = parseUnsupportedClaimDecisions(
-        command.unsupportedClaimsDecisions,
+        suppliedUnsupportedDecisions,
         unsupportedComponents.map((component) => component.componentKey),
       );
       const incorrectUnsupportedCount = unsupportedDecisions.filter(
@@ -1186,7 +1234,7 @@ export class TrainingAttemptEngineService
       );
       const adminScore =
         command.decision === 'OVERRIDDEN'
-          ? clampTrainingAttemptScore(command.adminScore!)
+          ? clampTrainingAttemptScore(canonicalAdminScore!)
           : null;
       const finalScore = adminScore ?? serverScore;
       const settings = this.readSettingsSnapshot(attempt.settingsSnapshotJson);
@@ -1200,6 +1248,8 @@ export class TrainingAttemptEngineService
         data: {
           attemptId: attempt.id,
           reviewerId: command.reviewerId,
+          idempotencyKey,
+          requestPayloadHash,
           reviewNumber: (attempt.reviews[0]?.reviewNumber ?? 0) + 1,
           previousFinalScore: attempt.finalScore,
           adminScore,
@@ -1248,7 +1298,7 @@ export class TrainingAttemptEngineService
       });
     });
 
-    return this.getAttempt(command.attemptId);
+    return this.getReviewDetails(command.attemptId);
   }
 
   async reprocessTranscription(command: ReprocessTrainingAnswerCommand) {
@@ -1428,7 +1478,7 @@ export class TrainingAttemptEngineService
         status: true,
         startedAt: true,
         completedAt: true,
-        aiSuggestedScore: true,
+        aiScore: true,
         serverScore: true,
         adminScore: true,
         finalScore: true,
@@ -2264,6 +2314,7 @@ export class TrainingAttemptEngineService
             evaluation,
             score: scoreTrainingEvaluation({
               questionMaxScore: evaluationInput.questionMaxScore,
+              transcript: evaluationInput.transcript,
               criteria: evaluationInput.criteria,
               facts: evaluationInput.facts,
               evaluation,
@@ -2458,7 +2509,30 @@ export class TrainingAttemptEngineService
             },
             attempt: {
               include: {
-                projectVersion: true,
+                projectVersion: {
+                  include: {
+                    project: {
+                      include: {
+                        realEstateObject: {
+                          include: {
+                            developer: true,
+                            primaryLocation: true,
+                            locations: {
+                              include: {
+                                location: true,
+                              },
+                            },
+                            metroStations: {
+                              include: {
+                                metroStation: true,
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
               },
             },
           },
@@ -3443,6 +3517,23 @@ function buildApprovedVocabulary(context: {
     attempt: {
       projectVersion: {
         versionNumber: number;
+        project?: {
+          title: string;
+          realEstateObject: {
+            title: string;
+            mapName: string | null;
+            krtName: string | null;
+            developer: { name: string } | null;
+            primaryLocation: { name: string } | null;
+            locations: Array<{ location: { name: string } }>;
+            metroStations: Array<{
+              metroStation: {
+                name: string;
+                lineName: string | null;
+              };
+            }>;
+          } | null;
+        };
       };
     };
     question: {
@@ -3456,26 +3547,38 @@ function buildApprovedVocabulary(context: {
     };
   };
 }) {
-  const terms = [
-    ...context.attemptQuestion.question.factLinks
+  const projectVersion =
+    context.attemptQuestion.attempt.projectVersion;
+  const project = projectVersion.project;
+  const object = project?.realEstateObject;
+  return buildSafeTrainingVocabulary({
+    projectVersionNumber: projectVersion.versionNumber,
+    projectTitle: project?.title ?? '',
+    object: object
+      ? {
+          title: object.title,
+          mapName: object.mapName,
+          krtName: object.krtName,
+          developerName: object.developer?.name,
+          primaryLocationName: object.primaryLocation?.name,
+          locationNames: object.locations.map(
+            (link) => link.location.name,
+          ),
+          metroStations: object.metroStations.map((link) => ({
+            name: link.metroStation.name,
+            lineName: link.metroStation.lineName,
+          })),
+        }
+      : null,
+    approvedFacts: context.attemptQuestion.question.factLinks
       .filter((link) => link.fact.isApproved)
-      .flatMap((link) => [
-        link.fact.statement,
-        ...readStringArray(link.fact.acceptedAliasesJson),
-      ]),
-  ]
-    .map((term) => term.trim().replace(/\s+/gu, ' '))
-    .filter(Boolean);
-  const uniqueTerms = [...new Set(terms)].sort((left, right) =>
-    left.localeCompare(right, 'ru'),
-  );
-  return {
-    version: `facts-v${context.attemptQuestion.attempt.projectVersion.versionNumber}`,
-    terms: uniqueTerms,
-    hash: createHash('sha256')
-      .update(JSON.stringify(uniqueTerms))
-      .digest('hex'),
-  };
+      .map((link) => ({
+        statement: link.fact.statement,
+        acceptedAliases: readStringArray(
+          link.fact.acceptedAliasesJson,
+        ),
+      })),
+  });
 }
 
 function parseEvaluationAnchors(
@@ -3569,15 +3672,15 @@ function asRecord(value: Prisma.JsonValue | null) {
     : undefined;
 }
 
-function parseUnsupportedClaimDecisions(
-  value: unknown,
-  expectedComponentKeys: string[],
-): Array<{
+type UnsupportedClaimDecision = {
   componentKey: string;
   decision: 'ACCEPTED' | 'INCORRECT';
-}> {
-  const expected = new Set(expectedComponentKeys);
-  if (value === undefined && expected.size === 0) return [];
+};
+
+function parseUnsupportedClaimDecisionPayload(
+  value: unknown,
+): UnsupportedClaimDecision[] {
+  if (value === undefined) return [];
   if (!Array.isArray(value)) {
     throw new BadRequestException(
       'Unsupported claim decisions must be an array',
@@ -3597,12 +3700,9 @@ function parseUnsupportedClaimDecisions(
         'Unsupported claim decision is invalid',
       );
     }
-    if (
-      !expected.has(item.componentKey) ||
-      seen.has(item.componentKey)
-    ) {
+    if (seen.has(item.componentKey)) {
       throw new BadRequestException(
-        'Unsupported claim decision references an unknown or duplicate component',
+        'Unsupported claim decision references a duplicate component',
       );
     }
     seen.add(item.componentKey);
@@ -3611,6 +3711,26 @@ function parseUnsupportedClaimDecisions(
       decision: item.decision,
     };
   });
+  return decisions;
+}
+
+function parseUnsupportedClaimDecisions(
+  decisions: UnsupportedClaimDecision[],
+  expectedComponentKeys: string[],
+) {
+  const expected = new Set(expectedComponentKeys);
+  const seen = new Set<string>();
+  for (const decision of decisions) {
+    if (
+      !expected.has(decision.componentKey) ||
+      seen.has(decision.componentKey)
+    ) {
+      throw new BadRequestException(
+        'Unsupported claim decision references an unknown or duplicate component',
+      );
+    }
+    seen.add(decision.componentKey);
+  }
   if (seen.size !== expected.size) {
     throw new BadRequestException(
       'Every unsupported claim requires a reviewer decision',

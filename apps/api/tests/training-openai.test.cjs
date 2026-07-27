@@ -1,6 +1,10 @@
 require('reflect-metadata');
 
 const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
+const fs = require('node:fs');
+const { createServer } = require('node:http');
+const path = require('node:path');
 const test = require('node:test');
 
 const {
@@ -12,14 +16,24 @@ const {
 } = require('../dist/training/openai/training-openai.http.js');
 const {
   OpenAiTrainingEvaluationProvider,
+  TRAINING_EVALUATION_JSON_SCHEMA,
   validateTrainingEvaluationOutput,
 } = require('../dist/training/openai/training-openai-evaluation.provider.js');
 const {
   OpenAiTrainingTranscriptionProvider,
 } = require('../dist/training/openai/training-openai-transcription.provider.js');
 const {
+  buildSafeTrainingVocabulary,
+} = require('../dist/training/openai/training-openai-vocabulary.js');
+const {
+  DeterministicFakeTrainingTranscriptionProvider,
+} = require('../dist/training/training-attempt.providers.js');
+const {
   TrainingReviewController,
 } = require('../dist/training/training-review.controller.js');
+const {
+  createSafeTrainingTestEnvironment,
+} = require('../scripts/training-test-environment.cjs');
 
 function createStubConfig(overrides = {}) {
   return {
@@ -160,6 +174,84 @@ test('OpenAI config defaults to fake locally and rejects unsafe production and t
       }),
     /non-placeholder/u,
   );
+
+  for (const placeholder of [
+    'replace-with-real-openai-key-123456789',
+    'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+    '00000000000000000000000000000000',
+    'opaque-placeholder-value-123456789',
+  ]) {
+    assert.throws(
+      () =>
+        new TrainingOpenAiConfig({
+          OPENAI_PROVIDER_MODE: 'real',
+          OPENAI_API_KEY: placeholder,
+        }),
+      (error) =>
+        /non-placeholder/u.test(error.message) &&
+        !error.message.includes(placeholder),
+    );
+  }
+
+  const explicitProductionEnvironment = {
+    NODE_ENV: 'production',
+    TRAINING_MODULE_ENABLED: 'true',
+    OPENAI_PROVIDER_MODE: 'real',
+    OPENAI_API_KEY: 'opaque_live_9Jw4nR2sT8vK6qP3mL7x',
+  };
+  assert.throws(
+    () => new TrainingOpenAiConfig(explicitProductionEnvironment),
+    /OPENAI_TRANSCRIPTION_MODEL is required/u,
+  );
+  const production = new TrainingOpenAiConfig({
+    ...explicitProductionEnvironment,
+    OPENAI_TRANSCRIPTION_MODEL: 'transcription-model',
+    OPENAI_TRANSCRIPTION_REVIEW_MODEL: 'transcription-review-model',
+    OPENAI_EVALUATION_MODEL: 'evaluation-model',
+    OPENAI_EVALUATION_REASONING: 'medium',
+    OPENAI_REVIEW_MODEL: 'review-model',
+    OPENAI_REVIEW_REASONING: 'high',
+  });
+  assert.equal(production.apiKey, explicitProductionEnvironment.OPENAI_API_KEY);
+});
+
+test('standard training test environment cannot inherit real providers or credentials', () => {
+  const environment = createSafeTrainingTestEnvironment({
+    NODE_ENV: 'production',
+    OPENAI_PROVIDER_MODE: 'real',
+    OPENAI_API_KEY: 'opaque_live_parent_9Jw4nR2sT8vK6qP3mL7x',
+    OPENAI_SMOKE_ENABLED: 'true',
+    TELEGRAM_TRANSPORT_MODE: 'real',
+  });
+  const config = new TrainingOpenAiConfig(environment);
+  assert.equal(environment.NODE_ENV, 'test');
+  assert.equal(environment.OPENAI_PROVIDER_MODE, 'fake');
+  assert.equal(environment.OPENAI_SMOKE_ENABLED, 'false');
+  assert.equal(environment.TELEGRAM_TRANSPORT_MODE, 'fake');
+  assert.equal('OPENAI_API_KEY' in environment, false);
+  assert.equal(config.providerMode, 'fake');
+  assert.equal(config.apiKey, null);
+});
+
+test('production compose requires the OpenAI key and all model/reasoning choices for both processes', () => {
+  const compose = fs.readFileSync(
+    path.resolve(__dirname, '../../../docker-compose.production.yml'),
+    'utf8',
+  );
+  for (const name of [
+    'OPENAI_API_KEY',
+    'OPENAI_TRANSCRIPTION_MODEL',
+    'OPENAI_TRANSCRIPTION_REVIEW_MODEL',
+    'OPENAI_EVALUATION_MODEL',
+    'OPENAI_EVALUATION_REASONING',
+    'OPENAI_REVIEW_MODEL',
+    'OPENAI_REVIEW_REASONING',
+  ]) {
+    assert.equal(
+      compose.match(new RegExp(`\\$\\{${name}:\\?`, 'gu'))?.length,
+      2,
+    );
+  }
 });
 
 test('training review API is permission-bound to training result reviewers', () => {
@@ -169,6 +261,108 @@ test('training review API is permission-bound to training result reviewers', () 
   assert.equal(
     Reflect.getMetadata('path', TrainingReviewController),
     'training/admin',
+  );
+});
+
+test('safe transcription vocabulary excludes statements, normalizes terms and hashes deterministically', async () => {
+  const context = {
+    projectVersionNumber: 7,
+    projectTitle: '  Проект\u00a0Авиатор ',
+    object: {
+      title: 'ЖК Авиатор',
+      mapName: 'Авиатор',
+      developerName: 'ГК Самолёт',
+      primaryLocationName: 'Пресненский район',
+      locationNames: ['Пресненский район', 'Москва\nЦентр'],
+      metroStations: [
+        { name: 'Деловой центр', lineName: 'Солнцевская линия' },
+      ],
+    },
+    approvedFacts: [
+      {
+        statement:
+          'Жилой комплекс состоит из двух башен и расположен рядом с рекой.',
+        acceptedAliases: [
+          'две башни',
+          '  Две\u00a0башни ',
+          'Жилой комплекс состоит из двух башен и расположен рядом с рекой.',
+          'это предложение. с точкой',
+          'слишком длинный профессиональный термин из семи отдельных слов здесь',
+        ],
+      },
+      {
+        statement: 'Две башни у реки',
+        acceptedAliases: ['Две башни у реки рядом'],
+      },
+    ],
+  };
+  const first = buildSafeTrainingVocabulary(context);
+  const second = buildSafeTrainingVocabulary(structuredClone(context));
+  assert.deepEqual(first, second);
+  assert.equal(first.terms.includes(context.approvedFacts[0].statement), false);
+  assert.equal(first.terms.includes('Две башни у реки рядом'), false);
+  assert.equal(first.terms.includes('Две башни'), false);
+  assert.equal(first.terms.includes('две башни'), true);
+  assert.equal(first.terms.includes('Проект Авиатор'), true);
+  assert.equal(first.terms.includes('Москва Центр'), false);
+  assert.equal(first.terms.length <= 64, true);
+  assert.equal(first.hash.length, 64);
+  assert.equal(
+    first.hash,
+    createHash('sha256')
+      .update(JSON.stringify({ version: first.version, terms: first.terms }))
+      .digest('hex'),
+  );
+
+  const changed = buildSafeTrainingVocabulary({
+    ...context,
+    projectTitle: 'Другой проект',
+  });
+  assert.notEqual(changed.hash, first.hash);
+
+  const fake = new DeterministicFakeTrainingTranscriptionProvider();
+  const transcript = await fake.transcribe({
+    answerId: 'answer-safe-vocabulary',
+    approvedVocabulary: first,
+    segments: [
+      {
+        id: 'segment-safe-vocabulary',
+        segmentIndex: 0,
+        fakeTranscript: 'Только произнесённый ответ',
+      },
+    ],
+  });
+  assert.equal(transcript.transcript, 'Только произнесённый ответ');
+  assert.equal(
+    first.terms.some((term) => transcript.transcript.includes(term)),
+    false,
+  );
+});
+
+test('strict evaluation schema centralizes finite bounds and anyOf nullables', () => {
+  assert.equal(TRAINING_EVALUATION_JSON_SCHEMA.additionalProperties, false);
+  assert.equal(
+    Number.isFinite(
+      TRAINING_EVALUATION_JSON_SCHEMA.properties.criteria.maxItems,
+    ),
+    true,
+  );
+  assert.equal(
+    Number.isFinite(
+      TRAINING_EVALUATION_JSON_SCHEMA.properties.facts.maxItems,
+    ),
+    true,
+  );
+  assert.deepEqual(
+    TRAINING_EVALUATION_JSON_SCHEMA.properties.facts.items.properties
+      .claim.anyOf.map((branch) => branch.type),
+    ['string', 'null'],
+  );
+  assert.equal(
+    Number.isFinite(
+      TRAINING_EVALUATION_JSON_SCHEMA.properties.summary.maxLength,
+    ),
+    true,
   );
 });
 
@@ -208,7 +402,7 @@ test('OpenAI HTTP client retries bounded 429 responses and never logs response b
   assert.equal(response.requestId, 'req-ok');
 });
 
-test('OpenAI HTTP timeout is terminal and marked as an ambiguous outcome', async () => {
+test('OpenAI HTTP hard deadline is terminal and marked as an ambiguous outcome', async () => {
   const client = new TrainingOpenAiHttpClient(createStubConfig(), {
     baseUrl: 'https://openai.stub',
     fetchImpl: async (_url, init) =>
@@ -229,12 +423,43 @@ test('OpenAI HTTP timeout is terminal and marked as an ambiguous outcome', async
       }),
     (error) => {
       assert.equal(error instanceof TrainingOpenAiRequestError, true);
-      assert.equal(error.code, 'OPENAI_TIMEOUT');
+      assert.equal(error.code, 'DEADLINE_EXCEEDED');
       assert.equal(error.ambiguous, true);
-      assert.equal(error.retryable, true);
+      assert.equal(error.retryable, false);
       return true;
     },
   );
+});
+
+test('OpenAI HTTP deadline includes Retry-After sleep and prevents another physical request', async () => {
+  let now = 0;
+  let calls = 0;
+  const client = new TrainingOpenAiHttpClient(createStubConfig(), {
+    baseUrl: 'https://openai.stub',
+    now: () => now,
+    sleep: async (milliseconds) => {
+      now += milliseconds;
+    },
+    fetchImpl: async () => {
+      calls += 1;
+      return new Response('limited', {
+        status: 429,
+        headers: { 'retry-after': '2' },
+      });
+    },
+  });
+  await assert.rejects(
+    () =>
+      client.request({
+        path: '/v1/responses',
+        timeoutMs: 1_000,
+        maxRetries: 5,
+        buildBody: () => '{}',
+      }),
+    (error) => error.code === 'DEADLINE_EXCEEDED',
+  );
+  assert.equal(calls, 1);
+  assert.equal(now, 0);
 });
 
 test('OpenAI HTTP classifies bounded 5xx, network and permanent 4xx failures', async () => {
@@ -381,6 +606,21 @@ test('evaluation validator rejects invented anchors and non-exact transcript evi
     () => validateTrainingEvaluationOutput(input, inventedEvidence),
     /exact non-empty transcript substring/u,
   );
+
+  const normalizedInput = createEvaluationInput();
+  normalizedInput.transcript = 'ЖК\u00a0Авиатор   расположен у метро.';
+  const normalizedOutput = createEvaluationOutput();
+  normalizedOutput.criteria[0].evidence = 'ЖК Авиатор расположен';
+  normalizedOutput.facts[0].evidence = 'ЖК Авиатор расположен';
+  assert.doesNotThrow(() =>
+    validateTrainingEvaluationOutput(normalizedInput, normalizedOutput),
+  );
+  normalizedOutput.facts[0].evidence = 'жк Авиатор расположен';
+  assert.throws(
+    () =>
+      validateTrainingEvaluationOutput(normalizedInput, normalizedOutput),
+    /exact non-empty transcript substring/u,
+  );
 });
 
 test('evaluation validator enforces exact schema, complete IDs, confidence, metrics and summary limits', () => {
@@ -448,6 +688,46 @@ test('evaluation validator enforces exact schema, complete IDs, confidence, metr
       (finding) => finding.verdict === 'UNSUPPORTED',
     ),
     true,
+  );
+});
+
+test('evaluation validator rejects semantic fact/claim inconsistencies for retry handling', () => {
+  const input = createEvaluationInput();
+  input.facts[0].acceptedAliases = ['Верная характеристика проекта'];
+  input.transcript +=
+    ' Подтвержденный факт. Верная характеристика проекта.';
+
+  for (const claim of [
+    'Подтвержденный факт',
+    'Это Подтвержденный факт проекта',
+    'Верная характеристика проекта',
+  ]) {
+    const output = createEvaluationOutput();
+    output.facts.push({
+      fact_id: null,
+      verdict: 'UNSUPPORTED',
+      claim,
+      evidence_source: 'TRANSCRIPT',
+      evidence: claim,
+      metric_id: null,
+      explanation: 'fixture',
+      confidence: 0.5,
+    });
+    output.requires_manual_review = true;
+    output.review_reasons = ['fixture'];
+    assert.throws(
+      () => validateTrainingEvaluationOutput(input, output),
+      (error) =>
+        error.code ===
+        'OPENAI_EVALUATION_UNSUPPORTED_CONFLICTS_APPROVED_FACT',
+    );
+  }
+
+  const approvedWithClaim = createEvaluationOutput();
+  approvedWithClaim.facts[0].claim = 'claim is forbidden';
+  assert.throws(
+    () => validateTrainingEvaluationOutput(input, approvedWithClaim),
+    /Approved fact findings/u,
   );
 });
 
@@ -580,6 +860,111 @@ test('audio transcription uploads normalized WAV with Russian language and appro
   assert.equal(result.requestId, 'req-transcribe');
   await provider.transcribe({ ...transcriptionInput, review: true });
   assert.equal(form.get('model'), 'gpt-4o-transcribe');
+});
+
+test('transcription sends one exact multipart WAV request over a local HTTP wire', async (t) => {
+  const wav = createPcmWav();
+  const checksum = createHash('sha256').update(wav).digest('hex');
+  let captured;
+  let requestCount = 0;
+  const server = createServer(async (request, response) => {
+    requestCount += 1;
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    captured = {
+      url: request.url,
+      authorizationPresent:
+        typeof request.headers.authorization === 'string',
+      contentType: request.headers['content-type'],
+      body: Buffer.concat(chunks),
+    };
+    response.writeHead(200, {
+      'content-type': 'application/json',
+      'x-request-id': 'req-wire-transcription',
+    });
+    response.end(
+      JSON.stringify({
+        text: 'ЖК Авиатор',
+        language: 'ru',
+        model: 'wire-transcription-model',
+      }),
+    );
+  });
+  const baseUrl = await listenLocalServer(server);
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+
+  const file = {
+    id: '88888888-8888-4888-8888-888888888888',
+    bucket: 'training-private',
+    key: 'training-audio/wire.wav',
+    mimeType: 'audio/wav',
+    sizeBytes: BigInt(wav.length),
+    checksum,
+  };
+  const config = createStubConfig({
+    transcriptionModel: 'wire-transcription-model',
+    transcriptionMaxRetries: 0,
+  });
+  const provider = new OpenAiTrainingTranscriptionProvider(
+    {
+      trainingAnswer: {
+        findUnique: async () => ({
+          id: 'answer-wire',
+          mergedAudioFileId: file.id,
+          mergedAudioFile: file,
+        }),
+      },
+    },
+    { readStoredFile: async () => wav },
+    config,
+    new TrainingOpenAiHttpClient(config, { baseUrl }),
+  );
+  await provider.transcribe({
+    answerId: 'answer-wire',
+    segments: [],
+    approvedVocabulary: {
+      version: 'safe-vocabulary-v1:project-version-1',
+      terms: ['ЖК Авиатор', 'ГК Самолёт'],
+    },
+    audio: {
+      fileId: file.id,
+      bucket: file.bucket,
+      key: file.key,
+      mimeType: file.mimeType,
+      sizeBytes: Number(file.sizeBytes),
+      checksum,
+      durationMilliseconds: 1,
+      segmentCount: 1,
+    },
+  });
+
+  assert.equal(requestCount, 1);
+  assert.equal(captured.url, '/v1/audio/transcriptions');
+  assert.equal(captured.authorizationPresent, true);
+  assert.match(captured.contentType, /^multipart\/form-data; boundary=/u);
+  const parts = parseMultipart(captured.body, captured.contentType);
+  assert.deepEqual(
+    parts.map((part) => part.name).sort(),
+    ['file', 'language', 'model', 'prompt', 'response_format'].sort(),
+  );
+  assert.equal(parts.filter((part) => part.name === 'file').length, 1);
+  const filePart = parts.find((part) => part.name === 'file');
+  assert.equal(filePart.filename, 'answer-wire.wav');
+  assert.equal(filePart.contentType, 'audio/wav');
+  assert.deepEqual(filePart.body, wav);
+  assert.equal(readMultipartText(parts, 'model'), 'wire-transcription-model');
+  assert.equal(readMultipartText(parts, 'language'), 'ru');
+  assert.equal(readMultipartText(parts, 'response_format'), 'json');
+  assert.equal(
+    readMultipartText(parts, 'prompt'),
+    'Утвержденные термины и названия: ЖК Авиатор, ГК Самолёт',
+  );
+  assert.equal(
+    captured.body
+      .toString('utf8')
+      .includes('Жилой комплекс состоит из двух башен'),
+    false,
+  );
 });
 
 test('transcription retries a temporary malformed response and rejects empty output', async () => {
@@ -749,4 +1134,50 @@ function createPcmWav() {
   buffer.write('data', 36, 'ascii');
   buffer.writeUInt32LE(dataSize, 40);
   return buffer;
+}
+
+function listenLocalServer(server) {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject);
+      const address = server.address();
+      resolve(`http://127.0.0.1:${address.port}`);
+    });
+  });
+}
+
+function parseMultipart(body, contentType) {
+  const boundary = /boundary=([^;]+)/u.exec(contentType)?.[1];
+  assert.ok(boundary);
+  return body
+    .toString('latin1')
+    .split(`--${boundary}`)
+    .slice(1, -1)
+    .map((rawPart) => {
+      const normalized = rawPart
+        .replace(/^\r\n/u, '')
+        .replace(/\r\n$/u, '');
+      const separator = normalized.indexOf('\r\n\r\n');
+      assert.notEqual(separator, -1);
+      const headers = normalized.slice(0, separator);
+      const disposition =
+        /content-disposition: form-data; name="([^"]+)"(?:; filename="([^"]+)")?/iu.exec(
+          headers,
+        );
+      assert.ok(disposition);
+      return {
+        name: disposition[1],
+        filename: disposition[2] ?? null,
+        contentType:
+          /content-type: ([^\r\n]+)/iu.exec(headers)?.[1] ?? null,
+        body: Buffer.from(normalized.slice(separator + 4), 'latin1'),
+      };
+    });
+}
+
+function readMultipartText(parts, name) {
+  const matching = parts.filter((part) => part.name === name);
+  assert.equal(matching.length, 1);
+  return matching[0].body.toString('utf8');
 }

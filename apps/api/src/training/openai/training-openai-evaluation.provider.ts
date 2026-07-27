@@ -8,10 +8,15 @@ import {
   TrainingEvaluationResult,
 } from '../training-attempt.providers';
 import { TrainingOpenAiConfig } from './training-openai.config';
+import { TRAINING_OPENAI_EVALUATION_LIMITS as LIMITS } from './training-openai-evaluation-limits';
 import {
   TrainingOpenAiHttpClient,
   TrainingOpenAiRequestError,
 } from './training-openai.http';
+import {
+  assertUnsupportedClaimDoesNotMatchApprovedFacts,
+  normalizeTrainingOpenAiText,
+} from './training-openai-text';
 
 const VERDICTS = [
   'CORRECT',
@@ -26,12 +31,6 @@ const ANSWER_RELEVANCE_VALUES = [
   'PARTIAL',
   'IRRELEVANT',
 ] as const;
-const MAX_EVALUATION_PROMPT_CHARACTERS = 500_000;
-const MAX_EVALUATION_CRITERIA = 100;
-const MAX_EVALUATION_FACTS = 500;
-const MAX_EVALUATION_METRICS = 100;
-const MAX_UNSUPPORTED_FINDINGS = 100;
-
 export const TRAINING_EVALUATION_SCHEMA_VERSION = 'openai-evaluation-v1';
 export const TRAINING_EVALUATION_PROMPT_VERSION = 'openai-evaluation-v1';
 
@@ -58,6 +57,8 @@ export const TRAINING_EVALUATION_JSON_SCHEMA = {
     },
     criteria: {
       type: 'array',
+      minItems: 1,
+      maxItems: LIMITS.criteria,
       items: {
         type: 'object',
         additionalProperties: false,
@@ -70,20 +71,36 @@ export const TRAINING_EVALUATION_JSON_SCHEMA = {
           'explanation',
         ],
         properties: {
-          criterion_id: { type: 'string' },
-          anchor_id: { type: 'string' },
+          criterion_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: LIMITS.identifierCharacters,
+          },
+          anchor_id: {
+            type: 'string',
+            minLength: 1,
+            maxLength: LIMITS.identifierCharacters,
+          },
           evidence_source: {
             type: 'string',
             enum: EVIDENCE_SOURCES,
           },
-          evidence: { type: ['string', 'null'] },
-          metric_id: { type: ['string', 'null'] },
-          explanation: { type: 'string' },
+          evidence: nullableStringSchema(LIMITS.evidenceCharacters),
+          metric_id: nullableStringSchema(
+            LIMITS.identifierCharacters,
+          ),
+          explanation: {
+            type: 'string',
+            minLength: 1,
+            maxLength: LIMITS.explanationCharacters,
+          },
         },
       },
     },
     facts: {
       type: 'array',
+      minItems: 0,
+      maxItems: LIMITS.facts + LIMITS.unsupportedFindings,
       items: {
         type: 'object',
         additionalProperties: false,
@@ -98,25 +115,41 @@ export const TRAINING_EVALUATION_JSON_SCHEMA = {
           'confidence',
         ],
         properties: {
-          fact_id: { type: ['string', 'null'] },
+          fact_id: nullableStringSchema(LIMITS.identifierCharacters),
           verdict: { type: 'string', enum: VERDICTS },
-          claim: { type: ['string', 'null'] },
+          claim: nullableStringSchema(LIMITS.evidenceCharacters),
           evidence_source: {
             type: 'string',
             enum: EVIDENCE_SOURCES,
           },
-          evidence: { type: ['string', 'null'] },
-          metric_id: { type: ['string', 'null'] },
-          explanation: { type: 'string' },
+          evidence: nullableStringSchema(LIMITS.evidenceCharacters),
+          metric_id: nullableStringSchema(
+            LIMITS.identifierCharacters,
+          ),
+          explanation: {
+            type: 'string',
+            minLength: 1,
+            maxLength: LIMITS.explanationCharacters,
+          },
           confidence: { type: 'number', minimum: 0, maximum: 1 },
         },
       },
     },
-    summary: { type: 'string' },
+    summary: {
+      type: 'string',
+      minLength: 1,
+      maxLength: LIMITS.summaryCharacters,
+    },
     requires_manual_review: { type: 'boolean' },
     review_reasons: {
       type: 'array',
-      items: { type: 'string' },
+      minItems: 0,
+      maxItems: LIMITS.reviewReasons,
+      items: {
+        type: 'string',
+        minLength: 1,
+        maxLength: LIMITS.reviewReasonCharacters,
+      },
     },
   },
 } as const;
@@ -139,7 +172,7 @@ export class OpenAiTrainingEvaluationProvider
       ? this.config.reviewReasoning
       : this.config.evaluationReasoning;
     const evaluationPayload = JSON.stringify(buildEvaluationPayload(input));
-    if (evaluationPayload.length > MAX_EVALUATION_PROMPT_CHARACTERS) {
+    if (evaluationPayload.length > LIMITS.promptCharacters) {
       throw providerError(
         'OPENAI_EVALUATION_PROMPT_TOO_LARGE',
         'Evaluation prompt exceeds the configured safety limit',
@@ -238,7 +271,7 @@ export function validateTrainingEvaluationOutput(
   if (
     criterionRows.length !== input.criteria.length ||
     factRows.length >
-      input.facts.length + MAX_UNSUPPORTED_FINDINGS
+      input.facts.length + LIMITS.unsupportedFindings
   ) {
     throw providerError(
       'OPENAI_EVALUATION_OUTPUT_LIMIT_EXCEEDED',
@@ -307,7 +340,7 @@ export function validateTrainingEvaluationOutput(
         record.explanation,
         `criteria[${index}].explanation`,
         1,
-        1_000,
+        LIMITS.explanationCharacters,
       ),
     };
   });
@@ -338,14 +371,33 @@ export function validateTrainingEvaluationOutput(
         VERDICTS,
         `facts[${index}].verdict`,
       );
-      const factId = readNullableString(record.fact_id, `facts[${index}].fact_id`);
-      const claim = readNullableString(record.claim, `facts[${index}].claim`);
+      const factId = readNullableString(
+        record.fact_id,
+        `facts[${index}].fact_id`,
+        LIMITS.identifierCharacters,
+      );
+      const claim = readNullableString(
+        record.claim,
+        `facts[${index}].claim`,
+        LIMITS.evidenceCharacters,
+      );
 
       if (verdict === 'UNSUPPORTED') {
         if (factId !== null || !claim?.trim()) {
           throw providerError(
             'OPENAI_EVALUATION_UNSUPPORTED_INVALID',
             'Unsupported findings require claim text and cannot reference a fact',
+          );
+        }
+        try {
+          assertUnsupportedClaimDoesNotMatchApprovedFacts(
+            { claim },
+            input.facts,
+          );
+        } catch {
+          throw providerError(
+            'OPENAI_EVALUATION_UNSUPPORTED_CONFLICTS_APPROVED_FACT',
+            'Unsupported claim conflicts with an approved fact or alias',
           );
         }
       } else if (
@@ -388,7 +440,9 @@ export function validateTrainingEvaluationOutput(
       return {
         ...(factId ? { factId } : {}),
         verdict,
-        ...(claim ? { claim: claim.trim() } : {}),
+        ...(claim
+          ? { claim: normalizeTrainingOpenAiText(claim) }
+          : {}),
         evidenceSource: evidence.source,
         ...(evidence.text ? { evidence: evidence.text } : {}),
         ...(evidence.metricId ? { metricId: evidence.metricId } : {}),
@@ -396,7 +450,7 @@ export function validateTrainingEvaluationOutput(
           record.explanation,
           `facts[${index}].explanation`,
           1,
-          1_000,
+          LIMITS.explanationCharacters,
         ),
         confidence: readConfidence(
           record.confidence,
@@ -413,7 +467,12 @@ export function validateTrainingEvaluationOutput(
     );
   }
 
-  const summary = readBoundedString(output.summary, 'summary', 1, 2_000).trim();
+  const summary = readBoundedString(
+    output.summary,
+    'summary',
+    1,
+    LIMITS.summaryCharacters,
+  ).trim();
   const sentenceCount =
     summary.match(/[^.!?…]+(?:[.!?…]+|$)/gu)?.filter((part) => part.trim())
       .length ?? 0;
@@ -433,10 +492,15 @@ export function validateTrainingEvaluationOutput(
     output.review_reasons,
     'review_reasons',
   ).map((reason, index) =>
-    readBoundedString(reason, `review_reasons[${index}]`, 1, 240).trim(),
+    readBoundedString(
+      reason,
+      `review_reasons[${index}]`,
+      1,
+      LIMITS.reviewReasonCharacters,
+    ).trim(),
   );
   if (
-    reviewReasons.length > 100 ||
+    reviewReasons.length > LIMITS.reviewReasons ||
     (output.requires_manual_review && reviewReasons.length === 0) ||
     (!output.requires_manual_review && reviewReasons.length > 0)
   ) {
@@ -522,9 +586,9 @@ function buildEvaluationPayload(input: TrainingEvaluationInput) {
 function validateEvaluationInput(input: TrainingEvaluationInput) {
   if (
     !input.transcript.trim() ||
-    input.transcript.length > 120_000 ||
+    input.transcript.length > LIMITS.transcriptCharacters ||
     !input.questionText.trim() ||
-    input.questionText.length > 8_000
+    input.questionText.length > LIMITS.questionCharacters
   ) {
     throw providerError(
       'OPENAI_EVALUATION_TRANSCRIPT_INVALID',
@@ -535,9 +599,9 @@ function validateEvaluationInput(input: TrainingEvaluationInput) {
   const anchorIds = new Set<string>();
   if (
     input.criteria.length === 0 ||
-    input.criteria.length > MAX_EVALUATION_CRITERIA ||
-    input.facts.length > MAX_EVALUATION_FACTS ||
-    input.metrics.length > MAX_EVALUATION_METRICS
+    input.criteria.length > LIMITS.criteria ||
+    input.facts.length > LIMITS.facts ||
+    input.metrics.length > LIMITS.metrics
   ) {
     throw providerError(
       'OPENAI_EVALUATION_INPUT_LIMIT_EXCEEDED',
@@ -548,7 +612,7 @@ function validateEvaluationInput(input: TrainingEvaluationInput) {
     if (
       criterionIds.has(criterion.id) ||
       criterion.anchors.length === 0 ||
-      criterion.anchors.length > 100 ||
+      criterion.anchors.length > LIMITS.anchorsPerCriterion ||
       !Number.isFinite(criterion.maxPoints)
     ) {
       throw providerError(
@@ -628,12 +692,26 @@ function validateEvidence(
     EVIDENCE_SOURCES,
     `${path}.evidence_source`,
   );
-  const text = readNullableString(record.evidence, `${path}.evidence`);
-  const metricId = readNullableString(record.metric_id, `${path}.metric_id`);
+  const text = readNullableString(
+    record.evidence,
+    `${path}.evidence`,
+    LIMITS.evidenceCharacters,
+  );
+  const metricId = readNullableString(
+    record.metric_id,
+    `${path}.metric_id`,
+    LIMITS.identifierCharacters,
+  );
+  const normalizedTranscript = normalizeTrainingOpenAiText(
+    input.transcript,
+  );
+  const normalizedEvidence = normalizeTrainingOpenAiText(text ?? '');
 
   if (
     source === 'TRANSCRIPT' &&
-    (!text?.trim() || metricId !== null || !input.transcript.includes(text))
+    (!normalizedEvidence ||
+      metricId !== null ||
+      !normalizedTranscript.includes(normalizedEvidence))
   ) {
     throw providerError(
       'OPENAI_EVALUATION_EVIDENCE_INVALID',
@@ -738,7 +816,12 @@ function readRecord(value: unknown, path: string) {
 }
 
 function readNonEmptyString(value: unknown, path: string) {
-  return readBoundedString(value, path, 1, 240).trim();
+  return readBoundedString(
+    value,
+    path,
+    1,
+    LIMITS.identifierCharacters,
+  ).trim();
 }
 
 function readBoundedString(
@@ -760,9 +843,13 @@ function readBoundedString(
   return value;
 }
 
-function readNullableString(value: unknown, path: string) {
+function readNullableString(
+  value: unknown,
+  path: string,
+  maximum: number,
+) {
   if (value === null) return null;
-  return readBoundedString(value, path, 0, 2_000);
+  return readBoundedString(value, path, 0, maximum);
 }
 
 function readConfidence(value: unknown, path: string) {
@@ -820,4 +907,17 @@ function providerError(code: string, message: string) {
     0,
     message,
   );
+}
+
+function nullableStringSchema(maxLength: number) {
+  return {
+    anyOf: [
+      {
+        type: 'string',
+        minLength: 0,
+        maxLength,
+      },
+      { type: 'null' },
+    ],
+  } as const;
 }

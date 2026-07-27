@@ -4,6 +4,9 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const { createHash } = require('node:crypto');
 const test = require('node:test');
+const { Module } = require('@nestjs/common');
+const { NestFactory } = require('@nestjs/core');
+const { JwtService } = require('@nestjs/jwt');
 const {
   PrismaClient,
   TrainingAnswerStatus,
@@ -22,6 +25,12 @@ const {
 const {
   TrainingAttemptEngineService,
 } = require('../dist/training/training-attempt-engine.service.js');
+const {
+  TrainingReviewController,
+} = require('../dist/training/training-review.controller.js');
+const {
+  AuthModule,
+} = require('../dist/auth/auth.module.js');
 const {
   DeterministicFakeTrainingEvaluationProvider,
   DeterministicFakeTrainingTranscriptionProvider,
@@ -328,6 +337,7 @@ test('PostgreSQL race: two refunds create one audit and refund once', async () =
     }),
     1,
   );
+
 });
 
 test('PostgreSQL recovery: two workers claim one READY job without duplicates', async () => {
@@ -791,6 +801,148 @@ test('PostgreSQL provider runs preserve original outputs and activate explicit r
   );
 });
 
+test('PostgreSQL same-answer constraints reject cross-owned active results and provider history', async () => {
+  const fixture = await createFixture();
+  const clock = createClock();
+  const service = createService(clock);
+  let attempt = await startAttempt(service, fixture);
+  attempt = await completeAttempt(service, clock, attempt, 21_400);
+  const answers = await prisma.trainingAnswer.findMany({
+    where: {
+      attemptQuestion: {
+        attemptId: attempt.id,
+      },
+    },
+    orderBy: {
+      attemptQuestion: {
+        sequence: 'asc',
+      },
+    },
+    include: {
+      transcriptions: true,
+      evaluations: true,
+    },
+  });
+  const own = answers[0];
+  const other = answers[1];
+  const historyCounts = {
+    transcriptions: await prisma.trainingAnswerTranscription.count({
+      where: { answer: { attemptQuestion: { attemptId: attempt.id } } },
+    }),
+    evaluations: await prisma.trainingAnswerEvaluation.count({
+      where: { answer: { attemptQuestion: { attemptId: attempt.id } } },
+    }),
+  };
+
+  await prisma.trainingAnswer.update({
+    where: { id: own.id },
+    data: {
+      activeTranscriptionId: own.activeTranscriptionId,
+      activeEvaluationId: own.activeEvaluationId,
+    },
+  });
+
+  await prisma.trainingAnswer.update({
+    where: { id: other.id },
+    data: {
+      activeTranscriptionId: null,
+      activeEvaluationId: null,
+    },
+  });
+  await assert.rejects(
+    () =>
+      prisma.trainingAnswer.update({
+        where: { id: own.id },
+        data: {
+          activeTranscriptionId: other.activeTranscriptionId,
+        },
+      }),
+    isForeignKeyFailure,
+  );
+  await assert.rejects(
+    () =>
+      prisma.trainingAnswer.update({
+        where: { id: own.id },
+        data: {
+          activeEvaluationId: other.activeEvaluationId,
+        },
+      }),
+    isForeignKeyFailure,
+  );
+  await prisma.trainingAnswer.update({
+    where: { id: other.id },
+    data: {
+      activeTranscriptionId: other.activeTranscriptionId,
+      activeEvaluationId: other.activeEvaluationId,
+    },
+  });
+
+  const crossTranscriptionRun = await createUnreferencedProviderRun(
+    other.id,
+    'TRANSCRIPTION',
+    'same-answer-transcription',
+  );
+  await assert.rejects(
+    () =>
+      prisma.trainingAnswerTranscription.update({
+        where: { id: own.transcriptions[0].id },
+        data: { providerRunId: crossTranscriptionRun.id },
+      }),
+    isForeignKeyFailure,
+  );
+  await prisma.trainingProviderRun.delete({
+    where: { id: crossTranscriptionRun.id },
+  });
+
+  const crossEvaluationRun = await createUnreferencedProviderRun(
+    other.id,
+    'EVALUATION',
+    'same-answer-evaluation',
+  );
+  await assert.rejects(
+    () =>
+      prisma.trainingAnswerEvaluation.update({
+        where: { id: own.evaluations[0].id },
+        data: { providerRunId: crossEvaluationRun.id },
+      }),
+    isForeignKeyFailure,
+  );
+  await prisma.trainingProviderRun.delete({
+    where: { id: crossEvaluationRun.id },
+  });
+
+  assert.deepEqual(
+    {
+      transcriptions: await prisma.trainingAnswerTranscription.count({
+        where: { answer: { attemptQuestion: { attemptId: attempt.id } } },
+      }),
+      evaluations: await prisma.trainingAnswerEvaluation.count({
+        where: { answer: { attemptQuestion: { attemptId: attempt.id } } },
+      }),
+    },
+    historyCounts,
+  );
+  const constraints = await prisma.$queryRaw`
+    SELECT "conname"
+    FROM "pg_constraint"
+    WHERE "conname" IN (
+      'training_answers_active_transcription_answer_fkey',
+      'training_answers_active_evaluation_answer_fkey',
+      'training_answer_transcriptions_provider_run_answer_fkey',
+      'training_answer_evaluations_provider_run_answer_fkey'
+    )
+  `;
+  assert.deepEqual(
+    constraints.map((row) => row.conname).sort(),
+    [
+      'training_answer_evaluations_provider_run_answer_fkey',
+      'training_answer_transcriptions_provider_run_answer_fkey',
+      'training_answers_active_evaluation_answer_fkey',
+      'training_answers_active_transcription_answer_fkey',
+    ],
+  );
+});
+
 test('PostgreSQL full 1 plus 3 flow runs real adapters against a local HTTP stub without duplicate provider runs', async () => {
   const fixture = await createFixture();
   const clock = createClock();
@@ -1002,6 +1154,7 @@ test('PostgreSQL review applies minus five only after reviewer marks an unsuppor
     await service.reviewAttempt({
       attemptId: attempt.id,
       reviewerId: fixture.publisherId,
+      idempotencyKey: 'db-review-approved-0001',
       decision: 'APPROVED',
       comment: 'Claim is factually incorrect',
       unsupportedClaimsDecisions: [
@@ -1029,6 +1182,287 @@ test('PostgreSQL review applies minus five only after reviewer marks an unsuppor
       },
     }),
     1,
+  );
+
+  const replayed = (
+    await service.reviewAttempt({
+      attemptId: attempt.id,
+      reviewerId: fixture.publisherId,
+      idempotencyKey: 'db-review-approved-0001',
+      decision: 'APPROVED',
+      comment: 'Claim is factually incorrect',
+      unsupportedClaimsDecisions: [
+        {
+          componentKey: unsupported.componentKey,
+          decision: 'INCORRECT',
+        },
+      ],
+    })
+  ).attempt;
+  assert.equal(Number(replayed.finalScore), 95);
+  assert.equal(
+    await prisma.trainingResultReview.count({
+      where: { attemptId: attempt.id },
+    }),
+    1,
+  );
+  assert.equal(
+    await prisma.auditLog.count({
+      where: {
+        entityId: attempt.id,
+        action: 'training.attempt.review',
+      },
+    }),
+    1,
+  );
+  await assert.rejects(
+    () =>
+      service.reviewAttempt({
+        attemptId: attempt.id,
+        reviewerId: fixture.publisherId,
+        idempotencyKey: 'db-review-approved-0001',
+        decision: 'APPROVED',
+        comment: 'Different canonical payload',
+        unsupportedClaimsDecisions: [
+          {
+            componentKey: unsupported.componentKey,
+            decision: 'INCORRECT',
+          },
+        ],
+      }),
+    (error) => error.getStatus?.() === 409,
+  );
+
+  const concurrentCommand = {
+    attemptId: attempt.id,
+    reviewerId: fixture.publisherId,
+    idempotencyKey: 'db-review-concurrent-0002',
+    decision: 'APPROVED',
+    comment: 'Concurrent identical review',
+    unsupportedClaimsDecisions: [
+      {
+        componentKey: unsupported.componentKey,
+        decision: 'INCORRECT',
+      },
+    ],
+  };
+  const concurrent = await Promise.all(
+    Array.from({ length: 8 }, () =>
+      createService(clock).reviewAttempt(concurrentCommand),
+    ),
+  );
+  assert.equal(
+    concurrent.every(
+      (result) => Number(result.attempt.finalScore) === 95,
+    ),
+    true,
+  );
+  assert.equal(
+    await prisma.trainingResultReview.count({
+      where: { attemptId: attempt.id },
+    }),
+    2,
+  );
+  assert.equal(
+    await prisma.auditLog.count({
+      where: {
+        entityId: attempt.id,
+        action: 'training.attempt.review',
+      },
+    }),
+    2,
+  );
+});
+
+test('real Nest review HTTP endpoint enforces auth, permission, idempotency and override reason', async (t) => {
+  const fixture = await createFixture();
+  const clock = createClock();
+  const service = createService(clock);
+  let attempt = await startAttempt(service, fixture);
+  attempt = await completeAttempt(
+    service,
+    clock,
+    attempt,
+    21_250,
+    '[[unsupported:HTTP review claim]]',
+  );
+  const unsupported = await prisma.trainingScoreComponent.findFirstOrThrow({
+    where: {
+      evaluation: {
+        answer: {
+          attemptQuestion: { attemptId: attempt.id },
+        },
+      },
+      factVerdict: 'UNSUPPORTED',
+    },
+  });
+  const users = await createReviewHttpUsers(fixture.publisherId);
+  class ReviewHttpTestModule {}
+  Module({
+    imports: [AuthModule],
+    controllers: [TrainingReviewController],
+    providers: [
+      {
+        provide: TrainingAttemptEngineService,
+        useValue: service,
+      },
+    ],
+  })(ReviewHttpTestModule);
+  const app = await NestFactory.create(ReviewHttpTestModule, {
+    logger: false,
+  });
+  await app.listen(0, '127.0.0.1');
+  t.after(() => app.close());
+  const baseUrl = await app.getUrl();
+  const jwt = new JwtService();
+  const secret =
+    process.env.JWT_ACCESS_SECRET ?? 'change-me-access-secret';
+  const tokens = Object.fromEntries(
+    Object.entries(users).map(([role, userId]) => [
+      role,
+      jwt.sign(
+        { sub: userId, type: 'access' },
+        { secret, expiresIn: '5m' },
+      ),
+    ]),
+  );
+  const path = `/training/admin/results/${attempt.id}/review`;
+  const approvedBody = {
+    decision: 'APPROVED',
+    comment: 'HTTP review approved',
+    unsupportedClaimsDecisions: [
+      {
+        componentKey: unsupported.componentKey,
+        decision: 'INCORRECT',
+      },
+    ],
+  };
+
+  assert.equal(
+    (await postReview(baseUrl, path, null, approvedBody, 'http-unauthorized-1')).status,
+    401,
+  );
+  assert.equal(
+    (
+      await postReview(
+        baseUrl,
+        path,
+        tokens.employee,
+        approvedBody,
+        'http-forbidden-0001',
+      )
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await postReview(
+        baseUrl,
+        '/training/admin/results/99999999-9999-4999-8999-999999999999/review',
+        tokens.admin,
+        approvedBody,
+        'http-not-found-0001',
+      )
+    ).status,
+    404,
+  );
+  assert.equal(
+    (
+      await postReview(
+        baseUrl,
+        path,
+        tokens.trainingAdmin,
+        approvedBody,
+      )
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await postReview(
+        baseUrl,
+        path,
+        tokens.trainingAdmin,
+        {
+          ...approvedBody,
+          decision: 'OVERRIDDEN',
+          adminScore: 80,
+          comment: '',
+        },
+        'http-override-no-reason',
+      )
+    ).status,
+    400,
+  );
+
+  const first = await postReview(
+    baseUrl,
+    path,
+    tokens.trainingAdmin,
+    approvedBody,
+    'http-training-admin-0001',
+  );
+  assert.equal(
+    first.status,
+    201,
+    `Unexpected review response: ${await first.text()}`,
+  );
+  const replay = await postReview(
+    baseUrl,
+    path,
+    tokens.trainingAdmin,
+    approvedBody,
+    'http-training-admin-0001',
+  );
+  assert.equal(replay.status, 201);
+  assert.equal(
+    await prisma.trainingResultReview.count({
+      where: {
+        attemptId: attempt.id,
+        reviewerId: users.trainingAdmin,
+      },
+    }),
+    1,
+  );
+  assert.equal(
+    await prisma.auditLog.count({
+      where: {
+        entityId: attempt.id,
+        actorUserId: users.trainingAdmin,
+        action: 'training.attempt.review',
+      },
+    }),
+    1,
+  );
+  assert.equal(
+    (
+      await postReview(
+        baseUrl,
+        path,
+        tokens.trainingAdmin,
+        { ...approvedBody, comment: 'Different payload' },
+        'http-training-admin-0001',
+      )
+    ).status,
+    409,
+  );
+
+  const adminSuccess = await postReview(
+    baseUrl,
+    path,
+    tokens.admin,
+    {
+      ...approvedBody,
+      comment: 'Admin approved independently',
+    },
+    'http-admin-success-0001',
+  );
+  assert.equal(adminSuccess.status, 201);
+  assert.equal(
+    await prisma.trainingResultReview.count({
+      where: { attemptId: attempt.id },
+    }),
+    2,
   );
 });
 
@@ -1259,6 +1693,108 @@ function createOpenAiStubConfig() {
     evaluationMaxOutputTokens: 4096,
     smokeEnabled: false,
   };
+}
+
+function createUnreferencedProviderRun(answerId, kind, label) {
+  const nonce = `${label}-${Date.now()}-${Math.random()}`;
+  return prisma.trainingProviderRun.create({
+    data: {
+      answerId,
+      kind,
+      runType: 'REPROCESS',
+      status: 'PENDING',
+      idempotencyKey: nonce,
+      requestedModelId: 'same-answer-constraint-fixture',
+      inputHash: createHash('sha256').update(nonce).digest('hex'),
+    },
+  });
+}
+
+async function createReviewHttpUsers(trainingAdminUserId) {
+  const unique = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const permission = await prisma.permission.upsert({
+    where: { key: 'training:results:review' },
+    update: {},
+    create: {
+      key: 'training:results:review',
+      description: 'Review training results',
+    },
+  });
+  const trainingAdmin = await prisma.user.findUniqueOrThrow({
+    where: { id: trainingAdminUserId },
+    select: { roleId: true },
+  });
+  await prisma.rolePermission.upsert({
+    where: {
+      roleId_permissionId: {
+        roleId: trainingAdmin.roleId,
+        permissionId: permission.id,
+      },
+    },
+    update: {},
+    create: {
+      roleId: trainingAdmin.roleId,
+      permissionId: permission.id,
+    },
+  });
+  const adminRole = await prisma.role.create({
+    data: {
+      name: `admin-http-${unique}`.slice(0, 64),
+      permissions: {
+        create: {
+          permissionId: permission.id,
+        },
+      },
+    },
+  });
+  const employeeRole = await prisma.role.create({
+    data: {
+      name: `employee-http-${unique}`.slice(0, 64),
+    },
+  });
+  const [admin, employee] = await Promise.all([
+    prisma.user.create({
+      data: {
+        email: `admin-http-${unique}@example.test`,
+        passwordHash: 'not-used-by-jwt-guard',
+        name: 'HTTP Admin',
+        status: UserStatus.ACTIVE,
+        roleId: adminRole.id,
+      },
+    }),
+    prisma.user.create({
+      data: {
+        email: `employee-http-${unique}@example.test`,
+        passwordHash: 'not-used-by-jwt-guard',
+        name: 'HTTP Employee',
+        status: UserStatus.ACTIVE,
+        roleId: employeeRole.id,
+      },
+    }),
+  ]);
+  return {
+    trainingAdmin: trainingAdminUserId,
+    admin: admin.id,
+    employee: employee.id,
+  };
+}
+
+function postReview(baseUrl, path, token, body, idempotencyKey) {
+  return fetch(`${baseUrl}${path}`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...(idempotencyKey
+        ? { 'idempotency-key': idempotencyKey }
+        : {}),
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+function isForeignKeyFailure(error) {
+  return error?.code === 'P2003';
 }
 
 function createPcmWav() {

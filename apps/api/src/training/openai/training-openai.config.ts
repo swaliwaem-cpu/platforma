@@ -4,8 +4,10 @@ import { parseTrainingModuleEnabled } from '../training.config';
 
 const MEBIBYTE = 1024 * 1024;
 const OPENAI_UPLOAD_LIMIT_BYTES = 25 * MEBIBYTE;
-const PLACEHOLDER_KEY_PATTERN =
-  /^(?:changeme|replace|placeholder|your[-_ ]?key|test|example|sk-(?:test|example|placeholder))/iu;
+const PLACEHOLDER_KEY_MARKER_PATTERN =
+  /(?:change[-_ ]?me|replace|placeholder|your[-_ ]?(?:api[-_ ]?)?key|example|dummy|fake|sample|test[-_ ]?key|todo|insert[-_ ]?key|real[-_ ]?key)/iu;
+const REPEATED_KEY_MASK_PATTERN =
+  /^(?:[x*#_\-.0]|(?:x|0){4,}|(?:sk[-_])?(?:x|0|test|fake|dummy)[-_]*)+$/iu;
 
 export type TrainingOpenAiProviderMode = 'fake' | 'real';
 export type TrainingOpenAiReasoningEffort =
@@ -73,35 +75,45 @@ export class TrainingOpenAiConfig {
       this.providerMode === 'real'
         ? readRequiredApiKey(env.OPENAI_API_KEY)
         : null;
+    const requireExplicitProductionModels =
+      nodeEnv === 'production' &&
+      trainingEnabled &&
+      this.providerMode === 'real';
     this.transcriptionModel = readModel(
       'OPENAI_TRANSCRIPTION_MODEL',
       env.OPENAI_TRANSCRIPTION_MODEL,
       'gpt-4o-mini-transcribe-2025-12-15',
+      requireExplicitProductionModels,
     );
     this.transcriptionReviewModel = readModel(
       'OPENAI_TRANSCRIPTION_REVIEW_MODEL',
       env.OPENAI_TRANSCRIPTION_REVIEW_MODEL,
       'gpt-4o-transcribe',
+      requireExplicitProductionModels,
     );
     this.evaluationModel = readModel(
       'OPENAI_EVALUATION_MODEL',
       env.OPENAI_EVALUATION_MODEL,
       'gpt-5.6-terra',
+      requireExplicitProductionModels,
     );
     this.evaluationReasoning = readReasoningEffort(
       'OPENAI_EVALUATION_REASONING',
       env.OPENAI_EVALUATION_REASONING,
       'medium',
+      requireExplicitProductionModels,
     );
     this.reviewModel = readModel(
       'OPENAI_REVIEW_MODEL',
       env.OPENAI_REVIEW_MODEL,
       'gpt-5.6-terra',
+      requireExplicitProductionModels,
     );
     this.reviewReasoning = readReasoningEffort(
       'OPENAI_REVIEW_REASONING',
       env.OPENAI_REVIEW_REASONING,
       'high',
+      requireExplicitProductionModels,
     );
     this.transcriptionTimeoutMs = readBoundedInteger(
       'OPENAI_TRANSCRIPTION_TIMEOUT_MS',
@@ -162,10 +174,16 @@ export class TrainingOpenAiConfig {
 
 function readRequiredApiKey(value: string | undefined) {
   const normalized = value?.trim() ?? '';
+  const distinctCharacters = new Set(
+    normalized.toLocaleLowerCase('en-US').replace(/[^a-z0-9]/gu, ''),
+  ).size;
   if (
-    normalized.length < 20 ||
-    !normalized.startsWith('sk-') ||
-    PLACEHOLDER_KEY_PATTERN.test(normalized)
+    normalized.length < 24 ||
+    normalized.length > 512 ||
+    /[\s\r\n]/u.test(normalized) ||
+    PLACEHOLDER_KEY_MARKER_PATTERN.test(normalized) ||
+    REPEATED_KEY_MASK_PATTERN.test(normalized) ||
+    distinctCharacters < 8
   ) {
     throw new Error(
       'OPENAI_API_KEY must contain a non-placeholder OpenAI API key in real mode',
@@ -174,8 +192,17 @@ function readRequiredApiKey(value: string | undefined) {
   return normalized;
 }
 
-function readModel(name: string, value: string | undefined, fallback: string) {
-  const normalized = value?.trim() || fallback;
+function readModel(
+  name: string,
+  value: string | undefined,
+  fallback: string,
+  required = false,
+) {
+  const configured = value?.trim() ?? '';
+  if (required && !configured) {
+    throw new Error(`${name} is required in production real mode`);
+  }
+  const normalized = configured || fallback;
   if (normalized.length > 120 || !/^[a-z0-9][a-z0-9._-]*$/u.test(normalized)) {
     throw new Error(`${name} must contain a valid model identifier`);
   }
@@ -186,8 +213,13 @@ function readReasoningEffort(
   name: string,
   value: string | undefined,
   fallback: TrainingOpenAiReasoningEffort,
+  required = false,
 ): TrainingOpenAiReasoningEffort {
-  const normalized = (value?.trim().toLowerCase() ||
+  const configured = value?.trim().toLowerCase() ?? '';
+  if (required && !configured) {
+    throw new Error(`${name} is required in production real mode`);
+  }
+  const normalized = (configured ||
     fallback) as TrainingOpenAiReasoningEffort;
   if (
     !['none', 'low', 'medium', 'high', 'xhigh', 'max'].includes(normalized)

@@ -43,6 +43,11 @@ GET            /training/admin/answers/:answerId/audio
 DELETE         /training/admin/users/:userId/training-data
 ```
 
+`POST .../results/:attemptId/review` требует обязательный
+`Idempotency-Key`. Server сохраняет canonical payload SHA-256; same key/same
+payload не создаёт повторную review/audit/penalty, same key/different payload
+возвращает `409`.
+
 ## Integration
 
 ```text
@@ -198,5 +203,10 @@ TRAINING_DOCUMENT_EXTRACTION_TIMEOUT_MS=30000
 ```
 
 Production secrets не коммитить.
+
+При `NODE_ENV=production`, включённом training и real provider key и все шесть
+`OPENAI_*MODEL`/`OPENAI_*REASONING` значений обязательны явно. Production
+Compose не использует development model defaults и отклоняет marker/
+repeated-mask placeholder keys без вывода key в error.
 
 ---

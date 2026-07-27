@@ -4,6 +4,9 @@ const { existsSync } = require('node:fs');
 const path = require('node:path');
 
 const { PrismaClient } = require('@prisma/client');
+const {
+  createSafeTrainingTestEnvironment,
+} = require('./training-test-environment.cjs');
 
 const apiDir = path.resolve(__dirname, '..');
 const allowedLocalHosts = new Set([
@@ -105,7 +108,7 @@ function runChild(command, args) {
     const child = spawn(command, args, {
       cwd: apiDir,
       env: {
-        ...process.env,
+        ...createSafeTrainingTestEnvironment(process.env),
         DATABASE_URL: temporaryDatabaseUrl.toString(),
       },
       stdio: 'inherit',

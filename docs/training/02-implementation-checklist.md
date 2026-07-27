@@ -536,6 +536,39 @@ PostgreSQL/HTTP integration tests; root suite также включает `286/2
   `git diff --check` и сборка общего API/worker image прошли.
 - [x] Новые dependencies не добавлены; opt-in real OpenAI smoke намеренно не
   запускался.
+- [x] Findings независимого review этапа 8 закрыты без перехода к этапу 9:
+  vocabulary не содержит `fact.statement`, имеет NFC/dedup/bounds и
+  deterministic version/hash; transcript не дополняется терминами.
+- [x] Semantic validator требует known fact/null claim для approved verdicts,
+  null fact/claim/transcript evidence для `UNSUPPORTED`, запрещает
+  exact/достаточно длинное containment statement/alias и нормализует evidence
+  без lowercase/fuzzy matching.
+- [x] Review POST требует `Idempotency-Key`; canonical payload hash и DB unique
+  обеспечивают replay без review/audit/penalty и `409` для другого payload,
+  включая конкурентные PostgreSQL-запросы.
+- [x] Production real mode требует key и все шесть model/reasoning env
+  variables явно; placeholder/repeated-mask keys отклоняются без утечки.
+- [x] Один monotonic hard deadline покрывает fetch/read/validation/backoff/
+  `Retry-After`; terminal code — `DEADLINE_EXCEEDED`.
+- [x] Strict JSON Schema содержит централизованные finite bounds и `anyOf`
+  string/null; backend повторяет структурную и semantic validation.
+- [x] Standard unit/PostgreSQL runners принудительно задают `NODE_ENV=test`,
+  OpenAI/Telegram fake, smoke false и удаляют inherited `OPENAI_API_KEY`.
+- [x] Local HTTP wire tests проверяют точный multipart WAV; smoke stub
+  подтверждает ровно 1 transcription + 1 evaluation, retries `0`, refusal/
+  incomplete/schema version и safe output.
+- [x] Additive migration
+  `20260727230000_fix_training_openai_review_findings` fail-loud проверяет
+  cross-answer history и добавляет composite same-answer constraints; clean
+  migration и `pg_constraint` проверены на временной PostgreSQL.
+- [x] Реальный ephemeral Nest/PostgreSQL review endpoint проверен на
+  `401/403/404`, обе разрешённые роли, missing key `400`, replay/conflict,
+  override без причины и audit cardinality.
+- [x] Post-review verification: API `423/423` unit + `76/76`
+  PostgreSQL/HTTP, все `39` migrations на чистой временной БД, root suite
+  `872/872`, development/production Compose config и API/worker Docker build.
+- [x] Real OpenAI smoke, production migration/deploy и этап 9 намеренно не
+  запускались.
 
 ## Этап 9. Employee/Admin results UI и rating
 

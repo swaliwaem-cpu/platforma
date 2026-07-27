@@ -10,6 +10,7 @@ export type TrainingOpenAiHttpOptions = {
   baseUrl?: string;
   fetchImpl?: typeof fetch;
   sleep?: (milliseconds: number) => Promise<void>;
+  now?: () => number;
 };
 
 export type TrainingOpenAiHttpRequest = {
@@ -49,6 +50,7 @@ export class TrainingOpenAiHttpClient {
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
   private readonly sleep: (milliseconds: number) => Promise<void>;
+  private readonly now: () => number;
 
   constructor(
     private readonly config: TrainingOpenAiConfig,
@@ -60,6 +62,7 @@ export class TrainingOpenAiHttpClient {
       '',
     );
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
+    this.now = options.now ?? (() => performance.now());
     this.sleep =
       options.sleep ??
       ((milliseconds) =>
@@ -81,26 +84,23 @@ export class TrainingOpenAiHttpClient {
       );
     }
 
-    const startedAt = Date.now();
+    const startedAt = this.now();
+    const deadlineAt = startedAt + input.timeoutMs;
     let retryCount = 0;
 
     for (;;) {
-      const remainingMs = input.timeoutMs - (Date.now() - startedAt);
+      const remainingMs = deadlineAt - this.now();
       if (remainingMs <= 0) {
-        throw new TrainingOpenAiRequestError(
-          'OPENAI_TIMEOUT',
-          true,
-          true,
-          null,
-          null,
-          retryCount,
-          'OpenAI request reached the total deadline with an ambiguous outcome',
-        );
+        throw deadlineExceeded(retryCount);
       }
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), remainingMs);
+      const timeout = setTimeout(
+        () => controller.abort(),
+        Math.max(1, Math.ceil(remainingMs)),
+      );
       let responseStatus: number | null = null;
       let responseRequestId: string | null = null;
+      let responseRetryDelayMs: number | null = null;
 
       try {
         const response = await this.fetchImpl(`${this.baseUrl}${input.path}`, {
@@ -119,27 +119,29 @@ export class TrainingOpenAiHttpClient {
           response,
           this.config.maxResponseBytes,
         );
+        if (this.now() >= deadlineAt) {
+          throw deadlineExceeded(retryCount, requestId);
+        }
 
         if (response.ok) {
           const result = {
             status: response.status,
             requestId,
             bodyText,
-            latencyMs: Date.now() - startedAt,
+            latencyMs: Math.max(0, Math.round(this.now() - startedAt)),
             retryCount,
           } satisfies TrainingOpenAiHttpResponse;
           input.validateResponse?.(result);
+          if (this.now() >= deadlineAt) {
+            throw deadlineExceeded(retryCount, requestId);
+          }
           return result;
         }
 
         const retryable = response.status === 429 || response.status >= 500;
-        if (retryable && retryCount < input.maxRetries) {
-          const delayMs = readRetryDelayMs(response, retryCount);
-          retryCount += 1;
-          await this.sleep(delayMs);
-          continue;
+        if (retryable) {
+          responseRetryDelayMs = readRetryDelayMs(response, retryCount);
         }
-
         throw new TrainingOpenAiRequestError(
           `OPENAI_HTTP_${response.status}`,
           retryable,
@@ -152,9 +154,16 @@ export class TrainingOpenAiHttpClient {
       } catch (error) {
         if (error instanceof TrainingOpenAiRequestError) {
           if (error.retryable && retryCount < input.maxRetries) {
-            const delayMs = Math.min(5_000, 250 * 2 ** retryCount);
+            const delayMs =
+              responseRetryDelayMs ??
+              Math.min(5_000, 250 * 2 ** retryCount);
             retryCount += 1;
-            await this.sleep(delayMs);
+            await this.sleepBeforeDeadline(
+              delayMs,
+              deadlineAt,
+              retryCount,
+              error.requestId,
+            );
             continue;
           }
           throw new TrainingOpenAiRequestError(
@@ -180,26 +189,48 @@ export class TrainingOpenAiHttpClient {
         }
 
         const aborted = controller.signal.aborted;
+        if (aborted || this.now() >= deadlineAt) {
+          throw deadlineExceeded(retryCount, responseRequestId);
+        }
         if (retryCount < input.maxRetries) {
           const delayMs = Math.min(5_000, 250 * 2 ** retryCount);
           retryCount += 1;
-          await this.sleep(delayMs);
+          await this.sleepBeforeDeadline(
+            delayMs,
+            deadlineAt,
+            retryCount,
+            responseRequestId,
+          );
           continue;
         }
         throw new TrainingOpenAiRequestError(
-          aborted ? 'OPENAI_TIMEOUT' : 'OPENAI_NETWORK_ERROR',
+          'OPENAI_NETWORK_ERROR',
           true,
           true,
           null,
           null,
           retryCount,
-          aborted
-            ? 'OpenAI request timed out with an ambiguous outcome'
-            : 'OpenAI network request failed with an ambiguous outcome',
+          'OpenAI network request failed with an ambiguous outcome',
         );
       } finally {
         clearTimeout(timeout);
       }
+    }
+  }
+
+  private async sleepBeforeDeadline(
+    delayMs: number,
+    deadlineAt: number,
+    retryCount: number,
+    requestId: string | null,
+  ) {
+    const remainingMs = deadlineAt - this.now();
+    if (remainingMs <= 0 || delayMs >= remainingMs) {
+      throw deadlineExceeded(retryCount, requestId);
+    }
+    await this.sleep(delayMs);
+    if (this.now() >= deadlineAt) {
+      throw deadlineExceeded(retryCount, requestId);
     }
   }
 }
@@ -248,4 +279,19 @@ function readRetryDelayMs(response: Response, retryCount: number) {
     }
   }
   return Math.min(5_000, 250 * 2 ** retryCount);
+}
+
+function deadlineExceeded(
+  retryCount: number,
+  requestId: string | null = null,
+) {
+  return new TrainingOpenAiRequestError(
+    'DEADLINE_EXCEEDED',
+    false,
+    true,
+    null,
+    requestId,
+    retryCount,
+    'OpenAI request reached the total deadline with an ambiguous outcome',
+  );
 }

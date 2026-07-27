@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Param,
@@ -16,6 +17,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RequirePermissions } from '../auth/permissions.decorator';
 import { PermissionsGuard } from '../auth/permissions.guard';
 import { TrainingAttemptEngineService } from './training-attempt-engine.service';
+import { parseTrainingReviewIdempotencyKey } from './training-review-idempotency';
 
 @Controller('training/admin')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -33,6 +35,7 @@ export class TrainingReviewController {
     @Param('attemptId') attemptId: string,
     @Body() body: Record<string, unknown>,
     @CurrentUser() reviewer: AuthenticatedUser,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
   ) {
     const decision = parseReviewDecision(body.decision);
     const adminScore =
@@ -42,6 +45,9 @@ export class TrainingReviewController {
     return this.attempts.reviewAttempt({
       attemptId,
       reviewerId: reviewer.id,
+      idempotencyKey: parseTrainingReviewIdempotencyKey(
+        idempotencyKey,
+      ),
       decision,
       adminScore,
       comment: typeof body.comment === 'string' ? body.comment : '',

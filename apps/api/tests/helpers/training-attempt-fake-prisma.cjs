@@ -429,6 +429,21 @@ class FakeTrainingAttemptPrisma {
       },
     };
     this.trainingResultReview = {
+      findFirst: async ({ where = {}, select } = {}) => {
+        const record =
+          this.reviews.find(
+            (review) =>
+              Object.entries(where).every(
+                ([key, value]) => review[key] === value,
+              ),
+          ) ?? null;
+        if (!record || !select) return record;
+        return Object.fromEntries(
+          Object.entries(select)
+            .filter(([, included]) => included)
+            .map(([key]) => [key, record[key]]),
+        );
+      },
       create: async ({ data }) => {
         const record = {
           id: this.nextId('review'),

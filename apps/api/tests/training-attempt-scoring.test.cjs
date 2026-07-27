@@ -30,6 +30,7 @@ const approvedFact = {
   id: 'fact-main',
   code: 'main.fact',
   statement: 'Утверждённый факт',
+  acceptedAliases: [],
 };
 test('secure question selector returns three different items without mutating the 10-item pool', () => {
   const selector = new CryptoTrainingQuestionSelector();
@@ -106,6 +107,7 @@ test('fake evaluation is deterministic and supports criterion, incorrect and uns
 test('backend scoring applies one minus-five penalty per distinct incorrect fact', () => {
   const score = scoreTrainingEvaluation({
     questionMaxScore: 55,
+    transcript: 'Менеджер сказал: Факт сверх материала.',
     criteria: [mainCriterion],
     facts: [approvedFact],
     evaluation: {
@@ -149,6 +151,7 @@ test('backend scoring applies one minus-five penalty per distinct incorrect fact
 test('unsupported claim has no automatic penalty but requires review', () => {
   const score = scoreTrainingEvaluation({
     questionMaxScore: 55,
+    transcript: 'Менеджер сказал: Факт сверх материала.',
     criteria: [mainCriterion],
     facts: [approvedFact],
     evaluation: {
@@ -165,6 +168,8 @@ test('unsupported claim has no automatic penalty but requires review', () => {
         {
           verdict: 'UNSUPPORTED',
           claim: 'Факт сверх материала',
+          evidenceSource: 'TRANSCRIPT',
+          evidence: 'Факт сверх материала',
         },
       ],
       summary: 'fake',

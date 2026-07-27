@@ -13,10 +13,18 @@ const telegramMigrationPath = path.join(
   rootDir,
   'apps/api/prisma/migrations/20260726150000_add_training_telegram_update_job/migration.sql',
 );
+const openAiReviewMigrationPath = path.join(
+  rootDir,
+  'apps/api/prisma/migrations/20260727230000_fix_training_openai_review_findings/migration.sql',
+);
 
 const schema = fs.readFileSync(schemaPath, 'utf8');
 const migration = fs.readFileSync(migrationPath, 'utf8');
 const telegramMigration = fs.readFileSync(telegramMigrationPath, 'utf8');
+const openAiReviewMigration = fs.readFileSync(
+  openAiReviewMigrationPath,
+  'utf8',
+);
 
 test('training schema defines the approved state enums', () => {
   for (const enumName of [
@@ -194,5 +202,36 @@ test('training migration is additive and enforces database integrity', () => {
   assert.match(
     migration,
     /training_project_versions_prevent_published_mutation[\s\S]*training_questions_prevent_published_mutation[\s\S]*training_question_fact_links_prevent_published_mutation/,
+  );
+});
+
+test('stage 8 review migration is additive and enforces ownership plus review idempotency', () => {
+  assert.match(
+    schema,
+    /idempotencyKey\s+String\?\s+@map\("idempotency_key"\)/,
+  );
+  assert.match(
+    schema,
+    /@@unique\(\[attemptId, reviewerId, idempotencyKey\], map: "training_result_reviews_attempt_reviewer_idempotency_key"\)/,
+  );
+  assert.match(
+    openAiReviewMigration,
+    /Cannot enforce training active transcription ownership/,
+  );
+  assert.match(
+    openAiReviewMigration,
+    /training_answers_active_transcription_answer_fkey/,
+  );
+  assert.match(
+    openAiReviewMigration,
+    /training_answer_evaluations_provider_run_answer_fkey/,
+  );
+  assert.match(
+    openAiReviewMigration,
+    /training_result_reviews_attempt_reviewer_idempotency_key/,
+  );
+  assert.doesNotMatch(
+    openAiReviewMigration,
+    /\b(DROP TABLE|DROP COLUMN|TRUNCATE|DELETE FROM|UPDATE\s+"training_)\b/u,
   );
 });

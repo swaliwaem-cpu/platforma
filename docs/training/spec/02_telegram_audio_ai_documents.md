@@ -128,7 +128,12 @@ Fallback/reprocessing:
 OPENAI_TRANSCRIPTION_REVIEW_MODEL=gpt-4o-transcribe
 ```
 
-Передавать language `ru` и короткий approved vocabulary prompt с названием ЖК, застройщиком и профессиональными терминами. Не передавать эталонный полный ответ, чтобы не исказить transcript.
+Передавать language `ru` и короткий approved vocabulary prompt только со
+структурированными именами проекта/ЖК, застройщика, location/metro и короткими
+approved aliases/профессиональными терминами. Применять NFC, trim,
+deduplication, bounded term/count, запрещать multiline/sentence-like terms.
+Никогда не передавать `fact.statement` или эталонный полный ответ и не
+дополнять результат transcription vocabulary-словами.
 
 Сохранять:
 

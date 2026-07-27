@@ -1411,12 +1411,14 @@ model TrainingAnswer {
   mergedAudioFile     File?                         @relation("TrainingAnswerAudioFile", fields: [mergedAudioFileId], references: [id], onDelete: Restrict)
   voiceSegments       TrainingVoiceSegment[]
   transcriptions      TrainingAnswerTranscription[] @relation("TrainingAnswerTranscriptions")
-  activeTranscription TrainingAnswerTranscription?  @relation("TrainingAnswerActiveTranscription", fields: [activeTranscriptionId], references: [id], onDelete: Restrict)
+  activeTranscription TrainingAnswerTranscription?  @relation("TrainingAnswerActiveTranscription", fields: [activeTranscriptionId, id], references: [id, answerId], onDelete: Restrict)
   evaluations         TrainingAnswerEvaluation[]    @relation("TrainingAnswerEvaluations")
-  activeEvaluation    TrainingAnswerEvaluation?     @relation("TrainingAnswerActiveEvaluation", fields: [activeEvaluationId], references: [id], onDelete: Restrict)
+  activeEvaluation    TrainingAnswerEvaluation?     @relation("TrainingAnswerActiveEvaluation", fields: [activeEvaluationId, id], references: [id, answerId], onDelete: Restrict)
   providerRuns        TrainingProviderRun[]
   audioUploadIntent   TrainingAudioUploadIntent?    @relation("TrainingAnswerAudioUploadIntent")
 
+  @@unique([activeTranscriptionId, id], map: "training_answers_active_transcription_id_id_key")
+  @@unique([activeEvaluationId, id], map: "training_answers_active_evaluation_id_id_key")
   @@index([status, updatedAt])
   @@map("training_answers")
 }
@@ -1457,6 +1459,7 @@ model TrainingProviderRun {
   transcription TrainingAnswerTranscription?
   evaluation    TrainingAnswerEvaluation?
 
+  @@unique([id, answerId], map: "training_provider_runs_id_answer_id_key")
   @@index([answerId, kind, createdAt])
   @@index([status, updatedAt])
   @@index([requestId])
@@ -1477,9 +1480,11 @@ model TrainingAnswerTranscription {
 
   answer          TrainingAnswer      @relation("TrainingAnswerTranscriptions", fields: [answerId], references: [id], onDelete: Restrict)
   activeForAnswer TrainingAnswer?     @relation("TrainingAnswerActiveTranscription")
-  providerRun     TrainingProviderRun @relation(fields: [providerRunId], references: [id], onDelete: Restrict)
+  providerRun     TrainingProviderRun @relation(fields: [providerRunId, answerId], references: [id, answerId], onDelete: Restrict)
 
   @@unique([answerId, transcriptionNumber])
+  @@unique([providerRunId, answerId], map: "training_answer_transcriptions_provider_run_answer_key")
+  @@unique([id, answerId], map: "training_answer_transcriptions_id_answer_id_key")
   @@index([answerId, createdAt])
   @@map("training_answer_transcriptions")
 }
@@ -1545,10 +1550,12 @@ model TrainingAnswerEvaluation {
 
   answer          TrainingAnswer           @relation("TrainingAnswerEvaluations", fields: [answerId], references: [id], onDelete: Restrict)
   activeForAnswer TrainingAnswer?          @relation("TrainingAnswerActiveEvaluation")
-  providerRun     TrainingProviderRun?     @relation(fields: [providerRunId], references: [id], onDelete: Restrict)
+  providerRun     TrainingProviderRun?     @relation(fields: [providerRunId, answerId], references: [id, answerId], onDelete: Restrict)
   scoreComponents TrainingScoreComponent[]
 
   @@unique([answerId, evaluationNumber])
+  @@unique([providerRunId, answerId], map: "training_answer_evaluations_provider_run_answer_key")
+  @@unique([id, answerId], map: "training_answer_evaluations_id_answer_id_key")
   @@index([answerId, createdAt])
   @@index([requiresReview])
   @@map("training_answer_evaluations")
@@ -1582,6 +1589,8 @@ model TrainingResultReview {
   id                             String               @id @default(uuid()) @db.Uuid
   attemptId                      String               @map("attempt_id") @db.Uuid
   reviewerId                     String               @map("reviewer_id") @db.Uuid
+  idempotencyKey                 String?              @map("idempotency_key") @db.VarChar(128)
+  requestPayloadHash             String?              @map("request_payload_hash") @db.VarChar(64)
   reviewNumber                   Int                  @default(1) @map("review_number")
   previousFinalScore             Decimal?             @map("previous_final_score") @db.Decimal(6, 2)
   adminScore                     Decimal?             @map("admin_score") @db.Decimal(6, 2)
@@ -1596,6 +1605,7 @@ model TrainingResultReview {
   reviewer User            @relation("TrainingResultReviewer", fields: [reviewerId], references: [id], onDelete: Restrict)
 
   @@unique([attemptId, reviewNumber])
+  @@unique([attemptId, reviewerId, idempotencyKey], map: "training_result_reviews_attempt_reviewer_idempotency_key")
   @@index([reviewerId, reviewedAt])
   @@index([attemptId, reviewedAt])
   @@map("training_result_reviews")

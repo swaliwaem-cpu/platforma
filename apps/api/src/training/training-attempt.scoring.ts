@@ -15,6 +15,10 @@ import {
   subtractTrainingScore,
   sumTrainingScores,
 } from './training-score-decimal';
+import {
+  assertUnsupportedClaimDoesNotMatchApprovedFacts,
+  normalizeTrainingOpenAiText,
+} from './openai/training-openai-text';
 
 export const TRAINING_INCORRECT_FACT_PENALTY = canonicalTrainingScore(5);
 
@@ -45,6 +49,7 @@ export type TrainingScoredEvaluation = {
 
 export function scoreTrainingEvaluation(input: {
   questionMaxScore: number;
+  transcript?: string;
   criteria: TrainingEvaluationCriterionInput[];
   facts: TrainingEvaluationFactInput[];
   evaluation: TrainingEvaluationResult;
@@ -104,7 +109,12 @@ export function scoreTrainingEvaluation(input: {
   const unsupportedClaims = new Set<string>();
 
   for (const finding of input.evaluation.factFindings) {
-    validateFactFinding(finding, factsById);
+    validateFactFinding(
+      finding,
+      factsById,
+      input.facts,
+      input.transcript,
+    );
 
     if (finding.verdict === 'INCORRECT' && finding.factId) {
       incorrectFacts.add(finding.factId);
@@ -190,6 +200,8 @@ export function clampTrainingAttemptScore(
 function validateFactFinding(
   finding: TrainingEvaluationFactFinding,
   factsById: Map<string, TrainingEvaluationFactInput>,
+  facts: TrainingEvaluationFactInput[],
+  transcript?: string,
 ) {
   if (finding.verdict === 'UNSUPPORTED') {
     if (!normalizeClaim(finding.claim)) {
@@ -198,14 +210,37 @@ function validateFactFinding(
     if (finding.factId) {
       throw new BadRequestException('Unsupported claim cannot reference an approved fact');
     }
+    if (
+      finding.evidenceSource !== 'TRANSCRIPT' ||
+      !normalizeTrainingOpenAiText(finding.evidence ?? '') ||
+      (transcript !== undefined &&
+        !normalizeTrainingOpenAiText(transcript).includes(
+          normalizeTrainingOpenAiText(finding.evidence ?? ''),
+        ))
+    ) {
+      throw new BadRequestException(
+        'Unsupported claim requires exact transcript evidence',
+      );
+    }
+    try {
+      assertUnsupportedClaimDoesNotMatchApprovedFacts(finding, facts);
+    } catch {
+      throw new BadRequestException(
+        'Unsupported claim conflicts with an approved fact or alias',
+      );
+    }
     return;
   }
 
-  if (!finding.factId || !factsById.has(finding.factId)) {
+  if (
+    !finding.factId ||
+    !factsById.has(finding.factId) ||
+    finding.claim !== undefined
+  ) {
     throw new BadRequestException('Evaluation returned an unknown fact');
   }
 }
 
 function normalizeClaim(value: string | undefined) {
-  return value?.trim().replace(/\s+/gu, ' ').toLocaleLowerCase('ru-RU') ?? '';
+  return normalizeTrainingOpenAiText(value ?? '');
 }

@@ -5554,3 +5554,75 @@ Dependencies:
   rubric/transcription quality.
 - Стоимость не хардкодится: usage сохраняется, а reporting/cost layer отложен.
   Этап 9 не начат.
+
+## 2026-07-27 - Independent review findings for training stage 8
+
+Задача:
+
+- Исправить только findings независимого review этапа 8 OpenAI-интеграции.
+- Не начинать этап 9, не менять Telegram dialogue, private audio/scoring
+  formula/random selection/attempt state machine и не выполнять реальные
+  OpenAI calls или production migration/deploy.
+
+Изменения:
+
+- Approved vocabulary вынесен в отдельный safe builder. Он никогда не
+  использует `TrainingFact.statement`, берёт только structured project/object/
+  developer/location/metro names и короткие aliases/professional terms,
+  применяет NFC/trim/dedup/bounds и deterministic version/SHA-256.
+- Evaluation schema получил централизованные finite bounds и `anyOf`
+  string/null. Backend проверяет согласованность fact/claim, запрещает
+  `UNSUPPORTED`, совпадающий или достаточно длинно пересекающийся с approved
+  statement/alias, и сравнивает transcript evidence после NFC/NBSP/whitespace
+  normalization без lowercase/fuzzy matching.
+- OpenAI HTTP client использует один monotonic hard deadline для fetch,
+  response read/validation, backoff и `Retry-After`; terminal code
+  `DEADLINE_EXCEEDED`.
+- Production real mode теперь требует key и все шесть model/reasoning
+  variables явно. Compose использует required-variable syntax для API/worker,
+  а key validation отклоняет marker/repeated-mask placeholders без утечки.
+- Review POST требует `Idempotency-Key`. В `TrainingResultReview` сохраняются
+  key и canonical payload hash; same key/same payload не создаёт новую review,
+  audit или penalty, same key/different payload возвращает `409`.
+- Additive migration
+  `20260727230000_fix_training_openai_review_findings` выполняет fail-loud
+  preflight, добавляет review unique/check constraints и composite same-answer
+  FK для active transcription/evaluation и provider history.
+- Unit/PostgreSQL runners принудительно задают test/fake режимы, выключают
+  smoke и удаляют inherited key. Smoke принудительно использует retries `0`,
+  делает ровно один transcription и один evaluation request, строго валидирует
+  envelope/output/schema version и печатает только safe metadata.
+- Добавлены actual multipart HTTP wire test, smoke HTTP stubs, semantic/schema/
+  placeholder/deadline regressions, concurrent PostgreSQL idempotency,
+  ownership/`pg_constraint` checks и настоящий ephemeral Nest review endpoint.
+- Обновлены env examples, production/staging checklist, implementation
+  checklist, OpenAI deployment/security/spec docs. Results/rating UI и этап 9
+  не начинались.
+
+Проверки:
+
+- `pnpm --filter @platforma/api test` — `423/423` unit и `76/76`
+  PostgreSQL/HTTP integration passed. Все `39` migrations применены к чистой
+  временной PostgreSQL; составные constraints проверены через
+  `pg_constraint`, затем БД удалена.
+- `pnpm build` — passed; сохраняется прежний Vite warning о chunk
+  `754.00 kB`.
+- `pnpm test` — passed: API `423 + 76`, Web `286`, Feed import `64`,
+  WordPress import `23`, всего `872`.
+- Development/production `docker compose config --quiet`, Prisma validation,
+  `git diff --check` и `docker compose build api training-worker` — passed.
+- Real OpenAI smoke, production migration и deploy не запускались.
+
+Ручная проверка:
+
+- Перед отдельным opt-in smoke подтвердить OpenAI project data controls,
+  model access, retention/rate limits и consented synthetic payload policy.
+- На staging после отдельного разрешения проверить safe logs, provider
+  metadata, active same-answer pointers, review replay/conflict и explicit
+  reprocessing.
+
+Спорные места:
+
+- Code-level findings независимого review закрыты. Остаются только внешние
+  operational gates перед billable smoke/staging.
+- Этап 9 намеренно не начат.

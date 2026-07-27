@@ -13,6 +13,11 @@ import {
   TrainingOpenAiHttpClient,
   TrainingOpenAiRequestError,
 } from './training-openai.http';
+import { normalizeTrainingOpenAiText } from './training-openai-text';
+import {
+  TRAINING_OPENAI_VOCABULARY_MAX_TERM_LENGTH,
+  TRAINING_OPENAI_VOCABULARY_MAX_TERMS,
+} from './training-openai-vocabulary';
 
 const WAV_MIME_TYPES = new Set([
   'audio/wav',
@@ -240,10 +245,20 @@ function buildVocabularyPrompt(
   vocabulary: TrainingTranscriptionInput['approvedVocabulary'],
 ) {
   if (!vocabulary) return '';
-  const terms = vocabulary.terms
-    .map((term) => term.trim().replace(/\s+/gu, ' '))
-    .filter((term) => term.length > 0 && term.length <= 120)
-    .slice(0, 100);
+  const terms = [
+    ...new Set(
+      vocabulary.terms
+        .filter((term) => !/[\r\n]/u.test(term))
+        .map(normalizeTrainingOpenAiText)
+        .filter(
+          (term) =>
+            term.length > 0 &&
+            Array.from(term).length <=
+              TRAINING_OPENAI_VOCABULARY_MAX_TERM_LENGTH &&
+            !/[.!?](?:\s|$)/u.test(term),
+        ),
+    ),
+  ].slice(0, TRAINING_OPENAI_VOCABULARY_MAX_TERMS);
   if (terms.length === 0) return '';
   return `Утвержденные термины и названия: ${terms.join(', ')}`.slice(0, 2_000);
 }

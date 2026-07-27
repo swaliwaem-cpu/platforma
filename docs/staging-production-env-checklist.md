@@ -32,6 +32,25 @@
 - The Telegram webhook is configured in Bot API with the same HTTPS route and
   secret header only after the API healthcheck succeeds.
 
+## Training OpenAI
+
+- Production Compose fixes `OPENAI_PROVIDER_MODE=real` for API and worker.
+- `OPENAI_API_KEY`, `OPENAI_TRANSCRIPTION_MODEL`,
+  `OPENAI_TRANSCRIPTION_REVIEW_MODEL`, `OPENAI_EVALUATION_MODEL`,
+  `OPENAI_EVALUATION_REASONING`, `OPENAI_REVIEW_MODEL`, and
+  `OPENAI_REVIEW_REASONING` are mandatory Compose variables without defaults.
+- The key is supplied through the secret store and is not a marker
+  placeholder, repeated `x/0/*` mask, test/fake/example value or short token.
+- API and worker fail-fast is checked without printing the key or saving it in
+  Compose output/log artifacts.
+- `OPENAI_SMOKE_ENABLED=false` remains set for normal deploy. The billable
+  smoke is run only after separate approval and sends exactly one
+  transcription plus one evaluation request with retries disabled.
+- Approved model access, project data controls, retention, target rate limits
+  and consented synthetic/staging payload policy are confirmed before smoke.
+- Review callers always send a stable `Idempotency-Key`; duplicate and
+  conflicting-key behavior is checked without extra review/audit rows.
+
 ## Storage
 
 - `S3_ENDPOINT` points to the internal S3-compatible endpoint.

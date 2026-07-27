@@ -58,15 +58,20 @@ File -> segment original / answer merged audio / committed upload intent
   используется.
 - Transcription принимает только persisted answer-owned private WAV,
   перепроверяет bucket/key/MIME/size/SHA-256 и формат mono 16 kHz 16-bit PCM.
-- Upload меньше 25 MiB, `language=ru`, prompt содержит только короткий
-  approved vocabulary, не полный эталонный ответ.
+- Upload меньше 25 MiB, `language=ru`, prompt содержит только bounded
+  structured names и короткие aliases/professional terms. Полный эталонный
+  ответ и `TrainingFact.statement` запрещены.
 - Evaluation использует Responses, `store:false`, strict JSON Schema и не
   передаёт tools/search/conversation/background/previous response state.
 - Instructions объявляют transcript и весь input JSON недоверенными данными.
 - Backend проверяет schema version, exact fields/enums, numeric confidence
   `0..1`, неизвестные/повторные IDs, неутверждённые anchors, полное покрытие
-  criteria/facts и evidence, которое не является точной подстрокой transcript
-  или известным metric ID.
+  criteria/facts и evidence. Transcript/evidence сравниваются после NFC и
+  CRLF/NBSP/whitespace normalization через case-sensitive `includes`, без
+  lowercase/fuzzy matching.
+- Non-UNSUPPORTED обязан иметь known `fact_id` и `claim=null`; UNSUPPORTED —
+  `fact_id=null`, claim и transcript evidence. Совпадение/достаточно длинное
+  containment approved statement/alias отклоняется как invalid output.
 - Ответ модели не содержит points: score вычисляется по persisted anchors и
   distinct incorrect facts только backend-кодом.
 - API process не исполняет AI jobs; HTTP calls выполняет только
@@ -85,6 +90,10 @@ reprocessing endpoint. Exactly-once billing не обещается.
 для исторических и используемых сущностей: нарушение обнаруживается в момент
 DELETE, а архивирование остаётся отдельным domain transition. CASCADE
 сохранён только у неисторических draft/content-owned сущностей.
+
+Composite same-answer foreign keys дополнительно запрещают cross-owned active
+transcription/evaluation и provider history. Additive migration сначала
+проверяет существующую историю и fail-loud без автоматического data repair.
 
 `FilesService.delete` блокирует строку `File` через `FOR UPDATE`, проверяет все
 ссылки до object storage delete и только затем удаляет object и DB row в одной

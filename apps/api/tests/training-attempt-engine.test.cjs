@@ -1061,6 +1061,7 @@ test('APPROVED and OVERRIDDEN reviews share canonical scoring and best-result ru
     await harness.service.reviewAttempt({
       attemptId: overriddenPending.id,
       reviewerId: ADMIN_ID,
+      idempotencyKey: 'review-override-9500',
       decision: 'OVERRIDDEN',
       adminScore: '89.995',
       comment: 'Проверено администратором',
@@ -1090,6 +1091,7 @@ test('APPROVED and OVERRIDDEN reviews share canonical scoring and best-result ru
     await harness.service.reviewAttempt({
       attemptId: approvedPending.id,
       reviewerId: ADMIN_ID,
+      idempotencyKey: 'review-approved-9700',
       decision: 'APPROVED',
       comment: 'Факт подтверждён',
     })
@@ -1098,6 +1100,42 @@ test('APPROVED and OVERRIDDEN reviews share canonical scoring and best-result ru
   assert.equal(approved.finalScore.toFixed(2), '100.00');
   assert.equal(approved.reviewStatus, TrainingReviewStatus.APPROVED);
   assert.equal(harness.prisma.reviews.length, 2);
+
+  const auditCount = harness.prisma.auditLogs.filter(
+    (entry) =>
+      entry.action === 'training.attempt.review' &&
+      entry.entityId === approvedPending.id,
+  ).length;
+  const replayed = (
+    await harness.service.reviewAttempt({
+      attemptId: approvedPending.id,
+      reviewerId: ADMIN_ID,
+      idempotencyKey: 'review-approved-9700',
+      decision: 'APPROVED',
+      comment: 'Факт подтверждён',
+    })
+  ).attempt;
+  assert.equal(replayed.id, approved.id);
+  assert.equal(harness.prisma.reviews.length, 2);
+  assert.equal(
+    harness.prisma.auditLogs.filter(
+      (entry) =>
+        entry.action === 'training.attempt.review' &&
+        entry.entityId === approvedPending.id,
+    ).length,
+    auditCount,
+  );
+  await assert.rejects(
+    () =>
+      harness.service.reviewAttempt({
+        attemptId: approvedPending.id,
+        reviewerId: ADMIN_ID,
+        idempotencyKey: 'review-approved-9700',
+        decision: 'APPROVED',
+        comment: 'Другой payload',
+      }),
+    ConflictException,
+  );
 });
 
 test('a FOLLOW_UP cannot be finished before it is presented', async () => {
