@@ -83,6 +83,19 @@ size, MIME, timestamps и unique recovery key. S3 object несёт
 не скачивая и не угадывая его содержимое. Повторное выполнение использует
 те же key/File/link и не создаёт дублей.
 
+После создания intent его `bucket` и `objectKey` являются единственным
+источником истины для upload, HEAD/metadata validation, File, delete и
+повторного recovery. Текущий `TRAINING_AUDIO_BUCKET` читается только при
+создании нового intent. Поэтому после crash и смены конфигурации A → B старый
+intent продолжает обслуживаться в A, а объект с тем же key в B не читается,
+не перезаписывается и не удаляется. Отсутствующий/некорректный persisted
+bucket является controlled manual-review error без fallback.
+
+Cleanup переводит intent в `CLEANED` только после signed delete из
+`intent.bucket` и подтверждающего HEAD с `exists = false`. Ошибка delete/HEAD
+остаётся retryable; после `maxAttempts` job становится `DEAD`, а intent
+остаётся `CLEANUP_PENDING`.
+
 Fault injection существует только как injected test token. Production
 HTTP/API не позволяет включить crash hook.
 
@@ -92,11 +105,25 @@ HTTP/API не позволяет включить crash hook.
   `MINIO_BUCKET`.
 - Training audio никогда не вызывает `getPublicUrl`; `File.url` всегда
   `null`.
-- Startup проверяет bucket policy/ACL и функциональные anonymous GET/LIST.
-- Public `200`, неоднозначный ответ или недоступный probe в production
-  останавливают startup.
-- Sentinel удаляется независимо от результата; credentials и signed headers
-  не логируются.
+- Bucket policy отклоняет public `Principal: "*"`/`Principal.AWS: "*"` и
+  эквивалентные wildcard principals для read/list/write/delete/ACL
+  capabilities. `Action` поддерживает string/array и wildcard patterns;
+  conditional public capability, безопасность которой нельзя доказать,
+  fail-closed отклоняется в production.
+- Bucket ACL отклоняет `AllUsers` и `AuthenticatedUsers` с `READ`,
+  `READ_ACP`, `WRITE`, `WRITE_ACP`, `FULL_CONTROL` и любым распознанным
+  permission grant.
+- Startup функционально выполняет unsigned object GET, bucket LIST, object
+  DELETE и обязательный PUT случайного небольшого sentinel без credentials,
+  `Authorization`, signed headers и redirect.
+- Любой `2xx` означает public capability; только `401/403` подтверждают
+  запрет. Неоднозначный ответ или недоступный probe в production останавливает
+  startup.
+- После неожиданного успешного PUT sentinel удаляется signed запросом в
+  `finally`, затем HEAD подтверждает отсутствие. Cleanup failure безопасно
+  логируется и сам останавливает startup; credentials, signed headers и полный
+  endpoint не логируются.
+- Production validation не меняет bucket policy/ACL автоматически.
 
 ## Process and temporary-file boundary
 
@@ -137,6 +164,8 @@ pnpm --filter @platforma/api test:training:audio:docker
 ```
 
 Он использует временные PostgreSQL/MinIO, настоящий API image и synthetic
-tones без голосов сотрудников. Проверяются privacy policy, object metadata,
-реальный process crash после upload, restart reconciliation, terminal cleanup,
-duplicate retry, multi-segment storage, OGG/Opus → WAV и process tree timeout.
+tones без голосов сотрудников. Проверяются реальные anonymous GET/LIST/PUT
+policy, отсутствие sentinel после signed cleanup, object metadata, реальный
+process crash после upload, restart reconciliation при смене текущего bucket
+A → B, terminal cleanup из A без удаления одноимённого объекта в B, duplicate
+retry, multi-segment storage, OGG/Opus → WAV и process tree timeout.

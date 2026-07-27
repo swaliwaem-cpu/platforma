@@ -5332,3 +5332,81 @@ Dependencies:
   цепочки; draft-only cascades не менялись.
 - По исправленным findings незакрытых BLOCKER/HIGH/MEDIUM перед этапом 8 нет.
   Этап 8 не начат.
+
+## 2026-07-27 - Final two training stage 7 audio findings
+
+Задача:
+
+- Исправить только оставшиеся HIGH/MEDIUM findings этапа 7: fail-closed
+  anonymous write validation и persisted bucket recovery.
+- Не начинать этап 8, не подключать OpenAI и не менять Telegram dialogue,
+  scoring, ffmpeg pipeline, transactional job lifecycle или Prisma model.
+
+Изменения:
+
+- Bucket policy validation теперь распознаёт public wildcard principals в
+  `Principal`/`Principal.AWS`, string/array actions и wildcard patterns,
+  покрывающие read/list/write/delete/ACL capabilities. Conditional public
+  capability без доказанного запрета anonymous access отклоняется fail-closed
+  в production.
+- ACL validation отклоняет `AllUsers`/`AuthenticatedUsers` grants с `READ`,
+  `READ_ACP`, `WRITE`, `WRITE_ACP`, `FULL_CONTROL` и любым распознанным
+  permission.
+- Startup выполняет unsigned GET/LIST/DELETE и обязательный PUT случайного
+  sentinel без credentials, signed headers и redirect. Любой `2xx` блокирует
+  startup, `401/403` считаются запретом, неоднозначный production result
+  fail-closed. Успешный PUT удаляется signed запросом в `finally`, затем HEAD
+  подтверждает отсутствие; cleanup error безопасно логируется и не
+  проглатывается.
+- `FilesService` принимает persisted bucket явно для private audio
+  put/head/delete. `TrainingAudioWorkerService` использует `intent.bucket` для
+  upload, HEAD/metadata validation, File и cleanup; текущий configured bucket
+  участвует только в создании нового intent.
+- Смена config bucket A → B после crash больше не конфликтует с существующим
+  intent. Recovery создаёт File в A, terminal cleanup удаляет и подтверждает
+  отсутствие объекта в A, а одноимённый объект в B остаётся нетронутым.
+  Delete/HEAD failure остаётся retryable, после exhaustion job становится
+  `DEAD`, intent остаётся `CLEANUP_PENDING`.
+- Добавлены unit, PostgreSQL и real MinIO Docker regressions. Схема данных уже
+  содержит non-null `TrainingAudioUploadIntent.bucket`, поэтому migration и
+  обновление локальной пользовательской БД не выполнялись.
+- Обновлены implementation checklist, security/data-flow, audio worker
+  deployment и staging/production storage checklist.
+
+Проверки:
+
+- `pnpm --filter @platforma/api test` — passed: `396/396` unit и `71/71`
+  PostgreSQL/HTTP integration; все `37` migrations применены к временной БД,
+  затем БД удалена.
+- `pnpm build` — passed; сохраняется существующее Vite warning о client chunk
+  `753.03 kB`.
+- `pnpm test` — passed: API `396 + 71`, Web `286`, Feed import `64`,
+  WordPress import `23`.
+- Первый `pnpm --filter @platforma/api test:training:audio:docker` выявил
+  только устаревшее ожидание текста ошибки после того, как новый functional
+  GET gate сработал раньше static policy assertion. Assertion уточнён.
+- Повторный `pnpm --filter @platforma/api test:training:audio:docker` —
+  passed: real MinIO anonymous GET/LIST/PUT, signed sentinel cleanup,
+  PostgreSQL migrations, crash recovery A → B, terminal cleanup из A,
+  сохранность одноимённого объекта в B, ffmpeg и process-group timeout.
+- Development и production `docker compose config --quiet` — passed с
+  безопасными test placeholders; production containers не запускались.
+- `docker compose build api training-worker` — passed.
+- `pnpm --filter @platforma/api exec prisma validate --schema prisma/schema.prisma`
+  и `git diff --check` — passed.
+
+Ручная проверка:
+
+- Перед production deploy остаётся provider-specific staging QA policy/ACL и
+  controlled restart с реальной сменой bucket config. Production S3,
+  Telegram/OpenAI network и webhook не затрагивались.
+- Существующие pending migrations после успешного review применять командой
+  `pnpm --filter @platforma/api exec prisma migrate deploy --schema prisma/schema.prisma`.
+
+Спорные места:
+
+- Public sensitive policy с `Condition` намеренно отклоняется, если validator
+  не может доказать исключение anonymous access; это требуемый production
+  fail-closed режим.
+- По этим двум finding незакрытых BLOCKER/HIGH/MEDIUM перед этапом 8 нет.
+  Этап 8 не начат.

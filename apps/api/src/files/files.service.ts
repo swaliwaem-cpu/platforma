@@ -240,11 +240,17 @@ export class FilesService {
   }
 
   async readStoredFile(file: Pick<File, 'bucket' | 'key'>) {
-    return this.storage.getObject(file.key, file.bucket ?? undefined);
+    return this.storage.getObject(
+      file.key,
+      this.requirePersistedPrivateBucket(file.bucket),
+    );
   }
 
   async deleteStoredFile(file: Pick<File, 'bucket' | 'key'>) {
-    await this.storage.deleteObject(file.key, file.bucket ?? undefined);
+    await this.storage.deleteObject(
+      file.key,
+      this.requirePersistedPrivateBucket(file.bucket),
+    );
   }
 
   getTrainingAudioBucket() {
@@ -252,15 +258,17 @@ export class FilesService {
   }
 
   async putPrivateTrainingAudioObject(input: {
+    bucket: string;
     key: string;
     body: Buffer;
     mimeType: string;
     checksum: string;
   }) {
+    this.requirePersistedPrivateBucket(input.bucket);
     this.assertPrivateTrainingAudioKey(input.key);
     this.assertSha256(input.checksum);
     await this.storage.putObject({
-      bucket: this.storage.getTrainingAudioBucket(),
+      bucket: input.bucket,
       key: input.key,
       body: input.body,
       contentType: input.mimeType,
@@ -269,15 +277,17 @@ export class FilesService {
   }
 
   async putPrivateTrainingAudioFile(input: {
+    bucket: string;
     key: string;
     filePath: string;
     mimeType: string;
     checksum: string;
     sizeBytes: number;
   }) {
+    this.requirePersistedPrivateBucket(input.bucket);
     this.assertPrivateTrainingAudioKey(input.key);
     await this.storage.putObjectFromFileToBucket({
-      bucket: this.storage.getTrainingAudioBucket(),
+      bucket: input.bucket,
       key: input.key,
       filePath: input.filePath,
       contentType: input.mimeType,
@@ -287,20 +297,16 @@ export class FilesService {
     });
   }
 
-  async headPrivateTrainingAudioObject(key: string) {
+  async headPrivateTrainingAudioObject(bucket: string, key: string) {
+    this.requirePersistedPrivateBucket(bucket);
     this.assertPrivateTrainingAudioKey(key);
-    return this.storage.headObject(
-      key,
-      this.storage.getTrainingAudioBucket(),
-    );
+    return this.storage.headObject(key, bucket);
   }
 
-  async deletePrivateTrainingAudioObject(key: string) {
+  async deletePrivateTrainingAudioObject(bucket: string, key: string) {
+    this.requirePersistedPrivateBucket(bucket);
     this.assertPrivateTrainingAudioKey(key);
-    await this.storage.deleteObject(
-      key,
-      this.storage.getTrainingAudioBucket(),
-    );
+    await this.storage.deleteObject(key, bucket);
   }
 
   async getById(id: string) {
@@ -833,6 +839,21 @@ export class FilesService {
     ) {
       throw new BadRequestException('Private training audio key is invalid');
     }
+  }
+
+  private requirePersistedPrivateBucket(bucket: string | null) {
+    if (
+      bucket === null ||
+      bucket.length === 0 ||
+      bucket.length > 255 ||
+      bucket !== bucket.trim() ||
+      /[/\\\u0000-\u001f\u007f]/u.test(bucket)
+    ) {
+      throw new Error(
+        'Persisted private file bucket requires manual review',
+      );
+    }
+    return bucket;
   }
 
   private assertSha256(value: string) {

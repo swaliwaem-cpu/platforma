@@ -41,15 +41,25 @@ node apps/api/dist/training/training-worker.main.js
 
 `TRAINING_AUDIO_BUCKET` должен быть отдельным private bucket. Object storage
 credentials доступны только backend/worker. Bucket нельзя публиковать через
-anonymous read policy, CDN или бессрочные signed URLs.
+anonymous read/list/write/delete/ACL policy, CDN или бессрочные signed URLs.
 
 В production переменная обязательна и не может совпадать с `MINIO_BUCKET`.
 При startup API/worker проверяют policy и ACL, если provider поддерживает эти
-операции, затем создают случайный sentinel и выполняют неподписанные object
-GET и bucket LIST. Допустимы только явные `401/403`; публичный `200`,
-неоднозначный status или недоступный probe останавливают startup. Sentinel
-всегда удаляется в `finally`. Сервис не меняет policy общего bucket
-автоматически.
+операции. Public wildcard principal отклоняется для read/list/write/delete/ACL
+actions, включая string/array и wildcard action patterns; conditional public
+capability без доказанного запрета anonymous access отклоняется fail-closed.
+ACL grants для `AllUsers`/`AuthenticatedUsers` отклоняются с `READ`,
+`READ_ACP`, `WRITE`, `WRITE_ACP` и `FULL_CONTROL`.
+
+Functional gate создаёт случайные sentinel keys и без credentials,
+`Authorization`, signed headers или redirect выполняет object GET, bucket
+LIST, object DELETE и обязательный маленький PUT. Любой `2xx` означает public
+capability; допустимы только явные `401/403`. Неоднозначный status или
+недоступный probe в production останавливает startup. После неожиданного
+успешного PUT sentinel удаляется signed запросом в `finally`, затем HEAD
+подтверждает отсутствие. Cleanup error безопасно логируется и также
+останавливает startup. Endpoint и credentials в error/log не выводятся.
+Сервис не меняет policy/ACL автоматически.
 
 И оригиналы, и normalized audio создают `File` со следующими правилами:
 
@@ -171,17 +181,26 @@ intent в `COMMITTED`.
 
 После полной смерти процесса новый worker находит stale job и тот же intent:
 
-1. делает HEAD deterministic object;
+1. делает HEAD deterministic object в persisted `intent.bucket`;
 2. сравнивает size, MIME и `x-amz-meta-sha256`;
-3. при совпадении завершает DB link без второго object/File;
+3. при совпадении создаёт/находит `File` с тем же persisted bucket и завершает
+   DB link без второго object/File;
 4. при несовпадении переводит intent в `CLEANUP_PENDING`, создаёт
    `CLEANUP_TRAINING_AUDIO_OBJECT` в существующей `TrainingJob`, удаляет
-   неизвестный object и повторяет исходный job;
+   неизвестный object именно из persisted bucket, подтверждает отсутствие
+   через HEAD и повторяет исходный job;
 5. для terminal attempt не создаёт link, а durable cleanup переводит intent в
    `CLEANED`.
 
+Текущий `TRAINING_AUDIO_BUCKET` используется только при создании нового
+intent. После изменения конфигурации A → B ранее сохранённый intent продолжает
+upload/HEAD/File/delete в A; одноимённый object в B не затрагивается. Silent
+fallback для отсутствующего persisted bucket запрещён и приводит к
+manual-review error.
+
 Ошибка object delete не проглатывается: cleanup job получает bounded retry,
 safe error code и после исчерпания становится `DEAD` со structured log.
+Intent при этом остаётся `CLEANUP_PENDING`, а не `CLEANED`.
 
 Merge job без всех downloaded segments возвращается в `PENDING` без расхода
 attempt. После terminal attempt jobs становятся no-op. Исчерпанный/permanent
@@ -248,10 +267,11 @@ pnpm --filter @platforma/api test:training:audio:docker
 
 Команда строит текущий API image, поднимает уникальный Compose project без
 published ports, применяет все migrations к временной БД, проверяет
-put/head/get/delete, private/public policy probes, два synthetic OGG/Opus,
-mono 16 kHz PCM WAV merge, ffmpeg/process-group timeout, crash after S3 upload,
-active recovery, terminal cleanup и duplicate retry. В `finally`/при
-`SIGINT`/`SIGTERM` удаляются containers, volumes и network.
+put/head/get/delete, реальные public GET/LIST/PUT policies и unsigned PUT,
+отсутствие sentinel после cleanup, два synthetic OGG/Opus, mono 16 kHz PCM WAV
+merge, ffmpeg/process-group timeout, crash after S3 upload, active/terminal
+recovery после смены bucket A → B и сохранность одноимённого объекта в B.
+В `finally`/при `SIGINT`/`SIGTERM` удаляются containers, volumes и network.
 
 ## Manual staging QA without production webhook and OpenAI
 

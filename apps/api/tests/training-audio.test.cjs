@@ -205,11 +205,24 @@ test('production storage requires a distinct explicitly configured audio bucket'
   );
 });
 
-test('training audio bucket privacy probe accepts private storage and rejects public or ambiguous access', async (t) => {
+test('training audio bucket privacy probe accepts private storage and rejects public read, list or ambiguous access', async (t) => {
   for (const fixture of [
     { name: 'private', anonymous: 'denied', succeeds: true },
-    { name: 'public', anonymous: 'public', succeeds: false },
-    { name: 'ambiguous', anonymous: 'network', succeeds: false },
+    {
+      name: 'public object read',
+      anonymous: { GET: 'public' },
+      succeeds: false,
+    },
+    {
+      name: 'public bucket list',
+      anonymous: { LIST: 'public' },
+      succeeds: false,
+    },
+    {
+      name: 'ambiguous read',
+      anonymous: { GET: 'network' },
+      succeeds: false,
+    },
   ]) {
     await t.test(fixture.name, async () => {
       await withTemporaryEnvironment(
@@ -244,40 +257,179 @@ test('training audio bucket privacy probe accepts private storage and rejects pu
   }
 });
 
-test('training audio bucket policy rejects a wildcard principal in a nested AWS array', async () => {
-  await withTemporaryEnvironment(
+test('training audio bucket anonymous PUT is a mandatory fail-closed gate with signed cleanup', async (t) => {
+  for (const fixture of [
     {
-      NODE_ENV: 'production',
-      S3_ENDPOINT: 'https://minio.test',
-      S3_PUBLIC_ENDPOINT: 'https://public-minio.test',
-      MINIO_BUCKET: 'general-bucket',
-      TRAINING_DOCUMENT_BUCKET: 'document-bucket',
-      TRAINING_AUDIO_BUCKET: 'audio-private-bucket',
+      name: 'private PUT is denied',
+      anonymous: { PUT: 'denied' },
+      succeeds: true,
     },
-    async () => {
-      const originalFetch = global.fetch;
-      global.fetch = createS3PrivacyFetch('denied', {
-        Version: '2012-10-17',
-        Statement: [
-          {
-            Effect: 'Allow',
-            Principal: {
-              AWS: ['arn:aws:iam::123456789012:root', '*'],
-            },
-            Action: 's3:GetObject',
-          },
-        ],
+    {
+      name: 'public PUT is rejected and removed',
+      anonymous: { PUT: 'public' },
+      succeeds: false,
+    },
+    {
+      name: 'ambiguous PUT is rejected in production',
+      anonymous: { PUT: 'network' },
+      succeeds: false,
+    },
+  ]) {
+    await t.test(fixture.name, async () => {
+      await withProductionStorageEnvironment(async () => {
+        const originalFetch = global.fetch;
+        const storageFetch = createS3PrivacyFetch(fixture.anonymous);
+        global.fetch = storageFetch;
+        try {
+          const operation = () => new S3StorageService().onModuleInit();
+          if (fixture.succeeds) {
+            await operation();
+          } else {
+            await assert.rejects(operation, /TRAINING_AUDIO_BUCKET/);
+          }
+          assert.deepEqual(storageFetch.getStoredProbeKeys(), []);
+          const anonymousPut = storageFetch.calls.find(
+            (call) => !call.signed && call.operation === 'PUT',
+          );
+          assert.ok(anonymousPut);
+          assert.equal(anonymousPut.headers.has('authorization'), false);
+          assert.equal(anonymousPut.headers.has('x-amz-date'), false);
+          assert.equal(
+            anonymousPut.headers.has('x-amz-content-sha256'),
+            false,
+          );
+        } finally {
+          global.fetch = originalFetch;
+        }
       });
-      try {
-        await assert.rejects(
-          () => new S3StorageService().onModuleInit(),
-          /TRAINING_AUDIO_BUCKET policy allows public access/,
-        );
-      } finally {
-        global.fetch = originalFetch;
-      }
+    });
+  }
+});
+
+test('training audio bucket anonymous PUT cleanup errors are logged and fail startup', async () => {
+  await withProductionStorageEnvironment(async () => {
+    const originalFetch = global.fetch;
+    global.fetch = createS3PrivacyFetch(
+      { PUT: 'public' },
+      null,
+      null,
+      { failSignedDeleteNumber: 2 },
+    );
+    try {
+      await assert.rejects(
+        () => new S3StorageService().onModuleInit(),
+        /privacy sentinel cleanup failed/,
+      );
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+});
+
+test('training audio bucket policy rejects public read and write capabilities including wildcard actions', async (t) => {
+  const fixtures = [
+    {
+      name: 'nested Principal.AWS read',
+      principal: {
+        AWS: ['arn:aws:iam::123456789012:root', '*'],
+      },
+      action: 's3:GetObject',
     },
-  );
+    {
+      name: 'Principal star PutObject',
+      principal: '*',
+      action: 's3:PutObject',
+    },
+    {
+      name: 'Principal.AWS star all actions',
+      principal: { AWS: '*' },
+      action: 's3:*',
+    },
+    {
+      name: 'Action array containing PutObject',
+      principal: '*',
+      action: ['s3:GetBucketLocation', 's3:PutObject'],
+    },
+    {
+      name: 'wildcard write action',
+      principal: '*',
+      action: 's3:Put*',
+    },
+    {
+      name: 'wildcard covering object writes',
+      principal: '*',
+      action: 's3:*Object',
+    },
+    {
+      name: 'conditional public write fails closed',
+      principal: '*',
+      action: 's3:PutObject',
+      condition: {
+        IpAddress: {
+          'aws:SourceIp': '10.0.0.0/8',
+        },
+      },
+    },
+  ];
+  for (const fixture of fixtures) {
+    await t.test(fixture.name, async () => {
+      await withProductionStorageEnvironment(async () => {
+        const originalFetch = global.fetch;
+        global.fetch = createS3PrivacyFetch('denied', {
+          Version: '2012-10-17',
+          Statement: [
+            {
+              Effect: 'Allow',
+              Principal: fixture.principal,
+              Action: fixture.action,
+              ...(fixture.condition
+                ? { Condition: fixture.condition }
+                : {}),
+            },
+          ],
+        });
+        try {
+          await assert.rejects(
+            () => new S3StorageService().onModuleInit(),
+            /TRAINING_AUDIO_BUCKET policy allows public access/,
+          );
+        } finally {
+          global.fetch = originalFetch;
+        }
+      });
+    });
+  }
+});
+
+test('training audio bucket ACL rejects every public or authenticated grant capability', async (t) => {
+  for (const fixture of [
+    { group: 'AllUsers', permission: 'READ' },
+    { group: 'AllUsers', permission: 'WRITE' },
+    { group: 'AllUsers', permission: 'FULL_CONTROL' },
+    { group: 'AuthenticatedUsers', permission: 'WRITE_ACP' },
+  ]) {
+    await t.test(
+      `${fixture.group} ${fixture.permission}`,
+      async () => {
+        await withProductionStorageEnvironment(async () => {
+          const originalFetch = global.fetch;
+          global.fetch = createS3PrivacyFetch(
+            'denied',
+            null,
+            createPublicAcl(fixture.group, fixture.permission),
+          );
+          try {
+            await assert.rejects(
+              () => new S3StorageService().onModuleInit(),
+              /TRAINING_AUDIO_BUCKET ACL allows public access/,
+            );
+          } finally {
+            global.fetch = originalFetch;
+          }
+        });
+      },
+    );
+  }
 });
 
 test('audio migration links private File rows to segments and merged answers with integrity constraints', () => {
@@ -1250,53 +1402,142 @@ async function withTemporaryEnvironment(overrides, operation) {
   }
 }
 
-function createS3PrivacyFetch(anonymousMode, bucketPolicy = null) {
-  let storedChecksum = null;
-  return async (urlValue, init = {}) => {
+function withProductionStorageEnvironment(operation) {
+  return withTemporaryEnvironment(
+    {
+      NODE_ENV: 'production',
+      S3_ENDPOINT: 'https://minio.test',
+      S3_PUBLIC_ENDPOINT: 'https://public-minio.test',
+      MINIO_BUCKET: 'general-bucket',
+      TRAINING_DOCUMENT_BUCKET: 'document-bucket',
+      TRAINING_AUDIO_BUCKET: 'audio-private-bucket',
+    },
+    operation,
+  );
+}
+
+function createS3PrivacyFetch(
+  anonymousMode,
+  bucketPolicy = null,
+  bucketAcl = null,
+  options = {},
+) {
+  const storedObjects = new Map();
+  const calls = [];
+  let signedPrivacyDeletes = 0;
+  const storageFetch = async (urlValue, init = {}) => {
     const url = new URL(String(urlValue));
     const headers = new Headers(init.headers);
     const signed = headers.has('authorization');
+    const method = init.method ?? 'GET';
+    const operation =
+      method === 'GET' && url.searchParams.has('list-type')
+        ? 'LIST'
+        : method;
+    calls.push({ signed, operation, headers });
     if (!signed) {
-      if (anonymousMode === 'network') {
+      const mode =
+        typeof anonymousMode === 'string'
+          ? anonymousMode
+          : (anonymousMode[operation] ?? 'denied');
+      if (mode === 'network') {
         throw new TypeError('anonymous probe unavailable');
       }
+      if (mode === 'public' && method === 'PUT') {
+        storedObjects.set(
+          url.pathname,
+          Buffer.from(init.body ?? ''),
+        );
+      }
+      if (mode === 'public' && method === 'DELETE') {
+        storedObjects.delete(url.pathname);
+      }
       return new Response(
-        anonymousMode === 'public' ? 'public' : 'denied',
+        mode === 'public' ? 'public' : 'denied',
         {
-          status: anonymousMode === 'public' ? 200 : 403,
+          status:
+            mode !== 'public'
+              ? 403
+              : method === 'DELETE'
+                ? 204
+                : 200,
         },
       );
     }
-    if (init.method === 'GET' && url.searchParams.has('policy')) {
+    if (method === 'GET' && url.searchParams.has('policy')) {
       return bucketPolicy
         ? Response.json(bucketPolicy)
         : new Response(null, { status: 404 });
     }
-    if (init.method === 'GET' && url.searchParams.has('acl')) {
-      return new Response(null, { status: 404 });
+    if (method === 'GET' && url.searchParams.has('acl')) {
+      return bucketAcl
+        ? new Response(bucketAcl, { status: 200 })
+        : new Response(null, { status: 404 });
     }
     if (
-      init.method === 'PUT' &&
+      method === 'PUT' &&
       url.pathname.includes('/training-audio/privacy-probe/')
     ) {
-      storedChecksum = headers.get('x-amz-meta-sha256');
+      storedObjects.set(url.pathname, {
+        body: Buffer.from(init.body ?? ''),
+        checksum: headers.get('x-amz-meta-sha256'),
+        contentType: headers.get('content-type'),
+      });
       return new Response(null, { status: 200 });
     }
     if (
-      init.method === 'HEAD' &&
+      method === 'HEAD' &&
       url.pathname.includes('/training-audio/privacy-probe/')
     ) {
+      const stored = storedObjects.get(url.pathname);
+      if (!stored) return new Response(null, { status: 404 });
+      const body = Buffer.isBuffer(stored) ? stored : stored.body;
       return new Response(null, {
         status: 200,
         headers: {
-          'content-length': '36',
-          'content-type': 'application/octet-stream',
-          'x-amz-meta-sha256': storedChecksum,
+          'content-length': String(body.length),
+          'content-type':
+            stored.contentType ?? 'application/octet-stream',
+          'x-amz-meta-sha256': stored.checksum ?? '',
         },
       });
     }
+    if (
+      method === 'DELETE' &&
+      url.pathname.includes('/training-audio/privacy-probe/')
+    ) {
+      signedPrivacyDeletes += 1;
+      if (
+        options.failSignedDeleteNumber === signedPrivacyDeletes
+      ) {
+        return new Response('delete failed', { status: 500 });
+      }
+      storedObjects.delete(url.pathname);
+      return new Response(null, { status: 204 });
+    }
     return new Response(null, {
-      status: init.method === 'DELETE' ? 204 : 200,
+      status: method === 'DELETE' ? 204 : 200,
     });
   };
+  storageFetch.calls = calls;
+  storageFetch.getStoredProbeKeys = () =>
+    [...storedObjects.keys()].filter((key) =>
+      key.includes('/training-audio/privacy-probe/'),
+    );
+  return storageFetch;
+}
+
+function createPublicAcl(group, permission) {
+  return [
+    '<AccessControlPolicy>',
+    '<AccessControlList>',
+    '<Grant>',
+    '<Grantee>',
+    `<URI>http://acs.amazonaws.com/groups/global/${group}</URI>`,
+    '</Grantee>',
+    `<Permission>${permission}</Permission>`,
+    '</Grant>',
+    '</AccessControlList>',
+    '</AccessControlPolicy>',
+  ].join('');
 }

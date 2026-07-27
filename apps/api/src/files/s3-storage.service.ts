@@ -228,8 +228,17 @@ export class S3StorageService implements OnModuleInit {
   async verifyTrainingAudioBucketPrivacy() {
     const bucket = this.trainingAudioBucket;
     await this.ensureBucket(bucket);
-    await this.assertNoPublicBucketPolicy(bucket);
-    await this.assertNoPublicBucketAcl(bucket);
+    let staticValidationError: unknown = null;
+    for (const validation of [
+      () => this.assertNoPublicBucketPolicy(bucket),
+      () => this.assertNoPublicBucketAcl(bucket),
+    ]) {
+      try {
+        await validation();
+      } catch (error) {
+        staticValidationError ??= error;
+      }
+    }
 
     const key = `training-audio/privacy-probe/${randomUUID()}`;
     const body = Buffer.from(randomUUID(), 'utf8');
@@ -284,10 +293,25 @@ export class S3StorageService implements OnModuleInit {
         anonymousList,
         'anonymous bucket LIST',
       );
+      const anonymousDelete = await fetch(
+        this.buildObjectUrl(bucket, key),
+        {
+          method: 'DELETE',
+          redirect: 'error',
+        },
+      ).catch(() => null);
+      this.assertAnonymousProbeDenied(
+        anonymousDelete,
+        'anonymous object DELETE',
+      );
     } finally {
       if (uploaded) {
-        await this.deleteObject(key, bucket);
+        await this.cleanupPrivacySentinel(bucket, key);
       }
+    }
+    await this.assertAnonymousPutDenied(bucket);
+    if (staticValidationError) {
+      throw staticValidationError;
     }
   }
 
@@ -453,7 +477,7 @@ export class S3StorageService implements OnModuleInit {
         'TRAINING_AUDIO_BUCKET policy response is invalid',
       );
     }
-    if (containsPublicPolicy(policy)) {
+    if (containsUnsafePublicPolicy(policy, this.requiresFailClosedPrivacy())) {
       throw new Error('TRAINING_AUDIO_BUCKET policy allows public access');
     }
   }
@@ -478,14 +502,7 @@ export class S3StorageService implements OnModuleInit {
       return;
     }
     const acl = await response.text();
-    if (
-      /http:\/\/acs\.amazonaws\.com\/groups\/global\/(?:AllUsers|AuthenticatedUsers)/u.test(
-        acl,
-      ) &&
-      /<Permission>\s*(?:READ|FULL_CONTROL)\s*<\/Permission>/u.test(
-        acl,
-      )
-    ) {
+    if (containsUnsafePublicAcl(acl)) {
       throw new Error('TRAINING_AUDIO_BUCKET ACL allows public access');
     }
   }
@@ -505,7 +522,7 @@ export class S3StorageService implements OnModuleInit {
       );
       return;
     }
-    if (response.status === 200) {
+    if (response.ok) {
       throw new Error(
         `TRAINING_AUDIO_BUCKET permits ${probe}`,
       );
@@ -518,6 +535,47 @@ export class S3StorageService implements OnModuleInit {
       }
       this.logger.warn(
         `Training audio bucket ${probe} returned ambiguous status ${response.status}`,
+      );
+    }
+  }
+
+  private async assertAnonymousPutDenied(bucket: string) {
+    const key = `training-audio/privacy-probe/${randomUUID()}`;
+    const body = new Uint8Array(Buffer.from('private-audio-write-probe', 'utf8'));
+    let cleanupRequired = false;
+    try {
+      const response = await fetch(
+        this.buildObjectUrl(bucket, key),
+        {
+          method: 'PUT',
+          body,
+          redirect: 'error',
+        },
+      ).catch(() => null);
+      cleanupRequired = Boolean(response?.ok);
+      this.assertAnonymousProbeDenied(
+        response,
+        'anonymous object PUT',
+      );
+    } finally {
+      if (cleanupRequired) {
+        await this.cleanupPrivacySentinel(bucket, key);
+      }
+    }
+  }
+
+  private async cleanupPrivacySentinel(bucket: string, key: string) {
+    try {
+      await this.deleteObject(key, bucket);
+      if ((await this.headObject(key, bucket)).exists) {
+        throw new Error('Sentinel object still exists after delete');
+      }
+    } catch {
+      this.logger.error(
+        'Training audio privacy sentinel cleanup failed',
+      );
+      throw new Error(
+        'TRAINING_AUDIO_BUCKET privacy sentinel cleanup failed',
       );
     }
   }
@@ -578,8 +636,35 @@ function normalizeSha256(value: string | null) {
     : null;
 }
 
-function containsPublicPolicy(value: unknown): boolean {
-  if (!value || typeof value !== 'object') return false;
+const PROTECTED_PUBLIC_S3_ACTIONS = [
+  's3:GetObject',
+  's3:GetObjectVersion',
+  's3:GetObjectAttributes',
+  's3:GetObjectAcl',
+  's3:GetObjectVersionAcl',
+  's3:ListBucket',
+  's3:ListBucketVersions',
+  's3:ListBucketMultipartUploads',
+  's3:ListMultipartUploadParts',
+  's3:PutObject',
+  's3:PutObjectAcl',
+  's3:PutObjectTagging',
+  's3:DeleteObject',
+  's3:DeleteObjectVersion',
+  's3:DeleteObjectTagging',
+  's3:AbortMultipartUpload',
+  's3:CreateMultipartUpload',
+  's3:RestoreObject',
+  's3:PutBucketPolicy',
+  's3:PutBucketAcl',
+  's3:DeleteBucket',
+] as const;
+
+function containsUnsafePublicPolicy(
+  value: unknown,
+  failClosed: boolean,
+): boolean {
+  if (!value || typeof value !== 'object') return failClosed;
   const policy = value as {
     Statement?: unknown;
   };
@@ -594,36 +679,74 @@ function containsPublicPolicy(value: unknown): boolean {
       Effect?: unknown;
       Principal?: unknown;
       Action?: unknown;
+      NotAction?: unknown;
+      Condition?: unknown;
     };
-    if (current.Effect !== 'Allow') return false;
+    if (
+      typeof current.Effect !== 'string' ||
+      current.Effect.toLowerCase() !== 'allow'
+    ) {
+      return false;
+    }
     if (!containsWildcardPrincipal(current.Principal)) {
       return false;
     }
-    const actions = Array.isArray(current.Action)
-      ? current.Action
-      : [current.Action];
-    return actions.some(
-      (action) =>
-        typeof action === 'string' &&
-        [
-          's3:*',
-          's3:GetObject',
-          's3:ListBucket',
-        ].some(
-          (publicAction) =>
-            action === publicAction ||
-            (action.endsWith('*') &&
-              publicAction.startsWith(action.slice(0, -1))),
-        ),
-    );
+    if (current.NotAction !== undefined) return failClosed;
+    const actions = normalizePolicyActions(current.Action);
+    if (!actions) return failClosed;
+    return actions.some(actionGrantsProtectedPublicCapability);
   });
 }
 
 function containsWildcardPrincipal(value: unknown): boolean {
-  if (value === '*') return true;
+  if (typeof value === 'string') return value.trim() === '*';
   if (Array.isArray(value)) {
     return value.some(containsWildcardPrincipal);
   }
   if (!value || typeof value !== 'object') return false;
   return Object.values(value).some(containsWildcardPrincipal);
+}
+
+function normalizePolicyActions(value: unknown): string[] | null {
+  const actions = Array.isArray(value) ? value : [value];
+  if (
+    actions.length === 0 ||
+    actions.some((action) => typeof action !== 'string')
+  ) {
+    return null;
+  }
+  const normalized = actions
+    .map((action) => action.trim())
+    .filter(Boolean);
+  return normalized.length > 0 ? normalized : null;
+}
+
+function actionGrantsProtectedPublicCapability(pattern: string) {
+  const expression = wildcardPatternToRegExp(pattern);
+  return PROTECTED_PUBLIC_S3_ACTIONS.some((action) =>
+    expression.test(action),
+  );
+}
+
+function wildcardPatternToRegExp(value: string) {
+  const escaped = value.replace(/[.+^${}()|[\]\\]/gu, '\\$&');
+  const pattern = escaped
+    .replace(/\*/gu, '.*')
+    .replace(/\?/gu, '.');
+  return new RegExp(`^${pattern}$`, 'iu');
+}
+
+function containsUnsafePublicAcl(value: string) {
+  const publicGroup =
+    /http:\/\/acs\.amazonaws\.com\/groups\/global\/(?:AllUsers|AuthenticatedUsers)/iu;
+  const permission =
+    /<(?:[A-Za-z_][\w.-]*:)?Permission\b[^>]*>\s*([^<]+?)\s*<\/(?:[A-Za-z_][\w.-]*:)?Permission\s*>/iu;
+  const grants = value.matchAll(
+    /<(?:[A-Za-z_][\w.-]*:)?Grant\b[^>]*>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?Grant\s*>/giu,
+  );
+  for (const grant of grants) {
+    const body = grant[1] ?? '';
+    if (publicGroup.test(body) && permission.test(body)) return true;
+  }
+  return publicGroup.test(value) && permission.test(value);
 }

@@ -39,11 +39,14 @@
 - `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, and `MINIO_BUCKET` are set.
 - `FILE_IMAGE_MAX_SIZE_BYTES` and `FILE_PDF_MAX_SIZE_BYTES` match operational limits.
 - Bucket creation permissions are available at startup or the bucket is pre-created.
-- `TRAINING_AUDIO_BUCKET` is a separate private bucket without anonymous read,
-  CDN publication or permanent public URLs.
+- `TRAINING_AUDIO_BUCKET` is a separate private bucket without anonymous
+  read/list/write/delete/ACL capabilities, CDN publication or permanent public
+  URLs.
 - Production Compose requires `TRAINING_AUDIO_BUCKET`; it differs from
   `MINIO_BUCKET`, and API/worker startup succeeds only after policy/ACL plus
-  anonymous object GET and bucket LIST prove that access is private.
+  anonymous object GET, bucket LIST, object DELETE and mandatory object PUT
+  prove that access is private. Only `401/403` are accepted; successful PUT
+  sentinel cleanup is confirmed by signed delete plus HEAD.
 - `TRAINING_AUDIO_RETENTION_DAYS=0` is preserved for approved indefinite
   retention; original voice objects remain after merge and Telegram unlink.
 

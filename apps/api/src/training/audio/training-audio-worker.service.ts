@@ -320,7 +320,8 @@ export class TrainingAudioWorkerService
     if (!intent) return 'COMPLETED';
     await this.ensureIntentObject(job.id, payload, intent, async () => {
       await this.files.putPrivateTrainingAudioObject({
-        key: storageKey,
+        bucket: intent.bucket,
+        key: intent.objectKey,
         body: downloaded.body,
         mimeType: downloaded.mimeType,
         checksum,
@@ -427,13 +428,14 @@ export class TrainingAudioWorkerService
           payload,
           intent,
           async () => {
-          await this.files.putPrivateTrainingAudioFile({
-            key: storageKey,
-            filePath: prepared.path,
-            mimeType: prepared.mimeType,
-            checksum: prepared.checksum,
-            sizeBytes: prepared.sizeBytes,
-          });
+            await this.files.putPrivateTrainingAudioFile({
+              bucket: intent.bucket,
+              key: intent.objectKey,
+              filePath: prepared.path,
+              mimeType: prepared.mimeType,
+              checksum: prepared.checksum,
+              sizeBytes: prepared.sizeBytes,
+            });
           },
         );
         await this.commitMergedIntent(
@@ -534,6 +536,7 @@ export class TrainingAudioWorkerService
 
     await this.refreshOwnershipOrThrow(jobId);
     const object = await this.files.headPrivateTrainingAudioObject(
+      current.bucket,
       current.objectKey,
     );
     if (object.exists) {
@@ -887,8 +890,19 @@ export class TrainingAudioWorkerService
     await this.refreshOwnershipOrThrow(job.id);
     try {
       await this.files.deletePrivateTrainingAudioObject(
+        intent.bucket,
         intent.objectKey,
       );
+      if (
+        (
+          await this.files.headPrivateTrainingAudioObject(
+            intent.bucket,
+            intent.objectKey,
+          )
+        ).exists
+      ) {
+        throw new Error('Persisted training audio object still exists');
+      }
     } catch {
       throw new TrainingAudioError('AUDIO_STORAGE_FAILED', true);
     }
@@ -1507,7 +1521,6 @@ function assertMatchingIntent(
     intent.kind !== spec.kind ||
     intent.segmentId !== spec.segmentId ||
     intent.answerId !== spec.answerId ||
-    intent.bucket !== spec.bucket ||
     intent.objectKey !== spec.objectKey ||
     intent.expectedChecksum !== spec.expectedChecksum ||
     intent.expectedSizeBytes !== BigInt(spec.expectedSizeBytes) ||

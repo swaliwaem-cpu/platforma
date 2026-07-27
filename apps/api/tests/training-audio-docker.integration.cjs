@@ -88,17 +88,19 @@ async function main() {
 }
 
 async function verifyStorageContract() {
+  const bucket = storage.getTrainingAudioBucket();
   const key = `training-audio/docker-contract/${randomUUID()}.wav`;
   const body = Buffer.from('real-minio-put-head-get-delete');
   const checksum = sha256(body);
   await files.putPrivateTrainingAudioObject({
+    bucket,
     key,
     body,
     mimeType: 'audio/wav',
     checksum,
   });
   assert.deepEqual(
-    await storage.headObject(key, storage.getTrainingAudioBucket()),
+    await storage.headObject(key, bucket),
     {
       exists: true,
       contentLength: body.length,
@@ -107,15 +109,15 @@ async function verifyStorageContract() {
     },
   );
   assert.deepEqual(
-    await storage.getObject(key, storage.getTrainingAudioBucket()),
+    await storage.getObject(key, bucket),
     body,
   );
-  await files.deletePrivateTrainingAudioObject(key);
+  await files.deletePrivateTrainingAudioObject(bucket, key);
   assert.equal(
     (
       await storage.headObject(
         key,
-        storage.getTrainingAudioBucket(),
+        bucket,
       )
     ).exists,
     false,
@@ -169,7 +171,7 @@ async function verifyPrivateAndPublicBucketPolicy() {
     );
     await assert.rejects(
       () => storage.verifyTrainingAudioBucketPrivacy(),
-      /TRAINING_AUDIO_BUCKET.*public access/,
+      /TRAINING_AUDIO_BUCKET permits anonymous object GET/,
     );
   } finally {
     const deletePolicy = await storage.signedFetch({
@@ -182,6 +184,129 @@ async function verifyPrivateAndPublicBucketPolicy() {
       true,
     );
     await storage.deleteObject(publicKey, bucket);
+  }
+  await storage.verifyTrainingAudioBucketPrivacy();
+
+  const listPolicy = Buffer.from(
+    JSON.stringify({
+      Version: '2012-10-17',
+      Statement: [
+        {
+          Effect: 'Allow',
+          Principal: '*',
+          Action: 's3:ListBucket',
+          Resource: [`arn:aws:s3:::${bucket}`],
+        },
+      ],
+    }),
+  );
+  const putListPolicy = await storage.signedFetch({
+    method: 'PUT',
+    bucket,
+    query: policyQuery,
+    body: listPolicy,
+    contentType: 'application/json',
+    contentLength: listPolicy.length,
+  });
+  assert.equal(
+    putListPolicy.ok,
+    true,
+    await putListPolicy.text(),
+  );
+  try {
+    const anonymousList = await fetch(
+      storage.buildObjectUrl(
+        bucket,
+        undefined,
+        new URLSearchParams({
+          'list-type': '2',
+          'max-keys': '1',
+        }),
+      ),
+      { redirect: 'error' },
+    );
+    assert.equal(anonymousList.status, 200);
+    await assert.rejects(
+      () => storage.verifyTrainingAudioBucketPrivacy(),
+      /TRAINING_AUDIO_BUCKET permits anonymous bucket LIST/,
+    );
+  } finally {
+    const deletePolicy = await storage.signedFetch({
+      method: 'DELETE',
+      bucket,
+      query: policyQuery,
+    });
+    assert.equal(
+      deletePolicy.ok || deletePolicy.status === 404,
+      true,
+    );
+  }
+  await storage.verifyTrainingAudioBucketPrivacy();
+
+  const anonymousWriteKey =
+    `training-audio/public-write-probe/${randomUUID()}`;
+  const anonymousWriteBody = Buffer.from(
+    'anonymous-write-must-be-rejected',
+  );
+  const writePolicy = Buffer.from(
+    JSON.stringify({
+      Version: '2012-10-17',
+      Statement: [
+        {
+          Effect: 'Allow',
+          Principal: '*',
+          Action: 's3:PutObject',
+          Resource: [`arn:aws:s3:::${bucket}/*`],
+        },
+      ],
+    }),
+  );
+  const putWritePolicy = await storage.signedFetch({
+    method: 'PUT',
+    bucket,
+    query: policyQuery,
+    body: writePolicy,
+    contentType: 'application/json',
+    contentLength: writePolicy.length,
+  });
+  assert.equal(
+    putWritePolicy.ok,
+    true,
+    await putWritePolicy.text(),
+  );
+  try {
+    const anonymousPut = await fetch(
+      storage.buildObjectUrl(bucket, anonymousWriteKey),
+      {
+        method: 'PUT',
+        body: anonymousWriteBody,
+        redirect: 'error',
+      },
+    );
+    assert.equal(anonymousPut.ok, true);
+    assert.deepEqual(
+      await storage.getObject(anonymousWriteKey, bucket),
+      anonymousWriteBody,
+    );
+    await assert.rejects(
+      () => storage.verifyTrainingAudioBucketPrivacy(),
+      /TRAINING_AUDIO_BUCKET permits anonymous object PUT/,
+    );
+  } finally {
+    const deletePolicy = await storage.signedFetch({
+      method: 'DELETE',
+      bucket,
+      query: policyQuery,
+    });
+    assert.equal(
+      deletePolicy.ok || deletePolicy.status === 404,
+      true,
+    );
+    await storage.deleteObject(anonymousWriteKey, bucket);
+    assert.equal(
+      (await storage.headObject(anonymousWriteKey, bucket)).exists,
+      false,
+    );
   }
   await storage.verifyTrainingAudioBucketPrivacy();
 }
@@ -235,6 +360,7 @@ async function verifyRealFfmpegPipeline() {
       const checksum = sha256(body);
       storedKeys.push(key);
       await files.putPrivateTrainingAudioObject({
+        bucket: storage.getTrainingAudioBucket(),
         key,
         body,
         mimeType: 'audio/ogg',
@@ -299,7 +425,10 @@ async function verifyRealFfmpegPipeline() {
   } finally {
     ffmpeg.onModuleDestroy();
     for (const key of storedKeys) {
-      await files.deletePrivateTrainingAudioObject(key);
+      await files.deletePrivateTrainingAudioObject(
+        storage.getTrainingAudioBucket(),
+        key,
+      );
     }
     await rm(generationDirectory, {
       recursive: true,
@@ -416,6 +545,27 @@ async function verifyCrashRecovery(terminal) {
     0,
   );
 
+  const rotatedBucket =
+    `training-audio-rotated-${randomUUID().slice(0, 12)}`;
+  const {
+    storage: restartedStorage,
+    files: restartedFiles,
+  } = await createStorageForAudioBucket(rotatedBucket);
+  assert.equal(
+    restartedStorage.getTrainingAudioBucket(),
+    rotatedBucket,
+  );
+  const rotatedObject = Buffer.from(
+    'same key in current bucket B must remain untouched',
+  );
+  await restartedStorage.putObject({
+    bucket: rotatedBucket,
+    key: pending.objectKey,
+    body: rotatedObject,
+    contentType: 'audio/wav',
+    metadata: { sha256: sha256(rotatedObject) },
+  });
+
   if (terminal) {
     await prisma.trainingAttempt.update({
       where: { id: fixture.attemptId },
@@ -447,7 +597,7 @@ async function verifyCrashRecovery(terminal) {
   const worker = new TrainingAudioWorkerService(
     prisma,
     config,
-    files,
+    restartedFiles,
     ffmpeg,
     provider,
   );
@@ -469,7 +619,7 @@ async function verifyCrashRecovery(terminal) {
     assert.equal(segment.originalFileId, null);
     assert.equal(
       (
-        await storage.headObject(
+        await restartedStorage.headObject(
           pending.objectKey,
           pending.bucket,
         )
@@ -501,6 +651,13 @@ async function verifyCrashRecovery(terminal) {
       }),
       1,
     );
+    const persistedFile = await prisma.file.findFirst({
+      where: {
+        bucket: pending.bucket,
+        key: pending.objectKey,
+      },
+    });
+    assert.equal(persistedFile.bucket, pending.bucket);
     await worker.drainNow();
     assert.equal(
       await prisma.file.count({
@@ -511,7 +668,49 @@ async function verifyCrashRecovery(terminal) {
       }),
       1,
     );
-    await files.deletePrivateTrainingAudioObject(pending.objectKey);
+    await restartedFiles.deletePrivateTrainingAudioObject(
+      pending.bucket,
+      pending.objectKey,
+    );
+  }
+  assert.deepEqual(
+    await restartedStorage.getObject(
+      pending.objectKey,
+      rotatedBucket,
+    ),
+    rotatedObject,
+  );
+  await restartedStorage.deleteObject(
+    pending.objectKey,
+    rotatedBucket,
+  );
+  assert.equal(
+    (
+      await restartedStorage.headObject(
+        pending.objectKey,
+        rotatedBucket,
+      )
+    ).exists,
+    false,
+  );
+}
+
+async function createStorageForAudioBucket(bucket) {
+  const previousBucket = process.env.TRAINING_AUDIO_BUCKET;
+  process.env.TRAINING_AUDIO_BUCKET = bucket;
+  try {
+    const restartedStorage = new S3StorageService();
+    await restartedStorage.onModuleInit();
+    return {
+      storage: restartedStorage,
+      files: new FilesService(prisma, restartedStorage),
+    };
+  } finally {
+    if (previousBucket === undefined) {
+      delete process.env.TRAINING_AUDIO_BUCKET;
+    } else {
+      process.env.TRAINING_AUDIO_BUCKET = previousBucket;
+    }
   }
 }
 

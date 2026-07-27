@@ -377,7 +377,7 @@ test('PostgreSQL merge waits for the unfinished segment without consuming an att
   assert.ok((await findAnswer(attempt.id)).mergedAudioFile);
 });
 
-test('PostgreSQL exception after storage upload leaves durable intent and restart commits the existing object', async () => {
+test('PostgreSQL recovery after bucket A to B config change uses persisted bucket and is idempotent', async () => {
   const fixture = await createFixture();
   const clock = createClock();
   const engine = createEngine(clock);
@@ -416,6 +416,7 @@ test('PostgreSQL exception after storage upload leaves durable intent and restar
     });
   assert.ok(intentAfterFailure);
   assert.equal(intentAfterFailure.state, 'PENDING');
+  assert.equal(intentAfterFailure.bucket, AUDIO_BUCKET);
   const retrying = await prisma.trainingJob.findUnique({
     where: {
       idempotencyKey: `attempt:${attempt.id}:answer:${answer.id}:segment:${answer.voiceSegments[0].id}:download`,
@@ -427,17 +428,66 @@ test('PostgreSQL exception after storage upload leaves durable intent and restar
     where: { id: retrying.id },
     data: { runAt: new Date('2000-01-01T00:00:00.000Z') },
   });
-  await drainAudio(
-    createWorker({
-      storage,
-      provider,
-      ffmpeg: createFfmpegFixture(storage),
-    }),
+  const decoyInRotatedBucket = Buffer.from(
+    'must not be read, overwritten or deleted',
   );
+  storage.objectsForBucket(ROTATED_AUDIO_BUCKET).set(
+    intentAfterFailure.objectKey,
+    decoyInRotatedBucket,
+  );
+  storage.metadataForBucket(ROTATED_AUDIO_BUCKET).set(
+    intentAfterFailure.objectKey,
+    {
+      exists: true,
+      contentLength: decoyInRotatedBucket.length,
+      contentType: 'audio/wav',
+      sha256: createHash('sha256')
+        .update(decoyInRotatedBucket)
+        .digest('hex'),
+    },
+  );
+  storage.setCurrentBucket(ROTATED_AUDIO_BUCKET);
+  storage.heads.length = 0;
+  const recoveryWorker = createWorker({
+    storage,
+    provider,
+    ffmpeg: createFfmpegFixture(storage),
+  });
+  await drainAudio(recoveryWorker);
+  await recoveryWorker.drainNow();
 
   assert.equal(storage.objects.size, 1);
   assert.equal(storage.puts.length, 1);
-  assert.ok((await findAnswer(attempt.id)).voiceSegments[0].originalFile);
+  const recoveredSegment =
+    (await findAnswer(attempt.id)).voiceSegments[0];
+  assert.equal(recoveredSegment.originalFile.bucket, AUDIO_BUCKET);
+  assert.equal(
+    recoveredSegment.originalStorageBucket,
+    AUDIO_BUCKET,
+  );
+  assert.equal(
+    storage
+      .objectsForBucket(ROTATED_AUDIO_BUCKET)
+      .get(intentAfterFailure.objectKey)
+      .equals(decoyInRotatedBucket),
+    true,
+  );
+  assert.equal(
+    storage.heads.some(
+      (head) =>
+        head.bucket === AUDIO_BUCKET &&
+        head.key === intentAfterFailure.objectKey,
+    ),
+    true,
+  );
+  assert.equal(
+    storage.heads.some(
+      (head) =>
+        head.bucket === ROTATED_AUDIO_BUCKET &&
+        head.key === intentAfterFailure.objectKey,
+    ),
+    false,
+  );
   assert.equal(
     await countAudioFilesForAttempt(attempt.id),
     1,
@@ -640,6 +690,21 @@ test('PostgreSQL delete failure remains a retryable cleanup job and becomes visi
   });
   assert.equal(dead.status, TrainingJobStatus.DEAD);
   assert.equal(dead.lastErrorCode, 'AUDIO_ATTEMPTS_EXHAUSTED');
+  assert.equal(
+    (
+      await prisma.trainingAudioUploadIntent.findUnique({
+        where: { id: intent.id },
+      })
+    ).state,
+    'CLEANUP_PENDING',
+  );
+  assert.equal(
+    storage.deletes.every(
+      (entry) =>
+        entry.bucket === AUDIO_BUCKET && entry.key === key,
+    ),
+    true,
+  );
   assert.notEqual(
     (await prisma.trainingAttempt.findUnique({
       where: { id: attempt.id },
@@ -679,6 +744,25 @@ test('PostgreSQL terminal attempt never links an unfinished intent and durably r
   const intent = await prisma.trainingAudioUploadIntent.findFirst({
     where: { segmentId: answer.voiceSegments[0].id },
   });
+  const objectInRotatedBucket = Buffer.from(
+    'same key in rotated bucket must survive terminal cleanup',
+  );
+  storage.objectsForBucket(ROTATED_AUDIO_BUCKET).set(
+    intent.objectKey,
+    objectInRotatedBucket,
+  );
+  storage.metadataForBucket(ROTATED_AUDIO_BUCKET).set(
+    intent.objectKey,
+    {
+      exists: true,
+      contentLength: objectInRotatedBucket.length,
+      contentType: 'audio/wav',
+      sha256: createHash('sha256')
+        .update(objectInRotatedBucket)
+        .digest('hex'),
+    },
+  );
+  storage.setCurrentBucket(ROTATED_AUDIO_BUCKET);
   await prisma.trainingAttempt.update({
     where: { id: attempt.id },
     data: {
@@ -709,6 +793,29 @@ test('PostgreSQL terminal attempt never links an unfinished intent and durably r
   assert.equal(cleaned.state, 'CLEANED');
   assert.equal(cleaned.committedFileId, null);
   assert.equal(storage.objects.size, 0);
+  assert.equal(
+    storage
+      .objectsForBucket(ROTATED_AUDIO_BUCKET)
+      .get(intent.objectKey)
+      .equals(objectInRotatedBucket),
+    true,
+  );
+  assert.equal(
+    storage.deletes.some(
+      (entry) =>
+        entry.bucket === AUDIO_BUCKET &&
+        entry.key === intent.objectKey,
+    ),
+    true,
+  );
+  assert.equal(
+    storage.deletes.some(
+      (entry) =>
+        entry.bucket === ROTATED_AUDIO_BUCKET &&
+        entry.key === intent.objectKey,
+    ),
+    false,
+  );
   assert.equal((await findAnswer(attempt.id)).voiceSegments[0].originalFile, null);
 });
 
@@ -1320,6 +1427,8 @@ test('PostgreSQL fake audio pipeline completes the full 1 plus 3 flow and reuses
 });
 
 const AUDIO_BUCKET = 'platforma-training-audio-test-private';
+const ROTATED_AUDIO_BUCKET =
+  'platforma-training-audio-test-private-rotated';
 const MERGED_BODY = Buffer.from('normalized private training audio');
 
 function audioConfig(overrides = {}) {
@@ -1380,29 +1489,56 @@ function createWorker({
 function createStorage(options = {}) {
   const objects = new Map();
   const metadata = new Map();
+  const objectsByBucket = new Map([[AUDIO_BUCKET, objects]]);
+  const metadataByBucket = new Map([[AUDIO_BUCKET, metadata]]);
   const puts = [];
   const deletes = [];
+  const heads = [];
+  let currentBucket = options.currentBucket ?? AUDIO_BUCKET;
   let putFailuresRemaining = options.putFailures ?? 0;
   let deleteFailuresRemaining = options.deleteFailures ?? 0;
+  const objectsForBucket = (bucket) => {
+    let bucketObjects = objectsByBucket.get(bucket);
+    if (!bucketObjects) {
+      bucketObjects = new Map();
+      objectsByBucket.set(bucket, bucketObjects);
+    }
+    return bucketObjects;
+  };
+  const metadataForBucket = (bucket) => {
+    let bucketMetadata = metadataByBucket.get(bucket);
+    if (!bucketMetadata) {
+      bucketMetadata = new Map();
+      metadataByBucket.set(bucket, bucketMetadata);
+    }
+    return bucketMetadata;
+  };
   return {
     objects,
     metadata,
+    objectsForBucket,
+    metadataForBucket,
     puts,
     deletes,
-    getTrainingAudioBucket: () => AUDIO_BUCKET,
+    heads,
+    getTrainingAudioBucket: () => currentBucket,
+    setCurrentBucket: (bucket) => {
+      currentBucket = bucket;
+    },
     putPrivateTrainingAudioObject: async ({
+      bucket,
       key,
       body,
       mimeType,
       checksum,
     }) => {
-      puts.push(key);
+      puts.push({ bucket, key });
       if (putFailuresRemaining > 0) {
         putFailuresRemaining -= 1;
         throw new Error('simulated storage put failure');
       }
-      objects.set(key, Buffer.from(body));
-      metadata.set(key, {
+      objectsForBucket(bucket).set(key, Buffer.from(body));
+      metadataForBucket(bucket).set(key, {
         exists: true,
         contentLength: body.length,
         contentType: mimeType,
@@ -1410,27 +1546,29 @@ function createStorage(options = {}) {
       });
     },
     putPrivateTrainingAudioFile: async ({
+      bucket,
       key,
       mimeType,
       checksum,
       sizeBytes,
     }) => {
-      puts.push(key);
+      puts.push({ bucket, key });
       if (putFailuresRemaining > 0) {
         putFailuresRemaining -= 1;
         throw new Error('simulated storage put failure');
       }
-      objects.set(key, Buffer.from(MERGED_BODY));
-      metadata.set(key, {
+      objectsForBucket(bucket).set(key, Buffer.from(MERGED_BODY));
+      metadataForBucket(bucket).set(key, {
         exists: true,
         contentLength: sizeBytes,
         contentType: mimeType,
         sha256: checksum,
       });
     },
-    headPrivateTrainingAudioObject: async (key) => {
+    headPrivateTrainingAudioObject: async (bucket, key) => {
+      heads.push({ bucket, key });
       return (
-        metadata.get(key) ?? {
+        metadataForBucket(bucket).get(key) ?? {
           exists: false,
           contentLength: null,
           contentType: null,
@@ -1438,17 +1576,20 @@ function createStorage(options = {}) {
         }
       );
     },
-    deletePrivateTrainingAudioObject: async (key) => {
-      deletes.push(key);
+    deletePrivateTrainingAudioObject: async (bucket, key) => {
+      deletes.push({ bucket, key });
       if (deleteFailuresRemaining > 0) {
         deleteFailuresRemaining -= 1;
         throw new Error('simulated storage delete failure');
       }
-      objects.delete(key);
-      metadata.delete(key);
+      objectsForBucket(bucket).delete(key);
+      metadataForBucket(bucket).delete(key);
     },
     readStoredFile: async (file) => {
-      const body = objects.get(file.key);
+      if (!file.bucket) {
+        throw new Error('persisted file bucket requires manual review');
+      }
+      const body = objectsForBucket(file.bucket).get(file.key);
       if (!body) throw new Error('private object is missing');
       return Buffer.from(body);
     },
@@ -1477,7 +1618,11 @@ function createFfmpegFixture(storage) {
       orders.push(inputs.map((input) => input.segmentIndex));
       for (const input of inputs) {
         assert.equal(input.answerId, inputs[0].answerId);
-        assert.ok(storage.objects.has(input.file.key));
+        assert.ok(
+          storage
+            .objectsForBucket(input.file.bucket)
+            .has(input.file.key),
+        );
       }
       return operation({
         path: '/tmp/internal-generated-normalized.wav',

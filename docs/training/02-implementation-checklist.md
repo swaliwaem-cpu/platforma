@@ -436,12 +436,19 @@ fixtures и получает internal audio metadata. OpenAI SDK/API key/network
 - [x] Restart через HEAD и S3 SHA metadata завершает link без дублей; mismatch
   и terminal owner используют persisted
   `CLEANUP_TRAINING_AUDIO_OBJECT` в существующей `TrainingJob`.
+- [x] Для существующего upload intent все upload/HEAD/File/delete/restart
+  paths используют только persisted `intent.bucket`; смена текущего
+  `TRAINING_AUDIO_BUCKET` с A на B не перенаправляет recovery в B.
 - [x] Cleanup delete errors получают bounded retry/`DEAD` и structured log;
-  temp cleanup наблюдаем, startup/periodic scavenger ограничен configured root,
-  не следует symlink и не удаляет fresh/active directories.
+  intent остаётся `CLEANUP_PENDING`, а `CLEANED` выставляется только после
+  delete и подтверждающего HEAD именно persisted bucket. Temp cleanup
+  наблюдаем, startup/periodic scavenger ограничен configured root, не следует
+  symlink и не удаляет fresh/active directories.
 - [x] Production требует отдельный `TRAINING_AUDIO_BUCKET`; startup проверяет
-  policy/ACL и anonymous object GET/bucket LIST, а неоднозначный probe
-  останавливает запуск.
+  public principal/action policy, ACL grants и functional anonymous
+  GET/LIST/PUT/DELETE. Public write, неоднозначный ответ или недоступный probe
+  останавливает запуск; успешный PUT sentinel удаляется signed запросом и
+  отсутствие объекта подтверждается HEAD.
 - [x] Добавлен настоящий HTTP integration на ephemeral port с real login,
   `JwtAuthGuard`/`PermissionsGuard`, матрицей `401/403/404/200`, private
   headers и `AuditLog`.
@@ -451,8 +458,10 @@ fixtures и получает internal audio metadata. OpenAI SDK/API key/network
 - [x] Добавлен обязательный перед этапом 8 Docker gate
   `pnpm --filter @platforma/api test:training:audio:docker`: isolated
   PostgreSQL/MinIO, все migrations, настоящий process `SIGKILL` после upload,
-  active recovery, terminal cleanup, duplicate retry, synthetic multi-segment
-  OGG/Opus → mono 16 kHz PCM WAV и process-tree timeout.
+  реальные anonymous GET/LIST/PUT policies, active recovery после смены
+  bucket A → B, terminal cleanup из A без изменения одноимённого объекта в B,
+  duplicate retry, synthetic multi-segment OGG/Opus → mono 16 kHz PCM WAV и
+  process-tree timeout.
 - [x] Новая queue, Redis/BullMQ, OpenAI, Telegram dialogue/scoring/frontend и
   этап 8 не добавлялись.
 
@@ -464,6 +473,26 @@ fixtures и получает internal audio metadata. OpenAI SDK/API key/network
 PostgreSQL/HTTP integration tests; root suite также включает `286/286` web,
 `64/64` feed-import и `23/23` wp-import tests. Docker gate с чистой БД,
 реальным MinIO и ffmpeg прошёл полностью.
+
+### Последние два finding этапа 7
+
+- [x] Privacy validation отклоняет anonymous/public write через policy и ACL,
+  выполняет настоящий unsigned PUT и гарантирует signed cleanup sentinel.
+- [x] Recovery и cleanup используют persisted `intent.bucket` после смены
+  текущей конфигурации A → B; объект с тем же key в B не затрагивается.
+- [x] Новая migration не создана: существующая модель уже содержит
+  обязательный `TrainingAudioUploadIntent.bucket`.
+- [x] API tests прошли: `396/396` unit и `71/71` PostgreSQL/HTTP integration;
+  временные PostgreSQL databases удалены.
+- [x] Root suite прошёл: API `396 + 71`, Web `286`, Feed import `64`,
+  WordPress import `23`.
+- [x] Real MinIO Docker gate проверил фактические anonymous GET/LIST/PUT,
+  отсутствие sentinel, crash recovery A → B и terminal cleanup из A;
+  containers, volumes и network удалены.
+- [x] Development/production Compose config и API/worker image build прошли.
+- [x] Этап 8, OpenAI, Telegram dialogue, scoring, ffmpeg pipeline,
+  transactional job semantics, dependencies и Prisma schema/migrations не
+  изменялись.
 
 ## Этап 8. OpenAI providers, scoring и review
 
