@@ -5248,3 +5248,87 @@ Dependencies:
   `File` и второго объекта в upload-before-commit и commit-before-complete
   recovery сценариях.
 - Новые зависимости не добавлялись. Этап 8 и OpenAI providers не начаты.
+
+## 2026-07-27 - Independent review fixes for training stage 7 audio
+
+Задача:
+
+- Исправить только findings независимого review аудиоконвейера этапа 7.
+- Не начинать этап 8, не подключать OpenAI, не менять Telegram dialogue,
+  scoring, выбор вопросов и подтверждённую attempt business logic, не
+  добавлять Redis/BullMQ или вторую очередь.
+
+Изменения:
+
+- Historical result chain защищена на уровне PostgreSQL: шесть прежних
+  destructive FK заменены additive migration на `ON DELETE RESTRICT` для
+  attempt question, answer, voice segment, evaluation, score и review.
+  Prisma relations синхронизированы с `onDelete: Restrict`. Generic
+  `FilesService.delete` теперь внутри transaction блокирует `File`, проверяет
+  training audio references до object delete и удаляет объект из persisted
+  bucket.
+- Telegram `getFile` и binary download используют no-follow mode. Недоверенный
+  `file_path`, построенный URL и `response.url` проверяются относительно
+  фиксированного `https://api.telegram.org`; redirect и смена origin являются
+  permanent security error без утечки bot token.
+- POSIX runner создаёт отдельную process group. Timeout отправляет group
+  `SIGTERM`, ждёт bounded grace, при необходимости отправляет group `SIGKILL`
+  и дожидается исчезновения группы/закрытия child. Compose включает
+  init/reaper для API и worker.
+- Добавлена persisted two-phase модель `TrainingAudioUploadIntent` со state
+  `PENDING/UPLOADED/COMMITTED/CLEANUP_PENDING/CLEANED`, owner identity,
+  deterministic key, bucket, SHA-256, bytes, MIME и recovery key. Объект
+  получает SHA-256 metadata. Restart сверяет HEAD metadata и либо завершает
+  единственный DB link, либо ставит существующий `TrainingJob` вида
+  `CLEANUP_TRAINING_AUDIO_OBJECT`.
+- Terminal attempt не связывает unfinished intent. Ошибка object delete
+  сохраняется как bounded retry; exhausted cleanup становится `DEAD` и
+  записывает structured log. Temp cleanup также наблюдаем, а bounded
+  startup/periodic scavenger ограничен configured root, не следует symlink и
+  сохраняет fresh/active directories.
+- Production требует отдельный `TRAINING_AUDIO_BUCKET`. Startup fail-closed
+  проверяет policy/ACL и функционально выполняет anonymous sentinel GET и
+  bucket LIST; public, недоступный или неоднозначный probe блокирует запуск.
+- Добавлены real Nest HTTP guard integration и изолированный Docker suite с
+  PostgreSQL, MinIO, process-level crash fixture и настоящими
+  ffmpeg/ffprobe. Fake 1+3 flow теперь проверяет merged audio metadata всех
+  четырёх ответов.
+- Обновлены env examples, shared job contract, implementation/deployment/
+  staging checklist и новая security/data-flow документация. Зависимости не
+  добавлялись.
+
+Проверки:
+
+- `pnpm --filter @platforma/api test` — `378/378` unit и `71/71`
+  PostgreSQL/HTTP integration tests passed; временная database создана, все
+  `37` migrations применены и database удалена.
+- `pnpm build` — passed; остаётся существующее Vite warning о client chunk
+  `753.03 kB`.
+- `pnpm test` — passed: API `378 + 71`, Web `286`, Feed import `64`,
+  WordPress import `23`.
+- `pnpm --filter @platforma/api test:training:audio:docker` — passed:
+  `37` migrations на чистой PostgreSQL, real MinIO put/head/get/delete,
+  private/public probes, real OGG/Opus to mono 16 kHz PCM WAV,
+  ffmpeg/process-group timeout, crash-after-upload active recovery и terminal
+  cleanup. Containers, volumes и network удалены.
+- Development и production `docker compose config --quiet` — passed;
+  production config проверен с безопасными test values без запуска production
+  services.
+- `docker compose build api training-worker` — passed.
+- `git diff --check` и Prisma validation — passed.
+
+Ручная проверка:
+
+- Production migrations и production services не затрагивались. Перед deploy
+  остаётся staging QA с реальным provider-specific S3/MinIO policy/ACL,
+  controlled SIGTERM/restart и playback через реальные роли.
+- Production Telegram/OpenAI network не использовалась; это намеренно вне
+  этапа 7 review fixes.
+
+Спорные места:
+
+- Выбран `RESTRICT`, а не `NO ACTION`: это соответствует существующему Prisma
+  relation mode и даёт немедленный запрет физического удаления исторической
+  цепочки; draft-only cascades не менялись.
+- По исправленным findings незакрытых BLOCKER/HIGH/MEDIUM перед этапом 8 нет.
+  Этап 8 не начат.

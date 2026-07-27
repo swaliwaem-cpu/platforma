@@ -49,6 +49,7 @@ services:
       retries: 5
 
   api:
+    init: true
     image: ${PLATFORMA_API_IMAGE:-platforma-api:local}
     build:
       context: .
@@ -151,6 +152,7 @@ services:
       retries: 5
 
   training-worker:
+    init: true
     image: ${PLATFORMA_API_IMAGE:-platforma-api:local}
     build:
       context: .

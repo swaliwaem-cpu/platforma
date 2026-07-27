@@ -14,7 +14,8 @@
     "test": "pnpm build && pnpm run test:unit && pnpm run test:training:db:run",
     "test:unit": "node --test tests/*.test.cjs",
     "test:training:db": "pnpm build && pnpm run test:training:db:run",
-    "test:training:db:run": "node --env-file-if-exists=.env scripts/run-training-db-tests.cjs"
+    "test:training:db:run": "node --env-file-if-exists=.env scripts/run-training-db-tests.cjs",
+    "test:training:audio:docker": "node scripts/run-training-audio-docker-tests.cjs"
   },
   "dependencies": {
     "@nestjs/common": "11.1.19",

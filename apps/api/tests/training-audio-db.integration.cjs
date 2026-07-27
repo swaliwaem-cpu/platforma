@@ -3,6 +3,7 @@ require('reflect-metadata');
 const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
 const test = require('node:test');
+const { ConflictException } = require('@nestjs/common');
 const {
   PrismaClient,
   TrainingAnswerStatus,
@@ -20,6 +21,9 @@ const {
 const {
   TrainingAudioAccessService,
 } = require('../dist/training/audio/training-audio-access.service.js');
+const {
+  FilesService,
+} = require('../dist/files/files.service.js');
 const {
   TrainingAudioError,
 } = require('../dist/training/audio/training-audio.error.js');
@@ -162,6 +166,155 @@ test('PostgreSQL audio lifecycle persists deterministic download and one private
   );
 });
 
+test('PostgreSQL historical result chain and linked audio File use RESTRICT without storage-first deletion', async () => {
+  const fixture = await createFixture();
+  const clock = createClock();
+  const engine = createEngine(clock);
+  const attempt = await startAttempt(engine, fixture);
+  const question = currentQuestion(attempt);
+  await appendVoice(engine, clock, attempt.id, {
+    updateId: 70_501n,
+    fileUniqueId: 'historical-restrict',
+    transcript: 'исторический ответ',
+  });
+  await engine.finishAnswer({
+    attemptId: attempt.id,
+    attemptQuestionId: question.id,
+  });
+  const storage = createStorage();
+  await drainAudio(
+    createWorker({
+      storage,
+      provider: createAudioProvider(),
+      ffmpeg: createFfmpegFixture(storage),
+    }),
+  );
+  const answer = await findAnswer(attempt.id);
+  assert.ok(answer.mergedAudioFile);
+  const evaluation = await prisma.trainingAnswerEvaluation.create({
+    data: {
+      answerId: answer.id,
+      evaluationNumber: 1,
+      actualModelId: 'fake-history',
+      promptVersion: '1',
+      schemaVersion: '1',
+      rubricVersion: '1',
+      structuredResultJson: {},
+      aiSuggestedScore: 1,
+      serverScore: 1,
+    },
+  });
+  await prisma.trainingScoreComponent.create({
+    data: {
+      evaluationId: evaluation.id,
+      componentKey: 'history',
+      awardedPoints: 1,
+      maxPoints: 1,
+    },
+  });
+  await prisma.trainingResultReview.create({
+    data: {
+      attemptId: attempt.id,
+      reviewerId: fixture.publisherId,
+      reviewNumber: 1,
+      finalScore: 1,
+      decision: 'APPROVED',
+      comment: 'Historical result remains archived',
+    },
+  });
+
+  const expectedConstraints = [
+    'training_attempt_questions_attempt_id_fkey',
+    'training_answers_attempt_question_id_fkey',
+    'training_voice_segments_answer_id_fkey',
+    'training_answer_evaluations_answer_id_fkey',
+    'training_score_components_evaluation_id_fkey',
+    'training_result_reviews_attempt_id_fkey',
+    'training_answers_merged_audio_file_id_fkey',
+    'training_voice_segments_original_file_id_fkey',
+  ];
+  const constraints = await prisma.$queryRawUnsafe(
+    `SELECT conname, confdeltype
+     FROM pg_constraint
+     WHERE conname = ANY($1::text[])
+     ORDER BY conname`,
+    expectedConstraints,
+  );
+  assert.deepEqual(
+    constraints.map((constraint) => constraint.conname),
+    [...expectedConstraints].sort(),
+  );
+  assert.equal(
+    constraints.every(
+      (constraint) => constraint.confdeltype === 'r',
+    ),
+    true,
+  );
+
+  await assertForeignKeyViolation(() =>
+    prisma.$executeRawUnsafe(
+      'DELETE FROM training_attempts WHERE id = $1::uuid',
+      attempt.id,
+    ),
+  );
+  await assertForeignKeyViolation(() =>
+    prisma.$executeRawUnsafe(
+      'DELETE FROM training_attempt_questions WHERE id = $1::uuid',
+      question.id,
+    ),
+  );
+  await assertForeignKeyViolation(() =>
+    prisma.$executeRawUnsafe(
+      'DELETE FROM training_answers WHERE id = $1::uuid',
+      answer.id,
+    ),
+  );
+
+  const storageDeletes = [];
+  const filesService = new FilesService(prisma, {
+    deleteObject: async (key) => {
+      storageDeletes.push(key);
+    },
+  });
+  await assert.rejects(
+    () => filesService.delete(answer.mergedAudioFile.id),
+    ConflictException,
+  );
+  assert.deepEqual(storageDeletes, []);
+
+  await prisma.trainingProject.update({
+    where: { id: fixture.projectId },
+    data: {
+      status: TrainingProjectStatus.ARCHIVED,
+      archivedAt: new Date(),
+    },
+  });
+  assert.equal(
+    await prisma.trainingAttempt.count({
+      where: { id: attempt.id },
+    }),
+    1,
+  );
+  assert.equal(
+    await prisma.trainingAttemptQuestion.count({
+      where: { id: question.id },
+    }),
+    1,
+  );
+  assert.equal(
+    await prisma.trainingAnswer.count({
+      where: { id: answer.id },
+    }),
+    1,
+  );
+  assert.equal(
+    await prisma.file.count({
+      where: { id: answer.mergedAudioFile.id },
+    }),
+    1,
+  );
+});
+
 test('PostgreSQL merge waits for the unfinished segment without consuming an attempt and preserves order', async () => {
   const fixture = await createFixture();
   const clock = createClock();
@@ -224,7 +377,7 @@ test('PostgreSQL merge waits for the unfinished segment without consuming an att
   assert.ok((await findAnswer(attempt.id)).mergedAudioFile);
 });
 
-test('PostgreSQL crash after storage upload rolls the object back and restart stores one segment', async () => {
+test('PostgreSQL exception after storage upload leaves durable intent and restart commits the existing object', async () => {
   const fixture = await createFixture();
   const clock = createClock();
   const engine = createEngine(clock);
@@ -237,26 +390,32 @@ test('PostgreSQL crash after storage upload rolls the object back and restart st
   const answer = await findAnswer(attempt.id);
   const storage = createStorage();
   const provider = createAudioProvider();
-  let failTransaction = true;
-  const crashingPrisma = proxyPrisma({
-    transaction: async (operation, options) => {
-      if (failTransaction) {
-        failTransaction = false;
-        throw new Error('simulated crash before DB commit');
-      }
-      return prisma.$transaction(operation, options);
-    },
-  });
+  let failAfterUpload = true;
   const crashingWorker = createWorker({
-    prismaClient: crashingPrisma,
     storage,
     provider,
     ffmpeg: createFfmpegFixture(storage),
+    faultInjection: {
+      afterObjectUpload: async () => {
+        if (failAfterUpload) {
+          failAfterUpload = false;
+          throw new Error('simulated process loss after object upload');
+        }
+      },
+    },
   });
   await crashingWorker.drainNow();
 
-  assert.equal(storage.objects.size, 0);
+  assert.equal(storage.objects.size, 1);
   assert.equal((await findAnswer(attempt.id)).voiceSegments[0].originalFile, null);
+  const intentAfterFailure =
+    await prisma.trainingAudioUploadIntent.findFirst({
+      where: {
+        segmentId: answer.voiceSegments[0].id,
+      },
+    });
+  assert.ok(intentAfterFailure);
+  assert.equal(intentAfterFailure.state, 'PENDING');
   const retrying = await prisma.trainingJob.findUnique({
     where: {
       idempotencyKey: `attempt:${attempt.id}:answer:${answer.id}:segment:${answer.voiceSegments[0].id}:download`,
@@ -277,11 +436,280 @@ test('PostgreSQL crash after storage upload rolls the object back and restart st
   );
 
   assert.equal(storage.objects.size, 1);
+  assert.equal(storage.puts.length, 1);
   assert.ok((await findAnswer(attempt.id)).voiceSegments[0].originalFile);
   assert.equal(
     await countAudioFilesForAttempt(attempt.id),
     1,
   );
+});
+
+test('PostgreSQL recovery covers failure before intent and after intent before upload', async () => {
+  const fixture = await createFixture();
+  const clock = createClock();
+  const engine = createEngine(clock);
+  const attempt = await startAttempt(engine, fixture);
+  await appendVoice(engine, clock, attempt.id, {
+    updateId: 72_101n,
+    fileUniqueId: 'before-intent-failure',
+    transcript: 'before intent',
+  });
+  const answer = await findAnswer(attempt.id);
+  let providerCalls = 0;
+  const provider = {
+    downloadVoice: async () => {
+      providerCalls += 1;
+      if (providerCalls === 1) {
+        throw new TrainingAudioError(
+          'TELEGRAM_NETWORK_ERROR',
+          true,
+        );
+      }
+      return {
+        body: Buffer.from('voice after provider recovery'),
+        mimeType: 'audio/wav',
+      };
+    },
+  };
+  const storage = createStorage({ putFailures: 1 });
+  const worker = createWorker({
+    storage,
+    provider,
+    ffmpeg: createFfmpegFixture(storage),
+  });
+
+  await worker.drainNow();
+  assert.equal(
+    await prisma.trainingAudioUploadIntent.count({
+      where: { segmentId: answer.voiceSegments[0].id },
+    }),
+    0,
+  );
+  const job = await prisma.trainingJob.findUnique({
+    where: {
+      idempotencyKey: `attempt:${attempt.id}:answer:${answer.id}:segment:${answer.voiceSegments[0].id}:download`,
+    },
+  });
+  await prisma.trainingJob.update({
+    where: { id: job.id },
+    data: { runAt: new Date('2000-01-01T00:00:00.000Z') },
+  });
+
+  await worker.drainNow();
+  const pendingIntent =
+    await prisma.trainingAudioUploadIntent.findFirst({
+      where: { segmentId: answer.voiceSegments[0].id },
+    });
+  assert.ok(pendingIntent);
+  assert.equal(pendingIntent.state, 'PENDING');
+  assert.equal(storage.objects.size, 0);
+
+  await prisma.trainingJob.update({
+    where: { id: job.id },
+    data: { runAt: new Date('2000-01-01T00:00:00.000Z') },
+  });
+  await drainAudio(worker);
+  const committedIntent =
+    await prisma.trainingAudioUploadIntent.findUnique({
+      where: { id: pendingIntent.id },
+    });
+  assert.equal(committedIntent.state, 'COMMITTED');
+  assert.ok((await findAnswer(attempt.id)).voiceSegments[0].originalFile);
+  assert.equal(storage.objects.size, 1);
+});
+
+test('PostgreSQL metadata mismatch is never linked and durable cleanup permits a safe retry', async () => {
+  const fixture = await createFixture();
+  const clock = createClock();
+  const engine = createEngine(clock);
+  const attempt = await startAttempt(engine, fixture);
+  await appendVoice(engine, clock, attempt.id, {
+    updateId: 72_201n,
+    fileUniqueId: 'metadata-mismatch',
+    transcript: 'metadata mismatch',
+  });
+  const answer = await findAnswer(attempt.id);
+  const segment = answer.voiceSegments[0];
+  const key = `training-audio/answers/${answer.id}/segments/${segment.id}.wav`;
+  const storage = createStorage();
+  storage.objects.set(key, Buffer.from('unknown object'));
+  storage.metadata.set(key, {
+    exists: true,
+    contentLength: 14,
+    contentType: 'audio/wav',
+    sha256: '0'.repeat(64),
+  });
+  const worker = createWorker({
+    storage,
+    provider: createAudioProvider(),
+    ffmpeg: createFfmpegFixture(storage),
+  });
+  await worker.drainNow();
+
+  assert.equal((await findAnswer(attempt.id)).voiceSegments[0].originalFile, null);
+  assert.equal(storage.objects.has(key), false);
+  const intent = await prisma.trainingAudioUploadIntent.findFirst({
+    where: { segmentId: segment.id },
+  });
+  assert.equal(intent.state, 'PENDING');
+  const cleanup = await prisma.trainingJob.findFirst({
+    where: {
+      kind: TrainingJobKind.CLEANUP_TRAINING_AUDIO_OBJECT,
+      payloadJson: { path: ['intentId'], equals: intent.id },
+    },
+  });
+  assert.equal(cleanup.status, TrainingJobStatus.SUCCEEDED);
+
+  const downloadJob = await prisma.trainingJob.findUnique({
+    where: {
+      idempotencyKey: `attempt:${attempt.id}:answer:${answer.id}:segment:${segment.id}:download`,
+    },
+  });
+  await prisma.trainingJob.update({
+    where: { id: downloadJob.id },
+    data: { runAt: new Date('2000-01-01T00:00:00.000Z') },
+  });
+  await drainAudio(worker);
+  assert.ok((await findAnswer(attempt.id)).voiceSegments[0].originalFile);
+  assert.equal(
+    await prisma.file.count({
+      where: { bucket: AUDIO_BUCKET, key },
+    }),
+    1,
+  );
+});
+
+test('PostgreSQL delete failure remains a retryable cleanup job and becomes visible as DEAD', async () => {
+  const fixture = await createFixture();
+  const clock = createClock();
+  const engine = createEngine(clock);
+  const attempt = await startAttempt(engine, fixture);
+  await appendVoice(engine, clock, attempt.id, {
+    updateId: 72_301n,
+    fileUniqueId: 'cleanup-delete-failure',
+    transcript: 'cleanup failure',
+  });
+  const answer = await findAnswer(attempt.id);
+  const segment = answer.voiceSegments[0];
+  const key = `training-audio/answers/${answer.id}/segments/${segment.id}.wav`;
+  const storage = createStorage({ deleteFailures: 1 });
+  storage.objects.set(key, Buffer.from('unknown object'));
+  storage.metadata.set(key, {
+    exists: true,
+    contentLength: 14,
+    contentType: 'audio/wav',
+    sha256: 'f'.repeat(64),
+  });
+  const worker = createWorker({
+    storage,
+    provider: createAudioProvider(),
+    ffmpeg: createFfmpegFixture(storage),
+  });
+  await worker.drainNow();
+  const intent = await prisma.trainingAudioUploadIntent.findFirst({
+    where: { segmentId: segment.id },
+  });
+  const cleanup = await prisma.trainingJob.findFirst({
+    where: {
+      kind: TrainingJobKind.CLEANUP_TRAINING_AUDIO_OBJECT,
+      payloadJson: { path: ['intentId'], equals: intent.id },
+    },
+  });
+  assert.equal(intent.state, 'CLEANUP_PENDING');
+  assert.equal(cleanup.status, TrainingJobStatus.PENDING);
+  assert.equal(cleanup.lastErrorCode, 'AUDIO_STORAGE_FAILED');
+  assert.equal(storage.objects.has(key), true);
+  await prisma.trainingJob.update({
+    where: { id: cleanup.id },
+    data: {
+      maxAttempts: cleanup.attempts,
+      runAt: new Date('2000-01-01T00:00:00.000Z'),
+    },
+  });
+  await prisma.trainingJob.updateMany({
+    where: {
+      id: { not: cleanup.id },
+      kind: TrainingJobKind.TELEGRAM_DOWNLOAD_SEGMENT,
+      payloadJson: { path: ['answerId'], equals: answer.id },
+    },
+    data: { runAt: new Date('2099-01-01T00:00:00.000Z') },
+  });
+  await worker.drainNow();
+  const dead = await prisma.trainingJob.findUnique({
+    where: { id: cleanup.id },
+  });
+  assert.equal(dead.status, TrainingJobStatus.DEAD);
+  assert.equal(dead.lastErrorCode, 'AUDIO_ATTEMPTS_EXHAUSTED');
+  assert.notEqual(
+    (await prisma.trainingAttempt.findUnique({
+      where: { id: attempt.id },
+    })).status,
+    TrainingAttemptStatus.TECHNICAL_FAILURE,
+  );
+});
+
+test('PostgreSQL terminal attempt never links an unfinished intent and durably removes its object', async () => {
+  const fixture = await createFixture();
+  const clock = createClock();
+  const engine = createEngine(clock);
+  const attempt = await startAttempt(engine, fixture);
+  await appendVoice(engine, clock, attempt.id, {
+    updateId: 72_401n,
+    fileUniqueId: 'terminal-cleanup',
+    transcript: 'terminal cleanup',
+  });
+  const answer = await findAnswer(attempt.id);
+  const storage = createStorage();
+  let injectFailure = true;
+  const firstWorker = createWorker({
+    storage,
+    provider: createAudioProvider(),
+    ffmpeg: createFfmpegFixture(storage),
+    faultInjection: {
+      afterObjectUpload: async () => {
+        if (injectFailure) {
+          injectFailure = false;
+          throw new Error('crash after upload');
+        }
+      },
+    },
+  });
+  await firstWorker.drainNow();
+  assert.equal(storage.objects.size, 1);
+  const intent = await prisma.trainingAudioUploadIntent.findFirst({
+    where: { segmentId: answer.voiceSegments[0].id },
+  });
+  await prisma.trainingAttempt.update({
+    where: { id: attempt.id },
+    data: {
+      status: TrainingAttemptStatus.TECHNICAL_FAILURE,
+      completedAt: new Date(),
+    },
+  });
+  const job = await prisma.trainingJob.findUnique({
+    where: {
+      idempotencyKey: `attempt:${attempt.id}:answer:${answer.id}:segment:${answer.voiceSegments[0].id}:download`,
+    },
+  });
+  await prisma.trainingJob.update({
+    where: { id: job.id },
+    data: { runAt: new Date('2000-01-01T00:00:00.000Z') },
+  });
+  await drainAudio(
+    createWorker({
+      storage,
+      provider: createAudioProvider(),
+      ffmpeg: createFfmpegFixture(storage),
+    }),
+  );
+  const cleaned =
+    await prisma.trainingAudioUploadIntent.findUnique({
+      where: { id: intent.id },
+    });
+  assert.equal(cleaned.state, 'CLEANED');
+  assert.equal(cleaned.committedFileId, null);
+  assert.equal(storage.objects.size, 0);
+  assert.equal((await findAnswer(attempt.id)).voiceSegments[0].originalFile, null);
 });
 
 test('PostgreSQL crash after DB commit restarts without a second download or object', async () => {
@@ -457,6 +885,7 @@ test('PostgreSQL lost lease prevents mutation and stale recovery completes after
   );
 
   assert.equal(storage.objects.size, 1);
+  assert.equal(storage.puts.length, 1);
   assert.ok((await findAnswer(attempt.id)).voiceSegments[0].originalFile);
   const recovered = await prisma.trainingJob.findUnique({
     where: { id: running.id },
@@ -764,7 +1193,13 @@ test('PostgreSQL protected audio access reads private bytes, audits admin and re
 test('PostgreSQL fake audio pipeline completes the full 1 plus 3 flow and reuses file_unique_id across answers', async () => {
   const fixture = await createFixture({ passScore: 75 });
   const clock = createClock();
-  const engine = createEngine(clock);
+  const transcriptionInputs = [];
+  const engine = createEngine(clock, {
+    transcribe: async (input) => {
+      transcriptionInputs.push(structuredClone(input));
+      return fakeTranscription.transcribe(input);
+    },
+  });
   const started = await startAttempt(engine, fixture);
   const storage = createStorage();
   const provider = createAudioProvider();
@@ -811,7 +1246,10 @@ test('PostgreSQL fake audio pipeline completes the full 1 plus 3 flow and reuses
       attemptQuestions: {
         include: {
           answer: {
-            include: { voiceSegments: true },
+            include: {
+              voiceSegments: true,
+              mergedAudioFile: true,
+            },
           },
         },
       },
@@ -845,6 +1283,40 @@ test('PostgreSQL fake audio pipeline completes the full 1 plus 3 flow and reuses
   );
   assert.equal(provider.calls.length, 4);
   assert.equal(ffmpeg.orders.length, 4);
+  const answersById = new Map(
+    completed.attemptQuestions.map((item) => [
+      item.answer.id,
+      {
+        attemptQuestionId: item.id,
+        answer: item.answer,
+      },
+    ]),
+  );
+  const currentAttemptInputs = transcriptionInputs.filter((input) =>
+    answersById.has(input.answerId),
+  );
+  assert.equal(
+    new Set(
+      currentAttemptInputs.map((input) => input.answerId),
+    ).size,
+    4,
+  );
+  for (const input of currentAttemptInputs) {
+    const expected = answersById.get(input.answerId);
+    assert.ok(expected);
+    assert.equal(input.attemptQuestionId, expected.attemptQuestionId);
+    assert.deepEqual(input.audio, {
+      fileId: expected.answer.mergedAudioFile.id,
+      bucket: expected.answer.mergedAudioFile.bucket,
+      key: expected.answer.mergedAudioFile.key,
+      mimeType: expected.answer.mergedAudioFile.mimeType,
+      sizeBytes: Number(expected.answer.mergedAudioFile.sizeBytes),
+      checksum: expected.answer.mergedAudioFile.checksum,
+      durationMilliseconds:
+        expected.answer.mergedAudioDurationMilliseconds,
+      segmentCount: expected.answer.voiceSegments.length,
+    });
+  }
 });
 
 const AUDIO_BUCKET = 'platforma-training-audio-test-private';
@@ -876,12 +1348,12 @@ function createClock() {
   );
 }
 
-function createEngine(clock) {
+function createEngine(clock, transcriptionProvider = fakeTranscription) {
   return new TrainingAttemptEngineService(
     prisma,
     clock,
     new DeterministicQuestionSelector(),
-    fakeTranscription,
+    transcriptionProvider,
     fakeEvaluation,
     audioConfig(),
   );
@@ -893,6 +1365,7 @@ function createWorker({
   ffmpeg,
   provider,
   configOverrides,
+  faultInjection,
 }) {
   return new TrainingAudioWorkerService(
     prismaClient,
@@ -900,29 +1373,79 @@ function createWorker({
     storage,
     ffmpeg,
     provider,
+    faultInjection,
   );
 }
 
-function createStorage() {
+function createStorage(options = {}) {
   const objects = new Map();
+  const metadata = new Map();
   const puts = [];
   const deletes = [];
+  let putFailuresRemaining = options.putFailures ?? 0;
+  let deleteFailuresRemaining = options.deleteFailures ?? 0;
   return {
     objects,
+    metadata,
     puts,
     deletes,
     getTrainingAudioBucket: () => AUDIO_BUCKET,
-    putPrivateTrainingAudioObject: async ({ key, body }) => {
+    putPrivateTrainingAudioObject: async ({
+      key,
+      body,
+      mimeType,
+      checksum,
+    }) => {
       puts.push(key);
+      if (putFailuresRemaining > 0) {
+        putFailuresRemaining -= 1;
+        throw new Error('simulated storage put failure');
+      }
       objects.set(key, Buffer.from(body));
+      metadata.set(key, {
+        exists: true,
+        contentLength: body.length,
+        contentType: mimeType,
+        sha256: checksum,
+      });
     },
-    putPrivateTrainingAudioFile: async ({ key }) => {
+    putPrivateTrainingAudioFile: async ({
+      key,
+      mimeType,
+      checksum,
+      sizeBytes,
+    }) => {
       puts.push(key);
+      if (putFailuresRemaining > 0) {
+        putFailuresRemaining -= 1;
+        throw new Error('simulated storage put failure');
+      }
       objects.set(key, Buffer.from(MERGED_BODY));
+      metadata.set(key, {
+        exists: true,
+        contentLength: sizeBytes,
+        contentType: mimeType,
+        sha256: checksum,
+      });
+    },
+    headPrivateTrainingAudioObject: async (key) => {
+      return (
+        metadata.get(key) ?? {
+          exists: false,
+          contentLength: null,
+          contentType: null,
+          sha256: null,
+        }
+      );
     },
     deletePrivateTrainingAudioObject: async (key) => {
       deletes.push(key);
+      if (deleteFailuresRemaining > 0) {
+        deleteFailuresRemaining -= 1;
+        throw new Error('simulated storage delete failure');
+      }
       objects.delete(key);
+      metadata.delete(key);
     },
     readStoredFile: async (file) => {
       const body = objects.get(file.key);
@@ -1258,6 +1781,19 @@ function deferred() {
     resolve = resolvePromise;
   });
   return { promise, resolve };
+}
+
+async function assertForeignKeyViolation(operation) {
+  await assert.rejects(operation, (error) => {
+    assert.equal(
+      error?.meta?.code === '23503' ||
+        error?.code === 'P2003' ||
+        /foreign key constraint/iu.test(error?.message ?? ''),
+      true,
+      error?.message,
+    );
+    return true;
+  });
 }
 
 function proxyPrisma(overrides) {

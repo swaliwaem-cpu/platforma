@@ -1,15 +1,23 @@
 import { createHash } from 'node:crypto';
 import {
+  lstat,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   rm,
   stat,
   writeFile,
 } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
-import { Inject, Injectable } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  type OnModuleDestroy,
+  type OnModuleInit,
+} from '@nestjs/common';
 import type { File } from '@prisma/client';
 
 import { FilesService } from '../../files/files.service';
@@ -22,6 +30,9 @@ import {
 
 const SILENCE_THRESHOLD_DB = -35;
 const LONG_PAUSE_MINIMUM_SECONDS = 0.8;
+const TEMP_SCAVENGE_INTERVAL_MS = 5 * 60_000;
+const TEMP_DIRECTORY_MAX_AGE_MS = 60 * 60_000;
+const TEMP_SCAVENGE_MAX_ENTRIES = 200;
 
 export type TrainingFfmpegSegmentInput = {
   id: string;
@@ -70,7 +81,14 @@ export type TrainingPreparedAudio = {
 };
 
 @Injectable()
-export class TrainingFfmpegService {
+export class TrainingFfmpegService
+  implements OnModuleInit, OnModuleDestroy
+{
+  private readonly logger = new Logger(TrainingFfmpegService.name);
+  private readonly activeDirectories = new Set<string>();
+  private scavengerInterval: NodeJS.Timeout | null = null;
+  private scavengerRunning = false;
+
   constructor(
     private readonly config: TrainingAudioConfig,
     private readonly files: FilesService,
@@ -78,17 +96,34 @@ export class TrainingFfmpegService {
     private readonly processRunner: TrainingAudioProcessRunner,
   ) {}
 
+  async onModuleInit() {
+    await this.ensureTempRoot();
+    await this.scavengeTempDirectories();
+    this.scavengerInterval = setInterval(() => {
+      void this.scavengeTempDirectories();
+    }, TEMP_SCAVENGE_INTERVAL_MS);
+    this.scavengerInterval.unref();
+  }
+
+  onModuleDestroy() {
+    if (this.scavengerInterval) {
+      clearInterval(this.scavengerInterval);
+      this.scavengerInterval = null;
+    }
+  }
+
   async withPreparedAudio<T>(
     inputs: TrainingFfmpegSegmentInput[],
     operation: (prepared: TrainingPreparedAudio) => Promise<T>,
   ) {
     const segments = validateSegments(inputs, this.config);
-    await mkdir(this.config.tempDir, { recursive: true, mode: 0o700 });
+    await this.ensureTempRoot();
     const directory = await mkdtemp(
       join(this.config.tempDir, 'answer-'),
     ).catch(() => {
       throw new TrainingAudioError('AUDIO_TEMP_IO_FAILED', true);
     });
+    this.activeDirectories.add(directory);
 
     try {
       const normalizedPaths: string[] = [];
@@ -265,10 +300,96 @@ export class TrainingFfmpegService {
       };
       return await operation(prepared);
     } finally {
-      await rm(directory, { recursive: true, force: true }).catch(
-        () => undefined,
-      );
+      await this.cleanupTempDirectory(directory, 'pipeline-finally');
+      this.activeDirectories.delete(directory);
     }
+  }
+
+  async scavengeTempDirectories(olderThanMs = TEMP_DIRECTORY_MAX_AGE_MS) {
+    if (this.scavengerRunning) return;
+    this.scavengerRunning = true;
+    try {
+      await this.ensureTempRoot();
+      const entries = await readdir(this.config.tempDir, {
+        withFileTypes: true,
+      });
+      const now = Date.now();
+      for (const entry of entries.slice(0, TEMP_SCAVENGE_MAX_ENTRIES)) {
+        if (
+          !entry.name.startsWith('answer-') ||
+          !entry.isDirectory() ||
+          entry.isSymbolicLink()
+        ) {
+          continue;
+        }
+        const candidate = resolve(this.config.tempDir, entry.name);
+        if (
+          dirname(candidate) !== resolve(this.config.tempDir) ||
+          this.activeDirectories.has(candidate)
+        ) {
+          continue;
+        }
+        try {
+          const metadata = await lstat(candidate);
+          if (
+            metadata.isSymbolicLink() ||
+            !metadata.isDirectory() ||
+            now - metadata.mtimeMs < olderThanMs
+          ) {
+            continue;
+          }
+          await rm(candidate, { recursive: true, force: true });
+        } catch (error) {
+          this.logCleanupError(
+            'temp-scavenger-entry-failed',
+            entry.name,
+            error,
+          );
+        }
+      }
+    } catch (error) {
+      this.logCleanupError(
+        'temp-scavenger-scan-failed',
+        null,
+        error,
+      );
+    } finally {
+      this.scavengerRunning = false;
+    }
+  }
+
+  private async ensureTempRoot() {
+    await mkdir(this.config.tempDir, {
+      recursive: true,
+      mode: 0o700,
+    }).catch(() => {
+      throw new TrainingAudioError('AUDIO_TEMP_IO_FAILED', true);
+    });
+  }
+
+  private async cleanupTempDirectory(
+    directory: string,
+    context: string,
+  ) {
+    try {
+      await rm(directory, { recursive: true, force: true });
+    } catch (error) {
+      this.logCleanupError(context, basename(directory), error);
+    }
+  }
+
+  private logCleanupError(
+    event: string,
+    directory: string | null,
+    error: unknown,
+  ) {
+    this.logger.warn(
+      JSON.stringify({
+        event,
+        directory,
+        errorCode: readFilesystemErrorCode(error),
+      }),
+    );
   }
 
   private async probeAudio(
@@ -503,4 +624,10 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function readFilesystemErrorCode(error: unknown) {
+  return error instanceof Error && 'code' in error
+    ? String(error.code).slice(0, 64)
+    : 'UNKNOWN';
 }

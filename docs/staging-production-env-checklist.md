@@ -41,6 +41,9 @@
 - Bucket creation permissions are available at startup or the bucket is pre-created.
 - `TRAINING_AUDIO_BUCKET` is a separate private bucket without anonymous read,
   CDN publication or permanent public URLs.
+- Production Compose requires `TRAINING_AUDIO_BUCKET`; it differs from
+  `MINIO_BUCKET`, and API/worker startup succeeds only after policy/ACL plus
+  anonymous object GET and bucket LIST prove that access is private.
 - `TRAINING_AUDIO_RETENTION_DAYS=0` is preserved for approved indefinite
   retention; original voice objects remain after merge and Telegram unlink.
 
@@ -55,8 +58,12 @@
   `TRAINING_AUDIO_WORKER_LEASE_MS`.
 - `TRAINING_AUDIO_TEMP_DIR` is absolute and backed by bounded private temp
   storage; Compose uses a 512 MiB `tmpfs`.
-- `training-worker` receives SIGTERM as Node PID 1 and has a `45s` grace period,
-  exceeding the default audio drain timeout `30000ms`.
+- `training-worker` receives SIGTERM through Docker init/reaper and has a `45s`
+  grace period, exceeding the default audio drain timeout `30000ms`.
+- Docker init/reaper is enabled; ffmpeg/ffprobe timeouts terminate the complete
+  POSIX process group with SIGTERM, bounded grace and SIGKILL fallback.
+- `pnpm --filter @platforma/api test:training:audio:docker` passes against
+  isolated PostgreSQL/MinIO and the built API image before stage 8/deploy.
 - Controlled stop/restart leaves no audio job locked by the stopped worker and
   creates no duplicate segment or merged `File`.
 - Protected playback requires JWT + `training:audio:read`, checks

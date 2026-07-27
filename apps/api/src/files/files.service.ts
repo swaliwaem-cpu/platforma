@@ -14,7 +14,12 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { File, FileStorage, FileVariantKind } from '@prisma/client';
+import {
+  File,
+  FileStorage,
+  FileVariantKind,
+  Prisma,
+} from '@prisma/client';
 
 import { AuthenticatedUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
@@ -250,13 +255,16 @@ export class FilesService {
     key: string;
     body: Buffer;
     mimeType: string;
+    checksum: string;
   }) {
     this.assertPrivateTrainingAudioKey(input.key);
+    this.assertSha256(input.checksum);
     await this.storage.putObject({
       bucket: this.storage.getTrainingAudioBucket(),
       key: input.key,
       body: input.body,
       contentType: input.mimeType,
+      metadata: { sha256: input.checksum },
     });
   }
 
@@ -275,7 +283,16 @@ export class FilesService {
       contentType: input.mimeType,
       checksum: input.checksum,
       contentLength: input.sizeBytes,
+      metadata: { sha256: input.checksum },
     });
+  }
+
+  async headPrivateTrainingAudioObject(key: string) {
+    this.assertPrivateTrainingAudioKey(key);
+    return this.storage.headObject(
+      key,
+      this.storage.getTrainingAudioBucket(),
+    );
   }
 
   async deletePrivateTrainingAudioObject(key: string) {
@@ -335,64 +352,77 @@ export class FilesService {
 
   async delete(id: string) {
     const fileId = this.parseUuid(id, 'File is invalid');
-    const file = await this.prisma.file.findUnique({
-      where: {
-        id: fileId,
-      },
-      include: {
-        variants: {
-          select: {
-            key: true,
-            bucket: true,
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT "id" FROM "files" WHERE "id" = ${fileId}::uuid FOR UPDATE`,
+      );
+      const file = await tx.file.findUnique({
+        where: {
+          id: fileId,
+        },
+        include: {
+          variants: {
+            select: {
+              key: true,
+              bucket: true,
+            },
+          },
+          _count: {
+            select: {
+              profilePhotoUsers: true,
+              objectImages: true,
+              objectFiles: true,
+              feedXmlSources: true,
+              lotPresentationDocuments: true,
+              projectPresentationDraftCovers: true,
+              projectPresentationDocuments: true,
+              projectPresentationAssets: true,
+              trainingSourceDocuments: true,
+              trainingVoiceSegments: true,
+              trainingAnswerAudio: true,
+              trainingAudioUploadIntents: true,
+            },
           },
         },
-        _count: {
-          select: {
-            profilePhotoUsers: true,
-            objectImages: true,
-            objectFiles: true,
-            feedXmlSources: true,
-            lotPresentationDocuments: true,
-            projectPresentationDraftCovers: true,
-            projectPresentationDocuments: true,
-            projectPresentationAssets: true,
-            trainingSourceDocuments: true,
-            trainingVoiceSegments: true,
-            trainingAnswerAudio: true,
-          },
+      });
+
+      if (!file) {
+        throw new NotFoundException('File not found');
+      }
+
+      if (
+        file._count.profilePhotoUsers > 0 ||
+        file._count.objectImages > 0 ||
+        file._count.objectFiles > 0 ||
+        file._count.feedXmlSources > 0 ||
+        file._count.lotPresentationDocuments > 0 ||
+        file._count.projectPresentationDraftCovers > 0 ||
+        file._count.projectPresentationDocuments > 0 ||
+        file._count.projectPresentationAssets > 0 ||
+        file._count.trainingSourceDocuments > 0 ||
+        file._count.trainingVoiceSegments > 0 ||
+        file._count.trainingAnswerAudio > 0 ||
+        file._count.trainingAudioUploadIntents > 0
+      ) {
+        throw new ConflictException('File is linked and cannot be deleted');
+      }
+
+      for (const variant of file.variants) {
+        await this.storage.deleteObject(
+          variant.key,
+          variant.bucket ?? undefined,
+        );
+      }
+
+      await this.storage.deleteObject(
+        file.key,
+        file.bucket ?? undefined,
+      );
+      await tx.file.delete({
+        where: {
+          id: file.id,
         },
-      },
-    });
-
-    if (!file) {
-      throw new NotFoundException('File not found');
-    }
-
-    if (
-      file._count.profilePhotoUsers > 0 ||
-      file._count.objectImages > 0 ||
-      file._count.objectFiles > 0 ||
-      file._count.feedXmlSources > 0 ||
-      file._count.lotPresentationDocuments > 0 ||
-      file._count.projectPresentationDraftCovers > 0 ||
-      file._count.projectPresentationDocuments > 0 ||
-      file._count.projectPresentationAssets > 0 ||
-      file._count.trainingSourceDocuments > 0 ||
-      file._count.trainingVoiceSegments > 0 ||
-      file._count.trainingAnswerAudio > 0
-    ) {
-      throw new ConflictException('File is linked and cannot be deleted');
-    }
-
-    for (const variant of file.variants) {
-      await this.storage.deleteObject(variant.key, variant.bucket ?? undefined);
-    }
-
-    await this.storage.deleteObject(file.key, file.bucket ?? undefined);
-    await this.prisma.file.delete({
-      where: {
-        id: file.id,
-      },
+      });
     });
   }
 
@@ -802,6 +832,14 @@ export class FilesService {
       key.split('/').some((segment) => segment === '' || segment === '.' || segment === '..')
     ) {
       throw new BadRequestException('Private training audio key is invalid');
+    }
+  }
+
+  private assertSha256(value: string) {
+    if (!/^[0-9a-f]{64}$/u.test(value)) {
+      throw new BadRequestException(
+        'Private training audio checksum is invalid',
+      );
     }
   }
 }

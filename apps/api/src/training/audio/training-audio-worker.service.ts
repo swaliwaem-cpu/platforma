@@ -4,12 +4,15 @@ import {
   Inject,
   Injectable,
   Logger,
+  Optional,
   type OnModuleDestroy,
   type OnModuleInit,
 } from '@nestjs/common';
 import {
   FileStorage,
   Prisma,
+  TrainingAudioUploadKind,
+  TrainingAudioUploadState,
   TrainingAnswerStatus,
   TrainingAttemptStatus,
   TrainingJobKind,
@@ -23,7 +26,10 @@ import { TRAINING_ACTIVE_ATTEMPT_STATUSES } from '../training.domain';
 import { enqueueAttemptTelegramOutboxEvent } from '../telegram/training-telegram-outbox';
 import { TrainingAudioConfig } from './training-audio.config';
 import { TrainingAudioError } from './training-audio.error';
-import { TrainingFfmpegService } from './training-ffmpeg.service';
+import {
+  TrainingFfmpegService,
+  type TrainingPreparedAudio,
+} from './training-ffmpeg.service';
 import {
   TRAINING_TELEGRAM_AUDIO_PROVIDER,
   type TrainingTelegramAudioProvider,
@@ -33,7 +39,19 @@ const AUDIO_JOB_LIMIT_PER_DRAIN = 100;
 const AUDIO_JOB_KINDS = [
   TrainingJobKind.TELEGRAM_DOWNLOAD_SEGMENT,
   TrainingJobKind.ASSEMBLE_ANSWER_AUDIO,
+  TrainingJobKind.CLEANUP_TRAINING_AUDIO_OBJECT,
 ] as const;
+
+export const TRAINING_AUDIO_FAULT_INJECTION = Symbol(
+  'TRAINING_AUDIO_FAULT_INJECTION',
+);
+
+export interface TrainingAudioFaultInjection {
+  afterObjectUpload(input: {
+    intentId: string;
+    kind: TrainingAudioUploadKind;
+  }): Promise<void>;
+}
 
 type ClaimedAudioJob = {
   id: string;
@@ -66,6 +84,9 @@ export class TrainingAudioWorkerService
     private readonly ffmpeg: TrainingFfmpegService,
     @Inject(TRAINING_TELEGRAM_AUDIO_PROVIDER)
     private readonly telegramAudio: TrainingTelegramAudioProvider,
+    @Optional()
+    @Inject(TRAINING_AUDIO_FAULT_INJECTION)
+    private readonly faultInjection: TrainingAudioFaultInjection | null = null,
   ) {}
 
   onModuleInit() {
@@ -202,6 +223,12 @@ export class TrainingAudioWorkerService
 
   private async processJob(job: ClaimedAudioJob): Promise<AudioJobOutcome> {
     const payload = readAudioJobPayload(job.payloadJson);
+    if (job.kind === TrainingJobKind.CLEANUP_TRAINING_AUDIO_OBJECT) {
+      if (!payload.intentId || !payload.cleanupMode) {
+        throw new TrainingAudioError('AUDIO_METADATA_INVALID', false);
+      }
+      return this.cleanupAudioObject(job, payload);
+    }
     if (job.kind === TrainingJobKind.TELEGRAM_DOWNLOAD_SEGMENT) {
       if (!payload.segmentId) {
         throw new TrainingAudioError('AUDIO_METADATA_INVALID', false);
@@ -246,6 +273,12 @@ export class TrainingAudioWorkerService
       throw new TrainingAudioError('AUDIO_METADATA_INVALID', false);
     }
     if (isTerminalAttempt(segment.answer.attemptQuestion.attempt.status)) {
+      await this.scheduleOwnerIntentCleanup(
+        job.id,
+        payload,
+        { segmentId: segment.id },
+        'TERMINAL',
+      );
       return 'COMPLETED';
     }
     if (segment.originalFile) {
@@ -273,92 +306,33 @@ export class TrainingAudioWorkerService
       segment.id,
       extension,
     );
-    let uploaded = false;
-
-    try {
-      await this.refreshOwnershipOrThrow(job.id);
+    const intent = await this.persistUploadIntent(job.id, payload, {
+      kind: TrainingAudioUploadKind.ORIGINAL_SEGMENT,
+      segmentId: segment.id,
+      answerId: null,
+      bucket: this.files.getTrainingAudioBucket(),
+      objectKey: storageKey,
+      expectedChecksum: checksum,
+      expectedSizeBytes: downloaded.body.length,
+      expectedMimeType: downloaded.mimeType,
+      recoveryKey: `training-audio:segment:${segment.id}`,
+    });
+    if (!intent) return 'COMPLETED';
+    await this.ensureIntentObject(job.id, payload, intent, async () => {
       await this.files.putPrivateTrainingAudioObject({
         key: storageKey,
         body: downloaded.body,
         mimeType: downloaded.mimeType,
+        checksum,
       });
-      uploaded = true;
-      await this.runSerializable(async (tx) => {
-        await acquireAttemptLock(tx, payload.attemptId);
-        await this.assertOwnedJob(tx, job.id);
-        const current = await tx.trainingVoiceSegment.findFirst({
-          where: {
-            id: segment.id,
-            answerId: payload.answerId,
-            answer: {
-              attemptQuestion: { attemptId: payload.attemptId },
-            },
-          },
-          include: { originalFile: true },
-        });
-        if (!current) {
-          throw new TrainingAudioError('AUDIO_METADATA_INVALID', false);
-        }
-        if (current.originalFile) return;
-        const bucket = this.files.getTrainingAudioBucket();
-        let file = await tx.file.findFirst({
-          where: {
-            storage: FileStorage.MINIO,
-            bucket,
-            key: storageKey,
-          },
-        });
-        if (file) {
-          assertMatchingFile(
-            file,
-            downloaded.mimeType,
-            downloaded.body.length,
-            checksum,
-          );
-        } else {
-          file = await tx.file.create({
-            data: {
-              storage: FileStorage.MINIO,
-              bucket,
-              key: storageKey,
-              url: null,
-              originalName: null,
-              mimeType: downloaded.mimeType,
-              sizeBytes: BigInt(downloaded.body.length),
-              checksum,
-              uploadedById: null,
-            },
-          });
-        }
-        await tx.trainingVoiceSegment.update({
-          where: { id: current.id },
-          data: {
-            originalFileId: file.id,
-            originalStorageBucket: bucket,
-            originalStorageKey: storageKey,
-            mimeType: downloaded.mimeType,
-            sizeBytes: BigInt(downloaded.body.length),
-            checksum,
-            durationMilliseconds:
-              current.durationSeconds === null
-                ? null
-                : current.durationSeconds * 1_000,
-            downloadedAt: new Date(),
-          },
-        });
-      });
-      return 'COMPLETED';
-    } catch (error) {
-      if (
-        uploaded &&
-        !(error instanceof LostAudioJobOwnershipError)
-      ) {
-        await this.files
-          .deletePrivateTrainingAudioObject(storageKey)
-          .catch(() => undefined);
-      }
-      throw error;
-    }
+    });
+    await this.commitSegmentIntent(
+      job.id,
+      payload,
+      segment.id,
+      intent.id,
+    );
+    return 'COMPLETED';
   }
 
   private async assembleAnswer(
@@ -385,6 +359,12 @@ export class TrainingAudioWorkerService
       throw new TrainingAudioError('AUDIO_METADATA_INVALID', false);
     }
     if (isTerminalAttempt(answer.attemptQuestion.attempt.status)) {
+      await this.scheduleOwnerIntentCleanup(
+        job.id,
+        payload,
+        { answerId: answer.id },
+        'TERMINAL',
+      );
       return 'COMPLETED';
     }
     if (answer.status === TrainingAnswerStatus.COLLECTING) {
@@ -421,19 +401,32 @@ export class TrainingAudioWorkerService
       },
     });
     const storageKey = buildMergedStorageKey(answer.id);
-    let uploaded = false;
-
-    try {
-      return await this.ffmpeg.withPreparedAudio(
-        answer.voiceSegments.map((segment) => ({
-          id: segment.id,
+    return this.ffmpeg.withPreparedAudio(
+      answer.voiceSegments.map((segment) => ({
+        id: segment.id,
+        answerId: answer.id,
+        segmentIndex: segment.segmentIndex,
+        receivedAt: segment.receivedAt,
+        file: segment.originalFile!,
+      })),
+      async (prepared): Promise<AudioJobOutcome> => {
+        const intent = await this.persistUploadIntent(job.id, payload, {
+          kind: TrainingAudioUploadKind.MERGED_ANSWER,
+          segmentId: null,
           answerId: answer.id,
-          segmentIndex: segment.segmentIndex,
-          receivedAt: segment.receivedAt,
-          file: segment.originalFile!,
-        })),
-        async (prepared): Promise<AudioJobOutcome> => {
-          await this.refreshOwnershipOrThrow(job.id);
+          bucket: this.files.getTrainingAudioBucket(),
+          objectKey: storageKey,
+          expectedChecksum: prepared.checksum,
+          expectedSizeBytes: prepared.sizeBytes,
+          expectedMimeType: prepared.mimeType,
+          recoveryKey: `training-audio:answer:${answer.id}`,
+        });
+        if (!intent) return 'COMPLETED';
+        await this.ensureIntentObject(
+          job.id,
+          payload,
+          intent,
+          async () => {
           await this.files.putPrivateTrainingAudioFile({
             key: storageKey,
             filePath: prepared.path,
@@ -441,99 +434,498 @@ export class TrainingAudioWorkerService
             checksum: prepared.checksum,
             sizeBytes: prepared.sizeBytes,
           });
-          uploaded = true;
-          await this.runSerializable(async (tx) => {
-            await acquireAttemptLock(tx, payload.attemptId);
-            await this.assertOwnedJob(tx, job.id);
-            const current = await tx.trainingAnswer.findFirst({
-              where: {
-                id: answer.id,
-                attemptQuestion: { attemptId: payload.attemptId },
-              },
-              include: { mergedAudioFile: true },
-            });
-            if (!current) {
-              throw new TrainingAudioError('AUDIO_METADATA_INVALID', false);
-            }
-            const bucket = this.files.getTrainingAudioBucket();
-            let file = current.mergedAudioFile;
-            if (!file) {
-              file = await tx.file.findFirst({
-                where: {
-                  storage: FileStorage.MINIO,
-                  bucket,
-                  key: storageKey,
-                },
-              });
-            }
-            if (file) {
-              assertMatchingFile(
-                file,
-                prepared.mimeType,
-                prepared.sizeBytes,
-                prepared.checksum,
-              );
-            } else {
-              file = await tx.file.create({
-                data: {
-                  storage: FileStorage.MINIO,
-                  bucket,
-                  key: storageKey,
-                  url: null,
-                  originalName: null,
-                  mimeType: prepared.mimeType,
-                  sizeBytes: BigInt(prepared.sizeBytes),
-                  checksum: prepared.checksum,
-                  uploadedById: null,
-                },
-              });
-            }
-            await tx.trainingAnswer.update({
-              where: { id: current.id },
-              data: {
-                mergedAudioFileId: file.id,
-                mergedAudioDurationMilliseconds:
-                  prepared.durationMilliseconds,
-                audioPreparedAt: new Date(),
-                acousticMetricsJson:
-                  prepared.metrics as unknown as Prisma.InputJsonObject,
-                status: TrainingAnswerStatus.READY,
-                errorCode: null,
-                errorMessage: null,
-              },
-            });
-            for (const segment of prepared.segments) {
-              await tx.trainingVoiceSegment.update({
-                where: { id: segment.id },
-                data: {
-                  durationMilliseconds: segment.durationMilliseconds,
-                  durationSeconds: Math.round(
-                    segment.durationMilliseconds / 1_000,
-                  ),
-                },
-              });
-            }
-            await enqueueTranscriptionJob(
-              tx,
-              payload.attemptId,
-              payload.answerId,
-              new Date(),
-            );
-          });
-          return 'COMPLETED';
-        },
-      );
-    } catch (error) {
-      if (
-        uploaded &&
-        !(error instanceof LostAudioJobOwnershipError)
-      ) {
-        await this.files
-          .deletePrivateTrainingAudioObject(storageKey)
-          .catch(() => undefined);
+          },
+        );
+        await this.commitMergedIntent(
+          job.id,
+          payload,
+          answer.id,
+          intent.id,
+          prepared,
+        );
+        return 'COMPLETED';
+      },
+    );
+  }
+
+  private async persistUploadIntent(
+    jobId: string,
+    payload: AudioJobPayload,
+    spec: UploadIntentSpec,
+  ): Promise<UploadIntentRecord | null> {
+    return this.runSerializable(async (tx) => {
+      await acquireAttemptLock(tx, payload.attemptId);
+      await this.assertOwnedJob(tx, jobId);
+      const attempt = await tx.trainingAttempt.findUnique({
+        where: { id: payload.attemptId },
+        select: { status: true },
+      });
+      if (!attempt) {
+        throw new TrainingAudioError('AUDIO_METADATA_INVALID', false);
       }
-      throw error;
+      if (isTerminalAttempt(attempt.status)) {
+        const existing =
+          await tx.trainingAudioUploadIntent.findUnique({
+            where: { recoveryKey: spec.recoveryKey },
+          });
+        if (
+          existing &&
+          existing.state !== TrainingAudioUploadState.COMMITTED &&
+          existing.state !== TrainingAudioUploadState.CLEANED
+        ) {
+          await this.scheduleIntentCleanupTx(
+            tx,
+            payload,
+            existing,
+            'TERMINAL',
+          );
+        }
+        return null;
+      }
+
+      const existing =
+        await tx.trainingAudioUploadIntent.findUnique({
+          where: { recoveryKey: spec.recoveryKey },
+        });
+      if (existing) {
+        assertMatchingIntent(existing, spec);
+        if (existing.state === TrainingAudioUploadState.CLEANED) {
+          throw new TrainingAudioError('AUDIO_METADATA_INVALID', false);
+        }
+        return existing;
+      }
+      return tx.trainingAudioUploadIntent.create({
+        data: {
+          kind: spec.kind,
+          state: TrainingAudioUploadState.PENDING,
+          segmentId: spec.segmentId,
+          answerId: spec.answerId,
+          bucket: spec.bucket,
+          objectKey: spec.objectKey,
+          expectedChecksum: spec.expectedChecksum,
+          expectedSizeBytes: BigInt(spec.expectedSizeBytes),
+          expectedMimeType: spec.expectedMimeType,
+          recoveryKey: spec.recoveryKey,
+        },
+      });
+    });
+  }
+
+  private async ensureIntentObject(
+    jobId: string,
+    payload: AudioJobPayload,
+    intent: UploadIntentRecord,
+    upload: () => Promise<void>,
+  ) {
+    const current =
+      await this.prisma.trainingAudioUploadIntent.findUnique({
+        where: { id: intent.id },
+      });
+    if (!current) {
+      throw new TrainingAudioError('AUDIO_METADATA_INVALID', false);
     }
+    if (current.state === TrainingAudioUploadState.COMMITTED) return;
+    if (current.state === TrainingAudioUploadState.CLEANUP_PENDING) {
+      throw new TrainingAudioError('AUDIO_STORAGE_FAILED', true);
+    }
+    if (current.state === TrainingAudioUploadState.CLEANED) {
+      throw new TrainingAudioError('AUDIO_METADATA_INVALID', false);
+    }
+
+    await this.refreshOwnershipOrThrow(jobId);
+    const object = await this.files.headPrivateTrainingAudioObject(
+      current.objectKey,
+    );
+    if (object.exists) {
+      if (!doesObjectMatchIntent(object, current)) {
+        await this.scheduleIntentCleanup(
+          jobId,
+          payload,
+          current.id,
+          'RETRY_UPLOAD',
+        );
+        throw new TrainingAudioError('AUDIO_STORAGE_FAILED', true);
+      }
+      await this.markIntentUploaded(jobId, payload, current.id);
+      return;
+    }
+
+    await upload();
+    await this.faultInjection?.afterObjectUpload({
+      intentId: current.id,
+      kind: current.kind,
+    });
+    await this.markIntentUploaded(jobId, payload, current.id);
+  }
+
+  private async markIntentUploaded(
+    jobId: string,
+    payload: AudioJobPayload,
+    intentId: string,
+  ) {
+    await this.runSerializable(async (tx) => {
+      await acquireAttemptLock(tx, payload.attemptId);
+      await this.assertOwnedJob(tx, jobId);
+      const updated = await tx.trainingAudioUploadIntent.updateMany({
+        where: {
+          id: intentId,
+          state: {
+            in: [
+              TrainingAudioUploadState.PENDING,
+              TrainingAudioUploadState.UPLOADED,
+            ],
+          },
+        },
+        data: {
+          state: TrainingAudioUploadState.UPLOADED,
+          uploadedAt: new Date(),
+        },
+      });
+      if (updated.count !== 1) {
+        throw new TrainingAudioError('AUDIO_METADATA_INVALID', false);
+      }
+    });
+  }
+
+  private async commitSegmentIntent(
+    jobId: string,
+    payload: AudioJobPayload,
+    segmentId: string,
+    intentId: string,
+  ) {
+    await this.runSerializable(async (tx) => {
+      await acquireAttemptLock(tx, payload.attemptId);
+      await this.assertOwnedJob(tx, jobId);
+      const attempt = await tx.trainingAttempt.findUnique({
+        where: { id: payload.attemptId },
+        select: { status: true },
+      });
+      const intent = await tx.trainingAudioUploadIntent.findUnique({
+        where: { id: intentId },
+      });
+      if (!attempt || !intent) {
+        throw new TrainingAudioError('AUDIO_METADATA_INVALID', false);
+      }
+      if (isTerminalAttempt(attempt.status)) {
+        await this.scheduleIntentCleanupTx(
+          tx,
+          payload,
+          intent,
+          'TERMINAL',
+        );
+        return;
+      }
+      if (intent.state !== TrainingAudioUploadState.UPLOADED) {
+        throw new TrainingAudioError('AUDIO_METADATA_INVALID', false);
+      }
+      const current = await tx.trainingVoiceSegment.findFirst({
+        where: {
+          id: segmentId,
+          answerId: payload.answerId,
+          answer: {
+            attemptQuestion: { attemptId: payload.attemptId },
+          },
+        },
+        include: { originalFile: true },
+      });
+      if (!current) {
+        throw new TrainingAudioError('AUDIO_METADATA_INVALID', false);
+      }
+      const file = await findOrCreateIntentFile(tx, intent);
+      if (current.originalFile) {
+        assertMatchingFile(
+          current.originalFile,
+          intent.expectedMimeType,
+          Number(intent.expectedSizeBytes),
+          intent.expectedChecksum,
+        );
+        if (current.originalFile.id !== file.id) {
+          throw new TrainingAudioError('AUDIO_METADATA_INVALID', false);
+        }
+      } else {
+        await tx.trainingVoiceSegment.update({
+          where: { id: current.id },
+          data: {
+            originalFileId: file.id,
+            originalStorageBucket: intent.bucket,
+            originalStorageKey: intent.objectKey,
+            mimeType: intent.expectedMimeType,
+            sizeBytes: intent.expectedSizeBytes,
+            checksum: intent.expectedChecksum,
+            durationMilliseconds:
+              current.durationSeconds === null
+                ? null
+                : current.durationSeconds * 1_000,
+            downloadedAt: new Date(),
+          },
+        });
+      }
+      await tx.trainingAudioUploadIntent.update({
+        where: { id: intent.id },
+        data: {
+          state: TrainingAudioUploadState.COMMITTED,
+          committedFileId: file.id,
+          committedAt: new Date(),
+        },
+      });
+    });
+  }
+
+  private async commitMergedIntent(
+    jobId: string,
+    payload: AudioJobPayload,
+    answerId: string,
+    intentId: string,
+    prepared: TrainingPreparedAudio,
+  ) {
+    await this.runSerializable(async (tx) => {
+      await acquireAttemptLock(tx, payload.attemptId);
+      await this.assertOwnedJob(tx, jobId);
+      const attempt = await tx.trainingAttempt.findUnique({
+        where: { id: payload.attemptId },
+        select: { status: true },
+      });
+      const intent = await tx.trainingAudioUploadIntent.findUnique({
+        where: { id: intentId },
+      });
+      if (!attempt || !intent) {
+        throw new TrainingAudioError('AUDIO_METADATA_INVALID', false);
+      }
+      if (isTerminalAttempt(attempt.status)) {
+        await this.scheduleIntentCleanupTx(
+          tx,
+          payload,
+          intent,
+          'TERMINAL',
+        );
+        return;
+      }
+      if (intent.state !== TrainingAudioUploadState.UPLOADED) {
+        throw new TrainingAudioError('AUDIO_METADATA_INVALID', false);
+      }
+      const current = await tx.trainingAnswer.findFirst({
+        where: {
+          id: answerId,
+          attemptQuestion: { attemptId: payload.attemptId },
+        },
+        include: { mergedAudioFile: true },
+      });
+      if (!current) {
+        throw new TrainingAudioError('AUDIO_METADATA_INVALID', false);
+      }
+      const file = await findOrCreateIntentFile(tx, intent);
+      if (current.mergedAudioFile) {
+        assertMatchingFile(
+          current.mergedAudioFile,
+          intent.expectedMimeType,
+          Number(intent.expectedSizeBytes),
+          intent.expectedChecksum,
+        );
+        if (current.mergedAudioFile.id !== file.id) {
+          throw new TrainingAudioError('AUDIO_METADATA_INVALID', false);
+        }
+      }
+      await tx.trainingAnswer.update({
+        where: { id: current.id },
+        data: {
+          mergedAudioFileId: file.id,
+          mergedAudioDurationMilliseconds:
+            prepared.durationMilliseconds,
+          audioPreparedAt: new Date(),
+          acousticMetricsJson:
+            prepared.metrics as unknown as Prisma.InputJsonObject,
+          status: TrainingAnswerStatus.READY,
+          errorCode: null,
+          errorMessage: null,
+        },
+      });
+      for (const segment of prepared.segments) {
+        await tx.trainingVoiceSegment.update({
+          where: { id: segment.id },
+          data: {
+            durationMilliseconds: segment.durationMilliseconds,
+            durationSeconds: Math.round(
+              segment.durationMilliseconds / 1_000,
+            ),
+          },
+        });
+      }
+      await tx.trainingAudioUploadIntent.update({
+        where: { id: intent.id },
+        data: {
+          state: TrainingAudioUploadState.COMMITTED,
+          committedFileId: file.id,
+          committedAt: new Date(),
+        },
+      });
+      await enqueueTranscriptionJob(
+        tx,
+        payload.attemptId,
+        payload.answerId,
+        new Date(),
+      );
+    });
+  }
+
+  private async scheduleOwnerIntentCleanup(
+    jobId: string,
+    payload: AudioJobPayload,
+    owner: { segmentId?: string; answerId?: string },
+    mode: CleanupMode,
+  ) {
+    await this.runSerializable(async (tx) => {
+      await acquireAttemptLock(tx, payload.attemptId);
+      await this.assertOwnedJob(tx, jobId);
+      const intent = await tx.trainingAudioUploadIntent.findFirst({
+        where: {
+          ...(owner.segmentId
+            ? { segmentId: owner.segmentId }
+            : { answerId: owner.answerId }),
+          state: {
+            notIn: [
+              TrainingAudioUploadState.COMMITTED,
+              TrainingAudioUploadState.CLEANED,
+            ],
+          },
+        },
+      });
+      if (intent) {
+        await this.scheduleIntentCleanupTx(
+          tx,
+          payload,
+          intent,
+          mode,
+        );
+      }
+    });
+  }
+
+  private async scheduleIntentCleanup(
+    jobId: string,
+    payload: AudioJobPayload,
+    intentId: string,
+    mode: CleanupMode,
+  ) {
+    await this.runSerializable(async (tx) => {
+      await acquireAttemptLock(tx, payload.attemptId);
+      await this.assertOwnedJob(tx, jobId);
+      const intent = await tx.trainingAudioUploadIntent.findUnique({
+        where: { id: intentId },
+      });
+      if (!intent) {
+        throw new TrainingAudioError('AUDIO_METADATA_INVALID', false);
+      }
+      await this.scheduleIntentCleanupTx(
+        tx,
+        payload,
+        intent,
+        mode,
+      );
+    });
+  }
+
+  private async scheduleIntentCleanupTx(
+    tx: Prisma.TransactionClient,
+    payload: AudioJobPayload,
+    intent: UploadIntentRecord,
+    mode: CleanupMode,
+  ) {
+    if (
+      intent.state === TrainingAudioUploadState.COMMITTED ||
+      intent.state === TrainingAudioUploadState.CLEANED ||
+      intent.state === TrainingAudioUploadState.CLEANUP_PENDING
+    ) {
+      return;
+    }
+    const scheduled = await tx.trainingAudioUploadIntent.update({
+      where: { id: intent.id },
+      data: {
+        state: TrainingAudioUploadState.CLEANUP_PENDING,
+        cleanupRequestedAt: new Date(),
+        cleanupGeneration: { increment: 1 },
+      },
+    });
+    await tx.trainingJob.createMany({
+      data: [
+        {
+          kind: TrainingJobKind.CLEANUP_TRAINING_AUDIO_OBJECT,
+          status: TrainingJobStatus.PENDING,
+          payloadJson: {
+            attemptId: payload.attemptId,
+            answerId: payload.answerId,
+            intentId: intent.id,
+            cleanupMode: mode,
+          },
+          idempotencyKey: `training-audio:cleanup:${intent.id}:${scheduled.cleanupGeneration}`,
+          runAt: new Date(),
+          maxAttempts: 5,
+        },
+      ],
+      skipDuplicates: true,
+    });
+  }
+
+  private async cleanupAudioObject(
+    job: ClaimedAudioJob,
+    payload: AudioJobPayload,
+  ): Promise<AudioJobOutcome> {
+    const intent =
+      await this.prisma.trainingAudioUploadIntent.findUnique({
+        where: { id: payload.intentId! },
+      });
+    if (!intent) return 'COMPLETED';
+    if (
+      intent.state === TrainingAudioUploadState.COMMITTED ||
+      intent.state === TrainingAudioUploadState.CLEANED
+    ) {
+      return 'COMPLETED';
+    }
+    if (intent.state !== TrainingAudioUploadState.CLEANUP_PENDING) {
+      return 'COMPLETED';
+    }
+
+    await this.refreshOwnershipOrThrow(job.id);
+    try {
+      await this.files.deletePrivateTrainingAudioObject(
+        intent.objectKey,
+      );
+    } catch {
+      throw new TrainingAudioError('AUDIO_STORAGE_FAILED', true);
+    }
+    await this.runSerializable(async (tx) => {
+      await acquireAttemptLock(tx, payload.attemptId);
+      await this.assertOwnedJob(tx, job.id);
+      const attempt = await tx.trainingAttempt.findUnique({
+        where: { id: payload.attemptId },
+        select: { status: true },
+      });
+      const current = await tx.trainingAudioUploadIntent.findUnique({
+        where: { id: intent.id },
+      });
+      if (!current) return;
+      if (current.state !== TrainingAudioUploadState.CLEANUP_PENDING) {
+        throw new TrainingAudioError('AUDIO_METADATA_INVALID', false);
+      }
+      const resumeUpload =
+        payload.cleanupMode === 'RETRY_UPLOAD' &&
+        attempt &&
+        !isTerminalAttempt(attempt.status);
+      await tx.trainingAudioUploadIntent.update({
+        where: { id: current.id },
+        data: resumeUpload
+          ? {
+              state: TrainingAudioUploadState.PENDING,
+              uploadedAt: null,
+              cleanupRequestedAt: null,
+              cleanedAt: null,
+            }
+          : {
+              state: TrainingAudioUploadState.CLEANED,
+              cleanedAt: new Date(),
+            },
+      });
+    });
+    return 'COMPLETED';
   }
 
   private async ensureTranscriptionJob(attemptId: string, answerId: string) {
@@ -633,6 +1025,20 @@ export class TrainingAudioWorkerService
         },
       });
       if (failed.count !== 1 || shouldRetry) return;
+      if (
+        job.kind ===
+        TrainingJobKind.CLEANUP_TRAINING_AUDIO_OBJECT
+      ) {
+        this.logger.error(
+          JSON.stringify({
+            event: 'training-audio-cleanup-dead',
+            jobId: job.id,
+            intentId: payload.intentId,
+            errorCode,
+          }),
+        );
+        return;
+      }
       await this.terminalizeAttempt(
         tx,
         payload,
@@ -666,6 +1072,20 @@ export class TrainingAudioWorkerService
         },
       });
       if (failed.count !== 1) return;
+      if (
+        job.kind ===
+        TrainingJobKind.CLEANUP_TRAINING_AUDIO_OBJECT
+      ) {
+        this.logger.error(
+          JSON.stringify({
+            event: 'training-audio-cleanup-dead',
+            jobId: job.id,
+            intentId: payload.intentId,
+            errorCode: 'AUDIO_ATTEMPTS_EXHAUSTED',
+          }),
+        );
+        return;
+      }
       await this.terminalizeAttempt(
         tx,
         payload,
@@ -750,6 +1170,7 @@ export class TrainingAudioWorkerService
       },
       select: {
         id: true,
+        kind: true,
         payloadJson: true,
         attempts: true,
         maxAttempts: true,
@@ -791,6 +1212,20 @@ export class TrainingAudioWorkerService
           },
         });
         if (recovered.count !== 1 || retry) return;
+        if (
+          job.kind ===
+          TrainingJobKind.CLEANUP_TRAINING_AUDIO_OBJECT
+        ) {
+          this.logger.error(
+            JSON.stringify({
+              event: 'training-audio-cleanup-dead',
+              jobId: job.id,
+              intentId: payload.intentId,
+              errorCode: 'STALE_AUDIO_JOB_DEAD',
+            }),
+          );
+          return;
+        }
         await this.terminalizeAttempt(
           tx,
           payload,
@@ -808,7 +1243,15 @@ export class TrainingAudioWorkerService
     operation: () => Promise<T>,
   ) {
     const interval = setInterval(() => {
-      void this.refreshOwnership(jobId).catch(() => undefined);
+      void this.refreshOwnership(jobId).catch((error) => {
+        this.logger.warn(
+          JSON.stringify({
+            event: 'training-audio-heartbeat-failed',
+            jobId,
+            error: safeError(error),
+          }),
+        );
+      });
     }, this.config.workerHeartbeatMs);
     interval.unref();
     this.heartbeatIntervals.set(jobId, interval);
@@ -870,6 +1313,7 @@ export class TrainingAudioWorkerService
       },
       select: {
         id: true,
+        kind: true,
         payloadJson: true,
         attempts: true,
         maxAttempts: true,
@@ -908,6 +1352,20 @@ export class TrainingAudioWorkerService
           },
         });
         if (released.count !== 1 || retry) return;
+        if (
+          job.kind ===
+          TrainingJobKind.CLEANUP_TRAINING_AUDIO_OBJECT
+        ) {
+          this.logger.error(
+            JSON.stringify({
+              event: 'training-audio-cleanup-dead',
+              jobId: job.id,
+              intentId: payload.intentId,
+              errorCode: 'AUDIO_SHUTDOWN_DEAD',
+            }),
+          );
+          return;
+        }
         await this.terminalizeAttempt(
           tx,
           payload,
@@ -950,6 +1408,37 @@ type AudioJobPayload = {
   attemptId: string;
   answerId: string;
   segmentId: string | null;
+  intentId: string | null;
+  cleanupMode: CleanupMode | null;
+};
+
+type CleanupMode = 'RETRY_UPLOAD' | 'TERMINAL';
+
+type UploadIntentSpec = {
+  kind: TrainingAudioUploadKind;
+  segmentId: string | null;
+  answerId: string | null;
+  bucket: string;
+  objectKey: string;
+  expectedChecksum: string;
+  expectedSizeBytes: number;
+  expectedMimeType: string;
+  recoveryKey: string;
+};
+
+type UploadIntentRecord = {
+  id: string;
+  kind: TrainingAudioUploadKind;
+  state: TrainingAudioUploadState;
+  segmentId: string | null;
+  answerId: string | null;
+  bucket: string;
+  objectKey: string;
+  expectedChecksum: string;
+  expectedSizeBytes: bigint;
+  expectedMimeType: string;
+  recoveryKey: string;
+  cleanupGeneration: number;
 };
 
 class LostAudioJobOwnershipError extends Error {}
@@ -968,6 +1457,12 @@ function readAudioJobPayload(value: Prisma.JsonValue): AudioJobPayload {
     attemptId: value.attemptId,
     answerId: value.answerId,
     segmentId: typeof value.segmentId === 'string' ? value.segmentId : null,
+    intentId: typeof value.intentId === 'string' ? value.intentId : null,
+    cleanupMode:
+      value.cleanupMode === 'RETRY_UPLOAD' ||
+      value.cleanupMode === 'TERMINAL'
+        ? value.cleanupMode
+        : null,
   };
 }
 
@@ -1002,6 +1497,79 @@ function assertMatchingFile(
   ) {
     throw new TrainingAudioError('AUDIO_METADATA_INVALID', false);
   }
+}
+
+function assertMatchingIntent(
+  intent: UploadIntentRecord,
+  spec: UploadIntentSpec,
+) {
+  if (
+    intent.kind !== spec.kind ||
+    intent.segmentId !== spec.segmentId ||
+    intent.answerId !== spec.answerId ||
+    intent.bucket !== spec.bucket ||
+    intent.objectKey !== spec.objectKey ||
+    intent.expectedChecksum !== spec.expectedChecksum ||
+    intent.expectedSizeBytes !== BigInt(spec.expectedSizeBytes) ||
+    intent.expectedMimeType !== spec.expectedMimeType ||
+    intent.recoveryKey !== spec.recoveryKey
+  ) {
+    throw new TrainingAudioError('AUDIO_METADATA_INVALID', false);
+  }
+}
+
+function doesObjectMatchIntent(
+  object: {
+    exists: boolean;
+    contentLength: number | null;
+    contentType: string | null;
+    sha256: string | null;
+  },
+  intent: UploadIntentRecord,
+) {
+  return (
+    object.exists &&
+    object.contentLength !== null &&
+    BigInt(object.contentLength) === intent.expectedSizeBytes &&
+    object.contentType === intent.expectedMimeType &&
+    object.sha256 === intent.expectedChecksum
+  );
+}
+
+async function findOrCreateIntentFile(
+  tx: Prisma.TransactionClient,
+  intent: UploadIntentRecord,
+) {
+  let file = await tx.file.findFirst({
+    where: {
+      storage: FileStorage.MINIO,
+      bucket: intent.bucket,
+      key: intent.objectKey,
+    },
+  });
+  if (file) {
+    assertMatchingFile(
+      file,
+      intent.expectedMimeType,
+      Number(intent.expectedSizeBytes),
+      intent.expectedChecksum,
+    );
+    return file;
+  }
+  file = await tx.file.create({
+    data: {
+      storage: FileStorage.MINIO,
+      bucket: intent.bucket,
+      key: intent.objectKey,
+      url: null,
+      originalName: null,
+      mimeType: intent.expectedMimeType,
+      sizeBytes: intent.expectedSizeBytes,
+      checksum: intent.expectedChecksum,
+      uploadedById: null,
+    },
+  });
+  return file;
 }
 
 async function enqueueTranscriptionJob(

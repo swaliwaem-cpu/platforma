@@ -16,11 +16,13 @@ BullMQ и отдельная queue-библиотека не добавлены.
 API / Telegram webhook
   -> TELEGRAM_DOWNLOAD_SEGMENT (по одному на persisted segment)
   -> training-worker
+  -> persisted TrainingAudioUploadIntent
   -> private original File
 
 finishAnswer
   -> ASSEMBLE_ANSWER_AUDIO
   -> training-worker + ffprobe/ffmpeg
+  -> persisted TrainingAudioUploadIntent
   -> private normalized File
   -> TRANSCRIBE_ANSWER
   -> API attempt worker + deterministic fake transcription
@@ -40,6 +42,14 @@ node apps/api/dist/training/training-worker.main.js
 `TRAINING_AUDIO_BUCKET` должен быть отдельным private bucket. Object storage
 credentials доступны только backend/worker. Bucket нельзя публиковать через
 anonymous read policy, CDN или бессрочные signed URLs.
+
+В production переменная обязательна и не может совпадать с `MINIO_BUCKET`.
+При startup API/worker проверяют policy и ACL, если provider поддерживает эти
+операции, затем создают случайный sentinel и выполняют неподписанные object
+GET и bucket LIST. Допустимы только явные `401/403`; публичный `200`,
+неоднозначный status или недоступный probe останавливают startup. Sentinel
+всегда удаляется в `finally`. Сервис не меняет policy общего bucket
+автоматически.
 
 И оригиналы, и normalized audio создают `File` со следующими правилами:
 
@@ -100,6 +110,13 @@ status, `Content-Type`, `Content-Length`, размер `getFile`, persisted
 - 429 учитывает `retry_after`;
 - 5xx, timeout и network errors повторяются bounded;
 - постоянные 4xx и spoofed/invalid audio не повторяются;
+- `getFile` и binary download используют no-follow redirect mode;
+- `file_path` принимается только как относительный путь без URL authority,
+  port, credentials, backslash, percent-encoding и `..`;
+- каждый URL перед запросом имеет точные `https:`, `api.telegram.org`, пустой
+  port и origin `https://api.telegram.org`; другой `response.url` запрещён;
+- любой `3xx` является non-retryable security error и не вызывает второго
+  HTTP-запроса;
 - error/log messages не содержат bot token или download URL;
 - deterministic storage key и unique File constraint делают retry
   идемпотентным.
@@ -112,11 +129,21 @@ status, `Content-Type`, `Content-Length`, размер `getFile`, persisted
 Worker создаёт уникальную директорию с mode `0700`, читает только связанные
 private File records и создаёт внутренние имена `segment-NNNN.*`.
 
-Процессы запускаются через `child_process.spawn` с `shell: false` и массивом
-аргументов. Используются `-nostdin`, один thread/filter thread, bounded output
-capture и timeout с `SIGKILL`. Concat manifest содержит только сгенерированные
-basename. Каждый segment нормализуется в mono 16 kHz PCM WAV, затем файлы
-объединяются и проверяются через ffprobe. Temp directory удаляется в `finally`.
+Процессы запускаются через `child_process.spawn` с `shell: false`, массивом
+аргументов и отдельной POSIX process group. Используются `-nostdin`, один
+thread/filter thread и bounded output capture. Timeout отправляет `SIGTERM`
+всей группе, ждёт короткий bounded grace, затем при необходимости отправляет
+`SIGKILL` всей группе и дожидается закрытия group/child; Windows использует
+безопасный child fallback. Compose включает Docker init/reaper для API и
+worker. Concat manifest содержит только сгенерированные basename. Каждый
+segment нормализуется в mono 16 kHz PCM WAV, затем файлы объединяются и
+проверяются через ffprobe.
+
+Temp directory удаляется в `finally`. Ошибка удаления не маскирует уже
+успешную аудиообработку, но пишется структурированно. Startup и периодический
+bounded scavenger рассматривают только generated `answer-*` directories
+внутри `TRAINING_AUDIO_TEMP_DIR`, не следуют symlink и не удаляют свежие или
+активные directories.
 
 Если локальные `ffmpeg`/`ffprobe` отсутствуют, job получает явный
 `FFMPEG_NOT_AVAILABLE`; Docker image уже содержит binaries.
@@ -133,7 +160,28 @@ Idempotency keys:
 attempt:<attemptId>:answer:<answerId>:segment:<segmentId>:download
 attempt:<attemptId>:answer:<answerId>:assemble
 attempt:<attemptId>:answer:<answerId>:transcribe
+training-audio:cleanup:<intentId>:<generation>
 ```
+
+До каждого S3 upload worker в короткой `Serializable` transaction сохраняет
+`TrainingAudioUploadIntent` с owner segment/answer, deterministic key, bucket,
+SHA-256, размером, MIME и recovery identity. После upload вторая короткая
+transaction создаёт/находит единственный `File`, связывает owner и переводит
+intent в `COMMITTED`.
+
+После полной смерти процесса новый worker находит stale job и тот же intent:
+
+1. делает HEAD deterministic object;
+2. сравнивает size, MIME и `x-amz-meta-sha256`;
+3. при совпадении завершает DB link без второго object/File;
+4. при несовпадении переводит intent в `CLEANUP_PENDING`, создаёт
+   `CLEANUP_TRAINING_AUDIO_OBJECT` в существующей `TrainingJob`, удаляет
+   неизвестный object и повторяет исходный job;
+5. для terminal attempt не создаёт link, а durable cleanup переводит intent в
+   `CLEANED`.
+
+Ошибка object delete не проглатывается: cleanup job получает bounded retry,
+safe error code и после исчерпания становится `DEAD` со structured log.
 
 Merge job без всех downloaded segments возвращается в `PENDING` без расхода
 attempt. После terminal attempt jobs становятся no-op. Исчерпанный/permanent
@@ -145,7 +193,7 @@ Signal path:
 
 ```text
 docker compose stop training-worker
-  -> SIGTERM для Node PID 1
+  -> SIGTERM через Docker init/reaper в Node application
   -> Nest shutdown hooks
   -> запрет новых claim
   -> drain до TRAINING_AUDIO_WORKER_DRAIN_TIMEOUT_MS
@@ -190,6 +238,20 @@ pnpm --filter @platforma/api test
 
 Runner создаёт временную локальную PostgreSQL database, применяет migrations,
 использует fake Telegram/audio/ffmpeg fixtures и удаляет database после тестов.
+
+Обязательный gate перед этапом 8 с настоящими локальными PostgreSQL, MinIO,
+ffmpeg/ffprobe и process-level `SIGKILL`:
+
+```bash
+pnpm --filter @platforma/api test:training:audio:docker
+```
+
+Команда строит текущий API image, поднимает уникальный Compose project без
+published ports, применяет все migrations к временной БД, проверяет
+put/head/get/delete, private/public policy probes, два synthetic OGG/Opus,
+mono 16 kHz PCM WAV merge, ffmpeg/process-group timeout, crash after S3 upload,
+active recovery, terminal cleanup и duplicate retry. В `finally`/при
+`SIGINT`/`SIGTERM` удаляются containers, volumes и network.
 
 ## Manual staging QA without production webhook and OpenAI
 

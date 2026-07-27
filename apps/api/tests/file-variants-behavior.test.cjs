@@ -177,6 +177,7 @@ test('FilesService.delete removes image variants before deleting original object
   const storage = createStorageMock();
   const deletedFileIds = [];
   const prisma = {
+    $queryRaw: async () => [],
     file: {
       findUnique: async () => ({
         ...createFileRecord({ key: 'uploads/2026/05/original.png' }),
@@ -197,6 +198,7 @@ test('FilesService.delete removes image variants before deleting original object
       },
     },
   };
+  prisma.$transaction = async (operation) => operation(prisma);
   const service = new FilesService(prisma, storage.service);
 
   await service.delete('11111111-1111-4111-8111-111111111111');
@@ -213,6 +215,7 @@ test('FilesService.delete removes image variants before deleting original object
 test('FilesService.delete removes private files from their persisted bucket', async () => {
   const storage = createStorageMock();
   const prisma = {
+    $queryRaw: async () => [],
     file: {
       findUnique: async () => ({
         ...createFileRecord({
@@ -236,6 +239,7 @@ test('FilesService.delete removes private files from their persisted bucket', as
       delete: async () => undefined,
     },
   };
+  prisma.$transaction = async (operation) => operation(prisma);
   const service = new FilesService(prisma, storage.service);
 
   await service.delete('11111111-1111-4111-8111-111111111111');

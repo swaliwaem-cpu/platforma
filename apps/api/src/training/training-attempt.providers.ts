@@ -44,13 +44,17 @@ export type TrainingTranscriptionSegmentInput = {
 
 export type TrainingTranscriptionInput = {
   answerId: string;
+  attemptQuestionId?: string;
   segments: TrainingTranscriptionSegmentInput[];
   audio?: {
     fileId: string;
+    bucket: string;
+    key: string;
     mimeType: string;
     sizeBytes: number;
     checksum: string;
     durationMilliseconds: number;
+    segmentCount: number;
   };
 };
 

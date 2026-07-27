@@ -420,6 +420,51 @@ fixtures и получает internal audio metadata. OpenAI SDK/API key/network
   Docker image build и проверки `ffmpeg`/`ffprobe`/worker entrypoint — passed;
   подробности см. в `docs/CODEX_LOG.md`.
 
+### Исправления независимого review этапа 7
+
+- [x] Historical result chain переведена с destructive cascade на
+  `ON DELETE RESTRICT`; ограничения проверяются через `pg_constraint`, а
+  linked training audio `File` отклоняется до object storage delete.
+- [x] Telegram `getFile` и binary download не следуют redirect; `file_path`,
+  protocol/host/port/origin и `response.url` валидируются fail-closed.
+- [x] ffmpeg/ffprobe запускаются в отдельной POSIX process group; timeout
+  выполняет group `SIGTERM`, bounded grace и group `SIGKILL`. Docker
+  init/reaper включён для API/worker.
+- [x] Добавлен persisted `TrainingAudioUploadIntent` до upload с owner,
+  deterministic key, SHA-256/size/MIME и state
+  `PENDING → UPLOADED → COMMITTED`.
+- [x] Restart через HEAD и S3 SHA metadata завершает link без дублей; mismatch
+  и terminal owner используют persisted
+  `CLEANUP_TRAINING_AUDIO_OBJECT` в существующей `TrainingJob`.
+- [x] Cleanup delete errors получают bounded retry/`DEAD` и structured log;
+  temp cleanup наблюдаем, startup/periodic scavenger ограничен configured root,
+  не следует symlink и не удаляет fresh/active directories.
+- [x] Production требует отдельный `TRAINING_AUDIO_BUCKET`; startup проверяет
+  policy/ACL и anonymous object GET/bucket LIST, а неоднозначный probe
+  останавливает запуск.
+- [x] Добавлен настоящий HTTP integration на ephemeral port с real login,
+  `JwtAuthGuard`/`PermissionsGuard`, матрицей `401/403/404/200`, private
+  headers и `AuditLog`.
+- [x] Fake 1+3 PostgreSQL flow проверяет merged File ID, bucket, internal key,
+  checksum, MIME, size, duration, segment count, answer и attempt question для
+  всех четырёх answers.
+- [x] Добавлен обязательный перед этапом 8 Docker gate
+  `pnpm --filter @platforma/api test:training:audio:docker`: isolated
+  PostgreSQL/MinIO, все migrations, настоящий process `SIGKILL` после upload,
+  active recovery, terminal cleanup, duplicate retry, synthetic multi-segment
+  OGG/Opus → mono 16 kHz PCM WAV и process-tree timeout.
+- [x] Новая queue, Redis/BullMQ, OpenAI, Telegram dialogue/scoring/frontend и
+  этап 8 не добавлялись.
+
+Подробные security/data-flow invariants зафиксированы в
+`docs/training/03-security-and-data-flow.md`, а deployment/runtime gate — в
+`docs/training/audio-worker-deployment.md`.
+
+Финальная проверка review findings: API `378/378` unit и `71/71`
+PostgreSQL/HTTP integration tests; root suite также включает `286/286` web,
+`64/64` feed-import и `23/23` wp-import tests. Docker gate с чистой БД,
+реальным MinIO и ffmpeg прошёл полностью.
+
 ## Этап 8. OpenAI providers, scoring и review
 
 - [ ] Реализовать server-side fetch providers для transcription/evaluation.

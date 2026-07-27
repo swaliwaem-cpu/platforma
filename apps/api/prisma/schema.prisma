@@ -241,19 +241,37 @@ enum TrainingJobStatus {
 }
 
 enum TrainingJobKind {
-  PROCESS_TELEGRAM_UPDATE   @map("process_telegram_update")
-  TELEGRAM_DOWNLOAD_SEGMENT @map("telegram_download_segment")
-  ASSEMBLE_ANSWER_AUDIO     @map("assemble_answer_audio")
-  TRANSCRIBE_ANSWER         @map("transcribe_answer")
-  ANALYZE_ACOUSTICS         @map("analyze_acoustics")
-  EVALUATE_ANSWER           @map("evaluate_answer")
-  FINALIZE_ATTEMPT          @map("finalize_attempt")
-  SEND_TELEGRAM_MESSAGE     @map("send_telegram_message")
-  SEND_TIMER_WARNING        @map("send_timer_warning")
-  EXPIRE_ATTEMPT            @map("expire_attempt")
-  EXTRACT_SOURCE_DOCUMENT   @map("extract_source_document")
+  PROCESS_TELEGRAM_UPDATE       @map("process_telegram_update")
+  TELEGRAM_DOWNLOAD_SEGMENT     @map("telegram_download_segment")
+  ASSEMBLE_ANSWER_AUDIO         @map("assemble_answer_audio")
+  CLEANUP_TRAINING_AUDIO_OBJECT @map("cleanup_training_audio_object")
+  TRANSCRIBE_ANSWER             @map("transcribe_answer")
+  ANALYZE_ACOUSTICS             @map("analyze_acoustics")
+  EVALUATE_ANSWER               @map("evaluate_answer")
+  FINALIZE_ATTEMPT              @map("finalize_attempt")
+  SEND_TELEGRAM_MESSAGE         @map("send_telegram_message")
+  SEND_TIMER_WARNING            @map("send_timer_warning")
+  EXPIRE_ATTEMPT                @map("expire_attempt")
+  EXTRACT_SOURCE_DOCUMENT       @map("extract_source_document")
 
   @@map("training_job_kind")
+}
+
+enum TrainingAudioUploadKind {
+  ORIGINAL_SEGMENT @map("original_segment")
+  MERGED_ANSWER    @map("merged_answer")
+
+  @@map("training_audio_upload_kind")
+}
+
+enum TrainingAudioUploadState {
+  PENDING         @map("pending")
+  UPLOADED        @map("uploaded")
+  COMMITTED       @map("committed")
+  CLEANUP_PENDING @map("cleanup_pending")
+  CLEANED         @map("cleaned")
+
+  @@map("training_audio_upload_state")
 }
 
 enum TrainingSourceExtractionStatus {
@@ -789,6 +807,7 @@ model File {
   trainingSourceDocuments        TrainingSourceDocument[]
   trainingVoiceSegments          TrainingVoiceSegment[]             @relation("TrainingVoiceOriginalFile")
   trainingAnswerAudio            TrainingAnswer[]                   @relation("TrainingAnswerAudioFile")
+  trainingAudioUploadIntents     TrainingAudioUploadIntent[]        @relation("TrainingAudioUploadCommittedFile")
 
   @@unique([storage, bucket, key])
   @@index([uploadedById])
@@ -1329,7 +1348,7 @@ model TrainingAttemptQuestion {
   createdAt             DateTime                      @default(now()) @map("created_at")
   updatedAt             DateTime                      @updatedAt @map("updated_at")
 
-  attempt  TrainingAttempt  @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  attempt  TrainingAttempt  @relation(fields: [attemptId], references: [id], onDelete: Restrict)
   question TrainingQuestion @relation(fields: [questionId], references: [id], onDelete: Restrict)
   answer   TrainingAnswer?
 
@@ -1360,10 +1379,11 @@ model TrainingAnswer {
   createdAt                       DateTime             @default(now()) @map("created_at")
   updatedAt                       DateTime             @updatedAt @map("updated_at")
 
-  attemptQuestion TrainingAttemptQuestion    @relation(fields: [attemptQuestionId], references: [id], onDelete: Cascade)
-  mergedAudioFile File?                      @relation("TrainingAnswerAudioFile", fields: [mergedAudioFileId], references: [id], onDelete: Restrict)
-  voiceSegments   TrainingVoiceSegment[]
-  evaluations     TrainingAnswerEvaluation[]
+  attemptQuestion   TrainingAttemptQuestion    @relation(fields: [attemptQuestionId], references: [id], onDelete: Restrict)
+  mergedAudioFile   File?                      @relation("TrainingAnswerAudioFile", fields: [mergedAudioFileId], references: [id], onDelete: Restrict)
+  voiceSegments     TrainingVoiceSegment[]
+  evaluations       TrainingAnswerEvaluation[]
+  audioUploadIntent TrainingAudioUploadIntent? @relation("TrainingAnswerAudioUploadIntent")
 
   @@index([status, updatedAt])
   @@map("training_answers")
@@ -1391,8 +1411,9 @@ model TrainingVoiceSegment {
   createdAt             DateTime  @default(now()) @map("created_at")
   updatedAt             DateTime  @updatedAt @map("updated_at")
 
-  answer       TrainingAnswer @relation(fields: [answerId], references: [id], onDelete: Cascade)
-  originalFile File?          @relation("TrainingVoiceOriginalFile", fields: [originalFileId], references: [id], onDelete: Restrict)
+  answer       TrainingAnswer             @relation(fields: [answerId], references: [id], onDelete: Restrict)
+  originalFile File?                      @relation("TrainingVoiceOriginalFile", fields: [originalFileId], references: [id], onDelete: Restrict)
+  uploadIntent TrainingAudioUploadIntent? @relation("TrainingVoiceSegmentUploadIntent")
 
   @@unique([answerId, segmentIndex])
   @@unique([answerId, fileUniqueId], map: "training_voice_segments_answer_id_file_unique_id_key")
@@ -1426,7 +1447,7 @@ model TrainingAnswerEvaluation {
   createdAt            DateTime  @default(now()) @map("created_at")
   updatedAt            DateTime  @updatedAt @map("updated_at")
 
-  answer          TrainingAnswer           @relation(fields: [answerId], references: [id], onDelete: Cascade)
+  answer          TrainingAnswer           @relation(fields: [answerId], references: [id], onDelete: Restrict)
   scoreComponents TrainingScoreComponent[]
 
   @@unique([answerId, evaluationNumber])
@@ -1449,7 +1470,7 @@ model TrainingScoreComponent {
   penaltyPoints Decimal              @default(0) @map("penalty_points") @db.Decimal(6, 2)
   createdAt     DateTime             @default(now()) @map("created_at")
 
-  evaluation TrainingAnswerEvaluation     @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  evaluation TrainingAnswerEvaluation     @relation(fields: [evaluationId], references: [id], onDelete: Restrict)
   criterion  TrainingEvaluationCriterion? @relation(fields: [criterionId], references: [id], onDelete: SetNull)
   fact       TrainingFact?                @relation(fields: [factId], references: [id], onDelete: SetNull)
 
@@ -1473,13 +1494,43 @@ model TrainingResultReview {
   reviewedAt                     DateTime             @default(now()) @map("reviewed_at")
   createdAt                      DateTime             @default(now()) @map("created_at")
 
-  attempt  TrainingAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  attempt  TrainingAttempt @relation(fields: [attemptId], references: [id], onDelete: Restrict)
   reviewer User            @relation("TrainingResultReviewer", fields: [reviewerId], references: [id], onDelete: Restrict)
 
   @@unique([attemptId, reviewNumber])
   @@index([reviewerId, reviewedAt])
   @@index([attemptId, reviewedAt])
   @@map("training_result_reviews")
+}
+
+model TrainingAudioUploadIntent {
+  id                 String                   @id @default(uuid()) @db.Uuid
+  kind               TrainingAudioUploadKind
+  state              TrainingAudioUploadState @default(PENDING)
+  segmentId          String?                  @unique @map("segment_id") @db.Uuid
+  answerId           String?                  @unique @map("answer_id") @db.Uuid
+  committedFileId    String?                  @unique @map("committed_file_id") @db.Uuid
+  bucket             String                   @db.VarChar(255)
+  objectKey          String                   @map("object_key") @db.VarChar(1024)
+  expectedChecksum   String                   @map("expected_checksum") @db.VarChar(64)
+  expectedSizeBytes  BigInt                   @map("expected_size_bytes")
+  expectedMimeType   String                   @map("expected_mime_type") @db.VarChar(120)
+  recoveryKey        String                   @unique @map("recovery_key") @db.VarChar(160)
+  uploadedAt         DateTime?                @map("uploaded_at")
+  committedAt        DateTime?                @map("committed_at")
+  cleanupRequestedAt DateTime?                @map("cleanup_requested_at")
+  cleanupGeneration  Int                      @default(0) @map("cleanup_generation")
+  cleanedAt          DateTime?                @map("cleaned_at")
+  createdAt          DateTime                 @default(now()) @map("created_at")
+  updatedAt          DateTime                 @updatedAt @map("updated_at")
+
+  segment       TrainingVoiceSegment? @relation("TrainingVoiceSegmentUploadIntent", fields: [segmentId], references: [id], onDelete: Restrict)
+  answer        TrainingAnswer?       @relation("TrainingAnswerAudioUploadIntent", fields: [answerId], references: [id], onDelete: Restrict)
+  committedFile File?                 @relation("TrainingAudioUploadCommittedFile", fields: [committedFileId], references: [id], onDelete: Restrict)
+
+  @@unique([bucket, objectKey])
+  @@index([state, updatedAt])
+  @@map("training_audio_upload_intents")
 }
 
 model TrainingProcessedUpdate {

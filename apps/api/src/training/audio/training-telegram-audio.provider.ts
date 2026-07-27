@@ -9,6 +9,7 @@ export const TRAINING_TELEGRAM_AUDIO_PROVIDER = Symbol(
 );
 
 const TELEGRAM_RESPONSE_MAX_BYTES = 64 * 1024;
+const TELEGRAM_API_ORIGIN = 'https://api.telegram.org';
 const ALLOWED_AUDIO_CONTENT_TYPES = new Set([
   'application/octet-stream',
   'application/ogg',
@@ -62,7 +63,6 @@ export class FetchTrainingTelegramAudioProvider
   constructor(
     private readonly botToken: string,
     private readonly config: TrainingAudioConfig,
-    private readonly apiBaseUrl = 'https://api.telegram.org',
     private readonly fetchImpl: typeof fetch = fetch,
   ) {}
 
@@ -155,7 +155,9 @@ export class FetchTrainingTelegramAudioProvider
 
   private async getFile(fileId: string) {
     return this.requestWithTimeout(
-      `${this.apiBaseUrl}/bot${encodeURIComponent(this.botToken)}/getFile`,
+      buildTelegramUrl(
+        `/bot${encodeURIComponent(this.botToken)}/getFile`,
+      ),
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -227,10 +229,11 @@ export class FetchTrainingTelegramAudioProvider
   }
 
   private async requestWithTimeout<T>(
-    url: string,
+    url: URL,
     init: RequestInit,
     consume: (response: Response) => Promise<T>,
   ) {
+    assertAllowedTelegramUrl(url);
     const controller = new AbortController();
     let timedOut = false;
     const timeout = setTimeout(() => {
@@ -243,7 +246,18 @@ export class FetchTrainingTelegramAudioProvider
       const response = await this.fetchImpl(url, {
         ...init,
         signal: controller.signal,
+        redirect: 'manual',
       });
+      if (response.status >= 300 && response.status < 400) {
+        throw new TrainingAudioError(
+          'TELEGRAM_REDIRECT_BLOCKED',
+          false,
+        );
+      }
+      const responseUrl = response.url
+        ? readResponseUrl(response.url)
+        : url;
+      assertAllowedTelegramUrl(responseUrl);
       return await consume(response);
     } catch (error) {
       if (error instanceof TrainingAudioError) throw error;
@@ -259,13 +273,19 @@ export class FetchTrainingTelegramAudioProvider
   }
 
   private buildFileUrl(filePath: string) {
+    if (!isSafeTelegramFilePath(filePath)) {
+      throw new TrainingAudioError(
+        'TELEGRAM_INVALID_FILE_PATH',
+        false,
+      );
+    }
     const encodedPath = filePath
       .split('/')
       .map((segment) => encodeURIComponent(segment))
       .join('/');
-    return `${this.apiBaseUrl}/file/bot${encodeURIComponent(
-      this.botToken,
-    )}/${encodedPath}`;
+    return buildTelegramUrl(
+      `/file/bot${encodeURIComponent(this.botToken)}/${encodedPath}`,
+    );
   }
 }
 
@@ -312,7 +332,10 @@ async function readBoundedBody(response: Response, maximumBytes: number) {
       if (done) break;
       total += value.byteLength;
       if (total > maximumBytes) {
-        await reader.cancel().catch(() => undefined);
+        await reader.cancel().then(
+          () => true,
+          () => false,
+        );
         throw new TrainingAudioError('AUDIO_SIZE_LIMIT_EXCEEDED', false);
       }
       chunks.push(Buffer.from(value));
@@ -373,6 +396,39 @@ function isSafeTelegramFilePath(value: string) {
   return segments.every(
     (segment) => segment.length > 0 && segment !== '.' && segment !== '..',
   );
+}
+
+function buildTelegramUrl(path: string) {
+  const url = new URL(path, TELEGRAM_API_ORIGIN);
+  assertAllowedTelegramUrl(url);
+  return url;
+}
+
+function readResponseUrl(value: string) {
+  try {
+    return new URL(value);
+  } catch {
+    throw new TrainingAudioError(
+      'TELEGRAM_REDIRECT_BLOCKED',
+      false,
+    );
+  }
+}
+
+function assertAllowedTelegramUrl(url: URL) {
+  if (
+    url.protocol !== 'https:' ||
+    url.hostname !== 'api.telegram.org' ||
+    url.port !== '' ||
+    url.username !== '' ||
+    url.password !== '' ||
+    url.origin !== TELEGRAM_API_ORIGIN
+  ) {
+    throw new TrainingAudioError(
+      'TELEGRAM_REDIRECT_BLOCKED',
+      false,
+    );
+  }
 }
 
 function readOptionalPositiveBigInt(value: unknown) {

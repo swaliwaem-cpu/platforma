@@ -4,9 +4,13 @@ const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
 const { existsSync, readFileSync } = require('node:fs');
 const {
+  mkdir,
   mkdtemp,
+  readdir,
   readFile,
   rm,
+  symlink,
+  utimes,
   writeFile,
 } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
@@ -25,8 +29,14 @@ const {
   TrainingAudioController,
 } = require('../dist/training/audio/training-audio.controller.js');
 const {
+  S3StorageService,
+} = require('../dist/files/s3-storage.service.js');
+const {
   TrainingAudioError,
 } = require('../dist/training/audio/training-audio.error.js');
+const {
+  NodeTrainingAudioProcessRunner,
+} = require('../dist/training/audio/training-audio-process.runner.js');
 const {
   TrainingFfmpegService,
 } = require('../dist/training/audio/training-ffmpeg.service.js');
@@ -75,6 +85,13 @@ const audioMigrationSource = readFileSync(
   resolve(
     rootDir,
     'apps/api/prisma/migrations/20260727120000_add_training_audio_pipeline/migration.sql',
+  ),
+  'utf8',
+);
+const reviewMigrationSource = readFileSync(
+  resolve(
+    rootDir,
+    'apps/api/prisma/migrations/20260727200000_fix_training_audio_review_findings/migration.sql',
   ),
   'utf8',
 );
@@ -159,6 +176,110 @@ test('audio config enforces bounded worker values, absolute temp and indefinite 
   );
 });
 
+test('production storage requires a distinct explicitly configured audio bucket', async () => {
+  await withTemporaryEnvironment(
+    {
+      NODE_ENV: 'production',
+      MINIO_BUCKET: 'general-bucket',
+      TRAINING_AUDIO_BUCKET: undefined,
+    },
+    async () => {
+      await assert.rejects(
+        () => new S3StorageService().onModuleInit(),
+        /TRAINING_AUDIO_BUCKET is required/,
+      );
+    },
+  );
+  await withTemporaryEnvironment(
+    {
+      NODE_ENV: 'production',
+      MINIO_BUCKET: 'same-bucket',
+      TRAINING_AUDIO_BUCKET: 'same-bucket',
+    },
+    async () => {
+      await assert.rejects(
+        () => new S3StorageService().onModuleInit(),
+        /must differ from MINIO_BUCKET/,
+      );
+    },
+  );
+});
+
+test('training audio bucket privacy probe accepts private storage and rejects public or ambiguous access', async (t) => {
+  for (const fixture of [
+    { name: 'private', anonymous: 'denied', succeeds: true },
+    { name: 'public', anonymous: 'public', succeeds: false },
+    { name: 'ambiguous', anonymous: 'network', succeeds: false },
+  ]) {
+    await t.test(fixture.name, async () => {
+      await withTemporaryEnvironment(
+        {
+          NODE_ENV: 'production',
+          S3_ENDPOINT: 'https://minio.test',
+          S3_PUBLIC_ENDPOINT: 'https://public-minio.test',
+          MINIO_BUCKET: 'general-bucket',
+          TRAINING_DOCUMENT_BUCKET: 'document-bucket',
+          TRAINING_AUDIO_BUCKET: 'audio-private-bucket',
+        },
+        async () => {
+          const originalFetch = global.fetch;
+          global.fetch = createS3PrivacyFetch(fixture.anonymous);
+          try {
+            const operation = () =>
+              new S3StorageService().onModuleInit();
+            if (fixture.succeeds) {
+              await operation();
+            } else {
+              await assert.rejects(
+                operation,
+                /TRAINING_AUDIO_BUCKET/,
+              );
+            }
+          } finally {
+            global.fetch = originalFetch;
+          }
+        },
+      );
+    });
+  }
+});
+
+test('training audio bucket policy rejects a wildcard principal in a nested AWS array', async () => {
+  await withTemporaryEnvironment(
+    {
+      NODE_ENV: 'production',
+      S3_ENDPOINT: 'https://minio.test',
+      S3_PUBLIC_ENDPOINT: 'https://public-minio.test',
+      MINIO_BUCKET: 'general-bucket',
+      TRAINING_DOCUMENT_BUCKET: 'document-bucket',
+      TRAINING_AUDIO_BUCKET: 'audio-private-bucket',
+    },
+    async () => {
+      const originalFetch = global.fetch;
+      global.fetch = createS3PrivacyFetch('denied', {
+        Version: '2012-10-17',
+        Statement: [
+          {
+            Effect: 'Allow',
+            Principal: {
+              AWS: ['arn:aws:iam::123456789012:root', '*'],
+            },
+            Action: 's3:GetObject',
+          },
+        ],
+      });
+      try {
+        await assert.rejects(
+          () => new S3StorageService().onModuleInit(),
+          /TRAINING_AUDIO_BUCKET policy allows public access/,
+        );
+      } finally {
+        global.fetch = originalFetch;
+      }
+    },
+  );
+});
+
 test('audio migration links private File rows to segments and merged answers with integrity constraints', () => {
   assert.match(
     schemaSource,
@@ -180,6 +301,29 @@ test('audio migration links private File rows to segments and merged answers wit
     audioMigrationSource,
     /training_voice_segments_checksum_sha256/,
   );
+  for (const constraint of [
+    'training_attempt_questions_attempt_id_fkey',
+    'training_answers_attempt_question_id_fkey',
+    'training_voice_segments_answer_id_fkey',
+    'training_answer_evaluations_answer_id_fkey',
+    'training_score_components_evaluation_id_fkey',
+    'training_result_reviews_attempt_id_fkey',
+  ]) {
+    assert.match(
+      reviewMigrationSource,
+      new RegExp(
+        `${constraint}[\\s\\S]*?ON DELETE RESTRICT`,
+      ),
+    );
+  }
+  assert.match(
+    schemaSource,
+    /model TrainingAudioUploadIntent \{[\s\S]*expectedChecksum[\s\S]*recoveryKey[\s\S]*cleanupGeneration/,
+  );
+  assert.match(
+    reviewMigrationSource,
+    /CREATE TABLE "training_audio_upload_intents"/,
+  );
 });
 
 test('Telegram voice provider downloads valid Ogg Opus and checks every byte count', async () => {
@@ -188,7 +332,6 @@ test('Telegram voice provider downloads valid Ogg Opus and checks every byte cou
   const provider = new FetchTrainingTelegramAudioProvider(
     '123456:secret-token',
     config(),
-    'https://telegram.invalid',
     async (url, options) => {
       calls.push({ url: String(url), options });
       if (calls.length === 1) {
@@ -219,6 +362,10 @@ test('Telegram voice provider downloads valid Ogg Opus and checks every byte cou
   assert.deepEqual(result, { body, mimeType: 'audio/ogg' });
   assert.equal(calls.length, 2);
   assert.equal(calls[0].options.method, 'POST');
+  assert.equal(calls[0].options.redirect, 'manual');
+  assert.equal(calls[1].options.redirect, 'manual');
+  assert.equal(new URL(calls[0].url).origin, 'https://api.telegram.org');
+  assert.equal(new URL(calls[1].url).origin, 'https://api.telegram.org');
   assert.match(calls[1].url, /\/file\/bot/);
 });
 
@@ -266,7 +413,6 @@ test('Telegram getFile classifies 429, 5xx, permanent 4xx and invalid JSON', asy
       const provider = new FetchTrainingTelegramAudioProvider(
         '123456:token-must-not-leak',
         config(),
-        'https://telegram.invalid',
         async () => fixture.response,
       );
       const error = await captureAudioError(() =>
@@ -290,7 +436,6 @@ test('Telegram download timeout aborts the request without exposing the bot toke
   const provider = new FetchTrainingTelegramAudioProvider(
     '123456:timeout-secret',
     config({ downloadTimeoutMs: 10 }),
-    'https://telegram.invalid',
     async (_url, options) =>
       new Promise((_resolve, reject) => {
         options.signal.addEventListener(
@@ -368,7 +513,6 @@ test('Telegram download rejects oversize, Content-Length mismatch, MIME and cont
       const provider = new FetchTrainingTelegramAudioProvider(
         '123456:secret',
         config(),
-        'https://telegram.invalid',
         async () => {
           call += 1;
           return call === 1
@@ -403,7 +547,6 @@ test('Telegram getFile rejects traversal paths before file download', async () =
   const provider = new FetchTrainingTelegramAudioProvider(
     '123456:secret',
     config(),
-    'https://telegram.invalid',
     async () => {
       calls += 1;
       return telegramJson({
@@ -421,6 +564,133 @@ test('Telegram getFile rejects traversal paths before file download', async () =
   );
 
   assert.equal(error.code, 'TELEGRAM_INVALID_FILE_PATH');
+  assert.equal(calls, 1);
+});
+
+test('Telegram file_path validation rejects URL, authority, traversal, encoding, backslash and malformed inputs', async (t) => {
+  const invalidPaths = [
+    'https://evil.example/file.oga',
+    '//evil.example/file.oga',
+    '../private/file.oga',
+    'voice/%2e%2e/private.oga',
+    'voice\\private.oga',
+    'https://user:password@evil.example:8443/file.oga',
+    'voice//file.oga',
+    'voice/\u0000file.oga',
+  ];
+  for (const filePath of invalidPaths) {
+    await t.test(JSON.stringify(filePath), async () => {
+      let calls = 0;
+      const provider = new FetchTrainingTelegramAudioProvider(
+        '123456:path-secret',
+        config(),
+        async () => {
+          calls += 1;
+          return telegramJson({
+            ok: true,
+            result: {
+              file_path: filePath,
+              file_size: 64,
+            },
+          });
+        },
+      );
+      const error = await captureAudioError(() =>
+        provider.downloadVoice({
+          fileId: 'file',
+          declaredSizeBytes: 64n,
+          declaredDurationSeconds: 1,
+        }),
+      );
+      assert.equal(error.code, 'TELEGRAM_INVALID_FILE_PATH');
+      assert.equal(error.retryable, false);
+      assert.equal(error.message.includes('path-secret'), false);
+      assert.equal(calls, 1);
+    });
+  }
+});
+
+test('Telegram redirects to external and loopback hosts are security errors and are never followed', async (t) => {
+  for (const target of [
+    'https://evil.example/audio.oga',
+    'http://localhost/audio.oga',
+    'http://127.0.0.1/audio.oga',
+  ]) {
+    await t.test(target, async () => {
+      const calls = [];
+      const provider = new FetchTrainingTelegramAudioProvider(
+        '123456:redirect-secret',
+        config(),
+        async (url, options) => {
+          calls.push({
+            url: String(url),
+            redirect: options.redirect,
+          });
+          if (calls.length === 1) {
+            return telegramJson({
+              ok: true,
+              result: {
+                file_path: 'voice/file.oga',
+                file_size: 64,
+              },
+            });
+          }
+          return new Response(null, {
+            status: 302,
+            headers: { location: target },
+          });
+        },
+      );
+      const error = await captureAudioError(() =>
+        provider.downloadVoice({
+          fileId: 'file',
+          declaredSizeBytes: 64n,
+          declaredDurationSeconds: 1,
+        }),
+      );
+      assert.equal(error.code, 'TELEGRAM_REDIRECT_BLOCKED');
+      assert.equal(error.retryable, false);
+      assert.equal(calls.length, 2);
+      assert.equal(calls.every((call) => call.redirect === 'manual'), true);
+      assert.equal(
+        calls.every(
+          (call) =>
+            new URL(call.url).origin === 'https://api.telegram.org',
+        ),
+        true,
+      );
+    });
+  }
+});
+
+test('Telegram response.url cannot change the fixed API origin', async () => {
+  let calls = 0;
+  const provider = new FetchTrainingTelegramAudioProvider(
+    '123456:response-url-secret',
+    config(),
+    async () => {
+      calls += 1;
+      const response = telegramJson({
+        ok: true,
+        result: {
+          file_path: 'voice/file.oga',
+          file_size: 64,
+        },
+      });
+      Object.defineProperty(response, 'url', {
+        value: 'http://127.0.0.1/getFile',
+      });
+      return response;
+    },
+  );
+  const error = await captureAudioError(() =>
+    provider.downloadVoice({
+      fileId: 'file',
+      declaredSizeBytes: 64n,
+      declaredDurationSeconds: 1,
+    }),
+  );
+  assert.equal(error.code, 'TELEGRAM_REDIRECT_BLOCKED');
   assert.equal(calls, 1);
 });
 
@@ -672,6 +942,98 @@ test('ffmpeg timeout and non-zero fixtures propagate typed errors and clean temp
   }
 });
 
+test('temp scavenger removes only stale generated directories and never follows symlinks', async () => {
+  const tempBase = await mkdtemp(
+    join(tmpdir(), 'platforma-audio-scavenger-'),
+  );
+  const external = await mkdtemp(
+    join(tmpdir(), 'platforma-audio-external-'),
+  );
+  const stale = join(tempBase, 'answer-stale');
+  const fresh = join(tempBase, 'answer-fresh');
+  const link = join(tempBase, 'answer-link');
+  try {
+    await mkdir(stale);
+    await mkdir(fresh);
+    await writeFile(join(external, 'keep'), 'keep');
+    await symlink(external, link, 'dir');
+    const old = new Date(Date.now() - 2 * 60_000);
+    await utimes(stale, old, old);
+    const service = new TrainingFfmpegService(
+      config({ tempDir: tempBase }),
+      { readStoredFile: async () => Buffer.alloc(0) },
+      { run: async () => ({ stdout: '', stderr: '' }) },
+    );
+    await service.scavengeTempDirectories(60_000);
+    const entries = await readdir(tempBase);
+    assert.equal(entries.includes('answer-stale'), false);
+    assert.equal(entries.includes('answer-fresh'), true);
+    assert.equal(entries.includes('answer-link'), true);
+    assert.equal(
+      (await readdir(external)).includes('keep'),
+      true,
+    );
+  } finally {
+    await rm(tempBase, { recursive: true, force: true });
+    await rm(external, { recursive: true, force: true });
+  }
+});
+
+test('process runner timeout terminates the full POSIX process group', {
+  skip: process.platform === 'win32',
+}, async () => {
+  const tempBase = await mkdtemp(
+    join(tmpdir(), 'platforma-process-tree-test-'),
+  );
+  const pidFile = join(tempBase, 'processes.txt');
+  const childScript =
+    "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)";
+  const parentScript = [
+    "trap '' TERM",
+    '"$2" -e "$3" >/dev/null 2>&1 &',
+    'child_pid=$!',
+    'printf "%s,%s" "$$" "$child_pid" > "$1"',
+    'wait',
+  ].join('\n');
+  let parentPid;
+  let childPid;
+  try {
+    const runner = new NodeTrainingAudioProcessRunner();
+    const error = await captureAudioError(() =>
+      runner.run({
+        command: '/bin/sh',
+        args: [
+          '-c',
+          parentScript,
+          'platforma-process-tree-parent',
+          pidFile,
+          process.execPath,
+          childScript,
+        ],
+        cwd: tempBase,
+        timeoutMs: 1_000,
+      }),
+    );
+    assert.equal(error.code, 'FFPROBE_TIMEOUT');
+    [parentPid, childPid] = (await readFile(pidFile, 'utf8'))
+      .split(',')
+      .map(Number);
+    assert.equal(Number.isSafeInteger(parentPid), true);
+    assert.equal(Number.isSafeInteger(childPid), true);
+    assert.equal(processExists(parentPid), false);
+    assert.equal(processExists(childPid), false);
+    assert.equal(processGroupExists(parentPid), false);
+  } finally {
+    if (parentPid && processGroupExists(parentPid)) {
+      process.kill(-parentPid, 'SIGKILL');
+    }
+    if (childPid && processExists(childPid)) {
+      process.kill(childPid, 'SIGKILL');
+    }
+    await rm(tempBase, { recursive: true, force: true });
+  }
+});
+
 test('audio process and worker source preserve no-shell CAS lifecycle and deterministic keys', () => {
   assert.match(processRunnerSource, /spawn\(input\.command,\s*input\.args,/);
   assert.match(processRunnerSource, /shell:\s*false/);
@@ -843,5 +1205,98 @@ function ffmpegSegment(id, segmentIndex, body, receivedAtMilliseconds) {
       sizeBytes: BigInt(body.length),
       checksum: createHash('sha256').update(body).digest('hex'),
     },
+  };
+}
+
+function processExists(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code !== 'ESRCH';
+  }
+}
+
+function processGroupExists(pid) {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code !== 'ESRCH';
+  }
+}
+
+async function withTemporaryEnvironment(overrides, operation) {
+  const previous = new Map(
+    Object.keys(overrides).map((key) => [key, process.env[key]]),
+  );
+  try {
+    for (const [key, value] of Object.entries(overrides)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+    return await operation();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
+function createS3PrivacyFetch(anonymousMode, bucketPolicy = null) {
+  let storedChecksum = null;
+  return async (urlValue, init = {}) => {
+    const url = new URL(String(urlValue));
+    const headers = new Headers(init.headers);
+    const signed = headers.has('authorization');
+    if (!signed) {
+      if (anonymousMode === 'network') {
+        throw new TypeError('anonymous probe unavailable');
+      }
+      return new Response(
+        anonymousMode === 'public' ? 'public' : 'denied',
+        {
+          status: anonymousMode === 'public' ? 200 : 403,
+        },
+      );
+    }
+    if (init.method === 'GET' && url.searchParams.has('policy')) {
+      return bucketPolicy
+        ? Response.json(bucketPolicy)
+        : new Response(null, { status: 404 });
+    }
+    if (init.method === 'GET' && url.searchParams.has('acl')) {
+      return new Response(null, { status: 404 });
+    }
+    if (
+      init.method === 'PUT' &&
+      url.pathname.includes('/training-audio/privacy-probe/')
+    ) {
+      storedChecksum = headers.get('x-amz-meta-sha256');
+      return new Response(null, { status: 200 });
+    }
+    if (
+      init.method === 'HEAD' &&
+      url.pathname.includes('/training-audio/privacy-probe/')
+    ) {
+      return new Response(null, {
+        status: 200,
+        headers: {
+          'content-length': '36',
+          'content-type': 'application/octet-stream',
+          'x-amz-meta-sha256': storedChecksum,
+        },
+      });
+    }
+    return new Response(null, {
+      status: init.method === 'DELETE' ? 204 : 200,
+    });
   };
 }

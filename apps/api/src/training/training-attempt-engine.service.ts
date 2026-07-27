@@ -1508,6 +1508,9 @@ export class TrainingAttemptEngineService
     if (
       this.audioConfig &&
       (!context.mergedAudioFile ||
+        !context.mergedAudioFile.bucket ||
+        !context.mergedAudioFile.key ||
+        context.mergedAudioFile.url !== null ||
         !context.mergedAudioFile.mimeType ||
         context.mergedAudioFile.sizeBytes === null ||
         !context.mergedAudioFile.checksum ||
@@ -1554,6 +1557,7 @@ export class TrainingAttemptEngineService
       (await withProviderTimeout(
         this.transcriptionProvider.transcribe({
           answerId: context.id,
+          attemptQuestionId: context.attemptQuestionId,
           segments: context.voiceSegments.map((segment) => ({
             id: segment.id,
             segmentIndex: segment.segmentIndex,
@@ -1573,6 +1577,9 @@ export class TrainingAttemptEngineService
               : {}),
           })),
           ...(context.mergedAudioFile &&
+          context.mergedAudioFile.bucket &&
+          context.mergedAudioFile.key &&
+          context.mergedAudioFile.url === null &&
           context.mergedAudioFile.mimeType &&
           context.mergedAudioFile.sizeBytes !== null &&
           context.mergedAudioFile.checksum &&
@@ -1580,11 +1587,14 @@ export class TrainingAttemptEngineService
             ? {
                 audio: {
                   fileId: context.mergedAudioFile.id,
+                  bucket: context.mergedAudioFile.bucket,
+                  key: context.mergedAudioFile.key,
                   mimeType: context.mergedAudioFile.mimeType,
                   sizeBytes: Number(context.mergedAudioFile.sizeBytes),
                   checksum: context.mergedAudioFile.checksum,
                   durationMilliseconds:
                     context.mergedAudioDurationMilliseconds,
+                  segmentCount: context.voiceSegments.length,
                 },
               }
             : {}),
