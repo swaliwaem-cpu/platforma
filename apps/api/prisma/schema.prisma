@@ -274,6 +274,31 @@ enum TrainingAudioUploadState {
   @@map("training_audio_upload_state")
 }
 
+enum TrainingProviderKind {
+  TRANSCRIPTION @map("transcription")
+  EVALUATION    @map("evaluation")
+
+  @@map("training_provider_kind")
+}
+
+enum TrainingProviderRunType {
+  PRIMARY   @map("primary")
+  REPROCESS @map("reprocess")
+  REVIEW    @map("review")
+
+  @@map("training_provider_run_type")
+}
+
+enum TrainingProviderRunStatus {
+  PENDING    @map("pending")
+  REQUESTING @map("requesting")
+  SUCCEEDED  @map("succeeded")
+  FAILED     @map("failed")
+  AMBIGUOUS  @map("ambiguous")
+
+  @@map("training_provider_run_status")
+}
+
 enum TrainingSourceExtractionStatus {
   PENDING           @map("pending")
   PROCESSING        @map("processing")
@@ -808,6 +833,7 @@ model File {
   trainingVoiceSegments          TrainingVoiceSegment[]             @relation("TrainingVoiceOriginalFile")
   trainingAnswerAudio            TrainingAnswer[]                   @relation("TrainingAnswerAudioFile")
   trainingAudioUploadIntents     TrainingAudioUploadIntent[]        @relation("TrainingAudioUploadCommittedFile")
+  trainingProviderRuns           TrainingProviderRun[]              @relation("TrainingProviderRunSourceFile")
 
   @@unique([storage, bucket, key])
   @@index([uploadedById])
@@ -1372,6 +1398,8 @@ model TrainingAnswer {
   transcriptionProvider           String?              @map("transcription_provider") @db.VarChar(64)
   transcriptionModel              String?              @map("transcription_model") @db.VarChar(120)
   transcriptionRequestId          String?              @map("transcription_request_id") @db.VarChar(160)
+  activeTranscriptionId           String?              @unique @map("active_transcription_id") @db.Uuid
+  activeEvaluationId              String?              @unique @map("active_evaluation_id") @db.Uuid
   processingStartedAt             DateTime?            @map("processing_started_at")
   processingFinishedAt            DateTime?            @map("processing_finished_at")
   errorCode                       String?              @map("error_code") @db.VarChar(120)
@@ -1379,14 +1407,81 @@ model TrainingAnswer {
   createdAt                       DateTime             @default(now()) @map("created_at")
   updatedAt                       DateTime             @updatedAt @map("updated_at")
 
-  attemptQuestion   TrainingAttemptQuestion    @relation(fields: [attemptQuestionId], references: [id], onDelete: Restrict)
-  mergedAudioFile   File?                      @relation("TrainingAnswerAudioFile", fields: [mergedAudioFileId], references: [id], onDelete: Restrict)
-  voiceSegments     TrainingVoiceSegment[]
-  evaluations       TrainingAnswerEvaluation[]
-  audioUploadIntent TrainingAudioUploadIntent? @relation("TrainingAnswerAudioUploadIntent")
+  attemptQuestion     TrainingAttemptQuestion       @relation(fields: [attemptQuestionId], references: [id], onDelete: Restrict)
+  mergedAudioFile     File?                         @relation("TrainingAnswerAudioFile", fields: [mergedAudioFileId], references: [id], onDelete: Restrict)
+  voiceSegments       TrainingVoiceSegment[]
+  transcriptions      TrainingAnswerTranscription[] @relation("TrainingAnswerTranscriptions")
+  activeTranscription TrainingAnswerTranscription?  @relation("TrainingAnswerActiveTranscription", fields: [activeTranscriptionId], references: [id], onDelete: Restrict)
+  evaluations         TrainingAnswerEvaluation[]    @relation("TrainingAnswerEvaluations")
+  activeEvaluation    TrainingAnswerEvaluation?     @relation("TrainingAnswerActiveEvaluation", fields: [activeEvaluationId], references: [id], onDelete: Restrict)
+  providerRuns        TrainingProviderRun[]
+  audioUploadIntent   TrainingAudioUploadIntent?    @relation("TrainingAnswerAudioUploadIntent")
 
   @@index([status, updatedAt])
   @@map("training_answers")
+}
+
+model TrainingProviderRun {
+  id                String                    @id @default(uuid()) @db.Uuid
+  answerId          String                    @map("answer_id") @db.Uuid
+  kind              TrainingProviderKind
+  runType           TrainingProviderRunType   @default(PRIMARY) @map("run_type")
+  status            TrainingProviderRunStatus @default(PENDING)
+  idempotencyKey    String                    @unique @map("idempotency_key") @db.VarChar(240)
+  requestedModelId  String                    @map("requested_model_id") @db.VarChar(120)
+  actualModelId     String?                   @map("actual_model_id") @db.VarChar(120)
+  reasoningEffort   String?                   @map("reasoning_effort") @db.VarChar(32)
+  sourceFileId      String?                   @map("source_file_id") @db.Uuid
+  sourceChecksum    String?                   @map("source_checksum") @db.VarChar(64)
+  transcriptHash    String?                   @map("transcript_hash") @db.VarChar(64)
+  inputHash         String                    @map("input_hash") @db.VarChar(64)
+  inputMetadataJson Json                      @default("{}") @map("input_metadata_json")
+  promptVersion     String?                   @map("prompt_version") @db.VarChar(64)
+  schemaVersion     String?                   @map("schema_version") @db.VarChar(64)
+  rubricVersion     String?                   @map("rubric_version") @db.VarChar(64)
+  requestId         String?                   @map("request_id") @db.VarChar(160)
+  responseStatus    String?                   @map("response_status") @db.VarChar(64)
+  providerUsageJson Json?                     @map("provider_usage_json")
+  latencyMs         Int?                      @map("latency_ms")
+  retryCount        Int                       @default(0) @map("retry_count")
+  errorCode         String?                   @map("error_code") @db.VarChar(120)
+  errorClass        String?                   @map("error_class") @db.VarChar(120)
+  ambiguousOutcome  Boolean                   @default(false) @map("ambiguous_outcome")
+  startedAt         DateTime?                 @map("started_at")
+  completedAt       DateTime?                 @map("completed_at")
+  createdAt         DateTime                  @default(now()) @map("created_at")
+  updatedAt         DateTime                  @updatedAt @map("updated_at")
+
+  answer        TrainingAnswer               @relation(fields: [answerId], references: [id], onDelete: Restrict)
+  sourceFile    File?                        @relation("TrainingProviderRunSourceFile", fields: [sourceFileId], references: [id], onDelete: Restrict)
+  transcription TrainingAnswerTranscription?
+  evaluation    TrainingAnswerEvaluation?
+
+  @@index([answerId, kind, createdAt])
+  @@index([status, updatedAt])
+  @@index([requestId])
+  @@map("training_provider_runs")
+}
+
+model TrainingAnswerTranscription {
+  id                  String   @id @default(uuid()) @db.Uuid
+  answerId            String   @map("answer_id") @db.Uuid
+  providerRunId       String   @unique @map("provider_run_id") @db.Uuid
+  transcriptionNumber Int      @map("transcription_number")
+  transcript          String
+  language            String   @db.VarChar(16)
+  wordCount           Int      @default(0) @map("word_count")
+  vocabularyVersion   String?  @map("vocabulary_version") @db.VarChar(64)
+  vocabularyHash      String?  @map("vocabulary_hash") @db.VarChar(64)
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  answer          TrainingAnswer      @relation("TrainingAnswerTranscriptions", fields: [answerId], references: [id], onDelete: Restrict)
+  activeForAnswer TrainingAnswer?     @relation("TrainingAnswerActiveTranscription")
+  providerRun     TrainingProviderRun @relation(fields: [providerRunId], references: [id], onDelete: Restrict)
+
+  @@unique([answerId, transcriptionNumber])
+  @@index([answerId, createdAt])
+  @@map("training_answer_transcriptions")
 }
 
 model TrainingVoiceSegment {
@@ -1427,6 +1522,7 @@ model TrainingVoiceSegment {
 model TrainingAnswerEvaluation {
   id                   String    @id @default(uuid()) @db.Uuid
   answerId             String    @map("answer_id") @db.Uuid
+  providerRunId        String?   @unique @map("provider_run_id") @db.Uuid
   evaluationNumber     Int       @default(1) @map("evaluation_number")
   actualModelId        String    @map("actual_model_id") @db.VarChar(120)
   reasoningEffort      String?   @map("reasoning_effort") @db.VarChar(32)
@@ -1447,7 +1543,9 @@ model TrainingAnswerEvaluation {
   createdAt            DateTime  @default(now()) @map("created_at")
   updatedAt            DateTime  @updatedAt @map("updated_at")
 
-  answer          TrainingAnswer           @relation(fields: [answerId], references: [id], onDelete: Restrict)
+  answer          TrainingAnswer           @relation("TrainingAnswerEvaluations", fields: [answerId], references: [id], onDelete: Restrict)
+  activeForAnswer TrainingAnswer?          @relation("TrainingAnswerActiveEvaluation")
+  providerRun     TrainingProviderRun?     @relation(fields: [providerRunId], references: [id], onDelete: Restrict)
   scoreComponents TrainingScoreComponent[]
 
   @@unique([answerId, evaluationNumber])

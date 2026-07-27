@@ -10,6 +10,9 @@ export const TRAINING_TRANSCRIPTION_PROVIDER = Symbol(
   'TRAINING_TRANSCRIPTION_PROVIDER',
 );
 export const TRAINING_EVALUATION_PROVIDER = Symbol('TRAINING_EVALUATION_PROVIDER');
+export const TRAINING_ATTEMPT_JOB_PROCESSOR_ENABLED = Symbol(
+  'TRAINING_ATTEMPT_JOB_PROCESSOR_ENABLED',
+);
 
 export type TrainingAttemptClock = {
   now(): Date;
@@ -45,6 +48,11 @@ export type TrainingTranscriptionSegmentInput = {
 export type TrainingTranscriptionInput = {
   answerId: string;
   attemptQuestionId?: string;
+  review?: boolean;
+  approvedVocabulary?: {
+    version: string;
+    terms: string[];
+  };
   segments: TrainingTranscriptionSegmentInput[];
   audio?: {
     fileId: string;
@@ -62,9 +70,15 @@ export type TrainingTranscriptionResult = {
   transcript: string;
   language: string;
   provider: string;
-  model: string;
-  requestId: string;
+  requestedModelId: string;
+  actualModelId: string | null;
+  model?: string;
+  requestId: string | null;
   wordCount: number;
+  usage?: Record<string, unknown>;
+  latencyMs?: number;
+  retryCount?: number;
+  responseStatus?: string;
 };
 
 export type TrainingTranscriptionProvider = {
@@ -75,47 +89,83 @@ export type TrainingEvaluationCriterionInput = {
   id: string;
   code: string;
   title: string;
+  description?: string;
   maxPoints: number;
+  anchors: TrainingEvaluationAnchorInput[];
+};
+
+export type TrainingEvaluationAnchorInput = {
+  id: string;
+  points: number;
+  description: string;
 };
 
 export type TrainingEvaluationFactInput = {
   id: string;
   code: string;
   statement: string;
+  acceptedAliases: string[];
+  relevance?: string;
+  required?: boolean;
+};
+
+export type TrainingEvaluationMetricInput = {
+  id: string;
+  value: number;
+  unit: string;
 };
 
 export type TrainingEvaluationInput = {
   answerId: string;
+  providerRunId?: string;
   questionId: string;
+  review?: boolean;
+  questionType?: 'MAIN' | 'FOLLOW_UP';
   questionText: string;
   questionMaxScore: number;
   transcript: string;
   criteria: TrainingEvaluationCriterionInput[];
   facts: TrainingEvaluationFactInput[];
+  metrics: TrainingEvaluationMetricInput[];
 };
 
 export type TrainingEvaluationCriterionScore = {
   criterionId: string;
-  awardedPoints: number;
+  anchorId?: string;
+  awardedPoints?: number;
+  evidenceSource?: 'TRANSCRIPT' | 'METRIC' | 'NONE';
   evidence?: string;
+  metricId?: string;
+  explanation?: string;
 };
 
 export type TrainingEvaluationFactFinding = {
   factId?: string;
   verdict: 'CORRECT' | 'PARTIAL' | 'MISSING' | 'INCORRECT' | 'UNSUPPORTED';
   claim?: string;
+  evidenceSource: 'TRANSCRIPT' | 'METRIC' | 'NONE';
   evidence?: string;
+  metricId?: string;
+  explanation: string;
+  confidence: number;
 };
 
 export type TrainingEvaluationResult = {
-  actualModelId: string;
+  requestedModelId: string;
+  actualModelId: string | null;
   reasoningEffort: string | null;
-  aiSuggestedScore: number;
+  answerRelevance: 'RELEVANT' | 'PARTIAL' | 'IRRELEVANT';
+  requiresManualReview: boolean;
+  reviewReasons: string[];
+  aiSuggestedScore?: number;
   criterionScores: TrainingEvaluationCriterionScore[];
   factFindings: TrainingEvaluationFactFinding[];
   summary: string;
-  requestId: string;
+  requestId: string | null;
   latencyMs: number;
+  retryCount?: number;
+  responseStatus?: string;
+  usage?: Record<string, unknown>;
 };
 
 export type TrainingEvaluationProvider = {
@@ -186,9 +236,13 @@ export class DeterministicFakeTrainingTranscriptionProvider
       transcript,
       language: 'ru',
       provider: 'fake',
+      requestedModelId: 'fake-transcription-v1',
+      actualModelId: 'fake-transcription-v1',
       model: 'fake-transcription-v1',
       requestId: `fake-transcription:${input.answerId}:1`,
       wordCount: countTranscriptWords(transcript),
+      retryCount: 0,
+      responseStatus: 'completed',
     };
   }
 }
@@ -220,7 +274,10 @@ export class DeterministicFakeTrainingEvaluationProvider
         factFindings.push({
           factId: fact.id,
           verdict: 'INCORRECT',
+          evidenceSource: 'TRANSCRIPT',
           evidence: match[0],
+          explanation: 'Deterministic fake incorrect fact',
+          confidence: 1,
         });
       }
     }
@@ -231,23 +288,38 @@ export class DeterministicFakeTrainingEvaluationProvider
         factFindings.push({
           verdict: 'UNSUPPORTED',
           claim,
+          evidenceSource: 'TRANSCRIPT',
           evidence: match[0],
+          explanation: 'Deterministic fake unsupported claim',
+          confidence: 1,
         });
       }
     }
 
     return {
+      requestedModelId: 'fake-evaluation-v1',
       actualModelId: 'fake-evaluation-v1',
       reasoningEffort: null,
+      answerRelevance: 'RELEVANT',
+      requiresManualReview: factFindings.some(
+        (finding) => finding.verdict === 'UNSUPPORTED',
+      ),
+      reviewReasons: factFindings
+        .filter((finding) => finding.verdict === 'UNSUPPORTED')
+        .map(() => 'UNSUPPORTED_CLAIM'),
       aiSuggestedScore: criterionScores.reduce(
-        (total, criterion) => total + criterion.awardedPoints,
+        (total, criterion) => total + (criterion.awardedPoints ?? 0),
         0,
       ),
       criterionScores,
       factFindings,
       summary: 'Deterministic fake evaluation',
-      requestId: `fake-evaluation:${input.answerId}:1`,
+      requestId: input.providerRunId
+        ? `fake-evaluation:${input.providerRunId}`
+        : `fake-evaluation:${input.answerId}:1`,
       latencyMs: 0,
+      retryCount: 0,
+      responseStatus: 'completed',
     };
   }
 }

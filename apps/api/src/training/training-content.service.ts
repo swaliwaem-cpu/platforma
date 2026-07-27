@@ -1483,7 +1483,7 @@ export class TrainingContentService {
         ? this.parseNullableString(body.description, 'Criterion description', 4000)
         : (current?.description ?? null),
       anchorsJson: this.hasOwn(body, 'anchors')
-        ? this.parseJsonArray(body.anchors, 100, 'Criterion anchors are invalid')
+        ? this.parseCriterionAnchors(body.anchors, Number(maxPoints))
         : this.toInputJson(current?.anchorsJson ?? []),
       sortOrder: this.hasOwn(body, 'sortOrder')
         ? this.parseNonNegativeInteger(body.sortOrder, 'Criterion sort order')
@@ -1890,6 +1890,59 @@ export class TrainingContentService {
       throw new BadRequestException(message);
     }
     return value as Prisma.InputJsonArray;
+  }
+
+  private parseCriterionAnchors(
+    value: unknown,
+    maximumPoints: number,
+  ): Prisma.InputJsonArray {
+    if (!Array.isArray(value) || value.length > 100) {
+      throw new BadRequestException('Criterion anchors are invalid');
+    }
+    const ids = new Set<string>();
+    return value.map((item, index) => {
+      if (!this.isRecord(item)) {
+        throw new BadRequestException(
+          `Criterion anchor ${index + 1} must be an object`,
+        );
+      }
+      const actualKeys = Object.keys(item).sort();
+      const expectedKeys = ['description', 'id', 'points'];
+      if (
+        actualKeys.length !== expectedKeys.length ||
+        actualKeys.some((key, keyIndex) => key !== expectedKeys[keyIndex])
+      ) {
+        throw new BadRequestException(
+          `Criterion anchor ${index + 1} has invalid fields`,
+        );
+      }
+      const id = this.parseCode(item.id, 'Criterion anchor ID');
+      if (ids.has(id)) {
+        throw new BadRequestException('Criterion anchor IDs must be unique');
+      }
+      ids.add(id);
+      const points = Number(item.points);
+      if (
+        !Number.isFinite(points) ||
+        points < 0 ||
+        points > maximumPoints ||
+        Math.round(points * 100) !== points * 100
+      ) {
+        throw new BadRequestException(
+          `Criterion anchor ${id} points are invalid`,
+        );
+      }
+      const description = this.parseRequiredString(
+        item.description,
+        `Criterion anchor ${id} description is required`,
+        2_000,
+      );
+      return {
+        id,
+        points,
+        description,
+      };
+    });
   }
 
   private parseRequiredString(value: unknown, message: string, maxLength: number) {

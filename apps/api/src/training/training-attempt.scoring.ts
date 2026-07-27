@@ -52,19 +52,42 @@ export function scoreTrainingEvaluation(input: {
   const criteriaById = new Map(input.criteria.map((criterion) => [criterion.id, criterion]));
   const factsById = new Map(input.facts.map((fact) => [fact.id, fact]));
   const scoresByCriterion = new Map<string, Prisma.Decimal>();
+  const evidenceByCriterion = new Map<string, Record<string, unknown>>();
 
   for (const score of input.evaluation.criterionScores) {
     const criterion = criteriaById.get(score.criterionId);
     if (!criterion) {
-      throw new BadRequestException('Fake evaluation returned an unknown criterion');
+      throw new BadRequestException('Evaluation returned an unknown criterion');
     }
     if (scoresByCriterion.has(score.criterionId)) {
-      throw new BadRequestException('Fake evaluation returned a duplicate criterion');
+      throw new BadRequestException('Evaluation returned a duplicate criterion');
+    }
+    const anchor = score.anchorId
+      ? criterion.anchors.find((candidate) => candidate.id === score.anchorId)
+      : undefined;
+    if (score.anchorId && !anchor) {
+      throw new BadRequestException('Evaluation returned an unknown anchor');
+    }
+    if (!anchor && score.awardedPoints === undefined) {
+      throw new BadRequestException(
+        'Evaluation did not select an approved anchor',
+      );
     }
     scoresByCriterion.set(
       score.criterionId,
-      clampTrainingScore(score.awardedPoints, 0, criterion.maxPoints),
+      clampTrainingScore(
+        anchor?.points ?? score.awardedPoints ?? 0,
+        0,
+        criterion.maxPoints,
+      ),
     );
+    evidenceByCriterion.set(score.criterionId, {
+      ...(score.evidenceSource ? { source: score.evidenceSource } : {}),
+      ...(score.evidence ? { text: score.evidence } : {}),
+      ...(score.metricId ? { metricId: score.metricId } : {}),
+      ...(score.anchorId ? { anchorId: score.anchorId } : {}),
+      ...(score.explanation ? { explanation: score.explanation } : {}),
+    });
   }
 
   const components: TrainingScoreComponentInput[] = input.criteria.map((criterion) => ({
@@ -74,7 +97,7 @@ export function scoreTrainingEvaluation(input: {
     awardedPoints:
       scoresByCriterion.get(criterion.id) ?? canonicalTrainingScore(0),
     maxPoints: canonicalTrainingScore(criterion.maxPoints),
-    evidence: null,
+    evidence: evidenceByCriterion.get(criterion.id) ?? null,
     penaltyPoints: canonicalTrainingScore(0),
   }));
   const incorrectFacts = new Set<string>();
@@ -134,7 +157,7 @@ export function scoreTrainingEvaluation(input: {
 
   return {
     aiSuggestedScore: clampTrainingScore(
-      input.evaluation.aiSuggestedScore,
+      criterionTotal,
       0,
       input.questionMaxScore,
     ),
@@ -143,8 +166,17 @@ export function scoreTrainingEvaluation(input: {
       0,
       input.questionMaxScore,
     ),
-    requiresReview: unsupportedClaims.size > 0,
-    reviewReasons: [...unsupportedClaims].map((claim) => `UNSUPPORTED:${claim}`),
+    requiresReview:
+      unsupportedClaims.size > 0 ||
+      (input.evaluation.requiresManualReview ?? false),
+    reviewReasons: [
+      ...new Set([
+        ...[...unsupportedClaims].map((claim) => `UNSUPPORTED:${claim}`),
+        ...(input.evaluation.reviewReasons ?? []).map(
+          (reason) => `PROVIDER_REVIEW:${reason}`,
+        ),
+      ]),
+    ],
     components,
   };
 }
@@ -170,7 +202,7 @@ function validateFactFinding(
   }
 
   if (!finding.factId || !factsById.has(finding.factId)) {
-    throw new BadRequestException('Fake evaluation returned an unknown fact');
+    throw new BadRequestException('Evaluation returned an unknown fact');
   }
 }
 

@@ -97,6 +97,9 @@ function validPublishableVersion(overrides = {}) {
         code: 'main',
         sortOrder: 0,
         maxPoints: new Prisma.Decimal(55),
+        anchorsJson: [
+          { id: 'main-full', points: 55, description: 'Полный ответ' },
+        ],
       },
       {
         id: '88888888-8888-4888-8888-888888888888',
@@ -104,6 +107,9 @@ function validPublishableVersion(overrides = {}) {
         code: 'follow',
         sortOrder: 0,
         maxPoints: new Prisma.Decimal(15),
+        anchorsJson: [
+          { id: 'follow-full', points: 15, description: 'Полный ответ' },
+        ],
       },
     ],
     project: {

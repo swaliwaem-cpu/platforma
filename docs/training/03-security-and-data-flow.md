@@ -2,8 +2,8 @@
 
 Дата актуализации: 2026-07-27.
 
-Документ фиксирует границы безопасности этапа 7 после независимого review.
-Этап 8, OpenAI, scoring и Telegram dialogue здесь не реализуются.
+Документ фиксирует границы безопасности этапов 7–8 после независимого review.
+UI результатов/rating и следующий этап здесь не реализуются.
 
 ## Поток данных
 
@@ -18,13 +18,18 @@ Telegram Bot API fixed origin
   -> PostgreSQL File link (url = null)
   -> ffprobe / ffmpeg isolated process group
   -> merged private WAV + upload intent
-  -> fake transcription metadata
+  -> persisted OpenAI provider intent
+  -> worker-only Audio Transcriptions request
+  -> immutable transcript version
+  -> worker-only Responses strict structured evaluation
+  -> backend-only deterministic score
   -> protected HTTP bytes + AuditLog
 ```
 
-Raw audio и transcript не передаются во внешние AI API. Object key содержит
-только внутренние UUID. Bot token, signed headers, download URL, storage
-credentials и object key не входят в публичные ошибки или HTTP JSON.
+Normalized WAV и transcript передаются OpenAI только из `training-worker` в
+real mode. Object key, private bucket, storage credentials, Telegram metadata,
+bot token, signed headers и download URL OpenAI не передаются и не входят в
+публичные ошибки или HTTP JSON.
 
 ## Защита исторических результатов
 
@@ -35,11 +40,46 @@ TrainingAttempt
   -> TrainingAttemptQuestion
   -> TrainingAnswer
      -> TrainingVoiceSegment
+     -> TrainingProviderRun
+     -> TrainingAnswerTranscription
      -> TrainingAnswerEvaluation
         -> TrainingScoreComponent
 TrainingAttempt -> TrainingResultReview
 File -> segment original / answer merged audio / committed upload intent
 ```
+
+Текущий transcript/evaluation выбирается через explicit
+`activeTranscriptionId`/`activeEvaluationId`; reprocessing добавляет новую
+версию, не перезаписывая исходный provider output.
+
+## OpenAI network and prompt boundary
+
+- Разрешён фиксированный origin `https://api.openai.com`; OpenAI SDK не
+  используется.
+- Transcription принимает только persisted answer-owned private WAV,
+  перепроверяет bucket/key/MIME/size/SHA-256 и формат mono 16 kHz 16-bit PCM.
+- Upload меньше 25 MiB, `language=ru`, prompt содержит только короткий
+  approved vocabulary, не полный эталонный ответ.
+- Evaluation использует Responses, `store:false`, strict JSON Schema и не
+  передаёт tools/search/conversation/background/previous response state.
+- Instructions объявляют transcript и весь input JSON недоверенными данными.
+- Backend проверяет schema version, exact fields/enums, numeric confidence
+  `0..1`, неизвестные/повторные IDs, неутверждённые anchors, полное покрытие
+  criteria/facts и evidence, которое не является точной подстрокой transcript
+  или известным metric ID.
+- Ответ модели не содержит points: score вычисляется по persisted anchors и
+  distinct incorrect facts только backend-кодом.
+- API process не исполняет AI jobs; HTTP calls выполняет только
+  `training-worker`.
+- Provider response body, transcript, audio и API key не логируются.
+
+Перед request сохраняется provider intent, но DB transaction во время network
+I/O не держится. `429/5xx`, timeout/network и временный malformed upstream
+response повторяются bounded внутри общего hard deadline. Исчерпанный
+timeout/network без известного исхода фиксируется как `AMBIGUOUS`; новый
+durable job/restart не повторяет такой платный вызов автоматически, потому что
+исход запроса и billing неизвестны. Reviewer запускает новую версию явным
+reprocessing endpoint. Exactly-once billing не обещается.
 
 Выбран `RESTRICT`, потому что это явная Prisma/PostgreSQL convention проекта
 для исторических и используемых сущностей: нарушение обнаруживается в момент

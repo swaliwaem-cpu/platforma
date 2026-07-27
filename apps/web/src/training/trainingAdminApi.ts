@@ -51,6 +51,12 @@ export type TrainingCriterion = {
   sortOrder: number;
 };
 
+export type TrainingCriterionAnchor = {
+  id: string;
+  points: number;
+  description: string;
+};
+
 export type TrainingVersion = {
   id: string;
   projectId: string;
@@ -333,7 +339,7 @@ export function saveTrainingCriterion(
     title: string;
     maxPoints: number;
     description: string | null;
-    anchors: string[];
+    anchors: TrainingCriterionAnchor[];
     sortOrder: number;
   },
 ) {

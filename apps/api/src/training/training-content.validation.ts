@@ -28,6 +28,7 @@ type PublishableCriterion = {
   code: string;
   sortOrder: number;
   maxPoints: number | string | { toString(): string };
+  anchorsJson: unknown;
 };
 
 export type PublishableTrainingVersion = {
@@ -154,6 +155,19 @@ export function collectTrainingPublicationErrors(version: PublishableTrainingVer
     if (hasDuplicates(criteria.map((criterion) => String(criterion.sortOrder)))) {
       errors.push(`${label} criterion positions must be unique`);
     }
+    if (
+      criteria.some(
+        (criterion) =>
+          !hasValidStructuredAnchors(
+            criterion.anchorsJson,
+            Number(criterion.maxPoints.toString()),
+          ),
+      )
+    ) {
+      errors.push(
+        `${label} criteria require valid structured anchors before publication`,
+      );
+    }
 
     const total = criteria.reduce(
       (sum, criterion) => sum + Number(criterion.maxPoints.toString()),
@@ -165,6 +179,43 @@ export function collectTrainingPublicationErrors(version: PublishableTrainingVer
   }
 
   return Array.from(new Set(errors));
+}
+
+function hasValidStructuredAnchors(value: unknown, maximumPoints: number) {
+  if (!Array.isArray(value) || value.length === 0) return false;
+  const ids = new Set<string>();
+  return value.every((anchor) => {
+    if (
+      typeof anchor !== 'object' ||
+      anchor === null ||
+      Array.isArray(anchor)
+    ) {
+      return false;
+    }
+    const record = anchor as Record<string, unknown>;
+    const keys = Object.keys(record).sort();
+    if (keys.join(',') !== 'description,id,points') return false;
+    const id = typeof record.id === 'string' ? record.id.trim() : '';
+    const description =
+      typeof record.description === 'string'
+        ? record.description.trim()
+        : '';
+    const points = record.points;
+    if (
+      !id ||
+      !/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(id) ||
+      ids.has(id) ||
+      !description ||
+      typeof points !== 'number' ||
+      !Number.isFinite(points) ||
+      points < 0 ||
+      points > maximumPoints
+    ) {
+      return false;
+    }
+    ids.add(id);
+    return true;
+  });
 }
 
 export function assertTrainingVersionPublishable(version: PublishableTrainingVersion) {

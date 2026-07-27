@@ -47,12 +47,18 @@ function validVersion(overrides = {}) {
         code: 'main.completeness',
         sortOrder: 0,
         maxPoints: 55,
+        anchorsJson: [
+          { id: 'main-full', points: 55, description: 'Полный ответ' },
+        ],
       },
       {
         questionType: 'FOLLOW_UP',
         code: 'follow.accuracy',
         sortOrder: 0,
         maxPoints: 15,
+        anchorsJson: [
+          { id: 'follow-full', points: 15, description: 'Полный ответ' },
+        ],
       },
     ],
     ...overrides,

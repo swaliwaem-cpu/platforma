@@ -1,6 +1,8 @@
 require('reflect-metadata');
 
 const assert = require('node:assert/strict');
+const http = require('node:http');
+const { createHash } = require('node:crypto');
 const test = require('node:test');
 const {
   PrismaClient,
@@ -24,6 +26,15 @@ const {
   DeterministicFakeTrainingEvaluationProvider,
   DeterministicFakeTrainingTranscriptionProvider,
 } = require('../dist/training/training-attempt.providers.js');
+const {
+  TrainingOpenAiHttpClient,
+} = require('../dist/training/openai/training-openai.http.js');
+const {
+  OpenAiTrainingEvaluationProvider,
+} = require('../dist/training/openai/training-openai-evaluation.provider.js');
+const {
+  OpenAiTrainingTranscriptionProvider,
+} = require('../dist/training/openai/training-openai-transcription.provider.js');
 const {
   DeterministicQuestionSelector,
   MutableTrainingClock,
@@ -407,7 +418,7 @@ test('PostgreSQL restart: READY, TRANSCRIBING, EVALUATING and FINALIZING all res
     );
   });
 
-  await t.test('TRANSCRIBING', async () => {
+  await t.test('TRANSCRIBING becomes ambiguous and needs explicit reprocessing', async () => {
     const fixture = await createFixture();
     const clock = createClock();
     const deferred = createDeferred();
@@ -434,14 +445,34 @@ test('PostgreSQL restart: READY, TRANSCRIBING, EVALUATING and FINALIZING all res
     firstService.onModuleDestroy();
     clock.advanceSeconds(31);
 
-    await createService(clock).recoverPendingProcessing();
+    const recoveredService = createService(clock);
+    await recoveredService.recoverPendingProcessing();
     assert.equal(
-      await countEvaluations(attempt.id),
-      1,
+      (await recoveredService.getAttempt(attempt.id)).attempt.status,
+      TrainingAttemptStatus.TECHNICAL_FAILURE,
     );
+    assert.equal(await countEvaluations(attempt.id), 0);
+    const answer = await prisma.trainingAnswer.findFirstOrThrow({
+      where: { attemptQuestion: { attemptId: attempt.id } },
+    });
+    assert.equal(
+      (
+        await prisma.trainingProviderRun.findFirstOrThrow({
+          where: { answerId: answer.id, kind: 'TRANSCRIPTION' },
+        })
+      ).status,
+      'AMBIGUOUS',
+    );
+    await recoveredService.reprocessTranscription({
+      answerId: answer.id,
+      reviewerId: fixture.publisherId,
+      comment: 'Explicit retry after ambiguous transcription',
+    });
+    await recoveredService.recoverPendingProcessing();
+    assert.equal(await countEvaluations(attempt.id), 1);
   });
 
-  await t.test('EVALUATING', async () => {
+  await t.test('EVALUATING becomes ambiguous and needs explicit reprocessing', async () => {
     const fixture = await createFixture();
     const clock = createClock();
     const deferred = createDeferred();
@@ -468,7 +499,30 @@ test('PostgreSQL restart: READY, TRANSCRIBING, EVALUATING and FINALIZING all res
     firstService.onModuleDestroy();
     clock.advanceSeconds(31);
 
-    await createService(clock).recoverPendingProcessing();
+    const recoveredService = createService(clock);
+    await recoveredService.recoverPendingProcessing();
+    assert.equal(
+      (await recoveredService.getAttempt(attempt.id)).attempt.status,
+      TrainingAttemptStatus.TECHNICAL_FAILURE,
+    );
+    assert.equal(await countEvaluations(attempt.id), 0);
+    const answer = await prisma.trainingAnswer.findFirstOrThrow({
+      where: { attemptQuestion: { attemptId: attempt.id } },
+    });
+    assert.equal(
+      (
+        await prisma.trainingProviderRun.findFirstOrThrow({
+          where: { answerId: answer.id, kind: 'EVALUATION' },
+        })
+      ).status,
+      'AMBIGUOUS',
+    );
+    await recoveredService.reprocessEvaluation({
+      answerId: answer.id,
+      reviewerId: fixture.publisherId,
+      comment: 'Explicit retry after ambiguous evaluation',
+    });
+    await recoveredService.recoverPendingProcessing();
     assert.equal(await countEvaluations(attempt.id), 1);
   });
 
@@ -548,7 +602,7 @@ test('PostgreSQL restart reuses a persisted provider result before state transit
   assert.equal(await countEvaluations(attempt.id), 1);
 });
 
-test('PostgreSQL timeout during TRANSCRIBING and EVALUATING persists intent and finalizes', async (t) => {
+test('PostgreSQL timeout during provider request preserves ambiguity and explicit recovery', async (t) => {
   for (const state of [
     TrainingAnswerStatus.TRANSCRIBING,
     TrainingAnswerStatus.EVALUATING,
@@ -599,10 +653,47 @@ test('PostgreSQL timeout during TRANSCRIBING and EVALUATING persists intent and 
         },
       });
 
-      assert.equal(completed.status, TrainingAttemptStatus.COMPLETED);
-      assert.equal(Number(completed.finalScore), 55);
+      assert.equal(
+        completed.status,
+        TrainingAttemptStatus.TECHNICAL_FAILURE,
+      );
       assert.equal(timeoutJob.status, TrainingJobStatus.SUCCEEDED);
       assert.equal(timeoutJob.payloadJson.phase, 'APPLIED');
+      const answer = await prisma.trainingAnswer.findFirstOrThrow({
+        where: { attemptQuestion: { attemptId: attempt.id } },
+      });
+      const ambiguousRun =
+        await prisma.trainingProviderRun.findFirstOrThrow({
+          where: {
+            answerId: answer.id,
+            kind:
+              state === TrainingAnswerStatus.TRANSCRIBING
+                ? 'TRANSCRIPTION'
+                : 'EVALUATION',
+          },
+          orderBy: { createdAt: 'desc' },
+        });
+      assert.equal(ambiguousRun.status, 'AMBIGUOUS');
+
+      if (state === TrainingAnswerStatus.TRANSCRIBING) {
+        await recoveredService.reprocessTranscription({
+          answerId: answer.id,
+          reviewerId: fixture.publisherId,
+          comment: 'Explicit timeout transcription recovery',
+        });
+      } else {
+        await recoveredService.reprocessEvaluation({
+          answerId: answer.id,
+          reviewerId: fixture.publisherId,
+          comment: 'Explicit timeout evaluation recovery',
+        });
+      }
+      await recoveredService.recoverPendingProcessing();
+      const reprocessed = (
+        await recoveredService.getAttempt(attempt.id)
+      ).attempt;
+      assert.equal(reprocessed.status, TrainingAttemptStatus.COMPLETED);
+      assert.equal(Number(reprocessed.finalScore), 55);
     });
   }
 });
@@ -637,6 +728,308 @@ test('PostgreSQL canonical rounding matches persisted components and pass thresh
   assert.equal(mainEvaluation.serverScore.toFixed(2), '30.00');
   assert.equal(attempt.finalScore.toFixed(2), '75.00');
   assert.equal(attempt.passStatus, TrainingPassStatus.PASSED);
+});
+
+test('PostgreSQL provider runs preserve original outputs and activate explicit reprocessing history', async () => {
+  const fixture = await createFixture();
+  const clock = createClock();
+  const service = createService(clock);
+  let attempt = await startAttempt(service, fixture);
+  attempt = await completeAttempt(service, clock, attempt, 21_100);
+  const mainAnswer = await prisma.trainingAnswer.findFirstOrThrow({
+    where: {
+      attemptQuestion: {
+        attemptId: attempt.id,
+        sequence: 1,
+      },
+    },
+    include: {
+      evaluations: { orderBy: { evaluationNumber: 'asc' } },
+      transcriptions: true,
+    },
+  });
+  const originalEvaluationId = mainAnswer.evaluations[0].id;
+  assert.equal(mainAnswer.transcriptions.length, 1);
+  assert.equal(mainAnswer.evaluations.length, 1);
+
+  await service.reprocessEvaluation({
+    answerId: mainAnswer.id,
+    reviewerId: fixture.publisherId,
+    comment: 'Re-evaluate after reviewer request',
+  });
+  await service.recoverPendingProcessing();
+
+  const reprocessed = await prisma.trainingAnswer.findUniqueOrThrow({
+    where: { id: mainAnswer.id },
+    include: {
+      evaluations: { orderBy: { evaluationNumber: 'asc' } },
+      transcriptions: true,
+      providerRuns: { orderBy: { createdAt: 'asc' } },
+    },
+  });
+  assert.equal(reprocessed.transcriptions.length, 1);
+  assert.equal(reprocessed.evaluations.length, 2);
+  assert.equal(reprocessed.evaluations[0].id, originalEvaluationId);
+  assert.equal(
+    reprocessed.activeEvaluationId,
+    reprocessed.evaluations[1].id,
+  );
+  assert.equal(
+    reprocessed.providerRuns.filter((run) => run.status === 'SUCCEEDED')
+      .length,
+    3,
+  );
+  assert.equal(reprocessed.providerRuns.at(-1).runType, 'REPROCESS');
+  assert.equal(
+    await prisma.auditLog.count({
+      where: {
+        entityId: mainAnswer.id,
+        action: 'training.answer.reprocess_evaluation',
+      },
+    }),
+    1,
+  );
+});
+
+test('PostgreSQL full 1 plus 3 flow runs real adapters against a local HTTP stub without duplicate provider runs', async () => {
+  const fixture = await createFixture();
+  const clock = createClock();
+  const wav = createPcmWav();
+  const checksum = createHash('sha256').update(wav).digest('hex');
+  let transcriptionCalls = 0;
+  let evaluationCalls = 0;
+  const stub = await startOpenAiStub(async (request, response) => {
+    if (request.url === '/v1/audio/transcriptions') {
+      transcriptionCalls += 1;
+      await readRequestBody(request);
+      response.writeHead(200, {
+        'content-type': 'application/json',
+        'x-request-id': `stub-transcription-${transcriptionCalls}`,
+      });
+      response.end(
+        JSON.stringify({
+          text: `Тестовый ответ ${transcriptionCalls}`,
+          language: 'ru',
+          model: 'gpt-4o-mini-transcribe-2025-12-15',
+          usage: { input_tokens: 1, output_tokens: 1 },
+        }),
+      );
+      return;
+    }
+    if (request.url === '/v1/responses') {
+      evaluationCalls += 1;
+      const requestBody = JSON.parse((await readRequestBody(request)).toString());
+      const input = JSON.parse(requestBody.input);
+      const output = {
+        schema_version: 'openai-evaluation-v1',
+        answer_relevance: 'RELEVANT',
+        criteria: input.criteria.map((criterion) => ({
+          criterion_id: criterion.id,
+          anchor_id: criterion.anchors[0].id,
+          evidence_source: 'TRANSCRIPT',
+          evidence: input.transcript,
+          metric_id: null,
+          explanation: 'Транскрипт обработан локальным stub.',
+        })),
+        facts: input.approved_facts.map((fact) => ({
+          fact_id: fact.id,
+          verdict: 'MISSING',
+          claim: null,
+          evidence_source: 'NONE',
+          evidence: null,
+          metric_id: null,
+          explanation: 'Факт не заявлен.',
+          confidence: 0.99,
+        })),
+        summary: 'Ответ обработан локальным HTTP stub.',
+        requires_manual_review: false,
+        review_reasons: [],
+      };
+      response.writeHead(200, {
+        'content-type': 'application/json',
+        'x-request-id': `stub-evaluation-${evaluationCalls}`,
+      });
+      response.end(
+        JSON.stringify({
+          id: `resp-${evaluationCalls}`,
+          model: 'gpt-5.6-terra',
+          status: 'completed',
+          usage: { input_tokens: 10, output_tokens: 10 },
+          output: [
+            {
+              type: 'message',
+              content: [
+                { type: 'output_text', text: JSON.stringify(output) },
+              ],
+            },
+          ],
+        }),
+      );
+      return;
+    }
+    response.writeHead(404).end();
+  });
+
+  try {
+    const openAiConfig = createOpenAiStubConfig();
+    const client = new TrainingOpenAiHttpClient(openAiConfig, {
+      baseUrl: stub.baseUrl,
+      sleep: async () => undefined,
+    });
+    const service = createService(clock, {
+      openAiConfig,
+      transcriptionProvider: new OpenAiTrainingTranscriptionProvider(
+        prisma,
+        { readStoredFile: async () => wav },
+        openAiConfig,
+        client,
+      ),
+      evaluationProvider: new OpenAiTrainingEvaluationProvider(
+        openAiConfig,
+        client,
+      ),
+    });
+    let attempt = await startAttempt(service, fixture);
+
+    for (let questionIndex = 0; questionIndex < 4; questionIndex += 1) {
+      const current = (await service.getAttempt(attempt.id)).attempt;
+      const targetQuestion = current.attemptQuestions.find((question) =>
+        [
+          TrainingAttemptQuestionStatus.PRESENTED,
+          TrainingAttemptQuestionStatus.COLLECTING,
+        ].includes(question.status),
+      );
+      assert.ok(targetQuestion);
+      await appendVoice(
+        service,
+        clock,
+        attempt,
+        BigInt(21_150 + questionIndex),
+        `local stub ${questionIndex}`,
+      );
+      const file = await prisma.file.create({
+        data: {
+          bucket: 'training-openai-stub',
+          key: `training-audio/openai-stub-${attempt.id}-${questionIndex}.wav`,
+          url: null,
+          originalName: 'answer.wav',
+          mimeType: 'audio/wav',
+          sizeBytes: BigInt(wav.length),
+          checksum,
+        },
+      });
+      await prisma.trainingAnswer.update({
+        where: { attemptQuestionId: targetQuestion.id },
+        data: {
+          mergedAudioFileId: file.id,
+          mergedAudioDurationMilliseconds: 1,
+          audioPreparedAt: clock.now(),
+        },
+      });
+      await service.finishAnswer({
+        attemptId: attempt.id,
+        attemptQuestionId: targetQuestion.id,
+      });
+    }
+
+    attempt = (await service.getAttempt(attempt.id)).attempt;
+    assert.equal(attempt.status, TrainingAttemptStatus.COMPLETED);
+    assert.equal(Number(attempt.finalScore), 100);
+    assert.equal(transcriptionCalls, 4);
+    assert.equal(evaluationCalls, 4);
+    assert.equal(
+      await prisma.trainingAnswerTranscription.count({
+        where: { answer: { attemptQuestion: { attemptId: attempt.id } } },
+      }),
+      4,
+    );
+    assert.equal(
+      await prisma.trainingAnswerEvaluation.count({
+        where: { answer: { attemptQuestion: { attemptId: attempt.id } } },
+      }),
+      4,
+    );
+    assert.equal(
+      await prisma.trainingProviderRun.count({
+        where: {
+          answer: { attemptQuestion: { attemptId: attempt.id } },
+          status: 'SUCCEEDED',
+        },
+      }),
+      8,
+    );
+    const idempotencyKeys = await prisma.trainingProviderRun.findMany({
+      where: { answer: { attemptQuestion: { attemptId: attempt.id } } },
+      select: { idempotencyKey: true },
+    });
+    assert.equal(
+      new Set(idempotencyKeys.map((run) => run.idempotencyKey)).size,
+      8,
+    );
+  } finally {
+    await stub.close();
+  }
+});
+
+test('PostgreSQL review applies minus five only after reviewer marks an unsupported claim incorrect', async () => {
+  const fixture = await createFixture();
+  const clock = createClock();
+  const service = createService(clock);
+  let attempt = await startAttempt(service, fixture);
+  attempt = await completeAttempt(
+    service,
+    clock,
+    attempt,
+    21_200,
+    '[[unsupported:новое утверждение]] [[unsupported:новое утверждение]]',
+  );
+  assert.equal(attempt.status, TrainingAttemptStatus.REQUIRES_REVIEW);
+  assert.equal(Number(attempt.serverScore), 100);
+
+  const unsupported = await prisma.trainingScoreComponent.findFirstOrThrow({
+    where: {
+      evaluation: {
+        answer: {
+          attemptQuestion: {
+            attemptId: attempt.id,
+          },
+        },
+      },
+      factVerdict: 'UNSUPPORTED',
+    },
+  });
+  const reviewed = (
+    await service.reviewAttempt({
+      attemptId: attempt.id,
+      reviewerId: fixture.publisherId,
+      decision: 'APPROVED',
+      comment: 'Claim is factually incorrect',
+      unsupportedClaimsDecisions: [
+        {
+          componentKey: unsupported.componentKey,
+          decision: 'INCORRECT',
+        },
+      ],
+    })
+  ).attempt;
+
+  assert.equal(Number(reviewed.serverScore), 100);
+  assert.equal(Number(reviewed.finalScore), 95);
+  assert.equal(reviewed.reviewStatus, TrainingReviewStatus.APPROVED);
+  assert.equal(reviewed.reviews.length, 1);
+  assert.equal(
+    reviewed.reviews[0].unsupportedClaimsDecisionsJson[0].decision,
+    'INCORRECT',
+  );
+  assert.equal(
+    await prisma.auditLog.count({
+      where: {
+        entityId: attempt.id,
+        action: 'training.attempt.review',
+      },
+    }),
+    1,
+  );
 });
 
 async function createFixture(options = {}) {
@@ -728,6 +1121,9 @@ async function createFixture(options = {}) {
         code: 'main-total',
         title: 'Главный ответ',
         maxPoints: 55,
+        anchorsJson: [
+          { id: 'main-full', points: 55, description: 'Полный ответ' },
+        ],
         sortOrder: 1,
       },
       {
@@ -736,6 +1132,9 @@ async function createFixture(options = {}) {
         code: 'follow-total',
         title: 'Дополнительный ответ',
         maxPoints: 15,
+        anchorsJson: [
+          { id: 'follow-full', points: 15, description: 'Полный ответ' },
+        ],
         sortOrder: 1,
       },
     ],
@@ -774,6 +1173,8 @@ function createService(clock, options = {}) {
     options.selector ?? new DeterministicQuestionSelector(),
     options.transcriptionProvider ?? fakeTranscription,
     options.evaluationProvider ?? fakeEvaluation,
+    undefined,
+    options.openAiConfig,
   );
 }
 
@@ -837,6 +1238,73 @@ function createDeferred() {
     reject = rejectPromise;
   });
   return { promise, resolve, reject };
+}
+
+function createOpenAiStubConfig() {
+  return {
+    providerMode: 'real',
+    apiKey: 'stub-credential-not-an-openai-key',
+    transcriptionModel: 'gpt-4o-mini-transcribe-2025-12-15',
+    transcriptionReviewModel: 'gpt-4o-transcribe',
+    evaluationModel: 'gpt-5.6-terra',
+    evaluationReasoning: 'medium',
+    reviewModel: 'gpt-5.6-terra',
+    reviewReasoning: 'high',
+    transcriptionTimeoutMs: 1_000,
+    evaluationTimeoutMs: 1_000,
+    transcriptionMaxRetries: 1,
+    evaluationMaxRetries: 1,
+    transcriptionMaxBytes: 24 * 1024 * 1024,
+    maxResponseBytes: 1024 * 1024,
+    evaluationMaxOutputTokens: 4096,
+    smokeEnabled: false,
+  };
+}
+
+function createPcmWav() {
+  const dataSize = 2;
+  const buffer = Buffer.alloc(44 + dataSize);
+  buffer.write('RIFF', 0, 'ascii');
+  buffer.writeUInt32LE(36 + dataSize, 4);
+  buffer.write('WAVE', 8, 'ascii');
+  buffer.write('fmt ', 12, 'ascii');
+  buffer.writeUInt32LE(16, 16);
+  buffer.writeUInt16LE(1, 20);
+  buffer.writeUInt16LE(1, 22);
+  buffer.writeUInt32LE(16_000, 24);
+  buffer.writeUInt32LE(32_000, 28);
+  buffer.writeUInt16LE(2, 32);
+  buffer.writeUInt16LE(16, 34);
+  buffer.write('data', 36, 'ascii');
+  buffer.writeUInt32LE(dataSize, 40);
+  return buffer;
+}
+
+async function startOpenAiStub(handler) {
+  const server = http.createServer((request, response) => {
+    Promise.resolve(handler(request, response)).catch((error) => {
+      response.writeHead(500, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ error: String(error) }));
+    });
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    close: () =>
+      new Promise((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      ),
+  };
+}
+
+async function readRequestBody(request) {
+  const chunks = [];
+  for await (const chunk of request) chunks.push(chunk);
+  return Buffer.concat(chunks);
 }
 
 async function waitForAnswerStatus(attemptId, status) {

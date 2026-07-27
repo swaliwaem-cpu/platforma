@@ -13,13 +13,26 @@ import {
   DeterministicFakeTrainingTranscriptionProvider,
   SystemTrainingAttemptClock,
   TRAINING_ATTEMPT_CLOCK,
+  TRAINING_ATTEMPT_JOB_PROCESSOR_ENABLED,
   TRAINING_EVALUATION_PROVIDER,
   TRAINING_QUESTION_SELECTOR,
   TRAINING_TRANSCRIPTION_PROVIDER,
 } from './training-attempt.providers';
+import { TrainingOpenAiConfig } from './openai/training-openai.config';
+import { OpenAiTrainingEvaluationProvider } from './openai/training-openai-evaluation.provider';
+import {
+  TrainingOpenAiHttpClient,
+  TRAINING_OPENAI_HTTP_OPTIONS,
+} from './openai/training-openai.http';
+import {
+  createTrainingEvaluationProvider,
+  createTrainingTranscriptionProvider,
+} from './openai/training-openai.providers';
+import { OpenAiTrainingTranscriptionProvider } from './openai/training-openai-transcription.provider';
 import { TrainingConfigService } from './training.config';
 import { TrainingContentService } from './training-content.service';
 import { TrainingController } from './training.controller';
+import { TrainingReviewController } from './training-review.controller';
 import { TrainingDocumentWorkerService } from './training-document-worker.service';
 import { TrainingDocumentsService } from './training-documents.service';
 import {
@@ -45,6 +58,7 @@ import { TrainingTelegramWorkerService } from './telegram/training-telegram-work
     TrainingTelegramController,
     TrainingTelegramWebhookController,
     TrainingAudioController,
+    TrainingReviewController,
   ],
   providers: [
     TrainingConfigService,
@@ -54,6 +68,12 @@ import { TrainingTelegramWorkerService } from './telegram/training-telegram-work
     TrainingAudioConfig,
     TrainingAudioAccessService,
     TrainingAttemptEngineService,
+    TrainingOpenAiConfig,
+    TrainingOpenAiHttpClient,
+    OpenAiTrainingTranscriptionProvider,
+    OpenAiTrainingEvaluationProvider,
+    DeterministicFakeTrainingTranscriptionProvider,
+    DeterministicFakeTrainingEvaluationProvider,
     TrainingTelegramConfig,
     TrainingTelegramLinkService,
     TrainingTelegramDialogService,
@@ -70,16 +90,34 @@ import { TrainingTelegramWorkerService } from './telegram/training-telegram-work
       useClass: SystemTrainingAttemptClock,
     },
     {
+      provide: TRAINING_ATTEMPT_JOB_PROCESSOR_ENABLED,
+      useValue: false,
+    },
+    {
+      provide: TRAINING_OPENAI_HTTP_OPTIONS,
+      useValue: {},
+    },
+    {
       provide: TRAINING_QUESTION_SELECTOR,
       useClass: CryptoTrainingQuestionSelector,
     },
     {
       provide: TRAINING_TRANSCRIPTION_PROVIDER,
-      useClass: DeterministicFakeTrainingTranscriptionProvider,
+      inject: [
+        TrainingOpenAiConfig,
+        DeterministicFakeTrainingTranscriptionProvider,
+        OpenAiTrainingTranscriptionProvider,
+      ],
+      useFactory: createTrainingTranscriptionProvider,
     },
     {
       provide: TRAINING_EVALUATION_PROVIDER,
-      useClass: DeterministicFakeTrainingEvaluationProvider,
+      inject: [
+        TrainingOpenAiConfig,
+        DeterministicFakeTrainingEvaluationProvider,
+        OpenAiTrainingEvaluationProvider,
+      ],
+      useFactory: createTrainingEvaluationProvider,
     },
   ],
   exports: [

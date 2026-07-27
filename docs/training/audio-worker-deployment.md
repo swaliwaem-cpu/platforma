@@ -2,10 +2,12 @@
 
 Дата актуализации: 2026-07-27.
 
-Документ относится только к этапу 7: Telegram voice download, private audio
-storage, ffmpeg/ffprobe и отдельный PostgreSQL-backed audio worker.
-Транскрибация остаётся deterministic fake provider. OpenAI SDK, API key и
-сетевые вызовы OpenAI отсутствуют.
+Документ подробно описывает stage-7 часть текущего pipeline: Telegram voice
+download, private audio storage, ffmpeg/ffprobe и отдельный
+PostgreSQL-backed worker. Начиная с этапа 8, следующий шаг выбирается через
+`OPENAI_PROVIDER_MODE`: local/test используют deterministic fake, production
+с включённым training fail-fast требует real OpenAI provider. Контракт
+OpenAI вынесен в `docs/training/openai-provider-deployment.md`.
 
 ## Runtime topology
 
@@ -25,7 +27,10 @@ finishAnswer
   -> persisted TrainingAudioUploadIntent
   -> private normalized File
   -> TRANSCRIBE_ANSWER
-  -> API attempt worker + deterministic fake transcription
+  -> training-worker
+  -> fake local/test либо real OpenAI transcription
+  -> EVALUATE_ANSWER
+  -> fake local/test либо real OpenAI structured evaluation
 ```
 
 API и `training-worker` используют один image
@@ -98,7 +103,8 @@ scope через `training:results:read`, проверяет checksum/size и п
 | `TRAINING_AUDIO_MAX_DURATION_SECONDS` | `600` | максимум duration |
 | `TRAINING_AUDIO_DOWNLOAD_TIMEOUT_MS` | `30000` | getFile/download timeout |
 | `TRAINING_FFMPEG_TIMEOUT_MS` | `90000` | timeout каждого ffmpeg/ffprobe process |
-| `TRAINING_TRANSCRIPTION_TIMEOUT_MS` | `30000` | timeout provider interface |
+| `OPENAI_TRANSCRIPTION_TIMEOUT_MS` | `60000` | timeout OpenAI transcription fetch |
+| `OPENAI_TRANSCRIPTION_MAX_RETRIES` | `2` | bounded retries внутри общего deadline |
 | `TRAINING_AUDIO_WORKER_POLL_MS` | `500` | polling |
 | `TRAINING_AUDIO_WORKER_CONCURRENCY` | `2` | process lanes |
 | `TRAINING_AUDIO_WORKER_LEASE_MS` | `120000` | lease |

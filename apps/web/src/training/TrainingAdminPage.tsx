@@ -68,6 +68,7 @@ import {
   saveTrainingFact,
   saveTrainingQuestion,
   type TrainingCriterion,
+  type TrainingCriterionAnchor,
   type TrainingDocument,
   type TrainingFact,
   type TrainingProject,
@@ -1537,7 +1538,7 @@ function CriterionCard({
   const [maxPoints, setMaxPoints] = useState(String(criterion.maxPoints));
   const [description, setDescription] = useState(criterion.description ?? '');
   const [anchors, setAnchors] = useState(
-    asStringList(criterion.anchorsJson).join('\n'),
+    formatCriterionAnchors(criterion.anchorsJson),
   );
   const [sortOrder, setSortOrder] = useState(String(criterion.sortOrder));
   const [error, setError] = useState<string | null>(null);
@@ -1559,7 +1560,7 @@ function CriterionCard({
         title: title.trim(),
         maxPoints: Number(maxPoints),
         description: description.trim() || null,
-        anchors: splitLines(anchors),
+        anchors: parseCriterionAnchors(anchors, Number(maxPoints)),
         sortOrder: Number(sortOrder),
       });
       await onChanged();
@@ -1637,9 +1638,12 @@ function CriterionCard({
               id={`criterion-anchors-${criterion.id || 'new'}`}
               className="training-control training-textarea training-textarea--compact"
               value={anchors}
-              placeholder="Один якорь на строку"
+              placeholder="full | 10 | Полный и точный ответ"
               onChange={(event) => setAnchors(event.target.value)}
             />
+            <FieldDescription>
+              Один якорь на строку: ID | баллы | описание.
+            </FieldDescription>
           </Field>
         </div>
       </fieldset>
@@ -2475,6 +2479,57 @@ function asNumberList(value: unknown) {
   return Array.isArray(value)
     ? value.filter((item): item is number => typeof item === 'number')
     : [];
+}
+
+function formatCriterionAnchors(value: unknown) {
+  if (!Array.isArray(value)) return '';
+  return value
+    .filter(
+      (item): item is TrainingCriterionAnchor =>
+        typeof item === 'object' &&
+        item !== null &&
+        typeof (item as TrainingCriterionAnchor).id === 'string' &&
+        typeof (item as TrainingCriterionAnchor).points === 'number' &&
+        typeof (item as TrainingCriterionAnchor).description === 'string',
+    )
+    .map(
+      (anchor) =>
+        `${anchor.id} | ${anchor.points} | ${anchor.description}`,
+    )
+    .join('\n');
+}
+
+function parseCriterionAnchors(value: string, maximumPoints: number) {
+  const anchors: TrainingCriterionAnchor[] = [];
+  const ids = new Set<string>();
+  for (const [index, line] of splitLines(value).entries()) {
+    const [rawId, rawPoints, ...descriptionParts] = line.split('|');
+    const id = rawId?.trim() ?? '';
+    const points = Number(rawPoints?.trim());
+    const description = descriptionParts.join('|').trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(id)) {
+      throw new Error(`Якорь ${index + 1}: укажите корректный ID.`);
+    }
+    if (ids.has(id)) {
+      throw new Error(`Якорь ${index + 1}: ID должен быть уникальным.`);
+    }
+    if (
+      !Number.isFinite(points) ||
+      points < 0 ||
+      points > maximumPoints ||
+      Math.round(points * 100) !== points * 100
+    ) {
+      throw new Error(
+        `Якорь ${index + 1}: баллы должны быть от 0 до ${maximumPoints}.`,
+      );
+    }
+    if (!description) {
+      throw new Error(`Якорь ${index + 1}: добавьте описание.`);
+    }
+    ids.add(id);
+    anchors.push({ id, points, description });
+  }
+  return anchors;
 }
 
 function splitList(value: string) {

@@ -119,7 +119,7 @@ Provider interface не зависит от конкретного SDK.
 Рекомендуемый default на дату плана:
 
 ```text
-OPENAI_TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe
+OPENAI_TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe-2025-12-15
 ```
 
 Fallback/reprocessing:
@@ -141,23 +141,25 @@ OPENAI_TRANSCRIPTION_REVIEW_MODEL=gpt-4o-transcribe
 
 ## 9.2. Оценивание
 
-Рекомендуемый cost-efficient default на дату плана:
+Утверждённый default:
 
 ```text
-OPENAI_EVALUATION_MODEL=gpt-5.6-luna
-OPENAI_EVALUATION_REASONING=low
+OPENAI_EVALUATION_MODEL=gpt-5.6-terra
+OPENAI_EVALUATION_REASONING=medium
 ```
 
 Для повторной проверки спорных случаев:
 
 ```text
 OPENAI_REVIEW_MODEL=gpt-5.6-terra
-OPENAI_REVIEW_REASONING=medium
+OPENAI_REVIEW_REASONING=high
 ```
 
 Модели задаются env и должны быть заменяемыми без миграции кода. После калибровки закрепить конкретный snapshot/model ID в каждой evaluation record.
 
-Использовать Responses API и strict Structured Outputs. Для запроса оценки использовать `store: false` там, где это поддерживается.
+Использовать Responses API и strict Structured Outputs. Запрос оценки всегда
+содержит `store: false` и не содержит tools, web/file search, conversation,
+background, `previous_response_id` или другой server-side state.
 
 LLM получает только:
 
@@ -177,30 +179,28 @@ LLM не получает web search и не должна использоват
 
 ```json
 {
-  "schema_version": "1",
-  "answer_relevance": "relevant|partial|irrelevant",
-  "fact_assessments": [
-    {
-      "fact_id": "uuid",
-      "verdict": "correct|partial|missing|incorrect|unsupported",
-      "evidence": "короткий фрагмент transcript",
-      "explanation": "кратко",
-      "confidence": 0.0
-    }
-  ],
-  "unsupported_claims": [
-    {
-      "claim": "пересказ утверждения",
-      "evidence": "фрагмент transcript",
-      "confidence": 0.0
-    }
-  ],
-  "criterion_assessments": [
+  "schema_version": "openai-evaluation-v1",
+  "answer_relevance": "RELEVANT|PARTIAL|IRRELEVANT",
+  "criteria": [
     {
       "criterion_id": "uuid",
-      "suggested_points": 0,
-      "evidence": "фрагмент или метрики",
+      "anchor_id": "stable-anchor-id",
+      "evidence_source": "TRANSCRIPT|METRIC|NONE",
+      "evidence": "точная подстрока или null",
+      "metric_id": "stable-metric-id или null",
       "explanation": "кратко"
+    }
+  ],
+  "facts": [
+    {
+      "fact_id": "uuid или null",
+      "verdict": "CORRECT|PARTIAL|MISSING|INCORRECT|UNSUPPORTED",
+      "claim": "только для UNSUPPORTED или null",
+      "evidence_source": "TRANSCRIPT|METRIC|NONE",
+      "evidence": "точная подстрока или null",
+      "metric_id": "stable-metric-id или null",
+      "explanation": "кратко",
+      "confidence": 0.99
     }
   ],
   "summary": "1–3 предложения",
@@ -211,14 +211,33 @@ LLM не получает web search и не должна использоват
 
 Backend обязан:
 
-- валидировать JSON Schema;
+- валидировать `schema_version`, exact JSON Schema без
+  `additionalProperties`, enum и numeric `confidence` в диапазоне `0..1`;
 - отвергать неизвестные IDs;
+- требовать ровно один известный anchor для каждого criterion и одну
+  классификацию для каждого approved fact;
 - проверять, что evidence существует в transcript или опирается на переданные метрики;
 - считать points сам;
 - применять `−5` за distinct incorrect fact;
 - не штрафовать unsupported до review;
 - clamp score;
 - сохранять AI output и server calculation отдельно.
+
+Модель не возвращает и не вычисляет points. Каждый criterion хранит
+структурированные anchors `{id, points, description}`; модель выбирает
+известный `anchor_id`, а backend получает points только из опубликованного
+anchor.
+
+Перед внешним вызовом создаётся `TrainingProviderRun(PENDING)`, затем отдельным
+DB update фиксируется `REQUESTING`. DB transaction во время HTTP request не
+держится. Полученный transcript/evaluation сохраняется как новая неизменяемая
+версия и только после успешной записи становится active.
+
+`429/5xx`, timeout/network и временный malformed upstream response повторяются
+bounded внутри одного живого provider call и общего hard deadline. Если после
+исчерпания повторов исход network/timeout всё ещё неизвестен, run становится
+`AMBIGUOUS`; durable job/restart не делает новый автоматический платный вызов
+и требует явного reviewer reprocessing. Это не гарантия exactly-once billing.
 
 Никаких chain-of-thought в БД или UI.
 

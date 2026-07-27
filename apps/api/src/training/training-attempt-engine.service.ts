@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import {
   BadRequestException,
@@ -19,6 +19,9 @@ import {
   TrainingJobKind,
   TrainingJobStatus,
   TrainingPassStatus,
+  TrainingProviderKind,
+  TrainingProviderRunStatus,
+  TrainingProviderRunType,
   TrainingProjectStatus,
   TrainingQuestionType,
   TrainingReviewStatus,
@@ -31,6 +34,7 @@ import { TrainingAudioConfig } from './audio/training-audio.config';
 import { TrainingAudioError } from './audio/training-audio.error';
 import {
   TRAINING_ATTEMPT_CLOCK,
+  TRAINING_ATTEMPT_JOB_PROCESSOR_ENABLED,
   TRAINING_EVALUATION_PROVIDER,
   TRAINING_QUESTION_SELECTOR,
   TRAINING_TRANSCRIPTION_PROVIDER,
@@ -39,7 +43,14 @@ import {
   type TrainingEvaluationProvider,
   type TrainingQuestionSelector,
   type TrainingTranscriptionProvider,
+  type TrainingTranscriptionResult,
 } from './training-attempt.providers';
+import { TrainingOpenAiConfig } from './openai/training-openai.config';
+import { TrainingOpenAiRequestError } from './openai/training-openai.http';
+import {
+  TRAINING_EVALUATION_PROMPT_VERSION,
+  TRAINING_EVALUATION_SCHEMA_VERSION,
+} from './openai/training-openai-evaluation.provider';
 import {
   clampTrainingAttemptScore,
   scoreTrainingEvaluation,
@@ -128,7 +139,13 @@ export type ReviewTrainingAttemptCommand = {
   decision: 'APPROVED' | 'OVERRIDDEN';
   adminScore?: Prisma.Decimal | number | string;
   comment: string;
-  unsupportedClaimsDecisions?: Prisma.InputJsonArray;
+  unsupportedClaimsDecisions?: unknown;
+};
+
+export type ReprocessTrainingAnswerCommand = {
+  answerId: string;
+  reviewerId: string;
+  comment: string;
 };
 
 type ClaimedTrainingAttemptJob = {
@@ -163,10 +180,16 @@ export class TrainingAttemptEngineService
     private readonly evaluationProvider: TrainingEvaluationProvider,
     @Optional()
     private readonly audioConfig?: TrainingAudioConfig,
+    @Optional()
+    private readonly openAiConfig?: TrainingOpenAiConfig,
+    @Optional()
+    @Inject(TRAINING_ATTEMPT_JOB_PROCESSOR_ENABLED)
+    private readonly jobProcessorEnabled?: boolean,
   ) {}
 
   onModuleInit() {
     this.destroyed = false;
+    if (this.jobProcessorEnabled === false) return;
     this.pollInterval = setInterval(
       () => this.kickRecovery(),
       TRAINING_ATTEMPT_JOB_POLL_MS,
@@ -784,7 +807,11 @@ export class TrainingAttemptEngineService
       return answer.id;
     });
 
-    if (answerId && !this.audioConfig) {
+    if (
+      answerId &&
+      !this.audioConfig &&
+      this.jobProcessorEnabled !== false
+    ) {
       await this.drainAttemptJobs(true);
     }
     return this.getAttempt(command.attemptId);
@@ -964,7 +991,12 @@ export class TrainingAttemptEngineService
       return { shouldDrain: true };
     });
 
-    if (result.shouldDrain && drainJobs && !this.drainPromise) {
+    if (
+      result.shouldDrain &&
+      drainJobs &&
+      this.jobProcessorEnabled !== false &&
+      !this.drainPromise
+    ) {
       await this.drainAttemptJobs(true);
     }
     return this.getAttempt(attemptId);
@@ -1016,7 +1048,9 @@ export class TrainingAttemptEngineService
     if (state === 'timeout') {
       return this.handleTimeout(attemptId, now);
     }
-    await this.drainAttemptJobs(true);
+    if (this.jobProcessorEnabled !== false) {
+      await this.drainAttemptJobs(true);
+    }
     return this.getAttempt(attemptId);
   }
 
@@ -1102,6 +1136,23 @@ export class TrainingAttemptEngineService
             orderBy: { reviewNumber: 'desc' },
             take: 1,
           },
+          attemptQuestions: {
+            include: {
+              answer: {
+                include: {
+                  activeEvaluation: {
+                    include: {
+                      scoreComponents: {
+                        where: {
+                          factVerdict: 'UNSUPPORTED',
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
         },
       });
       if (!attempt) {
@@ -1117,7 +1168,22 @@ export class TrainingAttemptEngineService
         throw new ConflictException('Training attempt has no server score');
       }
 
-      const serverScore = clampTrainingAttemptScore(attempt.serverScore);
+      const unsupportedComponents = attempt.attemptQuestions.flatMap(
+        (question) =>
+          question.answer?.activeEvaluation?.scoreComponents ?? [],
+      );
+      const unsupportedDecisions = parseUnsupportedClaimDecisions(
+        command.unsupportedClaimsDecisions,
+        unsupportedComponents.map((component) => component.componentKey),
+      );
+      const incorrectUnsupportedCount = unsupportedDecisions.filter(
+        (decision) => decision.decision === 'INCORRECT',
+      ).length;
+      const serverScore = clampTrainingAttemptScore(
+        canonicalTrainingScore(attempt.serverScore).sub(
+          canonicalTrainingScore(5).mul(incorrectUnsupportedCount),
+        ),
+      );
       const adminScore =
         command.decision === 'OVERRIDDEN'
           ? clampTrainingAttemptScore(command.adminScore!)
@@ -1141,7 +1207,7 @@ export class TrainingAttemptEngineService
           decision: reviewStatus,
           comment,
           unsupportedClaimsDecisionsJson:
-            command.unsupportedClaimsDecisions ?? [],
+            unsupportedDecisions,
           reviewedAt,
         },
       });
@@ -1166,15 +1232,296 @@ export class TrainingAttemptEngineService
         attempt.id,
         reviewedAt,
       );
+      await tx.auditLog.create({
+        data: {
+          actorUserId: command.reviewerId,
+          action: 'training.attempt.review',
+          entityType: 'training_attempt',
+          entityId: attempt.id,
+          metadata: {
+            decision: reviewStatus,
+            finalScore: finalScore.toString(),
+            incorrectUnsupportedCount,
+            unsupportedClaimsDecisions: unsupportedDecisions,
+          },
+        },
+      });
     });
 
     return this.getAttempt(command.attemptId);
+  }
+
+  async reprocessTranscription(command: ReprocessTrainingAnswerCommand) {
+    return this.enqueueAnswerReprocessing(
+      command,
+      TrainingJobKind.TRANSCRIBE_ANSWER,
+      TrainingAnswerStatus.TRANSCRIBING,
+      'training.answer.reprocess_transcription',
+    );
+  }
+
+  async reprocessEvaluation(command: ReprocessTrainingAnswerCommand) {
+    return this.enqueueAnswerReprocessing(
+      command,
+      TrainingJobKind.EVALUATE_ANSWER,
+      TrainingAnswerStatus.EVALUATING,
+      'training.answer.reprocess_evaluation',
+    );
+  }
+
+  private async enqueueAnswerReprocessing(
+    command: ReprocessTrainingAnswerCommand,
+    kind:
+      | typeof TrainingJobKind.TRANSCRIBE_ANSWER
+      | typeof TrainingJobKind.EVALUATE_ANSWER,
+    answerStatus: TrainingAnswerStatus,
+    auditAction: string,
+  ) {
+    const comment = command.comment.trim();
+    if (!comment || comment.length > 2_000) {
+      throw new BadRequestException('Reprocessing comment is required');
+    }
+    const runNonce = randomUUID();
+    const requestedAt = this.clock.now();
+
+    const result = await this.runSerializable(async (tx) => {
+      const answer = await tx.trainingAnswer.findUnique({
+        where: { id: command.answerId },
+        include: {
+          attemptQuestion: {
+            include: {
+              attempt: true,
+            },
+          },
+        },
+      });
+      if (!answer) {
+        throw new NotFoundException('Training answer not found');
+      }
+      await this.acquireAttemptLock(tx, answer.attemptQuestion.attemptId);
+      const attempt = answer.attemptQuestion.attempt;
+      if (
+        attempt.status !== TrainingAttemptStatus.COMPLETED &&
+        attempt.status !== TrainingAttemptStatus.REQUIRES_REVIEW &&
+        attempt.status !== TrainingAttemptStatus.TECHNICAL_FAILURE
+      ) {
+        throw new ConflictException(
+          'Only a terminal training attempt can be reprocessed',
+        );
+      }
+      if (
+        kind === TrainingJobKind.TRANSCRIBE_ANSWER &&
+        this.openAiConfig?.providerMode === 'real' &&
+        !answer.mergedAudioFileId
+      ) {
+        throw new ConflictException(
+          'Training answer has no normalized audio for reprocessing',
+        );
+      }
+      if (
+        kind === TrainingJobKind.EVALUATE_ANSWER &&
+        !answer.combinedTranscript
+      ) {
+        throw new ConflictException(
+          'Training answer has no transcript for reprocessing',
+        );
+      }
+
+      await this.closeAttemptJobsWithinTransaction(
+        tx,
+        attempt.id,
+        requestedAt,
+      );
+      await tx.trainingAttempt.update({
+        where: { id: attempt.id },
+        data: {
+          status: TrainingAttemptStatus.FINALIZING,
+          completedAt: null,
+          adminScore: null,
+          finalScore: null,
+          passStatus: TrainingPassStatus.PENDING,
+          reviewStatus: TrainingReviewStatus.PENDING,
+        },
+      });
+      await tx.trainingAttemptQuestion.update({
+        where: { id: answer.attemptQuestionId },
+        data: {
+          status: TrainingAttemptQuestionStatus.PROCESSING,
+          finishedAt: null,
+        },
+      });
+      await tx.trainingAnswer.update({
+        where: { id: answer.id },
+        data: {
+          status: answerStatus,
+          processingStartedAt: requestedAt,
+          processingFinishedAt: null,
+          errorCode: null,
+          errorMessage: null,
+        },
+      });
+      await tx.trainingJob.updateMany({
+        where: {
+          idempotencyKey: `attempt:${attempt.id}:finalize`,
+        },
+        data: {
+          status: TrainingJobStatus.PENDING,
+          attempts: 0,
+          runAt: requestedAt,
+          finishedAt: null,
+          lockOwner: null,
+          lockedAt: null,
+          heartbeatAt: null,
+          lastErrorCode: null,
+          lastErrorMessage: null,
+        },
+      });
+      await this.enqueueAnswerJobWithinTransaction(
+        tx,
+        kind,
+        attempt.id,
+        answer.id,
+        requestedAt,
+        TrainingProviderRunType.REPROCESS,
+        runNonce,
+      );
+      await tx.auditLog.create({
+        data: {
+          actorUserId: command.reviewerId,
+          action: auditAction,
+          entityType: 'training_answer',
+          entityId: answer.id,
+          metadata: {
+            attemptId: attempt.id,
+            comment,
+            runNonce,
+          },
+        },
+      });
+      return {
+        answerId: answer.id,
+        attemptId: attempt.id,
+        runNonce,
+        status: 'queued',
+      };
+    });
+
+    return result;
   }
 
   async getAttempt(attemptId: string) {
     const attempt = await this.prisma.trainingAttempt.findUnique({
       where: { id: attemptId },
       include: trainingAttemptRepositoryInclude,
+    });
+    if (!attempt) {
+      throw new NotFoundException('Training attempt not found');
+    }
+    return { attempt };
+  }
+
+  async getReviewDetails(attemptId: string) {
+    const attempt = await this.prisma.trainingAttempt.findUnique({
+      where: { id: attemptId },
+      select: {
+        id: true,
+        status: true,
+        startedAt: true,
+        completedAt: true,
+        aiSuggestedScore: true,
+        serverScore: true,
+        adminScore: true,
+        finalScore: true,
+        reviewStatus: true,
+        passStatus: true,
+        user: {
+          select: { id: true, email: true, name: true },
+        },
+        project: {
+          select: { id: true, slug: true, title: true },
+        },
+        reviews: {
+          orderBy: { reviewNumber: 'asc' },
+          include: {
+            reviewer: {
+              select: { id: true, email: true, name: true },
+            },
+          },
+        },
+        attemptQuestions: {
+          orderBy: { sequence: 'asc' },
+          select: {
+            id: true,
+            sequence: true,
+            status: true,
+            question: {
+              select: {
+                id: true,
+                type: true,
+                text: true,
+                maxScore: true,
+              },
+            },
+            answer: {
+              select: {
+                id: true,
+                status: true,
+                combinedTranscript: true,
+                normalizedLanguage: true,
+                activeTranscriptionId: true,
+                activeEvaluationId: true,
+                acousticMetricsJson: true,
+                errorCode: true,
+                errorMessage: true,
+                transcriptions: {
+                  orderBy: { transcriptionNumber: 'asc' },
+                  include: {
+                    providerRun: {
+                      select: {
+                        id: true,
+                        runType: true,
+                        status: true,
+                        requestedModelId: true,
+                        actualModelId: true,
+                        requestId: true,
+                        retryCount: true,
+                        ambiguousOutcome: true,
+                        errorCode: true,
+                        startedAt: true,
+                        completedAt: true,
+                      },
+                    },
+                  },
+                },
+                evaluations: {
+                  orderBy: { evaluationNumber: 'asc' },
+                  include: {
+                    scoreComponents: {
+                      orderBy: { componentKey: 'asc' },
+                    },
+                    providerRun: {
+                      select: {
+                        id: true,
+                        runType: true,
+                        status: true,
+                        requestedModelId: true,
+                        actualModelId: true,
+                        reasoningEffort: true,
+                        requestId: true,
+                        retryCount: true,
+                        ambiguousOutcome: true,
+                        errorCode: true,
+                        startedAt: true,
+                        completedAt: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
     });
     if (!attempt) {
       throw new NotFoundException('Training attempt not found');
@@ -1539,25 +1886,85 @@ export class TrainingAttemptEngineService
       return;
     }
 
-    const persistedTranscription =
+    const persistedTranscription: TrainingTranscriptionResult | null =
+      payload.runType === TrainingProviderRunType.PRIMARY &&
       context.combinedTranscript !== null
         ? {
             transcript: context.combinedTranscript,
             language: context.normalizedLanguage ?? 'ru',
             provider: context.transcriptionProvider ?? 'recovered',
-            model: context.transcriptionModel ?? 'recovered',
+            requestedModelId: context.transcriptionModel ?? 'recovered',
+            actualModelId: context.transcriptionModel ?? null,
             requestId:
               context.transcriptionRequestId ??
               `recovered-transcription:${context.id}`,
             wordCount: countTranscriptWords(context.combinedTranscript),
           }
         : null;
-    const transcription =
-      persistedTranscription ??
-      (await withProviderTimeout(
-        this.transcriptionProvider.transcribe({
+    const approvedVocabulary = buildApprovedVocabulary(context);
+    let providerRunId: string | null = null;
+    let transcription = persistedTranscription;
+
+    if (!transcription) {
+      const requestedModelId = this.resolveTranscriptionModel(payload.runType);
+      const providerRun = await this.prepareProviderRun({
+        jobId: job.id,
+        answerId: context.id,
+        kind: TrainingProviderKind.TRANSCRIPTION,
+        runType: payload.runType,
+        requestedModelId,
+        sourceFileId: context.mergedAudioFile?.id ?? null,
+        sourceChecksum: context.mergedAudioFile?.checksum ?? null,
+        inputHash: hashProviderInput({
+          answerId: context.id,
+          sourceChecksum: context.mergedAudioFile?.checksum ?? null,
+          vocabularyHash: approvedVocabulary.hash,
+          runType: payload.runType,
+        }),
+        inputMetadata: {
+          sourceFileId: context.mergedAudioFile?.id ?? null,
+          sizeBytes:
+            context.mergedAudioFile?.sizeBytes === null ||
+            context.mergedAudioFile?.sizeBytes === undefined
+              ? null
+              : Number(context.mergedAudioFile.sizeBytes),
+          vocabularyVersion: approvedVocabulary.version,
+          vocabularyHash: approvedVocabulary.hash,
+        },
+      });
+      providerRunId = providerRun?.id ?? null;
+
+      if (providerRun?.status === TrainingProviderRunStatus.SUCCEEDED) {
+        const recovered =
+          await this.prisma.trainingAnswerTranscription.findUnique({
+            where: { providerRunId: providerRun.id },
+          });
+        if (!recovered) {
+          throw new Error('Succeeded transcription provider run has no result');
+        }
+        transcription = {
+          transcript: recovered.transcript,
+          language: recovered.language,
+          provider: 'openai',
+          requestedModelId: providerRun.requestedModelId,
+          actualModelId: providerRun.actualModelId,
+          requestId: providerRun.requestId,
+          wordCount: recovered.wordCount,
+          usage: asRecord(providerRun.providerUsageJson),
+          latencyMs: providerRun.latencyMs ?? undefined,
+          retryCount: providerRun.retryCount,
+          responseStatus: providerRun.responseStatus ?? undefined,
+        };
+      } else {
+        try {
+          transcription = await this.transcriptionProvider.transcribe({
           answerId: context.id,
           attemptQuestionId: context.attemptQuestionId,
+          review: payload.runType !== TrainingProviderRunType.PRIMARY,
+          approvedVocabulary: {
+            version: approvedVocabulary.version,
+            terms: approvedVocabulary.terms,
+          },
           segments: context.voiceSegments.map((segment) => ({
             id: segment.id,
             segmentIndex: segment.segmentIndex,
@@ -1598,9 +2005,18 @@ export class TrainingAttemptEngineService
                 },
               }
             : {}),
-        }),
-        this.audioConfig?.transcriptionTimeoutMs ?? 30_000,
-      ));
+          });
+        } catch (error) {
+          if (providerRun) {
+            await this.recordProviderRunFailure(providerRun.id, error);
+          }
+          throw error;
+        }
+      }
+    }
+    if (!transcription) {
+      throw new Error('Transcription result is missing');
+    }
     const completedAt = this.clock.now();
 
     await this.runSerializable(async (tx) => {
@@ -1630,20 +2046,62 @@ export class TrainingAttemptEngineService
         return;
       }
 
+      let activeTranscriptionId = current.activeTranscriptionId;
+      if (providerRunId) {
+        let persisted =
+          await tx.trainingAnswerTranscription.findUnique({
+            where: { providerRunId: providerRunId },
+            select: { id: true },
+          });
+        if (!persisted) {
+          const aggregate = await tx.trainingAnswerTranscription.aggregate({
+            where: { answerId: current.id },
+            _max: { transcriptionNumber: true },
+          });
+          persisted = await tx.trainingAnswerTranscription.create({
+            data: {
+              answerId: current.id,
+              providerRunId,
+              transcriptionNumber:
+                (aggregate._max.transcriptionNumber ?? 0) + 1,
+              transcript: transcription.transcript,
+              language: transcription.language,
+              wordCount: transcription.wordCount,
+              vocabularyVersion: approvedVocabulary.version,
+              vocabularyHash: approvedVocabulary.hash,
+            },
+            select: { id: true },
+          });
+          await tx.trainingProviderRun.update({
+            where: { id: providerRunId },
+            data: {
+              status: TrainingProviderRunStatus.SUCCEEDED,
+              actualModelId: transcription.actualModelId,
+              requestId: transcription.requestId,
+              responseStatus: transcription.responseStatus ?? 'completed',
+              providerUsageJson: transcription.usage
+                ? (transcription.usage as Prisma.InputJsonObject)
+                : undefined,
+              latencyMs: transcription.latencyMs,
+              retryCount: transcription.retryCount ?? 0,
+              completedAt,
+            },
+          });
+        }
+        activeTranscriptionId = persisted.id;
+      }
+
       await tx.trainingAnswer.update({
         where: { id: current.id },
         data: {
           status: TrainingAnswerStatus.EVALUATING,
-          combinedTranscript:
-            current.combinedTranscript ?? transcription.transcript,
-          normalizedLanguage:
-            current.normalizedLanguage ?? transcription.language,
-          transcriptionProvider:
-            current.transcriptionProvider ?? transcription.provider,
+          activeTranscriptionId,
+          combinedTranscript: transcription.transcript,
+          normalizedLanguage: transcription.language,
+          transcriptionProvider: transcription.provider,
           transcriptionModel:
-            current.transcriptionModel ?? transcription.model,
-          transcriptionRequestId:
-            current.transcriptionRequestId ?? transcription.requestId,
+            transcription.actualModelId ?? transcription.requestedModelId,
+          transcriptionRequestId: transcription.requestId,
           acousticMetricsJson: mergeTranscriptMetrics(
             current.acousticMetricsJson,
             transcription.wordCount,
@@ -1657,6 +2115,8 @@ export class TrainingAttemptEngineService
         payload.attemptId,
         current.id,
         completedAt,
+        payload.runType,
+        payload.runNonce,
       );
       await this.completeJobWithinTransaction(tx, job.id, completedAt);
     });
@@ -1677,16 +2137,20 @@ export class TrainingAttemptEngineService
       throw new Error('Evaluation job has no persisted transcript');
     }
 
-    const existingEvaluation = await this.prisma.trainingAnswerEvaluation.findFirst({
-      where: {
-        answerId: context.id,
-        evaluationNumber: 1,
-      },
-      include: {
-        scoreComponents: true,
-      },
-    });
+    const existingEvaluation =
+      payload.runType === TrainingProviderRunType.PRIMARY
+        ? await this.prisma.trainingAnswerEvaluation.findFirst({
+            where: {
+              answerId: context.id,
+              evaluationNumber: 1,
+            },
+            include: {
+              scoreComponents: true,
+            },
+          })
+        : null;
     if (
+      payload.runType === TrainingProviderRunType.PRIMARY &&
       context.status === TrainingAnswerStatus.SCORED &&
       existingEvaluation
     ) {
@@ -1703,46 +2167,115 @@ export class TrainingAttemptEngineService
           score: ReturnType<typeof scoreTrainingEvaluation>;
         }
       | null = null;
+    let providerRunId: string | null = existingEvaluation?.providerRunId ?? null;
+    const criteria = await this.prisma.trainingEvaluationCriterion.findMany({
+      where: {
+        projectVersionId: context.attemptQuestion.attempt.projectVersionId,
+        questionType: context.attemptQuestion.question.type,
+      },
+      orderBy: { sortOrder: 'asc' },
+    });
+    const factLinks = context.attemptQuestion.question.factLinks.filter(
+      (link) => link.fact.isApproved,
+    );
+    const evaluationInput: TrainingEvaluationInput = {
+      answerId: context.id,
+      questionId: context.attemptQuestion.question.id,
+      review: payload.runType !== TrainingProviderRunType.PRIMARY,
+      questionType: context.attemptQuestion.question.type,
+      questionText: context.attemptQuestion.question.text,
+      questionMaxScore: context.attemptQuestion.question.maxScore,
+      transcript: context.combinedTranscript,
+      criteria: criteria.map((criterion) => ({
+        id: criterion.id,
+        code: criterion.code,
+        title: criterion.title,
+        description: criterion.description ?? undefined,
+        maxPoints: Number(criterion.maxPoints),
+        anchors: parseEvaluationAnchors(
+          criterion.anchorsJson,
+          Number(criterion.maxPoints),
+        ),
+      })),
+      facts: factLinks.map((link) => ({
+        id: link.fact.id,
+        code: link.fact.code,
+        statement: link.fact.statement,
+        acceptedAliases: readStringArray(link.fact.acceptedAliasesJson),
+        required: link.isRequired,
+      })),
+      metrics: buildEvaluationMetrics(
+        context.acousticMetricsJson,
+        context.mergedAudioDurationMilliseconds,
+      ),
+    };
 
     if (!existingEvaluation) {
-      const criteria = await this.prisma.trainingEvaluationCriterion.findMany({
-        where: {
-          projectVersionId: context.attemptQuestion.attempt.projectVersionId,
-          questionType: context.attemptQuestion.question.type,
-        },
-        orderBy: { sortOrder: 'asc' },
-      });
-      const facts = context.attemptQuestion.question.factLinks
-        .map((link) => link.fact)
-        .filter((fact) => fact.isApproved);
-      const evaluationInput: TrainingEvaluationInput = {
+      const requestedModelId = this.resolveEvaluationModel(payload.runType);
+      const providerRun = await this.prepareProviderRun({
+        jobId: job.id,
         answerId: context.id,
-        questionId: context.attemptQuestion.question.id,
-        questionText: context.attemptQuestion.question.text,
-        questionMaxScore: context.attemptQuestion.question.maxScore,
-        transcript: context.combinedTranscript,
-        criteria: criteria.map((criterion) => ({
-          id: criterion.id,
-          code: criterion.code,
-          title: criterion.title,
-          maxPoints: Number(criterion.maxPoints),
-        })),
-        facts: facts.map((fact) => ({
-          id: fact.id,
-          code: fact.code,
-          statement: fact.statement,
-        })),
-      };
-      const evaluation = await this.evaluationProvider.evaluate(evaluationInput);
-      evaluationResult = {
-        evaluation,
-        score: scoreTrainingEvaluation({
-          questionMaxScore: evaluationInput.questionMaxScore,
+        kind: TrainingProviderKind.EVALUATION,
+        runType: payload.runType,
+        requestedModelId,
+        reasoningEffort: this.resolveEvaluationReasoning(payload.runType),
+        transcriptHash: createHash('sha256')
+          .update(context.combinedTranscript)
+          .digest('hex'),
+        inputHash: hashProviderInput({
+          questionId: evaluationInput.questionId,
+          transcript: context.combinedTranscript,
           criteria: evaluationInput.criteria,
           facts: evaluationInput.facts,
-          evaluation,
+          metrics: evaluationInput.metrics,
+          runType: payload.runType,
         }),
-      };
+        inputMetadata: {
+          questionId: evaluationInput.questionId,
+          criterionIds: evaluationInput.criteria.map(
+            (criterion) => criterion.id,
+          ),
+          factIds: evaluationInput.facts.map((fact) => fact.id),
+          metricIds: evaluationInput.metrics.map((metric) => metric.id),
+        },
+        promptVersion: TRAINING_EVALUATION_PROMPT_VERSION,
+        schemaVersion: TRAINING_EVALUATION_SCHEMA_VERSION,
+        rubricVersion: `${context.attemptQuestion.attempt.projectVersion.versionNumber}`,
+      });
+      providerRunId = providerRun?.id ?? null;
+      if (providerRunId) {
+        evaluationInput.providerRunId = providerRunId;
+      }
+
+      if (providerRun?.status === TrainingProviderRunStatus.SUCCEEDED) {
+        const recovered =
+          await this.prisma.trainingAnswerEvaluation.findUnique({
+            where: { providerRunId: providerRun.id },
+            include: { scoreComponents: true },
+          });
+        if (!recovered) {
+          throw new Error('Succeeded evaluation provider run has no result');
+        }
+      } else {
+        try {
+          const evaluation =
+            await this.evaluationProvider.evaluate(evaluationInput);
+          evaluationResult = {
+            evaluation,
+            score: scoreTrainingEvaluation({
+              questionMaxScore: evaluationInput.questionMaxScore,
+              criteria: evaluationInput.criteria,
+              facts: evaluationInput.facts,
+              evaluation,
+            }),
+          };
+        } catch (error) {
+          if (providerRun) {
+            await this.recordProviderRunFailure(providerRun.id, error);
+          }
+          throw error;
+        }
+      }
     }
 
     const completedAt = this.clock.now();
@@ -1751,29 +2284,40 @@ export class TrainingAttemptEngineService
       if (!(await this.refreshOwnedJobWithinTransaction(tx, job.id))) {
         return;
       }
-      let persistedEvaluation = await tx.trainingAnswerEvaluation.findFirst({
-        where: {
-          answerId: context.id,
-          evaluationNumber: 1,
-        },
-        select: { id: true },
-      });
+      let persistedEvaluation = providerRunId
+        ? await tx.trainingAnswerEvaluation.findUnique({
+            where: { providerRunId },
+            select: { id: true },
+          })
+        : await tx.trainingAnswerEvaluation.findFirst({
+            where: {
+              answerId: context.id,
+              evaluationNumber: 1,
+            },
+            select: { id: true },
+          });
 
       if (!persistedEvaluation) {
         if (!evaluationResult) {
           throw new Error('Recovered evaluation result is missing');
         }
         const { evaluation, score } = evaluationResult;
+        const nextEvaluationNumber = providerRunId
+          ? ((await tx.trainingAnswerEvaluation.aggregate({
+              where: { answerId: context.id },
+              _max: { evaluationNumber: true },
+            }))._max.evaluationNumber ?? 0) + 1
+          : 1;
         persistedEvaluation = await tx.trainingAnswerEvaluation.create({
           data: {
             answerId: context.id,
-            evaluationNumber: 1,
-            actualModelId: evaluation.actualModelId,
+            providerRunId,
+            evaluationNumber: nextEvaluationNumber,
+            actualModelId:
+              evaluation.actualModelId ?? evaluation.requestedModelId,
             reasoningEffort: evaluation.reasoningEffort,
-            promptVersion:
-              context.attemptQuestion.attempt.projectVersion.promptVersion,
-            schemaVersion:
-              context.attemptQuestion.attempt.projectVersion.schemaVersion,
+            promptVersion: TRAINING_EVALUATION_PROMPT_VERSION,
+            schemaVersion: TRAINING_EVALUATION_SCHEMA_VERSION,
             rubricVersion: `${context.attemptQuestion.attempt.projectVersion.versionNumber}`,
             structuredResultJson:
               evaluation as unknown as Prisma.InputJsonObject,
@@ -1782,6 +2326,9 @@ export class TrainingAttemptEngineService
             summary: evaluation.summary.slice(0, 2_000),
             requiresReview: score.requiresReview,
             reviewReasonsJson: score.reviewReasons,
+            providerUsageJson: evaluation.usage
+              ? (evaluation.usage as Prisma.InputJsonObject)
+              : undefined,
             latencyMs: evaluation.latencyMs,
             requestId: evaluation.requestId,
             startedAt: context.processingStartedAt ?? completedAt,
@@ -1804,12 +2351,30 @@ export class TrainingAttemptEngineService
           },
           select: { id: true },
         });
+        if (providerRunId) {
+          await tx.trainingProviderRun.update({
+            where: { id: providerRunId },
+            data: {
+              status: TrainingProviderRunStatus.SUCCEEDED,
+              actualModelId: evaluation.actualModelId,
+              requestId: evaluation.requestId,
+              responseStatus: evaluation.responseStatus ?? 'completed',
+              providerUsageJson: evaluation.usage
+                ? (evaluation.usage as Prisma.InputJsonObject)
+                : undefined,
+              latencyMs: evaluation.latencyMs,
+              retryCount: evaluation.retryCount ?? 0,
+              completedAt,
+            },
+          });
+        }
       }
 
       await tx.trainingAnswer.update({
         where: { id: context.id },
         data: {
           status: TrainingAnswerStatus.SCORED,
+          activeEvaluationId: persistedEvaluation.id,
           processingFinishedAt: completedAt,
         },
       });
@@ -1906,6 +2471,174 @@ export class TrainingAttemptEngineService
     return context;
   }
 
+  private async prepareProviderRun(input: {
+    jobId: string;
+    answerId: string;
+    kind: TrainingProviderKind;
+    runType: TrainingProviderRunType;
+    requestedModelId: string;
+    reasoningEffort?: string | null;
+    sourceFileId?: string | null;
+    sourceChecksum?: string | null;
+    transcriptHash?: string | null;
+    inputHash: string;
+    inputMetadata: Prisma.InputJsonObject;
+    promptVersion?: string | null;
+    schemaVersion?: string | null;
+    rubricVersion?: string | null;
+  }) {
+    if (!this.prisma.trainingProviderRun) {
+      return null;
+    }
+    const idempotencyKey = `training-provider:${input.kind}:${input.jobId}`;
+    let run = await this.prisma.trainingProviderRun.findUnique({
+      where: { idempotencyKey },
+    });
+    if (!run) {
+      try {
+        run = await this.prisma.trainingProviderRun.create({
+          data: {
+            answerId: input.answerId,
+            kind: input.kind,
+            runType: input.runType,
+            status: TrainingProviderRunStatus.PENDING,
+            idempotencyKey,
+            requestedModelId: input.requestedModelId,
+            reasoningEffort: input.reasoningEffort,
+            sourceFileId: input.sourceFileId,
+            sourceChecksum: input.sourceChecksum,
+            transcriptHash: input.transcriptHash,
+            inputHash: input.inputHash,
+            inputMetadataJson: input.inputMetadata,
+            promptVersion: input.promptVersion,
+            schemaVersion: input.schemaVersion,
+            rubricVersion: input.rubricVersion,
+          },
+        });
+      } catch (error) {
+        if (!this.isPrismaConcurrencyError(error)) throw error;
+        run = await this.prisma.trainingProviderRun.findUnique({
+          where: { idempotencyKey },
+        });
+        if (!run) throw error;
+      }
+    }
+
+    if (run.status === TrainingProviderRunStatus.SUCCEEDED) return run;
+    if (run.status === TrainingProviderRunStatus.REQUESTING) {
+      await this.prisma.trainingProviderRun.update({
+        where: { id: run.id },
+        data: {
+          status: TrainingProviderRunStatus.AMBIGUOUS,
+          ambiguousOutcome: true,
+          errorCode: 'OPENAI_RECOVERED_REQUEST_AMBIGUOUS',
+          errorClass: 'recovery',
+          completedAt: this.clock.now(),
+        },
+      });
+      throw new TrainingOpenAiRequestError(
+        'OPENAI_RECOVERED_REQUEST_AMBIGUOUS',
+        false,
+        true,
+        null,
+        run.requestId,
+        run.retryCount,
+        'A persisted OpenAI request was interrupted with an ambiguous outcome',
+      );
+    }
+    if (
+      run.status === TrainingProviderRunStatus.AMBIGUOUS ||
+      run.status === TrainingProviderRunStatus.FAILED
+    ) {
+      throw new TrainingOpenAiRequestError(
+        run.errorCode ?? 'OPENAI_PROVIDER_RUN_NOT_RETRYABLE',
+        false,
+        run.ambiguousOutcome,
+        null,
+        run.requestId,
+        run.retryCount,
+        'OpenAI provider run is terminal and requires explicit reprocessing',
+      );
+    }
+
+    const startedAt = this.clock.now();
+    const claimed = await this.prisma.trainingProviderRun.updateMany({
+      where: {
+        id: run.id,
+        status: TrainingProviderRunStatus.PENDING,
+      },
+      data: {
+        status: TrainingProviderRunStatus.REQUESTING,
+        startedAt,
+        errorCode: null,
+        errorClass: null,
+        ambiguousOutcome: false,
+      },
+    });
+    if (claimed.count !== 1) {
+      throw new ConflictException('OpenAI provider run could not be claimed');
+    }
+    return {
+      ...run,
+      status: TrainingProviderRunStatus.REQUESTING,
+      startedAt,
+    };
+  }
+
+  private async recordProviderRunFailure(runId: string, error: unknown) {
+    const openAiError =
+      error instanceof TrainingOpenAiRequestError ? error : null;
+    const ambiguous = openAiError?.ambiguous ?? false;
+    await this.prisma.trainingProviderRun.updateMany({
+      where: {
+        id: runId,
+        status: TrainingProviderRunStatus.REQUESTING,
+      },
+      data: {
+        status: ambiguous
+          ? TrainingProviderRunStatus.AMBIGUOUS
+          : TrainingProviderRunStatus.FAILED,
+        requestId: openAiError?.requestId,
+        responseStatus:
+          openAiError?.status === null || openAiError?.status === undefined
+            ? ambiguous
+              ? 'ambiguous'
+              : 'failed'
+            : `http_${openAiError.status}`,
+        retryCount: openAiError?.retryCount ?? 0,
+        errorCode: openAiError?.code ?? 'OPENAI_PROVIDER_FAILED',
+        errorClass: error instanceof Error ? error.name.slice(0, 120) : 'Error',
+        ambiguousOutcome: ambiguous,
+        completedAt: this.clock.now(),
+      },
+    });
+  }
+
+  private resolveTranscriptionModel(runType: TrainingProviderRunType) {
+    if (this.openAiConfig?.providerMode === 'real') {
+      return runType === TrainingProviderRunType.PRIMARY
+        ? this.openAiConfig.transcriptionModel
+        : this.openAiConfig.transcriptionReviewModel;
+    }
+    return 'fake-transcription-v1';
+  }
+
+  private resolveEvaluationModel(runType: TrainingProviderRunType) {
+    if (this.openAiConfig?.providerMode === 'real') {
+      return runType === TrainingProviderRunType.PRIMARY
+        ? this.openAiConfig.evaluationModel
+        : this.openAiConfig.reviewModel;
+    }
+    return 'fake-evaluation-v1';
+  }
+
+  private resolveEvaluationReasoning(runType: TrainingProviderRunType) {
+    if (this.openAiConfig?.providerMode !== 'real') return null;
+    return runType === TrainingProviderRunType.PRIMARY
+      ? this.openAiConfig.evaluationReasoning
+      : this.openAiConfig.reviewReasoning;
+  }
+
   private async advanceOrFinalize(
     tx: Prisma.TransactionClient,
     attemptId: string,
@@ -1988,9 +2721,10 @@ export class TrainingAttemptEngineService
           include: {
             answer: {
               include: {
+                activeEvaluation: true,
                 evaluations: {
-                  where: { evaluationNumber: 1 },
-                  orderBy: { evaluationNumber: 'asc' },
+                  orderBy: { evaluationNumber: 'desc' },
+                  take: 1,
                 },
               },
             },
@@ -2019,7 +2753,13 @@ export class TrainingAttemptEngineService
     }
 
     const evaluations = attempt.attemptQuestions.flatMap(
-      (question) => question.answer?.evaluations ?? [],
+      (question) => {
+        const evaluation =
+          question.answer?.activeEvaluation ??
+          question.answer?.evaluations[0] ??
+          null;
+        return evaluation ? [evaluation] : [];
+      },
     );
     const aiScore = clampTrainingAttemptScore(
       sumTrainingScores(
@@ -2104,7 +2844,12 @@ export class TrainingAttemptEngineService
     attemptId: string,
     answerId: string,
     runAt: Date,
+    runType: TrainingProviderRunType = TrainingProviderRunType.PRIMARY,
+    runNonce?: string | null,
   ) {
+    if (runType !== TrainingProviderRunType.PRIMARY && !runNonce) {
+      throw new Error('Reprocessing job requires a stable run nonce');
+    }
     const action =
       kind === TrainingJobKind.ASSEMBLE_ANSWER_AUDIO
         ? 'assemble'
@@ -2119,8 +2864,13 @@ export class TrainingAttemptEngineService
           payloadJson: {
             attemptId,
             answerId,
+            runType,
+            ...(runNonce ? { runNonce } : {}),
           },
-          idempotencyKey: `attempt:${attemptId}:answer:${answerId}:${action}`,
+          idempotencyKey:
+            runType === TrainingProviderRunType.PRIMARY
+              ? `attempt:${attemptId}:answer:${answerId}:${action}`
+              : `attempt:${attemptId}:answer:${answerId}:${action}:${runNonce}`,
           runAt,
         },
       ],
@@ -2341,10 +3091,13 @@ export class TrainingAttemptEngineService
     const failedAt = this.clock.now();
     const message = toSafeErrorMessage(error);
     const audioError = error instanceof TrainingAudioError ? error : null;
+    const openAiError =
+      error instanceof TrainingOpenAiRequestError ? error : null;
     const retryable = audioError?.retryable ?? false;
     const shouldRetry =
       requireOwnership && retryable && job.attempts < job.maxAttempts;
-    const errorCode = audioError?.code ?? 'ATTEMPT_JOB_FAILED';
+    const errorCode =
+      audioError?.code ?? openAiError?.code ?? 'ATTEMPT_JOB_FAILED';
     const retryDelayMs = Math.max(
       Math.min(30_000, 250 * 2 ** Math.max(0, job.attempts - 1)),
       audioError?.retryAfterMs ?? 0,
@@ -2382,6 +3135,8 @@ export class TrainingAttemptEngineService
           errorDetailsJson: {
             retryable,
             retryAfterMs: audioError?.retryAfterMs ?? null,
+            ambiguousOutcome: openAiError?.ambiguous ?? false,
+            providerRequestId: openAiError?.requestId ?? null,
           },
         },
       });
@@ -2639,6 +3394,12 @@ function readAttemptJobPayload(value: Prisma.JsonValue) {
   return {
     attemptId: value.attemptId,
     answerId: typeof value.answerId === 'string' ? value.answerId : null,
+    runType:
+      value.runType === TrainingProviderRunType.REPROCESS ||
+      value.runType === TrainingProviderRunType.REVIEW
+        ? value.runType
+        : TrainingProviderRunType.PRIMARY,
+    runNonce: typeof value.runNonce === 'string' ? value.runNonce : null,
   };
 }
 
@@ -2646,28 +3407,6 @@ function toSafeErrorMessage(error: unknown) {
   return (error instanceof Error ? error.message : 'Training attempt job failed')
     .replace(/[\r\n]+/gu, ' ')
     .slice(0, 2_000);
-}
-
-async function withProviderTimeout<T>(
-  operation: Promise<T>,
-  timeoutMs: number,
-) {
-  let timeout: NodeJS.Timeout | null = null;
-  const timeoutPromise = new Promise<never>((_resolve, reject) => {
-    timeout = setTimeout(
-      () =>
-        reject(
-          new TrainingAudioError('TRANSCRIPTION_TIMEOUT', true),
-        ),
-      timeoutMs,
-    );
-    timeout.unref();
-  });
-  try {
-    return await Promise.race([operation, timeoutPromise]);
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
 }
 
 function mergeTranscriptMetrics(
@@ -2697,6 +3436,187 @@ function mergeTranscriptMetrics(
 
 function countTranscriptWords(value: string) {
   return value.match(/[\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)*/gu)?.length ?? 0;
+}
+
+function buildApprovedVocabulary(context: {
+  attemptQuestion: {
+    attempt: {
+      projectVersion: {
+        versionNumber: number;
+      };
+    };
+    question: {
+      factLinks: Array<{
+        fact: {
+          statement: string;
+          acceptedAliasesJson: Prisma.JsonValue;
+          isApproved: boolean;
+        };
+      }>;
+    };
+  };
+}) {
+  const terms = [
+    ...context.attemptQuestion.question.factLinks
+      .filter((link) => link.fact.isApproved)
+      .flatMap((link) => [
+        link.fact.statement,
+        ...readStringArray(link.fact.acceptedAliasesJson),
+      ]),
+  ]
+    .map((term) => term.trim().replace(/\s+/gu, ' '))
+    .filter(Boolean);
+  const uniqueTerms = [...new Set(terms)].sort((left, right) =>
+    left.localeCompare(right, 'ru'),
+  );
+  return {
+    version: `facts-v${context.attemptQuestion.attempt.projectVersion.versionNumber}`,
+    terms: uniqueTerms,
+    hash: createHash('sha256')
+      .update(JSON.stringify(uniqueTerms))
+      .digest('hex'),
+  };
+}
+
+function parseEvaluationAnchors(
+  value: Prisma.JsonValue,
+  maxPoints: number,
+) {
+  if (!Array.isArray(value)) return [];
+  const anchors: Array<{
+    id: string;
+    points: number;
+    description: string;
+  }> = [];
+  const ids = new Set<string>();
+  for (const item of value) {
+    if (!isJsonRecord(item)) continue;
+    const id = typeof item.id === 'string' ? item.id.trim() : '';
+    const points = typeof item.points === 'number' ? item.points : Number.NaN;
+    const description =
+      typeof item.description === 'string' ? item.description.trim() : '';
+    if (
+      !id ||
+      id.length > 120 ||
+      ids.has(id) ||
+      !description ||
+      description.length > 2_000 ||
+      !Number.isFinite(points) ||
+      points < 0 ||
+      points > maxPoints
+    ) {
+      continue;
+    }
+    ids.add(id);
+    anchors.push({ id, points, description });
+  }
+  return anchors;
+}
+
+function buildEvaluationMetrics(
+  value: Prisma.JsonValue,
+  durationMilliseconds: number | null,
+) {
+  const metrics: Array<{ id: string; value: number; unit: string }> = [];
+  if (durationMilliseconds !== null && durationMilliseconds >= 0) {
+    metrics.push({
+      id: 'audio_duration_milliseconds',
+      value: durationMilliseconds,
+      unit: 'milliseconds',
+    });
+  }
+  if (isJsonRecord(value) && isJsonRecord(value.transcript)) {
+    const wordCount = value.transcript.wordCount;
+    const wordsPerMinute = value.transcript.wordsPerMinute;
+    if (typeof wordCount === 'number' && Number.isFinite(wordCount)) {
+      metrics.push({ id: 'transcript_word_count', value: wordCount, unit: 'words' });
+    }
+    if (
+      typeof wordsPerMinute === 'number' &&
+      Number.isFinite(wordsPerMinute)
+    ) {
+      metrics.push({
+        id: 'speech_words_per_minute',
+        value: wordsPerMinute,
+        unit: 'words_per_minute',
+      });
+    }
+  }
+  return metrics;
+}
+
+function readStringArray(value: Prisma.JsonValue) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function hashProviderInput(value: unknown) {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+function isJsonRecord(
+  value: Prisma.JsonValue | undefined,
+): value is Prisma.JsonObject {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function asRecord(value: Prisma.JsonValue | null) {
+  return isJsonRecord(value ?? undefined)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function parseUnsupportedClaimDecisions(
+  value: unknown,
+  expectedComponentKeys: string[],
+): Array<{
+  componentKey: string;
+  decision: 'ACCEPTED' | 'INCORRECT';
+}> {
+  const expected = new Set(expectedComponentKeys);
+  if (value === undefined && expected.size === 0) return [];
+  if (!Array.isArray(value)) {
+    throw new BadRequestException(
+      'Unsupported claim decisions must be an array',
+    );
+  }
+  const seen = new Set<string>();
+  const decisions = value.map((item) => {
+    if (
+      typeof item !== 'object' ||
+      item === null ||
+      Array.isArray(item) ||
+      Object.keys(item).sort().join(',') !== 'componentKey,decision' ||
+      typeof item.componentKey !== 'string' ||
+      (item.decision !== 'ACCEPTED' && item.decision !== 'INCORRECT')
+    ) {
+      throw new BadRequestException(
+        'Unsupported claim decision is invalid',
+      );
+    }
+    if (
+      !expected.has(item.componentKey) ||
+      seen.has(item.componentKey)
+    ) {
+      throw new BadRequestException(
+        'Unsupported claim decision references an unknown or duplicate component',
+      );
+    }
+    seen.add(item.componentKey);
+    return {
+      componentKey: item.componentKey,
+      decision: item.decision,
+    };
+  });
+  if (seen.size !== expected.size) {
+    throw new BadRequestException(
+      'Every unsupported claim requires a reviewer decision',
+    );
+  }
+  return decisions;
 }
 
 export const TRAINING_ATTEMPT_SCORE_MAXIMUM = TRAINING_TOTAL_MAX_SCORE;

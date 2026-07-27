@@ -5464,3 +5464,93 @@ Dependencies:
 
 - Нет. Cleanup не меняет privacy policy и не превращает unsafe/ambiguous PUT в
   успешную проверку. Этап 8 и остальной аудиоконвейер не изменялись.
+
+## 2026-07-27 - Training stage 8 OpenAI providers, scoring and review
+
+Задача:
+
+- Выполнить только этап 8: real OpenAI transcription/evaluation providers,
+  deterministic backend scoring и минимальный backend review/reprocessing.
+- Не создавать results/rating UI, не переходить к этапу 9 и не выполнять
+  реальный billable OpenAI smoke без отдельного разрешения.
+
+Изменения:
+
+- Добавлен explicit `OPENAI_PROVIDER_MODE=fake|real`: test всегда fake, local
+  по умолчанию fake, production с включённым training fail-fast требует real
+  mode и non-placeholder server-side key. Model IDs, reasoning, deadlines,
+  retries и лимиты вынесены в env/Compose.
+- Реализованы native Node `fetch` providers без OpenAI SDK. Transcription
+  отправляет только answer-owned private normalized mono 16 kHz 16-bit PCM
+  WAV меньше 25 MiB в Audio Transcriptions API с `language=ru` и bounded
+  approved vocabulary. Review transcription явно использует отдельную model.
+- Evaluation использует Responses API, `store:false`, strict JSON Schema,
+  `reasoning.effort`, bounded output и не передаёт tools/search/conversation
+  state, raw documents или audio. Transcript передаётся как отдельный
+  недоверенный JSON data block.
+- Backend проверяет schema version, exact fields/enums, numeric confidence
+  `0..1`, полное покрытие facts/criteria, approved IDs/anchors, размеры и exact
+  transcript/metric evidence. Refusal, incomplete, missing/invalid output и
+  provider failures получают отдельные безопасные error codes.
+- Score вычисляется только backend по points опубликованных structured
+  anchors. Distinct approved incorrect fact даёт `−5` один раз; unsupported
+  claim не штрафуется автоматически и переводит attempt в review.
+- Добавлен protected review/reprocessing API с
+  `training:results:review`: решения по unsupported components, comment,
+  admin override, versioned review history и `AuditLog`. Исходные transcript,
+  provider output и server score не перезаписываются.
+- Аддитивная migration
+  `20260727220000_add_training_openai_provider_runs` добавляет persisted
+  provider intents/status/metadata, immutable transcript versions и active
+  transcript/evaluation pointers. Requested/actual models, request/status,
+  usage, latency, retries, hashes и prompt/schema/rubric versions сохраняются.
+- Intent фиксируется как `REQUESTING` до HTTP без открытой DB transaction.
+  `429/5xx`, timeout/network и временно malformed upstream response имеют
+  bounded retry внутри общего hard deadline. Исчерпанный неоднозначный исход
+  становится `AMBIGUOUS`; restart не делает новый платный вызов, явный
+  reprocessing создаёт новую version/run. Exactly-once billing не обещается.
+- OpenAI jobs перенесены в существующий `training-worker`; API только ставит
+  durable PostgreSQL jobs и обслуживает admin API. Новая очередь, SDK и
+  dependencies не добавлены.
+- Добавлены HTTP fixtures, local HTTP stub, PostgreSQL restart/duplicate/
+  ambiguity/review flow и отдельная opt-in smoke-команда на синтетическом WAV.
+  Criteria editor минимально обновлён для structured anchors; results/rating
+  frontend не создавался.
+- Обновлены env examples, Compose, implementation checklist, training
+  specification, security/data-flow, audio worker и OpenAI deployment docs.
+
+Проверки:
+
+- `pnpm --filter @platforma/api test` — `412/412` unit и `74/74`
+  PostgreSQL/HTTP integration passed. На временной PostgreSQL применены все
+  `38` migrations; full 1 MAIN + 3 FOLLOW_UP flow выполнил четыре
+  transcription и четыре strict evaluation через real adapters к локальному
+  HTTP stub без duplicate provider runs; БД удалена.
+- `pnpm build` — passed; сохраняется существующий Vite warning о client chunk
+  `754.00 kB`.
+- `pnpm test` — passed: API `412 + 74`, Web `286`, Feed import `64`,
+  WordPress import `23`, всего `859`.
+- Development и production `docker compose config --quiet` — passed.
+- `docker compose build api training-worker` — passed; оба service используют
+  общий успешно собранный image `platforma-api:local`.
+- Prisma schema validation и `git diff --check` — passed.
+- Real OpenAI smoke не запускался.
+
+Ручная проверка:
+
+- До opt-in smoke проверить OpenAI project data controls, допустимость
+  синтетического test payload, доступность утверждённых model IDs для
+  конкретного project, limits/rate limits и staging secret/network policy.
+- После отдельного разрешения выполнить только синтетический smoke, затем
+  staging QA provider metadata, active version pointers, manual review и
+  explicit reprocessing без transcript/audio в logs.
+- Production migrations, deploy, webhook registration и реальные голоса
+  сотрудников не затрагивались.
+
+Спорные места:
+
+- Незакрытых code-level BLOCKER/HIGH нет. До billable smoke остаются MEDIUM
+  operational gates: OpenAI data controls/model access и staging calibration
+  rubric/transcription quality.
+- Стоимость не хардкодится: usage сохраняется, а reporting/cost layer отложен.
+  Этап 9 не начат.

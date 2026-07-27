@@ -13,7 +13,6 @@ export class TrainingAudioConfig {
   readonly maxAnswerDurationSeconds: number;
   readonly downloadTimeoutMs: number;
   readonly ffmpegTimeoutMs: number;
-  readonly transcriptionTimeoutMs: number;
   readonly workerPollMs: number;
   readonly workerConcurrency: number;
   readonly workerLeaseMs: number;
@@ -63,13 +62,6 @@ export class TrainingAudioConfig {
       env.TRAINING_FFMPEG_TIMEOUT_MS,
       90_000,
       1_000,
-      300_000,
-    );
-    this.transcriptionTimeoutMs = readBoundedInteger(
-      'TRAINING_TRANSCRIPTION_TIMEOUT_MS',
-      env.TRAINING_TRANSCRIPTION_TIMEOUT_MS,
-      30_000,
-      100,
       300_000,
     );
     this.workerPollMs = readBoundedInteger(

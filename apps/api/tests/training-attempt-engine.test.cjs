@@ -149,7 +149,7 @@ async function completeAttempt(harness, seed, mainTranscript = 'полный г�
   return (await harness.service.getAttempt(attempt.id)).attempt;
 }
 
-test('stage 5 runtime wiring uses Serializable advisory locking and fake providers without network calls', async () => {
+test('stage 8 runtime wiring selects providers by mode while fake tests make no network calls', async () => {
   const providers = Reflect.getMetadata('providers', TrainingModule);
   const transcriptionBinding = providers.find(
     (provider) => provider?.provide === TRAINING_TRANSCRIPTION_PROVIDER,
@@ -157,14 +157,8 @@ test('stage 5 runtime wiring uses Serializable advisory locking and fake provide
   const evaluationBinding = providers.find(
     (provider) => provider?.provide === TRAINING_EVALUATION_PROVIDER,
   );
-  assert.equal(
-    transcriptionBinding.useClass,
-    DeterministicFakeTrainingTranscriptionProvider,
-  );
-  assert.equal(
-    evaluationBinding.useClass,
-    DeterministicFakeTrainingEvaluationProvider,
-  );
+  assert.equal(transcriptionBinding.useFactory.name, 'createTrainingTranscriptionProvider');
+  assert.equal(evaluationBinding.useFactory.name, 'createTrainingEvaluationProvider');
 
   const originalFetch = global.fetch;
   let fetchCalls = 0;

@@ -27,7 +27,7 @@
 | 5 | `05_attempt_engine_fake.md` | Выполнен; findings независимого review исправлены |
 | 6 | `06_telegram.md` | Выполнен |
 | 7 | `07_audio_worker.md` | Выполнен |
-| 8 | `08_openai_scoring_review.md` | Не начат |
+| 8 | `08_openai_scoring_review.md` | Выполнен |
 | 9 | `09_results_ui_rating.md` | Не начат |
 | 10 | `10_security_deploy_pilot.md` | Не начат |
 
@@ -496,17 +496,46 @@ PostgreSQL/HTTP integration tests; root suite также включает `286/2
 
 ## Этап 8. OpenAI providers, scoring и review
 
-- [ ] Реализовать server-side fetch providers для transcription/evaluation.
-- [ ] Использовать Audio Transcriptions API.
-- [ ] Использовать Responses API + strict Structured Outputs.
-- [ ] Брать model IDs из env и использовать `store: false`, где применимо.
-- [ ] Считать transcript недоверенными данными.
-- [ ] Валидировать schema/IDs/evidence на backend.
-- [ ] Считать final score только на backend.
-- [ ] Реализовать incorrect fact/duplicate/unsupported claim rules.
-- [ ] Реализовать admin review/override с reason и audit.
-- [ ] Сохранять model/prompt/schema version, usage, latency, request ID.
-- [ ] Добавить fixture tests и opt-in smoke command; не вызывать real API в CI.
+- [x] Реализовать server-side native fetch providers для
+  transcription/evaluation без OpenAI SDK.
+- [x] Использовать Audio Transcriptions API с normalized private WAV,
+  `language=ru`, approved vocabulary и лимитом меньше 25 MiB.
+- [x] Использовать Responses API + strict Structured Outputs, `store:false`,
+  без tools/search/conversation state.
+- [x] Брать model IDs/reasoning/timeouts/retries/limits из env; production с
+  включённым training fail-fast требует real mode и непустой non-placeholder
+  key.
+- [x] Считать transcript недоверенными данными и отделять его от
+  instructions.
+- [x] Валидировать exact schema, известные IDs, anchors, fact coverage и
+  transcript/metric evidence на backend.
+- [x] Считать score только на backend по утверждённым structured anchors.
+- [x] Реализовать distinct incorrect fact `−5`, dedup и unsupported claim без
+  автоматического штрафа до review.
+- [x] Реализовать permission-bound review/override с обязательным comment,
+  решением по каждому unsupported claim, историей и audit.
+- [x] Сохранять provider intent/status, requested/actual model,
+  prompt/schema/rubric version, usage, latency, request ID и неизменяемые
+  версии transcript/evaluation.
+- [x] Исполнять OpenAI jobs только в `training-worker`; API только ставит
+  durable jobs и обслуживает review/reprocessing.
+- [x] Не повторять неоднозначный REQUESTING outcome автоматически: сохранять
+  `AMBIGUOUS`, переводить попытку в technical failure и требовать явный
+  reprocessing.
+- [x] Добавить fake/HTTP-stub/PostgreSQL tests и отдельную billable opt-in
+  smoke command; real API не вызывался.
+- [x] Обновить structured anchors в минимальном criteria editor; UI
+  результатов/rating не начинался.
+- [x] `pnpm --filter @platforma/api test` прошёл: `412/412` unit и `74/74`
+  PostgreSQL/HTTP integration; все `38` migrations применены к временной БД,
+  затем БД удалена.
+- [x] `pnpm build` и `pnpm test` прошли: API `412 + 74`, Web `286`, Feed
+  import `64`, WordPress import `23`; сохраняется существующий Vite warning о
+  client chunk больше `500 kB`.
+- [x] Development/production Compose config, Prisma validation,
+  `git diff --check` и сборка общего API/worker image прошли.
+- [x] Новые dependencies не добавлены; opt-in real OpenAI smoke намеренно не
+  запускался.
 
 ## Этап 9. Employee/Admin results UI и rating
 
@@ -537,13 +566,13 @@ PostgreSQL/HTTP integration tests; root suite также включает `286/2
 
 ## Следующий этап
 
-Точный следующий этап: `docs/training/prompts/08_openai_scoring_review.md`.
-Этап 8 не начинался.
+Точный следующий этап: `docs/training/prompts/09_results_ui_rating.md`.
+Этап 9 не начинался.
 
 Он не начат и не должен выполняться автоматически. Перед ним нужно:
 
 1. получить отдельный запрос пользователя;
 2. повторно проверить branch/status и сохранить чужие изменения;
-3. прочитать prompt этапа 7 и audio/storage/security части спецификации;
-4. сохранить attempt engine provider-agnostic и не добавлять real
-   transcription/evaluation из этапа 8.
+3. прочитать prompt этапа 9 и visibility/rating части спецификации;
+4. не расширять review backend в results/rating frontend без отдельного
+   запроса.
