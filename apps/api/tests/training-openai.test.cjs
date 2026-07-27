@@ -731,6 +731,105 @@ test('evaluation validator rejects semantic fact/claim inconsistencies for retry
   );
 });
 
+test('evaluation validator canonically rejects case variants of approved unsupported claims', () => {
+  const fixtures = [
+    {
+      name: 'lowercase approved statement',
+      claim: 'подтвержденный факт',
+    },
+    {
+      name: 'uppercase approved statement',
+      claim: 'ПОДТВЕРЖДЕННЫЙ ФАКТ',
+    },
+    {
+      name: 'lowercase approved alias',
+      acceptedAliases: ['Верная характеристика проекта'],
+      claim: 'верная характеристика проекта',
+    },
+    {
+      name: 'case with NBSP and repeated whitespace',
+      claim: 'ПОДТВЕРЖДЕННЫЙ\u00a0   ФАКТ',
+    },
+    {
+      name: 'decomposed Unicode with different case',
+      statement: 'Подтверждённый факт',
+      claim: 'ПОДТВЕРЖДЕ\u0308ННЫЙ ФАКТ',
+    },
+  ];
+
+  for (const fixture of fixtures) {
+    const input = createEvaluationInput();
+    input.facts[0].statement =
+      fixture.statement ?? input.facts[0].statement;
+    input.facts[0].acceptedAliases = fixture.acceptedAliases ?? [];
+    input.transcript += ` ${fixture.claim}`;
+
+    const output = createEvaluationOutput();
+    output.facts.push({
+      fact_id: null,
+      verdict: 'UNSUPPORTED',
+      claim: fixture.claim,
+      evidence_source: 'TRANSCRIPT',
+      evidence: fixture.claim,
+      metric_id: null,
+      explanation: 'fixture',
+      confidence: 0.5,
+    });
+    output.requires_manual_review = true;
+    output.review_reasons = ['fixture'];
+
+    assert.throws(
+      () => validateTrainingEvaluationOutput(input, output),
+      (error) =>
+        error.code ===
+        'OPENAI_EVALUATION_UNSUPPORTED_CONFLICTS_APPROVED_FACT',
+      fixture.name,
+    );
+  }
+});
+
+test('evaluation validator accepts a genuinely new unsupported claim', () => {
+  const input = createEvaluationInput();
+  const claim = 'Совершенно новое утверждение';
+  input.transcript += ` ${claim}`;
+
+  const output = createEvaluationOutput();
+  output.facts.push({
+    fact_id: null,
+    verdict: 'UNSUPPORTED',
+    claim,
+    evidence_source: 'TRANSCRIPT',
+    evidence: claim,
+    metric_id: null,
+    explanation: 'fixture',
+    confidence: 0.5,
+  });
+  output.requires_manual_review = true;
+  output.review_reasons = ['fixture'];
+
+  const result = validateTrainingEvaluationOutput(input, output);
+  assert.equal(
+    result.factFindings.some(
+      (finding) =>
+        finding.verdict === 'UNSUPPORTED' && finding.claim === claim,
+    ),
+    true,
+  );
+});
+
+test('evaluation validator accepts an approved fact with its known fact_id', () => {
+  const result = validateTrainingEvaluationOutput(
+    createEvaluationInput(),
+    createEvaluationOutput(),
+  );
+
+  assert.equal(
+    result.factFindings[0].factId,
+    createEvaluationInput().facts[0].id,
+  );
+  assert.equal(result.factFindings[0].verdict, 'CORRECT');
+});
+
 test('Responses provider gives safe refusal, incomplete and invalid-output error codes', async () => {
   const envelopes = [
     {

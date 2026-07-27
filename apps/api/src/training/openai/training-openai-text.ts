@@ -12,11 +12,17 @@ export function normalizeTrainingOpenAiText(value: string) {
     .trim();
 }
 
+function normalizeUnsupportedApprovedComparisonText(value: string) {
+  return normalizeTrainingOpenAiText(value).toLocaleLowerCase('ru-RU');
+}
+
 export function assertUnsupportedClaimDoesNotMatchApprovedFacts(
   finding: { claim?: string },
   facts: readonly TrainingEvaluationFactInput[],
 ) {
-  const claim = normalizeTrainingOpenAiText(finding.claim ?? '');
+  const claim = normalizeUnsupportedApprovedComparisonText(
+    finding.claim ?? '',
+  );
   if (!claim) return;
 
   for (const fact of facts) {
@@ -25,7 +31,7 @@ export function assertUnsupportedClaimDoesNotMatchApprovedFacts(
       ...(fact.acceptedAliases ?? []),
     ]) {
       const normalizedApprovedText =
-        normalizeTrainingOpenAiText(approvedText);
+        normalizeUnsupportedApprovedComparisonText(approvedText);
       if (!normalizedApprovedText) continue;
 
       if (claim === normalizedApprovedText) {

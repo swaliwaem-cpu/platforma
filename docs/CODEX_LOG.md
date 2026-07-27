@@ -5626,3 +5626,43 @@ Dependencies:
 - Code-level findings независимого review закрыты. Остаются только внешние
   operational gates перед billable smoke/staging.
 - Этап 9 намеренно не начат.
+
+## 2026-07-27 - Case-insensitive approved UNSUPPORTED comparison
+
+Задача:
+
+- Исправить только регистрозависимое сравнение null-ID `UNSUPPORTED` claim с
+  approved `fact.statement` и aliases.
+- Не менять transcript evidence, scoring, review flow, остальную
+  OpenAI-интеграцию и не начинать этап 9.
+
+Изменения:
+
+- В `training-openai-text.ts` добавлена отдельная canonical semantic
+  normalization: NFC, Unicode spaces/whitespace collapse, trim и
+  `toLocaleLowerCase('ru-RU')`.
+- Canonical normalization применяется только к equality и существующим safe
+  containment-проверкам claim против approved statement/aliases.
+- Transcript evidence сохраняет прежнюю case-sensitive exact substring
+  проверку после минимальной NFC/whitespace normalization.
+- Добавлены regression tests для lower/upper case, alias, NBSP/repeated
+  spaces, composed/decomposed Unicode, нового unsupported claim и корректного
+  approved `fact_id`.
+
+Проверки:
+
+- `pnpm --filter @platforma/api test` — passed: `426/426` unit и `76/76`
+  PostgreSQL/HTTP integration; все `39` migrations применены к временной БД.
+- `pnpm build` — passed; сохраняется прежний Vite warning о chunk
+  `754.00 kB`.
+- `pnpm test` — passed: API `426 + 76`, Web `286`, Feed import `64`,
+  WordPress import `23`, всего `875`.
+- `git diff --check` — passed.
+- Реальные OpenAI-запросы не выполнялись.
+
+Спорные места:
+
+- Новых code-level BLOCKER/HIGH перед отдельным OpenAI smoke нет. Остаются
+  ранее зафиксированные внешние operational gates по data controls/model
+  access и staging calibration.
+- Этап 9 не начат.
