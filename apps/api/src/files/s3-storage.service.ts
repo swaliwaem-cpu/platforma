@@ -25,11 +25,14 @@ export class S3StorageService implements OnModuleInit {
   private readonly bucket = process.env.MINIO_BUCKET ?? 'platforma';
   private readonly trainingDocumentBucket =
     process.env.TRAINING_DOCUMENT_BUCKET ?? 'platforma-training-private';
+  private readonly trainingAudioBucket =
+    process.env.TRAINING_AUDIO_BUCKET ?? 'platforma-training-audio-private';
   private readonly readyBuckets = new Set<string>();
 
   async onModuleInit() {
     await this.ensureBucket();
     await this.ensureBucket(this.trainingDocumentBucket);
+    await this.ensureBucket(this.trainingAudioBucket);
   }
 
   getBucket() {
@@ -42,6 +45,10 @@ export class S3StorageService implements OnModuleInit {
 
   getTrainingDocumentBucket() {
     return this.trainingDocumentBucket;
+  }
+
+  getTrainingAudioBucket() {
+    return this.trainingAudioBucket;
   }
 
   async ensureBucket(bucket = this.bucket) {
@@ -93,11 +100,19 @@ export class S3StorageService implements OnModuleInit {
   }
 
   async putObjectFromFile(params: { key: string; filePath: string; contentType: string; checksum: string; contentLength: number }) {
-    await this.ensureBucket(this.bucket);
+    return this.putObjectFromFileToBucket({
+      ...params,
+      bucket: this.bucket,
+    });
+  }
+
+  async putObjectFromFileToBucket(params: { key: string; filePath: string; contentType: string; checksum: string; contentLength: number; bucket: string }) {
+    const bucket = params.bucket;
+    await this.ensureBucket(bucket);
 
     const response = await this.signedFetch({
       method: 'PUT',
-      bucket: this.bucket,
+      bucket,
       key: params.key,
       body: createReadStream(params.filePath),
       contentType: params.contentType,

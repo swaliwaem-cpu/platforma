@@ -43,8 +43,12 @@ export const trainingAttemptRepositoryInclude = {
       question: true,
       answer: {
         include: {
+          mergedAudioFile: true,
           voiceSegments: {
             orderBy: { segmentIndex: 'asc' },
+            include: {
+              originalFile: true,
+            },
           },
           evaluations: {
             orderBy: { evaluationNumber: 'asc' },

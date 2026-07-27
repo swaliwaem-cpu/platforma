@@ -242,6 +242,50 @@ export class FilesService {
     await this.storage.deleteObject(file.key, file.bucket ?? undefined);
   }
 
+  getTrainingAudioBucket() {
+    return this.storage.getTrainingAudioBucket();
+  }
+
+  async putPrivateTrainingAudioObject(input: {
+    key: string;
+    body: Buffer;
+    mimeType: string;
+  }) {
+    this.assertPrivateTrainingAudioKey(input.key);
+    await this.storage.putObject({
+      bucket: this.storage.getTrainingAudioBucket(),
+      key: input.key,
+      body: input.body,
+      contentType: input.mimeType,
+    });
+  }
+
+  async putPrivateTrainingAudioFile(input: {
+    key: string;
+    filePath: string;
+    mimeType: string;
+    checksum: string;
+    sizeBytes: number;
+  }) {
+    this.assertPrivateTrainingAudioKey(input.key);
+    await this.storage.putObjectFromFileToBucket({
+      bucket: this.storage.getTrainingAudioBucket(),
+      key: input.key,
+      filePath: input.filePath,
+      contentType: input.mimeType,
+      checksum: input.checksum,
+      contentLength: input.sizeBytes,
+    });
+  }
+
+  async deletePrivateTrainingAudioObject(key: string) {
+    this.assertPrivateTrainingAudioKey(key);
+    await this.storage.deleteObject(
+      key,
+      this.storage.getTrainingAudioBucket(),
+    );
+  }
+
   async getById(id: string) {
     const file = await this.findExistingFile(id);
 
@@ -313,6 +357,8 @@ export class FilesService {
             projectPresentationDocuments: true,
             projectPresentationAssets: true,
             trainingSourceDocuments: true,
+            trainingVoiceSegments: true,
+            trainingAnswerAudio: true,
           },
         },
       },
@@ -331,7 +377,9 @@ export class FilesService {
       file._count.projectPresentationDraftCovers > 0 ||
       file._count.projectPresentationDocuments > 0 ||
       file._count.projectPresentationAssets > 0 ||
-      file._count.trainingSourceDocuments > 0
+      file._count.trainingSourceDocuments > 0 ||
+      file._count.trainingVoiceSegments > 0 ||
+      file._count.trainingAnswerAudio > 0
     ) {
       throw new ConflictException('File is linked and cannot be deleted');
     }
@@ -742,5 +790,18 @@ export class FilesService {
     }
 
     return value;
+  }
+
+  private assertPrivateTrainingAudioKey(key: string) {
+    if (
+      key.length === 0 ||
+      key.length > 512 ||
+      !key.startsWith('training-audio/') ||
+      key.includes('\\') ||
+      !/^[a-z0-9./_-]+$/u.test(key) ||
+      key.split('/').some((segment) => segment === '' || segment === '.' || segment === '..')
+    ) {
+      throw new BadRequestException('Private training audio key is invalid');
+    }
   }
 }

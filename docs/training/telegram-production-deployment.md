@@ -1,10 +1,10 @@
 # Production deployment Training Telegram
 
-Дата актуализации: 2026-07-26.
+Дата актуализации: 2026-07-27.
 
-Этот документ относится только к Telegram-интеграции этапа 6. Он не включает
-скачивание voice, audio storage, MinIO audio, ffmpeg, OpenAI или отдельный
-worker этапа 7.
+Этот документ описывает Telegram-интеграцию этапа 6. Deployment private voice,
+audio storage, ffmpeg и отдельного worker этапа 7 описан в
+`docs/training/audio-worker-deployment.md`. OpenAI остаётся вне обоих этапов.
 
 ## Local development
 
@@ -140,4 +140,3 @@ FROM training_jobs
 ORDER BY updated_at DESC
 LIMIT 20;
 ```
-

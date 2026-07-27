@@ -5171,3 +5171,80 @@ Dependencies:
   не осталось. Этап 7, Telegram voice download, audio storage, ffmpeg, OpenAI,
   schema/migrations, dependencies и другая training business logic не
   изменялись.
+
+## 2026-07-27 - Training stage 7 private audio and worker
+
+Задача:
+
+- Выполнить только этап 7: server-side Telegram voice download, private audio
+  storage, безопасный ffmpeg/ffprobe pipeline, отдельный PostgreSQL-backed
+  worker и защищённое прослушивание.
+- Сохранить transcription provider детерминированным fake; не начинать этап 8,
+  не подключать OpenAI, Redis/BullMQ или вторую очередь.
+
+Изменения:
+
+- В существующую `TrainingJob` добавлен lifecycle
+  `TELEGRAM_DOWNLOAD_SEGMENT`/`ASSEMBLE_ANSWER_AUDIO`: CAS claim,
+  owner/lease/heartbeat, retry/backoff, stale recovery, `DEAD`, bounded drain
+  и безопасный restart без повторных объектов.
+- Telegram provider выполняет `getFile` и bounded body download через
+  `AbortController`, классифицирует временные/постоянные ошибки, проверяет
+  размер, headers и Ogg/Opus container. Bot token и download URL не включаются
+  в ошибки и логи.
+- Каждый original segment и итоговый normalized answer сохраняются в
+  `TRAINING_AUDIO_BUCKET` как private `File` с `url = null`, internal UUID-only
+  key, MIME, фактическими size и SHA-256. Добавлена migration с relation,
+  uniqueness и integrity constraints.
+- Добавлен безопасный ffmpeg pipeline: только `spawn` с `shell: false`,
+  generated paths/array arguments, one-thread limits, timeouts, bounded output,
+  уникальная temp directory `0700` и cleanup во всех ветках. Segment order
+  сохраняется; фиксируются duration, technical gaps и silence metrics.
+- Добавлены отдельный `training-worker.main.ts`, package script, Compose
+  service, ffmpeg/ffprobe в API image и bounded tmpfs.
+- Добавлен backend endpoint
+  `GET /training/admin/answers/:answerId/audio`: JWT,
+  `training:audio:read`, ownership либо administrative results scope,
+  private/no-store headers и `training.audio.read` audit.
+- Fake transcription принимает только internal audio metadata, поддерживает
+  success/retryable/permanent/timeout fixtures и сохраняет word count/WPM.
+  Scoring и существующий Telegram dialogue не изменялись.
+- Обновлены env examples, deployment guide, staging/production checklist и
+  implementation checklist.
+
+Проверки:
+
+- Новые audio unit/contract tests — 25/25 passed.
+- `pnpm --filter @platforma/api test` — 356/356 unit и 65/65 PostgreSQL
+  integration tests passed; все 36 migrations применены к временной локальной
+  database, которая затем удалена.
+- `pnpm build` — passed; сохраняется существующее предупреждение Vite о client
+  chunk `753.03 kB`, больше 500 kB.
+- `pnpm test` — 794/794 passed: API 356 unit + 65 PostgreSQL, Web 286,
+  Feed import 64, WordPress import 23.
+- Development и production Compose `config --quiet` — passed; production
+  rendering выполнен с безопасными in-memory test values без запуска
+  production containers.
+- `docker compose build api training-worker` — passed. В собранном
+  `platforma-api:local` подтверждены `ffmpeg`, `ffprobe` и
+  `/app/apps/api/dist/training/training-worker.main.js`.
+- `prisma validate` и `git diff --check` — passed.
+
+Ручная проверка:
+
+- На staging с fake transport и отдельным test bucket выполнить сценарии из
+  `docs/training/audio-worker-deployment.md`: private metadata, playback
+  ownership/admin access, audit и `docker compose stop training-worker` с
+  последующим restart.
+- Реальный Telegram Bot API/download, production MinIO/S3, webhook
+  registration и OpenAI не вызывались и автоматически не настраивались.
+
+Спорные места:
+
+- На локальном host отсутствуют `ffmpeg`/`ffprobe`; runtime-путь проверен в
+  собранном Docker image, где binaries установлены явно.
+- Storage даёт at-least-once внешнюю запись с deterministic key и
+  compensation/reuse вокруг DB commit; тесты подтверждают отсутствие второго
+  `File` и второго объекта в upload-before-commit и commit-before-complete
+  recovery сценариях.
+- Новые зависимости не добавлялись. Этап 8 и OpenAI providers не начаты.

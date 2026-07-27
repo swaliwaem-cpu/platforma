@@ -10,6 +10,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "start": "node --env-file-if-exists=.env dist/main.js",
+    "start:training-worker": "node --env-file-if-exists=.env dist/training/training-worker.main.js",
     "test": "pnpm build && pnpm run test:unit && pnpm run test:training:db:run",
     "test:unit": "node --test tests/*.test.cjs",
     "test:training:db": "pnpm build && pnpm run test:training:db:run",

@@ -7,6 +7,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   type OnModuleDestroy,
   type OnModuleInit,
 } from '@nestjs/common';
@@ -26,6 +27,8 @@ import {
 import type { TrainingAttemptSettingsSnapshot } from '@platforma/shared' with { 'resolution-mode': 'import' };
 
 import { PrismaService } from '../prisma/prisma.service';
+import { TrainingAudioConfig } from './audio/training-audio.config';
+import { TrainingAudioError } from './audio/training-audio.error';
 import {
   TRAINING_ATTEMPT_CLOCK,
   TRAINING_EVALUATION_PROVIDER,
@@ -158,6 +161,8 @@ export class TrainingAttemptEngineService
     private readonly transcriptionProvider: TrainingTranscriptionProvider,
     @Inject(TRAINING_EVALUATION_PROVIDER)
     private readonly evaluationProvider: TrainingEvaluationProvider,
+    @Optional()
+    private readonly audioConfig?: TrainingAudioConfig,
   ) {}
 
   onModuleInit() {
@@ -597,7 +602,7 @@ export class TrainingAttemptEngineService
         }));
       const segmentIndex = (currentQuestion.answer?.voiceSegments.length ?? 0) + 1;
 
-      await tx.trainingVoiceSegment.create({
+      const segment = await tx.trainingVoiceSegment.create({
         data: {
           answerId: answer.id,
           segmentIndex,
@@ -612,6 +617,25 @@ export class TrainingAttemptEngineService
           receivedAt,
         },
       });
+      if (this.audioConfig) {
+        await tx.trainingJob.createMany({
+          data: [
+            {
+              kind: TrainingJobKind.TELEGRAM_DOWNLOAD_SEGMENT,
+              status: TrainingJobStatus.PENDING,
+              payloadJson: {
+                attemptId: attempt.id,
+                answerId: answer.id,
+                segmentId: segment.id,
+              },
+              idempotencyKey: `attempt:${attempt.id}:answer:${answer.id}:segment:${segment.id}:download`,
+              runAt: receivedAt,
+              maxAttempts: 5,
+            },
+          ],
+          skipDuplicates: true,
+        });
+      }
 
       await tx.trainingAttemptQuestion.update({
         where: { id: currentQuestion.id },
@@ -743,7 +767,9 @@ export class TrainingAttemptEngineService
         tx,
         answer.status === TrainingAnswerStatus.EVALUATING
           ? TrainingJobKind.EVALUATE_ANSWER
-          : TrainingJobKind.TRANSCRIBE_ANSWER,
+          : this.audioConfig
+            ? TrainingJobKind.ASSEMBLE_ANSWER_AUDIO
+            : TrainingJobKind.TRANSCRIBE_ANSWER,
         attempt.id,
         answer.id,
         finishedAt,
@@ -758,7 +784,7 @@ export class TrainingAttemptEngineService
       return answer.id;
     });
 
-    if (answerId) {
+    if (answerId && !this.audioConfig) {
       await this.drainAttemptJobs(true);
     }
     return this.getAttempt(command.attemptId);
@@ -830,15 +856,14 @@ export class TrainingAttemptEngineService
       const answerIsProcessing =
         answer &&
         (answer.status === TrainingAnswerStatus.READY ||
+          answer.status === TrainingAnswerStatus.DOWNLOADING ||
           answer.status === TrainingAnswerStatus.TRANSCRIBING ||
           answer.status === TrainingAnswerStatus.EVALUATING);
 
       if (answerIsProcessing) {
         await this.enqueueAnswerJobWithinTransaction(
           tx,
-          answer.status === TrainingAnswerStatus.EVALUATING
-            ? TrainingJobKind.EVALUATE_ANSWER
-            : TrainingJobKind.TRANSCRIBE_ANSWER,
+          this.getAnswerProcessingJobKind(answer),
           attempt.id,
           answer.id,
           currentTime,
@@ -897,7 +922,9 @@ export class TrainingAttemptEngineService
         }
         await this.enqueueAnswerJobWithinTransaction(
           tx,
-          TrainingJobKind.TRANSCRIBE_ANSWER,
+          this.audioConfig
+            ? TrainingJobKind.ASSEMBLE_ANSWER_AUDIO
+            : TrainingJobKind.TRANSCRIBE_ANSWER,
           attempt.id,
           answer.id,
           currentTime,
@@ -1202,6 +1229,7 @@ export class TrainingAttemptEngineService
               select: {
                 id: true,
                 status: true,
+                mergedAudioFileId: true,
               },
             },
           },
@@ -1219,11 +1247,12 @@ export class TrainingAttemptEngineService
 
           if (
             answer.status === TrainingAnswerStatus.READY ||
+            answer.status === TrainingAnswerStatus.DOWNLOADING ||
             answer.status === TrainingAnswerStatus.TRANSCRIBING
           ) {
             await this.enqueueAnswerJobWithinTransaction(
               tx,
-              TrainingJobKind.TRANSCRIBE_ANSWER,
+              this.getAnswerProcessingJobKind(answer),
               attempt.id,
               answer.id,
               now,
@@ -1247,6 +1276,7 @@ export class TrainingAttemptEngineService
         const hasProcessingAnswer = attempt.attemptQuestions.some(
           (question) =>
             question.answer?.status === TrainingAnswerStatus.READY ||
+            question.answer?.status === TrainingAnswerStatus.DOWNLOADING ||
             question.answer?.status === TrainingAnswerStatus.TRANSCRIBING ||
             question.answer?.status === TrainingAnswerStatus.EVALUATING,
         );
@@ -1476,6 +1506,16 @@ export class TrainingAttemptEngineService
       return;
     }
     if (
+      this.audioConfig &&
+      (!context.mergedAudioFile ||
+        !context.mergedAudioFile.mimeType ||
+        context.mergedAudioFile.sizeBytes === null ||
+        !context.mergedAudioFile.checksum ||
+        context.mergedAudioDurationMilliseconds === null)
+    ) {
+      throw new TrainingAudioError('AUDIO_METADATA_INVALID', false);
+    }
+    if (
       context.status === TrainingAnswerStatus.EVALUATING ||
       context.status === TrainingAnswerStatus.SCORED
     ) {
@@ -1506,18 +1546,51 @@ export class TrainingAttemptEngineService
             requestId:
               context.transcriptionRequestId ??
               `recovered-transcription:${context.id}`,
+            wordCount: countTranscriptWords(context.combinedTranscript),
           }
         : null;
     const transcription =
       persistedTranscription ??
-      (await this.transcriptionProvider.transcribe({
-        answerId: context.id,
-        segments: context.voiceSegments.map((segment) => ({
-          id: segment.id,
-          segmentIndex: segment.segmentIndex,
-          fakeTranscript: segment.fileUniqueId,
-        })),
-      }));
+      (await withProviderTimeout(
+        this.transcriptionProvider.transcribe({
+          answerId: context.id,
+          segments: context.voiceSegments.map((segment) => ({
+            id: segment.id,
+            segmentIndex: segment.segmentIndex,
+            fakeTranscript: segment.fileUniqueId,
+            ...(segment.originalFile
+              ? {
+                  fileId: segment.originalFile.id,
+                  mimeType: segment.originalFile.mimeType ?? undefined,
+                  sizeBytes:
+                    segment.originalFile.sizeBytes === null
+                      ? undefined
+                      : Number(segment.originalFile.sizeBytes),
+                  checksum: segment.originalFile.checksum ?? undefined,
+                  durationMilliseconds:
+                    segment.durationMilliseconds ?? undefined,
+                }
+              : {}),
+          })),
+          ...(context.mergedAudioFile &&
+          context.mergedAudioFile.mimeType &&
+          context.mergedAudioFile.sizeBytes !== null &&
+          context.mergedAudioFile.checksum &&
+          context.mergedAudioDurationMilliseconds !== null
+            ? {
+                audio: {
+                  fileId: context.mergedAudioFile.id,
+                  mimeType: context.mergedAudioFile.mimeType,
+                  sizeBytes: Number(context.mergedAudioFile.sizeBytes),
+                  checksum: context.mergedAudioFile.checksum,
+                  durationMilliseconds:
+                    context.mergedAudioDurationMilliseconds,
+                },
+              }
+            : {}),
+        }),
+        this.audioConfig?.transcriptionTimeoutMs ?? 30_000,
+      ));
     const completedAt = this.clock.now();
 
     await this.runSerializable(async (tx) => {
@@ -1561,6 +1634,11 @@ export class TrainingAttemptEngineService
             current.transcriptionModel ?? transcription.model,
           transcriptionRequestId:
             current.transcriptionRequestId ?? transcription.requestId,
+          acousticMetricsJson: mergeTranscriptMetrics(
+            current.acousticMetricsJson,
+            transcription.wordCount,
+            current.mergedAudioDurationMilliseconds,
+          ),
         },
       });
       await this.enqueueAnswerJobWithinTransaction(
@@ -1785,8 +1863,12 @@ export class TrainingAttemptEngineService
     const context = await this.prisma.trainingAnswer.findUnique({
       where: { id: answerId },
       include: {
+        mergedAudioFile: true,
         voiceSegments: {
           orderBy: { segmentIndex: 'asc' },
+          include: {
+            originalFile: true,
+          },
         },
         attemptQuestion: {
           include: {
@@ -1985,9 +2067,28 @@ export class TrainingAttemptEngineService
     return true;
   }
 
+  private getAnswerProcessingJobKind(answer: {
+    status: TrainingAnswerStatus;
+    mergedAudioFileId?: string | null;
+  }) {
+    if (answer.status === TrainingAnswerStatus.EVALUATING) {
+      return TrainingJobKind.EVALUATE_ANSWER;
+    }
+    if (
+      this.audioConfig &&
+      !answer.mergedAudioFileId &&
+      (answer.status === TrainingAnswerStatus.READY ||
+        answer.status === TrainingAnswerStatus.DOWNLOADING)
+    ) {
+      return TrainingJobKind.ASSEMBLE_ANSWER_AUDIO;
+    }
+    return TrainingJobKind.TRANSCRIBE_ANSWER;
+  }
+
   private async enqueueAnswerJobWithinTransaction(
     tx: Prisma.TransactionClient,
     kind:
+      | typeof TrainingJobKind.ASSEMBLE_ANSWER_AUDIO
       | typeof TrainingJobKind.TRANSCRIBE_ANSWER
       | typeof TrainingJobKind.EVALUATE_ANSWER,
     attemptId: string,
@@ -1995,7 +2096,11 @@ export class TrainingAttemptEngineService
     runAt: Date,
   ) {
     const action =
-      kind === TrainingJobKind.TRANSCRIBE_ANSWER ? 'transcribe' : 'evaluate';
+      kind === TrainingJobKind.ASSEMBLE_ANSWER_AUDIO
+        ? 'assemble'
+        : kind === TrainingJobKind.TRANSCRIBE_ANSWER
+          ? 'transcribe'
+          : 'evaluate';
     await tx.trainingJob.createMany({
       data: [
         {
@@ -2225,6 +2330,15 @@ export class TrainingAttemptEngineService
     const payload = readAttemptJobPayload(job.payloadJson);
     const failedAt = this.clock.now();
     const message = toSafeErrorMessage(error);
+    const audioError = error instanceof TrainingAudioError ? error : null;
+    const retryable = audioError?.retryable ?? false;
+    const shouldRetry =
+      requireOwnership && retryable && job.attempts < job.maxAttempts;
+    const errorCode = audioError?.code ?? 'ATTEMPT_JOB_FAILED';
+    const retryDelayMs = Math.max(
+      Math.min(30_000, 250 * 2 ** Math.max(0, job.attempts - 1)),
+      audioError?.retryAfterMs ?? 0,
+    );
 
     await this.runSerializable(async (tx) => {
       if (payload.attemptId) {
@@ -2243,17 +2357,28 @@ export class TrainingAttemptEngineService
               }),
         },
         data: {
-          status: TrainingJobStatus.DEAD,
-          finishedAt: failedAt,
+          status: shouldRetry
+            ? TrainingJobStatus.PENDING
+            : TrainingJobStatus.DEAD,
+          runAt: shouldRetry
+            ? new Date(failedAt.getTime() + retryDelayMs)
+            : failedAt,
+          finishedAt: shouldRetry ? null : failedAt,
           lockOwner: null,
           lockedAt: null,
           heartbeatAt: null,
-          lastErrorCode: 'ATTEMPT_JOB_FAILED',
+          lastErrorCode: errorCode,
           lastErrorMessage: message,
-          errorDetailsJson: { retryable: false },
+          errorDetailsJson: {
+            retryable,
+            retryAfterMs: audioError?.retryAfterMs ?? null,
+          },
         },
       });
       if (failedJob.count === 0) {
+        return;
+      }
+      if (shouldRetry) {
         return;
       }
       if (payload.answerId) {
@@ -2262,7 +2387,7 @@ export class TrainingAttemptEngineService
           data: {
             status: TrainingAnswerStatus.FAILED,
             processingFinishedAt: failedAt,
-            errorCode: 'FAKE_PROVIDER_FAILED',
+            errorCode,
             errorMessage: message,
           },
         });
@@ -2511,6 +2636,57 @@ function toSafeErrorMessage(error: unknown) {
   return (error instanceof Error ? error.message : 'Training attempt job failed')
     .replace(/[\r\n]+/gu, ' ')
     .slice(0, 2_000);
+}
+
+async function withProviderTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+) {
+  let timeout: NodeJS.Timeout | null = null;
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(
+      () =>
+        reject(
+          new TrainingAudioError('TRANSCRIPTION_TIMEOUT', true),
+        ),
+      timeoutMs,
+    );
+    timeout.unref();
+  });
+  try {
+    return await Promise.race([operation, timeoutPromise]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+function mergeTranscriptMetrics(
+  current: Prisma.JsonValue,
+  wordCount: number,
+  durationMilliseconds: number | null,
+): Prisma.InputJsonObject {
+  const base =
+    current && typeof current === 'object' && !Array.isArray(current)
+      ? (current as Prisma.JsonObject)
+      : {};
+  const durationMinutes =
+    durationMilliseconds && durationMilliseconds > 0
+      ? durationMilliseconds / 60_000
+      : 0;
+  return {
+    ...base,
+    transcript: {
+      wordCount,
+      wordsPerMinute:
+        durationMinutes > 0
+          ? Math.round((wordCount / durationMinutes) * 1_000) / 1_000
+          : null,
+    },
+  };
+}
+
+function countTranscriptWords(value: string) {
+  return value.match(/[\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)*/gu)?.length ?? 0;
 }
 
 export const TRAINING_ATTEMPT_SCORE_MAXIMUM = TRAINING_TOTAL_MAX_SCORE;

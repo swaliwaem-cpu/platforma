@@ -39,6 +39,31 @@
 - `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, and `MINIO_BUCKET` are set.
 - `FILE_IMAGE_MAX_SIZE_BYTES` and `FILE_PDF_MAX_SIZE_BYTES` match operational limits.
 - Bucket creation permissions are available at startup or the bucket is pre-created.
+- `TRAINING_AUDIO_BUCKET` is a separate private bucket without anonymous read,
+  CDN publication or permanent public URLs.
+- `TRAINING_AUDIO_RETENTION_DAYS=0` is preserved for approved indefinite
+  retention; original voice objects remain after merge and Telegram unlink.
+
+## Training audio worker
+
+- API and `training-worker` use the same image, and both `ffmpeg` and `ffprobe`
+  are available inside it.
+- Only API runs migrations; `training-worker` starts after the API healthcheck.
+- Audio size/duration/segment limits and download/ffmpeg/transcription
+  timeouts match the target environment.
+- `TRAINING_AUDIO_WORKER_HEARTBEAT_MS` is lower than
+  `TRAINING_AUDIO_WORKER_LEASE_MS`.
+- `TRAINING_AUDIO_TEMP_DIR` is absolute and backed by bounded private temp
+  storage; Compose uses a 512 MiB `tmpfs`.
+- `training-worker` receives SIGTERM as Node PID 1 and has a `45s` grace period,
+  exceeding the default audio drain timeout `30000ms`.
+- Controlled stop/restart leaves no audio job locked by the stopped worker and
+  creates no duplicate segment or merged `File`.
+- Protected playback requires JWT + `training:audio:read`, checks
+  ownership/administrative scope, returns no key/public URL and writes
+  `training.audio.read` to `AuditLog`.
+- Real Bot API voice download is an explicit staging smoke; Compose does not
+  register the Telegram webhook automatically.
 
 ## WordPress Import
 

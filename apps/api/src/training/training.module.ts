@@ -2,6 +2,9 @@ import { Module } from '@nestjs/common';
 
 import { AuthModule } from '../auth/auth.module';
 import { FilesModule } from '../files/files.module';
+import { TrainingAudioAccessService } from './audio/training-audio-access.service';
+import { TrainingAudioConfig } from './audio/training-audio.config';
+import { TrainingAudioController } from './audio/training-audio.controller';
 import { TrainingAdminController } from './training-admin.controller';
 import { TrainingAttemptEngineService } from './training-attempt-engine.service';
 import {
@@ -41,12 +44,15 @@ import { TrainingTelegramWorkerService } from './telegram/training-telegram-work
     TrainingAdminController,
     TrainingTelegramController,
     TrainingTelegramWebhookController,
+    TrainingAudioController,
   ],
   providers: [
     TrainingConfigService,
     TrainingContentService,
     TrainingDocumentsService,
     TrainingDocumentWorkerService,
+    TrainingAudioConfig,
+    TrainingAudioAccessService,
     TrainingAttemptEngineService,
     TrainingTelegramConfig,
     TrainingTelegramLinkService,

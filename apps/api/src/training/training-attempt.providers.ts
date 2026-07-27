@@ -2,6 +2,8 @@ import { randomInt } from 'node:crypto';
 
 import { Injectable } from '@nestjs/common';
 
+import { TrainingAudioError } from './audio/training-audio.error';
+
 export const TRAINING_ATTEMPT_CLOCK = Symbol('TRAINING_ATTEMPT_CLOCK');
 export const TRAINING_QUESTION_SELECTOR = Symbol('TRAINING_QUESTION_SELECTOR');
 export const TRAINING_TRANSCRIPTION_PROVIDER = Symbol(
@@ -33,11 +35,23 @@ export type TrainingTranscriptionSegmentInput = {
   id: string;
   segmentIndex: number;
   fakeTranscript: string;
+  fileId?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  checksum?: string;
+  durationMilliseconds?: number;
 };
 
 export type TrainingTranscriptionInput = {
   answerId: string;
   segments: TrainingTranscriptionSegmentInput[];
+  audio?: {
+    fileId: string;
+    mimeType: string;
+    sizeBytes: number;
+    checksum: string;
+    durationMilliseconds: number;
+  };
 };
 
 export type TrainingTranscriptionResult = {
@@ -46,6 +60,7 @@ export type TrainingTranscriptionResult = {
   provider: string;
   model: string;
   requestId: string;
+  wordCount: number;
 };
 
 export type TrainingTranscriptionProvider = {
@@ -139,6 +154,24 @@ export class DeterministicFakeTrainingTranscriptionProvider
   implements TrainingTranscriptionProvider
 {
   async transcribe(input: TrainingTranscriptionInput): Promise<TrainingTranscriptionResult> {
+    const fixture = input.segments
+      .map((segment) => segment.fakeTranscript)
+      .join('\n');
+    if (fixture.includes('[[fake-transcription:retryable]]')) {
+      throw new TrainingAudioError(
+        'TRANSCRIPTION_RETRYABLE_FAILURE',
+        true,
+      );
+    }
+    if (fixture.includes('[[fake-transcription:permanent]]')) {
+      throw new TrainingAudioError(
+        'TRANSCRIPTION_PERMANENT_FAILURE',
+        false,
+      );
+    }
+    if (fixture.includes('[[fake-transcription:timeout]]')) {
+      return new Promise<TrainingTranscriptionResult>(() => undefined);
+    }
     const transcript = [...input.segments]
       .sort((left, right) => left.segmentIndex - right.segmentIndex)
       .map((segment) => segment.fakeTranscript.trim())
@@ -151,8 +184,13 @@ export class DeterministicFakeTrainingTranscriptionProvider
       provider: 'fake',
       model: 'fake-transcription-v1',
       requestId: `fake-transcription:${input.answerId}:1`,
+      wordCount: countTranscriptWords(transcript),
     };
   }
+}
+
+function countTranscriptWords(value: string) {
+  return value.match(/[\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)*/gu)?.length ?? 0;
 }
 
 @Injectable()

@@ -787,6 +787,8 @@ model File {
   projectPresentationDocuments   ProjectPresentationDocument[]
   projectPresentationAssets      ProjectPresentationDocumentAsset[]
   trainingSourceDocuments        TrainingSourceDocument[]
+  trainingVoiceSegments          TrainingVoiceSegment[]             @relation("TrainingVoiceOriginalFile")
+  trainingAnswerAudio            TrainingAnswer[]                   @relation("TrainingAnswerAudioFile")
 
   @@unique([storage, bucket, key])
   @@index([uploadedById])
@@ -1339,23 +1341,27 @@ model TrainingAttemptQuestion {
 }
 
 model TrainingAnswer {
-  id                     String               @id @default(uuid()) @db.Uuid
-  attemptQuestionId      String               @unique @map("attempt_question_id") @db.Uuid
-  status                 TrainingAnswerStatus @default(COLLECTING)
-  combinedTranscript     String?              @map("combined_transcript")
-  normalizedLanguage     String?              @map("normalized_language") @db.VarChar(16)
-  acousticMetricsJson    Json?                @map("acoustic_metrics_json")
-  transcriptionProvider  String?              @map("transcription_provider") @db.VarChar(64)
-  transcriptionModel     String?              @map("transcription_model") @db.VarChar(120)
-  transcriptionRequestId String?              @map("transcription_request_id") @db.VarChar(160)
-  processingStartedAt    DateTime?            @map("processing_started_at")
-  processingFinishedAt   DateTime?            @map("processing_finished_at")
-  errorCode              String?              @map("error_code") @db.VarChar(120)
-  errorMessage           String?              @map("error_message") @db.VarChar(2000)
-  createdAt              DateTime             @default(now()) @map("created_at")
-  updatedAt              DateTime             @updatedAt @map("updated_at")
+  id                              String               @id @default(uuid()) @db.Uuid
+  attemptQuestionId               String               @unique @map("attempt_question_id") @db.Uuid
+  status                          TrainingAnswerStatus @default(COLLECTING)
+  mergedAudioFileId               String?              @unique @map("merged_audio_file_id") @db.Uuid
+  mergedAudioDurationMilliseconds Int?                 @map("merged_audio_duration_milliseconds")
+  audioPreparedAt                 DateTime?            @map("audio_prepared_at")
+  combinedTranscript              String?              @map("combined_transcript")
+  normalizedLanguage              String?              @map("normalized_language") @db.VarChar(16)
+  acousticMetricsJson             Json?                @map("acoustic_metrics_json")
+  transcriptionProvider           String?              @map("transcription_provider") @db.VarChar(64)
+  transcriptionModel              String?              @map("transcription_model") @db.VarChar(120)
+  transcriptionRequestId          String?              @map("transcription_request_id") @db.VarChar(160)
+  processingStartedAt             DateTime?            @map("processing_started_at")
+  processingFinishedAt            DateTime?            @map("processing_finished_at")
+  errorCode                       String?              @map("error_code") @db.VarChar(120)
+  errorMessage                    String?              @map("error_message") @db.VarChar(2000)
+  createdAt                       DateTime             @default(now()) @map("created_at")
+  updatedAt                       DateTime             @updatedAt @map("updated_at")
 
   attemptQuestion TrainingAttemptQuestion    @relation(fields: [attemptQuestionId], references: [id], onDelete: Cascade)
+  mergedAudioFile File?                      @relation("TrainingAnswerAudioFile", fields: [mergedAudioFileId], references: [id], onDelete: Restrict)
   voiceSegments   TrainingVoiceSegment[]
   evaluations     TrainingAnswerEvaluation[]
 
@@ -1364,24 +1370,29 @@ model TrainingAnswer {
 }
 
 model TrainingVoiceSegment {
-  id                    String   @id @default(uuid()) @db.Uuid
-  answerId              String   @map("answer_id") @db.Uuid
-  segmentIndex          Int      @map("segment_index")
-  telegramUpdateId      BigInt   @unique @map("telegram_update_id")
-  telegramMessageId     BigInt   @map("telegram_message_id")
-  telegramChatId        BigInt   @map("telegram_chat_id")
-  telegramFileId        String   @map("telegram_file_id") @db.VarChar(256)
-  fileUniqueId          String   @map("file_unique_id") @db.VarChar(256)
-  originalStorageBucket String?  @map("original_storage_bucket") @db.VarChar(255)
-  originalStorageKey    String?  @map("original_storage_key") @db.VarChar(1024)
-  mimeType              String?  @map("mime_type") @db.VarChar(120)
-  sizeBytes             BigInt?  @map("size_bytes")
-  durationSeconds       Int?     @map("duration_seconds")
-  receivedAt            DateTime @default(now()) @map("received_at")
-  createdAt             DateTime @default(now()) @map("created_at")
-  updatedAt             DateTime @updatedAt @map("updated_at")
+  id                    String    @id @default(uuid()) @db.Uuid
+  answerId              String    @map("answer_id") @db.Uuid
+  originalFileId        String?   @unique @map("original_file_id") @db.Uuid
+  segmentIndex          Int       @map("segment_index")
+  telegramUpdateId      BigInt    @unique @map("telegram_update_id")
+  telegramMessageId     BigInt    @map("telegram_message_id")
+  telegramChatId        BigInt    @map("telegram_chat_id")
+  telegramFileId        String    @map("telegram_file_id") @db.VarChar(256)
+  fileUniqueId          String    @map("file_unique_id") @db.VarChar(256)
+  originalStorageBucket String?   @map("original_storage_bucket") @db.VarChar(255)
+  originalStorageKey    String?   @map("original_storage_key") @db.VarChar(1024)
+  mimeType              String?   @map("mime_type") @db.VarChar(120)
+  sizeBytes             BigInt?   @map("size_bytes")
+  checksum              String?   @db.VarChar(64)
+  durationSeconds       Int?      @map("duration_seconds")
+  durationMilliseconds  Int?      @map("duration_milliseconds")
+  downloadedAt          DateTime? @map("downloaded_at")
+  receivedAt            DateTime  @default(now()) @map("received_at")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
 
-  answer TrainingAnswer @relation(fields: [answerId], references: [id], onDelete: Cascade)
+  answer       TrainingAnswer @relation(fields: [answerId], references: [id], onDelete: Cascade)
+  originalFile File?          @relation("TrainingVoiceOriginalFile", fields: [originalFileId], references: [id], onDelete: Restrict)
 
   @@unique([answerId, segmentIndex])
   @@unique([answerId, fileUniqueId], map: "training_voice_segments_answer_id_file_unique_id_key")

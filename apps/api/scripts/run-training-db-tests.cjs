@@ -79,6 +79,7 @@ async function main() {
       '--test',
       '--test-concurrency=1',
       'tests/training-attempt-db.integration.cjs',
+      'tests/training-audio-db.integration.cjs',
       'tests/training-telegram-db.integration.cjs',
     ]);
   } catch (error) {

@@ -1,6 +1,6 @@
 # Checklist реализации модуля обучения
 
-Дата актуализации: 2026-07-26.
+Дата актуализации: 2026-07-27.
 
 Источник этапов: `docs/training/prompts/00_audit.md` …
 `10_security_deploy_pilot.md`.
@@ -26,7 +26,7 @@
 | 4 | `04_content_ui_documents.md` | Выполнен |
 | 5 | `05_attempt_engine_fake.md` | Выполнен; findings независимого review исправлены |
 | 6 | `06_telegram.md` | Выполнен |
-| 7 | `07_audio_worker.md` | Не начат |
+| 7 | `07_audio_worker.md` | Выполнен |
 | 8 | `08_openai_scoring_review.md` | Не начат |
 | 9 | `09_results_ui_rating.md` | Не начат |
 | 10 | `10_security_deploy_pilot.md` | Не начат |
@@ -372,16 +372,53 @@ scoring, worker lease/claim business logic, frontend и этап 7 не изме
 
 ## Этап 7. Private audio и отдельный worker
 
-- [ ] Реализовать private bucket/multi-bucket storage без public URL.
-- [ ] Скачать и проверить Telegram voice server-side.
-- [ ] Сохранить каждый voice segment.
-- [ ] Добавить безопасный ffmpeg/ffprobe pipeline с limits/timeouts/cleanup.
-- [ ] Извлечь утверждённые объективные audio metrics.
-- [ ] Реализовать PostgreSQL claim/heartbeat/retry/stale recovery.
-- [ ] Добавить `training-worker.main.ts`, package script и Compose service.
-- [ ] Добавить protected audio streaming с `training:audio:read` и audit.
-- [ ] Оставить transcription fake.
-- [ ] Добавить restart/retry/duplicate/cleanup fixtures/tests.
+- [x] Реализовать private bucket/multi-bucket storage без public URL.
+- [x] Скачать и проверить Telegram voice server-side.
+- [x] Сохранить каждый voice segment.
+- [x] Добавить безопасный ffmpeg/ffprobe pipeline с limits/timeouts/cleanup.
+- [x] Извлечь утверждённые объективные audio metrics.
+- [x] Реализовать PostgreSQL claim/heartbeat/retry/stale recovery.
+- [x] Добавить `training-worker.main.ts`, package script и Compose service.
+- [x] Добавить protected audio streaming с `training:audio:read` и audit.
+- [x] Оставить transcription fake.
+- [x] Добавить restart/retry/duplicate/cleanup fixtures/tests.
+
+`TELEGRAM_DOWNLOAD_SEGMENT` создаётся при persisted voice segment, а
+`ASSEMBLE_ANSWER_AUDIO` — только после `finishAnswer`. Оба вида обрабатывает
+отдельный process через существующую таблицу `TrainingJob`: CAS claim,
+owner/lease/heartbeat, bounded retry, stale recovery, `DEAD`, graceful shutdown
+и deterministic idempotency keys сохранены. Вторая queue/table/library не
+добавлена.
+
+Original и normalized audio сохраняются в `TRAINING_AUDIO_BUCKET` как private
+`File` с `url = null`, фактическими MIME/size/SHA-256 и internal UUID-only key.
+Retention зафиксирован как бессрочный. Backend playback требует JWT,
+`training:audio:read`, ownership либо administrative results scope и создаёт
+`training.audio.read` audit.
+
+Telegram provider выполняет `getFile` и bounded body download через
+`AbortController`, классифицирует 429/5xx/4xx/network/timeout, проверяет
+Content-Type/Length, metadata/actual byte count и Ogg/Opus magic. Token и
+download URL не попадают в ошибки.
+
+ffmpeg pipeline использует только `spawn`, `shell: false`, generated filenames,
+array args, one-thread limits, bounded captured output, timeout, unique mode
+`0700` temp directory и unconditional cleanup. Сохраняются duration, segment
+durations/count/bytes, technical intervals, надёжные silence metrics и WPM
+только из fake transcript word count.
+
+Transcription остаётся deterministic fake с success/retryable/permanent/timeout
+fixtures и получает internal audio metadata. OpenAI SDK/API key/network calls
+не добавлены; scoring и Telegram business dialogue не менялись.
+
+Проверки этапа 7:
+
+- новые audio unit/contract tests — 25/25 passed;
+- полный API suite — 356/356 unit и 65/65 PostgreSQL integration passed;
+- `pnpm test` — 794/794 passed во всём monorepo;
+- `pnpm build`, development/production Compose config, Prisma validation,
+  Docker image build и проверки `ffmpeg`/`ffprobe`/worker entrypoint — passed;
+  подробности см. в `docs/CODEX_LOG.md`.
 
 ## Этап 8. OpenAI providers, scoring и review
 
@@ -426,7 +463,8 @@ scoring, worker lease/claim business logic, frontend и этап 7 не изме
 
 ## Следующий этап
 
-Точный следующий этап: `docs/training/prompts/07_audio_worker.md`.
+Точный следующий этап: `docs/training/prompts/08_openai_scoring_review.md`.
+Этап 8 не начинался.
 
 Он не начат и не должен выполняться автоматически. Перед ним нужно:
 
