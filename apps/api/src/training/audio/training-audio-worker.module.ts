@@ -45,17 +45,26 @@ import {
 @Module({
   imports: [PrismaModule, FilesModule],
   providers: [
-    TrainingAudioConfig,
     TrainingConfigService,
     TrainingPolicyService,
     TrainingWorkerHeartbeatService,
-    TrainingTelegramConfig,
+    {
+      provide: TrainingAudioConfig,
+      useFactory: () => new TrainingAudioConfig(process.env),
+    },
+    {
+      provide: TrainingTelegramConfig,
+      useFactory: () => new TrainingTelegramConfig(process.env),
+    },
     FakeTrainingTelegramAudioProvider,
     NodeTrainingAudioProcessRunner,
     TrainingFfmpegService,
     TrainingAudioWorkerService,
     TrainingAttemptEngineService,
-    TrainingOpenAiConfig,
+    {
+      provide: TrainingOpenAiConfig,
+      useFactory: () => new TrainingOpenAiConfig(process.env),
+    },
     TrainingOpenAiHttpClient,
     OpenAiTrainingTranscriptionProvider,
     OpenAiTrainingEvaluationProvider,

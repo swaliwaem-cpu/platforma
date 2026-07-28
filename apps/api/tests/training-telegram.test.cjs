@@ -323,7 +323,7 @@ test('Docker and Nest bootstrap preserve the complete SIGTERM path', () => {
   assert.match(developmentCompose, /^\s*stop_grace_period:\s*30s\s*$/mu);
   assert.match(
     apiDockerfile,
-    /CMD \["sh", "-c", "pnpm --dir apps\/api exec prisma migrate deploy && exec node apps\/api\/dist\/main\.js"\]/u,
+    /CMD \["sh", "-c", "node apps\/api\/dist\/training\/training-deployment-preflight\.js && pnpm --dir apps\/api exec prisma migrate deploy && exec node apps\/api\/dist\/main\.js"\]/u,
   );
   assert.doesNotMatch(
     apiDockerfile,

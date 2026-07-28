@@ -403,6 +403,174 @@ test('PostgreSQL recovery: two workers claim one READY job without duplicates', 
   );
 });
 
+test('PostgreSQL runtime disable after attempt-job claim prevents providers and re-enable resumes processing', async () => {
+  const fixture = await createFixture();
+  const clock = createClock();
+  const stoppedService = createService(clock);
+  const attempt = await startAttempt(stoppedService, fixture);
+  await appendVoice(
+    stoppedService,
+    clock,
+    attempt,
+    20_651n,
+    'runtime disable recovery',
+  );
+  stoppedService.onModuleDestroy();
+  await stoppedService.finishAnswer({
+    attemptId: attempt.id,
+    attemptQuestionId: attempt.attemptQuestions[0].id,
+  });
+
+  let enabled = true;
+  let transcriptionCalls = 0;
+  let evaluationCalls = 0;
+  const trainingConfig = {
+    isEnabled: () => enabled,
+  };
+  const providers = {
+    transcriptionProvider: {
+      async transcribe(input) {
+        transcriptionCalls += 1;
+        return fakeTranscription.transcribe(input);
+      },
+    },
+    evaluationProvider: {
+      async evaluate(input) {
+        evaluationCalls += 1;
+        return fakeEvaluation.evaluate(input);
+      },
+    },
+  };
+  const pausedPrisma = proxyPrismaTrainingJob({
+    async updateMany(delegate, args) {
+      const result = await delegate.updateMany(args);
+      if (
+        result.count === 1 &&
+        args.data?.status === TrainingJobStatus.RUNNING &&
+        args.data?.lockOwner
+      ) {
+        enabled = false;
+      }
+      return result;
+    },
+  });
+  await createService(clock, {
+    ...providers,
+    prismaClient: pausedPrisma,
+    trainingConfig,
+  }).recoverPendingProcessing();
+
+  let job = await prisma.trainingJob.findFirstOrThrow({
+    where: {
+      kind: TrainingJobKind.TRANSCRIBE_ANSWER,
+      idempotencyKey: { startsWith: `attempt:${attempt.id}:answer:` },
+    },
+  });
+  assert.equal(transcriptionCalls, 0);
+  assert.equal(evaluationCalls, 0);
+  assert.equal(job.status, TrainingJobStatus.PENDING);
+  assert.equal(job.attempts, 0);
+  assert.equal(job.lockOwner, null);
+  assert.equal(job.lastErrorCode, 'TRAINING_DISABLED_AFTER_CLAIM');
+
+  enabled = true;
+  await createService(clock, {
+    ...providers,
+    trainingConfig,
+  }).recoverPendingProcessing();
+  job = await prisma.trainingJob.findUnique({ where: { id: job.id } });
+  assert.equal(job.status, TrainingJobStatus.SUCCEEDED);
+  assert.equal(job.attempts, 1);
+  assert.equal(transcriptionCalls, 1);
+  assert.equal(evaluationCalls, 1);
+  assert.equal(
+    (
+      await prisma.trainingAttemptQuestion.findUnique({
+        where: { id: attempt.attemptQuestions[0].id },
+      })
+    ).status,
+    TrainingAttemptQuestionStatus.SCORED,
+  );
+});
+
+test('PostgreSQL runtime disable after finalization lock prevents mutation and restart resumes it', async () => {
+  const fixture = await createFixture();
+  const clock = createClock();
+  let preparingService;
+  let evaluations = 0;
+  preparingService = createService(clock, {
+    evaluationProvider: {
+      async evaluate(input) {
+        evaluations += 1;
+        const result = await fakeEvaluation.evaluate(input);
+        if (evaluations === 4) preparingService.onModuleDestroy();
+        return result;
+      },
+    },
+  });
+  let attempt = await startAttempt(preparingService, fixture);
+  attempt = await completeAttempt(
+    preparingService,
+    clock,
+    attempt,
+    20_652,
+  );
+  assert.equal(attempt.status, TrainingAttemptStatus.FINALIZING);
+  const finalizationJob = await prisma.trainingJob.findUniqueOrThrow({
+    where: { idempotencyKey: `attempt:${attempt.id}:finalize` },
+  });
+
+  let enabled = true;
+  const trainingConfig = {
+    isEnabled: () => enabled,
+  };
+  const pausedPrisma = proxyPrismaFinalizationLockGate(
+    finalizationJob.id,
+    () => {
+      enabled = false;
+    },
+  );
+  await createService(clock, {
+    prismaClient: pausedPrisma,
+    trainingConfig,
+  }).recoverPendingProcessing();
+
+  let [persistedAttempt, persistedJob] = await Promise.all([
+    prisma.trainingAttempt.findUniqueOrThrow({
+      where: { id: attempt.id },
+    }),
+    prisma.trainingJob.findUniqueOrThrow({
+      where: { id: finalizationJob.id },
+    }),
+  ]);
+  assert.equal(persistedAttempt.status, TrainingAttemptStatus.FINALIZING);
+  assert.equal(persistedAttempt.finalScore, null);
+  assert.equal(persistedJob.status, TrainingJobStatus.PENDING);
+  assert.equal(persistedJob.attempts, 0);
+  assert.equal(persistedJob.lockOwner, null);
+  assert.equal(
+    persistedJob.lastErrorCode,
+    'TRAINING_DISABLED_AFTER_CLAIM',
+  );
+
+  enabled = true;
+  await createService(clock, {
+    trainingConfig,
+  }).recoverPendingProcessing();
+  [persistedAttempt, persistedJob] = await Promise.all([
+    prisma.trainingAttempt.findUniqueOrThrow({
+      where: { id: attempt.id },
+    }),
+    prisma.trainingJob.findUniqueOrThrow({
+      where: { id: finalizationJob.id },
+    }),
+  ]);
+  assert.equal(persistedAttempt.status, TrainingAttemptStatus.COMPLETED);
+  assert.equal(Number(persistedAttempt.finalScore), 100);
+  assert.equal(persistedJob.status, TrainingJobStatus.SUCCEEDED);
+  assert.equal(persistedJob.attempts, 1);
+});
+
 test('PostgreSQL restart: READY, TRANSCRIBING, EVALUATING and FINALIZING all resume', async (t) => {
   await t.test('READY', async () => {
     const fixture = await createFixture();
@@ -1602,14 +1770,90 @@ function createClock() {
 
 function createService(clock, options = {}) {
   return new TrainingAttemptEngineService(
-    prisma,
+    options.prismaClient ?? prisma,
     clock,
     options.selector ?? new DeterministicQuestionSelector(),
     options.transcriptionProvider ?? fakeTranscription,
     options.evaluationProvider ?? fakeEvaluation,
-    undefined,
+    options.audioConfig,
     options.openAiConfig,
+    options.jobProcessorEnabled,
+    options.trainingConfig,
   );
+}
+
+function proxyPrismaTrainingJob(overrides) {
+  const trainingJob = new Proxy(prisma.trainingJob, {
+    get(delegate, property) {
+      if (property in overrides) {
+        return (...args) => overrides[property](delegate, ...args);
+      }
+      const value = Reflect.get(delegate, property, delegate);
+      return typeof value === 'function' ? value.bind(delegate) : value;
+    },
+  });
+  return new Proxy(prisma, {
+    get(client, property) {
+      if (property === 'trainingJob') return trainingJob;
+      const value = Reflect.get(client, property, client);
+      return typeof value === 'function' ? value.bind(client) : value;
+    },
+  });
+}
+
+function proxyPrismaFinalizationLockGate(finalizationJobId, onLock) {
+  let armed = false;
+  const trainingJob = new Proxy(prisma.trainingJob, {
+    get(delegate, property) {
+      if (property === 'updateMany') {
+        return async (args) => {
+          const result = await delegate.updateMany(args);
+          if (
+            result.count === 1 &&
+            args.where?.id === finalizationJobId &&
+            args.data?.status === TrainingJobStatus.RUNNING &&
+            args.data?.lockOwner
+          ) {
+            armed = true;
+          }
+          return result;
+        };
+      }
+      const value = Reflect.get(delegate, property, delegate);
+      return typeof value === 'function' ? value.bind(delegate) : value;
+    },
+  });
+  const wrapTransaction = (tx) =>
+    new Proxy(tx, {
+      get(delegate, property) {
+        if (property === '$queryRaw') {
+          return async (...args) => {
+            const result = await delegate.$queryRaw(...args);
+            if (armed) {
+              armed = false;
+              onLock();
+            }
+            return result;
+          };
+        }
+        const value = Reflect.get(delegate, property, delegate);
+        return typeof value === 'function' ? value.bind(delegate) : value;
+      },
+    });
+  return new Proxy(prisma, {
+    get(client, property) {
+      if (property === 'trainingJob') return trainingJob;
+      if (property === '$transaction') {
+        return (operation, options) =>
+          client.$transaction(
+            (tx) => operation(wrapTransaction(tx)),
+            options,
+          );
+      }
+      const value = Reflect.get(client, property, client);
+      return typeof value === 'function' ? value.bind(client) : value;
+    },
+  });
 }
 
 async function startAttempt(service, fixture) {

@@ -255,19 +255,45 @@ server-side. Реальные OpenAI project data controls до staging/pilot н
 При `TRAINING_MODULE_ENABLED=false` ingress возвращает controlled
 `TRAINING_DISABLED`, webhook не выполняет domain transitions, workers не
 claim-ят jobs, recovery не начинает новую работу, данные и pending jobs
-сохраняются. После re-enable recovery продолжает persisted state.
+сохраняются. Worker повторно проверяет runtime flag после каждого await между
+поиском кандидата и CAS claim. Если disable случился после claim, job
+атомарно возвращается в `PENDING` без увеличения attempt count; новые
+Telegram/provider/storage вызовы не начинаются. Уже начатый внешний вызов
+может безопасно завершиться и сохранить результат. После re-enable recovery
+продолжает persisted state.
 
 Training logs используют Nest Logger и whitelist полей: correlation/internal
 IDs, provider/model/request ID, latency, retry, status и safe error code.
 Raw error, transcript, audio, prompt/provider payload, link token, secrets,
-email/name и signed storage headers не форматируются.
+email/name и signed storage headers не форматируются. Один persisted
+correlation ID сопровождает Telegram update/outbox, audio job, provider call,
+evaluation и attempt finalization; retry не создаёт новую логическую
+корреляцию.
 
 Публичный `GET /health` возвращает только `status`, `database` и
 `training: disabled|ready|degraded`. `GET /training/admin/operations/summary`
 требует `training:operations:read`; manual retry требует
-`training:operations:manage`, reason `3..500` и пишет audit. Summary содержит
-только counts/ages/status/error codes/heartbeat/modes/privacy verdict и не
-содержит payload, transcript, audio, bucket name или credential state.
+`training:operations:manage`, reason `3..500`, обязательный
+`Idempotency-Key` и пишет одну audit-запись на логическую операцию. Повтор с
+тем же ключом и payload возвращает сохранённый результат, а другой payload
+отклоняется. Summary содержит только агрегированные counts/ages/status/error
+codes/heartbeat/modes/privacy verdict и не содержит payload, transcript,
+audio, bucket name, object key, user identifiers или credential state.
+
+## Staging isolation
+
+`DEPLOYMENT_ENV=staging` требует `NODE_ENV=production` и синхронный
+fail-closed preflight до migrations, Nest bootstrap и storage probes.
+Preflight сравнивает canonical DB identity с exact staging allowlist и known
+production deny-list, требует отдельное имя staging DB, попарно разные
+general/document/audio buckets и отклоняет их совпадение с known production
+buckets. Staging public URLs и Telegram bot username также проверяются по
+allow/deny identifiers. Placeholder/default/production-like значения
+отклоняются без вывода DB credentials, tokens или secrets.
+
+Known production identifiers содержат только host/port/database name, bucket
+name, public host и bot username; их задаёт runtime deployment store.
+Production passwords, tokens и keys в Git не сохраняются.
 
 ## Автоматические доказательства
 
@@ -293,3 +319,16 @@ policy, отсутствие sentinel после signed cleanup, object metadata
 process crash после upload, restart reconciliation при смене текущего bucket
 A → B, terminal cleanup из A без удаления одноимённого объекта в B, duplicate
 retry, multi-segment storage, OGG/Opus → WAV и process tree timeout.
+
+Полный connected gate:
+
+```bash
+pnpm test:training:e2e
+```
+
+Он создаёт чистую временную PostgreSQL, применяет все migrations, поднимает
+isolated MinIO и Docker worker с реальным ffmpeg, использует только fake
+Telegram/transcription/evaluation providers и проходит единую persisted
+цепочку policy → link → attempt → audio → review → results/ranking/CSV →
+API/UI. В конце runner удаляет контейнеры, сеть, временную БД и локальные
+артефакты.

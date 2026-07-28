@@ -84,7 +84,12 @@ test('stage ten policy and operations routes keep explicit permission checks', (
     operationsSource,
     /hasPermission\('training:operations:manage'\)/,
   );
-  assert.match(operationsSource, /retryTrainingJob\(accessToken, retryJobId, retryReason\)/);
+  assert.match(
+    operationsSource,
+    /retryTrainingJob\(\s*accessToken,\s*retryJobId,\s*normalizedReason,\s*idempotencyKey,\s*\)/,
+  );
+  assert.match(operationsSource, /createOperationsRetryIdempotencyKey\(\)/);
+  assert.doesNotMatch(operationsSource, /recentPolicyAcceptances|item\.user/);
   assert.match(
     appSource,
     /item\.section !== 'training' \|\| isTrainingEnabled === true/,

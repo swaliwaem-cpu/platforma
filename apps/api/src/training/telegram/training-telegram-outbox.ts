@@ -4,6 +4,7 @@ import {
   TrainingJobStatus,
   UserStatus,
 } from '@prisma/client';
+import { readTrainingCorrelationId } from '../training-safe-log';
 
 export const TRAINING_TELEGRAM_OUTBOX_OPERATION = 'DOMAIN_EVENT';
 
@@ -20,6 +21,7 @@ type TrainingTelegramTarget = {
   userId: string;
   accountId: string;
   chatId: string;
+  correlationId?: string;
 };
 
 export type TrainingTelegramAccountLinkedEvent = TrainingTelegramTarget & {
@@ -97,6 +99,7 @@ export async function enqueueAttemptTelegramOutboxEvent(
     attemptQuestionId?: string;
     idempotencyKey: string;
     runAt: Date;
+    correlationId?: string | null;
   },
 ) {
   const attempt = await tx.trainingAttempt.findUnique({
@@ -129,6 +132,9 @@ export async function enqueueAttemptTelegramOutboxEvent(
     userId: attempt.userId,
     accountId: account.id,
     chatId: account.chatId.toString(),
+    ...(readTrainingCorrelationId(input.correlationId)
+      ? { correlationId: input.correlationId! }
+      : {}),
   };
   let event: TrainingTelegramOutboxEvent;
   if (input.eventType === 'ATTEMPT_RESULT') {
@@ -224,15 +230,22 @@ export function readTrainingTelegramOutboxEvent(
 }
 
 function readTarget(value: Prisma.JsonObject): TrainingTelegramTarget | null {
-  return typeof value.eventId === 'string' &&
+  if (
+    typeof value.eventId === 'string' &&
     typeof value.userId === 'string' &&
     typeof value.accountId === 'string' &&
     typeof value.chatId === 'string'
-    ? {
-        eventId: value.eventId,
-        userId: value.userId,
-        accountId: value.accountId,
-        chatId: value.chatId,
-      }
-    : null;
+  ) {
+    const correlationId = readTrainingCorrelationId(
+      value.correlationId,
+    );
+    return {
+      eventId: value.eventId,
+      userId: value.userId,
+      accountId: value.accountId,
+      chatId: value.chatId,
+      ...(correlationId ? { correlationId } : {}),
+    };
+  }
+  return null;
 }

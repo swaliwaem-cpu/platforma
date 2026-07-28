@@ -369,6 +369,7 @@ model User {
   trainingResultReviews         TrainingResultReview[]         @relation("TrainingResultReviewer")
   trainingPolicyVersions        TrainingPolicyVersion[]         @relation("TrainingPolicyVersionCreator")
   trainingPolicyAcceptances     TrainingPolicyAcceptance[]
+  trainingOperationsJobRetries  TrainingOperationsJobRetry[]    @relation("TrainingOperationsRetryActor")
 
   @@index([roleId])
   @@index([profilePhotoFileId])
@@ -1725,10 +1726,30 @@ model TrainingJob {
   createdAt        DateTime          @default(now()) @map("created_at")
   updatedAt        DateTime          @updatedAt @map("updated_at")
 
+  operationsRetries TrainingOperationsJobRetry[]
+
   @@index([status, runAt, createdAt])
   @@index([lockedAt])
   @@index([heartbeatAt])
   @@map("training_jobs")
+}
+
+model TrainingOperationsJobRetry {
+  id                 String            @id @default(uuid()) @db.Uuid
+  jobId              String            @map("job_id") @db.Uuid
+  actorUserId        String            @map("actor_user_id") @db.Uuid
+  idempotencyKey     String            @map("idempotency_key") @db.VarChar(128)
+  requestPayloadHash String            @map("request_payload_hash") @db.Char(64)
+  previousStatus     TrainingJobStatus @map("previous_status")
+  createdAt          DateTime          @default(now()) @map("created_at")
+
+  job   TrainingJob @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  actor User        @relation("TrainingOperationsRetryActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@unique([jobId, actorUserId, idempotencyKey], map: "uq_training_ops_retry_key")
+  @@index([jobId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@map("training_operations_job_retries")
 }
 
 model TrainingWorkerHeartbeat {

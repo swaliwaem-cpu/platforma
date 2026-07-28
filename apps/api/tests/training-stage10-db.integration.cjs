@@ -1,7 +1,9 @@
 require('reflect-metadata');
 
 const assert = require('node:assert/strict');
+const { execFileSync } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
+const { resolve } = require('node:path');
 const test = require('node:test');
 const { Module } = require('@nestjs/common');
 const { NestFactory } = require('@nestjs/core');
@@ -69,6 +71,20 @@ if (!process.env.DATABASE_URL) {
 }
 
 const prisma = new PrismaClient();
+const SEEDED_HTTP_ADMIN_EMAIL =
+  `training-stage10-seeded-admin-${randomUUID()}@example.test`;
+const SEEDED_HTTP_ADMIN_PASSWORD = 'TrainingStage10!1';
+
+execFileSync(process.execPath, ['dist/prisma/seed.js'], {
+  cwd: resolve(__dirname, '..'),
+  env: {
+    ...process.env,
+    ADMIN_EMAIL: SEEDED_HTTP_ADMIN_EMAIL,
+    ADMIN_NAME: 'Seeded Stage 10 Admin',
+    ADMIN_PASSWORD: SEEDED_HTTP_ADMIN_PASSWORD,
+  },
+  stdio: 'pipe',
+});
 
 test.after(async () => {
   await prisma.$disconnect();
@@ -115,6 +131,14 @@ test('PostgreSQL stage 10 policy gates attempts, versions, revocation and audit 
     }),
     1,
   );
+  await prisma.trainingPolicyAcceptance.updateMany({
+    where: {
+      userId: fixture.userId,
+      policyVersionId: fixture.firstPolicyId,
+      revokedAt: null,
+    },
+    data: { acceptedAt: new Date('2026-07-28T09:59:00.000Z') },
+  });
 
   const started = await engine.confirmStart({
     userId: fixture.userId,
@@ -201,7 +225,7 @@ test('PostgreSQL stage 10 policy gates attempts, versions, revocation and audit 
       error?.response?.code === 'TRAINING_POLICY_ACCEPTANCE_REQUIRED',
   );
 
-  await policyService.accept(
+  const secondAcceptance = await policyService.accept(
     fixture.userId,
     TrainingPolicyAcceptanceSource.PLATFORM,
   );
@@ -211,7 +235,11 @@ test('PostgreSQL stage 10 policy gates attempts, versions, revocation and audit 
       policyVersionId: secondPolicy.id,
       revokedAt: null,
     },
-    data: { revokedAt: new Date('2026-07-28T11:00:00.000Z') },
+    data: {
+      revokedAt: new Date(
+        new Date(secondAcceptance.acceptance.acceptedAt).getTime() + 1,
+      ),
+    },
   });
   await assert.rejects(
     engine.confirmStart({
@@ -318,9 +346,24 @@ test('real stage 10 HTTP policy and operations endpoints enforce 401/403/404/200
     assert.equal(typeof address, 'object');
     const baseUrl = `http://127.0.0.1:${address.port}`;
     const summaryUrl = `${baseUrl}/training/admin/operations/summary`;
+    const retryUrl = (jobId) =>
+      `${baseUrl}/training/admin/operations/jobs/${jobId}/retry`;
 
     assert.equal((await fetch(`${baseUrl}/training/policy`)).status, 401);
     assert.equal((await fetch(summaryUrl)).status, 401);
+    assert.equal(
+      (
+        await fetch(retryUrl(fixture.jobIds.trainingAdmin), {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'idempotency-key': 'anonymous-retry-key',
+          },
+          body: JSON.stringify({ reason: 'Anonymous retry' }),
+        })
+      ).status,
+      401,
+    );
 
     const noPermissionToken = await login(
       baseUrl,
@@ -344,6 +387,20 @@ test('real stage 10 HTTP policy and operations endpoints enforce 401/403/404/200
     );
 
     const employeeToken = await login(baseUrl, fixture.users.employee);
+    assert.equal(
+      (
+        await fetch(retryUrl(fixture.jobIds.trainingAdmin), {
+          method: 'POST',
+          headers: {
+            ...authorization(employeeToken),
+            'content-type': 'application/json',
+            'idempotency-key': 'employee-retry-key',
+          },
+          body: JSON.stringify({ reason: 'Employee retry' }),
+        })
+      ).status,
+      403,
+    );
     const policyResponse = await fetch(`${baseUrl}/training/policy`, {
       headers: authorization(employeeToken),
     });
@@ -359,12 +416,12 @@ test('real stage 10 HTTP policy and operations endpoints enforce 401/403/404/200
     assert.equal(acceptanceResponse.status, 201);
     assert.equal((await acceptanceResponse.json()).accepted, true);
 
-    const operationsToken = await login(
+    const readOnlyToken = await login(
       baseUrl,
-      fixture.users.operations,
+      fixture.users.readOnly,
     );
     const summaryResponse = await fetch(summaryUrl, {
-      headers: authorization(operationsToken),
+      headers: authorization(readOnlyToken),
     });
     assert.equal(summaryResponse.status, 200);
     const summaryText = await summaryResponse.text();
@@ -372,60 +429,212 @@ test('real stage 10 HTTP policy and operations endpoints enforce 401/403/404/200
     assert.equal(summary.training.status, 'enabled');
     assert.equal(summary.audioPrivacy.status, 'VERIFIED');
     assert.equal(typeof summary.activeAttempts, 'number');
+    assert.equal(typeof summary.policyAcceptances.activeCount, 'number');
     assert.equal('payloadJson' in summary, false);
     for (const forbidden of [
       'training-stage10-private-payload',
       'transcript',
       'bucket',
       'secret',
+      fixture.users.employee.id,
+      fixture.users.employee.email,
+      'employee',
     ]) {
       assert.equal(summaryText.includes(forbidden), false, forbidden);
     }
+    assert.equal(
+      (
+        await fetch(retryUrl(fixture.jobIds.trainingAdmin), {
+          method: 'POST',
+          headers: {
+            ...authorization(readOnlyToken),
+            'content-type': 'application/json',
+            'idempotency-key': 'read-only-retry-key',
+          },
+          body: JSON.stringify({ reason: 'Read only retry' }),
+        })
+      ).status,
+      403,
+    );
+
+    const trainingAdminToken = await login(
+      baseUrl,
+      fixture.users.trainingAdmin,
+    );
+    const adminToken = await login(baseUrl, fixture.users.admin);
+    assert.equal(
+      (
+        await fetch(summaryUrl, {
+          headers: authorization(trainingAdminToken),
+        })
+      ).status,
+      200,
+    );
+    assert.equal(
+      (
+        await fetch(summaryUrl, {
+          headers: authorization(adminToken),
+        })
+      ).status,
+      200,
+    );
 
     const missingRetry = await fetch(
-      `${baseUrl}/training/admin/operations/jobs/${randomUUID()}/retry`,
+      retryUrl(randomUUID()),
       {
         method: 'POST',
         headers: {
-          ...authorization(operationsToken),
+          ...authorization(adminToken),
           'content-type': 'application/json',
+          'idempotency-key': 'missing-job-retry-key',
         },
         body: JSON.stringify({ reason: 'Checked by operator' }),
       },
     );
     assert.equal(missingRetry.status, 404);
 
-    const retryResponse = await fetch(
-      `${baseUrl}/training/admin/operations/jobs/${fixture.jobId}/retry`,
+    const missingKeyResponse = await fetch(
+      retryUrl(fixture.jobIds.missingKey),
       {
         method: 'POST',
         headers: {
-          ...authorization(operationsToken),
+          ...authorization(adminToken),
           'content-type': 'application/json',
+        },
+        body: JSON.stringify({ reason: 'Missing key' }),
+      },
+    );
+    assert.equal(missingKeyResponse.status, 400);
+
+    const retryRequest = () =>
+      fetch(retryUrl(fixture.jobIds.trainingAdmin), {
+        method: 'POST',
+        headers: {
+          ...authorization(trainingAdminToken),
+          'content-type': 'application/json',
+          'idempotency-key': 'training-admin-retry-key',
+        },
+        body: JSON.stringify({ reason: 'Checked by operator' }),
+      });
+    const concurrentRetries = await Promise.all([
+      retryRequest(),
+      retryRequest(),
+    ]);
+    assert.deepEqual(
+      concurrentRetries.map((response) => response.status),
+      [200, 200],
+    );
+    for (const response of concurrentRetries) {
+      assert.equal((await response.json()).job.status, 'PENDING');
+    }
+
+    const conflictingRetry = await fetch(
+      retryUrl(fixture.jobIds.trainingAdmin),
+      {
+        method: 'POST',
+        headers: {
+          ...authorization(trainingAdminToken),
+          'content-type': 'application/json',
+          'idempotency-key': 'training-admin-retry-key',
+        },
+        body: JSON.stringify({ reason: 'Different retry reason' }),
+      },
+    );
+    assert.equal(conflictingRetry.status, 409);
+    const newKeyPendingRetry = await fetch(
+      retryUrl(fixture.jobIds.trainingAdmin),
+      {
+        method: 'POST',
+        headers: {
+          ...authorization(trainingAdminToken),
+          'content-type': 'application/json',
+          'idempotency-key': 'new-key-while-pending',
         },
         body: JSON.stringify({ reason: 'Checked by operator' }),
       },
     );
-    assert.equal(retryResponse.status, 201);
-    assert.equal((await retryResponse.json()).job.status, 'PENDING');
+    assert.equal(newKeyPendingRetry.status, 409);
+
+    const adminRetry = await fetch(retryUrl(fixture.jobIds.admin), {
+      method: 'POST',
+      headers: {
+        ...authorization(adminToken),
+        'content-type': 'application/json',
+        'idempotency-key': 'seeded-admin-retry-key',
+      },
+      body: JSON.stringify({ reason: 'Admin checked this job' }),
+    });
+    assert.equal(adminRetry.status, 200);
+
     const retriedJob = await httpPrisma.trainingJob.findUniqueOrThrow({
-      where: { id: fixture.jobId },
+      where: { id: fixture.jobIds.trainingAdmin },
     });
     assert.equal(retriedJob.status, TrainingJobStatus.PENDING);
     assert.equal(retriedJob.payloadJson.marker, 'training-stage10-private-payload');
     assert.equal(
       await httpPrisma.auditLog.count({
         where: {
-          actorUserId: fixture.users.operations.id,
+          actorUserId: fixture.users.trainingAdmin.id,
           action: 'training.operations.job.retry',
-          entityId: fixture.jobId,
+          entityId: fixture.jobIds.trainingAdmin,
         },
       }),
       1,
     );
-    await httpPrisma.trainingJob.delete({
-      where: { id: fixture.jobId },
-    });
+    assert.equal(
+      await httpPrisma.trainingOperationsJobRetry.count({
+        where: {
+          jobId: fixture.jobIds.trainingAdmin,
+          actorUserId: fixture.users.trainingAdmin.id,
+        },
+      }),
+      1,
+    );
+    assert.equal(
+      await httpPrisma.auditLog.count({
+        where: {
+          actorUserId: fixture.users.admin.id,
+          action: 'training.operations.job.retry',
+          entityId: fixture.jobIds.admin,
+        },
+      }),
+      1,
+    );
+
+    await assert.rejects(
+      httpPrisma.trainingOperationsJobRetry.create({
+        data: {
+          jobId: fixture.jobIds.trainingAdmin,
+          actorUserId: fixture.users.trainingAdmin.id,
+          idempotencyKey: 'training-admin-retry-key',
+          requestPayloadHash: 'a'.repeat(64),
+          previousStatus: TrainingJobStatus.FAILED,
+        },
+      }),
+    );
+    await assert.rejects(
+      httpPrisma.trainingOperationsJobRetry.create({
+        data: {
+          jobId: fixture.jobIds.missingKey,
+          actorUserId: fixture.users.admin.id,
+          idempotencyKey: 'invalid-hash-retry-key',
+          requestPayloadHash: 'not-a-sha256',
+          previousStatus: TrainingJobStatus.FAILED,
+        },
+      }),
+    );
+    const constraints = await httpPrisma.$queryRaw`
+      SELECT conname
+      FROM pg_constraint
+      WHERE conrelid = 'training_operations_job_retries'::regclass
+    `;
+    assert.ok(
+      constraints.some(
+        (row) =>
+          row.conname ===
+          'training_operations_job_retries_payload_hash_sha256',
+      ),
+    );
   } finally {
     await app.close();
     restoreEnvironment('JWT_ACCESS_SECRET', originalAccessSecret);
@@ -453,45 +662,44 @@ function createEngine(policyService) {
 
 async function createHttpFixture(httpPrisma) {
   const unique = `${Date.now()}-${randomUUID().slice(0, 8)}`;
-  const password = 'TrainingStage10!1';
+  const password = SEEDED_HTTP_ADMIN_PASSWORD;
   const passwordHash = await argon2.hash(password, {
     type: argon2.argon2id,
   });
-  const permissionKeys = [
-    'training:projects:read',
-    'training:take',
-    'training:operations:read',
-    'training:operations:manage',
-  ];
-  const permissions = {};
-  for (const key of permissionKeys) {
-    permissions[key] = await httpPrisma.permission.upsert({
-      where: { key },
-      update: {},
-      create: { key, description: key },
-    });
-  }
-  const rolePermissions = {
-    noPermission: [],
-    employee: [
-      permissions['training:projects:read'].id,
-      permissions['training:take'].id,
-    ],
-    operations: [
-      permissions['training:operations:read'].id,
-      permissions['training:operations:manage'].id,
-    ],
+  const [admin, trainingAdminRole, employeeRole, operationsRead] =
+    await Promise.all([
+      httpPrisma.user.findUniqueOrThrow({
+        where: { email: SEEDED_HTTP_ADMIN_EMAIL },
+      }),
+      httpPrisma.role.findUniqueOrThrow({ where: { name: 'training_admin' } }),
+      httpPrisma.role.findUniqueOrThrow({ where: { name: 'user' } }),
+      httpPrisma.permission.findUniqueOrThrow({
+        where: { key: 'training:operations:read' },
+      }),
+    ]);
+  const readOnlyRole = await httpPrisma.role.create({
+    data: {
+      name: `training-stage10-http-read-only-${unique}`,
+      permissions: { create: [{ permissionId: operationsRead.id }] },
+    },
+  });
+  const noPermissionRole = await httpPrisma.role.create({
+    data: { name: `training-stage10-http-no-permission-${unique}` },
+  });
+  const roleByUser = {
+    noPermission: noPermissionRole,
+    employee: employeeRole,
+    readOnly: readOnlyRole,
+    trainingAdmin: trainingAdminRole,
   };
-  const users = {};
-  for (const [name, permissionIds] of Object.entries(rolePermissions)) {
-    const role = await httpPrisma.role.create({
-      data: {
-        name: `training-stage10-http-${name}-${unique}`,
-        permissions: {
-          create: permissionIds.map((permissionId) => ({ permissionId })),
-        },
-      },
-    });
+  const users = {
+    admin: {
+      id: admin.id,
+      email: SEEDED_HTTP_ADMIN_EMAIL,
+      password,
+    },
+  };
+  for (const [name, role] of Object.entries(roleByUser)) {
     const email =
       `training-stage10-http-${name.toLowerCase()}-${unique}@example.test`;
     const user = await httpPrisma.user.create({
@@ -509,20 +717,33 @@ async function createHttpFixture(httpPrisma) {
     orderBy: { createdAt: 'desc' },
     select: { id: true },
   });
-  const job = await httpPrisma.trainingJob.create({
-    data: {
-      kind: TrainingJobKind.FINALIZE_ATTEMPT,
-      status: TrainingJobStatus.FAILED,
-      payloadJson: {
-        attemptId: attempt.id,
-        marker: 'training-stage10-private-payload',
+  const createRetryJob = (suffix) =>
+    httpPrisma.trainingJob.create({
+      data: {
+        kind: TrainingJobKind.FINALIZE_ATTEMPT,
+        status: TrainingJobStatus.FAILED,
+        payloadJson: {
+          attemptId: attempt.id,
+          marker: 'training-stage10-private-payload',
+        },
+        idempotencyKey: `training-stage10-http-${suffix}-${unique}`,
+        lastErrorCode: 'SAFE_STAGE10_FAILURE',
+        lastErrorMessage: 'generic failure',
       },
-      idempotencyKey: `training-stage10-http-${unique}`,
-      lastErrorCode: 'SAFE_STAGE10_FAILURE',
-      lastErrorMessage: 'generic failure',
+    });
+  const [trainingAdminJob, adminJob, missingKeyJob] = await Promise.all([
+    createRetryJob('training-admin'),
+    createRetryJob('admin'),
+    createRetryJob('missing-key'),
+  ]);
+  return {
+    jobIds: {
+      trainingAdmin: trainingAdminJob.id,
+      admin: adminJob.id,
+      missingKey: missingKeyJob.id,
     },
-  });
-  return { jobId: job.id, users };
+    users,
+  };
 }
 
 async function login(baseUrl, credentials) {
@@ -627,6 +848,10 @@ async function createFixture() {
       status: TrainingProjectStatus.OPEN,
       activeVersionId: version.id,
     },
+  });
+  await prisma.trainingPolicyVersion.updateMany({
+    where: { isActive: true },
+    data: { isActive: false },
   });
   const firstPolicy = await prisma.trainingPolicyVersion.create({
     data: {

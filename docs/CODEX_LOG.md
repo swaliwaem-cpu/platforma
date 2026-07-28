@@ -5918,3 +5918,93 @@ Dependencies:
   закрыты обязательные Telegram/audio/OpenAI/product/operations gates.
 - Никакие реальные provider requests, webhook registration, deploy,
   production/staging migrations или реальные голоса не выполнялись.
+
+## 2026-07-28 - Training stage 10 final review findings
+
+Задача:
+
+- Исправить только findings финального review этапа 10: policy immutability,
+  staging isolation, operations privacy/idempotency/RBAC, runtime disable
+  races, safe logging/correlation, connected full-chain E2E и Playwright
+  flake.
+- Не выполнять staging/production deploy, staging/production migrations,
+  реальные Telegram/OpenAI запросы или регистрацию webhook.
+
+Изменения:
+
+- Policy seed вынесен в единый helper. Существующая версия с тем же checksum
+  является no-op, а изменение body/checksum той же version останавливает seed;
+  новый текст требует новой version. PostgreSQL regression сохраняет старую
+  acceptance и проверяет, что она не подтверждает новую policy.
+- Добавлен fail-closed staging preflight до migrations/bootstrap/storage:
+  exact DB allowlist и production deny-list, отдельное имя staging DB, три
+  разные staging buckets, production bucket deny-list, isolated public hosts
+  и Telegram bot username, запрет placeholder/default/production-like
+  identifiers. Known production identifiers не содержат secrets. Host-runbook
+  использует единый root runner: он явно загружает `.env.staging`, требует
+  `DEPLOYMENT_ENV=staging`, повторяет preflight и допускает только
+  `prisma validate`, `migrate status` и `migrate deploy`.
+- Operations summary больше не возвращает user-level acceptances и PII:
+  остаются только aggregate counts/by-source. Retry требует
+  `Idempotency-Key`; новая additive таблица хранит canonical payload hash и
+  гарантирует один transition/AuditLog, replay того же payload и `409` при
+  конфликте. Реальная HTTP role matrix покрывает unauthenticated, employee,
+  read-only, `training_admin` и admin.
+- Telegram, audio и attempt workers читают runtime feature flag перед claim,
+  после awaits и непосредственно перед новыми provider/storage calls.
+  Disable после claim атомарно возвращает job в `PENDING` без потери ownership
+  state; re-enable продолжает persisted работу. Уже начатый внешний вызов
+  может завершиться и сохранить результат. Финальная verifier-проверка
+  дополнительно закрыла окна после Telegram ownership refresh и после
+  finalization advisory lock; детерминированные race-тесты проверяют отсутствие
+  domain mutation и успешный restart.
+- Production training paths используют whitelist safe logger. Persisted
+  correlation ID проходит Telegram update/outbox → voice/audio →
+  transcription/evaluation → finalization и сохраняется после restart/retry;
+  legacy jobs получают стабильный fallback по update/answer/attempt; raw
+  payload, transcript, prompt, audio, PII и secrets не логируются.
+- `pnpm test:training:e2e` заменён одним connected сценарием на чистой
+  PostgreSQL с isolated MinIO, Docker worker, реальным ffmpeg, fake providers
+  и API/UI: policy → Telegram link → attempt → voice → storage/transcription/
+  evaluation → review → employee result → ranking → CSV. Через цепочку
+  проверяются те же user/project/attempt IDs и реальные связанные DB records.
+- Playwright audio/unmount regression больше не зависит от точного числа
+  фоновых auth refresh, сохраняя assertions на abort и отсутствие stale Blob
+  URL. Для connected harness исправлены worker bootstrap/lifetime и конфликт
+  имён source/output WAV; новые зависимости не добавлялись.
+- Времязависимый policy revocation fixture теперь вычисляет `revokedAt`
+  относительно фактического `acceptedAt`, а не использует уже прошедшую
+  фиксированную дату.
+
+Проверки:
+
+- Финальные API-прогоны: `test:unit` — `442/442`;
+  `test:training:db` — `87/87`. Все `41` migrations применены к чистой
+  временной PostgreSQL, БД удалена.
+- `pnpm --filter @platforma/web test` — passed: `293/293`.
+- `pnpm --filter @platforma/web test:training:browser` — passed: `11/11`.
+- Проблемный audio/unmount Playwright test с `--repeat-each=10` — passed:
+  `10/10`.
+- `pnpm test:training:e2e` — passed: одна connected
+  PostgreSQL/Telegram/MinIO/ffmpeg/fake-provider/review/API/UI/CSV цепочка;
+  повторно пройдена после финальных verifier fixes; временные containers,
+  volumes и network удалены.
+- `pnpm build` и исходный полный `pnpm test` — passed. После трёх финальных
+  PostgreSQL regressions затронутые API suites отдельно повторены как
+  `442 + 87`; Web, feed-import и WordPress код ими не менялся.
+- `prisma validate`, development/staging/production Compose config и
+  `docker compose build api training-worker web` — passed.
+
+Ручная проверка:
+
+- До staging по-прежнему требуется утверждение policy text руководителем.
+- После отдельного разрешения пройти staging runbooks: deploy/migrations,
+  private-bucket probes, real Telegram voice/restart, synthetic OpenAI smoke,
+  calibration и pilot. В этой задаче они намеренно не выполнялись.
+
+Спорные места:
+
+- BLOCKER/HIGH из scope финального review не осталось.
+- Сохраняется существующий Vite warning об основном chunk `722.09 kB`.
+- Staging/production остаются `NO-GO` до закрытия внешних approval/provider/
+  privacy/calibration gates; текущий verdict относится только к подготовке.

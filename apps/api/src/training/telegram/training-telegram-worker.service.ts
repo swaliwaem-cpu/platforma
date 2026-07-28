@@ -18,11 +18,17 @@ import {
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { TRAINING_ACTIVE_ATTEMPT_STATUSES } from '../training.domain';
-import { TrainingConfigService } from '../training.config';
+import {
+  TrainingConfigService,
+  TrainingFeatureDisabledAfterClaimError,
+} from '../training.config';
 import { TrainingWorkerHeartbeatService } from '../training-worker-heartbeat.service';
 import {
   formatTrainingErrorForLog,
+  readTrainingCorrelationId,
+  resolveTrainingCorrelationId,
   safeTrainingFailureMessage,
+  writeSafeTrainingLog,
 } from '../training-safe-log';
 import { TrainingTelegramConfig } from './training-telegram.config';
 import { TrainingTelegramDialogService } from './training-telegram-dialog.service';
@@ -128,8 +134,14 @@ export class TrainingTelegramWorkerService
     setImmediate(() => {
       this.kickQueued = false;
       void this.drainNow().catch((error) => {
-        this.logger.error(
-          `Telegram worker drain failed: ${formatTrainingErrorForLog(error)}`,
+        writeSafeTrainingLog(
+          this.logger,
+          'error',
+          'training.telegram.worker.failed',
+          {
+            workerKind: 'telegram',
+            errorCode: formatTrainingErrorForLog(error),
+          },
         );
       });
     });
@@ -152,7 +164,9 @@ export class TrainingTelegramWorkerService
     await this.recoverStaleJobs();
     for (
       let index = 0;
-      index < TELEGRAM_JOB_LIMIT_PER_DRAIN && !this.destroyed;
+      index < TELEGRAM_JOB_LIMIT_PER_DRAIN &&
+      !this.destroyed &&
+      this.trainingConfig?.isEnabled() !== false;
       index += 1
     ) {
       const job = await this.claimNextJob();
@@ -165,6 +179,10 @@ export class TrainingTelegramWorkerService
         await this.completeJob(job);
       } catch (error) {
         if (error instanceof LostTelegramJobOwnershipError) continue;
+        if (error instanceof TrainingFeatureDisabledAfterClaimError) {
+          await this.releaseJobAfterFeatureDisable(job);
+          continue;
+        }
         await this.failJob(job, error);
       }
     }
@@ -237,9 +255,27 @@ export class TrainingTelegramWorkerService
   }
 
   private async processJob(job: ClaimedTelegramJob) {
+    this.assertRuntimeEnabled();
+    const correlationId = readJobCorrelationId(job.payloadJson);
+    writeSafeTrainingLog(
+      this.logger,
+      'log',
+      'training.telegram.job.started',
+      {
+        correlationId,
+        jobId: job.id,
+        updateId:
+          job.kind === TrainingJobKind.PROCESS_TELEGRAM_UPDATE
+            ? readUpdatePayload(job.payloadJson).updateId
+            : undefined,
+        status: job.kind,
+        workerKind: 'telegram',
+      },
+    );
     if (job.kind === TrainingJobKind.PROCESS_TELEGRAM_UPDATE) {
       const update = readUpdatePayload(job.payloadJson);
       await this.refreshOwnershipOrThrow(job.id);
+      this.assertRuntimeEnabled();
       await this.prisma.trainingProcessedUpdate.updateMany({
         where: {
           updateId: BigInt(update.updateId),
@@ -252,6 +288,7 @@ export class TrainingTelegramWorkerService
         },
         data: { status: TrainingProcessedUpdateStatus.PROCESSING },
       });
+      this.assertRuntimeEnabled();
       await this.dialog.processUpdate(update, job.idempotencyKey);
       return;
     }
@@ -267,6 +304,7 @@ export class TrainingTelegramWorkerService
       );
       if (plan?.operation === 'SEND_MESSAGE') {
         await this.refreshOwnershipOrThrow(job.id);
+        this.assertRuntimeEnabled();
         await this.transport.sendMessage({
           idempotencyKey: job.idempotencyKey,
           chatId: plan.chatId,
@@ -282,6 +320,7 @@ export class TrainingTelegramWorkerService
       const plan = await this.dialog.buildOutboxEvent(payload);
       if (plan?.operation === 'SEND_MESSAGE') {
         await this.refreshOwnershipOrThrow(job.id);
+        this.assertRuntimeEnabled();
         await this.transport.sendMessage({
           idempotencyKey: job.idempotencyKey,
           chatId: plan.chatId,
@@ -295,6 +334,7 @@ export class TrainingTelegramWorkerService
       const plan = await this.dialog.deliverAttemptResult(payload.attemptId);
       if (plan?.operation === 'SEND_MESSAGE') {
         await this.refreshOwnershipOrThrow(job.id);
+        this.assertRuntimeEnabled();
         await this.transport.sendMessage({
           idempotencyKey: job.idempotencyKey,
           chatId: plan.chatId,
@@ -306,6 +346,7 @@ export class TrainingTelegramWorkerService
     }
     if (payload.operation === 'ANSWER_CALLBACK') {
       await this.refreshOwnershipOrThrow(job.id);
+      this.assertRuntimeEnabled();
       await this.transport.answerCallbackQuery({
         idempotencyKey: job.idempotencyKey,
         callbackQueryId: payload.callbackQueryId,
@@ -320,12 +361,54 @@ export class TrainingTelegramWorkerService
       return;
     }
     await this.refreshOwnershipOrThrow(job.id);
+    this.assertRuntimeEnabled();
     await this.transport.sendMessage({
       idempotencyKey: job.idempotencyKey,
       chatId: payload.chatId,
       text: payload.text,
       replyMarkup: payload.replyMarkup,
     });
+  }
+
+  private assertRuntimeEnabled() {
+    if (this.trainingConfig?.isEnabled() === false) {
+      throw new TrainingFeatureDisabledAfterClaimError();
+    }
+  }
+
+  private async releaseJobAfterFeatureDisable(job: ClaimedTelegramJob) {
+    this.lostOwnership.add(job.id);
+    await this.prisma.trainingJob.updateMany({
+      where: {
+        id: job.id,
+        status: TrainingJobStatus.RUNNING,
+        lockOwner: this.workerId,
+        attempts: job.attempts,
+      },
+      data: {
+        status: TrainingJobStatus.PENDING,
+        attempts: { decrement: 1 },
+        runAt: new Date(),
+        finishedAt: null,
+        lockOwner: null,
+        lockedAt: null,
+        heartbeatAt: null,
+        lastErrorCode: 'TRAINING_DISABLED_AFTER_CLAIM',
+        lastErrorMessage: 'Training job released after runtime disable',
+        errorDetailsJson: { retryable: true },
+      },
+    });
+    writeSafeTrainingLog(
+      this.logger,
+      'log',
+      'training.telegram.job.released',
+      {
+        correlationId: readJobCorrelationId(job.payloadJson),
+        jobId: job.id,
+        status: 'disabled',
+        workerKind: 'telegram',
+      },
+    );
   }
 
   private async completeJob(job: ClaimedTelegramJob) {
@@ -483,8 +566,15 @@ export class TrainingTelegramWorkerService
   ) {
     const interval = setInterval(() => {
       void this.refreshOwnership(jobId).catch((error) => {
-        this.logger.warn(
-          `Telegram job ${jobId} heartbeat failed: ${formatTrainingErrorForLog(error)}`,
+        writeSafeTrainingLog(
+          this.logger,
+          'warn',
+          'training.telegram.heartbeat.failed',
+          {
+            jobId,
+            workerKind: 'telegram',
+            errorCode: formatTrainingErrorForLog(error),
+          },
         );
       });
     }, this.config.workerHeartbeatMs);
@@ -630,7 +720,13 @@ function readUpdatePayload(value: Prisma.JsonValue) {
   ) {
     throw new TypeError('Telegram update job payload is invalid');
   }
-  return payload as unknown as SanitizedTelegramUpdate;
+  return {
+    ...payload,
+    correlationId: resolveTrainingCorrelationId(
+      payload.correlationId,
+      `telegram-update:${payload.updateId}`,
+    ),
+  } as unknown as SanitizedTelegramUpdate;
 }
 
 function readTimerPayload(value: Prisma.JsonValue) {
@@ -710,6 +806,18 @@ function readObject(value: Prisma.JsonValue) {
     throw new TypeError('Telegram job payload is invalid');
   }
   return value as Prisma.JsonObject;
+}
+
+function readJobCorrelationId(value: Prisma.JsonValue) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  return typeof value.updateId === 'string'
+    ? resolveTrainingCorrelationId(
+        value.correlationId,
+        `telegram-update:${value.updateId}`,
+      )
+    : readTrainingCorrelationId(value.correlationId);
 }
 
 async function waitForPromise(promise: Promise<void>, timeoutMs: number) {

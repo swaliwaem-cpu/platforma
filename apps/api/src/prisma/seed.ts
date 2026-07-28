@@ -7,6 +7,7 @@ import {
   TRAINING_USER_PERMISSION_KEYS,
 } from '../training/training.permissions';
 import { CURRENT_TRAINING_POLICY } from '../training/training-policy.seed';
+import { seedImmutableTrainingPolicy } from '../training/training-policy-seeder';
 
 const prisma = new PrismaClient();
 
@@ -148,34 +149,11 @@ async function seed() {
   });
 
   await prisma.$transaction(async (tx) => {
-    await tx.trainingPolicyVersion.updateMany({
-      where: {
-        isActive: true,
-        version: { not: CURRENT_TRAINING_POLICY.version },
-      },
-      data: { isActive: false },
-    });
-    await tx.trainingPolicyVersion.upsert({
-      where: { version: CURRENT_TRAINING_POLICY.version },
-      update: {
-        title: CURRENT_TRAINING_POLICY.title,
-        body: CURRENT_TRAINING_POLICY.body,
-        checksum: CURRENT_TRAINING_POLICY.checksum,
-        effectiveAt: new Date(CURRENT_TRAINING_POLICY.effectiveAt),
-        isActive: CURRENT_TRAINING_POLICY.isActive,
-        approvalStatus: CURRENT_TRAINING_POLICY.approvalStatus,
-      },
-      create: {
-        version: CURRENT_TRAINING_POLICY.version,
-        title: CURRENT_TRAINING_POLICY.title,
-        body: CURRENT_TRAINING_POLICY.body,
-        checksum: CURRENT_TRAINING_POLICY.checksum,
-        effectiveAt: new Date(CURRENT_TRAINING_POLICY.effectiveAt),
-        isActive: CURRENT_TRAINING_POLICY.isActive,
-        approvalStatus: CURRENT_TRAINING_POLICY.approvalStatus,
-        createdById: admin.id,
-      },
-    });
+    await seedImmutableTrainingPolicy(
+      tx,
+      CURRENT_TRAINING_POLICY,
+      admin.id,
+    );
   });
 
   console.log(

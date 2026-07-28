@@ -32,7 +32,10 @@ import type { TrainingAttemptSettingsSnapshot } from '@platforma/shared' with { 
 import { PrismaService } from '../prisma/prisma.service';
 import { TrainingAudioConfig } from './audio/training-audio.config';
 import { TrainingAudioError } from './audio/training-audio.error';
-import { TrainingConfigService } from './training.config';
+import {
+  TrainingConfigService,
+  TrainingFeatureDisabledAfterClaimError,
+} from './training.config';
 import {
   TRAINING_ATTEMPT_CLOCK,
   TRAINING_ATTEMPT_JOB_PROCESSOR_ENABLED,
@@ -74,7 +77,10 @@ import { parseTrainingReviewIdempotencyKey } from './training-review-idempotency
 import { TrainingPolicyService } from './training-policy.service';
 import {
   formatTrainingErrorForLog,
+  readTrainingCorrelationId,
+  resolveTrainingCorrelationId,
   safeTrainingFailureMessage,
+  writeSafeTrainingLog,
 } from './training-safe-log';
 import { TrainingWorkerHeartbeatService } from './training-worker-heartbeat.service';
 import { enqueueAttemptTelegramOutboxEvent } from './telegram/training-telegram-outbox';
@@ -114,6 +120,7 @@ export type ConfirmTrainingAttemptStartCommand = {
   userId: string;
   projectId: string;
   confirmed: boolean;
+  correlationId?: string;
 };
 
 export type AppendFakeTrainingVoiceSegmentCommand = {
@@ -129,11 +136,13 @@ export type AppendFakeTrainingVoiceSegmentCommand = {
   telegramFileId?: string;
   fileUniqueId?: string;
   sizeBytes?: bigint;
+  correlationId?: string;
 };
 
 export type FinishTrainingAnswerCommand = {
   attemptId: string;
   attemptQuestionId: string;
+  correlationId?: string;
 };
 
 export type RefundTechnicalTrainingAttemptCommand = {
@@ -241,6 +250,9 @@ export class TrainingAttemptEngineService
     }
 
     const startedAt = this.clock.now();
+    const correlationId =
+      readTrainingCorrelationId(command.correlationId) ??
+      `training-start:${command.projectId}`;
 
     try {
       const attemptId = await this.runSerializable(async (tx) => {
@@ -427,6 +439,7 @@ export class TrainingAttemptEngineService
               payloadJson: {
                 attemptId: attempt.id,
                 warningSeconds,
+                correlationId,
               },
               idempotencyKey: `attempt:${attempt.id}:timer:warning:${warningSeconds}`,
               runAt: new Date(expiresAt.getTime() - warningSeconds * 1_000),
@@ -434,7 +447,7 @@ export class TrainingAttemptEngineService
             {
               kind: TrainingJobKind.EXPIRE_ATTEMPT,
               status: TrainingJobStatus.PENDING,
-              payloadJson: { attemptId: attempt.id },
+              payloadJson: { attemptId: attempt.id, correlationId },
               idempotencyKey: `attempt:${attempt.id}:timer:expire`,
               runAt: expiresAt,
             },
@@ -455,6 +468,7 @@ export class TrainingAttemptEngineService
           attemptQuestionId: presentedQuestion.id,
           idempotencyKey: `telegram:attempt:${attempt.id}:question:${presentedQuestion.id}`,
           runAt: startedAt,
+          correlationId,
         });
 
         return attempt.id;
@@ -516,6 +530,9 @@ export class TrainingAttemptEngineService
     }
     const telegramMessageId = command.telegramMessageId ?? command.updateId;
     const telegramChatId = command.telegramChatId ?? 1n;
+    const correlationId =
+      readTrainingCorrelationId(command.correlationId) ??
+      `training-voice:${command.updateId.toString()}`;
 
     const receivedAt = command.receivedAt ?? this.clock.now();
     const result = await this.runSerializable(async (tx) => {
@@ -680,6 +697,7 @@ export class TrainingAttemptEngineService
                 attemptId: attempt.id,
                 answerId: answer.id,
                 segmentId: segment.id,
+                correlationId,
               },
               idempotencyKey: `attempt:${attempt.id}:answer:${answer.id}:segment:${segment.id}:download`,
               runAt: receivedAt,
@@ -709,12 +727,16 @@ export class TrainingAttemptEngineService
       return this.finishAnswer({
         attemptId: command.attemptId,
         attemptQuestionId: result.attemptQuestionId,
+        correlationId,
       });
     }
     return this.getAttempt(command.attemptId);
   }
 
   async finishAnswer(command: FinishTrainingAnswerCommand) {
+    const correlationId =
+      readTrainingCorrelationId(command.correlationId) ??
+      `training-attempt:${command.attemptId}`;
     const answerId = await this.runSerializable(async (tx) => {
       await this.acquireAttemptLock(tx, command.attemptId);
 
@@ -826,6 +848,9 @@ export class TrainingAttemptEngineService
         attempt.id,
         answer.id,
         finishedAt,
+        TrainingProviderRunType.PRIMARY,
+        null,
+        correlationId,
       );
       await enqueueAttemptTelegramOutboxEvent(tx, {
         eventType: 'ANSWER_ACCEPTED',
@@ -833,6 +858,7 @@ export class TrainingAttemptEngineService
         attemptQuestionId: targetQuestion.id,
         idempotencyKey: `telegram:attempt:${attempt.id}:answer-accepted:${targetQuestion.id}`,
         runAt: finishedAt,
+        correlationId,
       });
       return answer.id;
     });
@@ -1755,6 +1781,7 @@ export class TrainingAttemptEngineService
 
   private async drainAttemptJobsLoop(propagateErrors: boolean) {
     while (!this.destroyed) {
+      if (this.trainingConfig?.isEnabled() === false) return;
       const job = await this.claimNextAttemptJob();
       if (!job) return;
 
@@ -1853,6 +1880,21 @@ export class TrainingAttemptEngineService
   private async processClaimedAttemptJob(job: ClaimedTrainingAttemptJob) {
     try {
       await this.withJobHeartbeat(job.id, async () => {
+        this.assertRuntimeEnabled();
+        const payload = readAttemptJobPayload(job.payloadJson);
+        writeSafeTrainingLog(
+          this.logger,
+          'log',
+          'training.attempt.job.started',
+          {
+            correlationId: payload.correlationId,
+            jobId: job.id,
+            attemptId: payload.attemptId,
+            answerId: payload.answerId,
+            status: job.kind,
+            workerKind: 'attempt',
+          },
+        );
         switch (job.kind) {
           case TrainingJobKind.TRANSCRIBE_ANSWER:
             await this.processTranscriptionJob(job);
@@ -1871,6 +1913,10 @@ export class TrainingAttemptEngineService
         }
       });
     } catch (error) {
+      if (error instanceof TrainingFeatureDisabledAfterClaimError) {
+        await this.releaseJobAfterFeatureDisable(job);
+        return;
+      }
       await this.failClaimedJob(job, error);
       throw error;
     }
@@ -1961,6 +2007,9 @@ export class TrainingAttemptEngineService
             payload.attemptId,
             context.id,
             completedAt,
+            payload.runType,
+            payload.runNonce,
+            payload.correlationId,
           );
         }
         await this.completeJobWithinTransaction(tx, job.id, completedAt);
@@ -1989,6 +2038,7 @@ export class TrainingAttemptEngineService
 
     if (!transcription) {
       const requestedModelId = this.resolveTranscriptionModel(payload.runType);
+      this.assertRuntimeEnabled();
       const providerRun = await this.prepareProviderRun({
         jobId: job.id,
         answerId: context.id,
@@ -2012,6 +2062,9 @@ export class TrainingAttemptEngineService
               : Number(context.mergedAudioFile.sizeBytes),
           vocabularyVersion: approvedVocabulary.version,
           vocabularyHash: approvedVocabulary.hash,
+          ...(payload.correlationId
+            ? { correlationId: payload.correlationId }
+            : {}),
         },
       });
       providerRunId = providerRun?.id ?? null;
@@ -2039,6 +2092,20 @@ export class TrainingAttemptEngineService
         };
       } else {
         try {
+          await this.assertProviderCallEnabled(providerRun?.id ?? null);
+          writeSafeTrainingLog(
+            this.logger,
+            'log',
+            'training.provider.request.started',
+            {
+              correlationId: payload.correlationId,
+              jobId: job.id,
+              attemptId: payload.attemptId,
+              answerId: context.id,
+              providerType: 'transcription',
+              requestedModel: requestedModelId,
+            },
+          );
           transcription = await this.transcriptionProvider.transcribe({
           answerId: context.id,
           attemptQuestionId: context.attemptQuestionId,
@@ -2088,7 +2155,29 @@ export class TrainingAttemptEngineService
               }
             : {}),
           });
+          writeSafeTrainingLog(
+            this.logger,
+            'log',
+            'training.provider.request.completed',
+            {
+              correlationId: payload.correlationId,
+              jobId: job.id,
+              attemptId: payload.attemptId,
+              answerId: context.id,
+              providerType: 'transcription',
+              actualModel:
+                transcription.actualModelId ??
+                transcription.requestedModelId,
+              providerRequestId: transcription.requestId,
+              latencyMs: transcription.latencyMs ?? 0,
+              retryCount: transcription.retryCount ?? 0,
+              status: 'succeeded',
+            },
+          );
         } catch (error) {
+          if (error instanceof TrainingFeatureDisabledAfterClaimError) {
+            throw error;
+          }
           if (providerRun) {
             await this.recordProviderRunFailure(providerRun.id, error);
           }
@@ -2199,6 +2288,7 @@ export class TrainingAttemptEngineService
         completedAt,
         payload.runType,
         payload.runNonce,
+        payload.correlationId,
       );
       await this.completeJobWithinTransaction(tx, job.id, completedAt);
     });
@@ -2294,6 +2384,7 @@ export class TrainingAttemptEngineService
 
     if (!existingEvaluation) {
       const requestedModelId = this.resolveEvaluationModel(payload.runType);
+      this.assertRuntimeEnabled();
       const providerRun = await this.prepareProviderRun({
         jobId: job.id,
         answerId: context.id,
@@ -2319,6 +2410,9 @@ export class TrainingAttemptEngineService
           ),
           factIds: evaluationInput.facts.map((fact) => fact.id),
           metricIds: evaluationInput.metrics.map((metric) => metric.id),
+          ...(payload.correlationId
+            ? { correlationId: payload.correlationId }
+            : {}),
         },
         promptVersion: TRAINING_EVALUATION_PROMPT_VERSION,
         schemaVersion: TRAINING_EVALUATION_SCHEMA_VERSION,
@@ -2340,8 +2434,41 @@ export class TrainingAttemptEngineService
         }
       } else {
         try {
+          await this.assertProviderCallEnabled(providerRun?.id ?? null);
+          writeSafeTrainingLog(
+            this.logger,
+            'log',
+            'training.provider.request.started',
+            {
+              correlationId: payload.correlationId,
+              jobId: job.id,
+              attemptId: payload.attemptId,
+              answerId: context.id,
+              providerType: 'evaluation',
+              requestedModel: requestedModelId,
+            },
+          );
           const evaluation =
             await this.evaluationProvider.evaluate(evaluationInput);
+          writeSafeTrainingLog(
+            this.logger,
+            'log',
+            'training.provider.request.completed',
+            {
+              correlationId: payload.correlationId,
+              jobId: job.id,
+              attemptId: payload.attemptId,
+              answerId: context.id,
+              providerType: 'evaluation',
+              actualModel:
+                evaluation.actualModelId ??
+                evaluation.requestedModelId,
+              providerRequestId: evaluation.requestId,
+              latencyMs: evaluation.latencyMs ?? 0,
+              retryCount: evaluation.retryCount ?? 0,
+              status: 'succeeded',
+            },
+          );
           evaluationResult = {
             evaluation,
             score: scoreTrainingEvaluation({
@@ -2353,6 +2480,9 @@ export class TrainingAttemptEngineService
             }),
           };
         } catch (error) {
+          if (error instanceof TrainingFeatureDisabledAfterClaimError) {
+            throw error;
+          }
           if (providerRun) {
             await this.recordProviderRunFailure(providerRun.id, error);
           }
@@ -2481,6 +2611,7 @@ export class TrainingAttemptEngineService
         payload.attemptId,
         context.attemptQuestion.sequence,
         completedAt,
+        payload.correlationId,
       );
       await this.completeJobWithinTransaction(tx, job.id, completedAt);
     });
@@ -2489,13 +2620,26 @@ export class TrainingAttemptEngineService
   private async processFinalizationJob(job: ClaimedTrainingAttemptJob) {
     const payload = readAttemptJobPayload(job.payloadJson);
     const completedAt = this.clock.now();
+    writeSafeTrainingLog(
+      this.logger,
+      'log',
+      'training.attempt.finalization.started',
+      {
+        correlationId: payload.correlationId,
+        jobId: job.id,
+        attemptId: payload.attemptId,
+        workerKind: 'attempt',
+      },
+    );
 
     await this.runSerializable(async (tx) => {
       await this.acquireAttemptLock(tx, payload.attemptId);
+      this.assertRuntimeEnabled();
       const finalized = await this.finalizeWithinTransaction(
         tx,
         payload.attemptId,
         completedAt,
+        payload.correlationId,
       );
       if (finalized) {
         await this.completeJobWithinTransaction(tx, job.id, completedAt);
@@ -2750,6 +2894,7 @@ export class TrainingAttemptEngineService
     attemptId: string,
     completedSequence: number,
     now: Date,
+    correlationId: string | null = null,
   ) {
     const attempt = await tx.trainingAttempt.findUnique({
       where: { id: attemptId },
@@ -2776,7 +2921,12 @@ export class TrainingAttemptEngineService
         where: { id: attempt.id },
         data: { status: TrainingAttemptStatus.FINALIZING },
       });
-      await this.enqueueFinalizeJobWithinTransaction(tx, attempt.id, now);
+      await this.enqueueFinalizeJobWithinTransaction(
+        tx,
+        attempt.id,
+        now,
+        correlationId,
+      );
       return;
     }
 
@@ -2811,6 +2961,7 @@ export class TrainingAttemptEngineService
       attemptQuestionId: nextQuestion.id,
       idempotencyKey: `telegram:attempt:${attempt.id}:question:${nextQuestion.id}`,
       runAt: now,
+      correlationId,
     });
   }
 
@@ -2818,6 +2969,7 @@ export class TrainingAttemptEngineService
     tx: Prisma.TransactionClient,
     attemptId: string,
     completedAt: Date,
+    correlationId: string | null = null,
   ) {
     const attempt = await tx.trainingAttempt.findUnique({
       where: { id: attemptId },
@@ -2918,6 +3070,7 @@ export class TrainingAttemptEngineService
       attemptId: attempt.id,
       idempotencyKey: `telegram:attempt-result:${attempt.id}`,
       runAt: new Date(completedAt.getTime() + 100),
+      correlationId,
     });
     await this.closeAttemptJobsWithinTransaction(tx, attempt.id, completedAt);
     return true;
@@ -2952,6 +3105,7 @@ export class TrainingAttemptEngineService
     runAt: Date,
     runType: TrainingProviderRunType = TrainingProviderRunType.PRIMARY,
     runNonce?: string | null,
+    correlationId?: string | null,
   ) {
     if (runType !== TrainingProviderRunType.PRIMARY && !runNonce) {
       throw new Error('Reprocessing job requires a stable run nonce');
@@ -2972,6 +3126,9 @@ export class TrainingAttemptEngineService
             answerId,
             runType,
             ...(runNonce ? { runNonce } : {}),
+            ...(readTrainingCorrelationId(correlationId)
+              ? { correlationId }
+              : {}),
           },
           idempotencyKey:
             runType === TrainingProviderRunType.PRIMARY
@@ -2988,13 +3145,19 @@ export class TrainingAttemptEngineService
     tx: Prisma.TransactionClient,
     attemptId: string,
     runAt: Date,
+    correlationId?: string | null,
   ) {
     await tx.trainingJob.createMany({
       data: [
         {
           kind: TrainingJobKind.FINALIZE_ATTEMPT,
           status: TrainingJobStatus.PENDING,
-          payloadJson: { attemptId },
+          payloadJson: {
+            attemptId,
+            ...(readTrainingCorrelationId(correlationId)
+              ? { correlationId }
+              : {}),
+          },
           idempotencyKey: `attempt:${attemptId}:finalize`,
           runAt,
         },
@@ -3147,6 +3310,54 @@ export class TrainingAttemptEngineService
         heartbeatAt: null,
         lastErrorCode: errorCode,
         lastErrorMessage: errorMessage,
+        errorDetailsJson: { retryable: true },
+      },
+    });
+  }
+
+  private assertRuntimeEnabled() {
+    if (this.trainingConfig?.isEnabled() === false) {
+      throw new TrainingFeatureDisabledAfterClaimError();
+    }
+  }
+
+  private async assertProviderCallEnabled(providerRunId: string | null) {
+    if (this.trainingConfig?.isEnabled() !== false) return;
+    if (providerRunId) {
+      await this.prisma.trainingProviderRun.updateMany({
+        where: {
+          id: providerRunId,
+          status: TrainingProviderRunStatus.REQUESTING,
+        },
+        data: {
+          status: TrainingProviderRunStatus.PENDING,
+          startedAt: null,
+        },
+      });
+    }
+    throw new TrainingFeatureDisabledAfterClaimError();
+  }
+
+  private async releaseJobAfterFeatureDisable(
+    job: ClaimedTrainingAttemptJob,
+  ) {
+    await this.prisma.trainingJob.updateMany({
+      where: {
+        id: job.id,
+        status: TrainingJobStatus.RUNNING,
+        lockOwner: this.workerId,
+        attempts: job.attempts,
+      },
+      data: {
+        status: TrainingJobStatus.PENDING,
+        attempts: { decrement: 1 },
+        runAt: this.clock.now(),
+        finishedAt: null,
+        lockOwner: null,
+        lockedAt: null,
+        heartbeatAt: null,
+        lastErrorCode: 'TRAINING_DISABLED_AFTER_CLAIM',
+        lastErrorMessage: 'Training job released after runtime disable',
         errorDetailsJson: { retryable: true },
       },
     });
@@ -3497,15 +3708,23 @@ function readAttemptJobPayload(value: Prisma.JsonValue) {
     throw new Error('Training attempt job payload has no attemptId');
   }
 
+  const answerId =
+    typeof value.answerId === 'string' ? value.answerId : null;
   return {
     attemptId: value.attemptId,
-    answerId: typeof value.answerId === 'string' ? value.answerId : null,
+    answerId,
     runType:
       value.runType === TrainingProviderRunType.REPROCESS ||
       value.runType === TrainingProviderRunType.REVIEW
         ? value.runType
         : TrainingProviderRunType.PRIMARY,
     runNonce: typeof value.runNonce === 'string' ? value.runNonce : null,
+    correlationId: resolveTrainingCorrelationId(
+      value.correlationId,
+      answerId
+        ? `training-answer:${answerId}`
+        : `training-attempt:${value.attemptId}`,
+    ),
   };
 }
 

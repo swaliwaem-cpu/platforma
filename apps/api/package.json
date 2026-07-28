@@ -17,6 +17,7 @@
     "test:training:db:run": "node --env-file-if-exists=.env scripts/run-training-db-tests.cjs",
     "test:training:audio:docker": "node scripts/run-training-audio-docker-tests.cjs",
     "test:training:openai:smoke": "pnpm build && node --env-file-if-exists=.env scripts/run-training-openai-smoke.cjs",
+    "training:deployment:preflight": "pnpm build && node --env-file-if-exists=.env dist/training/training-deployment-preflight.js",
     "training:telegram:webhook:status": "node --env-file-if-exists=.env scripts/training-telegram-webhook.cjs status",
     "training:telegram:webhook:register": "node --env-file-if-exists=.env scripts/training-telegram-webhook.cjs register",
     "training:telegram:webhook:delete": "node --env-file-if-exists=.env scripts/training-telegram-webhook.cjs delete"

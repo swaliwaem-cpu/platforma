@@ -934,6 +934,80 @@ test('PostgreSQL two audio workers claim one job and persist one segment', async
   );
 });
 
+test('PostgreSQL runtime disable after audio claim prevents provider call and restart resumes the same job', async () => {
+  const fixture = await createFixture();
+  const clock = createClock();
+  const engine = createEngine(clock);
+  const attempt = await startAttempt(engine, fixture);
+  await appendVoice(engine, clock, attempt.id, {
+    updateId: 74_101n,
+    fileUniqueId: 'runtime-disable-audio',
+    transcript: 'runtime disable fixture',
+  });
+  let enabled = true;
+  let providerCalls = 0;
+  const trainingConfig = {
+    isEnabled: () => enabled,
+  };
+  const pausedPrisma = proxyPrismaTrainingJob({
+    async updateMany(delegate, args) {
+      const result = await delegate.updateMany(args);
+      if (
+        result.count === 1 &&
+        args.data?.status === TrainingJobStatus.RUNNING &&
+        args.data?.lockOwner
+      ) {
+        enabled = false;
+      }
+      return result;
+    },
+  });
+  const storage = createStorage();
+  await createWorker({
+    prismaClient: pausedPrisma,
+    storage,
+    provider: {
+      async downloadVoice() {
+        providerCalls += 1;
+        return {
+          body: Buffer.from('must not be downloaded while disabled'),
+          mimeType: 'audio/wav',
+        };
+      },
+    },
+    ffmpeg: createFfmpegFixture(storage),
+    trainingConfig,
+  }).drainNow();
+
+  let job = await prisma.trainingJob.findFirstOrThrow({
+    where: {
+      kind: TrainingJobKind.TELEGRAM_DOWNLOAD_SEGMENT,
+      idempotencyKey: { startsWith: `attempt:${attempt.id}:answer:` },
+    },
+  });
+  assert.equal(providerCalls, 0);
+  assert.equal(job.status, TrainingJobStatus.PENDING);
+  assert.equal(job.attempts, 0);
+  assert.equal(job.lockOwner, null);
+  assert.equal(job.lastErrorCode, 'TRAINING_DISABLED_AFTER_CLAIM');
+
+  enabled = true;
+  const resumedProvider = createAudioProvider();
+  await drainAudio(
+    createWorker({
+      storage,
+      provider: resumedProvider,
+      ffmpeg: createFfmpegFixture(storage),
+      trainingConfig,
+    }),
+  );
+  job = await prisma.trainingJob.findUnique({ where: { id: job.id } });
+  assert.equal(job.status, TrainingJobStatus.SUCCEEDED);
+  assert.equal(job.attempts, 1);
+  assert.equal(resumedProvider.calls.length, 1);
+  assert.ok((await findAnswer(attempt.id)).voiceSegments[0].originalFile);
+});
+
 test('PostgreSQL lost lease prevents mutation and stale recovery completes after restart', async () => {
   const fixture = await createFixture();
   const clock = createClock();
@@ -1301,17 +1375,18 @@ test('PostgreSQL fake audio pipeline completes the full 1 plus 3 flow and reuses
   const fixture = await createFixture({ passScore: 75 });
   const clock = createClock();
   const transcriptionInputs = [];
-  const engine = createEngine(clock, {
+  const tracedTranscription = {
     transcribe: async (input) => {
       transcriptionInputs.push(structuredClone(input));
       return fakeTranscription.transcribe(input);
     },
-  });
+  };
+  let engine = createEngine(clock, tracedTranscription);
   const started = await startAttempt(engine, fixture);
   const storage = createStorage();
   const provider = createAudioProvider();
   const ffmpeg = createFfmpegFixture(storage);
-  const worker = createWorker({ storage, provider, ffmpeg });
+  const correlationByAnswer = new Map();
 
   for (let index = 0; index < 4; index += 1) {
     clock.set(new Date(Date.now() - 1_000));
@@ -1335,13 +1410,19 @@ test('PostgreSQL fake audio pipeline completes the full 1 plus 3 flow and reuses
       fileUniqueId: 'allowed-in-another-answer',
       transcript:
         index === 0 ? 'полный главный ответ' : `ответ ${index}`,
+      correlationId: `telegram-update:${78_001 + index}`,
     });
+    const answerBeforeFinish = await findAnswer(started.id);
+    const correlationId = `telegram-update:${78_001 + index}`;
+    correlationByAnswer.set(answerBeforeFinish.id, correlationId);
     await engine.finishAnswer({
       attemptId: started.id,
       attemptQuestionId: question.id,
+      correlationId,
     });
-    await drainAudio(worker);
+    await drainAudio(createWorker({ storage, provider, ffmpeg }));
     clock.set(new Date(Date.now() + 1_000));
+    engine = createEngine(clock, tracedTranscription);
     await engine.recoverPendingProcessing();
     await engine.recoverPendingProcessing();
   }
@@ -1390,6 +1471,55 @@ test('PostgreSQL fake audio pipeline completes the full 1 plus 3 flow and reuses
   );
   assert.equal(provider.calls.length, 4);
   assert.equal(ffmpeg.orders.length, 4);
+  const correlatedJobs = await prisma.trainingJob.findMany({
+    where: {
+      idempotencyKey: { startsWith: `attempt:${started.id}:answer:` },
+      kind: {
+        in: [
+          TrainingJobKind.TELEGRAM_DOWNLOAD_SEGMENT,
+          TrainingJobKind.ASSEMBLE_ANSWER_AUDIO,
+          TrainingJobKind.TRANSCRIBE_ANSWER,
+          TrainingJobKind.EVALUATE_ANSWER,
+        ],
+      },
+    },
+  });
+  for (const job of correlatedJobs) {
+    assert.equal(
+      job.payloadJson.correlationId,
+      correlationByAnswer.get(job.payloadJson.answerId),
+      `${job.kind}:${job.id}`,
+    );
+  }
+  const providerRuns = await prisma.trainingProviderRun.findMany({
+    where: {
+      answerId: { in: [...correlationByAnswer.keys()] },
+    },
+  });
+  assert.ok(providerRuns.length >= 8);
+  for (const run of providerRuns) {
+    assert.equal(
+      run.inputMetadataJson.correlationId,
+      correlationByAnswer.get(run.answerId),
+      `${run.kind}:${run.id}`,
+    );
+  }
+  const finalizationJob = await prisma.trainingJob.findUniqueOrThrow({
+    where: { idempotencyKey: `attempt:${started.id}:finalize` },
+  });
+  assert.equal(
+    finalizationJob.payloadJson.correlationId,
+    'telegram-update:78004',
+  );
+  const resultOutbox = await prisma.trainingJob.findUnique({
+    where: { idempotencyKey: `telegram:attempt-result:${started.id}` },
+  });
+  if (resultOutbox) {
+    assert.equal(
+      resultOutbox.payloadJson.correlationId,
+      'telegram-update:78004',
+    );
+  }
   const answersById = new Map(
     completed.attemptQuestions.map((item) => [
       item.answer.id,
@@ -1475,6 +1605,7 @@ function createWorker({
   provider,
   configOverrides,
   faultInjection,
+  trainingConfig,
 }) {
   return new TrainingAudioWorkerService(
     prismaClient,
@@ -1483,7 +1614,27 @@ function createWorker({
     ffmpeg,
     provider,
     faultInjection,
+    trainingConfig,
   );
+}
+
+function proxyPrismaTrainingJob(overrides) {
+  const trainingJob = new Proxy(prisma.trainingJob, {
+    get(delegate, property) {
+      if (property in overrides) {
+        return (...args) => overrides[property](delegate, ...args);
+      }
+      const value = Reflect.get(delegate, property, delegate);
+      return typeof value === 'function' ? value.bind(delegate) : value;
+    },
+  });
+  return new Proxy(prisma, {
+    get(client, property) {
+      if (property === 'trainingJob') return trainingJob;
+      const value = Reflect.get(client, property, client);
+      return typeof value === 'function' ? value.bind(client) : value;
+    },
+  });
 }
 
 function createStorage(options = {}) {
@@ -1803,7 +1954,7 @@ async function appendVoice(
   engine,
   clock,
   attemptId,
-  { updateId, fileUniqueId, transcript },
+  { updateId, fileUniqueId, transcript, correlationId },
 ) {
   return engine.appendVoiceSegment({
     attemptId,
@@ -1815,6 +1966,7 @@ async function appendVoice(
     telegramChatId: 987654321n,
     telegramFileId: `file-${updateId}`,
     fileUniqueId,
+    correlationId,
     durationSeconds: 5,
   });
 }

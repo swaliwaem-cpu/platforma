@@ -14,6 +14,7 @@
     "dev:web": "pnpm --filter @platforma/web dev",
     "test": "pnpm -r --if-present test",
     "test:training:e2e": "node scripts/run-training-e2e.cjs",
+    "training:staging": "pnpm --filter @platforma/api build && node --env-file=.env.staging scripts/run-training-staging.cjs",
     "feed-import:preview": "pnpm --filter @platforma/feed-import run preview",
     "feed-import:run": "pnpm --filter @platforma/feed-import run run",
     "wp-import:preview": "pnpm --filter @platforma/wp-import run preview",

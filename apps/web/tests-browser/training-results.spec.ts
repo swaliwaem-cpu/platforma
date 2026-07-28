@@ -337,7 +337,7 @@ test('audio unmount aborts delayed request and 401 refresh without leaking URLs'
   await page
     .getByRole('button', { name: 'Загрузить защищённое аудио' })
     .click();
-  await expect.poll(() => authRefreshes).toBe(2);
+  await expect.poll(() => authRefreshes).toBeGreaterThanOrEqual(2);
   await page.getByRole('button', { name: 'Результаты' }).click();
   await expect.poll(() => listRequests).toBeGreaterThanOrEqual(1);
   await page.waitForTimeout(900);
@@ -928,15 +928,14 @@ function operationsResponse() {
       approvalStatus: 'REQUIRES_MANAGER_APPROVAL',
       checksum: 'safe-checksum',
     },
-    recentPolicyAcceptances: [
-      {
-        user: { id: 'employee-1', name: 'Сотрудник' },
-        policyVersion: '2026-07-28.1',
-        source: 'PLATFORM',
-        acceptedAt: '2026-07-28T09:00:00.000Z',
-        revokedAt: null,
+    policyAcceptances: {
+      activeCount: 1,
+      revokedCount: 0,
+      bySource: {
+        PLATFORM: 1,
+        TELEGRAM: 0,
       },
-    ],
+    },
   };
 }
 

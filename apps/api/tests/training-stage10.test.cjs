@@ -1,8 +1,15 @@
 require('reflect-metadata');
 
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
 const { createHash } = require('node:crypto');
-const { readFileSync } = require('node:fs');
+const {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} = require('node:fs');
+const { tmpdir } = require('node:os');
 const { resolve } = require('node:path');
 const test = require('node:test');
 
@@ -20,12 +27,18 @@ const {
   TrainingOperationsController,
 } = require('../dist/training/training-operations.controller.js');
 const {
+  assertTrainingDeploymentIsolation,
+} = require('../dist/training/training-deployment.config.js');
+const {
   CURRENT_TRAINING_POLICY,
 } = require('../dist/training/training-policy.seed.js');
 const {
   buildSafeTrainingLogRecord,
   formatTrainingErrorForLog,
+  readTrainingCorrelationId,
+  resolveTrainingCorrelationId,
   safeTrainingFailureMessage,
+  writeSafeTrainingLog,
 } = require('../dist/training/training-safe-log.js');
 const {
   encodePolicyAcceptStartCallback,
@@ -152,12 +165,46 @@ test('safe training logs whitelist correlation fields and never include raw erro
     transcript,
     payload: { unsafe: true },
   });
-  const serialized = JSON.stringify({ formatted, persisted, record });
+  const emitted = [];
+  const sink = {
+    log: (message) => emitted.push(message),
+    warn: (message) => emitted.push(message),
+    error: (message) => emitted.push(message),
+  };
+  writeSafeTrainingLog(sink, 'log', 'training.production.path', {
+    correlationId: 'telegram-update:10',
+    jobId: 'job-10',
+    prompt: transcript,
+    authorization: secret,
+    error,
+  });
+  const serialized = JSON.stringify({
+    formatted,
+    persisted,
+    record,
+    emitted,
+  });
   assert.equal(serialized.includes(secret), false);
   assert.equal(serialized.includes(transcript), false);
   assert.equal(record.correlationId, 'telegram-update:10');
   assert.equal(record.jobId, 'job-10');
   assert.equal('payload' in record, false);
+  assert.equal(
+    readTrainingCorrelationId('telegram-update:10'),
+    'telegram-update:10',
+  );
+  assert.equal(readTrainingCorrelationId('unsafe correlation\nvalue'), null);
+  assert.equal(
+    resolveTrainingCorrelationId(
+      undefined,
+      'training-answer:11111111-1111-4111-8111-111111111111',
+    ),
+    'training-answer:11111111-1111-4111-8111-111111111111',
+  );
+  assert.equal(
+    resolveTrainingCorrelationId(undefined, 'unsafe fallback value'),
+    null,
+  );
 });
 
 test('Telegram policy callback is bounded and restores the project correlation', () => {
@@ -203,6 +250,157 @@ test('staging fake provider opt-in is explicit and production rejects it', () =>
       }),
     /STAGING_ALLOW_FAKE_PROVIDERS is forbidden/u,
   );
+});
+
+test('staging isolation rejects production DB, bucket, URL and bot identifiers', () => {
+  const valid = createStagingIsolationEnvironment();
+  assert.doesNotThrow(() => assertTrainingDeploymentIsolation(valid));
+
+  const invalidEnvironments = [
+    {
+      ...valid,
+      KNOWN_PRODUCTION_DATABASE_IDENTITIES:
+        'postgres:5432/platforma_staging',
+    },
+    {
+      ...valid,
+      TRAINING_DOCUMENT_BUCKET: valid.MINIO_BUCKET,
+    },
+    {
+      ...valid,
+      TRAINING_AUDIO_BUCKET: 'platforma-general-live',
+    },
+    {
+      ...valid,
+      PUBLIC_APP_URL: 'https://app.fluffywhite.internal',
+    },
+    {
+      ...valid,
+      TELEGRAM_BOT_USERNAME: 'platforma_training_bot',
+    },
+  ];
+  for (const environment of invalidEnvironments) {
+    assert.throws(() => assertTrainingDeploymentIsolation(environment));
+  }
+
+  const password = 'must-not-appear-in-errors';
+  assert.throws(
+    () =>
+      assertTrainingDeploymentIsolation({
+        ...valid,
+        DATABASE_URL: `postgresql://stage:${password}@prod-db.internal:5432/platforma?schema=public`,
+      }),
+    (error) => !String(error).includes(password),
+  );
+});
+
+test('staging isolation is enforced before migrations and placeholder examples fail closed', () => {
+  assert.throws(
+    () =>
+      assertTrainingDeploymentIsolation({
+        ...createStagingIsolationEnvironment(),
+        KNOWN_PRODUCTION_BUCKETS: 'REPLACE_WITH_PRODUCTION_BUCKETS',
+      }),
+    /explicit non-placeholder identifiers/u,
+  );
+  const dockerfile = readFileSync(
+    resolve(rootDir, 'apps/api/Dockerfile'),
+    'utf8',
+  );
+  assert.match(
+    dockerfile,
+    /training-deployment-preflight\.js && pnpm --dir apps\/api exec prisma migrate deploy/u,
+  );
+  const rootPackage = JSON.parse(
+    readFileSync(resolve(rootDir, 'package.json'), 'utf8'),
+  );
+  assert.equal(
+    rootPackage.scripts['training:staging'],
+    'pnpm --filter @platforma/api build && node --env-file=.env.staging scripts/run-training-staging.cjs',
+  );
+  const stagingRunner = readFileSync(
+    resolve(rootDir, 'scripts/run-training-staging.cjs'),
+    'utf8',
+  );
+  assert.match(
+    stagingRunner,
+    /DEPLOYMENT_ENV=staging from \.env\.staging/u,
+  );
+  assert.match(
+    stagingRunner,
+    /training-deployment-preflight\.js/u,
+  );
+
+  const temporaryDirectory = mkdtempSync(
+    resolve(tmpdir(), 'platforma-staging-preflight-'),
+  );
+  const environmentFile = resolve(temporaryDirectory, 'missing-marker.env');
+  const environmentWithoutMarker = {
+    ...createStagingIsolationEnvironment(),
+  };
+  delete environmentWithoutMarker.DEPLOYMENT_ENV;
+  writeFileSync(
+    environmentFile,
+    Object.entries(environmentWithoutMarker)
+      .map(([key, value]) => `${key}=${value}`)
+      .join('\n'),
+    { mode: 0o600 },
+  );
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        `--env-file=${environmentFile}`,
+        resolve(rootDir, 'scripts/run-training-staging.cjs'),
+        'preflight',
+      ],
+      {
+        cwd: rootDir,
+        env: {
+          PATH: process.env.PATH,
+        },
+        encoding: 'utf8',
+      },
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(
+      `${result.stdout}\n${result.stderr}`,
+      /require DEPLOYMENT_ENV=staging from \.env\.staging/u,
+    );
+    writeFileSync(
+      environmentFile,
+      Object.entries(createStagingIsolationEnvironment())
+        .map(([key, value]) => `${key}=${value}`)
+        .join('\n'),
+      { mode: 0o600 },
+    );
+    const validResult = spawnSync(
+      process.execPath,
+      [
+        `--env-file=${environmentFile}`,
+        resolve(rootDir, 'scripts/run-training-staging.cjs'),
+        'preflight',
+      ],
+      {
+        cwd: rootDir,
+        env: {
+          PATH: process.env.PATH,
+        },
+        encoding: 'utf8',
+      },
+    );
+    assert.equal(
+      validResult.status,
+      0,
+      `${validResult.stdout}\n${validResult.stderr}`,
+    );
+    assert.match(
+      validResult.stdout,
+      /Training staging deployment preflight passed/u,
+    );
+  } finally {
+    rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
 });
 
 test('staging Telegram config validates HTTPS and bounded abuse controls', () => {
@@ -385,3 +583,33 @@ test('training templates and frontend contain no credential-shaped values', () =
     /(OPENAI_API_KEY|TELEGRAM_BOT_TOKEN|S3_SECRET_ACCESS_KEY|WEBHOOK_SECRET)/u,
   );
 });
+
+function createStagingIsolationEnvironment() {
+  return {
+    NODE_ENV: 'production',
+    DEPLOYMENT_ENV: 'staging',
+    DATABASE_URL:
+      'postgresql://platforma_staging:stage-secret@postgres:5432/platforma_staging?schema=public',
+    STAGING_DATABASE_ALLOWED_HOSTS: 'postgres',
+    STAGING_DATABASE_NAME: 'platforma_staging',
+    KNOWN_PRODUCTION_DATABASE_IDENTITIES:
+      'prod-db.internal:5432/platforma',
+    MINIO_BUCKET: 'platforma-staging-general',
+    TRAINING_DOCUMENT_BUCKET: 'platforma-staging-documents',
+    TRAINING_AUDIO_BUCKET: 'platforma-staging-audio',
+    KNOWN_PRODUCTION_BUCKETS:
+      'platforma-general-live,platforma-documents-live,platforma-audio-live',
+    S3_PUBLIC_ENDPOINT: 'https://files.stage.fluffywhite.invalid',
+    TELEGRAM_WEBHOOK_URL:
+      'https://api.stage.fluffywhite.invalid/training/telegram/webhook',
+    PUBLIC_APP_URL: 'https://app.stage.fluffywhite.invalid',
+    WEB_ORIGIN: 'https://app.stage.fluffywhite.invalid',
+    VITE_API_URL: 'https://api.stage.fluffywhite.invalid',
+    STAGING_PUBLIC_HOSTS:
+      'files.stage.fluffywhite.invalid,api.stage.fluffywhite.invalid,app.stage.fluffywhite.invalid',
+    KNOWN_PRODUCTION_PUBLIC_HOSTS:
+      'files.fluffywhite.internal,api.fluffywhite.internal,app.fluffywhite.internal',
+    TELEGRAM_BOT_USERNAME: 'platforma_stage_training_bot',
+    KNOWN_PRODUCTION_TELEGRAM_BOT_USERNAMES: 'platforma_training_bot',
+  };
+}

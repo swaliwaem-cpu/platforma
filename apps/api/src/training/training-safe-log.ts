@@ -6,6 +6,7 @@ const SAFE_LOG_FIELD_NAMES = new Set([
   'attemptId',
   'attemptQuestionId',
   'answerId',
+  'intentId',
   'updateId',
   'providerType',
   'requestedModel',
@@ -17,6 +18,14 @@ const SAFE_LOG_FIELD_NAMES = new Set([
   'workerKind',
   'status',
 ]);
+const SAFE_CORRELATION_PATTERN =
+  /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/u;
+
+type TrainingLogLevel = 'log' | 'warn' | 'error';
+type TrainingLogSink = Record<
+  TrainingLogLevel,
+  (message: string) => unknown
+>;
 
 export function formatTrainingErrorForLog(error: unknown) {
   const name =
@@ -55,6 +64,34 @@ export function buildSafeTrainingLogRecord(
       typeof value === 'string' ? normalizeSafeValue(value) : (value as number | boolean);
   }
   return record;
+}
+
+export function readTrainingCorrelationId(value: unknown) {
+  return typeof value === 'string' &&
+    SAFE_CORRELATION_PATTERN.test(value)
+    ? value
+    : null;
+}
+
+export function resolveTrainingCorrelationId(
+  value: unknown,
+  fallback: string,
+) {
+  return (
+    readTrainingCorrelationId(value) ??
+    readTrainingCorrelationId(fallback)
+  );
+}
+
+export function writeSafeTrainingLog(
+  logger: TrainingLogSink,
+  level: TrainingLogLevel,
+  event: string,
+  fields: Record<string, unknown>,
+) {
+  logger[level](
+    JSON.stringify(buildSafeTrainingLogRecord(event, fields)),
+  );
 }
 
 function readSafeErrorCode(error: unknown) {

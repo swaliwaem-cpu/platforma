@@ -1064,7 +1064,7 @@ test('ffmpeg pipeline sorts persisted positions, emits objective metrics and cle
         const duration =
           sourceName === 'answer-normalized.wav'
             ? 3
-            : sourceName === 'segment-0001.wav'
+            : sourceName === 'segment-0001-source.wav'
               ? 1
               : 2;
         return {
@@ -1133,6 +1133,16 @@ test('ffmpeg pipeline sorts persisted positions, emits objective metrics and cle
       "file 'segment-0001.wav'\nfile 'segment-0002.wav'\n",
     );
     assert.equal(processCalls.every((call) => Array.isArray(call.args)), true);
+    const wavConversion = processCalls.find(
+      (call) =>
+        call.command === 'ffmpeg' &&
+        call.args.includes('segment-0001-source.wav'),
+    );
+    assert.equal(wavConversion.args.at(-1), 'segment-0001.wav');
+    assert.notEqual(
+      wavConversion.args[wavConversion.args.indexOf('-i') + 1],
+      wavConversion.args.at(-1),
+    );
     assert.equal(existsSync(outputPath), false);
   } finally {
     await rm(tempBase, { recursive: true, force: true });

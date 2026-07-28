@@ -54,6 +54,10 @@ export function TrainingOperationsPage({
   const [notice, setNotice] = useState<string | null>(null);
   const [retryJobId, setRetryJobId] = useState<string | null>(null);
   const [retryReason, setRetryReason] = useState('');
+  const [retryIdempotencyKey, setRetryIdempotencyKey] = useState('');
+  const [retrySubmittedReason, setRetrySubmittedReason] = useState<
+    string | null
+  >(null);
   const [isRetrying, setIsRetrying] = useState(false);
 
   const load = useCallback(async () => {
@@ -75,12 +79,24 @@ export function TrainingOperationsPage({
 
   async function submitRetry() {
     if (!accessToken || !retryJobId) return;
+    const normalizedReason = retryReason.trim();
+    const idempotencyKey =
+      retrySubmittedReason === null ||
+      retrySubmittedReason === normalizedReason
+        ? retryIdempotencyKey
+        : createOperationsRetryIdempotencyKey();
+    setRetryIdempotencyKey(idempotencyKey);
+    setRetrySubmittedReason(normalizedReason);
     setIsRetrying(true);
     setError(null);
     try {
-      await retryTrainingJob(accessToken, retryJobId, retryReason);
-      setRetryJobId(null);
-      setRetryReason('');
+      await retryTrainingJob(
+        accessToken,
+        retryJobId,
+        normalizedReason,
+        idempotencyKey,
+      );
+      resetRetryDialog();
       setNotice('Задание возвращено в очередь. Действие записано в аудит.');
       await load();
     } catch (caughtError) {
@@ -310,6 +326,10 @@ export function TrainingOperationsPage({
                               onClick={() => {
                                 setRetryJobId(item.jobId);
                                 setRetryReason('');
+                                setRetryIdempotencyKey(
+                                  createOperationsRetryIdempotencyKey(),
+                                );
+                                setRetrySubmittedReason(null);
                               }}
                             >
                               <RotateCcwIcon
@@ -336,46 +356,41 @@ export function TrainingOperationsPage({
 
           <AdminPanel>
             <CardHeader>
-              <CardTitle>Последние подтверждения правил</CardTitle>
+              <CardTitle>Подтверждения активных правил</CardTitle>
             </CardHeader>
             <CardContent className="training-operations-table-wrap">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Сотрудник</TableHead>
-                    <TableHead>Версия</TableHead>
-                    <TableHead>Источник</TableHead>
-                    <TableHead>Дата</TableHead>
+                    <TableHead>Агрегат</TableHead>
+                    <TableHead>Количество</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {summary.recentPolicyAcceptances.length ? (
-                    summary.recentPolicyAcceptances.map((item) => (
-                      <TableRow
-                        key={`${item.user.id}:${item.policyVersion}:${item.acceptedAt}`}
-                      >
-                        <TableCell>
-                          {item.user.name ?? `ID ${item.user.id.slice(0, 8)}`}
-                        </TableCell>
-                        <TableCell>{item.policyVersion}</TableCell>
-                        <TableCell>
-                          {item.source === 'TELEGRAM'
-                            ? 'Telegram'
-                            : 'Platforma'}
-                        </TableCell>
-                        <TableCell>
-                          {formatDateTime(item.acceptedAt)}
-                          {item.revokedAt ? ' · отозвано' : ''}
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  ) : (
-                    <TableRow>
-                      <TableCell colSpan={4}>
-                        Подтверждений пока нет.
-                      </TableCell>
-                    </TableRow>
-                  )}
+                  <TableRow>
+                    <TableCell>Действующие</TableCell>
+                    <TableCell>
+                      {summary.policyAcceptances.activeCount}
+                    </TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell>Отозванные</TableCell>
+                    <TableCell>
+                      {summary.policyAcceptances.revokedCount}
+                    </TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell>Platforma</TableCell>
+                    <TableCell>
+                      {summary.policyAcceptances.bySource.PLATFORM}
+                    </TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell>Telegram</TableCell>
+                    <TableCell>
+                      {summary.policyAcceptances.bySource.TELEGRAM}
+                    </TableCell>
+                  </TableRow>
                 </TableBody>
               </Table>
             </CardContent>
@@ -386,7 +401,7 @@ export function TrainingOperationsPage({
       <Dialog
         open={retryJobId !== null}
         onOpenChange={(open) => {
-          if (!open && !isRetrying) setRetryJobId(null);
+          if (!open && !isRetrying) resetRetryDialog();
         }}
       >
         <DialogContent showCloseButton={false}>
@@ -410,7 +425,7 @@ export function TrainingOperationsPage({
             <AdminButton
               disabled={isRetrying}
               tone="text"
-              onClick={() => setRetryJobId(null)}
+              onClick={resetRetryDialog}
             >
               Отмена
             </AdminButton>
@@ -429,6 +444,13 @@ export function TrainingOperationsPage({
       </Dialog>
     </div>
   );
+
+  function resetRetryDialog() {
+    setRetryJobId(null);
+    setRetryReason('');
+    setRetryIdempotencyKey('');
+    setRetrySubmittedReason(null);
+  }
 }
 
 function OperationMetric({
@@ -479,6 +501,10 @@ function formatDuration(value: number | null) {
   if (value === null) return 'нет ожидающих';
   if (value < 60) return `${value} сек`;
   return `${Math.floor(value / 60)} мин`;
+}
+
+function createOperationsRetryIdempotencyKey() {
+  return crypto.randomUUID();
 }
 
 function readError(error: unknown, fallback: string) {

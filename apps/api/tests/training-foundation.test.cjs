@@ -56,13 +56,14 @@ test('TrainingConfigService exposes the validated feature flag state', () => {
 
   try {
     process.env[TRAINING_MODULE_ENABLED_ENV] = 'true';
-    assert.deepEqual(new TrainingConfigService().getConfig(), {
+    const config = new TrainingConfigService();
+    assert.deepEqual(config.getConfig(), {
       enabled: true,
       status: 'enabled',
     });
 
     process.env[TRAINING_MODULE_ENABLED_ENV] = 'false';
-    assert.deepEqual(new TrainingConfigService().getConfig(), {
+    assert.deepEqual(config.getConfig(), {
       enabled: false,
       status: 'disabled',
     });

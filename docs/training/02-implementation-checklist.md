@@ -639,7 +639,13 @@ PostgreSQL/HTTP integration tests; root suite также включает `286/2
 - [x] Добавить безопасный health summary, worker heartbeat,
   `training:operations:read/manage`, operations summary/retry и audit.
 - [x] Добавить `pnpm test:training:e2e`: isolated PostgreSQL,
-  MinIO/ffmpeg Docker, fake providers и существующий Playwright harness.
+  MinIO/ffmpeg Docker, fake providers и существующий Playwright harness;
+  единая persisted цепочка policy → Telegram link → attempt → audio →
+  review → results/ranking/CSV → API/UI.
+- [x] Закрыть findings финального review: immutable policy seed,
+  fail-closed staging identity preflight, aggregate-only operations,
+  idempotent operations retry, runtime disable races, persisted safe
+  correlation и устойчивость Playwright refresh/audio сценария.
 - [x] Расширить local ranking smoke до 101 пользователя, page 1/2, полного
   CSV batching и `EXPLAIN (ANALYZE)`: `4` SQL-запроса на страницу, `8` на
   полный CSV в два batch без N+1.

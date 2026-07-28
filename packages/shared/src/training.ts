@@ -626,11 +626,12 @@ export type TrainingOperationsResponse = {
     approvalStatus: string;
     checksum: string;
   } | null;
-  recentPolicyAcceptances: Array<{
-    user: { id: string; name: string | null };
-    policyVersion: string;
-    source: 'PLATFORM' | 'TELEGRAM';
-    acceptedAt: string;
-    revokedAt: string | null;
-  }>;
+  policyAcceptances: {
+    activeCount: number;
+    revokedCount: number;
+    bySource: {
+      PLATFORM: number;
+      TELEGRAM: number;
+    };
+  };
 };

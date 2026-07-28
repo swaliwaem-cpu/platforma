@@ -23,17 +23,24 @@ test restore в отдельную database с counts/FK checks; не восст
 ## Migration
 
 ```bash
-cd apps/api
-pnpm exec prisma validate
-pnpm exec prisma migrate status
-pnpm exec prisma migrate deploy
-pnpm exec prisma migrate status
+pnpm training:staging preflight
+pnpm training:staging prisma validate
+pnpm training:staging prisma migrate status
+pnpm training:staging prisma migrate deploy
+pnpm training:staging prisma migrate status
 ```
 
 После deploy проверить policy unique active constraint, acceptance history,
 worker heartbeat, health, operations summary и отсутствие orphan jobs/files.
 Нельзя использовать `migrate reset`, `db push` или destructive down migration
 после появления данных.
+
+В staging preflight обязан завершиться до первого `migrate status/deploy`.
+Все host-команды выполняются из корня через один runner, который явно
+загружает `.env.staging`, требует `DEPLOYMENT_ENV=staging` и повторяет
+isolation-check перед каждым Prisma process.
+Docker API image выполняет тот же preflight до автоматического
+`prisma migrate deploy`; worker повторяет проверку до создания Nest context.
 
 ## Safe rollback
 

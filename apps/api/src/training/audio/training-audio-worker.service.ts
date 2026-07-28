@@ -23,11 +23,17 @@ import {
 import { FilesService } from '../../files/files.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TRAINING_ACTIVE_ATTEMPT_STATUSES } from '../training.domain';
-import { TrainingConfigService } from '../training.config';
+import {
+  TrainingConfigService,
+  TrainingFeatureDisabledAfterClaimError,
+} from '../training.config';
 import { TrainingWorkerHeartbeatService } from '../training-worker-heartbeat.service';
 import {
   formatTrainingErrorForLog,
+  readTrainingCorrelationId,
+  resolveTrainingCorrelationId,
   safeTrainingFailureMessage,
+  writeSafeTrainingLog,
 } from '../training-safe-log';
 import { enqueueAttemptTelegramOutboxEvent } from '../telegram/training-telegram-outbox';
 import { TrainingAudioConfig } from './training-audio.config';
@@ -144,8 +150,14 @@ export class TrainingAudioWorkerService
     setImmediate(() => {
       this.kickQueued = false;
       void this.drainNow().catch((error) => {
-        this.logger.error(
-          `Audio worker drain failed: ${formatTrainingErrorForLog(error)}`,
+        writeSafeTrainingLog(
+          this.logger,
+          'error',
+          'training.audio.worker.failed',
+          {
+            workerKind: 'audio',
+            errorCode: formatTrainingErrorForLog(error),
+          },
         );
       });
     });
@@ -174,7 +186,9 @@ export class TrainingAudioWorkerService
   private async drainLane() {
     for (
       let index = 0;
-      index < AUDIO_JOB_LIMIT_PER_DRAIN && !this.destroyed;
+      index < AUDIO_JOB_LIMIT_PER_DRAIN &&
+      !this.destroyed &&
+      this.trainingConfig?.isEnabled() !== false;
       index += 1
     ) {
       const job = await this.claimNextJob();
@@ -188,6 +202,10 @@ export class TrainingAudioWorkerService
         await this.completeJob(job.id);
       } catch (error) {
         if (error instanceof LostAudioJobOwnershipError) continue;
+        if (error instanceof TrainingFeatureDisabledAfterClaimError) {
+          await this.releaseJobAfterFeatureDisable(job);
+          continue;
+        }
         await this.failJob(job, error);
       }
     }
@@ -245,7 +263,21 @@ export class TrainingAudioWorkerService
   }
 
   private async processJob(job: ClaimedAudioJob): Promise<AudioJobOutcome> {
+    this.assertRuntimeEnabled();
     const payload = readAudioJobPayload(job.payloadJson);
+    writeSafeTrainingLog(
+      this.logger,
+      'log',
+      'training.audio.job.started',
+      {
+        correlationId: payload.correlationId,
+        jobId: job.id,
+        attemptId: payload.attemptId,
+        answerId: payload.answerId,
+        status: job.kind,
+        workerKind: 'audio',
+      },
+    );
     if (job.kind === TrainingJobKind.CLEANUP_TRAINING_AUDIO_OBJECT) {
       if (!payload.intentId || !payload.cleanupMode) {
         throw new TrainingAudioError('AUDIO_METADATA_INVALID', false);
@@ -309,6 +341,19 @@ export class TrainingAudioWorkerService
     }
 
     await this.refreshOwnershipOrThrow(job.id);
+    this.assertRuntimeEnabled();
+    writeSafeTrainingLog(
+      this.logger,
+      'log',
+      'training.audio.download.started',
+      {
+        correlationId: payload.correlationId,
+        jobId: job.id,
+        attemptId: payload.attemptId,
+        answerId: payload.answerId,
+        workerKind: 'audio',
+      },
+    );
     const downloaded = await this.telegramAudio.downloadVoice({
       fileId: segment.telegramFileId,
       declaredSizeBytes: segment.sizeBytes,
@@ -398,6 +443,7 @@ export class TrainingAudioWorkerService
       await this.ensureTranscriptionJob(
         payload.attemptId,
         payload.answerId,
+        payload.correlationId,
       );
       return 'COMPLETED';
     }
@@ -425,6 +471,7 @@ export class TrainingAudioWorkerService
       },
     });
     const storageKey = buildMergedStorageKey(answer.id);
+    this.assertRuntimeEnabled();
     return this.ffmpeg.withPreparedAudio(
       answer.voiceSegments.map((segment) => ({
         id: segment.id,
@@ -558,6 +605,7 @@ export class TrainingAudioWorkerService
     }
 
     await this.refreshOwnershipOrThrow(jobId);
+    this.assertRuntimeEnabled();
     const object = await this.files.headPrivateTrainingAudioObject(
       current.bucket,
       current.objectKey,
@@ -576,6 +624,7 @@ export class TrainingAudioWorkerService
       return;
     }
 
+    this.assertRuntimeEnabled();
     await upload();
     await this.faultInjection?.afterObjectUpload({
       intentId: current.id,
@@ -789,6 +838,7 @@ export class TrainingAudioWorkerService
         payload.attemptId,
         payload.answerId,
         new Date(),
+        payload.correlationId,
       );
     });
   }
@@ -881,6 +931,9 @@ export class TrainingAudioWorkerService
             answerId: payload.answerId,
             intentId: intent.id,
             cleanupMode: mode,
+            ...(payload.correlationId
+              ? { correlationId: payload.correlationId }
+              : {}),
           },
           idempotencyKey: `training-audio:cleanup:${intent.id}:${scheduled.cleanupGeneration}`,
           runAt: new Date(),
@@ -912,10 +965,12 @@ export class TrainingAudioWorkerService
 
     await this.refreshOwnershipOrThrow(job.id);
     try {
+      this.assertRuntimeEnabled();
       await this.files.deletePrivateTrainingAudioObject(
         intent.bucket,
         intent.objectKey,
       );
+      this.assertRuntimeEnabled();
       if (
         (
           await this.files.headPrivateTrainingAudioObject(
@@ -926,7 +981,10 @@ export class TrainingAudioWorkerService
       ) {
         throw new Error('Persisted training audio object still exists');
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof TrainingFeatureDisabledAfterClaimError) {
+        throw error;
+      }
       throw new TrainingAudioError('AUDIO_STORAGE_FAILED', true);
     }
     await this.runSerializable(async (tx) => {
@@ -965,10 +1023,20 @@ export class TrainingAudioWorkerService
     return 'COMPLETED';
   }
 
-  private async ensureTranscriptionJob(attemptId: string, answerId: string) {
+  private async ensureTranscriptionJob(
+    attemptId: string,
+    answerId: string,
+    correlationId: string | null,
+  ) {
     await this.prisma.$transaction(async (tx) => {
       await acquireAttemptLock(tx, attemptId);
-      await enqueueTranscriptionJob(tx, attemptId, answerId, new Date());
+      await enqueueTranscriptionJob(
+        tx,
+        attemptId,
+        answerId,
+        new Date(),
+        correlationId,
+      );
     });
   }
 
@@ -1013,6 +1081,39 @@ export class TrainingAudioWorkerService
         lastErrorCode: 'AUDIO_SEGMENTS_PENDING',
         lastErrorMessage: 'Answer audio segments are still downloading',
         errorDetailsJson: { retryable: true, waiting: true },
+      },
+    });
+    if (released.count !== 1) {
+      throw new LostAudioJobOwnershipError();
+    }
+    this.lostOwnership.add(job.id);
+  }
+
+  private assertRuntimeEnabled() {
+    if (this.trainingConfig?.isEnabled() === false) {
+      throw new TrainingFeatureDisabledAfterClaimError();
+    }
+  }
+
+  private async releaseJobAfterFeatureDisable(job: ClaimedAudioJob) {
+    const released = await this.prisma.trainingJob.updateMany({
+      where: {
+        id: job.id,
+        status: TrainingJobStatus.RUNNING,
+        lockOwner: this.workerId,
+        attempts: job.attempts,
+      },
+      data: {
+        status: TrainingJobStatus.PENDING,
+        attempts: { decrement: 1 },
+        runAt: new Date(),
+        finishedAt: null,
+        lockOwner: null,
+        lockedAt: null,
+        heartbeatAt: null,
+        lastErrorCode: 'TRAINING_DISABLED_AFTER_CLAIM',
+        lastErrorMessage: 'Training job released after runtime disable',
+        errorDetailsJson: { retryable: true },
       },
     });
     if (released.count !== 1) {
@@ -1169,6 +1270,7 @@ export class TrainingAudioWorkerService
         attemptId: payload.attemptId,
         idempotencyKey: `telegram:attempt-technical-failure:${payload.attemptId}`,
         runAt: failedAt,
+        correlationId: payload.correlationId,
       });
     }
     await tx.trainingJob.updateMany({
@@ -1447,6 +1549,7 @@ type AudioJobPayload = {
   segmentId: string | null;
   intentId: string | null;
   cleanupMode: CleanupMode | null;
+  correlationId: string | null;
 };
 
 type CleanupMode = 'RETRY_UPLOAD' | 'TERMINAL';
@@ -1500,6 +1603,10 @@ function readAudioJobPayload(value: Prisma.JsonValue): AudioJobPayload {
       value.cleanupMode === 'TERMINAL'
         ? value.cleanupMode
         : null,
+    correlationId: resolveTrainingCorrelationId(
+      value.correlationId,
+      `training-answer:${value.answerId}`,
+    ),
   };
 }
 
@@ -1613,13 +1720,20 @@ async function enqueueTranscriptionJob(
   attemptId: string,
   answerId: string,
   runAt: Date,
+  correlationId?: string | null,
 ) {
   await tx.trainingJob.createMany({
     data: [
       {
         kind: TrainingJobKind.TRANSCRIBE_ANSWER,
         status: TrainingJobStatus.PENDING,
-        payloadJson: { attemptId, answerId },
+        payloadJson: {
+          attemptId,
+          answerId,
+          ...(readTrainingCorrelationId(correlationId)
+            ? { correlationId }
+            : {}),
+        },
         idempotencyKey: `attempt:${attemptId}:answer:${answerId}:transcribe`,
         runAt,
         maxAttempts: 5,

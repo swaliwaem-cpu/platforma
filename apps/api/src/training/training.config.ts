@@ -23,14 +23,14 @@ export function parseTrainingModuleEnabled(value: string | undefined) {
 
 @Injectable()
 export class TrainingConfigService {
-  private readonly enabled = parseTrainingModuleEnabled(process.env[TRAINING_MODULE_ENABLED_ENV]);
-
   isEnabled() {
-    return this.enabled;
+    return parseTrainingModuleEnabled(
+      process.env[TRAINING_MODULE_ENABLED_ENV],
+    );
   }
 
   assertEnabled() {
-    if (!this.enabled) {
+    if (!this.isEnabled()) {
       throw new ServiceUnavailableException({
         code: 'TRAINING_DISABLED',
         message: 'Training module is temporarily disabled',
@@ -39,9 +39,17 @@ export class TrainingConfigService {
   }
 
   getConfig(): TrainingModuleConfigResponse {
+    const enabled = this.isEnabled();
     return {
-      enabled: this.enabled,
-      status: this.enabled ? 'enabled' : 'disabled',
+      enabled,
+      status: enabled ? 'enabled' : 'disabled',
     };
+  }
+}
+
+export class TrainingFeatureDisabledAfterClaimError extends Error {
+  constructor() {
+    super('Training module was disabled after the job was claimed');
+    this.name = 'TrainingFeatureDisabledAfterClaimError';
   }
 }

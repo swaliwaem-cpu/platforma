@@ -10,12 +10,16 @@ import {
   TrainingJobStatus,
   TrainingReviewStatus,
 } from '@prisma/client';
+import { createHash } from 'node:crypto';
 
 import { S3StorageService } from '../files/s3-storage.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { TrainingOpenAiConfig } from './openai/training-openai.config';
 import { TrainingTelegramConfig } from './telegram/training-telegram.config';
 import { TrainingConfigService } from './training.config';
+import { parseTrainingReviewIdempotencyKey } from './training-review-idempotency';
+
+const OPERATIONS_TRANSACTION_RETRY_LIMIT = 3;
 
 @Injectable()
 export class TrainingOperationsService {
@@ -40,7 +44,9 @@ export class TrainingOperationsService {
       lastSucceededJob,
       lastProcessedUpdate,
       activePolicy,
-      recentAcceptances,
+      activePolicyAcceptances,
+      revokedPolicyAcceptances,
+      activePolicyAcceptancesBySource,
     ] = await Promise.all([
       this.prisma.trainingJob.groupBy({
         by: ['kind', 'status'],
@@ -110,16 +116,25 @@ export class TrainingOperationsService {
           checksum: true,
         },
       }),
-      this.prisma.trainingPolicyAcceptance.findMany({
-        orderBy: { acceptedAt: 'desc' },
-        take: 20,
-        select: {
-          acceptedAt: true,
-          revokedAt: true,
-          source: true,
-          user: { select: { id: true, name: true } },
-          policyVersion: { select: { version: true } },
+      this.prisma.trainingPolicyAcceptance.count({
+        where: {
+          policyVersion: { isActive: true },
+          revokedAt: null,
         },
+      }),
+      this.prisma.trainingPolicyAcceptance.count({
+        where: {
+          policyVersion: { isActive: true },
+          revokedAt: { not: null },
+        },
+      }),
+      this.prisma.trainingPolicyAcceptance.groupBy({
+        by: ['source'],
+        where: {
+          policyVersion: { isActive: true },
+          revokedAt: null,
+        },
+        _count: { _all: true },
       }),
     ]);
 
@@ -183,21 +198,70 @@ export class TrainingOperationsService {
             effectiveAt: activePolicy.effectiveAt.toISOString(),
           }
         : null,
-      recentPolicyAcceptances: recentAcceptances.map((item) => ({
-        user: item.user,
-        policyVersion: item.policyVersion.version,
-        source: item.source,
-        acceptedAt: item.acceptedAt.toISOString(),
-        revokedAt: item.revokedAt?.toISOString() ?? null,
-      })),
+      policyAcceptances: {
+        activeCount: activePolicyAcceptances,
+        revokedCount: revokedPolicyAcceptances,
+        bySource: {
+          PLATFORM:
+            activePolicyAcceptancesBySource.find(
+              (item) => item.source === 'PLATFORM',
+            )?._count._all ?? 0,
+          TELEGRAM:
+            activePolicyAcceptancesBySource.find(
+              (item) => item.source === 'TELEGRAM',
+            )?._count._all ?? 0,
+        },
+      },
     };
   }
 
-  async retryJob(jobId: string, actorUserId: string, reason: unknown) {
+  async retryJob(
+    jobId: string,
+    actorUserId: string,
+    reason: unknown,
+    idempotencyKeyValue: unknown,
+  ) {
     const normalizedReason = readRetryReason(reason);
+    const idempotencyKey = parseTrainingReviewIdempotencyKey(
+      idempotencyKeyValue,
+    );
+    const requestPayloadHash = createHash('sha256')
+      .update(JSON.stringify({ reason: normalizedReason }), 'utf8')
+      .digest('hex');
     this.trainingConfig.assertEnabled();
 
-    return this.prisma.$transaction(async (tx) => {
+    return this.runSerializable(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT 1 AS "locked" FROM (SELECT pg_advisory_xact_lock(hashtextextended(${`training-operations-retry:${jobId}`}, 0))) AS "lock_state"`,
+      );
+      const existing = await tx.trainingOperationsJobRetry.findUnique({
+        where: {
+          jobId_actorUserId_idempotencyKey: {
+            jobId,
+            actorUserId,
+            idempotencyKey,
+          },
+        },
+        select: {
+          requestPayloadHash: true,
+          job: { select: { kind: true } },
+        },
+      });
+      if (existing) {
+        if (existing.requestPayloadHash !== requestPayloadHash) {
+          throw new ConflictException(
+            'Idempotency-Key was already used with a different retry payload',
+          );
+        }
+        return {
+          job: {
+            id: jobId,
+            kind: existing.job.kind,
+            status: TrainingJobStatus.PENDING,
+          },
+        };
+      }
+
       const job = await tx.trainingJob.findUnique({
         where: { id: jobId },
         select: {
@@ -240,6 +304,15 @@ export class TrainingOperationsService {
       if (retried.count !== 1) {
         throw new ConflictException('Training job status changed');
       }
+      await tx.trainingOperationsJobRetry.create({
+        data: {
+          jobId: job.id,
+          actorUserId,
+          idempotencyKey,
+          requestPayloadHash,
+          previousStatus: job.status,
+        },
+      });
       await tx.auditLog.create({
         data: {
           actorUserId,
@@ -261,6 +334,35 @@ export class TrainingOperationsService {
         },
       };
     });
+  }
+
+  private async runSerializable<T>(
+    operation: (tx: Prisma.TransactionClient) => Promise<T>,
+  ) {
+    let lastError: unknown;
+    for (
+      let attempt = 1;
+      attempt <= OPERATIONS_TRANSACTION_RETRY_LIMIT;
+      attempt += 1
+    ) {
+      try {
+        return await this.prisma.$transaction(operation, {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        });
+      } catch (error) {
+        lastError = error;
+        if (
+          !(
+            error instanceof Prisma.PrismaClientKnownRequestError &&
+            error.code === 'P2034'
+          ) ||
+          attempt === OPERATIONS_TRANSACTION_RETRY_LIMIT
+        ) {
+          throw error;
+        }
+      }
+    }
+    throw lastError;
   }
 }
 

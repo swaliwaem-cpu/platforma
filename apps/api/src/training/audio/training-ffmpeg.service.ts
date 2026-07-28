@@ -134,7 +134,7 @@ export class TrainingFfmpegService
         const sourceName = `segment-${String(segment.segmentIndex).padStart(
           4,
           '0',
-        )}${extension}`;
+        )}-source${extension}`;
         const sourcePath = join(directory, sourceName);
         const normalizedName = `segment-${String(
           segment.segmentIndex,

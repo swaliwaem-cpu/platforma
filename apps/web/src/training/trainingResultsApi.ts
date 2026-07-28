@@ -58,12 +58,14 @@ export function retryTrainingJob(
   accessToken: string,
   jobId: string,
   reason: string,
+  idempotencyKey: string,
 ) {
   return apiRequest(
     `/training/admin/operations/jobs/${encodeURIComponent(jobId)}/retry`,
     accessToken,
     {
       method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
       body: JSON.stringify({ reason }),
     },
   );

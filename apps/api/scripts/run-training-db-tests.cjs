@@ -86,6 +86,7 @@ async function main() {
       'tests/training-audio-http.integration.cjs',
       'tests/training-telegram-db.integration.cjs',
       'tests/training-results-db.integration.cjs',
+      'tests/training-policy-seed-db.integration.cjs',
       'tests/training-stage10-db.integration.cjs',
     ]);
   } catch (error) {

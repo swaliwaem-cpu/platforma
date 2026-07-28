@@ -18,19 +18,39 @@ docker compose -f docker-compose.yml -f docker-compose.staging.yml \
 
 Заменить все placeholders через secret store. Проверить HTTPS, exact
 `WEB_ORIGIN`, secure cookies у reverse proxy, private audio bucket и
-недоступность anonymous GET/LIST/PUT. До migration выполнить backup по
-`backup-migration-rollback.md`; затем:
+недоступность anonymous GET/LIST/PUT. `.env.staging` исключён из Git.
+
+До любого Prisma/S3/Nest side effect выполнить обязательный fail-closed
+preflight:
 
 ```bash
-cd apps/api
-pnpm exec prisma migrate status
-pnpm exec prisma migrate deploy
-pnpm exec prisma migrate status
+pnpm training:staging preflight
+```
+
+Команда запускается только из корня репозитория, обязательно загружает
+корневой `.env.staging` и fail-closed требует `DEPLOYMENT_ENV=staging`.
+Она требует exact staging DB host/name, попарно разные general/document/audio
+buckets, отдельные staging public hosts и Telegram bot username. Known
+production DB identities, bucket names, public hosts и bot usernames
+передаются как несекретные deny-list значения из deployment/secret store;
+credentials и production secrets для сравнения не используются. Совпадение,
+production-like/default identifier или placeholder останавливает процесс до
+migrations.
+
+До migration выполнить backup по `backup-migration-rollback.md`; затем:
+
+```bash
+pnpm training:staging preflight
+pnpm training:staging prisma validate
+pnpm training:staging prisma migrate status
+pnpm training:staging prisma migrate deploy
+pnpm training:staging prisma migrate status
 ```
 
 `migrate status` с pending migration ожидаемо может вернуть non-zero, поэтому
 deploy выполняется отдельной командой. `migrate reset` и `db push`
-запрещены.
+запрещены. Runner допускает только перечисленные read/forward migration
+команды, а isolation preflight повторяется перед каждым Prisma process.
 
 ## Последовательные режимы
 
@@ -68,6 +88,10 @@ Phase C — один утверждённый тестовый проект и t
 docker compose -f docker-compose.yml -f docker-compose.staging.yml \
   --env-file .env.staging up -d --build
 ```
+
+Staging overlay использует required-variable syntax для DB, всех buckets,
+S3 credentials/endpoints, public URLs и isolation allow/deny identifiers.
+Отсутствующие значения не наследуют development defaults.
 
 ## Webhook tooling
 

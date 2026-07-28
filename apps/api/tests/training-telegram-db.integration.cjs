@@ -638,6 +638,70 @@ test('several voice messages form one answer and duplicate message creates no se
   assert.ok(messages.some((message) => message.text.startsWith('Часть 2 принята')));
 });
 
+test('legacy Telegram update derives one stable correlation for voice domain and delivery', async () => {
+  const fixture = await createFixture();
+  const telegramId = 501_119;
+  const harness = createHarness();
+  await linkUser(harness, fixture.userId, telegramId);
+  await startAttempt(harness.engine, fixture);
+  const updateId = nextSequence();
+  const messageId = 119;
+  const idempotencyKey = `telegram:message:${telegramId}:${messageId}`;
+  await harness.webhook.acceptUpdate(
+    voiceUpdate(
+      updateId,
+      messageId,
+      telegramId,
+      'legacy-correlation',
+    ),
+  );
+  const updateJob = await prisma.trainingJob.findUniqueOrThrow({
+    where: { idempotencyKey },
+  });
+  const { correlationId: _removedCorrelationId, ...legacyPayload } =
+    updateJob.payloadJson;
+  await prisma.trainingJob.update({
+    where: { id: updateJob.id },
+    data: { payloadJson: legacyPayload },
+  });
+
+  let domainCorrelationId = null;
+  const attempts = new Proxy(harness.engine, {
+    get(target, property) {
+      if (property === 'appendVoiceSegment') {
+        return async (command) => {
+          domainCorrelationId = command.correlationId;
+          return target.appendVoiceSegment(command);
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  const dialog = new TrainingTelegramDialogService(
+    prisma,
+    TEST_CONFIG,
+    harness.links,
+    attempts,
+  );
+  await new TrainingTelegramWorkerService(
+    prisma,
+    TEST_CONFIG,
+    dialog,
+    harness.transport,
+  ).drainNow();
+
+  const expectedCorrelationId = `telegram-update:${updateId}`;
+  const deliveryJob = await prisma.trainingJob.findUniqueOrThrow({
+    where: { idempotencyKey: `${idempotencyKey}:delivery:0` },
+  });
+  assert.equal(domainCorrelationId, expectedCorrelationId);
+  assert.equal(
+    deliveryJob.payloadJson.correlationId,
+    expectedCorrelationId,
+  );
+});
+
 test('concurrent file_unique_id deduplication is scoped to one answer and keeps segment order valid', async () => {
   const fixture = await createFixture();
   const harness = createHarness();
@@ -1187,6 +1251,154 @@ test('two Telegram workers claim one delivery job only once', async () => {
     ).length,
     1,
   );
+});
+
+test('runtime disable after Telegram claim prevents delivery and restart resumes the same job', async () => {
+  const marker = `runtime-disable-${nextSequence()}`;
+  const key = `telegram:test:${marker}`;
+  await createTelegramDeliveryJob(key, marker);
+  let enabled = true;
+  let deliveries = 0;
+  const trainingConfig = {
+    isEnabled: () => enabled,
+  };
+  const pausedPrisma = proxyPrismaTrainingJob({
+    async updateMany(delegate, args) {
+      const result = await delegate.updateMany(args);
+      if (
+        result.count === 1 &&
+        args.data?.status === TrainingJobStatus.RUNNING &&
+        args.data?.lockOwner
+      ) {
+        enabled = false;
+      }
+      return result;
+    },
+  });
+  const worker = new TrainingTelegramWorkerService(
+    pausedPrisma,
+    TEST_CONFIG,
+    createHarness().dialog,
+    {
+      async sendMessage() {
+        deliveries += 1;
+      },
+      async answerCallbackQuery() {
+        deliveries += 1;
+      },
+    },
+    trainingConfig,
+  );
+
+  await worker.drainNow();
+  let job = await prisma.trainingJob.findUnique({
+    where: { idempotencyKey: key },
+  });
+  assert.equal(deliveries, 0);
+  assert.equal(job.status, TrainingJobStatus.PENDING);
+  assert.equal(job.attempts, 0);
+  assert.equal(job.lockOwner, null);
+  assert.equal(job.lastErrorCode, 'TRAINING_DISABLED_AFTER_CLAIM');
+
+  enabled = true;
+  const restartedTransport = new FakeTrainingTelegramTransport();
+  await new TrainingTelegramWorkerService(
+    prisma,
+    TEST_CONFIG,
+    createHarness().dialog,
+    restartedTransport,
+    trainingConfig,
+  ).drainNow();
+  job = await prisma.trainingJob.findUnique({
+    where: { idempotencyKey: key },
+  });
+  assert.equal(job.status, TrainingJobStatus.SUCCEEDED);
+  assert.equal(job.attempts, 1);
+  assert.equal(
+    restartedTransport.deliveries.filter(
+      (delivery) =>
+        delivery.operation === 'SEND_MESSAGE' && delivery.text === marker,
+    ).length,
+    1,
+  );
+});
+
+test('runtime disable during Telegram ownership refresh prevents update domain work and restart resumes it', async () => {
+  const updateId = nextSequence();
+  const messageId = 120;
+  const telegramId = 501_120;
+  const key = `telegram:message:${telegramId}:${messageId}`;
+  const harness = createHarness();
+  await harness.webhook.acceptUpdate(
+    privateTextUpdate(updateId, messageId, telegramId, 'Правила'),
+  );
+  let enabled = true;
+  let domainCalls = 0;
+  const trainingConfig = {
+    isEnabled: () => enabled,
+  };
+  const pausedPrisma = proxyPrismaTrainingJob({
+    async updateMany(delegate, args) {
+      const result = await delegate.updateMany(args);
+      if (
+        result.count === 1 &&
+        args.data?.heartbeatAt instanceof Date &&
+        args.data?.status === undefined
+      ) {
+        enabled = false;
+      }
+      return result;
+    },
+  });
+  const dialog = {
+    async processUpdate(...args) {
+      domainCalls += 1;
+      return harness.dialog.processUpdate(...args);
+    },
+  };
+  const worker = new TrainingTelegramWorkerService(
+    pausedPrisma,
+    TEST_CONFIG,
+    dialog,
+    harness.transport,
+    trainingConfig,
+  );
+
+  await worker.drainNow();
+  let [job, processedUpdate] = await Promise.all([
+    prisma.trainingJob.findUniqueOrThrow({
+      where: { idempotencyKey: key },
+    }),
+    prisma.trainingProcessedUpdate.findUniqueOrThrow({
+      where: { updateId: BigInt(updateId) },
+    }),
+  ]);
+  assert.equal(domainCalls, 0);
+  assert.equal(job.status, TrainingJobStatus.PENDING);
+  assert.equal(job.attempts, 0);
+  assert.equal(job.lockOwner, null);
+  assert.equal(job.lastErrorCode, 'TRAINING_DISABLED_AFTER_CLAIM');
+  assert.equal(processedUpdate.status, 'RECEIVED');
+
+  enabled = true;
+  await new TrainingTelegramWorkerService(
+    prisma,
+    TEST_CONFIG,
+    harness.dialog,
+    harness.transport,
+    trainingConfig,
+  ).drainNow();
+  [job, processedUpdate] = await Promise.all([
+    prisma.trainingJob.findUniqueOrThrow({
+      where: { idempotencyKey: key },
+    }),
+    prisma.trainingProcessedUpdate.findUniqueOrThrow({
+      where: { updateId: BigInt(updateId) },
+    }),
+  ]);
+  assert.equal(job.status, TrainingJobStatus.SUCCEEDED);
+  assert.equal(job.attempts, 1);
+  assert.equal(processedUpdate.status, 'PROCESSED');
 });
 
 test('Telegram worker applies bounded retries and permanently rejects non-retryable 4xx', async () => {

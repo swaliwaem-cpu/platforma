@@ -2,6 +2,9 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
+  HttpCode,
+  HttpStatus,
   Param,
   Post,
   UseGuards,
@@ -32,12 +35,19 @@ export class TrainingOperationsController {
   }
 
   @Post('jobs/:jobId/retry')
+  @HttpCode(HttpStatus.OK)
   @RequirePermissions('training:operations:manage')
   retryJob(
     @Param('jobId') jobId: string,
     @CurrentUser() actor: AuthenticatedUser,
     @Body() body: Record<string, unknown>,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
   ) {
-    return this.operations.retryJob(jobId, actor.id, body.reason);
+    return this.operations.retryJob(
+      jobId,
+      actor.id,
+      body.reason,
+      idempotencyKey,
+    );
   }
 }

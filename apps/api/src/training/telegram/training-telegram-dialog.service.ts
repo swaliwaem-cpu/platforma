@@ -574,6 +574,7 @@ export class TrainingTelegramDialogService {
           account.userId,
           callback.projectId,
           update.chatId,
+          update.correlationId,
         )),
       ];
     }
@@ -583,6 +584,7 @@ export class TrainingTelegramDialogService {
         account.userId,
         callback.attemptQuestionId,
         update.chatId,
+        update.correlationId,
       )),
     ];
   }
@@ -591,6 +593,7 @@ export class TrainingTelegramDialogService {
     userId: string,
     projectId: string,
     chatId: string,
+    correlationId?: string,
   ): Promise<DeliveryPlan[]> {
     const active = await this.findActiveAttempt(userId);
     if (active) {
@@ -631,6 +634,7 @@ export class TrainingTelegramDialogService {
         userId,
         projectId,
         confirmed: true,
+        correlationId,
       });
       const question = currentQuestion(result.attempt);
       if (!question) {
@@ -655,6 +659,7 @@ export class TrainingTelegramDialogService {
     userId: string,
     attemptQuestionId: string,
     chatId: string,
+    correlationId?: string,
   ): Promise<DeliveryPlan[]> {
     const target = await this.prisma.trainingAttemptQuestion.findUnique({
       where: { id: attemptQuestionId },
@@ -676,6 +681,7 @@ export class TrainingTelegramDialogService {
       await this.attempts.finishAnswer({
         attemptId: target.attempt.id,
         attemptQuestionId,
+        correlationId,
       });
       return [];
     } catch (error) {
@@ -734,6 +740,7 @@ export class TrainingTelegramDialogService {
         telegramChatId: BigInt(update.chatId),
         telegramFileId: voice.fileId,
         fileUniqueId: voice.fileUniqueId,
+        correlationId: update.correlationId,
         sizeBytes: voice.sizeBytes
           ? BigInt(voice.sizeBytes)
           : undefined,
