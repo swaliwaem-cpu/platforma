@@ -6341,3 +6341,26 @@ Dependencies:
 - Верхние семь вкладок редактора по-прежнему используют прежнее условное
   монтирование. Защита черновиков реализована внутри каждой master-detail
   вкладки; межвкладочную dirty-навигацию эта задача не меняет.
+
+Production deploy:
+
+- Commit `634afb7` запушен в `origin/on-ser`; production checkout
+  `/opt/platforma` fast-forwarded с `15f2890` до `634afb7`.
+- До обновления сохранён rollback-набор
+  `/opt/platforma-deploy-backups/training-editor-b-20260728T171012Z-15f2890`:
+  исходный commit/status, Compose state, описание web-контейнера и отдельный
+  Docker tag `platforma-web:rollback-training-editor-b-20260728T171012Z`.
+- Production image `platforma-web` собран успешно; пересоздан только service
+  `web`. API, training worker, PostgreSQL и migrations не перезапускались и не
+  изменялись.
+- Production checkout чистый на `634afb7`; `platforma-web-1` работает на новом
+  image `sha256:4e32f6b8081602d7ec643712f689fa74b8e5e023568d514e7e754eefe8a88c69`.
+- Локальный web endpoint и `https://broker.fluffywhite.moscow/` возвращают
+  HTTP `200`; API health после deploy: `status=ok`, `database=ok`,
+  `training=ready`.
+- Публичный HTML отдаёт новый main asset `index-CwH3aAho.js` и stylesheet
+  `index-ub4b8tvt.css`; оба содержат маркер `training-master-detail`, CSS также
+  содержит `training-checkbox-control`.
+- Авторизованная визуальная production-проверка не выполнена: управляемый
+  браузер с пользовательской сессией недоступен. Нужен hard reload и ручная
+  проверка разделов `Основное`, вопросы, `Факты` и `Критерии`.
