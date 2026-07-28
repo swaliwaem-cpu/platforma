@@ -315,6 +315,37 @@ test('production Compose fixes real mode and requires every Telegram value', () 
   }
 });
 
+test('production Compose keeps infrastructure private and services restartable', () => {
+  for (const service of ['postgres', 'redis', 'minio']) {
+    assert.match(
+      productionCompose,
+      new RegExp(
+        `^  ${service}:\\n(?:    [^\\n]+\\n)*?    restart: unless-stopped\\n` +
+          '(?:    [^\\n]+\\n)*?    ports: !reset \\[\\]$',
+        'mu',
+      ),
+    );
+  }
+  for (const [service, port] of [
+    ['api', '3000'],
+    ['web', '5173'],
+  ]) {
+    assert.match(
+      productionCompose,
+      new RegExp(
+        `^  ${service}:\\n(?:    [^\\n]+\\n)*?    restart: unless-stopped\\n` +
+          '(?:    [^\\n]+\\n)*?    ports: !override\\n' +
+          `      - "127\\.0\\.0\\.1:\\$\\{[A-Z_]+:-${port}\\}:${port}"$`,
+        'mu',
+      ),
+    );
+  }
+  assert.match(
+    productionCompose,
+    /^  training-worker:\n    restart: unless-stopped$/mu,
+  );
+});
+
 test('Docker and Nest bootstrap preserve the complete SIGTERM path', () => {
   assert.match(
     bootstrapSource,

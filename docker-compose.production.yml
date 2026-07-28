@@ -1,5 +1,17 @@
 services:
+  postgres:
+    restart: unless-stopped
+    ports: !reset []
+  redis:
+    restart: unless-stopped
+    ports: !reset []
+  minio:
+    restart: unless-stopped
+    ports: !reset []
   api:
+    restart: unless-stopped
+    ports: !override
+      - "127.0.0.1:${API_PORT:-3000}:3000"
     environment:
       NODE_ENV: production
       DEPLOYMENT_ENV: production
@@ -20,6 +32,7 @@ services:
       PUBLIC_APP_URL: "${PUBLIC_APP_URL:?PUBLIC_APP_URL is required}"
       TRAINING_AUDIO_BUCKET: "${TRAINING_AUDIO_BUCKET:?TRAINING_AUDIO_BUCKET is required and must differ from MINIO_BUCKET}"
   training-worker:
+    restart: unless-stopped
     environment:
       NODE_ENV: production
       DEPLOYMENT_ENV: production
@@ -39,3 +52,7 @@ services:
       TELEGRAM_WEBHOOK_URL: "${TELEGRAM_WEBHOOK_URL:?TELEGRAM_WEBHOOK_URL is required}"
       PUBLIC_APP_URL: "${PUBLIC_APP_URL:?PUBLIC_APP_URL is required}"
       TRAINING_AUDIO_BUCKET: "${TRAINING_AUDIO_BUCKET:?TRAINING_AUDIO_BUCKET is required and must differ from MINIO_BUCKET}"
+  web:
+    restart: unless-stopped
+    ports: !override
+      - "127.0.0.1:${WEB_PORT:-5173}:5173"
