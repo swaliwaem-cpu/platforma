@@ -6107,10 +6107,52 @@ Dependencies:
 
 Ручная/production проверка:
 
-- На этом checkpoint production ещё не изменён: flag остаётся `false`,
-  webhook не зарегистрирован, seed и назначение pilot не запускались.
-- Следующий разрешённый шаг: backup, deploy при выключенном feature, safe
-  seed, точная role/user/API матрица и только затем flag/webhook/TATE draft.
+- Перед изменениями создан custom-format backup:
+  `/opt/platforma-deploy-backups/pilot-rbac-20260728TZ8z4dEZ`,
+  размер `51 002 005` bytes, SHA-256
+  `9ab812a8a1d8ff7025090490eebc372f555c71fffc58abb7aebe942fbe1f0588`;
+  `pg_restore --list` сохранён рядом.
+- Production развернут с RBAC/policy/Telegram hardening commit `4dd34c5`.
+  Дополнительно развернут `94abb50`: API и worker принимают
+  `NODE_OPTIONS`; production использует `--dns-result-order=ipv4first`,
+  потому что с сервера Telegram доступен по IPv4, а IPv6 route отсутствует.
+- Seed выполнен с очищенными `ADMIN_NAME`, `ADMIN_PASSWORD` и
+  `ADMIN_PASSWORD_HASH`. Повторная сверка подтвердила, что имя, status, role
+  и password fingerprint `admin@fluffywhite.moscow` не изменились.
+- Policy `2026-07-28.1` создана как ACTIVE/APPROVED с creator
+  `admin@fluffywhite.moscow`. Миграции: `41` applied, `0` incomplete,
+  `0` rolled back.
+- `infanterattack@gmail.com` переведён из `user` в `training_pilot` через
+  production API: audit `user.role_change` создан, старые sessions
+  инвалидированы. В production ровно один ACTIVE user имеет
+  `training:take`; у общей роли `user` по-прежнему `0` permissions
+  `training:*`.
+- Реальная HTTP-матрица production API passed:
+  ordinary `user` получает `403` на employee/admin training endpoints;
+  pilot получает `200` на config/projects/own attempts/Telegram account и
+  `403` на admin endpoints; admin получает `200` на admin
+  config/projects/results/ranking/operations и `403` на employee training.
+- `TRAINING_MODULE_ENABLED=true` подтверждён в `.env.production`, API и
+  worker; health возвращает `training=ready`. `.env.production` сохранён как
+  `root:root 0600`.
+- Telegram `getMe` подтвердил `@fw_train_bot`. Единственный webhook
+  зарегистрирован на
+  `https://broker.fluffywhite.moscow/api/training/telegram/webhook`:
+  pending `0`, last error отсутствует, allowed updates — только `message` и
+  `callback_query`.
+- Создан и связан с существующим каталогом draft-проект `ЖК TATE`
+  (`slug=tate`): project/version `DRAFT`, active version отсутствует,
+  OPEN/PUBLISHED training records `0`.
+- Загружен визуально проверенный четырёхстраничный DOCX source pack.
+  Extraction завершён `READY`, job `SUCCEEDED`.
+- Подготовлены ровно `1 MAIN` с maximum `55` и `10 FOLLOW_UP` с maximum
+  `15`, позиции `1..10`; `13` draft-фактов имеют `isApproved=false`;
+  изменяемые цены/ипотека/рассрочка/наличие/сроки в факты не включены.
+  Подготовлены `4 MAIN` criteria на `55` и `2 FOLLOW_UP` criteria на `15`.
+- После создания TATE повторная production-проверка подтвердила:
+  ordinary user `/training/projects` — `403`, pilot visible projects — `0`,
+  admin видит TATE как DRAFT без active version. Попыток и Telegram
+  accounts — `0`; массовая доступность отсутствует.
 
 Спорные места:
 
@@ -6118,3 +6160,12 @@ Dependencies:
   переведены на `training:take`.
 - `training:data:delete` остаётся только у общей admin-роли; временная pilot и
   ограниченная `training_admin` его не получают.
+- Фактическое прохождение пилота ещё не запускалось: пользователь потребовал
+  ручное подтверждение фактов администратором, а проект до этого нельзя
+  публиковать/открывать. В `/admin/training` нужно проверить источники,
+  подтвердить каждый факт, вопросы/aliases/criteria/settings, затем
+  опубликовать версию и открыть проект.
+- Страница КОРТРОС ограничивает автоматизированный доступ CAPTCHA; перед
+  подтверждением её фактов нужен ручной живой просмотр.
+- Общая роль `user` не будет открыта без отдельной точной команды
+  `OPEN_TRAINING_FOR_ALL_USERS`.
