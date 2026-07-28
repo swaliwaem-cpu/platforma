@@ -23,6 +23,12 @@ import {
 import { FilesService } from '../../files/files.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TRAINING_ACTIVE_ATTEMPT_STATUSES } from '../training.domain';
+import { TrainingConfigService } from '../training.config';
+import { TrainingWorkerHeartbeatService } from '../training-worker-heartbeat.service';
+import {
+  formatTrainingErrorForLog,
+  safeTrainingFailureMessage,
+} from '../training-safe-log';
 import { enqueueAttemptTelegramOutboxEvent } from '../telegram/training-telegram-outbox';
 import { TrainingAudioConfig } from './training-audio.config';
 import { TrainingAudioError } from './training-audio.error';
@@ -87,10 +93,18 @@ export class TrainingAudioWorkerService
     @Optional()
     @Inject(TRAINING_AUDIO_FAULT_INJECTION)
     private readonly faultInjection: TrainingAudioFaultInjection | null = null,
+    @Optional()
+    private readonly trainingConfig?: TrainingConfigService,
+    @Optional()
+    private readonly workerHeartbeat?: TrainingWorkerHeartbeatService,
   ) {}
 
   onModuleInit() {
     this.destroyed = false;
+    if (this.trainingConfig?.isEnabled() === false) return;
+    void this.workerHeartbeat
+      ?.register('audio', this.workerId)
+      .catch(() => undefined);
     this.pollInterval = setInterval(() => this.kick(), this.config.workerPollMs);
     this.pollInterval.unref();
     this.kick();
@@ -118,19 +132,28 @@ export class TrainingAudioWorkerService
   }
 
   kick() {
-    if (this.destroyed || this.kickQueued) return;
+    if (
+      this.destroyed ||
+      this.kickQueued ||
+      this.trainingConfig?.isEnabled() === false
+    ) {
+      return;
+    }
+    void this.workerHeartbeat?.touch(this.workerId).catch(() => undefined);
     this.kickQueued = true;
     setImmediate(() => {
       this.kickQueued = false;
       void this.drainNow().catch((error) => {
-        this.logger.error(`Audio worker drain failed: ${safeError(error)}`);
+        this.logger.error(
+          `Audio worker drain failed: ${formatTrainingErrorForLog(error)}`,
+        );
       });
     });
   }
 
   async drainNow() {
     if (this.drainPromise) return this.drainPromise;
-    if (this.destroyed) return;
+    if (this.destroyed || this.trainingConfig?.isEnabled() === false) return;
     const drain = this.drainConcurrent().finally(() => {
       if (this.drainPromise === drain) this.drainPromise = null;
     });
@@ -139,7 +162,7 @@ export class TrainingAudioWorkerService
   }
 
   private async drainConcurrent() {
-    if (this.destroyed) return;
+    if (this.destroyed || this.trainingConfig?.isEnabled() === false) return;
     await this.recoverStaleJobs();
     await Promise.all(
       Array.from({ length: this.config.workerConcurrency }, () =>
@@ -1628,10 +1651,7 @@ function isTerminalAttempt(status: TrainingAttemptStatus) {
 }
 
 function safeError(error: unknown) {
-  if (error instanceof TrainingAudioError) {
-    return error.message;
-  }
-  return 'Training audio job failed';
+  return safeTrainingFailureMessage(error, 'Training audio job failed');
 }
 
 async function waitForPromise(promise: Promise<void>, timeoutMs: number) {

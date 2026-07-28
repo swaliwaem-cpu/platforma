@@ -14,6 +14,10 @@ const adminSource = readFileSync(
   resolve(currentDir, '../src/training/TrainingAdminPage.tsx'),
   'utf8',
 );
+const operationsSource = readFileSync(
+  resolve(currentDir, '../src/training/TrainingOperationsPage.tsx'),
+  'utf8',
+);
 
 test('employee training route and navigation require project read permission', () => {
   assert.match(
@@ -44,7 +48,7 @@ test('admin training route and navigation require admin access and project manag
   assert.match(appSource, /onOpenTraining=\{\(\) => navigate\('\/admin\/training'\)\}/);
   assert.match(
     appSource,
-    /label:\s*'Обучение',[\s\S]*canAccess:\s*hasPermission\('training:projects:manage'\)[\s\S]*onClick:\s*onOpenTraining/,
+    /label:\s*'Обучение',[\s\S]*canAccess:\s*isTrainingEnabled\s*&&\s*hasPermission\('training:projects:manage'\)[\s\S]*onClick:\s*onOpenTraining/,
   );
 });
 
@@ -58,8 +62,35 @@ test('employee shell and manual admin routes do not add a router dependency', ()
   assert.match(adminSource, /\/admin\\\/training\\\/\(\[0-9a-f-\]\+\)\\\/edit/);
   assert.match(
     shellSource,
-    /apiRequest<TrainingModuleConfigResponse>\('\/training\/config', accessToken\)/,
+    /apiRequest<TrainingModuleConfigResponse>\(\s*'\/training\/config',\s*accessToken,\s*\)/,
   );
   assert.match(shellSource, /config\?\.status === 'disabled'/);
   assert.match(shellSource, /config\?\.status === 'enabled'/);
+});
+
+test('stage ten policy and operations routes keep explicit permission checks', () => {
+  assert.match(
+    appSource,
+    /id:\s*'admin-training-operations'[\s\S]*path:\s*'\/admin\/training\/operations'[\s\S]*requiredPermissions:\s*\['admin:access', 'training:operations:read'\]/,
+  );
+  assert.match(
+    appSource,
+    /pathname\.startsWith\('\/admin\/training\/operations'\)[\s\S]*hasPermission\('training:operations:read'\)[\s\S]*<TrainingOperationsPage/,
+  );
+  assert.match(shellSource, /getTrainingPolicy\(accessToken\)/);
+  assert.match(shellSource, /acceptTrainingPolicy\(accessToken\)/);
+  assert.match(shellSource, /Ознакомлен и согласен продолжить/);
+  assert.match(
+    operationsSource,
+    /hasPermission\('training:operations:manage'\)/,
+  );
+  assert.match(operationsSource, /retryTrainingJob\(accessToken, retryJobId, retryReason\)/);
+  assert.match(
+    appSource,
+    /item\.section !== 'training' \|\| isTrainingEnabled === true/,
+  );
+  assert.match(
+    appSource,
+    /section\.id !== 'training' \|\| isTrainingEnabled/,
+  );
 });

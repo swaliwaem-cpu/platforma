@@ -5,6 +5,7 @@ import {
   Logger,
   OnModuleDestroy,
   OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import {
   Prisma,
@@ -17,6 +18,12 @@ import { FilesService } from '../files/files.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { TRAINING_DOCUMENT_JOB_POLL_MS } from './training-document.config';
 import { TrainingDocumentExtractorRegistry } from './training-document-extractor';
+import { TrainingConfigService } from './training.config';
+import {
+  formatTrainingErrorForLog,
+  safeTrainingFailureMessage,
+} from './training-safe-log';
+import { TrainingWorkerHeartbeatService } from './training-worker-heartbeat.service';
 
 @Injectable()
 export class TrainingDocumentWorkerService
@@ -32,9 +39,17 @@ export class TrainingDocumentWorkerService
   constructor(
     private readonly prisma: PrismaService,
     private readonly files: FilesService,
+    @Optional()
+    private readonly trainingConfig?: TrainingConfigService,
+    @Optional()
+    private readonly workerHeartbeat?: TrainingWorkerHeartbeatService,
   ) {}
 
   onModuleInit() {
+    if (this.trainingConfig?.isEnabled() === false) return;
+    void this.workerHeartbeat
+      ?.register('document', this.workerId)
+      .catch(() => undefined);
     this.interval = setInterval(() => this.kick(), TRAINING_DOCUMENT_JOB_POLL_MS);
     this.interval.unref();
     this.kick();
@@ -48,7 +63,14 @@ export class TrainingDocumentWorkerService
   }
 
   kick() {
-    if (this.running || this.kickQueued) return;
+    if (
+      this.running ||
+      this.kickQueued ||
+      this.trainingConfig?.isEnabled() === false
+    ) {
+      return;
+    }
+    void this.workerHeartbeat?.touch(this.workerId).catch(() => undefined);
     this.kickQueued = true;
     queueMicrotask(() => {
       this.kickQueued = false;
@@ -57,7 +79,7 @@ export class TrainingDocumentWorkerService
   }
 
   private async drain() {
-    if (this.running) return;
+    if (this.running || this.trainingConfig?.isEnabled() === false) return;
     this.running = true;
 
     try {
@@ -66,8 +88,7 @@ export class TrainingDocumentWorkerService
       }
     } catch (error) {
       this.logger.error(
-        'Training document worker loop failed',
-        error instanceof Error ? error.stack : String(error),
+        `Training document worker loop failed: ${formatTrainingErrorForLog(error)}`,
       );
     } finally {
       this.running = false;
@@ -247,7 +268,5 @@ function readSourceDocumentId(value: Prisma.JsonValue) {
 }
 
 function toSafeErrorMessage(error: unknown) {
-  const message = error instanceof Error ? error.message : 'Document extraction failed';
-
-  return message.replace(/[\r\n]+/gu, ' ').slice(0, 2_000);
+  return safeTrainingFailureMessage(error, 'Document extraction failed');
 }

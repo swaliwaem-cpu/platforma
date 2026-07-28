@@ -9,6 +9,8 @@ export const TRAINING_PERMISSION_DEFINITIONS = [
   ['training:audio:read', 'Read protected training audio'],
   ['training:ranking:read', 'Read training ranking'],
   ['training:telegram:manage', 'Manage training Telegram integration'],
+  ['training:operations:read', 'Read training operational status'],
+  ['training:operations:manage', 'Manage failed training jobs'],
   ['training:data:delete', 'Delete training data'],
 ] as const;
 
@@ -31,4 +33,6 @@ export const TRAINING_ADMIN_PERMISSION_KEYS = [
   'training:audio:read',
   'training:ranking:read',
   'training:telegram:manage',
+  'training:operations:read',
+  'training:operations:manage',
 ] as const satisfies readonly TrainingPermissionKey[];

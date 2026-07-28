@@ -557,3 +557,80 @@ export type TrainingReviewRequest = {
   comment: string;
   unsupportedClaimsDecisions: TrainingUnsupportedClaimDecision[];
 };
+
+export type TrainingPolicyResponse = {
+  policy: {
+    id: string;
+    version: string;
+    title: string;
+    body: string;
+    checksum: string;
+    effectiveAt: string;
+    isActive: boolean;
+    approvalStatus: string;
+  };
+  acceptance: {
+    acceptedAt: string;
+    source: 'PLATFORM' | 'TELEGRAM';
+  } | null;
+  accepted: boolean;
+};
+
+export type TrainingOperationsResponse = {
+  generatedAt: string;
+  training: TrainingModuleConfigResponse;
+  modes: {
+    telegram: 'fake' | 'real';
+    openAi: 'fake' | 'real';
+  };
+  audioPrivacy: {
+    status: 'VERIFIED' | 'NOT_VERIFIED';
+    checkedAt: string | null;
+  };
+  queue: Array<{
+    kind: TrainingJobKind;
+    status: TrainingJobStatus;
+    count: number;
+  }>;
+  providerRuns: Array<{
+    kind: 'TRANSCRIPTION' | 'EVALUATION';
+    status: string;
+    count: number;
+  }>;
+  oldestPendingAgeSeconds: number | null;
+  activeAttempts: number;
+  stuckAttempts: number;
+  attemptsRequiringReview: number;
+  recentErrors: Array<{
+    jobId: string;
+    kind: TrainingJobKind;
+    status: TrainingJobStatus;
+    code: string | null;
+    occurredAt: string;
+  }>;
+  workers: Array<{
+    kind: string;
+    status: 'ONLINE' | 'STALE';
+    startedAt: string;
+    lastSeenAt: string;
+  }>;
+  lastSuccessfulProcessing: {
+    jobAt: string | null;
+    telegramUpdateAt: string | null;
+  };
+  activePolicy: {
+    id: string;
+    version: string;
+    title: string;
+    effectiveAt: string;
+    approvalStatus: string;
+    checksum: string;
+  } | null;
+  recentPolicyAcceptances: Array<{
+    user: { id: string; name: string | null };
+    policyVersion: string;
+    source: 'PLATFORM' | 'TELEGRAM';
+    acceptedAt: string;
+    revokedAt: string | null;
+  }>;
+};

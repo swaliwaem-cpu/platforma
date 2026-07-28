@@ -1,6 +1,10 @@
 import { FormEvent, lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { MenuIcon, MoonIcon, SunIcon } from 'lucide-react';
-import type { AuthUser, UserStatus } from '@platforma/shared';
+import type {
+  AuthUser,
+  TrainingModuleConfigResponse,
+  UserStatus,
+} from '@platforma/shared';
 
 import platformLogoUrl from '../../../_Fluffy_White_1-02.svg';
 import { CatalogLinksAdminPage } from './admin/CatalogLinksAdminPage';
@@ -32,6 +36,11 @@ const TrainingAdminResultsPage = lazy(() =>
 const TrainingRankingPage = lazy(() =>
   import('./training/TrainingRankingPage').then((module) => ({
     default: module.TrainingRankingPage,
+  })),
+);
+const TrainingOperationsPage = lazy(() =>
+  import('./training/TrainingOperationsPage').then((module) => ({
+    default: module.TrainingOperationsPage,
   })),
 );
 
@@ -185,6 +194,13 @@ const cabinetSections = [
     requiredPermissions: ['admin:access', 'training:results:read'],
   },
   {
+    id: 'admin-training-operations',
+    label: 'Состояние обучения',
+    group: 'Админка',
+    path: '/admin/training/operations',
+    requiredPermissions: ['admin:access', 'training:operations:read'],
+  },
+  {
     id: 'admin-users',
     label: 'Пользователи',
     group: 'Админка',
@@ -273,9 +289,12 @@ export function App() {
 
 function AppRoutes() {
   const { pathname, navigate } = usePathname();
-  const { user, isLoading, logout, hasPermission } = useAuth();
+  const { accessToken, user, isLoading, logout, hasPermission } = useAuth();
   const sidebarRef = useRef<HTMLElement | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isTrainingEnabled, setIsTrainingEnabled] = useState<boolean | null>(
+    null,
+  );
   const [appTheme, setAppThemeState] = useState(() => getAppliedAppTheme());
   const isDarkTheme = appTheme === 'dark-premium';
   const themeToggleLabel = isDarkTheme ? 'Включить светлую тему' : 'Включить темную тему';
@@ -311,6 +330,30 @@ function AppRoutes() {
     };
   }, [isSidebarOpen]);
 
+  useEffect(() => {
+    if (
+      !accessToken ||
+      !user?.permissions.includes('training:projects:read')
+    ) {
+      setIsTrainingEnabled(null);
+      return;
+    }
+    let active = true;
+    void apiRequest<TrainingModuleConfigResponse>(
+      '/training/config',
+      accessToken,
+    )
+      .then((config) => {
+        if (active) setIsTrainingEnabled(config.enabled);
+      })
+      .catch(() => {
+        if (active) setIsTrainingEnabled(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [accessToken, user?.id, user?.permissions]);
+
   if (isLoading) {
     return <main className="app-shell app-shell--center">Загрузка</main>;
   }
@@ -335,7 +378,11 @@ function AppRoutes() {
   const objectLotRoute = parseObjectLotRoute(pathname);
   const objectSlug = objectLotRoute ? null : parseObjectSlug(pathname);
   const projectPresentationRoute = parseProjectPresentationRoute(pathname);
-  const visibleNavItems = navItems.filter((item) => canAccessNavigationItem(hasPermission, item));
+  const visibleNavItems = navItems.filter(
+    (item) =>
+      canAccessNavigationItem(hasPermission, item) &&
+      (item.section !== 'training' || isTrainingEnabled === true),
+  );
 
   return (
     <main className="app-shell">
@@ -428,7 +475,17 @@ function AppRoutes() {
       <section className="workspace">
         {activeSection === 'admin' ? (
           hasPermission('admin:access') ? (
-            pathname.startsWith('/admin/training/results') ? (
+            pathname.startsWith('/admin/training/operations') ? (
+              hasPermission('training:operations:read') ? (
+                <Suspense fallback={<RouteLoading />}>
+                  <TrainingOperationsPage
+                    onBack={() => navigate('/admin')}
+                  />
+                </Suspense>
+              ) : (
+                <AccessDenied />
+              )
+            ) : pathname.startsWith('/admin/training/results') ? (
               hasPermission('training:results:read') ? (
                 <Suspense fallback={<RouteLoading />}>
                   <TrainingAdminResultsPage
@@ -493,11 +550,13 @@ function AppRoutes() {
               )
             ) : (
               <AdminHome
+                isTrainingEnabled={isTrainingEnabled === true}
                 onOpenCatalogLinks={() => navigate('/admin/catalog-links')}
                 onOpenFeeds={() => navigate('/admin/feeds')}
                 onOpenImport={() => navigate('/admin/import')}
                 onOpenObjects={() => navigate('/admin/objects')}
                 onOpenTraining={() => navigate('/admin/training')}
+                onOpenTrainingOperations={() => navigate('/admin/training/operations')}
                 onOpenTrainingRanking={() => navigate('/admin/training/ranking')}
                 onOpenTrainingResults={() => navigate('/admin/training/results')}
                 onOpenUsers={() => navigate('/admin/users')}
@@ -555,7 +614,10 @@ function AppRoutes() {
             <AccessDenied />
           )
         ) : (
-          <CabinetHome navigate={navigate} />
+          <CabinetHome
+            isTrainingEnabled={isTrainingEnabled === true}
+            navigate={navigate}
+          />
         )}
       </section>
     </main>
@@ -912,7 +974,13 @@ function isValidRegistrationPassword(password: string) {
   );
 }
 
-function CabinetHome({ navigate }: { navigate: (nextPathname: string) => void }) {
+function CabinetHome({
+  isTrainingEnabled,
+  navigate,
+}: {
+  isTrainingEnabled: boolean;
+  navigate: (nextPathname: string) => void;
+}) {
   const { accessToken, user, updateUser } = useAuth();
   const [areSectionsVisible, setAreSectionsVisible] = useState(false);
   const [profileName, setProfileName] = useState('');
@@ -940,7 +1008,9 @@ function CabinetHome({ navigate }: { navigate: (nextPathname: string) => void })
     return null;
   }
 
-  const availableSections = getAvailableCabinetSections(user);
+  const availableSections = getAvailableCabinetSections(user).filter(
+    (section) => section.id !== 'training' || isTrainingEnabled,
+  );
 
   async function handleProfileSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1301,20 +1371,24 @@ function getProfileInitials(user: AuthUser) {
 }
 
 function AdminHome({
+  isTrainingEnabled,
   onOpenCatalogLinks,
   onOpenFeeds,
   onOpenImport,
   onOpenObjects,
   onOpenTraining,
+  onOpenTrainingOperations,
   onOpenTrainingRanking,
   onOpenTrainingResults,
   onOpenUsers,
 }: {
+  isTrainingEnabled: boolean;
   onOpenCatalogLinks: () => void;
   onOpenFeeds: () => void;
   onOpenImport: () => void;
   onOpenObjects: () => void;
   onOpenTraining: () => void;
+  onOpenTrainingOperations: () => void;
   onOpenTrainingRanking: () => void;
   onOpenTrainingResults: () => void;
   onOpenUsers: () => void;
@@ -1332,21 +1406,32 @@ function AdminHome({
       label: 'Обучение',
       description: 'Проекты, материалы и настройки модуля обучения.',
       tone: 'secondary',
-      canAccess: hasPermission('training:projects:manage'),
+      canAccess:
+        isTrainingEnabled && hasPermission('training:projects:manage'),
       onClick: onOpenTraining,
     },
     {
       label: 'Результаты обучения',
       description: 'Попытки, полный разбор, аудио и ручная проверка.',
       tone: 'secondary',
-      canAccess: hasPermission('training:results:read'),
+      canAccess:
+        isTrainingEnabled && hasPermission('training:results:read'),
       onClick: onOpenTrainingResults,
+    },
+    {
+      label: 'Состояние обучения',
+      description: 'Очереди, воркеры, безопасные ошибки и ручной retry.',
+      tone: 'secondary',
+      canAccess:
+        isTrainingEnabled && hasPermission('training:operations:read'),
+      onClick: onOpenTrainingOperations,
     },
     {
       label: 'Рейтинг обучения',
       description: 'Подтверждённые результаты по сотрудникам и CSV.',
       tone: 'secondary',
-      canAccess: hasPermission('training:results:read'),
+      canAccess:
+        isTrainingEnabled && hasPermission('training:results:read'),
       onClick: onOpenTrainingRanking,
     },
     {

@@ -32,6 +32,12 @@ import { OpenAiTrainingTranscriptionProvider } from './openai/training-openai-tr
 import { TrainingConfigService } from './training.config';
 import { TrainingContentService } from './training-content.service';
 import { TrainingController } from './training.controller';
+import { TrainingFeatureGuard } from './training-feature.guard';
+import { TrainingOperationsController } from './training-operations.controller';
+import { TrainingOperationsService } from './training-operations.service';
+import { TrainingPolicyController } from './training-policy.controller';
+import { TrainingPolicyService } from './training-policy.service';
+import { TrainingWorkerHeartbeatService } from './training-worker-heartbeat.service';
 import { TrainingReviewController } from './training-review.controller';
 import {
   TrainingAdminResultsController,
@@ -67,9 +73,15 @@ import { TrainingTelegramWorkerService } from './telegram/training-telegram-work
     TrainingReviewController,
     TrainingEmployeeResultsController,
     TrainingAdminResultsController,
+    TrainingPolicyController,
+    TrainingOperationsController,
   ],
   providers: [
     TrainingConfigService,
+    TrainingFeatureGuard,
+    TrainingPolicyService,
+    TrainingOperationsService,
+    TrainingWorkerHeartbeatService,
     TrainingContentService,
     TrainingDocumentsService,
     TrainingDocumentWorkerService,
@@ -132,6 +144,8 @@ import { TrainingTelegramWorkerService } from './telegram/training-telegram-work
   ],
   exports: [
     TrainingAttemptEngineService,
+    TrainingConfigService,
+    TrainingPolicyService,
     TrainingTelegramLinkService,
     TrainingTelegramWorkerService,
     FakeTrainingTelegramTransport,

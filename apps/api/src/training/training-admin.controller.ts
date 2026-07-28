@@ -30,6 +30,7 @@ import {
 import { TRAINING_MAX_DOCUMENT_BYTES } from './training-document.config';
 import { TrainingDocumentWorkerService } from './training-document-worker.service';
 import { TrainingDocumentsService } from './training-documents.service';
+import { TrainingFeatureGuard } from './training-feature.guard';
 
 type ContentResponse = {
   setHeader(name: string, value: string | number): void;
@@ -37,7 +38,7 @@ type ContentResponse = {
 };
 
 @Controller('training/admin')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard, TrainingFeatureGuard)
 @RequirePermissions('training:projects:manage')
 export class TrainingAdminController {
   constructor(

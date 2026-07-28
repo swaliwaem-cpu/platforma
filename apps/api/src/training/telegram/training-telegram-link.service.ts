@@ -3,6 +3,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
+  HttpStatus,
   Injectable,
   NotFoundException,
   ServiceUnavailableException,
@@ -72,6 +74,41 @@ export class TrainingTelegramLinkService {
       const tokenHash = hashTrainingLinkToken(token);
       try {
         await this.runSerializable(async (tx) => {
+          await tx.$queryRaw(
+            Prisma.sql`SELECT 1 AS "locked" FROM (SELECT pg_advisory_xact_lock(hashtextextended(${`training-link-token:${userId}`}, 0))) AS "lock_state"`,
+          );
+          const recentIssueCount = await tx.trainingLinkToken.count({
+            where: {
+              userId,
+              createdAt: { gte: new Date(now.getTime() - 60 * 60_000) },
+            },
+          });
+          if (recentIssueCount >= this.config.linkTokenMaxIssuesPerHour) {
+            throw new HttpException(
+              'Telegram link token issue limit exceeded',
+              HttpStatus.TOO_MANY_REQUESTS,
+            );
+          }
+          const activeToken = await tx.trainingLinkToken.findFirst({
+            where: {
+              userId,
+              usedAt: null,
+              revokedAt: null,
+              expiresAt: { gt: now },
+            },
+            orderBy: { createdAt: 'desc' },
+            select: { createdAt: true },
+          });
+          if (
+            activeToken &&
+            now.getTime() - activeToken.createdAt.getTime() <
+              this.config.linkTokenCooldownSeconds * 1_000
+          ) {
+            throw new HttpException(
+              'Telegram link token was issued too recently',
+              HttpStatus.TOO_MANY_REQUESTS,
+            );
+          }
           await tx.trainingLinkToken.updateMany({
             where: {
               userId,

@@ -2,6 +2,8 @@ services:
   api:
     environment:
       NODE_ENV: production
+      DEPLOYMENT_ENV: production
+      STAGING_ALLOW_FAKE_PROVIDERS: "false"
       OPENAI_PROVIDER_MODE: real
       OPENAI_API_KEY: "${OPENAI_API_KEY:?OPENAI_API_KEY is required}"
       OPENAI_TRANSCRIPTION_MODEL: "${OPENAI_TRANSCRIPTION_MODEL:?OPENAI_TRANSCRIPTION_MODEL is required}"
@@ -20,6 +22,8 @@ services:
   training-worker:
     environment:
       NODE_ENV: production
+      DEPLOYMENT_ENV: production
+      STAGING_ALLOW_FAKE_PROVIDERS: "false"
       OPENAI_PROVIDER_MODE: real
       OPENAI_API_KEY: "${OPENAI_API_KEY:?OPENAI_API_KEY is required}"
       OPENAI_TRANSCRIPTION_MODEL: "${OPENAI_TRANSCRIPTION_MODEL:?OPENAI_TRANSCRIPTION_MODEL is required}"

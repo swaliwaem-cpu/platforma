@@ -346,6 +346,141 @@ test('audio unmount aborts delayed request and 401 refresh without leaking URLs'
   await expect(page.getByText('Не удалось загрузить аудио')).toHaveCount(0);
 });
 
+test('employee accepts the current policy before a Telegram start link is issued', async ({
+  page,
+}) => {
+  let policyPosts = 0;
+  let startLinkPosts = 0;
+  let accepted = false;
+  await page.addInitScript(() => {
+    window.open = () => null;
+  });
+  await installApi(
+    page,
+    async (route) => {
+      const request = route.request();
+      const path = new URL(request.url()).pathname;
+      if (path === '/training/config') {
+        await fulfillJson(route, { enabled: true, status: 'enabled' });
+        return true;
+      }
+      if (path === '/training/projects') {
+        await fulfillJson(route, { items: [employeeProject()] });
+        return true;
+      }
+      if (path === '/training/telegram/account') {
+        await fulfillJson(route, { connected: true, account: { displayName: 'Test bot' } });
+        return true;
+      }
+      if (path === '/training/attempts') {
+        await fulfillJson(route, {
+          items: [],
+          pagination: { page: 1, pageSize: 100, total: 0, totalPages: 0 },
+        });
+        return true;
+      }
+      if (path === '/training/policy' && request.method() === 'GET') {
+        await fulfillJson(route, policyResponse(accepted));
+        return true;
+      }
+      if (path === '/training/policy/accept') {
+        policyPosts += 1;
+        accepted = true;
+        await fulfillJson(route, policyResponse(true));
+        return true;
+      }
+      if (path === '/training/projects/project-1/start-link') {
+        startLinkPosts += 1;
+        await fulfillJson(route, {
+          token: 'not-rendered',
+          expiresAt: '2026-07-28T12:00:00.000Z',
+          deepLink: 'https://t.me/example_bot?start=safe',
+          projectId: 'project-1',
+        });
+        return true;
+      }
+      return false;
+    },
+    employeePermissions,
+  );
+
+  await page.goto('/training');
+  await page.getByRole('button', { name: 'Перейти в Telegram' }).click();
+  await expect(page.getByRole('dialog')).toContainText(
+    'Голосовые ответы сохраняются в закрытом хранилище.',
+  );
+  expect(startLinkPosts).toBe(0);
+
+  await page
+    .getByRole('button', { name: 'Ознакомлен и согласен продолжить' })
+    .click();
+  await expect.poll(() => policyPosts).toBe(1);
+  await expect.poll(() => startLinkPosts).toBe(1);
+  await expect(
+    page.getByText('Ссылка на запуск открыта в Telegram.'),
+  ).toBeVisible();
+});
+
+test('operations dashboard exposes safe status and audits an explicit retry reason', async ({
+  page,
+}) => {
+  let retryPosts = 0;
+  let submittedReason = '';
+  await installApi(page, async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === '/training/admin/operations/summary') {
+      await fulfillJson(route, operationsResponse());
+      return true;
+    }
+    if (path === '/training/admin/operations/jobs/job-safe/retry') {
+      retryPosts += 1;
+      submittedReason = (request.postDataJSON() as { reason: string }).reason;
+      await fulfillJson(route, { job: { id: 'job-safe', status: 'PENDING' } });
+      return true;
+    }
+    return false;
+  });
+
+  await page.goto('/admin/training/operations');
+  await expect(page.getByText('Состояние модуля')).toBeVisible();
+  await expect(page.getByText('Требует утверждения')).toBeVisible();
+  await expect(page.getByText('SAFE_PROVIDER_FAILURE')).toBeVisible();
+  await expect(page.getByText('super-secret-provider-message')).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Повторить' }).click();
+  await page.locator('textarea').fill('Проверено дежурным администратором');
+  await page.getByRole('button', { name: 'Повторить задание' }).click();
+  await expect.poll(() => retryPosts).toBe(1);
+  expect(submittedReason).toBe('Проверено дежурным администратором');
+  await expect(
+    page.getByText('Задание возвращено в очередь. Действие записано в аудит.'),
+  ).toBeVisible();
+});
+
+test('disabled training module is absent from employee navigation', async ({
+  page,
+}) => {
+  let configGets = 0;
+  await installApi(
+    page,
+    async (route) => {
+      if (new URL(route.request().url()).pathname === '/training/config') {
+        configGets += 1;
+        await fulfillJson(route, { enabled: false, status: 'disabled' });
+        return true;
+      }
+      return false;
+    },
+    employeePermissions,
+  );
+
+  await page.goto('/cabinet');
+  await expect.poll(() => configGets).toBeGreaterThan(0);
+  await page.getByRole('button', { name: 'Раскрыть меню' }).click();
+  await expect(page.getByRole('button', { name: 'Обучение' })).toHaveCount(0);
+});
+
 test('employee manual adjustment shows final score and hides old breakdown', async ({
   page,
 }) => {
@@ -354,7 +489,7 @@ test('employee manual adjustment shows final score and hides old breakdown', asy
     async (route) => {
       const path = new URL(route.request().url()).pathname;
       if (path === '/training/config') {
-        await fulfillJson(route, { status: 'enabled' });
+        await fulfillJson(route, { enabled: true, status: 'enabled' });
         return true;
       }
       if (path === '/training/projects') {
@@ -413,7 +548,7 @@ test('employee, admin list, ranking and detail expose behavioral loading/empty/e
     async (route) => {
       const path = new URL(route.request().url()).pathname;
       if (path === '/training/config') {
-        await fulfillJson(route, { status: 'enabled' });
+        await fulfillJson(route, { enabled: true, status: 'enabled' });
         return true;
       }
       if (path === '/training/projects') {
@@ -537,6 +672,10 @@ async function installApi(
     const path = new URL(route.request().url()).pathname;
     if (path === '/auth/refresh') {
       await fulfillJson(route, authResponse('test-token', permissions));
+      return;
+    }
+    if (path === '/training/policy') {
+      await fulfillJson(route, policyResponse(true));
       return;
     }
     await fulfillJson(route, { message: `Unhandled test API route: ${path}` }, 404);
@@ -691,6 +830,116 @@ function employeeAttempt() {
   };
 }
 
+function employeeProject() {
+  return {
+    id: 'project-1',
+    slug: 'shagal',
+    title: 'ЖК «Шагал»',
+    description: 'Пилотная аттестация',
+    object: null,
+    sortOrder: 1,
+    availableFrom: '2026-07-28T08:00:00.000Z',
+    deadlineAt: '2026-08-15T18:00:00.000Z',
+    passScore: 80,
+    attemptLimit: 2,
+    attemptsUsed: 0,
+    attemptsLeft: 2,
+    cooldownMinutes: 60,
+    totalTimeLimitSeconds: 900,
+    allowRetakeAfterPass: false,
+    requiresTelegramConnection: true,
+    telegramConnected: true,
+    bestScore: null,
+    lastScore: null,
+    lastAttemptStatus: null,
+    activeAttempt: null,
+    eligibility: {
+      canStart: true,
+      reason: 'AVAILABLE',
+      retryAt: null,
+    },
+  };
+}
+
+function policyResponse(accepted: boolean) {
+  return {
+    policy: {
+      id: 'policy-1',
+      version: '2026-07-28.1',
+      title: 'Правила прохождения аттестации',
+      body:
+        'Голосовые ответы сохраняются в закрытом хранилище. Они транскрибируются и анализируются системой искусственного интеллекта.',
+      checksum: 'safe-checksum',
+      effectiveAt: '2026-07-28T08:00:00.000Z',
+      isActive: true,
+      approvalStatus: 'REQUIRES_MANAGER_APPROVAL',
+    },
+    acceptance: accepted
+      ? {
+          acceptedAt: '2026-07-28T09:00:00.000Z',
+          source: 'PLATFORM',
+        }
+      : null,
+    accepted,
+  };
+}
+
+function operationsResponse() {
+  return {
+    generatedAt: '2026-07-28T10:00:00.000Z',
+    training: { enabled: true, status: 'enabled' },
+    modes: { telegram: 'fake', openAi: 'fake' },
+    audioPrivacy: {
+      status: 'VERIFIED',
+      checkedAt: '2026-07-28T09:59:00.000Z',
+    },
+    queue: [{ kind: 'PROCESS_ANSWER', status: 'FAILED', count: 1 }],
+    providerRuns: [],
+    oldestPendingAgeSeconds: 42,
+    activeAttempts: 2,
+    stuckAttempts: 0,
+    attemptsRequiringReview: 1,
+    recentErrors: [
+      {
+        jobId: 'job-safe',
+        kind: 'PROCESS_ANSWER',
+        status: 'FAILED',
+        code: 'SAFE_PROVIDER_FAILURE',
+        occurredAt: '2026-07-28T09:58:00.000Z',
+      },
+    ],
+    workers: [
+      {
+        kind: 'attempt-worker',
+        status: 'ONLINE',
+        startedAt: '2026-07-28T09:00:00.000Z',
+        lastSeenAt: '2026-07-28T09:59:30.000Z',
+      },
+    ],
+    lastSuccessfulProcessing: {
+      jobAt: '2026-07-28T09:57:00.000Z',
+      telegramUpdateAt: null,
+    },
+    activePolicy: {
+      id: 'policy-1',
+      version: '2026-07-28.1',
+      title: 'Правила прохождения аттестации',
+      effectiveAt: '2026-07-28T08:00:00.000Z',
+      approvalStatus: 'REQUIRES_MANAGER_APPROVAL',
+      checksum: 'safe-checksum',
+    },
+    recentPolicyAcceptances: [
+      {
+        user: { id: 'employee-1', name: 'Сотрудник' },
+        policyVersion: '2026-07-28.1',
+        source: 'PLATFORM',
+        acceptedAt: '2026-07-28T09:00:00.000Z',
+        revokedAt: null,
+      },
+    ],
+  };
+}
+
 async function instrumentObjectUrls(page: Page) {
   await page.addInitScript(() => {
     const state = {
@@ -731,6 +980,8 @@ const adminPermissions = [
   'training:results:read',
   'training:results:review',
   'training:audio:read',
+  'training:operations:read',
+  'training:operations:manage',
 ];
 const employeePermissions = [
   'training:projects:read',

@@ -1,6 +1,6 @@
 # Training OpenAI provider deployment
 
-Дата актуализации: 2026-07-27.
+Дата актуализации: 2026-07-28.
 
 Документ описывает только production/staging-контракт этапа 8. Он не разрешает
 production deploy или billable smoke без отдельного решения.
@@ -194,6 +194,11 @@ structured evaluation request с retries `0`. Он валидирует complete
 incomplete/output/schema version и выводит только success/failure, model,
 request ID, usage и latency без transcript/prompt/output. В этапе 8 smoke не
 запускался.
+
+В этапе 10 smoke также не запускался из-за отложенного пополнения
+API-баланса. Точный preflight/cleanup и staging gate зафиксированы в
+`docs/training/openai-smoke-runbook.md`; без успешного synthetic smoke
+pilot/production запрещены.
 
 ## Rollback
 

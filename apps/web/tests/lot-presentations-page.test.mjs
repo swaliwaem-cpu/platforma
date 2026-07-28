@@ -27,7 +27,10 @@ test('lot presentations route is available from sidebar and cabinet navigation',
   assert.match(appSource, /pathname\.startsWith\('\/presentations'\)[\s\S]*\? 'presentations'/);
   assert.match(appSource, /pathname\.startsWith\('\/presentations\/'\)/);
   assert.match(appSource, /activeSection === 'presentations' \? \([\s\S]*canAccessLotPresentations\(user\) \? \([\s\S]*<LotPresentationsPage navigate=\{navigate\} \/>[\s\S]*\) : \([\s\S]*<AccessDenied \/>/);
-  assert.match(appSource, /navItems\.filter\(\(item\) => canAccessNavigationItem\(hasPermission, item\)\)/);
+  assert.match(
+    appSource,
+    /navItems\.filter\([\s\S]*canAccessNavigationItem\(hasPermission, item\)/,
+  );
   assert.match(appSource, /return cabinetSections\.filter\(\(section\) => canAccessCabinetSection\(user, section\)\);/);
   assert.match(appSource, /function canAccessNavigationItem[\s\S]*return canAccessPermissions\(hasPermission, item\.requiredPermissions\);/);
 });

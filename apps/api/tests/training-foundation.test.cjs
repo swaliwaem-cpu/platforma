@@ -35,6 +35,8 @@ const expectedTrainingPermissionKeys = [
   'training:audio:read',
   'training:ranking:read',
   'training:telegram:manage',
+  'training:operations:read',
+  'training:operations:manage',
   'training:data:delete',
 ];
 

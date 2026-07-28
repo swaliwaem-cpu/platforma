@@ -40,6 +40,28 @@ export class TrainingTelegramWebhookService {
   }
 
   async acceptUpdate(rawUpdate: unknown) {
+    let serialized: string;
+    try {
+      serialized = JSON.stringify(rawUpdate);
+    } catch {
+      return {
+        ok: true as const,
+        duplicate: false,
+        queued: false,
+        rejected: true,
+      };
+    }
+    if (
+      Buffer.byteLength(serialized, 'utf8') >
+      this.config.webhookMaxBodyBytes
+    ) {
+      return {
+        ok: true as const,
+        duplicate: false,
+        queued: false,
+        rejected: true,
+      };
+    }
     const receivedAt = new Date();
     let ingress: ReturnType<typeof sanitizeTelegramUpdate>;
     try {

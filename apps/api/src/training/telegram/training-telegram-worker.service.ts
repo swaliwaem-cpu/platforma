@@ -4,6 +4,7 @@ import {
   Inject,
   Injectable,
   Logger,
+  Optional,
   type OnModuleDestroy,
   type OnModuleInit,
 } from '@nestjs/common';
@@ -17,6 +18,12 @@ import {
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { TRAINING_ACTIVE_ATTEMPT_STATUSES } from '../training.domain';
+import { TrainingConfigService } from '../training.config';
+import { TrainingWorkerHeartbeatService } from '../training-worker-heartbeat.service';
+import {
+  formatTrainingErrorForLog,
+  safeTrainingFailureMessage,
+} from '../training-safe-log';
 import { TrainingTelegramConfig } from './training-telegram.config';
 import { TrainingTelegramDialogService } from './training-telegram-dialog.service';
 import {
@@ -66,10 +73,18 @@ export class TrainingTelegramWorkerService
     private readonly dialog: TrainingTelegramDialogService,
     @Inject(TRAINING_TELEGRAM_TRANSPORT)
     private readonly transport: TrainingTelegramTransport,
+    @Optional()
+    private readonly trainingConfig?: TrainingConfigService,
+    @Optional()
+    private readonly workerHeartbeat?: TrainingWorkerHeartbeatService,
   ) {}
 
   onModuleInit() {
     this.destroyed = false;
+    if (this.trainingConfig?.isEnabled() === false) return;
+    void this.workerHeartbeat
+      ?.register('telegram', this.workerId)
+      .catch(() => undefined);
     this.pollInterval = setInterval(
       () => this.kick(),
       this.config.workerPollMs,
@@ -101,19 +116,28 @@ export class TrainingTelegramWorkerService
   }
 
   kick() {
-    if (this.destroyed || this.kickQueued) return;
+    if (
+      this.destroyed ||
+      this.kickQueued ||
+      this.trainingConfig?.isEnabled() === false
+    ) {
+      return;
+    }
+    void this.workerHeartbeat?.touch(this.workerId).catch(() => undefined);
     this.kickQueued = true;
     setImmediate(() => {
       this.kickQueued = false;
       void this.drainNow().catch((error) => {
-        this.logger.error(`Telegram worker drain failed: ${safeError(error)}`);
+        this.logger.error(
+          `Telegram worker drain failed: ${formatTrainingErrorForLog(error)}`,
+        );
       });
     });
   }
 
   async drainNow() {
     if (this.drainPromise) return this.drainPromise;
-    if (this.destroyed) return;
+    if (this.destroyed || this.trainingConfig?.isEnabled() === false) return;
     const drain = this.drainLoop().finally(() => {
       if (this.drainPromise === drain) {
         this.drainPromise = null;
@@ -124,7 +148,7 @@ export class TrainingTelegramWorkerService
   }
 
   private async drainLoop() {
-    if (this.destroyed) return;
+    if (this.destroyed || this.trainingConfig?.isEnabled() === false) return;
     await this.recoverStaleJobs();
     for (
       let index = 0;
@@ -360,7 +384,7 @@ export class TrainingTelegramWorkerService
     const errorCode =
       transportError?.code ??
       (retry ? 'TELEGRAM_JOB_RETRY' : 'TELEGRAM_JOB_DEAD');
-    const message = safeError(error);
+    const message = safeTrainingFailureMessage(error, 'Telegram job failed');
 
     await this.prisma.$transaction(async (tx) => {
       const failed = await tx.trainingJob.updateMany({
@@ -460,7 +484,7 @@ export class TrainingTelegramWorkerService
     const interval = setInterval(() => {
       void this.refreshOwnership(jobId).catch((error) => {
         this.logger.warn(
-          `Telegram job ${jobId} heartbeat failed: ${safeError(error)}`,
+          `Telegram job ${jobId} heartbeat failed: ${formatTrainingErrorForLog(error)}`,
         );
       });
     }, this.config.workerHeartbeatMs);
@@ -686,14 +710,6 @@ function readObject(value: Prisma.JsonValue) {
     throw new TypeError('Telegram job payload is invalid');
   }
   return value as Prisma.JsonObject;
-}
-
-function safeError(error: unknown) {
-  return (error instanceof Error ? error.message : String(error))
-    .replace(/https:\/\/api\.telegram\.org\/bot[^/\s]+/giu, '[TELEGRAM_API]')
-    .replace(/\/bot[^/\s]+/giu, '/bot[REDACTED]')
-    .replace(/[\r\n]+/gu, ' ')
-    .slice(0, 2_000);
 }
 
 async function waitForPromise(promise: Promise<void>, timeoutMs: number) {

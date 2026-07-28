@@ -32,6 +32,7 @@ import type { TrainingAttemptSettingsSnapshot } from '@platforma/shared' with { 
 import { PrismaService } from '../prisma/prisma.service';
 import { TrainingAudioConfig } from './audio/training-audio.config';
 import { TrainingAudioError } from './audio/training-audio.error';
+import { TrainingConfigService } from './training.config';
 import {
   TRAINING_ATTEMPT_CLOCK,
   TRAINING_ATTEMPT_JOB_PROCESSOR_ENABLED,
@@ -70,6 +71,12 @@ import {
 } from './training.domain';
 import { trainingAttemptRepositoryInclude } from './training.repository.types';
 import { parseTrainingReviewIdempotencyKey } from './training-review-idempotency';
+import { TrainingPolicyService } from './training-policy.service';
+import {
+  formatTrainingErrorForLog,
+  safeTrainingFailureMessage,
+} from './training-safe-log';
+import { TrainingWorkerHeartbeatService } from './training-worker-heartbeat.service';
 import { enqueueAttemptTelegramOutboxEvent } from './telegram/training-telegram-outbox';
 
 const TRAINING_TERMINAL_ATTEMPT_STATUSES = [
@@ -188,11 +195,25 @@ export class TrainingAttemptEngineService
     @Optional()
     @Inject(TRAINING_ATTEMPT_JOB_PROCESSOR_ENABLED)
     private readonly jobProcessorEnabled?: boolean,
+    @Optional()
+    private readonly trainingConfig?: TrainingConfigService,
+    @Optional()
+    private readonly trainingPolicy?: TrainingPolicyService,
+    @Optional()
+    private readonly workerHeartbeat?: TrainingWorkerHeartbeatService,
   ) {}
 
   onModuleInit() {
     this.destroyed = false;
-    if (this.jobProcessorEnabled === false) return;
+    if (
+      this.jobProcessorEnabled === false ||
+      this.trainingConfig?.isEnabled() === false
+    ) {
+      return;
+    }
+    void this.workerHeartbeat
+      ?.register('attempt', this.workerId)
+      .catch(() => undefined);
     this.pollInterval = setInterval(
       () => this.kickRecovery(),
       TRAINING_ATTEMPT_JOB_POLL_MS,
@@ -214,6 +235,7 @@ export class TrainingAttemptEngineService
   }
 
   async confirmStart(command: ConfirmTrainingAttemptStartCommand) {
+    this.trainingConfig?.assertEnabled();
     if (!command.confirmed) {
       throw new BadRequestException('Training attempt start must be explicitly confirmed');
     }
@@ -223,6 +245,11 @@ export class TrainingAttemptEngineService
     try {
       const attemptId = await this.runSerializable(async (tx) => {
         await this.acquireUserProjectLock(tx, command.userId, command.projectId);
+        await this.trainingPolicy?.assertCurrentPolicyAccepted(
+          tx,
+          command.userId,
+          startedAt,
+        );
 
         const project = await tx.trainingProject.findUnique({
           where: { id: command.projectId },
@@ -1693,14 +1720,20 @@ export class TrainingAttemptEngineService
   }
 
   private kickRecovery() {
-    if (this.destroyed || this.kickQueued) return;
+    if (
+      this.destroyed ||
+      this.kickQueued ||
+      this.trainingConfig?.isEnabled() === false
+    ) {
+      return;
+    }
+    void this.workerHeartbeat?.touch(this.workerId).catch(() => undefined);
     this.kickQueued = true;
     queueMicrotask(() => {
       this.kickQueued = false;
       void this.recoverPendingProcessing().catch((error) => {
         this.logger.error(
-          'Training attempt recovery failed',
-          error instanceof Error ? error.stack : String(error),
+          `Training attempt recovery failed: ${formatTrainingErrorForLog(error)}`,
         );
       });
     });
@@ -1732,8 +1765,7 @@ export class TrainingAttemptEngineService
           throw error;
         }
         this.logger.error(
-          `Training attempt job ${job.id} failed`,
-          error instanceof Error ? error.stack : String(error),
+          `Training attempt job ${job.id} failed: ${formatTrainingErrorForLog(error)}`,
         );
       }
     }
@@ -3478,9 +3510,7 @@ function readAttemptJobPayload(value: Prisma.JsonValue) {
 }
 
 function toSafeErrorMessage(error: unknown) {
-  return (error instanceof Error ? error.message : 'Training attempt job failed')
-    .replace(/[\r\n]+/gu, ' ')
-    .slice(0, 2_000);
+  return safeTrainingFailureMessage(error, 'Training attempt job failed');
 }
 
 function mergeTranscriptMetrics(

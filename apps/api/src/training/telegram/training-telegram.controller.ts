@@ -17,12 +17,13 @@ import { CurrentUser } from '../../auth/current-user.decorator';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { RequirePermissions } from '../../auth/permissions.decorator';
 import { PermissionsGuard } from '../../auth/permissions.guard';
+import { TrainingFeatureGuard } from '../training-feature.guard';
 import { TrainingTelegramLinkService } from './training-telegram-link.service';
 import { TrainingTelegramWebhookService } from './training-telegram-webhook.service';
 import { TrainingTelegramWorkerService } from './training-telegram-worker.service';
 
 @Controller('training')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard, TrainingFeatureGuard)
 export class TrainingTelegramController {
   constructor(private readonly links: TrainingTelegramLinkService) {}
 
@@ -59,6 +60,7 @@ export class TrainingTelegramController {
 }
 
 @Controller('training/telegram')
+@UseGuards(TrainingFeatureGuard)
 export class TrainingTelegramWebhookController {
   constructor(
     private readonly webhook: TrainingTelegramWebhookService,

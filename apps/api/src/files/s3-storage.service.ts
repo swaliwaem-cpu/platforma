@@ -45,6 +45,7 @@ export class S3StorageService implements OnModuleInit {
     'platforma-training-audio-private';
   private readonly nodeEnv = (process.env.NODE_ENV ?? '').trim().toLowerCase();
   private readonly readyBuckets = new Set<string>();
+  private trainingAudioPrivacyVerifiedAt: Date | null = null;
 
   async onModuleInit() {
     this.assertTrainingAudioConfiguration();
@@ -68,6 +69,15 @@ export class S3StorageService implements OnModuleInit {
 
   getTrainingAudioBucket() {
     return this.trainingAudioBucket;
+  }
+
+  getTrainingAudioPrivacyStatus() {
+    return {
+      status: this.trainingAudioPrivacyVerifiedAt
+        ? ('VERIFIED' as const)
+        : ('NOT_VERIFIED' as const),
+      checkedAt: this.trainingAudioPrivacyVerifiedAt?.toISOString() ?? null,
+    };
   }
 
   async ensureBucket(bucket = this.bucket) {
@@ -313,6 +323,7 @@ export class S3StorageService implements OnModuleInit {
     if (staticValidationError) {
       throw staticValidationError;
     }
+    this.trainingAudioPrivacyVerifiedAt = new Date();
   }
 
   private async signedFetch(options: SignedRequestOptions) {

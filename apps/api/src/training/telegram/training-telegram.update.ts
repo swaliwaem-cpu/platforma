@@ -11,6 +11,7 @@ export type SanitizedTelegramUser = {
 
 export type SanitizedTelegramMessageUpdate = {
   type: 'MESSAGE';
+  correlationId: string;
   updateId: string;
   receivedAt: string;
   chatId: string;
@@ -46,6 +47,7 @@ export type SanitizedTelegramMessageUpdate = {
 
 export type SanitizedTelegramCallbackUpdate = {
   type: 'CALLBACK';
+  correlationId: string;
   updateId: string;
   receivedAt: string;
   chatId: string;
@@ -186,6 +188,7 @@ function sanitizeCallback(
     jobIdempotencyKey: `telegram:callback:${sourceHash}`,
     payload: {
       type: 'CALLBACK',
+      correlationId: `telegram-update:${updateId.toString()}`,
       updateId: updateId.toString(),
       receivedAt: receivedAt.toISOString(),
       chatId: chatId.toString(),
@@ -233,6 +236,7 @@ function sanitizeMessage(
     jobIdempotencyKey: `telegram:message:${chatId.toString()}:${messageId.toString()}`,
     payload: {
       type: 'MESSAGE',
+      correlationId: `telegram-update:${updateId.toString()}`,
       updateId: updateId.toString(),
       receivedAt: receivedAt.toISOString(),
       chatId: chatId.toString(),

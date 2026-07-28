@@ -837,7 +837,7 @@ async function createRankingFixture(
     );
   }
   const users = [];
-  for (let index = 0; index < 30; index += 1) {
+  for (let index = 0; index < 90; index += 1) {
     const user = await createRankingUser(prisma, {
       roleId: trainingRoleId,
       passwordHash,
@@ -1021,7 +1021,7 @@ async function createRankingFixture(
     needleUsers,
     reviewedUser,
     noAttemptUser,
-    totalEligibleUsers: 3 + 30 + 3 + 2 + 2 + 1,
+    totalEligibleUsers: 3 + 90 + 3 + 2 + 2 + 1,
     unique,
   };
 }
@@ -1086,8 +1086,10 @@ async function assertRankingPaginationAndExactNumeric({
   fixture,
 }) {
   const headers = authorization(token);
+  const pageLoadStartedAt = performance.now();
   const pageOne = await fetchRanking(baseUrl, headers, 'page=1&pageSize=10');
   const pageTwo = await fetchRanking(baseUrl, headers, 'page=2&pageSize=10');
+  const pageLoadDurationMs = performance.now() - pageLoadStartedAt;
   assert.equal(pageOne.items.length, 10);
   assert.equal(pageTwo.items.length, 10);
   assert.equal(
@@ -1095,6 +1097,8 @@ async function assertRankingPaginationAndExactNumeric({
     fixture.ranking.totalEligibleUsers,
   );
   assert.equal(pageTwo.pagination.total, pageOne.pagination.total);
+  assert.ok(pageOne.pagination.total >= 100);
+  assert.ok(pageLoadDurationMs < 5_000);
   assert.equal(
     pageOne.items.some((first) =>
       pageTwo.items.some((second) => second.user.id === first.user.id),
@@ -1103,24 +1107,44 @@ async function assertRankingPaginationAndExactNumeric({
   );
 
   const scopedUserIdFilters = [];
+  let scopedQueryCount = 0;
   const scopedService = new TrainingRankingService({
-    $queryRaw: (query) => prisma.$queryRaw(query),
+    $queryRaw: (query) => {
+      scopedQueryCount += 1;
+      return prisma.$queryRaw(query);
+    },
     trainingAttempt: {
       findMany: (args) => {
+        scopedQueryCount += 1;
         scopedUserIdFilters.push(args.where.userId.in);
         return prisma.trainingAttempt.findMany(args);
       },
-      groupBy: (args) => prisma.trainingAttempt.groupBy(args),
+      groupBy: (args) => {
+        scopedQueryCount += 1;
+        return prisma.trainingAttempt.groupBy(args);
+      },
     },
     trainingProject: {
-      findMany: (args) => prisma.trainingProject.findMany(args),
+      findMany: (args) => {
+        scopedQueryCount += 1;
+        return prisma.trainingProject.findMany(args);
+      },
     },
   });
   const scopedPage = await scopedService.list({ page: 2, pageSize: 2 });
   assert.equal(scopedPage.items.length, 2);
+  assert.equal(scopedQueryCount, 4);
   assert.deepEqual(
     [...new Set(scopedUserIdFilters.flat())].sort(),
     scopedPage.items.map((item) => item.user.id).sort(),
+  );
+  const queryCountBeforeExport = scopedQueryCount;
+  const scopedExport = await scopedService.listForExport({});
+  const scopedExportQueryCount = scopedQueryCount - queryCountBeforeExport;
+  assert.equal(scopedExport.pagination.total, pageOne.pagination.total);
+  assert.equal(
+    scopedExportQueryCount,
+    Math.ceil(pageOne.pagination.total / 100) * 4,
   );
 
   const needle = await fetchRanking(
@@ -1207,6 +1231,24 @@ async function assertRankingPaginationAndExactNumeric({
   assert.ok(exactCsv.indexOf(exactEmails[0]) < exactCsv.indexOf(exactEmails[1]));
   assert.ok(exactCsv.indexOf(exactEmails[1]) < exactCsv.indexOf(exactEmails[2]));
 
+  const fullCsvStartedAt = performance.now();
+  const fullCsvResponse = await fetch(
+    `${baseUrl}/training/admin/ranking/export.csv`,
+    { headers },
+  );
+  assert.equal(fullCsvResponse.status, 200);
+  const fullCsv = await fullCsvResponse.text();
+  const fullCsvDurationMs = performance.now() - fullCsvStartedAt;
+  assert.ok(fullCsv.split('\r\n').length >= pageOne.pagination.total + 1);
+  assert.ok(fullCsvDurationMs < 5_000);
+  console.log(
+    `Stage 10 ranking load: users=${pageOne.pagination.total}, pages=${pageLoadDurationMs.toFixed(
+      3,
+    )}ms, csv=${fullCsvDurationMs.toFixed(
+      3,
+    )}ms, queriesPerPage=4, csvQueries=${scopedExportQueryCount}`,
+  );
+
   const planRows = await prisma.$queryRaw(
     Prisma.sql`
       EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
@@ -1219,7 +1261,7 @@ async function assertRankingPaginationAndExactNumeric({
     ...collectPlanValues(explain.Plan, 'Relation Name'),
   ].sort();
   console.log(
-    `Stage 9 ranking EXPLAIN: execution=${explain['Execution Time'].toFixed(
+    `Stage 10 ranking EXPLAIN: execution=${explain['Execution Time'].toFixed(
       3,
     )}ms, root=${explain.Plan['Node Type']}, relations=${planRelations.join(
       ',',

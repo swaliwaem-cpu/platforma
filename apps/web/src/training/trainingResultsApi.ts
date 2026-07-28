@@ -9,6 +9,8 @@ import type {
   TrainingRankingResponse,
   TrainingRankingFiltersQuery,
   TrainingReviewRequest,
+  TrainingOperationsResponse,
+  TrainingPolicyResponse,
   TrainingTelegramAccountResponse,
 } from '@platforma/shared';
 
@@ -27,6 +29,43 @@ export function getTrainingTelegramAccount(accessToken: string) {
   return apiRequest<TrainingTelegramAccountResponse>(
     '/training/telegram/account',
     accessToken,
+  );
+}
+
+export function getTrainingPolicy(accessToken: string) {
+  return apiRequest<TrainingPolicyResponse>(
+    '/training/policy',
+    accessToken,
+  );
+}
+
+export function acceptTrainingPolicy(accessToken: string) {
+  return apiRequest<TrainingPolicyResponse>(
+    '/training/policy/accept',
+    accessToken,
+    { method: 'POST' },
+  );
+}
+
+export function getTrainingOperations(accessToken: string) {
+  return apiRequest<TrainingOperationsResponse>(
+    '/training/admin/operations/summary',
+    accessToken,
+  );
+}
+
+export function retryTrainingJob(
+  accessToken: string,
+  jobId: string,
+  reason: string,
+) {
+  return apiRequest(
+    `/training/admin/operations/jobs/${encodeURIComponent(jobId)}/retry`,
+    accessToken,
+    {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    },
   );
 }
 

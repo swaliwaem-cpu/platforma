@@ -145,7 +145,10 @@ test('admin content controller is guarded by the approved management permission 
   ]) {
     assert.equal(controllerSource.includes(route), true, `Missing route ${route}`);
   }
-  assert.match(controllerSource, /@UseGuards\(JwtAuthGuard, PermissionsGuard\)/);
+  assert.match(
+    controllerSource,
+    /@UseGuards\(JwtAuthGuard, PermissionsGuard, TrainingFeatureGuard\)/,
+  );
 });
 
 test('project creation atomically creates draft defaults and an AuditLog record', async () => {

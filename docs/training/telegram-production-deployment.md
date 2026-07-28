@@ -1,6 +1,6 @@
 # Production deployment Training Telegram
 
-Дата актуализации: 2026-07-27.
+Дата актуализации: 2026-07-28.
 
 Этот документ описывает Telegram-интеграцию этапа 6. Deployment private voice,
 audio storage, ffmpeg и отдельного worker этапа 7 описан в
@@ -16,6 +16,14 @@ TELEGRAM_TRANSPORT_MODE=fake
 ```
 
 Fake transport не должен использоваться для production.
+
+Staging flow, включая phase A `Telegram real + OpenAI fake`, вынесен в
+`docs/training/staging-deployment.md`. Production остаётся строго
+`DEPLOYMENT_ENV=production`, оба provider mode — `real`.
+
+Webhook не регистрируется при startup. Opt-in команды status/register/delete
+и dry-run описаны в staging runbook; в этапе 10 они проверялись только на
+локальном HTTP stub.
 
 ## Обязательный production profile
 

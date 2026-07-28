@@ -6,6 +6,7 @@ import {
   TRAINING_PERMISSION_DEFINITIONS,
   TRAINING_USER_PERMISSION_KEYS,
 } from '../training/training.permissions';
+import { CURRENT_TRAINING_POLICY } from '../training/training-policy.seed';
 
 const prisma = new PrismaClient();
 
@@ -128,7 +129,7 @@ async function seed() {
         });
   const shouldUpdateAdminPassword = Boolean(explicitAdminPasswordHash || explicitAdminPassword);
 
-  await prisma.user.upsert({
+  const admin = await prisma.user.upsert({
     where: { email: adminEmail },
     update: {
       name: adminName,
@@ -143,9 +144,43 @@ async function seed() {
       roleId: adminRole.id,
       status: UserStatus.ACTIVE,
     },
+    select: { id: true },
   });
 
-  console.log(`Seeded ${permissions.length} permissions, roles and admin user ${adminEmail}.`);
+  await prisma.$transaction(async (tx) => {
+    await tx.trainingPolicyVersion.updateMany({
+      where: {
+        isActive: true,
+        version: { not: CURRENT_TRAINING_POLICY.version },
+      },
+      data: { isActive: false },
+    });
+    await tx.trainingPolicyVersion.upsert({
+      where: { version: CURRENT_TRAINING_POLICY.version },
+      update: {
+        title: CURRENT_TRAINING_POLICY.title,
+        body: CURRENT_TRAINING_POLICY.body,
+        checksum: CURRENT_TRAINING_POLICY.checksum,
+        effectiveAt: new Date(CURRENT_TRAINING_POLICY.effectiveAt),
+        isActive: CURRENT_TRAINING_POLICY.isActive,
+        approvalStatus: CURRENT_TRAINING_POLICY.approvalStatus,
+      },
+      create: {
+        version: CURRENT_TRAINING_POLICY.version,
+        title: CURRENT_TRAINING_POLICY.title,
+        body: CURRENT_TRAINING_POLICY.body,
+        checksum: CURRENT_TRAINING_POLICY.checksum,
+        effectiveAt: new Date(CURRENT_TRAINING_POLICY.effectiveAt),
+        isActive: CURRENT_TRAINING_POLICY.isActive,
+        approvalStatus: CURRENT_TRAINING_POLICY.approvalStatus,
+        createdById: admin.id,
+      },
+    });
+  });
+
+  console.log(
+    `Seeded ${permissions.length} permissions, roles, admin user ${adminEmail} and training policy ${CURRENT_TRAINING_POLICY.version}.`,
+  );
 }
 
 void seed()

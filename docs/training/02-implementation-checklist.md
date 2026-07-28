@@ -627,27 +627,36 @@ PostgreSQL/HTTP integration tests; root suite также включает `286/2
 
 ## Этап 10. Security, deploy и pilot preparation
 
-- [ ] Реализовать consent/notification.
-- [ ] Добавить webhook hardening, rate/input limits и prompt-injection guards.
-- [ ] Проверить private audio и privileged access audit.
-- [ ] Добавить structured logs/counters без secrets/audio/transcript.
-- [ ] Добавить worker health/readiness.
-- [ ] Добавить полный fake E2E утверждённого сценария.
-- [ ] Создать обезличенный eval dataset scaffold без raw personal audio.
-- [ ] Обновить env/migration/worker/ffmpeg/webhook/backup/rollback docs.
-- [ ] Подготовить pilot checklist для ЖК «Шагал» без реальных материалов.
-- [ ] Выполнить финальные `pnpm build` и все tests.
-- [ ] Не выполнять production deploy без отдельного запроса.
+- [x] Реализовать versioned policy и идемпотентную acceptance
+  `PLATFORM | TELEGRAM`; новая active version требует повторного
+  подтверждения, отзыв не удаляет историю.
+- [x] Добавить policy block/dialog в `/training`, Telegram rules callback и
+  backend gate до расходования попытки.
+- [x] Добавить webhook body limit, link-token cooldown/hourly cap,
+  feature-disable guards и safe structured logging.
+- [x] Подтвердить private audio, privileged read audit, prompt-injection,
+  CSV formula protection и backend-only score существующими gates.
+- [x] Добавить безопасный health summary, worker heartbeat,
+  `training:operations:read/manage`, operations summary/retry и audit.
+- [x] Добавить `pnpm test:training:e2e`: isolated PostgreSQL,
+  MinIO/ffmpeg Docker, fake providers и существующий Playwright harness.
+- [x] Расширить local ranking smoke до 101 пользователя, page 1/2, полного
+  CSV batching и `EXPLAIN (ANALYZE)`: `4` SQL-запроса на страницу, `8` на
+  полный CSV в два batch без N+1.
+- [x] Добавить staging env/Compose, opt-in webhook tooling, OpenAI smoke,
+  backup/migration/rollback и manual QA runbooks.
+- [x] Создать pilot/checklist/calibration templates для ЖК «Шагал» без
+  реального контента, персональных данных и голосов.
+- [ ] Получить утверждение руководителя для policy text
+  `2026-07-28.1`; seed помечен `REQUIRES_MANAGER_APPROVAL`.
+- [ ] Выполнить отдельные staging gates: deploy/migrations, real Telegram,
+  private-bucket probe, synthetic OpenAI smoke после пополнения баланса,
+  calibration и pilot.
+- [x] Не выполнять production/staging deploy, production migrations,
+  real webhook registration, real Telegram/OpenAI calls или pilot.
 
 ## Следующий этап
 
-Точный следующий этап: этап 10 — security, deploy и pilot preparation.
-Этап 10 не начинался.
-
-Он не начат и не должен выполняться автоматически. Перед ним нужно:
-
-1. получить отдельный запрос пользователя;
-2. повторно проверить branch/status и сохранить чужие изменения;
-3. перечитать security/deploy/pilot части спецификации;
-4. не выполнять production migration/deploy, real Telegram/OpenAI или
-   обработку реальных голосов без отдельного разрешения.
+Этап 10 реализован локально. Следующий шаг не запускается автоматически:
+только отдельная staging-валидация по `staging-smoke-checklist.md` после
+утверждения policy и пополнения OpenAI-баланса.

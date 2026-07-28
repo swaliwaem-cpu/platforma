@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import type { TrainingModuleConfigResponse } from '@platforma/shared' with { 'resolution-mode': 'import' };
 
 export const TRAINING_MODULE_ENABLED_ENV = 'TRAINING_MODULE_ENABLED';
@@ -24,6 +24,19 @@ export function parseTrainingModuleEnabled(value: string | undefined) {
 @Injectable()
 export class TrainingConfigService {
   private readonly enabled = parseTrainingModuleEnabled(process.env[TRAINING_MODULE_ENABLED_ENV]);
+
+  isEnabled() {
+    return this.enabled;
+  }
+
+  assertEnabled() {
+    if (!this.enabled) {
+      throw new ServiceUnavailableException({
+        code: 'TRAINING_DISABLED',
+        message: 'Training module is temporarily disabled',
+      });
+    }
+  }
 
   getConfig(): TrainingModuleConfigResponse {
     return {

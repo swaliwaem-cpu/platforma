@@ -327,6 +327,13 @@ enum TrainingProcessedUpdateStatus {
   @@map("training_processed_update_status")
 }
 
+enum TrainingPolicyAcceptanceSource {
+  PLATFORM @map("platform")
+  TELEGRAM @map("telegram")
+
+  @@map("training_policy_acceptance_source")
+}
+
 model User {
   id                    String     @id @default(uuid()) @db.Uuid
   email                 String     @unique @db.VarChar(320)
@@ -360,6 +367,8 @@ model User {
   trainingLinkTokens            TrainingLinkToken[]
   trainingPublishedVersions     TrainingProjectVersion[]       @relation("TrainingVersionPublisher")
   trainingResultReviews         TrainingResultReview[]         @relation("TrainingResultReviewer")
+  trainingPolicyVersions        TrainingPolicyVersion[]         @relation("TrainingPolicyVersionCreator")
+  trainingPolicyAcceptances     TrainingPolicyAcceptance[]
 
   @@index([roleId])
   @@index([profilePhotoFileId])
@@ -1319,6 +1328,45 @@ model TrainingLinkToken {
   @@map("training_link_tokens")
 }
 
+model TrainingPolicyVersion {
+  id             String                     @id @default(uuid()) @db.Uuid
+  version        String                     @unique @db.VarChar(64)
+  title          String                     @db.VarChar(240)
+  body           String
+  checksum       String                     @unique @db.VarChar(64)
+  effectiveAt    DateTime                   @map("effective_at")
+  isActive       Boolean                    @default(false) @map("is_active")
+  approvalStatus String                     @map("approval_status") @db.VarChar(64)
+  createdById    String?                    @map("created_by_id") @db.Uuid
+  createdAt      DateTime                   @default(now()) @map("created_at")
+  updatedAt      DateTime                   @updatedAt @map("updated_at")
+
+  createdBy   User?                      @relation("TrainingPolicyVersionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  acceptances TrainingPolicyAcceptance[]
+
+  @@index([isActive, effectiveAt])
+  @@index([createdById])
+  @@map("training_policy_versions")
+}
+
+model TrainingPolicyAcceptance {
+  id              String                         @id @default(uuid()) @db.Uuid
+  userId          String                         @map("user_id") @db.Uuid
+  policyVersionId String                         @map("policy_version_id") @db.Uuid
+  source          TrainingPolicyAcceptanceSource
+  acceptedAt      DateTime                       @default(now()) @map("accepted_at")
+  revokedAt       DateTime?                      @map("revoked_at")
+  createdAt       DateTime                       @default(now()) @map("created_at")
+
+  user          User                  @relation(fields: [userId], references: [id], onDelete: Restrict)
+  policyVersion TrainingPolicyVersion @relation(fields: [policyVersionId], references: [id], onDelete: Restrict)
+
+  @@index([userId, acceptedAt])
+  @@index([policyVersionId, acceptedAt])
+  @@index([revokedAt])
+  @@map("training_policy_acceptances")
+}
+
 model TrainingAttempt {
   id                   String                @id @default(uuid()) @db.Uuid
   userId               String                @map("user_id") @db.Uuid
@@ -1681,6 +1729,20 @@ model TrainingJob {
   @@index([lockedAt])
   @@index([heartbeatAt])
   @@map("training_jobs")
+}
+
+model TrainingWorkerHeartbeat {
+  id           String   @id @default(uuid()) @db.Uuid
+  workerKind   String   @map("worker_kind") @db.VarChar(64)
+  instanceId   String   @unique @map("instance_id") @db.VarChar(160)
+  startedAt    DateTime @default(now()) @map("started_at")
+  lastSeenAt   DateTime @default(now()) @map("last_seen_at")
+  metadataJson Json     @default("{}") @map("metadata_json")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@index([workerKind, lastSeenAt])
+  @@map("training_worker_heartbeats")
 }
 
 model AuditLog {

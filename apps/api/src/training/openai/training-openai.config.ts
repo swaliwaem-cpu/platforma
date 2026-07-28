@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 
 import { parseTrainingModuleEnabled } from '../training.config';
+import {
+  allowStagingFakeProviders,
+  readTrainingDeploymentEnvironment,
+} from '../training-deployment.config';
 
 const MEBIBYTE = 1024 * 1024;
 const OPENAI_UPLOAD_LIMIT_BYTES = 25 * MEBIBYTE;
@@ -39,6 +43,8 @@ export class TrainingOpenAiConfig {
 
   constructor(env: NodeJS.ProcessEnv = process.env) {
     const nodeEnv = env.NODE_ENV?.trim().toLowerCase();
+    const deploymentEnvironment =
+      readTrainingDeploymentEnvironment(env);
     const trainingEnabled = parseTrainingModuleEnabled(
       env.TRAINING_MODULE_ENABLED,
     );
@@ -62,12 +68,30 @@ export class TrainingOpenAiConfig {
         : ((configuredMode || 'fake') as TrainingOpenAiProviderMode);
 
     if (
-      nodeEnv === 'production' &&
+      deploymentEnvironment === 'production' &&
       trainingEnabled &&
       this.providerMode !== 'real'
     ) {
       throw new Error(
         'OPENAI_PROVIDER_MODE=real is required when training is enabled in production',
+      );
+    }
+    if (
+      deploymentEnvironment === 'staging' &&
+      trainingEnabled &&
+      this.providerMode === 'fake' &&
+      !allowStagingFakeProviders(env)
+    ) {
+      throw new Error(
+        'STAGING_ALLOW_FAKE_PROVIDERS=true is required for fake OpenAI in staging',
+      );
+    }
+    if (
+      deploymentEnvironment === 'production' &&
+      allowStagingFakeProviders(env)
+    ) {
+      throw new Error(
+        'STAGING_ALLOW_FAKE_PROVIDERS is forbidden in production',
       );
     }
 
@@ -76,7 +100,7 @@ export class TrainingOpenAiConfig {
         ? readRequiredApiKey(env.OPENAI_API_KEY)
         : null;
     const requireExplicitProductionModels =
-      nodeEnv === 'production' &&
+      deploymentEnvironment === 'production' &&
       trainingEnabled &&
       this.providerMode === 'real';
     this.transcriptionModel = readModel(

@@ -12,6 +12,7 @@ import { CurrentUser } from '../../auth/current-user.decorator';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { RequirePermissions } from '../../auth/permissions.decorator';
 import { PermissionsGuard } from '../../auth/permissions.guard';
+import { TrainingFeatureGuard } from '../training-feature.guard';
 import {
   TrainingAudioAccessService,
   type TrainingAudioAuditRequest,
@@ -23,7 +24,7 @@ type TrainingAudioResponse = {
 };
 
 @Controller('training/admin/answers')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard, TrainingFeatureGuard)
 export class TrainingAudioController {
   constructor(private readonly audio: TrainingAudioAccessService) {}
 

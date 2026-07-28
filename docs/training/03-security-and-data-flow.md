@@ -1,6 +1,6 @@
-# Training audio security and data flow
+# Training security and data flow
 
-Дата актуализации: 2026-07-27.
+Дата актуализации: 2026-07-28.
 
 Документ фиксирует границы безопасности этапов 7–9 после независимого review.
 HTTP DTO/permissions этапа 9 подробно зафиксированы в
@@ -214,6 +214,60 @@ Admin list/ranking/CSV требуют `training:results:read`; review/reprocessi
 `training:results:review`; фактические audio bytes —
 `training:audio:read` плюс административный results scope. Frontend permission
 checks служат UX-фильтром, но не заменяют Nest guards.
+
+## Versioned policy и техническая фиксация ознакомления
+
+Единый текст хранится в `TrainingPolicyVersion` и создаётся seed из
+`training-policy.seed.ts`. Версия содержит `version`, `title`, `body`,
+`effectiveAt`, `isActive`, SHA-256 `checksum`, автора и статус утверждения.
+Текущий текст `2026-07-28.1` помечен
+`REQUIRES_MANAGER_APPROVAL`: это техническая фиксация ознакомления с
+внутренними правилами, а не заявление о полной юридической compliance.
+
+`TrainingPolicyAcceptance` хранит только internal `userId`, версию, дату,
+`PLATFORM | TELEGRAM` и optional `revokedAt`. Telegram identifiers не нужны и
+не сохраняются. Acceptance создаётся в транзакции с AuditLog и является
+идемпотентной для пары user/version. Новая active version или отзыв блокирует
+новую попытку до повторного подтверждения, но не удаляет исторические
+attempt/audio/results.
+
+## Категории данных, видимость и retention
+
+| Данные | Источник и назначение | Storage / retention | Кто видит | External / audit |
+| --- | --- | --- | --- | --- |
+| Platform user | существующий профиль, RBAC и owner binding | PostgreSQL, lifecycle пользователя | сам пользователь; admins по RBAC | не передаётся provider; auth/audit |
+| Telegram link/account | одноразовая связь private chat | hash токена и internal account relation; TTL/revoke | employee видит только connected state | Telegram; link/revoke audit |
+| Policy acceptance | Platforma или private Telegram callback | PostgreSQL, исторически; revoke без delete | employee свою; admin version/date/source | не external; acceptance audit |
+| Voice metadata | Telegram `file_id`, duration, update chain | PostgreSQL, вместе с исторической попыткой | только authorised admin processing | Telegram; correlation IDs |
+| Original/merged audio | bounded download и ffmpeg | private bucket, `File.url=null`, бессрочно | только `training:audio:read` + admin scope; employee не видит | Telegram download; privileged read audit |
+| Transcript | server-side transcription | immutable PostgreSQL versions, исторически | authorised admin; employee не видит | OpenAI Transcriptions в real mode; provider-run metadata |
+| Evaluation | strict structured result | immutable PostgreSQL versions, исторически | authorised admin; employee только разрешённый final result | OpenAI Responses `store=false`; provider-run metadata |
+| Score/review | backend formula и решение reviewer | PostgreSQL, исторически | employee безопасный final; admin detail/history | не external; review audit |
+| Ranking/CSV | подтверждённые final scores | формируется bounded page/batches, отдельного retention нет | `training:results:read` | не external; без transcript/audio/storage/provider payload |
+
+OpenAI key, Telegram token/webhook secret и S3 credentials остаются
+server-side. Реальные OpenAI project data controls до staging/pilot не
+проверялись; Zero Data Retention не заявляется. До их проверки допускается
+только fake provider или отдельный synthetic smoke по runbook.
+
+## Safe disable, logs и operations
+
+При `TRAINING_MODULE_ENABLED=false` ingress возвращает controlled
+`TRAINING_DISABLED`, webhook не выполняет domain transitions, workers не
+claim-ят jobs, recovery не начинает новую работу, данные и pending jobs
+сохраняются. После re-enable recovery продолжает persisted state.
+
+Training logs используют Nest Logger и whitelist полей: correlation/internal
+IDs, provider/model/request ID, latency, retry, status и safe error code.
+Raw error, transcript, audio, prompt/provider payload, link token, secrets,
+email/name и signed storage headers не форматируются.
+
+Публичный `GET /health` возвращает только `status`, `database` и
+`training: disabled|ready|degraded`. `GET /training/admin/operations/summary`
+требует `training:operations:read`; manual retry требует
+`training:operations:manage`, reason `3..500` и пишет audit. Summary содержит
+только counts/ages/status/error codes/heartbeat/modes/privacy verdict и не
+содержит payload, transcript, audio, bucket name или credential state.
 
 ## Автоматические доказательства
 

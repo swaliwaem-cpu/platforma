@@ -16,10 +16,11 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RequirePermissions } from '../auth/permissions.decorator';
 import { PermissionsGuard } from '../auth/permissions.guard';
 import { TrainingAttemptEngineService } from './training-attempt-engine.service';
+import { TrainingFeatureGuard } from './training-feature.guard';
 import { parseTrainingReviewIdempotencyKey } from './training-review-idempotency';
 
 @Controller('training/admin')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard, TrainingFeatureGuard)
 @RequirePermissions('training:results:review')
 export class TrainingReviewController {
   constructor(private readonly attempts: TrainingAttemptEngineService) {}

@@ -4,6 +4,7 @@ import {
   HttpException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import {
   Prisma,
@@ -13,6 +14,7 @@ import {
   TrainingJobKind,
   TrainingJobStatus,
   TrainingPassStatus,
+  TrainingPolicyAcceptanceSource,
   TrainingProjectStatus,
   TrainingReviewStatus,
   TrainingVersionStatus,
@@ -22,8 +24,11 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { TrainingAttemptEngineService } from '../training-attempt-engine.service';
 import { TRAINING_ACTIVE_ATTEMPT_STATUSES } from '../training.domain';
+import { TrainingPolicyService } from '../training-policy.service';
+import { CURRENT_TRAINING_POLICY } from '../training-policy.seed';
 import {
   encodeFinishCallback,
+  encodePolicyAcceptStartCallback,
   encodeProjectCallback,
   encodeStartCallback,
   parseTrainingTelegramCallback,
@@ -69,6 +74,8 @@ export class TrainingTelegramDialogService {
     private readonly config: TrainingTelegramConfig,
     private readonly links: TrainingTelegramLinkService,
     private readonly attempts: TrainingAttemptEngineService,
+    @Optional()
+    private readonly policy?: TrainingPolicyService,
   ) {}
 
   async listEmployeeProjects(userId: string) {
@@ -149,7 +156,11 @@ export class TrainingTelegramDialogService {
       update.type === 'CALLBACK'
         ? await this.processCallback(update)
         : await this.processMessage(update);
-    await this.enqueueDeliveryPlans(originKey, plans);
+    await this.enqueueDeliveryPlans(
+      originKey,
+      update.correlationId ?? `telegram-job:${originKey}`,
+      plans,
+    );
   }
 
   async deliverAttemptResult(
@@ -438,13 +449,7 @@ export class TrainingTelegramDialogService {
     if (command === 'PROJECTS') return this.projectList(userId, chatId);
     if (command === 'RESULTS') return this.resultsList(userId, chatId);
     if (command === 'RULES') {
-      return [
-        this.message(
-          chatId,
-          'Правила:\n• попытка списывается сразу после подтверждения;\n• таймер общий для четырёх вопросов;\n• пауза и отмена после старта невозможны;\n• принимаются только voice-сообщения;\n• один ответ может состоять из нескольких voice-частей.',
-          this.mainMenuKeyboard(),
-        ),
-      ];
+      return [await this.policyMessage(userId, chatId)];
     }
     if (command === 'OPEN_PLATFORM') {
       return [
@@ -513,6 +518,38 @@ export class TrainingTelegramDialogService {
         ...(await this.processCommand('CONNECT', account.userId, update.chatId)),
       ];
     }
+    if (
+      callback.action === 'POLICY_ACCEPT' ||
+      callback.action === 'POLICY_ACCEPT_START'
+    ) {
+      try {
+        if (!this.policy) {
+          throw new ConflictException('Training policy is unavailable');
+        }
+        await this.policy.accept(
+          account.userId,
+          TrainingPolicyAcceptanceSource.TELEGRAM,
+        );
+        return callback.action === 'POLICY_ACCEPT_START'
+          ? [
+              { ...answerPlan, text: 'Правила приняты' },
+              await this.projectConfirmation(
+                account.userId,
+                callback.projectId,
+                update.chatId,
+              ),
+            ]
+          : [
+              { ...answerPlan, text: 'Правила приняты' },
+              await this.policyMessage(account.userId, update.chatId),
+            ];
+      } catch (error) {
+        return [
+          { ...answerPlan, text: 'Не удалось сохранить подтверждение' },
+          this.message(update.chatId, safeUserError(error)),
+        ];
+      }
+    }
     if (callback.action === 'PROJECT') {
       try {
         return [
@@ -561,6 +598,31 @@ export class TrainingTelegramDialogService {
         this.message(
           chatId,
           'У вас уже есть активная аттестация. Вторая попытка не создана.',
+        ),
+      ];
+    }
+    const currentPolicy = await this.policy?.getCurrentPolicy(userId);
+    if (currentPolicy && !currentPolicy.accepted) {
+      return [
+        this.message(
+          chatId,
+          `${currentPolicy.policy.title}\nВерсия ${currentPolicy.policy.version}, действует с ${formatPolicyDate(currentPolicy.policy.effectiveAt)}.\n\n${currentPolicy.policy.body}`,
+          {
+            inline_keyboard: [
+              [
+                {
+                  text: 'Ознакомлен и согласен продолжить',
+                  callback_data: encodePolicyAcceptStartCallback(projectId),
+                },
+              ],
+              [
+                {
+                  text: 'Открыть платформу',
+                  url: this.config.publicTrainingUrl,
+                },
+              ],
+            ],
+          },
         ),
       ];
     }
@@ -878,8 +940,48 @@ export class TrainingTelegramDialogService {
     return project;
   }
 
+  private async policyMessage(userId: string, chatId: string) {
+    const currentPolicy = this.policy
+      ? await this.policy.getCurrentPolicy(userId)
+      : {
+          policy: {
+            ...CURRENT_TRAINING_POLICY,
+            id: 'unavailable',
+          },
+          accepted: false,
+          acceptance: null,
+        };
+    return this.message(
+      chatId,
+      `${currentPolicy.policy.title}\nВерсия ${currentPolicy.policy.version}, действует с ${formatPolicyDate(currentPolicy.policy.effectiveAt)}.\n\n${currentPolicy.policy.body}\n\n${
+        currentPolicy.accepted
+          ? `Подтверждено: ${formatPolicyDate(currentPolicy.acceptance!.acceptedAt)}.`
+          : 'Для начала аттестации подтвердите ознакомление.'
+      }`,
+      currentPolicy.accepted
+        ? this.mainMenuKeyboard()
+        : {
+            inline_keyboard: [
+              [
+                {
+                  text: 'Ознакомлен и согласен продолжить',
+                  callback_data: 'tr:accept',
+                },
+              ],
+              [
+                {
+                  text: 'Открыть платформу',
+                  url: this.config.publicTrainingUrl,
+                },
+              ],
+            ],
+          },
+    );
+  }
+
   private async enqueueDeliveryPlans(
     originKey: string,
+    correlationId: string,
     plans: DeliveryPlan[],
   ) {
     if (plans.length === 0) return;
@@ -888,7 +990,10 @@ export class TrainingTelegramDialogService {
       data: plans.map((plan, index) => ({
         kind: TrainingJobKind.SEND_TELEGRAM_MESSAGE,
         status: TrainingJobStatus.PENDING,
-        payloadJson: plan as unknown as Prisma.InputJsonObject,
+        payloadJson: {
+          ...plan,
+          correlationId,
+        } as unknown as Prisma.InputJsonObject,
         idempotencyKey: `${originKey}:delivery:${index}`,
         runAt: new Date(now.getTime() + index),
         maxAttempts: 5,
@@ -1047,6 +1152,15 @@ function isActiveTelegramUser(user: {
   deletedAt: Date | null;
 }) {
   return user.status === UserStatus.ACTIVE && user.deletedAt === null;
+}
+
+function formatPolicyDate(value: string) {
+  return new Intl.DateTimeFormat('ru-RU', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    timeZone: 'UTC',
+  }).format(new Date(value));
 }
 
 function safeUserError(error: unknown) {

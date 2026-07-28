@@ -19,6 +19,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RequirePermissions } from '../auth/permissions.decorator';
 import { PermissionsGuard } from '../auth/permissions.guard';
 import { buildTrainingRankingCsv } from './training-csv';
+import { TrainingFeatureGuard } from './training-feature.guard';
 import {
   TrainingRankingService,
   type TrainingRankingFilters,
@@ -35,7 +36,7 @@ type CsvResponse = {
 };
 
 @Controller('training')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard, TrainingFeatureGuard)
 export class TrainingEmployeeResultsController {
   constructor(private readonly results: TrainingResultsService) {}
 
@@ -83,7 +84,7 @@ export class TrainingEmployeeResultsController {
 }
 
 @Controller('training/admin')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard, TrainingFeatureGuard)
 @RequirePermissions('training:results:read')
 export class TrainingAdminResultsController {
   constructor(

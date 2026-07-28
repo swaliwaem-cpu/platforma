@@ -1,8 +1,12 @@
 import { Injectable } from '@nestjs/common';
 
 import { parseTrainingModuleEnabled } from '../training.config';
+import { readTrainingDeploymentEnvironment } from '../training-deployment.config';
 
 const DEFAULT_LINK_TOKEN_TTL_MINUTES = 15;
+const DEFAULT_LINK_TOKEN_COOLDOWN_SECONDS = 30;
+const DEFAULT_LINK_TOKEN_MAX_ISSUES_PER_HOUR = 10;
+const DEFAULT_WEBHOOK_MAX_BODY_BYTES = 96 * 1024;
 const DEFAULT_WORKER_POLL_MS = 250;
 const DEFAULT_WORKER_LEASE_MS = 30_000;
 const DEFAULT_WORKER_HEARTBEAT_MS = 5_000;
@@ -46,6 +50,9 @@ export class TrainingTelegramConfig {
   readonly webhookSecret: string;
   readonly webhookUrl: string;
   readonly linkTokenTtlMinutes: number;
+  readonly linkTokenCooldownSeconds: number;
+  readonly linkTokenMaxIssuesPerHour: number;
+  readonly webhookMaxBodyBytes: number;
   readonly workerPollMs: number;
   readonly workerLeaseMs: number;
   readonly workerHeartbeatMs: number;
@@ -54,6 +61,8 @@ export class TrainingTelegramConfig {
 
   constructor(env: NodeJS.ProcessEnv = process.env) {
     const nodeEnv = (env.NODE_ENV ?? '').trim().toLowerCase();
+    const deploymentEnvironment =
+      readTrainingDeploymentEnvironment(env);
     const trainingEnabled = parseTrainingModuleEnabled(
       env.TRAINING_MODULE_ENABLED,
     );
@@ -72,6 +81,27 @@ export class TrainingTelegramConfig {
       DEFAULT_LINK_TOKEN_TTL_MINUTES,
       1,
       60,
+    );
+    this.linkTokenCooldownSeconds = readBoundedInteger(
+      'TELEGRAM_LINK_TOKEN_COOLDOWN_SECONDS',
+      env.TELEGRAM_LINK_TOKEN_COOLDOWN_SECONDS,
+      DEFAULT_LINK_TOKEN_COOLDOWN_SECONDS,
+      1,
+      300,
+    );
+    this.linkTokenMaxIssuesPerHour = readBoundedInteger(
+      'TELEGRAM_LINK_TOKEN_MAX_ISSUES_PER_HOUR',
+      env.TELEGRAM_LINK_TOKEN_MAX_ISSUES_PER_HOUR,
+      DEFAULT_LINK_TOKEN_MAX_ISSUES_PER_HOUR,
+      1,
+      100,
+    );
+    this.webhookMaxBodyBytes = readBoundedInteger(
+      'TELEGRAM_WEBHOOK_MAX_BODY_BYTES',
+      env.TELEGRAM_WEBHOOK_MAX_BODY_BYTES,
+      DEFAULT_WEBHOOK_MAX_BODY_BYTES,
+      1_024,
+      100 * 1_024,
     );
     this.workerPollMs = readBoundedInteger(
       'TELEGRAM_WORKER_POLL_MS',
@@ -109,8 +139,10 @@ export class TrainingTelegramConfig {
 
     const strictRealConfiguration =
       this.transportMode === 'real' ||
-      (nodeEnv === 'production' && trainingEnabled);
-    if (nodeEnv === 'production' && trainingEnabled) {
+      (deploymentEnvironment !== 'development' &&
+        deploymentEnvironment !== 'test' &&
+        trainingEnabled);
+    if (deploymentEnvironment === 'production' && trainingEnabled) {
       if (this.transportMode !== 'real') {
         throw new Error(
           'TELEGRAM_TRANSPORT_MODE must be real when training is enabled in production',
@@ -134,7 +166,10 @@ export class TrainingTelegramConfig {
       assertHttpsUrl('TELEGRAM_WEBHOOK_URL', this.webhookUrl);
       assertHttpsUrl('PUBLIC_APP_URL', env.PUBLIC_APP_URL!);
     }
-    if (nodeEnv === 'production') {
+    if (
+      deploymentEnvironment === 'staging' ||
+      deploymentEnvironment === 'production'
+    ) {
       assertProductionValue('TELEGRAM_BOT_TOKEN', this.botToken);
       assertProductionValue('TELEGRAM_BOT_USERNAME', this.botUsername);
       assertProductionValue('TELEGRAM_WEBHOOK_SECRET', this.webhookSecret);

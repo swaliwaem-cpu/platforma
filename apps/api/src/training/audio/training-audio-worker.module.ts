@@ -3,6 +3,9 @@ import { Module } from '@nestjs/common';
 import { FilesModule } from '../../files/files.module';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { TrainingTelegramConfig } from '../telegram/training-telegram.config';
+import { TrainingConfigService } from '../training.config';
+import { TrainingPolicyService } from '../training-policy.service';
+import { TrainingWorkerHeartbeatService } from '../training-worker-heartbeat.service';
 import { TrainingAttemptEngineService } from '../training-attempt-engine.service';
 import {
   CryptoTrainingQuestionSelector,
@@ -43,6 +46,9 @@ import {
   imports: [PrismaModule, FilesModule],
   providers: [
     TrainingAudioConfig,
+    TrainingConfigService,
+    TrainingPolicyService,
+    TrainingWorkerHeartbeatService,
     TrainingTelegramConfig,
     FakeTrainingTelegramAudioProvider,
     NodeTrainingAudioProcessRunner,

@@ -95,6 +95,143 @@
   animation: training-results-spin 0.9s linear infinite;
 }
 
+.training-operations-overview {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.training-operation-metric {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+}
+
+.training-operation-metric-icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--app-theme-surface-muted, #f5f7fa);
+  color: var(--app-theme-ink-700, #536172);
+}
+
+.training-operation-metric-icon--success {
+  background: var(--app-theme-success-soft, #e7f7ed);
+  color: var(--app-theme-success, #19733d);
+}
+
+.training-operation-metric-icon--warning {
+  background: var(--app-theme-warning-soft, #fff8df);
+  color: var(--app-theme-warning, #765613);
+}
+
+.training-operation-metric-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.training-operation-metric > div:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.training-operation-metric span {
+  color: var(--app-theme-ink-600, #768495);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.training-operation-metric strong {
+  overflow-wrap: anywhere;
+  font-size: 15px;
+}
+
+.training-operations-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.training-operations-table-wrap {
+  overflow-x: auto;
+}
+
+.training-operations-number {
+  text-align: right;
+}
+
+.training-operations-list,
+.training-operations-policy {
+  display: grid;
+  gap: 12px;
+}
+
+.training-operations-list article {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--app-theme-border, #d6dde5);
+  padding-bottom: 12px;
+}
+
+.training-operations-list article:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.training-operations-list article > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.training-operations-list span,
+.training-operations-policy > span {
+  color: var(--app-theme-ink-600, #768495);
+  font-size: 12px;
+}
+
+.training-operations-policy .status-pill {
+  justify-self: start;
+}
+
+.training-operations-retry-reason {
+  display: grid;
+  gap: 7px;
+  color: var(--app-theme-ink-700, #536172);
+  font-weight: 700;
+}
+
+.training-operations-retry-reason textarea {
+  min-height: 112px;
+  resize: vertical;
+  border: 1px solid var(--app-theme-border, #d6dde5);
+  border-radius: var(--app-theme-radius-sm, 6px);
+  background: var(--app-theme-surface, #fff);
+  padding: 10px 12px;
+  color: var(--app-theme-ink-900, #18202a);
+  font: inherit;
+  font-weight: 400;
+}
+
+.training-operations-retry-reason textarea:focus-visible {
+  border-color: var(--app-theme-primary, #2468d7);
+  outline: 3px solid color-mix(
+    in srgb,
+    var(--app-theme-primary, #2468d7) 20%,
+    transparent
+  );
+}
+
 .training-results-actions,
 .training-filter-actions {
   display: flex;
@@ -128,6 +265,7 @@
 }
 
 .training-telegram-card [data-slot="card-header"],
+.training-policy-card [data-slot="card-header"],
 .training-project-card [data-slot="card-header"],
 .training-attempt-detail [data-slot="card-header"],
 .training-results--detail [data-slot="card-header"] {
@@ -135,6 +273,7 @@
 }
 
 .training-telegram-card [data-slot="card-content"],
+.training-policy-card [data-slot="card-content"],
 .training-project-card [data-slot="card-content"] {
   display: grid;
   gap: 16px;
@@ -143,6 +282,57 @@
 .training-telegram-card [data-slot="card-content"] {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
+}
+
+.training-policy-card [data-slot="card-content"] {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+}
+
+.training-policy-card [data-slot="card-content"] > p {
+  margin: 0;
+  color: var(--app-theme-ink-700, #536172);
+  line-height: 1.55;
+}
+
+.training-policy-card [data-slot="card-content"] > p:nth-child(2) {
+  grid-column: 1;
+}
+
+.training-policy-card .admin-button {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.training-policy-dialog {
+  width: min(720px, calc(100% - 32px));
+  max-width: 720px;
+  max-height: min(88vh, 820px);
+  overflow: hidden;
+  padding: 22px;
+}
+
+.training-policy-dialog [data-slot="dialog-title"] {
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.training-policy-dialog [data-slot="dialog-footer"] {
+  margin-right: -22px;
+  margin-bottom: -22px;
+  margin-left: -22px;
+  padding: 16px 22px;
+}
+
+.training-policy-body {
+  overflow-y: auto;
+  border: 1px solid var(--app-theme-border, #d6dde5);
+  border-radius: var(--app-theme-radius-sm, 6px);
+  background: var(--app-theme-surface-muted, #f5f7fa);
+  padding: 16px;
+  color: var(--app-theme-ink-800, #334052);
+  line-height: 1.65;
+  white-space: pre-line;
 }
 
 .training-telegram-card p,
@@ -863,6 +1053,10 @@
 }
 
 @media (max-width: 1180px) {
+  .training-operations-overview {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .training-project-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -883,9 +1077,16 @@
 
   .training-results-header,
   .training-results-section-heading,
+  .training-policy-card [data-slot="card-content"],
   .training-telegram-card [data-slot="card-content"] {
     align-items: stretch;
     grid-template-columns: 1fr;
+  }
+
+  .training-policy-card [data-slot="card-content"] > p,
+  .training-policy-card .admin-button {
+    grid-column: 1;
+    grid-row: auto;
   }
 
   .training-results-header {
@@ -904,6 +1105,7 @@
   }
 
   .training-project-grid,
+  .training-operations-columns,
   .training-ranking-projects {
     grid-template-columns: 1fr;
   }
@@ -990,6 +1192,10 @@
 
   .training-results-section-heading {
     display: grid;
+  }
+
+  .training-operations-overview {
+    grid-template-columns: 1fr;
   }
 
   .training-results-section-heading > span {

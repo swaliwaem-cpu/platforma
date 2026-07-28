@@ -3,6 +3,7 @@ import type {
   TrainingEmployeeAttemptListItem,
   TrainingEmployeeProjectSummary,
   TrainingModuleConfigResponse,
+  TrainingPolicyResponse,
   TrainingTelegramAccountResponse,
 } from '@platforma/shared';
 import {
@@ -32,11 +33,21 @@ import {
   CardTitle,
 } from '../components/ui/card';
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../components/ui/dialog';
+import {
+  acceptTrainingPolicy,
   createTrainingProjectStartLink,
   createTrainingTelegramLink,
   getTrainingAttempt,
   getTrainingAttempts,
   getTrainingProjects,
+  getTrainingPolicy,
   getTrainingTelegramAccount,
   revokeTrainingTelegramAccount,
 } from './trainingResultsApi';
@@ -70,6 +81,9 @@ export function TrainingShellPage({ onBack }: TrainingShellPageProps) {
   >([]);
   const [account, setAccount] =
     useState<TrainingTelegramAccountResponse | null>(null);
+  const [policy, setPolicy] = useState<TrainingPolicyResponse | null>(null);
+  const [isPolicyOpen, setIsPolicyOpen] = useState(false);
+  const [pendingProjectId, setPendingProjectId] = useState<string | null>(null);
   const [telegramLink, setTelegramLink] =
     useState<TelegramLinkState | null>(null);
   const [attempts, setAttempts] = useState<
@@ -91,17 +105,33 @@ export function TrainingShellPage({ onBack }: TrainingShellPageProps) {
     setIsLoading(true);
     setError(null);
     try {
-      const [nextConfig, projectResponse, accountResponse, attemptResponse] =
-        await Promise.all([
-          apiRequest<TrainingModuleConfigResponse>('/training/config', accessToken),
+      const nextConfig = await apiRequest<TrainingModuleConfigResponse>(
+        '/training/config',
+        accessToken,
+      );
+      setConfig(nextConfig);
+      if (nextConfig.status === 'disabled') {
+        setProjects([]);
+        setAccount(null);
+        setAttempts([]);
+        setPolicy(null);
+        return;
+      }
+      const [
+        projectResponse,
+        accountResponse,
+        attemptResponse,
+        policyResponse,
+      ] = await Promise.all([
           getTrainingProjects(accessToken),
           getTrainingTelegramAccount(accessToken),
           getTrainingAttempts(accessToken, { pageSize: 100 }),
+          getTrainingPolicy(accessToken),
         ]);
-      setConfig(nextConfig);
       setProjects(projectResponse.items);
       setAccount(accountResponse);
       setAttempts(attemptResponse.items);
+      setPolicy(policyResponse);
     } catch (caughtError) {
       setError(readError(caughtError, 'Не удалось загрузить обучение'));
     } finally {
@@ -148,6 +178,38 @@ export function TrainingShellPage({ onBack }: TrainingShellPageProps) {
       setError(
         readError(caughtError, 'Не удалось создать ссылку Telegram'),
       );
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
+  function requestProjectStart(projectId: string) {
+    if (!policy?.accepted) {
+      setPendingProjectId(projectId);
+      setIsPolicyOpen(true);
+      return;
+    }
+    void openTelegramLink(projectId);
+  }
+
+  async function acceptPolicy() {
+    if (!accessToken) return;
+    setPendingAction('policy');
+    setError(null);
+    try {
+      const acceptedPolicy = await acceptTrainingPolicy(accessToken);
+      setPolicy(acceptedPolicy);
+      setNotice(
+        `Правила версии ${acceptedPolicy.policy.version} подтверждены.`,
+      );
+      const projectId = pendingProjectId;
+      setPendingProjectId(null);
+      setIsPolicyOpen(false);
+      if (projectId) {
+        await openTelegramLink(projectId);
+      }
+    } catch (caughtError) {
+      setError(readError(caughtError, 'Не удалось сохранить подтверждение'));
     } finally {
       setPendingAction(null);
     }
@@ -230,6 +292,16 @@ export function TrainingShellPage({ onBack }: TrainingShellPageProps) {
 
       {!isLoading && config?.status === 'enabled' ? (
         <>
+          {policy ? (
+            <PolicyCard
+              policy={policy}
+              onOpen={() => {
+                setPendingProjectId(null);
+                setIsPolicyOpen(true);
+              }}
+            />
+          ) : null}
+
           <TelegramConnectionCard
             account={account}
             isPending={Boolean(pendingAction)}
@@ -253,7 +325,7 @@ export function TrainingShellPage({ onBack }: TrainingShellPageProps) {
                     key={project.id}
                     project={project}
                     isPending={pendingAction === `project:${project.id}`}
-                    onStart={() => void openTelegramLink(project.id)}
+                    onStart={() => requestProjectStart(project.id)}
                   />
                 ))}
               </div>
@@ -301,9 +373,120 @@ export function TrainingShellPage({ onBack }: TrainingShellPageProps) {
               onClose={() => setDetail(null)}
             />
           ) : null}
+
+          {policy ? (
+            <PolicyDialog
+              isOpen={isPolicyOpen}
+              isPending={pendingAction === 'policy'}
+              policy={policy}
+              onAccept={() => void acceptPolicy()}
+              onOpenChange={(open) => {
+                setIsPolicyOpen(open);
+                if (!open) setPendingProjectId(null);
+              }}
+            />
+          ) : null}
         </>
       ) : null}
     </div>
+  );
+}
+
+function PolicyCard({
+  policy,
+  onOpen,
+}: {
+  policy: TrainingPolicyResponse;
+  onOpen: () => void;
+}) {
+  return (
+    <AdminPanel className="training-policy-card">
+      <CardHeader>
+        <div>
+          <p className="eyebrow">Правила</p>
+          <CardTitle>{policy.policy.title}</CardTitle>
+        </div>
+        <AdminStatusBadge
+          className={
+            policy.accepted
+              ? 'training-status--success'
+              : 'training-status--warning'
+          }
+        >
+          {policy.accepted ? 'Подтверждены' : 'Требуют подтверждения'}
+        </AdminStatusBadge>
+      </CardHeader>
+      <CardContent>
+        <p>
+          Версия {policy.policy.version} · действует с{' '}
+          {formatPolicyDate(policy.policy.effectiveAt)}
+        </p>
+        <p>
+          {policy.acceptance
+            ? `Вы подтвердили правила ${formatDateTime(policy.acceptance.acceptedAt)} через ${
+                policy.acceptance.source === 'TELEGRAM'
+                  ? 'Telegram'
+                  : 'Platforma'
+              }.`
+            : 'Ознакомьтесь с правилами до перехода к первой попытке.'}
+        </p>
+        <AdminButton onClick={onOpen}>
+          {policy.accepted ? 'Открыть правила' : 'Ознакомиться с правилами'}
+        </AdminButton>
+      </CardContent>
+    </AdminPanel>
+  );
+}
+
+function PolicyDialog({
+  isOpen,
+  isPending,
+  policy,
+  onAccept,
+  onOpenChange,
+}: {
+  isOpen: boolean;
+  isPending: boolean;
+  policy: TrainingPolicyResponse;
+  onAccept: () => void;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <Dialog open={isOpen} onOpenChange={onOpenChange}>
+      <DialogContent
+        className="training-policy-dialog"
+        showCloseButton={false}
+      >
+        <DialogHeader>
+          <p className="eyebrow">Версия {policy.policy.version}</p>
+          <DialogTitle>{policy.policy.title}</DialogTitle>
+          <DialogDescription>
+            Действует с {formatPolicyDate(policy.policy.effectiveAt)}.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="training-policy-body">{policy.policy.body}</div>
+        <DialogFooter>
+          <AdminButton
+            disabled={isPending}
+            tone="text"
+            onClick={() => onOpenChange(false)}
+          >
+            Закрыть
+          </AdminButton>
+          {!policy.accepted ? (
+            <AdminButton
+              disabled={isPending}
+              tone="primary"
+              onClick={onAccept}
+            >
+              {isPending
+                ? 'Сохраняем подтверждение…'
+                : 'Ознакомлен и согласен продолжить'}
+            </AdminButton>
+          ) : null}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -668,4 +851,13 @@ function readError(error: unknown, fallback: string) {
 
 function formatDateTime(value: string | null) {
   return value ? new Date(value).toLocaleString('ru-RU') : null;
+}
+
+function formatPolicyDate(value: string) {
+  return new Date(value).toLocaleDateString('ru-RU', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    timeZone: 'UTC',
+  });
 }

@@ -5832,3 +5832,89 @@ Dependencies:
 - BLOCKER/HIGH по перечисленным findings этапа 9 не осталось.
 - Production cardinality/query plan, реальные provider/audio data и
   production deploy остаются отдельными gates. Этап 10 не начинался.
+
+## 2026-07-28 - Training stage 10 security, operations and pilot preparation
+
+Задача:
+
+- Выполнить только этап 10 модуля обучения: security hardening,
+  versioned policy/acceptance, operations, полный fake E2E, staging tooling,
+  deployment/rollback документацию и подготовку пилота ЖК «Шагал».
+- Не выполнять staging/production deploy или migrations, реальные
+  Telegram/OpenAI запросы, регистрацию webhook и пилот с сотрудниками.
+
+Изменения:
+
+- Добавлена additive migration `20260728090000_training_stage10_hardening`
+  с versioned policy, идемпотентной acceptance `PLATFORM | TELEGRAM` и
+  worker heartbeat. Новая active policy требует повторного подтверждения;
+  отзыв блокирует новые попытки без удаления исторических attempt/audio.
+- Единый policy seed `2026-07-28.1` содержит текст и checksum и помечен
+  `REQUIRES_MANAGER_APPROVAL`. Acceptance транзакционна, проверяет active
+  user, журналируется и выполняется до расходования попытки.
+- В `/training` добавлены policy card/dialog и точная кнопка подтверждения;
+  Telegram private-chat flow получил rules/accept callback. До acceptance
+  start link и запуск попытки недоступны.
+- Training ingress защищён feature guard. `TRAINING_MODULE_ENABLED=false`
+  скрывает frontend navigation и блокирует новые действия, а workers не
+  забирают persisted jobs; данные не удаляются.
+- Усилены webhook/link abuse controls: bounded body, cooldown/hourly cap,
+  один active token, TTL/rotation, private chat, secret header, idempotent
+  update/outbox. Добавлены environment deployment markers и запрет fake
+  providers в production.
+- Safe structured logs используют whitelist correlation/internal IDs,
+  provider/model/request metadata, latency/retry/status/error code без raw
+  payload, transcript, prompt, audio, Telegram/OpenAI/S3 secrets.
+- Health возвращает только общий `status/database/training`. Добавлены
+  `training:operations:read/manage`, безопасный operations summary,
+  heartbeat и audited retry только `FAILED/DEAD` job после проверки domain
+  reference, terminal error и CAS.
+- Добавлен operations UI в существующих `AdminUi`/shadcn conventions с
+  queue/worker/policy/error/acceptance метриками и reason dialog для retry.
+- Добавлены `.env.staging.example`, staging Compose, opt-in webhook CLI
+  `status/register/delete` с dry-run/confirmation и безопасным выводом,
+  отдельный root `test:training:e2e`.
+- Документированы security/data flow/indefinite audio retention, staging,
+  Telegram/OpenAI gates, backup/migrations/rollback, manual QA и go/no-go.
+  Созданы checklist/content/calibration templates для пилота ЖК «Шагал» без
+  реальных фактов, голосов и персональных данных.
+- Ranking load fixture расширен до 101 пользователя. Контракт фиксирует
+  четыре SQL-запроса на страницу и восемь на полный CSV из двух batch без
+  N+1, а `EXPLAIN` не читает answer/transcript/evaluation/audio/provider.
+- Новые зависимости не добавлялись.
+
+Проверки:
+
+- Исходный preflight до изменений прошёл: API `430 + 77`, Web `292`,
+  browser `8`, root `886`, build и `git diff --check`.
+- `pnpm test:training:e2e` — passed: API/PostgreSQL, isolated MinIO,
+  real ffmpeg на синтетическом OGG/WAV, fake Telegram/OpenAI и browser
+  `11/11`; временные PostgreSQL/MinIO/Docker ресурсы удалены.
+- `pnpm test` — passed: API unit `440/440`, PostgreSQL/HTTP `79/79`,
+  Web `293/293`, Feed import `64/64`, WordPress import `23/23`, всего `899`.
+  Все `40` migrations применены к чистой временной PostgreSQL и БД удалена.
+- Ranking load: `101` users, page 1/2 `43.783 ms`, full CSV `44.371 ms`,
+  `4` queries/page, `8` CSV queries. `EXPLAIN`: `15.802 ms`, root `Limit`,
+  только `users`, `permissions`, `role_permissions`, `training_attempts`.
+- `pnpm build` — passed. Сохраняется Vite warning об основном chunk
+  `722.09 kB`; operations page собрана отдельным lazy chunk `9.38 kB`.
+- `docker compose build --quiet api training-worker web` — passed.
+- Prisma validate, local/production/staging Compose config и
+  `git diff --check` — passed.
+
+Ручная проверка:
+
+- Утвердить policy text у руководителя, затем пройти
+  `docs/training/stage10-manual-qa.md` и staging smoke checklist с desktop,
+  mobile `375 px`, keyboard, ролями employee/training_admin/admin.
+- На отдельном staging выполнить migrations, private-bucket probes, реальный
+  Telegram webhook/voice/restart и synthetic OpenAI smoke после пополнения
+  баланса и проверки project data controls; затем calibration и пилот.
+
+Спорные места:
+
+- Code-level BLOCKER/HIGH для подготовки staging не обнаружены.
+- Staging и production остаются `NO-GO`, пока не утверждён policy text и не
+  закрыты обязательные Telegram/audio/OpenAI/product/operations gates.
+- Никакие реальные provider requests, webhook registration, deploy,
+  production/staging migrations или реальные голоса не выполнялись.

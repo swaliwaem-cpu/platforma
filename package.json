@@ -13,6 +13,7 @@
     "dev:api": "pnpm --filter @platforma/api dev",
     "dev:web": "pnpm --filter @platforma/web dev",
     "test": "pnpm -r --if-present test",
+    "test:training:e2e": "node scripts/run-training-e2e.cjs",
     "feed-import:preview": "pnpm --filter @platforma/feed-import run preview",
     "feed-import:run": "pnpm --filter @platforma/feed-import run run",
     "wp-import:preview": "pnpm --filter @platforma/wp-import run preview",
