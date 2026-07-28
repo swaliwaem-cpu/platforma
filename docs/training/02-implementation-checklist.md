@@ -653,8 +653,8 @@ PostgreSQL/HTTP integration tests; root suite также включает `286/2
   backup/migration/rollback и manual QA runbooks.
 - [x] Создать pilot/checklist/calibration templates для ЖК «Шагал» без
   реального контента, персональных данных и голосов.
-- [ ] Получить утверждение руководителя для policy text
-  `2026-07-28.1`; seed помечен `REQUIRES_MANAGER_APPROVAL`.
+- [x] Получено явное утверждение policy text `2026-07-28.1` от владельца
+  процесса 2026-07-28; seed помечен `APPROVED`.
 - [ ] Выполнить отдельные staging gates: deploy/migrations, real Telegram,
   private-bucket probe, synthetic OpenAI smoke после пополнения баланса,
   calibration и pilot.

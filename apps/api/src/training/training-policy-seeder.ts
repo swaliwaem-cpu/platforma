@@ -23,6 +23,9 @@ export async function seedImmutableTrainingPolicy(
       body: true,
       effectiveAt: true,
       checksum: true,
+      isActive: true,
+      approvalStatus: true,
+      createdById: true,
     },
   });
   const effectiveAt = new Date(policy.effectiveAt);
@@ -32,10 +35,13 @@ export async function seedImmutableTrainingPolicy(
       existing.title === policy.title &&
       existing.body === policy.body &&
       existing.effectiveAt.getTime() === effectiveAt.getTime() &&
-      existing.checksum === policy.checksum;
+      existing.checksum === policy.checksum &&
+      existing.isActive === policy.isActive &&
+      existing.approvalStatus === policy.approvalStatus &&
+      existing.createdById === createdById;
     if (!matchesImmutableContent) {
       throw new Error(
-        `Training policy version "${policy.version}" is immutable; publish changed text under a new version`,
+        `Training policy version "${policy.version}" does not match the approved immutable seed contract`,
       );
     }
     return { id: existing.id, created: false };

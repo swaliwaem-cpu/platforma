@@ -321,19 +321,28 @@ training:data:delete
 Seed:
 
 - role `user`:
+  - не получает `training:*` до отдельной команды открытия обучения всем.
+- temporary role `training_pilot`:
+  - все базовые permissions роли `user`;
   - `training:take`;
   - `training:own-results:read`;
-  - `training:projects:read`.
+  - не получает административные `training:*`.
 - new role `training_admin`:
   - `admin:access`;
-  - все `training:*`, кроме удаления данных можно оставить только после явного назначения;
+  - административные `training:*` без `training:take`,
+    `training:own-results:read` и удаления данных;
   - не давать автоматически права управления пользователями/объектами.
 - role `admin`:
-  - все permissions.
+  - административные permissions, но без `training:take` и
+    `training:own-results:read`, чтобы администратор не считался участником
+    закрытого пилота.
 - role `editor`:
   - никаких административных training permissions автоматически.
 
 `training:audio:read` выдаётся менеджеру через RBAC, а не проверку имени роли в коде.
+Employee-раздел `/training`, config, policy и список доступных проектов
+проверяют `training:take`; `training:projects:read` остаётся административным
+read-scope.
 
 ---
 

@@ -59,7 +59,7 @@ const {
 
 const rootDir = resolve(__dirname, '../../..');
 
-test('versioned policy source has a stable checksum and explicit approval gate', () => {
+test('versioned policy source has a stable checksum and explicit approval', () => {
   const checksum = createHash('sha256')
     .update(
       JSON.stringify({
@@ -72,10 +72,7 @@ test('versioned policy source has a stable checksum and explicit approval gate',
     )
     .digest('hex');
   assert.equal(CURRENT_TRAINING_POLICY.checksum, checksum);
-  assert.equal(
-    CURRENT_TRAINING_POLICY.approvalStatus,
-    'REQUIRES_MANAGER_APPROVAL',
-  );
+  assert.equal(CURRENT_TRAINING_POLICY.approvalStatus, 'APPROVED');
   for (const phrase of [
     'Голосовые сообщения',
     'хранятся бессрочно',

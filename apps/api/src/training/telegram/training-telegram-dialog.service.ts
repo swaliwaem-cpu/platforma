@@ -390,7 +390,7 @@ export class TrainingTelegramDialogService {
     const account = await this.links.findAccountByTelegramUserId(
       BigInt(update.user.telegramUserId),
     );
-    if (account && !isActiveTelegramUser(account.user)) {
+    if (account && !canUseTrainingTelegram(account.user)) {
       await this.links.revokeInactiveAccount(account.id, account.userId);
       return [this.accessClosed(update.chatId)];
     }
@@ -482,7 +482,7 @@ export class TrainingTelegramDialogService {
     const account = await this.links.findAccountByTelegramUserId(
       BigInt(update.user.telegramUserId),
     );
-    if (account && !isActiveTelegramUser(account.user)) {
+    if (account && !canUseTrainingTelegram(account.user)) {
       await this.links.revokeInactiveAccount(account.id, account.userId);
       return [answerPlan, this.accessClosed(update.chatId)];
     }
@@ -1154,11 +1154,18 @@ function linkErrorMessage(error: unknown) {
   return 'Ссылка подключения недействительна. Создайте новую ссылку в Platforma.';
 }
 
-function isActiveTelegramUser(user: {
+function canUseTrainingTelegram(user: {
   status: UserStatus;
   deletedAt: Date | null;
+  role: {
+    permissions: Array<{ permissionId: string }>;
+  };
 }) {
-  return user.status === UserStatus.ACTIVE && user.deletedAt === null;
+  return (
+    user.status === UserStatus.ACTIVE &&
+    user.deletedAt === null &&
+    user.role.permissions.length === 1
+  );
 }
 
 function formatPolicyDate(value: string) {

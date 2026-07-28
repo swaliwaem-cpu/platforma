@@ -4312,6 +4312,9 @@ test('UsersService.deactivate archives access by status and clears refresh sessi
     trainingTelegramAccount: {
       findUnique: async () => null,
     },
+    trainingLinkToken: {
+      updateMany: async () => ({ count: 0 }),
+    },
   };
   prisma.$transaction = async (callback) => callback(prisma);
   const service = new UsersService(prisma);

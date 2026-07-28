@@ -16,15 +16,12 @@ export const TRAINING_PERMISSION_DEFINITIONS = [
 
 export type TrainingPermissionKey = (typeof TRAINING_PERMISSION_DEFINITIONS)[number][0];
 
-export const TRAINING_USER_PERMISSION_KEYS = [
+export const TRAINING_PILOT_PERMISSION_KEYS = [
   'training:take',
   'training:own-results:read',
-  'training:projects:read',
 ] as const satisfies readonly TrainingPermissionKey[];
 
 export const TRAINING_ADMIN_PERMISSION_KEYS = [
-  'training:take',
-  'training:own-results:read',
   'training:projects:read',
   'training:projects:manage',
   'training:results:read',

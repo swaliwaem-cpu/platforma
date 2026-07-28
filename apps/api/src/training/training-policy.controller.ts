@@ -15,7 +15,7 @@ export class TrainingPolicyController {
   constructor(private readonly policy: TrainingPolicyService) {}
 
   @Get()
-  @RequirePermissions('training:projects:read')
+  @RequirePermissions('training:take')
   getCurrent(@CurrentUser() user: AuthenticatedUser) {
     return this.policy.getCurrentPolicy(user.id);
   }

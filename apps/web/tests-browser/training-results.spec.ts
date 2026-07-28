@@ -983,7 +983,6 @@ const adminPermissions = [
   'training:operations:manage',
 ];
 const employeePermissions = [
-  'training:projects:read',
   'training:take',
   'training:own-results:read',
 ];

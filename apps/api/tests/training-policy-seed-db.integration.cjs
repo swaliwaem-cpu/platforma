@@ -82,7 +82,7 @@ test('policy seed is a no-op for identical content and rejects mutation of an ac
       prisma.$transaction((tx) =>
         seedImmutableTrainingPolicy(tx, changed, fixture.user.id),
       ),
-      /is immutable; publish changed text under a new version/u,
+      /does not match the approved immutable seed contract/u,
     );
   }
 
@@ -92,6 +92,36 @@ test('policy seed is a no-op for identical content and rejects mutation of an ac
   assert.equal(unchanged.body, fixture.policy.body);
   assert.equal(unchanged.checksum, fixture.policy.checksum);
   assert.equal(unchanged.isActive, true);
+});
+
+test('existing policy must keep its approved status and original creator', async () => {
+  const fixture = await createFixture();
+  const seeded = await prisma.$transaction((tx) =>
+    seedImmutableTrainingPolicy(tx, fixture.policy, fixture.user.id),
+  );
+  await prisma.trainingPolicyVersion.update({
+    where: { id: seeded.id },
+    data: { approvalStatus: 'REQUIRES_MANAGER_APPROVAL' },
+  });
+
+  await assert.rejects(
+    prisma.$transaction((tx) =>
+      seedImmutableTrainingPolicy(tx, fixture.policy, fixture.user.id),
+    ),
+    /does not match the approved immutable seed contract/u,
+  );
+
+  await prisma.trainingPolicyVersion.update({
+    where: { id: seeded.id },
+    data: { approvalStatus: fixture.policy.approvalStatus },
+  });
+  const other = await createFixture();
+  await assert.rejects(
+    prisma.$transaction((tx) =>
+      seedImmutableTrainingPolicy(tx, fixture.policy, other.user.id),
+    ),
+    /does not match the approved immutable seed contract/u,
+  );
 });
 
 test('new policy version preserves old acceptance without satisfying the new version', async () => {

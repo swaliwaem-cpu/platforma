@@ -41,13 +41,13 @@ export class TrainingEmployeeResultsController {
   constructor(private readonly results: TrainingResultsService) {}
 
   @Get('projects')
-  @RequirePermissions('training:projects:read')
+  @RequirePermissions('training:take')
   listProjects(@CurrentUser() user: AuthenticatedUser) {
     return this.results.listEmployeeProjects(user.id);
   }
 
   @Get('projects/:projectId')
-  @RequirePermissions('training:projects:read')
+  @RequirePermissions('training:take')
   getProject(
     @CurrentUser() user: AuthenticatedUser,
     @Param('projectId') projectId: string,

@@ -260,6 +260,11 @@ export class UsersService {
             id: roleId,
           },
         };
+        data.refreshTokenHash = null;
+        data.refreshTokenExpiresAt = null;
+        data.sessions = {
+          deleteMany: {},
+        };
         changes.roleId = this.change(user.roleId, roleId);
         roleChanged = true;
         hasChanges = true;
@@ -344,6 +349,21 @@ export class UsersService {
           },
           tx,
         );
+        const canTakeTraining = await tx.rolePermission.findFirst({
+          where: {
+            roleId: updated.roleId,
+            permission: { key: 'training:take' },
+          },
+          select: { roleId: true },
+        });
+        if (!canTakeTraining) {
+          await this.revokeTelegramAccountWithinTransaction(
+            tx,
+            updated.id,
+            actor.id,
+            'training_permission_removed',
+          );
+        }
       }
 
       if (statusChanged) {
@@ -900,18 +920,19 @@ export class UsersService {
       where: { userId },
       select: { id: true, revokedAt: true },
     });
-    if (!account || account.revokedAt) return false;
 
     const revokedAt = new Date();
+    const revokedTokens = await tx.trainingLinkToken.updateMany({
+      where: { userId, usedAt: null, revokedAt: null },
+      data: { revokedAt },
+    });
+    if (!account || account.revokedAt) return revokedTokens.count > 0;
+
     const revoked = await tx.trainingTelegramAccount.updateMany({
       where: { id: account.id, revokedAt: null },
       data: { revokedAt },
     });
-    if (revoked.count !== 1) return false;
-    await tx.trainingLinkToken.updateMany({
-      where: { userId, usedAt: null, revokedAt: null },
-      data: { revokedAt },
-    });
+    if (revoked.count !== 1) return revokedTokens.count > 0;
     await tx.auditLog.create({
       data: {
         actorUserId,

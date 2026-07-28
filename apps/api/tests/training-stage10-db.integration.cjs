@@ -672,7 +672,9 @@ async function createHttpFixture(httpPrisma) {
         where: { email: SEEDED_HTTP_ADMIN_EMAIL },
       }),
       httpPrisma.role.findUniqueOrThrow({ where: { name: 'training_admin' } }),
-      httpPrisma.role.findUniqueOrThrow({ where: { name: 'user' } }),
+      httpPrisma.role.findUniqueOrThrow({
+        where: { name: 'training_pilot' },
+      }),
       httpPrisma.permission.findUniqueOrThrow({
         where: { key: 'training:operations:read' },
       }),
@@ -771,10 +773,23 @@ function restoreEnvironment(key, value) {
 
 async function createFixture() {
   const unique = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const takePermission = await prisma.permission.upsert({
+    where: { key: 'training:take' },
+    update: {},
+    create: {
+      key: 'training:take',
+      description: 'Take training assessments',
+    },
+  });
   const role = await prisma.role.create({
     data: {
       name: `training-stage10-${unique}`,
       description: 'Stage 10 integration role',
+      permissions: {
+        create: {
+          permissionId: takePermission.id,
+        },
+      },
     },
   });
   const createUser = (suffix, status = UserStatus.ACTIVE) =>

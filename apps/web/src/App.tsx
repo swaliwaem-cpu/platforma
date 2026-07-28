@@ -111,7 +111,7 @@ const navItems: readonly NavItem[] = [
     label: 'Обучение',
     path: '/training',
     section: 'training',
-    requiredPermissions: ['training:projects:read'],
+    requiredPermissions: ['training:take'],
   },
   {
     id: 'presentations',
@@ -156,7 +156,7 @@ const cabinetSections = [
     label: 'Обучение',
     group: 'Обучение',
     path: '/training',
-    requiredPermissions: ['training:projects:read'],
+    requiredPermissions: ['training:take'],
   },
   {
     id: 'presentations',
@@ -331,16 +331,18 @@ function AppRoutes() {
   }, [isSidebarOpen]);
 
   useEffect(() => {
-    if (
-      !accessToken ||
-      !user?.permissions.includes('training:projects:read')
-    ) {
+    const configPath = user?.permissions.includes('training:take')
+      ? '/training/config'
+      : user?.permissions.includes('training:projects:manage')
+        ? '/training/admin/config'
+        : null;
+    if (!accessToken || !configPath) {
       setIsTrainingEnabled(null);
       return;
     }
     let active = true;
     void apiRequest<TrainingModuleConfigResponse>(
-      '/training/config',
+      configPath,
       accessToken,
     )
       .then((config) => {
@@ -583,7 +585,7 @@ function AppRoutes() {
             <AccessDenied />
           )
         ) : activeSection === 'training' ? (
-          hasPermission('training:projects:read') ? (
+          hasPermission('training:take') ? (
             <TrainingShellPage mode="employee" />
           ) : (
             <AccessDenied />

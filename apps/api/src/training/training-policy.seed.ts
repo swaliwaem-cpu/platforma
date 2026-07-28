@@ -19,7 +19,7 @@ export const CURRENT_TRAINING_POLICY = Object.freeze({
   body: TRAINING_POLICY_BODY,
   effectiveAt: TRAINING_POLICY_EFFECTIVE_AT,
   isActive: true,
-  approvalStatus: 'REQUIRES_MANAGER_APPROVAL',
+  approvalStatus: 'APPROVED',
   checksum: createHash('sha256')
     .update(
       JSON.stringify({

@@ -15,7 +15,7 @@ const { TrainingController } = require('../dist/training/training.controller.js'
 const {
   TRAINING_ADMIN_PERMISSION_KEYS,
   TRAINING_PERMISSION_DEFINITIONS,
-  TRAINING_USER_PERMISSION_KEYS,
+  TRAINING_PILOT_PERMISSION_KEYS,
 } = require('../dist/training/training.permissions.js');
 
 const rootDir = resolve(__dirname, '../../..');
@@ -85,8 +85,16 @@ test('TrainingController exposes only a permission-protected config shell', () =
   assert.deepEqual(controller.getConfig(), response);
   assert.deepEqual(
     Reflect.getMetadata(PERMISSIONS_KEY, TrainingController.prototype.getConfig),
-    ['training:projects:read'],
+    ['training:take'],
   );
+  assert.deepEqual(
+    Reflect.getMetadata(
+      PERMISSIONS_KEY,
+      TrainingController.prototype.getAdminConfig,
+    ),
+    ['training:projects:manage'],
+  );
+  assert.deepEqual(controller.getAdminConfig(), response);
 
   const controllerSource = readFileSync(
     resolve(rootDir, 'apps/api/src/training/training.controller.ts'),
@@ -95,6 +103,7 @@ test('TrainingController exposes only a permission-protected config shell', () =
   assert.match(controllerSource, /@Controller\('training'\)/);
   assert.match(controllerSource, /@UseGuards\(JwtAuthGuard, PermissionsGuard\)/);
   assert.match(controllerSource, /@Get\('config'\)/);
+  assert.match(controllerSource, /@Get\('admin\/config'\)/);
   assert.doesNotMatch(controllerSource, /@(Post|Patch|Put|Delete)\(/);
 });
 
@@ -103,25 +112,43 @@ test('training permission contracts match the approved role matrix', () => {
     TRAINING_PERMISSION_DEFINITIONS.map(([key]) => key),
     expectedTrainingPermissionKeys,
   );
-  assert.deepEqual(TRAINING_USER_PERMISSION_KEYS, [
+  assert.deepEqual(TRAINING_PILOT_PERMISSION_KEYS, [
     'training:take',
     'training:own-results:read',
-    'training:projects:read',
   ]);
   assert.deepEqual(
     TRAINING_ADMIN_PERMISSION_KEYS,
-    expectedTrainingPermissionKeys.filter((key) => key !== 'training:data:delete'),
+    expectedTrainingPermissionKeys.filter(
+      (key) =>
+        ![
+          'training:take',
+          'training:own-results:read',
+          'training:data:delete',
+        ].includes(key),
+    ),
+  );
+  assert.equal(TRAINING_ADMIN_PERMISSION_KEYS.includes('training:take'), false);
+  assert.equal(
+    TRAINING_ADMIN_PERMISSION_KEYS.includes('training:own-results:read'),
+    false,
   );
   assert.equal(TRAINING_ADMIN_PERMISSION_KEYS.includes('training:data:delete'), false);
 
   assert.match(seedSource, /\.\.\.TRAINING_PERMISSION_DEFINITIONS/);
   assert.match(
     seedSource,
-    /admin:\s*permissions\.map\(\(\[key\]\) => key\),[\s\S]*training_admin:\s*\['admin:access', \.\.\.TRAINING_ADMIN_PERMISSION_KEYS\]/,
+    /training_admin:\s*\['admin:access', \.\.\.TRAINING_ADMIN_PERMISSION_KEYS\]/,
   );
-  assert.match(seedSource, /user:\s*\[[\s\S]*\.\.\.TRAINING_USER_PERMISSION_KEYS/);
+  assert.match(seedSource, /user:\s*BASE_USER_PERMISSION_KEYS/);
+  assert.match(
+    seedSource,
+    /training_pilot:\s*\[[\s\S]*\.\.\.BASE_USER_PERMISSION_KEYS,[\s\S]*\.\.\.TRAINING_PILOT_PERMISSION_KEYS/,
+  );
+  assert.match(seedSource, /rolePermission\.deleteMany/);
+  assert.match(seedSource, /rolePermission\.createMany/);
 
-  const editorPermissions = seedSource.match(/editor:\s*\[([\s\S]*?)\],\s*user:/)?.[1] ?? '';
+  const editorPermissions =
+    seedSource.match(/editor:\s*\[([\s\S]*?)\],\s*user:/)?.[1] ?? '';
   assert.doesNotMatch(editorPermissions, /training:/);
 });
 

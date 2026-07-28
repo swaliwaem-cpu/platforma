@@ -385,7 +385,6 @@ async function createFixture(prisma) {
   });
   const permissionIds = {};
   for (const key of [
-    'training:projects:read',
     'training:take',
     'training:own-results:read',
     'training:results:read',
@@ -399,17 +398,14 @@ async function createFixture(prisma) {
   }
   const definitions = {
     employee: [
-      'training:projects:read',
       'training:take',
       'training:own-results:read',
     ],
     other: [
-      'training:projects:read',
       'training:take',
       'training:own-results:read',
     ],
     visibility: [
-      'training:projects:read',
       'training:take',
       'training:own-results:read',
     ],

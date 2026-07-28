@@ -6057,3 +6057,64 @@ Dependencies:
 - Сохраняется существующий Vite warning об основном chunk `722.09 kB`.
 - Staging/production остаются `NO-GO` до закрытия внешних approval/provider/
   privacy/calibration gates; текущий verdict относится только к подготовке.
+
+## 2026-07-28 - Training production pilot access hardening
+
+Задача:
+
+- Подготовить закрытый production-пилот только для
+  `infanterattack@gmail.com`, не выдавая общей роли `user` training-доступ.
+- Оставить `admin@fluffywhite.moscow` администратором контента и результатов,
+  но не участником пилота.
+- Не включать feature flag и webhook до подтверждённой RBAC-изоляции.
+
+Изменения:
+
+- Общая роль `user` seed-ится только с четырьмя существующими catalog read
+  permissions и не получает ни одного `training:*`.
+- Добавлена временная роль `training_pilot`: те же четыре базовых permissions
+  плюс ровно `training:take` и `training:own-results:read`.
+- `admin` и `training_admin` сохраняют административные training-scopes, но
+  не получают `training:take` и `training:own-results:read`. Это исключает
+  шесть production-admin аккаунтов из участников пилота.
+- Seed стал транзакционным и синхронизирует точные role bundles: stale grants
+  удаляются, нужные создаются idempotently. Существующий admin должен уже быть
+  ACTIVE/admin; его имя и password hash seed больше не изменяет.
+- Policy `2026-07-28.1` переведена в утверждённый статус `APPROVED`. Повторный
+  seed проверяет immutable content, active/status и исходного creator.
+- Employee config/policy/project list и UI `/training` используют
+  `training:take`, поэтому pilot не требует административного
+  `training:projects:read`. Для admin navigation добавлен отдельный
+  `GET /training/admin/config` с `training:projects:manage`.
+- Telegram link/consume/update на каждом критическом пути повторно проверяет
+  ACTIVE user и актуальный `training:take`; при потере доступа account и
+  неиспользованные link tokens отзываются. Смена роли инвалидирует refresh
+  sessions и автоматически закрывает Telegram-доступ.
+- Добавлены PostgreSQL regressions точного/idempotent seed reconciliation,
+  сохранения admin identity, approved policy creator/status и Telegram
+  role-loss. Новые зависимости не добавлялись.
+
+Проверки:
+
+- `pnpm --filter @platforma/api build` — passed.
+- API unit — `443/443`.
+- Training PostgreSQL integration runner — `90/90`, passed на чистой временной БД:
+  применены все `41` migrations, включая новые RBAC/policy/Telegram
+  regressions; временная БД удалена.
+- Web unit — `293/293`; production build — passed. Сохраняется прежний Vite
+  warning об основном chunk около `722 kB`.
+- `git diff --check` — passed.
+
+Ручная/production проверка:
+
+- На этом checkpoint production ещё не изменён: flag остаётся `false`,
+  webhook не зарегистрирован, seed и назначение pilot не запускались.
+- Следующий разрешённый шаг: backup, deploy при выключенном feature, safe
+  seed, точная role/user/API матрица и только затем flag/webhook/TATE draft.
+
+Спорные места:
+
+- `training:projects:read` намеренно не добавлен pilot: employee read gates
+  переведены на `training:take`.
+- `training:data:delete` остаётся только у общей admin-роли; временная pilot и
+  ограниченная `training_admin` его не получают.

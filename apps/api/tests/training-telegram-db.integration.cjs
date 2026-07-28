@@ -1,6 +1,7 @@
 require('reflect-metadata');
 
 const assert = require('node:assert/strict');
+const { randomUUID } = require('node:crypto');
 const test = require('node:test');
 const {
   Prisma,
@@ -115,6 +116,49 @@ test('Telegram link token happy path stores only hash and consumes atomically', 
   });
   assert.equal(welcomeJob.status, TrainingJobStatus.PENDING);
   assert.equal(welcomeJob.payloadJson.eventType, 'ACCOUNT_LINKED');
+});
+
+test('Telegram revokes an existing link when training permission is removed', async () => {
+  const fixture = await createFixture();
+  const telegramId = 501_090;
+  const harness = createHarness();
+  await linkUser(harness, fixture.userId, telegramId);
+  const pendingToken = await harness.links.issueLinkToken(fixture.userId);
+  const noTrainingRole = await prisma.role.create({
+    data: {
+      name: `training-stage6-no-access-${randomUUID()}`,
+      description: 'No training access',
+    },
+  });
+  await prisma.user.update({
+    where: { id: fixture.userId },
+    data: { roleId: noTrainingRole.id },
+  });
+
+  await assert.rejects(
+    harness.links.issueLinkToken(fixture.userId),
+    /not authorized for training/u,
+  );
+  await acceptAndDrain(
+    harness,
+    privateTextUpdate(nextSequence(), 90, telegramId, '/projects'),
+  );
+
+  const [account, token] = await Promise.all([
+    prisma.trainingTelegramAccount.findUniqueOrThrow({
+      where: { userId: fixture.userId },
+    }),
+    prisma.trainingLinkToken.findUniqueOrThrow({
+      where: { tokenHash: hashTrainingLinkToken(pendingToken.token) },
+    }),
+  ]);
+  assert.ok(account.revokedAt);
+  assert.ok(token.revokedAt);
+  assert.ok(
+    harness.transport.deliveries.some((delivery) =>
+      delivery.text?.includes('Доступ к обучению закрыт'),
+    ),
+  );
 });
 
 test('concurrent consumption of one link token creates one account, audit and outbox event', async () => {
@@ -2179,10 +2223,23 @@ function transactionWithFailingTelegramOutbox(tx) {
 
 async function createFixture(options = {}) {
   const unique = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const takePermission = await prisma.permission.upsert({
+    where: { key: 'training:take' },
+    update: {},
+    create: {
+      key: 'training:take',
+      description: 'Take training assessments',
+    },
+  });
   const role = await prisma.role.create({
     data: {
       name: `training-stage6-${unique}`,
       description: 'Stage 6 isolated integration role',
+      permissions: {
+        create: {
+          permissionId: takePermission.id,
+        },
+      },
     },
   });
   const publisherId = await createUser(role.id, `publisher-${unique}`);

@@ -25,6 +25,7 @@ import {
 
 const LINK_TOKEN_BYTES = 32;
 const SERIALIZABLE_RETRY_LIMIT = 3;
+const TRAINING_TAKE_PERMISSION = 'training:take';
 
 export type TrainingTelegramIdentity = {
   telegramUserId: bigint;
@@ -60,6 +61,7 @@ export class TrainingTelegramLinkService {
         'Telegram bot username is not configured',
       );
     }
+    await this.assertUserCanTake(userId);
     const now = new Date();
     const expiresAt = new Date(
       now.getTime() + this.config.linkTokenTtlMinutes * 60_000,
@@ -161,6 +163,18 @@ export class TrainingTelegramLinkService {
                 id: true,
                 status: true,
                 deletedAt: true,
+                role: {
+                  select: {
+                    permissions: {
+                      where: {
+                        permission: { key: TRAINING_TAKE_PERMISSION },
+                      },
+                      select: {
+                        permissionId: true,
+                      },
+                    },
+                  },
+                },
               },
             },
           },
@@ -168,8 +182,10 @@ export class TrainingTelegramLinkService {
         if (!token) {
           throw new BadRequestException('Telegram link token is invalid');
         }
-        if (token.user.status !== UserStatus.ACTIVE || token.user.deletedAt) {
-          throw new ConflictException('Platforma user is not active');
+        if (!canTakeTraining(token.user)) {
+          throw new ConflictException(
+            'Platforma user is not authorized for training',
+          );
         }
 
         const consumed = await tx.trainingLinkToken.updateMany({
@@ -375,6 +391,18 @@ export class TrainingTelegramLinkService {
           select: {
             status: true,
             deletedAt: true,
+            role: {
+              select: {
+                permissions: {
+                  where: {
+                    permission: { key: TRAINING_TAKE_PERMISSION },
+                  },
+                  select: {
+                    permissionId: true,
+                  },
+                },
+              },
+            },
           },
         },
       },
@@ -393,6 +421,15 @@ export class TrainingTelegramLinkService {
             OR: [
               { status: { not: UserStatus.ACTIVE } },
               { deletedAt: { not: null } },
+              {
+                role: {
+                  permissions: {
+                    none: {
+                      permission: { key: TRAINING_TAKE_PERMISSION },
+                    },
+                  },
+                },
+              },
             ],
           },
         },
@@ -412,7 +449,7 @@ export class TrainingTelegramLinkService {
           metadata: {
             userId,
             accountId,
-            reason: 'inactive_user_update',
+            reason: 'inactive_or_unauthorized_user_update',
           },
         },
       });
@@ -445,6 +482,29 @@ export class TrainingTelegramLinkService {
     }
   }
 
+  private async assertUserCanTake(userId: string) {
+    const user = await this.prisma.user.findFirst({
+      where: {
+        id: userId,
+        status: UserStatus.ACTIVE,
+        deletedAt: null,
+        role: {
+          permissions: {
+            some: {
+              permission: { key: TRAINING_TAKE_PERMISSION },
+            },
+          },
+        },
+      },
+      select: { id: true },
+    });
+    if (!user) {
+      throw new ConflictException(
+        'Platforma user is not authorized for training',
+      );
+    }
+  }
+
   private async runSerializable<T>(
     callback: (tx: Prisma.TransactionClient) => Promise<T>,
   ) {
@@ -463,6 +523,20 @@ export class TrainingTelegramLinkService {
     }
     throw lastError;
   }
+}
+
+function canTakeTraining(user: {
+  status: UserStatus;
+  deletedAt: Date | null;
+  role: {
+    permissions: Array<{ permissionId: string }>;
+  };
+}) {
+  return (
+    user.status === UserStatus.ACTIVE &&
+    user.deletedAt === null &&
+    user.role.permissions.length === 1
+  );
 }
 
 export function hashTrainingLinkToken(token: string) {

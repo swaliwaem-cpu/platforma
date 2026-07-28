@@ -19,19 +19,19 @@ const operationsSource = readFileSync(
   'utf8',
 );
 
-test('employee training route and navigation require project read permission', () => {
+test('employee training route and navigation require pilot take permission', () => {
   assert.match(
     appSource,
-    /id:\s*'training',[\s\S]*label:\s*'Обучение',[\s\S]*path:\s*'\/training',[\s\S]*section:\s*'training',[\s\S]*requiredPermissions:\s*\['training:projects:read'\]/,
+    /id:\s*'training',[\s\S]*label:\s*'Обучение',[\s\S]*path:\s*'\/training',[\s\S]*section:\s*'training',[\s\S]*requiredPermissions:\s*\['training:take'\]/,
   );
   assert.match(appSource, /pathname === '\/training'[\s\S]*\? 'training'/);
   assert.match(
     appSource,
-    /activeSection === 'training'[\s\S]*hasPermission\('training:projects:read'\)[\s\S]*<TrainingShellPage mode="employee" \/>/,
+    /activeSection === 'training'[\s\S]*hasPermission\('training:take'\)[\s\S]*<TrainingShellPage mode="employee" \/>/,
   );
   assert.match(
     appSource,
-    /group:\s*'Обучение',[\s\S]*path:\s*'\/training',[\s\S]*requiredPermissions:\s*\['training:projects:read'\]/,
+    /group:\s*'Обучение',[\s\S]*path:\s*'\/training',[\s\S]*requiredPermissions:\s*\['training:take'\]/,
   );
 });
 
@@ -46,6 +46,10 @@ test('admin training route and navigation require admin access and project manag
     /id:\s*'admin-training',[\s\S]*path:\s*'\/admin\/training',[\s\S]*requiredPermissions:\s*\['admin:access', 'training:projects:manage'\]/,
   );
   assert.match(appSource, /onOpenTraining=\{\(\) => navigate\('\/admin\/training'\)\}/);
+  assert.match(
+    appSource,
+    /user\?\.permissions\.includes\('training:projects:manage'\)[\s\S]*'\/training\/admin\/config'/,
+  );
   assert.match(
     appSource,
     /label:\s*'Обучение',[\s\S]*canAccess:\s*isTrainingEnabled\s*&&\s*hasPermission\('training:projects:manage'\)[\s\S]*onClick:\s*onOpenTraining/,

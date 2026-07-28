@@ -162,6 +162,20 @@ test('results controllers enforce employee ownership and administrative read sco
   assert.deepEqual(
     Reflect.getMetadata(
       PERMISSIONS_KEY,
+      TrainingEmployeeResultsController.prototype.listProjects,
+    ),
+    ['training:take'],
+  );
+  assert.deepEqual(
+    Reflect.getMetadata(
+      PERMISSIONS_KEY,
+      TrainingEmployeeResultsController.prototype.getProject,
+    ),
+    ['training:take'],
+  );
+  assert.deepEqual(
+    Reflect.getMetadata(
+      PERMISSIONS_KEY,
       TrainingEmployeeResultsController.prototype.listAttempts,
     ),
     ['training:own-results:read'],

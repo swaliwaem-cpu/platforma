@@ -12,8 +12,14 @@ export class TrainingController {
   constructor(private readonly trainingConfig: TrainingConfigService) {}
 
   @Get('config')
-  @RequirePermissions('training:projects:read')
+  @RequirePermissions('training:take')
   getConfig(): TrainingModuleConfigResponse {
+    return this.trainingConfig.getConfig();
+  }
+
+  @Get('admin/config')
+  @RequirePermissions('training:projects:manage')
+  getAdminConfig(): TrainingModuleConfigResponse {
     return this.trainingConfig.getConfig();
   }
 }

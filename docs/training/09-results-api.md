@@ -10,8 +10,9 @@
 
 | Method | Path | Permission | Response boundary |
 | --- | --- | --- | --- |
-| `GET` | `/training/projects` | `training:projects:read` | Открытые проекты, optional object summary, лимиты/retake, best/last score, active attempt, Telegram state и backend eligibility |
-| `GET` | `/training/projects/:projectId` | `training:projects:read` | Один доступный проект или `404` |
+| `GET` | `/training/projects` | `training:take` | Открытые проекты, optional object summary, лимиты/retake, best/last score, active attempt, Telegram state и backend eligibility |
+| `GET` | `/training/projects/:projectId` | `training:take` | Один доступный проект или `404` |
+| `GET` | `/training/admin/config` | `training:projects:manage` | Feature-flag status для административной навигации без employee-права `training:take` |
 | `GET` | `/training/attempts` | `training:own-results:read` | Только JWT owner, filters `projectId/status`, bounded pagination |
 | `GET` | `/training/attempts/:attemptId` | `training:own-results:read` | Только JWT owner; разрешённые критерии, без transcript/errors/audio |
 | `GET` | `/training/telegram/account` | `training:take` | Только display metadata без Telegram/platform account IDs |

@@ -220,9 +220,9 @@ checks служат UX-фильтром, но не заменяют Nest guards.
 Единый текст хранится в `TrainingPolicyVersion` и создаётся seed из
 `training-policy.seed.ts`. Версия содержит `version`, `title`, `body`,
 `effectiveAt`, `isActive`, SHA-256 `checksum`, автора и статус утверждения.
-Текущий текст `2026-07-28.1` помечен
-`REQUIRES_MANAGER_APPROVAL`: это техническая фиксация ознакомления с
-внутренними правилами, а не заявление о полной юридической compliance.
+Текст `2026-07-28.1` утверждён владельцем процесса 2026-07-28 и seed хранит
+статус `APPROVED`. Это техническая фиксация утверждения внутренних правил, а
+не заявление о полной юридической compliance.
 
 `TrainingPolicyAcceptance` хранит только internal `userId`, версию, дату,
 `PLATFORM | TELEGRAM` и optional `revokedAt`. Telegram identifiers не нужны и
