@@ -13,7 +13,7 @@
 - `docker-compose.production.yml` - PostgreSQL, Redis и MinIO больше не публикуют host-порты; API и web привязаны только к `127.0.0.1`; для всех production-сервисов задан `restart: unless-stopped`.
 - `apps/api/tests/training-telegram.test.cjs` - добавлена регрессия production Compose на приватные infrastructure-порты, loopback API/web и restart policy.
 - На production создан root-only `/opt/platforma/.env.production` с режимами реальных Telegram/OpenAI providers, согласованными моделями и отдельными private training buckets. Значения секретов не выводились и не записывались в git; файл имеет `root:root 0600`.
-- `TRAINING_MODULE_ENABLED=false` и `OPENAI_SMOKE_ENABLED=false`: webhook не регистрировался, запросы к OpenAI не выполнялись.
+- `TRAINING_MODULE_ENABLED=false` и обычный runtime `OPENAI_SMOKE_ENABLED=false`: webhook не регистрировался, а реальный OpenAI-вызов выполнялся только отдельным явно разрешённым synthetic smoke.
 
 Проверки:
 
@@ -24,6 +24,8 @@
 - Backup восстановлен в изолированную БД: исходные 32 migrations валидны, FK-ошибок нет. На отдельном restore-клоне успешно применены все 9 новых migrations, после чего получено 41/41, ноль invalid constraints/indexes и неизменные контрольные counts.
 - Production migrations обновлены с 32 до 41; incomplete/rolled-back/log-error migrations, invalid training constraints и invalid training indexes - `0`. Контрольные counts сохранились: users `33`, files `43 396`, real estate objects `347`.
 - Оба training buckets созданы и возвращают `403` на unsigned `HEAD`.
+- После отдельного разрешения выполнен один billable OpenAI synthetic smoke без человеческого голоса и retries: transcription `gpt-4o-mini-transcribe-2025-12-15` - `12` tokens, `2665ms`, request `req_9f3be1fb30844af5b49417f79199d40c`; evaluation `gpt-5.6-terra` - `165` tokens, `1788ms`, request `51dd6831-7767-4acf-879c-25da3eb67db1`. Оба запроса успешны, Responses использует `store:false`.
+- После smoke одноразовый контейнер удалён; production API/worker сохранили `OPENAI_SMOKE_ENABLED=false`, `TRAINING_MODULE_ENABLED=false`, API остался healthy.
 - `git diff --check` - passed.
 
 Production deploy:
@@ -38,7 +40,7 @@ Production deploy:
 
 Ручная проверка:
 
-- До включения модуля закрыть provider-specific staging privacy, Telegram webhook/delivery, OpenAI billable smoke и calibration gates.
+- До включения модуля закрыть provider-specific staging privacy, Telegram webhook/delivery и calibration gates; synthetic OpenAI smoke закрыт.
 - После закрытия gates отдельно зарегистрировать Telegram webhook, включить `TRAINING_MODULE_ENABLED=true` и пройти production UI/role QA.
 - Перевыпустить SSH/Telegram/OpenAI credentials, переданные через чат, и обновить `/opt/platforma/.env.production`.
 
