@@ -81,3 +81,24 @@ test('training admin layout is responsive and respects reduced motion', () => {
   assert.match(stylesSource, /overflow-x: auto/);
   assert.match(stylesSource, /var\(--app-theme-surface/);
 });
+
+test('editor uses an accessible master-detail pattern without unmounting drafts', () => {
+  assert.match(pageSource, /className="training-master-detail"/);
+  assert.match(pageSource, /data-training-master-detail/);
+  assert.match(pageSource, /data-editor-item-id=\{item\.id\}/);
+  assert.match(pageSource, /aria-current=\{selected \? 'true' : undefined\}/);
+  assert.match(pageSource, /data-editor-panel-id=\{id\}/);
+  assert.match(pageSource, /hidden=\{id !== selectedId\}/);
+  assert.match(stylesSource, /\[data-editor-panel-id\]\[hidden\]/);
+  assert.doesNotMatch(pageSource, /training-criteria-columns/);
+});
+
+test('training checkboxes stay next to their labels and facts expose semantic relations', () => {
+  assert.match(pageSource, /function TrainingCheckboxRow/);
+  assert.match(pageSource, /className="training-checkbox-control"/);
+  assert.match(stylesSource, /\.training-admin \.training-checkbox-control/);
+  assert.match(stylesSource, /width: 18px/);
+  assert.match(pageSource, /<fieldset className="training-linked-questions/);
+  assert.match(pageSource, /<legend>Связанные вопросы<\/legend>/);
+  assert.doesNotMatch(pageSource, /orientation="horizontal"/);
+});

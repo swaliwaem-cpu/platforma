@@ -258,7 +258,7 @@ export function saveTrainingQuestion(
     ? `${adminBase}/versions/${versionId}/questions/${question.id}`
     : `${adminBase}/versions/${versionId}/questions`;
 
-  return apiRequest(path, token, {
+  return apiRequest<{ question: TrainingQuestion }>(path, token, {
     method: question.id ? 'PATCH' : 'POST',
     body: JSON.stringify({
       type: question.type,
@@ -303,7 +303,7 @@ export function saveTrainingFact(
     ? `${adminBase}/versions/${versionId}/facts/${fact.id}`
     : `${adminBase}/versions/${versionId}/facts`;
 
-  return apiRequest(path, token, {
+  return apiRequest<{ fact: TrainingFact }>(path, token, {
     method: fact.id ? 'PATCH' : 'POST',
     body: JSON.stringify({
       code: fact.code,
@@ -347,7 +347,7 @@ export function saveTrainingCriterion(
     ? `${adminBase}/versions/${versionId}/criteria/${criterion.id}`
     : `${adminBase}/versions/${versionId}/criteria`;
 
-  return apiRequest(path, token, {
+  return apiRequest<{ criterion: TrainingCriterion }>(path, token, {
     method: criterion.id ? 'PATCH' : 'POST',
     body: JSON.stringify({
       questionType: criterion.questionType,

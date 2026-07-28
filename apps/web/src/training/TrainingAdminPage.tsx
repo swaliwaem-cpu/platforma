@@ -108,6 +108,24 @@ const editorTabs: Array<{ id: EditorTab; label: string }> = [
   { id: 'publish', label: 'Проверка / публикация' },
 ];
 
+type TrainingMasterItem = {
+  id: string;
+  label: string;
+  description?: string;
+  status?: string;
+  statusTone?: 'neutral' | 'success' | 'warning';
+};
+
+type TrainingMasterGroup = {
+  id: string;
+  label: string;
+  summary?: string;
+  items: TrainingMasterItem[];
+  action?: ReactNode;
+};
+
+type ProjectEditorSection = 'project' | 'availability' | 'attempt';
+
 const projectStatusLabels = {
   DRAFT: 'Черновик',
   OPEN: 'Открыт',
@@ -630,6 +648,8 @@ function ProjectMainSection({
   const [serverError, setServerError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [selectedSection, setSelectedSection] =
+    useState<ProjectEditorSection>('project');
 
   useEffect(() => {
     setForm(projectToForm(project, version));
@@ -641,7 +661,10 @@ function ProjectMainSection({
     setErrors(nextErrors);
     setServerError(null);
     setNotice(null);
-    if (Object.keys(nextErrors).length > 0 || readOnly) return;
+    if (Object.keys(nextErrors).length > 0 || readOnly) {
+      setSelectedSection(projectErrorSection(nextErrors));
+      return;
+    }
 
     setSaving(true);
     try {
@@ -674,14 +697,80 @@ function ProjectMainSection({
         />
         {serverError ? <AdminAlert tone="error">{serverError}</AdminAlert> : null}
         {notice ? <AdminAlert tone="notice">{notice}</AdminAlert> : null}
-        <fieldset disabled={readOnly} className="training-fieldset">
-          <ProjectAndSettingsFields
-            form={form}
-            errors={errors}
-            objects={objects}
-            onChange={setForm}
-          />
-        </fieldset>
+        <TrainingMasterDetail
+          ariaLabel="Разделы основных настроек"
+          groups={[
+            {
+              id: 'main',
+              label: 'Основное',
+              items: [
+                {
+                  id: 'project',
+                  label: 'Карточка проекта',
+                  description: form.title || 'Название и описание',
+                  status: form.slug || 'Без slug',
+                },
+                {
+                  id: 'availability',
+                  label: 'Доступность',
+                  description:
+                    form.availableFrom || form.deadlineAt
+                      ? 'Окно прохождения задано'
+                      : 'Без ограничения по датам',
+                },
+                {
+                  id: 'attempt',
+                  label: 'Настройки попытки',
+                  description: `${form.passScore || '0'} баллов · ${form.attemptLimit || '0'} попытки`,
+                  status: form.allowRetakeAfterPass ? 'Повтор включён' : 'Без повтора',
+                },
+              ],
+            },
+          ]}
+          selectedId={selectedSection}
+          onSelect={(id) => setSelectedSection(id as ProjectEditorSection)}
+        >
+          {(['project', 'availability', 'attempt'] as const).map((section) => (
+            <TrainingDetailPanel
+              key={section}
+              id={section}
+              selectedId={selectedSection}
+              label={
+                section === 'project'
+                  ? 'Карточка проекта'
+                  : section === 'availability'
+                    ? 'Доступность'
+                    : 'Настройки попытки'
+              }
+            >
+              <TrainingDetailHeading
+                title={
+                  section === 'project'
+                    ? 'Карточка проекта'
+                    : section === 'availability'
+                      ? 'Доступность'
+                      : 'Настройки попытки'
+                }
+                description={
+                  section === 'project'
+                    ? 'Название, описание, связь с объектом и порядок показа.'
+                    : section === 'availability'
+                      ? 'Необязательное окно, в котором сотрудник может пройти обучение.'
+                      : 'Баллы, лимиты времени и правила повторного прохождения.'
+                }
+              />
+              <fieldset disabled={readOnly} className="training-fieldset">
+                <ProjectAndSettingsFields
+                  section={section}
+                  form={form}
+                  errors={errors}
+                  objects={objects}
+                  onChange={setForm}
+                />
+              </fieldset>
+            </TrainingDetailPanel>
+          ))}
+        </TrainingMasterDetail>
         {!readOnly ? (
           <div className="training-form-actions">
             <AdminButton tone="primary" type="submit" disabled={saving}>
@@ -700,11 +789,13 @@ function ProjectMainSection({
 }
 
 function ProjectAndSettingsFields({
+  section,
   form,
   errors,
   objects,
   onChange,
 }: {
+  section?: ProjectEditorSection;
   form: ProjectFormState;
   errors: Record<string, string>;
   objects: TrainingRealEstateObject[];
@@ -714,156 +805,165 @@ function ProjectAndSettingsFields({
     key: K,
     value: ProjectFormState[K],
   ) => onChange({ ...form, [key]: value });
+  const showProject = !section || section === 'project';
+  const showAvailability = !section || section === 'availability';
+  const showAttempt = !section || section === 'attempt';
 
   return (
     <FieldGroup className="training-fields">
-      <div className="training-form-grid">
-        <TrainingTextField
-          id="training-project-title"
-          label="Название"
-          value={form.title}
-          error={errors.title}
-          maxLength={240}
-          onChange={(value) => update('title', value)}
-        />
-        <TrainingTextField
-          id="training-project-slug"
-          label="Slug"
-          value={form.slug}
-          error={errors.slug}
-          maxLength={160}
-          placeholder="residential-project"
-          onChange={(value) => update('slug', value)}
-        />
-        <Field className="training-field-wide" data-invalid={Boolean(errors.description)}>
-          <FieldLabel htmlFor="training-project-description">Описание</FieldLabel>
-          <textarea
-            id="training-project-description"
-            className="training-control training-textarea"
-            value={form.description}
-            maxLength={2000}
-            aria-invalid={Boolean(errors.description)}
-            onChange={(event) => update('description', event.target.value)}
-          />
-          <FieldError>{errors.description}</FieldError>
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="training-project-object">
-            Объект недвижимости
-          </FieldLabel>
-          <select
-            id="training-project-object"
-            className="training-control"
-            value={form.realEstateObjectId}
-            onChange={(event) => update('realEstateObjectId', event.target.value)}
-          >
-            <option value="">Без связи с объектом</option>
-            {objects.map((object) => (
-              <option key={object.id} value={object.id}>
-                {object.title}
-              </option>
-            ))}
-          </select>
-          <FieldDescription>Связь опциональна и не влияет на структуру оценки.</FieldDescription>
-        </Field>
-        <TrainingNumberField
-          id="training-project-sort"
-          label="Порядок"
-          value={form.sortOrder}
-          min={0}
-          error={errors.sortOrder}
-          onChange={(value) => update('sortOrder', value)}
-        />
-        <TrainingTextField
-          id="training-project-start"
-          label="Доступен с"
-          type="datetime-local"
-          value={form.availableFrom}
-          error={errors.availability}
-          onChange={(value) => update('availableFrom', value)}
-        />
-        <TrainingTextField
-          id="training-project-deadline"
-          label="Дедлайн"
-          type="datetime-local"
-          value={form.deadlineAt}
-          error={errors.availability}
-          onChange={(value) => update('deadlineAt', value)}
-        />
-      </div>
-
-      <div className="training-subsection">
-        <div>
-          <h3>Настройки попытки</h3>
-          <p>Ограничения проверяются и при сохранении, и перед публикацией.</p>
-        </div>
-        <div className="training-form-grid training-form-grid--settings">
-          <TrainingNumberField
-            id="training-pass-score"
-            label="Проходной балл"
-            value={form.passScore}
-            min={0}
-            max={100}
-            error={errors.passScore}
-            onChange={(value) => update('passScore', value)}
-          />
-          <TrainingNumberField
-            id="training-attempt-limit"
-            label="Лимит попыток"
-            value={form.attemptLimit}
-            min={1}
-            error={errors.attemptLimit}
-            onChange={(value) => update('attemptLimit', value)}
-          />
-          <TrainingNumberField
-            id="training-cooldown"
-            label="Пауза, минут"
-            value={form.cooldownMinutes}
-            min={60}
-            max={1440}
-            error={errors.cooldownMinutes}
-            onChange={(value) => update('cooldownMinutes', value)}
-          />
-          <TrainingNumberField
-            id="training-time-limit"
-            label="Таймер, секунд"
-            value={form.totalTimeLimitSeconds}
-            min={300}
-            max={420}
-            error={errors.totalTimeLimitSeconds}
-            onChange={(value) => update('totalTimeLimitSeconds', value)}
-          />
-          <TrainingNumberField
-            id="training-grace"
-            label="Grace-период, секунд"
-            value={form.finishGraceSeconds}
-            min={0}
-            error={errors.finishGraceSeconds}
-            onChange={(value) => update('finishGraceSeconds', value)}
+      {showProject ? (
+        <div className="training-form-grid">
+          <TrainingTextField
+            id="training-project-title"
+            label="Название"
+            value={form.title}
+            error={errors.title}
+            maxLength={240}
+            onChange={(value) => update('title', value)}
           />
           <TrainingTextField
-            id="training-warnings"
-            label="Предупреждения, секунд"
-            value={form.warningSeconds}
-            error={errors.warningSeconds}
-            placeholder="60, 20"
-            onChange={(value) => update('warningSeconds', value)}
+            id="training-project-slug"
+            label="Slug"
+            value={form.slug}
+            error={errors.slug}
+            maxLength={160}
+            placeholder="residential-project"
+            onChange={(value) => update('slug', value)}
           />
-          <Field className="training-field-wide" orientation="horizontal">
-            <input
-              id="training-retake"
-              type="checkbox"
-              checked={form.allowRetakeAfterPass}
-              onChange={(event) =>
-                update('allowRetakeAfterPass', event.target.checked)
-              }
+          <Field className="training-field-wide" data-invalid={Boolean(errors.description)}>
+            <FieldLabel htmlFor="training-project-description">Описание</FieldLabel>
+            <textarea
+              id="training-project-description"
+              className="training-control training-textarea"
+              value={form.description}
+              maxLength={2000}
+              aria-invalid={Boolean(errors.description)}
+              onChange={(event) => update('description', event.target.value)}
             />
-            <FieldLabel htmlFor="training-retake">
-              Разрешить повторную попытку после прохождения
-            </FieldLabel>
+            <FieldError>{errors.description}</FieldError>
           </Field>
+          <Field>
+            <FieldLabel htmlFor="training-project-object">
+              Объект недвижимости
+            </FieldLabel>
+            <select
+              id="training-project-object"
+              className="training-control"
+              value={form.realEstateObjectId}
+              onChange={(event) => update('realEstateObjectId', event.target.value)}
+            >
+              <option value="">Без связи с объектом</option>
+              {objects.map((object) => (
+                <option key={object.id} value={object.id}>
+                  {object.title}
+                </option>
+              ))}
+            </select>
+            <FieldDescription>Связь опциональна и не влияет на структуру оценки.</FieldDescription>
+          </Field>
+          <TrainingNumberField
+            id="training-project-sort"
+            label="Порядок"
+            value={form.sortOrder}
+            min={0}
+            error={errors.sortOrder}
+            onChange={(value) => update('sortOrder', value)}
+          />
         </div>
-      </div>
+      ) : null}
+
+      {showAvailability ? (
+        <div className="training-form-grid">
+          <TrainingTextField
+            id="training-project-start"
+            label="Доступен с"
+            type="datetime-local"
+            value={form.availableFrom}
+            error={errors.availability}
+            onChange={(value) => update('availableFrom', value)}
+          />
+          <TrainingTextField
+            id="training-project-deadline"
+            label="Дедлайн"
+            type="datetime-local"
+            value={form.deadlineAt}
+            error={errors.availability}
+            onChange={(value) => update('deadlineAt', value)}
+          />
+        </div>
+      ) : null}
+
+      {showAttempt ? (
+        <div className={!section ? 'training-subsection' : undefined}>
+          {!section ? (
+            <div>
+              <h3>Настройки попытки</h3>
+              <p>Ограничения проверяются и при сохранении, и перед публикацией.</p>
+            </div>
+          ) : null}
+          <div className="training-form-grid training-form-grid--settings">
+            <TrainingNumberField
+              id="training-pass-score"
+              label="Проходной балл"
+              value={form.passScore}
+              min={0}
+              max={100}
+              error={errors.passScore}
+              onChange={(value) => update('passScore', value)}
+            />
+            <TrainingNumberField
+              id="training-attempt-limit"
+              label="Лимит попыток"
+              value={form.attemptLimit}
+              min={1}
+              error={errors.attemptLimit}
+              onChange={(value) => update('attemptLimit', value)}
+            />
+            <TrainingNumberField
+              id="training-cooldown"
+              label="Пауза, минут"
+              value={form.cooldownMinutes}
+              min={60}
+              max={1440}
+              error={errors.cooldownMinutes}
+              onChange={(value) => update('cooldownMinutes', value)}
+            />
+            <TrainingNumberField
+              id="training-time-limit"
+              label="Таймер, секунд"
+              value={form.totalTimeLimitSeconds}
+              min={300}
+              max={420}
+              error={errors.totalTimeLimitSeconds}
+              onChange={(value) => update('totalTimeLimitSeconds', value)}
+            />
+            <TrainingNumberField
+              id="training-grace"
+              label="Grace-период, секунд"
+              value={form.finishGraceSeconds}
+              min={0}
+              error={errors.finishGraceSeconds}
+              onChange={(value) => update('finishGraceSeconds', value)}
+            />
+            <TrainingTextField
+              id="training-warnings"
+              label="Предупреждения, секунд"
+              value={form.warningSeconds}
+              error={errors.warningSeconds}
+              placeholder="60, 20"
+              onChange={(value) => update('warningSeconds', value)}
+            />
+            <TrainingCheckboxRow
+              id="training-retake"
+              className="training-field-wide"
+              checked={form.allowRetakeAfterPass}
+              label="Разрешить повторную попытку после прохождения"
+              description="Сотрудник сможет начать новую попытку после успешного прохождения."
+              onChange={(checked) => update('allowRetakeAfterPass', checked)}
+            />
+          </div>
+        </div>
+      ) : null}
     </FieldGroup>
   );
 }
@@ -889,20 +989,55 @@ function QuestionsSection({
     .filter((question) => question.type === type)
     .sort((left, right) => left.position - right.position);
   const [adding, setAdding] = useState(false);
+  const newQuestionId = `new-question-${type.toLowerCase()}`;
+  const questionIds = [
+    ...questions.map((question) => question.id),
+    ...(adding ? [newQuestionId] : []),
+  ];
+  const questionSelectionKey = questionIds.join('|');
+  const [selectedId, setSelectedId] = useState(
+    () => questions[0]?.id ?? newQuestionId,
+  );
+
+  useEffect(() => {
+    if (!questionIds.includes(selectedId)) {
+      setSelectedId(questionIds[0] ?? '');
+    }
+  }, [questionSelectionKey, selectedId]);
+
+  const addQuestion = () => {
+    setAdding(true);
+    setSelectedId(newQuestionId);
+  };
+  const masterItems: TrainingMasterItem[] = [
+    ...questions.map((question) => ({
+      id: question.id,
+      label:
+        question.type === 'MAIN'
+          ? 'Главный вопрос'
+          : `Вопрос ${question.position}`,
+      description: question.text || 'Текст не указан',
+      status: question.isActive ? 'Активен' : 'Выключен',
+      statusTone: question.isActive ? ('success' as const) : ('neutral' as const),
+    })),
+    ...(adding
+      ? [
+          {
+            id: newQuestionId,
+            label: 'Новый вопрос',
+            description: 'Черновик ещё не сохранён',
+            status: 'Новый',
+            statusTone: 'warning' as const,
+          },
+        ]
+      : []),
+  ];
 
   return (
     <AdminPanel className="training-section-panel">
       <SectionHeading
         title={title}
         description={description}
-        actions={
-          !readOnly ? (
-            <AdminButton tone="primary" onClick={() => setAdding(true)}>
-              <PlusIcon aria-hidden="true" />
-              Добавить
-            </AdminButton>
-          ) : null
-        }
       />
       {questions.length === 0 && !adding ? (
         <AdminEmptyState
@@ -910,39 +1045,81 @@ function QuestionsSection({
           description="Добавьте вопросы, чтобы подготовить версию к публикации."
         />
       ) : null}
-      <div className="training-card-list">
-        {questions.map((question) => (
-          <QuestionCard
-            key={question.id}
-            token={token}
-            versionId={version.id}
-            question={question}
-            readOnly={readOnly}
-            onChanged={onChanged}
-          />
-        ))}
-        {adding ? (
-          <QuestionCard
-            token={token}
-            versionId={version.id}
-            question={{
-              id: '',
-              type,
-              text: '',
-              position: type === 'MAIN' ? 1 : nextPosition(questions),
-              isActive: true,
-              maxScore: type === 'MAIN' ? 55 : 15,
-              topicCodesJson: [],
-            }}
-            readOnly={false}
-            onChanged={async () => {
-              setAdding(false);
-              await onChanged();
-            }}
-            onCancel={() => setAdding(false)}
-          />
-        ) : null}
-      </div>
+      {questionIds.length > 0 ? (
+        <TrainingMasterDetail
+          ariaLabel={`Список: ${title}`}
+          groups={[
+            {
+              id: type,
+              label: title,
+              summary: `${questions.length} ${pluralizeItems(questions.length, 'вопрос', 'вопроса', 'вопросов')}`,
+              items: masterItems,
+              action:
+                !readOnly && !adding ? (
+                  <TrainingMasterAddButton label="Добавить вопрос" onClick={addQuestion} />
+                ) : null,
+            },
+          ]}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+        >
+          {questions.map((question) => (
+            <TrainingDetailPanel
+              key={question.id}
+              id={question.id}
+              selectedId={selectedId}
+              label={
+                question.type === 'MAIN'
+                  ? 'Главный вопрос'
+                  : `Вопрос ${question.position}`
+              }
+            >
+              <QuestionCard
+                token={token}
+                versionId={version.id}
+                question={question}
+                readOnly={readOnly}
+                onChanged={onChanged}
+              />
+            </TrainingDetailPanel>
+          ))}
+          {adding ? (
+            <TrainingDetailPanel
+              id={newQuestionId}
+              selectedId={selectedId}
+              label="Новый вопрос"
+            >
+              <QuestionCard
+                token={token}
+                versionId={version.id}
+                question={{
+                  id: '',
+                  type,
+                  text: '',
+                  position: type === 'MAIN' ? 1 : nextPosition(questions),
+                  isActive: true,
+                  maxScore: type === 'MAIN' ? 55 : 15,
+                  topicCodesJson: [],
+                }}
+                readOnly={false}
+                onChanged={async (savedId) => {
+                  await onChanged();
+                  setAdding(false);
+                  if (savedId) setSelectedId(savedId);
+                }}
+                onCancel={() => setAdding(false)}
+              />
+            </TrainingDetailPanel>
+          ) : null}
+        </TrainingMasterDetail>
+      ) : !readOnly ? (
+        <div className="training-empty-action">
+          <AdminButton tone="primary" onClick={addQuestion}>
+            <PlusIcon aria-hidden="true" />
+            Добавить вопрос
+          </AdminButton>
+        </div>
+      ) : null}
     </AdminPanel>
   );
 }
@@ -959,7 +1136,7 @@ function QuestionCard({
   versionId: string;
   question: TrainingQuestion;
   readOnly: boolean;
-  onChanged: () => Promise<void>;
+  onChanged: (savedId?: string) => Promise<void>;
   onCancel?: () => void;
 }) {
   const [text, setText] = useState(question.text);
@@ -980,7 +1157,7 @@ function QuestionCard({
     setSaving(true);
     setError(null);
     try {
-      await saveTrainingQuestion(token, versionId, {
+      const response = await saveTrainingQuestion(token, versionId, {
         id: question.id || undefined,
         type: question.type,
         text: text.trim(),
@@ -989,7 +1166,7 @@ function QuestionCard({
         maxScore: question.type === 'MAIN' ? 55 : 15,
         topicCodes: splitList(topicCodes),
       });
-      await onChanged();
+      await onChanged(response.question.id);
     } catch (caughtError) {
       setError(getErrorMessage(caughtError));
     } finally {
@@ -1020,7 +1197,14 @@ function QuestionCard({
           </strong>
           <span>Максимум: {question.type === 'MAIN' ? 55 : 15} баллов</span>
         </div>
-        <AdminStatusBadge>{isActive ? 'Активен' : 'Выключен'}</AdminStatusBadge>
+        <TrainingCheckboxRow
+          id={`question-active-${question.id || 'new'}`}
+          checked={isActive}
+          label="Активен"
+          compact
+          disabled={readOnly || saving}
+          onChange={setIsActive}
+        />
       </div>
       {error ? <AdminAlert tone="error">{error}</AdminAlert> : null}
       <fieldset disabled={readOnly || saving} className="training-fieldset">
@@ -1052,17 +1236,6 @@ function QuestionCard({
             placeholder="location, product"
             onChange={setTopicCodes}
           />
-          <Field orientation="horizontal">
-            <input
-              id={`question-active-${question.id || 'new'}`}
-              type="checkbox"
-              checked={isActive}
-              onChange={(event) => setIsActive(event.target.checked)}
-            />
-            <FieldLabel htmlFor={`question-active-${question.id || 'new'}`}>
-              Активен
-            </FieldLabel>
-          </Field>
         </div>
       </fieldset>
       {!readOnly ? (
@@ -1100,6 +1273,15 @@ function FactsSection({
 }) {
   const [documents, setDocuments] = useState<TrainingDocument[]>([]);
   const [adding, setAdding] = useState(false);
+  const newFactId = 'new-fact';
+  const factIds = [
+    ...version.facts.map((fact) => fact.id),
+    ...(adding ? [newFactId] : []),
+  ];
+  const factSelectionKey = factIds.join('|');
+  const [selectedId, setSelectedId] = useState(
+    () => version.facts[0]?.id ?? newFactId,
+  );
 
   useEffect(() => {
     void listTrainingDocuments(token, version.id)
@@ -1107,19 +1289,42 @@ function FactsSection({
       .catch(() => setDocuments([]));
   }, [token, version.id]);
 
+  useEffect(() => {
+    if (!factIds.includes(selectedId)) {
+      setSelectedId(factIds[0] ?? '');
+    }
+  }, [factSelectionKey, selectedId]);
+
+  const addFact = () => {
+    setAdding(true);
+    setSelectedId(newFactId);
+  };
+  const masterItems: TrainingMasterItem[] = [
+    ...version.facts.map((fact) => ({
+      id: fact.id,
+      label: fact.code,
+      description: fact.statement,
+      status: fact.isApproved ? 'Подтверждён' : 'Нужна проверка',
+      statusTone: fact.isApproved ? ('success' as const) : ('warning' as const),
+    })),
+    ...(adding
+      ? [
+          {
+            id: newFactId,
+            label: 'Новый факт',
+            description: 'Черновик ещё не сохранён',
+            status: 'Новый',
+            statusTone: 'warning' as const,
+          },
+        ]
+      : []),
+  ];
+
   return (
     <AdminPanel className="training-section-panel">
       <SectionHeading
         title="Структурированные факты"
         description="Только подтверждённые администратором факты участвуют в оценивании. Извлечённый текст сам по себе никогда не становится фактом."
-        actions={
-          !readOnly ? (
-            <AdminButton tone="primary" onClick={() => setAdding(true)}>
-              <PlusIcon aria-hidden="true" />
-              Добавить факт
-            </AdminButton>
-          ) : null
-        }
       />
       <AdminAlert tone="notice">
         Текст документов — рабочий черновик. Проверьте формулировку, источник и
@@ -1131,33 +1336,71 @@ function FactsSection({
           description="Создайте хотя бы один подтверждённый структурированный факт."
         />
       ) : null}
-      <div className="training-card-list">
-        {version.facts.map((fact) => (
-          <FactCard
-            key={fact.id}
-            token={token}
-            version={version}
-            fact={fact}
-            documents={documents}
-            readOnly={readOnly}
-            onChanged={onChanged}
-          />
-        ))}
-        {adding ? (
-          <FactCard
-            token={token}
-            version={version}
-            fact={null}
-            documents={documents}
-            readOnly={false}
-            onChanged={async () => {
-              setAdding(false);
-              await onChanged();
-            }}
-            onCancel={() => setAdding(false)}
-          />
-        ) : null}
-      </div>
+      {factIds.length > 0 ? (
+        <TrainingMasterDetail
+          ariaLabel="Список структурированных фактов"
+          groups={[
+            {
+              id: 'facts',
+              label: 'Факты',
+              summary: `${version.facts.length} ${pluralizeItems(version.facts.length, 'факт', 'факта', 'фактов')}`,
+              items: masterItems,
+              action:
+                !readOnly && !adding ? (
+                  <TrainingMasterAddButton label="Добавить факт" onClick={addFact} />
+                ) : null,
+            },
+          ]}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+        >
+          {version.facts.map((fact) => (
+            <TrainingDetailPanel
+              key={fact.id}
+              id={fact.id}
+              selectedId={selectedId}
+              label={fact.code}
+            >
+              <FactCard
+                token={token}
+                version={version}
+                fact={fact}
+                documents={documents}
+                readOnly={readOnly}
+                onChanged={onChanged}
+              />
+            </TrainingDetailPanel>
+          ))}
+          {adding ? (
+            <TrainingDetailPanel
+              id={newFactId}
+              selectedId={selectedId}
+              label="Новый факт"
+            >
+              <FactCard
+                token={token}
+                version={version}
+                fact={null}
+                documents={documents}
+                readOnly={false}
+                onChanged={async (savedId) => {
+                  await onChanged();
+                  setAdding(false);
+                  if (savedId) setSelectedId(savedId);
+                }}
+                onCancel={() => setAdding(false)}
+              />
+            </TrainingDetailPanel>
+          ) : null}
+        </TrainingMasterDetail>
+      ) : !readOnly ? (
+        <div className="training-empty-action">
+          <AdminButton tone="primary" onClick={addFact}>
+            <PlusIcon aria-hidden="true" />
+            Добавить факт
+          </AdminButton>
+        </div>
+      ) : null}
     </AdminPanel>
   );
 }
@@ -1176,7 +1419,7 @@ function FactCard({
   fact: TrainingFact | null;
   documents: TrainingDocument[];
   readOnly: boolean;
-  onChanged: () => Promise<void>;
+  onChanged: (savedId?: string) => Promise<void>;
   onCancel?: () => void;
 }) {
   const [code, setCode] = useState(fact?.code ?? '');
@@ -1227,7 +1470,7 @@ function FactCard({
     setSaving(true);
     setError(null);
     try {
-      await saveTrainingFact(token, version.id, {
+      const response = await saveTrainingFact(token, version.id, {
         id: fact?.id,
         code: code.trim(),
         topicCode: topicCode.trim(),
@@ -1239,7 +1482,7 @@ function FactCard({
         isApproved,
         questionIds: [...questionIds],
       });
-      await onChanged();
+      await onChanged(response.fact.id);
     } catch (caughtError) {
       setError(getErrorMessage(caughtError));
     } finally {
@@ -1351,39 +1594,55 @@ function FactCard({
               onChange={(event) => setSourceLocator(event.target.value)}
             />
           </Field>
-          <Field className="training-field-wide">
-            <FieldLabel>Связанные вопросы</FieldLabel>
-            <div className="training-checkbox-grid">
-              {version.questions.map((question) => (
-                <label key={question.id}>
-                  <input
-                    type="checkbox"
-                    checked={questionIds.has(question.id)}
-                    onChange={() => toggleQuestion(question.id)}
-                  />
-                  <span>
-                    {question.type === 'MAIN' ? 'Главный' : `Доп. ${question.position}`}
-                  </span>
-                </label>
-              ))}
+          <fieldset className="training-linked-questions training-field-wide">
+            <legend>Связанные вопросы</legend>
+            <p className="training-choice-summary">
+              Выбрано {questionIds.size} из {version.questions.length}
+            </p>
+            <div className="training-choice-list">
+              {[...version.questions]
+                .sort((left, right) => {
+                  if (left.type !== right.type) return left.type === 'MAIN' ? -1 : 1;
+                  return left.position - right.position;
+                })
+                .map((question) => (
+                  <label
+                    key={question.id}
+                    className={
+                      questionIds.has(question.id)
+                        ? 'training-choice-row is-checked'
+                        : 'training-choice-row'
+                    }
+                  >
+                    <input
+                      className="training-checkbox-control"
+                      type="checkbox"
+                      checked={questionIds.has(question.id)}
+                      onChange={() => toggleQuestion(question.id)}
+                    />
+                    <span className="training-choice-copy">
+                      <strong>
+                        {question.type === 'MAIN'
+                          ? 'Главный вопрос'
+                          : `Дополнительный вопрос ${question.position}`}
+                      </strong>
+                      <span>{question.text}</span>
+                      {!question.isActive ? (
+                        <small>Выключен и не участвует в выборе вопросов</small>
+                      ) : null}
+                    </span>
+                  </label>
+                ))}
             </div>
-          </Field>
-          <Field className="training-field-wide training-approval" orientation="horizontal">
-            <input
-              id={`fact-approved-${fact?.id ?? 'new'}`}
-              type="checkbox"
-              checked={isApproved}
-              onChange={(event) => setIsApproved(event.target.checked)}
-            />
-            <div>
-              <FieldLabel htmlFor={`fact-approved-${fact?.id ?? 'new'}`}>
-                Факт проверен и подтверждён администратором
-              </FieldLabel>
-              <FieldDescription>
-                Только после этого факт может участвовать в оценивании.
-              </FieldDescription>
-            </div>
-          </Field>
+          </fieldset>
+          <TrainingCheckboxRow
+            id={`fact-approved-${fact?.id ?? 'new'}`}
+            className="training-field-wide training-approval"
+            checked={isApproved}
+            label="Факт проверен и подтверждён администратором"
+            description="Только после этого факт может участвовать в оценивании."
+            onChange={setIsApproved}
+          />
         </div>
       </fieldset>
       {!readOnly ? (
@@ -1419,102 +1678,179 @@ function CriteriaSection({
   readOnly: boolean;
   onChanged: () => Promise<void>;
 }) {
+  const [addingTypes, setAddingTypes] = useState<Set<TrainingQuestionType>>(
+    () => new Set(),
+  );
+  const criteriaByType = useMemo(
+    () =>
+      Object.fromEntries(
+        (['MAIN', 'FOLLOW_UP'] as const).map((type) => [
+          type,
+          version.criteria
+            .filter((item) => item.questionType === type)
+            .sort((left, right) => left.sortOrder - right.sortOrder),
+        ]),
+      ) as Record<TrainingQuestionType, TrainingCriterion[]>,
+    [version.criteria],
+  );
+  const newCriterionId = (type: TrainingQuestionType) =>
+    `new-criterion-${type.toLowerCase()}`;
+  const criterionIds = [
+    ...criteriaByType.MAIN.map((criterion) => criterion.id),
+    ...(addingTypes.has('MAIN') ? [newCriterionId('MAIN')] : []),
+    ...criteriaByType.FOLLOW_UP.map((criterion) => criterion.id),
+    ...(addingTypes.has('FOLLOW_UP') ? [newCriterionId('FOLLOW_UP')] : []),
+  ];
+  const criterionSelectionKey = criterionIds.join('|');
+  const [selectedId, setSelectedId] = useState(
+    () => version.criteria[0]?.id ?? '',
+  );
+
+  useEffect(() => {
+    if (!criterionIds.includes(selectedId)) {
+      setSelectedId(criterionIds[0] ?? '');
+    }
+  }, [criterionSelectionKey, selectedId]);
+
+  const addCriterion = (type: TrainingQuestionType) => {
+    setAddingTypes((current) => new Set(current).add(type));
+    setSelectedId(newCriterionId(type));
+  };
+  const cancelCriterion = (type: TrainingQuestionType) => {
+    setAddingTypes((current) => {
+      const next = new Set(current);
+      next.delete(type);
+      return next;
+    });
+  };
+  const masterGroups: TrainingMasterGroup[] = (
+    ['MAIN', 'FOLLOW_UP'] as const
+  ).map((type) => {
+    const criteria = criteriaByType[type];
+    const total = criteria.reduce(
+      (sum, item) => sum + Number(item.maxPoints),
+      0,
+    );
+    const expected = type === 'MAIN' ? 55 : 15;
+    return {
+      id: type,
+      label: type === 'MAIN' ? 'Главный вопрос' : 'Дополнительный вопрос',
+      summary: `${criteria.length} ${pluralizeItems(criteria.length, 'критерий', 'критерия', 'критериев')} · ${formatNumber(total)} / ${expected}`,
+      items: [
+        ...criteria.map((criterion) => ({
+          id: criterion.id,
+          label: criterion.title || criterion.code,
+          description: criterion.code,
+          status: `${formatNumber(Number(criterion.maxPoints))} б.`,
+          statusTone: 'neutral' as const,
+        })),
+        ...(addingTypes.has(type)
+          ? [
+              {
+                id: newCriterionId(type),
+                label: 'Новый критерий',
+                description: 'Черновик ещё не сохранён',
+                status: 'Новый',
+                statusTone: 'warning' as const,
+              },
+            ]
+          : []),
+      ],
+      action:
+        !readOnly && !addingTypes.has(type) ? (
+          <TrainingMasterAddButton
+            label="Добавить критерий"
+            onClick={() => addCriterion(type)}
+          />
+        ) : null,
+    };
+  });
+
   return (
     <AdminPanel className="training-section-panel">
       <SectionHeading
         title="Критерии оценки"
         description="Сумма критериев главного вопроса должна быть 55, дополнительного — 15."
       />
-      <div className="training-criteria-columns">
-        {(['MAIN', 'FOLLOW_UP'] as const).map((type) => (
-          <CriterionGroup
-            key={type}
-            type={type}
-            token={token}
-            version={version}
-            readOnly={readOnly}
-            onChanged={onChanged}
-          />
-        ))}
-      </div>
-    </AdminPanel>
-  );
-}
-
-function CriterionGroup({
-  type,
-  token,
-  version,
-  readOnly,
-  onChanged,
-}: {
-  type: TrainingQuestionType;
-  token: string;
-  version: TrainingVersion;
-  readOnly: boolean;
-  onChanged: () => Promise<void>;
-}) {
-  const criteria = version.criteria
-    .filter((item) => item.questionType === type)
-    .sort((left, right) => left.sortOrder - right.sortOrder);
-  const total = criteria.reduce((sum, item) => sum + Number(item.maxPoints), 0);
-  const expected = type === 'MAIN' ? 55 : 15;
-  const [adding, setAdding] = useState(false);
-
-  return (
-    <section className="training-criterion-group">
-      <div className="training-criterion-summary">
-        <div>
-          <h3>{type === 'MAIN' ? 'Главный вопрос' : 'Дополнительный вопрос'}</h3>
-          <p>{criteria.length} критериев</p>
-        </div>
-        <AdminStatusBadge
-          className={total === expected ? 'training-status--ready' : 'training-status--warning'}
+      {criterionIds.length > 0 ? (
+        <TrainingMasterDetail
+          ariaLabel="Критерии оценки по типам вопросов"
+          groups={masterGroups}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
         >
-          {formatNumber(total)} / {expected}
-        </AdminStatusBadge>
-      </div>
-      <div className="training-card-list">
-        {criteria.map((criterion) => (
-          <CriterionCard
-            key={criterion.id}
-            token={token}
-            versionId={version.id}
-            criterion={criterion}
-            readOnly={readOnly}
-            onChanged={onChanged}
+          {(['MAIN', 'FOLLOW_UP'] as const).flatMap((type) => [
+            ...criteriaByType[type].map((criterion) => (
+              <TrainingDetailPanel
+                key={criterion.id}
+                id={criterion.id}
+                selectedId={selectedId}
+                label={criterion.title || criterion.code}
+              >
+                <CriterionCard
+                  token={token}
+                  versionId={version.id}
+                  criterion={criterion}
+                  readOnly={readOnly}
+                  onChanged={onChanged}
+                />
+              </TrainingDetailPanel>
+            )),
+            ...(addingTypes.has(type)
+              ? [
+                  <TrainingDetailPanel
+                    key={newCriterionId(type)}
+                    id={newCriterionId(type)}
+                    selectedId={selectedId}
+                    label="Новый критерий"
+                  >
+                    <CriterionCard
+                      token={token}
+                      versionId={version.id}
+                      criterion={{
+                        id: '',
+                        questionType: type,
+                        code: '',
+                        title: '',
+                        maxPoints: 0,
+                        description: '',
+                        anchorsJson: [],
+                        sortOrder: nextCriterionPosition(criteriaByType[type]),
+                      }}
+                      readOnly={false}
+                      onChanged={async (savedId) => {
+                        await onChanged();
+                        cancelCriterion(type);
+                        if (savedId) setSelectedId(savedId);
+                      }}
+                      onCancel={() => cancelCriterion(type)}
+                    />
+                  </TrainingDetailPanel>,
+                ]
+              : []),
+          ])}
+        </TrainingMasterDetail>
+      ) : (
+        <div className="training-criteria-empty">
+          <AdminEmptyState
+            title="Критерии не добавлены"
+            description="Добавьте критерии отдельно для главного и дополнительных вопросов."
           />
-        ))}
-        {adding ? (
-          <CriterionCard
-            token={token}
-            versionId={version.id}
-            criterion={{
-              id: '',
-              questionType: type,
-              code: '',
-              title: '',
-              maxPoints: 0,
-              description: '',
-              anchorsJson: [],
-              sortOrder: nextCriterionPosition(criteria),
-            }}
-            readOnly={false}
-            onChanged={async () => {
-              setAdding(false);
-              await onChanged();
-            }}
-            onCancel={() => setAdding(false)}
-          />
-        ) : null}
-      </div>
-      {!readOnly && !adding ? (
-        <AdminButton onClick={() => setAdding(true)}>
-          <PlusIcon aria-hidden="true" />
-          Добавить критерий
-        </AdminButton>
-      ) : null}
-    </section>
+          {!readOnly ? (
+            <div className="training-empty-action">
+              <AdminButton onClick={() => addCriterion('MAIN')}>
+                <PlusIcon aria-hidden="true" />
+                Для главного вопроса
+              </AdminButton>
+              <AdminButton onClick={() => addCriterion('FOLLOW_UP')}>
+                <PlusIcon aria-hidden="true" />
+                Для дополнительного
+              </AdminButton>
+            </div>
+          ) : null}
+        </div>
+      )}
+    </AdminPanel>
   );
 }
 
@@ -1530,7 +1866,7 @@ function CriterionCard({
   versionId: string;
   criterion: TrainingCriterion;
   readOnly: boolean;
-  onChanged: () => Promise<void>;
+  onChanged: (savedId?: string) => Promise<void>;
   onCancel?: () => void;
 }) {
   const [code, setCode] = useState(criterion.code);
@@ -1553,7 +1889,7 @@ function CriterionCard({
     setSaving(true);
     setError(null);
     try {
-      await saveTrainingCriterion(token, versionId, {
+      const response = await saveTrainingCriterion(token, versionId, {
         id: criterion.id || undefined,
         questionType: criterion.questionType,
         code: code.trim(),
@@ -1563,7 +1899,7 @@ function CriterionCard({
         anchors: parseCriterionAnchors(anchors, Number(maxPoints)),
         sortOrder: Number(sortOrder),
       });
-      await onChanged();
+      await onChanged(response.criterion.id);
     } catch (caughtError) {
       setError(getErrorMessage(caughtError));
     } finally {
@@ -1586,6 +1922,17 @@ function CriterionCard({
 
   return (
     <article className="training-edit-card training-edit-card--criterion">
+      <div className="training-edit-card-heading">
+        <div>
+          <strong>{title || code || 'Новый критерий'}</strong>
+          <span>
+            {criterion.questionType === 'MAIN'
+              ? 'Главный вопрос'
+              : 'Дополнительный вопрос'}
+          </span>
+        </div>
+        <AdminStatusBadge>{maxPoints || '0'} баллов</AdminStatusBadge>
+      </div>
       {error ? <AdminAlert tone="error">{error}</AdminAlert> : null}
       <fieldset disabled={readOnly || saving} className="training-fieldset">
         <div className="training-form-grid">
@@ -1620,22 +1967,26 @@ function CriterionCard({
             onChange={setMaxPoints}
           />
           <Field>
-            <FieldLabel htmlFor={`criterion-description-${criterion.id || 'new'}`}>
+            <FieldLabel
+              htmlFor={`criterion-description-${criterion.id || 'new'}-${criterion.questionType}`}
+            >
               Описание
             </FieldLabel>
             <textarea
-              id={`criterion-description-${criterion.id || 'new'}`}
+              id={`criterion-description-${criterion.id || 'new'}-${criterion.questionType}`}
               className="training-control training-textarea training-textarea--compact"
               value={description}
               onChange={(event) => setDescription(event.target.value)}
             />
           </Field>
           <Field className="training-field-wide">
-            <FieldLabel htmlFor={`criterion-anchors-${criterion.id || 'new'}`}>
+            <FieldLabel
+              htmlFor={`criterion-anchors-${criterion.id || 'new'}-${criterion.questionType}`}
+            >
               Якоря оценки
             </FieldLabel>
             <textarea
-              id={`criterion-anchors-${criterion.id || 'new'}`}
+              id={`criterion-anchors-${criterion.id || 'new'}-${criterion.questionType}`}
               className="training-control training-textarea training-textarea--compact"
               value={anchors}
               placeholder="full | 10 | Полный и точный ответ"
@@ -2162,6 +2513,228 @@ function TrainingAdminHeader({
   );
 }
 
+function TrainingMasterDetail({
+  ariaLabel,
+  groups,
+  selectedId,
+  onSelect,
+  children,
+}: {
+  ariaLabel: string;
+  groups: TrainingMasterGroup[];
+  selectedId: string;
+  onSelect: (id: string) => void;
+  children: ReactNode;
+}) {
+  const items = groups.flatMap((group) => group.items);
+
+  return (
+    <div
+      className="training-master-detail"
+      data-training-master-detail
+    >
+      <div className="training-master-mobile">
+        <label>
+          <span>Выбранный раздел</span>
+          <select
+            className="training-control"
+            value={selectedId}
+            disabled={items.length === 0}
+            onChange={(event) => onSelect(event.target.value)}
+          >
+            {groups.map((group) => (
+              <optgroup key={group.id} label={group.label}>
+                {group.items.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </label>
+        {groups.some((group) => group.action) ? (
+          <div
+            className="training-master-mobile-actions"
+            aria-label="Добавление элементов"
+          >
+            {groups.map((group) =>
+              group.action ? (
+                <div key={group.id} className="training-master-mobile-action">
+                  <span>{group.label}</span>
+                  {group.action}
+                </div>
+              ) : null,
+            )}
+          </div>
+        ) : null}
+      </div>
+
+      <nav className="training-master-pane" aria-label={ariaLabel}>
+        {groups.map((group) => (
+          <section key={group.id} className="training-master-group">
+            <div className="training-master-group-heading">
+              <div>
+                <h3>{group.label}</h3>
+                {group.summary ? <p>{group.summary}</p> : null}
+              </div>
+              {group.action}
+            </div>
+            {group.items.length > 0 ? (
+              <ul className="training-master-list">
+                {group.items.map((item) => {
+                  const selected = item.id === selectedId;
+                  return (
+                    <li key={item.id}>
+                      <button
+                        id={trainingMasterButtonId(item.id)}
+                        type="button"
+                        className={
+                          selected
+                            ? 'training-master-item is-active'
+                            : 'training-master-item'
+                        }
+                        aria-current={selected ? 'true' : undefined}
+                        aria-controls={trainingDetailPanelId(item.id)}
+                        data-editor-item-id={item.id}
+                        onClick={() => onSelect(item.id)}
+                      >
+                        <span className="training-master-item-copy">
+                          <strong>{item.label}</strong>
+                          {item.description ? <span>{item.description}</span> : null}
+                        </span>
+                        {item.status ? (
+                          <span
+                            className={`training-master-status training-master-status--${item.statusTone ?? 'neutral'}`}
+                          >
+                            {item.status}
+                          </span>
+                        ) : null}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p className="training-master-empty">Пока нет элементов</p>
+            )}
+          </section>
+        ))}
+      </nav>
+
+      <div className="training-detail-pane">{children}</div>
+    </div>
+  );
+}
+
+function TrainingMasterAddButton({
+  label,
+  onClick,
+}: {
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="training-master-add"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+    >
+      <PlusIcon aria-hidden="true" />
+    </button>
+  );
+}
+
+function TrainingDetailPanel({
+  id,
+  selectedId,
+  label,
+  children,
+}: {
+  id: string;
+  selectedId: string;
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <section
+      id={trainingDetailPanelId(id)}
+      aria-labelledby={trainingMasterButtonId(id)}
+      aria-label={label}
+      data-editor-panel-id={id}
+      hidden={id !== selectedId}
+    >
+      {children}
+    </section>
+  );
+}
+
+function TrainingDetailHeading({
+  title,
+  description,
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="training-detail-heading">
+      <h3>{title}</h3>
+      <p>{description}</p>
+    </div>
+  );
+}
+
+function TrainingCheckboxRow({
+  id,
+  label,
+  description,
+  checked,
+  disabled = false,
+  compact = false,
+  className,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  description?: string;
+  checked: boolean;
+  disabled?: boolean;
+  compact?: boolean;
+  className?: string;
+  onChange: (checked: boolean) => void;
+}) {
+  const descriptionId = description ? `${id}-description` : undefined;
+  const classes = [
+    'training-checkbox-row',
+    compact ? 'training-checkbox-row--compact' : '',
+    checked ? 'is-checked' : '',
+    disabled ? 'is-disabled' : '',
+    className ?? '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  return (
+    <label className={classes} data-checked={checked ? 'true' : 'false'}>
+      <input
+        id={id}
+        className="training-checkbox-control"
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        aria-describedby={descriptionId}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      <span className="training-checkbox-copy">
+        <strong>{label}</strong>
+        {description ? <span id={descriptionId}>{description}</span> : null}
+      </span>
+    </label>
+  );
+}
+
 function SectionHeading({
   title,
   description,
@@ -2467,6 +3040,51 @@ function translatePublicationError(message: string) {
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Запрос не выполнен';
+}
+
+function projectErrorSection(
+  errors: Record<string, string>,
+): ProjectEditorSection {
+  if (errors.availability) return 'availability';
+  if (
+    [
+      'passScore',
+      'attemptLimit',
+      'cooldownMinutes',
+      'totalTimeLimitSeconds',
+      'finishGraceSeconds',
+      'warningSeconds',
+    ].some((key) => errors[key])
+  ) {
+    return 'attempt';
+  }
+  return 'project';
+}
+
+function trainingDomSuffix(value: string) {
+  return value.replace(/[^A-Za-z0-9_-]+/gu, '-');
+}
+
+function trainingMasterButtonId(id: string) {
+  return `training-master-button-${trainingDomSuffix(id)}`;
+}
+
+function trainingDetailPanelId(id: string) {
+  return `training-detail-panel-${trainingDomSuffix(id)}`;
+}
+
+function pluralizeItems(
+  value: number,
+  singular: string,
+  few: string,
+  many: string,
+) {
+  const absolute = Math.abs(value) % 100;
+  const last = absolute % 10;
+  if (absolute > 10 && absolute < 20) return many;
+  if (last === 1) return singular;
+  if (last >= 2 && last <= 4) return few;
+  return many;
 }
 
 function asStringList(value: unknown) {
