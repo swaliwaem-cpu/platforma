@@ -57,6 +57,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
+      NODE_OPTIONS: ${NODE_OPTIONS:-}
       NODE_ENV: ${NODE_ENV:-development}
       DEPLOYMENT_ENV: ${DEPLOYMENT_ENV:-development}
       STAGING_ALLOW_FAKE_PROVIDERS: ${STAGING_ALLOW_FAKE_PROVIDERS:-false}
@@ -179,6 +180,7 @@ services:
       dockerfile: apps/api/Dockerfile
     command: ["node", "apps/api/dist/training/training-worker.main.js"]
     environment:
+      NODE_OPTIONS: ${NODE_OPTIONS:-}
       NODE_ENV: ${NODE_ENV:-development}
       DEPLOYMENT_ENV: ${DEPLOYMENT_ENV:-development}
       STAGING_ALLOW_FAKE_PROVIDERS: ${STAGING_ALLOW_FAKE_PROVIDERS:-false}
