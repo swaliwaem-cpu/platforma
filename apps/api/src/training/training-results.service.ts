@@ -9,6 +9,8 @@ import {
   TrainingFactVerdict,
   TrainingPassStatus,
   TrainingProjectStatus,
+  TrainingAttemptQuestionStatus,
+  TrainingQuestionType,
   TrainingReviewStatus,
   TrainingVersionStatus,
 } from '@prisma/client';
@@ -346,6 +348,7 @@ export class TrainingResultsService {
       where: { id: attemptId, userId },
       select: {
         ...employeeAttemptSelect,
+        serverScore: true,
         projectVersion: { select: { attemptLimit: true } },
         project: {
           select: {
@@ -425,7 +428,8 @@ export class TrainingResultsService {
         select: { finalScore: true },
       }),
     ]);
-    const isVisibleFinal = isFinalReviewedAttempt(attempt);
+    const breakdownPresentation =
+      resolveEmployeeBreakdownPresentation(attempt);
 
     return {
       attempt: {
@@ -436,28 +440,8 @@ export class TrainingResultsService {
             attempt.projectVersion.attemptLimit) - attemptsUsed,
         ),
         bestScore: decimalToString(best?.finalScore),
-        questions: attempt.attemptQuestions.map((question) => ({
-          id: question.id,
-          sequence: question.sequence,
-          type: question.question.type,
-          text: question.question.text,
-          status: question.status,
-          responseTimeSeconds: question.responseTimeSeconds,
-          answerDurationSeconds: question.answerDurationSeconds,
-          score: isVisibleFinal
-            ? decimalToString(question.answer?.activeEvaluation?.serverScore)
-            : null,
-          components: isVisibleFinal
-            ? (question.answer?.activeEvaluation?.scoreComponents ?? []).map(
-                (component) => ({
-                  key: component.componentKey,
-                  title: component.title ?? component.componentKey,
-                  awardedPoints: component.awardedPoints.toString(),
-                  maxPoints: component.maxPoints.toString(),
-                }),
-              )
-            : [],
-        })),
+        breakdownStatus: breakdownPresentation.status,
+        breakdown: breakdownPresentation.breakdown,
       },
     };
   }
@@ -1007,6 +991,109 @@ function serializeEmployeeAttempt(
       title: attempt.project.title,
       slug: attempt.project.slug,
     },
+  };
+}
+
+function resolveEmployeeBreakdownPresentation(attempt: {
+  status: TrainingAttemptStatus;
+  finalScore: Prisma.Decimal | null;
+  serverScore: Prisma.Decimal | null;
+  reviewStatus: TrainingReviewStatus;
+  attemptQuestions: Array<{
+    id: string;
+    sequence: number;
+    status: TrainingAttemptQuestionStatus;
+    responseTimeSeconds: number | null;
+    answerDurationSeconds: number | null;
+    question: {
+      type: TrainingQuestionType;
+      text: string;
+    };
+    answer: {
+      activeEvaluation: {
+        serverScore: Prisma.Decimal;
+        scoreComponents: Array<{
+          componentKey: string;
+          title: string | null;
+          awardedPoints: Prisma.Decimal;
+          maxPoints: Prisma.Decimal;
+        }>;
+      } | null;
+    } | null;
+  }>;
+}) {
+  if (!isFinalReviewedAttempt(attempt)) {
+    return {
+      status: 'PENDING_REVIEW' as const,
+      breakdown: null,
+    };
+  }
+  if (
+    attempt.reviewStatus === TrainingReviewStatus.OVERRIDDEN ||
+    attempt.serverScore === null ||
+    !attempt.finalScore!.equals(attempt.serverScore)
+  ) {
+    return {
+      status: 'MANUALLY_ADJUSTED_BREAKDOWN_UNAVAILABLE' as const,
+      breakdown: null,
+    };
+  }
+
+  const evaluations = attempt.attemptQuestions.map(
+    (question) => question.answer?.activeEvaluation ?? null,
+  );
+  if (evaluations.some((evaluation) => evaluation === null)) {
+    return {
+      status: 'BREAKDOWN_UNAVAILABLE' as const,
+      breakdown: null,
+    };
+  }
+  const questionScoreTotal = evaluations.reduce(
+    (sum, evaluation) => sum.add(evaluation!.serverScore),
+    new Prisma.Decimal(0),
+  );
+  if (!questionScoreTotal.equals(attempt.finalScore!)) {
+    return {
+      status: 'BREAKDOWN_UNAVAILABLE' as const,
+      breakdown: null,
+    };
+  }
+  const hasInconsistentComponents = evaluations.some((evaluation) => {
+    if (!evaluation!.scoreComponents.length) return false;
+    const componentTotal = evaluation!.scoreComponents.reduce(
+      (sum, component) => sum.add(component.awardedPoints),
+      new Prisma.Decimal(0),
+    );
+    return !componentTotal.equals(evaluation!.serverScore);
+  });
+  if (hasInconsistentComponents) {
+    return {
+      status: 'BREAKDOWN_UNAVAILABLE' as const,
+      breakdown: null,
+    };
+  }
+
+  return {
+    status: 'AVAILABLE' as const,
+    breakdown: attempt.attemptQuestions.map((question) => {
+      const evaluation = question.answer!.activeEvaluation!;
+      return {
+        id: question.id,
+        sequence: question.sequence,
+        type: question.question.type,
+        text: question.question.text,
+        status: question.status,
+        responseTimeSeconds: question.responseTimeSeconds,
+        answerDurationSeconds: question.answerDurationSeconds,
+        score: evaluation.serverScore.toString(),
+        components: evaluation.scoreComponents.map((component) => ({
+          key: component.componentKey,
+          title: component.title ?? component.componentKey,
+          awardedPoints: component.awardedPoints.toString(),
+          maxPoints: component.maxPoints.toString(),
+        })),
+      };
+    }),
   };
 }
 

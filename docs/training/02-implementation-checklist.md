@@ -28,7 +28,7 @@
 | 6 | `06_telegram.md` | Выполнен |
 | 7 | `07_audio_worker.md` | Выполнен |
 | 8 | `08_openai_scoring_review.md` | Выполнен |
-| 9 | `09_results_ui_rating.md` | Не начат |
+| 9 | `09_results_ui_rating.md` | Выполнен; findings независимого review исправлены |
 | 10 | `10_security_deploy_pilot.md` | Не начат |
 
 ## Этап 0. Аудит и архитектурные документы
@@ -604,6 +604,23 @@ PostgreSQL/HTTP integration tests; root suite также включает `286/2
   CSV; runner применяет все `39` migrations и удаляет временную БД;
 - отдельный demo seed не добавлялся: детерминированные fake-сценарии
   изолированы в unit/PostgreSQL fixtures и не могут попасть в production seed.
+- [x] Findings независимого review этапа 9 закрыты без перехода к этапу 10:
+  employee breakdown скрывается после любого manual/factual adjustment;
+  ranking page/total/order считаются CTE/window/numeric query в PostgreSQL;
+  CSV батчами использует тот же ranking core.
+- [x] Review UI разделяет `SUBMITTING/COMMITTED/REFRESHING/COMPLETED`,
+  `POST_AMBIGUOUS/REFRESH_FAILED/POST_FAILED`; committed POST не повторяется
+  при failed detail/ranking refresh.
+- [x] Protected audio download использует `AbortController`, generation token
+  и немедленный revoke stale/current Blob URL, включая 401 refresh race.
+- [x] Добавлен behavioral Playwright gate без новых dependencies:
+  `pnpm --filter @platforma/web test:training:browser` (`8/8` Chromium).
+- [x] PostgreSQL fixture содержит 41 ranking user и 10 projects; проверены
+  реальные page 1/2, total, page-scoped details, filters, exact averages,
+  stable ties, CSV order и `EXPLAIN (ANALYZE, BUFFERS)`.
+- [x] EXPLAIN не выбирает answer/transcript/evaluation/audio/provider
+  relations. Доказанной пользы нового индекса на fixture нет, поэтому Prisma
+  schema/migrations не менялись.
 - Real OpenAI synthetic smoke остаётся отложенным; production deploy и
   production migrations не выполнялись.
 - Этап 10 не начинался.

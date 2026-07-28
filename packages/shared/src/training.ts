@@ -280,20 +280,32 @@ export type TrainingEmployeeScoreComponent = {
   maxPoints: string;
 };
 
+export const TRAINING_EMPLOYEE_BREAKDOWN_STATUSES = [
+  'AVAILABLE',
+  'PENDING_REVIEW',
+  'MANUALLY_ADJUSTED_BREAKDOWN_UNAVAILABLE',
+  'BREAKDOWN_UNAVAILABLE',
+] as const;
+export type TrainingEmployeeBreakdownStatus =
+  (typeof TRAINING_EMPLOYEE_BREAKDOWN_STATUSES)[number];
+
+export type TrainingEmployeeQuestionBreakdown = {
+  id: string;
+  sequence: number;
+  type: TrainingQuestionType;
+  text: string;
+  status: TrainingAttemptQuestionStatus;
+  responseTimeSeconds: number | null;
+  answerDurationSeconds: number | null;
+  score: string;
+  components: TrainingEmployeeScoreComponent[];
+};
+
 export type TrainingEmployeeAttemptDetail = TrainingEmployeeAttemptListItem & {
   attemptsLeft: number;
   bestScore: string | null;
-  questions: Array<{
-    id: string;
-    sequence: number;
-    type: TrainingQuestionType;
-    text: string;
-    status: TrainingAttemptQuestionStatus;
-    responseTimeSeconds: number | null;
-    answerDurationSeconds: number | null;
-    score: string | null;
-    components: TrainingEmployeeScoreComponent[];
-  }>;
+  breakdownStatus: TrainingEmployeeBreakdownStatus;
+  breakdown: TrainingEmployeeQuestionBreakdown[] | null;
 };
 
 export type TrainingEmployeeAttemptDetailResponse = {

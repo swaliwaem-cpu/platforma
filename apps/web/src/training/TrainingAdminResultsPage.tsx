@@ -55,7 +55,11 @@ import {
   reprocessTrainingAnswer,
   reviewTrainingAttempt,
 } from './trainingResultsApi';
-import { TrainingReviewSubmission } from './trainingReviewSubmission.mjs';
+import {
+  TrainingReviewSubmission,
+  type TrainingReviewOperation,
+  type TrainingReviewSubmissionState,
+} from './trainingReviewSubmission.mjs';
 import {
   attemptStatusLabels,
   formatTrainingDuration,
@@ -528,6 +532,21 @@ function TrainingAdminAttemptPage({
     }
   }, [accessToken, attemptId]);
 
+  const refreshAfterReview = useCallback(async () => {
+    if (!accessToken) {
+      throw new Error('Сессия недоступна');
+    }
+    const [detail] = await Promise.all([
+      getTrainingAdminAttempt(accessToken, attemptId),
+      getTrainingRanking(accessToken, {
+        page: 1,
+        pageSize: 1,
+      }),
+    ]);
+    setAttempt(detail.attempt);
+    setError(null);
+  }, [accessToken, attemptId]);
+
   useEffect(() => {
     void load();
   }, [load]);
@@ -593,16 +612,7 @@ function TrainingAdminAttemptPage({
             <ReviewPanel
               accessToken={accessToken}
               attempt={attempt}
-              onReviewed={async () => {
-                await load();
-                if (accessToken) {
-                  await getTrainingRanking(accessToken, {
-                    page: 1,
-                    pageSize: 1,
-                  });
-                }
-                setNotice('Решение сохранено, результат и рейтинг обновлены.');
-              }}
+              onRefresh={refreshAfterReview}
             />
           ) : null}
           <ReviewHistory attempt={attempt} />
@@ -969,31 +979,71 @@ function TrainingAudioPlayer({
   answerId: string;
 }) {
   const managerRef = useRef(new TrainingAudioObjectUrl());
+  const abortRef = useRef<AbortController | null>(null);
+  const generationRef = useRef(0);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    generationRef.current += 1;
+    managerRef.current.revoke();
+    setAudioUrl(null);
+    setError(null);
+    setIsLoading(false);
+
+    return () => {
+      abortRef.current?.abort();
+      abortRef.current = null;
+      generationRef.current += 1;
       managerRef.current.revoke();
-    },
-    [],
-  );
+    };
+  }, [answerId]);
 
   async function loadAudio() {
     if (!accessToken) return;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const generation = generationRef.current + 1;
+    generationRef.current = generation;
+    managerRef.current.revoke();
+    setAudioUrl(null);
     setIsLoading(true);
     setError(null);
     try {
       const { blob } = await downloadTrainingAnswerAudio(
         accessToken,
         answerId,
+        controller.signal,
       );
-      setAudioUrl(managerRef.current.replace(blob));
+      if (
+        controller.signal.aborted ||
+        generation !== generationRef.current
+      ) {
+        return;
+      }
+      const nextUrl = managerRef.current.replace(blob);
+      if (
+        controller.signal.aborted ||
+        generation !== generationRef.current
+      ) {
+        managerRef.current.revoke();
+        return;
+      }
+      setAudioUrl(nextUrl);
     } catch (caughtError) {
+      if (isAbortError(caughtError)) return;
       setError(readError(caughtError, 'Не удалось загрузить аудио'));
     } finally {
-      setIsLoading(false);
+      if (generation === generationRef.current) {
+        if (abortRef.current === controller) {
+          abortRef.current = null;
+        }
+        setIsLoading(false);
+      }
     }
   }
 
@@ -1017,11 +1067,11 @@ function TrainingAudioPlayer({
 function ReviewPanel({
   accessToken,
   attempt,
-  onReviewed,
+  onRefresh,
 }: {
   accessToken: string | null;
   attempt: TrainingAdminAttemptDetail;
-  onReviewed: () => Promise<void>;
+  onRefresh: () => Promise<void>;
 }) {
   const unsupported = useMemo(
     () => {
@@ -1056,12 +1106,23 @@ function ReviewPanel({
   const [unsupportedDecisions, setUnsupportedDecisions] = useState<
     Record<string, 'ACCEPTED' | 'INCORRECT'>
   >({});
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const operationLockRef = useRef(false);
+  const [submissionState, setSubmissionState] =
+    useState<TrainingReviewSubmissionState>('IDLE');
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [hasConflict, setHasConflict] = useState(false);
+  const isOperationLocked = [
+    'SUBMITTING',
+    'COMMITTED',
+    'REFRESHING',
+    'POST_AMBIGUOUS',
+    'REFRESH_FAILED',
+  ].includes(submissionState);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!accessToken) return;
+    if (!accessToken || operationLockRef.current) return;
     const decisions = unsupported.map((component) => ({
       componentKey: component.componentKey,
       decision: unsupportedDecisions[component.componentKey],
@@ -1077,31 +1138,117 @@ function ReviewPanel({
       unsupportedClaimsDecisions:
         decisions as TrainingReviewRequest['unsupportedClaimsDecisions'],
     };
-    const idempotencyKey = submissionRef.current.keyFor(request);
-    setIsSubmitting(true);
+    let operation: TrainingReviewOperation<TrainingReviewRequest>;
+    try {
+      operation = submissionRef.current.begin(request);
+    } catch (caughtError) {
+      setError(readError(caughtError, 'Не удалось начать сохранение'));
+      return;
+    }
+    await sendReviewOperation(operation);
+  }
+
+  async function sendReviewOperation(
+    operation: TrainingReviewOperation<TrainingReviewRequest>,
+  ) {
+    if (!accessToken || operationLockRef.current) return;
+    operationLockRef.current = true;
+    setSubmissionState('SUBMITTING');
     setError(null);
+    setNotice(null);
+    setHasConflict(false);
     try {
       await reviewTrainingAttempt(
         accessToken,
         attempt.id,
-        request,
-        idempotencyKey,
+        operation.payload,
+        operation.key,
       );
-      submissionRef.current.complete();
-      await onReviewed();
     } catch (caughtError) {
-      setError(
-        caughtError instanceof ApiRequestError && caughtError.status === 409
-          ? 'Конфликт повторного запроса: обновите попытку и повторите решение.'
-          : readError(caughtError, 'Не удалось сохранить решение'),
-      );
+      operationLockRef.current = false;
+      if (isAmbiguousReviewPostError(caughtError)) {
+        submissionRef.current.markPostAmbiguous();
+        setSubmissionState('POST_AMBIGUOUS');
+        setError(
+          'Результат сохранения неизвестен. Повторите запрос с тем же ключом и данными.',
+        );
+        return;
+      }
+      submissionRef.current.markPostFailed();
+      setSubmissionState('POST_FAILED');
+      if (
+        caughtError instanceof ApiRequestError &&
+        caughtError.status === 409
+      ) {
+        setHasConflict(true);
+        setError(
+          'Конфликт Idempotency-Key: перечитайте попытку. Новый POST автоматически не отправляется.',
+        );
+        return;
+      }
+      setError(readError(caughtError, 'Не удалось сохранить решение'));
+      return;
+    }
+    submissionRef.current.markCommitted();
+    setSubmissionState('COMMITTED');
+    setNotice('Проверка сохранена. Обновляем данные.');
+    await refreshCommittedReview();
+  }
+
+  async function refreshCommittedReview() {
+    submissionRef.current.markRefreshing();
+    setSubmissionState('REFRESHING');
+    setError(null);
+    try {
+      await onRefresh();
+      submissionRef.current.markCompleted();
+      setSubmissionState('COMPLETED');
+      setNotice('Решение сохранено, результат и рейтинг обновлены.');
+    } catch {
+      submissionRef.current.markRefreshFailed();
+      setSubmissionState('REFRESH_FAILED');
+      setNotice(null);
+      setError('Проверка сохранена, но обновить данные не удалось');
     } finally {
-      setIsSubmitting(false);
+      operationLockRef.current = false;
+    }
+  }
+
+  async function retryAmbiguousPost() {
+    if (operationLockRef.current) return;
+    const operation =
+      submissionRef.current.retryAmbiguous<TrainingReviewRequest>();
+    await sendReviewOperation(operation);
+  }
+
+  async function retryRefresh() {
+    if (operationLockRef.current) return;
+    operationLockRef.current = true;
+    await refreshCommittedReview();
+  }
+
+  async function rereadAfterConflict() {
+    if (operationLockRef.current) return;
+    operationLockRef.current = true;
+    setError(null);
+    try {
+      await onRefresh();
+      submissionRef.current.reset();
+      setSubmissionState('IDLE');
+      setHasConflict(false);
+      setNotice('Данные попытки обновлены. Проверьте решение перед отправкой.');
+    } catch (caughtError) {
+      setError(readError(caughtError, 'Не удалось перечитать попытку'));
+    } finally {
+      operationLockRef.current = false;
     }
   }
 
   return (
-    <AdminPanel className="training-review-panel">
+    <AdminPanel
+      className="training-review-panel"
+      data-review-state={submissionState}
+    >
       <CardHeader>
         <div>
           <p className="eyebrow">Ручная проверка</p>
@@ -1111,7 +1258,7 @@ function ReviewPanel({
       </CardHeader>
       <CardContent>
         <form className="training-review-form" onSubmit={submit}>
-          <fieldset>
+          <fieldset disabled={isOperationLocked}>
             <legend>Решение</legend>
             <label>
               <input
@@ -1143,13 +1290,17 @@ function ReviewPanel({
                 max="100"
                 step="0.01"
                 type="number"
+                disabled={isOperationLocked}
                 value={adminScore}
                 onChange={(event) => setAdminScore(event.target.value)}
               />
             </label>
           ) : null}
           {unsupported.length ? (
-            <fieldset className="training-unsupported-review">
+            <fieldset
+              className="training-unsupported-review"
+              disabled={isOperationLocked}
+            >
               <legend>Unsupported claims</legend>
               {unsupported.map((component) => (
                 <div key={component.componentKey}>
@@ -1200,18 +1351,51 @@ function ReviewPanel({
               required
               maxLength={2000}
               rows={4}
+              disabled={isOperationLocked}
               value={comment}
               onChange={(event) => setComment(event.target.value)}
             />
           </label>
+          {notice ? <AdminAlert tone="notice">{notice}</AdminAlert> : null}
           {error ? <AdminAlert tone="error">{error}</AdminAlert> : null}
           <AdminButton
-            disabled={isSubmitting || !comment.trim()}
+            disabled={isOperationLocked || !comment.trim()}
             type="submit"
           >
             <CheckCircle2Icon data-icon="inline-start" aria-hidden="true" />
-            {isSubmitting ? 'Сохранение' : 'Сохранить решение'}
+            {submissionState === 'SUBMITTING'
+              ? 'Сохранение'
+              : submissionState === 'REFRESHING'
+                ? 'Обновление'
+                : 'Сохранить решение'}
           </AdminButton>
+          {submissionState === 'POST_AMBIGUOUS' ? (
+            <AdminButton
+              tone="secondary"
+              type="button"
+              onClick={() => void retryAmbiguousPost()}
+            >
+              Повторить сохранение
+            </AdminButton>
+          ) : null}
+          {submissionState === 'REFRESH_FAILED' ? (
+            <AdminButton
+              tone="secondary"
+              type="button"
+              onClick={() => void retryRefresh()}
+            >
+              Повторить обновление
+            </AdminButton>
+          ) : null}
+          {hasConflict ? (
+            <AdminButton
+              tone="secondary"
+              type="button"
+              onClick={() => void rereadAfterConflict()}
+            >
+              Перечитать данные
+            </AdminButton>
+          ) : null}
         </form>
       </CardContent>
     </AdminPanel>
@@ -1338,6 +1522,18 @@ function compactFilters(filters: ResultFilters) {
 function formatEvidence(value: unknown) {
   if (typeof value === 'string') return value;
   return JSON.stringify(value, null, 2);
+}
+
+function isAmbiguousReviewPostError(error: unknown) {
+  return (
+    !(error instanceof ApiRequestError) ||
+    error.status === 0 ||
+    error.status >= 500
+  );
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof Error && error.name === 'AbortError';
 }
 
 function readError(error: unknown, fallback: string) {

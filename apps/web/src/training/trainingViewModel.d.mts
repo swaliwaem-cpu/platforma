@@ -1,5 +1,6 @@
 import type {
   TrainingAttemptStatus,
+  TrainingEmployeeBreakdownStatus,
   TrainingPassStatus,
   TrainingProjectEligibilityReason,
   TrainingReviewStatus,
@@ -8,6 +9,10 @@ import type {
 export const attemptStatusLabels: Record<TrainingAttemptStatus, string>;
 export const passStatusLabels: Record<TrainingPassStatus, string>;
 export const reviewStatusLabels: Record<TrainingReviewStatus, string>;
+export const employeeBreakdownStatusLabels: Record<
+  TrainingEmployeeBreakdownStatus,
+  string
+>;
 export const eligibilityLabels: Record<TrainingProjectEligibilityReason, string>;
 
 export function visibleEmployeeScore(attempt: {

@@ -5,7 +5,6 @@ import {
   TrainingFactVerdict,
   TrainingPassStatus,
   TrainingReviewStatus,
-  UserStatus,
 } from '@prisma/client';
 import type {
   TrainingRankingItem,
@@ -38,6 +37,22 @@ type NarrativeInput = {
     unsupportedClaims: string[];
     scoreChangeFromFirst: string | null;
   }>;
+};
+
+type RankingPageRow = {
+  userId: string;
+  userName: string | null;
+  userEmail: string;
+  passedProjectsCount: number;
+  completedProjectsCount: number;
+  averageBestScore: string | null;
+  attemptsUsed: number;
+  lastCompletedAt: Date | null;
+  totalDurationSeconds: bigint;
+  averageDurationSeconds: number | null;
+  bestAttemptIds: string[];
+  position: bigint;
+  total: bigint;
 };
 
 const rankingAttemptSelect = {
@@ -85,6 +100,20 @@ const rankingAttemptSelect = {
   },
 } satisfies Prisma.TrainingAttemptSelect;
 
+const eligibleFinalAttemptWhere = {
+  isConsumed: true,
+  status: {
+    in: [
+      TrainingAttemptStatus.COMPLETED,
+      TrainingAttemptStatus.REQUIRES_REVIEW,
+    ],
+  },
+  finalScore: { not: null },
+  completedAt: { not: null },
+  reviewStatus: { not: TrainingReviewStatus.PENDING },
+  passStatus: { not: TrainingPassStatus.PENDING },
+} satisfies Prisma.TrainingAttemptWhereInput;
+
 @Injectable()
 export class TrainingRankingService {
   constructor(private readonly prisma: PrismaService) {}
@@ -92,69 +121,40 @@ export class TrainingRankingService {
   async list(
     filters: TrainingRankingFilters,
   ): Promise<TrainingRankingResponse> {
-    const users = await this.prisma.user.findMany({
-      where: {
-        status: UserStatus.ACTIVE,
-        deletedAt: null,
-        role: {
-          permissions: {
-            some: {
-              permission: { key: 'training:take' },
-            },
-          },
-        },
-        ...(filters.user
-          ? {
-              OR: [
-                { name: { contains: filters.user, mode: 'insensitive' } },
-                { email: { contains: filters.user, mode: 'insensitive' } },
-              ],
-            }
-          : {}),
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-      },
-    });
-    const [attempts, usageCounts, projects] = users.length
-      ? await Promise.all([
-          this.prisma.trainingAttempt.findMany({
+    const start = (filters.page - 1) * filters.pageSize;
+    const pageRows = await this.prisma.$queryRaw<RankingPageRow[]>(
+      buildTrainingRankingPageQuery(filters, start),
+    );
+    const total = pageRows[0] ? toSafeNumber(pageRows[0].total) : 0;
+    const userIds = pageRows.map((row) => row.userId);
+    const [attempts, usageCounts, projects] = await Promise.all([
+      userIds.length
+        ? this.prisma.trainingAttempt.findMany({
             where: {
-              userId: { in: users.map((user) => user.id) },
+              userId: { in: userIds },
               ...(filters.projectId
                 ? { projectId: filters.projectId }
                 : {}),
-              isConsumed: true,
-              status: {
-                in: [
-                  TrainingAttemptStatus.COMPLETED,
-                  TrainingAttemptStatus.REQUIRES_REVIEW,
-                ],
-              },
-              finalScore: { not: null },
-              completedAt: { not: null },
-              reviewStatus: { not: TrainingReviewStatus.PENDING },
-              passStatus: { not: TrainingPassStatus.PENDING },
+              ...eligibleFinalAttemptWhere,
             },
             select: rankingAttemptSelect,
-          }),
-          this.prisma.trainingAttempt.groupBy({
+          })
+        : Promise.resolve([]),
+      userIds.length
+        ? this.prisma.trainingAttempt.groupBy({
             by: ['userId', 'projectId'],
             where: {
-              userId: { in: users.map((user) => user.id) },
+              userId: { in: userIds },
               ...(filters.projectId
                 ? { projectId: filters.projectId }
                 : {}),
               isConsumed: true,
             },
             _count: { _all: true },
-          }),
-          this.listProjects(filters.projectId),
-        ])
-      : [[], [], await this.listProjects(filters.projectId)];
-
+          })
+        : Promise.resolve([]),
+      this.listProjects(filters.projectId),
+    ]);
     const attemptsByUser = new Map<string, typeof attempts>();
     for (const attempt of attempts) {
       const current = attemptsByUser.get(attempt.userId) ?? [];
@@ -167,50 +167,57 @@ export class TrainingRankingService {
         item._count._all,
       ]),
     );
-    const sorted = users
-      .map((user) =>
-        buildRankingItem(
-          user,
-          attemptsByUser.get(user.id) ?? [],
-          attemptsUsedByUserProject,
-        ),
-      )
-      .sort(compareRankingItems);
-    const start = (filters.page - 1) * filters.pageSize;
-    const items = sorted
-      .slice(start, start + filters.pageSize)
-      .map((item, index) => ({
-        ...item,
-        position: start + index + 1,
-      }));
+    const items = pageRows.map((row) =>
+      buildRankingItemFromPageRow(
+        row,
+        attemptsByUser.get(row.userId) ?? [],
+        attemptsUsedByUserProject,
+      ),
+    );
 
     return {
       items,
       pagination: {
         page: filters.page,
         pageSize: filters.pageSize,
-        total: sorted.length,
-        totalPages:
-          sorted.length === 0
-            ? 0
-            : Math.ceil(sorted.length / filters.pageSize),
+        total,
+        totalPages: total === 0 ? 0 : Math.ceil(total / filters.pageSize),
       },
       projects,
     };
   }
 
-  async listForExport(filters: Omit<TrainingRankingFilters, 'page' | 'pageSize'>) {
-    const first = await this.list({
-      ...filters,
-      page: 1,
-      pageSize: 100,
-    });
-    if (first.pagination.total <= 100) return first;
-    return this.list({
-      ...filters,
-      page: 1,
-      pageSize: first.pagination.total,
-    });
+  async listForExport(
+    filters: Omit<TrainingRankingFilters, 'page' | 'pageSize'>,
+  ) {
+    const items: TrainingRankingItem[] = [];
+    let projects: TrainingRankingResponse['projects'] = [];
+    let total = 0;
+    let page = 1;
+    do {
+      const batch = await this.list({
+        ...filters,
+        page,
+        pageSize: 100,
+      });
+      if (page === 1) {
+        projects = batch.projects;
+        total = batch.pagination.total;
+      }
+      items.push(...batch.items);
+      if (!batch.items.length) break;
+      page += 1;
+    } while (items.length < total);
+    return {
+      items,
+      projects,
+      pagination: {
+        page: 1,
+        pageSize: items.length,
+        total,
+        totalPages: total === 0 ? 0 : 1,
+      },
+    };
   }
 
   private listProjects(projectId?: string) {
@@ -223,6 +230,172 @@ export class TrainingRankingService {
       select: { id: true, title: true },
     });
   }
+}
+
+export function buildTrainingRankingPageQuery(
+  filters: TrainingRankingFilters,
+  offset: number,
+) {
+  const searchPattern = filters.user
+    ? `%${escapeLikePattern(filters.user)}%`
+    : null;
+  const searchCondition = searchPattern
+    ? Prisma.sql`
+        AND (
+          COALESCE(u."name", '') ILIKE ${searchPattern} ESCAPE '\'
+          OR u."email" ILIKE ${searchPattern} ESCAPE '\'
+        )
+      `
+    : Prisma.sql``;
+  const projectAttemptCondition = filters.projectId
+    ? Prisma.sql`AND ta."project_id" = ${filters.projectId}::uuid`
+    : Prisma.sql``;
+  const projectUserCondition = filters.projectId
+    ? Prisma.sql`WHERE COALESCE(bm."completedProjectsCount", 0) > 0`
+    : Prisma.sql``;
+
+  return Prisma.sql`
+    WITH eligible_users AS (
+      SELECT
+        u."id",
+        u."name",
+        u."email"
+      FROM "users" u
+      INNER JOIN "role_permissions" rp
+        ON rp."role_id" = u."role_id"
+      INNER JOIN "permissions" p
+        ON p."id" = rp."permission_id"
+       AND p."key" = 'training:take'
+      WHERE u."status"::text = 'active'
+        AND u."deleted_at" IS NULL
+        ${searchCondition}
+    ),
+    eligible_attempts AS (
+      SELECT
+        ta."id",
+        ta."user_id",
+        ta."project_id",
+        ta."final_score",
+        ta."pass_status",
+        ta."completed_at",
+        ta."total_duration_seconds",
+        ROW_NUMBER() OVER (
+          PARTITION BY ta."user_id", ta."project_id"
+          ORDER BY
+            ta."final_score" DESC,
+            ta."completed_at" ASC,
+            ta."id" ASC
+        ) AS "bestRank"
+      FROM "training_attempts" ta
+      INNER JOIN eligible_users eu
+        ON eu."id" = ta."user_id"
+      WHERE ta."is_consumed" = TRUE
+        AND ta."status"::text IN ('completed', 'requires_review')
+        AND ta."final_score" IS NOT NULL
+        AND ta."completed_at" IS NOT NULL
+        AND ta."review_status"::text <> 'pending'
+        AND ta."pass_status"::text <> 'pending'
+        ${projectAttemptCondition}
+    ),
+    best_attempts AS (
+      SELECT *
+      FROM eligible_attempts
+      WHERE "bestRank" = 1
+    ),
+    best_metrics AS (
+      SELECT
+        ba."user_id",
+        COUNT(*)::integer AS "completedProjectsCount",
+        COUNT(*) FILTER (
+          WHERE ba."pass_status"::text = 'passed'
+        )::integer AS "passedProjectsCount",
+        AVG(ba."final_score") AS "averageBestScoreExact",
+        ROUND(AVG(ba."final_score"), 2)::text AS "averageBestScore",
+        ARRAY_AGG(ba."id" ORDER BY ba."project_id") AS "bestAttemptIds"
+      FROM best_attempts ba
+      GROUP BY ba."user_id"
+    ),
+    final_metrics AS (
+      SELECT
+        ea."user_id",
+        MAX(ea."completed_at") AS "lastCompletedAt",
+        COALESCE(SUM(ea."total_duration_seconds"), 0)::bigint
+          AS "totalDurationSeconds",
+        ROUND(AVG(ea."total_duration_seconds"))::integer
+          AS "averageDurationSeconds"
+      FROM eligible_attempts ea
+      GROUP BY ea."user_id"
+    ),
+    usage_metrics AS (
+      SELECT
+        ta."user_id",
+        COUNT(*)::integer AS "attemptsUsed"
+      FROM "training_attempts" ta
+      INNER JOIN eligible_users eu
+        ON eu."id" = ta."user_id"
+      WHERE ta."is_consumed" = TRUE
+        ${projectAttemptCondition}
+      GROUP BY ta."user_id"
+    ),
+    user_aggregates AS (
+      SELECT
+        eu."id" AS "userId",
+        eu."name" AS "userName",
+        eu."email" AS "userEmail",
+        COALESCE(bm."passedProjectsCount", 0)::integer
+          AS "passedProjectsCount",
+        COALESCE(bm."completedProjectsCount", 0)::integer
+          AS "completedProjectsCount",
+        bm."averageBestScoreExact",
+        bm."averageBestScore",
+        COALESCE(um."attemptsUsed", 0)::integer AS "attemptsUsed",
+        fm."lastCompletedAt",
+        COALESCE(fm."totalDurationSeconds", 0)::bigint
+          AS "totalDurationSeconds",
+        fm."averageDurationSeconds",
+        COALESCE(bm."bestAttemptIds", ARRAY[]::uuid[]) AS "bestAttemptIds"
+      FROM eligible_users eu
+      LEFT JOIN best_metrics bm
+        ON bm."user_id" = eu."id"
+      LEFT JOIN final_metrics fm
+        ON fm."user_id" = eu."id"
+      LEFT JOIN usage_metrics um
+        ON um."user_id" = eu."id"
+      ${projectUserCondition}
+    ),
+    ranked_users AS (
+      SELECT
+        ua.*,
+        ROW_NUMBER() OVER (
+          ORDER BY
+            ua."passedProjectsCount" DESC,
+            ua."completedProjectsCount" DESC,
+            ua."averageBestScoreExact" DESC NULLS LAST,
+            ua."lastCompletedAt" ASC NULLS LAST,
+            ua."userId" ASC
+        ) AS "position",
+        COUNT(*) OVER () AS "total"
+      FROM user_aggregates ua
+    )
+    SELECT
+      "userId",
+      "userName",
+      "userEmail",
+      "passedProjectsCount",
+      "completedProjectsCount",
+      "averageBestScore",
+      "attemptsUsed",
+      "lastCompletedAt",
+      "totalDurationSeconds",
+      "averageDurationSeconds",
+      "bestAttemptIds",
+      "position",
+      "total"
+    FROM ranked_users
+    ORDER BY "position"
+    LIMIT ${filters.pageSize}
+    OFFSET ${offset}
+  `;
 }
 
 export function buildTrainingRankingNarrative(
@@ -288,34 +461,26 @@ export function buildTrainingRankingNarrative(
   return parts.join(' ');
 }
 
-function buildRankingItem(
-  user: {
-    id: string;
-    name: string | null;
-    email: string;
-  },
-  attempts: Array<
-    Prisma.TrainingAttemptGetPayload<{
-      select: typeof rankingAttemptSelect;
-    }>
-  >,
+type RankingAttempt = Prisma.TrainingAttemptGetPayload<{
+  select: typeof rankingAttemptSelect;
+}>;
+
+function buildRankingItemFromPageRow(
+  row: RankingPageRow,
+  attempts: RankingAttempt[],
   attemptsUsedByUserProject: Map<string, number>,
-): Omit<TrainingRankingItem, 'position'> {
+): TrainingRankingItem {
   const finalized = attempts.filter(isEligibleFinalAttempt);
   const finalizedByProject = new Map<string, typeof finalized>();
+  const attemptsById = new Map(finalized.map((attempt) => [attempt.id, attempt]));
   for (const attempt of finalized) {
     const current = finalizedByProject.get(attempt.projectId) ?? [];
     current.push(attempt);
     finalizedByProject.set(attempt.projectId, current);
   }
-  const bestByProject = new Map<string, (typeof finalized)[number]>();
-  for (const attempt of finalized) {
-    const current = bestByProject.get(attempt.projectId);
-    if (!current || compareBestAttempts(attempt, current) < 0) {
-      bestByProject.set(attempt.projectId, attempt);
-    }
-  }
-  const projects = [...bestByProject.values()]
+  const projects = row.bestAttemptIds
+    .map((attemptId) => attemptsById.get(attemptId))
+    .filter((attempt): attempt is RankingAttempt => Boolean(attempt))
     .sort(
       (left, right) =>
         left.project.title.localeCompare(right.project.title, 'ru') ||
@@ -328,72 +493,40 @@ function buildRankingItem(
         attempt,
         first,
         attemptsUsedByUserProject.get(
-          userProjectKey(user.id, attempt.projectId),
+          userProjectKey(row.userId, attempt.projectId),
         ) ?? 0,
         projectAttempts.length > 1,
       );
     });
-  const passedProjectsCount = projects.filter(
-    (project) => project.passStatus === TrainingPassStatus.PASSED,
-  ).length;
-  const completedProjectsCount = projects.length;
-  const averageBestScore =
-    projects.length > 0
-      ? (
-          projects.reduce(
-            (sum, project) => sum + Number(project.finalScore),
-            0,
-          ) / projects.length
-        ).toFixed(2)
-      : null;
-  const completedDurations = finalized
-    .map((attempt) => attempt.totalDurationSeconds)
-    .filter((value): value is number => value !== null);
-  const totalDurationSeconds = completedDurations.reduce(
-    (sum, value) => sum + value,
-    0,
-  );
-  const lastCompletedAt =
-    finalized
-      .map((attempt) => attempt.completedAt)
-      .filter((value): value is Date => value !== null)
-      .sort((left, right) => right.getTime() - left.getTime())[0] ?? null;
   const narrativeInput: NarrativeInput = {
-    completedProjectsCount,
-    passedProjectsCount,
-    averageBestScore,
+    completedProjectsCount: row.completedProjectsCount,
+    passedProjectsCount: row.passedProjectsCount,
+    averageBestScore: row.averageBestScore,
     projects,
   };
-  const attemptsUsed = [...attemptsUsedByUserProject.entries()].reduce(
-    (sum, [key, count]) =>
-      key.startsWith(`${user.id}:`) ? sum + count : sum,
-    0,
-  );
 
   return {
-    user,
-    passedProjectsCount,
-    completedProjectsCount,
-    averageBestScore,
-    attemptsUsed,
-    lastCompletedAt: lastCompletedAt?.toISOString() ?? null,
-    totalDurationSeconds,
-    averageDurationSeconds:
-      completedDurations.length > 0
-        ? Math.round(totalDurationSeconds / completedDurations.length)
-        : null,
+    position: toSafeNumber(row.position),
+    user: {
+      id: row.userId,
+      name: row.userName,
+      email: row.userEmail,
+    },
+    passedProjectsCount: row.passedProjectsCount,
+    completedProjectsCount: row.completedProjectsCount,
+    averageBestScore: row.averageBestScore,
+    attemptsUsed: row.attemptsUsed,
+    lastCompletedAt: row.lastCompletedAt?.toISOString() ?? null,
+    totalDurationSeconds: toSafeNumber(row.totalDurationSeconds),
+    averageDurationSeconds: row.averageDurationSeconds,
     narrative: buildTrainingRankingNarrative(narrativeInput),
     projects,
   };
 }
 
 function serializeProjectResult(
-  attempt: Prisma.TrainingAttemptGetPayload<{
-    select: typeof rankingAttemptSelect;
-  }>,
-  firstAttempt: Prisma.TrainingAttemptGetPayload<{
-    select: typeof rankingAttemptSelect;
-  }> | undefined,
+  attempt: RankingAttempt,
+  firstAttempt: RankingAttempt | undefined,
   attemptsUsed: number,
   hasMultipleFinalizedAttempts: boolean,
 ): TrainingRankingProjectResult {
@@ -403,7 +536,12 @@ function serializeProjectResult(
   );
   const criteria = new Map<
     string,
-    { key: string; title: string; awarded: number; maximum: number }
+    {
+      key: string;
+      title: string;
+      awarded: Prisma.Decimal;
+      maximum: Prisma.Decimal;
+    }
   >();
   for (const component of rawComponents) {
     if (!component.criterion) continue;
@@ -412,11 +550,11 @@ function serializeProjectResult(
       key,
       title:
         component.criterion.title ?? component.title ?? component.componentKey,
-      awarded: 0,
-      maximum: 0,
+      awarded: new Prisma.Decimal(0),
+      maximum: new Prisma.Decimal(0),
     };
-    current.awarded += Number(component.awardedPoints);
-    current.maximum += Number(component.maxPoints);
+    current.awarded = current.awarded.add(component.awardedPoints);
+    current.maximum = current.maximum.add(component.maxPoints);
     criteria.set(key, current);
   }
   const describe = (component: (typeof rawComponents)[number]) =>
@@ -437,10 +575,7 @@ function serializeProjectResult(
     summary: attempt.summary,
     scoreChangeFromFirst:
       firstAttempt && hasMultipleFinalizedAttempts
-        ? (
-            Number(attempt.finalScore) -
-            Number(firstAttempt.finalScore)
-          ).toFixed(2)
+        ? attempt.finalScore!.sub(firstAttempt.finalScore!).toFixed(2)
         : null,
     components: [...criteria.values()]
       .sort((left, right) => left.title.localeCompare(right.title, 'ru'))
@@ -482,30 +617,9 @@ function isEligibleFinalAttempt(
   );
 }
 
-function compareBestAttempts(
-  left: Prisma.TrainingAttemptGetPayload<{
-    select: typeof rankingAttemptSelect;
-  }>,
-  right: Prisma.TrainingAttemptGetPayload<{
-    select: typeof rankingAttemptSelect;
-  }>,
-) {
-  const scoreDifference =
-    Number(right.finalScore ?? 0) - Number(left.finalScore ?? 0);
-  if (scoreDifference !== 0) return scoreDifference;
-  const completedDifference =
-    (left.completedAt?.getTime() ?? Number.MAX_SAFE_INTEGER) -
-    (right.completedAt?.getTime() ?? Number.MAX_SAFE_INTEGER);
-  return completedDifference || left.id.localeCompare(right.id);
-}
-
 function compareFirstAttempts(
-  left: Prisma.TrainingAttemptGetPayload<{
-    select: typeof rankingAttemptSelect;
-  }>,
-  right: Prisma.TrainingAttemptGetPayload<{
-    select: typeof rankingAttemptSelect;
-  }>,
+  left: RankingAttempt,
+  right: RankingAttempt,
 ) {
   return (
     (left.completedAt?.getTime() ?? Number.MAX_SAFE_INTEGER) -
@@ -514,41 +628,18 @@ function compareFirstAttempts(
   );
 }
 
-function compareRankingItems(
-  left: Omit<TrainingRankingItem, 'position'>,
-  right: Omit<TrainingRankingItem, 'position'>,
-) {
-  return (
-    right.passedProjectsCount - left.passedProjectsCount ||
-    right.completedProjectsCount - left.completedProjectsCount ||
-    compareNullableNumberDesc(
-      left.averageBestScore,
-      right.averageBestScore,
-    ) ||
-    compareNullableDateAsc(left.lastCompletedAt, right.lastCompletedAt) ||
-    (left.user.name ?? '').localeCompare(right.user.name ?? '', 'ru') ||
-    left.user.email.localeCompare(right.user.email, 'ru') ||
-    left.user.id.localeCompare(right.user.id)
-  );
-}
-
-function compareNullableNumberDesc(
-  left: string | null,
-  right: string | null,
-) {
-  if (left === null && right === null) return 0;
-  if (left === null) return 1;
-  if (right === null) return -1;
-  return Number(right) - Number(left);
-}
-
-function compareNullableDateAsc(left: string | null, right: string | null) {
-  if (left === null && right === null) return 0;
-  if (left === null) return 1;
-  if (right === null) return -1;
-  return Date.parse(left) - Date.parse(right);
-}
-
 function userProjectKey(userId: string, projectId: string) {
   return `${userId}:${projectId}`;
+}
+
+function escapeLikePattern(value: string) {
+  return value.replace(/[\\%_]/gu, (character) => `\\${character}`);
+}
+
+function toSafeNumber(value: bigint) {
+  const converted = Number(value);
+  if (!Number.isSafeInteger(converted)) {
+    throw new RangeError('Training ranking aggregate exceeds safe integer range');
+  }
+  return converted;
 }

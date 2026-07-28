@@ -147,10 +147,12 @@ export function reprocessTrainingAnswer(
 export function downloadTrainingAnswerAudio(
   accessToken: string,
   answerId: string,
+  signal?: AbortSignal,
 ) {
   return apiDownload(
     `/training/admin/answers/${encodeURIComponent(answerId)}/audio`,
     accessToken,
+    { signal },
   );
 }
 

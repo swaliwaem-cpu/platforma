@@ -20,11 +20,29 @@
 | `POST` | `/training/projects/:projectId/start-link` | `training:take` | Одноразовый project-scoped deep link |
 
 Employee attempt никогда не принимает `userId` от клиента. `PENDING` review
-скрывает `finalScore`, question score и criteria breakdown. В DTO никогда нет
-AI summary, transcript, acoustic metrics, error fields, audio URL/bytes, voice
-segments, provider runs, review history, ranking и storage/Telegram metadata.
+скрывает `finalScore` и весь breakdown. В DTO никогда нет AI/server/admin
+score как отдельных полей, AI summary, transcript, acoustic metrics, error
+fields, audio URL/bytes, voice segments, provider runs, review history,
+ranking и storage/Telegram metadata.
 История принимает `projectId/status/dateFrom/dateTo` и `pageSize` либо
 совместимый `limit`; максимальный размер страницы — `100`.
+
+### Employee visibility matrix
+
+| Persisted state | `finalScore` | `breakdownStatus` | Question/criterion breakdown |
+| --- | --- | --- | --- |
+| `NOT_REQUIRED`, `finalScore = serverScore`, суммы persisted evaluation согласованы | Да | `AVAILABLE` | Да |
+| `APPROVED` без изменения score и с согласованными суммами | Да | `AVAILABLE` | Да |
+| `OVERRIDDEN` | Да, только итог | `MANUALLY_ADJUSTED_BREAKDOWN_UNAVAILABLE` | `null` |
+| Review применил factual/manual adjustment и `finalScore != serverScore` | Да, только итог | `MANUALLY_ADJUSTED_BREAKDOWN_UNAVAILABLE` | `null` |
+| Финальный результат есть, но persisted breakdown не сходится с итогом | Да, только итог | `BREAKDOWN_UNAVAILABLE` | `null` |
+| `reviewStatus=PENDING` / unresolved `REQUIRES_REVIEW` | Нет | `PENDING_REVIEW` | `null` |
+
+Backend не распределяет post-review разницу по вопросам задним числом.
+Employee UI для manual adjustment показывает: «Итоговая оценка
+скорректирована после проверки. Детализация по вопросам недоступна». Admin DTO
+не урезан и по-прежнему содержит AI/server/admin/final levels и immutable
+evaluation/review history.
 
 ## Admin API
 
@@ -74,6 +92,15 @@ Invalid enum/UUID/date/range получает `400`. Все list endpoints во�
 
 ## Ranking
 
+Основные строки рейтинга вычисляются одним parameterized `Prisma.sql` query:
+`eligible_users` применяет search до pagination; `eligible_attempts` применяет
+eligibility и optional project filter; `ROW_NUMBER()` выбирает лучший
+user/project; `AVG(numeric)` и агрегаты считаются в CTE; `ROW_NUMBER()` и
+`COUNT(*) OVER()` формируют position/total; `LIMIT/OFFSET` ограничивает
+реальную SQL-страницу. После этого fixed-size Prisma queries загружают
+breakdown только для `userId` текущей страницы. N+1, `$queryRawUnsafe` и
+интерполяция пользовательских строк отсутствуют.
+
 Для каждого active non-deleted пользователя с `training:take`:
 
 1. учитываются только consumed attempts со статусом `COMPLETED` либо
@@ -82,10 +109,13 @@ Invalid enum/UUID/date/range получает `400`. Все list endpoints во�
    refunded `isConsumed=false` не участвуют;
 3. на проект выбирается максимальный historical `finalScore`; tie-break —
    более ранний `completedAt`, затем стабильный `attempt.id`;
-4. `averageBestScore` считается только по завершённым проектам, пустые проекты
-   не превращаются в нули;
-5. сортировка: passed projects DESC, completed projects DESC, average DESC,
-   last completed ASC, затем name/email/user ID.
+4. `averageBestScore` считается PostgreSQL `numeric AVG` только по завершённым
+   проектам; пустые проекты не превращаются в нули;
+5. сортировка в PostgreSQL: passed projects DESC, completed projects DESC,
+   точный неокруглённый average DESC, last completed ASC, затем стабильный
+   user ID;
+6. display value — `ROUND(numeric, 2)` как decimal string; frontend порядок
+   backend не пересортировывает.
 
 Narrative строится детерминированным backend-кодом. При менее чем двух
 завершённых проектах возвращается только сообщение о недостаточности данных;
@@ -101,6 +131,10 @@ CSV содержит position, Platforma user ID/name/email, агрегаты ra
 duration/last completion, safe narrative, counts ошибок/unsupported claims и
 лучший score/pass status по проекту.
 
+Export последовательно читает страницы по `100` строк через тот же ranking
+core, поэтому eligibility, exact-average order и best reviewed result
+совпадают с API. Transcript/audio/provider payload не выбираются.
+
 - UTF-8 BOM добавлен для предсказуемого открытия русских данных в Excel.
 - Разделитель — comma, строки — CRLF, quotes удваиваются.
 - После trim-start значения, начинающиеся с `=`, `+`, `-`, `@`, а также
@@ -112,15 +146,26 @@ duration/last completion, safe narrative, counts ошибок/unsupported claims
 ## Автоматические доказательства
 
 - `apps/api/tests/training-results.test.cjs`: formula injection/Unicode,
-  deterministic narrative, controller permissions.
+  deterministic narrative, controller permissions и employee reconciliation.
 - `apps/api/tests/training-results-db.integration.cjs`: real PostgreSQL +
-  ephemeral Nest HTTP, `401/403/404`, ownership/masking, admin roles,
-  filters/pagination, best reviewed ranking и safe CSV.
+  ephemeral Nest HTTP, `401/403/404`, все employee visibility states, admin
+  score levels, 41 ranking users/10 projects, page isolation, exact averages
+  `85.001/85.004/85.005`, search/project filter, eligibility, safe CSV и
+  `EXPLAIN (ANALYZE, BUFFERS)`.
 - `apps/web/tests/training-results.test.mjs`: pending masking, stable labels,
-  protected audio object URL revoke, same-key review retry, manual routes,
-  responsive/reduced-motion CSS.
+  object URL manager и review operation state machine.
+- `apps/web/tests-browser/training-results.spec.ts`: 8 headless Chromium
+  behavioral сценариев: committed POST с failed refresh, ambiguous retry,
+  duplicate click/new action, audio abort/generation/revoke/401 refresh,
+  employee manual adjustment и loading/empty/error states.
+- Browser command:
+  `pnpm --filter @platforma/web test:training:browser`.
 
-DB schema и migrations на этапе 9 не менялись: существующих indexes
-`user/status`, `project/status`, `completedAt`, `reviewStatus/completedAt` и
-relation indexes достаточно для текущего bounded MVP. Production performance
-нужно перепроверить на фактической cardinality до пилота.
+`EXPLAIN` на PostgreSQL fixture подтвердил корневой `Limit` и чтение только
+`users`, `roles/permissions` и `training_attempts`; relations transcript,
+answers, evaluations, score components, voice segments и provider runs в main
+plan отсутствуют. На этой cardinality PostgreSQL обоснованно выбирает
+последовательные scans, поэтому доказанной пользы нового индекса нет и
+migration не добавлялась. Перед pilot остаётся повторить план на фактической
+cardinality; существующие indexes: `user/status`, `project/status`,
+`completedAt`, `reviewStatus/completedAt` и relation indexes.

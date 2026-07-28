@@ -7,6 +7,7 @@ const { Module } = require('@nestjs/common');
 const { NestFactory } = require('@nestjs/core');
 const argon2 = require('argon2');
 const {
+  Prisma,
   TrainingAnswerStatus,
   TrainingAttemptQuestionStatus,
   TrainingAttemptStatus,
@@ -27,6 +28,7 @@ const {
   TrainingEmployeeResultsController,
 } = require('../dist/training/training-results.controller.js');
 const {
+  buildTrainingRankingPageQuery,
   TrainingRankingService,
 } = require('../dist/training/training-ranking.service.js');
 const {
@@ -137,13 +139,9 @@ test('real PostgreSQL and HTTP enforce stage 9 visibility, filters, ranking and 
     const pendingDetailText = await pendingDetailResponse.text();
     const pendingDetail = JSON.parse(pendingDetailText);
     assert.equal(pendingDetail.attempt.finalScore, null);
+    assert.equal(pendingDetail.attempt.breakdownStatus, 'PENDING_REVIEW');
+    assert.equal(pendingDetail.attempt.breakdown, null);
     assert.equal('summary' in pendingDetail.attempt, false);
-    assert.ok(
-      pendingDetail.attempt.questions.every(
-        (question) =>
-          question.score === null && question.components.length === 0,
-      ),
-    );
     for (const forbidden of [
       'combinedTranscript',
       'transcript',
@@ -155,6 +153,59 @@ test('real PostgreSQL and HTTP enforce stage 9 visibility, filters, ranking and 
       'telegram',
     ]) {
       assert.equal(pendingDetailText.includes(forbidden), false, forbidden);
+    }
+    assertEmployeePayloadHasNoInternalScores(pendingDetail);
+
+    const visibilityToken = await login(
+      baseUrl,
+      fixture.users.visibility,
+    );
+    for (const expected of [
+      {
+        id: fixture.attemptIds.visibilityNotRequired,
+        finalScore: '90',
+        status: 'AVAILABLE',
+        hasBreakdown: true,
+      },
+      {
+        id: fixture.attemptIds.visibilityApproved,
+        finalScore: '90',
+        status: 'AVAILABLE',
+        hasBreakdown: true,
+      },
+      {
+        id: fixture.attemptIds.visibilityOverridden,
+        finalScore: '70',
+        status: 'MANUALLY_ADJUSTED_BREAKDOWN_UNAVAILABLE',
+        hasBreakdown: false,
+      },
+      {
+        id: fixture.attemptIds.visibilityFactualPenalty,
+        finalScore: '85',
+        status: 'MANUALLY_ADJUSTED_BREAKDOWN_UNAVAILABLE',
+        hasBreakdown: false,
+      },
+    ]) {
+      const response = await fetch(
+        `${baseUrl}/training/attempts/${expected.id}`,
+        { headers: authorization(visibilityToken) },
+      );
+      assert.equal(response.status, 200);
+      const body = await response.json();
+      assert.equal(body.attempt.finalScore, expected.finalScore);
+      assert.equal(body.attempt.breakdownStatus, expected.status);
+      assert.equal(
+        body.attempt.breakdown !== null,
+        expected.hasBreakdown,
+      );
+      if (expected.hasBreakdown) {
+        assert.equal(body.attempt.breakdown[0].score, '90');
+        assert.equal(
+          body.attempt.breakdown[0].components[0].awardedPoints,
+          '90',
+        );
+      }
+      assertEmployeePayloadHasNoInternalScores(body);
     }
 
     const foreignDetail = await fetch(
@@ -246,6 +297,22 @@ test('real PostgreSQL and HTTP enforce stage 9 visibility, filters, ranking and 
         assert.equal(detailText.includes(forbidden), false, forbidden);
       }
 
+      const overriddenDetailResponse = await fetch(
+        `${baseUrl}/training/admin/results/${fixture.attemptIds.visibilityOverridden}`,
+        { headers: authorization(token) },
+      );
+      assert.equal(overriddenDetailResponse.status, 200, role);
+      const overriddenDetail = await overriddenDetailResponse.json();
+      assert.equal(overriddenDetail.attempt.aiScore, '90');
+      assert.equal(overriddenDetail.attempt.serverScore, '90');
+      assert.equal(overriddenDetail.attempt.adminScore, '70');
+      assert.equal(overriddenDetail.attempt.finalScore, '70');
+      assert.equal(
+        overriddenDetail.attempt.questions[0].answer.evaluations[0]
+          .serverScore,
+        '90',
+      );
+
       const rankingResponse = await fetch(
         `${baseUrl}/training/admin/ranking?user=${encodeURIComponent(
           fixture.users.employee.email,
@@ -295,6 +362,14 @@ test('real PostgreSQL and HTTP enforce stage 9 visibility, filters, ranking and 
       assert.equal(csv.includes('private admin transcript'), false);
       assert.equal(csv.includes('audioUrl'), false);
     }
+
+    await assertRankingPaginationAndExactNumeric({
+      app,
+      baseUrl,
+      prisma,
+      token: await login(baseUrl, fixture.users.admin),
+      fixture,
+    });
   } finally {
     await app.close();
     restoreEnvironment('JWT_ACCESS_SECRET', originalAccessSecret);
@@ -333,6 +408,11 @@ async function createFixture(prisma) {
       'training:take',
       'training:own-results:read',
     ],
+    visibility: [
+      'training:projects:read',
+      'training:take',
+      'training:own-results:read',
+    ],
     trainingAdmin: ['training:results:read'],
     admin: ['training:results:read'],
     noPermission: [],
@@ -359,7 +439,7 @@ async function createFixture(prisma) {
         roleId: role.id,
       },
     });
-    users[name] = { id: user.id, email, password };
+    users[name] = { id: user.id, email, password, roleId: role.id };
   }
 
   const first = await createProject(
@@ -375,6 +455,13 @@ async function createFixture(prisma) {
     unique,
     'second',
     'Проект Юг',
+  );
+  const visibilityProject = await createProject(
+    prisma,
+    users.admin.id,
+    unique,
+    'visibility',
+    'Проект Visibility',
   );
   const old = await createAttempt(prisma, {
     userId: users.employee.id,
@@ -397,8 +484,8 @@ async function createFixture(prisma) {
       key: 'criterion:facts',
       title: 'Факты',
       verdict: null,
-      awarded: 18,
-      maximum: 20,
+      awarded: 90,
+      maximum: 100,
     },
   });
   const pending = await createAttempt(prisma, {
@@ -450,16 +537,106 @@ async function createFixture(prisma) {
     completedOffset: -5_000,
     transcript: 'foreign transcript',
   });
+  const visibilityNotRequired = await createAttempt(prisma, {
+    userId: users.visibility.id,
+    project: visibilityProject,
+    attemptNumber: 1,
+    finalScore: 90,
+    passStatus: TrainingPassStatus.PASSED,
+    completedOffset: -4_000,
+    transcript: 'visibility not required',
+    component: {
+      key: 'criterion:facts',
+      title: 'Факты',
+      verdict: null,
+      awarded: 90,
+      maximum: 100,
+    },
+  });
+  const visibilityApproved = await createAttempt(prisma, {
+    userId: users.visibility.id,
+    project: visibilityProject,
+    attemptNumber: 2,
+    finalScore: 90,
+    passStatus: TrainingPassStatus.PASSED,
+    reviewStatus: TrainingReviewStatus.APPROVED,
+    completedOffset: -3_000,
+    transcript: 'visibility approved',
+    component: {
+      key: 'criterion:facts',
+      title: 'Факты',
+      verdict: null,
+      awarded: 90,
+      maximum: 100,
+    },
+  });
+  const visibilityOverridden = await createAttempt(prisma, {
+    userId: users.visibility.id,
+    project: visibilityProject,
+    attemptNumber: 3,
+    aiScore: 90,
+    serverScore: 90,
+    adminScore: 70,
+    finalScore: 70,
+    evaluationServerScore: 90,
+    passStatus: TrainingPassStatus.FAILED,
+    reviewStatus: TrainingReviewStatus.OVERRIDDEN,
+    completedOffset: -2_000,
+    transcript: 'visibility overridden',
+    component: {
+      key: 'criterion:facts',
+      title: 'Факты',
+      verdict: null,
+      awarded: 90,
+      maximum: 100,
+    },
+  });
+  const visibilityFactualPenalty = await createAttempt(prisma, {
+    userId: users.visibility.id,
+    project: visibilityProject,
+    attemptNumber: 4,
+    aiScore: 90,
+    serverScore: 90,
+    finalScore: 85,
+    evaluationServerScore: 90,
+    passStatus: TrainingPassStatus.PASSED,
+    reviewStatus: TrainingReviewStatus.APPROVED,
+    completedOffset: -1_000,
+    transcript: 'visibility factual penalty',
+    component: {
+      key: 'fact:unsupported',
+      title: 'Unsupported',
+      verdict: TrainingFactVerdict.UNSUPPORTED,
+      awarded: 90,
+      maximum: 100,
+    },
+  });
+  const rankingFixture = await createRankingFixture(
+    prisma,
+    users.employee.roleId,
+    passwordHash,
+    users.admin.id,
+    unique,
+  );
 
   return {
     users,
-    projectIds: { first: first.id, second: second.id },
+    projectIds: {
+      first: first.id,
+      second: second.id,
+      visibility: visibilityProject.id,
+    },
     attemptIds: {
       old: old.id,
       best: best.id,
       pending: pending.id,
       foreign: foreign.id,
+      visibilityNotRequired: visibilityNotRequired.id,
+      visibilityApproved: visibilityApproved.id,
+      visibilityOverridden: visibilityOverridden.id,
+      visibilityFactualPenalty: visibilityFactualPenalty.id,
     },
+    ranking: rankingFixture,
   };
 }
 
@@ -495,6 +672,16 @@ async function createProject(
       maxScore: 55,
     },
   });
+  const criterion = await prisma.trainingEvaluationCriterion.create({
+    data: {
+      projectVersionId: version.id,
+      questionType: TrainingQuestionType.MAIN,
+      code: 'facts',
+      title: 'Факты',
+      maxPoints: 100,
+      sortOrder: 0,
+    },
+  });
   await prisma.trainingProjectVersion.update({
     where: { id: version.id },
     data: {
@@ -507,7 +694,12 @@ async function createProject(
     where: { id: project.id },
     data: { activeVersionId: version.id },
   });
-  return { id: project.id, versionId: version.id, questionId: question.id };
+  return {
+    id: project.id,
+    versionId: version.id,
+    questionId: question.id,
+    criterionId: criterion.id,
+  };
 }
 
 async function createAttempt(prisma, input) {
@@ -525,8 +717,9 @@ async function createAttempt(prisma, input) {
       graceExpiresAt: new Date(completedAt.getTime() + 120_000),
       completedAt,
       settingsSnapshotJson: {},
-      aiScore: input.finalScore,
-      serverScore: input.finalScore,
+      aiScore: input.aiScore ?? input.finalScore,
+      serverScore: input.serverScore ?? input.finalScore,
+      adminScore: input.adminScore ?? null,
       finalScore: input.finalScore,
       passStatus: input.passStatus,
       reviewStatus:
@@ -567,8 +760,12 @@ async function createAttempt(prisma, input) {
         schemaVersion: 'fixture-1',
         rubricVersion: 'fixture-1',
         structuredResultJson: {},
-        aiSuggestedScore: input.finalScore ?? 0,
-        serverScore: input.finalScore ?? 0,
+        aiSuggestedScore: input.aiScore ?? input.finalScore ?? 0,
+        serverScore:
+          input.evaluationServerScore ??
+          input.serverScore ??
+          input.finalScore ??
+          0,
         summary: 'fixture evaluation',
         requiresReview:
           input.reviewStatus === TrainingReviewStatus.PENDING,
@@ -578,6 +775,10 @@ async function createAttempt(prisma, input) {
       await prisma.trainingScoreComponent.create({
         data: {
           evaluationId: evaluation.id,
+          criterionId:
+            input.component.verdict === null
+              ? input.project.criterionId
+              : null,
           componentKey: input.component.key,
           title: input.component.title,
           awardedPoints: input.component.awarded,
@@ -614,4 +815,470 @@ function authorization(token) {
 function restoreEnvironment(key, value) {
   if (value === undefined) delete process.env[key];
   else process.env[key] = value;
+}
+
+async function createRankingFixture(
+  prisma,
+  trainingRoleId,
+  passwordHash,
+  publishedById,
+  unique,
+) {
+  const projects = [];
+  for (let index = 0; index < 10; index += 1) {
+    projects.push(
+      await createProject(
+        prisma,
+        publishedById,
+        unique,
+        `ranking-${index}`,
+        `Рейтинг ${String(index).padStart(2, '0')}`,
+      ),
+    );
+  }
+  const users = [];
+  for (let index = 0; index < 30; index += 1) {
+    const user = await createRankingUser(prisma, {
+      roleId: trainingRoleId,
+      passwordHash,
+      unique,
+      suffix: `regular-${String(index).padStart(2, '0')}`,
+      name: `Ranking Regular ${String(index).padStart(2, '0')}`,
+    });
+    users.push(user);
+    const firstCompletedAt = new Date(
+      `2026-07-${String(1 + (index % 20)).padStart(2, '0')}T10:00:00.000Z`,
+    );
+    await createBareRankingAttempt(prisma, {
+      userId: user.id,
+      project: projects[0],
+      attemptNumber: 1,
+      finalScore: 70 + (index % 10),
+      passStatus:
+        index % 3 === 0
+          ? TrainingPassStatus.FAILED
+          : TrainingPassStatus.PASSED,
+      completedAt: firstCompletedAt,
+    });
+    await createBareRankingAttempt(prisma, {
+      userId: user.id,
+      project: projects[0],
+      attemptNumber: 2,
+      finalScore: 60 + (index % 10),
+      passStatus: TrainingPassStatus.FAILED,
+      completedAt: new Date(firstCompletedAt.getTime() + 3_600_000),
+    });
+    await createBareRankingAttempt(prisma, {
+      userId: user.id,
+      project: projects[1],
+      attemptNumber: 1,
+      finalScore: 80 + (index % 10),
+      passStatus: TrainingPassStatus.PASSED,
+      completedAt: new Date(firstCompletedAt.getTime() + 7_200_000),
+    });
+    if (index % 2 === 0) {
+      await createBareRankingAttempt(prisma, {
+        userId: user.id,
+        project: projects[2],
+        attemptNumber: 1,
+        finalScore: 65 + (index % 10),
+        passStatus: TrainingPassStatus.PASSED,
+        completedAt: new Date(firstCompletedAt.getTime() + 10_800_000),
+      });
+    }
+  }
+
+  const exactUsers = [];
+  for (const exact of [
+    { suffix: 'exact-low', finalIncrement: '0.01' },
+    { suffix: 'exact-mid', finalIncrement: '0.04' },
+    { suffix: 'exact-high', finalIncrement: '0.05' },
+  ]) {
+    const user = await createRankingUser(prisma, {
+      roleId: trainingRoleId,
+      passwordHash,
+      unique,
+      suffix: exact.suffix,
+      name: `Exact Average ${exact.suffix}`,
+    });
+    exactUsers.push(user);
+    for (let index = 0; index < projects.length; index += 1) {
+      await createBareRankingAttempt(prisma, {
+        userId: user.id,
+        project: projects[index],
+        attemptNumber: 1,
+        finalScore:
+          index === projects.length - 1
+            ? new Prisma.Decimal(85).add(exact.finalIncrement)
+            : 85,
+        passStatus: TrainingPassStatus.PASSED,
+        completedAt: new Date(
+          `2026-06-${String(index + 1).padStart(2, '0')}T10:00:00.000Z`,
+        ),
+      });
+    }
+  }
+
+  const tieUsers = [];
+  for (const suffix of ['tie-a', 'tie-b']) {
+    const user = await createRankingUser(prisma, {
+      roleId: trainingRoleId,
+      passwordHash,
+      unique,
+      suffix,
+      name: `Stable Tie ${suffix}`,
+    });
+    tieUsers.push(user);
+    await createBareRankingAttempt(prisma, {
+      userId: user.id,
+      project: projects[0],
+      attemptNumber: 1,
+      finalScore: 88,
+      passStatus: TrainingPassStatus.PASSED,
+      completedAt: new Date('2026-06-15T10:00:00.000Z'),
+    });
+  }
+
+  const needleUsers = [];
+  for (const suffix of ['needle-a', 'needle-b']) {
+    const user = await createRankingUser(prisma, {
+      roleId: trainingRoleId,
+      passwordHash,
+      unique,
+      suffix,
+      name: `Needle Ranking ${suffix}`,
+    });
+    needleUsers.push(user);
+  }
+  const reviewedUser = needleUsers[0];
+  await createBareRankingAttempt(prisma, {
+    userId: reviewedUser.id,
+    project: projects[0],
+    attemptNumber: 1,
+    finalScore: 90,
+    passStatus: TrainingPassStatus.PASSED,
+    reviewStatus: TrainingReviewStatus.APPROVED,
+    completedAt: new Date('2026-06-10T10:00:00.000Z'),
+  });
+  await createBareRankingAttempt(prisma, {
+    userId: reviewedUser.id,
+    project: projects[0],
+    attemptNumber: 2,
+    finalScore: 80,
+    passStatus: TrainingPassStatus.PASSED,
+    reviewStatus: TrainingReviewStatus.APPROVED,
+    completedAt: new Date('2026-06-11T10:00:00.000Z'),
+  });
+  await createBareRankingAttempt(prisma, {
+    userId: reviewedUser.id,
+    project: projects[0],
+    attemptNumber: 3,
+    finalScore: 99,
+    passStatus: TrainingPassStatus.PENDING,
+    reviewStatus: TrainingReviewStatus.PENDING,
+    status: TrainingAttemptStatus.REQUIRES_REVIEW,
+    completedAt: new Date('2026-06-12T10:00:00.000Z'),
+  });
+  await createBareRankingAttempt(prisma, {
+    userId: reviewedUser.id,
+    project: projects[0],
+    attemptNumber: 4,
+    finalScore: 100,
+    passStatus: TrainingPassStatus.PASSED,
+    status: TrainingAttemptStatus.TECHNICAL_FAILURE,
+    completedAt: new Date('2026-06-13T10:00:00.000Z'),
+  });
+  await createBareRankingAttempt(prisma, {
+    userId: reviewedUser.id,
+    project: projects[0],
+    attemptNumber: 5,
+    finalScore: 100,
+    passStatus: TrainingPassStatus.PASSED,
+    isConsumed: false,
+    completedAt: new Date('2026-06-14T10:00:00.000Z'),
+  });
+  await createBareRankingAttempt(prisma, {
+    userId: needleUsers[1].id,
+    project: projects[0],
+    attemptNumber: 1,
+    finalScore: 75,
+    passStatus: TrainingPassStatus.PASSED,
+    completedAt: new Date('2026-06-16T10:00:00.000Z'),
+  });
+
+  const noAttemptUser = await createRankingUser(prisma, {
+    roleId: trainingRoleId,
+    passwordHash,
+    unique,
+    suffix: 'null-average',
+    name: 'Null Average Ranking',
+  });
+
+  return {
+    projects: projects.map((project) => project.id),
+    exactUsers,
+    tieUsers,
+    needleUsers,
+    reviewedUser,
+    noAttemptUser,
+    totalEligibleUsers: 3 + 30 + 3 + 2 + 2 + 1,
+    unique,
+  };
+}
+
+async function createRankingUser(
+  prisma,
+  { roleId, passwordHash, unique, suffix, name },
+) {
+  return prisma.user.create({
+    data: {
+      email: `rank-${suffix}-${unique}@example.test`,
+      passwordHash,
+      name,
+      status: UserStatus.ACTIVE,
+      roleId,
+    },
+  });
+}
+
+async function createBareRankingAttempt(
+  prisma,
+  {
+    userId,
+    project,
+    attemptNumber,
+    finalScore,
+    passStatus,
+    reviewStatus = TrainingReviewStatus.NOT_REQUIRED,
+    status = TrainingAttemptStatus.COMPLETED,
+    isConsumed = true,
+    completedAt,
+  },
+) {
+  return prisma.trainingAttempt.create({
+    data: {
+      userId,
+      projectId: project.id,
+      projectVersionId: project.versionId,
+      attemptNumber,
+      status,
+      isConsumed,
+      startedAt: new Date(completedAt.getTime() - 300_000),
+      expiresAt: new Date(completedAt.getTime() + 60_000),
+      graceExpiresAt: new Date(completedAt.getTime() + 120_000),
+      completedAt,
+      settingsSnapshotJson: {},
+      aiScore: finalScore,
+      serverScore: finalScore,
+      finalScore,
+      passStatus,
+      reviewStatus,
+      summary: 'ranking fixture',
+      totalDurationSeconds: 300,
+    },
+  });
+}
+
+async function assertRankingPaginationAndExactNumeric({
+  baseUrl,
+  prisma,
+  token,
+  fixture,
+}) {
+  const headers = authorization(token);
+  const pageOne = await fetchRanking(baseUrl, headers, 'page=1&pageSize=10');
+  const pageTwo = await fetchRanking(baseUrl, headers, 'page=2&pageSize=10');
+  assert.equal(pageOne.items.length, 10);
+  assert.equal(pageTwo.items.length, 10);
+  assert.equal(
+    pageOne.pagination.total,
+    fixture.ranking.totalEligibleUsers,
+  );
+  assert.equal(pageTwo.pagination.total, pageOne.pagination.total);
+  assert.equal(
+    pageOne.items.some((first) =>
+      pageTwo.items.some((second) => second.user.id === first.user.id),
+    ),
+    false,
+  );
+
+  const scopedUserIdFilters = [];
+  const scopedService = new TrainingRankingService({
+    $queryRaw: (query) => prisma.$queryRaw(query),
+    trainingAttempt: {
+      findMany: (args) => {
+        scopedUserIdFilters.push(args.where.userId.in);
+        return prisma.trainingAttempt.findMany(args);
+      },
+      groupBy: (args) => prisma.trainingAttempt.groupBy(args),
+    },
+    trainingProject: {
+      findMany: (args) => prisma.trainingProject.findMany(args),
+    },
+  });
+  const scopedPage = await scopedService.list({ page: 2, pageSize: 2 });
+  assert.equal(scopedPage.items.length, 2);
+  assert.deepEqual(
+    [...new Set(scopedUserIdFilters.flat())].sort(),
+    scopedPage.items.map((item) => item.user.id).sort(),
+  );
+
+  const needle = await fetchRanking(
+    baseUrl,
+    headers,
+    `page=1&pageSize=1&user=${encodeURIComponent('Needle Ranking')}`,
+  );
+  assert.equal(needle.items.length, 1);
+  assert.equal(needle.pagination.total, 2);
+
+  const projectFiltered = await fetchRanking(
+    baseUrl,
+    headers,
+    `page=1&pageSize=1&projectId=${fixture.ranking.projects[9]}`,
+  );
+  assert.equal(projectFiltered.items.length, 1);
+  assert.equal(projectFiltered.pagination.total, 3);
+
+  const reviewed = await fetchRanking(
+    baseUrl,
+    headers,
+    `page=1&pageSize=10&user=${encodeURIComponent(
+      fixture.ranking.reviewedUser.email,
+    )}`,
+  );
+  assert.equal(reviewed.pagination.total, 1);
+  assert.equal(reviewed.items[0].projects[0].finalScore, '90');
+  assert.equal(reviewed.items[0].projects[0].attemptNumber, 1);
+  assert.equal(reviewed.items[0].attemptsUsed, 4);
+  assert.equal(
+    reviewed.items[0].projects.some((project) =>
+      ['99', '100'].includes(project.finalScore),
+    ),
+    false,
+  );
+
+  const exact = await fetchRanking(
+    baseUrl,
+    headers,
+    `page=1&pageSize=10&user=${encodeURIComponent('Exact Average')}`,
+  );
+  assert.deepEqual(
+    exact.items.map((item) => item.user.id),
+    [
+      fixture.ranking.exactUsers[2].id,
+      fixture.ranking.exactUsers[1].id,
+      fixture.ranking.exactUsers[0].id,
+    ],
+  );
+  assert.deepEqual(
+    exact.items.map((item) => item.averageBestScore),
+    ['85.01', '85.00', '85.00'],
+  );
+
+  const ties = await fetchRanking(
+    baseUrl,
+    headers,
+    `page=1&pageSize=10&user=${encodeURIComponent('Stable Tie')}`,
+  );
+  assert.deepEqual(
+    ties.items.map((item) => item.user.id),
+    fixture.ranking.tieUsers.map((user) => user.id).sort(),
+  );
+
+  const nullAverage = await fetchRanking(
+    baseUrl,
+    headers,
+    `page=1&pageSize=10&user=${encodeURIComponent(
+      fixture.ranking.noAttemptUser.email,
+    )}`,
+  );
+  assert.equal(nullAverage.items[0].averageBestScore, null);
+  assert.deepEqual(nullAverage.items[0].projects, []);
+
+  const exactCsvResponse = await fetch(
+    `${baseUrl}/training/admin/ranking/export.csv?user=${encodeURIComponent(
+      'Exact Average',
+    )}`,
+    { headers },
+  );
+  assert.equal(exactCsvResponse.status, 200);
+  const exactCsv = await exactCsvResponse.text();
+  const exactEmails = exact.items.map((item) => item.user.email);
+  assert.ok(exactCsv.indexOf(exactEmails[0]) < exactCsv.indexOf(exactEmails[1]));
+  assert.ok(exactCsv.indexOf(exactEmails[1]) < exactCsv.indexOf(exactEmails[2]));
+
+  const planRows = await prisma.$queryRaw(
+    Prisma.sql`
+      EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+      ${buildTrainingRankingPageQuery({ page: 1, pageSize: 10 }, 0)}
+    `,
+  );
+  const planText = JSON.stringify(planRows);
+  const explain = planRows[0]['QUERY PLAN'][0];
+  const planRelations = [
+    ...collectPlanValues(explain.Plan, 'Relation Name'),
+  ].sort();
+  console.log(
+    `Stage 9 ranking EXPLAIN: execution=${explain['Execution Time'].toFixed(
+      3,
+    )}ms, root=${explain.Plan['Node Type']}, relations=${planRelations.join(
+      ',',
+    )}`,
+  );
+  assert.match(planText, /Limit/u);
+  for (const forbiddenRelation of [
+    'training_answers',
+    'training_answer_evaluations',
+    'training_score_components',
+    'training_voice_segments',
+    'training_provider_runs',
+  ]) {
+    assert.equal(
+      planText.includes(forbiddenRelation),
+      false,
+      forbiddenRelation,
+    );
+  }
+}
+
+function collectPlanValues(node, key) {
+  const values = [];
+  if (typeof node?.[key] === 'string') values.push(node[key]);
+  for (const child of node?.Plans ?? []) {
+    values.push(...collectPlanValues(child, key));
+  }
+  return values;
+}
+
+async function fetchRanking(baseUrl, headers, query) {
+  const response = await fetch(
+    `${baseUrl}/training/admin/ranking?${query}`,
+    { headers },
+  );
+  assert.equal(response.status, 200);
+  return response.json();
+}
+
+function assertEmployeePayloadHasNoInternalScores(value) {
+  const forbiddenKeys = new Set([
+    'serverScore',
+    'aiScore',
+    'adminScore',
+    'override',
+  ]);
+  visitJson(value, (key) => {
+    assert.equal(forbiddenKeys.has(key), false, key);
+  });
+}
+
+function visitJson(value, visit) {
+  if (Array.isArray(value)) {
+    for (const item of value) visitJson(item, visit);
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  for (const [key, item] of Object.entries(value)) {
+    visit(key);
+    visitJson(item, visit);
+  }
 }

@@ -42,6 +42,7 @@ import {
 } from './trainingResultsApi';
 import {
   attemptStatusLabels,
+  employeeBreakdownStatusLabels,
   eligibilityLabels,
   formatTrainingDuration,
   formatTrainingScore,
@@ -619,38 +620,38 @@ function EmployeeAttemptDetail({
             </strong>
           </div>
         </div>
-        <div className="training-question-breakdown">
-          {attempt.questions.map((question) => (
-            <article key={question.id}>
-              <header>
-                <div>
-                  <span>Вопрос {question.sequence}</span>
-                  <h4>{question.text}</h4>
-                </div>
-                <strong>{formatTrainingScore(question.score)}</strong>
-              </header>
-              {question.components.length ? (
-                <dl>
-                  {question.components.map((component) => (
-                    <div key={component.key}>
-                      <dt>{component.title}</dt>
-                      <dd>
-                        {formatTrainingScore(component.awardedPoints)} /{' '}
-                        {formatTrainingScore(component.maxPoints)}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-              ) : (
-                <p>
-                  {attempt.reviewStatus === 'PENDING'
-                    ? 'Разбивка появится после проверки.'
-                    : 'Разбивка не сформирована.'}
-                </p>
-              )}
-            </article>
-          ))}
-        </div>
+        {attempt.breakdown ? (
+          <div className="training-question-breakdown">
+            {attempt.breakdown.map((question) => (
+              <article key={question.id}>
+                <header>
+                  <div>
+                    <span>Вопрос {question.sequence}</span>
+                    <h4>{question.text}</h4>
+                  </div>
+                  <strong>{formatTrainingScore(question.score)}</strong>
+                </header>
+                {question.components.length ? (
+                  <dl>
+                    {question.components.map((component) => (
+                      <div key={component.key}>
+                        <dt>{component.title}</dt>
+                        <dd>
+                          {formatTrainingScore(component.awardedPoints)} /{' '}
+                          {formatTrainingScore(component.maxPoints)}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                ) : null}
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="training-breakdown-unavailable" role="status">
+            {employeeBreakdownStatusLabels[attempt.breakdownStatus]}
+          </p>
+        )}
         <div className="training-privacy-note">
           <ShieldCheckIcon aria-hidden="true" />
           Здесь отображается только разрешённая разбивка. Аудио, transcript и

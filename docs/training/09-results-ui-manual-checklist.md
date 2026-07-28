@@ -25,8 +25,13 @@
 - [ ] История фильтруется по проекту; loading/empty/error не ломают layout.
 - [ ] Pending review не показывает provisional score/summary/breakdown.
 - [ ] Own detail показывает только разрешённые criteria.
+- [ ] `NOT_REQUIRED` и unchanged `APPROVED` показывают breakdown только при
+  точном совпадении его суммы с `finalScore`.
+- [ ] `OVERRIDDEN`/factual penalty показывает итог, скрывает старый breakdown
+  и выводит сообщение о недоступности детализации после корректировки.
 - [ ] В Network/DOM employee response нет transcript, errors, audio URL,
-  ranking, provider/storage/Telegram metadata.
+  `aiScore/serverScore/adminScore`, override, ranking,
+  provider/storage/Telegram metadata.
 - [ ] Чужой UUID возвращает `404`, anonymous — `401`, missing permission —
   `403`.
 
@@ -40,6 +45,9 @@
   versions/usage/latency/errors, review/job history.
 - [ ] Audio загружается только по клику, refreshes JWT через общий API client,
   предыдущий/закрытый object URL revoke; публичного URL нет.
+- [ ] Смена answer, повторная загрузка и закрытие detail abort предыдущий
+  request; delayed response не устанавливает stale Blob URL и не показывает
+  `AbortError`.
 - [ ] Без `training:audio:read` player отсутствует и endpoint даёт `403`.
 
 ## Review
@@ -51,6 +59,10 @@
 - [ ] Same key/same payload не создаёт duplicate review/audit/penalty.
 - [ ] `409` показан понятным сообщением без автоматической новой отправки.
 - [ ] После успеха detail и ranking повторно загружены.
+- [ ] POST `200` + failed detail/ranking GET показывает «Проверка сохранена,
+  но обновить данные не удалось»; «Повторить обновление» выполняет только GET.
+- [ ] Ambiguous POST повторяется с тем же key и canonical payload; новый key
+  появляется только у нового review action после `COMPLETED`.
 - [ ] Reprocessing доступен только reviewer и создаёт новую immutable version.
 
 ## Ranking и CSV
@@ -64,6 +76,18 @@
 - [ ] CSV открывается с русским Unicode, quotes/newlines корректны.
 - [ ] Значения `=`, `+`, `-`, `@`, tab/CR/LF не выполняются как формулы.
 - [ ] CSV не содержит transcript/audio/storage/provider/Telegram/secrets.
+
+## Автоматический browser gate
+
+```bash
+pnpm --filter @platforma/web test:training:browser
+```
+
+Harness использует Chromium headless и `page.route`; реальный API,
+OpenAI/Telegram и production не вызываются. Он покрывает review request
+cardinality, partial success, Blob lifecycle, employee manual adjustment и
+loading/empty/error states. Ручные responsive/theme/spreadsheet проверки выше
+остаются обязательными.
 
 ## Responsive/accessibility
 

@@ -5762,3 +5762,73 @@ Dependencies:
   реальными account/audio/provider данными намеренно оставлена отдельным gate.
 - Реальный OpenAI smoke остаётся opt-in задачей предыдущего этапа; этап 10 не
   начинался.
+
+## 2026-07-28 - Independent review fixes for training stage 9
+
+Задача:
+
+- Исправить только findings независимого review этапа 9: employee score
+  visibility, server-side ranking pagination/exact numeric, partial-success
+  review UX, audio Blob race и behavioral browser tests.
+- Не начинать этап 10, не вызывать real OpenAI/Telegram и не затрагивать
+  production.
+
+Изменения:
+
+- Employee detail теперь возвращает `breakdownStatus` и nullable `breakdown`.
+  Persisted question/criterion breakdown доступен только для resolved
+  результата, когда `finalScore = serverScore` и все суммы согласованы.
+  `OVERRIDDEN`, factual/manual adjustment и unresolved review не раскрывают
+  исходный server breakdown. Admin detail сохраняет AI/server/admin/final
+  levels без урезания.
+- Ranking core перенесён в parameterized PostgreSQL CTE/window query:
+  eligibility/search/project filter выполняются до pagination, лучший
+  user/project выбирается через `ROW_NUMBER`, exact `AVG(numeric)` участвует в
+  SQL sort, `COUNT(*) OVER` формирует total, `LIMIT/OFFSET` ограничивает
+  страницу. Детали выбираются только для `userId` текущей страницы.
+- CSV последовательно читает страницы по 100 через тот же ranking core,
+  сохраняя exact order, eligibility и ранее проверенную formula protection.
+- Review UI использует явные состояния `IDLE/SUBMITTING/COMMITTED/REFRESHING/
+  COMPLETED/POST_AMBIGUOUS/REFRESH_FAILED/POST_FAILED`. После успешного POST
+  failed detail/ranking GET повторяется только кнопкой refresh; ambiguous POST
+  сохраняет исходные key и canonical payload/hash.
+- Protected audio download принимает `AbortSignal`; player aborts старый
+  request при answer change/reload/unmount, проверяет generation и revoke
+  stale/current object URL. Abort во время общего 401 refresh не создаёт
+  второй binary request и не показывает ошибку.
+- Добавлен отдельный Playwright Chromium harness без новых dependencies.
+  PostgreSQL fixture расширен до 41 ranking users и 10 projects с exact
+  averages `85.001/85.004/85.005`, excluded states и page-scoped details.
+- Обновлены employee visibility matrix, ranking API, implementation checklist
+  и manual UI guide. Prisma schema и migrations не менялись.
+
+Проверки:
+
+- `pnpm --filter @platforma/api test` — passed: `430/430` unit и `77/77`
+  PostgreSQL/HTTP; все `39` migrations применены к чистой временной БД.
+- `pnpm --filter @platforma/web test` — passed: `292/292`.
+- `pnpm --filter @platforma/web test:training:browser` — passed: `8/8`
+  headless Chromium behavioral tests.
+- `pnpm build` — passed; сохраняется существующий Vite warning об основном
+  chunk `715.29 kB`.
+- `pnpm test` — passed: API `430 + 77`, Web `292`, Feed import `64`,
+  WordPress import `23`, всего `886`.
+- `EXPLAIN (ANALYZE, BUFFERS)` на fixture: `root=Limit`,
+  `execution=3.298 ms` в отдельном API gate (`3.395 ms` в root suite);
+  relations только `users`, `permissions`, `role_permissions` и два прохода
+  `training_attempts`. Answer/transcript/evaluation/component/audio/provider
+  relations отсутствуют. Новый index без доказанной пользы не добавлялся.
+- `git diff --check` — passed.
+
+Ручная проверка:
+
+- На staging пройти responsive/theme/keyboard пункты
+  `docs/training/09-results-ui-manual-checklist.md`, проверить CSV в целевых
+  spreadsheet clients и protected audio/review observability с тестовыми
+  account data.
+
+Спорные места:
+
+- BLOCKER/HIGH по перечисленным findings этапа 9 не осталось.
+- Production cardinality/query plan, реальные provider/audio data и
+  production deploy остаются отдельными gates. Этап 10 не начинался.

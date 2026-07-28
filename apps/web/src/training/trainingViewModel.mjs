@@ -24,6 +24,14 @@ export const reviewStatusLabels = {
   OVERRIDDEN: 'Скорректировано',
 };
 
+export const employeeBreakdownStatusLabels = {
+  AVAILABLE: 'Детализация доступна.',
+  PENDING_REVIEW: 'Детализация появится после проверки.',
+  MANUALLY_ADJUSTED_BREAKDOWN_UNAVAILABLE:
+    'Итоговая оценка скорректирована после проверки. Детализация по вопросам недоступна.',
+  BREAKDOWN_UNAVAILABLE: 'Детализация по вопросам недоступна.',
+};
+
 export const eligibilityLabels = {
   AVAILABLE: 'Можно начать',
   TELEGRAM_NOT_CONNECTED: 'Telegram не подключён',

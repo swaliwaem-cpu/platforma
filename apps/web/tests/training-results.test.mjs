@@ -8,6 +8,7 @@ import { TrainingAudioObjectUrl } from '../src/training/trainingAudioUrl.mjs';
 import { TrainingReviewSubmission } from '../src/training/trainingReviewSubmission.mjs';
 import {
   attemptStatusLabels,
+  employeeBreakdownStatusLabels,
   formatTrainingDuration,
   formatTrainingScore,
   visibleEmployeeScore,
@@ -48,6 +49,10 @@ test('employee view model masks pending scores and formats stable states', () =>
     '88.50',
   );
   assert.equal(attemptStatusLabels.TECHNICAL_FAILURE, 'Техническая ошибка');
+  assert.equal(
+    employeeBreakdownStatusLabels.MANUALLY_ADJUSTED_BREAKDOWN_UNAVAILABLE,
+    'Итоговая оценка скорректирована после проверки. Детализация по вопросам недоступна.',
+  );
   assert.equal(formatTrainingScore('88.50'), '88,5');
   assert.equal(formatTrainingDuration(125), '2 мин 5 сек');
 });
@@ -75,7 +80,7 @@ test('protected audio object URLs are revoked on replacement and cleanup', () =>
   assert.deepEqual(revoked, [first, second]);
 });
 
-test('review retry keeps one idempotency key until success', () => {
+test('review operation keeps one key for ambiguous POST and refresh retries', () => {
   let sequence = 0;
   const submission = new TrainingReviewSubmission(
     () => `uuid-${++sequence}`,
@@ -86,17 +91,57 @@ test('review retry keeps one idempotency key until success', () => {
     unsupportedClaimsDecisions: [],
   };
 
-  const first = submission.keyFor(payload);
-  assert.equal(submission.keyFor(structuredClone(payload)), first);
-  assert.notEqual(
-    submission.keyFor({ ...payload, comment: 'Исправлено' }),
-    first,
+  const first = submission.begin(payload);
+  assert.equal(first.key, 'training-review-uuid-1');
+  assert.deepEqual(first.payload, payload);
+  assert.match(first.payloadHash, /^[a-f0-9]{8}$/u);
+
+  submission.markPostAmbiguous();
+  const retry = submission.retryAmbiguous();
+  assert.equal(retry.key, first.key);
+  assert.equal(retry.payloadHash, first.payloadHash);
+  assert.deepEqual(retry.payload, payload);
+
+  submission.markCommitted();
+  submission.markRefreshing();
+  submission.markRefreshFailed();
+  assert.throws(
+    () => submission.begin({ ...payload, comment: 'Другой payload' }),
+    /payload cannot be changed/u,
   );
-  submission.complete();
-  assert.equal(
-    submission.keyFor({ ...payload, comment: 'Исправлено' }),
-    'training-review-uuid-3',
+  submission.markRefreshing();
+  submission.markCompleted();
+
+  const next = submission.begin({
+    ...payload,
+    comment: 'Новая осознанная проверка',
+  });
+  assert.equal(next.key, 'training-review-uuid-2');
+  assert.notEqual(next.payloadHash, first.payloadHash);
+});
+
+test('review operation canonicalizes object key order and isolates permanent failures', () => {
+  let sequence = 0;
+  const submission = new TrainingReviewSubmission(
+    () => `uuid-${++sequence}`,
   );
+  const first = submission.begin({
+    comment: 'Проверено',
+    decision: 'APPROVED',
+    unsupportedClaimsDecisions: [{ verdict: 'APPROVED', componentId: '1' }],
+  });
+  submission.markPostAmbiguous();
+  const retry = submission.retryAmbiguous();
+  assert.equal(retry.payloadHash, first.payloadHash);
+
+  submission.markPostFailed();
+  const replacement = submission.begin({
+    unsupportedClaimsDecisions: [],
+    decision: 'OVERRIDDEN',
+    comment: 'Исправлено',
+  });
+  assert.equal(replacement.key, 'training-review-uuid-2');
+  assert.notEqual(replacement.payloadHash, first.payloadHash);
 });
 
 test('stage 9 routes use server permissions and route-level loading', () => {
@@ -115,15 +160,22 @@ test('stage 9 routes use server permissions and route-level loading', () => {
   assert.match(appSource, /lazy\(\(\) =>[\s\S]*TrainingRankingPage/u);
   assert.match(employeeSource, /getTrainingTelegramAccount/u);
   assert.match(employeeSource, /getTrainingAttempt/u);
-  assert.match(employeeSource, /attempt\.reviewStatus === 'PENDING'/u);
+  assert.match(employeeSource, /attempt\.breakdownStatus/u);
   assert.doesNotMatch(employeeSource, /attempt\.summary/u);
   assert.match(employeeSource, /project\.allowRetakeAfterPass/u);
   assert.match(employeeSource, /project\.activeAttempt/u);
   assert.match(employeeSource, /TELEGRAM_NOT_CONNECTED/u);
   assert.match(adminSource, /downloadTrainingAnswerAudio/u);
   assert.match(adminSource, /managerRef\.current\.revoke\(\)/u);
+  assert.match(adminSource, /generationRef/u);
+  assert.match(adminSource, /AbortController/u);
   assert.match(adminSource, /getTrainingRanking\(accessToken/u);
   assert.match(adminSource, /caughtError\.status === 409/u);
+  assert.match(
+    adminSource,
+    /Проверка сохранена, но обновить данные не удалось/u,
+  );
+  assert.match(adminSource, /Повторить обновление/u);
   assert.match(rankingSource, /downloadTrainingRankingCsv/u);
   assert.match(
     rankingSource,

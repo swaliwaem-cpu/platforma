@@ -63,19 +63,33 @@ export async function apiRequest<T = unknown>(
 export async function apiDownload(
   path: string,
   accessToken: string,
+  options: { signal?: AbortSignal } = {},
 ): Promise<{ blob: Blob; filename: string | null }> {
   const initialToken = currentAccessToken ?? accessToken;
   let response: Response;
 
   try {
-    response = await sendApiRequest(path, initialToken, {});
-  } catch {
+    response = await sendApiRequest(path, initialToken, {
+      signal: options.signal,
+    });
+  } catch (error) {
+    if (isAbortError(error)) throw error;
     throw new ApiRequestError(apiConnectionErrorMessage, 0);
   }
 
   if (response.status === 401) {
-    const refreshedSession = await refreshApiSession();
-    response = await sendApiRequest(path, refreshedSession.accessToken, {});
+    const refreshedSession = await waitForAbortable(
+      refreshApiSession(),
+      options.signal,
+    );
+    try {
+      response = await sendApiRequest(path, refreshedSession.accessToken, {
+        signal: options.signal,
+      });
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      throw new ApiRequestError(apiConnectionErrorMessage, 0);
+    }
   }
 
   if (!response.ok) {
@@ -180,4 +194,38 @@ function getContentDispositionFilename(value: string | null) {
   }
 
   return value.match(/filename="([^"]+)"/iu)?.[1] ?? null;
+}
+
+function waitForAbortable<T>(
+  promise: Promise<T>,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(createAbortError());
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => {
+      cleanup();
+      reject(createAbortError());
+    };
+    const cleanup = () => signal.removeEventListener('abort', abort);
+    signal.addEventListener('abort', abort, { once: true });
+    promise.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
+}
+
+function createAbortError() {
+  return new DOMException('The operation was aborted', 'AbortError');
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof DOMException && error.name === 'AbortError';
 }

@@ -197,8 +197,13 @@ ownership либо `training:results:read`. Несуществующий/чуж�
 
 Employee result endpoints используют только authenticated `user.id` из JWT и
 никогда не принимают owner ID из query/body. Чужой/несуществующий attempt
-возвращается как `404`; pending-review DTO обнуляет итог и breakdown, а AI
-summary отсутствует в employee DTO при любом status.
+возвращается как `404`; pending-review DTO обнуляет итог и breakdown. После
+`OVERRIDDEN` либо любого review adjustment, при котором
+`finalScore != serverScore`, employee получает только итог и
+`MANUALLY_ADJUSTED_BREAKDOWN_UNAVAILABLE`: исходные question/component scores
+не сериализуются. Breakdown доступен только из persisted active evaluation,
+если суммы question/criterion точно согласованы с `finalScore`. AI summary и
+AI/server/admin score fields отсутствуют в employee DTO при любом status.
 Project DTO отдаёт только безопасную связь с объектом, backend eligibility,
 active attempt timestamps/status и булевы Telegram/retake состояния; Telegram
 ID/chat ID и внутренний account ID не возвращаются.
