@@ -6169,3 +6169,28 @@ Dependencies:
   подтверждением её фактов нужен ручной живой просмотр.
 - Общая роль `user` не будет открыта без отдельной точной команды
   `OPEN_TRAINING_FOR_ALL_USERS`.
+
+## 2026-07-28 — Training admin facts blank-screen fix
+
+Что сделано:
+
+- Исправлен production-контракт detail endpoint учебного проекта: факты
+  теперь возвращаются вместе с `questionLinks`, которые использует вкладка
+  «Факты».
+- Добавлен unit regression на include связей вопросов в project detail.
+- Данные TATE и их статус не изменялись.
+
+Проверки:
+
+- `pnpm --filter @platforma/api build` — passed.
+- `node --test apps/api/tests/training-content-service.test.cjs` — `11/11`,
+  passed.
+- API unit — `444/444`, passed.
+
+Ручная/production проверка:
+
+- Ожидает деплоя и повторного открытия вкладки «Факты».
+
+Спорные места:
+
+- Нет.

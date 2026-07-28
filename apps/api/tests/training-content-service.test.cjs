@@ -217,6 +217,25 @@ test('project creation atomically creates draft defaults and an AuditLog record'
   assert.equal(calls.auditCreate.data.ipAddress, '127.0.0.1');
 });
 
+test('project detail includes fact question links required by the admin facts editor', async () => {
+  let query = null;
+  const service = new TrainingContentService({
+    trainingProject: {
+      findUnique: async (args) => {
+        query = args;
+        return { id: projectId, versions: [] };
+      },
+    },
+  });
+
+  await service.getProject(projectId);
+
+  assert.deepEqual(
+    query.include.versions.include.facts.include.questionLinks,
+    { orderBy: { createdAt: 'asc' } },
+  );
+});
+
 test('publication supersedes the old version and switches the active version in one transaction', async () => {
   const version = validPublishableVersion();
   const versionUpdates = [];

@@ -35,6 +35,11 @@ const trainingVersionContentInclude = {
   },
   facts: {
     orderBy: [{ topicCode: 'asc' }, { code: 'asc' }],
+    include: {
+      questionLinks: {
+        orderBy: { createdAt: 'asc' },
+      },
+    },
   },
   criteria: {
     orderBy: [{ questionType: 'asc' }, { sortOrder: 'asc' }],
