@@ -1,5 +1,52 @@
 # Codex Log
 
+## 2026-07-28 - Training production dark deploy
+
+Задача:
+
+- Подготовить production-окружение Telegram/OpenAI для модуля обучения и развернуть актуальную ветку `on-ser`.
+- Сохранить модуль и billable OpenAI smoke выключенными до отдельных staging/provider-проверок.
+- Не допустить публикации PostgreSQL, Redis и MinIO на host-интерфейсах.
+
+Изменения:
+
+- `docker-compose.production.yml` - PostgreSQL, Redis и MinIO больше не публикуют host-порты; API и web привязаны только к `127.0.0.1`; для всех production-сервисов задан `restart: unless-stopped`.
+- `apps/api/tests/training-telegram.test.cjs` - добавлена регрессия production Compose на приватные infrastructure-порты, loopback API/web и restart policy.
+- На production создан root-only `/opt/platforma/.env.production` с режимами реальных Telegram/OpenAI providers, согласованными моделями и отдельными private training buckets. Значения секретов не выводились и не записывались в git; файл имеет `root:root 0600`.
+- `TRAINING_MODULE_ENABLED=false` и `OPENAI_SMOKE_ENABLED=false`: webhook не регистрировался, запросы к OpenAI не выполнялись.
+
+Проверки:
+
+- `node --test apps/api/tests/training-telegram.test.cjs` - 16/16 passed.
+- `pnpm --filter @platforma/api test` - passed, включая TypeScript build и PostgreSQL DB suite 87/87.
+- Rendered production Compose: API `127.0.0.1:3000`, web `127.0.0.1:5173`, PostgreSQL/Redis/MinIO без host-портов; все шесть сервисов имеют `restart: unless-stopped`.
+- Перед миграциями создан custom-format backup `/opt/platforma-deploy-backups/predeploy-20260728T125637Z-67bc41e6bf45-training-disabled/database.dump`: `50 653 527` bytes, SHA-256 `755aabeb842c6d12ea281e5938716cb16c7c750d2b7c4ee883c7aa9fe9e06bf5`.
+- Backup восстановлен в изолированную БД: исходные 32 migrations валидны, FK-ошибок нет. На отдельном restore-клоне успешно применены все 9 новых migrations, после чего получено 41/41, ноль invalid constraints/indexes и неизменные контрольные counts.
+- Production migrations обновлены с 32 до 41; incomplete/rolled-back/log-error migrations, invalid training constraints и invalid training indexes - `0`. Контрольные counts сохранились: users `33`, files `43 396`, real estate objects `347`.
+- Оба training buckets созданы и возвращают `403` на unsigned `HEAD`.
+- `git diff --check` - passed.
+
+Production deploy:
+
+- Compose-hardening commit `a554a0c` отправлен в `origin/on-ser`; production `/opt/platforma` fast-forwarded с `67bc41e` до `a554a0c`.
+- Собраны production images `platforma-api:local` (`sha256:6847b308162e...`) и `platforma-web` (`sha256:e24f90d5972c...`); worker image содержит `ffmpeg` и `ffprobe` 8.0.1.
+- Сохранены rollback images `platforma-api:predeploy-20260728T125637Z-67bc41e6bf45-training-disabled` и `platforma-web:predeploy-20260728T125637Z-67bc41e6bf45-training-disabled`.
+- Переключены только API, web и новый training-worker; существующие PostgreSQL, Redis и MinIO не пересоздавались.
+- API healthy; локальный и публичный `/health` вернули `status=ok`, `database=ok`, `training=disabled`; `/` и `/training` вернули HTTP 200.
+- На host доступны только SSH и nginx `80/443`; API `3000` и web `5173` слушают loopback, портов `5432`, `6379`, `9000`, `9001` на host нет.
+- Стартовые логи API/web/worker не содержат runtime error/fatal/exception. Telegram `getWebhookInfo` подтвердил отсутствие зарегистрированного webhook и pending updates.
+
+Ручная проверка:
+
+- До включения модуля закрыть provider-specific staging privacy, Telegram webhook/delivery, OpenAI billable smoke и calibration gates.
+- После закрытия gates отдельно зарегистрировать Telegram webhook, включить `TRAINING_MODULE_ENABLED=true` и пройти production UI/role QA.
+- Перевыпустить SSH/Telegram/OpenAI credentials, переданные через чат, и обновить `/opt/platforma/.env.production`.
+
+Спорные места:
+
+- Это намеренный dark deploy: код, schema, worker и production provider contract развернуты, но пользовательские training-операции остаются выключенными.
+- В production остаются 27 исторических `PENDING` feed import runs без активных процессов; они не относятся к deployment scope и не изменялись.
+
 ## 2026-07-25 - Etalon lot PDF duplicate-layout resolver
 
 Задача:
