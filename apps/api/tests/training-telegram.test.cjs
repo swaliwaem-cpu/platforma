@@ -8,6 +8,9 @@ const test = require('node:test');
 const { PERMISSIONS_KEY } = require('../dist/auth/permissions.decorator.js');
 const { TrainingModule } = require('../dist/training/training.module.js');
 const {
+  TrainingEmployeeResultsController,
+} = require('../dist/training/training-results.controller.js');
+const {
   encodeFinishCallback,
   encodeProjectCallback,
   encodeStartCallback,
@@ -246,7 +249,7 @@ test('Telegram controllers expose employee and unguarded webhook routes', () => 
   assert.deepEqual(
     Reflect.getMetadata(
       PERMISSIONS_KEY,
-      TrainingTelegramController.prototype.getAttempt,
+      TrainingEmployeeResultsController.prototype.getAttempt,
     ),
     ['training:own-results:read'],
   );

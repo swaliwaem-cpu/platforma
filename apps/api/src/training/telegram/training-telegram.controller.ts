@@ -17,7 +17,6 @@ import { CurrentUser } from '../../auth/current-user.decorator';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { RequirePermissions } from '../../auth/permissions.decorator';
 import { PermissionsGuard } from '../../auth/permissions.guard';
-import { TrainingTelegramDialogService } from './training-telegram-dialog.service';
 import { TrainingTelegramLinkService } from './training-telegram-link.service';
 import { TrainingTelegramWebhookService } from './training-telegram-webhook.service';
 import { TrainingTelegramWorkerService } from './training-telegram-worker.service';
@@ -25,48 +24,12 @@ import { TrainingTelegramWorkerService } from './training-telegram-worker.servic
 @Controller('training')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 export class TrainingTelegramController {
-  constructor(
-    private readonly links: TrainingTelegramLinkService,
-    private readonly dialog: TrainingTelegramDialogService,
-  ) {}
-
-  @Get('projects')
-  @RequirePermissions('training:projects:read')
-  listProjects(@CurrentUser() user: AuthenticatedUser) {
-    return this.dialog.listEmployeeProjects(user.id);
-  }
-
-  @Get('projects/:projectId')
-  @RequirePermissions('training:projects:read')
-  getProject(
-    @CurrentUser() user: AuthenticatedUser,
-    @Param('projectId') projectId: string,
-  ) {
-    return this.dialog.getEmployeeProject(user.id, projectId);
-  }
+  constructor(private readonly links: TrainingTelegramLinkService) {}
 
   @Get('telegram/account')
   @RequirePermissions('training:take')
   getAccount(@CurrentUser() user: AuthenticatedUser) {
     return this.links.getAccount(user.id);
-  }
-
-  @Get('attempts')
-  @RequirePermissions('training:own-results:read')
-  listAttempts(@CurrentUser() user: AuthenticatedUser) {
-    return this.dialog.listEmployeeAttempts(user.id);
-  }
-
-  @Get('attempts/:attemptId')
-  @RequirePermissions('training:own-results:read')
-  getAttempt(
-    @CurrentUser() user: AuthenticatedUser,
-    @Param('attemptId') attemptId: string,
-  ) {
-    return this.dialog.getEmployeeAttempt(
-      user.id,
-      readUuid(attemptId, 'attemptId'),
-    );
   }
 
   @Post('telegram/link-tokens')

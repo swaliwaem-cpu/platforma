@@ -572,16 +572,41 @@ PostgreSQL/HTTP integration tests; root suite также включает `286/2
 
 ## Этап 9. Employee/Admin results UI и rating
 
-- [ ] Реализовать employee `/training` и Telegram connection state.
-- [ ] Показывать employee только разрешённый собственный результат.
-- [ ] Не показывать employee transcript/errors/audio/rating.
-- [ ] Оставить Telegram result кратким.
-- [ ] Реализовать admin filters/detail/timeline/audio/transcript/evidence.
-- [ ] Реализовать review/override UX с обязательной причиной.
-- [ ] Реализовать утверждённую rating formula и columns.
-- [ ] Использовать best reviewed final score.
-- [ ] Исключить storage keys/audio URLs из exports.
-- [ ] Добавить ownership/IDOR и frontend tests; запустить build/tests.
+- [x] Реализовать employee `/training` и Telegram connection state.
+- [x] Показывать employee только разрешённый собственный результат.
+- [x] Не показывать employee transcript/errors/audio/rating.
+- [x] Оставить Telegram result кратким.
+- [x] Реализовать admin filters/detail/timeline/audio/transcript/evidence.
+- [x] Реализовать review/override UX с обязательной причиной.
+- [x] Реализовать утверждённую rating formula и columns.
+- [x] Использовать best reviewed final score.
+- [x] Исключить storage keys/audio URLs из exports.
+- [x] Добавить ownership/IDOR и frontend tests; запустить build/tests.
+
+Фактическая реализация:
+
+- employee/admin DTO закреплены в `packages/shared/src/training.ts`;
+- employee project DTO содержит backend eligibility, retake/window/cooldown,
+  active attempt и безопасное Telegram connection state; history поддерживает
+  project/status/date filters;
+- list endpoints используют bounded server pagination/filtering и не грузят
+  transcript/audio bytes; тяжёлый разбор загружается только по `attemptId`;
+- admin list содержит version, AI/server/admin/final score, answer/attempt
+  counts и краткий summary без тяжёлых processing данных;
+- ranking исключает pending review, technical failure и refunded
+  (`isConsumed=false`), использует historical `passStatus` и лучший
+  подтверждённый `finalScore` каждого проекта; detail содержит ссылку на
+  выбранную попытку и детерминированную динамику first-to-best;
+- CSV содержит UTF-8 BOM для Excel, нейтрализует formula injection и не
+  экспортирует transcript/audio/provider/storage/Telegram данные;
+- новый real Nest/PostgreSQL HTTP test проверяет `401/403/404`, ownership,
+  employee masking, обе административные роли, filters/pagination, ranking и
+  CSV; runner применяет все `39` migrations и удаляет временную БД;
+- отдельный demo seed не добавлялся: детерминированные fake-сценарии
+  изолированы в unit/PostgreSQL fixtures и не могут попасть в production seed.
+- Real OpenAI synthetic smoke остаётся отложенным; production deploy и
+  production migrations не выполнялись.
+- Этап 10 не начинался.
 
 ## Этап 10. Security, deploy и pilot preparation
 
@@ -599,13 +624,13 @@ PostgreSQL/HTTP integration tests; root suite также включает `286/2
 
 ## Следующий этап
 
-Точный следующий этап: `docs/training/prompts/09_results_ui_rating.md`.
-Этап 9 не начинался.
+Точный следующий этап: этап 10 — security, deploy и pilot preparation.
+Этап 10 не начинался.
 
 Он не начат и не должен выполняться автоматически. Перед ним нужно:
 
 1. получить отдельный запрос пользователя;
 2. повторно проверить branch/status и сохранить чужие изменения;
-3. прочитать prompt этапа 9 и visibility/rating части спецификации;
-4. не расширять review backend в results/rating frontend без отдельного
-   запроса.
+3. перечитать security/deploy/pilot части спецификации;
+4. не выполнять production migration/deploy, real Telegram/OpenAI или
+   обработку реальных голосов без отдельного разрешения.

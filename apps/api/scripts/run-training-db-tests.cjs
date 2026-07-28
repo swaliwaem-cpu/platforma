@@ -85,6 +85,7 @@ async function main() {
       'tests/training-audio-db.integration.cjs',
       'tests/training-audio-http.integration.cjs',
       'tests/training-telegram-db.integration.cjs',
+      'tests/training-results-db.integration.cjs',
     ]);
   } catch (error) {
     exitCode = 1;

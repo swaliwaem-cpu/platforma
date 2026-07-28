@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useRef, useState } from 'react';
+import { FormEvent, lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { MenuIcon, MoonIcon, SunIcon } from 'lucide-react';
 import type { AuthUser, UserStatus } from '@platforma/shared';
 
@@ -23,6 +23,17 @@ import { TrainingShellPage } from './training/TrainingShellPage';
 import { getAppliedAppTheme, getNextAppTheme, setAppTheme } from './appTheme';
 import './styles.css';
 import './app-theme.css';
+
+const TrainingAdminResultsPage = lazy(() =>
+  import('./training/TrainingAdminResultsPage').then((module) => ({
+    default: module.TrainingAdminResultsPage,
+  })),
+);
+const TrainingRankingPage = lazy(() =>
+  import('./training/TrainingRankingPage').then((module) => ({
+    default: module.TrainingRankingPage,
+  })),
+);
 
 type AppSection = 'cabinet' | 'catalog' | 'training' | 'presentations' | 'admin';
 type LoginMode = 'login' | 'register';
@@ -158,6 +169,20 @@ const cabinetSections = [
     group: 'Админка',
     path: '/admin/training',
     requiredPermissions: ['admin:access', 'training:projects:manage'],
+  },
+  {
+    id: 'admin-training-results',
+    label: 'Результаты обучения',
+    group: 'Админка',
+    path: '/admin/training/results',
+    requiredPermissions: ['admin:access', 'training:results:read'],
+  },
+  {
+    id: 'admin-training-ranking',
+    label: 'Рейтинг обучения',
+    group: 'Админка',
+    path: '/admin/training/ranking',
+    requiredPermissions: ['admin:access', 'training:results:read'],
   },
   {
     id: 'admin-users',
@@ -403,7 +428,30 @@ function AppRoutes() {
       <section className="workspace">
         {activeSection === 'admin' ? (
           hasPermission('admin:access') ? (
-            pathname.startsWith('/admin/training') ? (
+            pathname.startsWith('/admin/training/results') ? (
+              hasPermission('training:results:read') ? (
+                <Suspense fallback={<RouteLoading />}>
+                  <TrainingAdminResultsPage
+                    pathname={pathname}
+                    navigate={navigate}
+                    onBack={() => navigate('/admin')}
+                  />
+                </Suspense>
+              ) : (
+                <AccessDenied />
+              )
+            ) : pathname.startsWith('/admin/training/ranking') ? (
+              hasPermission('training:results:read') ? (
+                <Suspense fallback={<RouteLoading />}>
+                  <TrainingRankingPage
+                    navigate={navigate}
+                    onBack={() => navigate('/admin/training/results')}
+                  />
+                </Suspense>
+              ) : (
+                <AccessDenied />
+              )
+            ) : pathname.startsWith('/admin/training') ? (
               hasPermission('training:projects:manage') ? (
                 <TrainingAdminPage
                   pathname={pathname}
@@ -450,6 +498,8 @@ function AppRoutes() {
                 onOpenImport={() => navigate('/admin/import')}
                 onOpenObjects={() => navigate('/admin/objects')}
                 onOpenTraining={() => navigate('/admin/training')}
+                onOpenTrainingRanking={() => navigate('/admin/training/ranking')}
+                onOpenTrainingResults={() => navigate('/admin/training/results')}
                 onOpenUsers={() => navigate('/admin/users')}
               />
             )
@@ -1256,6 +1306,8 @@ function AdminHome({
   onOpenImport,
   onOpenObjects,
   onOpenTraining,
+  onOpenTrainingRanking,
+  onOpenTrainingResults,
   onOpenUsers,
 }: {
   onOpenCatalogLinks: () => void;
@@ -1263,6 +1315,8 @@ function AdminHome({
   onOpenImport: () => void;
   onOpenObjects: () => void;
   onOpenTraining: () => void;
+  onOpenTrainingRanking: () => void;
+  onOpenTrainingResults: () => void;
   onOpenUsers: () => void;
 }) {
   const { hasPermission } = useAuth();
@@ -1276,10 +1330,24 @@ function AdminHome({
     },
     {
       label: 'Обучение',
-      description: 'Проекты, результаты и настройки модуля обучения.',
+      description: 'Проекты, материалы и настройки модуля обучения.',
       tone: 'secondary',
       canAccess: hasPermission('training:projects:manage'),
       onClick: onOpenTraining,
+    },
+    {
+      label: 'Результаты обучения',
+      description: 'Попытки, полный разбор, аудио и ручная проверка.',
+      tone: 'secondary',
+      canAccess: hasPermission('training:results:read'),
+      onClick: onOpenTrainingResults,
+    },
+    {
+      label: 'Рейтинг обучения',
+      description: 'Подтверждённые результаты по сотрудникам и CSV.',
+      tone: 'secondary',
+      canAccess: hasPermission('training:results:read'),
+      onClick: onOpenTrainingRanking,
     },
     {
       label: 'Пользователи',
@@ -1348,6 +1416,14 @@ function AccessDenied() {
       <h2>Недостаточно прав</h2>
       <p className="muted-text">Текущая роль не открывает этот раздел.</p>
     </div>
+  );
+}
+
+function RouteLoading() {
+  return (
+    <section className="content-panel">
+      <p className="muted-text">Загрузка раздела обучения</p>
+    </section>
   );
 }
 

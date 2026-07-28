@@ -2,8 +2,9 @@
 
 Дата актуализации: 2026-07-27.
 
-Документ фиксирует границы безопасности этапов 7–8 после независимого review.
-UI результатов/rating и следующий этап здесь не реализуются.
+Документ фиксирует границы безопасности этапов 7–9 после независимого review.
+HTTP DTO/permissions этапа 9 подробно зафиксированы в
+`docs/training/09-results-api.md`.
 
 ## Поток данных
 
@@ -193,6 +194,21 @@ Startup/periodic scavenger ограничен 200 entries, только generate
 ownership либо `training:results:read`. Несуществующий/чужой answer скрывается
 как `404`. Успех возвращает только bytes с `private, no-store` и создаёт
 `training.audio.read` в `AuditLog`; storage key/public URL не сериализуются.
+
+Employee result endpoints используют только authenticated `user.id` из JWT и
+никогда не принимают owner ID из query/body. Чужой/несуществующий attempt
+возвращается как `404`; pending-review DTO обнуляет итог и breakdown, а AI
+summary отсутствует в employee DTO при любом status.
+Project DTO отдаёт только безопасную связь с объектом, backend eligibility,
+active attempt timestamps/status и булевы Telegram/retake состояния; Telegram
+ID/chat ID и внутренний account ID не возвращаются.
+Transcript, ошибки, audio endpoint, provider metadata, ranking и review history
+в employee DTO отсутствуют по типу и по explicit Prisma select.
+
+Admin list/ranking/CSV требуют `training:results:read`; review/reprocessing —
+`training:results:review`; фактические audio bytes —
+`training:audio:read` плюс административный results scope. Frontend permission
+checks служат UX-фильтром, но не заменяют Nest guards.
 
 ## Автоматические доказательства
 

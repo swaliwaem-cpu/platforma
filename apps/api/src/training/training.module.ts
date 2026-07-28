@@ -33,6 +33,12 @@ import { TrainingConfigService } from './training.config';
 import { TrainingContentService } from './training-content.service';
 import { TrainingController } from './training.controller';
 import { TrainingReviewController } from './training-review.controller';
+import {
+  TrainingAdminResultsController,
+  TrainingEmployeeResultsController,
+} from './training-results.controller';
+import { TrainingRankingService } from './training-ranking.service';
+import { TrainingResultsService } from './training-results.service';
 import { TrainingDocumentWorkerService } from './training-document-worker.service';
 import { TrainingDocumentsService } from './training-documents.service';
 import {
@@ -59,6 +65,8 @@ import { TrainingTelegramWorkerService } from './telegram/training-telegram-work
     TrainingTelegramWebhookController,
     TrainingAudioController,
     TrainingReviewController,
+    TrainingEmployeeResultsController,
+    TrainingAdminResultsController,
   ],
   providers: [
     TrainingConfigService,
@@ -68,6 +76,8 @@ import { TrainingTelegramWorkerService } from './telegram/training-telegram-work
     TrainingAudioConfig,
     TrainingAudioAccessService,
     TrainingAttemptEngineService,
+    TrainingResultsService,
+    TrainingRankingService,
     TrainingOpenAiConfig,
     TrainingOpenAiHttpClient,
     OpenAiTrainingTranscriptionProvider,

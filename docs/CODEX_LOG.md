@@ -5666,3 +5666,99 @@ Dependencies:
   ранее зафиксированные внешние operational gates по data controls/model
   access и staging calibration.
 - Этап 9 не начат.
+
+## 2026-07-27 - Local Compose training migrations deploy
+
+Задача:
+
+- Собрать локальный Compose image `api`, поднять `postgres`, проверить,
+  применить и повторно проверить Prisma migrations.
+
+Результат:
+
+- `docker compose build api` — passed; собран `platforma-api:local`.
+- `docker compose up -d postgres` — PostgreSQL running/healthy.
+- Первый `prisma migrate status` обнаружил pending migrations
+  `20260727220000_add_training_openai_provider_runs` и
+  `20260727230000_fix_training_openai_review_findings` и завершился с кодом
+  `1`, поэтому исходная цепочка `&&` остановилась до deploy.
+- `prisma migrate deploy` и финальный `prisma migrate status` выполнены
+  отдельно: обе migrations применены, все `39` migrations актуальны,
+  `Database schema is up to date!`.
+- Финальный status повторно проверен из заново собранного image.
+
+Спорные места:
+
+- Prisma сообщил только informational notice о доступном major update
+  `6.19.3 -> 7.9.1`; зависимости намеренно не менялись.
+
+## 2026-07-28 - Training stage 9 employee and admin results UI
+
+Задача:
+
+- Выполнить только этап 9 модуля обучения: кабинет сотрудника, результаты и
+  review администратора, рейтинг и безопасный CSV export.
+- Не начинать этап 10, не выполнять production deploy/migrations, реальные
+  Telegram/OpenAI запросы и не добавлять зависимости.
+
+Изменения:
+
+- Добавлены shared DTO contracts для кабинета сотрудника, admin result detail,
+  review, ranking, pagination и безопасного Telegram account response.
+- Employee API теперь возвращает доступные проекты, историю и собственный
+  результат с ownership checks. Незавершённые и ожидающие review результаты
+  маскируют итоговый score и evaluation breakdown; AI summary отсутствует в
+  employee DTO для всех статусов.
+- Project DTO содержит optional object summary, retake/window/cooldown,
+  active attempt и безопасные Telegram connection/eligibility states.
+  Employee history поддерживает project/status/date filters.
+- Admin results API поддерживает серверные filters, sorting и pagination.
+  List содержит version, AI/server/admin/final score, answer/attempt counts и
+  короткий summary. Тяжёлые transcript/audio/evaluation/provider/job данные
+  загружаются только в detail endpoint и не раскрывают
+  storage/Telegram/provider secrets.
+- Ranking использует лучший finalized reviewed result по каждому проекту,
+  исключает technical/refunded/pending attempts и применяет детерминированный
+  tie-break. Narrative строится без AI и психологических интерпретаций и
+  включает first-to-best динамику при наличии повторных результатов.
+- CSV export защищён от spreadsheet formula injection, использует UTF-8 BOM,
+  CRLF и корректное quoting; transcript/audio/storage/provider/Telegram поля
+  не экспортируются.
+- Employee и admin UI реализованы в существующей React-архитектуре с manual
+  routing, `AdminUi` и `apiRequest`. Admin results/ranking загружаются lazy
+  chunks; добавлены loading/error/empty/pending states и responsive layout.
+- Review UI сохраняет один `Idempotency-Key` для повторной отправки того же
+  payload, обрабатывает `409`, не позволяет дублировать unsupported decision
+  и после успеха обновляет detail и ranking.
+- Добавлены real PostgreSQL/Nest HTTP integration tests, unit tests и web
+  source/runtime regressions для security matrix, ownership, pending masking,
+  ranking, CSV, protected audio URL cleanup и review idempotency.
+- Обновлены implementation/security docs, добавлены stage 9 API contract и
+  manual UI checklist. Prisma schema, migrations, env и Compose не менялись.
+
+Проверки:
+
+- `pnpm --filter @platforma/api test` — passed: `429/429` unit и `77/77`
+  PostgreSQL/HTTP integration; все `39` migrations применены к чистой
+  временной PostgreSQL, затем БД удалена.
+- `pnpm --filter @platforma/web test` — passed: `291/291`.
+- `pnpm build` — passed; новые training pages собраны отдельными chunks.
+  Сохраняется Vite warning об основном chunk `715.33 kB`.
+- `pnpm test` — passed: API `429 + 77`, Web `291`, Feed import `64`,
+  WordPress import `23`, всего `884`.
+- Production migrations/deploy, Compose config, real OpenAI smoke и реальные
+  Telegram запросы не запускались.
+
+Ручная проверка:
+
+- Пройти `docs/training/09-results-ui-manual-checklist.md` в браузере на desktop
+  и ширине `375 px` с ролями employee, training admin и без permission.
+- На отдельном staging gate проверить реальные protected audio responses,
+  download CSV в целевых spreadsheet clients и review/reprocess observability.
+
+Спорные места:
+
+- Code-level blockers этапа 9 не обнаружены. Живая browser/staging проверка с
+  реальными account/audio/provider данными намеренно оставлена отдельным gate.
+- Реальный OpenAI smoke остаётся opt-in задачей предыдущего этапа; этап 10 не
+  начинался.

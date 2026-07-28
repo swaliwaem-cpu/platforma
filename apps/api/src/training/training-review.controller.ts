@@ -2,7 +2,6 @@ import {
   BadRequestException,
   Body,
   Controller,
-  Get,
   Headers,
   HttpCode,
   HttpStatus,
@@ -24,11 +23,6 @@ import { parseTrainingReviewIdempotencyKey } from './training-review-idempotency
 @RequirePermissions('training:results:review')
 export class TrainingReviewController {
   constructor(private readonly attempts: TrainingAttemptEngineService) {}
-
-  @Get('results/:attemptId')
-  getResult(@Param('attemptId') attemptId: string) {
-    return this.attempts.getReviewDetails(attemptId);
-  }
 
   @Post('results/:attemptId/review')
   review(

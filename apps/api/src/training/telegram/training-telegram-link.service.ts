@@ -45,7 +45,10 @@ export class TrainingTelegramLinkService {
     });
     return {
       connected: account?.revokedAt === null,
-      account: account?.revokedAt === null ? serializeTelegramAccount(account) : null,
+      account:
+        account?.revokedAt === null
+          ? serializeEmployeeTelegramAccount(account)
+          : null,
     };
   }
 
@@ -433,21 +436,36 @@ export function hashTrainingLinkToken(token: string) {
 }
 
 function serializeTelegramAccount(account: {
-  telegramUserId: bigint;
-  chatId: bigint;
+  id: string;
   username: string | null;
   firstName: string | null;
   lastName: string | null;
   linkedAt: Date;
 }) {
+  const displayName =
+    [account.firstName, account.lastName].filter(Boolean).join(' ').trim() ||
+    (account.username ? `@${account.username}` : null);
   return {
-    telegramUserId: account.telegramUserId.toString(),
-    chatId: account.chatId.toString(),
+    id: account.id,
     username: account.username,
     firstName: account.firstName,
     lastName: account.lastName,
+    displayName,
     linkedAt: account.linkedAt.toISOString(),
   };
+}
+
+function serializeEmployeeTelegramAccount(account: {
+  username: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  linkedAt: Date;
+}) {
+  const {
+    id: _internalId,
+    ...safeAccount
+  } = serializeTelegramAccount({ id: 'internal', ...account });
+  return safeAccount;
 }
 
 function cleanTelegramMetadata(value: string | undefined, maximum: number) {
