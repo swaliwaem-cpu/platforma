@@ -1,6 +1,6 @@
 # Training go / no-go checklist
 
-Дата актуализации: 2026-07-28. Production запрещён, пока любой обязательный
+Дата актуализации: 2026-07-29. Production запрещён, пока любой обязательный
 gate не отмечен.
 
 ## Code
@@ -9,6 +9,31 @@ gate не отмечен.
 - [ ] Additive migrations прошли на staging с backup/status/post-check.
 - [ ] Feature disable/re-enable, rollback, worker restart и outbox recovery
   проверены на staging.
+- [ ] Working revision и publish-vs-mutation PostgreSQL race проверены с
+  persisted final-state assertions.
+- [ ] URL/document/fact-suggestion ownership, lost lease, stale recovery,
+  bounded shutdown и multi-replica сценарии проверены.
+- [ ] Dirty guard, fail-closed readiness, массовая загрузка и шесть шагов
+  мастера проверены в реальном авторизованном браузере.
+
+## Источники
+
+- [ ] Официальные URL прошли реальный TLS/DNS/redirect/SSRF smoke.
+- [ ] Private snapshot bucket и orphan cleanup проверены до/во время/после
+  PUT/DELETE failure.
+- [ ] Нельзя удалить источник при активной генерации или наличии истории,
+  которую требуется сохранить.
+- [ ] Full source text не возвращается в project/version detail; доступен
+  только отдельным защищённым endpoint.
+
+## Предложения фактов
+
+- [ ] Ни один предложенный факт не становится подтверждённым без решения
+  администратора и связи с вопросом.
+- [ ] Необработанные кандидаты и активные run/provider/job блокируют
+  публикацию.
+- [ ] Idempotency, ambiguous provider recovery и отсутствие двойного
+  billable-вызова подтверждены на staging.
 
 ## Telegram
 

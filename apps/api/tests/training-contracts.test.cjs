@@ -57,6 +57,8 @@ const expectedJobKinds = [
   'SEND_TIMER_WARNING',
   'EXPIRE_ATTEMPT',
   'EXTRACT_SOURCE_DOCUMENT',
+  'FETCH_OFFICIAL_URL_SOURCE',
+  'SUGGEST_FACTS',
 ];
 
 test('generated Prisma enums match shared training contracts', () => {

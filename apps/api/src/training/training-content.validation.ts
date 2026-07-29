@@ -31,6 +31,10 @@ type PublishableCriterion = {
   anchorsJson: unknown;
 };
 
+type PublishableSource = {
+  extractionStatus: string;
+};
+
 export type PublishableTrainingVersion = {
   passScore: number;
   attemptLimit: number;
@@ -48,6 +52,51 @@ export type PublishableTrainingVersion = {
   questions: PublishableQuestion[];
   facts: PublishableFact[];
   criteria: PublishableCriterion[];
+  sourceDocuments?: PublishableSource[];
+  officialUrlSources?: PublishableSource[];
+  pendingFactSuggestionCount?: number;
+  activeFactSuggestionRunCount?: number;
+  activeFactSuggestionProviderCount?: number;
+  activeFactSuggestionJobCount?: number;
+};
+
+export type TrainingReadinessIssue = {
+  code: string;
+  step:
+    | 'main'
+    | 'sources'
+    | 'suggestions'
+    | 'questions'
+    | 'criteria'
+    | 'review';
+  entityId?: string;
+  message: string;
+};
+
+export type TrainingVersionReadiness = {
+  readyToPublish: boolean;
+  facts: {
+    approved: number;
+    total: number;
+    pendingSuggestions: number;
+    ready: boolean;
+  };
+  questions: {
+    active: number;
+    required: number;
+    mainReady: boolean;
+    followUpsReady: boolean;
+    positionsReady: boolean;
+    ready: boolean;
+  };
+  criteria: {
+    mainPoints: number;
+    mainRequired: number;
+    followUpPoints: number;
+    followUpRequired: number;
+    ready: boolean;
+  };
+  issues: TrainingReadinessIssue[];
 };
 
 export function normalizeTrainingUniqueKey(value: string) {
@@ -135,6 +184,21 @@ export function collectTrainingPublicationErrors(version: PublishableTrainingVer
   } else if (version.facts.some((fact) => !fact.isApproved)) {
     errors.push('Every fact must be approved before publication');
   }
+  if ((version.pendingFactSuggestionCount ?? 0) > 0) {
+    errors.push('Pending fact suggestions must be reviewed or dismissed before publication');
+  }
+  if (getActiveFactSuggestionGenerationCount(version) > 0) {
+    errors.push('Fact suggestion generation must finish before publication');
+  }
+  if (
+    [...(version.sourceDocuments ?? []), ...(version.officialUrlSources ?? [])]
+      .some((source) =>
+        source.extractionStatus === 'PENDING' ||
+        source.extractionStatus === 'PROCESSING',
+      )
+  ) {
+    errors.push('Source extraction must finish before publication');
+  }
   if (hasDuplicates(version.facts.map((fact) => normalizeTrainingUniqueKey(fact.code)))) {
     errors.push('Fact codes must be unique');
   }
@@ -181,6 +245,79 @@ export function collectTrainingPublicationErrors(version: PublishableTrainingVer
   return Array.from(new Set(errors));
 }
 
+export function getTrainingVersionReadiness(
+  version: PublishableTrainingVersion,
+): TrainingVersionReadiness {
+  const errors = collectTrainingPublicationErrors(version);
+  const pendingSuggestions = version.pendingFactSuggestionCount ?? 0;
+  const activeSuggestionGeneration =
+    getActiveFactSuggestionGenerationCount(version);
+  const activeQuestions = version.questions.filter((question) => question.isActive);
+  const mainQuestions = activeQuestions.filter((question) => question.type === 'MAIN');
+  const followUpQuestions = activeQuestions.filter((question) => question.type === 'FOLLOW_UP');
+  const approvedFacts = version.facts.filter((fact) => fact.isApproved).length;
+  const mainPoints = sumCriterionPoints(version.criteria, 'MAIN');
+  const followUpPoints = sumCriterionPoints(version.criteria, 'FOLLOW_UP');
+  const mainQuestionsComplete =
+    mainQuestions.length === TRAINING_MAIN_QUESTION_COUNT &&
+    mainQuestions.every(
+      (question) =>
+        question.position === 1 && question.maxScore === TRAINING_MAIN_MAX_SCORE,
+    );
+  const followUpPositions = new Set(followUpQuestions.map((question) => question.position));
+  const followUpQuestionsComplete =
+    followUpQuestions.length === TRAINING_FOLLOW_UP_POOL_SIZE &&
+    followUpQuestions.every(
+      (question) =>
+        question.maxScore === TRAINING_FOLLOW_UP_MAX_SCORE &&
+        question.position >= 1 &&
+        question.position <= TRAINING_FOLLOW_UP_POOL_SIZE,
+    ) &&
+    followUpPositions.size === TRAINING_FOLLOW_UP_POOL_SIZE;
+
+  return {
+    readyToPublish: errors.length === 0,
+    facts: {
+      approved: approvedFacts,
+      total: version.facts.length,
+      pendingSuggestions,
+      ready:
+        version.facts.length > 0 &&
+        approvedFacts === version.facts.length &&
+        pendingSuggestions === 0 &&
+        activeSuggestionGeneration === 0,
+    },
+    questions: {
+      active: activeQuestions.length,
+      required: TRAINING_MAIN_QUESTION_COUNT + TRAINING_FOLLOW_UP_POOL_SIZE,
+      mainReady: mainQuestionsComplete,
+      followUpsReady:
+        followUpQuestions.length === TRAINING_FOLLOW_UP_POOL_SIZE &&
+        followUpQuestions.every(
+          (question) => question.maxScore === TRAINING_FOLLOW_UP_MAX_SCORE,
+        ),
+      positionsReady:
+        followUpQuestions.length === TRAINING_FOLLOW_UP_POOL_SIZE &&
+        followUpPositions.size === TRAINING_FOLLOW_UP_POOL_SIZE &&
+        Array.from(
+          { length: TRAINING_FOLLOW_UP_POOL_SIZE },
+          (_, index) => index + 1,
+        ).every((position) => followUpPositions.has(position)),
+      ready: mainQuestionsComplete && followUpQuestionsComplete,
+    },
+    criteria: {
+      mainPoints,
+      mainRequired: TRAINING_MAIN_MAX_SCORE,
+      followUpPoints,
+      followUpRequired: TRAINING_FOLLOW_UP_MAX_SCORE,
+      ready:
+        Math.abs(mainPoints - TRAINING_MAIN_MAX_SCORE) <= 0.000_001 &&
+        Math.abs(followUpPoints - TRAINING_FOLLOW_UP_MAX_SCORE) <= 0.000_001,
+    },
+    issues: errors.map(toTrainingReadinessIssue),
+  };
+}
+
 function hasValidStructuredAnchors(value: unknown, maximumPoints: number) {
   if (!Array.isArray(value) || value.length === 0) return false;
   const ids = new Set<string>();
@@ -219,7 +356,9 @@ function hasValidStructuredAnchors(value: unknown, maximumPoints: number) {
 }
 
 export function assertTrainingVersionPublishable(version: PublishableTrainingVersion) {
-  const errors = collectTrainingPublicationErrors(version);
+  const errors = getTrainingVersionReadiness(version).issues.map(
+    (issue) => issue.message,
+  );
 
   if (errors.length > 0) {
     throw new UnprocessableEntityException({
@@ -227,6 +366,114 @@ export function assertTrainingVersionPublishable(version: PublishableTrainingVer
       errors,
     });
   }
+}
+
+function toTrainingReadinessIssue(message: string): TrainingReadinessIssue {
+  if (message.includes('Source extraction')) {
+    return {
+      code: 'sources.processing',
+      step: 'sources',
+      message,
+    };
+  }
+  if (message.includes('suggestion generation')) {
+    return {
+      code: 'facts.suggestion_generation_active',
+      step: 'suggestions',
+      message,
+    };
+  }
+  if (message.toLocaleLowerCase('en-US').includes('fact suggestion')) {
+    return {
+      code: 'facts.pending_suggestions',
+      step: 'suggestions',
+      message,
+    };
+  }
+  if (message.includes('fact') || message.includes('Fact')) {
+    return {
+      code: message.includes('approved')
+        ? 'facts.unapproved'
+        : message.includes('codes')
+          ? 'facts.duplicate_codes'
+          : 'facts.missing',
+      step: 'suggestions',
+      message,
+    };
+  }
+  if (message.includes('question') || message.includes('Question')) {
+    return {
+      code: message.includes('position')
+        ? 'questions.positions'
+        : message.includes('texts')
+          ? 'questions.duplicate_texts'
+          : 'questions.shape',
+      step: 'questions',
+      message,
+    };
+  }
+  if (message.includes('criteria') || message.includes('criterion')) {
+    const prefix = message.startsWith('Main')
+      ? 'criteria.main'
+      : 'criteria.follow_up';
+    return {
+      code: message.includes('maximum')
+        ? `${prefix}.points`
+        : message.includes('anchors')
+          ? `${prefix}.anchors`
+          : `${prefix}.invalid`,
+      step: 'criteria',
+      message,
+    };
+  }
+  if (
+    message.includes('score') ||
+    message.includes('Attempt') ||
+    message.includes('Cooldown') ||
+    message.includes('timer') ||
+    message.includes('warnings') ||
+    message.includes('grace') ||
+    message.includes('maximum')
+  ) {
+    return {
+      code: 'main.attempt_settings',
+      step: 'main',
+      message,
+    };
+  }
+  if (message.includes('Availability') || message.includes('Archived')) {
+    return {
+      code: message.includes('Archived')
+        ? 'main.project_archived'
+        : 'main.availability',
+      step: 'main',
+      message,
+    };
+  }
+  return {
+    code: 'review.publication',
+    step: 'review',
+    message,
+  };
+}
+
+function getActiveFactSuggestionGenerationCount(
+  version: PublishableTrainingVersion,
+) {
+  return (
+    (version.activeFactSuggestionRunCount ?? 0) +
+    (version.activeFactSuggestionProviderCount ?? 0) +
+    (version.activeFactSuggestionJobCount ?? 0)
+  );
+}
+
+function sumCriterionPoints(
+  criteria: PublishableCriterion[],
+  questionType: PublishableCriterion['questionType'],
+) {
+  return criteria
+    .filter((criterion) => criterion.questionType === questionType)
+    .reduce((sum, criterion) => sum + Number(criterion.maxPoints.toString()), 0);
 }
 
 export function assertTrainingAvailability(

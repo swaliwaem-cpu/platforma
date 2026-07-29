@@ -5,6 +5,10 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
+const appSource = readFileSync(
+  resolve(currentDir, '../src/App.tsx'),
+  'utf8',
+);
 const pageSource = readFileSync(
   resolve(currentDir, '../src/training/TrainingAdminPage.tsx'),
   'utf8',
@@ -17,23 +21,41 @@ const stylesSource = readFileSync(
   resolve(currentDir, '../src/training/trainingAdmin.css'),
   'utf8',
 );
+const wizardSource = readFileSync(
+  resolve(currentDir, '../src/training/TrainingWizardNav.tsx'),
+  'utf8',
+);
+const readinessSource = readFileSync(
+  resolve(currentDir, '../src/training/TrainingReadiness.tsx'),
+  'utf8',
+);
+const evaluationSource = readFileSync(
+  resolve(currentDir, '../src/training/QuestionEvaluationContext.tsx'),
+  'utf8',
+);
+const uploadQueueSource = readFileSync(
+  resolve(currentDir, '../src/training/trainingUploadQueue.ts'),
+  'utf8',
+);
 const sharedApiSource = readFileSync(
   resolve(currentDir, '../src/admin/api.ts'),
   'utf8',
 );
 
-test('training admin exposes the seven approved content sections', () => {
+test('training admin exposes the six-step project setup wizard', () => {
   for (const label of [
-    'Основное',
-    'Материалы',
-    'Главный вопрос',
-    'Дополнительные вопросы',
-    'Факты',
+    'Основные данные',
+    'Источники',
+    'Предложенные факты',
+    'Вопросы',
     'Критерии',
-    'Проверка / публикация',
+    'Проверка',
   ]) {
-    assert.match(pageSource, new RegExp(`label: '${label.replace('/', '\\/')}'`));
+    assert.match(wizardSource, new RegExp(`label: '${label}'`));
   }
+  assert.match(pageSource, /data-wizard-step="main"/);
+  assert.match(pageSource, /hidden=\{activeStep !== 'questions'\}/);
+  assert.match(wizardSource, /aria-current=\{current \? 'step' : undefined\}/);
 });
 
 test('training admin uses AdminUi, shadcn fields and the existing apiRequest client', () => {
@@ -45,7 +67,7 @@ test('training admin uses AdminUi, shadcn fields and the existing apiRequest cli
   assert.doesNotMatch(pageSource, /react-router/);
 });
 
-test('project editor supports draft CRUD, optional object links and strict publication', () => {
+test('project editor supports working-revision CRUD, optional object links and strict publication', () => {
   assert.match(apiSource, /realEstateObjectId:\s*string \| null/);
   assert.match(apiSource, /\/real-estate-objects\?limit=100/);
   assert.match(apiSource, /\/draft-version/);
@@ -55,17 +77,51 @@ test('project editor supports draft CRUD, optional object links and strict publi
   assert.match(apiSource, /\/publish/);
   assert.match(pageSource, /Все факты должны быть подтверждены администратором/);
   assert.match(pageSource, /allErrors\.length > 0/);
+  assert.match(pageSource, /Рабочая редакция/);
+  assert.match(pageSource, /Редактировать/);
+  assert.doesNotMatch(pageSource, />Создать draft</i);
+  assert.doesNotMatch(pageSource, />Новый draft</i);
+  assert.match(pageSource, /Позиция в списке проектов/);
+  assert.match(pageSource, /Позиция в списке критериев/);
 });
 
-test('document UI covers upload, statuses, preview, manual text, retry and protected download', () => {
+test('source UI covers bounded batch upload, URL snapshots and protected document operations', () => {
+  assert.match(pageSource, /type="file"[\s\S]{0,80}multiple/);
+  assert.match(pageSource, /type="file"[\s\S]{0,80}tabIndex=\{-1\}/);
   assert.match(pageSource, /accept="\.pdf,\.docx,\.pptx,\.xlsx"/);
+  assert.match(pageSource, /не более 20 файлов/);
+  assert.match(pageSource, /Повторить ошибки/);
+  assert.match(pageSource, /runTrainingUploadQueue/);
+  assert.match(uploadQueueSource, /concurrency = 2/);
+  assert.match(uploadQueueSource, /item\.status = 'FAILED'/);
   assert.match(pageSource, /documentStatusLabels/);
   assert.match(pageSource, /getTrainingDocumentText/);
   assert.match(pageSource, /updateTrainingDocumentText/);
   assert.match(pageSource, /retryTrainingDocument/);
   assert.match(pageSource, /downloadTrainingDocument/);
-  assert.match(pageSource, /Извлечённый текст используется только как черновой материал/);
-  assert.match(pageSource, /Только подтверждённые администратором факты участвуют в оценивании/);
+  assert.match(apiSource, /\/official-url-sources/);
+  assert.match(pageSource, /Подтверждаю официальный домен/);
+  assert.match(pageSource, /Официальная ссылка/);
+  assert.match(pageSource, /сохранённый снимок официальной страницы/);
+});
+
+test('fact suggestions require explicit administrator acceptance or a rejection reason', () => {
+  assert.match(apiSource, /\/fact-suggestion-runs/);
+  assert.match(apiSource, /\/fact-suggestions/);
+  assert.match(apiSource, /Idempotency-Key/);
+  assert.match(pageSource, /Предложить факты из материалов/);
+  assert.match(pageSource, /Ни один факт не участвует в оценке без явного подтверждения/);
+  assert.match(pageSource, /Подтвердить факт/);
+  assert.match(pageSource, /Укажите причину отклонения/);
+  assert.match(pageSource, /Причина отклонения/);
+});
+
+test('questions explain the exact facts and criteria used for scoring', () => {
+  assert.match(evaluationSource, /Что реально участвует в оценке/);
+  assert.match(evaluationSource, /approvedFacts/);
+  assert.match(evaluationSource, /Не подтверждён — в оценке не участвует/);
+  assert.match(evaluationSource, /questionCriteria/);
+  assert.match(evaluationSource, /Эти критерии одинаковы для всех дополнительных вопросов/);
 });
 
 test('structured API errors are retained for validation UI', () => {
@@ -80,6 +136,9 @@ test('training admin layout is responsive and respects reduced motion', () => {
   assert.match(stylesSource, /@media \(prefers-reduced-motion: reduce\)/);
   assert.match(stylesSource, /overflow-x: auto/);
   assert.match(stylesSource, /var\(--app-theme-surface/);
+  assert.match(stylesSource, /\.training-wizard-mobile/);
+  assert.match(stylesSource, /\.training-evaluation-context-grid/);
+  assert.match(stylesSource, /\.training-master-add[\s\S]*width: 44px/);
 });
 
 test('editor uses an accessible master-detail pattern without unmounting drafts', () => {
@@ -101,4 +160,79 @@ test('training checkboxes stay next to their labels and facts expose semantic re
   assert.match(pageSource, /<fieldset className="training-linked-questions/);
   assert.match(pageSource, /<legend>Связанные вопросы<\/legend>/);
   assert.doesNotMatch(pageSource, /orientation="horizontal"/);
+});
+
+test('server readiness drives the publication summary and issue navigation', () => {
+  assert.match(apiSource, /\/readiness/);
+  assert.match(pageSource, /getTrainingReadiness/);
+  assert.match(readinessSource, /Готовность к публикации/);
+  assert.match(readinessSource, /Можно публиковать/);
+  assert.match(readinessSource, /pendingSuggestions/);
+  assert.match(pageSource, /readiness\.issues/);
+});
+
+test('dirty state is item-scoped and remains a fail-closed publication gate', () => {
+  assert.match(pageSource, /dirtyItemKeys/);
+  assert.match(pageSource, /setDirtyItem\('questions', itemId, dirty\)/);
+  assert.match(pageSource, /onDirtyChange\(editorId, false\)/);
+  assert.match(pageSource, /hasUnsavedChanges=\{hasUnsavedChanges\}/);
+  assert.match(
+    pageSource,
+    /Есть несохранённые изменения\. Сохраните их перед публикацией\./,
+  );
+  assert.doesNotMatch(pageSource, /setStepDirty/);
+});
+
+test('SPA history protection is direction-aware for Back, Forward and sidebar pushes', () => {
+  assert.match(pageSource, /trainingHistoryIndexKey/);
+  assert.match(pageSource, /originalPushState\.call/);
+  assert.match(pageSource, /const restorationDelta = previousIndex - targetIndex/);
+  assert.match(pageSource, /window\.history\.go\(restorationDelta\)/);
+  assert.match(pageSource, /window\.confirm\(unsavedChangesMessage\)/);
+  assert.match(appSource, /platforma:before-popstate/);
+  assert.match(appSource, /if \(!window\.dispatchEvent\(guardEvent\)\) return/);
+});
+
+test('new question editors have stable unique control and evaluation-context ids', () => {
+  assert.match(pageSource, /editorId=\{newQuestionId\}/);
+  assert.match(pageSource, /id=\{`question-text-\$\{editorId\}`\}/);
+  assert.match(pageSource, /instanceId=\{editorId\}/);
+  assert.match(evaluationSource, /evaluation-context-\$\{instanceId\.replace/);
+  assert.doesNotMatch(evaluationSource, /question\.id \|\| 'new'/);
+});
+
+test('source editing refreshes selectors, open URL previews and dirty document text', () => {
+  assert.match(pageSource, /setSourcesRevision\(\(current\) => current \+ 1\)/);
+  assert.match(pageSource, /\[loadFactSources, sourcesRevision\]/);
+  assert.match(pageSource, /latest\.updatedAt === selected\.source\.updatedAt/);
+  assert.match(pageSource, /getTrainingOfficialUrlSourceText/);
+  assert.match(pageSource, /onDirtyChange\(`document:\$\{selected\.source\.id\}`, true\)/);
+  assert.match(pageSource, /tabIndex=\{-1\}\s+multiple/);
+});
+
+test('readiness and fact suggestion actions fail closed when server state is unknown', () => {
+  assert.match(readinessSource, /Не удалось проверить готовность/);
+  assert.match(readinessSource, /Публикация заблокирована/);
+  assert.match(pageSource, /readinessUnavailable/);
+  assert.match(pageSource, /Boolean\(loadError\) \|\| runActive \|\| unresolvedCount > 0/);
+  assert.match(pageSource, /Сначала обработайте предложения:/);
+  assert.match(pageSource, /questionIds\.size === 0/);
+  assert.match(pageSource, /минимум с одним вопросом/);
+});
+
+test('master actions use unique desktop and mobile ids with visible focus recovery', () => {
+  assert.match(pageSource, /group\.action\('mobile'\)/);
+  assert.match(pageSource, /group\.action\?\.\('desktop'\)/);
+  assert.match(pageSource, /data-training-focus-key=\{focusKey\}/);
+  assert.match(pageSource, /element\.getClientRects\(\)\.length > 0/);
+});
+
+test('fact and suggestion selections prune only deleted question ids', () => {
+  assert.equal(
+    pageSource.match(
+      /pruneMissingQuestionIds\(current, availableQuestionIds\)/gu,
+    )?.length,
+    2,
+  );
+  assert.match(pageSource, /return changed \? next : selectedIds/);
 });

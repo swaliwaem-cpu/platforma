@@ -19,6 +19,7 @@ import {
   TRAINING_TRANSCRIPTION_PROVIDER,
 } from './training-attempt.providers';
 import { TrainingOpenAiConfig } from './openai/training-openai.config';
+import { TrainingFactSuggestionsService } from './fact-suggestions/training-fact-suggestions.service';
 import { OpenAiTrainingEvaluationProvider } from './openai/training-openai-evaluation.provider';
 import {
   TrainingOpenAiHttpClient,
@@ -35,6 +36,7 @@ import { TrainingController } from './training.controller';
 import { TrainingFeatureGuard } from './training-feature.guard';
 import { TrainingOperationsController } from './training-operations.controller';
 import { TrainingOperationsService } from './training-operations.service';
+import { TrainingOfficialUrlSourcesService } from './training-official-url-sources.service';
 import { TrainingPolicyController } from './training-policy.controller';
 import { TrainingPolicyService } from './training-policy.service';
 import { TrainingWorkerHeartbeatService } from './training-worker-heartbeat.service';
@@ -85,6 +87,8 @@ import { TrainingTelegramWorkerService } from './telegram/training-telegram-work
     TrainingContentService,
     TrainingDocumentsService,
     TrainingDocumentWorkerService,
+    TrainingOfficialUrlSourcesService,
+    TrainingFactSuggestionsService,
     {
       provide: TrainingAudioConfig,
       useFactory: () => new TrainingAudioConfig(process.env),

@@ -81,6 +81,8 @@ async function main() {
     await runChild('node', [
       '--test',
       '--test-concurrency=1',
+      'tests/training-content-lock-db.integration.cjs',
+      'tests/training-fact-suggestions-db.integration.cjs',
       'tests/training-attempt-db.integration.cjs',
       'tests/training-audio-db.integration.cjs',
       'tests/training-audio-http.integration.cjs',

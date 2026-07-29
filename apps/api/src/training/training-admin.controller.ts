@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Param,
@@ -31,6 +32,8 @@ import { TRAINING_MAX_DOCUMENT_BYTES } from './training-document.config';
 import { TrainingDocumentWorkerService } from './training-document-worker.service';
 import { TrainingDocumentsService } from './training-documents.service';
 import { TrainingFeatureGuard } from './training-feature.guard';
+import { TrainingFactSuggestionsService } from './fact-suggestions/training-fact-suggestions.service';
+import { TrainingOfficialUrlSourcesService } from './training-official-url-sources.service';
 
 type ContentResponse = {
   setHeader(name: string, value: string | number): void;
@@ -45,6 +48,8 @@ export class TrainingAdminController {
     private readonly trainingContent: TrainingContentService,
     private readonly trainingDocuments: TrainingDocumentsService,
     private readonly documentWorker: TrainingDocumentWorkerService,
+    private readonly officialUrlSources: TrainingOfficialUrlSourcesService,
+    private readonly factSuggestions: TrainingFactSuggestionsService,
   ) {}
 
   @Get('real-estate-objects')
@@ -122,6 +127,11 @@ export class TrainingAdminController {
     return this.trainingContent.getVersion(versionId);
   }
 
+  @Get('versions/:versionId/readiness')
+  async getVersionReadiness(@Param('versionId') versionId: string) {
+    return this.trainingContent.getVersionReadiness(versionId);
+  }
+
   @Patch('versions/:versionId')
   async updateVersion(
     @Param('versionId') versionId: string,
@@ -154,6 +164,130 @@ export class TrainingAdminController {
   @Get('versions/:versionId/documents')
   async listDocuments(@Param('versionId') versionId: string) {
     return this.trainingDocuments.listDocuments(versionId);
+  }
+
+  @Get('versions/:versionId/official-url-sources')
+  async listOfficialUrlSources(@Param('versionId') versionId: string) {
+    return this.officialUrlSources.listSources(versionId);
+  }
+
+  @Post('versions/:versionId/official-url-sources')
+  async createOfficialUrlSource(
+    @Param('versionId') versionId: string,
+    @Body() body: Record<string, unknown>,
+    @CurrentUser() actor: AuthenticatedUser,
+    @Req() request: TrainingAuditRequest,
+  ) {
+    return this.officialUrlSources.createSource(
+      versionId,
+      body,
+      actor,
+      request,
+    );
+  }
+
+  @Get('versions/:versionId/official-url-sources/:sourceId/text')
+  async getOfficialUrlSourceText(
+    @Param('versionId') versionId: string,
+    @Param('sourceId') sourceId: string,
+  ) {
+    return this.officialUrlSources.getSourceText(versionId, sourceId);
+  }
+
+  @Post('versions/:versionId/official-url-sources/:sourceId/retry')
+  async retryOfficialUrlSource(
+    @Param('versionId') versionId: string,
+    @Param('sourceId') sourceId: string,
+    @CurrentUser() actor: AuthenticatedUser,
+    @Req() request: TrainingAuditRequest,
+  ) {
+    return this.officialUrlSources.retrySource(
+      versionId,
+      sourceId,
+      actor,
+      request,
+    );
+  }
+
+  @Delete('versions/:versionId/official-url-sources/:sourceId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async deleteOfficialUrlSource(
+    @Param('versionId') versionId: string,
+    @Param('sourceId') sourceId: string,
+    @CurrentUser() actor: AuthenticatedUser,
+    @Req() request: TrainingAuditRequest,
+  ) {
+    await this.officialUrlSources.deleteSource(
+      versionId,
+      sourceId,
+      actor,
+      request,
+    );
+  }
+
+  @Post('versions/:versionId/fact-suggestion-runs')
+  async createFactSuggestionRun(
+    @Param('versionId') versionId: string,
+    @Body() body: Record<string, unknown>,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @CurrentUser() actor: AuthenticatedUser,
+    @Req() request: TrainingAuditRequest,
+  ) {
+    return this.factSuggestions.createRun(
+      versionId,
+      body,
+      actor,
+      request,
+      idempotencyKey,
+    );
+  }
+
+  @Get('versions/:versionId/fact-suggestion-runs/latest')
+  async getLatestFactSuggestionRun(@Param('versionId') versionId: string) {
+    return this.factSuggestions.getLatestRun(versionId);
+  }
+
+  @Get('versions/:versionId/fact-suggestions')
+  async listFactSuggestions(@Param('versionId') versionId: string) {
+    return this.factSuggestions.listSuggestions(versionId);
+  }
+
+  @Post(
+    'versions/:versionId/fact-suggestions/:suggestionId/accept',
+  )
+  async acceptFactSuggestion(
+    @Param('versionId') versionId: string,
+    @Param('suggestionId') suggestionId: string,
+    @Body() body: Record<string, unknown>,
+    @CurrentUser() actor: AuthenticatedUser,
+    @Req() request: TrainingAuditRequest,
+  ) {
+    return this.factSuggestions.acceptSuggestion(
+      versionId,
+      suggestionId,
+      body,
+      actor,
+      request,
+    );
+  }
+
+  @Post(
+    'versions/:versionId/fact-suggestions/:suggestionId/reject',
+  )
+  async rejectFactSuggestion(
+    @Param('versionId') versionId: string,
+    @Param('suggestionId') suggestionId: string,
+    @Body() body: Record<string, unknown>,
+    @CurrentUser() actor: AuthenticatedUser,
+    @Req() request: TrainingAuditRequest,
+  ) {
+    return this.factSuggestions.rejectSuggestion(
+      versionId,
+      suggestionId,
+      body,
+      actor,
+      request,
+    );
   }
 
   @Post('versions/:versionId/documents')

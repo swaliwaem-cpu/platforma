@@ -234,7 +234,17 @@ function usePathname() {
   const [pathname, setPathname] = useState(window.location.pathname);
 
   useEffect(() => {
-    const handlePopState = () => setPathname(window.location.pathname);
+    const handlePopState = (event: PopStateEvent) => {
+      const guardEvent = new CustomEvent<PopStateEvent>(
+        'platforma:before-popstate',
+        {
+          cancelable: true,
+          detail: event,
+        },
+      );
+      if (!window.dispatchEvent(guardEvent)) return;
+      setPathname(window.location.pathname);
+    };
     const handleDocumentClick = (event: MouseEvent) => {
       if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
         return;

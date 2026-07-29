@@ -35,6 +35,7 @@ export type TrainingFact = {
   acceptedAliasesJson: unknown;
   importance: number;
   sourceDocumentId: string | null;
+  sourceOfficialUrlId: string | null;
   sourceLocatorJson: unknown;
   isApproved: boolean;
   questionLinks: Array<{ questionId: string }>;
@@ -126,6 +127,106 @@ export type TrainingDocument = {
   };
   createdAt: string;
   updatedAt: string;
+};
+
+export type TrainingWizardStep =
+  | 'main'
+  | 'sources'
+  | 'suggestions'
+  | 'questions'
+  | 'criteria'
+  | 'review';
+
+export type TrainingReadiness = {
+  readyToPublish: boolean;
+  facts: {
+    approved: number;
+    total: number;
+    pendingSuggestions: number;
+    ready: boolean;
+  };
+  questions: {
+    active: number;
+    required: 11;
+    mainReady: boolean;
+    followUpsReady: boolean;
+    positionsReady: boolean;
+    ready: boolean;
+  };
+  criteria: {
+    mainPoints: number;
+    mainRequired: 55;
+    followUpPoints: number;
+    followUpRequired: 15;
+    ready: boolean;
+  };
+  issues: Array<{
+    code: string;
+    step: TrainingWizardStep;
+    entityId?: string;
+    message: string;
+  }>;
+};
+
+export type TrainingOfficialUrlSource = {
+  id: string;
+  projectVersionId: string;
+  inputUrl: string;
+  normalizedUrl: string;
+  confirmedOfficialHost: string;
+  extractionStatus: TrainingDocumentStatus;
+  errorMessage: string | null;
+  extractedCharacterCount: number;
+  textPreview: string;
+  checksum: string | null;
+  fetchedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TrainingFactSuggestionStatus =
+  | 'PENDING'
+  | 'ACCEPTED'
+  | 'REJECTED'
+  | 'STALE';
+
+export type TrainingFactSuggestion = {
+  id: string;
+  runId: string;
+  status: TrainingFactSuggestionStatus;
+  suggestedCode: string;
+  topicCode: string;
+  statement: string;
+  acceptedAliases: string[];
+  importance: number;
+  sourceKind: 'DOCUMENT' | 'OFFICIAL_URL';
+  sourceId: string;
+  sourceLocator: unknown;
+  sourceQuote: string | null;
+  acceptedFactId: string | null;
+  decisionReason: string | null;
+};
+
+export type TrainingFactSuggestionRun = {
+  id: string;
+  status:
+    | 'PENDING'
+    | 'RUNNING'
+    | 'READY'
+    | 'PARTIAL'
+    | 'FAILED'
+    | 'AMBIGUOUS'
+    | 'DISMISSED';
+  counts: {
+    total: number;
+    pending: number;
+    accepted: number;
+    rejected: number;
+    stale: number;
+  };
+  errorMessage?: string | null;
+  createdAt: string;
+  updatedAt?: string;
 };
 
 export type ProjectDraftInput = {
@@ -294,6 +395,7 @@ export function saveTrainingFact(
     acceptedAliases: string[];
     importance: number;
     sourceDocumentId: string | null;
+    sourceOfficialUrlId: string | null;
     sourceLocator: unknown;
     isApproved: boolean;
     questionIds: string[];
@@ -312,6 +414,7 @@ export function saveTrainingFact(
       acceptedAliases: fact.acceptedAliases,
       importance: fact.importance,
       sourceDocumentId: fact.sourceDocumentId,
+      sourceOfficialUrlId: fact.sourceOfficialUrlId,
       sourceLocator: fact.sourceLocator,
       isApproved: fact.isApproved,
       questionIds: fact.questionIds,
@@ -457,5 +560,146 @@ export function downloadTrainingDocument(
   return apiDownload(
     `${adminBase}/versions/${versionId}/documents/${documentId}/content`,
     token,
+  );
+}
+
+export function getTrainingReadiness(token: string, versionId: string) {
+  return apiRequest<{ readiness: TrainingReadiness }>(
+    `${adminBase}/versions/${encodeURIComponent(versionId)}/readiness`,
+    token,
+  );
+}
+
+export function listTrainingOfficialUrlSources(token: string, versionId: string) {
+  return apiRequest<{ items: TrainingOfficialUrlSource[] }>(
+    `${adminBase}/versions/${encodeURIComponent(versionId)}/official-url-sources`,
+    token,
+  );
+}
+
+export function createTrainingOfficialUrlSource(
+  token: string,
+  versionId: string,
+  input: { url: string; confirmedOfficialHost: string },
+) {
+  return apiRequest<{ source: TrainingOfficialUrlSource }>(
+    `${adminBase}/versions/${encodeURIComponent(versionId)}/official-url-sources`,
+    token,
+    { method: 'POST', body: JSON.stringify(input) },
+  );
+}
+
+export function getTrainingOfficialUrlSourceText(
+  token: string,
+  versionId: string,
+  sourceId: string,
+) {
+  return apiRequest<{
+    source: TrainingOfficialUrlSource;
+    extractedText: string;
+    extractionMetadata: unknown;
+    draftOnly: true;
+    scoringEligible: false;
+  }>(
+    `${adminBase}/versions/${encodeURIComponent(versionId)}/official-url-sources/${encodeURIComponent(sourceId)}/text`,
+    token,
+  );
+}
+
+export function retryTrainingOfficialUrlSource(
+  token: string,
+  versionId: string,
+  sourceId: string,
+) {
+  return apiRequest<{ source: TrainingOfficialUrlSource }>(
+    `${adminBase}/versions/${encodeURIComponent(versionId)}/official-url-sources/${encodeURIComponent(sourceId)}/retry`,
+    token,
+    { method: 'POST' },
+  );
+}
+
+export function deleteTrainingOfficialUrlSource(
+  token: string,
+  versionId: string,
+  sourceId: string,
+) {
+  return apiRequest(
+    `${adminBase}/versions/${encodeURIComponent(versionId)}/official-url-sources/${encodeURIComponent(sourceId)}`,
+    token,
+    { method: 'DELETE' },
+  );
+}
+
+export function createTrainingFactSuggestionRun(
+  token: string,
+  versionId: string,
+  sourceIds: Array<{ kind: 'DOCUMENT' | 'OFFICIAL_URL'; id: string }>,
+  idempotencyKey = createTrainingIdempotencyKey(),
+) {
+  return apiRequest<{ run: TrainingFactSuggestionRun }>(
+    `${adminBase}/versions/${encodeURIComponent(versionId)}/fact-suggestion-runs`,
+    token,
+    {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify({ sourceIds }),
+    },
+  );
+}
+
+export function getLatestTrainingFactSuggestionRun(
+  token: string,
+  versionId: string,
+) {
+  return apiRequest<{ run: TrainingFactSuggestionRun | null }>(
+    `${adminBase}/versions/${encodeURIComponent(versionId)}/fact-suggestion-runs/latest`,
+    token,
+  );
+}
+
+export function listTrainingFactSuggestions(token: string, versionId: string) {
+  return apiRequest<{ items: TrainingFactSuggestion[] }>(
+    `${adminBase}/versions/${encodeURIComponent(versionId)}/fact-suggestions`,
+    token,
+  );
+}
+
+export function acceptTrainingFactSuggestion(
+  token: string,
+  versionId: string,
+  suggestionId: string,
+  input: {
+    code: string;
+    topicCode: string;
+    statement: string;
+    acceptedAliases: string[];
+    importance: number;
+    questionIds: string[];
+  },
+) {
+  return apiRequest<{ suggestion: TrainingFactSuggestion; fact: TrainingFact }>(
+    `${adminBase}/versions/${encodeURIComponent(versionId)}/fact-suggestions/${encodeURIComponent(suggestionId)}/accept`,
+    token,
+    { method: 'POST', body: JSON.stringify(input) },
+  );
+}
+
+export function rejectTrainingFactSuggestion(
+  token: string,
+  versionId: string,
+  suggestionId: string,
+  reason: string,
+) {
+  return apiRequest<{ suggestion: TrainingFactSuggestion }>(
+    `${adminBase}/versions/${encodeURIComponent(versionId)}/fact-suggestions/${encodeURIComponent(suggestionId)}/reject`,
+    token,
+    { method: 'POST', body: JSON.stringify({ reason }) },
+  );
+}
+
+function createTrainingIdempotencyKey() {
+  return (
+    globalThis.crypto?.randomUUID?.() ??
+    `training-${Date.now()}-${Math.random().toString(36).slice(2)}`
   );
 }

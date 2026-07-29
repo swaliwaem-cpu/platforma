@@ -30,6 +30,23 @@ const extractorSource = readFileSync(
   path.join(rootDir, 'apps/api/src/training/training-document-extractor.ts'),
   'utf8',
 );
+const prismaSchema = readFileSync(
+  path.join(rootDir, 'apps/api/prisma/schema.prisma'),
+  'utf8',
+);
+
+function createVersionContentLockQuery(versionId, projectId) {
+  let queryIndex = 0;
+  return async () => {
+    queryIndex += 1;
+    if (queryIndex === 1) return [{ projectId }];
+    if (queryIndex === 2) return [{ id: projectId, status: 'DRAFT' }];
+    if (queryIndex === 3) {
+      return [{ id: versionId, projectId, status: 'DRAFT' }];
+    }
+    return [];
+  };
+}
 
 test('training document endpoints stay behind the training admin controller guard', () => {
   assert.match(controllerSource, /@Controller\('training\/admin'\)/);
@@ -86,6 +103,7 @@ test('document service creates a private file, source row, extraction job and au
   const versionId = '11111111-1111-4111-8111-111111111111';
   const documentId = '22222222-2222-4222-8222-222222222222';
   const fileId = '33333333-3333-4333-8333-333333333333';
+  const projectId = '55555555-5555-4555-8555-555555555555';
   const calls = { jobs: [], audits: [] };
   const storedFile = {
     id: fileId,
@@ -119,6 +137,7 @@ test('document service creates a private file, source row, extraction job and au
     _count: { facts: 0 },
   };
   const tx = {
+    $queryRaw: createVersionContentLockQuery(versionId, projectId),
     trainingSourceDocument: {
       create: async () => ({ id: documentId }),
     },
@@ -168,6 +187,78 @@ test('document service creates a private file, source row, extraction job and au
   assert.equal(calls.jobs[0].data.kind, 'EXTRACT_SOURCE_DOCUMENT');
   assert.deepEqual(calls.jobs[0].data.payloadJson, { sourceDocumentId: documentId });
   assert.equal(calls.audits[0].data.action, 'training.source-document.upload');
+});
+
+test('document deletion preserves fact-suggestion history', async () => {
+  const versionId = '11111111-1111-4111-8111-111111111111';
+  const projectId = '22222222-2222-4222-8222-222222222222';
+  const documentId = '33333333-3333-4333-8333-333333333333';
+  const fileId = '44444444-4444-4444-8444-444444444444';
+  let documentDeletes = 0;
+  let fileDeletes = 0;
+  const tx = {
+    $queryRaw: createVersionContentLockQuery(versionId, projectId),
+    trainingSourceDocument: {
+      findFirst: async () => ({
+        id: documentId,
+        projectVersionId: versionId,
+        fileId,
+        extractionStatus: 'READY',
+        file: {
+          id: fileId,
+          originalName: 'source.pdf',
+        },
+        _count: { facts: 0 },
+      }),
+      delete: async () => {
+        documentDeletes += 1;
+      },
+    },
+    trainingFactSuggestionRun: {
+      count: async () => 0,
+    },
+    trainingFactSuggestionProviderRun: {
+      count: async () => 1,
+    },
+  };
+  const service = new TrainingDocumentsService(
+    {
+      trainingProjectVersion: {
+        findUnique: async () => ({ id: versionId, status: 'DRAFT' }),
+      },
+      $transaction: async (callback) => callback(tx),
+    },
+    {
+      deleteUnlinkedFile: async () => {
+        fileDeletes += 1;
+      },
+    },
+  );
+
+  await assert.rejects(
+    () =>
+      service.deleteDocument(
+        versionId,
+        documentId,
+        { id: '55555555-5555-4555-8555-555555555555' },
+        { headers: {} },
+      ),
+    (error) =>
+      error?.status === 409 && /история решений/u.test(error.message),
+  );
+  assert.equal(documentDeletes, 0);
+  assert.equal(fileDeletes, 0);
+});
+
+test('fact-suggestion provider history prevents direct source deletion', () => {
+  assert.match(
+    prismaSchema,
+    /sourceDocument\s+TrainingSourceDocument\?\s+@relation\([\s\S]*?onDelete:\s*NoAction\)/u,
+  );
+  assert.match(
+    prismaSchema,
+    /sourceOfficialUrl\s+TrainingOfficialUrlSource\?\s+@relation\([\s\S]*?onDelete:\s*NoAction\)/u,
+  );
 });
 
 test('document service rejects extension and MIME mismatches before storage', async () => {

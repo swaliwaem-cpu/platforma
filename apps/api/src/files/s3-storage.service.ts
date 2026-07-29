@@ -18,6 +18,7 @@ type SignedRequestOptions = {
   contentLength?: number;
   payloadHash?: string;
   metadata?: Record<string, string>;
+  signal?: AbortSignal;
 };
 
 export type StoredObjectMetadata = {
@@ -80,7 +81,7 @@ export class S3StorageService implements OnModuleInit {
     };
   }
 
-  async ensureBucket(bucket = this.bucket) {
+  async ensureBucket(bucket = this.bucket, signal?: AbortSignal) {
     if (this.readyBuckets.has(bucket)) {
       return;
     }
@@ -88,6 +89,7 @@ export class S3StorageService implements OnModuleInit {
     const headResponse = await this.signedFetch({
       method: 'HEAD',
       bucket,
+      signal,
     });
 
     if (headResponse.ok) {
@@ -102,6 +104,7 @@ export class S3StorageService implements OnModuleInit {
     const createResponse = await this.signedFetch({
       method: 'PUT',
       bucket,
+      signal,
     });
 
     if (!createResponse.ok && createResponse.status !== 409) {
@@ -117,9 +120,10 @@ export class S3StorageService implements OnModuleInit {
     contentType: string;
     bucket?: string;
     metadata?: Record<string, string>;
+    signal?: AbortSignal;
   }) {
     const bucket = params.bucket ?? this.bucket;
-    await this.ensureBucket(bucket);
+    await this.ensureBucket(bucket, params.signal);
 
     const response = await this.signedFetch({
       method: 'PUT',
@@ -128,6 +132,7 @@ export class S3StorageService implements OnModuleInit {
       body: params.body,
       contentType: params.contentType,
       metadata: params.metadata,
+      signal: params.signal,
     });
 
     if (!response.ok) {
@@ -186,13 +191,18 @@ export class S3StorageService implements OnModuleInit {
     return Buffer.from(await response.arrayBuffer());
   }
 
-  async deleteObject(key: string, bucket = this.bucket) {
-    await this.ensureBucket(bucket);
+  async deleteObject(
+    key: string,
+    bucket = this.bucket,
+    signal?: AbortSignal,
+  ) {
+    await this.ensureBucket(bucket, signal);
 
     const response = await this.signedFetch({
       method: 'DELETE',
       bucket,
       key,
+      signal,
     });
 
     if (!response.ok && response.status !== 404) {
@@ -406,6 +416,7 @@ export class S3StorageService implements OnModuleInit {
       headers: requestHeaders,
       body: (Buffer.isBuffer(body) ? new Uint8Array(body) : body) as BodyInit | undefined,
       ...(body && !Buffer.isBuffer(body) ? { duplex: 'half' } : {}),
+      signal: options.signal,
     };
 
     return fetch(url, {

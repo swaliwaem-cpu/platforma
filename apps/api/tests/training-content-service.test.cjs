@@ -46,6 +46,25 @@ const request = {
   ip: '10.0.0.1',
 };
 
+function createVersionLockQuery(
+  status = TrainingVersionStatus.DRAFT,
+  projectStatus = TrainingProjectStatus.DRAFT,
+) {
+  let queryIndex = 0;
+
+  return async () => {
+    const lockStep = queryIndex % 3;
+    queryIndex += 1;
+    if (lockStep === 0) {
+      return [{ projectId }];
+    }
+    if (lockStep === 1) {
+      return [{ id: projectId, status: projectStatus }];
+    }
+    return [{ id: versionId, projectId, status }];
+  };
+}
+
 function validQuestions() {
   return [
     {
@@ -151,6 +170,42 @@ test('admin content controller is guarded by the approved management permission 
   );
 });
 
+test('project and version detail keep full official URL text behind the dedicated text endpoint', async () => {
+  let versionQuery;
+  let projectQuery;
+  const service = new TrainingContentService({
+    trainingProjectVersion: {
+      findUnique: async (query) => {
+        versionQuery = query;
+        return null;
+      },
+    },
+    trainingProject: {
+      findUnique: async (query) => {
+        projectQuery = query;
+        return null;
+      },
+    },
+  });
+
+  await assert.rejects(() => service.getVersion(versionId), /not found/iu);
+  await assert.rejects(() => service.getProject(projectId), /not found/iu);
+
+  assert.equal(
+    versionQuery.include.officialUrlSources.select.extractedText,
+    undefined,
+  );
+  assert.equal(
+    versionQuery.include.officialUrlSources.select.extractionMetadataJson,
+    undefined,
+  );
+  assert.equal(
+    projectQuery.include.versions.include.officialUrlSources.select
+      .extractedText,
+    undefined,
+  );
+});
+
 test('project creation atomically creates draft defaults and an AuditLog record', async () => {
   const calls = {
     projectCreate: null,
@@ -241,15 +296,10 @@ test('publication supersedes the old version and switches the active version in 
   const versionUpdates = [];
   const projectUpdates = [];
   const auditRows = [];
-  let identityRead = false;
   const tx = {
-    $queryRaw: async () => [{ id: projectId }],
+    $queryRaw: createVersionLockQuery(),
     trainingProjectVersion: {
       findUnique: async (args) => {
-        if (args.where.id === versionId && args.select?.projectId) {
-          identityRead = true;
-          return { projectId };
-        }
         if (args.where.id === versionId) {
           return version;
         }
@@ -286,7 +336,6 @@ test('publication supersedes the old version and switches the active version in 
 
   await service.publishVersion(versionId, actor, request);
 
-  assert.equal(identityRead, true);
   assert.deepEqual(versionUpdates[0], {
     where: { id: previousVersionId },
     data: { status: TrainingVersionStatus.SUPERSEDED },
@@ -312,10 +361,9 @@ test('invalid publication does not update a version, project or AuditLog', async
   });
   let writes = 0;
   const tx = {
-    $queryRaw: async () => [{ id: projectId }],
+    $queryRaw: createVersionLockQuery(),
     trainingProjectVersion: {
-      findUnique: async (args) =>
-        args.select?.projectId ? { projectId } : version,
+      findUnique: async () => version,
       update: async () => {
         writes += 1;
       },
@@ -345,15 +393,11 @@ test('invalid publication does not update a version, project or AuditLog', async
 test('published versions are rejected before content settings can be changed', async () => {
   let transactionStarted = false;
   const service = new TrainingContentService({
-    trainingProjectVersion: {
-      findUnique: async () => ({
-        id: versionId,
-        projectId,
-        status: TrainingVersionStatus.PUBLISHED,
-      }),
-    },
-    $transaction: async () => {
+    $transaction: async (callback) => {
       transactionStarted = true;
+      return callback({
+        $queryRaw: createVersionLockQuery(TrainingVersionStatus.PUBLISHED),
+      });
     },
   });
 
@@ -361,15 +405,17 @@ test('published versions are rejected before content settings can be changed', a
     () => service.updateVersion(versionId, { passScore: 80 }, actor, request),
     ConflictException,
   );
-  assert.equal(transactionStarted, false);
+  assert.equal(transactionStarted, true);
 });
 
 test('new draft clones immutable content and question-fact links from the latest version', async () => {
   const sourceDocumentId = '99999999-9999-4999-8999-999999999999';
+  const sourceOfficialUrlId = 'abababab-abab-4bab-8bab-abababababac';
   const sourceQuestionId = '44444444-4444-4444-8444-444444444444';
   const sourceFactId = '66666666-6666-4666-8666-666666666666';
   const cloned = {
     documents: [],
+    officialUrls: [],
     questions: [],
     facts: [],
     criteria: [],
@@ -413,6 +459,18 @@ test('new draft clones immutable content and question-fact links from the latest
           sourceLocatorJson: { page: 1 },
           isApproved: true,
         },
+        {
+          id: '67676767-6767-4767-8767-676767676767',
+          code: 'fact.url',
+          topicCode: 'project',
+          statement: 'Факт из официальной страницы',
+          acceptedAliasesJson: [],
+          importance: 1,
+          sourceDocumentId: null,
+          sourceOfficialUrlId,
+          sourceLocatorJson: { selector: 'main' },
+          isApproved: true,
+        },
       ],
       criteria: [
         {
@@ -437,6 +495,26 @@ test('new draft clones immutable content and question-fact links from the latest
           extractionMetadataJson: {},
           errorMessage: null,
           createdAt: new Date(),
+        },
+      ],
+      officialUrlSources: [
+        {
+          id: sourceOfficialUrlId,
+          confirmedById: actor.id,
+          snapshotFileId: 'acacacac-acac-4cac-8cac-acacacacacac',
+          url: 'https://developer.example/project',
+          normalizedUrl: 'https://developer.example/project',
+          finalUrl: 'https://developer.example/project',
+          hostname: 'developer.example',
+          fetchGeneration: 1,
+          extractionStatus: 'READY',
+          extractedText: 'Официальный текст',
+          contentHash: 'a'.repeat(64),
+          extractionMetadataJson: {},
+          errorCode: null,
+          errorMessage: null,
+          confirmedAt: new Date(),
+          fetchedAt: new Date(),
         },
       ],
       warningSecondsJson: [60, 20],
@@ -465,6 +543,12 @@ test('new draft clones immutable content and question-fact links from the latest
       create: async (args) => {
         cloned.documents.push(args);
         return { id: '12121212-1212-4212-8212-121212121212' };
+      },
+    },
+    trainingOfficialUrlSource: {
+      create: async (args) => {
+        cloned.officialUrls.push(args);
+        return { id: 'adadadad-adad-4dad-8dad-adadadadadad' };
       },
     },
     trainingQuestion: {
@@ -500,21 +584,38 @@ test('new draft clones immutable content and question-fact links from the latest
   };
   const service = new TrainingContentService({
     $transaction: async (callback) => callback(tx),
+    $queryRaw: async () => [
+      {
+        activeFactSuggestionRunCount: 0n,
+        activeFactSuggestionProviderCount: 0n,
+        activeFactSuggestionJobCount: 0n,
+      },
+    ],
     trainingProjectVersion: {
-      findUnique: async () => ({ id: versionId, projectId, questions: [], facts: [], criteria: [] }),
+      findUnique: async () =>
+        validPublishableVersion({
+          sourceDocuments: [],
+          officialUrlSources: [],
+          _count: { factSuggestions: 0 },
+        }),
     },
   });
 
   await service.createDraftVersion(projectId, actor, request);
 
   assert.equal(cloned.documents.length, 1);
+  assert.equal(cloned.officialUrls.length, 1);
   assert.equal(cloned.questions.length, 1);
-  assert.equal(cloned.facts.length, 1);
+  assert.equal(cloned.facts.length, 2);
   assert.equal(cloned.criteria.length, 1);
   assert.equal(cloned.links.length, 1);
   assert.equal(
     cloned.facts[0].data.sourceDocumentId,
     '12121212-1212-4212-8212-121212121212',
+  );
+  assert.equal(
+    cloned.facts[1].data.sourceOfficialUrlId,
+    'adadadad-adad-4dad-8dad-adadadadadad',
   );
   assert.deepEqual(cloned.links[0].data, {
     questionId: '13131313-1313-4313-8313-131313131313',
@@ -523,6 +624,62 @@ test('new draft clones immutable content and question-fact links from the latest
     isRequired: true,
   });
   assert.equal(cloned.audit[0].data.action, 'training.version.draft.create');
+});
+
+test('ensure editable version returns the existing working version without cloning', async () => {
+  let projectLocks = 0;
+  let creates = 0;
+  const existingVersion = validPublishableVersion({
+    sourceDocuments: [],
+    officialUrlSources: [],
+    _count: { factSuggestions: 0 },
+  });
+  const tx = {
+    $queryRaw: async () => {
+      projectLocks += 1;
+      return [{ id: projectId }];
+    },
+    trainingProject: {
+      findUnique: async () => ({
+        id: projectId,
+        status: TrainingProjectStatus.CLOSED,
+        activeVersionId: previousVersionId,
+      }),
+    },
+    trainingProjectVersion: {
+      findFirst: async (args) => {
+        if (args.where.status === TrainingVersionStatus.DRAFT) {
+          return { id: versionId };
+        }
+        return null;
+      },
+      create: async () => {
+        creates += 1;
+        return { id: 'ffffffff-ffff-4fff-8fff-ffffffffffff' };
+      },
+    },
+  };
+  const service = new TrainingContentService({
+    $transaction: async (callback) => callback(tx),
+    $queryRaw: async () => [
+      {
+        activeFactSuggestionRunCount: 0n,
+        activeFactSuggestionProviderCount: 0n,
+        activeFactSuggestionJobCount: 0n,
+      },
+    ],
+    trainingProjectVersion: {
+      findUnique: async () => existingVersion,
+    },
+  });
+
+  const response = await service.ensureEditableVersion(projectId, actor, request);
+
+  assert.equal(projectLocks, 1);
+  assert.equal(creates, 0);
+  assert.equal(response.created, false);
+  assert.equal(response.version.id, versionId);
+  assert.equal(response.readiness.readyToPublish, true);
 });
 
 test('question, fact and criterion CRUD writes only to a draft and records audit actions', async () => {
@@ -537,6 +694,7 @@ test('question, fact and criterion CRUD writes only to a draft and records audit
     audit: [],
   };
   const tx = {
+    $queryRaw: createVersionLockQuery(),
     trainingProjectVersion: {
       findUnique: async () => ({ id: versionId, status: TrainingVersionStatus.DRAFT }),
     },
@@ -643,6 +801,7 @@ test('question CRUD rejects a main score other than 55 before writing', async ()
   const service = new TrainingContentService({
     $transaction: async (callback) =>
       callback({
+        $queryRaw: createVersionLockQuery(),
         trainingProjectVersion: {
           findUnique: async () => ({ id: versionId, status: TrainingVersionStatus.DRAFT }),
         },
@@ -678,6 +837,7 @@ test('only an unused draft version can be hard-deleted', async () => {
   const service = new TrainingContentService({
     $transaction: async (callback) =>
       callback({
+        $queryRaw: createVersionLockQuery(),
         trainingProjectVersion: {
           findUnique: async () => ({
             id: versionId,
@@ -709,6 +869,7 @@ test('only an unused draft version can be hard-deleted', async () => {
   const usedService = new TrainingContentService({
     $transaction: async (callback) =>
       callback({
+        $queryRaw: createVersionLockQuery(),
         trainingProjectVersion: {
           findUnique: async () => ({
             id: versionId,
@@ -729,6 +890,7 @@ test('only an unused draft version can be hard-deleted', async () => {
   const publishedService = new TrainingContentService({
     $transaction: async (callback) =>
       callback({
+        $queryRaw: createVersionLockQuery(TrainingVersionStatus.PUBLISHED),
         trainingProjectVersion: {
           findUnique: async () => ({
             id: versionId,

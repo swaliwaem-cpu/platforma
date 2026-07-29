@@ -2088,7 +2088,8 @@ async function readRequestBody(request) {
 }
 
 async function waitForAnswerStatus(attemptId, status) {
-  for (let index = 0; index < 200; index += 1) {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
     const answer = await prisma.trainingAnswer.findFirst({
       where: {
         status,
@@ -2098,13 +2099,14 @@ async function waitForAnswerStatus(attemptId, status) {
       },
     });
     if (answer) return answer;
-    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 10));
   }
   assert.fail(`Answer did not enter ${status}`);
 }
 
 async function waitForPersistedTranscript(attemptId) {
-  for (let index = 0; index < 200; index += 1) {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
     const answer = await prisma.trainingAnswer.findFirst({
       where: {
         attemptQuestion: {
@@ -2114,7 +2116,7 @@ async function waitForPersistedTranscript(attemptId) {
       },
     });
     if (answer) return answer;
-    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 10));
   }
   assert.fail('Provider result was not persisted before restart');
 }

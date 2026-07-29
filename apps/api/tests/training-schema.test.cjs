@@ -17,12 +17,20 @@ const openAiReviewMigrationPath = path.join(
   rootDir,
   'apps/api/prisma/migrations/20260727230000_fix_training_openai_review_findings/migration.sql',
 );
+const contentCreationMigrationPath = path.join(
+  rootDir,
+  'apps/api/prisma/migrations/20260729120000_training_content_creation_workflow/migration.sql',
+);
 
 const schema = fs.readFileSync(schemaPath, 'utf8');
 const migration = fs.readFileSync(migrationPath, 'utf8');
 const telegramMigration = fs.readFileSync(telegramMigrationPath, 'utf8');
 const openAiReviewMigration = fs.readFileSync(
   openAiReviewMigrationPath,
+  'utf8',
+);
+const contentCreationMigration = fs.readFileSync(
+  contentCreationMigrationPath,
   'utf8',
 );
 
@@ -41,6 +49,8 @@ test('training schema defines the approved state enums', () => {
     'TrainingJobKind',
     'TrainingSourceExtractionStatus',
     'TrainingSourceDocumentType',
+    'TrainingFactSuggestionRunStatus',
+    'TrainingFactSuggestionStatus',
     'TrainingProcessedUpdateStatus',
   ]) {
     assert.match(schema, new RegExp(`enum ${enumName} \\{`));
@@ -52,12 +62,57 @@ test('training schema defines the approved state enums', () => {
   );
   assert.match(
     schema,
+    /enum TrainingJobKind \{[\s\S]*FETCH_OFFICIAL_URL_SOURCE[\s\S]*SUGGEST_FACTS/,
+  );
+  assert.match(
+    schema,
     /enum TrainingJobKind \{[\s\S]*PROCESS_TELEGRAM_UPDATE[\s\S]*TELEGRAM_DOWNLOAD_SEGMENT[\s\S]*ASSEMBLE_ANSWER_AUDIO[\s\S]*TRANSCRIBE_ANSWER[\s\S]*ANALYZE_ACOUSTICS[\s\S]*EVALUATE_ANSWER[\s\S]*FINALIZE_ATTEMPT[\s\S]*SEND_TELEGRAM_MESSAGE[\s\S]*SEND_TIMER_WARNING[\s\S]*EXPIRE_ATTEMPT[\s\S]*EXTRACT_SOURCE_DOCUMENT/,
   );
   assert.match(
     telegramMigration,
     /ALTER TYPE "training_job_kind" ADD VALUE 'process_telegram_update'/,
   );
+});
+
+test('official URL sources and fact suggestions are version-owned and auditable', () => {
+  for (const modelName of [
+    'TrainingOfficialUrlSource',
+    'TrainingFactSuggestionRun',
+    'TrainingFactSuggestionProviderRun',
+    'TrainingFactSuggestion',
+  ]) {
+    assert.match(schema, new RegExp(`model ${modelName} \\{`));
+  }
+
+  assert.match(
+    schema,
+    /model TrainingOfficialUrlSource \{[\s\S]*confirmedById\s+String[\s\S]*snapshotFileId\s+String\?[\s\S]*finalUrl\s+String\?[\s\S]*fetchGeneration\s+Int[\s\S]*confirmedAt\s+DateTime/,
+  );
+  assert.match(
+    schema,
+    /sourceOfficialUrlId\s+String\?[\s\S]*sourceOfficialUrl\s+TrainingOfficialUrlSource\?/,
+  );
+  assert.match(
+    contentCreationMigration,
+    /training_facts_source_xor_check[\s\S]*num_nonnulls\("source_document_id", "source_official_url_id"\) <= 1/,
+  );
+  assert.match(
+    contentCreationMigration,
+    /training_fact_provider_runs_source_xor_check[\s\S]*num_nonnulls\("source_document_id", "source_official_url_id"\) = 1/,
+  );
+  assert.match(
+    contentCreationMigration,
+    /training_official_url_sources_snapshot_file_id_fkey[\s\S]*REFERENCES "files"\("id"\)[\s\S]*ON DELETE RESTRICT/,
+  );
+  for (const trigger of [
+    'training_official_url_sources_prevent_published_mutation',
+    'training_fact_suggestion_runs_prevent_published_mutation',
+    'training_fact_provider_runs_prevent_published_mutation',
+    'training_fact_suggestions_prevent_published_mutation',
+    'training_fact_suggestions_prevent_original_mutation',
+  ]) {
+    assert.match(contentCreationMigration, new RegExp(trigger));
+  }
 });
 
 test('training projects reuse User and optionally link RealEstateObject', () => {

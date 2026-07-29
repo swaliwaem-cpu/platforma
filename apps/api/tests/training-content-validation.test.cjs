@@ -6,6 +6,7 @@ const {
   assertTrainingAvailability,
   assertTrainingVersionPublishable,
   collectTrainingPublicationErrors,
+  getTrainingVersionReadiness,
   normalizeTrainingUniqueKey,
 } = require('../dist/training/training-content.validation.js');
 
@@ -150,4 +151,106 @@ test('availability accepts no schedule or a complete 1 to 7 day window', () => {
 
 test('duplicate-key normalization is trimmed and case insensitive', () => {
   assert.equal(normalizeTrainingUniqueKey('  ФАКТ.Code  '), 'факт.code');
+});
+
+test('readiness uses the publication validator and exposes the wizard contract', () => {
+  const readiness = getTrainingVersionReadiness(validVersion());
+
+  assert.deepEqual(readiness, {
+    readyToPublish: true,
+    facts: {
+      approved: 1,
+      total: 1,
+      pendingSuggestions: 0,
+      ready: true,
+    },
+    questions: {
+      active: 11,
+      required: 11,
+      mainReady: true,
+      followUpsReady: true,
+      positionsReady: true,
+      ready: true,
+    },
+    criteria: {
+      mainPoints: 55,
+      mainRequired: 55,
+      followUpPoints: 15,
+      followUpRequired: 15,
+      ready: true,
+    },
+    issues: [],
+  });
+});
+
+test('pending fact suggestions are reported by readiness and block publication', () => {
+  const version = validVersion({ pendingFactSuggestionCount: 2 });
+  const readiness = getTrainingVersionReadiness(version);
+
+  assert.equal(readiness.readyToPublish, false);
+  assert.equal(readiness.facts.pendingSuggestions, 2);
+  assert.equal(readiness.facts.ready, false);
+  assert.deepEqual(readiness.issues[0], {
+    code: 'facts.pending_suggestions',
+    step: 'suggestions',
+    message: 'Pending fact suggestions must be reviewed or dismissed before publication',
+  });
+  assert.throws(
+    () => assertTrainingVersionPublishable(version),
+    UnprocessableEntityException,
+  );
+});
+
+test('active fact suggestion generation blocks readiness and publication', () => {
+  const version = validVersion({
+    activeFactSuggestionRunCount: 1,
+    activeFactSuggestionProviderCount: 2,
+    activeFactSuggestionJobCount: 2,
+  });
+  const readiness = getTrainingVersionReadiness(version);
+
+  assert.equal(readiness.readyToPublish, false);
+  assert.equal(readiness.facts.ready, false);
+  assert.deepEqual(readiness.issues[0], {
+    code: 'facts.suggestion_generation_active',
+    step: 'suggestions',
+    message: 'Fact suggestion generation must finish before publication',
+  });
+  assert.throws(
+    () => assertTrainingVersionPublishable(version),
+    UnprocessableEntityException,
+  );
+});
+
+test('in-flight source extraction is reported on the sources step and blocks publication', () => {
+  const version = validVersion({
+    sourceDocuments: [{ extractionStatus: 'PENDING' }],
+    officialUrlSources: [
+      { extractionStatus: 'PROCESSING' },
+      { extractionStatus: 'FAILED' },
+    ],
+  });
+  const readiness = getTrainingVersionReadiness(version);
+
+  assert.equal(readiness.readyToPublish, false);
+  assert.deepEqual(readiness.issues, [
+    {
+      code: 'sources.processing',
+      step: 'sources',
+      message: 'Source extraction must finish before publication',
+    },
+  ]);
+  assert.throws(
+    () => assertTrainingVersionPublishable(version),
+    UnprocessableEntityException,
+  );
+  assert.deepEqual(
+    collectTrainingPublicationErrors(
+      validVersion({
+        sourceDocuments: [{ extractionStatus: 'READY' }],
+        officialUrlSources: [{ extractionStatus: 'FAILED' }],
+      }),
+    ),
+    [],
+  );
 });

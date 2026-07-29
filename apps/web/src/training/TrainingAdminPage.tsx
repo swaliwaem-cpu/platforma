@@ -5,10 +5,12 @@ import {
   DownloadIcon,
   EyeIcon,
   FileTextIcon,
+  Globe2Icon,
   LoaderCircleIcon,
   PlusIcon,
   RefreshCwIcon,
   SaveIcon,
+  SparklesIcon,
   Trash2Icon,
   UploadIcon,
 } from 'lucide-react';
@@ -49,21 +51,32 @@ import {
   TableRow,
 } from '../components/ui/table';
 import {
+  acceptTrainingFactSuggestion,
   changeTrainingProjectStatus,
+  createTrainingFactSuggestionRun,
+  createTrainingOfficialUrlSource,
   createTrainingDraftVersion,
   createTrainingProject,
   deleteTrainingCriterion,
   deleteTrainingDocument,
   deleteTrainingFact,
+  deleteTrainingOfficialUrlSource,
   deleteTrainingQuestion,
   downloadTrainingDocument,
+  getLatestTrainingFactSuggestionRun,
   getTrainingDocumentText,
+  getTrainingOfficialUrlSourceText,
   getTrainingProject,
+  getTrainingReadiness,
+  listTrainingFactSuggestions,
   listTrainingDocuments,
+  listTrainingOfficialUrlSources,
   listTrainingObjects,
   listTrainingProjects,
   publishTrainingVersion,
+  rejectTrainingFactSuggestion,
   retryTrainingDocument,
+  retryTrainingOfficialUrlSource,
   saveTrainingCriterion,
   saveTrainingFact,
   saveTrainingQuestion,
@@ -71,16 +84,32 @@ import {
   type TrainingCriterionAnchor,
   type TrainingDocument,
   type TrainingFact,
+  type TrainingFactSuggestion,
+  type TrainingFactSuggestionRun,
+  type TrainingOfficialUrlSource,
   type TrainingProject,
   type TrainingQuestion,
   type TrainingQuestionType,
+  type TrainingReadiness,
   type TrainingRealEstateObject,
   type TrainingVersion,
+  type TrainingWizardStep,
   updateTrainingDocumentText,
   updateTrainingProject,
   updateTrainingVersion,
   uploadTrainingDocument,
 } from './trainingAdminApi';
+import { QuestionEvaluationContext } from './QuestionEvaluationContext';
+import { TrainingReadinessSummary } from './TrainingReadiness';
+import {
+  trainingWizardSteps,
+  TrainingWizardNav,
+  type TrainingWizardStepView,
+} from './TrainingWizardNav';
+import {
+  runTrainingUploadQueue,
+  type TrainingUploadQueueItem,
+} from './trainingUploadQueue';
 import './trainingAdmin.css';
 
 type TrainingAdminPageProps = {
@@ -88,25 +117,6 @@ type TrainingAdminPageProps = {
   navigate: (path: string) => void;
   onBack: () => void;
 };
-
-type EditorTab =
-  | 'main'
-  | 'materials'
-  | 'main-question'
-  | 'follow-ups'
-  | 'facts'
-  | 'criteria'
-  | 'publish';
-
-const editorTabs: Array<{ id: EditorTab; label: string }> = [
-  { id: 'main', label: 'Основное' },
-  { id: 'materials', label: 'Материалы' },
-  { id: 'main-question', label: 'Главный вопрос' },
-  { id: 'follow-ups', label: 'Дополнительные вопросы' },
-  { id: 'facts', label: 'Факты' },
-  { id: 'criteria', label: 'Критерии' },
-  { id: 'publish', label: 'Проверка / публикация' },
-];
 
 type TrainingMasterItem = {
   id: string;
@@ -121,20 +131,26 @@ type TrainingMasterGroup = {
   label: string;
   summary?: string;
   items: TrainingMasterItem[];
-  action?: ReactNode;
+  action?: (placement: 'desktop' | 'mobile') => ReactNode;
 };
 
 type ProjectEditorSection = 'project' | 'availability' | 'attempt';
+type TrainingDirtyChangeHandler = (itemId: string, dirty: boolean) => void;
+
+const dirtyItemSeparator = '::';
+const trainingHistoryIndexKey = '__trainingEditorHistoryIndex';
+const unsavedChangesMessage =
+  'Есть несохранённые изменения. Покинуть редактор и потерять их?';
 
 const projectStatusLabels = {
-  DRAFT: 'Черновик',
+  DRAFT: 'Не опубликован',
   OPEN: 'Открыт',
   CLOSED: 'Закрыт',
   ARCHIVED: 'Архив',
 } as const;
 
 const versionStatusLabels = {
-  DRAFT: 'Черновик',
+  DRAFT: 'Рабочая редакция',
   PUBLISHED: 'Опубликована',
   SUPERSEDED: 'Заменена',
 } as const;
@@ -147,13 +163,30 @@ const documentStatusLabels = {
   FAILED: 'Ошибка',
 } as const;
 
+const suggestionStatusLabels = {
+  PENDING: 'Требует проверки',
+  ACCEPTED: 'Подтверждён',
+  REJECTED: 'Отклонён',
+  STALE: 'Устарел',
+} as const;
+
+const suggestionRunStatusLabels = {
+  PENDING: 'в очереди',
+  RUNNING: 'анализируем',
+  READY: 'готов',
+  PARTIAL: 'готов частично',
+  FAILED: 'ошибка',
+  AMBIGUOUS: 'нужна проверка',
+  DISMISSED: 'отменён',
+} as const;
+
 export function TrainingAdminPage({
   pathname,
   navigate,
   onBack,
 }: TrainingAdminPageProps) {
   const editorMatch = pathname.match(
-    /^\/admin\/training\/([0-9a-f-]+)\/edit\/?$/iu,
+    /^\/admin\/training\/([0-9a-f-]+)\/edit(?:\/(main|sources|suggestions|questions|criteria|review))?\/?$/iu,
   );
 
   if (pathname === '/admin/training/new') {
@@ -169,6 +202,7 @@ export function TrainingAdminPage({
     return (
       <TrainingProjectEditorPage
         projectId={editorMatch[1]}
+        initialStep={(editorMatch[2] as TrainingWizardStep | undefined) ?? 'main'}
         navigate={navigate}
         onBack={() => navigate('/admin/training')}
       />
@@ -226,7 +260,7 @@ function TrainingProjectListPage({
       <TrainingAdminHeader
         eyebrow="Админка · Обучение"
         title="Проекты обучения"
-        description="Черновики, материалы, структура вопросов и готовность к публикации."
+        description="Рабочие редакции, источники, структура экзамена и готовность к публикации."
         onBack={onBack}
         actions={
           <AdminButton
@@ -314,7 +348,7 @@ function TrainingProjectListPage({
                     </TableCell>
                     <TableCell>
                       {draft
-                        ? `v${draft.versionNumber} · черновик`
+                        ? `Рабочая редакция v${draft.versionNumber}`
                         : project.activeVersion
                           ? `v${project.activeVersion.versionNumber} · опубликована`
                           : 'Нет версии'}
@@ -327,7 +361,7 @@ function TrainingProjectListPage({
                           navigate(`/admin/training/${project.id}/edit`)
                         }
                       >
-                        Открыть
+                        Редактировать
                       </AdminButton>
                     </TableCell>
                   </TableRow>
@@ -377,7 +411,7 @@ function TrainingProjectCreatePage({
         accessToken,
         toCreateProjectInput(form),
       );
-      navigate(`/admin/training/${response.project.id}/edit`);
+      navigate(`/admin/training/${response.project.id}/edit/sources`);
     } catch (caughtError) {
       setServerError(getErrorMessage(caughtError));
     } finally {
@@ -390,7 +424,7 @@ function TrainingProjectCreatePage({
       <TrainingAdminHeader
         eyebrow="Новый проект"
         title="Создание проекта обучения"
-        description="Сначала сохранится проект и его первая draft-версия. Контент добавляется в редакторе."
+        description="Сначала сохраните основные данные, затем мастер проведёт по источникам, фактам, вопросам и проверке."
         onBack={onBack}
       />
 
@@ -413,7 +447,7 @@ function TrainingProjectCreatePage({
               ) : (
                 <SaveIcon aria-hidden="true" />
               )}
-              Создать draft
+              Создать проект и продолжить
             </AdminButton>
           </div>
         </AdminPanel>
@@ -424,19 +458,64 @@ function TrainingProjectCreatePage({
 
 function TrainingProjectEditorPage({
   projectId,
+  initialStep,
+  navigate,
   onBack,
 }: {
   projectId: string;
+  initialStep: TrainingWizardStep;
   navigate: (path: string) => void;
   onBack: () => void;
 }) {
   const { accessToken } = useAuth();
   const [project, setProject] = useState<TrainingProject | null>(null);
   const [objects, setObjects] = useState<TrainingRealEstateObject[]>([]);
-  const [activeTab, setActiveTab] = useState<EditorTab>('main');
+  const [activeStep, setActiveStep] = useState<TrainingWizardStep>(initialStep);
+  const [visitedSteps, setVisitedSteps] = useState<Set<TrainingWizardStep>>(
+    () => new Set([initialStep]),
+  );
+  const [dirtyItemKeys, setDirtyItemKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [readiness, setReadiness] = useState<TrainingReadiness | null>(null);
+  const [readinessLoading, setReadinessLoading] = useState(false);
+  const [readinessError, setReadinessError] = useState<string | null>(null);
+  const [sourceSummary, setSourceSummary] = useState<{
+    total: number;
+    ready: number;
+  } | null>(null);
+  const [suggestionSummary, setSuggestionSummary] = useState<{
+    total: number;
+    pending: number;
+  } | null>(null);
+  const [sourcesRevision, setSourcesRevision] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionPending, setActionPending] = useState(false);
+  const ensuredProjectRef = useRef<string | null>(null);
+  const ensuringProjectRef = useRef<string | null>(null);
+  const restoringHistoryRef = useRef(false);
+  const pendingStepFocusRef = useRef<TrainingWizardStep | null>(null);
+  const currentProjectRef = useRef(projectId);
+  const historyIndexRef = useRef(
+    getTrainingHistoryIndex(window.history.state) ?? 0,
+  );
+
+  useEffect(() => {
+    if (currentProjectRef.current === projectId) return;
+    currentProjectRef.current = projectId;
+    setProject(null);
+    setObjects([]);
+    setDirtyItemKeys(new Set());
+    setReadiness(null);
+    setReadinessError(null);
+    setSourceSummary(null);
+    setSuggestionSummary(null);
+    setSourcesRevision(0);
+    setVisitedSteps(new Set([initialStep]));
+    ensuredProjectRef.current = null;
+    ensuringProjectRef.current = null;
+  }, [initialStep, projectId]);
 
   const loadProject = useCallback(async () => {
     if (!accessToken) return;
@@ -450,8 +529,10 @@ function TrainingProjectEditorPage({
       ]);
       setProject(projectResponse.project);
       setObjects(objectResponse.items);
+      return true;
     } catch (caughtError) {
       setError(getErrorMessage(caughtError));
+      return false;
     } finally {
       setLoading(false);
     }
@@ -460,6 +541,16 @@ function TrainingProjectEditorPage({
   useEffect(() => {
     void loadProject();
   }, [loadProject]);
+
+  useEffect(() => {
+    setActiveStep((current) => {
+      if (current !== initialStep) {
+        pendingStepFocusRef.current = initialStep;
+      }
+      return initialStep;
+    });
+    setVisitedSteps((current) => new Set(current).add(initialStep));
+  }, [initialStep]);
 
   const version = useMemo(() => {
     if (!project) return null;
@@ -471,19 +562,227 @@ function TrainingProjectEditorPage({
     );
   }, [project]);
 
-  async function createDraft() {
-    if (!accessToken || !project) return;
+  const loadReadiness = useCallback(async () => {
+    if (!accessToken || !version) return;
+    setReadinessLoading(true);
+    setReadinessError(null);
+    try {
+      const response = await getTrainingReadiness(accessToken, version.id);
+      setReadiness(response.readiness);
+    } catch (caughtError) {
+      setReadiness(null);
+      setReadinessError(getErrorMessage(caughtError));
+    } finally {
+      setReadinessLoading(false);
+    }
+  }, [accessToken, version]);
+
+  useEffect(() => {
+    void loadReadiness();
+  }, [loadReadiness]);
+
+  const ensureWorkingRevision = useCallback(async () => {
+    if (
+      !accessToken ||
+      !project ||
+      project.status === 'ARCHIVED' ||
+      ensuringProjectRef.current === project.id
+    ) {
+      return;
+    }
+    ensuringProjectRef.current = project.id;
     setActionPending(true);
     setError(null);
     try {
       await createTrainingDraftVersion(accessToken, project.id);
-      await loadProject();
+      const reloaded = await loadProject();
+      if (reloaded) {
+        ensuredProjectRef.current = project.id;
+      }
     } catch (caughtError) {
       setError(getErrorMessage(caughtError));
     } finally {
+      ensuringProjectRef.current = null;
       setActionPending(false);
     }
-  }
+  }, [accessToken, loadProject, project]);
+
+  useEffect(() => {
+    if (project?.versions.some((item) => item.status === 'DRAFT')) {
+      ensuredProjectRef.current = project.id;
+      return;
+    }
+    if (
+      !project ||
+      project.status === 'ARCHIVED' ||
+      ensuredProjectRef.current === project.id
+    ) {
+      return;
+    }
+    void ensureWorkingRevision();
+  }, [ensureWorkingRevision, project]);
+
+  const dirtySteps = useMemo(
+    () =>
+      new Set(
+        [...dirtyItemKeys].map(
+          (key) => key.split(dirtyItemSeparator, 1)[0] as TrainingWizardStep,
+        ),
+      ),
+    [dirtyItemKeys],
+  );
+  const hasUnsavedChanges = dirtyItemKeys.size > 0;
+
+  useEffect(() => {
+    const existingIndex = getTrainingHistoryIndex(window.history.state);
+    if (existingIndex !== null) {
+      historyIndexRef.current = existingIndex;
+      return;
+    }
+    window.history.replaceState(
+      withTrainingHistoryIndex(window.history.state, historyIndexRef.current),
+      '',
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) return;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasUnsavedChanges]);
+
+  useEffect(() => {
+    const handleBeforePopState = (event: Event) => {
+      const guardEvent = event as CustomEvent<PopStateEvent>;
+      const popStateEvent = guardEvent.detail;
+      const previousIndex = historyIndexRef.current;
+      const targetIndex =
+        getTrainingHistoryIndex(popStateEvent.state) ?? previousIndex - 1;
+
+      if (restoringHistoryRef.current) {
+        restoringHistoryRef.current = false;
+        historyIndexRef.current = targetIndex;
+        return;
+      }
+
+      const targetEditor = window.location.pathname.match(
+        /^\/admin\/training\/([0-9a-f-]+)\/edit(?:\/|$)/iu,
+      );
+      if (
+        targetEditor?.[1] === projectId ||
+        !hasUnsavedChanges ||
+        window.confirm(unsavedChangesMessage)
+      ) {
+        historyIndexRef.current = targetIndex;
+        return;
+      }
+
+      guardEvent.preventDefault();
+      restoringHistoryRef.current = true;
+      const restorationDelta = previousIndex - targetIndex;
+      window.setTimeout(() => {
+        window.history.go(restorationDelta);
+      }, 0);
+    };
+
+    window.addEventListener(
+      'platforma:before-popstate',
+      handleBeforePopState,
+    );
+    return () =>
+      window.removeEventListener(
+        'platforma:before-popstate',
+        handleBeforePopState,
+      );
+  }, [hasUnsavedChanges, projectId]);
+
+  useEffect(() => {
+    const originalPushState = window.history.pushState;
+    const guardedPushState: History['pushState'] = function (
+      data,
+      unused,
+      url,
+    ) {
+      const targetUrl =
+        url == null
+          ? new URL(window.location.href)
+          : new URL(String(url), window.location.href);
+      const targetEditor = targetUrl.pathname.match(
+        /^\/admin\/training\/([0-9a-f-]+)\/edit(?:\/|$)/iu,
+      );
+
+      if (
+        targetEditor?.[1] === projectId ||
+        !hasUnsavedChanges ||
+        window.confirm(unsavedChangesMessage)
+      ) {
+        const nextIndex = historyIndexRef.current + 1;
+        originalPushState.call(
+          window.history,
+          withTrainingHistoryIndex(data, nextIndex),
+          unused,
+          url,
+        );
+        historyIndexRef.current = nextIndex;
+      }
+    };
+
+    window.history.pushState = guardedPushState;
+    return () => {
+      if (window.history.pushState === guardedPushState) {
+        window.history.pushState = originalPushState;
+      }
+    };
+  }, [hasUnsavedChanges, projectId]);
+
+  const setDirtyItem = useCallback(
+    (step: TrainingWizardStep, itemId: string, dirty: boolean) => {
+      const key = `${step}${dirtyItemSeparator}${itemId}`;
+      setDirtyItemKeys((current) => {
+        const next = new Set(current);
+        if (dirty) next.add(key);
+        else next.delete(key);
+        return next;
+      });
+    },
+    [],
+  );
+
+  const changeStep = useCallback(
+    (step: TrainingWizardStep) => {
+      if (step === activeStep) return;
+      pendingStepFocusRef.current = step;
+      setVisitedSteps((current) => new Set(current).add(step));
+      setActiveStep(step);
+      navigate(`/admin/training/${projectId}/edit/${step}`);
+    },
+    [activeStep, navigate, projectId],
+  );
+
+  useEffect(() => {
+    const step = pendingStepFocusRef.current;
+    if (!step || step !== activeStep) return;
+    pendingStepFocusRef.current = null;
+    focusTrainingWizardStep(step);
+  }, [activeStep]);
+
+  const reloadAfterChange = useCallback(async () => {
+    await loadProject();
+    await loadReadiness();
+  }, [loadProject, loadReadiness]);
+
+  const reloadAfterSourceChange = useCallback(async () => {
+    await reloadAfterChange();
+    setSourcesRevision((current) => current + 1);
+  }, [reloadAfterChange]);
+
+  const requestBack = useCallback(() => {
+    onBack();
+  }, [onBack]);
 
   if (loading && !project) {
     return (
@@ -506,7 +805,154 @@ function TrainingProjectEditorPage({
     );
   }
 
+  const needsWorkingRevision =
+    project.status !== 'ARCHIVED' &&
+    !project.versions.some((item) => item.status === 'DRAFT') &&
+    ensuredProjectRef.current !== project.id;
+  if (needsWorkingRevision && error && !actionPending) {
+    return (
+      <main className="training-admin">
+        <TrainingAdminHeader
+          eyebrow="Обучение"
+          title="Не удалось открыть рабочую редакцию"
+          description="Опубликованная версия не изменена. Повторите создание рабочей редакции."
+          onBack={requestBack}
+          actions={
+            <AdminButton
+              tone="primary"
+              onClick={() => void ensureWorkingRevision()}
+            >
+              <RefreshCwIcon aria-hidden="true" />
+              Повторить
+            </AdminButton>
+          }
+        />
+        <AdminAlert tone="error">{error}</AdminAlert>
+      </main>
+    );
+  }
+  if (needsWorkingRevision || actionPending) {
+    return (
+      <main className="training-admin">
+        <TrainingLoading label="Открываем рабочую редакцию" />
+      </main>
+    );
+  }
+
   const readOnly = version.status !== 'DRAFT' || project.status === 'ARCHIVED';
+  const issuesByStep = new Set(
+    readiness?.issues.map((issue) => issue.step) ?? [],
+  );
+  const wizardStepViews: TrainingWizardStepView[] = trainingWizardSteps.map(
+    (step) => {
+      if (step.id === 'main') {
+        return {
+          ...step,
+          summary: readinessError
+            ? 'Проверка недоступна'
+            : readiness
+              ? 'Проект создан'
+              : 'Проверяем…',
+          state: readinessError
+            ? 'attention'
+            : readiness
+              ? issuesByStep.has(step.id)
+                ? 'attention'
+                : 'complete'
+              : 'pending',
+        };
+      }
+      if (step.id === 'sources') {
+        return {
+          ...step,
+          summary: sourceSummary
+            ? sourceSummary.total > 0
+              ? `${sourceSummary.ready}/${sourceSummary.total} готово`
+              : 'Добавьте материалы'
+            : 'Не проверено',
+          state: !sourceSummary
+            ? 'pending'
+            : issuesByStep.has(step.id)
+            ? 'attention'
+            : sourceSummary.total > 0
+              ? 'complete'
+              : 'pending',
+        };
+      }
+      if (step.id === 'suggestions') {
+        const pending =
+          readiness?.facts.pendingSuggestions ?? suggestionSummary?.pending ?? 0;
+        return {
+          ...step,
+          summary: suggestionSummary
+            ? suggestionSummary.total > 0
+              ? pending > 0
+                ? `${pending} требуют решения`
+                : `${suggestionSummary.total} обработано`
+              : 'Запустите анализ'
+            : 'Не проверено',
+          state: !suggestionSummary
+            ? 'pending'
+            : pending > 0 || issuesByStep.has(step.id)
+              ? 'attention'
+              : suggestionSummary.total > 0
+                ? 'complete'
+                : 'pending',
+        };
+      }
+      if (step.id === 'questions') {
+        return {
+          ...step,
+          summary: readiness
+            ? `${readiness.questions.active}/${readiness.questions.required} настроено`
+            : readinessError
+              ? 'Проверка недоступна'
+              : 'Проверяем…',
+          state: readinessError
+            ? 'attention'
+            : readiness
+              ? readiness.questions.ready
+                ? 'complete'
+                : 'attention'
+              : 'pending',
+        };
+      }
+      if (step.id === 'criteria') {
+        return {
+          ...step,
+          summary: readiness
+            ? `${formatNumber(readiness.criteria.mainPoints)}/${readiness.criteria.mainRequired} + ${formatNumber(readiness.criteria.followUpPoints)}/${readiness.criteria.followUpRequired}`
+            : readinessError
+              ? 'Проверка недоступна'
+              : 'Проверяем…',
+          state: readinessError
+            ? 'attention'
+            : readiness
+              ? readiness.criteria.ready
+                ? 'complete'
+                : 'attention'
+              : 'pending',
+        };
+      }
+      return {
+        ...step,
+        summary: readiness
+          ? readiness.readyToPublish
+            ? 'Можно публиковать'
+            : 'Есть замечания'
+          : readinessError
+            ? 'Проверка недоступна'
+            : 'Проверяем…',
+        state: readinessError
+          ? 'attention'
+          : readiness
+            ? readiness.readyToPublish
+              ? 'complete'
+              : 'attention'
+            : 'pending',
+      };
+    },
+  );
 
   return (
     <main className="training-admin training-admin--editor">
@@ -515,10 +961,10 @@ function TrainingProjectEditorPage({
         title={project.title}
         description={
           readOnly
-            ? 'Опубликованная версия доступна только для просмотра. Для изменений создайте новый draft.'
-            : 'Изменения сохраняются в draft и не влияют на опубликованную версию.'
+            ? 'Архивная или историческая версия доступна только для просмотра.'
+            : 'Изменения сохраняются в рабочей редакции и пока не видны сотрудникам.'
         }
-        onBack={onBack}
+        onBack={requestBack}
         actions={
           <div className="training-header-statuses">
             <AdminStatusBadge
@@ -529,101 +975,166 @@ function TrainingProjectEditorPage({
             <AdminStatusBadge>
               {versionStatusLabels[version.status]}
             </AdminStatusBadge>
-            {readOnly && project.status !== 'ARCHIVED' ? (
-              <AdminButton
-                tone="primary"
-                disabled={actionPending}
-                onClick={() => void createDraft()}
-              >
-                <PlusIcon aria-hidden="true" />
-                Новый draft
-              </AdminButton>
-            ) : null}
           </div>
         }
       />
 
       {error ? <AdminAlert tone="error">{error}</AdminAlert> : null}
 
-      <nav className="training-editor-tabs" aria-label="Разделы редактора">
-        {editorTabs.map((tab) => (
-          <button
-            key={tab.id}
-            className={activeTab === tab.id ? 'is-active' : ''}
-            type="button"
-            aria-current={activeTab === tab.id ? 'page' : undefined}
-            onClick={() => setActiveTab(tab.id)}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </nav>
+      <TrainingReadinessSummary
+        readiness={readiness}
+        loading={readinessLoading}
+        error={readinessError}
+        stale={hasUnsavedChanges}
+      />
+      <TrainingWizardNav
+        activeStep={activeStep}
+        dirtySteps={dirtySteps}
+        steps={wizardStepViews}
+        onStepChange={changeStep}
+      />
 
-      {activeTab === 'main' ? (
-        <ProjectMainSection
-          token={accessToken ?? ''}
-          project={project}
-          version={version}
-          objects={objects}
-          readOnly={readOnly}
-          onChanged={loadProject}
-        />
+      {visitedSteps.has('main') ? (
+        <section
+          className="training-wizard-panel"
+          data-wizard-step="main"
+          hidden={activeStep !== 'main'}
+        >
+          <ProjectMainSection
+            token={accessToken ?? ''}
+            project={project}
+            version={version}
+            objects={objects}
+            readOnly={readOnly}
+            onChanged={reloadAfterChange}
+            onDirtyChange={(itemId, dirty) =>
+              setDirtyItem('main', itemId, dirty)
+            }
+          />
+        </section>
       ) : null}
-      {activeTab === 'materials' ? (
-        <TrainingMaterialsSection
-          token={accessToken ?? ''}
-          version={version}
-          readOnly={readOnly}
-        />
+      {visitedSteps.has('sources') ? (
+        <section
+          className="training-wizard-panel"
+          data-wizard-step="sources"
+          hidden={activeStep !== 'sources'}
+        >
+          <TrainingMaterialsSection
+            token={accessToken ?? ''}
+            version={version}
+            readOnly={readOnly}
+            onSummaryChange={setSourceSummary}
+            onChanged={reloadAfterSourceChange}
+            onDirtyChange={(itemId, dirty) =>
+              setDirtyItem('sources', itemId, dirty)
+            }
+          />
+        </section>
       ) : null}
-      {activeTab === 'main-question' ? (
-        <QuestionsSection
-          title="Главный вопрос"
-          description="Для публикации нужен ровно один активный главный вопрос с максимумом 55 баллов."
-          type="MAIN"
-          token={accessToken ?? ''}
-          version={version}
-          readOnly={readOnly}
-          onChanged={loadProject}
-        />
+      {visitedSteps.has('suggestions') ? (
+        <section
+          className="training-wizard-panel training-wizard-panel--stack"
+          data-wizard-step="suggestions"
+          hidden={activeStep !== 'suggestions'}
+        >
+          <FactSuggestionsSection
+            token={accessToken ?? ''}
+            version={version}
+            readOnly={readOnly}
+            onSummaryChange={setSuggestionSummary}
+            onChanged={reloadAfterChange}
+            onDirtyChange={(itemId, dirty) =>
+              setDirtyItem('suggestions', itemId, dirty)
+            }
+          />
+          <FactsSection
+            token={accessToken ?? ''}
+            version={version}
+            sourcesRevision={sourcesRevision}
+            readOnly={readOnly}
+            onChanged={reloadAfterChange}
+            onDirtyChange={(itemId, dirty) =>
+              setDirtyItem('suggestions', itemId, dirty)
+            }
+          />
+        </section>
       ) : null}
-      {activeTab === 'follow-ups' ? (
-        <QuestionsSection
-          title="Дополнительные вопросы"
-          description="Для публикации нужны 10 активных вопросов с позициями от 1 до 10 и максимумом 15 баллов каждый."
-          type="FOLLOW_UP"
-          token={accessToken ?? ''}
-          version={version}
-          readOnly={readOnly}
-          onChanged={loadProject}
-        />
+      {visitedSteps.has('questions') ? (
+        <section
+          className="training-wizard-panel training-wizard-panel--stack"
+          data-wizard-step="questions"
+          hidden={activeStep !== 'questions'}
+        >
+          <QuestionsSection
+            title="Главный вопрос"
+            description="Для публикации нужен ровно один активный главный вопрос с максимумом 55 баллов."
+            type="MAIN"
+            token={accessToken ?? ''}
+            version={version}
+            readOnly={readOnly}
+            onChanged={reloadAfterChange}
+            onNavigate={changeStep}
+            onDirtyChange={(itemId, dirty) =>
+              setDirtyItem('questions', itemId, dirty)
+            }
+          />
+          <QuestionsSection
+            title="Дополнительные вопросы"
+            description="Для публикации нужны 10 активных вопросов с позициями от 1 до 10 и максимумом 15 баллов каждый."
+            type="FOLLOW_UP"
+            token={accessToken ?? ''}
+            version={version}
+            readOnly={readOnly}
+            onChanged={reloadAfterChange}
+            onNavigate={changeStep}
+            onDirtyChange={(itemId, dirty) =>
+              setDirtyItem('questions', itemId, dirty)
+            }
+          />
+        </section>
       ) : null}
-      {activeTab === 'facts' ? (
-        <FactsSection
-          token={accessToken ?? ''}
-          version={version}
-          readOnly={readOnly}
-          onChanged={loadProject}
-        />
+      {visitedSteps.has('criteria') ? (
+        <section
+          className="training-wizard-panel"
+          data-wizard-step="criteria"
+          hidden={activeStep !== 'criteria'}
+        >
+          <CriteriaSection
+            token={accessToken ?? ''}
+            version={version}
+            readOnly={readOnly}
+            onChanged={reloadAfterChange}
+            onDirtyChange={(itemId, dirty) =>
+              setDirtyItem('criteria', itemId, dirty)
+            }
+          />
+        </section>
       ) : null}
-      {activeTab === 'criteria' ? (
-        <CriteriaSection
-          token={accessToken ?? ''}
-          version={version}
-          readOnly={readOnly}
-          onChanged={loadProject}
-        />
+      {visitedSteps.has('review') ? (
+        <section
+          className="training-wizard-panel"
+          data-wizard-step="review"
+          hidden={activeStep !== 'review'}
+        >
+          <PublishSection
+            token={accessToken ?? ''}
+            project={project}
+            version={version}
+            readiness={readiness}
+            readinessLoading={readinessLoading}
+            readinessError={readinessError}
+            readOnly={readOnly}
+            hasUnsavedChanges={hasUnsavedChanges}
+            onChanged={reloadAfterChange}
+            onNavigate={changeStep}
+          />
+        </section>
       ) : null}
-      {activeTab === 'publish' ? (
-        <PublishSection
-          token={accessToken ?? ''}
-          project={project}
-          version={version}
-          readOnly={readOnly}
-          onChanged={loadProject}
-          onNavigate={setActiveTab}
-        />
-      ) : null}
+
+      <WizardNavigationFooter
+        activeStep={activeStep}
+        onNavigate={changeStep}
+      />
     </main>
   );
 }
@@ -635,6 +1146,7 @@ function ProjectMainSection({
   objects,
   readOnly,
   onChanged,
+  onDirtyChange,
 }: {
   token: string;
   project: TrainingProject;
@@ -642,6 +1154,7 @@ function ProjectMainSection({
   objects: TrainingRealEstateObject[];
   readOnly: boolean;
   onChanged: () => Promise<void>;
+  onDirtyChange: TrainingDirtyChangeHandler;
 }) {
   const [form, setForm] = useState(() => projectToForm(project, version));
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -650,10 +1163,20 @@ function ProjectMainSection({
   const [saving, setSaving] = useState(false);
   const [selectedSection, setSelectedSection] =
     useState<ProjectEditorSection>('project');
+  const [dirtySections, setDirtySections] = useState<Set<ProjectEditorSection>>(
+    () => new Set(),
+  );
 
   useEffect(() => {
-    setForm(projectToForm(project, version));
-  }, [project, version]);
+    if (dirtySections.size === 0) {
+      setForm(projectToForm(project, version));
+    }
+  }, [dirtySections.size, project, version]);
+
+  const markSectionDirty = (section: ProjectEditorSection) => {
+    setDirtySections((current) => new Set(current).add(section));
+    onDirtyChange(section, true);
+  };
 
   async function save(event: FormEvent) {
     event.preventDefault();
@@ -679,7 +1202,11 @@ function ProjectMainSection({
         deadlineAt: input.deadlineAt,
       });
       await updateTrainingVersion(token, version.id, input.draft);
-      setNotice('Основные данные и настройки draft сохранены.');
+      setNotice('Основные данные и настройки рабочей редакции сохранены.');
+      for (const section of ['project', 'availability', 'attempt'] as const) {
+        onDirtyChange(section, false);
+      }
+      setDirtySections(new Set());
       await onChanged();
     } catch (caughtError) {
       setServerError(getErrorMessage(caughtError));
@@ -743,31 +1270,33 @@ function ProjectMainSection({
                     : 'Настройки попытки'
               }
             >
-              <TrainingDetailHeading
-                title={
-                  section === 'project'
-                    ? 'Карточка проекта'
-                    : section === 'availability'
-                      ? 'Доступность'
-                      : 'Настройки попытки'
-                }
-                description={
-                  section === 'project'
-                    ? 'Название, описание, связь с объектом и порядок показа.'
-                    : section === 'availability'
-                      ? 'Необязательное окно, в котором сотрудник может пройти обучение.'
-                      : 'Баллы, лимиты времени и правила повторного прохождения.'
-                }
-              />
-              <fieldset disabled={readOnly} className="training-fieldset">
-                <ProjectAndSettingsFields
-                  section={section}
-                  form={form}
-                  errors={errors}
-                  objects={objects}
-                  onChange={setForm}
+              <div onChangeCapture={() => markSectionDirty(section)}>
+                <TrainingDetailHeading
+                  title={
+                    section === 'project'
+                      ? 'Карточка проекта'
+                      : section === 'availability'
+                        ? 'Доступность'
+                        : 'Настройки попытки'
+                  }
+                  description={
+                    section === 'project'
+                      ? 'Название, описание, связь с объектом и порядок показа.'
+                      : section === 'availability'
+                        ? 'Необязательное окно, в котором сотрудник может пройти обучение.'
+                        : 'Баллы, лимиты времени и правила повторного прохождения.'
+                  }
                 />
-              </fieldset>
+                <fieldset disabled={readOnly} className="training-fieldset">
+                  <ProjectAndSettingsFields
+                    section={section}
+                    form={form}
+                    errors={errors}
+                    objects={objects}
+                    onChange={setForm}
+                  />
+                </fieldset>
+              </div>
             </TrainingDetailPanel>
           ))}
         </TrainingMasterDetail>
@@ -863,10 +1392,11 @@ function ProjectAndSettingsFields({
           </Field>
           <TrainingNumberField
             id="training-project-sort"
-            label="Порядок"
+            label="Позиция в списке проектов"
             value={form.sortOrder}
             min={0}
             error={errors.sortOrder}
+            description="Меньшее число показывает проект выше; при равенстве проекты сортируются по названию."
             onChange={(value) => update('sortOrder', value)}
           />
         </div>
@@ -976,6 +1506,8 @@ function QuestionsSection({
   version,
   readOnly,
   onChanged,
+  onNavigate,
+  onDirtyChange,
 }: {
   title: string;
   description: string;
@@ -984,6 +1516,8 @@ function QuestionsSection({
   version: TrainingVersion;
   readOnly: boolean;
   onChanged: () => Promise<void>;
+  onNavigate: (step: TrainingWizardStep) => void;
+  onDirtyChange: TrainingDirtyChangeHandler;
 }) {
   const questions = version.questions
     .filter((question) => question.type === type)
@@ -1009,6 +1543,19 @@ function QuestionsSection({
     setAdding(true);
     setSelectedId(newQuestionId);
   };
+  const addButtonId = `training-add-question-${type.toLowerCase()}`;
+  const cancelNewQuestion = () => {
+    onDirtyChange(newQuestionId, false);
+    setAdding(false);
+    focusTrainingControl(addButtonId);
+  };
+
+  useEffect(() => {
+    if (adding && selectedId === newQuestionId) {
+      focusTrainingDetailPanel(newQuestionId);
+    }
+  }, [adding, newQuestionId, selectedId]);
+
   const masterItems: TrainingMasterItem[] = [
     ...questions.map((question) => ({
       id: question.id,
@@ -1025,7 +1572,7 @@ function QuestionsSection({
           {
             id: newQuestionId,
             label: 'Новый вопрос',
-            description: 'Черновик ещё не сохранён',
+            description: 'Вопрос ещё не сохранён',
             status: 'Новый',
             statusTone: 'warning' as const,
           },
@@ -1056,8 +1603,19 @@ function QuestionsSection({
               items: masterItems,
               action:
                 !readOnly && !adding ? (
-                  <TrainingMasterAddButton label="Добавить вопрос" onClick={addQuestion} />
-                ) : null,
+                  (placement) => (
+                    <TrainingMasterAddButton
+                      id={`${addButtonId}-${placement}`}
+                      focusKey={addButtonId}
+                      label={
+                        type === 'MAIN'
+                          ? 'Добавить главный вопрос'
+                          : 'Добавить дополнительный вопрос'
+                      }
+                      onClick={addQuestion}
+                    />
+                  )
+                ) : undefined,
             },
           ]}
           selectedId={selectedId}
@@ -1077,9 +1635,13 @@ function QuestionsSection({
               <QuestionCard
                 token={token}
                 versionId={version.id}
+                version={version}
                 question={question}
+                editorId={question.id}
                 readOnly={readOnly}
                 onChanged={onChanged}
+                onNavigate={onNavigate}
+                onDirtyChange={onDirtyChange}
               />
             </TrainingDetailPanel>
           ))}
@@ -1092,6 +1654,7 @@ function QuestionsSection({
               <QuestionCard
                 token={token}
                 versionId={version.id}
+                version={version}
                 question={{
                   id: '',
                   type,
@@ -1101,20 +1664,23 @@ function QuestionsSection({
                   maxScore: type === 'MAIN' ? 55 : 15,
                   topicCodesJson: [],
                 }}
+                editorId={newQuestionId}
                 readOnly={false}
+                onNavigate={onNavigate}
                 onChanged={async (savedId) => {
                   await onChanged();
                   setAdding(false);
                   if (savedId) setSelectedId(savedId);
                 }}
-                onCancel={() => setAdding(false)}
+                onCancel={cancelNewQuestion}
+                onDirtyChange={onDirtyChange}
               />
             </TrainingDetailPanel>
           ) : null}
         </TrainingMasterDetail>
       ) : !readOnly ? (
         <div className="training-empty-action">
-          <AdminButton tone="primary" onClick={addQuestion}>
+          <AdminButton id={addButtonId} tone="primary" onClick={addQuestion}>
             <PlusIcon aria-hidden="true" />
             Добавить вопрос
           </AdminButton>
@@ -1127,17 +1693,25 @@ function QuestionsSection({
 function QuestionCard({
   token,
   versionId,
+  version,
   question,
+  editorId,
   readOnly,
   onChanged,
   onCancel,
+  onNavigate,
+  onDirtyChange,
 }: {
   token: string;
   versionId: string;
+  version: TrainingVersion;
   question: TrainingQuestion;
+  editorId: string;
   readOnly: boolean;
   onChanged: (savedId?: string) => Promise<void>;
   onCancel?: () => void;
+  onNavigate: (step: TrainingWizardStep) => void;
+  onDirtyChange: TrainingDirtyChangeHandler;
 }) {
   const [text, setText] = useState(question.text);
   const [position, setPosition] = useState(String(question.position));
@@ -1166,6 +1740,7 @@ function QuestionCard({
         maxScore: question.type === 'MAIN' ? 55 : 15,
         topicCodes: splitList(topicCodes),
       });
+      onDirtyChange(editorId, false);
       await onChanged(response.question.id);
     } catch (caughtError) {
       setError(getErrorMessage(caughtError));
@@ -1175,11 +1750,14 @@ function QuestionCard({
   }
 
   async function remove() {
-    if (!question.id || !window.confirm('Удалить вопрос из draft?')) return;
+    if (!question.id || !window.confirm('Удалить вопрос из рабочей редакции?')) {
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
       await deleteTrainingQuestion(token, versionId, question.id);
+      onDirtyChange(editorId, false);
       await onChanged();
     } catch (caughtError) {
       setError(getErrorMessage(caughtError));
@@ -1189,7 +1767,10 @@ function QuestionCard({
   }
 
   return (
-    <article className="training-edit-card">
+    <article
+      className="training-edit-card"
+      onChangeCapture={() => onDirtyChange(editorId, true)}
+    >
       <div className="training-edit-card-heading">
         <div>
           <strong>
@@ -1198,7 +1779,7 @@ function QuestionCard({
           <span>Максимум: {question.type === 'MAIN' ? 55 : 15} баллов</span>
         </div>
         <TrainingCheckboxRow
-          id={`question-active-${question.id || 'new'}`}
+          id={`question-active-${editorId}`}
           checked={isActive}
           label="Активен"
           compact
@@ -1210,18 +1791,18 @@ function QuestionCard({
       <fieldset disabled={readOnly || saving} className="training-fieldset">
         <div className="training-form-grid">
           <Field className="training-field-wide">
-            <FieldLabel htmlFor={`question-text-${question.id || 'new'}`}>
+            <FieldLabel htmlFor={`question-text-${editorId}`}>
               Текст вопроса
             </FieldLabel>
             <textarea
-              id={`question-text-${question.id || 'new'}`}
+              id={`question-text-${editorId}`}
               className="training-control training-textarea"
               value={text}
               onChange={(event) => setText(event.target.value)}
             />
           </Field>
           <TrainingTextField
-            id={`question-position-${question.id || 'new'}`}
+            id={`question-position-${editorId}`}
             label="Позиция"
             type="number"
             value={position}
@@ -1230,7 +1811,7 @@ function QuestionCard({
             onChange={setPosition}
           />
           <TrainingTextField
-            id={`question-topics-${question.id || 'new'}`}
+            id={`question-topics-${editorId}`}
             label="Коды тем"
             value={topicCodes}
             placeholder="location, product"
@@ -1238,6 +1819,14 @@ function QuestionCard({
           />
         </div>
       </fieldset>
+      <QuestionEvaluationContext
+        instanceId={editorId}
+        question={{ ...question, isActive, text, position: Number(position) }}
+        facts={version.facts}
+        criteria={version.criteria}
+        onOpenFacts={() => onNavigate('suggestions')}
+        onOpenCriteria={() => onNavigate('criteria')}
+      />
       {!readOnly ? (
         <div className="training-card-actions">
           {question.id ? (
@@ -1260,18 +1849,535 @@ function QuestionCard({
   );
 }
 
-function FactsSection({
+function FactSuggestionsSection({
   token,
   version,
   readOnly,
+  onSummaryChange,
   onChanged,
+  onDirtyChange,
 }: {
   token: string;
   version: TrainingVersion;
   readOnly: boolean;
+  onSummaryChange: (summary: { total: number; pending: number }) => void;
   onChanged: () => Promise<void>;
+  onDirtyChange: TrainingDirtyChangeHandler;
+}) {
+  const [suggestions, setSuggestions] = useState<TrainingFactSuggestion[]>([]);
+  const [latestRun, setLatestRun] = useState<TrainingFactSuggestionRun | null>(
+    null,
+  );
+  const [selectedId, setSelectedId] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const syncedRunRef = useRef('');
+
+  const loadSuggestions = useCallback(async () => {
+    try {
+      const [suggestionResponse, runResponse] = await Promise.all([
+        listTrainingFactSuggestions(token, version.id),
+        getLatestTrainingFactSuggestionRun(token, version.id),
+      ]);
+      setSuggestions(suggestionResponse.items);
+      setLatestRun(runResponse.run);
+      setLoadError(null);
+      setSelectedId((current) => {
+        if (suggestionResponse.items.some((item) => item.id === current)) {
+          return current;
+        }
+        return (
+          suggestionResponse.items.find((item) => item.status === 'PENDING')?.id ??
+          suggestionResponse.items[0]?.id ??
+          ''
+        );
+      });
+    } catch (caughtError) {
+      setLoadError(getErrorMessage(caughtError));
+    } finally {
+      setLoading(false);
+    }
+  }, [token, version.id]);
+
+  useEffect(() => {
+    void loadSuggestions();
+  }, [loadSuggestions]);
+
+  useEffect(() => {
+    if (loading || loadError) return;
+    const pendingCount = suggestions.filter(
+      (suggestion) => suggestion.status === 'PENDING',
+    ).length;
+    onSummaryChange({ total: suggestions.length, pending: pendingCount });
+  }, [loadError, loading, onSummaryChange, suggestions]);
+
+  useEffect(() => {
+    if (!latestRun || !['PENDING', 'RUNNING'].includes(latestRun.status)) {
+      return;
+    }
+    const interval = setInterval(() => void loadSuggestions(), 2_500);
+    return () => clearInterval(interval);
+  }, [latestRun, loadSuggestions]);
+
+  useEffect(() => {
+    if (!latestRun || ['PENDING', 'RUNNING'].includes(latestRun.status)) {
+      return;
+    }
+    const syncKey = [
+      latestRun.id,
+      latestRun.status,
+      latestRun.updatedAt ?? '',
+      latestRun.counts.pending,
+    ].join(':');
+    if (syncedRunRef.current === syncKey) return;
+    syncedRunRef.current = syncKey;
+    void onChanged();
+  }, [latestRun, onChanged]);
+
+  async function startSuggestionRun() {
+    if (unresolvedCount > 0) {
+      setError(
+        `Сначала обработайте ${unresolvedCount} ${pluralizeItems(
+          unresolvedCount,
+          'предложение',
+          'предложения',
+          'предложений',
+        )}.`,
+      );
+      return;
+    }
+    setPending(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const [documentResponse, urlResponse] = await Promise.all([
+        listTrainingDocuments(token, version.id),
+        listTrainingOfficialUrlSources(token, version.id),
+      ]);
+      const sourceIds = [
+        ...documentResponse.items
+          .filter((item) => item.extractionStatus === 'READY')
+          .map((item) => ({ kind: 'DOCUMENT' as const, id: item.id })),
+        ...urlResponse.items
+          .filter((item) => item.extractionStatus === 'READY')
+          .map((item) => ({ kind: 'OFFICIAL_URL' as const, id: item.id })),
+      ];
+      if (sourceIds.length === 0) {
+        setError(
+          'Сначала дождитесь готовности хотя бы одного файла или официальной ссылки.',
+        );
+        return;
+      }
+      const response = await createTrainingFactSuggestionRun(
+        token,
+        version.id,
+        sourceIds,
+      );
+      setLatestRun(response.run);
+      setNotice('Материалы поставлены в очередь на анализ.');
+      await loadSuggestions();
+    } catch (caughtError) {
+      setError(getErrorMessage(caughtError));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  const runActive =
+    pending ||
+    Boolean(latestRun && ['PENDING', 'RUNNING'].includes(latestRun.status));
+  const unresolvedCount = suggestions.filter(
+    (suggestion) => suggestion.status === 'PENDING',
+  ).length;
+  const runButtonLabel = loading
+    ? 'Проверяем предложения…'
+    : loadError
+      ? 'Проверка предложений недоступна'
+      : runActive
+        ? 'Анализируем материалы…'
+        : unresolvedCount > 0
+          ? `Сначала обработайте предложения: ${unresolvedCount}`
+          : 'Предложить факты из материалов';
+  const masterItems: TrainingMasterItem[] = suggestions.map((suggestion) => ({
+    id: suggestion.id,
+    label: suggestion.suggestedCode || 'Предложенный факт',
+    description: suggestion.statement,
+    status: suggestionStatusLabels[suggestion.status],
+    statusTone:
+      suggestion.status === 'ACCEPTED'
+        ? 'success'
+        : suggestion.status === 'PENDING'
+          ? 'warning'
+          : 'neutral',
+  }));
+
+  return (
+    <AdminPanel className="training-section-panel">
+      <SectionHeading
+        title="Предложенные факты"
+        description="Система предлагает формулировки по готовым источникам. Ни один факт не участвует в оценке без явного подтверждения администратором."
+        actions={
+          !readOnly ? (
+            <AdminButton
+              tone="primary"
+              disabled={
+                loading || Boolean(loadError) || runActive || unresolvedCount > 0
+              }
+              onClick={() => void startSuggestionRun()}
+            >
+              {loading || runActive ? (
+                <LoaderCircleIcon className="training-spin" aria-hidden="true" />
+              ) : (
+                <SparklesIcon aria-hidden="true" />
+              )}
+              {runButtonLabel}
+            </AdminButton>
+          ) : null
+        }
+      />
+      {latestRun ? (
+        <div className="training-suggestion-run" role="status" aria-live="polite">
+          <span>
+            Последний анализ: {suggestionRunStatusLabels[latestRun.status]}
+          </span>
+          <strong>
+            {latestRun.counts.total} всего · {latestRun.counts.pending} требуют
+            решения
+          </strong>
+          {latestRun.errorMessage ? <small>{latestRun.errorMessage}</small> : null}
+        </div>
+      ) : null}
+      {error ? <AdminAlert tone="error">{error}</AdminAlert> : null}
+      {loadError ? (
+        <>
+          <AdminAlert tone="error">{loadError}</AdminAlert>
+          <div className="training-form-actions">
+            <AdminButton onClick={() => void loadSuggestions()}>
+              <RefreshCwIcon aria-hidden="true" />
+              Повторить загрузку
+            </AdminButton>
+          </div>
+        </>
+      ) : null}
+      {notice ? <AdminAlert tone="notice">{notice}</AdminAlert> : null}
+      {loading ? (
+        <TrainingLoading label="Загружаем предложения" />
+      ) : suggestions.length === 0 ? (
+        <AdminEmptyState
+          title="Предложений пока нет"
+          description="Добавьте готовые источники и запустите анализ. Факты также можно создать вручную ниже."
+        />
+      ) : (
+        <TrainingMasterDetail
+          ariaLabel="Предложенные факты"
+          groups={[
+            {
+              id: 'suggestions',
+              label: 'Результат анализа',
+              summary: `${suggestions.filter((item) => item.status === 'PENDING').length} требуют проверки`,
+              items: masterItems,
+            },
+          ]}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+        >
+          {suggestions.map((suggestion) => (
+            <TrainingDetailPanel
+              key={suggestion.id}
+              id={suggestion.id}
+              selectedId={selectedId}
+              label={suggestion.suggestedCode}
+            >
+              <FactSuggestionCard
+                token={token}
+                version={version}
+                suggestion={suggestion}
+                readOnly={readOnly}
+                onDirtyChange={onDirtyChange}
+                onChanged={async () => {
+                  await loadSuggestions();
+                  await onChanged();
+                }}
+              />
+            </TrainingDetailPanel>
+          ))}
+        </TrainingMasterDetail>
+      )}
+    </AdminPanel>
+  );
+}
+
+function FactSuggestionCard({
+  token,
+  version,
+  suggestion,
+  readOnly,
+  onChanged,
+  onDirtyChange,
+}: {
+  token: string;
+  version: TrainingVersion;
+  suggestion: TrainingFactSuggestion;
+  readOnly: boolean;
+  onChanged: () => Promise<void>;
+  onDirtyChange: TrainingDirtyChangeHandler;
+}) {
+  const [code, setCode] = useState(suggestion.suggestedCode);
+  const [topicCode, setTopicCode] = useState(suggestion.topicCode);
+  const [statement, setStatement] = useState(suggestion.statement);
+  const [aliases, setAliases] = useState(suggestion.acceptedAliases.join('\n'));
+  const [importance, setImportance] = useState(String(suggestion.importance));
+  const [questionIds, setQuestionIds] = useState<Set<string>>(() => new Set());
+  const [rejectReason, setRejectReason] = useState('');
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const editable = !readOnly && suggestion.status === 'PENDING';
+  const availableQuestionIds = useMemo(
+    () => new Set(version.questions.map((question) => question.id)),
+    [version.questions],
+  );
+
+  useEffect(() => {
+    setQuestionIds((current) =>
+      pruneMissingQuestionIds(current, availableQuestionIds),
+    );
+  }, [availableQuestionIds]);
+
+  function toggleQuestion(questionId: string) {
+    setQuestionIds((current) => {
+      const next = new Set(current);
+      if (next.has(questionId)) next.delete(questionId);
+      else next.add(questionId);
+      return next;
+    });
+  }
+
+  async function accept() {
+    if (!code.trim() || !topicCode.trim() || !statement.trim()) {
+      setError('Заполните код, тему и формулировку факта.');
+      return;
+    }
+    if (questionIds.size === 0) {
+      setError('Свяжите предложенный факт минимум с одним вопросом.');
+      return;
+    }
+    setPending(true);
+    setError(null);
+    try {
+      await acceptTrainingFactSuggestion(token, version.id, suggestion.id, {
+        code: code.trim(),
+        topicCode: topicCode.trim(),
+        statement: statement.trim(),
+        acceptedAliases: splitLines(aliases),
+        importance: Number(importance),
+        questionIds: [...questionIds],
+      });
+      onDirtyChange(suggestion.id, false);
+      await onChanged();
+    } catch (caughtError) {
+      setError(getErrorMessage(caughtError));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function reject() {
+    if (!rejectReason.trim()) {
+      setError('Укажите причину отклонения.');
+      return;
+    }
+    setPending(true);
+    setError(null);
+    try {
+      await rejectTrainingFactSuggestion(
+        token,
+        version.id,
+        suggestion.id,
+        rejectReason.trim(),
+      );
+      onDirtyChange(suggestion.id, false);
+      await onChanged();
+    } catch (caughtError) {
+      setError(getErrorMessage(caughtError));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <article
+      className="training-edit-card training-suggestion-card"
+      onChangeCapture={() => onDirtyChange(suggestion.id, true)}
+    >
+      <div className="training-edit-card-heading">
+        <div>
+          <strong>{suggestion.suggestedCode}</strong>
+          <span>{suggestion.topicCode}</span>
+        </div>
+        <AdminStatusBadge
+          className={
+            suggestion.status === 'ACCEPTED'
+              ? 'training-status--ready'
+              : suggestion.status === 'PENDING'
+                ? 'training-status--warning'
+                : undefined
+          }
+        >
+          {suggestionStatusLabels[suggestion.status]}
+        </AdminStatusBadge>
+      </div>
+      {suggestion.sourceQuote ? (
+        <blockquote className="training-source-quote">
+          <span>Фрагмент источника</span>
+          <p>{suggestion.sourceQuote}</p>
+        </blockquote>
+      ) : null}
+      {error ? <AdminAlert tone="error">{error}</AdminAlert> : null}
+      <fieldset disabled={!editable || pending} className="training-fieldset">
+        <div className="training-form-grid">
+          <TrainingTextField
+            id={`suggestion-code-${suggestion.id}`}
+            label="Код"
+            value={code}
+            onChange={setCode}
+          />
+          <TrainingTextField
+            id={`suggestion-topic-${suggestion.id}`}
+            label="Код темы"
+            value={topicCode}
+            onChange={setTopicCode}
+          />
+          <Field className="training-field-wide">
+            <FieldLabel htmlFor={`suggestion-statement-${suggestion.id}`}>
+              Проверенная формулировка
+            </FieldLabel>
+            <textarea
+              id={`suggestion-statement-${suggestion.id}`}
+              className="training-control training-textarea"
+              value={statement}
+              onChange={(event) => setStatement(event.target.value)}
+            />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor={`suggestion-aliases-${suggestion.id}`}>
+              Допустимые варианты
+            </FieldLabel>
+            <textarea
+              id={`suggestion-aliases-${suggestion.id}`}
+              className="training-control training-textarea training-textarea--compact"
+              value={aliases}
+              onChange={(event) => setAliases(event.target.value)}
+            />
+          </Field>
+          <TrainingNumberField
+            id={`suggestion-importance-${suggestion.id}`}
+            label="Важность"
+            min={1}
+            value={importance}
+            onChange={setImportance}
+          />
+          <fieldset className="training-linked-questions training-field-wide">
+            <legend>Связать с вопросами</legend>
+            <p className="training-choice-summary">
+              Выбрано {questionIds.size} из {version.questions.length}
+            </p>
+            <div className="training-choice-list">
+              {[...version.questions]
+                .sort((left, right) => {
+                  if (left.type !== right.type) return left.type === 'MAIN' ? -1 : 1;
+                  return left.position - right.position;
+                })
+                .map((question) => (
+                  <label
+                    key={question.id}
+                    className={
+                      questionIds.has(question.id)
+                        ? 'training-choice-row is-checked'
+                        : 'training-choice-row'
+                    }
+                  >
+                    <input
+                      className="training-checkbox-control"
+                      type="checkbox"
+                      checked={questionIds.has(question.id)}
+                      onChange={() => toggleQuestion(question.id)}
+                    />
+                    <span className="training-choice-copy">
+                      <strong>
+                        {question.type === 'MAIN'
+                          ? 'Главный вопрос'
+                          : `Дополнительный вопрос ${question.position}`}
+                      </strong>
+                      <span>{question.text}</span>
+                    </span>
+                  </label>
+                ))}
+            </div>
+          </fieldset>
+          {editable ? (
+            <Field className="training-field-wide">
+              <FieldLabel htmlFor={`suggestion-reason-${suggestion.id}`}>
+                Причина отклонения
+              </FieldLabel>
+              <textarea
+                id={`suggestion-reason-${suggestion.id}`}
+                className="training-control training-textarea training-textarea--compact"
+                value={rejectReason}
+                placeholder="Обязательно только при отклонении"
+                onChange={(event) => setRejectReason(event.target.value)}
+              />
+            </Field>
+          ) : null}
+        </div>
+      </fieldset>
+      {editable ? (
+        <div className="training-card-actions training-suggestion-actions">
+          {questionIds.size === 0 ? (
+            <p className="training-action-hint">
+              Свяжите предложенный факт минимум с одним вопросом.
+            </p>
+          ) : null}
+          <AdminButton
+            tone="danger"
+            disabled={pending || !rejectReason.trim()}
+            onClick={() => void reject()}
+          >
+            Отклонить
+          </AdminButton>
+          <AdminButton
+            tone="primary"
+            disabled={pending || questionIds.size === 0}
+            onClick={() => void accept()}
+          >
+            <CheckCircle2Icon aria-hidden="true" />
+            Подтвердить факт
+          </AdminButton>
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function FactsSection({
+  token,
+  version,
+  sourcesRevision,
+  readOnly,
+  onChanged,
+  onDirtyChange,
+}: {
+  token: string;
+  version: TrainingVersion;
+  sourcesRevision: number;
+  readOnly: boolean;
+  onChanged: () => Promise<void>;
+  onDirtyChange: TrainingDirtyChangeHandler;
 }) {
   const [documents, setDocuments] = useState<TrainingDocument[]>([]);
+  const [urlSources, setUrlSources] = useState<TrainingOfficialUrlSource[]>([]);
   const [adding, setAdding] = useState(false);
   const newFactId = 'new-fact';
   const factIds = [
@@ -1283,11 +2389,23 @@ function FactsSection({
     () => version.facts[0]?.id ?? newFactId,
   );
 
-  useEffect(() => {
-    void listTrainingDocuments(token, version.id)
-      .then((response) => setDocuments(response.items))
-      .catch(() => setDocuments([]));
+  const loadFactSources = useCallback(async () => {
+    try {
+      const [documentResponse, urlResponse] = await Promise.all([
+      listTrainingDocuments(token, version.id),
+      listTrainingOfficialUrlSources(token, version.id),
+      ]);
+      setDocuments(documentResponse.items);
+      setUrlSources(urlResponse.items);
+    } catch {
+      setDocuments([]);
+      setUrlSources([]);
+    }
   }, [token, version.id]);
+
+  useEffect(() => {
+    void loadFactSources();
+  }, [loadFactSources, sourcesRevision]);
 
   useEffect(() => {
     if (!factIds.includes(selectedId)) {
@@ -1299,6 +2417,19 @@ function FactsSection({
     setAdding(true);
     setSelectedId(newFactId);
   };
+  const addButtonId = 'training-add-fact';
+  const cancelNewFact = () => {
+    onDirtyChange(newFactId, false);
+    setAdding(false);
+    focusTrainingControl(addButtonId);
+  };
+
+  useEffect(() => {
+    if (adding && selectedId === newFactId) {
+      focusTrainingDetailPanel(newFactId);
+    }
+  }, [adding, selectedId]);
+
   const masterItems: TrainingMasterItem[] = [
     ...version.facts.map((fact) => ({
       id: fact.id,
@@ -1312,7 +2443,7 @@ function FactsSection({
           {
             id: newFactId,
             label: 'Новый факт',
-            description: 'Черновик ещё не сохранён',
+            description: 'Факт ещё не сохранён',
             status: 'Новый',
             statusTone: 'warning' as const,
           },
@@ -1327,7 +2458,7 @@ function FactsSection({
         description="Только подтверждённые администратором факты участвуют в оценивании. Извлечённый текст сам по себе никогда не становится фактом."
       />
       <AdminAlert tone="notice">
-        Текст документов — рабочий черновик. Проверьте формулировку, источник и
+        Извлечённый текст — рабочий материал. Проверьте формулировку, источник и
         включите «Факт подтверждён» вручную.
       </AdminAlert>
       {version.facts.length === 0 && !adding ? (
@@ -1347,8 +2478,15 @@ function FactsSection({
               items: masterItems,
               action:
                 !readOnly && !adding ? (
-                  <TrainingMasterAddButton label="Добавить факт" onClick={addFact} />
-                ) : null,
+                  (placement) => (
+                    <TrainingMasterAddButton
+                      id={`${addButtonId}-${placement}`}
+                      focusKey={addButtonId}
+                      label="Добавить факт"
+                      onClick={addFact}
+                    />
+                  )
+                ) : undefined,
             },
           ]}
           selectedId={selectedId}
@@ -1366,8 +2504,11 @@ function FactsSection({
                 version={version}
                 fact={fact}
                 documents={documents}
+                urlSources={urlSources}
+                editorId={fact.id}
                 readOnly={readOnly}
                 onChanged={onChanged}
+                onDirtyChange={onDirtyChange}
               />
             </TrainingDetailPanel>
           ))}
@@ -1382,20 +2523,23 @@ function FactsSection({
                 version={version}
                 fact={null}
                 documents={documents}
+                urlSources={urlSources}
+                editorId={newFactId}
                 readOnly={false}
                 onChanged={async (savedId) => {
                   await onChanged();
                   setAdding(false);
                   if (savedId) setSelectedId(savedId);
                 }}
-                onCancel={() => setAdding(false)}
+                onCancel={cancelNewFact}
+                onDirtyChange={onDirtyChange}
               />
             </TrainingDetailPanel>
           ) : null}
         </TrainingMasterDetail>
       ) : !readOnly ? (
         <div className="training-empty-action">
-          <AdminButton tone="primary" onClick={addFact}>
+          <AdminButton id={addButtonId} tone="primary" onClick={addFact}>
             <PlusIcon aria-hidden="true" />
             Добавить факт
           </AdminButton>
@@ -1410,17 +2554,23 @@ function FactCard({
   version,
   fact,
   documents,
+  urlSources,
+  editorId,
   readOnly,
   onChanged,
   onCancel,
+  onDirtyChange,
 }: {
   token: string;
   version: TrainingVersion;
   fact: TrainingFact | null;
   documents: TrainingDocument[];
+  urlSources: TrainingOfficialUrlSource[];
+  editorId: string;
   readOnly: boolean;
   onChanged: (savedId?: string) => Promise<void>;
   onCancel?: () => void;
+  onDirtyChange: TrainingDirtyChangeHandler;
 }) {
   const [code, setCode] = useState(fact?.code ?? '');
   const [topicCode, setTopicCode] = useState(fact?.topicCode ?? '');
@@ -1432,6 +2582,9 @@ function FactCard({
   const [sourceDocumentId, setSourceDocumentId] = useState(
     fact?.sourceDocumentId ?? '',
   );
+  const [sourceOfficialUrlId, setSourceOfficialUrlId] = useState(
+    fact?.sourceOfficialUrlId ?? '',
+  );
   const [sourceLocator, setSourceLocator] = useState(
     fact?.sourceLocatorJson ? JSON.stringify(fact.sourceLocatorJson, null, 2) : '',
   );
@@ -1441,6 +2594,16 @@ function FactCard({
   );
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const availableQuestionIds = useMemo(
+    () => new Set(version.questions.map((question) => question.id)),
+    [version.questions],
+  );
+
+  useEffect(() => {
+    setQuestionIds((current) =>
+      pruneMissingQuestionIds(current, availableQuestionIds),
+    );
+  }, [availableQuestionIds]);
 
   function toggleQuestion(questionId: string) {
     setQuestionIds((current) => {
@@ -1478,10 +2641,12 @@ function FactCard({
         acceptedAliases: splitLines(aliases),
         importance: Number(importance),
         sourceDocumentId: sourceDocumentId || null,
+        sourceOfficialUrlId: sourceOfficialUrlId || null,
         sourceLocator: locator,
         isApproved,
         questionIds: [...questionIds],
       });
+      onDirtyChange(editorId, false);
       await onChanged(response.fact.id);
     } catch (caughtError) {
       setError(getErrorMessage(caughtError));
@@ -1491,10 +2656,11 @@ function FactCard({
   }
 
   async function remove() {
-    if (!fact || !window.confirm('Удалить факт из draft?')) return;
+    if (!fact || !window.confirm('Удалить факт из рабочей редакции?')) return;
     setSaving(true);
     try {
       await deleteTrainingFact(token, version.id, fact.id);
+      onDirtyChange(editorId, false);
       await onChanged();
     } catch (caughtError) {
       setError(getErrorMessage(caughtError));
@@ -1504,7 +2670,10 @@ function FactCard({
   }
 
   return (
-    <article className="training-edit-card">
+    <article
+      className="training-edit-card"
+      onChangeCapture={() => onDirtyChange(editorId, true)}
+    >
       <div className="training-edit-card-heading">
         <div>
           <strong>{fact ? fact.code : 'Новый факт'}</strong>
@@ -1520,36 +2689,36 @@ function FactCard({
       <fieldset disabled={readOnly || saving} className="training-fieldset">
         <div className="training-form-grid">
           <TrainingTextField
-            id={`fact-code-${fact?.id ?? 'new'}`}
+            id={`fact-code-${editorId}`}
             label="Код"
             value={code}
             maxLength={120}
             onChange={setCode}
           />
           <TrainingTextField
-            id={`fact-topic-${fact?.id ?? 'new'}`}
+            id={`fact-topic-${editorId}`}
             label="Код темы"
             value={topicCode}
             maxLength={120}
             onChange={setTopicCode}
           />
           <Field className="training-field-wide">
-            <FieldLabel htmlFor={`fact-statement-${fact?.id ?? 'new'}`}>
+            <FieldLabel htmlFor={`fact-statement-${editorId}`}>
               Проверенная формулировка
             </FieldLabel>
             <textarea
-              id={`fact-statement-${fact?.id ?? 'new'}`}
+              id={`fact-statement-${editorId}`}
               className="training-control training-textarea"
               value={statement}
               onChange={(event) => setStatement(event.target.value)}
             />
           </Field>
           <Field>
-            <FieldLabel htmlFor={`fact-aliases-${fact?.id ?? 'new'}`}>
+            <FieldLabel htmlFor={`fact-aliases-${editorId}`}>
               Допустимые варианты
             </FieldLabel>
             <textarea
-              id={`fact-aliases-${fact?.id ?? 'new'}`}
+              id={`fact-aliases-${editorId}`}
               className="training-control training-textarea training-textarea--compact"
               value={aliases}
               placeholder="Один вариант на строку"
@@ -1557,7 +2726,7 @@ function FactCard({
             />
           </Field>
           <TrainingTextField
-            id={`fact-importance-${fact?.id ?? 'new'}`}
+            id={`fact-importance-${editorId}`}
             label="Важность"
             type="number"
             min={1}
@@ -1565,14 +2734,17 @@ function FactCard({
             onChange={setImportance}
           />
           <Field>
-            <FieldLabel htmlFor={`fact-document-${fact?.id ?? 'new'}`}>
+            <FieldLabel htmlFor={`fact-document-${editorId}`}>
               Документ-источник
             </FieldLabel>
             <select
-              id={`fact-document-${fact?.id ?? 'new'}`}
+              id={`fact-document-${editorId}`}
               className="training-control"
               value={sourceDocumentId}
-              onChange={(event) => setSourceDocumentId(event.target.value)}
+              onChange={(event) => {
+                setSourceDocumentId(event.target.value);
+                if (event.target.value) setSourceOfficialUrlId('');
+              }}
             >
               <option value="">Без документа</option>
               {documents.map((document) => (
@@ -1583,11 +2755,32 @@ function FactCard({
             </select>
           </Field>
           <Field>
-            <FieldLabel htmlFor={`fact-locator-${fact?.id ?? 'new'}`}>
+            <FieldLabel htmlFor={`fact-url-source-${editorId}`}>
+              Официальная страница-источник
+            </FieldLabel>
+            <select
+              id={`fact-url-source-${editorId}`}
+              className="training-control"
+              value={sourceOfficialUrlId}
+              onChange={(event) => {
+                setSourceOfficialUrlId(event.target.value);
+                if (event.target.value) setSourceDocumentId('');
+              }}
+            >
+              <option value="">Без официальной ссылки</option>
+              {urlSources.map((source) => (
+                <option key={source.id} value={source.id}>
+                  {source.confirmedOfficialHost} · {source.normalizedUrl}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor={`fact-locator-${editorId}`}>
               Локатор источника
             </FieldLabel>
             <textarea
-              id={`fact-locator-${fact?.id ?? 'new'}`}
+              id={`fact-locator-${editorId}`}
               className="training-control training-textarea training-code-input"
               value={sourceLocator}
               placeholder='{"page": 3}'
@@ -1636,7 +2829,7 @@ function FactCard({
             </div>
           </fieldset>
           <TrainingCheckboxRow
-            id={`fact-approved-${fact?.id ?? 'new'}`}
+            id={`fact-approved-${editorId}`}
             className="training-field-wide training-approval"
             checked={isApproved}
             label="Факт проверен и подтверждён администратором"
@@ -1672,11 +2865,13 @@ function CriteriaSection({
   version,
   readOnly,
   onChanged,
+  onDirtyChange,
 }: {
   token: string;
   version: TrainingVersion;
   readOnly: boolean;
   onChanged: () => Promise<void>;
+  onDirtyChange: TrainingDirtyChangeHandler;
 }) {
   const [addingTypes, setAddingTypes] = useState<Set<TrainingQuestionType>>(
     () => new Set(),
@@ -1717,12 +2912,21 @@ function CriteriaSection({
     setSelectedId(newCriterionId(type));
   };
   const cancelCriterion = (type: TrainingQuestionType) => {
+    onDirtyChange(newCriterionId(type), false);
     setAddingTypes((current) => {
       const next = new Set(current);
       next.delete(type);
       return next;
     });
+    focusTrainingControl(`training-add-criterion-${type.toLowerCase()}`);
   };
+
+  useEffect(() => {
+    if (selectedId.startsWith('new-criterion-')) {
+      focusTrainingDetailPanel(selectedId);
+    }
+  }, [addingTypes, selectedId]);
+
   const masterGroups: TrainingMasterGroup[] = (
     ['MAIN', 'FOLLOW_UP'] as const
   ).map((type) => {
@@ -1749,7 +2953,7 @@ function CriteriaSection({
               {
                 id: newCriterionId(type),
                 label: 'Новый критерий',
-                description: 'Черновик ещё не сохранён',
+                description: 'Критерий ещё не сохранён',
                 status: 'Новый',
                 statusTone: 'warning' as const,
               },
@@ -1758,11 +2962,17 @@ function CriteriaSection({
       ],
       action:
         !readOnly && !addingTypes.has(type) ? (
-          <TrainingMasterAddButton
-            label="Добавить критерий"
-            onClick={() => addCriterion(type)}
-          />
-        ) : null,
+          (placement) => (
+            <TrainingMasterAddButton
+              id={`training-add-criterion-${type.toLowerCase()}-${placement}`}
+              focusKey={`training-add-criterion-${type.toLowerCase()}`}
+              label={`Добавить критерий: ${
+                type === 'MAIN' ? 'главный вопрос' : 'дополнительный вопрос'
+              }`}
+              onClick={() => addCriterion(type)}
+            />
+          )
+        ) : undefined,
     };
   });
 
@@ -1791,8 +3001,10 @@ function CriteriaSection({
                   token={token}
                   versionId={version.id}
                   criterion={criterion}
+                  editorId={criterion.id}
                   readOnly={readOnly}
                   onChanged={onChanged}
+                  onDirtyChange={onDirtyChange}
                 />
               </TrainingDetailPanel>
             )),
@@ -1817,6 +3029,7 @@ function CriteriaSection({
                         anchorsJson: [],
                         sortOrder: nextCriterionPosition(criteriaByType[type]),
                       }}
+                      editorId={newCriterionId(type)}
                       readOnly={false}
                       onChanged={async (savedId) => {
                         await onChanged();
@@ -1824,6 +3037,7 @@ function CriteriaSection({
                         if (savedId) setSelectedId(savedId);
                       }}
                       onCancel={() => cancelCriterion(type)}
+                      onDirtyChange={onDirtyChange}
                     />
                   </TrainingDetailPanel>,
                 ]
@@ -1838,11 +3052,17 @@ function CriteriaSection({
           />
           {!readOnly ? (
             <div className="training-empty-action">
-              <AdminButton onClick={() => addCriterion('MAIN')}>
+              <AdminButton
+                id="training-add-criterion-main"
+                onClick={() => addCriterion('MAIN')}
+              >
                 <PlusIcon aria-hidden="true" />
                 Для главного вопроса
               </AdminButton>
-              <AdminButton onClick={() => addCriterion('FOLLOW_UP')}>
+              <AdminButton
+                id="training-add-criterion-follow_up"
+                onClick={() => addCriterion('FOLLOW_UP')}
+              >
                 <PlusIcon aria-hidden="true" />
                 Для дополнительного
               </AdminButton>
@@ -1858,16 +3078,20 @@ function CriterionCard({
   token,
   versionId,
   criterion,
+  editorId,
   readOnly,
   onChanged,
   onCancel,
+  onDirtyChange,
 }: {
   token: string;
   versionId: string;
   criterion: TrainingCriterion;
+  editorId: string;
   readOnly: boolean;
   onChanged: (savedId?: string) => Promise<void>;
   onCancel?: () => void;
+  onDirtyChange: TrainingDirtyChangeHandler;
 }) {
   const [code, setCode] = useState(criterion.code);
   const [title, setTitle] = useState(criterion.title);
@@ -1899,6 +3123,7 @@ function CriterionCard({
         anchors: parseCriterionAnchors(anchors, Number(maxPoints)),
         sortOrder: Number(sortOrder),
       });
+      onDirtyChange(editorId, false);
       await onChanged(response.criterion.id);
     } catch (caughtError) {
       setError(getErrorMessage(caughtError));
@@ -1908,10 +3133,13 @@ function CriterionCard({
   }
 
   async function remove() {
-    if (!criterion.id || !window.confirm('Удалить критерий из draft?')) return;
+    if (!criterion.id || !window.confirm('Удалить критерий из рабочей редакции?')) {
+      return;
+    }
     setSaving(true);
     try {
       await deleteTrainingCriterion(token, versionId, criterion.id);
+      onDirtyChange(editorId, false);
       await onChanged();
     } catch (caughtError) {
       setError(getErrorMessage(caughtError));
@@ -1921,7 +3149,10 @@ function CriterionCard({
   }
 
   return (
-    <article className="training-edit-card training-edit-card--criterion">
+    <article
+      className="training-edit-card training-edit-card--criterion"
+      onChangeCapture={() => onDirtyChange(editorId, true)}
+    >
       <div className="training-edit-card-heading">
         <div>
           <strong>{title || code || 'Новый критерий'}</strong>
@@ -1937,28 +3168,29 @@ function CriterionCard({
       <fieldset disabled={readOnly || saving} className="training-fieldset">
         <div className="training-form-grid">
           <TrainingTextField
-            id={`criterion-code-${criterion.id || 'new'}-${criterion.questionType}`}
+            id={`criterion-code-${editorId}`}
             label="Код"
             value={code}
             onChange={setCode}
           />
           <TrainingTextField
-            id={`criterion-order-${criterion.id || 'new'}-${criterion.questionType}`}
-            label="Порядок"
+            id={`criterion-order-${editorId}`}
+            label="Позиция в списке критериев"
             type="number"
             min={0}
             value={sortOrder}
+            description="Меньшее число показывает критерий выше внутри своей группы."
             onChange={setSortOrder}
           />
           <TrainingTextField
-            id={`criterion-title-${criterion.id || 'new'}-${criterion.questionType}`}
+            id={`criterion-title-${editorId}`}
             label="Название"
             className="training-field-wide"
             value={title}
             onChange={setTitle}
           />
           <TrainingTextField
-            id={`criterion-max-${criterion.id || 'new'}-${criterion.questionType}`}
+            id={`criterion-max-${editorId}`}
             label="Максимум баллов"
             type="number"
             min={0.01}
@@ -1968,12 +3200,12 @@ function CriterionCard({
           />
           <Field>
             <FieldLabel
-              htmlFor={`criterion-description-${criterion.id || 'new'}-${criterion.questionType}`}
+              htmlFor={`criterion-description-${editorId}`}
             >
               Описание
             </FieldLabel>
             <textarea
-              id={`criterion-description-${criterion.id || 'new'}-${criterion.questionType}`}
+              id={`criterion-description-${editorId}`}
               className="training-control training-textarea training-textarea--compact"
               value={description}
               onChange={(event) => setDescription(event.target.value)}
@@ -1981,12 +3213,12 @@ function CriterionCard({
           </Field>
           <Field className="training-field-wide">
             <FieldLabel
-              htmlFor={`criterion-anchors-${criterion.id || 'new'}-${criterion.questionType}`}
+              htmlFor={`criterion-anchors-${editorId}`}
             >
               Якоря оценки
             </FieldLabel>
             <textarea
-              id={`criterion-anchors-${criterion.id || 'new'}-${criterion.questionType}`}
+              id={`criterion-anchors-${editorId}`}
               className="training-control training-textarea training-textarea--compact"
               value={anchors}
               placeholder="full | 10 | Полный и точный ответ"
@@ -2020,119 +3252,340 @@ function CriterionCard({
   );
 }
 
+type SelectedTrainingSource =
+  | { kind: 'DOCUMENT'; source: TrainingDocument }
+  | { kind: 'OFFICIAL_URL'; source: TrainingOfficialUrlSource };
+
 function TrainingMaterialsSection({
   token,
   version,
   readOnly,
+  onSummaryChange,
+  onChanged,
+  onDirtyChange,
 }: {
   token: string;
   version: TrainingVersion;
   readOnly: boolean;
+  onSummaryChange: (summary: { total: number; ready: number }) => void;
+  onChanged: () => Promise<void>;
+  onDirtyChange: TrainingDirtyChangeHandler;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [documents, setDocuments] = useState<TrainingDocument[]>([]);
-  const [selected, setSelected] = useState<TrainingDocument | null>(null);
+  const [urlSources, setUrlSources] = useState<TrainingOfficialUrlSource[]>([]);
+  const [selected, setSelected] = useState<SelectedTrainingSource | null>(null);
   const [extractedText, setExtractedText] = useState('');
   const [metadata, setMetadata] = useState<unknown>(null);
+  const [uploadQueue, setUploadQueue] = useState<TrainingUploadQueueItem[]>([]);
+  const [urlInput, setUrlInput] = useState('');
+  const [officialHostConfirmed, setOfficialHostConfirmed] = useState(false);
+  const [addingUrl, setAddingUrl] = useState(false);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [urlPending, setUrlPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [selectedTextDirty, setSelectedTextDirty] = useState(false);
+  const officialHost = getHttpsHost(urlInput);
 
-  const loadDocuments = useCallback(async () => {
+  const loadSources = useCallback(async () => {
     try {
-      const response = await listTrainingDocuments(token, version.id);
-      setDocuments(response.items);
+      const [documentResponse, urlResponse] = await Promise.all([
+        listTrainingDocuments(token, version.id),
+        listTrainingOfficialUrlSources(token, version.id),
+      ]);
+      setDocuments(documentResponse.items);
+      setUrlSources(urlResponse.items);
+      setLoadError(null);
     } catch (caughtError) {
-      setError(getErrorMessage(caughtError));
+      setLoadError(getErrorMessage(caughtError));
     } finally {
       setLoading(false);
     }
   }, [token, version.id]);
 
   useEffect(() => {
-    void loadDocuments();
-  }, [loadDocuments]);
+    void loadSources();
+  }, [loadSources]);
+
+  useEffect(() => {
+    if (loading) return;
+    const sources = [...documents, ...urlSources];
+    onSummaryChange({
+      total: sources.length,
+      ready: sources.filter((source) => source.extractionStatus === 'READY').length,
+    });
+  }, [documents, loadError, loading, onSummaryChange, urlSources]);
 
   useEffect(() => {
     if (
-      !documents.some((document) =>
-        ['PENDING', 'PROCESSING'].includes(document.extractionStatus),
+      ![...documents, ...urlSources].some((source) =>
+        ['PENDING', 'PROCESSING'].includes(source.extractionStatus),
       )
     ) {
       return;
     }
-    const interval = setInterval(() => void loadDocuments(), 2_500);
+    const interval = setInterval(() => void loadSources(), 2_500);
     return () => clearInterval(interval);
-  }, [documents, loadDocuments]);
+  }, [documents, loadSources, urlSources]);
+
+  useEffect(() => {
+    if (!selected || selected.kind !== 'OFFICIAL_URL') return;
+    const latest = urlSources.find(
+      (source) => source.id === selected.source.id,
+    );
+    if (!latest || latest.updatedAt === selected.source.updatedAt) return;
+
+    if (latest.extractionStatus !== 'READY') {
+      setSelected({ kind: 'OFFICIAL_URL', source: latest });
+      setExtractedText('');
+      setMetadata(null);
+      return;
+    }
+
+    let cancelled = false;
+    void getTrainingOfficialUrlSourceText(token, version.id, latest.id)
+      .then((response) => {
+        if (cancelled) return;
+        setSelected({ kind: 'OFFICIAL_URL', source: response.source });
+        setExtractedText(response.extractedText);
+        setMetadata(response.extractionMetadata);
+        setError(null);
+      })
+      .catch((caughtError) => {
+        if (!cancelled) setError(getErrorMessage(caughtError));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected, token, urlSources, version.id]);
+
+  function clearSelectedTextDirty() {
+    if (selected?.kind === 'DOCUMENT') {
+      onDirtyChange(`document:${selected.source.id}`, false);
+    }
+    setSelectedTextDirty(false);
+  }
+
+  function canLeaveSelected(nextSourceId?: string) {
+    if (!selectedTextDirty || selected?.kind !== 'DOCUMENT') {
+      return true;
+    }
+    if (selected.source.id === nextSourceId) return false;
+    if (
+      !window.confirm(
+        'Есть несохранённые изменения текста документа. Закрыть их без сохранения?',
+      )
+    ) {
+      return false;
+    }
+    clearSelectedTextDirty();
+    return true;
+  }
+
+  function cancelOfficialUrl() {
+    setUrlInput('');
+    setOfficialHostConfirmed(false);
+    setAddingUrl(false);
+    onDirtyChange('official-url:new', false);
+    focusTrainingControl('training-add-official-url');
+  }
 
   async function upload(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
+    const files = Array.from(event.target.files ?? []);
     event.target.value = '';
-    if (!file) return;
+    if (files.length === 0) return;
+    if (files.length > 20) {
+      setError('За один раз можно выбрать не более 20 файлов.');
+      return;
+    }
 
+    const queue = files.map((file, index) => ({
+      id: `${file.name}-${file.size}-${file.lastModified}-${index}`,
+      file,
+      status: 'QUEUED' as const,
+      error: null,
+    }));
+    await processUploadQueue(queue);
+  }
+
+  async function processUploadQueue(queue: TrainingUploadQueueItem[]) {
+    setUploadQueue(queue);
     setUploading(true);
     setError(null);
     setNotice(null);
+    const result = await runTrainingUploadQueue(
+      queue,
+      (file) => uploadTrainingDocument(token, version.id, file),
+      setUploadQueue,
+      2,
+    );
+    const succeeded = result.filter((item) => item.status === 'SUCCEEDED').length;
+    const failed = result.filter((item) => item.status === 'FAILED');
+    setUploadQueue(failed);
+    setNotice(
+      failed.length === 0
+        ? `${succeeded} ${pluralizeItems(succeeded, 'файл загружен', 'файла загружены', 'файлов загружено')} и поставлено в очередь.`
+        : `Загружено ${succeeded} из ${result.length}. Ошибки показаны ниже.`,
+    );
+    setUploading(false);
+    await loadSources();
+    await onChanged();
+  }
+
+  async function retryFailedUploads() {
+    const failed = uploadQueue
+      .filter((item) => item.status === 'FAILED')
+      .map((item) => ({ ...item, status: 'QUEUED' as const, error: null }));
+    if (failed.length === 0) return;
+    await processUploadQueue(failed);
+  }
+
+  async function addOfficialUrl() {
+    if (!officialHost || !officialHostConfirmed) {
+      setError(
+        officialHost
+          ? 'Подтвердите, что это официальный сайт проекта.'
+          : 'Введите корректную публичную HTTPS-ссылку.',
+      );
+      return;
+    }
+    setUrlPending(true);
+    setError(null);
     try {
-      await uploadTrainingDocument(token, version.id, file);
-      setNotice('Документ загружен и поставлен в очередь на извлечение текста.');
-      await loadDocuments();
+      await createTrainingOfficialUrlSource(token, version.id, {
+        url: urlInput.trim(),
+        confirmedOfficialHost: officialHost,
+      });
+      setUrlInput('');
+      setOfficialHostConfirmed(false);
+      setAddingUrl(false);
+      onDirtyChange('official-url:new', false);
+      setNotice('Официальная ссылка добавлена и поставлена в очередь на обработку.');
+      await loadSources();
+      await onChanged();
     } catch (caughtError) {
       setError(getErrorMessage(caughtError));
     } finally {
-      setUploading(false);
+      setUrlPending(false);
     }
   }
 
-  async function preview(document: TrainingDocument) {
+  async function previewDocument(document: TrainingDocument) {
+    if (!canLeaveSelected(document.id)) return;
     setError(null);
     try {
       const response = await getTrainingDocumentText(token, version.id, document.id);
-      setSelected(response.document);
+      setSelected({ kind: 'DOCUMENT', source: response.document });
       setExtractedText(response.extractedText);
       setMetadata(response.extractionMetadata);
+      setSelectedTextDirty(false);
+    } catch (caughtError) {
+      setError(getErrorMessage(caughtError));
+    }
+  }
+
+  async function previewUrl(source: TrainingOfficialUrlSource) {
+    if (!canLeaveSelected(source.id)) return;
+    setError(null);
+    try {
+      const response = await getTrainingOfficialUrlSourceText(
+        token,
+        version.id,
+        source.id,
+      );
+      setSelected({ kind: 'OFFICIAL_URL', source: response.source });
+      setExtractedText(response.extractedText);
+      setMetadata(response.extractionMetadata);
+      setSelectedTextDirty(false);
     } catch (caughtError) {
       setError(getErrorMessage(caughtError));
     }
   }
 
   async function saveText() {
-    if (!selected) return;
+    if (!selected || selected.kind !== 'DOCUMENT') return;
     setError(null);
     try {
       await updateTrainingDocumentText(
         token,
         version.id,
-        selected.id,
+        selected.source.id,
         extractedText,
       );
-      setNotice('Черновой текст документа сохранён.');
-      await loadDocuments();
+      setNotice('Рабочий текст документа сохранён.');
+      clearSelectedTextDirty();
+      await loadSources();
+      await onChanged();
     } catch (caughtError) {
       setError(getErrorMessage(caughtError));
     }
   }
 
-  async function retry(document: TrainingDocument) {
+  async function retryDocument(document: TrainingDocument) {
     setError(null);
     try {
       await retryTrainingDocument(token, version.id, document.id);
-      await loadDocuments();
+      await loadSources();
+      await onChanged();
     } catch (caughtError) {
       setError(getErrorMessage(caughtError));
     }
   }
 
-  async function remove(document: TrainingDocument) {
+  async function retryUrl(source: TrainingOfficialUrlSource) {
+    setError(null);
+    try {
+      const response = await retryTrainingOfficialUrlSource(
+        token,
+        version.id,
+        source.id,
+      );
+      if (selected?.kind === 'OFFICIAL_URL' && selected.source.id === source.id) {
+        setSelected({ kind: 'OFFICIAL_URL', source: response.source });
+        setExtractedText('');
+        setMetadata(null);
+      }
+      await loadSources();
+      await onChanged();
+    } catch (caughtError) {
+      setError(getErrorMessage(caughtError));
+    }
+  }
+
+  async function removeDocument(document: TrainingDocument) {
     if (!window.confirm(`Удалить «${document.file.originalName ?? 'документ'}»?`)) {
       return;
     }
     setError(null);
     try {
       await deleteTrainingDocument(token, version.id, document.id);
-      if (selected?.id === document.id) setSelected(null);
-      await loadDocuments();
+      if (selected?.source.id === document.id) {
+        clearSelectedTextDirty();
+        setSelected(null);
+      }
+      await loadSources();
+      await onChanged();
+    } catch (caughtError) {
+      setError(getErrorMessage(caughtError));
+    }
+  }
+
+  async function removeUrl(source: TrainingOfficialUrlSource) {
+    if (!window.confirm(`Удалить официальный источник «${source.normalizedUrl}»?`)) {
+      return;
+    }
+    setError(null);
+    try {
+      await deleteTrainingOfficialUrlSource(token, version.id, source.id);
+      if (selected?.source.id === source.id) {
+        clearSelectedTextDirty();
+        setSelected(null);
+      }
+      await loadSources();
+      await onChanged();
     } catch (caughtError) {
       setError(getErrorMessage(caughtError));
     }
@@ -2146,7 +3599,9 @@ function TrainingMaterialsSection({
       const link = window.document.createElement('a');
       link.href = url;
       link.download =
-        response.filename ?? document.file.originalName ?? `document.${document.documentType.toLowerCase()}`;
+        response.filename ??
+        document.file.originalName ??
+        `document.${document.documentType.toLowerCase()}`;
       link.click();
       URL.revokeObjectURL(url);
     } catch (caughtError) {
@@ -2157,8 +3612,8 @@ function TrainingMaterialsSection({
   return (
     <AdminPanel className="training-section-panel">
       <SectionHeading
-        title="Материалы"
-        description="PDF, DOCX, PPTX и XLSX до 50 МБ. Извлечение не использует OCR, макросы, формулы или внешние ссылки."
+        title="Источники"
+        description="Загрузите несколько файлов или добавьте официальные HTTPS-страницы проекта. Извлечённый текст не участвует в оценке без подтверждённых фактов."
         actions={
           !readOnly ? (
             <>
@@ -2166,9 +3621,22 @@ function TrainingMaterialsSection({
                 ref={fileInputRef}
                 className="training-hidden-input"
                 type="file"
+                tabIndex={-1}
+                multiple
                 accept=".pdf,.docx,.pptx,.xlsx"
                 onChange={(event) => void upload(event)}
               />
+              <AdminButton
+                id="training-add-official-url"
+                disabled={uploading || addingUrl}
+                onClick={() => {
+                  setAddingUrl(true);
+                  focusTrainingControl('training-official-url');
+                }}
+              >
+                <Globe2Icon aria-hidden="true" />
+                Добавить ссылку
+              </AdminButton>
               <AdminButton
                 tone="primary"
                 disabled={uploading}
@@ -2179,26 +3647,128 @@ function TrainingMaterialsSection({
                 ) : (
                   <UploadIcon aria-hidden="true" />
                 )}
-                Загрузить
+                Выбрать файлы
               </AdminButton>
             </>
           ) : null
         }
       />
       <AdminAlert tone="notice">
-        Извлечённый текст используется только как черновой материал. Он не
-        участвует в оценивании, пока администратор не создаст и не подтвердит
-        структурированные факты.
+        PDF, DOCX, PPTX и XLSX — до 50 МБ каждый и не более 20 файлов за
+        выбор. Ссылки должны вести на официальный публичный HTTPS-сайт проекта.
       </AdminAlert>
+      {loadError ? <AdminAlert tone="error">{loadError}</AdminAlert> : null}
       {error ? <AdminAlert tone="error">{error}</AdminAlert> : null}
       {notice ? <AdminAlert tone="notice">{notice}</AdminAlert> : null}
 
+      {addingUrl ? (
+        <section className="training-url-source-form">
+          <div>
+            <h3>Официальная страница проекта</h3>
+            <p>
+              Система сохранит снимок текста. Обновление источника запускается
+              администратором вручную.
+            </p>
+          </div>
+          <FieldGroup>
+            <TrainingTextField
+              id="training-official-url"
+              label="HTTPS-ссылка"
+              type="url"
+              value={urlInput}
+              placeholder="https://developer.ru/projects/example"
+              onChange={(value) => {
+                setUrlInput(value);
+                setOfficialHostConfirmed(false);
+                onDirtyChange('official-url:new', value.trim().length > 0);
+              }}
+            />
+            <TrainingCheckboxRow
+              id="training-official-host-confirmation"
+              checked={officialHostConfirmed}
+              disabled={!officialHost}
+              label={
+                officialHost
+                  ? `Подтверждаю официальный домен: ${officialHost}`
+                  : 'Введите HTTPS-ссылку, чтобы проверить домен'
+              }
+              description="Добавляйте только страницы застройщика или официальный сайт проекта."
+              onChange={(checked) => {
+                setOfficialHostConfirmed(checked);
+                onDirtyChange(
+                  'official-url:new',
+                  checked || urlInput.trim().length > 0,
+                );
+              }}
+            />
+          </FieldGroup>
+          <div className="training-card-actions">
+            <AdminButton onClick={cancelOfficialUrl}>Отмена</AdminButton>
+            <AdminButton
+              tone="primary"
+              disabled={urlPending || !officialHost || !officialHostConfirmed}
+              onClick={() => void addOfficialUrl()}
+            >
+              {urlPending ? (
+                <LoaderCircleIcon className="training-spin" aria-hidden="true" />
+              ) : (
+                <Globe2Icon aria-hidden="true" />
+              )}
+              Добавить источник
+            </AdminButton>
+          </div>
+        </section>
+      ) : null}
+
+      {uploadQueue.length > 0 ? (
+        <section className="training-upload-queue" aria-live="polite">
+          <div className="training-upload-queue-heading">
+            <h3>Очередь загрузки</h3>
+            {!uploading &&
+            uploadQueue.some((item) => item.status === 'FAILED') ? (
+              <AdminButton tone="text" onClick={() => void retryFailedUploads()}>
+                <RefreshCwIcon aria-hidden="true" />
+                Повторить ошибки
+              </AdminButton>
+            ) : null}
+          </div>
+          <ul>
+            {uploadQueue.map((item) => (
+              <li key={item.id}>
+                <span>
+                  <strong>{item.file.name}</strong>
+                  <small>{formatBytes(String(item.file.size))}</small>
+                </span>
+                <AdminStatusBadge
+                  className={
+                    item.status === 'FAILED'
+                      ? 'training-document-status--failed'
+                      : item.status === 'SUCCEEDED'
+                        ? 'training-document-status--ready'
+                        : 'training-document-status--processing'
+                  }
+                >
+                  {item.status === 'QUEUED'
+                    ? 'В очереди'
+                    : item.status === 'UPLOADING'
+                      ? 'Загрузка'
+                      : item.status === 'SUCCEEDED'
+                        ? 'Загружен'
+                        : 'Ошибка'}
+                </AdminStatusBadge>
+                {item.error ? <small>{item.error}</small> : null}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       {loading ? (
-        <TrainingLoading label="Загружаем материалы" />
-      ) : documents.length === 0 ? (
+        <TrainingLoading label="Загружаем источники" />
+      ) : documents.length === 0 && urlSources.length === 0 ? (
         <AdminEmptyState
-          title="Материалы не загружены"
-          description="Добавьте один или несколько исходных документов."
+          title="Источники не добавлены"
+          description="Загрузите файлы или добавьте официальную страницу проекта."
         />
       ) : (
         <div className="training-document-list">
@@ -2210,7 +3780,8 @@ function TrainingMaterialsSection({
               <div className="training-document-info">
                 <strong>{document.file.originalName ?? document.documentType}</strong>
                 <span>
-                  {document.documentType} · {formatBytes(document.file.sizeBytes)} ·{' '}
+                  Файл · {document.documentType} ·{' '}
+                  {formatBytes(document.file.sizeBytes)} ·{' '}
                   {document.extractedCharacterCount.toLocaleString('ru-RU')} знаков
                 </span>
                 {document.errorMessage ? (
@@ -2219,16 +3790,9 @@ function TrainingMaterialsSection({
                   </span>
                 ) : null}
               </div>
-              <AdminStatusBadge
-                className={`training-document-status training-document-status--${document.extractionStatus.toLowerCase()}`}
-              >
-                {document.extractionStatus === 'PROCESSING' ? (
-                  <LoaderCircleIcon className="training-spin" aria-hidden="true" />
-                ) : null}
-                {documentStatusLabels[document.extractionStatus]}
-              </AdminStatusBadge>
+              <SourceStatus status={document.extractionStatus} />
               <div className="training-document-actions">
-                <AdminButton tone="text" onClick={() => void preview(document)}>
+                <AdminButton tone="text" onClick={() => void previewDocument(document)}>
                   <EyeIcon aria-hidden="true" />
                   Текст
                 </AdminButton>
@@ -2240,14 +3804,73 @@ function TrainingMaterialsSection({
                 ['FAILED', 'NEEDS_MANUAL_TEXT', 'READY'].includes(
                   document.extractionStatus,
                 ) ? (
-                  <AdminButton tone="text" onClick={() => void retry(document)}>
+                  <AdminButton
+                    tone="text"
+                    onClick={() => void retryDocument(document)}
+                  >
                     <RefreshCwIcon aria-hidden="true" />
                     Повторить
                   </AdminButton>
                 ) : null}
                 {!readOnly &&
                 !['PENDING', 'PROCESSING'].includes(document.extractionStatus) ? (
-                  <AdminButton tone="text" onClick={() => void remove(document)}>
+                  <AdminButton
+                    tone="text"
+                    onClick={() => void removeDocument(document)}
+                  >
+                    <Trash2Icon aria-hidden="true" />
+                    Удалить
+                  </AdminButton>
+                ) : null}
+              </div>
+            </article>
+          ))}
+          {urlSources.map((source) => (
+            <article key={source.id} className="training-document-row">
+              <div className="training-document-icon">
+                <Globe2Icon aria-hidden="true" />
+              </div>
+              <div className="training-document-info">
+                <strong>{source.confirmedOfficialHost}</strong>
+                <span className="training-source-url">{source.normalizedUrl}</span>
+                <span>
+                  Официальная ссылка ·{' '}
+                  {source.extractedCharacterCount.toLocaleString('ru-RU')} знаков
+                  {source.fetchedAt
+                    ? ` · обновлено ${new Date(source.fetchedAt).toLocaleDateString('ru-RU')}`
+                    : ''}
+                </span>
+                {source.errorMessage ? (
+                  <span className="training-document-error">
+                    {source.errorMessage}
+                  </span>
+                ) : null}
+              </div>
+              <SourceStatus status={source.extractionStatus} />
+              <div className="training-document-actions">
+                <AdminButton tone="text" asChild>
+                  <a
+                    href={source.normalizedUrl}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                  >
+                    <Globe2Icon aria-hidden="true" />
+                    Открыть
+                  </a>
+                </AdminButton>
+                <AdminButton tone="text" onClick={() => void previewUrl(source)}>
+                  <EyeIcon aria-hidden="true" />
+                  Текст
+                </AdminButton>
+                {!readOnly ? (
+                  <AdminButton tone="text" onClick={() => void retryUrl(source)}>
+                    <RefreshCwIcon aria-hidden="true" />
+                    Обновить
+                  </AdminButton>
+                ) : null}
+                {!readOnly &&
+                !['PENDING', 'PROCESSING'].includes(source.extractionStatus) ? (
+                  <AdminButton tone="text" onClick={() => void removeUrl(source)}>
                     <Trash2Icon aria-hidden="true" />
                     Удалить
                   </AdminButton>
@@ -2262,31 +3885,49 @@ function TrainingMaterialsSection({
         <section className="training-document-preview">
           <div className="training-document-preview-heading">
             <div>
-              <h3>{selected.file.originalName ?? 'Текст документа'}</h3>
+              <h3>
+                {selected.kind === 'DOCUMENT'
+                  ? selected.source.file.originalName ?? 'Текст документа'
+                  : selected.source.normalizedUrl}
+              </h3>
               <p>
-                Проверьте текст. Для сканов без текстового слоя внесите черновик
-                вручную.
+                {selected.kind === 'DOCUMENT'
+                  ? 'Проверьте текст. Для сканов без текстового слоя внесите текст вручную.'
+                  : 'Это сохранённый снимок официальной страницы. Для обновления запустите повторную обработку.'}
               </p>
             </div>
-            <AdminButton tone="text" onClick={() => setSelected(null)}>
+            <AdminButton
+              tone="text"
+              onClick={() => {
+                if (!canLeaveSelected()) return;
+                setSelected(null);
+              }}
+            >
               Закрыть
             </AdminButton>
           </div>
           <textarea
             className="training-control training-document-text"
             value={extractedText}
-            readOnly={readOnly}
-            onChange={(event) => setExtractedText(event.target.value)}
+            readOnly={readOnly || selected.kind === 'OFFICIAL_URL'}
+            aria-label="Извлечённый текст источника"
+            onChange={(event) => {
+              setExtractedText(event.target.value);
+              if (selected.kind === 'DOCUMENT') {
+                setSelectedTextDirty(true);
+                onDirtyChange(`document:${selected.source.id}`, true);
+              }
+            }}
           />
           <details>
             <summary>Технические локаторы извлечения</summary>
             <pre>{JSON.stringify(metadata, null, 2)}</pre>
           </details>
-          {!readOnly ? (
+          {!readOnly && selected.kind === 'DOCUMENT' ? (
             <div className="training-form-actions">
               <AdminButton tone="primary" onClick={() => void saveText()}>
                 <SaveIcon aria-hidden="true" />
-                Сохранить черновой текст
+                Сохранить рабочий текст
               </AdminButton>
             </div>
           ) : null}
@@ -2296,28 +3937,78 @@ function TrainingMaterialsSection({
   );
 }
 
+function SourceStatus({
+  status,
+}: {
+  status: TrainingDocument['extractionStatus'];
+}) {
+  return (
+    <AdminStatusBadge
+      className={`training-document-status training-document-status--${status.toLowerCase()}`}
+    >
+      {status === 'PROCESSING' ? (
+        <LoaderCircleIcon className="training-spin" aria-hidden="true" />
+      ) : null}
+      {documentStatusLabels[status]}
+    </AdminStatusBadge>
+  );
+}
+
 function PublishSection({
   token,
   project,
   version,
+  readiness,
+  readinessLoading,
+  readinessError,
   readOnly,
+  hasUnsavedChanges,
   onChanged,
   onNavigate,
 }: {
   token: string;
   project: TrainingProject;
   version: TrainingVersion;
+  readiness: TrainingReadiness | null;
+  readinessLoading: boolean;
+  readinessError: string | null;
   readOnly: boolean;
+  hasUnsavedChanges: boolean;
   onChanged: () => Promise<void>;
-  onNavigate: (tab: EditorTab) => void;
+  onNavigate: (step: TrainingWizardStep) => void;
 }) {
   const [serverErrors, setServerErrors] = useState<string[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  const validation = collectPublicationErrors(project, version);
+  const validation = readiness
+    ? readiness.issues.map((issue) => ({
+        section: issue.step,
+        message: issue.message,
+      }))
+    : collectPublicationErrors(project, version);
+  const readinessUnavailable = !readiness
+    ? {
+        section: 'review' as const,
+        message: readinessLoading
+          ? 'Дождитесь завершения серверной проверки готовности.'
+          : readinessError
+            ? 'Не удалось проверить готовность на сервере. Повторите попытку перед публикацией.'
+            : 'Серверная проверка готовности ещё не выполнена.',
+      }
+    : null;
   const allErrors = [
     ...validation,
-    ...serverErrors.map((message) => ({ section: 'publish' as const, message })),
+    ...(readinessUnavailable ? [readinessUnavailable] : []),
+    ...serverErrors.map((message) => ({ section: 'review' as const, message })),
+    ...(hasUnsavedChanges
+      ? [
+          {
+            section: 'review' as const,
+            message:
+              'Есть несохранённые изменения. Сохраните их перед публикацией.',
+          },
+        ]
+      : []),
   ];
 
   async function publish() {
@@ -2359,7 +4050,7 @@ function PublishSection({
     <AdminPanel className="training-section-panel">
       <SectionHeading
         title="Проверка и публикация"
-        description="Предпросмотр использует только текущий draft. Публикация создаёт неизменяемую активную версию."
+        description="Проверка использует текущую рабочую редакцию. После публикации сотрудники увидят новую версию, а история сохранится."
       />
       {notice ? <AdminAlert tone="notice">{notice}</AdminAlert> : null}
 
@@ -2484,6 +4175,38 @@ function PublishSection({
   );
 }
 
+function WizardNavigationFooter({
+  activeStep,
+  onNavigate,
+}: {
+  activeStep: TrainingWizardStep;
+  onNavigate: (step: TrainingWizardStep) => void;
+}) {
+  const currentIndex = trainingWizardSteps.findIndex(
+    (step) => step.id === activeStep,
+  );
+  const previous = trainingWizardSteps[currentIndex - 1];
+  const next = trainingWizardSteps[currentIndex + 1];
+
+  return (
+    <div className="training-wizard-footer" aria-label="Навигация по этапам">
+      {previous ? (
+        <AdminButton onClick={() => onNavigate(previous.id)}>
+          <ArrowLeftIcon aria-hidden="true" />
+          {previous.label}
+        </AdminButton>
+      ) : (
+        <span />
+      )}
+      {next ? (
+        <AdminButton tone="primary" onClick={() => onNavigate(next.id)}>
+          Далее: {next.label}
+        </AdminButton>
+      ) : null}
+    </div>
+  );
+}
+
 function TrainingAdminHeader({
   eyebrow,
   title,
@@ -2535,7 +4258,7 @@ function TrainingMasterDetail({
     >
       <div className="training-master-mobile">
         <label>
-          <span>Выбранный раздел</span>
+          <span>{`Выбранный элемент: ${ariaLabel}`}</span>
           <select
             className="training-control"
             value={selectedId}
@@ -2556,13 +4279,13 @@ function TrainingMasterDetail({
         {groups.some((group) => group.action) ? (
           <div
             className="training-master-mobile-actions"
-            aria-label="Добавление элементов"
+            aria-label={`Добавление: ${ariaLabel}`}
           >
             {groups.map((group) =>
               group.action ? (
                 <div key={group.id} className="training-master-mobile-action">
                   <span>{group.label}</span>
-                  {group.action}
+                  {group.action('mobile')}
                 </div>
               ) : null,
             )}
@@ -2578,7 +4301,7 @@ function TrainingMasterDetail({
                 <h3>{group.label}</h3>
                 {group.summary ? <p>{group.summary}</p> : null}
               </div>
-              {group.action}
+              {group.action?.('desktop')}
             </div>
             {group.items.length > 0 ? (
               <ul className="training-master-list">
@@ -2628,14 +4351,20 @@ function TrainingMasterDetail({
 }
 
 function TrainingMasterAddButton({
+  id,
+  focusKey,
   label,
   onClick,
 }: {
+  id: string;
+  focusKey: string;
   label: string;
   onClick: () => void;
 }) {
   return (
     <button
+      id={id}
+      data-training-focus-key={focusKey}
       type="button"
       className="training-master-add"
       aria-label={label}
@@ -2662,8 +4391,9 @@ function TrainingDetailPanel({
     <section
       id={trainingDetailPanelId(id)}
       aria-labelledby={trainingMasterButtonId(id)}
-      aria-label={label}
+      data-editor-panel-label={label}
       data-editor-panel-id={id}
+      tabIndex={-1}
       hidden={id !== selectedId}
     >
       {children}
@@ -2705,7 +4435,6 @@ function TrainingCheckboxRow({
   className?: string;
   onChange: (checked: boolean) => void;
 }) {
-  const descriptionId = description ? `${id}-description` : undefined;
   const classes = [
     'training-checkbox-row',
     compact ? 'training-checkbox-row--compact' : '',
@@ -2724,12 +4453,11 @@ function TrainingCheckboxRow({
         type="checkbox"
         checked={checked}
         disabled={disabled}
-        aria-describedby={descriptionId}
         onChange={(event) => onChange(event.target.checked)}
       />
       <span className="training-checkbox-copy">
         <strong>{label}</strong>
-        {description ? <span id={descriptionId}>{description}</span> : null}
+        {description ? <span>{description}</span> : null}
       </span>
     </label>
   );
@@ -2747,7 +4475,7 @@ function SectionHeading({
   return (
     <div className="training-section-heading">
       <div>
-        <h2>{title}</h2>
+        <h2 tabIndex={-1}>{title}</h2>
         <p>{description}</p>
       </div>
       {actions ? <div className="training-section-actions">{actions}</div> : null}
@@ -2760,6 +4488,7 @@ function TrainingTextField({
   label,
   value,
   error,
+  description,
   className,
   onChange,
   ...inputProps
@@ -2768,6 +4497,7 @@ function TrainingTextField({
   label: string;
   value: string;
   error?: string;
+  description?: string;
   className?: string;
   onChange: (value: string) => void;
 } & Omit<React.ComponentProps<typeof Input>, 'id' | 'value' | 'onChange'>) {
@@ -2781,6 +4511,7 @@ function TrainingTextField({
         onChange={(event) => onChange(event.target.value)}
         {...inputProps}
       />
+      {description ? <FieldDescription>{description}</FieldDescription> : null}
       <FieldError>{error}</FieldError>
     </Field>
   );
@@ -2791,6 +4522,7 @@ function TrainingNumberField({
   label,
   value,
   error,
+  description,
   onChange,
   ...inputProps
 }: {
@@ -2798,6 +4530,7 @@ function TrainingNumberField({
   label: string;
   value: string;
   error?: string;
+  description?: string;
   onChange: (value: string) => void;
 } & Omit<React.ComponentProps<typeof Input>, 'id' | 'type' | 'value' | 'onChange'>) {
   return (
@@ -2807,6 +4540,7 @@ function TrainingNumberField({
       type="number"
       value={value}
       error={error}
+      description={description}
       onChange={onChange}
       {...inputProps}
     />
@@ -2887,7 +4621,7 @@ function validateProjectForm(form: ProjectFormState) {
     errors.slug = 'Используйте строчные латинские буквы, цифры и дефисы.';
   }
   if (!isIntegerInRange(form.sortOrder, 0)) {
-    errors.sortOrder = 'Порядок должен быть целым числом от 0.';
+    errors.sortOrder = 'Позиция должна быть целым числом от 0.';
   }
   if (Boolean(form.availableFrom) !== Boolean(form.deadlineAt)) {
     errors.availability = 'Укажите обе даты или оставьте обе пустыми.';
@@ -2952,7 +4686,7 @@ function toCreateProjectInput(form: ProjectFormState) {
 }
 
 function collectPublicationErrors(project: TrainingProject, version: TrainingVersion) {
-  const errors: Array<{ section: EditorTab; message: string }> = [];
+  const errors: Array<{ section: TrainingWizardStep; message: string }> = [];
   const main = version.questions.filter(
     (question) => question.type === 'MAIN' && question.isActive,
   );
@@ -2961,13 +4695,13 @@ function collectPublicationErrors(project: TrainingProject, version: TrainingVer
   );
   if (main.length !== 1) {
     errors.push({
-      section: 'main-question',
+      section: 'questions',
       message: 'Нужен ровно один активный главный вопрос.',
     });
   }
   if (followUps.length !== 10) {
     errors.push({
-      section: 'follow-ups',
+      section: 'questions',
       message: 'Нужно ровно 10 активных дополнительных вопросов.',
     });
   }
@@ -2979,15 +4713,18 @@ function collectPublicationErrors(project: TrainingProject, version: TrainingVer
     )
   ) {
     errors.push({
-      section: 'follow-ups',
+      section: 'questions',
       message: 'Позиции дополнительных вопросов должны покрывать диапазон 1–10.',
     });
   }
   if (version.facts.length === 0) {
-    errors.push({ section: 'facts', message: 'Добавьте структурированные факты.' });
+    errors.push({
+      section: 'suggestions',
+      message: 'Добавьте структурированные факты.',
+    });
   } else if (version.facts.some((fact) => !fact.isApproved)) {
     errors.push({
-      section: 'facts',
+      section: 'suggestions',
       message: 'Все факты должны быть подтверждены администратором.',
     });
   }
@@ -3071,6 +4808,80 @@ function trainingMasterButtonId(id: string) {
 
 function trainingDetailPanelId(id: string) {
   return `training-detail-panel-${trainingDomSuffix(id)}`;
+}
+
+function pruneMissingQuestionIds(
+  selectedIds: Set<string>,
+  availableIds: Set<string>,
+) {
+  let changed = false;
+  const next = new Set<string>();
+  for (const questionId of selectedIds) {
+    if (availableIds.has(questionId)) {
+      next.add(questionId);
+    } else {
+      changed = true;
+    }
+  }
+  return changed ? next : selectedIds;
+}
+
+function getTrainingHistoryIndex(state: unknown) {
+  if (typeof state !== 'object' || state === null) return null;
+  const value = (state as Record<string, unknown>)[trainingHistoryIndexKey];
+  return typeof value === 'number' && Number.isInteger(value) ? value : null;
+}
+
+function withTrainingHistoryIndex(state: unknown, index: number) {
+  if (
+    typeof state === 'object' &&
+    state !== null &&
+    !Array.isArray(state)
+  ) {
+    return {
+      ...(state as Record<string, unknown>),
+      [trainingHistoryIndexKey]: index,
+    };
+  }
+  return {
+    [trainingHistoryIndexKey]: index,
+    originalState: state,
+  };
+}
+
+function focusTrainingControl(id: string) {
+  window.requestAnimationFrame(() => {
+    const directTarget = window.document.getElementById(id);
+    const keyedTargets = [
+      ...window.document.querySelectorAll<HTMLElement>(
+        '[data-training-focus-key]',
+      ),
+    ].filter((element) => element.dataset.trainingFocusKey === id);
+    const candidates = [
+      ...(directTarget ? [directTarget] : []),
+      ...keyedTargets,
+    ];
+    const visibleTarget = candidates.find(
+      (element) =>
+        !element.hidden &&
+        element.getClientRects().length > 0 &&
+        window.getComputedStyle(element).visibility !== 'hidden',
+    );
+    (visibleTarget ?? candidates[0])?.focus();
+  });
+}
+
+function focusTrainingDetailPanel(id: string) {
+  focusTrainingControl(trainingDetailPanelId(id));
+}
+
+function focusTrainingWizardStep(step: TrainingWizardStep) {
+  window.requestAnimationFrame(() => {
+    const panel = window.document.querySelector<HTMLElement>(
+      `[data-wizard-step="${step}"]`,
+    );
+    (panel?.querySelector<HTMLElement>('h2') ?? panel)?.focus();
+  });
 }
 
 function pluralizeItems(
@@ -3205,4 +5016,14 @@ function formatBytes(value: string | null) {
 
 function formatNumber(value: number) {
   return value.toLocaleString('ru-RU', { maximumFractionDigits: 2 });
+}
+
+function getHttpsHost(value: string) {
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol !== 'https:' || !url.hostname) return '';
+    return url.hostname.toLowerCase();
+  } catch {
+    return '';
+  }
 }

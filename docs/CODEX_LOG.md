@@ -6364,3 +6364,104 @@ Production deploy:
 - Авторизованная визуальная production-проверка не выполнена: управляемый
   браузер с пользовательской сессией недоступен. Нужен hard reload и ручная
   проверка разделов `Основное`, вопросы, `Факты` и `Критерии`.
+
+## 2026-07-29 — Training content creation workflow
+
+Что сделано:
+
+- Редактор обучения переведён на шестишаговый мастер:
+  `Основные данные → Источники → Предложенные факты → Вопросы → Критерии →
+  Проверка`.
+- Пользовательские названия `draft` и `Порядок` заменены на понятные
+  `Не опубликован`, `Рабочая редакция`, `Позиция в списке` и
+  `Редактировать`.
+- Опубликованный проект редактируется через автоматически создаваемую рабочую
+  редакцию. Ручное создание нового черновика для каждого изменения больше не
+  требуется.
+- Добавлен серверный индикатор готовности с едиными для проверки и публикации
+  правилами: подтверждённые факты, активные вопросы, суммы критериев,
+  завершённые источники и отсутствие ожидающих решения предложений.
+- Для каждого вопроса добавлен блок `Что реально участвует в оценке`:
+  только связанные подтверждённые факты и критерии нужного типа вопроса.
+- Добавлена массовая очередь загрузки до `20` файлов с конкурентностью `2`,
+  независимыми статусами, частичными ошибками и повтором только неуспешных
+  файлов.
+- Добавлены официальные HTTPS URL как отдельный тип источника. Сервер
+  проверяет DNS/IP/redirect/TLS/MIME/размер/таймауты, извлекает читаемый текст
+  через `parse5` и сохраняет снимок в закрытом объектном хранилище.
+- Добавлен управляемый процесс `Предложить факты из материала`: AI создаёт
+  только предложения; факт участвует в оценке исключительно после явного
+  подтверждения администратором и привязки к вопросу.
+- Document, official URL и fact-suggestion workers получили lease/heartbeat,
+  stale recovery, fencing и согласованную остановку. Публикация блокируется
+  при активной обработке и использует общий порядок PostgreSQL-locks.
+- Добавлена миграция с новыми источниками, предложениями, jobs, audit history
+  и ограничениями неизменяемости опубликованной версии.
+- Обновлены implementation, staging smoke и go-live checklist.
+
+Основные файлы:
+
+- `apps/api/prisma/migrations/20260729120000_training_content_creation_workflow/`.
+- `apps/api/prisma/schema.prisma`.
+- `apps/api/src/training/training-content.service.ts`.
+- `apps/api/src/training/training-version-lock.ts`.
+- `apps/api/src/training/training-official-url-*.ts`.
+- `apps/api/src/training/fact-suggestions/`.
+- `apps/api/src/training/training-admin.controller.ts`.
+- `apps/api/src/training/training.module.ts`.
+- `apps/web/src/training/TrainingAdminPage.tsx`.
+- `apps/web/src/training/TrainingWizardNav.tsx`.
+- `apps/web/src/training/TrainingReadiness.tsx`.
+- `apps/web/src/training/QuestionEvaluationContext.tsx`.
+- `apps/web/src/training/trainingUploadQueue.ts`.
+- `apps/web/src/training/trainingAdminApi.ts`.
+- `apps/web/src/training/trainingAdmin.css`.
+- `packages/shared/src/training.ts`.
+- `docs/training/02-implementation-checklist.md`.
+- `docs/training/staging-smoke-checklist.md`.
+- `docs/training/go-live-checklist.md`.
+
+Зависимость:
+
+- В `@platforma/api` добавлен `parse5` для DOM-разбора официальных страниц.
+
+Проверки:
+
+- `pnpm --filter @platforma/api test` — API build passed, unit
+  `499/499`, isolated PostgreSQL `100/100`; применены все `42` миграции,
+  временная БД удалена.
+- Целевой backend-набор до общего прогона — `93/93`, passed.
+- `pnpm --filter @platforma/web test` — `305/305`, passed.
+- `pnpm --filter @platforma/web build` — passed; осталось существующее
+  предупреждение Vite о chunk больше `500 kB`.
+- `pnpm --filter @platforma/web test:training:browser` — `19/19`, passed.
+- Первый чистый DB-прогон выявил несоответствия fixture/status, Prisma enum
+  в raw SQL и форму advisory-lock query. Они устранены; финальный
+  последовательный пакетный прогон полностью зелёный.
+
+Ручная и внешняя проверка:
+
+- Реальный OpenAI не вызывался; проверен fake/local provider.
+- Реальные внешние сайты застройщиков не загружались в финальном gate.
+- Staging и production в рамках этой задачи не обновлялись.
+- Перед отдельным production deploy нужны backup/migration/status gates и
+  ручной smoke: создание рабочей редакции, несколько файлов, официальный URL,
+  подтверждение/отклонение предложений, readiness и публикация.
+
+Известные спорные места:
+
+- Общий timeout официального URL завершает прикладной Promise, но отдельный
+  медленный socket может жить до transport read-timeout.
+- Ручное создание подтверждённого факта без связи с вопросом допускается
+  контрактом; такой факт учитывается в общем счётчике готовности, но не
+  участвует в оценке вопроса.
+- Внутренний неэкспонированный `dismissRun` не используется текущими API/UI;
+  перед его будущим подключением нужно отдельно проверить терминализацию всех
+  активных provider/job состояний.
+- Publication-first concurrency test проверяет конфликт, но не фиксирует
+  точный текст причины; сценарий защищён lock/immutability contract и общим
+  PostgreSQL-набором.
+
+Production deploy:
+
+- Не выполнялся. Commit, push и production migration не создавались.

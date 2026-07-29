@@ -9,8 +9,10 @@ import {
 } from '@nestjs/common';
 import {
   Prisma,
+  TrainingFactSuggestionRunStatus,
   TrainingJobKind,
   TrainingJobStatus,
+  TrainingProjectStatus,
   TrainingSourceDocumentType,
   TrainingSourceExtractionStatus,
   TrainingVersionStatus,
@@ -27,6 +29,7 @@ import {
   TRAINING_MAX_DOCUMENT_BYTES,
   TRAINING_MAX_EXTRACTED_CHARACTERS,
 } from './training-document.config';
+import { lockTrainingVersionForContentMutation } from './training-version-lock';
 
 const documentFileSelect = {
   id: true,
@@ -129,6 +132,7 @@ export class TrainingDocumentsService {
 
     try {
       documentId = await this.prisma.$transaction(async (tx) => {
+        await this.assertDraftVersionLocked(tx, version.id);
         const document = await tx.trainingSourceDocument.create({
           data: {
             projectVersionId: version.id,
@@ -210,8 +214,27 @@ export class TrainingDocumentsService {
     }
 
     await this.prisma.$transaction(async (tx) => {
+      await this.assertDraftVersionLocked(tx, version.id);
+      await tx.$queryRaw`SELECT "id" FROM "training_source_documents" WHERE "id" = ${documentId}::uuid FOR UPDATE`;
+      const lockedDocument = await tx.trainingSourceDocument.findFirst({
+        where: { id: documentId, projectVersionId: version.id },
+        select: { id: true, extractionStatus: true },
+      });
+      if (!lockedDocument) {
+        throw new NotFoundException('Training document not found');
+      }
+      if (
+        lockedDocument.extractionStatus ===
+          TrainingSourceExtractionStatus.PENDING ||
+        lockedDocument.extractionStatus ===
+          TrainingSourceExtractionStatus.PROCESSING
+      ) {
+        throw new ConflictException(
+          'Wait until automatic document extraction finishes',
+        );
+      }
       await tx.trainingSourceDocument.update({
-        where: { id: document.id },
+        where: { id: lockedDocument.id },
         data: {
           extractedText: extractedText || null,
           extractionStatus: extractedText
@@ -261,8 +284,23 @@ export class TrainingDocumentsService {
     }
 
     await this.prisma.$transaction(async (tx) => {
+      await this.assertDraftVersionLocked(tx, version.id);
+      await tx.$queryRaw`SELECT "id" FROM "training_source_documents" WHERE "id" = ${documentId}::uuid FOR UPDATE`;
+      const lockedDocument = await tx.trainingSourceDocument.findFirst({
+        where: { id: documentId, projectVersionId: version.id },
+        select: { id: true, extractionStatus: true },
+      });
+      if (!lockedDocument) {
+        throw new NotFoundException('Training document not found');
+      }
+      if (
+        lockedDocument.extractionStatus ===
+        TrainingSourceExtractionStatus.PROCESSING
+      ) {
+        throw new ConflictException('Document extraction is already running');
+      }
       await tx.trainingSourceDocument.update({
-        where: { id: document.id },
+        where: { id: lockedDocument.id },
         data: {
           extractionStatus: TrainingSourceExtractionStatus.PENDING,
           extractedText: null,
@@ -274,15 +312,15 @@ export class TrainingDocumentsService {
         data: {
           kind: TrainingJobKind.EXTRACT_SOURCE_DOCUMENT,
           status: TrainingJobStatus.PENDING,
-          payloadJson: { sourceDocumentId: document.id },
-          idempotencyKey: `extract-source-document:${document.id}:retry:${randomUUID()}`,
+          payloadJson: { sourceDocumentId: lockedDocument.id },
+          idempotencyKey: `extract-source-document:${lockedDocument.id}:retry:${randomUUID()}`,
         },
       });
       await this.writeAudit(tx, {
         action: 'training.source-document.retry',
         actor,
         request,
-        entityId: document.id,
+        entityId: lockedDocument.id,
         metadata: { projectVersionId: version.id },
       });
     });
@@ -298,21 +336,92 @@ export class TrainingDocumentsService {
   ) {
     const version = await this.requireDraftVersion(versionIdInput);
     const documentId = this.parseUuid(documentIdInput, 'Training document is invalid');
-    const document = await this.prisma.trainingSourceDocument.findFirst({
-      where: { id: documentId, projectVersionId: version.id },
-      include: {
-        file: true,
-      },
-    });
-
-    if (!document) {
-      throw new NotFoundException('Training document not found');
-    }
-    if (document.extractionStatus === TrainingSourceExtractionStatus.PROCESSING) {
-      throw new ConflictException('Processing document cannot be deleted');
-    }
+    let fileId: string | null = null;
 
     await this.prisma.$transaction(async (tx) => {
+      await this.assertDraftVersionLocked(tx, version.id);
+      await tx.$queryRaw`SELECT "id" FROM "training_source_documents" WHERE "id" = ${documentId}::uuid FOR UPDATE`;
+      const document = await tx.trainingSourceDocument.findFirst({
+        where: { id: documentId, projectVersionId: version.id },
+        include: {
+          file: true,
+          _count: {
+            select: {
+              facts: true,
+            },
+          },
+        },
+      });
+      if (!document) {
+        throw new NotFoundException('Training document not found');
+      }
+      if (
+        document.extractionStatus ===
+        TrainingSourceExtractionStatus.PROCESSING
+      ) {
+        throw new ConflictException('Processing document cannot be deleted');
+      }
+      if (document._count.facts > 0) {
+        throw new ConflictException(
+          'Remove this document from linked facts before deleting it',
+        );
+      }
+
+      const activeFactSuggestionRunCount =
+        await tx.trainingFactSuggestionRun.count({
+          where: {
+            projectVersionId: version.id,
+            status: {
+              in: [
+                TrainingFactSuggestionRunStatus.PENDING,
+                TrainingFactSuggestionRunStatus.RUNNING,
+              ],
+            },
+            sourceSnapshotJson: {
+              array_contains: [
+                {
+                  kind: 'DOCUMENT',
+                  id: document.id,
+                },
+              ],
+            },
+          },
+        });
+      if (activeFactSuggestionRunCount > 0) {
+        throw new ConflictException(
+          'Предложения фактов по этому документу ещё обрабатываются',
+        );
+      }
+
+      const factSuggestionHistoryCount =
+        await tx.trainingFactSuggestionProviderRun.count({
+          where: { sourceDocumentId: document.id },
+        });
+      if (factSuggestionHistoryCount > 0) {
+        throw new ConflictException(
+          'Документ использовался для предложений фактов и не может быть удалён: история решений должна быть сохранена',
+        );
+      }
+
+      const liveJobs = await tx.trainingJob.count({
+        where: {
+          kind: TrainingJobKind.EXTRACT_SOURCE_DOCUMENT,
+          status: {
+            in: [TrainingJobStatus.PENDING, TrainingJobStatus.RUNNING],
+          },
+          payloadJson: {
+            path: ['sourceDocumentId'],
+            equals: document.id,
+          },
+        },
+      });
+      if (liveJobs > 0) {
+        throw new ConflictException(
+          'Document has an active extraction job and cannot be deleted',
+        );
+      }
+
+      fileId = document.fileId;
       await tx.trainingSourceDocument.delete({ where: { id: document.id } });
       await this.writeAudit(tx, {
         action: 'training.source-document.delete',
@@ -326,7 +435,9 @@ export class TrainingDocumentsService {
         },
       });
     });
-    await this.files.deleteUnlinkedFile(document.fileId);
+    if (fileId) {
+      await this.files.deleteUnlinkedFile(fileId);
+    }
   }
 
   async getDocumentContent(versionIdInput: string, documentIdInput: string) {
@@ -400,6 +511,24 @@ export class TrainingDocumentsService {
     }
 
     return version;
+  }
+
+  private async assertDraftVersionLocked(
+    tx: Prisma.TransactionClient,
+    versionId: string,
+  ) {
+    const version = await lockTrainingVersionForContentMutation(tx, versionId);
+    if (!version) {
+      throw new NotFoundException('Training version not found');
+    }
+    if (
+      version.status !== TrainingVersionStatus.DRAFT ||
+      version.projectStatus === TrainingProjectStatus.ARCHIVED
+    ) {
+      throw new ConflictException(
+        'Published training version is immutable; open its working version',
+      );
+    }
   }
 
   private validateUpload(

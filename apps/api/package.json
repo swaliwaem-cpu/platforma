@@ -32,6 +32,7 @@
     "argon2": "^0.44.0",
     "fast-xml-parser": "5.10.1",
     "nodemailer": "^8.0.7",
+    "parse5": "^8.0.1",
     "pdfjs-dist": "6.1.200",
     "pdfkit": "^0.19.1",
     "reflect-metadata": "0.2.2",

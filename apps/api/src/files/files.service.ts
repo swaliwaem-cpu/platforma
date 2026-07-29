@@ -23,6 +23,7 @@ import {
 
 import { AuthenticatedUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
+import { TRAINING_OFFICIAL_URL_SNAPSHOT_PUT_TIMEOUT_MS } from '../training/training-official-url.config';
 import {
   ALLOWED_FILE_MIME_TYPES,
   FEED_XML_MAX_SIZE_BYTES,
@@ -239,6 +240,55 @@ export class FilesService {
     }
   }
 
+  async uploadPrivateTrainingSourceSnapshot(
+    input: {
+      buffer: Buffer;
+      originalName: string;
+      mimeType: 'text/html' | 'application/xhtml+xml';
+    },
+    uploadedById: string,
+  ) {
+    const originalName = basename(input.originalName || 'official-source.html');
+    const checksum = createHash('sha256').update(input.buffer).digest('hex');
+    const key = this.createPrivateTrainingSnapshotStorageKey();
+    const bucket = this.storage.getTrainingDocumentBucket();
+    let snapshotIntent: File | null = null;
+
+    try {
+      snapshotIntent = await this.prisma.file.create({
+        data: {
+          storage: FileStorage.MINIO,
+          bucket,
+          key,
+          url: null,
+          originalName,
+          mimeType: input.mimeType,
+          sizeBytes: BigInt(input.buffer.length),
+          checksum,
+          uploadedById,
+        },
+      });
+      await runTrainingSnapshotPutWithTimeout((signal) =>
+        this.storage.putObject({
+          bucket,
+          key,
+          body: input.buffer,
+          contentType: input.mimeType,
+          signal,
+        }),
+      );
+
+      return snapshotIntent;
+    } catch (error) {
+      await runTrainingSnapshotStorageWithTimeout(
+        (signal) => this.storage.deleteObject(key, bucket, signal),
+        Math.min(TRAINING_OFFICIAL_URL_SNAPSHOT_PUT_TIMEOUT_MS, 30_000),
+        'TRAINING_SNAPSHOT_DELETE_TIMEOUT',
+      ).catch(() => undefined);
+      throw error;
+    }
+  }
+
   async readStoredFile(file: Pick<File, 'bucket' | 'key'>) {
     return this.storage.getObject(
       file.key,
@@ -356,7 +406,7 @@ export class FilesService {
     };
   }
 
-  async delete(id: string) {
+  async delete(id: string, signal?: AbortSignal) {
     const fileId = this.parseUuid(id, 'File is invalid');
     await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw(
@@ -384,6 +434,7 @@ export class FilesService {
               projectPresentationDocuments: true,
               projectPresentationAssets: true,
               trainingSourceDocuments: true,
+              trainingOfficialUrlSnapshots: true,
               trainingVoiceSegments: true,
               trainingAnswerAudio: true,
               trainingAudioUploadIntents: true,
@@ -406,6 +457,7 @@ export class FilesService {
         file._count.projectPresentationDocuments > 0 ||
         file._count.projectPresentationAssets > 0 ||
         file._count.trainingSourceDocuments > 0 ||
+        file._count.trainingOfficialUrlSnapshots > 0 ||
         file._count.trainingVoiceSegments > 0 ||
         file._count.trainingAnswerAudio > 0 ||
         file._count.trainingAudioUploadIntents > 0
@@ -417,12 +469,14 @@ export class FilesService {
         await this.storage.deleteObject(
           variant.key,
           variant.bucket ?? undefined,
+          signal,
         );
       }
 
       await this.storage.deleteObject(
         file.key,
         file.bucket ?? undefined,
+        signal,
       );
       await tx.file.delete({
         where: {
@@ -432,9 +486,9 @@ export class FilesService {
     });
   }
 
-  async deleteUnlinkedFile(id: string) {
+  async deleteUnlinkedFile(id: string, signal?: AbortSignal) {
     try {
-      await this.delete(id);
+      await this.delete(id, signal);
     } catch (error) {
       if (error instanceof ConflictException) return false;
       this.logger.error(
@@ -686,6 +740,14 @@ export class FilesService {
     return `training-documents/${year}/${month}/${randomUUID()}${extension}`;
   }
 
+  private createPrivateTrainingSnapshotStorageKey() {
+    const now = new Date();
+    const year = now.getUTCFullYear();
+    const month = String(now.getUTCMonth() + 1).padStart(2, '0');
+
+    return `training-source-snapshots/${year}/${month}/${randomUUID()}.html`;
+  }
+
   private getSafeExtension(originalName: string, mimeType: string) {
     const extension = extname(originalName).toLowerCase();
     const allowedExtensions = this.getAllowedExtensions(mimeType);
@@ -862,5 +924,50 @@ export class FilesService {
         'Private training audio checksum is invalid',
       );
     }
+  }
+}
+
+export async function runTrainingSnapshotPutWithTimeout<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  timeoutMs = TRAINING_OFFICIAL_URL_SNAPSHOT_PUT_TIMEOUT_MS,
+) {
+  return runTrainingSnapshotStorageWithTimeout(
+    operation,
+    timeoutMs,
+    'TRAINING_SNAPSHOT_PUT_TIMEOUT',
+  );
+}
+
+export async function runTrainingSnapshotDeleteWithTimeout<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+) {
+  return runTrainingSnapshotStorageWithTimeout(
+    operation,
+    timeoutMs,
+    'TRAINING_SNAPSHOT_DELETE_TIMEOUT',
+  );
+}
+
+async function runTrainingSnapshotStorageWithTimeout<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+  errorCode: string,
+) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    const error = Object.assign(
+      new Error('Training source snapshot storage timeout'),
+      {
+        code: errorCode,
+      },
+    );
+    controller.abort(error);
+  }, timeoutMs);
+
+  try {
+    return await operation(controller.signal);
+  } finally {
+    clearTimeout(timeout);
   }
 }

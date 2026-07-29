@@ -19,6 +19,13 @@ import {
   TRAINING_TRANSCRIPTION_PROVIDER,
 } from '../training-attempt.providers';
 import { TrainingOpenAiConfig } from '../openai/training-openai.config';
+import {
+  createTrainingFactSuggestionProvider,
+  DeterministicFakeTrainingFactSuggestionProvider,
+  OpenAiTrainingFactSuggestionProvider,
+  TRAINING_FACT_SUGGESTION_PROVIDER,
+} from '../fact-suggestions/training-fact-suggestion.provider';
+import { TrainingFactSuggestionWorkerService } from '../fact-suggestions/training-fact-suggestion-worker.service';
 import { OpenAiTrainingEvaluationProvider } from '../openai/training-openai-evaluation.provider';
 import {
   TrainingOpenAiHttpClient,
@@ -29,6 +36,8 @@ import {
   createTrainingTranscriptionProvider,
 } from '../openai/training-openai.providers';
 import { OpenAiTrainingTranscriptionProvider } from '../openai/training-openai-transcription.provider';
+import { TrainingOfficialUrlFetcher } from '../training-official-url-fetcher';
+import { TrainingOfficialUrlWorkerService } from '../training-official-url-worker.service';
 import { TrainingAudioConfig } from './training-audio.config';
 import {
   TRAINING_AUDIO_PROCESS_RUNNER,
@@ -60,12 +69,17 @@ import {
     NodeTrainingAudioProcessRunner,
     TrainingFfmpegService,
     TrainingAudioWorkerService,
+    TrainingOfficialUrlFetcher,
+    TrainingOfficialUrlWorkerService,
+    TrainingFactSuggestionWorkerService,
     TrainingAttemptEngineService,
     {
       provide: TrainingOpenAiConfig,
       useFactory: () => new TrainingOpenAiConfig(process.env),
     },
     TrainingOpenAiHttpClient,
+    DeterministicFakeTrainingFactSuggestionProvider,
+    OpenAiTrainingFactSuggestionProvider,
     OpenAiTrainingTranscriptionProvider,
     OpenAiTrainingEvaluationProvider,
     DeterministicFakeTrainingTranscriptionProvider,
@@ -103,6 +117,15 @@ import {
         OpenAiTrainingEvaluationProvider,
       ],
       useFactory: createTrainingEvaluationProvider,
+    },
+    {
+      provide: TRAINING_FACT_SUGGESTION_PROVIDER,
+      inject: [
+        TrainingOpenAiConfig,
+        DeterministicFakeTrainingFactSuggestionProvider,
+        OpenAiTrainingFactSuggestionProvider,
+      ],
+      useFactory: createTrainingFactSuggestionProvider,
     },
     {
       provide: TRAINING_AUDIO_PROCESS_RUNNER,

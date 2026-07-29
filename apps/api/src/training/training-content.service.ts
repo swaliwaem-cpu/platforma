@@ -21,8 +21,14 @@ import {
 import {
   assertTrainingAvailability,
   assertTrainingVersionPublishable,
+  getTrainingVersionReadiness,
   normalizeTrainingUniqueKey,
 } from './training-content.validation';
+import {
+  lockTrainingVersionForContentMutation,
+  lockTrainingVersionForExclusiveMutation,
+  lockTrainingVersionForPublication,
+} from './training-version-lock';
 
 const trainingVersionContentInclude = {
   questions: {
@@ -47,6 +53,9 @@ const trainingVersionContentInclude = {
   sourceDocuments: {
     orderBy: { createdAt: 'asc' },
   },
+  officialUrlSources: {
+    orderBy: { createdAt: 'asc' },
+  },
 } satisfies Prisma.TrainingProjectVersionInclude;
 
 const trainingVersionDetailInclude = {
@@ -65,11 +74,39 @@ const trainingVersionDetailInclude = {
       updatedAt: true,
     },
   },
+  officialUrlSources: {
+    orderBy: { createdAt: 'asc' },
+    select: {
+      id: true,
+      projectVersionId: true,
+      snapshotFileId: true,
+      url: true,
+      normalizedUrl: true,
+      finalUrl: true,
+      hostname: true,
+      fetchGeneration: true,
+      extractionStatus: true,
+      contentHash: true,
+      errorCode: true,
+      errorMessage: true,
+      confirmedAt: true,
+      fetchedAt: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  },
   publishedBy: {
     select: {
       id: true,
       email: true,
       name: true,
+    },
+  },
+  _count: {
+    select: {
+      factSuggestions: {
+        where: { status: 'PENDING' },
+      },
     },
   },
 } satisfies Prisma.TrainingProjectVersionInclude;
@@ -134,6 +171,19 @@ type TrainingVersionContentRecord = Prisma.TrainingProjectVersionGetPayload<{
 }>;
 
 type TrainingTransaction = Prisma.TransactionClient;
+type TrainingQueryClient = Pick<TrainingTransaction, '$queryRaw'>;
+
+type TrainingFactSuggestionActivity = {
+  activeFactSuggestionRunCount: number;
+  activeFactSuggestionProviderCount: number;
+  activeFactSuggestionJobCount: number;
+};
+
+type TrainingFactSuggestionActivityRow = {
+  activeFactSuggestionRunCount: bigint;
+  activeFactSuggestionProviderCount: bigint;
+  activeFactSuggestionJobCount: bigint;
+};
 
 export type TrainingAuditRequest = RequestWithAuth & {
   ip?: string;
@@ -397,11 +447,24 @@ export class TrainingContentService {
     actor: AuthenticatedUser,
     request: TrainingAuditRequest,
   ) {
+    return this.ensureEditableVersion(projectIdInput, actor, request);
+  }
+
+  async ensureEditableVersion(
+    projectIdInput: string,
+    actor: AuthenticatedUser,
+    request: TrainingAuditRequest,
+  ) {
     const projectId = this.parseUuid(projectIdInput, 'Training project is invalid');
-    let versionId: string;
+    let result: {
+      versionId: string;
+      created: boolean;
+      clonedFromVersionId: string | null;
+    };
 
     try {
-      versionId = await this.prisma.$transaction(async (tx) => {
+      result = await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "training_projects" WHERE "id" = ${projectId}::uuid FOR UPDATE`;
         const project = await tx.trainingProject.findUnique({
           where: { id: projectId },
           select: { id: true, status: true, activeVersionId: true },
@@ -419,7 +482,11 @@ export class TrainingContentService {
           select: { id: true },
         });
         if (existingDraft) {
-          throw new ConflictException('Training project already has a draft version');
+          return {
+            versionId: existingDraft.id,
+            created: false,
+            clonedFromVersionId: null,
+          };
         }
 
         const latestVersion = await tx.trainingProjectVersion.findFirst({
@@ -457,13 +524,21 @@ export class TrainingContentService {
           },
         });
 
-        return version.id;
+        return {
+          versionId: version.id,
+          created: true,
+          clonedFromVersionId: latestVersion?.id ?? null,
+        };
       });
     } catch (error) {
-      this.rethrowPrismaConflict(error, 'Training project already has a draft version');
+      this.rethrowPrismaConflict(error, 'Training working version conflicted with another update');
     }
 
-    return this.getVersion(versionId!);
+    return {
+      ...(await this.getVersion(result!.versionId)),
+      created: result!.created,
+      clonedFromVersionId: result!.clonedFromVersionId,
+    };
   }
 
   async getVersion(id: string) {
@@ -489,8 +564,61 @@ export class TrainingContentService {
     if (!version) {
       throw new NotFoundException('Training version not found');
     }
+    const suggestionActivity = await this.getFactSuggestionActivity(
+      this.prisma,
+      versionId,
+    );
 
-    return { version };
+    return {
+      version,
+      readiness: getTrainingVersionReadiness({
+        ...version,
+        pendingFactSuggestionCount: version._count?.factSuggestions ?? 0,
+        ...suggestionActivity,
+      }),
+    };
+  }
+
+  async getVersionReadiness(id: string) {
+    const versionId = this.parseUuid(id, 'Training version is invalid');
+    const version = await this.prisma.trainingProjectVersion.findUnique({
+      where: { id: versionId },
+      include: {
+        project: true,
+        questions: true,
+        facts: true,
+        criteria: true,
+        sourceDocuments: {
+          select: { extractionStatus: true },
+        },
+        officialUrlSources: {
+          select: { extractionStatus: true },
+        },
+        _count: {
+          select: {
+            factSuggestions: {
+              where: { status: 'PENDING' },
+            },
+          },
+        },
+      },
+    });
+
+    if (!version) {
+      throw new NotFoundException('Training version not found');
+    }
+    const suggestionActivity = await this.getFactSuggestionActivity(
+      this.prisma,
+      versionId,
+    );
+
+    return {
+      readiness: getTrainingVersionReadiness({
+        ...version,
+        pendingFactSuggestionCount: version._count?.factSuggestions ?? 0,
+        ...suggestionActivity,
+      }),
+    };
   }
 
   async updateVersion(
@@ -501,18 +629,20 @@ export class TrainingContentService {
   ) {
     const versionId = this.parseUuid(id, 'Training version is invalid');
     this.assertOnlyVersionSettingFields(body, true);
-    const current = await this.prisma.trainingProjectVersion.findUnique({
-      where: { id: versionId },
-    });
-
-    this.assertDraftVersion(current);
-    const settings = this.parseVersionSettings(body, this.copyVersionSettings(current!));
     const changedFields = Object.keys(body);
     if (changedFields.length === 0) {
       throw new BadRequestException('No training version settings were provided');
     }
 
     await this.prisma.$transaction(async (tx) => {
+      const lockedVersion = await lockTrainingVersionForExclusiveMutation(tx, versionId);
+      this.assertDraftVersion(lockedVersion);
+      const current = await tx.trainingProjectVersion.findUnique({
+        where: { id: versionId },
+      });
+      this.assertDraftVersion(current);
+      const settings = this.parseVersionSettings(body, this.copyVersionSettings(current));
+
       await tx.trainingProjectVersion.update({
         where: { id: versionId },
         data: settings,
@@ -524,7 +654,7 @@ export class TrainingContentService {
         entityType: 'training_project_version',
         entityId: versionId,
         metadata: {
-          projectId: current!.projectId,
+          projectId: current.projectId,
           changedFields,
         },
       });
@@ -541,6 +671,8 @@ export class TrainingContentService {
     const versionId = this.parseUuid(id, 'Training version is invalid');
 
     await this.prisma.$transaction(async (tx) => {
+      const lockedVersion = await lockTrainingVersionForExclusiveMutation(tx, versionId);
+      this.assertDraftVersion(lockedVersion);
       const version = await tx.trainingProjectVersion.findUnique({
         where: { id: versionId },
         include: {
@@ -605,8 +737,8 @@ export class TrainingContentService {
 
     try {
       questionId = await this.prisma.$transaction(async (tx) => {
-        const version = await tx.trainingProjectVersion.findUnique({ where: { id: versionId } });
-        this.assertDraftVersion(version);
+        const lockedVersion = await lockTrainingVersionForContentMutation(tx, versionId);
+        this.assertDraftVersion(lockedVersion);
         const question = await tx.trainingQuestion.create({
           data: {
             projectVersionId: versionId,
@@ -652,14 +784,14 @@ export class TrainingContentService {
 
     try {
       await this.prisma.$transaction(async (tx) => {
+        const lockedVersion = await lockTrainingVersionForContentMutation(tx, versionId);
+        this.assertDraftVersion(lockedVersion);
         const question = await tx.trainingQuestion.findFirst({
           where: { id: questionId, projectVersionId: versionId },
         });
         if (!question) {
           throw new NotFoundException('Training question not found');
         }
-        const version = await tx.trainingProjectVersion.findUnique({ where: { id: versionId } });
-        this.assertDraftVersion(version);
         const data = this.parseQuestionInput(body, question);
         await tx.trainingQuestion.update({ where: { id: questionId }, data });
         await this.writeAudit(tx, {
@@ -691,6 +823,8 @@ export class TrainingContentService {
     const questionId = this.parseUuid(questionIdInput, 'Training question is invalid');
 
     await this.prisma.$transaction(async (tx) => {
+      const lockedVersion = await lockTrainingVersionForContentMutation(tx, versionId);
+      this.assertDraftVersion(lockedVersion);
       const question = await tx.trainingQuestion.findFirst({
         where: { id: questionId, projectVersionId: versionId },
         include: {
@@ -702,8 +836,6 @@ export class TrainingContentService {
       if (!question) {
         throw new NotFoundException('Training question not found');
       }
-      const version = await tx.trainingProjectVersion.findUnique({ where: { id: versionId } });
-      this.assertDraftVersion(version);
       if (question._count.attemptQuestions > 0) {
         throw new ConflictException('Used training question cannot be deleted');
       }
@@ -751,6 +883,7 @@ export class TrainingContentService {
         'acceptedAliases',
         'importance',
         'sourceDocumentId',
+        'sourceOfficialUrlId',
         'sourceLocator',
         'isApproved',
         'questionIds',
@@ -762,10 +895,15 @@ export class TrainingContentService {
 
     try {
       factId = await this.prisma.$transaction(async (tx) => {
-        const version = await tx.trainingProjectVersion.findUnique({ where: { id: versionId } });
-        this.assertDraftVersion(version);
+        const lockedVersion = await lockTrainingVersionForContentMutation(tx, versionId);
+        this.assertDraftVersion(lockedVersion);
         await this.ensureQuestionsBelongToVersion(tx, versionId, questionIds);
         await this.ensureSourceDocumentBelongsToVersion(tx, versionId, data.sourceDocumentId);
+        await this.ensureOfficialUrlSourceBelongsToVersion(
+          tx,
+          versionId,
+          data.sourceOfficialUrlId,
+        );
         const fact = await tx.trainingFact.create({
           data: {
             projectVersionId: versionId,
@@ -813,6 +951,7 @@ export class TrainingContentService {
         'acceptedAliases',
         'importance',
         'sourceDocumentId',
+        'sourceOfficialUrlId',
         'sourceLocator',
         'isApproved',
         'questionIds',
@@ -822,6 +961,8 @@ export class TrainingContentService {
 
     try {
       await this.prisma.$transaction(async (tx) => {
+        const lockedVersion = await lockTrainingVersionForContentMutation(tx, versionId);
+        this.assertDraftVersion(lockedVersion);
         const fact = await tx.trainingFact.findFirst({
           where: { id: factId, projectVersionId: versionId },
           include: {
@@ -831,8 +972,6 @@ export class TrainingContentService {
         if (!fact) {
           throw new NotFoundException('Training fact not found');
         }
-        const version = await tx.trainingProjectVersion.findUnique({ where: { id: versionId } });
-        this.assertDraftVersion(version);
         const { questionIds, ...data } = this.parseFactInput(
           body,
           fact,
@@ -840,6 +979,11 @@ export class TrainingContentService {
         );
         await this.ensureQuestionsBelongToVersion(tx, versionId, questionIds);
         await this.ensureSourceDocumentBelongsToVersion(tx, versionId, data.sourceDocumentId);
+        await this.ensureOfficialUrlSourceBelongsToVersion(
+          tx,
+          versionId,
+          data.sourceOfficialUrlId,
+        );
         await tx.trainingFact.update({ where: { id: factId }, data });
         if (this.hasOwn(body, 'questionIds')) {
           await this.replaceFactQuestionLinks(tx, factId, questionIds);
@@ -873,6 +1017,8 @@ export class TrainingContentService {
     const factId = this.parseUuid(factIdInput, 'Training fact is invalid');
 
     await this.prisma.$transaction(async (tx) => {
+      const lockedVersion = await lockTrainingVersionForContentMutation(tx, versionId);
+      this.assertDraftVersion(lockedVersion);
       const fact = await tx.trainingFact.findFirst({
         where: { id: factId, projectVersionId: versionId },
         include: {
@@ -884,8 +1030,6 @@ export class TrainingContentService {
       if (!fact) {
         throw new NotFoundException('Training fact not found');
       }
-      const version = await tx.trainingProjectVersion.findUnique({ where: { id: versionId } });
-      this.assertDraftVersion(version);
       if (fact._count.scoreComponents > 0) {
         throw new ConflictException('Used training fact cannot be deleted');
       }
@@ -937,8 +1081,8 @@ export class TrainingContentService {
 
     try {
       criterionId = await this.prisma.$transaction(async (tx) => {
-        const version = await tx.trainingProjectVersion.findUnique({ where: { id: versionId } });
-        this.assertDraftVersion(version);
+        const lockedVersion = await lockTrainingVersionForContentMutation(tx, versionId);
+        this.assertDraftVersion(lockedVersion);
         const criterion = await tx.trainingEvaluationCriterion.create({
           data: {
             projectVersionId: versionId,
@@ -992,14 +1136,14 @@ export class TrainingContentService {
 
     try {
       await this.prisma.$transaction(async (tx) => {
+        const lockedVersion = await lockTrainingVersionForContentMutation(tx, versionId);
+        this.assertDraftVersion(lockedVersion);
         const criterion = await tx.trainingEvaluationCriterion.findFirst({
           where: { id: criterionId, projectVersionId: versionId },
         });
         if (!criterion) {
           throw new NotFoundException('Training criterion not found');
         }
-        const version = await tx.trainingProjectVersion.findUnique({ where: { id: versionId } });
-        this.assertDraftVersion(version);
         const data = this.parseCriterionInput(body, criterion);
         await tx.trainingEvaluationCriterion.update({ where: { id: criterionId }, data });
         await this.writeAudit(tx, {
@@ -1031,6 +1175,8 @@ export class TrainingContentService {
     const criterionId = this.parseUuid(criterionIdInput, 'Training criterion is invalid');
 
     await this.prisma.$transaction(async (tx) => {
+      const lockedVersion = await lockTrainingVersionForContentMutation(tx, versionId);
+      this.assertDraftVersion(lockedVersion);
       const criterion = await tx.trainingEvaluationCriterion.findFirst({
         where: { id: criterionId, projectVersionId: versionId },
         include: {
@@ -1042,8 +1188,6 @@ export class TrainingContentService {
       if (!criterion) {
         throw new NotFoundException('Training criterion not found');
       }
-      const version = await tx.trainingProjectVersion.findUnique({ where: { id: versionId } });
-      this.assertDraftVersion(version);
       if (criterion._count.scoreComponents > 0) {
         throw new ConflictException('Used training criterion cannot be deleted');
       }
@@ -1070,15 +1214,8 @@ export class TrainingContentService {
 
     try {
       projectId = await this.prisma.$transaction(async (tx) => {
-        const identity = await tx.trainingProjectVersion.findUnique({
-          where: { id: versionId },
-          select: { projectId: true },
-        });
-        if (!identity) {
-          throw new NotFoundException('Training version not found');
-        }
-
-        await tx.$queryRaw`SELECT "id" FROM "training_projects" WHERE "id" = ${identity.projectId}::uuid FOR UPDATE`;
+        const lockedVersion = await lockTrainingVersionForPublication(tx, versionId);
+        this.assertDraftVersion(lockedVersion);
         const version = await tx.trainingProjectVersion.findUnique({
           where: { id: versionId },
           include: {
@@ -1086,12 +1223,31 @@ export class TrainingContentService {
             questions: true,
             facts: true,
             criteria: true,
+            sourceDocuments: {
+              select: { extractionStatus: true },
+            },
+            officialUrlSources: {
+              select: { extractionStatus: true },
+            },
+            _count: {
+              select: {
+                factSuggestions: {
+                  where: { status: 'PENDING' },
+                },
+              },
+            },
           },
         });
         this.assertDraftVersion(version);
+        const suggestionActivity = await this.getFactSuggestionActivity(
+          tx,
+          versionId,
+        );
         assertTrainingVersionPublishable({
           ...version!,
           warningSecondsJson: version!.warningSecondsJson,
+          pendingFactSuggestionCount: version!._count?.factSuggestions ?? 0,
+          ...suggestionActivity,
           criteria: version!.criteria.map((criterion) => ({
             ...criterion,
             maxPoints: criterion.maxPoints,
@@ -1122,7 +1278,7 @@ export class TrainingContentService {
           },
         });
         await tx.trainingProject.update({
-          where: { id: identity.projectId },
+          where: { id: lockedVersion.projectId },
           data: {
             activeVersionId: versionId,
             status:
@@ -1138,14 +1294,14 @@ export class TrainingContentService {
           entityType: 'training_project_version',
           entityId: versionId,
           metadata: {
-            projectId: identity.projectId,
+            projectId: lockedVersion.projectId,
             versionNumber: version!.versionNumber,
             previousActiveVersionId,
             publishedAt: publishedAt.toISOString(),
           },
         });
 
-        return identity.projectId;
+        return lockedVersion.projectId;
       });
     } catch (error) {
       if (error instanceof UnprocessableEntityException) {
@@ -1313,6 +1469,49 @@ export class TrainingContentService {
     return versionId;
   }
 
+  private async getFactSuggestionActivity(
+    client: TrainingQueryClient,
+    versionId: string,
+  ): Promise<TrainingFactSuggestionActivity> {
+    const rows = await client.$queryRaw<TrainingFactSuggestionActivityRow[]>(Prisma.sql`
+      SELECT
+        (
+          SELECT COUNT(*)
+          FROM "training_fact_suggestion_runs" AS runs
+          WHERE runs."project_version_id" = ${versionId}::uuid
+            AND runs."status" IN ('pending', 'running')
+        ) AS "activeFactSuggestionRunCount",
+        (
+          SELECT COUNT(*)
+          FROM "training_fact_suggestion_provider_runs" AS providers
+          WHERE providers."project_version_id" = ${versionId}::uuid
+            AND providers."status" IN ('pending', 'requesting')
+        ) AS "activeFactSuggestionProviderCount",
+        (
+          SELECT COUNT(DISTINCT jobs."id")
+          FROM "training_jobs" AS jobs
+          INNER JOIN "training_fact_suggestion_provider_runs" AS providers
+            ON providers."id"::text = jobs."payload_json" ->> 'providerRunId'
+          WHERE providers."project_version_id" = ${versionId}::uuid
+            AND jobs."kind" = 'suggest_facts'
+            AND jobs."status" IN ('pending', 'running')
+        ) AS "activeFactSuggestionJobCount"
+    `);
+    const activity = rows[0];
+
+    return {
+      activeFactSuggestionRunCount: Number(
+        activity?.activeFactSuggestionRunCount ?? 0,
+      ),
+      activeFactSuggestionProviderCount: Number(
+        activity?.activeFactSuggestionProviderCount ?? 0,
+      ),
+      activeFactSuggestionJobCount: Number(
+        activity?.activeFactSuggestionJobCount ?? 0,
+      ),
+    };
+  }
+
   private assertDraftVersion(
     version:
       | {
@@ -1400,6 +1599,7 @@ export class TrainingContentService {
       acceptedAliasesJson: Prisma.JsonValue;
       importance: number;
       sourceDocumentId: string | null;
+      sourceOfficialUrlId: string | null;
       sourceLocatorJson: Prisma.JsonValue | null;
       isApproved: boolean;
     },
@@ -1417,6 +1617,25 @@ export class TrainingContentService {
     if (!code || !topicCode || !statement) {
       throw new BadRequestException('Fact code, topic code and statement are required');
     }
+    const parsedSourceDocumentId = this.hasOwn(body, 'sourceDocumentId')
+      ? this.parseNullableUuid(body.sourceDocumentId, 'Source document is invalid')
+      : (current?.sourceDocumentId ?? null);
+    const parsedSourceOfficialUrlId = this.hasOwn(body, 'sourceOfficialUrlId')
+      ? this.parseNullableUuid(body.sourceOfficialUrlId, 'Official URL source is invalid')
+      : (current?.sourceOfficialUrlId ?? null);
+    const sourceDocumentId =
+      parsedSourceOfficialUrlId !== null && !this.hasOwn(body, 'sourceDocumentId')
+        ? null
+        : parsedSourceDocumentId;
+    const sourceOfficialUrlId =
+      parsedSourceDocumentId !== null && !this.hasOwn(body, 'sourceOfficialUrlId')
+        ? null
+        : parsedSourceOfficialUrlId;
+    if (sourceDocumentId !== null && sourceOfficialUrlId !== null) {
+      throw new BadRequestException(
+        'Fact can reference either a document or an official URL source, not both',
+      );
+    }
 
     return {
       code,
@@ -1428,9 +1647,8 @@ export class TrainingContentService {
       importance: this.hasOwn(body, 'importance')
         ? this.parsePositiveInteger(body.importance, 'Fact importance')
         : (current?.importance ?? 1),
-      sourceDocumentId: this.hasOwn(body, 'sourceDocumentId')
-        ? this.parseNullableUuid(body.sourceDocumentId, 'Source document is invalid')
-        : (current?.sourceDocumentId ?? null),
+      sourceDocumentId,
+      sourceOfficialUrlId,
       sourceLocatorJson: this.hasOwn(body, 'sourceLocator')
         ? this.parseNullableJsonObject(body.sourceLocator, 'Source locator is invalid')
         : this.toNullableInputJson(current?.sourceLocatorJson ?? null),
@@ -1596,6 +1814,34 @@ export class TrainingContentService {
       documentIds.set(document.id, cloned.id);
     }
 
+    const officialUrlIds = new Map<string, string>();
+    for (const officialUrl of source.officialUrlSources ?? []) {
+      const cloned = await tx.trainingOfficialUrlSource.create({
+        data: {
+          projectVersionId: targetVersionId,
+          confirmedById: officialUrl.confirmedById,
+          snapshotFileId: officialUrl.snapshotFileId,
+          url: officialUrl.url,
+          normalizedUrl: officialUrl.normalizedUrl,
+          finalUrl: officialUrl.finalUrl,
+          hostname: officialUrl.hostname,
+          fetchGeneration: officialUrl.fetchGeneration,
+          extractionStatus: officialUrl.extractionStatus,
+          extractedText: officialUrl.extractedText,
+          contentHash: officialUrl.contentHash,
+          extractionMetadataJson: this.toInputJson(
+            officialUrl.extractionMetadataJson,
+          ),
+          errorCode: officialUrl.errorCode,
+          errorMessage: officialUrl.errorMessage,
+          confirmedAt: officialUrl.confirmedAt,
+          fetchedAt: officialUrl.fetchedAt,
+        },
+        select: { id: true },
+      });
+      officialUrlIds.set(officialUrl.id, cloned.id);
+    }
+
     const questionIds = new Map<string, string>();
     for (const question of source.questions) {
       const cloned = await tx.trainingQuestion.create({
@@ -1625,6 +1871,9 @@ export class TrainingContentService {
           importance: fact.importance,
           sourceDocumentId: fact.sourceDocumentId
             ? (documentIds.get(fact.sourceDocumentId) ?? null)
+            : null,
+          sourceOfficialUrlId: fact.sourceOfficialUrlId
+            ? (officialUrlIds.get(fact.sourceOfficialUrlId) ?? null)
             : null,
           sourceLocatorJson: this.toNullableInputJson(fact.sourceLocatorJson),
           isApproved: fact.isApproved,
@@ -1703,6 +1952,28 @@ export class TrainingContentService {
     });
     if (!document) {
       throw new BadRequestException('Source document must belong to the fact version');
+    }
+  }
+
+  private async ensureOfficialUrlSourceBelongsToVersion(
+    tx: TrainingTransaction,
+    versionId: string,
+    sourceOfficialUrlId: string | null,
+  ) {
+    if (sourceOfficialUrlId === null) {
+      return;
+    }
+    const source = await tx.trainingOfficialUrlSource.findFirst({
+      where: {
+        id: sourceOfficialUrlId,
+        projectVersionId: versionId,
+      },
+      select: { id: true },
+    });
+    if (!source) {
+      throw new BadRequestException(
+        'Official URL source must belong to the fact version',
+      );
     }
   }
 

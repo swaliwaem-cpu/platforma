@@ -253,6 +253,8 @@ enum TrainingJobKind {
   SEND_TIMER_WARNING            @map("send_timer_warning")
   EXPIRE_ATTEMPT                @map("expire_attempt")
   EXTRACT_SOURCE_DOCUMENT       @map("extract_source_document")
+  FETCH_OFFICIAL_URL_SOURCE     @map("fetch_official_url_source")
+  SUGGEST_FACTS                 @map("suggest_facts")
 
   @@map("training_job_kind")
 }
@@ -318,6 +320,27 @@ enum TrainingSourceDocumentType {
   @@map("training_source_document_type")
 }
 
+enum TrainingFactSuggestionRunStatus {
+  PENDING   @map("pending")
+  RUNNING   @map("running")
+  READY     @map("ready")
+  PARTIAL   @map("partial")
+  FAILED    @map("failed")
+  AMBIGUOUS @map("ambiguous")
+  DISMISSED @map("dismissed")
+
+  @@map("training_fact_suggestion_run_status")
+}
+
+enum TrainingFactSuggestionStatus {
+  PENDING  @map("pending")
+  ACCEPTED @map("accepted")
+  REJECTED @map("rejected")
+  STALE    @map("stale")
+
+  @@map("training_fact_suggestion_status")
+}
+
 enum TrainingProcessedUpdateStatus {
   RECEIVED   @map("received")
   PROCESSING @map("processing")
@@ -350,26 +373,29 @@ model User {
   updatedAt             DateTime   @updatedAt @map("updated_at")
   deletedAt             DateTime?  @map("deleted_at")
 
-  role                          Role                           @relation(fields: [roleId], references: [id], onDelete: Restrict)
-  profilePhotoFile              File?                          @relation("UserProfilePhoto", fields: [profilePhotoFileId], references: [id], onDelete: SetNull)
-  auditLogs                     AuditLog[]                     @relation("AuditActor")
-  emailAuthChallenges           EmailAuthChallenge[]
-  sessions                      UserSession[]
-  importReports                 ImportReport[]                 @relation("ImportReportCreator")
-  uploadedFiles                 File[]                         @relation("FileUploader")
-  lotPresentationCollections    LotPresentationCollection[]
-  lotPresentationDocuments      LotPresentationDocument[]
-  lotPresentationWorkspaceItems LotPresentationWorkspaceItem[]
-  projectPresentationDrafts     ProjectPresentationDraft[]     @relation("ProjectPresentationDraftOwner")
-  projectPresentationDocuments  ProjectPresentationDocument[]  @relation("ProjectPresentationDocumentOwner")
-  trainingAttempts              TrainingAttempt[]
-  trainingTelegramAccount       TrainingTelegramAccount?
-  trainingLinkTokens            TrainingLinkToken[]
-  trainingPublishedVersions     TrainingProjectVersion[]       @relation("TrainingVersionPublisher")
-  trainingResultReviews         TrainingResultReview[]         @relation("TrainingResultReviewer")
-  trainingPolicyVersions        TrainingPolicyVersion[]         @relation("TrainingPolicyVersionCreator")
-  trainingPolicyAcceptances     TrainingPolicyAcceptance[]
-  trainingOperationsJobRetries  TrainingOperationsJobRetry[]    @relation("TrainingOperationsRetryActor")
+  role                             Role                           @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  profilePhotoFile                 File?                          @relation("UserProfilePhoto", fields: [profilePhotoFileId], references: [id], onDelete: SetNull)
+  auditLogs                        AuditLog[]                     @relation("AuditActor")
+  emailAuthChallenges              EmailAuthChallenge[]
+  sessions                         UserSession[]
+  importReports                    ImportReport[]                 @relation("ImportReportCreator")
+  uploadedFiles                    File[]                         @relation("FileUploader")
+  lotPresentationCollections       LotPresentationCollection[]
+  lotPresentationDocuments         LotPresentationDocument[]
+  lotPresentationWorkspaceItems    LotPresentationWorkspaceItem[]
+  projectPresentationDrafts        ProjectPresentationDraft[]     @relation("ProjectPresentationDraftOwner")
+  projectPresentationDocuments     ProjectPresentationDocument[]  @relation("ProjectPresentationDocumentOwner")
+  trainingAttempts                 TrainingAttempt[]
+  trainingTelegramAccount          TrainingTelegramAccount?
+  trainingLinkTokens               TrainingLinkToken[]
+  trainingPublishedVersions        TrainingProjectVersion[]       @relation("TrainingVersionPublisher")
+  trainingResultReviews            TrainingResultReview[]         @relation("TrainingResultReviewer")
+  trainingPolicyVersions           TrainingPolicyVersion[]        @relation("TrainingPolicyVersionCreator")
+  trainingPolicyAcceptances        TrainingPolicyAcceptance[]
+  trainingOperationsJobRetries     TrainingOperationsJobRetry[]   @relation("TrainingOperationsRetryActor")
+  trainingFactSuggestionRuns       TrainingFactSuggestionRun[]    @relation("TrainingFactSuggestionRunCreator")
+  trainingFactSuggestionReviews    TrainingFactSuggestion[]       @relation("TrainingFactSuggestionReviewer")
+  trainingOfficialUrlConfirmations TrainingOfficialUrlSource[]    @relation("TrainingOfficialUrlConfirmer")
 
   @@index([roleId])
   @@index([profilePhotoFileId])
@@ -844,6 +870,7 @@ model File {
   trainingAnswerAudio            TrainingAnswer[]                   @relation("TrainingAnswerAudioFile")
   trainingAudioUploadIntents     TrainingAudioUploadIntent[]        @relation("TrainingAudioUploadCommittedFile")
   trainingProviderRuns           TrainingProviderRun[]              @relation("TrainingProviderRunSourceFile")
+  trainingOfficialUrlSnapshots   TrainingOfficialUrlSource[]        @relation("TrainingOfficialUrlSnapshotFile")
 
   @@unique([storage, bucket, key])
   @@index([uploadedById])
@@ -1168,14 +1195,18 @@ model TrainingProjectVersion {
   createdAt             DateTime              @default(now()) @map("created_at")
   updatedAt             DateTime              @updatedAt @map("updated_at")
 
-  project          TrainingProject               @relation("TrainingProjectVersions", fields: [projectId], references: [id], onDelete: Cascade)
-  activeForProject TrainingProject?              @relation("TrainingProjectActiveVersion")
-  publishedBy      User?                         @relation("TrainingVersionPublisher", fields: [publishedById], references: [id], onDelete: SetNull)
-  questions        TrainingQuestion[]
-  facts            TrainingFact[]
-  criteria         TrainingEvaluationCriterion[]
-  sourceDocuments  TrainingSourceDocument[]
-  attempts         TrainingAttempt[]
+  project                    TrainingProject                     @relation("TrainingProjectVersions", fields: [projectId], references: [id], onDelete: Cascade)
+  activeForProject           TrainingProject?                    @relation("TrainingProjectActiveVersion")
+  publishedBy                User?                               @relation("TrainingVersionPublisher", fields: [publishedById], references: [id], onDelete: SetNull)
+  questions                  TrainingQuestion[]
+  facts                      TrainingFact[]
+  criteria                   TrainingEvaluationCriterion[]
+  sourceDocuments            TrainingSourceDocument[]
+  officialUrlSources         TrainingOfficialUrlSource[]
+  factSuggestionRuns         TrainingFactSuggestionRun[]
+  factSuggestionProviderRuns TrainingFactSuggestionProviderRun[]
+  factSuggestions            TrainingFactSuggestion[]
+  attempts                   TrainingAttempt[]
 
   @@unique([projectId, versionNumber])
   @@index([projectId, status])
@@ -1214,19 +1245,23 @@ model TrainingFact {
   acceptedAliasesJson Json     @default("[]") @map("accepted_aliases_json")
   importance          Int      @default(1)
   sourceDocumentId    String?  @map("source_document_id") @db.Uuid
+  sourceOfficialUrlId String?  @map("source_official_url_id") @db.Uuid
   sourceLocatorJson   Json?    @map("source_locator_json")
   isApproved          Boolean  @default(false) @map("is_approved")
   createdAt           DateTime @default(now()) @map("created_at")
   updatedAt           DateTime @updatedAt @map("updated_at")
 
-  projectVersion  TrainingProjectVersion     @relation(fields: [projectVersionId], references: [id], onDelete: Cascade)
-  sourceDocument  TrainingSourceDocument?    @relation(fields: [sourceDocumentId], references: [id], onDelete: SetNull)
-  questionLinks   TrainingQuestionFactLink[]
-  scoreComponents TrainingScoreComponent[]
+  projectVersion     TrainingProjectVersion     @relation(fields: [projectVersionId], references: [id], onDelete: Cascade)
+  sourceDocument     TrainingSourceDocument?    @relation(fields: [sourceDocumentId], references: [id], onDelete: SetNull)
+  sourceOfficialUrl  TrainingOfficialUrlSource? @relation(fields: [sourceOfficialUrlId], references: [id], onDelete: SetNull)
+  questionLinks      TrainingQuestionFactLink[]
+  scoreComponents    TrainingScoreComponent[]
+  acceptedSuggestion TrainingFactSuggestion?
 
   @@unique([projectVersionId, code])
   @@index([projectVersionId, topicCode])
   @@index([sourceDocumentId])
+  @@index([sourceOfficialUrlId])
   @@map("training_facts")
 }
 
@@ -1280,15 +1315,159 @@ model TrainingSourceDocument {
   createdAt              DateTime                       @default(now()) @map("created_at")
   updatedAt              DateTime                       @updatedAt @map("updated_at")
 
-  projectVersion TrainingProjectVersion @relation(fields: [projectVersionId], references: [id], onDelete: Cascade)
-  file           File                   @relation(fields: [fileId], references: [id], onDelete: Restrict)
-  facts          TrainingFact[]
+  projectVersion             TrainingProjectVersion              @relation(fields: [projectVersionId], references: [id], onDelete: Cascade)
+  file                       File                                @relation(fields: [fileId], references: [id], onDelete: Restrict)
+  facts                      TrainingFact[]
+  factSuggestionProviderRuns TrainingFactSuggestionProviderRun[]
 
   @@unique([projectVersionId, fileId])
   @@unique([projectVersionId, checksum])
   @@index([fileId])
   @@index([projectVersionId, extractionStatus])
   @@map("training_source_documents")
+}
+
+model TrainingOfficialUrlSource {
+  id                     String                         @id @default(uuid()) @db.Uuid
+  projectVersionId       String                         @map("project_version_id") @db.Uuid
+  confirmedById          String                         @map("confirmed_by_id") @db.Uuid
+  snapshotFileId         String?                        @map("snapshot_file_id") @db.Uuid
+  url                    String                         @db.VarChar(2048)
+  normalizedUrl          String                         @map("normalized_url") @db.VarChar(2048)
+  finalUrl               String?                        @map("final_url") @db.VarChar(2048)
+  hostname               String                         @db.VarChar(253)
+  fetchGeneration        Int                            @default(1) @map("fetch_generation")
+  extractionStatus       TrainingSourceExtractionStatus @default(PENDING) @map("extraction_status")
+  extractedText          String?                        @map("extracted_text")
+  contentHash            String?                        @map("content_hash") @db.Char(64)
+  extractionMetadataJson Json                           @default("{}") @map("extraction_metadata_json")
+  errorCode              String?                        @map("error_code") @db.VarChar(120)
+  errorMessage           String?                        @map("error_message") @db.VarChar(2000)
+  confirmedAt            DateTime                       @default(now()) @map("confirmed_at")
+  fetchedAt              DateTime?                      @map("fetched_at")
+  createdAt              DateTime                       @default(now()) @map("created_at")
+  updatedAt              DateTime                       @updatedAt @map("updated_at")
+
+  projectVersion             TrainingProjectVersion              @relation(fields: [projectVersionId], references: [id], onDelete: Cascade)
+  confirmedBy                User                                @relation("TrainingOfficialUrlConfirmer", fields: [confirmedById], references: [id], onDelete: Restrict)
+  snapshotFile               File?                               @relation("TrainingOfficialUrlSnapshotFile", fields: [snapshotFileId], references: [id], onDelete: Restrict)
+  facts                      TrainingFact[]
+  factSuggestionProviderRuns TrainingFactSuggestionProviderRun[]
+
+  @@unique([projectVersionId, normalizedUrl], map: "uq_training_url_source_version_normalized")
+  @@index([projectVersionId, extractionStatus], map: "idx_training_url_source_version_status")
+  @@index([hostname], map: "idx_training_url_source_hostname")
+  @@index([confirmedById, confirmedAt], map: "idx_training_url_source_confirmer")
+  @@index([snapshotFileId], map: "idx_training_url_source_snapshot_file")
+  @@map("training_official_url_sources")
+}
+
+model TrainingFactSuggestionRun {
+  id                 String                          @id @default(uuid()) @db.Uuid
+  projectVersionId   String                          @map("project_version_id") @db.Uuid
+  createdById        String                          @map("created_by_id") @db.Uuid
+  status             TrainingFactSuggestionRunStatus @default(PENDING)
+  idempotencyKey     String                          @map("idempotency_key") @db.VarChar(128)
+  requestPayloadHash String                          @map("request_payload_hash") @db.Char(64)
+  sourceSnapshotJson Json                            @map("source_snapshot_json")
+  promptVersion      String                          @map("prompt_version") @db.VarChar(64)
+  schemaVersion      String                          @map("schema_version") @db.VarChar(64)
+  errorCode          String?                         @map("error_code") @db.VarChar(120)
+  errorMessage       String?                         @map("error_message") @db.VarChar(2000)
+  startedAt          DateTime?                       @map("started_at")
+  completedAt        DateTime?                       @map("completed_at")
+  createdAt          DateTime                        @default(now()) @map("created_at")
+  updatedAt          DateTime                        @updatedAt @map("updated_at")
+
+  projectVersion TrainingProjectVersion              @relation(fields: [projectVersionId], references: [id], onDelete: Cascade)
+  createdBy      User                                @relation("TrainingFactSuggestionRunCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  providerRuns   TrainingFactSuggestionProviderRun[]
+  suggestions    TrainingFactSuggestion[]
+
+  @@unique([projectVersionId, createdById, idempotencyKey], map: "uq_training_fact_suggestion_run_key")
+  @@index([projectVersionId, status, createdAt], map: "idx_training_fact_suggestion_run_status")
+  @@index([createdById, createdAt], map: "idx_training_fact_suggestion_run_creator")
+  @@map("training_fact_suggestion_runs")
+}
+
+model TrainingFactSuggestionProviderRun {
+  id                  String                    @id @default(uuid()) @db.Uuid
+  projectVersionId    String                    @map("project_version_id") @db.Uuid
+  suggestionRunId     String                    @map("suggestion_run_id") @db.Uuid
+  sourceDocumentId    String?                   @map("source_document_id") @db.Uuid
+  sourceOfficialUrlId String?                   @map("source_official_url_id") @db.Uuid
+  chunkIndex          Int                       @map("chunk_index")
+  status              TrainingProviderRunStatus @default(PENDING)
+  idempotencyKey      String                    @unique @map("idempotency_key") @db.VarChar(240)
+  requestedModelId    String                    @map("requested_model_id") @db.VarChar(120)
+  actualModelId       String?                   @map("actual_model_id") @db.VarChar(120)
+  reasoningEffort     String?                   @map("reasoning_effort") @db.VarChar(32)
+  sourceContentHash   String                    @map("source_content_hash") @db.Char(64)
+  inputHash           String                    @map("input_hash") @db.Char(64)
+  inputMetadataJson   Json                      @default("{}") @map("input_metadata_json")
+  promptVersion       String                    @map("prompt_version") @db.VarChar(64)
+  schemaVersion       String                    @map("schema_version") @db.VarChar(64)
+  requestId           String?                   @map("request_id") @db.VarChar(160)
+  responseStatus      String?                   @map("response_status") @db.VarChar(64)
+  responseHash        String?                   @map("response_hash") @db.Char(64)
+  providerUsageJson   Json?                     @map("provider_usage_json")
+  latencyMs           Int?                      @map("latency_ms")
+  retryCount          Int                       @default(0) @map("retry_count")
+  errorCode           String?                   @map("error_code") @db.VarChar(120)
+  errorClass          String?                   @map("error_class") @db.VarChar(120)
+  ambiguousOutcome    Boolean                   @default(false) @map("ambiguous_outcome")
+  startedAt           DateTime?                 @map("started_at")
+  completedAt         DateTime?                 @map("completed_at")
+  createdAt           DateTime                  @default(now()) @map("created_at")
+  updatedAt           DateTime                  @updatedAt @map("updated_at")
+
+  projectVersion    TrainingProjectVersion     @relation(fields: [projectVersionId], references: [id], onDelete: Cascade)
+  suggestionRun     TrainingFactSuggestionRun  @relation(fields: [suggestionRunId], references: [id], onDelete: Cascade)
+  sourceDocument    TrainingSourceDocument?    @relation(fields: [sourceDocumentId], references: [id], onDelete: NoAction)
+  sourceOfficialUrl TrainingOfficialUrlSource? @relation(fields: [sourceOfficialUrlId], references: [id], onDelete: NoAction)
+  suggestions       TrainingFactSuggestion[]
+
+  @@index([suggestionRunId, status, createdAt], map: "idx_training_fact_provider_run_status")
+  @@index([projectVersionId, status, updatedAt], map: "idx_training_fact_provider_version_status")
+  @@index([sourceDocumentId], map: "idx_training_fact_provider_document")
+  @@index([sourceOfficialUrlId], map: "idx_training_fact_provider_url")
+  @@index([requestId], map: "idx_training_fact_provider_request")
+  @@map("training_fact_suggestion_provider_runs")
+}
+
+model TrainingFactSuggestion {
+  id                  String                       @id @default(uuid()) @db.Uuid
+  projectVersionId    String                       @map("project_version_id") @db.Uuid
+  suggestionRunId     String                       @map("suggestion_run_id") @db.Uuid
+  providerRunId       String                       @map("provider_run_id") @db.Uuid
+  suggestionIndex     Int                          @map("suggestion_index")
+  status              TrainingFactSuggestionStatus @default(PENDING)
+  suggestedCode       String                       @map("suggested_code") @db.VarChar(120)
+  topicCode           String                       @map("topic_code") @db.VarChar(120)
+  statement           String
+  acceptedAliasesJson Json                         @default("[]") @map("accepted_aliases_json")
+  importance          Int                          @default(1)
+  sourceQuote         String                       @map("source_quote")
+  sourceLocatorJson   Json                         @map("source_locator_json")
+  sourceContentHash   String                       @map("source_content_hash") @db.Char(64)
+  acceptedFactId      String?                      @unique @map("accepted_fact_id") @db.Uuid
+  reviewedById        String?                      @map("reviewed_by_id") @db.Uuid
+  reviewedAt          DateTime?                    @map("reviewed_at")
+  reviewComment       String?                      @map("review_comment") @db.VarChar(2000)
+  createdAt           DateTime                     @default(now()) @map("created_at")
+  updatedAt           DateTime                     @updatedAt @map("updated_at")
+
+  projectVersion TrainingProjectVersion            @relation(fields: [projectVersionId], references: [id], onDelete: Cascade)
+  suggestionRun  TrainingFactSuggestionRun         @relation(fields: [suggestionRunId], references: [id], onDelete: Cascade)
+  providerRun    TrainingFactSuggestionProviderRun @relation(fields: [providerRunId], references: [id], onDelete: Cascade)
+  acceptedFact   TrainingFact?                     @relation(fields: [acceptedFactId], references: [id], onDelete: Restrict)
+  reviewedBy     User?                             @relation("TrainingFactSuggestionReviewer", fields: [reviewedById], references: [id], onDelete: Restrict)
+
+  @@unique([providerRunId, suggestionIndex], map: "uq_training_fact_suggestion_provider_index")
+  @@index([suggestionRunId, status, createdAt], map: "idx_training_fact_suggestion_item_run_status")
+  @@index([projectVersionId, status, createdAt], map: "idx_training_fact_suggestion_version_status")
+  @@index([reviewedById, reviewedAt], map: "idx_training_fact_suggestion_reviewer")
+  @@map("training_fact_suggestions")
 }
 
 model TrainingTelegramAccount {
@@ -1330,17 +1509,17 @@ model TrainingLinkToken {
 }
 
 model TrainingPolicyVersion {
-  id             String                     @id @default(uuid()) @db.Uuid
-  version        String                     @unique @db.VarChar(64)
-  title          String                     @db.VarChar(240)
+  id             String   @id @default(uuid()) @db.Uuid
+  version        String   @unique @db.VarChar(64)
+  title          String   @db.VarChar(240)
   body           String
-  checksum       String                     @unique @db.VarChar(64)
-  effectiveAt    DateTime                   @map("effective_at")
-  isActive       Boolean                    @default(false) @map("is_active")
-  approvalStatus String                     @map("approval_status") @db.VarChar(64)
-  createdById    String?                    @map("created_by_id") @db.Uuid
-  createdAt      DateTime                   @default(now()) @map("created_at")
-  updatedAt      DateTime                   @updatedAt @map("updated_at")
+  checksum       String   @unique @db.VarChar(64)
+  effectiveAt    DateTime @map("effective_at")
+  isActive       Boolean  @default(false) @map("is_active")
+  approvalStatus String   @map("approval_status") @db.VarChar(64)
+  createdById    String?  @map("created_by_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
 
   createdBy   User?                      @relation("TrainingPolicyVersionCreator", fields: [createdById], references: [id], onDelete: SetNull)
   acceptances TrainingPolicyAcceptance[]

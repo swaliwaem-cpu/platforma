@@ -8,6 +8,7 @@ const followUpQuestionId = '44444444-4444-4444-8444-444444444444';
 const factId = '55555555-5555-4555-8555-555555555555';
 const mainCriterionId = '66666666-6666-4666-8666-666666666666';
 const followUpCriterionId = '77777777-7777-4777-8777-777777777777';
+const suggestionId = '88888888-8888-4888-8888-888888888888';
 
 test('master-detail keeps drafts mounted and aligns every checkbox with its copy', async ({
   page,
@@ -15,6 +16,15 @@ test('master-detail keeps drafts mounted and aligns every checkbox with its copy
   await installEditorApi(page);
   await page.goto(`/admin/training/${projectId}/edit`);
   await expect(page.getByRole('heading', { name: 'Карточка проекта' })).toBeVisible();
+  const suggestionsStepLabel = page
+    .locator('.training-wizard-step-copy strong')
+    .filter({ hasText: 'Предложенные факты' });
+  await expect(suggestionsStepLabel).toBeVisible();
+  expect(
+    await suggestionsStepLabel.evaluate(
+      (element) => element.scrollWidth <= element.clientWidth + 1,
+    ),
+  ).toBe(true);
 
   const titleInput = page.getByLabel('Название');
   await titleInput.fill('Несохранённый локальный заголовок');
@@ -30,13 +40,21 @@ test('master-detail keeps drafts mounted and aligns every checkbox with its copy
     }),
   );
 
-  await page.getByRole('button', { name: 'Дополнительные вопросы' }).click();
+  await page
+    .locator('.training-wizard-step')
+    .filter({ hasText: 'Вопросы' })
+    .click();
   const firstQuestionPanel = page.locator(
     `[data-editor-panel-id="${followUpQuestionId}"]`,
   );
+  const followUpEditor = page.locator('.training-master-detail').filter({
+    has: firstQuestionPanel,
+  });
   const questionTextarea = firstQuestionPanel.getByLabel('Текст вопроса');
   await questionTextarea.fill('Несохранённый текст дополнительного вопроса');
-  await page.getByRole('button', { name: /Добавить вопрос/ }).click();
+  await followUpEditor
+    .getByRole('button', { name: 'Добавить дополнительный вопрос' })
+    .click();
   await expect(firstQuestionPanel).toBeHidden();
   await page.locator(`[data-editor-item-id="${followUpQuestionId}"]`).click();
   await expect(questionTextarea).toHaveValue(
@@ -47,22 +65,35 @@ test('master-detail keeps drafts mounted and aligns every checkbox with its copy
       hasText: 'Активен',
     }),
   );
+  await expect(
+    firstQuestionPanel.getByRole('heading', {
+      name: 'Что реально участвует в оценке',
+    }),
+  ).toBeVisible();
 
-  await page.getByRole('button', { name: 'Факты' }).click();
+  await page
+    .locator('.training-wizard-step')
+    .filter({ hasText: 'Предложенные факты' })
+    .click();
+  const factPanel = page.locator(`[data-editor-panel-id="${factId}"]`);
   await expectCheckboxGeometry(
-    page.locator('.training-choice-row').filter({
+    factPanel.locator('.training-choice-row').filter({
       hasText: 'Главный вопрос',
     }),
   );
   await expectCheckboxGeometry(
-    page.locator('.training-approval').filter({
+    factPanel.locator('.training-approval').filter({
       hasText: 'Факт проверен',
     }),
   );
 
-  await page.getByRole('button', { name: 'Критерии' }).click();
-  const master = page.locator('.training-master-pane');
-  const detail = page.locator('.training-detail-pane');
+  await page
+    .locator('.training-wizard-step')
+    .filter({ hasText: 'Критерии' })
+    .click();
+  const activeStep = page.locator('[data-wizard-step="criteria"]');
+  const master = activeStep.locator('.training-master-pane');
+  const detail = activeStep.locator('.training-detail-pane');
   const [masterBox, detailBox] = await Promise.all([
     master.boundingBox(),
     detail.boundingBox(),
@@ -71,7 +102,7 @@ test('master-detail keeps drafts mounted and aligns every checkbox with its copy
   expect(detailBox).not.toBeNull();
   expect(detailBox!.width).toBeGreaterThan(masterBox!.width * 1.5);
   await expect(
-    page.locator('[data-editor-panel-id]:visible'),
+    activeStep.locator('[data-editor-panel-id]:visible'),
   ).toHaveCount(1);
   await expect(
     page.locator(`[data-editor-item-id="${mainCriterionId}"]`),
@@ -87,24 +118,45 @@ test('mobile editor replaces the rail with a selector and does not overflow', as
 
   await expect(page.locator('.training-master-pane')).toBeHidden();
   await expect(page.locator('.training-master-mobile select')).toBeVisible();
+  const [menuBox, backBox] = await Promise.all([
+    page.locator('.sidebar-toggle').boundingBox(),
+    page.getByRole('button', { name: 'Назад' }).boundingBox(),
+  ]);
+  expect(menuBox).not.toBeNull();
+  expect(backBox).not.toBeNull();
+  expect(
+    menuBox!.x < backBox!.x + backBox!.width &&
+      menuBox!.x + menuBox!.width > backBox!.x &&
+      menuBox!.y < backBox!.y + backBox!.height &&
+      menuBox!.y + menuBox!.height > backBox!.y,
+  ).toBe(false);
 
-  await page.getByRole('button', { name: 'Дополнительные вопросы' }).click();
+  await page.locator('.training-wizard-mobile select').selectOption('questions');
   await expect(
-    page.locator('.training-master-mobile').getByRole('button', {
-      name: 'Добавить вопрос',
-    }),
+    page
+      .locator('.training-master-mobile-action')
+      .filter({ hasText: 'Дополнительные вопросы' })
+      .getByRole('button', {
+        name: 'Добавить дополнительный вопрос',
+      }),
   ).toBeVisible();
 
-  await page.getByRole('button', { name: 'Факты' }).click();
+  await page.locator('.training-wizard-mobile select').selectOption('suggestions');
   await expect(
-    page.locator('.training-master-mobile').getByRole('button', {
+    page
+      .locator('[data-wizard-step="suggestions"]')
+      .locator('.training-master-mobile')
+      .getByRole('button', {
       name: 'Добавить факт',
     }),
   ).toBeVisible();
 
-  await page.getByRole('button', { name: 'Критерии' }).click();
+  await page.locator('.training-wizard-mobile select').selectOption('criteria');
   await expect(
-    page.locator('.training-master-mobile').getByRole('button', {
+    page
+      .locator('[data-wizard-step="criteria"]')
+      .locator('.training-master-mobile')
+      .getByRole('button', {
       name: 'Добавить критерий',
     }),
   ).toHaveCount(2);
@@ -115,17 +167,269 @@ test('mobile editor replaces the rail with a selector and does not overflow', as
   expect(overflow).toBeLessThanOrEqual(1);
 });
 
-test('read-only version keeps master navigation available while fields stay disabled', async ({
+test('published project automatically opens an editable working revision', async ({
   page,
 }) => {
   await installEditorApi(page, 'PUBLISHED');
   await page.goto(`/admin/training/${projectId}/edit`);
 
+  await expect(page.getByText('Рабочая редакция', { exact: true })).toBeVisible();
   const availabilityButton = page.getByRole('button', { name: /Доступность/ });
   await expect(availabilityButton).toBeEnabled();
   await availabilityButton.click();
   await expect(availabilityButton).toHaveAttribute('aria-current', 'true');
-  await expect(page.getByLabel('Доступен с')).toBeDisabled();
+  await expect(page.getByLabel('Доступен с')).toBeEnabled();
+});
+
+test('saving one card keeps another dirty item and publication blocked', async ({
+  page,
+}) => {
+  await installEditorApi(page);
+  await page.goto(`/admin/training/${projectId}/edit`);
+
+  await page.getByLabel('Название').fill('Несохранённое название проекта');
+  await page
+    .locator('.training-wizard-step')
+    .filter({ hasText: 'Вопросы' })
+    .click();
+
+  const questionPanel = page.locator(
+    `[data-editor-panel-id="${followUpQuestionId}"]`,
+  );
+  await questionPanel
+    .getByLabel('Текст вопроса')
+    .fill('Сохранённый текст вопроса');
+  await questionPanel.getByRole('button', { name: 'Сохранить' }).click();
+
+  await page
+    .locator('.training-wizard-step')
+    .filter({ hasText: 'Проверка' })
+    .click();
+  await expect(
+    page.getByText(
+      'Есть несохранённые изменения. Сохраните их перед публикацией.',
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Опубликовать версию' }),
+  ).toBeDisabled();
+  await expect(page.getByText('Сначала сохраните изменения')).toBeVisible();
+});
+
+test('new MAIN and FOLLOW_UP forms have unique ids and cancel clears dirty focusably', async ({
+  page,
+}) => {
+  await installEditorApi(page);
+  await page.goto(`/admin/training/${projectId}/edit/questions`);
+
+  await expect(page.locator('#training-add-question-main')).toHaveCount(0);
+  await expect(
+    page.locator('#training-add-question-main-desktop'),
+  ).toHaveCount(1);
+  await expect(page.locator('#training-add-question-main-mobile')).toHaveCount(
+    1,
+  );
+  await expect(page.locator('#training-add-question-follow_up')).toHaveCount(0);
+  await expect(
+    page.locator('#training-add-question-follow_up-desktop'),
+  ).toHaveCount(1);
+  await expect(
+    page.locator('#training-add-question-follow_up-mobile'),
+  ).toHaveCount(1);
+
+  await page
+    .getByRole('button', { name: 'Добавить главный вопрос' })
+    .click();
+  await page
+    .getByRole('button', { name: 'Добавить дополнительный вопрос' })
+    .click();
+
+  await expect(page.locator('#evaluation-context-new-question-main')).toHaveCount(
+    1,
+  );
+  await expect(
+    page.locator('#evaluation-context-new-question-follow_up'),
+  ).toHaveCount(1);
+  await expect(page.locator('#question-text-new-question-main')).toHaveCount(1);
+  await expect(
+    page.locator('#question-text-new-question-follow_up'),
+  ).toHaveCount(1);
+  expect(
+    await page.evaluate(
+      () =>
+        (document.activeElement as HTMLElement | null)?.dataset.editorPanelId,
+    ),
+  ).toBe('new-question-follow_up');
+
+  const followUpPanel = page.locator(
+    '[data-editor-panel-id="new-question-follow_up"]',
+  );
+  await followUpPanel
+    .getByLabel('Текст вопроса')
+    .fill('Черновик, который отменяем');
+  await followUpPanel.getByRole('button', { name: 'Отмена' }).click();
+  await expect(
+    page.locator(
+      '[data-training-focus-key="training-add-question-follow_up"]:visible',
+    ),
+  ).toBeFocused();
+
+  const mainPanel = page.locator('[data-editor-panel-id="new-question-main"]');
+  await mainPanel.getByRole('button', { name: 'Отмена' }).click();
+  await expect(
+    page.locator(
+      '[data-training-focus-key="training-add-question-main"]:visible',
+    ),
+  ).toBeFocused();
+
+  await page
+    .locator('.training-wizard-step')
+    .filter({ hasText: 'Проверка' })
+    .click();
+  await expect(
+    page.getByText(
+      'Есть несохранённые изменения. Сохраните их перед публикацией.',
+      { exact: true },
+    ),
+  ).toHaveCount(0);
+});
+
+test('dirty editor guards sidebar navigation and restores browser Forward on cancel', async ({
+  page,
+}) => {
+  await installEditorApi(page);
+  await page.goto(`/admin/training/${projectId}/edit`);
+  await page.getByLabel('Название').fill('Черновик перед переходом');
+  await page.getByRole('button', { name: 'Раскрыть меню' }).click();
+
+  page.once('dialog', async (dialog) => {
+    expect(dialog.message()).toContain('Есть несохранённые изменения');
+    await dialog.dismiss();
+  });
+  await page.getByRole('button', { name: 'Админка', exact: true }).click();
+  await expect(page).toHaveURL(
+    new RegExp(`/admin/training/${projectId}/edit/?$`),
+  );
+  await expect(page.getByLabel('Название')).toHaveValue(
+    'Черновик перед переходом',
+  );
+
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: 'Админка', exact: true }).click();
+  await expect(page).toHaveURL(/\/admin$/);
+  await page.goBack();
+  await expect(page).toHaveURL(
+    new RegExp(`/admin/training/${projectId}/edit/?$`),
+  );
+
+  await page.getByLabel('Название').fill('Черновик перед Forward');
+  page.once('dialog', async (dialog) => {
+    expect(dialog.message()).toContain('Есть несохранённые изменения');
+    await dialog.dismiss();
+  });
+  await page.evaluate(() => window.history.forward());
+  await expect(page).toHaveURL(
+    new RegExp(`/admin/training/${projectId}/edit/?$`),
+  );
+  await expect(page.getByLabel('Название')).toHaveValue(
+    'Черновик перед Forward',
+  );
+
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.evaluate(() => window.history.forward());
+  await expect(page).toHaveURL(/\/admin$/);
+});
+
+test('readiness API failure is visible and publication fails closed', async ({
+  page,
+}) => {
+  await installEditorApi(page, 'DRAFT', true);
+  await page.goto(`/admin/training/${projectId}/edit/review`);
+
+  const readinessSummary = page.locator('.training-readiness-summary');
+  await expect(
+    readinessSummary.getByText('Не удалось проверить готовность', {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    readinessSummary.getByText('Публикация заблокирована.', { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText('Можно публиковать')).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: 'Опубликовать версию' }),
+  ).toBeDisabled();
+});
+
+test('deleted questions are pruned without losing valid dirty links', async ({
+  page,
+}) => {
+  await installEditorApi(page, 'DRAFT', false, true);
+  await page.goto(`/admin/training/${projectId}/edit/suggestions`);
+
+  const suggestionPanel = page.locator(
+    `[data-editor-panel-id="${suggestionId}"]`,
+  );
+  const factPanel = page.locator(`[data-editor-panel-id="${factId}"]`);
+  for (const panel of [suggestionPanel, factPanel]) {
+    await panel
+      .locator('.training-choice-row')
+      .filter({ hasText: 'Дополнительный вопрос 1' })
+      .locator('input[type="checkbox"]')
+      .check();
+  }
+  await suggestionPanel
+    .locator('.training-choice-row')
+    .filter({ hasText: 'Главный вопрос' })
+    .locator('input[type="checkbox"]')
+    .check();
+  await expect(
+    page.getByRole('button', { name: /Сначала обработайте предложения: 1/ }),
+  ).toBeDisabled();
+
+  await page
+    .locator('.training-wizard-step')
+    .filter({ hasText: 'Вопросы' })
+    .click();
+  page.once('dialog', (dialog) => dialog.accept());
+  await page
+    .locator(`[data-editor-panel-id="${mainQuestionId}"]`)
+    .getByRole('button', { name: 'Удалить' })
+    .click();
+  await expect(
+    page.locator(`[data-editor-panel-id="${mainQuestionId}"]`),
+  ).toHaveCount(0);
+
+  await page
+    .locator('.training-wizard-step')
+    .filter({ hasText: 'Предложенные факты' })
+    .click();
+  for (const panel of [suggestionPanel, factPanel]) {
+    await expect(
+      panel.getByText('Главный вопрос', { exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      panel
+        .locator('.training-choice-row')
+        .filter({ hasText: 'Дополнительный вопрос 1' })
+        .locator('input[type="checkbox"]'),
+    ).toBeChecked();
+    await expect(
+      panel.getByText('Выбрано 1 из 1', { exact: true }),
+    ).toBeVisible();
+  }
+
+  await page
+    .locator('.training-wizard-step')
+    .filter({ hasText: 'Проверка' })
+    .click();
+  await expect(
+    page.getByText(
+      'Есть несохранённые изменения. Сохраните их перед публикацией.',
+      { exact: true },
+    ),
+  ).toBeVisible();
 });
 
 async function expectCheckboxGeometry(row: ReturnType<Page['locator']>) {
@@ -147,7 +451,11 @@ async function expectCheckboxGeometry(row: ReturnType<Page['locator']>) {
 async function installEditorApi(
   page: Page,
   versionStatus: 'DRAFT' | 'PUBLISHED' = 'DRAFT',
+  readinessFails = false,
+  includePendingSuggestion = false,
 ) {
+  let currentVersionStatus = versionStatus;
+  const deletedQuestionIds = new Set<string>();
   await page.route(`${apiOrigin}/**`, async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/auth/refresh') {
@@ -168,7 +476,24 @@ async function installEditorApi(
       return;
     }
     if (path === `/training/admin/projects/${projectId}`) {
-      await fulfillJson(route, { project: editorProject(versionStatus) });
+      const project = editorProject(currentVersionStatus);
+      const projectVersion = project.versions[0];
+      if (projectVersion) {
+        projectVersion.questions = projectVersion.questions.filter(
+          (question) => !deletedQuestionIds.has(question.id),
+        );
+      }
+      await fulfillJson(route, { project });
+      return;
+    }
+    if (
+      path === `/training/admin/projects/${projectId}/draft-version` &&
+      route.request().method() === 'POST'
+    ) {
+      currentVersionStatus = 'DRAFT';
+      await fulfillJson(route, {
+        version: editorProject('DRAFT').versions[0],
+      });
       return;
     }
     if (path === '/training/admin/real-estate-objects') {
@@ -177,6 +502,61 @@ async function installEditorApi(
     }
     if (path === `/training/admin/versions/${versionId}/documents`) {
       await fulfillJson(route, { items: [] });
+      return;
+    }
+    if (
+      path === `/training/admin/versions/${versionId}/official-url-sources`
+    ) {
+      await fulfillJson(route, { items: [] });
+      return;
+    }
+    if (path === `/training/admin/versions/${versionId}/fact-suggestions`) {
+      await fulfillJson(route, {
+        items: includePendingSuggestion ? [editorSuggestion()] : [],
+      });
+      return;
+    }
+    if (
+      path ===
+      `/training/admin/versions/${versionId}/fact-suggestion-runs/latest`
+    ) {
+      await fulfillJson(route, { run: null });
+      return;
+    }
+    if (path === `/training/admin/versions/${versionId}/readiness`) {
+      if (readinessFails) {
+        await fulfillJson(route, { message: 'Readiness unavailable' }, 503);
+        return;
+      }
+      await fulfillJson(route, { readiness: editorReadiness() });
+      return;
+    }
+    if (
+      path ===
+        `/training/admin/versions/${versionId}/questions/${followUpQuestionId}` &&
+      route.request().method() === 'PATCH'
+    ) {
+      const input = route.request().postDataJSON();
+      await fulfillJson(route, {
+        question: {
+          id: followUpQuestionId,
+          type: 'FOLLOW_UP',
+          text: input.text,
+          position: input.position,
+          isActive: input.isActive,
+          maxScore: 15,
+          topicCodesJson: input.topicCodes,
+        },
+      });
+      return;
+    }
+    if (
+      path ===
+        `/training/admin/versions/${versionId}/questions/${mainQuestionId}` &&
+      route.request().method() === 'DELETE'
+    ) {
+      deletedQuestionIds.add(mainQuestionId);
+      await fulfillJson(route, { deleted: true });
       return;
     }
     await fulfillJson(route, { message: `Unhandled test API route: ${path}` }, 404);
@@ -254,6 +634,7 @@ function editorProject(versionStatus: 'DRAFT' | 'PUBLISHED' = 'DRAFT') {
             acceptedAliasesJson: ['архитектурное бюро'],
             importance: 1,
             sourceDocumentId: null,
+            sourceOfficialUrlId: null,
             sourceLocatorJson: null,
             isApproved: true,
             questionLinks: [{ questionId: mainQuestionId }],
@@ -283,5 +664,58 @@ function editorProject(versionStatus: 'DRAFT' | 'PUBLISHED' = 'DRAFT') {
         ],
       },
     ],
+  };
+}
+
+function editorReadiness() {
+  return {
+    readyToPublish: false,
+    facts: {
+      approved: 1,
+      total: 1,
+      pendingSuggestions: 0,
+      ready: true,
+    },
+    questions: {
+      active: 2,
+      required: 11,
+      mainReady: true,
+      followUpsReady: false,
+      positionsReady: false,
+      ready: false,
+    },
+    criteria: {
+      mainPoints: 55,
+      mainRequired: 55,
+      followUpPoints: 15,
+      followUpRequired: 15,
+      ready: true,
+    },
+    issues: [
+      {
+        code: 'FOLLOW_UP_COUNT',
+        step: 'questions',
+        message: 'Нужно настроить 10 дополнительных вопросов.',
+      },
+    ],
+  };
+}
+
+function editorSuggestion() {
+  return {
+    id: suggestionId,
+    runId: '99999999-9999-4999-8999-999999999999',
+    status: 'PENDING',
+    suggestedCode: 'architecture.style',
+    topicCode: 'architecture',
+    statement: 'Архитектурная концепция формирует узнаваемый образ проекта.',
+    acceptedAliases: [],
+    importance: 1,
+    sourceKind: 'DOCUMENT',
+    sourceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    sourceLocator: { page: 1 },
+    sourceQuote: 'Архитектурная концепция проекта.',
+    acceptedFactId: null,
+    decisionReason: null,
   };
 }
