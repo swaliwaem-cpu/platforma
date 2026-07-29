@@ -6545,6 +6545,9 @@ Production deploy:
   revoke.
 - Training admin переведён на семишаговый мастер с отдельным шагом
   «Участники», searchable keyboard-accessible selectors и явным выбором PDF.
+- `TrainingDocumentWorkerService` зарегистрирован в отдельном
+  `training-worker`: до минимального gate document extraction выполнялся
+  только процессом API и не запускался в изолированном worker-контуре.
 - Новые dependencies не добавлялись.
 
 Проверки:
@@ -6556,10 +6559,57 @@ Production deploy:
   Сохраняется прежнее предупреждение Vite о chunk больше `500 kB`.
 - Clean isolated PostgreSQL: применены все `43` migrations, существующий
   training DB-набор — `100/100`, временная база удалена.
+- Минимальный isolated full-chain E2E после worker-fix — passed: настоящий
+  PDF записан в MinIO и извлечён document worker, проверены provenance
+  `LINKED_OBJECT_PDF`, назначение, отказ неназначенному сотруднику,
+  pin assignment на attempt, переназначение после старта, продолжение уже
+  начатой попытки, optimistic revision conflict, Telegram fake transport,
+  fake OpenAI providers, review, browser UI и CSV.
 - `git diff --check` — passed.
-- Не выполнялись real provider/Telegram, real MinIO linked-PDF, browser,
-  staging и production smoke.
+- Real OpenAI и Telegram delivery не вызывались; isolated gate использовал
+  fake providers/transport. Отдельный staging-контур по решению пользователя
+  заменён минимальным isolated gate.
 
 Production:
 
-- Production не изменялся; deployment и данные не затрагивались.
+- Implementation commit `3eac63a` и worker/E2E fix `9c520e1` отправлены в
+  `origin/on-ser`; production checkout `/opt/platforma` fast-forwarded с
+  `bbd829e` до `9c520e1`.
+- До checkout, build и migration создан rollback-набор
+  `/opt/platforma-deploy-backups/training-linked-assignments-20260729131732-bbd829e96f7a`:
+  PostgreSQL custom dump `49 MB`, `pg_restore --list`, SHA-256
+  `a03394db6bd89a832b8bee661a833c8401511312e8d6b996e2cc12d49a70f15f`,
+  Compose/git/MinIO metadata и rollback tags старых API/web images.
+- Dump успешно восстановлен в отдельную временную БД: `42` migration rows,
+  `34` users, `1` training project, `2` versions, `2` source documents и
+  `0` attempts; временная БД после проверки удалена. Два `files`, попавшие в
+  MVCC snapshot dump, были удалены из активной БД до более позднего live
+  count, остальные контрольные counts совпали.
+- Candidate API/web images собраны на production до переключения. Deployment
+  preflight завершился с exit `0`; initial `migrate status` показал только
+  `20260729160000_add_training_linked_sources_assignments`.
+- Миграция применена через отдельный `prisma migrate deploy`; повторный
+  status подтвердил `43 migrations` и `Database schema is up to date!`.
+  Новые constraints/FK имеют `convalidated=true`.
+- Пересозданы только `api`, `training-worker` и `web`; PostgreSQL, Redis и
+  MinIO не перезапускались. API и worker используют image
+  `sha256:bd20775f47e6...`, web — `sha256:cdefe201a4e3...`; restart count
+  всех трёх равен `0`.
+- Internal health и внешний
+  `https://broker.fluffywhite.moscow/api/health` возвращают HTTP `200` с
+  `status=ok`, `database=ok`, `training=ready`; публичный web возвращает
+  `200`.
+- Новые assignees/linked-PDF endpoints без JWT возвращают `401`; production
+  web bundle содержит `linked-object-pdfs` и `/training/admin/assignees`.
+  Error-scan startup/runtime logs пуст.
+- Worker heartbeats `attempt`, `audio`, `document`, `fact-suggestion`,
+  `official-url`, `telegram` обновляются с возрастом `0–2` секунды. После
+  deploy зарегистрированы два свежих document worker instance: API и
+  выделенный `training-worker`.
+- Единственный production-проект `ЖК TATE` сохранён в состоянии
+  `open/all_eligible`, `audience_revision=0`; assignments и attempts — `0`.
+  В production есть `1` активный аккаунт с `training:take`, у связанного ЖК
+  найден `1` PDF, его объект подтверждён в MinIO.
+- Авторизованный ручной UI-smoke не выполнялся. Нужно проверить создание
+  проекта в админке, выбор PDF связанного ЖК, назначение аккаунта,
+  публикацию и появление аттестации у назначенного пользователя.
