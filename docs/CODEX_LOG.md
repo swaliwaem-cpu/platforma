@@ -6443,10 +6443,10 @@ Production deploy:
 
 - Реальный OpenAI не вызывался; проверен fake/local provider.
 - Реальные внешние сайты застройщиков не загружались в финальном gate.
-- Staging и production в рамках этой задачи не обновлялись.
-- Перед отдельным production deploy нужны backup/migration/status gates и
-  ручной smoke: создание рабочей редакции, несколько файлов, официальный URL,
-  подтверждение/отклонение предложений, readiness и публикация.
+- По прямой команде пользователя rollout выполнен без отдельного staging.
+- После production deploy нужен авторизованный ручной smoke: рабочая редакция,
+  несколько файлов, официальный URL, подтверждение/отклонение предложений,
+  readiness и публикация.
 
 Известные спорные места:
 
@@ -6464,19 +6464,44 @@ Production deploy:
 
 Production deploy:
 
-- Implementation commit `f7b01d5` отправлен в `origin/on-ser`.
+- Implementation commit `f7b01d5` и preflight docs commit `8eee17b`
+  отправлены в `origin/on-ser`.
 - Production preflight на `/opt/platforma` подтвердил: checkout чистый на
-  `a343603`, ветка отстаёт от candidate ровно на один commit; текущие API,
-  PostgreSQL, Redis и MinIO healthy, training worker и web запущены; локальный
-  и публичный health возвращают `status=ok`, `database=ok`,
-  `training=ready`.
+  `a343603`; текущие API, PostgreSQL, Redis и MinIO healthy, training worker
+  и web запущены; локальный и публичный health возвращают `status=ok`,
+  `database=ok`, `training=ready`.
 - `docker-compose.yml` + `docker-compose.production.yml` +
   root-only `.env.production` (`0600`) проходят `docker compose config
   --quiet`; на диске доступно около `68 GB`.
-- Production deploy, backup, migration, rebuild и restart не выполнялись:
-  обязательный `docs/training/go-live-checklist.md` требует отдельного
-  staging-прогона новой миграции, real URL/TLS/DNS и fact-suggestion
-  workflow. Готового staging checkout, Compose-контура или staging-контейнеров
-  на production host не найдено, поэтому результат preflight — `NO-GO`.
-- Production checkout, база и контейнеры после preflight не изменены; на
-  сервере выполнен только `git fetch` для сравнения candidate commit.
+- По прямому решению пользователя отдельный staging-контур не создавался.
+- Перед изменением создан и проверен rollback-набор
+  `/opt/platforma-deploy-backups/training-authoring-20260729T103008Z-a3436031a1af`:
+  PostgreSQL custom dump `49 MB`, `pg_restore --list`, SHA-256
+  `3217ed456b2947ea117dc8b981da95299b3eb00112f6ca98a1fa3ee93e147e3b`,
+  Compose/git/container metadata и три rollback image.
+- Production checkout fast-forwarded с `a343603` до `8eee17b`. Candidate
+  API и web images собраны до переключения трафика; API build включает
+  успешные Prisma generate и TypeScript compile, web — production Vite build.
+- `20260729120000_training_content_creation_workflow` применена через
+  `prisma migrate deploy`. Финальный `migrate status`: `42 migrations`,
+  `Database schema is up to date!`; migration row завершена, не откатана,
+  `applied_steps_count=1`.
+- Пересозданы только `api`, `training-worker` и `web`; PostgreSQL, Redis и
+  MinIO не пересоздавались. API и worker используют один candidate image
+  `sha256:c92b443a15a...`, web —
+  `sha256:3e6b58cfef38...`; restart count всех трёх контейнеров равен `0`.
+- Локальный и публичный health после deploy:
+  `status=ok`, `database=ok`, `training=ready`; публичный web возвращает
+  `200`.
+- Публичные assets `index-DfI1SaaA.js` и `index-Ce_TbOY9.css` содержат новые
+  route/CSS markers: `official-url-sources`, `fact-suggestion-runs`,
+  `/readiness`, `draft-version`, `training-wizard`.
+- Новые защищённые readiness/official URL/fact-suggestion endpoints без JWT
+  возвращают `401`. В PostgreSQL присутствуют новые source/suggestion tables.
+- Worker heartbeats `attempt`, `audio`, `document`, `fact-suggestion`,
+  `official-url`, `telegram` обновляются с возрастом `0–1` секунды; активных
+  `pending/running` jobs после deploy нет, recent error scan пуст.
+- TATE после deploy сохранён в статусе `OPEN`: одна версия, `11` вопросов,
+  `13` фактов. Новых official URL, fact-suggestion runs и suggestions до
+  ручного использования — `0`.
+- Production checkout чистый и синхронный с `origin/on-ser`.
