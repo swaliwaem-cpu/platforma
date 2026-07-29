@@ -6464,4 +6464,19 @@ Production deploy:
 
 Production deploy:
 
-- Не выполнялся. Commit, push и production migration не создавались.
+- Implementation commit `f7b01d5` отправлен в `origin/on-ser`.
+- Production preflight на `/opt/platforma` подтвердил: checkout чистый на
+  `a343603`, ветка отстаёт от candidate ровно на один commit; текущие API,
+  PostgreSQL, Redis и MinIO healthy, training worker и web запущены; локальный
+  и публичный health возвращают `status=ok`, `database=ok`,
+  `training=ready`.
+- `docker-compose.yml` + `docker-compose.production.yml` +
+  root-only `.env.production` (`0600`) проходят `docker compose config
+  --quiet`; на диске доступно около `68 GB`.
+- Production deploy, backup, migration, rebuild и restart не выполнялись:
+  обязательный `docs/training/go-live-checklist.md` требует отдельного
+  staging-прогона новой миграции, real URL/TLS/DNS и fact-suggestion
+  workflow. Готового staging checkout, Compose-контура или staging-контейнеров
+  на production host не найдено, поэтому результат preflight — `NO-GO`.
+- Production checkout, база и контейнеры после preflight не изменены; на
+  сервере выполнен только `git fetch` для сравнения candidate commit.
