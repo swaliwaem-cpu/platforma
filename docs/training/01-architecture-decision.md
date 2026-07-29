@@ -1,8 +1,9 @@
 # Architecture Decision: модуль обучения в существующей Platforma
 
-Дата: 2026-07-25.
+Дата: 2026-07-25; дополнение принято 2026-07-29.
 
-Статус: принято как архитектурная основа; production-реализация не начата.
+Статус: архитектурная основа реализована по этапам 1–10; дополнение
+`linked-object PDF + assignments` принято к реализации.
 
 ## 1. Контекст
 
@@ -208,6 +209,52 @@ OCR не входит в первый MVP.
 
 Конкретная Docker target layout проверяется на этапе 7; отдельный новый
 Dockerfile не создаётся без необходимости.
+
+### ADR-11. Ввести явную аудиторию проекта и M:N назначения
+
+- `TrainingProjectAudienceMode` имеет `ALL_ELIGIBLE | ASSIGNED_ONLY`.
+- Additive migration выставляет существующим проектам `ALL_ELIGIBLE`, чтобы не
+  ломать текущую доступность; новые проекты получают `ASSIGNED_ONLY`.
+- `TrainingProjectAssignment` связывает существующие `User` и
+  `TrainingProject`, поддерживает soft revoke/reactivate и unique
+  `(projectId, userId)`.
+- Пустой active assignment set означает «никому». `ASSIGNED_ONLY` нельзя
+  открыть без хотя бы одного активного, не удалённого пользователя с
+  `training:take`.
+- Назначение следует за текущей active published version при каждом новом
+  старте; созданная attempt по-прежнему pins конкретный version ID.
+- Revoke блокирует новые Platforma/Telegram/deep-link/start flows, но не
+  останавливает уже начатую attempt и не удаляет историю.
+- Audience/assignment mutations используют optimistic `audienceRevision`,
+  canonical no-op idempotency и тот же `user + project` advisory-lock order,
+  что transactional attempt start.
+
+Общий `/users` не переиспользуется: training admin получает узкий eligible
+assignee endpoint под `training:projects:manage`, без расширения `users:read`.
+
+Это изменение несовместимо с assignment-unaware старым API при включённом
+training: старый код интерпретирует все `OPEN` проекты как глобальные и может
+показать `ASSIGNED_ONLY` нецелевым пользователям. После появления таких
+проектов rollback допускается только при `TRAINING_MODULE_ENABLED=false` либо
+на assignment-aware revision; additive tables/columns не удаляются.
+
+### ADR-12. Переиспользовать PDF связанного ЖК как явный source
+
+- Источник выбирается только через принадлежность
+  `RealEstateObject → ObjectFile → File` текущему `realEstateObjectId`.
+- `TrainingSourceDocument` переиспользует существующий `File` и получает
+  `originKind=LINKED_OBJECT_PDF` плюс immutable provenance snapshot. Storage
+  copy не создаётся без доказанной lifecycle-проблемы.
+- Перед attach повторно проверяются ownership, PDF MIME/magic bytes, size и
+  checksum; arbitrary `fileId` не принимается.
+- `PRESENTATION`/`DOCUMENT` отмечаются UI по умолчанию, `FLOOR_PLAN` выбирается
+  вручную.
+- Смена ЖК не удаляет и не перепривязывает прежние sources. Manual upload и
+  official URL остаются отдельными источниками.
+- Выбор ЖК/PDF не запускает OpenAI. Pipeline остаётся:
+  extraction → explicit suggestions → human-approved facts → publish.
+- Многообъектные `ProjectPresentationDocument` исключены из v1 из-за другой
+  семантики snapshot/delete и отсутствия однозначного одного связанного ЖК.
 
 ## 3. Зависимости
 

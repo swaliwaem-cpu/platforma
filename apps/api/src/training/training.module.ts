@@ -6,6 +6,8 @@ import { TrainingAudioAccessService } from './audio/training-audio-access.servic
 import { TrainingAudioConfig } from './audio/training-audio.config';
 import { TrainingAudioController } from './audio/training-audio.controller';
 import { TrainingAdminController } from './training-admin.controller';
+import { TrainingAssignmentsController } from './training-assignments.controller';
+import { TrainingAssignmentsService } from './training-assignments.service';
 import { TrainingAttemptEngineService } from './training-attempt-engine.service';
 import {
   CryptoTrainingQuestionSelector,
@@ -49,6 +51,7 @@ import { TrainingRankingService } from './training-ranking.service';
 import { TrainingResultsService } from './training-results.service';
 import { TrainingDocumentWorkerService } from './training-document-worker.service';
 import { TrainingDocumentsService } from './training-documents.service';
+import { TrainingLinkedObjectSourcesController } from './training-linked-object-sources.controller';
 import {
   TrainingTelegramController,
   TrainingTelegramWebhookController,
@@ -69,6 +72,8 @@ import { TrainingTelegramWorkerService } from './telegram/training-telegram-work
   controllers: [
     TrainingController,
     TrainingAdminController,
+    TrainingAssignmentsController,
+    TrainingLinkedObjectSourcesController,
     TrainingTelegramController,
     TrainingTelegramWebhookController,
     TrainingAudioController,
@@ -85,6 +90,7 @@ import { TrainingTelegramWorkerService } from './telegram/training-telegram-work
     TrainingOperationsService,
     TrainingWorkerHeartbeatService,
     TrainingContentService,
+    TrainingAssignmentsService,
     TrainingDocumentsService,
     TrainingDocumentWorkerService,
     TrainingOfficialUrlSourcesService,

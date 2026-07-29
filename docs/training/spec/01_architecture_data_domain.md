@@ -50,6 +50,7 @@ Separate training worker process
 
 ```text
 TrainingProjectStatus: DRAFT | OPEN | CLOSED | ARCHIVED
+TrainingProjectAudienceMode: ALL_ELIGIBLE | ASSIGNED_ONLY
 TrainingVersionStatus: DRAFT | PUBLISHED | SUPERSEDED
 TrainingQuestionType: MAIN | FOLLOW_UP
 TrainingAttemptStatus:
@@ -71,6 +72,7 @@ TrainingFactVerdict: CORRECT | PARTIAL | MISSING | INCORRECT | UNSUPPORTED
 TrainingReviewStatus: NOT_REQUIRED | PENDING | APPROVED | OVERRIDDEN
 TrainingJobStatus: PENDING | RUNNING | SUCCEEDED | FAILED | DEAD
 TrainingSourceExtractionStatus: PENDING | PROCESSING | READY | NEEDS_MANUAL_TEXT | FAILED
+TrainingSourceOriginKind: UPLOAD | LINKED_OBJECT_PDF
 ```
 
 ## 4.2. Основные модели
@@ -83,6 +85,11 @@ TrainingSourceExtractionStatus: PENDING | PROCESSING | READY | NEEDS_MANUAL_TEXT
 - `title`;
 - `description`;
 - `status`;
+- `audienceMode`:
+  - legacy projects после additive migration получают `ALL_ELIGIBLE`;
+  - новые проекты по умолчанию получают `ASSIGNED_ONLY`;
+- `audienceRevision` для optimistic concurrency административных изменений
+  audience/assignments;
 - `sortOrder`;
 - `availableFrom DateTime?`;
 - `deadlineAt DateTime?`;
@@ -160,11 +167,42 @@ Publication validation: ровно 1 MAIN, ровно 10 FOLLOW_UP.
 - `fileId` relation to existing `File`;
 - `documentType`;
 - `checksum`;
+- `originKind` (`UPLOAD | LINKED_OBJECT_PDF`);
+- `originMetadataJson` immutable snapshot:
+  - для upload: original filename, actor и время загрузки;
+  - для linked PDF: `realEstateObjectId`, object title/slug, `objectFileId`,
+    object file type/title, original filename, actor и время выбора;
 - `extractionStatus`;
 - `extractedText`;
 - `extractionMetadataJson`;
 - `errorMessage`;
 - timestamps.
+
+Linked PDF переиспользует существующий `File`, выбранный только через
+`ObjectFile` текущего связанного ЖК, и после подключения проходит тот же
+extraction/fact-suggestion/human-approval pipeline. Provenance переносится при
+клонировании рабочей версии и не зависит от последующей смены связи проекта с
+ЖК.
+
+### `TrainingProjectAssignment`
+
+M:N access-control связь существующих `TrainingProject` и `User`:
+
+- `projectId`;
+- `userId`;
+- `assignedById`;
+- `assignedAt`;
+- `revokedById?`;
+- `revokedAt?`;
+- timestamps;
+- unique `[projectId, userId]`;
+- indexes для `[userId, revokedAt]` и `[projectId, revokedAt]`.
+
+Повторное назначение реактивирует существующую пару, hard delete не
+используется. Назначение не закрепляет версию: при новом старте используется
+текущая active published version проекта, а созданный `TrainingAttempt`
+фиксирует её ID. Eligible assignment требует активного, не удалённого
+пользователя с `training:take`.
 
 ### `TrainingTelegramAccount`
 
@@ -190,6 +228,8 @@ Publication validation: ровно 1 MAIN, ровно 10 FOLLOW_UP.
 - `userId`;
 - `projectId`;
 - `projectVersionId`;
+- `assignmentId?` snapshot назначения, давшего доступ; legacy/global attempts
+  сохраняют `null`;
 - `attemptNumber`;
 - `status`;
 - `isConsumed` true сразу после подтверждения старта;
@@ -354,19 +394,30 @@ read-scope.
 2. Backend проверяет:
    - Telegram связан;
    - проект открыт и не истёк дедлайн;
+   - `ALL_ELIGIBLE` либо активное назначение пользователя для
+     `ASSIGNED_ONLY`;
+   - пользователь остаётся активным, не удалённым и имеет `training:take`;
    - нет активной попытки;
    - лимит не исчерпан;
    - cooldown прошёл;
    - пересдача после pass разрешена либо проект ещё не пройден.
 3. Бот показывает подтверждение списания попытки.
 4. После нажатия `Начать` в одной транзакции:
+   - повторно проверяется audience/assignment после того же advisory lock
+     `user + project`, который используют assign/revoke;
    - создаётся `TrainingAttempt` с `isConsumed=true`;
    - фиксируется immutable version;
+   - для `ASSIGNED_ONLY` фиксируется `assignmentId`;
    - случайно выбираются 3 разных follow-up из 10;
    - создаются 4 `TrainingAttemptQuestion`;
    - рассчитываются `expiresAt` и `graceExpiresAt`;
    - ставятся jobs предупреждений и таймаута;
    - отправляется главный вопрос.
+
+Снятие назначения, выигравшее гонку до старта, запрещает попытку. Если
+транзакция старта выиграла первой, уже созданная попытка продолжается до
+финализации; revoke влияет только на следующие старты. История, admin results и
+ranking остаются attempt-based и не пересчитываются по текущему assignment.
 
 ## 6.2. Сбор нескольких voice
 

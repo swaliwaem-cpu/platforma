@@ -23,7 +23,7 @@
   только к одному из результатов: изменение вошло до validation либо получило
   conflict; опубликованная версия остаётся валидной и неизменяемой.
 - [ ] Серверный readiness и publish возвращают одинаковые blocking issues.
-- [ ] Мастер проходит все шесть шагов с клавиатуры и на ширинах
+- [ ] Мастер проходит все семь шагов, включая `Участники`, с клавиатуры и на ширинах
   `1440/1024/760/375px`; dirty guard работает для Back, sidebar и закрытия
   страницы.
 
@@ -47,6 +47,28 @@
   запрос автоматически.
 - [ ] Удаление источника во время extraction/provider run блокируется и не
   стирает историю решений каскадом.
+- [ ] Поиск ЖК работает за пределами первых 100 записей, показывает PDF count;
+  `PRESENTATION`/`DOCUMENT` выбраны по умолчанию, `FLOOR_PLAN` — только
+  вручную.
+- [ ] Foreign `objectFileId`, non-PDF, oversize и checksum mismatch
+  отклоняются; повторный attach создаёт один source/job.
+- [ ] Linked PDF сохраняет immutable provenance при clone version и смене ЖК;
+  смена ЖК не удаляет source, manual upload и URL продолжают работать.
+- [ ] Выбор ЖК/PDF не вызывает OpenAI; в scoring попадают только явно
+  подтверждённые и связанные с вопросами факты.
+
+## Audience и назначения
+
+- [ ] Upgrade сохраняет legacy проекты `ALL_ELIGIBLE`; новый проект создаётся
+  `ASSIGNED_ONLY`, пустой assignment set не позволяет открыть его.
+- [ ] Eligible selector исключает inactive/deleted/без `training:take`;
+  concurrent edit даёт controlled revision conflict без потерянного update.
+- [ ] Test employee A видит/запускает назначенный проект в Platforma и
+  Telegram; B не видит и получает neutral deny для direct link/stale callback.
+- [ ] Реальная PostgreSQL race `start ↔ revoke` не создаёт unauthorized
+  attempt; уже созданная attempt завершается после revoke, история сохраняется.
+- [ ] Старый assignment-unaware API не присутствует в rotation; rollback с
+  включённым training выполняется только на assignment-aware revision.
 
 ## Phase A: Telegram real, OpenAI fake
 

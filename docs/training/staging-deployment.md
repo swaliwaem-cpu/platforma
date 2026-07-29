@@ -1,6 +1,6 @@
 # Training staging deployment
 
-Дата актуализации: 2026-07-28.
+Дата актуализации: 2026-07-29.
 
 Runbook подготовлен этапом 10, но staging deploy не выполнялся. Staging
 обязан использовать отдельные PostgreSQL database, MinIO/S3 buckets,
@@ -125,9 +125,36 @@ pnpm --filter @platforma/api training:telegram:webhook:delete
 register. Token/secret не печатать и ротировать через BotFather/secret store
 при подозрении на компрометацию.
 
+## Rollout linked-object PDF и assignments
+
+До включения новой revision:
+
+1. Снять backup и inventory counts проектов, assignments, attempts,
+   `ObjectFile/File` и training sources.
+2. Применить additive migration с training disabled и проверить:
+   legacy проекты = `ALL_ELIGIBLE`, новые default = `ASSIGNED_ONLY`, legacy
+   attempts сохраняют nullable assignment snapshot.
+3. Поднять только assignment-aware API/worker/web одной revision. Старый API
+   не должен работать с включённым training после появления
+   `ASSIGNED_ONLY`-проектов.
+4. На staging создать новый `ASSIGNED_ONLY` проект, назначить test employee A
+   и убедиться, что test employee B не видит и не запускает его через
+   Platforma, Telegram, stale callback или deep-link.
+5. Подключить один реальный PDF выбранного связанного ЖК, проверить
+   provenance, extraction и отсутствие OpenAI до отдельной команды
+   suggestions.
+6. Только после focused smoke включать training для пилотной группы.
+
+Emergency rollback: сначала `TRAINING_MODULE_ENABLED=false`, затем откат на
+совместимую assignment-aware revision. Additive audience/assignment/provenance
+таблицы и колонки не удалять.
+
 ## Stop conditions
 
 Остановить проверку и оставить `TRAINING_MODULE_ENABLED=false`, если policy не
 утверждена, backup не проверен, privacy probe неоднозначен, worker heartbeat
 отсутствует, webhook secret не проходит, есть DEAD jobs либо synthetic
 OpenAI smoke/calibration не завершены.
+Дополнительно остановиться, если legacy audience backfill неверен,
+`ASSIGNED_ONLY` доступен без назначения, assignment-unaware image остаётся в
+rotation либо linked PDF provenance/checksum не подтверждены.

@@ -20,6 +20,7 @@ export const trainingWizardSteps: Array<
   { id: 'main', label: 'Основные данные' },
   { id: 'sources', label: 'Источники' },
   { id: 'suggestions', label: 'Предложенные факты' },
+  { id: 'assignments', label: 'Участники' },
   { id: 'questions', label: 'Вопросы' },
   { id: 'criteria', label: 'Критерии' },
   { id: 'review', label: 'Проверка' },

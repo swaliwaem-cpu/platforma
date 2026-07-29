@@ -25,6 +25,10 @@ const wizardSource = readFileSync(
   resolve(currentDir, '../src/training/TrainingWizardNav.tsx'),
   'utf8',
 );
+const pickerSource = readFileSync(
+  resolve(currentDir, '../src/training/TrainingSearchPicker.tsx'),
+  'utf8',
+);
 const readinessSource = readFileSync(
   resolve(currentDir, '../src/training/TrainingReadiness.tsx'),
   'utf8',
@@ -42,11 +46,12 @@ const sharedApiSource = readFileSync(
   'utf8',
 );
 
-test('training admin exposes the six-step project setup wizard', () => {
+test('training admin exposes the seven-step project setup wizard', () => {
   for (const label of [
     'Основные данные',
     'Источники',
     'Предложенные факты',
+    'Участники',
     'Вопросы',
     'Критерии',
     'Проверка',
@@ -54,6 +59,7 @@ test('training admin exposes the six-step project setup wizard', () => {
     assert.match(wizardSource, new RegExp(`label: '${label}'`));
   }
   assert.match(pageSource, /data-wizard-step="main"/);
+  assert.match(pageSource, /data-wizard-step="assignments"/);
   assert.match(pageSource, /hidden=\{activeStep !== 'questions'\}/);
   assert.match(wizardSource, /aria-current=\{current \? 'step' : undefined\}/);
 });
@@ -69,7 +75,7 @@ test('training admin uses AdminUi, shadcn fields and the existing apiRequest cli
 
 test('project editor supports working-revision CRUD, optional object links and strict publication', () => {
   assert.match(apiSource, /realEstateObjectId:\s*string \| null/);
-  assert.match(apiSource, /\/real-estate-objects\?limit=100/);
+  assert.match(apiSource, /\/real-estate-objects\?\$\{query\.toString\(\)\}/);
   assert.match(apiSource, /\/draft-version/);
   assert.match(apiSource, /\/questions/);
   assert.match(apiSource, /\/facts/);
@@ -103,6 +109,49 @@ test('source UI covers bounded batch upload, URL snapshots and protected documen
   assert.match(pageSource, /Подтверждаю официальный домен/);
   assert.match(pageSource, /Официальная ссылка/);
   assert.match(pageSource, /сохранённый снимок официальной страницы/);
+});
+
+test('linked object PDF sources are explicit, eligible and use the existing document pipeline', () => {
+  assert.match(apiSource, /\/linked-object-pdfs/);
+  assert.match(apiSource, /\/documents\/from-linked-object/);
+  assert.match(apiSource, /eligible:\s*boolean/);
+  assert.match(apiSource, /eligibilityError:\s*string \| null/);
+  assert.match(pageSource, /PDF связанного ЖК/);
+  assert.match(pageSource, /импорт не запускается автоматически/);
+  assert.match(pageSource, /!pdf\.eligible/);
+  assert.match(pageSource, /pdf\.recommendedByDefault/);
+  assert.match(pageSource, /Добавить выбранные PDF/);
+  assert.match(stylesSource, /\.training-linked-pdf-panel/);
+});
+
+test('project assignments support explicit audience and remain editable outside archive', () => {
+  assert.match(apiSource, /\/assignees\?/);
+  assert.match(apiSource, /\/projects\/\$\{encodeURIComponent\(projectId\)\}\/assignments/);
+  assert.match(apiSource, /\/projects\/\$\{encodeURIComponent\(projectId\)\}\/audience/);
+  assert.match(pageSource, /Только назначенные аккаунты/);
+  assert.match(pageSource, /Все сотрудники с правом обучения/);
+  assert.match(pageSource, /readOnly=\{project\.status === 'ARCHIVED'\}/);
+  assert.match(pageSource, /activeStep === 'assignments'/);
+  assert.match(pageSource, /activeStep !== 'assignments'/);
+  assert.match(pageSource, /assignmentSummary\.eligibleTotal/);
+  assert.match(pageSource, /Для открытия назначьте хотя бы один подходящий аккаунт/);
+  assert.match(stylesSource, /\.training-audience-modes/);
+  assert.match(stylesSource, /\.training-assignment-list/);
+});
+
+test('training search picker exposes keyboard and screen-reader combobox semantics', () => {
+  assert.match(pickerSource, /role="combobox"/);
+  assert.match(pickerSource, /role="listbox"/);
+  assert.match(pickerSource, /role="option"/);
+  assert.match(pickerSource, /aria-activedescendant/);
+  assert.match(pickerSource, /aria-multiselectable/);
+  assert.match(pickerSource, /event\.key === 'ArrowDown'/);
+  assert.match(pickerSource, /event\.key === 'Escape'/);
+  assert.match(pickerSource, /event\.key === 'Home'/);
+  assert.match(pickerSource, /event\.key === 'End'/);
+  assert.match(stylesSource, /\.training-picker-control[\s\S]*min-height: 44px/);
+  assert.match(stylesSource, /\.training-picker-option[\s\S]*min-height: 52px/);
+  assert.match(stylesSource, /\.training-picker-control:focus-within/);
 });
 
 test('fact suggestions require explicit administrator acceptance or a rejection reason', () => {
@@ -139,6 +188,8 @@ test('training admin layout is responsive and respects reduced motion', () => {
   assert.match(stylesSource, /\.training-wizard-mobile/);
   assert.match(stylesSource, /\.training-evaluation-context-grid/);
   assert.match(stylesSource, /\.training-master-add[\s\S]*width: 44px/);
+  assert.match(stylesSource, /\.training-search-picker/);
+  assert.match(stylesSource, /\.training-picker-popover/);
 });
 
 test('editor uses an accessible master-detail pattern without unmounting drafts', () => {

@@ -1,6 +1,7 @@
 import {
   AlertCircleIcon,
   ArrowLeftIcon,
+  Building2Icon,
   CheckCircle2Icon,
   DownloadIcon,
   EyeIcon,
@@ -13,6 +14,7 @@ import {
   SparklesIcon,
   Trash2Icon,
   UploadIcon,
+  UsersIcon,
 } from 'lucide-react';
 import {
   type ChangeEvent,
@@ -52,6 +54,7 @@ import {
 } from '../components/ui/table';
 import {
   acceptTrainingFactSuggestion,
+  attachTrainingLinkedObjectPdfs,
   changeTrainingProjectStatus,
   createTrainingFactSuggestionRun,
   createTrainingOfficialUrlSource,
@@ -64,16 +67,20 @@ import {
   deleteTrainingQuestion,
   downloadTrainingDocument,
   getLatestTrainingFactSuggestionRun,
+  getTrainingProjectAssignments,
   getTrainingDocumentText,
   getTrainingOfficialUrlSourceText,
   getTrainingProject,
   getTrainingReadiness,
+  listTrainingAssignees,
   listTrainingFactSuggestions,
   listTrainingDocuments,
+  listTrainingLinkedObjectPdfs,
   listTrainingOfficialUrlSources,
   listTrainingObjects,
   listTrainingProjects,
   publishTrainingVersion,
+  replaceTrainingProjectAssignments,
   rejectTrainingFactSuggestion,
   retryTrainingDocument,
   retryTrainingOfficialUrlSource,
@@ -83,10 +90,14 @@ import {
   type TrainingCriterion,
   type TrainingCriterionAnchor,
   type TrainingDocument,
+  type TrainingAssignmentCandidate,
+  type TrainingAssignmentSummary,
+  type TrainingAudienceMode,
   type TrainingFact,
   type TrainingFactSuggestion,
   type TrainingFactSuggestionRun,
   type TrainingOfficialUrlSource,
+  type TrainingLinkedObjectPdf,
   type TrainingProject,
   type TrainingQuestion,
   type TrainingQuestionType,
@@ -95,12 +106,17 @@ import {
   type TrainingVersion,
   type TrainingWizardStep,
   updateTrainingDocumentText,
+  updateTrainingProjectAudience,
   updateTrainingProject,
   updateTrainingVersion,
   uploadTrainingDocument,
 } from './trainingAdminApi';
 import { QuestionEvaluationContext } from './QuestionEvaluationContext';
 import { TrainingReadinessSummary } from './TrainingReadiness';
+import {
+  TrainingSearchPicker,
+  type TrainingSearchPickerOption,
+} from './TrainingSearchPicker';
 import {
   trainingWizardSteps,
   TrainingWizardNav,
@@ -186,7 +202,7 @@ export function TrainingAdminPage({
   onBack,
 }: TrainingAdminPageProps) {
   const editorMatch = pathname.match(
-    /^\/admin\/training\/([0-9a-f-]+)\/edit(?:\/(main|sources|suggestions|questions|criteria|review))?\/?$/iu,
+    /^\/admin\/training\/([0-9a-f-]+)\/edit(?:\/(main|sources|suggestions|assignments|questions|criteria|review))?\/?$/iu,
   );
 
   if (pathname === '/admin/training/new') {
@@ -391,7 +407,7 @@ function TrainingProjectCreatePage({
 
   useEffect(() => {
     if (!accessToken) return;
-    void listTrainingObjects(accessToken)
+    void listTrainingObjects(accessToken, { hasPdf: true, page: 1, limit: 20 })
       .then((response) => setObjects(response.items))
       .catch(() => setObjects([]));
   }, [accessToken]);
@@ -432,9 +448,12 @@ function TrainingProjectCreatePage({
         <AdminPanel className="training-section-panel">
           {serverError ? <AdminAlert tone="error">{serverError}</AdminAlert> : null}
           <ProjectAndSettingsFields
+            token={accessToken ?? ''}
             form={form}
             errors={errors}
             objects={objects}
+            initialObject={null}
+            disabled={false}
             onChange={setForm}
           />
           <div className="training-form-actions">
@@ -488,6 +507,8 @@ function TrainingProjectEditorPage({
     total: number;
     pending: number;
   } | null>(null);
+  const [assignmentSummary, setAssignmentSummary] =
+    useState<TrainingAssignmentSummary | null>(null);
   const [sourcesRevision, setSourcesRevision] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -511,6 +532,7 @@ function TrainingProjectEditorPage({
     setReadinessError(null);
     setSourceSummary(null);
     setSuggestionSummary(null);
+    setAssignmentSummary(null);
     setSourcesRevision(0);
     setVisitedSteps(new Set([initialStep]));
     ensuredProjectRef.current = null;
@@ -523,12 +545,19 @@ function TrainingProjectEditorPage({
     setLoading(true);
     setError(null);
     try {
-      const [projectResponse, objectResponse] = await Promise.all([
+      const [projectResponse, objectResponse, assignmentResponse] =
+        await Promise.all([
         getTrainingProject(accessToken, projectId),
-        listTrainingObjects(accessToken),
+        listTrainingObjects(accessToken, {
+          hasPdf: true,
+          page: 1,
+          limit: 20,
+        }),
+        getTrainingProjectAssignments(accessToken, projectId),
       ]);
       setProject(projectResponse.project);
       setObjects(objectResponse.items);
+      setAssignmentSummary(assignmentResponse);
       return true;
     } catch (caughtError) {
       setError(getErrorMessage(caughtError));
@@ -613,6 +642,7 @@ function TrainingProjectEditorPage({
       return;
     }
     if (
+      activeStep === 'assignments' ||
       !project ||
       project.status === 'ARCHIVED' ||
       ensuredProjectRef.current === project.id
@@ -620,7 +650,7 @@ function TrainingProjectEditorPage({
       return;
     }
     void ensureWorkingRevision();
-  }, [ensureWorkingRevision, project]);
+  }, [activeStep, ensureWorkingRevision, project]);
 
   const dirtySteps = useMemo(
     () =>
@@ -806,6 +836,7 @@ function TrainingProjectEditorPage({
   }
 
   const needsWorkingRevision =
+    activeStep !== 'assignments' &&
     project.status !== 'ARCHIVED' &&
     !project.versions.some((item) => item.status === 'DRAFT') &&
     ensuredProjectRef.current !== project.id;
@@ -898,6 +929,31 @@ function TrainingProjectEditorPage({
               : suggestionSummary.total > 0
                 ? 'complete'
                 : 'pending',
+        };
+      }
+      if (step.id === 'assignments') {
+        const assignedCount = assignmentSummary?.eligibleTotal ?? 0;
+        const assignedOnly =
+          assignmentSummary?.audienceMode === 'ASSIGNED_ONLY';
+        return {
+          ...step,
+          summary: assignmentSummary
+            ? assignedOnly
+              ? assignedCount > 0
+                ? `${assignedCount} ${pluralizeItems(
+                    assignedCount,
+                    'участник',
+                    'участника',
+                    'участников',
+                  )}`
+                : 'Никто не назначен'
+              : 'Все сотрудники с доступом'
+            : 'Не проверено',
+          state: !assignmentSummary
+            ? 'pending'
+            : assignedOnly && assignedCount === 0
+              ? 'attention'
+              : 'complete',
         };
       }
       if (step.id === 'questions') {
@@ -1021,6 +1077,7 @@ function TrainingProjectEditorPage({
         >
           <TrainingMaterialsSection
             token={accessToken ?? ''}
+            project={project}
             version={version}
             readOnly={readOnly}
             onSummaryChange={setSourceSummary}
@@ -1055,6 +1112,23 @@ function TrainingProjectEditorPage({
             onChanged={reloadAfterChange}
             onDirtyChange={(itemId, dirty) =>
               setDirtyItem('suggestions', itemId, dirty)
+            }
+          />
+        </section>
+      ) : null}
+      {visitedSteps.has('assignments') ? (
+        <section
+          className="training-wizard-panel"
+          data-wizard-step="assignments"
+          hidden={activeStep !== 'assignments'}
+        >
+          <TrainingAssignmentsSection
+            token={accessToken ?? ''}
+            projectId={project.id}
+            readOnly={project.status === 'ARCHIVED'}
+            onSummaryChange={setAssignmentSummary}
+            onDirtyChange={(itemId, dirty) =>
+              setDirtyItem('assignments', itemId, dirty)
             }
           />
         </section>
@@ -1123,6 +1197,7 @@ function TrainingProjectEditorPage({
             readiness={readiness}
             readinessLoading={readinessLoading}
             readinessError={readinessError}
+            assignmentSummary={assignmentSummary}
             readOnly={readOnly}
             hasUnsavedChanges={hasUnsavedChanges}
             onChanged={reloadAfterChange}
@@ -1289,10 +1364,13 @@ function ProjectMainSection({
                 />
                 <fieldset disabled={readOnly} className="training-fieldset">
                   <ProjectAndSettingsFields
+                    token={token}
                     section={section}
                     form={form}
                     errors={errors}
                     objects={objects}
+                    initialObject={project.realEstateObject}
+                    disabled={readOnly}
                     onChange={setForm}
                   />
                 </fieldset>
@@ -1317,17 +1395,155 @@ function ProjectMainSection({
   );
 }
 
+function TrainingLinkedObjectPicker({
+  token,
+  initialOptions,
+  initialSelectedObject,
+  selectedId,
+  disabled,
+  onSelectedIdChange,
+}: {
+  token: string;
+  initialOptions: TrainingRealEstateObject[];
+  initialSelectedObject: TrainingRealEstateObject | null;
+  selectedId: string;
+  disabled: boolean;
+  onSelectedIdChange: (id: string) => void;
+}) {
+  const [objects, setObjects] =
+    useState<TrainingRealEstateObject[]>(initialOptions);
+  const [selectedObjects, setSelectedObjects] = useState<
+    TrainingRealEstateObject[]
+  >(() =>
+    initialSelectedObject && initialSelectedObject.id === selectedId
+      ? [initialSelectedObject]
+      : [],
+  );
+  const [query, setQuery] = useState('');
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(
+    initialOptions.length >= 20 ? 2 : 1,
+  );
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const requestSequenceRef = useRef(0);
+  const firstSearchRef = useRef(true);
+
+  useEffect(() => {
+    setObjects(initialOptions);
+  }, [initialOptions]);
+
+  useEffect(() => {
+    if (!selectedId) {
+      setSelectedObjects([]);
+      return;
+    }
+    const current = selectedObjects.find((object) => object.id === selectedId);
+    if (current) return;
+    const option =
+      objects.find((object) => object.id === selectedId) ??
+      (initialSelectedObject?.id === selectedId ? initialSelectedObject : null);
+    if (option) setSelectedObjects([option]);
+  }, [initialSelectedObject, objects, selectedId, selectedObjects]);
+
+  const loadObjects = useCallback(
+    async (nextPage: number, append: boolean) => {
+      if (!token) return;
+      const requestSequence = requestSequenceRef.current + 1;
+      requestSequenceRef.current = requestSequence;
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await listTrainingObjects(token, {
+          search: query.trim() || undefined,
+          hasPdf: true,
+          page: nextPage,
+          limit: 20,
+        });
+        if (requestSequenceRef.current !== requestSequence) return;
+        setObjects((current) =>
+          append
+            ? mergeTrainingObjects(current, response.items)
+            : response.items,
+        );
+        setPage(response.page);
+        setTotalPages(response.totalPages);
+      } catch (caughtError) {
+        if (requestSequenceRef.current === requestSequence) {
+          setError(getErrorMessage(caughtError));
+        }
+      } finally {
+        if (requestSequenceRef.current === requestSequence) {
+          setLoading(false);
+        }
+      }
+    },
+    [query, token],
+  );
+
+  useEffect(() => {
+    if (firstSearchRef.current && !query) {
+      firstSearchRef.current = false;
+      return;
+    }
+    const timeout = window.setTimeout(() => void loadObjects(1, false), 220);
+    return () => window.clearTimeout(timeout);
+  }, [loadObjects, query]);
+
+  const pickerOptions = objects.map(toLinkedObjectPickerOption);
+  const selectedPickerOptions = selectedObjects.map(
+    toLinkedObjectPickerOption,
+  );
+
+  return (
+    <TrainingSearchPicker
+      id="training-project-object"
+      label="Связанный ЖК"
+      placeholder="Найти ЖК с PDF"
+      emptyLabel="ЖК с доступными PDF не найдены."
+      options={pickerOptions}
+      selectedOptions={selectedPickerOptions}
+      query={query}
+      disabled={disabled}
+      loading={loading}
+      error={error}
+      hasMore={page < totalPages}
+      onQueryChange={setQuery}
+      onLoadMore={() => void loadObjects(page + 1, true)}
+      onRetry={() => void loadObjects(1, false)}
+      onSelectedOptionsChange={(next) => {
+        const selected = next[0];
+        if (!selected) {
+          setSelectedObjects([]);
+          onSelectedIdChange('');
+          return;
+        }
+        const object = objects.find((item) => item.id === selected.id);
+        if (!object) return;
+        setSelectedObjects([object]);
+        onSelectedIdChange(object.id);
+      }}
+    />
+  );
+}
+
 function ProjectAndSettingsFields({
+  token,
   section,
   form,
   errors,
   objects,
+  initialObject,
+  disabled,
   onChange,
 }: {
+  token: string;
   section?: ProjectEditorSection;
   form: ProjectFormState;
   errors: Record<string, string>;
   objects: TrainingRealEstateObject[];
+  initialObject: TrainingRealEstateObject | null;
+  disabled: boolean;
   onChange: (value: ProjectFormState) => void;
 }) {
   const update = <K extends keyof ProjectFormState>(
@@ -1372,23 +1588,20 @@ function ProjectAndSettingsFields({
             <FieldError>{errors.description}</FieldError>
           </Field>
           <Field>
-            <FieldLabel htmlFor="training-project-object">
-              Объект недвижимости
-            </FieldLabel>
-            <select
-              id="training-project-object"
-              className="training-control"
-              value={form.realEstateObjectId}
-              onChange={(event) => update('realEstateObjectId', event.target.value)}
-            >
-              <option value="">Без связи с объектом</option>
-              {objects.map((object) => (
-                <option key={object.id} value={object.id}>
-                  {object.title}
-                </option>
-              ))}
-            </select>
-            <FieldDescription>Связь опциональна и не влияет на структуру оценки.</FieldDescription>
+            <TrainingLinkedObjectPicker
+              token={token}
+              initialOptions={objects}
+              initialSelectedObject={initialObject}
+              selectedId={form.realEstateObjectId}
+              disabled={disabled}
+              onSelectedIdChange={(value) =>
+                update('realEstateObjectId', value)
+              }
+            />
+            <FieldDescription>
+              PDF выбранного ЖК можно явно добавить на шаге «Источники».
+              Сам выбор ничего не импортирует.
+            </FieldDescription>
           </Field>
           <TrainingNumberField
             id="training-project-sort"
@@ -3258,6 +3471,7 @@ type SelectedTrainingSource =
 
 function TrainingMaterialsSection({
   token,
+  project,
   version,
   readOnly,
   onSummaryChange,
@@ -3265,6 +3479,7 @@ function TrainingMaterialsSection({
   onDirtyChange,
 }: {
   token: string;
+  project: TrainingProject;
   version: TrainingVersion;
   readOnly: boolean;
   onSummaryChange: (summary: { total: number; ready: number }) => void;
@@ -3274,6 +3489,12 @@ function TrainingMaterialsSection({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [documents, setDocuments] = useState<TrainingDocument[]>([]);
   const [urlSources, setUrlSources] = useState<TrainingOfficialUrlSource[]>([]);
+  const [linkedObject, setLinkedObject] =
+    useState<TrainingRealEstateObject | null>(project.realEstateObject);
+  const [linkedPdfs, setLinkedPdfs] = useState<TrainingLinkedObjectPdf[]>([]);
+  const [selectedLinkedPdfIds, setSelectedLinkedPdfIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [selected, setSelected] = useState<SelectedTrainingSource | null>(null);
   const [extractedText, setExtractedText] = useState('');
   const [metadata, setMetadata] = useState<unknown>(null);
@@ -3284,27 +3505,76 @@ function TrainingMaterialsSection({
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [urlPending, setUrlPending] = useState(false);
+  const [linkedPdfPending, setLinkedPdfPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [linkedPdfError, setLinkedPdfError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [selectedTextDirty, setSelectedTextDirty] = useState(false);
+  const linkedObjectSelectionRef = useRef<string | null>(null);
   const officialHost = getHttpsHost(urlInput);
 
   const loadSources = useCallback(async () => {
-    try {
-      const [documentResponse, urlResponse] = await Promise.all([
+    const [documentResult, urlResult, linkedPdfResult] =
+      await Promise.allSettled([
         listTrainingDocuments(token, version.id),
         listTrainingOfficialUrlSources(token, version.id),
+        listTrainingLinkedObjectPdfs(token, version.id),
       ]);
-      setDocuments(documentResponse.items);
-      setUrlSources(urlResponse.items);
-      setLoadError(null);
-    } catch (caughtError) {
-      setLoadError(getErrorMessage(caughtError));
-    } finally {
-      setLoading(false);
+
+    if (documentResult.status === 'fulfilled') {
+      setDocuments(documentResult.value.items);
     }
-  }, [token, version.id]);
+    if (urlResult.status === 'fulfilled') {
+      setUrlSources(urlResult.value.items);
+    }
+    if (
+      documentResult.status === 'fulfilled' &&
+      urlResult.status === 'fulfilled'
+    ) {
+      setLoadError(null);
+    } else {
+      const caughtError =
+        documentResult.status === 'rejected'
+          ? documentResult.reason
+          : urlResult.status === 'rejected'
+            ? urlResult.reason
+            : null;
+      setLoadError(getErrorMessage(caughtError));
+    }
+
+    if (linkedPdfResult.status === 'fulfilled') {
+      const response = linkedPdfResult.value;
+      setLinkedObject(response.realEstateObject);
+      setLinkedPdfs(response.items);
+      setLinkedPdfError(null);
+      const nextObjectId = response.realEstateObject?.id ?? 'none';
+      setSelectedLinkedPdfIds((current) => {
+        if (linkedObjectSelectionRef.current !== nextObjectId) {
+          linkedObjectSelectionRef.current = nextObjectId;
+          return new Set(
+            response.items
+            .filter(
+              (item) =>
+                  item.eligible &&
+                  item.recommendedByDefault &&
+                  !item.alreadyAttached,
+            )
+              .map((item) => item.objectFileId),
+          );
+        }
+        const available = new Set(
+          response.items
+            .filter((item) => item.eligible && !item.alreadyAttached)
+            .map((item) => item.objectFileId),
+        );
+        return new Set([...current].filter((id) => available.has(id)));
+      });
+    } else {
+      setLinkedPdfError(getErrorMessage(linkedPdfResult.reason));
+    }
+    setLoading(false);
+  }, [project.realEstateObjectId, token, version.id]);
 
   useEffect(() => {
     void loadSources();
@@ -3470,6 +3740,41 @@ function TrainingMaterialsSection({
       setError(getErrorMessage(caughtError));
     } finally {
       setUrlPending(false);
+    }
+  }
+
+  async function attachLinkedPdfs() {
+    const objectFileIds = [...selectedLinkedPdfIds];
+    if (objectFileIds.length === 0) {
+      setError('Выберите хотя бы один PDF связанного ЖК.');
+      return;
+    }
+    setLinkedPdfPending(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await attachTrainingLinkedObjectPdfs(
+        token,
+        version.id,
+        objectFileIds,
+      );
+      setSelectedLinkedPdfIds(new Set());
+      setNotice(
+        response.createdCount > 0
+          ? `${response.createdCount} ${pluralizeItems(
+              response.createdCount,
+              'PDF добавлен',
+              'PDF добавлены',
+              'PDF добавлено',
+            )} и поставлено в очередь.`
+          : 'Выбранные PDF уже добавлены в источники.',
+      );
+      await loadSources();
+      await onChanged();
+    } catch (caughtError) {
+      setError(getErrorMessage(caughtError));
+    } finally {
+      setLinkedPdfPending(false);
     }
   }
 
@@ -3661,6 +3966,121 @@ function TrainingMaterialsSection({
       {error ? <AdminAlert tone="error">{error}</AdminAlert> : null}
       {notice ? <AdminAlert tone="notice">{notice}</AdminAlert> : null}
 
+      <section className="training-linked-pdf-panel">
+        <div className="training-linked-pdf-heading">
+          <div>
+            <span className="training-linked-pdf-icon" aria-hidden="true">
+              <Building2Icon />
+            </span>
+            <div>
+              <h3>PDF связанного ЖК</h3>
+              <p>
+                {linkedObject
+                  ? `${linkedObject.title}. Выберите конкретные файлы — импорт не запускается автоматически.`
+                  : 'Сначала выберите связанный ЖК в «Основных данных».'}
+              </p>
+            </div>
+          </div>
+          {linkedObject ? (
+            <AdminStatusBadge>
+              {linkedPdfs.length}{' '}
+              {pluralizeItems(linkedPdfs.length, 'PDF', 'PDF', 'PDF')}
+            </AdminStatusBadge>
+          ) : null}
+        </div>
+
+        {linkedPdfError ? (
+          <div className="training-linked-pdf-state" role="alert">
+            <span>{linkedPdfError}</span>
+            <AdminButton tone="text" onClick={() => void loadSources()}>
+              <RefreshCwIcon aria-hidden="true" />
+              Повторить
+            </AdminButton>
+          </div>
+        ) : !linkedObject ? (
+          <div className="training-linked-pdf-state">
+            Выбор ЖК сам по себе не добавляет материалы и не запускает AI.
+          </div>
+        ) : linkedPdfs.length === 0 ? (
+          <div className="training-linked-pdf-state">
+            У этого ЖК нет доступных PDF.
+          </div>
+        ) : (
+          <>
+            <div className="training-linked-pdf-list">
+              {linkedPdfs.map((pdf) => {
+                const checked =
+                  pdf.alreadyAttached ||
+                  selectedLinkedPdfIds.has(pdf.objectFileId);
+                const title =
+                  pdf.title ?? pdf.file.originalName ?? 'PDF без названия';
+                return (
+                  <TrainingCheckboxRow
+                    key={pdf.objectFileId}
+                    id={`linked-pdf-${trainingDomSuffix(pdf.objectFileId)}`}
+                    checked={checked}
+                    disabled={
+                      readOnly ||
+                      !pdf.eligible ||
+                      pdf.alreadyAttached ||
+                      linkedPdfPending
+                    }
+                    label={title}
+                    description={`${linkedPdfTypeLabel(pdf.type)} · ${formatBytes(
+                      pdf.file.sizeBytes,
+                    )}${
+                      !pdf.eligible
+                        ? ` · недоступен: ${
+                            pdf.eligibilityError ??
+                            'файл не прошёл проверку'
+                          }`
+                        : pdf.alreadyAttached
+                        ? ' · уже добавлен'
+                        : pdf.recommendedByDefault
+                          ? ' · выбран по умолчанию'
+                          : ' · выберите вручную'
+                    }`}
+                    onChange={(nextChecked) =>
+                      setSelectedLinkedPdfIds((current) => {
+                        const next = new Set(current);
+                        if (nextChecked) next.add(pdf.objectFileId);
+                        else next.delete(pdf.objectFileId);
+                        return next;
+                      })
+                    }
+                  />
+                );
+              })}
+            </div>
+            {!readOnly ? (
+              <div className="training-linked-pdf-actions">
+                <p>
+                  Презентации и документы отмечены заранее. Планировки
+                  добавляются только вручную.
+                </p>
+                <AdminButton
+                  tone="primary"
+                  disabled={
+                    linkedPdfPending || selectedLinkedPdfIds.size === 0
+                  }
+                  onClick={() => void attachLinkedPdfs()}
+                >
+                  {linkedPdfPending ? (
+                    <LoaderCircleIcon
+                      className="training-spin"
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <PlusIcon aria-hidden="true" />
+                  )}
+                  Добавить выбранные PDF
+                </AdminButton>
+              </div>
+            ) : null}
+          </>
+        )}
+      </section>
+
       {addingUrl ? (
         <section className="training-url-source-form">
           <div>
@@ -3780,7 +4200,12 @@ function TrainingMaterialsSection({
               <div className="training-document-info">
                 <strong>{document.file.originalName ?? document.documentType}</strong>
                 <span>
-                  Файл · {document.documentType} ·{' '}
+                  {document.originKind === 'LINKED_OBJECT_PDF'
+                    ? `ЖК · ${
+                        document.originMetadata?.objectTitle ?? 'связанный объект'
+                      }`
+                    : 'Загружен вручную'}{' '}
+                  · {document.documentType} ·{' '}
                   {formatBytes(document.file.sizeBytes)} ·{' '}
                   {document.extractedCharacterCount.toLocaleString('ru-RU')} знаков
                 </span>
@@ -3954,6 +4379,342 @@ function SourceStatus({
   );
 }
 
+function TrainingAssignmentsSection({
+  token,
+  projectId,
+  readOnly,
+  onSummaryChange,
+  onDirtyChange,
+}: {
+  token: string;
+  projectId: string;
+  readOnly: boolean;
+  onSummaryChange: (summary: TrainingAssignmentSummary | null) => void;
+  onDirtyChange: TrainingDirtyChangeHandler;
+}) {
+  const [summary, setSummary] = useState<TrainingAssignmentSummary | null>(null);
+  const [audienceMode, setAudienceMode] =
+    useState<TrainingAudienceMode>('ASSIGNED_ONLY');
+  const [candidates, setCandidates] = useState<TrainingAssignmentCandidate[]>([]);
+  const [selectedCandidates, setSelectedCandidates] = useState<
+    TrainingAssignmentCandidate[]
+  >([]);
+  const [query, setQuery] = useState('');
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const searchSequenceRef = useRef(0);
+  const firstSearchRef = useRef(true);
+
+  const loadAssignments = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [assignmentResponse, candidateResponse] = await Promise.all([
+        getTrainingProjectAssignments(token, projectId),
+        listTrainingAssignees(token, { page: 1, limit: 20 }),
+      ]);
+      const selected = assignmentResponse.items.map((assignment) => ({
+        id: assignment.userId,
+        name: assignment.name,
+        email: assignment.email,
+        status: assignment.status,
+        eligible: assignment.eligible,
+        telegramConnected: assignment.telegramConnected,
+      }));
+      setSummary(assignmentResponse);
+      setAudienceMode(assignmentResponse.audienceMode);
+      setSelectedCandidates(selected);
+      setCandidates(
+        mergeTrainingCandidates(candidateResponse.items, selected),
+      );
+      setPage(candidateResponse.page);
+      setTotalPages(candidateResponse.totalPages);
+      onSummaryChange(assignmentResponse);
+      onDirtyChange('selection', false);
+    } catch (caughtError) {
+      setError(getErrorMessage(caughtError));
+      onSummaryChange(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [onDirtyChange, onSummaryChange, projectId, token]);
+
+  useEffect(() => {
+    void loadAssignments();
+  }, [loadAssignments]);
+
+  const loadCandidates = useCallback(
+    async (nextPage: number, append: boolean) => {
+      const sequence = searchSequenceRef.current + 1;
+      searchSequenceRef.current = sequence;
+      setSearchLoading(true);
+      setError(null);
+      try {
+        const response = await listTrainingAssignees(token, {
+          search: query.trim() || undefined,
+          page: nextPage,
+          limit: 20,
+        });
+        if (searchSequenceRef.current !== sequence) return;
+        setCandidates((current) =>
+          mergeTrainingCandidates(
+            append ? current : [],
+            response.items,
+            selectedCandidates,
+          ),
+        );
+        setPage(response.page);
+        setTotalPages(response.totalPages);
+      } catch (caughtError) {
+        if (searchSequenceRef.current === sequence) {
+          setError(getErrorMessage(caughtError));
+        }
+      } finally {
+        if (searchSequenceRef.current === sequence) {
+          setSearchLoading(false);
+        }
+      }
+    },
+    [query, selectedCandidates, token],
+  );
+
+  useEffect(() => {
+    if (firstSearchRef.current && !query) {
+      firstSearchRef.current = false;
+      return;
+    }
+    const timeout = window.setTimeout(() => void loadCandidates(1, false), 220);
+    return () => window.clearTimeout(timeout);
+  }, [loadCandidates, query]);
+
+  const selectedIds = selectedCandidates.map((candidate) => candidate.id);
+  const originalIds = summary?.items.map((item) => item.userId) ?? [];
+  const dirty =
+    Boolean(summary) &&
+    (audienceMode !== summary?.audienceMode ||
+      !sameStringSet(selectedIds, originalIds));
+
+  function updateSelected(next: TrainingSearchPickerOption[]) {
+    const nextCandidates = next.flatMap((option) => {
+      const candidate =
+        candidates.find((item) => item.id === option.id) ??
+        selectedCandidates.find((item) => item.id === option.id);
+      return candidate ? [candidate] : [];
+    });
+    setSelectedCandidates(nextCandidates);
+    onDirtyChange(
+      'selection',
+      Boolean(summary) &&
+        (audienceMode !== summary?.audienceMode ||
+          !sameStringSet(
+            nextCandidates.map((candidate) => candidate.id),
+            originalIds,
+          )),
+    );
+  }
+
+  function updateAudienceMode(nextMode: TrainingAudienceMode) {
+    setAudienceMode(nextMode);
+    onDirtyChange(
+      'selection',
+      Boolean(summary) &&
+        (nextMode !== summary?.audienceMode ||
+          !sameStringSet(selectedIds, originalIds)),
+    );
+  }
+
+  async function saveAssignments() {
+    if (!summary || !dirty) return;
+    setSaving(true);
+    setError(null);
+    setNotice(null);
+    try {
+      let nextSummary = summary;
+      if (audienceMode !== nextSummary.audienceMode) {
+        nextSummary = await updateTrainingProjectAudience(token, projectId, {
+          audienceMode,
+          expectedRevision: nextSummary.audienceRevision,
+        });
+      }
+      if (
+        !sameStringSet(
+          selectedCandidates.map((candidate) => candidate.id),
+          nextSummary.items.map((item) => item.userId),
+        )
+      ) {
+        nextSummary = await replaceTrainingProjectAssignments(token, projectId, {
+          userIds: selectedCandidates.map((candidate) => candidate.id),
+          expectedRevision: nextSummary.audienceRevision,
+        });
+      }
+      setSummary(nextSummary);
+      setAudienceMode(nextSummary.audienceMode);
+      setSelectedCandidates(
+        nextSummary.items.map((assignment) => ({
+          id: assignment.userId,
+          name: assignment.name,
+          email: assignment.email,
+          status: assignment.status,
+          eligible: assignment.eligible,
+          telegramConnected: assignment.telegramConnected,
+        })),
+      );
+      onSummaryChange(nextSummary);
+      onDirtyChange('selection', false);
+      setNotice('Участники и режим доступа сохранены.');
+    } catch (caughtError) {
+      if (caughtError instanceof ApiRequestError && caughtError.status === 409) {
+        setError(
+          'Список участников изменил другой администратор. Данные обновлены — повторите выбор.',
+        );
+        await loadAssignments();
+      } else {
+        setError(getErrorMessage(caughtError));
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading && !summary) {
+    return (
+      <AdminPanel className="training-section-panel">
+        <TrainingLoading label="Загружаем участников" />
+      </AdminPanel>
+    );
+  }
+
+  return (
+    <AdminPanel className="training-section-panel">
+      <SectionHeading
+        title="Участники аттестации"
+        description="Назначьте один или несколько аккаунтов. Доступ проверяется и в платформе, и при старте через Telegram."
+      />
+      {error ? <AdminAlert tone="error">{error}</AdminAlert> : null}
+      {notice ? <AdminAlert tone="notice">{notice}</AdminAlert> : null}
+
+      <fieldset className="training-audience-modes" disabled={readOnly || saving}>
+        <legend>Кто увидит проект</legend>
+        <TrainingCheckboxRow
+          id="training-audience-assigned"
+          type="radio"
+          name="training-audience-mode"
+          checked={audienceMode === 'ASSIGNED_ONLY'}
+          label="Только назначенные аккаунты"
+          description="Новые проекты используют этот режим. Пустой список означает «никому»."
+          onChange={() => updateAudienceMode('ASSIGNED_ONLY')}
+        />
+        <TrainingCheckboxRow
+          id="training-audience-all"
+          type="radio"
+          name="training-audience-mode"
+          checked={audienceMode === 'ALL_ELIGIBLE'}
+          label="Все сотрудники с правом обучения"
+          description="Совместимый режим для существующих общих проектов."
+          onChange={() => updateAudienceMode('ALL_ELIGIBLE')}
+        />
+      </fieldset>
+
+      <div className="training-assignment-picker">
+        <TrainingSearchPicker
+          id="training-assignee-search"
+          label="Аккаунты для аттестации"
+          placeholder="Имя или email"
+          emptyLabel="Подходящие активные аккаунты не найдены."
+          multiple
+          disabled={readOnly || saving}
+          options={candidates.map(toAssigneePickerOption)}
+          selectedOptions={selectedCandidates.map(toAssigneePickerOption)}
+          query={query}
+          loading={searchLoading}
+          error={error}
+          hasMore={page < totalPages}
+          onQueryChange={setQuery}
+          onSelectedOptionsChange={updateSelected}
+          onLoadMore={() => void loadCandidates(page + 1, true)}
+          onRetry={() => void loadCandidates(1, false)}
+        />
+        <p className="training-assignment-help">
+          {selectedCandidates.length > 0
+            ? `${selectedCandidates.length} ${pluralizeItems(
+                selectedCandidates.length,
+                'аккаунт назначен',
+                'аккаунта назначены',
+                'аккаунтов назначено',
+              )}.`
+            : 'Пока никто не назначен.'}{' '}
+          Telegram не обязателен для назначения.
+        </p>
+      </div>
+
+      {selectedCandidates.length > 0 ? (
+        <ul className="training-assignment-list" aria-label="Назначенные аккаунты">
+          {selectedCandidates.map((candidate) => (
+            <li key={candidate.id}>
+              <span className="training-assignment-avatar" aria-hidden="true">
+                <UsersIcon />
+              </span>
+              <span>
+                <strong>{candidate.name ?? candidate.email}</strong>
+                <small>{candidate.email}</small>
+              </span>
+              <AdminStatusBadge
+                className={
+                  candidate.telegramConnected
+                    ? 'training-assignment-telegram is-connected'
+                    : 'training-assignment-telegram'
+                }
+              >
+                {candidate.telegramConnected
+                  ? 'Telegram подключён'
+                  : 'Без Telegram'}
+              </AdminStatusBadge>
+              {!readOnly ? (
+                <AdminButton
+                  tone="text"
+                  aria-label={`Убрать ${candidate.name ?? candidate.email}`}
+                  disabled={saving}
+                  onClick={() =>
+                    updateSelected(
+                      selectedCandidates
+                        .filter((item) => item.id !== candidate.id)
+                        .map(toAssigneePickerOption),
+                    )
+                  }
+                >
+                  Убрать
+                </AdminButton>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      {!readOnly ? (
+        <div className="training-form-actions">
+          <AdminButton
+            tone="primary"
+            disabled={saving || !dirty}
+            onClick={() => void saveAssignments()}
+          >
+            {saving ? (
+              <LoaderCircleIcon className="training-spin" aria-hidden="true" />
+            ) : (
+              <SaveIcon aria-hidden="true" />
+            )}
+            Сохранить участников
+          </AdminButton>
+        </div>
+      ) : null}
+    </AdminPanel>
+  );
+}
+
 function PublishSection({
   token,
   project,
@@ -3961,6 +4722,7 @@ function PublishSection({
   readiness,
   readinessLoading,
   readinessError,
+  assignmentSummary,
   readOnly,
   hasUnsavedChanges,
   onChanged,
@@ -3972,6 +4734,7 @@ function PublishSection({
   readiness: TrainingReadiness | null;
   readinessLoading: boolean;
   readinessError: string | null;
+  assignmentSummary: TrainingAssignmentSummary | null;
   readOnly: boolean;
   hasUnsavedChanges: boolean;
   onChanged: () => Promise<void>;
@@ -3980,6 +4743,10 @@ function PublishSection({
   const [serverErrors, setServerErrors] = useState<string[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const assignedOnly = assignmentSummary?.audienceMode === 'ASSIGNED_ONLY';
+  const canOpenProject =
+    Boolean(assignmentSummary) &&
+    (!assignedOnly || (assignmentSummary?.eligibleTotal ?? 0) > 0);
   const validation = readiness
     ? readiness.issues.map((issue) => ({
         section: issue.step,
@@ -4134,6 +4901,16 @@ function PublishSection({
               <dt>Проходной балл</dt>
               <dd>{version.passScore} / 100</dd>
             </div>
+            <div>
+              <dt>Доступ</dt>
+              <dd>
+                {assignmentSummary
+                  ? assignedOnly
+                    ? `${assignmentSummary.eligibleTotal} назначено`
+                    : 'Все сотрудники с доступом'
+                  : 'Не удалось проверить'}
+              </dd>
+            </div>
           </dl>
         </section>
       </div>
@@ -4142,13 +4919,17 @@ function PublishSection({
         <section className="training-lifecycle">
           <div>
             <h3>Доступ сотрудникам</h3>
-            <p>Управление состоянием опубликованного проекта.</p>
+            <p>
+              {assignedOnly && !canOpenProject
+                ? 'Для открытия назначьте хотя бы один подходящий аккаунт.'
+                : 'Управление состоянием опубликованного проекта.'}
+            </p>
           </div>
           <div className="training-card-actions">
             {project.status !== 'OPEN' ? (
               <AdminButton
                 tone="success"
-                disabled={pending}
+                disabled={pending || !canOpenProject}
                 onClick={() => void changeStatus('open')}
               >
                 Открыть
@@ -4418,6 +5199,8 @@ function TrainingDetailHeading({
 
 function TrainingCheckboxRow({
   id,
+  type = 'checkbox',
+  name,
   label,
   description,
   checked,
@@ -4427,6 +5210,8 @@ function TrainingCheckboxRow({
   onChange,
 }: {
   id: string;
+  type?: 'checkbox' | 'radio';
+  name?: string;
   label: string;
   description?: string;
   checked: boolean;
@@ -4450,7 +5235,8 @@ function TrainingCheckboxRow({
       <input
         id={id}
         className="training-checkbox-control"
-        type="checkbox"
+        type={type}
+        name={name}
         checked={checked}
         disabled={disabled}
         onChange={(event) => onChange(event.target.checked)}
@@ -4777,6 +5563,79 @@ function translatePublicationError(message: string) {
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Запрос не выполнен';
+}
+
+function mergeTrainingObjects(
+  current: TrainingRealEstateObject[],
+  incoming: TrainingRealEstateObject[],
+) {
+  const objectsById = new Map(
+    current.map((object) => [object.id, object] as const),
+  );
+  for (const object of incoming) {
+    objectsById.set(object.id, object);
+  }
+  return [...objectsById.values()];
+}
+
+function toLinkedObjectPickerOption(
+  object: TrainingRealEstateObject,
+): TrainingSearchPickerOption {
+  const pdfCount = object.eligiblePdfCount ?? object.pdfCount ?? 0;
+  return {
+    id: object.id,
+    label: object.title,
+    description: object.slug,
+    meta: `${pdfCount} ${pluralizeItems(pdfCount, 'PDF', 'PDF', 'PDF')}`,
+  };
+}
+
+function mergeTrainingCandidates(
+  ...candidateGroups: TrainingAssignmentCandidate[][]
+) {
+  const candidatesById = new Map<string, TrainingAssignmentCandidate>();
+  for (const candidates of candidateGroups) {
+    for (const candidate of candidates) {
+      candidatesById.set(candidate.id, candidate);
+    }
+  }
+  return [...candidatesById.values()];
+}
+
+function toAssigneePickerOption(
+  candidate: TrainingAssignmentCandidate,
+): TrainingSearchPickerOption {
+  return {
+    id: candidate.id,
+    label: candidate.name?.trim() || candidate.email,
+    description:
+      candidate.name?.trim() && candidate.name.trim() !== candidate.email
+        ? candidate.email
+        : undefined,
+    meta:
+      candidate.eligible === false
+        ? 'Больше нет права на обучение'
+        : candidate.telegramConnected
+          ? 'Telegram подключён'
+          : 'Без Telegram',
+    disabled: candidate.eligible === false || candidate.status !== 'ACTIVE',
+  };
+}
+
+function sameStringSet(left: string[], right: string[]) {
+  if (left.length !== right.length) return false;
+  const rightSet = new Set(right);
+  return left.every((item) => rightSet.has(item));
+}
+
+function linkedPdfTypeLabel(type: TrainingLinkedObjectPdf['type']) {
+  const labels: Record<TrainingLinkedObjectPdf['type'], string> = {
+    PRESENTATION: 'Презентация',
+    DOCUMENT: 'Документ',
+    FLOOR_PLAN: 'Планировка',
+    OTHER: 'Другой файл',
+  };
+  return labels[type];
 }
 
 function projectErrorSection(

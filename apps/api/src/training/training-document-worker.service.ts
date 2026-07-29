@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import {
   Injectable,
@@ -272,6 +272,10 @@ export class TrainingDocumentWorkerService
     this.claimedDocuments.set(job.id, document.id);
 
     const buffer = await this.files.readStoredFile(document.file);
+    const checksum = createHash('sha256').update(buffer).digest('hex');
+    if (checksum !== document.checksum.toLocaleLowerCase('en-US')) {
+      throw new Error('Stored training document checksum does not match');
+    }
     const extraction = await this.extractors.extract(
       document.documentType,
       buffer,

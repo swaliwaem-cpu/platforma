@@ -7,9 +7,11 @@ import {
 } from '@nestjs/common';
 import {
   Prisma,
+  TrainingProjectAudienceMode,
   TrainingProjectStatus,
   TrainingQuestionType,
   TrainingVersionStatus,
+  UserStatus,
 } from '@prisma/client';
 
 import type { AuthenticatedUser, RequestWithAuth } from '../auth/auth.types';
@@ -29,6 +31,7 @@ import {
   lockTrainingVersionForExclusiveMutation,
   lockTrainingVersionForPublication,
 } from './training-version-lock';
+import { acquireTrainingProjectAudienceLock } from './training-project-access';
 
 const trainingVersionContentInclude = {
   questions: {
@@ -124,6 +127,14 @@ const trainingProjectDetailInclude = {
     orderBy: { versionNumber: 'desc' },
     include: trainingVersionDetailInclude,
   },
+  _count: {
+    select: {
+      attempts: true,
+      assignments: {
+        where: { revokedAt: null },
+      },
+    },
+  },
 } satisfies Prisma.TrainingProjectInclude;
 
 const trainingProjectListInclude = {
@@ -162,6 +173,9 @@ const trainingProjectListInclude = {
   _count: {
     select: {
       attempts: true,
+      assignments: {
+        where: { revokedAt: null },
+      },
     },
   },
 } satisfies Prisma.TrainingProjectInclude;
@@ -308,6 +322,7 @@ export class TrainingContentService {
             slug,
             description,
             realEstateObjectId,
+            audienceMode: TrainingProjectAudienceMode.ASSIGNED_ONLY,
             sortOrder,
             availableFrom,
             deadlineAt,
@@ -1365,6 +1380,9 @@ export class TrainingContentService {
     const projectId = this.parseUuid(id, 'Training project is invalid');
 
     await this.prisma.$transaction(async (tx) => {
+      if (status === TrainingProjectStatus.OPEN) {
+        await acquireTrainingProjectAudienceLock(tx, projectId);
+      }
       await tx.$queryRaw`SELECT "id" FROM "training_projects" WHERE "id" = ${projectId}::uuid FOR UPDATE`;
       const project = await tx.trainingProject.findUnique({
         where: { id: projectId },
@@ -1390,6 +1408,36 @@ export class TrainingContentService {
         assertTrainingAvailability(project.availableFrom, project.deadlineAt);
         if (project.deadlineAt && project.deadlineAt.getTime() <= Date.now()) {
           throw new UnprocessableEntityException('Training project deadline has already passed');
+        }
+        if (
+          project.audienceMode ===
+          TrainingProjectAudienceMode.ASSIGNED_ONLY
+        ) {
+          const eligibleAssignmentCount =
+            await tx.trainingProjectAssignment.count({
+              where: {
+                projectId,
+                revokedAt: null,
+                user: {
+                  status: UserStatus.ACTIVE,
+                  deletedAt: null,
+                  role: {
+                    permissions: {
+                      some: {
+                        permission: {
+                          key: 'training:take',
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            });
+          if (eligibleAssignmentCount === 0) {
+            throw new UnprocessableEntityException(
+              'Assigned-only training project requires at least one eligible assignee',
+            );
+          }
         }
       }
 
@@ -1803,6 +1851,10 @@ export class TrainingContentService {
           projectVersionId: targetVersionId,
           fileId: document.fileId,
           documentType: document.documentType,
+          originKind: document.originKind,
+          originMetadataJson: this.toInputJson(
+            document.originMetadataJson,
+          ),
           checksum: document.checksum,
           extractionStatus: document.extractionStatus,
           extractedText: document.extractedText,
@@ -1997,8 +2049,8 @@ export class TrainingContentService {
     if (id === null) {
       return;
     }
-    const object = await this.prisma.realEstateObject.findUnique({
-      where: { id },
+    const object = await this.prisma.realEstateObject.findFirst({
+      where: { id, deletedAt: null },
       select: { id: true },
     });
     if (!object) {

@@ -19,10 +19,24 @@ POST   /training/projects/:id/start-link
 
 Employee attempt response не должен включать transcript, errors, unsupported claims, audio keys или admin notes.
 
+`GET /training/projects`, project detail, Telegram project list, deep-link и
+финальный transactional start применяют единый audience predicate:
+
+- `ALL_ELIGIBLE` — прежний доступ активного пользователя с `training:take`;
+- `ASSIGNED_ONLY` — только активное назначение этого пользователя.
+
+Неназначенный проект не раскрывается отдельным eligibility reason и
+возвращается как недоступный/`404`. Снятие назначения не скрывает собственную
+историю уже созданных attempts.
+
 ## Admin
 
 ```text
 GET/POST/PATCH /training/admin/projects
+GET            /training/admin/assignees
+GET            /training/admin/projects/:projectId/assignments
+PATCH          /training/admin/projects/:projectId/audience
+PUT            /training/admin/projects/:projectId/assignments
 POST           /training/admin/projects/:id/draft-version
 POST           /training/admin/versions/:id/publish
 POST           /training/admin/projects/:id/open
@@ -32,6 +46,8 @@ CRUD           /training/admin/versions/:id/questions
 CRUD           /training/admin/versions/:id/facts
 CRUD           /training/admin/versions/:id/criteria
 POST           /training/admin/versions/:id/documents
+GET            /training/admin/versions/:id/linked-object-pdfs
+POST           /training/admin/versions/:id/documents/from-linked-object
 GET            /training/admin/results
 GET            /training/admin/results/:attemptId
 POST           /training/admin/results/:attemptId/review
@@ -47,6 +63,29 @@ DELETE         /training/admin/users/:userId/training-data
 `Idempotency-Key`. Server сохраняет canonical payload SHA-256; same key/same
 payload не создаёт повторную review/audit/penalty, same key/different payload
 возвращает `409`.
+
+Assignment endpoints защищаются `training:projects:manage`; общий `/users` и
+permission `users:read` для этого не переиспользуются.
+
+- `GET /training/admin/assignees` возвращает минимальные поля активных,
+  не удалённых пользователей с `training:take`.
+- `PATCH .../audience` принимает `{audienceMode, expectedRevision}`.
+- `PUT .../assignments` принимает `{userIds, expectedRevision}`, атомарно
+  синхронизирует M:N-набор, soft-revoke/reactivate пары и не создаёт
+  повторный audit для canonical no-op.
+- Конфликт `expectedRevision` возвращает `409`; `audienceRevision`
+  увеличивается только при фактическом изменении.
+- Перевод/открытие `ASSIGNED_ONLY` с пустым active eligible set запрещён.
+
+Linked-object source endpoints:
+
+- `GET .../linked-object-pdfs` возвращает только PDF текущего связанного ЖК,
+  provenance-safe metadata и состояние already attached.
+- `POST .../documents/from-linked-object` принимает
+  `{objectFileIds: string[]}`; arbitrary `fileId` не принимается.
+- Существующий `GET /training/admin/real-estate-objects` поддерживает
+  `search`, `page`, `limit`, `hasPdf` и PDF counts, чтобы UI не ограничивался
+  первыми 100 объектами.
 
 ## Integration
 
@@ -66,6 +105,7 @@ POST /training/telegram/webhook
 
 - Telegram connected/not connected;
 - открытые проекты в заданном admin порядке;
+- только проекты, разрешённые их `audienceMode` и assignment;
 - дедлайн;
 - cooldown;
 - pass score;
@@ -90,14 +130,21 @@ POST /training/telegram/webhook
 
 Разделы:
 
-1. Основное и optional связь с ЖК.
+1. Основное, audience mode и optional связь с ЖК.
 2. Доступность, порядок, дедлайн, cooldown, attempts, timer, retake-after-pass.
-3. Материалы.
-4. Главный вопрос.
-5. 10 дополнительных вопросов.
-6. Факты и источники.
+3. Источники: manual upload, official URL и явный выбор PDF связанного ЖК.
+4. Предложения фактов с обязательным решением администратора.
+5. Участники: searchable M:N selector только eligible аккаунтов.
+6. Главный вопрос и 10 дополнительных вопросов.
 7. Критерии и баллы.
-8. Preview/validation/publish.
+8. Preview/validation/publish с audience/assignment/source provenance summary.
+
+Выбор ЖК не запускает импорт или OpenAI. Смена ЖК предупреждает, что ранее
+подключённые sources сохранятся. Selector PDF по умолчанию отмечает
+`PRESENTATION`/`DOCUMENT`, но `FLOOR_PLAN` требует ручного выбора. Selector
+пользователей поддерживает поиск по имени/email, keyboard navigation,
+loading/empty/error states и показывает Telegram readiness только как
+информацию, а не условие назначения.
 
 ## 12.3. Admin results
 

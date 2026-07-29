@@ -1,6 +1,6 @@
 # Training backup, migration and rollback
 
-Дата актуализации: 2026-07-28. Команды production/staging в этапе 10 не
+Дата актуализации: 2026-07-29. Команды production/staging в этапе 10 не
 выполнялись.
 
 ## Backup и проверка
@@ -31,7 +31,9 @@ pnpm training:staging prisma migrate status
 ```
 
 После deploy проверить policy unique active constraint, acceptance history,
-worker heartbeat, health, operations summary и отсутствие orphan jobs/files.
+legacy `ALL_ELIGIBLE` backfill, default новых проектов `ASSIGNED_ONLY`,
+assignment/provenance FK/indexes, worker heartbeat, health, operations summary
+и отсутствие orphan jobs/files.
 Нельзя использовать `migrate reset`, `db push` или destructive down migration
 после появления данных.
 
@@ -56,6 +58,13 @@ Docker API image выполняет тот же preflight до автомати�
 6. Исправить код, повторно deploy и проверить migrations/health/privacy.
 7. Вернуть webhook, затем re-enable training.
 8. Убедиться, что persisted jobs продолжены recovery policy без дублей.
+
+После появления `ASSIGNED_ONLY` старый assignment-unaware API несовместим с
+данными: он может показать открытый проект всем eligible users. Поэтому
+rollback image допустим только если он уже поддерживает audience/assignments.
+Иначе training остаётся disabled до forward-fix. Additive
+audience/assignment/provenance columns/tables, assignments, source provenance
+и attempts не удалять и не «откатывать» destructive SQL.
 
 Если требуется полное восстановление, развернуть backup в новой изолированной
 DB, проверить migration history/data integrity и переключить приложение

@@ -10,11 +10,15 @@ export type TrainingDocumentStatus =
   | 'NEEDS_MANUAL_TEXT'
   | 'FAILED';
 
+export type TrainingAudienceMode = 'ALL_ELIGIBLE' | 'ASSIGNED_ONLY';
+
 export type TrainingRealEstateObject = {
   id: string;
   title: string;
   slug: string;
   status: string;
+  pdfCount?: number;
+  eligiblePdfCount?: number;
 };
 
 export type TrainingQuestion = {
@@ -93,6 +97,8 @@ export type TrainingProject = {
   activeVersionId: string | null;
   realEstateObjectId: string | null;
   realEstateObject: TrainingRealEstateObject | null;
+  audienceMode: TrainingAudienceMode;
+  audienceRevision: number;
   versions: TrainingVersion[];
   activeVersion?: Pick<
     TrainingVersion,
@@ -119,6 +125,15 @@ export type TrainingDocument = {
   extractedCharacterCount: number;
   textPreview: string;
   linkedFactCount: number;
+  originKind: 'UPLOAD' | 'LINKED_OBJECT_PDF';
+  originMetadata: {
+    objectId?: string;
+    objectTitle?: string;
+    objectSlug?: string;
+    objectFileId?: string;
+    objectFileType?: TrainingLinkedObjectPdfType;
+    objectFileTitle?: string | null;
+  } | null;
   file: {
     id: string;
     originalName: string | null;
@@ -133,9 +148,62 @@ export type TrainingWizardStep =
   | 'main'
   | 'sources'
   | 'suggestions'
+  | 'assignments'
   | 'questions'
   | 'criteria'
   | 'review';
+
+export type TrainingLinkedObjectPdfType =
+  | 'PRESENTATION'
+  | 'DOCUMENT'
+  | 'FLOOR_PLAN'
+  | 'OTHER';
+
+export type TrainingLinkedObjectPdf = {
+  objectFileId: string;
+  type: TrainingLinkedObjectPdfType;
+  title: string | null;
+  sortOrder: number;
+  recommendedByDefault: boolean;
+  eligible: boolean;
+  eligibilityError: string | null;
+  alreadyAttached: boolean;
+  sourceDocumentId: string | null;
+  file: {
+    id: string;
+    originalName: string | null;
+    mimeType: string | null;
+    sizeBytes: string | null;
+    createdAt: string;
+  };
+};
+
+export type TrainingAssignmentCandidate = {
+  id: string;
+  name: string | null;
+  email: string;
+  status: string;
+  telegramConnected: boolean;
+  eligible?: boolean;
+};
+
+export type TrainingProjectAssignment = {
+  userId: string;
+  name: string | null;
+  email: string;
+  status: string;
+  eligible: boolean;
+  telegramConnected: boolean;
+  assignedAt: string;
+};
+
+export type TrainingAssignmentSummary = {
+  audienceMode: TrainingAudienceMode;
+  audienceRevision: number;
+  items: TrainingProjectAssignment[];
+  total: number;
+  eligibleTotal: number;
+};
 
 export type TrainingReadiness = {
   readyToPublish: boolean;
@@ -336,10 +404,120 @@ export function changeTrainingProjectStatus(
   );
 }
 
-export function listTrainingObjects(token: string) {
-  return apiRequest<{ items: TrainingRealEstateObject[] }>(
-    `${adminBase}/real-estate-objects?limit=100`,
+export function listTrainingObjects(
+  token: string,
+  params: {
+    search?: string;
+    hasPdf?: boolean;
+    page?: number;
+    limit?: number;
+  } = {},
+) {
+  const query = new URLSearchParams();
+  if (params.search) query.set('search', params.search);
+  if (params.hasPdf !== undefined) query.set('hasPdf', String(params.hasPdf));
+  query.set('page', String(params.page ?? 1));
+  query.set('limit', String(params.limit ?? 20));
+
+  return apiRequest<{
+    items: TrainingRealEstateObject[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  }>(
+    `${adminBase}/real-estate-objects?${query.toString()}`,
     token,
+  );
+}
+
+export function listTrainingLinkedObjectPdfs(
+  token: string,
+  versionId: string,
+) {
+  return apiRequest<{
+    realEstateObject: TrainingRealEstateObject | null;
+    items: TrainingLinkedObjectPdf[];
+  }>(
+    `${adminBase}/versions/${encodeURIComponent(versionId)}/linked-object-pdfs`,
+    token,
+  );
+}
+
+export function attachTrainingLinkedObjectPdfs(
+  token: string,
+  versionId: string,
+  objectFileIds: string[],
+) {
+  return apiRequest<{
+    items: Array<{
+      objectFileId: string;
+      alreadyAttached: boolean;
+      document: TrainingDocument;
+    }>;
+    createdCount: number;
+  }>(
+    `${adminBase}/versions/${encodeURIComponent(versionId)}/documents/from-linked-object`,
+    token,
+    {
+      method: 'POST',
+      body: JSON.stringify({ objectFileIds }),
+    },
+  );
+}
+
+export function listTrainingAssignees(
+  token: string,
+  params: { search?: string; page?: number; limit?: number } = {},
+) {
+  const query = new URLSearchParams();
+  if (params.search) query.set('search', params.search);
+  query.set('page', String(params.page ?? 1));
+  query.set('limit', String(params.limit ?? 20));
+
+  return apiRequest<{
+    items: TrainingAssignmentCandidate[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  }>(`${adminBase}/assignees?${query.toString()}`, token);
+}
+
+export function getTrainingProjectAssignments(
+  token: string,
+  projectId: string,
+) {
+  return apiRequest<TrainingAssignmentSummary>(
+    `${adminBase}/projects/${encodeURIComponent(projectId)}/assignments`,
+    token,
+  );
+}
+
+export function updateTrainingProjectAudience(
+  token: string,
+  projectId: string,
+  input: {
+    audienceMode: TrainingAudienceMode;
+    expectedRevision: number;
+  },
+) {
+  return apiRequest<TrainingAssignmentSummary>(
+    `${adminBase}/projects/${encodeURIComponent(projectId)}/audience`,
+    token,
+    { method: 'PATCH', body: JSON.stringify(input) },
+  );
+}
+
+export function replaceTrainingProjectAssignments(
+  token: string,
+  projectId: string,
+  input: { userIds: string[]; expectedRevision: number },
+) {
+  return apiRequest<TrainingAssignmentSummary>(
+    `${adminBase}/projects/${encodeURIComponent(projectId)}/assignments`,
+    token,
+    { method: 'PUT', body: JSON.stringify(input) },
   );
 }
 

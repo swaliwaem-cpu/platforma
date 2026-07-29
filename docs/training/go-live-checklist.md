@@ -13,8 +13,10 @@ gate не отмечен.
   persisted final-state assertions.
 - [ ] URL/document/fact-suggestion ownership, lost lease, stale recovery,
   bounded shutdown и multi-replica сценарии проверены.
-- [ ] Dirty guard, fail-closed readiness, массовая загрузка и шесть шагов
+- [ ] Dirty guard, fail-closed readiness, массовая загрузка и семь шагов
   мастера проверены в реальном авторизованном браузере.
+- [ ] Clean/upgrade audience migration, legacy `ALL_ELIGIBLE`, new
+  `ASSIGNED_ONLY` default и nullable legacy attempt snapshot проверены.
 
 ## Источники
 
@@ -25,6 +27,10 @@ gate не отмечен.
   которую требуется сохранить.
 - [ ] Full source text не возвращается в project/version detail; доступен
   только отдельным защищённым endpoint.
+- [ ] Linked PDF можно подключить только из текущего связанного ЖК; ownership,
+  PDF magic/MIME/size/checksum, duplicate attach и provenance clone проверены.
+- [ ] Смена ЖК не удаляет подключённые sources; manual/URL sources работают;
+  выбор ЖК/PDF сам не вызывает OpenAI.
 
 ## Предложения фактов
 
@@ -40,6 +46,17 @@ gate не отмечен.
 - [ ] Отдельный staging bot, real HTTPS webhook и secret header.
 - [ ] Private chat, real synthetic/test voice, duplicate update/callback,
   shutdown/restart проверены.
+- [ ] Назначенный A видит/запускает проект; неназначенный B не проходит через
+  project list, deep-link, stale callback или прямой attempt start.
+
+## Audience и assignments
+
+- [ ] `ASSIGNED_ONLY` невозможно открыть с пустым active eligible set.
+- [ ] Candidate search возвращает только active/undeleted users с
+  `training:take`; M:N assign/revoke идемпотентны и audit доступны.
+- [ ] Optimistic `audienceRevision` не допускает lost update.
+- [ ] PostgreSQL race `revoke ↔ start` проверена: revoke блокирует новый старт,
+  уже созданная attempt продолжается и история не исчезает.
 
 ## Audio
 
@@ -66,5 +83,8 @@ gate не отмечен.
 - [ ] Назначены incident contact, rollback owner и reviewer.
 - [ ] Есть доступ для webhook revoke/restore и token/key rotation.
 - [ ] Наблюдаются heartbeat, queue age, stuck attempts, review и safe errors.
+- [ ] Rollback owner знает, что assignment-unaware API нельзя включать после
+  появления `ASSIGNED_ONLY`: сначала training disabled, затем только
+  assignment-aware revision; additive данные не удаляются.
 
 Итог: [ ] GO  [ ] NO-GO. Решение, дата и ответственный:

@@ -25,6 +25,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { TrainingAttemptEngineService } from '../training-attempt-engine.service';
 import { TRAINING_ACTIVE_ATTEMPT_STATUSES } from '../training.domain';
 import { TrainingPolicyService } from '../training-policy.service';
+import { trainingProjectAudienceWhere } from '../training-project-access';
 import { CURRENT_TRAINING_POLICY } from '../training-policy.seed';
 import {
   encodeFinishCallback,
@@ -79,7 +80,7 @@ export class TrainingTelegramDialogService {
   ) {}
 
   async listEmployeeProjects(userId: string) {
-    const projects = await this.listOpenProjects();
+    const projects = await this.listOpenProjects(userId);
     const items = await Promise.all(
       projects.map(async (project) => {
         const attemptsUsed = await this.prisma.trainingAttempt.count({
@@ -796,7 +797,7 @@ export class TrainingTelegramDialogService {
   }
 
   private async projectList(userId: string, chatId: string) {
-    const projects = await this.listOpenProjects();
+    const projects = await this.listOpenProjects(userId);
     if (projects.length === 0) {
       return [
         this.message(
@@ -823,7 +824,7 @@ export class TrainingTelegramDialogService {
     projectId: string,
     chatId: string,
   ): Promise<DeliveryPlan> {
-    const project = await this.getOpenProject(projectId);
+    const project = await this.getOpenProject(userId, projectId);
     const attemptsUsed = await this.prisma.trainingAttempt.count({
       where: { userId, projectId, isConsumed: true },
     });
@@ -922,12 +923,13 @@ export class TrainingTelegramDialogService {
     });
   }
 
-  private async listOpenProjects() {
+  private async listOpenProjects(userId: string) {
     const now = new Date();
     return this.prisma.trainingProject.findMany({
       where: {
         status: TrainingProjectStatus.OPEN,
         activeVersion: { status: TrainingVersionStatus.PUBLISHED },
+        ...trainingProjectAudienceWhere(userId),
         AND: [
           { OR: [{ availableFrom: null }, { availableFrom: { lte: now } }] },
           { OR: [{ deadlineAt: null }, { deadlineAt: { gte: now } }] },
@@ -940,8 +942,8 @@ export class TrainingTelegramDialogService {
     });
   }
 
-  private async getOpenProject(projectId: string) {
-    const projects = await this.listOpenProjects();
+  private async getOpenProject(userId: string, projectId: string) {
+    const projects = await this.listOpenProjects(userId);
     const project = projects.find((item) => item.id === projectId);
     if (!project) throw new NotFoundException('Open training project not found');
     return project;

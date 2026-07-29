@@ -22,6 +22,7 @@ import {
   TrainingProviderKind,
   TrainingProviderRunStatus,
   TrainingProviderRunType,
+  TrainingProjectAudienceMode,
   TrainingProjectStatus,
   TrainingQuestionType,
   TrainingReviewStatus,
@@ -75,6 +76,12 @@ import {
 import { trainingAttemptRepositoryInclude } from './training.repository.types';
 import { parseTrainingReviewIdempotencyKey } from './training-review-idempotency';
 import { TrainingPolicyService } from './training-policy.service';
+import {
+  acquireTrainingProjectAudienceLock,
+  acquireTrainingUserProjectLock,
+  activeTrainingAssignmentSelect,
+  resolveTrainingAttemptAssignmentId,
+} from './training-project-access';
 import {
   formatTrainingErrorForLog,
   readTrainingCorrelationId,
@@ -266,6 +273,7 @@ export class TrainingAttemptEngineService
         const project = await tx.trainingProject.findUnique({
           where: { id: command.projectId },
           include: {
+            assignments: activeTrainingAssignmentSelect(command.userId),
             activeVersion: {
               include: {
                 questions: {
@@ -278,6 +286,14 @@ export class TrainingAttemptEngineService
         });
 
         if (!project) {
+          throw new NotFoundException('Training project not found');
+        }
+        const assignmentId = resolveTrainingAttemptAssignmentId(project);
+        if (
+          project.audienceMode ===
+            TrainingProjectAudienceMode.ASSIGNED_ONLY &&
+          !assignmentId
+        ) {
           throw new NotFoundException('Training project not found');
         }
         if (project.status !== TrainingProjectStatus.OPEN) {
@@ -393,6 +409,7 @@ export class TrainingAttemptEngineService
             userId: command.userId,
             projectId: command.projectId,
             projectVersionId: project.activeVersion.id,
+            assignmentId,
             attemptNumber,
             status: TrainingAttemptStatus.AWAITING_MAIN,
             isConsumed: true,
@@ -3636,9 +3653,8 @@ export class TrainingAttemptEngineService
     userId: string,
     projectId: string,
   ) {
-    await tx.$queryRaw(
-      Prisma.sql`SELECT 1 AS "locked" FROM (SELECT pg_advisory_xact_lock(hashtextextended(${`training-attempt:${userId}:${projectId}`}, 0))) AS "lock_state"`,
-    );
+    await acquireTrainingProjectAudienceLock(tx, projectId);
+    await acquireTrainingUserProjectLock(tx, userId, projectId);
   }
 
   private async acquireAttemptLock(

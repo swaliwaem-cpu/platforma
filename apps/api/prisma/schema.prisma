@@ -149,6 +149,13 @@ enum TrainingProjectStatus {
   @@map("training_project_status")
 }
 
+enum TrainingProjectAudienceMode {
+  ALL_ELIGIBLE  @map("all_eligible")
+  ASSIGNED_ONLY @map("assigned_only")
+
+  @@map("training_project_audience_mode")
+}
+
 enum TrainingVersionStatus {
   DRAFT      @map("draft")
   PUBLISHED  @map("published")
@@ -320,6 +327,13 @@ enum TrainingSourceDocumentType {
   @@map("training_source_document_type")
 }
 
+enum TrainingSourceOriginKind {
+  UPLOAD            @map("upload")
+  LINKED_OBJECT_PDF @map("linked_object_pdf")
+
+  @@map("training_source_origin_kind")
+}
+
 enum TrainingFactSuggestionRunStatus {
   PENDING   @map("pending")
   RUNNING   @map("running")
@@ -386,6 +400,9 @@ model User {
   projectPresentationDrafts        ProjectPresentationDraft[]     @relation("ProjectPresentationDraftOwner")
   projectPresentationDocuments     ProjectPresentationDocument[]  @relation("ProjectPresentationDocumentOwner")
   trainingAttempts                 TrainingAttempt[]
+  trainingProjectAssignments       TrainingProjectAssignment[]    @relation("TrainingAssignmentUser")
+  trainingAssignmentsCreated       TrainingProjectAssignment[]    @relation("TrainingAssignmentAssigner")
+  trainingAssignmentsRevoked       TrainingProjectAssignment[]    @relation("TrainingAssignmentRevoker")
   trainingTelegramAccount          TrainingTelegramAccount?
   trainingLinkTokens               TrainingLinkToken[]
   trainingPublishedVersions        TrainingProjectVersion[]       @relation("TrainingVersionPublisher")
@@ -1147,23 +1164,26 @@ model ProjectPresentationDocumentAsset {
 }
 
 model TrainingProject {
-  id                 String                @id @default(uuid()) @db.Uuid
-  realEstateObjectId String?               @map("real_estate_object_id") @db.Uuid
-  slug               String                @unique @db.VarChar(160)
-  title              String                @db.VarChar(240)
-  description        String?               @db.VarChar(2000)
-  status             TrainingProjectStatus @default(DRAFT)
-  sortOrder          Int                   @default(0) @map("sort_order")
-  availableFrom      DateTime?             @map("available_from")
-  deadlineAt         DateTime?             @map("deadline_at")
-  activeVersionId    String?               @unique @map("active_version_id") @db.Uuid
-  archivedAt         DateTime?             @map("archived_at")
-  createdAt          DateTime              @default(now()) @map("created_at")
-  updatedAt          DateTime              @updatedAt @map("updated_at")
+  id                 String                      @id @default(uuid()) @db.Uuid
+  realEstateObjectId String?                     @map("real_estate_object_id") @db.Uuid
+  slug               String                      @unique @db.VarChar(160)
+  title              String                      @db.VarChar(240)
+  description        String?                     @db.VarChar(2000)
+  status             TrainingProjectStatus       @default(DRAFT)
+  audienceMode       TrainingProjectAudienceMode @default(ALL_ELIGIBLE) @map("audience_mode")
+  audienceRevision   Int                         @default(0) @map("audience_revision")
+  sortOrder          Int                         @default(0) @map("sort_order")
+  availableFrom      DateTime?                   @map("available_from")
+  deadlineAt         DateTime?                   @map("deadline_at")
+  activeVersionId    String?                     @unique @map("active_version_id") @db.Uuid
+  archivedAt         DateTime?                   @map("archived_at")
+  createdAt          DateTime                    @default(now()) @map("created_at")
+  updatedAt          DateTime                    @updatedAt @map("updated_at")
 
-  realEstateObject RealEstateObject?        @relation(fields: [realEstateObjectId], references: [id], onDelete: SetNull)
-  activeVersion    TrainingProjectVersion?  @relation("TrainingProjectActiveVersion", fields: [activeVersionId], references: [id], onDelete: SetNull)
-  versions         TrainingProjectVersion[] @relation("TrainingProjectVersions")
+  realEstateObject RealEstateObject?           @relation(fields: [realEstateObjectId], references: [id], onDelete: SetNull)
+  activeVersion    TrainingProjectVersion?     @relation("TrainingProjectActiveVersion", fields: [activeVersionId], references: [id], onDelete: SetNull)
+  versions         TrainingProjectVersion[]    @relation("TrainingProjectVersions")
+  assignments      TrainingProjectAssignment[]
   linkTokens       TrainingLinkToken[]
   attempts         TrainingAttempt[]
 
@@ -1171,6 +1191,31 @@ model TrainingProject {
   @@index([status, sortOrder])
   @@index([availableFrom, deadlineAt])
   @@map("training_projects")
+}
+
+model TrainingProjectAssignment {
+  id           String    @id @default(uuid()) @db.Uuid
+  projectId    String    @map("project_id") @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  assignedById String    @map("assigned_by_id") @db.Uuid
+  revokedById  String?   @map("revoked_by_id") @db.Uuid
+  assignedAt   DateTime  @default(now()) @map("assigned_at")
+  revokedAt    DateTime? @map("revoked_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  project    TrainingProject   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  user       User              @relation("TrainingAssignmentUser", fields: [userId], references: [id], onDelete: Restrict)
+  assignedBy User              @relation("TrainingAssignmentAssigner", fields: [assignedById], references: [id], onDelete: Restrict)
+  revokedBy  User?             @relation("TrainingAssignmentRevoker", fields: [revokedById], references: [id], onDelete: SetNull)
+  attempts   TrainingAttempt[] @relation("TrainingAttemptAssignment")
+
+  @@unique([projectId, userId])
+  @@index([userId, revokedAt, projectId])
+  @@index([projectId, revokedAt, assignedAt])
+  @@index([assignedById])
+  @@index([revokedById])
+  @@map("training_project_assignments")
 }
 
 model TrainingProjectVersion {
@@ -1307,6 +1352,8 @@ model TrainingSourceDocument {
   projectVersionId       String                         @map("project_version_id") @db.Uuid
   fileId                 String                         @map("file_id") @db.Uuid
   documentType           TrainingSourceDocumentType     @map("document_type")
+  originKind             TrainingSourceOriginKind       @default(UPLOAD) @map("origin_kind")
+  originMetadataJson     Json                           @default("{}") @map("origin_metadata_json")
   checksum               String                         @db.VarChar(128)
   extractionStatus       TrainingSourceExtractionStatus @default(PENDING) @map("extraction_status")
   extractedText          String?                        @map("extracted_text")
@@ -1552,6 +1599,7 @@ model TrainingAttempt {
   userId               String                @map("user_id") @db.Uuid
   projectId            String                @map("project_id") @db.Uuid
   projectVersionId     String                @map("project_version_id") @db.Uuid
+  assignmentId         String?               @map("assignment_id") @db.Uuid
   attemptNumber        Int                   @map("attempt_number")
   status               TrainingAttemptStatus @default(STARTED)
   isConsumed           Boolean               @default(true) @map("is_consumed")
@@ -1571,9 +1619,10 @@ model TrainingAttempt {
   createdAt            DateTime              @default(now()) @map("created_at")
   updatedAt            DateTime              @updatedAt @map("updated_at")
 
-  user             User                      @relation(fields: [userId], references: [id], onDelete: Restrict)
-  project          TrainingProject           @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  projectVersion   TrainingProjectVersion    @relation(fields: [projectVersionId], references: [id], onDelete: Restrict)
+  user             User                       @relation(fields: [userId], references: [id], onDelete: Restrict)
+  project          TrainingProject            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  projectVersion   TrainingProjectVersion     @relation(fields: [projectVersionId], references: [id], onDelete: Restrict)
+  assignment       TrainingProjectAssignment? @relation("TrainingAttemptAssignment", fields: [assignmentId], references: [id], onDelete: Restrict)
   attemptQuestions TrainingAttemptQuestion[]
   reviews          TrainingResultReview[]
 
@@ -1581,6 +1630,7 @@ model TrainingAttempt {
   @@index([userId, status])
   @@index([projectId, status])
   @@index([projectVersionId])
+  @@index([assignmentId])
   @@index([completedAt])
   @@index([reviewStatus, completedAt])
   @@map("training_attempts")

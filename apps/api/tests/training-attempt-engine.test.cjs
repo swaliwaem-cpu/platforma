@@ -12,6 +12,7 @@ const {
   TrainingJobKind,
   TrainingJobStatus,
   TrainingPassStatus,
+  TrainingProjectAudienceMode,
   TrainingReviewStatus,
 } = require('@prisma/client');
 
@@ -365,6 +366,38 @@ test('project global status and availability window are backend start boundaries
   await assert.rejects(
     () => startAttempt(expired.service),
     /deadline has expired/u,
+  );
+});
+
+test('assigned-only project hides an unassigned direct start', async () => {
+  const harness = createHarness();
+  harness.prisma.project.audienceMode =
+    TrainingProjectAudienceMode.ASSIGNED_ONLY;
+  harness.prisma.project.assignments = [];
+
+  await assert.rejects(
+    () => startAttempt(harness.service),
+    /Training project not found/u,
+  );
+  assert.equal(harness.prisma.attempts.size, 0);
+});
+
+test('assigned-only project pins the active assignment on a new attempt', async () => {
+  const harness = createHarness();
+  const assignmentId = '70000000-0000-4000-8000-000000000001';
+  harness.prisma.project.audienceMode =
+    TrainingProjectAudienceMode.ASSIGNED_ONLY;
+  harness.prisma.project.assignments = [{ id: assignmentId }];
+
+  const attempt = await startAttempt(harness.service);
+
+  assert.equal(attempt.assignmentId, assignmentId);
+  assert.deepEqual(
+    harness.prisma.rawQueries.slice(0, 2).map((query) => query.values[0]),
+    [
+      `training-audience:${PROJECT_ID}`,
+      `training-attempt:${USER_ID}:${PROJECT_ID}`,
+    ],
   );
 });
 

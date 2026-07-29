@@ -6505,3 +6505,61 @@ Production deploy:
   `13` фактов. Новых official URL, fact-suggestion runs и suggestions до
   ручного использования — `0`.
 - Production checkout чистый и синхронный с `origin/on-ser`.
+
+## 2026-07-29 — Контракт linked-object PDF и назначений обучения
+
+Что зафиксировано:
+
+- Подтверждена M:N-модель назначений существующих пользователей Platforma:
+  legacy-проекты остаются `ALL_ELIGIBLE`, новые создаются
+  `ASSIGNED_ONLY`, пустой active assignment set означает «никому».
+- `ASSIGNED_ONLY` нельзя открыть без active/undeleted пользователя с
+  `training:take`; назначение следует за active published version при новом
+  старте, а attempt закрепляет конкретную version.
+- Revoke блокирует новые Platforma/Telegram/deep-link/start flows, но не
+  прерывает уже начатую attempt и не удаляет историю.
+- PDF связанного ЖК подключается только явным выбором `ObjectFile/File`,
+  сохраняет immutable provenance и проходит существующий extraction →
+  explicit suggestions → human-approved facts pipeline.
+- `PRESENTATION`/`DOCUMENT` предлагаются выбранными по умолчанию,
+  `FLOOR_PLAN` выбирается вручную; manual upload и official URL сохраняются.
+  Смена ЖК не удаляет sources и не запускает OpenAI.
+- Многообъектные `ProjectPresentationDocument` исключены из v1.
+- Зафиксирован rollback-риск: assignment-unaware API нельзя включать после
+  появления `ASSIGNED_ONLY`; emergency path начинается с
+  `TRAINING_MODULE_ENABLED=false`, additive данные не удаляются.
+
+Реализация:
+
+- Обновлены business/data/document/API/frontend/test спецификации.
+- Добавлены ADR, implementation checklist, staging, go-live и rollback gates.
+- Добавлена additive migration
+  `20260729160000_add_training_linked_sources_assignments`: audience/revision,
+  M:N assignments, pinned attempt assignment и provenance источников.
+- Добавлены admin API кандидатов/назначений и linked-object PDF list/attach;
+  PDF переиспользует существующий private `File`, проходит MIME/size/magic
+  bytes/SHA-256 проверку и штатный extraction pipeline.
+- Audience gate применён в employee Platforma, Telegram, deep-link и
+  authoritative attempt start. Блокировки используют единый порядок
+  `audience → user/project`; уже созданная attempt продолжает работу после
+  revoke.
+- Training admin переведён на семишаговый мастер с отдельным шагом
+  «Участники», searchable keyboard-accessible selectors и явным выбором PDF.
+- Новые dependencies не добавлялись.
+
+Проверки:
+
+- `prisma generate` и `prisma validate` — passed.
+- API build — passed; затронутые unit-наборы — `83/83`, финальный
+  attempt/documents-набор — `42/42`, content-service — `13/13`.
+- Web build — passed; focused training-admin source test — `21/21`.
+  Сохраняется прежнее предупреждение Vite о chunk больше `500 kB`.
+- Clean isolated PostgreSQL: применены все `43` migrations, существующий
+  training DB-набор — `100/100`, временная база удалена.
+- `git diff --check` — passed.
+- Не выполнялись real provider/Telegram, real MinIO linked-PDF, browser,
+  staging и production smoke.
+
+Production:
+
+- Production не изменялся; deployment и данные не затрагивались.

@@ -18,6 +18,17 @@ const controllerSource = readFileSync(
   path.join(rootDir, 'apps/api/src/training/training-admin.controller.ts'),
   'utf8',
 );
+const linkedObjectControllerSource = readFileSync(
+  path.join(
+    rootDir,
+    'apps/api/src/training/training-linked-object-sources.controller.ts',
+  ),
+  'utf8',
+);
+const trainingModuleSource = readFileSync(
+  path.join(rootDir, 'apps/api/src/training/training.module.ts'),
+  'utf8',
+);
 const documentServiceSource = readFileSync(
   path.join(rootDir, 'apps/api/src/training/training-documents.service.ts'),
   'utf8',
@@ -64,6 +75,18 @@ test('training document endpoints stay behind the training admin controller guar
     /@Get\('versions\/:versionId\/documents\/:documentId\/content'\)/,
   );
   assert.match(controllerSource, /Cache-Control', 'private, no-store'/);
+  assert.match(
+    linkedObjectControllerSource,
+    /@RequirePermissions\('training:projects:manage'\)/,
+  );
+  assert.match(
+    linkedObjectControllerSource,
+    /@Post\('versions\/:versionId\/documents\/from-linked-object'\)/,
+  );
+  assert.match(
+    trainingModuleSource,
+    /controllers:\s*\[[\s\S]*TrainingLinkedObjectSourcesController/u,
+  );
 });
 
 test('document upload is draft-only, private and never promotes extracted text to facts', () => {
@@ -83,6 +106,10 @@ test('document worker claims only extraction jobs and persists terminal statuses
   assert.match(workerSource, /TrainingSourceExtractionStatus\.FAILED/);
   assert.match(workerSource, /TrainingJobStatus\.SUCCEEDED/);
   assert.match(workerSource, /TrainingJobStatus\.DEAD/);
+  assert.match(
+    workerSource,
+    /createHash\('sha256'\)[\s\S]*document\.checksum/u,
+  );
   assert.doesNotMatch(workerSource, /TELEGRAM|TRANSCRIBE|EVALUATE_ANSWER/);
 });
 

@@ -26,6 +26,7 @@ import type {
 
 import { PrismaService } from '../prisma/prisma.service';
 import { TRAINING_ACTIVE_ATTEMPT_STATUSES } from './training.domain';
+import { trainingProjectAudienceWhere } from './training-project-access';
 
 export type TrainingEmployeeAttemptFilters = {
   page: number;
@@ -150,6 +151,7 @@ export class TrainingResultsService {
         where: {
           status: TrainingProjectStatus.OPEN,
           activeVersion: { status: TrainingVersionStatus.PUBLISHED },
+          ...trainingProjectAudienceWhere(userId),
         },
         orderBy: [{ sortOrder: 'asc' }, { title: 'asc' }, { id: 'asc' }],
         select: {

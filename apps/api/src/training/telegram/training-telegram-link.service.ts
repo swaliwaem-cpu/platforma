@@ -17,6 +17,7 @@ import {
 } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { trainingProjectAudienceWhere } from '../training-project-access';
 import { TrainingTelegramConfig } from './training-telegram.config';
 import {
   enqueueTrainingTelegramOutboxEvent,
@@ -68,7 +69,7 @@ export class TrainingTelegramLinkService {
     );
 
     if (projectId) {
-      await this.assertProjectCanStart(projectId, now);
+      await this.assertProjectCanStart(userId, projectId, now);
     }
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -457,9 +458,16 @@ export class TrainingTelegramLinkService {
     });
   }
 
-  private async assertProjectCanStart(projectId: string, now: Date) {
-    const project = await this.prisma.trainingProject.findUnique({
-      where: { id: projectId },
+  private async assertProjectCanStart(
+    userId: string,
+    projectId: string,
+    now: Date,
+  ) {
+    const project = await this.prisma.trainingProject.findFirst({
+      where: {
+        id: projectId,
+        ...trainingProjectAudienceWhere(userId),
+      },
       select: {
         status: true,
         availableFrom: true,

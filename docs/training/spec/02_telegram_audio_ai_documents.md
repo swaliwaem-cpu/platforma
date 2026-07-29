@@ -289,6 +289,36 @@ Adapters:
 
 После extraction admin создаёт/подтверждает structured facts. Публикация невозможна, если обязательные facts не подтверждены.
 
+## 10.1. PDF связанного ЖК
+
+Дополнительный источник выбирается только явно и только для draft/workspace
+version проекта, у которого задан `realEstateObjectId`:
+
+1. Backend получает доступные PDF через `RealEstateObject → ObjectFile → File`.
+2. `PRESENTATION` и `DOCUMENT` UI предлагает выбранными по умолчанию;
+   `FLOOR_PLAN` администратор выбирает вручную.
+3. Перед attach backend повторно проверяет принадлежность `ObjectFile`
+   связанному ЖК, PDF MIME/magic bytes, размер и checksum. Произвольный
+   клиентский `fileId` не принимается.
+4. Attach переиспользует существующий `File`, создаёт обычный
+   `TrainingSourceDocument` с `originKind=LINKED_OBJECT_PDF`, immutable
+   provenance snapshot и `EXTRACT_SOURCE_DOCUMENT`.
+5. Duplicate attach/checksum идемпотентен и не создаёт второй source/job.
+6. Смена `realEstateObjectId` после attach не удаляет и не перепривязывает
+   ранее выбранные sources; администратор видит их сохранённое происхождение и
+   удаляет только явным существующим безопасным flow.
+7. Сам выбор ЖК или PDF не запускает fact suggestions/OpenAI. Это остаётся
+   отдельной явной командой после extraction.
+8. Manual upload и official HTTPS URL продолжают работать независимо.
+
+Полученный текст остаётся черновым материалом. Scoring использует только
+подтверждённые человеком факты, связанные с вопросами и опубликованные в
+immutable version.
+
+`ProjectPresentationDocument` с несколькими ЖК намеренно исключён из v1:
+этот pipeline принимает только отдельные PDF конкретного связанного ЖК через
+`ObjectFile/File`.
+
 ---
 
 # 11. API

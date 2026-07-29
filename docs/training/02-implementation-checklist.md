@@ -83,9 +83,9 @@
   списков.
 - [x] Редактирование существующего проекта идемпотентно возвращает текущую
   рабочую редакцию либо создаёт её из последней опубликованной версии.
-- [x] Добавлен шестишаговый мастер:
-  `Основные данные → Источники → Предложенные факты → Вопросы → Критерии →
-  Проверка`.
+- [x] Добавлен семишаговый мастер:
+  `Основные данные → Источники → Предложенные факты → Участники → Вопросы →
+  Критерии → Проверка`.
 - [x] Добавлен серверный индикатор готовности, общий с publish validation.
 - [x] Добавлена массовая клиентская очередь загрузки документов с независимым
   результатом и повтором для каждого файла.
@@ -694,8 +694,45 @@ PostgreSQL/HTTP integration tests; root suite также включает `286/2
 - [x] Не выполнять production/staging deploy, production migrations,
   real webhook registration, real Telegram/OpenAI calls или pilot.
 
+## Расширение: linked-object PDF и назначения пользователей
+
+Подтверждённый контракт от 2026-07-29:
+
+- [x] Зафиксировать M:N `TrainingProjectAssignment` без отдельной Employee.
+- [x] Зафиксировать legacy `ALL_ELIGIBLE` и default новых проектов
+  `ASSIGNED_ONLY`.
+- [x] Зафиксировать empty assignments = nobody и запрет открытия
+  `ASSIGNED_ONLY` без active eligible user.
+- [x] Зафиксировать follow-active-version для новых starts и продолжение уже
+  начатой attempt после revoke.
+- [x] Зафиксировать кандидатов как active/undeleted users с `training:take`.
+- [x] Зафиксировать явный attach выбранных PDF связанного ЖК через
+  `ObjectFile/File`, immutable provenance и существующий extraction →
+  suggestions → human-approved facts pipeline.
+- [x] Зафиксировать defaults `PRESENTATION`/`DOCUMENT`, manual
+  `FLOOR_PLAN`, сохранение manual/URL sources, отсутствие auto OpenAI и
+  silent source delete при смене ЖК.
+- [x] Исключить многообъектный `ProjectPresentationDocument` из v1.
+
+Локальная реализация и проверки:
+
+- [x] Additive Prisma migration для audience, revision, assignments,
+  attempt snapshot и source provenance.
+- [x] Assignment API/eligible candidates/audit/optimistic concurrency.
+- [x] Единый audience gate в employee Platforma, Telegram, deep-link и
+  transactional attempt start.
+- [x] Linked-object PDF list/attach API с ownership/PDF/checksum validation,
+  idempotency и version clone provenance.
+- [x] Семишаговый admin wizard и accessible searchable selectors.
+- [x] Prisma validate, API/web build, focused unit/UI source tests и clean
+  PostgreSQL migration chain с существующим DB-набором.
+- [ ] Новые HTTP/RBAC smoke, assignment-specific PostgreSQL race/trigger,
+  browser и real MinIO linked-PDF gates выполнены на staging.
+- [ ] Staging migration, A/B assignment, real S3 PDF и rollback compatibility
+  проверены отдельно до production GO.
+
 ## Следующий этап
 
-Этап 10 реализован локально. Следующий шаг не запускается автоматически:
-только отдельная staging-валидация по `staging-smoke-checklist.md` после
-утверждения policy и пополнения OpenAI-баланса.
+Этап 10 и расширение linked-object PDF/assignments реализованы локально.
+Следующая работа — staging-валидация расширения по чеклистам; production GO
+не считается полученным на основании локальной реализации.

@@ -179,6 +179,23 @@
 
 **Готово:** согласованные acceptance thresholds и реальный E2E.
 
+## Этап 13. PDF связанного ЖК и персональные назначения
+
+- additive audience/assignment/provenance migration;
+- legacy `ALL_ELIGIBLE`, default для новых проектов `ASSIGNED_ONLY`;
+- M:N selector eligible users и optimistic `audienceRevision`;
+- единый assignment gate в Platforma, Telegram, deep-link и transactional
+  attempt start;
+- явный attach выбранных `ObjectFile/File` PDF связанного ЖК;
+- extraction → explicit fact suggestions → human-approved facts без
+  автоматического OpenAI;
+- provenance snapshot и перенос в следующую рабочую версию;
+- manual upload/official URL остаются без изменения.
+
+**Готово:** новый проект нельзя открыть без active eligible assignment;
+назначенный пользователь проходит linked-PDF flow, неназначенный не видит и не
+может запустить проект ни одним прямым или Telegram-путём.
+
 ---
 
 # 16. Обязательные тесты
@@ -215,6 +232,21 @@ Unit/integration:
 28. Zip bomb/oversize/timeouts отклоняются.
 29. Worker restart восстанавливает stale job.
 30. OpenAI invalid schema/retry/429 fixtures.
+31. Clean/upgrade migration сохраняет legacy проекты как `ALL_ELIGIBLE`, а
+    новые создаются `ASSIGNED_ONLY`.
+32. Empty assignments = nobody; `ASSIGNED_ONLY` нельзя открыть без active
+    eligible user.
+33. Candidate endpoint исключает inactive/deleted/без `training:take`.
+34. Platforma/Telegram/deep-link/start одинаково отклоняют неназначенного
+    пользователя; собственная история остаётся доступной после revoke.
+35. Реальная PostgreSQL race `revoke ↔ start` даёт только два допустимых
+    исхода: revoke запрещает старт либо уже созданная attempt продолжается.
+36. Linked PDF принимается только из выбранного ЖК; foreign
+    `objectFileId`, non-PDF, oversize и checksum mismatch отклоняются.
+37. Повторный attach создаёт один source/job; provenance сохраняется при clone
+    version и не меняется при смене ЖК.
+38. Выбор ЖК/PDF не вызывает OpenAI; только human-approved linked facts
+    участвуют в scoring.
 
 Commands:
 
@@ -233,8 +265,13 @@ pnpm test
 
 - Training встроен в существующую Platforma.
 - Пользователь связывает Telegram одноразовой ссылкой.
-- У всех одинаковый глобально управляемый список проектов.
+- Legacy-проекты сохраняют `ALL_ELIGIBLE`; новые проекты используют
+  `ASSIGNED_ONLY` и M:N назначения существующих пользователей.
+- Пустой assignment set не раскрывает проект; revoke блокирует только новые
+  старты, а активная попытка продолжается.
 - Проект опционально связан с ЖК.
+- Выбранные PDF связанного ЖК подключаются явно с immutable provenance,
+  проходят extraction и не становятся scoring facts без решения человека.
 - Admin публикует immutable version с 1 main + 10 follow-up.
 - Попытка списывается при старте и длится общий configurable 5–7 минут.
 - Бот принимает только voice и несколько частей на вопрос.
