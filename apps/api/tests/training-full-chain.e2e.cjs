@@ -1,30 +1,42 @@
 require('reflect-metadata');
 
 const assert = require('node:assert/strict');
-const { randomUUID } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { createRequire } = require('node:module');
 const { mkdtemp, readFile, rm } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const path = require('node:path');
 const argon2 = require('argon2');
+const PDFDocument = require('pdfkit');
 const {
+  FileStorage,
+  ObjectFileType,
   PrismaClient,
   TrainingAttemptQuestionStatus,
   TrainingAttemptStatus,
   TrainingJobKind,
   TrainingPassStatus,
   TrainingPolicyAcceptanceSource,
+  TrainingProjectAudienceMode,
   TrainingProjectStatus,
   TrainingQuestionType,
   TrainingReviewStatus,
+  TrainingSourceExtractionStatus,
+  TrainingSourceOriginKind,
   TrainingVersionStatus,
   UserStatus,
 } = require('@prisma/client');
 
 const {
+  FilesService,
+} = require('../dist/files/files.service.js');
+const {
   S3StorageService,
 } = require('../dist/files/s3-storage.service.js');
+const {
+  TrainingAssignmentsService,
+} = require('../dist/training/training-assignments.service.js');
 const {
   TrainingAudioConfig,
 } = require('../dist/training/audio/training-audio.config.js');
@@ -39,6 +51,9 @@ const {
 const {
   TrainingPolicyService,
 } = require('../dist/training/training-policy.service.js');
+const {
+  TrainingDocumentsService,
+} = require('../dist/training/training-documents.service.js');
 const {
   TrainingRankingService,
 } = require('../dist/training/training-ranking.service.js');
@@ -95,7 +110,27 @@ async function main() {
     await storage.onModuleInit();
     await waitForTrainingWorkers();
 
-    const fixture = await createFixture();
+    const fixture = await createFixture(storage);
+    const assignments = new TrainingAssignmentsService(prisma);
+    const initialAssignments = await assignments.getAssignments(
+      fixture.project.id,
+    );
+    assert.equal(
+      initialAssignments.audienceMode,
+      TrainingProjectAudienceMode.ASSIGNED_ONLY,
+    );
+    assert.equal(initialAssignments.eligibleTotal, 1);
+    assert.equal(initialAssignments.items[0]?.userId, fixture.employee.id);
+    const candidates = await assignments.listCandidates({
+      search: fixture.employee.email,
+      page: 1,
+      limit: 10,
+    });
+    assert.deepEqual(
+      candidates.items.map((candidate) => candidate.id),
+      [fixture.employee.id],
+    );
+
     const policy = new TrainingPolicyService(prisma);
     const currentPolicy = await policy.getCurrentPolicy(fixture.employee.id);
     assert.equal(currentPolicy.accepted, false);
@@ -109,6 +144,14 @@ async function main() {
     const telegramLinks = new TrainingTelegramLinkService(
       prisma,
       new TrainingTelegramConfig(process.env),
+    );
+    await assert.rejects(
+      () =>
+        telegramLinks.issueLinkToken(
+          fixture.unassignedEmployee.id,
+          fixture.project.id,
+        ),
+      /Training project not found/u,
     );
     const link = await telegramLinks.issueLinkToken(
       fixture.employee.id,
@@ -156,6 +199,38 @@ async function main() {
     const attemptId = started.attempt.id;
     assert.equal(started.attempt.userId, fixture.employee.id);
     assert.equal(started.attempt.projectId, fixture.project.id);
+    const pinnedAttempt = await prisma.trainingAttempt.findUniqueOrThrow({
+      where: { id: attemptId },
+      select: { assignmentId: true },
+    });
+    assert.equal(pinnedAttempt.assignmentId, fixture.assignment.id);
+
+    const revokedAssignments = await assignments.replaceAssignments(
+      fixture.project.id,
+      {
+        userIds: [fixture.unassignedEmployee.id],
+        expectedRevision: initialAssignments.audienceRevision,
+      },
+      fixture.admin,
+      { headers: {} },
+    );
+    assert.equal(revokedAssignments.total, 1);
+    assert.equal(
+      revokedAssignments.items[0]?.userId,
+      fixture.unassignedEmployee.id,
+    );
+    await assert.rejects(
+      () =>
+        telegramLinks.issueLinkToken(
+          fixture.employee.id,
+          fixture.project.id,
+        ),
+      /Training project not found/u,
+    );
+    const resultsWhileRevoked = await new TrainingResultsService(
+      prisma,
+    ).listEmployeeProjects(fixture.employee.id);
+    assert.equal(resultsWhileRevoked.items.length, 0);
 
     const answerCorrelations = [];
     for (let index = 0; index < 4; index += 1) {
@@ -237,6 +312,30 @@ async function main() {
     assert.equal(reviewed.passStatus, TrainingPassStatus.PASSED);
     assert.equal(reviewed.reviewStatus, TrainingReviewStatus.APPROVED);
 
+    await assert.rejects(
+      () =>
+        assignments.replaceAssignments(
+          fixture.project.id,
+          {
+            userIds: [fixture.employee.id],
+            expectedRevision: initialAssignments.audienceRevision,
+          },
+          fixture.admin,
+          { headers: {} },
+        ),
+      /revision conflict/u,
+    );
+    const restoredAssignments = await assignments.replaceAssignments(
+      fixture.project.id,
+      {
+        userIds: [fixture.employee.id],
+        expectedRevision: revokedAssignments.audienceRevision,
+      },
+      fixture.admin,
+      { headers: {} },
+    );
+    assert.equal(restoredAssignments.eligibleTotal, 1);
+
     await assertConnectedDatabaseState({
       attemptId,
       fixture,
@@ -295,13 +394,13 @@ async function main() {
   }
 }
 
-async function createFixture() {
+async function createFixture(storage) {
   const unique = `${Date.now()}-${randomUUID().slice(0, 8)}`;
-  const [admin, userRole] = await Promise.all([
+  const [admin, trainingPilotRole] = await Promise.all([
     prisma.user.findUniqueOrThrow({
       where: { email: process.env.TRAINING_E2E_ADMIN_EMAIL },
     }),
-    prisma.role.findUniqueOrThrow({ where: { name: 'user' } }),
+    prisma.role.findUniqueOrThrow({ where: { name: 'training_pilot' } }),
   ]);
   const employeePassword = 'TrainingE2E!1';
   const employee = await prisma.user.create({
@@ -311,8 +410,56 @@ async function createFixture() {
       passwordHash: await argon2.hash(employeePassword, {
         type: argon2.argon2id,
       }),
-      roleId: userRole.id,
+      roleId: trainingPilotRole.id,
       status: UserStatus.ACTIVE,
+    },
+  });
+  const unassignedEmployee = await prisma.user.create({
+    data: {
+      email: `training-unassigned-${unique}@example.test`,
+      name: 'Training Unassigned Employee',
+      passwordHash: await argon2.hash(employeePassword, {
+        type: argon2.argon2id,
+      }),
+      roleId: trainingPilotRole.id,
+      status: UserStatus.ACTIVE,
+    },
+  });
+  const realEstateObject = await prisma.realEstateObject.create({
+    data: {
+      slug: `training-linked-object-${unique}`,
+      title: 'ЖК для linked PDF E2E',
+      status: 'PUBLISHED',
+    },
+  });
+  const pdf = await createPdf('Linked object PDF training fact');
+  const pdfChecksum = createHash('sha256').update(pdf).digest('hex');
+  const pdfKey = `training-linked-e2e/${unique}.pdf`;
+  await storage.putObject({
+    key: pdfKey,
+    body: pdf,
+    contentType: 'application/pdf',
+  });
+  const linkedFile = await prisma.file.create({
+    data: {
+      storage: FileStorage.MINIO,
+      bucket: storage.getBucket(),
+      key: pdfKey,
+      url: null,
+      originalName: 'linked-training-e2e.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: BigInt(pdf.length),
+      checksum: pdfChecksum,
+      uploadedById: admin.id,
+    },
+  });
+  const objectFile = await prisma.objectFile.create({
+    data: {
+      objectId: realEstateObject.id,
+      fileId: linkedFile.id,
+      type: ObjectFileType.PRESENTATION,
+      title: 'Презентация linked PDF E2E',
+      sortOrder: 1,
     },
   });
   const project = await prisma.trainingProject.create({
@@ -321,6 +468,8 @@ async function createFixture() {
       title: 'Единый E2E-проект обучения',
       description: 'Связанный сценарий этапа 10',
       status: TrainingProjectStatus.DRAFT,
+      realEstateObjectId: realEstateObject.id,
+      audienceMode: TrainingProjectAudienceMode.ASSIGNED_ONLY,
     },
   });
   const version = await prisma.trainingProjectVersion.create({
@@ -408,12 +557,46 @@ async function createFixture() {
       },
     ],
   });
+  const documents = new TrainingDocumentsService(
+    prisma,
+    new FilesService(prisma, storage),
+  );
+  const linkedPdfCandidates = await documents.listLinkedObjectPdfs(version.id);
+  assert.equal(linkedPdfCandidates.items.length, 1);
+  assert.equal(linkedPdfCandidates.items[0]?.eligible, true);
+  assert.equal(linkedPdfCandidates.items[0]?.recommendedByDefault, true);
+  const attached = await documents.attachLinkedObjectPdfs(
+    version.id,
+    { objectFileIds: [objectFile.id] },
+    admin,
+    { headers: {} },
+  );
+  assert.equal(attached.createdCount, 1);
+  const sourceDocument = await waitForLinkedDocumentExtraction(
+    attached.items[0].document.id,
+  );
+  assert.equal(
+    sourceDocument.originKind,
+    TrainingSourceOriginKind.LINKED_OBJECT_PDF,
+  );
+  assert.match(
+    sourceDocument.extractedText ?? '',
+    /Linked object PDF training fact/u,
+  );
+
   await prisma.trainingProjectVersion.update({
     where: { id: version.id },
     data: {
       status: TrainingVersionStatus.PUBLISHED,
       publishedAt: new Date(),
       publishedById: admin.id,
+    },
+  });
+  const assignment = await prisma.trainingProjectAssignment.create({
+    data: {
+      projectId: project.id,
+      userId: employee.id,
+      assignedById: admin.id,
     },
   });
   await prisma.trainingProject.update({
@@ -429,9 +612,53 @@ async function createFixture() {
       ...employee,
       password: employeePassword,
     },
+    unassignedEmployee,
     project,
     version,
+    assignment,
+    sourceDocument,
   };
+}
+
+async function waitForLinkedDocumentExtraction(documentId) {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const document = await prisma.trainingSourceDocument.findUniqueOrThrow({
+      where: { id: documentId },
+    });
+    if (
+      document.extractionStatus === TrainingSourceExtractionStatus.READY
+    ) {
+      return document;
+    }
+    if (
+      document.extractionStatus === TrainingSourceExtractionStatus.FAILED ||
+      document.extractionStatus ===
+        TrainingSourceExtractionStatus.NEEDS_MANUAL_TEXT
+    ) {
+      throw new Error(
+        `Linked PDF extraction stopped with ${document.extractionStatus}: ${document.errorMessage ?? 'no error'}`,
+      );
+    }
+    await wait(100);
+  }
+  throw new Error('Linked PDF extraction did not finish in time');
+}
+
+function createPdf(text) {
+  return new Promise((resolve, reject) => {
+    const document = new PDFDocument({
+      autoFirstPage: false,
+      compress: false,
+    });
+    const chunks = [];
+    document.on('data', (chunk) => chunks.push(chunk));
+    document.on('error', reject);
+    document.on('end', () => resolve(Buffer.concat(chunks)));
+    document.addPage();
+    document.fontSize(18).text(text);
+    document.end();
+  });
 }
 
 async function assertConnectedDatabaseState({
@@ -552,16 +779,22 @@ async function waitForTrainingWorkers() {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     const heartbeats = await prisma.trainingWorkerHeartbeat.findMany({
-      where: { workerKind: { in: ['audio', 'attempt'] } },
+      where: { workerKind: { in: ['audio', 'attempt', 'document'] } },
       select: { workerKind: true },
     });
     const kinds = new Set(
       heartbeats.map((heartbeat) => heartbeat.workerKind),
     );
-    if (kinds.has('audio') && kinds.has('attempt')) return;
+    if (
+      kinds.has('audio') &&
+      kinds.has('attempt') &&
+      kinds.has('document')
+    ) {
+      return;
+    }
     await wait(100);
   }
-  throw new Error('Training audio/attempt worker did not become ready');
+  throw new Error('Training audio/attempt/document worker did not become ready');
 }
 
 async function waitForAnswerProcessing({

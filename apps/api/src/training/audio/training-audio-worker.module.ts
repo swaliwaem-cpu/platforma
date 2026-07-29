@@ -38,6 +38,7 @@ import {
 import { OpenAiTrainingTranscriptionProvider } from '../openai/training-openai-transcription.provider';
 import { TrainingOfficialUrlFetcher } from '../training-official-url-fetcher';
 import { TrainingOfficialUrlWorkerService } from '../training-official-url-worker.service';
+import { TrainingDocumentWorkerService } from '../training-document-worker.service';
 import { TrainingAudioConfig } from './training-audio.config';
 import {
   TRAINING_AUDIO_PROCESS_RUNNER,
@@ -69,6 +70,7 @@ import {
     NodeTrainingAudioProcessRunner,
     TrainingFfmpegService,
     TrainingAudioWorkerService,
+    TrainingDocumentWorkerService,
     TrainingOfficialUrlFetcher,
     TrainingOfficialUrlWorkerService,
     TrainingFactSuggestionWorkerService,
