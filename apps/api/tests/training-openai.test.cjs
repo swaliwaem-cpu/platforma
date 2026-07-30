@@ -591,6 +591,72 @@ test('Responses evaluation uses store false, strict schema and treats transcript
   assert.equal(result.requestId, 'req-eval');
 });
 
+test('Responses evaluation accepts anchor IDs reused by different criteria', async () => {
+  const input = createEvaluationInput();
+  input.criteria[0].anchors[0].id = 'shared-anchor';
+  input.criteria.push({
+    id: '77777777-7777-4777-8777-777777777777',
+    code: 'structure',
+    title: 'Структура',
+    maxPoints: 10,
+    anchors: [
+      {
+        id: 'shared-anchor',
+        points: 10,
+        description: 'Ответ имеет понятную структуру',
+      },
+    ],
+  });
+
+  const output = createEvaluationOutput();
+  output.criteria[0].anchor_id = 'shared-anchor';
+  output.criteria.push({
+    criterion_id: '77777777-7777-4777-8777-777777777777',
+    anchor_id: 'shared-anchor',
+    evidence_source: 'TRANSCRIPT',
+    evidence: 'Подтвержденный факт',
+    metric_id: null,
+    explanation: 'Ответ структурирован.',
+  });
+
+  const client = new TrainingOpenAiHttpClient(createStubConfig(), {
+    baseUrl: 'https://openai.stub',
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({
+          id: 'resp-shared-anchor',
+          model: 'gpt-5.6-terra',
+          status: 'completed',
+          usage: { input_tokens: 100, output_tokens: 50 },
+          output: [
+            {
+              type: 'message',
+              content: [
+                {
+                  type: 'output_text',
+                  text: JSON.stringify(output),
+                },
+              ],
+            },
+          ],
+        }),
+        { status: 200, headers: { 'x-request-id': 'req-shared-anchor' } },
+      ),
+  });
+  const provider = new OpenAiTrainingEvaluationProvider(
+    createStubConfig(),
+    client,
+  );
+
+  const result = await provider.evaluate(input);
+
+  assert.deepEqual(
+    result.criterionScores.map((criterion) => criterion.anchorId),
+    ['shared-anchor', 'shared-anchor'],
+  );
+  assert.equal(result.requestId, 'req-shared-anchor');
+});
+
 test('evaluation validator rejects invented anchors and non-exact transcript evidence', () => {
   const input = createEvaluationInput();
   const inventedAnchor = createEvaluationOutput();

@@ -596,7 +596,6 @@ function validateEvaluationInput(input: TrainingEvaluationInput) {
     );
   }
   const criterionIds = new Set<string>();
-  const anchorIds = new Set<string>();
   if (
     input.criteria.length === 0 ||
     input.criteria.length > LIMITS.criteria ||
@@ -621,6 +620,7 @@ function validateEvaluationInput(input: TrainingEvaluationInput) {
       );
     }
     criterionIds.add(criterion.id);
+    const anchorIds = new Set<string>();
     for (const anchor of criterion.anchors) {
       if (
         anchorIds.has(anchor.id) ||
