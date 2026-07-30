@@ -6660,3 +6660,58 @@ Production:
 - Реальный evaluation после hotfix ещё не вызывался. Следующий ручной gate —
   новая живая попытка тестового аккаунта с одним основным и тремя
   уточняющими ответами.
+
+## 2026-07-30 — Production hotfix evidence нулевого anchor
+
+Причина:
+
+- Вторая живая попытка TATE подтвердила работу Telegram, реальной
+  транскрибации и предыдущего anchor-ID hotfix: evaluation дошёл до OpenAI
+  Responses и получил три HTTP `200`.
+- Strict JSON Schema разрешала `criteria[].evidence_source=NONE`, а prompt
+  описывал его форму без ограничения по anchor. Runtime при этом безусловно
+  отклонял `NONE` для любого критерия как
+  `OPENAI_EVALUATION_EVIDENCE_INVALID`, превращая schema-valid output в
+  bounded retry и затем в `technical_failure`.
+
+Исправление:
+
+- Validator теперь находит выбранный persisted anchor и разрешает
+  `evidence_source=NONE` только при `anchor.points === 0`.
+- Для любого положительного anchor по-прежнему обязательны точная
+  `TRANSCRIPT`-цитата или утверждённая `METRIC`; получить баллы без evidence
+  невозможно.
+- Prompt явно фиксирует zero-only правило, его version поднята до
+  `openai-evaluation-v2`. JSON Schema остаётся `openai-evaluation-v1`,
+  поскольку shape output не менялся.
+- Fact evidence rules, Prisma schema/migrations, API contracts и dependencies
+  не изменялись.
+
+Проверки и production:
+
+- Локальный API build — passed; профильный OpenAI stub-набор — `24/24`;
+  `git diff --check` — passed. Независимый backend-review дал `GO`.
+- Implementation commit `899548b` отправлен в `origin/on-ser`.
+- Перед deploy создан rollback-набор
+  `/opt/platforma-deploy-backups/training-evidence-hotfix-20260730T125803Z-bb8ef99b60c3`:
+  PostgreSQL custom dump `50 MB`, `pg_restore --list` passed, SHA-256
+  `068ba918019a15b43dee662d661c4905863ae4b72322ba8974075e3fc9ae20fa`.
+  Старый API image сохранён как
+  `platforma-api:rollback-evidence-20260730T125803Z`.
+- Candidate API image успешно прошёл Prisma generate и TypeScript build;
+  внутри image подтверждены validator и prompt-version markers. Перед
+  переключением активных `pending/running` training jobs не было.
+- Пересозданы только `api` и `training-worker`; они используют image
+  `sha256:5ed52e864a5e...`, restart count равен `0`. Web, PostgreSQL, Redis и
+  MinIO не перезапускались.
+- Повторный Prisma status подтвердил `43 migrations` и
+  `Database schema is up to date!`. Internal/public health возвращает
+  `status=ok`, `database=ok`, `training=ready`; все шесть worker heartbeat
+  свежие, startup/runtime error scan пуст.
+- Попытка `308c5b0d-43ea-40f6-9363-9b728bd46bc4` возвращена через
+  `TrainingAttemptEngineService.refundTechnicalFailure`: сохранён ровно один
+  audit `training.attempt.refund`, `is_consumed=false`, использованных попыток
+  тестового пользователя по TATE снова `0`.
+- Новая billable live-попытка после этого hotfix ещё не запускалась. Следующий
+  ручной gate — повторить один полный TATE flow; старую dead evaluation job
+  не переигрывать.
