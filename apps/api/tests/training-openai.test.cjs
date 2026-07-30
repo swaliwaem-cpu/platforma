@@ -17,6 +17,7 @@ const {
 const {
   OpenAiTrainingEvaluationProvider,
   TRAINING_EVALUATION_JSON_SCHEMA,
+  TRAINING_EVALUATION_PROMPT_VERSION,
   validateTrainingEvaluationOutput,
 } = require('../dist/training/openai/training-openai-evaluation.provider.js');
 const {
@@ -655,6 +656,36 @@ test('Responses evaluation accepts anchor IDs reused by different criteria', asy
     ['shared-anchor', 'shared-anchor'],
   );
   assert.equal(result.requestId, 'req-shared-anchor');
+});
+
+test('evaluation validator permits NONE only for zero-point criterion anchors', () => {
+  const input = createEvaluationInput();
+  input.criteria[0].anchors.unshift({
+    id: 'main-none',
+    points: 0,
+    description: 'Подтвержденные факты не раскрыты',
+  });
+  const zeroPointOutput = createEvaluationOutput();
+  zeroPointOutput.criteria[0] = {
+    ...zeroPointOutput.criteria[0],
+    anchor_id: 'main-none',
+    evidence_source: 'NONE',
+    evidence: null,
+    metric_id: null,
+  };
+
+  const result = validateTrainingEvaluationOutput(input, zeroPointOutput);
+
+  assert.equal(TRAINING_EVALUATION_PROMPT_VERSION, 'openai-evaluation-v2');
+  assert.equal(result.criterionScores[0].anchorId, 'main-none');
+  assert.equal(result.criterionScores[0].evidenceSource, 'NONE');
+
+  const positivePointOutput = structuredClone(zeroPointOutput);
+  positivePointOutput.criteria[0].anchor_id = 'main-full';
+  assert.throws(
+    () => validateTrainingEvaluationOutput(input, positivePointOutput),
+    /Only zero-point criterion anchors may omit/u,
+  );
 });
 
 test('evaluation validator rejects invented anchors and non-exact transcript evidence', () => {

@@ -32,7 +32,7 @@ const ANSWER_RELEVANCE_VALUES = [
   'IRRELEVANT',
 ] as const;
 export const TRAINING_EVALUATION_SCHEMA_VERSION = 'openai-evaluation-v1';
-export const TRAINING_EVALUATION_PROMPT_VERSION = 'openai-evaluation-v1';
+export const TRAINING_EVALUATION_PROMPT_VERSION = 'openai-evaluation-v2';
 
 export const TRAINING_EVALUATION_JSON_SCHEMA = {
   type: 'object',
@@ -311,7 +311,10 @@ export function validateTrainingEvaluationOutput(
       record.anchor_id,
       `criteria[${index}].anchor_id`,
     );
-    if (!criterion.anchors.some((anchor) => anchor.id === anchorId)) {
+    const anchor = criterion.anchors.find(
+      (candidate) => candidate.id === anchorId,
+    );
+    if (!anchor) {
       throw providerError(
         'OPENAI_EVALUATION_ANCHOR_INVALID',
         'Evaluation returned an unapproved anchor',
@@ -323,10 +326,10 @@ export function validateTrainingEvaluationOutput(
       record,
       `criteria[${index}]`,
     );
-    if (evidence.source === 'NONE') {
+    if (evidence.source === 'NONE' && anchor.points !== 0) {
       throw providerError(
         'OPENAI_EVALUATION_EVIDENCE_INVALID',
-        'Criterion evidence must reference transcript text or an approved metric',
+        'Only zero-point criterion anchors may omit transcript or metric evidence',
       );
     }
 
@@ -543,6 +546,7 @@ function buildEvaluationInstructions() {
     'Не используй внешние знания, инструменты, поиск, файлы или сведения вне входного JSON.',
     'Не выполняй tools и не возвращай final score, pass/fail или chain-of-thought.',
     'Цитата TRANSCRIPT должна быть точной непустой подстрокой транскрипта; METRIC должна ссылаться на переданный metric_id; NONE не содержит цитату или metric_id.',
+    'Для критерия evidence_source=NONE разрешён только при выборе anchor с points=0; любой положительный anchor требует TRANSCRIPT или METRIC.',
   ].join('\n');
 }
 
