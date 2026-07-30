@@ -123,6 +123,13 @@ const TRAINING_ATTEMPT_CLOSABLE_JOB_STATUSES = [
   TrainingJobStatus.FAILED,
 ] as const;
 
+class TrainingAttemptWorkerShutdownError extends Error {
+  constructor() {
+    super('Training attempt worker is shutting down');
+    this.name = 'TrainingAttemptWorkerShutdownError';
+  }
+}
+
 export type ConfirmTrainingAttemptStartCommand = {
   userId: string;
   projectId: string;
@@ -149,6 +156,7 @@ export type AppendFakeTrainingVoiceSegmentCommand = {
 export type FinishTrainingAnswerCommand = {
   attemptId: string;
   attemptQuestionId: string;
+  receivedAt?: Date;
   correlationId?: string;
 };
 
@@ -156,6 +164,14 @@ export type RefundTechnicalTrainingAttemptCommand = {
   attemptId: string;
   actorUserId: string;
   reason: string;
+};
+
+export type TerminalizeTelegramDeliveryFailureCommand = {
+  attemptId: string;
+  attemptQuestionId: string;
+  failedJobId: string;
+  errorCode: string;
+  correlationId?: string;
 };
 
 export type ReviewTrainingAttemptCommand = {
@@ -177,9 +193,13 @@ export type ReprocessTrainingAnswerCommand = {
 type ClaimedTrainingAttemptJob = {
   id: string;
   kind: TrainingJobKind;
+  status: TrainingJobStatus;
   payloadJson: Prisma.JsonValue;
   attempts: number;
   maxAttempts: number;
+  lockOwner: string | null;
+  lockedAt: Date | null;
+  heartbeatAt: Date | null;
 };
 
 @Injectable()
@@ -639,6 +659,44 @@ export class TrainingAttemptEngineService
           attemptQuestionId: currentQuestion.id,
         };
       }
+      if (this.audioConfig) {
+        const existingSegments =
+          currentQuestion.answer?.voiceSegments ?? [];
+        if (existingSegments.length >= this.audioConfig.maxSegments) {
+          throw new BadRequestException(
+            'Training answer segment limit is exceeded',
+          );
+        }
+        if (
+          command.sizeBytes !== undefined &&
+          command.sizeBytes > BigInt(this.audioConfig.maxSegmentBytes)
+        ) {
+          throw new BadRequestException(
+            'Training voice segment size limit is exceeded',
+          );
+        }
+        const declaredAnswerBytes = existingSegments.reduce(
+          (total, segment) => total + (segment.sizeBytes ?? 0n),
+          command.sizeBytes ?? 0n,
+        );
+        if (declaredAnswerBytes > BigInt(this.audioConfig.maxAnswerBytes)) {
+          throw new BadRequestException(
+            'Training answer size limit is exceeded',
+          );
+        }
+        const declaredAnswerDurationSeconds = existingSegments.reduce(
+          (total, segment) => total + (segment.durationSeconds ?? 0),
+          command.durationSeconds ?? 0,
+        );
+        if (
+          declaredAnswerDurationSeconds >
+          this.audioConfig.maxAnswerDurationSeconds
+        ) {
+          throw new BadRequestException(
+            'Training answer duration limit is exceeded',
+          );
+        }
+      }
 
       const isExpired = receivedAt >= attempt.expiresAt;
       if (isExpired) {
@@ -751,6 +809,15 @@ export class TrainingAttemptEngineService
   }
 
   async finishAnswer(command: FinishTrainingAnswerCommand) {
+    const receivedAt = command.receivedAt ?? this.clock.now();
+    if (
+      !(receivedAt instanceof Date) ||
+      !Number.isFinite(receivedAt.getTime())
+    ) {
+      throw new BadRequestException(
+        'Training answer finish ingress time is invalid',
+      );
+    }
     const correlationId =
       readTrainingCorrelationId(command.correlationId) ??
       `training-attempt:${command.attemptId}`;
@@ -807,7 +874,7 @@ export class TrainingAttemptEngineService
         throw new ConflictException('Current training answer has failed');
       }
 
-      const finishedAt = this.clock.now();
+      const finishedAt = receivedAt;
       const timeoutStarted =
         attempt.status === TrainingAttemptStatus.FINALIZING ||
         finishedAt >= attempt.expiresAt;
@@ -1182,6 +1249,128 @@ export class TrainingAttemptEngineService
     return this.getAttempt(command.attemptId);
   }
 
+  async terminalizeTelegramDeliveryFailure(
+    command: TerminalizeTelegramDeliveryFailureCommand,
+  ) {
+    const errorCode = command.errorCode.trim();
+    if (
+      !/^[A-Z0-9_]{3,120}$/u.test(errorCode) ||
+      !command.attemptId ||
+      !command.attemptQuestionId ||
+      !command.failedJobId
+    ) {
+      throw new BadRequestException(
+        'Telegram delivery failure command is invalid',
+      );
+    }
+    const failedAt = this.clock.now();
+    const correlationId =
+      readTrainingCorrelationId(command.correlationId) ??
+      `training-attempt:${command.attemptId}`;
+
+    await this.runSerializable(async (tx) => {
+      await this.acquireAttemptLock(tx, command.attemptId);
+      const failedJob = await tx.trainingJob.findUnique({
+        where: { id: command.failedJobId },
+        select: {
+          id: true,
+          kind: true,
+          status: true,
+          payloadJson: true,
+        },
+      });
+      if (
+        !failedJob ||
+        failedJob.kind !== TrainingJobKind.SEND_TELEGRAM_MESSAGE ||
+        failedJob.status !== TrainingJobStatus.DEAD
+      ) {
+        throw new ConflictException(
+          'Critical Telegram delivery job is not dead',
+        );
+      }
+      const delivery = readTelegramAttemptDeliveryPayload(
+        failedJob.payloadJson,
+      );
+      if (delivery?.eventType === 'TECHNICAL_FAILURE') {
+        return;
+      }
+      if (
+        delivery?.eventType !== 'ATTEMPT_QUESTION' ||
+        delivery.attemptId !== command.attemptId ||
+        delivery.attemptQuestionId !== command.attemptQuestionId
+      ) {
+        throw new ConflictException(
+          'Telegram delivery job does not match the current attempt question',
+        );
+      }
+
+      const attempt = await tx.trainingAttempt.findUnique({
+        where: { id: command.attemptId },
+        include: {
+          attemptQuestions: {
+            orderBy: { sequence: 'asc' },
+            select: {
+              id: true,
+              sequence: true,
+              status: true,
+            },
+          },
+        },
+      });
+      if (!attempt) {
+        throw new NotFoundException('Training attempt not found');
+      }
+      if (this.isTerminalAttemptStatus(attempt.status)) {
+        return;
+      }
+      const currentQuestion = this.findCurrentQuestion(
+        attempt.attemptQuestions,
+      );
+      if (currentQuestion?.id !== command.attemptQuestionId) {
+        throw new ConflictException(
+          'Telegram delivery failure is not for the current attempt question',
+        );
+      }
+
+      await tx.trainingAttempt.update({
+        where: { id: attempt.id },
+        data: {
+          status: TrainingAttemptStatus.TECHNICAL_FAILURE,
+          isConsumed: false,
+          completedAt: failedAt,
+          passStatus: TrainingPassStatus.PENDING,
+        },
+      });
+      await this.closeAttemptJobsWithinTransaction(
+        tx,
+        attempt.id,
+        failedAt,
+      );
+      await tx.auditLog.create({
+        data: {
+          action: 'training.attempt.automatic_refund',
+          entityType: 'training_attempt',
+          entityId: attempt.id,
+          metadata: {
+            reason: 'telegram_question_delivery_failed',
+            attemptQuestionId: command.attemptQuestionId,
+            failedJobId: command.failedJobId,
+            errorCode,
+          },
+        },
+      });
+      await enqueueAttemptTelegramOutboxEvent(tx, {
+        eventType: 'TECHNICAL_FAILURE',
+        attemptId: attempt.id,
+        idempotencyKey: `telegram:attempt-technical-failure:${attempt.id}`,
+        runAt: failedAt,
+        correlationId,
+      });
+    });
+
+    return this.getAttempt(command.attemptId);
+  }
+
   async reviewAttempt(command: ReviewTrainingAttemptCommand) {
     const idempotencyKey = parseTrainingReviewIdempotencyKey(
       command.idempotencyKey,
@@ -1375,7 +1564,6 @@ export class TrainingAttemptEngineService
     return this.enqueueAnswerReprocessing(
       command,
       TrainingJobKind.TRANSCRIBE_ANSWER,
-      TrainingAnswerStatus.TRANSCRIBING,
       'training.answer.reprocess_transcription',
     );
   }
@@ -1384,7 +1572,6 @@ export class TrainingAttemptEngineService
     return this.enqueueAnswerReprocessing(
       command,
       TrainingJobKind.EVALUATE_ANSWER,
-      TrainingAnswerStatus.EVALUATING,
       'training.answer.reprocess_evaluation',
     );
   }
@@ -1394,7 +1581,6 @@ export class TrainingAttemptEngineService
     kind:
       | typeof TrainingJobKind.TRANSCRIBE_ANSWER
       | typeof TrainingJobKind.EVALUATE_ANSWER,
-    answerStatus: TrainingAnswerStatus,
     auditAction: string,
   ) {
     const comment = command.comment.trim();
@@ -1405,6 +1591,22 @@ export class TrainingAttemptEngineService
     const requestedAt = this.clock.now();
 
     const result = await this.runSerializable(async (tx) => {
+      const answerReference = await tx.trainingAnswer.findUnique({
+        where: { id: command.answerId },
+        select: {
+          id: true,
+          attemptQuestion: {
+            select: { attemptId: true },
+          },
+        },
+      });
+      if (!answerReference) {
+        throw new NotFoundException('Training answer not found');
+      }
+      await this.acquireAttemptLock(
+        tx,
+        answerReference.attemptQuestion.attemptId,
+      );
       const answer = await tx.trainingAnswer.findUnique({
         where: { id: command.answerId },
         include: {
@@ -1418,7 +1620,6 @@ export class TrainingAttemptEngineService
       if (!answer) {
         throw new NotFoundException('Training answer not found');
       }
-      await this.acquireAttemptLock(tx, answer.attemptQuestion.attemptId);
       const attempt = answer.attemptQuestion.attempt;
       if (
         attempt.status !== TrainingAttemptStatus.COMPLETED &&
@@ -1427,6 +1628,11 @@ export class TrainingAttemptEngineService
       ) {
         throw new ConflictException(
           'Only a terminal training attempt can be reprocessed',
+        );
+      }
+      if (!attempt.isConsumed) {
+        throw new ConflictException(
+          'A refunded training attempt cannot be reprocessed',
         );
       }
       if (
@@ -1446,56 +1652,22 @@ export class TrainingAttemptEngineService
           'Training answer has no transcript for reprocessing',
         );
       }
-
-      await this.closeAttemptJobsWithinTransaction(
-        tx,
-        attempt.id,
-        requestedAt,
-      );
-      await tx.trainingAttempt.update({
-        where: { id: attempt.id },
-        data: {
-          status: TrainingAttemptStatus.FINALIZING,
-          completedAt: null,
-          adminScore: null,
-          finalScore: null,
-          passStatus: TrainingPassStatus.PENDING,
-          reviewStatus: TrainingReviewStatus.PENDING,
-        },
-      });
-      await tx.trainingAttemptQuestion.update({
-        where: { id: answer.attemptQuestionId },
-        data: {
-          status: TrainingAttemptQuestionStatus.PROCESSING,
-          finishedAt: null,
-        },
-      });
-      await tx.trainingAnswer.update({
-        where: { id: answer.id },
-        data: {
-          status: answerStatus,
-          processingStartedAt: requestedAt,
-          processingFinishedAt: null,
-          errorCode: null,
-          errorMessage: null,
-        },
-      });
-      await tx.trainingJob.updateMany({
+      const activeReprocessingJob = await tx.trainingJob.findFirst({
         where: {
-          idempotencyKey: `attempt:${attempt.id}:finalize`,
+          idempotencyKey: {
+            startsWith: `attempt:${attempt.id}:answer:${answer.id}:`,
+          },
+          status: {
+            in: [TrainingJobStatus.PENDING, TrainingJobStatus.RUNNING],
+          },
         },
-        data: {
-          status: TrainingJobStatus.PENDING,
-          attempts: 0,
-          runAt: requestedAt,
-          finishedAt: null,
-          lockOwner: null,
-          lockedAt: null,
-          heartbeatAt: null,
-          lastErrorCode: null,
-          lastErrorMessage: null,
-        },
+        select: { id: true },
       });
+      if (activeReprocessingJob) {
+        throw new ConflictException(
+          'Training answer already has active processing',
+        );
+      }
       await this.enqueueAnswerJobWithinTransaction(
         tx,
         kind,
@@ -1742,6 +1914,7 @@ export class TrainingAttemptEngineService
 
         const hasProcessingAnswer = attempt.attemptQuestions.some(
           (question) =>
+            question.answer?.status === TrainingAnswerStatus.COLLECTING ||
             question.answer?.status === TrainingAnswerStatus.READY ||
             question.answer?.status === TrainingAnswerStatus.DOWNLOADING ||
             question.answer?.status === TrainingAnswerStatus.TRANSCRIBING ||
@@ -1803,6 +1976,10 @@ export class TrainingAttemptEngineService
       if (!job) return;
 
       try {
+        if (this.destroyed) {
+          await this.releaseJobAfterShutdown(job);
+          return;
+        }
         await this.processClaimedAttemptJob(job);
       } catch (error) {
         if (propagateErrors) {
@@ -1844,17 +2021,26 @@ export class TrainingAttemptEngineService
         select: {
           id: true,
           kind: true,
+          status: true,
           payloadJson: true,
           attempts: true,
           maxAttempts: true,
+          lockOwner: true,
+          lockedAt: true,
+          heartbeatAt: true,
         },
       });
+      if (this.destroyed) return null;
       if (!candidate) return null;
 
       if (candidate.attempts >= candidate.maxAttempts) {
         await this.failExhaustedJob(candidate, now);
+        if (this.destroyed) return null;
         continue;
       }
+      if (this.destroyed) return null;
+      const candidateSnapshot = { ...candidate };
+      const claimedAttempts = candidate.attempts + 1;
 
       const claimed = await this.prisma.trainingJob.updateMany({
         where: {
@@ -1886,16 +2072,35 @@ export class TrainingAttemptEngineService
       if (claimed.count === 0) {
         continue;
       }
+      if (this.destroyed) {
+        await this.releaseJobAfterShutdown({
+          ...candidateSnapshot,
+          status: TrainingJobStatus.RUNNING,
+          attempts: claimedAttempts,
+          lockOwner: this.workerId,
+          lockedAt: now,
+          heartbeatAt: now,
+        });
+        return null;
+      }
 
       return {
-        ...candidate,
-        attempts: candidate.attempts + 1,
+        ...candidateSnapshot,
+        status: TrainingJobStatus.RUNNING,
+        attempts: claimedAttempts,
+        lockOwner: this.workerId,
+        lockedAt: now,
+        heartbeatAt: now,
       };
     }
   }
 
   private async processClaimedAttemptJob(job: ClaimedTrainingAttemptJob) {
     try {
+      if (this.destroyed) {
+        await this.releaseJobAfterShutdown(job);
+        return;
+      }
       await this.withJobHeartbeat(job.id, async () => {
         this.assertRuntimeEnabled();
         const payload = readAttemptJobPayload(job.payloadJson);
@@ -1930,6 +2135,10 @@ export class TrainingAttemptEngineService
         }
       });
     } catch (error) {
+      if (error instanceof TrainingAttemptWorkerShutdownError) {
+        await this.releaseJobAfterShutdown(job);
+        return;
+      }
       if (error instanceof TrainingFeatureDisabledAfterClaimError) {
         await this.releaseJobAfterFeatureDisable(job);
         return;
@@ -1979,21 +2188,36 @@ export class TrainingAttemptEngineService
       throw new Error('Transcription job payload has no answerId');
     }
 
-    await this.prisma.trainingAnswer.updateMany({
-      where: {
-        id: payload.answerId,
-        status: TrainingAnswerStatus.READY,
-      },
-      data: {
-        status: TrainingAnswerStatus.TRANSCRIBING,
-        processingStartedAt: this.clock.now(),
-        errorCode: null,
-        errorMessage: null,
-      },
-    });
+    if (payload.runType === TrainingProviderRunType.PRIMARY) {
+      await this.prisma.trainingAnswer.updateMany({
+        where: {
+          id: payload.answerId,
+          status: TrainingAnswerStatus.READY,
+        },
+        data: {
+          status: TrainingAnswerStatus.TRANSCRIBING,
+          processingStartedAt: this.clock.now(),
+          errorCode: null,
+          errorMessage: null,
+        },
+      });
+    }
 
     const context = await this.loadAnswerProcessingContext(payload.answerId);
-    if (this.isTerminalAttemptStatus(context.attemptQuestion.attempt.status)) {
+    if (
+      payload.runType === TrainingProviderRunType.PRIMARY &&
+      this.isTerminalAttemptStatus(context.attemptQuestion.attempt.status)
+    ) {
+      await this.completeTerminalJob(job.id, payload.attemptId);
+      return;
+    }
+    if (
+      payload.runType !== TrainingProviderRunType.PRIMARY &&
+      (!this.isTerminalAttemptStatus(
+        context.attemptQuestion.attempt.status,
+      ) ||
+        !context.attemptQuestion.attempt.isConsumed)
+    ) {
       await this.completeTerminalJob(job.id, payload.attemptId);
       return;
     }
@@ -2011,8 +2235,9 @@ export class TrainingAttemptEngineService
       throw new TrainingAudioError('AUDIO_METADATA_INVALID', false);
     }
     if (
-      context.status === TrainingAnswerStatus.EVALUATING ||
-      context.status === TrainingAnswerStatus.SCORED
+      payload.runType === TrainingProviderRunType.PRIMARY &&
+      (context.status === TrainingAnswerStatus.EVALUATING ||
+        context.status === TrainingAnswerStatus.SCORED)
     ) {
       const completedAt = this.clock.now();
       await this.runSerializable(async (tx) => {
@@ -2124,53 +2349,53 @@ export class TrainingAttemptEngineService
             },
           );
           transcription = await this.transcriptionProvider.transcribe({
-          answerId: context.id,
-          attemptQuestionId: context.attemptQuestionId,
-          review: payload.runType !== TrainingProviderRunType.PRIMARY,
-          approvedVocabulary: {
-            version: approvedVocabulary.version,
-            terms: approvedVocabulary.terms,
-          },
-          segments: context.voiceSegments.map((segment) => ({
-            id: segment.id,
-            segmentIndex: segment.segmentIndex,
-            fakeTranscript: segment.fileUniqueId,
-            ...(segment.originalFile
+            answerId: context.id,
+            attemptQuestionId: context.attemptQuestionId,
+            review: payload.runType !== TrainingProviderRunType.PRIMARY,
+            approvedVocabulary: {
+              version: approvedVocabulary.version,
+              terms: approvedVocabulary.terms,
+            },
+            segments: context.voiceSegments.map((segment) => ({
+              id: segment.id,
+              segmentIndex: segment.segmentIndex,
+              fakeTranscript: segment.fileUniqueId,
+              ...(segment.originalFile
+                ? {
+                    fileId: segment.originalFile.id,
+                    mimeType: segment.originalFile.mimeType ?? undefined,
+                    sizeBytes:
+                      segment.originalFile.sizeBytes === null
+                        ? undefined
+                        : Number(segment.originalFile.sizeBytes),
+                    checksum: segment.originalFile.checksum ?? undefined,
+                    durationMilliseconds:
+                      segment.durationMilliseconds ?? undefined,
+                  }
+                : {}),
+            })),
+            ...(context.mergedAudioFile &&
+            context.mergedAudioFile.bucket &&
+            context.mergedAudioFile.key &&
+            context.mergedAudioFile.url === null &&
+            context.mergedAudioFile.mimeType &&
+            context.mergedAudioFile.sizeBytes !== null &&
+            context.mergedAudioFile.checksum &&
+            context.mergedAudioDurationMilliseconds !== null
               ? {
-                  fileId: segment.originalFile.id,
-                  mimeType: segment.originalFile.mimeType ?? undefined,
-                  sizeBytes:
-                    segment.originalFile.sizeBytes === null
-                      ? undefined
-                      : Number(segment.originalFile.sizeBytes),
-                  checksum: segment.originalFile.checksum ?? undefined,
-                  durationMilliseconds:
-                    segment.durationMilliseconds ?? undefined,
+                  audio: {
+                    fileId: context.mergedAudioFile.id,
+                    bucket: context.mergedAudioFile.bucket,
+                    key: context.mergedAudioFile.key,
+                    mimeType: context.mergedAudioFile.mimeType,
+                    sizeBytes: Number(context.mergedAudioFile.sizeBytes),
+                    checksum: context.mergedAudioFile.checksum,
+                    durationMilliseconds:
+                      context.mergedAudioDurationMilliseconds,
+                    segmentCount: context.voiceSegments.length,
+                  },
                 }
               : {}),
-          })),
-          ...(context.mergedAudioFile &&
-          context.mergedAudioFile.bucket &&
-          context.mergedAudioFile.key &&
-          context.mergedAudioFile.url === null &&
-          context.mergedAudioFile.mimeType &&
-          context.mergedAudioFile.sizeBytes !== null &&
-          context.mergedAudioFile.checksum &&
-          context.mergedAudioDurationMilliseconds !== null
-            ? {
-                audio: {
-                  fileId: context.mergedAudioFile.id,
-                  bucket: context.mergedAudioFile.bucket,
-                  key: context.mergedAudioFile.key,
-                  mimeType: context.mergedAudioFile.mimeType,
-                  sizeBytes: Number(context.mergedAudioFile.sizeBytes),
-                  checksum: context.mergedAudioFile.checksum,
-                  durationMilliseconds:
-                    context.mergedAudioDurationMilliseconds,
-                  segmentCount: context.voiceSegments.length,
-                },
-              }
-            : {}),
           });
           writeSafeTrainingLog(
             this.logger,
@@ -2195,8 +2420,14 @@ export class TrainingAttemptEngineService
           if (error instanceof TrainingFeatureDisabledAfterClaimError) {
             throw error;
           }
-          if (providerRun) {
-            await this.recordProviderRunFailure(providerRun.id, error);
+          if (
+            providerRunId &&
+            error instanceof TrainingAudioError &&
+            error.retryable
+          ) {
+            await this.releaseProviderRunBeforeHttpRetry(providerRunId);
+          } else if (providerRunId) {
+            await this.recordProviderRunFailure(providerRunId, error);
           }
           throw error;
         }
@@ -2207,108 +2438,134 @@ export class TrainingAttemptEngineService
     }
     const completedAt = this.clock.now();
 
-    await this.runSerializable(async (tx) => {
-      await this.acquireAttemptLock(tx, payload.attemptId);
-      if (!(await this.refreshOwnedJobWithinTransaction(tx, job.id))) {
-        return;
-      }
-      const current = await tx.trainingAnswer.findUnique({
-        where: { id: context.id },
-        include: {
-          attemptQuestion: {
-            include: {
-              attempt: true,
+    let resultPersisted = false;
+    try {
+      resultPersisted = await this.runSerializable(async (tx) => {
+        await this.acquireAttemptLock(tx, payload.attemptId);
+        if (!(await this.refreshOwnedJobWithinTransaction(tx, job.id))) {
+          return false;
+        }
+        const current = await tx.trainingAnswer.findUnique({
+          where: { id: context.id },
+          include: {
+            attemptQuestion: {
+              include: {
+                attempt: true,
+              },
             },
           },
-        },
-      });
-      if (!current) {
-        throw new NotFoundException('Training answer not found');
-      }
-      if (this.isTerminalAttemptStatus(current.attemptQuestion.attempt.status)) {
-        await this.closeAttemptJobsWithinTransaction(
-          tx,
-          payload.attemptId,
-          completedAt,
-        );
-        return;
-      }
-
-      let activeTranscriptionId = current.activeTranscriptionId;
-      if (providerRunId) {
-        let persisted =
-          await tx.trainingAnswerTranscription.findUnique({
-            where: { providerRunId: providerRunId },
-            select: { id: true },
-          });
-        if (!persisted) {
-          const aggregate = await tx.trainingAnswerTranscription.aggregate({
-            where: { answerId: current.id },
-            _max: { transcriptionNumber: true },
-          });
-          persisted = await tx.trainingAnswerTranscription.create({
-            data: {
-              answerId: current.id,
-              providerRunId,
-              transcriptionNumber:
-                (aggregate._max.transcriptionNumber ?? 0) + 1,
-              transcript: transcription.transcript,
-              language: transcription.language,
-              wordCount: transcription.wordCount,
-              vocabularyVersion: approvedVocabulary.version,
-              vocabularyHash: approvedVocabulary.hash,
-            },
-            select: { id: true },
-          });
-          await tx.trainingProviderRun.update({
-            where: { id: providerRunId },
-            data: {
-              status: TrainingProviderRunStatus.SUCCEEDED,
-              actualModelId: transcription.actualModelId,
-              requestId: transcription.requestId,
-              responseStatus: transcription.responseStatus ?? 'completed',
-              providerUsageJson: transcription.usage
-                ? (transcription.usage as Prisma.InputJsonObject)
-                : undefined,
-              latencyMs: transcription.latencyMs,
-              retryCount: transcription.retryCount ?? 0,
-              completedAt,
-            },
-          });
+        });
+        if (!current) {
+          throw new NotFoundException('Training answer not found');
         }
-        activeTranscriptionId = persisted.id;
-      }
+        const currentAttempt = current.attemptQuestion.attempt;
+        if (
+          payload.runType === TrainingProviderRunType.PRIMARY &&
+          this.isTerminalAttemptStatus(currentAttempt.status)
+        ) {
+          await this.closeAttemptJobsWithinTransaction(
+            tx,
+            payload.attemptId,
+            completedAt,
+          );
+          return false;
+        }
+        if (
+          payload.runType !== TrainingProviderRunType.PRIMARY &&
+          (!this.isTerminalAttemptStatus(currentAttempt.status) ||
+            !currentAttempt.isConsumed)
+        ) {
+          await this.completeJobWithinTransaction(tx, job.id, completedAt);
+          return false;
+        }
 
-      await tx.trainingAnswer.update({
-        where: { id: current.id },
-        data: {
-          status: TrainingAnswerStatus.EVALUATING,
-          activeTranscriptionId,
-          combinedTranscript: transcription.transcript,
-          normalizedLanguage: transcription.language,
-          transcriptionProvider: transcription.provider,
-          transcriptionModel:
-            transcription.actualModelId ?? transcription.requestedModelId,
-          transcriptionRequestId: transcription.requestId,
-          acousticMetricsJson: mergeTranscriptMetrics(
-            current.acousticMetricsJson,
-            transcription.wordCount,
-            current.mergedAudioDurationMilliseconds,
-          ),
-        },
+        let activeTranscriptionId = current.activeTranscriptionId;
+        if (providerRunId) {
+          let persisted =
+            await tx.trainingAnswerTranscription.findUnique({
+              where: { providerRunId: providerRunId },
+              select: { id: true },
+            });
+          if (!persisted) {
+            const aggregate = await tx.trainingAnswerTranscription.aggregate({
+              where: { answerId: current.id },
+              _max: { transcriptionNumber: true },
+            });
+            persisted = await tx.trainingAnswerTranscription.create({
+              data: {
+                answerId: current.id,
+                providerRunId,
+                transcriptionNumber:
+                  (aggregate._max.transcriptionNumber ?? 0) + 1,
+                transcript: transcription.transcript,
+                language: transcription.language,
+                wordCount: transcription.wordCount,
+                vocabularyVersion: approvedVocabulary.version,
+                vocabularyHash: approvedVocabulary.hash,
+              },
+              select: { id: true },
+            });
+            await tx.trainingProviderRun.update({
+              where: { id: providerRunId },
+              data: {
+                status: TrainingProviderRunStatus.SUCCEEDED,
+                actualModelId: transcription.actualModelId,
+                requestId: transcription.requestId,
+                responseStatus: transcription.responseStatus ?? 'completed',
+                providerUsageJson: transcription.usage
+                  ? (transcription.usage as Prisma.InputJsonObject)
+                  : undefined,
+                latencyMs: transcription.latencyMs,
+                retryCount: transcription.retryCount ?? 0,
+                completedAt,
+              },
+            });
+          }
+          activeTranscriptionId = persisted.id;
+        }
+
+        await tx.trainingAnswer.update({
+          where: { id: current.id },
+          data: {
+            ...(payload.runType === TrainingProviderRunType.PRIMARY
+              ? { status: TrainingAnswerStatus.EVALUATING }
+              : {}),
+            activeTranscriptionId,
+            combinedTranscript: transcription.transcript,
+            normalizedLanguage: transcription.language,
+            transcriptionProvider: transcription.provider,
+            transcriptionModel:
+              transcription.actualModelId ?? transcription.requestedModelId,
+            transcriptionRequestId: transcription.requestId,
+            acousticMetricsJson: mergeTranscriptMetrics(
+              current.acousticMetricsJson,
+              transcription.wordCount,
+              current.mergedAudioDurationMilliseconds,
+            ),
+          },
+        });
+        await this.enqueueAnswerJobWithinTransaction(
+          tx,
+          TrainingJobKind.EVALUATE_ANSWER,
+          payload.attemptId,
+          current.id,
+          completedAt,
+          payload.runType,
+          payload.runNonce,
+          payload.correlationId,
+        );
+        await this.completeJobWithinTransaction(tx, job.id, completedAt);
+        return true;
       });
-      await this.enqueueAnswerJobWithinTransaction(
-        tx,
-        TrainingJobKind.EVALUATE_ANSWER,
-        payload.attemptId,
-        current.id,
-        completedAt,
-        payload.runType,
-        payload.runNonce,
-        payload.correlationId,
-      );
-      await this.completeJobWithinTransaction(tx, job.id, completedAt);
-    });
+    } catch (error) {
+      if (providerRunId) {
+        await this.recordProviderPersistenceFailure(providerRunId);
+      }
+      throw error;
+    }
+    if (!resultPersisted && providerRunId) {
+      await this.recordProviderPersistenceFailure(providerRunId);
+    }
   }
 
   private async processEvaluationJob(job: ClaimedTrainingAttemptJob) {
@@ -2318,7 +2575,20 @@ export class TrainingAttemptEngineService
     }
 
     const context = await this.loadAnswerProcessingContext(payload.answerId);
-    if (this.isTerminalAttemptStatus(context.attemptQuestion.attempt.status)) {
+    if (
+      payload.runType === TrainingProviderRunType.PRIMARY &&
+      this.isTerminalAttemptStatus(context.attemptQuestion.attempt.status)
+    ) {
+      await this.completeTerminalJob(job.id, payload.attemptId);
+      return;
+    }
+    if (
+      payload.runType !== TrainingProviderRunType.PRIMARY &&
+      (!this.isTerminalAttemptStatus(
+        context.attemptQuestion.attempt.status,
+      ) ||
+        !context.attemptQuestion.attempt.isConsumed)
+    ) {
       await this.completeTerminalJob(job.id, payload.attemptId);
       return;
     }
@@ -2500,8 +2770,8 @@ export class TrainingAttemptEngineService
           if (error instanceof TrainingFeatureDisabledAfterClaimError) {
             throw error;
           }
-          if (providerRun) {
-            await this.recordProviderRunFailure(providerRun.id, error);
+          if (providerRunId) {
+            await this.recordProviderRunFailure(providerRunId, error);
           }
           throw error;
         }
@@ -2509,129 +2779,188 @@ export class TrainingAttemptEngineService
     }
 
     const completedAt = this.clock.now();
-    await this.runSerializable(async (tx) => {
-      await this.acquireAttemptLock(tx, payload.attemptId);
-      if (!(await this.refreshOwnedJobWithinTransaction(tx, job.id))) {
-        return;
-      }
-      let persistedEvaluation = providerRunId
-        ? await tx.trainingAnswerEvaluation.findUnique({
-            where: { providerRunId },
-            select: { id: true },
-          })
-        : await tx.trainingAnswerEvaluation.findFirst({
-            where: {
-              answerId: context.id,
-              evaluationNumber: 1,
-            },
-            select: { id: true },
-          });
-
-      if (!persistedEvaluation) {
-        if (!evaluationResult) {
-          throw new Error('Recovered evaluation result is missing');
+    let resultPersisted = false;
+    try {
+      resultPersisted = await this.runSerializable(async (tx) => {
+        await this.acquireAttemptLock(tx, payload.attemptId);
+        if (!(await this.refreshOwnedJobWithinTransaction(tx, job.id))) {
+          return false;
         }
-        const { evaluation, score } = evaluationResult;
-        const nextEvaluationNumber = providerRunId
-          ? ((await tx.trainingAnswerEvaluation.aggregate({
-              where: { answerId: context.id },
-              _max: { evaluationNumber: true },
-            }))._max.evaluationNumber ?? 0) + 1
-          : 1;
-        persistedEvaluation = await tx.trainingAnswerEvaluation.create({
-          data: {
-            answerId: context.id,
-            providerRunId,
-            evaluationNumber: nextEvaluationNumber,
-            actualModelId:
-              evaluation.actualModelId ?? evaluation.requestedModelId,
-            reasoningEffort: evaluation.reasoningEffort,
-            promptVersion: TRAINING_EVALUATION_PROMPT_VERSION,
-            schemaVersion: TRAINING_EVALUATION_SCHEMA_VERSION,
-            rubricVersion: `${context.attemptQuestion.attempt.projectVersion.versionNumber}`,
-            structuredResultJson:
-              evaluation as unknown as Prisma.InputJsonObject,
-            aiSuggestedScore: score.aiSuggestedScore,
-            serverScore: score.serverScore,
-            summary: evaluation.summary.slice(0, 2_000),
-            requiresReview: score.requiresReview,
-            reviewReasonsJson: score.reviewReasons,
-            providerUsageJson: evaluation.usage
-              ? (evaluation.usage as Prisma.InputJsonObject)
-              : undefined,
-            latencyMs: evaluation.latencyMs,
-            requestId: evaluation.requestId,
-            startedAt: context.processingStartedAt ?? completedAt,
-            completedAt,
-            scoreComponents: {
-              create: score.components.map((component) => ({
-                criterionId: component.criterionId,
-                factId: component.factId,
-                componentKey: component.componentKey,
-                title: component.title,
-                awardedPoints: component.awardedPoints,
-                maxPoints: component.maxPoints,
-                factVerdict: component.factVerdict,
-                evidenceJson: component.evidence
-                  ? (component.evidence as Prisma.InputJsonObject)
-                  : undefined,
-                penaltyPoints: component.penaltyPoints,
-              })),
+        const currentAnswer = await tx.trainingAnswer.findUnique({
+          where: { id: context.id },
+          include: {
+            attemptQuestion: {
+              include: {
+                attempt: true,
+              },
             },
           },
-          select: { id: true },
         });
-        if (providerRunId) {
-          await tx.trainingProviderRun.update({
-            where: { id: providerRunId },
+        if (!currentAnswer) {
+          throw new NotFoundException('Training answer not found');
+        }
+        const currentAttempt = currentAnswer.attemptQuestion.attempt;
+        if (
+          payload.runType !== TrainingProviderRunType.PRIMARY &&
+          (!this.isTerminalAttemptStatus(currentAttempt.status) ||
+            !currentAttempt.isConsumed)
+        ) {
+          await this.completeJobWithinTransaction(tx, job.id, completedAt);
+          return false;
+        }
+
+        let persistedEvaluation = providerRunId
+          ? await tx.trainingAnswerEvaluation.findUnique({
+              where: { providerRunId },
+              select: { id: true },
+            })
+          : payload.runType === TrainingProviderRunType.PRIMARY
+            ? await tx.trainingAnswerEvaluation.findFirst({
+                where: {
+                  answerId: context.id,
+                  evaluationNumber: 1,
+                },
+                select: { id: true },
+              })
+            : null;
+
+        if (!persistedEvaluation) {
+          if (!evaluationResult) {
+            throw new Error('Recovered evaluation result is missing');
+          }
+          const { evaluation, score } = evaluationResult;
+          const nextEvaluationNumber =
+            providerRunId ||
+            payload.runType !== TrainingProviderRunType.PRIMARY
+              ? ((await tx.trainingAnswerEvaluation.aggregate({
+                  where: { answerId: context.id },
+                  _max: { evaluationNumber: true },
+                }))._max.evaluationNumber ?? 0) + 1
+              : 1;
+          persistedEvaluation = await tx.trainingAnswerEvaluation.create({
             data: {
-              status: TrainingProviderRunStatus.SUCCEEDED,
-              actualModelId: evaluation.actualModelId,
-              requestId: evaluation.requestId,
-              responseStatus: evaluation.responseStatus ?? 'completed',
+              answerId: context.id,
+              providerRunId,
+              evaluationNumber: nextEvaluationNumber,
+              actualModelId:
+                evaluation.actualModelId ?? evaluation.requestedModelId,
+              reasoningEffort: evaluation.reasoningEffort,
+              promptVersion: TRAINING_EVALUATION_PROMPT_VERSION,
+              schemaVersion: TRAINING_EVALUATION_SCHEMA_VERSION,
+              rubricVersion: `${context.attemptQuestion.attempt.projectVersion.versionNumber}`,
+              structuredResultJson:
+                evaluation as unknown as Prisma.InputJsonObject,
+              aiSuggestedScore: score.aiSuggestedScore,
+              serverScore: score.serverScore,
+              summary: evaluation.summary.slice(0, 2_000),
+              requiresReview: score.requiresReview,
+              reviewReasonsJson: score.reviewReasons,
               providerUsageJson: evaluation.usage
                 ? (evaluation.usage as Prisma.InputJsonObject)
                 : undefined,
               latencyMs: evaluation.latencyMs,
-              retryCount: evaluation.retryCount ?? 0,
+              requestId: evaluation.requestId,
+              startedAt: context.processingStartedAt ?? completedAt,
               completedAt,
+              scoreComponents: {
+                create: score.components.map((component) => ({
+                  criterionId: component.criterionId,
+                  factId: component.factId,
+                  componentKey: component.componentKey,
+                  title: component.title,
+                  awardedPoints: component.awardedPoints,
+                  maxPoints: component.maxPoints,
+                  factVerdict: component.factVerdict,
+                  evidenceJson: component.evidence
+                    ? (component.evidence as Prisma.InputJsonObject)
+                    : undefined,
+                  penaltyPoints: component.penaltyPoints,
+                })),
+              },
+            },
+            select: { id: true },
+          });
+          if (providerRunId) {
+            await tx.trainingProviderRun.update({
+              where: { id: providerRunId },
+              data: {
+                status: TrainingProviderRunStatus.SUCCEEDED,
+                actualModelId: evaluation.actualModelId,
+                requestId: evaluation.requestId,
+                responseStatus: evaluation.responseStatus ?? 'completed',
+                providerUsageJson: evaluation.usage
+                  ? (evaluation.usage as Prisma.InputJsonObject)
+                  : undefined,
+                latencyMs: evaluation.latencyMs,
+                retryCount: evaluation.retryCount ?? 0,
+                completedAt,
+              },
+            });
+          }
+        }
+
+        await tx.trainingAnswer.update({
+          where: { id: context.id },
+          data: {
+            status: TrainingAnswerStatus.SCORED,
+            activeEvaluationId: persistedEvaluation.id,
+            processingFinishedAt: completedAt,
+            errorCode: null,
+            errorMessage: null,
+          },
+        });
+        await tx.trainingAttemptQuestion.update({
+          where: { id: context.attemptQuestion.id },
+          data: {
+            status: TrainingAttemptQuestionStatus.SCORED,
+            finishedAt: context.attemptQuestion.finishedAt ?? completedAt,
+            responseTimeSeconds: calculateDurationSeconds(
+              context.attemptQuestion.presentedAt,
+              context.attemptQuestion.firstSegmentAt,
+            ),
+            answerDurationSeconds: context.voiceSegments.reduce(
+              (total, segment) => total + (segment.durationSeconds ?? 0),
+              0,
+            ),
+          },
+        });
+        if (payload.runType === TrainingProviderRunType.PRIMARY) {
+          await this.advanceOrFinalize(
+            tx,
+            payload.attemptId,
+            context.attemptQuestion.sequence,
+            completedAt,
+            payload.correlationId,
+          );
+        } else {
+          const originalCompletedAt =
+            currentAttempt.completedAt ?? completedAt;
+          await tx.trainingAttempt.update({
+            where: { id: currentAttempt.id },
+            data: {
+              status: TrainingAttemptStatus.FINALIZING,
+              adminScore: null,
             },
           });
+          await this.finalizeWithinTransaction(
+            tx,
+            currentAttempt.id,
+            originalCompletedAt,
+            payload.correlationId,
+          );
         }
+        await this.completeJobWithinTransaction(tx, job.id, completedAt);
+        return true;
+      });
+    } catch (error) {
+      if (providerRunId) {
+        await this.recordProviderPersistenceFailure(providerRunId);
       }
-
-      await tx.trainingAnswer.update({
-        where: { id: context.id },
-        data: {
-          status: TrainingAnswerStatus.SCORED,
-          activeEvaluationId: persistedEvaluation.id,
-          processingFinishedAt: completedAt,
-        },
-      });
-      await tx.trainingAttemptQuestion.update({
-        where: { id: context.attemptQuestion.id },
-        data: {
-          status: TrainingAttemptQuestionStatus.SCORED,
-          finishedAt: context.attemptQuestion.finishedAt ?? completedAt,
-          responseTimeSeconds: calculateDurationSeconds(
-            context.attemptQuestion.presentedAt,
-            context.attemptQuestion.firstSegmentAt,
-          ),
-          answerDurationSeconds: context.voiceSegments.reduce(
-            (total, segment) => total + (segment.durationSeconds ?? 0),
-            0,
-          ),
-        },
-      });
-      await this.advanceOrFinalize(
-        tx,
-        payload.attemptId,
-        context.attemptQuestion.sequence,
-        completedAt,
-        payload.correlationId,
-      );
-      await this.completeJobWithinTransaction(tx, job.id, completedAt);
-    });
+      throw error;
+    }
+    if (!resultPersisted && providerRunId) {
+      await this.recordProviderPersistenceFailure(providerRunId);
+    }
   }
 
   private async processFinalizationJob(job: ClaimedTrainingAttemptJob) {
@@ -2665,7 +2994,7 @@ export class TrainingAttemptEngineService
 
       await this.releaseJobWithinTransaction(
         tx,
-        job.id,
+        job,
         new Date(completedAt.getTime() + TRAINING_ATTEMPT_JOB_POLL_MS),
         'ATTEMPT_NOT_READY',
         'Training attempt still has unfinished questions',
@@ -2790,6 +3119,47 @@ export class TrainingAttemptEngineService
         if (!run) throw error;
       }
     }
+    if (!run) {
+      throw new ConflictException('OpenAI provider run could not be loaded');
+    }
+
+    if (
+      run.answerId !== input.answerId ||
+      run.kind !== input.kind ||
+      run.runType !== input.runType
+    ) {
+      throw new ConflictException(
+        'OpenAI provider run does not match the requested training operation',
+      );
+    }
+    if (run.status === TrainingProviderRunStatus.PENDING) {
+      await this.prisma.trainingProviderRun.updateMany({
+        where: {
+          id: run.id,
+          status: TrainingProviderRunStatus.PENDING,
+        },
+        data: {
+          requestedModelId: input.requestedModelId,
+          reasoningEffort: input.reasoningEffort,
+          sourceFileId: input.sourceFileId,
+          sourceChecksum: input.sourceChecksum,
+          transcriptHash: input.transcriptHash,
+          inputHash: input.inputHash,
+          inputMetadataJson: input.inputMetadata,
+          promptVersion: input.promptVersion,
+          schemaVersion: input.schemaVersion,
+          rubricVersion: input.rubricVersion,
+        },
+      });
+      run = await this.prisma.trainingProviderRun.findUnique({
+        where: { idempotencyKey },
+      });
+      if (!run) {
+        throw new ConflictException(
+          'OpenAI provider run disappeared during metadata refresh',
+        );
+      }
+    }
 
     if (run.status === TrainingProviderRunStatus.SUCCEEDED) return run;
     if (run.status === TrainingProviderRunStatus.REQUESTING) {
@@ -2876,6 +3246,42 @@ export class TrainingAttemptEngineService
         errorCode: openAiError?.code ?? 'OPENAI_PROVIDER_FAILED',
         errorClass: error instanceof Error ? error.name.slice(0, 120) : 'Error',
         ambiguousOutcome: ambiguous,
+        completedAt: this.clock.now(),
+      },
+    });
+  }
+
+  private async releaseProviderRunBeforeHttpRetry(runId: string) {
+    await this.prisma.trainingProviderRun.updateMany({
+      where: {
+        id: runId,
+        status: TrainingProviderRunStatus.REQUESTING,
+      },
+      data: {
+        status: TrainingProviderRunStatus.PENDING,
+        startedAt: null,
+        requestId: null,
+        responseStatus: null,
+        errorCode: null,
+        errorClass: null,
+        ambiguousOutcome: false,
+        completedAt: null,
+      },
+    });
+  }
+
+  private async recordProviderPersistenceFailure(runId: string) {
+    await this.prisma.trainingProviderRun.updateMany({
+      where: {
+        id: runId,
+        status: TrainingProviderRunStatus.REQUESTING,
+      },
+      data: {
+        status: TrainingProviderRunStatus.FAILED,
+        responseStatus: 'persistence_failed',
+        errorCode: 'OPENAI_RESULT_PERSISTENCE_FAILED',
+        errorClass: 'persistence',
+        ambiguousOutcome: false,
         completedAt: this.clock.now(),
       },
     });
@@ -3308,19 +3714,21 @@ export class TrainingAttemptEngineService
 
   private async releaseJobWithinTransaction(
     tx: Prisma.TransactionClient,
-    jobId: string,
+    job: ClaimedTrainingAttemptJob,
     runAt: Date,
     errorCode: string,
     errorMessage: string,
   ) {
     await tx.trainingJob.updateMany({
       where: {
-        id: jobId,
+        id: job.id,
         status: TrainingJobStatus.RUNNING,
         lockOwner: this.workerId,
+        attempts: job.attempts,
       },
       data: {
         status: TrainingJobStatus.PENDING,
+        attempts: Math.max(0, job.attempts - 1),
         runAt,
         lockOwner: null,
         lockedAt: null,
@@ -3339,18 +3747,13 @@ export class TrainingAttemptEngineService
   }
 
   private async assertProviderCallEnabled(providerRunId: string | null) {
-    if (this.trainingConfig?.isEnabled() !== false) return;
+    const runtimeDisabled = this.trainingConfig?.isEnabled() === false;
+    if (!runtimeDisabled && !this.destroyed) return;
     if (providerRunId) {
-      await this.prisma.trainingProviderRun.updateMany({
-        where: {
-          id: providerRunId,
-          status: TrainingProviderRunStatus.REQUESTING,
-        },
-        data: {
-          status: TrainingProviderRunStatus.PENDING,
-          startedAt: null,
-        },
-      });
+      await this.releaseProviderRunBeforeHttpRetry(providerRunId);
+    }
+    if (this.destroyed) {
+      throw new TrainingAttemptWorkerShutdownError();
     }
     throw new TrainingFeatureDisabledAfterClaimError();
   }
@@ -3375,6 +3778,29 @@ export class TrainingAttemptEngineService
         heartbeatAt: null,
         lastErrorCode: 'TRAINING_DISABLED_AFTER_CLAIM',
         lastErrorMessage: 'Training job released after runtime disable',
+        errorDetailsJson: { retryable: true },
+      },
+    });
+  }
+
+  private async releaseJobAfterShutdown(job: ClaimedTrainingAttemptJob) {
+    await this.prisma.trainingJob.updateMany({
+      where: {
+        id: job.id,
+        status: TrainingJobStatus.RUNNING,
+        lockOwner: this.workerId,
+        attempts: job.attempts,
+      },
+      data: {
+        status: TrainingJobStatus.PENDING,
+        attempts: Math.max(0, job.attempts - 1),
+        runAt: this.clock.now(),
+        finishedAt: null,
+        lockOwner: null,
+        lockedAt: null,
+        heartbeatAt: null,
+        lastErrorCode: 'ATTEMPT_SHUTDOWN_RELEASE',
+        lastErrorMessage: 'Training attempt job released during shutdown',
         errorDetailsJson: { retryable: true },
       },
     });
@@ -3421,7 +3847,7 @@ export class TrainingAttemptEngineService
     error: unknown,
     requireOwnership = true,
   ) {
-    const payload = readAttemptJobPayload(job.payloadJson);
+    const payload = tryReadAttemptJobPayload(job.payloadJson);
     const failedAt = this.clock.now();
     const message = toSafeErrorMessage(error);
     const audioError = error instanceof TrainingAudioError ? error : null;
@@ -3431,14 +3857,19 @@ export class TrainingAttemptEngineService
     const shouldRetry =
       requireOwnership && retryable && job.attempts < job.maxAttempts;
     const errorCode =
-      audioError?.code ?? openAiError?.code ?? 'ATTEMPT_JOB_FAILED';
+      payload === null
+        ? 'ATTEMPT_JOB_PAYLOAD_INVALID'
+        : audioError?.code ?? openAiError?.code ?? 'ATTEMPT_JOB_FAILED';
+    const reprocessing =
+      payload !== null &&
+      payload.runType !== TrainingProviderRunType.PRIMARY;
     const retryDelayMs = Math.max(
       Math.min(30_000, 250 * 2 ** Math.max(0, job.attempts - 1)),
       audioError?.retryAfterMs ?? 0,
     );
 
     await this.runSerializable(async (tx) => {
-      if (payload.attemptId) {
+      if (payload) {
         await this.acquireAttemptLock(tx, payload.attemptId);
       }
       const failedJob = await tx.trainingJob.updateMany({
@@ -3448,9 +3879,14 @@ export class TrainingAttemptEngineService
             ? {
                 status: TrainingJobStatus.RUNNING,
                 lockOwner: this.workerId,
+                attempts: job.attempts,
               }
             : {
+                status: job.status,
                 attempts: job.attempts,
+                lockOwner: job.lockOwner,
+                lockedAt: job.lockedAt,
+                heartbeatAt: job.heartbeatAt,
               }),
         },
         data: {
@@ -3480,7 +3916,7 @@ export class TrainingAttemptEngineService
       if (shouldRetry) {
         return;
       }
-      if (payload.answerId) {
+      if (payload?.answerId && !reprocessing) {
         await tx.trainingAnswer.updateMany({
           where: { id: payload.answerId },
           data: {
@@ -3491,7 +3927,7 @@ export class TrainingAttemptEngineService
           },
         });
       }
-      if (payload.attemptId) {
+      if (payload && !reprocessing) {
         const transitioned = await tx.trainingAttempt.updateMany({
           where: {
             id: payload.attemptId,
@@ -3742,6 +4178,45 @@ function readAttemptJobPayload(value: Prisma.JsonValue) {
         : `training-attempt:${value.attemptId}`,
     ),
   };
+}
+
+function tryReadAttemptJobPayload(value: Prisma.JsonValue) {
+  try {
+    return readAttemptJobPayload(value);
+  } catch {
+    return null;
+  }
+}
+
+function readTelegramAttemptDeliveryPayload(value: Prisma.JsonValue) {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    Array.isArray(value) ||
+    value.operation !== 'DOMAIN_EVENT' ||
+    typeof value.eventType !== 'string' ||
+    typeof value.attemptId !== 'string'
+  ) {
+    return null;
+  }
+  if (value.eventType === 'TECHNICAL_FAILURE') {
+    return {
+      eventType: value.eventType,
+      attemptId: value.attemptId,
+      attemptQuestionId: null,
+    } as const;
+  }
+  if (
+    value.eventType === 'ATTEMPT_QUESTION' &&
+    typeof value.attemptQuestionId === 'string'
+  ) {
+    return {
+      eventType: value.eventType,
+      attemptId: value.attemptId,
+      attemptQuestionId: value.attemptQuestionId,
+    } as const;
+  }
+  return null;
 }
 
 function toSafeErrorMessage(error: unknown) {

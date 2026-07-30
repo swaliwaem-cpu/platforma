@@ -68,7 +68,9 @@ export class TrainingAudioAccessService {
       );
     }
 
-    const buffer = await this.files.readStoredFile(file);
+    const buffer = await this.files.readStoredFile(file, {
+      privateTrainingAudio: true,
+    });
     const checksum = createHash('sha256').update(buffer).digest('hex');
     if (
       BigInt(buffer.length) !== file.sizeBytes ||

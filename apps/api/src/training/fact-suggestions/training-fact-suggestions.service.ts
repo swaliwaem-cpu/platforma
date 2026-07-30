@@ -21,6 +21,7 @@ import type { AuthenticatedUser } from '../../auth/auth.types';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { TrainingAuditRequest } from '../training-content.service';
 import { TrainingOpenAiConfig } from '../openai/training-openai.config';
+import { TrainingOpenAiRequestError } from '../openai/training-openai.http';
 import { lockTrainingVersionForContentMutation } from '../training-version-lock';
 import {
   buildTrainingFactSuggestionChunks,
@@ -29,11 +30,19 @@ import {
 } from './training-fact-suggestion.chunking';
 import {
   hashTrainingFactSuggestionText,
+  serializeTrainingFactSuggestionProviderInput,
+  TRAINING_FACT_SUGGESTION_MAX_SUGGESTIONS,
   TRAINING_FACT_SUGGESTION_PROMPT_VERSION,
   TRAINING_FACT_SUGGESTION_SCHEMA_VERSION,
+  type TrainingExistingFactInput,
+  type TrainingFactSuggestionProviderInput,
 } from './training-fact-suggestion.provider';
 
 const MAX_SOURCES_PER_RUN = 50;
+export const TRAINING_FACT_SUGGESTION_MAX_PROVIDER_RUNS_PER_RUN = 40;
+export const TRAINING_FACT_SUGGESTION_MAX_AGGREGATE_SUGGESTIONS = 800;
+export const TRAINING_FACT_SUGGESTION_MAX_AGGREGATE_INPUT_CHARACTERS =
+  1_500_000;
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -744,16 +753,15 @@ export class TrainingFactSuggestionsService {
         acceptedAliasesJson: true,
       },
     });
-    const existingFactsHash = canonicalHash(
-      existingFacts
-        .map((fact) => ({
-          id: fact.id,
-          code: fact.code,
-          statement: fact.statement,
-          acceptedAliases: parseStringArrayJson(fact.acceptedAliasesJson),
-        }))
-        .sort((left, right) => left.id.localeCompare(right.id)),
-    );
+    const existingFactInputs: TrainingExistingFactInput[] = existingFacts
+      .map((fact) => ({
+        id: fact.id,
+        code: fact.code,
+        statement: fact.statement,
+        acceptedAliases: parseStringArrayJson(fact.acceptedAliasesJson),
+      }))
+      .sort((left, right) => left.id.localeCompare(right.id));
+    const existingFactsHash = canonicalHash(existingFactInputs);
     const sourceSnapshots: SourceSnapshot[] = preparedSources.map((source) => ({
       kind: source.kind,
       id: source.id,
@@ -762,6 +770,24 @@ export class TrainingFactSuggestionsService {
       chunkCount: source.chunks.length,
     }));
     const runId = randomUUID();
+    const providerPlans = preparedSources.flatMap((source) =>
+      source.chunks.map((chunk) => ({ source, chunk })),
+    );
+    if (providerPlans.length === 0) {
+      throw new ConflictException(
+        'Selected sources contain no text for fact suggestions',
+      );
+    }
+    assertTrainingFactSuggestionRunBudget(
+      providerPlans.map(
+        ({ chunk }): TrainingFactSuggestionProviderInput => ({
+          runId,
+          chunkId: chunk.id,
+          segments: chunk.segments,
+          existingFacts: existingFactInputs,
+        }),
+      ),
+    );
     const requestedModelId =
       this.openAiConfig.providerMode === 'real'
         ? this.openAiConfig.reviewModel
@@ -770,41 +796,32 @@ export class TrainingFactSuggestionsService {
       this.openAiConfig.providerMode === 'real'
         ? this.openAiConfig.reviewReasoning
         : null;
-    const providerRows = preparedSources.flatMap((source) =>
-      source.chunks.map((chunk) => ({
-        id: randomUUID(),
-        projectVersionId: versionId,
-        suggestionRunId: runId,
-        sourceDocumentId:
-          source.kind === 'DOCUMENT' ? source.id : null,
-        sourceOfficialUrlId:
-          source.kind === 'OFFICIAL_URL' ? source.id : null,
-        chunkIndex: chunk.index,
-        status: TrainingProviderRunStatus.PENDING,
-        idempotencyKey: `fact-suggestion-provider:${runId}:${source.kind}:${source.id}:${chunk.index}`,
-        requestedModelId,
-        reasoningEffort,
-        sourceContentHash: source.contentHash,
-        inputHash: canonicalHash({
-          chunkInputHash: chunk.inputHash,
-          existingFactsHash,
-        }),
-        inputMetadataJson: {
-          chunkId: chunk.id,
-          chunkInputHash: chunk.inputHash,
-          existingFactsHash,
-          segmentCount: chunk.segments.length,
-          sourceKind: source.kind,
-        },
-        promptVersion: TRAINING_FACT_SUGGESTION_PROMPT_VERSION,
-        schemaVersion: TRAINING_FACT_SUGGESTION_SCHEMA_VERSION,
-      })),
-    );
-    if (providerRows.length === 0) {
-      throw new ConflictException(
-        'Selected sources contain no text for fact suggestions',
-      );
-    }
+    const providerRows = providerPlans.map(({ source, chunk }) => ({
+      id: randomUUID(),
+      projectVersionId: versionId,
+      suggestionRunId: runId,
+      sourceDocumentId: source.kind === 'DOCUMENT' ? source.id : null,
+      sourceOfficialUrlId: source.kind === 'OFFICIAL_URL' ? source.id : null,
+      chunkIndex: chunk.index,
+      status: TrainingProviderRunStatus.PENDING,
+      idempotencyKey: `fact-suggestion-provider:${runId}:${source.kind}:${source.id}:${chunk.index}`,
+      requestedModelId,
+      reasoningEffort,
+      sourceContentHash: source.contentHash,
+      inputHash: canonicalHash({
+        chunkInputHash: chunk.inputHash,
+        existingFactsHash,
+      }),
+      inputMetadataJson: {
+        chunkId: chunk.id,
+        chunkInputHash: chunk.inputHash,
+        existingFactsHash,
+        segmentCount: chunk.segments.length,
+        sourceKind: source.kind,
+      },
+      promptVersion: TRAINING_FACT_SUGGESTION_PROMPT_VERSION,
+      schemaVersion: TRAINING_FACT_SUGGESTION_SCHEMA_VERSION,
+    }));
 
     try {
       await this.prisma.$transaction(async (tx) => {
@@ -1427,6 +1444,70 @@ export class TrainingFactSuggestionsService {
       },
     });
   }
+}
+
+export function assertTrainingFactSuggestionRunBudget(
+  providerInputs: TrainingFactSuggestionProviderInput[],
+) {
+  if (
+    providerInputs.length >
+    TRAINING_FACT_SUGGESTION_MAX_PROVIDER_RUNS_PER_RUN
+  ) {
+    throw factSuggestionBudgetError(
+      'FACT_SUGGESTION_PROVIDER_RUN_LIMIT_EXCEEDED',
+      `Выбранные материалы требуют ${providerInputs.length} запросов к провайдеру; максимум за один анализ — ${TRAINING_FACT_SUGGESTION_MAX_PROVIDER_RUNS_PER_RUN}. Уменьшите набор или объём источников.`,
+    );
+  }
+
+  const potentialSuggestions =
+    providerInputs.length * TRAINING_FACT_SUGGESTION_MAX_SUGGESTIONS;
+  if (
+    potentialSuggestions >
+    TRAINING_FACT_SUGGESTION_MAX_AGGREGATE_SUGGESTIONS
+  ) {
+    throw factSuggestionBudgetError(
+      'FACT_SUGGESTION_AGGREGATE_OUTPUT_LIMIT_EXCEEDED',
+      `Выбранные материалы могут сформировать до ${potentialSuggestions} предложений; максимум за один анализ — ${TRAINING_FACT_SUGGESTION_MAX_AGGREGATE_SUGGESTIONS}.`,
+    );
+  }
+
+  let aggregateInputCharacters = 0;
+  for (const input of providerInputs) {
+    try {
+      aggregateInputCharacters +=
+        serializeTrainingFactSuggestionProviderInput(input).length;
+    } catch (error) {
+      if (error instanceof TrainingOpenAiRequestError) {
+        throw factSuggestionBudgetError(
+          'FACT_SUGGESTION_PROVIDER_INPUT_LIMIT_EXCEEDED',
+          'Существующие факты и выбранный фрагмент превышают безопасный размер одного запроса. Сократите материалы или объём фактов.',
+          error.code,
+        );
+      }
+      throw error;
+    }
+    if (
+      aggregateInputCharacters >
+      TRAINING_FACT_SUGGESTION_MAX_AGGREGATE_INPUT_CHARACTERS
+    ) {
+      throw factSuggestionBudgetError(
+        'FACT_SUGGESTION_AGGREGATE_INPUT_LIMIT_EXCEEDED',
+        `Суммарный объём анализа превышает безопасный лимит ${TRAINING_FACT_SUGGESTION_MAX_AGGREGATE_INPUT_CHARACTERS} символов. Уменьшите набор материалов.`,
+      );
+    }
+  }
+}
+
+function factSuggestionBudgetError(
+  code: string,
+  message: string,
+  providerErrorCode?: string,
+) {
+  return new BadRequestException({
+    code,
+    message,
+    ...(providerErrorCode ? { providerErrorCode } : {}),
+  });
 }
 
 export function parseSourceSnapshots(value: Prisma.JsonValue) {

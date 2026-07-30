@@ -146,7 +146,7 @@ export class TrainingOfficialUrlSourcesService {
               sourceId: source.id,
               fetchGeneration: source.fetchGeneration,
             },
-            idempotencyKey: officialUrlJobKey(
+            idempotencyKey: trainingOfficialUrlJobKey(
               source.id,
               source.fetchGeneration,
             ),
@@ -246,7 +246,7 @@ export class TrainingOfficialUrlSourcesService {
             fetchGeneration: generation,
             retryNonce: randomUUID(),
           },
-          idempotencyKey: officialUrlJobKey(source.id, generation),
+          idempotencyKey: trainingOfficialUrlJobKey(source.id, generation),
         },
       });
       await this.writeAudit(tx, {
@@ -549,7 +549,10 @@ export class TrainingOfficialUrlSourcesService {
   }
 }
 
-function officialUrlJobKey(sourceId: string, fetchGeneration: number) {
+export function trainingOfficialUrlJobKey(
+  sourceId: string,
+  fetchGeneration: number,
+) {
   return `fetch-official-url-source:${sourceId}:${fetchGeneration}`;
 }
 

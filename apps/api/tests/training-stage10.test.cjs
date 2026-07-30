@@ -54,6 +54,7 @@ const {
   TrainingTelegramWebhookService,
 } = require('../dist/training/telegram/training-telegram-webhook.service.js');
 const {
+  WEBHOOK_MAX_CONNECTIONS,
   executeWebhookCommand,
 } = require('../scripts/training-telegram-webhook.cjs');
 
@@ -488,6 +489,8 @@ test('webhook CLI uses allowed_updates and never returns credentials', async () 
   assert.deepEqual(register, { ok: true, command: 'register' });
   const body = JSON.parse(calls[0].options.body);
   assert.deepEqual(body.allowed_updates, ['message', 'callback_query']);
+  assert.equal(body.max_connections, 1);
+  assert.equal(body.max_connections, WEBHOOK_MAX_CONNECTIONS);
   assert.equal(body.drop_pending_updates, false);
   const serializedResult = JSON.stringify(register);
   assert.equal(serializedResult.includes(env.TELEGRAM_BOT_TOKEN), false);
@@ -507,12 +510,14 @@ test('webhook CLI uses allowed_updates and never returns credentials', async () 
         result: {
           url: 'https://api.stage.invalid/training/telegram/webhook',
           pending_update_count: 2,
+          max_connections: 1,
           allowed_updates: ['message', 'callback_query'],
         },
       }),
     }),
   });
   assert.equal(status.webhook.pendingUpdateCount, 2);
+  assert.equal(status.webhook.maxConnections, 1);
 
   await assert.rejects(
     executeWebhookCommand({

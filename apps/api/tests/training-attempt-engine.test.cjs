@@ -60,6 +60,7 @@ function createService({
   selector,
   transcriptionProvider,
   evaluationProvider,
+  audioConfig,
 }) {
   return new TrainingAttemptEngineService(
     prisma,
@@ -69,6 +70,7 @@ function createService({
       new DeterministicFakeTrainingTranscriptionProvider(),
     evaluationProvider ??
       new DeterministicFakeTrainingEvaluationProvider(),
+    audioConfig,
   );
 }
 
@@ -498,6 +500,104 @@ test('finish command, timeout command and finalization are idempotent under dupl
   assert.equal(harness.prisma.evaluations.size, 1);
 });
 
+test('finish uses ingress time instead of delayed handler time at the timeout boundary', async () => {
+  const harness = createHarness();
+  const attempt = await startAttempt(harness.service);
+  await harness.service.appendVoiceSegment({
+    attemptId: attempt.id,
+    kind: 'VOICE',
+    updateId: 7_050n,
+    fakeTranscript: 'получено до таймаута',
+    recordingStartedAt: new Date(attempt.expiresAt.getTime() - 2_000),
+  });
+  harness.service.onModuleDestroy();
+  harness.clock.set(new Date(attempt.expiresAt.getTime() + 5_000));
+
+  const result = await harness.service.finishAnswer({
+    attemptId: attempt.id,
+    attemptQuestionId: attempt.attemptQuestions[0].id,
+    receivedAt: new Date(attempt.expiresAt.getTime() - 1),
+  });
+
+  assert.equal(result.attempt.status, 'PROCESSING_MAIN');
+  assert.equal(
+    result.attempt.attemptQuestions[0].status,
+    TrainingAttemptQuestionStatus.LOCKED,
+  );
+  assert.equal(result.attempt.attemptQuestions[0].answer.status, 'READY');
+});
+
+test('audio ingress rejects declared segment count, size and duration overflow before enqueue', async () => {
+  const baseAudioConfig = {
+    maxSegmentBytes: 65_536,
+    maxAnswerBytes: 65_536,
+    maxSegments: 32,
+    maxAnswerDurationSeconds: 60,
+  };
+  const segmentHarness = createHarness({
+    audioConfig: { ...baseAudioConfig, maxSegments: 1 },
+  });
+  const segmentAttempt = await startAttempt(segmentHarness.service);
+  await segmentHarness.service.appendVoiceSegment({
+    attemptId: segmentAttempt.id,
+    kind: 'VOICE',
+    updateId: 7_060n,
+    fakeTranscript: 'первая часть',
+    recordingStartedAt: segmentHarness.clock.now(),
+    durationSeconds: 10,
+  });
+  await assert.rejects(
+    () =>
+      segmentHarness.service.appendVoiceSegment({
+        attemptId: segmentAttempt.id,
+        kind: 'VOICE',
+        updateId: 7_061n,
+        fakeTranscript: 'лишняя часть',
+        recordingStartedAt: segmentHarness.clock.now(),
+        durationSeconds: 10,
+      }),
+    /segment limit/u,
+  );
+
+  const sizeHarness = createHarness({ audioConfig: baseAudioConfig });
+  const sizeAttempt = await startAttempt(sizeHarness.service);
+  await assert.rejects(
+    () =>
+      sizeHarness.service.appendVoiceSegment({
+        attemptId: sizeAttempt.id,
+        kind: 'VOICE',
+        updateId: 7_062n,
+        fakeTranscript: 'слишком большой сегмент',
+        recordingStartedAt: sizeHarness.clock.now(),
+        sizeBytes: 65_537n,
+      }),
+    /segment size limit/u,
+  );
+
+  const durationHarness = createHarness({ audioConfig: baseAudioConfig });
+  const durationAttempt = await startAttempt(durationHarness.service);
+  await durationHarness.service.appendVoiceSegment({
+    attemptId: durationAttempt.id,
+    kind: 'VOICE',
+    updateId: 7_063n,
+    fakeTranscript: 'сорок секунд',
+    recordingStartedAt: durationHarness.clock.now(),
+    durationSeconds: 40,
+  });
+  await assert.rejects(
+    () =>
+      durationHarness.service.appendVoiceSegment({
+        attemptId: durationAttempt.id,
+        kind: 'VOICE',
+        updateId: 7_064n,
+        fakeTranscript: 'ещё двадцать одна',
+        recordingStartedAt: durationHarness.clock.now(),
+        durationSeconds: 21,
+      }),
+    /duration limit/u,
+  );
+});
+
 test('service recreation resumes a persisted READY answer', async () => {
   const harness = createHarness();
   const attempt = await startAttempt(harness.service);
@@ -779,6 +879,101 @@ test('two recovery workers claim one persisted answer only once', async () => {
   assert.equal(evaluationCalls, 1);
   assert.equal(harness.prisma.evaluations.size, 1);
   assert.equal(harness.prisma.scoreComponents.length, 1);
+});
+
+test('malformed job is terminalized once and stale exhausted snapshot cannot overwrite success', async () => {
+  const harness = createHarness();
+  const malformedKey = 'attempt:malformed:answer:broken:transcribe';
+  harness.prisma.jobs.set(malformedKey, {
+    id: 'job-malformed',
+    idempotencyKey: malformedKey,
+    kind: TrainingJobKind.TRANSCRIBE_ANSWER,
+    status: TrainingJobStatus.PENDING,
+    payloadJson: {},
+    runAt: harness.clock.now(),
+    attempts: 0,
+    maxAttempts: 3,
+    lockOwner: null,
+    lockedAt: null,
+    heartbeatAt: null,
+    finishedAt: null,
+    createdAt: harness.clock.now(),
+    updatedAt: harness.clock.now(),
+  });
+
+  await harness.service.recoverPendingProcessing();
+  const malformed = harness.prisma.jobs.get(malformedKey);
+  assert.equal(malformed.status, TrainingJobStatus.DEAD);
+  assert.equal(malformed.lastErrorCode, 'ATTEMPT_JOB_PAYLOAD_INVALID');
+  assert.equal(malformed.lockOwner, null);
+  assert.equal(malformed.heartbeatAt, null);
+
+  const exhaustedKey = 'attempt:stale:answer:done:evaluate';
+  const exhausted = {
+    id: 'job-stale-exhausted',
+    idempotencyKey: exhaustedKey,
+    kind: TrainingJobKind.EVALUATE_ANSWER,
+    status: TrainingJobStatus.RUNNING,
+    payloadJson: { attemptId: 'attempt-stale', answerId: 'answer-stale' },
+    runAt: harness.clock.now(),
+    attempts: 3,
+    maxAttempts: 3,
+    lockOwner: 'old-worker',
+    lockedAt: new Date('2026-07-25T09:58:00.000Z'),
+    heartbeatAt: new Date('2026-07-25T09:58:00.000Z'),
+    finishedAt: null,
+    createdAt: harness.clock.now(),
+    updatedAt: harness.clock.now(),
+  };
+  harness.prisma.jobs.set(exhaustedKey, exhausted);
+  const staleSnapshot = { ...exhausted };
+  Object.assign(exhausted, {
+    status: TrainingJobStatus.SUCCEEDED,
+    finishedAt: harness.clock.now(),
+    lockOwner: null,
+    lockedAt: null,
+    heartbeatAt: null,
+  });
+
+  await harness.service.failExhaustedJob(staleSnapshot, harness.clock.now());
+  assert.equal(exhausted.status, TrainingJobStatus.SUCCEEDED);
+  assert.equal(exhausted.lastErrorCode, undefined);
+});
+
+test('finalizer polling does not consume attempts while an answer is not ready', async () => {
+  const harness = createHarness();
+  const attempt = await startAttempt(harness.service);
+  harness.prisma.attempts.get(attempt.id).status =
+    TrainingAttemptStatus.FINALIZING;
+  const finalizeKey = `attempt:${attempt.id}:finalize`;
+  harness.prisma.jobs.set(finalizeKey, {
+    id: 'job-finalize-not-ready',
+    idempotencyKey: finalizeKey,
+    kind: TrainingJobKind.FINALIZE_ATTEMPT,
+    status: TrainingJobStatus.PENDING,
+    payloadJson: { attemptId: attempt.id },
+    runAt: harness.clock.now(),
+    attempts: 0,
+    maxAttempts: 3,
+    lockOwner: null,
+    lockedAt: null,
+    heartbeatAt: null,
+    finishedAt: null,
+    createdAt: harness.clock.now(),
+    updatedAt: harness.clock.now(),
+  });
+
+  for (let poll = 0; poll < 5; poll += 1) {
+    await harness.service.recoverPendingProcessing();
+    const finalizeJob = harness.prisma.jobs.get(finalizeKey);
+    assert.equal(finalizeJob.status, TrainingJobStatus.PENDING);
+    assert.equal(finalizeJob.attempts, 0);
+    harness.clock.advanceSeconds(1);
+  }
+  assert.equal(
+    harness.prisma.attempts.get(attempt.id).status,
+    TrainingAttemptStatus.FINALIZING,
+  );
 });
 
 test('repeated persisted job execution does not duplicate transcript, evaluation or answer score', async () => {
@@ -1190,6 +1385,60 @@ test('a FOLLOW_UP cannot be finished before it is presented', async () => {
   );
 });
 
+test('failed evaluation reprocess preserves the completed result snapshot', async () => {
+  const harness = createHarness();
+  const completed = await completeAttempt(harness, 9_950);
+  const rawAnswer = harness.prisma.answers.get(
+    completed.attemptQuestions[0].answer.id,
+  );
+  const snapshot = {
+    attemptStatus: completed.status,
+    finalScore: completed.finalScore.toFixed(2),
+    completedAt: completed.completedAt.getTime(),
+    answerStatus: rawAnswer.status,
+    activeEvaluationId: rawAnswer.activeEvaluationId,
+    processingFinishedAt: rawAnswer.processingFinishedAt.getTime(),
+  };
+  const reprocessingService = createService({
+    ...harness,
+    evaluationProvider: {
+      evaluate: async () => {
+        throw new Error('deterministic reprocess failure');
+      },
+    },
+  });
+
+  await reprocessingService.reprocessEvaluation({
+    answerId: rawAnswer.id,
+    reviewerId: ADMIN_ID,
+    comment: 'Проверка безопасного повторного запуска',
+  });
+  await reprocessingService.recoverPendingProcessing();
+
+  const after = (
+    await reprocessingService.getAttempt(completed.id)
+  ).attempt;
+  const afterAnswer = harness.prisma.answers.get(rawAnswer.id);
+  const reprocessJob = [...harness.prisma.jobs.values()].find(
+    (job) =>
+      job.kind === TrainingJobKind.EVALUATE_ANSWER &&
+      job.payloadJson.runType === 'REPROCESS',
+  );
+  assert.equal(reprocessJob.status, TrainingJobStatus.DEAD);
+  assert.equal(after.status, snapshot.attemptStatus);
+  assert.equal(after.finalScore.toFixed(2), snapshot.finalScore);
+  assert.equal(after.completedAt.getTime(), snapshot.completedAt);
+  assert.equal(afterAnswer.status, snapshot.answerStatus);
+  assert.equal(
+    afterAnswer.activeEvaluationId,
+    snapshot.activeEvaluationId,
+  );
+  assert.equal(
+    afterAnswer.processingFinishedAt.getTime(),
+    snapshot.processingFinishedAt,
+  );
+});
+
 test('fake provider failure is refundable and does not consume the configured single attempt', async () => {
   const harness = createHarness({
     attemptLimit: 1,
@@ -1252,6 +1501,15 @@ test('fake provider failure is refundable and does not consume the configured si
     reason: 'Повторный refund',
   });
   assert.equal(harness.prisma.auditLogs.length, 1);
+  await assert.rejects(
+    () =>
+      harness.service.reprocessEvaluation({
+        answerId: failed.attemptQuestions[0].answer.id,
+        reviewerId: ADMIN_ID,
+        comment: 'Refunded attempt must stay inactive',
+      }),
+    /refunded training attempt/u,
+  );
 
   const replacement = await startAttempt(harness.service);
   assert.equal(replacement.attemptNumber, 2);

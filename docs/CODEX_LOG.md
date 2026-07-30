@@ -6715,3 +6715,62 @@ Production:
 - Новая billable live-попытка после этого hotfix ещё не запускалась. Следующий
   ручной gate — повторить один полный TATE flow; старую dead evaluation job
   не переигрывать.
+
+## 2026-07-30 — Комплексная стабилизация training runtime
+
+Причина:
+
+- После живых TATE-проверок проведён параллельный аудит скрытых отказов в
+  OpenAI, Telegram, audio/transcription, attempt jobs, content publication,
+  fact suggestions, official URL sources и выдаче результатов.
+- Приоритетом были bounded retry, сохранность терминального результата,
+  предсказуемая техническая компенсация и недопущение лишних billable
+  provider-вызовов.
+
+Исправление:
+
+- Evaluation переведён на prompt `openai-evaluation-v3` и strict schema
+  `openai-evaluation-v2`: варианты evidence/fact verdict/review описаны через
+  допустимый Structured Outputs `anyOf`, нулевой anchor принимает только
+  `NONE`, положительный — только подтверждённый evidence, `IRRELEVANT`
+  принудительно обнуляет результат и отправляет его на review.
+- Семантически некорректные HTTP `200` ответы OpenAI больше не повторяются как
+  сетевые ошибки. HTTP retry сохранён для timeout/transport/`429`/`5xx`;
+  redirect запрещён, а deadline/ambiguous/request-id классифицируются
+  раздельно.
+- Publication preflight получил лимиты criteria/anchors/linked facts,
+  проверку zero/full anchors, наличия approved fact у активного вопроса,
+  семантических дублей и консервативной вместимости prompt/output.
+- Fact suggestions получили ASCII-коды результата, нормализацию source quote,
+  лимиты provider runs/объёма и неретраебельную обработку семантически
+  некорректного HTTP `200`.
+- Attempt engine защищён от poison jobs, stale-worker overwrite, shutdown
+  race, зависания в `REQUESTING`, потребления попытки до финализации и
+  разрушительного reprocess. Старый терминальный результат остаётся активным
+  до успешного завершения новой обработки.
+- Telegram webhook ограничивает тело и время чтения; unlink запрещён во время
+  активной попытки; dead critical delivery переводит попытку в
+  `TECHNICAL_FAILURE` с автоматическим refund. Startup recovery обрабатывает
+  пропущенные terminal delivery, а регистрация webhook использует
+  `max_connections=1`.
+- Audio/storage path использует persisted bucket без скрытого auto-create,
+  проверяет privacy, имеет общий deadline чтения и bounded storage retry.
+  Transcription проверяет язык, модель, transcript/usage/request-id и не
+  повторяет целый WAV после malformed HTTP `200`.
+- Official URL fetch закрепляет проверенный адрес и использует общий deadline;
+  operations retry атомарно создаёт новую generation только для актуального
+  failed source. Чтение transcript результата получило
+  `Cache-Control: private, no-store` и отдельный audit без сырого текста.
+
+Проверки:
+
+- Один объединённый целевой unit-прогон — `254/254` passed.
+- `pnpm build:api` — passed; `git diff --check` — passed.
+- Отдельные изолированные PostgreSQL-проверки startup recovery Telegram и
+  transcript audit — по `1/1` passed; временные базы удалены.
+- Prisma schema/migrations и dependencies не изменялись. Полный DB/E2E-набор,
+  реальные OpenAI/Telegram вызовы и production deploy намеренно не
+  запускались.
+- После будущего deploy требуется перерегистрировать Telegram webhook для
+  применения `max_connections=1`, проверить один полный TATE flow и точечно
+  повторить retry двух production failed URL sources.

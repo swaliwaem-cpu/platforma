@@ -91,7 +91,9 @@ export class TrainingOpenAiHttpClient {
     for (;;) {
       const remainingMs = deadlineAt - this.now();
       if (remainingMs <= 0) {
-        throw deadlineExceeded(retryCount);
+        throw deadlineExceeded(retryCount, {
+          ambiguous: false,
+        });
       }
       const controller = new AbortController();
       const timeout = setTimeout(
@@ -111,6 +113,7 @@ export class TrainingOpenAiHttpClient {
           },
           body: input.buildBody(),
           signal: controller.signal,
+          redirect: 'error',
         });
         const requestId = response.headers.get('x-request-id');
         responseStatus = response.status;
@@ -120,7 +123,11 @@ export class TrainingOpenAiHttpClient {
           this.config.maxResponseBytes,
         );
         if (this.now() >= deadlineAt) {
-          throw deadlineExceeded(retryCount, requestId);
+          throw deadlineExceeded(retryCount, {
+            ambiguous: false,
+            status: response.status,
+            requestId,
+          });
         }
 
         if (response.ok) {
@@ -133,7 +140,11 @@ export class TrainingOpenAiHttpClient {
           } satisfies TrainingOpenAiHttpResponse;
           input.validateResponse?.(result);
           if (this.now() >= deadlineAt) {
-            throw deadlineExceeded(retryCount, requestId);
+            throw deadlineExceeded(retryCount, {
+              ambiguous: false,
+              status: response.status,
+              requestId,
+            });
           }
           return result;
         }
@@ -162,7 +173,11 @@ export class TrainingOpenAiHttpClient {
               delayMs,
               deadlineAt,
               retryCount,
-              error.requestId,
+              {
+                ambiguous: error.ambiguous,
+                status: error.status ?? responseStatus,
+                requestId: error.requestId ?? responseRequestId,
+              },
             );
             continue;
           }
@@ -181,8 +196,8 @@ export class TrainingOpenAiHttpClient {
             'OPENAI_RESPONSE_TOO_LARGE',
             false,
             false,
-            null,
-            null,
+            responseStatus,
+            responseRequestId,
             retryCount,
             'OpenAI response exceeded the configured byte limit',
           );
@@ -190,7 +205,11 @@ export class TrainingOpenAiHttpClient {
 
         const aborted = controller.signal.aborted;
         if (aborted || this.now() >= deadlineAt) {
-          throw deadlineExceeded(retryCount, responseRequestId);
+          throw deadlineExceeded(retryCount, {
+            ambiguous: true,
+            status: responseStatus,
+            requestId: responseRequestId,
+          });
         }
         if (retryCount < input.maxRetries) {
           const delayMs = Math.min(5_000, 250 * 2 ** retryCount);
@@ -199,7 +218,11 @@ export class TrainingOpenAiHttpClient {
             delayMs,
             deadlineAt,
             retryCount,
-            responseRequestId,
+            {
+              ambiguous: true,
+              status: responseStatus,
+              requestId: responseRequestId,
+            },
           );
           continue;
         }
@@ -222,15 +245,15 @@ export class TrainingOpenAiHttpClient {
     delayMs: number,
     deadlineAt: number,
     retryCount: number,
-    requestId: string | null,
+    deadlineContext: DeadlineContext,
   ) {
     const remainingMs = deadlineAt - this.now();
     if (remainingMs <= 0 || delayMs >= remainingMs) {
-      throw deadlineExceeded(retryCount, requestId);
+      throw deadlineExceeded(retryCount, deadlineContext);
     }
     await this.sleep(delayMs);
     if (this.now() >= deadlineAt) {
-      throw deadlineExceeded(retryCount, requestId);
+      throw deadlineExceeded(retryCount, deadlineContext);
     }
   }
 }
@@ -281,17 +304,22 @@ function readRetryDelayMs(response: Response, retryCount: number) {
   return Math.min(5_000, 250 * 2 ** retryCount);
 }
 
-function deadlineExceeded(
-  retryCount: number,
-  requestId: string | null = null,
-) {
+type DeadlineContext = {
+  ambiguous: boolean;
+  status?: number | null;
+  requestId?: string | null;
+};
+
+function deadlineExceeded(retryCount: number, context: DeadlineContext) {
   return new TrainingOpenAiRequestError(
     'DEADLINE_EXCEEDED',
     false,
-    true,
-    null,
-    requestId,
+    context.ambiguous,
+    context.status ?? null,
+    context.requestId ?? null,
     retryCount,
-    'OpenAI request reached the total deadline with an ambiguous outcome',
+    context.ambiguous
+      ? 'OpenAI request reached the total deadline with an ambiguous outcome'
+      : 'OpenAI request reached the total deadline after a known outcome',
   );
 }

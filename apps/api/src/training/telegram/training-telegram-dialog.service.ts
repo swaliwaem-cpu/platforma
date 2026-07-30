@@ -234,6 +234,7 @@ export class TrainingTelegramDialogService {
       !TRAINING_ACTIVE_ATTEMPT_STATUSES.includes(
         attempt.status as (typeof TRAINING_ACTIVE_ATTEMPT_STATUSES)[number],
       ) ||
+      attempt.expiresAt <= new Date() ||
       attempt.user.status !== UserStatus.ACTIVE ||
       attempt.user.deletedAt ||
       !attempt.user.trainingTelegramAccount ||
@@ -586,6 +587,7 @@ export class TrainingTelegramDialogService {
         callback.attemptQuestionId,
         update.chatId,
         update.correlationId,
+        update.receivedAt,
       )),
     ];
   }
@@ -661,6 +663,7 @@ export class TrainingTelegramDialogService {
     attemptQuestionId: string,
     chatId: string,
     correlationId?: string,
+    receivedAt?: string,
   ): Promise<DeliveryPlan[]> {
     const target = await this.prisma.trainingAttemptQuestion.findUnique({
       where: { id: attemptQuestionId },
@@ -683,6 +686,7 @@ export class TrainingTelegramDialogService {
         attemptId: target.attempt.id,
         attemptQuestionId,
         correlationId,
+        ...(receivedAt ? { receivedAt: new Date(receivedAt) } : {}),
       });
       return [];
     } catch (error) {
@@ -746,23 +750,41 @@ export class TrainingTelegramDialogService {
           ? BigInt(voice.sizeBytes)
           : undefined,
       });
-      const segment = await this.prisma.trainingVoiceSegment.findUnique({
-        where: {
-          telegramChatId_telegramMessageId: {
-            telegramChatId: BigInt(update.chatId),
-            telegramMessageId: BigInt(update.messageId),
-          },
-        },
-        select: {
-          segmentIndex: true,
-          answer: {
-            select: {
-              attemptQuestionId: true,
-              status: true,
+      const segment =
+        (await this.prisma.trainingVoiceSegment.findUnique({
+          where: {
+            telegramChatId_telegramMessageId: {
+              telegramChatId: BigInt(update.chatId),
+              telegramMessageId: BigInt(update.messageId),
             },
           },
-        },
-      });
+          select: {
+            segmentIndex: true,
+            answer: {
+              select: {
+                attemptQuestionId: true,
+                status: true,
+              },
+            },
+          },
+        })) ??
+        (await this.prisma.trainingVoiceSegment.findFirst({
+          where: {
+            fileUniqueId: voice.fileUniqueId,
+            answer: {
+              attemptQuestionId: beforeQuestion.id,
+            },
+          },
+          select: {
+            segmentIndex: true,
+            answer: {
+              select: {
+                attemptQuestionId: true,
+                status: true,
+              },
+            },
+          },
+        }));
       if (!segment) {
         throw new ConflictException('Voice segment was not persisted');
       }

@@ -6,11 +6,19 @@ import {
   TRAINING_MAIN_MAX_SCORE,
   TRAINING_MAIN_QUESTION_COUNT,
 } from './training.domain';
+import { TRAINING_OPENAI_EVALUATION_LIMITS } from './openai/training-openai-evaluation-limits';
 
 const MIN_AVAILABILITY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const MAX_AVAILABILITY_WINDOW_MS = 7 * MIN_AVAILABILITY_WINDOW_MS;
+const DEFAULT_EVALUATION_MAX_OUTPUT_TOKENS = 4_096;
+const CONSERVATIVE_OUTPUT_CHARACTERS_PER_TOKEN = 2;
+const SAFE_EVALUATION_OUTPUT_CHARACTERS =
+  DEFAULT_EVALUATION_MAX_OUTPUT_TOKENS *
+  CONSERVATIVE_OUTPUT_CHARACTERS_PER_TOKEN;
+const EVALUATION_SCHEMA_VERSION = 'openai-evaluation-v1';
 
 type PublishableQuestion = {
+  id: string;
   type: 'MAIN' | 'FOLLOW_UP';
   text: string;
   position: number;
@@ -19,13 +27,22 @@ type PublishableQuestion = {
 };
 
 type PublishableFact = {
+  id: string;
   code: string;
+  statement: string;
+  acceptedAliasesJson: unknown;
   isApproved: boolean;
+  questionLinks: Array<{
+    questionId: string;
+  }>;
 };
 
 type PublishableCriterion = {
+  id: string;
   questionType: 'MAIN' | 'FOLLOW_UP';
   code: string;
+  title: string;
+  description?: string | null;
   sortOrder: number;
   maxPoints: number | string | { toString(): string };
   anchorsJson: unknown;
@@ -213,6 +230,11 @@ export function collectTrainingPublicationErrors(version: PublishableTrainingVer
       errors.push(`${label} criteria are required`);
       continue;
     }
+    if (criteria.length > TRAINING_OPENAI_EVALUATION_LIMITS.criteria) {
+      errors.push(
+        `${label} criteria count must not exceed ${TRAINING_OPENAI_EVALUATION_LIMITS.criteria}`,
+      );
+    }
     if (hasDuplicates(criteria.map((criterion) => normalizeTrainingUniqueKey(criterion.code)))) {
       errors.push(`${label} criterion codes must be unique`);
     }
@@ -232,6 +254,37 @@ export function collectTrainingPublicationErrors(version: PublishableTrainingVer
         `${label} criteria require valid structured anchors before publication`,
       );
     }
+    if (
+      criteria.some(
+        (criterion) =>
+          readStructuredAnchors(criterion.anchorsJson).length >
+          TRAINING_OPENAI_EVALUATION_LIMITS.anchorsPerCriterion,
+      )
+    ) {
+      errors.push(
+        `${label} criterion anchors count must not exceed ${TRAINING_OPENAI_EVALUATION_LIMITS.anchorsPerCriterion}`,
+      );
+    }
+    if (
+      criteria.some(
+        (criterion) =>
+          !readStructuredAnchors(criterion.anchorsJson).some(
+            (anchor) => anchor.points === 0,
+          ),
+      )
+    ) {
+      errors.push(`${label} criteria require a zero-point anchor`);
+    }
+    if (
+      criteria.some((criterion) => {
+        const maximumPoints = Number(criterion.maxPoints.toString());
+        return !readStructuredAnchors(criterion.anchorsJson).some(
+          (anchor) => Math.abs(anchor.points - maximumPoints) <= 0.000_001,
+        );
+      })
+    ) {
+      errors.push(`${label} criteria require a full-score anchor`);
+    }
 
     const total = criteria.reduce(
       (sum, criterion) => sum + Number(criterion.maxPoints.toString()),
@@ -241,6 +294,14 @@ export function collectTrainingPublicationErrors(version: PublishableTrainingVer
       errors.push(`${label} criteria maximum must equal ${expectedMaximum}`);
     }
   }
+
+  errors.push(
+    ...collectEvaluationEnvelopeErrors(
+      activeQuestions,
+      version.facts,
+      version.criteria,
+    ),
+  );
 
   return Array.from(new Set(errors));
 }
@@ -353,6 +414,225 @@ function hasValidStructuredAnchors(value: unknown, maximumPoints: number) {
     ids.add(id);
     return true;
   });
+}
+
+type StructuredAnchor = {
+  id: string;
+  points: number;
+  description: string;
+};
+
+function readStructuredAnchors(value: unknown): StructuredAnchor[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((anchor) => {
+    if (
+      typeof anchor !== 'object' ||
+      anchor === null ||
+      Array.isArray(anchor)
+    ) {
+      return [];
+    }
+    const record = anchor as Record<string, unknown>;
+    if (
+      typeof record.id !== 'string' ||
+      typeof record.points !== 'number' ||
+      typeof record.description !== 'string'
+    ) {
+      return [];
+    }
+    return [
+      {
+        id: record.id.trim(),
+        points: record.points,
+        description: record.description.trim(),
+      },
+    ];
+  });
+}
+
+function collectEvaluationEnvelopeErrors(
+  questions: PublishableQuestion[],
+  facts: PublishableFact[],
+  criteria: PublishableCriterion[],
+) {
+  const errors: string[] = [];
+  const approvedFacts = facts.filter((fact) => fact.isApproved);
+
+  for (const question of questions) {
+    const linkedFacts = approvedFacts.filter((fact) =>
+      fact.questionLinks.some((link) => link.questionId === question.id),
+    );
+    const questionLabel =
+      question.type === 'MAIN'
+        ? 'Main question'
+        : `Follow-up question ${question.position}`;
+
+    if (linkedFacts.length === 0) {
+      errors.push(`${questionLabel} must have at least one linked approved fact`);
+      continue;
+    }
+    if (linkedFacts.length > TRAINING_OPENAI_EVALUATION_LIMITS.facts) {
+      errors.push(
+        `${questionLabel} linked approved facts count must not exceed ${TRAINING_OPENAI_EVALUATION_LIMITS.facts}`,
+      );
+    }
+    if (hasDuplicateFactVocabulary(linkedFacts)) {
+      errors.push(
+        `${questionLabel} linked approved facts must not contain duplicate statements or aliases`,
+      );
+    }
+
+    const questionCriteria = criteria.filter(
+      (criterion) => criterion.questionType === question.type,
+    );
+    if (
+      estimateEvaluationPromptCharacters(
+        question,
+        linkedFacts,
+        questionCriteria,
+      ) > TRAINING_OPENAI_EVALUATION_LIMITS.promptCharacters
+    ) {
+      errors.push(
+        `${questionLabel} evaluation input exceeds the safe prompt budget`,
+      );
+    }
+    if (
+      estimateMinimumEvaluationOutputCharacters(linkedFacts, questionCriteria) >
+      SAFE_EVALUATION_OUTPUT_CHARACTERS
+    ) {
+      errors.push(
+        `${questionLabel} evaluation output exceeds the safe output capacity`,
+      );
+    }
+  }
+
+  return errors;
+}
+
+function hasDuplicateFactVocabulary(facts: PublishableFact[]) {
+  const ownerBySemanticKey = new Map<string, string>();
+
+  for (const fact of facts) {
+    const factKeys = new Set(
+      [fact.statement, ...readStringArray(fact.acceptedAliasesJson)]
+        .map(normalizeFactSemanticKey)
+        .filter(Boolean),
+    );
+    for (const key of factKeys) {
+      const ownerId = ownerBySemanticKey.get(key);
+      if (ownerId && ownerId !== fact.id) {
+        return true;
+      }
+      ownerBySemanticKey.set(key, fact.id);
+    }
+  }
+
+  return false;
+}
+
+function normalizeFactSemanticKey(value: string) {
+  return value
+    .normalize('NFKC')
+    .toLocaleLowerCase('ru-RU')
+    .replace(/[«»„“”"'`]/gu, '')
+    .replace(/[.,!?;:()[\]{}—–-]+/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim();
+}
+
+function estimateEvaluationPromptCharacters(
+  question: PublishableQuestion,
+  facts: PublishableFact[],
+  criteria: PublishableCriterion[],
+) {
+  return JSON.stringify({
+    question: {
+      id: question.id,
+      type: question.type,
+      text: question.text,
+      max_score: question.maxScore,
+    },
+    transcript: 'x'.repeat(
+      TRAINING_OPENAI_EVALUATION_LIMITS.transcriptCharacters,
+    ),
+    criteria: criteria.map((criterion) => ({
+      id: criterion.id,
+      code: criterion.code,
+      title: criterion.title,
+      description: criterion.description ?? null,
+      max_points: Number(criterion.maxPoints.toString()),
+      anchors: readStructuredAnchors(criterion.anchorsJson).map((anchor) => ({
+        id: anchor.id,
+        points: anchor.points,
+        description: anchor.description,
+      })),
+    })),
+    approved_facts: facts.map((fact) => ({
+      id: fact.id,
+      code: fact.code,
+      statement: fact.statement,
+      accepted_aliases: readStringArray(fact.acceptedAliasesJson),
+      relevance: null,
+      required: false,
+    })),
+    metrics: [
+      {
+        id: 'audio_duration_milliseconds',
+        value: 420_000,
+        unit: 'milliseconds',
+      },
+      {
+        id: 'transcript_word_count',
+        value: 1_000,
+        unit: 'words',
+      },
+      {
+        id: 'speech_words_per_minute',
+        value: 300,
+        unit: 'words_per_minute',
+      },
+    ],
+  }).length;
+}
+
+function estimateMinimumEvaluationOutputCharacters(
+  facts: PublishableFact[],
+  criteria: PublishableCriterion[],
+) {
+  return JSON.stringify({
+    schema_version: EVALUATION_SCHEMA_VERSION,
+    answer_relevance: 'RELEVANT',
+    criteria: criteria.map((criterion) => ({
+      criterion_id: criterion.id,
+      anchor_id:
+        readStructuredAnchors(criterion.anchorsJson).find(
+          (anchor) => anchor.points === 0,
+        )?.id ?? '0',
+      evidence_source: 'NONE',
+      evidence: null,
+      metric_id: null,
+      explanation: 'x',
+    })),
+    facts: facts.map((fact) => ({
+      fact_id: fact.id,
+      verdict: 'MISSING',
+      claim: null,
+      evidence_source: 'NONE',
+      evidence: null,
+      metric_id: null,
+      explanation: 'x',
+      confidence: 0,
+    })),
+    summary: 'x.',
+    requires_manual_review: false,
+    review_reasons: [],
+  }).length;
+}
+
+function readStringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : [];
 }
 
 export function assertTrainingVersionPublishable(version: PublishableTrainingVersion) {

@@ -265,9 +265,19 @@ test('real PostgreSQL and HTTP enforce stage 9 visibility, filters, ranking and 
 
       const detailResponse = await fetch(
         `${baseUrl}/training/admin/results/${fixture.attemptIds.best}`,
-        { headers: authorization(token) },
+        {
+          headers: {
+            ...authorization(token),
+            'User-Agent': `training-results-test/${role}`,
+          },
+        },
       );
       assert.equal(detailResponse.status, 200, role);
+      assert.equal(
+        detailResponse.headers.get('cache-control'),
+        'private, no-store',
+        role,
+      );
       const detailText = await detailResponse.text();
       const detail = JSON.parse(detailText);
       assert.equal(
@@ -296,6 +306,34 @@ test('real PostgreSQL and HTTP enforce stage 9 visibility, filters, ranking and 
       ]) {
         assert.equal(detailText.includes(forbidden), false, forbidden);
       }
+      const transcriptAudit = await prisma.auditLog.findFirst({
+        where: {
+          actorUserId: fixture.users[role].id,
+          action: 'training.transcript.read',
+          entityType: 'training_attempt',
+          entityId: fixture.attemptIds.best,
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      assert.ok(transcriptAudit, role);
+      assert.equal(
+        transcriptAudit.userAgent,
+        `training-results-test/${role}`,
+        role,
+      );
+      assert.deepEqual(transcriptAudit.metadata, {
+        attemptId: fixture.attemptIds.best,
+        ownerUserId: fixture.users.employee.id,
+        projectId: fixture.projectIds.first,
+        scope: 'administrative',
+      });
+      assert.equal(
+        JSON.stringify(transcriptAudit).includes(
+          'private admin transcript',
+        ),
+        false,
+        role,
+      );
 
       const overriddenDetailResponse = await fetch(
         `${baseUrl}/training/admin/results/${fixture.attemptIds.visibilityOverridden}`,

@@ -17,6 +17,7 @@ import {
 } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { TrainingAttemptEngineService } from '../training-attempt-engine.service';
 import { TRAINING_ACTIVE_ATTEMPT_STATUSES } from '../training.domain';
 import {
   TrainingConfigService,
@@ -45,6 +46,8 @@ import {
 } from './training-telegram.transport';
 
 const TELEGRAM_JOB_LIMIT_PER_DRAIN = 100;
+const TELEGRAM_TERMINALIZATION_ATTEMPTS = 3;
+const TELEGRAM_TERMINALIZATION_RETRY_MS = 25;
 const TELEGRAM_JOB_KINDS = [
   TrainingJobKind.PROCESS_TELEGRAM_UPDATE,
   TrainingJobKind.SEND_TELEGRAM_MESSAGE,
@@ -70,6 +73,7 @@ export class TrainingTelegramWorkerService
   private drainPromise: Promise<void> | null = null;
   private kickQueued = false;
   private destroyed = false;
+  private recoveredDeadCriticalDeliveries = false;
   private readonly heartbeatIntervals = new Map<string, NodeJS.Timeout>();
   private readonly lostOwnership = new Set<string>();
 
@@ -83,10 +87,13 @@ export class TrainingTelegramWorkerService
     private readonly trainingConfig?: TrainingConfigService,
     @Optional()
     private readonly workerHeartbeat?: TrainingWorkerHeartbeatService,
+    @Optional()
+    private readonly attempts?: TrainingAttemptEngineService,
   ) {}
 
   onModuleInit() {
     this.destroyed = false;
+    this.recoveredDeadCriticalDeliveries = false;
     if (this.trainingConfig?.isEnabled() === false) return;
     void this.workerHeartbeat
       ?.register('telegram', this.workerId)
@@ -161,6 +168,10 @@ export class TrainingTelegramWorkerService
 
   private async drainLoop() {
     if (this.destroyed || this.trainingConfig?.isEnabled() === false) return;
+    if (!this.recoveredDeadCriticalDeliveries) {
+      await this.recoverDeadCriticalQuestionDeliveries();
+      this.recoveredDeadCriticalDeliveries = true;
+    }
     await this.recoverStaleJobs();
     for (
       let index = 0;
@@ -211,7 +222,7 @@ export class TrainingTelegramWorkerService
       if (this.destroyed) return null;
       if (!candidate) return null;
       if (candidate.attempts >= candidate.maxAttempts) {
-        await this.prisma.trainingJob.updateMany({
+        const exhausted = await this.prisma.trainingJob.updateMany({
           where: {
             id: candidate.id,
             status: TrainingJobStatus.PENDING,
@@ -225,6 +236,12 @@ export class TrainingTelegramWorkerService
             errorDetailsJson: { retryable: false },
           },
         });
+        if (exhausted.count === 1) {
+          await this.terminalizeDeadCriticalQuestionDelivery(
+            { ...candidate, attempts: candidate.attempts },
+            'TELEGRAM_ATTEMPTS_EXHAUSTED',
+          );
+        }
         if (this.destroyed) return null;
         continue;
       }
@@ -469,7 +486,7 @@ export class TrainingTelegramWorkerService
       (retry ? 'TELEGRAM_JOB_RETRY' : 'TELEGRAM_JOB_DEAD');
     const message = safeTrainingFailureMessage(error, 'Telegram job failed');
 
-    await this.prisma.$transaction(async (tx) => {
+    const failed = await this.prisma.$transaction(async (tx) => {
       const failed = await tx.trainingJob.updateMany({
         where: {
           id: job.id,
@@ -508,7 +525,11 @@ export class TrainingTelegramWorkerService
           },
         });
       }
+      return failed.count === 1;
     });
+    if (failed && !retry) {
+      await this.terminalizeDeadCriticalQuestionDelivery(job, errorCode);
+    }
   }
 
   private async recoverStaleJobs() {
@@ -524,6 +545,9 @@ export class TrainingTelegramWorkerService
       },
       select: {
         id: true,
+        kind: true,
+        payloadJson: true,
+        idempotencyKey: true,
         attempts: true,
         maxAttempts: true,
         heartbeatAt: true,
@@ -533,7 +557,7 @@ export class TrainingTelegramWorkerService
     });
     for (const job of staleJobs) {
       const retry = job.attempts < job.maxAttempts;
-      await this.prisma.trainingJob.updateMany({
+      const recovered = await this.prisma.trainingJob.updateMany({
         where: {
           id: job.id,
           status: TrainingJobStatus.RUNNING,
@@ -557,6 +581,19 @@ export class TrainingTelegramWorkerService
           errorDetailsJson: { retryable: retry },
         },
       });
+      if (recovered.count === 1 && !retry) {
+        await this.terminalizeDeadCriticalQuestionDelivery(
+          {
+            id: job.id,
+            kind: job.kind,
+            payloadJson: job.payloadJson,
+            idempotencyKey: job.idempotencyKey,
+            attempts: job.attempts,
+            maxAttempts: job.maxAttempts,
+          },
+          'STALE_TELEGRAM_JOB_DEAD',
+        );
+      }
     }
   }
 
@@ -612,6 +649,7 @@ export class TrainingTelegramWorkerService
   }
 
   private async preflightTimerWarning(jobId: string, attemptId: string) {
+    const preflightAt = new Date();
     return this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw(
         Prisma.sql`SELECT 1 AS "locked" FROM (SELECT pg_advisory_xact_lock(hashtextextended(${`training-attempt-id:${attemptId}`}, 0))) AS "lock_state"`,
@@ -630,6 +668,7 @@ export class TrainingTelegramWorkerService
         where: {
           id: attemptId,
           status: { in: [...TRAINING_ACTIVE_ATTEMPT_STATUSES] },
+          expiresAt: { gt: preflightAt },
           user: {
             status: UserStatus.ACTIVE,
             deletedAt: null,
@@ -678,12 +717,19 @@ export class TrainingTelegramWorkerService
         status: TrainingJobStatus.RUNNING,
         lockOwner: this.workerId,
       },
-      select: { id: true, attempts: true, maxAttempts: true },
+      select: {
+        id: true,
+        kind: true,
+        payloadJson: true,
+        idempotencyKey: true,
+        attempts: true,
+        maxAttempts: true,
+      },
     });
     for (const job of jobs) {
       this.lostOwnership.add(job.id);
       const retry = job.attempts < job.maxAttempts;
-      await this.prisma.trainingJob.updateMany({
+      const released = await this.prisma.trainingJob.updateMany({
         where: {
           id: job.id,
           status: TrainingJobStatus.RUNNING,
@@ -706,7 +752,101 @@ export class TrainingTelegramWorkerService
           errorDetailsJson: { retryable: retry },
         },
       });
+      if (released.count === 1 && !retry) {
+        await this.terminalizeDeadCriticalQuestionDelivery(
+          job,
+          'TELEGRAM_SHUTDOWN_DEAD',
+        );
+      }
     }
+  }
+
+  private async recoverDeadCriticalQuestionDeliveries() {
+    const jobs = await this.prisma.trainingJob.findMany({
+      where: {
+        kind: TrainingJobKind.SEND_TELEGRAM_MESSAGE,
+        status: TrainingJobStatus.DEAD,
+        AND: [
+          {
+            payloadJson: {
+              path: ['operation'],
+              equals: TRAINING_TELEGRAM_OUTBOX_OPERATION,
+            },
+          },
+          {
+            payloadJson: {
+              path: ['eventType'],
+              equals: 'ATTEMPT_QUESTION',
+            },
+          },
+        ],
+      },
+      orderBy: [{ finishedAt: 'asc' }, { createdAt: 'asc' }],
+      select: {
+        id: true,
+        kind: true,
+        payloadJson: true,
+        idempotencyKey: true,
+        attempts: true,
+        maxAttempts: true,
+        lastErrorCode: true,
+      },
+      take: TELEGRAM_JOB_LIMIT_PER_DRAIN,
+    });
+    for (const job of jobs) {
+      await this.terminalizeDeadCriticalQuestionDelivery(
+        job,
+        job.lastErrorCode ?? 'DEAD_TELEGRAM_QUESTION_DELIVERY',
+      );
+    }
+  }
+
+  private async terminalizeDeadCriticalQuestionDelivery(
+    job: ClaimedTelegramJob,
+    errorCode: string,
+  ) {
+    if (job.kind !== TrainingJobKind.SEND_TELEGRAM_MESSAGE) return;
+    const payload = readDeliveryPayload(job.payloadJson);
+    if (
+      payload.operation !== TRAINING_TELEGRAM_OUTBOX_OPERATION ||
+      payload.eventType !== 'ATTEMPT_QUESTION'
+    ) {
+      return;
+    }
+    if (!this.attempts) {
+      throw new Error(
+        'Training attempt engine is unavailable for critical Telegram delivery failure',
+      );
+    }
+    const terminalErrorCode = /^[A-Z0-9_]{3,120}$/u.test(errorCode)
+      ? errorCode
+      : 'DEAD_TELEGRAM_QUESTION_DELIVERY';
+    let lastError: unknown;
+    for (
+      let attempt = 1;
+      attempt <= TELEGRAM_TERMINALIZATION_ATTEMPTS;
+      attempt += 1
+    ) {
+      try {
+        await this.attempts.terminalizeTelegramDeliveryFailure({
+          attemptId: payload.attemptId,
+          attemptQuestionId: payload.attemptQuestionId,
+          failedJobId: job.id,
+          errorCode: terminalErrorCode,
+          correlationId: payload.correlationId,
+        });
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt < TELEGRAM_TERMINALIZATION_ATTEMPTS) {
+          await waitForTimeout(
+            TELEGRAM_TERMINALIZATION_RETRY_MS * attempt,
+          );
+        }
+      }
+    }
+    this.recoveredDeadCriticalDeliveries = false;
+    throw lastError;
   }
 }
 
@@ -832,4 +972,11 @@ async function waitForPromise(promise: Promise<void>, timeoutMs: number) {
   ]);
   if (timeout) clearTimeout(timeout);
   return result;
+}
+
+function waitForTimeout(timeoutMs: number) {
+  return new Promise<void>((resolve) => {
+    const timeout = setTimeout(resolve, timeoutMs);
+    timeout.unref();
+  });
 }

@@ -8,16 +8,13 @@ import {
   TrainingTranscriptionInput,
   TrainingTranscriptionProvider,
 } from '../training-attempt.providers';
+import { TrainingAudioError } from '../audio/training-audio.error';
 import { TrainingOpenAiConfig } from './training-openai.config';
 import {
   TrainingOpenAiHttpClient,
   TrainingOpenAiRequestError,
 } from './training-openai.http';
-import { normalizeTrainingOpenAiText } from './training-openai-text';
-import {
-  TRAINING_OPENAI_VOCABULARY_MAX_TERM_LENGTH,
-  TRAINING_OPENAI_VOCABULARY_MAX_TERMS,
-} from './training-openai-vocabulary';
+import { buildTrainingVocabularyPrompt } from './training-openai-vocabulary';
 
 const WAV_MIME_TYPES = new Set([
   'audio/wav',
@@ -26,6 +23,10 @@ const WAV_MIME_TYPES = new Set([
   'audio/vnd.wave',
 ]);
 const MAX_TRANSCRIPT_CHARACTERS = 120_000;
+const MAX_LANGUAGE_CHARACTERS = 16;
+const MAX_MODEL_ID_CHARACTERS = 120;
+const MAX_REQUEST_ID_CHARACTERS = 160;
+const MAX_STORAGE_READ_TIMEOUT_MS = 30_000;
 
 @Injectable()
 export class OpenAiTrainingTranscriptionProvider
@@ -92,7 +93,8 @@ export class OpenAiTrainingTranscriptionProvider
       );
     }
 
-    const buffer = await this.files.readStoredFile(storedFile);
+    const storedAudio = await this.readPersistedAudio(storedFile);
+    const buffer = storedAudio.buffer;
     if (
       buffer.length !== audio.sizeBytes ||
       createHash('sha256').update(buffer).digest('hex') !== audio.checksum
@@ -107,7 +109,9 @@ export class OpenAiTrainingTranscriptionProvider
     const requestedModelId = input.review
       ? this.config.transcriptionReviewModel
       : this.config.transcriptionModel;
-    const vocabularyPrompt = buildVocabularyPrompt(input.approvedVocabulary);
+    const vocabularyPrompt = input.approvedVocabulary
+      ? buildTrainingVocabularyPrompt(input.approvedVocabulary.terms)
+      : '';
     const response = await this.http.request({
       path: '/v1/audio/transcriptions',
       timeoutMs: this.config.transcriptionTimeoutMs,
@@ -126,15 +130,11 @@ export class OpenAiTrainingTranscriptionProvider
         return form;
       },
       validateResponse: ({ bodyText }) => {
-        try {
-          const candidate = parseJsonObject(
-            bodyText,
-            'OPENAI_TRANSCRIPTION_RESPONSE_INVALID',
-          );
-          readRequiredString(candidate, 'text');
-        } catch (error) {
-          throw asRetryableUpstreamResponseError(error);
-        }
+        const candidate = parseJsonObject(
+          bodyText,
+          'OPENAI_TRANSCRIPTION_RESPONSE_INVALID',
+        );
+        readRequiredString(candidate, 'text');
       },
     });
     const payload = parseJsonObject(
@@ -149,12 +149,13 @@ export class OpenAiTrainingTranscriptionProvider
       );
     }
     if (
-      transcript.length > MAX_TRANSCRIPT_CHARACTERS ||
+      Array.from(transcript).length > MAX_TRANSCRIPT_CHARACTERS ||
+      transcript.includes('\u0000') ||
       containsUnpairedSurrogate(transcript)
     ) {
       throw providerValidationError(
         'OPENAI_TRANSCRIPTION_TEXT_INVALID',
-        'OpenAI transcription text is too long or is not valid Unicode',
+        'OpenAI transcription text is too long or contains invalid characters',
       );
     }
     if ([...transcript].length < 2) {
@@ -164,25 +165,104 @@ export class OpenAiTrainingTranscriptionProvider
       );
     }
 
+    const providedLanguage = readOptionalBoundedString(
+      payload,
+      'language',
+      MAX_LANGUAGE_CHARACTERS,
+    );
+    const language =
+      providedLanguage === null
+        ? 'ru'
+        : (readBoundedMetadataString(
+            providedLanguage.toLowerCase(),
+            'language',
+            MAX_LANGUAGE_CHARACTERS,
+          ) ?? 'ru');
+    const actualModelId = readOptionalBoundedString(
+      payload,
+      'model',
+      MAX_MODEL_ID_CHARACTERS,
+    );
+    const requestId = readBoundedMetadataString(
+      response.requestId,
+      'requestId',
+      MAX_REQUEST_ID_CHARACTERS,
+    );
+    const usage = isRecord(payload.usage) ? payload.usage : undefined;
+    if (usage) assertJsonValueSafe(usage);
+
     return {
       transcript,
-      language:
-        typeof payload.language === 'string' && payload.language.trim()
-          ? payload.language.trim().toLowerCase()
-          : 'ru',
+      language,
       provider: 'openai',
       requestedModelId,
-      actualModelId:
-        typeof payload.model === 'string' && payload.model.trim()
-          ? payload.model.trim()
-          : null,
-      requestId: response.requestId,
+      actualModelId,
+      requestId,
       wordCount: countWords(transcript),
-      usage: isRecord(payload.usage) ? payload.usage : undefined,
+      usage,
       latencyMs: response.latencyMs,
       retryCount: response.retryCount,
       responseStatus: 'completed',
     };
+  }
+
+  private async readPersistedAudio(
+    storedFile: Parameters<FilesService['readStoredFile']>[0],
+  ) {
+    const timeoutMs = Math.max(
+      1,
+      Math.min(
+        this.config.transcriptionTimeoutMs,
+        MAX_STORAGE_READ_TIMEOUT_MS,
+      ),
+    );
+    const deadlineAt = Date.now() + timeoutMs;
+    let retryCount = 0;
+
+    for (;;) {
+      const remainingMs = deadlineAt - Date.now();
+      if (remainingMs <= 0) {
+        throw new TrainingAudioError('AUDIO_STORAGE_FAILED', true);
+      }
+      const controller = new AbortController();
+      let timeout: NodeJS.Timeout | undefined;
+      const deadline = new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          controller.abort();
+          reject(new TrainingAudioError('AUDIO_STORAGE_FAILED', true));
+        }, remainingMs);
+      });
+
+      try {
+        const buffer = await Promise.race([
+          this.files.readStoredFile(storedFile, {
+            signal: controller.signal,
+            privateTrainingAudio: true,
+          }),
+          deadline,
+        ]);
+        return { buffer };
+      } catch (error) {
+        const retryable = isRetryableStorageReadError(error);
+        if (
+          retryable &&
+          retryCount < this.config.transcriptionMaxRetries
+        ) {
+          const delayMs = Math.min(
+            250 * 2 ** retryCount,
+            deadlineAt - Date.now() - 1,
+          );
+          if (delayMs > 0) {
+            retryCount += 1;
+            await sleep(delayMs);
+            continue;
+          }
+        }
+        throw new TrainingAudioError('AUDIO_STORAGE_FAILED', retryable);
+      } finally {
+        if (timeout) clearTimeout(timeout);
+      }
+    }
   }
 }
 
@@ -241,28 +321,6 @@ function assertNormalizedWav(buffer: Buffer) {
   }
 }
 
-function buildVocabularyPrompt(
-  vocabulary: TrainingTranscriptionInput['approvedVocabulary'],
-) {
-  if (!vocabulary) return '';
-  const terms = [
-    ...new Set(
-      vocabulary.terms
-        .filter((term) => !/[\r\n]/u.test(term))
-        .map(normalizeTrainingOpenAiText)
-        .filter(
-          (term) =>
-            term.length > 0 &&
-            Array.from(term).length <=
-              TRAINING_OPENAI_VOCABULARY_MAX_TERM_LENGTH &&
-            !/[.!?](?:\s|$)/u.test(term),
-        ),
-    ),
-  ].slice(0, TRAINING_OPENAI_VOCABULARY_MAX_TERMS);
-  if (terms.length === 0) return '';
-  return `Утвержденные термины и названия: ${terms.join(', ')}`.slice(0, 2_000);
-}
-
 function parseJsonObject(body: string, code: string) {
   try {
     const parsed: unknown = JSON.parse(body);
@@ -281,6 +339,71 @@ function readRequiredString(value: Record<string, unknown>, key: string) {
     );
   }
   return value[key];
+}
+
+function readOptionalBoundedString(
+  value: Record<string, unknown>,
+  key: string,
+  maximumCharacters: number,
+) {
+  const candidate = value[key];
+  if (candidate === undefined || candidate === null) return null;
+  if (typeof candidate !== 'string') {
+    throw providerValidationError(
+      'OPENAI_TRANSCRIPTION_RESPONSE_INVALID',
+      `OpenAI response field ${key} is invalid`,
+    );
+  }
+  return readBoundedMetadataString(candidate, key, maximumCharacters);
+}
+
+function readBoundedMetadataString(
+  value: string | null,
+  key: string,
+  maximumCharacters: number,
+) {
+  if (value === null) return null;
+  const normalized = value.trim();
+  if (!normalized) return null;
+  if (
+    Array.from(normalized).length > maximumCharacters ||
+    normalized.includes('\u0000') ||
+    containsUnpairedSurrogate(normalized)
+  ) {
+    throw providerValidationError(
+      'OPENAI_TRANSCRIPTION_RESPONSE_INVALID',
+      `OpenAI response field ${key} is invalid`,
+    );
+  }
+  return normalized;
+}
+
+function assertJsonValueSafe(value: unknown) {
+  const pending = [value];
+  while (pending.length > 0) {
+    const candidate = pending.pop();
+    if (typeof candidate === 'string') {
+      if (
+        candidate.includes('\u0000') ||
+        containsUnpairedSurrogate(candidate)
+      ) {
+        throw providerValidationError(
+          'OPENAI_TRANSCRIPTION_RESPONSE_INVALID',
+          'OpenAI transcription usage metadata contains invalid characters',
+        );
+      }
+      continue;
+    }
+    if (Array.isArray(candidate)) {
+      pending.push(...candidate);
+      continue;
+    }
+    if (isRecord(candidate)) {
+      for (const [key, entry] of Object.entries(candidate)) {
+        pending.push(key, entry);
+      }
+    }
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -317,25 +440,40 @@ function providerValidationError(code: string, message: string) {
   );
 }
 
-function asRetryableUpstreamResponseError(error: unknown) {
-  if (error instanceof TrainingOpenAiRequestError) {
-    return new TrainingOpenAiRequestError(
-      error.code,
-      true,
-      false,
-      error.status,
-      error.requestId,
-      error.retryCount,
-      error.message,
-    );
+function isRetryableStorageReadError(error: unknown) {
+  if (error instanceof TrainingAudioError) return error.retryable;
+  if (error instanceof TypeError) return true;
+  if (
+    error instanceof DOMException &&
+    (error.name === 'AbortError' || error.name === 'TimeoutError')
+  ) {
+    return true;
   }
-  return new TrainingOpenAiRequestError(
-    'OPENAI_TRANSCRIPTION_RESPONSE_INVALID',
-    true,
-    false,
-    null,
-    null,
-    0,
-    'OpenAI transcription response is temporarily invalid',
-  );
+  const message =
+    error instanceof Error ? error.message : String(error ?? '');
+  if (
+    /manual review|TRAINING_AUDIO_BUCKET|privacy|:\s*(?:400|401|403|404)\b/iu.test(
+      message,
+    )
+  ) {
+    return false;
+  }
+  const status =
+    typeof (error as { getStatus?: unknown })?.getStatus === 'function'
+      ? (error as { getStatus(): unknown }).getStatus()
+      : null;
+  if (
+    typeof status === 'number' &&
+    status >= 400 &&
+    status < 500
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function sleep(milliseconds: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
 }

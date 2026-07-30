@@ -2,10 +2,13 @@ import { createHash } from 'node:crypto';
 
 import { normalizeTrainingOpenAiText } from './training-openai-text';
 
-export const TRAINING_OPENAI_VOCABULARY_VERSION = 'safe-vocabulary-v1';
+export const TRAINING_OPENAI_VOCABULARY_VERSION = 'safe-vocabulary-v2';
 export const TRAINING_OPENAI_VOCABULARY_MAX_TERMS = 64;
 export const TRAINING_OPENAI_VOCABULARY_MAX_TERM_LENGTH = 80;
 export const TRAINING_OPENAI_VOCABULARY_MAX_ALIAS_WORDS = 6;
+export const TRAINING_OPENAI_VOCABULARY_PROMPT_MAX_CHARACTERS = 2_000;
+export const TRAINING_OPENAI_VOCABULARY_PROMPT_PREFIX =
+  'Утвержденные термины и названия: ';
 
 type TrainingVocabularyContext = {
   projectVersionNumber: number;
@@ -61,15 +64,60 @@ export function buildSafeTrainingVocabulary(
     addVocabularyTerm(accepted, value, forbiddenStatements, true);
   }
 
-  const terms = [...accepted.values()]
-    .sort(compareVocabularyTerms)
-    .slice(0, TRAINING_OPENAI_VOCABULARY_MAX_TERMS);
+  const terms = fitTrainingVocabularyPromptTerms(
+    [...accepted.values()]
+      .sort(compareVocabularyTerms)
+      .slice(0, TRAINING_OPENAI_VOCABULARY_MAX_TERMS),
+  );
   const version = `${TRAINING_OPENAI_VOCABULARY_VERSION}:project-version-${context.projectVersionNumber}`;
   const hash = createHash('sha256')
     .update(JSON.stringify({ version, terms }))
     .digest('hex');
 
   return { version, terms, hash };
+}
+
+export function buildTrainingVocabularyPrompt(values: readonly string[]) {
+  const accepted = new Map<string, string>();
+  for (const value of values) {
+    if (typeof value !== 'string' || /[\r\n]/u.test(value)) continue;
+    const normalized = normalizeTrainingOpenAiText(value);
+    if (
+      !normalized ||
+      Array.from(normalized).length >
+        TRAINING_OPENAI_VOCABULARY_MAX_TERM_LENGTH ||
+      isSentenceLike(normalized)
+    ) {
+      continue;
+    }
+    const key = normalized.toLocaleLowerCase('ru-RU');
+    if (!accepted.has(key)) accepted.set(key, normalized);
+  }
+
+  const terms = fitTrainingVocabularyPromptTerms(
+    [...accepted.values()].slice(0, TRAINING_OPENAI_VOCABULARY_MAX_TERMS),
+  );
+  return terms.length > 0
+    ? `${TRAINING_OPENAI_VOCABULARY_PROMPT_PREFIX}${terms.join(', ')}`
+    : '';
+}
+
+function fitTrainingVocabularyPromptTerms(values: readonly string[]) {
+  const terms: string[] = [];
+  for (const value of values) {
+    const candidate = `${TRAINING_OPENAI_VOCABULARY_PROMPT_PREFIX}${[
+      ...terms,
+      value,
+    ].join(', ')}`;
+    if (
+      Array.from(candidate).length >
+      TRAINING_OPENAI_VOCABULARY_PROMPT_MAX_CHARACTERS
+    ) {
+      continue;
+    }
+    terms.push(value);
+  }
+  return terms;
 }
 
 function addVocabularyTerm(

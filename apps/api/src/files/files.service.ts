@@ -289,10 +289,25 @@ export class FilesService {
     }
   }
 
-  async readStoredFile(file: Pick<File, 'bucket' | 'key'>) {
+  async readStoredFile(
+    file: Pick<File, 'bucket' | 'key'>,
+    options?: {
+      signal?: AbortSignal;
+      privateTrainingAudio?: boolean;
+    },
+  ) {
+    const bucket = this.requirePersistedPrivateBucket(file.bucket);
+    if (options?.privateTrainingAudio) {
+      this.assertPrivateTrainingAudioKey(file.key);
+      await this.storage.ensurePersistedTrainingAudioBucket(
+        bucket,
+        options.signal,
+      );
+    }
     return this.storage.getObject(
       file.key,
-      this.requirePersistedPrivateBucket(file.bucket),
+      bucket,
+      options?.signal,
     );
   }
 
@@ -317,6 +332,7 @@ export class FilesService {
     this.requirePersistedPrivateBucket(input.bucket);
     this.assertPrivateTrainingAudioKey(input.key);
     this.assertSha256(input.checksum);
+    await this.storage.ensurePersistedTrainingAudioBucket(input.bucket);
     await this.storage.putObject({
       bucket: input.bucket,
       key: input.key,
@@ -336,6 +352,7 @@ export class FilesService {
   }) {
     this.requirePersistedPrivateBucket(input.bucket);
     this.assertPrivateTrainingAudioKey(input.key);
+    await this.storage.ensurePersistedTrainingAudioBucket(input.bucket);
     await this.storage.putObjectFromFileToBucket({
       bucket: input.bucket,
       key: input.key,
@@ -350,12 +367,14 @@ export class FilesService {
   async headPrivateTrainingAudioObject(bucket: string, key: string) {
     this.requirePersistedPrivateBucket(bucket);
     this.assertPrivateTrainingAudioKey(key);
+    await this.storage.ensurePersistedTrainingAudioBucket(bucket);
     return this.storage.headObject(key, bucket);
   }
 
   async deletePrivateTrainingAudioObject(bucket: string, key: string) {
     this.requirePersistedPrivateBucket(bucket);
     this.assertPrivateTrainingAudioKey(key);
+    await this.storage.ensurePersistedTrainingAudioBucket(bucket);
     await this.storage.deleteObject(key, bucket);
   }
 

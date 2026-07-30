@@ -11,6 +11,24 @@ const {
 } = require('../dist/training/training-content.validation.js');
 
 function validVersion(overrides = {}) {
+  const questions = [
+    {
+      id: '11111111-1111-4111-8111-111111111111',
+      type: 'MAIN',
+      text: 'Расскажите о проекте',
+      position: 1,
+      isActive: true,
+      maxScore: 55,
+    },
+    ...Array.from({ length: 10 }, (_, index) => ({
+      id: `22222222-2222-4222-8222-${String(index + 1).padStart(12, '0')}`,
+      type: 'FOLLOW_UP',
+      text: `Дополнительный вопрос ${index + 1}`,
+      position: index + 1,
+      isActive: true,
+      maxScore: 15,
+    })),
+  ];
   return {
     passScore: 75,
     attemptLimit: 3,
@@ -25,39 +43,41 @@ function validVersion(overrides = {}) {
       availableFrom: null,
       deadlineAt: null,
     },
-    questions: [
+    questions,
+    facts: [
       {
-        type: 'MAIN',
-        text: 'Расскажите о проекте',
-        position: 1,
-        isActive: true,
-        maxScore: 55,
+        id: '33333333-3333-4333-8333-333333333333',
+        code: 'project.fact',
+        statement: 'Проект находится в Москве',
+        acceptedAliasesJson: [],
+        isApproved: true,
+        questionLinks: questions.map((question) => ({
+          questionId: question.id,
+        })),
       },
-      ...Array.from({ length: 10 }, (_, index) => ({
-        type: 'FOLLOW_UP',
-        text: `Дополнительный вопрос ${index + 1}`,
-        position: index + 1,
-        isActive: true,
-        maxScore: 15,
-      })),
     ],
-    facts: [{ code: 'project.fact', isApproved: true }],
     criteria: [
       {
+        id: '44444444-4444-4444-8444-444444444444',
         questionType: 'MAIN',
         code: 'main.completeness',
+        title: 'Полнота',
         sortOrder: 0,
         maxPoints: 55,
         anchorsJson: [
+          { id: 'main-zero', points: 0, description: 'Нет ответа' },
           { id: 'main-full', points: 55, description: 'Полный ответ' },
         ],
       },
       {
+        id: '55555555-5555-4555-8555-555555555555',
         questionType: 'FOLLOW_UP',
         code: 'follow.accuracy',
+        title: 'Точность',
         sortOrder: 0,
         maxPoints: 15,
         anchorsJson: [
+          { id: 'follow-zero', points: 0, description: 'Нет ответа' },
           { id: 'follow-full', points: 15, description: 'Полный ответ' },
         ],
       },
@@ -252,5 +272,189 @@ test('in-flight source extraction is reported on the sources step and blocks pub
       }),
     ),
     [],
+  );
+});
+
+test('publication rejects content that exceeds runtime fact and criterion limits', () => {
+  const factHeavyVersion = validVersion();
+  const mainQuestionId = factHeavyVersion.questions[0].id;
+  factHeavyVersion.facts.push(
+    ...Array.from({ length: 500 }, (_, index) => ({
+      id: `fact-${index + 2}`,
+      code: `project.fact.${index + 2}`,
+      statement: `Утверждённый факт ${index + 2}`,
+      acceptedAliasesJson: [],
+      isApproved: true,
+      questionLinks: [{ questionId: mainQuestionId }],
+    })),
+  );
+
+  const factErrors = collectTrainingPublicationErrors(factHeavyVersion);
+  assert.equal(
+    factErrors.includes(
+      'Main question linked approved facts count must not exceed 500',
+    ),
+    true,
+  );
+
+  const criterionHeavyVersion = validVersion();
+  criterionHeavyVersion.criteria = [
+    ...Array.from({ length: 101 }, (_, index) => {
+      const maxPoints = index === 100 ? 5 : 0.5;
+      return {
+        id: `main-criterion-${index + 1}`,
+        questionType: 'MAIN',
+        code: `main.${index + 1}`,
+        title: `Главный критерий ${index + 1}`,
+        sortOrder: index,
+        maxPoints,
+        anchorsJson: [
+          { id: 'zero', points: 0, description: 'Нет ответа' },
+          { id: 'full', points: maxPoints, description: 'Полный ответ' },
+        ],
+      };
+    }),
+    validVersion().criteria[1],
+  ];
+
+  const criterionErrors = collectTrainingPublicationErrors(
+    criterionHeavyVersion,
+  );
+  assert.equal(
+    criterionErrors.includes('Main criteria count must not exceed 100'),
+    true,
+  );
+});
+
+test('publication requires bounded anchors with zero and full score endpoints', () => {
+  const tooManyAnchors = validVersion();
+  tooManyAnchors.criteria[0].anchorsJson = [
+    { id: 'zero', points: 0, description: 'Нет ответа' },
+    { id: 'full', points: 55, description: 'Полный ответ' },
+    ...Array.from({ length: 99 }, (_, index) => ({
+      id: `middle-${index + 1}`,
+      points: 1,
+      description: `Промежуточный уровень ${index + 1}`,
+    })),
+  ];
+  assert.equal(
+    collectTrainingPublicationErrors(tooManyAnchors).includes(
+      'Main criterion anchors count must not exceed 100',
+    ),
+    true,
+  );
+
+  const noZero = validVersion();
+  noZero.criteria[0].anchorsJson = [
+    { id: 'full', points: 55, description: 'Полный ответ' },
+  ];
+  assert.equal(
+    collectTrainingPublicationErrors(noZero).includes(
+      'Main criteria require a zero-point anchor',
+    ),
+    true,
+  );
+
+  const noFull = validVersion();
+  noFull.criteria[0].anchorsJson = [
+    { id: 'zero', points: 0, description: 'Нет ответа' },
+    { id: 'partial', points: 20, description: 'Частичный ответ' },
+  ];
+  assert.equal(
+    collectTrainingPublicationErrors(noFull).includes(
+      'Main criteria require a full-score anchor',
+    ),
+    true,
+  );
+});
+
+test('publication requires approved fact coverage for every active question', () => {
+  const version = validVersion();
+  version.facts[0].questionLinks = [
+    { questionId: version.questions[0].id },
+  ];
+
+  const errors = collectTrainingPublicationErrors(version);
+
+  assert.equal(
+    errors.includes(
+      'Follow-up question 1 must have at least one linked approved fact',
+    ),
+    true,
+  );
+  assert.equal(
+    errors.includes(
+      'Follow-up question 10 must have at least one linked approved fact',
+    ),
+    true,
+  );
+});
+
+test('publication rejects duplicate fact statements or aliases within a question', () => {
+  const version = validVersion();
+  version.facts[0].statement = 'Срок сдачи — 2027.';
+  version.facts.push({
+    id: '66666666-6666-4666-8666-666666666666',
+    code: 'project.deadline.alias',
+    statement: 'Проект будет завершён в установленный срок',
+    acceptedAliasesJson: ['  СРОК СДАЧИ 2027  '],
+    isApproved: true,
+    questionLinks: [{ questionId: version.questions[0].id }],
+  });
+
+  assert.equal(
+    collectTrainingPublicationErrors(version).includes(
+      'Main question linked approved facts must not contain duplicate statements or aliases',
+    ),
+    true,
+  );
+});
+
+test('publication preflights aggregate prompt and mandatory output capacity', () => {
+  const promptHeavyVersion = validVersion();
+  promptHeavyVersion.criteria = [
+    ...[18.33, 18.33, 18.34].map((maxPoints, criterionIndex) => ({
+      id: `prompt-main-${criterionIndex + 1}`,
+      questionType: 'MAIN',
+      code: `main.prompt.${criterionIndex + 1}`,
+      title: `Главный критерий ${criterionIndex + 1}`,
+      sortOrder: criterionIndex,
+      maxPoints,
+      anchorsJson: [
+        { id: 'zero', points: 0, description: 'я'.repeat(2_000) },
+        { id: 'full', points: maxPoints, description: 'я'.repeat(2_000) },
+        ...Array.from({ length: 98 }, (_, anchorIndex) => ({
+          id: `middle-${anchorIndex + 1}`,
+          points: 0,
+          description: 'я'.repeat(2_000),
+        })),
+      ],
+    })),
+    validVersion().criteria[1],
+  ];
+  assert.equal(
+    collectTrainingPublicationErrors(promptHeavyVersion).includes(
+      'Main question evaluation input exceeds the safe prompt budget',
+    ),
+    true,
+  );
+
+  const outputHeavyVersion = validVersion();
+  const mainQuestionId = outputHeavyVersion.questions[0].id;
+  outputHeavyVersion.facts.push(
+    ...Array.from({ length: 79 }, (_, index) => ({
+      id: `77777777-7777-4777-8777-${String(index + 2).padStart(12, '0')}`,
+      code: `output.fact.${index + 2}`,
+      statement: `Короткий факт ${index + 2}`,
+      acceptedAliasesJson: [],
+      isApproved: true,
+      questionLinks: [{ questionId: mainQuestionId }],
+    })),
+  );
+  assert.equal(
+    collectTrainingPublicationErrors(outputHeavyVersion).includes(
+      'Main question evaluation output exceeds the safe output capacity',
+    ),
+    true,
   );
 });

@@ -228,6 +228,32 @@ test('manual unlink is idempotent and audited once', async () => {
   );
 });
 
+test('manual unlink is blocked while a consumed training attempt is active', async () => {
+  const fixture = await createFixture();
+  const harness = createHarness();
+  await linkUser(harness, fixture.userId, 501_103);
+  await startAttempt(harness.engine, fixture);
+
+  await assert.rejects(
+    harness.links.revokeAccount(fixture.userId),
+    /cannot be disconnected while a training attempt is active/u,
+  );
+
+  const account = await prisma.trainingTelegramAccount.findUniqueOrThrow({
+    where: { userId: fixture.userId },
+  });
+  assert.equal(account.revokedAt, null);
+  assert.equal(
+    await prisma.auditLog.count({
+      where: {
+        action: 'training.telegram.unlink',
+        actorUserId: fixture.userId,
+      },
+    }),
+    0,
+  );
+});
+
 test('simultaneous relink and revoke preserve one account and no reusable token', async () => {
   const fixture = await createFixture();
   const harness = createHarness();
@@ -682,6 +708,43 @@ test('several voice messages form one answer and duplicate message creates no se
   assert.ok(messages.some((message) => message.text.startsWith('Часть 2 принята')));
 });
 
+test('duplicate voice file with a new message id returns the existing segment acknowledgement', async () => {
+  const fixture = await createFixture();
+  const telegramId = 501_142;
+  const harness = createHarness();
+  await linkUser(harness, fixture.userId, telegramId);
+  const attempt = await startAttempt(harness.engine, fixture);
+  const fileUniqueId = `forwarded-duplicate-${nextSequence()}`;
+
+  await acceptAndDrain(
+    harness,
+    voiceUpdate(nextSequence(), 32, telegramId, fileUniqueId),
+  );
+  harness.transport.clear();
+  await acceptAndDrain(
+    harness,
+    voiceUpdate(nextSequence(), 33, telegramId, fileUniqueId),
+  );
+
+  const segments = await prisma.trainingVoiceSegment.findMany({
+    where: {
+      fileUniqueId,
+      answer: { attemptQuestion: { attemptId: attempt.id } },
+    },
+  });
+  assert.equal(segments.length, 1);
+  const acknowledgement = harness.transport.deliveries.find(
+    (delivery) =>
+      delivery.operation === 'SEND_MESSAGE' &&
+      delivery.text.startsWith('Часть 1 принята'),
+  );
+  assert.ok(acknowledgement);
+  assert.match(
+    acknowledgement.replyMarkup.inline_keyboard[0][0].callback_data,
+    /^tr:f:/u,
+  );
+});
+
 test('legacy Telegram update derives one stable correlation for voice domain and delivery', async () => {
   const fixture = await createFixture();
   const telegramId = 501_119;
@@ -874,17 +937,42 @@ test('finish callback is idempotent and an old-question callback cannot finish t
   );
   const finishData = encodeFinishCallback(firstQuestionId);
   const callbackId = `finish-${nextSequence()}`;
+  const finishUpdateId = nextSequence();
+  const segment = await prisma.trainingVoiceSegment.findFirstOrThrow({
+    where: {
+      answer: { attemptQuestionId: firstQuestionId },
+    },
+    select: { receivedAt: true },
+  });
 
-  await acceptAndDrain(
-    harness,
+  await harness.webhook.acceptUpdate(
     callbackUpdate(
-      nextSequence(),
+      finishUpdateId,
       41,
       telegramId,
       callbackId,
       finishData,
     ),
   );
+  const finishJob = await prisma.trainingJob.findFirstOrThrow({
+    where: {
+      kind: TrainingJobKind.PROCESS_TELEGRAM_UPDATE,
+      payloadJson: {
+        path: ['updateId'],
+        equals: String(finishUpdateId),
+      },
+    },
+  });
+  await prisma.trainingJob.update({
+    where: { id: finishJob.id },
+    data: {
+      payloadJson: {
+        ...finishJob.payloadJson,
+        receivedAt: segment.receivedAt.toISOString(),
+      },
+    },
+  });
+  await drainTelegram(harness.worker);
   await acceptAndDrain(
     harness,
     callbackUpdate(
@@ -901,6 +989,15 @@ test('finish callback is idempotent and an old-question callback cannot finish t
       question.status === TrainingAttemptQuestionStatus.PRESENTED,
   );
   assert.ok(nextQuestion);
+  const finishedQuestion =
+    await prisma.trainingAttemptQuestion.findUniqueOrThrow({
+      where: { id: firstQuestionId },
+      select: { finishedAt: true },
+    });
+  assert.equal(
+    finishedQuestion.finishedAt.toISOString(),
+    segment.receivedAt.toISOString(),
+  );
 
   await acceptAndDrain(
     harness,
@@ -1273,6 +1370,9 @@ test('two Telegram workers claim one delivery job only once', async () => {
     TEST_CONFIG,
     dialog,
     transport,
+    undefined,
+    undefined,
+    engine,
   );
   const second = new TrainingTelegramWorkerService(
     prisma,
@@ -1505,6 +1605,117 @@ test('Telegram worker applies bounded retries and permanently rejects non-retrya
   assert.equal(exhausted.status, TrainingJobStatus.DEAD);
   assert.equal(exhausted.attempts, 2);
   assert.equal(exhausted.lastErrorCode, 'RATE_LIMITED');
+});
+
+test('dead critical question delivery terminalizes and refunds the active attempt once', async () => {
+  const fixture = await createFixture();
+  const harness = createHarness();
+  await linkUser(harness, fixture.userId, 501_140);
+  await drainTelegram(harness.worker);
+  const attempt = await startAttempt(harness.engine, fixture);
+  const question = attempt.attemptQuestions.find(
+    (item) => item.status === TrainingAttemptQuestionStatus.PRESENTED,
+  );
+  assert.ok(question);
+  const questionKey = `telegram:attempt:${attempt.id}:question:${question.id}`;
+  await prisma.trainingJob.update({
+    where: { idempotencyKey: questionKey },
+    data: { maxAttempts: 1 },
+  });
+  const permanentTransport = {
+    sendMessage: async () => {
+      throw new TrainingTelegramTransportError(
+        'PERMANENT_CLIENT_ERROR',
+        false,
+      );
+    },
+    answerCallbackQuery: async () => undefined,
+  };
+  const worker = new TrainingTelegramWorkerService(
+    prisma,
+    TEST_CONFIG,
+    harness.dialog,
+    permanentTransport,
+    undefined,
+    undefined,
+    harness.engine,
+  );
+
+  await worker.drainNow();
+
+  const [persistedAttempt, questionJob] = await Promise.all([
+    prisma.trainingAttempt.findUniqueOrThrow({
+      where: { id: attempt.id },
+      select: { status: true, isConsumed: true },
+    }),
+    prisma.trainingJob.findUniqueOrThrow({
+      where: { idempotencyKey: questionKey },
+      select: { status: true, lastErrorCode: true },
+    }),
+  ]);
+  assert.equal(persistedAttempt.status, TrainingAttemptStatus.TECHNICAL_FAILURE);
+  assert.equal(persistedAttempt.isConsumed, false);
+  assert.equal(questionJob.status, TrainingJobStatus.DEAD);
+  assert.equal(questionJob.lastErrorCode, 'PERMANENT_CLIENT_ERROR');
+});
+
+test('Telegram worker startup recovers a dead critical question without resending it', async () => {
+  const fixture = await createFixture();
+  const harness = createHarness();
+  await linkUser(harness, fixture.userId, 501_143);
+  await drainTelegram(harness.worker);
+  const attempt = await startAttempt(harness.engine, fixture);
+  const question = attempt.attemptQuestions.find(
+    (item) => item.status === TrainingAttemptQuestionStatus.PRESENTED,
+  );
+  assert.ok(question);
+  const questionKey = `telegram:attempt:${attempt.id}:question:${question.id}`;
+  await prisma.trainingJob.update({
+    where: { idempotencyKey: questionKey },
+    data: {
+      status: TrainingJobStatus.DEAD,
+      attempts: 5,
+      finishedAt: new Date(),
+      lastErrorCode: 'PERMANENT_CLIENT_ERROR',
+    },
+  });
+  harness.transport.clear();
+  const restartedWorker = new TrainingTelegramWorkerService(
+    prisma,
+    TEST_CONFIG,
+    harness.dialog,
+    harness.transport,
+    undefined,
+    undefined,
+    harness.engine,
+  );
+
+  await restartedWorker.drainNow();
+
+  const [persistedAttempt, questionJob] = await Promise.all([
+    prisma.trainingAttempt.findUniqueOrThrow({
+      where: { id: attempt.id },
+      select: { status: true, isConsumed: true },
+    }),
+    prisma.trainingJob.findUniqueOrThrow({
+      where: { idempotencyKey: questionKey },
+      select: { status: true, attempts: true },
+    }),
+  ]);
+  assert.equal(persistedAttempt.status, TrainingAttemptStatus.TECHNICAL_FAILURE);
+  assert.equal(persistedAttempt.isConsumed, false);
+  assert.deepEqual(questionJob, {
+    status: TrainingJobStatus.DEAD,
+    attempts: 5,
+  });
+  assert.equal(
+    harness.transport.deliveries.some(
+      (delivery) =>
+        delivery.operation === 'SEND_MESSAGE' &&
+        delivery.text.includes(question.question.text),
+    ),
+    false,
+  );
 });
 
 test('Telegram worker heartbeats prevent takeover and stale exhausted jobs become DEAD', async () => {
@@ -1867,6 +2078,55 @@ test('timeout warning is not sent after terminal state', async () => {
     ),
     false,
   );
+});
+
+test('overdue warning is skipped even while the attempt status is still active', async () => {
+  const fixture = await createFixture();
+  const telegramId = 501_115;
+  const harness = createHarness();
+  await linkUser(harness, fixture.userId, telegramId);
+  const attempt = await startAttempt(harness.engine, fixture);
+  await drainTelegram(harness.worker);
+  harness.transport.clear();
+  const now = new Date();
+  await prisma.trainingAttempt.update({
+    where: { id: attempt.id },
+    data: {
+      expiresAt: new Date(now.getTime() - 1_000),
+      graceExpiresAt: new Date(now.getTime() + 60_000),
+    },
+  });
+  const warning = await prisma.trainingJob.findFirstOrThrow({
+    where: {
+      kind: TrainingJobKind.SEND_TIMER_WARNING,
+      idempotencyKey: {
+        startsWith: `attempt:${attempt.id}:timer:warning:`,
+      },
+    },
+  });
+  await prisma.trainingJob.update({
+    where: { id: warning.id },
+    data: {
+      status: TrainingJobStatus.PENDING,
+      runAt: new Date('1998-01-01T00:00:00.000Z'),
+      finishedAt: null,
+    },
+  });
+
+  await drainTelegram(harness.worker);
+
+  assert.equal(
+    harness.transport.deliveries.some(
+      (delivery) =>
+        delivery.operation === 'SEND_MESSAGE' &&
+        delivery.text.includes('осталось'),
+    ),
+    false,
+  );
+  const skipped = await prisma.trainingJob.findUniqueOrThrow({
+    where: { id: warning.id },
+  });
+  assert.equal(skipped.status, TrainingJobStatus.SUCCEEDED);
 });
 
 test('timeout finalization persists and delivers one result outbox event', async () => {

@@ -205,6 +205,44 @@ test('production storage requires a distinct explicitly configured audio bucket'
   );
 });
 
+test('missing persisted training audio bucket fails closed without auto-creation', async () => {
+  await withProductionStorageEnvironment(async () => {
+    const originalFetch = global.fetch;
+    const calls = [];
+    global.fetch = async (url, init = {}) => {
+      calls.push({
+        method: init.method ?? 'GET',
+        pathname: new URL(String(url)).pathname,
+        signed: new Headers(init.headers).has('authorization'),
+      });
+      return new Response(null, {
+        status: init.method === 'HEAD' ? 404 : 200,
+      });
+    };
+    try {
+      const storage = new S3StorageService();
+      await assert.rejects(
+        () =>
+          storage.ensurePersistedTrainingAudioBucket(
+            'retired-private-audio-bucket',
+          ),
+        /missing and requires manual review/,
+      );
+      assert.equal(
+        calls.some(
+          (call) =>
+            call.signed &&
+            call.method === 'PUT' &&
+            call.pathname === '/retired-private-audio-bucket',
+        ),
+        false,
+      );
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+});
+
 test('training audio bucket privacy probe accepts private storage and rejects public read, list or ambiguous access', async (t) => {
   for (const fixture of [
     { name: 'private', anonymous: 'denied', succeeds: true },

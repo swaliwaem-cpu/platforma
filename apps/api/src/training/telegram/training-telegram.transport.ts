@@ -6,6 +6,8 @@ export const TRAINING_TELEGRAM_TRANSPORT = Symbol(
   'TRAINING_TELEGRAM_TRANSPORT',
 );
 
+const TELEGRAM_RESPONSE_MAX_BYTES = 64 * 1024;
+
 export type TelegramInlineButton =
   | { text: string; callback_data: string }
   | { text: string; url: string };
@@ -90,6 +92,7 @@ export class FetchTrainingTelegramTransport
   constructor(
     private readonly botToken: string,
     private readonly apiBaseUrl = 'https://api.telegram.org',
+    private readonly requestTimeoutMs = 5_000,
   ) {}
 
   async sendMessage(input: TrainingTelegramSendMessage) {
@@ -116,10 +119,12 @@ export class FetchTrainingTelegramTransport
     const timeout = setTimeout(() => {
       timedOut = true;
       controller.abort();
-    }, 5_000);
+    }, this.requestTimeoutMs);
     timeout.unref();
 
     let response: Response;
+    let payload: TelegramResponsePayload | null = null;
+    let invalidJson = false;
     try {
       response = await fetch(
         `${this.apiBaseUrl}/bot${encodeURIComponent(this.botToken)}/${method}`,
@@ -130,6 +135,12 @@ export class FetchTrainingTelegramTransport
           signal: controller.signal,
         },
       );
+      const parsed = await waitForTelegramResponseBody(
+        readTelegramResponsePayload(response),
+        controller.signal,
+      );
+      payload = parsed.payload;
+      invalidJson = parsed.invalidJson;
     } catch (error) {
       if (error instanceof TrainingTelegramTransportError) throw error;
       throw new TrainingTelegramTransportError(
@@ -138,19 +149,6 @@ export class FetchTrainingTelegramTransport
       );
     } finally {
       clearTimeout(timeout);
-    }
-
-    type TelegramResponsePayload = {
-      ok?: boolean;
-      error_code?: number;
-      parameters?: { retry_after?: number };
-    };
-    let payload: TelegramResponsePayload | null = null;
-    let invalidJson = false;
-    try {
-      payload = (await response.json()) as TelegramResponsePayload;
-    } catch {
-      invalidJson = true;
     }
 
     const errorCode =
@@ -192,6 +190,100 @@ export class FetchTrainingTelegramTransport
     }
     throw new TrainingTelegramTransportError('INVALID_RESPONSE', true);
   }
+}
+
+type TelegramResponsePayload = {
+  ok?: boolean;
+  error_code?: number;
+  parameters?: { retry_after?: number };
+};
+
+async function readTelegramResponsePayload(response: Response): Promise<{
+  payload: TelegramResponsePayload | null;
+  invalidJson: boolean;
+}> {
+  const contentLength = response.headers?.get?.('content-length');
+  if (
+    contentLength &&
+    (/^\d+$/u.test(contentLength) === false ||
+      BigInt(contentLength) > BigInt(TELEGRAM_RESPONSE_MAX_BYTES))
+  ) {
+    throw new TrainingTelegramTransportError('INVALID_RESPONSE', true);
+  }
+
+  if (!response.body || typeof response.body.getReader !== 'function') {
+    try {
+      const payload = (await response.json()) as TelegramResponsePayload;
+      if (
+        Buffer.byteLength(JSON.stringify(payload), 'utf8') >
+        TELEGRAM_RESPONSE_MAX_BYTES
+      ) {
+        throw new TrainingTelegramTransportError('INVALID_RESPONSE', true);
+      }
+      return {
+        payload,
+        invalidJson: false,
+      };
+    } catch (error) {
+      if (error instanceof TrainingTelegramTransportError) throw error;
+      return { payload: null, invalidJson: true };
+    }
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      totalBytes += chunk.value.byteLength;
+      if (totalBytes > TELEGRAM_RESPONSE_MAX_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        throw new TrainingTelegramTransportError('INVALID_RESPONSE', true);
+      }
+      chunks.push(chunk.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const body = Buffer.concat(
+    chunks.map((chunk) =>
+      Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength),
+    ),
+    totalBytes,
+  ).toString('utf8');
+  try {
+    return {
+      payload: JSON.parse(body) as TelegramResponsePayload,
+      invalidJson: false,
+    };
+  } catch {
+    return { payload: null, invalidJson: true };
+  }
+}
+
+function waitForTelegramResponseBody<T>(
+  operation: Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  if (signal.aborted) {
+    return Promise.reject(abortError());
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(abortError());
+    signal.addEventListener('abort', onAbort, { once: true });
+    operation.then(resolve, reject).finally(() => {
+      signal.removeEventListener('abort', onAbort);
+    });
+  });
+}
+
+function abortError() {
+  const error = new Error('Telegram response body timed out');
+  error.name = 'AbortError';
+  return error;
 }
 
 export function createTrainingTelegramTransport(

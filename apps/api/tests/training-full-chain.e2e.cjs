@@ -863,7 +863,17 @@ async function assertResultRankingAndCsv({ attemptId, fixture }) {
   assert.equal(employee.attempt.project.id, fixture.project.id);
   assert.equal(Number(employee.attempt.finalScore), 95);
 
-  const admin = await results.getAdminAttempt(attemptId);
+  const admin = await results.getAdminAttempt(
+    attemptId,
+    {
+      ...fixture.admin,
+      permissions: ['training:results:read'],
+    },
+    {
+      ip: '127.0.0.1',
+      headers: { 'user-agent': 'training-full-chain-e2e' },
+    },
+  );
   assert.equal(admin.attempt.id, attemptId);
   assert.equal(admin.attempt.user.id, fixture.employee.id);
   assert.equal(admin.attempt.project.id, fixture.project.id);

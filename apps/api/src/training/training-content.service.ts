@@ -601,7 +601,13 @@ export class TrainingContentService {
       include: {
         project: true,
         questions: true,
-        facts: true,
+        facts: {
+          include: {
+            questionLinks: {
+              select: { questionId: true },
+            },
+          },
+        },
         criteria: true,
         sourceDocuments: {
           select: { extractionStatus: true },
@@ -1236,7 +1242,13 @@ export class TrainingContentService {
           include: {
             project: true,
             questions: true,
-            facts: true,
+            facts: {
+              include: {
+                questionLinks: {
+                  select: { questionId: true },
+                },
+              },
+            },
             criteria: true,
             sourceDocuments: {
               select: { extractionStatus: true },

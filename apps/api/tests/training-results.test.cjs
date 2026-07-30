@@ -186,6 +186,44 @@ test('results controllers enforce employee ownership and administrative read sco
   );
 });
 
+test('admin transcript detail is private and forwards audit context', async () => {
+  const attemptId = '00000000-0000-4000-8000-000000000001';
+  const actor = {
+    id: 'admin-1',
+    permissions: ['training:results:read'],
+  };
+  const request = {
+    ip: '127.0.0.1',
+    headers: { 'user-agent': 'training-results-unit-test' },
+  };
+  const headers = new Map();
+  let received;
+  const controller = new TrainingAdminResultsController(
+    {
+      async getAdminAttempt(...args) {
+        received = args;
+        return { attempt: { id: attemptId } };
+      },
+    },
+    {},
+  );
+
+  const result = await controller.getResult(
+    attemptId,
+    actor,
+    request,
+    {
+      setHeader(name, value) {
+        headers.set(name, value);
+      },
+    },
+  );
+
+  assert.equal(headers.get('Cache-Control'), 'private, no-store');
+  assert.deepEqual(received, [attemptId, actor, request]);
+  assert.deepEqual(result, { attempt: { id: attemptId } });
+});
+
 test('employee detail exposes a breakdown only when it reconciles with final score', async () => {
   for (const scenario of [
     {

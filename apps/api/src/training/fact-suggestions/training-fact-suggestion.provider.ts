@@ -15,13 +15,15 @@ export const TRAINING_FACT_SUGGESTION_PROMPT_VERSION =
   'training-fact-suggestions-v1';
 const MAX_SOURCE_TEXT_CHARACTERS = 36_000;
 const MAX_EXISTING_FACTS = 250;
-const MAX_SUGGESTIONS = 40;
+export const TRAINING_FACT_SUGGESTION_MAX_SUGGESTIONS = 20;
 const MAX_ALIASES = 20;
 const MAX_CODE_CHARACTERS = 120;
 const MAX_STATEMENT_CHARACTERS = 8_000;
 const MAX_ALIAS_CHARACTERS = 500;
 const MAX_QUOTE_CHARACTERS = 2_000;
-const CODE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
+const MAX_PROVIDER_INPUT_CHARACTERS = MAX_SOURCE_TEXT_CHARACTERS * 2;
+const CODE_PATTERN_SOURCE = '^[A-Za-z0-9][A-Za-z0-9._-]*$';
+const CODE_PATTERN = new RegExp(CODE_PATTERN_SOURCE, 'u');
 
 export const TRAINING_FACT_SUGGESTION_PROVIDER = Symbol(
   'TRAINING_FACT_SUGGESTION_PROVIDER',
@@ -94,7 +96,7 @@ export const TRAINING_FACT_SUGGESTION_JSON_SCHEMA = {
     facts: {
       type: 'array',
       minItems: 0,
-      maxItems: MAX_SUGGESTIONS,
+      maxItems: TRAINING_FACT_SUGGESTION_MAX_SUGGESTIONS,
       items: {
         type: 'object',
         additionalProperties: false,
@@ -108,8 +110,8 @@ export const TRAINING_FACT_SUGGESTION_JSON_SCHEMA = {
           'source_quote',
         ],
         properties: {
-          suggested_code: boundedStringSchema(MAX_CODE_CHARACTERS),
-          topic_code: boundedStringSchema(MAX_CODE_CHARACTERS),
+          suggested_code: boundedCodeSchema(),
+          topic_code: boundedCodeSchema(),
           statement: boundedStringSchema(MAX_STATEMENT_CHARACTERS),
           accepted_aliases: {
             type: 'array',
@@ -189,17 +191,9 @@ export class OpenAiTrainingFactSuggestionProvider
   async suggest(
     input: TrainingFactSuggestionProviderInput,
   ): Promise<TrainingFactSuggestionProviderResult> {
-    validateProviderInput(input);
     const requestedModelId = this.config.reviewModel;
     const reasoningEffort = this.config.reviewReasoning;
-    const inputJson = JSON.stringify(buildProviderPayload(input));
-
-    if (inputJson.length > MAX_SOURCE_TEXT_CHARACTERS * 2) {
-      throw providerError(
-        'OPENAI_FACT_SUGGESTION_PROMPT_TOO_LARGE',
-        'Fact suggestion prompt exceeds the configured safety limit',
-      );
-    }
+    const inputJson = serializeTrainingFactSuggestionProviderInput(input);
 
     const response = await this.http.request({
       path: '/v1/responses',
@@ -295,7 +289,7 @@ export function validateFactSuggestionOutput(
   }
 
   const rows = readArray(output.facts, 'facts');
-  if (rows.length > MAX_SUGGESTIONS) {
+  if (rows.length > TRAINING_FACT_SUGGESTION_MAX_SUGGESTIONS) {
     throw providerError(
       'OPENAI_FACT_SUGGESTION_OUTPUT_LIMIT_EXCEEDED',
       'Fact suggestion output contains too many facts',
@@ -371,10 +365,14 @@ export function validateFactSuggestionOutput(
         'Fact suggestion references an unknown source segment',
       );
     }
-    if (!segment.text.includes(sourceQuote)) {
+    const normalizedSourceQuote = normalizeSourceBindingText(sourceQuote);
+    if (
+      !normalizedSourceQuote.trim() ||
+      !normalizeSourceBindingText(segment.text).includes(normalizedSourceQuote)
+    ) {
       throw providerError(
         'OPENAI_FACT_SUGGESTION_SOURCE_QUOTE_INVALID',
-        'Fact suggestion quote must be an exact source substring',
+        'Fact suggestion quote must match a normalized source substring',
       );
     }
 
@@ -411,7 +409,7 @@ export function validateFactSuggestionOutput(
       sourceId: segment.sourceId,
       sourceSegmentId,
       sourceLocator: segment.locator,
-      sourceQuote,
+      sourceQuote: normalizedSourceQuote,
       statementHash: hashText(normalizedStatement),
       duplicateOfFactId,
     });
@@ -475,6 +473,8 @@ function buildProviderInstructions() {
     'Не используй внешние знания, поиск, tools, файлы или сведения вне input JSON.',
     'Каждый факт обязан ссылаться на один переданный source_segment_id.',
     'source_quote должна быть точной непустой подстрокой соответствующего source_text.',
+    'suggested_code и topic_code должны быть ASCII-кодами: начинаться с латинской буквы или цифры и содержать только A-Z, a-z, 0-9, точку, дефис или подчёркивание.',
+    `Верни не более ${TRAINING_FACT_SUGGESTION_MAX_SUGGESTIONS} наиболее важных фактов.`,
     'Не утверждай факт, если его нельзя прямо подтвердить точной цитатой.',
     'Не возвращай score, approval, question IDs, chain-of-thought или рекомендации по публикации.',
     'Не повторяй факты из existing_facts и не придумывай идентификаторы источников.',
@@ -498,51 +498,45 @@ function buildProviderPayload(input: TrainingFactSuggestionProviderInput) {
   };
 }
 
+export function serializeTrainingFactSuggestionProviderInput(
+  input: TrainingFactSuggestionProviderInput,
+) {
+  validateProviderInput(input);
+  const inputJson = JSON.stringify(buildProviderPayload(input));
+  if (inputJson.length > MAX_PROVIDER_INPUT_CHARACTERS) {
+    throw providerError(
+      'OPENAI_FACT_SUGGESTION_PROMPT_TOO_LARGE',
+      'Fact suggestion prompt exceeds the configured safety limit',
+    );
+  }
+  return inputJson;
+}
+
 function validateRetryableProviderResponse(
   input: TrainingFactSuggestionProviderInput,
   bodyText: string,
 ) {
-  try {
-    const envelope = parseJsonObject(
-      bodyText,
-      'OPENAI_FACT_SUGGESTION_RESPONSE_INVALID',
+  const envelope = parseJsonObject(
+    bodyText,
+    'OPENAI_FACT_SUGGESTION_RESPONSE_INVALID',
+  );
+  const status =
+    typeof envelope.status === 'string' ? envelope.status : 'unknown';
+  if (status !== 'completed') {
+    throw providerError(
+      status === 'incomplete'
+        ? 'OPENAI_FACT_SUGGESTION_INCOMPLETE'
+        : 'OPENAI_FACT_SUGGESTION_NOT_COMPLETED',
+      `OpenAI fact suggestion response status is ${status}`,
     );
-    const status =
-      typeof envelope.status === 'string' ? envelope.status : 'unknown';
-    if (status !== 'completed') {
-      throw providerError(
-        status === 'incomplete'
-          ? 'OPENAI_FACT_SUGGESTION_INCOMPLETE'
-          : 'OPENAI_FACT_SUGGESTION_NOT_COMPLETED',
-        `OpenAI fact suggestion response status is ${status}`,
-      );
-    }
-    validateFactSuggestionOutput(
-      input,
-      parseJsonObject(
-        extractOutputText(envelope),
-        'OPENAI_FACT_SUGGESTION_OUTPUT_INVALID',
-      ),
-    );
-  } catch (error) {
-    if (
-      error instanceof TrainingOpenAiRequestError &&
-      error.code !== 'OPENAI_FACT_SUGGESTION_REFUSAL' &&
-      error.code !== 'OPENAI_FACT_SUGGESTION_INCOMPLETE' &&
-      error.code !== 'OPENAI_FACT_SUGGESTION_NOT_COMPLETED'
-    ) {
-      throw new TrainingOpenAiRequestError(
-        error.code,
-        true,
-        false,
-        error.status,
-        error.requestId,
-        error.retryCount,
-        error.message,
-      );
-    }
-    throw error;
   }
+  validateFactSuggestionOutput(
+    input,
+    parseJsonObject(
+      extractOutputText(envelope),
+      'OPENAI_FACT_SUGGESTION_OUTPUT_INVALID',
+    ),
+  );
 }
 
 function extractOutputText(envelope: Record<string, unknown>) {
@@ -711,6 +705,13 @@ function normalizeSnapshotText(value: string) {
     .replace(/\u0000/gu, '');
 }
 
+function normalizeSourceBindingText(value: string) {
+  return value
+    .normalize('NFC')
+    .replace(/\r\n?/gu, '\n')
+    .replace(/[\u00a0\u2007\u202f]/gu, ' ');
+}
+
 function hashText(value: string) {
   return createHash('sha256').update(value, 'utf8').digest('hex');
 }
@@ -732,6 +733,13 @@ function boundedStringSchema(maxLength: number) {
     type: 'string',
     minLength: 1,
     maxLength,
+  } as const;
+}
+
+function boundedCodeSchema() {
+  return {
+    ...boundedStringSchema(MAX_CODE_CHARACTERS),
+    pattern: CODE_PATTERN_SOURCE,
   } as const;
 }
 

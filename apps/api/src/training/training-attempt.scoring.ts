@@ -58,6 +58,8 @@ export function scoreTrainingEvaluation(input: {
   const factsById = new Map(input.facts.map((fact) => [fact.id, fact]));
   const scoresByCriterion = new Map<string, Prisma.Decimal>();
   const evidenceByCriterion = new Map<string, Record<string, unknown>>();
+  const answerIsIrrelevant =
+    input.evaluation.answerRelevance === 'IRRELEVANT';
 
   for (const score of input.evaluation.criterionScores) {
     const criterion = criteriaById.get(score.criterionId);
@@ -80,11 +82,13 @@ export function scoreTrainingEvaluation(input: {
     }
     scoresByCriterion.set(
       score.criterionId,
-      clampTrainingScore(
-        anchor?.points ?? score.awardedPoints ?? 0,
-        0,
-        criterion.maxPoints,
-      ),
+      answerIsIrrelevant
+        ? canonicalTrainingScore(0)
+        : clampTrainingScore(
+            anchor?.points ?? score.awardedPoints ?? 0,
+            0,
+            criterion.maxPoints,
+          ),
     );
     evidenceByCriterion.set(score.criterionId, {
       ...(score.evidenceSource ? { source: score.evidenceSource } : {}),
@@ -177,10 +181,12 @@ export function scoreTrainingEvaluation(input: {
       input.questionMaxScore,
     ),
     requiresReview:
+      answerIsIrrelevant ||
       unsupportedClaims.size > 0 ||
       (input.evaluation.requiresManualReview ?? false),
     reviewReasons: [
       ...new Set([
+        ...(answerIsIrrelevant ? ['ANSWER_IRRELEVANT'] : []),
         ...[...unsupportedClaims].map((claim) => `UNSUPPORTED:${claim}`),
         ...(input.evaluation.reviewReasons ?? []).map(
           (reason) => `PROVIDER_REVIEW:${reason}`,

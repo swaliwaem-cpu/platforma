@@ -26,6 +26,8 @@ const {
   TrainingProviderRunStatus,
 } = require('@prisma/client');
 const {
+  assertTrainingFactSuggestionRunBudget,
+  TRAINING_FACT_SUGGESTION_MAX_PROVIDER_RUNS_PER_RUN,
   TrainingFactSuggestionsService,
 } = require('../dist/training/fact-suggestions/training-fact-suggestions.service.js');
 
@@ -56,9 +58,40 @@ test('fact suggestion schema is strict and does not allow approval or scoring fi
   );
   const fields =
     TRAINING_FACT_SUGGESTION_JSON_SCHEMA.properties.facts.items.properties;
+  assert.equal(
+    fields.suggested_code.pattern,
+    '^[A-Za-z0-9][A-Za-z0-9._-]*$',
+  );
+  assert.equal(fields.topic_code.pattern, '^[A-Za-z0-9][A-Za-z0-9._-]*$');
   assert.equal('is_approved' in fields, false);
   assert.equal('score' in fields, false);
   assert.equal('question_ids' in fields, false);
+});
+
+test('validator binds a normalized PDF quote to the server-owned locator', () => {
+  const input = createInput();
+  input.segments[0].text =
+    'Девелопером проекта является компания TATE\u00a0Development.\r\nНазвание — И\u0306ога.';
+  const result = validateFactSuggestionOutput(input, {
+    schema_version: 'training-fact-suggestions-v1',
+    facts: [
+      {
+        suggested_code: 'identity.developer',
+        topic_code: 'identity',
+        statement: 'Девелопером проекта является TATE Development.',
+        accepted_aliases: ['TATE Development'],
+        importance: 1,
+        source_segment_id: input.segments[0].id,
+        source_quote:
+          'Девелопером проекта является компания TATE Development.\nНазвание — Йога.',
+      },
+    ],
+  });
+
+  assert.equal(result.length, 1);
+  assert.deepEqual(result[0].sourceLocator, { page: 3 });
+  assert.match(result[0].sourceQuote, /TATE Development/u);
+  assert.equal(result[0].sourceQuote.includes('\r'), false);
 });
 
 test('validator resolves locator server-side and requires an exact source quote', () => {
@@ -96,7 +129,7 @@ test('validator resolves locator server-side and requires an exact source quote'
           },
         ],
       }),
-    /exact source substring/u,
+    /normalized source substring/u,
   );
 });
 
@@ -293,8 +326,169 @@ test('real provider request is structured, stateless and has no tool access', as
     requestBody.text.format.schema.additionalProperties,
     false,
   );
+  assert.match(requestBody.instructions, /ASCII-кодами/u);
+  assert.equal(requestBody.text.format.schema.properties.facts.maxItems, 20);
   assert.equal(result.requestId, 'req_fake');
   assert.deepEqual(result.suggestions, []);
+});
+
+test('semantic fact-suggestion validation failure is terminal after one paid response', async () => {
+  let requestCount = 0;
+  const config = {
+    apiKey: 'not-a-real-key',
+    reviewModel: 'review-model',
+    reviewReasoning: 'high',
+    evaluationTimeoutMs: 10_000,
+    evaluationMaxRetries: 2,
+    evaluationMaxOutputTokens: 1_000,
+    maxResponseBytes: 100_000,
+  };
+  const http = new TrainingOpenAiHttpClient(config, {
+    baseUrl: 'https://openai.invalid',
+    sleep: async () => {},
+    fetchImpl: async () => {
+      requestCount += 1;
+      return new Response(
+        JSON.stringify({
+          status: 'completed',
+          model: 'review-model',
+          output: [
+            {
+              type: 'message',
+              content: [
+                {
+                  type: 'output_text',
+                  text: JSON.stringify({
+                    schema_version: 'training-fact-suggestions-v1',
+                    facts: [
+                      {
+                        suggested_code: 'identity.developer',
+                        topic_code: 'identity',
+                        statement:
+                          'Девелопером проекта является TATE Development.',
+                        accepted_aliases: [],
+                        importance: 1,
+                        source_segment_id: 'invented-segment',
+                        source_quote: 'TATE Development',
+                      },
+                    ],
+                  }),
+                },
+              ],
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+            'x-request-id': 'req_semantic_invalid',
+          },
+        },
+      );
+    },
+  });
+  const provider = new OpenAiTrainingFactSuggestionProvider(config, http);
+
+  await assert.rejects(
+    () => provider.suggest(createInput()),
+    (error) => {
+      assert.equal(
+        error.code,
+        'OPENAI_FACT_SUGGESTION_SOURCE_SEGMENT_INVALID',
+      );
+      assert.equal(error.retryable, false);
+      assert.equal(error.retryCount, 0);
+      return true;
+    },
+  );
+  assert.equal(requestCount, 1);
+});
+
+test('run budget rejects excessive provider fan-out before jobs are created', () => {
+  const input = createInput();
+  const providerInputs = Array.from(
+    { length: TRAINING_FACT_SUGGESTION_MAX_PROVIDER_RUNS_PER_RUN + 1 },
+    (_, index) => ({
+      ...input,
+      chunkId: `chunk-${index + 1}`,
+    }),
+  );
+
+  assert.throws(
+    () => assertTrainingFactSuggestionRunBudget(providerInputs),
+    (error) => {
+      assert.ok(error instanceof BadRequestException);
+      assert.equal(
+        error.getResponse().code,
+        'FACT_SUGGESTION_PROVIDER_RUN_LIMIT_EXCEEDED',
+      );
+      return true;
+    },
+  );
+});
+
+test('run budget rejects oversized existing-fact context before jobs are created', () => {
+  const input = createInput();
+  input.segments[0].text = 'A'.repeat(30_000);
+  input.existingFacts = [
+    {
+      id: '22222222-2222-4222-8222-222222222222',
+      code: 'existing.fact',
+      statement: 'S'.repeat(8_000),
+      acceptedAliases: Array.from({ length: 100 }, (_, index) =>
+        `${String(index).padStart(3, '0')}${'A'.repeat(497)}`,
+      ),
+    },
+  ];
+
+  assert.throws(
+    () => assertTrainingFactSuggestionRunBudget([input]),
+    (error) => {
+      assert.ok(error instanceof BadRequestException);
+      assert.equal(
+        error.getResponse().code,
+        'FACT_SUGGESTION_PROVIDER_INPUT_LIMIT_EXCEEDED',
+      );
+      assert.equal(
+        error.getResponse().providerErrorCode,
+        'OPENAI_FACT_SUGGESTION_PROMPT_TOO_LARGE',
+      );
+      return true;
+    },
+  );
+});
+
+test('run budget caps aggregate serialized provider input cost', () => {
+  const input = createInput();
+  input.segments[0].text = 'A'.repeat(30_000);
+  input.existingFacts = [
+    {
+      id: '22222222-2222-4222-8222-222222222222',
+      code: 'existing.fact',
+      statement: 'S'.repeat(8_000),
+      acceptedAliases: [],
+    },
+  ];
+  const providerInputs = Array.from(
+    { length: TRAINING_FACT_SUGGESTION_MAX_PROVIDER_RUNS_PER_RUN },
+    (_, index) => ({
+      ...input,
+      chunkId: `chunk-${index + 1}`,
+    }),
+  );
+
+  assert.throws(
+    () => assertTrainingFactSuggestionRunBudget(providerInputs),
+    (error) => {
+      assert.ok(error instanceof BadRequestException);
+      assert.equal(
+        error.getResponse().code,
+        'FACT_SUGGESTION_AGGREGATE_INPUT_LIMIT_EXCEEDED',
+      );
+      return true;
+    },
+  );
 });
 
 test('run status reducer distinguishes ready, partial and ambiguous outcomes', () => {

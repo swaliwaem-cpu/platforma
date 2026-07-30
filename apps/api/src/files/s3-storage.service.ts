@@ -46,6 +46,7 @@ export class S3StorageService implements OnModuleInit {
     'platforma-training-audio-private';
   private readonly nodeEnv = (process.env.NODE_ENV ?? '').trim().toLowerCase();
   private readonly readyBuckets = new Set<string>();
+  private readonly verifiedTrainingAudioBuckets = new Set<string>();
   private trainingAudioPrivacyVerifiedAt: Date | null = null;
 
   async onModuleInit() {
@@ -114,6 +115,45 @@ export class S3StorageService implements OnModuleInit {
     this.readyBuckets.add(bucket);
   }
 
+  private async ensureExistingBucket(
+    bucket: string,
+    signal?: AbortSignal,
+  ) {
+    if (this.readyBuckets.has(bucket)) {
+      return;
+    }
+
+    const headResponse = await this.signedFetch({
+      method: 'HEAD',
+      bucket,
+      signal,
+    });
+    if (headResponse.ok) {
+      this.readyBuckets.add(bucket);
+      return;
+    }
+    if (headResponse.status === 404) {
+      throw new Error(
+        'Persisted training audio bucket is missing and requires manual review',
+      );
+    }
+    await this.throwStorageError(
+      'Cannot inspect persisted training audio bucket',
+      headResponse,
+    );
+  }
+
+  async ensurePersistedTrainingAudioBucket(
+    bucket: string,
+    signal?: AbortSignal,
+  ) {
+    if (this.verifiedTrainingAudioBuckets.has(bucket)) {
+      return;
+    }
+    await this.ensureExistingBucket(bucket, signal);
+    await this.verifyTrainingAudioBucketPrivacyInternal(bucket, false);
+  }
+
   async putObject(params: {
     key: string;
     body: Buffer;
@@ -175,13 +215,18 @@ export class S3StorageService implements OnModuleInit {
     }
   }
 
-  async getObject(key: string, bucket = this.bucket) {
-    await this.ensureBucket(bucket);
+  async getObject(
+    key: string,
+    bucket = this.bucket,
+    signal?: AbortSignal,
+  ) {
+    await this.ensureBucket(bucket, signal);
 
     const response = await this.signedFetch({
       method: 'GET',
       bucket,
       key,
+      signal,
     });
 
     if (!response.ok) {
@@ -247,7 +292,21 @@ export class S3StorageService implements OnModuleInit {
 
   async verifyTrainingAudioBucketPrivacy() {
     const bucket = this.trainingAudioBucket;
-    await this.ensureBucket(bucket);
+    await this.verifyTrainingAudioBucketPrivacyInternal(bucket, true);
+  }
+
+  private async verifyTrainingAudioBucketPrivacyInternal(
+    bucket: string,
+    allowCreate: boolean,
+  ) {
+    if (this.verifiedTrainingAudioBuckets.has(bucket)) {
+      return;
+    }
+    if (allowCreate) {
+      await this.ensureBucket(bucket);
+    } else {
+      await this.ensureExistingBucket(bucket);
+    }
     let staticValidationError: unknown = null;
     for (const validation of [
       () => this.assertNoPublicBucketPolicy(bucket),
@@ -333,7 +392,10 @@ export class S3StorageService implements OnModuleInit {
     if (staticValidationError) {
       throw staticValidationError;
     }
-    this.trainingAudioPrivacyVerifiedAt = new Date();
+    this.verifiedTrainingAudioBuckets.add(bucket);
+    if (bucket === this.trainingAudioBucket) {
+      this.trainingAudioPrivacyVerifiedAt = new Date();
+    }
   }
 
   private async signedFetch(options: SignedRequestOptions) {

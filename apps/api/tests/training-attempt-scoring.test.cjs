@@ -187,6 +187,37 @@ test('unsupported claim has no automatic penalty but requires review', () => {
   );
 });
 
+test('irrelevant answer is fail-closed to zero points and mandatory review', () => {
+  const score = scoreTrainingEvaluation({
+    questionMaxScore: 55,
+    criteria: [mainCriterion],
+    facts: [],
+    evaluation: {
+      actualModelId: 'fixture',
+      reasoningEffort: null,
+      answerRelevance: 'IRRELEVANT',
+      requiresManualReview: false,
+      reviewReasons: [],
+      criterionScores: [
+        {
+          criterionId: mainCriterion.id,
+          awardedPoints: 55,
+        },
+      ],
+      factFindings: [],
+      summary: 'Ответ нерелевантен.',
+      requestId: 'request-irrelevant',
+      latencyMs: 0,
+    },
+  });
+
+  assert.equal(score.aiSuggestedScore.toFixed(2), '0.00');
+  assert.equal(score.serverScore.toFixed(2), '0.00');
+  assert.equal(score.components[0].awardedPoints.toFixed(2), '0.00');
+  assert.equal(score.requiresReview, true);
+  assert.deepEqual(score.reviewReasons, ['ANSWER_IRRELEVANT']);
+});
+
 test('backend clamps answer points and fixes the attempt maximum at 55 + 15 + 15 + 15', () => {
   const score = scoreTrainingEvaluation({
     questionMaxScore: 15,

@@ -140,7 +140,9 @@ export class TrainingFfmpegService
           segment.segmentIndex,
         ).padStart(4, '0')}.wav`;
         const normalizedPath = join(directory, normalizedName);
-        const body = await this.files.readStoredFile(segment.file);
+        const body = await this.files.readStoredFile(segment.file, {
+          privateTrainingAudio: true,
+        });
         if (
           body.length === 0 ||
           body.length > this.config.maxSegmentBytes ||

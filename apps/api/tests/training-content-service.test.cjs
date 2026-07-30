@@ -87,6 +87,7 @@ function validQuestions() {
 }
 
 function validPublishableVersion(overrides = {}) {
+  const questions = validQuestions();
   return {
     id: versionId,
     projectId,
@@ -101,12 +102,17 @@ function validPublishableVersion(overrides = {}) {
     allowRetakeAfterPass: false,
     mainMaxScore: 55,
     followUpMaxScore: 15,
-    questions: validQuestions(),
+    questions,
     facts: [
       {
         id: '66666666-6666-4666-8666-666666666666',
         code: 'project.fact',
+        statement: 'Проект находится в Москве',
+        acceptedAliasesJson: [],
         isApproved: true,
+        questionLinks: questions.map((question) => ({
+          questionId: question.id,
+        })),
       },
     ],
     criteria: [
@@ -114,9 +120,12 @@ function validPublishableVersion(overrides = {}) {
         id: '77777777-7777-4777-8777-777777777777',
         questionType: 'MAIN',
         code: 'main',
+        title: 'Главный критерий',
+        description: null,
         sortOrder: 0,
         maxPoints: new Prisma.Decimal(55),
         anchorsJson: [
+          { id: 'main-zero', points: 0, description: 'Нет ответа' },
           { id: 'main-full', points: 55, description: 'Полный ответ' },
         ],
       },
@@ -124,9 +133,12 @@ function validPublishableVersion(overrides = {}) {
         id: '88888888-8888-4888-8888-888888888888',
         questionType: 'FOLLOW_UP',
         code: 'follow',
+        title: 'Дополнительный критерий',
+        description: null,
         sortOrder: 0,
         maxPoints: new Prisma.Decimal(15),
         anchorsJson: [
+          { id: 'follow-zero', points: 0, description: 'Нет ответа' },
           { id: 'follow-full', points: 15, description: 'Полный ответ' },
         ],
       },

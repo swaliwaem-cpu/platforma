@@ -24,6 +24,7 @@ const {
   OpenAiTrainingTranscriptionProvider,
 } = require('../dist/training/openai/training-openai-transcription.provider.js');
 const {
+  buildTrainingVocabularyPrompt,
   buildSafeTrainingVocabulary,
 } = require('../dist/training/openai/training-openai-vocabulary.js');
 const {
@@ -109,7 +110,7 @@ function createEvaluationInput() {
 
 function createEvaluationOutput() {
   return {
-    schema_version: 'openai-evaluation-v1',
+    schema_version: 'openai-evaluation-v2',
     answer_relevance: 'RELEVANT',
     criteria: [
       {
@@ -134,8 +135,10 @@ function createEvaluationOutput() {
       },
     ],
     summary: 'Ответ соответствует утвержденным данным.',
-    requires_manual_review: false,
-    review_reasons: [],
+    review: {
+      required: false,
+      reasons: [],
+    },
   };
 }
 
@@ -321,6 +324,37 @@ test('safe transcription vocabulary excludes statements, normalizes terms and ha
   });
   assert.notEqual(changed.hash, first.hash);
 
+  const bounded = buildSafeTrainingVocabulary({
+    projectVersionNumber: 2,
+    projectTitle: `А${'а'.repeat(79)}`,
+    object: {
+      locationNames: Array.from(
+        { length: 63 },
+        (_, index) =>
+          `${String(index).padStart(2, '0')}${'б'.repeat(78)}`,
+      ),
+    },
+    approvedFacts: [],
+  });
+  const boundedPrompt = buildTrainingVocabularyPrompt(bounded.terms);
+  assert.equal(Array.from(boundedPrompt).length <= 2_000, true);
+  assert.equal(bounded.terms.length < 64, true);
+  assert.equal(
+    boundedPrompt,
+    `Утвержденные термины и названия: ${bounded.terms.join(', ')}`,
+  );
+  assert.equal(
+    bounded.hash,
+    createHash('sha256')
+      .update(
+        JSON.stringify({
+          version: bounded.version,
+          terms: bounded.terms,
+        }),
+      )
+      .digest('hex'),
+  );
+
   const fake = new DeterministicFakeTrainingTranscriptionProvider();
   const transcript = await fake.transcribe({
     answerId: 'answer-safe-vocabulary',
@@ -340,7 +374,7 @@ test('safe transcription vocabulary excludes statements, normalizes terms and ha
   );
 });
 
-test('strict evaluation schema centralizes finite bounds and anyOf nullables', () => {
+test('strict evaluation schema centralizes finite bounds and nested discriminated unions', () => {
   assert.equal(TRAINING_EVALUATION_JSON_SCHEMA.additionalProperties, false);
   assert.equal(
     Number.isFinite(
@@ -354,10 +388,13 @@ test('strict evaluation schema centralizes finite bounds and anyOf nullables', (
     ),
     true,
   );
-  assert.deepEqual(
-    TRAINING_EVALUATION_JSON_SCHEMA.properties.facts.items.properties
-      .claim.anyOf.map((branch) => branch.type),
-    ['string', 'null'],
+  assert.equal(
+    TRAINING_EVALUATION_JSON_SCHEMA.properties.facts.items.anyOf.every(
+      (branch) =>
+        branch.type === 'object' &&
+        branch.additionalProperties === false,
+    ),
+    true,
   );
   assert.equal(
     Number.isFinite(
@@ -374,6 +411,7 @@ test('OpenAI HTTP client retries bounded 429 responses and never logs response b
     sleep: async () => undefined,
     fetchImpl: async (_url, init) => {
       calls += 1;
+      assert.equal(init.redirect, 'error');
       assert.equal(
         init.headers.Authorization,
         'Bearer stub-credential-not-an-openai-key',
@@ -445,7 +483,10 @@ test('OpenAI HTTP deadline includes Retry-After sleep and prevents another physi
       calls += 1;
       return new Response('limited', {
         status: 429,
-        headers: { 'retry-after': '2' },
+        headers: {
+          'retry-after': '2',
+          'x-request-id': 'req-known-rate-limit',
+        },
       });
     },
   });
@@ -457,10 +498,82 @@ test('OpenAI HTTP deadline includes Retry-After sleep and prevents another physi
         maxRetries: 5,
         buildBody: () => '{}',
       }),
-    (error) => error.code === 'DEADLINE_EXCEEDED',
+    (error) =>
+      error.code === 'DEADLINE_EXCEEDED' &&
+      error.ambiguous === false &&
+      error.status === 429 &&
+      error.requestId === 'req-known-rate-limit',
   );
   assert.equal(calls, 1);
   assert.equal(now, 0);
+});
+
+test('OpenAI HTTP refuses redirects before a private request can reach another origin', async (t) => {
+  let redirectSourceCalls = 0;
+  let redirectTargetCalls = 0;
+  const redirectTarget = createServer((_request, response) => {
+    redirectTargetCalls += 1;
+    response.writeHead(200);
+    response.end('{"ok":true}');
+  });
+  const redirectTargetUrl = await listenLocalServer(redirectTarget);
+  t.after(() => new Promise((resolve) => redirectTarget.close(resolve)));
+
+  const redirectSource = createServer((_request, response) => {
+    redirectSourceCalls += 1;
+    response.writeHead(307, {
+      location: `${redirectTargetUrl}/private-body`,
+    });
+    response.end();
+  });
+  const redirectSourceUrl = await listenLocalServer(redirectSource);
+  t.after(() => new Promise((resolve) => redirectSource.close(resolve)));
+
+  const client = new TrainingOpenAiHttpClient(createStubConfig(), {
+    baseUrl: redirectSourceUrl,
+  });
+  await assert.rejects(
+    () =>
+      client.request({
+        path: '/v1/responses',
+        timeoutMs: 1_000,
+        maxRetries: 0,
+        buildBody: () => '{"private":"payload"}',
+      }),
+    (error) =>
+      error.code === 'OPENAI_NETWORK_ERROR' && error.ambiguous === true,
+  );
+  assert.equal(redirectSourceCalls, 1);
+  assert.equal(redirectTargetCalls, 0);
+});
+
+test('OpenAI HTTP preserves known response metadata for local size rejection', async () => {
+  const client = new TrainingOpenAiHttpClient(
+    createStubConfig({ maxResponseBytes: 4 }),
+    {
+      baseUrl: 'https://openai.stub',
+      fetchImpl: async () =>
+        new Response('oversized', {
+          status: 200,
+          headers: { 'x-request-id': 'req-oversized' },
+        }),
+    },
+  );
+
+  await assert.rejects(
+    () =>
+      client.request({
+        path: '/v1/responses',
+        timeoutMs: 1_000,
+        maxRetries: 0,
+        buildBody: () => '{}',
+      }),
+    (error) =>
+      error.code === 'OPENAI_RESPONSE_TOO_LARGE' &&
+      error.ambiguous === false &&
+      error.status === 200 &&
+      error.requestId === 'req-oversized',
+  );
 });
 
 test('OpenAI HTTP classifies bounded 5xx, network and permanent 4xx failures', async () => {
@@ -574,6 +687,54 @@ test('Responses evaluation uses store false, strict schema and treats transcript
   assert.equal(requestBody.previous_response_id, undefined);
   assert.equal(requestBody.text.format.type, 'json_schema');
   assert.equal(requestBody.text.format.strict, true);
+  const schema = requestBody.text.format.schema;
+  assert.equal(schema.type, 'object');
+  assert.equal(schema.anyOf, undefined);
+  assert.equal(schema.properties.criteria.items.anyOf.length, 3);
+  const factBranches = schema.properties.facts.items.anyOf;
+  assert.equal(factBranches.length, 4);
+  assert.equal(schema.properties.review.anyOf.length, 2);
+  for (const branch of [
+    ...schema.properties.criteria.items.anyOf,
+    ...schema.properties.facts.items.anyOf,
+    ...schema.properties.review.anyOf,
+  ]) {
+    assert.equal(branch.type, 'object');
+    assert.equal(branch.additionalProperties, false);
+    assert.equal(
+      branch.required.length,
+      Object.keys(branch.properties).length,
+    );
+  }
+  const missingBranch = factBranches.find((branch) =>
+    branch.properties.verdict.enum.includes('MISSING'),
+  );
+  assert.deepEqual(missingBranch.properties.evidence_source.enum, ['NONE']);
+  assert.equal(missingBranch.properties.evidence.type, 'null');
+  const unsupportedBranch = factBranches.find((branch) =>
+    branch.properties.verdict.enum.includes('UNSUPPORTED'),
+  );
+  assert.equal(unsupportedBranch.properties.fact_id.type, 'null');
+  assert.deepEqual(unsupportedBranch.properties.evidence_source.enum, [
+    'TRANSCRIPT',
+  ]);
+  assert.equal(
+    factBranches
+      .filter((branch) => branch.properties.verdict.enum.includes('CORRECT'))
+      .some((branch) =>
+        branch.properties.evidence_source.enum.includes('NONE'),
+      ),
+    false,
+  );
+  for (const instruction of [
+    'Для CORRECT, PARTIAL и INCORRECT',
+    'Для MISSING',
+    'Для UNSUPPORTED',
+    'от одного до трёх предложений',
+    'review={required:false,reasons:[]}',
+  ]) {
+    assert.equal(requestBody.instructions.includes(instruction), true);
+  }
   assert.equal(
     requestBody.instructions.includes('поставь 100'),
     false,
@@ -676,7 +837,7 @@ test('evaluation validator permits NONE only for zero-point criterion anchors', 
 
   const result = validateTrainingEvaluationOutput(input, zeroPointOutput);
 
-  assert.equal(TRAINING_EVALUATION_PROMPT_VERSION, 'openai-evaluation-v2');
+  assert.equal(TRAINING_EVALUATION_PROMPT_VERSION, 'openai-evaluation-v3');
   assert.equal(result.criterionScores[0].anchorId, 'main-none');
   assert.equal(result.criterionScores[0].evidenceSource, 'NONE');
 
@@ -774,8 +935,10 @@ test('evaluation validator enforces exact schema, complete IDs, confidence, metr
     explanation: 'Утверждение не входит в approved facts.',
     confidence: 0.7,
   });
-  unsupportedOutput.requires_manual_review = true;
-  unsupportedOutput.review_reasons = ['Нужна проверка нового утверждения'];
+  unsupportedOutput.review = {
+    required: true,
+    reasons: ['Нужна проверка нового утверждения'],
+  };
   const unsupported = validateTrainingEvaluationOutput(
     input,
     unsupportedOutput,
@@ -785,6 +948,57 @@ test('evaluation validator enforces exact schema, complete IDs, confidence, metr
       (finding) => finding.verdict === 'UNSUPPORTED',
     ),
     true,
+  );
+});
+
+test('evaluation validator aligns fact evidence, review signal and minimum evidence with schema v2', () => {
+  const input = createEvaluationInput();
+
+  const missing = createEvaluationOutput();
+  missing.facts[0] = {
+    ...missing.facts[0],
+    verdict: 'MISSING',
+    evidence_source: 'NONE',
+    evidence: null,
+    metric_id: null,
+  };
+  assert.doesNotThrow(() =>
+    validateTrainingEvaluationOutput(input, missing),
+  );
+
+  const missingWithTranscript = structuredClone(missing);
+  missingWithTranscript.facts[0].evidence_source = 'TRANSCRIPT';
+  missingWithTranscript.facts[0].evidence = 'Подтвержденный факт';
+  assert.throws(
+    () => validateTrainingEvaluationOutput(input, missingWithTranscript),
+    /Missing findings must use NONE evidence/u,
+  );
+
+  const shortEvidence = createEvaluationOutput();
+  shortEvidence.criteria[0].evidence = 'П';
+  assert.throws(
+    () => validateTrainingEvaluationOutput(input, shortEvidence),
+    /at least 2 characters/u,
+  );
+
+  const emptyReviewReason = createEvaluationOutput();
+  emptyReviewReason.review = {
+    required: true,
+    reasons: [' '],
+  };
+  assert.throws(
+    () => validateTrainingEvaluationOutput(input, emptyReviewReason),
+    /reasons must be non-empty/u,
+  );
+
+  const inconsistentReview = createEvaluationOutput();
+  inconsistentReview.review = {
+    required: true,
+    reasons: [],
+  };
+  assert.throws(
+    () => validateTrainingEvaluationOutput(input, inconsistentReview),
+    /signal and reasons are inconsistent/u,
   );
 });
 
@@ -810,8 +1024,10 @@ test('evaluation validator rejects semantic fact/claim inconsistencies for retry
       explanation: 'fixture',
       confidence: 0.5,
     });
-    output.requires_manual_review = true;
-    output.review_reasons = ['fixture'];
+    output.review = {
+      required: true,
+      reasons: ['fixture'],
+    };
     assert.throws(
       () => validateTrainingEvaluationOutput(input, output),
       (error) =>
@@ -872,8 +1088,10 @@ test('evaluation validator canonically rejects case variants of approved unsuppo
       explanation: 'fixture',
       confidence: 0.5,
     });
-    output.requires_manual_review = true;
-    output.review_reasons = ['fixture'];
+    output.review = {
+      required: true,
+      reasons: ['fixture'],
+    };
 
     assert.throws(
       () => validateTrainingEvaluationOutput(input, output),
@@ -901,8 +1119,10 @@ test('evaluation validator accepts a genuinely new unsupported claim', () => {
     explanation: 'fixture',
     confidence: 0.5,
   });
-  output.requires_manual_review = true;
-  output.review_reasons = ['fixture'];
+  output.review = {
+    required: true,
+    reasons: ['fixture'],
+  };
 
   const result = validateTrainingEvaluationOutput(input, output);
   assert.equal(
@@ -925,6 +1145,55 @@ test('evaluation validator accepts an approved fact with its known fact_id', () 
     createEvaluationInput().facts[0].id,
   );
   assert.equal(result.factFindings[0].verdict, 'CORRECT');
+});
+
+test('Responses provider does not retry schema-valid semantic validation failures', async () => {
+  const invalidOutput = createEvaluationOutput();
+  invalidOutput.criteria[0] = {
+    ...invalidOutput.criteria[0],
+    evidence_source: 'NONE',
+    evidence: null,
+    metric_id: null,
+  };
+  let calls = 0;
+  const client = new TrainingOpenAiHttpClient(createStubConfig(), {
+    baseUrl: 'https://openai.stub',
+    sleep: async () => undefined,
+    fetchImpl: async () => {
+      calls += 1;
+      return new Response(
+        JSON.stringify({
+          id: 'resp-semantic-invalid',
+          model: 'gpt-5.6-terra',
+          status: 'completed',
+          output: [
+            {
+              type: 'message',
+              content: [
+                {
+                  type: 'output_text',
+                  text: JSON.stringify(invalidOutput),
+                },
+              ],
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    },
+  });
+  const provider = new OpenAiTrainingEvaluationProvider(
+    createStubConfig({ evaluationMaxRetries: 2 }),
+    client,
+  );
+
+  await assert.rejects(
+    () => provider.evaluate(createEvaluationInput()),
+    (error) =>
+      error.code === 'OPENAI_EVALUATION_EVIDENCE_INVALID' &&
+      error.retryable === false,
+  );
+  assert.equal(calls, 1);
 });
 
 test('Responses provider gives safe refusal, incomplete and invalid-output error codes', async () => {
@@ -1163,7 +1432,7 @@ test('transcription sends one exact multipart WAV request over a local HTTP wire
   );
 });
 
-test('transcription retries a temporary malformed response and rejects empty output', async () => {
+test('transcription rejects malformed HTTP 200 without uploading the WAV again and rejects empty output', async () => {
   const wav = createPcmWav();
   const checksum = require('node:crypto')
     .createHash('sha256')
@@ -1201,29 +1470,29 @@ test('transcription retries a temporary malformed response and rejects empty out
     },
   };
   let calls = 0;
-  const retryConfig = createStubConfig({ transcriptionMaxRetries: 1 });
-  const retryClient = new TrainingOpenAiHttpClient(retryConfig, {
+  const malformedConfig = createStubConfig({
+    transcriptionMaxRetries: 2,
+  });
+  const malformedClient = new TrainingOpenAiHttpClient(malformedConfig, {
     baseUrl: 'https://openai.stub',
     sleep: async () => undefined,
     fetchImpl: async () => {
       calls += 1;
-      return new Response(
-        calls === 1
-          ? '{"unexpected":true}'
-          : '{"text":"русский ответ","language":"ru"}',
-        { status: 200 },
-      );
+      return new Response('{"unexpected":true}', { status: 200 });
     },
   });
   const provider = new OpenAiTrainingTranscriptionProvider(
     prisma,
     { readStoredFile: async () => wav },
-    retryConfig,
-    retryClient,
+    malformedConfig,
+    malformedClient,
   );
-  const result = await provider.transcribe(input);
-  assert.equal(result.retryCount, 1);
-  assert.equal(calls, 2);
+  await assert.rejects(
+    () => provider.transcribe(input),
+    (error) =>
+      error.code === 'OPENAI_TRANSCRIPTION_RESPONSE_INVALID',
+  );
+  assert.equal(calls, 1);
 
   const emptyConfig = createStubConfig({ transcriptionMaxRetries: 0 });
   const emptyProvider = new OpenAiTrainingTranscriptionProvider(
@@ -1239,6 +1508,240 @@ test('transcription retries a temporary malformed response and rejects empty out
     () => emptyProvider.transcribe(input),
     (error) => error.code === 'OPENAI_TRANSCRIPTION_EMPTY',
   );
+});
+
+test('transcription retries a transient private storage read before the only OpenAI request', async () => {
+  const wav = createPcmWav();
+  const checksum = createHash('sha256').update(wav).digest('hex');
+  const file = {
+    id: '61616161-6161-4161-8161-616161616161',
+    bucket: 'training-private-old',
+    key: 'training-audio/storage-retry.wav',
+    mimeType: 'audio/wav',
+    sizeBytes: BigInt(wav.length),
+    checksum,
+  };
+  let storageCalls = 0;
+  let fetchCalls = 0;
+  let readOptions;
+  const storageConfig = createStubConfig({
+    transcriptionMaxRetries: 1,
+  });
+  const provider = new OpenAiTrainingTranscriptionProvider(
+    {
+      trainingAnswer: {
+        findUnique: async () => ({
+          id: 'answer-storage-retry',
+          mergedAudioFileId: file.id,
+          mergedAudioFile: file,
+        }),
+      },
+    },
+    {
+      readStoredFile: async (_file, options) => {
+        storageCalls += 1;
+        readOptions = options;
+        if (storageCalls === 1) {
+          throw new TypeError('temporary storage network error');
+        }
+        return wav;
+      },
+    },
+    storageConfig,
+    new TrainingOpenAiHttpClient(storageConfig, {
+      baseUrl: 'https://openai.stub',
+      fetchImpl: async () => {
+        fetchCalls += 1;
+        return new Response('{"text":"русский ответ","language":"ru"}');
+      },
+    }),
+  );
+
+  const result = await provider.transcribe({
+    answerId: 'answer-storage-retry',
+    segments: [],
+    audio: {
+      fileId: file.id,
+      bucket: file.bucket,
+      key: file.key,
+      mimeType: file.mimeType,
+      sizeBytes: Number(file.sizeBytes),
+      checksum,
+      durationMilliseconds: 1,
+      segmentCount: 1,
+    },
+  });
+
+  assert.equal(storageCalls, 2);
+  assert.equal(fetchCalls, 1);
+  assert.equal(readOptions.privateTrainingAudio, true);
+  assert.equal(readOptions.signal instanceof AbortSignal, true);
+  assert.equal(result.retryCount, 0);
+});
+
+test('transcription bounds a stuck private storage read and never calls OpenAI', async () => {
+  const wav = createPcmWav();
+  const checksum = createHash('sha256').update(wav).digest('hex');
+  const file = {
+    id: '62626262-6262-4262-8262-626262626262',
+    bucket: 'training-private-old',
+    key: 'training-audio/storage-timeout.wav',
+    mimeType: 'audio/wav',
+    sizeBytes: BigInt(wav.length),
+    checksum,
+  };
+  let fetchCalled = false;
+  let signal;
+  const timeoutConfig = createStubConfig({
+    transcriptionTimeoutMs: 25,
+    transcriptionMaxRetries: 0,
+  });
+  const provider = new OpenAiTrainingTranscriptionProvider(
+    {
+      trainingAnswer: {
+        findUnique: async () => ({
+          id: 'answer-storage-timeout',
+          mergedAudioFileId: file.id,
+          mergedAudioFile: file,
+        }),
+      },
+    },
+    {
+      readStoredFile: async (_file, options) => {
+        signal = options.signal;
+        return new Promise(() => undefined);
+      },
+    },
+    timeoutConfig,
+    new TrainingOpenAiHttpClient(timeoutConfig, {
+      baseUrl: 'https://openai.stub',
+      fetchImpl: async () => {
+        fetchCalled = true;
+        return new Response('{"text":"unexpected"}');
+      },
+    }),
+  );
+
+  await assert.rejects(
+    () =>
+      provider.transcribe({
+        answerId: 'answer-storage-timeout',
+        segments: [],
+        audio: {
+          fileId: file.id,
+          bucket: file.bucket,
+          key: file.key,
+          mimeType: file.mimeType,
+          sizeBytes: Number(file.sizeBytes),
+          checksum,
+          durationMilliseconds: 1,
+          segmentCount: 1,
+        },
+      }),
+    (error) =>
+      error.code === 'AUDIO_STORAGE_FAILED' &&
+      error.retryable === true,
+  );
+  assert.equal(signal.aborted, true);
+  assert.equal(fetchCalled, false);
+});
+
+test('transcription validates persisted response metadata bounds and NUL characters', async (t) => {
+  const wav = createPcmWav();
+  const checksum = createHash('sha256').update(wav).digest('hex');
+  const file = {
+    id: '63636363-6363-4363-8363-636363636363',
+    bucket: 'training-private',
+    key: 'training-audio/metadata.wav',
+    mimeType: 'audio/wav',
+    sizeBytes: BigInt(wav.length),
+    checksum,
+  };
+  const input = {
+    answerId: 'answer-metadata',
+    segments: [],
+    audio: {
+      fileId: file.id,
+      bucket: file.bucket,
+      key: file.key,
+      mimeType: file.mimeType,
+      sizeBytes: Number(file.sizeBytes),
+      checksum,
+      durationMilliseconds: 1,
+      segmentCount: 1,
+    },
+  };
+  for (const fixture of [
+    {
+      name: 'language exceeds varchar',
+      payload: { text: 'русский ответ', language: 'r'.repeat(17) },
+      requestId: 'req-valid',
+      code: 'OPENAI_TRANSCRIPTION_RESPONSE_INVALID',
+    },
+    {
+      name: 'model exceeds varchar',
+      payload: { text: 'русский ответ', model: 'm'.repeat(121) },
+      requestId: 'req-valid',
+      code: 'OPENAI_TRANSCRIPTION_RESPONSE_INVALID',
+    },
+    {
+      name: 'request id exceeds varchar',
+      payload: { text: 'русский ответ' },
+      requestId: 'r'.repeat(161),
+      code: 'OPENAI_TRANSCRIPTION_RESPONSE_INVALID',
+    },
+    {
+      name: 'transcript contains NUL',
+      payload: { text: 'русский\u0000ответ' },
+      requestId: 'req-valid',
+      code: 'OPENAI_TRANSCRIPTION_TEXT_INVALID',
+    },
+    {
+      name: 'usage metadata contains NUL',
+      payload: {
+        text: 'русский ответ',
+        usage: { source: 'bad\u0000metadata' },
+      },
+      requestId: 'req-valid',
+      code: 'OPENAI_TRANSCRIPTION_RESPONSE_INVALID',
+    },
+  ]) {
+    await t.test(fixture.name, async () => {
+      let fetchCalls = 0;
+      const metadataConfig = createStubConfig({
+        transcriptionMaxRetries: 2,
+      });
+      const provider = new OpenAiTrainingTranscriptionProvider(
+        {
+          trainingAnswer: {
+            findUnique: async () => ({
+              id: 'answer-metadata',
+              mergedAudioFileId: file.id,
+              mergedAudioFile: file,
+            }),
+          },
+        },
+        { readStoredFile: async () => wav },
+        metadataConfig,
+        new TrainingOpenAiHttpClient(metadataConfig, {
+          baseUrl: 'https://openai.stub',
+          fetchImpl: async () => {
+            fetchCalls += 1;
+            return new Response(JSON.stringify(fixture.payload), {
+              status: 200,
+              headers: { 'x-request-id': fixture.requestId },
+            });
+          },
+        }),
+      );
+
+      await assert.rejects(
+        () => provider.transcribe(input),
+        (error) => error.code === fixture.code,
+      );
+      assert.equal(fetchCalls, 1);
+    });
+  }
 });
 
 test('transcription rejects corrupted and over-size persisted audio before HTTP', async () => {

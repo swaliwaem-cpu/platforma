@@ -584,6 +584,59 @@ test('fetch Telegram transport classifies retryable and permanent failures', asy
   }
 });
 
+test('fetch Telegram transport bounds response body time and size', async () => {
+  const originalFetch = global.fetch;
+  try {
+    global.fetch = async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: async () => new Promise(() => undefined),
+    });
+    const timeoutTransport = new FetchTrainingTelegramTransport(
+      '123456:TEST_TOKEN',
+      'https://telegram.test',
+      20,
+    );
+    await assert.rejects(
+      timeoutTransport.sendMessage({
+        idempotencyKey: 'body-timeout',
+        chatId: '100',
+        text: 'Test',
+      }),
+      (error) => {
+        assert.ok(error instanceof TrainingTelegramTransportError);
+        assert.equal(error.code, 'TIMEOUT');
+        return true;
+      },
+    );
+
+    global.fetch = async () =>
+      new Response(Buffer.alloc(64 * 1024 + 1, 1), {
+        status: 200,
+      });
+    const boundedTransport = new FetchTrainingTelegramTransport(
+      '123456:TEST_TOKEN',
+      'https://telegram.test',
+      100,
+    );
+    await assert.rejects(
+      boundedTransport.sendMessage({
+        idempotencyKey: 'body-size',
+        chatId: '100',
+        text: 'Test',
+      }),
+      (error) => {
+        assert.ok(error instanceof TrainingTelegramTransportError);
+        assert.equal(error.code, 'INVALID_RESPONSE');
+        return true;
+      },
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test('unsupported or malformed Telegram payloads are acknowledged without throwing', async () => {
   const malformedPayloads = [
     { update_id: 80, message: { chat: null } },

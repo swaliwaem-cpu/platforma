@@ -31,8 +31,31 @@ const ANSWER_RELEVANCE_VALUES = [
   'PARTIAL',
   'IRRELEVANT',
 ] as const;
-export const TRAINING_EVALUATION_SCHEMA_VERSION = 'openai-evaluation-v1';
-export const TRAINING_EVALUATION_PROMPT_VERSION = 'openai-evaluation-v2';
+const LEGACY_TRAINING_EVALUATION_SCHEMA_VERSION = 'openai-evaluation-v1';
+const MINIMUM_EVIDENCE_CHARACTERS = 2;
+const SUMMARY_PATTERN =
+  '^\\s*(?=[\\s\\S]*\\S)(?:[^.!?…]+(?:[.!?…]+|$)){1,3}\\s*$';
+const CRITERION_OUTPUT_KEYS = [
+  'criterion_id',
+  'anchor_id',
+  'evidence_source',
+  'evidence',
+  'metric_id',
+  'explanation',
+] as const;
+const FACT_OUTPUT_KEYS = [
+  'fact_id',
+  'verdict',
+  'claim',
+  'evidence_source',
+  'evidence',
+  'metric_id',
+  'explanation',
+  'confidence',
+] as const;
+
+export const TRAINING_EVALUATION_SCHEMA_VERSION = 'openai-evaluation-v2';
+export const TRAINING_EVALUATION_PROMPT_VERSION = 'openai-evaluation-v3';
 
 export const TRAINING_EVALUATION_JSON_SCHEMA = {
   type: 'object',
@@ -43,8 +66,7 @@ export const TRAINING_EVALUATION_JSON_SCHEMA = {
     'criteria',
     'facts',
     'summary',
-    'requires_manual_review',
-    'review_reasons',
+    'review',
   ],
   properties: {
     schema_version: {
@@ -60,41 +82,11 @@ export const TRAINING_EVALUATION_JSON_SCHEMA = {
       minItems: 1,
       maxItems: LIMITS.criteria,
       items: {
-        type: 'object',
-        additionalProperties: false,
-        required: [
-          'criterion_id',
-          'anchor_id',
-          'evidence_source',
-          'evidence',
-          'metric_id',
-          'explanation',
+        anyOf: [
+          criterionOutputSchema('TRANSCRIPT'),
+          criterionOutputSchema('METRIC'),
+          criterionOutputSchema('NONE'),
         ],
-        properties: {
-          criterion_id: {
-            type: 'string',
-            minLength: 1,
-            maxLength: LIMITS.identifierCharacters,
-          },
-          anchor_id: {
-            type: 'string',
-            minLength: 1,
-            maxLength: LIMITS.identifierCharacters,
-          },
-          evidence_source: {
-            type: 'string',
-            enum: EVIDENCE_SOURCES,
-          },
-          evidence: nullableStringSchema(LIMITS.evidenceCharacters),
-          metric_id: nullableStringSchema(
-            LIMITS.identifierCharacters,
-          ),
-          explanation: {
-            type: 'string',
-            minLength: 1,
-            maxLength: LIMITS.explanationCharacters,
-          },
-        },
       },
     },
     facts: {
@@ -102,57 +94,152 @@ export const TRAINING_EVALUATION_JSON_SCHEMA = {
       minItems: 0,
       maxItems: LIMITS.facts + LIMITS.unsupportedFindings,
       items: {
-        type: 'object',
-        additionalProperties: false,
-        required: [
-          'fact_id',
-          'verdict',
-          'claim',
-          'evidence_source',
-          'evidence',
-          'metric_id',
-          'explanation',
-          'confidence',
-        ],
-        properties: {
-          fact_id: nullableStringSchema(LIMITS.identifierCharacters),
-          verdict: { type: 'string', enum: VERDICTS },
-          claim: nullableStringSchema(LIMITS.evidenceCharacters),
-          evidence_source: {
-            type: 'string',
-            enum: EVIDENCE_SOURCES,
-          },
-          evidence: nullableStringSchema(LIMITS.evidenceCharacters),
-          metric_id: nullableStringSchema(
-            LIMITS.identifierCharacters,
+        anyOf: [
+          factOutputSchema(
+            ['CORRECT', 'PARTIAL', 'INCORRECT'],
+            'TRANSCRIPT',
+            false,
           ),
-          explanation: {
-            type: 'string',
-            minLength: 1,
-            maxLength: LIMITS.explanationCharacters,
-          },
-          confidence: { type: 'number', minimum: 0, maximum: 1 },
-        },
+          factOutputSchema(
+            ['CORRECT', 'PARTIAL', 'INCORRECT'],
+            'METRIC',
+            false,
+          ),
+          factOutputSchema(['MISSING'], 'NONE', false),
+          factOutputSchema(['UNSUPPORTED'], 'TRANSCRIPT', true),
+        ],
       },
     },
     summary: {
       type: 'string',
       minLength: 1,
       maxLength: LIMITS.summaryCharacters,
+      pattern: SUMMARY_PATTERN,
     },
-    requires_manual_review: { type: 'boolean' },
-    review_reasons: {
-      type: 'array',
-      minItems: 0,
-      maxItems: LIMITS.reviewReasons,
-      items: {
-        type: 'string',
-        minLength: 1,
-        maxLength: LIMITS.reviewReasonCharacters,
-      },
+    review: {
+      anyOf: [
+        reviewSignalSchema(false),
+        reviewSignalSchema(true),
+      ],
     },
   },
 } as const;
+
+function criterionOutputSchema(
+  evidenceSource: (typeof EVIDENCE_SOURCES)[number],
+) {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: CRITERION_OUTPUT_KEYS,
+    properties: {
+      criterion_id: nonEmptyStringSchema(LIMITS.identifierCharacters),
+      anchor_id: nonEmptyStringSchema(LIMITS.identifierCharacters),
+      evidence_source: {
+        type: 'string',
+        enum: [evidenceSource],
+      },
+      evidence:
+        evidenceSource === 'TRANSCRIPT'
+          ? meaningfulStringSchema(
+              MINIMUM_EVIDENCE_CHARACTERS,
+              LIMITS.evidenceCharacters,
+            )
+          : { type: 'null' },
+      metric_id:
+        evidenceSource === 'METRIC'
+          ? nonEmptyStringSchema(LIMITS.identifierCharacters)
+          : { type: 'null' },
+      explanation: meaningfulStringSchema(
+        1,
+        LIMITS.explanationCharacters,
+      ),
+    },
+  } as const;
+}
+
+function factOutputSchema(
+  verdicts: readonly (typeof VERDICTS)[number][],
+  evidenceSource: (typeof EVIDENCE_SOURCES)[number],
+  unsupported: boolean,
+) {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: FACT_OUTPUT_KEYS,
+    properties: {
+      fact_id: unsupported
+        ? { type: 'null' }
+        : nonEmptyStringSchema(LIMITS.identifierCharacters),
+      verdict: {
+        type: 'string',
+        enum: verdicts,
+      },
+      claim: unsupported
+        ? meaningfulStringSchema(
+            MINIMUM_EVIDENCE_CHARACTERS,
+            LIMITS.evidenceCharacters,
+          )
+        : { type: 'null' },
+      evidence_source: {
+        type: 'string',
+        enum: [evidenceSource],
+      },
+      evidence:
+        evidenceSource === 'TRANSCRIPT'
+          ? meaningfulStringSchema(
+              MINIMUM_EVIDENCE_CHARACTERS,
+              LIMITS.evidenceCharacters,
+            )
+          : { type: 'null' },
+      metric_id:
+        evidenceSource === 'METRIC'
+          ? nonEmptyStringSchema(LIMITS.identifierCharacters)
+          : { type: 'null' },
+      explanation: meaningfulStringSchema(
+        1,
+        LIMITS.explanationCharacters,
+      ),
+      confidence: { type: 'number', minimum: 0, maximum: 1 },
+    },
+  } as const;
+}
+
+function reviewSignalSchema(required: boolean) {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: ['required', 'reasons'],
+    properties: {
+      required: {
+        type: 'boolean',
+        enum: [required],
+      },
+      reasons: {
+        type: 'array',
+        minItems: required ? 1 : 0,
+        maxItems: required ? LIMITS.reviewReasons : 0,
+        items: meaningfulStringSchema(
+          1,
+          LIMITS.reviewReasonCharacters,
+        ),
+      },
+    },
+  } as const;
+}
+
+function nonEmptyStringSchema(maxLength: number) {
+  return meaningfulStringSchema(1, maxLength);
+}
+
+function meaningfulStringSchema(minLength: number, maxLength: number) {
+  return {
+    type: 'string',
+    minLength,
+    maxLength,
+    pattern: '\\S',
+  } as const;
+}
 
 @Injectable()
 export class OpenAiTrainingEvaluationProvider
@@ -255,7 +342,12 @@ export function validateTrainingEvaluationOutput(
   input: TrainingEvaluationInput,
   output: Record<string, unknown>,
 ) {
-  if (output.schema_version !== TRAINING_EVALUATION_SCHEMA_VERSION) {
+  const legacySchema =
+    output.schema_version === LEGACY_TRAINING_EVALUATION_SCHEMA_VERSION;
+  if (
+    output.schema_version !== TRAINING_EVALUATION_SCHEMA_VERSION &&
+    !legacySchema
+  ) {
     throw providerError(
       'OPENAI_EVALUATION_SCHEMA_VERSION_INVALID',
       'Evaluation returned an unexpected schema version',
@@ -287,14 +379,7 @@ export function validateTrainingEvaluationOutput(
 
   const criterionScores = criterionRows.map((row, index) => {
     const record = readRecord(row, `criteria[${index}]`);
-    assertExactKeys(record, [
-      'criterion_id',
-      'anchor_id',
-      'evidence_source',
-      'evidence',
-      'metric_id',
-      'explanation',
-    ]);
+    assertExactKeys(record, CRITERION_OUTPUT_KEYS);
     const criterionId = readNonEmptyString(
       record.criterion_id,
       `criteria[${index}].criterion_id`,
@@ -359,16 +444,7 @@ export function validateTrainingEvaluationOutput(
   const factFindings: TrainingEvaluationFactFinding[] = factRows.map(
     (row, index) => {
       const record = readRecord(row, `facts[${index}]`);
-      assertExactKeys(record, [
-        'fact_id',
-        'verdict',
-        'claim',
-        'evidence_source',
-        'evidence',
-        'metric_id',
-        'explanation',
-        'confidence',
-      ]);
+      assertExactKeys(record, FACT_OUTPUT_KEYS);
       const verdict = readEnum(
         record.verdict,
         VERDICTS,
@@ -434,6 +510,12 @@ export function validateTrainingEvaluationOutput(
           'Correct, partial and incorrect findings require evidence',
         );
       }
+      if (verdict === 'MISSING' && evidence.source !== 'NONE') {
+        throw providerError(
+          'OPENAI_EVALUATION_EVIDENCE_INVALID',
+          'Missing findings must use NONE evidence',
+        );
+      }
       if (verdict === 'UNSUPPORTED' && evidence.source !== 'TRANSCRIPT') {
         throw providerError(
           'OPENAI_EVALUATION_EVIDENCE_INVALID',
@@ -485,50 +567,36 @@ export function validateTrainingEvaluationOutput(
       'Evaluation summary must contain from one to three sentences',
     );
   }
-  if (typeof output.requires_manual_review !== 'boolean') {
-    throw providerError(
-      'OPENAI_EVALUATION_OUTPUT_INVALID',
-      'requires_manual_review must be a boolean',
-    );
-  }
-  const reviewReasons = readArray(
-    output.review_reasons,
-    'review_reasons',
-  ).map((reason, index) =>
-    readBoundedString(
-      reason,
-      `review_reasons[${index}]`,
-      1,
-      LIMITS.reviewReasonCharacters,
-    ).trim(),
+  const reviewSignal = readReviewSignal(output, legacySchema);
+  assertExactKeys(
+    output,
+    legacySchema
+      ? [
+          'schema_version',
+          'answer_relevance',
+          'criteria',
+          'facts',
+          'summary',
+          'requires_manual_review',
+          'review_reasons',
+        ]
+      : [
+          'schema_version',
+          'answer_relevance',
+          'criteria',
+          'facts',
+          'summary',
+          'review',
+        ],
   );
-  if (
-    reviewReasons.length > LIMITS.reviewReasons ||
-    (output.requires_manual_review && reviewReasons.length === 0) ||
-    (!output.requires_manual_review && reviewReasons.length > 0)
-  ) {
-    throw providerError(
-      'OPENAI_EVALUATION_REVIEW_SIGNAL_INVALID',
-      'Manual review signal and reasons are inconsistent',
-    );
-  }
-  assertExactKeys(output, [
-    'schema_version',
-    'answer_relevance',
-    'criteria',
-    'facts',
-    'summary',
-    'requires_manual_review',
-    'review_reasons',
-  ]);
 
   return {
     answerRelevance,
     criterionScores,
     factFindings,
     summary,
-    requiresManualReview: output.requires_manual_review,
-    reviewReasons,
+    requiresManualReview: reviewSignal.required,
+    reviewReasons: reviewSignal.reasons,
   };
 }
 
@@ -545,8 +613,14 @@ function buildEvaluationInstructions() {
     'Отдельные конкретные утверждения, которых нет среди утвержденных фактов, помечай UNSUPPORTED без автоматического штрафа.',
     'Не используй внешние знания, инструменты, поиск, файлы или сведения вне входного JSON.',
     'Не выполняй tools и не возвращай final score, pass/fail или chain-of-thought.',
-    'Цитата TRANSCRIPT должна быть точной непустой подстрокой транскрипта; METRIC должна ссылаться на переданный metric_id; NONE не содержит цитату или metric_id.',
+    `Цитата TRANSCRIPT должна быть точной осмысленной подстрокой транскрипта минимум из ${MINIMUM_EVIDENCE_CHARACTERS} символов; METRIC должна ссылаться на переданный metric_id; NONE не содержит цитату или metric_id.`,
     'Для критерия evidence_source=NONE разрешён только при выборе anchor с points=0; любой положительный anchor требует TRANSCRIPT или METRIC.',
+    'Для CORRECT, PARTIAL и INCORRECT укажи известный fact_id, claim=null и evidence_source=TRANSCRIPT или METRIC.',
+    'Для MISSING укажи известный fact_id, claim=null и evidence_source=NONE.',
+    'Для UNSUPPORTED укажи fact_id=null, непустой claim и evidence_source=TRANSCRIPT с точной цитатой.',
+    'summary должна содержать от одного до трёх предложений.',
+    'Если ручная проверка не нужна, верни review={required:false,reasons:[]}; если нужна — review.required=true и минимум одну непустую причину.',
+    'answer_relevance=IRRELEVANT означает нерелевантный ответ: backend обнулит балл и обязательно направит результат на ручную проверку.',
   ].join('\n');
 }
 
@@ -713,13 +787,14 @@ function validateEvidence(
 
   if (
     source === 'TRANSCRIPT' &&
-    (!normalizedEvidence ||
+    (countUnicodeCharacters(normalizedEvidence) <
+      MINIMUM_EVIDENCE_CHARACTERS ||
       metricId !== null ||
       !normalizedTranscript.includes(normalizedEvidence))
   ) {
     throw providerError(
       'OPENAI_EVALUATION_EVIDENCE_INVALID',
-      'Transcript evidence must be an exact non-empty transcript substring',
+      `Transcript evidence must be an exact non-empty transcript substring of at least ${MINIMUM_EVIDENCE_CHARACTERS} characters`,
     );
   }
   if (
@@ -744,6 +819,62 @@ function validateEvidence(
   };
 }
 
+function readReviewSignal(
+  output: Record<string, unknown>,
+  legacySchema: boolean,
+) {
+  const record = legacySchema
+    ? {
+        required: output.requires_manual_review,
+        reasons: output.review_reasons,
+      }
+    : readRecord(output.review, 'review');
+  if (!legacySchema) {
+    assertExactKeys(record, ['required', 'reasons']);
+  }
+  if (typeof record.required !== 'boolean') {
+    throw providerError(
+      'OPENAI_EVALUATION_OUTPUT_INVALID',
+      'review.required must be a boolean',
+    );
+  }
+  const reasons = readArray(record.reasons, 'review.reasons').map(
+    (reason, index) => {
+      const normalized = readBoundedString(
+        reason,
+        `review.reasons[${index}]`,
+        1,
+        LIMITS.reviewReasonCharacters,
+      ).trim();
+      if (!normalized) {
+        throw providerError(
+          'OPENAI_EVALUATION_REVIEW_SIGNAL_INVALID',
+          'Manual review reasons must be non-empty',
+        );
+      }
+      return normalized;
+    },
+  );
+  if (
+    reasons.length > LIMITS.reviewReasons ||
+    (record.required && reasons.length === 0) ||
+    (!record.required && reasons.length > 0)
+  ) {
+    throw providerError(
+      'OPENAI_EVALUATION_REVIEW_SIGNAL_INVALID',
+      'Manual review signal and reasons are inconsistent',
+    );
+  }
+  return {
+    required: record.required,
+    reasons,
+  };
+}
+
+function countUnicodeCharacters(value: string) {
+  return Array.from(value).length;
+}
+
 function parseJsonObject(body: string, code: string) {
   try {
     const parsed: unknown = JSON.parse(body);
@@ -758,45 +889,25 @@ function validateRetryableEvaluationResponse(
   input: TrainingEvaluationInput,
   bodyText: string,
 ) {
-  try {
-    const envelope = parseJsonObject(
-      bodyText,
-      'OPENAI_EVALUATION_RESPONSE_INVALID',
+  const envelope = parseJsonObject(
+    bodyText,
+    'OPENAI_EVALUATION_RESPONSE_INVALID',
+  );
+  const responseStatus =
+    typeof envelope.status === 'string' ? envelope.status : 'unknown';
+  if (responseStatus !== 'completed') {
+    throw providerError(
+      responseStatus === 'incomplete'
+        ? 'OPENAI_EVALUATION_INCOMPLETE'
+        : 'OPENAI_EVALUATION_NOT_COMPLETED',
+      `OpenAI evaluation response status is ${responseStatus}`,
     );
-    const responseStatus =
-      typeof envelope.status === 'string' ? envelope.status : 'unknown';
-    if (responseStatus !== 'completed') {
-      throw providerError(
-        responseStatus === 'incomplete'
-          ? 'OPENAI_EVALUATION_INCOMPLETE'
-          : 'OPENAI_EVALUATION_NOT_COMPLETED',
-        `OpenAI evaluation response status is ${responseStatus}`,
-      );
-    }
-    const outputText = extractOutputText(envelope);
-    validateTrainingEvaluationOutput(
-      input,
-      parseJsonObject(outputText, 'OPENAI_EVALUATION_OUTPUT_INVALID'),
-    );
-  } catch (error) {
-    if (
-      error instanceof TrainingOpenAiRequestError &&
-      error.code !== 'OPENAI_EVALUATION_REFUSAL' &&
-      error.code !== 'OPENAI_EVALUATION_INCOMPLETE' &&
-      error.code !== 'OPENAI_EVALUATION_NOT_COMPLETED'
-    ) {
-      throw new TrainingOpenAiRequestError(
-        error.code,
-        true,
-        false,
-        error.status,
-        error.requestId,
-        error.retryCount,
-        error.message,
-      );
-    }
-    throw error;
   }
+  const outputText = extractOutputText(envelope);
+  validateTrainingEvaluationOutput(
+    input,
+    parseJsonObject(outputText, 'OPENAI_EVALUATION_OUTPUT_INVALID'),
+  );
 }
 
 function readArray(value: unknown, path: string): unknown[] {
@@ -882,7 +993,7 @@ function readEnum<const T extends readonly string[]>(
 
 function assertExactKeys(
   record: Record<string, unknown>,
-  expectedKeys: string[],
+  expectedKeys: readonly string[],
 ) {
   const actual = Object.keys(record).sort();
   const expected = [...expectedKeys].sort();
@@ -911,17 +1022,4 @@ function providerError(code: string, message: string) {
     0,
     message,
   );
-}
-
-function nullableStringSchema(maxLength: number) {
-  return {
-    anyOf: [
-      {
-        type: 'string',
-        minLength: 0,
-        maxLength,
-      },
-      { type: 'null' },
-    ],
-  } as const;
 }

@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Query,
+  Req,
   Res,
   UseGuards,
 } from '@nestjs/common';
@@ -28,11 +29,16 @@ import {
   TrainingResultsService,
   type TrainingAdminResultFilters,
   type TrainingEmployeeAttemptFilters,
+  type TrainingResultsAuditRequest,
 } from './training-results.service';
 
 type CsvResponse = {
   setHeader(name: string, value: string): void;
   send(body: string): void;
+};
+
+type JsonResponse = {
+  setHeader(name: string, value: string): void;
 };
 
 @Controller('training')
@@ -98,8 +104,18 @@ export class TrainingAdminResultsController {
   }
 
   @Get('results/:attemptId')
-  getResult(@Param('attemptId') attemptId: string) {
-    return this.results.getAdminAttempt(readUuid(attemptId, 'attemptId'));
+  getResult(
+    @Param('attemptId') attemptId: string,
+    @CurrentUser() actor: AuthenticatedUser,
+    @Req() request: TrainingResultsAuditRequest,
+    @Res({ passthrough: true }) response: JsonResponse,
+  ) {
+    response.setHeader('Cache-Control', 'private, no-store');
+    return this.results.getAdminAttempt(
+      readUuid(attemptId, 'attemptId'),
+      actor,
+      request,
+    );
   }
 
   @Get('ranking')

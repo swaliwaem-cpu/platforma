@@ -1,5 +1,6 @@
 const TELEGRAM_API_ORIGIN = 'https://api.telegram.org';
 const ALLOWED_UPDATES = ['message', 'callback_query'];
+const WEBHOOK_MAX_CONNECTIONS = 1;
 const REQUEST_TIMEOUT_MS = 10_000;
 
 async function main() {
@@ -65,6 +66,7 @@ async function executeWebhookCommand({
           url: webhookUrl,
           secret_token: webhookSecret,
           allowed_updates: ALLOWED_UPDATES,
+          max_connections: WEBHOOK_MAX_CONNECTIONS,
           drop_pending_updates: false,
         }
       : command === 'delete'
@@ -79,6 +81,8 @@ async function executeWebhookCommand({
       method,
       allowedUpdates:
         command === 'register' ? ALLOWED_UPDATES : undefined,
+      maxConnections:
+        command === 'register' ? WEBHOOK_MAX_CONNECTIONS : undefined,
       dropPendingUpdates:
         command === 'delete' ? dropPendingUpdates : undefined,
     };
@@ -150,6 +154,12 @@ function sanitizeWebhookInfo(value) {
           (item) => typeof item === 'string',
         )
       : [],
+    maxConnections:
+      Number.isSafeInteger(info.max_connections) &&
+      info.max_connections >= 1 &&
+      info.max_connections <= 100
+        ? info.max_connections
+        : null,
   };
 }
 
@@ -175,6 +185,7 @@ function requireHttpsUrl(env, name) {
 
 module.exports = {
   ALLOWED_UPDATES,
+  WEBHOOK_MAX_CONNECTIONS,
   executeWebhookCommand,
   sanitizeWebhookInfo,
 };

@@ -24,9 +24,17 @@ import type {
   TrainingProjectEligibilityReason,
 } from '@platforma/shared' with { 'resolution-mode': 'import' };
 
+import type { AuthenticatedUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
 import { TRAINING_ACTIVE_ATTEMPT_STATUSES } from './training.domain';
 import { trainingProjectAudienceWhere } from './training-project-access';
+
+export type TrainingResultsAuditRequest = {
+  ip?: string;
+  headers?: {
+    'user-agent'?: string | string[];
+  };
+};
 
 export type TrainingEmployeeAttemptFilters = {
   page: number;
@@ -497,6 +505,8 @@ export class TrainingResultsService {
 
   async getAdminAttempt(
     attemptId: string,
+    actor: AuthenticatedUser,
+    request: TrainingResultsAuditRequest,
   ): Promise<TrainingAdminAttemptDetailResponse> {
     const attempt = await this.prisma.trainingAttempt.findUnique({
       where: { id: attemptId },
@@ -709,6 +719,22 @@ export class TrainingResultsService {
       }),
     ]);
     const timeline = buildTimeline(attempt);
+    await this.prisma.auditLog.create({
+      data: {
+        actorUserId: actor.id,
+        action: 'training.transcript.read',
+        entityType: 'training_attempt',
+        entityId: attempt.id,
+        metadata: {
+          attemptId: attempt.id,
+          ownerUserId: attempt.user.id,
+          projectId: attempt.project.id,
+          scope: 'administrative',
+        },
+        ipAddress: request.ip?.slice(0, 64) ?? null,
+        userAgent: readUserAgent(request.headers?.['user-agent']),
+      },
+    });
 
     return {
       attempt: {
@@ -862,6 +888,11 @@ export class TrainingResultsService {
       },
     };
   }
+}
+
+function readUserAgent(value: string | string[] | undefined) {
+  const normalized = Array.isArray(value) ? value[0] : value;
+  return normalized?.slice(0, 1_000) ?? null;
 }
 
 function buildAdminWhere(

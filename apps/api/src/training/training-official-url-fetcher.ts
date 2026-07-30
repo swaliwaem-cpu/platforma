@@ -358,23 +358,85 @@ async function resolveOfficialUrlDns(
   }));
 }
 
+type TrainingOfficialUrlPinnedHttpRequest = (input: {
+  url: URL;
+  address: TrainingOfficialUrlAddress;
+  deadlineAt: number;
+}) => Promise<TrainingOfficialUrlHttpResponse>;
+
+const ADDRESS_FALLBACK_ERROR_CODES = new Set([
+  'CONNECT_TIMEOUT',
+  'NETWORK_ERROR',
+  'READ_TIMEOUT',
+]);
+
+export async function requestOfficialUrlWithAddressFallback(
+  input: {
+    url: URL;
+    addresses: TrainingOfficialUrlAddress[];
+    deadlineAt: number;
+  },
+  requestAddress: TrainingOfficialUrlPinnedHttpRequest =
+    requestOfficialUrlAtAddress,
+): Promise<TrainingOfficialUrlHttpResponse> {
+  if (input.addresses.length === 0) {
+    throw new TrainingOfficialUrlFetchError(
+      'DNS_LOOKUP_FAILED',
+      'Не удалось определить сетевой адрес официального источника',
+    );
+  }
+
+  const addresses = [...input.addresses].sort(
+    (left, right) => left.family - right.family,
+  );
+  let lastError: TrainingOfficialUrlFetchError | null = null;
+
+  for (const address of addresses) {
+    assertBeforeDeadline(input.deadlineAt);
+    try {
+      return await requestAddress({
+        url: input.url,
+        address,
+        deadlineAt: input.deadlineAt,
+      });
+    } catch (error) {
+      const normalizedError =
+        error instanceof TrainingOfficialUrlFetchError
+          ? error
+          : new TrainingOfficialUrlFetchError(
+              'NETWORK_ERROR',
+              'Не удалось загрузить официальную страницу',
+            );
+      if (!ADDRESS_FALLBACK_ERROR_CODES.has(normalizedError.code)) {
+        throw normalizedError;
+      }
+      lastError = normalizedError;
+    }
+  }
+
+  throw (
+    lastError ??
+    new TrainingOfficialUrlFetchError(
+      'NETWORK_ERROR',
+      'Не удалось загрузить официальную страницу',
+    )
+  );
+}
+
 async function requestOfficialUrl(input: {
   url: URL;
   addresses: TrainingOfficialUrlAddress[];
   deadlineAt: number;
 }): Promise<TrainingOfficialUrlHttpResponse> {
-  return new Promise((resolve, reject) => {
-    const pinnedAddress = input.addresses[0];
-    if (!pinnedAddress) {
-      reject(
-        new TrainingOfficialUrlFetchError(
-          'DNS_LOOKUP_FAILED',
-          'Не удалось определить сетевой адрес официального источника',
-        ),
-      );
-      return;
-    }
+  return requestOfficialUrlWithAddressFallback(input);
+}
 
+async function requestOfficialUrlAtAddress(input: {
+  url: URL;
+  address: TrainingOfficialUrlAddress;
+  deadlineAt: number;
+}): Promise<TrainingOfficialUrlHttpResponse> {
+  return new Promise((resolve, reject) => {
     let settled = false;
     let connectTimer: NodeJS.Timeout | null = null;
     const finish = (
@@ -421,7 +483,7 @@ async function requestOfficialUrl(input: {
         },
         servername: input.url.hostname,
         lookup: ((_hostname: string, _options: unknown, callback: Function) => {
-          callback(null, pinnedAddress.address, pinnedAddress.family);
+          callback(null, input.address.address, input.address.family);
         }) as never,
       },
       (response) => {

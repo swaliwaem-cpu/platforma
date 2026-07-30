@@ -7,17 +7,23 @@ import {
 import {
   Prisma,
   TrainingAttemptStatus,
+  TrainingJobKind,
   TrainingJobStatus,
+  TrainingProjectStatus,
   TrainingReviewStatus,
+  TrainingSourceExtractionStatus,
+  TrainingVersionStatus,
 } from '@prisma/client';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import { S3StorageService } from '../files/s3-storage.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { TrainingOpenAiConfig } from './openai/training-openai.config';
 import { TrainingTelegramConfig } from './telegram/training-telegram.config';
 import { TrainingConfigService } from './training.config';
+import { trainingOfficialUrlJobKey } from './training-official-url-sources.service';
 import { parseTrainingReviewIdempotencyKey } from './training-review-idempotency';
+import { lockTrainingVersionForContentMutation } from './training-version-lock';
 
 const OPERATIONS_TRANSACTION_RETRY_LIMIT = 3;
 
@@ -282,6 +288,10 @@ export class TrainingOperationsService {
         );
       }
       await assertJobCanBeRetried(tx, job);
+      const officialUrlRetry =
+        job.kind === TrainingJobKind.FETCH_OFFICIAL_URL_SOURCE
+          ? await prepareOfficialUrlJobRetry(tx, job)
+          : null;
 
       const retried = await tx.trainingJob.updateMany({
         where: {
@@ -299,6 +309,19 @@ export class TrainingOperationsService {
           lastErrorMessage: null,
           errorDetailsJson: Prisma.JsonNull,
           finishedAt: null,
+          ...(officialUrlRetry
+            ? {
+                payloadJson: {
+                  sourceId: officialUrlRetry.sourceId,
+                  fetchGeneration: officialUrlRetry.fetchGeneration,
+                  retryNonce: randomUUID(),
+                },
+                idempotencyKey: trainingOfficialUrlJobKey(
+                  officialUrlRetry.sourceId,
+                  officialUrlRetry.fetchGeneration,
+                ),
+              }
+            : {}),
         },
       });
       if (retried.count !== 1) {
@@ -323,6 +346,12 @@ export class TrainingOperationsService {
             jobKind: job.kind,
             previousStatus: job.status,
             reason: normalizedReason,
+            ...(officialUrlRetry
+              ? {
+                  sourceId: officialUrlRetry.sourceId,
+                  fetchGeneration: officialUrlRetry.fetchGeneration,
+                }
+              : {}),
           },
         },
       });
@@ -413,6 +442,17 @@ async function assertJobCanBeRetried(
     payload.sourceDocumentId,
     (id) => tx.trainingSourceDocument.findUnique({ where: { id }, select: { id: true } }),
   );
+  if (job.kind === TrainingJobKind.FETCH_OFFICIAL_URL_SOURCE) {
+    const officialUrlPayload = readOfficialUrlRetryPayload(job.payloadJson);
+    referencesChecked += await assertStringReference(
+      officialUrlPayload.sourceId,
+      (id) =>
+        tx.trainingOfficialUrlSource.findUnique({
+          where: { id },
+          select: { id: true },
+        }),
+    );
+  }
   if (payload.updateId !== undefined) {
     const updateId = readBigIntReference(payload.updateId);
     const update = await tx.trainingProcessedUpdate.findUnique({
@@ -436,6 +476,104 @@ async function assertJobCanBeRetried(
       `Training job ${job.kind} has no verifiable domain reference`,
     );
   }
+}
+
+async function prepareOfficialUrlJobRetry(
+  tx: Prisma.TransactionClient,
+  job: {
+    payloadJson: Prisma.JsonValue;
+  },
+) {
+  const payload = readOfficialUrlRetryPayload(job.payloadJson);
+  const initialSource = await tx.trainingOfficialUrlSource.findUnique({
+    where: { id: payload.sourceId },
+    select: {
+      id: true,
+      projectVersionId: true,
+    },
+  });
+  if (!initialSource) throw missingJobReference();
+
+  const version = await lockTrainingVersionForContentMutation(
+    tx,
+    initialSource.projectVersionId,
+  );
+  if (
+    !version ||
+    version.status !== TrainingVersionStatus.DRAFT ||
+    version.projectStatus === TrainingProjectStatus.ARCHIVED
+  ) {
+    throw new ConflictException(
+      'Official URL source belongs to an immutable training version',
+    );
+  }
+
+  await tx.$queryRaw`SELECT "id" FROM "training_official_url_sources" WHERE "id" = ${payload.sourceId}::uuid FOR UPDATE`;
+  const source = await tx.trainingOfficialUrlSource.findUnique({
+    where: { id: payload.sourceId },
+    select: {
+      id: true,
+      projectVersionId: true,
+      fetchGeneration: true,
+      extractionStatus: true,
+    },
+  });
+  if (!source || source.projectVersionId !== initialSource.projectVersionId) {
+    throw missingJobReference();
+  }
+  if (source.fetchGeneration !== payload.fetchGeneration) {
+    throw new ConflictException(
+      'Obsolete official URL source job cannot be retried',
+    );
+  }
+  if (source.extractionStatus !== TrainingSourceExtractionStatus.FAILED) {
+    throw new ConflictException(
+      'Official URL source is not in a retryable failed state',
+    );
+  }
+
+  const fetchGeneration = source.fetchGeneration + 1;
+  await tx.trainingOfficialUrlSource.update({
+    where: { id: source.id },
+    data: {
+      fetchGeneration,
+      finalUrl: null,
+      extractionStatus: TrainingSourceExtractionStatus.PENDING,
+      extractedText: null,
+      contentHash: null,
+      extractionMetadataJson: {},
+      errorCode: null,
+      errorMessage: null,
+      fetchedAt: null,
+    },
+  });
+
+  return {
+    sourceId: source.id,
+    fetchGeneration,
+  };
+}
+
+function readOfficialUrlRetryPayload(value: Prisma.JsonValue) {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    typeof value.sourceId !== 'string' ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+      value.sourceId,
+    ) ||
+    !Number.isInteger(value.fetchGeneration) ||
+    Number(value.fetchGeneration) < 1
+  ) {
+    throw new ConflictException(
+      'Official URL source job payload cannot be validated',
+    );
+  }
+  return {
+    sourceId: value.sourceId,
+    fetchGeneration: Number(value.fetchGeneration),
+  };
 }
 
 async function assertStringReference(

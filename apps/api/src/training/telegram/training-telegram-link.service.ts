@@ -17,6 +17,7 @@ import {
 } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { TRAINING_ACTIVE_ATTEMPT_STATUSES } from '../training.domain';
 import { trainingProjectAudienceWhere } from '../training-project-access';
 import { TrainingTelegramConfig } from './training-telegram.config';
 import {
@@ -350,6 +351,18 @@ export class TrainingTelegramLinkService {
       });
       if (!account || account.revokedAt) {
         return;
+      }
+      const activeAttempt = await tx.trainingAttempt.findFirst({
+        where: {
+          userId,
+          status: { in: [...TRAINING_ACTIVE_ATTEMPT_STATUSES] },
+        },
+        select: { id: true },
+      });
+      if (activeAttempt) {
+        throw new ConflictException(
+          'Telegram cannot be disconnected while a training attempt is active',
+        );
       }
       const revoked = await tx.trainingTelegramAccount.updateMany({
         where: { id: account.id, revokedAt: null },

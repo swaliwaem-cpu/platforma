@@ -6,6 +6,7 @@ const {
   TrainingOfficialUrlFetcher,
   normalizeOfficialHostname,
   normalizeOfficialUrl,
+  requestOfficialUrlWithAddressFallback,
 } = require('../dist/training/training-official-url-fetcher.js');
 const {
   extractTrainingOfficialUrlText,
@@ -29,6 +30,9 @@ const {
   runTrainingSnapshotDeleteWithTimeout,
   runTrainingSnapshotPutWithTimeout,
 } = require('../dist/files/files.service.js');
+const {
+  TrainingOperationsService,
+} = require('../dist/training/training-operations.service.js');
 
 const PUBLIC_ADDRESSES = [{ address: '93.184.216.34', family: 4 }];
 
@@ -156,6 +160,36 @@ test('official URL fetch accepts a global-unicast IPv6 address', async () => {
 
   assert.equal(requests, 1);
   assert.match(result.text, /Public IPv6/u);
+});
+
+test('official URL request falls back across every validated A and AAAA address', async () => {
+  const ipv4 = { address: '93.184.216.34', family: 4 };
+  const ipv6 = {
+    address: '2606:2800:220:1:248:1893:25c8:1946',
+    family: 6,
+  };
+  const attempted = [];
+
+  const response = await requestOfficialUrlWithAddressFallback(
+    {
+      url: new URL('https://example.com/project'),
+      addresses: [ipv6, ipv4],
+      deadlineAt: Date.now() + 1_000,
+    },
+    async ({ address }) => {
+      attempted.push(address);
+      if (address.family === 4) {
+        throw new TrainingOfficialUrlFetchError(
+          'NETWORK_ERROR',
+          'Не удалось загрузить официальную страницу',
+        );
+      }
+      return htmlResponse('<main><p>IPv6 fallback</p></main>');
+    },
+  );
+
+  assert.deepEqual(attempted, [ipv4, ipv6]);
+  assert.match(response.body.toString('utf8'), /IPv6 fallback/u);
 });
 
 test('official URL total deadline bounds a stalled DNS resolver', async () => {
@@ -587,6 +621,106 @@ test('official URL service turns URL policy failures into a client validation er
     (error) => error?.status === 400 && /HTTPS/u.test(error.message),
   );
   assert.equal(transactions, 0);
+});
+
+test('operations retry advances a failed official URL source generation atomically', async () => {
+  const jobId = '11111111-1111-4111-8111-111111111111';
+  const sourceId = '22222222-2222-4222-8222-222222222222';
+  const versionId = '33333333-3333-4333-8333-333333333333';
+  const projectId = '44444444-4444-4444-8444-444444444444';
+  const actorId = '55555555-5555-4555-8555-555555555555';
+  const source = {
+    id: sourceId,
+    projectVersionId: versionId,
+    fetchGeneration: 2,
+    extractionStatus: 'FAILED',
+  };
+  const sourceUpdates = [];
+  const jobUpdates = [];
+  const retries = [];
+  const audits = [];
+  let rawQueryIndex = 0;
+  const tx = {
+    $queryRaw: async () => {
+      rawQueryIndex += 1;
+      if (rawQueryIndex === 1) return [{ locked: 1 }];
+      if (rawQueryIndex === 2) return [{ projectId }];
+      if (rawQueryIndex === 3) {
+        return [{ id: projectId, status: 'draft' }];
+      }
+      if (rawQueryIndex === 4) {
+        return [{ id: versionId, projectId, status: 'draft' }];
+      }
+      return [];
+    },
+    trainingOperationsJobRetry: {
+      findUnique: async () => null,
+      create: async (input) => retries.push(input),
+    },
+    trainingJob: {
+      findUnique: async () => ({
+        id: jobId,
+        kind: 'FETCH_OFFICIAL_URL_SOURCE',
+        status: 'DEAD',
+        payloadJson: {
+          sourceId,
+          fetchGeneration: 2,
+        },
+        lastErrorCode: 'NETWORK_ERROR',
+      }),
+      updateMany: async (input) => {
+        jobUpdates.push(input);
+        return { count: 1 };
+      },
+    },
+    trainingOfficialUrlSource: {
+      findUnique: async () => source,
+      update: async (input) => sourceUpdates.push(input),
+    },
+    auditLog: {
+      create: async (input) => audits.push(input),
+    },
+  };
+  const operations = new TrainingOperationsService(
+    {
+      $transaction: async (callback) => callback(tx),
+    },
+    { assertEnabled: () => undefined },
+    {},
+    {},
+    {},
+  );
+
+  const result = await operations.retryJob(
+    jobId,
+    actorId,
+    'Повтор после проверки сети',
+    'official-url-retry-key',
+  );
+
+  assert.deepEqual(result.job, {
+    id: jobId,
+    kind: 'FETCH_OFFICIAL_URL_SOURCE',
+    status: 'PENDING',
+  });
+  assert.equal(sourceUpdates.length, 1);
+  assert.equal(sourceUpdates[0].data.fetchGeneration, 3);
+  assert.equal(sourceUpdates[0].data.extractionStatus, 'PENDING');
+  assert.equal(sourceUpdates[0].data.errorCode, null);
+  assert.equal(jobUpdates.length, 1);
+  assert.equal(jobUpdates[0].data.status, 'PENDING');
+  assert.equal(jobUpdates[0].data.attempts, 0);
+  assert.equal(jobUpdates[0].data.payloadJson.sourceId, sourceId);
+  assert.equal(jobUpdates[0].data.payloadJson.fetchGeneration, 3);
+  assert.equal(
+    jobUpdates[0].data.idempotencyKey,
+    `fetch-official-url-source:${sourceId}:3`,
+  );
+  assert.match(jobUpdates[0].data.payloadJson.retryNonce, /^[0-9a-f-]{36}$/u);
+  assert.equal(retries.length, 1);
+  assert.equal(audits.length, 1);
+  assert.equal(audits[0].data.metadata.sourceId, sourceId);
+  assert.equal(audits[0].data.metadata.fetchGeneration, 3);
 });
 
 test('official URL worker snapshots extracted HTML and commits only while it owns the lease', async () => {
