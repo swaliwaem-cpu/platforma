@@ -6613,3 +6613,50 @@ Production:
 - Авторизованный ручной UI-smoke не выполнялся. Нужно проверить создание
   проекта в админке, выбор PDF связанного ЖК, назначение аккаунта,
   публикацию и появление аттестации у назначенного пользователя.
+
+## 2026-07-30 — Production hotfix критериев OpenAI-оценки
+
+Причина:
+
+- В первой живой попытке TATE Telegram, загрузка/сборка аудио и реальная
+  OpenAI-транскрибация завершились успешно, но evaluation завершился
+  `OPENAI_EVALUATION_ANCHORS_INVALID` до внешнего Responses-запроса.
+- Production-критерии корректно переиспользуют короткие anchor IDs
+  (`weak`, `adequate`, `strong`, `partial`) в разных критериях. Content
+  validation и scoring трактуют ID как локальный для критерия, а runtime
+  ошибочно требовал глобальной уникальности на весь evaluation input.
+
+Исправление:
+
+- Runtime-проверка уникальности anchor IDs ограничена одним критерием;
+  уникальность criterion IDs по-прежнему проверяется на весь input.
+- Добавлен regression test с одинаковым anchor ID в двух разных критериях.
+- Новых dependencies, Prisma schema/migrations и API contracts нет.
+
+Проверки и production:
+
+- Локальный API build — passed; профильный OpenAI stub-набор — `23/23`;
+  `git diff --check` — passed.
+- Implementation commit `b89d6fa` отправлен в `origin/on-ser`.
+- Перед переключением создан custom PostgreSQL backup
+  `/opt/platforma-deploy-backups/training-anchor-hotfix-20260730T122351Z-546eba2d28b5`:
+  `50 MB`, `pg_restore --list` passed, SHA-256
+  `e510f1e9aa5079c03ef4bf39c2237505d90efdadd10ae647d4bc243c30ffed8c`.
+  Старый API image сохранён как
+  `platforma-api:rollback-anchor-20260730T122351Z`.
+- Candidate deployment preflight прошёл; Prisma повторно подтвердил
+  `43 migrations` и `Database schema is up to date!`.
+- Пересозданы только `api` и `training-worker`; они используют image
+  `sha256:39938bfddb56...`, restart count равен `0`. Web, PostgreSQL, Redis
+  и MinIO не перезапускались.
+- Internal/public health возвращает
+  `status=ok`, `database=ok`, `training=ready`; startup/runtime error scan
+  пуст, все шесть worker heartbeat обновляются с возрастом менее секунды.
+- Техническая попытка
+  `3d68bd36-86ce-4406-b06a-e2131b9a9dcf` возвращена через
+  `TrainingAttemptEngineService.refundTechnicalFailure`: сохранён audit
+  `training.attempt.refund`, `is_consumed=false`, использованных попыток
+  тестового пользователя по TATE снова `0`.
+- Реальный evaluation после hotfix ещё не вызывался. Следующий ручной gate —
+  новая живая попытка тестового аккаунта с одним основным и тремя
+  уточняющими ответами.
