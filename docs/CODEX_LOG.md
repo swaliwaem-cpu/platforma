@@ -6805,3 +6805,23 @@ Production:
   завершила все четыре voice-ответа: 4/4 transcription и 4/4 evaluation
   provider runs имеют `SUCCEEDED`, все вопросы `SCORED`, активных jobs нет.
   Итог штатно направлен на review: `aiScore=65`, `serverScore=60`.
+
+## 2026-07-31 — Возврат пункта обучения в меню администратора
+
+Причина и исправление:
+
+- Production-модуль исправен: `TRAINING_MODULE_ENABLED=true`, health имеет
+  `training=ready`, а роль `admin` содержит `training:projects:manage`.
+- Верхний пункт `Обучение` после изоляции pilot ошибочно показывался только
+  при сотрудническом permission `training:take`, которого у admin-роли нет.
+- Пункт теперь доступен либо сотруднику с `training:take`, либо администратору
+  с `admin:access` и `training:projects:manage`. Для администратора он ведёт
+  прямо в `/admin/training`; employee route `/training` не изменён.
+
+Проверки:
+
+- Новый регрессионный source-contract test сначала воспроизвёл ошибку, затем
+  целевой набор прошёл `5/5`.
+- `pnpm build:web` и `git diff --check` — passed. Сохраняется прежнее
+  предупреждение Vite о chunk больше `500 kB`.
+- API, Telegram/OpenAI, Prisma schema, migrations и dependencies не менялись.

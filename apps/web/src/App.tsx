@@ -1532,6 +1532,13 @@ function canAccessPermissions(
 }
 
 function getNavigationPath(user: AuthUser, item: NavItem) {
+  if (
+    item.id === 'training' &&
+    user.permissions.includes('training:projects:manage')
+  ) {
+    return '/admin/training';
+  }
+
   return item.id === 'presentations' && canAccessProjectPresentations(user)
     ? '/presentations/projects'
     : item.path;
@@ -1543,7 +1550,18 @@ function getCabinetSectionPath(user: AuthUser, section: CabinetSection) {
     : section.path;
 }
 
-function canAccessNavigationItem(hasPermission: (permission: string) => boolean, item: Pick<NavItem, 'requiredPermissions'>) {
+function canAccessNavigationItem(
+  hasPermission: (permission: string) => boolean,
+  item: Pick<NavItem, 'id' | 'requiredPermissions'>,
+) {
+  if (item.id === 'training') {
+    return (
+      hasPermission('training:take') ||
+      (hasPermission('admin:access') &&
+        hasPermission('training:projects:manage'))
+    );
+  }
+
   return canAccessPermissions(hasPermission, item.requiredPermissions);
 }
 

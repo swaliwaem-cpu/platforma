@@ -56,6 +56,17 @@ test('admin training route and navigation require admin access and project manag
   );
 });
 
+test('top-level training navigation remains available to training admins and opens admin training', () => {
+  assert.match(
+    appSource,
+    /function canAccessNavigationItem[\s\S]*item\.id === 'training'[\s\S]*hasPermission\('training:take'\)[\s\S]*hasPermission\('training:projects:manage'\)/,
+  );
+  assert.match(
+    appSource,
+    /function getNavigationPath[\s\S]*item\.id === 'training'[\s\S]*user\.permissions\.includes\('training:projects:manage'\)[\s\S]*'\/admin\/training'/,
+  );
+});
+
 test('employee shell and manual admin routes do not add a router dependency', () => {
   assert.match(appSource, /import \{ TrainingAdminPage \} from '\.\/training\/TrainingAdminPage';/);
   assert.match(appSource, /import \{ TrainingShellPage \} from '\.\/training\/TrainingShellPage';/);
