@@ -6859,3 +6859,19 @@ Production:
   после исправления целевой набор прошёл `22/22`.
 - `pnpm build:web` и `git diff --check` — passed. Сохраняется прежнее
   предупреждение Vite о chunk больше `500 kB`.
+
+Production:
+
+- Commit `1c5f24e` отправлен в `origin/on-ser`; production checkout
+  fast-forwarded с `eb715b4` до `1c5f24e`.
+- Старый web image сохранён как
+  `platforma-web:rollback-training-results-nav-20260731T0916Z`.
+- Собран и пересоздан только контейнер `web`; новый image:
+  `sha256:74fe6dfd818e...`, restart count равен `0`.
+- Контейнеры `api` и `training-worker` сохранили прежние ID/image и restart
+  count `0`.
+- Production bundle содержит `/admin/training/results` и `Результаты`;
+  internal и public web возвращают HTTP `200`, public health —
+  `status=ok`, `database=ok`, `training=ready`.
+- Авторизованную визуальную проверку нужно завершить обновлением страницы
+  `/admin/training` под admin-аккаунтом.
