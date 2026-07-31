@@ -1,5 +1,48 @@
 # Codex Log
 
+## 2026-07-31 - Training results reviewer workspace redesign
+
+Задача:
+
+- Переработать `/admin/training/results/:attemptId` по согласованному варианту B: убрать технический таймлайн и историю обработки, сделать расшифровку и оценку понятными обычному пользователю и локализовать интерфейс на русский язык.
+- Сохранить существующие контракты protected audio, повторной обработки и ручной проверки без backend-изменений и новых зависимостей.
+
+Изменения:
+
+- Detail заменён на reviewer workspace: компактная сводка попытки, навигация по вопросам, один выбранный вопрос и две колонки «Ответ сотрудника» / «Разбор ответа».
+- Raw JSON, внутренние component/fact keys, модели, request IDs, MIME/bytes, segments/acoustics, provider runs, evaluation/job history и processing timeline больше не выводятся.
+- Evidence преобразуется в карточки с понятными полями «Фрагмент ответа», «Утверждение сотрудника» и «Почему так оценено»; длинная расшифровка раскрывается без вложенной прокрутки.
+- Все видимые статусы, типы вопросов, verdicts и действия локализованы; состояния дополнены семантическими цветами с текстовыми подписями.
+- Итог проверки вынесен в отдельный пункт той же навигации, чтобы сохранить один атомарный review POST: общее решение и решения по спорным утверждениям изначально пустые, комментарий обязателен.
+- Форма проверки остаётся смонтированной при навигации: введённые данные, operation lock и текущий `Idempotency-Key` не теряются во время delayed/ambiguous POST; ошибки валидации переводят фокус на первое нерешённое поле.
+- Добавлены desktop keyboard navigation, последовательный mobile pager и адаптивная компоновка без горизонтального переполнения.
+- Обновлены unit/browser регрессии и manual checklist результатов обучения.
+
+Проверки:
+
+- `pnpm --dir apps/web exec playwright test tests-browser/training-results.spec.ts --config=playwright.training.config.ts` - 15/15 passed.
+- `pnpm --filter @platforma/web test` - 311/311 passed.
+- `pnpm build:web` - passed; сохранено существующее предупреждение Vite о main chunk `791.47 kB`.
+- Визуальная сверка в dark theme при `1586x992` подтвердила компактную шапку, сводку, двухколоночный workspace, читаемые evidence-карточки и контраст состояний/действий.
+
+Production deploy:
+
+- Commit `1c71086` отправлен в `origin/on-ser`; production `/opt/platforma` fast-forwarded с `bb8080e` до `1c71086` при чистом checkout и валидном production Compose.
+- Перед переключением сохранён rollback image `platforma-web:rollback-training-results-review-20260731T103057Z`.
+- Собран web image `sha256:b0a7f04bea2e2855c544d6ad04c7b6507dba390fa387a5c667a8727858da033c`; пересоздан только `web`, API, training-worker, PostgreSQL, Redis и MinIO не пересоздавались.
+- Новый web container запущен, startup log чистый; локальный и публичный `/admin/training/results` вернули HTTP 200, `/api/health` вернул `status=ok`, `database=ok`, `training=ready`.
+- В production bundle подтверждены `TrainingAdminResultsPage`/`trainingResults.css` и маркер «Навигация по вопросам».
+
+Ручная проверка:
+
+- На production/staging пройти detail с реальными длинными ответами, 4+ вопросами, отсутствующим аудио и ролями без `training:audio:read` / `training:results:review`.
+- Проверить обе темы и реальные браузерные audio controls; автоматический прогон использует fake API и synthetic Blob.
+
+Спорные места:
+
+- Решение проверяющего не встроено в каждую карточку утверждения, а централизовано в пункте «Итог проверки»: это сохраняет атомарность существующего review API и предотвращает частично сохранённые решения.
+- Авторизованный production UI smoke с реальной попыткой не выполнялся автоматически: нужен ручной вход проверяющего, чтобы не изменять реальные review-данные.
+
 ## 2026-07-28 - Training production dark deploy
 
 Задача:
