@@ -40,9 +40,15 @@
 - [ ] Filters user/project/date/score/status/review/pass и sort применяются на
   сервере; pagination сохраняет bounded page size.
 - [ ] List остаётся быстрым и не загружает transcript/audio bytes.
-- [ ] Detail показывает timeline, 4 questions, segments metadata, protected
-  audio, active transcript, acoustic/evidence/components, scores, provider
-  versions/usage/latency/errors, review/job history.
+- [ ] Detail показывает компактную сводку попытки и навигацию по вопросам;
+  одновременно открыт только один вопрос или итог проверки.
+- [ ] Ответ, protected audio, расшифровка и объяснение баллов изложены
+  пользовательским языком без JSON, внутренних ключей, provider/request IDs,
+  MIME, bytes, job history и processing timeline.
+- [ ] Статусы, типы вопросов, verdicts и действия полностью локализованы на
+  русский язык; цвет не является единственным признаком состояния.
+- [ ] Длинная расшифровка раскрывается по явному действию без вложенной
+  прокрутки; переключение вопросов сохраняет понятный фокус и контекст.
 - [ ] Audio загружается только по клику, refreshes JWT через общий API client,
   предыдущий/закрытый object URL revoke; публичного URL нет.
 - [ ] Смена answer, повторная загрузка и закрытие detail abort предыдущий
@@ -52,6 +58,8 @@
 
 ## Review
 
+- [ ] Итоговое решение и решения по unsupported claims изначально не выбраны;
+  интерфейс не подставляет подтверждение системного результата по умолчанию.
 - [ ] Comment обязателен; `OVERRIDDEN` требует score.
 - [ ] Для каждого unsupported claim выбрано `ACCEPTED` либо `INCORRECT`.
 - [ ] Во время POST повторная отправка disabled.
@@ -84,7 +92,8 @@ pnpm --filter @platforma/web test:training:browser
 ```
 
 Harness использует Chromium headless и `page.route`; реальный API,
-OpenAI/Telegram и production не вызываются. Он покрывает review request
+OpenAI/Telegram и production не вызываются. Он покрывает readable review
+workspace без диагностик, keyboard/mobile navigation, review request
 cardinality, partial success, Blob lifecycle, employee manual adjustment и
 loading/empty/error states. Ручные responsive/theme/spreadsheet проверки выше
 остаются обязательными.

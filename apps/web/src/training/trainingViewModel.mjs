@@ -24,6 +24,39 @@ export const reviewStatusLabels = {
   OVERRIDDEN: 'Скорректировано',
 };
 
+export const questionTypeLabels = {
+  MAIN: 'Основной вопрос',
+  FOLLOW_UP: 'Уточняющий вопрос',
+};
+
+export const questionStatusLabels = {
+  PENDING: 'Ожидает ответа',
+  PRESENTED: 'Вопрос показан',
+  COLLECTING: 'Идёт ответ',
+  LOCKED: 'Ответ принят',
+  PROCESSING: 'Проверяется',
+  SCORED: 'Оценён',
+  SKIPPED_TIMEOUT: 'Пропущен: время истекло',
+};
+
+export const answerStatusLabels = {
+  COLLECTING: 'Идёт запись',
+  READY: 'Ответ получен',
+  DOWNLOADING: 'Загружается',
+  TRANSCRIBING: 'Распознаётся',
+  EVALUATING: 'Оценивается',
+  SCORED: 'Оценён',
+  FAILED: 'Ошибка обработки',
+};
+
+export const factVerdictLabels = {
+  CORRECT: 'Верно',
+  PARTIAL: 'Частично раскрыто',
+  MISSING: 'Не раскрыто',
+  INCORRECT: 'Фактическая ошибка',
+  UNSUPPORTED: 'Требуется решение',
+};
+
 export const employeeBreakdownStatusLabels = {
   AVAILABLE: 'Детализация доступна.',
   PENDING_REVIEW: 'Детализация появится после проверки.',

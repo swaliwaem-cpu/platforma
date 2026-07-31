@@ -190,7 +190,8 @@ test('duplicate click sends one POST and a completed new action gets a new key',
   });
 
   await openAdminDetail(page);
-  await page.locator('textarea').fill('Первое решение');
+  await page.getByLabel('Подтвердить системный результат').check();
+  await page.getByLabel('Комментарий (обязательно)').fill('Первое решение');
   const submit = page.getByRole('button', { name: 'Сохранить решение' });
   await submit.evaluate((button) => {
     (button as HTMLButtonElement).click();
@@ -201,10 +202,64 @@ test('duplicate click sends one POST and a completed new action gets a new key',
   ).toBeVisible();
   expect(keys).toHaveLength(1);
 
-  await page.locator('textarea').fill('Новое осознанное решение');
+  await page
+    .getByLabel('Комментарий (обязательно)')
+    .fill('Новое осознанное решение');
   await page.getByRole('button', { name: 'Сохранить решение' }).click();
   await expect.poll(() => keys.length).toBe(2);
   expect(keys[1]).not.toBe(keys[0]);
+});
+
+test('review navigation keeps the active submission and prevents a second POST', async ({
+  page,
+}) => {
+  let reviewPosts = 0;
+  let releasePost = () => {};
+  const postGate = new Promise<void>((resolve) => {
+    releasePost = resolve;
+  });
+  await installApi(page, async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === `/training/admin/results/${attemptId}`) {
+      await fulfillJson(route, adminDetail());
+      return true;
+    }
+    if (path === `/training/admin/results/${attemptId}/review`) {
+      reviewPosts += 1;
+      await postGate;
+      await fulfillJson(route, { review: { id: 'review-navigation' } });
+      return true;
+    }
+    if (path === '/training/admin/ranking') {
+      await fulfillJson(route, emptyRanking());
+      return true;
+    }
+    return false;
+  });
+
+  await openAdminDetail(page);
+  await page.getByLabel('Подтвердить системный результат').check();
+  await page
+    .getByLabel('Комментарий (обязательно)')
+    .fill('Решение сохраняется при навигации');
+  await page.getByRole('button', { name: 'Сохранить решение' }).click();
+  await expect(page.getByRole('button', { name: 'Сохранение' })).toBeDisabled();
+
+  await page.getByRole('tab', { name: /Вопрос 1/u }).click();
+  await expect(page.getByRole('heading', { name: /Вопрос 1/u })).toBeVisible();
+  await page.getByRole('tab', { name: /Итог проверки/u }).click();
+  await expect(page.getByLabel('Подтвердить системный результат')).toBeChecked();
+  await expect(page.getByLabel('Комментарий (обязательно)')).toHaveValue(
+    'Решение сохраняется при навигации',
+  );
+  await expect(page.getByRole('button', { name: 'Сохранение' })).toBeDisabled();
+  expect(reviewPosts).toBe(1);
+
+  releasePost();
+  await expect(
+    page.getByText('Решение сохранено, результат и рейтинг обновлены.'),
+  ).toBeVisible();
+  expect(reviewPosts).toBe(1);
 });
 
 test('audio generation aborts stale response, revokes A and keeps only B', async ({
@@ -250,8 +305,9 @@ test('audio generation aborts stale response, revokes A and keeps only B', async
   });
 
   await openAdminDetail(page);
+  await page.getByRole('tab', { name: /Вопрос 1/u }).click();
   await page
-    .getByRole('button', { name: 'Загрузить защищённое аудио' })
+    .getByRole('button', { name: 'Прослушать ответ' })
     .click();
   currentAnswer = answerBId;
   await page.getByRole('button', { name: 'Обновить' }).click();
@@ -264,13 +320,13 @@ test('audio generation aborts stale response, revokes A and keeps only B', async
   currentAnswer = answerAId;
   await page.getByRole('button', { name: 'Обновить' }).click();
   await page
-    .getByRole('button', { name: 'Загрузить защищённое аудио' })
+    .getByRole('button', { name: 'Прослушать ответ' })
     .click();
   await expect(page.locator('audio')).toHaveAttribute('src', 'blob:test-1');
   currentAnswer = answerBId;
   await page.getByRole('button', { name: 'Обновить' }).click();
   await page
-    .getByRole('button', { name: 'Загрузить защищённое аудио' })
+    .getByRole('button', { name: 'Прослушать ответ' })
     .click();
   await expect(page.locator('audio')).toHaveAttribute('src', 'blob:test-2');
   expect(await objectUrlState(page)).toEqual({
@@ -334,16 +390,291 @@ test('audio unmount aborts delayed request and 401 refresh without leaking URLs'
   });
 
   await openAdminDetail(page);
+  await page.getByRole('tab', { name: /Вопрос 1/u }).click();
   await page
-    .getByRole('button', { name: 'Загрузить защищённое аудио' })
+    .getByRole('button', { name: 'Прослушать ответ' })
     .click();
   await expect.poll(() => authRefreshes).toBeGreaterThanOrEqual(2);
-  await page.getByRole('button', { name: 'Результаты' }).click();
+  await page.getByRole('button', { name: 'Результаты обучения' }).click();
   await expect.poll(() => listRequests).toBeGreaterThanOrEqual(1);
   await page.waitForTimeout(900);
   expect(audioRequests).toBe(1);
   expect(await objectUrlState(page)).toEqual({ created: [], revoked: [] });
   await expect(page.getByText('Не удалось загрузить аудио')).toHaveCount(0);
+});
+
+test('admin detail renders one readable reviewer workspace without diagnostics', async ({
+  page,
+}) => {
+  const firstQuestion = evaluatedAdminQuestion({
+    questionId: 'question-1',
+    answerId: answerAId,
+    sequence: 1,
+    type: 'MAIN',
+    text: 'Расскажите о проекте',
+    transcript: 'РАСШИФРОВКА_ВОПРОСА_1',
+    components: [
+      {
+        componentKey: 'main.structure',
+        title: 'Структура презентации',
+        criterionCode: 'main.structure',
+        factCode: null,
+        awardedPoints: '5',
+        maxPoints: '10',
+        penaltyPoints: '0',
+        factVerdict: 'PARTIAL',
+        evidence: {
+          text: 'Фрагмент ответа сотрудника',
+          explanation: 'Ответ раскрывает тему только частично.',
+          source: 'TRANSCRIPT',
+          anchorId: 'technical-anchor',
+        },
+      },
+      {
+        componentKey: 'claim-1',
+        title: 'landscape.wowhaus',
+        criterionCode: null,
+        factCode: 'landscape.wowhaus',
+        awardedPoints: '0',
+        maxPoints: '0',
+        penaltyPoints: '0',
+        factVerdict: 'UNSUPPORTED',
+        evidence: {
+          claim: 'Концепцию благоустройства разработало бюро VaaS.',
+          explanation: 'Утверждение не найдено в подтверждённых материалах.',
+        },
+      },
+    ],
+  });
+  const secondQuestion = evaluatedAdminQuestion({
+    questionId: 'question-2',
+    answerId: answerBId,
+    sequence: 2,
+    type: 'FOLLOW_UP',
+    text: 'Уточните инфраструктуру',
+    transcript: 'РАСШИФРОВКА_ВОПРОСА_2',
+    components: [],
+  });
+  await installApi(page, async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === `/training/admin/results/${attemptId}`) {
+      await fulfillJson(
+        route,
+        adminDetail({
+          timeline: [
+            {
+              at: '2026-07-28T10:00:00.000Z',
+              kind: 'RAW',
+              label: 'RAW_TIMELINE_EVENT_TEST',
+            },
+          ],
+          jobs: [
+            {
+              id: 'job-raw',
+              kind: 'SEND_TELEGRAM_MESSAGE',
+              status: 'SUCCEEDED',
+              attempts: 1,
+            },
+          ],
+          questions: [firstQuestion, secondQuestion],
+        }),
+      );
+      return true;
+    }
+    return false;
+  });
+
+  await page.goto(`/admin/training/results/${attemptId}`);
+  await expect(page.getByText('Навигация по вопросам')).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Вопрос 1 · Основной вопрос' }),
+  ).toBeVisible();
+  await expect(page.getByText('РАСШИФРОВКА_ВОПРОСА_1')).toBeVisible();
+  await expect(page.getByText('Фрагмент ответа сотрудника')).toBeVisible();
+  await expect(page.getByText('Ответ раскрывает тему только частично.')).toBeVisible();
+  await expect(page.getByText('main.structure')).toHaveCount(0);
+  await expect(page.getByText('landscape.wowhaus')).toHaveCount(0);
+  await expect(page.getByText('RAW_TIMELINE_EVENT_TEST')).toHaveCount(0);
+  await expect(page.getByText('SEND_TELEGRAM_MESSAGE')).toHaveCount(0);
+  await expect(page.getByText('provider-request-secret')).toHaveCount(0);
+  await expect(page.getByText('audio/test-raw')).toHaveCount(0);
+  await expect(page.getByText('gpt-raw-model')).toHaveCount(0);
+
+  const questionTwoTab = page.getByRole('tab', { name: /Вопрос 2/u });
+  await questionTwoTab.click();
+  await expect(
+    page.getByRole('heading', { name: 'Вопрос 2 · Уточняющий вопрос' }),
+  ).toBeVisible();
+  await expect(page.getByText('РАСШИФРОВКА_ВОПРОСА_2')).toBeVisible();
+  await expect(page.getByText('РАСШИФРОВКА_ВОПРОСА_1')).toHaveCount(0);
+
+  await questionTwoTab.press('Home');
+  await expect(page.getByRole('tab', { name: /Вопрос 1/u })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  await page.getByRole('tab', { name: /Вопрос 1/u }).press('End');
+  await expect(page.getByRole('tab', { name: /Итог проверки/u })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+});
+
+test('review starts blank and submits readable unsupported decisions', async ({
+  page,
+}) => {
+  let submittedBody: Record<string, unknown> | null = null;
+  const question = evaluatedAdminQuestion({
+    questionId: 'question-review',
+    answerId: answerAId,
+    sequence: 1,
+    type: 'MAIN',
+    text: 'Проверьте спорный факт',
+    transcript: 'Концепцию благоустройства разработало бюро VaaS.',
+    components: [
+      {
+        componentKey: 'claim-1',
+        title: 'landscape.wowhaus',
+        criterionCode: null,
+        factCode: 'landscape.wowhaus',
+        awardedPoints: '0',
+        maxPoints: '0',
+        penaltyPoints: '0',
+        factVerdict: 'UNSUPPORTED',
+        evidence: {
+          claim: 'Концепцию благоустройства разработало бюро VaaS.',
+          explanation: 'Утверждение не подтверждено источником.',
+        },
+      },
+    ],
+  });
+  await installApi(page, async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === `/training/admin/results/${attemptId}`) {
+      await fulfillJson(
+        route,
+        adminDetail({
+          finalScore: null,
+          reviewStatus: 'PENDING',
+          requiresReview: true,
+          questions: [question],
+        }),
+      );
+      return true;
+    }
+    if (path === `/training/admin/results/${attemptId}/review`) {
+      submittedBody = request.postDataJSON() as Record<string, unknown>;
+      await fulfillJson(route, { review: { id: 'review-readable' } });
+      return true;
+    }
+    if (path === '/training/admin/ranking') {
+      await fulfillJson(route, emptyRanking());
+      return true;
+    }
+    return false;
+  });
+
+  await openAdminDetail(page);
+  const approveResult = page.getByLabel('Подтвердить системный результат');
+  const overrideResult = page.getByLabel('Скорректировать итог');
+  await expect(approveResult).not.toBeChecked();
+  await expect(overrideResult).not.toBeChecked();
+  await expect(page.getByText('Утверждения, требующие решения')).toBeVisible();
+  await expect(
+    page.getByText('Концепцию благоустройства разработало бюро VaaS.'),
+  ).toBeVisible();
+  await expect(page.getByText('claim-1')).toHaveCount(0);
+
+  const saveDecision = page.getByRole('button', { name: 'Сохранить решение' });
+  await saveDecision.click();
+  await expect(approveResult).toBeFocused();
+  await expect(page.getByText('Выберите итоговое решение по попытке.')).toBeVisible();
+
+  await approveResult.check();
+  await saveDecision.click();
+  await expect(page.getByLabel('Допустимый факт')).toBeFocused();
+  await expect(
+    page.getByText('Примите решение по каждому спорному утверждению.'),
+  ).toBeVisible();
+
+  await page.getByLabel('Ошибка сотрудника').check();
+  await saveDecision.click();
+  await expect(page.getByLabel('Комментарий (обязательно)')).toBeFocused();
+  await expect(
+    page.getByText('Добавьте обязательный комментарий проверяющего.'),
+  ).toBeVisible();
+
+  await page
+    .getByLabel('Комментарий (обязательно)')
+    .fill('Проверено по материалам проекта');
+  await saveDecision.click();
+  await expect.poll(() => submittedBody).not.toBeNull();
+  expect(submittedBody).toEqual({
+    decision: 'APPROVED',
+    comment: 'Проверено по материалам проекта',
+    unsupportedClaimsDecisions: [
+      { componentKey: 'claim-1', decision: 'INCORRECT' },
+    ],
+  });
+});
+
+test('mobile detail uses a sequential pager and never overflows', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  const longTranscript = 'Подробный ответ сотрудника. '.repeat(40);
+  await installApi(page, async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === `/training/admin/results/${attemptId}`) {
+      await fulfillJson(
+        route,
+        adminDetail({
+          questions: [
+            evaluatedAdminQuestion({
+              questionId: 'question-mobile-1',
+              answerId: answerAId,
+              sequence: 1,
+              type: 'MAIN',
+              text: 'Первый вопрос',
+              transcript: longTranscript,
+              components: [],
+            }),
+            evaluatedAdminQuestion({
+              questionId: 'question-mobile-2',
+              answerId: answerBId,
+              sequence: 2,
+              type: 'FOLLOW_UP',
+              text: 'Второй вопрос',
+              transcript: 'МОБИЛЬНЫЙ_ОТВЕТ_2',
+              components: [],
+            }),
+          ],
+        }),
+      );
+      return true;
+    }
+    return false;
+  });
+
+  await page.goto(`/admin/training/results/${attemptId}`);
+  await expect(page.getByText('Вопрос 1 из 2')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Предыдущий вопрос' })).toBeDisabled();
+  const expandTranscript = page.getByRole('button', { name: 'Показать полностью' });
+  await expect(expandTranscript).toHaveAttribute('aria-expanded', 'false');
+  await expandTranscript.click();
+  await expect(page.getByRole('button', { name: 'Свернуть' })).toHaveAttribute(
+    'aria-expanded',
+    'true',
+  );
+  await page.getByRole('button', { name: 'Следующий вопрос' }).click();
+  await expect(page.getByText('Вопрос 2 из 2')).toBeVisible();
+  await expect(page.getByText('МОБИЛЬНЫЙ_ОТВЕТ_2')).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
 });
 
 test('employee accepts the current policy before a Telegram start link is issued', async ({
@@ -646,7 +977,7 @@ test('employee, admin list, ranking and detail expose behavioral loading/empty/e
   });
   await page.goto(`/admin/training/results/${attemptId}`);
   await expect(page.getByRole('status')).toContainText(
-    'Загрузка полного разбора',
+    'Загрузка результата',
   );
   releaseDetail();
   await expect(page.getByText('detail failed')).toBeVisible();
@@ -654,11 +985,14 @@ test('employee, admin list, ranking and detail expose behavioral loading/empty/e
 
 async function openAdminDetail(page: Page) {
   await page.goto(`/admin/training/results/${attemptId}`);
-  await expect(page.getByText('Решение администратора', { exact: true })).toBeVisible();
+  await expect(page.getByText('Навигация по вопросам')).toBeVisible();
+  await page.getByRole('tab', { name: /Итог проверки/u }).click();
+  await expect(page.getByRole('heading', { name: 'Итог проверки' })).toBeVisible();
 }
 
 async function submitReview(page: Page, comment: string) {
-  await page.locator('textarea').fill(comment);
+  await page.getByLabel('Подтвердить системный результат').check();
+  await page.getByLabel('Комментарий (обязательно)').fill(comment);
   await page.getByRole('button', { name: 'Сохранить решение' }).click();
 }
 
@@ -748,7 +1082,7 @@ function adminDetail(
       expiresAt: '2026-07-28T10:10:00.000Z',
       graceExpiresAt: '2026-07-28T10:12:00.000Z',
       timeline: [],
-      questions: [],
+      questions: [adminQuestion('question-default', answerAId)],
       jobs: [],
       reviews: [],
       ...overrides,
@@ -756,7 +1090,17 @@ function adminDetail(
   };
 }
 
-function adminQuestion(questionId: string, answerId: string) {
+function adminQuestion(
+  questionId: string,
+  answerId: string,
+  overrides: Record<string, unknown> = {},
+) {
+  const answerOverrides =
+    overrides.answer && typeof overrides.answer === 'object'
+      ? (overrides.answer as Record<string, unknown>)
+      : {};
+  const questionOverrides = { ...overrides };
+  delete questionOverrides.answer;
   return {
     id: questionId,
     sequence: 1,
@@ -790,8 +1134,101 @@ function adminQuestion(questionId: string, answerId: string) {
       transcriptions: [],
       evaluations: [],
       providerRuns: [],
+      ...answerOverrides,
     },
+    ...questionOverrides,
   };
+}
+
+function evaluatedAdminQuestion({
+  questionId,
+  answerId,
+  sequence,
+  type,
+  text,
+  transcript,
+  components,
+}: {
+  questionId: string;
+  answerId: string;
+  sequence: number;
+  type: 'MAIN' | 'FOLLOW_UP';
+  text: string;
+  transcript: string;
+  components: Array<Record<string, unknown>>;
+}) {
+  const awardedScore = components.reduce((total, component) => {
+    const value = Number(component.awardedPoints ?? 0);
+    return total + (Number.isFinite(value) ? value : 0);
+  }, 0);
+
+  return adminQuestion(questionId, answerId, {
+    sequence,
+    type,
+    text,
+    answer: {
+      combinedTranscript: transcript,
+      audioMimeType: 'audio/test-raw',
+      audioSizeBytes: '123456',
+      transcriptionModel: 'gpt-raw-model',
+      transcriptionRequestId: 'provider-request-secret',
+      segments: [
+        {
+          id: `segment-${sequence}`,
+          segmentIndex: 0,
+          mimeType: 'audio/test-raw',
+          sizeBytes: '123456',
+          durationMilliseconds: 44_000,
+          downloadedAt: null,
+          receivedAt: '2026-07-28T10:01:00.000Z',
+        },
+      ],
+      transcriptions: [
+        {
+          id: `transcription-${sequence}`,
+          transcriptionNumber: 1,
+          transcript,
+          language: 'ru',
+          wordCount: 10,
+          isActive: true,
+          createdAt: '2026-07-28T10:04:00.000Z',
+        },
+      ],
+      evaluations: [
+        {
+          id: `evaluation-${sequence}`,
+          evaluationNumber: 1,
+          actualModelId: 'gpt-raw-model',
+          reasoningEffort: null,
+          promptVersion: 'prompt-secret',
+          schemaVersion: 'schema-secret',
+          rubricVersion: 'rubric-secret',
+          aiSuggestedScore: String(awardedScore),
+          serverScore: String(awardedScore),
+          summary: 'Понятное резюме',
+          requiresReview: components.some(
+            (component) => component.factVerdict === 'UNSUPPORTED',
+          ),
+          reviewReasons: null,
+          usage: { raw: 'usage-secret' },
+          latencyMs: 123,
+          requestId: 'provider-request-secret',
+          isActive: true,
+          components,
+          createdAt: '2026-07-28T10:04:00.000Z',
+        },
+      ],
+      providerRuns: [
+        {
+          id: `provider-run-${sequence}`,
+          kind: 'EVALUATION',
+          status: 'SUCCEEDED',
+          requestedModelId: 'gpt-raw-model',
+          requestId: 'provider-request-secret',
+        },
+      ],
+    },
+  });
 }
 
 function emptyRanking() {

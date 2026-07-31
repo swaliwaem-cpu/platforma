@@ -7,10 +7,14 @@ import { fileURLToPath } from 'node:url';
 import { TrainingAudioObjectUrl } from '../src/training/trainingAudioUrl.mjs';
 import { TrainingReviewSubmission } from '../src/training/trainingReviewSubmission.mjs';
 import {
+  answerStatusLabels,
   attemptStatusLabels,
   employeeBreakdownStatusLabels,
+  factVerdictLabels,
   formatTrainingDuration,
   formatTrainingScore,
+  questionStatusLabels,
+  questionTypeLabels,
   visibleEmployeeScore,
 } from '../src/training/trainingViewModel.mjs';
 
@@ -55,6 +59,12 @@ test('employee view model masks pending scores and formats stable states', () =>
   );
   assert.equal(formatTrainingScore('88.50'), '88,5');
   assert.equal(formatTrainingDuration(125), '2 мин 5 сек');
+  assert.equal(questionTypeLabels.MAIN, 'Основной вопрос');
+  assert.equal(questionTypeLabels.FOLLOW_UP, 'Уточняющий вопрос');
+  assert.equal(questionStatusLabels.SCORED, 'Оценён');
+  assert.equal(answerStatusLabels.TRANSCRIBING, 'Распознаётся');
+  assert.equal(factVerdictLabels.INCORRECT, 'Фактическая ошибка');
+  assert.equal(factVerdictLabels.UNSUPPORTED, 'Требуется решение');
 });
 
 test('protected audio object URLs are revoked on replacement and cleanup', () => {
@@ -190,4 +200,24 @@ test('training results layout covers mobile, tablet and reduced motion', () => {
   assert.match(cssSource, /@media \(max-width: 430px\)/u);
   assert.match(cssSource, /@media \(prefers-reduced-motion: reduce\)/u);
   assert.match(cssSource, /\.training-results-table\s*\{[\s\S]*min-width/u);
+  assert.match(cssSource, /\.training-review-workspace\s*\{/u);
+  assert.match(cssSource, /\.training-question-navigation\s*\{/u);
+  assert.match(cssSource, /\.training-question-workspace\s*\{/u);
+});
+
+test('admin results render a human review workspace without diagnostics', () => {
+  assert.match(adminSource, /Навигация по вопросам/u);
+  assert.match(adminSource, /Расшифровка ответа/u);
+  assert.match(adminSource, /Разбор ответа/u);
+  assert.match(adminSource, /Утверждения, требующие решения/u);
+  assert.match(adminSource, /Решение проверяющего/u);
+  assert.match(adminSource, /useState<TrainingReviewRequest\['decision'\] \| null>/u);
+  assert.doesNotMatch(adminSource, /function Timeline/u);
+  assert.doesNotMatch(adminSource, /function ProcessingHistory/u);
+  assert.doesNotMatch(adminSource, /Provider runs и метрики/u);
+  assert.doesNotMatch(adminSource, /История evaluation/u);
+  assert.doesNotMatch(adminSource, /audioMimeType/u);
+  assert.doesNotMatch(adminSource, /audioSizeBytes/u);
+  assert.doesNotMatch(adminSource, /transcriptionRequestId/u);
+  assert.doesNotMatch(adminSource, /JSON\.stringify\(value/u);
 });

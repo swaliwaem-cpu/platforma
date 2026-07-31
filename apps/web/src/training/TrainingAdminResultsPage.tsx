@@ -1,21 +1,29 @@
 import type {
-  TrainingAdminAnswerDetail,
   TrainingAdminAttemptDetail,
   TrainingAdminResultListItem,
+  TrainingAdminScoreComponent,
   TrainingReviewRequest,
 } from '@platforma/shared';
 import {
   ArrowLeftIcon,
   AudioLinesIcon,
+  CalendarDaysIcon,
   CheckCircle2Icon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  CircleAlertIcon,
+  ClipboardCheckIcon,
+  FolderIcon,
   LoaderCircleIcon,
   RefreshCwIcon,
   RotateCcwIcon,
   SearchIcon,
   ShieldAlertIcon,
+  UserRoundIcon,
 } from 'lucide-react';
 import {
   type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -35,9 +43,21 @@ import { useAuth } from '../auth/AuthProvider';
 import {
   CardContent,
   CardHeader,
-  CardTitle,
 } from '../components/ui/card';
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from '../components/ui/field';
 import { Input } from '../components/ui/input';
+import {
+  RadioGroup,
+  RadioGroupItem,
+} from '../components/ui/radio-group';
 import {
   Table,
   TableBody,
@@ -62,9 +82,13 @@ import {
 } from './trainingReviewSubmission.mjs';
 import {
   attemptStatusLabels,
+  answerStatusLabels,
+  factVerdictLabels,
   formatTrainingDuration,
   formatTrainingScore,
   passStatusLabels,
+  questionStatusLabels,
+  questionTypeLabels,
   reviewStatusLabels,
 } from './trainingViewModel.mjs';
 import './trainingResults.css';
@@ -196,9 +220,7 @@ function TrainingAdminResultList({
           </button>
           <p className="eyebrow">Обучение · контроль</p>
           <h2>Результаты и проверки</h2>
-          <p>
-            Быстрый список попыток без тяжёлых transcript и audio-данных.
-          </p>
+          <p>Список попыток сотрудников и результатов ручной проверки.</p>
         </div>
         <div className="training-results-actions">
           <AdminButton
@@ -422,7 +444,7 @@ function TrainingAdminResultList({
                 <TableHead>Состояние</TableHead>
                 <TableHead>Баллы</TableHead>
                 <TableHead>Проверка</TableHead>
-                <TableHead>Ошибки</TableHead>
+                <TableHead>Замечания</TableHead>
                 <TableHead>Дата</TableHead>
                 <TableHead aria-label="Действия" />
               </TableRow>
@@ -456,10 +478,10 @@ function TrainingAdminResultList({
                       Итог {formatTrainingScore(item.finalScore)}
                     </strong>
                     <small>
-                      AI {formatTrainingScore(item.aiScore)} · сервер{' '}
-                      {formatTrainingScore(item.serverScore)}
+                      Предварительно {formatTrainingScore(item.aiScore)} · по
+                      правилам {formatTrainingScore(item.serverScore)}
                       {item.adminScore
-                        ? ` · admin ${formatTrainingScore(item.adminScore)}`
+                        ? ` · после проверки ${formatTrainingScore(item.adminScore)}`
                         : ''}
                     </small>
                     <small>{passStatusLabels[item.passStatus]}</small>
@@ -468,8 +490,8 @@ function TrainingAdminResultList({
                     {reviewStatusLabels[item.reviewStatus]}
                   </TableCell>
                   <TableCell>
-                    {item.answerErrorsCount +
-                      item.unsupportedClaimsCount}
+                    {item.answerErrorsCount} ошибок ·{' '}
+                    {item.unsupportedClaimsCount} требуют решения
                   </TableCell>
                   <TableCell>
                     {new Date(item.startedAt).toLocaleDateString('ru-RU')}
@@ -503,6 +525,12 @@ function TrainingAdminResultList({
   );
 }
 
+type SelectedReviewView =
+  | { kind: 'question'; questionId: string }
+  | { kind: 'final' };
+
+type AttemptQuestion = TrainingAdminAttemptDetail['questions'][number];
+
 function TrainingAdminAttemptPage({
   attemptId,
   onBack,
@@ -514,9 +542,17 @@ function TrainingAdminAttemptPage({
   const [attempt, setAttempt] = useState<TrainingAdminAttemptDetail | null>(
     null,
   );
+  const [selectedView, setSelectedView] = useState<SelectedReviewView | null>(
+    null,
+  );
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  const applyAttempt = useCallback((nextAttempt: TrainingAdminAttemptDetail) => {
+    setAttempt(nextAttempt);
+    setSelectedView((current) => keepAvailableReviewView(current, nextAttempt));
+  }, []);
 
   const load = useCallback(async () => {
     if (!accessToken) return;
@@ -524,13 +560,13 @@ function TrainingAdminAttemptPage({
     setError(null);
     try {
       const response = await getTrainingAdminAttempt(accessToken, attemptId);
-      setAttempt(response.attempt);
+      applyAttempt(response.attempt);
     } catch (caughtError) {
       setError(readError(caughtError, 'Не удалось загрузить попытку'));
     } finally {
       setIsLoading(false);
     }
-  }, [accessToken, attemptId]);
+  }, [accessToken, applyAttempt, attemptId]);
 
   const refreshAfterReview = useCallback(async () => {
     if (!accessToken) {
@@ -543,17 +579,31 @@ function TrainingAdminAttemptPage({
         pageSize: 1,
       }),
     ]);
-    setAttempt(detail.attempt);
+    applyAttempt(detail.attempt);
     setError(null);
-  }, [accessToken, attemptId]);
+  }, [accessToken, applyAttempt, attemptId]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
+  const selectedQuestion =
+    attempt && selectedView?.kind === 'question'
+      ? attempt.questions.find(
+          (question) => question.id === selectedView.questionId,
+        ) ?? null
+      : null;
+
+  const openFinalReview = useCallback(() => {
+    setSelectedView({ kind: 'final' });
+    window.requestAnimationFrame(() => {
+      document.getElementById('training-review-panel')?.focus();
+    });
+  }, []);
+
   return (
     <div className="training-results training-results--detail">
-      <header className="training-results-header">
+      <header className="training-results-header training-results-detail-header">
         <div>
           <button
             className="training-results-back"
@@ -561,20 +611,14 @@ function TrainingAdminAttemptPage({
             onClick={onBack}
           >
             <ArrowLeftIcon aria-hidden="true" />
-            Результаты
+            Результаты обучения
           </button>
-          <p className="eyebrow">Полный разбор</p>
           <h2>
             {attempt
               ? `${attempt.user.name ?? attempt.user.email} · ${attempt.project.title}`
               : 'Результат попытки'}
           </h2>
-          {attempt ? (
-            <p>
-              Попытка {attempt.attemptNumber} ·{' '}
-              {new Date(attempt.startedAt).toLocaleString('ru-RU')}
-            </p>
-          ) : null}
+          <p>Проверка ответов сотрудника и итогового результата.</p>
         </div>
         <AdminButton disabled={isLoading} onClick={() => void load()}>
           <RefreshCwIcon data-icon="inline-start" aria-hidden="true" />
@@ -583,143 +627,336 @@ function TrainingAdminAttemptPage({
       </header>
 
       {error ? <AdminAlert tone="error">{error}</AdminAlert> : null}
-      {notice ? <AdminAlert tone="notice">{notice}</AdminAlert> : null}
-      {isLoading ? (
-        <div className="training-results-loading" role="status">
-          <LoaderCircleIcon aria-hidden="true" />
-          Загрузка полного разбора
+      {notice ? (
+        <div className="training-review-status" role="status">
+          {notice}
         </div>
       ) : null}
-      {attempt ? (
+      {isLoading ? (
+        <div className="training-results-loading" role="status" aria-busy>
+          <LoaderCircleIcon aria-hidden="true" />
+          Загрузка результата…
+        </div>
+      ) : null}
+      {attempt && selectedView ? (
         <>
-          <AttemptScoreSummary attempt={attempt} />
-          <Timeline attempt={attempt} />
-          <div className="training-admin-question-list">
-            {attempt.questions.map((question) => (
-              <AdminQuestionCard
-                key={question.id}
-                answer={question.answer}
-                question={question}
+          <AttemptOverview attempt={attempt} />
+          <div className="training-review-workspace">
+            <QuestionNavigation
+              attempt={attempt}
+              selectedView={selectedView}
+              onSelect={setSelectedView}
+            />
+            {selectedQuestion ? (
+              <QuestionWorkspace
+                key={selectedQuestion.id}
+                accessToken={accessToken}
                 canReadAudio={hasPermission('training:audio:read')}
                 canReview={hasPermission('training:results:review')}
-                accessToken={accessToken}
-                onNotice={setNotice}
+                question={selectedQuestion}
                 onError={setError}
+                onNotice={setNotice}
+                onOpenFinal={openFinalReview}
               />
-            ))}
+            ) : null}
+            <section
+              aria-labelledby="training-question-tab-final"
+              className="training-final-workspace"
+              hidden={selectedView.kind !== 'final'}
+              id="training-review-panel"
+              role="tabpanel"
+              tabIndex={0}
+            >
+              {hasPermission('training:results:review') ? (
+                <ReviewPanel
+                  accessToken={accessToken}
+                  attempt={attempt}
+                  onRefresh={refreshAfterReview}
+                />
+              ) : (
+                <AdminPanel>
+                  <CardHeader>
+                    <h3>Итог проверки</h3>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="muted-text">
+                      У вас нет права изменять результат этой попытки.
+                    </p>
+                  </CardContent>
+                </AdminPanel>
+              )}
+              <ReviewHistory attempt={attempt} />
+            </section>
           </div>
-          {hasPermission('training:results:review') ? (
-            <ReviewPanel
-              accessToken={accessToken}
-              attempt={attempt}
-              onRefresh={refreshAfterReview}
-            />
-          ) : null}
-          <ReviewHistory attempt={attempt} />
-          <ProcessingHistory attempt={attempt} />
         </>
       ) : null}
     </div>
   );
 }
 
-function AttemptScoreSummary({
-  attempt,
-}: {
-  attempt: TrainingAdminAttemptDetail;
-}) {
+function AttemptOverview({ attempt }: { attempt: TrainingAdminAttemptDetail }) {
   return (
-    <AdminPanel>
-      <CardHeader>
-        <CardTitle>Итог попытки</CardTitle>
-        <AdminStatusBadge>
-          {reviewStatusLabels[attempt.reviewStatus]}
-        </AdminStatusBadge>
-      </CardHeader>
+    <AdminPanel className="training-attempt-overview">
       <CardContent>
-        <dl className="training-detail-summary training-detail-summary--admin">
+        <dl>
           <div>
-            <dt>AI</dt>
-            <dd>{formatTrainingScore(attempt.aiScore)}</dd>
+            <dt>
+              <UserRoundIcon aria-hidden="true" />
+              Сотрудник
+            </dt>
+            <dd>{attempt.user.name ?? attempt.user.email}</dd>
           </div>
           <div>
-            <dt>Server</dt>
-            <dd>{formatTrainingScore(attempt.serverScore)}</dd>
+            <dt>
+              <FolderIcon aria-hidden="true" />
+              Проект
+            </dt>
+            <dd>{attempt.project.title}</dd>
           </div>
           <div>
-            <dt>Admin</dt>
-            <dd>{formatTrainingScore(attempt.adminScore)}</dd>
+            <dt>
+              <RotateCcwIcon aria-hidden="true" />
+              Попытка
+            </dt>
+            <dd>№ {attempt.attemptNumber}</dd>
           </div>
-          <div className="training-detail-summary-final">
-            <dt>Final</dt>
-            <dd>{formatTrainingScore(attempt.finalScore)}</dd>
+          <div>
+            <dt>
+              <CalendarDaysIcon aria-hidden="true" />
+              Дата и время
+            </dt>
+            <dd>{new Date(attempt.startedAt).toLocaleString('ru-RU')}</dd>
+          </div>
+          <div className="training-attempt-overview-score">
+            <dt>Итоговый балл</dt>
+            <dd>{formatTrainingScore(attempt.finalScore)} из 100</dd>
           </div>
           <div>
             <dt>Результат</dt>
-            <dd>{passStatusLabels[attempt.passStatus]}</dd>
+            <dd>
+              <AdminStatusBadge
+                className={`training-status-badge training-status-badge--${attempt.passStatus.toLowerCase()}`}
+              >
+                {passStatusLabels[attempt.passStatus]}
+              </AdminStatusBadge>
+            </dd>
           </div>
           <div>
-            <dt>Время</dt>
-            <dd>{formatTrainingDuration(attempt.totalDurationSeconds)}</dd>
+            <dt>Статус</dt>
+            <dd>
+              <AdminStatusBadge
+                className={`training-status-badge training-status-badge--review-${attempt.reviewStatus.toLowerCase()}`}
+              >
+                {reviewStatusLabels[attempt.reviewStatus]}
+              </AdminStatusBadge>
+            </dd>
           </div>
         </dl>
-        {attempt.summary ? (
-          <p className="training-attempt-summary">{attempt.summary}</p>
-        ) : null}
       </CardContent>
     </AdminPanel>
   );
 }
 
-function Timeline({ attempt }: { attempt: TrainingAdminAttemptDetail }) {
+function QuestionNavigation({
+  attempt,
+  selectedView,
+  onSelect,
+}: {
+  attempt: TrainingAdminAttemptDetail;
+  selectedView: SelectedReviewView;
+  onSelect: (view: SelectedReviewView) => void;
+}) {
+  const navigationItems: Array<{
+    id: string;
+    label: string;
+    view: SelectedReviewView;
+  }> = [
+    ...attempt.questions.map((question) => ({
+      id: `training-question-tab-${question.id}`,
+      label: `Вопрос ${question.sequence}`,
+      view: { kind: 'question' as const, questionId: question.id },
+    })),
+    {
+      id: 'training-question-tab-final',
+      label: 'Итог проверки',
+      view: { kind: 'final' as const },
+    },
+  ];
+  const selectedIndex = Math.max(
+    0,
+    navigationItems.findIndex((item) => isSameReviewView(item.view, selectedView)),
+  );
+
+  function handleNavigationKey(
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    index: number,
+  ) {
+    let nextIndex: number | null = null;
+    if (event.key === 'ArrowDown' || event.key === 'ArrowRight') {
+      nextIndex = (index + 1) % navigationItems.length;
+    } else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') {
+      nextIndex = (index - 1 + navigationItems.length) % navigationItems.length;
+    } else if (event.key === 'Home') {
+      nextIndex = 0;
+    } else if (event.key === 'End') {
+      nextIndex = navigationItems.length - 1;
+    }
+    if (nextIndex === null) return;
+    event.preventDefault();
+    const nextItem = navigationItems[nextIndex];
+    if (!nextItem) return;
+    onSelect(nextItem.view);
+    window.requestAnimationFrame(() => {
+      document.getElementById(nextItem.id)?.focus();
+    });
+  }
+
   return (
-    <AdminPanel>
-      <CardHeader>
-        <CardTitle>Timeline</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <ol className="training-timeline">
-          {attempt.timeline.map((event, index) => (
-            <li key={`${event.at}:${event.kind}:${index}`}>
-              <span aria-hidden="true" />
-              <div>
-                <strong>{event.label}</strong>
-                <time dateTime={event.at}>
-                  {new Date(event.at).toLocaleString('ru-RU')}
-                </time>
-              </div>
-            </li>
-          ))}
-        </ol>
-      </CardContent>
-    </AdminPanel>
+    <>
+      <AdminPanel className="training-question-navigation">
+        <CardHeader>
+          <h3>Навигация по вопросам</h3>
+          <span>
+            {formatRussianCount(attempt.questions.length, [
+              'вопрос',
+              'вопроса',
+              'вопросов',
+            ])}
+          </span>
+        </CardHeader>
+        <CardContent
+          aria-label="Вопросы попытки"
+          aria-orientation="vertical"
+          role="tablist"
+        >
+          {attempt.questions.map((question, index) => {
+            const isSelected =
+              selectedView.kind === 'question' &&
+              selectedView.questionId === question.id;
+            const score = getQuestionScore(question);
+            return (
+              <button
+                aria-controls="training-question-workspace"
+                aria-selected={isSelected}
+                className="training-question-navigation-item"
+                id={`training-question-tab-${question.id}`}
+                key={question.id}
+                role="tab"
+                tabIndex={isSelected ? 0 : -1}
+                type="button"
+                onClick={() =>
+                  onSelect({ kind: 'question', questionId: question.id })
+                }
+                onKeyDown={(event) => handleNavigationKey(event, index)}
+              >
+                <span className="training-question-number" aria-hidden="true">
+                  {question.sequence}
+                </span>
+                <span className="training-question-navigation-copy">
+                  <strong>Вопрос {question.sequence}</strong>
+                  <small>{questionTypeLabels[question.type]}</small>
+                </span>
+                <span className="training-question-navigation-result">
+                  <strong>{score}</strong>
+                  <small>
+                    {questionNeedsAttention(question)
+                      ? 'Требуется проверка'
+                      : questionStatusLabels[question.status]}
+                  </small>
+                </span>
+              </button>
+            );
+          })}
+          <button
+            aria-controls="training-review-panel"
+            aria-selected={selectedView.kind === 'final'}
+            className="training-question-navigation-item training-question-navigation-final"
+            id="training-question-tab-final"
+            role="tab"
+            tabIndex={selectedView.kind === 'final' ? 0 : -1}
+            type="button"
+            onClick={() => onSelect({ kind: 'final' })}
+            onKeyDown={(event) =>
+              handleNavigationKey(event, navigationItems.length - 1)
+            }
+          >
+            <ClipboardCheckIcon aria-hidden="true" />
+            <span className="training-question-navigation-copy">
+              <strong>Итог проверки</strong>
+              <small>{formatTrainingScore(attempt.finalScore)} из 100</small>
+            </span>
+            <span className="training-question-navigation-result">
+              <small>{reviewStatusLabels[attempt.reviewStatus]}</small>
+            </span>
+          </button>
+        </CardContent>
+      </AdminPanel>
+
+      <div className="training-question-pager" aria-live="polite">
+        <AdminButton
+          aria-label="Предыдущий вопрос"
+          disabled={selectedIndex === 0}
+          tone="secondary"
+          onClick={() => {
+            const previousItem = navigationItems[selectedIndex - 1];
+            if (previousItem) onSelect(previousItem.view);
+          }}
+        >
+          <ChevronLeftIcon data-icon="inline-start" aria-hidden="true" />
+          Назад
+        </AdminButton>
+        <strong>
+          {selectedView.kind === 'final'
+            ? 'Итог проверки'
+            : `Вопрос ${selectedIndex + 1} из ${attempt.questions.length}`}
+        </strong>
+        <AdminButton
+          aria-label="Следующий вопрос"
+          disabled={selectedIndex === navigationItems.length - 1}
+          tone="secondary"
+          onClick={() => {
+            const nextItem = navigationItems[selectedIndex + 1];
+            if (nextItem) onSelect(nextItem.view);
+          }}
+        >
+          Далее
+          <ChevronRightIcon data-icon="inline-end" aria-hidden="true" />
+        </AdminButton>
+      </div>
+    </>
   );
 }
 
-function AdminQuestionCard({
-  answer,
-  question,
+function QuestionWorkspace({
+  accessToken,
   canReadAudio,
   canReview,
-  accessToken,
-  onNotice,
+  question,
   onError,
+  onNotice,
+  onOpenFinal,
 }: {
-  answer: TrainingAdminAnswerDetail | null;
-  question: TrainingAdminAttemptDetail['questions'][number];
+  accessToken: string | null;
   canReadAudio: boolean;
   canReview: boolean;
-  accessToken: string | null;
-  onNotice: (value: string | null) => void;
+  question: AttemptQuestion;
   onError: (value: string | null) => void;
+  onNotice: (value: string | null) => void;
+  onOpenFinal: () => void;
 }) {
+  const answer = question.answer;
   const activeEvaluation = answer?.evaluations.find(
     (evaluation) => evaluation.isActive,
   );
   const activeTranscription = answer?.transcriptions.find(
     (transcription) => transcription.isActive,
   );
+  const [isTranscriptExpanded, setIsTranscriptExpanded] = useState(false);
   const [isReprocessing, setIsReprocessing] = useState(false);
+  const transcript =
+    activeTranscription?.transcript ??
+    answer?.combinedTranscript ??
+    'Расшифровка пока недоступна.';
 
   async function reprocess(kind: 'transcription' | 'evaluation') {
     if (!accessToken || !answer) return;
@@ -733,7 +970,11 @@ function AdminQuestionCard({
         kind,
         'Повторная обработка из интерфейса проверки',
       );
-      onNotice('Повторная обработка поставлена в очередь.');
+      onNotice(
+        kind === 'transcription'
+          ? 'Повторное распознавание поставлено в очередь.'
+          : 'Пересчёт оценки поставлен в очередь.',
+      );
     } catch (caughtError) {
       onError(readError(caughtError, 'Не удалось запустить обработку'));
     } finally {
@@ -742,76 +983,100 @@ function AdminQuestionCard({
   }
 
   return (
-    <AdminPanel className="training-admin-question">
+    <AdminPanel
+      aria-labelledby={`training-question-tab-${question.id}`}
+      className="training-question-workspace"
+      id="training-question-workspace"
+      role="tabpanel"
+      tabIndex={0}
+    >
       <CardHeader>
         <div>
-          <p className="eyebrow">
-            Вопрос {question.sequence} · {question.type}
-          </p>
-          <CardTitle>{question.text}</CardTitle>
+          <h3 id={`training-question-heading-${question.id}`}>
+            Вопрос {question.sequence} · {questionTypeLabels[question.type]}
+          </h3>
+          <p>{question.text}</p>
         </div>
-        <AdminStatusBadge>{question.status}</AdminStatusBadge>
+        <AdminStatusBadge
+          className={`training-status-badge training-status-badge--question-${question.status.toLowerCase()}`}
+        >
+          {questionStatusLabels[question.status]}
+        </AdminStatusBadge>
       </CardHeader>
       <CardContent>
         {!answer ? (
-          <AdminEmptyState title="Ответ не создан" />
+          <AdminEmptyState
+            title="Ответ не получен"
+            description="Сотрудник не успел ответить на этот вопрос."
+          />
         ) : (
-          <>
-            <div className="training-answer-meta">
-              <span>Статус: {answer.status}</span>
-              <span>
-                Голос: {formatTrainingDuration(
-                  answer.audioDurationMilliseconds === null
-                    ? null
-                    : Math.round(answer.audioDurationMilliseconds / 1_000),
-                )}
-              </span>
-              <span>Сегментов: {answer.segments.length}</span>
-              <span>
-                Audio: {answer.audioMimeType ?? 'MIME —'} ·{' '}
-                {answer.audioSizeBytes
-                  ? `${answer.audioSizeBytes} bytes`
-                  : 'размер —'}
-              </span>
-              <span>
-                Transcription:{' '}
-                {answer.transcriptionProvider ?? 'provider —'} /{' '}
-                {answer.transcriptionModel ?? 'model —'} / request{' '}
-                {answer.transcriptionRequestId ?? '—'}
-              </span>
-            </div>
-            {canReadAudio && answer.audioAvailable ? (
-              <TrainingAudioPlayer
-                accessToken={accessToken}
-                answerId={answer.id}
-              />
-            ) : null}
-            <section className="training-answer-section">
-              <div className="training-answer-section-heading">
-                <h4>Transcript</h4>
-                {canReview ? (
+          <div className="training-question-columns">
+            <section className="training-answer-pane">
+              <header>
+                <div>
+                  <h4>Ответ сотрудника</h4>
+                  <span>{answerStatusLabels[answer.status]}</span>
+                </div>
+                <span>
+                  {formatTrainingDuration(question.answerDurationSeconds)}
+                </span>
+              </header>
+              {canReadAudio && answer.audioAvailable ? (
+                <TrainingAudioPlayer
+                  accessToken={accessToken}
+                  answerId={answer.id}
+                  questionSequence={question.sequence}
+                />
+              ) : null}
+              <section className="training-transcript-card">
+                <header>
+                  <h4>Расшифровка ответа</h4>
+                  {canReview ? (
+                    <AdminButton
+                      disabled={isReprocessing}
+                      tone="text"
+                      onClick={() => void reprocess('transcription')}
+                    >
+                      <RotateCcwIcon
+                        data-icon="inline-start"
+                        aria-hidden="true"
+                      />
+                      Повторно распознать
+                    </AdminButton>
+                  ) : null}
+                </header>
+                <p
+                  className="training-transcript-readable"
+                  data-expanded={isTranscriptExpanded}
+                  id={`training-transcript-${answer.id}`}
+                >
+                  {transcript}
+                </p>
+                {transcript.length > 420 ? (
                   <AdminButton
-                    disabled={isReprocessing}
+                    aria-controls={`training-transcript-${answer.id}`}
+                    aria-expanded={isTranscriptExpanded}
                     tone="text"
-                    onClick={() => void reprocess('transcription')}
+                    onClick={() => setIsTranscriptExpanded((current) => !current)}
                   >
-                    <RotateCcwIcon
-                      data-icon="inline-start"
-                      aria-hidden="true"
-                    />
-                    Перезапустить
+                    {isTranscriptExpanded ? 'Свернуть' : 'Показать полностью'}
                   </AdminButton>
                 ) : null}
-              </div>
-              <p className="training-transcript">
-                {activeTranscription?.transcript ??
-                  answer.combinedTranscript ??
-                  'Transcript отсутствует.'}
-              </p>
+              </section>
+              {answer.errorCode ? (
+                <AdminAlert tone="error">
+                  Ответ не удалось обработать. Повторите обработку или обратитесь
+                  к администратору системы.
+                </AdminAlert>
+              ) : null}
             </section>
-            <section className="training-answer-section">
-              <div className="training-answer-section-heading">
-                <h4>Оценка и доказательства</h4>
+
+            <section className="training-evaluation-pane">
+              <header>
+                <div>
+                  <h4>Разбор ответа</h4>
+                  <span>Понятное объяснение выставленных баллов</span>
+                </div>
                 {canReview ? (
                   <AdminButton
                     disabled={isReprocessing}
@@ -822,161 +1087,104 @@ function AdminQuestionCard({
                       data-icon="inline-start"
                       aria-hidden="true"
                     />
-                    Перезапустить
+                    Пересчитать оценку
                   </AdminButton>
                 ) : null}
-              </div>
+              </header>
               {activeEvaluation ? (
-                <div className="training-component-list">
-                  {activeEvaluation.components.map((component) => (
-                    <article
-                      key={component.componentKey}
-                      className={
-                        component.factVerdict === 'UNSUPPORTED' ||
-                        component.factVerdict === 'INCORRECT'
-                          ? 'training-component training-component--warning'
-                          : 'training-component'
-                      }
-                    >
-                      <div>
-                        <strong>
-                          {component.title ?? component.componentKey}
-                        </strong>
-                        <span>
-                          {component.criterionCode ??
-                            component.factCode ??
-                            'Компонент'}
-                        </span>
-                      </div>
-                      <strong>
-                        {formatTrainingScore(component.awardedPoints)} /{' '}
-                        {formatTrainingScore(component.maxPoints)}
-                      </strong>
-                      <span>{component.factVerdict ?? 'CRITERION'}</span>
-                      {component.evidence ? (
-                        <pre>{formatEvidence(component.evidence)}</pre>
-                      ) : null}
-                    </article>
-                  ))}
-                </div>
+                <ReadableEvaluation
+                  components={activeEvaluation.components}
+                  onOpenFinal={onOpenFinal}
+                />
               ) : (
-                <p className="muted-text">Активная оценка отсутствует.</p>
+                <AdminEmptyState
+                  title="Оценка пока недоступна"
+                  description="Обработка ответа ещё не завершена."
+                />
               )}
             </section>
-            <details className="training-provider-details">
-              <summary>
-                Сегменты и акустика ({answer.segments.length})
-              </summary>
-              <div className="training-segment-list">
-                {answer.segments.map((segment) => (
-                  <article key={segment.id}>
-                    <strong>Сегмент {segment.segmentIndex + 1}</strong>
-                    <span>{segment.mimeType ?? 'MIME не указан'}</span>
-                    <span>
-                      {segment.sizeBytes
-                        ? `${segment.sizeBytes} bytes`
-                        : 'Размер не указан'}
-                    </span>
-                    <span>
-                      {formatTrainingDuration(
-                        segment.durationMilliseconds === null
-                          ? null
-                          : Math.round(
-                              segment.durationMilliseconds / 1_000,
-                            ),
-                      )}
-                    </span>
-                    <time dateTime={segment.receivedAt}>
-                      {new Date(segment.receivedAt).toLocaleString('ru-RU')}
-                    </time>
-                  </article>
-                ))}
-              </div>
-              {answer.acousticMetrics ? (
-                <pre className="training-safe-json">
-                  {formatEvidence(answer.acousticMetrics)}
-                </pre>
-              ) : (
-                <p className="muted-text">Акустические метрики отсутствуют.</p>
-              )}
-            </details>
-            <details className="training-provider-details">
-              <summary>
-                История evaluation ({answer.evaluations.length})
-              </summary>
-              <div className="training-evaluation-history">
-                {answer.evaluations.map((evaluation) => (
-                  <article key={evaluation.id}>
-                    <strong>
-                      Evaluation {evaluation.evaluationNumber}
-                      {evaluation.isActive ? ' · active' : ''}
-                    </strong>
-                    <span>
-                      AI {formatTrainingScore(evaluation.aiSuggestedScore)} ·
-                      server {formatTrainingScore(evaluation.serverScore)}
-                    </span>
-                    <span>
-                      prompt {evaluation.promptVersion} · schema{' '}
-                      {evaluation.schemaVersion} · rubric{' '}
-                      {evaluation.rubricVersion}
-                    </span>
-                    {evaluation.summary ? <p>{evaluation.summary}</p> : null}
-                  </article>
-                ))}
-              </div>
-            </details>
-            <details className="training-provider-details">
-              <summary>
-                Provider runs и метрики ({answer.providerRuns.length})
-              </summary>
-              <div className="training-provider-run-list">
-                {answer.providerRuns.map((run) => (
-                  <article key={run.id}>
-                    <strong>
-                      {run.kind} · {run.status}
-                    </strong>
-                    <span>
-                      model: {run.actualModelId ?? run.requestedModelId}
-                    </span>
-                    <span>request: {run.requestId ?? '—'}</span>
-                    <span>latency: {run.latencyMs ?? '—'} ms</span>
-                    <span>
-                      prompt/schema/rubric: {run.promptVersion ?? '—'} /{' '}
-                      {run.schemaVersion ?? '—'} /{' '}
-                      {run.rubricVersion ?? '—'}
-                    </span>
-                    {run.errorCode ? (
-                      <span>
-                        {run.errorCode} · {run.errorClass ?? 'error'}
-                      </span>
-                    ) : null}
-                    {run.usage ? (
-                      <pre className="training-safe-json">
-                        {formatEvidence(run.usage)}
-                      </pre>
-                    ) : null}
-                  </article>
-                ))}
-              </div>
-            </details>
-            {answer.errorCode ? (
-              <AdminAlert tone="error">
-                {answer.errorCode}: {answer.errorMessage ?? 'Ошибка ответа'}
-              </AdminAlert>
-            ) : null}
-          </>
+          </div>
         )}
       </CardContent>
     </AdminPanel>
   );
 }
 
+function ReadableEvaluation({
+  components,
+  onOpenFinal,
+}: {
+  components: TrainingAdminScoreComponent[];
+  onOpenFinal: () => void;
+}) {
+  const orderedComponents = [...components].sort(
+    (left, right) => componentAttentionRank(left) - componentAttentionRank(right),
+  );
+
+  return (
+    <div className="training-readable-evaluation">
+      {orderedComponents.map((component, index) => {
+        const evidence = getReadableEvidence(component.evidence);
+        const needsDecision = component.factVerdict === 'UNSUPPORTED';
+        const isWarning =
+          needsDecision || component.factVerdict === 'INCORRECT';
+        return (
+          <article
+            className={
+              isWarning
+                ? 'training-evaluation-card training-evaluation-card--warning'
+                : 'training-evaluation-card'
+            }
+            key={component.componentKey}
+          >
+            <header>
+              <div>
+                <strong>{getReadableComponentTitle(component, index)}</strong>
+                <span>
+                  {component.factVerdict
+                    ? factVerdictLabels[component.factVerdict]
+                    : 'Критерий оценки'}
+                </span>
+              </div>
+              <strong>
+                {formatTrainingScore(component.awardedPoints)} из{' '}
+                {formatTrainingScore(component.maxPoints)}
+              </strong>
+            </header>
+            {evidence.map((item) => (
+              <div className="training-evidence-field" key={item.label}>
+                <span>{item.label}</span>
+                {item.kind === 'quote' ? (
+                  <blockquote>{item.value}</blockquote>
+                ) : (
+                  <p>{item.value}</p>
+                )}
+              </div>
+            ))}
+            {needsDecision ? (
+              <div className="training-evaluation-decision-link">
+                <CircleAlertIcon aria-hidden="true" />
+                <span>Нужно решение проверяющего.</span>
+                <AdminButton tone="text" onClick={onOpenFinal}>
+                  Перейти к итогу
+                </AdminButton>
+              </div>
+            ) : null}
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
 function TrainingAudioPlayer({
   accessToken,
   answerId,
+  questionSequence,
 }: {
   accessToken: string | null;
   answerId: string;
+  questionSequence: number;
 }) {
   const managerRef = useRef(new TrainingAudioObjectUrl());
   const abortRef = useRef<AbortController | null>(null);
@@ -1050,13 +1258,18 @@ function TrainingAudioPlayer({
   return (
     <div className="training-audio-player">
       {audioUrl ? (
-        <audio controls preload="metadata" src={audioUrl}>
-          Ваш браузер не поддерживает audio.
+        <audio
+          aria-label={`Запись ответа на вопрос ${questionSequence}`}
+          controls
+          preload="metadata"
+          src={audioUrl}
+        >
+          Ваш браузер не поддерживает воспроизведение записи.
         </audio>
       ) : (
         <AdminButton disabled={isLoading} onClick={() => void loadAudio()}>
           <AudioLinesIcon data-icon="inline-start" aria-hidden="true" />
-          {isLoading ? 'Загрузка' : 'Загрузить защищённое аудио'}
+          {isLoading ? 'Загрузка…' : 'Прослушать ответ'}
         </AdminButton>
       )}
       {error ? <span className="form-error">{error}</span> : null}
@@ -1075,21 +1288,20 @@ function ReviewPanel({
 }) {
   const unsupported = useMemo(
     () => {
-      const components = attempt.questions.flatMap(
-        (question) =>
-          question.answer?.evaluations
-            .filter((evaluation) => evaluation.isActive)
-            .flatMap((evaluation) =>
-              evaluation.components.filter(
-                (component) => component.factVerdict === 'UNSUPPORTED',
-              ),
-            ) ?? [],
+      const components = attempt.questions.flatMap((question) =>
+        (question.answer?.evaluations ?? [])
+          .filter((evaluation) => evaluation.isActive)
+          .flatMap((evaluation) =>
+            evaluation.components
+              .filter((component) => component.factVerdict === 'UNSUPPORTED')
+              .map((component) => ({ component, question })),
+          ),
       );
       return [
         ...new Map(
-          components.map((component) => [
-            component.componentKey,
-            component,
+          components.map((item) => [
+            item.component.componentKey,
+            item,
           ]),
         ).values(),
       ];
@@ -1098,7 +1310,7 @@ function ReviewPanel({
   );
   const submissionRef = useRef(new TrainingReviewSubmission());
   const [decision, setDecision] =
-    useState<TrainingReviewRequest['decision']>('APPROVED');
+    useState<TrainingReviewRequest['decision'] | null>(null);
   const [adminScore, setAdminScore] = useState(
     attempt.finalScore ?? '',
   );
@@ -1110,8 +1322,11 @@ function ReviewPanel({
   const [submissionState, setSubmissionState] =
     useState<TrainingReviewSubmissionState>('IDLE');
   const [error, setError] = useState<string | null>(null);
+  const [validationTarget, setValidationTarget] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [hasConflict, setHasConflict] = useState(false);
+  const decisionGroupRef = useRef<HTMLDivElement>(null);
+  const commentRef = useRef<HTMLTextAreaElement>(null);
   const isOperationLocked = [
     'SUBMITTING',
     'COMMITTED',
@@ -1123,14 +1338,33 @@ function ReviewPanel({
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!accessToken || operationLockRef.current) return;
-    const decisions = unsupported.map((component) => ({
+    if (!decision) {
+      showValidationError(
+        'Выберите итоговое решение по попытке.',
+        'decision',
+      );
+      return;
+    }
+    const decisions = unsupported.map(({ component }) => ({
       componentKey: component.componentKey,
       decision: unsupportedDecisions[component.componentKey],
     }));
-    if (decisions.some((item) => !item.decision)) {
-      setError('Примите решение по каждому unsupported claim.');
+    const unresolvedDecision = decisions.find((item) => !item.decision);
+    if (unresolvedDecision) {
+      showValidationError(
+        'Примите решение по каждому спорному утверждению.',
+        `unsupported:${unresolvedDecision.componentKey}`,
+      );
       return;
     }
+    if (!comment.trim()) {
+      showValidationError(
+        'Добавьте обязательный комментарий проверяющего.',
+        'comment',
+      );
+      return;
+    }
+    setValidationTarget(null);
     const request: TrainingReviewRequest = {
       decision,
       ...(decision === 'OVERRIDDEN' ? { adminScore } : {}),
@@ -1146,6 +1380,28 @@ function ReviewPanel({
       return;
     }
     await sendReviewOperation(operation);
+  }
+
+  function showValidationError(message: string, target: string) {
+    setValidationTarget(target);
+    setError(message);
+    window.requestAnimationFrame(() => {
+      if (target === 'decision') {
+        decisionGroupRef.current
+          ?.querySelector<HTMLElement>('[role="radio"]')
+          ?.focus();
+        return;
+      }
+      if (target === 'comment') {
+        commentRef.current?.focus();
+        return;
+      }
+      const componentKey = target.replace(/^unsupported:/u, '');
+      document
+        .getElementById(`training-unsupported-decision-${componentKey}`)
+        ?.querySelector<HTMLElement>('[role="radio"]')
+        ?.focus();
+    });
   }
 
   async function sendReviewOperation(
@@ -1170,7 +1426,7 @@ function ReviewPanel({
         submissionRef.current.markPostAmbiguous();
         setSubmissionState('POST_AMBIGUOUS');
         setError(
-          'Результат сохранения неизвестен. Повторите запрос с тем же ключом и данными.',
+          'Результат сохранения неизвестен. Повторите сохранение без изменения данных.',
         );
         return;
       }
@@ -1182,7 +1438,7 @@ function ReviewPanel({
       ) {
         setHasConflict(true);
         setError(
-          'Конфликт Idempotency-Key: перечитайте попытку. Новый POST автоматически не отправляется.',
+          'Данные попытки изменились. Перечитайте результат перед повторным сохранением.',
         );
         return;
       }
@@ -1251,40 +1507,66 @@ function ReviewPanel({
     >
       <CardHeader>
         <div>
-          <p className="eyebrow">Ручная проверка</p>
-          <CardTitle>Решение администратора</CardTitle>
+          <h3>Итог проверки</h3>
+          <p>
+            Подтвердите результат системы или скорректируйте итоговый балл.
+          </p>
         </div>
         <ShieldAlertIcon aria-hidden="true" />
       </CardHeader>
       <CardContent>
         <form className="training-review-form" onSubmit={submit}>
-          <fieldset disabled={isOperationLocked}>
-            <legend>Решение</legend>
-            <label>
-              <input
-                checked={decision === 'APPROVED'}
-                name="review-decision"
-                type="radio"
-                value="APPROVED"
-                onChange={() => setDecision('APPROVED')}
-              />
-              Подтвердить системный результат
-            </label>
-            <label>
-              <input
-                checked={decision === 'OVERRIDDEN'}
-                name="review-decision"
-                type="radio"
-                value="OVERRIDDEN"
-                onChange={() => setDecision('OVERRIDDEN')}
-              />
-              Скорректировать итог
-            </label>
-          </fieldset>
+          <FieldGroup>
+          <div className="training-review-current-result">
+            <span>Текущий итог</span>
+            <strong>{formatTrainingScore(attempt.finalScore)} из 100</strong>
+            <span>{passStatusLabels[attempt.passStatus]}</span>
+          </div>
+          <FieldSet disabled={isOperationLocked}>
+            <FieldLegend>Решение проверяющего</FieldLegend>
+            <FieldDescription>
+              Система ничего не выбрала за вас — решение нужно указать явно.
+            </FieldDescription>
+            <RadioGroup
+              aria-describedby={
+                validationTarget === 'decision'
+                  ? 'training-review-error'
+                  : undefined
+              }
+              aria-invalid={validationTarget === 'decision'}
+              aria-label="Решение проверяющего"
+              aria-required="true"
+              ref={decisionGroupRef}
+              value={decision ?? ''}
+              onValueChange={(value) => {
+                setDecision(value as TrainingReviewRequest['decision']);
+                if (validationTarget === 'decision') {
+                  setValidationTarget(null);
+                  setError(null);
+                }
+              }}
+            >
+              <Field className="training-review-choice" orientation="horizontal">
+                <RadioGroupItem id="review-decision-approved" value="APPROVED" />
+                <FieldLabel htmlFor="review-decision-approved">
+                  Подтвердить системный результат
+                </FieldLabel>
+              </Field>
+              <Field className="training-review-choice" orientation="horizontal">
+                <RadioGroupItem id="review-decision-overridden" value="OVERRIDDEN" />
+                <FieldLabel htmlFor="review-decision-overridden">
+                  Скорректировать итог
+                </FieldLabel>
+              </Field>
+            </RadioGroup>
+          </FieldSet>
           {decision === 'OVERRIDDEN' ? (
-            <label>
-              <span>Итоговый балл</span>
+            <Field>
+              <FieldLabel htmlFor="training-review-score">
+                Итоговый балл
+              </FieldLabel>
               <Input
+                id="training-review-score"
                 required
                 min="0"
                 max="100"
@@ -1294,72 +1576,146 @@ function ReviewPanel({
                 value={adminScore}
                 onChange={(event) => setAdminScore(event.target.value)}
               />
-            </label>
+            </Field>
           ) : null}
           {unsupported.length ? (
-            <fieldset
-              className="training-unsupported-review"
-              disabled={isOperationLocked}
-            >
-              <legend>Unsupported claims</legend>
-              {unsupported.map((component) => (
-                <div key={component.componentKey}>
-                  <strong>
-                    {component.title ?? component.componentKey}
-                  </strong>
-                  <label>
-                    <input
-                      checked={
-                        unsupportedDecisions[component.componentKey] ===
-                        'ACCEPTED'
-                      }
-                      name={`unsupported-${component.componentKey}`}
-                      type="radio"
-                      onChange={() =>
-                        setUnsupportedDecisions((current) => ({
-                          ...current,
-                          [component.componentKey]: 'ACCEPTED',
-                        }))
-                      }
-                    />
-                    Допустимый факт
-                  </label>
-                  <label>
-                    <input
-                      checked={
-                        unsupportedDecisions[component.componentKey] ===
-                        'INCORRECT'
-                      }
-                      name={`unsupported-${component.componentKey}`}
-                      type="radio"
-                      onChange={() =>
-                        setUnsupportedDecisions((current) => ({
-                          ...current,
-                          [component.componentKey]: 'INCORRECT',
-                        }))
-                      }
-                    />
-                    Ошибка сотрудника
-                  </label>
+            <section className="training-unsupported-review">
+              <header>
+                <div>
+                  <h4>Утверждения, требующие решения</h4>
+                  <span>
+                    {formatRussianCount(unsupported.length, [
+                      'утверждение',
+                      'утверждения',
+                      'утверждений',
+                    ])}
+                  </span>
                 </div>
-              ))}
-            </fieldset>
+                <CircleAlertIcon aria-hidden="true" />
+              </header>
+              {unsupported.map(({ component, question }, index) => {
+                const evidence = getReadableEvidence(component.evidence);
+                const claim =
+                  evidence.find((item) => item.label === 'Утверждение сотрудника')
+                    ?.value ?? getReadableComponentTitle(component, index);
+                return (
+                  <FieldSet
+                    className="training-unsupported-claim"
+                    disabled={isOperationLocked}
+                    key={component.componentKey}
+                  >
+                    <FieldLegend>{claim}</FieldLegend>
+                    <FieldDescription>
+                      Вопрос {question.sequence} ·{' '}
+                      {questionTypeLabels[question.type]}
+                    </FieldDescription>
+                    {evidence
+                      .filter((item) => item.label !== 'Утверждение сотрудника')
+                      .map((item) => (
+                        <div className="training-evidence-field" key={item.label}>
+                          <span>{item.label}</span>
+                          {item.kind === 'quote' ? (
+                            <blockquote>{item.value}</blockquote>
+                          ) : (
+                            <p>{item.value}</p>
+                          )}
+                        </div>
+                      ))}
+                    <RadioGroup
+                      aria-describedby={
+                        validationTarget ===
+                        `unsupported:${component.componentKey}`
+                          ? 'training-review-error'
+                          : undefined
+                      }
+                      aria-invalid={
+                        validationTarget ===
+                        `unsupported:${component.componentKey}`
+                      }
+                      aria-label={`Решение по утверждению: ${claim}`}
+                      aria-required="true"
+                      id={`training-unsupported-decision-${component.componentKey}`}
+                      value={unsupportedDecisions[component.componentKey] ?? ''}
+                      onValueChange={(value) => {
+                        setUnsupportedDecisions((current) => ({
+                          ...current,
+                          [component.componentKey]: value as
+                            | 'ACCEPTED'
+                            | 'INCORRECT',
+                        }));
+                        if (
+                          validationTarget ===
+                          `unsupported:${component.componentKey}`
+                        ) {
+                          setValidationTarget(null);
+                          setError(null);
+                        }
+                      }}
+                    >
+                      <Field className="training-review-choice" orientation="horizontal">
+                        <RadioGroupItem
+                          id={`unsupported-${component.componentKey}-accepted`}
+                          value="ACCEPTED"
+                        />
+                        <FieldLabel
+                          htmlFor={`unsupported-${component.componentKey}-accepted`}
+                        >
+                          Допустимый факт
+                        </FieldLabel>
+                      </Field>
+                      <Field className="training-review-choice" orientation="horizontal">
+                        <RadioGroupItem
+                          id={`unsupported-${component.componentKey}-incorrect`}
+                          value="INCORRECT"
+                        />
+                        <FieldLabel
+                          htmlFor={`unsupported-${component.componentKey}-incorrect`}
+                        >
+                          Ошибка сотрудника
+                        </FieldLabel>
+                      </Field>
+                    </RadioGroup>
+                  </FieldSet>
+                );
+              })}
+            </section>
           ) : null}
-          <label>
-            <span>Комментарий</span>
+          <Field>
+            <FieldLabel htmlFor="training-review-comment">
+              Комментарий (обязательно)
+            </FieldLabel>
             <textarea
-              required
+              aria-describedby={
+                validationTarget === 'comment'
+                  ? 'training-review-error'
+                  : undefined
+              }
+              aria-invalid={validationTarget === 'comment'}
+              ref={commentRef}
+              aria-required="true"
+              id="training-review-comment"
               maxLength={2000}
               rows={4}
               disabled={isOperationLocked}
               value={comment}
-              onChange={(event) => setComment(event.target.value)}
+              onChange={(event) => {
+                setComment(event.target.value);
+                if (validationTarget === 'comment') {
+                  setValidationTarget(null);
+                  setError(null);
+                }
+              }}
             />
-          </label>
-          {notice ? <AdminAlert tone="notice">{notice}</AdminAlert> : null}
-          {error ? <AdminAlert tone="error">{error}</AdminAlert> : null}
+          </Field>
+          {notice ? (
+            <div className="training-review-status" role="status">
+              {notice}
+            </div>
+          ) : null}
+          {error ? <FieldError id="training-review-error">{error}</FieldError> : null}
           <AdminButton
-            disabled={isOperationLocked || !comment.trim()}
+            className="training-review-submit"
+            disabled={isOperationLocked}
             type="submit"
           >
             <CheckCircle2Icon data-icon="inline-start" aria-hidden="true" />
@@ -1396,6 +1752,7 @@ function ReviewPanel({
               Перечитать данные
             </AdminButton>
           ) : null}
+          </FieldGroup>
         </form>
       </CardContent>
     </AdminPanel>
@@ -1407,13 +1764,12 @@ function ReviewHistory({
 }: {
   attempt: TrainingAdminAttemptDetail;
 }) {
+  if (!attempt.reviews.length) return null;
   return (
-    <AdminPanel>
-      <CardHeader>
-        <CardTitle>История проверок</CardTitle>
-      </CardHeader>
+    <AdminPanel className="training-review-history-panel">
       <CardContent>
-        {attempt.reviews.length ? (
+        <details className="training-review-history-details">
+          <summary>Предыдущие решения ({attempt.reviews.length})</summary>
           <div className="training-review-history">
             {attempt.reviews.map((review) => (
               <article key={review.id}>
@@ -1434,43 +1790,7 @@ function ReviewHistory({
               </article>
             ))}
           </div>
-        ) : (
-          <p className="muted-text">Ручных проверок пока нет.</p>
-        )}
-      </CardContent>
-    </AdminPanel>
-  );
-}
-
-function ProcessingHistory({
-  attempt,
-}: {
-  attempt: TrainingAdminAttemptDetail;
-}) {
-  return (
-    <AdminPanel>
-      <CardHeader>
-        <CardTitle>История обработки</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {attempt.jobs.length ? (
-          <div className="training-job-list">
-            {attempt.jobs.map((job) => (
-              <article key={job.id}>
-                <strong>{job.kind}</strong>
-                <span>{job.status}</span>
-                <span>Попыток worker: {job.attempts}</span>
-                {job.lastErrorCode ? (
-                  <span>
-                    {job.lastErrorCode}: {job.lastErrorMessage}
-                  </span>
-                ) : null}
-              </article>
-            ))}
-          </div>
-        ) : (
-          <p className="muted-text">Связанные job-записи не найдены.</p>
-        )}
+        </details>
       </CardContent>
     </AdminPanel>
   );
@@ -1519,9 +1839,158 @@ function compactFilters(filters: ResultFilters) {
   );
 }
 
-function formatEvidence(value: unknown) {
-  if (typeof value === 'string') return value;
-  return JSON.stringify(value, null, 2);
+function keepAvailableReviewView(
+  current: SelectedReviewView | null,
+  attempt: TrainingAdminAttemptDetail,
+): SelectedReviewView {
+  if (current?.kind === 'final') return current;
+  if (
+    current?.kind === 'question' &&
+    attempt.questions.some((question) => question.id === current.questionId)
+  ) {
+    return current;
+  }
+  const defaultQuestion =
+    attempt.questions.find(questionNeedsAttention) ?? attempt.questions[0];
+  return defaultQuestion
+    ? { kind: 'question', questionId: defaultQuestion.id }
+    : { kind: 'final' };
+}
+
+function isSameReviewView(
+  left: SelectedReviewView,
+  right: SelectedReviewView,
+) {
+  return (
+    left.kind === right.kind &&
+    (left.kind === 'final' ||
+      (right.kind === 'question' && left.questionId === right.questionId))
+  );
+}
+
+function questionNeedsAttention(question: AttemptQuestion) {
+  const evaluation = question.answer?.evaluations.find(
+    (item) => item.isActive,
+  );
+  return Boolean(
+    evaluation?.requiresReview ||
+      evaluation?.components.some(
+        (component) => component.factVerdict === 'UNSUPPORTED',
+      ),
+  );
+}
+
+function getQuestionScore(question: AttemptQuestion) {
+  const evaluation = question.answer?.evaluations.find(
+    (item) => item.isActive,
+  );
+  if (!evaluation) return '—';
+  const maximum = evaluation.components.reduce((total, component) => {
+    const value = Number(component.maxPoints);
+    return Number.isFinite(value) ? total + value : total;
+  }, 0);
+  return `${formatTrainingScore(evaluation.serverScore)} / ${formatTrainingScore(maximum)}`;
+}
+
+function componentAttentionRank(component: TrainingAdminScoreComponent) {
+  if (component.factVerdict === 'UNSUPPORTED') return 0;
+  if (component.factVerdict === 'INCORRECT') return 1;
+  if (
+    component.factVerdict === 'PARTIAL' ||
+    component.factVerdict === 'MISSING'
+  ) {
+    return 2;
+  }
+  return 3;
+}
+
+function getReadableComponentTitle(
+  component: TrainingAdminScoreComponent,
+  index: number,
+) {
+  const title = component.title?.trim();
+  if (title && !looksLikeTechnicalIdentifier(title)) return title;
+  if (component.factVerdict === 'UNSUPPORTED') {
+    return 'Утверждение требует решения';
+  }
+  if (component.factVerdict === 'INCORRECT') return 'Фактическая ошибка';
+  return `Критерий ${index + 1}`;
+}
+
+function looksLikeTechnicalIdentifier(value: string) {
+  return /^[a-z0-9_-]+(?:\.[a-z0-9_-]+)+$/iu.test(value);
+}
+
+function getReadableEvidence(value: unknown): Array<{
+  kind: 'quote' | 'text';
+  label: string;
+  value: string;
+}> {
+  if (typeof value === 'string' && value.trim()) {
+    return [
+      {
+        kind: 'text',
+        label: 'Почему так оценено',
+        value: value.trim(),
+      },
+    ];
+  }
+  if (!isRecord(value)) return [];
+  const claim = readEvidenceString(value.claim);
+  const text = readEvidenceString(value.text);
+  const explanation = readEvidenceString(value.explanation);
+  const result: Array<{
+    kind: 'quote' | 'text';
+    label: string;
+    value: string;
+  }> = [];
+  if (claim) {
+    result.push({
+      kind: 'quote',
+      label: 'Утверждение сотрудника',
+      value: claim,
+    });
+  }
+  if (text && text !== claim) {
+    result.push({
+      kind: 'quote',
+      label: 'Фрагмент ответа',
+      value: text,
+    });
+  }
+  if (explanation) {
+    result.push({
+      kind: 'text',
+      label: 'Почему так оценено',
+      value: explanation,
+    });
+  }
+  return result;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function readEvidenceString(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function formatRussianCount(
+  count: number,
+  forms: readonly [string, string, string],
+) {
+  const absolute = Math.abs(count) % 100;
+  const lastDigit = absolute % 10;
+  const form =
+    absolute > 10 && absolute < 20
+      ? forms[2]
+      : lastDigit === 1
+        ? forms[0]
+        : lastDigit >= 2 && lastDigit <= 4
+          ? forms[1]
+          : forms[2];
+  return `${count} ${form}`;
 }
 
 function isAmbiguousReviewPostError(error: unknown) {
