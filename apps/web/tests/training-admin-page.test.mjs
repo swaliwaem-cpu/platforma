@@ -73,6 +73,13 @@ test('training admin uses AdminUi, shadcn fields and the existing apiRequest cli
   assert.doesNotMatch(pageSource, /react-router/);
 });
 
+test('training project list exposes results navigation to authorized admins', () => {
+  assert.match(
+    pageSource,
+    /hasPermission\('training:results:read'\)[\s\S]{0,500}navigate\('\/admin\/training\/results'\)[\s\S]{0,200}Результаты/,
+  );
+});
+
 test('project editor supports working-revision CRUD, optional object links and strict publication', () => {
   assert.match(apiSource, /realEstateObjectId:\s*string \| null/);
   assert.match(apiSource, /\/real-estate-objects\?\$\{query\.toString\(\)\}/);

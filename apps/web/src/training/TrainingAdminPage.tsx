@@ -7,6 +7,7 @@ import {
   EyeIcon,
   FileTextIcon,
   Globe2Icon,
+  ListChecksIcon,
   LoaderCircleIcon,
   PlusIcon,
   RefreshCwIcon,
@@ -240,7 +241,7 @@ function TrainingProjectListPage({
   navigate: (path: string) => void;
   onBack: () => void;
 }) {
-  const { accessToken } = useAuth();
+  const { accessToken, hasPermission } = useAuth();
   const [projects, setProjects] = useState<TrainingProject[]>([]);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
@@ -279,13 +280,23 @@ function TrainingProjectListPage({
         description="Рабочие редакции, источники, структура экзамена и готовность к публикации."
         onBack={onBack}
         actions={
-          <AdminButton
-            tone="primary"
-            onClick={() => navigate('/admin/training/new')}
-          >
-            <PlusIcon aria-hidden="true" />
-            Создать проект
-          </AdminButton>
+          <>
+            {hasPermission('training:results:read') ? (
+              <AdminButton
+                onClick={() => navigate('/admin/training/results')}
+              >
+                <ListChecksIcon aria-hidden="true" />
+                Результаты
+              </AdminButton>
+            ) : null}
+            <AdminButton
+              tone="primary"
+              onClick={() => navigate('/admin/training/new')}
+            >
+              <PlusIcon aria-hidden="true" />
+              Создать проект
+            </AdminButton>
+          </>
         }
       />
 
