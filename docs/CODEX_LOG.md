@@ -1,5 +1,39 @@
 # Codex Log
 
+## 2026-07-31 - Admin home training card cleanup
+
+Задача:
+
+- Убрать с главной страницы админки дублирующие карточки «Состояние обучения» и «Рейтинг обучения», не удаляя сами разделы и маршруты.
+
+Изменения:
+
+- Из `AdminHome` удалены две карточки и неиспользуемые callback-пропсы для перехода к ним.
+- Маршруты `/admin/training/operations` и `/admin/training/ranking` сохранены и продолжают работать из других точек интерфейса.
+- Добавлена регрессия, проверяющая отсутствие карточек только в пределах `AdminHome` и сохранность маршрутов.
+
+Проверки:
+
+- `node --test tests/training-routes.test.mjs` из `apps/web` - 6/6 passed.
+- `pnpm --filter @platforma/web test` - 312/312 passed.
+- `pnpm build:web` - passed; сохранено существующее предупреждение Vite о main chunk `790.87 kB`.
+
+Production deploy:
+
+- Commit `979220f` отправлен в `origin/on-ser`; production `/opt/platforma` fast-forwarded с `6493c97` до `979220f`.
+- Перед переключением сохранён rollback image `platforma-web:rollback-admin-home-20260731T105527Z`.
+- Собран web image `sha256:4cbee648c636a90467051b6f0c7fb9ec9e6df7fd16049c27dc0881d7f87fec9b`; пересоздан только `web`.
+- Новый web container запущен и использует ожидаемый image; startup log чистый, публичный `/admin` вернул HTTP 200, `/api/health` вернул `status=ok`, `database=ok`, `training=ready`.
+- В production checkout подтверждено отсутствие обеих карточек в `AdminHome` и наличие обоих маршрутов.
+
+Ручная проверка:
+
+- Обновить `/admin` с очисткой кэша и визуально подтвердить, что сетка содержит семь карточек без «Состояния обучения» и «Рейтинга обучения».
+
+Спорные места:
+
+- Нет: изменение ограничено видимостью двух карточек на главной админки; функциональность разделов не удалялась.
+
 ## 2026-07-31 - Training results reviewer workspace redesign
 
 Задача:
