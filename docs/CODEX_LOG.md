@@ -6774,3 +6774,34 @@ Production:
 - После будущего deploy требуется перерегистрировать Telegram webhook для
   применения `max_connections=1`, проверить один полный TATE flow и точечно
   повторить retry двух production failed URL sources.
+
+## 2026-07-31 — Узкий production fix OpenAI schema и полный TATE voice flow
+
+Причина и исправление:
+
+- Живая попытка `81e5dbb3-7b18-4c1b-8a13-54b80468191d` доказала, что
+  Telegram-приём, сборка аудио и транскрибация работают, но evaluation
+  отклоняется OpenAI с HTTP `400`.
+- Точный ответ провайдера:
+  `Invalid JSON schema: regex lookaround is not supported. Found at $.properties.summary.pattern.`
+- В `SUMMARY_PATTERN` удалён только positive lookahead; остальные поля
+  schema, provider lifecycle, Telegram/audio logic и БД не изменялись.
+- Сначала добавлен регрессионный тест отсутствия lookaround: до исправления
+  он падал, после исправления проходит.
+
+Проверки и production:
+
+- API build, `git diff --check` и профильный OpenAI-набор `37/37` прошли.
+- Полный `pnpm --dir apps/api test` выполнен: unit-этап прошёл; исторический
+  rollback-набор PostgreSQL завершился `85/105`, с 20 несвязанными
+  baseline-падениями в Telegram worker/race tests. Эти проблемы не
+  исправлялись в рамках узкого hotfix.
+- Commit `f372cfb` задеплоен пересозданием только `api` и
+  `training-worker`; rollback image:
+  `platforma-api:rollback-c137471-20260731T083121Z`.
+- Public health после deploy:
+  `status=ok`, `database=ok`, `training=ready`.
+- Контрольная попытка `ce7c1089-0c1d-4a56-ac5c-94cf2be73f10`
+  завершила все четыре voice-ответа: 4/4 transcription и 4/4 evaluation
+  provider runs имеют `SUCCEEDED`, все вопросы `SCORED`, активных jobs нет.
+  Итог штатно направлен на review: `aiScore=65`, `serverScore=60`.
