@@ -10,6 +10,7 @@ const {
   TrainingAttemptStatus,
   TrainingJobKind,
   TrainingJobStatus,
+  TrainingPassStatus,
   TrainingProjectStatus,
   TrainingQuestionType,
   TrainingVersionStatus,
@@ -1303,7 +1304,8 @@ test('finalization commits the terminal state and result outbox before worker re
   const resultDeliveries = restartedHarness.transport.deliveries.filter(
     (delivery) =>
       delivery.operation === 'SEND_MESSAGE' &&
-      delivery.text.startsWith('Результат:'),
+      delivery.text ===
+        `Поздравляем, проект ${fixture.projectTitle} успешно сдан`,
   );
   assert.equal(resultDeliveries.length, 1);
   const delivered = await prisma.trainingJob.findUnique({
@@ -2165,7 +2167,8 @@ test('timeout finalization persists and delivers one result outbox event', async
     harness.transport.deliveries.filter(
       (delivery) =>
         delivery.operation === 'SEND_MESSAGE' &&
-        delivery.text.startsWith('Результат:'),
+        delivery.text ===
+          `Проект ${fixture.projectTitle} не сдан, осталось попыток 2`,
     ).length,
     1,
   );
@@ -2251,7 +2254,7 @@ test('terminal transition wins the advisory pre-send warning gate without a late
   assert.equal(closedWarning.errorDetailsJson.terminalNoop, true);
 });
 
-test('normal finalization sends only score, pass status, attempts left and Platforma button', async () => {
+test('successful finalization sends the project success message and Platforma button', async () => {
   const fixture = await createFixture();
   const telegramId = 501_013;
   const harness = createHarness();
@@ -2263,12 +2266,10 @@ test('normal finalization sends only score, pass status, attempts left and Platf
   const result = harness.transport.deliveries.find(
     (delivery) =>
       delivery.operation === 'SEND_MESSAGE' &&
-      delivery.text.startsWith('Результат:'),
+      delivery.text ===
+        `Поздравляем, проект ${fixture.projectTitle} успешно сдан`,
   );
   assert.ok(result);
-  assert.match(result.text, /Результат: 100\/100/);
-  assert.match(result.text, /Аттестация пройдена/);
-  assert.match(result.text, /Осталось попыток: 2/);
   assert.equal(result.text.includes('transcript'), false);
   assert.deepEqual(result.replyMarkup.inline_keyboard[0][0], {
     text: 'Открыть платформу',
@@ -2281,6 +2282,36 @@ test('normal finalization sends only score, pass status, attempts left and Platf
   });
   assert.equal(resultJob.status, TrainingJobStatus.SUCCEEDED);
   assert.equal(resultJob.attempts, 1);
+});
+
+test('failed finalization sends the project failure message with attempts left', async () => {
+  const fixture = await createFixture();
+  const telegramId = 501_016;
+  const harness = createHarness();
+  await linkUser(harness, fixture.userId, telegramId);
+  await drainTelegram(harness.worker);
+  const attempt = await startAttempt(harness.engine, fixture);
+  await completeAttempt(harness.engine, attempt, 605_000);
+  await prisma.trainingAttempt.update({
+    where: { id: attempt.id },
+    data: {
+      finalScore: 0,
+      passStatus: TrainingPassStatus.FAILED,
+    },
+  });
+  await drainTelegram(harness.worker, true);
+
+  const result = harness.transport.deliveries.find(
+    (delivery) =>
+      delivery.operation === 'SEND_MESSAGE' &&
+      delivery.text ===
+        `Проект ${fixture.projectTitle} не сдан, осталось попыток 2`,
+  );
+  assert.ok(result);
+  assert.deepEqual(result.replyMarkup.inline_keyboard[0][0], {
+    text: 'Открыть платформу',
+    url: TEST_CONFIG.publicTrainingUrl,
+  });
 });
 
 test('REQUIRES_REVIEW is shown without preliminary score or pass/fail', async () => {
@@ -2327,6 +2358,72 @@ test('REQUIRES_REVIEW is shown without preliminary score or pass/fail', async ()
         delivery.text.startsWith('До завершения аттестации'),
     ),
     false,
+  );
+
+  const unsupported = await prisma.trainingScoreComponent.findFirstOrThrow({
+    where: {
+      evaluation: {
+        answer: {
+          attemptQuestion: { attemptId: attempt.id },
+        },
+      },
+      factVerdict: 'UNSUPPORTED',
+    },
+  });
+  harness.transport.clear();
+  const reviewCommand = {
+    attemptId: attempt.id,
+    reviewerId: fixture.publisherId,
+    idempotencyKey: 'telegram-result-review-0001',
+    decision: 'APPROVED',
+    comment: 'Факт подтверждён',
+    unsupportedClaimsDecisions: [
+      {
+        componentKey: unsupported.componentKey,
+        decision: 'ACCEPTED',
+      },
+    ],
+  };
+  await harness.engine.reviewAttempt(reviewCommand);
+  await drainTelegram(harness.worker, true);
+
+  assert.equal(
+    harness.transport.deliveries.filter(
+      (delivery) =>
+        delivery.operation === 'SEND_MESSAGE' &&
+        delivery.text ===
+          `Поздравляем, проект ${fixture.projectTitle} успешно сдан`,
+    ).length,
+    1,
+  );
+  assert.equal(
+    await prisma.trainingJob.count({
+      where: {
+        idempotencyKey: `telegram:attempt-result:${attempt.id}:review:1`,
+        status: TrainingJobStatus.SUCCEEDED,
+      },
+    }),
+    1,
+  );
+
+  await harness.engine.reviewAttempt(reviewCommand);
+  await drainTelegram(harness.worker, true);
+  assert.equal(
+    harness.transport.deliveries.filter(
+      (delivery) =>
+        delivery.operation === 'SEND_MESSAGE' &&
+        delivery.text ===
+          `Поздравляем, проект ${fixture.projectTitle} успешно сдан`,
+    ).length,
+    1,
+  );
+  assert.equal(
+    await prisma.trainingJob.count({
+      where: {
+        idempotencyKey: `telegram:attempt-result:${attempt.id}:review:1`,
+      },
+    }),
+    1,
   );
 });
 
@@ -2585,6 +2682,7 @@ async function createFixture(options = {}) {
     publisherId,
     userId,
     projectId: project.id,
+    projectTitle: project.title,
   };
 }
 

@@ -1502,6 +1502,7 @@ export class TrainingAttemptEngineService
           ? TrainingReviewStatus.OVERRIDDEN
           : TrainingReviewStatus.APPROVED;
       const reviewedAt = this.clock.now();
+      const reviewNumber = (attempt.reviews[0]?.reviewNumber ?? 0) + 1;
 
       await tx.trainingResultReview.create({
         data: {
@@ -1509,7 +1510,7 @@ export class TrainingAttemptEngineService
           reviewerId: command.reviewerId,
           idempotencyKey,
           requestPayloadHash,
-          reviewNumber: (attempt.reviews[0]?.reviewNumber ?? 0) + 1,
+          reviewNumber,
           previousFinalScore: attempt.finalScore,
           adminScore,
           finalScore,
@@ -1541,6 +1542,12 @@ export class TrainingAttemptEngineService
         attempt.id,
         reviewedAt,
       );
+      await enqueueAttemptTelegramOutboxEvent(tx, {
+        eventType: 'ATTEMPT_RESULT',
+        attemptId: attempt.id,
+        idempotencyKey: `telegram:attempt-result:${attempt.id}:review:${reviewNumber}`,
+        runAt: reviewedAt,
+      });
       await tx.auditLog.create({
         data: {
           actorUserId: command.reviewerId,

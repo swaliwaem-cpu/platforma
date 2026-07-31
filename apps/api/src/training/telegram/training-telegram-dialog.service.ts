@@ -206,11 +206,9 @@ export class TrainingTelegramDialogService {
       attempt.status === TrainingAttemptStatus.REQUIRES_REVIEW ||
       attempt.reviewStatus === TrainingReviewStatus.PENDING
         ? `Результат отправлен на проверку.\nОсталось попыток: ${attemptsLeft}.`
-        : `Результат: ${formatScore(attempt.finalScore)}/100.\n${
-            attempt.passStatus === TrainingPassStatus.PASSED
-              ? 'Аттестация пройдена.'
-              : 'Аттестация не пройдена.'
-          }\nОсталось попыток: ${attemptsLeft}.`;
+        : attempt.passStatus === TrainingPassStatus.PASSED
+          ? `Поздравляем, проект ${attempt.project.title} успешно сдан`
+          : `Проект ${attempt.project.title} не сдан, осталось попыток ${attemptsLeft}`;
     return {
       operation: 'SEND_MESSAGE',
       chatId: attempt.user.trainingTelegramAccount.chatId.toString(),
