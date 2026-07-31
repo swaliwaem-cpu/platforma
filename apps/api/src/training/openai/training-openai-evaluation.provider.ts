@@ -34,7 +34,7 @@ const ANSWER_RELEVANCE_VALUES = [
 const LEGACY_TRAINING_EVALUATION_SCHEMA_VERSION = 'openai-evaluation-v1';
 const MINIMUM_EVIDENCE_CHARACTERS = 2;
 const SUMMARY_PATTERN =
-  '^\\s*(?=[\\s\\S]*\\S)(?:[^.!?…]+(?:[.!?…]+|$)){1,3}\\s*$';
+  '^\\s*(?:[^.!?…]+(?:[.!?…]+|$)){1,3}\\s*$';
 const CRITERION_OUTPUT_KEYS = [
   'criterion_id',
   'anchor_id',
