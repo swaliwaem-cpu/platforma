@@ -22,6 +22,13 @@
 - Изолированный PostgreSQL-прогон пяти целевых Telegram-тестов - 5/5 passed; временная БД удалена.
 - Полный `test:training:db` запускался дважды, но оба раза падал на несвязанном конкурентном тесте и затем каскадно на оставшихся Telegram-тестах; обе временные БД удалены.
 
+Production deploy:
+
+- Commit `93a53a6` развернут в production `/opt/platforma`; migration/schema changes отсутствуют.
+- Перед переключением сохранён rollback image `platforma-api:rollback-telegram-result-20260731T113950Z`.
+- Собран API image `sha256:e14351c0091ba7243e313fead18a9ded167c88612c82c0a1569a6d799fe5e6e8`; пересозданы только `api` и `training-worker`.
+- Оба контейнера используют ожидаемый image и работают; API healthy, `/api/health` вернул `status=ok`, `database=ok`, `training=ready`, startup logs без ошибок.
+
 Ручная проверка:
 
 - В fake/staging Telegram пройти одну успешную и одну неуспешную попытку и сверить название проекта, остаток попыток и кнопку «Открыть платформу».
