@@ -18,6 +18,10 @@ const operationsSource = readFileSync(
   resolve(currentDir, '../src/training/TrainingOperationsPage.tsx'),
   'utf8',
 );
+const adminHomeSource = appSource.slice(
+  appSource.indexOf('function AdminHome('),
+  appSource.indexOf('function AccessDenied('),
+);
 
 test('employee training route and navigation require pilot take permission', () => {
   assert.match(
@@ -113,4 +117,13 @@ test('stage ten policy and operations routes keep explicit permission checks', (
     appSource,
     /section\.id !== 'training' \|\| isTrainingEnabled/,
   );
+});
+
+test('admin home hides training operations and ranking duplicate cards', () => {
+  assert.doesNotMatch(adminHomeSource, /Состояние обучения/u);
+  assert.doesNotMatch(adminHomeSource, /Рейтинг обучения/u);
+  assert.doesNotMatch(adminHomeSource, /onOpenTrainingOperations/u);
+  assert.doesNotMatch(adminHomeSource, /onOpenTrainingRanking/u);
+  assert.match(appSource, /path:\s*'\/admin\/training\/operations'/u);
+  assert.match(appSource, /path:\s*'\/admin\/training\/ranking'/u);
 });

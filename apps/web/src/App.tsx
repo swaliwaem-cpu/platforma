@@ -568,8 +568,6 @@ function AppRoutes() {
                 onOpenImport={() => navigate('/admin/import')}
                 onOpenObjects={() => navigate('/admin/objects')}
                 onOpenTraining={() => navigate('/admin/training')}
-                onOpenTrainingOperations={() => navigate('/admin/training/operations')}
-                onOpenTrainingRanking={() => navigate('/admin/training/ranking')}
                 onOpenTrainingResults={() => navigate('/admin/training/results')}
                 onOpenUsers={() => navigate('/admin/users')}
               />
@@ -1389,8 +1387,6 @@ function AdminHome({
   onOpenImport,
   onOpenObjects,
   onOpenTraining,
-  onOpenTrainingOperations,
-  onOpenTrainingRanking,
   onOpenTrainingResults,
   onOpenUsers,
 }: {
@@ -1400,8 +1396,6 @@ function AdminHome({
   onOpenImport: () => void;
   onOpenObjects: () => void;
   onOpenTraining: () => void;
-  onOpenTrainingOperations: () => void;
-  onOpenTrainingRanking: () => void;
   onOpenTrainingResults: () => void;
   onOpenUsers: () => void;
 }) {
@@ -1429,22 +1423,6 @@ function AdminHome({
       canAccess:
         isTrainingEnabled && hasPermission('training:results:read'),
       onClick: onOpenTrainingResults,
-    },
-    {
-      label: 'Состояние обучения',
-      description: 'Очереди, воркеры, безопасные ошибки и ручной retry.',
-      tone: 'secondary',
-      canAccess:
-        isTrainingEnabled && hasPermission('training:operations:read'),
-      onClick: onOpenTrainingOperations,
-    },
-    {
-      label: 'Рейтинг обучения',
-      description: 'Подтверждённые результаты по сотрудникам и CSV.',
-      tone: 'secondary',
-      canAccess:
-        isTrainingEnabled && hasPermission('training:results:read'),
-      onClick: onOpenTrainingRanking,
     },
     {
       label: 'Пользователи',
