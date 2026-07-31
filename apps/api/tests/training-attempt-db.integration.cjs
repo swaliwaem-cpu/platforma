@@ -15,6 +15,8 @@ const {
   TrainingJobKind,
   TrainingJobStatus,
   TrainingPassStatus,
+  TrainingProviderKind,
+  TrainingProviderRunStatus,
   TrainingProjectStatus,
   TrainingQuestionType,
   TrainingReviewStatus,
@@ -312,6 +314,21 @@ test('PostgreSQL race: two refunds create one audit and refund once', async () =
       attemptId: attempt.id,
       attemptQuestionId: attempt.attemptQuestions[0].id,
     }),
+  );
+  const failedAnswer = await prisma.trainingAnswer.findFirstOrThrow({
+    where: { attemptQuestion: { attemptId: attempt.id } },
+  });
+  const failedProviderRun =
+    await prisma.trainingProviderRun.findFirstOrThrow({
+      where: {
+        answerId: failedAnswer.id,
+        kind: TrainingProviderKind.EVALUATION,
+      },
+    });
+  assert.equal(failedAnswer.status, TrainingAnswerStatus.FAILED);
+  assert.equal(
+    failedProviderRun.status,
+    TrainingProviderRunStatus.FAILED,
   );
 
   const command = {
@@ -620,27 +637,42 @@ test('PostgreSQL restart: READY, TRANSCRIBING, EVALUATING and FINALIZING all res
       })
       .catch(() => {});
     await waitForAnswerStatus(attempt.id, TrainingAnswerStatus.TRANSCRIBING);
+    await waitForProviderRunStatus(
+      attempt.id,
+      TrainingProviderKind.TRANSCRIPTION,
+      TrainingProviderRunStatus.REQUESTING,
+    );
     firstService.onModuleDestroy();
     clock.advanceSeconds(31);
 
-    const recoveredService = createService(clock);
+    let recoveredProviderCalls = 0;
+    const recoveredService = createService(clock, {
+      transcriptionProvider: {
+        transcribe: async (input) => {
+          recoveredProviderCalls += 1;
+          return fakeTranscription.transcribe(input);
+        },
+      },
+    });
     await recoveredService.recoverPendingProcessing();
     assert.equal(
       (await recoveredService.getAttempt(attempt.id)).attempt.status,
       TrainingAttemptStatus.TECHNICAL_FAILURE,
     );
     assert.equal(await countEvaluations(attempt.id), 0);
+    assert.equal(recoveredProviderCalls, 0);
     const answer = await prisma.trainingAnswer.findFirstOrThrow({
       where: { attemptQuestion: { attemptId: attempt.id } },
     });
-    assert.equal(
-      (
-        await prisma.trainingProviderRun.findFirstOrThrow({
-          where: { answerId: answer.id, kind: 'TRANSCRIPTION' },
-        })
-      ).status,
-      'AMBIGUOUS',
-    );
+    assert.equal(answer.status, TrainingAnswerStatus.FAILED);
+    const primaryRun = await prisma.trainingProviderRun.findFirstOrThrow({
+      where: {
+        answerId: answer.id,
+        kind: TrainingProviderKind.TRANSCRIPTION,
+      },
+    });
+    assert.equal(primaryRun.runType, 'PRIMARY');
+    assert.equal(primaryRun.status, TrainingProviderRunStatus.AMBIGUOUS);
     await recoveredService.reprocessTranscription({
       answerId: answer.id,
       reviewerId: fixture.publisherId,
@@ -648,6 +680,32 @@ test('PostgreSQL restart: READY, TRANSCRIBING, EVALUATING and FINALIZING all res
     });
     await recoveredService.recoverPendingProcessing();
     assert.equal(await countEvaluations(attempt.id), 1);
+    assert.equal(recoveredProviderCalls, 1);
+    const transcriptionRuns = await prisma.trainingProviderRun.findMany({
+      where: {
+        answerId: answer.id,
+        kind: TrainingProviderKind.TRANSCRIPTION,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    assert.equal(transcriptionRuns.length, 2);
+    assert.equal(transcriptionRuns[0].id, primaryRun.id);
+    assert.equal(transcriptionRuns[0].status, TrainingProviderRunStatus.AMBIGUOUS);
+    assert.equal(transcriptionRuns[1].runType, 'REPROCESS');
+    assert.equal(transcriptionRuns[1].status, TrainingProviderRunStatus.SUCCEEDED);
+    assert.notEqual(transcriptionRuns[1].idempotencyKey, primaryRun.idempotencyKey);
+    const activeTranscription = await prisma.trainingAnswer.findUniqueOrThrow({
+      where: { id: answer.id },
+      select: {
+        activeTranscription: {
+          select: { providerRunId: true },
+        },
+      },
+    });
+    assert.equal(
+      activeTranscription.activeTranscription.providerRunId,
+      transcriptionRuns[1].id,
+    );
   });
 
   await t.test('EVALUATING becomes ambiguous and needs explicit reprocessing', async () => {
@@ -674,27 +732,42 @@ test('PostgreSQL restart: READY, TRANSCRIBING, EVALUATING and FINALIZING all res
       })
       .catch(() => {});
     await waitForAnswerStatus(attempt.id, TrainingAnswerStatus.EVALUATING);
+    await waitForProviderRunStatus(
+      attempt.id,
+      TrainingProviderKind.EVALUATION,
+      TrainingProviderRunStatus.REQUESTING,
+    );
     firstService.onModuleDestroy();
     clock.advanceSeconds(31);
 
-    const recoveredService = createService(clock);
+    let recoveredProviderCalls = 0;
+    const recoveredService = createService(clock, {
+      evaluationProvider: {
+        evaluate: async (input) => {
+          recoveredProviderCalls += 1;
+          return fakeEvaluation.evaluate(input);
+        },
+      },
+    });
     await recoveredService.recoverPendingProcessing();
     assert.equal(
       (await recoveredService.getAttempt(attempt.id)).attempt.status,
       TrainingAttemptStatus.TECHNICAL_FAILURE,
     );
     assert.equal(await countEvaluations(attempt.id), 0);
+    assert.equal(recoveredProviderCalls, 0);
     const answer = await prisma.trainingAnswer.findFirstOrThrow({
       where: { attemptQuestion: { attemptId: attempt.id } },
     });
-    assert.equal(
-      (
-        await prisma.trainingProviderRun.findFirstOrThrow({
-          where: { answerId: answer.id, kind: 'EVALUATION' },
-        })
-      ).status,
-      'AMBIGUOUS',
-    );
+    assert.equal(answer.status, TrainingAnswerStatus.FAILED);
+    const primaryRun = await prisma.trainingProviderRun.findFirstOrThrow({
+      where: {
+        answerId: answer.id,
+        kind: TrainingProviderKind.EVALUATION,
+      },
+    });
+    assert.equal(primaryRun.runType, 'PRIMARY');
+    assert.equal(primaryRun.status, TrainingProviderRunStatus.AMBIGUOUS);
     await recoveredService.reprocessEvaluation({
       answerId: answer.id,
       reviewerId: fixture.publisherId,
@@ -702,6 +775,32 @@ test('PostgreSQL restart: READY, TRANSCRIBING, EVALUATING and FINALIZING all res
     });
     await recoveredService.recoverPendingProcessing();
     assert.equal(await countEvaluations(attempt.id), 1);
+    assert.equal(recoveredProviderCalls, 1);
+    const evaluationRuns = await prisma.trainingProviderRun.findMany({
+      where: {
+        answerId: answer.id,
+        kind: TrainingProviderKind.EVALUATION,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    assert.equal(evaluationRuns.length, 2);
+    assert.equal(evaluationRuns[0].id, primaryRun.id);
+    assert.equal(evaluationRuns[0].status, TrainingProviderRunStatus.AMBIGUOUS);
+    assert.equal(evaluationRuns[1].runType, 'REPROCESS');
+    assert.equal(evaluationRuns[1].status, TrainingProviderRunStatus.SUCCEEDED);
+    assert.notEqual(evaluationRuns[1].idempotencyKey, primaryRun.idempotencyKey);
+    const activeEvaluation = await prisma.trainingAnswer.findUniqueOrThrow({
+      where: { id: answer.id },
+      select: {
+        activeEvaluation: {
+          select: { providerRunId: true },
+        },
+      },
+    });
+    assert.equal(
+      activeEvaluation.activeEvaluation.providerRunId,
+      evaluationRuns[1].id,
+    );
   });
 
   await t.test('FINALIZING', async () => {
@@ -732,36 +831,108 @@ test('PostgreSQL restart: READY, TRANSCRIBING, EVALUATING and FINALIZING all res
   });
 });
 
-test('PostgreSQL restart reuses a persisted provider result before state transition', async () => {
+test('PostgreSQL restart automatically resumes a persisted PENDING provider run', async () => {
   const fixture = await createFixture();
   const clock = createClock();
   const deferred = createDeferred();
   const firstService = createService(clock, {
     transcriptionProvider: {
-      transcribe: async (input) => {
-        await prisma.trainingAnswer.update({
-          where: { id: input.answerId },
-          data: {
-            combinedTranscript: 'persisted PostgreSQL provider result',
-            normalizedLanguage: 'ru',
-            transcriptionProvider: 'fake',
-            transcriptionModel: 'fake-transcription-v1',
-            transcriptionRequestId: `persisted:${input.answerId}`,
-          },
-        });
-        return deferred.promise;
-      },
+      transcribe: async () => deferred.promise,
     },
   });
   const attempt = await startAttempt(firstService, fixture);
-  await appendVoice(firstService, clock, attempt, 20_801n, 'provider result');
+  await appendVoice(firstService, clock, attempt, 20_801n, 'pending provider');
   void firstService
     .finishAnswer({
       attemptId: attempt.id,
       attemptQuestionId: attempt.attemptQuestions[0].id,
     })
     .catch(() => {});
-  await waitForPersistedTranscript(attempt.id);
+  const providerRun = await waitForProviderRunStatus(
+    attempt.id,
+    TrainingProviderKind.TRANSCRIPTION,
+    TrainingProviderRunStatus.REQUESTING,
+  );
+  await prisma.trainingProviderRun.update({
+    where: { id: providerRun.id },
+    data: {
+      status: TrainingProviderRunStatus.PENDING,
+      startedAt: null,
+    },
+  });
+  firstService.onModuleDestroy();
+  clock.advanceSeconds(31);
+
+  let recoveredCalls = 0;
+  const recoveredService = createService(clock, {
+    transcriptionProvider: {
+      transcribe: async (input) => {
+        recoveredCalls += 1;
+        return fakeTranscription.transcribe(input);
+      },
+    },
+  });
+  await recoveredService.recoverPendingProcessing();
+
+  assert.equal(recoveredCalls, 1);
+  assert.equal(
+    (
+      await prisma.trainingProviderRun.findUniqueOrThrow({
+        where: { id: providerRun.id },
+      })
+    ).status,
+    TrainingProviderRunStatus.SUCCEEDED,
+  );
+  assert.equal(await countEvaluations(attempt.id), 1);
+});
+
+test('PostgreSQL restart reuses a persisted SUCCEEDED provider result before state transition', async () => {
+  const fixture = await createFixture();
+  const clock = createClock();
+  const deferred = createDeferred();
+  const firstService = createService(clock, {
+    transcriptionProvider: {
+      transcribe: async () => deferred.promise,
+    },
+  });
+  const attempt = await startAttempt(firstService, fixture);
+  await appendVoice(firstService, clock, attempt, 20_802n, 'provider result');
+  void firstService
+    .finishAnswer({
+      attemptId: attempt.id,
+      attemptQuestionId: attempt.attemptQuestions[0].id,
+    })
+    .catch(() => {});
+  const providerRun = await waitForProviderRunStatus(
+    attempt.id,
+    TrainingProviderKind.TRANSCRIPTION,
+    TrainingProviderRunStatus.REQUESTING,
+  );
+  const answer = await prisma.trainingAnswer.findFirstOrThrow({
+    where: { attemptQuestion: { attemptId: attempt.id } },
+  });
+  await prisma.$transaction([
+    prisma.trainingAnswerTranscription.create({
+      data: {
+        answerId: answer.id,
+        providerRunId: providerRun.id,
+        transcriptionNumber: 1,
+        transcript: 'persisted PostgreSQL provider result',
+        language: 'ru',
+        wordCount: 4,
+      },
+    }),
+    prisma.trainingProviderRun.update({
+      where: { id: providerRun.id },
+      data: {
+        status: TrainingProviderRunStatus.SUCCEEDED,
+        actualModelId: 'fake-transcription-v1',
+        requestId: `persisted:${answer.id}`,
+        responseStatus: 'completed',
+        completedAt: clock.now(),
+      },
+    }),
+  ]);
   firstService.onModuleDestroy();
   clock.advanceSeconds(31);
 
@@ -777,6 +948,28 @@ test('PostgreSQL restart reuses a persisted provider result before state transit
   await recoveredService.recoverPendingProcessing();
 
   assert.equal(repeatedCalls, 0);
+  assert.equal(
+    (
+      await prisma.trainingProviderRun.findUniqueOrThrow({
+        where: { id: providerRun.id },
+      })
+    ).status,
+    TrainingProviderRunStatus.SUCCEEDED,
+  );
+  assert.equal(
+    await prisma.trainingAnswerTranscription.count({
+      where: { providerRunId: providerRun.id },
+    }),
+    1,
+  );
+  assert.equal(
+    (
+      await prisma.trainingAnswer.findUniqueOrThrow({
+        where: { id: answer.id },
+      })
+    ).combinedTranscript,
+    'persisted PostgreSQL provider result',
+  );
   assert.equal(await countEvaluations(attempt.id), 1);
 });
 
@@ -817,6 +1010,13 @@ test('PostgreSQL timeout during provider request preserves ambiguity and explici
         })
         .catch(() => {});
       await waitForAnswerStatus(attempt.id, state);
+      await waitForProviderRunStatus(
+        attempt.id,
+        state === TrainingAnswerStatus.TRANSCRIBING
+          ? TrainingProviderKind.TRANSCRIPTION
+          : TrainingProviderKind.EVALUATION,
+        TrainingProviderRunStatus.REQUESTING,
+      );
       clock.set(attempt.expiresAt);
       await firstService.handleTimeout(attempt.id, clock.now());
       firstService.onModuleDestroy();
@@ -2102,6 +2302,27 @@ async function waitForAnswerStatus(attemptId, status) {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   assert.fail(`Answer did not enter ${status}`);
+}
+
+async function waitForProviderRunStatus(attemptId, kind, status) {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const providerRun = await prisma.trainingProviderRun.findFirst({
+      where: {
+        kind,
+        status,
+        answer: {
+          attemptQuestion: {
+            attemptId,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (providerRun) return providerRun;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.fail(`Provider run ${kind} did not enter ${status}`);
 }
 
 async function waitForPersistedTranscript(attemptId) {

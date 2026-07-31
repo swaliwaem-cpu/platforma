@@ -47,7 +47,7 @@ const {
   TrainingTelegramWebhookService,
 } = require('../dist/training/telegram/training-telegram-webhook.service.js');
 const {
-  TrainingTelegramWorkerService,
+  TrainingTelegramWorkerService: ProductionTrainingTelegramWorkerService,
 } = require('../dist/training/telegram/training-telegram-worker.service.js');
 const { UsersService } = require('../dist/users/users.service.js');
 const {
@@ -63,8 +63,38 @@ if (!process.env.DATABASE_URL) {
 const prisma = new PrismaClient();
 let telegramSequence = 100_000;
 
+class TrainingTelegramWorkerService extends ProductionTrainingTelegramWorkerService {
+  constructor(
+    prismaClient,
+    config,
+    dialog,
+    transport,
+    trainingConfig,
+    workerHeartbeat,
+    attempts,
+  ) {
+    super(
+      prismaClient,
+      config,
+      dialog,
+      transport,
+      trainingConfig,
+      workerHeartbeat,
+      attempts ?? createEngine(prisma),
+    );
+  }
+}
+
 test.after(async () => {
   await prisma.$disconnect();
+});
+
+test.afterEach(async () => {
+  await prisma.trainingJob.deleteMany({
+    where: {
+      idempotencyKey: { startsWith: 'telegram:test:' },
+    },
+  });
 });
 
 test('Telegram link token happy path stores only hash and consumes atomically', async () => {
@@ -398,7 +428,7 @@ test('one Platforma user cannot link two active Telegram accounts', async () => 
 test('blocking and deactivating a user atomically revoke Telegram access without automatic restore', async () => {
   const fixture = await createFixture();
   const harness = createHarness();
-  await linkUser(harness, fixture.userId, 501_103);
+  await linkUser(harness, fixture.userId, 501_117);
   const pendingToken = await harness.links.issueLinkToken(fixture.userId);
   const actor = await prisma.user.findUnique({
     where: { id: fixture.publisherId },
@@ -436,7 +466,7 @@ test('blocking and deactivating a user atomically revoke Telegram access without
   );
 
   await users.activate(fixture.userId, actor, auditRequest());
-  await linkUser(harness, fixture.userId, 501_103);
+  await linkUser(harness, fixture.userId, 501_117);
   await users.deactivate(fixture.userId, actor, auditRequest());
   const deactivated = await prisma.user.findUnique({
     where: { id: fixture.userId },
@@ -458,7 +488,7 @@ test('blocking and deactivating a user atomically revoke Telegram access without
   assert.ok(afterActivation.revokedAt);
   await acceptAndDrain(
     harness,
-    privateTextUpdate(nextSequence(), 90, 501_103, 'Правила'),
+    privateTextUpdate(nextSequence(), 90, 501_117, 'Правила'),
   );
   assert.ok(
     harness.transport.deliveries.some(
@@ -1372,9 +1402,6 @@ test('two Telegram workers claim one delivery job only once', async () => {
     TEST_CONFIG,
     dialog,
     transport,
-    undefined,
-    undefined,
-    engine,
   );
   const second = new TrainingTelegramWorkerService(
     prisma,
@@ -2090,11 +2117,15 @@ test('overdue warning is skipped even while the attempt status is still active',
   const attempt = await startAttempt(harness.engine, fixture);
   await drainTelegram(harness.worker);
   harness.transport.clear();
+  const expiresAt = new Date(attempt.startedAt.getTime() + 1);
+  while (Date.now() <= expiresAt.getTime()) {
+    await wait(5);
+  }
   const now = new Date();
   await prisma.trainingAttempt.update({
     where: { id: attempt.id },
     data: {
-      expiresAt: new Date(now.getTime() - 1_000),
+      expiresAt,
       graceExpiresAt: new Date(now.getTime() + 60_000),
     },
   });
@@ -2511,6 +2542,9 @@ function createHarness() {
     TEST_CONFIG,
     dialog,
     transport,
+    undefined,
+    undefined,
+    engine,
   );
   return { engine, links, dialog, transport, webhook, worker };
 }

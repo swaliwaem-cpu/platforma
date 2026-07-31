@@ -8,6 +8,7 @@ const {
 } = require('@nestjs/common');
 const {
   PrismaClient,
+  TrainingProjectAudienceMode,
   TrainingProjectStatus,
   TrainingQuestionType,
   TrainingVersionStatus,
@@ -17,6 +18,17 @@ const {
 const {
   TrainingContentService,
 } = require('../dist/training/training-content.service.js');
+const {
+  TrainingAttemptEngineService,
+} = require('../dist/training/training-attempt-engine.service.js');
+const {
+  DeterministicFakeTrainingEvaluationProvider,
+  DeterministicFakeTrainingTranscriptionProvider,
+} = require('../dist/training/training-attempt.providers.js');
+const {
+  DeterministicQuestionSelector,
+  MutableTrainingClock,
+} = require('./helpers/training-attempt-fake-prisma.cjs');
 
 if (!process.env.DATABASE_URL) {
   throw new Error(
@@ -133,6 +145,12 @@ for (const scenario of createMutationFirstScenarios()) {
 test('PostgreSQL race: publication commits before a waiting create and the create is rejected', async () => {
   const fixture = await createPublishableFixture();
   const actor = createActor(fixture.publisher);
+  assert.equal(
+    (
+      await publicationService.getVersionReadiness(fixture.version.id)
+    ).readiness.readyToPublish,
+    true,
+  );
   const baselineWaiters = await countBlockedTransactions();
   const gate = await holdVersionRowGate(fixture.version.id);
   let publicationResultPromise;
@@ -145,15 +163,16 @@ test('PostgreSQL race: publication commits before a waiting create and the creat
     await waitForBlockedTransactions(baselineWaiters + 1);
 
     mutationResultPromise = settle(
-      mutationService.createQuestion(
+      mutationService.createFact(
         fixture.version.id,
         {
-          type: TrainingQuestionType.FOLLOW_UP,
-          text: 'Поздний вопрос после начала публикации',
-          position: 10,
-          isActive: true,
-          maxScore: 15,
-          topicCodes: ['race'],
+          code: 'race.late-fact',
+          topicCode: 'race',
+          statement: 'Поздний факт после начала публикации',
+          acceptedAliases: [],
+          importance: 1,
+          isApproved: true,
+          questionIds: [],
         },
         actor,
         request,
@@ -168,6 +187,10 @@ test('PostgreSQL race: publication commits before a waiting create and the creat
     const mutationResult = await mutationResultPromise;
     assert.equal(mutationResult.status, 'rejected');
     assert.equal(mutationResult.reason instanceof ConflictException, true);
+    assert.equal(
+      mutationResult.reason.message,
+      'Published training version is immutable; create a new draft',
+    );
   } finally {
     await gate.release();
     if (publicationResultPromise) {
@@ -190,10 +213,10 @@ test('PostgreSQL race: publication commits before a waiting create and the creat
   assert.equal(persistedProject.activeVersionId, fixture.version.id);
   assert.equal(persistedProject.status, TrainingProjectStatus.CLOSED);
   assert.equal(
-    await observerPrisma.trainingQuestion.count({
+    await observerPrisma.trainingFact.count({
       where: {
         projectVersionId: fixture.version.id,
-        text: 'Поздний вопрос после начала публикации',
+        code: 'race.late-fact',
       },
     }),
     0,
@@ -209,11 +232,149 @@ test('PostgreSQL race: publication commits before a waiting create and the creat
   );
   assert.equal(
     await countAuditForVersion(
-      'training.question.create',
+      'training.fact.create',
       fixture.version.id,
     ),
     0,
   );
+});
+
+test('PostgreSQL race: two concurrent publishes create one current published version', async () => {
+  const fixture = await createPublishableFixture();
+  const actor = createActor(fixture.publisher);
+  const results = await Promise.all([
+    settle(publicationService.publishVersion(fixture.version.id, actor, request)),
+    settle(mutationService.publishVersion(fixture.version.id, actor, request)),
+  ]);
+
+  assert.equal(
+    results.filter((result) => result.status === 'fulfilled').length,
+    1,
+  );
+  assert.equal(
+    results.filter(
+      (result) =>
+        result.status === 'rejected' &&
+        result.reason instanceof ConflictException &&
+        result.reason.message ===
+          'Published training version is immutable; create a new draft',
+    ).length,
+    1,
+  );
+  const [project, publishedVersions, publishAudits] = await Promise.all([
+    observerPrisma.trainingProject.findUniqueOrThrow({
+      where: { id: fixture.project.id },
+      select: { activeVersionId: true },
+    }),
+    observerPrisma.trainingProjectVersion.findMany({
+      where: {
+        projectId: fixture.project.id,
+        status: TrainingVersionStatus.PUBLISHED,
+      },
+      select: { id: true },
+    }),
+    observerPrisma.auditLog.count({
+      where: {
+        action: 'training.version.publish',
+        entityId: fixture.version.id,
+      },
+    }),
+  ]);
+  assert.equal(project.activeVersionId, fixture.version.id);
+  assert.deepEqual(publishedVersions, [{ id: fixture.version.id }]);
+  assert.equal(publishAudits, 1);
+});
+
+test('PostgreSQL publication supersedes the old version and attempts stay pinned', async () => {
+  const fixture = await createPublishableFixture();
+  const actor = createActor(fixture.publisher);
+  await publicationService.publishVersion(fixture.version.id, actor, request);
+  await observerPrisma.trainingProject.update({
+    where: { id: fixture.project.id },
+    data: {
+      audienceMode: TrainingProjectAudienceMode.ALL_ELIGIBLE,
+      status: TrainingProjectStatus.OPEN,
+    },
+  });
+  const [firstEmployee, secondEmployee] = await Promise.all([
+    createEmployee(fixture.role.id, 'before-publication'),
+    createEmployee(fixture.role.id, 'after-publication'),
+  ]);
+  const attemptEngine = createAttemptEngine();
+  const firstAttempt = (
+    await attemptEngine.confirmStart({
+      userId: firstEmployee.id,
+      projectId: fixture.project.id,
+      confirmed: true,
+    })
+  ).attempt;
+  assert.equal(firstAttempt.projectVersionId, fixture.version.id);
+
+  const draft = await publicationService.createDraftVersion(
+    fixture.project.id,
+    actor,
+    request,
+  );
+  await publicationService.publishVersion(draft.version.id, actor, request);
+
+  const [oldVersion, newVersion, project, persistedFirstAttempt] =
+    await Promise.all([
+      observerPrisma.trainingProjectVersion.findUniqueOrThrow({
+        where: { id: fixture.version.id },
+        select: { status: true },
+      }),
+      observerPrisma.trainingProjectVersion.findUniqueOrThrow({
+        where: { id: draft.version.id },
+        select: { status: true },
+      }),
+      observerPrisma.trainingProject.findUniqueOrThrow({
+        where: { id: fixture.project.id },
+        select: { activeVersionId: true, status: true },
+      }),
+      observerPrisma.trainingAttempt.findUniqueOrThrow({
+        where: { id: firstAttempt.id },
+        select: { projectVersionId: true },
+      }),
+    ]);
+  assert.equal(oldVersion.status, TrainingVersionStatus.SUPERSEDED);
+  assert.equal(newVersion.status, TrainingVersionStatus.PUBLISHED);
+  assert.equal(project.activeVersionId, draft.version.id);
+  assert.equal(project.status, TrainingProjectStatus.OPEN);
+  assert.equal(persistedFirstAttempt.projectVersionId, fixture.version.id);
+
+  const secondAttempt = (
+    await attemptEngine.confirmStart({
+      userId: secondEmployee.id,
+      projectId: fixture.project.id,
+      confirmed: true,
+    })
+  ).attempt;
+  assert.equal(secondAttempt.projectVersionId, draft.version.id);
+
+  const newMainQuestion = await observerPrisma.trainingQuestion.findFirstOrThrow({
+    where: {
+      projectVersionId: draft.version.id,
+      type: TrainingQuestionType.MAIN,
+    },
+  });
+  for (const [versionId, questionId] of [
+    [fixture.version.id, fixture.mainQuestion.id],
+    [draft.version.id, newMainQuestion.id],
+  ]) {
+    await assert.rejects(
+      mutationService.updateQuestion(
+        versionId,
+        questionId,
+        { text: 'Недопустимое изменение опубликованной версии' },
+        actor,
+        request,
+      ),
+      (error) =>
+        error instanceof ConflictException &&
+        error.message ===
+          'Published training version is immutable; create a new draft',
+    );
+  }
 });
 
 function createMutationFirstScenarios() {
@@ -426,12 +587,12 @@ async function createPublishableFixture() {
       isApproved: true,
     },
   });
-  await observerPrisma.trainingQuestionFactLink.create({
-    data: {
-      questionId: mainQuestion.id,
+  await observerPrisma.trainingQuestionFactLink.createMany({
+    data: [mainQuestion, ...followUpQuestions].map((question) => ({
+      questionId: question.id,
       factId: fact.id,
       isRequired: true,
-    },
+    })),
   });
   await observerPrisma.trainingEvaluationCriterion.createMany({
     data: [
@@ -442,6 +603,7 @@ async function createPublishableFixture() {
         title: 'Главный ответ',
         maxPoints: 55,
         anchorsJson: [
+          { id: 'main-zero', points: 0, description: 'Ответ отсутствует' },
           { id: 'main-full', points: 55, description: 'Полный ответ' },
         ],
         sortOrder: 0,
@@ -453,6 +615,7 @@ async function createPublishableFixture() {
         title: 'Дополнительный ответ',
         maxPoints: 15,
         anchorsJson: [
+          { id: 'follow-zero', points: 0, description: 'Ответ отсутствует' },
           {
             id: 'follow-full',
             points: 15,
@@ -465,12 +628,36 @@ async function createPublishableFixture() {
   });
 
   return {
+    role,
     publisher,
     project,
     version,
     mainQuestion,
     followUpQuestions,
   };
+}
+
+function createEmployee(roleId, label) {
+  const unique = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return observerPrisma.user.create({
+    data: {
+      email: `training-content-lock-${label}-${unique}@example.test`,
+      passwordHash: 'not-used-in-domain-test',
+      name: `Training employee ${label}`,
+      status: UserStatus.ACTIVE,
+      roleId,
+    },
+  });
+}
+
+function createAttemptEngine() {
+  return new TrainingAttemptEngineService(
+    observerPrisma,
+    new MutableTrainingClock(new Date('2026-08-01T00:00:00.000Z')),
+    new DeterministicQuestionSelector(),
+    new DeterministicFakeTrainingTranscriptionProvider(),
+    new DeterministicFakeTrainingEvaluationProvider(),
+  );
 }
 
 function createActor(user) {

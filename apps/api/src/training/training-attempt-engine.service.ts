@@ -107,7 +107,8 @@ const TRAINING_CURRENT_QUESTION_STATUSES = [
 ] as const;
 
 const TRAINING_FAKE_TRANSCRIPT_MAX_LENGTH = 240;
-const TRAINING_TRANSACTION_RETRY_LIMIT = 3;
+const TRAINING_TRANSACTION_RETRY_LIMIT = 5;
+const TRAINING_TRANSACTION_RETRY_BASE_DELAY_MS = 10;
 const TRAINING_ATTEMPT_JOB_POLL_MS = 250;
 const TRAINING_ATTEMPT_JOB_LEASE_MS = 30_000;
 const TRAINING_ATTEMPT_JOB_HEARTBEAT_MS = 5_000;
@@ -4130,6 +4131,7 @@ export class TrainingAttemptEngineService
         ) {
           throw error;
         }
+        await waitForTrainingTransactionRetry(attempt);
       }
     }
 
@@ -4148,6 +4150,15 @@ export class TrainingAttemptEngineService
       status as (typeof TRAINING_TERMINAL_ATTEMPT_STATUSES)[number],
     );
   }
+}
+
+function waitForTrainingTransactionRetry(attempt: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(
+      resolve,
+      TRAINING_TRANSACTION_RETRY_BASE_DELAY_MS * attempt,
+    );
+  });
 }
 
 function calculateDurationSeconds(start: Date | null, end: Date | null) {

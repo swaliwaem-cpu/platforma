@@ -1,5 +1,40 @@
 # Codex Log
 
+## 2026-08-01 - Training refactor baseline recovery
+
+Задача:
+
+- Разобрать и устранить 21 PostgreSQL failure перед рефакторингом, зафиксировав OpenAI recovery, publication и document-worker contracts.
+- Не начинать сам рефакторинг, не менять UI/routes/DTO/scoring/permissions и не вызывать real providers/production.
+
+Изменения:
+
+- Исходные 21 failure сгруппированы в пять test/fixture root causes: OpenAI crash-window sync, publication readiness fixture, Telegram identity, undefined engine и production-incomplete direct worker fixtures.
+- OpenAI PostgreSQL restart tests ждут committed `REQUESTING` и доказывают все `PENDING/REQUESTING/SUCCEEDED/FAILED/AMBIGUOUS` пути: terminal answer state, reuse результата без auto-call, explicit reprocess как новый run, сохранность primary history и active selection.
+- Publication DB tests теперь покрывают concurrent publish, immutable content, supersede, old-attempt pinning и new-attempt active version.
+- Telegram test worker wiring приведён к production dependency contract; identities, jobs и time-bound fixtures изолированы.
+- Добавлен real PostgreSQL document-worker test для two-consumer CAS/source fence и stale lease recovery; runner запускает 11 DB files.
+- Выявленный финальным race repeat `P2034` contention устранён bounded retry: пять Serializable attempts с линейным backoff `10–40 ms`.
+- Создан `docs/training/refactor/04-baseline-recovery.md`; обновлены current state и regression plan. Статус: `REFACTOR_BASELINE_READY`, но refactor не начат.
+
+Проверки:
+
+- `pnpm --filter @platforma/api test` - passed; unit 537/537, PostgreSQL 111/111.
+- Два отдельных `test:training:db:run` после финальных fixes - 111/111 и 111/111; обе temporary DB удалены.
+- `pnpm --filter @platforma/web test` - 312/312 passed.
+- `pnpm build` - passed; сохранён известный Vite warning о chunk 790.87 kB.
+- `pnpm test` - passed, включая ещё один PostgreSQL 111/111.
+- Prisma schema valid; 43 migrations применены с нуля в temporary DB runs; `git diff --check` passed.
+
+Ручная проверка:
+
+- Не требуется для baseline recovery. Real provider, Playwright/full-chain и Docker-audio gates остаются stage-specific для будущих refactor batches.
+
+Спорные места:
+
+- Exactly-once OpenAI billing не обещается; durable `REQUESTING` после restart становится `AMBIGUOUS` и требует explicit reprocess.
+- Document worker остаётся multi-consumer; mutual exclusion доказан CAS/lease/source-fence PostgreSQL test, а не изменением production topology.
+
 ## 2026-07-31 - Telegram training result messages
 
 Задача:
