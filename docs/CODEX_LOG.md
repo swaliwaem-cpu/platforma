@@ -6825,3 +6825,19 @@ Production:
 - `pnpm build:web` и `git diff --check` — passed. Сохраняется прежнее
   предупреждение Vite о chunk больше `500 kB`.
 - API, Telegram/OpenAI, Prisma schema, migrations и dependencies не менялись.
+
+Production:
+
+- Commit `2b8feb7` отправлен в `origin/on-ser`; production checkout
+  fast-forwarded с `865a026` до `2b8feb7`.
+- Старый web image сохранён как
+  `platforma-web:rollback-admin-training-nav-20260731T085133Z`.
+- Собран и пересоздан только контейнер `web`; новый image:
+  `sha256:12129e70463c...`, restart count равен `0`.
+- Контейнеры `api` и `training-worker` сохранили прежние ID/image и restart
+  count `0`.
+- Новый production bundle содержит `training:projects:manage` и
+  `/admin/training`; internal и public web возвращают HTTP `200`, public
+  health — `status=ok`, `database=ok`, `training=ready`.
+- Авторизованную проверку меню нужно завершить обновлением страницы под
+  admin-аккаунтом.
