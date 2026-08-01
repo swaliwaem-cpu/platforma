@@ -1,5 +1,40 @@
 # Codex Log
 
+## 2026-08-01 - Training Stage 3 safe deduplication
+
+Задача:
+
+- Выполнить только Stage 3: после characterization консолидировать доказанное exact/pure дублирование и остановиться перед backend god-files.
+- Не менять React state/effects, SQL, worker lifecycle, routes/DTO/schema/permissions/jobs/providers и production.
+
+Изменения:
+
+- Пять read-only аудитов сформировали manifest из шести разрешённых групп и отдельный список intentional/uncertain duplication.
+- Добавлены канонические helpers worker wait, UUID v1–5/v1–8 и fact-suggestion canonical JSON/SHA-256; локальные exact copies подключены к ним без изменения caller errors и lifecycle sequencing.
+- Frontend error/points formatters и query serializer вынесены в pure ESM helpers; endpoint defaults, truthiness, encoding и empty-query behavior сохранены.
+- Characterization tests добавлены и запущены до переключения consumers; web suite вырос с 312 до 315 tests.
+- Production diff: удалено 188 строк, добавлено 140, net `-48` (backend `-44`, frontend `-4`).
+- Создан `docs/training/refactor/06-safe-deduplication.md`; документы 02–03 обновлены только до статуса Stage 3. Stage 4–8 не отмечены выполненными.
+
+Проверки:
+
+- `pnpm --filter @platforma/api test` — passed; unit 542/542, PostgreSQL 111/111.
+- Два отдельных PostgreSQL repeats — 111/111 и 111/111; обе temporary DB удалены.
+- `pnpm --filter @platforma/web test` — 315/315 passed.
+- `pnpm build` и `pnpm test` — passed; Vite main chunk 787.75 kB с известным warning.
+- Полный Playwright training suite — 24/24; desktop/mobile goldens без изменений.
+- Prisma schema valid; все 43 migrations применились в clean DB runs; `git diff --check` passed; `.only/.skip` и удалений tests нет.
+
+Ручная проверка:
+
+- Для Stage 3 не требуется: frontend behavior закрыт unit/browser tests и неизменными goldens. Real Telegram/OpenAI, fake full-chain, Docker audio и production не запускались.
+
+Спорные места:
+
+- Telegram compact callback UUID, transaction/security/provider helpers, domain hashes и лишь похожие frontend formatters/predicates намеренно не объединены.
+- Существующий React dev warning `Maximum update depth exceeded` сохранён без functional fix вне scope.
+- Stage 4 backend decomposition требует отдельного разрешения.
+
 ## 2026-08-01 - Training characterization and proven dead-code removal
 
 Задача:

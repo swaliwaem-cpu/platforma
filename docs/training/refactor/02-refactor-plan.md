@@ -1,6 +1,6 @@
 # Модуль обучения: безопасный план рефакторинга
 
-Статус на 2026-08-01: Stage 1 и Stage 2 выполнены по явной команде `REFACTOR_APPROVED`; execution record — `04-baseline-recovery.md` и `05-dead-code-removal.md`. На границе Stage 2 работа остановлена. Stage 3–8 не разрешены и не начинались.
+Статус на 2026-08-01: Stage 1–2 выполнены по `REFACTOR_APPROVED`, Stage 3 — по `REFACTOR_STAGE_3_APPROVED`. Execution records: `04-baseline-recovery.md`, `05-dead-code-removal.md` и `06-safe-deduplication.md`. Работа остановлена на полностью зелёной границе Stage 3; Stage 4–8 не разрешены и не начинались.
 
 ## Цель и стратегия
 
@@ -87,7 +87,7 @@
 
 ## Stage 3 — Безопасная консолидация дублирования
 
-**Готовность сейчас:** `NOT_APPROVED`. Readiness Stage 2 достигнута, но явная команда требует остановиться до устранения дублирования.
+**Готовность сейчас:** `COMPLETE`. Консолидированы только шесть доказанных exact/pure групп: worker wait, UUID predicate с сохранением v1–5/v1–8 boundary, fact-suggestion canonical hash, frontend error/points formatters и query serialization. Полный manifest, intentional/uncertain keep list, characterization и gates находятся в `06-safe-deduplication.md`.
 
 **Файлы:** worker helpers, small backend utilities, `TrainingShellPage.tsx`, `TrainingOperationsPage.tsx`, `TrainingRankingPage.tsx`, `TrainingAdminResultsPage.tsx`, `QuestionEvaluationContext.tsx`, `TrainingReadiness.tsx`, `trainingAdminApi.ts`, `trainingResultsApi.ts`.
 
@@ -107,7 +107,7 @@
 
 ## Stage 4 — Backend god-files
 
-**Готовность сейчас:** `BLOCKED_BY_STAGE_3`; выполнять несколькими batches, не одной большой заменой.
+**Готовность сейчас:** `NOT_APPROVED`; readiness Stage 3 достигнута, но выполнять только по отдельной явной команде и несколькими batches, не одной большой заменой.
 
 **Файлы/порядок:**
 
@@ -194,7 +194,7 @@
 
 ## Stage 8 — Финальная архитектурная валидация
 
-**Готовность сейчас:** `BLOCKED_BY_STAGES_3_7`.
+**Готовность сейчас:** `BLOCKED_BY_STAGES_4_7`.
 
 **Файлы:** весь training scope, shared contract, Prisma schema/migration history, Compose/env/deploy manifests и четыре audit-документа.
 
@@ -233,4 +233,4 @@ Stage 1 green baseline
 - рост query count/p95/bundle без объяснения;
 - необходимость functional bugfix, migration, dependency или product decision вне scope.
 
-Текущая команда после аудита: **остановиться и ждать `REFACTOR_APPROVED`**.
+Текущая граница: **Stage 3 завершён; остановиться и ждать отдельного разрешения на Stage 4**.

@@ -1,19 +1,19 @@
 # Модуль обучения: regression и characterization test plan
 
-Статус: PostgreSQL baseline и scoped characterization для удаления dead code восстановлены 2026-08-01; Stage 1–2 завершены по `REFACTOR_APPROVED`. Stage 3–8 не начинались и требуют отдельного разрешения.
+Статус: PostgreSQL baseline восстановлен 2026-08-01; Stage 1–2 завершены по `REFACTOR_APPROVED`, Stage 3 safe deduplication — по `REFACTOR_STAGE_3_APPROVED`. Stage 4–8 не начинались и требуют отдельного разрешения.
 
 ## Текущее состояние gate
 
 | Gate | Текущий результат 2026-08-01 | Статус для refactor |
 |---|---|---|
-| `pnpm --filter @platforma/api test` | pass; unit 538/538, PostgreSQL 111/111 | PASS |
-| `pnpm --filter @platforma/web test` | 312/312 pass | PASS |
-| `pnpm build` | pass; Vite main chunk warning 790.87 kB | PASS с зафиксированным warning |
+| `pnpm --filter @platforma/api test` | pass; unit 542/542, PostgreSQL 111/111 | PASS |
+| `pnpm --filter @platforma/web test` | 315/315 pass | PASS |
+| `pnpm build` | pass; известный Vite main chunk warning, 787.75 kB | PASS с зафиксированным warning |
 | `pnpm test` | pass; PostgreSQL 111/111 | PASS |
 | PostgreSQL repeat 1 / repeat 2 | 111/111; 111/111, каждый на clean temporary DB | PASS |
 | Prisma validate / migrations | valid; 43/43 migrations применены в clean DB runs | PASS |
 | `git diff --check` | pass | PASS |
-| Playwright training | 24/24 pass; editor/results desktop/mobile golden screenshots и employee permission boundary | PASS для Stage 2; повторять перед следующими UI batches |
+| Playwright training | 24/24 pass; editor/results desktop/mobile golden screenshots и employee permission boundary | PASS для Stage 3; повторять перед следующими UI batches |
 | fake full-chain | не входил в baseline recovery | REQUIRED перед integration batch |
 | Docker audio/MinIO/ffmpeg | не входил в baseline recovery | REQUIRED перед audio/worker batch |
 | real Telegram/OpenAI | не запускался и не разрешён | OUT OF SCOPE до отдельного GO |
@@ -67,6 +67,16 @@ Schema/migration, secret scan и exact Compose guards остаются поле�
 - Четыре golden screenshots совпали до и после CSS batch; полный browser suite прошёл 24/24.
 
 Остальные suites ниже остаются обязательными перед теми будущими batches, которые затрагивают соответствующие integration, worker, provider или authoring contracts. Stage 2 их не менял.
+
+## Scoped characterization, добавленный для Stage 3
+
+- Backend pure helper suite фиксирует worker wait success/timeout/`unref()`/rejection, UUID v1–5 и отдельный v1–8 document boundary, canonical JSON ordering и SHA-256 — 4/4.
+- Frontend query suite фиксирует omission, coercion, insertion order, Cyrillic/NBSP/reserved-character encoding, `null`/`false`/`0`/array behavior и точные defaults трёх admin endpoints — 2/2.
+- Results suite фиксирует общий error fallback и points formatting — 1 новый test.
+- Characterization был зелёным до переключения production consumers; после переключения focused API/web gates повторены.
+- Полный web suite вырос с 312 до 315 tests; source-contract assertions теперь требуют shared serializer и caller-owned defaults, а не локальную копию `URLSearchParams`.
+
+Stage 3 не менял React state/effects, запросы, routing, SQL, worker lifecycle, provider или public contracts. Exact execution record — `06-safe-deduplication.md`.
 
 ## Обязательные новые characterization suites для последующих stages
 
@@ -154,7 +164,7 @@ create project -> working draft/clone -> question/fact/criterion
 |---|---|---|---|
 | dead imports/types/helpers | API/web build, relevant unit | полный DB runner | `git diff --check` |
 | CSS dead selectors | web unit | — | editor/results Playwright + screenshot desktop/mobile |
-| pure shared helpers | helper unit, exact snapshot | полный DB runner | web tests при frontend consumer |
+| pure shared helpers | helper unit, exact snapshot | полный DB runner | web tests при frontend consumer; Stage 3 PASS |
 | content/controller | content/doc/source/fact unit | authoring HTTP + content-lock DB + full-chain | editor Playwright |
 | attempt/scoring/review | contracts/scoring/engine/OpenAI unit | весь DB runner + fake full-chain | results/review Playwright |
 | audio/storage | audio unit | audio DB/HTTP + Docker + full-chain | audio browser lifecycle |
@@ -211,4 +221,4 @@ git diff --check
 - список неизменяемых contracts подписан;
 - необходимые для recovery gates зелёны.
 
-На этом baseline выполнены только scoped characterization и proven dead-code removal (Stage 1–2). Перед каждым batch Stage 3–8 нужны его stage-specific browser/full-chain/Docker gates и отдельная явная команда; текущая работа остановлена до duplication stage.
+На этом baseline выполнены scoped characterization, proven dead-code removal и safe deduplication (Stage 1–3). Перед каждым batch Stage 4–8 нужны его stage-specific browser/full-chain/Docker gates и отдельная явная команда; текущая работа остановлена перед backend god-file stage.

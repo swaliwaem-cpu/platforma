@@ -30,3 +30,5 @@ export function visibleEmployeeScore(attempt: {
 
 export function formatTrainingScore(value: string | number | null | undefined): string;
 export function formatTrainingDuration(seconds: number | null | undefined): string;
+export function readTrainingError(error: unknown, fallback: string): string;
+export function formatTrainingPoints(value: number): string;

@@ -94,3 +94,11 @@ export function formatTrainingDuration(seconds) {
   const remainder = seconds % 60;
   return minutes ? `${minutes} мин ${remainder} сек` : `${remainder} сек`;
 }
+
+export function readTrainingError(error, fallback) {
+  return error instanceof Error ? error.message : fallback;
+}
+
+export function formatTrainingPoints(value) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(2);
+}

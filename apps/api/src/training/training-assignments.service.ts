@@ -19,6 +19,7 @@ import {
   acquireTrainingProjectAudienceLock,
   acquireTrainingUserProjectLock,
 } from './training-project-access';
+import { isTrainingUuid } from './training-uuid';
 
 const TRAINING_TAKE_PERMISSION = 'training:take';
 const SERIALIZABLE_RETRY_LIMIT = 3;
@@ -516,10 +517,7 @@ function readUuidArray(value: unknown, field: string) {
 
 function readUuid(value: unknown, field: string) {
   if (
-    typeof value !== 'string' ||
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
-      value,
-    )
+    !isTrainingUuid(value)
   ) {
     throw new BadRequestException(`${field} must contain UUID values`);
   }

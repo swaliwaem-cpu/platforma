@@ -44,6 +44,7 @@ import {
 } from './training-safe-log';
 import { lockTrainingVersionForContentMutation } from './training-version-lock';
 import { TrainingWorkerHeartbeatService } from './training-worker-heartbeat.service';
+import { isTrainingUuid } from './training-uuid';
 
 type ClaimedOfficialUrlJob = {
   id: string;
@@ -756,10 +757,7 @@ function readOfficialUrlJobPayload(
     typeof value !== 'object' ||
     value === null ||
     Array.isArray(value) ||
-    typeof value.sourceId !== 'string' ||
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
-      value.sourceId,
-    ) ||
+    !isTrainingUuid(value.sourceId) ||
     !Number.isInteger(value.fetchGeneration) ||
     Number(value.fetchGeneration) < 1
   ) {

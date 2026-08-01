@@ -26,6 +26,7 @@ import {
   normalizeOfficialUrl,
 } from './training-official-url-fetcher';
 import { lockTrainingVersionForContentMutation } from './training-version-lock';
+import { isTrainingUuid } from './training-uuid';
 
 export const TRAINING_MAX_OFFICIAL_URL_SOURCES_PER_VERSION = 50;
 
@@ -502,9 +503,7 @@ export class TrainingOfficialUrlSourcesService {
   }
 
   private parseUuid(value: string, message: string) {
-    const uuidPattern =
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-    if (!uuidPattern.test(value)) {
+    if (!isTrainingUuid(value)) {
       throw new BadRequestException(message);
     }
     return value;

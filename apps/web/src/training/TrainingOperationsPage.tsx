@@ -37,6 +37,7 @@ import {
   getTrainingOperations,
   retryTrainingJob,
 } from './trainingResultsApi';
+import { readTrainingError as readError } from './trainingViewModel.mjs';
 import './trainingResults.css';
 
 type TrainingOperationsPageProps = {
@@ -505,8 +506,4 @@ function formatDuration(value: number | null) {
 
 function createOperationsRetryIdempotencyKey() {
   return crypto.randomUUID();
-}
-
-function readError(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
 }

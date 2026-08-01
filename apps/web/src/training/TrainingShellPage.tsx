@@ -58,6 +58,7 @@ import {
   formatTrainingDuration,
   formatTrainingScore,
   passStatusLabels,
+  readTrainingError as readError,
   reviewStatusLabels,
 } from './trainingViewModel.mjs';
 import './trainingResults.css';
@@ -844,9 +845,6 @@ function EmployeeAttemptDetail({
   );
 }
 
-function readError(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
-}
 
 function formatDateTime(value: string | null) {
   return value ? new Date(value).toLocaleString('ru-RU') : null;

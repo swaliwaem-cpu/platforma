@@ -15,6 +15,7 @@ import type {
 } from '@platforma/shared';
 
 import { apiDownload, apiRequest } from '../admin/api';
+import { withTrainingQuery } from './trainingQueryString.mjs';
 
 type QueryValue = string | number | boolean | undefined;
 
@@ -115,7 +116,7 @@ export function getTrainingAttempts(
   query: TrainingEmployeeAttemptFiltersQuery = {},
 ) {
   return apiRequest<TrainingEmployeeAttemptsResponse>(
-    withQuery('/training/attempts', query),
+    withTrainingQuery('/training/attempts', query),
     accessToken,
   );
 }
@@ -137,7 +138,7 @@ export function getTrainingAdminResults(
     | Record<string, QueryValue> = {},
 ) {
   return apiRequest<TrainingAdminResultsResponse>(
-    withQuery('/training/admin/results', query),
+    withTrainingQuery('/training/admin/results', query),
     accessToken,
   );
 }
@@ -202,7 +203,7 @@ export function getTrainingRanking(
   query: TrainingRankingFiltersQuery = {},
 ) {
   return apiRequest<TrainingRankingResponse>(
-    withQuery('/training/admin/ranking', query),
+    withTrainingQuery('/training/admin/ranking', query),
     accessToken,
   );
 }
@@ -212,21 +213,7 @@ export function downloadTrainingRankingCsv(
   query: Pick<TrainingRankingFiltersQuery, 'user' | 'projectId'> = {},
 ) {
   return apiDownload(
-    withQuery('/training/admin/ranking/export.csv', query),
+    withTrainingQuery('/training/admin/ranking/export.csv', query),
     accessToken,
   );
-}
-
-function withQuery(
-  path: string,
-  query: object,
-) {
-  const search = new URLSearchParams();
-  for (const [key, value] of Object.entries(query)) {
-    if (value !== undefined && value !== '') {
-      search.set(key, String(value));
-    }
-  }
-  const serialized = search.toString();
-  return serialized ? `${path}?${serialized}` : path;
 }

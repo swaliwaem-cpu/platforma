@@ -89,6 +89,7 @@ import {
   passStatusLabels,
   questionStatusLabels,
   questionTypeLabels,
+  readTrainingError as readError,
   reviewStatusLabels,
 } from './trainingViewModel.mjs';
 import './trainingResults.css';
@@ -2003,8 +2004,4 @@ function isAmbiguousReviewPostError(error: unknown) {
 
 function isAbortError(error: unknown) {
   return error instanceof Error && error.name === 'AbortError';
-}
-
-function readError(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
 }

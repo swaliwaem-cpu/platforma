@@ -24,6 +24,7 @@ import { TrainingConfigService } from './training.config';
 import { trainingOfficialUrlJobKey } from './training-official-url-sources.service';
 import { parseTrainingReviewIdempotencyKey } from './training-review-idempotency';
 import { lockTrainingVersionForContentMutation } from './training-version-lock';
+import { isTrainingUuid } from './training-uuid';
 
 const OPERATIONS_TRANSACTION_RETRY_LIMIT = 3;
 
@@ -559,10 +560,7 @@ function readOfficialUrlRetryPayload(value: Prisma.JsonValue) {
     !value ||
     typeof value !== 'object' ||
     Array.isArray(value) ||
-    typeof value.sourceId !== 'string' ||
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
-      value.sourceId,
-    ) ||
+    !isTrainingUuid(value.sourceId) ||
     !Number.isInteger(value.fetchGeneration) ||
     Number(value.fetchGeneration) < 1
   ) {

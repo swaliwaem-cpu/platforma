@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 
 import {
   BadRequestException,
@@ -23,6 +23,7 @@ import type { TrainingAuditRequest } from '../training-content.service';
 import { TrainingOpenAiConfig } from '../openai/training-openai.config';
 import { TrainingOpenAiRequestError } from '../openai/training-openai.http';
 import { lockTrainingVersionForContentMutation } from '../training-version-lock';
+import { isTrainingUuid } from '../training-uuid';
 import {
   buildTrainingFactSuggestionChunks,
   type TrainingFactSuggestionChunk,
@@ -37,6 +38,7 @@ import {
   type TrainingExistingFactInput,
   type TrainingFactSuggestionProviderInput,
 } from './training-fact-suggestion.provider';
+import { hashCanonicalTrainingFactSuggestionJson as canonicalHash } from './training-fact-suggestion-canonical-json';
 
 const MAX_SOURCES_PER_RUN = 50;
 export const TRAINING_FACT_SUGGESTION_MAX_PROVIDER_RUNS_PER_RUN = 40;
@@ -44,8 +46,6 @@ export const TRAINING_FACT_SUGGESTION_MAX_AGGREGATE_SUGGESTIONS = 800;
 export const TRAINING_FACT_SUGGESTION_MAX_AGGREGATE_INPUT_CHARACTERS =
   1_500_000;
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u;
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 type SourceKind = 'DOCUMENT' | 'OFFICIAL_URL';
 
@@ -1112,8 +1112,7 @@ export class TrainingFactSuggestionsService {
       if (
         unsupported.length > 0 ||
         (item.kind !== 'DOCUMENT' && item.kind !== 'OFFICIAL_URL') ||
-        typeof item.id !== 'string' ||
-        !UUID_PATTERN.test(item.id)
+        !isTrainingUuid(item.id)
       ) {
         throw new BadRequestException('sourceIds contains an invalid source');
       }
@@ -1140,7 +1139,7 @@ export class TrainingFactSuggestionsService {
   }
 
   private parseUuid(value: string, message: string) {
-    if (!UUID_PATTERN.test(value)) {
+    if (!isTrainingUuid(value)) {
       throw new BadRequestException(message);
     }
     return value;
@@ -1157,7 +1156,7 @@ export class TrainingFactSuggestionsService {
     }
     const unique = new Set<string>();
     value.forEach((item) => {
-      if (typeof item !== 'string' || !UUID_PATTERN.test(item)) {
+      if (!isTrainingUuid(item)) {
         throw new BadRequestException(`${label} contains an invalid ID`);
       }
       unique.add(item);
@@ -1330,12 +1329,6 @@ function factSuggestionBudgetError(
   });
 }
 
-function canonicalHash(value: unknown) {
-  return createHash('sha256')
-    .update(JSON.stringify(sortJson(value)), 'utf8')
-    .digest('hex');
-}
-
 function requireInputJson(value: Prisma.JsonValue, message: string) {
   if (value === null) {
     throw new ConflictException(message);
@@ -1413,16 +1406,6 @@ function serializeSuggestion(suggestion: {
     acceptedFactId: suggestion.acceptedFactId,
     decisionReason: suggestion.reviewComment,
   };
-}
-
-function sortJson(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortJson);
-  if (!isRecord(value)) return value;
-  return Object.fromEntries(
-    Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, child]) => [key, sortJson(child)]),
-  );
 }
 
 function isPrismaUniqueError(error: unknown) {

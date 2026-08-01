@@ -30,6 +30,8 @@ import {
 } from './training-safe-log';
 import { lockTrainingVersionForContentMutation } from './training-version-lock';
 import { TrainingWorkerHeartbeatService } from './training-worker-heartbeat.service';
+import { waitForTrainingWorkerPromise as waitForPromise } from './training-worker-shutdown';
+import { isTrainingUuid } from './training-uuid';
 
 const DOCUMENT_JOB_LIMIT_PER_DRAIN = 25;
 const DOCUMENT_JOB_LEASE_MS = Math.max(
@@ -856,9 +858,7 @@ function readSourceDocumentId(value: Prisma.JsonValue) {
     value === null ||
     Array.isArray(value) ||
     typeof value.sourceDocumentId !== 'string' ||
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
-      value.sourceDocumentId,
-    )
+    !isTrainingUuid(value.sourceDocumentId, 8)
   ) {
     return null;
   }
@@ -868,18 +868,4 @@ function readSourceDocumentId(value: Prisma.JsonValue) {
 
 function toSafeErrorMessage(error: unknown) {
   return safeTrainingFailureMessage(error, 'Document extraction failed');
-}
-
-async function waitForPromise(promise: Promise<void>, timeoutMs: number) {
-  let timeout: NodeJS.Timeout | null = null;
-  const timedOut = new Promise<false>((resolve) => {
-    timeout = setTimeout(() => resolve(false), timeoutMs);
-    timeout.unref();
-  });
-  const result = await Promise.race([
-    promise.then(() => true as const),
-    timedOut,
-  ]);
-  if (timeout) clearTimeout(timeout);
-  return result;
 }

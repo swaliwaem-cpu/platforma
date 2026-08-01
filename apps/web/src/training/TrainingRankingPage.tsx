@@ -38,6 +38,7 @@ import {
   formatTrainingDuration,
   formatTrainingScore,
   passStatusLabels,
+  readTrainingError as readError,
 } from './trainingViewModel.mjs';
 import './trainingResults.css';
 
@@ -400,9 +401,6 @@ function RankingRow({
   );
 }
 
-function readError(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
-}
 
 function formatSignedScore(value: string) {
   const parsed = Number(value);

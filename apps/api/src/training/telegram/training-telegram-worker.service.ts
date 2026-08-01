@@ -24,6 +24,7 @@ import {
   TrainingFeatureDisabledAfterClaimError,
 } from '../training.config';
 import { TrainingWorkerHeartbeatService } from '../training-worker-heartbeat.service';
+import { waitForTrainingWorkerPromise as waitForPromise } from '../training-worker-shutdown';
 import {
   formatTrainingErrorForLog,
   readTrainingCorrelationId,
@@ -958,20 +959,6 @@ function readJobCorrelationId(value: Prisma.JsonValue) {
         `telegram-update:${value.updateId}`,
       )
     : readTrainingCorrelationId(value.correlationId);
-}
-
-async function waitForPromise(promise: Promise<void>, timeoutMs: number) {
-  let timeout: NodeJS.Timeout | null = null;
-  const timedOut = new Promise<false>((resolve) => {
-    timeout = setTimeout(() => resolve(false), timeoutMs);
-    timeout.unref();
-  });
-  const result = await Promise.race([
-    promise.then(() => true as const),
-    timedOut,
-  ]);
-  if (timeout) clearTimeout(timeout);
-  return result;
 }
 
 function waitForTimeout(timeoutMs: number) {

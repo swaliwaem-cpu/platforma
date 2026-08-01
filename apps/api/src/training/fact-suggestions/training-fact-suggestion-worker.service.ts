@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 
 import {
   Inject,
@@ -29,6 +29,8 @@ import {
 import { TrainingConfigService } from '../training.config';
 import { lockTrainingVersionForContentMutation } from '../training-version-lock';
 import { TrainingWorkerHeartbeatService } from '../training-worker-heartbeat.service';
+import { waitForTrainingWorkerPromise as waitForPromise } from '../training-worker-shutdown';
+import { hashCanonicalTrainingFactSuggestionJson as canonicalHash } from './training-fact-suggestion-canonical-json';
 import { buildTrainingFactSuggestionChunks } from './training-fact-suggestion.chunking';
 import {
   hashTrainingFactSuggestionText,
@@ -2071,23 +2073,6 @@ function readStringArray(value: Prisma.JsonValue) {
   return value.filter((item): item is string => typeof item === 'string');
 }
 
-function canonicalHash(value: unknown) {
-  return createHash('sha256')
-    .update(JSON.stringify(sortJson(value)), 'utf8')
-    .digest('hex');
-}
-
-function sortJson(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortJson);
-  const record = readRecord(value);
-  if (!record) return value;
-  return Object.fromEntries(
-    Object.entries(record)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, child]) => [key, sortJson(child)]),
-  );
-}
-
 function succeededJobData(finishedAt: Date) {
   return {
     status: TrainingJobStatus.SUCCEEDED,
@@ -2158,18 +2143,4 @@ function readBoundedWorkerOption(
     throw new Error(`${name} must be an integer from ${minimum} to ${maximum}`);
   }
   return resolved;
-}
-
-async function waitForPromise(promise: Promise<void>, timeoutMs: number) {
-  let timeout: NodeJS.Timeout | null = null;
-  const timedOut = new Promise<false>((resolve) => {
-    timeout = setTimeout(() => resolve(false), timeoutMs);
-    timeout.unref();
-  });
-  const result = await Promise.race([
-    promise.then(() => true as const),
-    timedOut,
-  ]);
-  if (timeout) clearTimeout(timeout);
-  return result;
 }

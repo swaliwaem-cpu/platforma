@@ -21,6 +21,7 @@ import { RequirePermissions } from '../auth/permissions.decorator';
 import { PermissionsGuard } from '../auth/permissions.guard';
 import { buildTrainingRankingCsv } from './training-csv';
 import { TrainingFeatureGuard } from './training-feature.guard';
+import { isTrainingUuid } from './training-uuid';
 import {
   TrainingRankingService,
   type TrainingRankingFilters,
@@ -349,10 +350,7 @@ function readOptionalUuid(value: unknown, field: string) {
 
 function readUuid(value: unknown, field: string) {
   if (
-    typeof value !== 'string' ||
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
-      value,
-    )
+    !isTrainingUuid(value)
   ) {
     throw new BadRequestException(`${field} must be a UUID`);
   }

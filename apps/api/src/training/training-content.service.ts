@@ -32,6 +32,7 @@ import {
   lockTrainingVersionForPublication,
 } from './training-version-lock';
 import { acquireTrainingProjectAudienceLock } from './training-project-access';
+import { isTrainingUuid } from './training-uuid';
 
 const trainingVersionContentInclude = {
   questions: {
@@ -2434,7 +2435,7 @@ export class TrainingContentService {
   }
 
   private parseUuid(value: string, message: string) {
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value)) {
+    if (!isTrainingUuid(value)) {
       throw new BadRequestException(message);
     }
     return value;

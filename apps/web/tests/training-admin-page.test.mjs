@@ -82,7 +82,7 @@ test('training project list exposes results navigation to authorized admins', ()
 
 test('project editor supports working-revision CRUD, optional object links and strict publication', () => {
   assert.match(apiSource, /realEstateObjectId:\s*string \| null/);
-  assert.match(apiSource, /\/real-estate-objects\?\$\{query\.toString\(\)\}/);
+  assert.match(apiSource, /withTrainingQuery\(`\$\{adminBase\}\/real-estate-objects`/);
   assert.match(apiSource, /\/draft-version/);
   assert.match(apiSource, /\/questions/);
   assert.match(apiSource, /\/facts/);
@@ -132,7 +132,7 @@ test('linked object PDF sources are explicit, eligible and use the existing docu
 });
 
 test('project assignments support explicit audience and remain editable outside archive', () => {
-  assert.match(apiSource, /\/assignees\?/);
+  assert.match(apiSource, /withTrainingQuery\(`\$\{adminBase\}\/assignees`/);
   assert.match(apiSource, /\/projects\/\$\{encodeURIComponent\(projectId\)\}\/assignments/);
   assert.match(apiSource, /\/projects\/\$\{encodeURIComponent\(projectId\)\}\/audience/);
   assert.match(pageSource, /Только назначенные аккаунты/);

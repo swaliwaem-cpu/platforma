@@ -33,6 +33,7 @@ import {
   TRAINING_MAX_EXTRACTED_CHARACTERS,
 } from './training-document.config';
 import { lockTrainingVersionForContentMutation } from './training-version-lock';
+import { isTrainingUuid } from './training-uuid';
 
 const documentFileSelect = {
   id: true,
@@ -1315,10 +1316,7 @@ export class TrainingDocumentsService {
   }
 
   private parseUuid(value: string, message: string) {
-    const uuidPattern =
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-
-    if (!uuidPattern.test(value)) {
+    if (!isTrainingUuid(value)) {
       throw new BadRequestException(message);
     }
 

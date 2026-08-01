@@ -12,9 +12,11 @@ import {
   employeeBreakdownStatusLabels,
   factVerdictLabels,
   formatTrainingDuration,
+  formatTrainingPoints,
   formatTrainingScore,
   questionStatusLabels,
   questionTypeLabels,
+  readTrainingError,
   visibleEmployeeScore,
 } from '../src/training/trainingViewModel.mjs';
 
@@ -65,6 +67,22 @@ test('employee view model masks pending scores and formats stable states', () =>
   assert.equal(answerStatusLabels.TRANSCRIBING, 'Распознаётся');
   assert.equal(factVerdictLabels.INCORRECT, 'Фактическая ошибка');
   assert.equal(factVerdictLabels.UNSUPPORTED, 'Требуется решение');
+});
+
+test('shared training presentation helpers preserve exact local behavior', () => {
+  assert.equal(readTrainingError(new Error('Ошибка\u00a0API'), 'Запасной'), 'Ошибка\u00a0API');
+  assert.equal(readTrainingError(new Error(''), 'Запасной'), '');
+  assert.equal(readTrainingError('Ошибка', 'Запасной'), 'Запасной');
+  assert.equal(readTrainingError(null, 'Запасной'), 'Запасной');
+
+  assert.equal(formatTrainingPoints(14), '14');
+  assert.equal(formatTrainingPoints(14.5), '14.50');
+  assert.equal(formatTrainingPoints(14.125), '14.13');
+  assert.equal(formatTrainingPoints(10.005), '10.01');
+  assert.equal(formatTrainingPoints(1.005), '1.00');
+  assert.equal(formatTrainingPoints(-0), '0');
+  assert.equal(formatTrainingPoints(Number.NaN), 'NaN');
+  assert.equal(formatTrainingPoints(Number.POSITIVE_INFINITY), 'Infinity');
 });
 
 test('protected audio object URLs are revoked on replacement and cleanup', () => {

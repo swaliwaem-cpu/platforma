@@ -6,6 +6,7 @@ import type {
   TrainingFact,
   TrainingQuestion,
 } from './trainingAdminApi';
+import { formatTrainingPoints as formatPoints } from './trainingViewModel.mjs';
 
 export function QuestionEvaluationContext({
   instanceId,
@@ -152,8 +153,4 @@ export function QuestionEvaluationContext({
       </div>
     </section>
   );
-}
-
-function formatPoints(value: number) {
-  return Number.isInteger(value) ? String(value) : value.toFixed(2);
 }

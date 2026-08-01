@@ -1,6 +1,7 @@
 import { AlertCircleIcon, CheckCircle2Icon } from 'lucide-react';
 
 import type { TrainingReadiness } from './trainingAdminApi';
+import { formatTrainingPoints as formatPoints } from './trainingViewModel.mjs';
 
 export function TrainingReadinessSummary({
   readiness,
@@ -100,10 +101,6 @@ export function TrainingReadinessSummary({
       </div>
     </section>
   );
-}
-
-function formatPoints(value: number) {
-  return Number.isInteger(value) ? String(value) : value.toFixed(2);
 }
 
 function pluralizeIssues(value: number) {

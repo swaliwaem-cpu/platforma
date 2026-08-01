@@ -18,6 +18,7 @@ import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { RequirePermissions } from '../../auth/permissions.decorator';
 import { PermissionsGuard } from '../../auth/permissions.guard';
 import { TrainingFeatureGuard } from '../training-feature.guard';
+import { isTrainingUuid } from '../training-uuid';
 import { TrainingTelegramLinkService } from './training-telegram-link.service';
 import { TrainingTelegramWebhookService } from './training-telegram-webhook.service';
 import { TrainingTelegramWorkerService } from './training-telegram-worker.service';
@@ -87,10 +88,7 @@ function readOptionalUuid(value: unknown, field: string) {
 
 function readUuid(value: unknown, field: string) {
   if (
-    typeof value !== 'string' ||
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
-      value,
-    )
+    !isTrainingUuid(value)
   ) {
     throw new BadRequestException(`${field} must be a UUID`);
   }

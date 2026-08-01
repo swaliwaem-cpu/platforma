@@ -1,4 +1,5 @@
 import { apiDownload, apiRequest } from '../admin/api';
+import { withTrainingQuery } from './trainingQueryString.mjs';
 
 export type TrainingProjectStatus = 'DRAFT' | 'OPEN' | 'CLOSED' | 'ARCHIVED';
 export type TrainingVersionStatus = 'DRAFT' | 'PUBLISHED' | 'SUPERSEDED';
@@ -324,18 +325,20 @@ export function listTrainingProjects(
   token: string,
   params: { search?: string; status?: string; page?: number; limit?: number },
 ) {
-  const query = new URLSearchParams();
-  if (params.search) query.set('search', params.search);
-  if (params.status) query.set('status', params.status);
-  query.set('page', String(params.page ?? 1));
-  query.set('limit', String(params.limit ?? 50));
-
   return apiRequest<{
     items: TrainingProject[];
     total: number;
     page: number;
     totalPages: number;
-  }>(`${adminBase}/projects?${query.toString()}`, token);
+  }>(
+    withTrainingQuery(`${adminBase}/projects`, {
+      search: params.search || undefined,
+      status: params.status || undefined,
+      page: params.page ?? 1,
+      limit: params.limit ?? 50,
+    }),
+    token,
+  );
 }
 
 export function getTrainingProject(token: string, projectId: string) {
@@ -413,12 +416,6 @@ export function listTrainingObjects(
     limit?: number;
   } = {},
 ) {
-  const query = new URLSearchParams();
-  if (params.search) query.set('search', params.search);
-  if (params.hasPdf !== undefined) query.set('hasPdf', String(params.hasPdf));
-  query.set('page', String(params.page ?? 1));
-  query.set('limit', String(params.limit ?? 20));
-
   return apiRequest<{
     items: TrainingRealEstateObject[];
     total: number;
@@ -426,7 +423,12 @@ export function listTrainingObjects(
     limit: number;
     totalPages: number;
   }>(
-    `${adminBase}/real-estate-objects?${query.toString()}`,
+    withTrainingQuery(`${adminBase}/real-estate-objects`, {
+      search: params.search || undefined,
+      hasPdf: params.hasPdf,
+      page: params.page ?? 1,
+      limit: params.limit ?? 20,
+    }),
     token,
   );
 }
@@ -470,18 +472,20 @@ export function listTrainingAssignees(
   token: string,
   params: { search?: string; page?: number; limit?: number } = {},
 ) {
-  const query = new URLSearchParams();
-  if (params.search) query.set('search', params.search);
-  query.set('page', String(params.page ?? 1));
-  query.set('limit', String(params.limit ?? 20));
-
   return apiRequest<{
     items: TrainingAssignmentCandidate[];
     total: number;
     page: number;
     limit: number;
     totalPages: number;
-  }>(`${adminBase}/assignees?${query.toString()}`, token);
+  }>(
+    withTrainingQuery(`${adminBase}/assignees`, {
+      search: params.search || undefined,
+      page: params.page ?? 1,
+      limit: params.limit ?? 20,
+    }),
+    token,
+  );
 }
 
 export function getTrainingProjectAssignments(
