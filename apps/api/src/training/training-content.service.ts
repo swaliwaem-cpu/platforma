@@ -2225,13 +2225,6 @@ export class TrainingContentService {
     return this.parseJsonObject(value, message);
   }
 
-  private parseJsonArray(value: unknown, maxItems: number, message: string) {
-    if (!Array.isArray(value) || value.length > maxItems) {
-      throw new BadRequestException(message);
-    }
-    return value as Prisma.InputJsonArray;
-  }
-
   private parseCriterionAnchors(
     value: unknown,
     maximumPoints: number,

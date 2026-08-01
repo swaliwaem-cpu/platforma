@@ -381,18 +381,6 @@ export class TrainingOfficialUrlSourcesService {
     }
   }
 
-  async getSnapshot(versionIdInput: string, sourceIdInput: string) {
-    const source = await this.findSource(versionIdInput, sourceIdInput);
-    if (!source.snapshotFile) {
-      throw new NotFoundException('Official URL snapshot is not ready');
-    }
-
-    return {
-      file: source.snapshotFile,
-      buffer: await this.files.readStoredFile(source.snapshotFile),
-    };
-  }
-
   private async getSource(versionId: string, sourceId: string) {
     const source = await this.prisma.trainingOfficialUrlSource.findFirst({
       where: {

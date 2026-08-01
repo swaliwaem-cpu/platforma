@@ -594,7 +594,7 @@ function AppRoutes() {
           )
         ) : activeSection === 'training' ? (
           hasPermission('training:take') ? (
-            <TrainingShellPage mode="employee" />
+            <TrainingShellPage />
           ) : (
             <AccessDenied />
           )

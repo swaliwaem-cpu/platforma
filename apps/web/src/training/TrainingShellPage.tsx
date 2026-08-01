@@ -63,7 +63,6 @@ import {
 import './trainingResults.css';
 
 type TrainingShellPageProps = {
-  mode: 'employee' | 'admin';
   onBack?: () => void;
 };
 

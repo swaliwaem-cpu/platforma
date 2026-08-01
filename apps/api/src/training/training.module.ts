@@ -161,13 +161,6 @@ import { TrainingTelegramWorkerService } from './telegram/training-telegram-work
       useFactory: createTrainingEvaluationProvider,
     },
   ],
-  exports: [
-    TrainingAttemptEngineService,
-    TrainingConfigService,
-    TrainingPolicyService,
-    TrainingTelegramLinkService,
-    TrainingTelegramWorkerService,
-    FakeTrainingTelegramTransport,
-  ],
+  exports: [TrainingConfigService],
 })
 export class TrainingModule {}

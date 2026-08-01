@@ -1,5 +1,40 @@
 # Codex Log
 
+## 2026-08-01 - Training characterization and proven dead-code removal
+
+Задача:
+
+- Выполнить только Stage 1 characterization и Stage 2 удаления доказанного dead code; остановиться до duplication/god-files/query/architecture work.
+- Не менять Prisma, routes, DTO, permissions, jobs, provider schemas, scoring, Telegram/OpenAI contracts и production.
+
+Изменения:
+
+- Четыре read-only проверки подтвердили 21 symbol/surface entry и 21 CSS selector как безопасные; существующие `CANDIDATE` entries сохранены.
+- Добавлен runtime Nest test внешнего consumer для retained `TrainingConfigService` export.
+- Добавлен отрицательный browser test `training:take` boundary без employee data requests.
+- Добавлены desktop/mobile golden screenshots editor/results и DOM assertions отсутствия legacy selectors; editor mock синхронизирован с существующим assignments GET.
+- Удалены 18 backend entries и две эксклюзивные dependency-цепочки, три frontend entries, три admin и 18 results selectors.
+- Production diff: 586 удалённых строк, 6 добавленных/перезаписанных, net `-580`; публичное поведение и контракты сохранены.
+- Создан `docs/training/refactor/05-dead-code-removal.md`; документы 01–03 обновлены только до статуса Stage 2. Stage 3–8 не отмечены выполненными.
+
+Проверки:
+
+- `pnpm --filter @platforma/api test` - passed; unit 538/538, PostgreSQL 111/111.
+- Два отдельных PostgreSQL repeats - 111/111 и 111/111; обе temporary DB удалены.
+- `pnpm --filter @platforma/web test` - 312/312 passed.
+- `pnpm build` и `pnpm test` - passed; сохранён известный Vite warning о chunk 790.86 kB.
+- Полный Playwright training suite - 24/24 passed; четыре golden screenshots стабильны.
+- Prisma schema valid; `git diff --check` passed; `.only/.skip`, удалённых tests и `output/` diff нет.
+
+Ручная проверка:
+
+- Для локального Stage 2 не требуется: desktop/mobile UI закреплён browser screenshots. Real providers и production не запускались.
+
+Спорные места:
+
+- Существующий React dev warning `Maximum update depth exceeded` в editor browser harness не исправлялся как функциональная работа вне scope.
+- Stage 3 (дублирование) и последующие этапы требуют отдельного разрешения.
+
 ## 2026-08-01 - Training refactor baseline recovery
 
 Задача:

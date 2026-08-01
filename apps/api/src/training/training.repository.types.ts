@@ -81,16 +81,4 @@ export const trainingJobClaimSelect = {
   heartbeatAt: true,
 } satisfies Prisma.TrainingJobSelect;
 
-export type TrainingProjectRepositoryRecord = Prisma.TrainingProjectGetPayload<{
-  include: typeof trainingProjectRepositoryInclude;
-}>;
-
-export type TrainingAttemptRepositoryRecord = Prisma.TrainingAttemptGetPayload<{
-  include: typeof trainingAttemptRepositoryInclude;
-}>;
-
-export type TrainingJobClaimRecord = Prisma.TrainingJobGetPayload<{
-  select: typeof trainingJobClaimSelect;
-}>;
-
 export type TrainingTransactionClient = Prisma.TransactionClient;

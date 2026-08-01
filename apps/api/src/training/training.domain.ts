@@ -1,12 +1,7 @@
 import type {
   TrainingAttemptStatus,
-  TrainingQuestionType,
   TrainingVersionStatus,
 } from '@prisma/client';
-import type {
-  TrainingAttemptSettingsSnapshot,
-  TrainingQuestionSelection,
-} from '@platforma/shared' with { 'resolution-mode': 'import' };
 
 export const TRAINING_MAIN_QUESTION_COUNT = 1;
 export const TRAINING_FOLLOW_UP_POOL_SIZE = 10;
@@ -29,30 +24,3 @@ export const TRAINING_IMMUTABLE_VERSION_STATUSES = [
   'PUBLISHED',
   'SUPERSEDED',
 ] as const satisfies readonly TrainingVersionStatus[];
-
-export type TrainingAttemptStartSnapshot = {
-  userId: string;
-  projectId: string;
-  projectVersionId: string;
-  attemptNumber: number;
-  settings: TrainingAttemptSettingsSnapshot;
-  selection: TrainingQuestionSelection;
-  startedAt: Date;
-  expiresAt: Date;
-  graceExpiresAt: Date;
-};
-
-export type TrainingSelectedQuestion = {
-  questionId: string;
-  type: TrainingQuestionType;
-  sequence: 1 | 2 | 3 | 4;
-  selectionRandomIndex: number | null;
-};
-
-export type TrainingPrivateVoiceObject = {
-  bucket: string;
-  key: string;
-  mimeType: string | null;
-  sizeBytes: bigint | null;
-  durationSeconds: number | null;
-};

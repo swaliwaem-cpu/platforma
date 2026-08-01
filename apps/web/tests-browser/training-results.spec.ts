@@ -4,6 +4,26 @@ const attemptId = '11111111-1111-4111-8111-111111111111';
 const answerAId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const answerBId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const apiOrigin = 'http://localhost:3000';
+const legacyResultsSelectors = [
+  '.training-detail-summary--admin',
+  '.training-detail-summary-final',
+  '.training-attempt-summary',
+  '.training-admin-question-list',
+  '.training-timeline',
+  '.training-answer-meta',
+  '.training-answer-section',
+  '.training-answer-section-heading',
+  '.training-transcript',
+  '.training-component-list',
+  '.training-component',
+  '.training-component--warning',
+  '.training-provider-details',
+  '.training-provider-run-list',
+  '.training-segment-list',
+  '.training-evaluation-history',
+  '.training-job-list',
+  '.training-safe-json',
+].join(', ');
 
 test('review POST success and refresh failure never produce a second POST', async ({
   page,
@@ -403,7 +423,7 @@ test('audio unmount aborts delayed request and 401 refresh without leaking URLs'
   await expect(page.getByText('Не удалось загрузить аудио')).toHaveCount(0);
 });
 
-test('admin detail renders one readable reviewer workspace without diagnostics', async ({
+test('training CSS visual baseline: desktop admin detail renders one readable reviewer workspace without diagnostics', async ({
   page,
 }) => {
   const firstQuestion = evaluatedAdminQuestion({
@@ -518,6 +538,12 @@ test('admin detail renders one readable reviewer workspace without diagnostics',
     'aria-selected',
     'true',
   );
+  await expect(page.locator(legacyResultsSelectors)).toHaveCount(0);
+  await expect(page).toHaveScreenshot('training-results-desktop.png', {
+    animations: 'disabled',
+    caret: 'hide',
+    fullPage: true,
+  });
 });
 
 test('review starts blank and submits readable unsupported decisions', async ({
@@ -619,7 +645,7 @@ test('review starts blank and submits readable unsupported decisions', async ({
   });
 });
 
-test('mobile detail uses a sequential pager and never overflows', async ({
+test('training CSS visual baseline: mobile detail uses a sequential pager and never overflows', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 375, height: 812 });
@@ -675,6 +701,12 @@ test('mobile detail uses a sequential pager and never overflows', async ({
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
+  await expect(page.locator(legacyResultsSelectors)).toHaveCount(0);
+  await expect(page).toHaveScreenshot('training-results-mobile.png', {
+    animations: 'disabled',
+    caret: 'hide',
+    fullPage: true,
+  });
 });
 
 test('employee accepts the current policy before a Telegram start link is issued', async ({
@@ -750,6 +782,33 @@ test('employee accepts the current policy before a Telegram start link is issued
   await expect(
     page.getByText('Ссылка на запуск открыта в Telegram.'),
   ).toBeVisible();
+});
+
+test('employee training route keeps the take-permission boundary', async ({
+  page,
+}) => {
+  let employeeDataRequests = 0;
+  await installApi(
+    page,
+    async (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (
+        path === '/training/projects' ||
+        path === '/training/attempts' ||
+        path === '/training/telegram/account'
+      ) {
+        employeeDataRequests += 1;
+      }
+      return false;
+    },
+    [],
+  );
+
+  await page.goto('/training');
+  await expect(
+    page.getByRole('heading', { name: 'Недостаточно прав' }),
+  ).toBeVisible();
+  expect(employeeDataRequests).toBe(0);
 });
 
 test('operations dashboard exposes safe status and audits an explicit retry reason', async ({

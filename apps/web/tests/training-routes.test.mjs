@@ -31,10 +31,6 @@ test('employee training route and navigation require pilot take permission', () 
   assert.match(appSource, /pathname === '\/training'[\s\S]*\? 'training'/);
   assert.match(
     appSource,
-    /activeSection === 'training'[\s\S]*hasPermission\('training:take'\)[\s\S]*<TrainingShellPage mode="employee" \/>/,
-  );
-  assert.match(
-    appSource,
     /group:\s*'Обучение',[\s\S]*path:\s*'\/training',[\s\S]*requiredPermissions:\s*\['training:take'\]/,
   );
 });

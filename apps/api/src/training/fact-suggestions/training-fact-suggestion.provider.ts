@@ -422,10 +422,6 @@ export function hashTrainingFactSuggestionText(value: string) {
   return hashText(normalizeSnapshotText(value));
 }
 
-export function normalizeTrainingFactSuggestionSnapshot(value: string) {
-  return normalizeSnapshotText(value);
-}
-
 function validateProviderInput(input: TrainingFactSuggestionProviderInput) {
   if (!input.runId.trim() || !input.chunkId.trim() || input.segments.length === 0) {
     throw providerError(

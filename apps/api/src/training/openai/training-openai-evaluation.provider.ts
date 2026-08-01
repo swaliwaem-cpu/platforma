@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
 import {
-  TrainingEvaluationCriterionInput,
   TrainingEvaluationFactFinding,
   TrainingEvaluationInput,
   TrainingEvaluationProvider,

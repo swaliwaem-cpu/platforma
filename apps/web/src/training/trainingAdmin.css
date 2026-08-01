@@ -45,7 +45,6 @@
 .training-admin-heading > p:last-child,
 .training-section-heading p,
 .training-subsection p,
-.training-criterion-summary p,
 .training-document-preview-heading p,
 .training-validation-heading p,
 .training-lifecycle p {
@@ -196,44 +195,6 @@
   margin: 0;
   color: var(--app-theme-ink-900, #18202a);
   font-size: 23px;
-}
-
-.training-editor-tabs {
-  display: flex;
-  min-width: 0;
-  gap: 4px;
-  overflow-x: auto;
-  border: 1px solid var(--app-theme-border, #d6dde5);
-  border-radius: var(--app-theme-radius-md, 8px);
-  background: var(--app-theme-surface, #ffffff);
-  padding: 6px;
-  box-shadow: var(--app-theme-shadow-panel, 0 16px 38px rgb(24 32 42 / 7%));
-  scrollbar-width: thin;
-}
-
-.training-editor-tabs button {
-  min-height: 42px;
-  flex: 0 0 auto;
-  border: 1px solid transparent;
-  border-radius: var(--app-theme-radius-sm, 6px);
-  background: transparent;
-  color: var(--app-theme-ink-700, #536172);
-  padding: 9px 13px;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 750;
-  cursor: pointer;
-}
-
-.training-editor-tabs button:hover {
-  background: var(--app-theme-surface-soft, #f8fafc);
-  color: var(--app-theme-ink-900, #18202a);
-}
-
-.training-editor-tabs button.is-active {
-  border-color: var(--app-theme-border, #d6dde5);
-  background: var(--app-theme-primary-soft, #edf4ff);
-  color: var(--app-theme-primary-deep, #174ea6);
 }
 
 .training-readiness-summary {
@@ -543,7 +504,6 @@
 }
 
 .training-subsection h3,
-.training-criterion-summary h3,
 .training-document-preview h3,
 .training-validation-heading h3,
 .training-lifecycle h3 {
@@ -555,11 +515,6 @@
 .training-form-actions {
   border-top: 1px solid var(--app-theme-border-soft, #e0e6ed);
   padding-top: 18px;
-}
-
-.training-card-list {
-  display: grid;
-  gap: 14px;
 }
 
 .training-master-detail {
@@ -1128,13 +1083,6 @@
 
 .training-criteria-empty {
   display: grid;
-  gap: 12px;
-}
-
-.training-criterion-summary {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
   gap: 12px;
 }
 

@@ -46,11 +46,6 @@ export const TRAINING_FACT_SUGGESTION_MAX_AGGREGATE_INPUT_CHARACTERS =
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-const RETRYABLE_RUN_STATUSES = new Set<TrainingFactSuggestionRunStatus>([
-  TrainingFactSuggestionRunStatus.FAILED,
-  TrainingFactSuggestionRunStatus.AMBIGUOUS,
-  TrainingFactSuggestionRunStatus.PARTIAL,
-]);
 
 type SourceKind = 'DOCUMENT' | 'OFFICIAL_URL';
 
@@ -122,24 +117,6 @@ export class TrainingFactSuggestionsService {
       idempotencyKeyInput,
       null,
     );
-  }
-
-  async listRuns(versionIdInput: string) {
-    const versionId = await this.requireVersion(versionIdInput);
-    const items = await this.prisma.trainingFactSuggestionRun.findMany({
-      where: { projectVersionId: versionId },
-      orderBy: { createdAt: 'desc' },
-      take: 50,
-      include: {
-        providerRuns: {
-          orderBy: [{ chunkIndex: 'asc' }, { createdAt: 'asc' }],
-        },
-        suggestions: {
-          orderBy: [{ providerRunId: 'asc' }, { suggestionIndex: 'asc' }],
-        },
-      },
-    });
-    return { items: items.map(serializeRun) };
   }
 
   async getRun(versionIdInput: string, runIdInput: string) {
@@ -513,163 +490,6 @@ export class TrainingFactSuggestionsService {
       },
     );
     return this.getSuggestion(versionId, suggestionId);
-  }
-
-  async dismissRun(
-    versionIdInput: string,
-    runIdInput: string,
-    body: { comment?: unknown },
-    actor: AuthenticatedUser,
-    request: TrainingAuditRequest,
-  ) {
-    this.assertOnlyFields(body as Record<string, unknown>, ['comment']);
-    const versionId = this.parseUuid(
-      versionIdInput,
-      'Training version is invalid',
-    );
-    const runId = this.parseUuid(runIdInput, 'Fact suggestion run is invalid');
-    const comment = this.parseRequiredString(
-      body.comment,
-      'Dismiss comment is required',
-      2_000,
-      3,
-    );
-
-    await this.prisma.$transaction(async (tx) => {
-      const lockedVersion = await lockTrainingVersionForContentMutation(
-        tx,
-        versionId,
-      );
-      this.assertDraftVersion(lockedVersion?.status);
-      if (lockedVersion?.projectStatus === 'ARCHIVED') {
-        throw new ConflictException('Archived training project is immutable');
-      }
-      await tx.$queryRaw`SELECT "id" FROM "training_fact_suggestion_runs" WHERE "id" = ${runId}::uuid FOR UPDATE`;
-      const run = await tx.trainingFactSuggestionRun.findFirst({
-        where: {
-          id: runId,
-          projectVersionId: versionId,
-        },
-        select: {
-          id: true,
-          status: true,
-        },
-      });
-      if (!run) {
-        throw new NotFoundException('Fact suggestion run not found');
-      }
-      if (run.status === TrainingFactSuggestionRunStatus.DISMISSED) return;
-
-      await tx.trainingFactSuggestionRun.update({
-        where: { id: run.id },
-        data: {
-          status: TrainingFactSuggestionRunStatus.DISMISSED,
-          completedAt: new Date(),
-          errorCode: null,
-          errorMessage: null,
-        },
-      });
-      await tx.trainingFactSuggestion.updateMany({
-        where: {
-          suggestionRunId: run.id,
-          status: TrainingFactSuggestionStatus.PENDING,
-        },
-        data: {
-          status: TrainingFactSuggestionStatus.REJECTED,
-          reviewedById: actor.id,
-          reviewedAt: new Date(),
-          reviewComment: comment,
-        },
-      });
-      await tx.trainingFactSuggestionProviderRun.updateMany({
-        where: {
-          suggestionRunId: run.id,
-          status: TrainingProviderRunStatus.PENDING,
-        },
-        data: {
-          status: TrainingProviderRunStatus.FAILED,
-          errorCode: 'FACT_SUGGESTION_RUN_DISMISSED',
-          errorClass: 'dismissed',
-          completedAt: new Date(),
-        },
-      });
-      await tx.trainingJob.updateMany({
-        where: {
-          kind: TrainingJobKind.SUGGEST_FACTS,
-          idempotencyKey: {
-            startsWith: `fact-suggest:${run.id}:`,
-          },
-          status: TrainingJobStatus.PENDING,
-        },
-        data: {
-          status: TrainingJobStatus.FAILED,
-          lastErrorCode: 'FACT_SUGGESTION_RUN_DISMISSED',
-          lastErrorMessage: 'Fact suggestion run was dismissed',
-          finishedAt: new Date(),
-        },
-      });
-      await this.writeAudit(tx, {
-        action: 'training.fact-suggestion-run.dismiss',
-        actor,
-        request,
-        entityType: 'training_fact_suggestion_run',
-        entityId: run.id,
-        metadata: {
-          projectVersionId: versionId,
-          commentLength: comment.length,
-        },
-      });
-    });
-    return this.getRun(versionId, runId);
-  }
-
-  async retryRun(
-    versionIdInput: string,
-    runIdInput: string,
-    actor: AuthenticatedUser,
-    request: TrainingAuditRequest,
-    idempotencyKeyInput: unknown,
-  ) {
-    const versionId = this.parseUuid(
-      versionIdInput,
-      'Training version is invalid',
-    );
-    const runId = this.parseUuid(runIdInput, 'Fact suggestion run is invalid');
-    const run = await this.prisma.trainingFactSuggestionRun.findFirst({
-      where: {
-        id: runId,
-        projectVersionId: versionId,
-      },
-      select: {
-        id: true,
-        status: true,
-        sourceSnapshotJson: true,
-      },
-    });
-    if (!run) {
-      throw new NotFoundException('Fact suggestion run not found');
-    }
-    if (!RETRYABLE_RUN_STATUSES.has(run.status)) {
-      throw new ConflictException(
-        'Only a failed, ambiguous or partial run can be retried',
-      );
-    }
-    const snapshots = parseSourceSnapshots(run.sourceSnapshotJson);
-    return this.createRunInternal(
-      versionId,
-      {
-        sourceDocumentIds: snapshots
-          .filter((snapshot) => snapshot.kind === 'DOCUMENT')
-          .map((snapshot) => snapshot.id),
-        sourceOfficialUrlIds: snapshots
-          .filter((snapshot) => snapshot.kind === 'OFFICIAL_URL')
-          .map((snapshot) => snapshot.id),
-      },
-      actor,
-      request,
-      idempotencyKeyInput,
-      run.id,
-    );
   }
 
   private async createRunInternal(
@@ -1507,31 +1327,6 @@ function factSuggestionBudgetError(
     code,
     message,
     ...(providerErrorCode ? { providerErrorCode } : {}),
-  });
-}
-
-export function parseSourceSnapshots(value: Prisma.JsonValue) {
-  if (!Array.isArray(value)) {
-    throw new ConflictException('Fact suggestion source snapshot is invalid');
-  }
-  return value.map((item) => {
-    if (
-      !isRecord(item) ||
-      (item.kind !== 'DOCUMENT' && item.kind !== 'OFFICIAL_URL') ||
-      typeof item.id !== 'string' ||
-      typeof item.checksum !== 'string' ||
-      typeof item.contentHash !== 'string' ||
-      !Number.isInteger(item.chunkCount)
-    ) {
-      throw new ConflictException('Fact suggestion source snapshot is invalid');
-    }
-    return {
-      kind: item.kind,
-      id: item.id,
-      checksum: item.checksum,
-      contentHash: item.contentHash,
-      chunkCount: Number(item.chunkCount),
-    } satisfies SourceSnapshot;
   });
 }
 

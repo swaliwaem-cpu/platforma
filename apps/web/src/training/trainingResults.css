@@ -544,22 +544,6 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
-.training-detail-summary--admin {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-}
-
-.training-detail-summary-final {
-  background: var(
-    --app-theme-primary-soft,
-    #eaf1ff
-  ) !important;
-}
-
-.training-detail-summary-final dd {
-  color: var(--app-theme-primary-deep, #174ea6);
-}
-
-.training-attempt-summary,
 .training-ranking-narrative {
   margin: 0;
   border-left: 3px solid var(--app-theme-primary, #2f6fdb);
@@ -569,8 +553,7 @@
   line-height: 1.55;
 }
 
-.training-question-breakdown,
-.training-admin-question-list {
+.training-question-breakdown {
   display: grid;
   gap: 12px;
 }
@@ -600,8 +583,7 @@
   text-transform: uppercase;
 }
 
-.training-question-breakdown h4,
-.training-answer-section h4 {
+.training-question-breakdown h4 {
   margin: 4px 0 0;
   font-size: 14px;
   line-height: 1.4;
@@ -696,63 +678,6 @@
   gap: 12px;
 }
 
-.training-timeline {
-  display: grid;
-  gap: 0;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.training-timeline li {
-  display: grid;
-  grid-template-columns: 18px 1fr;
-  gap: 10px;
-  min-height: 48px;
-}
-
-.training-timeline li > span {
-  position: relative;
-  width: 9px;
-  height: 9px;
-  margin-top: 5px;
-  border-radius: 50%;
-  background: var(--app-theme-primary, #2f6fdb);
-}
-
-.training-timeline li > span::after {
-  position: absolute;
-  top: 12px;
-  left: 4px;
-  width: 1px;
-  height: 32px;
-  background: var(--app-theme-border, #d6dde5);
-  content: "";
-}
-
-.training-timeline li:last-child > span::after {
-  display: none;
-}
-
-.training-timeline li div {
-  display: grid;
-  align-content: start;
-  gap: 3px;
-}
-
-.training-timeline time {
-  color: var(--app-theme-ink-600, #768495);
-  font-size: 12px;
-}
-
-.training-answer-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 16px;
-  color: var(--app-theme-ink-600, #768495);
-  font-size: 12px;
-}
-
 .training-audio-player {
   display: flex;
   min-height: 52px;
@@ -769,143 +694,9 @@
   height: 38px;
 }
 
-.training-answer-section {
-  display: grid;
-  gap: 10px;
-  border-top: 1px solid var(--app-theme-border, #d6dde5);
-  padding-top: 16px;
-}
-
-.training-answer-section-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.training-answer-section h4 {
-  margin: 0;
-}
-
-.training-transcript {
-  max-height: 260px;
-  overflow: auto;
-  margin: 0;
-  border-radius: var(--app-theme-radius-sm, 6px);
-  background: var(--app-theme-surface-muted, #f5f7fa);
-  padding: 14px;
-  white-space: pre-wrap;
-  line-height: 1.65;
-}
-
-.training-component-list {
-  display: grid;
-  gap: 8px;
-}
-
-.training-component {
-  display: grid;
-  grid-template-columns: minmax(200px, 1fr) auto auto;
-  align-items: start;
-  gap: 10px 16px;
-  border: 1px solid var(--app-theme-border, #d6dde5);
-  border-radius: var(--app-theme-radius-sm, 6px);
-  padding: 11px 12px;
-}
-
-.training-component--warning {
-  border-color: color-mix(
-    in srgb,
-    var(--app-theme-warning, #8a651c) 40%,
-    var(--app-theme-border, #d6dde5)
-  );
-  background: var(--app-theme-warning-soft, #fff8df);
-}
-
-.training-component > div {
-  display: grid;
-  gap: 3px;
-}
-
-.training-component span {
-  color: var(--app-theme-ink-600, #768495);
-  font-size: 11px;
-}
-
-.training-component pre {
-  grid-column: 1 / -1;
-  overflow: auto;
-  margin: 0;
-  border-radius: 4px;
-  background: color-mix(
-    in srgb,
-    var(--app-theme-ink-900, #18202a) 6%,
-    transparent
-  );
-  padding: 9px;
-  font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
-  white-space: pre-wrap;
-}
-
-.training-provider-details {
-  border-top: 1px solid var(--app-theme-border, #d6dde5);
-  padding-top: 14px;
-}
-
-.training-provider-details summary {
-  min-height: 40px;
-  color: var(--app-theme-ink-800, #344253);
-  font-weight: 750;
-  cursor: pointer;
-}
-
-.training-provider-run-list,
-.training-segment-list,
-.training-evaluation-history,
-.training-job-list,
 .training-review-history {
   display: grid;
   gap: 8px;
-}
-
-.training-provider-run-list article,
-.training-segment-list article,
-.training-evaluation-history article,
-.training-job-list article {
-  display: grid;
-  grid-template-columns: minmax(220px, 1fr) repeat(3, minmax(100px, auto));
-  gap: 8px 16px;
-  border: 1px solid var(--app-theme-border, #d6dde5);
-  border-radius: var(--app-theme-radius-sm, 6px);
-  padding: 10px 12px;
-  font-size: 12px;
-}
-
-.training-provider-run-list article .training-safe-json {
-  grid-column: 1 / -1;
-}
-
-.training-segment-list time,
-.training-evaluation-history span {
-  color: var(--app-theme-ink-600, #768495);
-  font-size: 12px;
-}
-
-.training-evaluation-history article > p {
-  grid-column: 1 / -1;
-  margin: 0;
-  line-height: 1.5;
-}
-
-.training-safe-json {
-  overflow: auto;
-  max-height: 220px;
-  margin: 10px 0 0;
-  border-radius: var(--app-theme-radius-sm, 6px);
-  background: var(--app-theme-surface-muted, #f5f7fa);
-  padding: 10px;
-  font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
-  white-space: pre-wrap;
 }
 
 .training-review-panel [data-slot="card-header"] > svg {
@@ -1700,10 +1491,6 @@ html[data-app-theme] .training-results--detail .admin-button--text:focus-visible
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .training-detail-summary--admin {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
   .training-attempt-overview dl {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
@@ -1859,8 +1646,7 @@ html[data-app-theme] .training-results--detail .admin-button--text:focus-visible
   }
 
   .training-metric-grid,
-  .training-detail-summary,
-  .training-detail-summary--admin {
+  .training-detail-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1899,18 +1685,6 @@ html[data-app-theme] .training-results--detail .admin-button--text:focus-visible
     box-shadow: none;
   }
 
-  .training-component {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .training-component > span {
-    grid-column: 1 / -1;
-  }
-
-  .training-provider-run-list article,
-  .training-segment-list article,
-  .training-evaluation-history article,
-  .training-job-list article,
   .training-unsupported-review > div {
     grid-template-columns: 1fr;
   }
@@ -1957,7 +1731,6 @@ html[data-app-theme] .training-results--detail .admin-button--text:focus-visible
 
   .training-metric-grid,
   .training-detail-summary,
-  .training-detail-summary--admin,
   .training-results-filter-grid,
   .training-ranking-filter {
     grid-template-columns: 1fr;
@@ -2010,8 +1783,7 @@ html[data-app-theme] .training-results--detail .admin-button--text:focus-visible
 
   .training-question-breakdown header,
   .training-ranking-projects article > header,
-  .training-review-history header,
-  .training-answer-section-heading {
+  .training-review-history header {
     align-items: flex-start;
     flex-direction: column;
   }

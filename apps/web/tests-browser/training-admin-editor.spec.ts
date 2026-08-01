@@ -9,8 +9,13 @@ const factId = '55555555-5555-4555-8555-555555555555';
 const mainCriterionId = '66666666-6666-4666-8666-666666666666';
 const followUpCriterionId = '77777777-7777-4777-8777-777777777777';
 const suggestionId = '88888888-8888-4888-8888-888888888888';
+const legacyEditorSelectors = [
+  '.training-editor-tabs',
+  '.training-card-list',
+  '.training-criterion-summary',
+].join(', ');
 
-test('master-detail keeps drafts mounted and aligns every checkbox with its copy', async ({
+test('training CSS visual baseline: desktop master-detail keeps drafts mounted and aligns every checkbox with its copy', async ({
   page,
 }) => {
   await installEditorApi(page);
@@ -107,9 +112,15 @@ test('master-detail keeps drafts mounted and aligns every checkbox with its copy
   await expect(
     page.locator(`[data-editor-item-id="${mainCriterionId}"]`),
   ).toHaveAttribute('aria-current', 'true');
+  await expect(page.locator(legacyEditorSelectors)).toHaveCount(0);
+  await expect(page).toHaveScreenshot('training-editor-desktop.png', {
+    animations: 'disabled',
+    caret: 'hide',
+    fullPage: true,
+  });
 });
 
-test('mobile editor replaces the rail with a selector and does not overflow', async ({
+test('training CSS visual baseline: mobile editor replaces the rail with a selector and does not overflow', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -165,6 +176,12 @@ test('mobile editor replaces the rail with a selector and does not overflow', as
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   );
   expect(overflow).toBeLessThanOrEqual(1);
+  await expect(page.locator(legacyEditorSelectors)).toHaveCount(0);
+  await expect(page).toHaveScreenshot('training-editor-mobile.png', {
+    animations: 'disabled',
+    caret: 'hide',
+    fullPage: true,
+  });
 });
 
 test('published project automatically opens an editable working revision', async ({
@@ -484,6 +501,19 @@ async function installEditorApi(
         );
       }
       await fulfillJson(route, { project });
+      return;
+    }
+    if (
+      path === `/training/admin/projects/${projectId}/assignments` &&
+      route.request().method() === 'GET'
+    ) {
+      await fulfillJson(route, {
+        audienceMode: 'ALL_ELIGIBLE',
+        audienceRevision: 1,
+        items: [],
+        total: 0,
+        eligibleTotal: 0,
+      });
       return;
     }
     if (

@@ -8,9 +8,6 @@ export type TrainingReviewSubmissionState =
   | 'REFRESH_FAILED'
   | 'POST_FAILED';
 
-export const TRAINING_REVIEW_SUBMISSION_STATES:
-  readonly TrainingReviewSubmissionState[];
-
 export type TrainingReviewOperation<T = unknown> = {
   key: string;
   payload: T;
@@ -19,7 +16,6 @@ export type TrainingReviewOperation<T = unknown> = {
 
 export class TrainingReviewSubmission {
   constructor(uuid?: () => string);
-  get state(): TrainingReviewSubmissionState;
   begin<T>(payload: T): TrainingReviewOperation<T>;
   retryAmbiguous<T>(): TrainingReviewOperation<T>;
   markCommitted(): void;

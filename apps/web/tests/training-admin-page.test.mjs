@@ -190,7 +190,6 @@ test('structured API errors are retained for validation UI', () => {
 test('training admin layout is responsive and respects reduced motion', () => {
   assert.match(stylesSource, /@media \(max-width: 760px\)/);
   assert.match(stylesSource, /@media \(prefers-reduced-motion: reduce\)/);
-  assert.match(stylesSource, /overflow-x: auto/);
   assert.match(stylesSource, /var\(--app-theme-surface/);
   assert.match(stylesSource, /\.training-wizard-mobile/);
   assert.match(stylesSource, /\.training-evaluation-context-grid/);

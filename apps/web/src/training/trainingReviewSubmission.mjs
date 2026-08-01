@@ -1,14 +1,3 @@
-export const TRAINING_REVIEW_SUBMISSION_STATES = [
-  'IDLE',
-  'SUBMITTING',
-  'COMMITTED',
-  'REFRESHING',
-  'COMPLETED',
-  'POST_AMBIGUOUS',
-  'REFRESH_FAILED',
-  'POST_FAILED',
-];
-
 export class TrainingReviewSubmission {
   #key = null;
   #payload = null;
@@ -18,10 +7,6 @@ export class TrainingReviewSubmission {
 
   constructor(uuid = () => crypto.randomUUID()) {
     this.#uuid = uuid;
-  }
-
-  get state() {
-    return this.#state;
   }
 
   begin(payload) {
