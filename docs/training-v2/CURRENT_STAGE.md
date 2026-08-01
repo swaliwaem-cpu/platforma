@@ -6,8 +6,10 @@
 проект; Employee проходит попытку 1+3 с общим timer; deterministic fake evaluator
 сохраняет итог, доступный Employee и Admin.
 
-Текущая работа — только проектирование. Реализация начинается после отдельного
-разрешения и закрытия применимых вопросов из `DECISIONS.md#needs_decision`.
+Текущая работа — реализация Stage 1 по явному разрешению пользователя. Все
+применимые вопросы Stage 1 закрыты в `DECISIONS.md`. До ручного подтверждения
+пользователя текущим этапом остаётся Stage 1, даже если код и автоматические
+проверки готовы.
 
 ## Входит
 
@@ -16,11 +18,14 @@
 - Draft, publish, global open/close.
 - Общий список открытых проектов для eligible-сотрудников.
 - Явное подтверждение start, attempt limit и server-side timer.
+- Reload/reopen восстанавливает ту же active attempt до неизменного `expiresAt`.
+- Lazy timeout с `completionReason=TIMEOUT`, unanswered=`0` и `isPassed=false`.
 - Immutable snapshot 1+10 при старте.
 - Main text answer, затем backend selection трёх разных дополнительных.
 - Три additional text answers и синхронная fake evaluation.
 - Сохранённые `PASSED`, `FAILED` и `REQUIRES_REVIEW` результаты.
-- Used/remaining, best/last confirmed и минимальная собственная history.
+- Used/remaining, раздельные best confirmed/pending review и минимальная
+  собственная history.
 - Минимальный Admin project/attempt view.
 - Существующие auth, RBAC, API client, app shell, routing и UI primitives.
 
@@ -36,7 +41,7 @@
 
 ## Последовательность реализации
 
-1. Закрыть только применимые Stage 1 пункты `NEEDS_DECISION`.
+1. Зафиксировать закрытые решения Stage 1 в активной документации.
 2. Утвердить additive schema из пяти моделей и одну migration.
 3. Добавить idempotent permissions seed и backend RBAC contract.
 4. Реализовать project aggregate, publish/open и explicit serializers.
@@ -55,7 +60,8 @@
   `apps/api/src/prisma/seed.ts`;
 - небольшое подключение `TrainingModule` в `apps/api/src/app.module.ts`;
 - предметные файлы под `apps/api/src/training/`: module, два controllers,
-  project service, attempt service, evaluator/fake evaluator и serializers;
+  project service, attempt service с module-local serializers, attempt state,
+  evaluator/fake evaluator, selector, snapshot и общая HTTP validation;
 - `packages/shared/src/training.ts` и минимальный re-export;
 - минимальное route/navigation wiring в `apps/web/src/App.tsx`;
 - предметные API/pages/styles под `apps/web/src/training/`;
@@ -67,11 +73,14 @@
 ## Ограничения diff
 
 - Ровно пять основных Training-моделей; шестая требует stop-and-rescope.
-- Не более 13 предложенных public endpoints и пяти frontend routes.
-- Ориентир — не более 22 затронутых production-файлов и примерно 2500 новых
-  non-generated production lines; превышение требует нового согласования.
-- Новый production-файл желательно до 300–500 строк; более 500 требует
-  объяснения, более 700 запрещено без отдельного решения.
+- Не более 12 public endpoints и пяти frontend routes.
+- Количество строк и файлов не является самостоятельной целью. Проверяется,
+  что каждый отдельный production-файл сохраняет предметную ответственность,
+  dependencies или lifecycle и не является архитектурным конфетти.
+- Разумный ориентир текущего Stage 1 после консолидации — около 10 backend,
+  9 frontend и 1 shared production-файла; это не механический лимит.
+- Самостоятельные controllers, routes и fetch/state lifecycles не объединяются
+  только ради уменьшения количества файлов.
 - Одна additive migration; applied migrations не изменяются.
 - Dependencies, lockfile, env и Docker не меняются.
 - Никакого попутного рефакторинга и инфраструктуры Stage 2+.
@@ -108,7 +117,7 @@
 
 Реализация останавливается, если:
 
-- не закрыта применимая timer/abandon/role semantics;
+- реализация расходится с зафиксированными timer/reload/timeout/role semantics;
 - требуется шестая модель, четырнадцатый endpoint или шестой route;
 - historical integrity зависит от frontend или текущего project row;
 - attempt limit не защищён от concurrent start;

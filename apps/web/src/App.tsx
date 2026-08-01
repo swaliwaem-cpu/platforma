@@ -18,11 +18,12 @@ import { LotPresentationsPage } from './presentations/LotPresentationsPage';
 import { canAccessLotPresentations, canAccessProjectPresentations } from './presentations/presentationAccess';
 import { ProjectPresentationEditorPage } from './presentations/projects/ProjectPresentationEditorPage';
 import { ProjectPresentationsPage } from './presentations/projects/ProjectPresentationsPage';
+import { TrainingAdminRoutes, TrainingEmployeeRoutes } from './training/TrainingRoutes';
 import { getAppliedAppTheme, getNextAppTheme, setAppTheme } from './appTheme';
 import './styles.css';
 import './app-theme.css';
 
-type AppSection = 'cabinet' | 'catalog' | 'presentations' | 'admin';
+type AppSection = 'cabinet' | 'catalog' | 'presentations' | 'training' | 'admin';
 type LoginMode = 'login' | 'register';
 type NavChildItem = {
   id: string;
@@ -90,6 +91,13 @@ const navItems: readonly NavItem[] = [
     path: '/presentations',
     section: 'presentations',
     requiredPermissions: [],
+  },
+  {
+    id: 'training',
+    label: 'Обучение',
+    path: '/training',
+    section: 'training',
+    requiredPermissions: ['training:participate'],
   },
   {
     id: 'admin',
@@ -277,6 +285,8 @@ function AppRoutes() {
 
   const activeSection: AppSection = pathname.startsWith('/admin')
     ? 'admin'
+    : pathname.startsWith('/training')
+      ? 'training'
     : pathname.startsWith('/presentations')
       ? 'presentations'
     : pathname.startsWith('/catalog') || pathname.startsWith('/objects/')
@@ -378,7 +388,18 @@ function AppRoutes() {
       <section className="workspace">
         {activeSection === 'admin' ? (
           hasPermission('admin:access') ? (
-            pathname.startsWith('/admin/users') ? (
+            pathname.startsWith('/admin/training') ? (
+              hasPermission('training:projects:manage') || hasPermission('training:results:read') ? (
+                <TrainingAdminRoutes
+                  canManageProjects={hasPermission('training:projects:manage')}
+                  canReadResults={hasPermission('training:results:read')}
+                  navigate={navigate}
+                  pathname={pathname}
+                />
+              ) : (
+                <AccessDenied />
+              )
+            ) : pathname.startsWith('/admin/users') ? (
               hasPermission('users:read') ? (
                 <UsersAdminPage onBack={() => navigate('/admin')} />
               ) : (
@@ -414,9 +435,16 @@ function AppRoutes() {
                 onOpenFeeds={() => navigate('/admin/feeds')}
                 onOpenImport={() => navigate('/admin/import')}
                 onOpenObjects={() => navigate('/admin/objects')}
+                onOpenTraining={() => navigate('/admin/training')}
                 onOpenUsers={() => navigate('/admin/users')}
               />
             )
+          ) : (
+            <AccessDenied />
+          )
+        ) : activeSection === 'training' ? (
+          hasPermission('training:participate') ? (
+            <TrainingEmployeeRoutes navigate={navigate} pathname={pathname} />
           ) : (
             <AccessDenied />
           )
@@ -479,6 +507,8 @@ function isAppRoute(pathname: string) {
     pathname.startsWith('/catalog/') ||
     pathname === '/presentations' ||
     pathname.startsWith('/presentations/') ||
+    pathname === '/training' ||
+    pathname.startsWith('/training/') ||
     pathname === '/admin' ||
     pathname.startsWith('/admin/') ||
     pathname.startsWith('/objects/')
@@ -1212,16 +1242,25 @@ function AdminHome({
   onOpenFeeds,
   onOpenImport,
   onOpenObjects,
+  onOpenTraining,
   onOpenUsers,
 }: {
   onOpenCatalogLinks: () => void;
   onOpenFeeds: () => void;
   onOpenImport: () => void;
   onOpenObjects: () => void;
+  onOpenTraining: () => void;
   onOpenUsers: () => void;
 }) {
   const { hasPermission } = useAuth();
   const actions = [
+    {
+      label: 'Обучение',
+      description: 'Проекты, попытки и результаты обучения.',
+      tone: 'primary',
+      canAccess: hasPermission('training:projects:manage') || hasPermission('training:results:read'),
+      onClick: onOpenTraining,
+    },
     {
       label: 'Объекты',
       description: 'Каталог, публикация, медиа и данные объектов.',

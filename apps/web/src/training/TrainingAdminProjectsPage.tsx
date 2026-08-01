@@ -1,0 +1,185 @@
+import { FormEvent, useEffect, useState } from 'react';
+import type {
+  TrainingAdminAttemptSummary,
+  TrainingAdminProjectSummary,
+} from '@platforma/shared';
+
+import {
+  AdminAlert,
+  AdminButton,
+  AdminEmptyState,
+  AdminPanel,
+  AdminStatusBadge,
+} from '../admin/AdminUi';
+import { useAuth } from '../auth/AuthProvider';
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
+import {
+  createTrainingAdminProject,
+  getTrainingAdminAttempts,
+  getTrainingAdminProjects,
+} from './trainingApi';
+import {
+  formatTrainingDate,
+  getTrainingStatusClass,
+  trainingAttemptStatusLabels,
+  trainingProjectStatusLabels,
+} from './trainingView';
+
+type TrainingAdminProjectsPageProps = {
+  canManageProjects: boolean;
+  canReadResults: boolean;
+  navigate: (pathname: string) => void;
+};
+
+export function TrainingAdminProjectsPage({
+  canManageProjects,
+  canReadResults,
+  navigate,
+}: TrainingAdminProjectsPageProps) {
+  const { accessToken } = useAuth();
+  const [projects, setProjects] = useState<TrainingAdminProjectSummary[]>([]);
+  const [attempts, setAttempts] = useState<TrainingAdminAttemptSummary[]>([]);
+  const [title, setTitle] = useState('');
+  const [allowRetakeAfterPass, setAllowRetakeAfterPass] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isCreating, setIsCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    if (!accessToken) return;
+
+    const controller = new AbortController();
+    setIsLoading(true);
+    setError(null);
+
+    void Promise.all([
+      canManageProjects
+        ? getTrainingAdminProjects(accessToken, controller.signal)
+        : Promise.resolve({ items: [] }),
+      canReadResults
+        ? getTrainingAdminAttempts(accessToken, controller.signal)
+        : Promise.resolve({ items: [] }),
+    ])
+      .then(([projectResponse, attemptResponse]) => {
+        if (controller.signal.aborted) return;
+        setProjects(projectResponse.items);
+        setAttempts(attemptResponse.items);
+      })
+      .catch((loadError: unknown) => {
+        if (!controller.signal.aborted) {
+          setError(loadError instanceof Error ? loadError.message : 'Не удалось загрузить обучение');
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [accessToken, canManageProjects, canReadResults, reloadKey]);
+
+  const handleCreate = async (event: FormEvent) => {
+    event.preventDefault();
+
+    if (!accessToken || !canManageProjects || isCreating) return;
+
+    if (!title.trim()) {
+      setError('Введите название проекта');
+      return;
+    }
+
+    setIsCreating(true);
+    setError(null);
+
+    try {
+      const project = await createTrainingAdminProject(accessToken, {
+        title: title.trim(),
+        allowRetakeAfterPass,
+      });
+      navigate(`/admin/training/projects/${project.id}`);
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : 'Не удалось создать проект');
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  return (
+    <div className="training-page training-admin-page">
+      <header className="training-page-header">
+        <div>
+          <p className="eyebrow">Админка · Обучение</p>
+          <h2>Training V2</h2>
+          <p className="muted-text">Проекты, публикация и минимальная история попыток Stage 1.</p>
+        </div>
+      </header>
+
+      {error ? (
+        <AdminAlert tone="error">
+          <span>{error}</span>
+          <AdminButton type="button" tone="text" onClick={() => setReloadKey((value) => value + 1)}>Повторить</AdminButton>
+        </AdminAlert>
+      ) : null}
+
+      {canManageProjects ? (
+        <AdminPanel className="training-create-panel">
+          <div>
+            <p className="eyebrow">Новый проект</p>
+            <h3>Создать черновик</h3>
+          </div>
+          <form onSubmit={(event) => void handleCreate(event)}>
+            <FieldGroup>
+              <Field data-invalid={Boolean(error && !title.trim())}>
+                <FieldLabel htmlFor="training-project-title">Название</FieldLabel>
+                <Input id="training-project-title" value={title} aria-invalid={Boolean(error && !title.trim())} onChange={(event) => setTitle(event.target.value)} />
+                {!title.trim() && error ? <FieldError>{error}</FieldError> : null}
+              </Field>
+              <Field orientation="horizontal">
+                <input id="training-project-retake" type="checkbox" checked={allowRetakeAfterPass} onChange={(event) => setAllowRetakeAfterPass(event.target.checked)} />
+                <div>
+                  <FieldLabel htmlFor="training-project-retake">Разрешить пересдачу после успешного результата</FieldLabel>
+                  <FieldDescription>Общий лимит попыток продолжает действовать.</FieldDescription>
+                </div>
+              </Field>
+            </FieldGroup>
+            <AdminButton type="submit" tone="primary" disabled={isCreating}>{isCreating ? 'Создание…' : 'Создать и настроить'}</AdminButton>
+          </form>
+        </AdminPanel>
+      ) : null}
+
+      {canManageProjects ? (
+        <section aria-labelledby="training-admin-projects-title">
+          <div className="training-section-heading"><h3 id="training-admin-projects-title">Проекты</h3><span className="training-section-count">{projects.length}</span></div>
+          {isLoading ? <Skeleton className="training-list-skeleton" /> : projects.length ? (
+            <div className="training-admin-list">
+              {projects.map((project) => (
+                <button type="button" className="training-admin-row" key={project.id} onClick={() => navigate(`/admin/training/projects/${project.id}`)}>
+                  <span><strong>{project.title}</strong><small>{project.questionsCount} вопросов · {project.attemptsCount} попыток</small></span>
+                  <span><AdminStatusBadge className={getTrainingStatusClass(project.status)}>{trainingProjectStatusLabels[project.status]}{project.isOpen ? ' · открыт' : ''}</AdminStatusBadge><small>{project.timeLimitSeconds / 60} мин</small></span>
+                </button>
+              ))}
+            </div>
+          ) : <AdminEmptyState title="Проектов пока нет" description="Создайте первый черновик выше." />}
+        </section>
+      ) : null}
+
+      {canReadResults ? (
+        <section aria-labelledby="training-admin-attempts-title">
+          <div className="training-section-heading"><h3 id="training-admin-attempts-title">Последние попытки</h3><span className="training-section-count">{attempts.length}</span></div>
+          {isLoading ? <Skeleton className="training-list-skeleton" /> : attempts.length ? (
+            <div className="training-admin-list">
+              {attempts.map((attempt) => (
+                <button type="button" className="training-admin-row" key={attempt.id} onClick={() => navigate(`/admin/training/attempts/${attempt.id}`)}>
+                  <span><strong>{attempt.user.name ?? attempt.user.email}</strong><small>{attempt.project.title} · попытка №{attempt.attemptNumber}</small></span>
+                  <span><AdminStatusBadge className={getTrainingStatusClass(attempt.status)}>{trainingAttemptStatusLabels[attempt.status]}</AdminStatusBadge><small>{attempt.finalScore ?? '—'} · {formatTrainingDate(attempt.startedAt)}</small></span>
+                </button>
+              ))}
+            </div>
+          ) : <AdminEmptyState title="Попыток пока нет" description="Завершённые и активные попытки появятся здесь." />}
+        </section>
+      ) : null}
+    </div>
+  );
+}

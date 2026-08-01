@@ -68,22 +68,51 @@ Stage 1 отсутствует.
 `PASSED`. При `true` новый start разрешён только пока не исчерпан общий attempt
 limit. Настройка задаётся явно, потому что её default не утверждён.
 
+## Timer, reload и timeout Stage 1
+
+- В `TrainingProject` лимит времени хранится целым числом секунд; default —
+  `420` секунд.
+- В Admin UI время вводится положительным целым числом минут и передаётся в API
+  как секунды. Искусственный верхний product limit в Stage 1 не вводится.
+- Один общий timer начинается только после подтверждённого start и сохраняется
+  как `startedAt`/`expiresAt` попытки.
+- Reload, закрытие вкладки и повторное открытие не ставят timer на паузу, не
+  продлевают его и не создают новую попытку. До `expiresAt` Employee продолжает
+  ту же active attempt.
+- Expiry обрабатывается лениво при API-взаимодействии и загрузке active attempt;
+  worker или background timer не создаётся.
+- Начатая попытка считается использованной. При timeout она финализируется с
+  `completionReason=TIMEOUT`, пропущенными вопросами по `0`, суммой реально
+  полученных баллов без нормализации и `isPassed=false` даже при достигнутом
+  numeric `passScore`.
+- После timeout продолжение и отдельная cancel-команда недоступны.
+
+## Закрытие проекта и active attempt
+
+- Закрытый проект не позволяет создавать новые попытки.
+- Уже начатая попытка продолжает работать по immutable snapshot до завершения
+  либо timeout.
+- Изменение проекта не меняет активную или завершённую попытку.
+
 ## Fake evaluation boundary
 
 Создаётся один узкий `TrainingEvaluator` contract и одна синхронная
 `DeterministicFakeTrainingEvaluator` реализация без network calls.
 
-Evaluator получает четыре выбранных snapshot-вопроса, финальные текстовые
-ответы и snapshot scoring config. Он возвращает result status, final score или
-`null` для `REQUIRES_REVIEW`, а также согласованные per-question scores.
+Evaluator получает текущий текстовый answer и `maxScore`. Он возвращает
+`score`, безопасный breakdown и outcome `SCORED | REQUIRES_REVIEW`. Итог и
+pass/fail рассчитывает backend по сохранённым per-question scores и snapshot
+настройкам.
 
 Development-механизм детерминирован:
 
-- точный нормализованный `FAKE_PASS` даёт максимум ответа;
-- точный нормализованный `FAKE_FAIL` даёт ноль;
-- любой иной текст детерминированно даёт ноль;
-- хотя бы один точный нормализованный `FAKE_REVIEW` завершает попытку как `REQUIRES_REVIEW` без
-  подтверждённого final score.
+- точный нормализованный `[fake:pass]` даёт максимум ответа;
+- точный нормализованный `[fake:fail]` даёт ноль;
+- точный нормализованный `[fake:review]` даёт `REQUIRES_REVIEW`;
+- любой иной непустой текст получает `min(maxScore, normalizedText.length)`.
+
+Версия этого development-контракта сохраняется в attempt. Пустой answer
+отклоняется input validation.
 
 Маркеры не являются публичным продуктовым контрактом. Provider registry,
 provider-run tables, retries, billing и recovery не создаются.
@@ -92,12 +121,15 @@ provider-run tables, retries, billing и recovery не создаются.
 
 - `training:participate` определяет eligible-сотрудника и разрешает employee
   list, start, answer и чтение только собственных результатов.
-- `training:manage` вместе с существующим `admin:access` разрешает authoring,
-  publish/open и минимальный admin просмотр попыток.
+- `training:projects:manage` разрешает authoring, publish и open/close.
+- `training:results:read` разрешает минимальный admin просмотр попыток.
+- `admin` получает все три permission, `user` — только
+  `training:participate`, `editor` не получает Training permissions
+  автоматически.
 
-Отдельный results permission появится только при реальном разделении
-обязанностей. Frontend gates отвечают за UX; backend guards и ownership — за
-доступ.
+Business logic не проверяет role name. Frontend gates отвечают за UX; backend
+guards, permissions и ownership — за доступ. Существующий `admin:access`
+продолжает защищать общий `/admin` shell, но не заменяет предметные permissions.
 
 ## Минимальная видимость Stage 1
 
@@ -108,28 +140,25 @@ provider-run tables, retries, billing и recovery не создаются.
   создаются.
 - `REQUIRES_REVIEW` не участвует в best/last confirmed score.
 
+Project-level employee summary возвращает раздельно:
+
+- `bestConfirmedScore`;
+- `bestConfirmedStatus`;
+- `hasPendingReview`.
+
+Подтверждённый `PASSED` остаётся основным статусом при наличии pending review,
+а pending показывается отдельно. Если подтверждённого результата нет, но есть
+pending review, основной статус — `REQUIRES_REVIEW`. Review resolution в
+Stage 1 отсутствует.
+
 ## Явно отложено
 
 Все детали voice grace period, transcription, rubric, facts, penalty evidence,
 unsupported claims, review, materials, ranking, retention, operations и
 production rollout решаются только в соответствующих этапах.
 
-## NEEDS_DECISION
+## Закрытые вопросы Stage 1
 
-Эти вопросы не блокируют проектирование, но указанные вопросы Stage 1 нужно
-закрыть до реализации связанного поведения:
-
-1. Каковы допустимые min/max и единица timer; рекомендуется хранить целые секунды
-   и требовать явное значение без неутверждённого default.
-2. Какие текущие роли получают `training:participate`; eligibility уже
-   определяется permission, но seed mapping не утверждён.
-3. Где проходит проверяемая server-side граница между техническим
-   reload/reconnect активного взаимодействия и брошенной попыткой, которую
-   запрещено продолжать позднее; до решения recovery behavior не предполагается.
-4. Как завершать неполную попытку по timeout; рекомендуется terminal
-   `TIMED_OUT` без подтверждённого score, пока другое правило не утверждено.
-5. Что делает закрытие проекта с уже начатой попыткой; рекомендуется запрещать
-   новые старты, но дать snapshot-попытке завершиться в исходный deadline.
-6. Как вычисляется показываемый project-level status, если у сотрудника
-   одновременно есть confirmed `PASSED`/`FAILED` и `REQUIRES_REVIEW`; это нужно
-   решить до реализации employee project list.
+Единица/default timer, reload/recovery, timeout, close behavior, role mapping и
+сочетание confirmed/pending результата закрыты текущим заданием Stage 1 и
+зафиксированы выше. Новых `NEEDS_DECISION` для Web Fake Vertical Slice нет.

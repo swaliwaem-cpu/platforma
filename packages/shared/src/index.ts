@@ -1,5 +1,7 @@
 export const platformName = 'Platforma';
 
+export * from './training.js';
+
 export type UserStatus = 'ACTIVE' | 'BLOCKED' | 'INVITED' | 'DEACTIVATED';
 export type ObjectStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
 export type RealEstateObjectType = 'RESIDENTIAL' | 'COMMERCIAL';
