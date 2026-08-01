@@ -6,6 +6,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RequirePermissions } from '../auth/permissions.decorator';
 import { PermissionsGuard } from '../auth/permissions.guard';
 import { TrainingAttemptService } from './training-attempt.service';
+import { TrainingTelegramService } from './training-telegram.service';
 import {
   parseStartTrainingAttemptInput,
   parseSubmitTrainingAnswerInput,
@@ -16,7 +17,15 @@ import {
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 @RequirePermissions('training:participate')
 export class TrainingEmployeeController {
-  constructor(private readonly attempts: TrainingAttemptService) {}
+  constructor(
+    private readonly attempts: TrainingAttemptService,
+    private readonly telegram: TrainingTelegramService,
+  ) {}
+
+  @Get('telegram/account')
+  async getTelegramAccount(@CurrentUser() actor: AuthenticatedUser) {
+    return this.telegram.getAccountState(actor.id);
+  }
 
   @Get('projects')
   async listProjects(@CurrentUser() actor: AuthenticatedUser) {
@@ -34,6 +43,17 @@ export class TrainingEmployeeController {
       parseUuid(projectId, 'projectId'),
       actor.id,
       parseStartTrainingAttemptInput(body, idempotencyKey),
+    );
+  }
+
+  @Post('projects/:projectId/telegram-link')
+  async createTelegramLink(
+    @Param('projectId') projectId: string,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.telegram.createProjectLink(
+      actor.id,
+      parseUuid(projectId, 'projectId'),
     );
   }
 

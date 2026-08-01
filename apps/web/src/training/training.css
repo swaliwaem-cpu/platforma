@@ -112,6 +112,46 @@
   font-weight: 600;
 }
 
+.training-telegram-strip {
+  display: flex;
+  padding: 20px 22px;
+  border: 1px solid color-mix(in srgb, var(--catalog-blue) 34%, var(--catalog-border));
+  border-radius: var(--catalog-radius-lg);
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  background:
+    linear-gradient(110deg, color-mix(in srgb, var(--catalog-blue-soft) 68%, var(--catalog-panel)), var(--catalog-panel));
+  box-shadow: var(--catalog-shadow-card);
+}
+
+.training-telegram-strip h3,
+.training-telegram-strip p {
+  margin: 0;
+}
+
+.training-telegram-strip .eyebrow {
+  margin-bottom: 5px;
+}
+
+.training-telegram-strip p:last-child {
+  max-width: 72ch;
+  margin-top: 6px;
+  color: var(--catalog-ink-700);
+}
+
+.training-project-actions {
+  min-height: 76px;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.training-link-expiry {
+  color: var(--catalog-ink-700);
+  font-size: 0.8rem;
+}
+
 .training-history-list,
 .training-admin-list,
 .training-admin-answers,
@@ -350,6 +390,11 @@
     flex-direction: column;
   }
 
+  .training-telegram-strip {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
   .training-attempt-status {
     width: 100%;
     align-items: stretch;
@@ -390,6 +435,10 @@
 
   .training-route-message {
     margin: 16px;
+  }
+
+  .training-project-actions .admin-button {
+    width: 100%;
   }
 }
 

@@ -9,6 +9,8 @@ import type {
   TrainingEmployeeAttempt,
   TrainingEmployeeAttemptsResponse,
   TrainingEmployeeProjectsResponse,
+  TrainingTelegramAccountState,
+  TrainingTelegramLinkResponse,
   UpdateTrainingProjectAvailabilityRequest,
   UpdateTrainingProjectRequest,
 } from '@platforma/shared';
@@ -25,6 +27,20 @@ export function getTrainingAttempts(accessToken: string, signal?: AbortSignal) {
   return apiRequest<TrainingEmployeeAttemptsResponse>('/training/attempts', accessToken, {
     signal,
   });
+}
+
+export function getTrainingTelegramAccount(accessToken: string, signal?: AbortSignal) {
+  return apiRequest<TrainingTelegramAccountState>('/training/telegram/account', accessToken, {
+    signal,
+  });
+}
+
+export function createTrainingTelegramLink(accessToken: string, projectId: string) {
+  return apiRequest<TrainingTelegramLinkResponse>(
+    `/training/projects/${encodeURIComponent(projectId)}/telegram-link`,
+    accessToken,
+    { method: 'POST' },
+  );
 }
 
 export function startTrainingAttempt(

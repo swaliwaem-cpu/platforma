@@ -44,6 +44,80 @@ Stage 1 — синхронный web-only vertical slice. Текстовые о�
 outbox, provider runs, parsers, review, ranking, CSV, operations, notifications,
 analytics, assignments и deploy.
 
+## Граница Stage 2
+
+Stage 2 добавляет реальный Telegram transport и реальную обработку Telegram
+voice без настоящей транскрибации. Employee выбирает проект только в Platforma;
+одноразовая deep link содержит выбранный `projectId` через server-side token и
+никогда не превращает Telegram в каталог проектов.
+
+- Telegram account связывается только с существующим активным `User`.
+- Поддерживается только private chat и только `message.voice`.
+- Один ответ состоит из одного или нескольких последовательно сохранённых voice
+  segments и переходит в обработку только после отдельного действия
+  «Завершить ответ».
+- Worker действительно скачивает Telegram-файлы, сохраняет originals в
+  отдельном private bucket и нормализует их через `ffmpeg` в один WAV PCM mono
+  16 kHz.
+- Транскрипция остаётся детерминированной fake-реализацией, которая по умолчанию
+  возвращает `[fake:pass]`. Оценивание и progression переиспользуют существующий
+  Stage 1 `TrainingEvaluator` и общий completion flow.
+- Stage 1 text mode сохраняется только как development/test fallback. В
+  production UI основной CTA ведёт в Telegram.
+
+В Stage 2 нет OpenAI, facts/criteria, manual review, admin audio player,
+documents/parsers, ranking, CSV, policy acceptance, operations и production
+deploy.
+
+## Telegram link, dialog и idempotency Stage 2
+
+- Raw link token возвращается только внутри `https://t.me/...?...` и не
+  сохраняется; PostgreSQL хранит SHA-256 hash. TTL — 15 минут.
+- Создание deep link не создаёт и не расходует попытку. Попытка стартует только
+  после Telegram callback и использует существующую транзакционную защиту
+  limit/active attempt/retake/snapshot/timer.
+- Token consume, active-account conflicts, start callback, segment insert и
+  finish transition защищены транзакциями и unique constraints. Exactly-once
+  Telegram delivery не обещается; повторное информационное сообщение допустимо.
+- `/start` без token выводит состояние из `TrainingAttempt`,
+  `TrainingAttemptQuestion` и `TrainingAnswer`. Отдельная Telegram session/state
+  machine не создаётся.
+- Project context берётся из последнего успешно использованного project-bound
+  link token; при его отсутствии допускается fallback только на единственную
+  active attempt пользователя.
+- Unlink endpoint в Stage 2 не добавляется: безопасный lifecycle отвязки требует
+  отдельного продуктового решения, а текущий flow в нём не нуждается.
+
+## Audio и processing Stage 2
+
+- `TrainingAnswer` со статусом `PROCESSING` является persisted processing unit;
+  отдельные job/outbox/provider-run tables не создаются.
+- Worker claim использует PostgreSQL `FOR UPDATE SKIP LOCKED`, ownership lock,
+  heartbeat, stale-lock recovery и максимум три попытки обработки.
+- Original OGG и merged WAV имеют детерминированные keys без PII, отдельный
+  `TRAINING_AUDIO_BUCKET` и `File.url=null`. Повторная обработка переиспользует
+  тот же object/File.
+- `ffmpeg` запускается через `spawn` с `shell:false`, фиксированными аргументами,
+  timeout и cleanup уникальной temp directory в `finally`.
+- Domain transition и progression фиксируются до outbound Telegram message.
+  Ошибка отправки не откатывает ответ; `/start` восстанавливает состояние.
+- После исчерпания processing attempts answer получает `FAILED` без transcript,
+  score и обычного pass/fail. Attempt остаётся `IN_PROGRESS`, поэтому техническая
+  ошибка не превращается в низкую оценку. Повтор ответа в Stage 2 не реализован;
+  это явное ограничение до отдельного решения следующих этапов.
+
+## Timeout Stage 2
+
+Stage 1 timer остаётся источником истины. Telegram update и worker перед
+изменением progression применяют тот же lazy timeout. Истёкшая попытка не
+принимает новые segments; unfinished Telegram answer становится `FAILED` с
+техническим code, unanswered question получает timeout-состояние, а attempt не
+может стать passed.
+
+Grace period для voice, начатого до `expiresAt`, в Stage 2 отсутствует. Его нельзя
+добавить корректно без дополнительного lifecycle, поэтому решение явно
+отложено до Stage 3/5.
+
 ## Historical integrity
 
 Рассмотрены два варианта:
@@ -153,9 +227,10 @@ Stage 1 отсутствует.
 
 ## Явно отложено
 
-Все детали voice grace period, transcription, rubric, facts, penalty evidence,
-unsupported claims, review, materials, ranking, retention, operations и
-production rollout решаются только в соответствующих этапах.
+Real transcription/OpenAI, voice grace period, retry UX после технического
+`FAILED`, rubric, facts, penalty evidence, unsupported claims, review,
+materials, ranking, retention, operations и production rollout решаются только
+в соответствующих этапах.
 
 ## Закрытые вопросы Stage 1
 

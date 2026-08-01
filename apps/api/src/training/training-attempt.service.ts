@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import {
   Prisma,
+  TrainingAnswerProcessingStatus,
   TrainingAttemptQuestionStatus,
   TrainingAttemptStatus,
   TrainingProjectStatus,
@@ -245,8 +246,7 @@ function serializeEmployeeAttempt(
   attempt: TrainingAttemptDetailRecord,
 ): TrainingEmployeeAttempt {
   const currentQuestion = attempt.questions.find(
-    (question) =>
-      question.status === TrainingAttemptQuestionStatus.PRESENTED && !question.answer,
+    (question) => question.status === TrainingAttemptQuestionStatus.PRESENTED,
   );
   const isTerminal = attempt.status !== TrainingAttemptStatus.IN_PROGRESS;
 
@@ -262,7 +262,9 @@ function serializeEmployeeAttempt(
     startedAt: attempt.startedAt.toISOString(),
     expiresAt: attempt.expiresAt.toISOString(),
     completedAt: attempt.completedAt?.toISOString() ?? null,
-    answeredCount: attempt.questions.filter((question) => question.answer).length,
+    answeredCount: attempt.questions.filter(
+      (question) => question.status === TrainingAttemptQuestionStatus.ANSWERED,
+    ).length,
     totalQuestions: 4,
     currentQuestion: currentQuestion
       ? {
@@ -279,7 +281,7 @@ function serializeEmployeeAttempt(
           finalScore: attempt.finalScore,
           isPassed: attempt.isPassed,
           safeBreakdown: attempt.questions.flatMap((question) =>
-            question.answer
+            isCompletedAnswer(question.answer)
               ? [
                   {
                     sequence: question.sequence,
@@ -342,7 +344,7 @@ function serializeAdminAttempt(attempt: TrainingAttemptDetailRecord): TrainingAd
       status: question.status,
       presentedAt: question.presentedAt.toISOString(),
       answeredAt: question.answeredAt?.toISOString() ?? null,
-      answer: question.answer
+      answer: isCompletedAnswer(question.answer)
         ? {
             text: question.answer.text,
             score: question.answer.score,
@@ -353,6 +355,28 @@ function serializeAdminAttempt(attempt: TrainingAttemptDetailRecord): TrainingAd
         : null,
     })),
   };
+}
+
+function isCompletedAnswer(
+  answer: TrainingAttemptDetailRecord['questions'][number]['answer'],
+): answer is NonNullable<TrainingAttemptDetailRecord['questions'][number]['answer']> & {
+  text: string;
+  score: number;
+  fakeOutcome: NonNullable<
+    TrainingAttemptDetailRecord['questions'][number]['answer']
+  >['fakeOutcome'] & {};
+  safeBreakdownJson: Prisma.JsonValue;
+  submittedAt: Date;
+} {
+  return Boolean(
+    answer &&
+      answer.processingStatus === TrainingAnswerProcessingStatus.COMPLETED &&
+      answer.text !== null &&
+      answer.score !== null &&
+      answer.fakeOutcome !== null &&
+      answer.safeBreakdownJson !== null &&
+      answer.submittedAt !== null,
+  );
 }
 
 function serializeSafeBreakdown(value: Prisma.JsonValue): TrainingSafeBreakdown {

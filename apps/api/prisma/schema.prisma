@@ -186,6 +186,22 @@ enum TrainingFakeOutcome {
   @@map("training_fake_outcome")
 }
 
+enum TrainingAnswerSource {
+  TEXT     @map("text")
+  TELEGRAM @map("telegram")
+
+  @@map("training_answer_source")
+}
+
+enum TrainingAnswerProcessingStatus {
+  COLLECTING @map("collecting")
+  PROCESSING @map("processing")
+  COMPLETED  @map("completed")
+  FAILED     @map("failed")
+
+  @@map("training_answer_processing_status")
+}
+
 model User {
   id                    String     @id @default(uuid()) @db.Uuid
   email                 String     @unique @db.VarChar(320)
@@ -215,6 +231,8 @@ model User {
   projectPresentationDrafts      ProjectPresentationDraft[]       @relation("ProjectPresentationDraftOwner")
   projectPresentationDocuments   ProjectPresentationDocument[]    @relation("ProjectPresentationDocumentOwner")
   trainingAttempts               TrainingAttempt[]
+  trainingTelegramAccounts       TrainingTelegramAccount[]
+  trainingTelegramLinkTokens     TrainingTelegramLinkToken[]
 
   @@index([roleId])
   @@index([profilePhotoFileId])
@@ -684,6 +702,8 @@ model File {
   projectPresentationDraftCovers ProjectPresentationDraft[]       @relation("ProjectPresentationDraftCover")
   projectPresentationDocuments ProjectPresentationDocument[]
   projectPresentationAssets    ProjectPresentationDocumentAsset[]
+  trainingAnswerSegments       TrainingAnswerSegment[]             @relation("TrainingAnswerSegmentStoredFile")
+  trainingMergedAnswers        TrainingAnswer[]                    @relation("TrainingAnswerMergedAudio")
 
   @@unique([storage, bucket, key])
   @@index([uploadedById])
@@ -1020,6 +1040,7 @@ model TrainingProject {
   realEstateObject RealEstateObject?  @relation(fields: [realEstateObjectId], references: [id], onDelete: SetNull)
   questions        TrainingQuestion[]
   attempts         TrainingAttempt[]
+  telegramLinkTokens TrainingTelegramLinkToken[]
 
   @@index([realEstateObjectId])
   @@index([status, isOpen, sortOrder])
@@ -1096,17 +1117,88 @@ model TrainingAttemptQuestion {
 }
 
 model TrainingAnswer {
-  id                String              @id @default(uuid()) @db.Uuid
-  attemptQuestionId String              @unique @map("attempt_question_id") @db.Uuid
-  text              String
-  score             Int
-  fakeOutcome       TrainingFakeOutcome @map("fake_outcome")
-  safeBreakdownJson Json                @map("safe_breakdown_json")
-  submittedAt       DateTime            @default(now()) @map("submitted_at")
-  createdAt         DateTime            @default(now()) @map("created_at")
-  updatedAt         DateTime            @updatedAt @map("updated_at")
+  id                  String                         @id @default(uuid()) @db.Uuid
+  attemptQuestionId   String                         @unique @map("attempt_question_id") @db.Uuid
+  source              TrainingAnswerSource           @default(TEXT)
+  processingStatus    TrainingAnswerProcessingStatus @default(COMPLETED) @map("processing_status")
+  text                String?
+  score               Int?
+  fakeOutcome         TrainingFakeOutcome?           @map("fake_outcome")
+  safeBreakdownJson   Json?                          @map("safe_breakdown_json")
+  mergedAudioFileId   String?                        @unique @map("merged_audio_file_id") @db.Uuid
+  processingAttempts  Int                            @default(0) @map("processing_attempts")
+  processingLockedAt  DateTime?                      @map("processing_locked_at")
+  processingLockedBy  String?                        @map("processing_locked_by") @db.VarChar(128)
+  processingErrorCode String?                        @map("processing_error_code") @db.VarChar(64)
+  submittedAt         DateTime?                      @map("submitted_at")
+  createdAt           DateTime                       @default(now()) @map("created_at")
+  updatedAt           DateTime                       @updatedAt @map("updated_at")
 
   attemptQuestion TrainingAttemptQuestion @relation(fields: [attemptQuestionId], references: [id], onDelete: Restrict)
+  mergedAudioFile File?                   @relation("TrainingAnswerMergedAudio", fields: [mergedAudioFileId], references: [id], onDelete: Restrict)
+  segments        TrainingAnswerSegment[]
 
+  @@index([processingStatus, processingLockedAt, createdAt])
   @@map("training_answers")
+}
+
+model TrainingTelegramAccount {
+  id             String    @id @default(uuid()) @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  telegramUserId BigInt    @map("telegram_user_id") @db.BigInt
+  chatId         BigInt    @map("chat_id") @db.BigInt
+  username       String?   @db.VarChar(64)
+  linkedAt       DateTime  @default(now()) @map("linked_at")
+  revokedAt      DateTime? @map("revoked_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@index([telegramUserId])
+  @@index([chatId])
+  @@map("training_telegram_accounts")
+}
+
+model TrainingTelegramLinkToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  projectId String    @map("project_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash") @db.Char(64)
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user    User            @relation(fields: [userId], references: [id], onDelete: Restrict)
+  project TrainingProject @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
+  @@index([userId, usedAt])
+  @@index([projectId])
+  @@index([expiresAt])
+  @@map("training_telegram_link_tokens")
+}
+
+model TrainingAnswerSegment {
+  id                   String   @id @default(uuid()) @db.Uuid
+  answerId             String   @map("answer_id") @db.Uuid
+  position             Int
+  telegramMessageId    BigInt   @map("telegram_message_id") @db.BigInt
+  telegramFileId       String   @map("telegram_file_id") @db.VarChar(512)
+  telegramFileUniqueId String   @map("telegram_file_unique_id") @db.VarChar(512)
+  durationSeconds      Int      @map("duration_seconds")
+  sizeBytes            BigInt?  @map("size_bytes") @db.BigInt
+  storedFileId         String?  @map("stored_file_id") @db.Uuid
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  answer     TrainingAnswer @relation(fields: [answerId], references: [id], onDelete: Restrict)
+  storedFile File?          @relation("TrainingAnswerSegmentStoredFile", fields: [storedFileId], references: [id], onDelete: Restrict)
+
+  @@unique([answerId, position])
+  @@unique([answerId, telegramMessageId])
+  @@unique([answerId, telegramFileUniqueId])
+  @@index([storedFileId])
+  @@map("training_answer_segments")
 }

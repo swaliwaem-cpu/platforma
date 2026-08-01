@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import type {
   TrainingEmployeeAttemptSummary,
   TrainingEmployeeProject,
+  TrainingTelegramAccountState,
+  TrainingTelegramLinkResponse,
 } from '@platforma/shared';
 
 import { AdminAlert, AdminButton, AdminEmptyState, AdminStatusBadge } from '../admin/AdminUi';
@@ -17,8 +19,10 @@ import {
 } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
+  createTrainingTelegramLink,
   getTrainingAttempts,
   getTrainingProjects,
+  getTrainingTelegramAccount,
   startTrainingAttempt,
 } from './trainingApi';
 import {
@@ -36,8 +40,14 @@ export function TrainingProjectsPage({ navigate }: TrainingProjectsPageProps) {
   const { accessToken } = useAuth();
   const [projects, setProjects] = useState<TrainingEmployeeProject[]>([]);
   const [attempts, setAttempts] = useState<TrainingEmployeeAttemptSummary[]>([]);
+  const [telegramAccount, setTelegramAccount] = useState<TrainingTelegramAccountState | null>(null);
+  const [telegramLink, setTelegramLink] = useState<
+    (TrainingTelegramLinkResponse & { projectId: string }) | null
+  >(null);
   const [isLoading, setIsLoading] = useState(true);
   const [startingProjectId, setStartingProjectId] = useState<string | null>(null);
+  const [linkingProjectId, setLinkingProjectId] = useState<string | null>(null);
+  const [telegramNotice, setTelegramNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const startIdempotencyKeyRef = useRef<string | null>(null);
@@ -52,11 +62,13 @@ export function TrainingProjectsPage({ navigate }: TrainingProjectsPageProps) {
     void Promise.all([
       getTrainingProjects(accessToken, controller.signal),
       getTrainingAttempts(accessToken, controller.signal),
+      getTrainingTelegramAccount(accessToken, controller.signal),
     ])
-      .then(([projectResponse, attemptResponse]) => {
+      .then(([projectResponse, attemptResponse, accountResponse]) => {
         if (controller.signal.aborted) return;
         setProjects(projectResponse.items);
         setAttempts(attemptResponse.items);
+        setTelegramAccount(accountResponse);
       })
       .catch((loadError: unknown) => {
         if (!controller.signal.aborted) {
@@ -69,6 +81,25 @@ export function TrainingProjectsPage({ navigate }: TrainingProjectsPageProps) {
 
     return () => controller.abort();
   }, [accessToken, reloadKey]);
+
+  useEffect(() => {
+    if (!telegramLink) return;
+
+    const remainingMs = new Date(telegramLink.expiresAt).getTime() - Date.now();
+
+    if (remainingMs <= 0) {
+      setTelegramLink(null);
+      setTelegramNotice('Срок действия ссылки истёк. Создайте новую ссылку для Telegram.');
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setTelegramLink(null);
+      setTelegramNotice('Срок действия ссылки истёк. Создайте новую ссылку для Telegram.');
+    }, remainingMs);
+
+    return () => window.clearTimeout(timeout);
+  }, [telegramLink]);
 
   const handleStart = async (project: TrainingEmployeeProject) => {
     if (!accessToken) return;
@@ -99,6 +130,25 @@ export function TrainingProjectsPage({ navigate }: TrainingProjectsPageProps) {
     }
   };
 
+  const handleTelegramLink = async (project: TrainingEmployeeProject) => {
+    if (!accessToken) return;
+
+    setLinkingProjectId(project.id);
+    setTelegramNotice(null);
+    setError(null);
+
+    try {
+      const link = await createTrainingTelegramLink(accessToken, project.id);
+      setTelegramAccount(link.account);
+      setTelegramLink({ ...link, projectId: project.id });
+    } catch {
+      setTelegramLink(null);
+      setTelegramNotice('Не удалось создать ссылку. Обновите список проектов и попробуйте ещё раз.');
+    } finally {
+      setLinkingProjectId(null);
+    }
+  };
+
   return (
     <div className="training-page">
       <header className="training-page-header">
@@ -116,6 +166,29 @@ export function TrainingProjectsPage({ navigate }: TrainingProjectsPageProps) {
             Повторить
           </AdminButton>
         </AdminAlert>
+      ) : null}
+
+      <section className="training-telegram-strip" aria-labelledby="training-telegram-title">
+        <div>
+          <p className="eyebrow">Telegram</p>
+          <h3 id="training-telegram-title">
+            {telegramAccount?.linked ? 'Аккаунт подключён' : 'Голосовая аттестация в Telegram'}
+          </h3>
+          <p>
+            {telegramAccount?.linked
+              ? telegramAccount.username
+                ? `Связан аккаунт @${telegramAccount.username}. Проект выбирается здесь, в Platforma.`
+                : 'Telegram связан. Проект выбирается здесь, в Platforma.'
+              : 'Выберите проект ниже: одноразовая ссылка свяжет Telegram и откроет именно этот проект.'}
+          </p>
+        </div>
+        <AdminStatusBadge className={telegramAccount?.linked ? 'training-status--success' : 'training-status--active'}>
+          {telegramAccount?.linked ? 'Подключён' : 'Не подключён'}
+        </AdminStatusBadge>
+      </section>
+
+      {telegramNotice ? (
+        <AdminAlert tone="notice"><span>{telegramNotice}</span></AdminAlert>
       ) : null}
 
       <section aria-labelledby="training-projects-title">
@@ -154,21 +227,55 @@ export function TrainingProjectsPage({ navigate }: TrainingProjectsPageProps) {
                     <p className="training-pending-note">Есть попытка, требующая проверки.</p>
                   ) : null}
                 </CardContent>
-                <CardFooter>
-                  {project.activeAttempt ? (
-                    <AdminButton type="button" tone="primary" onClick={() => navigate(`/training/attempts/${project.activeAttempt?.id}`)}>
-                      Продолжить попытку
-                    </AdminButton>
+                <CardFooter className="training-project-actions">
+                  {telegramLink?.projectId === project.id ? (
+                    <>
+                      <AdminButton asChild tone="primary">
+                        <a href={telegramLink.url} target="_blank" rel="noreferrer">
+                          Открыть Telegram <span aria-hidden="true">↗</span>
+                        </a>
+                      </AdminButton>
+                      <span className="training-link-expiry">Ссылка действует 15 минут</span>
+                    </>
                   ) : (
                     <AdminButton
                       type="button"
                       tone="primary"
-                      disabled={!project.canStart || startingProjectId !== null}
-                      onClick={() => void handleStart(project)}
+                      disabled={
+                        (!project.canStart && !project.activeAttempt) ||
+                        linkingProjectId !== null
+                      }
+                      onClick={() => void handleTelegramLink(project)}
                     >
-                      {startingProjectId === project.id ? 'Запуск…' : 'Начать попытку'}
+                      {linkingProjectId === project.id
+                        ? 'Создаём ссылку…'
+                        : project.activeAttempt
+                          ? 'Продолжить в Telegram'
+                          : 'Пройти в Telegram'}
                     </AdminButton>
                   )}
+                  {import.meta.env.DEV ? (
+                    project.activeAttempt ? (
+                      <AdminButton
+                        type="button"
+                        tone="text"
+                        onClick={() => navigate(`/training/attempts/${project.activeAttempt?.id}`)}
+                      >
+                        Продолжить тестовый текстовый режим
+                      </AdminButton>
+                    ) : (
+                      <AdminButton
+                        type="button"
+                        tone="text"
+                        disabled={!project.canStart || startingProjectId !== null}
+                        onClick={() => void handleStart(project)}
+                      >
+                        {startingProjectId === project.id
+                          ? 'Запуск…'
+                          : 'Тестовый текстовый режим'}
+                      </AdminButton>
+                    )
+                  ) : null}
                 </CardFooter>
               </Card>
             ))}

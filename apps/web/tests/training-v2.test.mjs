@@ -47,6 +47,19 @@ test('employee flow uses server state, stable start idempotency and current ques
   assert.doesNotMatch(attemptSource, /followUpQuestions|questionPool|hiddenQuestions/);
 });
 
+test('Stage 2 employee flow makes project-bound Telegram voice transport primary', () => {
+  assert.match(apiSource, /\/training\/telegram\/account/);
+  assert.match(apiSource, /\/training\/projects\/\$\{encodeURIComponent\(projectId\)\}\/telegram-link/);
+  assert.match(projectsSource, /Пройти в Telegram/);
+  assert.match(projectsSource, /Продолжить в Telegram/);
+  assert.match(projectsSource, /Открыть Telegram/);
+  assert.match(projectsSource, /import\.meta\.env\.DEV/);
+  assert.match(projectsSource, /Тестовый текстовый режим/);
+  assert.match(projectsSource, /Срок действия ссылки истёк/);
+  assert.match(projectsSource, /target="_blank" rel="noreferrer"/);
+  assert.match(projectsSource, /telegramAccount\?\.linked/);
+});
+
 test('employee screens render loading, error, empty, result and review states', () => {
   assert.match(projectsSource, /aria-label="Загрузка проектов"/);
   assert.match(projectsSource, /tone="error"/);
@@ -62,8 +75,8 @@ test('employee screens render loading, error, empty, result and review states', 
   assert.match(viewSource, /REQUIRES_REVIEW[\s\S]*?Требует проверки/);
 });
 
-test('Stage 1 text-answer notice and deterministic fake markers are explicit', () => {
-  assert.match(attemptSource, /Временный текстовый режим Stage 1\. В следующем этапе ответы будут голосовыми\./);
+test('Stage 2 keeps text answers only as explicit development/test fallback', () => {
+  assert.match(attemptSource, /Development\/test fallback Stage 2/);
   assert.match(attemptSource, /\[fake:pass\]/);
   assert.match(attemptSource, /\[fake:fail\]/);
   assert.match(attemptSource, /\[fake:review\]/);

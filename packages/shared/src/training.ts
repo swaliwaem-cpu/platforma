@@ -101,6 +101,18 @@ export type TrainingEmployeeProjectsResponse = {
   items: TrainingEmployeeProject[];
 };
 
+export type TrainingTelegramAccountState = {
+  linked: boolean;
+  username: string | null;
+  linkedAt: string | null;
+};
+
+export type TrainingTelegramLinkResponse = {
+  url: string;
+  expiresAt: string;
+  account: TrainingTelegramAccountState;
+};
+
 export type TrainingAttemptQuestion = {
   id: string;
   sequence: number;

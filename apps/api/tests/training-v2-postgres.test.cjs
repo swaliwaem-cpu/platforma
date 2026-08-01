@@ -49,9 +49,12 @@ if (!databaseUrl) {
   });
 
   beforeEach(async () => {
+    await prisma.trainingAnswerSegment.deleteMany();
     await prisma.trainingAnswer.deleteMany();
     await prisma.trainingAttemptQuestion.deleteMany();
     await prisma.trainingAttempt.deleteMany();
+    await prisma.trainingTelegramLinkToken.deleteMany();
+    await prisma.trainingTelegramAccount.deleteMany();
     await prisma.trainingQuestion.deleteMany();
     await prisma.trainingProject.deleteMany();
     await prisma.user.deleteMany({ where: { email: { endsWith: '@training.test' } } });

@@ -217,7 +217,7 @@ export function TrainingAttemptPage({ attemptId, navigate }: TrainingAttemptPage
                 onChange={(event) => setAnswer(event.target.value)}
               />
               <FieldDescription>
-                Временный текстовый режим Stage 1. В следующем этапе ответы будут голосовыми.
+                Development/test fallback Stage 2. Основной продуктовый сценарий проходит голосом в Telegram.
               </FieldDescription>
               <FieldDescription>
                 Dev-маркеры: <code>[fake:pass]</code>, <code>[fake:fail]</code>, <code>[fake:review]</code>.

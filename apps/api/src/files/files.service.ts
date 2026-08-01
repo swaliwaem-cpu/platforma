@@ -199,6 +199,7 @@ export class FilesService {
 
   async getById(id: string) {
     const file = await this.findExistingFile(id);
+    this.assertNotTrainingAudio(file);
 
     return {
       file: this.serializeFile(file),
@@ -208,12 +209,16 @@ export class FilesService {
   async getContent(id: string, variant?: string | null) {
     const requestedVariant = this.parseRequestedVariant(variant);
     const file = await this.findExistingFileWithVariants(id);
+    this.assertNotTrainingAudio(file);
 
     if (requestedVariant.kind === 'variant') {
       const fileVariant = file.variants.find((currentVariant) => currentVariant.variant === requestedVariant.variant);
 
       if (fileVariant) {
-        const buffer = await this.storage.getObject(fileVariant.key);
+        const buffer = await this.storage.getObject(
+          fileVariant.key,
+          fileVariant.bucket ?? undefined,
+        );
 
         return {
           file: {
@@ -226,7 +231,7 @@ export class FilesService {
         };
       }
 
-      const buffer = await this.storage.getObject(file.key);
+      const buffer = await this.storage.getObject(file.key, file.bucket ?? undefined);
 
       return {
         file,
@@ -235,7 +240,7 @@ export class FilesService {
       };
     }
 
-    const buffer = await this.storage.getObject(file.key);
+    const buffer = await this.storage.getObject(file.key, file.bucket ?? undefined);
 
     return {
       file,
@@ -254,6 +259,7 @@ export class FilesService {
         variants: {
           select: {
             key: true,
+            bucket: true,
           },
         },
         _count: {
@@ -266,6 +272,8 @@ export class FilesService {
             projectPresentationDraftCovers: true,
             projectPresentationDocuments: true,
             projectPresentationAssets: true,
+            trainingAnswerSegments: true,
+            trainingMergedAnswers: true,
           },
         },
       },
@@ -283,16 +291,18 @@ export class FilesService {
       file._count.lotPresentationDocuments > 0 ||
       file._count.projectPresentationDraftCovers > 0 ||
       file._count.projectPresentationDocuments > 0 ||
-      file._count.projectPresentationAssets > 0
+      file._count.projectPresentationAssets > 0 ||
+      file._count.trainingAnswerSegments > 0 ||
+      file._count.trainingMergedAnswers > 0
     ) {
       throw new ConflictException('File is linked and cannot be deleted');
     }
 
     for (const variant of file.variants) {
-      await this.storage.deleteObject(variant.key);
+      await this.storage.deleteObject(variant.key, variant.bucket ?? undefined);
     }
 
-    await this.storage.deleteObject(file.key);
+    await this.storage.deleteObject(file.key, file.bucket ?? undefined);
     await this.prisma.file.delete({
       where: {
         id: file.id,
@@ -622,6 +632,12 @@ export class FilesService {
     }
 
     return file;
+  }
+
+  private assertNotTrainingAudio(file: { url: string | null; key: string }) {
+    if (file.url === null && file.key.startsWith('training-v2/answers/')) {
+      throw new NotFoundException('File not found');
+    }
   }
 
   private async findExistingFileWithVariants(id: string) {

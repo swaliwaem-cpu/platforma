@@ -11,6 +11,6 @@ import { S3StorageService } from './s3-storage.service';
   imports: [AuthModule, PrismaModule],
   controllers: [FilesController, MediaController],
   providers: [FilesService, S3StorageService],
-  exports: [FilesService],
+  exports: [FilesService, S3StorageService],
 })
 export class FilesModule {}

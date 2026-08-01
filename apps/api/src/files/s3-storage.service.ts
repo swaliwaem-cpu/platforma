@@ -1,7 +1,7 @@
 import { createHmac, createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 
-import { Injectable, InternalServerErrorException, OnModuleInit } from '@nestjs/common';
+import { Injectable, InternalServerErrorException } from '@nestjs/common';
 
 type SignedRequestOptions = {
   method: 'DELETE' | 'GET' | 'HEAD' | 'PUT';
@@ -14,7 +14,7 @@ type SignedRequestOptions = {
 };
 
 @Injectable()
-export class S3StorageService implements OnModuleInit {
+export class S3StorageService {
   private readonly endpoint = normalizeEndpoint(process.env.S3_ENDPOINT ?? 'http://localhost:9000');
   private readonly publicEndpoint = normalizeEndpoint(
     process.env.S3_PUBLIC_ENDPOINT ?? this.endpoint,
@@ -23,32 +23,28 @@ export class S3StorageService implements OnModuleInit {
   private readonly accessKeyId = process.env.S3_ACCESS_KEY_ID ?? 'platforma';
   private readonly secretAccessKey = process.env.S3_SECRET_ACCESS_KEY ?? 'platforma_password';
   private readonly bucket = process.env.MINIO_BUCKET ?? 'platforma';
-  private bucketReady = false;
-
-  async onModuleInit() {
-    await this.ensureBucket();
-  }
+  private readonly readyBuckets = new Set<string>();
 
   getBucket() {
     return this.bucket;
   }
 
-  getPublicUrl(key: string) {
-    return `${this.publicEndpoint}/${encodePath(this.bucket)}/${encodePath(key)}`;
+  getPublicUrl(key: string, bucket = this.bucket) {
+    return `${this.publicEndpoint}/${encodePath(bucket)}/${encodePath(key)}`;
   }
 
-  async ensureBucket() {
-    if (this.bucketReady) {
+  async ensureBucket(bucket = this.bucket) {
+    if (this.readyBuckets.has(bucket)) {
       return;
     }
 
     const headResponse = await this.signedFetch({
       method: 'HEAD',
-      bucket: this.bucket,
+      bucket,
     });
 
     if (headResponse.ok) {
-      this.bucketReady = true;
+      this.readyBuckets.add(bucket);
       return;
     }
 
@@ -58,22 +54,23 @@ export class S3StorageService implements OnModuleInit {
 
     const createResponse = await this.signedFetch({
       method: 'PUT',
-      bucket: this.bucket,
+      bucket,
     });
 
     if (!createResponse.ok && createResponse.status !== 409) {
       await this.throwStorageError('Cannot create MinIO bucket', createResponse);
     }
 
-    this.bucketReady = true;
+    this.readyBuckets.add(bucket);
   }
 
-  async putObject(params: { key: string; body: Buffer; contentType: string }) {
-    await this.ensureBucket();
+  async putObject(params: { key: string; body: Buffer; contentType: string; bucket?: string }) {
+    const bucket = params.bucket ?? this.bucket;
+    await this.ensureBucket(bucket);
 
     const response = await this.signedFetch({
       method: 'PUT',
-      bucket: this.bucket,
+      bucket,
       key: params.key,
       body: params.body,
       contentType: params.contentType,
@@ -84,12 +81,13 @@ export class S3StorageService implements OnModuleInit {
     }
   }
 
-  async putObjectFromFile(params: { key: string; filePath: string; contentType: string; checksum: string; contentLength: number }) {
-    await this.ensureBucket();
+  async putObjectFromFile(params: { key: string; filePath: string; contentType: string; checksum: string; contentLength: number; bucket?: string }) {
+    const bucket = params.bucket ?? this.bucket;
+    await this.ensureBucket(bucket);
 
     const response = await this.signedFetch({
       method: 'PUT',
-      bucket: this.bucket,
+      bucket,
       key: params.key,
       body: createReadStream(params.filePath),
       contentType: params.contentType,
@@ -102,12 +100,12 @@ export class S3StorageService implements OnModuleInit {
     }
   }
 
-  async getObject(key: string) {
-    await this.ensureBucket();
+  async getObject(key: string, bucket = this.bucket) {
+    await this.ensureBucket(bucket);
 
     const response = await this.signedFetch({
       method: 'GET',
-      bucket: this.bucket,
+      bucket,
       key,
     });
 
@@ -118,12 +116,12 @@ export class S3StorageService implements OnModuleInit {
     return Buffer.from(await response.arrayBuffer());
   }
 
-  async deleteObject(key: string) {
-    await this.ensureBucket();
+  async deleteObject(key: string, bucket = this.bucket) {
+    await this.ensureBucket(bucket);
 
     const response = await this.signedFetch({
       method: 'DELETE',
-      bucket: this.bucket,
+      bucket,
       key,
     });
 

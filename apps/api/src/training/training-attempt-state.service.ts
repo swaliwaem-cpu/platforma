@@ -7,6 +7,8 @@ import {
 } from '@nestjs/common';
 import {
   Prisma,
+  TrainingAnswerProcessingStatus,
+  TrainingAnswerSource,
   TrainingAttemptCompletionReason,
   TrainingAttemptQuestionStatus,
   TrainingAttemptStatus,
@@ -41,6 +43,26 @@ export type SubmitTrainingAnswerInput = {
   text: string;
 };
 
+export type AddTrainingVoiceSegmentInput = {
+  telegramMessageId: bigint;
+  telegramFileId: string;
+  telegramFileUniqueId: string;
+  durationSeconds: number;
+  sizeBytes: bigint | null;
+};
+
+export type AddTrainingVoiceSegmentResult =
+  | { status: 'ADDED' | 'DUPLICATE'; attemptQuestionId: string; position: number }
+  | { status: 'PROCESSING' | 'FAILED' | 'NO_CURRENT_QUESTION' | 'TIMED_OUT' };
+
+export type FinishTrainingVoiceAnswerResult =
+  | { status: 'PROCESSING' | 'FAILED'; answerId: string }
+  | { status: 'STALE' | 'NO_SEGMENTS' | 'TIMED_OUT' };
+
+const TRAINING_MAX_VOICE_SEGMENTS = 20;
+const TRAINING_MAX_VOICE_SEGMENT_BYTES = 20 * 1024 * 1024;
+const TRAINING_MAX_VOICE_TOTAL_BYTES = 60 * 1024 * 1024;
+
 @Injectable()
 export class TrainingAttemptStateService {
   constructor(
@@ -50,7 +72,64 @@ export class TrainingAttemptStateService {
   ) {}
 
   async startAttempt(projectId: string, userId: string, input: StartTrainingAttemptInput) {
+    return this.prisma.$transaction((transaction) =>
+      this.startAttemptInTransaction(transaction, projectId, userId, input),
+    );
+  }
+
+  async startAttemptFromTelegramLinkToken(tokenId: string, userId: string) {
     return this.prisma.$transaction(async (transaction) => {
+      await transaction.$queryRaw(
+        Prisma.sql`SELECT "id" FROM "training_telegram_link_tokens" WHERE "id" = CAST(${tokenId} AS uuid) FOR UPDATE`,
+      );
+      const token = await transaction.trainingTelegramLinkToken.findFirst({
+        where: { id: tokenId, userId },
+      });
+
+      if (!token || token.usedAt === null) {
+        throw new NotFoundException('Training Telegram link not found');
+      }
+
+      if (token.revokedAt !== null) {
+        const existingAttempt = await transaction.trainingAttempt.findFirst({
+          where: {
+            userId,
+            projectId: token.projectId,
+            OR: [
+              { startIdempotencyKey: token.id },
+              { status: TrainingAttemptStatus.IN_PROGRESS },
+            ],
+          },
+          orderBy: { startedAt: 'desc' },
+          select: { id: true },
+        });
+
+        return existingAttempt?.id ?? null;
+      }
+
+      const attemptId = await this.startAttemptInTransaction(
+        transaction,
+        token.projectId,
+        userId,
+        { confirmed: true, idempotencyKey: token.id },
+      );
+      await transaction.trainingTelegramLinkToken.update({
+        where: { id: token.id },
+        data: {
+          revokedAt: await this.getDatabaseNow(transaction),
+        },
+      });
+
+      return attemptId;
+    });
+  }
+
+  private async startAttemptInTransaction(
+    transaction: Prisma.TransactionClient,
+    projectId: string,
+    userId: string,
+    input: StartTrainingAttemptInput,
+  ) {
       await this.lockUser(transaction, userId);
       await this.lockProject(transaction, projectId);
       const now = await this.getDatabaseNow(transaction);
@@ -173,7 +252,6 @@ export class TrainingAttemptStateService {
       });
 
       return attempt.id;
-    });
   }
 
   async submitAnswer(attemptId: string, userId: string, input: SubmitTrainingAnswerInput) {
@@ -212,39 +290,260 @@ export class TrainingAttemptStateService {
         throw new NotFoundException('Current training question not found');
       }
 
-      const evaluation = this.evaluator.evaluate(input.text, currentQuestion.maxScore);
-      await transaction.trainingAnswer.create({
-        data: {
-          attemptQuestionId: currentQuestion.id,
-          text: input.text,
-          score: evaluation.score,
-          fakeOutcome:
-            evaluation.outcome === 'REQUIRES_REVIEW'
-              ? TrainingFakeOutcome.REQUIRES_REVIEW
-              : TrainingFakeOutcome.SCORED,
-          safeBreakdownJson: evaluation.safeBreakdown,
-          submittedAt: now,
-        },
-      });
-      await transaction.trainingAttemptQuestion.update({
-        where: { id: currentQuestion.id },
-        data: {
-          status: TrainingAttemptQuestionStatus.ANSWERED,
-          answeredAt: now,
-        },
-      });
-
-      if (currentQuestion.sequence === 1) {
-        await this.createFollowUpQuestions(transaction, attempt, now);
+      if (currentQuestion.answer) {
+        throw new ConflictException('Current training answer is already in progress');
       }
 
-      await this.completeIfReady(transaction, attempt.id, now);
+      await this.completeAnswerFromText(
+        transaction,
+        attempt,
+        currentQuestion,
+        input.text,
+        now,
+      );
       return attempt.id;
     });
 
     if (!submittedAttemptId) throw new ConflictException('Training attempt time has expired');
 
     return submittedAttemptId;
+  }
+
+  async addTelegramVoiceSegment(
+    attemptId: string,
+    userId: string,
+    input: AddTrainingVoiceSegmentInput,
+  ): Promise<AddTrainingVoiceSegmentResult> {
+    return this.prisma.$transaction(async (transaction) => {
+      const locked = await this.lockAttempt(transaction, attemptId, userId);
+
+      if (!locked) {
+        throw new NotFoundException('Training attempt not found');
+      }
+
+      const now = await this.getDatabaseNow(transaction);
+
+      if (await this.finalizeTimeoutIfNeeded(transaction, attemptId, now)) {
+        return { status: 'TIMED_OUT' };
+      }
+
+      const currentQuestion = await transaction.trainingAttemptQuestion.findFirst({
+        where: {
+          attemptId,
+          status: TrainingAttemptQuestionStatus.PRESENTED,
+        },
+        include: {
+          answer: {
+            include: {
+              segments: { orderBy: { position: 'asc' } },
+            },
+          },
+        },
+        orderBy: { sequence: 'asc' },
+      });
+
+      if (!currentQuestion) {
+        return { status: 'NO_CURRENT_QUESTION' };
+      }
+
+      let answer = currentQuestion.answer;
+
+      if (!answer) {
+        answer = await transaction.trainingAnswer.create({
+          data: {
+            attemptQuestionId: currentQuestion.id,
+            source: TrainingAnswerSource.TELEGRAM,
+            processingStatus: TrainingAnswerProcessingStatus.COLLECTING,
+          },
+          include: { segments: true },
+        });
+      }
+
+      if (
+        answer.source !== TrainingAnswerSource.TELEGRAM ||
+        answer.processingStatus === TrainingAnswerProcessingStatus.COMPLETED
+      ) {
+        return { status: 'NO_CURRENT_QUESTION' };
+      }
+
+      if (answer.processingStatus === TrainingAnswerProcessingStatus.PROCESSING) {
+        return { status: 'PROCESSING' };
+      }
+
+      if (answer.processingStatus === TrainingAnswerProcessingStatus.FAILED) {
+        return { status: 'FAILED' };
+      }
+
+      const duplicate = answer.segments.find(
+        (segment) =>
+          segment.telegramMessageId === input.telegramMessageId ||
+          segment.telegramFileUniqueId === input.telegramFileUniqueId,
+      );
+
+      if (duplicate) {
+        return {
+          status: 'DUPLICATE',
+          attemptQuestionId: currentQuestion.id,
+          position: duplicate.position,
+        };
+      }
+
+      const declaredSize = Number(input.sizeBytes ?? 0n);
+      const declaredTotal = answer.segments.reduce(
+        (total, segment) => total + Number(segment.sizeBytes ?? 0n),
+        declaredSize,
+      );
+
+      if (
+        answer.segments.length >= TRAINING_MAX_VOICE_SEGMENTS ||
+        declaredSize > TRAINING_MAX_VOICE_SEGMENT_BYTES ||
+        declaredTotal > TRAINING_MAX_VOICE_TOTAL_BYTES
+      ) {
+        throw new BadRequestException('Training voice answer exceeds the allowed size');
+      }
+
+      const position = answer.segments.length + 1;
+      await transaction.trainingAnswerSegment.create({
+        data: {
+          answerId: answer.id,
+          position,
+          telegramMessageId: input.telegramMessageId,
+          telegramFileId: input.telegramFileId,
+          telegramFileUniqueId: input.telegramFileUniqueId,
+          durationSeconds: input.durationSeconds,
+          sizeBytes: input.sizeBytes,
+        },
+      });
+
+      return { status: 'ADDED', attemptQuestionId: currentQuestion.id, position };
+    });
+  }
+
+  async finishTelegramVoiceAnswer(
+    attemptId: string,
+    userId: string,
+    attemptQuestionId: string,
+  ): Promise<FinishTrainingVoiceAnswerResult> {
+    return this.prisma.$transaction(async (transaction) => {
+      const locked = await this.lockAttempt(transaction, attemptId, userId);
+
+      if (!locked) {
+        throw new NotFoundException('Training attempt not found');
+      }
+
+      const now = await this.getDatabaseNow(transaction);
+
+      if (await this.finalizeTimeoutIfNeeded(transaction, attemptId, now)) {
+        return { status: 'TIMED_OUT' };
+      }
+
+      const currentQuestion = await transaction.trainingAttemptQuestion.findFirst({
+        where: {
+          attemptId,
+          status: TrainingAttemptQuestionStatus.PRESENTED,
+        },
+        include: {
+          answer: {
+            include: { _count: { select: { segments: true } } },
+          },
+        },
+        orderBy: { sequence: 'asc' },
+      });
+
+      if (!currentQuestion || currentQuestion.id !== attemptQuestionId) {
+        return { status: 'STALE' };
+      }
+
+      const answer = currentQuestion.answer;
+
+      if (!answer || answer._count.segments === 0) {
+        return { status: 'NO_SEGMENTS' };
+      }
+
+      if (answer.processingStatus === TrainingAnswerProcessingStatus.FAILED) {
+        return { status: 'FAILED', answerId: answer.id };
+      }
+
+      if (answer.processingStatus === TrainingAnswerProcessingStatus.PROCESSING) {
+        return { status: 'PROCESSING', answerId: answer.id };
+      }
+
+      if (answer.processingStatus !== TrainingAnswerProcessingStatus.COLLECTING) {
+        return { status: 'STALE' };
+      }
+
+      await transaction.trainingAnswer.update({
+        where: { id: answer.id },
+        data: {
+          processingStatus: TrainingAnswerProcessingStatus.PROCESSING,
+          submittedAt: now,
+          processingLockedAt: null,
+          processingLockedBy: null,
+          processingErrorCode: null,
+        },
+      });
+
+      return { status: 'PROCESSING', answerId: answer.id };
+    });
+  }
+
+  async completeTelegramVoiceAnswer(answerId: string, workerId: string, text: string) {
+    const answerRef = await this.prisma.trainingAnswer.findUnique({
+      where: { id: answerId },
+      select: { attemptQuestion: { select: { attemptId: true } } },
+    });
+
+    if (!answerRef) return { status: 'STALE' as const, attemptId: null };
+
+    return this.prisma.$transaction(async (transaction) => {
+      const attemptId = answerRef.attemptQuestion.attemptId;
+      const locked = await this.lockAttempt(transaction, attemptId);
+
+      if (!locked) return { status: 'STALE' as const, attemptId: null };
+
+      const now = await this.getDatabaseNow(transaction);
+
+      if (await this.finalizeTimeoutIfNeeded(transaction, attemptId, now)) {
+        return { status: 'TIMED_OUT' as const, attemptId };
+      }
+
+      const attempt = await transaction.trainingAttempt.findUniqueOrThrow({
+        where: { id: attemptId },
+        include: {
+          questions: {
+            include: { answer: true },
+            orderBy: { sequence: 'asc' },
+          },
+        },
+      });
+      const currentQuestion = attempt.questions.find(
+        (question) => question.status === TrainingAttemptQuestionStatus.PRESENTED,
+      );
+      const answer = currentQuestion?.answer;
+
+      if (
+        !currentQuestion ||
+        !answer ||
+        answer.id !== answerId ||
+        answer.source !== TrainingAnswerSource.TELEGRAM ||
+        answer.processingStatus !== TrainingAnswerProcessingStatus.PROCESSING ||
+        answer.processingLockedBy !== workerId ||
+        answer.mergedAudioFileId === null
+      ) {
+        return { status: 'STALE' as const, attemptId };
+      }
+
+      await this.completeAnswerFromText(
+        transaction,
+        attempt,
+        currentQuestion,
+        text,
+        now,
+        answer.id,
+      );
+
+      return { status: 'COMPLETED' as const, attemptId };
+    });
   }
 
   async finalizeAttemptIfExpired(attemptId: string, userId?: string) {
@@ -283,6 +582,63 @@ export class TrainingAttemptStateService {
     for (const attempt of attempts) {
       await this.finalizeAttemptIfExpired(attempt.id);
     }
+  }
+
+  private async completeAnswerFromText(
+    transaction: Prisma.TransactionClient,
+    attempt: { id: string; projectSnapshotJson: Prisma.JsonValue },
+    currentQuestion: { id: string; sequence: number; maxScore: number },
+    text: string,
+    now: Date,
+    existingAnswerId?: string,
+  ) {
+    const evaluation = this.evaluator.evaluate(text, currentQuestion.maxScore);
+    const evaluationData = {
+      text,
+      score: evaluation.score,
+      fakeOutcome:
+        evaluation.outcome === 'REQUIRES_REVIEW'
+          ? TrainingFakeOutcome.REQUIRES_REVIEW
+          : TrainingFakeOutcome.SCORED,
+      safeBreakdownJson: evaluation.safeBreakdown,
+    };
+
+    if (existingAnswerId) {
+      await transaction.trainingAnswer.update({
+        where: { id: existingAnswerId },
+        data: {
+          ...evaluationData,
+          processingStatus: TrainingAnswerProcessingStatus.COMPLETED,
+          processingLockedAt: null,
+          processingLockedBy: null,
+          processingErrorCode: null,
+        },
+      });
+    } else {
+      await transaction.trainingAnswer.create({
+        data: {
+          attemptQuestionId: currentQuestion.id,
+          source: TrainingAnswerSource.TEXT,
+          processingStatus: TrainingAnswerProcessingStatus.COMPLETED,
+          ...evaluationData,
+          submittedAt: now,
+        },
+      });
+    }
+
+    await transaction.trainingAttemptQuestion.update({
+      where: { id: currentQuestion.id },
+      data: {
+        status: TrainingAttemptQuestionStatus.ANSWERED,
+        answeredAt: now,
+      },
+    });
+
+    if (currentQuestion.sequence === 1) {
+      await this.createFollowUpQuestions(transaction, attempt, now);
+    }
+
+    await this.completeIfReady(transaction, attempt.id, now);
   }
 
   private async createFollowUpQuestions(
@@ -326,7 +682,14 @@ export class TrainingAttemptStateService {
       include: { answer: true },
     });
 
-    if (questions.length !== 4 || questions.some((question) => !question.answer)) {
+    if (
+      questions.length !== 4 ||
+      questions.some(
+        (question) =>
+          question.status !== TrainingAttemptQuestionStatus.ANSWERED ||
+          question.answer?.processingStatus !== TrainingAnswerProcessingStatus.COMPLETED,
+      )
+    ) {
       return;
     }
 
@@ -396,6 +759,24 @@ export class TrainingAttemptStateService {
         0,
       ),
     );
+    await transaction.trainingAnswer.updateMany({
+      where: {
+        attemptQuestion: { attemptId },
+        source: TrainingAnswerSource.TELEGRAM,
+        processingStatus: {
+          in: [
+            TrainingAnswerProcessingStatus.COLLECTING,
+            TrainingAnswerProcessingStatus.PROCESSING,
+          ],
+        },
+      },
+      data: {
+        processingStatus: TrainingAnswerProcessingStatus.FAILED,
+        processingLockedAt: null,
+        processingLockedBy: null,
+        processingErrorCode: 'ATTEMPT_TIMED_OUT',
+      },
+    });
     await transaction.trainingAttemptQuestion.updateMany({
       where: {
         attemptId,
