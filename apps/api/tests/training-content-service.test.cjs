@@ -20,10 +20,17 @@ const { TrainingAdminController } = require('../dist/training/training-admin.con
 const { TrainingContentService } = require('../dist/training/training-content.service.js');
 
 const rootDir = path.resolve(__dirname, '../../..');
-const controllerSource = fs.readFileSync(
-  path.join(rootDir, 'apps/api/src/training/training-admin.controller.ts'),
-  'utf8',
-);
+const trainingControllerDir = path.join(rootDir, 'apps/api/src/training');
+const controllerSource = fs
+  .readdirSync(trainingControllerDir)
+  .filter(
+    (name) =>
+      name.startsWith('training-admin') && name.endsWith('.controller.ts'),
+  )
+  .map((name) =>
+    fs.readFileSync(path.join(trainingControllerDir, name), 'utf8'),
+  )
+  .join('\n');
 const serviceSource = fs.readFileSync(
   path.join(rootDir, 'apps/api/src/training/training-content.service.ts'),
   'utf8',

@@ -6,6 +6,12 @@ import { TrainingAudioAccessService } from './audio/training-audio-access.servic
 import { TrainingAudioConfig } from './audio/training-audio.config';
 import { TrainingAudioController } from './audio/training-audio.controller';
 import { TrainingAdminController } from './training-admin.controller';
+import { TrainingAdminCriteriaController } from './training-admin-criteria.controller';
+import { TrainingAdminDocumentsController } from './training-admin-documents.controller';
+import { TrainingAdminFactsController } from './training-admin-facts.controller';
+import { TrainingAdminFactSuggestionsController } from './training-admin-fact-suggestions.controller';
+import { TrainingAdminOfficialUrlSourcesController } from './training-admin-official-url-sources.controller';
+import { TrainingAdminQuestionsController } from './training-admin-questions.controller';
 import { TrainingAssignmentsController } from './training-assignments.controller';
 import { TrainingAssignmentsService } from './training-assignments.service';
 import { TrainingAttemptEngineService } from './training-attempt-engine.service';
@@ -72,6 +78,12 @@ import { TrainingTelegramWorkerService } from './telegram/training-telegram-work
   controllers: [
     TrainingController,
     TrainingAdminController,
+    TrainingAdminDocumentsController,
+    TrainingAdminOfficialUrlSourcesController,
+    TrainingAdminFactSuggestionsController,
+    TrainingAdminQuestionsController,
+    TrainingAdminFactsController,
+    TrainingAdminCriteriaController,
     TrainingAssignmentsController,
     TrainingLinkedObjectSourcesController,
     TrainingTelegramController,

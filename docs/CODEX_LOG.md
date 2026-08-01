@@ -1,5 +1,43 @@
 # Codex Log
 
+## 2026-08-01 - Training Stage 4 backend god-file Batch 1
+
+Задача:
+
+- Выполнить только первый batch Stage 4: разделить один наиболее приоритетный backend god-file и остановиться.
+- Не менять behavior, Prisma/query/transaction/state, frontend, React warning, query optimization, providers или production.
+
+Изменения:
+
+- Ровно пять read-only анализов проверили responsibility map, transaction/state safety, Nest DI/public surface, regression coverage и extraction design `training-admin.controller.ts`.
+- До production move добавлен runtime contract suite всех 43 admin routes: metadata, guards/permission, arguments, statuses, delegation, success-only document worker kick, error passthrough, download headers и upload interceptor.
+- `TrainingAdminController` оставлен project/version facade; documents/catalog, official URLs, fact suggestions, questions, facts и criteria вынесены в шесть узких controllers под неизменным `training/admin`.
+- Жёсткий instance contract сохранён controller-specific compatibility surface: прежние 43 public methods и пять constructor tokens доступны на исходном классе, а 30 inherited delegates не имеют route metadata и не создают duplicate HTTP routes.
+- `TrainingModule` получил только registration новых controllers; providers/exports/imports не менялись.
+- Старые content/documents source assertions переведены на aggregate controller family без удаления или ослабления expectations.
+- Facade уменьшен 509→155 LOC и 43→13 объявленных route methods, сохранив 43 public instance methods и 5 constructor tokens; max method 20→9, production net LOC `+339`, static import cycles 0.
+- Создан `docs/training/refactor/07-backend-god-file-batch-1.md`; документы 02–03 обновлены только до статуса Stage 4 Batch 1. Stage 4 целиком не отмечен завершённым.
+
+Проверки:
+
+- Pre/post-move targeted gate — 31/31; новый contract suite — 5/5.
+- `pnpm --filter @platforma/api test` — passed; unit 547/547, PostgreSQL 111/111.
+- Два отдельных PostgreSQL repeats — 111/111 и 111/111; обе temporary DB удалены.
+- `pnpm --filter @platforma/web test` — 315/315 passed.
+- `pnpm build` и `pnpm test` — passed; Vite main chunk 787.75 kB с известным warning.
+- Полный Playwright training suite — 24/24; goldens не изменены.
+- Prisma schema valid; все 43 migrations применились в clean DB runs; import cycles 0; `git diff --check` passed; `.only/.skip`, удалённых tests и migrations нет.
+
+Ручная проверка:
+
+- Для controller-only move не требуется: HTTP metadata/delegation и high-risk side effects закрыты runtime tests, DB state — повторными PostgreSQL suites. Real Telegram/OpenAI и production не запускались.
+
+Спорные места:
+
+- HTTP ownership 30 handler-ов изменён в рамках утверждённого controller split, но прежний direct-call instance surface исходного class token сохранён compatibility delegates и покрыт тем же exact delegation test.
+- Существующий React dev warning `Maximum update depth exceeded` сохранён без исправления по границе Stage 4A.
+- Следующий backend god-file, query optimization и frontend Stage 5 требуют отдельных разрешений.
+
 ## 2026-08-01 - Training Stage 3 safe deduplication
 
 Задача:

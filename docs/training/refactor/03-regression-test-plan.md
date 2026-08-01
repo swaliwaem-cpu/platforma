@@ -1,19 +1,19 @@
 # Модуль обучения: regression и characterization test plan
 
-Статус: PostgreSQL baseline восстановлен 2026-08-01; Stage 1–2 завершены по `REFACTOR_APPROVED`, Stage 3 safe deduplication — по `REFACTOR_STAGE_3_APPROVED`. Stage 4–8 не начинались и требуют отдельного разрешения.
+Статус: PostgreSQL baseline восстановлен 2026-08-01; Stage 1–2 завершены по `REFACTOR_APPROVED`, Stage 3 safe deduplication — по `REFACTOR_STAGE_3_APPROVED`, Stage 4 Batch 1 — по `REFACTOR_STAGE_4A_APPROVED`. Остальные backend god-files и Stage 5–8 не начинались и требуют отдельного разрешения.
 
 ## Текущее состояние gate
 
 | Gate | Текущий результат 2026-08-01 | Статус для refactor |
 |---|---|---|
-| `pnpm --filter @platforma/api test` | pass; unit 542/542, PostgreSQL 111/111 | PASS |
+| `pnpm --filter @platforma/api test` | pass; unit 547/547, PostgreSQL 111/111 | PASS после Stage 4 Batch 1 |
 | `pnpm --filter @platforma/web test` | 315/315 pass | PASS |
 | `pnpm build` | pass; известный Vite main chunk warning, 787.75 kB | PASS с зафиксированным warning |
 | `pnpm test` | pass; PostgreSQL 111/111 | PASS |
 | PostgreSQL repeat 1 / repeat 2 | 111/111; 111/111, каждый на clean temporary DB | PASS |
 | Prisma validate / migrations | valid; 43/43 migrations применены в clean DB runs | PASS |
 | `git diff --check` | pass | PASS |
-| Playwright training | 24/24 pass; editor/results desktop/mobile golden screenshots и employee permission boundary | PASS для Stage 3; повторять перед следующими UI batches |
+| Playwright training | 24/24 pass; editor/results desktop/mobile goldens не изменены; известный React warning сохранён | PASS после Stage 4 Batch 1 |
 | fake full-chain | не входил в baseline recovery | REQUIRED перед integration batch |
 | Docker audio/MinIO/ffmpeg | не входил в baseline recovery | REQUIRED перед audio/worker batch |
 | real Telegram/OpenAI | не запускался и не разрешён | OUT OF SCOPE до отдельного GO |
@@ -33,7 +33,7 @@
 
 ## Инвентаризация существующего покрытия
 
-Проанализированы 16 API unit training suites, 11 файлов общего PostgreSQL runner, отдельный Docker-audio suite, 3 web node suites, 2 Playwright suites и full-chain harness.
+Проанализированы 17 API unit training suites, 11 файлов общего PostgreSQL runner, отдельный Docker-audio suite, 3 web node suites, 2 Playwright suites и full-chain harness.
 
 ### Сильные behavioral suites
 
@@ -77,6 +77,18 @@ Schema/migration, secret scan и exact Compose guards остаются поле�
 - Полный web suite вырос с 312 до 315 tests; source-contract assertions теперь требуют shared serializer и caller-owned defaults, а не локальную копию `URLSearchParams`.
 
 Stage 3 не менял React state/effects, запросы, routing, SQL, worker lifecycle, provider или public contracts. Exact execution record — `06-safe-deduplication.md`.
+
+## Scoped characterization, добавленный для Stage 4 Batch 1
+
+- `training-admin-controller-contract.test.cjs` получает controllers из runtime metadata `TrainingModule` и фиксирует все 43 handler: exact name/method/path/effective status, prefix, guard order, permission, route arguments, interceptor presence и отсутствие duplicate owners.
+- Исходный `TrainingAdminController` отдельно сохраняет exact пять constructor tokens и все 43 public instance methods; 30 inherited compatibility delegates вызываются тем же delegation table, но не получают route metadata и не создают duplicates.
+- Delegation table фиксирует service token/method, точный порядок аргументов, return semantics и raw `Idempotency-Key`.
+- Отдельно зафиксированы success-only `upload/retry → documentWorker.kick()`, passthrough исходной ошибки, exact download headers/filename sanitization/Buffer/send order и file-size interceptor contract.
+- Один и тот же suite был зелёным до и после перемещения: 5/5; совместный targeted content/documents gate — 31/31.
+- Два явных PostgreSQL repeats после split — 111/111 и 111/111 на clean temporary DB; полный API и root suites добавили ещё по одному зелёному DB run.
+- Static source assertions content/documents теперь проверяют aggregate узких controllers, а не расположение route в старом god-file; semantic expectations не удалены и не ослаблены.
+
+Stage 4 Batch 1 не менял Prisma/query/transaction/state, DTO, jobs, provider/Telegram/OpenAI, frontend или production. Exact execution record — `07-backend-god-file-batch-1.md`.
 
 ## Обязательные новые characterization suites для последующих stages
 
@@ -221,4 +233,4 @@ git diff --check
 - список неизменяемых contracts подписан;
 - необходимые для recovery gates зелёны.
 
-На этом baseline выполнены scoped characterization, proven dead-code removal и safe deduplication (Stage 1–3). Перед каждым batch Stage 4–8 нужны его stage-specific browser/full-chain/Docker gates и отдельная явная команда; текущая работа остановлена перед backend god-file stage.
+На этом baseline выполнены scoped characterization, proven dead-code removal, safe deduplication и только первый backend god-file split (Stage 1–3 + Stage 4 Batch 1). Перед каждым следующим batch Stage 4–8 нужны его stage-specific gates и отдельная явная команда; текущая работа остановлена перед вторым backend god-file.

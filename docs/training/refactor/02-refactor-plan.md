@@ -1,6 +1,6 @@
 # Модуль обучения: безопасный план рефакторинга
 
-Статус на 2026-08-01: Stage 1–2 выполнены по `REFACTOR_APPROVED`, Stage 3 — по `REFACTOR_STAGE_3_APPROVED`. Execution records: `04-baseline-recovery.md`, `05-dead-code-removal.md` и `06-safe-deduplication.md`. Работа остановлена на полностью зелёной границе Stage 3; Stage 4–8 не разрешены и не начинались.
+Статус на 2026-08-01: Stage 1–2 выполнены по `REFACTOR_APPROVED`, Stage 3 — по `REFACTOR_STAGE_3_APPROVED`, Stage 4 Batch 1 — по `REFACTOR_STAGE_4A_APPROVED`. Execution records: `04-baseline-recovery.md`, `05-dead-code-removal.md`, `06-safe-deduplication.md` и `07-backend-god-file-batch-1.md`. Выполнен только split первого backend god-file; остальные batches Stage 4 и Stage 5–8 не разрешены и не начинались.
 
 ## Цель и стратегия
 
@@ -107,11 +107,11 @@
 
 ## Stage 4 — Backend god-files
 
-**Готовность сейчас:** `NOT_APPROVED`; readiness Stage 3 достигнута, но выполнять только по отдельной явной команде и несколькими batches, не одной большой заменой.
+**Готовность сейчас:** `BATCH_1_COMPLETE`; `training-admin.controller.ts` разделён по admin domains с зелёными gates. Остальные backend god-files остаются `NOT_APPROVED` и выполняются только по отдельной явной команде несколькими batches.
 
 **Файлы/порядок:**
 
-1. `training-admin.controller.ts`: разделить по admin domains под тем же prefix/guards/routes.
+1. `training-admin.controller.ts`: `COMPLETE` в Batch 1; project/version facade сохранён, шесть узких controllers зарегистрированы под тем же prefix/guards/routes. Exact record — `07-backend-god-file-batch-1.md`.
 2. `training-content.service.ts`: façade над project/version lifecycle, questions, facts, criteria; publish/clone transaction сначала не дробить.
 3. `training-results.service.ts`, `training-documents.service.ts`, `training-fact-suggestions.service.ts`: query/command/presenter/storage boundaries.
 4. `training-telegram-dialog.service.ts`: router, handlers, read model, renderer с неизменным callback/message contract.
@@ -233,4 +233,4 @@ Stage 1 green baseline
 - рост query count/p95/bundle без объяснения;
 - необходимость functional bugfix, migration, dependency или product decision вне scope.
 
-Текущая граница: **Stage 3 завершён; остановиться и ждать отдельного разрешения на Stage 4**.
+Текущая граница: **Stage 4 Batch 1 завершён; остановиться и ждать отдельного разрешения на следующий backend god-file. Stage 4 целиком не завершён**.

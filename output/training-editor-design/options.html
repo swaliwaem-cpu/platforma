@@ -1,0 +1,887 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Platforma · варианты редактора обучения</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b1016;
+      --shell: #0f151d;
+      --panel: #141b24;
+      --panel-2: #192230;
+      --control: #101720;
+      --border: #2c3949;
+      --border-soft: #232e3b;
+      --text: #e8ecf2;
+      --muted: #9aa6b6;
+      --muted-2: #758295;
+      --gold: #d1b66a;
+      --gold-soft: #342e20;
+      --green: #7bc28f;
+      --green-soft: #193226;
+      --blue: #7ea8e8;
+      --blue-soft: #192b43;
+      --danger: #ef8e8e;
+      --shadow: 0 18px 50px rgb(0 0 0 / 22%);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      min-width: 1180px;
+      margin: 0;
+      background:
+        radial-gradient(circle at 15% -10%, rgb(126 168 232 / 9%), transparent 30%),
+        var(--bg);
+      color: var(--text);
+    }
+
+    button, input, textarea { font: inherit; }
+
+    .board {
+      width: 1800px;
+      min-height: 1400px;
+      margin: 0 auto;
+      padding: 30px 34px 40px;
+    }
+
+    .product-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 54px;
+      margin-bottom: 18px;
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      background: rgb(20 27 36 / 92%);
+      padding: 0 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      font-size: 14px;
+      font-weight: 750;
+      letter-spacing: .01em;
+    }
+
+    .mark {
+      display: grid;
+      width: 28px;
+      height: 28px;
+      place-items: center;
+      border: 1px solid rgb(209 182 106 / 50%);
+      border-radius: 8px;
+      background: var(--gold-soft);
+      color: var(--gold);
+      font-family: Georgia, serif;
+      font-size: 16px;
+    }
+
+    .crumbs {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .concept-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 22px;
+      align-items: end;
+      margin-bottom: 18px;
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      background: var(--panel);
+      padding: 22px 24px;
+    }
+
+    .concept-head .kicker,
+    .demo-kicker {
+      margin: 0 0 7px;
+      color: var(--gold);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 28px;
+      line-height: 1.15;
+    }
+
+    .concept-head p {
+      max-width: 900px;
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .concept-tags {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .tag, .status, .count {
+      display: inline-flex;
+      min-height: 28px;
+      align-items: center;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--control);
+      color: var(--muted);
+      padding: 4px 10px;
+      font-size: 11px;
+      font-weight: 750;
+      white-space: nowrap;
+    }
+
+    .tag.good, .status.good {
+      border-color: rgb(123 194 143 / 36%);
+      background: var(--green-soft);
+      color: var(--green);
+    }
+
+    .tag.gold {
+      border-color: rgb(209 182 106 / 35%);
+      background: var(--gold-soft);
+      color: var(--gold);
+    }
+
+    .tabs {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 18px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      background: var(--panel);
+      padding: 6px;
+    }
+
+    .tabs span {
+      display: inline-flex;
+      min-height: 38px;
+      align-items: center;
+      border-radius: 7px;
+      color: var(--muted);
+      padding: 0 12px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .tabs span.active {
+      border: 1px solid rgb(209 182 106 / 28%);
+      background: var(--gold-soft);
+      color: var(--gold);
+    }
+
+    .demo-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+      align-items: start;
+    }
+
+    .demo {
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--panel);
+      padding: 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .demo-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 14px;
+      border-bottom: 1px solid var(--border-soft);
+      padding-bottom: 14px;
+    }
+
+    .demo-head h2 {
+      margin: 0;
+      font-size: 18px;
+    }
+
+    .demo-head p {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .stack { display: grid; gap: 10px; }
+    .stack-lg { display: grid; gap: 14px; }
+
+    .card {
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: var(--panel-2);
+      padding: 14px;
+    }
+
+    .card-head, .summary-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    .card-title {
+      min-width: 0;
+    }
+
+    .card-title strong {
+      display: block;
+      font-size: 13px;
+    }
+
+    .card-title small {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .field-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .field-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .field.wide { grid-column: 1 / -1; }
+
+    .field label {
+      display: block;
+      margin-bottom: 5px;
+      color: #b8c1ce;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .input, .textarea {
+      min-height: 35px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--control);
+      color: var(--muted);
+      padding: 8px 10px;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .textarea { min-height: 58px; }
+    .textarea.code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
+
+    .choice-row {
+      display: inline-flex;
+      width: fit-content;
+      min-height: 48px;
+      align-items: center;
+      gap: 11px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--control);
+      padding: 8px 11px;
+    }
+
+    .choice-row.success {
+      border-color: rgb(123 194 143 / 35%);
+      background: var(--green-soft);
+    }
+
+    .choice-copy strong {
+      display: block;
+      font-size: 12px;
+    }
+
+    .choice-copy small {
+      display: block;
+      max-width: 390px;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.35;
+    }
+
+    .switch {
+      position: relative;
+      display: grid;
+      width: 18px;
+      height: 18px;
+      flex: 0 0 auto;
+      place-items: center;
+      border: 1px solid #566479;
+      border-radius: 4px;
+      background: #242f3d;
+      color: transparent;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .switch.on {
+      border-color: #668e72;
+      background: #365844;
+      color: #e5f6ea;
+    }
+
+    .switch.on::after {
+      content: "✓";
+    }
+
+    .check {
+      display: grid;
+      width: 16px;
+      height: 16px;
+      flex: 0 0 auto;
+      place-items: center;
+      border: 1px solid #566479;
+      border-radius: 4px;
+      background: #242f3d;
+      color: transparent;
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .check.on {
+      border-color: #668e72;
+      background: #365844;
+      color: #e5f6ea;
+    }
+
+    .question-pills {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 7px;
+      margin-top: 8px;
+    }
+
+    .question-pill {
+      display: flex;
+      min-height: 38px;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--control);
+      padding: 7px 9px;
+      color: #c2cad5;
+      font-size: 11px;
+      font-weight: 650;
+    }
+
+    .question-pill.selected {
+      border-color: rgb(126 168 232 / 44%);
+      background: var(--blue-soft);
+      color: #dbe8fb;
+    }
+
+    .segmented {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 4px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--control);
+      padding: 4px;
+    }
+
+    .segmented span {
+      display: flex;
+      min-height: 34px;
+      align-items: center;
+      justify-content: space-between;
+      border-radius: 6px;
+      color: var(--muted);
+      padding: 0 10px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .segmented span.active {
+      background: var(--blue-soft);
+      color: #dbe8fb;
+    }
+
+    .criterion-row {
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--control);
+      padding: 10px;
+    }
+
+    .criterion-row .index {
+      display: grid;
+      width: 26px;
+      height: 26px;
+      place-items: center;
+      border-radius: 6px;
+      background: #243041;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .criterion-row strong { font-size: 11px; }
+    .criterion-row small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
+
+    .split {
+      display: grid;
+      grid-template-columns: 220px minmax(0, 1fr);
+      min-height: 360px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: var(--control);
+    }
+
+    .rail {
+      border-right: 1px solid var(--border);
+      background: #111923;
+      padding: 9px;
+    }
+
+    .rail-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin: 3px 4px 8px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+
+    .rail-item {
+      display: grid;
+      gap: 3px;
+      margin-bottom: 4px;
+      border: 1px solid transparent;
+      border-radius: 7px;
+      padding: 9px;
+    }
+
+    .rail-item.active {
+      border-color: rgb(126 168 232 / 35%);
+      background: var(--blue-soft);
+    }
+
+    .rail-item strong { font-size: 11px; }
+    .rail-item span { color: var(--muted); font-size: 9px; }
+
+    .detail {
+      min-width: 0;
+      padding: 14px;
+    }
+
+    .detail-toolbar {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 12px;
+      border-bottom: 1px solid var(--border-soft);
+      padding-bottom: 11px;
+    }
+
+    .detail-toolbar h3 { margin: 0; font-size: 14px; }
+    .detail-toolbar p { margin: 4px 0 0; color: var(--muted); font-size: 10px; }
+
+    .accordion {
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: var(--control);
+    }
+
+    .accordion-row + .accordion-row { border-top: 1px solid var(--border); }
+
+    .accordion-summary {
+      display: grid;
+      grid-template-columns: 22px minmax(0, 1fr) auto;
+      gap: 9px;
+      align-items: center;
+      min-height: 48px;
+      padding: 8px 11px;
+    }
+
+    .accordion-summary .chevron {
+      color: var(--muted);
+      font-size: 14px;
+      transform: rotate(-90deg);
+    }
+
+    .accordion-row.open .chevron { transform: rotate(0deg); }
+    .accordion-summary strong { font-size: 11px; }
+    .accordion-summary small { display: block; margin-top: 2px; color: var(--muted); font-size: 9px; }
+
+    .accordion-body {
+      display: none;
+      border-top: 1px solid var(--border-soft);
+      background: var(--panel-2);
+      padding: 12px 42px;
+    }
+
+    .accordion-row.open .accordion-body { display: block; }
+
+    .inline-toggle {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      color: #c8d0da;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .totals {
+      display: flex;
+      gap: 7px;
+      margin-bottom: 9px;
+    }
+
+    .full { grid-column: 1 / -1; }
+
+    .footnote {
+      margin: 14px 0 0;
+      color: var(--muted-2);
+      font-size: 10px;
+      line-height: 1.45;
+    }
+
+    body:not([data-variant="a"]) .board-a,
+    body:not([data-variant="b"]) .board-b,
+    body:not([data-variant="c"]) .board-c { display: none; }
+  </style>
+</head>
+<body>
+  <section class="board board-a">
+    <div class="product-bar">
+      <div class="brand"><span class="mark">P</span> Platforma <span class="crumbs">/ Админка / Обучение / ЖК TATE</span></div>
+      <span class="status good">Draft сохранён</span>
+    </div>
+    <header class="concept-head">
+      <div>
+        <p class="kicker">Вариант A · Compact stack</p>
+        <h1>Одна колонка, компактные логические блоки</h1>
+        <p>Самая безопасная переработка: существующие формы остаются на месте, checkbox становится частью подписи, а группы «Критериев» идут последовательно на всю ширину.</p>
+      </div>
+      <div class="concept-tags"><span class="tag good">Лучший баланс</span><span class="tag">Низкий риск</span><span class="tag gold">Минимум новой логики</span></div>
+    </header>
+    <nav class="tabs"><span class="active">Основное</span><span>Материалы</span><span>Главный вопрос</span><span>Дополнительные вопросы</span><span>Факты</span><span>Критерии</span><span>Проверка / публикация</span></nav>
+    <div class="demo-grid">
+      <article class="demo">
+        <div class="demo-head"><div><p class="demo-kicker">Основное</p><h2>Настройки попытки</h2><p>Контроль расположен внутри собственного смыслового блока.</p></div><span class="tag">6 параметров</span></div>
+        <div class="field-grid three">
+          <div class="field"><label>Проходной балл</label><div class="input">75</div></div>
+          <div class="field"><label>Лимит попыток</label><div class="input">3</div></div>
+          <div class="field"><label>Пауза, минут</label><div class="input">60</div></div>
+          <div class="field"><label>Таймер, секунд</label><div class="input">420</div></div>
+          <div class="field"><label>Grace-период</label><div class="input">15</div></div>
+          <div class="field"><label>Предупреждения</label><div class="input">120, 60, 30</div></div>
+        </div>
+        <div style="margin-top:12px">
+          <div class="choice-row">
+            <span class="switch"></span>
+            <span class="choice-copy"><strong>Разрешить повторную попытку после прохождения</strong><small>Уже прошедший сотрудник сможет начать обучение ещё раз.</small></span>
+          </div>
+        </div>
+      </article>
+
+      <article class="demo">
+        <div class="demo-head"><div><p class="demo-kicker">Вопросы</p><h2>Карточка с действием в заголовке</h2><p>Статус и подпись образуют один компактный переключатель.</p></div><span class="tag good">10 / 10</span></div>
+        <div class="card">
+          <div class="card-head">
+            <div class="card-title"><strong>Вопрос 1</strong><small>Максимум 15 баллов · позиция 1</small></div>
+            <div class="inline-toggle"><span class="switch on"></span>Активен</div>
+          </div>
+          <div class="field-grid">
+            <div class="field wide"><label>Текст вопроса</label><div class="textarea">Кто является девелопером TATE и какова основная концепция проекта?</div></div>
+            <div class="field"><label>Позиция</label><div class="input">1</div></div>
+            <div class="field"><label>Коды тем</label><div class="input">identity, concept</div></div>
+          </div>
+        </div>
+        <div class="stack" style="margin-top:9px">
+          <div class="criterion-row"><span class="index">2</span><div><strong>Где расположен проект и какой адрес указывает застройщик?</strong><small>location · 15 баллов</small></div><span class="status good">Активен</span></div>
+          <div class="criterion-row"><span class="index">3</span><div><strong>Какие видовые характеристики заявлены?</strong><small>views · 15 баллов</small></div><span class="status good">Активен</span></div>
+        </div>
+      </article>
+
+      <article class="demo">
+        <div class="demo-head"><div><p class="demo-kicker">Факты</p><h2>Выбор связан с названием, а не с краями карточки</h2><p>Вся плашка — кликабельный label; подтверждение оформлено как отдельное решение.</p></div><span class="status good">Подтверждён</span></div>
+        <div class="field-grid">
+          <div class="field"><label>Код</label><div class="input">architecture.author</div></div>
+          <div class="field"><label>Код темы</label><div class="input">architecture</div></div>
+          <div class="field wide"><label>Проверенная формулировка</label><div class="textarea">Архитектурную концепцию комплекса разработало бюро Kleinewelt Architekten.</div></div>
+        </div>
+        <p class="demo-kicker" style="margin-top:13px">Связанные вопросы</p>
+        <div class="question-pills" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+          <div class="question-pill selected"><span class="check on">✓</span>Главный · презентация проекта</div>
+          <div class="question-pill"><span class="check"></span>Доп. 1 · девелопер и концепция</div>
+          <div class="question-pill selected"><span class="check on">✓</span>Доп. 4 · архитектурное бюро</div>
+          <div class="question-pill"><span class="check"></span>Доп. 5 · инфраструктура</div>
+        </div>
+        <div style="margin-top:12px">
+          <div class="choice-row success">
+            <span class="switch on"></span>
+            <span class="choice-copy"><strong>Факт проверен и подтверждён</strong><small>Только после подтверждения он участвует в оценивании.</small></span>
+          </div>
+        </div>
+      </article>
+
+      <article class="demo">
+        <div class="demo-head"><div><p class="demo-kicker">Критерии</p><h2>Обе группы идут последовательно</h2><p>Full-width группы убирают две неравные вертикальные колонки без новой навигации.</p></div><span class="status good">70 / 70</span></div>
+        <div class="summary-row card" style="padding:10px 12px"><div class="card-title"><strong>Главный вопрос</strong><small>3 критерия</small></div><span class="status good">55 / 55</span></div>
+        <div class="stack" style="margin-top:10px">
+          <div class="criterion-row"><span class="index">01</span><div><strong>Структура ответа</strong><small>main.structure · 15 баллов · 3 якоря</small></div><span class="status good">Готово</span></div>
+          <div class="criterion-row"><span class="index">02</span><div><strong>Фактическая точность</strong><small>main.fact_accuracy · 30 баллов · 3 якоря</small></div><span class="status good">Готово</span></div>
+          <div class="criterion-row"><span class="index">03</span><div><strong>Клиентская релевантность</strong><small>main.client_relevance · 10 баллов · 3 якоря</small></div><span class="status good">Готово</span></div>
+        </div>
+        <div class="summary-row card" style="margin-top:10px;padding:10px 12px"><div class="card-title"><strong>Дополнительный вопрос</strong><small>2 критерия</small></div><span class="status good">15 / 15</span></div>
+        <p class="footnote">Обе группы и все формы доступны в обычном вертикальном потоке; свободной «шахты» справа больше нет.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="board board-b">
+    <div class="product-bar">
+      <div class="brand"><span class="mark">P</span> Platforma <span class="crumbs">/ Админка / Обучение / ЖК TATE</span></div>
+      <span class="status good">Draft сохранён</span>
+    </div>
+    <header class="concept-head">
+      <div>
+        <p class="kicker">Вариант B · Master–detail</p>
+        <h1>Список слева, выбранный редактор справа</h1>
+        <p>Рабочая модель для большого объёма контента: пользователь всегда видит структуру набора и редактирует ровно один объект, не прокручивая десятки длинных карточек.</p>
+      </div>
+      <div class="concept-tags"><span class="tag good">Лучше при росте данных</span><span class="tag">Средний риск</span><span class="tag gold">Максимальная скорость</span></div>
+    </header>
+    <nav class="tabs"><span>Основное</span><span>Материалы</span><span>Главный вопрос</span><span class="active">Дополнительные вопросы</span><span>Факты</span><span>Критерии</span><span>Проверка / публикация</span></nav>
+    <div class="demo-grid">
+      <article class="demo">
+        <div class="demo-head"><div><p class="demo-kicker">Основное</p><h2>Локальная навигация по настройкам</h2><p>Слева — два понятных раздела, справа — только текущая группа полей.</p></div><span class="tag">2 раздела</span></div>
+        <div class="split">
+          <aside class="rail">
+            <div class="rail-heading">Разделы</div>
+            <div class="rail-item"><strong>Карточка проекта</strong><span>Название, объект, даты</span></div>
+            <div class="rail-item active"><strong>Настройки попытки</strong><span>Баллы, лимиты, таймер</span></div>
+          </aside>
+          <div class="detail">
+            <div class="detail-toolbar"><div><h3>Настройки попытки</h3><p>6 числовых параметров и одно правило</p></div><span class="status good">Валидно</span></div>
+            <div class="field-grid three">
+              <div class="field"><label>Проходной балл</label><div class="input">75</div></div>
+              <div class="field"><label>Лимит</label><div class="input">3</div></div>
+              <div class="field"><label>Пауза</label><div class="input">60</div></div>
+              <div class="field"><label>Таймер</label><div class="input">420</div></div>
+              <div class="field"><label>Grace</label><div class="input">15</div></div>
+              <div class="field"><label>Сигналы</label><div class="input">120, 60, 30</div></div>
+            </div>
+            <div style="margin-top:12px"><div class="choice-row"><span class="switch"></span><span class="choice-copy"><strong>Повторная попытка после прохождения</strong><small>Разрешить уже прошедшему пользователю начать ещё раз.</small></span></div></div>
+          </div>
+        </div>
+      </article>
+
+      <article class="demo">
+        <div class="demo-head"><div><p class="demo-kicker">Вопросы</p><h2>10 вопросов остаются перед глазами</h2><p>Выбор слева не меняет страницу и не сбрасывает положение.</p></div><span class="tag good">10 / 10 активны</span></div>
+        <div class="split">
+          <aside class="rail">
+            <div class="rail-heading"><span>Вопросы</span><span>＋</span></div>
+            <div class="rail-item active"><strong>01 · Девелопер и концепция</strong><span>identity, concept</span></div>
+            <div class="rail-item"><strong>02 · Расположение проекта</strong><span>location</span></div>
+            <div class="rail-item"><strong>03 · Видовые характеристики</strong><span>views</span></div>
+            <div class="rail-item"><strong>04 · Архитектурное бюро</strong><span>architecture</span></div>
+            <div class="rail-item"><strong>05 · Инфраструктура</strong><span>amenities</span></div>
+          </aside>
+          <div class="detail">
+            <div class="detail-toolbar">
+              <div><h3>Вопрос 1</h3><p>Максимум 15 баллов</p></div>
+              <div class="inline-toggle"><span class="switch on"></span>Активен</div>
+            </div>
+            <div class="field-grid">
+              <div class="field wide"><label>Текст вопроса</label><div class="textarea">Кто является девелопером TATE и какова основная концепция проекта?</div></div>
+              <div class="field"><label>Позиция</label><div class="input">1</div></div>
+              <div class="field"><label>Коды тем</label><div class="input">identity, concept</div></div>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="demo">
+        <div class="demo-head"><div><p class="demo-kicker">Факты</p><h2>Реестр фактов + сфокусированная форма</h2><p>Статусы видны в списке, а связи выбираются компактными label-плашками.</p></div><span class="tag">18 фактов</span></div>
+        <div class="split">
+          <aside class="rail">
+            <div class="rail-heading"><span>Факты</span><span>＋</span></div>
+            <div class="rail-item active"><strong>architecture.author</strong><span style="color:var(--green)">Подтверждён</span></div>
+            <div class="rail-item"><strong>identity.developer</strong><span style="color:var(--green)">Подтверждён</span></div>
+            <div class="rail-item"><strong>location.address</strong><span style="color:var(--gold)">Нужна проверка</span></div>
+            <div class="rail-item"><strong>views.panorama</strong><span style="color:var(--green)">Подтверждён</span></div>
+          </aside>
+          <div class="detail">
+            <div class="detail-toolbar"><div><h3>architecture.author</h3><p>Тема: architecture</p></div><span class="status good">Подтверждён</span></div>
+            <div class="field-grid"><div class="field wide"><label>Проверенная формулировка</label><div class="textarea">Архитектурную концепцию комплекса разработало бюро Kleinewelt Architekten.</div></div></div>
+            <p class="demo-kicker" style="margin-top:12px">Связанные вопросы</p>
+            <div class="question-pills" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+              <div class="question-pill selected"><span class="check on">✓</span>Главный</div>
+              <div class="question-pill"><span class="check"></span>Доп. 1</div>
+              <div class="question-pill selected"><span class="check on">✓</span>Доп. 4</div>
+            </div>
+            <div style="margin-top:11px"><div class="choice-row success"><span class="switch on"></span><span class="choice-copy"><strong>Факт подтверждён</strong><small>Разрешить участие в оценивании.</small></span></div></div>
+          </div>
+        </div>
+      </article>
+
+      <article class="demo">
+        <div class="demo-head"><div><p class="demo-kicker">Критерии</p><h2>Обе группы в одном реестре</h2><p>Слева — иерархия и суммы, справа — один критерий. Пустой второй колонки нет.</p></div><span class="status good">70 / 70</span></div>
+        <div class="split">
+          <aside class="rail">
+            <div class="rail-heading"><span>Главный вопрос</span><span>55 / 55</span></div>
+            <div class="rail-item"><strong>01 · Структура ответа</strong><span>15 баллов</span></div>
+            <div class="rail-item"><strong>02 · Фактическая точность</strong><span>30 баллов</span></div>
+            <div class="rail-item active"><strong>03 · Клиентская релевантность</strong><span>10 баллов</span></div>
+            <div class="rail-heading" style="margin-top:14px"><span>Дополнительный</span><span>15 / 15</span></div>
+            <div class="rail-item"><strong>01 · Точность</strong><span>10 баллов</span></div>
+            <div class="rail-item"><strong>02 · Полнота</strong><span>5 баллов</span></div>
+          </aside>
+          <div class="detail">
+            <div class="detail-toolbar"><div><h3>Клиентская релевантность</h3><p>main.client_relevance · порядок 3</p></div><span class="status good">10 баллов</span></div>
+            <div class="field-grid">
+              <div class="field"><label>Код</label><div class="input">main.client_relevance</div></div>
+              <div class="field"><label>Максимум</label><div class="input">10</div></div>
+              <div class="field wide"><label>Описание</label><div class="textarea">Факты объяснены через значимость для клиента.</div></div>
+              <div class="field wide"><label>Якоря оценки</label><div class="textarea code">weak | 0 | Перечисление без ценности<br>adequate | 5 | Связано с потребностями<br>strong | 10 | Ясная клиентская польза</div></div>
+            </div>
+          </div>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section class="board board-c">
+    <div class="product-bar">
+      <div class="brand"><span class="mark">P</span> Platforma <span class="crumbs">/ Админка / Обучение / ЖК TATE</span></div>
+      <span class="status good">Draft сохранён</span>
+    </div>
+    <header class="concept-head">
+      <div>
+        <p class="kicker">Вариант C · Progressive disclosure</p>
+        <h1>Компактный реестр с раскрывающимися редакторами</h1>
+        <p>Все сущности видны как короткие summary-строки; поля открываются только у выбранного элемента. Это резко сокращает прокрутку и сохраняет одноколоночную модель.</p>
+      </div>
+      <div class="concept-tags"><span class="tag good">Самый компактный</span><span class="tag">Средний риск</span><span class="tag gold">Лучше на мобильном</span></div>
+    </header>
+    <nav class="tabs"><span>Основное</span><span>Материалы</span><span>Главный вопрос</span><span>Дополнительные вопросы</span><span>Факты</span><span class="active">Критерии</span><span>Проверка / публикация</span></nav>
+    <div class="demo-grid">
+      <article class="demo">
+        <div class="demo-head"><div><p class="demo-kicker">Основное</p><h2>Три смысловых accordion-раздела</h2><p>Сводка остаётся видимой даже в закрытом состоянии.</p></div><span class="tag">1 открыт</span></div>
+        <div class="accordion">
+          <div class="accordion-row">
+            <div class="accordion-summary"><span class="chevron">⌄</span><div><strong>Карточка проекта</strong><small>ЖК TATE · slug: tate · без связи с объектом</small></div><span class="status good">Готово</span></div>
+          </div>
+          <div class="accordion-row">
+            <div class="accordion-summary"><span class="chevron">⌄</span><div><strong>Доступность</strong><small>Без даты начала · без дедлайна</small></div><span class="status">Не ограничено</span></div>
+          </div>
+          <div class="accordion-row open">
+            <div class="accordion-summary"><span class="chevron">⌄</span><div><strong>Настройки попытки</strong><small>75 баллов · 3 попытки · 7 минут</small></div><span class="status good">Валидно</span></div>
+            <div class="accordion-body">
+              <div class="field-grid three">
+                <div class="field"><label>Проходной балл</label><div class="input">75</div></div>
+                <div class="field"><label>Лимит</label><div class="input">3</div></div>
+                <div class="field"><label>Пауза</label><div class="input">60</div></div>
+              </div>
+              <div style="margin-top:11px"><div class="choice-row"><span class="switch"></span><span class="choice-copy"><strong>Повторная попытка после прохождения</strong><small>Разрешить новый запуск после успешного результата.</small></span></div></div>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="demo">
+        <div class="demo-head"><div><p class="demo-kicker">Вопросы</p><h2>Десять вопросов без десяти огромных форм</h2><p>Статус остаётся рядом с названием в summary-строке.</p></div><span class="tag good">10 / 10</span></div>
+        <div class="accordion">
+          <div class="accordion-row open">
+            <div class="accordion-summary"><span class="chevron">⌄</span><div><strong>01 · Девелопер и концепция</strong><small>identity, concept · 15 баллов</small></div><div class="inline-toggle"><span class="switch on"></span>Активен</div></div>
+            <div class="accordion-body">
+              <div class="field-grid">
+                <div class="field wide"><label>Текст вопроса</label><div class="textarea">Кто является девелопером TATE и какова основная концепция проекта?</div></div>
+                <div class="field"><label>Позиция</label><div class="input">1</div></div>
+                <div class="field"><label>Коды тем</label><div class="input">identity, concept</div></div>
+              </div>
+            </div>
+          </div>
+          <div class="accordion-row"><div class="accordion-summary"><span class="chevron">⌄</span><div><strong>02 · Расположение проекта</strong><small>location · 15 баллов</small></div><div class="inline-toggle"><span class="switch on"></span>Активен</div></div></div>
+          <div class="accordion-row"><div class="accordion-summary"><span class="chevron">⌄</span><div><strong>03 · Видовые характеристики</strong><small>views · 15 баллов</small></div><div class="inline-toggle"><span class="switch on"></span>Активен</div></div></div>
+          <div class="accordion-row"><div class="accordion-summary"><span class="chevron">⌄</span><div><strong>04 · Архитектурное бюро</strong><small>architecture · 15 баллов</small></div><div class="inline-toggle"><span class="switch on"></span>Активен</div></div></div>
+        </div>
+      </article>
+
+      <article class="demo">
+        <div class="demo-head"><div><p class="demo-kicker">Факты</p><h2>Статус и тема видны до раскрытия</h2><p>Связи и подтверждение находятся внутри одного открытого контекста.</p></div><span class="tag">18 фактов</span></div>
+        <div class="accordion">
+          <div class="accordion-row open">
+            <div class="accordion-summary"><span class="chevron">⌄</span><div><strong>architecture.author</strong><small>architecture · связан с 2 вопросами</small></div><span class="status good">Подтверждён</span></div>
+            <div class="accordion-body">
+              <div class="field"><label>Проверенная формулировка</label><div class="textarea">Архитектурную концепцию комплекса разработало бюро Kleinewelt Architekten.</div></div>
+              <p class="demo-kicker" style="margin-top:12px">Связанные вопросы</p>
+              <div class="question-pills" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+                <div class="question-pill selected"><span class="check on">✓</span>Главный</div>
+                <div class="question-pill"><span class="check"></span>Доп. 1</div>
+                <div class="question-pill selected"><span class="check on">✓</span>Доп. 4</div>
+              </div>
+              <div style="margin-top:11px"><div class="choice-row success"><span class="switch on"></span><span class="choice-copy"><strong>Факт проверен и подтверждён</strong><small>Участвует в оценивании ответа.</small></span></div></div>
+            </div>
+          </div>
+          <div class="accordion-row"><div class="accordion-summary"><span class="chevron">⌄</span><div><strong>identity.developer</strong><small>identity · связан с 1 вопросом</small></div><span class="status good">Подтверждён</span></div></div>
+          <div class="accordion-row"><div class="accordion-summary"><span class="chevron">⌄</span><div><strong>location.address</strong><small>location · связан с 2 вопросами</small></div><span class="status" style="color:var(--gold)">Нужна проверка</span></div></div>
+        </div>
+      </article>
+
+      <article class="demo">
+        <div class="demo-head"><div><p class="demo-kicker">Критерии</p><h2>Группы идут вертикально, карточки раскрываются</h2><p>Неравная высота групп больше не создаёт пустую половину страницы.</p></div><span class="status good">70 / 70</span></div>
+        <div class="totals"><span class="tag good">Главный 55 / 55</span><span class="tag good">Дополнительный 15 / 15</span></div>
+        <div class="accordion">
+          <div class="accordion-row"><div class="accordion-summary"><span class="chevron">⌄</span><div><strong>01 · Структура ответа</strong><small>main.structure · 15 баллов · 3 якоря</small></div><span class="status good">Готово</span></div></div>
+          <div class="accordion-row"><div class="accordion-summary"><span class="chevron">⌄</span><div><strong>02 · Фактическая точность</strong><small>main.fact_accuracy · 30 баллов · 3 якоря</small></div><span class="status good">Готово</span></div></div>
+          <div class="accordion-row open">
+            <div class="accordion-summary"><span class="chevron">⌄</span><div><strong>03 · Клиентская релевантность</strong><small>main.client_relevance · 10 баллов · 3 якоря</small></div><span class="status good">Готово</span></div>
+            <div class="accordion-body">
+              <div class="field-grid">
+                <div class="field"><label>Код</label><div class="input">main.client_relevance</div></div>
+                <div class="field"><label>Максимум</label><div class="input">10</div></div>
+                <div class="field wide"><label>Описание</label><div class="textarea">Факты объяснены через значимость для клиента без маркетинговых обещаний.</div></div>
+                <div class="field wide"><label>Якоря оценки</label><div class="textarea code">weak | 0 | Перечисление без объяснения<br>adequate | 5 | Часть фактов связана с потребностями<br>strong | 10 | Ясно раскрыта польза для клиента</div></div>
+              </div>
+            </div>
+          </div>
+          <div class="accordion-row"><div class="accordion-summary"><span class="chevron">⌄</span><div><strong>Доп. 01 · Точность ответа</strong><small>follow_up.accuracy · 10 баллов</small></div><span class="status good">Готово</span></div></div>
+          <div class="accordion-row"><div class="accordion-summary"><span class="chevron">⌄</span><div><strong>Доп. 02 · Полнота ответа</strong><small>follow_up.completeness · 5 баллов</small></div><span class="status good">Готово</span></div></div>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <script>
+    const variant = new URLSearchParams(location.search).get("variant") || "a";
+    document.body.dataset.variant = ["a", "b", "c"].includes(variant) ? variant : "a";
+  </script>
+</body>
+</html>

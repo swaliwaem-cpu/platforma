@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { readFileSync } = require('node:fs');
+const { readFileSync, readdirSync } = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 
@@ -14,10 +14,14 @@ const {
 const config = require('../dist/training/training-document.config.js');
 
 const rootDir = path.resolve(__dirname, '../../..');
-const controllerSource = readFileSync(
-  path.join(rootDir, 'apps/api/src/training/training-admin.controller.ts'),
-  'utf8',
-);
+const trainingControllerDir = path.join(rootDir, 'apps/api/src/training');
+const controllerSource = readdirSync(trainingControllerDir)
+  .filter(
+    (name) =>
+      name.startsWith('training-admin') && name.endsWith('.controller.ts'),
+  )
+  .map((name) => readFileSync(path.join(trainingControllerDir, name), 'utf8'))
+  .join('\n');
 const linkedObjectControllerSource = readFileSync(
   path.join(
     rootDir,
