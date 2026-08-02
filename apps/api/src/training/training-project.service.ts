@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import {
   Prisma,
+  TrainingProjectAccessMode,
   TrainingProjectStatus,
   TrainingQuestionType,
 } from '@prisma/client';
@@ -34,6 +35,7 @@ export type CreateTrainingProjectInput = {
   timeLimitSeconds: number;
   passScore: number;
   allowRetakeAfterPass: boolean;
+  accessMode: TrainingProjectAccessMode;
 };
 
 export type TrainingFactDraftInput = {
@@ -125,6 +127,11 @@ const adminProjectInclude = {
     },
   },
   criteria: true,
+  _count: {
+    select: {
+      assignments: { where: { revokedAt: null } },
+    },
+  },
 } as const satisfies Prisma.TrainingProjectInclude;
 
 type AdminProjectRecord = Prisma.TrainingProjectGetPayload<{
@@ -142,6 +149,7 @@ export class TrainingProjectService {
           select: {
             attempts: true,
             questions: true,
+            assignments: { where: { revokedAt: null } },
           },
         },
       },
@@ -153,6 +161,8 @@ export class TrainingProjectService {
         id: project.id,
         title: project.title,
         status: project.status,
+        accessMode: project.accessMode,
+        activeAssignments: project._count.assignments,
         isOpen: project.isOpen,
         sortOrder: project.sortOrder,
         attemptLimit: project.attemptLimit,
@@ -204,12 +214,16 @@ export class TrainingProjectService {
     return this.getAdminProject(projectId);
   }
 
-  async updateDraft(projectId: string, input: UpdateTrainingProjectDraftInput) {
+  async updateDraft(
+    projectId: string,
+    input: UpdateTrainingProjectDraftInput,
+    actorUserId?: string,
+  ) {
     await this.prisma.$transaction(async (transaction) => {
       await this.lockProject(transaction, projectId);
       const project = await transaction.trainingProject.findUnique({
         where: { id: projectId },
-        select: { id: true, isOpen: true },
+        select: { id: true, isOpen: true, accessMode: true },
       });
 
       if (!project) {
@@ -218,6 +232,10 @@ export class TrainingProjectService {
 
       if (project.isOpen) {
         throw new ConflictException('Close the training project before editing');
+      }
+
+      if (project.accessMode !== input.accessMode && !actorUserId) {
+        throw new ConflictException('Access mode changes require an authenticated actor');
       }
 
       await this.ensureRealEstateObjectExists(input.realEstateObjectId, transaction);
@@ -234,9 +252,22 @@ export class TrainingProjectService {
           timeLimitSeconds: input.timeLimitSeconds,
           passScore: input.passScore,
           allowRetakeAfterPass: input.allowRetakeAfterPass,
+          accessMode: input.accessMode,
           contentSchemaVersion: TRAINING_SNAPSHOT_SCHEMA_VERSION,
         },
       });
+
+      if (project.accessMode !== input.accessMode && actorUserId) {
+        await transaction.auditLog.create({
+          data: {
+            actorUserId,
+            action: 'training.project_access_mode.update',
+            entityType: 'training_project',
+            entityId: projectId,
+            metadata: { from: project.accessMode, to: input.accessMode },
+          },
+        });
+      }
 
       const questions = [
         await this.upsertQuestion(
@@ -399,6 +430,8 @@ export class TrainingProjectService {
       title: project.title,
       description: project.description,
       status: project.status,
+      accessMode: project.accessMode,
+      activeAssignments: project._count.assignments,
       isOpen: project.isOpen,
       sortOrder: project.sortOrder,
       attemptLimit: project.attemptLimit,

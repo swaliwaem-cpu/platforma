@@ -1,4 +1,6 @@
 import type {
+  BulkTrainingProjectAssignmentsRequest,
+  BulkTrainingProjectAssignmentsResponse,
   CreateTrainingProjectRequest,
   ImportTrainingObjectRequest,
   ImportTrainingObjectResponse,
@@ -20,9 +22,11 @@ import type {
   TrainingMaterialDetail,
   TrainingMaterialsResponse,
   TrainingObjectOptionsResponse,
+  TrainingProjectAssignmentUsersResponse,
   TrainingTelegramAccountState,
   TrainingTelegramLinkResponse,
   UpdateTrainingProjectAvailabilityRequest,
+  UpdateTrainingProjectAccessModeRequest,
   UpdateTrainingProjectRequest,
 } from '@platforma/shared';
 
@@ -126,12 +130,48 @@ export function getTrainingAdminProject(
 export function updateTrainingAdminProject(
   accessToken: string,
   projectId: string,
-  input: UpdateTrainingProjectRequest | UpdateTrainingProjectAvailabilityRequest,
+  input:
+    | UpdateTrainingProjectRequest
+    | UpdateTrainingProjectAvailabilityRequest
+    | UpdateTrainingProjectAccessModeRequest,
 ) {
   return apiRequest<TrainingAdminProject>(
     `/training/admin/projects/${encodeURIComponent(projectId)}`,
     accessToken,
     { method: 'PATCH', body: JSON.stringify(input) },
+  );
+}
+
+export function getTrainingAssignmentUsers(
+  accessToken: string,
+  projectId: string,
+  input: { page: number; limit: number; search: string; assigned: 'all' | 'yes' | 'no' },
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams({
+    page: String(input.page),
+    limit: String(input.limit),
+    assigned: input.assigned,
+    status: 'active',
+  });
+  if (input.search.trim()) query.set('search', input.search.trim());
+
+  return apiRequest<TrainingProjectAssignmentUsersResponse>(
+    `/training/admin/projects/${encodeURIComponent(projectId)}/assignment-users?${query.toString()}`,
+    accessToken,
+    { signal },
+  );
+}
+
+export function bulkTrainingAssignments(
+  accessToken: string,
+  projectId: string,
+  input: BulkTrainingProjectAssignmentsRequest,
+) {
+  return apiRequest<BulkTrainingProjectAssignmentsResponse>(
+    `/training/admin/projects/${encodeURIComponent(projectId)}/assignments/bulk`,
+    accessToken,
+    { method: 'POST', body: JSON.stringify(input) },
   );
 }
 

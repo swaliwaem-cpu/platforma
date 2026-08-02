@@ -148,6 +148,13 @@ enum TrainingProjectStatus {
   @@map("training_project_status")
 }
 
+enum TrainingProjectAccessMode {
+  ALL_PARTICIPANTS @map("all_participants")
+  ASSIGNED_USERS   @map("assigned_users")
+
+  @@map("training_project_access_mode")
+}
+
 enum TrainingQuestionType {
   MAIN      @map("main")
   FOLLOW_UP @map("follow_up")
@@ -300,6 +307,8 @@ model User {
   createdTrainingMaterials       TrainingMaterial[]         @relation("TrainingMaterialCreator")
   confirmedTrainingMaterials     TrainingMaterial[]         @relation("TrainingMaterialOfficialConfirmer")
   createdTrainingMaterialRevisions TrainingMaterialRevision[] @relation("TrainingMaterialRevisionCreator")
+  trainingProjectAssignments     TrainingProjectAssignment[] @relation("TrainingProjectAssignee")
+  assignedTrainingProjects       TrainingProjectAssignment[] @relation("TrainingProjectAssigner")
 
   @@index([roleId])
   @@index([profilePhotoFileId])
@@ -1096,6 +1105,7 @@ model TrainingProject {
   title                String                @db.VarChar(240)
   description          String?
   status               TrainingProjectStatus @default(DRAFT)
+  accessMode           TrainingProjectAccessMode @default(ASSIGNED_USERS) @map("access_mode")
   isOpen               Boolean               @default(false) @map("is_open")
   sortOrder            Int                   @default(0) @map("sort_order")
   attemptLimit         Int                   @default(3) @map("attempt_limit")
@@ -1112,10 +1122,31 @@ model TrainingProject {
   criteria         TrainingCriterion[]
   telegramLinkTokens TrainingTelegramLinkToken[]
   materials          TrainingMaterial[]
+  assignments        TrainingProjectAssignment[]
 
   @@index([realEstateObjectId])
   @@index([status, isOpen, sortOrder])
   @@map("training_projects")
+}
+
+model TrainingProjectAssignment {
+  id           String    @id @default(uuid()) @db.Uuid
+  projectId    String    @map("project_id") @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  assignedById String?   @map("assigned_by_id") @db.Uuid
+  assignedAt   DateTime  @default(now()) @map("assigned_at")
+  revokedAt    DateTime? @map("revoked_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  project    TrainingProject @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  user       User            @relation("TrainingProjectAssignee", fields: [userId], references: [id], onDelete: Restrict)
+  assignedBy User?           @relation("TrainingProjectAssigner", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  @@unique([projectId, userId])
+  @@index([projectId, revokedAt])
+  @@index([userId, revokedAt])
+  @@map("training_project_assignments")
 }
 
 model TrainingQuestion {

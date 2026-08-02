@@ -7,6 +7,7 @@ const { NestFactory } = require('@nestjs/core');
 const { JwtService } = require('@nestjs/jwt');
 const {
   PrismaClient,
+  TrainingProjectAccessMode,
   TrainingProjectStatus,
   TrainingQuestionType,
   UserStatus,
@@ -263,6 +264,7 @@ if (!databaseUrl) {
         timeLimitSeconds: 420,
         passScore: 75,
         allowRetakeAfterPass: true,
+        accessMode: TrainingProjectAccessMode.ALL_PARTICIPANTS,
         questions: {
           create: [
             { type: TrainingQuestionType.MAIN, text: `${title} main`, position: 1 },
@@ -312,6 +314,7 @@ if (!databaseUrl) {
     await prisma.trainingAttempt.deleteMany();
     await prisma.trainingTelegramLinkToken.deleteMany();
     await prisma.trainingTelegramAccount.deleteMany();
+    await prisma.trainingProjectAssignment.deleteMany();
     await prisma.trainingFact.deleteMany();
     await prisma.trainingCriterion.deleteMany();
     await prisma.trainingQuestion.deleteMany();

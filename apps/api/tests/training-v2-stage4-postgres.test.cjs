@@ -222,6 +222,7 @@ if (!databaseUrl) {
   }
 
   async function clearData() {
+    await prisma.trainingProjectAssignment.deleteMany();
     await prisma.trainingFact.deleteMany();
     await prisma.trainingMaterialRevision.deleteMany();
     await prisma.trainingMaterial.deleteMany();

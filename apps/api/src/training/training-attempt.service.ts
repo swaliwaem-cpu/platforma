@@ -4,7 +4,6 @@ import {
   TrainingAnswerProcessingStatus,
   TrainingAttemptQuestionStatus,
   TrainingAttemptStatus,
-  TrainingProjectStatus,
   TrainingReviewDecision,
 } from '@prisma/client';
 import type {
@@ -29,26 +28,27 @@ import {
   isTrainingProjectSnapshotWithFacts,
   parseTrainingProjectSnapshot,
 } from './training-snapshot';
+import { TrainingProjectAccessService } from './training-project-access.service';
 
 @Injectable()
 export class TrainingAttemptService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly state: TrainingAttemptStateService,
+    private readonly projectAccess: TrainingProjectAccessService,
   ) {}
 
   async listEmployeeProjects(userId: string): Promise<TrainingEmployeeProjectsResponse> {
     await this.state.finalizeExpiredForUser(userId);
+    await this.projectAccess.assertParticipant(userId);
     const projects = await this.prisma.trainingProject.findMany({
-      where: {
-        OR: [
-          { status: TrainingProjectStatus.PUBLISHED, isOpen: true },
-          {
-            attempts: {
-              some: { userId, status: TrainingAttemptStatus.IN_PROGRESS },
-            },
-          },
-        ],
+      where: this.projectAccess.employeeProjectWhere(userId),
+      include: {
+        assignments: {
+          where: { userId, revokedAt: null },
+          select: { id: true },
+          take: 1,
+        },
       },
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
     });
@@ -84,9 +84,9 @@ export class TrainingAttemptService {
         );
         const attemptsLeft = Math.max(0, project.attemptLimit - countingAttempts.length);
         const blockedByPass = Boolean(bestConfirmed?.isPassed && !project.allowRetakeAfterPass);
+        const hasCurrentAccess = this.projectAccess.hasCurrentAccess(project);
         const canStart =
-          project.status === TrainingProjectStatus.PUBLISHED &&
-          project.isOpen &&
+          hasCurrentAccess &&
           !activeAttempt &&
           attemptsLeft > 0 &&
           !blockedByPass;
@@ -123,6 +123,10 @@ export class TrainingAttemptService {
               : 'FAILED'
             : null,
           hasPendingReview,
+          newAttemptAccessRevoked: Boolean(
+            activeAttempt &&
+              this.projectAccess.isAssignmentAccessRevoked(project),
+          ),
           status: bestConfirmed
             ? bestConfirmed.isPassed
               ? 'PASSED'

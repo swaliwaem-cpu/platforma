@@ -14,7 +14,6 @@ import {
   TrainingAttemptQuestionStatus,
   TrainingAttemptStatus,
   TrainingFakeOutcome,
-  TrainingProjectStatus,
   TrainingQuestionType,
   TrainingReviewStatus,
 } from '@prisma/client';
@@ -29,6 +28,7 @@ import {
   TrainingEvaluator,
 } from './training-evaluator';
 import { TrainingFollowUpSelector } from './training-follow-up-selector';
+import { TrainingProjectAccessService } from './training-project-access.service';
 import {
   hasTrainingSnapshotQuestionStructure,
   parseTrainingProjectSnapshot,
@@ -78,6 +78,7 @@ export class TrainingAttemptStateService {
     private readonly prisma: PrismaService,
     @Inject(TRAINING_EVALUATOR) private readonly evaluator: TrainingEvaluator,
     private readonly followUpSelector: TrainingFollowUpSelector,
+    private readonly projectAccess: TrainingProjectAccessService,
   ) {}
 
   async startAttempt(projectId: string, userId: string, input: StartTrainingAttemptInput) {
@@ -100,6 +101,7 @@ export class TrainingAttemptStateService {
       }
 
       if (token.revokedAt !== null) {
+        await this.projectAccess.assertParticipant(userId, transaction);
         const existingAttempt = await transaction.trainingAttempt.findFirst({
           where: {
             userId,
@@ -170,6 +172,8 @@ export class TrainingAttemptStateService {
         throw new NotFoundException('Training project not found');
       }
 
+      await this.projectAccess.assertParticipant(userId, transaction);
+
       const idempotentAttempt = await transaction.trainingAttempt.findUnique({
         where: {
           userId_projectId_startIdempotencyKey: {
@@ -205,9 +209,7 @@ export class TrainingAttemptStateService {
         }
       }
 
-      if (project.status !== TrainingProjectStatus.PUBLISHED || !project.isOpen) {
-        throw new ConflictException('Training project is not open');
-      }
+      await this.projectAccess.assertNewAttemptAccess(projectId, userId, transaction);
 
       const attemptsUsed = await transaction.trainingAttempt.count({
         where: { userId, projectId, countsTowardAttemptLimit: true },
@@ -1144,7 +1146,7 @@ export class TrainingAttemptStateService {
 
   private async lockProject(transaction: Prisma.TransactionClient, projectId: string) {
     await transaction.$queryRaw(
-      Prisma.sql`SELECT "id" FROM "training_projects" WHERE "id" = CAST(${projectId} AS uuid) FOR UPDATE`,
+      Prisma.sql`SELECT "id" FROM "training_projects" WHERE "id" = CAST(${projectId} AS uuid) FOR SHARE`,
     );
   }
 

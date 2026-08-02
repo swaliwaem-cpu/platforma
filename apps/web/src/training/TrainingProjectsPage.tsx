@@ -226,6 +226,11 @@ export function TrainingProjectsPage({ navigate }: TrainingProjectsPageProps) {
                   {project.hasPendingReview ? (
                     <p className="training-pending-note">Есть попытка, требующая проверки.</p>
                   ) : null}
+                  {project.newAttemptAccessRevoked ? (
+                    <p className="training-access-revoked-note">
+                      Доступ к новым попыткам отозван. Текущую попытку можно завершить.
+                    </p>
+                  ) : null}
                 </CardContent>
                 <CardFooter className="training-project-actions">
                   {telegramLink?.projectId === project.id ? (
@@ -242,6 +247,7 @@ export function TrainingProjectsPage({ navigate }: TrainingProjectsPageProps) {
                       type="button"
                       tone="primary"
                       disabled={
+                        project.newAttemptAccessRevoked ||
                         (!project.canStart && !project.activeAttempt) ||
                         linkingProjectId !== null
                       }
@@ -249,7 +255,9 @@ export function TrainingProjectsPage({ navigate }: TrainingProjectsPageProps) {
                     >
                       {linkingProjectId === project.id
                         ? 'Создаём ссылку…'
-                        : project.activeAttempt
+                        : project.newAttemptAccessRevoked
+                          ? 'Продолжите через /start в Telegram'
+                          : project.activeAttempt
                           ? 'Продолжить в Telegram'
                           : 'Пройти в Telegram'}
                     </AdminButton>

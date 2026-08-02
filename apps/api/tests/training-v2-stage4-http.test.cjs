@@ -338,6 +338,7 @@ if (!databaseUrl) {
     return {
       title: 'Stage 4 HTTP', description: null, realEstateObjectId: null, sortOrder: 0,
       attemptLimit: 3, timeLimitMinutes: 7, passScore: 75, allowRetakeAfterPass: true,
+      accessMode: 'ALL_PARTICIPANTS',
       mainQuestion: 'Главный вопрос',
       followUpQuestions: Array.from({ length: 10 }, (_, index) => `Дополнительный вопрос ${index + 1}`),
       facts: Array.from({ length: 11 }, (_, index) => ({
@@ -403,6 +404,7 @@ if (!databaseUrl) {
     await prisma.trainingAttempt.deleteMany();
     await prisma.trainingTelegramLinkToken.deleteMany();
     await prisma.trainingTelegramAccount.deleteMany();
+    await prisma.trainingProjectAssignment.deleteMany();
     await prisma.trainingFact.deleteMany();
     await prisma.trainingMaterialRevision.deleteMany();
     await prisma.trainingMaterial.deleteMany();

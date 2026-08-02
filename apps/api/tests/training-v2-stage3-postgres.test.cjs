@@ -8,6 +8,7 @@ const {
   TrainingAnswerProcessingStatus,
   TrainingAnswerSource,
   TrainingAttemptStatus,
+  TrainingProjectAccessMode,
   UserStatus,
 } = require('@prisma/client');
 const { ConflictException } = require('@nestjs/common');
@@ -17,6 +18,7 @@ const { TrainingAttemptService } = require('../dist/training/training-attempt.se
 const { DeterministicFakeTrainingEvaluator } = require('../dist/training/training-evaluator.js');
 const { TrainingOpenAIError } = require('../dist/training/training-openai-client.js');
 const { TrainingProjectService } = require('../dist/training/training-project.service.js');
+const { TrainingProjectAccessService } = require('../dist/training/training-project-access.service.js');
 const { TrainingReviewService } = require('../dist/training/training-review.service.js');
 const { TrainingVoiceWorkerService } = require('../dist/training/training-voice-worker.service.js');
 
@@ -28,13 +30,15 @@ if (!databaseUrl) {
   });
 } else {
   const prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
+  const projectAccess = new TrainingProjectAccessService(prisma);
   const fakeEvaluator = new DeterministicFakeTrainingEvaluator();
   const state = new TrainingAttemptStateService(
     prisma,
     fakeEvaluator,
     { select: (candidates) => candidates.slice(0, 3) },
+    projectAccess,
   );
-  const attempts = new TrainingAttemptService(prisma, state);
+  const attempts = new TrainingAttemptService(prisma, state, projectAccess);
   const projects = new TrainingProjectService(prisma);
   const reviews = new TrainingReviewService(prisma);
 
@@ -52,7 +56,7 @@ if (!databaseUrl) {
     const stored = await prisma.trainingAttempt.findUniqueOrThrow({ where: { id: started.id } });
     const snapshot = stored.projectSnapshotJson;
 
-    assert.equal(snapshot.schemaVersion, 2);
+    assert.equal(snapshot.schemaVersion, 3);
     assert.equal(snapshot.questions.every((question) => question.facts.length === 1), true);
     assert.equal(snapshot.criteria.main.reduce((sum, item) => sum + item.maxPoints, 0), 55);
     assert.equal(snapshot.criteria.followUp.reduce((sum, item) => sum + item.maxPoints, 0), 15);
@@ -76,6 +80,7 @@ if (!databaseUrl) {
         passScore: 75,
         allowRetakeAfterPass: true,
         contentSchemaVersion: 1,
+        accessMode: TrainingProjectAccessMode.ALL_PARTICIPANTS,
         questions: {
           create: [
             {
@@ -271,6 +276,7 @@ if (!databaseUrl) {
       timeLimitSeconds: 420,
       passScore: 75,
       allowRetakeAfterPass: true,
+      accessMode: TrainingProjectAccessMode.ALL_PARTICIPANTS,
     });
     await projects.updateDraft(project.id, projectDraft(title, `${title} approved fact`, overrides));
     await projects.publishProject(project.id);
@@ -287,6 +293,7 @@ if (!databaseUrl) {
       timeLimitSeconds: 420,
       passScore: 75,
       allowRetakeAfterPass: true,
+      accessMode: TrainingProjectAccessMode.ALL_PARTICIPANTS,
       mainQuestion: `${title} main`,
       followUpQuestions: Array.from({ length: 10 }, (_, index) => `${title} follow-up ${index + 1}`),
       facts: Array.from({ length: 11 }, (_, index) => ({
@@ -306,8 +313,17 @@ if (!databaseUrl) {
   }
 
   async function createUser(label) {
+    const permission = await prisma.permission.upsert({
+      where: { key: 'training:participate' },
+      update: {},
+      create: { key: 'training:participate', description: 'Participate' },
+    });
     const role = await prisma.role.create({
-      data: { name: `training-stage3-${label.slice(0, 12)}-${randomUUID().slice(0, 8)}`, description: 'Stage 3 test' },
+      data: {
+        name: `training-stage3-${label.slice(0, 12)}-${randomUUID().slice(0, 8)}`,
+        description: 'Stage 3 test',
+        permissions: { create: { permissionId: permission.id } },
+      },
     });
     return prisma.user.create({
       data: { email: `${label}-${randomUUID()}@training.test`, passwordHash: 'hash', name: label, status: UserStatus.ACTIVE, roleId: role.id },
@@ -347,6 +363,7 @@ if (!databaseUrl) {
     await prisma.trainingAttempt.deleteMany();
     await prisma.trainingTelegramLinkToken.deleteMany();
     await prisma.trainingTelegramAccount.deleteMany();
+    await prisma.trainingProjectAssignment.deleteMany();
     await prisma.trainingFact.deleteMany();
     await prisma.trainingCriterion.deleteMany();
     await prisma.trainingQuestion.deleteMany();

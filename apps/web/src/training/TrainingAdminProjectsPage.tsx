@@ -97,6 +97,7 @@ export function TrainingAdminProjectsPage({
       const project = await createTrainingAdminProject(accessToken, {
         title: title.trim(),
         allowRetakeAfterPass,
+        accessMode: 'ASSIGNED_USERS',
       });
       navigate(`/admin/training/projects/${project.id}`);
     } catch (createError) {
@@ -156,7 +157,7 @@ export function TrainingAdminProjectsPage({
             <div className="training-admin-list">
               {projects.map((project) => (
                 <button type="button" className="training-admin-row" key={project.id} onClick={() => navigate(`/admin/training/projects/${project.id}`)}>
-                  <span><strong>{project.title}</strong><small>{project.questionsCount} вопросов · {project.attemptsCount} попыток</small></span>
+                  <span><strong>{project.title}</strong><small>{project.questionsCount} вопросов · {project.attemptsCount} попыток</small><small>{project.accessMode === 'ALL_PARTICIPANTS' ? 'Все участники' : `По назначениям · ${project.activeAssignments}`}</small></span>
                   <span><AdminStatusBadge className={getTrainingStatusClass(project.status)}>{trainingProjectStatusLabels[project.status]}{project.isOpen ? ' · открыт' : ''}</AdminStatusBadge><small>{project.timeLimitSeconds / 60} мин</small></span>
                 </button>
               ))}

@@ -8,6 +8,7 @@ const {
   PrismaClient,
   TrainingAnswerProcessingStatus,
   TrainingAnswerSource,
+  TrainingProjectAccessMode,
   UserStatus,
 } = require('@prisma/client');
 
@@ -23,6 +24,7 @@ const {
 const {
   TrainingProjectService,
 } = require('../dist/training/training-project.service.js');
+const { TrainingProjectAccessService } = require('../dist/training/training-project-access.service.js');
 const {
   FakeTrainingTelegramClient,
 } = require('../dist/training/training-telegram-client.js');
@@ -45,12 +47,14 @@ if (!databaseUrl) {
   });
 } else {
   const prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
+  const projectAccess = new TrainingProjectAccessService(prisma);
   const state = new TrainingAttemptStateService(
     prisma,
     new DeterministicFakeTrainingEvaluator(),
     { select: (candidates) => candidates.slice(0, 3) },
+    projectAccess,
   );
-  const attempts = new TrainingAttemptService(prisma, state);
+  const attempts = new TrainingAttemptService(prisma, state, projectAccess);
   const projects = new TrainingProjectService(prisma);
   let client;
   let telegram;
@@ -62,7 +66,7 @@ if (!databaseUrl) {
   beforeEach(async () => {
     await clearTrainingData();
     client = new FakeTrainingTelegramClient();
-    telegram = new TrainingTelegramService(prisma, state, attempts, client);
+    telegram = new TrainingTelegramService(prisma, state, projectAccess, client);
   });
 
   after(async () => {
@@ -615,6 +619,7 @@ if (!databaseUrl) {
       timeLimitSeconds: 420,
       passScore: 75,
       allowRetakeAfterPass: true,
+      accessMode: TrainingProjectAccessMode.ALL_PARTICIPANTS,
     });
     await projects.updateDraft(project.id, {
       title,
@@ -625,6 +630,7 @@ if (!databaseUrl) {
       timeLimitSeconds: 420,
       passScore: 75,
       allowRetakeAfterPass: true,
+      accessMode: TrainingProjectAccessMode.ALL_PARTICIPANTS,
       mainQuestion: `${title} main`,
       followUpQuestions: Array.from({ length: 10 }, (_, index) => `${title} ${index + 1}`),
       facts: Array.from({ length: 11 }, (_, index) => ({
@@ -746,6 +752,7 @@ if (!databaseUrl) {
     await prisma.trainingAttempt.deleteMany();
     await prisma.trainingTelegramLinkToken.deleteMany();
     await prisma.trainingTelegramAccount.deleteMany();
+    await prisma.trainingProjectAssignment.deleteMany();
     await prisma.trainingFact.deleteMany();
     await prisma.trainingCriterion.deleteMany();
     await prisma.trainingQuestion.deleteMany();

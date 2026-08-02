@@ -7,6 +7,7 @@ const {
   PrismaClient,
   TrainingAttemptQuestionStatus,
   TrainingAttemptStatus,
+  TrainingProjectAccessMode,
   UserStatus,
 } = require('@prisma/client');
 const { ConflictException, NotFoundException } = require('@nestjs/common');
@@ -23,6 +24,7 @@ const {
 const {
   TrainingProjectService,
 } = require('../dist/training/training-project.service.js');
+const { TrainingProjectAccessService } = require('../dist/training/training-project-access.service.js');
 
 const databaseUrl = process.env.TRAINING_TEST_DATABASE_URL;
 
@@ -36,12 +38,14 @@ if (!databaseUrl) {
   const deterministicSelector = {
     select: (candidates) => candidates.slice(0, 3),
   };
+  const projectAccess = new TrainingProjectAccessService(prisma);
   const stateService = new TrainingAttemptStateService(
     prisma,
     evaluator,
     deterministicSelector,
+    projectAccess,
   );
-  const attemptService = new TrainingAttemptService(prisma, stateService);
+  const attemptService = new TrainingAttemptService(prisma, stateService, projectAccess);
   const projectService = new TrainingProjectService(prisma);
 
   before(async () => {
@@ -55,6 +59,7 @@ if (!databaseUrl) {
     await prisma.trainingAttempt.deleteMany();
     await prisma.trainingTelegramLinkToken.deleteMany();
     await prisma.trainingTelegramAccount.deleteMany();
+    await prisma.trainingProjectAssignment.deleteMany();
     await prisma.trainingFact.deleteMany();
     await prisma.trainingCriterion.deleteMany();
     await prisma.trainingQuestion.deleteMany();
@@ -326,10 +331,16 @@ if (!databaseUrl) {
   });
 
   async function createUser(label) {
+    const permission = await prisma.permission.upsert({
+      where: { key: 'training:participate' },
+      update: {},
+      create: { key: 'training:participate', description: 'Participate' },
+    });
     const role = await prisma.role.create({
       data: {
         name: `training-test-${label}-${randomUUID()}`,
         description: 'Training integration test role',
+        permissions: { create: { permissionId: permission.id } },
       },
     });
 
@@ -354,6 +365,7 @@ if (!databaseUrl) {
       timeLimitSeconds: 420,
       passScore: overrides.passScore ?? 75,
       allowRetakeAfterPass: overrides.allowRetakeAfterPass ?? true,
+      accessMode: TrainingProjectAccessMode.ALL_PARTICIPANTS,
     });
     await projectService.updateDraft(created.id, draftInput(overrides));
     await projectService.publishProject(created.id);
@@ -371,6 +383,7 @@ if (!databaseUrl) {
       timeLimitSeconds: 420,
       passScore: overrides.passScore ?? 75,
       allowRetakeAfterPass: overrides.allowRetakeAfterPass ?? true,
+      accessMode: TrainingProjectAccessMode.ALL_PARTICIPANTS,
       mainQuestion: overrides.mainQuestion ?? 'Исходный главный вопрос',
       followUpQuestions:
         overrides.followUpQuestions ??

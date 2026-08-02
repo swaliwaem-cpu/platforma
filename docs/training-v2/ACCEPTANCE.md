@@ -1,149 +1,69 @@
-# Acceptance: Stage 4
+# Acceptance: Stage 4.5 — Project Assignments
 
-## Критерии готовности к ручной приёмке
+## Критерии готовности
 
-- `TrainingMaterial` принадлежит одному project, архивируется без physical
-  delete и поддерживает только `PDF | OFFICIAL_URL | MANUAL_TEXT |
-  OBJECT_SNAPSHOT`.
-- Каждая загрузка/refresh создаёт immutable `TrainingMaterialRevision` с
-  revision number, previous revision, bounded normalized segments, content hash
-  и deterministic diff. Старые facts и attempts не меняются.
-- PDF проверяется по auth/RBAC/ownership, MIME, extension, `%PDF-`, размеру,
-  page count и timeout, хранится private с `File.url=null` и извлекается по
-  страницам. Scanned/password-protected/invalid PDF получает safe error без OCR.
-- Official URL требует admin confirmation, допускает только HTTPS и проходит
-  DNS/IP/redirect SSRF checks. Fetch ограничен по redirects, bytes, content type
-  и timeout; crawler и follow-links отсутствуют.
-- Browser fallback выключен по умолчанию, обрабатывает только одну указанную
-  страницу в isolated ephemeral context, проверяет все requests и гарантированно
-  закрывается.
-- Manual text сохраняется как normalized plain text. Object snapshot принимает
-  только field codes и читает текущие values backend-ом из linked object по
-  explicit allowlist стабильных полей.
-- ЖК выбирается в searchable dropdown через server-side Platforma search,
-  включая другую клавиатурную раскладку. Явный import связывает project,
-  snapshot-ит все стабильные allowlisted поля и копирует каждый прикреплённый
-  PDF в private Training material revision.
-- По всем READY revisions импортированной карточки система создаёт ровно один
-  главный и десять дополнительных grounded question drafts. Existing questions
-  заменяются только после подтверждения; project остаётся `DRAFT`, а факты не
-  создаются автоматически.
-- Suggestions генерируются deterministic fake или existing OpenAI client,
-  chunk-ятся по segments, проходят strict schema/IDs/evidence validation и не
-  создают fact до explicit admin apply.
-- Apply повторно проверяет permission, ownership, question, statement, aliases,
-  required, locator/excerpt и duplicates. Созданный material fact хранит точную
-  source citation; existing manual fact editor сохраняется.
-- Snapshot v3 замораживает bounded fact source citation. Snapshot v1/v2 читаются
-  без conversion; material refresh и новые facts не меняют old attempt.
-- Publication/evaluation используют только approved `TrainingFact`. Employee не
-  получает materials, URLs, extracted text, revisions, suggestions или hidden
-  facts.
-- Existing admin project editor содержит tab «Материалы», четыре source flows,
-  preview/history/diff/suggestions/apply/archive; facts и admin attempt detail
-  показывают source badge/citation. Новый frontend route отсутствует.
-- Нет DOCX/PPTX/XLSX/OCR/crawler/search/RAG/embeddings/ranking/CSV/operations,
-  worker/job/queue/outbox/provider-run infrastructure и production deploy.
+- Migration additive: existing projects backfill-ятся `ALL_PARTICIPANTS`, новые
+  получают default `ASSIGNED_USERS`, данные Stage 1–4 не удаляются.
+- Assignment хранит actor/time/revoke, уникален на project/user и имеет индексы
+  `(projectId, revokedAt)` и `(userId, revokedAt)`.
+- Assign, повторный assign, revoke и повторный revoke идемпотентны; invalid user
+  отменяет весь bulk request.
+- Новая попытка разрешена только активному неудалённому user с
+  `training:participate` и текущим project access. Assignment не выдаёт
+  permission.
+- `ALL_PARTICIPANTS` и `ASSIGNED_USERS` проверяются одной backend policy в list,
+  start и всех Telegram checkpoints.
+- После revoke активная попытка, questions, answers, voice/audio, results и
+  history сохраняются; новая попытка после завершения блокируется.
+- Employee list фильтруется в БД и возвращает active attempt после revoke.
+- Admin API защищён `training:projects:manage`, возвращает только userId, name,
+  email, status, canParticipate, isAssigned и assignedAt.
+- UI расширяет existing editor, поддерживает mode, warning при нуле назначений,
+  server search/pagination/filter, current-page selection, bulk и все состояния.
+- Admin project list показывает mode/count без N+1.
+- Один Telegram bot изолирует пользователей; token не является доказательством
+  доступа и recheck выполняется при link, consume и start.
+- 10 разных users могут одновременно начать один project; double start одного
+  user создаёт одну active attempt.
+- Stage 5, реальные provider calls, deploy и commit отсутствуют.
 
-## Automated fake/stub acceptance
+## Automated fake/local acceptance
 
-Все external providers и URL/browser scenarios используют fake/stub/local
-fixtures. Migration/PostgreSQL tests используют только временную PostgreSQL.
-
-1. `prisma validate`/generate и additive Stage 4 migration проходят на clean
-   install и при Stage 3 → Stage 4 upgrade с сохранением projects, facts,
-   attempts и snapshots v1/v2; existing facts backfill-ятся `MANUAL`.
-2. Unit tests проверяют material types, immutable revision numbering,
-   paragraph/segment diff, manual segments, object allowlist, canonical
-   duplicates, excerpt normalization, strict suggestions и snapshot v1/v2/v3.
-3. Synthetic PDF tests проверяют MIME/magic/size/page limits, page text/locator,
-   checksum, private `File.url=null`, missing text layer, password/invalid input,
-   timeout и отсутствие temp artifacts при in-memory parsing без коммерческих
-   fixtures.
-4. Local URL fixture проверяет extraction headings/paragraphs/lists/tables,
-   bytes/content-type/timeout, redirects/downgrade/credentials/port, DNS/public
-   IP validation, final URL и changed/unchanged refresh diff без real websites.
-5. Local JS-only fixture проверяет disabled/enabled browser fallback, rendered
-   text, отсутствие clicks, blocking third-party/private requests, timeout и
-   process/context cleanup.
-6. Object snapshot/import tests доказывают keyboard-layout search,
-   linked-object ownership, backend-only value read, все object PDF, tampered
-   frontend values ignored, volatile fields unavailable, immutable old revision
-   и создание grounded 1+10 question drafts.
-7. Fake/local OpenAI stub проверяет `store=false`, no tools/search, strict
-   schema, untrusted-source prompt, IDs/locator/excerpt, injection, chunk limits,
-   partial failure и отсутствие `TrainingFact` до apply.
-8. Apply/publication tests проверяют selected edited suggestions, source fields,
-   duplicate warning/no auto-create и использование только approved facts.
-9. PostgreSQL/HTTP/RBAC tests проверяют constraints/immutability, 401/403/200,
-   safe UUID probing, ownership, PDF download, material/suggestion/apply,
-   object-options/import-object endpoints, snapshot v3 и unchanged old attempts.
-10. Frontend/browser tests проверяют Materials tab, searchable ЖК dropdown,
-    другую раскладку, импорт карточки/всех PDF, 1+10 question drafts, четыре
-    ручных source flows, loading/empty/error, extracted text/history/diff,
-    review/apply, source badges и отсутствие employee material UI.
-11. Full API/web/workspace tests, builds, `git diff --check`, `.only`/`.skip`,
-    real-provider/real-website scans и cleanup временных resources проходят.
-12. Если изменён browser runtime/API Dockerfile, API image build и local PDF +
-    JS-only extraction smokes проходят с graceful cleanup.
+1. `prisma validate`/generate; clean temporary PostgreSQL install; Stage 4 → 4.5
+   upgrade с backfill, сохранением projects/attempts/history и новым default.
+2. Unit/schema tests: access matrix, active/inactive/deleted users, permission +
+   assignment, active-attempt recovery, bulk validation, idempotency и safe DTO.
+3. PostgreSQL: uniqueness/indexes, bulk, user on 10 projects, project for 10
+   users, revoke/reactivate, mode preservation, filtered visibility, permission,
+   revoke/start race, 10 concurrent starts и per-user isolation.
+4. HTTP/RBAC: 401/403/404, employee isolation, admin picker search/pagination/
+   filters, safe response, atomic bulk, employee list/start/Telegram denial.
+5. Frontend/browser: mode toggle, defaults/backfill display, search, pagination,
+   selection, assign/revoke, zero-assignment and missing-permission warnings,
+   employee visibility, active-attempt recovery, loading/empty/error.
+6. Linked fake scenario: 10 projects, at least 3 users with overlapping
+   assignments, three Telegram accounts, concurrent start and independent
+   questions/answers/audio/results, revoke during attempt and post-completion
+   denial without affecting other users.
+7. API/web/workspace tests and builds, targeted browser suite,
+   `git diff --check`, `.only`/`.skip`, real-call/secrets/old-migration scans and
+   cleanup temporary resources.
 
 ## Локальная ручная приёмка
 
-Использовать локальную test database, private test bucket, fake/local OpenAI stub
-и локальные HTTP/JS fixture pages. Production и реальные сайты не нужны.
-
-### Сценарий 1 — PDF
-
-1. Admin открывает существующий TrainingProject и tab «Материалы».
-2. Загружает небольшой synthetic text PDF.
-3. Проверяет page count, extracted text, private original download и page
-   locators.
-4. Генерирует suggestions, редактирует и применяет несколько выбранных.
-5. Проверяет `TrainingFact` с badge `PDF · Страница N` и публикует project.
-
-### Сценарий 2 — официальный URL
-
-1. Admin добавляет локальный HTTPS fixture URL и подтверждает официальный
-   источник.
-2. Проверяет final URL, fetchedAt, `HTTP` method и extracted text.
-3. Меняет fixture и нажимает refresh: появляется новая revision и bounded diff.
-4. Проверяет, что существующие facts не изменились; новые suggestions
-   применяются только вручную.
-
-### Сценарий 3 — JS-only URL
-
-1. Проверяет `BROWSER_FALLBACK_REQUIRED` при выключенном fallback.
-2. Включает test env fallback и повторяет extraction локальной JS-only page.
-3. Видит rendered text и `BROWSER` method; fixture подтверждает, что clicks,
-   other pages и blocked requests не выполнялись.
-
-### Сценарий 4 — ручной текст
-
-1. Admin создаёт manual material с title/text.
-2. Изменяет text через новую revision и проверяет diff/history.
-3. Генерирует и вручную применяет выбранные suggestions.
-
-### Сценарий 5 — карточка Platforma
-
-1. Admin вводит название ЖК в searchable dropdown, в том числе в другой
-   клавиатурной раскладке, и выбирает найденный `RealEstateObject`.
-2. Запускает import и проверяет snapshot всех доступных стабильных полей и
-   отдельные private materials для всех прикреплённых к карточке PDF.
-3. Проверяет появление одного главного и десяти дополнительных черновиков
-   вопросов в tab «Контент и оценивание»; существующие вопросы заменяются только
-   после отдельного подтверждения.
-4. Изменяет исходный object/PDF, повторяет import и проверяет неизменность old
-   revisions и создание новых revisions.
-
-### Сценарий 6 — integrity попытки
-
-1. Публикует project с approved sourced facts и начинает test attempt.
-2. Проверяет snapshot v3/source citation в admin attempt detail.
-3. Обновляет material и facts после старта.
-4. Проверяет, что old attempt и его source citation не изменились.
+1. Создать 10 учебных проектов.
+2. Часть проектов установить в `ALL_PARTICIPANTS`, часть в `ASSIGNED_USERS`.
+3. Назначить нескольким пользователям один проект.
+4. Назначить одному пользователю несколько проектов.
+5. Проверить видимость проектов под разными аккаунтами Platforma.
+6. Связать разные Telegram-аккаунты с разными пользователями.
+7. Одновременно начать один проект минимум с двух аккаунтов.
+8. Проверить независимость вопросов, ответов, voice, аудио и результатов.
+9. Отозвать доступ одному пользователю во время активной попытки.
+10. Проверить: текущая попытка завершается, новая попытка блокируется, история
+    остаётся.
 
 ## Definition of Done
 
-Stage 4 остаётся текущим даже после готовности кода и зелёных automated checks.
-Только отдельное ручное подтверждение шести сценариев закрывает этап. Stage 5,
-ranking, operations и production deploy не начинаются без новой задачи.
+Stage 4.5 готов только при зелёных automated gates и выполнении отдельной ручной
+приёмки. Stage 5, commit и production deploy не выполняются в этой задаче.

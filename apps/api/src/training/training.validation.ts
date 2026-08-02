@@ -17,9 +17,10 @@ import {
   TRAINING_FACT_STATEMENT_MAX_LENGTH,
   TRAINING_SNAPSHOT_FOLLOW_UP_COUNT,
 } from './training-snapshot';
-import { TrainingQuestionType } from '@prisma/client';
+import { TrainingProjectAccessMode, TrainingQuestionType } from '@prisma/client';
 
 const TRAINING_DEFAULT_TIME_LIMIT_MINUTES = 7;
+const TRAINING_ASSIGNMENT_BULK_LIMIT = 500;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 export function parseCreateTrainingProjectInput(body: Record<string, unknown>): CreateTrainingProjectInput {
@@ -34,6 +35,10 @@ export function parseCreateTrainingProjectInput(body: Record<string, unknown>): 
     allowRetakeAfterPass: parseRequiredBoolean(
       body.allowRetakeAfterPass,
       'allowRetakeAfterPass',
+    ),
+    accessMode: parseTrainingProjectAccessMode(
+      body.accessMode,
+      TrainingProjectAccessMode.ASSIGNED_USERS,
     ),
   };
 }
@@ -67,6 +72,54 @@ export function parseTrainingAvailabilityInput(body: Record<string, unknown>) {
   return {
     isOpen: parseRequiredBoolean(body.isOpen, 'isOpen'),
   };
+}
+
+export function parseTrainingProjectAccessModeInput(body: Record<string, unknown>) {
+  return {
+    accessMode: parseTrainingProjectAccessMode(body.accessMode),
+  };
+}
+
+export function parseTrainingAssignmentUsersQuery(
+  query: Record<string, string | undefined>,
+) {
+  const assigned = query.assigned ?? 'all';
+
+  if (assigned !== 'all' && assigned !== 'yes' && assigned !== 'no') {
+    throw new BadRequestException('assigned must be all, yes or no');
+  }
+  if (query.status !== undefined && query.status !== 'active') {
+    throw new BadRequestException('status must be active');
+  }
+
+  return {
+    page: parseInteger(query.page, 'page', 1, { minimum: 1 }),
+    limit: parseInteger(query.limit, 'limit', 20, { minimum: 1, maximum: 100 }),
+    search: parseOptionalBoundedText(query.search, 'search', 240),
+    assigned,
+  } as const;
+}
+
+export function parseBulkTrainingProjectAssignmentsInput(body: Record<string, unknown>) {
+  if (body.action !== 'ASSIGN' && body.action !== 'REVOKE') {
+    throw new BadRequestException('action must be ASSIGN or REVOKE');
+  }
+  if (
+    !Array.isArray(body.userIds) ||
+    body.userIds.length === 0 ||
+    body.userIds.length > TRAINING_ASSIGNMENT_BULK_LIMIT
+  ) {
+    throw new BadRequestException(
+      `userIds must contain between 1 and ${TRAINING_ASSIGNMENT_BULK_LIMIT} items`,
+    );
+  }
+
+  return {
+    action: body.action,
+    userIds: [...new Set(body.userIds.map((userId, index) =>
+      parseUuid(userId, `userIds[${index}]`),
+    ))],
+  } as const;
 }
 
 export function parseStartTrainingAttemptInput(
@@ -198,6 +251,22 @@ function parseRequiredBoolean(value: unknown, fieldName: string) {
   }
 
   return value;
+}
+
+function parseTrainingProjectAccessMode(
+  value: unknown,
+  fallback?: TrainingProjectAccessMode,
+) {
+  const parsed = value === undefined ? fallback : value;
+
+  if (
+    parsed !== TrainingProjectAccessMode.ALL_PARTICIPANTS &&
+    parsed !== TrainingProjectAccessMode.ASSIGNED_USERS
+  ) {
+    throw new BadRequestException('accessMode must be ALL_PARTICIPANTS or ASSIGNED_USERS');
+  }
+
+  return parsed;
 }
 
 function parseTrainingFacts(value: unknown): TrainingFactDraftInput[] {

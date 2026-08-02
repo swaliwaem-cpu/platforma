@@ -4,6 +4,7 @@ import type {
   TrainingCriterionDraft,
   TrainingFactDraft,
   TrainingFactSource,
+  TrainingProjectAccessMode,
   TrainingQuestionType,
   UpdateTrainingProjectRequest,
 } from '@platforma/shared';
@@ -26,6 +27,7 @@ import {
   trainingProjectStatusLabels,
 } from './trainingView';
 import { TrainingMaterialsPanel } from './TrainingMaterialsPanel';
+import { TrainingProjectAccessPanel } from './TrainingProjectAccessPanel';
 
 type EditorFact = TrainingFactDraft & Partial<TrainingFactSource>;
 
@@ -38,6 +40,7 @@ type EditorForm = {
   timeLimitMinutes: string;
   passScore: string;
   allowRetakeAfterPass: boolean;
+  accessMode: TrainingProjectAccessMode;
   mainQuestion: string;
   followUpQuestions: string[];
   facts: EditorFact[];
@@ -197,7 +200,7 @@ export function TrainingAdminProjectEditorPage({
 
       {error ? <AdminAlert tone="error">{error}</AdminAlert> : null}
       {notice ? <AdminAlert tone="notice">{notice}</AdminAlert> : null}
-      {isReadOnly ? <AdminAlert tone="notice">Закройте проект перед редактированием. Уже начатые попытки не изменятся.</AdminAlert> : null}
+      {isReadOnly && activeTab !== 'access' ? <AdminAlert tone="notice">Закройте проект перед редактированием. Уже начатые попытки не изменятся.</AdminAlert> : null}
       {Object.keys(errors).length ? (
         <AdminAlert tone="error">
           <div>
@@ -216,6 +219,7 @@ export function TrainingAdminProjectEditorPage({
         <TabsList variant="line" aria-label="Разделы редактора проекта">
           <TabsTrigger value="content">Контент и оценивание</TabsTrigger>
           <TabsTrigger value="materials">Материалы</TabsTrigger>
+          <TabsTrigger value="access">Доступ сотрудников</TabsTrigger>
         </TabsList>
         <TabsContent value="content">
       <form className="training-editor-form" onSubmit={(event) => void handleSave(event)}>
@@ -295,6 +299,16 @@ export function TrainingAdminProjectEditorPage({
             onFactsChanged={() => void refreshProjectContent()}
           />
         </TabsContent>
+        <TabsContent value="access">
+          <TrainingProjectAccessPanel
+            accessToken={accessToken ?? ''}
+            project={project}
+            onProjectChanged={(updated) => {
+              setProject(updated);
+              setForm(toEditorForm(updated));
+            }}
+          />
+        </TabsContent>
       </Tabs>
     </div>
   );
@@ -364,7 +378,7 @@ function CriteriaEditor({ criteria, disabled, expectedTotal, onChange, type }: {
 }
 
 function toEditorForm(project: TrainingAdminProject): EditorForm {
-  return { title: project.title, description: project.description ?? '', realEstateObjectId: project.realEstateObjectId ?? '', sortOrder: String(project.sortOrder), attemptLimit: String(project.attemptLimit), timeLimitMinutes: String(project.timeLimitSeconds / 60), passScore: String(project.passScore), allowRetakeAfterPass: project.allowRetakeAfterPass, mainQuestion: project.mainQuestion, followUpQuestions: Array.from({ length: 10 }, (_, index) => project.followUpQuestions[index] ?? ''), facts: project.facts.map((fact) => ({ ...fact, aliases: [...fact.aliases] })), criteria: project.criteria.map((criterion) => ({ ...criterion })) };
+  return { title: project.title, description: project.description ?? '', realEstateObjectId: project.realEstateObjectId ?? '', sortOrder: String(project.sortOrder), attemptLimit: String(project.attemptLimit), timeLimitMinutes: String(project.timeLimitSeconds / 60), passScore: String(project.passScore), allowRetakeAfterPass: project.allowRetakeAfterPass, accessMode: project.accessMode, mainQuestion: project.mainQuestion, followUpQuestions: Array.from({ length: 10 }, (_, index) => project.followUpQuestions[index] ?? ''), facts: project.facts.map((fact) => ({ ...fact, aliases: [...fact.aliases] })), criteria: project.criteria.map((criterion) => ({ ...criterion })) };
 }
 
 function validateEditorForm(form: EditorForm) {
@@ -399,7 +413,7 @@ function validateInteger(value: string, id: string, errors: Record<string, strin
 }
 
 function toUpdateRequest(form: EditorForm): UpdateTrainingProjectRequest {
-  return { title: form.title.trim(), description: form.description.trim() || null, realEstateObjectId: form.realEstateObjectId.trim() || null, sortOrder: Number(form.sortOrder), attemptLimit: Number(form.attemptLimit), timeLimitMinutes: Number(form.timeLimitMinutes), passScore: Number(form.passScore), allowRetakeAfterPass: form.allowRetakeAfterPass, mainQuestion: form.mainQuestion.trim(), followUpQuestions: form.followUpQuestions.map((question) => question.trim()), facts: form.facts.map((fact) => ({ id: fact.id, questionType: fact.questionType, questionPosition: fact.questionPosition, statement: fact.statement.trim(), aliases: fact.aliases.map((alias) => alias.trim()), isRequired: fact.isRequired, position: fact.position })), criteria: form.criteria.map((criterion) => ({ ...criterion, code: criterion.code.trim(), title: criterion.title.trim(), guidance: criterion.guidance.trim() })) };
+  return { title: form.title.trim(), description: form.description.trim() || null, realEstateObjectId: form.realEstateObjectId.trim() || null, sortOrder: Number(form.sortOrder), attemptLimit: Number(form.attemptLimit), timeLimitMinutes: Number(form.timeLimitMinutes), passScore: Number(form.passScore), allowRetakeAfterPass: form.allowRetakeAfterPass, accessMode: form.accessMode, mainQuestion: form.mainQuestion.trim(), followUpQuestions: form.followUpQuestions.map((question) => question.trim()), facts: form.facts.map((fact) => ({ id: fact.id, questionType: fact.questionType, questionPosition: fact.questionPosition, statement: fact.statement.trim(), aliases: fact.aliases.map((alias) => alias.trim()), isRequired: fact.isRequired, position: fact.position })), criteria: form.criteria.map((criterion) => ({ ...criterion, code: criterion.code.trim(), title: criterion.title.trim(), guidance: criterion.guidance.trim() })) };
 }
 
 function factsFor(facts: EditorFact[], type: TrainingQuestionType, position: number) {

@@ -42,11 +42,12 @@ const stage4Migration = readFileSync(
 );
 const seed = readFileSync(resolve(repositoryRoot, 'apps/api/src/prisma/seed.ts'), 'utf8');
 
-test('Training V2 Stage 4 adds exactly TrainingMaterial and TrainingMaterialRevision', () => {
+test('Training V2 preserves Stage 4 models and adds the accepted assignment layer', () => {
   const modelNames = [...schema.matchAll(/^model (Training\w+) \{/gmu)].map((match) => match[1]);
 
   assert.deepEqual(modelNames, [
     'TrainingProject',
+    'TrainingProjectAssignment',
     'TrainingQuestion',
     'TrainingFact',
     'TrainingMaterial',

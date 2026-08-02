@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 
 import { AuthenticatedUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -7,9 +7,13 @@ import { RequirePermissions } from '../auth/permissions.decorator';
 import { PermissionsGuard } from '../auth/permissions.guard';
 import { TrainingAttemptService } from './training-attempt.service';
 import { TrainingProjectService } from './training-project.service';
+import { TrainingProjectAccessService } from './training-project-access.service';
 import { TrainingReviewService } from './training-review.service';
 import {
   parseCreateTrainingProjectInput,
+  parseBulkTrainingProjectAssignmentsInput,
+  parseTrainingAssignmentUsersQuery,
+  parseTrainingProjectAccessModeInput,
   parseTrainingAvailabilityInput,
   parseReviewTrainingAttemptInput,
   parseUpdateTrainingProjectDraftInput,
@@ -21,6 +25,7 @@ import {
 export class TrainingAdminController {
   constructor(
     private readonly projects: TrainingProjectService,
+    private readonly projectAccess: TrainingProjectAccessService,
     private readonly attempts: TrainingAttemptService,
     private readonly reviews: TrainingReviewService,
   ) {}
@@ -43,23 +48,61 @@ export class TrainingAdminController {
     return this.projects.getAdminProject(parseUuid(projectId, 'projectId'));
   }
 
+  @Get('projects/:projectId/assignment-users')
+  @RequirePermissions('training:projects:manage')
+  async listAssignmentUsers(
+    @Param('projectId') projectId: string,
+    @Query() query: Record<string, string | undefined>,
+  ) {
+    return this.projectAccess.listAssignmentUsers(
+      parseUuid(projectId, 'projectId'),
+      parseTrainingAssignmentUsersQuery(query),
+    );
+  }
+
+  @Post('projects/:projectId/assignments/bulk')
+  @RequirePermissions('training:projects:manage')
+  async bulkAssignments(
+    @Param('projectId') projectId: string,
+    @Body() body: Record<string, unknown>,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.projectAccess.bulkAssignments(
+      parseUuid(projectId, 'projectId'),
+      actor.id,
+      parseBulkTrainingProjectAssignmentsInput(body),
+    );
+  }
+
   @Patch('projects/:projectId')
   @RequirePermissions('training:projects:manage')
   async updateProject(
     @Param('projectId') projectId: string,
     @Body() body: Record<string, unknown>,
+    @CurrentUser() actor: AuthenticatedUser,
   ) {
     const parsedProjectId = parseUuid(projectId, 'projectId');
 
-    return Object.prototype.hasOwnProperty.call(body, 'isOpen')
-      ? this.projects.setAvailability(
-          parsedProjectId,
-          parseTrainingAvailabilityInput(body).isOpen,
-        )
-      : this.projects.updateDraft(
-          parsedProjectId,
-          parseUpdateTrainingProjectDraftInput(body),
-        );
+    if (Object.prototype.hasOwnProperty.call(body, 'isOpen')) {
+      return this.projects.setAvailability(
+        parsedProjectId,
+        parseTrainingAvailabilityInput(body).isOpen,
+      );
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(body, 'accessMode') &&
+      Object.keys(body).length === 1
+    ) {
+      const { accessMode } = parseTrainingProjectAccessModeInput(body);
+      await this.projectAccess.setAccessMode(parsedProjectId, actor.id, accessMode);
+      return this.projects.getAdminProject(parsedProjectId);
+    }
+
+    return this.projects.updateDraft(
+      parsedProjectId,
+      parseUpdateTrainingProjectDraftInput(body),
+      actor.id,
+    );
   }
 
   @Post('projects/:projectId/publish')

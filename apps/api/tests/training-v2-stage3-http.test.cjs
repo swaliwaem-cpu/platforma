@@ -257,6 +257,7 @@ if (!databaseUrl) {
       timeLimitMinutes: 7,
       passScore: 75,
       allowRetakeAfterPass: true,
+      accessMode: 'ALL_PARTICIPANTS',
       mainQuestion: `${title}: главный вопрос`,
       followUpQuestions: Array.from(
         { length: 10 },
@@ -383,6 +384,7 @@ if (!databaseUrl) {
     await prisma.trainingAttempt.deleteMany();
     await prisma.trainingTelegramLinkToken.deleteMany();
     await prisma.trainingTelegramAccount.deleteMany();
+    await prisma.trainingProjectAssignment.deleteMany();
     await prisma.trainingFact.deleteMany();
     await prisma.trainingCriterion.deleteMany();
     await prisma.trainingQuestion.deleteMany();

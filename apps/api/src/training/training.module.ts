@@ -33,6 +33,7 @@ import {
   TRAINING_MATERIAL_SUGGESTER,
 } from './training-material-suggester';
 import { TrainingProjectService } from './training-project.service';
+import { TrainingProjectAccessService } from './training-project-access.service';
 import { TrainingReviewService } from './training-review.service';
 import {
   FakeTrainingTelegramClient,
@@ -60,6 +61,7 @@ import { TrainingUrlExtractor } from './training-url-extractor';
   ],
   providers: [
     TrainingProjectService,
+    TrainingProjectAccessService,
     TrainingAttemptService,
     TrainingAttemptStateService,
     TrainingReviewService,

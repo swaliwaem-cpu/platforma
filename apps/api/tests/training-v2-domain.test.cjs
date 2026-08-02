@@ -186,6 +186,7 @@ test('employee attempt service exposes only the current question and safe result
   const service = new TrainingAttemptService(
     { trainingAttempt: { findFirst: async () => attempt } },
     { finalizeAttemptIfExpired: async () => false },
+    { assertParticipant: async () => undefined },
   );
   const serialized = await service.getEmployeeAttempt(attempt.id, attempt.userId);
   const json = JSON.stringify(serialized);

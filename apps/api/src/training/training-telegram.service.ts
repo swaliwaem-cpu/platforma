@@ -14,7 +14,6 @@ import {
   TrainingAnswerProcessingStatus,
   TrainingAttemptQuestionStatus,
   TrainingAttemptStatus,
-  UserStatus,
 } from '@prisma/client';
 import type {
   TrainingTelegramAccountState,
@@ -23,7 +22,7 @@ import type {
 
 import { PrismaService } from '../prisma/prisma.service';
 import { TrainingAttemptStateService } from './training-attempt-state.service';
-import { TrainingAttemptService } from './training-attempt.service';
+import { TrainingProjectAccessService } from './training-project-access.service';
 import {
   getTrainingTelegramTransportMode,
   TRAINING_TELEGRAM_CLIENT,
@@ -67,7 +66,7 @@ export class TrainingTelegramService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly attemptState: TrainingAttemptStateService,
-    private readonly attempts: TrainingAttemptService,
+    private readonly projectAccess: TrainingProjectAccessService,
     @Inject(TRAINING_TELEGRAM_CLIENT) private readonly client: TrainingTelegramClient,
   ) {}
 
@@ -127,24 +126,23 @@ export class TrainingTelegramService {
     userId: string,
     projectId: string,
   ): Promise<TrainingTelegramLinkResponse> {
-    const projects = await this.attempts.listEmployeeProjects(userId);
-    const project = projects.items.find((item) => item.id === projectId);
-
-    if (!project) {
-      throw new NotFoundException('Training project not found');
-    }
-
-    if (!project.canStart && !project.activeAttempt) {
-      throw new ConflictException('Training project is not available');
-    }
-
     const rawToken = randomBytes(32).toString('base64url');
     const tokenHash = hashTrainingTelegramLinkToken(rawToken);
-    const now = await this.getDatabaseNow();
-    const expiresAt = new Date(now.getTime() + TELEGRAM_LINK_TTL_MS);
+    const expiresAt = await this.prisma.$transaction(async (transaction) => {
+      await transaction.$queryRaw(
+        Prisma.sql`SELECT "id" FROM "users" WHERE "id" = CAST(${userId} AS uuid) FOR SHARE`,
+      );
+      await transaction.$queryRaw(
+        Prisma.sql`SELECT "id" FROM "training_projects" WHERE "id" = CAST(${projectId} AS uuid) FOR SHARE`,
+      );
+      await this.projectAccess.assertNewAttemptAccess(projectId, userId, transaction);
+      const now = await getTransactionNow(transaction);
+      const tokenExpiresAt = new Date(now.getTime() + TELEGRAM_LINK_TTL_MS);
+      await transaction.trainingTelegramLinkToken.create({
+        data: { userId, projectId, tokenHash, expiresAt: tokenExpiresAt },
+      });
 
-    await this.prisma.trainingTelegramLinkToken.create({
-      data: { userId, projectId, tokenHash, expiresAt },
+      return tokenExpiresAt;
     });
 
     const username = getTelegramBotUsername();
@@ -311,6 +309,7 @@ export class TrainingTelegramService {
         !(
           error instanceof BadRequestException ||
           error instanceof ConflictException ||
+          error instanceof ForbiddenException ||
           error instanceof NotFoundException
         )
       ) {
@@ -512,20 +511,6 @@ export class TrainingTelegramService {
           where: { tokenHash },
           include: {
             project: { select: { title: true } },
-            user: {
-              select: {
-                id: true,
-                status: true,
-                deletedAt: true,
-                role: {
-                  select: {
-                    permissions: {
-                      select: { permission: { select: { key: true } } },
-                    },
-                  },
-                },
-              },
-            },
           },
         });
         const now = await getTransactionNow(transaction);
@@ -539,15 +524,11 @@ export class TrainingTelegramService {
           throw new ConflictException('Ссылка недействительна, истекла или уже использована.');
         }
 
-        if (
-          token.user.status !== UserStatus.ACTIVE ||
-          token.user.deletedAt !== null ||
-          !token.user.role.permissions.some(
-            (rolePermission) => rolePermission.permission.key === 'training:participate',
-          )
-        ) {
-          throw new ForbiddenException('Пользователь больше не имеет доступа к обучению.');
-        }
+        await this.projectAccess.assertNewAttemptAccess(
+          token.projectId,
+          token.userId,
+          transaction,
+        );
 
         const activeAccounts = await transaction.trainingTelegramAccount.findMany({
           where: {
@@ -717,6 +698,13 @@ export class TrainingTelegramService {
 
     if (!account) return null;
 
+    try {
+      await this.projectAccess.assertParticipant(account.userId);
+    } catch (error) {
+      if (error instanceof ForbiddenException) return null;
+      throw error;
+    }
+
     await this.attemptState.finalizeExpiredForUser(account.userId);
     const selectedToken = await this.prisma.trainingTelegramLinkToken.findFirst({
       where: { userId: account.userId, usedAt: { not: null } },
@@ -747,14 +735,6 @@ export class TrainingTelegramService {
     });
   }
 
-  private async getDatabaseNow() {
-    const [row] = await this.prisma.$queryRaw<Array<{ now: Date }>>(
-      Prisma.sql`SELECT CURRENT_TIMESTAMP AS "now"`,
-    );
-
-    if (!row) throw new Error('Database timestamp unavailable');
-    return row.now;
-  }
 }
 
 export function hashTrainingTelegramLinkToken(rawToken: string) {

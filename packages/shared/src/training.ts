@@ -1,4 +1,5 @@
 export type TrainingProjectStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
+export type TrainingProjectAccessMode = 'ALL_PARTICIPANTS' | 'ASSIGNED_USERS';
 export type TrainingQuestionType = 'MAIN' | 'FOLLOW_UP';
 export type TrainingAttemptStatus =
   | 'IN_PROGRESS'
@@ -105,6 +106,8 @@ export type TrainingAdminProjectSummary = {
   id: string;
   title: string;
   status: TrainingProjectStatus;
+  accessMode: TrainingProjectAccessMode;
+  activeAssignments: number;
   isOpen: boolean;
   sortOrder: number;
   attemptLimit: number;
@@ -126,6 +129,8 @@ export type TrainingAdminProject = {
   title: string;
   description: string | null;
   status: TrainingProjectStatus;
+  accessMode: TrainingProjectAccessMode;
+  activeAssignments: number;
   isOpen: boolean;
   sortOrder: number;
   attemptLimit: number;
@@ -151,6 +156,7 @@ export type CreateTrainingProjectRequest = {
   timeLimitMinutes?: number;
   passScore?: number;
   allowRetakeAfterPass: boolean;
+  accessMode?: TrainingProjectAccessMode;
 };
 
 export type UpdateTrainingProjectRequest = Required<CreateTrainingProjectRequest> & {
@@ -162,6 +168,43 @@ export type UpdateTrainingProjectRequest = Required<CreateTrainingProjectRequest
 
 export type UpdateTrainingProjectAvailabilityRequest = {
   isOpen: boolean;
+};
+
+export type UpdateTrainingProjectAccessModeRequest = {
+  accessMode: TrainingProjectAccessMode;
+};
+
+export type TrainingProjectAssignmentFilter = 'all' | 'yes' | 'no';
+
+export type TrainingProjectAssignmentUser = {
+  userId: string;
+  name: string;
+  email: string;
+  status: 'ACTIVE' | 'BLOCKED' | 'INVITED' | 'DEACTIVATED';
+  canParticipate: boolean;
+  isAssigned: boolean;
+  assignedAt: string | null;
+};
+
+export type TrainingProjectAssignmentUsersResponse = {
+  items: TrainingProjectAssignmentUser[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+  activeAssignments: number;
+};
+
+export type BulkTrainingProjectAssignmentsRequest = {
+  action: 'ASSIGN' | 'REVOKE';
+  userIds: readonly string[];
+};
+
+export type BulkTrainingProjectAssignmentsResponse = {
+  assigned: number;
+  revoked: number;
+  unchanged: number;
+  activeAssignments: number;
 };
 
 export type TrainingMaterialType = 'PDF' | 'OFFICIAL_URL' | 'MANUAL_TEXT' | 'OBJECT_SNAPSHOT';
@@ -288,6 +331,7 @@ export type TrainingEmployeeProject = {
   attemptsLeft: number;
   eligibility: TrainingProjectEligibility;
   canStart: boolean;
+  newAttemptAccessRevoked: boolean;
   activeAttempt: { id: string; expiresAt: string } | null;
   bestConfirmedScore: number | null;
   bestConfirmedStatus: TrainingConfirmedStatus | null;
