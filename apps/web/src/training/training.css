@@ -375,6 +375,139 @@
   padding: 28px;
 }
 
+.training-question-draft,
+.training-facts-editor,
+.training-criteria-editor,
+.training-fact-row,
+.training-criterion-row,
+.training-review-panel form,
+.training-evaluation-summary,
+.training-evaluation-grid section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.training-question-draft,
+.training-facts-editor,
+.training-criteria-editor,
+.training-review-panel,
+.training-evaluation-grid section,
+.training-evaluation-summary {
+  padding: 18px;
+  border: 1px solid var(--catalog-border);
+  border-radius: var(--catalog-radius-md);
+  background: var(--catalog-panel-soft);
+}
+
+.training-facts-editor,
+.training-criteria-editor {
+  min-width: 0;
+}
+
+.training-subsection-heading,
+.training-review-decisions,
+.training-inline-check {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.training-subsection-heading {
+  justify-content: space-between;
+}
+
+.training-subsection-heading legend,
+.training-review-decisions legend {
+  font-weight: 700;
+}
+
+.training-total--valid {
+  color: var(--catalog-forest-deep);
+}
+
+.training-total--invalid,
+.training-validation-note {
+  color: var(--catalog-danger);
+}
+
+.training-fact-row,
+.training-criterion-row {
+  padding: 16px;
+  border: 1px solid var(--catalog-border-soft);
+  border-radius: var(--catalog-radius-md);
+  background: var(--catalog-panel);
+}
+
+.training-criterion-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.training-criterion-row > :nth-child(4),
+.training-criterion-row > :last-child {
+  grid-column: 1 / -1;
+}
+
+.training-review-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(320px, 1.2fr);
+  gap: 24px;
+}
+
+.training-review-decisions {
+  min-height: 44px;
+  padding: 10px 0;
+  border: 0;
+  flex-wrap: wrap;
+}
+
+.training-review-decisions label {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.training-evaluation-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.training-evaluation-grid h4,
+.training-evaluation-summary h4,
+.training-evaluation-grid ul,
+.training-evaluation-summary ul,
+.training-evaluation-summary p {
+  margin: 0;
+}
+
+.training-evaluation-grid ul,
+.training-evaluation-summary ul {
+  display: flex;
+  padding: 0;
+  flex-direction: column;
+  gap: 10px;
+  list-style: none;
+}
+
+.training-evaluation-grid li,
+.training-evaluation-summary li {
+  display: grid;
+  gap: 4px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--catalog-border-soft);
+}
+
+.training-evaluation-grid q,
+.training-evaluation-summary q,
+.training-evaluation-grid small {
+  color: var(--catalog-ink-700);
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 820px) {
   .training-page {
     padding: 22px 18px;
@@ -382,7 +515,10 @@
 
   .training-card-grid,
   .training-form-grid,
-  .training-metrics--wide {
+  .training-metrics--wide,
+  .training-criterion-row,
+  .training-review-panel,
+  .training-evaluation-grid {
     grid-template-columns: 1fr;
   }
 

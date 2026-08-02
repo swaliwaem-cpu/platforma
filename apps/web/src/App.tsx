@@ -393,6 +393,7 @@ function AppRoutes() {
                 <TrainingAdminRoutes
                   canManageProjects={hasPermission('training:projects:manage')}
                   canReadResults={hasPermission('training:results:read')}
+                  canReviewResults={hasPermission('training:results:review')}
                   navigate={navigate}
                   pathname={pathname}
                 />

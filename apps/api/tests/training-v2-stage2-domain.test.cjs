@@ -131,8 +131,17 @@ test('one voice segment is still normalized and fake transcription is determinis
 
   assert.equal(args.includes('-vn'), true);
   assert.equal(args.includes('-filter_complex'), false);
-  assert.equal(await transcriber.transcribe(metadata), '[fake:pass]');
-  assert.equal(await transcriber.transcribe(metadata), '[fake:pass]');
+  const first = await transcriber.transcribe(metadata);
+  const second = await transcriber.transcribe(metadata);
+  assert.deepEqual(first, second);
+  assert.deepEqual(first, {
+    text: '[fake:pass]',
+    model: 'deterministic-fake-transcriber',
+    requestId: null,
+    latencyMs: 0,
+    attempts: 1,
+    usage: null,
+  });
 });
 
 test('ffmpeg runner enforces timeout without shell interpolation', async () => {

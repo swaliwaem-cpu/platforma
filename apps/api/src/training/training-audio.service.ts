@@ -114,13 +114,7 @@ export class TrainingAudioService {
 
     if (answer.mergedAudioFile) {
       this.assertPrivateFile(answer.mergedAudioFile, bucket, 'audio/wav');
-
-      return {
-        answerId,
-        fileId: answer.mergedAudioFile.id,
-        mimeType: 'audio/wav' as const,
-        sizeBytes: Number(answer.mergedAudioFile.sizeBytes ?? 0n),
-      };
+      return this.loadVerifiedMergedAudio(answerId, answer.mergedAudioFile, bucket);
     }
 
     const totalDuration = answer.segments.reduce(
@@ -192,12 +186,7 @@ export class TrainingAudioService {
         checksum,
       );
 
-      return {
-        answerId,
-        fileId: file.id,
-        mimeType: 'audio/wav' as const,
-        sizeBytes: outputStats.size,
-      };
+      return this.loadVerifiedMergedAudio(answerId, file, bucket);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -377,6 +366,53 @@ export class TrainingAudioService {
     }
 
     return bucket;
+  }
+
+  private async loadVerifiedMergedAudio(
+    answerId: string,
+    file: {
+      id: string;
+      bucket: string | null;
+      key: string;
+      url: string | null;
+      mimeType: string | null;
+      sizeBytes: bigint | null;
+      checksum: string | null;
+    },
+    bucket: string,
+  ) {
+    this.assertPrivateFile(file, bucket, 'audio/wav');
+    const body = await this.storage.getObject(file.key, bucket);
+    const sizeBytes = Number(file.sizeBytes ?? -1n);
+    const checksum = createHash('sha256').update(body).digest('hex');
+
+    if (
+      sizeBytes !== body.length ||
+      body.length <= 44 ||
+      body.length > 64 * 1024 * 1024 ||
+      !file.checksum ||
+      checksum !== file.checksum ||
+      body.toString('ascii', 0, 4) !== 'RIFF' ||
+      body.toString('ascii', 8, 12) !== 'WAVE'
+    ) {
+      throw new TrainingAudioError('MERGED_WAV_INTEGRITY_FAILED', false);
+    }
+
+    const ownership = await this.prisma.trainingAnswer.count({
+      where: { id: answerId, mergedAudioFileId: file.id },
+    });
+
+    if (ownership !== 1) throw new TrainingAudioError('MERGED_WAV_OWNERSHIP_FAILED', false);
+
+    return {
+      answerId,
+      fileId: file.id,
+      mimeType: 'audio/wav' as const,
+      sizeBytes,
+      checksum,
+      wav: body,
+      vocabularyPrompt: '',
+    };
   }
 
   private assertPrivateFile(

@@ -170,8 +170,8 @@ export function TrainingAttemptPage({ attemptId, navigate }: TrainingAttemptPage
   }
 
   const resultLabel = attempt.result
-    ? attempt.status === 'REQUIRES_REVIEW'
-      ? getTrainingResultLabel('REQUIRES_REVIEW')
+    ? attempt.status === 'REQUIRES_REVIEW' || attempt.status === 'TECHNICAL_FAILED'
+      ? trainingAttemptStatusLabels[attempt.status]
       : getTrainingResultLabel(null, attempt.result.isPassed)
     : trainingAttemptStatusLabels[attempt.status];
 
@@ -236,8 +236,10 @@ export function TrainingAttemptPage({ attemptId, navigate }: TrainingAttemptPage
             <strong>{attempt.result.finalScore ?? '—'}</strong><span>из 100</span>
           </div>
           <h3>{resultLabel}</h3>
-          {attempt.status === 'REQUIRES_REVIEW' ? (
-            <p className="muted-text">Результат сохранён отдельно и пока не считается подтверждённым.</p>
+          {attempt.result.message ? (
+            <p className="muted-text">{attempt.result.message}</p>
+          ) : attempt.status === 'REQUIRES_REVIEW' ? (
+            <p className="muted-text">Предварительный балл скрыт до решения проверяющего.</p>
           ) : attempt.status === 'TIMED_OUT' ? (
             <p className="muted-text">Пропущенные вопросы получили 0 баллов; неполная попытка не может быть пройдена.</p>
           ) : null}

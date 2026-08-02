@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import {
   Prisma,
+  TrainingAiStepStatus,
   TrainingAnswerProcessingStatus,
   TrainingAnswerSource,
   TrainingAttemptCompletionReason,
@@ -15,11 +16,13 @@ import {
   TrainingFakeOutcome,
   TrainingProjectStatus,
   TrainingQuestionType,
+  TrainingReviewStatus,
 } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
 import {
   clampTrainingTotalScore,
+  evaluateLegacyTrainingText,
   TRAINING_FOLLOW_UP_MAX_SCORE,
   TRAINING_EVALUATOR,
   TRAINING_MAIN_MAX_SCORE,
@@ -29,8 +32,12 @@ import { TrainingFollowUpSelector } from './training-follow-up-selector';
 import {
   hasTrainingSnapshotQuestionStructure,
   parseTrainingProjectSnapshot,
+  TRAINING_EVALUATION_SCHEMA_VERSION,
+  TRAINING_LEGACY_SNAPSHOT_SCHEMA_VERSION,
+  TRAINING_SCORING_VERSION,
   TRAINING_SNAPSHOT_SCHEMA_VERSION,
   TrainingProjectSnapshot,
+  TrainingProjectSnapshotV2,
 } from './training-snapshot';
 
 export type StartTrainingAttemptInput = {
@@ -136,9 +143,20 @@ export class TrainingAttemptStateService {
       const project = await transaction.trainingProject.findUnique({
         where: { id: projectId },
         include: {
+          realEstateObject: { select: { title: true } },
           questions: {
             where: { isActive: true },
+            include: {
+              facts: {
+                where: { isActive: true },
+                orderBy: [{ position: 'asc' }, { id: 'asc' }],
+              },
+            },
             orderBy: [{ type: 'asc' }, { position: 'asc' }],
+          },
+          criteria: {
+            where: { isActive: true },
+            orderBy: [{ questionType: 'asc' }, { position: 'asc' }, { id: 'asc' }],
           },
         },
       });
@@ -187,7 +205,7 @@ export class TrainingAttemptStateService {
       }
 
       const attemptsUsed = await transaction.trainingAttempt.count({
-        where: { userId, projectId },
+        where: { userId, projectId, countsTowardAttemptLimit: true },
       });
 
       if (attemptsUsed >= project.attemptLimit) {
@@ -546,6 +564,150 @@ export class TrainingAttemptStateService {
     });
   }
 
+  async completeEvaluatedTelegramVoiceAnswer(answerId: string, workerId: string) {
+    const answerRef = await this.prisma.trainingAnswer.findUnique({
+      where: { id: answerId },
+      select: { attemptQuestion: { select: { attemptId: true } } },
+    });
+
+    if (!answerRef) return { status: 'STALE' as const, attemptId: null };
+
+    return this.prisma.$transaction(async (transaction) => {
+      const attemptId = answerRef.attemptQuestion.attemptId;
+      const locked = await this.lockAttempt(transaction, attemptId);
+
+      if (!locked) return { status: 'STALE' as const, attemptId: null };
+      const now = await this.getDatabaseNow(transaction);
+
+      if (await this.finalizeTimeoutIfNeeded(transaction, attemptId, now)) {
+        return { status: 'TIMED_OUT' as const, attemptId };
+      }
+
+      const attempt = await transaction.trainingAttempt.findUniqueOrThrow({
+        where: { id: attemptId },
+        include: {
+          questions: {
+            include: { answer: true },
+            orderBy: { sequence: 'asc' },
+          },
+        },
+      });
+      const currentQuestion = attempt.questions.find(
+        (question) => question.status === TrainingAttemptQuestionStatus.PRESENTED,
+      );
+      const answer = currentQuestion?.answer;
+
+      if (
+        !currentQuestion ||
+        !answer ||
+        answer.id !== answerId ||
+        answer.source !== TrainingAnswerSource.TELEGRAM ||
+        answer.processingStatus !== TrainingAnswerProcessingStatus.PROCESSING ||
+        answer.processingLockedBy !== workerId ||
+        answer.transcriptionStatus !== TrainingAiStepStatus.COMPLETED ||
+        answer.evaluationStatus !== TrainingAiStepStatus.COMPLETED ||
+        answer.text === null ||
+        answer.score === null ||
+        answer.mergedAudioFileId === null ||
+        answer.safeBreakdownJson === null ||
+        answer.fakeOutcome === null ||
+        answer.evaluationJson === null
+      ) {
+        return { status: 'STALE' as const, attemptId };
+      }
+
+      await transaction.trainingAnswer.update({
+        where: { id: answer.id },
+        data: {
+          processingStatus: TrainingAnswerProcessingStatus.COMPLETED,
+          processingLockedAt: null,
+          processingLockedBy: null,
+          processingErrorCode: null,
+        },
+      });
+      await transaction.trainingAttemptQuestion.update({
+        where: { id: currentQuestion.id },
+        data: { status: TrainingAttemptQuestionStatus.ANSWERED, answeredAt: now },
+      });
+
+      if (currentQuestion.sequence === 1) {
+        await this.createFollowUpQuestions(transaction, attempt, now);
+      }
+
+      await this.completeIfReady(transaction, attempt.id, now);
+      return { status: 'COMPLETED' as const, attemptId };
+    });
+  }
+
+  async failTelegramVoiceAttempt(
+    answerId: string,
+    errorCode: string,
+    failedStep: 'transcription' | 'evaluation' | 'processing',
+    workerId?: string,
+    providerAttempts = 0,
+  ) {
+    const answerRef = await this.prisma.trainingAnswer.findUnique({
+      where: { id: answerId },
+      select: { attemptQuestion: { select: { attemptId: true } } },
+    });
+
+    if (!answerRef) return false;
+
+    return this.prisma.$transaction(async (transaction) => {
+      const attemptId = answerRef.attemptQuestion.attemptId;
+      const locked = await this.lockAttempt(transaction, attemptId);
+
+      if (!locked) return false;
+      const attempt = await transaction.trainingAttempt.findUnique({
+        where: { id: attemptId },
+        select: { status: true },
+      });
+
+      if (!attempt || attempt.status !== TrainingAttemptStatus.IN_PROGRESS) return false;
+      const now = await this.getDatabaseNow(transaction);
+      const failed = await transaction.trainingAnswer.updateMany({
+        where: {
+          id: answerId,
+          processingStatus: TrainingAnswerProcessingStatus.PROCESSING,
+          ...(workerId ? { processingLockedBy: workerId } : {}),
+        },
+        data: {
+          processingStatus: TrainingAnswerProcessingStatus.FAILED,
+          processingLockedAt: null,
+          processingLockedBy: null,
+          processingErrorCode: errorCode.slice(0, 64),
+          ...(failedStep === 'transcription'
+            ? {
+                transcriptionStatus: TrainingAiStepStatus.FAILED,
+                transcriptionAttempts: { increment: providerAttempts },
+              }
+            : failedStep === 'evaluation'
+              ? {
+                  evaluationStatus: TrainingAiStepStatus.FAILED,
+                  evaluationAttempts: { increment: providerAttempts },
+                }
+              : {}),
+        },
+      });
+
+      if (failed.count !== 1) return false;
+      await transaction.trainingAttempt.update({
+        where: { id: attemptId },
+        data: {
+          status: TrainingAttemptStatus.TECHNICAL_FAILED,
+          completionReason: TrainingAttemptCompletionReason.TECHNICAL_FAILURE,
+          completedAt: now,
+          calculatedScore: null,
+          finalScore: null,
+          isPassed: false,
+          countsTowardAttemptLimit: false,
+        },
+      });
+
+      return true;
+    });
+  }
+
   async finalizeAttemptIfExpired(attemptId: string, userId?: string) {
     return this.prisma.$transaction(async (transaction) => {
       const locked = await this.lockAttempt(transaction, attemptId, userId);
@@ -592,7 +754,7 @@ export class TrainingAttemptStateService {
     now: Date,
     existingAnswerId?: string,
   ) {
-    const evaluation = this.evaluator.evaluate(text, currentQuestion.maxScore);
+    const evaluation = evaluateLegacyTrainingText(text, currentQuestion.maxScore);
     const evaluationData = {
       text,
       score: evaluation.score,
@@ -601,6 +763,8 @@ export class TrainingAttemptStateService {
           ? TrainingFakeOutcome.REQUIRES_REVIEW
           : TrainingFakeOutcome.SCORED,
       safeBreakdownJson: evaluation.safeBreakdown,
+      transcriptionStatus: TrainingAiStepStatus.COMPLETED,
+      evaluationStatus: TrainingAiStepStatus.COMPLETED,
     };
 
     if (existingAnswerId) {
@@ -709,6 +873,10 @@ export class TrainingAttemptStateService {
           status: TrainingAttemptStatus.REQUIRES_REVIEW,
           completionReason: TrainingAttemptCompletionReason.COMPLETED,
           completedAt: now,
+          calculatedScore: clampTrainingTotalScore(
+            questions.reduce((total, question) => total + (question.answer?.score ?? 0), 0),
+          ),
+          reviewStatus: TrainingReviewStatus.PENDING,
           finalScore: null,
           isPassed: null,
         },
@@ -725,6 +893,7 @@ export class TrainingAttemptStateService {
         status: TrainingAttemptStatus.COMPLETED,
         completionReason: TrainingAttemptCompletionReason.COMPLETED,
         completedAt: now,
+        calculatedScore: finalScore,
         finalScore,
         isPassed: finalScore >= snapshot.settings.passScore,
       },
@@ -755,7 +924,13 @@ export class TrainingAttemptStateService {
 
     const finalScore = clampTrainingTotalScore(
       attempt.questions.reduce(
-        (total, question) => total + (question.answer?.score ?? 0),
+        (total, question) =>
+          total + (
+            question.status === TrainingAttemptQuestionStatus.ANSWERED &&
+            question.answer?.processingStatus === TrainingAnswerProcessingStatus.COMPLETED
+              ? question.answer.score ?? 0
+              : 0
+          ),
         0,
       ),
     );
@@ -790,6 +965,7 @@ export class TrainingAttemptStateService {
         status: TrainingAttemptStatus.TIMED_OUT,
         completionReason: TrainingAttemptCompletionReason.TIMEOUT,
         completedAt: now,
+        calculatedScore: finalScore,
         finalScore,
         isPassed: false,
       },
@@ -800,6 +976,8 @@ export class TrainingAttemptStateService {
 
   private createSnapshot(project: {
     title: string;
+    contentSchemaVersion: number;
+    realEstateObject: { title: string } | null;
     attemptLimit: number;
     timeLimitSeconds: number;
     passScore: number;
@@ -808,6 +986,22 @@ export class TrainingAttemptStateService {
       id: string;
       type: TrainingQuestionType;
       text: string;
+      position: number;
+      facts: Array<{
+        id: string;
+        statement: string;
+        aliasesJson: Prisma.JsonValue;
+        isRequired: boolean;
+        position: number;
+      }>;
+    }>;
+    criteria: Array<{
+      id: string;
+      questionType: TrainingQuestionType;
+      code: string;
+      title: string;
+      guidance: string;
+      maxPoints: number;
       position: number;
     }>;
   }): TrainingProjectSnapshot {
@@ -820,8 +1014,7 @@ export class TrainingAttemptStateService {
       throw new BadRequestException('Training project must contain 1+10 active questions');
     }
 
-    return {
-      schemaVersion: TRAINING_SNAPSHOT_SCHEMA_VERSION,
+    const common = {
       projectTitle: project.title,
       settings: {
         attemptLimit: project.attemptLimit,
@@ -840,6 +1033,68 @@ export class TrainingAttemptStateService {
           position: question.position,
         })),
     };
+
+    if (project.contentSchemaVersion === TRAINING_LEGACY_SNAPSHOT_SCHEMA_VERSION) {
+      return {
+        schemaVersion: TRAINING_LEGACY_SNAPSHOT_SCHEMA_VERSION,
+        ...common,
+      };
+    }
+
+    if (project.contentSchemaVersion !== TRAINING_SNAPSHOT_SCHEMA_VERSION) {
+      throw new BadRequestException('Unsupported training project content version');
+    }
+
+    const criteriaFor = (type: TrainingQuestionType) =>
+      project.criteria
+        .filter((criterion) => criterion.questionType === type)
+        .map((criterion) => ({
+          id: criterion.id,
+          code: criterion.code,
+          title: criterion.title,
+          guidance: criterion.guidance,
+          maxPoints: criterion.maxPoints,
+          position: criterion.position,
+        }));
+    const snapshot: TrainingProjectSnapshotV2 = {
+      schemaVersion: TRAINING_SNAPSHOT_SCHEMA_VERSION,
+      projectTitle: common.projectTitle,
+      relatedObjectTitle: project.realEstateObject?.title ?? null,
+      settings: common.settings,
+      scoringVersion: TRAINING_SCORING_VERSION,
+      evaluationSchemaVersion: TRAINING_EVALUATION_SCHEMA_VERSION,
+      criteria: {
+        main: criteriaFor(TrainingQuestionType.MAIN),
+        followUp: criteriaFor(TrainingQuestionType.FOLLOW_UP),
+      },
+      questions: [...main, ...followUps]
+        .sort((left, right) =>
+          left.type === right.type
+            ? left.position - right.position
+            : left.type === TrainingQuestionType.MAIN
+              ? -1
+              : 1,
+        )
+        .map((question) => ({
+          sourceQuestionId: question.id,
+          type: question.type,
+          text: question.text,
+          position: question.position,
+          facts: question.facts.map((fact) => ({
+            id: fact.id,
+            statement: fact.statement,
+            aliases: parseSnapshotAliases(fact.aliasesJson),
+            required: fact.isRequired,
+            position: fact.position,
+          })),
+        })),
+    };
+
+    try {
+      return parseTrainingProjectSnapshot(snapshot);
+    } catch {
+      throw new BadRequestException('Training Stage 3 facts and criteria are invalid');
+    }
   }
 
   private async lockUser(transaction: Prisma.TransactionClient, userId: string) {
@@ -885,4 +1140,12 @@ export class TrainingAttemptStateService {
 
     return row.now;
   }
+}
+
+function parseSnapshotAliases(value: Prisma.JsonValue) {
+  if (!Array.isArray(value) || value.some((alias) => typeof alias !== 'string')) {
+    throw new BadRequestException('Training fact aliases are invalid');
+  }
+
+  return value as string[];
 }

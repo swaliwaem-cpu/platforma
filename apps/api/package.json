@@ -10,7 +10,8 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "start": "node --env-file-if-exists=.env dist/main.js",
-    "test": "pnpm build && node --test tests/*.test.cjs"
+    "test": "pnpm build && node tests/run-tests.cjs",
+    "test:training:openai:smoke": "pnpm build && node tests/training-v2-openai-smoke.cjs"
   },
   "dependencies": {
     "@nestjs/common": "11.1.19",

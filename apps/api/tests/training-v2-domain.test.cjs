@@ -12,7 +12,7 @@ const { BadRequestException } = require('@nestjs/common');
 
 const {
   clampTrainingTotalScore,
-  DeterministicFakeTrainingEvaluator,
+  evaluateLegacyTrainingText,
 } = require('../dist/training/training-evaluator.js');
 const {
   TrainingFollowUpSelector,
@@ -34,12 +34,17 @@ test('publication validation requires exactly one main and ten follow-ups', () =
     timeLimitSeconds: 420,
     passScore: 75,
     questions: [
-      { type: TrainingQuestionType.MAIN, isActive: true, text: 'Главный вопрос' },
+      { type: TrainingQuestionType.MAIN, isActive: true, text: 'Главный вопрос', facts: [{ isActive: true }] },
       ...Array.from({ length: 10 }, (_, index) => ({
         type: TrainingQuestionType.FOLLOW_UP,
         isActive: true,
         text: `Дополнительный вопрос ${index + 1}`,
+        facts: [{ isActive: true }],
       })),
+    ],
+    criteria: [
+      { questionType: TrainingQuestionType.MAIN, maxPoints: 55, isActive: true },
+      { questionType: TrainingQuestionType.FOLLOW_UP, maxPoints: 15, isActive: true },
     ],
   };
 
@@ -58,9 +63,7 @@ test('timer parsing stores positive whole UI minutes as seconds with 420 default
 });
 
 test('deterministic fake evaluator supports pass, fail, review and length contracts', () => {
-  const evaluator = new DeterministicFakeTrainingEvaluator();
-
-  assert.deepEqual(evaluator.evaluate('[fake:pass]', 15), {
+  assert.deepEqual(evaluateLegacyTrainingText('[fake:pass]', 15), {
     score: 15,
     outcome: 'SCORED',
     safeBreakdown: {
@@ -70,10 +73,10 @@ test('deterministic fake evaluator supports pass, fail, review and length contra
       maxScore: 15,
     },
   });
-  assert.equal(evaluator.evaluate('[fake:fail]', 55).score, 0);
-  assert.equal(evaluator.evaluate('[fake:review]', 55).outcome, 'REQUIRES_REVIEW');
-  assert.equal(evaluator.evaluate('1234567890', 15).score, 10);
-  assert.equal(evaluator.evaluate('x'.repeat(100), 15).score, 15);
+  assert.equal(evaluateLegacyTrainingText('[fake:fail]', 55).score, 0);
+  assert.equal(evaluateLegacyTrainingText('[fake:review]', 55).outcome, 'REQUIRES_REVIEW');
+  assert.equal(evaluateLegacyTrainingText('1234567890', 15).score, 10);
+  assert.equal(evaluateLegacyTrainingText('x'.repeat(100), 15).score, 15);
 });
 
 test('follow-up selector returns three unique candidates with injected randomness', () => {

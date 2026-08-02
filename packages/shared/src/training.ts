@@ -4,9 +4,16 @@ export type TrainingAttemptStatus =
   | 'IN_PROGRESS'
   | 'COMPLETED'
   | 'REQUIRES_REVIEW'
-  | 'TIMED_OUT';
-export type TrainingAttemptCompletionReason = 'COMPLETED' | 'TIMEOUT' | null;
+  | 'TIMED_OUT'
+  | 'TECHNICAL_FAILED';
+export type TrainingAttemptCompletionReason =
+  | 'COMPLETED'
+  | 'TIMEOUT'
+  | 'TECHNICAL_FAILURE'
+  | null;
 export type TrainingConfirmedStatus = 'PASSED' | 'FAILED';
+export type TrainingReviewStatus = 'NOT_REQUIRED' | 'PENDING' | 'RESOLVED';
+export type TrainingReviewDecision = 'APPROVED' | 'OVERRIDDEN' | null;
 export type TrainingEmployeeProjectStatus = TrainingConfirmedStatus | 'REQUIRES_REVIEW' | null;
 export type TrainingProjectEligibility =
   | 'ACTIVE_ATTEMPT'
@@ -15,11 +22,71 @@ export type TrainingProjectEligibility =
   | 'LIMIT_REACHED'
   | 'CLOSED';
 
-export type TrainingSafeBreakdown = {
+export type TrainingLegacySafeBreakdown = {
   version: string;
   basis: 'TEXT_LENGTH' | 'FAKE_PASS' | 'FAKE_FAIL' | 'FAKE_REVIEW';
   awardedScore: number;
   maxScore: number;
+};
+
+export type TrainingAiSafeBreakdown = {
+  version: 'training-v2-evaluation-v1';
+  basis: 'AI_CRITERIA';
+  criteriaPoints: number;
+  incorrectFactCount: number;
+  penaltyPoints: number;
+  awardedScore: number;
+  maxScore: number;
+};
+
+export type TrainingSafeBreakdown = TrainingLegacySafeBreakdown | TrainingAiSafeBreakdown;
+
+export type TrainingObjectiveMetrics = {
+  audioDurationSeconds: number;
+  segmentCount: number;
+  wordCount: number;
+  wordsPerMinute: number;
+  fillerWordsCount: number;
+  fillerWordsFound: string[];
+};
+
+export type TrainingStructuredEvaluation = {
+  schema_version: 'training-v2-evaluation-v1';
+  fact_assessments: Array<{
+    fact_id: string;
+    verdict: 'CORRECT' | 'PARTIAL' | 'MISSING' | 'INCORRECT';
+    evidence: string | null;
+    explanation: string;
+  }>;
+  criterion_assessments: Array<{
+    criterion_id: string;
+    awarded_points: number;
+    evidence: string | null;
+    explanation: string;
+  }>;
+  unsupported_claims: Array<{ claim: string; evidence: string }>;
+  summary: string;
+  requires_review: boolean;
+};
+
+export type TrainingFactDraft = {
+  id: string | null;
+  questionType: TrainingQuestionType;
+  questionPosition: number;
+  statement: string;
+  aliases: string[];
+  isRequired: boolean;
+  position: number;
+};
+
+export type TrainingCriterionDraft = {
+  id: string | null;
+  questionType: TrainingQuestionType;
+  code: string;
+  title: string;
+  guidance: string;
+  maxPoints: number;
+  position: number;
 };
 
 export type TrainingAdminProjectSummary = {
@@ -53,8 +120,12 @@ export type TrainingAdminProject = {
   timeLimitSeconds: number;
   passScore: number;
   allowRetakeAfterPass: boolean;
+  contentSchemaVersion: number;
   mainQuestion: string;
   followUpQuestions: string[];
+  facts: TrainingFactDraft[];
+  criteria: TrainingCriterionDraft[];
+  publicationErrors: string[];
   createdAt: string;
   updatedAt: string;
 };
@@ -73,6 +144,8 @@ export type CreateTrainingProjectRequest = {
 export type UpdateTrainingProjectRequest = Required<CreateTrainingProjectRequest> & {
   mainQuestion: string;
   followUpQuestions: string[];
+  facts: TrainingFactDraft[];
+  criteria: TrainingCriterionDraft[];
 };
 
 export type UpdateTrainingProjectAvailabilityRequest = {
@@ -144,6 +217,8 @@ export type TrainingEmployeeAttempt = {
       maxScore: number;
       details: TrainingSafeBreakdown;
     }>;
+    message: string | null;
+    attemptRefunded: boolean;
   } | null;
 };
 
@@ -194,6 +269,13 @@ export type TrainingAdminAttempt = TrainingAdminAttemptSummary & {
     };
   };
   completionReason: TrainingAttemptCompletionReason;
+  calculatedScore: number | null;
+  reviewStatus: TrainingReviewStatus;
+  reviewDecision: TrainingReviewDecision;
+  reviewedAt: string | null;
+  reviewComment: string | null;
+  reviewFinalScore: number | null;
+  countsTowardAttemptLimit: boolean;
   fakeEvaluationVersion: string;
   expiresAt: string;
   questions: Array<{
@@ -206,12 +288,49 @@ export type TrainingAdminAttempt = TrainingAdminAttemptSummary & {
     status: 'PRESENTED' | 'ANSWERED' | 'SKIPPED_TIMEOUT';
     presentedAt: string;
     answeredAt: string | null;
-    answer: {
-      text: string;
-      score: number;
-      fakeOutcome: 'SCORED' | 'REQUIRES_REVIEW';
-      safeBreakdown: TrainingSafeBreakdown;
-      submittedAt: string;
-    } | null;
+    facts: Array<{
+      id: string;
+      statement: string;
+      aliases: string[];
+      required: boolean;
+      position: number;
+    }>;
+    criteria: Array<{
+      id: string;
+      code: string;
+      title: string;
+      guidance: string;
+      maxPoints: number;
+      position: number;
+    }>;
+    answer: null | {
+      processingStatus: 'COLLECTING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+      text: string | null;
+      score: number | null;
+      safeBreakdown: TrainingSafeBreakdown | null;
+      submittedAt: string | null;
+      transcriptionModel: string | null;
+      evaluationModel: string | null;
+      evaluation: TrainingStructuredEvaluation | null;
+      objectiveMetrics: TrainingObjectiveMetrics | null;
+      technicalErrorCode: string | null;
+    };
   }>;
+};
+
+export type ReviewTrainingAttemptRequest = {
+  decision: 'APPROVE' | 'OVERRIDE';
+  finalScore?: number | null;
+  comment?: string | null;
+};
+
+export type ReviewTrainingAttemptResponse = {
+  attemptId: string;
+  status: TrainingAttemptStatus;
+  calculatedScore: number | null;
+  finalScore: number | null;
+  isPassed: boolean | null;
+  reviewStatus: TrainingReviewStatus;
+  reviewDecision: TrainingReviewDecision;
+  reviewedAt: string | null;
 };

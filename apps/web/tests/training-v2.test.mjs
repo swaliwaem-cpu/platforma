@@ -91,12 +91,12 @@ test('admin authoring validates one main and exactly ten follow-up questions', (
   assert.match(editorSource, /Закройте проект перед редактированием\. Уже начатые попытки не изменятся\./);
 });
 
-test('admin list and attempt detail expose only Stage 1 operational data', () => {
+test('admin list and attempt detail preserve the existing route and avoid excluded surfaces', () => {
   assert.match(adminProjectsSource, /Проекты/);
   assert.match(adminProjectsSource, /Последние попытки/);
   assert.match(adminAttemptSource, /attempt\.questions\.map/);
   assert.match(adminAttemptSource, /question\.answer\.text/);
-  assert.doesNotMatch(adminAttemptSource, /reviewAction|ranking|leaderboard|audio|transcript/iu);
+  assert.doesNotMatch(adminAttemptSource, /ranking|leaderboard|audio player|storage key/iu);
 });
 
 test('Training UI has responsive, focus-visible and reduced-motion states', () => {

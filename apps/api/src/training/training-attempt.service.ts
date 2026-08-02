@@ -5,6 +5,7 @@ import {
   TrainingAttemptQuestionStatus,
   TrainingAttemptStatus,
   TrainingProjectStatus,
+  TrainingReviewDecision,
 } from '@prisma/client';
 import type {
   TrainingAdminAttempt,
@@ -14,6 +15,8 @@ import type {
   TrainingEmployeeAttemptsResponse,
   TrainingEmployeeProjectsResponse,
   TrainingSafeBreakdown,
+  TrainingObjectiveMetrics,
+  TrainingStructuredEvaluation,
 } from '@platforma/shared' with { 'resolution-mode': 'import' };
 
 import { PrismaService } from '../prisma/prisma.service';
@@ -59,6 +62,9 @@ export class TrainingAttemptService {
         const activeAttempt = projectAttempts.find(
           (attempt) => attempt.status === TrainingAttemptStatus.IN_PROGRESS,
         );
+        const countingAttempts = projectAttempts.filter(
+          (attempt) => attempt.countsTowardAttemptLimit,
+        );
         const confirmedAttempts = projectAttempts.filter(
           (attempt) =>
             attempt.status === TrainingAttemptStatus.COMPLETED &&
@@ -73,7 +79,7 @@ export class TrainingAttemptService {
         const hasPendingReview = projectAttempts.some(
           (attempt) => attempt.status === TrainingAttemptStatus.REQUIRES_REVIEW,
         );
-        const attemptsLeft = Math.max(0, project.attemptLimit - projectAttempts.length);
+        const attemptsLeft = Math.max(0, project.attemptLimit - countingAttempts.length);
         const blockedByPass = Boolean(bestConfirmed?.isPassed && !project.allowRetakeAfterPass);
         const canStart =
           project.status === TrainingProjectStatus.PUBLISHED &&
@@ -89,7 +95,7 @@ export class TrainingAttemptService {
           attemptLimit: project.attemptLimit,
           timeLimitSeconds: project.timeLimitSeconds,
           passScore: project.passScore,
-          attemptsUsed: projectAttempts.length,
+          attemptsUsed: countingAttempts.length,
           attemptsLeft,
           eligibility: activeAttempt
             ? 'ACTIVE_ATTEMPT'
@@ -249,6 +255,10 @@ function serializeEmployeeAttempt(
     (question) => question.status === TrainingAttemptQuestionStatus.PRESENTED,
   );
   const isTerminal = attempt.status !== TrainingAttemptStatus.IN_PROGRESS;
+  const hideBreakdown =
+    attempt.status === TrainingAttemptStatus.REQUIRES_REVIEW ||
+    attempt.status === TrainingAttemptStatus.TECHNICAL_FAILED ||
+    attempt.reviewDecision === TrainingReviewDecision.OVERRIDDEN;
 
   return {
     id: attempt.id,
@@ -280,7 +290,9 @@ function serializeEmployeeAttempt(
           status: attempt.status,
           finalScore: attempt.finalScore,
           isPassed: attempt.isPassed,
-          safeBreakdown: attempt.questions.flatMap((question) =>
+          safeBreakdown: hideBreakdown
+            ? []
+            : attempt.questions.flatMap((question) =>
             isCompletedAnswer(question.answer)
               ? [
                   {
@@ -293,6 +305,14 @@ function serializeEmployeeAttempt(
                 ]
               : [],
           ),
+          message: attempt.status === TrainingAttemptStatus.TECHNICAL_FAILED
+            ? 'Произошла техническая ошибка. Попытка возвращена.'
+            : attempt.reviewDecision === TrainingReviewDecision.OVERRIDDEN
+              ? 'Итог скорректирован после проверки.'
+              : attempt.status === TrainingAttemptStatus.REQUIRES_REVIEW
+                ? 'Требует проверки.'
+                : null,
+          attemptRefunded: attempt.status === TrainingAttemptStatus.TECHNICAL_FAILED,
         }
       : null,
   };
@@ -328,13 +348,30 @@ function serializeAdminAttempt(attempt: TrainingAttemptDetailRecord): TrainingAd
     attemptNumber: attempt.attemptNumber,
     status: attempt.status,
     completionReason: attempt.completionReason,
+    calculatedScore: attempt.calculatedScore,
+    reviewStatus: attempt.reviewStatus,
+    reviewDecision: attempt.reviewDecision,
+    reviewedAt: attempt.reviewedAt?.toISOString() ?? null,
+    reviewComment: attempt.reviewComment,
+    reviewFinalScore: attempt.reviewFinalScore,
+    countsTowardAttemptLimit: attempt.countsTowardAttemptLimit,
     finalScore: attempt.finalScore,
     isPassed: attempt.isPassed,
     fakeEvaluationVersion: attempt.fakeEvaluationVersion,
     startedAt: attempt.startedAt.toISOString(),
     expiresAt: attempt.expiresAt.toISOString(),
     completedAt: attempt.completedAt?.toISOString() ?? null,
-    questions: attempt.questions.map((question) => ({
+    questions: attempt.questions.map((question) => {
+      const snapshotQuestion = snapshot.schemaVersion === 2
+        ? snapshot.questions.find((item) => item.sourceQuestionId === question.sourceQuestionId)
+        : null;
+      const criteria = snapshot.schemaVersion === 2
+        ? question.type === 'MAIN'
+          ? snapshot.criteria.main
+          : snapshot.criteria.followUp
+        : [];
+
+      return {
       id: question.id,
       sourceQuestionId: question.sourceQuestionId,
       sequence: question.sequence,
@@ -344,16 +381,26 @@ function serializeAdminAttempt(attempt: TrainingAttemptDetailRecord): TrainingAd
       status: question.status,
       presentedAt: question.presentedAt.toISOString(),
       answeredAt: question.answeredAt?.toISOString() ?? null,
-      answer: isCompletedAnswer(question.answer)
+      facts: snapshotQuestion?.facts ?? [],
+      criteria,
+      answer: question.answer
         ? {
             text: question.answer.text,
             score: question.answer.score,
-            fakeOutcome: question.answer.fakeOutcome,
-            safeBreakdown: serializeSafeBreakdown(question.answer.safeBreakdownJson),
-            submittedAt: question.answer.submittedAt.toISOString(),
+            processingStatus: question.answer.processingStatus,
+            safeBreakdown: serializeSafeBreakdownNullable(question.answer.safeBreakdownJson),
+            submittedAt: question.answer.submittedAt?.toISOString() ?? null,
+            transcriptionModel: question.answer.transcriptionModel,
+            evaluationModel: question.answer.evaluationModel,
+            evaluation: serializeStructuredEvaluation(question.answer.evaluationJson),
+            objectiveMetrics: serializeObjectiveMetrics(
+              question.answer.objectiveMetricsJson,
+            ),
+            technicalErrorCode: question.answer.processingErrorCode,
           }
         : null,
-    })),
+      };
+    }),
   };
 }
 
@@ -380,24 +427,61 @@ function isCompletedAnswer(
 }
 
 function serializeSafeBreakdown(value: Prisma.JsonValue): TrainingSafeBreakdown {
+  const parsed = serializeSafeBreakdownNullable(value);
+  if (!parsed) throw new Error('Invalid training safe breakdown');
+  return parsed;
+}
+
+function serializeSafeBreakdownNullable(value: Prisma.JsonValue | null): TrainingSafeBreakdown | null {
   if (
     typeof value !== 'object' ||
     value === null ||
     Array.isArray(value) ||
     typeof value.version !== 'string' ||
-    !['TEXT_LENGTH', 'FAKE_PASS', 'FAKE_FAIL', 'FAKE_REVIEW'].includes(
-      String(value.basis),
-    ) ||
+    typeof value.basis !== 'string' ||
     typeof value.awardedScore !== 'number' ||
     typeof value.maxScore !== 'number'
   ) {
-    throw new Error('Invalid training safe breakdown');
+    return null;
+  }
+
+  if (value.basis === 'AI_CRITERIA') {
+    if (
+      value.version !== 'training-v2-evaluation-v1' ||
+      typeof value.criteriaPoints !== 'number' ||
+      typeof value.incorrectFactCount !== 'number' ||
+      typeof value.penaltyPoints !== 'number'
+    ) return null;
+
+    return {
+      version: 'training-v2-evaluation-v1',
+      basis: 'AI_CRITERIA',
+      criteriaPoints: value.criteriaPoints,
+      incorrectFactCount: value.incorrectFactCount,
+      penaltyPoints: value.penaltyPoints,
+      awardedScore: value.awardedScore,
+      maxScore: value.maxScore,
+    };
+  }
+
+  if (!['TEXT_LENGTH', 'FAKE_PASS', 'FAKE_FAIL', 'FAKE_REVIEW'].includes(value.basis)) {
+    return null;
   }
 
   return {
     version: value.version,
-    basis: value.basis as TrainingSafeBreakdown['basis'],
+    basis: value.basis as 'TEXT_LENGTH' | 'FAKE_PASS' | 'FAKE_FAIL' | 'FAKE_REVIEW',
     awardedScore: value.awardedScore,
     maxScore: value.maxScore,
   };
+}
+
+function serializeStructuredEvaluation(value: Prisma.JsonValue | null) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as unknown as TrainingStructuredEvaluation;
+}
+
+function serializeObjectiveMetrics(value: Prisma.JsonValue | null) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as unknown as TrainingObjectiveMetrics;
 }

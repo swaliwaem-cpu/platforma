@@ -28,7 +28,8 @@ export function TrainingAdminRoutes({
   navigate,
   canManageProjects,
   canReadResults,
-}: TrainingRoutesProps & { canManageProjects: boolean; canReadResults: boolean }) {
+  canReviewResults,
+}: TrainingRoutesProps & { canManageProjects: boolean; canReadResults: boolean; canReviewResults: boolean }) {
   if (/^\/admin\/training\/?$/u.test(pathname)) {
     return (
       <TrainingAdminProjectsPage
@@ -57,7 +58,7 @@ export function TrainingAdminRoutes({
 
   if (attemptId) {
     return canReadResults
-      ? <TrainingAdminAttemptPage key={attemptId} attemptId={attemptId} navigate={navigate} />
+      ? <TrainingAdminAttemptPage key={attemptId} attemptId={attemptId} canReviewResults={canReviewResults} navigate={navigate} />
       : <TrainingRouteDenied />;
   }
 

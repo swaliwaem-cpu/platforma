@@ -1,5 +1,7 @@
 import type {
   CreateTrainingProjectRequest,
+  ReviewTrainingAttemptRequest,
+  ReviewTrainingAttemptResponse,
   StartTrainingAttemptRequest,
   SubmitTrainingAnswerRequest,
   TrainingAdminAttempt,
@@ -147,5 +149,17 @@ export function getTrainingAdminAttempt(
     `/training/admin/attempts/${encodeURIComponent(attemptId)}`,
     accessToken,
     { signal },
+  );
+}
+
+export function reviewTrainingAdminAttempt(
+  accessToken: string,
+  attemptId: string,
+  input: ReviewTrainingAttemptRequest,
+) {
+  return apiRequest<ReviewTrainingAttemptResponse>(
+    `/training/admin/attempts/${encodeURIComponent(attemptId)}/review`,
+    accessToken,
+    { method: 'POST', body: JSON.stringify(input) },
   );
 }

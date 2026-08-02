@@ -16,8 +16,16 @@ import {
   DeterministicFakeTrainingEvaluator,
   TRAINING_EVALUATOR,
 } from './training-evaluator';
+import { OpenAITrainingEvaluator } from './training-openai-evaluator';
+import {
+  getOpenAIApiKey,
+  getTrainingAiMode,
+  TrainingOpenAIClient,
+} from './training-openai-client';
+import { OpenAITrainingTranscriber } from './training-openai-transcriber';
 import { TrainingFollowUpSelector } from './training-follow-up-selector';
 import { TrainingProjectService } from './training-project.service';
+import { TrainingReviewService } from './training-review.service';
 import {
   FakeTrainingTelegramClient,
   getTrainingTelegramTransportMode,
@@ -44,12 +52,14 @@ import { TrainingVoiceWorkerService } from './training-voice-worker.service';
     TrainingProjectService,
     TrainingAttemptService,
     TrainingAttemptStateService,
+    TrainingReviewService,
     TrainingFollowUpSelector,
     TrainingTelegramService,
     TrainingAudioService,
     TrainingVoiceWorkerService,
     SpawnTrainingFfmpegRunner,
     DeterministicFakeTrainingTranscriber,
+    DeterministicFakeTrainingEvaluator,
     FakeTrainingTelegramClient,
     NativeTrainingTelegramClient,
     {
@@ -66,7 +76,11 @@ import { TrainingVoiceWorkerService } from './training-voice-worker.service';
     },
     {
       provide: TRAINING_EVALUATOR,
-      useClass: DeterministicFakeTrainingEvaluator,
+      inject: [DeterministicFakeTrainingEvaluator],
+      useFactory: (fakeEvaluator: DeterministicFakeTrainingEvaluator) =>
+        getTrainingAiMode() === 'openai'
+          ? new OpenAITrainingEvaluator(new TrainingOpenAIClient(getOpenAIApiKey()))
+          : fakeEvaluator,
     },
     {
       provide: TRAINING_FFMPEG_RUNNER,
@@ -74,7 +88,11 @@ import { TrainingVoiceWorkerService } from './training-voice-worker.service';
     },
     {
       provide: TRAINING_TRANSCRIBER,
-      useExisting: DeterministicFakeTrainingTranscriber,
+      inject: [DeterministicFakeTrainingTranscriber],
+      useFactory: (fakeTranscriber: DeterministicFakeTrainingTranscriber) =>
+        getTrainingAiMode() === 'openai'
+          ? new OpenAITrainingTranscriber(new TrainingOpenAIClient(getOpenAIApiKey()))
+          : fakeTranscriber,
     },
   ],
 })

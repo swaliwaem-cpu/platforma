@@ -6,9 +6,18 @@ import type {
 } from './training-attempt-state.service';
 import type {
   CreateTrainingProjectInput,
+  TrainingCriterionDraftInput,
+  TrainingFactDraftInput,
   UpdateTrainingProjectDraftInput,
 } from './training-project.service';
-import { TRAINING_SNAPSHOT_FOLLOW_UP_COUNT } from './training-snapshot';
+import type { ReviewTrainingAttemptInput } from './training-review.service';
+import {
+  TRAINING_FACT_ALIAS_LIMIT,
+  TRAINING_FACT_ALIAS_MAX_LENGTH,
+  TRAINING_FACT_STATEMENT_MAX_LENGTH,
+  TRAINING_SNAPSHOT_FOLLOW_UP_COUNT,
+} from './training-snapshot';
+import { TrainingQuestionType } from '@prisma/client';
 
 const TRAINING_DEFAULT_TIME_LIMIT_MINUTES = 7;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -49,6 +58,8 @@ export function parseUpdateTrainingProjectDraftInput(
     followUpQuestions: body.followUpQuestions.map((question, index) =>
       parseRequiredText(question, `followUpQuestions[${index}]`),
     ),
+    facts: parseTrainingFacts(body.facts),
+    criteria: parseTrainingCriteria(body.criteria),
   };
 }
 
@@ -77,6 +88,34 @@ export function parseSubmitTrainingAnswerInput(body: Record<string, unknown>): S
     attemptQuestionId: parseUuid(body.attemptQuestionId, 'attemptQuestionId'),
     text: parseRequiredText(body.text, 'text'),
   };
+}
+
+export function parseReviewTrainingAttemptInput(
+  body: Record<string, unknown>,
+): ReviewTrainingAttemptInput {
+  const comment = parseOptionalBoundedText(body.comment, 'comment', 2_000) || null;
+
+  if (body.decision === 'APPROVE') {
+    if (body.finalScore !== undefined && body.finalScore !== null) {
+      throw new BadRequestException('finalScore is only allowed for OVERRIDE');
+    }
+
+    return { decision: 'APPROVE', finalScore: null, comment };
+  }
+
+  if (body.decision === 'OVERRIDE') {
+    if (!comment) throw new BadRequestException('comment is required for OVERRIDE');
+    return {
+      decision: 'OVERRIDE',
+      finalScore: parseInteger(body.finalScore, 'finalScore', -1, {
+        minimum: 0,
+        maximum: 100,
+      }),
+      comment,
+    };
+  }
+
+  throw new BadRequestException('decision must be APPROVE or OVERRIDE');
 }
 
 export function parseTrainingTimeLimitMinutes(
@@ -159,4 +198,191 @@ function parseRequiredBoolean(value: unknown, fieldName: string) {
   }
 
   return value;
+}
+
+function parseTrainingFacts(value: unknown): TrainingFactDraftInput[] {
+  if (!Array.isArray(value)) {
+    throw new BadRequestException('facts must be an array');
+  }
+
+  const facts = value.map((item, index) => {
+    const record = parseRecord(item, `facts[${index}]`);
+    const aliases = parseAliases(record.aliases, `facts[${index}].aliases`);
+
+    return {
+      id: parseOptionalUuid(record.id, `facts[${index}].id`),
+      questionType: parseQuestionType(record.questionType, `facts[${index}].questionType`),
+      questionPosition: parseQuestionPosition(
+        record.questionType,
+        record.questionPosition,
+        `facts[${index}].questionPosition`,
+      ),
+      statement: parseRequiredText(
+        record.statement,
+        `facts[${index}].statement`,
+        TRAINING_FACT_STATEMENT_MAX_LENGTH,
+      ).normalize('NFC'),
+      aliases,
+      isRequired: parseRequiredBoolean(record.isRequired, `facts[${index}].isRequired`),
+      position: parseInteger(record.position, `facts[${index}].position`, index + 1, {
+        minimum: 1,
+      }),
+    };
+  });
+
+  assertUniqueDraftData(
+    facts,
+    (fact) => fact.id,
+    'fact IDs',
+    true,
+  );
+  assertUniqueDraftData(
+    facts,
+    (fact) => `${fact.questionType}:${fact.questionPosition}:${fact.position}`,
+    'fact positions',
+  );
+
+  return facts;
+}
+
+function parseTrainingCriteria(value: unknown): TrainingCriterionDraftInput[] {
+  if (!Array.isArray(value)) {
+    throw new BadRequestException('criteria must be an array');
+  }
+
+  const criteria = value.map((item, index) => {
+    const record = parseRecord(item, `criteria[${index}]`);
+
+    return {
+      id: parseOptionalUuid(record.id, `criteria[${index}].id`),
+      questionType: parseQuestionType(
+        record.questionType,
+        `criteria[${index}].questionType`,
+      ),
+      code: parseCriterionCode(record.code, `criteria[${index}].code`),
+      title: parseRequiredText(record.title, `criteria[${index}].title`, 240),
+      guidance: parseOptionalBoundedText(
+        record.guidance,
+        `criteria[${index}].guidance`,
+        2_000,
+      ),
+      maxPoints: parseInteger(
+        record.maxPoints,
+        `criteria[${index}].maxPoints`,
+        1,
+        { minimum: 1, maximum: 55 },
+      ),
+      position: parseInteger(record.position, `criteria[${index}].position`, index + 1, {
+        minimum: 1,
+      }),
+    };
+  });
+
+  assertUniqueDraftData(criteria, (criterion) => criterion.id, 'criterion IDs', true);
+  assertUniqueDraftData(
+    criteria,
+    (criterion) => `${criterion.questionType}:${criterion.code}`,
+    'criterion codes',
+  );
+  assertUniqueDraftData(
+    criteria,
+    (criterion) => `${criterion.questionType}:${criterion.position}`,
+    'criterion positions',
+  );
+
+  return criteria;
+}
+
+function parseAliases(value: unknown, fieldName: string) {
+  if (!Array.isArray(value) || value.length > TRAINING_FACT_ALIAS_LIMIT) {
+    throw new BadRequestException(
+      `${fieldName} must contain at most ${TRAINING_FACT_ALIAS_LIMIT} aliases`,
+    );
+  }
+
+  const aliases = value.map((alias, index) => {
+    const parsed = parseRequiredText(
+      alias,
+      `${fieldName}[${index}]`,
+      TRAINING_FACT_ALIAS_MAX_LENGTH,
+    ).normalize('NFC');
+
+    if (/\r|\n/u.test(parsed) || parsed.split(/\s+/u).length > 8) {
+      throw new BadRequestException(`${fieldName}[${index}] must be a short term`);
+    }
+
+    return parsed;
+  });
+  const normalized = aliases.map((alias) => alias.toLocaleLowerCase('ru-RU'));
+
+  if (new Set(normalized).size !== normalized.length) {
+    throw new BadRequestException(`${fieldName} contains duplicates`);
+  }
+
+  return aliases;
+}
+
+function parseRecord(value: unknown, fieldName: string): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new BadRequestException(`${fieldName} must be an object`);
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function parseQuestionType(value: unknown, fieldName: string) {
+  if (value !== TrainingQuestionType.MAIN && value !== TrainingQuestionType.FOLLOW_UP) {
+    throw new BadRequestException(`${fieldName} must be MAIN or FOLLOW_UP`);
+  }
+
+  return value;
+}
+
+function parseQuestionPosition(type: unknown, value: unknown, fieldName: string) {
+  const parsed = parseInteger(value, fieldName, 1, {
+    minimum: 1,
+    maximum: type === TrainingQuestionType.MAIN ? 1 : TRAINING_SNAPSHOT_FOLLOW_UP_COUNT,
+  });
+
+  if (type === TrainingQuestionType.MAIN && parsed !== 1) {
+    throw new BadRequestException(`${fieldName} must be 1 for MAIN`);
+  }
+
+  return parsed;
+}
+
+function parseCriterionCode(value: unknown, fieldName: string) {
+  const code = parseRequiredText(value, fieldName, 64).toLocaleLowerCase('en-US');
+
+  if (!/^[a-z][a-z0-9_]*$/u.test(code)) {
+    throw new BadRequestException(`${fieldName} must use lowercase snake_case`);
+  }
+
+  return code;
+}
+
+function parseOptionalBoundedText(value: unknown, fieldName: string, maximumLength: number) {
+  if (value === undefined || value === null) return '';
+  if (typeof value !== 'string') throw new BadRequestException(`${fieldName} must be text`);
+
+  const text = value.trim();
+
+  if (text.length > maximumLength) {
+    throw new BadRequestException(`${fieldName} is too long`);
+  }
+
+  return text;
+}
+
+function assertUniqueDraftData<T>(
+  items: T[],
+  getKey: (item: T) => string | null,
+  fieldName: string,
+  ignoreNull = false,
+) {
+  const keys = items.map(getKey).filter((key): key is string => !ignoreNull || key !== null);
+
+  if (new Set(keys).size !== keys.length) {
+    throw new BadRequestException(`${fieldName} must be unique`);
+  }
 }

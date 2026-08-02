@@ -316,7 +316,7 @@ if (!databaseUrl) {
     const waitingAudio = new WaitingWorkerAudio(prisma);
     const transcripts = { calls: 0, transcribe: async () => {
       transcripts.calls += 1;
-      return '[fake:pass]';
+      return fakeTranscription();
     } };
     const firstWorker = createWorker(waitingAudio, transcripts);
     const secondWorker = createWorker(waitingAudio, transcripts);
@@ -357,7 +357,7 @@ if (!databaseUrl) {
       where: { userId: user.id, projectId: project.id },
     });
     const workerAudio = new ImmediateWorkerAudio(prisma);
-    const transcriber = { transcribe: async () => '[fake:pass]' };
+    const transcriber = { transcribe: async () => fakeTranscription() };
     const worker = createWorker(workerAudio, transcriber);
 
     for (let sequence = 1; sequence <= 4; sequence += 1) {
@@ -452,7 +452,7 @@ if (!databaseUrl) {
     );
     const worker = createWorker(
       new ImmediateWorkerAudio(prisma),
-      { transcribe: async () => '[fake:pass]' },
+      { transcribe: async () => fakeTranscription() },
     );
 
     assert.equal(await worker.runOnce(), true);
@@ -495,7 +495,7 @@ if (!databaseUrl) {
     const waitingAudio = new WaitingWorkerAudio(prisma);
     const worker = createWorker(
       waitingAudio,
-      { transcribe: async () => '[fake:pass]' },
+      { transcribe: async () => fakeTranscription() },
     );
     const run = worker.runOnce();
     await waitingAudio.waitUntilStarted();
@@ -516,7 +516,8 @@ if (!databaseUrl) {
     assert.equal(storedAttempt.status, 'TIMED_OUT');
     assert.equal(answer.processingStatus, TrainingAnswerProcessingStatus.FAILED);
     assert.equal(answer.processingErrorCode, 'ATTEMPT_TIMED_OUT');
-    assert.equal(answer.score, null);
+    assert.equal(answer.score, 55);
+    assert.equal(storedAttempt.finalScore, 0);
     assert.equal(
       client.sentMessages.filter(
         (message) => message.text === 'Время попытки истекло. Аттестация не пройдена.',
@@ -539,7 +540,7 @@ if (!databaseUrl) {
         throw new TrainingAudioError('TEMPORARY_AUDIO_FAILURE', true);
       },
     };
-    const worker = createWorker(failingAudio, { transcribe: async () => '[fake:pass]' });
+    const worker = createWorker(failingAudio, { transcribe: async () => fakeTranscription() });
 
     assert.equal(await worker.runOnce(), true);
     assert.equal(await worker.runOnce(), true);
@@ -555,7 +556,8 @@ if (!databaseUrl) {
     assert.equal(answer.processingStatus, TrainingAnswerProcessingStatus.FAILED);
     assert.equal(answer.processingErrorCode, 'TEMPORARY_AUDIO_FAILURE');
     assert.equal(answer.score, null);
-    assert.equal(attempt.status, 'IN_PROGRESS');
+    assert.equal(attempt.status, 'TECHNICAL_FAILED');
+    assert.equal(attempt.countsTowardAttemptLimit, false);
     assert.equal(attempt.finalScore, null);
     assert.equal(await worker.runOnce(), false);
   });
@@ -625,6 +627,19 @@ if (!databaseUrl) {
       allowRetakeAfterPass: true,
       mainQuestion: `${title} main`,
       followUpQuestions: Array.from({ length: 10 }, (_, index) => `${title} ${index + 1}`),
+      facts: Array.from({ length: 11 }, (_, index) => ({
+        id: null,
+        questionType: index === 0 ? 'MAIN' : 'FOLLOW_UP',
+        questionPosition: index === 0 ? 1 : index,
+        statement: `${title} fact ${index + 1}`,
+        aliases: [`term ${index + 1}`],
+        isRequired: true,
+        position: 1,
+      })),
+      criteria: [
+        { id: null, questionType: 'MAIN', code: 'main', title: 'Main', guidance: '', maxPoints: 55, position: 1 },
+        { id: null, questionType: 'FOLLOW_UP', code: 'follow_up', title: 'Follow-up', guidance: '', maxPoints: 15, position: 1 },
+      ],
     });
     await projects.publishProject(project.id);
     return projects.setAvailability(project.id, true);
@@ -718,6 +733,7 @@ if (!databaseUrl) {
       prisma,
       audio,
       transcriber,
+      new DeterministicFakeTrainingEvaluator(),
       state,
       telegram,
     );
@@ -730,6 +746,8 @@ if (!databaseUrl) {
     await prisma.trainingAttempt.deleteMany();
     await prisma.trainingTelegramLinkToken.deleteMany();
     await prisma.trainingTelegramAccount.deleteMany();
+    await prisma.trainingFact.deleteMany();
+    await prisma.trainingCriterion.deleteMany();
     await prisma.trainingQuestion.deleteMany();
     await prisma.trainingProject.deleteMany();
     await prisma.file.deleteMany({
@@ -812,7 +830,10 @@ if (!databaseUrl) {
         where: { id: answerId },
         data: { mergedAudioFileId: file.id },
       });
-      return { answerId, fileId: file.id, mimeType: 'audio/wav', sizeBytes: 64 };
+      const wav = Buffer.alloc(64);
+      wav.write('RIFF', 0, 'ascii');
+      wav.write('WAVE', 8, 'ascii');
+      return { answerId, fileId: file.id, mimeType: 'audio/wav', sizeBytes: 64, checksum: 'test', wav, vocabularyPrompt: '' };
     }
   }
 
@@ -837,4 +858,8 @@ if (!databaseUrl) {
       return super.prepareAnswerAudio(answerId);
     }
   }
+}
+
+function fakeTranscription() {
+  return { text: '[fake:pass]', model: 'fake', requestId: null, latencyMs: 0, attempts: 1, usage: null };
 }

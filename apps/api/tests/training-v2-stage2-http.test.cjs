@@ -312,6 +312,8 @@ if (!databaseUrl) {
     await prisma.trainingAttempt.deleteMany();
     await prisma.trainingTelegramLinkToken.deleteMany();
     await prisma.trainingTelegramAccount.deleteMany();
+    await prisma.trainingFact.deleteMany();
+    await prisma.trainingCriterion.deleteMany();
     await prisma.trainingQuestion.deleteMany();
     await prisma.trainingProject.deleteMany();
     await prisma.user.deleteMany({ where: { email: { endsWith: '@training.test' } } });

@@ -1,109 +1,118 @@
-# Acceptance: Stage 2
+# Acceptance: Stage 3
 
 ## Критерии готовности к ручной приёмке
 
-- `/training` показывает Telegram account state и основной project CTA
-  «Пройти в Telegram» без нового route.
-- Deep link привязана к текущим User/project, хранится только как SHA-256 hash,
-  действует 15 минут и не расходует попытку до callback подтверждения.
-- `/start <token>` атомарно связывает только private Telegram account, явно
-  отклоняет конфликты и не использует token повторно.
-- `/start` восстанавливает active attempt/current question/processing/timeout из
-  Training domain tables без отдельной conversation state.
-- Бот принимает только `message.voice`, сохраняет ordered multi-segments и
-  начинает background processing только после «Завершить ответ».
-- Worker безопасно claim-ит persisted answer, восстанавливает stale processing
-  после restart и не допускает double processing.
-- Telegram originals и merged WAV хранятся private с `File.url=null`; `ffmpeg`
-  создаёт PCM mono 16 kHz WAV и всегда очищает temp directory.
-- Fake transcription возвращает `[fake:pass]`; existing fake evaluator и единый
-  answer-completion flow проводят MAIN + 3 FOLLOW_UP и сохраняют итог/history.
-- Final processing failure не создаёт transcript/score/pass/fail.
-- Нет OpenAI и инфраструктуры Stage 3–5.
+- New project хранит facts и criteria, публикуется только при валидных `1 + 10`,
+  facts на каждый question, aliases и точных totals `55/15`.
+- New attempt snapshot schema v2 замораживает settings, 11 questions, facts,
+  criteria и schema versions; старые schema v1 attempts не конвертируются.
+- `TRAINING_AI_MODE=openai` использует только backend OpenAI implementations и
+  требует API key без fallback на fake.
+- Transcription отправляет один проверенный private merged WAV в
+  `/v1/audio/transcriptions`; vocabulary не содержит full facts/scoring/PII.
+- Evaluation отправляет только current answer context в `/v1/responses` с
+  `store=false`, без tools/web/files и с strict JSON Schema.
+- Backend проверяет exact IDs/evidence, считает objective metrics, criteria sum,
+  distinct `−5` penalties и final score. Unsupported claim требует review и не
+  получает автоматический штраф.
+- Transcription и validated evaluation сохраняются отдельными checkpoints;
+  restart не повторяет уже сохранённый step и не дублирует progression.
+- Исчерпанный provider failure создаёт `TECHNICAL_FAILED`, возвращает попытку и
+  позволяет replacement attempt.
+- Review permission/endpoint разрешает одноразовые idempotent `APPROVE` и
+  `OVERRIDE`; employee pending/override/technical DTO остаётся безопасным.
+- Admin видит facts/evidence/criteria/metrics/models/calculated/final score, но не
+  secrets, raw provider body, prompt, private storage key или chain-of-thought.
+- Нет Stage 4/5 infrastructure и production deploy.
 
-## Local fake smoke
+## Automated fake/stub acceptance
 
-Сценарий не делает реальных Telegram/OpenAI вызовов.
+Все сценарии ниже не обращаются к `api.openai.com` и реальному Telegram.
 
-1. Создать отдельную временную PostgreSQL database и применить только
-   `prisma migrate deploy`.
-2. Собрать API: `pnpm --dir apps/api build`.
-3. Запустить vertical test с `NODE_ENV=test`,
-   `TELEGRAM_TRANSPORT_MODE=fake` и `TRAINING_TEST_DATABASE_URL`, указывающим на
-   временную database:
-   `node --test apps/api/tests/training-v2-stage2-postgres.test.cjs`.
-4. Убедиться, что scenario
-   `vertical fake Telegram flow completes deep link, voice 1+3 and final result once`
-   зелёный: он выполняет deep link, account link, start, два voice segments на
-   каждый ответ, finish, processing, fake transcript/evaluation, 1+3 и result.
-5. Запустить provider/unit/HTTP tests и headless browser smoke из Stage 2 test
-   suite. Browser smoke использует production web build и intercepted local API;
-   dev text fallback в нём отсутствует.
-6. Удалить временную database. Local MinIO и внешняя сеть для этого smoke не
-   требуются; audio storage/provider заменены локальными fake doubles, а
-   реальный `ffmpeg` отдельно проверяется внутри API Docker image.
+1. `prisma validate` и `prisma generate` проходят на текущей schema.
+2. Все migrations применяются на чистой временной PostgreSQL.
+3. Upgrade Stage 2 → Stage 3 сохраняет schema v1 snapshot/status/final score и
+   backfill-ит только additive Stage 3 columns.
+4. Unit/domain tests проверяют facts/aliases, totals `55/15`, snapshot v1/v2,
+   metrics, strict evaluation IDs/evidence, score clamps, distinct penalties и
+   unsupported review.
+5. Transcription local HTTP stub проверяет реальный multipart: one WAV part,
+   model, `language=ru`, bounded vocabulary, timeout/retry/4xx/malformed cases.
+6. Evaluation local HTTP stub проверяет реальный Responses body: model,
+   reasoning, `store=false`, strict schema, trust boundary, запрещённые fields,
+   refusal/incomplete/invalid IDs/evidence/injection/retry/4xx cases.
+7. PostgreSQL tests проверяют snapshot immutability, both checkpoints/restart,
+   exactly-once progression/finalization, technical refund/replacement и review
+   idempotency/conflict.
+8. HTTP/RBAC tests проверяют project PATCH/publish errors, denied employee review,
+   allowed admin review и safe pending/override/technical employee DTO.
+9. Web source tests и targeted Playwright production-preview harness проверяют
+   facts/criteria totals, evaluation detail, approve/override duplicate-submit
+   protection и employee states без sensitive rendering.
+10. Full API/web/workspace tests, builds, `git diff --check`, `.only`/`.skip`,
+    test-env, lockfile и scope scans проходят.
+11. Временные databases удаляются после проверок.
 
-## Real Telegram smoke — только вручную
+## Opt-in synthetic OpenAI smoke — только вручную
 
-Не выполнять автоматически и не использовать production webhook.
+Обычные tests никогда не запускают этот smoke. Требуются одновременно:
+
+- `TRAINING_AI_MODE=openai`;
+- `OPENAI_SMOKE_ENABLED=true`;
+- непустой `OPENAI_API_KEY` в untracked environment.
+
+Запуск из repository root:
+
+`pnpm test:training:openai:smoke`
+
+Smoke генерирует короткий mono PCM WAV 16 kHz, отключает retries, выполняет ровно
+один transcription request и один strict evaluation request с synthetic
+facts/criteria. Он не печатает transcript, prompt, structured evaluation или
+API key; выводит только status, requested/actual models, request IDs, usage и
+latency. Без любого обязательного флага выводит explicit skip.
+
+Этот smoke не выполняется автоматически и не доказывает Telegram integration.
+
+## Real Telegram voice + OpenAI — только вручную
+
+Не использовать production webhook и не выполнять production deploy.
 
 Подготовка:
 
-- создать test bot через BotFather;
-- сохранить bot token и webhook secret только в untracked `.env`;
-- задать `TELEGRAM_TRANSPORT_MODE=real`, `TELEGRAM_BOT_TOKEN`,
-  `TELEGRAM_BOT_USERNAME`, `TELEGRAM_WEBHOOK_SECRET`, отдельный
-  `TRAINING_AUDIO_BUCKET`;
-- поднять public HTTPS tunnel либо использовать доступный test URL;
-- вручную временно направить Telegram webhook на
-  `POST /training/telegram/webhook` с secret header;
-- после smoke удалить test webhook.
+- отдельная test database и private test audio bucket;
+- test Telegram bot/webhook/tunnel по процедуре принятого Stage 2;
+- `TRAINING_AI_MODE=openai`, временный `OPENAI_API_KEY`, pinned models и bounded
+  timeouts/retries только в untracked environment;
+- draft project с 11 вопросами, approved facts каждого question и criteria
+  totals `55/15`; затем publish/open.
 
 Проверка:
 
-1. Admin создаёт, публикует и открывает Training project.
-2. Employee открывает `/training` и нажимает «Пройти в Telegram».
-3. Employee открывает deep link; bot связывает account и показывает выбранный
-   project без списания попытки.
-4. Employee нажимает «Начать аттестацию» и получает MAIN.
-5. Employee отправляет два voice messages и нажимает «Завершить ответ».
-6. Bot показывает processing, затем следующий вопрос.
-7. Employee проходит MAIN + 3 FOLLOW_UP и видит fake pass/fail result.
-8. Во время active attempt повторный `/start` восстанавливает текущий вопрос;
-   во время processing — сообщение «Ответ обрабатывается».
-9. Text, photo, `message.audio`, document и остальные message kinds не создают
-   answer/segment и получают просьбу отправить голосовое сообщение.
-10. Повторные start/finish callbacks и одинаковый voice update не создают
-    вторую attempt, question progression или segment.
-11. Stage 1 web history показывает Telegram attempt; generic file endpoints не
-    отдают private training audio.
-12. Проверить private bucket: originals сохраняются в segment order, merged WAV
-    имеет PCM mono 16 kHz, а все training `File.url` равны `null`.
+1. Employee проходит real Telegram voice MAIN + 3 FOLLOW_UP.
+2. Для каждого answer originals/merged private WAV и ownership остаются Stage 2;
+   transcript сохраняется до evaluation, provider metadata не содержит secret.
+3. Restart после transcription продолжает evaluation без второй transcription;
+   restart после saved evaluation не делает второй evaluation request.
+4. Valid result завершает progression один раз и backend final score совпадает с
+   criteria/penalties из admin detail.
+5. Ответ с unsupported claim становится `REQUIRES_REVIEW`; employee видит «Требует
+   проверки» без provisional score/breakdown/internal data, admin видит evidence.
+6. Admin `APPROVE` завершает attempt с `finalScore=calculatedScore`; точный повтор
+   не создаёт второй side effect.
+7. На новой pending attempt admin `OVERRIDE` задаёт `0..100` и причину; employee
+   видит скорректированный final score, нейтральное сообщение и без старого
+   breakdown.
+8. Безопасно смоделированный non-retryable/исчерпанный provider failure создаёт
+   `TECHNICAL_FAILED`, скрывает internal code от employee, не расходует limit и
+   позволяет replacement attempt.
+9. Проверить отсутствие transcript/evaluation/provider metadata/review comment в
+   employee HTTP response, а не только визуально.
+10. После smoke удалить test webhook, временный key/config, private test audio и
+    test database.
 
-## Автоматические проверки перед отчётом
+## Definition of Done и переход к Stage 4
 
-- Unit/schema: hashing, callback/private parsing, fake client/transcriber,
-  segment order, `ffmpeg` args/timeout, Prisma shape и migration constraints.
-- PostgreSQL: token/account races, deduplication, finish idempotency, timeout,
-  private File records, worker claim/restart/failure и полный 1+3 vertical flow.
-- HTTP: account/link ownership/availability, webhook secret/body/private chat,
-  rejected message kinds, voice metadata и unknown update ACK.
-- Provider local stub: all four native client operations, timeout, 429/5xx retry,
-  permanent 4xx и отсутствие token в errors.
-- Web/headless Chromium: Telegram status/primary CTA, project-bound link,
-  production hiding dev fallback и safe expired-link state.
-- Migration: clean temporary PostgreSQL и Stage 1 → Stage 2 upgrade с сохранением
-  fixture.
-- Docker: API image build, `ffmpeg -version` и synthetic OGG → WAV PCM mono
-  16 kHz smoke.
-- Full API/web/workspace tests, builds, `prisma validate`, `git diff --check`,
-  `.only`/`.skip` и scope scan.
-
-Фактические команды и counts фиксируются в итоговом отчёте. Ручной real Telegram
-smoke остаётся внешним gate до пользовательской приёмки.
-
-## Definition of Done и переход к Stage 3
-
-Stage 2 остаётся текущим даже после готовности кода и зелёных automated checks.
-Только ручное подтверждение пользователя закрывает этап. OpenAI, facts,
-criteria, review и любой другой Stage 3 scope не начинаются без отдельной задачи.
+Stage 3 остаётся текущим даже после готовности кода и зелёных automated checks.
+Только ручное подтверждение synthetic OpenAI smoke и real Telegram + OpenAI
+сценариев закрывает этап. Documents/materials Stage 4 и ranking/production
+hardening Stage 5 не начинаются без отдельной задачи.

@@ -19,14 +19,30 @@ const stage2Migration = readFileSync(
   ),
   'utf8',
 );
+const stage3Migration = readFileSync(
+  resolve(
+    repositoryRoot,
+    'apps/api/prisma/migrations/20260802090000_add_training_v2_stage_3/migration.sql',
+  ),
+  'utf8',
+);
+const stage3EnumMigration = readFileSync(
+  resolve(
+    repositoryRoot,
+    'apps/api/prisma/migrations/20260802083000_add_training_v2_stage_3_enum_values/migration.sql',
+  ),
+  'utf8',
+);
 const seed = readFileSync(resolve(repositoryRoot, 'apps/api/src/prisma/seed.ts'), 'utf8');
 
-test('Training V2 Stage 2 has exactly eight Training models', () => {
+test('Training V2 Stage 3 adds only TrainingFact and TrainingCriterion', () => {
   const modelNames = [...schema.matchAll(/^model (Training\w+) \{/gmu)].map((match) => match[1]);
 
   assert.deepEqual(modelNames, [
     'TrainingProject',
     'TrainingQuestion',
+    'TrainingFact',
+    'TrainingCriterion',
     'TrainingAttempt',
     'TrainingAttemptQuestion',
     'TrainingAnswer',
@@ -34,6 +50,17 @@ test('Training V2 Stage 2 has exactly eight Training models', () => {
     'TrainingTelegramLinkToken',
     'TrainingAnswerSegment',
   ]);
+});
+
+test('Stage 3 migration adds facts, criteria and checkpoint/review state only', () => {
+  assert.match(stage3Migration, /CREATE TABLE "training_facts"/);
+  assert.match(stage3Migration, /CREATE TABLE "training_criteria"/);
+  assert.match(stage3Migration, /ADD COLUMN "transcription_status"/);
+  assert.match(stage3Migration, /ADD COLUMN "review_status"/);
+  assert.match(stage3Migration, /counts_toward_attempt_limit/);
+  assert.match(stage3EnumMigration, /technical_failed/);
+  assert.match(stage3EnumMigration, /technical_failure/);
+  assert.doesNotMatch(stage3Migration, /provider_run|evaluation_run|transcription_run|review_history|training_jobs|outbox|document|embedding|ranking/iu);
 });
 
 test('Training schema preserves Stage 1 and adds only Stage 2 transport state', () => {
@@ -118,6 +145,7 @@ test('Training permissions are seeded idempotently with the fixed role mapping',
   assert.match(seed, /\['training:participate', 'Participate in training projects'\]/);
   assert.match(seed, /\['training:projects:manage', 'Manage training projects'\]/);
   assert.match(seed, /\['training:results:read', 'Read training attempt results'\]/);
+  assert.match(seed, /\['training:results:review', 'Review training attempt results'\]/);
   assert.match(seed, /admin: permissions\.map\(\(\[key\]\) => key\)/);
   assert.match(seed, /user:[\s\S]*'training:participate'/);
 

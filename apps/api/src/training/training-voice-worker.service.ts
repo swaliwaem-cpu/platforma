@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto';
 
 import { Inject, Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { Prisma, TrainingAnswerProcessingStatus } from '@prisma/client';
+import {
+  Prisma,
+  TrainingAiStepStatus,
+  TrainingAnswerProcessingStatus,
+  TrainingFakeOutcome,
+} from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -10,8 +15,22 @@ import {
   TrainingAudioService,
 } from './training-audio.service';
 import { TrainingAttemptStateService } from './training-attempt-state.service';
+import {
+  calculateTrainingObjectiveMetrics,
+  scoreTrainingEvaluation,
+  TRAINING_EVALUATOR,
+  type TrainingEvaluationInput,
+  type TrainingEvaluator,
+} from './training-evaluator';
+import { TrainingOpenAIError } from './training-openai-client';
+import {
+  isTrainingProjectSnapshotV2,
+  parseTrainingProjectSnapshot,
+  type TrainingProjectSnapshotV2,
+} from './training-snapshot';
 import { TrainingTelegramService } from './training-telegram.service';
 import {
+  buildTrainingVocabularyPrompt,
   TRAINING_TRANSCRIBER,
   type TrainingTranscriber,
 } from './training-transcriber';
@@ -36,6 +55,7 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
     private readonly prisma: PrismaService,
     private readonly audio: TrainingAudioService,
     @Inject(TRAINING_TRANSCRIBER) private readonly transcriber: TrainingTranscriber,
+    @Inject(TRAINING_EVALUATOR) private readonly evaluator: TrainingEvaluator,
     private readonly attemptState: TrainingAttemptStateService,
     private readonly telegram: TrainingTelegramService,
   ) {}
@@ -85,16 +105,19 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
     const staleLockMs = getStaleLockMs();
     const rows = await this.prisma.$queryRaw<ClaimedAnswer[]>(Prisma.sql`
       WITH candidate AS (
-        SELECT "id"
-        FROM "training_answers"
-        WHERE "processing_status" = 'processing'
-          AND "processing_attempts" < ${MAX_PROCESSING_ATTEMPTS}
+        SELECT answer."id"
+        FROM "training_answers" AS answer
+        JOIN "training_attempt_questions" AS question ON question."id" = answer."attempt_question_id"
+        JOIN "training_attempts" AS attempt ON attempt."id" = question."attempt_id"
+        WHERE answer."processing_status" = 'processing'
+          AND attempt."status" = 'in_progress'
+          AND answer."processing_attempts" < ${MAX_PROCESSING_ATTEMPTS}
           AND (
-            "processing_locked_at" IS NULL
-            OR "processing_locked_at" < CURRENT_TIMESTAMP - (${staleLockMs} * INTERVAL '1 millisecond')
+            answer."processing_locked_at" IS NULL
+            OR answer."processing_locked_at" < CURRENT_TIMESTAMP - (${staleLockMs} * INTERVAL '1 millisecond')
           )
-        ORDER BY "created_at" ASC, "id" ASC
-        FOR UPDATE SKIP LOCKED
+        ORDER BY answer."created_at" ASC, answer."id" ASC
+        FOR UPDATE OF answer SKIP LOCKED
         LIMIT 1
       )
       UPDATE "training_answers" AS answer
@@ -114,84 +137,179 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
 
   private async recoverExhaustedAnswers() {
     const staleLockMs = getStaleLockMs();
-    const failed = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-      UPDATE "training_answers"
-      SET
-        "processing_status" = 'failed',
-        "processing_locked_at" = NULL,
-        "processing_locked_by" = NULL,
-        "processing_error_code" = 'PROCESSING_ATTEMPTS_EXHAUSTED',
-        "updated_at" = CURRENT_TIMESTAMP
-      WHERE "processing_status" = 'processing'
-        AND "processing_attempts" >= ${MAX_PROCESSING_ATTEMPTS}
+    const exhausted = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT answer."id"
+      FROM "training_answers" AS answer
+      JOIN "training_attempt_questions" AS question ON question."id" = answer."attempt_question_id"
+      JOIN "training_attempts" AS attempt ON attempt."id" = question."attempt_id"
+      WHERE answer."processing_status" = 'processing'
+        AND attempt."status" = 'in_progress'
+        AND answer."processing_attempts" >= ${MAX_PROCESSING_ATTEMPTS}
         AND (
-          "processing_locked_at" IS NULL
-          OR "processing_locked_at" < CURRENT_TIMESTAMP - (${staleLockMs} * INTERVAL '1 millisecond')
+          answer."processing_locked_at" IS NULL
+          OR answer."processing_locked_at" < CURRENT_TIMESTAMP - (${staleLockMs} * INTERVAL '1 millisecond')
         )
-      RETURNING "id"
+      ORDER BY answer."created_at" ASC, answer."id" ASC
     `);
 
-    for (const answer of failed) {
-      await this.notifyFailed(answer.id);
+    for (const answer of exhausted) {
+      const failed = await this.attemptState.failTelegramVoiceAttempt(
+        answer.id,
+        'PROCESSING_ATTEMPTS_EXHAUSTED',
+        'processing',
+      );
+      if (failed) await this.notifyFailed(answer.id);
     }
   }
 
   private async processClaimedAnswer(answer: ClaimedAnswer) {
-    const answerRef = await this.prisma.trainingAnswer.findUnique({
-      where: { id: answer.id },
-      select: { attemptQuestion: { select: { attemptId: true } } },
-    });
+    const context = await this.loadContext(answer.id);
 
-    if (!answerRef) return;
-
+    if (!context) return;
     const timedOut = await this.attemptState.finalizeAttemptIfExpired(
-      answerRef.attemptQuestion.attemptId,
+      context.attemptQuestion.attempt.id,
     );
 
     if (timedOut) {
       await this.notifyProcessed(answer.id);
       return;
     }
-    const stillClaimed = await this.prisma.trainingAnswer.findFirst({
-      where: {
-        id: answer.id,
-        processingStatus: TrainingAnswerProcessingStatus.PROCESSING,
-        processingLockedBy: this.workerId,
-      },
-      select: { id: true },
-    });
-
-    if (!stillClaimed) return;
+    if (!(await this.isStillClaimed(answer.id))) return;
 
     const heartbeat = setInterval(
       () => void this.refreshHeartbeat(answer.id).catch(() => undefined),
       getHeartbeatIntervalMs(),
     );
+    let failedStep: 'transcription' | 'evaluation' | 'processing' = 'processing';
 
     try {
-      const audio = await this.audio.prepareAnswerAudio(answer.id);
-      const transcript = await this.transcriber.transcribe(audio);
-
-      if (!transcript.trim()) {
-        throw new VoiceWorkerError('EMPTY_TRANSCRIPT', false);
-      }
-
-      const result = await this.attemptState.completeTelegramVoiceAnswer(
-        answer.id,
-        this.workerId,
-        transcript,
+      const snapshot = parseTrainingProjectSnapshot(
+        context.attemptQuestion.attempt.projectSnapshotJson,
       );
 
-      if (result.status === 'COMPLETED') {
-        await this.notifyProcessed(answer.id);
-      } else if (result.status === 'TIMED_OUT') {
+      if (!isTrainingProjectSnapshotV2(snapshot)) {
+        await this.audio.prepareAnswerAudio(answer.id);
+        const result = await this.attemptState.completeTelegramVoiceAnswer(
+          answer.id,
+          this.workerId,
+          '[fake:pass]',
+        );
+        if (result.status === 'COMPLETED' || result.status === 'TIMED_OUT') {
+          await this.notifyProcessed(answer.id);
+        }
+        return;
+      }
+
+      const question = resolveSnapshotQuestion(snapshot, context.attemptQuestion.sourceQuestionId);
+      let current = context;
+
+      if (current.transcriptionStatus !== TrainingAiStepStatus.COMPLETED) {
+        failedStep = 'transcription';
+        const audio = await this.audio.prepareAnswerAudio(answer.id);
+        const transcription = await this.transcriber.transcribe({
+          ...audio,
+          vocabularyPrompt: buildTrainingVocabularyPrompt({
+            projectTitle: snapshot.projectTitle,
+            relatedObjectTitle: snapshot.relatedObjectTitle,
+            facts: question.facts,
+          }),
+        });
+        const saved = await this.prisma.trainingAnswer.updateMany({
+          where: {
+            id: answer.id,
+            processingStatus: TrainingAnswerProcessingStatus.PROCESSING,
+            processingLockedBy: this.workerId,
+            transcriptionStatus: TrainingAiStepStatus.PENDING,
+          },
+          data: {
+            text: transcription.text,
+            transcriptionStatus: TrainingAiStepStatus.COMPLETED,
+            transcriptionAttempts: { increment: transcription.attempts },
+            transcriptionModel: transcription.model,
+            transcriptionRequestId: transcription.requestId,
+            transcriptionLatencyMs: transcription.latencyMs,
+          },
+        });
+
+        if (saved.count !== 1) return;
+        const reloaded = await this.loadContext(answer.id);
+        if (!reloaded) return;
+        current = reloaded;
+      }
+
+      if (current.evaluationStatus !== TrainingAiStepStatus.COMPLETED) {
+        failedStep = 'evaluation';
+        if (!current.text) throw new VoiceWorkerError('TRANSCRIPT_CHECKPOINT_MISSING', false);
+        const evaluationInput = createEvaluationInput(snapshot, question, current);
+        const result = await this.evaluator.evaluate(evaluationInput);
+        const scoring = scoreTrainingEvaluation(result.evaluation, evaluationInput);
+        const saved = await this.prisma.trainingAnswer.updateMany({
+          where: {
+            id: answer.id,
+            processingStatus: TrainingAnswerProcessingStatus.PROCESSING,
+            processingLockedBy: this.workerId,
+            transcriptionStatus: TrainingAiStepStatus.COMPLETED,
+            evaluationStatus: TrainingAiStepStatus.PENDING,
+          },
+          data: {
+            score: scoring.score,
+            fakeOutcome: scoring.requiresReview
+              ? TrainingFakeOutcome.REQUIRES_REVIEW
+              : TrainingFakeOutcome.SCORED,
+            safeBreakdownJson: scoring.safeBreakdown,
+            evaluationStatus: TrainingAiStepStatus.COMPLETED,
+            evaluationAttempts: { increment: result.attempts },
+            evaluationModel: result.model,
+            evaluationRequestId: result.requestId,
+            evaluationLatencyMs: result.latencyMs,
+            evaluationSchemaVersion: result.evaluation.schema_version,
+            evaluationJson: result.evaluation as unknown as Prisma.InputJsonValue,
+            objectiveMetricsJson: evaluationInput.objectiveMetrics as unknown as Prisma.InputJsonValue,
+          },
+        });
+
+        if (saved.count !== 1) return;
+      }
+
+      failedStep = 'processing';
+      const progression = await this.attemptState.completeEvaluatedTelegramVoiceAnswer(
+        answer.id,
+        this.workerId,
+      );
+
+      if (progression.status === 'COMPLETED' || progression.status === 'TIMED_OUT') {
         await this.notifyProcessed(answer.id);
       }
     } catch (error) {
-      await this.handleProcessingFailure(answer, error);
+      await this.handleProcessingFailure(answer, error, failedStep);
     } finally {
       clearInterval(heartbeat);
     }
+  }
+
+  private async loadContext(answerId: string) {
+    return this.prisma.trainingAnswer.findUnique({
+      where: { id: answerId },
+      include: {
+        segments: { orderBy: { position: 'asc' } },
+        attemptQuestion: {
+          include: {
+            attempt: { select: { id: true, projectSnapshotJson: true } },
+          },
+        },
+      },
+    });
+  }
+
+  private async isStillClaimed(answerId: string) {
+    return Boolean(await this.prisma.trainingAnswer.findFirst({
+      where: {
+        id: answerId,
+        processingStatus: TrainingAnswerProcessingStatus.PROCESSING,
+        processingLockedBy: this.workerId,
+      },
+      select: { id: true },
+    }));
   }
 
   private async refreshHeartbeat(answerId: string) {
@@ -204,7 +322,11 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
     `);
   }
 
-  private async handleProcessingFailure(answer: ClaimedAnswer, error: unknown) {
+  private async handleProcessingFailure(
+    answer: ClaimedAnswer,
+    error: unknown,
+    failedStep: 'transcription' | 'evaluation' | 'processing',
+  ) {
     const retryable = isRetryableWorkerError(error);
     const exhausted = answer.processing_attempts >= MAX_PROCESSING_ATTEMPTS;
 
@@ -224,28 +346,21 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
       return;
     }
 
-    const failed = await this.prisma.trainingAnswer.updateMany({
-      where: {
-        id: answer.id,
-        processingStatus: TrainingAnswerProcessingStatus.PROCESSING,
-        processingLockedBy: this.workerId,
-      },
-      data: {
-        processingStatus: TrainingAnswerProcessingStatus.FAILED,
-        processingLockedAt: null,
-        processingLockedBy: null,
-        processingErrorCode: getWorkerErrorCode(error),
-      },
-    });
-
-    if (failed.count === 1) await this.notifyFailed(answer.id);
+    const failed = await this.attemptState.failTelegramVoiceAttempt(
+      answer.id,
+      getWorkerErrorCode(error),
+      failedStep,
+      this.workerId,
+      error instanceof TrainingOpenAIError ? error.attempts : 0,
+    );
+    if (failed) await this.notifyFailed(answer.id);
   }
 
   private async notifyProcessed(answerId: string) {
     try {
       await this.telegram.notifyAnswerProcessed(answerId);
     } catch {
-      // Domain state is already committed; /start restores it if delivery fails.
+      // Domain state is committed; /start restores it if delivery fails.
     }
   }
 
@@ -258,6 +373,45 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
   }
 }
 
+type WorkerContext = {
+  text: string | null;
+  segments: Array<{ durationSeconds: number }>;
+  attemptQuestion: { maxScore: number };
+};
+
+function resolveSnapshotQuestion(snapshot: TrainingProjectSnapshotV2, sourceQuestionId: string | null) {
+  const question = snapshot.questions.find((item) => item.sourceQuestionId === sourceQuestionId);
+
+  if (!question) throw new VoiceWorkerError('SNAPSHOT_QUESTION_MISSING', false);
+  return question;
+}
+
+function createEvaluationInput(
+  snapshot: TrainingProjectSnapshotV2,
+  question: TrainingProjectSnapshotV2['questions'][number],
+  answer: WorkerContext,
+): TrainingEvaluationInput {
+  if (!answer.text) throw new VoiceWorkerError('TRANSCRIPT_CHECKPOINT_MISSING', false);
+  const criteria = question.type === 'MAIN' ? snapshot.criteria.main : snapshot.criteria.followUp;
+
+  return {
+    questionText: question.text,
+    questionType: question.type,
+    transcript: answer.text,
+    facts: question.facts,
+    criteria,
+    objectiveMetrics: calculateTrainingObjectiveMetrics({
+      transcript: answer.text,
+      audioDurationSeconds: answer.segments.reduce(
+        (total, segment) => total + segment.durationSeconds,
+        0,
+      ),
+      segmentCount: answer.segments.length,
+    }),
+    maxScore: answer.attemptQuestion.maxScore,
+  };
+}
+
 class VoiceWorkerError extends Error {
   constructor(
     readonly code: string,
@@ -268,12 +422,13 @@ class VoiceWorkerError extends Error {
 }
 
 function isRetryableWorkerError(error: unknown) {
+  if (error instanceof TrainingOpenAIError) return false;
   if (error instanceof VoiceWorkerError) return error.retryable;
   return isRetryableTrainingAudioError(error);
 }
 
 function getWorkerErrorCode(error: unknown) {
-  if (error instanceof VoiceWorkerError) return error.code;
+  if (error instanceof TrainingOpenAIError || error instanceof VoiceWorkerError) return error.code;
   return getTrainingAudioErrorCode(error).slice(0, 64);
 }
 

@@ -1,81 +1,105 @@
-# Current Stage: Stage 2 — Telegram и Voice Transport
+# Current Stage: Stage 3 — OpenAI, Facts, Scoring и Review
 
 ## Цель
 
-Доказать полный transport-flow: Employee выбирает проект на `/training`, получает
-одноразовую Telegram deep link, связывает существующего пользователя,
-подтверждает старт, отвечает голосом на 1 MAIN + 3 FOLLOW_UP, а backend реально
-скачивает и нормализует audio, после чего fake transcription и существующий fake
-evaluator формируют результат.
+Подключить реальную backend-only транскрибацию и strict structured evaluation к
+существующему Telegram voice flow, закрепить approved facts/criteria в immutable
+attempt snapshot, считать итог детерминированно на backend и дать admin один
+минимальный review action без раскрытия provisional/internal данных сотруднику.
 
-Код и автоматические проверки могут быть готовы, но текущим этапом остаётся
-Stage 2 до ручного подтверждения пользователя. Stage 3 не начинается
-автоматически.
+Код и automated checks могут быть готовы, но текущим этапом остаётся Stage 3 до
+ручной проверки OpenAI и полного Telegram + OpenAI flow. Stage 4 и Stage 5 не
+начинаются автоматически.
 
 ## Входит
 
-- Project-bound deep link с SHA-256 hash, TTL 15 минут и atomic consume.
-- Связь Telegram account с существующим активным `User`, явные конфликты и
-  private-chat boundary.
-- `/start <token>`, подтверждение старта и `/start` resume из domain state.
-- Только `message.voice`, несколько ordered segments и отдельный finish callback.
-- Persisted `TrainingAnswer` processing unit, PostgreSQL claim, heartbeat,
-  bounded retry и stale-lock restart recovery внутри API process.
-- Реальные Telegram `getFile`/download в real mode и fake client для tests.
-- Private originals и merged WAV через существующие `File`/S3 abstractions,
-  отдельный `TRAINING_AUDIO_BUCKET` и `File.url=null`.
-- `ffmpeg`: WAV PCM mono 16 kHz, timeout и guaranteed temp cleanup.
-- Узкий deterministic fake transcriber и существующий Stage 1 fake evaluator.
-- Основной production CTA «Пройти в Telegram» на существующем `/training`;
-  Stage 1 text UI только в `import.meta.env.DEV` и automated tests.
-- Employee history и Admin attempt view из Stage 1 без audio player.
+- Только две новые основные модели: `TrainingFact` и `TrainingCriterion`.
+- Snapshot schema v2 с facts, MAIN/FOLLOW_UP criteria, max points, scoring и
+  evaluation schema versions; schema v1 attempts остаются читаемыми без
+  destructive conversion.
+- Existing project PATCH для atomic draft facts/criteria и existing publish/open
+  validation: `1 + 10`, fact на каждый question, aliases bounds, criteria totals
+  `55/15`, unique codes.
+- Existing admin project editor с facts, aliases, required flag, criteria,
+  totals и publication/validation errors; нового route нет.
+- `TRAINING_AI_MODE=fake|openai`; OpenAI API key и bounded timeout/retry/model
+  settings. Tests принудительно используют fake mode и удаляют inherited key.
+- `POST /v1/audio/transcriptions` через native `fetch`/`FormData`, model
+  `gpt-4o-mini-transcribe-2025-12-15`, `language=ru`, one verified merged WAV и
+  короткий vocabulary prompt без fact statements/scoring.
+- Responses API `POST /v1/responses`, model `gpt-5.6-terra`, reasoning `medium`,
+  `store=false`, без tools/web/file/external knowledge и со strict JSON Schema.
+- Backend evidence/ID validation, objective speech metrics и deterministic
+  per-answer/attempt scoring со штрафом `−5` за distinct incorrect fact.
+- Unsupported claim без автоматического штрафа переводит attempt в
+  `REQUIRES_REVIEW` и скрывает provisional result от employee.
+- Persisted transcription/evaluation checkpoints, resume без повторения уже
+  сохранённого шага и общий Stage 1/2 progression.
+- Terminal `TECHNICAL_FAILED`, refund через
+  `countsTowardAttemptLimit=false`, safe employee message и replacement attempt.
+- Permission `training:results:review` и единственный новый review endpoint с
+  одноразовыми `APPROVE | OVERRIDE` и exact-payload idempotency.
+- Existing admin attempt detail с facts/evidence/criteria/metrics/models/scores и
+  review form; backend-safe employee pending/overridden/technical DTO.
+- Отдельный opt-in OpenAI smoke script, который не входит в обычные tests.
 
 ## Не входит
 
-- OpenAI и любые реальные transcription/evaluation providers.
-- Facts, criteria, semantic scoring, unsupported claims и penalty logic.
-- Manual review/review UI, admin audio player, ranking и CSV.
-- Documents, PDF/DOCX/PPTX/XLSX parsers, RAG, embeddings и materials workflow.
-- Generic jobs, отдельный worker app/container, outbox, provider runs и update
-  ledger.
-- Telegram Mini App, project list внутри bot, unlink/admin/operations endpoints,
-  webhook registration tooling и bot settings UI.
-- Policy acceptance, monitoring stack, staging, production deploy и pilot.
+- PDF/DOCX/PPTX/XLSX, documents, parsers, extraction, material library, RAG,
+  embeddings, vector store и external knowledge.
+- Ranking, rating, CSV, operations dashboard, monitoring stack и notification
+  system.
+- Separate worker container/app, generic queue/job, outbox, provider-run или
+  evaluation/transcription-run tables.
+- Полная review history, per-claim resolution, multi-review и reprocessing UI.
+- Admin audio endpoint/player, новые frontend routes и новые dependencies.
+- Production fail-fast hardening, staging/production deploy, real webhook
+  registration, pilot и calibration.
 
 ## Реализуемая последовательность
 
-1. Additive schema: три Stage 2 models и минимальные поля `TrainingAnswer`.
-2. Telegram account/link/webhook boundary и fake/native client.
-3. Voice segments, private audio, `ffmpeg`, fake transcription и persisted worker.
-4. Dialog 1+3, Telegram-first `/training`, vertical fake flow и canonical docs.
-5. Полные automated checks, Docker `ffmpeg` smoke и три read-only verifier.
-6. Остановиться с отчётом и ждать ручной приёмки Stage 2.
+1. Additive schema/migrations, facts/criteria domain, snapshot v2 и publication.
+2. OpenAI config/client/transcription и реально сериализованный multipart stub.
+3. Responses strict schema, evidence validation, metrics и backend scoring.
+4. Processing checkpoints/restart, bounded retries и technical refund.
+5. Review/RBAC/visibility, existing admin/employee UI, HTTP/PostgreSQL/browser
+   checks, opt-in smoke и канонические документы.
+6. Остановиться с отчётом и ждать ручной приёмки Stage 3.
 
 ## Ограничения scope
 
-- Только `TrainingTelegramAccount`, `TrainingTelegramLinkToken` и
-  `TrainingAnswerSegment`; отдельные job/audio/session/update models запрещены.
-- Только три новых endpoints: account state, project-bound link и webhook.
-- Одна additive Stage 2 migration; applied migrations не изменяются.
-- Нового frontend route, dependency, lockfile change, worker container или SDK
-  нет.
-- Технический processing failure не получает обычный score; repeat-answer UX и
-  voice grace period явно отложены.
+- Ровно две новые основные Prisma models и один новый HTTP endpoint.
+- Только existing API process worker; external calls выполняются вне database
+  transactions.
+- Exactly-once billing не обещается: crash после provider response и до
+  checkpoint save может повторить один платный request.
+- Stage 1 fake text mode и deterministic fake providers остаются только для
+  tests/development. Real mode не fallback-ится на fake.
+- Stage 2 Telegram, private audio, random 3/10, timer, attempt limit и immutable
+  snapshot principle не меняются.
 
 ## Ручная приёмка
 
-Ожидаются два отдельных сценария из `ACCEPTANCE.md`: локальный fake smoke без
-внешних providers и ручной real Telegram smoke через временный test webhook.
-Production webhook не регистрируется.
+Нужны отдельные сценарии из `ACCEPTANCE.md`:
+
+1. opt-in synthetic OpenAI smoke с ровно одной transcription и одной evaluation;
+2. real Telegram voice + OpenAI полный `1 + 3` flow;
+3. pending review без provisional leakage и `APPROVE`;
+4. `OVERRIDE` с final score/reason и безопасным employee result;
+5. provider technical failure с refund и replacement attempt.
+
+Production deploy и production Telegram webhook не выполняются.
 
 ## Stop conditions
 
-- Появляется OpenAI или предметная инфраструктура Stage 3–5.
-- Требуется четвёртая Stage 2 model, пятый endpoint или новый frontend route.
-- Audio становится публичным либо key содержит PII.
-- Webhook скачивает/объединяет audio внутри HTTP request.
-- Concurrent workers могут обработать один answer дважды или restart теряет
-  persisted `PROCESSING` answer.
-- Voice progression дублирует Stage 1 scoring/finalization.
-- PostgreSQL, HTTP, provider, audio, browser, Docker или workspace проверки
-  остаются красными.
+- Появляется третья основная Stage 3 model, второй новый endpoint, provider run,
+  job/outbox, document/material/ranking/operations infrastructure.
+- OpenAI request содержит passScore/finalScore, другие projects/users, hidden
+  future questions, web/files/tools или сохраняется с `store=true`.
+- Vocabulary содержит полные fact statements/criteria/scoring или PII.
+- Модель определяет final score/pass/fail либо evidence/IDs принимаются без
+  backend validation.
+- Pending employee DTO раскрывает provisional/internal данные; technical failure
+  расходует attempt limit.
+- Restart повторяет сохранённый checkpoint либо progression применяется дважды.
+- PostgreSQL, HTTP, provider, web, browser, migration или workspace gates красные.

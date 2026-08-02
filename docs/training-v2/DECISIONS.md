@@ -24,13 +24,13 @@ Training V2 является предметным модулем существ�
 3. **Stage 3 — OpenAI и Review.** Реальная транскрибация, approved facts,
    структурированное оценивание, критерии, штраф `−5`, unsupported claim,
    минимальный review и server-side final score; без parsers и ranking.
-4. **Stage 4 — Материалы и Admin Content.** Ручные facts, aliases, criteria,
-   PDF/DOCX/PPTX/XLSX, draft extraction, ручное подтверждение и publication
+4. **Stage 4 — Материалы и Admin Content.** PDF/DOCX/PPTX/XLSX, draft
+   extraction, ручное подтверждение извлечённых данных и material publication
    workflow; без RAG/vector DB без отдельного решения.
 5. **Stage 5 — Results, Ranking и Production Hardening.** Полные admin results,
-   расширенная employee history, audio playback, review UI, ranking, при
-   необходимости CSV, security, минимальные operations, deploy, pilot и
-   calibration.
+   расширенная employee history, audio playback, полная review history,
+   ranking, при необходимости CSV, security, минимальные operations, deploy,
+   pilot и calibration.
 
 Новый этап начинается только после приёмки текущего и отдельного разрешения.
 
@@ -117,6 +117,100 @@ Stage 1 timer остаётся источником истины. Telegram updat
 Grace period для voice, начатого до `expiresAt`, в Stage 2 отсутствует. Его нельзя
 добавить корректно без дополнительного lifecycle, поэтому решение явно
 отложено до Stage 3/5.
+
+## Граница Stage 3
+
+Stage 3 заменяет fake provider-часть единственного voice processing flow на
+настраиваемые backend-only реализации, добавляет approved facts, criteria,
+детерминированный backend scoring и одноразовую ручную проверку. Stage 1 fake
+mode сохраняется для development и tests; второго progression flow нет.
+
+- Основная transcription model —
+  `gpt-4o-mini-transcribe-2025-12-15`; запрос идёт native `fetch`/`FormData` в
+  `POST /v1/audio/transcriptions`.
+- Evaluation model — `gpt-5.6-terra`, reasoning effort — `medium`; запрос идёт
+  native `fetch` в Responses API `POST /v1/responses` с `store=false` и strict
+  JSON Schema.
+- OpenAI вызывается только backend. `tools`, web search, file search, external
+  knowledge, `previous_response_id`, conversation и background mode запрещены.
+- Модель возвращает только assessments/evidence/unsupported claims/summary и
+  не возвращает final score или pass/fail. Transcript объявлен недоверенными
+  данными; IDs и evidence повторно проверяет backend.
+- Итог одного answer равен сумме разрешённых criterion points с clamp и штрафом
+  `−5` за каждый distinct `INCORRECT` fact. Unsupported claim автоматически не
+  штрафуется, но всегда требует ручной проверки.
+- Stage 2 technical `FAILED` lifecycle заменён terminal
+  `TECHNICAL_FAILED`: попытка сохраняется, не расходует limit, не имеет
+  `finalScore`, возвращается сотруднику и допускает replacement attempt.
+
+В Stage 3 нет документов/parsers, extraction, RAG, embeddings, ranking, CSV,
+operations dashboard, отдельного worker container, generic queue/job, outbox,
+provider-run tables, полной review history и production deploy.
+
+## Facts, criteria и immutable snapshot Stage 3
+
+- Добавляются только две основные модели: `TrainingFact` принадлежит одному
+  question, `TrainingCriterion` — project и template `MAIN | FOLLOW_UP`.
+- Default criteria редактируемы: MAIN `5 + 15 + 15 + 10 + 10 = 55`, FOLLOW_UP
+  — один `answer_quality = 15`. Admin может менять состав при сохранении точных
+  totals `55/15` и уникальных codes внутри project/question type.
+- Новый project получает `contentSchemaVersion=2`. Publication/open требует
+  ровно `1 + 10` active questions, минимум один active fact на каждый question,
+  валидные ограниченные aliases и точные criteria totals.
+- Attempt snapshot schema v2 содержит settings, все 11 questions, fact IDs,
+  statements, aliases, required/position, оба criteria templates, scoring и
+  evaluation schema versions. После start evaluation не читает live
+  facts/criteria.
+- Исторические schema v1 snapshots не конвертируются. Existing projects получают
+  `contentSchemaVersion=1`; новые Stage 3 projects создаются как v2.
+
+## OpenAI request и recovery boundary Stage 3
+
+- Перед transcription backend повторно читает только merged private WAV
+  текущего answer и проверяет ownership, bucket, MIME, RIFF/WAVE, размер и
+  checksum. Лимит OpenAI transcription — 25 MB.
+- Vocabulary prompt содержит только короткие NFC-normalized project/object names
+  и aliases. Полные fact statements, criteria guidance, scoring rules, эталонный
+  ответ и данные сотрудника туда не передаются.
+- Один hard deadline охватывает bounded retries. Retryable: `429`, `5xx`,
+  timeout/network и временно malformed provider response. `400`, `401`, `403`,
+  invalid audio/model/configuration и size limit не retry-ятся. `Retry-After`
+  учитывается только внутри оставшегося deadline.
+- `TrainingAnswer` остаётся processing unit и хранит отдельные checkpoints:
+  transcript/provider metadata, затем validated evaluation/objective metrics и
+  server score, затем общий progression. Restart не повторяет уже сохранённый
+  checkpoint; progression/follow-up/finalization защищены транзакцией.
+- Внешний OpenAI request выполняется вне database transaction. Crash после
+  provider response, но до checkpoint save, может повторить платный request;
+  exactly-once billing в Stage 3 не обещается.
+- API key, Authorization header, transcript в logs, полный prompt/raw request,
+  chain-of-thought и неограниченный raw provider response не сохраняются.
+
+## Objective metrics Stage 3
+
+Backend считает только `audioDurationSeconds`, `segmentCount`, `wordCount`,
+`wordsPerMinute`, `fillerWordsCount` и `fillerWordsFound` по ограниченному списку
+русских filler phrases. Пол, возраст, акцент, национальность, эмоции,
+психологическая уверенность, харизма и личность не оцениваются.
+
+## Минимальный review и visibility Stage 3
+
+- Permission `training:results:review` добавляется только admin seed role; user
+  и editor не получают его автоматически.
+- Единственный новый endpoint —
+  `POST /training/admin/attempts/:attemptId/review`. `APPROVE` принимает
+  `calculatedScore`; `OVERRIDE` требует `finalScore 0..100` и непустую причину.
+- Review одноразовый. Точный повтор resolved payload идемпотентен; другой payload
+  получает conflict. Отдельной review table/history нет.
+- При unsupported claim attempt сохраняет `calculatedScore`, переходит в
+  `REQUIRES_REVIEW`, но employee DTO скрывает provisional score, breakdown,
+  transcript, evaluations, facts/provider metadata, review comment и internal
+  error. Admin detail видит evidence, metrics, models, calculated/final score и
+  safe technical error code.
+- После `APPROVE` employee получает final score и согласованный safe breakdown.
+  После `OVERRIDE` старый breakdown скрывается и показывается нейтральное
+  сообщение. После `TECHNICAL_FAILED` показывается только безопасное сообщение
+  о возврате попытки.
 
 ## Historical integrity
 
@@ -227,10 +321,10 @@ Stage 1 отсутствует.
 
 ## Явно отложено
 
-Real transcription/OpenAI, voice grace period, retry UX после технического
-`FAILED`, rubric, facts, penalty evidence, unsupported claims, review,
-materials, ranking, retention, operations и production rollout решаются только
-в соответствующих этапах.
+Document ingestion/extraction и material workflow относятся к Stage 4.
+Ranking, CSV, audio playback, полная review history, retention, operations,
+production hardening/deploy, pilot и calibration относятся к Stage 5. Voice
+grace period не меняется Stage 3 и требует отдельного решения.
 
 ## Закрытые вопросы Stage 1
 

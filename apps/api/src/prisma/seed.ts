@@ -27,6 +27,7 @@ const permissions = [
   ['training:participate', 'Participate in training projects'],
   ['training:projects:manage', 'Manage training projects'],
   ['training:results:read', 'Read training attempt results'],
+  ['training:results:review', 'Review training attempt results'],
 ] as const;
 
 const rolePermissions = {

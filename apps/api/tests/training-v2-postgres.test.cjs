@@ -55,6 +55,8 @@ if (!databaseUrl) {
     await prisma.trainingAttempt.deleteMany();
     await prisma.trainingTelegramLinkToken.deleteMany();
     await prisma.trainingTelegramAccount.deleteMany();
+    await prisma.trainingFact.deleteMany();
+    await prisma.trainingCriterion.deleteMany();
     await prisma.trainingQuestion.deleteMany();
     await prisma.trainingProject.deleteMany();
     await prisma.user.deleteMany({ where: { email: { endsWith: '@training.test' } } });
@@ -263,6 +265,7 @@ if (!databaseUrl) {
           status: TrainingAttemptStatus.COMPLETED,
           completionReason: 'COMPLETED',
           completedAt: new Date(),
+          calculatedScore: 100,
           finalScore: 100,
           isPassed: true,
         },
@@ -372,6 +375,19 @@ if (!databaseUrl) {
       followUpQuestions:
         overrides.followUpQuestions ??
         Array.from({ length: 10 }, (_, index) => `Исходный follow-up ${index + 1}`),
+      facts: Array.from({ length: 11 }, (_, index) => ({
+        id: null,
+        questionType: index === 0 ? 'MAIN' : 'FOLLOW_UP',
+        questionPosition: index === 0 ? 1 : index,
+        statement: `Утверждённый факт ${index + 1}`,
+        aliases: [`Термин ${index + 1}`],
+        isRequired: true,
+        position: 1,
+      })),
+      criteria: [
+        { id: null, questionType: 'MAIN', code: 'main', title: 'Main', guidance: '', maxPoints: 55, position: 1 },
+        { id: null, questionType: 'FOLLOW_UP', code: 'follow_up', title: 'Follow-up', guidance: '', maxPoints: 15, position: 1 },
+      ],
     };
   }
 

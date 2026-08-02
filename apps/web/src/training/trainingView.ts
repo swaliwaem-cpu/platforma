@@ -9,6 +9,7 @@ export const trainingAttemptStatusLabels: Record<TrainingAttemptStatus, string> 
   COMPLETED: 'Завершена',
   REQUIRES_REVIEW: 'Требует проверки',
   TIMED_OUT: 'Время истекло',
+  TECHNICAL_FAILED: 'Техническая ошибка',
 };
 
 export const trainingProjectStatusLabels: Record<TrainingProjectStatus, string> = {
@@ -29,7 +30,7 @@ export function getTrainingResultLabel(
 
 export function getTrainingStatusClass(status: string | null) {
   if (status === 'PASSED' || status === 'COMPLETED') return 'training-status--success';
-  if (status === 'FAILED' || status === 'TIMED_OUT') return 'training-status--danger';
+  if (status === 'FAILED' || status === 'TIMED_OUT' || status === 'TECHNICAL_FAILED') return 'training-status--danger';
   if (status === 'REQUIRES_REVIEW') return 'training-status--warning';
   if (status === 'IN_PROGRESS' || status === 'PUBLISHED') return 'training-status--active';
   return '';

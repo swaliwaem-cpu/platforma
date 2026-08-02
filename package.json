@@ -13,6 +13,7 @@
     "dev:api": "pnpm --filter @platforma/api dev",
     "dev:web": "pnpm --filter @platforma/web dev",
     "test": "pnpm -r --if-present test",
+    "test:training:openai:smoke": "pnpm --filter @platforma/api test:training:openai:smoke",
     "feed-import:preview": "pnpm --filter @platforma/feed-import run preview",
     "feed-import:run": "pnpm --filter @platforma/feed-import run run",
     "wp-import:preview": "pnpm --filter @platforma/wp-import run preview",

@@ -160,13 +160,15 @@ enum TrainingAttemptStatus {
   COMPLETED       @map("completed")
   REQUIRES_REVIEW @map("requires_review")
   TIMED_OUT       @map("timed_out")
+  TECHNICAL_FAILED @map("technical_failed")
 
   @@map("training_attempt_status")
 }
 
 enum TrainingAttemptCompletionReason {
-  COMPLETED @map("completed")
-  TIMEOUT   @map("timeout")
+  COMPLETED         @map("completed")
+  TIMEOUT           @map("timeout")
+  TECHNICAL_FAILURE @map("technical_failure")
 
   @@map("training_attempt_completion_reason")
 }
@@ -202,6 +204,29 @@ enum TrainingAnswerProcessingStatus {
   @@map("training_answer_processing_status")
 }
 
+enum TrainingAiStepStatus {
+  PENDING   @map("pending")
+  COMPLETED @map("completed")
+  FAILED    @map("failed")
+
+  @@map("training_ai_step_status")
+}
+
+enum TrainingReviewStatus {
+  NOT_REQUIRED @map("not_required")
+  PENDING      @map("pending")
+  RESOLVED     @map("resolved")
+
+  @@map("training_review_status")
+}
+
+enum TrainingReviewDecision {
+  APPROVED   @map("approved")
+  OVERRIDDEN @map("overridden")
+
+  @@map("training_review_decision")
+}
+
 model User {
   id                    String     @id @default(uuid()) @db.Uuid
   email                 String     @unique @db.VarChar(320)
@@ -230,7 +255,8 @@ model User {
   lotPresentationWorkspaceItems LotPresentationWorkspaceItem[]
   projectPresentationDrafts      ProjectPresentationDraft[]       @relation("ProjectPresentationDraftOwner")
   projectPresentationDocuments   ProjectPresentationDocument[]    @relation("ProjectPresentationDocumentOwner")
-  trainingAttempts               TrainingAttempt[]
+  trainingAttempts               TrainingAttempt[]               @relation("TrainingAttemptOwner")
+  reviewedTrainingAttempts       TrainingAttempt[]               @relation("TrainingAttemptReviewer")
   trainingTelegramAccounts       TrainingTelegramAccount[]
   trainingTelegramLinkTokens     TrainingTelegramLinkToken[]
 
@@ -1034,12 +1060,14 @@ model TrainingProject {
   timeLimitSeconds     Int                   @default(420) @map("time_limit_seconds")
   passScore            Int                   @default(75) @map("pass_score")
   allowRetakeAfterPass Boolean               @map("allow_retake_after_pass")
+  contentSchemaVersion Int                   @default(1) @map("content_schema_version")
   createdAt            DateTime              @default(now()) @map("created_at")
   updatedAt            DateTime              @updatedAt @map("updated_at")
 
   realEstateObject RealEstateObject?  @relation(fields: [realEstateObjectId], references: [id], onDelete: SetNull)
   questions        TrainingQuestion[]
   attempts         TrainingAttempt[]
+  criteria         TrainingCriterion[]
   telegramLinkTokens TrainingTelegramLinkToken[]
 
   @@index([realEstateObjectId])
@@ -1059,9 +1087,47 @@ model TrainingQuestion {
 
   project          TrainingProject           @relation(fields: [projectId], references: [id], onDelete: Restrict)
   attemptQuestions TrainingAttemptQuestion[]
+  facts            TrainingFact[]
 
   @@unique([projectId, type, position])
   @@map("training_questions")
+}
+
+model TrainingFact {
+  id          String   @id @default(uuid()) @db.Uuid
+  questionId  String   @map("question_id") @db.Uuid
+  statement   String
+  aliasesJson Json     @default("[]") @map("aliases_json")
+  isRequired  Boolean  @default(true) @map("is_required")
+  position    Int
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  question TrainingQuestion @relation(fields: [questionId], references: [id], onDelete: Restrict)
+
+  @@unique([questionId, position])
+  @@map("training_facts")
+}
+
+model TrainingCriterion {
+  id           String               @id @default(uuid()) @db.Uuid
+  projectId    String               @map("project_id") @db.Uuid
+  questionType TrainingQuestionType @map("question_type")
+  code         String               @db.VarChar(64)
+  title        String               @db.VarChar(240)
+  guidance     String
+  maxPoints    Int                  @map("max_points")
+  position     Int
+  isActive     Boolean              @default(true) @map("is_active")
+  createdAt    DateTime             @default(now()) @map("created_at")
+  updatedAt    DateTime             @updatedAt @map("updated_at")
+
+  project TrainingProject @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
+  @@unique([projectId, questionType, code])
+  @@unique([projectId, questionType, position])
+  @@map("training_criteria")
 }
 
 model TrainingAttempt {
@@ -1077,18 +1143,28 @@ model TrainingAttempt {
   completedAt           DateTime?                        @map("completed_at")
   finalScore            Int?                             @map("final_score")
   isPassed              Boolean?                         @map("is_passed")
+  calculatedScore       Int?                             @map("calculated_score")
+  reviewStatus          TrainingReviewStatus             @default(NOT_REQUIRED) @map("review_status")
+  reviewDecision        TrainingReviewDecision?          @map("review_decision")
+  reviewedById          String?                          @map("reviewed_by_id") @db.Uuid
+  reviewedAt            DateTime?                        @map("reviewed_at")
+  reviewComment         String?                          @map("review_comment")
+  reviewFinalScore      Int?                             @map("review_final_score")
+  countsTowardAttemptLimit Boolean                       @default(true) @map("counts_toward_attempt_limit")
   projectSnapshotJson   Json                             @map("project_snapshot_json")
   fakeEvaluationVersion String                           @map("fake_evaluation_version") @db.VarChar(64)
   createdAt             DateTime                         @default(now()) @map("created_at")
   updatedAt             DateTime                         @updatedAt @map("updated_at")
 
-  user      User                      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  user      User                      @relation("TrainingAttemptOwner", fields: [userId], references: [id], onDelete: Restrict)
+  reviewedBy User?                    @relation("TrainingAttemptReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
   project   TrainingProject           @relation(fields: [projectId], references: [id], onDelete: Restrict)
   questions TrainingAttemptQuestion[]
 
   @@unique([userId, projectId, attemptNumber])
   @@unique([userId, projectId, startIdempotencyKey])
   @@index([projectId, startedAt])
+  @@index([reviewedById])
   @@map("training_attempts")
 }
 
@@ -1130,6 +1206,19 @@ model TrainingAnswer {
   processingLockedAt  DateTime?                      @map("processing_locked_at")
   processingLockedBy  String?                        @map("processing_locked_by") @db.VarChar(128)
   processingErrorCode String?                        @map("processing_error_code") @db.VarChar(64)
+  transcriptionStatus TrainingAiStepStatus           @default(PENDING) @map("transcription_status")
+  evaluationStatus    TrainingAiStepStatus           @default(PENDING) @map("evaluation_status")
+  transcriptionAttempts Int                          @default(0) @map("transcription_attempts")
+  evaluationAttempts  Int                            @default(0) @map("evaluation_attempts")
+  transcriptionModel  String?                        @map("transcription_model") @db.VarChar(120)
+  evaluationModel     String?                        @map("evaluation_model") @db.VarChar(120)
+  transcriptionRequestId String?                     @map("transcription_request_id") @db.VarChar(160)
+  evaluationRequestId String?                        @map("evaluation_request_id") @db.VarChar(160)
+  transcriptionLatencyMs Int?                        @map("transcription_latency_ms")
+  evaluationLatencyMs Int?                           @map("evaluation_latency_ms")
+  evaluationSchemaVersion String?                    @map("evaluation_schema_version") @db.VarChar(64)
+  evaluationJson      Json?                          @map("evaluation_json")
+  objectiveMetricsJson Json?                         @map("objective_metrics_json")
   submittedAt         DateTime?                      @map("submitted_at")
   createdAt           DateTime                       @default(now()) @map("created_at")
   updatedAt           DateTime                       @updatedAt @map("updated_at")
