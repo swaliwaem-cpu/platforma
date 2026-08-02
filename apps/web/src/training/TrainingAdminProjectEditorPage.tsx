@@ -3,6 +3,7 @@ import type {
   TrainingAdminProject,
   TrainingCriterionDraft,
   TrainingFactDraft,
+  TrainingFactSource,
   TrainingQuestionType,
   UpdateTrainingProjectRequest,
 } from '@platforma/shared';
@@ -12,12 +13,21 @@ import { useAuth } from '../auth/AuthProvider';
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   getTrainingAdminProject,
   publishTrainingAdminProject,
   updateTrainingAdminProject,
 } from './trainingApi';
-import { getTrainingStatusClass, trainingProjectStatusLabels } from './trainingView';
+import {
+  formatTrainingFactSourceBadge,
+  getTrainingStatusClass,
+  trainingProjectStatusLabels,
+} from './trainingView';
+import { TrainingMaterialsPanel } from './TrainingMaterialsPanel';
+
+type EditorFact = TrainingFactDraft & Partial<TrainingFactSource>;
 
 type EditorForm = {
   title: string;
@@ -30,7 +40,7 @@ type EditorForm = {
   allowRetakeAfterPass: boolean;
   mainQuestion: string;
   followUpQuestions: string[];
-  facts: TrainingFactDraft[];
+  facts: EditorFact[];
   criteria: TrainingCriterionDraft[];
 };
 
@@ -52,6 +62,7 @@ export function TrainingAdminProjectEditorPage({
   const [isLoading, setIsLoading] = useState(true);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [activeTab, setActiveTab] = useState('content');
 
   useEffect(() => {
     if (!accessToken) return;
@@ -132,6 +143,17 @@ export function TrainingAdminProjectEditorPage({
     }
   };
 
+  const refreshProjectContent = async () => {
+    if (!accessToken) return;
+    try {
+      const refreshed = await getTrainingAdminProject(accessToken, projectId);
+      setProject(refreshed);
+      setForm(toEditorForm(refreshed));
+    } catch (refreshError) {
+      setError(refreshError instanceof Error ? refreshError.message : 'Не удалось обновить проект');
+    }
+  };
+
   if (isLoading) return <div className="training-page"><Skeleton className="training-editor-skeleton" /></div>;
 
   if (!project || !form) {
@@ -190,6 +212,12 @@ export function TrainingAdminProjectEditorPage({
         </AdminAlert>
       ) : null}
 
+      <Tabs className="training-editor-tabs" value={activeTab} onValueChange={setActiveTab}>
+        <TabsList variant="line" aria-label="Разделы редактора проекта">
+          <TabsTrigger value="content">Контент и оценивание</TabsTrigger>
+          <TabsTrigger value="materials">Материалы</TabsTrigger>
+        </TabsList>
+        <TabsContent value="content">
       <form className="training-editor-form" onSubmit={(event) => void handleSave(event)}>
         <AdminPanel className="training-editor-section">
           <div><p className="eyebrow">Настройки</p><h3>Основные параметры</h3></div>
@@ -199,7 +227,6 @@ export function TrainingAdminProjectEditorPage({
               <FieldLabel htmlFor="training-description">Описание</FieldLabel>
               <textarea id="training-description" className="training-textarea" rows={4} value={form.description} disabled={isReadOnly} onChange={(event) => setForm({ ...form, description: event.target.value })} />
             </Field>
-            <EditorTextField id="training-object-id" label="ID ЖК (необязательно)" value={form.realEstateObjectId} error={errors['training-object-id']} disabled={isReadOnly} onChange={(value) => setForm({ ...form, realEstateObjectId: value })} />
             <EditorNumberField id="training-sort-order" label="Порядок" value={form.sortOrder} error={errors['training-sort-order']} disabled={isReadOnly} onChange={(value) => setForm({ ...form, sortOrder: value })} />
             <EditorNumberField id="training-attempt-limit" label="Лимит попыток" value={form.attemptLimit} error={errors['training-attempt-limit']} disabled={isReadOnly} onChange={(value) => setForm({ ...form, attemptLimit: value })} />
             <EditorNumberField id="training-time-limit" label="Таймер, минуты" value={form.timeLimitMinutes} error={errors['training-time-limit']} disabled={isReadOnly} onChange={(value) => setForm({ ...form, timeLimitMinutes: value })} />
@@ -258,6 +285,17 @@ export function TrainingAdminProjectEditorPage({
 
         <AdminButton type="submit" tone="primary" disabled={isReadOnly || Boolean(pendingAction)}>{pendingAction === 'save' ? 'Сохранение…' : 'Сохранить черновик'}</AdminButton>
       </form>
+        </TabsContent>
+        <TabsContent value="materials">
+          <TrainingMaterialsPanel
+            accessToken={accessToken ?? ''}
+            disabled={isReadOnly}
+            linkedObjectId={project.realEstateObjectId}
+            projectId={project.id}
+            onFactsChanged={() => void refreshProjectContent()}
+          />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
@@ -270,12 +308,18 @@ function EditorNumberField(props: Parameters<typeof EditorTextField>[0]) {
   return <EditorTextField {...props} />;
 }
 
-function QuestionFactsEditor({ disabled, facts, label, onChange, questionPosition, questionType }: { disabled: boolean; facts: TrainingFactDraft[]; label: string; onChange: (facts: TrainingFactDraft[]) => void; questionPosition: number; questionType: TrainingQuestionType }) {
+function QuestionFactsEditor({ disabled, facts, label, onChange, questionPosition, questionType }: { disabled: boolean; facts: EditorFact[]; label: string; onChange: (facts: EditorFact[]) => void; questionPosition: number; questionType: TrainingQuestionType }) {
   return (
     <fieldset className="training-facts-editor" disabled={disabled}>
       <div className="training-subsection-heading"><legend>{label}</legend><span>{facts.length} факт.</span></div>
       {facts.length ? facts.map((fact, index) => (
         <div className="training-fact-row" key={fact.id ?? `${questionType}-${questionPosition}-${index}`}>
+          <div className="training-fact-source">
+            <Badge variant={fact.sourceType === 'MATERIAL' ? 'secondary' : 'outline'}>
+              {formatTrainingFactSourceBadge(fact)}
+            </Badge>
+            {fact.sourceType === 'MATERIAL' ? <small>{fact.sourceLabel}{fact.sourceExcerpt ? ` · «${fact.sourceExcerpt}»` : ''}</small> : null}
+          </div>
           <Field>
             <FieldLabel htmlFor={`fact-${questionType}-${questionPosition}-${index}`}>Утверждённый факт {index + 1}</FieldLabel>
             <textarea id={`fact-${questionType}-${questionPosition}-${index}`} className="training-textarea" rows={3} value={fact.statement} onChange={(event) => onChange(facts.map((item, itemIndex) => itemIndex === index ? { ...item, statement: event.target.value } : item))} />
@@ -326,7 +370,6 @@ function toEditorForm(project: TrainingAdminProject): EditorForm {
 function validateEditorForm(form: EditorForm) {
   const errors: Record<string, string> = {};
   if (!form.title.trim()) errors['training-title'] = 'Введите название';
-  if (form.realEstateObjectId && !/^[0-9a-f-]{36}$/iu.test(form.realEstateObjectId)) errors['training-object-id'] = 'Введите UUID ЖК';
   validateInteger(form.sortOrder, 'training-sort-order', errors, 0);
   validateInteger(form.attemptLimit, 'training-attempt-limit', errors, 1);
   validateInteger(form.timeLimitMinutes, 'training-time-limit', errors, 1);
@@ -356,13 +399,13 @@ function validateInteger(value: string, id: string, errors: Record<string, strin
 }
 
 function toUpdateRequest(form: EditorForm): UpdateTrainingProjectRequest {
-  return { title: form.title.trim(), description: form.description.trim() || null, realEstateObjectId: form.realEstateObjectId.trim() || null, sortOrder: Number(form.sortOrder), attemptLimit: Number(form.attemptLimit), timeLimitMinutes: Number(form.timeLimitMinutes), passScore: Number(form.passScore), allowRetakeAfterPass: form.allowRetakeAfterPass, mainQuestion: form.mainQuestion.trim(), followUpQuestions: form.followUpQuestions.map((question) => question.trim()), facts: form.facts.map((fact) => ({ ...fact, statement: fact.statement.trim(), aliases: fact.aliases.map((alias) => alias.trim()) })), criteria: form.criteria.map((criterion) => ({ ...criterion, code: criterion.code.trim(), title: criterion.title.trim(), guidance: criterion.guidance.trim() })) };
+  return { title: form.title.trim(), description: form.description.trim() || null, realEstateObjectId: form.realEstateObjectId.trim() || null, sortOrder: Number(form.sortOrder), attemptLimit: Number(form.attemptLimit), timeLimitMinutes: Number(form.timeLimitMinutes), passScore: Number(form.passScore), allowRetakeAfterPass: form.allowRetakeAfterPass, mainQuestion: form.mainQuestion.trim(), followUpQuestions: form.followUpQuestions.map((question) => question.trim()), facts: form.facts.map((fact) => ({ id: fact.id, questionType: fact.questionType, questionPosition: fact.questionPosition, statement: fact.statement.trim(), aliases: fact.aliases.map((alias) => alias.trim()), isRequired: fact.isRequired, position: fact.position })), criteria: form.criteria.map((criterion) => ({ ...criterion, code: criterion.code.trim(), title: criterion.title.trim(), guidance: criterion.guidance.trim() })) };
 }
 
-function factsFor(facts: TrainingFactDraft[], type: TrainingQuestionType, position: number) {
+function factsFor(facts: EditorFact[], type: TrainingQuestionType, position: number) {
   return facts.filter((fact) => fact.questionType === type && fact.questionPosition === position).sort((left, right) => left.position - right.position);
 }
 
-function replaceQuestionFacts(facts: TrainingFactDraft[], type: TrainingQuestionType, position: number, replacement: TrainingFactDraft[]) {
+function replaceQuestionFacts(facts: EditorFact[], type: TrainingQuestionType, position: number, replacement: EditorFact[]) {
   return [...facts.filter((fact) => fact.questionType !== type || fact.questionPosition !== position), ...replacement.map((fact, index) => ({ ...fact, questionType: type, questionPosition: position, position: index + 1 }))];
 }

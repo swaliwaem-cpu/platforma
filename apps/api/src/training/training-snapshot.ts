@@ -1,7 +1,8 @@
 import { TrainingQuestionType } from '@prisma/client';
 
 export const TRAINING_LEGACY_SNAPSHOT_SCHEMA_VERSION = 1;
-export const TRAINING_SNAPSHOT_SCHEMA_VERSION = 2;
+export const TRAINING_STAGE3_SNAPSHOT_SCHEMA_VERSION = 2;
+export const TRAINING_SNAPSHOT_SCHEMA_VERSION = 3;
 export const TRAINING_SNAPSHOT_FOLLOW_UP_COUNT = 10;
 export const TRAINING_SCORING_VERSION = 'training-v2-scoring-v1';
 export const TRAINING_EVALUATION_SCHEMA_VERSION = 'training-v2-evaluation-v1';
@@ -22,6 +23,16 @@ export type TrainingProjectSnapshotFact = {
   aliases: string[];
   required: boolean;
   position: number;
+};
+
+export type TrainingProjectSnapshotFactSource = {
+  sourceType: 'MANUAL' | 'MATERIAL';
+  sourceLabel: string;
+  sourceLocator: string | null;
+  sourceExcerpt: string | null;
+  sourceRevisionId: string | null;
+  sourceMaterialType: 'PDF' | 'OFFICIAL_URL' | 'MANUAL_TEXT' | 'OBJECT_SNAPSHOT' | null;
+  sourceUrl: string | null;
 };
 
 export type TrainingProjectSnapshotCriterion = {
@@ -48,7 +59,7 @@ export type TrainingProjectSnapshotV1 = {
 };
 
 export type TrainingProjectSnapshotV2 = {
-  schemaVersion: typeof TRAINING_SNAPSHOT_SCHEMA_VERSION;
+  schemaVersion: typeof TRAINING_STAGE3_SNAPSHOT_SCHEMA_VERSION;
   projectTitle: string;
   relatedObjectTitle: string | null;
   settings: TrainingProjectSnapshotSettings;
@@ -61,7 +72,19 @@ export type TrainingProjectSnapshotV2 = {
   questions: Array<TrainingProjectSnapshotQuestion & { facts: TrainingProjectSnapshotFact[] }>;
 };
 
-export type TrainingProjectSnapshot = TrainingProjectSnapshotV1 | TrainingProjectSnapshotV2;
+export type TrainingProjectSnapshotV3 = Omit<TrainingProjectSnapshotV2, 'schemaVersion' | 'questions'> & {
+  schemaVersion: typeof TRAINING_SNAPSHOT_SCHEMA_VERSION;
+  questions: Array<
+    TrainingProjectSnapshotQuestion & {
+      facts: Array<TrainingProjectSnapshotFact & TrainingProjectSnapshotFactSource>;
+    }
+  >;
+};
+
+export type TrainingProjectSnapshot =
+  | TrainingProjectSnapshotV1
+  | TrainingProjectSnapshotV2
+  | TrainingProjectSnapshotV3;
 
 export function parseTrainingProjectSnapshot(value: unknown): TrainingProjectSnapshot {
   if (!isRecord(value)) throw new Error('Invalid training snapshot');
@@ -70,9 +93,11 @@ export function parseTrainingProjectSnapshot(value: unknown): TrainingProjectSna
     return parseLegacySnapshot(value);
   }
 
-  if (value.schemaVersion === TRAINING_SNAPSHOT_SCHEMA_VERSION) {
+  if (value.schemaVersion === TRAINING_STAGE3_SNAPSHOT_SCHEMA_VERSION) {
     return parseStage3Snapshot(value);
   }
+
+  if (value.schemaVersion === TRAINING_SNAPSHOT_SCHEMA_VERSION) return parseStage4Snapshot(value);
 
   throw new Error('Unsupported training snapshot');
 }
@@ -80,7 +105,14 @@ export function parseTrainingProjectSnapshot(value: unknown): TrainingProjectSna
 export function isTrainingProjectSnapshotV2(
   snapshot: TrainingProjectSnapshot,
 ): snapshot is TrainingProjectSnapshotV2 {
-  return snapshot.schemaVersion === TRAINING_SNAPSHOT_SCHEMA_VERSION;
+  return snapshot.schemaVersion === TRAINING_STAGE3_SNAPSHOT_SCHEMA_VERSION;
+}
+
+export function isTrainingProjectSnapshotWithFacts(
+  snapshot: TrainingProjectSnapshot,
+): snapshot is TrainingProjectSnapshotV2 | TrainingProjectSnapshotV3 {
+  return snapshot.schemaVersion === TRAINING_STAGE3_SNAPSHOT_SCHEMA_VERSION ||
+    snapshot.schemaVersion === TRAINING_SNAPSHOT_SCHEMA_VERSION;
 }
 
 export function hasTrainingSnapshotQuestionStructure(
@@ -117,7 +149,7 @@ function parseLegacySnapshot(value: Record<string, unknown>): TrainingProjectSna
 }
 
 function parseStage3Snapshot(value: Record<string, unknown>): TrainingProjectSnapshotV2 {
-  const common = parseCommonSnapshot(value, true);
+  const common = parseCommonSnapshot(value, 'v2');
 
   if (
     (value.relatedObjectTitle !== null && typeof value.relatedObjectTitle !== 'string') ||
@@ -137,7 +169,7 @@ function parseStage3Snapshot(value: Record<string, unknown>): TrainingProjectSna
   }
 
   return {
-    schemaVersion: TRAINING_SNAPSHOT_SCHEMA_VERSION,
+    schemaVersion: TRAINING_STAGE3_SNAPSHOT_SCHEMA_VERSION,
     projectTitle: common.projectTitle,
     relatedObjectTitle: value.relatedObjectTitle,
     settings: common.settings,
@@ -148,7 +180,41 @@ function parseStage3Snapshot(value: Record<string, unknown>): TrainingProjectSna
   };
 }
 
-function parseCommonSnapshot(value: Record<string, unknown>, withFacts = false) {
+function parseStage4Snapshot(value: Record<string, unknown>): TrainingProjectSnapshotV3 {
+  const common = parseCommonSnapshot(value, 'v3');
+  const stage3Shape = parseScoredSnapshotFields(value, 'Stage 4');
+
+  return {
+    schemaVersion: TRAINING_SNAPSHOT_SCHEMA_VERSION,
+    projectTitle: common.projectTitle,
+    relatedObjectTitle: stage3Shape.relatedObjectTitle,
+    settings: common.settings,
+    scoringVersion: TRAINING_SCORING_VERSION,
+    evaluationSchemaVersion: TRAINING_EVALUATION_SCHEMA_VERSION,
+    criteria: stage3Shape.criteria,
+    questions: common.questions as TrainingProjectSnapshotV3['questions'],
+  };
+}
+
+function parseScoredSnapshotFields(value: Record<string, unknown>, stage: string) {
+  if (
+    (value.relatedObjectTitle !== null && typeof value.relatedObjectTitle !== 'string') ||
+    value.scoringVersion !== TRAINING_SCORING_VERSION ||
+    value.evaluationSchemaVersion !== TRAINING_EVALUATION_SCHEMA_VERSION ||
+    !isRecord(value.criteria)
+  ) {
+    throw new Error(`Invalid ${stage} training snapshot`);
+  }
+
+  const main = parseCriteria(value.criteria.main, 55);
+  const followUp = parseCriteria(value.criteria.followUp, 15);
+  const ids = [...main, ...followUp].map((criterion) => criterion.id);
+  if (new Set(ids).size !== ids.length) throw new Error('Duplicate training snapshot criterion ID');
+
+  return { relatedObjectTitle: value.relatedObjectTitle, criteria: { main, followUp } };
+}
+
+function parseCommonSnapshot(value: Record<string, unknown>, factVersion: 'none' | 'v2' | 'v3' = 'none') {
   const settings = value.settings;
   const questions = value.questions;
 
@@ -181,7 +247,9 @@ function parseCommonSnapshot(value: Record<string, unknown>, withFacts = false) 
       type: question.type,
       text: question.text,
       position: question.position,
-      ...(withFacts ? { facts: parseFacts(question.facts) } : {}),
+      ...(factVersion !== 'none'
+        ? { facts: parseFacts(question.facts, factVersion === 'v3') }
+        : {}),
     };
   });
 
@@ -205,7 +273,10 @@ function parseCommonSnapshot(value: Record<string, unknown>, withFacts = false) 
   };
 }
 
-function parseFacts(value: unknown): TrainingProjectSnapshotFact[] {
+function parseFacts(
+  value: unknown,
+  withSource: boolean,
+): Array<TrainingProjectSnapshotFact & Partial<TrainingProjectSnapshotFactSource>> {
   if (!Array.isArray(value) || value.length === 0) {
     throw new Error('Training snapshot question facts are required');
   }
@@ -232,12 +303,54 @@ function parseFacts(value: unknown): TrainingProjectSnapshotFact[] {
       throw new Error('Invalid training snapshot fact');
     }
 
-    return {
+    const parsed = {
       id: fact.id,
       statement: fact.statement,
       aliases: fact.aliases as string[],
       required: fact.required,
       position: fact.position,
+    };
+
+    if (!withSource) return parsed;
+
+    if (
+      (fact.sourceType !== 'MANUAL' && fact.sourceType !== 'MATERIAL') ||
+      typeof fact.sourceLabel !== 'string' ||
+      !fact.sourceLabel.trim() ||
+      fact.sourceLabel.length > 240 ||
+      (fact.sourceLocator !== null &&
+        (typeof fact.sourceLocator !== 'string' || fact.sourceLocator.length > 240)) ||
+      (fact.sourceExcerpt !== null &&
+        (typeof fact.sourceExcerpt !== 'string' || fact.sourceExcerpt.length > 500)) ||
+      (fact.sourceRevisionId !== null &&
+        (typeof fact.sourceRevisionId !== 'string' || fact.sourceRevisionId.length > 64)) ||
+      (fact.sourceMaterialType !== null &&
+        fact.sourceMaterialType !== 'PDF' &&
+        fact.sourceMaterialType !== 'OFFICIAL_URL' &&
+        fact.sourceMaterialType !== 'MANUAL_TEXT' &&
+        fact.sourceMaterialType !== 'OBJECT_SNAPSHOT') ||
+      (fact.sourceUrl !== null &&
+        (typeof fact.sourceUrl !== 'string' || fact.sourceUrl.length > 2_048)) ||
+      (fact.sourceType === 'MANUAL' &&
+        (fact.sourceRevisionId !== null || fact.sourceLocator !== null ||
+          fact.sourceExcerpt !== null || fact.sourceMaterialType !== null || fact.sourceUrl !== null)) ||
+      (fact.sourceType === 'MATERIAL' &&
+        (!fact.sourceRevisionId || !fact.sourceLocator || !fact.sourceExcerpt ||
+          !fact.sourceMaterialType))
+    ) {
+      throw new Error('Invalid training snapshot fact source');
+    }
+
+    return {
+      ...parsed,
+      sourceType: fact.sourceType as TrainingProjectSnapshotFactSource['sourceType'],
+      sourceLabel: fact.sourceLabel,
+      sourceLocator: fact.sourceLocator,
+      sourceExcerpt: fact.sourceExcerpt,
+      sourceRevisionId: fact.sourceRevisionId,
+      sourceMaterialType:
+        fact.sourceMaterialType as TrainingProjectSnapshotFactSource['sourceMaterialType'],
+      sourceUrl: fact.sourceUrl,
     };
   });
   if (

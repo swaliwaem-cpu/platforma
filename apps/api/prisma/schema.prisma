@@ -227,6 +227,44 @@ enum TrainingReviewDecision {
   @@map("training_review_decision")
 }
 
+enum TrainingMaterialType {
+  PDF             @map("pdf")
+  OFFICIAL_URL    @map("official_url")
+  MANUAL_TEXT     @map("manual_text")
+  OBJECT_SNAPSHOT @map("object_snapshot")
+
+  @@map("training_material_type")
+}
+
+enum TrainingMaterialStatus {
+  ACTIVE   @map("active")
+  ARCHIVED @map("archived")
+
+  @@map("training_material_status")
+}
+
+enum TrainingMaterialRevisionStatus {
+  READY  @map("ready")
+  FAILED @map("failed")
+
+  @@map("training_material_revision_status")
+}
+
+enum TrainingMaterialSuggestionStatus {
+  NOT_GENERATED @map("not_generated")
+  READY         @map("ready")
+  FAILED        @map("failed")
+
+  @@map("training_material_suggestion_status")
+}
+
+enum TrainingFactSourceType {
+  MANUAL   @map("manual")
+  MATERIAL @map("material")
+
+  @@map("training_fact_source_type")
+}
+
 model User {
   id                    String     @id @default(uuid()) @db.Uuid
   email                 String     @unique @db.VarChar(320)
@@ -259,6 +297,9 @@ model User {
   reviewedTrainingAttempts       TrainingAttempt[]               @relation("TrainingAttemptReviewer")
   trainingTelegramAccounts       TrainingTelegramAccount[]
   trainingTelegramLinkTokens     TrainingTelegramLinkToken[]
+  createdTrainingMaterials       TrainingMaterial[]         @relation("TrainingMaterialCreator")
+  confirmedTrainingMaterials     TrainingMaterial[]         @relation("TrainingMaterialOfficialConfirmer")
+  createdTrainingMaterialRevisions TrainingMaterialRevision[] @relation("TrainingMaterialRevisionCreator")
 
   @@index([roleId])
   @@index([profilePhotoFileId])
@@ -730,6 +771,7 @@ model File {
   projectPresentationAssets    ProjectPresentationDocumentAsset[]
   trainingAnswerSegments       TrainingAnswerSegment[]             @relation("TrainingAnswerSegmentStoredFile")
   trainingMergedAnswers        TrainingAnswer[]                    @relation("TrainingAnswerMergedAudio")
+  trainingMaterialRevisions    TrainingMaterialRevision[]          @relation("TrainingMaterialRevisionFile")
 
   @@unique([storage, bucket, key])
   @@index([uploadedById])
@@ -1069,6 +1111,7 @@ model TrainingProject {
   attempts         TrainingAttempt[]
   criteria         TrainingCriterion[]
   telegramLinkTokens TrainingTelegramLinkToken[]
+  materials          TrainingMaterial[]
 
   @@index([realEstateObjectId])
   @@index([status, isOpen, sortOrder])
@@ -1094,20 +1137,90 @@ model TrainingQuestion {
 }
 
 model TrainingFact {
-  id          String   @id @default(uuid()) @db.Uuid
-  questionId  String   @map("question_id") @db.Uuid
-  statement   String
-  aliasesJson Json     @default("[]") @map("aliases_json")
-  isRequired  Boolean  @default(true) @map("is_required")
-  position    Int
-  isActive    Boolean  @default(true) @map("is_active")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id               String                 @id @default(uuid()) @db.Uuid
+  questionId       String                 @map("question_id") @db.Uuid
+  statement        String
+  aliasesJson      Json                   @default("[]") @map("aliases_json")
+  isRequired       Boolean                @default(true) @map("is_required")
+  position         Int
+  isActive         Boolean                @default(true) @map("is_active")
+  sourceType       TrainingFactSourceType @default(MANUAL) @map("source_type")
+  sourceRevisionId String?                @map("source_revision_id") @db.Uuid
+  sourceLabel      String                 @default("Добавлено вручную") @map("source_label") @db.VarChar(240)
+  sourceLocator    String?                @map("source_locator") @db.VarChar(240)
+  sourceExcerpt    String?                @map("source_excerpt")
+  createdAt        DateTime               @default(now()) @map("created_at")
+  updatedAt        DateTime               @updatedAt @map("updated_at")
 
-  question TrainingQuestion @relation(fields: [questionId], references: [id], onDelete: Restrict)
+  question       TrainingQuestion          @relation(fields: [questionId], references: [id], onDelete: Restrict)
+  sourceRevision TrainingMaterialRevision? @relation(fields: [sourceRevisionId], references: [id], onDelete: Restrict)
 
   @@unique([questionId, position])
+  @@index([sourceRevisionId])
   @@map("training_facts")
+}
+
+model TrainingMaterial {
+  id                    String                 @id @default(uuid()) @db.Uuid
+  projectId             String                 @map("project_id") @db.Uuid
+  type                  TrainingMaterialType
+  title                 String                 @db.VarChar(240)
+  status                TrainingMaterialStatus @default(ACTIVE)
+  sourceUrl             String?                @map("source_url") @db.VarChar(2048)
+  officialConfirmedAt   DateTime?              @map("official_confirmed_at")
+  officialConfirmedById String?                @map("official_confirmed_by_id") @db.Uuid
+  createdById           String                 @map("created_by_id") @db.Uuid
+  createdAt             DateTime               @default(now()) @map("created_at")
+  updatedAt             DateTime               @updatedAt @map("updated_at")
+
+  project             TrainingProject            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  officialConfirmedBy User?                      @relation("TrainingMaterialOfficialConfirmer", fields: [officialConfirmedById], references: [id], onDelete: Restrict)
+  createdBy           User                       @relation("TrainingMaterialCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  revisions           TrainingMaterialRevision[]
+
+  @@index([projectId, status, createdAt])
+  @@index([createdById])
+  @@index([officialConfirmedById])
+  @@map("training_materials")
+}
+
+model TrainingMaterialRevision {
+  id                       String                           @id @default(uuid()) @db.Uuid
+  materialId               String                           @map("material_id") @db.Uuid
+  revisionNumber           Int                              @map("revision_number")
+  previousRevisionId       String?                          @map("previous_revision_id") @db.Uuid
+  status                   TrainingMaterialRevisionStatus
+  fileId                   String?                          @map("file_id") @db.Uuid
+  requestedUrl             String?                          @map("requested_url") @db.VarChar(2048)
+  finalUrl                 String?                          @map("final_url") @db.VarChar(2048)
+  fetchedAt                DateTime?                        @map("fetched_at")
+  extractedText            String                           @map("extracted_text")
+  segmentsJson             Json                             @map("segments_json")
+  contentHash              String                           @map("content_hash") @db.VarChar(64)
+  extractionMetadataJson   Json                             @map("extraction_metadata_json")
+  diffJson                 Json                             @map("diff_json")
+  isChanged                Boolean                          @map("is_changed")
+  suggestionStatus         TrainingMaterialSuggestionStatus @default(NOT_GENERATED) @map("suggestion_status")
+  suggestionsJson          Json?                            @map("suggestions_json")
+  suggestionModel         String?                          @map("suggestion_model") @db.VarChar(120)
+  suggestionRequestIdsJson Json?                            @map("suggestion_request_ids_json")
+  suggestionErrorCode     String?                          @map("suggestion_error_code") @db.VarChar(120)
+  createdById              String                           @map("created_by_id") @db.Uuid
+  createdAt                DateTime                         @default(now()) @map("created_at")
+
+  material         TrainingMaterial            @relation(fields: [materialId], references: [id], onDelete: Restrict)
+  previousRevision TrainingMaterialRevision?   @relation("TrainingMaterialRevisionChain", fields: [materialId, previousRevisionId], references: [materialId, id], onDelete: Restrict)
+  nextRevisions    TrainingMaterialRevision[]   @relation("TrainingMaterialRevisionChain")
+  file             File?                       @relation("TrainingMaterialRevisionFile", fields: [fileId], references: [id], onDelete: Restrict)
+  createdBy        User                        @relation("TrainingMaterialRevisionCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  facts            TrainingFact[]
+
+  @@unique([materialId, revisionNumber])
+  @@unique([materialId, id])
+  @@index([fileId])
+  @@index([createdById])
+  @@index([createdAt])
+  @@map("training_material_revisions")
 }
 
 model TrainingCriterion {

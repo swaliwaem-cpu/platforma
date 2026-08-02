@@ -2,7 +2,7 @@ require('reflect-metadata');
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { BadRequestException } = require('@nestjs/common');
+const { BadRequestException, ConflictException } = require('@nestjs/common');
 const { FileVariantKind } = require('@prisma/client');
 
 const { FilesController } = require('../dist/files/files.controller.js');
@@ -205,6 +205,31 @@ test('FilesService.delete removes image variants before deleting original object
     'uploads/2026/05/original.png',
   ]);
   assert.deepEqual(deletedFileIds, ['11111111-1111-4111-8111-111111111111']);
+});
+
+test('FilesService.delete preserves storage for a PDF linked to an immutable training revision', async () => {
+  const storage = createStorageMock();
+  const prisma = {
+    file: {
+      findUnique: async () => ({
+        ...createFileRecord({
+          bucket: 'training-materials',
+          key: 'training-v2/materials/material/revision.pdf',
+          url: null,
+        }),
+        variants: [],
+        _count: { trainingMaterialRevisions: 1 },
+      }),
+      delete: async () => assert.fail('linked file must not be deleted from the database'),
+    },
+  };
+  const service = new FilesService(prisma, storage.service);
+
+  await assert.rejects(
+    () => service.delete('11111111-1111-4111-8111-111111111111'),
+    (error) => error instanceof ConflictException,
+  );
+  assert.deepEqual(storage.deleted, []);
 });
 
 test('FilesService.getContent returns requested image variant when it exists', async () => {

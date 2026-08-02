@@ -199,7 +199,7 @@ export class FilesService {
 
   async getById(id: string) {
     const file = await this.findExistingFile(id);
-    this.assertNotTrainingAudio(file);
+    this.assertNotPrivateTrainingFile(file);
 
     return {
       file: this.serializeFile(file),
@@ -209,7 +209,7 @@ export class FilesService {
   async getContent(id: string, variant?: string | null) {
     const requestedVariant = this.parseRequestedVariant(variant);
     const file = await this.findExistingFileWithVariants(id);
-    this.assertNotTrainingAudio(file);
+    this.assertNotPrivateTrainingFile(file);
 
     if (requestedVariant.kind === 'variant') {
       const fileVariant = file.variants.find((currentVariant) => currentVariant.variant === requestedVariant.variant);
@@ -274,6 +274,7 @@ export class FilesService {
             projectPresentationAssets: true,
             trainingAnswerSegments: true,
             trainingMergedAnswers: true,
+            trainingMaterialRevisions: true,
           },
         },
       },
@@ -293,7 +294,8 @@ export class FilesService {
       file._count.projectPresentationDocuments > 0 ||
       file._count.projectPresentationAssets > 0 ||
       file._count.trainingAnswerSegments > 0 ||
-      file._count.trainingMergedAnswers > 0
+      file._count.trainingMergedAnswers > 0 ||
+      file._count.trainingMaterialRevisions > 0
     ) {
       throw new ConflictException('File is linked and cannot be deleted');
     }
@@ -634,8 +636,11 @@ export class FilesService {
     return file;
   }
 
-  private assertNotTrainingAudio(file: { url: string | null; key: string }) {
-    if (file.url === null && file.key.startsWith('training-v2/answers/')) {
+  private assertNotPrivateTrainingFile(file: { url: string | null; key: string }) {
+    if (
+      file.url === null &&
+      (file.key.startsWith('training-v2/answers/') || file.key.startsWith('training-v2/materials/'))
+    ) {
       throw new NotFoundException('File not found');
     }
   }

@@ -33,15 +33,24 @@ const stage3EnumMigration = readFileSync(
   ),
   'utf8',
 );
+const stage4Migration = readFileSync(
+  resolve(
+    repositoryRoot,
+    'apps/api/prisma/migrations/20260802150000_add_training_v2_stage_4_materials/migration.sql',
+  ),
+  'utf8',
+);
 const seed = readFileSync(resolve(repositoryRoot, 'apps/api/src/prisma/seed.ts'), 'utf8');
 
-test('Training V2 Stage 3 adds only TrainingFact and TrainingCriterion', () => {
+test('Training V2 Stage 4 adds exactly TrainingMaterial and TrainingMaterialRevision', () => {
   const modelNames = [...schema.matchAll(/^model (Training\w+) \{/gmu)].map((match) => match[1]);
 
   assert.deepEqual(modelNames, [
     'TrainingProject',
     'TrainingQuestion',
     'TrainingFact',
+    'TrainingMaterial',
+    'TrainingMaterialRevision',
     'TrainingCriterion',
     'TrainingAttempt',
     'TrainingAttemptQuestion',
@@ -50,6 +59,16 @@ test('Training V2 Stage 3 adds only TrainingFact and TrainingCriterion', () => {
     'TrainingTelegramLinkToken',
     'TrainingAnswerSegment',
   ]);
+});
+
+test('Stage 4 migration is additive and enforces revision and source invariants', () => {
+  assert.match(stage4Migration, /CREATE TABLE "training_materials"/);
+  assert.match(stage4Migration, /CREATE TABLE "training_material_revisions"/);
+  assert.match(stage4Migration, /training_material_revision_ready_immutable_trigger/);
+  assert.match(stage4Migration, /training_fact_material_same_project_trigger/);
+  assert.match(stage4Migration, /FOREIGN KEY \("file_id"\)[\s\S]*ON DELETE RESTRICT/);
+  assert.match(stage4Migration, /UPDATE "training_projects"[\s\S]*"content_schema_version" = 3/);
+  assert.doesNotMatch(stage4Migration, /DROP TABLE|DROP TYPE|DELETE FROM|TRUNCATE/);
 });
 
 test('Stage 3 migration adds facts, criteria and checkpoint/review state only', () => {

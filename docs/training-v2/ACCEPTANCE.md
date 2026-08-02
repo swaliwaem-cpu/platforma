@@ -1,118 +1,149 @@
-# Acceptance: Stage 3
+# Acceptance: Stage 4
 
 ## Критерии готовности к ручной приёмке
 
-- New project хранит facts и criteria, публикуется только при валидных `1 + 10`,
-  facts на каждый question, aliases и точных totals `55/15`.
-- New attempt snapshot schema v2 замораживает settings, 11 questions, facts,
-  criteria и schema versions; старые schema v1 attempts не конвертируются.
-- `TRAINING_AI_MODE=openai` использует только backend OpenAI implementations и
-  требует API key без fallback на fake.
-- Transcription отправляет один проверенный private merged WAV в
-  `/v1/audio/transcriptions`; vocabulary не содержит full facts/scoring/PII.
-- Evaluation отправляет только current answer context в `/v1/responses` с
-  `store=false`, без tools/web/files и с strict JSON Schema.
-- Backend проверяет exact IDs/evidence, считает objective metrics, criteria sum,
-  distinct `−5` penalties и final score. Unsupported claim требует review и не
-  получает автоматический штраф.
-- Transcription и validated evaluation сохраняются отдельными checkpoints;
-  restart не повторяет уже сохранённый step и не дублирует progression.
-- Исчерпанный provider failure создаёт `TECHNICAL_FAILED`, возвращает попытку и
-  позволяет replacement attempt.
-- Review permission/endpoint разрешает одноразовые idempotent `APPROVE` и
-  `OVERRIDE`; employee pending/override/technical DTO остаётся безопасным.
-- Admin видит facts/evidence/criteria/metrics/models/calculated/final score, но не
-  secrets, raw provider body, prompt, private storage key или chain-of-thought.
-- Нет Stage 4/5 infrastructure и production deploy.
+- `TrainingMaterial` принадлежит одному project, архивируется без physical
+  delete и поддерживает только `PDF | OFFICIAL_URL | MANUAL_TEXT |
+  OBJECT_SNAPSHOT`.
+- Каждая загрузка/refresh создаёт immutable `TrainingMaterialRevision` с
+  revision number, previous revision, bounded normalized segments, content hash
+  и deterministic diff. Старые facts и attempts не меняются.
+- PDF проверяется по auth/RBAC/ownership, MIME, extension, `%PDF-`, размеру,
+  page count и timeout, хранится private с `File.url=null` и извлекается по
+  страницам. Scanned/password-protected/invalid PDF получает safe error без OCR.
+- Official URL требует admin confirmation, допускает только HTTPS и проходит
+  DNS/IP/redirect SSRF checks. Fetch ограничен по redirects, bytes, content type
+  и timeout; crawler и follow-links отсутствуют.
+- Browser fallback выключен по умолчанию, обрабатывает только одну указанную
+  страницу в isolated ephemeral context, проверяет все requests и гарантированно
+  закрывается.
+- Manual text сохраняется как normalized plain text. Object snapshot принимает
+  только field codes и читает текущие values backend-ом из linked object по
+  explicit allowlist стабильных полей.
+- ЖК выбирается в searchable dropdown через server-side Platforma search,
+  включая другую клавиатурную раскладку. Явный import связывает project,
+  snapshot-ит все стабильные allowlisted поля и копирует каждый прикреплённый
+  PDF в private Training material revision.
+- По всем READY revisions импортированной карточки система создаёт ровно один
+  главный и десять дополнительных grounded question drafts. Existing questions
+  заменяются только после подтверждения; project остаётся `DRAFT`, а факты не
+  создаются автоматически.
+- Suggestions генерируются deterministic fake или existing OpenAI client,
+  chunk-ятся по segments, проходят strict schema/IDs/evidence validation и не
+  создают fact до explicit admin apply.
+- Apply повторно проверяет permission, ownership, question, statement, aliases,
+  required, locator/excerpt и duplicates. Созданный material fact хранит точную
+  source citation; existing manual fact editor сохраняется.
+- Snapshot v3 замораживает bounded fact source citation. Snapshot v1/v2 читаются
+  без conversion; material refresh и новые facts не меняют old attempt.
+- Publication/evaluation используют только approved `TrainingFact`. Employee не
+  получает materials, URLs, extracted text, revisions, suggestions или hidden
+  facts.
+- Existing admin project editor содержит tab «Материалы», четыре source flows,
+  preview/history/diff/suggestions/apply/archive; facts и admin attempt detail
+  показывают source badge/citation. Новый frontend route отсутствует.
+- Нет DOCX/PPTX/XLSX/OCR/crawler/search/RAG/embeddings/ranking/CSV/operations,
+  worker/job/queue/outbox/provider-run infrastructure и production deploy.
 
 ## Automated fake/stub acceptance
 
-Все сценарии ниже не обращаются к `api.openai.com` и реальному Telegram.
+Все external providers и URL/browser scenarios используют fake/stub/local
+fixtures. Migration/PostgreSQL tests используют только временную PostgreSQL.
 
-1. `prisma validate` и `prisma generate` проходят на текущей schema.
-2. Все migrations применяются на чистой временной PostgreSQL.
-3. Upgrade Stage 2 → Stage 3 сохраняет schema v1 snapshot/status/final score и
-   backfill-ит только additive Stage 3 columns.
-4. Unit/domain tests проверяют facts/aliases, totals `55/15`, snapshot v1/v2,
-   metrics, strict evaluation IDs/evidence, score clamps, distinct penalties и
-   unsupported review.
-5. Transcription local HTTP stub проверяет реальный multipart: one WAV part,
-   model, `language=ru`, bounded vocabulary, timeout/retry/4xx/malformed cases.
-6. Evaluation local HTTP stub проверяет реальный Responses body: model,
-   reasoning, `store=false`, strict schema, trust boundary, запрещённые fields,
-   refusal/incomplete/invalid IDs/evidence/injection/retry/4xx cases.
-7. PostgreSQL tests проверяют snapshot immutability, both checkpoints/restart,
-   exactly-once progression/finalization, technical refund/replacement и review
-   idempotency/conflict.
-8. HTTP/RBAC tests проверяют project PATCH/publish errors, denied employee review,
-   allowed admin review и safe pending/override/technical employee DTO.
-9. Web source tests и targeted Playwright production-preview harness проверяют
-   facts/criteria totals, evaluation detail, approve/override duplicate-submit
-   protection и employee states без sensitive rendering.
-10. Full API/web/workspace tests, builds, `git diff --check`, `.only`/`.skip`,
-    test-env, lockfile и scope scans проходят.
-11. Временные databases удаляются после проверок.
+1. `prisma validate`/generate и additive Stage 4 migration проходят на clean
+   install и при Stage 3 → Stage 4 upgrade с сохранением projects, facts,
+   attempts и snapshots v1/v2; existing facts backfill-ятся `MANUAL`.
+2. Unit tests проверяют material types, immutable revision numbering,
+   paragraph/segment diff, manual segments, object allowlist, canonical
+   duplicates, excerpt normalization, strict suggestions и snapshot v1/v2/v3.
+3. Synthetic PDF tests проверяют MIME/magic/size/page limits, page text/locator,
+   checksum, private `File.url=null`, missing text layer, password/invalid input,
+   timeout и отсутствие temp artifacts при in-memory parsing без коммерческих
+   fixtures.
+4. Local URL fixture проверяет extraction headings/paragraphs/lists/tables,
+   bytes/content-type/timeout, redirects/downgrade/credentials/port, DNS/public
+   IP validation, final URL и changed/unchanged refresh diff без real websites.
+5. Local JS-only fixture проверяет disabled/enabled browser fallback, rendered
+   text, отсутствие clicks, blocking third-party/private requests, timeout и
+   process/context cleanup.
+6. Object snapshot/import tests доказывают keyboard-layout search,
+   linked-object ownership, backend-only value read, все object PDF, tampered
+   frontend values ignored, volatile fields unavailable, immutable old revision
+   и создание grounded 1+10 question drafts.
+7. Fake/local OpenAI stub проверяет `store=false`, no tools/search, strict
+   schema, untrusted-source prompt, IDs/locator/excerpt, injection, chunk limits,
+   partial failure и отсутствие `TrainingFact` до apply.
+8. Apply/publication tests проверяют selected edited suggestions, source fields,
+   duplicate warning/no auto-create и использование только approved facts.
+9. PostgreSQL/HTTP/RBAC tests проверяют constraints/immutability, 401/403/200,
+   safe UUID probing, ownership, PDF download, material/suggestion/apply,
+   object-options/import-object endpoints, snapshot v3 и unchanged old attempts.
+10. Frontend/browser tests проверяют Materials tab, searchable ЖК dropdown,
+    другую раскладку, импорт карточки/всех PDF, 1+10 question drafts, четыре
+    ручных source flows, loading/empty/error, extracted text/history/diff,
+    review/apply, source badges и отсутствие employee material UI.
+11. Full API/web/workspace tests, builds, `git diff --check`, `.only`/`.skip`,
+    real-provider/real-website scans и cleanup временных resources проходят.
+12. Если изменён browser runtime/API Dockerfile, API image build и local PDF +
+    JS-only extraction smokes проходят с graceful cleanup.
 
-## Opt-in synthetic OpenAI smoke — только вручную
+## Локальная ручная приёмка
 
-Обычные tests никогда не запускают этот smoke. Требуются одновременно:
+Использовать локальную test database, private test bucket, fake/local OpenAI stub
+и локальные HTTP/JS fixture pages. Production и реальные сайты не нужны.
 
-- `TRAINING_AI_MODE=openai`;
-- `OPENAI_SMOKE_ENABLED=true`;
-- непустой `OPENAI_API_KEY` в untracked environment.
+### Сценарий 1 — PDF
 
-Запуск из repository root:
+1. Admin открывает существующий TrainingProject и tab «Материалы».
+2. Загружает небольшой synthetic text PDF.
+3. Проверяет page count, extracted text, private original download и page
+   locators.
+4. Генерирует suggestions, редактирует и применяет несколько выбранных.
+5. Проверяет `TrainingFact` с badge `PDF · Страница N` и публикует project.
 
-`pnpm test:training:openai:smoke`
+### Сценарий 2 — официальный URL
 
-Smoke генерирует короткий mono PCM WAV 16 kHz, отключает retries, выполняет ровно
-один transcription request и один strict evaluation request с synthetic
-facts/criteria. Он не печатает transcript, prompt, structured evaluation или
-API key; выводит только status, requested/actual models, request IDs, usage и
-latency. Без любого обязательного флага выводит explicit skip.
+1. Admin добавляет локальный HTTPS fixture URL и подтверждает официальный
+   источник.
+2. Проверяет final URL, fetchedAt, `HTTP` method и extracted text.
+3. Меняет fixture и нажимает refresh: появляется новая revision и bounded diff.
+4. Проверяет, что существующие facts не изменились; новые suggestions
+   применяются только вручную.
 
-Этот smoke не выполняется автоматически и не доказывает Telegram integration.
+### Сценарий 3 — JS-only URL
 
-## Real Telegram voice + OpenAI — только вручную
+1. Проверяет `BROWSER_FALLBACK_REQUIRED` при выключенном fallback.
+2. Включает test env fallback и повторяет extraction локальной JS-only page.
+3. Видит rendered text и `BROWSER` method; fixture подтверждает, что clicks,
+   other pages и blocked requests не выполнялись.
 
-Не использовать production webhook и не выполнять production deploy.
+### Сценарий 4 — ручной текст
 
-Подготовка:
+1. Admin создаёт manual material с title/text.
+2. Изменяет text через новую revision и проверяет diff/history.
+3. Генерирует и вручную применяет выбранные suggestions.
 
-- отдельная test database и private test audio bucket;
-- test Telegram bot/webhook/tunnel по процедуре принятого Stage 2;
-- `TRAINING_AI_MODE=openai`, временный `OPENAI_API_KEY`, pinned models и bounded
-  timeouts/retries только в untracked environment;
-- draft project с 11 вопросами, approved facts каждого question и criteria
-  totals `55/15`; затем publish/open.
+### Сценарий 5 — карточка Platforma
 
-Проверка:
+1. Admin вводит название ЖК в searchable dropdown, в том числе в другой
+   клавиатурной раскладке, и выбирает найденный `RealEstateObject`.
+2. Запускает import и проверяет snapshot всех доступных стабильных полей и
+   отдельные private materials для всех прикреплённых к карточке PDF.
+3. Проверяет появление одного главного и десяти дополнительных черновиков
+   вопросов в tab «Контент и оценивание»; существующие вопросы заменяются только
+   после отдельного подтверждения.
+4. Изменяет исходный object/PDF, повторяет import и проверяет неизменность old
+   revisions и создание новых revisions.
 
-1. Employee проходит real Telegram voice MAIN + 3 FOLLOW_UP.
-2. Для каждого answer originals/merged private WAV и ownership остаются Stage 2;
-   transcript сохраняется до evaluation, provider metadata не содержит secret.
-3. Restart после transcription продолжает evaluation без второй transcription;
-   restart после saved evaluation не делает второй evaluation request.
-4. Valid result завершает progression один раз и backend final score совпадает с
-   criteria/penalties из admin detail.
-5. Ответ с unsupported claim становится `REQUIRES_REVIEW`; employee видит «Требует
-   проверки» без provisional score/breakdown/internal data, admin видит evidence.
-6. Admin `APPROVE` завершает attempt с `finalScore=calculatedScore`; точный повтор
-   не создаёт второй side effect.
-7. На новой pending attempt admin `OVERRIDE` задаёт `0..100` и причину; employee
-   видит скорректированный final score, нейтральное сообщение и без старого
-   breakdown.
-8. Безопасно смоделированный non-retryable/исчерпанный provider failure создаёт
-   `TECHNICAL_FAILED`, скрывает internal code от employee, не расходует limit и
-   позволяет replacement attempt.
-9. Проверить отсутствие transcript/evaluation/provider metadata/review comment в
-   employee HTTP response, а не только визуально.
-10. После smoke удалить test webhook, временный key/config, private test audio и
-    test database.
+### Сценарий 6 — integrity попытки
 
-## Definition of Done и переход к Stage 4
+1. Публикует project с approved sourced facts и начинает test attempt.
+2. Проверяет snapshot v3/source citation в admin attempt detail.
+3. Обновляет material и facts после старта.
+4. Проверяет, что old attempt и его source citation не изменились.
 
-Stage 3 остаётся текущим даже после готовности кода и зелёных automated checks.
-Только ручное подтверждение synthetic OpenAI smoke и real Telegram + OpenAI
-сценариев закрывает этап. Documents/materials Stage 4 и ranking/production
-hardening Stage 5 не начинаются без отдельной задачи.
+## Definition of Done
+
+Stage 4 остаётся текущим даже после готовности кода и зелёных automated checks.
+Только отдельное ручное подтверждение шести сценариев закрывает этап. Stage 5,
+ranking, operations и production deploy не начинаются без новой задачи.

@@ -25,7 +25,10 @@ import {
   type StartTrainingAttemptInput,
   type SubmitTrainingAnswerInput,
 } from './training-attempt-state.service';
-import { parseTrainingProjectSnapshot } from './training-snapshot';
+import {
+  isTrainingProjectSnapshotWithFacts,
+  parseTrainingProjectSnapshot,
+} from './training-snapshot';
 
 @Injectable()
 export class TrainingAttemptService {
@@ -362,10 +365,10 @@ function serializeAdminAttempt(attempt: TrainingAttemptDetailRecord): TrainingAd
     expiresAt: attempt.expiresAt.toISOString(),
     completedAt: attempt.completedAt?.toISOString() ?? null,
     questions: attempt.questions.map((question) => {
-      const snapshotQuestion = snapshot.schemaVersion === 2
+      const snapshotQuestion = isTrainingProjectSnapshotWithFacts(snapshot)
         ? snapshot.questions.find((item) => item.sourceQuestionId === question.sourceQuestionId)
         : null;
-      const criteria = snapshot.schemaVersion === 2
+      const criteria = isTrainingProjectSnapshotWithFacts(snapshot)
         ? question.type === 'MAIN'
           ? snapshot.criteria.main
           : snapshot.criteria.followUp

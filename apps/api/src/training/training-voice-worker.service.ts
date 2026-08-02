@@ -24,9 +24,10 @@ import {
 } from './training-evaluator';
 import { TrainingOpenAIError } from './training-openai-client';
 import {
-  isTrainingProjectSnapshotV2,
+  isTrainingProjectSnapshotWithFacts,
   parseTrainingProjectSnapshot,
   type TrainingProjectSnapshotV2,
+  type TrainingProjectSnapshotV3,
 } from './training-snapshot';
 import { TrainingTelegramService } from './training-telegram.service';
 import {
@@ -187,7 +188,7 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
         context.attemptQuestion.attempt.projectSnapshotJson,
       );
 
-      if (!isTrainingProjectSnapshotV2(snapshot)) {
+      if (!isTrainingProjectSnapshotWithFacts(snapshot)) {
         await this.audio.prepareAnswerAudio(answer.id);
         const result = await this.attemptState.completeTelegramVoiceAnswer(
           answer.id,
@@ -379,7 +380,9 @@ type WorkerContext = {
   attemptQuestion: { maxScore: number };
 };
 
-function resolveSnapshotQuestion(snapshot: TrainingProjectSnapshotV2, sourceQuestionId: string | null) {
+type TrainingSnapshotWithFacts = TrainingProjectSnapshotV2 | TrainingProjectSnapshotV3;
+
+function resolveSnapshotQuestion(snapshot: TrainingSnapshotWithFacts, sourceQuestionId: string | null) {
   const question = snapshot.questions.find((item) => item.sourceQuestionId === sourceQuestionId);
 
   if (!question) throw new VoiceWorkerError('SNAPSHOT_QUESTION_MISSING', false);
@@ -387,7 +390,7 @@ function resolveSnapshotQuestion(snapshot: TrainingProjectSnapshotV2, sourceQues
 }
 
 function createEvaluationInput(
-  snapshot: TrainingProjectSnapshotV2,
+  snapshot: TrainingSnapshotWithFacts,
   question: TrainingProjectSnapshotV2['questions'][number],
   answer: WorkerContext,
 ): TrainingEvaluationInput {

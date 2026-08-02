@@ -18,6 +18,20 @@ export async function apiRequest<T = unknown>(
   accessToken: string,
   options: RequestInit = {},
 ) {
+  const response = await apiResponse(path, accessToken, options);
+
+  if (response.status === 204) {
+    return null as T;
+  }
+
+  return (await response.json()) as T;
+}
+
+export async function apiResponse(
+  path: string,
+  accessToken: string,
+  options: RequestInit = {},
+) {
   const initialToken = currentAccessToken ?? accessToken;
   let response: Response;
 
@@ -41,11 +55,7 @@ export async function apiRequest<T = unknown>(
     throw new Error(await resolveErrorMessage(response));
   }
 
-  if (response.status === 204) {
-    return null as T;
-  }
-
-  return (await response.json()) as T;
+  return response;
 }
 
 async function sendApiRequest(path: string, accessToken: string, options: RequestInit) {

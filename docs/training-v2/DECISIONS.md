@@ -24,9 +24,10 @@ Training V2 является предметным модулем существ�
 3. **Stage 3 — OpenAI и Review.** Реальная транскрибация, approved facts,
    структурированное оценивание, критерии, штраф `−5`, unsupported claim,
    минимальный review и server-side final score; без parsers и ranking.
-4. **Stage 4 — Материалы и Admin Content.** PDF/DOCX/PPTX/XLSX, draft
-   extraction, ручное подтверждение извлечённых данных и material publication
-   workflow; без RAG/vector DB без отдельного решения.
+4. **Stage 4 — Материалы и Admin Content.** PDF с текстовым слоем, явно
+   добавленный официальный HTTPS URL, ручной текст и immutable snapshot
+   выбранных стабильных полей связанного `RealEstateObject`; extraction и AI
+   suggestions остаются черновиками до ручного создания `TrainingFact`.
 5. **Stage 5 — Results, Ranking и Production Hardening.** Полные admin results,
    расширенная employee history, audio playback, полная review history,
    ranking, при необходимости CSV, security, минимальные operations, deploy,
@@ -325,6 +326,106 @@ Document ingestion/extraction и material workflow относятся к Stage 4
 Ranking, CSV, audio playback, полная review history, retention, operations,
 production hardening/deploy, pilot и calibration относятся к Stage 5. Voice
 grace period не меняется Stage 3 и требует отдельного решения.
+
+## Граница Stage 4
+
+Stage 4 добавляет административные источники approved facts в существующий
+Training aggregate. Поддерживаются только:
+
+- PDF с текстовым слоем;
+- одна явно добавленная администратором страница официального HTTPS-сайта;
+- ручной plain text;
+- immutable snapshot allowlisted стабильных полей выбранного
+  `RealEstateObject` и всех прикреплённых к нему PDF с текстовым слоем.
+
+DOCX, PPTX, XLSX, OCR, scanned PDF без text layer, crawler, sitemap, поиск в
+интернете, RAG, embeddings и vector database не поддерживаются. PDF без
+текстового слоя получает безопасную ошибку `PDF_TEXT_LAYER_MISSING`; OCR
+автоматически не запускается. Browser fallback обрабатывает только исходную
+явно указанную страницу, не кликает ссылки и не выполняет crawling.
+
+`TrainingMaterial` является административным источником одного проекта, а
+`TrainingMaterialRevision` — immutable результат конкретной загрузки или
+refresh. Старые revisions не перезаписываются. Refresh всегда создаёт новую
+revision, считает checksum и bounded segment diff и никогда автоматически не
+изменяет существующие `TrainingFact` или attempt snapshots. ЖК выбирается в
+admin editor через searchable dropdown, который переиспользует server-side
+Platforma search variants, включая запрос в другой клавиатурной раскладке.
+Явный import action связывает project с выбранным `RealEstateObject`, создаёт
+snapshot всех backend allowlisted стабильных полей и отдельную private immutable
+revision для каждого прикреплённого PDF. Live synchronization отсутствует.
+
+Тот же явный import action формирует один главный и десять дополнительных
+черновиков вопросов по READY snapshot/PDF revisions. Если в проекте уже есть
+вопросы, backend требует отдельного подтверждения их замены. Проект остаётся
+`DRAFT`; администратор проверяет и сохраняет вопросы перед публикацией. Это не
+является автоматическим созданием или утверждением `TrainingFact`.
+
+## Источник факта и snapshot v3
+
+`TrainingFact` имеет один primary source: `MANUAL` либо `MATERIAL`. Material fact
+ссылается на READY revision того же проекта и хранит bounded source label,
+locator и точный excerpt из нормализованного segment text. Existing Stage 3
+facts backfill-ятся как `MANUAL`. Ручной fact editor сохраняется и не требует
+создания отдельного manual material.
+
+Attempt snapshot schema v3 замораживает source type, label, locator, excerpt,
+material type, URL snapshot при его наличии и source revision ID. Полный
+extracted text, PDF file ID, storage key, raw HTML, suggestions и admin metadata
+в snapshot не входят. Snapshot v1 и v2 продолжают читаться без преобразования.
+
+Publication использует только `TrainingQuestion`, подтверждённый
+`TrainingFact` и `TrainingCriterion`. Raw materials, extracted text, failed
+revisions и AI suggestions не участвуют в scoring и не публикуются отдельно.
+
+## Extraction и private storage Stage 4
+
+Training PDF хранится в отдельном private bucket, имеет `File.url=null` и
+выдаётся только через admin endpoint с JWT, `training:projects:manage` и
+project/material ownership. Проверяются MIME, `.pdf`, magic bytes `%PDF-`,
+размер, non-empty payload, page count и timeout; page text сохраняется bounded
+segments с `page:N` locators. Parsing выполняется в памяти без temp files, а
+`pdfjs` loading task закрывается в `finally`.
+
+Official URL требует явного подтверждения администратора. Допускается только
+HTTPS без credentials, fragment и нестандартного порта. Backend проверяет DNS и
+все resolved IP, запрещает localhost/private/link-local/multicast/reserved и
+metadata endpoints, вручную и bounded обрабатывает redirects с повторной полной
+проверкой каждого destination и запрещает downgrade на HTTP. Response bytes,
+content type и timeout ограничены; raw HTML не хранится.
+
+Browser fallback по умолчанию выключен и включается только env-настройкой. Он
+использует ephemeral context без persistent profile, cookies, permissions,
+clicks, forms и downloads; каждый network request проходит URL/IP validation,
+а third-party analytics, images, media и fonts блокируются. Extraction и
+browser process завершаются bounded timeout и cleanup в `finally`.
+
+Extraction выполняется явным синхронным admin action вне долгой DB transaction.
+Отдельные worker, generic queue, job table и outbox в Stage 4 не создаются.
+
+## AI suggestions Stage 4
+
+Один узкий `TrainingMaterialSuggester` генерирует как fact suggestions, так и
+grounded question drafts; он имеет deterministic fake и OpenAI реализации и
+выбирается существующим `TRAINING_AI_MODE`. OpenAI использует
+существующий client/config и `OPENAI_EVALUATION_MODEL`, Responses API с
+`store=false`, strict Structured Outputs, без tools, web/file search,
+conversation, background и `previous_response_id`.
+
+В provider передаётся только bounded extracted segment text. PDF binary, raw
+HTML, данные других проектов и сотрудников, attempts и scoring туда не входят.
+Source text считается недоверенным и не может давать инструкции provider-у.
+Детерминированный chunking идёт по границам segments с ограничениями chars,
+chunks, total text и общим hard deadline. Частичная ошибка отклоняет весь набор
+suggestions и не меняет facts.
+
+Suggestion содержит только target question, statement, aliases, required flag и
+точный source locator/excerpt. Backend повторно валидирует strict schema,
+question ownership, IDs, locator и excerpt. Suggestion остаётся черновиком:
+`TrainingFact` создаётся только отдельным admin apply после выбора и возможного
+редактирования. Canonical exact/safe-containment duplicate detection не создаёт
+второй fact автоматически. Semantic merge и multi-source facts не входят в
+Stage 4.
 
 ## Закрытые вопросы Stage 1
 

@@ -79,6 +79,18 @@ export type TrainingFactDraft = {
   position: number;
 };
 
+export type TrainingFactSource = {
+  sourceType: 'MANUAL' | 'MATERIAL';
+  sourceRevisionId: string | null;
+  sourceLabel: string;
+  sourceLocator: string | null;
+  sourceExcerpt: string | null;
+  sourceMaterialType: 'PDF' | 'OFFICIAL_URL' | 'MANUAL_TEXT' | 'OBJECT_SNAPSHOT' | null;
+  sourceUrl: string | null;
+};
+
+export type TrainingAdminFact = TrainingFactDraft & TrainingFactSource;
+
 export type TrainingCriterionDraft = {
   id: string | null;
   questionType: TrainingQuestionType;
@@ -123,7 +135,7 @@ export type TrainingAdminProject = {
   contentSchemaVersion: number;
   mainQuestion: string;
   followUpQuestions: string[];
-  facts: TrainingFactDraft[];
+  facts: TrainingAdminFact[];
   criteria: TrainingCriterionDraft[];
   publicationErrors: string[];
   createdAt: string;
@@ -150,6 +162,119 @@ export type UpdateTrainingProjectRequest = Required<CreateTrainingProjectRequest
 
 export type UpdateTrainingProjectAvailabilityRequest = {
   isOpen: boolean;
+};
+
+export type TrainingMaterialType = 'PDF' | 'OFFICIAL_URL' | 'MANUAL_TEXT' | 'OBJECT_SNAPSHOT';
+export type TrainingMaterialStatus = 'ACTIVE' | 'ARCHIVED';
+export type TrainingMaterialRevisionStatus = 'READY' | 'FAILED';
+export type TrainingMaterialSuggestionStatus = 'NOT_GENERATED' | 'READY' | 'FAILED';
+
+export type TrainingMaterialSegment = { locator: string; label: string; text: string };
+export type TrainingMaterialDiff = {
+  previousRevisionId: string | null;
+  added: string[];
+  removed: string[];
+  unchangedCount: number;
+  changed: boolean;
+};
+
+export type TrainingMaterialSuggestion = {
+  id: string;
+  targetQuestionId: string;
+  statement: string;
+  aliases: string[];
+  isRequired: boolean;
+  sourceLocator: string;
+  sourceExcerpt: string;
+};
+
+export type TrainingMaterialRevision = {
+  id: string;
+  revisionNumber: number;
+  previousRevisionId: string | null;
+  status: TrainingMaterialRevisionStatus;
+  requestedUrl: string | null;
+  finalUrl: string | null;
+  fetchedAt: string | null;
+  extractedText: string;
+  segments: TrainingMaterialSegment[];
+  contentHash: string;
+  extractionMetadata: Record<string, unknown>;
+  diff: TrainingMaterialDiff;
+  isChanged: boolean;
+  suggestionStatus: TrainingMaterialSuggestionStatus;
+  suggestions: TrainingMaterialSuggestion[] | null;
+  suggestionModel: string | null;
+  suggestionErrorCode: string | null;
+  createdAt: string;
+};
+
+export type TrainingMaterial = {
+  id: string;
+  projectId: string;
+  type: TrainingMaterialType;
+  title: string;
+  status: TrainingMaterialStatus;
+  sourceUrl: string | null;
+  officialConfirmedAt: string | null;
+  latestRevision: TrainingMaterialRevision | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TrainingMaterialsResponse = { items: TrainingMaterial[] };
+export type TrainingMaterialDetail = TrainingMaterial & { revisions: TrainingMaterialRevision[] };
+
+export type TrainingObjectOption = {
+  id: string;
+  title: string;
+  status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
+  developerName: string | null;
+  pdfCount: number;
+};
+
+export type TrainingObjectOptionsResponse = {
+  items: TrainingObjectOption[];
+  selected: TrainingObjectOption | null;
+};
+
+export type ImportTrainingObjectRequest = {
+  objectId: string;
+  replaceExistingQuestions: boolean;
+};
+
+export type ImportTrainingObjectResponse = {
+  object: TrainingObjectOption;
+  objectSnapshotMaterialId: string;
+  importedPdfCount: number;
+  failedPdfTitles: string[];
+  mainQuestion: string;
+  followUpQuestions: string[];
+  questionGenerationModel: string;
+  questionGenerationSourceChars: number;
+};
+
+export type CreateTrainingManualMaterialRequest = { title: string; text: string };
+export type CreateTrainingUrlMaterialRequest = {
+  title: string;
+  url: string;
+  officialConfirmed: true;
+};
+export type CreateTrainingObjectSnapshotMaterialRequest = {
+  title: string;
+  fieldCodes: string[];
+};
+export type RefreshTrainingMaterialRequest = { text?: string; fieldCodes?: string[] };
+export type ApplyTrainingMaterialSuggestionsRequest = {
+  suggestions: Array<{
+    suggestionId: string;
+    targetQuestionId: string;
+    statement: string;
+    aliases: string[];
+    isRequired: boolean;
+    sourceLocator: string;
+    sourceExcerpt: string;
+  }>;
 };
 
 export type TrainingEmployeeProject = {
@@ -294,6 +419,13 @@ export type TrainingAdminAttempt = TrainingAdminAttemptSummary & {
       aliases: string[];
       required: boolean;
       position: number;
+      sourceType?: 'MANUAL' | 'MATERIAL';
+      sourceRevisionId?: string | null;
+      sourceLabel?: string;
+      sourceLocator?: string | null;
+      sourceExcerpt?: string | null;
+      sourceMaterialType?: 'PDF' | 'OFFICIAL_URL' | 'MANUAL_TEXT' | 'OBJECT_SNAPSHOT' | null;
+      sourceUrl?: string | null;
     }>;
     criteria: Array<{
       id: string;

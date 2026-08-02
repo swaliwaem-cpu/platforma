@@ -35,9 +35,11 @@ import {
   TRAINING_EVALUATION_SCHEMA_VERSION,
   TRAINING_LEGACY_SNAPSHOT_SCHEMA_VERSION,
   TRAINING_SCORING_VERSION,
+  TRAINING_STAGE3_SNAPSHOT_SCHEMA_VERSION,
   TRAINING_SNAPSHOT_SCHEMA_VERSION,
   TrainingProjectSnapshot,
   TrainingProjectSnapshotV2,
+  TrainingProjectSnapshotV3,
 } from './training-snapshot';
 
 export type StartTrainingAttemptInput = {
@@ -149,6 +151,9 @@ export class TrainingAttemptStateService {
             include: {
               facts: {
                 where: { isActive: true },
+                include: {
+                  sourceRevision: { include: { material: true } },
+                },
                 orderBy: [{ position: 'asc' }, { id: 'asc' }],
               },
             },
@@ -993,6 +998,18 @@ export class TrainingAttemptStateService {
         aliasesJson: Prisma.JsonValue;
         isRequired: boolean;
         position: number;
+        sourceType: 'MANUAL' | 'MATERIAL';
+        sourceRevisionId: string | null;
+        sourceLabel: string;
+        sourceLocator: string | null;
+        sourceExcerpt: string | null;
+        sourceRevision: null | {
+          finalUrl: string | null;
+          material: {
+            type: 'PDF' | 'OFFICIAL_URL' | 'MANUAL_TEXT' | 'OBJECT_SNAPSHOT';
+            sourceUrl: string | null;
+          };
+        };
       }>;
     }>;
     criteria: Array<{
@@ -1041,7 +1058,10 @@ export class TrainingAttemptStateService {
       };
     }
 
-    if (project.contentSchemaVersion !== TRAINING_SNAPSHOT_SCHEMA_VERSION) {
+    if (
+      project.contentSchemaVersion !== TRAINING_STAGE3_SNAPSHOT_SCHEMA_VERSION &&
+      project.contentSchemaVersion !== TRAINING_SNAPSHOT_SCHEMA_VERSION
+    ) {
       throw new BadRequestException('Unsupported training project content version');
     }
 
@@ -1056,8 +1076,7 @@ export class TrainingAttemptStateService {
           maxPoints: criterion.maxPoints,
           position: criterion.position,
         }));
-    const snapshot: TrainingProjectSnapshotV2 = {
-      schemaVersion: TRAINING_SNAPSHOT_SCHEMA_VERSION,
+    const snapshotBase = {
       projectTitle: common.projectTitle,
       relatedObjectTitle: project.realEstateObject?.title ?? null,
       settings: common.settings,
@@ -1086,14 +1105,30 @@ export class TrainingAttemptStateService {
             aliases: parseSnapshotAliases(fact.aliasesJson),
             required: fact.isRequired,
             position: fact.position,
+            ...(project.contentSchemaVersion === TRAINING_SNAPSHOT_SCHEMA_VERSION
+              ? {
+                  sourceType: fact.sourceType,
+                  sourceRevisionId: fact.sourceRevisionId,
+                  sourceLabel: fact.sourceLabel,
+                  sourceLocator: fact.sourceLocator,
+                  sourceExcerpt: fact.sourceExcerpt,
+                  sourceMaterialType: fact.sourceRevision?.material.type ?? null,
+                  sourceUrl:
+                    fact.sourceRevision?.finalUrl ?? fact.sourceRevision?.material.sourceUrl ?? null,
+                }
+              : {}),
           })),
         })),
     };
+    const snapshot: TrainingProjectSnapshotV2 | TrainingProjectSnapshotV3 =
+      project.contentSchemaVersion === TRAINING_SNAPSHOT_SCHEMA_VERSION
+        ? { schemaVersion: TRAINING_SNAPSHOT_SCHEMA_VERSION, ...snapshotBase } as TrainingProjectSnapshotV3
+        : { schemaVersion: TRAINING_STAGE3_SNAPSHOT_SCHEMA_VERSION, ...snapshotBase } as TrainingProjectSnapshotV2;
 
     try {
       return parseTrainingProjectSnapshot(snapshot);
     } catch {
-      throw new BadRequestException('Training Stage 3 facts and criteria are invalid');
+      throw new BadRequestException('Training facts, sources and criteria are invalid');
     }
   }
 

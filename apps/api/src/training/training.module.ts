@@ -24,6 +24,14 @@ import {
 } from './training-openai-client';
 import { OpenAITrainingTranscriber } from './training-openai-transcriber';
 import { TrainingFollowUpSelector } from './training-follow-up-selector';
+import { TrainingMaterialController } from './training-material.controller';
+import { TrainingMaterialExtractionService } from './training-material-extraction';
+import { TrainingMaterialService } from './training-material.service';
+import {
+  DeterministicFakeTrainingMaterialSuggester,
+  OpenAITrainingMaterialSuggester,
+  TRAINING_MATERIAL_SUGGESTER,
+} from './training-material-suggester';
 import { TrainingProjectService } from './training-project.service';
 import { TrainingReviewService } from './training-review.service';
 import {
@@ -40,12 +48,14 @@ import {
   TRAINING_TRANSCRIBER,
 } from './training-transcriber';
 import { TrainingVoiceWorkerService } from './training-voice-worker.service';
+import { TrainingUrlExtractor } from './training-url-extractor';
 
 @Module({
   imports: [AuthModule, PrismaModule, FilesModule],
   controllers: [
     TrainingEmployeeController,
     TrainingAdminController,
+    TrainingMaterialController,
     TrainingTelegramController,
   ],
   providers: [
@@ -57,6 +67,10 @@ import { TrainingVoiceWorkerService } from './training-voice-worker.service';
     TrainingTelegramService,
     TrainingAudioService,
     TrainingVoiceWorkerService,
+    TrainingMaterialExtractionService,
+    TrainingUrlExtractor,
+    TrainingMaterialService,
+    DeterministicFakeTrainingMaterialSuggester,
     SpawnTrainingFfmpegRunner,
     DeterministicFakeTrainingTranscriber,
     DeterministicFakeTrainingEvaluator,
@@ -85,6 +99,14 @@ import { TrainingVoiceWorkerService } from './training-voice-worker.service';
     {
       provide: TRAINING_FFMPEG_RUNNER,
       useExisting: SpawnTrainingFfmpegRunner,
+    },
+    {
+      provide: TRAINING_MATERIAL_SUGGESTER,
+      inject: [DeterministicFakeTrainingMaterialSuggester],
+      useFactory: (fakeSuggester: DeterministicFakeTrainingMaterialSuggester) =>
+        getTrainingAiMode() === 'openai'
+          ? new OpenAITrainingMaterialSuggester(new TrainingOpenAIClient(getOpenAIApiKey()))
+          : fakeSuggester,
     },
     {
       provide: TRAINING_TRANSCRIBER,

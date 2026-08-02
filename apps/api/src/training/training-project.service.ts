@@ -21,6 +21,7 @@ import {
   TRAINING_FACT_ALIAS_LIMIT,
   TRAINING_FACT_ALIAS_MAX_LENGTH,
   TRAINING_SNAPSHOT_FOLLOW_UP_COUNT,
+  TRAINING_STAGE3_SNAPSHOT_SCHEMA_VERSION,
   TRAINING_SNAPSHOT_SCHEMA_VERSION,
 } from './training-snapshot';
 
@@ -115,7 +116,13 @@ const DEFAULT_CRITERIA: readonly Omit<TrainingCriterionDraftInput, 'id'>[] = [
 
 const adminProjectInclude = {
   questions: {
-    include: { facts: true },
+    include: {
+      facts: {
+        include: {
+          sourceRevision: { include: { material: true } },
+        },
+      },
+    },
   },
   criteria: true,
 } as const satisfies Prisma.TrainingProjectInclude;
@@ -302,7 +309,7 @@ export class TrainingProjectService {
         throw new ConflictException('Only a published training project can be opened');
       }
 
-      if (isOpen && project.contentSchemaVersion === TRAINING_SNAPSHOT_SCHEMA_VERSION) {
+      if (isOpen && project.contentSchemaVersion >= TRAINING_STAGE3_SNAPSHOT_SCHEMA_VERSION) {
         this.validatePublication(project);
       }
 
@@ -348,7 +355,7 @@ export class TrainingProjectService {
         `Нужны 1 главный и ${TRAINING_SNAPSHOT_FOLLOW_UP_COUNT} дополнительных вопросов.`,
       );
     }
-    if (project.contentSchemaVersion === TRAINING_SNAPSHOT_SCHEMA_VERSION) {
+    if (project.contentSchemaVersion >= TRAINING_STAGE3_SNAPSHOT_SCHEMA_VERSION) {
       for (const question of activeQuestions) {
         if (!question.facts.some((fact) => fact.isActive)) {
           errors.push(
@@ -411,6 +418,13 @@ export class TrainingProjectService {
             aliases: parseAliasesJson(fact.aliasesJson),
             isRequired: fact.isRequired,
             position: fact.position,
+            sourceType: fact.sourceType,
+            sourceRevisionId: fact.sourceRevisionId,
+            sourceLabel: fact.sourceLabel,
+            sourceLocator: fact.sourceLocator,
+            sourceExcerpt: fact.sourceExcerpt,
+            sourceMaterialType: fact.sourceRevision?.material.type ?? null,
+            sourceUrl: fact.sourceRevision?.finalUrl ?? fact.sourceRevision?.material.sourceUrl ?? null,
           })),
         )
         .sort(compareDraftItems),
@@ -444,6 +458,23 @@ export class TrainingProjectService {
       projectId,
       facts.flatMap((fact) => (fact.id ? [fact.id] : [])),
     );
+    const existingFacts = facts.some((fact) => fact.id)
+      ? await transaction.trainingFact.findMany({
+          where: {
+            id: { in: facts.flatMap((fact) => (fact.id ? [fact.id] : [])) },
+            question: { projectId },
+          },
+          select: {
+            id: true,
+            sourceType: true,
+            sourceRevisionId: true,
+            sourceLabel: true,
+            sourceLocator: true,
+            sourceExcerpt: true,
+          },
+        })
+      : [];
+    const existingById = new Map(existingFacts.map((fact) => [fact.id, fact]));
     const questionByKey = new Map(
       questions.map((question) => [draftKey(question.type, question.position), question]),
     );
@@ -459,6 +490,8 @@ export class TrainingProjectService {
 
         if (!question) throw new BadRequestException('Training fact question is invalid');
 
+        const source = fact.id ? existingById.get(fact.id) : null;
+
         return {
           id: fact.id ?? randomUUID(),
           questionId: question.id,
@@ -467,6 +500,11 @@ export class TrainingProjectService {
           isRequired: fact.isRequired,
           position: fact.position,
           isActive: true,
+          sourceType: source?.sourceType ?? 'MANUAL',
+          sourceRevisionId: source?.sourceRevisionId ?? null,
+          sourceLabel: source?.sourceLabel ?? 'Добавлено вручную',
+          sourceLocator: source?.sourceLocator ?? null,
+          sourceExcerpt: source?.sourceExcerpt ?? null,
         };
       }),
     });

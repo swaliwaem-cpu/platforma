@@ -1,105 +1,123 @@
-# Current Stage: Stage 3 — OpenAI, Facts, Scoring и Review
+# Current Stage: Stage 4 — Materials and Admin Content
 
 ## Цель
 
-Подключить реальную backend-only транскрибацию и strict structured evaluation к
-существующему Telegram voice flow, закрепить approved facts/criteria в immutable
-attempt snapshot, считать итог детерминированно на backend и дать admin один
-минимальный review action без раскрытия provisional/internal данных сотруднику.
+Дать администратору существующего `TrainingProject` четыре безопасных источника
+контента — PDF, официальный URL, ручной текст и snapshot карточки Platforma —,
+позволить загрузить карточку выбранного ЖК со всеми его PDF и автоматически
+получить черновики 1+10 вопросов, а проверенные AI suggestions вручную
+превратить в `TrainingFact` с immutable source citation.
 
-Код и automated checks могут быть готовы, но текущим этапом остаётся Stage 3 до
-ручной проверки OpenAI и полного Telegram + OpenAI flow. Stage 4 и Stage 5 не
-начинаются автоматически.
+Stage 3 вручную принят пользователем. Stage 4 остаётся текущим до отдельной
+ручной приёмки. Stage 5 не начинается автоматически.
 
 ## Входит
 
-- Только две новые основные модели: `TrainingFact` и `TrainingCriterion`.
-- Snapshot schema v2 с facts, MAIN/FOLLOW_UP criteria, max points, scoring и
-  evaluation schema versions; schema v1 attempts остаются читаемыми без
-  destructive conversion.
-- Existing project PATCH для atomic draft facts/criteria и existing publish/open
-  validation: `1 + 10`, fact на каждый question, aliases bounds, criteria totals
-  `55/15`, unique codes.
-- Existing admin project editor с facts, aliases, required flag, criteria,
-  totals и publication/validation errors; нового route нет.
-- `TRAINING_AI_MODE=fake|openai`; OpenAI API key и bounded timeout/retry/model
-  settings. Tests принудительно используют fake mode и удаляют inherited key.
-- `POST /v1/audio/transcriptions` через native `fetch`/`FormData`, model
-  `gpt-4o-mini-transcribe-2025-12-15`, `language=ru`, one verified merged WAV и
-  короткий vocabulary prompt без fact statements/scoring.
-- Responses API `POST /v1/responses`, model `gpt-5.6-terra`, reasoning `medium`,
-  `store=false`, без tools/web/file/external knowledge и со strict JSON Schema.
-- Backend evidence/ID validation, objective speech metrics и deterministic
-  per-answer/attempt scoring со штрафом `−5` за distinct incorrect fact.
-- Unsupported claim без автоматического штрафа переводит attempt в
-  `REQUIRES_REVIEW` и скрывает provisional result от employee.
-- Persisted transcription/evaluation checkpoints, resume без повторения уже
-  сохранённого шага и общий Stage 1/2 progression.
-- Terminal `TECHNICAL_FAILED`, refund через
-  `countsTowardAttemptLimit=false`, safe employee message и replacement attempt.
-- Permission `training:results:review` и единственный новый review endpoint с
-  одноразовыми `APPROVE | OVERRIDE` и exact-payload idempotency.
-- Existing admin attempt detail с facts/evidence/criteria/metrics/models/scores и
-  review form; backend-safe employee pending/overridden/technical DTO.
-- Отдельный opt-in OpenAI smoke script, который не входит в обычные tests.
+- Ровно две новые основные модели: `TrainingMaterial` и
+  `TrainingMaterialRevision`; material архивируется, revisions immutable.
+- Четыре source types: PDF с текстовым слоем, явно подтверждённый official HTTPS
+  URL, manual plain text и immutable snapshot выбранных allowlisted полей
+  связанного `RealEstateObject`.
+- Searchable dropdown выбора ЖК использует те же server-side search variants,
+  что каталог Platforma, включая запрос в другой клавиатурной раскладке.
+- Явный import action связывает project с выбранным ЖК, создаёт snapshot всех
+  стабильных allowlisted полей и private immutable revisions для всех
+  прикреплённых к карточке PDF с текстовым слоем.
+- По READY snapshot/PDF revisions автоматически создаются черновики ровно
+  одного главного и десяти дополнительных вопросов. Замена существующих
+  вопросов требует отдельного подтверждения; project остаётся `DRAFT`.
+- Bounded extraction, normalized segments, checksum, revision history и
+  deterministic segment diff; refresh всегда создаёт новую revision и не меняет
+  facts автоматически.
+- Отдельный private Training material bucket, `File.url=null`, admin-only PDF
+  download с JWT, `training:projects:manage` и ownership.
+- SSRF-safe HTTP extraction одной URL-страницы и opt-in isolated browser
+  fallback одной страницы без clicks, forms, login, downloads и crawling.
+- Один узкий `TrainingMaterialSuggester`: deterministic fake и OpenAI через
+  существующий `TRAINING_AI_MODE`, strict schema, bounded chunking и no tools or
+  web search.
+- Manual review/apply выбранных suggestions. Только успешный apply создаёт
+  `TrainingFact`; duplicate warning не создаёт второй fact.
+- `TrainingFact` source `MANUAL | MATERIAL`, один primary source и exact
+  locator/excerpt. Existing Stage 3 facts становятся `MANUAL`.
+- Immutable attempt snapshot schema v3 с bounded source citation при сохранении
+  чтения snapshots v1/v2.
+- Existing project editor с tab «Материалы», source badges в facts и source
+  citation в existing admin attempt detail; новый frontend route не создаётся.
+- Publication и scoring используют только approved `TrainingFact`, questions и
+  criteria, но не raw materials, extracted text или suggestions.
 
 ## Не входит
 
-- PDF/DOCX/PPTX/XLSX, documents, parsers, extraction, material library, RAG,
-  embeddings, vector store и external knowledge.
-- Ranking, rating, CSV, operations dashboard, monitoring stack и notification
-  system.
-- Separate worker container/app, generic queue/job, outbox, provider-run или
-  evaluation/transcription-run tables.
-- Полная review history, per-claim resolution, multi-review и reprocessing UI.
-- Admin audio endpoint/player, новые frontend routes и новые dependencies.
-- Production fail-fast hardening, staging/production deploy, real webhook
-  registration, pilot и calibration.
+- DOCX, PPTX, XLSX, OCR, image-to-text и scanned PDF без text layer.
+- Crawling, sitemap, follow-links, search engine, web search tool, RAG,
+  embeddings и vector database.
+- Automatic fact approval, auto-update facts, multi-source merge и live sync с
+  `RealEstateObject`.
+- Automatic question approval и публикация проекта без ручной проверки admin.
+- Ranking, CSV, operations dashboard, notifications, generic worker/queue/job,
+  outbox, provider-run tables и document library вне Training.
+- Employee material/source endpoints, новые frontend routes, новый UI framework
+  и production deploy.
+- Изменения Telegram, voice, transcription/evaluation Stage 3, scoring, review,
+  random 3/10, timer, attempt limit и employee visibility.
 
 ## Реализуемая последовательность
 
-1. Additive schema/migrations, facts/criteria domain, snapshot v2 и publication.
-2. OpenAI config/client/transcription и реально сериализованный multipart stub.
-3. Responses strict schema, evidence validation, metrics и backend scoring.
-4. Processing checkpoints/restart, bounded retries и technical refund.
-5. Review/RBAC/visibility, existing admin/employee UI, HTTP/PostgreSQL/browser
-   checks, opt-in smoke и канонические документы.
-6. Остановиться с отчётом и ждать ручной приёмки Stage 3.
+1. Models/enums, additive migration, fact source, snapshot v3 и PostgreSQL
+   compatibility.
+2. Material revisions, manual text, object snapshot, hashes/diff и tests.
+3. Private PDF storage/extraction, validation, timeout/cleanup и Docker check
+   при новой dependency.
+4. Official URL HTTP extraction, SSRF/redirect protection, opt-in browser
+   fallback и local fixture tests.
+5. Strict material suggestions, bounded chunking, manual apply и duplicate
+   handling.
+6. Existing admin editor Materials tab, source badges/citations и browser tests.
+7. Searchable object import, все object PDF и grounded 1+10 question drafts.
+8. Полные gates, read-only verification и остановка с отчётом без commit/deploy.
 
 ## Ограничения scope
 
-- Ровно две новые основные Prisma models и один новый HTTP endpoint.
-- Только existing API process worker; external calls выполняются вне database
-  transactions.
-- Exactly-once billing не обещается: crash после provider response и до
-  checkpoint save может повторить один платный request.
-- Stage 1 fake text mode и deterministic fake providers остаются только для
-  tests/development. Real mode не fallback-ится на fake.
-- Stage 2 Telegram, private audio, random 3/10, timer, attempt limit и immutable
-  snapshot principle не меняются.
+- Только две новые основные Prisma models; failed revision не является
+  источником facts.
+- Один material принадлежит одному project. Все project/material/revision/file
+  endpoints проверяют backend permission и ownership.
+- External PDF parsing, HTTP/browser extraction и OpenAI requests выполняются
+  вне database transaction с server-side timeout.
+- Browser fallback выключен по умолчанию и обрабатывает только одну явно
+  добавленную страницу.
+- Extracted text и AI suggestions являются черновиками. Только подтверждённый
+  `TrainingFact` участвует в publication, snapshot и evaluation.
+- Старые revisions, facts и attempts не переписываются при refresh или update
+  источника.
 
 ## Ручная приёмка
 
-Нужны отдельные сценарии из `ACCEPTANCE.md`:
+Нужны отдельные локальные сценарии из `ACCEPTANCE.md`:
 
-1. opt-in synthetic OpenAI smoke с ровно одной transcription и одной evaluation;
-2. real Telegram voice + OpenAI полный `1 + 3` flow;
-3. pending review без provisional leakage и `APPROVE`;
-4. `OVERRIDE` с final score/reason и безопасным employee result;
-5. provider technical failure с refund и replacement attempt.
+1. PDF upload, extraction, suggestions, manual apply и source page.
+2. Official URL extraction/refresh/diff без изменения existing facts.
+3. JS-only URL через opt-in browser fallback одной страницы.
+4. Manual text с новой revision и diff.
+5. Platforma object snapshot с allowlisted fields и immutable refresh.
+6. Searchable ЖК dropdown, импорт карточки и всех PDF, затем появление 1+10
+   черновиков вопросов в content editor.
+7. Attempt snapshot v3/source citation остаётся неизменным после material/fact
+   edits.
 
-Production deploy и production Telegram webhook не выполняются.
+Production deploy, реальные внешние сайты и реальные provider-вызовы в
+automated tests не выполняются.
 
 ## Stop conditions
 
-- Появляется третья основная Stage 3 model, второй новый endpoint, provider run,
-  job/outbox, document/material/ranking/operations infrastructure.
-- OpenAI request содержит passScore/finalScore, другие projects/users, hidden
-  future questions, web/files/tools или сохраняется с `store=true`.
-- Vocabulary содержит полные fact statements/criteria/scoring или PII.
-- Модель определяет final score/pass/fail либо evidence/IDs принимаются без
-  backend validation.
-- Pending employee DTO раскрывает provisional/internal данные; technical failure
-  расходует attempt limit.
-- Restart повторяет сохранённый checkpoint либо progression применяется дважды.
-- PostgreSQL, HTTP, provider, web, browser, migration или workspace gates красные.
+- Появляется третья новая основная Stage 4 model, generic job/queue/outbox,
+  crawler, OCR, RAG/vector infrastructure, ranking или operations surface.
+- URL/redirect/browser request может обращаться к private/reserved address либо
+  обходит повторную SSRF validation.
+- PDF становится публичным, storage key или source content раскрывается
+  employee, либо raw PDF/HTML передаётся OpenAI.
+- Suggestion создаёт или меняет `TrainingFact` без explicit admin apply.
+- Refresh меняет старую revision, approved fact или historical attempt.
+- PostgreSQL, HTTP, provider, browser, migration, API/web/workspace или Docker
+  gates красные.

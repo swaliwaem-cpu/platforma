@@ -51,3 +51,62 @@ export function formatTrainingDuration(seconds: number) {
 
   return `${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`;
 }
+
+export function formatTrainingFactSourceBadge(source: {
+  sourceType?: 'MANUAL' | 'MATERIAL';
+  sourceMaterialType?: 'PDF' | 'OFFICIAL_URL' | 'MANUAL_TEXT' | 'OBJECT_SNAPSHOT' | null;
+  sourceLocator?: string | null;
+  sourceUrl?: string | null;
+}) {
+  if (source.sourceType !== 'MATERIAL') return 'Добавлено вручную';
+  if (source.sourceMaterialType === 'PDF') {
+    return `PDF · ${formatLocator(source.sourceLocator, 'page:', 'Страница')}`;
+  }
+  if (source.sourceMaterialType === 'OFFICIAL_URL') {
+    return `URL · ${formatSourceUrl(source.sourceUrl)}`;
+  }
+  if (source.sourceMaterialType === 'OBJECT_SNAPSHOT') {
+    return `Platforma · ${formatObjectField(source.sourceLocator)}`;
+  }
+  if (source.sourceMaterialType === 'MANUAL_TEXT') {
+    return `Ручной текст · ${formatLocator(source.sourceLocator, 'paragraph:', 'Абзац')}`;
+  }
+  return 'Материал · источник';
+}
+
+function formatLocator(value: string | null | undefined, prefix: string, label: string) {
+  return value?.startsWith(prefix) && value.slice(prefix.length)
+    ? `${label} ${value.slice(prefix.length)}`
+    : 'источник';
+}
+
+function formatSourceUrl(value: string | null | undefined) {
+  try {
+    const url = new URL(value ?? '');
+    const path = url.pathname === '/' ? '' : url.pathname;
+    return `${url.hostname}${path}`.slice(0, 120);
+  } catch {
+    return 'официальная страница';
+  }
+}
+
+function formatObjectField(locator: string | null | undefined) {
+  const code = locator?.startsWith('object-field:') ? locator.slice('object-field:'.length) : '';
+  return ({
+    title: 'Название',
+    type: 'Тип объекта',
+    architectureDescription: 'Архитектура',
+    infrastructureDescription: 'Инфраструктура',
+    fillingDescription: 'Отделка и наполнение',
+    krtName: 'КРТ',
+    apartmentAreaRange: 'Площади',
+    ceilingHeight: 'Высота потолков',
+    propertyClass: 'Класс',
+    floorRange: 'Этажность',
+    completion: 'Срок сдачи',
+    address: 'Адрес',
+    developer: 'Девелопер',
+    locations: 'Районы',
+    metroStations: 'Метро',
+  } as Record<string, string>)[code] ?? 'поле карточки';
+}
