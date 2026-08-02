@@ -233,10 +233,11 @@ export function App() {
 
 function AppRoutes() {
   const { pathname, navigate } = usePathname();
-  const { user, isLoading, logout, hasPermission } = useAuth();
+  const { accessToken, user, isLoading, logout, hasPermission } = useAuth();
   const sidebarRef = useRef<HTMLElement | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [appTheme, setAppThemeState] = useState(() => getAppliedAppTheme());
+  const [trainingEnabled, setTrainingEnabled] = useState(false);
   const isDarkTheme = appTheme === 'dark-premium';
   const themeToggleLabel = isDarkTheme ? 'Включить светлую тему' : 'Включить темную тему';
 
@@ -246,6 +247,23 @@ function AppRoutes() {
     setAppTheme(nextTheme);
     setAppThemeState(nextTheme);
   };
+
+  useEffect(() => {
+    if (!user || !accessToken) {
+      setTrainingEnabled(false);
+      return;
+    }
+
+    const controller = new AbortController();
+
+    void apiRequest<{ enabled: boolean }>('/training/config', accessToken, {
+      signal: controller.signal,
+    })
+      .then((config) => setTrainingEnabled(config.enabled === true))
+      .catch(() => setTrainingEnabled(false));
+
+    return () => controller.abort();
+  }, [accessToken, user]);
 
   useEffect(() => {
     if (!isSidebarOpen) {
@@ -295,7 +313,11 @@ function AppRoutes() {
   const objectLotRoute = parseObjectLotRoute(pathname);
   const objectSlug = objectLotRoute ? null : parseObjectSlug(pathname);
   const projectPresentationRoute = parseProjectPresentationRoute(pathname);
-  const visibleNavItems = navItems.filter((item) => canAccessNavigationItem(hasPermission, item));
+  const visibleNavItems = navItems.filter(
+    (item) =>
+      (item.id !== 'training' || trainingEnabled) &&
+      canAccessNavigationItem(hasPermission, item),
+  );
 
   return (
     <main className="app-shell">
@@ -389,7 +411,8 @@ function AppRoutes() {
         {activeSection === 'admin' ? (
           hasPermission('admin:access') ? (
             pathname.startsWith('/admin/training') ? (
-              hasPermission('training:projects:manage') || hasPermission('training:results:read') ? (
+              trainingEnabled &&
+              (hasPermission('training:projects:manage') || hasPermission('training:results:read')) ? (
                 <TrainingAdminRoutes
                   canManageProjects={hasPermission('training:projects:manage')}
                   canReadResults={hasPermission('training:results:read')}
@@ -438,6 +461,7 @@ function AppRoutes() {
                 onOpenImport={() => navigate('/admin/import')}
                 onOpenObjects={() => navigate('/admin/objects')}
                 onOpenTraining={() => navigate('/admin/training')}
+                trainingEnabled={trainingEnabled}
                 onOpenUsers={() => navigate('/admin/users')}
               />
             )
@@ -445,7 +469,7 @@ function AppRoutes() {
             <AccessDenied />
           )
         ) : activeSection === 'training' ? (
-          hasPermission('training:participate') ? (
+          trainingEnabled && hasPermission('training:participate') ? (
             <TrainingEmployeeRoutes navigate={navigate} pathname={pathname} />
           ) : (
             <AccessDenied />
@@ -1245,6 +1269,7 @@ function AdminHome({
   onOpenImport,
   onOpenObjects,
   onOpenTraining,
+  trainingEnabled,
   onOpenUsers,
 }: {
   onOpenCatalogLinks: () => void;
@@ -1252,6 +1277,7 @@ function AdminHome({
   onOpenImport: () => void;
   onOpenObjects: () => void;
   onOpenTraining: () => void;
+  trainingEnabled: boolean;
   onOpenUsers: () => void;
 }) {
   const { hasPermission } = useAuth();
@@ -1260,7 +1286,8 @@ function AdminHome({
       label: 'Обучение',
       description: 'Проекты, попытки и результаты обучения.',
       tone: 'primary',
-      canAccess: hasPermission('training:projects:manage') || hasPermission('training:results:read'),
+      canAccess: trainingEnabled &&
+        (hasPermission('training:projects:manage') || hasPermission('training:results:read')),
       onClick: onOpenTraining,
     },
     {

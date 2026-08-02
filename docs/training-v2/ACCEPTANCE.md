@@ -1,63 +1,70 @@
-# Acceptance: Stage 5 Part 2 — Ranking, Coverage, CSV
+# Acceptance: Stage 5 Part 3/4 — Runtime Hardening and Concurrency
 
 ## Критерии готовности
 
-- Ranking использует max confirmed counting `finalScore` на employee/project;
-  best может отличаться от latest, historical `isPassed` сохраняется.
-- Pending review, `TECHNICAL_FAILED` и non-counting attempts не ухудшают metrics.
-  Timeout и resolved override покрыты как подтверждённые historical results.
-- Revoke сохраняет historical average/result и изменяет только current coverage.
-- Coverage соответствует Stage 4.5 policy для ALL/ASSIGNED, active permissioned
-  users и open/published projects; zero denominator даёт `null`.
-- Server-side filters применяются до aggregation/`COUNT(*) OVER()`/pagination;
-  page 1/2 не пересекаются и имеют stable exact order.
-- `AVG(finalScore::numeric)` сортируется до округления; display использует
-  `ROUND_HALF_UP` до двух знаков.
-- List query не читает heavy answer/evaluation/audio payload; detail query
-  ограничен user IDs текущей страницы; DB query count bounded.
-- Deterministic summary не использует OpenAI и не делает психологических выводов.
-- Ranking и CSV защищены `training:results:read`, имеют 401/403/200 coverage и
-  explicit safe DTO/columns.
-- CSV совпадает с API policy/order/filters, идёт батчами по 100, имеет UTF-8 BOM,
-  корректное quoting и защиту `= + - @ tab CR LF` после leading whitespace.
-- Admin UI сохраняет backend order и покрывает filters/pagination/coverage/
-  breakdown/summary/download/loading/empty/error/mobile/permission states.
-- Новые tables/materialized results, production hardening/deploy, Part 3, commit
-  и реальные Telegram/OpenAI calls отсутствуют.
+- Один bot и один API worker обрабатывают 10 concurrent users одного проекта
+  без cross-user contamination; provider peak больше одного и не превышает
+  `TRAINING_VOICE_WORKER_CONCURRENCY` (default `3`, bounded `1..10`).
+- Claim остаётся атомарным через существующий `FOR UPDATE SKIP LOCKED`; каждый
+  claim получает уникальный fencing owner, поэтому второй worker/slot не
+  обрабатывает answer дважды, а lost owner не сохраняет stale checkpoint/result.
+- Shutdown запрещает новые claims, ждёт active tasks не дольше configured drain,
+  освобождает unfinished ownership для restart и не теряет persisted work.
+- Stale/restart recovery и сохранённые transcription/evaluation checkpoints не
+  повторяют уже подтверждённые этапы.
+- При `TRAINING_MODULE_ENABLED=false` frontend entry скрыты, employee/admin API
+  возвращает controlled disabled error, webhook отвечает controlled no-op,
+  worker и external providers не начинают новую работу. Re-enable продолжает
+  сохранённый processing; исторические данные не удаляются.
+- Production + enabled не стартует с fake provider, HTTP/local/private/
+  placeholder URL, отсутствующими Telegram/OpenAI values/models или
+  совпадающими/невалидными buckets. Ошибка содержит только безопасный code.
+- Webhook status/register/delete являются opt-in. Register использует HTTPS,
+  `secret_token`, только `message`/`callback_query`, bounded timeout и safe
+  errors; delete требует `--confirm-delete`; token/secret не печатаются.
+- Ordinary test/build не запускает opt-in OpenAI smoke или Telegram CLI.
+- `/health` возвращает только `status`, `database` и optional `training`.
+- API image содержит `ffmpeg`; Node получает SIGTERM/SIGINT; отдельного worker
+  container и schema migration нет.
 
 ## Automated fake/local acceptance
 
-1. Shared/API/web builds и `prisma validate`; migration status/upgrade только
-   если query-plan evidence потребовал additive index.
-2. Unit/domain: query bounds, historical eligibility/best/ties/nulls, Decimal
-   rounding, coverage, deterministic summary и CSV security.
-3. Isolated PostgreSQL synthetic dataset: минимум 100 users, 10 projects,
-   mixed ALL/ASSIGNED/overlaps/revokes, attempts/reviews/technical failures;
-   exact order, pages, filters, bounded query count и `EXPLAIN`.
-4. HTTP/RBAC: ranking/CSV 401/403/200, filters, safe allowlist, CSV headers/BOM/
-   formula protection и API/CSV parity.
-5. Frontend source и targeted browser: permission route/navigation, filters,
-   pagination, current coverage, unchanged backend order, CSV download,
-   loading/empty/error/mobile и обе поддерживаемые themes.
-6. Full API/web/root tests and workspace builds, `git diff --check`, `.only`/
-   `.skip`, secret/real-call/excluded-scope scans и cleanup resources.
+1. Unit/domain: strict feature flag, production config matrix, HTTPS/private/
+   placeholder URL, pairwise bucket distinctness, redaction, webhook request/
+   dry-run/delete confirmation/local stub и health allowlist.
+2. Isolated PostgreSQL/runtime: 10 users одного project с разными Telegram
+   accounts/chats, concurrent voice+finish, bounded provider concurrency,
+   independent segments/transcripts/results, two workers/one answer, stale
+   recovery и lost-owner fencing.
+3. Lifecycle: disable before claim, disable between claim/external call,
+   re-enable resume, shutdown without new claims, successful bounded drain и
+   timeout/restart recovery с финальными DB assertions.
+4. HTTP: disabled employee/admin actions, controlled webhook no-op, safe health
+   и redacted production startup failure.
+5. API/web/root tests and builds, Prisma validate, development/production
+   Compose config, Docker API image build, `ffmpeg`, signal/stop/restart smoke,
+   `git diff --check`, `.only`/`.skip` и excluded-scope/secret scans.
 
 ## Локальная ручная приёмка
 
-1. Под admin открыть `/admin/training/ranking`, применить project/access/current
-   filters и сравнить две страницы с backend order.
-2. После revoke сравнить неизменный historical best/average и изменившийся
-   current coverage; отдельно проверить ALL и ASSIGNED проекты.
-3. Сверить project breakdown, timeout, resolved override и «Недостаточно данных».
-4. Скачать CSV с теми же filters, открыть в spreadsheet и проверить UTF-8,
-   русские имена, commas/quotes/newlines и formula-like cells.
-5. Под ролью только с `training:results:read` проверить ranking/CSV; employee и
-   роль без permission не должны видеть route и получают 403 API.
-6. Проверить desktop/mobile, `minimal-luxury` и `dark-premium`, loading/empty/
-   error/focus/reduced-motion states.
+1. При enabled проверить employee/admin Training entry и direct routes; при
+   disabled убедиться, что entry скрыты, direct actions заблокированы, а после
+   re-enable данные и pending processing сохранены.
+2. Запустить webhook `status`/register `--dry-run`; убедиться, что вывод не
+   содержит token/secret. Реальные register/delete не выполнять.
+3. Остановить и перезапустить локальный API во время fake processing; проверить
+   bounded stop и финальное восстановление persisted answer.
+4. Проверить `/health` в enabled/disabled state и отсутствие config metadata.
+
+## Remaining production gates
+
+- Отдельное production env review и backup/migration/rollback plan.
+- Реальные HTTPS endpoint, Telegram webhook registration/status и controlled
+  Telegram/OpenAI smoke по отдельному разрешению.
+- Production deploy и post-deploy observation не выполнены.
 
 ## Definition of Done
 
-Part 2 готов к ручной локальной приёмке только при зелёных automated gates и
-query-plan evidence. Part 3–4, production deploy и commit остаются отдельными
+Part 3 готова только при зелёных fake/local gates, чистых временных ресурсах и
+отсутствии real external/deploy действий. Commit и Part 4 остаются отдельными
 не начатыми задачами.

@@ -7,10 +7,11 @@ import { RequirePermissions } from '../auth/permissions.decorator';
 import { PermissionsGuard } from '../auth/permissions.guard';
 import type { FileContentResponse } from '../files/file-content-response';
 import { TrainingAudioAccessService } from './training-audio-access.service';
+import { TrainingFeatureGuard } from './training-runtime-config';
 import { parseUuid } from './training.validation';
 
 @Controller('training/admin')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(TrainingFeatureGuard, JwtAuthGuard, PermissionsGuard)
 export class TrainingAudioAccessController {
   constructor(private readonly audio: TrainingAudioAccessService) {}
 

@@ -6,6 +6,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RequirePermissions } from '../auth/permissions.decorator';
 import { PermissionsGuard } from '../auth/permissions.guard';
 import { TrainingAttemptService } from './training-attempt.service';
+import { TrainingFeatureGuard } from './training-runtime-config';
 import { TrainingTelegramService } from './training-telegram.service';
 import {
   parseStartTrainingAttemptInput,
@@ -14,7 +15,7 @@ import {
 } from './training.validation';
 
 @Controller('training')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(TrainingFeatureGuard, JwtAuthGuard, PermissionsGuard)
 @RequirePermissions('training:participate')
 export class TrainingEmployeeController {
   constructor(

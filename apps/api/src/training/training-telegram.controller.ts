@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 
 import { TrainingTelegramService } from './training-telegram.service';
+import { isTrainingModuleEnabled } from './training-runtime-config';
 
 @Controller('training/telegram')
 export class TrainingTelegramController {
@@ -20,6 +21,8 @@ export class TrainingTelegramController {
     @Headers('content-length') contentLength: string | undefined,
     @Body() body: unknown,
   ) {
+    if (!isTrainingModuleEnabled()) return { ok: true, disabled: true };
+
     this.telegram.assertWebhookSecret(secret);
 
     const declaredLength = Number(contentLength);

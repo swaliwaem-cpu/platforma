@@ -30,6 +30,7 @@ import {
   type TrainingProjectSnapshotV3,
 } from './training-snapshot';
 import { TrainingTelegramService } from './training-telegram.service';
+import { isTrainingModuleEnabled } from './training-runtime-config';
 import {
   buildTrainingVocabularyPrompt,
   TRAINING_TRANSCRIBER,
@@ -40,17 +41,32 @@ const MAX_PROCESSING_ATTEMPTS = 3;
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
 const DEFAULT_STALE_LOCK_MS = 2 * 60_000;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
+const DEFAULT_CONCURRENCY = 3;
+const DEFAULT_SHUTDOWN_DRAIN_MS = 10_000;
+const EXHAUSTED_RECOVERY_BATCH_SIZE = 50;
 
 type ClaimedAnswer = {
   id: string;
   processing_attempts: number;
+  lock_owner: string;
+};
+
+type ActiveClaim = {
+  answerId: string;
+  externalStarted: boolean;
+  ownershipLost: boolean;
 };
 
 @Injectable()
 export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy {
   private readonly workerId = `training-voice-${process.pid}-${randomUUID()}`;
   private timer: ReturnType<typeof setInterval> | null = null;
-  private active = false;
+  private stopping = false;
+  private pumping = false;
+  private pumpTask: Promise<void> | null = null;
+  private readonly activeTasks = new Set<Promise<void>>();
+  private readonly activeClaims = new Map<string, ActiveClaim>();
+  private shutdownPromise: Promise<void> | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -62,48 +78,140 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
   ) {}
 
   async onModuleInit() {
-    if (!isWorkerEnabled()) return;
+    if (!isWorkerEnabled() || !isTrainingModuleEnabled()) return;
 
     await this.recoverExhaustedAnswers();
-    this.timer = setInterval(() => void this.drain(), getPollIntervalMs());
+    this.timer = setInterval(() => void this.poll(), getPollIntervalMs());
     this.kick();
   }
 
-  onModuleDestroy() {
+  async onModuleDestroy() {
+    await this.shutdown();
+  }
+
+  async shutdown() {
+    if (this.shutdownPromise) return this.shutdownPromise;
+
+    this.shutdownPromise = this.performShutdown();
+    return this.shutdownPromise;
+  }
+
+  private async performShutdown() {
+    this.stopping = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    const drainMs = getShutdownDrainMs();
+    const deadline = Date.now() + drainMs;
+    const releaseReserveMs = Math.min(1_000, Math.max(50, Math.floor(drainMs / 5)));
+    const workDeadline = deadline - releaseReserveMs;
+
+    if (this.pumpTask && !(await settlesBefore(this.pumpTask, workDeadline))) {
+      await settlesBefore(this.releaseActiveClaimsForRestart(), deadline);
+      return;
+    }
+
+    if (!this.activeTasks.size) return;
+
+    const drain = Promise.allSettled([...this.activeTasks]);
+    if (await settlesBefore(drain, workDeadline)) return;
+
+    const release = this.releaseActiveClaimsForRestart();
+    await settlesBefore(release, deadline);
   }
 
   kick() {
-    void this.drain();
+    if (this.stopping || !isTrainingModuleEnabled() || this.pumpTask) return;
+
+    const task = this.pump();
+    this.pumpTask = task;
+    void task.then(
+      () => this.clearPumpTask(task),
+      () => this.clearPumpTask(task),
+    );
+  }
+
+  private clearPumpTask(task: Promise<void>) {
+    if (this.pumpTask === task) this.pumpTask = null;
+  }
+
+  private async poll() {
+    if (this.stopping || !isTrainingModuleEnabled()) return;
+    await this.recoverExhaustedAnswers();
+    this.kick();
   }
 
   async runOnce() {
+    if (this.stopping || !isTrainingModuleEnabled()) return false;
     await this.recoverExhaustedAnswers();
     const answer = await this.claimNextAnswer();
 
     if (!answer) return false;
 
-    await this.processClaimedAnswer(answer);
+    this.trackClaim(answer);
+    if (this.stopping || !isTrainingModuleEnabled()) {
+      await this.releaseClaim(answer, true);
+      this.activeClaims.delete(answer.lock_owner);
+      return false;
+    }
+
+    try {
+      await this.processClaimedAnswer(answer);
+    } finally {
+      this.activeClaims.delete(answer.lock_owner);
+    }
     return true;
   }
 
-  private async drain() {
-    if (this.active) return;
-    this.active = true;
-    let processed = false;
-
+  private async pump() {
+    if (this.pumping || this.stopping || !isTrainingModuleEnabled()) return;
+    this.pumping = true;
     try {
-      processed = await this.runOnce();
-    } finally {
-      this.active = false;
+      while (
+        !this.stopping &&
+        isTrainingModuleEnabled() &&
+        this.activeTasks.size < getWorkerConcurrency()
+      ) {
+        const answer = await this.claimNextAnswer();
 
-      if (processed) queueMicrotask(() => void this.drain());
+        if (!answer) break;
+        this.trackClaim(answer);
+        if (this.stopping || !isTrainingModuleEnabled()) {
+          await this.releaseClaim(answer, true);
+          this.activeClaims.delete(answer.lock_owner);
+          break;
+        }
+        this.startClaimedTask(answer);
+      }
+    } finally {
+      this.pumping = false;
     }
   }
 
+  private startClaimedTask(answer: ClaimedAnswer) {
+    const task = this.processClaimedAnswer(answer)
+      .catch((error: unknown) => this.handleProcessingFailure(answer, error, 'processing'))
+      .then(() => undefined)
+      .finally(() => {
+        this.activeClaims.delete(answer.lock_owner);
+        this.activeTasks.delete(task);
+        if (!this.stopping && isTrainingModuleEnabled()) queueMicrotask(() => this.kick());
+      });
+
+    this.activeTasks.add(task);
+  }
+
+  private trackClaim(answer: ClaimedAnswer) {
+    this.activeClaims.set(answer.lock_owner, {
+      answerId: answer.id,
+      externalStarted: false,
+      ownershipLost: false,
+    });
+  }
+
   private async claimNextAnswer() {
+    if (this.stopping || !isTrainingModuleEnabled()) return null;
     const staleLockMs = getStaleLockMs();
+    const lockOwner = `${this.workerId}-${randomUUID()}`;
     const rows = await this.prisma.$queryRaw<ClaimedAnswer[]>(Prisma.sql`
       WITH candidate AS (
         SELECT answer."id"
@@ -124,19 +232,23 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
       UPDATE "training_answers" AS answer
       SET
         "processing_locked_at" = CURRENT_TIMESTAMP,
-        "processing_locked_by" = ${this.workerId},
+        "processing_locked_by" = ${lockOwner},
         "processing_attempts" = "processing_attempts" + 1,
         "processing_error_code" = NULL,
         "updated_at" = CURRENT_TIMESTAMP
       FROM candidate
       WHERE answer."id" = candidate."id"
-      RETURNING answer."id", answer."processing_attempts"
+      RETURNING
+        answer."id",
+        answer."processing_attempts",
+        answer."processing_locked_by" AS "lock_owner"
     `);
 
     return rows[0] ?? null;
   }
 
   private async recoverExhaustedAnswers() {
+    if (this.stopping || !isTrainingModuleEnabled()) return;
     const staleLockMs = getStaleLockMs();
     const exhausted = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
       SELECT answer."id"
@@ -151,6 +263,7 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
           OR answer."processing_locked_at" < CURRENT_TIMESTAMP - (${staleLockMs} * INTERVAL '1 millisecond')
         )
       ORDER BY answer."created_at" ASC, answer."id" ASC
+      LIMIT ${EXHAUSTED_RECOVERY_BATCH_SIZE}
     `);
 
     for (const answer of exhausted) {
@@ -175,10 +288,10 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
       await this.notifyProcessed(answer.id);
       return;
     }
-    if (!(await this.isStillClaimed(answer.id))) return;
+    if (!(await this.canContinueClaim(answer, false))) return;
 
     const heartbeat = setInterval(
-      () => void this.refreshHeartbeat(answer.id).catch(() => undefined),
+      () => void this.refreshHeartbeat(answer).catch(() => undefined),
       getHeartbeatIntervalMs(),
     );
     let failedStep: 'transcription' | 'evaluation' | 'processing' = 'processing';
@@ -189,10 +302,11 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
       );
 
       if (!isTrainingProjectSnapshotWithFacts(snapshot)) {
+        if (!(await this.canContinueClaim(answer, true))) return;
         await this.audio.prepareAnswerAudio(answer.id);
         const result = await this.attemptState.completeTelegramVoiceAnswer(
           answer.id,
-          this.workerId,
+          answer.lock_owner,
           '[fake:pass]',
         );
         if (result.status === 'COMPLETED' || result.status === 'TIMED_OUT') {
@@ -206,7 +320,9 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
 
       if (current.transcriptionStatus !== TrainingAiStepStatus.COMPLETED) {
         failedStep = 'transcription';
+        if (!(await this.canContinueClaim(answer, true))) return;
         const audio = await this.audio.prepareAnswerAudio(answer.id);
+        if (!(await this.canContinueClaim(answer, true))) return;
         const transcription = await this.transcriber.transcribe({
           ...audio,
           vocabularyPrompt: buildTrainingVocabularyPrompt({
@@ -219,7 +335,7 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
           where: {
             id: answer.id,
             processingStatus: TrainingAnswerProcessingStatus.PROCESSING,
-            processingLockedBy: this.workerId,
+            processingLockedBy: answer.lock_owner,
             transcriptionStatus: TrainingAiStepStatus.PENDING,
           },
           data: {
@@ -242,13 +358,14 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
         failedStep = 'evaluation';
         if (!current.text) throw new VoiceWorkerError('TRANSCRIPT_CHECKPOINT_MISSING', false);
         const evaluationInput = createEvaluationInput(snapshot, question, current);
+        if (!(await this.canContinueClaim(answer, true))) return;
         const result = await this.evaluator.evaluate(evaluationInput);
         const scoring = scoreTrainingEvaluation(result.evaluation, evaluationInput);
         const saved = await this.prisma.trainingAnswer.updateMany({
           where: {
             id: answer.id,
             processingStatus: TrainingAnswerProcessingStatus.PROCESSING,
-            processingLockedBy: this.workerId,
+            processingLockedBy: answer.lock_owner,
             transcriptionStatus: TrainingAiStepStatus.COMPLETED,
             evaluationStatus: TrainingAiStepStatus.PENDING,
           },
@@ -275,7 +392,7 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
       failedStep = 'processing';
       const progression = await this.attemptState.completeEvaluatedTelegramVoiceAnswer(
         answer.id,
-        this.workerId,
+        answer.lock_owner,
       );
 
       if (progression.status === 'COMPLETED' || progression.status === 'TIMED_OUT') {
@@ -302,25 +419,32 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
     });
   }
 
-  private async isStillClaimed(answerId: string) {
+  private async isStillClaimed(answerId: string, lockOwner: string) {
+    if (this.activeClaims.get(lockOwner)?.ownershipLost) return false;
+
     return Boolean(await this.prisma.trainingAnswer.findFirst({
       where: {
         id: answerId,
         processingStatus: TrainingAnswerProcessingStatus.PROCESSING,
-        processingLockedBy: this.workerId,
+        processingLockedBy: lockOwner,
       },
       select: { id: true },
     }));
   }
 
-  private async refreshHeartbeat(answerId: string) {
-    await this.prisma.$executeRaw(Prisma.sql`
+  private async refreshHeartbeat(answer: ClaimedAnswer) {
+    const updated = await this.prisma.$executeRaw(Prisma.sql`
       UPDATE "training_answers"
       SET "processing_locked_at" = CURRENT_TIMESTAMP, "updated_at" = CURRENT_TIMESTAMP
-      WHERE "id" = CAST(${answerId} AS uuid)
+      WHERE "id" = CAST(${answer.id} AS uuid)
         AND "processing_status" = 'processing'
-        AND "processing_locked_by" = ${this.workerId}
+        AND "processing_locked_by" = ${answer.lock_owner}
     `);
+
+    if (updated !== 1) {
+      const active = this.activeClaims.get(answer.lock_owner);
+      if (active) active.ownershipLost = true;
+    }
   }
 
   private async handleProcessingFailure(
@@ -336,7 +460,7 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
         where: {
           id: answer.id,
           processingStatus: TrainingAnswerProcessingStatus.PROCESSING,
-          processingLockedBy: this.workerId,
+          processingLockedBy: answer.lock_owner,
         },
         data: {
           processingLockedAt: null,
@@ -351,13 +475,14 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
       answer.id,
       getWorkerErrorCode(error),
       failedStep,
-      this.workerId,
+      answer.lock_owner,
       error instanceof TrainingOpenAIError ? error.attempts : 0,
     );
     if (failed) await this.notifyFailed(answer.id);
   }
 
   private async notifyProcessed(answerId: string) {
+    if (this.stopping || !isTrainingModuleEnabled()) return;
     try {
       await this.telegram.notifyAnswerProcessed(answerId);
     } catch {
@@ -366,11 +491,71 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
   }
 
   private async notifyFailed(answerId: string) {
+    if (this.stopping || !isTrainingModuleEnabled()) return;
     try {
       await this.telegram.notifyAnswerFailed(answerId);
     } catch {
       // A failed informational delivery must not reopen answer processing.
     }
+  }
+
+  private async canContinueClaim(answer: ClaimedAnswer, beforeExternal: boolean) {
+    if (!isTrainingModuleEnabled()) {
+      await this.releaseClaim(answer, !this.hasStartedExternal(answer));
+      return false;
+    }
+    if (this.stopping && !this.hasStartedExternal(answer)) {
+      await this.releaseClaim(answer, true);
+      return false;
+    }
+    if (!(await this.isStillClaimed(answer.id, answer.lock_owner))) return false;
+
+    if (beforeExternal) {
+      const active = this.activeClaims.get(answer.lock_owner);
+      if (active) active.externalStarted = true;
+    }
+    return true;
+  }
+
+  private hasStartedExternal(answer: ClaimedAnswer) {
+    return this.activeClaims.get(answer.lock_owner)?.externalStarted ?? true;
+  }
+
+  private async releaseClaim(answer: ClaimedAnswer, rollbackAttempt: boolean) {
+    if (rollbackAttempt) {
+      await this.prisma.$executeRaw(Prisma.sql`
+        UPDATE "training_answers"
+        SET
+          "processing_locked_at" = NULL,
+          "processing_locked_by" = NULL,
+          "processing_attempts" = GREATEST("processing_attempts" - 1, 0),
+          "updated_at" = CURRENT_TIMESTAMP
+        WHERE "id" = CAST(${answer.id} AS uuid)
+          AND "processing_status" = 'processing'
+          AND "processing_locked_by" = ${answer.lock_owner}
+      `);
+      return;
+    }
+
+    await this.prisma.trainingAnswer.updateMany({
+      where: {
+        id: answer.id,
+        processingStatus: TrainingAnswerProcessingStatus.PROCESSING,
+        processingLockedBy: answer.lock_owner,
+      },
+      data: { processingLockedAt: null, processingLockedBy: null },
+    });
+  }
+
+  private async releaseActiveClaimsForRestart() {
+    await Promise.all(
+      [...this.activeClaims.entries()].map(([lockOwner, active]) =>
+        this.releaseClaim(
+          { id: active.answerId, processing_attempts: 0, lock_owner: lockOwner },
+          !active.externalStarted,
+        ),
+      ),
+    );
   }
 }
 
@@ -442,6 +627,24 @@ function isWorkerEnabled() {
   return process.env.NODE_ENV !== 'test';
 }
 
+function getWorkerConcurrency() {
+  return readBoundedInteger(
+    process.env.TRAINING_VOICE_WORKER_CONCURRENCY,
+    DEFAULT_CONCURRENCY,
+    1,
+    10,
+  );
+}
+
+function getShutdownDrainMs() {
+  return readBoundedInteger(
+    process.env.TRAINING_VOICE_WORKER_SHUTDOWN_DRAIN_MS,
+    DEFAULT_SHUTDOWN_DRAIN_MS,
+    250,
+    60_000,
+  );
+}
+
 function getPollIntervalMs() {
   return readBoundedInteger(
     process.env.TRAINING_VOICE_WORKER_POLL_INTERVAL_MS,
@@ -483,4 +686,24 @@ function readBoundedInteger(
   return Number.isInteger(parsed) && parsed >= minimum && parsed <= maximum
     ? parsed
     : fallback;
+}
+
+async function settlesBefore(promise: Promise<unknown>, deadline: number) {
+  const observed = promise.then(
+    () => true,
+    () => true,
+  );
+  const remainingMs = deadline - Date.now();
+  if (remainingMs <= 0) return false;
+
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  const settled = await Promise.race([
+    observed,
+    new Promise<false>((resolve) => {
+      timeout = setTimeout(() => resolve(false), remainingMs);
+    }),
+  ]);
+
+  if (timeout) clearTimeout(timeout);
+  return settled;
 }

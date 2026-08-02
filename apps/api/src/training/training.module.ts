@@ -4,6 +4,7 @@ import { AuthModule } from '../auth/auth.module';
 import { FilesModule } from '../files/files.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { TrainingAdminController } from './training-admin.controller';
+import { TrainingConfigController } from './training-config.controller';
 import { TrainingAudioAccessController } from './training-audio-access.controller';
 import { TrainingAudioAccessService } from './training-audio-access.service';
 import {
@@ -37,6 +38,7 @@ import {
 import { TrainingProjectService } from './training-project.service';
 import { TrainingProjectAccessService } from './training-project-access.service';
 import { TrainingReviewService } from './training-review.service';
+import { TrainingFeatureGuard } from './training-runtime-config';
 import { TrainingResultsService } from './training-results.service';
 import { TrainingRankingService } from './training-ranking.service';
 import {
@@ -58,6 +60,7 @@ import { TrainingUrlExtractor } from './training-url-extractor';
 @Module({
   imports: [AuthModule, PrismaModule, FilesModule],
   controllers: [
+    TrainingConfigController,
     TrainingEmployeeController,
     TrainingAdminController,
     TrainingAudioAccessController,
@@ -73,6 +76,7 @@ import { TrainingUrlExtractor } from './training-url-extractor';
     TrainingResultsService,
     TrainingRankingService,
     TrainingAudioAccessService,
+    TrainingFeatureGuard,
     TrainingFollowUpSelector,
     TrainingTelegramService,
     TrainingAudioService,

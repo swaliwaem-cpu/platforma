@@ -22,13 +22,14 @@ import { RequirePermissions } from '../auth/permissions.decorator';
 import { PermissionsGuard } from '../auth/permissions.guard';
 import type { UploadedFile as UploadedFileData } from '../files/uploaded-file.type';
 import { TrainingMaterialService } from './training-material.service';
+import { TrainingFeatureGuard } from './training-runtime-config';
 import { parseUuid } from './training.validation';
 
 const PDF_UPLOAD_LIMIT = 100 * 1024 * 1024;
 type ContentResponse = { setHeader(name: string, value: string | number): void; send(body: Buffer): void };
 
 @Controller('training/admin')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(TrainingFeatureGuard, JwtAuthGuard, PermissionsGuard)
 @RequirePermissions('training:projects:manage')
 export class TrainingMaterialController {
   constructor(private readonly materials: TrainingMaterialService) {}

@@ -39,9 +39,7 @@ export type ProfilePhotoFile = {
 export type HealthStatus = {
   status: 'ok' | 'error';
   database: 'ok' | 'unavailable';
-  postgis?: boolean;
-  timestamp?: string;
-  message?: string;
+  training?: 'ready' | 'disabled' | 'degraded';
 };
 
 export type AuthUser = {

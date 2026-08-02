@@ -11,6 +11,7 @@ import { TrainingProjectAccessService } from './training-project-access.service'
 import { TrainingReviewService } from './training-review.service';
 import { TrainingResultsService } from './training-results.service';
 import { TrainingRankingService } from './training-ranking.service';
+import { TrainingFeatureGuard } from './training-runtime-config';
 import {
   parseCreateTrainingProjectInput,
   parseBulkTrainingProjectAssignmentsInput,
@@ -25,7 +26,7 @@ import {
 } from './training.validation';
 
 @Controller('training/admin')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(TrainingFeatureGuard, JwtAuthGuard, PermissionsGuard)
 export class TrainingAdminController {
   constructor(
     private readonly projects: TrainingProjectService,

@@ -35,8 +35,9 @@ Training V2 является предметным модулем существ�
 
 Stage 5 выполняется четырьмя отдельными последовательными частями: Part 1 —
 employee/admin results, protected audio и review integration; Part 2 — ranking,
-current coverage и связанный CSV export; Part 3 — следующие отдельно
-утверждённые product surfaces; Part 4 — production hardening и общий E2E.
+current coverage и связанный CSV export; Part 3 — concurrency/runtime hardening,
+feature/config/webhook/health и local shutdown/restart guarantees; Part 4 —
+только отдельно утверждённая финальная production граница и общий E2E.
 Каждая часть требует отдельного разрешения. Реализация Part 2 не означает начало
 Part 3–4.
 
@@ -116,6 +117,42 @@ Part 3–4.
   dataset; отсутствие доказательства означает отсутствие migration.
 
 Новый этап начинается только после приёмки текущего и отдельного разрешения.
+
+## Stage 5 Part 3 — concurrency и production-ready config boundary
+
+- Отдельного staging сейчас нет; Part 3 не выполняет deploy. Production требует
+  отдельно настроенные real Telegram/OpenAI, публичные HTTPS URL и operator
+  registration webhook.
+- Один bot обслуживает многих пользователей. `TrainingAnswer` остаётся
+  persisted processing unit; generic queue/job/outbox и отдельный worker
+  container не создаются.
+- Один API process использует bounded pool с default concurrency `3` и bounds
+  `1..10`. Каждый атомарный `SKIP LOCKED` claim получает уникальный fencing
+  token, даже если два slots принадлежат одному process. Все checkpoints и
+  progression сравнивают этот token; lost owner не сохраняет stale result.
+- Shutdown сначала закрывает claim boundary, затем bounded ждёт active tasks.
+  Незавершённый owner освобождается для restart; попытка processing не
+  превращается в product failure только из-за shutdown. Nest принимает
+  `SIGTERM`/`SIGINT`, а Node становится final PID процесса API container.
+- `TRAINING_MODULE_ENABLED` является простым server env flag, а не remote flag
+  service. Disable скрывает frontend entry, блокирует employee/admin actions,
+  превращает webhook в controlled no-op и запрещает новые worker/provider
+  calls. Projects, assignments, materials, attempts, answers и audio остаются;
+  re-enable продолжает persisted work.
+- Production + enabled проходит одну startup validation boundary: Telegram
+  transport `real`, token/username/secret/canonical webhook URL, AI mode
+  `openai`, key и explicit models, HTTPS public/webhook URL, валидные general,
+  audio и material buckets, попарно различные. Local/private/placeholder и fake
+  config fail-closed; ошибки не содержат values.
+- Webhook lifecycle управляется только opt-in CLI `status`, `register`, `delete`.
+  Register отправляет secret и allowed updates `message|callback_query`, delete
+  требует явного подтверждения, реальные команды автоматически не запускаются.
+- Публичный health сообщает только safe status, DB и Training
+  `ready|disabled|degraded`; provider/model/bucket/token/user/transcript/payload
+  metadata исключены.
+- Existing opt-in OpenAI smoke остаётся отдельным explicit command, использует
+  synthetic WAV и не входит в ordinary tests/build. В Part 3 он реально не
+  запускается.
 
 ## Этап 4.5 — назначение проектов пользователям
 
