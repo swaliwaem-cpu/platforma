@@ -104,7 +104,7 @@ export function TrainingAdminProjectsPage({
           <h2>Training V2</h2>
           <p className="muted-text">Управление проектами и отдельный реестр результатов Training V2.</p>
         </div>
-        {canReadResults ? <AdminButton type="button" tone="primary" onClick={() => navigate('/admin/training/results')}>Результаты сотрудников</AdminButton> : null}
+        {canReadResults ? <div className="training-project-actions"><AdminButton type="button" tone="text" onClick={() => navigate('/admin/training/results')}>Результаты сотрудников</AdminButton><AdminButton type="button" tone="primary" onClick={() => navigate('/admin/training/ranking')}>Рейтинг</AdminButton></div> : null}
       </header>
 
       {error ? (
@@ -157,10 +157,7 @@ export function TrainingAdminProjectsPage({
       ) : null}
 
       {canReadResults ? (
-        <AdminPanel className="training-results-entry">
-          <div><p className="eyebrow">Результаты</p><h3>История сотрудников</h3><p className="muted-text">Фильтры, серверная пагинация, detail, review и защищённое аудио доступны в отдельном разделе.</p></div>
-          <AdminButton type="button" tone="primary" onClick={() => navigate('/admin/training/results')}>Открыть результаты</AdminButton>
-        </AdminPanel>
+        <div className="training-admin-entry-grid"><AdminPanel className="training-results-entry"><div><p className="eyebrow">Результаты</p><h3>История сотрудников</h3><p className="muted-text">Detail, review и защищённое аудио каждой попытки.</p></div><AdminButton type="button" tone="text" onClick={() => navigate('/admin/training/results')}>Открыть результаты</AdminButton></AdminPanel><AdminPanel className="training-results-entry"><div><p className="eyebrow">Рейтинг</p><h3>Лучшие результаты</h3><p className="muted-text">Исторический максимум, текущий охват и безопасный CSV.</p></div><AdminButton type="button" tone="primary" onClick={() => navigate('/admin/training/ranking')}>Открыть рейтинг</AdminButton></AdminPanel></div>
       ) : null}
     </div>
   );

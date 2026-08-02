@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Header, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 
 import { AuthenticatedUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -10,6 +10,7 @@ import { TrainingProjectService } from './training-project.service';
 import { TrainingProjectAccessService } from './training-project-access.service';
 import { TrainingReviewService } from './training-review.service';
 import { TrainingResultsService } from './training-results.service';
+import { TrainingRankingService } from './training-ranking.service';
 import {
   parseCreateTrainingProjectInput,
   parseBulkTrainingProjectAssignmentsInput,
@@ -18,6 +19,7 @@ import {
   parseTrainingAvailabilityInput,
   parseReviewTrainingAttemptInput,
   parseTrainingAdminResultsQuery,
+  parseTrainingAdminRankingQuery,
   parseUpdateTrainingProjectDraftInput,
   parseUuid,
 } from './training.validation';
@@ -31,6 +33,7 @@ export class TrainingAdminController {
     private readonly attempts: TrainingAttemptService,
     private readonly reviews: TrainingReviewService,
     private readonly results: TrainingResultsService,
+    private readonly ranking: TrainingRankingService,
   ) {}
 
   @Get('projects')
@@ -124,6 +127,21 @@ export class TrainingAdminController {
   @RequirePermissions('training:results:read')
   async listResults(@Query() query: Record<string, string | undefined>) {
     return this.results.listAdminResults(parseTrainingAdminResultsQuery(query));
+  }
+
+  @Get('ranking/export.csv')
+  @RequirePermissions('training:results:read')
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  @Header('Content-Disposition', 'attachment; filename="training-ranking.csv"')
+  @Header('X-Content-Type-Options', 'nosniff')
+  async exportRanking(@Query() query: Record<string, string | undefined>) {
+    return this.ranking.exportCsv(parseTrainingAdminRankingQuery(query));
+  }
+
+  @Get('ranking')
+  @RequirePermissions('training:results:read')
+  async listRanking(@Query() query: Record<string, string | undefined>) {
+    return this.ranking.listRanking(parseTrainingAdminRankingQuery(query));
   }
 
   @Get('attempts/:attemptId')

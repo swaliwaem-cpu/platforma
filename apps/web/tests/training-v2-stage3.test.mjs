@@ -13,7 +13,7 @@ const editorSource = source('training/TrainingAdminProjectEditorPage.tsx');
 const adminAttemptSource = source('training/TrainingAdminAttemptPage.tsx');
 const employeeAttemptSource = source('training/TrainingAttemptPage.tsx');
 
-test('Stage 3 extends the existing project editor without adding routes', () => {
+test('Stage 3 extends the existing project editor without document or operations routes', () => {
   assert.match(editorSource, /QuestionFactsEditor/);
   assert.match(editorSource, /Утверждённый факт/);
   assert.match(editorSource, /Aliases через запятую/);
@@ -27,7 +27,7 @@ test('Stage 3 extends the existing project editor without adding routes', () => 
   assert.match(editorSource, /Aliases не должны повторяться/);
   assert.match(editorSource, /Codes \$\{type\} не должны повторяться/);
   assert.match(editorSource, /Проверьте draft/);
-  assert.doesNotMatch(routesSource, /documents|materials|ranking|operations/iu);
+  assert.doesNotMatch(routesSource, /documents|operations/iu);
 });
 
 test('Stage 3 review UI is permission-gated and protects duplicate submits', () => {

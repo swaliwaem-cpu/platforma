@@ -52,6 +52,35 @@ const participantPermissionWhere = {
 export class TrainingProjectAccessService {
   constructor(private readonly prisma: PrismaService) {}
 
+  currentEligibilitySql() {
+    return Prisma.sql`
+      u."status"::text = 'active'
+      AND u."deleted_at" IS NULL
+      AND p."status"::text = 'published'
+      AND p."is_open" = TRUE
+      AND EXISTS (
+        SELECT 1
+        FROM "role_permissions" rp
+        JOIN "permissions" permission ON permission."id" = rp."permission_id"
+        WHERE rp."role_id" = u."role_id"
+          AND permission."key" = 'training:participate'
+      )
+      AND (
+        p."access_mode"::text = 'all_participants'
+        OR (
+          p."access_mode"::text = 'assigned_users'
+          AND EXISTS (
+            SELECT 1
+            FROM "training_project_assignments" eligibility_assignment
+            WHERE eligibility_assignment."project_id" = p."id"
+              AND eligibility_assignment."user_id" = u."id"
+              AND eligibility_assignment."revoked_at" IS NULL
+          )
+        )
+      )
+    `;
+  }
+
   participantWhere(userId: string): Prisma.UserWhereInput {
     return { id: userId, ...participantPermissionWhere };
   }

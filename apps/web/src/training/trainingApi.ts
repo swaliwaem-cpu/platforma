@@ -18,6 +18,8 @@ import type {
   TrainingAdminProjectsResponse,
   TrainingAdminResultsQuery,
   TrainingAdminResultsResponse,
+  TrainingAdminRankingQuery,
+  TrainingAdminRankingResponse,
   TrainingEmployeeAttempt,
   TrainingEmployeeAttemptsResponse,
   TrainingEmployeeProjectsResponse,
@@ -370,6 +372,44 @@ export function getTrainingAdminResults(
     accessToken,
     { signal },
   );
+}
+
+export function getTrainingAdminRanking(
+  accessToken: string,
+  input: TrainingAdminRankingQuery,
+  signal?: AbortSignal,
+) {
+  return apiRequest<TrainingAdminRankingResponse>(
+    `/training/admin/ranking?${buildTrainingQuery(input)}`,
+    accessToken,
+    { signal },
+  );
+}
+
+export async function downloadTrainingAdminRankingCsv(
+  accessToken: string,
+  input: TrainingAdminRankingQuery,
+) {
+  const response = await apiResponse(
+    `/training/admin/ranking/export.csv?${buildTrainingQuery(input)}`,
+    accessToken,
+  );
+  const objectUrl = URL.createObjectURL(await response.blob());
+  const link = document.createElement('a');
+  link.href = objectUrl;
+  link.download = 'training-ranking.csv';
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
+function buildTrainingQuery(input: Record<string, unknown>) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(input)) {
+    if (value !== '') query.set(key, String(value));
+  }
+  return query.toString();
 }
 
 export function getTrainingAnswerAudio(

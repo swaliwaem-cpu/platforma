@@ -38,6 +38,7 @@ import { TrainingProjectService } from './training-project.service';
 import { TrainingProjectAccessService } from './training-project-access.service';
 import { TrainingReviewService } from './training-review.service';
 import { TrainingResultsService } from './training-results.service';
+import { TrainingRankingService } from './training-ranking.service';
 import {
   FakeTrainingTelegramClient,
   getTrainingTelegramTransportMode,
@@ -70,6 +71,7 @@ import { TrainingUrlExtractor } from './training-url-extractor';
     TrainingAttemptStateService,
     TrainingReviewService,
     TrainingResultsService,
+    TrainingRankingService,
     TrainingAudioAccessService,
     TrainingFollowUpSelector,
     TrainingTelegramService,

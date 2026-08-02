@@ -504,6 +504,75 @@ export type TrainingAdminResultsResponse = {
   totalPages: number;
 };
 
+export type TrainingAdminRankingQuery = {
+  page: number;
+  limit: number;
+  search: string;
+  project: string;
+  accessMode: TrainingProjectAccessMode | '';
+  currentlyAssigned: 'true' | 'false' | '';
+  currentlyEligible: 'true' | 'false' | '';
+};
+
+export type TrainingRankingCriterionSummary = {
+  code: string;
+  title: string;
+  awardedPoints: number;
+  maxPoints: number;
+  percent: string;
+};
+
+export type TrainingRankingProjectResult = {
+  attemptId: string;
+  projectId: string;
+  projectTitle: string;
+  accessMode: TrainingProjectAccessMode;
+  assignmentStatus: TrainingAssignmentStatus;
+  currentlyEligible: boolean;
+  finalScore: number;
+  isPassed: boolean;
+  completedAt: string;
+  durationSeconds: number;
+  factualErrorsCount: number;
+  unsupportedClaimsCount: number;
+};
+
+export type TrainingAdminRankingRow = {
+  user: { id: string; email: string; name: string | null };
+  passedProjectsCount: number;
+  completedProjectsCount: number;
+  averageBestScore: string | null;
+  attemptsUsed: number;
+  lastCompletedAt: string | null;
+  totalDurationSeconds: number;
+  averageDurationSeconds: string | null;
+  currentEligibleProjectsCount: number;
+  currentCompletedEligibleProjectsCount: number;
+  currentPassedEligibleProjectsCount: number;
+  currentCoveragePercent: string | null;
+  currentAccess: {
+    allParticipantsProjectsCount: number;
+    assignedProjectsCount: number;
+    activeAssignmentsCount: number;
+  };
+  bestResults: TrainingRankingProjectResult[];
+  summary: {
+    text: string;
+    strongestCriterion: TrainingRankingCriterionSummary | null;
+    weakestCriterion: TrainingRankingCriterionSummary | null;
+    factualErrorsCount: number;
+    unsupportedClaimsCount: number;
+  };
+};
+
+export type TrainingAdminRankingResponse = {
+  items: TrainingAdminRankingRow[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};
+
 export type TrainingAdminAttempt = TrainingAdminAttemptSummary & {
   project: {
     id: string;

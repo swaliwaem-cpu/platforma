@@ -3,6 +3,7 @@ import { TrainingAdminAttemptPage } from './TrainingAdminAttemptPage';
 import { TrainingAdminProjectEditorPage } from './TrainingAdminProjectEditorPage';
 import { TrainingAdminProjectsPage } from './TrainingAdminProjectsPage';
 import { TrainingAdminResultsPage } from './TrainingAdminResultsPage';
+import { TrainingAdminRankingPage } from './TrainingAdminRankingPage';
 import { TrainingAttemptPage } from './TrainingAttemptPage';
 import { TrainingProjectsPage } from './TrainingProjectsPage';
 import './training.css';
@@ -45,6 +46,12 @@ export function TrainingAdminRoutes({
   if (/^\/admin\/training\/results\/?$/u.test(pathname)) {
     return canReadResults
       ? <TrainingAdminResultsPage navigate={navigate} />
+      : <TrainingRouteDenied />;
+  }
+
+  if (/^\/admin\/training\/ranking\/?$/u.test(pathname)) {
+    return canReadResults
+      ? <TrainingAdminRankingPage navigate={navigate} />
       : <TrainingRouteDenied />;
   }
 

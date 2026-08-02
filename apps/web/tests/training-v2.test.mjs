@@ -17,14 +17,14 @@ const adminAttemptSource = source('training/TrainingAdminAttemptPage.tsx');
 const viewSource = source('training/trainingView.ts');
 const stylesSource = source('training/training.css');
 
-test('Training V2 keeps Stage 1 routes and adds the Stage 5 Part 1 results route', () => {
+test('Training V2 keeps existing routes and adds the Stage 5 Part 2 ranking route', () => {
   assert.equal(routesSource.includes('/^\\/training\\/?$/u'), true);
   assert.equal(routesSource.includes('/^\\/training\\/attempts\\/([^/]+)\\/?$/u'), true);
   assert.equal(routesSource.includes('/^\\/admin\\/training\\/?$/u'), true);
   assert.equal(routesSource.includes('/^\\/admin\\/training\\/projects\\/([^/]+)\\/?$/u'), true);
   assert.equal(routesSource.includes('/^\\/admin\\/training\\/attempts\\/([^/]+)\\/?$/u'), true);
   assert.equal(routesSource.includes('/^\\/admin\\/training\\/results\\/?$/u'), true);
-  assert.doesNotMatch(routesSource, /ranking|leaderboard|csv/iu);
+  assert.equal(routesSource.includes('/^\\/admin\\/training\\/ranking\\/?$/u'), true);
 });
 
 test('application shell enforces employee and admin permission gates', () => {
@@ -93,7 +93,7 @@ test('admin authoring validates one main and exactly ten follow-up questions', (
   assert.match(editorSource, /Закройте проект перед редактированием\. Уже начатые попытки не изменятся\./);
 });
 
-test('admin projects link to the Stage 5 results list and detail keeps excluded surfaces out', () => {
+test('admin projects link to results and ranking while detail keeps excluded surfaces out', () => {
   assert.match(adminProjectsSource, /Проекты/);
   assert.match(adminProjectsSource, /Результаты сотрудников/);
   assert.match(adminAttemptSource, /attempt\.questions\.map/);

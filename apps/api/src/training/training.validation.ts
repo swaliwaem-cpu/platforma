@@ -29,6 +29,7 @@ import type {
   TrainingAssignmentStatus,
 } from '@platforma/shared' with { 'resolution-mode': 'import' };
 import type { TrainingAdminResultsQueryInput } from './training-results.service';
+import type { TrainingAdminRankingQueryInput } from './training-ranking.service';
 
 const TRAINING_DEFAULT_TIME_LIMIT_MINUTES = 7;
 const TRAINING_ASSIGNMENT_BULK_LIMIT = 500;
@@ -183,6 +184,24 @@ export function parseTrainingAdminResultsQuery(
         'DURATION_ASC',
       ] satisfies TrainingAdminResultSort[],
     ) ?? 'STARTED_DESC',
+  };
+}
+
+export function parseTrainingAdminRankingQuery(
+  query: Record<string, string | undefined>,
+): TrainingAdminRankingQueryInput {
+  return {
+    page: parseInteger(query.page, 'page', 1, { minimum: 1 }),
+    limit: parseInteger(query.limit, 'limit', 20, { minimum: 1, maximum: 100 }),
+    search: parseOptionalBoundedText(query.search, 'search', 240) || null,
+    project: parseOptionalBoundedText(query.project, 'project', 240) || null,
+    accessMode: parseOptionalEnum(
+      query.accessMode,
+      'accessMode',
+      Object.values(TrainingProjectAccessMode),
+    ),
+    currentlyAssigned: parseOptionalBoolean(query.currentlyAssigned, 'currentlyAssigned'),
+    currentlyEligible: parseOptionalBoolean(query.currentlyEligible, 'currentlyEligible'),
   };
 }
 

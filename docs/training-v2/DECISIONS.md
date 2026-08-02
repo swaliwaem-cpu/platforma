@@ -34,9 +34,11 @@ Training V2 является предметным модулем существ�
    pilot и calibration.
 
 Stage 5 выполняется четырьмя отдельными последовательными частями: Part 1 —
-employee/admin results, protected audio и review integration; Part 2 — ranking;
-Part 3 — CSV/export; Part 4 — production hardening и общий E2E. Каждая часть
-требует отдельного разрешения. Реализация Part 1 не означает начало Part 2–4.
+employee/admin results, protected audio и review integration; Part 2 — ranking,
+current coverage и связанный CSV export; Part 3 — следующие отдельно
+утверждённые product surfaces; Part 4 — production hardening и общий E2E.
+Каждая часть требует отдельного разрешения. Реализация Part 2 не означает начало
+Part 3–4.
 
 ## Stage 5 Part 1 — результаты, защищённое аудио и review
 
@@ -70,6 +72,48 @@ Part 3 — CSV/export; Part 4 — production hardening и общий E2E. Каж
   и assignment history покрывают Part 1. Индекс не добавляется без плана на
   реалистичной кардинальности; локальная малая fixture не является основанием
   для migration.
+
+## Stage 5 Part 2 — рейтинг, текущий охват и CSV
+
+- Исторический рейтинг строится из существующих attempts. Для каждой пары
+  employee/project выбирается подтверждённая counting attempt с максимальным
+  `finalScore`; при равенстве — более новая по `startedAt`, затем больший `id`.
+- Подтверждёнными являются только `COMPLETED | TIMED_OUT` с non-null
+  `finalScore/isPassed`, resolved либо не требовавшимся review и
+  `countsTowardAttemptLimit=true`. Pending review и `TECHNICAL_FAILED`
+  исключаются. Historical `isPassed` не пересчитывается по live `passScore`.
+- Revoke assignment, смена access mode и закрытие проекта не удаляют historical
+  best. Current coverage рассчитывается отдельно по единой Stage 4.5 policy.
+- Universe рейтинга — объединение пользователей с historical confirmed result
+  и пользователей хотя бы с одним currently eligible project.
+- `project` и `accessMode` задают scope проектов до historical/current
+  aggregation. `currentlyAssigned` и `currentlyEligible` являются tri-state
+  row filters после aggregation: `true` означает хотя бы один, `false` — ни
+  одного соответствующего проекта в scope.
+- `attemptsUsed` считает все attempts с `countsTowardAttemptLimit=true` в scope.
+  Passed/completed, score и duration считаются по одному best result на project.
+- `averageBestScore` — PostgreSQL `AVG(finalScore::numeric)`. Сортировка идёт по
+  exact numeric до display rounding; наружу значение округляется
+  `ROUND_HALF_UP` до двух знаков и передаётся decimal-строкой.
+- `currentCoveragePercent` равен completed eligible / eligible * 100 и равен
+  `null`, если eligible denominator равен нулю. Current passed использует
+  historical `isPassed` выбранного best result.
+- Основной list query применяет filters, `COUNT(*) OVER()`, stable order и
+  `LIMIT/OFFSET` в PostgreSQL. Project breakdown/evaluation aggregates
+  загружаются одним bounded query только для users текущей страницы.
+- Deterministic summary не использует OpenAI. Criterion analytics берётся из
+  immutable snapshot и validated evaluation best attempts. Breakdown
+  `OVERRIDDEN` attempt не используется для strongest/weakest; при недостатке
+  согласованных данных выводится «Недостаточно данных».
+- Ranking API и CSV защищены `training:results:read`. CSV выполняет тот же core
+  и filters батчами по 100, сохраняет exact order, добавляет UTF-8 BOM, quoting
+  и formula-injection protection после проверки leading whitespace.
+- Ranking/CSV используют explicit allowlist. Transcript, evidence, audio,
+  storage, source excerpts, provider payload/request IDs, review comments,
+  Telegram IDs и secrets не экспортируются.
+- Отдельные ranking/analytics/export tables и materialized results не создаются.
+  Additive index допустим только после `EXPLAIN (ANALYZE, BUFFERS)` на synthetic
+  dataset; отсутствие доказательства означает отсутствие migration.
 
 Новый этап начинается только после приёмки текущего и отдельного разрешения.
 
