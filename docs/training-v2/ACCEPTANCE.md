@@ -1,69 +1,62 @@
-# Acceptance: Stage 4.5 — Project Assignments
+# Acceptance: Stage 5 Part 1 — Results, Audio, Review
 
 ## Критерии готовности
 
-- Migration additive: existing projects backfill-ятся `ALL_PARTICIPANTS`, новые
-  получают default `ASSIGNED_USERS`, данные Stage 1–4 не удаляются.
-- Assignment хранит actor/time/revoke, уникален на project/user и имеет индексы
-  `(projectId, revokedAt)` и `(userId, revokedAt)`.
-- Assign, повторный assign, revoke и повторный revoke идемпотентны; invalid user
-  отменяет весь bulk request.
-- Новая попытка разрешена только активному неудалённому user с
-  `training:participate` и текущим project access. Assignment не выдаёт
-  permission.
-- `ALL_PARTICIPANTS` и `ASSIGNED_USERS` проверяются одной backend policy в list,
-  start и всех Telegram checkpoints.
-- После revoke активная попытка, questions, answers, voice/audio, results и
-  history сохраняются; новая попытка после завершения блокируется.
-- Employee list фильтруется в БД и возвращает active attempt после revoke.
-- Admin API защищён `training:projects:manage`, возвращает только userId, name,
-  email, status, canParticipate, isAssigned и assignedAt.
-- UI расширяет existing editor, поддерживает mode, warning при нуле назначений,
-  server search/pagination/filter, current-page selection, bulk и все состояния.
-- Admin project list показывает mode/count без N+1.
-- Один Telegram bot изолирует пользователей; token не является доказательством
-  доступа и recheck выполняется при link, consume и start.
-- 10 разных users могут одновременно начать один project; double start одного
-  user создаёт одну active attempt.
-- Stage 5, реальные provider calls, deploy и commit отсутствуют.
+- Employee project cards содержат attempts left, лучший и последний
+  подтверждённый результат; pending review не раскрывает provisional score.
+- Employee history использует snapshot title, показывает duration, safe
+  breakdown и refund/message semantics; transcript/evaluation/provider/audio
+  metadata отсутствуют в JSON.
+- Technical failure не имеет final/pass и не расходует limit. Pending review не
+  имеет employee final/pass. Timeout duration ограничен `expiresAt`.
+- Admin results защищён `training:results:read`, имеет bounded server filters,
+  pagination/total, stable sort и lightweight response.
+- Admin detail отделяет immutable snapshot от current access/assignment,
+  показывает review actor и admin-only evidence/request metadata.
+- Audio endpoint защищён отдельным `training:audio:read`; отсутствие права даёт
+  403, отсутствующий/невалидный object — одинаковый safe 404.
+- Успешное audio-чтение проверяет private bucket, deterministic key, ownership,
+  MIME, URL=null, size, checksum и WAV header, отвечает no-store и пишет один
+  bounded audit. Employee API не содержит audio reference.
+- UI Blob URL отменяется/revoke-ится; stale response не может заменить новый.
+- Успешный review POST сохраняется в UI до refresh; ошибка refresh не вызывает
+  и не предлагает второй POST.
+- Ranking, CSV, production hardening, общий Stage 5 E2E, deploy и commit
+  отсутствуют.
 
 ## Automated fake/local acceptance
 
-1. `prisma validate`/generate; clean temporary PostgreSQL install; Stage 4 → 4.5
-   upgrade с backfill, сохранением projects/attempts/history и новым default.
-2. Unit/schema tests: access matrix, active/inactive/deleted users, permission +
-   assignment, active-attempt recovery, bulk validation, idempotency и safe DTO.
-3. PostgreSQL: uniqueness/indexes, bulk, user on 10 projects, project for 10
-   users, revoke/reactivate, mode preservation, filtered visibility, permission,
-   revoke/start race, 10 concurrent starts и per-user isolation.
-4. HTTP/RBAC: 401/403/404, employee isolation, admin picker search/pagination/
-   filters, safe response, atomic bulk, employee list/start/Telegram denial.
-5. Frontend/browser: mode toggle, defaults/backfill display, search, pagination,
-   selection, assign/revoke, zero-assignment and missing-permission warnings,
-   employee visibility, active-attempt recovery, loading/empty/error.
-6. Linked fake scenario: 10 projects, at least 3 users with overlapping
-   assignments, three Telegram accounts, concurrent start and independent
-   questions/answers/audio/results, revoke during attempt and post-completion
-   denial without affecting other users.
-7. API/web/workspace tests and builds, targeted browser suite,
-   `git diff --check`, `.only`/`.skip`, real-call/secrets/old-migration scans and
-   cleanup temporary resources.
+1. Shared/API/web builds и `prisma validate` без schema/migration изменений.
+2. Unit/domain: query bounds/ranges, protected WAV integrity, safe 404 и bounded
+   audit.
+3. Isolated PostgreSQL: employee confirmed/pending/technical semantics, safe
+   breakdown, revoke history, assignment/current-access separation, real raw SQL
+   filters/pagination/sort.
+4. HTTP/RBAC: 401/403, независимые results/audio permissions, safe lightweight
+   results JSON, no-store audio response и persisted audit.
+5. Frontend source tests: results route, server filters/pagination, review partial
+   success, Blob lifecycle и Telegram-independent employee results.
+6. Targeted browser: results loading/filter/pagination/detail, review refresh
+   failure и protected audio load/close/error on both supported themes.
+7. Full API/web/workspace tests and builds, `git diff --check`, `.only`/`.skip`,
+   secret/real-call/excluded-scope scans and cleanup temporary DB/object.
 
 ## Локальная ручная приёмка
 
-1. Создать 10 учебных проектов.
-2. Часть проектов установить в `ALL_PARTICIPANTS`, часть в `ASSIGNED_USERS`.
-3. Назначить нескольким пользователям один проект.
-4. Назначить одному пользователю несколько проектов.
-5. Проверить видимость проектов под разными аккаунтами Platforma.
-6. Связать разные Telegram-аккаунты с разными пользователями.
-7. Одновременно начать один проект минимум с двух аккаунтов.
-8. Проверить независимость вопросов, ответов, voice, аудио и результатов.
-9. Отозвать доступ одному пользователю во время активной попытки.
-10. Проверить: текущая попытка завершается, новая попытка блокируется, история
-    остаётся.
+1. Под employee проверить лучший/последний результат, остаток попыток, pending,
+   timeout и технический refund в «Моих попытках».
+2. Под admin открыть `/admin/training/results`, применить фильтры и pagination,
+   открыть detail из строки.
+3. Сравнить snapshot title/settings с текущим project и current assignment после
+   revoke/reactivate.
+4. Проверить approve/override и сценарий: POST успешен, detail refresh временно
+   недоступен — повторный POST не предлагается.
+5. Под admin с `training:audio:read` загрузить/прослушать/закрыть WAV; проверить
+   no-store и audit. Под ролью только с `training:results:read` получить 403.
+6. Проверить desktop/mobile, `minimal-luxury` и `dark-premium`, loading/empty/
+   error/focus/reduced-motion states.
 
 ## Definition of Done
 
-Stage 4.5 готов только при зелёных automated gates и выполнении отдельной ручной
-приёмки. Stage 5, commit и production deploy не выполняются в этой задаче.
+Part 1 готов к ручной локальной приёмке только при зелёных automated gates.
+Part 2–4, production deploy и commit остаются отдельными не начатыми задачами.

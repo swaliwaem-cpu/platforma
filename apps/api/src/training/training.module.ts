@@ -4,6 +4,8 @@ import { AuthModule } from '../auth/auth.module';
 import { FilesModule } from '../files/files.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { TrainingAdminController } from './training-admin.controller';
+import { TrainingAudioAccessController } from './training-audio-access.controller';
+import { TrainingAudioAccessService } from './training-audio-access.service';
 import {
   SpawnTrainingFfmpegRunner,
   TRAINING_FFMPEG_RUNNER,
@@ -35,6 +37,7 @@ import {
 import { TrainingProjectService } from './training-project.service';
 import { TrainingProjectAccessService } from './training-project-access.service';
 import { TrainingReviewService } from './training-review.service';
+import { TrainingResultsService } from './training-results.service';
 import {
   FakeTrainingTelegramClient,
   getTrainingTelegramTransportMode,
@@ -56,6 +59,7 @@ import { TrainingUrlExtractor } from './training-url-extractor';
   controllers: [
     TrainingEmployeeController,
     TrainingAdminController,
+    TrainingAudioAccessController,
     TrainingMaterialController,
     TrainingTelegramController,
   ],
@@ -65,6 +69,8 @@ import { TrainingUrlExtractor } from './training-url-extractor';
     TrainingAttemptService,
     TrainingAttemptStateService,
     TrainingReviewService,
+    TrainingResultsService,
+    TrainingAudioAccessService,
     TrainingFollowUpSelector,
     TrainingTelegramService,
     TrainingAudioService,

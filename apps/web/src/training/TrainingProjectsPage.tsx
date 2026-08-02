@@ -27,6 +27,7 @@ import {
 } from './trainingApi';
 import {
   formatTrainingDate,
+  formatTrainingDuration,
   getTrainingResultLabel,
   getTrainingStatusClass,
   trainingAttemptStatusLabels,
@@ -62,13 +63,11 @@ export function TrainingProjectsPage({ navigate }: TrainingProjectsPageProps) {
     void Promise.all([
       getTrainingProjects(accessToken, controller.signal),
       getTrainingAttempts(accessToken, controller.signal),
-      getTrainingTelegramAccount(accessToken, controller.signal),
     ])
-      .then(([projectResponse, attemptResponse, accountResponse]) => {
+      .then(([projectResponse, attemptResponse]) => {
         if (controller.signal.aborted) return;
         setProjects(projectResponse.items);
         setAttempts(attemptResponse.items);
-        setTelegramAccount(accountResponse);
       })
       .catch((loadError: unknown) => {
         if (!controller.signal.aborted) {
@@ -77,6 +76,16 @@ export function TrainingProjectsPage({ navigate }: TrainingProjectsPageProps) {
       })
       .finally(() => {
         if (!controller.signal.aborted) setIsLoading(false);
+      });
+
+    void getTrainingTelegramAccount(accessToken, controller.signal)
+      .then((accountResponse) => {
+        if (!controller.signal.aborted) setTelegramAccount(accountResponse);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setTelegramNotice('Статус Telegram временно недоступен. Результаты и проекты загружены.');
+        }
       });
 
     return () => controller.abort();
@@ -218,10 +227,11 @@ export function TrainingProjectsPage({ navigate }: TrainingProjectsPageProps) {
                 </CardHeader>
                 <CardContent>
                   <dl className="training-metrics">
-                    <div><dt>Попытки</dt><dd>{project.attemptsUsed} / {project.attemptLimit}</dd></div>
+                    <div><dt>Попытки</dt><dd>{project.attemptsUsed} / {project.attemptLimit} · осталось {project.attemptsLeft}</dd></div>
                     <div><dt>Время</dt><dd>{project.timeLimitSeconds / 60} мин</dd></div>
                     <div><dt>Проходной балл</dt><dd>{project.passScore}</dd></div>
                     <div><dt>Лучший результат</dt><dd>{project.bestConfirmedScore ?? '—'}</dd></div>
+                    <div><dt>Последний результат</dt><dd>{project.lastConfirmedScore ?? '—'}{project.lastConfirmedAt ? ` · ${formatTrainingDate(project.lastConfirmedAt)}` : ''}</dd></div>
                   </dl>
                   {project.hasPendingReview ? (
                     <p className="training-pending-note">Есть попытка, требующая проверки.</p>
@@ -302,8 +312,8 @@ export function TrainingProjectsPage({ navigate }: TrainingProjectsPageProps) {
           <div className="training-history-list">
             {attempts.map((attempt) => (
               <button className="training-history-row" type="button" key={attempt.id} onClick={() => navigate(`/training/attempts/${attempt.id}`)}>
-                <span><strong>{attempt.projectTitle}</strong><small>Попытка №{attempt.attemptNumber} · {formatTrainingDate(attempt.startedAt)}</small></span>
-                <span><AdminStatusBadge className={getTrainingStatusClass(attempt.status)}>{trainingAttemptStatusLabels[attempt.status]}</AdminStatusBadge><strong>{attempt.finalScore ?? '—'}</strong></span>
+                <span><strong>{attempt.projectTitle}</strong><small>Попытка №{attempt.attemptNumber} · {formatTrainingDate(attempt.startedAt)}{attempt.durationSeconds !== null ? ` · ${formatTrainingDuration(attempt.durationSeconds)}` : ''}</small>{attempt.message ? <small>{attempt.message}</small> : null}{attempt.safeBreakdown.length ? <small>{attempt.safeBreakdown.map((item) => `В${item.sequence}: ${item.score}/${item.maxScore}`).join(' · ')}</small> : null}</span>
+                <span><AdminStatusBadge className={getTrainingStatusClass(attempt.status)}>{trainingAttemptStatusLabels[attempt.status]}</AdminStatusBadge><strong>{attempt.finalScore ?? '—'}</strong><small>{attempt.isPassed === null ? 'Итог не подтверждён' : attempt.isPassed ? 'Пройдено' : 'Не пройдено'}{attempt.attemptRefunded ? ' · попытка возвращена' : ''}</small></span>
               </button>
             ))}
           </div>

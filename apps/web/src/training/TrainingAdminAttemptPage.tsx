@@ -8,9 +8,11 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { getTrainingAdminAttempt, reviewTrainingAdminAttempt } from './trainingApi';
+import { TrainingProtectedAudioPlayer } from './TrainingProtectedAudioPlayer';
 import {
   formatTrainingFactSourceBadge,
   formatTrainingDate,
+  formatTrainingDuration,
   getTrainingStatusClass,
   trainingAttemptStatusLabels,
 } from './trainingView';
@@ -18,12 +20,14 @@ import {
 type TrainingAdminAttemptPageProps = {
   attemptId: string;
   canReviewResults: boolean;
+  canReadAudio: boolean;
   navigate: (pathname: string) => void;
 };
 
 export function TrainingAdminAttemptPage({
   attemptId,
   canReviewResults,
+  canReadAudio,
   navigate,
 }: TrainingAdminAttemptPageProps) {
   const { accessToken } = useAuth();
@@ -79,16 +83,33 @@ export function TrainingAdminAttemptPage({
     setNotice(null);
 
     try {
-      await reviewTrainingAdminAttempt(accessToken, attempt.id, {
+      const reviewed = await reviewTrainingAdminAttempt(accessToken, attempt.id, {
         decision,
         finalScore: decision === 'OVERRIDE' ? score : null,
         comment: comment.trim() || null,
       });
-      const updated = await getTrainingAdminAttempt(accessToken, attempt.id);
-      setAttempt(updated);
+      setAttempt((current) => current ? {
+        ...current,
+        status: reviewed.status,
+        calculatedScore: reviewed.calculatedScore,
+        finalScore: reviewed.finalScore,
+        isPassed: reviewed.isPassed,
+        reviewStatus: reviewed.reviewStatus,
+        reviewDecision: reviewed.reviewDecision,
+        reviewedAt: reviewed.reviewedAt,
+      } : current);
       setNotice(decision === 'APPROVE' ? 'Расчётный результат подтверждён.' : 'Итоговый балл скорректирован.');
     } catch (reviewError) {
       setError(reviewError instanceof Error ? reviewError.message : 'Не удалось завершить проверку');
+      setIsReviewing(false);
+      return;
+    }
+
+    try {
+      const updated = await getTrainingAdminAttempt(accessToken, attempt.id);
+      setAttempt(updated);
+    } catch {
+      setNotice('Решение сохранено, но detail не обновился. Нажмите «Обновить данные» — повторная отправка review не требуется.');
     } finally {
       setIsReviewing(false);
     }
@@ -100,7 +121,7 @@ export function TrainingAdminAttemptPage({
     return (
       <div className="training-page">
         <AdminAlert tone="error"><span>{error ?? 'Попытка не найдена'}</span><AdminButton type="button" tone="text" onClick={() => setReloadKey((value) => value + 1)}>Повторить</AdminButton></AdminAlert>
-        <AdminButton type="button" onClick={() => navigate('/admin/training')}>К списку</AdminButton>
+        <AdminButton type="button" onClick={() => navigate('/admin/training/results')}>К списку</AdminButton>
       </div>
     );
   }
@@ -115,7 +136,7 @@ export function TrainingAdminAttemptPage({
       {error ? <AdminAlert tone="error"><span>{error}</span><AdminButton type="button" tone="text" onClick={() => setReloadKey((value) => value + 1)}>Обновить</AdminButton></AdminAlert> : null}
       {notice ? <AdminAlert tone="notice">{notice}</AdminAlert> : null}
 
-      <div className="training-toolbar"><AdminButton type="button" tone="text" onClick={() => navigate('/admin/training')}>К проектам и попыткам</AdminButton></div>
+      <div className="training-toolbar"><AdminButton type="button" tone="text" onClick={() => navigate('/admin/training/results')}>К результатам</AdminButton><AdminButton type="button" tone="text" onClick={() => setReloadKey((value) => value + 1)}>Обновить данные</AdminButton></div>
 
       <AdminPanel className="training-attempt-summary">
         <dl className="training-metrics training-metrics--wide">
@@ -125,6 +146,10 @@ export function TrainingAdminAttemptPage({
           <div><dt>Итоговый балл</dt><dd>{attempt.finalScore ?? '—'} / 100</dd></div>
           <div><dt>Review</dt><dd>{attempt.reviewStatus}{attempt.reviewDecision ? ` · ${attempt.reviewDecision}` : ''}</dd></div>
           <div><dt>Попытка учтена</dt><dd>{attempt.countsTowardAttemptLimit ? 'Да' : 'Нет, возвращена'}</dd></div>
+          <div><dt>Длительность</dt><dd>{formatTrainingDuration(attempt.durationSeconds)}</dd></div>
+          <div><dt>Snapshot</dt><dd>v{attempt.snapshotVersion}</dd></div>
+          <div><dt>Текущий доступ</dt><dd>{attempt.currentAccess.hasCurrentAccess ? 'Есть' : 'Нет'} · {attempt.currentAccess.assignmentStatus}</dd></div>
+          <div><dt>Проверил</dt><dd>{attempt.reviewedBy?.name ?? attempt.reviewedBy?.email ?? '—'}</dd></div>
         </dl>
       </AdminPanel>
 
@@ -159,13 +184,18 @@ export function TrainingAdminAttemptPage({
                   <>
                     <div className="training-answer-copy"><p>{question.answer.text ?? 'Transcript не сохранён.'}</p><small>{question.answer.processingStatus} · {formatTrainingDate(question.answer.submittedAt)}</small></div>
                     <dl className="training-metrics training-metrics--wide">
+                      <div><dt>Источник</dt><dd>{question.answer.source}</dd></div>
+                      <div><dt>Время ответа</dt><dd>{question.responseDurationSeconds === null ? '—' : formatTrainingDuration(question.responseDurationSeconds)}</dd></div>
                       <div><dt>Transcription model</dt><dd>{question.answer.transcriptionModel ?? '—'}</dd></div>
                       <div><dt>Evaluation model</dt><dd>{question.answer.evaluationModel ?? '—'}</dd></div>
+                      <div><dt>Transcription request</dt><dd>{question.answer.transcriptionRequestId ?? '—'}</dd></div>
+                      <div><dt>Evaluation request</dt><dd>{question.answer.evaluationRequestId ?? '—'}</dd></div>
                       <div><dt>Criteria points</dt><dd>{aiBreakdown?.criteriaPoints ?? '—'}</dd></div>
                       <div><dt>Штрафы</dt><dd>{aiBreakdown ? `−${aiBreakdown.penaltyPoints} (${aiBreakdown.incorrectFactCount} ошибок)` : '—'}</dd></div>
                       <div><dt>Слов</dt><dd>{question.answer.objectiveMetrics?.wordCount ?? '—'}</dd></div>
                       <div><dt>Темп</dt><dd>{question.answer.objectiveMetrics ? `${question.answer.objectiveMetrics.wordsPerMinute} слов/мин` : '—'}</dd></div>
                     </dl>
+                    <TrainingProtectedAudioPlayer answerId={question.answer.id} audioAvailable={question.answer.audioAvailable} canReadAudio={canReadAudio} />
                     {question.answer.technicalErrorCode ? <AdminAlert tone="error">Код обработки: {question.answer.technicalErrorCode}</AdminAlert> : null}
                     <div className="training-evaluation-grid">
                       <section><h4>Утверждённые факты</h4>{question.facts.length ? <ul>{question.facts.map((fact) => { const assessment = evaluation?.fact_assessments.find((item) => item.fact_id === fact.id); return <li key={fact.id}><strong>{assessment?.verdict ?? '—'}</strong><span>{fact.statement}</span><div className="training-fact-source"><Badge variant={fact.sourceType === 'MATERIAL' ? 'secondary' : 'outline'}>{formatTrainingFactSourceBadge(fact)}</Badge>{fact.sourceType === 'MATERIAL' ? <small>{fact.sourceLabel}{fact.sourceExcerpt ? ` · «${fact.sourceExcerpt}»` : ''}</small> : null}</div>{assessment?.evidence ? <q>{assessment.evidence}</q> : null}{assessment?.explanation ? <small>{assessment.explanation}</small> : null}</li>; })}</ul> : <p className="muted-text">Legacy snapshot без facts.</p>}</section>

@@ -70,7 +70,8 @@ export class TrainingAttemptService {
         );
         const confirmedAttempts = projectAttempts.filter(
           (attempt) =>
-            attempt.status === TrainingAttemptStatus.COMPLETED &&
+            (attempt.status === TrainingAttemptStatus.COMPLETED ||
+              attempt.status === TrainingAttemptStatus.TIMED_OUT) &&
             attempt.finalScore !== null &&
             attempt.isPassed !== null,
         );
@@ -83,6 +84,7 @@ export class TrainingAttemptService {
           (attempt) => attempt.status === TrainingAttemptStatus.REQUIRES_REVIEW,
         );
         const attemptsLeft = Math.max(0, project.attemptLimit - countingAttempts.length);
+        const lastConfirmed = confirmedAttempts[0] ?? null;
         const blockedByPass = Boolean(bestConfirmed?.isPassed && !project.allowRetakeAfterPass);
         const hasCurrentAccess = this.projectAccess.hasCurrentAccess(project);
         const canStart =
@@ -122,6 +124,13 @@ export class TrainingAttemptService {
               ? 'PASSED'
               : 'FAILED'
             : null,
+          lastConfirmedScore: lastConfirmed?.finalScore ?? null,
+          lastConfirmedStatus: lastConfirmed
+            ? lastConfirmed.isPassed
+              ? 'PASSED'
+              : 'FAILED'
+            : null,
+          lastConfirmedAt: lastConfirmed?.completedAt?.toISOString() ?? null,
           hasPendingReview,
           newAttemptAccessRevoked: Boolean(
             activeAttempt &&
@@ -153,7 +162,7 @@ export class TrainingAttemptService {
     await this.state.finalizeExpiredForUser(userId);
     const attempts = await this.prisma.trainingAttempt.findMany({
       where: { userId },
-      include: trainingAttemptDetailInclude,
+      include: trainingEmployeeAttemptInclude,
       orderBy: { startedAt: 'desc' },
     });
 
@@ -164,7 +173,7 @@ export class TrainingAttemptService {
     await this.state.finalizeAttemptIfExpired(attemptId, userId);
     const attempt = await this.prisma.trainingAttempt.findFirst({
       where: { id: attemptId, userId },
-      include: trainingAttemptDetailInclude,
+      include: trainingEmployeeAttemptInclude,
     });
 
     if (!attempt) {
@@ -216,18 +225,40 @@ export class TrainingAttemptService {
     await this.state.finalizeAttemptIfExpired(attemptId);
     const attempt = await this.prisma.trainingAttempt.findUnique({
       where: { id: attemptId },
-      include: trainingAttemptDetailInclude,
+      include: trainingAdminAttemptDetailInclude,
     });
 
     if (!attempt) {
       throw new NotFoundException('Training attempt not found');
     }
 
-    return serializeAdminAttempt(attempt);
+    const currentAccess = await this.projectAccess.getCurrentAccessState(
+      attempt.projectId,
+      attempt.userId,
+    );
+
+    return serializeAdminAttempt(attempt, currentAccess);
   }
 }
 
-const trainingAttemptDetailInclude = {
+const trainingEmployeeAttemptInclude = {
+  questions: {
+    include: {
+      answer: {
+        select: {
+          processingStatus: true,
+          score: true,
+          safeBreakdownJson: true,
+        },
+      },
+    },
+    orderBy: {
+      sequence: 'asc' as const,
+    },
+  },
+} as const satisfies Prisma.TrainingAttemptInclude;
+
+const trainingAdminAttemptDetailInclude = {
   project: {
     select: {
       id: true,
@@ -235,6 +266,13 @@ const trainingAttemptDetailInclude = {
     },
   },
   user: {
+    select: {
+      id: true,
+      email: true,
+      name: true,
+    },
+  },
+  reviewedBy: {
     select: {
       id: true,
       email: true,
@@ -251,26 +289,30 @@ const trainingAttemptDetailInclude = {
   },
 } as const satisfies Prisma.TrainingAttemptInclude;
 
-type TrainingAttemptDetailRecord = Prisma.TrainingAttemptGetPayload<{
-  include: typeof trainingAttemptDetailInclude;
+type TrainingEmployeeAttemptRecord = Prisma.TrainingAttemptGetPayload<{
+  include: typeof trainingEmployeeAttemptInclude;
+}>;
+
+type TrainingAdminAttemptRecord = Prisma.TrainingAttemptGetPayload<{
+  include: typeof trainingAdminAttemptDetailInclude;
 }>;
 
 function serializeEmployeeAttempt(
-  attempt: TrainingAttemptDetailRecord,
+  attempt: TrainingEmployeeAttemptRecord,
 ): TrainingEmployeeAttempt {
   const currentQuestion = attempt.questions.find(
     (question) => question.status === TrainingAttemptQuestionStatus.PRESENTED,
   );
   const isTerminal = attempt.status !== TrainingAttemptStatus.IN_PROGRESS;
-  const hideBreakdown =
-    attempt.status === TrainingAttemptStatus.REQUIRES_REVIEW ||
-    attempt.status === TrainingAttemptStatus.TECHNICAL_FAILED ||
-    attempt.reviewDecision === TrainingReviewDecision.OVERRIDDEN;
+  const safeBreakdown = serializeEmployeeSafeBreakdown(attempt);
+  const hasFinalResult =
+    attempt.status !== TrainingAttemptStatus.REQUIRES_REVIEW &&
+    attempt.status !== TrainingAttemptStatus.TECHNICAL_FAILED;
 
   return {
     id: attempt.id,
     project: {
-      id: attempt.project.id,
+      id: attempt.projectId,
       title: parseTrainingProjectSnapshot(attempt.projectSnapshotJson).projectTitle,
     },
     attemptNumber: attempt.attemptNumber,
@@ -295,29 +337,15 @@ function serializeEmployeeAttempt(
     result: isTerminal
       ? {
           status: attempt.status,
-          finalScore: attempt.finalScore,
-          isPassed: attempt.isPassed,
-          safeBreakdown: hideBreakdown
-            ? []
-            : attempt.questions.flatMap((question) =>
-            isCompletedAnswer(question.answer)
-              ? [
-                  {
-                    sequence: question.sequence,
-                    type: question.type,
-                    score: question.answer.score,
-                    maxScore: question.maxScore,
-                    details: serializeSafeBreakdown(question.answer.safeBreakdownJson),
-                  },
-                ]
-              : [],
-          ),
+          finalScore: hasFinalResult ? attempt.finalScore : null,
+          isPassed: hasFinalResult ? attempt.isPassed : null,
+          safeBreakdown,
           message: attempt.status === TrainingAttemptStatus.TECHNICAL_FAILED
             ? 'Произошла техническая ошибка. Попытка возвращена.'
             : attempt.reviewDecision === TrainingReviewDecision.OVERRIDDEN
               ? 'Итог скорректирован после проверки.'
               : attempt.status === TrainingAttemptStatus.REQUIRES_REVIEW
-                ? 'Требует проверки.'
+                ? 'Результат проверяется.'
                 : null,
           attemptRefunded: attempt.status === TrainingAttemptStatus.TECHNICAL_FAILED,
         }
@@ -326,22 +354,41 @@ function serializeEmployeeAttempt(
 }
 
 function serializeEmployeeAttemptSummary(
-  attempt: TrainingAttemptDetailRecord,
+  attempt: TrainingEmployeeAttemptRecord,
 ): TrainingEmployeeAttemptSummary {
+  const hasFinalResult =
+    attempt.status !== TrainingAttemptStatus.REQUIRES_REVIEW &&
+    attempt.status !== TrainingAttemptStatus.TECHNICAL_FAILED;
+
   return {
     id: attempt.id,
     projectId: attempt.projectId,
     projectTitle: parseTrainingProjectSnapshot(attempt.projectSnapshotJson).projectTitle,
     attemptNumber: attempt.attemptNumber,
     status: attempt.status,
-    finalScore: attempt.finalScore,
-    isPassed: attempt.isPassed,
+    completionReason: attempt.completionReason,
+    countsTowardAttemptLimit: attempt.countsTowardAttemptLimit,
+    finalScore: hasFinalResult ? attempt.finalScore : null,
+    isPassed: hasFinalResult ? attempt.isPassed : null,
+    safeBreakdown: serializeEmployeeSafeBreakdown(attempt),
+    message: attempt.status === TrainingAttemptStatus.TECHNICAL_FAILED
+      ? 'Произошла техническая ошибка. Попытка возвращена.'
+      : attempt.reviewDecision === TrainingReviewDecision.OVERRIDDEN
+        ? 'Итог скорректирован после проверки.'
+        : attempt.status === TrainingAttemptStatus.REQUIRES_REVIEW
+          ? 'Результат проверяется.'
+          : null,
+    attemptRefunded: attempt.status === TrainingAttemptStatus.TECHNICAL_FAILED,
     startedAt: attempt.startedAt.toISOString(),
     completedAt: attempt.completedAt?.toISOString() ?? null,
+    durationSeconds: getAttemptDurationSeconds(attempt),
   };
 }
 
-function serializeAdminAttempt(attempt: TrainingAttemptDetailRecord): TrainingAdminAttempt {
+function serializeAdminAttempt(
+  attempt: TrainingAdminAttemptRecord,
+  currentAccess: TrainingAdminAttempt['currentAccess'],
+): TrainingAdminAttempt {
   const snapshot = parseTrainingProjectSnapshot(attempt.projectSnapshotJson);
 
   return {
@@ -355,15 +402,21 @@ function serializeAdminAttempt(attempt: TrainingAttemptDetailRecord): TrainingAd
     attemptNumber: attempt.attemptNumber,
     status: attempt.status,
     completionReason: attempt.completionReason,
+    snapshotVersion: snapshot.schemaVersion,
+    durationSeconds: getAttemptDurationSeconds(attempt) ?? 0,
+    currentAccess,
     calculatedScore: attempt.calculatedScore,
     reviewStatus: attempt.reviewStatus,
     reviewDecision: attempt.reviewDecision,
     reviewedAt: attempt.reviewedAt?.toISOString() ?? null,
+    reviewedBy: attempt.reviewedBy,
     reviewComment: attempt.reviewComment,
     reviewFinalScore: attempt.reviewFinalScore,
     countsTowardAttemptLimit: attempt.countsTowardAttemptLimit,
     finalScore: attempt.finalScore,
-    isPassed: attempt.isPassed,
+    isPassed: attempt.status === TrainingAttemptStatus.TECHNICAL_FAILED
+      ? null
+      : attempt.isPassed,
     fakeEvaluationVersion: attempt.fakeEvaluationVersion,
     startedAt: attempt.startedAt.toISOString(),
     expiresAt: attempt.expiresAt.toISOString(),
@@ -388,10 +441,18 @@ function serializeAdminAttempt(attempt: TrainingAttemptDetailRecord): TrainingAd
       status: question.status,
       presentedAt: question.presentedAt.toISOString(),
       answeredAt: question.answeredAt?.toISOString() ?? null,
+      responseDurationSeconds: question.answeredAt
+        ? Math.max(
+            0,
+            Math.floor((question.answeredAt.getTime() - question.presentedAt.getTime()) / 1_000),
+          )
+        : null,
       facts: snapshotQuestion?.facts ?? [],
       criteria,
       answer: question.answer
         ? {
+            id: question.answer.id,
+            source: question.answer.source,
             text: question.answer.text,
             score: question.answer.score,
             processingStatus: question.answer.processingStatus,
@@ -399,11 +460,17 @@ function serializeAdminAttempt(attempt: TrainingAttemptDetailRecord): TrainingAd
             submittedAt: question.answer.submittedAt?.toISOString() ?? null,
             transcriptionModel: question.answer.transcriptionModel,
             evaluationModel: question.answer.evaluationModel,
+            transcriptionRequestId: question.answer.transcriptionRequestId,
+            evaluationRequestId: question.answer.evaluationRequestId,
             evaluation: serializeStructuredEvaluation(question.answer.evaluationJson),
             objectiveMetrics: serializeObjectiveMetrics(
               question.answer.objectiveMetricsJson,
             ),
             technicalErrorCode: question.answer.processingErrorCode,
+            audioAvailable: Boolean(
+              question.answer.source === 'TELEGRAM' &&
+                question.answer.mergedAudioFileId,
+            ),
           }
         : null,
       };
@@ -411,32 +478,65 @@ function serializeAdminAttempt(attempt: TrainingAttemptDetailRecord): TrainingAd
   };
 }
 
-function isCompletedAnswer(
-  answer: TrainingAttemptDetailRecord['questions'][number]['answer'],
-): answer is NonNullable<TrainingAttemptDetailRecord['questions'][number]['answer']> & {
-  text: string;
-  score: number;
-  fakeOutcome: NonNullable<
-    TrainingAttemptDetailRecord['questions'][number]['answer']
-  >['fakeOutcome'] & {};
-  safeBreakdownJson: Prisma.JsonValue;
-  submittedAt: Date;
-} {
-  return Boolean(
-    answer &&
-      answer.processingStatus === TrainingAnswerProcessingStatus.COMPLETED &&
-      answer.text !== null &&
-      answer.score !== null &&
-      answer.fakeOutcome !== null &&
-      answer.safeBreakdownJson !== null &&
-      answer.submittedAt !== null,
-  );
+function serializeEmployeeSafeBreakdown(
+  attempt: TrainingEmployeeAttemptRecord,
+): NonNullable<TrainingEmployeeAttempt['result']>['safeBreakdown'] {
+  if (
+    attempt.status === TrainingAttemptStatus.REQUIRES_REVIEW ||
+    attempt.status === TrainingAttemptStatus.TECHNICAL_FAILED ||
+    attempt.reviewDecision === TrainingReviewDecision.OVERRIDDEN ||
+    attempt.calculatedScore === null ||
+    attempt.finalScore === null ||
+    attempt.calculatedScore !== attempt.finalScore
+  ) {
+    return [];
+  }
+
+  const result: NonNullable<TrainingEmployeeAttempt['result']>['safeBreakdown'] = [];
+  let totalScore = 0;
+
+  for (const question of attempt.questions) {
+    if (question.status !== TrainingAttemptQuestionStatus.ANSWERED) continue;
+    const answer = question.answer;
+    const details = serializeSafeBreakdownNullable(answer?.safeBreakdownJson ?? null);
+
+    if (
+      !answer ||
+      answer.processingStatus !== TrainingAnswerProcessingStatus.COMPLETED ||
+      answer.score === null ||
+      !details ||
+      details.awardedScore !== answer.score ||
+      details.maxScore !== question.maxScore
+    ) {
+      return [];
+    }
+
+    totalScore += answer.score;
+    result.push({
+      sequence: question.sequence,
+      type: question.type,
+      score: answer.score,
+      maxScore: question.maxScore,
+      details,
+    });
+  }
+
+  return totalScore === attempt.finalScore ? result : [];
 }
 
-function serializeSafeBreakdown(value: Prisma.JsonValue): TrainingSafeBreakdown {
-  const parsed = serializeSafeBreakdownNullable(value);
-  if (!parsed) throw new Error('Invalid training safe breakdown');
-  return parsed;
+function getAttemptDurationSeconds(attempt: {
+  status: TrainingAttemptStatus;
+  expiresAt: Date;
+  completedAt: Date | null;
+  startedAt: Date;
+}) {
+  const end = attempt.status === TrainingAttemptStatus.TIMED_OUT
+    ? attempt.expiresAt
+    : attempt.completedAt;
+
+  return end
+    ? Math.max(0, Math.floor((end.getTime() - attempt.startedAt.getTime()) / 1_000))
+    : null;
 }
 
 function serializeSafeBreakdownNullable(value: Prisma.JsonValue | null): TrainingSafeBreakdown | null {
@@ -447,7 +547,9 @@ function serializeSafeBreakdownNullable(value: Prisma.JsonValue | null): Trainin
     typeof value.version !== 'string' ||
     typeof value.basis !== 'string' ||
     typeof value.awardedScore !== 'number' ||
-    typeof value.maxScore !== 'number'
+    typeof value.maxScore !== 'number' ||
+    !Number.isFinite(value.awardedScore) ||
+    !Number.isFinite(value.maxScore)
   ) {
     return null;
   }

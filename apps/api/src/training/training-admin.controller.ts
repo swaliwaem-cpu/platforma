@@ -9,6 +9,7 @@ import { TrainingAttemptService } from './training-attempt.service';
 import { TrainingProjectService } from './training-project.service';
 import { TrainingProjectAccessService } from './training-project-access.service';
 import { TrainingReviewService } from './training-review.service';
+import { TrainingResultsService } from './training-results.service';
 import {
   parseCreateTrainingProjectInput,
   parseBulkTrainingProjectAssignmentsInput,
@@ -16,6 +17,7 @@ import {
   parseTrainingProjectAccessModeInput,
   parseTrainingAvailabilityInput,
   parseReviewTrainingAttemptInput,
+  parseTrainingAdminResultsQuery,
   parseUpdateTrainingProjectDraftInput,
   parseUuid,
 } from './training.validation';
@@ -28,6 +30,7 @@ export class TrainingAdminController {
     private readonly projectAccess: TrainingProjectAccessService,
     private readonly attempts: TrainingAttemptService,
     private readonly reviews: TrainingReviewService,
+    private readonly results: TrainingResultsService,
   ) {}
 
   @Get('projects')
@@ -115,6 +118,12 @@ export class TrainingAdminController {
   @RequirePermissions('training:results:read')
   async listAttempts() {
     return this.attempts.listAdminAttempts();
+  }
+
+  @Get('results')
+  @RequirePermissions('training:results:read')
+  async listResults(@Query() query: Record<string, string | undefined>) {
+    return this.results.listAdminResults(parseTrainingAdminResultsQuery(query));
   }
 
   @Get('attempts/:attemptId')

@@ -1,6 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react';
 import type {
-  TrainingAdminAttemptSummary,
   TrainingAdminProjectSummary,
 } from '@platforma/shared';
 
@@ -17,13 +16,10 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   createTrainingAdminProject,
-  getTrainingAdminAttempts,
   getTrainingAdminProjects,
 } from './trainingApi';
 import {
-  formatTrainingDate,
   getTrainingStatusClass,
-  trainingAttemptStatusLabels,
   trainingProjectStatusLabels,
 } from './trainingView';
 
@@ -40,7 +36,6 @@ export function TrainingAdminProjectsPage({
 }: TrainingAdminProjectsPageProps) {
   const { accessToken } = useAuth();
   const [projects, setProjects] = useState<TrainingAdminProjectSummary[]>([]);
-  const [attempts, setAttempts] = useState<TrainingAdminAttemptSummary[]>([]);
   const [title, setTitle] = useState('');
   const [allowRetakeAfterPass, setAllowRetakeAfterPass] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -55,18 +50,12 @@ export function TrainingAdminProjectsPage({
     setIsLoading(true);
     setError(null);
 
-    void Promise.all([
-      canManageProjects
-        ? getTrainingAdminProjects(accessToken, controller.signal)
-        : Promise.resolve({ items: [] }),
-      canReadResults
-        ? getTrainingAdminAttempts(accessToken, controller.signal)
-        : Promise.resolve({ items: [] }),
-    ])
-      .then(([projectResponse, attemptResponse]) => {
+    void (canManageProjects
+      ? getTrainingAdminProjects(accessToken, controller.signal)
+      : Promise.resolve({ items: [] }))
+      .then((projectResponse) => {
         if (controller.signal.aborted) return;
         setProjects(projectResponse.items);
-        setAttempts(attemptResponse.items);
       })
       .catch((loadError: unknown) => {
         if (!controller.signal.aborted) {
@@ -78,7 +67,7 @@ export function TrainingAdminProjectsPage({
       });
 
     return () => controller.abort();
-  }, [accessToken, canManageProjects, canReadResults, reloadKey]);
+  }, [accessToken, canManageProjects, reloadKey]);
 
   const handleCreate = async (event: FormEvent) => {
     event.preventDefault();
@@ -113,8 +102,9 @@ export function TrainingAdminProjectsPage({
         <div>
           <p className="eyebrow">Админка · Обучение</p>
           <h2>Training V2</h2>
-          <p className="muted-text">Проекты, публикация и минимальная история попыток Stage 1.</p>
+          <p className="muted-text">Управление проектами и отдельный реестр результатов Training V2.</p>
         </div>
+        {canReadResults ? <AdminButton type="button" tone="primary" onClick={() => navigate('/admin/training/results')}>Результаты сотрудников</AdminButton> : null}
       </header>
 
       {error ? (
@@ -167,19 +157,10 @@ export function TrainingAdminProjectsPage({
       ) : null}
 
       {canReadResults ? (
-        <section aria-labelledby="training-admin-attempts-title">
-          <div className="training-section-heading"><h3 id="training-admin-attempts-title">Последние попытки</h3><span className="training-section-count">{attempts.length}</span></div>
-          {isLoading ? <Skeleton className="training-list-skeleton" /> : attempts.length ? (
-            <div className="training-admin-list">
-              {attempts.map((attempt) => (
-                <button type="button" className="training-admin-row" key={attempt.id} onClick={() => navigate(`/admin/training/attempts/${attempt.id}`)}>
-                  <span><strong>{attempt.user.name ?? attempt.user.email}</strong><small>{attempt.project.title} · попытка №{attempt.attemptNumber}</small></span>
-                  <span><AdminStatusBadge className={getTrainingStatusClass(attempt.status)}>{trainingAttemptStatusLabels[attempt.status]}</AdminStatusBadge><small>{attempt.finalScore ?? '—'} · {formatTrainingDate(attempt.startedAt)}</small></span>
-                </button>
-              ))}
-            </div>
-          ) : <AdminEmptyState title="Попыток пока нет" description="Завершённые и активные попытки появятся здесь." />}
-        </section>
+        <AdminPanel className="training-results-entry">
+          <div><p className="eyebrow">Результаты</p><h3>История сотрудников</h3><p className="muted-text">Фильтры, серверная пагинация, detail, review и защищённое аудио доступны в отдельном разделе.</p></div>
+          <AdminButton type="button" tone="primary" onClick={() => navigate('/admin/training/results')}>Открыть результаты</AdminButton>
+        </AdminPanel>
       ) : null}
     </div>
   );

@@ -142,6 +142,69 @@ export class TrainingProjectAccessService {
     throw new ForbiddenException('Training project is not assigned to the user');
   }
 
+  async getCurrentAccessState(projectId: string, userId: string) {
+    const [project, user] = await this.prisma.$transaction([
+      this.prisma.trainingProject.findUnique({
+        where: { id: projectId },
+        select: {
+          status: true,
+          isOpen: true,
+          accessMode: true,
+          assignments: {
+            where: { userId },
+            select: { revokedAt: true },
+            take: 1,
+          },
+        },
+      }),
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          status: true,
+          deletedAt: true,
+          role: {
+            select: {
+              permissions: {
+                where: { permission: { key: 'training:participate' } },
+                select: { permissionId: true },
+                take: 1,
+              },
+            },
+          },
+        },
+      }),
+    ]);
+
+    if (!project || !user) throw new NotFoundException('Training attempt scope not found');
+    const assignment = project.assignments[0];
+    const assignmentStatus = !assignment
+      ? 'NEVER_ASSIGNED'
+      : assignment.revokedAt === null
+        ? 'ASSIGNED'
+        : 'REVOKED';
+    const canParticipate =
+      user.status === UserStatus.ACTIVE &&
+      user.deletedAt === null &&
+      user.role.permissions.length > 0;
+    const hasProjectAccess =
+      project.accessMode === TrainingProjectAccessMode.ALL_PARTICIPANTS ||
+      assignmentStatus === 'ASSIGNED';
+
+    return {
+      projectStatus: project.status,
+      isOpen: project.isOpen,
+      accessMode: project.accessMode,
+      assignmentStatus,
+      userStatus: user.status,
+      canParticipate,
+      hasCurrentAccess:
+        canParticipate &&
+        project.status === TrainingProjectStatus.PUBLISHED &&
+        project.isOpen &&
+        hasProjectAccess,
+    } as const;
+  }
+
   async listAssignmentUsers(
     projectId: string,
     query: AssignmentUsersQuery,

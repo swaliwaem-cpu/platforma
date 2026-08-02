@@ -394,6 +394,7 @@ function AppRoutes() {
                   canManageProjects={hasPermission('training:projects:manage')}
                   canReadResults={hasPermission('training:results:read')}
                   canReviewResults={hasPermission('training:results:review')}
+                  canReadAudio={hasPermission('training:audio:read')}
                   navigate={navigate}
                   pathname={pathname}
                 />

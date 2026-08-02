@@ -28,6 +28,7 @@ const permissions = [
   ['training:projects:manage', 'Manage training projects'],
   ['training:results:read', 'Read training attempt results'],
   ['training:results:review', 'Review training attempt results'],
+  ['training:audio:read', 'Read protected training answer audio'],
 ] as const;
 
 const rolePermissions = {

@@ -16,6 +16,8 @@ import type {
   TrainingAdminAttemptsResponse,
   TrainingAdminProject,
   TrainingAdminProjectsResponse,
+  TrainingAdminResultsQuery,
+  TrainingAdminResultsResponse,
   TrainingEmployeeAttempt,
   TrainingEmployeeAttemptsResponse,
   TrainingEmployeeProjectsResponse,
@@ -350,6 +352,36 @@ export function getTrainingAdminAttempts(accessToken: string, signal?: AbortSign
   return apiRequest<TrainingAdminAttemptsResponse>('/training/admin/attempts', accessToken, {
     signal,
   });
+}
+
+export function getTrainingAdminResults(
+  accessToken: string,
+  input: TrainingAdminResultsQuery,
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(input)) {
+    if (value !== '') query.set(key, String(value));
+  }
+
+  return apiRequest<TrainingAdminResultsResponse>(
+    `/training/admin/results?${query.toString()}`,
+    accessToken,
+    { signal },
+  );
+}
+
+export function getTrainingAnswerAudio(
+  accessToken: string,
+  answerId: string,
+  signal?: AbortSignal,
+) {
+  return apiResponse(
+    `/training/admin/answers/${encodeURIComponent(answerId)}/audio`,
+    accessToken,
+    { signal },
+  );
 }
 
 export function getTrainingAdminAttempt(

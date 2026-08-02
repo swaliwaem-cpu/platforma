@@ -17,13 +17,14 @@ const adminAttemptSource = source('training/TrainingAdminAttemptPage.tsx');
 const viewSource = source('training/trainingView.ts');
 const stylesSource = source('training/training.css');
 
-test('Training V2 uses exactly five Stage 1 page routes', () => {
+test('Training V2 keeps Stage 1 routes and adds the Stage 5 Part 1 results route', () => {
   assert.equal(routesSource.includes('/^\\/training\\/?$/u'), true);
   assert.equal(routesSource.includes('/^\\/training\\/attempts\\/([^/]+)\\/?$/u'), true);
   assert.equal(routesSource.includes('/^\\/admin\\/training\\/?$/u'), true);
   assert.equal(routesSource.includes('/^\\/admin\\/training\\/projects\\/([^/]+)\\/?$/u'), true);
   assert.equal(routesSource.includes('/^\\/admin\\/training\\/attempts\\/([^/]+)\\/?$/u'), true);
-  assert.doesNotMatch(routesSource, /telegram|audio|voice|review\/|ranking|leaderboard/iu);
+  assert.equal(routesSource.includes('/^\\/admin\\/training\\/results\\/?$/u'), true);
+  assert.doesNotMatch(routesSource, /ranking|leaderboard|csv/iu);
 });
 
 test('application shell enforces employee and admin permission gates', () => {
@@ -33,6 +34,7 @@ test('application shell enforces employee and admin permission gates', () => {
   assert.match(appSource, /hasPermission\('training:projects:manage'\) \|\| hasPermission\('training:results:read'\)/);
   assert.match(routesSource, /canManageProjects[\s\S]*?TrainingAdminProjectEditorPage/);
   assert.match(routesSource, /canReadResults[\s\S]*?TrainingAdminAttemptPage/);
+  assert.match(appSource, /canReadAudio=\{hasPermission\('training:audio:read'\)\}/);
 });
 
 test('employee flow uses server state, stable start idempotency and current question only', () => {
@@ -91,12 +93,13 @@ test('admin authoring validates one main and exactly ten follow-up questions', (
   assert.match(editorSource, /Закройте проект перед редактированием\. Уже начатые попытки не изменятся\./);
 });
 
-test('admin list and attempt detail preserve the existing route and avoid excluded surfaces', () => {
+test('admin projects link to the Stage 5 results list and detail keeps excluded surfaces out', () => {
   assert.match(adminProjectsSource, /Проекты/);
-  assert.match(adminProjectsSource, /Последние попытки/);
+  assert.match(adminProjectsSource, /Результаты сотрудников/);
   assert.match(adminAttemptSource, /attempt\.questions\.map/);
   assert.match(adminAttemptSource, /question\.answer\.text/);
-  assert.doesNotMatch(adminAttemptSource, /ranking|leaderboard|audio player|storage key/iu);
+  assert.match(adminAttemptSource, /TrainingProtectedAudioPlayer/);
+  assert.doesNotMatch(adminAttemptSource, /ranking|leaderboard|storage key|bucket/iu);
 });
 
 test('Training UI has responsive, focus-visible and reduced-motion states', () => {

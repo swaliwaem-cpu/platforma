@@ -17,7 +17,18 @@ import {
   TRAINING_FACT_STATEMENT_MAX_LENGTH,
   TRAINING_SNAPSHOT_FOLLOW_UP_COUNT,
 } from './training-snapshot';
-import { TrainingProjectAccessMode, TrainingQuestionType } from '@prisma/client';
+import {
+  TrainingAnswerSource,
+  TrainingAttemptStatus,
+  TrainingProjectAccessMode,
+  TrainingQuestionType,
+  TrainingReviewStatus,
+} from '@prisma/client';
+import type {
+  TrainingAdminResultSort,
+  TrainingAssignmentStatus,
+} from '@platforma/shared' with { 'resolution-mode': 'import' };
+import type { TrainingAdminResultsQueryInput } from './training-results.service';
 
 const TRAINING_DEFAULT_TIME_LIMIT_MINUTES = 7;
 const TRAINING_ASSIGNMENT_BULK_LIMIT = 500;
@@ -98,6 +109,81 @@ export function parseTrainingAssignmentUsersQuery(
     search: parseOptionalBoundedText(query.search, 'search', 240),
     assigned,
   } as const;
+}
+
+export function parseTrainingAdminResultsQuery(
+  query: Record<string, string | undefined>,
+): TrainingAdminResultsQueryInput {
+  const scoreMin = parseOptionalInteger(query.scoreMin, 'scoreMin', 0, 100);
+  const scoreMax = parseOptionalInteger(query.scoreMax, 'scoreMax', 0, 100);
+  const durationMin = parseOptionalInteger(query.durationMin, 'durationMin', 0, 2_147_483_647);
+  const durationMax = parseOptionalInteger(query.durationMax, 'durationMax', 0, 2_147_483_647);
+  const startedFrom = parseOptionalDate(query.startedFrom, 'startedFrom');
+  const startedTo = parseOptionalDate(query.startedTo, 'startedTo');
+
+  if (scoreMin !== null && scoreMax !== null && scoreMin > scoreMax) {
+    throw new BadRequestException('scoreMin must not exceed scoreMax');
+  }
+  if (durationMin !== null && durationMax !== null && durationMin > durationMax) {
+    throw new BadRequestException('durationMin must not exceed durationMax');
+  }
+  if (startedFrom && startedTo && startedFrom.getTime() > startedTo.getTime()) {
+    throw new BadRequestException('startedFrom must not exceed startedTo');
+  }
+
+  return {
+    page: parseInteger(query.page, 'page', 1, { minimum: 1 }),
+    limit: parseInteger(query.limit, 'limit', 20, { minimum: 1, maximum: 100 }),
+    search: parseOptionalBoundedText(query.search, 'search', 240) || null,
+    userId: parseOptionalUuid(query.userId, 'userId'),
+    projectId: parseOptionalUuid(query.projectId, 'projectId'),
+    accessMode: parseOptionalEnum(
+      query.accessMode,
+      'accessMode',
+      Object.values(TrainingProjectAccessMode),
+    ),
+    assignmentStatus: parseOptionalEnum(
+      query.assignmentStatus,
+      'assignmentStatus',
+      ['ASSIGNED', 'REVOKED', 'NEVER_ASSIGNED'] satisfies TrainingAssignmentStatus[],
+    ),
+    startedFrom,
+    startedTo,
+    attemptStatus: parseOptionalEnum(
+      query.attemptStatus,
+      'attemptStatus',
+      Object.values(TrainingAttemptStatus),
+    ),
+    reviewStatus: parseOptionalEnum(
+      query.reviewStatus,
+      'reviewStatus',
+      Object.values(TrainingReviewStatus),
+    ),
+    passed: parseOptionalBoolean(query.passed, 'passed'),
+    scoreMin,
+    scoreMax,
+    durationMin,
+    durationMax,
+    source: parseOptionalEnum(
+      query.source,
+      'source',
+      Object.values(TrainingAnswerSource),
+    ),
+    sort: parseOptionalEnum(
+      query.sort,
+      'sort',
+      [
+        'STARTED_DESC',
+        'STARTED_ASC',
+        'COMPLETED_DESC',
+        'COMPLETED_ASC',
+        'SCORE_DESC',
+        'SCORE_ASC',
+        'DURATION_DESC',
+        'DURATION_ASC',
+      ] satisfies TrainingAdminResultSort[],
+    ) ?? 'STARTED_DESC',
+  };
 }
 
 export function parseBulkTrainingProjectAssignmentsInput(body: Record<string, unknown>) {
@@ -243,6 +329,47 @@ function parseInteger(
   }
 
   return parsed;
+}
+
+function parseOptionalInteger(
+  value: unknown,
+  fieldName: string,
+  minimum: number,
+  maximum: number,
+) {
+  if (value === undefined || value === null || value === '') return null;
+  return parseInteger(value, fieldName, minimum, { minimum, maximum });
+}
+
+function parseOptionalBoolean(value: unknown, fieldName: string) {
+  if (value === undefined || value === null || value === '') return null;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  throw new BadRequestException(`${fieldName} must be true or false`);
+}
+
+function parseOptionalDate(value: unknown, fieldName: string) {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string' || value.length > 40) {
+    throw new BadRequestException(`${fieldName} must be an ISO date`);
+  }
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime())) {
+    throw new BadRequestException(`${fieldName} must be an ISO date`);
+  }
+  return parsed;
+}
+
+function parseOptionalEnum<T extends string>(
+  value: unknown,
+  fieldName: string,
+  allowed: readonly T[],
+): T | null {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string' || !allowed.includes(value as T)) {
+    throw new BadRequestException(`${fieldName} is invalid`);
+  }
+  return value as T;
 }
 
 function parseRequiredBoolean(value: unknown, fieldName: string) {

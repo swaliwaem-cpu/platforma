@@ -33,6 +33,44 @@ Training V2 является предметным модулем существ�
    ranking, при необходимости CSV, security, минимальные operations, deploy,
    pilot и calibration.
 
+Stage 5 выполняется четырьмя отдельными последовательными частями: Part 1 —
+employee/admin results, protected audio и review integration; Part 2 — ranking;
+Part 3 — CSV/export; Part 4 — production hardening и общий E2E. Каждая часть
+требует отдельного разрешения. Реализация Part 1 не означает начало Part 2–4.
+
+## Stage 5 Part 1 — результаты, защищённое аудио и review
+
+- Исторический результат всегда строится из `TrainingAttempt` и его immutable
+  snapshot. Live project title/settings не переписывают историю.
+- Current access mode, assignment и user/project availability вычисляются
+  отдельно и показывают только состояние на момент запроса.
+- Подтверждёнными являются terminal attempts с server-side `finalScore` и
+  `isPassed`. `REQUIRES_REVIEW` скрывает provisional result;
+  `TECHNICAL_FAILED` результата не имеет и возвращает попытку.
+- Timeout остаётся terminal result и использует `expiresAt` для duration.
+- Employee получает только safe breakdown: sequence/type/score/maxScore и уже
+  разрешённый `safeBreakdownJson`; transcript, full evaluation, request IDs,
+  facts, provider и storage metadata остаются admin-only.
+- Admin list выполняет server-side pagination/filter/sort и отдаёт lightweight
+  rows. Admin detail сохраняет существующую evidence-модель и добавляет snapshot,
+  current access, duration, reviewer, answer source/request IDs и
+  `audioAvailable` без file id/bucket/key/checksum.
+- `training:results:read`, `training:results:review` и
+  `training:audio:read` независимы. Seed выдаёт новый audio permission только
+  admin role.
+- Audio никогда не публикуется и не получает presigned URL. Endpoint читает
+  детерминированный private object через backend, fail-closed проверяет metadata
+  и WAV integrity, отвечает `private, no-store` и пишет успешное чтение в
+  `AuditLog` без bucket/key/checksum.
+- Browser создаёт Blob URL только после явного действия, отменяет устаревший
+  запрос и всегда вызывает `URL.revokeObjectURL` при замене, закрытии и unmount.
+- Review POST и последующий detail refresh — две разные операции. Успешный POST
+  немедленно обновляет локальный terminal state; сбой GET требует только refresh.
+- Новая Prisma migration не нужна: текущие Attempt/Question/Answer/File/AuditLog
+  и assignment history покрывают Part 1. Индекс не добавляется без плана на
+  реалистичной кардинальности; локальная малая fixture не является основанием
+  для migration.
+
 Новый этап начинается только после приёмки текущего и отдельного разрешения.
 
 ## Этап 4.5 — назначение проектов пользователям

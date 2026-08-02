@@ -2,6 +2,7 @@ import { AdminButton, AdminPanel } from '../admin/AdminUi';
 import { TrainingAdminAttemptPage } from './TrainingAdminAttemptPage';
 import { TrainingAdminProjectEditorPage } from './TrainingAdminProjectEditorPage';
 import { TrainingAdminProjectsPage } from './TrainingAdminProjectsPage';
+import { TrainingAdminResultsPage } from './TrainingAdminResultsPage';
 import { TrainingAttemptPage } from './TrainingAttemptPage';
 import { TrainingProjectsPage } from './TrainingProjectsPage';
 import './training.css';
@@ -29,7 +30,8 @@ export function TrainingAdminRoutes({
   canManageProjects,
   canReadResults,
   canReviewResults,
-}: TrainingRoutesProps & { canManageProjects: boolean; canReadResults: boolean; canReviewResults: boolean }) {
+  canReadAudio,
+}: TrainingRoutesProps & { canManageProjects: boolean; canReadResults: boolean; canReviewResults: boolean; canReadAudio: boolean }) {
   if (/^\/admin\/training\/?$/u.test(pathname)) {
     return (
       <TrainingAdminProjectsPage
@@ -38,6 +40,12 @@ export function TrainingAdminRoutes({
         navigate={navigate}
       />
     );
+  }
+
+  if (/^\/admin\/training\/results\/?$/u.test(pathname)) {
+    return canReadResults
+      ? <TrainingAdminResultsPage navigate={navigate} />
+      : <TrainingRouteDenied />;
   }
 
   const projectId = parseRouteId(
@@ -58,7 +66,7 @@ export function TrainingAdminRoutes({
 
   if (attemptId) {
     return canReadResults
-      ? <TrainingAdminAttemptPage key={attemptId} attemptId={attemptId} canReviewResults={canReviewResults} navigate={navigate} />
+      ? <TrainingAdminAttemptPage key={attemptId} attemptId={attemptId} canReviewResults={canReviewResults} canReadAudio={canReadAudio} navigate={navigate} />
       : <TrainingRouteDenied />;
   }
 
