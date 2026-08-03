@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import {
+  BadGatewayException,
   BadRequestException,
   ConflictException,
   Inject,
@@ -41,11 +42,18 @@ import {
   canonicalTrainingFact,
   TRAINING_MATERIAL_SUGGESTER,
   type TrainingMaterialSuggester,
+  type TrainingQuestionDraftGenerationInput,
   type TrainingQuestionDraftGenerationResult,
   type TrainingQuestionDraftSource,
   validateMaterialSuggestions,
 } from './training-material-suggester';
+import { TrainingOpenAIError } from './training-openai-client';
 import { recordTrainingProjectDeleteCleanupObject } from './training-project-cleanup';
+import {
+  TRAINING_FACT_ALIAS_LIMIT,
+  TRAINING_FACT_ALIAS_MAX_LENGTH,
+  TRAINING_FACT_ALIAS_MAX_WORDS,
+} from './training-snapshot';
 import { TrainingUrlExtractor } from './training-url-extractor';
 
 const DEFAULT_PDF_MAX_BYTES = 25 * 1024 * 1024;
@@ -476,7 +484,7 @@ export class TrainingMaterialService {
       }
     }
 
-    const generated = await this.suggester.generateQuestionDrafts({
+    const generated = await this.generateQuestionDrafts({
       projectId,
       objectId: object.id,
       objectTitle: object.title,
@@ -755,7 +763,12 @@ export class TrainingMaterialService {
       };
     });
     if (selected.some((suggestion) => !suggestion.statement || suggestion.statement.length > 1_000 ||
-      suggestion.aliases.length > 20 || suggestion.aliases.some((alias) => !alias || alias.length > 80))) {
+      suggestion.aliases.length > TRAINING_FACT_ALIAS_LIMIT || suggestion.aliases.some((alias) =>
+        !alias ||
+        alias.length > TRAINING_FACT_ALIAS_MAX_LENGTH ||
+        alias.split(/\s+/u).length > TRAINING_FACT_ALIAS_MAX_WORDS ||
+        /[\r\n]/u.test(alias)
+      ))) {
       throw new BadRequestException('SUGGESTION_INVALID');
     }
 
@@ -1147,7 +1160,7 @@ export class TrainingMaterialService {
     }
   }
 
-  private generateQuestionDraftsForSource(input: {
+  private async generateQuestionDraftsForSource(input: {
     projectId: string;
     materialId: string;
     revisionId: string;
@@ -1162,12 +1175,24 @@ export class TrainingMaterialService {
       materialType: input.type,
       segments: input.extraction.segments,
     }];
-    return this.suggester.generateQuestionDrafts({
+    const generated = await this.generateQuestionDrafts({
       projectId: input.projectId,
       objectId: input.materialId,
       objectTitle: input.title,
       sources,
-    }).then((generated) => ({ generated, sources }));
+    });
+    return { generated, sources };
+  }
+
+  private async generateQuestionDrafts(input: TrainingQuestionDraftGenerationInput) {
+    try {
+      return await this.suggester.generateQuestionDrafts(input);
+    } catch (error) {
+      if (error instanceof TrainingOpenAIError) {
+        throw new BadGatewayException('QUESTION_DRAFT_GENERATION_FAILED');
+      }
+      throw error;
+    }
   }
 
   private async upsertGeneratedQuestionDrafts(

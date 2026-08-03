@@ -16,6 +16,8 @@ const {
   prepareQuestionSourceSegments,
   validateQuestionDraftGeneration,
 } = require('../dist/training/training-material-suggester.js');
+const { TrainingMaterialService } = require('../dist/training/training-material.service.js');
+const { TrainingOpenAIError } = require('../dist/training/training-openai-client.js');
 const {
   isPublicIpAddress,
   TrainingUrlExtractor,
@@ -173,6 +175,26 @@ test('object materials generate one main and ten grounded draft questions withou
     },
     followUps: first.followUps,
   }, segments), /OBJECT_QUESTION_DRAFTS_INVALID/);
+  assert.doesNotThrow(() => validateQuestionDraftGeneration({
+    main: {
+      ...first.main,
+      facts: [{
+        ...first.main.facts[0],
+        aliases: [Array.from({ length: 15 }, (_, index) => String(index + 1)).join(' ')],
+      }],
+    },
+    followUps: first.followUps,
+  }, segments));
+  assert.throws(() => validateQuestionDraftGeneration({
+    main: {
+      ...first.main,
+      facts: [{
+        ...first.main.facts[0],
+        aliases: [Array.from({ length: 16 }, (_, index) => String(index + 1)).join(' ')],
+      }],
+    },
+    followUps: first.followUps,
+  }, segments), /OBJECT_QUESTION_DRAFTS_INVALID/);
   assert.throws(() => validateQuestionDraftGeneration({
     main: {
       ...first.main,
@@ -180,6 +202,34 @@ test('object materials generate one main and ten grounded draft questions withou
     },
     followUps: first.followUps,
   }, segments), /OBJECT_QUESTION_DRAFTS_INVALID/);
+});
+
+test('question generation provider failures use a safe API error', async () => {
+  const service = new TrainingMaterialService(
+    null,
+    null,
+    null,
+    null,
+    {
+      generateQuestionDrafts: async () => {
+        throw new TrainingOpenAIError('OBJECT_QUESTION_DRAFTS_INVALID', false);
+      },
+    },
+  );
+
+  await assert.rejects(
+    () => service.generateQuestionDrafts({
+      projectId: 'project',
+      objectId: 'object',
+      objectTitle: 'Север',
+      sources: [],
+    }),
+    (error) => {
+      assert.equal(error.getStatus(), 502);
+      assert.equal(error.message, 'QUESTION_DRAFT_GENERATION_FAILED');
+      return true;
+    },
+  );
 });
 
 test('large object question context stays bounded while representing every imported material', () => {

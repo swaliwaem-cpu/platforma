@@ -10,11 +10,17 @@ import { Badge } from '@/components/ui/badge';
 import { getTrainingAdminAttempt, reviewTrainingAdminAttempt } from './trainingApi';
 import { TrainingProtectedAudioPlayer } from './TrainingProtectedAudioPlayer';
 import {
+  formatTrainingReviewDecision,
   formatTrainingFactSourceBadge,
   formatTrainingDate,
   formatTrainingDuration,
   getTrainingStatusClass,
+  trainingAnswerProcessingStatusLabels,
+  trainingAnswerSourceLabels,
+  trainingAssignmentStatusLabels,
   trainingAttemptStatusLabels,
+  trainingFactVerdictLabels,
+  trainingReviewStatusLabels,
 } from './trainingView';
 
 type TrainingAdminAttemptPageProps = {
@@ -70,11 +76,11 @@ export function TrainingAdminAttemptPage({
     const score = Number(finalScore);
 
     if (decision === 'OVERRIDE' && (!Number.isInteger(score) || score < 0 || score > 100)) {
-      setError('Для Override укажите целый итоговый балл от 0 до 100.');
+      setError('Для корректировки укажите целый итоговый балл от 0 до 100.');
       return;
     }
     if (decision === 'OVERRIDE' && !comment.trim()) {
-      setError('Для Override укажите причину.');
+      setError('Для корректировки укажите причину.');
       return;
     }
 
@@ -109,7 +115,7 @@ export function TrainingAdminAttemptPage({
       const updated = await getTrainingAdminAttempt(accessToken, attempt.id);
       setAttempt(updated);
     } catch {
-      setNotice('Решение сохранено, но detail не обновился. Нажмите «Обновить данные» — повторная отправка review не требуется.');
+      setNotice('Решение сохранено, но подробности не обновились. Нажмите «Обновить данные» — повторная отправка решения не требуется.');
     } finally {
       setIsReviewing(false);
     }
@@ -144,11 +150,11 @@ export function TrainingAdminAttemptPage({
           <div><dt>Завершение</dt><dd>{formatTrainingDate(attempt.completedAt)}</dd></div>
           <div><dt>Расчётный балл</dt><dd>{attempt.calculatedScore ?? '—'} / 100</dd></div>
           <div><dt>Итоговый балл</dt><dd>{attempt.finalScore ?? '—'} / 100</dd></div>
-          <div><dt>Review</dt><dd>{attempt.reviewStatus}{attempt.reviewDecision ? ` · ${attempt.reviewDecision}` : ''}</dd></div>
+          <div><dt>Проверка</dt><dd>{trainingReviewStatusLabels[attempt.reviewStatus]}{formatTrainingReviewDecision(attempt.reviewDecision) ? ` · ${formatTrainingReviewDecision(attempt.reviewDecision)}` : ''}</dd></div>
           <div><dt>Попытка учтена</dt><dd>{attempt.countsTowardAttemptLimit ? 'Да' : 'Нет, возвращена'}</dd></div>
           <div><dt>Длительность</dt><dd>{formatTrainingDuration(attempt.durationSeconds)}</dd></div>
-          <div><dt>Snapshot</dt><dd>v{attempt.snapshotVersion}</dd></div>
-          <div><dt>Текущий доступ</dt><dd>{attempt.currentAccess.hasCurrentAccess ? 'Есть' : 'Нет'} · {attempt.currentAccess.assignmentStatus}</dd></div>
+          <div><dt>Версия данных</dt><dd>Версия {attempt.snapshotVersion}</dd></div>
+          <div><dt>Текущий доступ</dt><dd>{attempt.currentAccess.hasCurrentAccess ? 'Есть' : 'Нет'} · {trainingAssignmentStatusLabels[attempt.currentAccess.assignmentStatus]}</dd></div>
           <div><dt>Проверил</dt><dd>{attempt.reviewedBy?.name ?? attempt.reviewedBy?.email ?? '—'}</dd></div>
         </dl>
       </AdminPanel>
@@ -156,17 +162,17 @@ export function TrainingAdminAttemptPage({
       {attempt.reviewStatus === 'PENDING' ? (
         canReviewResults ? (
           <AdminPanel className="training-review-panel">
-            <div><p className="eyebrow">Ручная проверка</p><h3>Подтвердить или скорректировать итог</h3><p className="muted-text">Расчётный балл: {attempt.calculatedScore ?? '—'}. Review одноразовый.</p></div>
+            <div><p className="eyebrow">Ручная проверка</p><h3>Подтвердить или скорректировать итог</h3><p className="muted-text">Расчётный балл: {attempt.calculatedScore ?? '—'}. Решение можно принять только один раз.</p></div>
             <form onSubmit={(event) => void handleReview(event)}>
               <FieldGroup>
-                <fieldset className="training-review-decisions"><legend>Решение</legend><label><input type="radio" name="review-decision" checked={decision === 'APPROVE'} disabled={isReviewing} onChange={() => setDecision('APPROVE')} /> Approve</label><label><input type="radio" name="review-decision" checked={decision === 'OVERRIDE'} disabled={isReviewing} onChange={() => setDecision('OVERRIDE')} /> Override</label></fieldset>
+                <fieldset className="training-review-decisions"><legend>Решение</legend><label><input type="radio" name="review-decision" checked={decision === 'APPROVE'} disabled={isReviewing} onChange={() => setDecision('APPROVE')} /> Подтвердить</label><label><input type="radio" name="review-decision" checked={decision === 'OVERRIDE'} disabled={isReviewing} onChange={() => setDecision('OVERRIDE')} /> Скорректировать</label></fieldset>
                 {decision === 'OVERRIDE' ? <Field><FieldLabel htmlFor="training-review-score">Итоговый балл</FieldLabel><Input id="training-review-score" inputMode="numeric" value={finalScore} disabled={isReviewing} onChange={(event) => setFinalScore(event.target.value)} /><FieldDescription>Целое число от 0 до 100.</FieldDescription></Field> : null}
-                <Field><FieldLabel htmlFor="training-review-comment">Причина / комментарий</FieldLabel><textarea id="training-review-comment" className="training-textarea" rows={4} value={comment} disabled={isReviewing} onChange={(event) => setComment(event.target.value)} />{decision === 'OVERRIDE' && !comment.trim() ? <FieldError>Причина обязательна для Override.</FieldError> : null}</Field>
+                <Field><FieldLabel htmlFor="training-review-comment">Причина / комментарий</FieldLabel><textarea id="training-review-comment" className="training-textarea" rows={4} value={comment} disabled={isReviewing} onChange={(event) => setComment(event.target.value)} />{decision === 'OVERRIDE' && !comment.trim() ? <FieldError>Причина обязательна для корректировки.</FieldError> : null}</Field>
                 <AdminButton type="submit" tone="primary" disabled={isReviewing}>{isReviewing ? 'Сохранение…' : decision === 'APPROVE' ? 'Подтвердить расчёт' : 'Сохранить новый итог'}</AdminButton>
               </FieldGroup>
             </form>
           </AdminPanel>
-        ) : <AdminAlert tone="notice">У вас нет права training:results:review.</AdminAlert>
+        ) : <AdminAlert tone="notice">У вас нет права проверять результаты сотрудников.</AdminAlert>
       ) : null}
 
       <section aria-labelledby="training-admin-answers-title">
@@ -182,15 +188,15 @@ export function TrainingAdminAttemptPage({
                 <h3>{question.text}</h3>
                 {question.answer ? (
                   <>
-                    <div className="training-answer-copy"><p>{question.answer.text ?? 'Transcript не сохранён.'}</p><small>{question.answer.processingStatus} · {formatTrainingDate(question.answer.submittedAt)}</small></div>
+                    <div className="training-answer-copy"><p>{question.answer.text ?? 'Расшифровка не сохранена.'}</p><small>{trainingAnswerProcessingStatusLabels[question.answer.processingStatus]} · {formatTrainingDate(question.answer.submittedAt)}</small></div>
                     <dl className="training-metrics training-metrics--wide">
-                      <div><dt>Источник</dt><dd>{question.answer.source}</dd></div>
+                      <div><dt>Источник</dt><dd>{trainingAnswerSourceLabels[question.answer.source]}</dd></div>
                       <div><dt>Время ответа</dt><dd>{question.responseDurationSeconds === null ? '—' : formatTrainingDuration(question.responseDurationSeconds)}</dd></div>
-                      <div><dt>Transcription model</dt><dd>{question.answer.transcriptionModel ?? '—'}</dd></div>
-                      <div><dt>Evaluation model</dt><dd>{question.answer.evaluationModel ?? '—'}</dd></div>
-                      <div><dt>Transcription request</dt><dd>{question.answer.transcriptionRequestId ?? '—'}</dd></div>
-                      <div><dt>Evaluation request</dt><dd>{question.answer.evaluationRequestId ?? '—'}</dd></div>
-                      <div><dt>Criteria points</dt><dd>{aiBreakdown?.criteriaPoints ?? '—'}</dd></div>
+                      <div><dt>Модель расшифровки</dt><dd>{question.answer.transcriptionModel ?? '—'}</dd></div>
+                      <div><dt>Модель оценивания</dt><dd>{question.answer.evaluationModel ?? '—'}</dd></div>
+                      <div><dt>Запрос расшифровки</dt><dd>{question.answer.transcriptionRequestId ?? '—'}</dd></div>
+                      <div><dt>Запрос оценивания</dt><dd>{question.answer.evaluationRequestId ?? '—'}</dd></div>
+                      <div><dt>Баллы по критериям</dt><dd>{aiBreakdown?.criteriaPoints ?? '—'}</dd></div>
                       <div><dt>Штрафы</dt><dd>{aiBreakdown ? `−${aiBreakdown.penaltyPoints} (${aiBreakdown.incorrectFactCount} ошибок)` : '—'}</dd></div>
                       <div><dt>Слов</dt><dd>{question.answer.objectiveMetrics?.wordCount ?? '—'}</dd></div>
                       <div><dt>Темп</dt><dd>{question.answer.objectiveMetrics ? `${question.answer.objectiveMetrics.wordsPerMinute} слов/мин` : '—'}</dd></div>
@@ -198,10 +204,10 @@ export function TrainingAdminAttemptPage({
                     <TrainingProtectedAudioPlayer answerId={question.answer.id} audioAvailable={question.answer.audioAvailable} canReadAudio={canReadAudio} />
                     {question.answer.technicalErrorCode ? <AdminAlert tone="error">Код обработки: {question.answer.technicalErrorCode}</AdminAlert> : null}
                     <div className="training-evaluation-grid">
-                      <section><h4>Утверждённые факты</h4>{question.facts.length ? <ul>{question.facts.map((fact) => { const assessment = evaluation?.fact_assessments.find((item) => item.fact_id === fact.id); return <li key={fact.id}><strong>{assessment?.verdict ?? '—'}</strong><span>{fact.statement}</span><div className="training-fact-source"><Badge variant={fact.sourceType === 'MATERIAL' ? 'secondary' : 'outline'}>{formatTrainingFactSourceBadge(fact)}</Badge>{fact.sourceType === 'MATERIAL' ? <small>{fact.sourceLabel}{fact.sourceExcerpt ? ` · «${fact.sourceExcerpt}»` : ''}</small> : null}</div>{assessment?.evidence ? <q>{assessment.evidence}</q> : null}{assessment?.explanation ? <small>{assessment.explanation}</small> : null}</li>; })}</ul> : <p className="muted-text">Legacy snapshot без facts.</p>}</section>
-                      <section><h4>Критерии</h4>{question.criteria.length ? <ul>{question.criteria.map((criterion) => { const assessment = evaluation?.criterion_assessments.find((item) => item.criterion_id === criterion.id); return <li key={criterion.id}><strong>{assessment?.awarded_points ?? '—'} / {criterion.maxPoints}</strong><span>{criterion.title}</span>{assessment?.evidence ? <q>{assessment.evidence}</q> : null}{assessment?.explanation ? <small>{assessment.explanation}</small> : null}</li>; })}</ul> : <p className="muted-text">Legacy snapshot без criteria.</p>}</section>
+                      <section><h4>Утверждённые факты</h4>{question.facts.length ? <ul>{question.facts.map((fact) => { const assessment = evaluation?.fact_assessments.find((item) => item.fact_id === fact.id); return <li key={fact.id}><strong>{assessment ? trainingFactVerdictLabels[assessment.verdict] : '—'}</strong><span>{fact.statement}</span><div className="training-fact-source"><Badge variant={fact.sourceType === 'MATERIAL' ? 'secondary' : 'outline'}>{formatTrainingFactSourceBadge(fact)}</Badge>{fact.sourceType === 'MATERIAL' ? <small>{fact.sourceLabel}{fact.sourceExcerpt ? ` · «${fact.sourceExcerpt}»` : ''}</small> : null}</div>{assessment?.evidence ? <q>{assessment.evidence}</q> : null}{assessment?.explanation ? <small>{assessment.explanation}</small> : null}</li>; })}</ul> : <p className="muted-text">В сохранённой версии нет фактов.</p>}</section>
+                      <section><h4>Критерии</h4>{question.criteria.length ? <ul>{question.criteria.map((criterion) => { const assessment = evaluation?.criterion_assessments.find((item) => item.criterion_id === criterion.id); return <li key={criterion.id}><strong>{assessment?.awarded_points ?? '—'} / {criterion.maxPoints}</strong><span>{criterion.title}</span>{assessment?.evidence ? <q>{assessment.evidence}</q> : null}{assessment?.explanation ? <small>{assessment.explanation}</small> : null}</li>; })}</ul> : <p className="muted-text">В сохранённой версии нет критериев.</p>}</section>
                     </div>
-                    {evaluation ? <div className="training-evaluation-summary"><h4>Резюме</h4><p>{evaluation.summary}</p>{evaluation.unsupported_claims.length ? <><h4>Unsupported claims</h4><ul>{evaluation.unsupported_claims.map((claim, index) => <li key={`${claim.evidence}-${index}`}><span>{claim.claim}</span><q>{claim.evidence}</q></li>)}</ul></> : null}</div> : null}
+                    {evaluation ? <div className="training-evaluation-summary"><h4>Резюме</h4><p>{evaluation.summary}</p>{evaluation.unsupported_claims.length ? <><h4>Неподтверждённые утверждения</h4><ul>{evaluation.unsupported_claims.map((claim, index) => <li key={`${claim.evidence}-${index}`}><span>{claim.claim}</span><q>{claim.evidence}</q></li>)}</ul></> : null}</div> : null}
                   </>
                 ) : <p className="muted-text">Ответ отсутствует: {question.status === 'SKIPPED_TIMEOUT' ? 'время истекло' : 'вопрос ожидает ответа'}.</p>}
               </AdminPanel>

@@ -36,16 +36,19 @@ test('OpenAI transcription serializes one WAV multipart part and bounded vocabul
 });
 
 test('transcription vocabulary normalizes, deduplicates and excludes fact statements', () => {
+  const allowedAlias = Array.from({ length: 15 }, () => 'раз').join(' ');
+  const oversizedAlias = Array.from({ length: 16 }, () => 'два').join(' ');
   const prompt = buildTrainingVocabularyPrompt({
     projectTitle: ' ЖК Север ',
     relatedObjectTitle: 'ЖК Север',
-    facts: [{ aliases: ['Север', 'север', 'короткий термин', 'слишком длинное предложение в котором уже девять отдельных слов для удаления'] }],
+    facts: [{ aliases: ['Север', 'север', 'короткий термин', allowedAlias, oversizedAlias] }],
   });
 
   assert.equal(countMatches(prompt, 'ЖК Север'), 1);
   assert.equal(countMatches(prompt.toLocaleLowerCase('ru-RU'), 'север'), 2);
   assert.match(prompt, /короткий термин/u);
-  assert.doesNotMatch(prompt, /длинное предложение/u);
+  assert.match(prompt, new RegExp(allowedAlias, 'u'));
+  assert.doesNotMatch(prompt, new RegExp(oversizedAlias, 'u'));
   assert.doesNotMatch(prompt, /В проекте 120 квартир/u);
 });
 

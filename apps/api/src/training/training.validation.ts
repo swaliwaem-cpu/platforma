@@ -14,6 +14,7 @@ import type { ReviewTrainingAttemptInput } from './training-review.service';
 import {
   TRAINING_FACT_ALIAS_LIMIT,
   TRAINING_FACT_ALIAS_MAX_LENGTH,
+  TRAINING_FACT_ALIAS_MAX_WORDS,
   TRAINING_FACT_STATEMENT_MAX_LENGTH,
   TRAINING_SNAPSHOT_FOLLOW_UP_COUNT,
 } from './training-snapshot';
@@ -522,7 +523,10 @@ function parseAliases(value: unknown, fieldName: string) {
       TRAINING_FACT_ALIAS_MAX_LENGTH,
     ).normalize('NFC');
 
-    if (/\r|\n/u.test(parsed) || parsed.split(/\s+/u).length > 8) {
+    if (
+      /\r|\n/u.test(parsed) ||
+      parsed.split(/\s+/u).length > TRAINING_FACT_ALIAS_MAX_WORDS
+    ) {
       throw new BadRequestException(`${fieldName}[${index}] must be a short term`);
     }
 

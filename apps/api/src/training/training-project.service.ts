@@ -647,10 +647,10 @@ export class TrainingProjectService {
         .reduce((total, criterion) => total + criterion.maxPoints, 0);
 
       if (mainTotal !== 55) {
-        errors.push(`Сумма MAIN criteria должна быть 55, сейчас ${mainTotal}.`);
+        errors.push(`Сумма критериев главного вопроса должна быть 55, сейчас ${mainTotal}.`);
       }
       if (followUpTotal !== 15) {
-        errors.push(`Сумма FOLLOW_UP criteria должна быть 15, сейчас ${followUpTotal}.`);
+        errors.push(`Сумма критериев дополнительных вопросов должна быть 15, сейчас ${followUpTotal}.`);
       }
     }
 

@@ -1,7 +1,11 @@
 import type {
+  TrainingAnswerSource,
+  TrainingAssignmentStatus,
   TrainingAttemptStatus,
   TrainingEmployeeProjectStatus,
   TrainingProjectStatus,
+  TrainingReviewDecision,
+  TrainingReviewStatus,
 } from '@platforma/shared';
 
 export const trainingAttemptStatusLabels: Record<TrainingAttemptStatus, string> = {
@@ -17,6 +21,43 @@ export const trainingProjectStatusLabels: Record<TrainingProjectStatus, string> 
   PUBLISHED: 'Опубликован',
   ARCHIVED: 'В архиве',
 };
+
+export const trainingReviewStatusLabels: Record<TrainingReviewStatus, string> = {
+  NOT_REQUIRED: 'Не требуется',
+  PENDING: 'Ожидает проверки',
+  RESOLVED: 'Проверено',
+};
+
+export const trainingAssignmentStatusLabels: Record<TrainingAssignmentStatus, string> = {
+  ASSIGNED: 'Назначен',
+  REVOKED: 'Назначение отозвано',
+  NEVER_ASSIGNED: 'Не назначался',
+};
+
+export const trainingAnswerSourceLabels: Record<TrainingAnswerSource, string> = {
+  TEXT: 'Текст',
+  TELEGRAM: 'Телеграм',
+};
+
+export const trainingAnswerProcessingStatusLabels = {
+  COLLECTING: 'Сбор ответа',
+  PROCESSING: 'Обработка',
+  COMPLETED: 'Обработан',
+  FAILED: 'Ошибка обработки',
+} as const;
+
+export const trainingFactVerdictLabels = {
+  CORRECT: 'Верно',
+  PARTIAL: 'Частично',
+  MISSING: 'Не упомянуто',
+  INCORRECT: 'Неверно',
+} as const;
+
+export function formatTrainingReviewDecision(decision: TrainingReviewDecision) {
+  if (decision === 'APPROVED') return 'Подтверждено';
+  if (decision === 'OVERRIDDEN') return 'Скорректировано';
+  return null;
+}
 
 export function getTrainingResultLabel(
   status: TrainingEmployeeProjectStatus,
@@ -63,7 +104,7 @@ export function formatTrainingFactSourceBadge(source: {
     return `PDF · ${formatLocator(source.sourceLocator, 'page:', 'Страница')}`;
   }
   if (source.sourceMaterialType === 'OFFICIAL_URL') {
-    return `URL · ${formatSourceUrl(source.sourceUrl)}`;
+    return `Ссылка · ${formatSourceUrl(source.sourceUrl)}`;
   }
   if (source.sourceMaterialType === 'OBJECT_SNAPSHOT') {
     return `Platforma · ${formatObjectField(source.sourceLocator)}`;

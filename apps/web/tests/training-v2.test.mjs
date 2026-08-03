@@ -16,6 +16,7 @@ const editorSource = source('training/TrainingAdminProjectEditorPage.tsx');
 const adminAttemptSource = source('training/TrainingAdminAttemptPage.tsx');
 const viewSource = source('training/trainingView.ts');
 const stylesSource = source('training/training.css');
+const appThemeSource = source('app-theme.css');
 
 test('Training V2 keeps existing routes and adds the Stage 5 Part 2 ranking route', () => {
   assert.equal(routesSource.includes('/^\\/training\\/?$/u'), true);
@@ -86,6 +87,8 @@ test('Stage 2 keeps text answers only as explicit development/test fallback', ()
 
 test('admin authoring validates one main and exactly ten follow-up questions', () => {
   assert.match(editorSource, /1 главный и 10 дополнительных вопросов/);
+  assert.match(editorSource, /useState<EditorTab>\('materials'\)/);
+  assert.match(editorSource, /label="Материалы"[\s\S]*?label="Вопросы"[\s\S]*?label="Назначения"/);
   assert.match(editorSource, /Array\.from\(\{ length: 10 \}/);
   assert.match(editorSource, /form\.followUpQuestions\.forEach/);
   assert.match(editorSource, /if \(!form\.mainQuestion\.trim\(\)\)/);
@@ -108,6 +111,7 @@ test('admin project deletion is explicit, destructive and guarded against duplic
     /deleteTrainingAdminProject[\s\S]*?encodeURIComponent\(projectId\)[\s\S]*?method: 'DELETE'/,
   );
   assert.match(editorSource, /Безвозвратно удалить проект «\{project\.title\}»\?/);
+  assert.match(editorSource, /tone="danger"[\s\S]*?className="training-editor-delete-action"/);
   assert.match(editorSource, /все попытки и результаты сотрудников/);
   assert.match(editorSource, /аудиозаписи, материалы, назначения и связанные файлы/);
   assert.match(editorSource, /pendingAction === 'delete'/);
@@ -118,6 +122,15 @@ test('admin project deletion is explicit, destructive and guarded against duplic
   assert.match(editorSource, /await deleteTrainingAdminProject\(accessToken, project\.id\)/);
   assert.match(editorSource, /navigate\('\/admin\/training'\)/);
   assert.match(editorSource, /deleteError \? <AdminAlert tone="error">/);
+});
+
+test('question fact actions stay grouped and dark-theme feedback uses readable semantic colors', () => {
+  assert.match(editorSource, /className="training-fact-actions"[\s\S]*?className="training-inline-check"[\s\S]*?className="training-fact-delete-action"/);
+  assert.match(stylesSource, /\.training-inline-check input\[type='checkbox'\][\s\S]*?width:\s*18px;[\s\S]*?height:\s*18px;/);
+  assert.match(stylesSource, /\.training-fact-actions\s*\{[\s\S]*?justify-content:\s*space-between;/);
+  assert.match(appThemeSource, /\.admin-alert--notice\)[\s\S]*?background:\s*var\(--app-theme-success-soft\);/);
+  assert.match(appThemeSource, /\.admin-alert \[data-slot='alert-description'\][\s\S]*?color:\s*inherit;/);
+  assert.match(appThemeSource, /\.admin-button--danger\s*\{[\s\S]*?background:\s*var\(--app-theme-danger\);/);
 });
 
 test('Training UI has responsive, focus-visible and reduced-motion states', () => {

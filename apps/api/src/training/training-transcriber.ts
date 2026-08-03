@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 
-import type { TrainingProjectSnapshotFact } from './training-snapshot';
+import {
+  TRAINING_FACT_ALIAS_MAX_LENGTH,
+  TRAINING_FACT_ALIAS_MAX_WORDS,
+  type TrainingProjectSnapshotFact,
+} from './training-snapshot';
 
 export const TRAINING_TRANSCRIBER = Symbol('TRAINING_TRANSCRIBER');
 
@@ -42,8 +46,6 @@ export class DeterministicFakeTrainingTranscriber implements TrainingTranscriber
 }
 
 const MAX_VOCABULARY_ITEMS = 40;
-const MAX_VOCABULARY_ITEM_LENGTH = 80;
-const MAX_VOCABULARY_WORDS = 8;
 const MAX_VOCABULARY_PROMPT_LENGTH = 1_500;
 
 export function buildTrainingVocabularyPrompt(input: {
@@ -66,8 +68,8 @@ export function buildTrainingVocabularyPrompt(input: {
 
     if (
       !item ||
-      item.length > MAX_VOCABULARY_ITEM_LENGTH ||
-      item.split(' ').length > MAX_VOCABULARY_WORDS ||
+      item.length > TRAINING_FACT_ALIAS_MAX_LENGTH ||
+      item.split(' ').length > TRAINING_FACT_ALIAS_MAX_WORDS ||
       /[.!?;:\r\n]/u.test(item) ||
       seen.has(canonical)
     ) {

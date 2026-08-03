@@ -13,6 +13,15 @@ test('apiRequest converts fetch failures into readable Russian connection errors
   assert.match(source, /try \{[\s\S]*?response = await sendApiRequest\(path, refreshedSession\.accessToken, options\);[\s\S]*?\} catch \{[\s\S]*?throw new Error\(apiConnectionErrorMessage\);[\s\S]*?\}/);
 });
 
+test('apiRequest localizes standard HTTP error messages returned by the server', () => {
+  assert.match(source, /'Internal server error': 'Внутренняя ошибка сервера'/);
+  assert.match(source, /'Bad Request': 'Некорректный запрос'/);
+  assert.match(source, /Unauthorized: 'Требуется авторизация'/);
+  assert.match(source, /Forbidden: 'Недостаточно прав'/);
+  assert.match(source, /'Not Found': 'Ресурс не найден'/);
+  assert.match(source, /standardApiErrorTranslations\[message\] \?\? message/);
+});
+
 test('apiRequest bypasses browser cache for JSON API state', () => {
   assert.match(source, /cache:\s*options\.cache \?\? 'no-store'/);
 });

@@ -85,7 +85,7 @@ function TrainingRouteDenied() {
     <AdminPanel className="training-route-message">
       <p className="eyebrow">Доступ</p>
       <h2>Недостаточно прав</h2>
-      <p className="muted-text">Текущая роль не открывает этот Training-раздел.</p>
+    <p className="muted-text">Текущая роль не открывает этот раздел обучения.</p>
     </AdminPanel>
   );
 }

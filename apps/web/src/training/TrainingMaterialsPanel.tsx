@@ -2,6 +2,8 @@ import { FocusEvent, FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useSt
 import type {
   TrainingMaterial,
   TrainingMaterialDetail,
+  TrainingMaterialRevisionStatus,
+  TrainingMaterialStatus,
   TrainingMaterialSuggestion,
   TrainingMaterialType,
   TrainingObjectOption,
@@ -14,9 +16,12 @@ import {
   Globe2Icon,
   KeyboardIcon,
   RefreshCwIcon,
+  SearchIcon,
+  PlusIcon,
   SparklesIcon,
   XIcon,
   ChevronDownIcon,
+  ChevronRightIcon,
 } from 'lucide-react';
 
 import { AdminAlert, AdminButton } from '../admin/AdminUi';
@@ -37,14 +42,21 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty';
-import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import {
   applyTrainingMaterialSuggestions,
   archiveTrainingMaterial,
   createTrainingManualMaterial,
-  createTrainingObjectMaterial,
   createTrainingPdfMaterial,
   createTrainingUrlMaterial,
   downloadTrainingMaterialPdf,
@@ -63,15 +75,44 @@ type TrainingMaterialsPanelProps = {
   hasQuestions: boolean;
   projectId: string;
   linkedObjectId: string | null;
+  onMaterialsCountChange: (count: number) => void;
   onProjectContentChanged: () => void | Promise<void>;
 };
 
+type CreatableTrainingMaterialType = Exclude<TrainingMaterialType, 'OBJECT_SNAPSHOT'>;
+type MaterialCreateError = {
+  field: 'title' | 'file' | 'url' | 'form';
+  message: string;
+};
+
 const typeLabels: Record<TrainingMaterialType, string> = {
-  PDF: 'PDF',
-  OFFICIAL_URL: 'Официальный URL',
+  PDF: 'Документ PDF',
+  OFFICIAL_URL: 'Официальная ссылка',
   MANUAL_TEXT: 'Ручной текст',
   OBJECT_SNAPSHOT: 'Карточка Platforma',
 };
+
+const materialStatusLabels: Record<TrainingMaterialStatus, string> = {
+  ACTIVE: 'Активен',
+  ARCHIVED: 'В архиве',
+};
+
+const revisionStatusLabels: Record<TrainingMaterialRevisionStatus, string> = {
+  READY: 'Готово',
+  FAILED: 'Ошибка',
+};
+
+const objectStatusLabels: Record<TrainingObjectOption['status'], string> = {
+  DRAFT: 'Черновик',
+  PUBLISHED: 'Опубликован',
+  ARCHIVED: 'В архиве',
+};
+
+const creatableMaterialTypes: readonly CreatableTrainingMaterialType[] = [
+  'PDF',
+  'OFFICIAL_URL',
+  'MANUAL_TEXT',
+];
 
 const typeIcons = {
   PDF: FileTextIcon,
@@ -104,17 +145,21 @@ export function TrainingMaterialsPanel({
   hasQuestions,
   projectId,
   linkedObjectId,
+  onMaterialsCountChange,
   onProjectContentChanged,
 }: TrainingMaterialsPanelProps) {
-  const hasLinkedObject = Boolean(linkedObjectId);
   const [materials, setMaterials] = useState<TrainingMaterial[]>([]);
   const [selected, setSelected] = useState<TrainingMaterialDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<MaterialCreateError | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
-  const [createType, setCreateType] = useState<TrainingMaterialType>('MANUAL_TEXT');
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [materialSearch, setMaterialSearch] = useState('');
+  const [materialTypeFilter, setMaterialTypeFilter] = useState<'ALL' | TrainingMaterialType>('ALL');
+  const [createType, setCreateType] = useState<CreatableTrainingMaterialType>('MANUAL_TEXT');
   const [title, setTitle] = useState('');
   const [text, setText] = useState('');
   const [url, setUrl] = useState('');
@@ -143,6 +188,7 @@ export function TrainingMaterialsPanel({
       .then(async (response) => {
         if (controller.signal.aborted) return;
         setMaterials(response.items);
+        onMaterialsCountChange(response.items.length);
         const nextId = selected?.id && response.items.some((item) => item.id === selected.id)
           ? selected.id
           : response.items[0]?.id;
@@ -162,7 +208,7 @@ export function TrainingMaterialsPanel({
         if (!controller.signal.aborted) setIsLoading(false);
       });
     return () => controller.abort();
-  }, [accessToken, projectId, reloadKey]);
+  }, [accessToken, onMaterialsCountChange, projectId, reloadKey]);
 
   useEffect(() => {
     setSelectedRevisionId(selected?.revisions[0]?.id ?? null);
@@ -220,6 +266,14 @@ export function TrainingMaterialsPanel({
     () => suggestionDrafts.filter((suggestion) => selectedSuggestionIds.includes(suggestion.id)),
     [selectedSuggestionIds, suggestionDrafts],
   );
+  const visibleMaterials = useMemo(() => {
+    const normalizedSearch = materialSearch.trim().toLocaleLowerCase('ru-RU');
+    return materials.filter((material) => {
+      const matchesType = materialTypeFilter === 'ALL' || material.type === materialTypeFilter;
+      const matchesSearch = !normalizedSearch || material.title.toLocaleLowerCase('ru-RU').includes(normalizedSearch);
+      return matchesType && matchesSearch;
+    });
+  }, [materialSearch, materialTypeFilter, materials]);
 
   const runAction = async (
     action: string,
@@ -246,11 +300,11 @@ export function TrainingMaterialsPanel({
     event.preventDefault();
     if (pendingAction) return;
     if (!title.trim()) {
-      setError('Укажите название материала.');
+      setCreateError({ field: 'title', message: 'Укажите название материала.' });
       return;
     }
     if (createType === 'PDF' && !file) {
-      setError('Выберите PDF-файл.');
+      setCreateError({ field: 'file', message: 'Выберите PDF-файл.' });
       return;
     }
 
@@ -273,11 +327,6 @@ export function TrainingMaterialsPanel({
           replaceExistingQuestions,
         });
       }
-      if (submittedType === 'OBJECT_SNAPSHOT') {
-        return createTrainingObjectMaterial(accessToken, projectId, {
-          title: title.trim(), fieldCodes,
-        });
-      }
       return createTrainingManualMaterial(accessToken, projectId, {
         title: title.trim(), text,
       });
@@ -285,6 +334,7 @@ export function TrainingMaterialsPanel({
 
     setPendingAction('create');
     setError(null);
+    setCreateError(null);
     setNotice(null);
     try {
       let detail: TrainingMaterialDetail;
@@ -297,13 +347,14 @@ export function TrainingMaterialsPanel({
           throw createError;
         }
         const confirmed = window.confirm(
-          'В проекте уже есть вопросы и эталонные ответы. Заменить их новыми AI-черновиками на основе этого источника?',
+          'В проекте уже есть вопросы и эталонные ответы. Заменить их новыми автоматически созданными черновиками на основе этого источника?',
         );
         if (!confirmed) return;
         detail = await createMaterial(true);
       }
 
       setSelected(detail);
+      setIsCreateOpen(false);
       setReloadKey((value) => value + 1);
       const questionsGenerated = (submittedType === 'PDF' || submittedType === 'OFFICIAL_URL') &&
         detail.latestRevision?.status === 'READY';
@@ -314,7 +365,14 @@ export function TrainingMaterialsPanel({
           : 'Материал создан. Извлечённый текст остаётся административным черновиком.');
       if (questionsGenerated) await onProjectContentChanged();
     } catch (createError) {
-      setError(createError instanceof Error ? createError.message : 'Не удалось создать материал');
+      setCreateError({
+        field: submittedType === 'OFFICIAL_URL'
+          ? 'url'
+          : submittedType === 'PDF'
+            ? 'file'
+            : 'form',
+        message: formatMaterialCreateError(createError),
+      });
     } finally {
       setPendingAction(null);
     }
@@ -336,7 +394,7 @@ export function TrainingMaterialsPanel({
     if (!selected) return;
     await runAction('refresh', () => {
       if (selected.type === 'PDF') {
-        if (!refreshFile) throw new Error('Выберите новую PDF-версию.');
+        if (!refreshFile) throw new Error('Выберите новую версию документа PDF.');
         return refreshTrainingPdfMaterial(accessToken, selected.id, refreshFile);
       }
       if (selected.type === 'MANUAL_TEXT') {
@@ -346,7 +404,7 @@ export function TrainingMaterialsPanel({
         return refreshTrainingMaterial(accessToken, selected.id, { fieldCodes });
       }
       return refreshTrainingMaterial(accessToken, selected.id, {});
-    }, 'Создана новая immutable revision; существующие факты не изменены.');
+    }, 'Создана новая неизменяемая версия; существующие факты не изменены.');
   };
 
   const handleApply = async () => {
@@ -375,7 +433,7 @@ export function TrainingMaterialsPanel({
       );
       await onProjectContentChanged();
     } catch (applyError) {
-      setError(applyError instanceof Error ? applyError.message : 'Не удалось применить suggestions');
+      setError(applyError instanceof Error ? applyError.message : 'Не удалось применить предложенные факты');
     } finally {
       setPendingAction(null);
     }
@@ -404,7 +462,7 @@ export function TrainingMaterialsPanel({
       if (!replaceExistingQuestions && message === 'PROJECT_QUESTIONS_REPLACE_CONFIRMATION_REQUIRED') {
         setPendingAction(null);
         const confirmed = window.confirm(
-          'В проекте уже есть вопросы и эталонные ответы. Заменить их новыми AI-черновиками из карточки ЖК и вложений?',
+          'В проекте уже есть вопросы и эталонные ответы. Заменить их новыми автоматически созданными черновиками из карточки ЖК и вложений?',
         );
         if (confirmed) await handleObjectImport(true);
         return;
@@ -420,178 +478,287 @@ export function TrainingMaterialsPanel({
       {error ? <AdminAlert tone="error">{error}</AdminAlert> : null}
       {notice ? <AdminAlert tone="notice">{notice}</AdminAlert> : null}
       {disabled ? (
-        <AdminAlert tone="notice">Закройте проект перед изменением материалов. Preview и история доступны для чтения.</AdminAlert>
+        <AdminAlert tone="notice">Закройте проект перед изменением материалов. Предпросмотр и история доступны для чтения.</AdminAlert>
       ) : null}
 
-      <Card className="training-object-import-card">
-        <CardHeader>
-          <CardTitle><Building2Icon /> Данные ЖК из Platforma</CardTitle>
-          <CardDescription>
-            Найдите ЖК по названию. Поиск понимает текст в другой раскладке. Система создаст immutable snapshot карточки, загрузит все прикреплённые PDF и сформирует 11 вопросов с эталонными ответами.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Field data-disabled={disabled}>
-            <FieldLabel htmlFor="training-object-search">Связанный ЖК</FieldLabel>
-            <ObjectSearchCombobox
-              disabled={disabled}
-              id="training-object-search"
-              isLoading={isObjectOptionsLoading}
-              onQueryChange={setObjectSearch}
-              onSelectedIdChange={setSelectedObjectId}
-              options={objectOptions}
-              query={objectSearch}
-              selectedId={selectedObjectId}
-            />
-            <FieldDescription>
-              Загружаются только стабильные поля карточки; цены, акции, остатки и другие изменяемые данные исключены.
-            </FieldDescription>
-            {objectOptionsError ? <p className="training-object-search-error" role="alert">{objectOptionsError}</p> : null}
-          </Field>
-        </CardContent>
-        <CardFooter>
-          <AdminButton
-            type="button"
-            tone="primary"
-            disabled={disabled || !selectedObjectId || Boolean(pendingAction)}
-            onClick={() => void handleObjectImport()}
-          >
-            <SparklesIcon data-icon="inline-start" />
-            {pendingAction === 'object-import' ? 'Загрузка и генерация…' : 'Создать вопросы и ответы из данных ЖК'}
-          </AdminButton>
-        </CardFooter>
-      </Card>
-
-      <Card className="training-material-create-card">
-        <CardHeader>
-          <CardTitle>Добавить источник</CardTitle>
-          <CardDescription>PDF и официальный URL сразу формируют вопросы и эталонные ответы. Каждый источник сохраняется отдельной immutable revision.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={(event) => void handleCreate(event)}>
-            <FieldGroup>
+      <div className="training-material-workspace">
+        <div className="training-material-library-column">
+          <Card className="training-object-import-card">
+            <CardHeader>
+              <CardTitle><Building2Icon /> Данные ЖК из Platforma</CardTitle>
+              <CardDescription>
+                Найдите ЖК по названию. Поиск понимает текст в другой раскладке. Система сохранит снимок данных карточки, загрузит прикреплённые документы PDF и сформирует 11 вопросов с эталонными ответами.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
               <Field data-disabled={disabled}>
-                <FieldLabel htmlFor="training-material-type">Тип источника</FieldLabel>
-                <select
-                  id="training-material-type"
-                  className="training-material-select"
-                  value={createType}
+                <FieldLabel htmlFor="training-object-search">Связанный ЖК</FieldLabel>
+                <ObjectSearchCombobox
                   disabled={disabled}
-                  onChange={(event) => setCreateType(event.target.value as TrainingMaterialType)}
-                >
-                  {Object.entries(typeLabels).map(([value, label]) => (
-                    <option key={value} value={value}>{label}</option>
-                  ))}
-                </select>
+                  id="training-object-search"
+                  isLoading={isObjectOptionsLoading}
+                  onQueryChange={setObjectSearch}
+                  onSelectedIdChange={setSelectedObjectId}
+                  options={objectOptions}
+                  query={objectSearch}
+                  selectedId={selectedObjectId}
+                />
+                <FieldDescription>
+                  Загружаются только стабильные поля карточки; цены, акции, остатки и другие изменяемые данные исключены.
+                </FieldDescription>
+                {objectOptionsError ? <p className="training-object-search-error" role="alert">{objectOptionsError}</p> : null}
               </Field>
-              <Field data-disabled={disabled}>
-                <FieldLabel htmlFor="training-material-title">Название</FieldLabel>
-                <Input id="training-material-title" value={title} disabled={disabled} onChange={(event) => setTitle(event.target.value)} />
-              </Field>
-              {createType === 'PDF' ? (
-                <Field data-disabled={disabled}>
-                  <FieldLabel htmlFor="training-material-pdf">PDF с текстовым слоем</FieldLabel>
-                  <Input id="training-material-pdf" type="file" accept="application/pdf,.pdf" disabled={disabled} onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
-                  <FieldDescription>До 25 MB. OCR и scanned PDF не поддерживаются.</FieldDescription>
-                </Field>
-              ) : null}
-              {createType === 'OFFICIAL_URL' ? (
-                <>
-                  <Field data-disabled={disabled}>
-                    <FieldLabel htmlFor="training-material-url">Одна официальная HTTPS-страница</FieldLabel>
-                    <Input id="training-material-url" type="url" value={url} disabled={disabled} onChange={(event) => setUrl(event.target.value)} />
-                  </Field>
-                  <label className="training-inline-check">
-                    <input type="checkbox" checked={officialConfirmed} disabled={disabled} onChange={(event) => setOfficialConfirmed(event.target.checked)} />
-                    Подтверждаю, что это официальный источник проекта
-                  </label>
-                </>
-              ) : null}
-              {createType === 'MANUAL_TEXT' ? (
-                <Field data-disabled={disabled}>
-                  <FieldLabel htmlFor="training-material-text">Plain text</FieldLabel>
-                  <textarea id="training-material-text" className="training-textarea" rows={8} value={text} disabled={disabled} onChange={(event) => setText(event.target.value)} />
-                </Field>
-              ) : null}
-              {createType === 'OBJECT_SNAPSHOT' ? (
-                <>
-                  <FieldDescription>
-                    {linkedObjectId ? `Связанный объект: ${linkedObjectId}` : 'К проекту не привязан объект.'}
-                  </FieldDescription>
-                  <ObjectFields disabled={disabled || !hasLinkedObject} value={fieldCodes} onChange={setFieldCodes} />
-                </>
-              ) : null}
-              <AdminButton type="submit" tone="primary" disabled={disabled || pendingAction === 'create' || (createType === 'OFFICIAL_URL' && !officialConfirmed) || (createType === 'OBJECT_SNAPSHOT' && !hasLinkedObject)}>
-                {pendingAction === 'create' ? 'Извлечение…' : 'Создать материал'}
+            </CardContent>
+            <CardFooter>
+              <AdminButton
+                type="button"
+                tone="primary"
+                disabled={disabled || !selectedObjectId || Boolean(pendingAction)}
+                onClick={() => void handleObjectImport()}
+              >
+                <SparklesIcon data-icon="inline-start" />
+                {pendingAction === 'object-import' ? 'Загрузка и генерация…' : 'Создать вопросы и ответы из данных ЖК'}
               </AdminButton>
-            </FieldGroup>
-          </form>
-        </CardContent>
-      </Card>
+            </CardFooter>
+          </Card>
 
-      <section className="training-material-browser" aria-labelledby="training-materials-list-title">
-        <div className="training-section-heading">
-          <h3 id="training-materials-list-title">Материалы</h3>
-          <span className="training-section-count">{materials.length}</span>
+          <section className="training-material-browser" aria-labelledby="training-materials-list-title">
+            <div className="training-material-browser-heading">
+              <div>
+                <h3 id="training-materials-list-title">Материалы проекта</h3>
+                <p className="muted-text">Все источники, используемые для подготовки вопросов.</p>
+              </div>
+              <AdminButton
+                type="button"
+                tone={isCreateOpen ? 'secondary' : 'primary'}
+                disabled={disabled}
+                aria-expanded={isCreateOpen}
+                onClick={() => setIsCreateOpen((value) => {
+                  setCreateError(null);
+                  return !value;
+                })}
+              >
+                {isCreateOpen ? <XIcon data-icon="inline-start" /> : <PlusIcon data-icon="inline-start" />}
+                {isCreateOpen ? 'Закрыть форму' : 'Добавить источник'}
+              </AdminButton>
+            </div>
+
+            {isCreateOpen ? (
+              <Card className="training-material-create-card">
+                <CardHeader>
+                  <CardTitle>Новый источник</CardTitle>
+                <CardDescription>Документы PDF и официальные ссылки формируют вопросы и эталонные ответы. Каждый источник сохраняется отдельной неизменяемой версией.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <form onSubmit={(event) => void handleCreate(event)}>
+                    <FieldGroup>
+                      <Field data-disabled={disabled}>
+                        <FieldLabel htmlFor="training-material-type">Тип источника</FieldLabel>
+                        <select
+                          id="training-material-type"
+                          className="training-material-select"
+                          value={createType}
+                          disabled={disabled}
+                          onChange={(event) => {
+                            setCreateType(event.target.value as CreatableTrainingMaterialType);
+                            setCreateError(null);
+                          }}
+                        >
+                          {creatableMaterialTypes.map((value) => (
+                            <option key={value} value={value}>{typeLabels[value]}</option>
+                          ))}
+                        </select>
+                      </Field>
+                      <Field data-disabled={disabled} data-invalid={createError?.field === 'title'}>
+                        <FieldLabel htmlFor="training-material-title">Название</FieldLabel>
+                        <Input
+                          id="training-material-title"
+                          value={title}
+                          disabled={disabled}
+                          aria-invalid={createError?.field === 'title'}
+                          onChange={(event) => {
+                            setTitle(event.target.value);
+                            if (createError?.field === 'title') setCreateError(null);
+                          }}
+                        />
+                        {createError?.field === 'title' ? <FieldError>{createError.message}</FieldError> : null}
+                      </Field>
+                      {createType === 'PDF' ? (
+                        <Field data-disabled={disabled} data-invalid={createError?.field === 'file'}>
+                          <FieldLabel htmlFor="training-material-pdf">Документ PDF с текстовым слоем</FieldLabel>
+                          <Input
+                            id="training-material-pdf"
+                            type="file"
+                            accept="application/pdf,.pdf"
+                            disabled={disabled}
+                            aria-invalid={createError?.field === 'file'}
+                            onChange={(event) => {
+                              setFile(event.target.files?.[0] ?? null);
+                              if (createError?.field === 'file') setCreateError(null);
+                            }}
+                          />
+                          <FieldDescription>До 25 МБ. Автоматическое распознавание текста и сканы без текстового слоя не поддерживаются.</FieldDescription>
+                          {createError?.field === 'file' ? <FieldError>{createError.message}</FieldError> : null}
+                        </Field>
+                      ) : null}
+                      {createType === 'OFFICIAL_URL' ? (
+                        <>
+                          <Field data-disabled={disabled} data-invalid={createError?.field === 'url'}>
+                          <FieldLabel htmlFor="training-material-url">Одна официальная защищённая страница</FieldLabel>
+                            <Input
+                              id="training-material-url"
+                              type="url"
+                              value={url}
+                              disabled={disabled}
+                              aria-invalid={createError?.field === 'url'}
+                              onChange={(event) => {
+                                setUrl(event.target.value);
+                                if (createError?.field === 'url') setCreateError(null);
+                              }}
+                            />
+                            {createError?.field === 'url' ? <FieldError>{createError.message}</FieldError> : null}
+                          </Field>
+                          <Field
+                            orientation="horizontal"
+                            className="training-official-confirmation"
+                            data-disabled={disabled}
+                          >
+                            <input
+                              id="training-material-official-confirmation"
+                              type="checkbox"
+                              checked={officialConfirmed}
+                              disabled={disabled}
+                              onChange={(event) => setOfficialConfirmed(event.target.checked)}
+                            />
+                            <FieldLabel htmlFor="training-material-official-confirmation">
+                              Подтверждаю, что это официальный источник проекта
+                            </FieldLabel>
+                          </Field>
+                        </>
+                      ) : null}
+                      {createType === 'MANUAL_TEXT' ? (
+                        <Field data-disabled={disabled}>
+                          <FieldLabel htmlFor="training-material-text">Текст</FieldLabel>
+                          <textarea id="training-material-text" className="training-textarea" rows={8} value={text} disabled={disabled} onChange={(event) => setText(event.target.value)} />
+                        </Field>
+                      ) : null}
+                      {createError?.field === 'form' ? <AdminAlert tone="error">{createError.message}</AdminAlert> : null}
+                      <AdminButton type="submit" tone="primary" disabled={disabled || pendingAction === 'create' || (createType === 'OFFICIAL_URL' && !officialConfirmed)}>
+                        {pendingAction === 'create' ? 'Извлечение…' : 'Создать материал'}
+                      </AdminButton>
+                    </FieldGroup>
+                  </form>
+                </CardContent>
+              </Card>
+            ) : null}
+
+            <div className="training-material-filters">
+              <label className="training-material-search">
+                <SearchIcon aria-hidden="true" />
+                <span className="sr-only">Поиск по материалам</span>
+                <Input
+                  type="search"
+                  value={materialSearch}
+                  placeholder="Поиск по материалам"
+                  onChange={(event) => setMaterialSearch(event.target.value)}
+                />
+              </label>
+              <select
+                className="training-material-select training-material-type-filter"
+                aria-label="Фильтр по типу материала"
+                value={materialTypeFilter}
+                onChange={(event) => setMaterialTypeFilter(event.target.value as 'ALL' | TrainingMaterialType)}
+              >
+                <option value="ALL">Все типы</option>
+                {Object.entries(typeLabels).map(([value, label]) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </div>
+
+            {isLoading ? <Skeleton className="training-materials-skeleton" /> : null}
+            {!isLoading && materials.length === 0 ? (
+              <Empty className="training-material-empty">
+                <EmptyHeader>
+                  <EmptyMedia variant="icon"><FileTextIcon /></EmptyMedia>
+                  <EmptyTitle>Источников пока нет</EmptyTitle>
+                  <EmptyDescription>Добавьте документ PDF, официальную ссылку, ручной текст или снимок данных связанной карточки.</EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            ) : null}
+            {!isLoading && materials.length > 0 && visibleMaterials.length === 0 ? (
+              <Empty className="training-material-empty">
+                <EmptyHeader>
+                  <EmptyMedia variant="icon"><SearchIcon /></EmptyMedia>
+                  <EmptyTitle>Ничего не найдено</EmptyTitle>
+                  <EmptyDescription>Измените запрос или сбросьте фильтр типа.</EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            ) : null}
+            {!isLoading && visibleMaterials.length > 0 ? (
+              <div className="training-material-table-shell">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Источник</TableHead>
+                      <TableHead>Тип</TableHead>
+                      <TableHead>Обновлён</TableHead>
+                      <TableHead>Статус</TableHead>
+                      <TableHead><span className="sr-only">Открыть</span></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {visibleMaterials.map((material) => (
+                      <MaterialRow
+                        active={selected?.id === material.id}
+                        key={material.id}
+                        material={material}
+                        onOpen={() => void openMaterial(material.id)}
+                      />
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            ) : null}
+            <p className="training-material-count">Показано {visibleMaterials.length} из {materials.length}</p>
+          </section>
         </div>
-        {isLoading ? <Skeleton className="training-materials-skeleton" /> : null}
-        {!isLoading && materials.length === 0 ? (
-          <Empty className="training-material-empty">
-            <EmptyHeader>
-              <EmptyMedia variant="icon"><FileTextIcon /></EmptyMedia>
-              <EmptyTitle>Источников пока нет</EmptyTitle>
-              <EmptyDescription>Добавьте PDF, URL, ручной текст или snapshot связанной карточки.</EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        ) : null}
-        {!isLoading && materials.length ? (
-          <div className="training-material-grid">
-            {materials.map((material) => (
-              <MaterialCard
-                active={selected?.id === material.id}
-                key={material.id}
-                material={material}
-                onOpen={() => void openMaterial(material.id)}
-              />
-            ))}
-          </div>
-        ) : null}
-      </section>
 
-      {selected ? (
+        <aside className="training-material-inspector" aria-label="Инспектор выбранного материала">
+          {selected ? (
         <Card className="training-material-detail">
           <CardHeader>
             <CardTitle>{selected.title}</CardTitle>
-            <CardDescription>{typeLabels[selected.type]} · {selected.revisions.length} revision</CardDescription>
-            <CardAction><Badge variant={selected.status === 'ACTIVE' ? 'secondary' : 'outline'}>{selected.status}</Badge></CardAction>
+            <CardDescription>{typeLabels[selected.type]} · {formatVersionCount(selected.revisions.length)}</CardDescription>
+            <CardAction><Badge variant={selected.status === 'ACTIVE' ? 'secondary' : 'outline'}>{materialStatusLabels[selected.status]}</Badge></CardAction>
           </CardHeader>
           <CardContent className="training-material-detail-content">
             {selectedRevision ? (
               <>
                 {selectedRevision.status === 'FAILED' ? (
                   <AdminAlert tone="error">
-                    Extraction не завершён: {String(selectedRevision.extractionMetadata.errorCode ?? 'MATERIAL_EXTRACTION_FAILED')}.
-                    Для PDF загрузите другой файл с text layer или добавьте источник как ручной текст; OCR автоматически не запускается.
+                    Извлечение не завершено: {formatExtractionError(selectedRevision.extractionMetadata.errorCode)}.
+                    Для документа PDF загрузите другой файл с текстовым слоем или добавьте источник как ручной текст; автоматическое распознавание не запускается.
                   </AdminAlert>
                 ) : null}
                 <div className="training-material-meta">
-                  <span>Revision {selectedRevision.revisionNumber}</span>
-                  <span>{String(selectedRevision.extractionMetadata.method ?? '—')}</span>
-                  <span>{selectedRevision.status}</span>
+                  <span>Версия {selectedRevision.revisionNumber}</span>
+                  <span>{formatExtractionMethod(selectedRevision.extractionMetadata.method)}</span>
+                  <span>{revisionStatusLabels[selectedRevision.status]}</span>
                   <span>{selectedRevision.contentHash.slice(0, 12)}…</span>
                   <span>{selectedRevision.isChanged ? 'Есть изменения' : 'Без изменений'}</span>
                 </div>
                 {selected.type === 'OFFICIAL_URL' ? (
                   <dl className="training-material-url-meta">
-                    <div><dt>Requested URL</dt><dd>{selectedRevision.requestedUrl ?? selected.sourceUrl ?? '—'}</dd></div>
-                    <div><dt>Final URL</dt><dd>{selectedRevision.finalUrl ?? '—'}</dd></div>
-                    <div><dt>Fetched at</dt><dd>{selectedRevision.fetchedAt ? new Date(selectedRevision.fetchedAt).toLocaleString('ru-RU') : '—'}</dd></div>
+                    <div><dt>Запрошенная ссылка</dt><dd>{selectedRevision.requestedUrl ?? selected.sourceUrl ?? '—'}</dd></div>
+                    <div><dt>Итоговая ссылка</dt><dd>{selectedRevision.finalUrl ?? '—'}</dd></div>
+                    <div><dt>Загружено</dt><dd>{selectedRevision.fetchedAt ? new Date(selectedRevision.fetchedAt).toLocaleString('ru-RU') : '—'}</dd></div>
                   </dl>
                 ) : null}
                 {selected.type === 'OBJECT_SNAPSHOT' ? (
                   <dl className="training-material-url-meta">
                     <div><dt>Объект</dt><dd>{String(selectedRevision.extractionMetadata.objectTitle ?? '—')}</dd></div>
-                    <div><dt>Object ID</dt><dd>{String(selectedRevision.extractionMetadata.objectId ?? '—')}</dd></div>
+                    <div><dt>Идентификатор объекта</dt><dd>{String(selectedRevision.extractionMetadata.objectId ?? '—')}</dd></div>
                     <div><dt>Выбрано полей</dt><dd>{Array.isArray(selectedRevision.extractionMetadata.fieldCodes) ? selectedRevision.extractionMetadata.fieldCodes.length : 0}</dd></div>
                   </dl>
                 ) : null}
@@ -601,7 +768,7 @@ export function TrainingMaterialsPanel({
                     <ol className="training-material-segments">
                       {selectedRevision.segments.map((segment) => (
                         <li key={segment.locator}>
-                          <div><strong>{segment.label}</strong><span>{segment.locator}</span></div>
+                          <div><strong>{segment.label}</strong><span>{formatSegmentLocator(segment.locator)}</span></div>
                           <p>{segment.text}</p>
                         </li>
                       ))}
@@ -609,17 +776,17 @@ export function TrainingMaterialsPanel({
                   ) : <p className="muted-text">Извлечённого текста нет.</p>}
                 </section>
                 <section className="training-material-diff">
-                  <h4>Diff</h4>
+                  <h4>Изменения</h4>
                   <div>
                     <span>Добавлено: {selectedRevision.diff.added.length}</span>
                     <span>Удалено: {selectedRevision.diff.removed.length}</span>
                     <span>Без изменений: {selectedRevision.diff.unchangedCount}</span>
                   </div>
-                  {selectedRevision.diff.added.length ? <DiffList title="Добавленные segments" items={selectedRevision.diff.added} /> : null}
-                  {selectedRevision.diff.removed.length ? <DiffList title="Удалённые segments" items={selectedRevision.diff.removed} /> : null}
+                  {selectedRevision.diff.added.length ? <DiffList title="Добавленные фрагменты" items={selectedRevision.diff.added} /> : null}
+                  {selectedRevision.diff.removed.length ? <DiffList title="Удалённые фрагменты" items={selectedRevision.diff.removed} /> : null}
                 </section>
                 <section className="training-material-history">
-                  <h4>История revisions</h4>
+                  <h4>История версий</h4>
                   <ol>{selected.revisions.map((revision) => (
                     <li key={revision.id}>
                       <button
@@ -628,15 +795,15 @@ export function TrainingMaterialsPanel({
                         onClick={() => setSelectedRevisionId(revision.id)}
                       >
                         <strong>#{revision.revisionNumber}</strong>
-                        <span>{revision.status} · {new Date(revision.createdAt).toLocaleString('ru-RU')}</span>
-                        <Badge variant={revision.isChanged ? 'secondary' : 'outline'}>{revision.isChanged ? 'changed' : 'same'}</Badge>
+                        <span>{revisionStatusLabels[revision.status]} · {new Date(revision.createdAt).toLocaleString('ru-RU')}</span>
+                        <Badge variant={revision.isChanged ? 'secondary' : 'outline'}>{revision.isChanged ? 'Изменена' : 'Без изменений'}</Badge>
                       </button>
                     </li>
                   ))}</ol>
                 </section>
                 {selectedRevision.status === 'READY' ? <section className="training-material-suggestions">
                   <div className="training-subsection-heading">
-                    <div><h4>Дополнительные факты из материала</h4><p className="muted-text">Можно дополнить автоматически созданные ответы; новые AI-факты не участвуют в публикации до ручного применения.</p></div>
+                    <div><h4>Дополнительные факты из материала</h4><p className="muted-text">Можно дополнить автоматически созданные ответы; новые сгенерированные факты не участвуют в публикации до ручного применения.</p></div>
                     <AdminButton type="button" tone="secondary" disabled={disabled || !hasQuestions || Boolean(pendingAction)} onClick={() => void runAction('suggest', () => generateTrainingMaterialSuggestions(accessToken, selectedRevision.id), 'Дополнительные факты сгенерированы и ждут ручного выбора.')}>
                       <SparklesIcon data-icon="inline-start" />
                       {pendingAction === 'suggest' ? 'Генерация…' : 'Сгенерировать дополнительные факты'}
@@ -657,7 +824,7 @@ export function TrainingMaterialsPanel({
                   </AdminButton>
                 </section> : null}
               </>
-            ) : <p className="muted-text">У материала нет revisions.</p>}
+            ) : <p className="muted-text">У материала нет версий.</p>}
           </CardContent>
           <CardFooter className="training-material-actions">
             {selected.type === 'PDF' ? <Input type="file" accept="application/pdf,.pdf" disabled={disabled} onChange={(event) => setRefreshFile(event.target.files?.[0] ?? null)} /> : null}
@@ -665,14 +832,24 @@ export function TrainingMaterialsPanel({
             {selected.type === 'OBJECT_SNAPSHOT' ? <ObjectFields disabled={disabled} value={fieldCodes} onChange={setFieldCodes} /> : null}
             <div className="training-toolbar">
               <AdminButton type="button" tone="secondary" disabled={disabled || Boolean(pendingAction)} onClick={() => void handleRefresh()}>
-                <RefreshCwIcon data-icon="inline-start" /> Новая revision
+                <RefreshCwIcon data-icon="inline-start" /> Новая версия
               </AdminButton>
-              {selected.type === 'PDF' ? <AdminButton type="button" tone="text" onClick={() => void downloadTrainingMaterialPdf(accessToken, selected.id, selected.title)}><DownloadIcon data-icon="inline-start" /> Скачать original</AdminButton> : null}
+              {selected.type === 'PDF' ? <AdminButton type="button" tone="text" onClick={() => void downloadTrainingMaterialPdf(accessToken, selected.id, selected.title)}><DownloadIcon data-icon="inline-start" /> Скачать исходный файл</AdminButton> : null}
               <AdminButton type="button" tone="danger" disabled={disabled || selected.status === 'ARCHIVED' || Boolean(pendingAction)} onClick={() => void runAction('archive', () => archiveTrainingMaterial(accessToken, selected.id), 'Материал архивирован без удаления истории.')}><ArchiveIcon data-icon="inline-start" /> Архивировать</AdminButton>
             </div>
           </CardFooter>
         </Card>
-      ) : null}
+          ) : (
+            <Empty className="training-material-inspector-empty">
+              <EmptyHeader>
+                <EmptyMedia variant="icon"><FileTextIcon /></EmptyMedia>
+                <EmptyTitle>Выберите источник</EmptyTitle>
+                <EmptyDescription>Здесь появятся содержимое, версии и действия выбранного материала.</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          )}
+        </aside>
+      </div>
     </div>
   );
 }
@@ -754,7 +931,10 @@ function ObjectSearchCombobox({
                 clearSelection();
               }}
             >
-              <span>{selected.title}</span>
+              <span className="training-object-selected-copy">
+                <strong>{selected.title}</strong>
+                <small>{formatObjectOptionMeta(selected)}</small>
+              </span>
               <XIcon aria-hidden="true" />
             </button>
           ) : null}
@@ -809,7 +989,7 @@ function ObjectSearchCombobox({
             >
               <span>
                 <strong>{option.title}</strong>
-                <small>{[option.developerName, option.status, `${option.pdfCount} PDF`].filter(Boolean).join(' · ')}</small>
+                <small>{formatObjectOptionMeta(option)}</small>
               </span>
               {option.id === selectedId ? <span className="searchable-multi-select-check">Выбрано</span> : null}
             </button>
@@ -835,22 +1015,85 @@ function mergeObjectOptions(
   return [...byId.values()];
 }
 
-function MaterialCard({ active, material, onOpen }: { active: boolean; material: TrainingMaterial; onOpen: () => void }) {
+function formatVersionCount(value: number) {
+  const mod100 = value % 100;
+  const mod10 = value % 10;
+  if (mod100 >= 11 && mod100 <= 14) return `${value} версий`;
+  if (mod10 === 1) return `${value} версия`;
+  if (mod10 >= 2 && mod10 <= 4) return `${value} версии`;
+  return `${value} версий`;
+}
+
+function formatExtractionMethod(value: unknown) {
+  const method = typeof value === 'string' ? value : '';
+  return ({
+    MANUAL: 'Ручной текст',
+    PDF_TEXT_LAYER: 'Текстовый слой PDF',
+    HTTP: 'Загрузка страницы',
+    BROWSER: 'Загрузка через браузер',
+    OBJECT_SNAPSHOT: 'Карточка Platforma',
+    PDF: 'Документ PDF',
+  } as Record<string, string>)[method] ?? 'Способ не указан';
+}
+
+function formatExtractionError(value: unknown) {
+  const code = typeof value === 'string' ? value : '';
+  return ({
+    PDF_TEXT_LAYER_MISSING: 'в документе нет текстового слоя',
+    MATERIAL_EXTRACTION_FAILED: 'не удалось извлечь текст',
+  } as Record<string, string>)[code] ?? 'неизвестная ошибка извлечения';
+}
+
+function formatObjectOptionMeta(option: TrainingObjectOption) {
+  return [option.developerName, objectStatusLabels[option.status], `${option.pdfCount} PDF`]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+function formatSegmentLocator(locator: string) {
+  const [kind, value] = locator.split(':', 2);
+  if (kind === 'page' && value) return `Страница ${value}`;
+  if (kind === 'paragraph' && value) return `Абзац ${value}`;
+  if (kind === 'object-field') return 'Поле карточки';
+  return 'Фрагмент источника';
+}
+
+function formatMaterialCreateError(error: unknown) {
+  const message = error instanceof Error ? error.message : 'Не удалось создать материал';
+
+  if (message === 'QUESTION_DRAFT_GENERATION_FAILED' || message === 'Internal server error') {
+    return 'Не удалось сформировать вопросы по источнику. Материал не сохранён. Попробуйте ещё раз.';
+  }
+
+  return message;
+}
+
+function MaterialRow({ active, material, onOpen }: { active: boolean; material: TrainingMaterial; onOpen: () => void }) {
   const Icon = typeIcons[material.type];
   return (
-    <Card className={active ? 'training-material-card training-material-card--active' : 'training-material-card'} size="sm">
-      <CardHeader>
-        <CardTitle><Icon /> {material.title}</CardTitle>
-        <CardDescription>{typeLabels[material.type]}</CardDescription>
-        <CardAction>
-          <Badge variant={material.latestRevision?.status === 'FAILED' ? 'destructive' : 'outline'}>
-            r{material.latestRevision?.revisionNumber ?? 0} · {material.latestRevision?.status ?? 'EMPTY'}
-          </Badge>
-        </CardAction>
-      </CardHeader>
-      <CardContent><p>{material.latestRevision?.extractedText.slice(0, 140) ?? 'Нет извлечённого текста'}</p></CardContent>
-      <CardFooter><AdminButton type="button" tone="text" onClick={onOpen}>Открыть</AdminButton></CardFooter>
-    </Card>
+    <TableRow className="training-material-row" data-state={active ? 'selected' : undefined}>
+      <TableCell>
+        <button type="button" className="training-material-title-button" onClick={onOpen}>
+          <span className="training-material-type-icon"><Icon aria-hidden="true" /></span>
+          <span>
+            <strong>{material.title}</strong>
+            <small>Версия {material.latestRevision?.revisionNumber ?? 0}</small>
+          </span>
+        </button>
+      </TableCell>
+      <TableCell><Badge variant="outline">{typeLabels[material.type]}</Badge></TableCell>
+      <TableCell>{new Date(material.updatedAt).toLocaleDateString('ru-RU')}</TableCell>
+      <TableCell>
+        <Badge variant={material.latestRevision?.status === 'FAILED' ? 'destructive' : 'secondary'}>
+          {material.latestRevision ? revisionStatusLabels[material.latestRevision.status] : 'Нет версии'}
+        </Badge>
+      </TableCell>
+      <TableCell>
+        <button type="button" className="training-material-open-button" aria-label={`Открыть ${material.title}`} onClick={onOpen}>
+          <ChevronRightIcon aria-hidden="true" />
+        </button>
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -866,7 +1109,7 @@ function DiffList({ items, title }: { items: string[]; title: string }) {
 function ObjectFields({ disabled, onChange, value }: { disabled: boolean; onChange: (value: string[]) => void; value: string[] }) {
   return (
     <fieldset className="training-object-fields" disabled={disabled}>
-      <legend>Allowlisted поля карточки</legend>
+      <legend>Разрешённые поля карточки</legend>
       <div>{objectFields.map(([code, label]) => (
         <label key={code}>
           <input type="checkbox" checked={value.includes(code)} onChange={(event) => onChange(event.target.checked ? [...value, code] : value.filter((item) => item !== code))} />
@@ -894,7 +1137,7 @@ function SuggestionEditor({
     <article className="training-suggestion-editor">
       <label className="training-inline-check">
         <input type="checkbox" checked={selected} disabled={disabled} onChange={(event) => onSelected(event.target.checked)} />
-        Выбрать suggestion
+        Выбрать предложенный факт
       </label>
       <FieldGroup>
         <Field data-disabled={disabled}>
@@ -902,11 +1145,11 @@ function SuggestionEditor({
           <textarea id={`suggestion-statement-${suggestion.id}`} className="training-textarea" rows={3} value={suggestion.statement} disabled={disabled} onChange={(event) => onChange({ ...suggestion, statement: event.target.value })} />
         </Field>
         <Field data-disabled={disabled}>
-          <FieldLabel htmlFor={`suggestion-aliases-${suggestion.id}`}>Aliases</FieldLabel>
+          <FieldLabel htmlFor={`suggestion-aliases-${suggestion.id}`}>Варианты ответа</FieldLabel>
           <Input id={`suggestion-aliases-${suggestion.id}`} value={suggestion.aliases.join(', ')} disabled={disabled} onChange={(event) => onChange({ ...suggestion, aliases: event.target.value.split(',').map((item) => item.trim()).filter(Boolean) })} />
         </Field>
       </FieldGroup>
-      <blockquote><strong>{suggestion.sourceLocator}</strong> · {suggestion.sourceExcerpt}</blockquote>
+      <blockquote><strong>{formatSegmentLocator(suggestion.sourceLocator)}</strong> · {suggestion.sourceExcerpt}</blockquote>
     </article>
   );
 }

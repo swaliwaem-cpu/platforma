@@ -5,6 +5,13 @@ export const apiAuthUpdatedEventName = 'platforma-auth-updated';
 export const apiAuthClearedEventName = 'platforma-auth-cleared';
 
 const apiConnectionErrorMessage = 'Не удалось связаться с сервером';
+const standardApiErrorTranslations: Record<string, string> = {
+  'Internal server error': 'Внутренняя ошибка сервера',
+  'Bad Request': 'Некорректный запрос',
+  Unauthorized: 'Требуется авторизация',
+  Forbidden: 'Недостаточно прав',
+  'Not Found': 'Ресурс не найден',
+};
 
 let currentAccessToken: string | null = null;
 let refreshSessionPromise: Promise<AuthResponse> | null = null;
@@ -117,7 +124,7 @@ async function resolveErrorMessage(response: Response) {
     const data = (await response.json()) as { message?: string | string[] };
     const message = Array.isArray(data.message) ? data.message.join(', ') : data.message;
 
-    return message || 'Запрос не выполнен';
+    return message ? standardApiErrorTranslations[message] ?? message : 'Запрос не выполнен';
   } catch {
     return 'Запрос не выполнен';
   }

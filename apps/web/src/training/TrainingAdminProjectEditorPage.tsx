@@ -15,6 +15,7 @@ import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/c
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
+import { ChevronRightIcon, Trash2Icon } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -61,6 +62,12 @@ type TrainingAdminProjectEditorPageProps = {
   navigate: (pathname: string) => void;
 };
 
+type EditorTab = 'materials' | 'questions' | 'assignments';
+
+const TRAINING_FACT_ALIAS_LIMIT = 20;
+const TRAINING_FACT_ALIAS_MAX_LENGTH = 80;
+const TRAINING_FACT_ALIAS_MAX_WORDS = 15;
+
 export function TrainingAdminProjectEditorPage({
   projectId,
   navigate,
@@ -74,7 +81,8 @@ export function TrainingAdminProjectEditorPage({
   const [isLoading, setIsLoading] = useState(true);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
-  const [activeTab, setActiveTab] = useState('content');
+  const [activeTab, setActiveTab] = useState<EditorTab>('materials');
+  const [materialsCount, setMaterialsCount] = useState(0);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
@@ -103,8 +111,7 @@ export function TrainingAdminProjectEditorPage({
     return () => controller.abort();
   }, [accessToken, projectId, reloadKey]);
 
-  const handleSave = async (event: FormEvent) => {
-    event.preventDefault();
+  const saveProject = async () => {
     if (!accessToken || !form || !project || pendingAction) return;
 
     const nextErrors = validateEditorForm(form);
@@ -112,7 +119,10 @@ export function TrainingAdminProjectEditorPage({
 
     if (Object.keys(nextErrors).length) {
       setError('Исправьте отмеченные поля перед сохранением');
-      document.getElementById(Object.keys(nextErrors)[0] ?? '')?.focus();
+      setActiveTab('questions');
+      window.requestAnimationFrame(() => {
+        document.getElementById(Object.keys(nextErrors)[0] ?? '')?.focus();
+      });
       return;
     }
 
@@ -136,6 +146,11 @@ export function TrainingAdminProjectEditorPage({
     }
   };
 
+  const handleSave = (event: FormEvent) => {
+    event.preventDefault();
+    void saveProject();
+  };
+
   const runProjectAction = async (action: 'publish' | 'open' | 'close') => {
     if (!accessToken || !project || pendingAction) return;
 
@@ -149,7 +164,7 @@ export function TrainingAdminProjectEditorPage({
         : await updateTrainingAdminProject(accessToken, project.id, { isOpen: action === 'open' });
       setProject(updated);
       setForm(toEditorForm(updated));
-      setNotice(action === 'publish' ? 'Проект опубликован.' : action === 'open' ? 'Проект открыт для новых попыток.' : 'Проект закрыт; активные попытки продолжаются по snapshot.');
+      setNotice(action === 'publish' ? 'Проект опубликован.' : action === 'open' ? 'Проект открыт для новых попыток.' : 'Проект закрыт; активные попытки продолжаются по сохранённому снимку данных.');
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : 'Действие не выполнено');
     } finally {
@@ -211,27 +226,46 @@ export function TrainingAdminProjectEditorPage({
 
   const isReadOnly = project.isOpen;
   const isDeleting = pendingAction === 'delete';
+  const questionsCount = Number(Boolean(form.mainQuestion.trim())) +
+    form.followUpQuestions.filter((question) => Boolean(question.trim())).length;
+  const hasCompleteQuestionSet = questionsCount === 11;
+  const hasAssignmentAccess = project.accessMode === 'ALL_PARTICIPANTS' || project.activeAssignments > 0;
+  const readinessPercent = Math.round(
+    ([materialsCount > 0, hasCompleteQuestionSet, hasAssignmentAccess].filter(Boolean).length / 3) * 100,
+  );
+  const nextTab: EditorTab | null = activeTab === 'materials'
+    ? 'questions'
+    : activeTab === 'questions'
+      ? 'assignments'
+      : null;
 
   return (
-    <div className="training-page training-admin-page">
-      <header className="training-page-header">
-        <div><p className="eyebrow">Админка · Обучение</p><h2>{project.title}</h2><p className="muted-text">Настройки, 1 главный и 10 дополнительных вопросов.</p></div>
-        <AdminStatusBadge className={getTrainingStatusClass(project.status)}>{trainingProjectStatusLabels[project.status]}{project.isOpen ? ' · открыт' : ' · закрыт'}</AdminStatusBadge>
-      </header>
-
-      <div className="training-toolbar">
-        <AdminButton type="button" tone="text" onClick={() => navigate('/admin/training')}>К списку</AdminButton>
+    <div className="training-page training-admin-page training-project-editor-page">
+      <header className="training-project-editor-header">
+        <div className="training-project-editor-heading">
+          <p className="training-editor-breadcrumb">Обучение <span>/</span> Проекты</p>
+          <div className="training-project-editor-title-row">
+            <h2>{project.title}</h2>
+            <AdminStatusBadge className={getTrainingStatusClass(project.status)}>{trainingProjectStatusLabels[project.status]}{project.isOpen ? ' · открыт' : ' · закрыт'}</AdminStatusBadge>
+          </div>
+          <p className="muted-text">Подготовьте материалы, проверьте вопросы и назначьте сотрудников.</p>
+        </div>
+        <div className="training-project-editor-actions">
+          <AdminButton type="button" tone="secondary" onClick={() => navigate('/admin/training')}>К списку</AdminButton>
         {project.isOpen ? (
           <AdminButton type="button" tone="secondary" disabled={Boolean(pendingAction)} onClick={() => void runProjectAction('close')}>Закрыть проект</AdminButton>
-        ) : (
-          <>
-            <AdminButton type="button" tone="secondary" disabled={project.status !== 'DRAFT' || Boolean(pendingAction)} onClick={() => void runProjectAction('publish')}>Опубликовать</AdminButton>
-            <AdminButton type="button" tone="primary" disabled={project.status !== 'PUBLISHED' || Boolean(pendingAction)} onClick={() => void runProjectAction('open')}>Открыть проект</AdminButton>
-          </>
-        )}
+        ) : project.status === 'DRAFT' ? (
+          <AdminButton type="button" tone="secondary" disabled={Boolean(pendingAction)} onClick={() => void runProjectAction('publish')}>Опубликовать</AdminButton>
+        ) : project.status === 'PUBLISHED' ? (
+          <AdminButton type="button" tone="secondary" disabled={Boolean(pendingAction)} onClick={() => void runProjectAction('open')}>Открыть проект</AdminButton>
+        ) : null}
+          <AdminButton type="button" tone="primary" disabled={isReadOnly || Boolean(pendingAction)} onClick={() => void saveProject()}>
+            {pendingAction === 'save' ? 'Сохранение…' : 'Сохранить'}
+          </AdminButton>
         <AdminButton
           type="button"
           tone="danger"
+          className="training-editor-delete-action"
           disabled={Boolean(pendingAction)}
           onClick={() => {
             setDeleteError(null);
@@ -240,15 +274,16 @@ export function TrainingAdminProjectEditorPage({
         >
           Удалить проект
         </AdminButton>
-      </div>
+        </div>
+      </header>
 
       {error ? <AdminAlert tone="error">{error}</AdminAlert> : null}
       {notice ? <AdminAlert tone="notice">{notice}</AdminAlert> : null}
-      {isReadOnly && activeTab !== 'access' ? <AdminAlert tone="notice">Закройте проект перед редактированием. Уже начатые попытки не изменятся.</AdminAlert> : null}
+      {isReadOnly && activeTab !== 'assignments' ? <AdminAlert tone="notice">Закройте проект перед редактированием. Уже начатые попытки не изменятся.</AdminAlert> : null}
       {Object.keys(errors).length ? (
         <AdminAlert tone="error">
           <div>
-            <strong>Проверьте draft:</strong>
+            <strong>Проверьте черновик:</strong>
             <ul>{[...new Set(Object.values(errors))].map((item) => <li key={item}>{item}</li>)}</ul>
           </div>
         </AdminAlert>
@@ -259,14 +294,52 @@ export function TrainingAdminProjectEditorPage({
         </AdminAlert>
       ) : null}
 
-      <Tabs className="training-editor-tabs" value={activeTab} onValueChange={setActiveTab}>
-        <TabsList variant="line" aria-label="Разделы редактора проекта">
-          <TabsTrigger value="content">Контент и оценивание</TabsTrigger>
-          <TabsTrigger value="materials">Материалы</TabsTrigger>
-          <TabsTrigger value="access">Доступ сотрудников</TabsTrigger>
-        </TabsList>
-        <TabsContent value="content">
-      <form className="training-editor-form" onSubmit={(event) => void handleSave(event)}>
+      <Tabs
+        className="training-editor-workspace"
+        orientation="vertical"
+        value={activeTab}
+        onValueChange={(value) => setActiveTab(value as EditorTab)}
+      >
+        <aside className="training-editor-stage-rail" aria-label="Подготовка проекта">
+          <div className="training-editor-stage-heading">
+            <span>Подготовка проекта</span>
+            <small>Три шага до запуска обучения</small>
+          </div>
+          <TabsList variant="line" aria-label="Разделы редактора проекта">
+            <EditorStageTrigger value="materials" step="01" label="Материалы" meta={`${materialsCount} ${pluralizeMaterials(materialsCount)}`} />
+            <EditorStageTrigger value="questions" step="02" label="Вопросы" meta={`${questionsCount} из 11`} />
+            <EditorStageTrigger value="assignments" step="03" label="Назначения" meta={project.accessMode === 'ALL_PARTICIPANTS' ? 'Все участники' : `${project.activeAssignments} сотрудников`} />
+          </TabsList>
+          <div className="training-editor-readiness">
+            <div><span>Готовность</span><strong>{readinessPercent}%</strong></div>
+            <progress aria-label={`Готовность проекта ${readinessPercent}%`} max={100} value={readinessPercent} />
+          </div>
+          {nextTab ? (
+            <AdminButton className="training-editor-next-step" type="button" tone="secondary" onClick={() => setActiveTab(nextTab)}>
+              {activeTab === 'materials' ? 'Далее: вопросы' : 'Далее: назначения'}
+              <ChevronRightIcon data-icon="inline-end" />
+            </AdminButton>
+          ) : null}
+        </aside>
+
+        <div className="training-editor-stage-content">
+        <TabsContent value="materials">
+          <TrainingMaterialsPanel
+            accessToken={accessToken ?? ''}
+            disabled={isReadOnly}
+            hasQuestions={Boolean(project.mainQuestion.trim()) || project.followUpQuestions.some((question) => Boolean(question.trim()))}
+            linkedObjectId={project.realEstateObjectId}
+            projectId={project.id}
+            onMaterialsCountChange={setMaterialsCount}
+            onProjectContentChanged={refreshProjectContent}
+          />
+        </TabsContent>
+        <TabsContent value="questions">
+          <div className="training-editor-content-heading">
+            <h3>Вопросы и оценивание</h3>
+            <p className="muted-text">Настройки проекта, 1 главный и 10 дополнительных вопросов.</p>
+          </div>
+      <form id="training-project-editor-form" className="training-editor-form" onSubmit={handleSave}>
         <AdminPanel className="training-editor-section">
           <div><p className="eyebrow">Настройки</p><h3>Основные параметры</h3></div>
           <FieldGroup className="training-form-grid">
@@ -304,7 +377,7 @@ export function TrainingAdminProjectEditorPage({
         </AdminPanel>
 
         <AdminPanel className="training-editor-section">
-          <div><p className="eyebrow">Вопросы 2–11</p><h3>Дополнительные вопросы · по 15 баллов</h3><p className="muted-text">Backend выберет три разных вопроса после ответа на главный.</p></div>
+          <div><p className="eyebrow">Вопросы 2–11</p><h3>Дополнительные вопросы · по 15 баллов</h3><p className="muted-text">Система выберет три разных вопроса после ответа на главный.</p></div>
           <FieldGroup>
             {form.followUpQuestions.map((question, index) => {
               const id = `training-follow-up-${index + 1}`;
@@ -326,7 +399,7 @@ export function TrainingAdminProjectEditorPage({
         </AdminPanel>
 
         <AdminPanel className="training-editor-section">
-          <div><p className="eyebrow">Оценивание</p><h3>Настраиваемые критерии</h3><p className="muted-text">MAIN применяется к главному ответу, FOLLOW_UP — к каждому из трёх дополнительных.</p></div>
+          <div><p className="eyebrow">Оценивание</p><h3>Настраиваемые критерии</h3><p className="muted-text">Критерии главного вопроса применяются к главному ответу, а критерии дополнительных — к каждому из трёх дополнительных.</p></div>
           <CriteriaEditor disabled={isReadOnly} criteria={form.criteria} onChange={(criteria) => setForm({ ...form, criteria })} type="MAIN" expectedTotal={55} />
           <CriteriaEditor disabled={isReadOnly} criteria={form.criteria} onChange={(criteria) => setForm({ ...form, criteria })} type="FOLLOW_UP" expectedTotal={15} />
         </AdminPanel>
@@ -334,17 +407,11 @@ export function TrainingAdminProjectEditorPage({
         <AdminButton type="submit" tone="primary" disabled={isReadOnly || Boolean(pendingAction)}>{pendingAction === 'save' ? 'Сохранение…' : 'Сохранить черновик'}</AdminButton>
       </form>
         </TabsContent>
-        <TabsContent value="materials">
-          <TrainingMaterialsPanel
-            accessToken={accessToken ?? ''}
-            disabled={isReadOnly}
-            hasQuestions={Boolean(project.mainQuestion.trim()) || project.followUpQuestions.some((question) => Boolean(question.trim()))}
-            linkedObjectId={project.realEstateObjectId}
-            projectId={project.id}
-            onProjectContentChanged={refreshProjectContent}
-          />
-        </TabsContent>
-        <TabsContent value="access">
+        <TabsContent value="assignments">
+          <div className="training-editor-content-heading">
+            <h3>Назначения</h3>
+            <p className="muted-text">Выберите, кто сможет начать обучение по этому проекту.</p>
+          </div>
           <TrainingProjectAccessPanel
             accessToken={accessToken ?? ''}
             project={project}
@@ -354,6 +421,7 @@ export function TrainingAdminProjectEditorPage({
             }}
           />
         </TabsContent>
+        </div>
       </Tabs>
 
       <Dialog
@@ -398,6 +466,37 @@ export function TrainingAdminProjectEditorPage({
   );
 }
 
+function EditorStageTrigger({
+  label,
+  meta,
+  step,
+  value,
+}: {
+  label: string;
+  meta: string;
+  step: string;
+  value: EditorTab;
+}) {
+  return (
+    <TabsTrigger className="training-editor-stage-trigger" value={value}>
+      <span className="training-editor-stage-number" aria-hidden="true">{step}</span>
+      <span className="training-editor-stage-copy">
+        <strong>{label}</strong>
+        <small>{meta}</small>
+      </span>
+    </TabsTrigger>
+  );
+}
+
+function pluralizeMaterials(value: number) {
+  const mod100 = value % 100;
+  const mod10 = value % 10;
+  if (mod100 >= 11 && mod100 <= 14) return 'источников';
+  if (mod10 === 1) return 'источник';
+  if (mod10 >= 2 && mod10 <= 4) return 'источника';
+  return 'источников';
+}
+
 function EditorTextField({ id, label, value, error, disabled, onChange }: { id: string; label: string; value: string; error?: string; disabled: boolean; onChange: (value: string) => void }) {
   return <Field data-invalid={Boolean(error)} data-disabled={disabled}><FieldLabel htmlFor={id}>{label}</FieldLabel><Input id={id} value={value} disabled={disabled} aria-invalid={Boolean(error)} onChange={(event) => onChange(event.target.value)} />{error ? <FieldError>{error}</FieldError> : null}</Field>;
 }
@@ -423,12 +522,14 @@ function QuestionFactsEditor({ disabled, facts, label, onChange, questionPositio
             <textarea id={`fact-${questionType}-${questionPosition}-${index}`} className="training-textarea" rows={3} value={fact.statement} onChange={(event) => onChange(facts.map((item, itemIndex) => itemIndex === index ? { ...item, statement: event.target.value } : item))} />
           </Field>
           <Field>
-            <FieldLabel htmlFor={`aliases-${questionType}-${questionPosition}-${index}`}>Aliases через запятую</FieldLabel>
+            <FieldLabel htmlFor={`aliases-${questionType}-${questionPosition}-${index}`}>Варианты ответа через запятую</FieldLabel>
             <Input id={`aliases-${questionType}-${questionPosition}-${index}`} value={fact.aliases.join(', ')} onChange={(event) => onChange(facts.map((item, itemIndex) => itemIndex === index ? { ...item, aliases: event.target.value.split(',').map((alias) => alias.trim()).filter(Boolean) } : item))} />
             <FieldDescription>Только краткие имена и термины, не полный эталонный ответ.</FieldDescription>
           </Field>
-          <label className="training-inline-check"><input type="checkbox" checked={fact.isRequired} onChange={(event) => onChange(facts.map((item, itemIndex) => itemIndex === index ? { ...item, isRequired: event.target.checked } : item))} /> Обязательный факт</label>
-          <AdminButton type="button" tone="text" onClick={() => onChange(facts.filter((_, itemIndex) => itemIndex !== index).map((item, itemIndex) => ({ ...item, position: itemIndex + 1 })))}>Удалить факт</AdminButton>
+          <div className="training-fact-actions">
+            <label className="training-inline-check"><input type="checkbox" checked={fact.isRequired} onChange={(event) => onChange(facts.map((item, itemIndex) => itemIndex === index ? { ...item, isRequired: event.target.checked } : item))} /> <span>Обязательный факт</span></label>
+            <AdminButton className="training-fact-delete-action" type="button" tone="danger" onClick={() => onChange(facts.filter((_, itemIndex) => itemIndex !== index).map((item, itemIndex) => ({ ...item, position: itemIndex + 1 })))}><Trash2Icon data-icon="inline-start" /> Удалить факт</AdminButton>
+          </div>
         </div>
       )) : <p className="training-validation-note">Нет фактов: проект нельзя будет опубликовать.</p>}
       <AdminButton type="button" tone="secondary" onClick={() => onChange([...facts, { id: null, questionType, questionPosition, statement: '', aliases: [], isRequired: true, position: facts.length + 1 }])}>Добавить факт ответа</AdminButton>
@@ -446,17 +547,17 @@ function CriteriaEditor({ criteria, disabled, expectedTotal, onChange, type }: {
 
   return (
     <fieldset className="training-criteria-editor" disabled={disabled}>
-      <div className="training-subsection-heading"><legend>{type} criteria</legend><strong className={total === expectedTotal ? 'training-total--valid' : 'training-total--invalid'}>{total} / {expectedTotal}</strong></div>
+      <div className="training-subsection-heading"><legend>{type === 'MAIN' ? 'Критерии главного вопроса' : 'Критерии дополнительных вопросов'}</legend><strong className={total === expectedTotal ? 'training-total--valid' : 'training-total--invalid'}>{total} / {expectedTotal}</strong></div>
       {scoped.map((criterion, index) => (
         <div className="training-criterion-row" key={criterion.id ?? `${type}-${index}`}>
-          <EditorTextField id={`criterion-code-${type}-${index}`} label="Code" value={criterion.code} disabled={disabled} onChange={(value) => replace(scoped.map((item, itemIndex) => itemIndex === index ? { ...item, code: value } : item))} />
+          <EditorTextField id={`criterion-code-${type}-${index}`} label="Код" value={criterion.code} disabled={disabled} onChange={(value) => replace(scoped.map((item, itemIndex) => itemIndex === index ? { ...item, code: value } : item))} />
           <EditorTextField id={`criterion-title-${type}-${index}`} label="Название" value={criterion.title} disabled={disabled} onChange={(value) => replace(scoped.map((item, itemIndex) => itemIndex === index ? { ...item, title: value } : item))} />
           <EditorNumberField id={`criterion-points-${type}-${index}`} label="Баллы" value={String(criterion.maxPoints)} disabled={disabled} onChange={(value) => replace(scoped.map((item, itemIndex) => itemIndex === index ? { ...item, maxPoints: Number(value) } : item))} />
           <Field><FieldLabel htmlFor={`criterion-guidance-${type}-${index}`}>Инструкция</FieldLabel><textarea id={`criterion-guidance-${type}-${index}`} className="training-textarea" rows={3} value={criterion.guidance} onChange={(event) => replace(scoped.map((item, itemIndex) => itemIndex === index ? { ...item, guidance: event.target.value } : item))} /></Field>
-          <AdminButton type="button" tone="text" onClick={() => replace(scoped.filter((_, itemIndex) => itemIndex !== index))}>Удалить criterion</AdminButton>
+          <AdminButton type="button" tone="text" onClick={() => replace(scoped.filter((_, itemIndex) => itemIndex !== index))}>Удалить критерий</AdminButton>
         </div>
       ))}
-      <AdminButton type="button" tone="secondary" onClick={() => replace([...scoped, { id: null, questionType: type, code: '', title: '', guidance: '', maxPoints: 1, position: scoped.length + 1 }])}>Добавить criterion</AdminButton>
+      <AdminButton type="button" tone="secondary" onClick={() => replace([...scoped, { id: null, questionType: type, code: '', title: '', guidance: '', maxPoints: 1, position: scoped.length + 1 }])}>Добавить критерий</AdminButton>
     </fieldset>
   );
 }
@@ -476,16 +577,23 @@ function validateEditorForm(form: EditorForm) {
   form.followUpQuestions.forEach((question, index) => { if (!question.trim()) errors[`training-follow-up-${index + 1}`] = 'Введите дополнительный вопрос'; });
   form.facts.forEach((fact, index) => {
     if (!fact.statement.trim()) errors[`training-fact-${index}`] = 'Заполните утверждённый факт';
-    if (fact.aliases.length > 20 || fact.aliases.some((alias) => alias.length > 80 || alias.split(/\s+/u).length > 8 || /[\r\n]/u.test(alias))) errors[`training-fact-alias-${index}`] = 'Проверьте краткие aliases';
+    if (
+      fact.aliases.length > TRAINING_FACT_ALIAS_LIMIT ||
+      fact.aliases.some((alias) =>
+        alias.length > TRAINING_FACT_ALIAS_MAX_LENGTH ||
+        alias.split(/\s+/u).length > TRAINING_FACT_ALIAS_MAX_WORDS ||
+        /[\r\n]/u.test(alias)
+      )
+    ) errors[`training-fact-alias-${index}`] = 'Проверьте краткие варианты ответа';
     const canonical = fact.aliases.map((alias) => alias.normalize('NFC').toLocaleLowerCase('ru-RU'));
-    if (new Set(canonical).size !== canonical.length) errors[`training-fact-alias-${index}`] = 'Aliases не должны повторяться';
+    if (new Set(canonical).size !== canonical.length) errors[`training-fact-alias-${index}`] = 'Варианты ответа не должны повторяться';
   });
   for (const type of ['MAIN', 'FOLLOW_UP'] as const) {
     const scoped = form.criteria.filter((criterion) => criterion.questionType === type);
     const codes = scoped.map((criterion) => criterion.code.trim().toLocaleLowerCase('en-US'));
-    if (new Set(codes).size !== codes.length) errors[`training-criteria-${type}`] = `Codes ${type} не должны повторяться`;
+    if (new Set(codes).size !== codes.length) errors[`training-criteria-${type}`] = `Коды критериев ${type === 'MAIN' ? 'главного вопроса' : 'дополнительных вопросов'} не должны повторяться`;
     scoped.forEach((criterion, index) => {
-      if (!/^[a-z][a-z0-9_]*$/u.test(criterion.code) || !criterion.title.trim() || !Number.isInteger(criterion.maxPoints) || criterion.maxPoints < 1) errors[`training-criterion-${type}-${index}`] = `Проверьте criterion ${index + 1}`;
+      if (!/^[a-z][a-z0-9_]*$/u.test(criterion.code) || !criterion.title.trim() || !Number.isInteger(criterion.maxPoints) || criterion.maxPoints < 1) errors[`training-criterion-${type}-${index}`] = `Проверьте критерий ${index + 1}`;
     });
   }
   return errors;

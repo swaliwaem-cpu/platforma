@@ -32,7 +32,7 @@ test('Stage 5 Part 1 review commits POST state before a separate detail refresh'
   assert.ok(reviewIndex >= 0);
   assert.ok(optimisticIndex > reviewIndex);
   assert.ok(refreshIndex > optimisticIndex);
-  assert.match(detail, /Решение сохранено, но detail не обновился/);
+  assert.match(detail, /Решение сохранено, но подробности не обновились/);
 });
 
 test('Stage 5 Part 1 protected audio owns abort and object URL lifecycle', () => {

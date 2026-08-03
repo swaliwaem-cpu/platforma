@@ -120,7 +120,7 @@ try {
   await page.getByRole('heading', { name: 'Stage 3 browser project' }).waitFor();
   await page.getByText('55 / 55', { exact: true }).waitFor();
   await page.getByText('15 / 15', { exact: true }).waitFor();
-  await page.getByText('Проверьте краткость aliases перед публикацией.').waitFor();
+  await page.getByText('Проверьте краткость вариантов ответа перед публикацией.').waitFor();
   assert.equal(await page.getByText(/Утверждённый факт 1/u).count(), 11);
   await page.getByRole('button', { name: 'Добавить факт' }).first().click();
   await page.getByText('Утверждённый факт 2', { exact: true }).waitFor();
@@ -128,7 +128,7 @@ try {
   await page.goto(`${baseUrl}/admin/training/attempts/${approveAttemptId}`);
   await page.getByRole('heading', { name: 'Подтвердить или скорректировать итог' }).waitFor();
   await page.getByText('Утверждённые факты').waitFor();
-  await page.getByText('Unsupported claims').waitFor();
+  await page.getByText('Неподтверждённые утверждения').waitFor();
   await page.getByText('gpt-4o-mini-transcribe-2025-12-15').waitFor();
   await page.getByText('gpt-5.6-terra').waitFor();
   const approveButton = page.getByRole('button', { name: 'Подтвердить расчёт' });
@@ -145,7 +145,7 @@ try {
   assert.equal(reviewRequests.filter((item) => item.attemptId === approveAttemptId).length, 1);
 
   await page.goto(`${baseUrl}/admin/training/attempts/${overrideAttemptId}`);
-  await page.getByLabel('Override').check();
+  await page.getByLabel('Скорректировать').check();
   await page.getByLabel('Итоговый балл').fill('44');
   await page.getByLabel('Причина / комментарий').fill('Проверено руководителем');
   const overrideButton = page.getByRole('button', { name: 'Сохранить новый итог' });
@@ -244,7 +244,7 @@ function adminProject() {
       { id: '45555555-5555-4555-8555-555555555555', questionType: 'MAIN', code: 'delivery', title: 'Подача', guidance: '', maxPoints: 10, position: 5 },
       { id: '46666666-6666-4666-8666-666666666666', questionType: 'FOLLOW_UP', code: 'answer_quality', title: 'Качество ответа', guidance: '', maxPoints: 15, position: 1 },
     ],
-    publicationErrors: ['Проверьте краткость aliases перед публикацией.'],
+    publicationErrors: ['Проверьте краткость вариантов ответа перед публикацией.'],
     createdAt: '2026-08-02T09:00:00.000Z',
     updatedAt: '2026-08-02T09:00:00.000Z',
   };
@@ -270,7 +270,7 @@ function adminAttempt(attemptId, resolvedReview) {
       projectStatus: 'PUBLISHED_OPEN',
       isOpen: true,
       accessMode: 'ALL_PARTICIPANTS',
-      assignmentStatus: 'NOT_REQUIRED',
+      assignmentStatus: 'NEVER_ASSIGNED',
       userStatus: 'ACTIVE',
       canParticipate: true,
       hasCurrentAccess: true,

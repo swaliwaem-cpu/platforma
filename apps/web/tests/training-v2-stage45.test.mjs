@@ -15,7 +15,7 @@ const employeeProjects = source('training/TrainingProjectsPage.tsx');
 const styles = source('training/training.css');
 
 test('Stage 4.5 extends the existing editor without a new route', () => {
-  assert.match(editor, /TabsTrigger value="access">Доступ сотрудников/);
+  assert.match(editor, /EditorStageTrigger value="assignments"[^\n]*label="Назначения"/);
   assert.match(editor, /TrainingProjectAccessPanel/);
   assert.doesNotMatch(routes, /assignments|assignment-users|project-access/iu);
   assert.match(adminProjects, /accessMode: 'ASSIGNED_USERS'/);
@@ -25,8 +25,12 @@ test('Stage 4.5 extends the existing editor without a new route', () => {
 test('Stage 4.5 access panel covers modes, warnings and bounded bulk selection', () => {
   assert.match(panel, /ASSIGNED_USERS/);
   assert.match(panel, /ALL_PARTICIPANTS/);
+  assert.match(panel, /data-selected=\{project\.accessMode === 'ASSIGNED_USERS'\}/);
+  assert.match(panel, /data-selected=\{project\.accessMode === 'ALL_PARTICIPANTS'\}/);
+  assert.match(panel, /training-access-mode-radio/);
+  assert.match(panel, />Выбрано<\/Badge>/);
   assert.match(panel, /нет активных назначений/iu);
-  assert.match(panel, /server|Имя или email/iu);
+  assert.match(panel, /server|Имя или электронная почта/iu);
   assert.match(panel, /assigned/);
   assert.match(panel, /Выбрать всех сотрудников на текущей странице/);
   assert.match(panel, /Назначить/);
@@ -56,5 +60,8 @@ test('Stage 4.5 employee UI shows the exact safe active-attempt message', () => 
   assert.match(employeeProjects, /Продолжите через \/start в Telegram/);
   assert.match(styles, /training-access-revoked-note/);
   assert.match(styles, /training-access-modes/);
+  assert.match(styles, /training-access-mode-option\[data-selected='true'\]/);
+  assert.match(styles, /training-access-mode-radio\[data-state='checked'\]/);
+  assert.match(styles, /training-access-mode-selected/);
   assert.match(styles, /training-assignment-pagination/);
 });

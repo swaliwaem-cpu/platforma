@@ -8,6 +8,7 @@ export const TRAINING_SCORING_VERSION = 'training-v2-scoring-v1';
 export const TRAINING_EVALUATION_SCHEMA_VERSION = 'training-v2-evaluation-v1';
 export const TRAINING_FACT_ALIAS_LIMIT = 20;
 export const TRAINING_FACT_ALIAS_MAX_LENGTH = 80;
+export const TRAINING_FACT_ALIAS_MAX_WORDS = 15;
 export const TRAINING_FACT_STATEMENT_MAX_LENGTH = 1_000;
 
 type TrainingProjectSnapshotSettings = {

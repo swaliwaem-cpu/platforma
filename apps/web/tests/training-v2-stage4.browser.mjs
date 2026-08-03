@@ -7,13 +7,22 @@ const baseUrl = process.env.TRAINING_WEB_TEST_URL;
 if (!baseUrl) throw new Error('TRAINING_WEB_TEST_URL is required');
 
 const browser = await chromium.launch({ headless: true });
-const page = await browser.newPage();
+const page = await browser.newPage({ viewport: { width: 1536, height: 1024 } });
+const consoleIssues = [];
+page.on('console', (message) => {
+  if (message.type() === 'error' || message.type() === 'warning') {
+    consoleIssues.push(`${message.type()}: ${message.text()}`);
+  }
+});
+page.on('pageerror', (error) => consoleIssues.push(`pageerror: ${error.message}`));
 const projectId = '61111111-1111-4111-8111-111111111111';
 const questionId = '62222222-2222-4222-8222-222222222222';
 const objectId = '67777777-7777-4777-8777-777777777777';
 const materials = [];
-let listFailuresRemaining = 2;
+let listFailuresRemaining = 1;
 let listDelaysRemaining = 0;
+let listDelayGate = null;
+let resolveListDelayStarted = null;
 let appliedPayload = null;
 let confirmedUrlPayload = null;
 let objectImported = false;
@@ -59,7 +68,9 @@ try {
       }
       if (listDelaysRemaining > 0) {
         listDelaysRemaining -= 1;
-        await new Promise((resolve) => setTimeout(resolve, 1_500));
+        resolveListDelayStarted?.();
+        resolveListDelayStarted = null;
+        await listDelayGate;
       }
       await json(route, { items: materials });
       return;
@@ -115,9 +126,12 @@ try {
       const type = {
         MANUAL_TEXT: 'manual',
         OFFICIAL_URL: 'url',
-        OBJECT_SNAPSHOT: 'object-snapshot',
       }[payload.type];
       const title = payload.title;
+      if (type === 'url' && title === 'Broken URL') {
+        await json(route, { message: 'QUESTION_DRAFT_GENERATION_FAILED' }, 502);
+        return;
+      }
       if (type === 'url') confirmedUrlPayload = payload;
       const material = makeMaterial(type, title, materials.length + 1);
       materials.unshift(material);
@@ -198,16 +212,37 @@ try {
     await json(route, { message: 'not found' }, 404);
   });
 
-  await page.goto(`${baseUrl}/admin/training/projects/${projectId}`);
+  await page.goto(`${baseUrl}/admin/training/projects/${projectId}?theme=c`);
   await page.getByRole('heading', { name: 'Stage 4 browser project' }).waitFor();
+  assert.equal(await page.title(), 'Platforma');
+  assert.match(page.url(), new RegExp(`/admin/training/projects/${projectId}\\?theme=c$`, 'u'));
+  assert.equal(await page.locator('html').getAttribute('data-app-theme'), 'dark-premium');
+  assert.equal(await page.locator('vite-error-overlay').count(), 0);
+  const deleteProjectButton = page.getByRole('button', { name: 'Удалить проект' });
+  assert.equal(await deleteProjectButton.getAttribute('data-variant'), 'destructive');
+  assert.notEqual(await deleteProjectButton.evaluate((element) => getComputedStyle(element).backgroundColor), 'rgba(0, 0, 0, 0)');
+  await deleteProjectButton.click();
+  await page.getByRole('heading', { name: /Безвозвратно удалить проект/u }).waitFor();
+  if (process.env.TRAINING_DELETE_SCREENSHOT) {
+    await page.screenshot({ path: process.env.TRAINING_DELETE_SCREENSHOT });
+  }
+  await page.getByRole('button', { name: 'Отмена' }).click();
+  await page.getByRole('heading', { name: /Безвозвратно удалить проект/u }).waitFor({ state: 'hidden' });
   await page.getByRole('tab', { name: 'Материалы' }).click();
   await page.getByText('MATERIAL_LIST_FIXTURE_ERROR').waitFor();
 
-  listDelaysRemaining = 2;
+  listDelaysRemaining = 1;
+  let releaseListDelay;
+  listDelayGate = new Promise((resolve) => { releaseListDelay = resolve; });
+  const delayedListStarted = new Promise((resolve) => { resolveListDelayStarted = resolve; });
   await page.reload();
+  await delayedListStarted;
   await page.getByRole('heading', { name: 'Stage 4 browser project' }).waitFor();
   await page.getByRole('tab', { name: 'Материалы' }).click();
+  await page.locator('.training-materials-skeleton').waitFor();
   assert.equal(await page.locator('.training-materials-skeleton').count(), 1);
+  releaseListDelay();
+  listDelayGate = null;
   await page.getByText('Источников пока нет').waitFor();
 
   const search = page.getByRole('combobox', { name: 'Поиск ЖК' });
@@ -224,13 +259,17 @@ try {
     if (!response.url().endsWith('/import-object') || response.request().method() !== 'POST') return false;
     return response.request().postDataJSON()?.replaceExistingQuestions === true;
   });
-  await page.getByRole('button', { name: 'Загрузить данные и создать вопросы' }).click();
+  await page.getByRole('button', { name: 'Создать вопросы и ответы из данных ЖК' }).click();
   assert.equal((await importResponsePromise).status(), 201);
-  await page.getByText(/Созданы 1 главный и 10 дополнительных черновиков вопросов/u).waitFor();
+  await page.getByText(/Созданы 1 главный и 10 дополнительных вопросов с активными эталонными ответами/u).waitFor();
+  assert.ok(await contrastRatio(page.locator('.admin-alert--notice').last()) >= 4.5);
+  if (process.env.TRAINING_NOTICE_SCREENSHOT) {
+    await page.screenshot({ path: process.env.TRAINING_NOTICE_SCREENSHOT });
+  }
   assert.ok(objectSearchQueries.includes('ctdth'));
   assert.deepEqual(objectImportPayloads.map((payload) => payload.replaceExistingQuestions), [false, true]);
 
-  await page.getByRole('tab', { name: 'Контент и оценивание' }).click();
+  await page.getByRole('tab', { name: 'Вопросы' }).click();
   await page.getByLabel('Текст главного вопроса').waitFor();
   assert.equal(await page.getByLabel('Текст главного вопроса').inputValue(), generatedMainQuestion());
   assert.equal(await page.getByLabel('Дополнительный вопрос 10').inputValue(), generatedFollowUpQuestions()[9]);
@@ -238,24 +277,24 @@ try {
 
   await createManual();
   await createOfficialUrl();
-  await createObjectSnapshot();
   await createPdf();
-  assert.equal(await page.locator('.training-material-card').count(), 6);
+  assert.equal(await page.locator('.training-material-row').count(), 5);
 
-  await page.locator('.training-material-card').filter({ hasText: 'URL source' }).getByRole('button', { name: 'Открыть' }).click();
+  await page.locator('.training-material-row').filter({ hasText: 'URL source' }).getByRole('button', { name: 'Открыть URL source' }).click();
   await page.getByText('https://official.test/final', { exact: true }).waitFor();
-  await page.getByRole('button', { name: 'Новая revision' }).click();
-  await page.getByText('Revision 2', { exact: true }).waitFor();
-  await page.getByText('Добавленные segments').waitFor();
-  await page.getByRole('button', { name: /#1 READY/u }).click();
-  await page.getByText('Revision 1', { exact: true }).waitFor();
-  await page.getByRole('button', { name: /#2 READY/u }).click();
+  await page.getByRole('button', { name: 'Новая версия' }).click();
+  const inspector = page.getByLabel('Инспектор выбранного материала');
+  await inspector.getByText('Версия 2', { exact: true }).waitFor();
+  await page.getByText('Добавленные фрагменты').waitFor();
+  await page.getByRole('button', { name: /#1 Готово/u }).click();
+  await inspector.getByText('Версия 1', { exact: true }).waitFor();
+  await page.getByRole('button', { name: /#2 Готово/u }).click();
 
   await page.getByRole('button', { name: 'Сгенерировать' }).click();
   await page.getByText('Предложенный факт из URL.').waitFor();
   const suggestion = page.locator('.training-suggestion-editor');
-  await suggestion.getByText('Выбрать suggestion').click();
-  await suggestion.getByLabel('Факт').fill('Отредактированный подтверждённый факт.');
+  await suggestion.getByText('Выбрать предложенный факт').click();
+  await suggestion.getByRole('textbox', { name: 'Факт', exact: true }).fill('Отредактированный подтверждённый факт.');
   const applyResponsePromise = page.waitForResponse((response) =>
     response.url().endsWith('/apply-suggestions') && response.request().method() === 'POST',
   );
@@ -264,52 +303,104 @@ try {
   assert.equal(appliedPayload.suggestions[0].statement, 'Отредактированный подтверждённый факт.');
   assert.equal(confirmedUrlPayload.officialConfirmed, true);
 
-  await page.getByRole('tab', { name: 'Контент и оценивание' }).click();
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await inspector.evaluate((element) => { element.scrollTop = 0; });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  if (process.env.TRAINING_DESKTOP_SCREENSHOT) {
+    await page.screenshot({ path: process.env.TRAINING_DESKTOP_SCREENSHOT });
+  }
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  if (process.env.TRAINING_MOBILE_SCREENSHOT) {
+    await page.screenshot({ path: process.env.TRAINING_MOBILE_SCREENSHOT });
+  }
+  await page.setViewportSize({ width: 1536, height: 1024 });
+
+  await page.getByRole('tab', { name: 'Вопросы' }).click();
   await page.getByText('PDF · Страница 1').first().waitFor();
   await page.getByText(/PDF проекта · «Высота потолков/u).first().waitFor();
+  const firstFactRow = page.locator('.training-fact-row').first();
+  const factCheckboxBox = await firstFactRow.locator('.training-inline-check input[type="checkbox"]').boundingBox();
+  const factLabelBox = await firstFactRow.locator('.training-inline-check span').boundingBox();
+  const factDeleteBox = await firstFactRow.locator('.training-fact-delete-action').boundingBox();
+  assert.ok(factCheckboxBox && factLabelBox && factDeleteBox);
+  assert.ok(factLabelBox.x - (factCheckboxBox.x + factCheckboxBox.width) <= 12);
+  assert.ok(factDeleteBox.x > factLabelBox.x);
+  if (process.env.TRAINING_QUESTIONS_SCREENSHOT) {
+    await firstFactRow.screenshot({ path: process.env.TRAINING_QUESTIONS_SCREENSHOT });
+  }
 
   await page.goto(`${baseUrl}/training`);
   await page.getByRole('heading', { name: 'Учебные проекты' }).waitFor();
   assert.equal(await page.getByRole('tab', { name: 'Материалы' }).count(), 0);
   assert.equal(await page.getByText('Официальный URL').count(), 0);
+  const unexpectedConsoleIssues = consoleIssues.filter((message) =>
+    !/status of (?:500 \(Internal Server Error\)|502 \(Bad Gateway\)|409 \(Conflict\))/u.test(message),
+  );
+  assert.deepEqual(unexpectedConsoleIssues, []);
 } finally {
   await browser.close();
 }
 
 async function createManual() {
+  await page.getByRole('button', { name: 'Добавить источник' }).click();
   await page.getByLabel('Тип источника').selectOption('MANUAL_TEXT');
   await page.locator('#training-material-title').fill('Manual source');
-  await page.getByLabel('Plain text').fill('Ручной текст для immutable revision.');
+  await page.getByLabel('Текст').fill('Ручной текст для новой версии.');
   await page.getByRole('button', { name: 'Создать материал' }).click();
   await page.getByText('Manual source', { exact: true }).first().waitFor();
 }
 
 async function createOfficialUrl() {
+  await page.getByRole('button', { name: 'Добавить источник' }).click();
+  assert.equal(
+    await page.getByLabel('Тип источника').locator('option[value="OBJECT_SNAPSHOT"]').count(),
+    0,
+  );
   await page.getByLabel('Тип источника').selectOption('OFFICIAL_URL');
+  await page.locator('#training-material-title').fill('Broken URL');
+  await page.getByLabel('Одна официальная защищённая страница').fill('https://official.test/source');
+  const confirmation = page.getByLabel('Подтверждаю, что это официальный источник проекта');
+  const confirmationLabel = page.locator('label[for="training-material-official-confirmation"]');
+  const checkboxBox = await confirmation.boundingBox();
+  const labelBox = await confirmationLabel.boundingBox();
+  assert.ok(checkboxBox && labelBox);
+  assert.ok(labelBox.x - (checkboxBox.x + checkboxBox.width) <= 16);
+  await confirmation.check();
+  await page.getByRole('button', { name: 'Создать материал' }).click();
+  await page.getByText('Не удалось сформировать вопросы по источнику. Материал не сохранён. Попробуйте ещё раз.').waitFor();
+  assert.equal(await page.getByText('Broken URL', { exact: true }).count(), 0);
   await page.locator('#training-material-title').fill('URL source');
-  await page.getByLabel('Одна официальная HTTPS-страница').fill('https://official.test/source');
-  await page.getByText('Подтверждаю, что это официальный источник проекта').click();
   await page.getByRole('button', { name: 'Создать материал' }).click();
   await page.getByText('URL source', { exact: true }).first().waitFor();
 }
 
-async function createObjectSnapshot() {
-  await page.getByLabel('Тип источника').selectOption('OBJECT_SNAPSHOT');
-  await page.locator('#training-material-title').fill('Object source');
-  await page.getByRole('button', { name: 'Создать материал' }).click();
-  await page.getByText('Object source', { exact: true }).first().waitFor();
-}
-
 async function createPdf() {
+  await page.getByRole('button', { name: 'Добавить источник' }).click();
   await page.getByLabel('Тип источника').selectOption('PDF');
   await page.locator('#training-material-title').fill('PDF source');
-  await page.getByLabel('PDF с текстовым слоем').setInputFiles({
+  await page.getByLabel('Документ PDF с текстовым слоем').setInputFiles({
     name: 'fixture.pdf',
     mimeType: 'application/pdf',
     buffer: Buffer.from('%PDF-1.4 synthetic browser fixture'),
   });
   await page.getByRole('button', { name: 'Создать материал' }).click();
   await page.getByText('PDF source', { exact: true }).first().waitFor();
+}
+
+async function contrastRatio(locator) {
+  return locator.evaluate((element) => {
+    const parse = (value) => value.match(/[\d.]+/gu)?.slice(0, 3).map(Number) ?? [0, 0, 0];
+    const luminance = (rgb) => rgb
+      .map((channel) => channel / 255)
+      .map((channel) => channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4)
+      .reduce((sum, channel, index) => sum + channel * [0.2126, 0.7152, 0.0722][index], 0);
+    const foreground = luminance(parse(getComputedStyle(element).color));
+    const background = luminance(parse(getComputedStyle(element).backgroundColor));
+    return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+  });
 }
 
 function makeMaterial(kind, title, index) {

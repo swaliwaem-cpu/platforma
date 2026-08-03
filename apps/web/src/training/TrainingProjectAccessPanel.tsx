@@ -181,17 +181,33 @@ export function TrainingProjectAccessPanel({
           value={project.accessMode}
           onValueChange={(value) => void updateMode(value as TrainingProjectAccessMode)}
         >
-          <label className="training-access-mode-option">
-            <RadioGroupItem value="ASSIGNED_USERS" />
-            <span>
-              <strong>Только назначенные сотрудники</strong>
-              <small>Нужны право training:participate и активное назначение.</small>
+          <label
+            className="training-access-mode-option"
+            data-selected={project.accessMode === 'ASSIGNED_USERS'}
+          >
+            <RadioGroupItem className="training-access-mode-radio" value="ASSIGNED_USERS" />
+            <span className="training-access-mode-copy">
+              <span className="training-access-mode-title">
+                <strong>Только назначенные сотрудники</strong>
+                {project.accessMode === 'ASSIGNED_USERS' ? (
+                  <Badge className="training-access-mode-selected" aria-hidden="true">Выбрано</Badge>
+                ) : null}
+              </span>
+              <small>Нужны право участия в обучении и активное назначение.</small>
             </span>
           </label>
-          <label className="training-access-mode-option">
-            <RadioGroupItem value="ALL_PARTICIPANTS" />
-            <span>
-              <strong>Все участники обучения</strong>
+          <label
+            className="training-access-mode-option"
+            data-selected={project.accessMode === 'ALL_PARTICIPANTS'}
+          >
+            <RadioGroupItem className="training-access-mode-radio" value="ALL_PARTICIPANTS" />
+            <span className="training-access-mode-copy">
+              <span className="training-access-mode-title">
+                <strong>Все участники обучения</strong>
+                {project.accessMode === 'ALL_PARTICIPANTS' ? (
+                  <Badge className="training-access-mode-selected" aria-hidden="true">Выбрано</Badge>
+                ) : null}
+              </span>
               <small>Доступ получают все активные сотрудники с правом участия.</small>
             </span>
           </label>
@@ -218,7 +234,7 @@ export function TrainingProjectAccessPanel({
             <Input
               type="search"
               value={searchInput}
-              placeholder="Имя или email"
+              placeholder="Имя или электронная почта"
               onChange={(event) => setSearchInput(event.target.value)}
             />
           </label>
@@ -310,7 +326,7 @@ export function TrainingProjectAccessPanel({
                         {user.canParticipate ? 'Есть' : 'Нет'}
                       </Badge>
                       {!user.canParticipate ? (
-                        <small>Назначение не даст доступ без permission.</small>
+                        <small>Назначение не даст доступ без права участия в обучении.</small>
                       ) : null}
                     </span>
                   </TableCell>

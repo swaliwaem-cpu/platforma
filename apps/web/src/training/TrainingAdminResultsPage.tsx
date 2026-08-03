@@ -8,7 +8,15 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { getTrainingAdminResults } from './trainingApi';
-import { formatTrainingDate, formatTrainingDuration, getTrainingStatusClass, trainingAttemptStatusLabels } from './trainingView';
+import {
+  formatTrainingDate,
+  formatTrainingDuration,
+  getTrainingStatusClass,
+  trainingAnswerSourceLabels,
+  trainingAssignmentStatusLabels,
+  trainingAttemptStatusLabels,
+  trainingReviewStatusLabels,
+} from './trainingView';
 
 const initialQuery: TrainingAdminResultsQuery = {
   page: 1,
@@ -89,22 +97,22 @@ export function TrainingAdminResultsPage({ navigate }: TrainingAdminResultsPageP
   return (
     <div className="training-page training-admin-page">
       <header className="training-page-header">
-        <div><p className="eyebrow">Админка · Training V2</p><h2>Результаты сотрудников</h2><p className="muted-text">Серверные фильтры, пагинация и детальная проверка каждой попытки.</p></div>
+        <div><p className="eyebrow">Админка · Обучение</p><h2>Результаты сотрудников</h2><p className="muted-text">Серверные фильтры, постраничный вывод и детальная проверка каждой попытки.</p></div>
         <AdminButton type="button" tone="text" onClick={() => navigate('/admin/training')}>К проектам</AdminButton>
       </header>
 
       <AdminPanel className="training-results-filter-panel">
         <form onSubmit={applyFilters}>
           <FieldGroup className="training-results-filters">
-            <Field><FieldLabel htmlFor="training-result-search">Сотрудник</FieldLabel><Input id="training-result-search" placeholder="Имя или email" value={draft.search} onChange={(event) => update('search', event.target.value)} /></Field>
-            <Field><FieldLabel htmlFor="training-result-project">Project ID</FieldLabel><Input id="training-result-project" value={draft.projectId} onChange={(event) => update('projectId', event.target.value)} /></Field>
-            <Field><FieldLabel htmlFor="training-result-user">User ID</FieldLabel><Input id="training-result-user" value={draft.userId} onChange={(event) => update('userId', event.target.value)} /></Field>
+            <Field><FieldLabel htmlFor="training-result-search">Сотрудник</FieldLabel><Input id="training-result-search" placeholder="Имя или электронная почта" value={draft.search} onChange={(event) => update('search', event.target.value)} /></Field>
+            <Field><FieldLabel htmlFor="training-result-project">Идентификатор проекта</FieldLabel><Input id="training-result-project" value={draft.projectId} onChange={(event) => update('projectId', event.target.value)} /></Field>
+            <Field><FieldLabel htmlFor="training-result-user">Идентификатор сотрудника</FieldLabel><Input id="training-result-user" value={draft.userId} onChange={(event) => update('userId', event.target.value)} /></Field>
             <SelectField id="training-result-status" label="Статус" value={draft.attemptStatus} onChange={(value) => update('attemptStatus', value as TrainingAdminResultsQuery['attemptStatus'])} options={[['', 'Все'], ['IN_PROGRESS', 'В процессе'], ['COMPLETED', 'Завершена'], ['REQUIRES_REVIEW', 'Требует проверки'], ['TIMED_OUT', 'Время истекло'], ['TECHNICAL_FAILED', 'Техническая ошибка']]} />
-            <SelectField id="training-result-review" label="Review" value={draft.reviewStatus} onChange={(value) => update('reviewStatus', value as TrainingAdminResultsQuery['reviewStatus'])} options={[['', 'Все'], ['NOT_REQUIRED', 'Не требуется'], ['PENDING', 'Ожидает'], ['RESOLVED', 'Завершён']]} />
+            <SelectField id="training-result-review" label="Проверка" value={draft.reviewStatus} onChange={(value) => update('reviewStatus', value as TrainingAdminResultsQuery['reviewStatus'])} options={[['', 'Все'], ['NOT_REQUIRED', 'Не требуется'], ['PENDING', 'Ожидает'], ['RESOLVED', 'Завершена']]} />
             <SelectField id="training-result-passed" label="Итог" value={draft.passed} onChange={(value) => update('passed', value as TrainingAdminResultsQuery['passed'])} options={[['', 'Все'], ['true', 'Пройдено'], ['false', 'Не пройдено']]} />
             <SelectField id="training-result-access" label="Модель доступа" value={draft.accessMode} onChange={(value) => update('accessMode', value as TrainingAdminResultsQuery['accessMode'])} options={[['', 'Все'], ['ASSIGNED_USERS', 'По назначениям'], ['ALL_PARTICIPANTS', 'Все участники']]} />
             <SelectField id="training-result-assignment" label="Назначение" value={draft.assignmentStatus} onChange={(value) => update('assignmentStatus', value as TrainingAdminResultsQuery['assignmentStatus'])} options={[['', 'Все'], ['ASSIGNED', 'Назначен'], ['REVOKED', 'Отозван'], ['NEVER_ASSIGNED', 'Не назначался']]} />
-            <SelectField id="training-result-source" label="Источник" value={draft.source} onChange={(value) => update('source', value as TrainingAdminResultsQuery['source'])} options={[['', 'Все'], ['TEXT', 'Текст'], ['TELEGRAM', 'Telegram']]} />
+            <SelectField id="training-result-source" label="Источник" value={draft.source} onChange={(value) => update('source', value as TrainingAdminResultsQuery['source'])} options={[['', 'Все'], ['TEXT', 'Текст'], ['TELEGRAM', 'Телеграм']]} />
             <Field><FieldLabel htmlFor="training-result-from">Старт от</FieldLabel><Input id="training-result-from" type="datetime-local" value={draft.startedFrom} onChange={(event) => update('startedFrom', event.target.value)} /></Field>
             <Field><FieldLabel htmlFor="training-result-to">Старт до</FieldLabel><Input id="training-result-to" type="datetime-local" value={draft.startedTo} onChange={(event) => update('startedTo', event.target.value)} /></Field>
             <Field><FieldLabel htmlFor="training-result-score-min">Балл от</FieldLabel><Input id="training-result-score-min" inputMode="numeric" value={draft.scoreMin} onChange={(event) => update('scoreMin', event.target.value)} /></Field>
@@ -133,7 +141,7 @@ export function TrainingAdminResultsPage({ navigate }: TrainingAdminResultsPageP
 }
 
 function ResultRow({ item, open }: { item: TrainingAdminResultSummary; open: () => void }) {
-  return <TableRow><TableCell><strong>{item.user.name ?? item.user.email}</strong><small className="training-table-secondary">{item.user.email} · {item.project.title} · №{item.attemptNumber}</small></TableCell><TableCell><AdminStatusBadge className={getTrainingStatusClass(item.status)}>{trainingAttemptStatusLabels[item.status]}</AdminStatusBadge><small className="training-table-secondary">{item.reviewStatus}</small></TableCell><TableCell>{item.finalScore ?? '—'} / 100<small className="training-table-secondary">{item.isPassed === null ? 'Итог не подтверждён' : item.isPassed ? 'Пройдено' : 'Не пройдено'}</small></TableCell><TableCell>{formatTrainingDuration(item.durationSeconds)}<small className="training-table-secondary">{item.answerCount} ответов · {item.answerSources.join(', ') || '—'}</small></TableCell><TableCell>{item.currentAccess.hasCurrentAccess ? 'Есть' : 'Нет'}<small className="training-table-secondary">{item.currentAccess.assignmentStatus}</small></TableCell><TableCell>{formatTrainingDate(item.startedAt)}</TableCell><TableCell><AdminButton type="button" tone="text" onClick={open}>Открыть</AdminButton></TableCell></TableRow>;
+  return <TableRow><TableCell><strong>{item.user.name ?? item.user.email}</strong><small className="training-table-secondary">{item.user.email} · {item.project.title} · №{item.attemptNumber}</small></TableCell><TableCell><AdminStatusBadge className={getTrainingStatusClass(item.status)}>{trainingAttemptStatusLabels[item.status]}</AdminStatusBadge><small className="training-table-secondary">{trainingReviewStatusLabels[item.reviewStatus]}</small></TableCell><TableCell>{item.finalScore ?? '—'} / 100<small className="training-table-secondary">{item.isPassed === null ? 'Итог не подтверждён' : item.isPassed ? 'Пройдено' : 'Не пройдено'}</small></TableCell><TableCell>{formatTrainingDuration(item.durationSeconds)}<small className="training-table-secondary">{item.answerCount} ответов · {item.answerSources.map((source) => trainingAnswerSourceLabels[source]).join(', ') || '—'}</small></TableCell><TableCell>{item.currentAccess.hasCurrentAccess ? 'Есть' : 'Нет'}<small className="training-table-secondary">{trainingAssignmentStatusLabels[item.currentAccess.assignmentStatus]}</small></TableCell><TableCell>{formatTrainingDate(item.startedAt)}</TableCell><TableCell><AdminButton type="button" tone="text" onClick={open}>Открыть</AdminButton></TableCell></TableRow>;
 }
 
 function SelectField({ id, label, value, options, onChange }: { id: string; label: string; value: string; options: Array<[string, string]>; onChange: (value: string) => void }) {

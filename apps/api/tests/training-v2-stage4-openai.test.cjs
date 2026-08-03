@@ -6,6 +6,7 @@ const test = require('node:test');
 const {
   OpenAITrainingMaterialSuggester,
 } = require('../dist/training/training-material-suggester.js');
+const { TrainingOpenAIClient } = require('../dist/training/training-openai-client.js');
 
 test('material OpenAI stub uses strict store=false request without tools and validates exact evidence', async () => {
   let captured;
@@ -150,6 +151,55 @@ test('object question generation uses strict grounded output and creates exactly
   assert.equal(result.followUps.length, 10);
   assert.equal([result.main, ...result.followUps].every((question) => question.facts.length === 1), true);
   assert.deepEqual(result.requestIds, ['question-request']);
+});
+
+test('invalid grounded question output is retried once before returning drafts', async () => {
+  const sourceExcerpt = 'Архитектура комплекса описана в карточке.';
+  const locator = 'revision-object:object-field:architecture';
+  let calls = 0;
+  const makeQuestion = (index, excerpt = sourceExcerpt) => ({
+    text: `Что нужно знать об архитектуре комплекса, часть ${index}?`,
+    source_locator: locator,
+    source_excerpt: excerpt,
+    facts: [{
+      statement: `Проверяемый факт об архитектуре, часть ${index}.`,
+      aliases: [],
+      is_required: true,
+      source_locator: locator,
+      source_excerpt: sourceExcerpt,
+    }],
+  });
+  const client = new TrainingOpenAIClient(
+    'test-key',
+    async () => {
+      calls += 1;
+      return jsonResponse({
+        main_question: makeQuestion(0, calls === 1 ? 'Цитаты нет в источнике.' : sourceExcerpt),
+        follow_up_questions: Array.from({ length: 10 }, (_, index) => makeQuestion(index + 1)),
+      });
+    },
+    'https://openai.test/v1',
+  );
+  const result = await new OpenAITrainingMaterialSuggester(client).generateQuestionDrafts({
+    projectId: 'project',
+    objectId: 'object',
+    objectTitle: 'Север',
+    sources: [{
+      materialId: 'material-object',
+      revisionId: 'revision-object',
+      materialTitle: 'Карточка Platforma · Север',
+      materialType: 'OBJECT_SNAPSHOT',
+      segments: [{
+        locator: 'object-field:architecture',
+        label: 'Архитектура',
+        text: sourceExcerpt,
+      }],
+    }],
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(result.attempts, 2);
+  assert.equal(result.followUps.length, 10);
 });
 
 function makeInput(text) {

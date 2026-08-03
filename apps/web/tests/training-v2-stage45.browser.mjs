@@ -58,6 +58,16 @@ try {
       return;
     }
 
+    if (path === `/training/admin/projects/${projectId}/materials` && request.method() === 'GET') {
+      await json(route, { items: [] });
+      return;
+    }
+
+    if (path === `/training/admin/projects/${projectId}/object-options` && request.method() === 'GET') {
+      await json(route, { items: [], selected: null });
+      return;
+    }
+
     if (path === `/training/admin/projects/${projectId}/assignment-users`) {
       pickerQueries.push(Object.fromEntries(url.searchParams.entries()));
       if (pickerErrorEnabled && url.searchParams.get('search') === 'ошибка') {
@@ -127,25 +137,58 @@ try {
     await json(route, { message: `Unexpected ${request.method()} ${path}` }, 404);
   });
 
-  await page.goto(`${baseUrl}/admin/training/projects/${projectId}`);
-  await page.getByRole('tab', { name: 'Доступ сотрудников' }).click();
+  await page.goto(`${baseUrl}/admin/training/projects/${projectId}?theme=c`);
+  assert.equal(await page.locator('html').getAttribute('data-app-theme'), 'dark-premium');
+  await page.getByRole('tab', { name: 'Назначения' }).click();
   await page.getByText('Анна Брокер').waitFor();
   await page.getByText('Нет', { exact: true }).waitFor();
   await page.getByText(/нет активных назначений/iu).waitFor();
+
+  const assignedMode = page.locator('.training-access-mode-option').filter({ hasText: 'Только назначенные сотрудники' });
+  const allParticipantsMode = page.locator('.training-access-mode-option').filter({ hasText: 'Все участники обучения' });
+  const assignedRadio = assignedMode.getByRole('radio');
+  const allParticipantsRadio = allParticipantsMode.getByRole('radio');
+  assert.equal(await assignedMode.getAttribute('data-selected'), 'true');
+  assert.equal(await allParticipantsMode.getAttribute('data-selected'), 'false');
+  assert.equal(await assignedRadio.getAttribute('data-state'), 'checked');
+  assert.equal(await allParticipantsRadio.getAttribute('data-state'), 'unchecked');
+  assert.equal(await assignedMode.getByText('Выбрано', { exact: true }).count(), 1);
+  assert.ok(await contrastRatio(assignedMode.getByText('Выбрано', { exact: true })) >= 4.5);
+  const assignedRadioBox = await assignedRadio.boundingBox();
+  assert.ok(assignedRadioBox && assignedRadioBox.width >= 24 && assignedRadioBox.height >= 24);
+  const [assignedModeStyles, allParticipantsModeStyles] = await Promise.all([
+    assignedMode.evaluate((element) => {
+      const styles = getComputedStyle(element);
+      return { backgroundColor: styles.backgroundColor, borderColor: styles.borderColor, boxShadow: styles.boxShadow };
+    }),
+    allParticipantsMode.evaluate((element) => {
+      const styles = getComputedStyle(element);
+      return { backgroundColor: styles.backgroundColor, borderColor: styles.borderColor, boxShadow: styles.boxShadow };
+    }),
+  ]);
+  assert.notEqual(assignedModeStyles.backgroundColor, allParticipantsModeStyles.backgroundColor);
+  assert.notEqual(assignedModeStyles.borderColor, allParticipantsModeStyles.borderColor);
+  assert.notEqual(assignedModeStyles.boxShadow, 'none');
+  if (process.env.TRAINING_ACCESS_SCREENSHOT) {
+    await page.locator('.training-access-mode-panel').screenshot({ path: process.env.TRAINING_ACCESS_SCREENSHOT });
+  }
 
   await page.getByText('Все участники обучения').click();
   await page.getByText(/доступны всем сотрудникам/iu).waitFor();
   assert.deepEqual(modePayloads.at(-1), { accessMode: 'ALL_PARTICIPANTS' });
   assert.equal(project.isOpen, true);
+  assert.equal(await assignedMode.getAttribute('data-selected'), 'false');
+  assert.equal(await allParticipantsMode.getAttribute('data-selected'), 'true');
+  assert.equal(await allParticipantsMode.getByText('Выбрано', { exact: true }).count(), 1);
 
   await page.getByText('Только назначенные сотрудники').click();
 
-  await page.getByPlaceholder('Имя или email').fill('медленно');
+  await page.getByPlaceholder('Имя или электронная почта').fill('медленно');
   await page.locator('.training-assignment-skeleton').waitFor();
   await page.getByText('Анна Брокер').waitFor();
 
   pickerErrorEnabled = true;
-  await page.getByPlaceholder('Имя или email').fill('ошибка');
+  await page.getByPlaceholder('Имя или электронная почта').fill('ошибка');
   await page.getByText('PICKER_FIXTURE_ERROR').waitFor();
   pickerErrorEnabled = false;
   await page.getByRole('button', { name: 'Повторить' }).click();
@@ -174,11 +217,11 @@ try {
   await page.getByText(/Отозвано: 1/).waitFor();
   assert.deepEqual(bulkPayloads.at(-1), { action: 'REVOKE', userIds: [employeeId] });
 
-  await page.getByPlaceholder('Имя или email').fill('нет');
+  await page.getByPlaceholder('Имя или электронная почта').fill('нет');
   await page.getByText('Сотрудники не найдены').waitFor();
   assert.equal(pickerQueries.at(-1).search, 'нет');
 
-  await page.getByPlaceholder('Имя или email').fill('Анна');
+  await page.getByPlaceholder('Имя или электронная почта').fill('Анна');
   await assignmentFilter.selectOption('all');
   await page.getByText('Анна Брокер').waitFor();
   await page.getByRole('checkbox', { name: 'Выбрать Анна Брокер' }).check();
@@ -186,6 +229,22 @@ try {
   await page.getByText('Страница 2 из 2').waitFor();
   await page.getByText('Выбрано на странице: 0').waitFor();
   assert.equal(pickerQueries.at(-1).page, '2');
+
+  await page.goto(`${baseUrl}/admin/training/projects/${projectId}?theme=d`);
+  assert.equal(await page.locator('html').getAttribute('data-app-theme'), 'minimal-luxury');
+  await page.getByRole('tab', { name: 'Назначения' }).click();
+  const lightAssignedMode = page.locator('.training-access-mode-option').filter({ hasText: 'Только назначенные сотрудники' });
+  const lightAllParticipantsMode = page.locator('.training-access-mode-option').filter({ hasText: 'Все участники обучения' });
+  await lightAssignedMode.getByText('Выбрано', { exact: true }).waitFor();
+  assert.ok(await contrastRatio(lightAssignedMode.getByText('Выбрано', { exact: true })) >= 4.5);
+  const [lightAssignedBackground, lightAllBackground] = await Promise.all([
+    lightAssignedMode.evaluate((element) => getComputedStyle(element).backgroundColor),
+    lightAllParticipantsMode.evaluate((element) => getComputedStyle(element).backgroundColor),
+  ]);
+  assert.notEqual(lightAssignedBackground, lightAllBackground);
+  if (process.env.TRAINING_ACCESS_LIGHT_SCREENSHOT) {
+    await page.locator('.training-access-mode-panel').screenshot({ path: process.env.TRAINING_ACCESS_LIGHT_SCREENSHOT });
+  }
 
   process.stdout.write('TRAINING_STAGE45_BROWSER_OK\n');
 } finally {
@@ -223,5 +282,24 @@ async function json(route, body, status = 200) {
     status,
     contentType: 'application/json',
     body: JSON.stringify(body),
+  });
+}
+
+async function contrastRatio(locator) {
+  return locator.evaluate((element) => {
+    const parseRgb = (value) => value.match(/[\d.]+/gu)?.slice(0, 3).map(Number) ?? [0, 0, 0];
+    const luminance = (rgb) => {
+      const channels = rgb.map((channel) => {
+        const normalized = channel / 255;
+        return normalized <= 0.03928
+          ? normalized / 12.92
+          : ((normalized + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+    };
+    const styles = getComputedStyle(element);
+    const foreground = luminance(parseRgb(styles.color));
+    const background = luminance(parseRgb(styles.backgroundColor));
+    return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
   });
 }

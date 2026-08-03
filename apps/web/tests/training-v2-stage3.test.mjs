@@ -16,7 +16,7 @@ const employeeAttemptSource = source('training/TrainingAttemptPage.tsx');
 test('Stage 3 extends the existing project editor without document or operations routes', () => {
   assert.match(editorSource, /QuestionFactsEditor/);
   assert.match(editorSource, /Утверждённый факт/);
-  assert.match(editorSource, /Aliases через запятую/);
+  assert.match(editorSource, /Варианты ответа через запятую/);
   assert.match(editorSource, /Обязательный факт/);
   assert.match(editorSource, /Добавить факт/);
   assert.match(editorSource, /Удалить факт/);
@@ -24,9 +24,10 @@ test('Stage 3 extends the existing project editor without document or operations
   assert.match(editorSource, /expectedTotal=\{55\}/);
   assert.match(editorSource, /expectedTotal=\{15\}/);
   assert.match(editorSource, /publicationErrors/);
-  assert.match(editorSource, /Aliases не должны повторяться/);
-  assert.match(editorSource, /Codes \$\{type\} не должны повторяться/);
-  assert.match(editorSource, /Проверьте draft/);
+  assert.match(editorSource, /Варианты ответа не должны повторяться/);
+  assert.match(editorSource, /TRAINING_FACT_ALIAS_MAX_WORDS = 15/);
+  assert.match(editorSource, /Коды критериев/);
+  assert.match(editorSource, /Проверьте черновик/);
   assert.doesNotMatch(routesSource, /documents|operations/iu);
 });
 
@@ -37,7 +38,7 @@ test('Stage 3 review UI is permission-gated and protects duplicate submits', () 
   assert.match(adminAttemptSource, /decision === 'APPROVE'/);
   assert.match(adminAttemptSource, /decision === 'OVERRIDE'/);
   assert.match(adminAttemptSource, /finalScore/);
-  assert.match(adminAttemptSource, /Причина обязательна для Override/);
+  assert.match(adminAttemptSource, /Причина обязательна для корректировки/);
   assert.match(adminAttemptSource, /if \(!accessToken \|\| !attempt \|\| isReviewing\) return/);
   assert.match(adminAttemptSource, /disabled=\{isReviewing\}/);
   assert.match(adminAttemptSource, /Сохранение…/);
@@ -45,8 +46,8 @@ test('Stage 3 review UI is permission-gated and protects duplicate submits', () 
 
 test('admin detail renders evaluation evidence and only safe provider metadata', () => {
   assert.match(adminAttemptSource, /Расчётный балл/);
-  assert.match(adminAttemptSource, /Transcription model/);
-  assert.match(adminAttemptSource, /Evaluation model/);
+  assert.match(adminAttemptSource, /Модель расшифровки/);
+  assert.match(adminAttemptSource, /Модель оценивания/);
   assert.match(adminAttemptSource, /objectiveMetrics/);
   assert.match(adminAttemptSource, /fact_assessments/);
   assert.match(adminAttemptSource, /criterion_assessments/);

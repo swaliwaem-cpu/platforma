@@ -26,6 +26,12 @@ const secondCriterionId = '44444444-4444-4444-8444-444444444444';
 test('Stage 3 draft validates fact aliases and duplicate criterion codes', () => {
   const draft = makeDraft();
   assert.equal(parseUpdateTrainingProjectDraftInput(draft).facts.length, 11);
+  assert.doesNotThrow(() => parseUpdateTrainingProjectDraftInput({
+    ...draft,
+    facts: draft.facts.map((fact, index) => index === 0
+      ? { ...fact, aliases: [Array.from({ length: 15 }, () => 'раз').join(' ')] }
+      : fact),
+  }));
   assert.throws(
     () => parseUpdateTrainingProjectDraftInput({
       ...draft,
@@ -39,7 +45,7 @@ test('Stage 3 draft validates fact aliases and duplicate criterion codes', () =>
     () => parseUpdateTrainingProjectDraftInput({
       ...draft,
       facts: draft.facts.map((fact, index) => index === 0
-        ? { ...fact, aliases: ['полный эталонный ответ из девяти отдельных слов подряд сейчас'] }
+        ? { ...fact, aliases: [Array.from({ length: 16 }, () => 'два').join(' ')] }
         : fact),
     }),
     BadRequestException,
