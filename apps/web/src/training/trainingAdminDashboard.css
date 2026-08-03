@@ -27,9 +27,58 @@
   gap: 10px;
 }
 
-.training-admin-dashboard-actions .admin-button {
+.training-admin-dashboard-actions .training-dashboard-icon-action,
+.training-admin-dashboard-actions .training-dashboard-create-action {
   min-height: 44px;
+}
+
+.training-admin-dashboard-actions .training-dashboard-icon-action {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+}
+
+.training-admin-dashboard-actions .training-dashboard-create-action {
   padding-inline: 16px;
+}
+
+html[data-app-theme='minimal-luxury'] .training-admin-dashboard .training-admin-dashboard-actions .training-dashboard-icon-action {
+  border-color: var(--app-theme-primary);
+  background: var(--app-theme-primary);
+  color: var(--app-theme-primary-foreground);
+}
+
+html[data-app-theme='minimal-luxury'] .training-admin-dashboard .training-admin-dashboard-actions .training-dashboard-icon-action:hover,
+html[data-app-theme='minimal-luxury'] .training-admin-dashboard .training-admin-dashboard-actions .training-dashboard-icon-action:focus-visible {
+  border-color: var(--app-theme-primary-deep);
+  background: var(--app-theme-primary-deep);
+  color: var(--app-theme-primary-foreground);
+}
+
+html[data-app-theme='dark-premium'] .training-admin-dashboard .training-admin-dashboard-actions .training-dashboard-icon-action {
+  border-color: var(--app-theme-border);
+  background: var(--app-theme-surface);
+  color: var(--app-theme-ink-900);
+}
+
+html[data-app-theme='dark-premium'] .training-admin-dashboard .training-admin-dashboard-actions .training-dashboard-icon-action:hover,
+html[data-app-theme='dark-premium'] .training-admin-dashboard .training-admin-dashboard-actions .training-dashboard-icon-action:focus-visible {
+  border-color: var(--app-theme-border-strong);
+  background: var(--app-theme-surface-muted);
+  color: var(--app-theme-ink-900);
+}
+
+html[data-app-theme] .training-admin-dashboard .training-admin-dashboard-actions .training-dashboard-create-action {
+  border-color: var(--app-theme-accent);
+  background: var(--app-theme-accent);
+  color: var(--app-theme-primary-foreground);
+}
+
+html[data-app-theme] .training-admin-dashboard .training-admin-dashboard-actions .training-dashboard-create-action:hover,
+html[data-app-theme] .training-admin-dashboard .training-admin-dashboard-actions .training-dashboard-create-action:focus-visible {
+  border-color: color-mix(in srgb, var(--app-theme-accent) 82%, var(--app-theme-ink-900));
+  background: color-mix(in srgb, var(--app-theme-accent) 82%, var(--app-theme-ink-900));
+  color: var(--app-theme-primary-foreground);
 }
 
 .training-dashboard-metrics {
@@ -70,10 +119,9 @@
   stroke-width: 1.8;
 }
 
-.training-dashboard-metric[data-tone='success'] .training-dashboard-metric-icon {
-  border-color: color-mix(in srgb, var(--catalog-forest) 45%, var(--catalog-border));
-  color: var(--catalog-forest-deep);
-  background: var(--catalog-forest-soft);
+html[data-app-theme='dark-premium'] .training-admin-dashboard .training-dashboard-metric-icon,
+html[data-app-theme='dark-premium'] .training-admin-dashboard .training-dashboard-project-name svg {
+  color: var(--app-theme-ink-900);
 }
 
 .training-dashboard-metric-copy {
@@ -107,14 +155,8 @@
   margin-top: 2px;
 }
 
-.training-dashboard-main {
-  display: grid;
-  grid-template-columns: minmax(900px, 1fr) clamp(340px, 22vw, 380px);
-  align-items: start;
-  gap: 16px;
-}
-
 .training-dashboard-project-panel {
+  width: 100%;
   min-width: 0;
   min-height: 392px;
   gap: 0;
@@ -273,26 +315,18 @@
   padding: 20px;
 }
 
-.training-admin-dashboard .training-dashboard-create-panel {
-  position: sticky;
-  top: 24px;
-  min-width: 0;
-  padding: 24px;
-  gap: 24px;
+.training-create-dialog {
+  width: min(480px, calc(100% - 32px));
+  max-width: 480px;
 }
 
-.training-dashboard-create-panel > div:first-child {
+.training-create-dialog form {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 22px;
 }
 
-.training-dashboard-create-panel .eyebrow,
-.training-dashboard-create-panel .muted-text {
-  margin: 0;
-}
-
-.training-dashboard-create-panel [data-slot='input'] {
+.training-create-dialog [data-slot='input'] {
   min-height: 46px;
 }
 
@@ -311,21 +345,6 @@
 
 .training-dashboard-retake-field label {
   cursor: pointer;
-}
-
-.training-admin-dashboard .training-dashboard-create-button {
-  width: 100%;
-  min-height: 46px;
-}
-
-@media (max-width: 1480px) {
-  .training-dashboard-main {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .training-admin-dashboard .training-dashboard-create-panel {
-    position: static;
-  }
 }
 
 @media (max-width: 1120px) {
@@ -411,13 +430,8 @@
 
 @media (max-width: 620px) {
   .training-admin-dashboard-actions {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .training-admin-dashboard-actions .admin-button {
     width: 100%;
-    white-space: normal;
+    justify-content: flex-start;
   }
 
   .training-dashboard-metric {
@@ -438,10 +452,6 @@
 }
 
 @media (max-width: 420px) {
-  .training-admin-dashboard-actions {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .training-dashboard-metric {
     min-height: 126px;
     flex-direction: column;

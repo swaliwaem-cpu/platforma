@@ -106,19 +106,25 @@ test('admin projects link to results and ranking while detail keeps excluded sur
   assert.doesNotMatch(adminAttemptSource, /ranking|leaderboard|storage key|bucket/iu);
 });
 
-test('admin projects overview renders an accessible responsive operations dashboard', () => {
+test('admin projects overview renders an accessible responsive operations dashboard with modal creation', () => {
   assert.match(adminProjectsSource, /aria-label="Сводка по проектам"/u);
   assert.match(adminProjectsSource, /project\.status === 'PUBLISHED'/u);
   assert.match(adminProjectsSource, /project\.status === 'DRAFT'/u);
   assert.match(adminProjectsSource, /summary\.attempts \+= project\.attemptsCount/u);
+  assert.match(adminProjectsSource, /size="icon"[\s\S]*?aria-label="Результаты сотрудников"/u);
+  assert.match(adminProjectsSource, /size="icon"[\s\S]*?aria-label="Рейтинг"/u);
+  assert.match(adminProjectsSource, /<DialogTitle>Создать проект<\/DialogTitle>/u);
   assert.match(adminProjectsSource, /aria-label=\{`Открыть проект «\$\{project\.title\}»`\}/u);
   assert.match(adminProjectsSource, /required[\s\S]*?autoComplete="off"[\s\S]*?disabled=\{isCreating\}/u);
-  assert.match(dashboardStylesSource, /\.training-dashboard-main[\s\S]*?grid-template-columns:/u);
+  assert.match(dashboardStylesSource, /\.training-dashboard-project-panel\s*\{[\s\S]*?width:\s*100%;/u);
+  assert.match(dashboardStylesSource, /data-app-theme='dark-premium'[\s\S]*?training-dashboard-metric-icon[\s\S]*?training-dashboard-project-name svg[\s\S]*?color:\s*var\(--app-theme-ink-900\);/u);
+  assert.doesNotMatch(dashboardStylesSource, /data-tone='success'\] \.training-dashboard-metric-icon/u);
   assert.match(dashboardStylesSource, /\.training-page\.training-admin-dashboard\s*\{[\s\S]*?width:\s*85vw;/u);
   assert.match(dashboardStylesSource, /\.training-dashboard-project-name strong[\s\S]*?white-space:\s*normal;/u);
   assert.match(dashboardStylesSource, /\.training-dashboard-project-status \.status-pill[\s\S]*?white-space:\s*nowrap;/u);
   assert.match(dashboardStylesSource, /@media \(max-width: 1220px\)[\s\S]*?training-dashboard-project-head/u);
   assert.match(dashboardStylesSource, /@media \(prefers-reduced-motion: reduce\)/u);
+  assert.doesNotMatch(adminProjectsSource, /training-dashboard-create-panel/u);
   assert.doesNotMatch(adminProjectsSource, /training-dashboard-entry-grid/u);
 });
 

@@ -9,6 +9,7 @@ import {
   ClipboardCheckIcon,
   FilePenLineIcon,
   FolderKanbanIcon,
+  FolderPlusIcon,
   TrophyIcon,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -24,6 +25,14 @@ import { useAuth } from '../auth/AuthProvider';
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   createTrainingAdminProject,
   getTrainingAdminProjects,
@@ -81,7 +90,9 @@ export function TrainingAdminProjectsPage({
   const [allowRetakeAfterPass, setAllowRetakeAfterPass] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
   const dashboardSummary = projects.reduce(
@@ -126,12 +137,12 @@ export function TrainingAdminProjectsPage({
     if (!accessToken || !canManageProjects || isCreating) return;
 
     if (!title.trim()) {
-      setError('Введите название проекта');
+      setCreateError('Введите название проекта');
       return;
     }
 
     setIsCreating(true);
-    setError(null);
+    setCreateError(null);
 
     try {
       const project = await createTrainingAdminProject(accessToken, {
@@ -141,7 +152,7 @@ export function TrainingAdminProjectsPage({
       });
       navigate(`/admin/training/projects/${project.id}`);
     } catch (createError) {
-      setError(createError instanceof Error ? createError.message : 'Не удалось создать проект');
+      setCreateError(createError instanceof Error ? createError.message : 'Не удалось создать проект');
     } finally {
       setIsCreating(false);
     }
@@ -155,16 +166,48 @@ export function TrainingAdminProjectsPage({
           <h2>Модуль обучения</h2>
           <p className="muted-text">Управление учебными проектами и отдельный реестр результатов.</p>
         </div>
-        {canReadResults ? (
+        {canReadResults || canManageProjects ? (
           <div className="training-admin-dashboard-actions">
-            <AdminButton type="button" tone="secondary" onClick={() => navigate('/admin/training/results')}>
-              <BarChart3Icon data-icon="inline-start" />
-              Результаты сотрудников
-            </AdminButton>
-            <AdminButton type="button" tone="primary" onClick={() => navigate('/admin/training/ranking')}>
-              <TrophyIcon data-icon="inline-start" />
-              Рейтинг
-            </AdminButton>
+            {canReadResults ? (
+              <>
+                <AdminButton
+                  className="training-dashboard-icon-action"
+                  type="button"
+                  tone="secondary"
+                  size="icon"
+                  aria-label="Результаты сотрудников"
+                  title="Результаты сотрудников"
+                  onClick={() => navigate('/admin/training/results')}
+                >
+                  <BarChart3Icon />
+                </AdminButton>
+                <AdminButton
+                  className="training-dashboard-icon-action"
+                  type="button"
+                  tone="secondary"
+                  size="icon"
+                  aria-label="Рейтинг"
+                  title="Рейтинг"
+                  onClick={() => navigate('/admin/training/ranking')}
+                >
+                  <TrophyIcon />
+                </AdminButton>
+              </>
+            ) : null}
+            {canManageProjects ? (
+              <AdminButton
+                className="training-dashboard-create-action"
+                type="button"
+                tone="primary"
+                onClick={() => {
+                  setCreateError(null);
+                  setIsCreateDialogOpen(true);
+                }}
+              >
+                <FolderPlusIcon data-icon="inline-start" />
+                Создать проект
+              </AdminButton>
+            ) : null}
           </div>
         ) : null}
       </header>
@@ -203,7 +246,7 @@ export function TrainingAdminProjectsPage({
       ) : null}
 
       {canManageProjects ? (
-        <div className="training-dashboard-main">
+        <>
           <AdminPanel className="training-dashboard-project-panel">
             <div className="training-dashboard-panel-heading">
               <div>
@@ -282,72 +325,93 @@ export function TrainingAdminProjectsPage({
               </div>
             ) : (
               <div className="training-dashboard-empty">
-                <AdminEmptyState title="Проектов пока нет" description="Создайте первый черновик справа." />
+                <AdminEmptyState title="Проектов пока нет" description="Создайте первый черновик кнопкой сверху." />
               </div>
             )}
           </AdminPanel>
 
-          <AdminPanel className="training-create-panel training-dashboard-create-panel">
-            <div>
-              <p className="eyebrow">Новый проект</p>
-              <h3 id="training-create-project-title">Создать черновик</h3>
-              <p className="muted-text">Название можно изменить позже в настройках проекта.</p>
-            </div>
-            <form
-              aria-labelledby="training-create-project-title"
-              onSubmit={(event) => void handleCreate(event)}
+          <Dialog
+            open={isCreateDialogOpen}
+            onOpenChange={(open) => {
+              if (isCreating) return;
+              setIsCreateDialogOpen(open);
+              if (!open) setCreateError(null);
+            }}
+          >
+            <DialogContent
+              className="training-create-dialog"
+              showCloseButton={!isCreating}
+              onEscapeKeyDown={(event) => {
+                if (isCreating) event.preventDefault();
+              }}
+              onPointerDownOutside={(event) => {
+                if (isCreating) event.preventDefault();
+              }}
             >
-              <FieldGroup>
-                <Field
-                  data-disabled={isCreating || undefined}
-                  data-invalid={Boolean(error && !title.trim())}
-                >
-                  <FieldLabel htmlFor="training-project-title">Название проекта *</FieldLabel>
-                  <Input
-                    id="training-project-title"
-                    value={title}
-                    required
-                    autoComplete="off"
-                    placeholder="Введите название проекта"
+              <DialogHeader>
+                <DialogTitle>Создать проект</DialogTitle>
+                <DialogDescription>
+                  Создайте черновик и перейдите к материалам, вопросам и настройкам доступа.
+                </DialogDescription>
+              </DialogHeader>
+              <form onSubmit={(event) => void handleCreate(event)}>
+                <FieldGroup>
+                  <Field
+                    data-disabled={isCreating || undefined}
+                    data-invalid={Boolean(createError && !title.trim())}
+                  >
+                    <FieldLabel htmlFor="training-project-title">Название проекта *</FieldLabel>
+                    <Input
+                      id="training-project-title"
+                      value={title}
+                      required
+                      autoComplete="off"
+                      placeholder="Введите название проекта"
+                      disabled={isCreating}
+                      aria-invalid={Boolean(createError && !title.trim())}
+                      onChange={(event) => setTitle(event.target.value)}
+                    />
+                    {!title.trim() && createError ? <FieldError>{createError}</FieldError> : null}
+                  </Field>
+                  <Field
+                    className="training-dashboard-retake-field"
+                    data-disabled={isCreating || undefined}
+                    orientation="horizontal"
+                  >
+                    <input
+                      id="training-project-retake"
+                      type="checkbox"
+                      checked={allowRetakeAfterPass}
+                      disabled={isCreating}
+                      onChange={(event) => setAllowRetakeAfterPass(event.target.checked)}
+                    />
+                    <div>
+                      <FieldLabel htmlFor="training-project-retake">
+                        Разрешить пересдачу после успешного результата
+                      </FieldLabel>
+                      <FieldDescription>Общий лимит попыток продолжает действовать.</FieldDescription>
+                    </div>
+                  </Field>
+                </FieldGroup>
+                {createError && title.trim() ? <AdminAlert tone="error">{createError}</AdminAlert> : null}
+                <DialogFooter>
+                  <AdminButton
+                    type="button"
+                    tone="secondary"
                     disabled={isCreating}
-                    aria-invalid={Boolean(error && !title.trim())}
-                    onChange={(event) => setTitle(event.target.value)}
-                  />
-                  {!title.trim() && error ? <FieldError>{error}</FieldError> : null}
-                </Field>
-                <Field
-                  className="training-dashboard-retake-field"
-                  data-disabled={isCreating || undefined}
-                  orientation="horizontal"
-                >
-                  <input
-                    id="training-project-retake"
-                    type="checkbox"
-                    checked={allowRetakeAfterPass}
-                    disabled={isCreating}
-                    onChange={(event) => setAllowRetakeAfterPass(event.target.checked)}
-                  />
-                  <div>
-                    <FieldLabel htmlFor="training-project-retake">
-                      Разрешить пересдачу после успешного результата
-                    </FieldLabel>
-                    <FieldDescription>Общий лимит попыток продолжает действовать.</FieldDescription>
-                  </div>
-                </Field>
-              </FieldGroup>
-              <AdminButton
-                className="training-dashboard-create-button"
-                type="submit"
-                tone="primary"
-                fit={false}
-                disabled={isCreating}
-              >
-                {isCreating ? 'Создание…' : 'Создать и настроить'}
-                {!isCreating ? <ArrowRightIcon data-icon="inline-end" /> : null}
-              </AdminButton>
-            </form>
-          </AdminPanel>
-        </div>
+                    onClick={() => setIsCreateDialogOpen(false)}
+                  >
+                    Отмена
+                  </AdminButton>
+                  <AdminButton type="submit" tone="primary" disabled={isCreating}>
+                    {isCreating ? 'Создание…' : 'Создать и настроить'}
+                    {!isCreating ? <ArrowRightIcon data-icon="inline-end" /> : null}
+                  </AdminButton>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+        </>
       ) : null}
 
     </div>
