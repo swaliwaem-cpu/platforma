@@ -252,7 +252,7 @@ export function TrainingAdminProjectEditorPage({
           <QuestionFactsEditor
             disabled={isReadOnly}
             facts={factsFor(form.facts, 'MAIN', 1)}
-            label="Факты главного вопроса"
+            label="Эталонный ответ · проверяемые факты"
             onChange={(facts) => setForm({ ...form, facts: replaceQuestionFacts(form.facts, 'MAIN', 1, facts) })}
             questionPosition={1}
             questionType="MAIN"
@@ -270,7 +270,7 @@ export function TrainingAdminProjectEditorPage({
                   <QuestionFactsEditor
                     disabled={isReadOnly}
                     facts={factsFor(form.facts, 'FOLLOW_UP', index + 1)}
-                    label={`Факты вопроса ${index + 1}`}
+                    label={`Эталонный ответ вопроса ${index + 1}`}
                     onChange={(facts) => setForm({ ...form, facts: replaceQuestionFacts(form.facts, 'FOLLOW_UP', index + 1, facts) })}
                     questionPosition={index + 1}
                     questionType="FOLLOW_UP"
@@ -294,9 +294,10 @@ export function TrainingAdminProjectEditorPage({
           <TrainingMaterialsPanel
             accessToken={accessToken ?? ''}
             disabled={isReadOnly}
+            hasQuestions={Boolean(project.mainQuestion.trim()) || project.followUpQuestions.some((question) => Boolean(question.trim()))}
             linkedObjectId={project.realEstateObjectId}
             projectId={project.id}
-            onFactsChanged={() => void refreshProjectContent()}
+            onProjectContentChanged={refreshProjectContent}
           />
         </TabsContent>
         <TabsContent value="access">
@@ -347,7 +348,7 @@ function QuestionFactsEditor({ disabled, facts, label, onChange, questionPositio
           <AdminButton type="button" tone="text" onClick={() => onChange(facts.filter((_, itemIndex) => itemIndex !== index).map((item, itemIndex) => ({ ...item, position: itemIndex + 1 })))}>Удалить факт</AdminButton>
         </div>
       )) : <p className="training-validation-note">Нет фактов: проект нельзя будет опубликовать.</p>}
-      <AdminButton type="button" tone="secondary" onClick={() => onChange([...facts, { id: null, questionType, questionPosition, statement: '', aliases: [], isRequired: true, position: facts.length + 1 }])}>Добавить факт</AdminButton>
+      <AdminButton type="button" tone="secondary" onClick={() => onChange([...facts, { id: null, questionType, questionPosition, statement: '', aliases: [], isRequired: true, position: facts.length + 1 }])}>Добавить факт ответа</AdminButton>
     </fieldset>
   );
 }

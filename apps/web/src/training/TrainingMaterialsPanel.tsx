@@ -60,9 +60,10 @@ import {
 type TrainingMaterialsPanelProps = {
   accessToken: string;
   disabled: boolean;
+  hasQuestions: boolean;
   projectId: string;
   linkedObjectId: string | null;
-  onFactsChanged: () => void;
+  onProjectContentChanged: () => void | Promise<void>;
 };
 
 const typeLabels: Record<TrainingMaterialType, string> = {
@@ -100,9 +101,10 @@ const objectFields = [
 export function TrainingMaterialsPanel({
   accessToken,
   disabled,
+  hasQuestions,
   projectId,
   linkedObjectId,
-  onFactsChanged,
+  onProjectContentChanged,
 }: TrainingMaterialsPanelProps) {
   const hasLinkedObject = Boolean(linkedObjectId);
   const [materials, setMaterials] = useState<TrainingMaterial[]>([]);
@@ -242,21 +244,36 @@ export function TrainingMaterialsPanel({
 
   const handleCreate = async (event: FormEvent) => {
     event.preventDefault();
+    if (pendingAction) return;
     if (!title.trim()) {
       setError('Укажите название материала.');
       return;
     }
-    await runAction('create', async () => {
-      if (createType === 'PDF') {
-        if (!file) throw new Error('Выберите PDF-файл.');
-        return createTrainingPdfMaterial(accessToken, projectId, title.trim(), file);
+    if (createType === 'PDF' && !file) {
+      setError('Выберите PDF-файл.');
+      return;
+    }
+
+    const submittedType = createType;
+    const createMaterial = (replaceExistingQuestions: boolean) => {
+      if (submittedType === 'PDF') {
+        return createTrainingPdfMaterial(
+          accessToken,
+          projectId,
+          title.trim(),
+          file as File,
+          replaceExistingQuestions,
+        );
       }
-      if (createType === 'OFFICIAL_URL') {
+      if (submittedType === 'OFFICIAL_URL') {
         return createTrainingUrlMaterial(accessToken, projectId, {
-          title: title.trim(), url: url.trim(), officialConfirmed: officialConfirmed as true,
+          title: title.trim(),
+          url: url.trim(),
+          officialConfirmed: officialConfirmed as true,
+          replaceExistingQuestions,
         });
       }
-      if (createType === 'OBJECT_SNAPSHOT') {
+      if (submittedType === 'OBJECT_SNAPSHOT') {
         return createTrainingObjectMaterial(accessToken, projectId, {
           title: title.trim(), fieldCodes,
         });
@@ -264,7 +281,43 @@ export function TrainingMaterialsPanel({
       return createTrainingManualMaterial(accessToken, projectId, {
         title: title.trim(), text,
       });
-    }, 'Материал создан. Извлечённый текст остаётся административным черновиком.');
+    };
+
+    setPendingAction('create');
+    setError(null);
+    setNotice(null);
+    try {
+      let detail: TrainingMaterialDetail;
+      try {
+        detail = await createMaterial(false);
+      } catch (createError) {
+        const message = createError instanceof Error ? createError.message : 'Не удалось создать материал';
+        const createsQuestions = submittedType === 'PDF' || submittedType === 'OFFICIAL_URL';
+        if (!createsQuestions || message !== 'PROJECT_QUESTIONS_REPLACE_CONFIRMATION_REQUIRED') {
+          throw createError;
+        }
+        const confirmed = window.confirm(
+          'В проекте уже есть вопросы и эталонные ответы. Заменить их новыми AI-черновиками на основе этого источника?',
+        );
+        if (!confirmed) return;
+        detail = await createMaterial(true);
+      }
+
+      setSelected(detail);
+      setReloadKey((value) => value + 1);
+      const questionsGenerated = (submittedType === 'PDF' || submittedType === 'OFFICIAL_URL') &&
+        detail.latestRevision?.status === 'READY';
+      setNotice(questionsGenerated
+        ? 'Материал создан. Сформированы 1 главный и 10 дополнительных вопросов с активными эталонными ответами.'
+        : detail.latestRevision?.status === 'FAILED'
+          ? 'Материал сохранён, но текст не извлечён, поэтому вопросы и ответы не созданы.'
+          : 'Материал создан. Извлечённый текст остаётся административным черновиком.');
+      if (questionsGenerated) await onProjectContentChanged();
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : 'Не удалось создать материал');
+    } finally {
+      setPendingAction(null);
+    }
   };
 
   const openMaterial = async (materialId: string) => {
@@ -320,7 +373,7 @@ export function TrainingMaterialsPanel({
       setNotice(
         `Создано фактов: ${response.createdFactIds.length}. Дубликатов пропущено: ${response.duplicates.length}.`,
       );
-      onFactsChanged();
+      await onProjectContentChanged();
     } catch (applyError) {
       setError(applyError instanceof Error ? applyError.message : 'Не удалось применить suggestions');
     } finally {
@@ -342,16 +395,16 @@ export function TrainingMaterialsPanel({
         ? ` Не удалось извлечь PDF: ${response.failedPdfTitles.join(', ')}.`
         : '';
       setNotice(
-        `ЖК «${response.object.title}» связан с проектом. Карточка и PDF загружены: ${response.importedPdfCount}. Созданы 1 главный и 10 дополнительных черновиков вопросов.${failedSuffix}`,
+        `ЖК «${response.object.title}» связан с проектом. Карточка и PDF загружены: ${response.importedPdfCount}. Созданы 1 главный и 10 дополнительных вопросов с активными эталонными ответами.${failedSuffix}`,
       );
       setReloadKey((value) => value + 1);
-      onFactsChanged();
+      await onProjectContentChanged();
     } catch (importError) {
       const message = importError instanceof Error ? importError.message : 'Не удалось загрузить данные ЖК';
       if (!replaceExistingQuestions && message === 'PROJECT_QUESTIONS_REPLACE_CONFIRMATION_REQUIRED') {
         setPendingAction(null);
         const confirmed = window.confirm(
-          'В проекте уже есть вопросы. Заменить их новыми AI-черновиками? Утверждённые факты не удаляются и потребуют ручной проверки.',
+          'В проекте уже есть вопросы и эталонные ответы. Заменить их новыми AI-черновиками из карточки ЖК и вложений?',
         );
         if (confirmed) await handleObjectImport(true);
         return;
@@ -374,7 +427,7 @@ export function TrainingMaterialsPanel({
         <CardHeader>
           <CardTitle><Building2Icon /> Данные ЖК из Platforma</CardTitle>
           <CardDescription>
-            Найдите ЖК по названию. Поиск понимает текст в другой раскладке. После запуска система создаст immutable snapshot карточки, загрузит все прикреплённые PDF и сформирует 11 черновиков вопросов.
+            Найдите ЖК по названию. Поиск понимает текст в другой раскладке. Система создаст immutable snapshot карточки, загрузит все прикреплённые PDF и сформирует 11 вопросов с эталонными ответами.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -404,7 +457,7 @@ export function TrainingMaterialsPanel({
             onClick={() => void handleObjectImport()}
           >
             <SparklesIcon data-icon="inline-start" />
-            {pendingAction === 'object-import' ? 'Загрузка и генерация…' : 'Загрузить данные и создать вопросы'}
+            {pendingAction === 'object-import' ? 'Загрузка и генерация…' : 'Создать вопросы и ответы из данных ЖК'}
           </AdminButton>
         </CardFooter>
       </Card>
@@ -412,7 +465,7 @@ export function TrainingMaterialsPanel({
       <Card className="training-material-create-card">
         <CardHeader>
           <CardTitle>Добавить источник</CardTitle>
-          <CardDescription>Один explicit source → одна immutable revision. Факты создаются отдельно.</CardDescription>
+          <CardDescription>PDF и официальный URL сразу формируют вопросы и эталонные ответы. Каждый источник сохраняется отдельной immutable revision.</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={(event) => void handleCreate(event)}>
@@ -583,13 +636,13 @@ export function TrainingMaterialsPanel({
                 </section>
                 {selectedRevision.status === 'READY' ? <section className="training-material-suggestions">
                   <div className="training-subsection-heading">
-                    <div><h4>Suggestions</h4><p className="muted-text">AI-черновики не участвуют в публикации до ручного apply.</p></div>
-                    <AdminButton type="button" tone="secondary" disabled={disabled || Boolean(pendingAction)} onClick={() => void runAction('suggest', () => generateTrainingMaterialSuggestions(accessToken, selectedRevision.id), 'Suggestions сгенерированы и ждут ручного выбора.')}>
+                    <div><h4>Дополнительные факты из материала</h4><p className="muted-text">Можно дополнить автоматически созданные ответы; новые AI-факты не участвуют в публикации до ручного применения.</p></div>
+                    <AdminButton type="button" tone="secondary" disabled={disabled || !hasQuestions || Boolean(pendingAction)} onClick={() => void runAction('suggest', () => generateTrainingMaterialSuggestions(accessToken, selectedRevision.id), 'Дополнительные факты сгенерированы и ждут ручного выбора.')}>
                       <SparklesIcon data-icon="inline-start" />
-                      {pendingAction === 'suggest' ? 'Генерация…' : 'Сгенерировать'}
+                      {pendingAction === 'suggest' ? 'Генерация…' : 'Сгенерировать дополнительные факты'}
                     </AdminButton>
                   </div>
-                  {suggestionDrafts.length ? suggestionDrafts.map((suggestion, index) => (
+                  {!hasQuestions ? <p className="muted-text">Сначала создайте вопросы проекта — без них факты не к чему привязать.</p> : suggestionDrafts.length ? suggestionDrafts.map((suggestion, index) => (
                     <SuggestionEditor
                       key={suggestion.id}
                       suggestion={suggestion}
@@ -598,8 +651,8 @@ export function TrainingMaterialsPanel({
                       onSelected={(checked) => setSelectedSuggestionIds((current) => checked ? [...current, suggestion.id] : current.filter((id) => id !== suggestion.id))}
                       onChange={(next) => setSuggestionDrafts((current) => current.map((item, itemIndex) => itemIndex === index ? next : item))}
                     />
-                  )) : <p className="muted-text">Suggestions ещё не сгенерированы.</p>}
-                  <AdminButton type="button" tone="primary" disabled={disabled || !selectedSuggestions.length || Boolean(pendingAction)} onClick={() => void handleApply()}>
+                  )) : <p className="muted-text">Дополнительные факты ещё не сгенерированы.</p>}
+                  <AdminButton type="button" tone="primary" disabled={disabled || !hasQuestions || !selectedSuggestions.length || Boolean(pendingAction)} onClick={() => void handleApply()}>
                     Применить выбранные ({selectedSuggestions.length})
                   </AdminButton>
                 </section> : null}

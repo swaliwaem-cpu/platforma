@@ -272,10 +272,12 @@ export function createTrainingPdfMaterial(
   projectId: string,
   title: string,
   file: File,
+  replaceExistingQuestions = false,
 ) {
   const form = new FormData();
   form.set('title', title);
   form.set('file', file);
+  form.set('replaceExistingQuestions', String(replaceExistingQuestions));
   return apiRequest<TrainingMaterialDetail>(
     `/training/admin/projects/${encodeURIComponent(projectId)}/materials/pdf`,
     accessToken,

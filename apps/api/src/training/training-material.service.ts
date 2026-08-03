@@ -41,6 +41,7 @@ import {
   canonicalTrainingFact,
   TRAINING_MATERIAL_SUGGESTER,
   type TrainingMaterialSuggester,
+  type TrainingQuestionDraftGenerationResult,
   type TrainingQuestionDraftSource,
   validateMaterialSuggestions,
 } from './training-material-suggester';
@@ -208,23 +209,63 @@ export class TrainingMaterialService {
     title: string,
     sourceUrl: string,
     officialConfirmed: boolean,
+    replaceExistingQuestions = false,
   ) {
     if (!officialConfirmed) throw new BadRequestException('OFFICIAL_CONFIRMATION_REQUIRED');
     await this.requireEditableProject(projectId);
+    await this.requireQuestionReplacementConfirmation(projectId, replaceExistingQuestions);
+    const normalizedTitle = requiredTitle(title);
     const extracted = await this.urlExtractor.extract(sourceUrl);
-    return this.createMaterialWithRevision({
+    const materialId = randomUUID();
+    const revisionId = randomUUID();
+    const questionGeneration = await this.generateQuestionDraftsForSource({
       projectId,
-      actorId,
-      title,
+      materialId,
+      revisionId,
+      title: normalizedTitle,
       type: TrainingMaterialType.OFFICIAL_URL,
       extraction: extracted,
-      sourceUrl,
-      requestedUrl: sourceUrl,
-      finalUrl: extracted.finalUrl,
-      fetchedAt: extracted.fetchedAt,
-      officialConfirmedAt: new Date(),
-      officialConfirmedById: actorId,
     });
+    await this.prisma.$transaction(async (transaction) => {
+      await lockProject(transaction, projectId);
+      await this.assertQuestionReplacementAllowed(
+        transaction,
+        projectId,
+        replaceExistingQuestions,
+      );
+      await transaction.trainingMaterial.create({
+        data: {
+          id: materialId,
+          projectId,
+          createdById: actorId,
+          title: normalizedTitle,
+          type: TrainingMaterialType.OFFICIAL_URL,
+          sourceUrl,
+          officialConfirmedAt: new Date(),
+          officialConfirmedById: actorId,
+          revisions: { create: {
+            id: revisionId,
+            ...revisionCreateData({
+              actorId,
+              revisionNumber: 1,
+              previousRevision: null,
+              extraction: extracted,
+              requestedUrl: sourceUrl,
+              finalUrl: extracted.finalUrl,
+              fetchedAt: extracted.fetchedAt,
+            }),
+          } },
+        },
+      });
+      await this.upsertGeneratedQuestionDrafts(
+        transaction,
+        projectId,
+        null,
+        questionGeneration.generated,
+        questionGeneration.sources,
+      );
+    });
+    return this.get(materialId);
   }
 
   async createObjectSnapshot(
@@ -247,12 +288,7 @@ export class TrainingMaterialService {
     replaceExistingQuestions: boolean,
   ) {
     await this.requireEditableProject(projectId);
-    const existingQuestions = await this.prisma.trainingQuestion.count({
-      where: { projectId, isActive: true },
-    });
-    if (existingQuestions > 0 && !replaceExistingQuestions) {
-      throw new ConflictException('PROJECT_QUESTIONS_REPLACE_CONFIRMATION_REQUIRED');
-    }
+    await this.requireQuestionReplacementConfirmation(projectId, replaceExistingQuestions);
 
     const object = await this.prisma.realEstateObject.findFirst({
       where: { id: objectId, deletedAt: null },
@@ -448,8 +484,9 @@ export class TrainingMaterialService {
     await this.applyGeneratedQuestionDrafts(
       projectId,
       object.id,
-      generated.main.text,
-      generated.followUps.map((question) => question.text),
+      generated,
+      questionSources,
+      replaceExistingQuestions,
     );
 
     return {
@@ -470,13 +507,20 @@ export class TrainingMaterialService {
     };
   }
 
-  async createPdf(projectId: string, actorId: string, title: string, file: UploadedFile | undefined) {
+  async createPdf(
+    projectId: string,
+    actorId: string,
+    title: string,
+    file: UploadedFile | undefined,
+    replaceExistingQuestions = false,
+  ) {
     await this.requireEditableProject(projectId);
+    await this.requireQuestionReplacementConfirmation(projectId, replaceExistingQuestions);
     const validated = validatePdf(file);
     const normalizedTitle = requiredTitle(title);
+    let extraction: TrainingMaterialExtraction;
     try {
-      const extraction = await this.extraction.extractPdf(validated.buffer);
-      return this.createPdfMaterial(projectId, actorId, normalizedTitle, validated, extraction);
+      extraction = await this.extraction.extractPdf(validated.buffer);
     } catch (error) {
       return this.createPdfMaterial(
         projectId,
@@ -487,6 +531,58 @@ export class TrainingMaterialService {
         safeErrorCode(error, 'PDF_EXTRACTION_FAILED'),
       );
     }
+    const materialId = randomUUID();
+    const revisionId = randomUUID();
+    const questionGeneration = await this.generateQuestionDraftsForSource({
+      projectId,
+      materialId,
+      revisionId,
+      title: normalizedTitle,
+      type: TrainingMaterialType.PDF,
+      extraction,
+    });
+    const stored = await this.storePrivatePdf(materialId, revisionId, actorId, validated);
+    try {
+      await this.prisma.$transaction(async (transaction) => {
+        await lockProject(transaction, projectId);
+        await this.assertQuestionReplacementAllowed(
+          transaction,
+          projectId,
+          replaceExistingQuestions,
+        );
+        await transaction.trainingMaterial.create({
+          data: {
+            id: materialId,
+            projectId,
+            createdById: actorId,
+            title: normalizedTitle,
+            type: TrainingMaterialType.PDF,
+            revisions: { create: {
+              id: revisionId,
+              fileId: stored.id,
+              ...revisionCreateData({
+                actorId,
+                revisionNumber: 1,
+                previousRevision: null,
+                extraction,
+              }),
+            } },
+          },
+        });
+        await this.upsertGeneratedQuestionDrafts(
+          transaction,
+          projectId,
+          null,
+          questionGeneration.generated,
+          questionGeneration.sources,
+        );
+      });
+    } catch (error) {
+      await this.storage.deleteObject(stored.key, stored.bucket ?? undefined).catch(() => undefined);
+      await this.prisma.file.delete({ where: { id: stored.id } }).catch(() => undefined);
+      throw error;
+    }
+    return this.get(materialId);
   }
 
   async refresh(
@@ -572,6 +668,9 @@ export class TrainingMaterialService {
       select: { id: true, text: true },
       orderBy: [{ type: 'asc' }, { position: 'asc' }],
     });
+    if (!questions.length) {
+      throw new ConflictException('PROJECT_QUESTIONS_REQUIRED_FOR_SUGGESTIONS');
+    }
     const segments = parseStoredSegments(revision.segmentsJson);
     try {
       const result = await this.suggester.suggest({
@@ -977,65 +1076,155 @@ export class TrainingMaterialService {
 
   private async applyGeneratedQuestionDrafts(
     projectId: string,
-    objectId: string,
-    mainQuestion: string,
-    followUpQuestions: string[],
+    objectId: string | null,
+    generated: TrainingQuestionDraftGenerationResult,
+    sources: TrainingQuestionDraftSource[],
+    replaceExistingQuestions: boolean,
   ) {
-    if (followUpQuestions.length !== 10) {
-      throw new BadRequestException('OBJECT_QUESTION_DRAFTS_INVALID');
-    }
     await this.prisma.$transaction(async (transaction) => {
       await lockProject(transaction, projectId);
-      const project = await transaction.trainingProject.findUnique({
-        where: { id: projectId },
-        select: { id: true, isOpen: true },
-      });
-      if (!project) throw new NotFoundException('Training project not found');
-      if (project.isOpen) throw new ConflictException('Close the training project before editing materials');
+      await this.assertQuestionReplacementAllowed(transaction, projectId, replaceExistingQuestions);
+      await this.upsertGeneratedQuestionDrafts(transaction, projectId, objectId, generated, sources);
+    });
+  }
 
-      await transaction.trainingProject.update({
-        where: { id: projectId },
-        data: {
-          realEstateObjectId: objectId,
-          status: TrainingProjectStatus.DRAFT,
-        },
-      });
-      await transaction.trainingQuestion.upsert({
-        where: {
-          projectId_type_position: {
-            projectId,
-            type: TrainingQuestionType.MAIN,
-            position: 1,
-          },
-        },
-        update: { text: mainQuestion, isActive: true },
-        create: {
+  private async requireQuestionReplacementConfirmation(
+    projectId: string,
+    replaceExistingQuestions: boolean,
+  ) {
+    const existingQuestions = await this.prisma.trainingQuestion.count({
+      where: { projectId, isActive: true },
+    });
+    if (existingQuestions > 0 && !replaceExistingQuestions) {
+      throw new ConflictException('PROJECT_QUESTIONS_REPLACE_CONFIRMATION_REQUIRED');
+    }
+  }
+
+  private async assertQuestionReplacementAllowed(
+    transaction: Prisma.TransactionClient,
+    projectId: string,
+    replaceExistingQuestions: boolean,
+  ) {
+    const existingQuestions = await transaction.trainingQuestion.count({
+      where: { projectId, isActive: true },
+    });
+    if (existingQuestions > 0 && !replaceExistingQuestions) {
+      throw new ConflictException('PROJECT_QUESTIONS_REPLACE_CONFIRMATION_REQUIRED');
+    }
+  }
+
+  private generateQuestionDraftsForSource(input: {
+    projectId: string;
+    materialId: string;
+    revisionId: string;
+    title: string;
+    type: TrainingQuestionDraftSource['materialType'];
+    extraction: TrainingMaterialExtraction;
+  }) {
+    const sources: TrainingQuestionDraftSource[] = [{
+      materialId: input.materialId,
+      revisionId: input.revisionId,
+      materialTitle: input.title,
+      materialType: input.type,
+      segments: input.extraction.segments,
+    }];
+    return this.suggester.generateQuestionDrafts({
+      projectId: input.projectId,
+      objectId: input.materialId,
+      objectTitle: input.title,
+      sources,
+    }).then((generated) => ({ generated, sources }));
+  }
+
+  private async upsertGeneratedQuestionDrafts(
+    transaction: Prisma.TransactionClient,
+    projectId: string,
+    objectId: string | null,
+    generated: TrainingQuestionDraftGenerationResult,
+    sources: TrainingQuestionDraftSource[],
+  ) {
+    if (generated.followUps.length !== 10) {
+      throw new BadRequestException('OBJECT_QUESTION_DRAFTS_INVALID');
+    }
+    const project = await transaction.trainingProject.findUnique({
+      where: { id: projectId },
+      select: { id: true, isOpen: true },
+    });
+    if (!project) throw new NotFoundException('Training project not found');
+    if (project.isOpen) throw new ConflictException('Close the training project before editing materials');
+
+    await transaction.trainingProject.update({
+      where: { id: projectId },
+      data: {
+        ...(objectId ? { realEstateObjectId: objectId } : {}),
+        status: TrainingProjectStatus.DRAFT,
+      },
+    });
+    const mainQuestion = await transaction.trainingQuestion.upsert({
+      where: {
+        projectId_type_position: {
           projectId,
           type: TrainingQuestionType.MAIN,
           position: 1,
-          text: mainQuestion,
-          isActive: true,
         },
-      });
-      for (const [index, text] of followUpQuestions.entries()) {
-        await transaction.trainingQuestion.upsert({
-          where: {
-            projectId_type_position: {
-              projectId,
-              type: TrainingQuestionType.FOLLOW_UP,
-              position: index + 1,
-            },
-          },
-          update: { text, isActive: true },
-          create: {
+      },
+      update: { text: generated.main.text, isActive: true },
+      create: {
+        projectId,
+        type: TrainingQuestionType.MAIN,
+        position: 1,
+        text: generated.main.text,
+        isActive: true,
+      },
+      select: { id: true },
+    });
+    const generatedQuestions = [{ questionId: mainQuestion.id, draft: generated.main }];
+    for (const [index, question] of generated.followUps.entries()) {
+      const persisted = await transaction.trainingQuestion.upsert({
+        where: {
+          projectId_type_position: {
             projectId,
             type: TrainingQuestionType.FOLLOW_UP,
             position: index + 1,
-            text,
-            isActive: true,
           },
-        });
-      }
+        },
+        update: { text: question.text, isActive: true },
+        create: {
+          projectId,
+          type: TrainingQuestionType.FOLLOW_UP,
+          position: index + 1,
+          text: question.text,
+          isActive: true,
+        },
+        select: { id: true },
+      });
+      generatedQuestions.push({ questionId: persisted.id, draft: question });
+    }
+
+    const sourceByCompositeLocator = generatedFactSourceMap(sources);
+    await transaction.trainingFact.deleteMany({
+      where: { question: { projectId } },
+    });
+    await transaction.trainingFact.createMany({
+      data: generatedQuestions.flatMap(({ questionId, draft }) =>
+        draft.facts.map((fact, index) => {
+          const source = sourceByCompositeLocator.get(fact.sourceLocator);
+          if (!source) throw new BadRequestException('OBJECT_QUESTION_DRAFTS_INVALID');
+          return {
+            questionId,
+            statement: fact.statement,
+            aliasesJson: fact.aliases as Prisma.InputJsonValue,
+            isRequired: fact.isRequired,
+            position: index + 1,
+            isActive: true,
+            sourceType: TrainingFactSourceType.MATERIAL,
+            sourceRevisionId: source.sourceRevisionId,
+            sourceLabel: source.sourceLabel,
+            sourceLocator: source.sourceLocator,
+            sourceExcerpt: fact.sourceExcerpt,
+          };
+        }),
+      ),
     });
   }
 
@@ -1191,7 +1380,9 @@ function latestRevisionMetadata(material: MaterialRecord) {
 function questionSourceFromMaterial(material: TrainingMaterialDetail): TrainingQuestionDraftSource {
   const revision = material.latestRevision;
   if (!revision || revision.status !== TrainingMaterialRevisionStatus.READY ||
-    (material.type !== TrainingMaterialType.PDF && material.type !== TrainingMaterialType.OBJECT_SNAPSHOT)) {
+    (material.type !== TrainingMaterialType.PDF &&
+      material.type !== TrainingMaterialType.OFFICIAL_URL &&
+      material.type !== TrainingMaterialType.OBJECT_SNAPSHOT)) {
     throw new BadRequestException('OBJECT_QUESTION_SOURCE_INVALID');
   }
   return {
@@ -1201,6 +1392,28 @@ function questionSourceFromMaterial(material: TrainingMaterialDetail): TrainingQ
     materialType: material.type,
     segments: revision.segments,
   };
+}
+
+function generatedFactSourceMap(sources: readonly TrainingQuestionDraftSource[]) {
+  const result = new Map<string, {
+    sourceRevisionId: string;
+    sourceLabel: string;
+    sourceLocator: string;
+  }>();
+  for (const source of sources) {
+    for (const segment of source.segments) {
+      const compositeLocator = `${source.revisionId}:${segment.locator}`;
+      if (result.has(compositeLocator)) {
+        throw new BadRequestException('OBJECT_QUESTION_DRAFTS_INVALID');
+      }
+      result.set(compositeLocator, {
+        sourceRevisionId: source.revisionId,
+        sourceLabel: source.materialTitle,
+        sourceLocator: segment.locator,
+      });
+    }
+  }
+  return result;
 }
 
 function isPdfObjectFile(objectFile: {

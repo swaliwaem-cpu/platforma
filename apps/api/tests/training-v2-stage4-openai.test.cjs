@@ -96,6 +96,13 @@ test('object question generation uses strict grounded output and creates exactly
     text: `Что нужно знать об архитектуре комплекса, часть ${index}?`,
     source_locator: locator,
     source_excerpt: sourceExcerpt,
+    facts: [{
+      statement: `Проверяемый факт об архитектуре, часть ${index}.`,
+      aliases: [],
+      is_required: true,
+      source_locator: locator,
+      source_excerpt: sourceExcerpt,
+    }],
   });
   const client = {
     request: async (input) => {
@@ -129,8 +136,19 @@ test('object question generation uses strict grounded output and creates exactly
   assert.equal(captured.text.format.strict, true);
   assert.equal(captured.text.format.schema.properties.follow_up_questions.minItems, 10);
   assert.equal(captured.text.format.schema.properties.follow_up_questions.maxItems, 10);
+  const mainQuestionSchema = captured.text.format.schema.properties.main_question;
+  assert.equal(mainQuestionSchema.required.includes('facts'), true);
+  const factSchema = mainQuestionSchema.properties.facts;
+  assert.equal(factSchema.minItems, 1);
+  assert.equal(factSchema.maxItems, 5);
+  assert.equal(factSchema.items.additionalProperties, false);
+  assert.deepEqual(
+    new Set(factSchema.items.required),
+    new Set(['statement', 'aliases', 'is_required', 'source_locator', 'source_excerpt']),
+  );
   assert.match(captured.instructions, /SOURCE_TEXT_UNTRUSTED/);
   assert.equal(result.followUps.length, 10);
+  assert.equal([result.main, ...result.followUps].every((question) => question.facts.length === 1), true);
   assert.deepEqual(result.requestIds, ['question-request']);
 });
 

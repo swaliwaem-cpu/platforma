@@ -14,6 +14,7 @@ const {
   DeterministicFakeTrainingMaterialSuggester,
   canonicalTrainingFact,
   prepareQuestionSourceSegments,
+  validateQuestionDraftGeneration,
 } = require('../dist/training/training-material-suggester.js');
 const {
   isPublicIpAddress,
@@ -150,7 +151,35 @@ test('object materials generate one main and ten grounded draft questions withou
   for (const question of [first.main, ...first.followUps]) {
     const source = segments.find((segment) => segment.locator === question.sourceLocator);
     assert.ok(source.text.includes(question.sourceExcerpt));
+    assert.ok(question.facts.length >= 1 && question.facts.length <= 5);
+    assert.equal(question.facts.some((fact) => fact.isRequired), true);
+    for (const fact of question.facts) {
+      const factSource = segments.find((segment) => segment.locator === fact.sourceLocator);
+      assert.ok(factSource.text.includes(fact.sourceExcerpt));
+    }
   }
+
+  assert.throws(() => validateQuestionDraftGeneration({
+    main: { ...first.main, facts: [] },
+    followUps: first.followUps,
+  }, segments), /OBJECT_QUESTION_DRAFTS_INVALID/);
+  assert.throws(() => validateQuestionDraftGeneration({
+    main: {
+      ...first.main,
+      facts: Array.from({ length: 6 }, (_, index) => ({
+        ...first.main.facts[0],
+        statement: `Уникальный проверяемый факт ${index + 1}`,
+      })),
+    },
+    followUps: first.followUps,
+  }, segments), /OBJECT_QUESTION_DRAFTS_INVALID/);
+  assert.throws(() => validateQuestionDraftGeneration({
+    main: {
+      ...first.main,
+      facts: [{ ...first.main.facts[0], sourceExcerpt: 'Нет такой цитаты в источнике.' }],
+    },
+    followUps: first.followUps,
+  }, segments), /OBJECT_QUESTION_DRAFTS_INVALID/);
 });
 
 test('large object question context stays bounded while representing every imported material', () => {

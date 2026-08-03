@@ -23,6 +23,8 @@ if (!databaseUrl) {
 
   const { TrainingModule } = require('../dist/training/training.module.js');
   const { S3StorageService } = require('../dist/files/s3-storage.service.js');
+  const { TRAINING_MATERIAL_SUGGESTER } = require('../dist/training/training-material-suggester.js');
+  const { TrainingUrlExtractor } = require('../dist/training/training-url-extractor.js');
   const prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
   const jwt = new JwtService();
   let app;
@@ -166,6 +168,44 @@ if (!databaseUrl) {
     assert.equal(persistedRevision.file.url, null);
     assert.equal(persistedRevision.file.bucket, process.env.TRAINING_MATERIAL_BUCKET ?? 'training-materials');
     assert.equal(persistedRevision.file.checksum.length, 64);
+    const generatedQuestions = await prisma.trainingQuestion.findMany({
+      where: { projectId: created.body.id, isActive: true },
+    });
+    assert.equal(generatedQuestions.length, 11);
+    assert.equal(generatedQuestions.filter((question) => question.type === 'MAIN').length, 1);
+    assert.equal(generatedQuestions.filter((question) => question.type === 'FOLLOW_UP').length, 10);
+    const generatedFacts = await assertGeneratedFacts(created.body.id);
+    assert.equal(generatedFacts.every((fact) => fact.sourceRevisionId === uploaded.latestRevision.id), true);
+
+    const replacementRequiredForm = new FormData();
+    replacementRequiredForm.set('title', 'Second PDF');
+    replacementRequiredForm.set('file', new Blob([pdf], { type: 'application/pdf' }), 'second.pdf');
+    const replacementRequired = await fetch(
+      `${baseUrl}/training/admin/projects/${created.body.id}/materials/pdf`,
+      { method: 'POST', headers: { Authorization: `Bearer ${adminToken}` }, body: replacementRequiredForm },
+    );
+    assert.equal(replacementRequired.status, 409);
+    assert.equal((await replacementRequired.json()).message, 'PROJECT_QUESTIONS_REPLACE_CONFIRMATION_REQUIRED');
+    assert.equal(await prisma.trainingMaterial.count({ where: { projectId: created.body.id } }), 1);
+
+    const replacementConfirmedForm = new FormData();
+    replacementConfirmedForm.set('title', 'Second PDF');
+    replacementConfirmedForm.set('file', new Blob([pdf], { type: 'application/pdf' }), 'second.pdf');
+    replacementConfirmedForm.set('replaceExistingQuestions', 'true');
+    const replacementConfirmedResponse = await fetch(
+      `${baseUrl}/training/admin/projects/${created.body.id}/materials/pdf`,
+      { method: 'POST', headers: { Authorization: `Bearer ${adminToken}` }, body: replacementConfirmedForm },
+    );
+    const replacementConfirmed = await replacementConfirmedResponse.json();
+    assert.equal(replacementConfirmedResponse.status, 201, JSON.stringify(replacementConfirmed));
+    const replacementFacts = await assertGeneratedFacts(created.body.id);
+    assert.equal(
+      replacementFacts.every((fact) => fact.sourceRevisionId === replacementConfirmed.latestRevision.id),
+      true,
+    );
+    assert.equal(await prisma.trainingFact.count({
+      where: { id: { in: generatedFacts.map((fact) => fact.id) } },
+    }), 0);
 
     const generic = await request(`/files/${persistedRevision.file.id}/content`, { token: adminToken });
     assert.equal(generic.status, 404);
@@ -183,6 +223,7 @@ if (!databaseUrl) {
     const blankForm = new FormData();
     blankForm.set('title', 'Scanned-like PDF');
     blankForm.set('file', new Blob([blankPdf], { type: 'application/pdf' }), 'blank.pdf');
+    blankForm.set('replaceExistingQuestions', 'true');
     const blankResponse = await fetch(`${baseUrl}/training/admin/projects/${created.body.id}/materials/pdf`, {
       method: 'POST', headers: { Authorization: `Bearer ${adminToken}` }, body: blankForm,
     });
@@ -191,10 +232,15 @@ if (!databaseUrl) {
     assert.equal(blankMaterial.latestRevision.status, 'FAILED');
     assert.equal(blankMaterial.latestRevision.extractionMetadata.errorCode, 'PDF_TEXT_LAYER_MISSING');
     assert.equal(blankMaterial.latestRevision.suggestions, null);
+    assert.deepEqual(
+      (await assertGeneratedFacts(created.body.id)).map((fact) => fact.id),
+      replacementFacts.map((fact) => fact.id),
+    );
 
     const invalidForm = new FormData();
     invalidForm.set('title', 'Invalid PDF');
     invalidForm.set('file', new Blob([Buffer.from('not-pdf')], { type: 'application/pdf' }), 'invalid.pdf');
+    invalidForm.set('replaceExistingQuestions', 'true');
     const invalid = await fetch(`${baseUrl}/training/admin/projects/${created.body.id}/materials/pdf`, {
       method: 'POST', headers: { Authorization: `Bearer ${adminToken}` }, body: invalidForm,
     });
@@ -203,6 +249,7 @@ if (!databaseUrl) {
     const wrongMimeForm = new FormData();
     wrongMimeForm.set('title', 'Wrong MIME');
     wrongMimeForm.set('file', new Blob([pdf], { type: 'text/plain' }), 'fixture.pdf');
+    wrongMimeForm.set('replaceExistingQuestions', 'true');
     assert.equal((await fetch(`${baseUrl}/training/admin/projects/${created.body.id}/materials/pdf`, {
       method: 'POST', headers: { Authorization: `Bearer ${adminToken}` }, body: wrongMimeForm,
     })).status, 400);
@@ -212,11 +259,146 @@ if (!databaseUrl) {
     const oversizedForm = new FormData();
     oversizedForm.set('title', 'Oversized PDF');
     oversizedForm.set('file', new Blob([pdf], { type: 'application/pdf' }), 'oversized.pdf');
+    oversizedForm.set('replaceExistingQuestions', 'true');
     assert.equal((await fetch(`${baseUrl}/training/admin/projects/${created.body.id}/materials/pdf`, {
       method: 'POST', headers: { Authorization: `Bearer ${adminToken}` }, body: oversizedForm,
     })).status, 400);
     if (previousLimit === undefined) delete process.env.TRAINING_MATERIAL_MAX_BYTES;
     else process.env.TRAINING_MATERIAL_MAX_BYTES = previousLimit;
+  });
+
+  test('official URL creates question drafts and requires confirmation before replacing them', async () => {
+    const linkedObject = await prisma.realEstateObject.create({ data: {
+      title: 'ЖК URL',
+      slug: `stage4-object-url-${randomUUID()}`,
+    } });
+    const created = await request('/training/admin/projects', {
+      token: adminToken, method: 'POST', body: { title: 'Stage 4 URL', allowRetakeAfterPass: false },
+    });
+    await prisma.trainingProject.update({
+      where: { id: created.body.id },
+      data: { realEstateObjectId: linkedObject.id },
+    });
+
+    const extractor = app.get(TrainingUrlExtractor);
+    const originalExtract = extractor.extract;
+    let extractCalls = 0;
+    extractor.extract = async (sourceUrl) => {
+      extractCalls += 1;
+      const text = `Официальная страница ${extractCalls}: рядом метро, высота потолков три метра.`;
+      return {
+        text,
+        segments: [{ locator: 'html:main', label: 'Основной текст', text }],
+        contentHash: createHash('sha256').update(text).digest('hex'),
+        metadata: { method: 'HTTP' },
+        finalUrl: sourceUrl,
+        fetchedAt: new Date(),
+      };
+    };
+
+    try {
+      const first = await request(`/training/admin/projects/${created.body.id}/materials`, {
+        token: adminToken,
+        method: 'POST',
+        body: {
+          type: 'OFFICIAL_URL',
+          title: 'Официальный источник',
+          url: 'https://developer.example/project',
+          officialConfirmed: true,
+          replaceExistingQuestions: false,
+        },
+      });
+      assert.equal(first.status, 201, JSON.stringify(first.body));
+      const initialQuestions = await prisma.trainingQuestion.findMany({
+        where: { projectId: created.body.id, isActive: true },
+        orderBy: [{ type: 'asc' }, { position: 'asc' }],
+      });
+      assert.equal(initialQuestions.length, 11);
+      assert.equal(initialQuestions.filter((question) => question.type === 'MAIN').length, 1);
+      assert.equal(initialQuestions.filter((question) => question.type === 'FOLLOW_UP').length, 10);
+      const initialFacts = await assertGeneratedFacts(created.body.id);
+      assert.equal(initialFacts.every((fact) => fact.sourceRevisionId === first.body.latestRevision.id), true);
+
+      const replacementRequired = await request(`/training/admin/projects/${created.body.id}/materials`, {
+        token: adminToken,
+        method: 'POST',
+        body: {
+          type: 'OFFICIAL_URL',
+          title: 'Новый официальный источник',
+          url: 'https://developer.example/project-v2',
+          officialConfirmed: true,
+          replaceExistingQuestions: false,
+        },
+      });
+      assert.equal(replacementRequired.status, 409);
+      assert.equal(replacementRequired.body.message, 'PROJECT_QUESTIONS_REPLACE_CONFIRMATION_REQUIRED');
+      assert.equal(extractCalls, 1);
+      assert.equal(await prisma.trainingMaterial.count({ where: { projectId: created.body.id } }), 1);
+
+      const replaced = await request(`/training/admin/projects/${created.body.id}/materials`, {
+        token: adminToken,
+        method: 'POST',
+        body: {
+          type: 'OFFICIAL_URL',
+          title: 'Новый официальный источник',
+          url: 'https://developer.example/project-v2',
+          officialConfirmed: true,
+          replaceExistingQuestions: true,
+        },
+      });
+      assert.equal(replaced.status, 201, JSON.stringify(replaced.body));
+      assert.equal(extractCalls, 2);
+      const replacedQuestions = await prisma.trainingQuestion.findMany({
+        where: { projectId: created.body.id, isActive: true },
+        orderBy: [{ type: 'asc' }, { position: 'asc' }],
+      });
+      assert.equal(replacedQuestions.length, 11);
+      assert.deepEqual(replacedQuestions.map((question) => question.id), initialQuestions.map((question) => question.id));
+      const replacedFacts = await assertGeneratedFacts(created.body.id);
+      assert.equal(replacedFacts.every((fact) => fact.sourceRevisionId === replaced.body.latestRevision.id), true);
+      assert.equal(await prisma.trainingFact.count({
+        where: { id: { in: initialFacts.map((fact) => fact.id) } },
+      }), 0);
+      const updatedProject = await prisma.trainingProject.findUnique({ where: { id: created.body.id } });
+      assert.equal(updatedProject.realEstateObjectId, linkedObject.id);
+    } finally {
+      extractor.extract = originalExtract;
+    }
+  });
+
+  test('fact suggestions require existing questions before calling the provider', async () => {
+    const created = await request('/training/admin/projects', {
+      token: adminToken, method: 'POST', body: { title: 'Stage 4 empty questions', allowRetakeAfterPass: false },
+    });
+    const material = await request(`/training/admin/projects/${created.body.id}/materials`, {
+      token: adminToken,
+      method: 'POST',
+      body: { type: 'MANUAL_TEXT', title: 'Источник без вопросов', text: 'Проверяемый факт.' },
+    });
+    assert.equal(material.status, 201);
+
+    const suggester = app.get(TRAINING_MATERIAL_SUGGESTER);
+    const originalSuggest = suggester.suggest;
+    let suggestCalls = 0;
+    suggester.suggest = async (...args) => {
+      suggestCalls += 1;
+      return originalSuggest.apply(suggester, args);
+    };
+    try {
+      const response = await request(
+        `/training/admin/material-revisions/${material.body.latestRevision.id}/suggestions`,
+        { token: adminToken, method: 'POST' },
+      );
+      assert.equal(response.status, 409);
+      assert.equal(response.body.message, 'PROJECT_QUESTIONS_REQUIRED_FOR_SUGGESTIONS');
+      assert.equal(suggestCalls, 0);
+      const revision = await prisma.trainingMaterialRevision.findUnique({
+        where: { id: material.body.latestRevision.id },
+      });
+      assert.equal(revision.suggestionStatus, 'NOT_GENERATED');
+    } finally {
+      suggester.suggest = originalSuggest;
+    }
   });
 
   test('object import searches with the platform keyboard-layout variants, copies every PDF and creates question drafts', async () => {
@@ -253,6 +435,25 @@ if (!databaseUrl) {
       fileId: sourceFile.id,
       title: 'Презентация ЖК',
     } });
+    const invalidSourceKey = `training-v2/stage4-object-source/${randomUUID()}-invalid.pdf`;
+    const invalidPdf = Buffer.from('not-a-pdf');
+    await storage.putObject({ key: invalidSourceKey, body: invalidPdf, contentType: 'application/pdf' });
+    const invalidSourceFile = await prisma.file.create({ data: {
+      storage: 'MINIO',
+      bucket: storage.getBucket(),
+      key: invalidSourceKey,
+      url: storage.getPublicUrl(invalidSourceKey),
+      originalName: 'broken.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: BigInt(invalidPdf.length),
+      checksum: createHash('sha256').update(invalidPdf).digest('hex'),
+      uploadedById: admin.id,
+    } });
+    await prisma.objectFile.create({ data: {
+      objectId: object.id,
+      fileId: invalidSourceFile.id,
+      title: 'Повреждённое вложение',
+    } });
 
     assert.equal((await request(
       `/training/admin/projects/${created.body.id}/object-options?search=${encodeURIComponent('ctdth')}`,
@@ -265,7 +466,7 @@ if (!databaseUrl) {
     assert.equal(options.status, 200, JSON.stringify(options.body));
     assert.equal(options.body.items.length, 1);
     assert.equal(options.body.items[0].id, object.id);
-    assert.equal(options.body.items[0].pdfCount, 1);
+    assert.equal(options.body.items[0].pdfCount, 2);
 
     assert.equal((await request(`/training/admin/projects/${created.body.id}/import-object`, {
       token: employeeToken,
@@ -280,7 +481,7 @@ if (!databaseUrl) {
     assert.equal(imported.status, 201, JSON.stringify(imported.body));
     assert.equal(imported.body.object.id, object.id);
     assert.equal(imported.body.importedPdfCount, 1);
-    assert.deepEqual(imported.body.failedPdfTitles, []);
+    assert.deepEqual(imported.body.failedPdfTitles, ['Повреждённое вложение']);
     assert.equal(imported.body.followUpQuestions.length, 10);
 
     const project = await prisma.trainingProject.findUnique({ where: { id: created.body.id } });
@@ -297,14 +498,24 @@ if (!databaseUrl) {
       where: { projectId: created.body.id, status: 'ACTIVE' },
       include: { revisions: { include: { file: true } } },
     });
-    assert.equal(materials.length, 2);
+    assert.equal(materials.length, 3);
     const snapshot = materials.find((material) => material.type === 'OBJECT_SNAPSHOT');
     assert.match(snapshot.revisions[0].extractedText, /ЖК Северный/);
     assert.match(snapshot.revisions[0].extractedText, /3,1 м/);
-    const importedPdf = materials.find((material) => material.type === 'PDF');
+    const importedPdf = materials.find((material) =>
+      material.type === 'PDF' && material.revisions[0].status === 'READY',
+    );
+    const failedPdf = materials.find((material) =>
+      material.type === 'PDF' && material.revisions[0].status === 'FAILED',
+    );
+    assert.ok(failedPdf);
     assert.match(importedPdf.revisions[0].extractedText, /Underground parking/iu);
     assert.equal(importedPdf.revisions[0].file.url, null);
     assert.equal(importedPdf.revisions[0].file.bucket, process.env.TRAINING_MATERIAL_BUCKET ?? 'training-materials');
+    const importedFacts = await assertGeneratedFacts(created.body.id);
+    const allowedSourceRevisionIds = new Set([snapshot.revisions[0].id, importedPdf.revisions[0].id]);
+    assert.equal(importedFacts.every((fact) => allowedSourceRevisionIds.has(fact.sourceRevisionId)), true);
+    assert.equal(importedFacts.some((fact) => fact.sourceRevisionId === failedPdf.revisions[0].id), false);
 
     const confirmationRequired = await request(`/training/admin/projects/${created.body.id}/import-object`, {
       token: adminToken,
@@ -320,6 +531,24 @@ if (!databaseUrl) {
     });
     assert.equal(replaced.status, 201, JSON.stringify(replaced.body));
     assert.equal(await prisma.trainingQuestion.count({ where: { projectId: created.body.id, isActive: true } }), 11);
+    assert.equal(await prisma.trainingFact.count({
+      where: { id: { in: importedFacts.map((fact) => fact.id) } },
+    }), 0);
+    const replacedObjectFacts = await assertGeneratedFacts(created.body.id);
+    const latestReadyRevisions = await prisma.trainingMaterialRevision.findMany({
+      where: {
+        material: { projectId: created.body.id, status: 'ACTIVE' },
+        status: 'READY',
+      },
+      orderBy: { revisionNumber: 'desc' },
+      distinct: ['materialId'],
+      select: { id: true },
+    });
+    const latestReadyRevisionIds = new Set(latestReadyRevisions.map((revision) => revision.id));
+    assert.equal(
+      replacedObjectFacts.every((fact) => latestReadyRevisionIds.has(fact.sourceRevisionId)),
+      true,
+    );
 
     await prisma.objectFile.deleteMany({ where: { objectId: object.id } });
     const withoutRemovedPdf = await request(`/training/admin/projects/${created.body.id}/import-object`, {
@@ -332,7 +561,43 @@ if (!databaseUrl) {
     assert.equal(await prisma.trainingMaterial.count({
       where: { projectId: created.body.id, type: 'PDF', status: 'ACTIVE' },
     }), 0);
+    const snapshotOnlyFacts = await assertGeneratedFacts(created.body.id);
+    assert.equal(snapshotOnlyFacts.every(
+      (fact) => fact.sourceRevision.material.type === 'OBJECT_SNAPSHOT',
+    ), true);
   });
+
+  async function assertGeneratedFacts(projectId) {
+    const facts = await prisma.trainingFact.findMany({
+      where: { question: { projectId }, isActive: true },
+      include: {
+        question: true,
+        sourceRevision: { include: { material: true } },
+      },
+      orderBy: { id: 'asc' },
+    });
+    assert.ok(facts.length >= 11 && facts.length <= 55);
+    const countByQuestion = new Map();
+    for (const fact of facts) {
+      assert.equal(fact.question.isActive, true);
+      assert.equal(fact.sourceType, 'MATERIAL');
+      assert.ok(fact.sourceRevision);
+      assert.equal(fact.sourceRevision.status, 'READY');
+      assert.equal(fact.sourceRevision.material.projectId, projectId);
+      assert.equal(fact.sourceLabel, fact.sourceRevision.material.title);
+      assert.ok(fact.sourceLocator);
+      assert.ok(fact.sourceExcerpt);
+      const segments = fact.sourceRevision.segmentsJson;
+      assert.ok(Array.isArray(segments));
+      const segment = segments.find((item) => item.locator === fact.sourceLocator);
+      assert.ok(segment);
+      assert.equal(segment.text.includes(fact.sourceExcerpt), true);
+      countByQuestion.set(fact.questionId, (countByQuestion.get(fact.questionId) ?? 0) + 1);
+    }
+    assert.equal(countByQuestion.size, 11);
+    assert.equal([...countByQuestion.values()].every((count) => count >= 1 && count <= 5), true);
+    return facts;
+  }
 
   function draft() {
     return {

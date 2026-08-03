@@ -19,6 +19,8 @@ const stylesSource = source('training/training.css');
 test('Stage 4 stays inside the existing admin editor and adds the explicit Platforma object import flow', () => {
   assert.match(editorSource, /TabsTrigger value="materials">Материалы/);
   assert.match(editorSource, /TrainingMaterialsPanel/);
+  assert.match(editorSource, /Эталонный ответ · проверяемые факты/);
+  assert.match(editorSource, /Эталонный ответ вопроса/);
   assert.doesNotMatch(routesSource, /materials|material-revisions/iu);
   assert.match(panelSource, /PDF: 'PDF'/);
   assert.match(panelSource, /OFFICIAL_URL: 'Официальный URL'/);
@@ -32,12 +34,12 @@ test('Stage 4 stays inside the existing admin editor and adds the explicit Platf
   assert.match(panelSource, /role="combobox"/);
   assert.match(panelSource, /role="listbox"/);
   assert.match(panelSource, /Поиск понимает текст в другой раскладке/);
-  assert.match(panelSource, /Загрузить данные и создать вопросы/);
-  assert.match(panelSource, /Созданы 1 главный и 10 дополнительных черновиков вопросов/);
+  assert.match(panelSource, /Создать вопросы и ответы из данных ЖК/);
+  assert.match(panelSource, /Созданы 1 главный и 10 дополнительных вопросов с активными эталонными ответами/);
   assert.doesNotMatch(editorSource, /UUID связанного ЖК|training-object-id/);
 });
 
-test('material UI covers loading, empty, failed extraction, revisions, bounded diff and manual suggestions', () => {
+test('material UI covers loading, auto questions, failed extraction, revisions and guarded fact generation', () => {
   assert.match(panelSource, /training-materials-skeleton/);
   assert.match(panelSource, /Источников пока нет/);
   assert.match(panelSource, /setError\(loadError/);
@@ -47,10 +49,17 @@ test('material UI covers loading, empty, failed extraction, revisions, bounded d
   assert.match(panelSource, /Без изменений:/);
   assert.match(panelSource, /Добавленные segments/);
   assert.match(panelSource, /setSelectedRevisionId\(revision\.id\)/);
-  assert.match(panelSource, /Сгенерировать/);
+  assert.match(panelSource, /Сгенерировать дополнительные факты/);
+  assert.match(panelSource, /Сначала создайте вопросы проекта/);
+  assert.match(panelSource, /disabled=\{disabled \|\| !hasQuestions/);
   assert.match(panelSource, /Применить выбранные/);
   assert.match(panelSource, /Дубликатов пропущено/);
-  assert.match(panelSource, /AI-черновики не участвуют в публикации до ручного apply/);
+  assert.match(panelSource, /новые AI-факты не участвуют в публикации до ручного применения/);
+  assert.match(panelSource, /Сформированы 1 главный и 10 дополнительных вопросов с активными эталонными ответами/);
+  assert.match(panelSource, /Заменить их новыми AI-черновиками/);
+  assert.doesNotMatch(panelSource, /Утверждённые факты не удаляются/);
+  assert.match(panelSource, /PROJECT_QUESTIONS_REPLACE_CONFIRMATION_REQUIRED/);
+  assert.match(panelSource, /createMaterial\(true\)/);
   assert.match(stylesSource, /training-revision-button--active/);
   assert.match(stylesSource, /training-material-url-meta/);
 });
@@ -64,6 +73,7 @@ test('admin API owns the complete resource boundary and private PDF download kee
   assert.match(apiSource, /\/import-object/);
   assert.match(apiSource, /JSON\.stringify\(input\)/);
   assert.match(apiSource, /\/materials\/pdf/);
+  assert.match(apiSource, /form\.set\('replaceExistingQuestions', String\(replaceExistingQuestions\)\)/);
   assert.match(apiSource, /\/materials\/\$\{encodeURIComponent\(materialId\)\}\/revisions/);
   assert.match(apiSource, /\/material-revisions\/\$\{encodeURIComponent\(revisionId\)\}\/suggestions/);
   assert.match(apiSource, /\/material-revisions\/\$\{encodeURIComponent\(revisionId\)\}\/apply-suggestions/);

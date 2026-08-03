@@ -78,6 +78,7 @@ export class TrainingMaterialController {
       return this.materials.createOfficialUrl(
         parsedProjectId, actor.id, title, requiredText(body.url, 'url', 2_048),
         body.officialConfirmed === true,
+        optionalBoolean(body.replaceExistingQuestions, 'replaceExistingQuestions'),
       );
     }
     if (body.type === 'OBJECT_SNAPSHOT') {
@@ -93,11 +94,16 @@ export class TrainingMaterialController {
   createPdf(
     @Param('projectId') projectId: string,
     @Body('title') title: string,
+    @Body('replaceExistingQuestions') replaceExistingQuestions: unknown,
     @UploadedFile() file: UploadedFileData | undefined,
     @CurrentUser() actor: AuthenticatedUser,
   ) {
     return this.materials.createPdf(
-      parseUuid(projectId, 'projectId'), actor.id, requiredText(title, 'title', 240), file,
+      parseUuid(projectId, 'projectId'),
+      actor.id,
+      requiredText(title, 'title', 240),
+      file,
+      optionalMultipartBoolean(replaceExistingQuestions, 'replaceExistingQuestions'),
     );
   }
 
@@ -195,6 +201,18 @@ function stringArray(value: unknown, field: string, maximum = 32, minimum = 1) {
 function requiredBoolean(value: unknown, field: string) {
   if (typeof value !== 'boolean') throw new BadRequestException(`${field} is invalid`);
   return value;
+}
+
+function optionalBoolean(value: unknown, field: string) {
+  if (value === undefined) return false;
+  return requiredBoolean(value, field);
+}
+
+function optionalMultipartBoolean(value: unknown, field: string) {
+  if (value === undefined) return false;
+  if (value === 'true' || value === true) return true;
+  if (value === 'false' || value === false) return false;
+  throw new BadRequestException(`${field} is invalid`);
 }
 
 function safeFilename(value: string | null) {

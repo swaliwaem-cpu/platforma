@@ -568,6 +568,7 @@ async function runConnectedScenario(context) {
     'E2E официальный URL fixture',
     'https://official.fixture.test/project',
     true,
+    true,
   );
   assert.equal(urlMaterial.type, 'OFFICIAL_URL');
   assert.equal(manualMaterial.type, 'MANUAL_TEXT');

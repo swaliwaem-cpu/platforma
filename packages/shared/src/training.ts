@@ -304,6 +304,7 @@ export type CreateTrainingUrlMaterialRequest = {
   title: string;
   url: string;
   officialConfirmed: true;
+  replaceExistingQuestions?: boolean;
 };
 export type CreateTrainingObjectSnapshotMaterialRequest = {
   title: string;
