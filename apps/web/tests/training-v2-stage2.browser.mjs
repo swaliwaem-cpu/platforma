@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 
 import { chromium } from '@playwright/test';
+import { fulfillTrainingConfig } from './training-v2-browser-config-fixture.mjs';
 
 const baseUrl = process.env.TRAINING_WEB_TEST_URL;
 
@@ -14,6 +15,8 @@ const projectId = '11111111-1111-4111-8111-111111111111';
 
 try {
   await page.route('http://localhost:3000/**', async (route) => {
+    if (await fulfillTrainingConfig(route, true)) return;
+
     const request = route.request();
     const path = new URL(request.url()).pathname;
 
