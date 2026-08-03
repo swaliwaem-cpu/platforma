@@ -13,6 +13,7 @@
     "dev:api": "pnpm --filter @platforma/api dev",
     "dev:web": "pnpm --filter @platforma/web dev",
     "test": "pnpm -r --if-present test",
+    "test:training-v2:e2e": "node apps/api/tests/training-v2-stage5-part4-e2e.cjs",
     "test:training:openai:smoke": "pnpm --filter @platforma/api test:training:openai:smoke",
     "training:webhook:status": "node --env-file-if-exists=.env apps/api/scripts/training-telegram-webhook.cjs status",
     "training:webhook:register": "node --env-file-if-exists=.env apps/api/scripts/training-telegram-webhook.cjs register",

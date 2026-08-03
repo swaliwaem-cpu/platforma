@@ -601,3 +601,41 @@ Stage 4.
 Единица/default timer, reload/recovery, timeout, close behavior, role mapping и
 сочетание confirmed/pending результата закрыты текущим заданием Stage 1 и
 зафиксированы выше. Новых `NEEDS_DECISION` для Web Fake Vertical Slice нет.
+
+## Stage 5 Part 4: connected E2E и final readiness
+
+Финальный connected fake E2E запускается одной root-командой
+`pnpm test:training-v2:e2e`. Runner сам собирает текущие API и web images,
+создаёт уникальные Docker network/volumes/containers для PostgreSQL и MinIO,
+накатывает все 38 migrations на пустую БД, проверяет `migrate status` и всегда
+удаляет только созданные им ресурсы.
+
+Один сценарий проводит одни и те же project/user/attempt/answer IDs через живой
+Nest HTTP API, PostgreSQL, private MinIO, реальный `ffmpeg` из API image и
+собранный web в headless Chromium. Auth refresh использует test fixture, а два
+точечных route overrides инъецируют HTTP 500 для results error state и
+post-review refresh failure; happy path и остальные browser-запросы идут в
+живой API. Telegram, transcription, evaluation и material suggestions остаются
+deterministic fake. URL extraction заменяется test-only локальным extractor
+fixture без сетевого запроса. Реальные
+Telegram/OpenAI вызовы и production deploy не являются частью команды.
+
+Для review/recovery ветвей допустимы только test-only scripted providers,
+инъецированные через уже существующие interfaces. Они не добавляют product
+режимов, env или runtime infrastructure. Connected suite проверяет 10 проектов,
+105 сотрудников, 10 одновременных Telegram flows, provider concurrency
+`1 < peak <= 3`, duplicate delivery, restart/fencing, feature disable/re-enable,
+technical refund, timeout, results/review/ranking/CSV/audio, assignments/revoke,
+immutable snapshot и redaction.
+
+Performance gate использует тот же набор из 105 сотрудников и 10 проектов:
+exact pagination, стабильный порядок API/CSV, formula-injection escaping,
+две bounded SQL-команды на страницу, четыре на CSV из двух 100-row batches и
+`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)`. Машинозависимый SLA по миллисекундам
+не вводится; фиксируются plan rows и measured execution/planning time.
+
+Part 4 не создаёт migrations, product features, новых dependencies или
+отдельного worker. Результат этой части — доказательства регрессии и два
+операторских списка: local manual acceptance и будущий production rollout.
+Реальный Telegram/OpenAI smoke, webhook registration и deploy остаются
+внешними воротами, требующими отдельного разрешения.

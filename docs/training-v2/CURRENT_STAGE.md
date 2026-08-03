@@ -1,61 +1,58 @@
-# Current Stage: Stage 5 Part 3/4 — Runtime Hardening and Concurrency
+# Current Stage: Stage 5 Part 4/4 — Connected E2E and Final Readiness
 
 ## Статус
 
-Stage 4, Stage 4.5 и Stage 5 Parts 1–2 приняты пользователем. Текущая
-разрешённая граница — только третья из четырёх частей Stage 5. Part 4 не
-начинается без отдельного задания.
+`final acceptance pending`
 
-Отдельного staging-окружения сейчас нет. Эта часть выполняется локально без
-production deploy, production DB/SSH и реальных Telegram/OpenAI вызовов.
+Stage 4, Stage 4.5 и Stage 5 Parts 1–3 вручную приняты и находятся в отдельных
+commits. Connected fake E2E и автоматическая финальная регрессия Part 4
+реализованы локально. Для полного acceptance остаются перечисленные ниже
+ручные и внешние gates.
+
+Отдельного staging-окружения нет. Production deploy, production DB/SSH,
+реальные Telegram/OpenAI вызовы и webhook registration в этой части не
+выполняются.
 
 ## Входит
 
-- Один общий Telegram-бот обслуживает минимум 10 одновременно работающих
-  пользователей одного проекта с независимыми account/chat/attempt/answer.
-- `TrainingAnswer` остаётся persisted processing unit. Локальный API worker
-  использует существующий PostgreSQL `FOR UPDATE SKIP LOCKED`, configurable
-  bounded concurrency с default `3`, уникальный fencing token каждого claim,
-  heartbeat, stale recovery и bounded retries.
-- `TRAINING_MODULE_ENABLED=true|false`: backend actions блокируются, webhook
-  становится controlled no-op, worker не берёт новую работу, frontend скрывает
-  employee/admin entry, а существующие данные и processing work сохраняются.
-- При production + enabled startup fail-closed требует real Telegram, HTTPS
-  webhook/public URL, OpenAI, explicit models и три валидных попарно различных
-  general/audio/material bucket.
-- Только opt-in webhook CLI: status, HTTPS register и confirm-required delete;
-  secret и allowed updates передаются безопасно, реальные вызовы автоматически
-  не запускаются.
-- Публичный `/health` ограничен status, DB и training
-  `ready|disabled|degraded` без config/provider/user/payload metadata.
-- Nest shutdown hooks, прямой Node signal path, bounded worker drain и restart
-  recovery внутри существующего API container. `ffmpeg` остаётся в API image.
+- Одна команда `pnpm test:training-v2:e2e` с чистой PostgreSQL БД, MinIO,
+  собранными API/web images, real `ffmpeg`, live Nest API и live browser.
+- Один connected сценарий на одинаковых IDs: object/PDF/official URL,
+  materials/suggestions, 10 проектов с ALL/ASSIGNED доступом, assignments,
+  Telegram linking, voice segments, finish, result/history/review,
+  ranking/coverage/CSV и protected audio.
+- Multi-user concurrency, duplicate delivery, worker restart/fencing,
+  disable/re-enable, technical refund, timeout и bounded graceful shutdown.
+- Регрессия Stage 4/4.5/Stage 5, RBAC, ownership, private storage, redaction,
+  revoke/close mid-attempt и immutable snapshot.
+- Performance evidence на 105 сотрудниках и 10 проектах: exact pagination,
+  stable API/CSV order, query counts и PostgreSQL `EXPLAIN` без искусственного
+  machine-specific SLA.
+- Финальные local manual acceptance и future production rollout checklists.
 
 ## Не входит
 
-- Production deploy, production DB/SSH, real Telegram webhook registration,
-  real Telegram/OpenAI smoke и отдельное staging-окружение.
-- Изменение results, ranking, CSV, protected audio, review, materials или
-  assignments без доказанного blocker.
-- Generic queue/job/outbox/provider-run infrastructure, отдельный worker
-  container, operations dashboard и remote/dynamic feature flag.
-- Новые product features, Part 4, commit и schema migration.
+- Новые product features, migrations, dependencies, generic queue/outbox,
+  отдельный worker container или новый provider mode.
+- Реальные Telegram/OpenAI вызовы, платный smoke, реальный webhook register или
+  delete, production deploy, production DB/SSH и commit.
+- Изменение product-кода без доказанного connected blocker.
 
-## Production boundary
+## Remaining external gates
 
-Production требует `TRAINING_MODULE_ENABLED=true`, real Telegram/OpenAI,
-публичные HTTPS URL и отдельно выполненную operator registration webhook.
-Feature disable сохраняет projects, assignments, materials, attempts, answers,
-audio и незавершённую работу; после re-enable persisted processing продолжается.
+- Локальная ручная fake-проверка ключевых экранов и operator flow.
+- Отдельно разрешённый real local Telegram/OpenAI smoke без автоматических
+  повторов.
+- Production env review, backup/rollback, operator webhook registration,
+  deploy и post-deploy observation по отдельной задаче.
 
 ## Stop conditions
 
-- Требуется production deploy/DB/SSH, real provider call или webhook registration.
-- Требуется generic queue/separate worker container или изменение Part 1–2
-  surfaces без доказанного blocker.
-- Lost owner способен сохранить stale checkpoint/result либо shutdown берёт
-  новую работу после stop boundary.
-- Disabled module начинает новый external call или удаляет/финализирует
-  persisted work вместо сохранения для recovery.
-- Health/config/error/log раскрывает secret, model, bucket, user, transcript или
-  provider payload.
+- Любой шаг требует real provider call, webhook mutation, production access,
+  deploy или commit без отдельной команды пользователя.
+- Connected E2E оставляет Docker resources, обращается к внешнему provider или
+  использует неочищенную shared БД/MinIO.
+- Results/ranking/CSV/audio раскрывают private payload/storage/provider data,
+  а RBAC/ownership допускают cross-user или cross-project доступ.
+- Regression, build, Compose, migration, browser, shutdown или performance gate
+  не имеет воспроизводимого зелёного результата.
