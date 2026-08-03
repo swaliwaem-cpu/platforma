@@ -23,7 +23,7 @@ test('Stage 5 Part 2 ranking uses server pagination and the server-provided orde
 test('Stage 5 Part 2 exposes permission-gated navigation, breakdown and CSV lifecycle', () => {
   assert.match(routes, /admin\\\/training\\\/ranking/u);
   assert.match(routes, /canReadResults[\s\S]*TrainingAdminRankingPage/u);
-  assert.match(projects, /Открыть рейтинг/u);
+  assert.match(projects, /navigate\('\/admin\/training\/ranking'\)/u);
   assert.match(ranking, /<details className="training-ranking-details">/u);
   assert.match(ranking, /currentCoveragePercent/u);
   assert.match(api, /\/training\/admin\/ranking\/export\.csv/u);

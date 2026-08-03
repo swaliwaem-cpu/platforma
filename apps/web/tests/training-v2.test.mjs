@@ -16,6 +16,7 @@ const editorSource = source('training/TrainingAdminProjectEditorPage.tsx');
 const adminAttemptSource = source('training/TrainingAdminAttemptPage.tsx');
 const viewSource = source('training/trainingView.ts');
 const stylesSource = source('training/training.css');
+const dashboardStylesSource = source('training/trainingAdminDashboard.css');
 const appThemeSource = source('app-theme.css');
 
 test('Training V2 keeps existing routes and adds the Stage 5 Part 2 ranking route', () => {
@@ -103,6 +104,22 @@ test('admin projects link to results and ranking while detail keeps excluded sur
   assert.match(adminAttemptSource, /question\.answer\.text/);
   assert.match(adminAttemptSource, /TrainingProtectedAudioPlayer/);
   assert.doesNotMatch(adminAttemptSource, /ranking|leaderboard|storage key|bucket/iu);
+});
+
+test('admin projects overview renders an accessible responsive operations dashboard', () => {
+  assert.match(adminProjectsSource, /aria-label="Сводка по проектам"/u);
+  assert.match(adminProjectsSource, /project\.status === 'PUBLISHED'/u);
+  assert.match(adminProjectsSource, /project\.status === 'DRAFT'/u);
+  assert.match(adminProjectsSource, /summary\.attempts \+= project\.attemptsCount/u);
+  assert.match(adminProjectsSource, /aria-label=\{`Открыть проект «\$\{project\.title\}»`\}/u);
+  assert.match(adminProjectsSource, /required[\s\S]*?autoComplete="off"[\s\S]*?disabled=\{isCreating\}/u);
+  assert.match(dashboardStylesSource, /\.training-dashboard-main[\s\S]*?grid-template-columns:/u);
+  assert.match(dashboardStylesSource, /\.training-page\.training-admin-dashboard\s*\{[\s\S]*?width:\s*85vw;/u);
+  assert.match(dashboardStylesSource, /\.training-dashboard-project-name strong[\s\S]*?white-space:\s*normal;/u);
+  assert.match(dashboardStylesSource, /\.training-dashboard-project-status \.status-pill[\s\S]*?white-space:\s*nowrap;/u);
+  assert.match(dashboardStylesSource, /@media \(max-width: 1220px\)[\s\S]*?training-dashboard-project-head/u);
+  assert.match(dashboardStylesSource, /@media \(prefers-reduced-motion: reduce\)/u);
+  assert.doesNotMatch(adminProjectsSource, /training-dashboard-entry-grid/u);
 });
 
 test('admin project deletion is explicit, destructive and guarded against duplicate submit', () => {

@@ -2,6 +2,16 @@ import { FormEvent, useEffect, useState } from 'react';
 import type {
   TrainingAdminProjectSummary,
 } from '@platforma/shared';
+import {
+  ArrowRightIcon,
+  BadgeCheckIcon,
+  BarChart3Icon,
+  ClipboardCheckIcon,
+  FilePenLineIcon,
+  FolderKanbanIcon,
+  TrophyIcon,
+} from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 
 import {
   AdminAlert,
@@ -22,12 +32,43 @@ import {
   getTrainingStatusClass,
   trainingProjectStatusLabels,
 } from './trainingView';
+import './trainingAdminDashboard.css';
 
 type TrainingAdminProjectsPageProps = {
   canManageProjects: boolean;
   canReadResults: boolean;
   navigate: (pathname: string) => void;
 };
+
+type TrainingDashboardMetricProps = {
+  icon: LucideIcon;
+  label: string;
+  value: number | null;
+  tone?: 'default' | 'success';
+};
+
+function TrainingDashboardMetric({
+  icon: Icon,
+  label,
+  tone = 'default',
+  value,
+}: TrainingDashboardMetricProps) {
+  return (
+    <AdminPanel className="training-dashboard-metric" data-tone={tone}>
+      <span className="training-dashboard-metric-icon" aria-hidden="true">
+        <Icon />
+      </span>
+      <span className="training-dashboard-metric-copy">
+        <small>{label}</small>
+        {value === null ? (
+          <Skeleton className="training-dashboard-metric-skeleton" />
+        ) : (
+          <strong>{value}</strong>
+        )}
+      </span>
+    </AdminPanel>
+  );
+}
 
 export function TrainingAdminProjectsPage({
   canManageProjects,
@@ -42,6 +83,16 @@ export function TrainingAdminProjectsPage({
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+
+  const dashboardSummary = projects.reduce(
+    (summary, project) => {
+      if (project.status === 'PUBLISHED') summary.published += 1;
+      if (project.status === 'DRAFT') summary.drafts += 1;
+      summary.attempts += project.attemptsCount;
+      return summary;
+    },
+    { published: 0, drafts: 0, attempts: 0 },
+  );
 
   useEffect(() => {
     if (!accessToken) return;
@@ -97,14 +148,25 @@ export function TrainingAdminProjectsPage({
   };
 
   return (
-    <div className="training-page training-admin-page">
+    <div className="training-page training-admin-page training-admin-dashboard">
       <header className="training-page-header">
         <div>
           <p className="eyebrow">Админка · Обучение</p>
           <h2>Модуль обучения</h2>
           <p className="muted-text">Управление учебными проектами и отдельный реестр результатов.</p>
         </div>
-        {canReadResults ? <div className="training-project-actions"><AdminButton type="button" tone="text" onClick={() => navigate('/admin/training/results')}>Результаты сотрудников</AdminButton><AdminButton type="button" tone="primary" onClick={() => navigate('/admin/training/ranking')}>Рейтинг</AdminButton></div> : null}
+        {canReadResults ? (
+          <div className="training-admin-dashboard-actions">
+            <AdminButton type="button" tone="secondary" onClick={() => navigate('/admin/training/results')}>
+              <BarChart3Icon data-icon="inline-start" />
+              Результаты сотрудников
+            </AdminButton>
+            <AdminButton type="button" tone="primary" onClick={() => navigate('/admin/training/ranking')}>
+              <TrophyIcon data-icon="inline-start" />
+              Рейтинг
+            </AdminButton>
+          </div>
+        ) : null}
       </header>
 
       {error ? (
@@ -115,50 +177,179 @@ export function TrainingAdminProjectsPage({
       ) : null}
 
       {canManageProjects ? (
-        <AdminPanel className="training-create-panel">
-          <div>
-            <p className="eyebrow">Новый проект</p>
-            <h3>Создать черновик</h3>
-          </div>
-          <form onSubmit={(event) => void handleCreate(event)}>
-            <FieldGroup>
-              <Field data-invalid={Boolean(error && !title.trim())}>
-                <FieldLabel htmlFor="training-project-title">Название</FieldLabel>
-                <Input id="training-project-title" value={title} aria-invalid={Boolean(error && !title.trim())} onChange={(event) => setTitle(event.target.value)} />
-                {!title.trim() && error ? <FieldError>{error}</FieldError> : null}
-              </Field>
-              <Field orientation="horizontal">
-                <input id="training-project-retake" type="checkbox" checked={allowRetakeAfterPass} onChange={(event) => setAllowRetakeAfterPass(event.target.checked)} />
-                <div>
-                  <FieldLabel htmlFor="training-project-retake">Разрешить пересдачу после успешного результата</FieldLabel>
-                  <FieldDescription>Общий лимит попыток продолжает действовать.</FieldDescription>
-                </div>
-              </Field>
-            </FieldGroup>
-            <AdminButton type="submit" tone="primary" disabled={isCreating}>{isCreating ? 'Создание…' : 'Создать и настроить'}</AdminButton>
-          </form>
-        </AdminPanel>
-      ) : null}
-
-      {canManageProjects ? (
-        <section aria-labelledby="training-admin-projects-title">
-          <div className="training-section-heading"><h3 id="training-admin-projects-title">Проекты</h3><span className="training-section-count">{projects.length}</span></div>
-          {isLoading ? <Skeleton className="training-list-skeleton" /> : projects.length ? (
-            <div className="training-admin-list">
-              {projects.map((project) => (
-                <button type="button" className="training-admin-row" key={project.id} onClick={() => navigate(`/admin/training/projects/${project.id}`)}>
-                  <span><strong>{project.title}</strong><small>{project.questionsCount} вопросов · {project.attemptsCount} попыток</small><small>{project.accessMode === 'ALL_PARTICIPANTS' ? 'Все участники' : `По назначениям · ${project.activeAssignments}`}</small></span>
-                  <span><AdminStatusBadge className={getTrainingStatusClass(project.status)}>{trainingProjectStatusLabels[project.status]}{project.isOpen ? ' · открыт' : ''}</AdminStatusBadge><small>{project.timeLimitSeconds / 60} мин</small></span>
-                </button>
-              ))}
-            </div>
-          ) : <AdminEmptyState title="Проектов пока нет" description="Создайте первый черновик выше." />}
+        <section className="training-dashboard-metrics" aria-label="Сводка по проектам">
+          <TrainingDashboardMetric
+            icon={FolderKanbanIcon}
+            label="Всего проектов"
+            value={isLoading ? null : projects.length}
+          />
+          <TrainingDashboardMetric
+            icon={BadgeCheckIcon}
+            label="Опубликовано"
+            tone="success"
+            value={isLoading ? null : dashboardSummary.published}
+          />
+          <TrainingDashboardMetric
+            icon={FilePenLineIcon}
+            label="Черновики"
+            value={isLoading ? null : dashboardSummary.drafts}
+          />
+          <TrainingDashboardMetric
+            icon={ClipboardCheckIcon}
+            label="Попытки"
+            value={isLoading ? null : dashboardSummary.attempts}
+          />
         </section>
       ) : null}
 
-      {canReadResults ? (
-        <div className="training-admin-entry-grid"><AdminPanel className="training-results-entry"><div><p className="eyebrow">Результаты</p><h3>История сотрудников</h3><p className="muted-text">Подробности, проверка и защищённое аудио каждой попытки.</p></div><AdminButton type="button" tone="text" onClick={() => navigate('/admin/training/results')}>Открыть результаты</AdminButton></AdminPanel><AdminPanel className="training-results-entry"><div><p className="eyebrow">Рейтинг</p><h3>Лучшие результаты</h3><p className="muted-text">Исторический максимум, текущий охват и безопасная выгрузка в CSV.</p></div><AdminButton type="button" tone="primary" onClick={() => navigate('/admin/training/ranking')}>Открыть рейтинг</AdminButton></AdminPanel></div>
+      {canManageProjects ? (
+        <div className="training-dashboard-main">
+          <AdminPanel className="training-dashboard-project-panel">
+            <div className="training-dashboard-panel-heading">
+              <div>
+                <h3 id="training-admin-projects-title">Проекты</h3>
+                <p>Управляйте настройками, доступом и публикацией.</p>
+              </div>
+              <span className="training-section-count" aria-label={`Проектов: ${projects.length}`}>
+                {projects.length}
+              </span>
+            </div>
+
+            {isLoading ? (
+              <Skeleton className="training-dashboard-list-skeleton" />
+            ) : projects.length ? (
+              <div className="training-dashboard-project-table" aria-labelledby="training-admin-projects-title">
+                <div className="training-dashboard-project-head" aria-hidden="true">
+                  <span>Название проекта</span>
+                  <span>Статус</span>
+                  <span>Вопросы</span>
+                  <span>Попытки</span>
+                  <span>Доступ</span>
+                  <span>Время</span>
+                  <span />
+                </div>
+                <div className="training-dashboard-project-list">
+                  {projects.map((project) => (
+                    <button
+                      type="button"
+                      className="training-dashboard-project-row"
+                      key={project.id}
+                      aria-label={`Открыть проект «${project.title}»`}
+                      onClick={() => navigate(`/admin/training/projects/${project.id}`)}
+                    >
+                      <span className="training-dashboard-project-name">
+                        <FolderKanbanIcon aria-hidden="true" />
+                        <strong>{project.title}</strong>
+                      </span>
+                      <span className="training-dashboard-project-status">
+                        <AdminStatusBadge className={getTrainingStatusClass(project.status)}>
+                          {trainingProjectStatusLabels[project.status]}
+                          {project.isOpen ? ' · открыт' : ''}
+                        </AdminStatusBadge>
+                      </span>
+                      <span
+                        className="training-dashboard-project-cell training-dashboard-project-cell--questions"
+                        data-label="Вопросы"
+                      >
+                        {project.questionsCount}
+                      </span>
+                      <span
+                        className="training-dashboard-project-cell training-dashboard-project-cell--attempts"
+                        data-label="Попытки"
+                      >
+                        {project.attemptsCount}
+                      </span>
+                      <span
+                        className="training-dashboard-project-cell training-dashboard-project-cell--access"
+                        data-label="Доступ"
+                      >
+                        {project.accessMode === 'ALL_PARTICIPANTS'
+                          ? 'Все участники'
+                          : `По назначениям · ${project.activeAssignments}`}
+                      </span>
+                      <span
+                        className="training-dashboard-project-cell training-dashboard-project-cell--time"
+                        data-label="Время"
+                      >
+                        {project.timeLimitSeconds / 60} мин
+                      </span>
+                      <span className="training-dashboard-project-arrow" aria-hidden="true">
+                        <ArrowRightIcon />
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="training-dashboard-empty">
+                <AdminEmptyState title="Проектов пока нет" description="Создайте первый черновик справа." />
+              </div>
+            )}
+          </AdminPanel>
+
+          <AdminPanel className="training-create-panel training-dashboard-create-panel">
+            <div>
+              <p className="eyebrow">Новый проект</p>
+              <h3 id="training-create-project-title">Создать черновик</h3>
+              <p className="muted-text">Название можно изменить позже в настройках проекта.</p>
+            </div>
+            <form
+              aria-labelledby="training-create-project-title"
+              onSubmit={(event) => void handleCreate(event)}
+            >
+              <FieldGroup>
+                <Field
+                  data-disabled={isCreating || undefined}
+                  data-invalid={Boolean(error && !title.trim())}
+                >
+                  <FieldLabel htmlFor="training-project-title">Название проекта *</FieldLabel>
+                  <Input
+                    id="training-project-title"
+                    value={title}
+                    required
+                    autoComplete="off"
+                    placeholder="Введите название проекта"
+                    disabled={isCreating}
+                    aria-invalid={Boolean(error && !title.trim())}
+                    onChange={(event) => setTitle(event.target.value)}
+                  />
+                  {!title.trim() && error ? <FieldError>{error}</FieldError> : null}
+                </Field>
+                <Field
+                  className="training-dashboard-retake-field"
+                  data-disabled={isCreating || undefined}
+                  orientation="horizontal"
+                >
+                  <input
+                    id="training-project-retake"
+                    type="checkbox"
+                    checked={allowRetakeAfterPass}
+                    disabled={isCreating}
+                    onChange={(event) => setAllowRetakeAfterPass(event.target.checked)}
+                  />
+                  <div>
+                    <FieldLabel htmlFor="training-project-retake">
+                      Разрешить пересдачу после успешного результата
+                    </FieldLabel>
+                    <FieldDescription>Общий лимит попыток продолжает действовать.</FieldDescription>
+                  </div>
+                </Field>
+              </FieldGroup>
+              <AdminButton
+                className="training-dashboard-create-button"
+                type="submit"
+                tone="primary"
+                fit={false}
+                disabled={isCreating}
+              >
+                {isCreating ? 'Создание…' : 'Создать и настроить'}
+                {!isCreating ? <ArrowRightIcon data-icon="inline-end" /> : null}
+              </AdminButton>
+            </form>
+          </AdminPanel>
+        </div>
       ) : null}
+
     </div>
   );
 }
