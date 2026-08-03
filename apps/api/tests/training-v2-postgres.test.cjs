@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { after, before, beforeEach, test } = require('node:test');
 const {
+  Prisma,
   PrismaClient,
   TrainingAttemptQuestionStatus,
   TrainingAttemptStatus,
@@ -125,6 +126,46 @@ if (!databaseUrl) {
     await assert.rejects(
       () => attemptService.startAttempt(limitedProject.id, user.id, startInput()),
       ConflictException,
+    );
+
+    const delayedProject = await createOpenProject({ attemptLimit: 2 });
+    const failed = await answerAll(
+      await attemptService.startAttempt(delayedProject.id, user.id, startInput()),
+      user.id,
+      '[fake:fail]',
+    );
+    const delayedSummary = (await attemptService.listEmployeeProjects(user.id)).items
+      .find((item) => item.id === delayedProject.id);
+
+    assert.equal(delayedSummary.attemptsLeft, 1);
+    assert.equal(delayedSummary.canStart, false);
+    await assert.rejects(
+      () => attemptService.startAttempt(delayedProject.id, user.id, startInput()),
+      ConflictException,
+    );
+
+    await prisma.$executeRaw(Prisma.sql`
+      UPDATE training_attempts
+       SET completed_at = CURRENT_TIMESTAMP - INTERVAL '59 minutes 59 seconds'
+       WHERE id = CAST(${failed.id} AS uuid)
+    `);
+    await assert.rejects(
+      () => attemptService.startAttempt(delayedProject.id, user.id, startInput()),
+      ConflictException,
+    );
+    await prisma.$executeRaw(Prisma.sql`
+      UPDATE training_attempts
+       SET completed_at = CURRENT_TIMESTAMP - INTERVAL '60 minutes'
+       WHERE id = CAST(${failed.id} AS uuid)
+    `);
+    assert.equal(
+      (await attemptService.listEmployeeProjects(user.id)).items
+        .find((item) => item.id === delayedProject.id).canStart,
+      true,
+    );
+    assert.equal(
+      (await attemptService.startAttempt(delayedProject.id, user.id, startInput())).attemptNumber,
+      2,
     );
   });
 
@@ -307,6 +348,10 @@ if (!databaseUrl) {
       user.id,
       '[fake:fail]',
     );
+    await prisma.trainingAttempt.update({
+      where: { id: failed.id },
+      data: { completedAt: new Date(Date.now() - 61 * 60 * 1000) },
+    });
     const passed = await answerAll(
       await attemptService.startAttempt(project.id, user.id, startInput()),
       user.id,

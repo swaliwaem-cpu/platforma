@@ -268,6 +268,7 @@ export class FilesService {
             objectImages: true,
             objectFiles: true,
             feedXmlSources: true,
+            feedMediaAssets: true,
             lotPresentationDocuments: true,
             projectPresentationDraftCovers: true,
             projectPresentationDocuments: true,
@@ -289,6 +290,7 @@ export class FilesService {
       file._count.objectImages > 0 ||
       file._count.objectFiles > 0 ||
       file._count.feedXmlSources > 0 ||
+      file._count.feedMediaAssets > 0 ||
       file._count.lotPresentationDocuments > 0 ||
       file._count.projectPresentationDraftCovers > 0 ||
       file._count.projectPresentationDocuments > 0 ||
@@ -313,18 +315,27 @@ export class FilesService {
   }
 
   async deleteUnlinkedFile(id: string) {
+    return (await this.deleteUnlinkedFileWithResult(id)) === 'DELETED';
+  }
+
+  async deleteUnlinkedFileWithResult(id: string) {
     try {
       await this.delete(id);
     } catch (error) {
-      if (error instanceof ConflictException) return false;
+      if (error instanceof ConflictException) return 'LINKED' as const;
+      if (error instanceof NotFoundException) return 'MISSING' as const;
       this.logger.error(
         `Failed to delete unlinked file ${id}`,
         error instanceof Error ? error.stack : String(error),
       );
-      return false;
+      return 'FAILED' as const;
     }
 
-    return true;
+    return 'DELETED' as const;
+  }
+
+  async deleteStoredObject(key: string, bucket: string | null) {
+    await this.storage.deleteObject(key, bucket ?? undefined);
   }
 
   serializeFile(file: File) {

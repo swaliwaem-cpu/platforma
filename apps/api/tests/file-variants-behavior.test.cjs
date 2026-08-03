@@ -232,6 +232,27 @@ test('FilesService.delete preserves storage for a PDF linked to an immutable tra
   assert.deepEqual(storage.deleted, []);
 });
 
+test('FilesService.delete preserves storage for a file linked to feed media', async () => {
+  const storage = createStorageMock();
+  const prisma = {
+    file: {
+      findUnique: async () => ({
+        ...createFileRecord(),
+        variants: [],
+        _count: { feedMediaAssets: 1 },
+      }),
+      delete: async () => assert.fail('feed media file must not be deleted from the database'),
+    },
+  };
+  const service = new FilesService(prisma, storage.service);
+
+  await assert.rejects(
+    () => service.delete('11111111-1111-4111-8111-111111111111'),
+    (error) => error instanceof ConflictException,
+  );
+  assert.deepEqual(storage.deleted, []);
+});
+
 test('FilesService.getContent returns requested image variant when it exists', async () => {
   const storage = createStorageMock();
   const variantBuffer = Buffer.from('card variant');

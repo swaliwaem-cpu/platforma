@@ -102,6 +102,24 @@ test('admin projects link to results and ranking while detail keeps excluded sur
   assert.doesNotMatch(adminAttemptSource, /ranking|leaderboard|storage key|bucket/iu);
 });
 
+test('admin project deletion is explicit, destructive and guarded against duplicate submit', () => {
+  assert.match(
+    apiSource,
+    /deleteTrainingAdminProject[\s\S]*?encodeURIComponent\(projectId\)[\s\S]*?method: 'DELETE'/,
+  );
+  assert.match(editorSource, /Безвозвратно удалить проект «\{project\.title\}»\?/);
+  assert.match(editorSource, /все попытки и результаты сотрудников/);
+  assert.match(editorSource, /аудиозаписи, материалы, назначения и связанные файлы/);
+  assert.match(editorSource, /pendingAction === 'delete'/);
+  assert.match(editorSource, /if \(!accessToken \|\| !project \|\| pendingAction\) return/);
+  assert.match(editorSource, /showCloseButton=\{!isDeleting\}/);
+  assert.match(editorSource, /disabled=\{isDeleting\}[\s\S]*?Отмена/);
+  assert.match(editorSource, /Удалить всё навсегда/);
+  assert.match(editorSource, /await deleteTrainingAdminProject\(accessToken, project\.id\)/);
+  assert.match(editorSource, /navigate\('\/admin\/training'\)/);
+  assert.match(editorSource, /deleteError \? <AdminAlert tone="error">/);
+});
+
 test('Training UI has responsive, focus-visible and reduced-motion states', () => {
   assert.match(stylesSource, /:focus-visible/);
   assert.match(stylesSource, /@media \(max-width: 820px\)/);

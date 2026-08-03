@@ -16,6 +16,7 @@ const { TrainingAttemptService } = require('../dist/training/training-attempt.se
 const { DeterministicFakeTrainingEvaluator } = require('../dist/training/training-evaluator.js');
 const { TrainingProjectAccessService } = require('../dist/training/training-project-access.service.js');
 const { TrainingProjectService } = require('../dist/training/training-project.service.js');
+const { TrainingReviewService } = require('../dist/training/training-review.service.js');
 const { FakeTrainingTelegramClient } = require('../dist/training/training-telegram-client.js');
 const { TrainingTelegramService } = require('../dist/training/training-telegram.service.js');
 const { TrainingVoiceWorkerService } = require('../dist/training/training-voice-worker.service.js');
@@ -44,6 +45,7 @@ if (!databaseUrl) {
     access,
     telegramClient,
   );
+  const reviews = new TrainingReviewService(prisma, telegram);
   let admin;
   let participants;
 
@@ -446,7 +448,9 @@ if (!databaseUrl) {
       );
     }
     assert.equal(
-      telegramClient.sentMessages.filter((message) => message.text === 'Аттестация пройдена.').length >= 3,
+      telegramClient.sentMessages.filter(
+        (message) => message.text === 'Аттестация по проекту Three Telegram accounts пройдена',
+      ).length >= 3,
       true,
     );
     await assert.rejects(
@@ -454,6 +458,125 @@ if (!databaseUrl) {
       ForbiddenException,
     );
     await access.assertNewAttemptAccess(project.id, users[1].id);
+  });
+
+  test('Telegram result notifications use snapshot title, remaining attempts and cooldown', async () => {
+    const user = await createUser('result-message', UserStatus.ACTIVE, ['training:participate']);
+    const project = await createOpenProject('Result message project');
+    const telegramId = 99_401n;
+    await access.bulkAssignments(project.id, admin.id, { action: 'ASSIGN', userIds: [user.id] });
+    await prisma.trainingTelegramAccount.create({
+      data: {
+        userId: user.id,
+        telegramUserId: telegramId,
+        chatId: telegramId,
+        username: 'result_message',
+      },
+    });
+
+    const passed = await answerAll(
+      await attempts.startAttempt(project.id, user.id, startInput()),
+      user.id,
+      '[fake:pass]',
+    );
+    await telegram.notifyAttemptState(passed.id);
+    assert.equal(
+      telegramClient.sentMessages.at(-1).text,
+      'Аттестация по проекту Result message project пройдена',
+    );
+
+    const failed = await answerAll(
+      await attempts.startAttempt(project.id, user.id, startInput()),
+      user.id,
+      '[fake:fail]',
+    );
+    await telegram.notifyAttemptState(failed.id);
+    assert.equal(
+      telegramClient.sentMessages.at(-1).text,
+      'Аттестация по проекту Result message project не пройдена, осталось попыток 1. Повторное прохождение доступно через 60 минут',
+    );
+    await assert.rejects(
+      attempts.startAttempt(project.id, user.id, startInput()),
+    );
+
+    await prisma.trainingAttempt.update({
+      where: { id: failed.id },
+      data: { completedAt: new Date(Date.now() - 61 * 60 * 1000) },
+    });
+    await prisma.trainingAttempt.update({
+      where: { id: passed.id },
+      data: { completedAt: new Date(Date.now() - 62 * 60 * 1000) },
+    });
+    const finalFailure = await answerAll(
+      await attempts.startAttempt(project.id, user.id, startInput()),
+      user.id,
+      '[fake:fail]',
+    );
+    await telegram.notifyAttemptState(finalFailure.id);
+    assert.equal(
+      telegramClient.sentMessages.at(-1).text,
+      'Аттестация по проекту Result message project не пройдена, осталось попыток 0',
+    );
+  });
+
+  test('manual pass and fail send one final Telegram result after review', async () => {
+    const user = await createUser('manual-result', UserStatus.ACTIVE, ['training:participate']);
+    const project = await createOpenProject('Manual result project');
+    const telegramId = 99_402n;
+    await access.bulkAssignments(project.id, admin.id, { action: 'ASSIGN', userIds: [user.id] });
+    await prisma.trainingTelegramAccount.create({
+      data: {
+        userId: user.id,
+        telegramUserId: telegramId,
+        chatId: telegramId,
+        username: 'manual_result',
+      },
+    });
+
+    const passPending = await answerAll(
+      await attempts.startAttempt(project.id, user.id, startInput()),
+      user.id,
+      '[fake:review]',
+    );
+    const passInput = {
+      decision: 'OVERRIDE',
+      finalScore: 90,
+      comment: 'Ручная успешная оценка',
+    };
+    await reviews.reviewAttempt(passPending.id, admin.id, passInput);
+    const passMessage = 'Аттестация по проекту Manual result project пройдена';
+    await waitForTelegramMessage(passMessage);
+    assert.equal(
+      telegramClient.sentMessages.filter((message) => message.text === passMessage).length,
+      1,
+    );
+
+    await reviews.reviewAttempt(passPending.id, admin.id, passInput);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(
+      telegramClient.sentMessages.filter((message) => message.text === passMessage).length,
+      1,
+    );
+    const messagesBeforeStaleWorker = telegramClient.sentMessages.length;
+    await telegram.notifyAttemptState(
+      passPending.id,
+      TrainingAttemptStatus.REQUIRES_REVIEW,
+    );
+    assert.equal(telegramClient.sentMessages.length, messagesBeforeStaleWorker);
+
+    const failPending = await answerAll(
+      await attempts.startAttempt(project.id, user.id, startInput()),
+      user.id,
+      '[fake:review]',
+    );
+    await reviews.reviewAttempt(failPending.id, admin.id, {
+      decision: 'OVERRIDE',
+      finalScore: 42,
+      comment: 'Ручная неуспешная оценка',
+    });
+    await waitForTelegramMessage(
+      'Аттестация по проекту Manual result project не пройдена, осталось попыток 1. Повторное прохождение доступно через 60 минут',
+    );
   });
 
   test('concurrent revoke and start has one consistent commit order', async () => {
@@ -578,6 +701,25 @@ if (!databaseUrl) {
 
   function startInput() {
     return { confirmed: true, idempotencyKey: randomUUID() };
+  }
+
+  async function answerAll(initial, userId, text) {
+    let attempt = initial;
+    while (attempt.currentQuestion) {
+      attempt = await attempts.submitAnswer(attempt.id, userId, {
+        attemptQuestionId: attempt.currentQuestion.id,
+        text,
+      });
+    }
+    return attempt;
+  }
+
+  async function waitForTelegramMessage(text) {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      if (telegramClient.sentMessages.some((message) => message.text === text)) return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.fail(`Telegram message was not sent: ${text}`);
   }
 
   function startUpdate(telegramId, rawToken) {

@@ -9,6 +9,7 @@ import {
 
 import { PrismaService } from '../prisma/prisma.service';
 import { parseTrainingProjectSnapshot } from './training-snapshot';
+import { TrainingTelegramService } from './training-telegram.service';
 
 export type ReviewTrainingAttemptInput =
   | { decision: 'APPROVE'; finalScore: null; comment: string | null }
@@ -16,14 +17,17 @@ export type ReviewTrainingAttemptInput =
 
 @Injectable()
 export class TrainingReviewService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly telegram: TrainingTelegramService,
+  ) {}
 
   async reviewAttempt(
     attemptId: string,
     reviewedById: string,
     input: ReviewTrainingAttemptInput,
   ) {
-    return this.prisma.$transaction(async (transaction) => {
+    const outcome = await this.prisma.$transaction(async (transaction) => {
       await transaction.$queryRaw(
         Prisma.sql`SELECT "id" FROM "training_attempts" WHERE "id" = CAST(${attemptId} AS uuid) FOR UPDATE`,
       );
@@ -34,7 +38,9 @@ export class TrainingReviewService {
       if (!attempt) throw new NotFoundException('Training attempt not found');
 
       if (attempt.reviewStatus === TrainingReviewStatus.RESOLVED) {
-        if (isSameResolvedReview(attempt, input)) return serializeReview(attempt);
+        if (isSameResolvedReview(attempt, input)) {
+          return { result: serializeReview(attempt), shouldNotify: false };
+        }
         throw new ConflictException('Training attempt review is already resolved');
       }
 
@@ -50,6 +56,11 @@ export class TrainingReviewService {
         ? attempt.calculatedScore
         : input.finalScore;
       const snapshot = parseTrainingProjectSnapshot(attempt.projectSnapshotJson);
+      const [databaseClock] = await transaction.$queryRaw<Array<{ now: Date }>>(
+        Prisma.sql`SELECT CURRENT_TIMESTAMP AS "now"`,
+      );
+
+      if (!databaseClock) throw new Error('Database timestamp unavailable');
       const reviewed = await transaction.trainingAttempt.update({
         where: { id: attempt.id },
         data: {
@@ -62,14 +73,20 @@ export class TrainingReviewService {
             ? TrainingReviewDecision.APPROVED
             : TrainingReviewDecision.OVERRIDDEN,
           reviewedById,
-          reviewedAt: new Date(),
+          reviewedAt: databaseClock.now,
           reviewComment: input.comment,
           reviewFinalScore: input.decision === 'OVERRIDE' ? input.finalScore : null,
         },
       });
 
-      return serializeReview(reviewed);
+      return { result: serializeReview(reviewed), shouldNotify: true };
     });
+
+    if (outcome.shouldNotify) {
+      this.telegram.dispatchAttemptStateNotification(attemptId);
+    }
+
+    return outcome.result;
   }
 }
 

@@ -73,6 +73,73 @@ if (!databaseUrl) {
     assert.equal(deniedManage.status, 403);
     assert.equal(deniedResults.status, 403);
 
+    const removable = await request('/training/admin/projects', {
+      token: adminToken,
+      method: 'POST',
+      body: { title: 'HTTP removable training', allowRetakeAfterPass: false },
+    });
+    assert.equal(removable.status, 201);
+    assert.equal(
+      (await request(`/training/admin/projects/${removable.body.id}`, {
+        method: 'DELETE',
+      })).status,
+      401,
+    );
+    assert.equal(
+      (await request(`/training/admin/projects/${removable.body.id}`, {
+        token: employeeToken,
+        method: 'DELETE',
+      })).status,
+      403,
+    );
+    assert.equal(
+      await prisma.trainingProject.count({ where: { id: removable.body.id } }),
+      1,
+    );
+    assert.equal(
+      (await request('/training/admin/projects/not-a-uuid', {
+        token: adminToken,
+        method: 'DELETE',
+      })).status,
+      400,
+    );
+    assert.equal(
+      (await request(`/training/admin/projects/${randomUUID()}`, {
+        token: adminToken,
+        method: 'DELETE',
+      })).status,
+      404,
+    );
+    const removed = await request(`/training/admin/projects/${removable.body.id}`, {
+      token: adminToken,
+      method: 'DELETE',
+    });
+    assert.equal(removed.status, 204);
+    assert.equal(removed.body, null);
+    assert.equal(
+      (await request(`/training/admin/projects/${removable.body.id}`, {
+        token: adminToken,
+      })).status,
+      404,
+    );
+    assert.equal(
+      (await request(`/training/admin/projects/${removable.body.id}`, {
+        token: adminToken,
+        method: 'DELETE',
+      })).status,
+      204,
+    );
+    assert.equal(
+      await prisma.auditLog.count({
+        where: {
+          action: 'training.project.delete',
+          entityId: removable.body.id,
+          actorUserId: admin.id,
+        },
+      }),
+      1,
+    );
+
     const created = await request('/training/admin/projects', {
       token: adminToken,
       method: 'POST',

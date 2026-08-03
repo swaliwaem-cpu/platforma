@@ -13,6 +13,7 @@ import {
 
 import { S3StorageService } from '../files/s3-storage.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { recordTrainingProjectDeleteCleanupObject } from './training-project-cleanup';
 import {
   TRAINING_TELEGRAM_CLIENT,
   TrainingTelegramClientError,
@@ -95,6 +96,9 @@ export class TrainingAudioService {
     const answer = await this.prisma.trainingAnswer.findUnique({
       where: { id: answerId },
       include: {
+        attemptQuestion: {
+          select: { attempt: { select: { projectId: true } } },
+        },
         mergedAudioFile: true,
         segments: {
           include: { storedFile: true },
@@ -133,7 +137,12 @@ export class TrainingAudioService {
       let totalBytes = 0;
 
       for (const segment of answer.segments) {
-        const body = await this.loadSegmentBody(answerId, segment, bucket);
+        const body = await this.loadSegmentBody(
+          answerId,
+          answer.attemptQuestion.attempt.projectId,
+          segment,
+          bucket,
+        );
         totalBytes += body.length;
 
         if (totalBytes > 60 * 1024 * 1024) {
@@ -184,7 +193,23 @@ export class TrainingAudioService {
         key,
         outputStats.size,
         checksum,
-      );
+      )
+        .catch(async (error: unknown) => {
+          try {
+            await this.storage.deleteObject(key, bucket);
+          } catch (cleanupError) {
+            await recordTrainingProjectDeleteCleanupObject(
+              this.prisma,
+              answer.attemptQuestion.attempt.projectId,
+              { key, bucket },
+            );
+            throw new AggregateError(
+              [error, cleanupError],
+              'Training merged audio persistence and cleanup failed',
+            );
+          }
+          throw error;
+        });
 
       return this.loadVerifiedMergedAudio(answerId, file, bucket);
     } finally {
@@ -194,6 +219,7 @@ export class TrainingAudioService {
 
   private async loadSegmentBody(
     answerId: string,
+    projectId: string,
     segment: {
       id: string;
       position: number;
@@ -243,14 +269,31 @@ export class TrainingAudioService {
       body: downloaded.body,
       contentType: 'audio/ogg',
     });
-    await this.persistSegmentFile(
-      segment.id,
-      segment.position,
-      bucket,
-      key,
-      downloaded.sizeBytes,
-      checksum,
-    );
+    try {
+      await this.persistSegmentFile(
+        segment.id,
+        segment.position,
+        bucket,
+        key,
+        downloaded.sizeBytes,
+        checksum,
+      );
+    } catch (error) {
+      try {
+        await this.storage.deleteObject(key, bucket);
+      } catch (cleanupError) {
+        await recordTrainingProjectDeleteCleanupObject(
+          this.prisma,
+          projectId,
+          { key, bucket },
+        );
+        throw new AggregateError(
+          [error, cleanupError],
+          'Training voice segment persistence and cleanup failed',
+        );
+      }
+      throw error;
+    }
 
     return downloaded.body;
   }

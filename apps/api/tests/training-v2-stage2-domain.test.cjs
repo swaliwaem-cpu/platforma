@@ -1,6 +1,7 @@
 require('reflect-metadata');
 
 const assert = require('node:assert/strict');
+const { readFileSync } = require('node:fs');
 const { chmod, mkdtemp, rm, writeFile } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
@@ -11,6 +12,7 @@ const {
   TrainingTelegramClientError,
 } = require('../dist/training/training-telegram-client.js');
 const {
+  formatTrainingAttemptResultMessage,
   hashTrainingTelegramLinkToken,
   isPrivateTrainingTelegramUpdate,
   parseTrainingTelegramCallback,
@@ -21,8 +23,16 @@ const {
   TrainingAudioError,
 } = require('../dist/training/training-audio.service.js');
 const {
+  isTrainingRetakeDelayActive,
+} = require('../dist/training/training-attempt-state.service.js');
+const {
   DeterministicFakeTrainingTranscriber,
 } = require('../dist/training/training-transcriber.js');
+
+const attemptStateSource = readFileSync(
+  join(__dirname, '../src/training/training-attempt-state.service.ts'),
+  'utf8',
+);
 
 test('Telegram link tokens are hashed deterministically without storing raw data', () => {
   const rawToken = '0123456789abcdefghijklmnopqrstuvwxyzABCDE';
@@ -51,6 +61,27 @@ test('Telegram callback parser accepts only exact start and finish UUID payloads
   assert.equal(parseTrainingTelegramCallback(`unknown:${id}`), null);
 });
 
+test('Telegram token start locks user and project before the token row', () => {
+  const method = attemptStateSource.match(
+    /async startAttemptFromTelegramLinkToken[\s\S]*?\n  private async startAttemptInTransaction/,
+  )?.[0];
+
+  assert.ok(method);
+  const snapshotIndex = method.indexOf('const tokenSnapshot');
+  const userLockIndex = method.indexOf('await this.lockUser');
+  const projectLockIndex = method.indexOf('await this.lockProject');
+  const tokenLockIndex = method.indexOf('training_telegram_link_tokens');
+  const tokenValidationIndex = method.indexOf('const token =');
+
+  assert.equal(
+    snapshotIndex < userLockIndex &&
+      userLockIndex < projectLockIndex &&
+      projectLockIndex < tokenLockIndex &&
+      tokenLockIndex < tokenValidationIndex,
+    true,
+  );
+});
+
 test('Telegram update boundary accepts private messages/callbacks and ignores groups', () => {
   assert.equal(
     isPrivateTrainingTelegramUpdate({
@@ -71,6 +102,58 @@ test('Telegram update boundary accepts private messages/callbacks and ignores gr
     false,
   );
   assert.equal(isPrivateTrainingTelegramUpdate({ channel_post: {} }), false);
+});
+
+test('Telegram result messages include project, remaining attempts and the fixed retake delay', () => {
+  assert.equal(
+    formatTrainingAttemptResultMessage({
+      projectTitle: 'Северный парк',
+      isPassed: true,
+      remainingAttempts: 2,
+    }),
+    'Аттестация по проекту Северный парк пройдена',
+  );
+  assert.equal(
+    formatTrainingAttemptResultMessage({
+      projectTitle: 'Северный парк',
+      isPassed: false,
+      remainingAttempts: 2,
+    }),
+    'Аттестация по проекту Северный парк не пройдена, осталось попыток 2. Повторное прохождение доступно через 60 минут',
+  );
+  assert.equal(
+    formatTrainingAttemptResultMessage({
+      projectTitle: 'Северный парк',
+      isPassed: false,
+      remainingAttempts: 0,
+    }),
+    'Аттестация по проекту Северный парк не пройдена, осталось попыток 0',
+  );
+});
+
+test('retake delay stays active before 60 minutes and expires at the exact boundary', () => {
+  const resolvedAt = new Date('2026-08-03T10:00:00.000Z');
+  const attempts = [{
+    status: 'COMPLETED',
+    completedAt: resolvedAt,
+    reviewedAt: null,
+    isPassed: false,
+  }];
+
+  assert.equal(
+    isTrainingRetakeDelayActive(
+      attempts,
+      new Date('2026-08-03T10:59:59.999Z'),
+    ),
+    true,
+  );
+  assert.equal(
+    isTrainingRetakeDelayActive(
+      attempts,
+      new Date('2026-08-03T11:00:00.000Z'),
+    ),
+    false,
+  );
 });
 
 test('fake Telegram client records outbound calls and serves bounded local files', async () => {

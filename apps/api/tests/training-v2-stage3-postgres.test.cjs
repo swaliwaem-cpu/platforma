@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { after, before, beforeEach, test } = require('node:test');
 const {
+  Prisma,
   PrismaClient,
   TrainingAnswerProcessingStatus,
   TrainingAnswerSource,
@@ -40,7 +41,10 @@ if (!databaseUrl) {
   );
   const attempts = new TrainingAttemptService(prisma, state, projectAccess);
   const projects = new TrainingProjectService(prisma);
-  const reviews = new TrainingReviewService(prisma);
+  const reviewNotifications = [];
+  const reviews = new TrainingReviewService(prisma, {
+    dispatchAttemptStateNotification: (attemptId) => reviewNotifications.push(attemptId),
+  });
 
   before(async () => prisma.$connect());
   beforeEach(clearTrainingData);
@@ -197,6 +201,7 @@ if (!databaseUrl) {
   });
 
   test('pending review hides provisional result; approve and override are idempotent', async () => {
+    reviewNotifications.length = 0;
     const reviewer = await createUser('reviewer');
     const employee = await createUser('reviewed');
     const project = await createOpenProject('Stage 3 review', { attemptLimit: 3 });
@@ -218,12 +223,32 @@ if (!databaseUrl) {
     });
     assert.deepEqual(repeated, approved);
     assert.equal(approved.reviewDecision, 'APPROVED');
+    assert.equal(approved.isPassed, false);
+    assert.deepEqual(reviewNotifications, [pending.id]);
     await assert.rejects(
       () => reviews.reviewAttempt(pending.id, reviewer.id, {
         decision: 'OVERRIDE', finalScore: 50, comment: 'Другая оценка',
       }),
       ConflictException,
     );
+    await assert.rejects(
+      () => attempts.startAttempt(project.id, employee.id, startInput()),
+      ConflictException,
+    );
+    await prisma.$executeRaw(Prisma.sql`
+      UPDATE training_attempts
+       SET reviewed_at = CURRENT_TIMESTAMP - INTERVAL '59 minutes 59 seconds'
+       WHERE id = CAST(${pending.id} AS uuid)
+    `);
+    await assert.rejects(
+      () => attempts.startAttempt(project.id, employee.id, startInput()),
+      ConflictException,
+    );
+    await prisma.$executeRaw(Prisma.sql`
+      UPDATE training_attempts
+       SET reviewed_at = CURRENT_TIMESTAMP - INTERVAL '60 minutes'
+       WHERE id = CAST(${pending.id} AS uuid)
+    `);
 
     const secondPending = await answerAll(
       await attempts.startAttempt(project.id, employee.id, startInput()),
@@ -235,6 +260,7 @@ if (!databaseUrl) {
     });
     assert.equal(overridden.finalScore, 42);
     assert.equal(overridden.reviewDecision, 'OVERRIDDEN');
+    assert.deepEqual(reviewNotifications, [pending.id, secondPending.id]);
     const visible = await attempts.getEmployeeAttempt(secondPending.id, employee.id);
     assert.equal(visible.result.finalScore, 42);
     assert.deepEqual(visible.result.safeBreakdown, []);

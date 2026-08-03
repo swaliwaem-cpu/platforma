@@ -131,6 +131,14 @@ export function getTrainingAdminProject(
   );
 }
 
+export function deleteTrainingAdminProject(accessToken: string, projectId: string) {
+  return apiRequest<void>(
+    `/training/admin/projects/${encodeURIComponent(projectId)}`,
+    accessToken,
+    { method: 'DELETE' },
+  );
+}
+
 export function updateTrainingAdminProject(
   accessToken: string,
   projectId: string,

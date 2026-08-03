@@ -21,8 +21,12 @@ import type {
 } from '@platforma/shared' with { 'resolution-mode': 'import' };
 
 import { PrismaService } from '../prisma/prisma.service';
-import { TrainingAttemptStateService } from './training-attempt-state.service';
+import {
+  TRAINING_RETAKE_DELAY_MINUTES,
+  TrainingAttemptStateService,
+} from './training-attempt-state.service';
 import { TrainingProjectAccessService } from './training-project-access.service';
+import { parseTrainingProjectSnapshot } from './training-snapshot';
 import {
   getTrainingTelegramTransportMode,
   TRAINING_TELEGRAM_CLIENT,
@@ -209,7 +213,10 @@ export class TrainingTelegramService {
     }
   }
 
-  async notifyAnswerProcessed(answerId: string) {
+  async notifyAnswerProcessed(
+    answerId: string,
+    expectedAttemptStatus?: TrainingAttemptStatus,
+  ) {
     const answer = await this.prisma.trainingAnswer.findUnique({
       where: { id: answerId },
       select: {
@@ -218,7 +225,6 @@ export class TrainingTelegramService {
             attempt: {
               select: {
                 id: true,
-                userId: true,
               },
             },
           },
@@ -228,17 +234,45 @@ export class TrainingTelegramService {
 
     if (!answer) return;
 
+    await this.notifyAttemptState(
+      answer.attemptQuestion.attempt.id,
+      expectedAttemptStatus,
+    );
+  }
+
+  async notifyAttemptState(
+    attemptId: string,
+    expectedAttemptStatus?: TrainingAttemptStatus,
+  ) {
+    const attempt = await this.prisma.trainingAttempt.findUnique({
+      where: { id: attemptId },
+      select: { userId: true, status: true },
+    });
+
+    if (
+      !attempt ||
+      (expectedAttemptStatus !== undefined && attempt.status !== expectedAttemptStatus)
+    ) {
+      return;
+    }
+
     const account = await this.prisma.trainingTelegramAccount.findFirst({
-      where: {
-        userId: answer.attemptQuestion.attempt.userId,
-        revokedAt: null,
-      },
+      where: { userId: attempt.userId, revokedAt: null },
       select: { chatId: true },
     });
 
-    if (!account) return;
+    if (account) {
+      await this.sendAttemptState(account.chatId, attemptId, expectedAttemptStatus);
+    }
+  }
 
-    await this.sendAttemptState(account.chatId, answer.attemptQuestion.attempt.id);
+  dispatchAttemptStateNotification(attemptId: string) {
+    queueMicrotask(() => {
+      void this.notifyAttemptState(
+        attemptId,
+        TrainingAttemptStatus.COMPLETED,
+      ).catch(() => undefined);
+    });
   }
 
   async notifyAnswerFailed(answerId: string) {
@@ -613,11 +647,16 @@ export class TrainingTelegramService {
     });
   }
 
-  private async sendAttemptState(chatId: bigint, attemptId: string) {
+  private async sendAttemptState(
+    chatId: bigint,
+    attemptId: string,
+    expectedAttemptStatus?: TrainingAttemptStatus,
+  ) {
     await this.attemptState.finalizeAttemptIfExpired(attemptId);
     const attempt = await this.prisma.trainingAttempt.findUnique({
       where: { id: attemptId },
       include: {
+        project: { select: { attemptLimit: true } },
         questions: {
           include: {
             answer: { include: { _count: { select: { segments: true } } } },
@@ -627,7 +666,12 @@ export class TrainingTelegramService {
       },
     });
 
-    if (!attempt) return;
+    if (
+      !attempt ||
+      (expectedAttemptStatus !== undefined && attempt.status !== expectedAttemptStatus)
+    ) {
+      return;
+    }
 
     if (attempt.status === TrainingAttemptStatus.TIMED_OUT) {
       await this.outboundClient.sendMessage({
@@ -638,9 +682,25 @@ export class TrainingTelegramService {
     }
 
     if (attempt.status === TrainingAttemptStatus.COMPLETED) {
+      const projectTitle = parseTrainingProjectSnapshot(
+        attempt.projectSnapshotJson,
+      ).projectTitle;
+      const attemptsUsed = attempt.isPassed
+        ? 0
+        : await this.prisma.trainingAttempt.count({
+            where: {
+              userId: attempt.userId,
+              projectId: attempt.projectId,
+              countsTowardAttemptLimit: true,
+            },
+          });
       await this.outboundClient.sendMessage({
         chatId,
-        text: attempt.isPassed ? 'Аттестация пройдена.' : 'Аттестация не пройдена.',
+        text: formatTrainingAttemptResultMessage({
+          projectTitle,
+          isPassed: attempt.isPassed === true,
+          remainingAttempts: Math.max(0, attempt.project.attemptLimit - attemptsUsed),
+        }),
       });
       return;
     }
@@ -739,6 +799,24 @@ export class TrainingTelegramService {
 
 export function hashTrainingTelegramLinkToken(rawToken: string) {
   return createHash('sha256').update(rawToken, 'utf8').digest('hex');
+}
+
+export function formatTrainingAttemptResultMessage(input: {
+  projectTitle: string;
+  isPassed: boolean;
+  remainingAttempts: number;
+}) {
+  if (input.isPassed) {
+    return `Аттестация по проекту ${input.projectTitle} пройдена`;
+  }
+
+  const failedMessage =
+    `Аттестация по проекту ${input.projectTitle} не пройдена, ` +
+    `осталось попыток ${input.remainingAttempts}`;
+
+  return input.remainingAttempts > 0
+    ? `${failedMessage}. Повторное прохождение доступно через ${TRAINING_RETAKE_DELAY_MINUTES} минут`
+    : failedMessage;
 }
 
 export function parseTrainingTelegramCallback(value: string) {

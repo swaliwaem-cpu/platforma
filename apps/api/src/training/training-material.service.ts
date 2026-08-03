@@ -45,6 +45,7 @@ import {
   type TrainingQuestionDraftSource,
   validateMaterialSuggestions,
 } from './training-material-suggester';
+import { recordTrainingProjectDeleteCleanupObject } from './training-project-cleanup';
 import { TrainingUrlExtractor } from './training-url-extractor';
 
 const DEFAULT_PDF_MAX_BYTES = 25 * 1024 * 1024;
@@ -578,9 +579,7 @@ export class TrainingMaterialService {
         );
       });
     } catch (error) {
-      await this.storage.deleteObject(stored.key, stored.bucket ?? undefined).catch(() => undefined);
-      await this.prisma.file.delete({ where: { id: stored.id } }).catch(() => undefined);
-      throw error;
+      return this.cleanupPdfAfterFailedLink(projectId, stored, error);
     }
     return this.get(materialId);
   }
@@ -946,9 +945,7 @@ export class TrainingMaterialService {
         },
       });
     } catch (error) {
-      await this.storage.deleteObject(stored.key, stored.bucket ?? undefined).catch(() => undefined);
-      await this.prisma.file.delete({ where: { id: stored.id } }).catch(() => undefined);
-      throw error;
+      return this.cleanupPdfAfterFailedLink(projectId, stored, error);
     }
     return this.get(materialId);
   }
@@ -987,11 +984,48 @@ export class TrainingMaterialService {
         } });
       });
     } catch (error) {
-      await this.storage.deleteObject(stored.key, stored.bucket ?? undefined).catch(() => undefined);
-      await this.prisma.file.delete({ where: { id: stored.id } }).catch(() => undefined);
-      throw error;
+      return this.cleanupPdfAfterFailedLink(material.projectId, stored, error);
     }
     return this.get(material.id);
+  }
+
+  private async cleanupPdfAfterFailedLink(
+    projectId: string,
+    stored: { id: string; key: string; bucket: string | null },
+    originalError: unknown,
+  ): Promise<never> {
+    try {
+      await this.storage.deleteObject(stored.key, stored.bucket ?? undefined);
+    } catch (cleanupError) {
+      try {
+        await recordTrainingProjectDeleteCleanupObject(this.prisma, projectId, {
+          key: stored.key,
+          bucket: stored.bucket,
+          fileId: stored.id,
+        });
+      } catch (auditError) {
+        throw new AggregateError(
+          [originalError, cleanupError, auditError],
+          'Training PDF link and cleanup failed',
+        );
+      }
+
+      throw new AggregateError(
+        [originalError, cleanupError],
+        'Training PDF link failed and storage cleanup is pending',
+      );
+    }
+
+    try {
+      await this.prisma.file.delete({ where: { id: stored.id } });
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [originalError, cleanupError],
+        'Training PDF link failed and file cleanup is pending',
+      );
+    }
+
+    throw originalError;
   }
 
   private async storePrivatePdf(

@@ -32,7 +32,9 @@ if (!databaseUrl) {
   const attempts = new TrainingAttemptService(prisma, state, access);
   const projects = new TrainingProjectService(prisma);
   const results = new TrainingResultsService(prisma, state);
-  const reviews = new TrainingReviewService(prisma);
+  const reviews = new TrainingReviewService(prisma, {
+    dispatchAttemptStateNotification: () => undefined,
+  });
   let admin;
   let employee;
 
@@ -84,6 +86,21 @@ if (!databaseUrl) {
     assert.equal(projectSummary.bestConfirmedScore, 100);
     assert.equal(projectSummary.lastConfirmedScore, 0);
 
+    await assert.rejects(
+      attempts.startAttempt(project.id, employee.id, {
+        confirmed: true,
+        idempotencyKey: randomUUID(),
+      }),
+    );
+    await prisma.trainingAttempt.update({
+      where: { id: failedAttempt.id },
+      data: { completedAt: new Date(Date.now() - 61 * 60 * 1000) },
+    });
+    await prisma.trainingAttempt.update({
+      where: { id: passedAttemptId },
+      data: { completedAt: new Date(Date.now() - 62 * 60 * 1000) },
+    });
+
     await prisma.trainingProject.update({ where: { id: project.id }, data: { title: 'Live title changed' } });
     employeeHistory = await attempts.listEmployeeAttempts(employee.id);
     assert.equal(
@@ -101,15 +118,15 @@ if (!databaseUrl) {
       revokedProjects.items.find((item) => item.id === project.id).activeAttempt.id,
       activeAttempt.id,
     );
-    const timeoutStartedAt = new Date('2026-08-03T10:00:00.000Z');
+    const timeoutStartedAt = new Date(new Date(failedAttempt.startedAt).getTime() + 60 * 1000);
     await prisma.trainingAttempt.update({
       where: { id: activeAttempt.id },
       data: {
         status: 'TIMED_OUT',
         completionReason: 'TIMEOUT',
         startedAt: timeoutStartedAt,
-        expiresAt: new Date('2026-08-03T10:07:00.000Z'),
-        completedAt: new Date('2026-08-03T11:00:00.000Z'),
+        expiresAt: new Date(timeoutStartedAt.getTime() + 7 * 60 * 1000),
+        completedAt: new Date(timeoutStartedAt.getTime() + 60 * 60 * 1000),
         calculatedScore: 10,
         finalScore: 10,
         isPassed: false,
@@ -184,6 +201,17 @@ if (!databaseUrl) {
     assert.equal(overriddenHistory.finalScore, 70);
     assert.equal(overriddenHistory.safeBreakdown.length, 0);
     assert.equal(overriddenHistory.message, 'Итог скорректирован после проверки.');
+
+    await assert.rejects(
+      attempts.startAttempt(project.id, employee.id, {
+        confirmed: true,
+        idempotencyKey: randomUUID(),
+      }),
+    );
+    await prisma.trainingAttempt.update({
+      where: { id: reviewAttempt.id },
+      data: { reviewedAt: new Date(Date.now() - 61 * 60 * 1000) },
+    });
 
     let technicalAttempt = await attempts.startAttempt(project.id, employee.id, {
       confirmed: true,

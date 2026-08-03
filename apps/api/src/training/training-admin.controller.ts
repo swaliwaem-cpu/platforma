@@ -1,4 +1,17 @@
-import { Body, Controller, Get, Header, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Header,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 
 import { AuthenticatedUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -53,6 +66,16 @@ export class TrainingAdminController {
   @RequirePermissions('training:projects:manage')
   async getProject(@Param('projectId') projectId: string) {
     return this.projects.getAdminProject(parseUuid(projectId, 'projectId'));
+  }
+
+  @Delete('projects/:projectId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RequirePermissions('training:projects:manage')
+  async deleteProject(
+    @Param('projectId') projectId: string,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    await this.projects.deleteProject(parseUuid(projectId, 'projectId'), actor.id);
   }
 
   @Get('projects/:projectId/assignment-users')

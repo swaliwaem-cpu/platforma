@@ -428,7 +428,58 @@ if (!databaseUrl) {
     assert.equal(history.items.some((item) => item.id === attempt.id), true);
     assert.equal(
       client.sentMessages.filter((message) =>
-        message.text === 'Аттестация пройдена.',
+        message.text === 'Аттестация по проекту Worker vertical пройдена',
+      ).length,
+      1,
+    );
+  });
+
+  test('voice worker automatically sends the failed result with remaining attempts and delay', async () => {
+    const user = await createUser('worker-failed-result');
+    const project = await createOpenProject('Worker failed result');
+    const { token, telegramId } = await consumeLink(user.id, project.id, 802);
+    await telegram.handleUpdate(callbackUpdate(telegramId, `tr:start:${token.id}`, 'failed-start'));
+    const attempt = await prisma.trainingAttempt.findFirstOrThrow({
+      where: { userId: user.id, projectId: project.id },
+    });
+    const worker = createWorker(
+      new ImmediateWorkerAudio(prisma),
+      { transcribe: async () => fakeTranscription('[fake:fail]') },
+    );
+
+    for (let sequence = 1; sequence <= 4; sequence += 1) {
+      const question = await prisma.trainingAttemptQuestion.findFirstOrThrow({
+        where: { attemptId: attempt.id, status: 'PRESENTED' },
+        orderBy: { sequence: 'asc' },
+      });
+      await telegram.handleUpdate(
+        voiceUpdate(
+          telegramId,
+          80_200 + sequence,
+          `failed-file-${sequence}`,
+          `failed-unique-${sequence}`,
+        ),
+      );
+      await telegram.handleUpdate(
+        callbackUpdate(
+          telegramId,
+          `tr:finish:${question.id}`,
+          `failed-finish-${sequence}`,
+        ),
+      );
+      assert.equal(await worker.runOnce(), true);
+    }
+
+    const completed = await prisma.trainingAttempt.findUniqueOrThrow({
+      where: { id: attempt.id },
+    });
+    assert.equal(completed.status, 'COMPLETED');
+    assert.equal(completed.isPassed, false);
+    assert.equal(
+      client.sentMessages.filter(
+        (message) =>
+          message.text ===
+          'Аттестация по проекту Worker failed result не пройдена, осталось попыток 2. Повторное прохождение доступно через 60 минут',
       ).length,
       1,
     );
@@ -867,6 +918,6 @@ if (!databaseUrl) {
   }
 }
 
-function fakeTranscription() {
-  return { text: '[fake:pass]', model: 'fake', requestId: null, latencyMs: 0, attempts: 1, usage: null };
+function fakeTranscription(text = '[fake:pass]') {
+  return { text, model: 'fake', requestId: null, latencyMs: 0, attempts: 1, usage: null };
 }

@@ -68,9 +68,12 @@ export type FinishTrainingVoiceAnswerResult =
   | { status: 'PROCESSING' | 'FAILED'; answerId: string }
   | { status: 'STALE' | 'NO_SEGMENTS' | 'TIMED_OUT' };
 
+export const TRAINING_RETAKE_DELAY_MINUTES = 60;
+
 const TRAINING_MAX_VOICE_SEGMENTS = 20;
 const TRAINING_MAX_VOICE_SEGMENT_BYTES = 20 * 1024 * 1024;
 const TRAINING_MAX_VOICE_TOTAL_BYTES = 60 * 1024 * 1024;
+const TRAINING_RETAKE_DELAY_MS = TRAINING_RETAKE_DELAY_MINUTES * 60 * 1000;
 
 @Injectable()
 export class TrainingAttemptStateService {
@@ -89,6 +92,17 @@ export class TrainingAttemptStateService {
 
   async startAttemptFromTelegramLinkToken(tokenId: string, userId: string) {
     return this.prisma.$transaction(async (transaction) => {
+      const tokenSnapshot = await transaction.trainingTelegramLinkToken.findFirst({
+        where: { id: tokenId, userId },
+        select: { projectId: true },
+      });
+
+      if (!tokenSnapshot) {
+        throw new NotFoundException('Training Telegram link not found');
+      }
+
+      await this.lockUser(transaction, userId);
+      await this.lockProject(transaction, tokenSnapshot.projectId);
       await transaction.$queryRaw(
         Prisma.sql`SELECT "id" FROM "training_telegram_link_tokens" WHERE "id" = CAST(${tokenId} AS uuid) FOR UPDATE`,
       );
@@ -96,7 +110,11 @@ export class TrainingAttemptStateService {
         where: { id: tokenId, userId },
       });
 
-      if (!token || token.usedAt === null) {
+      if (
+        !token ||
+        token.projectId !== tokenSnapshot.projectId ||
+        token.usedAt === null
+      ) {
         throw new NotFoundException('Training Telegram link not found');
       }
 
@@ -118,7 +136,7 @@ export class TrainingAttemptStateService {
         return existingAttempt?.id ?? null;
       }
 
-      const attemptId = await this.startAttemptInTransaction(
+      const attemptId = await this.startAttemptAfterLocks(
         transaction,
         token.projectId,
         userId,
@@ -143,6 +161,15 @@ export class TrainingAttemptStateService {
   ) {
       await this.lockUser(transaction, userId);
       await this.lockProject(transaction, projectId);
+      return this.startAttemptAfterLocks(transaction, projectId, userId, input);
+  }
+
+  private async startAttemptAfterLocks(
+    transaction: Prisma.TransactionClient,
+    projectId: string,
+    userId: string,
+    input: StartTrainingAttemptInput,
+  ) {
       const now = await this.getDatabaseNow(transaction);
       const project = await transaction.trainingProject.findUnique({
         where: { id: projectId },
@@ -217,6 +244,25 @@ export class TrainingAttemptStateService {
 
       if (attemptsUsed >= project.attemptLimit) {
         throw new ConflictException('Training attempt limit reached');
+      }
+
+      const resolvedAttempts = await transaction.trainingAttempt.findMany({
+        where: {
+          userId,
+          projectId,
+          status: TrainingAttemptStatus.COMPLETED,
+          isPassed: { not: null },
+        },
+        select: {
+          status: true,
+          completedAt: true,
+          reviewedAt: true,
+          isPassed: true,
+        },
+      });
+
+      if (isTrainingRetakeDelayActive(resolvedAttempts, now)) {
+        throw new ConflictException('Training retake delay is active');
       }
 
       if (!project.allowRetakeAfterPass) {
@@ -529,7 +575,11 @@ export class TrainingAttemptStateService {
       const now = await this.getDatabaseNow(transaction);
 
       if (await this.finalizeTimeoutIfNeeded(transaction, attemptId, now)) {
-        return { status: 'TIMED_OUT' as const, attemptId };
+        return {
+          status: 'TIMED_OUT' as const,
+          attemptId,
+          attemptStatus: TrainingAttemptStatus.TIMED_OUT,
+        };
       }
 
       const attempt = await transaction.trainingAttempt.findUniqueOrThrow({
@@ -567,7 +617,16 @@ export class TrainingAttemptStateService {
         answer.id,
       );
 
-      return { status: 'COMPLETED' as const, attemptId };
+      const progressedAttempt = await transaction.trainingAttempt.findUniqueOrThrow({
+        where: { id: attemptId },
+        select: { status: true },
+      });
+
+      return {
+        status: 'COMPLETED' as const,
+        attemptId,
+        attemptStatus: progressedAttempt.status,
+      };
     });
   }
 
@@ -587,7 +646,11 @@ export class TrainingAttemptStateService {
       const now = await this.getDatabaseNow(transaction);
 
       if (await this.finalizeTimeoutIfNeeded(transaction, attemptId, now)) {
-        return { status: 'TIMED_OUT' as const, attemptId };
+        return {
+          status: 'TIMED_OUT' as const,
+          attemptId,
+          attemptStatus: TrainingAttemptStatus.TIMED_OUT,
+        };
       }
 
       const attempt = await transaction.trainingAttempt.findUniqueOrThrow({
@@ -642,7 +705,16 @@ export class TrainingAttemptStateService {
       }
 
       await this.completeIfReady(transaction, attempt.id, now);
-      return { status: 'COMPLETED' as const, attemptId };
+      const progressedAttempt = await transaction.trainingAttempt.findUniqueOrThrow({
+        where: { id: attemptId },
+        select: { status: true },
+      });
+
+      return {
+        status: 'COMPLETED' as const,
+        attemptId,
+        attemptStatus: progressedAttempt.status,
+      };
     });
   }
 
@@ -1177,6 +1249,48 @@ export class TrainingAttemptStateService {
 
     return row.now;
   }
+}
+
+export function getTrainingRetakeAvailableAt(
+  attempts: ReadonlyArray<{
+    status: TrainingAttemptStatus;
+    completedAt: Date | null;
+    reviewedAt: Date | null;
+    isPassed: boolean | null;
+  }>,
+) {
+  const latestResult = attempts.reduce<{
+    isPassed: boolean;
+    resolvedAt: Date;
+  } | null>((latest, attempt) => {
+    if (
+      attempt.status !== TrainingAttemptStatus.COMPLETED ||
+      attempt.isPassed === null
+    ) {
+      return latest;
+    }
+
+    const resolvedAt = attempt.reviewedAt ?? attempt.completedAt;
+
+    if (!resolvedAt || (latest && latest.resolvedAt.getTime() >= resolvedAt.getTime())) {
+      return latest;
+    }
+
+    return { isPassed: attempt.isPassed, resolvedAt };
+  }, null);
+
+  if (!latestResult || latestResult.isPassed) return null;
+
+  return new Date(latestResult.resolvedAt.getTime() + TRAINING_RETAKE_DELAY_MS);
+}
+
+export function isTrainingRetakeDelayActive(
+  attempts: Parameters<typeof getTrainingRetakeAvailableAt>[0],
+  now: Date,
+) {
+  const availableAt = getTrainingRetakeAvailableAt(attempts);
+
+  return Boolean(availableAt && availableAt.getTime() > now.getTime());
 }
 
 function parseSnapshotAliases(value: Prisma.JsonValue) {

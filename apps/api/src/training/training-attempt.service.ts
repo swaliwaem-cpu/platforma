@@ -20,6 +20,7 @@ import type {
 
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  isTrainingRetakeDelayActive,
   TrainingAttemptStateService,
   type StartTrainingAttemptInput,
   type SubmitTrainingAnswerInput,
@@ -41,6 +42,7 @@ export class TrainingAttemptService {
   async listEmployeeProjects(userId: string): Promise<TrainingEmployeeProjectsResponse> {
     await this.state.finalizeExpiredForUser(userId);
     await this.projectAccess.assertParticipant(userId);
+    const now = new Date();
     const projects = await this.prisma.trainingProject.findMany({
       where: this.projectAccess.employeeProjectWhere(userId),
       include: {
@@ -86,12 +88,14 @@ export class TrainingAttemptService {
         const attemptsLeft = Math.max(0, project.attemptLimit - countingAttempts.length);
         const lastConfirmed = confirmedAttempts[0] ?? null;
         const blockedByPass = Boolean(bestConfirmed?.isPassed && !project.allowRetakeAfterPass);
+        const blockedByRetakeDelay = isTrainingRetakeDelayActive(projectAttempts, now);
         const hasCurrentAccess = this.projectAccess.hasCurrentAccess(project);
         const canStart =
           hasCurrentAccess &&
           !activeAttempt &&
           attemptsLeft > 0 &&
-          !blockedByPass;
+          !blockedByPass &&
+          !blockedByRetakeDelay;
 
         return {
           id: project.id,

@@ -5,6 +5,7 @@ import {
   Prisma,
   TrainingAiStepStatus,
   TrainingAnswerProcessingStatus,
+  TrainingAttemptStatus,
   TrainingFakeOutcome,
 } from '@prisma/client';
 
@@ -285,7 +286,7 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
     );
 
     if (timedOut) {
-      await this.notifyProcessed(answer.id);
+      await this.notifyProcessed(answer.id, TrainingAttemptStatus.TIMED_OUT);
       return;
     }
     if (!(await this.canContinueClaim(answer, false))) return;
@@ -310,7 +311,7 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
           '[fake:pass]',
         );
         if (result.status === 'COMPLETED' || result.status === 'TIMED_OUT') {
-          await this.notifyProcessed(answer.id);
+          await this.notifyProcessed(answer.id, result.attemptStatus);
         }
         return;
       }
@@ -396,7 +397,7 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
       );
 
       if (progression.status === 'COMPLETED' || progression.status === 'TIMED_OUT') {
-        await this.notifyProcessed(answer.id);
+        await this.notifyProcessed(answer.id, progression.attemptStatus);
       }
     } catch (error) {
       await this.handleProcessingFailure(answer, error, failedStep);
@@ -481,12 +482,15 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
     if (failed) await this.notifyFailed(answer.id);
   }
 
-  private async notifyProcessed(answerId: string) {
+  private async notifyProcessed(
+    answerId: string,
+    expectedAttemptStatus: TrainingAttemptStatus,
+  ) {
     if (this.stopping || !isTrainingModuleEnabled()) return;
     try {
-      await this.telegram.notifyAnswerProcessed(answerId);
+      await this.telegram.notifyAnswerProcessed(answerId, expectedAttemptStatus);
     } catch {
-      // Domain state is committed; /start restores it if delivery fails.
+      // Domain state is committed; result delivery remains best-effort.
     }
   }
 

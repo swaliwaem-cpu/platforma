@@ -15,8 +15,17 @@ import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/c
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
+  deleteTrainingAdminProject,
   getTrainingAdminProject,
   publishTrainingAdminProject,
   updateTrainingAdminProject,
@@ -66,6 +75,8 @@ export function TrainingAdminProjectEditorPage({
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [activeTab, setActiveTab] = useState('content');
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -157,6 +168,27 @@ export function TrainingAdminProjectEditorPage({
     }
   };
 
+  const handleDelete = async () => {
+    if (!accessToken || !project || pendingAction) return;
+
+    setPendingAction('delete');
+    setDeleteError(null);
+    setError(null);
+    setNotice(null);
+
+    try {
+      await deleteTrainingAdminProject(accessToken, project.id);
+      setIsDeleteDialogOpen(false);
+      navigate('/admin/training');
+    } catch (caughtError) {
+      setDeleteError(
+        caughtError instanceof Error ? caughtError.message : 'Не удалось удалить проект',
+      );
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
   if (isLoading) return <div className="training-page"><Skeleton className="training-editor-skeleton" /></div>;
 
   if (!project || !form) {
@@ -178,6 +210,7 @@ export function TrainingAdminProjectEditorPage({
   }
 
   const isReadOnly = project.isOpen;
+  const isDeleting = pendingAction === 'delete';
 
   return (
     <div className="training-page training-admin-page">
@@ -196,6 +229,17 @@ export function TrainingAdminProjectEditorPage({
             <AdminButton type="button" tone="primary" disabled={project.status !== 'PUBLISHED' || Boolean(pendingAction)} onClick={() => void runProjectAction('open')}>Открыть проект</AdminButton>
           </>
         )}
+        <AdminButton
+          type="button"
+          tone="danger"
+          disabled={Boolean(pendingAction)}
+          onClick={() => {
+            setDeleteError(null);
+            setIsDeleteDialogOpen(true);
+          }}
+        >
+          Удалить проект
+        </AdminButton>
       </div>
 
       {error ? <AdminAlert tone="error">{error}</AdminAlert> : null}
@@ -311,6 +355,45 @@ export function TrainingAdminProjectEditorPage({
           />
         </TabsContent>
       </Tabs>
+
+      <Dialog
+        open={isDeleteDialogOpen}
+        onOpenChange={(open) => {
+          if (isDeleting) return;
+          setIsDeleteDialogOpen(open);
+          if (!open) setDeleteError(null);
+        }}
+      >
+        <DialogContent showCloseButton={!isDeleting}>
+          <DialogHeader>
+            <DialogTitle>Безвозвратно удалить проект «{project.title}»?</DialogTitle>
+            <DialogDescription>
+              Будут удалены сам проект, все попытки и результаты сотрудников, ответы,
+              аудиозаписи, материалы, назначения и связанные файлы. Восстановить данные
+              будет невозможно.
+            </DialogDescription>
+          </DialogHeader>
+          {deleteError ? <AdminAlert tone="error">{deleteError}</AdminAlert> : null}
+          <DialogFooter>
+            <AdminButton
+              type="button"
+              tone="secondary"
+              disabled={isDeleting}
+              onClick={() => setIsDeleteDialogOpen(false)}
+            >
+              Отмена
+            </AdminButton>
+            <AdminButton
+              type="button"
+              tone="danger"
+              disabled={isDeleting}
+              onClick={() => void handleDelete()}
+            >
+              {isDeleting ? 'Удаляем…' : 'Удалить всё навсегда'}
+            </AdminButton>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
