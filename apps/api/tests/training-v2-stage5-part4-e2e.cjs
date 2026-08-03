@@ -1322,11 +1322,11 @@ async function runBrowserChecks(context, browser) {
     await page.getByText('Результаты сотрудников').waitFor();
     await page.getByText('E2E Employee 000').first().waitFor();
     await page.getByLabel('Сотрудник').fill('no-such-e2e-user');
-    await page.getByRole('button', { name: 'Применить' }).click();
+    await page.getByRole('button', { name: 'Показать' }).click();
     await page.getByText('Результаты не найдены').waitFor();
     failResults = true;
     await page.getByLabel('Сотрудник').fill('e2e-error');
-    await page.getByRole('button', { name: 'Применить' }).click();
+    await page.getByRole('button', { name: 'Показать' }).click();
     await page.getByText('E2E_RESULTS_ERROR').waitFor();
     failResults = false;
     await page.getByRole('button', { name: 'Сбросить' }).click();

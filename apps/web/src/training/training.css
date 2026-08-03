@@ -1602,6 +1602,17 @@
   gap: 18px;
 }
 
+.training-results-page {
+  max-width: 1280px;
+}
+
+.training-results-page .training-results-filter-panel {
+  position: relative;
+  z-index: 20;
+  overflow: visible;
+  padding: 20px 24px;
+}
+
 .training-results-entry > div,
 .training-protected-audio > div:first-child {
   display: flex;
@@ -1612,13 +1623,15 @@
 
 .training-results-filter-panel form {
   display: grid;
-  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 16px;
 }
 
 .training-results-filters {
   display: grid;
-  grid-template-columns: repeat(4, minmax(170px, 1fr));
-  gap: 14px;
+  grid-template-columns: minmax(320px, 1fr) minmax(220px, 280px);
+  gap: 12px;
 }
 
 .training-results-filter-actions,
@@ -1629,12 +1642,81 @@
   gap: 10px;
 }
 
+.training-results-heading-copy {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.training-results-sort-note {
+  color: var(--catalog-ink-600);
+  font-size: 13px;
+}
+
+.training-results-employee-select .searchable-multi-select-control {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  min-height: 46px;
+  padding: 6px 12px;
+}
+
+.training-results-employee-select .searchable-multi-select-value input {
+  min-width: 0;
+  flex-basis: 100%;
+  font-size: 14px;
+}
+
+.training-results-employee-search-icon {
+  width: 17px;
+  height: 17px;
+  color: var(--catalog-ink-600);
+}
+
+.training-results-employee-option-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.training-results-employee-option-copy strong,
+.training-results-employee-option-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.training-results-employee-option-copy strong {
+  font-size: 13px;
+}
+
+.training-results-employee-option-copy small {
+  color: var(--catalog-ink-600);
+  font-size: 12px;
+}
+
+.training-results-employee-select .searchable-multi-select-option > svg {
+  width: 16px;
+  height: 16px;
+  color: var(--catalog-blue-deep);
+}
+
+.training-results-employee-select .searchable-multi-select-option--highlighted {
+  background: var(--catalog-blue-soft);
+}
+
+.training-results-page .training-results-employee-select .searchable-multi-select-menu {
+  z-index: 30;
+}
+
 .training-results-pagination {
   justify-content: center;
 }
 
 .training-results-table-panel {
   padding: 6px 14px;
+}
+
+.training-results-page .training-results-table-panel {
+  padding-inline: 0;
 }
 
 .training-results-table-panel [data-slot='table-cell'] {
@@ -1777,6 +1859,18 @@
   .training-ranking-filters,
   .training-admin-entry-grid {
     grid-template-columns: 1fr;
+  }
+
+  .training-results-filter-panel form {
+    grid-template-columns: 1fr;
+  }
+
+  .training-results-page .training-results-filter-panel {
+    padding: 16px;
+  }
+
+  .training-results-filter-actions {
+    justify-content: flex-start;
   }
 
   .training-object-fields > div {

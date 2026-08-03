@@ -1,13 +1,21 @@
 import assert from 'node:assert/strict';
+import { mkdir } from 'node:fs/promises';
+import { resolve } from 'node:path';
 
 import { chromium } from '@playwright/test';
 import { fulfillTrainingConfig } from './training-v2-browser-config-fixture.mjs';
 
 const baseUrl = process.env.TRAINING_WEB_TEST_URL;
 if (!baseUrl) throw new Error('TRAINING_WEB_TEST_URL is required');
+const screenshotDir = process.env.FRONTEND_QA_SCREENSHOT_DIR;
 
 const browser = await chromium.launch({ headless: true });
-const page = await browser.newPage();
+const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+const consoleIssues = [];
+page.on('console', (message) => {
+  if (message.type() === 'error' || message.type() === 'warning') consoleIssues.push(message.text());
+});
+page.on('pageerror', (error) => consoleIssues.push(error.message));
 const attemptId = '91111111-1111-4111-8111-111111111111';
 const answerId = '92222222-2222-4222-8222-222222222222';
 const resultQueries = [];
@@ -125,6 +133,9 @@ try {
   await page.locator('.training-list-skeleton').waitFor();
   await page.getByText('Результаты сотрудников').waitFor();
   await page.getByText('Анна Брокер').waitFor();
+  assert.equal(await page.title(), 'Platforma');
+  assert.equal(new URL(page.url()).pathname, '/admin/training/results');
+  assert.equal(await page.locator('vite-error-overlay').count(), 0);
   resultDelayMs = 0;
   assert.equal(await page.locator('html').getAttribute('data-app-theme'), 'minimal-luxury');
   await page.getByRole('button', { name: 'Раскрыть меню' }).click();
@@ -136,22 +147,43 @@ try {
   await page.getByRole('button', { name: 'Назад' }).click();
   await page.getByText('Страница 1 из 2').waitFor();
   await page.getByLabel('Сотрудник').fill('Анна');
+  await page.getByRole('option', { name: /Анна Брокер.*anna@example\.test/ }).waitFor();
+  await page.getByLabel('Сотрудник').press('ArrowDown');
+  await page.getByLabel('Сотрудник').press('Enter');
   await page.getByLabel('Статус').selectOption('REQUIRES_REVIEW');
-  await page.getByRole('button', { name: 'Применить' }).click();
+  const filteredResultsRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return url.pathname === '/training/admin/results'
+      && url.searchParams.get('userId') === '95555555-5555-4555-8555-555555555555';
+  });
+  await page.getByRole('button', { name: 'Показать' }).click();
+  await filteredResultsRequest;
   await page.getByText('Анна Брокер').waitFor();
-  assert.equal(resultQueries.at(-1).search, 'Анна');
+  assert.equal(resultQueries.at(-1).userId, '95555555-5555-4555-8555-555555555555');
   assert.equal(resultQueries.at(-1).attemptStatus, 'REQUIRES_REVIEW');
+  assert.deepEqual(consoleIssues, []);
+  if (screenshotDir) {
+    await mkdir(screenshotDir, { recursive: true });
+    await page.screenshot({ path: resolve(screenshotDir, 'training-results-filtered.png'), fullPage: true });
+  }
 
   await page.getByLabel('Сотрудник').fill('empty');
-  await page.getByRole('button', { name: 'Применить' }).click();
+  await page.getByRole('button', { name: 'Показать' }).click();
   await page.getByText('Результаты не найдены').waitFor();
   await page.getByLabel('Сотрудник').fill('error');
-  await page.getByRole('button', { name: 'Применить' }).click();
+  await page.getByRole('button', { name: 'Показать' }).click();
   await page.getByText('RESULTS_FAILED').waitFor();
   await page.getByRole('button', { name: 'Сбросить' }).click();
   await page.getByText('Анна Брокер').waitFor();
+  if (screenshotDir) {
+    await mkdir(screenshotDir, { recursive: true });
+    await page.screenshot({ path: resolve(screenshotDir, 'training-results-desktop.png'), fullPage: true });
+  }
   await page.setViewportSize({ width: 500, height: 900 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  if (screenshotDir) {
+    await page.screenshot({ path: resolve(screenshotDir, 'training-results-mobile.png'), fullPage: true });
+  }
 
   await page.getByRole('button', { name: 'Открыть' }).click();
   await page.waitForURL(`**/admin/training/attempts/${attemptId}`);
@@ -165,7 +197,7 @@ try {
   await page.getByText('AUDIO_FAILED').waitFor();
 
   await page.getByRole('button', { name: 'Подтвердить расчёт' }).click();
-  await page.getByText(/Решение сохранено, но detail не обновился/).waitFor();
+  await page.getByText(/Решение сохранено, но подробности не обновились/).waitFor();
   assert.equal(reviewPosts, 1);
   assert.ok(detailReads >= 2);
   assert.equal(await page.getByRole('button', { name: 'Подтвердить расчёт' }).count(), 0);
