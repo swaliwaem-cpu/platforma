@@ -5,26 +5,36 @@ export const apiAuthUpdatedEventName = 'platforma-auth-updated';
 export const apiAuthClearedEventName = 'platforma-auth-cleared';
 
 const apiConnectionErrorMessage = 'Не удалось связаться с сервером';
+const standardApiErrorTranslations: Record<string, string> = {
+  'Internal server error': 'Внутренняя ошибка сервера',
+  'Bad Request': 'Некорректный запрос',
+  Unauthorized: 'Требуется авторизация',
+  Forbidden: 'Недостаточно прав',
+  'Not Found': 'Ресурс не найден',
+};
 
 let currentAccessToken: string | null = null;
 let refreshSessionPromise: Promise<AuthResponse> | null = null;
-
-export class ApiRequestError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-    readonly errors: string[] = [],
-  ) {
-    super(message);
-    this.name = 'ApiRequestError';
-  }
-}
 
 export function setApiAccessToken(accessToken: string | null) {
   currentAccessToken = accessToken;
 }
 
 export async function apiRequest<T = unknown>(
+  path: string,
+  accessToken: string,
+  options: RequestInit = {},
+) {
+  const response = await apiResponse(path, accessToken, options);
+
+  if (response.status === 204) {
+    return null as T;
+  }
+
+  return (await response.json()) as T;
+}
+
+export async function apiResponse(
   path: string,
   accessToken: string,
   options: RequestInit = {},
@@ -49,58 +59,10 @@ export async function apiRequest<T = unknown>(
   }
 
   if (!response.ok) {
-    const error = await resolveApiError(response);
-    throw new ApiRequestError(error.message, response.status, error.errors);
+    throw new Error(await resolveErrorMessage(response));
   }
 
-  if (response.status === 204) {
-    return null as T;
-  }
-
-  return (await response.json()) as T;
-}
-
-export async function apiDownload(
-  path: string,
-  accessToken: string,
-  options: { signal?: AbortSignal } = {},
-): Promise<{ blob: Blob; filename: string | null }> {
-  const initialToken = currentAccessToken ?? accessToken;
-  let response: Response;
-
-  try {
-    response = await sendApiRequest(path, initialToken, {
-      signal: options.signal,
-    });
-  } catch (error) {
-    if (isAbortError(error)) throw error;
-    throw new ApiRequestError(apiConnectionErrorMessage, 0);
-  }
-
-  if (response.status === 401) {
-    const refreshedSession = await waitForAbortable(
-      refreshApiSession(),
-      options.signal,
-    );
-    try {
-      response = await sendApiRequest(path, refreshedSession.accessToken, {
-        signal: options.signal,
-      });
-    } catch (error) {
-      if (isAbortError(error)) throw error;
-      throw new ApiRequestError(apiConnectionErrorMessage, 0);
-    }
-  }
-
-  if (!response.ok) {
-    const error = await resolveApiError(response);
-    throw new ApiRequestError(error.message, response.status, error.errors);
-  }
-
-  return {
-    blob: await response.blob(),
-    filename: getContentDispositionFilename(response.headers.get('Content-Disposition')),
-  };
+  return response;
 }
 
 async function sendApiRequest(path: string, accessToken: string, options: RequestInit) {
@@ -154,78 +116,16 @@ async function refreshApiSession() {
 }
 
 async function resolveErrorMessage(response: Response) {
-  return (await resolveApiError(response)).message;
-}
-
-async function resolveApiError(response: Response) {
   if (response.status === 413) {
-    return {
-      message: 'Слишком большой запрос: уменьшите размер файлов или загрузите меньше изображений',
-      errors: [] as string[],
-    };
+    return 'Слишком большой запрос: уменьшите размер файлов или загрузите меньше изображений';
   }
 
   try {
-    const data = (await response.json()) as {
-      message?: string | string[];
-      errors?: unknown;
-    };
+    const data = (await response.json()) as { message?: string | string[] };
     const message = Array.isArray(data.message) ? data.message.join(', ') : data.message;
-    const errors = Array.isArray(data.errors)
-      ? data.errors.filter((item): item is string => typeof item === 'string')
-      : [];
 
-    return { message: message || 'Запрос не выполнен', errors };
+    return message ? standardApiErrorTranslations[message] ?? message : 'Запрос не выполнен';
   } catch {
-    return { message: 'Запрос не выполнен', errors: [] as string[] };
+    return 'Запрос не выполнен';
   }
-}
-
-function getContentDispositionFilename(value: string | null) {
-  if (!value) return null;
-
-  const utf8Match = value.match(/filename\*=UTF-8''([^;]+)/iu);
-  if (utf8Match?.[1]) {
-    try {
-      return decodeURIComponent(utf8Match[1]);
-    } catch {
-      return utf8Match[1];
-    }
-  }
-
-  return value.match(/filename="([^"]+)"/iu)?.[1] ?? null;
-}
-
-function waitForAbortable<T>(
-  promise: Promise<T>,
-  signal: AbortSignal | undefined,
-): Promise<T> {
-  if (!signal) return promise;
-  if (signal.aborted) return Promise.reject(createAbortError());
-  return new Promise<T>((resolve, reject) => {
-    const abort = () => {
-      cleanup();
-      reject(createAbortError());
-    };
-    const cleanup = () => signal.removeEventListener('abort', abort);
-    signal.addEventListener('abort', abort, { once: true });
-    promise.then(
-      (value) => {
-        cleanup();
-        resolve(value);
-      },
-      (error) => {
-        cleanup();
-        reject(error);
-      },
-    );
-  });
-}
-
-function createAbortError() {
-  return new DOMException('The operation was aborted', 'AbortError');
-}
-
-function isAbortError(error: unknown) {
-  return error instanceof DOMException && error.name === 'AbortError';
 }

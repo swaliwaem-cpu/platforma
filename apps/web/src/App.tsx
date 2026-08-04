@@ -1,10 +1,6 @@
-import { FormEvent, lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import { MenuIcon, MoonIcon, SunIcon } from 'lucide-react';
-import type {
-  AuthUser,
-  TrainingModuleConfigResponse,
-  UserStatus,
-} from '@platforma/shared';
+import type { AuthUser, UserStatus } from '@platforma/shared';
 
 import platformLogoUrl from '../../../_Fluffy_White_1-02.svg';
 import { CatalogLinksAdminPage } from './admin/CatalogLinksAdminPage';
@@ -22,29 +18,12 @@ import { LotPresentationsPage } from './presentations/LotPresentationsPage';
 import { canAccessLotPresentations, canAccessProjectPresentations } from './presentations/presentationAccess';
 import { ProjectPresentationEditorPage } from './presentations/projects/ProjectPresentationEditorPage';
 import { ProjectPresentationsPage } from './presentations/projects/ProjectPresentationsPage';
-import { TrainingAdminPage } from './training/TrainingAdminPage';
-import { TrainingShellPage } from './training/TrainingShellPage';
+import { TrainingAdminRoutes, TrainingEmployeeRoutes } from './training/TrainingRoutes';
 import { getAppliedAppTheme, getNextAppTheme, setAppTheme } from './appTheme';
 import './styles.css';
 import './app-theme.css';
 
-const TrainingAdminResultsPage = lazy(() =>
-  import('./training/TrainingAdminResultsPage').then((module) => ({
-    default: module.TrainingAdminResultsPage,
-  })),
-);
-const TrainingRankingPage = lazy(() =>
-  import('./training/TrainingRankingPage').then((module) => ({
-    default: module.TrainingRankingPage,
-  })),
-);
-const TrainingOperationsPage = lazy(() =>
-  import('./training/TrainingOperationsPage').then((module) => ({
-    default: module.TrainingOperationsPage,
-  })),
-);
-
-type AppSection = 'cabinet' | 'catalog' | 'training' | 'presentations' | 'admin';
+type AppSection = 'cabinet' | 'catalog' | 'presentations' | 'training' | 'admin';
 type LoginMode = 'login' | 'register';
 type NavChildItem = {
   id: string;
@@ -107,18 +86,18 @@ const navItems: readonly NavItem[] = [
     ],
   },
   {
-    id: 'training',
-    label: 'Обучение',
-    path: '/training',
-    section: 'training',
-    requiredPermissions: ['training:take'],
-  },
-  {
     id: 'presentations',
     label: 'Подборки',
     path: '/presentations',
     section: 'presentations',
     requiredPermissions: [],
+  },
+  {
+    id: 'training',
+    label: 'Обучение',
+    path: '/training',
+    section: 'training',
+    requiredPermissions: ['training:participate'],
   },
   {
     id: 'admin',
@@ -152,13 +131,6 @@ const cabinetSections = [
     requiredPermissions: ['objects:read'],
   },
   {
-    id: 'training',
-    label: 'Обучение',
-    group: 'Обучение',
-    path: '/training',
-    requiredPermissions: ['training:take'],
-  },
-  {
     id: 'presentations',
     label: 'Подборки лотов',
     group: 'Презентации',
@@ -171,34 +143,6 @@ const cabinetSections = [
     group: 'Админка',
     path: '/admin/objects',
     requiredPermissions: ['admin:access', 'objects:read'],
-  },
-  {
-    id: 'admin-training',
-    label: 'Управление обучением',
-    group: 'Админка',
-    path: '/admin/training',
-    requiredPermissions: ['admin:access', 'training:projects:manage'],
-  },
-  {
-    id: 'admin-training-results',
-    label: 'Результаты обучения',
-    group: 'Админка',
-    path: '/admin/training/results',
-    requiredPermissions: ['admin:access', 'training:results:read'],
-  },
-  {
-    id: 'admin-training-ranking',
-    label: 'Рейтинг обучения',
-    group: 'Админка',
-    path: '/admin/training/ranking',
-    requiredPermissions: ['admin:access', 'training:results:read'],
-  },
-  {
-    id: 'admin-training-operations',
-    label: 'Состояние обучения',
-    group: 'Админка',
-    path: '/admin/training/operations',
-    requiredPermissions: ['admin:access', 'training:operations:read'],
   },
   {
     id: 'admin-users',
@@ -234,17 +178,7 @@ function usePathname() {
   const [pathname, setPathname] = useState(window.location.pathname);
 
   useEffect(() => {
-    const handlePopState = (event: PopStateEvent) => {
-      const guardEvent = new CustomEvent<PopStateEvent>(
-        'platforma:before-popstate',
-        {
-          cancelable: true,
-          detail: event,
-        },
-      );
-      if (!window.dispatchEvent(guardEvent)) return;
-      setPathname(window.location.pathname);
-    };
+    const handlePopState = () => setPathname(window.location.pathname);
     const handleDocumentClick = (event: MouseEvent) => {
       if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
         return;
@@ -302,10 +236,8 @@ function AppRoutes() {
   const { accessToken, user, isLoading, logout, hasPermission } = useAuth();
   const sidebarRef = useRef<HTMLElement | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [isTrainingEnabled, setIsTrainingEnabled] = useState<boolean | null>(
-    null,
-  );
   const [appTheme, setAppThemeState] = useState(() => getAppliedAppTheme());
+  const [trainingEnabled, setTrainingEnabled] = useState(false);
   const isDarkTheme = appTheme === 'dark-premium';
   const themeToggleLabel = isDarkTheme ? 'Включить светлую тему' : 'Включить темную тему';
 
@@ -315,6 +247,23 @@ function AppRoutes() {
     setAppTheme(nextTheme);
     setAppThemeState(nextTheme);
   };
+
+  useEffect(() => {
+    if (!user || !accessToken) {
+      setTrainingEnabled(false);
+      return;
+    }
+
+    const controller = new AbortController();
+
+    void apiRequest<{ enabled: boolean }>('/training/config', accessToken, {
+      signal: controller.signal,
+    })
+      .then((config) => setTrainingEnabled(config.enabled === true))
+      .catch(() => setTrainingEnabled(false));
+
+    return () => controller.abort();
+  }, [accessToken, user]);
 
   useEffect(() => {
     if (!isSidebarOpen) {
@@ -340,32 +289,6 @@ function AppRoutes() {
     };
   }, [isSidebarOpen]);
 
-  useEffect(() => {
-    const configPath = user?.permissions.includes('training:take')
-      ? '/training/config'
-      : user?.permissions.includes('training:projects:manage')
-        ? '/training/admin/config'
-        : null;
-    if (!accessToken || !configPath) {
-      setIsTrainingEnabled(null);
-      return;
-    }
-    let active = true;
-    void apiRequest<TrainingModuleConfigResponse>(
-      configPath,
-      accessToken,
-    )
-      .then((config) => {
-        if (active) setIsTrainingEnabled(config.enabled);
-      })
-      .catch(() => {
-        if (active) setIsTrainingEnabled(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [accessToken, user?.id, user?.permissions]);
-
   if (isLoading) {
     return <main className="app-shell app-shell--center">Загрузка</main>;
   }
@@ -380,20 +303,20 @@ function AppRoutes() {
 
   const activeSection: AppSection = pathname.startsWith('/admin')
     ? 'admin'
-    : pathname === '/training'
+    : pathname.startsWith('/training')
       ? 'training'
-      : pathname.startsWith('/presentations')
-        ? 'presentations'
-        : pathname.startsWith('/catalog') || pathname.startsWith('/objects/')
-          ? 'catalog'
-          : 'cabinet';
+    : pathname.startsWith('/presentations')
+      ? 'presentations'
+    : pathname.startsWith('/catalog') || pathname.startsWith('/objects/')
+      ? 'catalog'
+      : 'cabinet';
   const objectLotRoute = parseObjectLotRoute(pathname);
   const objectSlug = objectLotRoute ? null : parseObjectSlug(pathname);
   const projectPresentationRoute = parseProjectPresentationRoute(pathname);
   const visibleNavItems = navItems.filter(
     (item) =>
-      canAccessNavigationItem(hasPermission, item) &&
-      (item.section !== 'training' || isTrainingEnabled === true),
+      (item.id !== 'training' || trainingEnabled) &&
+      canAccessNavigationItem(hasPermission, item),
   );
 
   return (
@@ -487,45 +410,16 @@ function AppRoutes() {
       <section className="workspace">
         {activeSection === 'admin' ? (
           hasPermission('admin:access') ? (
-            pathname.startsWith('/admin/training/operations') ? (
-              hasPermission('training:operations:read') ? (
-                <Suspense fallback={<RouteLoading />}>
-                  <TrainingOperationsPage
-                    onBack={() => navigate('/admin')}
-                  />
-                </Suspense>
-              ) : (
-                <AccessDenied />
-              )
-            ) : pathname.startsWith('/admin/training/results') ? (
-              hasPermission('training:results:read') ? (
-                <Suspense fallback={<RouteLoading />}>
-                  <TrainingAdminResultsPage
-                    pathname={pathname}
-                    navigate={navigate}
-                    onBack={() => navigate('/admin')}
-                  />
-                </Suspense>
-              ) : (
-                <AccessDenied />
-              )
-            ) : pathname.startsWith('/admin/training/ranking') ? (
-              hasPermission('training:results:read') ? (
-                <Suspense fallback={<RouteLoading />}>
-                  <TrainingRankingPage
-                    navigate={navigate}
-                    onBack={() => navigate('/admin/training/results')}
-                  />
-                </Suspense>
-              ) : (
-                <AccessDenied />
-              )
-            ) : pathname.startsWith('/admin/training') ? (
-              hasPermission('training:projects:manage') ? (
-                <TrainingAdminPage
-                  pathname={pathname}
+            pathname.startsWith('/admin/training') ? (
+              trainingEnabled &&
+              (hasPermission('training:projects:manage') || hasPermission('training:results:read')) ? (
+                <TrainingAdminRoutes
+                  canManageProjects={hasPermission('training:projects:manage')}
+                  canReadResults={hasPermission('training:results:read')}
+                  canReviewResults={hasPermission('training:results:review')}
+                  canReadAudio={hasPermission('training:audio:read')}
                   navigate={navigate}
-                  onBack={() => navigate('/admin')}
+                  pathname={pathname}
                 />
               ) : (
                 <AccessDenied />
@@ -562,16 +456,21 @@ function AppRoutes() {
               )
             ) : (
               <AdminHome
-                isTrainingEnabled={isTrainingEnabled === true}
                 onOpenCatalogLinks={() => navigate('/admin/catalog-links')}
                 onOpenFeeds={() => navigate('/admin/feeds')}
                 onOpenImport={() => navigate('/admin/import')}
                 onOpenObjects={() => navigate('/admin/objects')}
                 onOpenTraining={() => navigate('/admin/training')}
-                onOpenTrainingResults={() => navigate('/admin/training/results')}
+                trainingEnabled={trainingEnabled}
                 onOpenUsers={() => navigate('/admin/users')}
               />
             )
+          ) : (
+            <AccessDenied />
+          )
+        ) : activeSection === 'training' ? (
+          trainingEnabled && hasPermission('training:participate') ? (
+            <TrainingEmployeeRoutes navigate={navigate} pathname={pathname} />
           ) : (
             <AccessDenied />
           )
@@ -589,12 +488,6 @@ function AppRoutes() {
         ) : objectSlug ? (
           hasPermission('objects:read') ? (
             <ObjectDetailPage navigate={navigate} slug={objectSlug} onBack={() => navigate('/catalog')} />
-          ) : (
-            <AccessDenied />
-          )
-        ) : activeSection === 'training' ? (
-          hasPermission('training:take') ? (
-            <TrainingShellPage mode="employee" />
           ) : (
             <AccessDenied />
           )
@@ -624,10 +517,7 @@ function AppRoutes() {
             <AccessDenied />
           )
         ) : (
-          <CabinetHome
-            isTrainingEnabled={isTrainingEnabled === true}
-            navigate={navigate}
-          />
+          <CabinetHome navigate={navigate} />
         )}
       </section>
     </main>
@@ -641,9 +531,10 @@ function isAppRoute(pathname: string) {
     pathname === '/cabinet' ||
     pathname === '/catalog' ||
     pathname.startsWith('/catalog/') ||
-    pathname === '/training' ||
     pathname === '/presentations' ||
     pathname.startsWith('/presentations/') ||
+    pathname === '/training' ||
+    pathname.startsWith('/training/') ||
     pathname === '/admin' ||
     pathname.startsWith('/admin/') ||
     pathname.startsWith('/objects/')
@@ -984,13 +875,7 @@ function isValidRegistrationPassword(password: string) {
   );
 }
 
-function CabinetHome({
-  isTrainingEnabled,
-  navigate,
-}: {
-  isTrainingEnabled: boolean;
-  navigate: (nextPathname: string) => void;
-}) {
+function CabinetHome({ navigate }: { navigate: (nextPathname: string) => void }) {
   const { accessToken, user, updateUser } = useAuth();
   const [areSectionsVisible, setAreSectionsVisible] = useState(false);
   const [profileName, setProfileName] = useState('');
@@ -1018,9 +903,7 @@ function CabinetHome({
     return null;
   }
 
-  const availableSections = getAvailableCabinetSections(user).filter(
-    (section) => section.id !== 'training' || isTrainingEnabled,
-  );
+  const availableSections = getAvailableCabinetSections(user);
 
   async function handleProfileSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1381,48 +1264,38 @@ function getProfileInitials(user: AuthUser) {
 }
 
 function AdminHome({
-  isTrainingEnabled,
   onOpenCatalogLinks,
   onOpenFeeds,
   onOpenImport,
   onOpenObjects,
   onOpenTraining,
-  onOpenTrainingResults,
+  trainingEnabled,
   onOpenUsers,
 }: {
-  isTrainingEnabled: boolean;
   onOpenCatalogLinks: () => void;
   onOpenFeeds: () => void;
   onOpenImport: () => void;
   onOpenObjects: () => void;
   onOpenTraining: () => void;
-  onOpenTrainingResults: () => void;
+  trainingEnabled: boolean;
   onOpenUsers: () => void;
 }) {
   const { hasPermission } = useAuth();
   const actions = [
+    {
+      label: 'Обучение',
+      description: 'Проекты, попытки и результаты обучения.',
+      tone: 'primary',
+      canAccess: trainingEnabled &&
+        (hasPermission('training:projects:manage') || hasPermission('training:results:read')),
+      onClick: onOpenTraining,
+    },
     {
       label: 'Объекты',
       description: 'Каталог, публикация, медиа и данные объектов.',
       tone: 'primary',
       canAccess: hasPermission('objects:read'),
       onClick: onOpenObjects,
-    },
-    {
-      label: 'Обучение',
-      description: 'Проекты, материалы и настройки модуля обучения.',
-      tone: 'secondary',
-      canAccess:
-        isTrainingEnabled && hasPermission('training:projects:manage'),
-      onClick: onOpenTraining,
-    },
-    {
-      label: 'Результаты обучения',
-      description: 'Попытки, полный разбор, аудио и ручная проверка.',
-      tone: 'secondary',
-      canAccess:
-        isTrainingEnabled && hasPermission('training:results:read'),
-      onClick: onOpenTrainingResults,
     },
     {
       label: 'Пользователи',
@@ -1494,14 +1367,6 @@ function AccessDenied() {
   );
 }
 
-function RouteLoading() {
-  return (
-    <section className="content-panel">
-      <p className="muted-text">Загрузка раздела обучения</p>
-    </section>
-  );
-}
-
 function canAccessPermissions(
   hasPermission: (permission: string) => boolean,
   requiredPermissions: readonly string[],
@@ -1510,13 +1375,6 @@ function canAccessPermissions(
 }
 
 function getNavigationPath(user: AuthUser, item: NavItem) {
-  if (
-    item.id === 'training' &&
-    user.permissions.includes('training:projects:manage')
-  ) {
-    return '/admin/training';
-  }
-
   return item.id === 'presentations' && canAccessProjectPresentations(user)
     ? '/presentations/projects'
     : item.path;
@@ -1528,18 +1386,7 @@ function getCabinetSectionPath(user: AuthUser, section: CabinetSection) {
     : section.path;
 }
 
-function canAccessNavigationItem(
-  hasPermission: (permission: string) => boolean,
-  item: Pick<NavItem, 'id' | 'requiredPermissions'>,
-) {
-  if (item.id === 'training') {
-    return (
-      hasPermission('training:take') ||
-      (hasPermission('admin:access') &&
-        hasPermission('training:projects:manage'))
-    );
-  }
-
+function canAccessNavigationItem(hasPermission: (permission: string) => boolean, item: Pick<NavItem, 'requiredPermissions'>) {
   return canAccessPermissions(hasPermission, item.requiredPermissions);
 }
 

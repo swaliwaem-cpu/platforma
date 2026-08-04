@@ -3,13 +3,14 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 
 import { AppModule } from './app.module';
-import { assertTrainingDeploymentIsolation } from './training/training-deployment.config';
+import { validateTrainingRuntimeConfig } from './training/training-runtime-config';
 
 async function bootstrap() {
-  assertTrainingDeploymentIsolation(process.env);
+  validateTrainingRuntimeConfig();
   const app = await NestFactory.create(AppModule);
-  app.enableShutdownHooks(['SIGTERM', 'SIGINT']);
   const port = Number(process.env.PORT ?? 3000);
+
+  app.enableShutdownHooks(['SIGTERM', 'SIGINT']);
 
   app.enableCors({
     origin: process.env.WEB_ORIGIN ?? true,

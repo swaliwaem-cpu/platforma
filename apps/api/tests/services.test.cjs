@@ -4310,9 +4310,9 @@ test('UsersService.deactivate archives access by status and clears refresh sessi
       },
     },
     trainingTelegramAccount: {
-      findUnique: async () => null,
+      findFirst: async () => null,
     },
-    trainingLinkToken: {
+    trainingTelegramLinkToken: {
       updateMany: async () => ({ count: 0 }),
     },
   };

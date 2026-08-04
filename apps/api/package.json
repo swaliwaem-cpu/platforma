@@ -10,17 +10,9 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "start": "node --env-file-if-exists=.env dist/main.js",
-    "start:training-worker": "node --env-file-if-exists=.env dist/training/training-worker.main.js",
-    "test": "pnpm build && pnpm run test:unit && pnpm run test:training:db:run",
-    "test:unit": "node scripts/run-api-unit-tests.cjs",
-    "test:training:db": "pnpm build && pnpm run test:training:db:run",
-    "test:training:db:run": "node --env-file-if-exists=.env scripts/run-training-db-tests.cjs",
-    "test:training:audio:docker": "node scripts/run-training-audio-docker-tests.cjs",
-    "test:training:openai:smoke": "pnpm build && node --env-file-if-exists=.env scripts/run-training-openai-smoke.cjs",
-    "training:deployment:preflight": "pnpm build && node --env-file-if-exists=.env dist/training/training-deployment-preflight.js",
-    "training:telegram:webhook:status": "node --env-file-if-exists=.env scripts/training-telegram-webhook.cjs status",
-    "training:telegram:webhook:register": "node --env-file-if-exists=.env scripts/training-telegram-webhook.cjs register",
-    "training:telegram:webhook:delete": "node --env-file-if-exists=.env scripts/training-telegram-webhook.cjs delete"
+    "test": "pnpm build && node tests/run-tests.cjs",
+    "test:training:stage4:browser": "pnpm build && node tests/training-v2-stage4-browser-runtime.cjs",
+    "test:training:openai:smoke": "pnpm build && node tests/training-v2-openai-smoke.cjs"
   },
   "dependencies": {
     "@nestjs/common": "11.1.19",
@@ -30,21 +22,19 @@
     "@platforma/shared": "workspace:*",
     "@prisma/client": "6.19.3",
     "argon2": "^0.44.0",
-    "fast-xml-parser": "5.10.1",
+    "cheerio": "^1.2.0",
     "nodemailer": "^8.0.7",
-    "parse5": "^8.0.1",
-    "pdfjs-dist": "6.1.200",
+    "pdfjs-dist": "^6.2.108",
     "pdfkit": "^0.19.1",
+    "playwright-core": "1.61.0",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2",
-    "sharp": "^0.34.5",
-    "yauzl": "3.4.0"
+    "sharp": "^0.34.5"
   },
   "devDependencies": {
     "@types/node": "25.6.0",
     "@types/nodemailer": "^8.0.0",
     "@types/pdfkit": "^0.17.6",
-    "@types/yauzl": "3.4.0",
     "prisma": "6.19.3",
     "typescript": "6.0.3"
   }

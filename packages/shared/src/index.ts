@@ -1,6 +1,6 @@
-export * from './training.js';
-
 export const platformName = 'Platforma';
+
+export * from './training.js';
 
 export type UserStatus = 'ACTIVE' | 'BLOCKED' | 'INVITED' | 'DEACTIVATED';
 export type ObjectStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
@@ -39,9 +39,7 @@ export type ProfilePhotoFile = {
 export type HealthStatus = {
   status: 'ok' | 'error';
   database: 'ok' | 'unavailable';
-  postgis?: boolean;
-  timestamp?: string;
-  message?: string;
+  training?: 'ready' | 'disabled' | 'degraded';
 };
 
 export type AuthUser = {

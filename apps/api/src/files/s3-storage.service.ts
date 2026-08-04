@@ -39,8 +39,8 @@ export class S3StorageService implements OnModuleInit {
   private readonly accessKeyId = process.env.S3_ACCESS_KEY_ID ?? 'platforma';
   private readonly secretAccessKey = process.env.S3_SECRET_ACCESS_KEY ?? 'platforma_password';
   private readonly bucket = process.env.MINIO_BUCKET ?? 'platforma';
-  private readonly trainingDocumentBucket =
-    process.env.TRAINING_DOCUMENT_BUCKET ?? 'platforma-training-private';
+  private readonly trainingMaterialBucket =
+    process.env.TRAINING_MATERIAL_BUCKET ?? 'platforma-training-materials';
   private readonly trainingAudioBucket =
     process.env.TRAINING_AUDIO_BUCKET?.trim() ||
     'platforma-training-audio-private';
@@ -52,7 +52,7 @@ export class S3StorageService implements OnModuleInit {
   async onModuleInit() {
     this.assertTrainingAudioConfiguration();
     await this.ensureBucket();
-    await this.ensureBucket(this.trainingDocumentBucket);
+    await this.ensureBucket(this.trainingMaterialBucket);
     await this.ensureBucket(this.trainingAudioBucket);
     await this.verifyTrainingAudioBucketPrivacy();
   }
@@ -61,12 +61,12 @@ export class S3StorageService implements OnModuleInit {
     return this.bucket;
   }
 
-  getPublicUrl(key: string) {
-    return `${this.publicEndpoint}/${encodePath(this.bucket)}/${encodePath(key)}`;
+  getPublicUrl(key: string, bucket = this.bucket) {
+    return `${this.publicEndpoint}/${encodePath(bucket)}/${encodePath(key)}`;
   }
 
-  getTrainingDocumentBucket() {
-    return this.trainingDocumentBucket;
+  getTrainingMaterialBucket() {
+    return this.trainingMaterialBucket;
   }
 
   getTrainingAudioBucket() {
@@ -180,10 +180,17 @@ export class S3StorageService implements OnModuleInit {
     }
   }
 
-  async putObjectFromFile(params: { key: string; filePath: string; contentType: string; checksum: string; contentLength: number }) {
+  async putObjectFromFile(params: {
+    key: string;
+    filePath: string;
+    contentType: string;
+    checksum: string;
+    contentLength: number;
+    bucket?: string;
+  }) {
     return this.putObjectFromFileToBucket({
       ...params,
-      bucket: this.bucket,
+      bucket: params.bucket ?? this.bucket,
     });
   }
 

@@ -2,7 +2,7 @@ require('reflect-metadata');
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { BadRequestException } = require('@nestjs/common');
+const { BadRequestException, ConflictException } = require('@nestjs/common');
 const { FileVariantKind } = require('@prisma/client');
 
 const { FilesController } = require('../dist/files/files.controller.js');
@@ -49,14 +49,12 @@ function createFileRecord(overrides = {}) {
 function createStorageMock() {
   const uploaded = [];
   const deleted = [];
-  const deleteRequests = [];
   const readKeys = [];
   const objects = new Map();
 
   return {
     uploaded,
     deleted,
-    deleteRequests,
     readKeys,
     objects,
     service: {
@@ -70,9 +68,8 @@ function createStorageMock() {
 
         return objects.get(key) ?? Buffer.alloc(0);
       },
-      deleteObject: async (key, bucket) => {
+      deleteObject: async (key) => {
         deleted.push(key);
-        deleteRequests.push({ key, bucket });
       },
     },
   };
@@ -177,7 +174,6 @@ test('FilesService.delete removes image variants before deleting original object
   const storage = createStorageMock();
   const deletedFileIds = [];
   const prisma = {
-    $queryRaw: async () => [],
     file: {
       findUnique: async () => ({
         ...createFileRecord({ key: 'uploads/2026/05/original.png' }),
@@ -198,7 +194,6 @@ test('FilesService.delete removes image variants before deleting original object
       },
     },
   };
-  prisma.$transaction = async (operation) => operation(prisma);
   const service = new FilesService(prisma, storage.service);
 
   await service.delete('11111111-1111-4111-8111-111111111111');
@@ -212,44 +207,50 @@ test('FilesService.delete removes image variants before deleting original object
   assert.deepEqual(deletedFileIds, ['11111111-1111-4111-8111-111111111111']);
 });
 
-test('FilesService.delete removes private files from their persisted bucket', async () => {
+test('FilesService.delete preserves storage for a PDF linked to an immutable training revision', async () => {
   const storage = createStorageMock();
   const prisma = {
-    $queryRaw: async () => [],
     file: {
       findUnique: async () => ({
         ...createFileRecord({
-          bucket: 'platforma-training-private',
-          key: 'training-documents/private.pdf',
+          bucket: 'training-materials',
+          key: 'training-v2/materials/material/revision.pdf',
           url: null,
         }),
         variants: [],
-        _count: {
-          profilePhotoUsers: 0,
-          objectImages: 0,
-          objectFiles: 0,
-          feedXmlSources: 0,
-          lotPresentationDocuments: 0,
-          projectPresentationDraftCovers: 0,
-          projectPresentationDocuments: 0,
-          projectPresentationAssets: 0,
-          trainingSourceDocuments: 0,
-        },
+        _count: { trainingMaterialRevisions: 1 },
       }),
-      delete: async () => undefined,
+      delete: async () => assert.fail('linked file must not be deleted from the database'),
     },
   };
-  prisma.$transaction = async (operation) => operation(prisma);
   const service = new FilesService(prisma, storage.service);
 
-  await service.delete('11111111-1111-4111-8111-111111111111');
+  await assert.rejects(
+    () => service.delete('11111111-1111-4111-8111-111111111111'),
+    (error) => error instanceof ConflictException,
+  );
+  assert.deepEqual(storage.deleted, []);
+});
 
-  assert.deepEqual(storage.deleteRequests, [
-    {
-      key: 'training-documents/private.pdf',
-      bucket: 'platforma-training-private',
+test('FilesService.delete preserves storage for a file linked to feed media', async () => {
+  const storage = createStorageMock();
+  const prisma = {
+    file: {
+      findUnique: async () => ({
+        ...createFileRecord(),
+        variants: [],
+        _count: { feedMediaAssets: 1 },
+      }),
+      delete: async () => assert.fail('feed media file must not be deleted from the database'),
     },
-  ]);
+  };
+  const service = new FilesService(prisma, storage.service);
+
+  await assert.rejects(
+    () => service.delete('11111111-1111-4111-8111-111111111111'),
+    (error) => error instanceof ConflictException,
+  );
+  assert.deepEqual(storage.deleted, []);
 });
 
 test('FilesService.getContent returns requested image variant when it exists', async () => {

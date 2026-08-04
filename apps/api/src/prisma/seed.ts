@@ -5,16 +5,6 @@ import {
 } from '@prisma/client';
 import * as argon2 from 'argon2';
 
-import {
-  TRAINING_ADMIN_PERMISSION_KEYS,
-  TRAINING_PERMISSION_DEFINITIONS,
-  TRAINING_PILOT_PERMISSION_KEYS,
-} from '../training/training.permissions';
-import {
-  CURRENT_TRAINING_POLICY,
-} from '../training/training-policy.seed';
-import { seedImmutableTrainingPolicy } from '../training/training-policy-seeder';
-
 const prisma = new PrismaClient();
 
 const BASE_USER_PERMISSION_KEYS = [
@@ -47,6 +37,18 @@ const NON_TRAINING_PERMISSION_DEFINITIONS = [
   ['audit-log:read', 'Read audit log'],
 ] as const;
 
+const TRAINING_PERMISSION_DEFINITIONS = [
+  ['training:participate', 'Participate in training projects'],
+  ['training:projects:manage', 'Manage training projects'],
+  ['training:results:read', 'Read training attempt results'],
+  ['training:results:review', 'Review training attempt results'],
+  ['training:audio:read', 'Read protected training answer audio'],
+] as const;
+
+const TRAINING_ADMIN_PERMISSION_KEYS = TRAINING_PERMISSION_DEFINITIONS.map(
+  ([key]) => key,
+);
+
 const permissions = [
   ...NON_TRAINING_PERMISSION_DEFINITIONS,
   ...TRAINING_PERMISSION_DEFINITIONS,
@@ -56,7 +58,6 @@ const rolePermissions: Record<string, readonly string[]> = {
   admin: [
     ...NON_TRAINING_PERMISSION_DEFINITIONS.map(([key]) => key),
     ...TRAINING_ADMIN_PERMISSION_KEYS,
-    'training:data:delete',
   ],
   training_admin: ['admin:access', ...TRAINING_ADMIN_PERMISSION_KEYS],
   editor: [
@@ -71,10 +72,10 @@ const rolePermissions: Record<string, readonly string[]> = {
     'files:upload',
     'files:delete',
   ],
-  user: BASE_USER_PERMISSION_KEYS,
+  user: [...BASE_USER_PERMISSION_KEYS, 'training:participate'],
   training_pilot: [
     ...BASE_USER_PERMISSION_KEYS,
-    ...TRAINING_PILOT_PERMISSION_KEYS,
+    'training:participate',
   ],
 };
 
@@ -88,7 +89,6 @@ type SeedEnvironment = {
 export async function seedPlatforma(
   client: PrismaClient,
   environment: SeedEnvironment = process.env,
-  policy = CURRENT_TRAINING_POLICY,
 ) {
   return client.$transaction(async (tx) => {
     const permissionRecords = new Map<string, { id: string }>();
@@ -163,12 +163,9 @@ export async function seedPlatforma(
       ? assertExistingAdminIsSafe(existingAdmin, adminRole.id, adminEmail)
       : await createInitialAdmin(tx, adminRole.id, adminEmail, environment);
 
-    await seedImmutableTrainingPolicy(tx, policy, admin.id);
-
     return {
       adminEmail,
       permissionCount: permissions.length,
-      policyVersion: policy.version,
     };
   });
 }
@@ -176,7 +173,7 @@ export async function seedPlatforma(
 async function seed() {
   const result = await seedPlatforma(prisma);
   console.log(
-    `Seeded ${result.permissionCount} permissions, roles, admin user ${result.adminEmail} and training policy ${result.policyVersion}.`,
+    `Seeded ${result.permissionCount} permissions, roles and admin user ${result.adminEmail}.`,
   );
 }
 

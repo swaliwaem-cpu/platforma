@@ -2,172 +2,134 @@ import { Module } from '@nestjs/common';
 
 import { AuthModule } from '../auth/auth.module';
 import { FilesModule } from '../files/files.module';
-import { TrainingAudioAccessService } from './audio/training-audio-access.service';
-import { TrainingAudioConfig } from './audio/training-audio.config';
-import { TrainingAudioController } from './audio/training-audio.controller';
+import { PrismaModule } from '../prisma/prisma.module';
 import { TrainingAdminController } from './training-admin.controller';
-import { TrainingAssignmentsController } from './training-assignments.controller';
-import { TrainingAssignmentsService } from './training-assignments.service';
-import { TrainingAttemptEngineService } from './training-attempt-engine.service';
+import { TrainingConfigController } from './training-config.controller';
+import { TrainingAudioAccessController } from './training-audio-access.controller';
+import { TrainingAudioAccessService } from './training-audio-access.service';
 import {
-  CryptoTrainingQuestionSelector,
-  DeterministicFakeTrainingEvaluationProvider,
-  DeterministicFakeTrainingTranscriptionProvider,
-  SystemTrainingAttemptClock,
-  TRAINING_ATTEMPT_CLOCK,
-  TRAINING_ATTEMPT_JOB_PROCESSOR_ENABLED,
-  TRAINING_EVALUATION_PROVIDER,
-  TRAINING_QUESTION_SELECTOR,
-  TRAINING_TRANSCRIPTION_PROVIDER,
-} from './training-attempt.providers';
-import { TrainingOpenAiConfig } from './openai/training-openai.config';
-import { TrainingFactSuggestionsService } from './fact-suggestions/training-fact-suggestions.service';
-import { OpenAiTrainingEvaluationProvider } from './openai/training-openai-evaluation.provider';
+  SpawnTrainingFfmpegRunner,
+  TRAINING_FFMPEG_RUNNER,
+  TrainingAudioService,
+} from './training-audio.service';
+import { TrainingAttemptStateService } from './training-attempt-state.service';
+import { TrainingAttemptService } from './training-attempt.service';
+import { TrainingEmployeeController } from './training-employee.controller';
 import {
-  TrainingOpenAiHttpClient,
-  TRAINING_OPENAI_HTTP_OPTIONS,
-} from './openai/training-openai.http';
+  DeterministicFakeTrainingEvaluator,
+  TRAINING_EVALUATOR,
+} from './training-evaluator';
+import { OpenAITrainingEvaluator } from './training-openai-evaluator';
 import {
-  createTrainingEvaluationProvider,
-  createTrainingTranscriptionProvider,
-} from './openai/training-openai.providers';
-import { OpenAiTrainingTranscriptionProvider } from './openai/training-openai-transcription.provider';
-import { TrainingConfigService } from './training.config';
-import { TrainingContentService } from './training-content.service';
-import { TrainingController } from './training.controller';
-import { TrainingFeatureGuard } from './training-feature.guard';
-import { TrainingOperationsController } from './training-operations.controller';
-import { TrainingOperationsService } from './training-operations.service';
-import { TrainingOfficialUrlSourcesService } from './training-official-url-sources.service';
-import { TrainingPolicyController } from './training-policy.controller';
-import { TrainingPolicyService } from './training-policy.service';
-import { TrainingWorkerHeartbeatService } from './training-worker-heartbeat.service';
-import { TrainingReviewController } from './training-review.controller';
+  getOpenAIApiKey,
+  getTrainingAiMode,
+  TrainingOpenAIClient,
+} from './training-openai-client';
+import { OpenAITrainingTranscriber } from './training-openai-transcriber';
+import { TrainingFollowUpSelector } from './training-follow-up-selector';
+import { TrainingMaterialController } from './training-material.controller';
+import { TrainingMaterialExtractionService } from './training-material-extraction';
+import { TrainingMaterialService } from './training-material.service';
 import {
-  TrainingAdminResultsController,
-  TrainingEmployeeResultsController,
-} from './training-results.controller';
-import { TrainingRankingService } from './training-ranking.service';
+  DeterministicFakeTrainingMaterialSuggester,
+  OpenAITrainingMaterialSuggester,
+  TRAINING_MATERIAL_SUGGESTER,
+} from './training-material-suggester';
+import { TrainingProjectService } from './training-project.service';
+import { TrainingProjectAccessService } from './training-project-access.service';
+import { TrainingReviewService } from './training-review.service';
+import { TrainingFeatureGuard } from './training-runtime-config';
 import { TrainingResultsService } from './training-results.service';
-import { TrainingDocumentWorkerService } from './training-document-worker.service';
-import { TrainingDocumentsService } from './training-documents.service';
-import { TrainingLinkedObjectSourcesController } from './training-linked-object-sources.controller';
+import { TrainingRankingService } from './training-ranking.service';
 import {
-  TrainingTelegramController,
-  TrainingTelegramWebhookController,
-} from './telegram/training-telegram.controller';
-import { TrainingTelegramConfig } from './telegram/training-telegram.config';
-import { TrainingTelegramDialogService } from './telegram/training-telegram-dialog.service';
-import { TrainingTelegramLinkService } from './telegram/training-telegram-link.service';
+  FakeTrainingTelegramClient,
+  getTrainingTelegramTransportMode,
+  NativeTrainingTelegramClient,
+  TRAINING_TELEGRAM_CLIENT,
+  validateTrainingTelegramRealConfig,
+} from './training-telegram-client';
+import { TrainingTelegramController } from './training-telegram.controller';
+import { TrainingTelegramService } from './training-telegram.service';
 import {
-  createTrainingTelegramTransport,
-  FakeTrainingTelegramTransport,
-  TRAINING_TELEGRAM_TRANSPORT,
-} from './telegram/training-telegram.transport';
-import { TrainingTelegramWebhookService } from './telegram/training-telegram-webhook.service';
-import { TrainingTelegramWorkerService } from './telegram/training-telegram-worker.service';
+  DeterministicFakeTrainingTranscriber,
+  TRAINING_TRANSCRIBER,
+} from './training-transcriber';
+import { TrainingVoiceWorkerService } from './training-voice-worker.service';
+import { TrainingUrlExtractor } from './training-url-extractor';
 
 @Module({
-  imports: [AuthModule, FilesModule],
+  imports: [AuthModule, PrismaModule, FilesModule],
   controllers: [
-    TrainingController,
+    TrainingConfigController,
+    TrainingEmployeeController,
     TrainingAdminController,
-    TrainingAssignmentsController,
-    TrainingLinkedObjectSourcesController,
+    TrainingAudioAccessController,
+    TrainingMaterialController,
     TrainingTelegramController,
-    TrainingTelegramWebhookController,
-    TrainingAudioController,
-    TrainingReviewController,
-    TrainingEmployeeResultsController,
-    TrainingAdminResultsController,
-    TrainingPolicyController,
-    TrainingOperationsController,
   ],
   providers: [
-    TrainingConfigService,
-    TrainingFeatureGuard,
-    TrainingPolicyService,
-    TrainingOperationsService,
-    TrainingWorkerHeartbeatService,
-    TrainingContentService,
-    TrainingAssignmentsService,
-    TrainingDocumentsService,
-    TrainingDocumentWorkerService,
-    TrainingOfficialUrlSourcesService,
-    TrainingFactSuggestionsService,
-    {
-      provide: TrainingAudioConfig,
-      useFactory: () => new TrainingAudioConfig(process.env),
-    },
-    TrainingAudioAccessService,
-    TrainingAttemptEngineService,
+    TrainingProjectService,
+    TrainingProjectAccessService,
+    TrainingAttemptService,
+    TrainingAttemptStateService,
+    TrainingReviewService,
     TrainingResultsService,
     TrainingRankingService,
+    TrainingAudioAccessService,
+    TrainingFeatureGuard,
+    TrainingFollowUpSelector,
+    TrainingTelegramService,
+    TrainingAudioService,
+    TrainingVoiceWorkerService,
+    TrainingMaterialExtractionService,
+    TrainingUrlExtractor,
+    TrainingMaterialService,
+    DeterministicFakeTrainingMaterialSuggester,
+    SpawnTrainingFfmpegRunner,
+    DeterministicFakeTrainingTranscriber,
+    DeterministicFakeTrainingEvaluator,
+    FakeTrainingTelegramClient,
+    NativeTrainingTelegramClient,
     {
-      provide: TrainingOpenAiConfig,
-      useFactory: () => new TrainingOpenAiConfig(process.env),
-    },
-    TrainingOpenAiHttpClient,
-    OpenAiTrainingTranscriptionProvider,
-    OpenAiTrainingEvaluationProvider,
-    DeterministicFakeTrainingTranscriptionProvider,
-    DeterministicFakeTrainingEvaluationProvider,
-    {
-      provide: TrainingTelegramConfig,
-      useFactory: () => new TrainingTelegramConfig(process.env),
-    },
-    TrainingTelegramLinkService,
-    TrainingTelegramDialogService,
-    TrainingTelegramWebhookService,
-    TrainingTelegramWorkerService,
-    FakeTrainingTelegramTransport,
-    {
-      provide: TRAINING_TELEGRAM_TRANSPORT,
-      inject: [TrainingTelegramConfig, FakeTrainingTelegramTransport],
-      useFactory: createTrainingTelegramTransport,
-    },
-    {
-      provide: TRAINING_ATTEMPT_CLOCK,
-      useClass: SystemTrainingAttemptClock,
-    },
-    {
-      provide: TRAINING_ATTEMPT_JOB_PROCESSOR_ENABLED,
-      useValue: false,
+      provide: TRAINING_TELEGRAM_CLIENT,
+      inject: [FakeTrainingTelegramClient, NativeTrainingTelegramClient],
+      useFactory: (
+        fakeClient: FakeTrainingTelegramClient,
+        realClient: NativeTrainingTelegramClient,
+      ) => {
+        validateTrainingTelegramRealConfig();
+
+        return getTrainingTelegramTransportMode() === 'real' ? realClient : fakeClient;
+      },
     },
     {
-      provide: TRAINING_OPENAI_HTTP_OPTIONS,
-      useValue: {},
+      provide: TRAINING_EVALUATOR,
+      inject: [DeterministicFakeTrainingEvaluator],
+      useFactory: (fakeEvaluator: DeterministicFakeTrainingEvaluator) =>
+        getTrainingAiMode() === 'openai'
+          ? new OpenAITrainingEvaluator(new TrainingOpenAIClient(getOpenAIApiKey()))
+          : fakeEvaluator,
     },
     {
-      provide: TRAINING_QUESTION_SELECTOR,
-      useClass: CryptoTrainingQuestionSelector,
+      provide: TRAINING_FFMPEG_RUNNER,
+      useExisting: SpawnTrainingFfmpegRunner,
     },
     {
-      provide: TRAINING_TRANSCRIPTION_PROVIDER,
-      inject: [
-        TrainingOpenAiConfig,
-        DeterministicFakeTrainingTranscriptionProvider,
-        OpenAiTrainingTranscriptionProvider,
-      ],
-      useFactory: createTrainingTranscriptionProvider,
+      provide: TRAINING_MATERIAL_SUGGESTER,
+      inject: [DeterministicFakeTrainingMaterialSuggester],
+      useFactory: (fakeSuggester: DeterministicFakeTrainingMaterialSuggester) =>
+        getTrainingAiMode() === 'openai'
+          ? new OpenAITrainingMaterialSuggester(new TrainingOpenAIClient(getOpenAIApiKey()))
+          : fakeSuggester,
     },
     {
-      provide: TRAINING_EVALUATION_PROVIDER,
-      inject: [
-        TrainingOpenAiConfig,
-        DeterministicFakeTrainingEvaluationProvider,
-        OpenAiTrainingEvaluationProvider,
-      ],
-      useFactory: createTrainingEvaluationProvider,
+      provide: TRAINING_TRANSCRIBER,
+      inject: [DeterministicFakeTrainingTranscriber],
+      useFactory: (fakeTranscriber: DeterministicFakeTrainingTranscriber) =>
+        getTrainingAiMode() === 'openai'
+          ? new OpenAITrainingTranscriber(new TrainingOpenAIClient(getOpenAIApiKey()))
+          : fakeTranscriber,
     },
-  ],
-  exports: [
-    TrainingAttemptEngineService,
-    TrainingConfigService,
-    TrainingPolicyService,
-    TrainingTelegramLinkService,
-    TrainingTelegramWorkerService,
-    FakeTrainingTelegramTransport,
   ],
 })
 export class TrainingModule {}

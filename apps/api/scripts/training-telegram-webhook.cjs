@@ -1,198 +1,223 @@
 const TELEGRAM_API_ORIGIN = 'https://api.telegram.org';
 const ALLOWED_UPDATES = ['message', 'callback_query'];
-const WEBHOOK_MAX_CONNECTIONS = 1;
-const REQUEST_TIMEOUT_MS = 10_000;
-
-async function main() {
-  const command = process.argv[2];
-  const dryRun = process.argv.includes('--dry-run');
-  const result = await executeWebhookCommand({
-    command,
-    dryRun,
-    env: process.env,
-    fetchImpl: fetch,
-    apiOrigin: TELEGRAM_API_ORIGIN,
-  });
-  console.log(JSON.stringify(result, null, 2));
-}
 
 async function executeWebhookCommand({
-  command,
-  dryRun = false,
-  env,
-  fetchImpl,
-  apiOrigin = TELEGRAM_API_ORIGIN,
+  action,
+  args = [],
+  environment = process.env,
+  fetchImpl = fetch,
 }) {
-  if (!['status', 'register', 'delete'].includes(command)) {
-    throw new Error(
-      'Command must be status, register or delete',
-    );
+  requireRealTelegramConfig(environment);
+  const dryRun = args.includes('--dry-run');
+
+  if (!['status', 'register', 'delete'].includes(action)) {
+    throw safeError('WEBHOOK_ACTION_INVALID');
   }
-  if ((env.TELEGRAM_TRANSPORT_MODE ?? '').trim() !== 'real') {
-    throw new Error(
-      'TELEGRAM_TRANSPORT_MODE=real is required for webhook tooling',
-    );
-  }
-  const botToken = requireValue(env, 'TELEGRAM_BOT_TOKEN');
-  const webhookSecret =
-    command === 'register'
-      ? requireValue(env, 'TELEGRAM_WEBHOOK_SECRET')
-      : '';
-  const webhookUrl =
-    command === 'register'
-      ? requireHttpsUrl(env, 'TELEGRAM_WEBHOOK_URL')
-      : '';
-  const dropPendingUpdates =
-    command === 'delete' &&
-    readBooleanFlag(env, 'TELEGRAM_WEBHOOK_DROP_PENDING_UPDATES');
-  if (
-    command === 'delete' &&
-    env.TELEGRAM_WEBHOOK_DELETE_CONFIRMED !== 'true'
-  ) {
-    throw new Error(
-      'TELEGRAM_WEBHOOK_DELETE_CONFIRMED=true is required to delete a webhook',
-    );
+  if (action === 'delete' && !args.includes('--confirm-delete')) {
+    throw safeError('WEBHOOK_DELETE_CONFIRMATION_REQUIRED');
   }
 
-  const method =
-    command === 'status'
-      ? 'getWebhookInfo'
-      : command === 'register'
-        ? 'setWebhook'
-        : 'deleteWebhook';
-  const body =
-    command === 'register'
-      ? {
-          url: webhookUrl,
-          secret_token: webhookSecret,
-          allowed_updates: ALLOWED_UPDATES,
-          max_connections: WEBHOOK_MAX_CONNECTIONS,
-          drop_pending_updates: false,
-        }
-      : command === 'delete'
-        ? { drop_pending_updates: dropPendingUpdates }
-        : undefined;
+  const operation = createOperation(action, environment);
 
-  if (dryRun) {
+  if (dryRun) return { ok: true, action, dryRun: true };
+
+  const result = await callTelegram(operation, environment, fetchImpl);
+
+  if (action === 'status') {
     return {
       ok: true,
-      dryRun: true,
-      command,
-      method,
-      allowedUpdates:
-        command === 'register' ? ALLOWED_UPDATES : undefined,
-      maxConnections:
-        command === 'register' ? WEBHOOK_MAX_CONNECTIONS : undefined,
-      dropPendingUpdates:
-        command === 'delete' ? dropPendingUpdates : undefined,
+      action,
+      registered: typeof result.url === 'string' && result.url.length > 0,
+      pendingUpdateCount: boundedNonNegativeInteger(result.pending_update_count),
+      hasLastError: Number.isInteger(result.last_error_date),
     };
   }
 
+  return { ok: true, action, dryRun: false };
+}
+
+function createOperation(action, environment) {
+  if (action === 'status') return { method: 'getWebhookInfo', body: {} };
+  if (action === 'delete') {
+    return { method: 'deleteWebhook', body: { drop_pending_updates: false } };
+  }
+
+  const webhookUrl = validateWebhookUrl(environment.TELEGRAM_WEBHOOK_URL);
+  const secret = required(environment, 'TELEGRAM_WEBHOOK_SECRET');
+
+  return {
+    method: 'setWebhook',
+    body: {
+      url: webhookUrl,
+      secret_token: secret,
+      allowed_updates: ALLOWED_UPDATES,
+      drop_pending_updates: false,
+    },
+  };
+}
+
+async function callTelegram(operation, environment, fetchImpl) {
+  const token = required(environment, 'TELEGRAM_BOT_TOKEN');
+  const origin = getApiOrigin(environment);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  timeout.unref();
+  const timeout = setTimeout(() => controller.abort(), readTimeout(environment));
   let response;
+
   try {
-    response = await fetchImpl(
-      `${apiOrigin}/bot${botToken}/${method}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: body ? JSON.stringify(body) : undefined,
-        signal: controller.signal,
-      },
+    response = await fetchImpl(`${origin}/bot${token}/${operation.method}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(operation.body),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    throw safeError(
+      error instanceof DOMException && error.name === 'AbortError'
+        ? 'TELEGRAM_WEBHOOK_TIMEOUT'
+        : 'TELEGRAM_WEBHOOK_NETWORK_ERROR',
     );
-  } catch {
-    throw new Error('Telegram webhook request failed');
   } finally {
     clearTimeout(timeout);
   }
-  if (!response.ok) {
-    throw new Error(
-      `Telegram webhook request failed with HTTP ${response.status}`,
-    );
+
+  if (!response.ok) throw safeError(`TELEGRAM_WEBHOOK_HTTP_${response.status}`);
+  const text = await response.text();
+  if (Buffer.byteLength(text, 'utf8') > 32 * 1024) {
+    throw safeError('TELEGRAM_WEBHOOK_RESPONSE_TOO_LARGE');
   }
-  const payload = await response.json().catch(() => null);
-  if (!payload || payload.ok !== true) {
-    throw new Error('Telegram webhook API rejected the request');
+
+  let payload;
+  try {
+    payload = JSON.parse(text);
+  } catch {
+    throw safeError('TELEGRAM_WEBHOOK_RESPONSE_INVALID');
   }
-  if (command !== 'status') {
-    return { ok: true, command };
-  }
-  return {
-    ok: true,
-    command,
-    webhook: sanitizeWebhookInfo(payload.result),
-  };
+  if (!payload || payload.ok !== true) throw safeError('TELEGRAM_WEBHOOK_PROVIDER_ERROR');
+  return payload.result && typeof payload.result === 'object' ? payload.result : {};
 }
 
-function readBooleanFlag(env, name) {
-  const value = env[name]?.trim().toLowerCase();
-  if (value === undefined || value === '') return false;
-  if (value !== 'true' && value !== 'false') {
-    throw new Error(`${name} must be "true" or "false"`);
+function requireRealTelegramConfig(environment) {
+  if (environment.TELEGRAM_TRANSPORT_MODE?.trim().toLowerCase() !== 'real') {
+    throw safeError('TELEGRAM_TRANSPORT_MODE_REAL_REQUIRED');
   }
-  return value === 'true';
+  required(environment, 'TELEGRAM_BOT_TOKEN');
 }
 
-function sanitizeWebhookInfo(value) {
-  const info =
-    value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  return {
-    configured: typeof info.url === 'string' && info.url.length > 0,
-    url: typeof info.url === 'string' ? info.url : '',
-    pendingUpdateCount:
-      Number.isSafeInteger(info.pending_update_count)
-        ? info.pending_update_count
-        : 0,
-    lastErrorDate:
-      Number.isSafeInteger(info.last_error_date)
-        ? info.last_error_date
-        : null,
-    allowedUpdates: Array.isArray(info.allowed_updates)
-      ? info.allowed_updates.filter(
-          (item) => typeof item === 'string',
-        )
-      : [],
-    maxConnections:
-      Number.isSafeInteger(info.max_connections) &&
-      info.max_connections >= 1 &&
-      info.max_connections <= 100
-        ? info.max_connections
-        : null,
-  };
-}
-
-function requireValue(env, name) {
-  const value = env[name]?.trim();
-  if (!value) throw new Error(`${name} is required`);
+function required(environment, key) {
+  const value = environment[key]?.trim();
+  if (!value) throw safeError(`${key}_REQUIRED`);
   return value;
 }
 
-function requireHttpsUrl(env, name) {
-  const value = requireValue(env, name);
+function validateWebhookUrl(raw) {
   let url;
   try {
-    url = new URL(value);
+    url = new URL(raw);
   } catch {
-    throw new Error(`${name} must be an absolute HTTPS URL`);
+    throw safeError('TELEGRAM_WEBHOOK_URL_INVALID');
   }
-  if (url.protocol !== 'https:') {
-    throw new Error(`${name} must use HTTPS`);
+
+  const hostname = url.hostname.toLowerCase();
+  if (
+    url.protocol !== 'https:' ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    url.pathname !== '/training/telegram/webhook' ||
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '0.0.0.0' ||
+    hostname === '::1' ||
+    hostname.endsWith('.local') ||
+    hostname.endsWith('.test') ||
+    hostname.endsWith('.example') ||
+    isPrivateHostname(hostname)
+  ) {
+    throw safeError('TELEGRAM_WEBHOOK_URL_INVALID');
   }
+
   return url.toString();
+}
+
+function isPrivateHostname(hostname) {
+  const normalized = hostname.replace(/^\[|\]$/gu, '');
+
+  if (
+    normalized === '::' ||
+    normalized === '::1' ||
+    normalized.startsWith('fc') ||
+    normalized.startsWith('fd') ||
+    normalized.startsWith('fe80:')
+  ) {
+    return true;
+  }
+
+  const match = normalized.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/u);
+  if (!match) return false;
+  const octets = match.slice(1).map(Number);
+  const first = octets[0] ?? 0;
+  const second = octets[1] ?? 0;
+
+  return octets.some((part) => part > 255) || first === 0 || first === 10 || first === 127 ||
+    (first === 169 && second === 254) ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168);
+}
+
+function getApiOrigin(environment) {
+  const testOrigin = environment.TELEGRAM_TEST_API_ORIGIN?.trim();
+  if (!testOrigin) return TELEGRAM_API_ORIGIN;
+  if (environment.NODE_ENV !== 'test') throw safeError('TELEGRAM_TEST_API_ORIGIN_FORBIDDEN');
+
+  const url = new URL(testOrigin);
+  if (
+    !['http:', 'https:'].includes(url.protocol) ||
+    !['127.0.0.1', 'localhost'].includes(url.hostname) ||
+    url.username ||
+    url.password ||
+    url.pathname !== '/'
+  ) {
+    throw safeError('TELEGRAM_TEST_API_ORIGIN_INVALID');
+  }
+  return url.origin;
+}
+
+function readTimeout(environment) {
+  const value = Number(environment.TELEGRAM_REQUEST_TIMEOUT_MS ?? 5_000);
+  return Number.isInteger(value) && value >= 100 && value <= 30_000 ? value : 5_000;
+}
+
+function boundedNonNegativeInteger(value) {
+  return Number.isInteger(value) && value >= 0 ? Math.min(value, 1_000_000) : 0;
+}
+
+function safeError(code) {
+  const error = new Error(code);
+  error.code = code;
+  return error;
+}
+
+async function main() {
+  try {
+    const result = await executeWebhookCommand({
+      action: process.argv[2],
+      args: process.argv.slice(3),
+    });
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+  } catch (error) {
+    process.stderr.write(`${error && error.code ? error.code : 'TELEGRAM_WEBHOOK_COMMAND_FAILED'}\n`);
+    process.exitCode = 1;
+  }
+}
+
+if (require.main === module) {
+  void main();
 }
 
 module.exports = {
   ALLOWED_UPDATES,
-  WEBHOOK_MAX_CONNECTIONS,
+  createOperation,
   executeWebhookCommand,
-  sanitizeWebhookInfo,
+  validateWebhookUrl,
 };
-
-if (require.main === module) {
-  void main().catch((error) => {
-    console.error(error instanceof Error ? error.message : 'Webhook command failed');
-    process.exitCode = 1;
-  });
-}

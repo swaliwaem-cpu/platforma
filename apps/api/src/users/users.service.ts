@@ -352,7 +352,7 @@ export class UsersService {
         const canTakeTraining = await tx.rolePermission.findFirst({
           where: {
             roleId: updated.roleId,
-            permission: { key: 'training:take' },
+            permission: { key: 'training:participate' },
           },
           select: { roleId: true },
         });
@@ -916,13 +916,13 @@ export class UsersService {
     actorUserId: string,
     reason: string,
   ) {
-    const account = await tx.trainingTelegramAccount.findUnique({
-      where: { userId },
+    const account = await tx.trainingTelegramAccount.findFirst({
+      where: { userId, revokedAt: null },
       select: { id: true, revokedAt: true },
     });
 
     const revokedAt = new Date();
-    const revokedTokens = await tx.trainingLinkToken.updateMany({
+    const revokedTokens = await tx.trainingTelegramLinkToken.updateMany({
       where: { userId, usedAt: null, revokedAt: null },
       data: { revokedAt },
     });

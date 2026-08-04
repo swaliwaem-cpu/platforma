@@ -1,639 +1,678 @@
-export type TrainingModuleStatus = 'enabled' | 'disabled';
+export type TrainingProjectStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
+export type TrainingProjectAccessMode = 'ALL_PARTICIPANTS' | 'ASSIGNED_USERS';
+export type TrainingQuestionType = 'MAIN' | 'FOLLOW_UP';
+export type TrainingAttemptStatus =
+  | 'IN_PROGRESS'
+  | 'COMPLETED'
+  | 'REQUIRES_REVIEW'
+  | 'TIMED_OUT'
+  | 'TECHNICAL_FAILED';
+export type TrainingAttemptCompletionReason =
+  | 'COMPLETED'
+  | 'TIMEOUT'
+  | 'TECHNICAL_FAILURE'
+  | null;
+export type TrainingConfirmedStatus = 'PASSED' | 'FAILED';
+export type TrainingReviewStatus = 'NOT_REQUIRED' | 'PENDING' | 'RESOLVED';
+export type TrainingReviewDecision = 'APPROVED' | 'OVERRIDDEN' | null;
+export type TrainingAnswerSource = 'TEXT' | 'TELEGRAM';
+export type TrainingAssignmentStatus = 'ASSIGNED' | 'REVOKED' | 'NEVER_ASSIGNED';
+export type TrainingEmployeeProjectStatus = TrainingConfirmedStatus | 'REQUIRES_REVIEW' | null;
+export type TrainingProjectEligibility =
+  | 'ACTIVE_ATTEMPT'
+  | 'ELIGIBLE'
+  | 'PASSED'
+  | 'LIMIT_REACHED'
+  | 'CLOSED';
 
-export type TrainingModuleConfigResponse = {
-  enabled: boolean;
-  status: TrainingModuleStatus;
+export type TrainingLegacySafeBreakdown = {
+  version: string;
+  basis: 'TEXT_LENGTH' | 'FAKE_PASS' | 'FAKE_FAIL' | 'FAKE_REVIEW';
+  awardedScore: number;
+  maxScore: number;
 };
 
-export const TRAINING_PROJECT_STATUSES = ['DRAFT', 'OPEN', 'CLOSED', 'ARCHIVED'] as const;
-export type TrainingProjectStatus = (typeof TRAINING_PROJECT_STATUSES)[number];
-
-export const TRAINING_VERSION_STATUSES = ['DRAFT', 'PUBLISHED', 'SUPERSEDED'] as const;
-export type TrainingVersionStatus = (typeof TRAINING_VERSION_STATUSES)[number];
-
-export const TRAINING_QUESTION_TYPES = ['MAIN', 'FOLLOW_UP'] as const;
-export type TrainingQuestionType = (typeof TRAINING_QUESTION_TYPES)[number];
-
-export const TRAINING_ATTEMPT_STATUSES = [
-  'STARTED',
-  'AWAITING_MAIN',
-  'PROCESSING_MAIN',
-  'AWAITING_FOLLOW_UP',
-  'PROCESSING_FOLLOW_UP',
-  'FINALIZING',
-  'COMPLETED',
-  'REQUIRES_REVIEW',
-  'EXPIRED',
-  'TECHNICAL_FAILURE',
-] as const;
-export type TrainingAttemptStatus = (typeof TRAINING_ATTEMPT_STATUSES)[number];
-
-export const TRAINING_ATTEMPT_QUESTION_STATUSES = [
-  'PENDING',
-  'PRESENTED',
-  'COLLECTING',
-  'LOCKED',
-  'PROCESSING',
-  'SCORED',
-  'SKIPPED_TIMEOUT',
-] as const;
-export type TrainingAttemptQuestionStatus = (typeof TRAINING_ATTEMPT_QUESTION_STATUSES)[number];
-
-export const TRAINING_ANSWER_STATUSES = [
-  'COLLECTING',
-  'READY',
-  'DOWNLOADING',
-  'TRANSCRIBING',
-  'EVALUATING',
-  'SCORED',
-  'FAILED',
-] as const;
-export type TrainingAnswerStatus = (typeof TRAINING_ANSWER_STATUSES)[number];
-
-export const TRAINING_FACT_VERDICTS = [
-  'CORRECT',
-  'PARTIAL',
-  'MISSING',
-  'INCORRECT',
-  'UNSUPPORTED',
-] as const;
-export type TrainingFactVerdict = (typeof TRAINING_FACT_VERDICTS)[number];
-
-export const TRAINING_REVIEW_STATUSES = [
-  'NOT_REQUIRED',
-  'PENDING',
-  'APPROVED',
-  'OVERRIDDEN',
-] as const;
-export type TrainingReviewStatus = (typeof TRAINING_REVIEW_STATUSES)[number];
-
-export const TRAINING_PASS_STATUSES = ['PENDING', 'PASSED', 'FAILED'] as const;
-export type TrainingPassStatus = (typeof TRAINING_PASS_STATUSES)[number];
-
-export const TRAINING_JOB_STATUSES = ['PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED', 'DEAD'] as const;
-export type TrainingJobStatus = (typeof TRAINING_JOB_STATUSES)[number];
-
-export const TRAINING_JOB_KINDS = [
-  'PROCESS_TELEGRAM_UPDATE',
-  'TELEGRAM_DOWNLOAD_SEGMENT',
-  'ASSEMBLE_ANSWER_AUDIO',
-  'CLEANUP_TRAINING_AUDIO_OBJECT',
-  'TRANSCRIBE_ANSWER',
-  'ANALYZE_ACOUSTICS',
-  'EVALUATE_ANSWER',
-  'FINALIZE_ATTEMPT',
-  'SEND_TELEGRAM_MESSAGE',
-  'SEND_TIMER_WARNING',
-  'EXPIRE_ATTEMPT',
-  'EXTRACT_SOURCE_DOCUMENT',
-  'FETCH_OFFICIAL_URL_SOURCE',
-  'SUGGEST_FACTS',
-] as const;
-export type TrainingJobKind = (typeof TRAINING_JOB_KINDS)[number];
-
-export const TRAINING_SOURCE_EXTRACTION_STATUSES = [
-  'PENDING',
-  'PROCESSING',
-  'READY',
-  'NEEDS_MANUAL_TEXT',
-  'FAILED',
-] as const;
-export type TrainingSourceExtractionStatus =
-  (typeof TRAINING_SOURCE_EXTRACTION_STATUSES)[number];
-
-export const TRAINING_SOURCE_DOCUMENT_TYPES = ['PDF', 'DOCX', 'PPTX', 'XLSX'] as const;
-export type TrainingSourceDocumentType = (typeof TRAINING_SOURCE_DOCUMENT_TYPES)[number];
-
-export const TRAINING_PROCESSED_UPDATE_STATUSES = [
-  'RECEIVED',
-  'PROCESSING',
-  'PROCESSED',
-  'FAILED',
-] as const;
-export type TrainingProcessedUpdateStatus =
-  (typeof TRAINING_PROCESSED_UPDATE_STATUSES)[number];
-
-export type TrainingAttemptSettingsSnapshot = {
-  versionId: string;
-  versionNumber: number;
-  passScore: number;
-  attemptLimit: number;
-  cooldownMinutes: number;
-  totalTimeLimitSeconds: number;
-  finishGraceSeconds: number;
-  warningSeconds: number[];
-  allowRetakeAfterPass: boolean;
-  mainMaxScore: 55;
-  followUpMaxScore: 15;
-  promptVersion: string;
-  schemaVersion: string;
+export type TrainingAiSafeBreakdown = {
+  version: 'training-v2-evaluation-v1';
+  basis: 'AI_CRITERIA';
+  criteriaPoints: number;
+  incorrectFactCount: number;
+  penaltyPoints: number;
+  awardedScore: number;
+  maxScore: number;
 };
 
-export type TrainingQuestionSelection = {
-  mainQuestionId: string;
-  followUpQuestionIds: readonly [string, string, string];
+export type TrainingSafeBreakdown = TrainingLegacySafeBreakdown | TrainingAiSafeBreakdown;
+
+export type TrainingObjectiveMetrics = {
+  audioDurationSeconds: number;
+  segmentCount: number;
+  wordCount: number;
+  wordsPerMinute: number;
+  fillerWordsCount: number;
+  fillerWordsFound: string[];
 };
 
-export type TrainingScoreSnapshot = {
-  aiScore: string | null;
-  serverScore: string | null;
-  adminScore: string | null;
-  finalScore: string | null;
-  passStatus: TrainingPassStatus;
-  reviewStatus: TrainingReviewStatus;
+export type TrainingStructuredEvaluation = {
+  schema_version: 'training-v2-evaluation-v1';
+  fact_assessments: Array<{
+    fact_id: string;
+    verdict: 'CORRECT' | 'PARTIAL' | 'MISSING' | 'INCORRECT';
+    evidence: string | null;
+    explanation: string;
+  }>;
+  criterion_assessments: Array<{
+    criterion_id: string;
+    awarded_points: number;
+    evidence: string | null;
+    explanation: string;
+  }>;
+  unsupported_claims: Array<{ claim: string; evidence: string }>;
+  summary: string;
+  requires_review: boolean;
 };
 
-export type TrainingPagination = {
-  page: number;
-  pageSize: number;
-  total: number;
-  totalPages: number;
+export type TrainingFactDraft = {
+  id: string | null;
+  questionType: TrainingQuestionType;
+  questionPosition: number;
+  statement: string;
+  aliases: string[];
+  isRequired: boolean;
+  position: number;
 };
 
-export type TrainingEmployeeAttemptFiltersQuery = {
-  page?: number;
-  pageSize?: number;
-  projectId?: string;
-  status?: TrainingAttemptStatus;
-  dateFrom?: string;
-  dateTo?: string;
+export type TrainingFactSource = {
+  sourceType: 'MANUAL' | 'MATERIAL';
+  sourceRevisionId: string | null;
+  sourceLabel: string;
+  sourceLocator: string | null;
+  sourceExcerpt: string | null;
+  sourceMaterialType: 'PDF' | 'OFFICIAL_URL' | 'MANUAL_TEXT' | 'OBJECT_SNAPSHOT' | null;
+  sourceUrl: string | null;
 };
 
-export type TrainingAdminResultFiltersQuery = {
-  page?: number;
-  pageSize?: number;
-  user?: string;
-  userId?: string;
-  projectId?: string;
-  projectVersionId?: string;
-  status?: TrainingAttemptStatus;
-  reviewStatus?: TrainingReviewStatus;
-  passStatus?: TrainingPassStatus;
-  requiresReview?: boolean;
-  dateFrom?: string;
-  dateTo?: string;
-  finalScoreFrom?: number;
-  finalScoreTo?: number;
-  sortField?: 'startedAt' | 'completedAt' | 'finalScore';
-  sortDirection?: 'asc' | 'desc';
+export type TrainingAdminFact = TrainingFactDraft & TrainingFactSource;
+
+export type TrainingCriterionDraft = {
+  id: string | null;
+  questionType: TrainingQuestionType;
+  code: string;
+  title: string;
+  guidance: string;
+  maxPoints: number;
+  position: number;
 };
 
-export type TrainingRankingFiltersQuery = {
-  page?: number;
-  pageSize?: number;
-  user?: string;
-  projectId?: string;
-};
-
-export type TrainingTelegramAccountSummary = {
-  username: string | null;
-  firstName: string | null;
-  lastName: string | null;
-  displayName: string | null;
-  linkedAt: string;
-};
-
-export type TrainingTelegramAccountResponse = {
-  connected: boolean;
-  account: TrainingTelegramAccountSummary | null;
-};
-
-export type TrainingProjectEligibilityReason =
-  | 'AVAILABLE'
-  | 'TELEGRAM_NOT_CONNECTED'
-  | 'ATTEMPT_IN_PROGRESS'
-  | 'ATTEMPT_LIMIT_REACHED'
-  | 'COOLDOWN_ACTIVE'
-  | 'ALREADY_PASSED'
-  | 'DEADLINE_PASSED'
-  | 'NOT_YET_AVAILABLE';
-
-export type TrainingEmployeeProjectSummary = {
+export type TrainingAdminProjectSummary = {
   id: string;
-  slug: string;
+  title: string;
+  status: TrainingProjectStatus;
+  accessMode: TrainingProjectAccessMode;
+  activeAssignments: number;
+  isOpen: boolean;
+  sortOrder: number;
+  attemptLimit: number;
+  timeLimitSeconds: number;
+  passScore: number;
+  questionsCount: number;
+  attemptsCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TrainingAdminProjectsResponse = {
+  items: TrainingAdminProjectSummary[];
+};
+
+export type TrainingAdminProject = {
+  id: string;
+  realEstateObjectId: string | null;
   title: string;
   description: string | null;
-  object: {
-    id: string;
-    title: string;
-    slug: string;
-    summary: string | null;
-  } | null;
+  status: TrainingProjectStatus;
+  accessMode: TrainingProjectAccessMode;
+  activeAssignments: number;
+  isOpen: boolean;
   sortOrder: number;
-  availableFrom: string | null;
-  deadlineAt: string | null;
-  passScore: number;
   attemptLimit: number;
+  timeLimitSeconds: number;
+  passScore: number;
+  allowRetakeAfterPass: boolean;
+  contentSchemaVersion: number;
+  mainQuestion: string;
+  followUpQuestions: string[];
+  facts: TrainingAdminFact[];
+  criteria: TrainingCriterionDraft[];
+  publicationErrors: string[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CreateTrainingProjectRequest = {
+  title: string;
+  description?: string | null;
+  realEstateObjectId?: string | null;
+  sortOrder?: number;
+  attemptLimit?: number;
+  timeLimitMinutes?: number;
+  passScore?: number;
+  allowRetakeAfterPass: boolean;
+  accessMode?: TrainingProjectAccessMode;
+};
+
+export type UpdateTrainingProjectRequest = Required<CreateTrainingProjectRequest> & {
+  mainQuestion: string;
+  followUpQuestions: string[];
+  facts: TrainingFactDraft[];
+  criteria: TrainingCriterionDraft[];
+};
+
+export type UpdateTrainingProjectAvailabilityRequest = {
+  isOpen: boolean;
+};
+
+export type UpdateTrainingProjectAccessModeRequest = {
+  accessMode: TrainingProjectAccessMode;
+};
+
+export type TrainingProjectAssignmentFilter = 'all' | 'yes' | 'no';
+
+export type TrainingProjectAssignmentUser = {
+  userId: string;
+  name: string;
+  email: string;
+  status: 'ACTIVE' | 'BLOCKED' | 'INVITED' | 'DEACTIVATED';
+  canParticipate: boolean;
+  isAssigned: boolean;
+  assignedAt: string | null;
+};
+
+export type TrainingProjectAssignmentUsersResponse = {
+  items: TrainingProjectAssignmentUser[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+  activeAssignments: number;
+};
+
+export type BulkTrainingProjectAssignmentsRequest = {
+  action: 'ASSIGN' | 'REVOKE';
+  userIds: readonly string[];
+};
+
+export type BulkTrainingProjectAssignmentsResponse = {
+  assigned: number;
+  revoked: number;
+  unchanged: number;
+  activeAssignments: number;
+};
+
+export type TrainingMaterialType = 'PDF' | 'OFFICIAL_URL' | 'MANUAL_TEXT' | 'OBJECT_SNAPSHOT';
+export type TrainingMaterialStatus = 'ACTIVE' | 'ARCHIVED';
+export type TrainingMaterialRevisionStatus = 'READY' | 'FAILED';
+export type TrainingMaterialSuggestionStatus = 'NOT_GENERATED' | 'READY' | 'FAILED';
+
+export type TrainingMaterialSegment = { locator: string; label: string; text: string };
+export type TrainingMaterialDiff = {
+  previousRevisionId: string | null;
+  added: string[];
+  removed: string[];
+  unchangedCount: number;
+  changed: boolean;
+};
+
+export type TrainingMaterialSuggestion = {
+  id: string;
+  targetQuestionId: string;
+  statement: string;
+  aliases: string[];
+  isRequired: boolean;
+  sourceLocator: string;
+  sourceExcerpt: string;
+};
+
+export type TrainingMaterialRevision = {
+  id: string;
+  revisionNumber: number;
+  previousRevisionId: string | null;
+  status: TrainingMaterialRevisionStatus;
+  requestedUrl: string | null;
+  finalUrl: string | null;
+  fetchedAt: string | null;
+  extractedText: string;
+  segments: TrainingMaterialSegment[];
+  contentHash: string;
+  extractionMetadata: Record<string, unknown>;
+  diff: TrainingMaterialDiff;
+  isChanged: boolean;
+  suggestionStatus: TrainingMaterialSuggestionStatus;
+  suggestions: TrainingMaterialSuggestion[] | null;
+  suggestionModel: string | null;
+  suggestionErrorCode: string | null;
+  createdAt: string;
+};
+
+export type TrainingMaterial = {
+  id: string;
+  projectId: string;
+  type: TrainingMaterialType;
+  title: string;
+  status: TrainingMaterialStatus;
+  sourceUrl: string | null;
+  officialConfirmedAt: string | null;
+  latestRevision: TrainingMaterialRevision | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TrainingMaterialsResponse = { items: TrainingMaterial[] };
+export type TrainingMaterialDetail = TrainingMaterial & { revisions: TrainingMaterialRevision[] };
+
+export type TrainingObjectOption = {
+  id: string;
+  title: string;
+  status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
+  developerName: string | null;
+  pdfCount: number;
+};
+
+export type TrainingObjectOptionsResponse = {
+  items: TrainingObjectOption[];
+  selected: TrainingObjectOption | null;
+};
+
+export type ImportTrainingObjectRequest = {
+  objectId: string;
+  replaceExistingQuestions: boolean;
+};
+
+export type ImportTrainingObjectResponse = {
+  object: TrainingObjectOption;
+  objectSnapshotMaterialId: string;
+  importedPdfCount: number;
+  failedPdfTitles: string[];
+  mainQuestion: string;
+  followUpQuestions: string[];
+  questionGenerationModel: string;
+  questionGenerationSourceChars: number;
+};
+
+export type CreateTrainingManualMaterialRequest = { title: string; text: string };
+export type CreateTrainingUrlMaterialRequest = {
+  title: string;
+  url: string;
+  officialConfirmed: true;
+  replaceExistingQuestions?: boolean;
+};
+export type CreateTrainingObjectSnapshotMaterialRequest = {
+  title: string;
+  fieldCodes: string[];
+};
+export type RefreshTrainingMaterialRequest = { text?: string; fieldCodes?: string[] };
+export type ApplyTrainingMaterialSuggestionsRequest = {
+  suggestions: Array<{
+    suggestionId: string;
+    targetQuestionId: string;
+    statement: string;
+    aliases: string[];
+    isRequired: boolean;
+    sourceLocator: string;
+    sourceExcerpt: string;
+  }>;
+};
+
+export type TrainingEmployeeProject = {
+  id: string;
+  title: string;
+  description: string | null;
+  attemptLimit: number;
+  timeLimitSeconds: number;
+  passScore: number;
   attemptsUsed: number;
   attemptsLeft: number;
-  cooldownMinutes: number;
-  totalTimeLimitSeconds: number;
-  allowRetakeAfterPass: boolean;
-  requiresTelegramConnection: boolean;
-  telegramConnected: boolean;
-  bestScore: string | null;
-  lastScore: string | null;
-  lastAttemptStatus: TrainingAttemptStatus | null;
-  activeAttempt: {
-    id: string;
-    status: TrainingAttemptStatus;
-    startedAt: string;
-    expiresAt: string;
-  } | null;
-  eligibility: {
-    canStart: boolean;
-    reason: TrainingProjectEligibilityReason;
-    retryAt: string | null;
-  };
+  eligibility: TrainingProjectEligibility;
+  canStart: boolean;
+  newAttemptAccessRevoked: boolean;
+  activeAttempt: { id: string; expiresAt: string } | null;
+  bestConfirmedScore: number | null;
+  bestConfirmedStatus: TrainingConfirmedStatus | null;
+  lastConfirmedScore: number | null;
+  lastConfirmedStatus: TrainingConfirmedStatus | null;
+  lastConfirmedAt: string | null;
+  hasPendingReview: boolean;
+  status: TrainingEmployeeProjectStatus;
 };
 
 export type TrainingEmployeeProjectsResponse = {
-  items: TrainingEmployeeProjectSummary[];
+  items: TrainingEmployeeProject[];
 };
 
-export type TrainingEmployeeAttemptListItem = {
-  id: string;
-  attemptNumber: number;
-  status: TrainingAttemptStatus;
-  isConsumed: boolean;
-  startedAt: string;
+export type TrainingTelegramAccountState = {
+  linked: boolean;
+  username: string | null;
+  linkedAt: string | null;
+};
+
+export type TrainingTelegramLinkResponse = {
+  url: string;
   expiresAt: string;
-  completedAt: string | null;
-  totalDurationSeconds: number | null;
-  finalScore: string | null;
-  passStatus: TrainingPassStatus;
-  reviewStatus: TrainingReviewStatus;
-  project: {
-    id: string;
-    title: string;
-    slug: string;
-  };
+  account: TrainingTelegramAccountState;
 };
 
-export type TrainingEmployeeAttemptsResponse = {
-  items: TrainingEmployeeAttemptListItem[];
-  pagination: TrainingPagination;
-};
-
-export type TrainingEmployeeScoreComponent = {
-  key: string;
-  title: string;
-  awardedPoints: string;
-  maxPoints: string;
-};
-
-export const TRAINING_EMPLOYEE_BREAKDOWN_STATUSES = [
-  'AVAILABLE',
-  'PENDING_REVIEW',
-  'MANUALLY_ADJUSTED_BREAKDOWN_UNAVAILABLE',
-  'BREAKDOWN_UNAVAILABLE',
-] as const;
-export type TrainingEmployeeBreakdownStatus =
-  (typeof TRAINING_EMPLOYEE_BREAKDOWN_STATUSES)[number];
-
-export type TrainingEmployeeQuestionBreakdown = {
+export type TrainingAttemptQuestion = {
   id: string;
   sequence: number;
   type: TrainingQuestionType;
   text: string;
-  status: TrainingAttemptQuestionStatus;
-  responseTimeSeconds: number | null;
-  answerDurationSeconds: number | null;
-  score: string;
-  components: TrainingEmployeeScoreComponent[];
+  maxScore: number;
 };
 
-export type TrainingEmployeeAttemptDetail = TrainingEmployeeAttemptListItem & {
-  attemptsLeft: number;
-  bestScore: string | null;
-  breakdownStatus: TrainingEmployeeBreakdownStatus;
-  breakdown: TrainingEmployeeQuestionBreakdown[] | null;
+export type TrainingEmployeeSafeBreakdownItem = {
+  sequence: number;
+  type: TrainingQuestionType;
+  score: number;
+  maxScore: number;
+  details: TrainingSafeBreakdown;
 };
 
-export type TrainingEmployeeAttemptDetailResponse = {
-  attempt: TrainingEmployeeAttemptDetail;
-};
-
-export type TrainingAdminResultListItem = {
+export type TrainingEmployeeAttempt = {
   id: string;
-  user: {
-    id: string;
-    name: string | null;
-    email: string;
-  };
-  project: {
-    id: string;
-    title: string;
-    slug: string;
-  };
-  projectVersion: {
-    id: string;
-    versionNumber: number;
+  project: { id: string; title: string };
+  attemptNumber: number;
+  status: TrainingAttemptStatus;
+  completionReason: TrainingAttemptCompletionReason;
+  startedAt: string;
+  expiresAt: string;
+  completedAt: string | null;
+  answeredCount: number;
+  totalQuestions: number;
+  currentQuestion: TrainingAttemptQuestion | null;
+  result: {
+    status: TrainingAttemptStatus;
+    finalScore: number | null;
+    isPassed: boolean | null;
+    safeBreakdown: TrainingEmployeeSafeBreakdownItem[];
+    message: string | null;
+    attemptRefunded: boolean;
+  } | null;
+};
+
+export type TrainingEmployeeAttemptSummary = {
+  id: string;
+  projectId: string;
+  projectTitle: string;
+  attemptNumber: number;
+  status: TrainingAttemptStatus;
+  completionReason: TrainingAttemptCompletionReason;
+  countsTowardAttemptLimit: boolean;
+  finalScore: number | null;
+  isPassed: boolean | null;
+  safeBreakdown: TrainingEmployeeSafeBreakdownItem[];
+  message: string | null;
+  attemptRefunded: boolean;
+  startedAt: string;
+  completedAt: string | null;
+  durationSeconds: number | null;
+};
+
+export type TrainingEmployeeAttemptsResponse = {
+  items: TrainingEmployeeAttemptSummary[];
+};
+
+export type StartTrainingAttemptRequest = { confirmed: true };
+export type SubmitTrainingAnswerRequest = { attemptQuestionId: string; text: string };
+
+export type TrainingAdminAttemptSummary = {
+  id: string;
+  user: { id: string; email: string; name: string | null };
+  project: { id: string; title: string };
+  attemptNumber: number;
+  status: TrainingAttemptStatus;
+  finalScore: number | null;
+  isPassed: boolean | null;
+  startedAt: string;
+  completedAt: string | null;
+};
+
+export type TrainingAdminAttemptsResponse = {
+  items: TrainingAdminAttemptSummary[];
+};
+
+export type TrainingAdminResultSort =
+  | 'STARTED_DESC'
+  | 'STARTED_ASC'
+  | 'COMPLETED_DESC'
+  | 'COMPLETED_ASC'
+  | 'SCORE_DESC'
+  | 'SCORE_ASC'
+  | 'DURATION_DESC'
+  | 'DURATION_ASC';
+
+export type TrainingAdminResultsQuery = {
+  page: number;
+  limit: number;
+  search: string;
+  userId: string;
+  projectId: string;
+  accessMode: TrainingProjectAccessMode | '';
+  assignmentStatus: TrainingAssignmentStatus | '';
+  startedFrom: string;
+  startedTo: string;
+  attemptStatus: TrainingAttemptStatus | '';
+  reviewStatus: TrainingReviewStatus | '';
+  passed: 'true' | 'false' | '';
+  scoreMin: string;
+  scoreMax: string;
+  durationMin: string;
+  durationMax: string;
+  source: TrainingAnswerSource | '';
+  sort: TrainingAdminResultSort;
+};
+
+export type TrainingAdminResultSummary = {
+  id: string;
+  user: { id: string; email: string; name: string | null };
+  project: { id: string; title: string };
+  currentAccess: {
+    accessMode: TrainingProjectAccessMode;
+    assignmentStatus: TrainingAssignmentStatus;
+    hasCurrentAccess: boolean;
   };
   attemptNumber: number;
   status: TrainingAttemptStatus;
-  isConsumed: boolean;
+  completionReason: TrainingAttemptCompletionReason;
+  reviewStatus: TrainingReviewStatus;
+  reviewDecision: TrainingReviewDecision;
+  countsTowardAttemptLimit: boolean;
+  finalScore: number | null;
+  isPassed: boolean | null;
   startedAt: string;
   completedAt: string | null;
-  totalDurationSeconds: number | null;
-  aiScore: string | null;
-  serverScore: string | null;
-  adminScore: string | null;
-  finalScore: string | null;
-  passStatus: TrainingPassStatus;
-  reviewStatus: TrainingReviewStatus;
-  answerErrorsCount: number;
-  unsupportedClaimsCount: number;
-  answersCompleted: number;
-  attemptsUsed: number;
-  requiresReview: boolean;
-  summary: string | null;
+  durationSeconds: number;
+  answerCount: number;
+  answerSources: TrainingAnswerSource[];
+  hasPendingReview: boolean;
+  hasTechnicalFailure: boolean;
 };
 
 export type TrainingAdminResultsResponse = {
-  items: TrainingAdminResultListItem[];
-  pagination: TrainingPagination;
+  items: TrainingAdminResultSummary[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
 };
 
-export type TrainingAdminProviderRun = {
-  id: string;
-  kind: string;
-  runType: string;
-  status: string;
-  requestedModelId: string;
-  actualModelId: string | null;
-  requestId: string | null;
-  responseStatus: string | null;
-  promptVersion: string | null;
-  schemaVersion: string | null;
-  rubricVersion: string | null;
-  latencyMs: number | null;
-  retryCount: number;
-  errorCode: string | null;
-  errorClass: string | null;
-  ambiguousOutcome: boolean;
-  usage: unknown;
-  startedAt: string | null;
-  completedAt: string | null;
+export type TrainingAdminRankingQuery = {
+  page: number;
+  limit: number;
+  search: string;
+  project: string;
+  accessMode: TrainingProjectAccessMode | '';
+  currentlyAssigned: 'true' | 'false' | '';
+  currentlyEligible: 'true' | 'false' | '';
 };
 
-export type TrainingAdminScoreComponent = {
-  componentKey: string;
-  title: string | null;
-  criterionCode: string | null;
-  factCode: string | null;
-  awardedPoints: string;
-  maxPoints: string;
-  penaltyPoints: string;
-  factVerdict: TrainingFactVerdict | null;
-  evidence: unknown;
-};
-
-export type TrainingUnsupportedClaimDecision = {
-  componentKey: string;
-  decision: 'ACCEPTED' | 'INCORRECT';
-};
-
-export type TrainingAdminAnswerDetail = {
-  id: string;
-  status: TrainingAnswerStatus;
-  audioAvailable: boolean;
-  audioUrl: string | null;
-  audioMimeType: string | null;
-  audioSizeBytes: string | null;
-  audioDurationMilliseconds: number | null;
-  combinedTranscript: string | null;
-  normalizedLanguage: string | null;
-  transcriptionProvider: string | null;
-  transcriptionModel: string | null;
-  transcriptionRequestId: string | null;
-  acousticMetrics: unknown;
-  processingStartedAt: string | null;
-  processingFinishedAt: string | null;
-  errorCode: string | null;
-  errorMessage: string | null;
-  segments: Array<{
-    id: string;
-    segmentIndex: number;
-    mimeType: string | null;
-    sizeBytes: string | null;
-    durationMilliseconds: number | null;
-    downloadedAt: string | null;
-    receivedAt: string;
-  }>;
-  transcriptions: Array<{
-    id: string;
-    transcriptionNumber: number;
-    transcript: string;
-    language: string;
-    wordCount: number;
-    isActive: boolean;
-    createdAt: string;
-  }>;
-  evaluations: Array<{
-    id: string;
-    evaluationNumber: number;
-    actualModelId: string;
-    reasoningEffort: string | null;
-    promptVersion: string;
-    schemaVersion: string;
-    rubricVersion: string;
-    aiSuggestedScore: string;
-    serverScore: string;
-    summary: string | null;
-    requiresReview: boolean;
-    reviewReasons: unknown;
-    usage: unknown;
-    latencyMs: number | null;
-    requestId: string | null;
-    isActive: boolean;
-    components: TrainingAdminScoreComponent[];
-    createdAt: string;
-  }>;
-  providerRuns: TrainingAdminProviderRun[];
-};
-
-export type TrainingAdminAttemptDetail = TrainingAdminResultListItem & {
-  expiresAt: string;
-  graceExpiresAt: string;
-  aiScore: string | null;
-  serverScore: string | null;
-  adminScore: string | null;
-  summary: string | null;
-  timeline: Array<{
-    at: string;
-    kind: string;
-    label: string;
-  }>;
-  questions: Array<{
-    id: string;
-    sequence: number;
-    type: TrainingQuestionType;
-    text: string;
-    status: TrainingAttemptQuestionStatus;
-    presentedAt: string | null;
-    firstSegmentAt: string | null;
-    finishedAt: string | null;
-    responseTimeSeconds: number | null;
-    answerDurationSeconds: number | null;
-    answer: TrainingAdminAnswerDetail | null;
-  }>;
-  reviews: Array<{
-    id: string;
-    reviewNumber: number;
-    reviewer: {
-      id: string;
-      name: string | null;
-      email: string;
-    };
-    previousFinalScore: string | null;
-    adminScore: string | null;
-    finalScore: string;
-    decision: TrainingReviewStatus;
-    comment: string;
-    unsupportedClaimsDecisions: unknown;
-    reviewedAt: string;
-  }>;
-  jobs: Array<{
-    id: string;
-    kind: TrainingJobKind;
-    status: TrainingJobStatus;
-    attempts: number;
-    lastErrorCode: string | null;
-    lastErrorMessage: string | null;
-    runAt: string;
-    finishedAt: string | null;
-  }>;
-};
-
-export type TrainingAdminAttemptDetailResponse = {
-  attempt: TrainingAdminAttemptDetail;
+export type TrainingRankingCriterionSummary = {
+  code: string;
+  title: string;
+  awardedPoints: number;
+  maxPoints: number;
+  percent: string;
 };
 
 export type TrainingRankingProjectResult = {
   attemptId: string;
-  attemptNumber: number;
   projectId: string;
   projectTitle: string;
-  finalScore: string;
-  passStatus: TrainingPassStatus;
+  accessMode: TrainingProjectAccessMode;
+  assignmentStatus: TrainingAssignmentStatus;
+  currentlyEligible: boolean;
+  finalScore: number;
+  isPassed: boolean;
   completedAt: string;
-  attemptsUsed: number;
-  summary: string | null;
-  scoreChangeFromFirst: string | null;
-  components: TrainingEmployeeScoreComponent[];
-  errors: string[];
-  unsupportedClaims: string[];
+  durationSeconds: number;
+  factualErrorsCount: number;
+  unsupportedClaimsCount: number;
 };
 
-export type TrainingRankingItem = {
-  position: number;
-  user: {
-    id: string;
-    name: string | null;
-    email: string;
-  };
+export type TrainingAdminRankingRow = {
+  user: { id: string; email: string; name: string | null };
   passedProjectsCount: number;
   completedProjectsCount: number;
   averageBestScore: string | null;
   attemptsUsed: number;
   lastCompletedAt: string | null;
   totalDurationSeconds: number;
-  averageDurationSeconds: number | null;
-  narrative: string;
-  projects: TrainingRankingProjectResult[];
+  averageDurationSeconds: string | null;
+  currentEligibleProjectsCount: number;
+  currentCompletedEligibleProjectsCount: number;
+  currentPassedEligibleProjectsCount: number;
+  currentCoveragePercent: string | null;
+  currentAccess: {
+    allParticipantsProjectsCount: number;
+    assignedProjectsCount: number;
+    activeAssignmentsCount: number;
+  };
+  bestResults: TrainingRankingProjectResult[];
+  summary: {
+    text: string;
+    strongestCriterion: TrainingRankingCriterionSummary | null;
+    weakestCriterion: TrainingRankingCriterionSummary | null;
+    factualErrorsCount: number;
+    unsupportedClaimsCount: number;
+  };
 };
 
-export type TrainingRankingResponse = {
-  items: TrainingRankingItem[];
-  pagination: TrainingPagination;
-  projects: Array<{
+export type TrainingAdminRankingResponse = {
+  items: TrainingAdminRankingRow[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};
+
+export type TrainingAdminAttempt = TrainingAdminAttemptSummary & {
+  project: {
     id: string;
     title: string;
-  }>;
-};
-
-export type TrainingReviewRequest = {
-  decision: 'APPROVED' | 'OVERRIDDEN';
-  adminScore?: number | string;
-  comment: string;
-  unsupportedClaimsDecisions: TrainingUnsupportedClaimDecision[];
-};
-
-export type TrainingPolicyResponse = {
-  policy: {
-    id: string;
-    version: string;
-    title: string;
-    body: string;
-    checksum: string;
-    effectiveAt: string;
-    isActive: boolean;
-    approvalStatus: string;
-  };
-  acceptance: {
-    acceptedAt: string;
-    source: 'PLATFORM' | 'TELEGRAM';
-  } | null;
-  accepted: boolean;
-};
-
-export type TrainingOperationsResponse = {
-  generatedAt: string;
-  training: TrainingModuleConfigResponse;
-  modes: {
-    telegram: 'fake' | 'real';
-    openAi: 'fake' | 'real';
-  };
-  audioPrivacy: {
-    status: 'VERIFIED' | 'NOT_VERIFIED';
-    checkedAt: string | null;
-  };
-  queue: Array<{
-    kind: TrainingJobKind;
-    status: TrainingJobStatus;
-    count: number;
-  }>;
-  providerRuns: Array<{
-    kind: 'TRANSCRIPTION' | 'EVALUATION';
-    status: string;
-    count: number;
-  }>;
-  oldestPendingAgeSeconds: number | null;
-  activeAttempts: number;
-  stuckAttempts: number;
-  attemptsRequiringReview: number;
-  recentErrors: Array<{
-    jobId: string;
-    kind: TrainingJobKind;
-    status: TrainingJobStatus;
-    code: string | null;
-    occurredAt: string;
-  }>;
-  workers: Array<{
-    kind: string;
-    status: 'ONLINE' | 'STALE';
-    startedAt: string;
-    lastSeenAt: string;
-  }>;
-  lastSuccessfulProcessing: {
-    jobAt: string | null;
-    telegramUpdateAt: string | null;
-  };
-  activePolicy: {
-    id: string;
-    version: string;
-    title: string;
-    effectiveAt: string;
-    approvalStatus: string;
-    checksum: string;
-  } | null;
-  policyAcceptances: {
-    activeCount: number;
-    revokedCount: number;
-    bySource: {
-      PLATFORM: number;
-      TELEGRAM: number;
+    settings: {
+      attemptLimit: number;
+      timeLimitSeconds: number;
+      passScore: number;
+      allowRetakeAfterPass: boolean;
     };
   };
+  completionReason: TrainingAttemptCompletionReason;
+  snapshotVersion: number;
+  durationSeconds: number;
+  currentAccess: {
+    projectStatus: TrainingProjectStatus;
+    isOpen: boolean;
+    accessMode: TrainingProjectAccessMode;
+    assignmentStatus: TrainingAssignmentStatus;
+    userStatus: 'ACTIVE' | 'BLOCKED' | 'INVITED' | 'DEACTIVATED';
+    canParticipate: boolean;
+    hasCurrentAccess: boolean;
+  };
+  calculatedScore: number | null;
+  reviewStatus: TrainingReviewStatus;
+  reviewDecision: TrainingReviewDecision;
+  reviewedAt: string | null;
+  reviewedBy: { id: string; email: string; name: string | null } | null;
+  reviewComment: string | null;
+  reviewFinalScore: number | null;
+  countsTowardAttemptLimit: boolean;
+  fakeEvaluationVersion: string;
+  expiresAt: string;
+  questions: Array<{
+    id: string;
+    sourceQuestionId: string | null;
+    sequence: number;
+    type: TrainingQuestionType;
+    text: string;
+    maxScore: number;
+    status: 'PRESENTED' | 'ANSWERED' | 'SKIPPED_TIMEOUT';
+    presentedAt: string;
+    answeredAt: string | null;
+    responseDurationSeconds: number | null;
+    facts: Array<{
+      id: string;
+      statement: string;
+      aliases: string[];
+      required: boolean;
+      position: number;
+      sourceType?: 'MANUAL' | 'MATERIAL';
+      sourceRevisionId?: string | null;
+      sourceLabel?: string;
+      sourceLocator?: string | null;
+      sourceExcerpt?: string | null;
+      sourceMaterialType?: 'PDF' | 'OFFICIAL_URL' | 'MANUAL_TEXT' | 'OBJECT_SNAPSHOT' | null;
+      sourceUrl?: string | null;
+    }>;
+    criteria: Array<{
+      id: string;
+      code: string;
+      title: string;
+      guidance: string;
+      maxPoints: number;
+      position: number;
+    }>;
+    answer: null | {
+      id: string;
+      source: TrainingAnswerSource;
+      processingStatus: 'COLLECTING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+      text: string | null;
+      score: number | null;
+      safeBreakdown: TrainingSafeBreakdown | null;
+      submittedAt: string | null;
+      transcriptionModel: string | null;
+      evaluationModel: string | null;
+      transcriptionRequestId: string | null;
+      evaluationRequestId: string | null;
+      evaluation: TrainingStructuredEvaluation | null;
+      objectiveMetrics: TrainingObjectiveMetrics | null;
+      technicalErrorCode: string | null;
+      audioAvailable: boolean;
+    };
+  }>;
+};
+
+export type ReviewTrainingAttemptRequest = {
+  decision: 'APPROVE' | 'OVERRIDE';
+  finalScore?: number | null;
+  comment?: string | null;
+};
+
+export type ReviewTrainingAttemptResponse = {
+  attemptId: string;
+  status: TrainingAttemptStatus;
+  calculatedScore: number | null;
+  finalScore: number | null;
+  isPassed: boolean | null;
+  reviewStatus: TrainingReviewStatus;
+  reviewDecision: TrainingReviewDecision;
+  reviewedAt: string | null;
 };

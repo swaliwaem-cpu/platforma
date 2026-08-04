@@ -14,16 +14,10 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import {
-  File,
-  FileStorage,
-  FileVariantKind,
-  Prisma,
-} from '@prisma/client';
+import { File, FileStorage, FileVariantKind } from '@prisma/client';
 
 import { AuthenticatedUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
-import { TRAINING_OFFICIAL_URL_SNAPSHOT_PUT_TIMEOUT_MS } from '../training/training-official-url.config';
 import {
   ALLOWED_FILE_MIME_TYPES,
   FEED_XML_MAX_SIZE_BYTES,
@@ -203,183 +197,9 @@ export class FilesService {
     }
   }
 
-  async uploadPrivateTrainingDocument(
-    file: UploadedFile & { buffer: Buffer },
-    actor: AuthenticatedUser,
-    extension: '.pdf' | '.docx' | '.pptx' | '.xlsx',
-  ) {
-    const originalName = basename(file.originalname || `document${extension}`);
-    const checksum = createHash('sha256').update(file.buffer).digest('hex');
-    const key = this.createPrivateTrainingStorageKey(extension);
-    const bucket = this.storage.getTrainingDocumentBucket();
-
-    try {
-      await this.storage.putObject({
-        bucket,
-        key,
-        body: file.buffer,
-        contentType: file.mimetype,
-      });
-
-      return await this.prisma.file.create({
-        data: {
-          storage: FileStorage.MINIO,
-          bucket,
-          key,
-          url: null,
-          originalName,
-          mimeType: file.mimetype,
-          sizeBytes: BigInt(file.buffer.length),
-          checksum,
-          uploadedById: actor.id,
-        },
-      });
-    } catch (error) {
-      await this.storage.deleteObject(key, bucket).catch(() => undefined);
-      throw error;
-    }
-  }
-
-  async uploadPrivateTrainingSourceSnapshot(
-    input: {
-      buffer: Buffer;
-      originalName: string;
-      mimeType: 'text/html' | 'application/xhtml+xml';
-    },
-    uploadedById: string,
-  ) {
-    const originalName = basename(input.originalName || 'official-source.html');
-    const checksum = createHash('sha256').update(input.buffer).digest('hex');
-    const key = this.createPrivateTrainingSnapshotStorageKey();
-    const bucket = this.storage.getTrainingDocumentBucket();
-    let snapshotIntent: File | null = null;
-
-    try {
-      snapshotIntent = await this.prisma.file.create({
-        data: {
-          storage: FileStorage.MINIO,
-          bucket,
-          key,
-          url: null,
-          originalName,
-          mimeType: input.mimeType,
-          sizeBytes: BigInt(input.buffer.length),
-          checksum,
-          uploadedById,
-        },
-      });
-      await runTrainingSnapshotPutWithTimeout((signal) =>
-        this.storage.putObject({
-          bucket,
-          key,
-          body: input.buffer,
-          contentType: input.mimeType,
-          signal,
-        }),
-      );
-
-      return snapshotIntent;
-    } catch (error) {
-      await runTrainingSnapshotStorageWithTimeout(
-        (signal) => this.storage.deleteObject(key, bucket, signal),
-        Math.min(TRAINING_OFFICIAL_URL_SNAPSHOT_PUT_TIMEOUT_MS, 30_000),
-        'TRAINING_SNAPSHOT_DELETE_TIMEOUT',
-      ).catch(() => undefined);
-      throw error;
-    }
-  }
-
-  async readStoredFile(
-    file: Pick<File, 'bucket' | 'key'>,
-    options?: {
-      signal?: AbortSignal;
-      privateTrainingAudio?: boolean;
-    },
-  ) {
-    const bucket = this.requirePersistedPrivateBucket(file.bucket);
-    if (options?.privateTrainingAudio) {
-      this.assertPrivateTrainingAudioKey(file.key);
-      await this.storage.ensurePersistedTrainingAudioBucket(
-        bucket,
-        options.signal,
-      );
-    }
-    return this.storage.getObject(
-      file.key,
-      bucket,
-      options?.signal,
-    );
-  }
-
-  async deleteStoredFile(file: Pick<File, 'bucket' | 'key'>) {
-    await this.storage.deleteObject(
-      file.key,
-      this.requirePersistedPrivateBucket(file.bucket),
-    );
-  }
-
-  getTrainingAudioBucket() {
-    return this.storage.getTrainingAudioBucket();
-  }
-
-  async putPrivateTrainingAudioObject(input: {
-    bucket: string;
-    key: string;
-    body: Buffer;
-    mimeType: string;
-    checksum: string;
-  }) {
-    this.requirePersistedPrivateBucket(input.bucket);
-    this.assertPrivateTrainingAudioKey(input.key);
-    this.assertSha256(input.checksum);
-    await this.storage.ensurePersistedTrainingAudioBucket(input.bucket);
-    await this.storage.putObject({
-      bucket: input.bucket,
-      key: input.key,
-      body: input.body,
-      contentType: input.mimeType,
-      metadata: { sha256: input.checksum },
-    });
-  }
-
-  async putPrivateTrainingAudioFile(input: {
-    bucket: string;
-    key: string;
-    filePath: string;
-    mimeType: string;
-    checksum: string;
-    sizeBytes: number;
-  }) {
-    this.requirePersistedPrivateBucket(input.bucket);
-    this.assertPrivateTrainingAudioKey(input.key);
-    await this.storage.ensurePersistedTrainingAudioBucket(input.bucket);
-    await this.storage.putObjectFromFileToBucket({
-      bucket: input.bucket,
-      key: input.key,
-      filePath: input.filePath,
-      contentType: input.mimeType,
-      checksum: input.checksum,
-      contentLength: input.sizeBytes,
-      metadata: { sha256: input.checksum },
-    });
-  }
-
-  async headPrivateTrainingAudioObject(bucket: string, key: string) {
-    this.requirePersistedPrivateBucket(bucket);
-    this.assertPrivateTrainingAudioKey(key);
-    await this.storage.ensurePersistedTrainingAudioBucket(bucket);
-    return this.storage.headObject(key, bucket);
-  }
-
-  async deletePrivateTrainingAudioObject(bucket: string, key: string) {
-    this.requirePersistedPrivateBucket(bucket);
-    this.assertPrivateTrainingAudioKey(key);
-    await this.storage.ensurePersistedTrainingAudioBucket(bucket);
-    await this.storage.deleteObject(key, bucket);
-  }
-
   async getById(id: string) {
     const file = await this.findExistingFile(id);
+    this.assertNotPrivateTrainingFile(file);
 
     return {
       file: this.serializeFile(file),
@@ -389,12 +209,16 @@ export class FilesService {
   async getContent(id: string, variant?: string | null) {
     const requestedVariant = this.parseRequestedVariant(variant);
     const file = await this.findExistingFileWithVariants(id);
+    this.assertNotPrivateTrainingFile(file);
 
     if (requestedVariant.kind === 'variant') {
       const fileVariant = file.variants.find((currentVariant) => currentVariant.variant === requestedVariant.variant);
 
       if (fileVariant) {
-        const buffer = await this.storage.getObject(fileVariant.key);
+        const buffer = await this.storage.getObject(
+          fileVariant.key,
+          fileVariant.bucket ?? undefined,
+        );
 
         return {
           file: {
@@ -407,7 +231,7 @@ export class FilesService {
         };
       }
 
-      const buffer = await this.storage.getObject(file.key);
+      const buffer = await this.storage.getObject(file.key, file.bucket ?? undefined);
 
       return {
         file,
@@ -416,7 +240,7 @@ export class FilesService {
       };
     }
 
-    const buffer = await this.storage.getObject(file.key);
+    const buffer = await this.storage.getObject(file.key, file.bucket ?? undefined);
 
     return {
       file,
@@ -425,99 +249,93 @@ export class FilesService {
     };
   }
 
-  async delete(id: string, signal?: AbortSignal) {
+  async delete(id: string) {
     const fileId = this.parseUuid(id, 'File is invalid');
-    await this.prisma.$transaction(async (tx) => {
-      await tx.$queryRaw(
-        Prisma.sql`SELECT "id" FROM "files" WHERE "id" = ${fileId}::uuid FOR UPDATE`,
-      );
-      const file = await tx.file.findUnique({
-        where: {
-          id: fileId,
-        },
-        include: {
-          variants: {
-            select: {
-              key: true,
-              bucket: true,
-            },
-          },
-          _count: {
-            select: {
-              profilePhotoUsers: true,
-              objectImages: true,
-              objectFiles: true,
-              feedXmlSources: true,
-              lotPresentationDocuments: true,
-              projectPresentationDraftCovers: true,
-              projectPresentationDocuments: true,
-              projectPresentationAssets: true,
-              trainingSourceDocuments: true,
-              trainingOfficialUrlSnapshots: true,
-              trainingVoiceSegments: true,
-              trainingAnswerAudio: true,
-              trainingAudioUploadIntents: true,
-            },
+    const file = await this.prisma.file.findUnique({
+      where: {
+        id: fileId,
+      },
+      include: {
+        variants: {
+          select: {
+            key: true,
+            bucket: true,
           },
         },
-      });
-
-      if (!file) {
-        throw new NotFoundException('File not found');
-      }
-
-      if (
-        file._count.profilePhotoUsers > 0 ||
-        file._count.objectImages > 0 ||
-        file._count.objectFiles > 0 ||
-        file._count.feedXmlSources > 0 ||
-        file._count.lotPresentationDocuments > 0 ||
-        file._count.projectPresentationDraftCovers > 0 ||
-        file._count.projectPresentationDocuments > 0 ||
-        file._count.projectPresentationAssets > 0 ||
-        file._count.trainingSourceDocuments > 0 ||
-        file._count.trainingOfficialUrlSnapshots > 0 ||
-        file._count.trainingVoiceSegments > 0 ||
-        file._count.trainingAnswerAudio > 0 ||
-        file._count.trainingAudioUploadIntents > 0
-      ) {
-        throw new ConflictException('File is linked and cannot be deleted');
-      }
-
-      for (const variant of file.variants) {
-        await this.storage.deleteObject(
-          variant.key,
-          variant.bucket ?? undefined,
-          signal,
-        );
-      }
-
-      await this.storage.deleteObject(
-        file.key,
-        file.bucket ?? undefined,
-        signal,
-      );
-      await tx.file.delete({
-        where: {
-          id: file.id,
+        _count: {
+          select: {
+            profilePhotoUsers: true,
+            objectImages: true,
+            objectFiles: true,
+            feedXmlSources: true,
+            feedMediaAssets: true,
+            lotPresentationDocuments: true,
+            projectPresentationDraftCovers: true,
+            projectPresentationDocuments: true,
+            projectPresentationAssets: true,
+            trainingAnswerSegments: true,
+            trainingMergedAnswers: true,
+            trainingMaterialRevisions: true,
+          },
         },
-      });
+      },
+    });
+
+    if (!file) {
+      throw new NotFoundException('File not found');
+    }
+
+    if (
+      file._count.profilePhotoUsers > 0 ||
+      file._count.objectImages > 0 ||
+      file._count.objectFiles > 0 ||
+      file._count.feedXmlSources > 0 ||
+      file._count.feedMediaAssets > 0 ||
+      file._count.lotPresentationDocuments > 0 ||
+      file._count.projectPresentationDraftCovers > 0 ||
+      file._count.projectPresentationDocuments > 0 ||
+      file._count.projectPresentationAssets > 0 ||
+      file._count.trainingAnswerSegments > 0 ||
+      file._count.trainingMergedAnswers > 0 ||
+      file._count.trainingMaterialRevisions > 0
+    ) {
+      throw new ConflictException('File is linked and cannot be deleted');
+    }
+
+    for (const variant of file.variants) {
+      await this.storage.deleteObject(variant.key, variant.bucket ?? undefined);
+    }
+
+    await this.storage.deleteObject(file.key, file.bucket ?? undefined);
+    await this.prisma.file.delete({
+      where: {
+        id: file.id,
+      },
     });
   }
 
-  async deleteUnlinkedFile(id: string, signal?: AbortSignal) {
+  async deleteUnlinkedFile(id: string) {
+    return (await this.deleteUnlinkedFileWithResult(id)) === 'DELETED';
+  }
+
+  async deleteUnlinkedFileWithResult(id: string) {
     try {
-      await this.delete(id, signal);
+      await this.delete(id);
     } catch (error) {
-      if (error instanceof ConflictException) return false;
+      if (error instanceof ConflictException) return 'LINKED' as const;
+      if (error instanceof NotFoundException) return 'MISSING' as const;
       this.logger.error(
         `Failed to delete unlinked file ${id}`,
         error instanceof Error ? error.stack : String(error),
       );
-      return false;
+      return 'FAILED' as const;
     }
 
-    return true;
+    return 'DELETED' as const;
+  }
+
+  async deleteStoredObject(key: string, bucket: string | null) {
+    await this.storage.deleteObject(key, bucket ?? undefined);
   }
 
   serializeFile(file: File) {
@@ -751,22 +569,6 @@ export class FilesService {
     return `uploads/${year}/${month}/${randomUUID()}${extension}`;
   }
 
-  private createPrivateTrainingStorageKey(extension: '.pdf' | '.docx' | '.pptx' | '.xlsx') {
-    const now = new Date();
-    const year = now.getUTCFullYear();
-    const month = String(now.getUTCMonth() + 1).padStart(2, '0');
-
-    return `training-documents/${year}/${month}/${randomUUID()}${extension}`;
-  }
-
-  private createPrivateTrainingSnapshotStorageKey() {
-    const now = new Date();
-    const year = now.getUTCFullYear();
-    const month = String(now.getUTCMonth() + 1).padStart(2, '0');
-
-    return `training-source-snapshots/${year}/${month}/${randomUUID()}.html`;
-  }
-
   private getSafeExtension(originalName: string, mimeType: string) {
     const extension = extname(originalName).toLowerCase();
     const allowedExtensions = this.getAllowedExtensions(mimeType);
@@ -845,6 +647,15 @@ export class FilesService {
     return file;
   }
 
+  private assertNotPrivateTrainingFile(file: { url: string | null; key: string }) {
+    if (
+      file.url === null &&
+      (file.key.startsWith('training-v2/answers/') || file.key.startsWith('training-v2/materials/'))
+    ) {
+      throw new NotFoundException('File not found');
+    }
+  }
+
   private async findExistingFileWithVariants(id: string) {
     const fileId = this.parseUuid(id, 'File is invalid');
     const file = await this.prisma.file.findUnique({
@@ -907,86 +718,5 @@ export class FilesService {
     }
 
     return value;
-  }
-
-  private assertPrivateTrainingAudioKey(key: string) {
-    if (
-      key.length === 0 ||
-      key.length > 512 ||
-      !key.startsWith('training-audio/') ||
-      key.includes('\\') ||
-      !/^[a-z0-9./_-]+$/u.test(key) ||
-      key.split('/').some((segment) => segment === '' || segment === '.' || segment === '..')
-    ) {
-      throw new BadRequestException('Private training audio key is invalid');
-    }
-  }
-
-  private requirePersistedPrivateBucket(bucket: string | null) {
-    if (
-      bucket === null ||
-      bucket.length === 0 ||
-      bucket.length > 255 ||
-      bucket !== bucket.trim() ||
-      /[/\\\u0000-\u001f\u007f]/u.test(bucket)
-    ) {
-      throw new Error(
-        'Persisted private file bucket requires manual review',
-      );
-    }
-    return bucket;
-  }
-
-  private assertSha256(value: string) {
-    if (!/^[0-9a-f]{64}$/u.test(value)) {
-      throw new BadRequestException(
-        'Private training audio checksum is invalid',
-      );
-    }
-  }
-}
-
-export async function runTrainingSnapshotPutWithTimeout<T>(
-  operation: (signal: AbortSignal) => Promise<T>,
-  timeoutMs = TRAINING_OFFICIAL_URL_SNAPSHOT_PUT_TIMEOUT_MS,
-) {
-  return runTrainingSnapshotStorageWithTimeout(
-    operation,
-    timeoutMs,
-    'TRAINING_SNAPSHOT_PUT_TIMEOUT',
-  );
-}
-
-export async function runTrainingSnapshotDeleteWithTimeout<T>(
-  operation: (signal: AbortSignal) => Promise<T>,
-  timeoutMs: number,
-) {
-  return runTrainingSnapshotStorageWithTimeout(
-    operation,
-    timeoutMs,
-    'TRAINING_SNAPSHOT_DELETE_TIMEOUT',
-  );
-}
-
-async function runTrainingSnapshotStorageWithTimeout<T>(
-  operation: (signal: AbortSignal) => Promise<T>,
-  timeoutMs: number,
-  errorCode: string,
-) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => {
-    const error = Object.assign(
-      new Error('Training source snapshot storage timeout'),
-      {
-        code: errorCode,
-      },
-    );
-    controller.abort(error);
-  }, timeoutMs);
-
-  try {
-    return await operation(controller.signal);
-  } finally {
-    clearTimeout(timeout);
   }
 }
