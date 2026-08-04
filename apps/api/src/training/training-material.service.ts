@@ -56,7 +56,7 @@ import {
 } from './training-snapshot';
 import { TrainingUrlExtractor } from './training-url-extractor';
 
-const DEFAULT_PDF_MAX_BYTES = 25 * 1024 * 1024;
+const DEFAULT_PDF_MAX_BYTES = 100 * 1024 * 1024;
 const PLATFORM_OBJECT_IMPORT_KIND = 'PLATFORMA_OBJECT';
 const OBJECT_FIELD_CODES = [
   'title',
