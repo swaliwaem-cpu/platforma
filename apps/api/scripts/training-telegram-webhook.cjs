@@ -1,5 +1,9 @@
 const TELEGRAM_API_ORIGIN = 'https://api.telegram.org';
 const ALLOWED_UPDATES = ['message', 'callback_query'];
+const TELEGRAM_WEBHOOK_PATHS = new Set([
+  '/training/telegram/webhook',
+  '/api/training/telegram/webhook',
+]);
 
 async function executeWebhookCommand({
   action,
@@ -124,7 +128,7 @@ function validateWebhookUrl(raw) {
     url.password ||
     url.search ||
     url.hash ||
-    url.pathname !== '/training/telegram/webhook' ||
+    !TELEGRAM_WEBHOOK_PATHS.has(url.pathname) ||
     hostname === 'localhost' ||
     hostname === '127.0.0.1' ||
     hostname === '0.0.0.0' ||

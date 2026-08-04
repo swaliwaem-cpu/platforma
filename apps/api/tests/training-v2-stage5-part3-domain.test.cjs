@@ -31,7 +31,7 @@ function validProductionEnvironment() {
     TELEGRAM_BOT_TOKEN: '123456789:abcdefghijklmnopqrstuvwxyz_123456',
     TELEGRAM_BOT_USERNAME: 'platforma_training_bot',
     TELEGRAM_WEBHOOK_SECRET: 'safe_webhook_secret_123456',
-    TELEGRAM_WEBHOOK_URL: 'https://training.fluffywhite.moscow/training/telegram/webhook',
+    TELEGRAM_WEBHOOK_URL: 'https://training.fluffywhite.moscow/api/training/telegram/webhook',
     TRAINING_AI_MODE: 'openai',
     OPENAI_API_KEY: 'sk-live-project-key-value-123456',
     OPENAI_TRANSCRIPTION_MODEL: 'gpt-transcribe-production',
@@ -65,6 +65,10 @@ test('production disabled mode preserves a safe fake configuration', () => {
 
 test('production enabled mode requires real providers, HTTPS and pairwise distinct buckets', () => {
   assert.deepEqual(validateTrainingRuntimeConfig(validProductionEnvironment()), { enabled: true });
+  assert.deepEqual(validateTrainingRuntimeConfig({
+    ...validProductionEnvironment(),
+    TELEGRAM_WEBHOOK_URL: 'https://training.fluffywhite.moscow/training/telegram/webhook',
+  }), { enabled: true });
 
   const invalidCases = [
     ['TELEGRAM_TRANSPORT_MODE', 'fake'],
@@ -154,6 +158,10 @@ test('webhook register builds the exact secret and allowed-updates request', () 
   assert.equal(operation.body.secret_token, environment.TELEGRAM_WEBHOOK_SECRET);
   assert.deepEqual(operation.body.allowed_updates, ALLOWED_UPDATES);
   assert.equal(operation.body.drop_pending_updates, false);
+  assert.equal(
+    validateWebhookUrl('https://training.fluffywhite.moscow/training/telegram/webhook'),
+    'https://training.fluffywhite.moscow/training/telegram/webhook',
+  );
   assert.throws(() => validateWebhookUrl('http://example.com/training/telegram/webhook'));
   assert.throws(() => validateWebhookUrl('https://127.0.0.1/training/telegram/webhook'));
   assert.throws(() => validateWebhookUrl('https://[fd00::1]/training/telegram/webhook'));

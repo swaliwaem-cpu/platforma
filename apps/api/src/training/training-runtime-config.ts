@@ -8,6 +8,10 @@ type TrainingEnvironment = NodeJS.ProcessEnv | Record<string, string | undefined
 
 const BUCKET_PATTERN = /^(?!\d{1,3}(?:\.\d{1,3}){3}$)[a-z0-9](?:[a-z0-9.-]{1,61}[a-z0-9])?$/u;
 const PLACEHOLDER_PATTERN = /(?:change[-_ ]?me|placeholder|example|your[-_ ]|dummy|test[-_ ]?(?:key|token|secret)|^fake$)/iu;
+const TELEGRAM_WEBHOOK_PATHS = new Set([
+  '/training/telegram/webhook',
+  '/api/training/telegram/webhook',
+]);
 
 export class TrainingRuntimeConfigError extends Error {
   constructor(readonly code: string) {
@@ -119,7 +123,7 @@ function validateHttpsUrl(
     url.hash ||
     isUnsafeProductionHostname(url.hostname) ||
     (requireWebhookPath &&
-      (url.pathname !== '/training/telegram/webhook' || Boolean(url.search)))
+      (!TELEGRAM_WEBHOOK_PATHS.has(url.pathname) || Boolean(url.search)))
   ) {
     throw new TrainingRuntimeConfigError(`${key}_INVALID`);
   }
