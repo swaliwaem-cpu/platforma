@@ -10,7 +10,14 @@ const page = await browser.newPage();
 const queries = [];
 const exportQueries = [];
 let exportReads = 0;
-let initialDelay = true;
+let initialRankingReleased = false;
+let releaseInitialRanking;
+const initialRankingGate = new Promise((resolve) => {
+  releaseInitialRanking = () => {
+    initialRankingReleased = true;
+    resolve();
+  };
+});
 
 try {
   await page.route('http://localhost:3000/**', async (route) => {
@@ -20,7 +27,7 @@ try {
     if (url.pathname === '/auth/refresh') return json(route, { accessToken: 'ranking-token', user: { id: '1', email: 'admin@test', name: 'Admin', status: 'ACTIVE', role: { id: '1', name: 'admin' }, permissions: ['admin:access', 'training:results:read'] } });
     if (url.pathname === '/training/admin/ranking') {
       queries.push(Object.fromEntries(url.searchParams.entries()));
-      if (initialDelay) { initialDelay = false; await new Promise((resolve) => setTimeout(resolve, 150)); }
+      if (!initialRankingReleased) await initialRankingGate;
       const search = url.searchParams.get('search');
       if (search === 'error') return json(route, { message: 'RANKING_FAILED' }, 500);
       return json(route, { items: search === 'empty' ? [] : [fixture(), fixture('u2', 'Борис Брокер', '75.00')], total: search === 'empty' ? 0 : 21, page: Number(url.searchParams.get('page') ?? 1), limit: 20, totalPages: search === 'empty' ? 0 : 2 });
@@ -33,20 +40,25 @@ try {
     return json(route, { message: `Unexpected ${url.pathname}` }, 404);
   });
 
-  await page.goto(`${baseUrl}/admin/training/ranking`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${baseUrl}/admin/training/ranking?theme=c`, { waitUntil: 'domcontentloaded' });
   await page.getByLabel('Загрузка рейтинга').waitFor();
+  releaseInitialRanking();
   await page.getByText('Рейтинг сотрудников').waitFor();
   await page.getByText('Анна Брокер').waitFor();
-  assert.deepEqual(await page.locator('tbody tr td:first-child strong').allTextContents(), ['1. Анна Брокер', '2. Борис Брокер']);
+  assert.deepEqual(await page.locator('tbody tr.training-ranking-row td:nth-child(2) strong').allTextContents(), ['Анна Брокер', 'Борис Брокер']);
   await page.getByText('87.50%').waitFor();
-  await page.getByText('По проектам').first().click();
+  await page.locator('tbody .training-ranking-access--yes').first().waitFor();
+  assert.equal(await page.getByText('Стабильный результат.').count(), 0);
+  await page.getByRole('button', { name: 'Детали' }).first().click();
+  await page.getByText('Стабильный результат.').waitFor();
+  await page.getByText('Результаты по проектам').click();
   await page.getByText('Проект А').first().waitFor();
   await page.getByRole('button', { name: 'Далее' }).click();
   await page.getByText('Страница 2 из 2').waitFor();
   assert.equal(queries.at(-1).page, '2');
   await page.getByLabel('Сотрудник').fill('empty');
-  await page.getByLabel('Сейчас доступно').selectOption('true');
-  await page.getByRole('button', { name: 'Применить' }).click();
+  await page.getByLabel('Доступ').selectOption('true');
+  await page.getByRole('button', { name: 'Показать' }).click();
   await page.getByText('Рейтинг пуст').waitFor();
   assert.equal(queries.at(-1).currentlyEligible, 'true');
   await page.getByRole('button', { name: 'Скачать CSV' }).click();
@@ -55,7 +67,7 @@ try {
   assert.equal(exportQueries[0].search, 'empty');
   assert.equal(exportQueries[0].currentlyEligible, 'true');
   await page.getByLabel('Сотрудник').fill('error');
-  await page.getByRole('button', { name: 'Применить' }).click();
+  await page.getByRole('button', { name: 'Показать' }).click();
   await page.getByText('RANKING_FAILED').waitFor();
   assert.equal(await page.getByText('Анна Брокер').count(), 0);
   await page.setViewportSize({ width: 500, height: 900 });
