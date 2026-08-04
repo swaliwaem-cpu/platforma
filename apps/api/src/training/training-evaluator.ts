@@ -357,14 +357,19 @@ function parseCriterionAssessment(
   if (
     !criterion ||
     !Number.isInteger(value.awarded_points) ||
-    (value.awarded_points as number) < 0 ||
-    (value.awarded_points as number) > criterion.maxPoints ||
     (value.evidence !== null && typeof value.evidence !== 'string') ||
     typeof value.explanation !== 'string' ||
     value.explanation.trim().length < 1 ||
     value.explanation.length > 1_000
   ) {
     throw new Error('INVALID_CRITERION_ASSESSMENT');
+  }
+
+  if (
+    (value.awarded_points as number) < 0 ||
+    (value.awarded_points as number) > criterion.maxPoints
+  ) {
+    throw new Error('CRITERION_POINTS_OUT_OF_RANGE');
   }
 
   if (typeof value.evidence === 'string') {

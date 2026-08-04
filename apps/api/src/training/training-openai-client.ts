@@ -22,6 +22,7 @@ export class TrainingOpenAIError extends Error {
     readonly code: string,
     readonly retryable: boolean,
     readonly attempts = 0,
+    readonly detailCode: string | null = null,
   ) {
     super(`Training OpenAI request failed: ${code}`);
     this.name = 'TrainingOpenAIError';
@@ -90,7 +91,12 @@ export class TrainingOpenAIClient {
           };
         } catch (error) {
           const parsedError = error instanceof TrainingOpenAIError
-            ? new TrainingOpenAIError(error.code, error.retryable, attempts)
+            ? new TrainingOpenAIError(
+                error.code,
+                error.retryable,
+                attempts,
+                error.detailCode,
+              )
             : new TrainingOpenAIError('OPENAI_MALFORMED_RESPONSE', true, attempts);
 
           if (!parsedError.retryable || attempts > input.policy.maxRetries) throw parsedError;

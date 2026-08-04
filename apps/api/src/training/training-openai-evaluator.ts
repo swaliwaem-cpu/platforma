@@ -166,15 +166,21 @@ export function createEvaluationSchema(input: TrainingEvaluationInput) {
         minItems: criterionIds.length,
         maxItems: criterionIds.length,
         items: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['criterion_id', 'awarded_points', 'evidence', 'explanation'],
-          properties: {
-            criterion_id: { type: 'string', enum: criterionIds },
-            awarded_points: { type: 'integer', minimum: 0, maximum: input.maxScore },
-            evidence: { type: ['string', 'null'], minLength: 1, maxLength: 500 },
-            explanation: { type: 'string', minLength: 1, maxLength: 1_000 },
-          },
+          anyOf: input.criteria.map((criterion) => ({
+            type: 'object',
+            additionalProperties: false,
+            required: ['criterion_id', 'awarded_points', 'evidence', 'explanation'],
+            properties: {
+              criterion_id: { type: 'string', enum: [criterion.id] },
+              awarded_points: {
+                type: 'integer',
+                minimum: 0,
+                maximum: criterion.maxPoints,
+              },
+              evidence: { type: ['string', 'null'], minLength: 1, maxLength: 500 },
+              explanation: { type: 'string', minLength: 1, maxLength: 1_000 },
+            },
+          })),
         },
       },
       unsupported_claims: {
@@ -223,9 +229,36 @@ function parseEvaluationResponse(value: unknown, requestedModel: string, input: 
         : requestedModel,
       usage: parseUsage(value.usage),
     };
-  } catch {
-    throw new TrainingOpenAIError('OPENAI_EVALUATION_INVALID', true);
+  } catch (error) {
+    throw new TrainingOpenAIError(
+      'OPENAI_EVALUATION_INVALID',
+      true,
+      0,
+      getSafeEvaluationValidationCode(error),
+    );
   }
+}
+
+const SAFE_EVALUATION_VALIDATION_CODES = new Set([
+  'INVALID_EVALUATION_OBJECT',
+  'EVALUATION_ADDITIONAL_PROPERTIES',
+  'INVALID_EVALUATION_SCHEMA',
+  'INVALID_FACT_ASSESSMENT',
+  'FACT_EVIDENCE_REQUIRED',
+  'INVALID_CRITERION_ASSESSMENT',
+  'CRITERION_POINTS_OUT_OF_RANGE',
+  'INVALID_CRITERION_EVIDENCE',
+  'FACT_IDS_MISMATCH',
+  'CRITERION_IDS_MISMATCH',
+  'TOO_MANY_UNSUPPORTED_CLAIMS',
+  'INVALID_UNSUPPORTED_CLAIM',
+  'UNSUPPORTED_CLAIM_IS_APPROVED',
+  'EVIDENCE_NOT_IN_TRANSCRIPT',
+]);
+
+function getSafeEvaluationValidationCode(error: unknown) {
+  const code = error instanceof Error ? error.message : '';
+  return SAFE_EVALUATION_VALIDATION_CODES.has(code) ? code : 'UNKNOWN_VALIDATION_ERROR';
 }
 
 function readOutputText(value: unknown) {
