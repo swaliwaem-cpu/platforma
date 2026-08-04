@@ -26,7 +26,12 @@ test('Responses request is strict, store=false and contains only current approve
   assert.equal(requestBody.text.format.strict, true);
   assert.equal(requestBody.text.format.schema.additionalProperties, false);
   assert.equal(requestBody.text.format.schema.properties.fact_assessments.items.additionalProperties, false);
-  assert.equal(requestBody.text.format.schema.properties.criterion_assessments.items.additionalProperties, false);
+  assert.equal(
+    requestBody.text.format.schema.properties.criterion_assessments.items.anyOf.every(
+      (branch) => branch.additionalProperties === false,
+    ),
+    true,
+  );
   assert.equal(requestBody.text.format.schema.properties.unsupported_claims.items.additionalProperties, false);
 
   const serialized = JSON.stringify(requestBody);
@@ -39,13 +44,56 @@ test('Responses request is strict, store=false and contains only current approve
 });
 
 test('evaluation schema fixes expected IDs and bounded arrays', () => {
-  const schema = createEvaluationSchema(makeInput());
+  const secondCriterionId = '33333333-3333-4333-8333-333333333333';
+  const input = makeInput();
+  input.criteria = [
+    { ...input.criteria[0], maxPoints: 20 },
+    { id: secondCriterionId, code: 'second', title: 'Второй', guidance: 'Проверить.', maxPoints: 35, position: 2 },
+  ];
+  const schema = createEvaluationSchema(input);
   assert.deepEqual(schema.properties.fact_assessments.items.properties.fact_id.enum, [factId]);
-  assert.deepEqual(schema.properties.criterion_assessments.items.properties.criterion_id.enum, [criterionId]);
+  assert.deepEqual(
+    schema.properties.criterion_assessments.items.anyOf.map((branch) => ({
+      id: branch.properties.criterion_id.enum[0],
+      maximum: branch.properties.awarded_points.maximum,
+    })),
+    [
+      { id: criterionId, maximum: 20 },
+      { id: secondCriterionId, maximum: 35 },
+    ],
+  );
   assert.equal(schema.properties.fact_assessments.minItems, 1);
-  assert.equal(schema.properties.fact_assessments.maxItems, 1);
+  assert.equal(schema.properties.criterion_assessments.minItems, 2);
+  assert.equal(schema.properties.criterion_assessments.maxItems, 2);
   assert.equal(schema.properties.unsupported_claims.maxItems, 20);
   assert.equal(Object.hasOwn(schema.properties, 'final_score'), false);
+});
+
+test('safe validation detail survives bounded provider retries', async () => {
+  await withEvaluationEnv(async () => {
+    process.env.OPENAI_EVALUATION_MAX_RETRIES = '1';
+    let calls = 0;
+    const invalid = {
+      ...makeEvaluation(),
+      criterion_assessments: [{
+        ...makeEvaluation().criterion_assessments[0],
+        awarded_points: 56,
+      }],
+    };
+    const evaluator = makeEvaluator(async () => {
+      calls += 1;
+      return jsonResponse(makeResponse(invalid));
+    });
+
+    await assert.rejects(
+      () => evaluator.evaluate(makeInput()),
+      (error) =>
+        error.code === 'OPENAI_EVALUATION_INVALID' &&
+        error.detailCode === 'CRITERION_POINTS_OUT_OF_RANGE' &&
+        error.attempts === 2,
+    );
+    assert.equal(calls, 2);
+  });
 });
 
 test('Responses provider rejects refusal, incomplete, invalid schema and evidence mismatch', async () => {

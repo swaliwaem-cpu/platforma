@@ -7,6 +7,7 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -14,6 +15,7 @@ import {
   TrainingAnswerProcessingStatus,
   TrainingAttemptQuestionStatus,
   TrainingAttemptStatus,
+  TrainingQuestionType,
 } from '@prisma/client';
 import type {
   TrainingTelegramAccountState,
@@ -31,6 +33,7 @@ import {
   getTrainingTelegramTransportMode,
   TRAINING_TELEGRAM_CLIENT,
   type TrainingTelegramClient,
+  TrainingTelegramClientError,
 } from './training-telegram-client';
 
 const TELEGRAM_LINK_TTL_MS = 15 * 60 * 1000;
@@ -61,10 +64,14 @@ type TelegramCallback = {
   data: string;
 };
 
-type TrainingTelegramDelivery = () => Promise<void>;
+type TrainingTelegramDelivery = {
+  operation: 'answerCallbackQuery' | 'sendMessage';
+  deliver: () => Promise<void>;
+};
 
 @Injectable()
 export class TrainingTelegramService {
+  private readonly logger = new Logger(TrainingTelegramService.name);
   private readonly outboundContext = new AsyncLocalStorage<TrainingTelegramClient>();
 
   constructor(
@@ -88,10 +95,16 @@ export class TrainingTelegramService {
             row.map((button) => ({ ...button })),
           ),
         };
-        deliveries.push(() => this.client.sendMessage(copiedInput));
+        deliveries.push({
+          operation: 'sendMessage',
+          deliver: () => this.client.sendMessage(copiedInput),
+        });
       },
       answerCallbackQuery: async (callbackQueryId, text) => {
-        deliveries.push(() => this.client.answerCallbackQuery(callbackQueryId, text));
+        deliveries.push({
+          operation: 'answerCallbackQuery',
+          deliver: () => this.client.answerCallbackQuery(callbackQueryId, text),
+        });
       },
       getFile: async () => {
         throw new Error('Telegram file download is not allowed in a webhook request');
@@ -106,10 +119,37 @@ export class TrainingTelegramService {
   }
 
   dispatchWebhookDeliveries(deliveries: TrainingTelegramDelivery[]) {
-    queueMicrotask(async () => {
-      for (const deliver of deliveries) {
-        await deliver().catch(() => undefined);
+    queueMicrotask(() => {
+      const callbackAnswers = deliveries.filter(
+        (delivery) => delivery.operation === 'answerCallbackQuery',
+      );
+      const messages = deliveries.filter((delivery) => delivery.operation === 'sendMessage');
+
+      for (const delivery of callbackAnswers) {
+        void this.deliverAndLog(delivery);
       }
+      void this.deliverMessagesSequentially(messages);
+    });
+  }
+
+  private async deliverMessagesSequentially(deliveries: TrainingTelegramDelivery[]) {
+    for (const delivery of deliveries) await this.deliverAndLog(delivery);
+  }
+
+  private async deliverAndLog(delivery: TrainingTelegramDelivery) {
+    try {
+      await delivery.deliver();
+    } catch (error) {
+      this.logDeliveryFailure(delivery.operation, error);
+    }
+  }
+
+  private logDeliveryFailure(operation: TrainingTelegramDelivery['operation'], error: unknown) {
+    this.logger.warn({
+      event: 'training_telegram_delivery_failed',
+      operation,
+      code: error instanceof TrainingTelegramClientError ? error.code : 'UNEXPECTED_ERROR',
+      retryable: error instanceof TrainingTelegramClientError && error.retryable,
     });
   }
 
@@ -271,7 +311,7 @@ export class TrainingTelegramService {
       void this.notifyAttemptState(
         attemptId,
         TrainingAttemptStatus.COMPLETED,
-      ).catch(() => undefined);
+      ).catch((error: unknown) => this.logDeliveryFailure('sendMessage', error));
     });
   }
 
@@ -442,7 +482,7 @@ export class TrainingTelegramService {
     if (result.status === 'PROCESSING') {
       await this.outboundClient.sendMessage({
         chatId: callback.identity.chatId,
-        text: 'Ответ обрабатывается',
+        text: 'Ответ принят. Распознаём и оцениваем. Время обработки не учитывается в лимите. Следующий вопрос придёт автоматически.',
       });
     } else if (result.status === 'TIMED_OUT') {
       await this.outboundClient.sendMessage({
@@ -723,7 +763,12 @@ export class TrainingTelegramService {
     }
 
     if (question.answer?.processingStatus === TrainingAnswerProcessingStatus.PROCESSING) {
-      await this.outboundClient.sendMessage({ chatId, text: 'Ответ обрабатывается' });
+      await this.outboundClient.sendMessage({
+        chatId,
+        text: question.answer.transcriptionStatus === 'COMPLETED'
+          ? 'Ответ распознан. Сейчас оцениваем его. Время обработки не учитывается в лимите.'
+          : 'Ответ принят. Распознаём и оцениваем. Время обработки не учитывается в лимите. Следующий вопрос придёт автоматически.',
+      });
       return;
     }
 
@@ -737,7 +782,11 @@ export class TrainingTelegramService {
 
       await this.outboundClient.sendMessage({
       chatId,
-      text: `Вопрос ${question.sequence} из 4\n${question.questionTextSnapshot}\n\nОтправьте ответ голосовым сообщением.`,
+      text: `Вопрос ${question.sequence} из 4\n${question.questionTextSnapshot}\n\nОтправьте ответ голосовым сообщением.${
+        question.type === TrainingQuestionType.FOLLOW_UP
+          ? '\nРекомендуем ответить за 60–90 секунд.'
+          : ''
+      }`,
       ...(question.answer?._count.segments
         ? {
             inlineKeyboard: [

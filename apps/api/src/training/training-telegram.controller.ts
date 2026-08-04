@@ -3,6 +3,7 @@ import {
   Controller,
   Headers,
   HttpCode,
+  Logger,
   PayloadTooLargeException,
   Post,
 } from '@nestjs/common';
@@ -12,6 +13,8 @@ import { isTrainingModuleEnabled } from './training-runtime-config';
 
 @Controller('training/telegram')
 export class TrainingTelegramController {
+  private readonly logger = new Logger(TrainingTelegramController.name);
+
   constructor(private readonly telegram: TrainingTelegramService) {}
 
   @Post('webhook')
@@ -35,7 +38,16 @@ export class TrainingTelegramController {
       throw new PayloadTooLargeException('Telegram update is too large');
     }
 
+    const startedAt = Date.now();
     const deliveries = await this.telegram.handleWebhookUpdate(body);
+    const durationMs = Date.now() - startedAt;
+
+    if (durationMs >= 1_000) {
+      this.logger.warn({
+        event: 'training_telegram_webhook_slow',
+        durationMs,
+      });
+    }
     this.telegram.dispatchWebhookDeliveries(deliveries);
     return { ok: true };
   }

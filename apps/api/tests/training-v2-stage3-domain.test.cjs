@@ -100,6 +100,12 @@ test('strict evaluation rejects unknown/duplicate IDs and mismatched evidence', 
       ? { ...item, evidence: 'нет в транскрипте' }
       : item),
   }, input), /EVIDENCE_NOT_IN_TRANSCRIPT/);
+  assert.throws(() => validateTrainingStructuredEvaluation({
+    ...valid,
+    criterion_assessments: valid.criterion_assessments.map((item, index) => index === 0
+      ? { ...item, awarded_points: 21 }
+      : item),
+  }, input), /CRITERION_POINTS_OUT_OF_RANGE/);
 });
 
 test('evidence normalization is exact and deterministic', () => {
@@ -215,7 +221,10 @@ function makeEvaluationInput() {
       { id: factId, statement: 'В проекте 120 квартир.', aliases: ['120 квартир'], required: true, position: 1 },
       { id: secondFactId, statement: 'Срок сдачи не переносился.', aliases: ['срок без переноса'], required: true, position: 2 },
     ],
-    criteria: [{ id: criterionId, code: 'main', title: 'Main', guidance: '', maxPoints: 55, position: 1 }],
+    criteria: [
+      { id: criterionId, code: 'main-part-1', title: 'Main part 1', guidance: '', maxPoints: 20, position: 1 },
+      { id: secondCriterionId, code: 'main-part-2', title: 'Main part 2', guidance: '', maxPoints: 35, position: 2 },
+    ],
     objectiveMetrics: { audioDurationSeconds: 30, segmentCount: 1, wordCount: 9, wordsPerMinute: 18, fillerWordsCount: 0, fillerWordsFound: [] },
     maxScore: 55,
   };
@@ -228,7 +237,10 @@ function makeEvaluation() {
       { fact_id: factId, verdict: 'CORRECT', evidence: 'В проекте 120 квартир.', explanation: 'Совпадает.' },
       { fact_id: secondFactId, verdict: 'INCORRECT', evidence: 'Срок сдачи перенесён.', explanation: 'Противоречит факту.' },
     ],
-    criterion_assessments: [{ criterion_id: criterionId, awarded_points: 55, evidence: 'В проекте 120 квартир.', explanation: 'Полный ответ.' }],
+    criterion_assessments: [
+      { criterion_id: criterionId, awarded_points: 20, evidence: 'В проекте 120 квартир.', explanation: 'Первая часть.' },
+      { criterion_id: secondCriterionId, awarded_points: 35, evidence: 'Срок сдачи перенесён.', explanation: 'Вторая часть.' },
+    ],
     unsupported_claims: [],
     summary: 'Ответ оценён.',
     requires_review: false,

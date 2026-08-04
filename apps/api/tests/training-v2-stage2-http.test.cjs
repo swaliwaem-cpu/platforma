@@ -189,6 +189,51 @@ if (!databaseUrl) {
     }
   });
 
+  test('callback answer is dispatched before a slow Telegram message', async () => {
+    const question = await prisma.trainingAttemptQuestion.findFirstOrThrow({
+      where: {
+        status: 'PRESENTED',
+        attempt: { userId: employee.id, projectId: project.id },
+      },
+      orderBy: { sequence: 'asc' },
+    });
+    const originalSendMessage = client.sendMessage.bind(client);
+    const originalAnswerCallbackQuery = client.answerCallbackQuery.bind(client);
+    let releaseMessage;
+    const messageBarrier = new Promise((resolve) => { releaseMessage = resolve; });
+    let messageStarted = false;
+    let callbackAnswered = false;
+
+    client.sendMessage = async (input) => {
+      messageStarted = true;
+      await messageBarrier;
+      await originalSendMessage(input);
+    };
+    client.answerCallbackQuery = async (...args) => {
+      callbackAnswered = true;
+      await originalAnswerCallbackQuery(...args);
+    };
+
+    try {
+      const response = await webhook(
+        callbackUpdate(501, `tr:finish:${question.id}`, 'priority-callback'),
+      );
+
+      assert.equal(response.status, 200);
+      await waitFor(() => messageStarted && callbackAnswered);
+      assert.equal(callbackAnswered, true);
+    } finally {
+      releaseMessage();
+      await waitFor(() =>
+        client.sentMessages.some((message) =>
+          message.text.startsWith('Ответ принят. Распознаём и оцениваем.'),
+        ),
+      );
+      client.sendMessage = originalSendMessage;
+      client.answerCallbackQuery = originalAnswerCallbackQuery;
+    }
+  });
+
   async function request(path, options = {}) {
     const response = await fetch(`${baseUrl}${path}`, {
       method: options.method ?? 'GET',

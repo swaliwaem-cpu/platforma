@@ -590,7 +590,9 @@ async function runConnectedScenario(context) {
       })),
     },
   );
-  assert.equal(applied.createdFactIds.length, suggested.latestRevision.suggestions.length);
+  assert.equal(applied.createdFactIds.length, 0);
+  assert.equal(applied.duplicates.length, suggested.latestRevision.suggestions.length);
+  assert.equal(applied.duplicates.every((duplicate) => duplicate.reason === 'DUPLICATE_FACT'), true);
 
   const richDraft = await apiRequest(`/training/admin/projects/${project.id}`, {
     token: identities.tokens.admin,
@@ -1339,7 +1341,7 @@ async function runBrowserChecks(context, browser) {
     await page.getByRole('tab', { name: 'Материалы' }).click();
     await page.getByText('E2E официальный URL fixture').first().waitFor();
     await page.getByText('E2E PDF вложение').first().waitFor();
-    await page.getByRole('tab', { name: 'Доступ сотрудников' }).click();
+    await page.getByRole('tab', { name: 'Назначения' }).click();
     await page.getByText('E2E Employee 000').first().waitFor();
 
     await page.goto(`http://web:5173/admin/training/attempts/${pendingReviewAttempt.id}`);
@@ -1352,7 +1354,7 @@ async function runBrowserChecks(context, browser) {
     assert.ok(lifecycle.created >= 1);
     assert.ok(lifecycle.revoked >= 1);
     await page.getByRole('button', { name: 'Подтвердить расчёт' }).click();
-    await page.getByText(/Решение сохранено, но detail не обновился/u).waitFor();
+    await page.getByText(/Решение сохранено, но подробности не обновились/u).waitFor();
     assert.equal(reviewPosts, 1);
     assert.equal(failedReviewRefresh, true);
     assert.equal(await page.getByRole('button', { name: 'Подтвердить расчёт' }).count(), 0);

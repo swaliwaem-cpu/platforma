@@ -134,7 +134,40 @@ if (!databaseUrl) {
     assert.equal(evaluator.calls, 2);
     assert.equal(completed.processingStatus, 'COMPLETED');
     assert.equal(completed.evaluationStatus, 'COMPLETED');
+    assert.equal(completed.processingAttempts, 2);
+    assert.equal(completed.evaluationAttempts, 2);
     assert.equal(await prisma.trainingAttemptQuestion.count({ where: { attemptId: item.attempt.id } }), 4);
+  });
+
+  test('retryable evaluation exhausts after two worker cycles with safe detail and refunded attempt', async () => {
+    const item = await createProcessingAnswer('evaluation-exhausted');
+    const transcriber = new RecordingTranscriber();
+    const evaluator = new AlwaysRetryableEvaluator(fakeEvaluator);
+    const worker = createWorker(new FakeAudio(prisma), transcriber, evaluator, state);
+
+    assert.equal(await worker.runOnce(), true);
+    const retrying = await prisma.trainingAnswer.findUniqueOrThrow({ where: { id: item.answerId } });
+    assert.equal(retrying.processingStatus, 'PROCESSING');
+    assert.equal(retrying.processingErrorCode, null);
+    assert.equal(retrying.processingAttempts, 1);
+    assert.equal(retrying.evaluationAttempts, 2);
+
+    assert.equal(await worker.runOnce(), true);
+    const failedAnswer = await prisma.trainingAnswer.findUniqueOrThrow({ where: { id: item.answerId } });
+    const failedAttempt = await prisma.trainingAttempt.findUniqueOrThrow({ where: { id: item.attempt.id } });
+    assert.equal(transcriber.calls, 1);
+    assert.equal(evaluator.calls, 2);
+    assert.equal(failedAnswer.processingStatus, 'FAILED');
+    assert.equal(failedAnswer.processingAttempts, 2);
+    assert.equal(failedAnswer.evaluationAttempts, 4);
+    assert.equal(
+      failedAnswer.processingErrorCode,
+      'OPENAI_EVALUATION_INVALID_CRITERION_POINTS_OUT_OF_RANGE',
+    );
+    assert.equal(failedAttempt.status, 'TECHNICAL_FAILED');
+    assert.equal(failedAttempt.countsTowardAttemptLimit, false);
+    assert.equal(failedAttempt.finalScore, null);
+    assert.equal(await worker.runOnce(), false);
   });
 
   test('evaluation checkpoint survives progression restart and creates follow-ups exactly once', async () => {
@@ -447,8 +480,27 @@ if (!databaseUrl) {
   class FailOnceEvaluator extends RecordingEvaluator {
     async evaluate(input) {
       this.calls += 1;
-      if (this.calls === 1) throw new Error('simulated restart before evaluation response');
+      if (this.calls === 1) {
+        throw new TrainingOpenAIError(
+          'OPENAI_EVALUATION_INVALID',
+          true,
+          1,
+          'CRITERION_POINTS_OUT_OF_RANGE',
+        );
+      }
       return this.delegate.evaluate(input);
+    }
+  }
+
+  class AlwaysRetryableEvaluator extends RecordingEvaluator {
+    async evaluate() {
+      this.calls += 1;
+      throw new TrainingOpenAIError(
+        'OPENAI_EVALUATION_INVALID',
+        true,
+        2,
+        'CRITERION_POINTS_OUT_OF_RANGE',
+      );
     }
   }
 }

@@ -165,7 +165,9 @@ if (!databaseUrl) {
     assert.equal(processing.processingStatus, TrainingAnswerProcessingStatus.PROCESSING);
     assert.equal(await prisma.trainingAnswer.count({ where: { id: answer.id } }), 1);
     assert.equal(
-      client.sentMessages.filter((message) => message.text === 'Ответ обрабатывается').length,
+      client.sentMessages.filter((message) =>
+        message.text.startsWith('Ответ принят. Распознаём и оцениваем.'),
+      ).length,
       2,
     );
   });
@@ -220,6 +222,35 @@ if (!databaseUrl) {
     assert.equal(storedAnswer.processingErrorCode, 'ATTEMPT_TIMED_OUT');
     assert.equal(storedAnswer.score, null);
     assert.equal(storedAnswer.segments.length, 1);
+  });
+
+  test('finish at an expired deadline times out instead of submitting for processing', async () => {
+    const user = await createUser('finish-timeout');
+    const project = await createOpenProject('Finish timeout project');
+    const { token, telegramId } = await consumeLink(user.id, project.id, 402);
+    await telegram.handleUpdate(callbackUpdate(telegramId, `tr:start:${token.id}`, 'start-finish-timeout'));
+    const attempt = await prisma.trainingAttempt.findFirstOrThrow({ where: { userId: user.id } });
+    const question = await prisma.trainingAttemptQuestion.findFirstOrThrow({
+      where: { attemptId: attempt.id, status: 'PRESENTED' },
+    });
+    await telegram.handleUpdate(voiceUpdate(telegramId, 22, 'file-finish-timeout', 'unique-finish-timeout'));
+    await prisma.$executeRawUnsafe(
+      `UPDATE training_attempts SET expires_at = CURRENT_TIMESTAMP WHERE id = $1::uuid`,
+      attempt.id,
+    );
+
+    await telegram.handleUpdate(
+      callbackUpdate(telegramId, `tr:finish:${question.id}`, 'finish-after-deadline'),
+    );
+
+    const storedAttempt = await prisma.trainingAttempt.findUniqueOrThrow({ where: { id: attempt.id } });
+    const storedAnswer = await prisma.trainingAnswer.findFirstOrThrow({
+      where: { attemptQuestion: { attemptId: attempt.id } },
+    });
+    assert.equal(storedAttempt.status, 'TIMED_OUT');
+    assert.equal(storedAnswer.processingStatus, TrainingAnswerProcessingStatus.FAILED);
+    assert.equal(storedAnswer.processingErrorCode, 'ATTEMPT_TIMED_OUT');
+    assert.equal(storedAnswer.submittedAt, null);
   });
 
   test('audio processing downloads ordered segments, stores private files and cleans temp data', async () => {
@@ -397,7 +428,7 @@ if (!databaseUrl) {
       );
       if (sequence === 1) {
         await telegram.handleUpdate(plainStartUpdate(telegramId));
-        assert.equal(client.sentMessages.at(-1)?.text, 'Ответ обрабатывается');
+        assert.match(client.sentMessages.at(-1)?.text ?? '', /Время обработки не учитывается/);
       }
       assert.equal(await worker.runOnce(), true);
     }
@@ -485,7 +516,7 @@ if (!databaseUrl) {
     );
   });
 
-  test('worker timeout after finish commits timeout result and notifies Telegram', async () => {
+  test('worker returns processing time to the attempt deadline after finish', async () => {
     const user = await createUser('worker-timeout');
     const project = await createOpenProject('Worker timeout');
     const { token, telegramId } = await consumeLink(user.id, project.id, 851);
@@ -505,6 +536,14 @@ if (!databaseUrl) {
       `UPDATE training_attempts SET started_at = CURRENT_TIMESTAMP - INTERVAL '2 minutes', expires_at = CURRENT_TIMESTAMP - INTERVAL '1 minute' WHERE id = $1::uuid`,
       attempt.id,
     );
+    await prisma.$executeRawUnsafe(
+      `UPDATE training_answers SET submitted_at = CURRENT_TIMESTAMP - INTERVAL '2 minutes' WHERE attempt_question_id = $1::uuid`,
+      question.id,
+    );
+    const beforeAttempt = await prisma.trainingAttempt.findUniqueOrThrow({ where: { id: attempt.id } });
+    const beforeAnswer = await prisma.trainingAnswer.findFirstOrThrow({
+      where: { attemptQuestion: { attemptId: attempt.id } },
+    });
     const worker = createWorker(
       new ImmediateWorkerAudio(prisma),
       { transcribe: async () => fakeTranscription() },
@@ -518,20 +557,31 @@ if (!databaseUrl) {
     const answer = await prisma.trainingAnswer.findFirstOrThrow({
       where: { attemptQuestion: { attemptId: attempt.id } },
     });
-    assert.equal(storedAttempt.status, 'TIMED_OUT');
-    assert.equal(storedAttempt.isPassed, false);
-    assert.equal(answer.processingStatus, TrainingAnswerProcessingStatus.FAILED);
-    assert.equal(answer.processingErrorCode, 'ATTEMPT_TIMED_OUT');
-    assert.equal(answer.score, null);
+    const answeredQuestion = await prisma.trainingAttemptQuestion.findUniqueOrThrow({
+      where: { id: question.id },
+    });
+    const expectedExpiresAt = beforeAttempt.expiresAt.getTime() +
+      (answeredQuestion.answeredAt.getTime() - beforeAnswer.submittedAt.getTime());
+    assert.equal(storedAttempt.status, 'IN_PROGRESS');
+    assert.equal(storedAttempt.expiresAt.getTime() > Date.now(), true);
+    assert.equal(storedAttempt.expiresAt.getTime(), expectedExpiresAt);
+    assert.equal(answer.processingStatus, TrainingAnswerProcessingStatus.COMPLETED);
+    assert.equal(answer.processingErrorCode, null);
+    assert.equal(answer.score, 55);
     assert.equal(
       client.sentMessages.filter(
-        (message) => message.text === 'Время попытки истекло. Аттестация не пройдена.',
+        (message) => message.text.startsWith('Вопрос 2 из 4'),
       ).length,
       1,
     );
+    assert.equal(await worker.runOnce(), false);
+    const afterRepeatedRun = await prisma.trainingAttempt.findUniqueOrThrow({
+      where: { id: attempt.id },
+    });
+    assert.equal(afterRepeatedRun.expiresAt.getTime(), storedAttempt.expiresAt.getTime());
   });
 
-  test('worker notifies timeout that occurs while claimed audio is processing', async () => {
+  test('expiry sweep cannot time out a submitted answer while worker is processing it', async () => {
     const user = await createUser('worker-mid-timeout');
     const project = await createOpenProject('Worker mid timeout');
     const { token, telegramId } = await consumeLink(user.id, project.id, 852);
@@ -558,6 +608,15 @@ if (!databaseUrl) {
       `UPDATE training_attempts SET started_at = CURRENT_TIMESTAMP - INTERVAL '2 minutes', expires_at = CURRENT_TIMESTAMP - INTERVAL '1 minute' WHERE id = $1::uuid`,
       attempt.id,
     );
+    await prisma.$executeRawUnsafe(
+      `UPDATE training_answers SET submitted_at = CURRENT_TIMESTAMP - INTERVAL '2 minutes' WHERE attempt_question_id = $1::uuid`,
+      question.id,
+    );
+    assert.equal(await state.finalizeAttemptIfExpired(attempt.id), false);
+    const duringProcessing = await prisma.trainingAttempt.findUniqueOrThrow({
+      where: { id: attempt.id },
+    });
+    assert.equal(duringProcessing.status, 'IN_PROGRESS');
     waitingAudio.release();
 
     assert.equal(await run, true);
@@ -568,14 +627,15 @@ if (!databaseUrl) {
     const answer = await prisma.trainingAnswer.findFirstOrThrow({
       where: { attemptQuestion: { attemptId: attempt.id } },
     });
-    assert.equal(storedAttempt.status, 'TIMED_OUT');
-    assert.equal(answer.processingStatus, TrainingAnswerProcessingStatus.FAILED);
-    assert.equal(answer.processingErrorCode, 'ATTEMPT_TIMED_OUT');
+    assert.equal(storedAttempt.status, 'IN_PROGRESS');
+    assert.equal(storedAttempt.expiresAt.getTime() > Date.now(), true);
+    assert.equal(answer.processingStatus, TrainingAnswerProcessingStatus.COMPLETED);
+    assert.equal(answer.processingErrorCode, null);
     assert.equal(answer.score, 55);
-    assert.equal(storedAttempt.finalScore, 0);
+    assert.equal(storedAttempt.finalScore, null);
     assert.equal(
       client.sentMessages.filter(
-        (message) => message.text === 'Время попытки истекло. Аттестация не пройдена.',
+        (message) => message.text.startsWith('Вопрос 2 из 4'),
       ).length,
       1,
     );

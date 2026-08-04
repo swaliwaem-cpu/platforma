@@ -573,15 +573,6 @@ export class TrainingAttemptStateService {
       if (!locked) return { status: 'STALE' as const, attemptId: null };
 
       const now = await this.getDatabaseNow(transaction);
-
-      if (await this.finalizeTimeoutIfNeeded(transaction, attemptId, now)) {
-        return {
-          status: 'TIMED_OUT' as const,
-          attemptId,
-          attemptStatus: TrainingAttemptStatus.TIMED_OUT,
-        };
-      }
-
       const attempt = await transaction.trainingAttempt.findUniqueOrThrow({
         where: { id: attemptId },
         include: {
@@ -603,11 +594,27 @@ export class TrainingAttemptStateService {
         answer.source !== TrainingAnswerSource.TELEGRAM ||
         answer.processingStatus !== TrainingAnswerProcessingStatus.PROCESSING ||
         answer.processingLockedBy !== workerId ||
+        answer.submittedAt === null ||
+        answer.submittedAt.getTime() > attempt.expiresAt.getTime() ||
         answer.mergedAudioFileId === null
       ) {
+        if (await this.finalizeTimeoutIfNeeded(transaction, attemptId, now)) {
+          return {
+            status: 'TIMED_OUT' as const,
+            attemptId,
+            attemptStatus: TrainingAttemptStatus.TIMED_OUT,
+          };
+        }
         return { status: 'STALE' as const, attemptId };
       }
 
+      await this.creditTelegramProcessingTime(
+        transaction,
+        attempt.id,
+        attempt.expiresAt,
+        answer.submittedAt,
+        now,
+      );
       await this.completeAnswerFromText(
         transaction,
         attempt,
@@ -644,15 +651,6 @@ export class TrainingAttemptStateService {
 
       if (!locked) return { status: 'STALE' as const, attemptId: null };
       const now = await this.getDatabaseNow(transaction);
-
-      if (await this.finalizeTimeoutIfNeeded(transaction, attemptId, now)) {
-        return {
-          status: 'TIMED_OUT' as const,
-          attemptId,
-          attemptStatus: TrainingAttemptStatus.TIMED_OUT,
-        };
-      }
-
       const attempt = await transaction.trainingAttempt.findUniqueOrThrow({
         where: { id: attemptId },
         include: {
@@ -674,6 +672,8 @@ export class TrainingAttemptStateService {
         answer.source !== TrainingAnswerSource.TELEGRAM ||
         answer.processingStatus !== TrainingAnswerProcessingStatus.PROCESSING ||
         answer.processingLockedBy !== workerId ||
+        answer.submittedAt === null ||
+        answer.submittedAt.getTime() > attempt.expiresAt.getTime() ||
         answer.transcriptionStatus !== TrainingAiStepStatus.COMPLETED ||
         answer.evaluationStatus !== TrainingAiStepStatus.COMPLETED ||
         answer.text === null ||
@@ -683,9 +683,23 @@ export class TrainingAttemptStateService {
         answer.fakeOutcome === null ||
         answer.evaluationJson === null
       ) {
+        if (await this.finalizeTimeoutIfNeeded(transaction, attemptId, now)) {
+          return {
+            status: 'TIMED_OUT' as const,
+            attemptId,
+            attemptStatus: TrainingAttemptStatus.TIMED_OUT,
+          };
+        }
         return { status: 'STALE' as const, attemptId };
       }
 
+      await this.creditTelegramProcessingTime(
+        transaction,
+        attempt.id,
+        attempt.expiresAt,
+        answer.submittedAt,
+        now,
+      );
       await transaction.trainingAnswer.update({
         where: { id: answer.id },
         data: {
@@ -1001,6 +1015,17 @@ export class TrainingAttemptStateService {
       return false;
     }
 
+    const submittedAnswerInProcessing = attempt.questions.some(
+      (question) =>
+        question.status === TrainingAttemptQuestionStatus.PRESENTED &&
+        question.answer?.source === TrainingAnswerSource.TELEGRAM &&
+        question.answer.processingStatus === TrainingAnswerProcessingStatus.PROCESSING &&
+        question.answer.submittedAt !== null &&
+        question.answer.submittedAt.getTime() <= attempt.expiresAt.getTime(),
+    );
+
+    if (submittedAnswerInProcessing) return false;
+
     const finalScore = clampTrainingTotalScore(
       attempt.questions.reduce(
         (total, question) =>
@@ -1051,6 +1076,25 @@ export class TrainingAttemptStateService {
     });
 
     return true;
+  }
+
+  private async creditTelegramProcessingTime(
+    transaction: Prisma.TransactionClient,
+    attemptId: string,
+    currentExpiresAt: Date,
+    submittedAt: Date,
+    now: Date,
+  ) {
+    const processingDurationMs = Math.max(0, now.getTime() - submittedAt.getTime());
+
+    if (processingDurationMs === 0) return;
+
+    await transaction.trainingAttempt.update({
+      where: { id: attemptId },
+      data: {
+        expiresAt: new Date(currentExpiresAt.getTime() + processingDurationMs),
+      },
+    });
   }
 
   private createSnapshot(project: {

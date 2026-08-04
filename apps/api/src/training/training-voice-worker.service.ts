@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { Inject, Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import {
   Prisma,
   TrainingAiStepStatus,
@@ -31,6 +31,7 @@ import {
   type TrainingProjectSnapshotV3,
 } from './training-snapshot';
 import { TrainingTelegramService } from './training-telegram.service';
+import { TrainingTelegramClientError } from './training-telegram-client';
 import { isTrainingModuleEnabled } from './training-runtime-config';
 import {
   buildTrainingVocabularyPrompt,
@@ -39,6 +40,7 @@ import {
 } from './training-transcriber';
 
 const MAX_PROCESSING_ATTEMPTS = 3;
+const MAX_OPENAI_EVALUATION_WORKER_ATTEMPTS = 2;
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
 const DEFAULT_STALE_LOCK_MS = 2 * 60_000;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
@@ -60,6 +62,7 @@ type ActiveClaim = {
 
 @Injectable()
 export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(TrainingVoiceWorkerService.name);
   private readonly workerId = `training-voice-${process.pid}-${randomUUID()}`;
   private timer: ReturnType<typeof setInterval> | null = null;
   private stopping = false;
@@ -453,10 +456,25 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
     error: unknown,
     failedStep: 'transcription' | 'evaluation' | 'processing',
   ) {
-    const retryable = isRetryableWorkerError(error);
-    const exhausted = answer.processing_attempts >= MAX_PROCESSING_ATTEMPTS;
+    const openAiEvaluationError =
+      failedStep === 'evaluation' && error instanceof TrainingOpenAIError
+        ? error
+        : null;
+    const retryable = openAiEvaluationError
+      ? openAiEvaluationError.retryable
+      : isRetryableWorkerError(error);
+    const maximumAttempts = openAiEvaluationError
+      ? MAX_OPENAI_EVALUATION_WORKER_ATTEMPTS
+      : MAX_PROCESSING_ATTEMPTS;
+    const exhausted = answer.processing_attempts >= maximumAttempts;
 
     if (retryable && !exhausted) {
+      this.logger.warn({
+        event: 'training_voice_processing_retry',
+        step: failedStep,
+        code: getWorkerErrorCode(error),
+        processingAttempt: answer.processing_attempts,
+      });
       await this.prisma.trainingAnswer.updateMany({
         where: {
           id: answer.id,
@@ -467,6 +485,9 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
           processingLockedAt: null,
           processingLockedBy: null,
           processingErrorCode: null,
+          ...(openAiEvaluationError && openAiEvaluationError.attempts > 0
+            ? { evaluationAttempts: { increment: openAiEvaluationError.attempts } }
+            : {}),
         },
       });
       return;
@@ -489,8 +510,8 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
     if (this.stopping || !isTrainingModuleEnabled()) return;
     try {
       await this.telegram.notifyAnswerProcessed(answerId, expectedAttemptStatus);
-    } catch {
-      // Domain state is committed; result delivery remains best-effort.
+    } catch (error) {
+      this.logTelegramDeliveryFailure('answerProcessed', error);
     }
   }
 
@@ -498,9 +519,18 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
     if (this.stopping || !isTrainingModuleEnabled()) return;
     try {
       await this.telegram.notifyAnswerFailed(answerId);
-    } catch {
-      // A failed informational delivery must not reopen answer processing.
+    } catch (error) {
+      this.logTelegramDeliveryFailure('answerFailed', error);
     }
+  }
+
+  private logTelegramDeliveryFailure(operation: string, error: unknown) {
+    this.logger.warn({
+      event: 'training_telegram_delivery_failed',
+      operation,
+      code: error instanceof TrainingTelegramClientError ? error.code : 'UNEXPECTED_ERROR',
+      retryable: error instanceof TrainingTelegramClientError && error.retryable,
+    });
   }
 
   private async canContinueClaim(answer: ClaimedAnswer, beforeExternal: boolean) {
@@ -620,7 +650,10 @@ function isRetryableWorkerError(error: unknown) {
 }
 
 function getWorkerErrorCode(error: unknown) {
-  if (error instanceof TrainingOpenAIError || error instanceof VoiceWorkerError) return error.code;
+  if (error instanceof TrainingOpenAIError) {
+    return [error.code, error.detailCode].filter(Boolean).join('_').slice(0, 64);
+  }
+  if (error instanceof VoiceWorkerError) return error.code;
   return getTrainingAudioErrorCode(error).slice(0, 64);
 }
 
