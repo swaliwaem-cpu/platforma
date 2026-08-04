@@ -22,7 +22,7 @@ import {
   AdminStatusBadge,
 } from '../admin/AdminUi';
 import { useAuth } from '../auth/AuthProvider';
-import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -385,12 +385,9 @@ export function TrainingAdminProjectsPage({
                       disabled={isCreating}
                       onChange={(event) => setAllowRetakeAfterPass(event.target.checked)}
                     />
-                    <div>
-                      <FieldLabel htmlFor="training-project-retake">
-                        Разрешить пересдачу после успешного результата
-                      </FieldLabel>
-                      <FieldDescription>Общий лимит попыток продолжает действовать.</FieldDescription>
-                    </div>
+                    <FieldLabel htmlFor="training-project-retake">
+                      Разрешить пересдачу после успешного результата
+                    </FieldLabel>
                   </Field>
                 </FieldGroup>
                 {createError && title.trim() ? <AdminAlert tone="error">{createError}</AdminAlert> : null}

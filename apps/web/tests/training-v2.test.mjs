@@ -114,6 +114,15 @@ test('admin projects overview renders an accessible responsive operations dashbo
   assert.match(adminProjectsSource, /size="icon"[\s\S]*?aria-label="Результаты сотрудников"/u);
   assert.match(adminProjectsSource, /size="icon"[\s\S]*?aria-label="Рейтинг"/u);
   assert.match(adminProjectsSource, /<DialogTitle>Создать проект<\/DialogTitle>/u);
+  assert.match(
+    adminProjectsSource,
+    /<input[\s\S]*?id="training-project-retake"[\s\S]*?type="checkbox"[\s\S]*?\/>\s*<FieldLabel htmlFor="training-project-retake">\s*Разрешить пересдачу после успешного результата/u,
+  );
+  assert.doesNotMatch(adminProjectsSource, /Общий лимит попыток продолжает действовать\./u);
+  assert.match(
+    dashboardStylesSource,
+    /\.training-dashboard-retake-field > input\[type='checkbox'\][\s\S]*?width:\s*18px;[\s\S]*?flex:\s*0 0 18px;/u,
+  );
   assert.match(adminProjectsSource, /aria-label=\{`Открыть проект «\$\{project\.title\}»`\}/u);
   assert.match(adminProjectsSource, /required[\s\S]*?autoComplete="off"[\s\S]*?disabled=\{isCreating\}/u);
   assert.match(dashboardStylesSource, /\.training-dashboard-project-panel\s*\{[\s\S]*?width:\s*100%;/u);
