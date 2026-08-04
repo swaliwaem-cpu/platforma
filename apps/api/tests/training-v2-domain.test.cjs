@@ -55,8 +55,8 @@ test('publication validation requires exactly one main and ten follow-ups', () =
   );
 });
 
-test('timer parsing stores positive whole UI minutes as seconds with 420 default', () => {
-  assert.equal(parseTrainingTimeLimitMinutes(undefined), 420);
+test('timer parsing stores positive whole UI minutes as seconds with 1200 default', () => {
+  assert.equal(parseTrainingTimeLimitMinutes(undefined), 1200);
   assert.equal(parseTrainingTimeLimitMinutes(12), 720);
   assert.throws(() => parseTrainingTimeLimitMinutes(0), BadRequestException);
   assert.throws(() => parseTrainingTimeLimitMinutes(1.5), BadRequestException);

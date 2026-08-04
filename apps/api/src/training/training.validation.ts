@@ -32,7 +32,7 @@ import type {
 import type { TrainingAdminResultsQueryInput } from './training-results.service';
 import type { TrainingAdminRankingQueryInput } from './training-ranking.service';
 
-const TRAINING_DEFAULT_TIME_LIMIT_MINUTES = 7;
+const TRAINING_DEFAULT_TIME_LIMIT_MINUTES = 20;
 const TRAINING_ASSIGNMENT_BULK_LIMIT = 500;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
