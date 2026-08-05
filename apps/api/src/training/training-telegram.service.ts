@@ -15,7 +15,6 @@ import {
   TrainingAnswerProcessingStatus,
   TrainingAttemptQuestionStatus,
   TrainingAttemptStatus,
-  TrainingQuestionType,
 } from '@prisma/client';
 import type {
   TrainingTelegramAccountState,
@@ -482,7 +481,7 @@ export class TrainingTelegramService {
     if (result.status === 'PROCESSING') {
       await this.outboundClient.sendMessage({
         chatId: callback.identity.chatId,
-        text: 'Ответ принят. Распознаём и оцениваем. Время обработки не учитывается в лимите. Следующий вопрос придёт автоматически.',
+        text: 'Ответ принят. Следующий вопрос придёт автоматически.',
       });
     } else if (result.status === 'TIMED_OUT') {
       await this.outboundClient.sendMessage({
@@ -765,9 +764,7 @@ export class TrainingTelegramService {
     if (question.answer?.processingStatus === TrainingAnswerProcessingStatus.PROCESSING) {
       await this.outboundClient.sendMessage({
         chatId,
-        text: question.answer.transcriptionStatus === 'COMPLETED'
-          ? 'Ответ распознан. Сейчас оцениваем его. Время обработки не учитывается в лимите.'
-          : 'Ответ принят. Распознаём и оцениваем. Время обработки не учитывается в лимите. Следующий вопрос придёт автоматически.',
+        text: 'Ответ принят. Следующий вопрос придёт автоматически.',
       });
       return;
     }
@@ -782,11 +779,7 @@ export class TrainingTelegramService {
 
       await this.outboundClient.sendMessage({
       chatId,
-      text: `Вопрос ${question.sequence} из 4\n${question.questionTextSnapshot}\n\nОтправьте ответ голосовым сообщением.${
-        question.type === TrainingQuestionType.FOLLOW_UP
-          ? '\nРекомендуем ответить за 60–90 секунд.'
-          : ''
-      }`,
+      text: `Вопрос ${question.sequence} из 4\n${question.questionTextSnapshot}\n\nОтправьте ответ голосовым сообщением.`,
       ...(question.answer?._count.segments
         ? {
             inlineKeyboard: [
