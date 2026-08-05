@@ -166,7 +166,7 @@ if (!databaseUrl) {
     assert.equal(await prisma.trainingAnswer.count({ where: { id: answer.id } }), 1);
     assert.equal(
       client.sentMessages.filter((message) =>
-        message.text.startsWith('Ответ принят. Распознаём и оцениваем.'),
+        message.text === 'Ответ принят. Следующий вопрос придёт автоматически.',
       ).length,
       2,
     );
@@ -428,7 +428,10 @@ if (!databaseUrl) {
       );
       if (sequence === 1) {
         await telegram.handleUpdate(plainStartUpdate(telegramId));
-        assert.match(client.sentMessages.at(-1)?.text ?? '', /Время обработки не учитывается/);
+        assert.equal(
+          client.sentMessages.at(-1)?.text,
+          'Ответ принят. Следующий вопрос придёт автоматически.',
+        );
       }
       assert.equal(await worker.runOnce(), true);
     }
@@ -573,6 +576,10 @@ if (!databaseUrl) {
         (message) => message.text.startsWith('Вопрос 2 из 4'),
       ).length,
       1,
+    );
+    assert.doesNotMatch(
+      client.sentMessages.find((message) => message.text.startsWith('Вопрос 2 из 4'))?.text ?? '',
+      /Рекомендуем ответить за 60–90 секунд/,
     );
     assert.equal(await worker.runOnce(), false);
     const afterRepeatedRun = await prisma.trainingAttempt.findUniqueOrThrow({

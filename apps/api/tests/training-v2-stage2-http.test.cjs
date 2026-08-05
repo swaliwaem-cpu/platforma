@@ -226,7 +226,7 @@ if (!databaseUrl) {
       releaseMessage();
       await waitFor(() =>
         client.sentMessages.some((message) =>
-          message.text.startsWith('Ответ принят. Распознаём и оцениваем.'),
+          message.text === 'Ответ принят. Следующий вопрос придёт автоматически.',
         ),
       );
       client.sendMessage = originalSendMessage;
