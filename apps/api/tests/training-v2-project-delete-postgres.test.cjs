@@ -320,7 +320,7 @@ if (!databaseUrl) {
     const storage = new MemoryStorage();
     const files = new FilesService(prisma, storage);
     const projects = new TrainingProjectService(prisma, files);
-    const materials = new TrainingMaterialService(prisma, storage, {}, {}, {});
+    const materials = new TrainingMaterialService(prisma, storage, {}, {}, {}, {});
     const project = await createProject('Late PDF race');
 
     await projects.deleteProject(project.id, actor.id);

@@ -43,7 +43,13 @@ export function validateTrainingRuntimeConfig(
   requireExact(environment, 'TRAINING_AI_MODE', 'openai');
   requireSecret(environment, 'OPENAI_API_KEY', 20);
   requireValue(environment, 'OPENAI_TRANSCRIPTION_MODEL', 3);
-  requireValue(environment, 'OPENAI_EVALUATION_MODEL', 3);
+  requireValue(environment, 'OPENAI_QUESTION_GENERATION_MODEL', 3);
+  requirePreferredValue(
+    environment,
+    'OPENAI_EVALUATOR_MODEL',
+    'OPENAI_EVALUATION_MODEL',
+    3,
+  );
 
   validateHttpsUrl(environment, 'PUBLIC_APP_URL', false);
   validateHttpsUrl(environment, 'TELEGRAM_WEBHOOK_URL', true);
@@ -92,6 +98,18 @@ function requireValue(environment: TrainingEnvironment, key: string, minimumLeng
   }
 
   return value;
+}
+
+function requirePreferredValue(
+  environment: TrainingEnvironment,
+  primaryKey: string,
+  fallbackKey: string,
+  minimumLength: number,
+) {
+  if (environment[primaryKey]?.trim()) {
+    return requireValue(environment, primaryKey, minimumLength);
+  }
+  return requireValue(environment, fallbackKey, minimumLength);
 }
 
 function requireSecret(environment: TrainingEnvironment, key: string, minimumLength: number) {

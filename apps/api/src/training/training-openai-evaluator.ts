@@ -1,3 +1,7 @@
+import { createHash } from 'node:crypto';
+
+import { Logger } from '@nestjs/common';
+
 import {
   type TrainingEvaluationInput,
   type TrainingEvaluationResult,
@@ -12,6 +16,14 @@ import {
   TrainingOpenAIError,
 } from './training-openai-client';
 import { TRAINING_EVALUATION_SCHEMA_VERSION } from './training-snapshot';
+import {
+  createTrainingOpenAIUsageLog,
+  parseTrainingOpenAIUsage,
+  readTrainingOpenAIResponseId,
+  readTrainingOpenAIResponseMetadata,
+} from './training-openai-usage';
+
+export const TRAINING_EVALUATOR_PROMPT_VERSION = 'training-evaluator-prompt-v2';
 
 const EVALUATION_INSTRUCTIONS = [
   'Ты оцениваешь ответ сотрудника только по переданным утвержденным фактам и критериям.',
@@ -25,13 +37,20 @@ const EVALUATION_INSTRUCTIONS = [
 
 export class OpenAITrainingEvaluator implements TrainingEvaluator {
   readonly version = TRAINING_EVALUATION_SCHEMA_VERSION;
+  private readonly logger = new Logger(OpenAITrainingEvaluator.name);
 
   constructor(private readonly client: TrainingOpenAIClient) {}
 
   async evaluate(input: TrainingEvaluationInput): Promise<TrainingEvaluationResult> {
-    const model = (process.env.OPENAI_EVALUATION_MODEL ?? DEFAULT_OPENAI_EVALUATION_MODEL).trim();
+    const model = (
+      process.env.OPENAI_EVALUATOR_MODEL?.trim() ||
+      process.env.OPENAI_EVALUATION_MODEL?.trim() ||
+      DEFAULT_OPENAI_EVALUATION_MODEL
+    ).trim();
     const reasoning = (
-      process.env.OPENAI_EVALUATION_REASONING ?? DEFAULT_OPENAI_EVALUATION_REASONING
+      process.env.OPENAI_EVALUATOR_REASONING?.trim() ||
+      process.env.OPENAI_EVALUATION_REASONING?.trim() ||
+      DEFAULT_OPENAI_EVALUATION_REASONING
     ).trim();
 
     if (!model) throw new TrainingOpenAIError('OPENAI_EVALUATION_MODEL_INVALID', false);
@@ -50,6 +69,8 @@ export class OpenAITrainingEvaluator implements TrainingEvaluator {
         16_000,
       ),
       instructions: EVALUATION_INSTRUCTIONS,
+      prompt_cache_key: createEvaluationPromptCacheKey(input),
+      prompt_cache_options: { mode: 'explicit' },
       input: [
         {
           role: 'user',
@@ -57,14 +78,13 @@ export class OpenAITrainingEvaluator implements TrainingEvaluator {
             {
               type: 'input_text',
               text: JSON.stringify({
-                trust_boundary: 'UNTRUSTED_TRANSCRIPT',
                 schema_version: TRAINING_EVALUATION_SCHEMA_VERSION,
+                prompt_version: TRAINING_EVALUATOR_PROMPT_VERSION,
                 question: {
                   text: input.questionText,
                   type: input.questionType,
                   max_answer_score: input.maxScore,
                 },
-                transcript: input.transcript,
                 approved_facts: input.facts.map((fact) => ({
                   id: fact.id,
                   statement: fact.statement,
@@ -78,6 +98,14 @@ export class OpenAITrainingEvaluator implements TrainingEvaluator {
                   guidance: criterion.guidance,
                   max_points: criterion.maxPoints,
                 })),
+              }),
+              prompt_cache_breakpoint: { mode: 'explicit' },
+            },
+            {
+              type: 'input_text',
+              text: JSON.stringify({
+                trust_boundary: 'UNTRUSTED_TRANSCRIPT',
+                transcript: input.transcript,
                 objective_metrics: input.objectiveMetrics,
               }),
             },
@@ -112,6 +140,20 @@ export class OpenAITrainingEvaluator implements TrainingEvaluator {
         ),
       },
       parse: async (httpResponse) => parseEvaluationResponse(await httpResponse.json(), model, input),
+      observeResponse: async ({ response: httpResponse, durationMs }) => {
+        const metadata = await readTrainingOpenAIResponseMetadata(httpResponse);
+        this.logger.log(createTrainingOpenAIUsageLog({
+          operation: 'training_answer_evaluation',
+          model: metadata.model ?? model,
+          reasoningEffort: reasoning,
+          projectId: input.projectId,
+          questionId: input.questionId,
+          attemptId: input.attemptId,
+          responseId: metadata.responseId,
+          usage: metadata.usage,
+          durationMs,
+        }));
+      },
     });
 
     return {
@@ -120,6 +162,7 @@ export class OpenAITrainingEvaluator implements TrainingEvaluator {
       requestId: response.requestId,
       latencyMs: response.latencyMs,
       attempts: response.attempts,
+      responseId: response.value.responseId,
       usage: response.value.usage,
     };
   }
@@ -227,7 +270,8 @@ function parseEvaluationResponse(value: unknown, requestedModel: string, input: 
       actualModel: typeof value.model === 'string' && value.model.trim()
         ? value.model.slice(0, 120)
         : requestedModel,
-      usage: parseUsage(value.usage),
+      responseId: readTrainingOpenAIResponseId(value),
+      usage: parseTrainingOpenAIUsage(value.usage),
     };
   } catch (error) {
     throw new TrainingOpenAIError(
@@ -290,15 +334,16 @@ function containsRefusal(value: unknown) {
   );
 }
 
-function parseUsage(value: unknown) {
-  if (!isRecord(value)) return null;
-  const usage: Record<string, number> = {};
-
-  for (const [key, item] of Object.entries(value)) {
-    if (typeof item === 'number' && Number.isFinite(item) && item >= 0) usage[key] = item;
-  }
-
-  return Object.keys(usage).length ? usage : null;
+export function createEvaluationPromptCacheKey(input: Pick<
+  TrainingEvaluationInput,
+  'projectKnowledgeVersion' | 'questionId'
+>) {
+  const digest = createHash('sha256').update([
+    String(input.projectKnowledgeVersion),
+    input.questionId,
+    TRAINING_EVALUATOR_PROMPT_VERSION,
+  ].join('\0')).digest('hex');
+  return digest;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

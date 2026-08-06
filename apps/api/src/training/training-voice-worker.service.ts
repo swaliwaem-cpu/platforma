@@ -329,6 +329,8 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
         if (!(await this.canContinueClaim(answer, true))) return;
         const transcription = await this.transcriber.transcribe({
           ...audio,
+          projectId: current.attemptQuestion.attempt.projectId,
+          attemptId: current.attemptQuestion.attempt.id,
           vocabularyPrompt: buildTrainingVocabularyPrompt({
             projectTitle: snapshot.projectTitle,
             relatedObjectTitle: snapshot.relatedObjectTitle,
@@ -416,7 +418,7 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
         segments: { orderBy: { position: 'asc' } },
         attemptQuestion: {
           include: {
-            attempt: { select: { id: true, projectSnapshotJson: true } },
+            attempt: { select: { id: true, projectId: true, projectSnapshotJson: true } },
           },
         },
       },
@@ -596,7 +598,10 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
 type WorkerContext = {
   text: string | null;
   segments: Array<{ durationSeconds: number }>;
-  attemptQuestion: { maxScore: number };
+  attemptQuestion: {
+    maxScore: number;
+    attempt: { id: string; projectId: string };
+  };
 };
 
 type TrainingSnapshotWithFacts = TrainingProjectSnapshotV2 | TrainingProjectSnapshotV3;
@@ -617,6 +622,10 @@ function createEvaluationInput(
   const criteria = question.type === 'MAIN' ? snapshot.criteria.main : snapshot.criteria.followUp;
 
   return {
+    projectId: answer.attemptQuestion.attempt.projectId,
+    attemptId: answer.attemptQuestion.attempt.id,
+    questionId: question.sourceQuestionId,
+    projectKnowledgeVersion: snapshot.projectKnowledgeVersion,
     questionText: question.text,
     questionType: question.type,
     transcript: answer.text,

@@ -1113,6 +1113,8 @@ model TrainingProject {
   passScore            Int                   @default(75) @map("pass_score")
   allowRetakeAfterPass Boolean               @map("allow_retake_after_pass")
   contentSchemaVersion Int                   @default(1) @map("content_schema_version")
+  knowledgeVersion     Int                   @default(0) @map("knowledge_version")
+  knowledgeSourceHash  String?               @map("knowledge_source_hash") @db.Char(64)
   createdAt            DateTime              @default(now()) @map("created_at")
   updatedAt            DateTime              @updatedAt @map("updated_at")
 
@@ -1123,10 +1125,39 @@ model TrainingProject {
   telegramLinkTokens TrainingTelegramLinkToken[]
   materials          TrainingMaterial[]
   assignments        TrainingProjectAssignment[]
+  knowledgeVersions  TrainingProjectKnowledgeVersion[]
 
   @@index([realEstateObjectId])
   @@index([status, isOpen, sortOrder])
   @@map("training_projects")
+}
+
+model TrainingProjectKnowledgeVersion {
+  id                       String    @id @default(uuid()) @db.Uuid
+  projectId                String    @map("project_id") @db.Uuid
+  version                  Int
+  sourceHash               String    @map("source_hash") @db.Char(64)
+  compilerVersion          String    @map("compiler_version") @db.VarChar(64)
+  promptVersion            String    @map("prompt_version") @db.VarChar(64)
+  status                   String    @db.VarChar(16)
+  sourceManifestJson       Json      @map("source_manifest_json")
+  compiledKnowledgeJson    Json?     @map("compiled_knowledge_json")
+  sourceChars              Int?      @map("source_chars")
+  generationModel          String?   @map("generation_model") @db.VarChar(120)
+  generationRequestIdsJson Json?     @map("generation_request_ids_json")
+  generationAttempts       Int       @default(0) @map("generation_attempts")
+  generationToken          String?   @map("generation_token") @db.VarChar(128)
+  lockedAt                 DateTime? @map("locked_at")
+  errorCode                String?   @map("error_code") @db.VarChar(120)
+  createdAt                DateTime  @default(now()) @map("created_at")
+  updatedAt                DateTime  @updatedAt @map("updated_at")
+
+  project TrainingProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, version])
+  @@unique([projectId, sourceHash])
+  @@index([status, lockedAt])
+  @@map("training_project_knowledge_versions")
 }
 
 model TrainingProjectAssignment {

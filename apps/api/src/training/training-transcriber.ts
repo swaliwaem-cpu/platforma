@@ -5,10 +5,13 @@ import {
   TRAINING_FACT_ALIAS_MAX_WORDS,
   type TrainingProjectSnapshotFact,
 } from './training-snapshot';
+import type { TrainingOpenAIUsage } from './training-openai-usage';
 
 export const TRAINING_TRANSCRIBER = Symbol('TRAINING_TRANSCRIBER');
 
 export type TrainingTranscriptionInput = {
+  projectId: string;
+  attemptId: string;
   answerId: string;
   fileId: string;
   mimeType: 'audio/wav';
@@ -24,7 +27,8 @@ export type TrainingTranscriptionResult = {
   requestId: string | null;
   latencyMs: number;
   attempts: number;
-  usage: Record<string, number> | null;
+  responseId: string | null;
+  usage: TrainingOpenAIUsage | null;
 };
 
 export interface TrainingTranscriber {
@@ -40,6 +44,7 @@ export class DeterministicFakeTrainingTranscriber implements TrainingTranscriber
       requestId: null,
       latencyMs: 0,
       attempts: 1,
+      responseId: null,
       usage: null,
     };
   }

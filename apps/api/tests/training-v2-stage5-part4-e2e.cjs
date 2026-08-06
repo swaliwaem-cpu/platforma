@@ -235,6 +235,9 @@ async function runInner() {
   const {
     TRAINING_MATERIAL_SUGGESTER,
   } = require('../dist/training/training-material-suggester.js');
+  const {
+    TrainingProjectKnowledgeService,
+  } = require('../dist/training/training-project-knowledge.service.js');
   const { TrainingProjectAccessService } = require('../dist/training/training-project-access.service.js');
   const { TrainingRankingService } = require('../dist/training/training-ranking.service.js');
   const {
@@ -286,6 +289,7 @@ async function runInner() {
       TrainingMaterialExtractionService,
       TrainingMaterialService,
       TRAINING_MATERIAL_SUGGESTER,
+      TrainingProjectKnowledgeService,
       TrainingRankingService,
       TrainingVoiceWorkerService,
       TrainingOpenAIError,
@@ -531,6 +535,7 @@ async function runConnectedScenario(context) {
 
   const extraction = context.app.get(context.TrainingMaterialExtractionService);
   const suggester = context.app.get(context.TRAINING_MATERIAL_SUGGESTER);
+  const knowledge = context.app.get(context.TrainingProjectKnowledgeService);
   const urlExtractor = {
     async extract(url) {
       return {
@@ -555,6 +560,7 @@ async function runConnectedScenario(context) {
     extraction,
     urlExtractor,
     suggester,
+    knowledge,
   );
   const manualMaterial = await fixtureMaterials.createManual(
     project.id,

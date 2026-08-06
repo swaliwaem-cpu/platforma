@@ -1,7 +1,7 @@
 require('reflect-metadata');
 
 const assert = require('node:assert/strict');
-const { randomUUID } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 const { after, before, test } = require('node:test');
 const {
   FileStorage,
@@ -14,6 +14,12 @@ const {
 } = require('@prisma/client');
 const { TrainingMaterialService } = require('../dist/training/training-material.service.js');
 const { TrainingMaterialExtractionService } = require('../dist/training/training-material-extraction.js');
+const {
+  DeterministicFakeTrainingMaterialSuggester,
+} = require('../dist/training/training-material-suggester.js');
+const {
+  TrainingProjectKnowledgeService,
+} = require('../dist/training/training-project-knowledge.service.js');
 
 const databaseUrl = process.env.TRAINING_TEST_DATABASE_URL;
 
@@ -143,6 +149,7 @@ if (!databaseUrl) {
       new TrainingMaterialExtractionService(),
       {},
       {},
+      {},
     );
     const created = await service.createObjectSnapshot(
       project.id, user.id, 'Object snapshot', ['title', 'ceilingHeight'],
@@ -193,6 +200,134 @@ if (!databaseUrl) {
     assert.equal(archived.status, 'ARCHIVED');
   });
 
+  test('project knowledge reuses source hash, versions changes and claims concurrent generation once', async () => {
+    const project = await createProject('knowledge');
+    const deterministic = new DeterministicFakeTrainingMaterialSuggester();
+    let calls = 0;
+    const counted = {
+      suggest: (input) => deterministic.suggest(input),
+      generateQuestionDrafts: async (input) => {
+        calls += 1;
+        return deterministic.generateQuestionDrafts(input);
+      },
+    };
+    const service = new TrainingProjectKnowledgeService(prisma, counted);
+    const initial = knowledgeInput(project.id, 'Стабильный факт проекта.');
+    const first = await service.compile(initial);
+    const repeated = await service.compile(initial);
+
+    assert.equal(calls, 1);
+    assert.equal(first.reused, false);
+    assert.equal(repeated.reused, true);
+    assert.equal(repeated.sourceHash, first.sourceHash);
+    assert.equal(repeated.compilationVersion, first.compilationVersion);
+
+    const changed = await service.compile(knowledgeInput(project.id, 'Материал проекта изменён.'));
+    assert.equal(calls, 2);
+    assert.notEqual(changed.sourceHash, first.sourceHash);
+    assert.ok(changed.compilationVersion > first.compilationVersion);
+
+    const concurrentProject = await createProject('knowledge-race');
+    let releaseProvider;
+    let providerStarted;
+    const started = new Promise((resolve) => { providerStarted = resolve; });
+    const release = new Promise((resolve) => { releaseProvider = resolve; });
+    let concurrentCalls = 0;
+    const concurrent = new TrainingProjectKnowledgeService(prisma, {
+      suggest: (input) => deterministic.suggest(input),
+      generateQuestionDrafts: async (input) => {
+        concurrentCalls += 1;
+        providerStarted();
+        await release;
+        return deterministic.generateQuestionDrafts(input);
+      },
+    });
+    const concurrentInput = knowledgeInput(concurrentProject.id, 'Один конкурентный источник.');
+    const winner = concurrent.compile(concurrentInput);
+    await started;
+    const waiter = concurrent.compile(concurrentInput);
+    releaseProvider();
+    const results = await Promise.all([winner, waiter]);
+
+    assert.equal(concurrentCalls, 1);
+    assert.equal(results.filter((result) => result.reused).length, 1);
+    assert.equal(await prisma.trainingProjectKnowledgeVersion.count({
+      where: { projectId: concurrentProject.id },
+    }), 1);
+
+    const staleProject = await createProject('knowledge-stale-source');
+    const staleInput = {
+      ...knowledgeInput(staleProject.id, 'Устаревший снимок источников.'),
+      expectedProjectKnowledgeVersion: staleProject.knowledgeVersion,
+    };
+    await prisma.trainingProject.update({
+      where: { id: staleProject.id },
+      data: { knowledgeVersion: { increment: 1 } },
+    });
+    const callsBeforeStale = calls;
+    await assert.rejects(
+      () => service.compile(staleInput),
+      (error) => error.code === 'QUESTION_KNOWLEDGE_SOURCE_STALE',
+    );
+    assert.equal(calls, callsBeforeStale);
+  });
+
+  test('project knowledge can reuse A after applying A plus B and returning to A', async () => {
+    const project = await createProject('knowledge-return');
+    const deterministic = new DeterministicFakeTrainingMaterialSuggester();
+    let calls = 0;
+    const counted = {
+      suggest: (input) => deterministic.suggest(input),
+      generateQuestionDrafts: async (input) => {
+        calls += 1;
+        return deterministic.generateQuestionDrafts(input);
+      },
+    };
+    const knowledge = new TrainingProjectKnowledgeService(prisma, counted);
+    const materials = new TrainingMaterialService(
+      prisma,
+      {},
+      new TrainingMaterialExtractionService(),
+      {},
+      counted,
+      knowledge,
+    );
+    const materialA = await materials.createManual(
+      project.id,
+      user.id,
+      'Источник A',
+      'Стабильный факт источника A.',
+    );
+    const sourceA = materialSource(materialA);
+    const compilationA = await knowledge.compile(questionInput(project.id, [sourceA]));
+    await materials.applyGeneratedQuestionDrafts(project.id, null, compilationA, true);
+
+    const materialB = await materials.createManual(
+      project.id,
+      user.id,
+      'Источник B',
+      'Дополнительный факт источника B.',
+    );
+    const compilationAB = await knowledge.compile(questionInput(
+      project.id,
+      [sourceA, materialSource(materialB)],
+    ));
+    await materials.applyGeneratedQuestionDrafts(project.id, null, compilationAB, true);
+    await materials.archive(materialB.id);
+
+    const reusedA = await knowledge.compile(questionInput(project.id, [sourceA]));
+    assert.equal(reusedA.reused, true);
+    assert.equal(reusedA.sourceHash, compilationA.sourceHash);
+    assert.equal(calls, 2);
+    await materials.applyGeneratedQuestionDrafts(project.id, null, reusedA, true);
+
+    const finalProject = await prisma.trainingProject.findUniqueOrThrow({
+      where: { id: project.id },
+      select: { knowledgeSourceHash: true },
+    });
+    assert.equal(finalProject.knowledgeSourceHash, compilationA.sourceHash);
+  });
+
   async function createProject(label) {
     return prisma.trainingProject.create({ data: {
       title: `Stage 4 ${label}`, attemptLimit: 3, timeLimitSeconds: 420,
@@ -204,6 +339,42 @@ if (!databaseUrl) {
     return prisma.trainingQuestion.create({ data: {
       projectId, type: TrainingQuestionType.MAIN, text: `Question ${label}`, position: 1,
     } });
+  }
+
+  function knowledgeInput(projectId, text) {
+    return {
+      projectId,
+      objectId: 'object',
+      objectTitle: 'Knowledge object',
+      sources: [{
+        materialId: 'material',
+        revisionId: randomUUID(),
+        materialTitle: 'Knowledge source',
+        materialType: 'MANUAL_TEXT',
+        contentHash: createHash('sha256').update(text.trim()).digest('hex'),
+        segments: [{ locator: 'paragraph:1', label: 'Абзац 1', text }],
+      }],
+    };
+  }
+
+  function questionInput(projectId, sources) {
+    return {
+      projectId,
+      objectId: 'object',
+      objectTitle: 'Knowledge object',
+      sources,
+    };
+  }
+
+  function materialSource(material) {
+    return {
+      materialId: material.id,
+      revisionId: material.latestRevision.id,
+      materialTitle: material.title,
+      materialType: material.type,
+      contentHash: material.latestRevision.contentHash,
+      segments: material.latestRevision.segments,
+    };
   }
 
   function revisionData(revisionNumber, fileId) {

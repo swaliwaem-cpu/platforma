@@ -43,11 +43,14 @@ import {
   TRAINING_MATERIAL_SUGGESTER,
   type TrainingMaterialSuggester,
   type TrainingQuestionDraftGenerationInput,
-  type TrainingQuestionDraftGenerationResult,
   type TrainingQuestionDraftSource,
   validateMaterialSuggestions,
 } from './training-material-suggester';
 import { TrainingOpenAIError } from './training-openai-client';
+import {
+  TrainingProjectKnowledgeService,
+  type TrainingCompiledProjectKnowledge,
+} from './training-project-knowledge.service';
 import { recordTrainingProjectDeleteCleanupObject } from './training-project-cleanup';
 import {
   TRAINING_FACT_ALIAS_LIMIT,
@@ -134,6 +137,7 @@ export class TrainingMaterialService {
     private readonly urlExtractor: TrainingUrlExtractor,
     @Inject(TRAINING_MATERIAL_SUGGESTER)
     private readonly suggester: TrainingMaterialSuggester,
+    private readonly knowledge: TrainingProjectKnowledgeService,
   ) {}
 
   async list(projectId: string) {
@@ -270,8 +274,7 @@ export class TrainingMaterialService {
         transaction,
         projectId,
         null,
-        questionGeneration.generated,
-        questionGeneration.sources,
+        questionGeneration.compilation,
       );
     });
     return this.get(materialId);
@@ -369,9 +372,13 @@ export class TrainingMaterialService {
       })
       .map((material) => material.id);
     if (obsoleteIds.length) {
-      await this.prisma.trainingMaterial.updateMany({
-        where: { id: { in: obsoleteIds } },
-        data: { status: TrainingMaterialStatus.ARCHIVED },
+      await this.prisma.$transaction(async (transaction) => {
+        await lockProject(transaction, projectId);
+        const archived = await transaction.trainingMaterial.updateMany({
+          where: { id: { in: obsoleteIds }, status: TrainingMaterialStatus.ACTIVE },
+          data: { status: TrainingMaterialStatus.ARCHIVED },
+        });
+        if (archived.count) await invalidateProjectKnowledge(transaction, projectId);
       });
     }
 
@@ -396,7 +403,6 @@ export class TrainingMaterialService {
           extraction: snapshotExtraction,
         });
 
-    const questionSources: TrainingQuestionDraftSource[] = [questionSourceFromMaterial(snapshotDetail)];
     const importedPdfByObjectFileId = new Map(
       importedMaterials.flatMap((material) => {
         const metadata = latestRevisionMetadata(material);
@@ -464,7 +470,6 @@ export class TrainingMaterialService {
             );
         importedPdfCount += 1;
         if (detail.latestRevision?.status === TrainingMaterialRevisionStatus.READY) {
-          questionSources.push(questionSourceFromMaterial(detail));
         } else {
           failedPdfTitles.push(pdfTitle);
         }
@@ -484,19 +489,21 @@ export class TrainingMaterialService {
       }
     }
 
-    const generated = await this.generateQuestionDrafts({
+    const questionSourceSnapshot = await this.listQuestionSources(projectId);
+    const compilation = await this.generateQuestionDrafts({
       projectId,
       objectId: object.id,
       objectTitle: object.title,
-      sources: questionSources,
+      sources: questionSourceSnapshot.sources,
+      expectedProjectKnowledgeVersion: questionSourceSnapshot.knowledgeVersion,
     });
     await this.applyGeneratedQuestionDrafts(
       projectId,
       object.id,
-      generated,
-      questionSources,
+      compilation,
       replaceExistingQuestions,
     );
+    const generated = compilation.generated;
 
     return {
       object: serializeObjectOption({
@@ -582,8 +589,7 @@ export class TrainingMaterialService {
           transaction,
           projectId,
           null,
-          questionGeneration.generated,
-          questionGeneration.sources,
+          questionGeneration.compilation,
         );
       });
     } catch (error) {
@@ -656,9 +662,13 @@ export class TrainingMaterialService {
     const material = await this.findMaterial(materialId);
     await this.requireEditableProject(material.projectId);
     if (material.status === TrainingMaterialStatus.ARCHIVED) return serializeMaterialDetail(material);
-    await this.prisma.trainingMaterial.update({
-      where: { id: material.id },
-      data: { status: TrainingMaterialStatus.ARCHIVED },
+    await this.prisma.$transaction(async (transaction) => {
+      await lockProject(transaction, material.projectId);
+      const archived = await transaction.trainingMaterial.updateMany({
+        where: { id: material.id, status: TrainingMaterialStatus.ACTIVE },
+        data: { status: TrainingMaterialStatus.ARCHIVED },
+      });
+      if (archived.count) await invalidateProjectKnowledge(transaction, material.projectId);
     });
     return this.get(material.id);
   }
@@ -669,6 +679,9 @@ export class TrainingMaterialService {
     if (revision.status !== TrainingMaterialRevisionStatus.READY ||
       revision.material.status !== TrainingMaterialStatus.ACTIVE) {
       throw new ConflictException('MATERIAL_REVISION_NOT_READY');
+    }
+    if (revision.suggestionStatus === TrainingMaterialSuggestionStatus.READY) {
+      return this.get(revision.material.id);
     }
     const questions = await this.prisma.trainingQuestion.findMany({
       where: { projectId: revision.material.projectId, isActive: true },
@@ -817,6 +830,9 @@ export class TrainingMaterialService {
         canonicalExisting.push(canonical);
         nextPositionByQuestion.set(suggestion.targetQuestionId, position + 1);
       }
+      if (created.length) {
+        await invalidateProjectKnowledge(transaction, revision.material.projectId);
+      }
       return { createdFactIds: created, duplicates };
     });
   }
@@ -847,26 +863,31 @@ export class TrainingMaterialService {
     officialConfirmedById?: string;
   }) {
     const title = requiredTitle(input.title);
-    const material = await this.prisma.trainingMaterial.create({
-      data: {
-        projectId: input.projectId,
-        createdById: input.actorId,
-        title,
-        type: input.type,
-        sourceUrl: input.sourceUrl,
-        officialConfirmedAt: input.officialConfirmedAt,
-        officialConfirmedById: input.officialConfirmedById,
-        revisions: { create: revisionCreateData({
-          actorId: input.actorId,
-          revisionNumber: 1,
-          previousRevision: null,
-          extraction: input.extraction,
-          requestedUrl: input.requestedUrl,
-          finalUrl: input.finalUrl,
-          fetchedAt: input.fetchedAt,
-        }) },
-      },
-      include: materialInclude,
+    const material = await this.prisma.$transaction(async (transaction) => {
+      await lockProject(transaction, input.projectId);
+      const created = await transaction.trainingMaterial.create({
+        data: {
+          projectId: input.projectId,
+          createdById: input.actorId,
+          title,
+          type: input.type,
+          sourceUrl: input.sourceUrl,
+          officialConfirmedAt: input.officialConfirmedAt,
+          officialConfirmedById: input.officialConfirmedById,
+          revisions: { create: revisionCreateData({
+            actorId: input.actorId,
+            revisionNumber: 1,
+            previousRevision: null,
+            extraction: input.extraction,
+            requestedUrl: input.requestedUrl,
+            finalUrl: input.finalUrl,
+            fetchedAt: input.fetchedAt,
+          }) },
+        },
+        include: materialInclude,
+      });
+      await invalidateProjectKnowledge(transaction, input.projectId);
+      return created;
     });
     return serializeMaterialDetail(material);
   }
@@ -878,6 +899,7 @@ export class TrainingMaterialService {
     urlFields: { requestedUrl?: string | null; finalUrl?: string; fetchedAt?: Date } = {},
   ) {
     await this.prisma.$transaction(async (transaction) => {
+      await lockProject(transaction, material.projectId);
       await lockMaterial(transaction, material.id);
       const previous = await transaction.trainingMaterialRevision.findFirst({
         where: { materialId: material.id }, orderBy: { revisionNumber: 'desc' },
@@ -892,6 +914,9 @@ export class TrainingMaterialService {
           ...urlFields,
         }),
       } });
+      if (!previous || previous.contentHash !== extraction.contentHash) {
+        await invalidateProjectKnowledge(transaction, material.projectId);
+      }
     });
     return this.get(material.id);
   }
@@ -904,6 +929,7 @@ export class TrainingMaterialService {
     metadata: Record<string, unknown> = {},
   ) {
     await this.prisma.$transaction(async (transaction) => {
+      await lockProject(transaction, material.projectId);
       await lockMaterial(transaction, material.id);
       const previous = await transaction.trainingMaterialRevision.findFirst({
         where: { materialId: material.id }, orderBy: { revisionNumber: 'desc' },
@@ -920,6 +946,9 @@ export class TrainingMaterialService {
           ...urlFields,
         }),
       } });
+      if (previous?.status === TrainingMaterialRevisionStatus.READY) {
+        await invalidateProjectKnowledge(transaction, material.projectId);
+      }
     });
     return this.get(material.id);
   }
@@ -937,25 +966,29 @@ export class TrainingMaterialService {
     const revisionId = randomUUID();
     const stored = await this.storePrivatePdf(materialId, revisionId, actorId, file);
     try {
-      await this.prisma.trainingMaterial.create({
-        data: {
-          id: materialId, projectId, createdById: actorId, title,
-          type: TrainingMaterialType.PDF,
-          revisions: { create: {
-            id: revisionId,
-            fileId: stored.id,
-            ...(extraction
-              ? revisionCreateData({ actorId, revisionNumber: 1, previousRevision: null, extraction })
-              : failedRevisionCreateData({
-                  actorId,
-                  revisionNumber: 1,
-                  previousRevision: null,
-                  errorCode: errorCode ?? 'PDF_EXTRACTION_FAILED',
-                  method: 'PDF',
-                  metadata: failureMetadata,
-                })),
-          } },
-        },
+      await this.prisma.$transaction(async (transaction) => {
+        await lockProject(transaction, projectId);
+        await transaction.trainingMaterial.create({
+          data: {
+            id: materialId, projectId, createdById: actorId, title,
+            type: TrainingMaterialType.PDF,
+            revisions: { create: {
+              id: revisionId,
+              fileId: stored.id,
+              ...(extraction
+                ? revisionCreateData({ actorId, revisionNumber: 1, previousRevision: null, extraction })
+                : failedRevisionCreateData({
+                    actorId,
+                    revisionNumber: 1,
+                    previousRevision: null,
+                    errorCode: errorCode ?? 'PDF_EXTRACTION_FAILED',
+                    method: 'PDF',
+                    metadata: failureMetadata,
+                  })),
+            } },
+          },
+        });
+        if (extraction) await invalidateProjectKnowledge(transaction, projectId);
       });
     } catch (error) {
       return this.cleanupPdfAfterFailedLink(projectId, stored, error);
@@ -975,6 +1008,7 @@ export class TrainingMaterialService {
     const stored = await this.storePrivatePdf(material.id, revisionId, actorId, file);
     try {
       await this.prisma.$transaction(async (transaction) => {
+        await lockProject(transaction, material.projectId);
         await lockMaterial(transaction, material.id);
         const previous = await transaction.trainingMaterialRevision.findFirst({
           where: { materialId: material.id }, orderBy: { revisionNumber: 'desc' },
@@ -995,6 +1029,10 @@ export class TrainingMaterialService {
                 metadata: failureMetadata,
               })),
         } });
+        const sourceChanged = extraction
+          ? !previous || previous.contentHash !== extraction.contentHash
+          : previous?.status === TrainingMaterialRevisionStatus.READY;
+        if (sourceChanged) await invalidateProjectKnowledge(transaction, material.projectId);
       });
     } catch (error) {
       return this.cleanupPdfAfterFailedLink(material.projectId, stored, error);
@@ -1079,6 +1117,49 @@ export class TrainingMaterialService {
     });
   }
 
+  private async listQuestionSources(projectId: string): Promise<{
+    sources: TrainingQuestionDraftSource[];
+    knowledgeVersion: number;
+    objectTitle: string;
+  }> {
+    return this.prisma.$transaction(async (transaction) => {
+      await lockProject(transaction, projectId);
+      const project = await transaction.trainingProject.findUnique({
+        where: { id: projectId },
+        select: {
+          knowledgeVersion: true,
+          title: true,
+          realEstateObject: { select: { title: true } },
+        },
+      });
+      if (!project) throw new NotFoundException('Training project not found');
+      const materials = await transaction.trainingMaterial.findMany({
+        where: { projectId, status: TrainingMaterialStatus.ACTIVE },
+        include: {
+          revisions: { orderBy: { revisionNumber: 'desc' }, take: 1 },
+        },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      });
+      const sources = materials.flatMap((material) => {
+        const revision = material.revisions[0];
+        if (!revision || revision.status !== TrainingMaterialRevisionStatus.READY) return [];
+        return [{
+          materialId: material.id,
+          revisionId: revision.id,
+          materialTitle: material.title,
+          materialType: material.type,
+          contentHash: revision.contentHash,
+          segments: parseStoredSegments(revision.segmentsJson),
+        }];
+      });
+      return {
+        sources,
+        knowledgeVersion: project.knowledgeVersion,
+        objectTitle: project.realEstateObject?.title ?? project.title,
+      };
+    });
+  }
+
   private async recordObjectPdfReadFailure(
     projectId: string,
     actorId: string,
@@ -1124,14 +1205,13 @@ export class TrainingMaterialService {
   private async applyGeneratedQuestionDrafts(
     projectId: string,
     objectId: string | null,
-    generated: TrainingQuestionDraftGenerationResult,
-    sources: TrainingQuestionDraftSource[],
+    compilation: TrainingCompiledProjectKnowledge,
     replaceExistingQuestions: boolean,
   ) {
     await this.prisma.$transaction(async (transaction) => {
       await lockProject(transaction, projectId);
       await this.assertQuestionReplacementAllowed(transaction, projectId, replaceExistingQuestions);
-      await this.upsertGeneratedQuestionDrafts(transaction, projectId, objectId, generated, sources);
+      await this.upsertGeneratedQuestionDrafts(transaction, projectId, objectId, compilation);
     });
   }
 
@@ -1168,25 +1248,32 @@ export class TrainingMaterialService {
     type: TrainingQuestionDraftSource['materialType'];
     extraction: TrainingMaterialExtraction;
   }) {
-    const sources: TrainingQuestionDraftSource[] = [{
+    const prospectiveSource: TrainingQuestionDraftSource = {
       materialId: input.materialId,
       revisionId: input.revisionId,
       materialTitle: input.title,
       materialType: input.type,
+      contentHash: input.extraction.contentHash,
       segments: input.extraction.segments,
-    }];
-    const generated = await this.generateQuestionDrafts({
+    };
+    const sourceSnapshot = await this.listQuestionSources(input.projectId);
+    const sources = [
+      ...sourceSnapshot.sources,
+      prospectiveSource,
+    ];
+    const compilation = await this.generateQuestionDrafts({
       projectId: input.projectId,
       objectId: input.materialId,
-      objectTitle: input.title,
+      objectTitle: sourceSnapshot.objectTitle,
       sources,
+      expectedProjectKnowledgeVersion: sourceSnapshot.knowledgeVersion,
     });
-    return { generated, sources };
+    return { compilation };
   }
 
   private async generateQuestionDrafts(input: TrainingQuestionDraftGenerationInput) {
     try {
-      return await this.suggester.generateQuestionDrafts(input);
+      return await this.knowledge.compile(input);
     } catch (error) {
       if (error instanceof TrainingOpenAIError) {
         throw new BadGatewayException('QUESTION_DRAFT_GENERATION_FAILED');
@@ -1199,24 +1286,34 @@ export class TrainingMaterialService {
     transaction: Prisma.TransactionClient,
     projectId: string,
     objectId: string | null,
-    generated: TrainingQuestionDraftGenerationResult,
-    sources: TrainingQuestionDraftSource[],
+    compilation: TrainingCompiledProjectKnowledge,
   ) {
+    const { generated } = compilation;
     if (generated.followUps.length !== 10) {
       throw new BadRequestException('OBJECT_QUESTION_DRAFTS_INVALID');
     }
     const project = await transaction.trainingProject.findUnique({
       where: { id: projectId },
-      select: { id: true, isOpen: true },
+      select: {
+        id: true,
+        isOpen: true,
+        knowledgeSourceHash: true,
+        knowledgeVersion: true,
+      },
     });
     if (!project) throw new NotFoundException('Training project not found');
     if (project.isOpen) throw new ConflictException('Close the training project before editing materials');
-
+    if (project.knowledgeSourceHash === compilation.sourceHash) return;
+    if (project.knowledgeVersion !== compilation.baseProjectKnowledgeVersion) {
+      throw new ConflictException('QUESTION_KNOWLEDGE_STALE');
+    }
     await transaction.trainingProject.update({
       where: { id: projectId },
       data: {
         ...(objectId ? { realEstateObjectId: objectId } : {}),
         status: TrainingProjectStatus.DRAFT,
+        knowledgeSourceHash: compilation.sourceHash,
+        knowledgeVersion: { increment: 1 },
       },
     });
     const mainQuestion = await transaction.trainingQuestion.upsert({
@@ -1260,14 +1357,13 @@ export class TrainingMaterialService {
       generatedQuestions.push({ questionId: persisted.id, draft: question });
     }
 
-    const sourceByCompositeLocator = generatedFactSourceMap(sources);
     await transaction.trainingFact.deleteMany({
       where: { question: { projectId } },
     });
     await transaction.trainingFact.createMany({
       data: generatedQuestions.flatMap(({ questionId, draft }) =>
         draft.facts.map((fact, index) => {
-          const source = sourceByCompositeLocator.get(fact.sourceLocator);
+          const source = compilation.references.get(fact.sourceLocator);
           if (!source) throw new BadRequestException('OBJECT_QUESTION_DRAFTS_INVALID');
           return {
             questionId,
@@ -1434,45 +1530,6 @@ function latestRevisionMetadata(material: MaterialRecord) {
   return latest && isRecord(latest.extractionMetadataJson)
     ? latest.extractionMetadataJson
     : null;
-}
-
-function questionSourceFromMaterial(material: TrainingMaterialDetail): TrainingQuestionDraftSource {
-  const revision = material.latestRevision;
-  if (!revision || revision.status !== TrainingMaterialRevisionStatus.READY ||
-    (material.type !== TrainingMaterialType.PDF &&
-      material.type !== TrainingMaterialType.OFFICIAL_URL &&
-      material.type !== TrainingMaterialType.OBJECT_SNAPSHOT)) {
-    throw new BadRequestException('OBJECT_QUESTION_SOURCE_INVALID');
-  }
-  return {
-    materialId: material.id,
-    revisionId: revision.id,
-    materialTitle: material.title,
-    materialType: material.type,
-    segments: revision.segments,
-  };
-}
-
-function generatedFactSourceMap(sources: readonly TrainingQuestionDraftSource[]) {
-  const result = new Map<string, {
-    sourceRevisionId: string;
-    sourceLabel: string;
-    sourceLocator: string;
-  }>();
-  for (const source of sources) {
-    for (const segment of source.segments) {
-      const compositeLocator = `${source.revisionId}:${segment.locator}`;
-      if (result.has(compositeLocator)) {
-        throw new BadRequestException('OBJECT_QUESTION_DRAFTS_INVALID');
-      }
-      result.set(compositeLocator, {
-        sourceRevisionId: source.revisionId,
-        sourceLabel: source.materialTitle,
-        sourceLocator: segment.locator,
-      });
-    }
-  }
-  return result;
 }
 
 function isPdfObjectFile(objectFile: {
@@ -1653,6 +1710,19 @@ async function lockProject(transaction: Prisma.TransactionClient, projectId: str
 
 async function lockMaterial(transaction: Prisma.TransactionClient, materialId: string) {
   await transaction.$queryRaw(Prisma.sql`SELECT "id" FROM "training_materials" WHERE "id" = CAST(${materialId} AS uuid) FOR UPDATE`);
+}
+
+async function invalidateProjectKnowledge(
+  transaction: Prisma.TransactionClient,
+  projectId: string,
+) {
+  await transaction.trainingProject.update({
+    where: { id: projectId },
+    data: {
+      knowledgeSourceHash: null,
+      knowledgeVersion: { increment: 1 },
+    },
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

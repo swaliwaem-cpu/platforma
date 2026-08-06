@@ -1,3 +1,5 @@
+import { Logger } from '@nestjs/common';
+
 import {
   DEFAULT_OPENAI_TRANSCRIPTION_MODEL,
   readTrainingOpenAIInteger,
@@ -9,10 +11,18 @@ import type {
   TrainingTranscriptionInput,
   TrainingTranscriptionResult,
 } from './training-transcriber';
+import {
+  createTrainingOpenAIUsageLog,
+  parseTrainingOpenAIUsage,
+  readTrainingOpenAIResponseId,
+  readTrainingOpenAIResponseMetadata,
+} from './training-openai-usage';
 
 const OPENAI_TRANSCRIPTION_MAX_BYTES = 25 * 1024 * 1024;
 
 export class OpenAITrainingTranscriber implements TrainingTranscriber {
+  private readonly logger = new Logger(OpenAITrainingTranscriber.name);
+
   constructor(private readonly client: TrainingOpenAIClient) {}
 
   async transcribe(input: TrainingTranscriptionInput): Promise<TrainingTranscriptionResult> {
@@ -68,8 +78,22 @@ export class OpenAITrainingTranscriber implements TrainingTranscriber {
           actualModel: typeof value.model === 'string' && value.model.trim()
             ? value.model.slice(0, 120)
             : model,
-          usage: parseUsage(value.usage),
+          responseId: readTrainingOpenAIResponseId(value),
+          usage: parseTrainingOpenAIUsage(value.usage),
         };
+      },
+      observeResponse: async ({ response: httpResponse, durationMs }) => {
+        const metadata = await readTrainingOpenAIResponseMetadata(httpResponse);
+        this.logger.log(createTrainingOpenAIUsageLog({
+          operation: 'training_audio_transcription',
+          model: metadata.model ?? model,
+          reasoningEffort: null,
+          projectId: input.projectId,
+          attemptId: input.attemptId,
+          responseId: metadata.responseId,
+          usage: metadata.usage,
+          durationMs,
+        }));
       },
     });
 
@@ -79,20 +103,10 @@ export class OpenAITrainingTranscriber implements TrainingTranscriber {
       requestId: response.requestId,
       latencyMs: response.latencyMs,
       attempts: response.attempts,
+      responseId: response.value.responseId,
       usage: response.value.usage,
     };
   }
-}
-
-function parseUsage(value: unknown) {
-  if (!isRecord(value)) return null;
-  const usage: Record<string, number> = {};
-
-  for (const [key, item] of Object.entries(value)) {
-    if (typeof item === 'number' && Number.isFinite(item) && item >= 0) usage[key] = item;
-  }
-
-  return Object.keys(usage).length ? usage : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

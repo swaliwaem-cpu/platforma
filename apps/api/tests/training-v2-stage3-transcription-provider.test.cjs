@@ -133,6 +133,8 @@ function makeTranscriber(fetchImplementation) {
 
 function makeInput(wav, vocabularyPrompt) {
   return {
+    projectId: 'project-id',
+    attemptId: 'attempt-id',
     answerId: 'answer-id',
     fileId: 'file-id',
     mimeType: 'audio/wav',

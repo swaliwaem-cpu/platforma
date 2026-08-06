@@ -1,6 +1,7 @@
 require('reflect-metadata');
 
 const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
 const test = require('node:test');
 const PDFDocument = require('pdfkit');
 
@@ -14,6 +15,8 @@ const {
   DeterministicFakeTrainingMaterialSuggester,
   canonicalTrainingFact,
   prepareQuestionSourceSegments,
+  prepareTrainingQuestionKnowledge,
+  TRAINING_QUESTION_COMPILER_VERSION,
   validateQuestionDraftGeneration,
 } = require('../dist/training/training-material-suggester.js');
 const { TrainingMaterialService } = require('../dist/training/training-material.service.js');
@@ -125,6 +128,10 @@ test('fake suggestions stay cited, deterministic and canonical duplicates ignore
 
 test('object materials generate one main and ten grounded draft questions without approving them', async () => {
   const suggester = new DeterministicFakeTrainingMaterialSuggester();
+  const sourceSegments = [
+    { locator: 'object-field:title', label: 'Название', text: 'Жилой комплекс Север.' },
+    { locator: 'object-field:architecture', label: 'Архитектура', text: 'Фасады выполнены из клинкерного кирпича.' },
+  ];
   const input = {
     projectId: 'project',
     objectId: 'object',
@@ -134,10 +141,8 @@ test('object materials generate one main and ten grounded draft questions withou
       revisionId: 'revision',
       materialTitle: 'Карточка Platforma · Север',
       materialType: 'OBJECT_SNAPSHOT',
-      segments: [
-        { locator: 'object-field:title', label: 'Название', text: 'Жилой комплекс Север.' },
-        { locator: 'object-field:architecture', label: 'Архитектура', text: 'Фасады выполнены из клинкерного кирпича.' },
-      ],
+      contentHash: questionContentHash(sourceSegments),
+      segments: sourceSegments,
     }],
   };
   const first = await suggester.generateQuestionDrafts(input);
@@ -151,9 +156,7 @@ test('object materials generate one main and ten grounded draft questions withou
     { main: second.main, followUps: second.followUps },
   );
   for (const question of [first.main, ...first.followUps]) {
-    const source = segments.find((segment) => segment.locator === question.sourceLocator);
-    assert.ok(source.text.includes(question.sourceExcerpt));
-    assert.ok(question.facts.length >= 1 && question.facts.length <= 5);
+    assert.ok(question.facts.length >= 1 && question.facts.length <= 3);
     assert.equal(question.facts.some((fact) => fact.isRequired), true);
     for (const fact of question.facts) {
       const factSource = segments.find((segment) => segment.locator === fact.sourceLocator);
@@ -168,7 +171,7 @@ test('object materials generate one main and ten grounded draft questions withou
   assert.throws(() => validateQuestionDraftGeneration({
     main: {
       ...first.main,
-      facts: Array.from({ length: 6 }, (_, index) => ({
+      facts: Array.from({ length: 4 }, (_, index) => ({
         ...first.main.facts[0],
         statement: `Уникальный проверяемый факт ${index + 1}`,
       })),
@@ -215,6 +218,11 @@ test('question generation provider failures use a safe API error', async () => {
         throw new TrainingOpenAIError('OBJECT_QUESTION_DRAFTS_INVALID', false);
       },
     },
+    {
+      compile: async () => {
+        throw new TrainingOpenAIError('OBJECT_QUESTION_DRAFTS_INVALID', false);
+      },
+    },
   );
 
   await assert.rejects(
@@ -233,25 +241,139 @@ test('question generation provider failures use a safe API error', async () => {
 });
 
 test('large object question context stays bounded while representing every imported material', () => {
-  const sources = Array.from({ length: 3 }, (_, index) => ({
-    materialId: `material-${index}`,
-    revisionId: `revision-${index}`,
-    materialTitle: `Источник ${index}`,
-    materialType: index === 0 ? 'OBJECT_SNAPSHOT' : 'PDF',
-    segments: [{
+  const sources = Array.from({ length: 3 }, (_, index) => {
+    const segments = [{
       locator: index === 0 ? 'object-field:description' : 'page:1',
       label: index === 0 ? 'Описание' : 'Страница 1',
       text: String(index).repeat(50_000),
-    }],
-  }));
+    }];
+    return {
+      materialId: `material-${index}`,
+      revisionId: `revision-${index}`,
+      materialTitle: `Источник ${index}`,
+      materialType: index === 0 ? 'OBJECT_SNAPSHOT' : 'PDF',
+      contentHash: questionContentHash(segments),
+      segments,
+    };
+  });
   const segments = prepareQuestionSourceSegments(sources);
+  const prepared = prepareTrainingQuestionKnowledge({
+    projectId: 'project', objectId: 'object', objectTitle: 'Object', sources,
+  });
 
-  assert.ok(segments.reduce((total, segment) => total + segment.text.length, 0) <= 80_000);
+  assert.ok(segments.reduce((total, segment) => total + segment.text.length, 0) <= 30_000);
   assert.deepEqual(
-    new Set(segments.map((segment) => segment.locator.split(':')[0])),
+    new Set([...prepared.references.values()].map((reference) => reference.sourceRevisionId)),
     new Set(['revision-0', 'revision-1', 'revision-2']),
   );
 });
+
+test('question knowledge deduplicates exact content with stable hash and fresh provenance', () => {
+  const source = ({ materialId, revisionId, title, type = 'PDF', segments }) => ({
+    materialId,
+    revisionId,
+    materialTitle: title,
+    materialType: type,
+    contentHash: questionContentHash(segments),
+    segments,
+  });
+  const prepare = (sources) => prepareTrainingQuestionKnowledge({
+    projectId: 'project',
+    objectId: 'object',
+    objectTitle: 'Север',
+    sources,
+  });
+  const canonical = source({
+    materialId: 'material-a',
+    revisionId: 'revision-a',
+    title: 'Первое имя.pdf',
+    segments: [
+      { locator: 'page:1', label: 'Страница 1', text: 'Первый проверяемый факт.' },
+      { locator: 'page:2', label: 'Страница 2', text: 'Второй проверяемый факт.' },
+    ],
+  });
+  const duplicate = source({
+    materialId: 'material-z',
+    revisionId: 'revision-z',
+    title: 'Другое имя и metadata',
+    type: 'OFFICIAL_URL',
+    segments: [{
+      locator: 'url:body',
+      label: 'Другой заголовок',
+      text: 'Первый проверяемый факт.\n\nВторой проверяемый факт.',
+    }],
+  });
+  const distinct = source({
+    materialId: 'material-b',
+    revisionId: 'revision-b',
+    title: 'Другой документ.pdf',
+    segments: [{ locator: 'page:1', label: 'Страница 1', text: 'Совсем другой факт.' }],
+  });
+
+  assert.equal(canonical.contentHash, duplicate.contentHash);
+  assert.notEqual(canonical.contentHash, distinct.contentHash);
+
+  const single = prepare([canonical]);
+  const withDuplicate = prepare([canonical, duplicate]);
+  const reordered = prepare([duplicate, canonical]);
+  const withDistinct = prepare([canonical, distinct]);
+  const withDistinctReordered = prepare([distinct, canonical]);
+  const afterCanonicalArchive = prepare([duplicate]);
+
+  assert.equal(TRAINING_QUESTION_COMPILER_VERSION, 'training-question-compiler-v3');
+  assert.equal(withDuplicate.sourceManifest.length, 1);
+  assert.equal(withDistinct.sourceManifest.length, 2);
+  assert.equal(withDuplicate.sourceHash, single.sourceHash);
+  assert.equal(reordered.sourceHash, single.sourceHash);
+  assert.deepEqual(reordered.segments, single.segments);
+  assert.notEqual(withDistinct.sourceHash, single.sourceHash);
+  assert.equal(withDistinctReordered.sourceHash, withDistinct.sourceHash);
+  assert.deepEqual(withDistinctReordered.segments, withDistinct.segments);
+  assert.equal(afterCanonicalArchive.sourceHash, single.sourceHash);
+  assert.deepEqual(afterCanonicalArchive.segments, single.segments);
+  assert.deepEqual(
+    new Set([...withDuplicate.references.values()].map((reference) => reference.sourceRevisionId)),
+    new Set(['revision-a']),
+  );
+  assert.deepEqual(
+    new Set([...afterCanonicalArchive.references.values()].map((reference) => reference.sourceRevisionId)),
+    new Set(['revision-z']),
+  );
+  assert.deepEqual(
+    new Set([...afterCanonicalArchive.references.values()].map((reference) => reference.sourceLocator)),
+    new Set(['url:body']),
+  );
+
+  const rawChars = [canonical, duplicate].reduce(
+    (total, item) => total + questionSourceText(item.segments).length,
+    0,
+  );
+  assert.equal(rawChars, single.fullSourceChars * 2);
+  assert.equal(withDuplicate.fullSourceChars, single.fullSourceChars);
+
+  const previousBudget = process.env.OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS;
+  try {
+    process.env.OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS = '30000';
+    const thirtyThousand = prepare([canonical]);
+    process.env.OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS = '20000';
+    const twentyThousand = prepare([canonical]);
+    assert.notEqual(thirtyThousand.sourceHash, twentyThousand.sourceHash);
+  } finally {
+    if (previousBudget === undefined) {
+      delete process.env.OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS;
+    } else {
+      process.env.OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS = previousBudget;
+    }
+  }
+});
+
+function questionSourceText(segments) {
+  return segments.map((segment) => normalizeTrainingMaterialText(segment.text)).join('\n\n');
+}
+
+function questionContentHash(segments) {
+  return createHash('sha256').update(questionSourceText(segments)).digest('hex');
+}
 
 test('snapshot v3 freezes bounded citation while v1 and v2 remain readable', () => {
   const base = makeSnapshot(2);

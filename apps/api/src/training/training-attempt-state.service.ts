@@ -1100,6 +1100,7 @@ export class TrainingAttemptStateService {
   private createSnapshot(project: {
     title: string;
     contentSchemaVersion: number;
+    knowledgeVersion: number;
     realEstateObject: { title: string } | null;
     attemptLimit: number;
     timeLimitSeconds: number;
@@ -1200,6 +1201,7 @@ export class TrainingAttemptStateService {
       settings: common.settings,
       scoringVersion: TRAINING_SCORING_VERSION,
       evaluationSchemaVersion: TRAINING_EVALUATION_SCHEMA_VERSION,
+      projectKnowledgeVersion: project.knowledgeVersion,
       criteria: {
         main: criteriaFor(TrainingQuestionType.MAIN),
         followUp: criteriaFor(TrainingQuestionType.FOLLOW_UP),

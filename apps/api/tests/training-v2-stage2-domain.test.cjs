@@ -223,6 +223,7 @@ test('one voice segment is still normalized and fake transcription is determinis
     requestId: null,
     latencyMs: 0,
     attempts: 1,
+    responseId: null,
     usage: null,
   });
 });

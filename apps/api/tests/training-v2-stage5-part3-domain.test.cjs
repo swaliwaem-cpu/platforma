@@ -35,7 +35,8 @@ function validProductionEnvironment() {
     TRAINING_AI_MODE: 'openai',
     OPENAI_API_KEY: 'sk-live-project-key-value-123456',
     OPENAI_TRANSCRIPTION_MODEL: 'gpt-transcribe-production',
-    OPENAI_EVALUATION_MODEL: 'gpt-evaluation-production',
+    OPENAI_QUESTION_GENERATION_MODEL: 'gpt-5.6-terra',
+    OPENAI_EVALUATOR_MODEL: 'gpt-5.6-terra',
     PUBLIC_APP_URL: 'https://platforma.fluffywhite.moscow',
     MINIO_BUCKET: 'platforma',
     TRAINING_AUDIO_BUCKET: 'platforma-training-audio',
@@ -76,13 +77,31 @@ test('production enabled mode requires real providers, HTTPS and pairwise distin
     ['TELEGRAM_WEBHOOK_URL', 'https://localhost/training/telegram/webhook'],
     ['TRAINING_AUDIO_BUCKET', 'platforma'],
     ['TRAINING_MATERIAL_BUCKET', 'Invalid_Bucket'],
-    ['OPENAI_EVALUATION_MODEL', ''],
+    ['OPENAI_QUESTION_GENERATION_MODEL', ''],
+    ['OPENAI_EVALUATOR_MODEL', ''],
   ];
 
   for (const [key, value] of invalidCases) {
     const environment = { ...validProductionEnvironment(), [key]: value };
     assert.throws(() => validateTrainingRuntimeConfig(environment), TrainingRuntimeConfigError);
   }
+});
+
+test('production evaluator model validation follows primary then legacy fallback precedence', () => {
+  const legacyOnly = validProductionEnvironment();
+  delete legacyOnly.OPENAI_EVALUATOR_MODEL;
+  legacyOnly.OPENAI_EVALUATION_MODEL = 'gpt-5.6-terra';
+  assert.deepEqual(validateTrainingRuntimeConfig(legacyOnly), { enabled: true });
+
+  const invalidPrimary = {
+    ...legacyOnly,
+    OPENAI_EVALUATOR_MODEL: 'placeholder',
+  };
+  assert.throws(
+    () => validateTrainingRuntimeConfig(invalidPrimary),
+    (error) => error instanceof TrainingRuntimeConfigError &&
+      error.code === 'OPENAI_EVALUATOR_MODEL_INVALID',
+  );
 });
 
 test('production validation errors are redacted and never contain configured secrets', () => {

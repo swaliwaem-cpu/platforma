@@ -40,6 +40,13 @@ const stage4Migration = readFileSync(
   ),
   'utf8',
 );
+const knowledgeMigration = readFileSync(
+  resolve(
+    repositoryRoot,
+    'apps/api/prisma/migrations/20260805120000_add_training_project_knowledge/migration.sql',
+  ),
+  'utf8',
+);
 const seed = readFileSync(resolve(repositoryRoot, 'apps/api/src/prisma/seed.ts'), 'utf8');
 
 test('Training V2 preserves Stage 4 models and adds the accepted assignment layer', () => {
@@ -47,6 +54,7 @@ test('Training V2 preserves Stage 4 models and adds the accepted assignment laye
 
   assert.deepEqual(modelNames, [
     'TrainingProject',
+    'TrainingProjectKnowledgeVersion',
     'TrainingProjectAssignment',
     'TrainingQuestion',
     'TrainingFact',
@@ -60,6 +68,14 @@ test('Training V2 preserves Stage 4 models and adds the accepted assignment laye
     'TrainingTelegramLinkToken',
     'TrainingAnswerSegment',
   ]);
+});
+
+test('project knowledge migration is additive and enforces hash/version claims', () => {
+  assert.match(knowledgeMigration, /CREATE TABLE "training_project_knowledge_versions"/u);
+  assert.match(knowledgeMigration, /UNIQUE INDEX[\s\S]*"project_id", "source_hash"/u);
+  assert.match(knowledgeMigration, /"status" IN \('GENERATING', 'READY', 'FAILED'\)/u);
+  assert.match(knowledgeMigration, /"compiled_knowledge_json" IS NOT NULL/u);
+  assert.doesNotMatch(knowledgeMigration, /DROP TABLE|DROP TYPE|DELETE FROM|TRUNCATE/iu);
 });
 
 test('Stage 4 migration is additive and enforces revision and source invariants', () => {
