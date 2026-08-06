@@ -5,6 +5,7 @@ import {
   type TrainingProjectSnapshotCriterion,
   type TrainingProjectSnapshotFact,
 } from './training-snapshot';
+import type { TrainingOpenAIUsage } from './training-openai-usage';
 
 export const TRAINING_EVALUATOR = Symbol('TRAINING_EVALUATOR');
 export const TRAINING_FAKE_EVALUATION_VERSION = 'stage1-length-v1';
@@ -56,6 +57,10 @@ export type TrainingStructuredEvaluation = {
 };
 
 export type TrainingEvaluationInput = {
+  projectId: string;
+  attemptId: string;
+  questionId: string;
+  projectKnowledgeVersion: number;
   questionText: string;
   questionType: 'MAIN' | 'FOLLOW_UP';
   transcript: string;
@@ -71,7 +76,8 @@ export type TrainingEvaluationResult = {
   requestId: string | null;
   latencyMs: number;
   attempts: number;
-  usage: Record<string, number> | null;
+  responseId: string | null;
+  usage: TrainingOpenAIUsage | null;
 };
 
 export interface TrainingEvaluator {
@@ -116,6 +122,7 @@ export class DeterministicFakeTrainingEvaluator implements TrainingEvaluator {
       requestId: null,
       latencyMs: 0,
       attempts: 1,
+      responseId: null,
       usage: null,
     };
   }

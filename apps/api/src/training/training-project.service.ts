@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import {
   BadRequestException,
@@ -466,7 +466,7 @@ export class TrainingProjectService {
       await this.lockProject(transaction, projectId);
       const project = await transaction.trainingProject.findUnique({
         where: { id: projectId },
-        select: { id: true, isOpen: true, accessMode: true },
+        include: adminProjectInclude,
       });
 
       if (!project) {
@@ -480,6 +480,8 @@ export class TrainingProjectService {
       if (project.accessMode !== input.accessMode && !actorUserId) {
         throw new ConflictException('Access mode changes require an authenticated actor');
       }
+
+      const knowledgeChanged = currentKnowledgeDigest(project) !== inputKnowledgeDigest(input);
 
       await this.ensureRealEstateObjectExists(input.realEstateObjectId, transaction);
       await transaction.trainingProject.update({
@@ -497,6 +499,12 @@ export class TrainingProjectService {
           allowRetakeAfterPass: input.allowRetakeAfterPass,
           accessMode: input.accessMode,
           contentSchemaVersion: TRAINING_SNAPSHOT_SCHEMA_VERSION,
+          ...(knowledgeChanged
+            ? {
+                knowledgeSourceHash: null,
+                knowledgeVersion: { increment: 1 },
+              }
+            : {}),
         },
       });
 
@@ -1088,6 +1096,118 @@ function parseProjectDeleteAuditMetadata(
       ? { cleanupCompletedAt: metadata.cleanupCompletedAt }
       : {}),
   };
+}
+
+function currentKnowledgeDigest(project: AdminProjectRecord) {
+  return knowledgeDigest({
+    questions: project.questions
+      .filter((question) => question.isActive)
+      .map((question) => ({
+        type: question.type,
+        position: question.position,
+        text: question.text,
+      })),
+    facts: project.questions.flatMap((question) => question.facts
+      .filter((fact) => fact.isActive)
+      .map((fact) => ({
+        questionType: question.type,
+        questionPosition: question.position,
+        position: fact.position,
+        statement: fact.statement,
+        aliases: parseAliasesJson(fact.aliasesJson),
+        isRequired: fact.isRequired,
+      }))),
+    criteria: project.criteria
+      .filter((criterion) => criterion.isActive)
+      .map((criterion) => ({
+        questionType: criterion.questionType,
+        position: criterion.position,
+        code: criterion.code,
+        title: criterion.title,
+        guidance: criterion.guidance,
+        maxPoints: criterion.maxPoints,
+      })),
+  });
+}
+
+function inputKnowledgeDigest(input: UpdateTrainingProjectDraftInput) {
+  return knowledgeDigest({
+    questions: [
+      { type: TrainingQuestionType.MAIN, position: 1, text: input.mainQuestion },
+      ...input.followUpQuestions.map((text, index) => ({
+        type: TrainingQuestionType.FOLLOW_UP,
+        position: index + 1,
+        text,
+      })),
+    ],
+    facts: input.facts,
+    criteria: input.criteria,
+  });
+}
+
+function knowledgeDigest(value: {
+  questions: Array<{ type: TrainingQuestionType; position: number; text: string }>;
+  facts: Array<{
+    questionType: TrainingQuestionType;
+    questionPosition: number;
+    position: number;
+    statement: string;
+    aliases: string[];
+    isRequired: boolean;
+  }>;
+  criteria: Array<{
+    questionType: TrainingQuestionType;
+    position: number;
+    code: string;
+    title: string;
+    guidance: string;
+    maxPoints: number;
+  }>;
+}) {
+  const canonical = {
+    questions: value.questions.map((question) => ({
+      ...question,
+      text: normalizeKnowledgeText(question.text),
+    })).sort(compareKnowledgeItems),
+    facts: value.facts.map((fact) => ({
+      questionType: fact.questionType,
+      questionPosition: fact.questionPosition,
+      position: fact.position,
+      statement: normalizeKnowledgeText(fact.statement),
+      aliases: fact.aliases.map(normalizeKnowledgeText),
+      isRequired: fact.isRequired,
+    })).sort((left, right) =>
+      compareKnowledgeItems(
+        { type: left.questionType, position: left.questionPosition },
+        { type: right.questionType, position: right.questionPosition },
+      ) || left.position - right.position,
+    ),
+    criteria: value.criteria.map((criterion) => ({
+      ...criterion,
+      code: normalizeKnowledgeText(criterion.code),
+      title: normalizeKnowledgeText(criterion.title),
+      guidance: normalizeKnowledgeText(criterion.guidance),
+    })).sort((left, right) =>
+      compareKnowledgeItems(
+        { type: left.questionType, position: left.position },
+        { type: right.questionType, position: right.position },
+      ),
+    ),
+  };
+  return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
+}
+
+function compareKnowledgeItems(
+  left: { type: TrainingQuestionType; position: number },
+  right: { type: TrainingQuestionType; position: number },
+) {
+  return left.type === right.type
+    ? left.position - right.position
+    : left.type === TrainingQuestionType.MAIN ? -1 : 1;
+}
+
+function normalizeKnowledgeText(value: string) {
+  return value.normalize('NFC').replace(/\s+/gu, ' ').trim();
 }
 
 function parseAliasesJson(value: Prisma.JsonValue) {

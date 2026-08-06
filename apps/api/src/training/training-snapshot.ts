@@ -66,6 +66,7 @@ export type TrainingProjectSnapshotV2 = {
   settings: TrainingProjectSnapshotSettings;
   scoringVersion: typeof TRAINING_SCORING_VERSION;
   evaluationSchemaVersion: typeof TRAINING_EVALUATION_SCHEMA_VERSION;
+  projectKnowledgeVersion: number;
   criteria: {
     main: TrainingProjectSnapshotCriterion[];
     followUp: TrainingProjectSnapshotCriterion[];
@@ -176,6 +177,7 @@ function parseStage3Snapshot(value: Record<string, unknown>): TrainingProjectSna
     settings: common.settings,
     scoringVersion: TRAINING_SCORING_VERSION,
     evaluationSchemaVersion: TRAINING_EVALUATION_SCHEMA_VERSION,
+    projectKnowledgeVersion: parseProjectKnowledgeVersion(value.projectKnowledgeVersion),
     criteria: { main: mainCriteria, followUp: followUpCriteria },
     questions: common.questions as TrainingProjectSnapshotV2['questions'],
   };
@@ -192,6 +194,7 @@ function parseStage4Snapshot(value: Record<string, unknown>): TrainingProjectSna
     settings: common.settings,
     scoringVersion: TRAINING_SCORING_VERSION,
     evaluationSchemaVersion: TRAINING_EVALUATION_SCHEMA_VERSION,
+    projectKnowledgeVersion: stage3Shape.projectKnowledgeVersion,
     criteria: stage3Shape.criteria,
     questions: common.questions as TrainingProjectSnapshotV3['questions'],
   };
@@ -212,7 +215,15 @@ function parseScoredSnapshotFields(value: Record<string, unknown>, stage: string
   const ids = [...main, ...followUp].map((criterion) => criterion.id);
   if (new Set(ids).size !== ids.length) throw new Error('Duplicate training snapshot criterion ID');
 
-  return { relatedObjectTitle: value.relatedObjectTitle, criteria: { main, followUp } };
+  return {
+    relatedObjectTitle: value.relatedObjectTitle,
+    projectKnowledgeVersion: parseProjectKnowledgeVersion(value.projectKnowledgeVersion),
+    criteria: { main, followUp },
+  };
+}
+
+function parseProjectKnowledgeVersion(value: unknown) {
+  return isInteger(value) && value >= 0 ? value : 0;
 }
 
 function parseCommonSnapshot(value: Record<string, unknown>, factVersion: 'none' | 'v2' | 'v3' = 'none') {

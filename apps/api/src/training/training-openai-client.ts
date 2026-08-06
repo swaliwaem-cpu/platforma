@@ -17,6 +17,13 @@ export type TrainingOpenAIResponse<T> = {
   attempts: number;
 };
 
+export type TrainingOpenAIResponseObservation = {
+  response: Response;
+  requestId: string | null;
+  attempt: number;
+  durationMs: number;
+};
+
 export class TrainingOpenAIError extends Error {
   constructor(
     readonly code: string,
@@ -44,6 +51,7 @@ export class TrainingOpenAIClient {
     contentType?: string;
     policy: TrainingOpenAIRequestPolicy;
     parse: (response: Response) => Promise<T>;
+    observeResponse?: (observation: TrainingOpenAIResponseObservation) => Promise<void> | void;
   }): Promise<TrainingOpenAIResponse<T>> {
     const startedAt = Date.now();
     const deadline = startedAt + input.policy.timeoutMs;
@@ -59,6 +67,7 @@ export class TrainingOpenAIClient {
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), remainingMs);
+      const attemptStartedAt = Date.now();
 
       try {
         const response = await this.fetchImplementation(`${this.baseUrl}${input.path}`, {
@@ -70,6 +79,15 @@ export class TrainingOpenAIClient {
           body: input.body,
           signal: controller.signal,
         });
+        const requestId = boundedHeader(response.headers.get('x-request-id'));
+        if (input.observeResponse) {
+          await Promise.resolve(input.observeResponse({
+            response: response.clone(),
+            requestId,
+            attempt: attempts,
+            durationMs: Math.max(0, Date.now() - attemptStartedAt),
+          })).catch(() => undefined);
+        }
 
         if (!response.ok) {
           const error = statusError(response.status, attempts);
@@ -85,7 +103,7 @@ export class TrainingOpenAIClient {
 
           return {
             value,
-            requestId: boundedHeader(response.headers.get('x-request-id')),
+            requestId,
             latencyMs: Math.max(0, Date.now() - startedAt),
             attempts,
           };

@@ -36,6 +36,7 @@ import {
   TRAINING_MATERIAL_SUGGESTER,
 } from './training-material-suggester';
 import { TrainingProjectService } from './training-project.service';
+import { TrainingProjectKnowledgeService } from './training-project-knowledge.service';
 import { TrainingProjectAccessService } from './training-project-access.service';
 import { TrainingReviewService } from './training-review.service';
 import { TrainingFeatureGuard } from './training-runtime-config';
@@ -84,6 +85,7 @@ import { TrainingUrlExtractor } from './training-url-extractor';
     TrainingMaterialExtractionService,
     TrainingUrlExtractor,
     TrainingMaterialService,
+    TrainingProjectKnowledgeService,
     DeterministicFakeTrainingMaterialSuggester,
     SpawnTrainingFfmpegRunner,
     DeterministicFakeTrainingTranscriber,
