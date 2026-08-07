@@ -234,6 +234,23 @@ enum TrainingReviewDecision {
   @@map("training_review_decision")
 }
 
+enum TrainingTelegramOutboxEventType {
+  ANSWER_PROCESSED @map("answer_processed")
+  ANSWER_FAILED    @map("answer_failed")
+  ATTEMPT_STATE    @map("attempt_state")
+
+  @@map("training_telegram_outbox_event_type")
+}
+
+enum TrainingTelegramOutboxStatus {
+  PENDING    @map("pending")
+  PROCESSING @map("processing")
+  SENT       @map("sent")
+  FAILED     @map("failed")
+
+  @@map("training_telegram_outbox_status")
+}
+
 enum TrainingMaterialType {
   PDF             @map("pdf")
   OFFICIAL_URL    @map("official_url")
@@ -1373,6 +1390,7 @@ model TrainingAttempt {
   reviewedBy User?                    @relation("TrainingAttemptReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
   project   TrainingProject           @relation(fields: [projectId], references: [id], onDelete: Restrict)
   questions TrainingAttemptQuestion[]
+  telegramOutboxEntries TrainingTelegramOutbox[]
 
   @@unique([userId, projectId, attemptNumber])
   @@unique([userId, projectId, startIdempotencyKey])
@@ -1439,6 +1457,7 @@ model TrainingAnswer {
   attemptQuestion TrainingAttemptQuestion @relation(fields: [attemptQuestionId], references: [id], onDelete: Restrict)
   mergedAudioFile File?                   @relation("TrainingAnswerMergedAudio", fields: [mergedAudioFileId], references: [id], onDelete: Restrict)
   segments        TrainingAnswerSegment[]
+  telegramOutboxEntries TrainingTelegramOutbox[]
 
   @@index([processingStatus, processingLockedAt, createdAt])
   @@map("training_answers")
@@ -1480,6 +1499,30 @@ model TrainingTelegramLinkToken {
   @@index([projectId])
   @@index([expiresAt])
   @@map("training_telegram_link_tokens")
+}
+
+model TrainingTelegramOutbox {
+  id               String                          @id @default(uuid()) @db.Uuid
+  eventType        TrainingTelegramOutboxEventType @map("event_type")
+  attemptId        String                          @map("attempt_id") @db.Uuid
+  answerId         String?                         @map("answer_id") @db.Uuid
+  deduplicationKey String                          @unique @map("deduplication_key") @db.VarChar(160)
+  status           TrainingTelegramOutboxStatus    @default(PENDING)
+  attempts         Int                             @default(0)
+  availableAt      DateTime                        @default(now()) @map("available_at")
+  lockedAt         DateTime?                       @map("locked_at")
+  lockedBy         String?                         @map("locked_by") @db.VarChar(160)
+  lastErrorCode    String?                         @map("last_error_code") @db.VarChar(64)
+  sentAt           DateTime?                       @map("sent_at")
+  createdAt        DateTime                        @default(now()) @map("created_at")
+  updatedAt        DateTime                        @updatedAt @map("updated_at")
+
+  attempt TrainingAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  answer  TrainingAnswer? @relation(fields: [answerId], references: [id], onDelete: Cascade)
+
+  @@index([attemptId])
+  @@index([answerId])
+  @@map("training_telegram_outbox")
 }
 
 model TrainingAnswerSegment {

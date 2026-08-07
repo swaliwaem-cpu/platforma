@@ -30,6 +30,7 @@ if (!databaseUrl) {
   const { TrainingModule } = require('../dist/training/training.module.js');
   const {
     FakeTrainingTelegramClient,
+    TrainingTelegramClientError,
   } = require('../dist/training/training-telegram-client.js');
   const prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
   const jwt = new JwtService();
@@ -231,6 +232,33 @@ if (!databaseUrl) {
       );
       client.sendMessage = originalSendMessage;
       client.answerCallbackQuery = originalAnswerCallbackQuery;
+    }
+  });
+
+  test('retryable Telegram delivery failure is retried after the webhook ACK', async () => {
+    const originalSendMessage = client.sendMessage.bind(client);
+    let deliveryAttempts = 0;
+    const messagesBefore = client.sentMessages.length;
+
+    client.sendMessage = async (input) => {
+      deliveryAttempts += 1;
+
+      if (deliveryAttempts === 1) {
+        throw new TrainingTelegramClientError('SENDMESSAGE_NETWORK', true);
+      }
+
+      await originalSendMessage(input);
+    };
+
+    try {
+      const response = await webhook(messageUpdate(501, 102, { text: 'Не voice' }));
+
+      assert.equal(response.status, 200);
+      await waitFor(() => client.sentMessages.length === messagesBefore + 1);
+      assert.equal(deliveryAttempts, 2);
+      assert.equal(client.sentMessages.at(-1)?.text, 'Ответ отправьте голосовым сообщением');
+    } finally {
+      client.sendMessage = originalSendMessage;
     }
   });
 

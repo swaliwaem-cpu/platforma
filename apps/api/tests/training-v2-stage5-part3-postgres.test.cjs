@@ -17,6 +17,9 @@ const { TrainingProjectService } = require('../dist/training/training-project.se
 const { TrainingProjectAccessService } = require('../dist/training/training-project-access.service.js');
 const { FakeTrainingTelegramClient } = require('../dist/training/training-telegram-client.js');
 const { TrainingTelegramService } = require('../dist/training/training-telegram.service.js');
+const {
+  TrainingTelegramOutboxWorkerService,
+} = require('../dist/training/training-telegram-outbox-worker.service.js');
 const { TrainingVoiceWorkerService } = require('../dist/training/training-voice-worker.service.js');
 
 const databaseUrl = process.env.TRAINING_TEST_DATABASE_URL;
@@ -484,7 +487,9 @@ if (!databaseUrl) {
       transcriber,
       workerEvaluator,
       attemptState,
-      telegram ?? { notifyAnswerProcessed: async () => undefined, notifyAnswerFailed: async () => undefined },
+      telegram
+        ? new TrainingTelegramOutboxWorkerService(prisma, telegram)
+        : { notifyAnswerProcessed: async () => undefined, notifyAnswerFailed: async () => undefined },
     );
   }
 

@@ -245,6 +245,9 @@ async function runInner() {
   } = require('../dist/training/training-telegram-client.js');
   const { TrainingTelegramService } = require('../dist/training/training-telegram.service.js');
   const {
+    TrainingTelegramOutboxWorkerService,
+  } = require('../dist/training/training-telegram-outbox-worker.service.js');
+  const {
     DeterministicFakeTrainingTranscriber,
   } = require('../dist/training/training-transcriber.js');
   const {
@@ -264,6 +267,7 @@ async function runInner() {
     const storage = app.get(S3StorageService);
     const fakeTelegram = app.get(FakeTrainingTelegramClient);
     const telegram = app.get(TrainingTelegramService);
+    const telegramOutbox = app.get(TrainingTelegramOutboxWorkerService);
     const audio = app.get(TrainingAudioService);
     const attemptState = app.get(TrainingAttemptStateService);
     const evaluator = app.get(TRAINING_EVALUATOR);
@@ -277,6 +281,7 @@ async function runInner() {
       storage,
       fakeTelegram,
       telegram,
+      telegramOutbox,
       audio,
       attemptState,
       evaluator,
@@ -1531,7 +1536,7 @@ function createWorker(context, transcriber) {
     transcriber,
     context.evaluator,
     context.attemptState,
-    context.telegram,
+    context.telegramOutbox,
   );
 }
 

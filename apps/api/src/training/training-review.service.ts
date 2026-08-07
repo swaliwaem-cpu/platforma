@@ -5,11 +5,13 @@ import {
   TrainingAttemptStatus,
   TrainingReviewDecision,
   TrainingReviewStatus,
+  TrainingTelegramOutboxEventType,
 } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { parseTrainingProjectSnapshot } from './training-snapshot';
-import { TrainingTelegramService } from './training-telegram.service';
+import { enqueueTrainingTelegramOutbox } from './training-telegram-outbox';
+import { TrainingTelegramOutboxWorkerService } from './training-telegram-outbox-worker.service';
 
 export type ReviewTrainingAttemptInput =
   | { decision: 'APPROVE'; finalScore: null; comment: string | null }
@@ -19,7 +21,7 @@ export type ReviewTrainingAttemptInput =
 export class TrainingReviewService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly telegram: TrainingTelegramService,
+    private readonly telegramOutbox: TrainingTelegramOutboxWorkerService,
   ) {}
 
   async reviewAttempt(
@@ -78,12 +80,17 @@ export class TrainingReviewService {
           reviewFinalScore: input.decision === 'OVERRIDE' ? input.finalScore : null,
         },
       });
+      await enqueueTrainingTelegramOutbox(transaction, {
+        eventType: TrainingTelegramOutboxEventType.ATTEMPT_STATE,
+        attemptId: attempt.id,
+        answerId: null,
+      });
 
       return { result: serializeReview(reviewed), shouldNotify: true };
     });
 
     if (outcome.shouldNotify) {
-      this.telegram.dispatchAttemptStateNotification(attemptId);
+      this.telegramOutbox.dispatchAttemptStateNotification(attemptId);
     }
 
     return outcome.result;

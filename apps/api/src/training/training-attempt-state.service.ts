@@ -16,6 +16,7 @@ import {
   TrainingFakeOutcome,
   TrainingQuestionType,
   TrainingReviewStatus,
+  TrainingTelegramOutboxEventType,
 } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
@@ -29,6 +30,7 @@ import {
 } from './training-evaluator';
 import { TrainingFollowUpSelector } from './training-follow-up-selector';
 import { TrainingProjectAccessService } from './training-project-access.service';
+import { enqueueTrainingTelegramOutbox } from './training-telegram-outbox';
 import {
   hasTrainingSnapshotQuestionStructure,
   parseTrainingProjectSnapshot,
@@ -628,6 +630,11 @@ export class TrainingAttemptStateService {
         where: { id: attemptId },
         select: { status: true },
       });
+      await enqueueTrainingTelegramOutbox(transaction, {
+        eventType: TrainingTelegramOutboxEventType.ANSWER_PROCESSED,
+        attemptId,
+        answerId,
+      });
 
       return {
         status: 'COMPLETED' as const,
@@ -723,6 +730,11 @@ export class TrainingAttemptStateService {
         where: { id: attemptId },
         select: { status: true },
       });
+      await enqueueTrainingTelegramOutbox(transaction, {
+        eventType: TrainingTelegramOutboxEventType.ANSWER_PROCESSED,
+        attemptId,
+        answerId,
+      });
 
       return {
         status: 'COMPLETED' as const,
@@ -795,6 +807,11 @@ export class TrainingAttemptStateService {
           isPassed: false,
           countsTowardAttemptLimit: false,
         },
+      });
+      await enqueueTrainingTelegramOutbox(transaction, {
+        eventType: TrainingTelegramOutboxEventType.ANSWER_FAILED,
+        attemptId,
+        answerId,
       });
 
       return true;
@@ -1025,6 +1042,9 @@ export class TrainingAttemptStateService {
     );
 
     if (submittedAnswerInProcessing) return false;
+    const hasTelegramAnswer = attempt.questions.some(
+      (question) => question.answer?.source === TrainingAnswerSource.TELEGRAM,
+    );
 
     const finalScore = clampTrainingTotalScore(
       attempt.questions.reduce(
@@ -1074,6 +1094,13 @@ export class TrainingAttemptStateService {
         isPassed: false,
       },
     });
+    if (hasTelegramAnswer) {
+      await enqueueTrainingTelegramOutbox(transaction, {
+        eventType: TrainingTelegramOutboxEventType.ATTEMPT_STATE,
+        attemptId,
+        answerId: null,
+      });
+    }
 
     return true;
   }

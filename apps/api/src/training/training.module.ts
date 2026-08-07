@@ -50,6 +50,7 @@ import {
   validateTrainingTelegramRealConfig,
 } from './training-telegram-client';
 import { TrainingTelegramController } from './training-telegram.controller';
+import { TrainingTelegramOutboxWorkerService } from './training-telegram-outbox-worker.service';
 import { TrainingTelegramService } from './training-telegram.service';
 import {
   DeterministicFakeTrainingTranscriber,
@@ -80,6 +81,7 @@ import { TrainingUrlExtractor } from './training-url-extractor';
     TrainingFeatureGuard,
     TrainingFollowUpSelector,
     TrainingTelegramService,
+    TrainingTelegramOutboxWorkerService,
     TrainingAudioService,
     TrainingVoiceWorkerService,
     TrainingMaterialExtractionService,

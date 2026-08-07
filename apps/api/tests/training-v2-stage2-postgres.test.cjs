@@ -32,6 +32,9 @@ const {
   TrainingTelegramService,
 } = require('../dist/training/training-telegram.service.js');
 const {
+  TrainingTelegramOutboxWorkerService,
+} = require('../dist/training/training-telegram-outbox-worker.service.js');
+const {
   TrainingAudioError,
   TrainingAudioService,
 } = require('../dist/training/training-audio.service.js');
@@ -58,6 +61,7 @@ if (!databaseUrl) {
   const projects = new TrainingProjectService(prisma);
   let client;
   let telegram;
+  let telegramOutbox;
 
   before(async () => {
     await prisma.$connect();
@@ -67,6 +71,7 @@ if (!databaseUrl) {
     await clearTrainingData();
     client = new FakeTrainingTelegramClient();
     telegram = new TrainingTelegramService(prisma, state, projectAccess, client);
+    telegramOutbox = new TrainingTelegramOutboxWorkerService(prisma, telegram);
   });
 
   after(async () => {
@@ -222,6 +227,12 @@ if (!databaseUrl) {
     assert.equal(storedAnswer.processingErrorCode, 'ATTEMPT_TIMED_OUT');
     assert.equal(storedAnswer.score, null);
     assert.equal(storedAnswer.segments.length, 1);
+    assert.equal(
+      await prisma.trainingTelegramOutbox.count({
+        where: { attemptId: attempt.id, eventType: 'ATTEMPT_STATE' },
+      }),
+      1,
+    );
   });
 
   test('finish at an expired deadline times out instead of submitting for processing', async () => {
@@ -433,6 +444,12 @@ if (!databaseUrl) {
           'Ответ принят. Следующий вопрос придёт автоматически.',
         );
       }
+      if (sequence === 4) {
+        assert.equal(
+          client.sentMessages.at(-1)?.text,
+          'Ваши ответы приняты. Ожидайте решения.',
+        );
+      }
       assert.equal(await worker.runOnce(), true);
     }
 
@@ -457,6 +474,16 @@ if (!databaseUrl) {
       ),
       true,
     );
+    const notifications = await prisma.trainingTelegramOutbox.findMany({
+      where: { attemptId: attempt.id },
+      orderBy: { createdAt: 'asc' },
+    });
+    assert.equal(notifications.length, 4);
+    assert.equal(
+      notifications.every((notification) => notification.eventType === 'ANSWER_PROCESSED'),
+      true,
+    );
+    assert.equal(new Set(notifications.map((notification) => notification.deduplicationKey)).size, 4);
     assert.equal(await worker.runOnce(), false);
     const history = await attempts.listEmployeeAttempts(user.id);
     assert.equal(history.items.some((item) => item.id === attempt.id), true);
@@ -681,6 +708,12 @@ if (!databaseUrl) {
     assert.equal(attempt.status, 'TECHNICAL_FAILED');
     assert.equal(attempt.countsTowardAttemptLimit, false);
     assert.equal(attempt.finalScore, null);
+    assert.equal(
+      await prisma.trainingTelegramOutbox.count({
+        where: { attemptId: item.attempt.id, eventType: 'ANSWER_FAILED' },
+      }),
+      1,
+    );
     assert.equal(await worker.runOnce(), false);
   });
 
@@ -859,7 +892,7 @@ if (!databaseUrl) {
       transcriber,
       new DeterministicFakeTrainingEvaluator(),
       state,
-      telegram,
+      telegramOutbox,
     );
   }
 

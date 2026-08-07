@@ -54,6 +54,13 @@ const sharedArtifactMigration = readFileSync(
   ),
   'utf8',
 );
+const telegramOutboxMigration = readFileSync(
+  resolve(
+    repositoryRoot,
+    'apps/api/prisma/migrations/20260807190000_add_training_telegram_delivery_outbox/migration.sql',
+  ),
+  'utf8',
+);
 const rootEnvironmentExample = readFileSync(resolve(repositoryRoot, '.env.example'), 'utf8');
 const apiEnvironmentExample = readFileSync(
   resolve(repositoryRoot, 'apps/api/.env.example'),
@@ -80,8 +87,32 @@ test('Training V2 preserves Stage 4 models and adds the accepted assignment laye
     'TrainingAnswer',
     'TrainingTelegramAccount',
     'TrainingTelegramLinkToken',
+    'TrainingTelegramOutbox',
     'TrainingAnswerSegment',
   ]);
+});
+
+test('Telegram delivery outbox is narrow, additive and indexed for claim/recovery', () => {
+  assert.match(telegramOutboxMigration, /CREATE TABLE "training_telegram_outbox"/u);
+  assert.match(telegramOutboxMigration, /training_telegram_outbox_deduplication_key_key/u);
+  assert.match(
+    telegramOutboxMigration,
+    /training_telegram_outbox_pending_claim_idx[\s\S]*WHERE "status" = 'pending'/u,
+  );
+  assert.match(
+    telegramOutboxMigration,
+    /training_telegram_outbox_processing_recovery_idx[\s\S]*WHERE "status" = 'processing'/u,
+  );
+  assert.match(telegramOutboxMigration, /training_telegram_outbox_state_check/u);
+  assert.match(telegramOutboxMigration, /training_telegram_outbox_event_reference_check/u);
+  assert.doesNotMatch(
+    telegramOutboxMigration,
+    /bot_token|webhook_secret|transcript|audio|payload|request_json/iu,
+  );
+  assert.doesNotMatch(
+    telegramOutboxMigration,
+    /DROP TABLE|DROP TYPE|DELETE FROM|TRUNCATE/iu,
+  );
 });
 
 test('shared question artifact migration is additive, indexed and project-independent', () => {

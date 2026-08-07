@@ -5,7 +5,6 @@ import {
   Prisma,
   TrainingAiStepStatus,
   TrainingAnswerProcessingStatus,
-  TrainingAttemptStatus,
   TrainingFakeOutcome,
 } from '@prisma/client';
 
@@ -30,8 +29,8 @@ import {
   type TrainingProjectSnapshotV2,
   type TrainingProjectSnapshotV3,
 } from './training-snapshot';
-import { TrainingTelegramService } from './training-telegram.service';
 import { TrainingTelegramClientError } from './training-telegram-client';
+import { TrainingTelegramOutboxWorkerService } from './training-telegram-outbox-worker.service';
 import { isTrainingModuleEnabled } from './training-runtime-config';
 import {
   buildTrainingVocabularyPrompt,
@@ -78,7 +77,7 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
     @Inject(TRAINING_TRANSCRIBER) private readonly transcriber: TrainingTranscriber,
     @Inject(TRAINING_EVALUATOR) private readonly evaluator: TrainingEvaluator,
     private readonly attemptState: TrainingAttemptStateService,
-    private readonly telegram: TrainingTelegramService,
+    private readonly telegramOutbox: TrainingTelegramOutboxWorkerService,
   ) {}
 
   async onModuleInit() {
@@ -289,7 +288,7 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
     );
 
     if (timedOut) {
-      await this.notifyProcessed(answer.id, TrainingAttemptStatus.TIMED_OUT);
+      await this.notifyProcessed(answer.id);
       return;
     }
     if (!(await this.canContinueClaim(answer, false))) return;
@@ -314,7 +313,7 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
           '[fake:pass]',
         );
         if (result.status === 'COMPLETED' || result.status === 'TIMED_OUT') {
-          await this.notifyProcessed(answer.id, result.attemptStatus);
+          await this.notifyProcessed(answer.id);
         }
         return;
       }
@@ -402,7 +401,7 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
       );
 
       if (progression.status === 'COMPLETED' || progression.status === 'TIMED_OUT') {
-        await this.notifyProcessed(answer.id, progression.attemptStatus);
+        await this.notifyProcessed(answer.id);
       }
     } catch (error) {
       await this.handleProcessingFailure(answer, error, failedStep);
@@ -505,13 +504,10 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
     if (failed) await this.notifyFailed(answer.id);
   }
 
-  private async notifyProcessed(
-    answerId: string,
-    expectedAttemptStatus: TrainingAttemptStatus,
-  ) {
+  private async notifyProcessed(answerId: string) {
     if (this.stopping || !isTrainingModuleEnabled()) return;
     try {
-      await this.telegram.notifyAnswerProcessed(answerId, expectedAttemptStatus);
+      await this.telegramOutbox.notifyAnswerProcessed(answerId);
     } catch (error) {
       this.logTelegramDeliveryFailure('answerProcessed', error);
     }
@@ -520,7 +516,7 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
   private async notifyFailed(answerId: string) {
     if (this.stopping || !isTrainingModuleEnabled()) return;
     try {
-      await this.telegram.notifyAnswerFailed(answerId);
+      await this.telegramOutbox.notifyAnswerFailed(answerId);
     } catch (error) {
       this.logTelegramDeliveryFailure('answerFailed', error);
     }
