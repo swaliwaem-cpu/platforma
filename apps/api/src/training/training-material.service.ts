@@ -1143,6 +1143,10 @@ export class TrainingMaterialService {
       const sources = materials.flatMap((material) => {
         const revision = material.revisions[0];
         if (!revision || revision.status !== TrainingMaterialRevisionStatus.READY) return [];
+        const reuseMetadata = readQuestionSourceReuseMetadata(
+          material.type,
+          revision.extractionMetadataJson,
+        );
         return [{
           materialId: material.id,
           revisionId: revision.id,
@@ -1150,6 +1154,7 @@ export class TrainingMaterialService {
           materialType: material.type,
           contentHash: revision.contentHash,
           segments: parseStoredSegments(revision.segmentsJson),
+          ...(reuseMetadata ? { reuseMetadata } : {}),
         }];
       });
       return {
@@ -1376,7 +1381,7 @@ export class TrainingMaterialService {
             sourceRevisionId: source.sourceRevisionId,
             sourceLabel: source.sourceLabel,
             sourceLocator: source.sourceLocator,
-            sourceExcerpt: fact.sourceExcerpt,
+            sourceExcerpt: source.sourceExcerpt,
           };
         }),
       ),
@@ -1697,6 +1702,32 @@ function parseDiff(value: unknown) {
     unchangedCount: value.unchangedCount as number,
     changed: value.changed,
   };
+}
+
+export function readQuestionSourceReuseMetadata(
+  materialType: TrainingMaterialType,
+  value: unknown,
+): TrainingQuestionDraftSource['reuseMetadata'] | undefined {
+  if (!isRecord(value) || typeof value.objectId !== 'string') return undefined;
+
+  if (materialType === TrainingMaterialType.OBJECT_SNAPSHOT) {
+    return {
+      kind: 'PLATFORMA_OBJECT_SNAPSHOT',
+      realEstateObjectId: value.objectId,
+    };
+  }
+  if (
+    materialType === TrainingMaterialType.PDF &&
+    value.importKind === PLATFORM_OBJECT_IMPORT_KIND &&
+    typeof value.sourceObjectFileId === 'string' &&
+    typeof value.sourceFileId === 'string'
+  ) {
+    return {
+      kind: 'PLATFORMA_OBJECT_PDF',
+      realEstateObjectId: value.objectId,
+    };
+  }
+  return undefined;
 }
 
 function isCanonicalDuplicate(existing: string, next: string) {

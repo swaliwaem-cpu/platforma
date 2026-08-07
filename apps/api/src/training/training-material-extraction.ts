@@ -116,8 +116,12 @@ export function normalizeTrainingMaterialText(value: string) {
     .trim();
 }
 
+export function normalizeTrainingEvidenceText(value: string) {
+  return normalizeTrainingMaterialText(value).replace(/\s+/gu, ' ');
+}
+
 export function normalizeTrainingEvidence(value: string) {
-  return normalizeTrainingMaterialText(value).replace(/\s+/gu, ' ').toLocaleLowerCase('ru-RU');
+  return normalizeTrainingEvidenceText(value).toLocaleLowerCase('ru-RU');
 }
 
 export function isExactSegmentExcerpt(

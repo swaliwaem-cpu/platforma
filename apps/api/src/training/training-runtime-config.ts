@@ -4,10 +4,24 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 
+import {
+  ABSOLUTE_TRAINING_QUESTION_CONTEXT_MAX_CHARS,
+  MIN_TRAINING_QUESTION_CONTEXT_MAX_CHARS,
+} from './training-question-context-budget';
+import {
+  DEFAULT_OPENAI_QUESTION_GENERATION_LUNA_MODEL,
+  DEFAULT_OPENAI_QUESTION_GENERATION_MODEL,
+  DEFAULT_TRAINING_QUESTION_GENERATION_STRATEGY,
+} from './training-question-generation-router';
+
 type TrainingEnvironment = NodeJS.ProcessEnv | Record<string, string | undefined>;
 
 const BUCKET_PATTERN = /^(?!\d{1,3}(?:\.\d{1,3}){3}$)[a-z0-9](?:[a-z0-9.-]{1,61}[a-z0-9])?$/u;
 const PLACEHOLDER_PATTERN = /(?:change[-_ ]?me|placeholder|example|your[-_ ]|dummy|test[-_ ]?(?:key|token|secret)|^fake$)/iu;
+const TELEGRAM_WEBHOOK_PATHS = new Set([
+  '/training/telegram/webhook',
+  '/api/training/telegram/webhook',
+]);
 
 export class TrainingRuntimeConfigError extends Error {
   constructor(readonly code: string) {
@@ -23,6 +37,19 @@ export function isTrainingModuleEnabled(environment: TrainingEnvironment = proce
   if (raw === 'true') return true;
   if (raw === 'false') return false;
   throw new TrainingRuntimeConfigError('TRAINING_MODULE_ENABLED_INVALID');
+}
+
+export function isTrainingCrossProjectGenerationReuseEnabled(
+  environment: TrainingEnvironment = process.env,
+) {
+  const raw = environment.TRAINING_CROSS_PROJECT_GENERATION_REUSE_ENABLED;
+
+  if (raw === undefined || raw === '') return false;
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  throw new TrainingRuntimeConfigError(
+    'TRAINING_CROSS_PROJECT_GENERATION_REUSE_ENABLED_INVALID',
+  );
 }
 
 export function validateTrainingRuntimeConfig(
@@ -41,9 +68,16 @@ export function validateTrainingRuntimeConfig(
   requireValue(environment, 'TELEGRAM_BOT_USERNAME', 5);
   requireSecret(environment, 'TELEGRAM_WEBHOOK_SECRET', 16);
   requireExact(environment, 'TRAINING_AI_MODE', 'openai');
+  isTrainingCrossProjectGenerationReuseEnabled(environment);
   requireSecret(environment, 'OPENAI_API_KEY', 20);
   requireValue(environment, 'OPENAI_TRANSCRIPTION_MODEL', 3);
-  requireValue(environment, 'OPENAI_QUESTION_GENERATION_MODEL', 3);
+  validateQuestionGenerationRouting(environment);
+  requireOptionalInteger(
+    environment,
+    'OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS',
+    MIN_TRAINING_QUESTION_CONTEXT_MAX_CHARS,
+    ABSOLUTE_TRAINING_QUESTION_CONTEXT_MAX_CHARS,
+  );
   requirePreferredValue(
     environment,
     'OPENAI_EVALUATOR_MODEL',
@@ -116,6 +150,45 @@ function requireSecret(environment: TrainingEnvironment, key: string, minimumLen
   return requireValue(environment, key, minimumLength);
 }
 
+function requireOptionalInteger(
+  environment: TrainingEnvironment,
+  key: string,
+  minimum: number,
+  maximum: number,
+) {
+  const configured = environment[key];
+  if (configured === undefined || configured === '') return;
+  const raw = configured.trim();
+  const value = Number(raw);
+
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new TrainingRuntimeConfigError(`${key}_INVALID`);
+  }
+}
+
+function validateQuestionGenerationRouting(environment: TrainingEnvironment) {
+  const strategy = (
+    environment.OPENAI_QUESTION_GENERATION_STRATEGY ??
+    DEFAULT_TRAINING_QUESTION_GENERATION_STRATEGY
+  ).trim();
+  if (strategy !== 'terra_only' && strategy !== 'luna_then_terra') {
+    throw new TrainingRuntimeConfigError('OPENAI_QUESTION_GENERATION_STRATEGY_INVALID');
+  }
+
+  if (environment.OPENAI_QUESTION_GENERATION_MODEL?.trim() !==
+    DEFAULT_OPENAI_QUESTION_GENERATION_MODEL) {
+    throw new TrainingRuntimeConfigError('OPENAI_QUESTION_GENERATION_MODEL_INVALID');
+  }
+
+  const lunaModel = (
+    environment.OPENAI_QUESTION_GENERATION_LUNA_MODEL ??
+    DEFAULT_OPENAI_QUESTION_GENERATION_LUNA_MODEL
+  ).trim();
+  if (lunaModel !== DEFAULT_OPENAI_QUESTION_GENERATION_LUNA_MODEL) {
+    throw new TrainingRuntimeConfigError('OPENAI_QUESTION_GENERATION_LUNA_MODEL_INVALID');
+  }
+}
+
 function validateHttpsUrl(
   environment: TrainingEnvironment,
   key: string,
@@ -137,7 +210,7 @@ function validateHttpsUrl(
     url.hash ||
     isUnsafeProductionHostname(url.hostname) ||
     (requireWebhookPath &&
-      (url.pathname !== '/training/telegram/webhook' || Boolean(url.search)))
+      (!TELEGRAM_WEBHOOK_PATHS.has(url.pathname) || Boolean(url.search)))
   ) {
     throw new TrainingRuntimeConfigError(`${key}_INVALID`);
   }

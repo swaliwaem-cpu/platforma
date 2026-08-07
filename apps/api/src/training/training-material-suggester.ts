@@ -19,30 +19,70 @@ import {
   readTrainingOpenAIResponseMetadata,
   type TrainingOpenAIUsage,
 } from './training-openai-usage';
-import { isExactSegmentExcerpt, normalizeTrainingMaterialText } from './training-material-extraction';
+import {
+  isExactSegmentExcerpt,
+  normalizeTrainingEvidenceText,
+  normalizeTrainingMaterialText,
+} from './training-material-extraction';
 import {
   TRAINING_FACT_ALIAS_LIMIT,
   TRAINING_FACT_ALIAS_MAX_LENGTH,
   TRAINING_FACT_ALIAS_MAX_WORDS,
 } from './training-snapshot';
+import {
+  ABSOLUTE_TRAINING_QUESTION_CONTEXT_MAX_CHARS,
+  chooseTrainingQuestionContextBudget,
+  DEFAULT_TRAINING_QUESTION_CONTEXT_MAX_CHARS,
+  MIN_TRAINING_QUESTION_CONTEXT_MAX_CHARS,
+} from './training-question-context-budget';
+import {
+  DEFAULT_OPENAI_QUESTION_GENERATION_MODEL,
+  routeTrainingQuestionGeneration,
+  readQuestionGenerationRoutingConfig,
+  TRAINING_QUESTION_ROUTING_STRATEGY_VERSION,
+  TRAINING_QUESTION_VALIDATOR_VERSION,
+  type TrainingQuestionGenerationAttemptTelemetry,
+} from './training-question-generation-router';
 
 const CHUNK_CHARS = 12_000;
 const MAX_CHUNKS = 4;
 const MAX_TOTAL_CHARS = 40_000;
 const MAX_SUGGESTIONS = 30;
-const DEFAULT_QUESTION_SOURCE_MAX_CHARS = 30_000;
-const QUESTION_SOURCE_MIN_CHARS = 5_000;
-const QUESTION_SOURCE_MAX_CHARS = 120_000;
 const QUESTION_EVIDENCE_MAX_CHARS = 1_200;
 const QUESTION_DRAFT_COUNT = 11;
 const QUESTION_FACT_MIN_COUNT = 1;
 const QUESTION_FACT_MAX_COUNT = 3;
 const QUESTION_GENERATED_ALIAS_LIMIT = 4;
+const QUESTION_SERVICE_WORDS = new Set([
+  'а', 'без', 'бы', 'в', 'во', 'все', 'всё', 'где', 'да', 'для', 'до', 'есть',
+  'ещё', 'же', 'знать', 'и', 'из', 'или', 'имеется', 'как', 'какая', 'какие',
+  'какой', 'какое', 'когда', 'кто', 'ли', 'можно', 'на', 'надо', 'не', 'нужно',
+  'о', 'об', 'обо', 'от', 'по', 'под', 'про', 'расскажите', 'рассказать', 'с',
+  'со', 'что', 'эта', 'эти', 'это', 'этот',
+]);
+const QUESTION_GENERIC_WORDS = new Set([
+  'важно', 'важное', 'данные', 'жк', 'информация', 'информации', 'источник',
+  'ключевое', 'комплекс', 'комплекса', 'комплексе', 'материал', 'материалах',
+  'объект', 'объекта', 'объекте', 'основное', 'особенности', 'параметры',
+  'подробнее', 'преимущества', 'проект', 'проекта', 'проекте', 'раздел',
+  'сведения', 'фрагмент', 'характеристики', 'часть', 'вопрос',
+]);
 
-export const TRAINING_QUESTION_COMPILER_VERSION = 'training-question-compiler-v3';
+export const TRAINING_QUESTION_COMPILER_VERSION = 'training-question-compiler-v7';
 export const TRAINING_QUESTION_PROMPT_VERSION = 'training-question-prompt-v2';
-export const DEFAULT_OPENAI_QUESTION_GENERATION_MODEL = 'gpt-5.6-terra';
+export const TRAINING_QUESTION_SELECTION_ALGORITHM =
+  'source-coverage-numeric-priority-v1';
+export const TRAINING_QUESTION_EVIDENCE_DEDUP_ALGORITHM =
+  'normalized-evidence-sha256-v1';
+export const TRAINING_QUESTION_LOCATOR_CONTRACT = 'compact-evidence-id-v1';
 export const DEFAULT_OPENAI_QUESTION_GENERATION_REASONING = 'low';
+export const DEFAULT_OPENAI_QUESTION_GENERATION_MAX_OUTPUT_TOKENS = 7_000;
+
+export {
+  DEFAULT_OPENAI_QUESTION_GENERATION_MODEL,
+  TRAINING_QUESTION_ROUTING_STRATEGY_VERSION,
+  TRAINING_QUESTION_VALIDATOR_VERSION,
+};
 
 export const TRAINING_MATERIAL_SUGGESTER = Symbol('TRAINING_MATERIAL_SUGGESTER');
 
@@ -70,6 +110,10 @@ export type TrainingQuestionDraftSource = {
   materialType: 'PDF' | 'OFFICIAL_URL' | 'MANUAL_TEXT' | 'OBJECT_SNAPSHOT';
   contentHash: string;
   segments: TrainingMaterialSegment[];
+  reuseMetadata?: {
+    kind: 'PLATFORMA_OBJECT_SNAPSHOT' | 'PLATFORMA_OBJECT_PDF';
+    realEstateObjectId: string;
+  };
 };
 
 export type TrainingQuestionDraftGenerationInput = {
@@ -79,6 +123,28 @@ export type TrainingQuestionDraftGenerationInput = {
   sources: TrainingQuestionDraftSource[];
   expectedProjectKnowledgeVersion?: number;
 };
+
+export type TrainingQuestionGenerationObservation = Readonly<{
+  attempt: number;
+  durationMs: number;
+  model: string | null;
+  requestedModel: string;
+  requestId: string | null;
+  clientRequestId: string;
+  responseId: string | null;
+  usage: TrainingOpenAIUsage | null;
+  fallbackReason: string | null;
+  finalModel: string | null;
+  outcome: TrainingQuestionGenerationAttemptTelemetry['outcome'];
+}>;
+
+export type TrainingQuestionGenerationOptions = Readonly<{
+  sourceMaximumChars?: number;
+  preparedSource?: TrainingPreparedQuestionSource;
+  observeResponse?: (
+    observation: TrainingQuestionGenerationObservation,
+  ) => Promise<void> | void;
+}>;
 
 export type TrainingGeneratedQuestionDraft = {
   text: string;
@@ -103,14 +169,19 @@ export type TrainingQuestionDraftGenerationResult = {
   generatedAt: Date;
   responseId: string | null;
   usage: TrainingOpenAIUsage | null;
+  strategy?: 'terra_only' | 'luna_then_terra';
+  attemptTelemetry?: TrainingQuestionGenerationAttemptTelemetry[];
 };
 
 export type TrainingPreparedQuestionSource = {
   segments: TrainingMaterialSegment[];
   references: Map<string, {
+    evidenceHash: string;
+    canonicalSourceKey: string;
     sourceRevisionId: string;
     sourceLabel: string;
     sourceLocator: string;
+    sourceExcerpt: string;
   }>;
   sourceManifest: Array<{
     sourceKey: string;
@@ -119,12 +190,32 @@ export type TrainingPreparedQuestionSource = {
   }>;
   sourceHash: string;
   fullSourceChars: number;
+  evidenceMetrics: {
+    rawFragments: number;
+    uniqueFragments: number;
+    selectedFragments: number;
+    rawChars: number;
+    uniqueChars: number;
+    selectedChars: number;
+    chosenBudget: number;
+    configuredMaximumChars: number;
+    uniqueSources: number;
+    representedSources: number;
+    policyVersion: string;
+  };
 };
+
+export type TrainingQuestionQualityContext = Readonly<{
+  objectTitle: string;
+  canonicalSourceCount: number;
+  canonicalSourceKeysByLocator: ReadonlyMap<string, string>;
+}>;
 
 export interface TrainingMaterialSuggester {
   suggest(input: TrainingMaterialSuggestionInput): Promise<TrainingMaterialSuggestionResult>;
   generateQuestionDrafts(
     input: TrainingQuestionDraftGenerationInput,
+    options?: TrainingQuestionGenerationOptions,
   ): Promise<TrainingQuestionDraftGenerationResult>;
 }
 
@@ -158,15 +249,17 @@ export class DeterministicFakeTrainingMaterialSuggester implements TrainingMater
 
   async generateQuestionDrafts(
     input: TrainingQuestionDraftGenerationInput,
+    options?: TrainingQuestionGenerationOptions,
   ): Promise<TrainingQuestionDraftGenerationResult> {
-    const segments = prepareQuestionSourceSegments(input.sources);
+    const prepared = options?.preparedSource ?? prepareTrainingQuestionKnowledge(input, options);
+    const segments = prepared.segments;
     const createDraft = (index: number, main = false): TrainingGeneratedQuestionDraft => {
       const segment = segments[index % segments.length];
       if (!segment) throw new TrainingOpenAIError('OBJECT_QUESTION_SOURCE_EMPTY', false);
       const excerpt = evidenceExcerpt(segment.text);
       const text = main
         ? `Расскажите о жилом комплексе «${input.objectTitle}».`
-        : `Вопрос ${index}: что важно знать о разделе «${segment.label}» жилого комплекса «${input.objectTitle}»?`;
+        : `Вопрос ${index}: что подтверждает факт «${excerpt.substring(0, 180)}»?`;
       return {
         text,
         facts: [{
@@ -188,8 +281,15 @@ export class DeterministicFakeTrainingMaterialSuggester implements TrainingMater
       generatedAt: new Date(),
       responseId: null,
       usage: null,
+      strategy: 'terra_only' as const,
+      attemptTelemetry: [],
     };
-    validateQuestionDraftGeneration(result, segments);
+    validateQuestionDraftGeneration(
+      result,
+      segments,
+      false,
+      createTrainingQuestionQualityContext(prepared, input.objectTitle),
+    );
     return result;
   }
 }
@@ -262,53 +362,93 @@ export class OpenAITrainingMaterialSuggester implements TrainingMaterialSuggeste
 
   async generateQuestionDrafts(
     input: TrainingQuestionDraftGenerationInput,
+    options?: TrainingQuestionGenerationOptions,
   ): Promise<TrainingQuestionDraftGenerationResult> {
-    const segments = prepareQuestionSourceSegments(input.sources);
-    const model = readQuestionGenerationModel();
+    const prepared = options?.preparedSource ?? prepareTrainingQuestionKnowledge(input, options);
+    const segments = prepared.segments;
+    const aiEvidence = prepareQuestionAIEvidence(prepared);
+    const routing = readQuestionGenerationRoutingConfig();
     const reasoning = readQuestionGenerationReasoning();
+    const qualityContext = createTrainingQuestionQualityContext(prepared, input.objectTitle);
     const timeoutMs = readTrainingOpenAIInteger(
       'TRAINING_MATERIAL_SUGGESTION_TIMEOUT_MS',
       120_000,
       1_000,
       300_000,
     );
-    const response = await this.client.request({
-      path: '/responses',
-      body: JSON.stringify(createQuestionDraftRequest(
-        model,
-        reasoning,
-        input.objectTitle,
-        segments,
-      )),
-      contentType: 'application/json',
-      policy: { timeoutMs, maxRetries: 1 },
-      parse: async (httpResponse) => parseQuestionDraftResponse(
-        await httpResponse.json(),
-        segments,
-      ),
-      observeResponse: async ({ response: httpResponse, durationMs }) => {
-        const metadata = await readTrainingOpenAIResponseMetadata(httpResponse);
-        this.logger.log(createTrainingOpenAIUsageLog({
-          operation: 'training_question_generation',
-          model: metadata.model ?? model,
-          reasoningEffort: reasoning,
-          projectId: input.projectId,
-          responseId: metadata.responseId,
-          usage: metadata.usage,
-          durationMs,
-        }));
-      },
-    });
-    const result = {
-      ...response.value,
-      model,
-      requestIds: response.requestId ? [response.requestId] : [],
-      attempts: response.attempts,
-      sourceChars: segments.reduce((total, segment) => total + segment.text.length, 0),
-      generatedAt: new Date(),
-    };
-    validateQuestionDraftGeneration(result, segments);
-    return result;
+    try {
+      const response = await routeTrainingQuestionGeneration({
+        client: this.client,
+        config: routing,
+        timeoutMs,
+        createBody: (model) => JSON.stringify(createQuestionDraftRequest(
+          model, reasoning, input.objectTitle, aiEvidence.segments,
+        )),
+        parse: async (httpResponse) => parseQuestionDraftResponse(
+          await httpResponse.json(),
+          segments,
+          aiEvidence.references,
+          qualityContext,
+        ),
+        observeAttempts: async (telemetry) => {
+          for (const attempt of telemetry) {
+            this.logger.log({
+              ...createTrainingOpenAIUsageLog({
+                operation: 'training_question_generation',
+                model: attempt.actualModel ?? attempt.requestedModel,
+                reasoningEffort: reasoning,
+                projectId: input.projectId,
+                responseId: attempt.responseId,
+                usage: attempt.usage,
+                durationMs: attempt.latencyMs,
+              }),
+              attempt: attempt.attempt,
+              requestedModel: attempt.requestedModel,
+              clientRequestId: attempt.clientRequestId,
+              requestId: attempt.requestId,
+              httpStatus: attempt.httpStatus,
+              outcome: attempt.outcome,
+              errorCode: attempt.errorCode,
+              fallbackReason: attempt.fallbackReason,
+              finalModel: attempt.finalModel,
+            });
+            await options?.observeResponse?.({
+              attempt: attempt.attempt,
+              durationMs: attempt.latencyMs,
+              model: attempt.actualModel,
+              requestedModel: attempt.requestedModel,
+              requestId: attempt.requestId,
+              clientRequestId: attempt.clientRequestId,
+              responseId: attempt.responseId,
+              usage: attempt.usage,
+              fallbackReason: attempt.fallbackReason,
+              finalModel: attempt.finalModel,
+              outcome: attempt.outcome,
+            });
+          }
+        },
+      });
+      const result = {
+        ...response.value,
+        model: response.finalModel,
+        requestIds: response.requestIds,
+        attempts: response.attempts,
+        sourceChars: segments.reduce((total, segment) => total + segment.text.length, 0),
+        generatedAt: new Date(),
+        strategy: routing.strategy,
+        attemptTelemetry: response.telemetry,
+      };
+      validateQuestionDraftGeneration(result, segments, false, qualityContext);
+      this.logger.log(createTrainingQuestionContextMetrics(prepared, 'valid'));
+      return result;
+    } catch (error) {
+      const validationResult = error instanceof TrainingOpenAIError &&
+        error.code.startsWith('OBJECT_QUESTION_DRAFTS_')
+        ? 'invalid'
+        : 'not_run';
+      this.logger.warn(createTrainingQuestionContextMetrics(prepared, validationResult));
+      throw error;
+    }
   }
 }
 
@@ -473,41 +613,63 @@ export function prepareQuestionSourceSegments(sources: readonly TrainingQuestion
 
 export function prepareTrainingQuestionKnowledge(
   input: TrainingQuestionDraftGenerationInput,
+  options?: Pick<TrainingQuestionGenerationOptions, 'sourceMaximumChars'>,
 ): TrainingPreparedQuestionSource {
-  const maximum = readTrainingOpenAIInteger(
+  const configuredMaximum = options?.sourceMaximumChars ?? readTrainingOpenAIInteger(
     'OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS',
-    DEFAULT_QUESTION_SOURCE_MAX_CHARS,
-    QUESTION_SOURCE_MIN_CHARS,
-    QUESTION_SOURCE_MAX_CHARS,
+    DEFAULT_TRAINING_QUESTION_CONTEXT_MAX_CHARS,
+    MIN_TRAINING_QUESTION_CONTEXT_MAX_CHARS,
+    ABSOLUTE_TRAINING_QUESTION_CONTEXT_MAX_CHARS,
   );
+  if (
+    !Number.isInteger(configuredMaximum) ||
+    configuredMaximum < MIN_TRAINING_QUESTION_CONTEXT_MAX_CHARS ||
+    configuredMaximum > ABSOLUTE_TRAINING_QUESTION_CONTEXT_MAX_CHARS
+  ) {
+    throw new TrainingOpenAIError(
+      'OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS_INVALID',
+      false,
+    );
+  }
   const normalizedSources = normalizeQuestionSources(input.sources);
 
   if (!normalizedSources.length) {
     throw new TrainingOpenAIError('OBJECT_QUESTION_SOURCE_EMPTY', false);
   }
-  if (normalizedSources.length * 160 > maximum) {
-    throw new TrainingOpenAIError('OBJECT_CONTENT_TOO_LARGE_FOR_QUESTIONS', false);
-  }
 
-  const fragmentMaximum = Math.min(
-    QUESTION_EVIDENCE_MAX_CHARS,
-    Math.max(160, Math.floor(maximum / normalizedSources.length)),
-  );
   const fragments = normalizedSources.map((source) => createEvidenceFragments(
     source,
-    fragmentMaximum,
+    QUESTION_EVIDENCE_MAX_CHARS,
   ));
-  const selected = selectEvidenceFragments(fragments, maximum);
+  const deduplicated = deduplicateEvidenceFragments(fragments);
+  const contextBudget = chooseTrainingQuestionContextBudget({
+    uniqueChars: deduplicated.metrics.uniqueChars,
+    uniqueFragments: deduplicated.metrics.uniqueFragments,
+    uniqueSources: normalizedSources.length,
+  }, {
+    maximumChars: configuredMaximum,
+  });
+  const selected = selectEvidenceFragments(
+    deduplicated.fragments,
+    normalizedSources.map((source) => source.sourceKey),
+    contextBudget.chosenBudget,
+  );
   const references = new Map<string, {
+    evidenceHash: string;
+    canonicalSourceKey: string;
     sourceRevisionId: string;
     sourceLabel: string;
     sourceLocator: string;
+    sourceExcerpt: string;
   }>();
   const segments = selected.map((fragment) => {
     references.set(fragment.locator, {
+      evidenceHash: fragment.fingerprint,
+      canonicalSourceKey: fragment.sourceContentHash.substring(0, 24),
       sourceRevisionId: fragment.revisionId,
       sourceLabel: fragment.materialTitle,
       sourceLocator: fragment.originalLocator,
+      sourceExcerpt: evidenceExcerpt(fragment.text),
     });
     return {
       locator: fragment.locator,
@@ -520,16 +682,29 @@ export function prepareTrainingQuestionKnowledge(
     contentHash: source.contentHash,
     normalizedChars: source.normalizedChars,
   }));
+  const routing = readQuestionGenerationRoutingConfig();
   const sourceHash = createHash('sha256').update(JSON.stringify({
     compilerVersion: TRAINING_QUESTION_COMPILER_VERSION,
     promptVersion: TRAINING_QUESTION_PROMPT_VERSION,
-    model: readQuestionGenerationModel(),
+    routing: {
+      strategy: routing.strategy,
+      routingVersion: routing.routingVersion,
+      primaryModel: routing.primaryModel,
+      fallbackModel: routing.fallbackModel,
+      validatorVersion: routing.validatorVersion,
+    },
     reasoning: readQuestionGenerationReasoning(),
-    sourceMaxChars: maximum,
-    budgetAlgorithm: 'semantic-round-robin-v1',
+    chosenBudget: contextBudget.chosenBudget,
+    budgetPolicyVersion: contextBudget.policyVersion,
+    selectionAlgorithm: TRAINING_QUESTION_SELECTION_ALGORITHM,
+    evidenceDedupAlgorithm: TRAINING_QUESTION_EVIDENCE_DEDUP_ALGORITHM,
+    locatorContract: TRAINING_QUESTION_LOCATOR_CONTRACT,
     objectTitle: normalizeTrainingMaterialText(input.objectTitle),
-    sources: sourceManifest,
+    evidence: selected.map((fragment) => fragment.fingerprint),
   })).digest('hex');
+
+  const selectedChars = selected.reduce((total, fragment) => total + fragment.text.length, 0);
+  const representedSourceKeys = new Set(selected.flatMap((fragment) => fragment.sourceKeys));
 
   return {
     segments,
@@ -540,7 +715,71 @@ export function prepareTrainingQuestionKnowledge(
       (total, source) => total + source.normalizedChars,
       0,
     ),
+    evidenceMetrics: {
+      ...deduplicated.metrics,
+      selectedFragments: selected.length,
+      selectedChars,
+      chosenBudget: contextBudget.chosenBudget,
+      configuredMaximumChars: configuredMaximum,
+      uniqueSources: normalizedSources.length,
+      representedSources: representedSourceKeys.size,
+      policyVersion: contextBudget.policyVersion,
+    },
   };
+}
+
+export function createTrainingQuestionContextMetrics(
+  prepared: TrainingPreparedQuestionSource,
+  validationResult: 'valid' | 'invalid' | 'not_run',
+) {
+  return {
+    event: 'training_question_context',
+    operation: 'training_question_generation',
+    ...prepared.evidenceMetrics,
+    validationResult,
+  };
+}
+
+export function createTrainingQuestionQualityContext(
+  prepared: TrainingPreparedQuestionSource,
+  objectTitle: string,
+): TrainingQuestionQualityContext {
+  return {
+    objectTitle,
+    canonicalSourceCount: prepared.sourceManifest.length,
+    canonicalSourceKeysByLocator: new Map(
+      [...prepared.references.entries()].map(([locator, reference]) => [
+        locator,
+        reference.canonicalSourceKey,
+      ]),
+    ),
+  };
+}
+
+export function prepareQuestionAIEvidence(prepared: TrainingPreparedQuestionSource) {
+  const compactIdsByLocator = new Map(
+    [...prepared.references.entries()]
+      .sort((left, right) =>
+        left[1].evidenceHash.localeCompare(right[1].evidenceHash) ||
+        left[0].localeCompare(right[0]),
+      )
+      .map(([locator], index) => [locator, `e${index + 1}`]),
+  );
+  const references = new Map<string, TrainingMaterialSegment>();
+  const segments = prepared.segments.map((segment) => {
+    const compactId = compactIdsByLocator.get(segment.locator);
+    if (!compactId) throw new TrainingOpenAIError('OBJECT_QUESTION_SOURCE_INVALID', false);
+    references.set(compactId, segment);
+    return {
+      locator: compactId,
+      text: segment.text,
+    };
+  });
+
+  if (references.size !== prepared.references.size) {
+    throw new TrainingOpenAIError('OBJECT_QUESTION_SOURCE_INVALID', false);
+  }
+  return { segments, references };
 }
 
 type NormalizedQuestionSource = {
@@ -557,6 +796,7 @@ type NormalizedQuestionSource = {
 
 type QuestionEvidenceFragment = {
   locator: string;
+  sourceContentHash: string;
   revisionId: string;
   materialTitle: string;
   originalLocator: string;
@@ -566,6 +806,11 @@ type QuestionEvidenceFragment = {
   sourcePosition: number;
   originalPosition: number;
   fragmentPosition: number;
+};
+
+type DeduplicatedQuestionEvidenceFragment = QuestionEvidenceFragment & {
+  fingerprint: string;
+  sourceKeys: string[];
 };
 
 function normalizeQuestionSources(sources: readonly TrainingQuestionDraftSource[]) {
@@ -671,6 +916,7 @@ function createEvidenceFragments(source: NormalizedQuestionSource, maximum: numb
       evidencePosition += 1;
       fragments.push({
         locator: `source:${source.sourceKey}:evidence:${evidencePosition}`,
+        sourceContentHash: source.contentHash,
         revisionId: source.revisionId,
         materialTitle: source.materialTitle,
         originalLocator: segment.originalLocator,
@@ -684,6 +930,86 @@ function createEvidenceFragments(source: NormalizedQuestionSource, maximum: numb
     }
   }
   return fragments;
+}
+
+function deduplicateEvidenceFragments(
+  groups: QuestionEvidenceFragment[][],
+) {
+  const candidates = groups.flatMap((group) => group.map((fragment) => {
+    const normalizedText = normalizeTrainingEvidenceText(fragment.text);
+    return {
+      ...fragment,
+      normalizedText,
+      fingerprint: createHash('sha256').update(normalizedText).digest('hex'),
+    };
+  }));
+  const candidatesByFingerprint = new Map<string, typeof candidates>();
+
+  for (const candidate of candidates) {
+    const duplicates = candidatesByFingerprint.get(candidate.fingerprint);
+    if (duplicates) {
+      if (duplicates[0]?.normalizedText !== candidate.normalizedText) {
+        throw new TrainingOpenAIError('OBJECT_QUESTION_SOURCE_INVALID', false);
+      }
+      duplicates.push(candidate);
+    } else {
+      candidatesByFingerprint.set(candidate.fingerprint, [candidate]);
+    }
+  }
+
+  const deduplicatedFragments: DeduplicatedQuestionEvidenceFragment[] = [];
+  const locatorFingerprints = new Map<string, string>();
+
+  for (const [fingerprint, duplicates] of [...candidatesByFingerprint.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))) {
+    const canonicalReference = [...duplicates].sort(compareEvidenceCandidates)[0];
+    const normalizedText = duplicates[0]?.normalizedText;
+    if (!canonicalReference || !normalizedText) {
+      throw new TrainingOpenAIError('OBJECT_QUESTION_SOURCE_INVALID', false);
+    }
+    const locatorKey = fingerprint.substring(0, 24);
+    const existingFingerprint = locatorFingerprints.get(locatorKey);
+    if (existingFingerprint && existingFingerprint !== fingerprint) {
+      throw new TrainingOpenAIError('OBJECT_QUESTION_SOURCE_INVALID', false);
+    }
+    locatorFingerprints.set(locatorKey, fingerprint);
+    deduplicatedFragments.push({
+      ...canonicalReference,
+      locator: `source:${locatorKey}:evidence:1`,
+      label: `Источник ${locatorKey} · фрагмент 1`,
+      text: normalizedText,
+      score: scoreEvidenceText(normalizedText),
+      fingerprint,
+      sourceKeys: [...new Set(duplicates.map((duplicate) =>
+        duplicate.sourceContentHash.substring(0, 24),
+      ))].sort(),
+    });
+  }
+
+  return {
+    fragments: deduplicatedFragments,
+    metrics: {
+      rawFragments: candidates.length,
+      uniqueFragments: candidatesByFingerprint.size,
+      rawChars: candidates.reduce((total, candidate) => total + candidate.normalizedText.length, 0),
+      uniqueChars: [...candidatesByFingerprint.values()].reduce(
+        (total, duplicates) => total + (duplicates[0]?.normalizedText.length ?? 0),
+        0,
+      ),
+    },
+  };
+}
+
+function compareEvidenceCandidates(
+  left: QuestionEvidenceFragment,
+  right: QuestionEvidenceFragment,
+) {
+  return left.sourceContentHash.localeCompare(right.sourceContentHash) ||
+    left.originalPosition - right.originalPosition ||
+    left.fragmentPosition - right.fragmentPosition ||
+    left.originalLocator.localeCompare(right.originalLocator) ||
+    left.revisionId.localeCompare(right.revisionId) ||
+    left.materialTitle.localeCompare(right.materialTitle);
 }
 
 function splitEvidenceText(text: string, maximum: number) {
@@ -728,66 +1054,244 @@ function scoreEvidenceText(text: string) {
   return uniqueWords * 10 + Math.min(text.length, 1_000) + digits * 20;
 }
 
-function selectEvidenceFragments(groups: QuestionEvidenceFragment[][], maximum: number) {
-  const selected = new Set<QuestionEvidenceFragment>();
-  let used = 0;
-  const ranked = groups.map((group, sourcePosition) => group
-    .map((fragment) => ({ ...fragment, sourcePosition }))
-    .sort((left, right) =>
-      right.score - left.score ||
-      left.originalPosition - right.originalPosition ||
-      left.fragmentPosition - right.fragmentPosition,
-    ));
-
-  for (const group of ranked) {
-    const first = group[0];
-    if (!first || used + first.text.length > maximum) {
-      throw new TrainingOpenAIError('OBJECT_CONTENT_TOO_LARGE_FOR_QUESTIONS', false);
-    }
-    selected.add(first);
-    used += first.text.length;
+function selectEvidenceFragments(
+  fragments: DeduplicatedQuestionEvidenceFragment[],
+  sourceKeys: string[],
+  maximum: number,
+) {
+  const allFragments = [...fragments].sort((left, right) =>
+    left.fingerprint.localeCompare(right.fingerprint),
+  );
+  if (
+    allFragments.reduce((total, fragment) => total + fragment.text.length, 0) <= maximum
+  ) {
+    return allFragments;
   }
 
-  const queues = ranked.map((group) => group.slice(1));
-  while (queues.some((queue) => queue.length)) {
-    let added = false;
-    for (const queue of queues) {
-      while (queue.length) {
-        const candidate = queue.shift();
-        if (!candidate) break;
-        if (used + candidate.text.length > maximum) continue;
-        selected.add(candidate);
-        used += candidate.text.length;
-        added = true;
-        break;
+  const selected = new Map<string, DeduplicatedQuestionEvidenceFragment>();
+  let used = 0;
+  const ranked = [...fragments].sort(compareEvidenceForSelection);
+  const numericFragments = ranked.filter((fragment) => /\d/u.test(fragment.text));
+  const numericChars = numericFragments.reduce(
+    (total, fragment) => total + fragment.text.length,
+    0,
+  );
+  let coverage: DeduplicatedQuestionEvidenceFragment[] | null = null;
+
+  if (numericChars <= maximum) {
+    for (const fragment of numericFragments) {
+      selected.set(fragment.fingerprint, fragment);
+      used += fragment.text.length;
+    }
+    const representedByNumeric = new Set(numericFragments.flatMap((fragment) =>
+      fragment.sourceKeys,
+    ));
+    const uncoveredSources = sourceKeys.filter((sourceKey) =>
+      !representedByNumeric.has(sourceKey),
+    );
+    coverage = selectSourceCoverageFragments(
+      ranked.filter((fragment) => !selected.has(fragment.fingerprint)),
+      uncoveredSources,
+      maximum - used,
+    );
+    if (!coverage) {
+      selected.clear();
+      used = 0;
+    }
+  }
+
+  coverage ??= selectSourceCoverageFragments(ranked, sourceKeys, maximum);
+  if (!coverage) {
+    throw new TrainingOpenAIError('OBJECT_CONTENT_TOO_LARGE_FOR_QUESTIONS', false);
+  }
+  for (const representative of coverage) {
+    selected.set(representative.fingerprint, representative);
+    used += representative.text.length;
+  }
+
+  const remaining = ranked.filter((fragment) => !selected.has(fragment.fingerprint));
+  const numeric = remaining.filter((fragment) => /\d/u.test(fragment.text));
+  const nonNumeric = remaining.filter((fragment) => !/\d/u.test(fragment.text));
+
+  for (const fragment of [...numeric, ...nonNumeric]) {
+    if (used + fragment.text.length > maximum) continue;
+    selected.set(fragment.fingerprint, fragment);
+    used += fragment.text.length;
+  }
+
+  return [...selected.values()].sort((left, right) =>
+    left.fingerprint.localeCompare(right.fingerprint),
+  );
+}
+
+type QuestionSourceCoverageCandidate = {
+  fragment: DeduplicatedQuestionEvidenceFragment;
+  mask: bigint;
+};
+
+function selectSourceCoverageFragments(
+  fragments: DeduplicatedQuestionEvidenceFragment[],
+  sourceKeys: string[],
+  maximum: number,
+) {
+  const sortedSourceKeys = [...sourceKeys].sort();
+  if (!sortedSourceKeys.length) return [];
+  const sourceIndex = new Map(sortedSourceKeys.map((sourceKey, index) => [sourceKey, index]));
+  const allSourcesMask = (1n << BigInt(sortedSourceKeys.length)) - 1n;
+  const candidateByMask = new Map<bigint, QuestionSourceCoverageCandidate>();
+
+  for (const fragment of fragments) {
+    const mask = fragment.sourceKeys.reduce((result, sourceKey) => {
+      const index = sourceIndex.get(sourceKey);
+      return index === undefined ? result : result | (1n << BigInt(index));
+    }, 0n);
+    if (mask === 0n) continue;
+    const existing = candidateByMask.get(mask);
+    if (
+      !existing || fragment.text.length < existing.fragment.text.length ||
+      (
+        fragment.text.length === existing.fragment.text.length &&
+        compareEvidenceForSelection(fragment, existing.fragment) < 0
+      )
+    ) {
+      candidateByMask.set(mask, { fragment, mask });
+    }
+  }
+
+  const candidates = [...candidateByMask.values()];
+  const greedy = selectGreedySourceCoverage(candidates, allSourcesMask, maximum);
+  if (greedy) return greedy.map((candidate) => candidate.fragment);
+  if (sortedSourceKeys.length > 20 || candidates.length > 256) return null;
+
+  const candidatesBySource = sortedSourceKeys.map((_, index) => candidates.filter((candidate) =>
+    (candidate.mask & (1n << BigInt(index))) !== 0n,
+  ));
+  const bestUsedByMask = new Map<bigint, number>();
+  let visitedStates = 0;
+
+  function search(
+    coveredMask: bigint,
+    used: number,
+    path: QuestionSourceCoverageCandidate[],
+  ): QuestionSourceCoverageCandidate[] | null {
+    visitedStates += 1;
+    if (visitedStates > 100_000) return null;
+    if (coveredMask === allSourcesMask) return path;
+    const previousUsed = bestUsedByMask.get(coveredMask);
+    if (previousUsed !== undefined && previousUsed <= used) return null;
+    bestUsedByMask.set(coveredMask, used);
+
+    let branchCandidates: Array<QuestionSourceCoverageCandidate & { newlyCovered: number }> | null = null;
+    for (let index = 0; index < sortedSourceKeys.length; index += 1) {
+      const sourceMask = 1n << BigInt(index);
+      if ((coveredMask & sourceMask) !== 0n) continue;
+      const viable = (candidatesBySource[index] ?? [])
+        .map((candidate) => ({
+          ...candidate,
+          newlyCovered: countSourceMaskBits(candidate.mask & ~coveredMask),
+        }))
+        .filter(({ fragment, newlyCovered }) =>
+          newlyCovered > 0 &&
+          used + fragment.text.length <= maximum,
+        );
+      if (!viable.length) return null;
+      if (!branchCandidates || viable.length < branchCandidates.length) {
+        branchCandidates = viable;
       }
     }
-    if (!added) break;
+    if (!branchCandidates) return null;
+
+    branchCandidates.sort(compareSourceCoverageCandidates);
+    for (const candidate of branchCandidates) {
+      const result = search(
+        coveredMask | candidate.mask,
+        used + candidate.fragment.text.length,
+        [...path, candidate],
+      );
+      if (result) return result;
+      if (visitedStates > 100_000) return null;
+    }
+    return null;
   }
 
-  return [...selected].sort((left, right) =>
-    left.sourcePosition - right.sourcePosition ||
-    left.originalPosition - right.originalPosition ||
-    left.fragmentPosition - right.fragmentPosition,
-  );
+  const exact = search(0n, 0, []);
+  return exact?.map((candidate) => candidate.fragment) ?? null;
+}
+
+function selectGreedySourceCoverage(
+  candidates: QuestionSourceCoverageCandidate[],
+  allSourcesMask: bigint,
+  maximum: number,
+) {
+  const selected: QuestionSourceCoverageCandidate[] = [];
+  let coveredMask = 0n;
+  let used = 0;
+
+  while (coveredMask !== allSourcesMask) {
+    const candidate = candidates
+      .map((current) => ({
+        ...current,
+        newlyCovered: countSourceMaskBits(current.mask & ~coveredMask),
+      }))
+      .filter(({ fragment, newlyCovered }) =>
+        newlyCovered > 0 && used + fragment.text.length <= maximum,
+      )
+      .sort(compareSourceCoverageCandidates)[0];
+    if (!candidate) return null;
+    selected.push(candidate);
+    used += candidate.fragment.text.length;
+    coveredMask |= candidate.mask;
+  }
+  return selected;
+}
+
+function compareSourceCoverageCandidates(
+  left: QuestionSourceCoverageCandidate & { newlyCovered: number },
+  right: QuestionSourceCoverageCandidate & { newlyCovered: number },
+) {
+  return left.fragment.text.length * right.newlyCovered -
+    right.fragment.text.length * left.newlyCovered ||
+    left.fragment.text.length - right.fragment.text.length ||
+    compareEvidenceForSelection(left.fragment, right.fragment);
+}
+
+function countSourceMaskBits(mask: bigint) {
+  let remaining = mask;
+  let count = 0;
+  while (remaining) {
+    remaining &= remaining - 1n;
+    count += 1;
+  }
+  return count;
+}
+
+function compareEvidenceForSelection(
+  left: DeduplicatedQuestionEvidenceFragment,
+  right: DeduplicatedQuestionEvidenceFragment,
+) {
+  return right.score - left.score || left.fingerprint.localeCompare(right.fingerprint);
 }
 
 export function validateQuestionDraftGeneration(
   result: Pick<TrainingQuestionDraftGenerationResult, 'main' | 'followUps'>,
   segments: readonly TrainingMaterialSegment[],
   retryable = false,
+  qualityContext?: TrainingQuestionQualityContext,
 ) {
   const drafts = [result.main, ...result.followUps];
   const normalizedQuestions = new Set<string>();
+  const coveredCanonicalSources = new Set<string>();
 
   if (result.followUps.length !== QUESTION_DRAFT_COUNT - 1) {
     throw new TrainingOpenAIError('OBJECT_QUESTION_DRAFTS_INVALID', retryable);
   }
-  for (const draft of drafts) {
+  for (const [draftIndex, draft] of drafts.entries()) {
     const text = normalizeTrainingMaterialText(draft.text);
     const canonical = text.toLocaleLowerCase('ru-RU');
     if (
       !text || text.length > 500 || normalizedQuestions.has(canonical) ||
+      (draftIndex > 0 && qualityContext &&
+        isDeterministicallyGenericFollowUp(text, qualityContext.objectTitle)) ||
       draft.facts.length < QUESTION_FACT_MIN_COUNT ||
       draft.facts.length > QUESTION_FACT_MAX_COUNT ||
       !draft.facts.some((fact) => fact.isRequired)
@@ -810,9 +1314,59 @@ export function validateQuestionDraftGeneration(
       ) {
         throw new TrainingOpenAIError('OBJECT_QUESTION_DRAFTS_INVALID', retryable);
       }
+      const canonicalSourceKey = qualityContext?.canonicalSourceKeysByLocator.get(
+        fact.sourceLocator,
+      );
+      if (canonicalSourceKey) coveredCanonicalSources.add(canonicalSourceKey);
       normalizedFacts.add(factCanonical);
     }
     normalizedQuestions.add(canonical);
+  }
+  if (qualityContext) {
+    const requiredCoverage = Math.min(3, qualityContext.canonicalSourceCount);
+    if (coveredCanonicalSources.size < requiredCoverage) {
+      throw new TrainingOpenAIError('OBJECT_QUESTION_DRAFTS_INVALID', retryable);
+    }
+  }
+  return result;
+}
+
+export function isDeterministicallyGenericFollowUp(
+  question: string,
+  objectTitle: string,
+) {
+  const questionTokens = tokenizeQuestionText(question);
+  const titleTokens = tokenizeQuestionText(objectTitle);
+  const withoutTitle = removeTokenSequence(questionTokens, titleTokens);
+  const meaningful = withoutTitle.filter((token) =>
+    !QUESTION_SERVICE_WORDS.has(token) &&
+    !/^\d+$/u.test(token) &&
+    !/^e\d+$/u.test(token) &&
+    !/^[a-f0-9]{12,}$/u.test(token),
+  );
+
+  return meaningful.length === 0 ||
+    meaningful.every((token) => QUESTION_GENERIC_WORDS.has(token));
+}
+
+function tokenizeQuestionText(value: string) {
+  return normalizeTrainingMaterialText(value)
+    .toLocaleLowerCase('ru-RU')
+    .match(/[\p{L}\p{N}]+/gu) ?? [];
+}
+
+function removeTokenSequence(tokens: string[], sequence: string[]) {
+  if (!sequence.length || sequence.length > tokens.length) return tokens;
+  const result: string[] = [];
+
+  for (let index = 0; index < tokens.length;) {
+    const matches = sequence.every((token, offset) => tokens[index + offset] === token);
+    if (matches) {
+      index += sequence.length;
+    } else {
+      result.push(tokens[index] as string);
+      index += 1;
+    }
   }
   return result;
 }
@@ -821,9 +1375,9 @@ function createQuestionDraftRequest(
   model: string,
   reasoning: string,
   objectTitle: string,
-  segments: TrainingMaterialSegment[],
+  aiSegments: Array<{ locator: string; text: string }>,
 ) {
-  const locators = segments.map((segment) => segment.locator);
+  const locators = aiSegments.map((segment) => segment.locator);
   const questionSchema = {
     type: 'object',
     additionalProperties: false,
@@ -862,12 +1416,7 @@ function createQuestionDraftRequest(
     store: false,
     prompt_cache_options: { mode: 'explicit' },
     reasoning: { effort: reasoning },
-    max_output_tokens: readTrainingOpenAIInteger(
-      'OPENAI_QUESTION_GENERATION_MAX_OUTPUT_TOKENS',
-      7_000,
-      2_000,
-      12_000,
-    ),
+    max_output_tokens: readQuestionGenerationMaxOutputTokens(),
     instructions: [
       'Создай черновик программы проверки знаний по выбранному жилому комплексу.',
       'Нужен ровно один широкий главный вопрос и ровно десять разных дополнительных вопросов на русском языке.',
@@ -886,7 +1435,7 @@ function createQuestionDraftRequest(
       content: [{ type: 'input_text', text: JSON.stringify({
         trust_boundary: 'UNTRUSTED_SOURCE_TEXT',
         object_title: objectTitle,
-        segments,
+        segments: aiSegments,
       }) }],
     }],
     text: {
@@ -913,7 +1462,12 @@ function createQuestionDraftRequest(
   };
 }
 
-function parseQuestionDraftResponse(value: unknown, segments: TrainingMaterialSegment[]) {
+function parseQuestionDraftResponse(
+  value: unknown,
+  segments: TrainingMaterialSegment[],
+  aiReferences: ReadonlyMap<string, TrainingMaterialSegment>,
+  qualityContext: TrainingQuestionQualityContext,
+) {
   if (!isRecord(value) || value.status !== 'completed') {
     throw new TrainingOpenAIError('OBJECT_QUESTION_DRAFTS_MALFORMED', true);
   }
@@ -922,48 +1476,61 @@ function parseQuestionDraftResponse(value: unknown, segments: TrainingMaterialSe
     if (error instanceof TrainingOpenAIError) throw error;
     throw new TrainingOpenAIError('OBJECT_QUESTION_DRAFTS_MALFORMED', true);
   }
-  if (!isRecord(parsed) || !Array.isArray(parsed.follow_up_questions)) {
+  if (
+    !isRecord(parsed) ||
+    !hasExactKeys(parsed, ['main_question', 'follow_up_questions']) ||
+    !Array.isArray(parsed.follow_up_questions)
+  ) {
     throw new TrainingOpenAIError('OBJECT_QUESTION_DRAFTS_MALFORMED', true);
   }
   const result = {
-    main: parseQuestionDraft(parsed.main_question, segments),
-    followUps: parsed.follow_up_questions.map((question) => parseQuestionDraft(question, segments)),
+    main: parseQuestionDraft(parsed.main_question, aiReferences),
+    followUps: parsed.follow_up_questions.map((question) =>
+      parseQuestionDraft(question, aiReferences),
+    ),
     responseId: readTrainingOpenAIResponseId(value),
     usage: parseTrainingOpenAIUsage(value.usage),
   };
-  validateQuestionDraftGeneration(result, segments, true);
+  validateQuestionDraftGeneration(result, segments, true, qualityContext);
   return result;
 }
 
 function parseQuestionDraft(
   value: unknown,
-  segments: TrainingMaterialSegment[],
+  aiReferences: ReadonlyMap<string, TrainingMaterialSegment>,
 ): TrainingGeneratedQuestionDraft {
-  if (!isRecord(value) || typeof value.text !== 'string' || !Array.isArray(value.facts)) {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ['text', 'facts']) ||
+    typeof value.text !== 'string' ||
+    !Array.isArray(value.facts)
+  ) {
     throw new TrainingOpenAIError('OBJECT_QUESTION_DRAFTS_MALFORMED', true);
   }
   return {
     text: normalizeTrainingMaterialText(value.text),
-    facts: value.facts.map((fact) => parseGeneratedFactDraft(fact, segments)),
+    facts: value.facts.map((fact) => parseGeneratedFactDraft(fact, aiReferences)),
   };
 }
 
 function parseGeneratedFactDraft(
   value: unknown,
-  segments: TrainingMaterialSegment[],
+  aiReferences: ReadonlyMap<string, TrainingMaterialSegment>,
 ): TrainingGeneratedFactDraft {
-  if (!isRecord(value) || typeof value.statement !== 'string' ||
+  if (!isRecord(value) ||
+    !hasExactKeys(value, ['statement', 'aliases', 'is_required', 'source_locator']) ||
+    typeof value.statement !== 'string' ||
     !Array.isArray(value.aliases) || value.aliases.some((alias) => typeof alias !== 'string') ||
     typeof value.is_required !== 'boolean' || typeof value.source_locator !== 'string') {
     throw new TrainingOpenAIError('OBJECT_QUESTION_DRAFTS_MALFORMED', true);
   }
-  const source = segments.find((segment) => segment.locator === value.source_locator);
+  const source = aiReferences.get(value.source_locator);
   if (!source) throw new TrainingOpenAIError('OBJECT_QUESTION_DRAFTS_MALFORMED', true);
   return {
     statement: normalizeTrainingMaterialText(value.statement),
     aliases: (value.aliases as string[]).map(normalizeTrainingMaterialText),
     isRequired: value.is_required,
-    sourceLocator: value.source_locator,
+    sourceLocator: source.locator,
     sourceExcerpt: evidenceExcerpt(source.text),
   };
 }
@@ -1018,15 +1585,11 @@ function evidenceExcerpt(value: string) {
   return sentence.length <= 500 ? sentence : sentence.substring(0, 500).trim();
 }
 
-function readQuestionGenerationModel() {
-  const model = (
-    process.env.OPENAI_QUESTION_GENERATION_MODEL ?? DEFAULT_OPENAI_QUESTION_GENERATION_MODEL
-  ).trim();
-  if (!model) throw new TrainingOpenAIError('OPENAI_QUESTION_GENERATION_MODEL_INVALID', false);
-  return model;
+export function readQuestionGenerationModel() {
+  return readQuestionGenerationRoutingConfig().terraModel;
 }
 
-function readQuestionGenerationReasoning() {
+export function readQuestionGenerationReasoning() {
   const reasoning = (
     process.env.OPENAI_QUESTION_GENERATION_REASONING ?? DEFAULT_OPENAI_QUESTION_GENERATION_REASONING
   ).trim();
@@ -1034,6 +1597,15 @@ function readQuestionGenerationReasoning() {
     throw new TrainingOpenAIError('OPENAI_QUESTION_GENERATION_REASONING_INVALID', false);
   }
   return reasoning;
+}
+
+export function readQuestionGenerationMaxOutputTokens() {
+  return readTrainingOpenAIInteger(
+    'OPENAI_QUESTION_GENERATION_MAX_OUTPUT_TOKENS',
+    DEFAULT_OPENAI_QUESTION_GENERATION_MAX_OUTPUT_TOKENS,
+    2_000,
+    12_000,
+  );
 }
 
 function stableSuggestionId(revisionId: string, locator: string, index: number) {
@@ -1058,4 +1630,11 @@ function readOutputText(value: unknown) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasExactKeys(value: Record<string, unknown>, keys: string[]) {
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  return actual.length === expected.length &&
+    actual.every((key, index) => key === expected[index]);
 }

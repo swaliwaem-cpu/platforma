@@ -47,6 +47,19 @@ const knowledgeMigration = readFileSync(
   ),
   'utf8',
 );
+const sharedArtifactMigration = readFileSync(
+  resolve(
+    repositoryRoot,
+    'apps/api/prisma/migrations/20260807140000_add_training_question_generation_artifacts/migration.sql',
+  ),
+  'utf8',
+);
+const rootEnvironmentExample = readFileSync(resolve(repositoryRoot, '.env.example'), 'utf8');
+const apiEnvironmentExample = readFileSync(
+  resolve(repositoryRoot, 'apps/api/.env.example'),
+  'utf8',
+);
+const compose = readFileSync(resolve(repositoryRoot, 'docker-compose.yml'), 'utf8');
 const seed = readFileSync(resolve(repositoryRoot, 'apps/api/src/prisma/seed.ts'), 'utf8');
 
 test('Training V2 preserves Stage 4 models and adds the accepted assignment layer', () => {
@@ -55,6 +68,7 @@ test('Training V2 preserves Stage 4 models and adds the accepted assignment laye
   assert.deepEqual(modelNames, [
     'TrainingProject',
     'TrainingProjectKnowledgeVersion',
+    'TrainingQuestionGenerationArtifact',
     'TrainingProjectAssignment',
     'TrainingQuestion',
     'TrainingFact',
@@ -68,6 +82,46 @@ test('Training V2 preserves Stage 4 models and adds the accepted assignment laye
     'TrainingTelegramLinkToken',
     'TrainingAnswerSegment',
   ]);
+});
+
+test('shared question artifact migration is additive, indexed and project-independent', () => {
+  assert.match(
+    sharedArtifactMigration,
+    /CREATE TABLE "training_question_generation_artifacts"/u,
+  );
+  assert.match(
+    sharedArtifactMigration,
+    /UNIQUE INDEX[\s\S]*"real_estate_object_id", "generation_key_hash"/u,
+  );
+  assert.match(
+    sharedArtifactMigration,
+    /real_estate_object_id_fkey[\s\S]*ON DELETE CASCADE/u,
+  );
+  assert.match(
+    sharedArtifactMigration,
+    /generation_artifact_id_fkey[\s\S]*ON DELETE SET NULL/u,
+  );
+  assert.match(
+    sharedArtifactMigration,
+    /generation_artifact_id_idx/u,
+  );
+  assert.doesNotMatch(
+    sharedArtifactMigration,
+    /DROP\s|DELETE\s+FROM|TRUNCATE|ALTER\s+COLUMN/iu,
+  );
+  assert.doesNotMatch(
+    sharedArtifactMigration,
+    /training_question_generation_artifacts[\s\S]*"project_id"/u,
+  );
+});
+
+test('cross-project generation reuse flag is documented off by default', () => {
+  for (const contract of [rootEnvironmentExample, apiEnvironmentExample, compose]) {
+    assert.match(
+      contract,
+      /TRAINING_CROSS_PROJECT_GENERATION_REUSE_ENABLED(?::|=)[^\n]*false/u,
+    );
+  }
 });
 
 test('project knowledge migration is additive and enforces hash/version claims', () => {

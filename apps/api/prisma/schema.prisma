@@ -503,6 +503,7 @@ model RealEstateObject {
   projectPresentationDraftItems    ProjectPresentationDraftObject[]
   projectPresentationDocumentItems ProjectPresentationDocumentObject[]
   trainingProjects                  TrainingProject[]
+  trainingQuestionGenerationArtifacts TrainingQuestionGenerationArtifact[]
 
   @@index([status])
   @@index([type])
@@ -1149,15 +1150,52 @@ model TrainingProjectKnowledgeVersion {
   generationToken          String?   @map("generation_token") @db.VarChar(128)
   lockedAt                 DateTime? @map("locked_at")
   errorCode                String?   @map("error_code") @db.VarChar(120)
+  generationArtifactId     String?   @map("generation_artifact_id") @db.Uuid
   createdAt                DateTime  @default(now()) @map("created_at")
   updatedAt                DateTime  @updatedAt @map("updated_at")
 
-  project TrainingProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project            TrainingProject                    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  generationArtifact TrainingQuestionGenerationArtifact? @relation(fields: [generationArtifactId], references: [id], onDelete: SetNull)
 
   @@unique([projectId, version])
   @@unique([projectId, sourceHash])
   @@index([status, lockedAt])
+  @@index([generationArtifactId])
   @@map("training_project_knowledge_versions")
+}
+
+model TrainingQuestionGenerationArtifact {
+  id                       String    @id @default(uuid()) @db.Uuid
+  realEstateObjectId       String    @map("real_estate_object_id") @db.Uuid
+  generationKeyHash        String    @map("generation_key_hash") @db.Char(64)
+  generationKeyJson        Json      @map("generation_key_json")
+  sourceFingerprint        String    @map("source_fingerprint") @db.Char(64)
+  artifactSchemaVersion    Int       @map("artifact_schema_version")
+  compilerVersion          String    @map("compiler_version") @db.VarChar(64)
+  promptVersion            String    @map("prompt_version") @db.VarChar(64)
+  generationModel          String    @map("generation_model") @db.VarChar(120)
+  generationReasoning      String    @map("generation_reasoning") @db.VarChar(16)
+  routingStrategy          String    @map("routing_strategy") @db.VarChar(64)
+  chosenBudget             Int       @map("chosen_budget")
+  budgetPolicyVersion      String    @map("budget_policy_version") @db.VarChar(64)
+  maxOutputTokens          Int       @map("max_output_tokens")
+  status                   String    @db.VarChar(16)
+  artifactJson             Json?     @map("artifact_json")
+  sourceChars              Int?      @map("source_chars")
+  generationRequestIdsJson Json?     @map("generation_request_ids_json")
+  generationAttempts       Int       @default(0) @map("generation_attempts")
+  generationToken          String?   @map("generation_token") @db.VarChar(128)
+  lockedAt                 DateTime? @map("locked_at")
+  errorCode                String?   @map("error_code") @db.VarChar(120)
+  createdAt                DateTime  @default(now()) @map("created_at")
+  updatedAt                DateTime  @updatedAt @map("updated_at")
+
+  realEstateObject  RealEstateObject                @relation(fields: [realEstateObjectId], references: [id], onDelete: Cascade)
+  knowledgeVersions TrainingProjectKnowledgeVersion[]
+
+  @@unique([realEstateObjectId, generationKeyHash])
+  @@index([status, lockedAt])
+  @@map("training_question_generation_artifacts")
 }
 
 model TrainingProjectAssignment {

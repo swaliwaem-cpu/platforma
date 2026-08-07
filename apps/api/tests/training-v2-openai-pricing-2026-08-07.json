@@ -1,0 +1,36 @@
+{
+  "snapshotId": "openai-standard-pricing-2026-08-07",
+  "sourceUrl": "https://developers.openai.com/api/docs/pricing",
+  "currency": "USD",
+  "shortContextMaximumInputTokens": 272000,
+  "models": {
+    "gpt-5.6-luna": {
+      "short": {
+        "inputUsdPerMillion": 0.2,
+        "cachedInputUsdPerMillion": 0.02,
+        "cacheWriteUsdPerMillion": 0.25,
+        "outputUsdPerMillion": 1.2
+      },
+      "long": {
+        "inputUsdPerMillion": 0.4,
+        "cachedInputUsdPerMillion": 0.04,
+        "cacheWriteUsdPerMillion": 0.5,
+        "outputUsdPerMillion": 1.8
+      }
+    },
+    "gpt-5.6-terra": {
+      "short": {
+        "inputUsdPerMillion": 2,
+        "cachedInputUsdPerMillion": 0.2,
+        "cacheWriteUsdPerMillion": 2.5,
+        "outputUsdPerMillion": 12
+      },
+      "long": {
+        "inputUsdPerMillion": 4,
+        "cachedInputUsdPerMillion": 0.4,
+        "cacheWriteUsdPerMillion": 5,
+        "outputUsdPerMillion": 18
+      }
+    }
+  }
+}

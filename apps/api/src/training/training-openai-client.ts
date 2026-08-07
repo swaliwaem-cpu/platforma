@@ -49,6 +49,7 @@ export class TrainingOpenAIClient {
     path: '/audio/transcriptions' | '/responses';
     body: BodyInit;
     contentType?: string;
+    clientRequestId?: string;
     policy: TrainingOpenAIRequestPolicy;
     parse: (response: Response) => Promise<T>;
     observeResponse?: (observation: TrainingOpenAIResponseObservation) => Promise<void> | void;
@@ -75,6 +76,9 @@ export class TrainingOpenAIClient {
           headers: {
             Authorization: `Bearer ${this.apiKey}`,
             ...(input.contentType ? { 'Content-Type': input.contentType } : {}),
+            ...(input.clientRequestId
+              ? { 'X-Client-Request-Id': input.clientRequestId }
+              : {}),
           },
           body: input.body,
           signal: controller.signal,
@@ -94,7 +98,11 @@ export class TrainingOpenAIClient {
           await response.body?.cancel().catch(() => undefined);
 
           if (!error.retryable || attempts > input.policy.maxRetries) throw error;
-          await waitBeforeRetry(response.headers.get('retry-after'), deadline, attempts);
+          await waitBeforeTrainingOpenAIRetry(
+            response.headers.get('retry-after'),
+            deadline,
+            attempts,
+          );
           continue;
         }
 
@@ -118,13 +126,13 @@ export class TrainingOpenAIClient {
             : new TrainingOpenAIError('OPENAI_MALFORMED_RESPONSE', true, attempts);
 
           if (!parsedError.retryable || attempts > input.policy.maxRetries) throw parsedError;
-          await waitBeforeRetry(null, deadline, attempts);
+          await waitBeforeTrainingOpenAIRetry(null, deadline, attempts);
         }
       } catch (error) {
         const normalized = normalizeFetchError(error, attempts);
 
         if (!normalized.retryable || attempts > input.policy.maxRetries) throw normalized;
-        await waitBeforeRetry(null, deadline, attempts);
+        await waitBeforeTrainingOpenAIRetry(null, deadline, attempts);
       } finally {
         clearTimeout(timer);
       }
@@ -193,7 +201,7 @@ function normalizeFetchError(error: unknown, attempts: number) {
   return new TrainingOpenAIError('OPENAI_NETWORK_ERROR', true, attempts);
 }
 
-async function waitBeforeRetry(
+export async function waitBeforeTrainingOpenAIRetry(
   retryAfter: string | null,
   deadline: number,
   attempts: number,
