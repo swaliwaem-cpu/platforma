@@ -238,6 +238,7 @@ test('Responses provider retries 429, 500 and malformed upstream within one poli
 test('usage observer records every HTTP response in a retry chain with actual model metadata', async () => {
   await withEvaluationEnv(async () => {
     let calls = 0;
+    const records = [];
     const evaluator = makeEvaluator(async () => {
       calls += 1;
       if (calls === 1) {
@@ -250,7 +251,7 @@ test('usage observer records every HTTP response in a retry chain with actual mo
         });
       }
       return jsonResponse(makeResponse(makeEvaluation()));
-    });
+    }, { record: async (value) => { records.push(value); return true; } });
     const logs = [];
     evaluator.logger = { log: (value) => logs.push(value) };
 
@@ -262,6 +263,15 @@ test('usage observer records every HTTP response in a retry chain with actual mo
     assert.equal(logs[0].model, 'gpt-5.6-terra-observed');
     assert.equal(logs[0].inputTokens, 100);
     assert.equal(logs[1].responseId, 'response-id');
+    assert.equal(records.length, 2);
+    assert.deepEqual(records.map((record) => record.attemptOrdinal), [1, 2]);
+    assert.deepEqual(records.map((record) => record.outcome), [
+      'local_validation_failed',
+      'accepted',
+    ]);
+    assert.equal(records[0].promptVersion, 'training-evaluator-prompt-v2');
+    assert.equal(records[0].schemaVersion, 'training-v2-evaluation-v1');
+    assert.equal(records[0].projectId, makeInput().projectId);
   });
 });
 
@@ -286,9 +296,10 @@ test('Responses provider bounds timeout and does not retry permanent 4xx', async
   });
 });
 
-function makeEvaluator(fetchImplementation) {
+function makeEvaluator(fetchImplementation, usageRecorder) {
   return new OpenAITrainingEvaluator(
     new TrainingOpenAIClient('test-key', fetchImplementation, 'https://openai.invalid/v1'),
+    usageRecorder,
   );
 }
 

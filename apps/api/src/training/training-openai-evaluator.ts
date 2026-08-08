@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import { Logger } from '@nestjs/common';
 
@@ -22,6 +22,7 @@ import {
   readTrainingOpenAIResponseId,
   readTrainingOpenAIResponseMetadata,
 } from './training-openai-usage';
+import type { TrainingAiUsageRecorder } from './training-ai-usage.service';
 
 export const TRAINING_EVALUATOR_PROMPT_VERSION = 'training-evaluator-prompt-v2';
 
@@ -39,7 +40,10 @@ export class OpenAITrainingEvaluator implements TrainingEvaluator {
   readonly version = TRAINING_EVALUATION_SCHEMA_VERSION;
   private readonly logger = new Logger(OpenAITrainingEvaluator.name);
 
-  constructor(private readonly client: TrainingOpenAIClient) {}
+  constructor(
+    private readonly client: TrainingOpenAIClient,
+    private readonly usageRecorder?: TrainingAiUsageRecorder,
+  ) {}
 
   async evaluate(
     input: TrainingEvaluationInput,
@@ -124,10 +128,12 @@ export class OpenAITrainingEvaluator implements TrainingEvaluator {
         },
       },
     };
+    const operationRunId = randomUUID();
     const response = await this.client.request({
       path: '/responses',
       body: JSON.stringify(body),
       contentType: 'application/json',
+      clientRequestId: operationRunId,
       signal: options?.signal,
       policy: {
         timeoutMs: readTrainingOpenAIInteger(
@@ -144,9 +150,11 @@ export class OpenAITrainingEvaluator implements TrainingEvaluator {
         ),
       },
       parse: async (httpResponse) => parseEvaluationResponse(await httpResponse.json(), model, input),
-      observeResponse: async ({ response: httpResponse, durationMs }) => {
-        const metadata = await readTrainingOpenAIResponseMetadata(httpResponse);
-        this.logger.log(createTrainingOpenAIUsageLog({
+      observeAttempt: async (observation) => {
+        const metadata = observation.response
+          ? await readTrainingOpenAIResponseMetadata(observation.response)
+          : { model: null, responseId: null, usage: null };
+        const usageLog = createTrainingOpenAIUsageLog({
           operation: 'training_answer_evaluation',
           model: metadata.model ?? model,
           reasoningEffort: reasoning,
@@ -155,8 +163,41 @@ export class OpenAITrainingEvaluator implements TrainingEvaluator {
           attemptId: input.attemptId,
           responseId: metadata.responseId,
           usage: metadata.usage,
-          durationMs,
-        }));
+          durationMs: observation.durationMs,
+        });
+        this.logger.log({
+          ...usageLog,
+          operationRunId,
+          attempt: observation.attempt,
+          requestId: observation.requestId,
+          httpStatus: observation.httpStatus,
+          outcome: observation.outcome,
+          errorCode: observation.errorCode,
+        });
+        await this.usageRecorder?.record({
+          operationRunId,
+          operation: usageLog.operation,
+          requestedModel: model,
+          model: metadata.model ?? model,
+          reasoningEffort: reasoning,
+          promptVersion: TRAINING_EVALUATOR_PROMPT_VERSION,
+          compilerVersion: null,
+          schemaVersion: TRAINING_EVALUATION_SCHEMA_VERSION,
+          projectId: input.projectId,
+          attemptId: input.attemptId,
+          questionId: input.questionId,
+          attemptOrdinal: observation.attempt,
+          clientRequestId: observation.clientRequestId,
+          requestId: observation.requestId,
+          responseId: metadata.responseId,
+          httpStatus: observation.httpStatus,
+          outcome: observation.outcome,
+          errorCode: observation.errorCode,
+          isRetry: observation.attempt > 1,
+          isFallback: false,
+          usage: metadata.usage,
+          latencyMs: observation.durationMs,
+        });
       },
     });
 

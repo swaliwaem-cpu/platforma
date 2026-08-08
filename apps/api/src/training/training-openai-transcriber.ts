@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { Logger } from '@nestjs/common';
 
 import {
@@ -17,13 +19,17 @@ import {
   readTrainingOpenAIResponseId,
   readTrainingOpenAIResponseMetadata,
 } from './training-openai-usage';
+import type { TrainingAiUsageRecorder } from './training-ai-usage.service';
 
 const OPENAI_TRANSCRIPTION_MAX_BYTES = 25 * 1024 * 1024;
 
 export class OpenAITrainingTranscriber implements TrainingTranscriber {
   private readonly logger = new Logger(OpenAITrainingTranscriber.name);
 
-  constructor(private readonly client: TrainingOpenAIClient) {}
+  constructor(
+    private readonly client: TrainingOpenAIClient,
+    private readonly usageRecorder?: TrainingAiUsageRecorder,
+  ) {}
 
   async transcribe(
     input: TrainingTranscriptionInput,
@@ -52,9 +58,11 @@ export class OpenAITrainingTranscriber implements TrainingTranscriber {
     form.set('response_format', 'json');
     if (input.vocabularyPrompt) form.set('prompt', input.vocabularyPrompt);
 
+    const operationRunId = randomUUID();
     const response = await this.client.request({
       path: '/audio/transcriptions',
       body: form,
+      clientRequestId: operationRunId,
       signal: options?.signal,
       policy: {
         timeoutMs: readTrainingOpenAIInteger(
@@ -86,9 +94,11 @@ export class OpenAITrainingTranscriber implements TrainingTranscriber {
           usage: parseTrainingOpenAIUsage(value.usage),
         };
       },
-      observeResponse: async ({ response: httpResponse, durationMs }) => {
-        const metadata = await readTrainingOpenAIResponseMetadata(httpResponse);
-        this.logger.log(createTrainingOpenAIUsageLog({
+      observeAttempt: async (observation) => {
+        const metadata = observation.response
+          ? await readTrainingOpenAIResponseMetadata(observation.response)
+          : { model: null, responseId: null, usage: null };
+        const usageLog = createTrainingOpenAIUsageLog({
           operation: 'training_audio_transcription',
           model: metadata.model ?? model,
           reasoningEffort: null,
@@ -96,8 +106,40 @@ export class OpenAITrainingTranscriber implements TrainingTranscriber {
           attemptId: input.attemptId,
           responseId: metadata.responseId,
           usage: metadata.usage,
-          durationMs,
-        }));
+          durationMs: observation.durationMs,
+        });
+        this.logger.log({
+          ...usageLog,
+          operationRunId,
+          attempt: observation.attempt,
+          requestId: observation.requestId,
+          httpStatus: observation.httpStatus,
+          outcome: observation.outcome,
+          errorCode: observation.errorCode,
+        });
+        await this.usageRecorder?.record({
+          operationRunId,
+          operation: usageLog.operation,
+          requestedModel: model,
+          model: metadata.model ?? model,
+          reasoningEffort: null,
+          promptVersion: null,
+          compilerVersion: null,
+          schemaVersion: null,
+          projectId: input.projectId,
+          attemptId: input.attemptId,
+          attemptOrdinal: observation.attempt,
+          clientRequestId: observation.clientRequestId,
+          requestId: observation.requestId,
+          responseId: metadata.responseId,
+          httpStatus: observation.httpStatus,
+          outcome: observation.outcome,
+          errorCode: observation.errorCode,
+          isRetry: observation.attempt > 1,
+          isFallback: false,
+          usage: metadata.usage,
+          latencyMs: observation.durationMs,
+        });
       },
     });
 

@@ -31,9 +31,12 @@ import type {
 } from '@platforma/shared' with { 'resolution-mode': 'import' };
 import type { TrainingAdminResultsQueryInput } from './training-results.service';
 import type { TrainingAdminRankingQueryInput } from './training-ranking.service';
+import type { TrainingAiUsageReportFilter } from './training-ai-usage.service';
 
 const TRAINING_DEFAULT_TIME_LIMIT_MINUTES = 7;
 const TRAINING_ASSIGNMENT_BULK_LIMIT = 500;
+const TRAINING_AI_USAGE_DEFAULT_RANGE_MS = 30 * 24 * 60 * 60 * 1_000;
+const TRAINING_AI_USAGE_MAX_RANGE_MS = 93 * 24 * 60 * 60 * 1_000;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 export function parseCreateTrainingProjectInput(body: Record<string, unknown>): CreateTrainingProjectInput {
@@ -203,6 +206,30 @@ export function parseTrainingAdminRankingQuery(
     ),
     currentlyAssigned: parseOptionalBoolean(query.currentlyAssigned, 'currentlyAssigned'),
     currentlyEligible: parseOptionalBoolean(query.currentlyEligible, 'currentlyEligible'),
+  };
+}
+
+export function parseTrainingAiUsageReportQuery(
+  query: Record<string, string | undefined>,
+  now = new Date(),
+): TrainingAiUsageReportFilter {
+  const to = parseOptionalDate(query.to, 'to') ?? now;
+  const from = parseOptionalDate(query.from, 'from') ??
+    new Date(to.getTime() - TRAINING_AI_USAGE_DEFAULT_RANGE_MS);
+
+  if (from.getTime() >= to.getTime()) {
+    throw new BadRequestException('from must be before to');
+  }
+  if (to.getTime() - from.getTime() > TRAINING_AI_USAGE_MAX_RANGE_MS) {
+    throw new BadRequestException('AI usage report range must not exceed 93 days');
+  }
+
+  return {
+    from,
+    to,
+    projectId: parseOptionalUuid(query.projectId, 'projectId'),
+    attemptId: parseOptionalUuid(query.attemptId, 'attemptId'),
+    operationRunId: parseOptionalUuid(query.operationRunId, 'operationRunId'),
   };
 }
 

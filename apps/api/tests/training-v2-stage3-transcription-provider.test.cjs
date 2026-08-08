@@ -14,9 +14,11 @@ const {
 
 test('OpenAI transcription serializes one WAV multipart part and bounded vocabulary', async () => {
   const wav = makeWav();
+  const usageRecords = [];
   const request = await captureNativeRequest({ text: 'Тестовая расшифровка' }, async (baseUrl) => {
     const transcriber = new OpenAITrainingTranscriber(
       new TrainingOpenAIClient('test-key', fetch, baseUrl),
+      { record: async (value) => { usageRecords.push(value); return true; } },
     );
     const result = await transcriber.transcribe(makeInput(wav, 'Словарь: ЖК Север'));
 
@@ -33,6 +35,10 @@ test('OpenAI transcription serializes one WAV multipart part and bounded vocabul
   assert.match(request.body, /name="language"[\s\S]*ru/u);
   assert.match(request.body, /ЖК Север/u);
   assert.equal(request.raw.includes(wav), true);
+  assert.equal(usageRecords.length, 1);
+  assert.equal(usageRecords[0].outcome, 'accepted');
+  assert.equal(usageRecords[0].operation, 'training_audio_transcription');
+  assert.equal(usageRecords[0].attemptOrdinal, 1);
 });
 
 test('transcription vocabulary normalizes, deduplicates and excludes fact statements', () => {

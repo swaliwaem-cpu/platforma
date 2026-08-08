@@ -69,7 +69,7 @@ const apiEnvironmentExample = readFileSync(
 const compose = readFileSync(resolve(repositoryRoot, 'docker-compose.yml'), 'utf8');
 const seed = readFileSync(resolve(repositoryRoot, 'apps/api/src/prisma/seed.ts'), 'utf8');
 
-test('Training V2 preserves Stage 4 models and adds the accepted assignment layer', () => {
+test('Training V2 preserves its models and includes AI usage events', () => {
   const modelNames = [...schema.matchAll(/^model (Training\w+) \{/gmu)].map((match) => match[1]);
 
   assert.deepEqual(modelNames, [
@@ -85,6 +85,7 @@ test('Training V2 preserves Stage 4 models and adds the accepted assignment laye
     'TrainingMaterialRevision',
     'TrainingCriterion',
     'TrainingAttempt',
+    'TrainingAiUsageEvent',
     'TrainingAttemptQuestion',
     'TrainingAnswer',
     'TrainingTelegramAccount',

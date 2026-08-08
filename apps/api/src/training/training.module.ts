@@ -59,6 +59,7 @@ import {
 } from './training-transcriber';
 import { TrainingVoiceWorkerService } from './training-voice-worker.service';
 import { TrainingUrlExtractor } from './training-url-extractor';
+import { TrainingAiUsageService } from './training-ai-usage.service';
 
 @Module({
   imports: [AuthModule, PrismaModule, FilesModule],
@@ -90,6 +91,7 @@ import { TrainingUrlExtractor } from './training-url-extractor';
     TrainingUrlExtractor,
     TrainingMaterialService,
     TrainingProjectKnowledgeService,
+    TrainingAiUsageService,
     DeterministicFakeTrainingMaterialSuggester,
     SpawnTrainingFfmpegRunner,
     DeterministicFakeTrainingTranscriber,
@@ -110,10 +112,16 @@ import { TrainingUrlExtractor } from './training-url-extractor';
     },
     {
       provide: TRAINING_EVALUATOR,
-      inject: [DeterministicFakeTrainingEvaluator],
-      useFactory: (fakeEvaluator: DeterministicFakeTrainingEvaluator) =>
+      inject: [DeterministicFakeTrainingEvaluator, TrainingAiUsageService],
+      useFactory: (
+        fakeEvaluator: DeterministicFakeTrainingEvaluator,
+        aiUsage: TrainingAiUsageService,
+      ) =>
         getTrainingAiMode() === 'openai'
-          ? new OpenAITrainingEvaluator(new TrainingOpenAIClient(getOpenAIApiKey()))
+          ? new OpenAITrainingEvaluator(
+              new TrainingOpenAIClient(getOpenAIApiKey()),
+              aiUsage,
+            )
           : fakeEvaluator,
     },
     {
@@ -122,18 +130,30 @@ import { TrainingUrlExtractor } from './training-url-extractor';
     },
     {
       provide: TRAINING_MATERIAL_SUGGESTER,
-      inject: [DeterministicFakeTrainingMaterialSuggester],
-      useFactory: (fakeSuggester: DeterministicFakeTrainingMaterialSuggester) =>
+      inject: [DeterministicFakeTrainingMaterialSuggester, TrainingAiUsageService],
+      useFactory: (
+        fakeSuggester: DeterministicFakeTrainingMaterialSuggester,
+        aiUsage: TrainingAiUsageService,
+      ) =>
         getTrainingAiMode() === 'openai'
-          ? new OpenAITrainingMaterialSuggester(new TrainingOpenAIClient(getOpenAIApiKey()))
+          ? new OpenAITrainingMaterialSuggester(
+              new TrainingOpenAIClient(getOpenAIApiKey()),
+              aiUsage,
+            )
           : fakeSuggester,
     },
     {
       provide: TRAINING_TRANSCRIBER,
-      inject: [DeterministicFakeTrainingTranscriber],
-      useFactory: (fakeTranscriber: DeterministicFakeTrainingTranscriber) =>
+      inject: [DeterministicFakeTrainingTranscriber, TrainingAiUsageService],
+      useFactory: (
+        fakeTranscriber: DeterministicFakeTrainingTranscriber,
+        aiUsage: TrainingAiUsageService,
+      ) =>
         getTrainingAiMode() === 'openai'
-          ? new OpenAITrainingTranscriber(new TrainingOpenAIClient(getOpenAIApiKey()))
+          ? new OpenAITrainingTranscriber(
+              new TrainingOpenAIClient(getOpenAIApiKey()),
+              aiUsage,
+            )
           : fakeTranscriber,
     },
   ],

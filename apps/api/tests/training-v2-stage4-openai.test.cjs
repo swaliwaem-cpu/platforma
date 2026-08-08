@@ -45,6 +45,37 @@ test('material OpenAI stub uses strict store=false request without tools and val
   assert.equal(result.suggestions[0].sourceLocator, 'page:1');
 });
 
+test('material suggestions persist one safe usage row per provider attempt', async () => {
+  const usageRecords = [];
+  const client = new TrainingOpenAIClient('test-key', async () => jsonResponse({
+    suggestions: [{
+      target_question_id: 'question-1',
+      statement: 'Высота потолков составляет три метра.',
+      aliases: ['потолки 3 м'],
+      is_required: true,
+      source_locator: 'page:1',
+      source_excerpt: 'Высота потолков составляет три метра.',
+    }],
+  }, {
+    model: 'gpt-5.6-terra',
+    responseId: 'response-suggestion',
+    requestId: 'request-suggestion',
+    usage: makeUsage(100, 40, 10, 50, 12),
+  }), 'https://openai.test/v1');
+  const suggester = new OpenAITrainingMaterialSuggester(client, {
+    record: async (value) => { usageRecords.push(value); return true; },
+  });
+
+  await suggester.suggest(makeInput('Высота потолков составляет три метра.'));
+
+  assert.equal(usageRecords.length, 1);
+  assert.equal(usageRecords[0].operation, 'training_material_suggestions');
+  assert.equal(usageRecords[0].promptVersion, 'training-material-suggestions-prompt-v1');
+  assert.equal(usageRecords[0].schemaVersion, 'training-material-suggestions-v1');
+  assert.equal(usageRecords[0].responseId, 'response-suggestion');
+  assert.deepEqual(usageRecords[0].usage, makeUsage(100, 40, 10, 50, 12));
+});
+
 test('material OpenAI stub rejects mismatched locator/excerpt and any partial chunk failure', async () => {
   let calls = 0;
   const invalidEvidenceClient = {
@@ -368,6 +399,7 @@ test('luna_then_terra accepts valid Luna after exactly one attempt with safe tel
 test('invalid Luna gets one Terra fallback and records both attempts', async () => {
   await withQuestionGenerationEnv('luna_then_terra', async () => {
     const requestedModels = [];
+    const usageRecords = [];
     let calls = 0;
     const client = new TrainingOpenAIClient('test-key', async (_url, request) => {
       calls += 1;
@@ -384,7 +416,9 @@ test('invalid Luna gets one Terra fallback and records both attempts', async () 
       });
     }, 'https://openai.test/v1');
 
-    const result = await new OpenAITrainingMaterialSuggester(client)
+    const result = await new OpenAITrainingMaterialSuggester(client, {
+      record: async (value) => { usageRecords.push(value); return true; },
+    })
       .generateQuestionDrafts(makeGenerationInput('Паркинг рассчитан на сто автомобилей.'));
 
     assert.deepEqual(requestedModels, ['gpt-5.6-luna', 'gpt-5.6-terra']);
@@ -413,6 +447,16 @@ test('invalid Luna gets one Terra fallback and records both attempts', async () 
         },
       ],
     );
+    assert.equal(usageRecords.length, 2);
+    assert.equal(new Set(usageRecords.map((record) => record.operationRunId)).size, 1);
+    assert.deepEqual(usageRecords.map((record) => record.attemptOrdinal), [1, 2]);
+    assert.deepEqual(usageRecords.map((record) => record.fallbackReason), [
+      null,
+      'luna_local_validation_failed',
+    ]);
+    assert.equal(usageRecords[0].compilerVersion, 'training-question-compiler-v7');
+    assert.equal(usageRecords[0].promptVersion, 'training-question-prompt-v2');
+    assert.equal(usageRecords[0].schemaVersion, 'training-question-drafts-v1');
   });
 });
 

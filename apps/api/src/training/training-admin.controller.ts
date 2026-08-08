@@ -25,6 +25,7 @@ import { TrainingReviewService } from './training-review.service';
 import { TrainingResultsService } from './training-results.service';
 import { TrainingRankingService } from './training-ranking.service';
 import { TrainingFeatureGuard } from './training-runtime-config';
+import { TrainingAiUsageService } from './training-ai-usage.service';
 import {
   parseCreateTrainingProjectInput,
   parseBulkTrainingProjectAssignmentsInput,
@@ -34,6 +35,7 @@ import {
   parseReviewTrainingAttemptInput,
   parseTrainingAdminResultsQuery,
   parseTrainingAdminRankingQuery,
+  parseTrainingAiUsageReportQuery,
   parseUpdateTrainingProjectDraftInput,
   parseUuid,
 } from './training.validation';
@@ -48,6 +50,7 @@ export class TrainingAdminController {
     private readonly reviews: TrainingReviewService,
     private readonly results: TrainingResultsService,
     private readonly ranking: TrainingRankingService,
+    private readonly aiUsage: TrainingAiUsageService,
   ) {}
 
   @Get('projects')
@@ -166,6 +169,12 @@ export class TrainingAdminController {
   @RequirePermissions('training:results:read')
   async listRanking(@Query() query: Record<string, string | undefined>) {
     return this.ranking.listRanking(parseTrainingAdminRankingQuery(query));
+  }
+
+  @Get('ai-usage')
+  @RequirePermissions('training:results:read')
+  async getAiUsage(@Query() query: Record<string, string | undefined>) {
+    return this.aiUsage.report(parseTrainingAiUsageReportQuery(query));
   }
 
   @Get('attempts/:attemptId')

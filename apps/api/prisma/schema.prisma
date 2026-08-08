@@ -1168,6 +1168,7 @@ model TrainingProject {
   materialOperations TrainingMaterialOperation[]
   assignments        TrainingProjectAssignment[]
   knowledgeVersions  TrainingProjectKnowledgeVersion[]
+  aiUsageEvents      TrainingAiUsageEvent[]
 
   @@index([realEstateObjectId])
   @@index([status, isOpen, sortOrder])
@@ -1272,6 +1273,7 @@ model TrainingQuestion {
   project          TrainingProject           @relation(fields: [projectId], references: [id], onDelete: Restrict)
   attemptQuestions TrainingAttemptQuestion[]
   facts            TrainingFact[]
+  aiUsageEvents    TrainingAiUsageEvent[]
 
   @@unique([projectId, type, position])
   @@map("training_questions")
@@ -1480,12 +1482,63 @@ model TrainingAttempt {
   project   TrainingProject           @relation(fields: [projectId], references: [id], onDelete: Restrict)
   questions TrainingAttemptQuestion[]
   telegramOutboxEntries TrainingTelegramOutbox[]
+  aiUsageEvents TrainingAiUsageEvent[]
 
   @@unique([userId, projectId, attemptNumber])
   @@unique([userId, projectId, startIdempotencyKey])
   @@index([projectId, startedAt])
   @@index([reviewedById])
   @@map("training_attempts")
+}
+
+model TrainingAiUsageEvent {
+  id                 String   @id @default(uuid()) @db.Uuid
+  operationRunId     String   @map("operation_run_id") @db.Uuid
+  provider           String   @db.VarChar(32)
+  operation          String   @db.VarChar(64)
+  requestedModel     String   @map("requested_model") @db.VarChar(120)
+  model              String   @db.VarChar(120)
+  reasoningEffort    String?  @map("reasoning_effort") @db.VarChar(16)
+  promptVersion      String?  @map("prompt_version") @db.VarChar(64)
+  compilerVersion    String?  @map("compiler_version") @db.VarChar(64)
+  schemaVersion      String?  @map("schema_version") @db.VarChar(64)
+  projectId          String?  @map("project_id") @db.Uuid
+  attemptId          String?  @map("attempt_id") @db.Uuid
+  questionId         String?  @map("question_id") @db.Uuid
+  attemptOrdinal     Int      @map("attempt_ordinal")
+  clientRequestId    String?  @map("client_request_id") @db.VarChar(160)
+  requestId          String?  @map("request_id") @db.VarChar(160)
+  responseId         String?  @map("response_id") @db.VarChar(160)
+  httpStatus         Int?     @map("http_status") @db.SmallInt
+  outcome            String   @db.VarChar(32)
+  errorCode          String?  @map("error_code") @db.VarChar(120)
+  fallbackReason     String?  @map("fallback_reason") @db.VarChar(120)
+  isRetry            Boolean  @map("is_retry")
+  isFallback         Boolean  @map("is_fallback")
+  inputTokens        Int?     @map("input_tokens")
+  cachedTokens       Int?     @map("cached_tokens")
+  cacheWriteTokens   Int?     @map("cache_write_tokens")
+  outputTokens       Int?     @map("output_tokens")
+  reasoningTokens    Int?     @map("reasoning_tokens")
+  totalTokens        Int?     @map("total_tokens")
+  pricingVersion     String?  @map("pricing_version") @db.VarChar(64)
+  pricingStatus      String   @map("pricing_status") @db.VarChar(32)
+  estimatedCostUsd   Decimal? @map("estimated_cost_usd") @db.Decimal(18, 8)
+  latencyMs          Int      @map("latency_ms")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  project  TrainingProject?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  attempt  TrainingAttempt?  @relation(fields: [attemptId], references: [id], onDelete: SetNull)
+  question TrainingQuestion? @relation(fields: [questionId], references: [id], onDelete: SetNull)
+
+  @@unique([operationRunId, attemptOrdinal])
+  @@index([createdAt])
+  @@index([projectId, createdAt])
+  @@index([attemptId, createdAt])
+  @@index([questionId])
+  @@index([operation, createdAt])
+  @@index([model, createdAt])
+  @@map("training_ai_usage_events")
 }
 
 model TrainingAttemptQuestion {

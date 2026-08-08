@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import { Logger } from '@nestjs/common';
 
@@ -43,6 +43,7 @@ import {
   TRAINING_QUESTION_VALIDATOR_VERSION,
   type TrainingQuestionGenerationAttemptTelemetry,
 } from './training-question-generation-router';
+import type { TrainingAiUsageRecorder } from './training-ai-usage.service';
 
 const CHUNK_CHARS = 12_000;
 const MAX_CHUNKS = 4;
@@ -70,6 +71,11 @@ const QUESTION_GENERIC_WORDS = new Set([
 
 export const TRAINING_QUESTION_COMPILER_VERSION = 'training-question-compiler-v7';
 export const TRAINING_QUESTION_PROMPT_VERSION = 'training-question-prompt-v2';
+export const TRAINING_QUESTION_DRAFT_SCHEMA_VERSION = 'training-question-drafts-v1';
+export const TRAINING_MATERIAL_SUGGESTION_PROMPT_VERSION =
+  'training-material-suggestions-prompt-v1';
+export const TRAINING_MATERIAL_SUGGESTION_SCHEMA_VERSION =
+  'training-material-suggestions-v1';
 export const TRAINING_QUESTION_SELECTION_ALGORITHM =
   'source-coverage-numeric-priority-v1';
 export const TRAINING_QUESTION_EVIDENCE_DEDUP_ALGORITHM =
@@ -297,7 +303,10 @@ export class DeterministicFakeTrainingMaterialSuggester implements TrainingMater
 export class OpenAITrainingMaterialSuggester implements TrainingMaterialSuggester {
   private readonly logger = new Logger(OpenAITrainingMaterialSuggester.name);
 
-  constructor(private readonly client: TrainingOpenAIClient) {}
+  constructor(
+    private readonly client: TrainingOpenAIClient,
+    private readonly usageRecorder?: TrainingAiUsageRecorder,
+  ) {}
 
   async suggest(input: TrainingMaterialSuggestionInput): Promise<TrainingMaterialSuggestionResult> {
     const chunks = chunkSegments(input.segments);
@@ -311,6 +320,7 @@ export class OpenAITrainingMaterialSuggester implements TrainingMaterialSuggeste
     );
     const suggestions: TrainingMaterialSuggestion[] = [];
     const requestIds: string[] = [];
+    const operationRunId = randomUUID();
     let attempts = 0;
 
     for (const [chunkIndex, chunk] of chunks.entries()) {
@@ -321,6 +331,7 @@ export class OpenAITrainingMaterialSuggester implements TrainingMaterialSuggeste
         path: '/responses',
         body: JSON.stringify(body),
         contentType: 'application/json',
+        clientRequestId: operationRunId,
         policy: { timeoutMs: remaining, maxRetries: 1 },
         parse: async (httpResponse) => parseSuggestionResponse(
           await httpResponse.json(),
@@ -328,17 +339,51 @@ export class OpenAITrainingMaterialSuggester implements TrainingMaterialSuggeste
           chunk,
           chunkIndex,
         ),
-        observeResponse: async ({ response: httpResponse, durationMs }) => {
-          const metadata = await readTrainingOpenAIResponseMetadata(httpResponse);
-          this.logger.log(createTrainingOpenAIUsageLog({
+        observeAttempt: async (observation) => {
+          const metadata = observation.response
+            ? await readTrainingOpenAIResponseMetadata(observation.response)
+            : { model: null, responseId: null, usage: null };
+          const attemptOrdinal = attempts + observation.attempt;
+          const usageLog = createTrainingOpenAIUsageLog({
             operation: 'training_material_suggestions',
             model: metadata.model ?? model,
             reasoningEffort: reasoning,
             projectId: input.projectId,
             responseId: metadata.responseId,
             usage: metadata.usage,
-            durationMs,
-          }));
+            durationMs: observation.durationMs,
+          });
+          this.logger.log({
+            ...usageLog,
+            operationRunId,
+            attempt: attemptOrdinal,
+            requestId: observation.requestId,
+            httpStatus: observation.httpStatus,
+            outcome: observation.outcome,
+            errorCode: observation.errorCode,
+          });
+          await this.usageRecorder?.record({
+            operationRunId,
+            operation: usageLog.operation,
+            requestedModel: model,
+            model: metadata.model ?? model,
+            reasoningEffort: reasoning,
+            promptVersion: TRAINING_MATERIAL_SUGGESTION_PROMPT_VERSION,
+            compilerVersion: null,
+            schemaVersion: TRAINING_MATERIAL_SUGGESTION_SCHEMA_VERSION,
+            projectId: input.projectId,
+            attemptOrdinal,
+            clientRequestId: observation.clientRequestId,
+            requestId: observation.requestId,
+            responseId: metadata.responseId,
+            httpStatus: observation.httpStatus,
+            outcome: observation.outcome,
+            errorCode: observation.errorCode,
+            isRetry: observation.attempt > 1,
+            isFallback: false,
+            usage: metadata.usage,
+            latencyMs: observation.durationMs,
+          });
         },
       });
       suggestions.push(...response.value.suggestions);
@@ -376,6 +421,7 @@ export class OpenAITrainingMaterialSuggester implements TrainingMaterialSuggeste
       1_000,
       300_000,
     );
+    const operationRunId = randomUUID();
     try {
       const response = await routeTrainingQuestionGeneration({
         client: this.client,
@@ -402,6 +448,7 @@ export class OpenAITrainingMaterialSuggester implements TrainingMaterialSuggeste
                 usage: attempt.usage,
                 durationMs: attempt.latencyMs,
               }),
+              operationRunId,
               attempt: attempt.attempt,
               requestedModel: attempt.requestedModel,
               clientRequestId: attempt.clientRequestId,
@@ -411,6 +458,29 @@ export class OpenAITrainingMaterialSuggester implements TrainingMaterialSuggeste
               errorCode: attempt.errorCode,
               fallbackReason: attempt.fallbackReason,
               finalModel: attempt.finalModel,
+            });
+            await this.usageRecorder?.record({
+              operationRunId,
+              operation: 'training_question_generation',
+              requestedModel: attempt.requestedModel,
+              model: attempt.actualModel ?? attempt.requestedModel,
+              reasoningEffort: reasoning,
+              promptVersion: TRAINING_QUESTION_PROMPT_VERSION,
+              compilerVersion: TRAINING_QUESTION_COMPILER_VERSION,
+              schemaVersion: TRAINING_QUESTION_DRAFT_SCHEMA_VERSION,
+              projectId: input.projectId,
+              attemptOrdinal: attempt.attempt,
+              clientRequestId: attempt.clientRequestId,
+              requestId: attempt.requestId,
+              responseId: attempt.responseId,
+              httpStatus: attempt.httpStatus,
+              outcome: attempt.outcome,
+              errorCode: attempt.errorCode,
+              fallbackReason: attempt.fallbackReason,
+              isRetry: attempt.attempt > 1 && attempt.fallbackReason === null,
+              isFallback: attempt.fallbackReason !== null,
+              usage: attempt.usage,
+              latencyMs: attempt.latencyMs,
             });
             await options?.observeResponse?.({
               attempt: attempt.attempt,
