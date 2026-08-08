@@ -332,14 +332,18 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
 
       if (!isTrainingProjectSnapshotWithFacts(snapshot)) {
         if (!(await this.canContinueClaim(answer))) return;
-        await this.audio.prepareAnswerAudio(answer.id);
-        const result = await this.attemptState.completeTelegramVoiceAnswer(
-          answer.id,
-          answer.lock_owner,
-          '[fake:pass]',
-        );
-        if (result.status === 'COMPLETED' || result.status === 'TIMED_OUT') {
-          await this.notifyProcessed(answer.id);
+        const audio = await this.audio.prepareAnswerAudio(answer.id);
+        try {
+          const result = await this.attemptState.completeTelegramVoiceAnswer(
+            answer.id,
+            answer.lock_owner,
+            '[fake:pass]',
+          );
+          if (result.status === 'COMPLETED' || result.status === 'TIMED_OUT') {
+            await this.notifyProcessed(answer.id);
+          }
+        } finally {
+          await this.cleanupPreparedAudio(audio);
         }
         return;
       }
@@ -352,20 +356,28 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
         if (!(await this.canContinueClaim(answer))) return;
         const audio = await this.audio.prepareAnswerAudio(answer.id);
         const transcriptionSignal = await this.beginExternalCall(answer);
-        if (!transcriptionSignal) return;
-        const transcription = await this.transcriber.transcribe(
-          {
-            ...audio,
-            projectId: current.attemptQuestion.attempt.projectId,
-            attemptId: current.attemptQuestion.attempt.id,
-            vocabularyPrompt: buildTrainingVocabularyPrompt({
-              projectTitle: snapshot.projectTitle,
-              relatedObjectTitle: snapshot.relatedObjectTitle,
-              facts: question.facts,
-            }),
-          },
-          { signal: transcriptionSignal },
-        );
+        if (!transcriptionSignal) {
+          await this.cleanupPreparedAudio(audio);
+          return;
+        }
+        let transcription;
+        try {
+          transcription = await this.transcriber.transcribe(
+            {
+              ...audio,
+              projectId: current.attemptQuestion.attempt.projectId,
+              attemptId: current.attemptQuestion.attempt.id,
+              vocabularyPrompt: buildTrainingVocabularyPrompt({
+                projectTitle: snapshot.projectTitle,
+                relatedObjectTitle: snapshot.relatedObjectTitle,
+                facts: question.facts,
+              }),
+            },
+            { signal: transcriptionSignal },
+          );
+        } finally {
+          await this.cleanupPreparedAudio(audio);
+        }
         const saved = await this.prisma.trainingAnswer.updateMany({
           where: {
             id: answer.id,
@@ -562,6 +574,15 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
       await this.telegramOutbox.notifyAnswerFailed(answerId);
     } catch (error) {
       this.logTelegramDeliveryFailure('answerFailed', error);
+    }
+  }
+
+  private async cleanupPreparedAudio(audio: { cleanup?: () => Promise<void> }) {
+    if (!audio.cleanup) return;
+    try {
+      await audio.cleanup();
+    } catch {
+      this.logger.warn({ event: 'training_audio_temp_cleanup_failed' });
     }
   }
 

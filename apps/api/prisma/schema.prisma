@@ -1589,6 +1589,10 @@ model TrainingAnswer {
   evaluationRequestId String?                        @map("evaluation_request_id") @db.VarChar(160)
   transcriptionLatencyMs Int?                        @map("transcription_latency_ms")
   evaluationLatencyMs Int?                           @map("evaluation_latency_ms")
+  audioDurationSeconds Int?                          @map("audio_duration_seconds")
+  audioInputBytes     BigInt?                        @map("audio_input_bytes") @db.BigInt
+  audioOutputBytes    BigInt?                        @map("audio_output_bytes") @db.BigInt
+  audioFfmpegLatencyMs Int?                          @map("audio_ffmpeg_latency_ms")
   evaluationSchemaVersion String?                    @map("evaluation_schema_version") @db.VarChar(64)
   evaluationJson      Json?                          @map("evaluation_json")
   objectiveMetricsJson Json?                         @map("objective_metrics_json")

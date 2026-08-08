@@ -1,7 +1,7 @@
 require('reflect-metadata');
 
 const assert = require('node:assert/strict');
-const { randomUUID } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 const { readFile, writeFile } = require('node:fs/promises');
 const { after, before, beforeEach, test } = require('node:test');
 const {
@@ -530,10 +530,9 @@ if (!databaseUrl) {
       {
         run: async (args) => {
           const outputPath = args.at(-1);
-          const wav = Buffer.alloc(64);
-          wav.write('RIFF', 0, 'ascii');
-          wav.write('WAVE', 8, 'ascii');
-          await writeFile(outputPath, wav);
+          const webm = Buffer.alloc(64);
+          Buffer.from([0x1a, 0x45, 0xdf, 0xa3]).copy(webm);
+          await writeFile(outputPath, webm);
         },
       },
     );
@@ -547,7 +546,7 @@ if (!databaseUrl) {
     assert.equal(storage.objects.size, 0);
     assert.equal(await prisma.file.count({ where: { id: segmentFile.id } }), 0);
     assert.equal(
-      await prisma.file.count({ where: { key: `training-v2/answers/${answer.id}/merged.wav` } }),
+      await prisma.file.count({ where: { key: `training-v2/answers/${answer.id}/merged.webm` } }),
       0,
     );
   });
@@ -676,7 +675,7 @@ if (!databaseUrl) {
         originalName: suffix.split('/').at(-1),
         mimeType,
         sizeBytes: BigInt(body.length),
-        checksum: 'a'.repeat(64),
+        checksum: createHash('sha256').update(body).digest('hex'),
         uploadedById: actor.id,
       },
     });
@@ -740,6 +739,15 @@ class MemoryStorage {
     return body;
   }
 
+  async getObjectToFile({ key, bucket, filePath }) {
+    const body = await this.getObject(key, bucket);
+    await writeFile(filePath, body, { flag: 'wx' });
+    return {
+      size: body.length,
+      checksum: createHash('sha256').update(body).digest('hex'),
+    };
+  }
+
   async putObject(input) {
     if (input.key.includes('/segments/')) await this.hooks.onSegmentPutBeforeStore?.();
     this.objects.set(this.objectId(input.key, input.bucket), input.body);
@@ -747,8 +755,10 @@ class MemoryStorage {
   }
 
   async putObjectFromFile(input) {
+    if (input.key.includes('/segments/')) await this.hooks.onSegmentPutBeforeStore?.();
     this.objects.set(this.objectId(input.key, input.bucket), await readFile(input.filePath));
-    if (input.key.endsWith('/merged.wav')) await this.hooks.onMergedPut?.();
+    if (input.key.includes('/segments/')) await this.hooks.onSegmentPut?.();
+    if (input.key.endsWith('/merged.webm')) await this.hooks.onMergedPut?.();
   }
 
   async deleteObject(key, bucket) {

@@ -384,6 +384,15 @@ export class TrainingProjectService {
                 key: `training-v2/answers/${answer.id}/merged.wav`,
                 bucket: trainingAudioBucket,
               })),
+            ...mergedAnswerFiles
+              .filter(
+                (answer) =>
+                  !answer.mergedAudioFileId || deletedFileIds.has(answer.mergedAudioFileId),
+              )
+              .map((answer) => ({
+                key: `training-v2/answers/${answer.id}/merged.webm`,
+                bucket: trainingAudioBucket,
+              })),
             ...segmentFiles
               .filter(
                 (segment) =>

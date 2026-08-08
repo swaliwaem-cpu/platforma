@@ -13,6 +13,10 @@ import {
   DEFAULT_OPENAI_QUESTION_GENERATION_MODEL,
   DEFAULT_TRAINING_QUESTION_GENERATION_STRATEGY,
 } from './training-question-generation-router';
+import {
+  getTrainingAudioLimits,
+  TrainingAudioLimitsError,
+} from './training-audio-limits';
 
 type TrainingEnvironment = NodeJS.ProcessEnv | Record<string, string | undefined>;
 
@@ -83,6 +87,14 @@ export function validateTrainingRuntimeConfig(
   requireExact(environment, 'TRAINING_AI_MODE', 'openai');
   isTrainingCrossProjectGenerationReuseEnabled(environment);
   isTrainingHarmlessExtraRoutingEnabled(environment);
+  try {
+    getTrainingAudioLimits(environment);
+  } catch (error) {
+    if (error instanceof TrainingAudioLimitsError) {
+      throw new TrainingRuntimeConfigError(error.code);
+    }
+    throw error;
+  }
   requireSecret(environment, 'OPENAI_API_KEY', 20);
   requireValue(environment, 'OPENAI_TRANSCRIPTION_MODEL', 3);
   validateQuestionGenerationRouting(environment);

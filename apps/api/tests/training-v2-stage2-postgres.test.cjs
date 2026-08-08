@@ -1,7 +1,7 @@
 require('reflect-metadata');
 
 const assert = require('node:assert/strict');
-const { randomUUID } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 const { access, readFile, writeFile } = require('node:fs/promises');
 const { after, before, beforeEach, test } = require('node:test');
 const {
@@ -304,6 +304,10 @@ if (!databaseUrl) {
     assert.equal(files.every((file) => file.url === null), true);
     assert.equal(files.every((file) => file.bucket === process.env.TRAINING_AUDIO_BUCKET), true);
     assert.equal(storage.objects.size, 3);
+    assert.equal(result.mimeType, 'audio/webm');
+    assert.equal(result.providerUploads.length, 1);
+    await result.cleanup();
+    await repeated.cleanup();
     await assert.rejects(() => access(runner.tempDirectory));
   });
 
@@ -937,6 +941,19 @@ if (!databaseUrl) {
       if (!body) throw new Error('Missing fake object');
       return Buffer.from(body);
     }
+
+    async getObjectToFile({ key, bucket, filePath }) {
+      const body = await this.getObject(key, bucket);
+      await writeFile(filePath, body, { flag: 'wx' });
+      return {
+        size: body.length,
+        checksum: createHash('sha256').update(body).digest('hex'),
+      };
+    }
+
+    async deleteObject(key, bucket) {
+      this.objects.delete(`${bucket}/${key}`);
+    }
   }
 
   class SyntheticWavRunner {
@@ -952,10 +969,9 @@ if (!databaseUrl) {
       const outputPath = args.at(-1);
       this.inputBodies = await Promise.all(inputPaths.map((path) => readFile(path)));
       this.tempDirectory = outputPath.slice(0, outputPath.lastIndexOf('/'));
-      const wav = Buffer.alloc(64);
-      wav.write('RIFF', 0, 'ascii');
-      wav.write('WAVE', 8, 'ascii');
-      await writeFile(outputPath, wav);
+      const webm = Buffer.alloc(64);
+      Buffer.from([0x1a, 0x45, 0xdf, 0xa3]).copy(webm);
+      await writeFile(outputPath, webm);
     }
   }
 
