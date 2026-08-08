@@ -8,7 +8,7 @@ const currentDir = dirname(fileURLToPath(import.meta.url));
 const source = (path) => readFileSync(resolve(currentDir, `../src/${path}`), 'utf8');
 const api = source('training/trainingApi.ts');
 const ranking = source('training/TrainingAdminRankingPage.tsx');
-const routes = source('training/TrainingRoutes.tsx');
+const routes = source('training/TrainingAdminRoutes.tsx');
 const projects = source('training/TrainingAdminProjectsPage.tsx');
 
 test('Stage 5 Part 2 ranking uses server pagination and the server-provided order', () => {

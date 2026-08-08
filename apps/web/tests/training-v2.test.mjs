@@ -8,6 +8,8 @@ const currentDir = dirname(fileURLToPath(import.meta.url));
 const source = (path) => readFileSync(resolve(currentDir, `../src/${path}`), 'utf8');
 const appSource = source('App.tsx');
 const routesSource = source('training/TrainingRoutes.tsx');
+const employeeRoutesSource = source('training/TrainingEmployeeRoutes.tsx');
+const adminRoutesSource = source('training/TrainingAdminRoutes.tsx');
 const apiSource = source('training/trainingApi.ts');
 const projectsSource = source('training/TrainingProjectsPage.tsx');
 const attemptSource = source('training/TrainingAttemptPage.tsx');
@@ -22,14 +24,23 @@ const audioStorageStylesSource = source('training/trainingAudioStorage.css');
 const appThemeSource = source('app-theme.css');
 
 test('Training V2 keeps existing routes and adds the Stage 5 Part 2 ranking route', () => {
-  assert.equal(routesSource.includes('/^\\/training\\/?$/u'), true);
-  assert.equal(routesSource.includes('/^\\/training\\/attempts\\/([^/]+)\\/?$/u'), true);
-  assert.equal(routesSource.includes('/^\\/admin\\/training\\/?$/u'), true);
-  assert.equal(routesSource.includes('/^\\/admin\\/training\\/projects\\/([^/]+)\\/?$/u'), true);
-  assert.equal(routesSource.includes('/^\\/admin\\/training\\/attempts\\/([^/]+)\\/?$/u'), true);
-  assert.equal(routesSource.includes('/^\\/admin\\/training\\/results\\/?$/u'), true);
-  assert.equal(routesSource.includes('/^\\/admin\\/training\\/ranking\\/?$/u'), true);
-  assert.equal(routesSource.includes('/^\\/admin\\/training\\/audio-storage\\/?$/u'), true);
+  assert.equal(employeeRoutesSource.includes('/^\\/training\\/?$/u'), true);
+  assert.equal(employeeRoutesSource.includes('/^\\/training\\/attempts\\/([^/]+)\\/?$/u'), true);
+  assert.equal(adminRoutesSource.includes('/^\\/admin\\/training\\/?$/u'), true);
+  assert.equal(adminRoutesSource.includes('/^\\/admin\\/training\\/projects\\/([^/]+)\\/?$/u'), true);
+  assert.equal(adminRoutesSource.includes('/^\\/admin\\/training\\/attempts\\/([^/]+)\\/?$/u'), true);
+  assert.equal(adminRoutesSource.includes('/^\\/admin\\/training\\/results\\/?$/u'), true);
+  assert.equal(adminRoutesSource.includes('/^\\/admin\\/training\\/ranking\\/?$/u'), true);
+  assert.equal(adminRoutesSource.includes('/^\\/admin\\/training\\/audio-storage\\/?$/u'), true);
+});
+
+test('training employee and admin routes are isolated behind lazy route chunks', () => {
+  assert.match(routesSource, /lazy\([\s\S]*?import\('\.\/TrainingEmployeeRoutes'\)/);
+  assert.match(routesSource, /lazy\([\s\S]*?import\('\.\/TrainingAdminRoutes'\)/);
+  assert.match(routesSource, /<Suspense fallback=\{<TrainingRouteLoading \/>\}>/);
+  assert.match(routesSource, /Обновить страницу/);
+  assert.doesNotMatch(employeeRoutesSource, /TrainingAdmin/u);
+  assert.doesNotMatch(adminRoutesSource, /TrainingProjectsPage|TrainingAttemptPage/u);
 });
 
 test('application shell enforces employee and admin permission gates', () => {
@@ -37,8 +48,8 @@ test('application shell enforces employee and admin permission gates', () => {
   assert.match(appSource, /hasPermission\('training:participate'\)[\s\S]*?<TrainingEmployeeRoutes/);
   assert.match(appSource, /hasPermission\('admin:access'\)[\s\S]*?pathname\.startsWith\('\/admin\/training'\)/);
   assert.match(appSource, /hasPermission\('training:projects:manage'\)[\s\S]*?hasPermission\('training:results:read'\)[\s\S]*?hasPermission\('training:audio:read'\)/);
-  assert.match(routesSource, /canManageProjects[\s\S]*?TrainingAdminProjectEditorPage/);
-  assert.match(routesSource, /canReadResults[\s\S]*?TrainingAdminAttemptPage/);
+  assert.match(adminRoutesSource, /canManageProjects[\s\S]*?TrainingAdminProjectEditorPage/);
+  assert.match(adminRoutesSource, /canReadResults[\s\S]*?TrainingAdminAttemptPage/);
   assert.match(appSource, /canReadAudio=\{hasPermission\('training:audio:read'\)\}/);
   assert.match(appSource, /canDeleteFiles=\{hasPermission\('files:delete'\)\}/);
 });
@@ -152,7 +163,7 @@ test('admin project deletion is explicit, destructive and guarded against duplic
 });
 
 test('audio storage page is manual-only, filterable and double-confirmed', () => {
-  assert.match(routesSource, /canReadAudio[\s\S]*?TrainingAudioStoragePage/);
+  assert.match(adminRoutesSource, /canReadAudio[\s\S]*?TrainingAudioStoragePage/);
   assert.match(adminProjectsSource, /aria-label="Хранилище аудио"[\s\S]*?\/admin\/training\/audio-storage/);
   assert.match(audioStorageSource, /Автоматического GC нет/);
   assert.match(audioStorageSource, /Название, включая удалённые/);

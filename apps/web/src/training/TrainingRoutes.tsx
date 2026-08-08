@@ -1,134 +1,96 @@
-import { AdminButton, AdminPanel } from '../admin/AdminUi';
-import { TrainingAdminAttemptPage } from './TrainingAdminAttemptPage';
-import { TrainingAdminProjectEditorPage } from './TrainingAdminProjectEditorPage';
-import { TrainingAdminProjectsPage } from './TrainingAdminProjectsPage';
-import { TrainingAdminResultsPage } from './TrainingAdminResultsPage';
-import { TrainingAdminRankingPage } from './TrainingAdminRankingPage';
-import { TrainingAttemptPage } from './TrainingAttemptPage';
-import { TrainingAudioStoragePage } from './TrainingAudioStoragePage';
-import { TrainingProjectsPage } from './TrainingProjectsPage';
-import './training.css';
+import {
+  Component,
+  lazy,
+  Suspense,
+  type ErrorInfo,
+  type ReactNode,
+} from 'react';
 
-type TrainingRoutesProps = {
+import { AdminButton, AdminPanel } from '../admin/AdminUi';
+
+export type TrainingRoutesProps = {
   pathname: string;
   navigate: (pathname: string) => void;
 };
 
-export function TrainingEmployeeRoutes({ pathname, navigate }: TrainingRoutesProps) {
-  if (/^\/training\/?$/u.test(pathname)) {
-    return <TrainingProjectsPage navigate={navigate} />;
-  }
-
-  const attemptId = parseRouteId(pathname, /^\/training\/attempts\/([^/]+)\/?$/u);
-
-  return attemptId
-    ? <TrainingAttemptPage key={attemptId} attemptId={attemptId} navigate={navigate} />
-    : <TrainingRouteNotFound navigate={navigate} fallback="/training" />;
-}
-
-export function TrainingAdminRoutes({
-  pathname,
-  navigate,
-  canManageProjects,
-  canReadResults,
-  canReviewResults,
-  canReadAudio,
-  canDeleteFiles,
-}: TrainingRoutesProps & {
+type TrainingAdminRoutesProps = TrainingRoutesProps & {
   canManageProjects: boolean;
   canReadResults: boolean;
   canReviewResults: boolean;
   canReadAudio: boolean;
   canDeleteFiles: boolean;
-}) {
-  if (/^\/admin\/training\/?$/u.test(pathname)) {
-    return (
-      <TrainingAdminProjectsPage
-        canManageProjects={canManageProjects}
-        canReadResults={canReadResults}
-        canReadAudio={canReadAudio}
-        navigate={navigate}
-      />
-    );
-  }
+};
 
-  if (/^\/admin\/training\/audio-storage\/?$/u.test(pathname)) {
-    return canReadAudio
-      ? <TrainingAudioStoragePage canDeleteFiles={canDeleteFiles} navigate={navigate} />
-      : <TrainingRouteDenied />;
-  }
+const TrainingEmployeeRoutesChunk = lazy(() =>
+  import('./TrainingEmployeeRoutes').then((module) => ({
+    default: module.TrainingEmployeeRoutes,
+  })),
+);
 
-  if (/^\/admin\/training\/results\/?$/u.test(pathname)) {
-    return canReadResults
-      ? <TrainingAdminResultsPage navigate={navigate} />
-      : <TrainingRouteDenied />;
-  }
+const TrainingAdminRoutesChunk = lazy(() =>
+  import('./TrainingAdminRoutes').then((module) => ({
+    default: module.TrainingAdminRoutes,
+  })),
+);
 
-  if (/^\/admin\/training\/ranking\/?$/u.test(pathname)) {
-    return canReadResults
-      ? <TrainingAdminRankingPage navigate={navigate} />
-      : <TrainingRouteDenied />;
-  }
-
-  const projectId = parseRouteId(
-    pathname,
-    /^\/admin\/training\/projects\/([^/]+)\/?$/u,
-  );
-
-  if (projectId) {
-    return canManageProjects
-      ? <TrainingAdminProjectEditorPage key={projectId} projectId={projectId} navigate={navigate} />
-      : <TrainingRouteDenied />;
-  }
-
-  const attemptId = parseRouteId(
-    pathname,
-    /^\/admin\/training\/attempts\/([^/]+)\/?$/u,
-  );
-
-  if (attemptId) {
-    return canReadResults
-      ? <TrainingAdminAttemptPage key={attemptId} attemptId={attemptId} canReviewResults={canReviewResults} canReadAudio={canReadAudio} navigate={navigate} />
-      : <TrainingRouteDenied />;
-  }
-
-  return <TrainingRouteNotFound navigate={navigate} fallback="/admin/training" />;
-}
-
-function TrainingRouteDenied() {
+export function TrainingEmployeeRoutes(props: TrainingRoutesProps) {
   return (
-    <AdminPanel className="training-route-message">
-      <p className="eyebrow">Доступ</p>
-      <h2>Недостаточно прав</h2>
-    <p className="muted-text">Текущая роль не открывает этот раздел обучения.</p>
-    </AdminPanel>
+    <TrainingRouteChunkBoundary pathname={props.pathname}>
+      <Suspense fallback={<TrainingRouteLoading />}>
+        <TrainingEmployeeRoutesChunk {...props} />
+      </Suspense>
+    </TrainingRouteChunkBoundary>
   );
 }
 
-function TrainingRouteNotFound({
-  navigate,
-  fallback,
-}: {
-  navigate: (pathname: string) => void;
-  fallback: string;
-}) {
+export function TrainingAdminRoutes(props: TrainingAdminRoutesProps) {
   return (
-    <AdminPanel className="training-route-message">
+    <TrainingRouteChunkBoundary pathname={props.pathname}>
+      <Suspense fallback={<TrainingRouteLoading />}>
+        <TrainingAdminRoutesChunk {...props} />
+      </Suspense>
+    </TrainingRouteChunkBoundary>
+  );
+}
+
+function TrainingRouteLoading() {
+  return (
+    <AdminPanel className="content-panel training-route-chunk-state" role="status" aria-live="polite">
       <p className="eyebrow">Обучение</p>
-      <h2>Страница не найдена</h2>
-      <AdminButton type="button" onClick={() => navigate(fallback)}>Вернуться</AdminButton>
+      <h2>Загрузка раздела</h2>
+      <p className="muted-text">Подготавливаем страницу обучения…</p>
     </AdminPanel>
   );
 }
 
-function parseRouteId(pathname: string, pattern: RegExp) {
-  const value = pathname.match(pattern)?.[1];
+class TrainingRouteChunkBoundary extends Component<
+  { children: ReactNode; pathname: string },
+  { failedPathname: string | null }
+> {
+  override state: { failedPathname: string | null } = { failedPathname: null };
 
-  if (!value) return null;
+  static getDerivedStateFromError() {
+    return { failedPathname: window.location.pathname };
+  }
 
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
+  override componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('Failed to render a training route chunk.', error, errorInfo);
+  }
+
+  override render() {
+    if (this.state.failedPathname === this.props.pathname) {
+      return (
+        <AdminPanel className="content-panel training-route-chunk-state" role="alert">
+          <p className="eyebrow">Обучение</p>
+          <h2>Не удалось открыть раздел</h2>
+          <p className="muted-text">Обновите страницу, чтобы загрузить модуль ещё раз.</p>
+          <AdminButton type="button" tone="primary" onClick={() => window.location.reload()}>
+            Обновить страницу
+          </AdminButton>
+        </AdminPanel>
+      );
+    }
+
+    return this.props.children;
   }
 }
