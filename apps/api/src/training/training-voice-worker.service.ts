@@ -40,10 +40,13 @@ import {
   TRAINING_TRANSCRIBER,
   type TrainingTranscriber,
 } from './training-transcriber';
+import { TrainingVoiceWorkerWakeupService } from './training-voice-worker-wakeup.service';
 
 const MAX_PROCESSING_ATTEMPTS = 3;
 const MAX_OPENAI_EVALUATION_WORKER_ATTEMPTS = 2;
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
+const DEFAULT_RECOVERY_SWEEP_INTERVAL_MS = 15_000;
+const IDLE_POLL_BACKOFF_MULTIPLIERS = [1, 2.5, 5, 7.5] as const;
 const DEFAULT_STALE_LOCK_MS = 2 * 60_000;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 const DEFAULT_CONCURRENCY = 3;
@@ -66,10 +69,14 @@ type ActiveClaim = {
 export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(TrainingVoiceWorkerService.name);
   private readonly workerId = `training-voice-${process.pid}-${randomUUID()}`;
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private pollTimer: ReturnType<typeof setTimeout> | null = null;
+  private recoveryTimer: ReturnType<typeof setInterval> | null = null;
+  private unsubscribeWakeup: (() => void) | null = null;
+  private idlePollIndex = 0;
+  private wakeRequested = false;
   private stopping = false;
   private pumping = false;
-  private pumpTask: Promise<void> | null = null;
+  private pumpTask: Promise<boolean> | null = null;
   private readonly activeTasks = new Set<Promise<void>>();
   private readonly activeClaims = new Map<string, ActiveClaim>();
   private readonly externalAbortController = new AbortController();
@@ -82,13 +89,18 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
     @Inject(TRAINING_EVALUATOR) private readonly evaluator: TrainingEvaluator,
     private readonly attemptState: TrainingAttemptStateService,
     private readonly telegramOutbox: TrainingTelegramOutboxWorkerService,
+    private readonly wakeup = new TrainingVoiceWorkerWakeupService(),
   ) {}
 
   async onModuleInit() {
     if (!isWorkerEnabled() || !isTrainingModuleEnabled()) return;
 
     await this.recoverExhaustedAnswers();
-    this.timer = setInterval(() => void this.poll(), getPollIntervalMs());
+    this.unsubscribeWakeup = this.wakeup.subscribe(() => this.kick());
+    this.recoveryTimer = setInterval(
+      () => void this.runRecoverySweep(),
+      getRecoverySweepIntervalMs(),
+    );
     this.kick();
   }
 
@@ -106,8 +118,11 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
   private async performShutdown() {
     this.stopping = true;
     this.externalAbortController.abort();
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
+    this.clearPollTimer();
+    if (this.recoveryTimer) clearInterval(this.recoveryTimer);
+    this.recoveryTimer = null;
+    this.unsubscribeWakeup?.();
+    this.unsubscribeWakeup = null;
     const drainMs = getShutdownDrainMs();
     const deadline = Date.now() + drainMs;
     const releaseReserveMs = Math.min(1_000, Math.max(50, Math.floor(drainMs / 5)));
@@ -128,24 +143,73 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
   }
 
   kick() {
-    if (this.stopping || !isTrainingModuleEnabled() || this.pumpTask) return;
+    if (this.stopping || !isTrainingModuleEnabled()) return;
 
+    this.idlePollIndex = 0;
+    this.wakeRequested = true;
+    this.clearPollTimer();
+    this.startPump();
+  }
+
+  private startPump() {
+    if (this.pumpTask || this.stopping || !isTrainingModuleEnabled()) return;
+
+    this.wakeRequested = false;
     const task = this.pump();
     this.pumpTask = task;
     void task.then(
-      () => this.clearPumpTask(task),
-      () => this.clearPumpTask(task),
+      (foundWork) => this.completePump(task, foundWork),
+      () => {
+        this.logWorkerFailure('pump');
+        this.completePump(task, false);
+      },
     );
   }
 
-  private clearPumpTask(task: Promise<void>) {
-    if (this.pumpTask === task) this.pumpTask = null;
+  private completePump(task: Promise<boolean>, foundWork: boolean) {
+    if (this.pumpTask !== task) return;
+    this.pumpTask = null;
+
+    if (this.stopping || !isTrainingModuleEnabled()) return;
+    if (this.wakeRequested) {
+      this.startPump();
+      return;
+    }
+    if (foundWork) this.idlePollIndex = 0;
+    this.schedulePoll();
   }
 
-  private async poll() {
-    if (this.stopping || !isTrainingModuleEnabled()) return;
-    await this.recoverExhaustedAnswers();
-    this.kick();
+  private schedulePoll() {
+    if (this.pollTimer || this.stopping || !isTrainingModuleEnabled()) return;
+    const delays = getIdlePollDelaysMs();
+    const delay = delays[Math.min(this.idlePollIndex, delays.length - 1)] ??
+      DEFAULT_POLL_INTERVAL_MS;
+    this.idlePollIndex = Math.min(this.idlePollIndex + 1, delays.length - 1);
+    this.pollTimer = setTimeout(() => {
+      this.pollTimer = null;
+      this.startPump();
+    }, delay);
+  }
+
+  private clearPollTimer() {
+    if (this.pollTimer) clearTimeout(this.pollTimer);
+    this.pollTimer = null;
+  }
+
+  private async runRecoverySweep() {
+    try {
+      await this.recoverExhaustedAnswers();
+    } catch {
+      this.logWorkerFailure('recovery');
+    }
+  }
+
+  private logWorkerFailure(operation: 'pump' | 'recovery') {
+    this.logger.warn({
+      event: 'training_voice_worker_failed',
+      operation,
+      code: 'UNEXPECTED_ERROR',
+    });
   }
 
   async runOnce() {
@@ -171,8 +235,9 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
   }
 
   private async pump() {
-    if (this.pumping || this.stopping || !isTrainingModuleEnabled()) return;
+    if (this.pumping || this.stopping || !isTrainingModuleEnabled()) return false;
     this.pumping = true;
+    let foundWork = false;
     try {
       while (
         !this.stopping &&
@@ -182,6 +247,7 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
         const answer = await this.claimNextAnswer();
 
         if (!answer) break;
+        foundWork = true;
         this.trackClaim(answer);
         if (this.stopping || !isTrainingModuleEnabled()) {
           await this.releaseClaim(answer, true);
@@ -193,6 +259,7 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
     } finally {
       this.pumping = false;
     }
+    return foundWork;
   }
 
   private startClaimedTask(answer: ClaimedAnswer) {
@@ -767,6 +834,24 @@ function getPollIntervalMs() {
     250,
     60_000,
   );
+}
+
+export function createTrainingVoiceWorkerIdlePollDelays(minimumMs: number) {
+  if (!Number.isInteger(minimumMs) || minimumMs < 1) {
+    throw new RangeError('TRAINING_VOICE_WORKER_POLL_INTERVAL_INVALID');
+  }
+
+  return IDLE_POLL_BACKOFF_MULTIPLIERS.map((multiplier) =>
+    Math.round(minimumMs * multiplier),
+  );
+}
+
+function getIdlePollDelaysMs() {
+  return createTrainingVoiceWorkerIdlePollDelays(getPollIntervalMs());
+}
+
+function getRecoverySweepIntervalMs() {
+  return Math.max(DEFAULT_RECOVERY_SWEEP_INTERVAL_MS, getPollIntervalMs());
 }
 
 function getStaleLockMs() {

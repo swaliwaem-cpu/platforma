@@ -58,6 +58,7 @@ import {
   TRAINING_TRANSCRIBER,
 } from './training-transcriber';
 import { TrainingVoiceWorkerService } from './training-voice-worker.service';
+import { TrainingVoiceWorkerWakeupService } from './training-voice-worker-wakeup.service';
 import { TrainingUrlExtractor } from './training-url-extractor';
 import { TrainingAiUsageService } from './training-ai-usage.service';
 
@@ -85,6 +86,7 @@ import { TrainingAiUsageService } from './training-ai-usage.service';
     TrainingTelegramService,
     TrainingTelegramOutboxWorkerService,
     TrainingAudioService,
+    TrainingVoiceWorkerWakeupService,
     TrainingVoiceWorkerService,
     TrainingMaterialExtractionService,
     TrainingMaterialOperationService,

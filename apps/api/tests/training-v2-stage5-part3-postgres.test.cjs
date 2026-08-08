@@ -24,6 +24,9 @@ const {
   TrainingTelegramOutboxWorkerService,
 } = require('../dist/training/training-telegram-outbox-worker.service.js');
 const { TrainingVoiceWorkerService } = require('../dist/training/training-voice-worker.service.js');
+const {
+  TrainingVoiceWorkerWakeupService,
+} = require('../dist/training/training-voice-worker-wakeup.service.js');
 
 const databaseUrl = process.env.TRAINING_TEST_DATABASE_URL;
 
@@ -43,11 +46,13 @@ if (!databaseUrl) {
   const prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
   const projectAccess = new TrainingProjectAccessService(prisma);
   const evaluator = new DeterministicFakeTrainingEvaluator();
+  const voiceWorkerWakeup = new TrainingVoiceWorkerWakeupService();
   const state = new TrainingAttemptStateService(
     prisma,
     evaluator,
     { select: (candidates) => candidates.slice(0, 3) },
     projectAccess,
+    voiceWorkerWakeup,
   );
   const attempts = new TrainingAttemptService(prisma, state, projectAccess);
   const projects = new TrainingProjectService(prisma);
@@ -149,6 +154,93 @@ if (!databaseUrl) {
       client.sentMessages.filter((message) => message.text.startsWith('Вопрос 2 из 4')).length,
       10,
     );
+  });
+
+  test('committed PROCESSING answer wakes a local idle worker without waiting for polling', async (context) => {
+    process.env.TRAINING_VOICE_WORKER_POLL_INTERVAL_MS = '1000';
+    const project = await createOpenProject('Part 3 local wakeup');
+    const [user] = await createUsers(1, 'local-wakeup');
+    const attempt = await attempts.startAttempt(project.id, user.id, {
+      confirmed: true,
+      idempotencyKey: randomUUID(),
+    });
+    const telegramUserId = 91_001;
+    const chatId = 92_001;
+    await prisma.trainingTelegramAccount.create({
+      data: {
+        userId: user.id,
+        telegramUserId: BigInt(telegramUserId),
+        chatId: BigInt(chatId),
+      },
+    });
+    const client = new FakeTrainingTelegramClient();
+    const telegram = new TrainingTelegramService(prisma, state, projectAccess, client);
+    const transcriber = new BarrierTranscriber();
+    const worker = createWorker(
+      new ImmediateAudio(),
+      transcriber,
+      evaluator,
+      state,
+      telegram,
+    );
+    context.after(async () => {
+      process.env.TRAINING_VOICE_WORKER_POLL_INTERVAL_MS = '250';
+      transcriber.release();
+      await worker.shutdown();
+    });
+    await worker.onModuleInit();
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await telegram.handleUpdate(voiceUpdate(
+      telegramUserId,
+      chatId,
+      93_001,
+      'local-wakeup-file',
+      'local-wakeup-unique',
+    ));
+
+    const startedAt = Date.now();
+    await telegram.handleUpdate(finishUpdate(
+      telegramUserId,
+      chatId,
+      attempt.currentQuestion.id,
+      'local-wakeup-finish',
+    ));
+    await Promise.race([
+      transcriber.waitUntilStarted(),
+      new Promise((_, reject) => setTimeout(
+        () => reject(new Error('Local worker wakeup was not immediate')),
+        750,
+      )),
+    ]);
+    assert.ok(Date.now() - startedAt < 750);
+    transcriber.release();
+    await waitFor(async () =>
+      (await prisma.trainingAnswer.findFirst({
+        where: { attemptQuestionId: attempt.currentQuestion.id },
+        select: { processingStatus: true },
+      }))?.processingStatus === TrainingAnswerProcessingStatus.COMPLETED,
+    );
+  });
+
+  test('periodic polling recovers work when no local wakeup signal is delivered', async (context) => {
+    process.env.TRAINING_VOICE_WORKER_POLL_INTERVAL_MS = '250';
+    const transcriber = new BoundedTranscriber(0);
+    const worker = createWorker(new ImmediateAudio(), transcriber, evaluator, state);
+    context.after(() => worker.shutdown());
+    await worker.onModuleInit();
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const [item] = await createProcessingAnswers(1, 'lost-wakeup-signal');
+    await waitFor(async () =>
+      (await prisma.trainingAnswer.findUniqueOrThrow({
+        where: { id: item.answerId },
+        select: { processingStatus: true },
+      })).processingStatus === TrainingAnswerProcessingStatus.COMPLETED,
+      4_000,
+    );
+
+    assert.equal(transcriber.calls, 1);
+    assert.equal((await getAnswer(item.answerId)).processingAttempts, 1);
   });
 
   test('lost ownership cannot save a stale transcript and a fresh owner resumes it', async () => {
@@ -744,6 +836,7 @@ if (!databaseUrl) {
       telegram
         ? new TrainingTelegramOutboxWorkerService(prisma, telegram)
         : { notifyAnswerProcessed: async () => undefined, notifyAnswerFailed: async () => undefined },
+      voiceWorkerWakeup,
     );
   }
 

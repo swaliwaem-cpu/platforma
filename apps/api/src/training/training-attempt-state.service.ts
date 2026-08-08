@@ -31,6 +31,7 @@ import {
 import { TrainingFollowUpSelector } from './training-follow-up-selector';
 import { TrainingProjectAccessService } from './training-project-access.service';
 import { enqueueTrainingTelegramOutbox } from './training-telegram-outbox';
+import { TrainingVoiceWorkerWakeupService } from './training-voice-worker-wakeup.service';
 import {
   hasTrainingSnapshotQuestionStructure,
   parseTrainingProjectSnapshot,
@@ -84,6 +85,7 @@ export class TrainingAttemptStateService {
     @Inject(TRAINING_EVALUATOR) private readonly evaluator: TrainingEvaluator,
     private readonly followUpSelector: TrainingFollowUpSelector,
     private readonly projectAccess: TrainingProjectAccessService,
+    private readonly voiceWorkerWakeup = new TrainingVoiceWorkerWakeupService(),
   ) {}
 
   async startAttempt(projectId: string, userId: string, input: StartTrainingAttemptInput) {
@@ -497,7 +499,9 @@ export class TrainingAttemptStateService {
     userId: string,
     attemptQuestionId: string,
   ): Promise<FinishTrainingVoiceAnswerResult> {
-    return this.prisma.$transaction(async (transaction) => {
+    const result = await this.prisma.$transaction(async (
+      transaction,
+    ): Promise<FinishTrainingVoiceAnswerResult> => {
       const locked = await this.lockAttempt(transaction, attemptId, userId);
 
       if (!locked) {
@@ -558,6 +562,9 @@ export class TrainingAttemptStateService {
 
       return { status: 'PROCESSING', answerId: answer.id };
     });
+
+    if (result.status === 'PROCESSING') this.voiceWorkerWakeup.kick();
+    return result;
   }
 
   async completeTelegramVoiceAnswer(answerId: string, workerId: string, text: string) {
