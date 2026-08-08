@@ -61,6 +61,7 @@ if (!databaseUrl) {
     const snapshot = stored.projectSnapshotJson;
 
     assert.equal(snapshot.schemaVersion, 3);
+    assert.equal(snapshot.evaluationSchemaVersion, 'training-v2-evaluation-v2');
     assert.equal(snapshot.questions.every((question) => question.facts.length === 1), true);
     assert.equal(snapshot.criteria.main.reduce((sum, item) => sum + item.maxPoints, 0), 55);
     assert.equal(snapshot.criteria.followUp.reduce((sum, item) => sum + item.maxPoints, 0), 15);
@@ -137,6 +138,50 @@ if (!databaseUrl) {
     assert.equal(completed.processingAttempts, 2);
     assert.equal(completed.evaluationAttempts, 2);
     assert.equal(await prisma.trainingAttemptQuestion.count({ where: { attemptId: item.attempt.id } }), 4);
+  });
+
+  test('classified harmless voice answer persists its route and does not block final completion', async () => {
+    const item = await createProcessingAnswer('harmless-routing');
+    const transcriber = {
+      transcribe: async () => ({
+        text: '[fake:harmless]',
+        model: 'stub-transcriber',
+        requestId: 'harmless-transcription',
+        latencyMs: 1,
+        attempts: 1,
+        usage: null,
+      }),
+    };
+    const worker = createWorker(new FakeAudio(prisma), transcriber, fakeEvaluator, state);
+    const previous = process.env.TRAINING_HARMLESS_EXTRA_ROUTING_ENABLED;
+    process.env.TRAINING_HARMLESS_EXTRA_ROUTING_ENABLED = 'true';
+
+    try {
+      assert.equal(await worker.runOnce(), true);
+    } finally {
+      if (previous === undefined) delete process.env.TRAINING_HARMLESS_EXTRA_ROUTING_ENABLED;
+      else process.env.TRAINING_HARMLESS_EXTRA_ROUTING_ENABLED = previous;
+    }
+
+    const storedAnswer = await prisma.trainingAnswer.findUniqueOrThrow({
+      where: { id: item.answerId },
+    });
+    assert.equal(storedAnswer.fakeOutcome, 'SCORED');
+    assert.equal(storedAnswer.evaluationSchemaVersion, 'training-v2-evaluation-v2');
+    assert.deepEqual(storedAnswer.evaluationJson.unsupported_claims, [{
+      claim: 'fake harmless extra',
+      evidence: '[fake:harmless]',
+      category: 'HARMLESS_EXTRA',
+    }]);
+    assert.equal(storedAnswer.evaluationJson.requires_review, false);
+
+    const completed = await answerAll(
+      await attempts.getEmployeeAttempt(item.attempt.id, item.user.id),
+      item.user.id,
+      '[fake:pass]',
+    );
+    assert.equal(completed.status, 'COMPLETED');
+    assert.notEqual(completed.result.finalScore, null);
   });
 
   test('retryable evaluation exhausts after two worker cycles with safe detail and refunded attempt', async () => {

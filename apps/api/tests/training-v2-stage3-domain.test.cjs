@@ -67,6 +67,13 @@ test('snapshot schema v2 freezes facts and exact 55/15 criteria while v1 remains
   assert.equal(parsed.questions[0].facts[0].statement, 'В проекте 120 квартир.');
   assert.equal(parsed.criteria.main.reduce((sum, item) => sum + item.maxPoints, 0), 55);
   assert.equal(parsed.criteria.followUp.reduce((sum, item) => sum + item.maxPoints, 0), 15);
+  assert.equal(
+    parseTrainingProjectSnapshot({
+      ...snapshot,
+      evaluationSchemaVersion: 'training-v2-evaluation-v2',
+    }).evaluationSchemaVersion,
+    'training-v2-evaluation-v2',
+  );
   assert.equal(parseTrainingProjectSnapshot({
     schemaVersion: 1,
     projectTitle: snapshot.projectTitle,
@@ -165,6 +172,62 @@ test('backend scoring applies one distinct minus five penalty, clamps and sends 
     ...makeEvaluation(),
     unsupported_claims: [{ claim: '120 квартир', evidence: '120 квартир' }],
   }, input), /UNSUPPORTED_CLAIM_IS_APPROVED/);
+});
+
+test('classified routing separates harmless extras from material review for MAIN and FOLLOW_UP', () => {
+  for (const questionType of ['MAIN', 'FOLLOW_UP']) {
+    const input = {
+      ...makeEvaluationInput(),
+      questionType,
+      maxScore: questionType === 'MAIN' ? 55 : 15,
+      evaluationSchemaVersion: 'training-v2-evaluation-v2',
+      harmlessExtraRoutingEnabled: true,
+    };
+    const harmless = {
+      ...makeEvaluation(),
+      schema_version: 'training-v2-evaluation-v2',
+      unsupported_claims: [{
+        claim: 'Есть бассейн',
+        evidence: 'Есть бассейн',
+        category: 'HARMLESS_EXTRA',
+      }],
+      requires_review: false,
+    };
+    const harmlessEvaluation = validateTrainingStructuredEvaluation(harmless, input);
+
+    assert.equal(scoreTrainingEvaluation(harmlessEvaluation, input).requiresReview, false);
+    assert.equal(scoreTrainingEvaluation(harmlessEvaluation, input).score, questionType === 'MAIN' ? 50 : 10);
+
+    const material = {
+      ...harmless,
+      unsupported_claims: [{
+        claim: 'Есть бассейн',
+        evidence: 'Есть бассейн',
+        category: 'MATERIAL_UNVERIFIED',
+      }],
+      requires_review: true,
+    };
+    assert.equal(
+      scoreTrainingEvaluation(
+        validateTrainingStructuredEvaluation(material, input),
+        input,
+      ).requiresReview,
+      true,
+    );
+    assert.throws(
+      () => validateTrainingStructuredEvaluation({ ...material, requires_review: false }, input),
+      /REVIEW_ROUTING_MISMATCH/u,
+    );
+
+    const conservativeInput = { ...input, harmlessExtraRoutingEnabled: false };
+    assert.equal(
+      validateTrainingStructuredEvaluation(
+        { ...harmless, requires_review: true },
+        conservativeInput,
+      ).requires_review,
+      true,
+    );
+  }
 });
 
 test('objective speech metrics use only documented deterministic measurements', () => {

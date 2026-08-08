@@ -560,14 +560,14 @@ function serializeSafeBreakdownNullable(value: Prisma.JsonValue | null): Trainin
 
   if (value.basis === 'AI_CRITERIA') {
     if (
-      value.version !== 'training-v2-evaluation-v1' ||
+      !['training-v2-evaluation-v1', 'training-v2-evaluation-v2'].includes(value.version) ||
       typeof value.criteriaPoints !== 'number' ||
       typeof value.incorrectFactCount !== 'number' ||
       typeof value.penaltyPoints !== 'number'
     ) return null;
 
     return {
-      version: 'training-v2-evaluation-v1',
+      version: value.version as 'training-v2-evaluation-v1' | 'training-v2-evaluation-v2',
       basis: 'AI_CRITERIA',
       criteriaPoints: value.criteriaPoints,
       incorrectFactCount: value.incorrectFactCount,

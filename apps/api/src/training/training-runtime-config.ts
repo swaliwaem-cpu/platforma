@@ -52,6 +52,19 @@ export function isTrainingCrossProjectGenerationReuseEnabled(
   );
 }
 
+export function isTrainingHarmlessExtraRoutingEnabled(
+  environment: TrainingEnvironment = process.env,
+) {
+  const raw = environment.TRAINING_HARMLESS_EXTRA_ROUTING_ENABLED;
+
+  if (raw === undefined || raw === '') return false;
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  throw new TrainingRuntimeConfigError(
+    'TRAINING_HARMLESS_EXTRA_ROUTING_ENABLED_INVALID',
+  );
+}
+
 export function validateTrainingRuntimeConfig(
   environment: TrainingEnvironment = process.env,
 ) {
@@ -69,6 +82,7 @@ export function validateTrainingRuntimeConfig(
   requireSecret(environment, 'TELEGRAM_WEBHOOK_SECRET', 16);
   requireExact(environment, 'TRAINING_AI_MODE', 'openai');
   isTrainingCrossProjectGenerationReuseEnabled(environment);
+  isTrainingHarmlessExtraRoutingEnabled(environment);
   requireSecret(environment, 'OPENAI_API_KEY', 20);
   requireValue(environment, 'OPENAI_TRANSCRIPTION_MODEL', 3);
   validateQuestionGenerationRouting(environment);

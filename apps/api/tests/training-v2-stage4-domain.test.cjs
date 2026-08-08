@@ -1368,7 +1368,7 @@ test('question sourceHash includes compact locator contract and compiler version
     });
     const hashInput = {
       compilerVersion: 'training-question-compiler-v7',
-      promptVersion: 'training-question-prompt-v2',
+      promptVersion: 'training-question-prompt-v3',
       routing: {
         strategy: 'terra_only',
         routingVersion: 'luna-terra-router-v1',

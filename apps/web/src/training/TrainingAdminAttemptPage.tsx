@@ -11,6 +11,7 @@ import { getTrainingAdminAttempt, reviewTrainingAdminAttempt } from './trainingA
 import { TrainingProtectedAudioPlayer } from './TrainingProtectedAudioPlayer';
 import {
   formatTrainingReviewDecision,
+  formatTrainingUnsupportedClaimCategory,
   formatTrainingFactSourceBadge,
   formatTrainingDate,
   formatTrainingDuration,
@@ -207,7 +208,7 @@ export function TrainingAdminAttemptPage({
                       <section><h4>Утверждённые факты</h4>{question.facts.length ? <ul>{question.facts.map((fact) => { const assessment = evaluation?.fact_assessments.find((item) => item.fact_id === fact.id); return <li key={fact.id}><strong>{assessment ? trainingFactVerdictLabels[assessment.verdict] : '—'}</strong><span>{fact.statement}</span><div className="training-fact-source"><Badge variant={fact.sourceType === 'MATERIAL' ? 'secondary' : 'outline'}>{formatTrainingFactSourceBadge(fact)}</Badge>{fact.sourceType === 'MATERIAL' ? <small>{fact.sourceLabel}{fact.sourceExcerpt ? ` · «${fact.sourceExcerpt}»` : ''}</small> : null}</div>{assessment?.evidence ? <q>{assessment.evidence}</q> : null}{assessment?.explanation ? <small>{assessment.explanation}</small> : null}</li>; })}</ul> : <p className="muted-text">В сохранённой версии нет фактов.</p>}</section>
                       <section><h4>Критерии</h4>{question.criteria.length ? <ul>{question.criteria.map((criterion) => { const assessment = evaluation?.criterion_assessments.find((item) => item.criterion_id === criterion.id); return <li key={criterion.id}><strong>{assessment?.awarded_points ?? '—'} / {criterion.maxPoints}</strong><span>{criterion.title}</span>{assessment?.evidence ? <q>{assessment.evidence}</q> : null}{assessment?.explanation ? <small>{assessment.explanation}</small> : null}</li>; })}</ul> : <p className="muted-text">В сохранённой версии нет критериев.</p>}</section>
                     </div>
-                    {evaluation ? <div className="training-evaluation-summary"><h4>Резюме</h4><p>{evaluation.summary}</p>{evaluation.unsupported_claims.length ? <><h4>Неподтверждённые утверждения</h4><ul>{evaluation.unsupported_claims.map((claim, index) => <li key={`${claim.evidence}-${index}`}><span>{claim.claim}</span><q>{claim.evidence}</q></li>)}</ul></> : null}</div> : null}
+                    {evaluation ? <div className="training-evaluation-summary"><h4>Резюме</h4><p>{evaluation.summary}</p>{evaluation.unsupported_claims.length ? <><h4>Неподтверждённые утверждения</h4><ul>{evaluation.unsupported_claims.map((claim, index) => <li key={`${claim.evidence}-${index}`}><strong>{formatTrainingUnsupportedClaimCategory(claim.category)}</strong><span>{claim.claim}</span><q>{claim.evidence}</q></li>)}</ul></> : null}</div> : null}
                   </>
                 ) : <p className="muted-text">Ответ отсутствует: {question.status === 'SKIPPED_TIMEOUT' ? 'время истекло' : 'вопрос ожидает ответа'}.</p>}
               </AdminPanel>

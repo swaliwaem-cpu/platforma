@@ -33,7 +33,7 @@ export type TrainingLegacySafeBreakdown = {
 };
 
 export type TrainingAiSafeBreakdown = {
-  version: 'training-v2-evaluation-v1';
+  version: 'training-v2-evaluation-v1' | 'training-v2-evaluation-v2';
   basis: 'AI_CRITERIA';
   criteriaPoints: number;
   incorrectFactCount: number;
@@ -53,8 +53,14 @@ export type TrainingObjectiveMetrics = {
   fillerWordsFound: string[];
 };
 
+export type TrainingUnsupportedClaimCategory =
+  | 'HARMLESS_EXTRA'
+  | 'MATERIAL_UNVERIFIED'
+  | 'CONTRADICTORY'
+  | 'UNSAFE_TO_SCORE';
+
 export type TrainingStructuredEvaluation = {
-  schema_version: 'training-v2-evaluation-v1';
+  schema_version: 'training-v2-evaluation-v1' | 'training-v2-evaluation-v2';
   fact_assessments: Array<{
     fact_id: string;
     verdict: 'CORRECT' | 'PARTIAL' | 'MISSING' | 'INCORRECT';
@@ -67,7 +73,11 @@ export type TrainingStructuredEvaluation = {
     evidence: string | null;
     explanation: string;
   }>;
-  unsupported_claims: Array<{ claim: string; evidence: string }>;
+  unsupported_claims: Array<{
+    claim: string;
+    evidence: string;
+    category?: TrainingUnsupportedClaimCategory;
+  }>;
   summary: string;
   requires_review: boolean;
 };
@@ -587,6 +597,8 @@ export type TrainingRankingProjectResult = {
   durationSeconds: number;
   factualErrorsCount: number;
   unsupportedClaimsCount: number;
+  harmlessExtraClaimsCount: number;
+  reviewRequiredClaimsCount: number;
 };
 
 export type TrainingAdminRankingRow = {
@@ -614,6 +626,8 @@ export type TrainingAdminRankingRow = {
     weakestCriterion: TrainingRankingCriterionSummary | null;
     factualErrorsCount: number;
     unsupportedClaimsCount: number;
+    harmlessExtraClaimsCount: number;
+    reviewRequiredClaimsCount: number;
   };
 };
 

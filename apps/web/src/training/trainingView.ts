@@ -6,6 +6,7 @@ import type {
   TrainingProjectStatus,
   TrainingReviewDecision,
   TrainingReviewStatus,
+  TrainingUnsupportedClaimCategory,
 } from '@platforma/shared';
 
 export const trainingAttemptStatusLabels: Record<TrainingAttemptStatus, string> = {
@@ -52,6 +53,24 @@ export const trainingFactVerdictLabels = {
   MISSING: 'Не упомянуто',
   INCORRECT: 'Неверно',
 } as const;
+
+export const trainingUnsupportedClaimCategoryLabels: Record<
+  TrainingUnsupportedClaimCategory,
+  string
+> = {
+  HARMLESS_EXTRA: 'Безобидная дополнительная информация',
+  MATERIAL_UNVERIFIED: 'Существенный неподтверждённый факт',
+  CONTRADICTORY: 'Противоречие утверждённому факту',
+  UNSAFE_TO_SCORE: 'Нельзя надёжно оценить автоматически',
+};
+
+export function formatTrainingUnsupportedClaimCategory(
+  category: TrainingUnsupportedClaimCategory | undefined,
+) {
+  return category
+    ? trainingUnsupportedClaimCategoryLabels[category]
+    : 'Историческое неподтверждённое утверждение';
+}
 
 export function formatTrainingReviewDecision(decision: TrainingReviewDecision) {
   if (decision === 'APPROVED') return 'Подтверждено';

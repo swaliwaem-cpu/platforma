@@ -455,7 +455,7 @@ test('invalid Luna gets one Terra fallback and records both attempts', async () 
       'luna_local_validation_failed',
     ]);
     assert.equal(usageRecords[0].compilerVersion, 'training-question-compiler-v7');
-    assert.equal(usageRecords[0].promptVersion, 'training-question-prompt-v2');
+    assert.equal(usageRecords[0].promptVersion, 'training-question-prompt-v3');
     assert.equal(usageRecords[0].schemaVersion, 'training-question-drafts-v1');
   });
 });

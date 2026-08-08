@@ -118,6 +118,7 @@ try {
 
   await page.goto(`${baseUrl}/admin/training/projects/${projectId}`);
   await page.getByRole('heading', { name: 'Stage 3 browser project' }).waitFor();
+  await page.getByRole('tab', { name: /Вопросы/u }).click();
   await page.getByText('55 / 55', { exact: true }).waitFor();
   await page.getByText('15 / 15', { exact: true }).waitFor();
   await page.getByText('Проверьте краткость вариантов ответа перед публикацией.').waitFor();
@@ -129,6 +130,7 @@ try {
   await page.getByRole('heading', { name: 'Подтвердить или скорректировать итог' }).waitFor();
   await page.getByText('Утверждённые факты').waitFor();
   await page.getByText('Неподтверждённые утверждения').waitFor();
+  await page.getByText('Существенный неподтверждённый факт').waitFor();
   await page.getByText('gpt-4o-mini-transcribe-2025-12-15').waitFor();
   await page.getByText('gpt-5.6-terra').waitFor();
   const approveButton = page.getByRole('button', { name: 'Подтвердить расчёт' });
@@ -308,17 +310,17 @@ function adminAttempt(attemptId, resolvedReview) {
         processingStatus: 'COMPLETED',
         text: 'Скрытый transcript сотрудника',
         score: 50,
-        safeBreakdown: { version: 'training-v2-evaluation-v1', basis: 'AI_CRITERIA', criteriaPoints: 55, incorrectFactCount: 1, penaltyPoints: 5, awardedScore: 50, maxScore: 55 },
+        safeBreakdown: { version: 'training-v2-evaluation-v2', basis: 'AI_CRITERIA', criteriaPoints: 55, incorrectFactCount: 1, penaltyPoints: 5, awardedScore: 50, maxScore: 55 },
         submittedAt: '2026-08-02T09:05:00.000Z',
         transcriptionModel: 'gpt-4o-mini-transcribe-2025-12-15',
         evaluationModel: 'gpt-5.6-terra',
         transcriptionRequestId: 'transcription-stage3-browser',
         evaluationRequestId: 'evaluation-stage3-browser',
         evaluation: {
-          schema_version: 'training-v2-evaluation-v1',
+          schema_version: 'training-v2-evaluation-v2',
           fact_assessments: [{ fact_id: factId, verdict: 'INCORRECT', evidence: 'Скрытый transcript', explanation: 'Не совпадает.' }],
           criterion_assessments: [{ criterion_id: criterionId, awarded_points: 55, evidence: 'Скрытый transcript', explanation: 'Оценено.' }],
-          unsupported_claims: [{ claim: 'Неподтверждённое утверждение', evidence: 'Скрытый transcript' }],
+          unsupported_claims: [{ claim: 'Неподтверждённое утверждение', evidence: 'Скрытый transcript', category: 'MATERIAL_UNVERIFIED' }],
           summary: 'Требуется ручная проверка.',
           requires_review: true,
         },

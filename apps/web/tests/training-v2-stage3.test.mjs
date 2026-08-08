@@ -52,6 +52,7 @@ test('admin detail renders evaluation evidence and only safe provider metadata',
   assert.match(adminAttemptSource, /fact_assessments/);
   assert.match(adminAttemptSource, /criterion_assessments/);
   assert.match(adminAttemptSource, /unsupported_claims/);
+  assert.match(adminAttemptSource, /formatTrainingUnsupportedClaimCategory/);
   assert.match(adminAttemptSource, /technicalErrorCode/);
   assert.doesNotMatch(
     adminAttemptSource,

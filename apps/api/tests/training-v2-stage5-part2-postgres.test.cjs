@@ -105,6 +105,86 @@ if (!databaseUrl) {
       { ...attempts[2], projectId: projects[1].id, attemptNumber: 1, startIdempotencyKey: randomUUID(), finalScore: 99, calculatedScore: 55, isPassed: true, reviewStatus: 'RESOLVED', reviewDecision: 'OVERRIDDEN', reviewedById: users[0].id, reviewedAt: new Date('2026-08-02T01:00:00.000Z'), reviewComment: 'Synthetic override', reviewFinalScore: 99 },
       { ...attempts[0], attemptNumber: 6, startIdempotencyKey: randomUUID(), startedAt: new Date(base.getTime() + 700_000), expiresAt: new Date(base.getTime() + 1_120_000), completedAt: new Date(base.getTime() + 760_000), finalScore: 70, calculatedScore: 70, isPassed: false },
     ] });
+    await prisma.trainingAttempt.update({
+      where: { id: newerBestAttemptId },
+      data: {
+        projectSnapshotJson: makeAnalyticsSnapshot(),
+        reviewStatus: 'RESOLVED',
+        reviewDecision: 'APPROVED',
+        reviewedById: users[0].id,
+        reviewedAt: new Date('2026-08-02T00:30:00.000Z'),
+        reviewFinalScore: 80,
+      },
+    });
+    const routedQuestion = await prisma.trainingAttemptQuestion.create({
+      data: {
+        attemptId: newerBestAttemptId,
+        sequence: 1,
+        type: 'MAIN',
+        questionTextSnapshot: 'Main analytics question',
+        maxScore: 55,
+        status: 'ANSWERED',
+        presentedAt: base,
+        answeredAt: new Date(base.getTime() + 30_000),
+      },
+    });
+    const legacyQuestion = await prisma.trainingAttemptQuestion.create({
+      data: {
+        attemptId: newerBestAttemptId,
+        sequence: 2,
+        type: 'FOLLOW_UP',
+        questionTextSnapshot: 'Legacy analytics question',
+        maxScore: 15,
+        status: 'ANSWERED',
+        presentedAt: base,
+        answeredAt: new Date(base.getTime() + 40_000),
+      },
+    });
+    await prisma.trainingAnswer.createMany({ data: [
+      {
+        attemptQuestionId: routedQuestion.id,
+        source: 'TEXT',
+        processingStatus: 'COMPLETED',
+        text: 'Harmless and material claims',
+        score: 40,
+        fakeOutcome: 'REQUIRES_REVIEW',
+        transcriptionStatus: 'COMPLETED',
+        evaluationStatus: 'COMPLETED',
+        evaluationSchemaVersion: 'training-v2-evaluation-v2',
+        evaluationJson: {
+          schema_version: 'training-v2-evaluation-v2',
+          fact_assessments: [],
+          criterion_assessments: [],
+          unsupported_claims: [
+            { claim: 'Extra', evidence: 'Harmless', category: 'HARMLESS_EXTRA' },
+            { claim: 'Material', evidence: 'material', category: 'MATERIAL_UNVERIFIED' },
+          ],
+          summary: 'Routed analytics fixture',
+          requires_review: true,
+        },
+        submittedAt: new Date(base.getTime() + 30_000),
+      },
+      {
+        attemptQuestionId: legacyQuestion.id,
+        source: 'TEXT',
+        processingStatus: 'COMPLETED',
+        text: 'Legacy claim',
+        score: 10,
+        fakeOutcome: 'REQUIRES_REVIEW',
+        transcriptionStatus: 'COMPLETED',
+        evaluationStatus: 'COMPLETED',
+        evaluationSchemaVersion: 'training-v2-evaluation-v1',
+        evaluationJson: {
+          schema_version: 'training-v2-evaluation-v1',
+          fact_assessments: [],
+          criterion_assessments: [],
+          unsupported_claims: [{ claim: 'Legacy', evidence: 'Legacy' }],
+          summary: 'Legacy analytics fixture',
+          requires_review: true,
+        },
+        submittedAt: new Date(base.getTime() + 40_000),
+      },
+    ] });
     await prisma.trainingProjectAssignment.update({
       where: { projectId_userId: { projectId: projects[5].id, userId: users[0].id } },
       data: { revokedAt: new Date('2026-08-02T00:00:00.000Z') },
@@ -150,6 +230,13 @@ if (!databaseUrl) {
     assert.equal(firstUser.bestResults.some((result) => result.projectId === projects[5].id && !result.currentlyEligible), true);
     assert.equal(firstUser.bestResults.find((result) => result.projectId === projects[0].id).attemptId, newerBestAttemptId);
     assert.notEqual(firstUser.bestResults.find((result) => result.projectId === projects[0].id).attemptId, olderBestAttemptId);
+    assert.equal(firstUser.summary.unsupportedClaimsCount, 3);
+    assert.equal(firstUser.summary.harmlessExtraClaimsCount, 1);
+    assert.equal(firstUser.summary.reviewRequiredClaimsCount, 2);
+    assert.equal(
+      firstUser.bestResults.find((result) => result.projectId === projects[0].id).reviewRequiredClaimsCount,
+      2,
+    );
 
     await prisma.trainingProjectAssignment.update({
       where: { projectId_userId: { projectId: projects[5].id, userId: users[0].id } },
@@ -199,6 +286,7 @@ if (!databaseUrl) {
     assert.equal(csv.codePointAt(0), 0xfeff);
     assert.match(csv, /"'=HYPERLINK\(""https:\/\/invalid""\)"/u);
     assert.doesNotMatch(csv, /passwordHash|refreshToken|evaluationJson|projectSnapshotJson/iu);
+    assert.match(csv, /"harmlessExtraClaimsCount","reviewRequiredClaimsCount"/u);
     assert.equal(csv.trimEnd().split('\r\n').length, 106);
     assert.equal(queryCount, 4, 'two bounded SQL queries per 100-row CSV batch');
   });
@@ -221,4 +309,38 @@ if (!databaseUrl) {
     assert.ok(plan.Plan['Shared Hit Blocks'] >= 0);
     process.stdout.write(`ranking explain execution_ms=${plan['Execution Time']} planning_ms=${plan['Planning Time']} rows=${plan.Plan['Actual Rows']}\n`);
   });
+}
+
+function makeAnalyticsSnapshot() {
+  return {
+    schemaVersion: 2,
+    projectTitle: 'Ranking analytics snapshot',
+    relatedObjectTitle: null,
+    settings: {
+      attemptLimit: 3,
+      timeLimitSeconds: 420,
+      passScore: 75,
+      allowRetakeAfterPass: true,
+    },
+    scoringVersion: 'training-v2-scoring-v1',
+    evaluationSchemaVersion: 'training-v2-evaluation-v2',
+    projectKnowledgeVersion: 1,
+    criteria: {
+      main: [{ id: 'main-criterion', code: 'main', title: 'Main', guidance: '', maxPoints: 55, position: 1 }],
+      followUp: [{ id: 'follow-criterion', code: 'follow', title: 'Follow', guidance: '', maxPoints: 15, position: 1 }],
+    },
+    questions: Array.from({ length: 11 }, (_, index) => ({
+      sourceQuestionId: randomUUID(),
+      type: index === 0 ? 'MAIN' : 'FOLLOW_UP',
+      text: `Analytics question ${index + 1}`,
+      position: index === 0 ? 1 : index,
+      facts: [{
+        id: `fact-${index + 1}`,
+        statement: `Fact ${index + 1}`,
+        aliases: [],
+        required: true,
+        position: 1,
+      }],
+    })),
+  };
 }

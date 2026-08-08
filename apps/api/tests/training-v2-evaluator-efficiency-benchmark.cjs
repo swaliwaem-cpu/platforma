@@ -128,6 +128,17 @@ async function run() {
           reviewAgreement: scoring
             ? scoring.requiresReview === fixtureCase.expected.requiresReview
             : false,
+          contradictionAgreement: result
+            ? detectsMaterialContradiction(result.evaluation) ===
+              fixtureCase.expected.materialContradiction
+            : false,
+          automaticScoringAgreement: scoring
+            ? !scoring.requiresReview === fixtureCase.expected.automaticScoringAllowed
+            : false,
+          materialErrorFalseNegative: result
+            ? fixtureCase.expected.materialContradiction &&
+              !detectsMaterialContradiction(result.evaluation)
+            : fixtureCase.expected.materialContradiction,
         });
       }
       reports.push({
@@ -154,6 +165,7 @@ async function run() {
       manualQualityReviewRequired: true,
       candidatePassesAutomaticGate:
         reports[1].summary.manualAgreementRate >= reports[0].summary.manualAgreementRate &&
+        reports[1].summary.materialErrorFalseNegatives === 0 &&
         reports[1].summary.accepted === reports[0].summary.accepted &&
         reports[1].summary.latencyP95Ms < reports[0].summary.latencyP95Ms &&
         reports[1].summary.averageOutputTokens !== null &&
@@ -172,7 +184,7 @@ function parseFixture(raw) {
   }
   if (
     !isRecord(value) ||
-    value.schemaVersion !== 1 ||
+    value.schemaVersion !== 2 ||
     !Array.isArray(value.cases) ||
     value.cases.length < 2 ||
     value.cases.length > 10
@@ -207,7 +219,10 @@ function validateFixtureCase(value) {
     value.expected.scoreMin < 0 ||
     value.expected.scoreMax < value.expected.scoreMin ||
     value.expected.scoreMax > value.maxScore ||
-    typeof value.expected.requiresReview !== 'boolean'
+    typeof value.expected.requiresReview !== 'boolean' ||
+    typeof value.expected.materialContradiction !== 'boolean' ||
+    typeof value.expected.automaticScoringAllowed !== 'boolean' ||
+    value.expected.automaticScoringAllowed === value.expected.requiresReview
   ) {
     throw new Error('OPENAI_EVALUATOR_BENCHMARK_FIXTURE_INVALID');
   }
@@ -255,6 +270,8 @@ function createEvaluationInput(item, index, calculateTrainingObjectiveMetrics) {
       segmentCount: item.segmentCount,
     }),
     maxScore: item.maxScore,
+    evaluationSchemaVersion: 'training-v2-evaluation-v2',
+    harmlessExtraRoutingEnabled: true,
   };
 }
 
@@ -272,7 +289,12 @@ function applyVariant(value) {
 
 function summarize(cases) {
   const accepted = cases.filter((item) => item.status === 'accepted');
-  const agreement = cases.filter((item) => item.scoreAgreement && item.reviewAgreement).length;
+  const agreement = cases.filter((item) =>
+    item.scoreAgreement &&
+    item.reviewAgreement &&
+    item.contradictionAgreement &&
+    item.automaticScoringAgreement
+  ).length;
   const providerAttempts = cases.reduce((total, item) => total + item.providerAttempts, 0);
   const extraCalls = cases.reduce((total, item) => total + item.extraCalls, 0);
   const outputTokens = cases.map((item) => item.outputTokens).filter(Number.isInteger);
@@ -287,7 +309,13 @@ function summarize(cases) {
     averageOutputTokens: average(outputTokens),
     averageReasoningTokens: average(reasoningTokens),
     latencyP95Ms: percentile(cases.map((item) => item.latencyMs), 0.95),
+    materialErrorFalseNegatives: cases.filter((item) => item.materialErrorFalseNegative).length,
   };
+}
+
+function detectsMaterialContradiction(evaluation) {
+  return evaluation.fact_assessments.some((assessment) => assessment.verdict === 'INCORRECT') ||
+    evaluation.unsupported_claims.some((claim) => claim.category === 'CONTRADICTORY');
 }
 
 function sumReported(attempts, key) {

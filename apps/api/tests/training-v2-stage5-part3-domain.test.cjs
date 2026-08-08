@@ -14,6 +14,7 @@ const {
   TrainingFeatureGuard,
   TrainingRuntimeConfigError,
   isTrainingCrossProjectGenerationReuseEnabled,
+  isTrainingHarmlessExtraRoutingEnabled,
   isTrainingModuleEnabled,
   validateTrainingRuntimeConfig,
 } = require('../dist/training/training-runtime-config.js');
@@ -77,6 +78,23 @@ test('cross-project generation reuse flag is strict and defaults disabled', () =
   );
 });
 
+test('harmless-extra routing is strict and remains fail-closed before calibration', () => {
+  assert.equal(isTrainingHarmlessExtraRoutingEnabled({}), false);
+  assert.equal(isTrainingHarmlessExtraRoutingEnabled({
+    TRAINING_HARMLESS_EXTRA_ROUTING_ENABLED: 'true',
+  }), true);
+  assert.equal(isTrainingHarmlessExtraRoutingEnabled({
+    TRAINING_HARMLESS_EXTRA_ROUTING_ENABLED: 'false',
+  }), false);
+  assert.throws(
+    () => isTrainingHarmlessExtraRoutingEnabled({
+      TRAINING_HARMLESS_EXTRA_ROUTING_ENABLED: 'TRUE',
+    }),
+    (error) => error instanceof TrainingRuntimeConfigError &&
+      error.code === 'TRAINING_HARMLESS_EXTRA_ROUTING_ENABLED_INVALID',
+  );
+});
+
 test('question generation routing defaults to terra_only and requires exact official models', () => {
   assert.deepEqual(readQuestionGenerationRoutingConfig({}), {
     strategy: 'terra_only',
@@ -119,6 +137,7 @@ test('production enabled mode requires real providers, HTTPS and pairwise distin
     ['TELEGRAM_TRANSPORT_MODE', 'fake'],
     ['TRAINING_AI_MODE', 'fake'],
     ['TRAINING_CROSS_PROJECT_GENERATION_REUSE_ENABLED', 'TRUE'],
+    ['TRAINING_HARMLESS_EXTRA_ROUTING_ENABLED', 'TRUE'],
     ['OPENAI_QUESTION_GENERATION_STRATEGY', 'luna_first'],
     ['OPENAI_QUESTION_GENERATION_MODEL', 'gpt-5.6-luna'],
     ['OPENAI_QUESTION_GENERATION_LUNA_MODEL', 'gpt-5.6-terra'],
@@ -342,6 +361,7 @@ test('Docker and ordinary-test contracts preserve signal, ffmpeg and opt-in Open
   assert.match(workerMain, /enableShutdownHooks\(\['SIGTERM', 'SIGINT'\]\)/u);
   assert.match(compose, /stop_grace_period: 30s/u);
   assert.match(compose, /TRAINING_VOICE_WORKER_CONCURRENCY/u);
+  assert.match(compose, /TRAINING_HARMLESS_EXTRA_ROUTING_ENABLED:\s*\$\{TRAINING_HARMLESS_EXTRA_ROUTING_ENABLED:-false\}/u);
   assert.match(compose, /training-voice-worker:\s*\n[\s\S]*training-voice-worker\.main\.js/u);
   assert.match(compose, /training-voice-worker:\s*[\s\S]*deploy:\s*\n\s+replicas: 1/u);
   assert.match(compose, /api:\s*[\s\S]*TRAINING_VOICE_WORKER_ENABLED: "false"/u);

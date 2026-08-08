@@ -70,7 +70,7 @@ const QUESTION_GENERIC_WORDS = new Set([
 ]);
 
 export const TRAINING_QUESTION_COMPILER_VERSION = 'training-question-compiler-v7';
-export const TRAINING_QUESTION_PROMPT_VERSION = 'training-question-prompt-v2';
+export const TRAINING_QUESTION_PROMPT_VERSION = 'training-question-prompt-v3';
 export const TRAINING_QUESTION_DRAFT_SCHEMA_VERSION = 'training-question-drafts-v1';
 export const TRAINING_MATERIAL_SUGGESTION_PROMPT_VERSION =
   'training-material-suggestions-prompt-v1';
@@ -264,7 +264,7 @@ export class DeterministicFakeTrainingMaterialSuggester implements TrainingMater
       if (!segment) throw new TrainingOpenAIError('OBJECT_QUESTION_SOURCE_EMPTY', false);
       const excerpt = evidenceExcerpt(segment.text);
       const text = main
-        ? `Расскажите о жилом комплексе «${input.objectTitle}».`
+        ? `Расскажите о жилом комплексе «${input.objectTitle}» только в рамках материалов обучения: назовите ключевые характеристики и преимущества.`
         : `Вопрос ${index}: что подтверждает факт «${excerpt.substring(0, 180)}»?`;
       return {
         text,
@@ -1490,6 +1490,7 @@ function createQuestionDraftRequest(
     instructions: [
       'Создай черновик программы проверки знаний по выбранному жилому комплексу.',
       'Нужен ровно один широкий главный вопрос и ровно десять разных дополнительных вопросов на русском языке.',
+      'Главный вопрос должен ограничивать ответ материалами обучения и явно перечислять две-три темы ответа без раскрытия самих эталонных фактов.',
       'Каждый вопрос должен быть однозначно отвечаем по переданным материалам и полезен для проверки брокера.',
       'Для каждого вопроса верни от одного до трёх атомарных проверяемых фактов эталонного ответа; хотя бы один факт должен быть обязательным.',
       'Факты должны вместе давать достаточный эталон ответа на соответствующий вопрос, не повторяться и не выходить за пределы источников.',

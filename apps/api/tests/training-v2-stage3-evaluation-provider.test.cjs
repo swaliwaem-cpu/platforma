@@ -89,6 +89,66 @@ test('Responses request is strict, store=false and contains only current approve
   });
 });
 
+test('v2 provider contract persists classified routing and keeps harmless extras non-blocking', async () => {
+  let requestBody;
+  const input = {
+    ...makeInput(),
+    evaluationSchemaVersion: 'training-v2-evaluation-v2',
+    harmlessExtraRoutingEnabled: true,
+  };
+  const evaluation = {
+    ...makeEvaluation(),
+    schema_version: 'training-v2-evaluation-v2',
+    unsupported_claims: [{
+      claim: 'Есть бассейн',
+      evidence: 'Есть бассейн',
+      category: 'HARMLESS_EXTRA',
+    }],
+  };
+  const evaluator = makeEvaluator(async (_url, init) => {
+    requestBody = JSON.parse(init.body);
+    return jsonResponse(makeResponse(evaluation));
+  });
+
+  const result = await withEvaluationEnv(() => evaluator.evaluate(input));
+
+  assert.equal(result.evaluation.requires_review, false);
+  assert.equal(result.evaluation.unsupported_claims[0].category, 'HARMLESS_EXTRA');
+  assert.deepEqual(
+    requestBody.text.format.schema.properties.unsupported_claims.items.required,
+    ['claim', 'evidence', 'category'],
+  );
+  assert.deepEqual(
+    requestBody.text.format.schema.properties.unsupported_claims.items.properties.category.enum,
+    ['HARMLESS_EXTRA', 'MATERIAL_UNVERIFIED', 'CONTRADICTORY', 'UNSAFE_TO_SCORE'],
+  );
+  assert.match(requestBody.instructions, /HARMLESS_EXTRA/u);
+  assert.match(requestBody.instructions, /не требует review/u);
+  assert.notEqual(
+    createEvaluationPromptCacheKey(input),
+    createEvaluationPromptCacheKey({ ...input, harmlessExtraRoutingEnabled: false }),
+  );
+});
+
+test('manual evaluator quality gate requires review, contradiction, auto-score and score labels', () => {
+  const source = require('node:fs').readFileSync(
+    resolve(__dirname, 'training-v2-evaluator-efficiency-benchmark.cjs'),
+    'utf8',
+  );
+
+  for (const label of [
+    'requiresReview',
+    'materialContradiction',
+    'automaticScoringAllowed',
+    'scoreMin',
+    'scoreMax',
+  ]) {
+    assert.match(source, new RegExp(label, 'u'));
+  }
+  assert.match(source, /materialErrorFalseNegatives === 0/u);
+  assert.match(source, /OPENAI_EVALUATOR_BENCHMARK_ENABLED !== 'true'/u);
+});
+
 test('same knowledge question reuses stable prefix and key while transcript stays dynamic', async () => {
   const bodies = [];
   const evaluator = makeEvaluator(async (_url, init) => {
@@ -378,7 +438,7 @@ test('usage observer records every HTTP response in a retry chain with actual mo
       'accepted',
     ]);
     assert.equal(records[0].errorCode, 'OPENAI_EVALUATION_OUTPUT_LIMIT');
-    assert.equal(records[0].promptVersion, 'training-evaluator-prompt-v3');
+    assert.equal(records[0].promptVersion, 'training-evaluator-prompt-v4');
     assert.equal(records[0].schemaVersion, 'training-v2-evaluation-v1');
     assert.equal(records[0].projectId, makeInput().projectId);
   });

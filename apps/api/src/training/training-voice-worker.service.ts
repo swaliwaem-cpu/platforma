@@ -31,7 +31,10 @@ import {
 } from './training-snapshot';
 import { TrainingTelegramClientError } from './training-telegram-client';
 import { TrainingTelegramOutboxWorkerService } from './training-telegram-outbox-worker.service';
-import { isTrainingModuleEnabled } from './training-runtime-config';
+import {
+  isTrainingHarmlessExtraRoutingEnabled,
+  isTrainingModuleEnabled,
+} from './training-runtime-config';
 import {
   buildTrainingVocabularyPrompt,
   TRAINING_TRANSCRIBER,
@@ -683,6 +686,8 @@ function createEvaluationInput(
       segmentCount: answer.segments.length,
     }),
     maxScore: answer.attemptQuestion.maxScore,
+    evaluationSchemaVersion: snapshot.evaluationSchemaVersion,
+    harmlessExtraRoutingEnabled: isTrainingHarmlessExtraRoutingEnabled(),
   };
 }
 
