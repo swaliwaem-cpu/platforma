@@ -69,6 +69,7 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
   private pumpTask: Promise<void> | null = null;
   private readonly activeTasks = new Set<Promise<void>>();
   private readonly activeClaims = new Map<string, ActiveClaim>();
+  private readonly externalAbortController = new AbortController();
   private shutdownPromise: Promise<void> | null = null;
 
   constructor(
@@ -101,6 +102,7 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
 
   private async performShutdown() {
     this.stopping = true;
+    this.externalAbortController.abort();
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     const drainMs = getShutdownDrainMs();
@@ -214,40 +216,61 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
   private async claimNextAnswer() {
     if (this.stopping || !isTrainingModuleEnabled()) return null;
     const staleLockMs = getStaleLockMs();
+    const concurrency = getWorkerConcurrency();
     const lockOwner = `${this.workerId}-${randomUUID()}`;
-    const rows = await this.prisma.$queryRaw<ClaimedAnswer[]>(Prisma.sql`
-      WITH candidate AS (
-        SELECT answer."id"
-        FROM "training_answers" AS answer
-        JOIN "training_attempt_questions" AS question ON question."id" = answer."attempt_question_id"
-        JOIN "training_attempts" AS attempt ON attempt."id" = question."attempt_id"
-        WHERE answer."processing_status" = 'processing'
-          AND attempt."status" = 'in_progress'
-          AND answer."processing_attempts" < ${MAX_PROCESSING_ATTEMPTS}
-          AND (
-            answer."processing_locked_at" IS NULL
-            OR answer."processing_locked_at" < CURRENT_TIMESTAMP - (${staleLockMs} * INTERVAL '1 millisecond')
-          )
-        ORDER BY answer."created_at" ASC, answer."id" ASC
-        FOR UPDATE OF answer SKIP LOCKED
-        LIMIT 1
-      )
-      UPDATE "training_answers" AS answer
-      SET
-        "processing_locked_at" = CURRENT_TIMESTAMP,
-        "processing_locked_by" = ${lockOwner},
-        "processing_attempts" = "processing_attempts" + 1,
-        "processing_error_code" = NULL,
-        "updated_at" = CURRENT_TIMESTAMP
-      FROM candidate
-      WHERE answer."id" = candidate."id"
-      RETURNING
-        answer."id",
-        answer."processing_attempts",
-        answer."processing_locked_by" AS "lock_owner"
-    `);
+    return this.prisma.$transaction(async (transaction) => {
+      await transaction.$queryRaw(Prisma.sql`
+        SELECT pg_advisory_xact_lock(
+          hashtext('platforma'),
+          hashtext('training_voice_worker_concurrency')
+        ) IS NULL AS "lockAcquired"
+      `);
 
-    return rows[0] ?? null;
+      if (this.stopping || !isTrainingModuleEnabled()) return null;
+
+      const rows = await transaction.$queryRaw<ClaimedAnswer[]>(Prisma.sql`
+        WITH capacity AS MATERIALIZED (
+          SELECT COUNT(*)::integer AS "activeClaims"
+          FROM "training_answers" AS active_answer
+          WHERE active_answer."processing_status" = 'processing'
+            AND active_answer."processing_locked_by" IS NOT NULL
+            AND active_answer."processing_locked_at" >= CURRENT_TIMESTAMP - (${staleLockMs} * INTERVAL '1 millisecond')
+        ),
+        candidate AS (
+          SELECT answer."id"
+          FROM "training_answers" AS answer
+          JOIN "training_attempt_questions" AS question ON question."id" = answer."attempt_question_id"
+          JOIN "training_attempts" AS attempt ON attempt."id" = question."attempt_id"
+          CROSS JOIN capacity
+          WHERE answer."processing_status" = 'processing'
+            AND attempt."status" = 'in_progress'
+            AND answer."processing_attempts" < ${MAX_PROCESSING_ATTEMPTS}
+            AND capacity."activeClaims" < ${concurrency}
+            AND (
+              answer."processing_locked_at" IS NULL
+              OR answer."processing_locked_at" < CURRENT_TIMESTAMP - (${staleLockMs} * INTERVAL '1 millisecond')
+            )
+          ORDER BY answer."created_at" ASC, answer."id" ASC
+          FOR UPDATE OF answer SKIP LOCKED
+          LIMIT 1
+        )
+        UPDATE "training_answers" AS answer
+        SET
+          "processing_locked_at" = CURRENT_TIMESTAMP,
+          "processing_locked_by" = ${lockOwner},
+          "processing_attempts" = "processing_attempts" + 1,
+          "processing_error_code" = NULL,
+          "updated_at" = CURRENT_TIMESTAMP
+        FROM candidate
+        WHERE answer."id" = candidate."id"
+        RETURNING
+          answer."id",
+          answer."processing_attempts",
+          answer."processing_locked_by" AS "lock_owner"
+      `);
+
+      return rows[0] ?? null;
+    });
   }
 
   private async recoverExhaustedAnswers() {
@@ -291,7 +314,7 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
       await this.notifyProcessed(answer.id);
       return;
     }
-    if (!(await this.canContinueClaim(answer, false))) return;
+    if (!(await this.canContinueClaim(answer))) return;
 
     const heartbeat = setInterval(
       () => void this.refreshHeartbeat(answer).catch(() => undefined),
@@ -305,7 +328,7 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
       );
 
       if (!isTrainingProjectSnapshotWithFacts(snapshot)) {
-        if (!(await this.canContinueClaim(answer, true))) return;
+        if (!(await this.canContinueClaim(answer))) return;
         await this.audio.prepareAnswerAudio(answer.id);
         const result = await this.attemptState.completeTelegramVoiceAnswer(
           answer.id,
@@ -323,19 +346,23 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
 
       if (current.transcriptionStatus !== TrainingAiStepStatus.COMPLETED) {
         failedStep = 'transcription';
-        if (!(await this.canContinueClaim(answer, true))) return;
+        if (!(await this.canContinueClaim(answer))) return;
         const audio = await this.audio.prepareAnswerAudio(answer.id);
-        if (!(await this.canContinueClaim(answer, true))) return;
-        const transcription = await this.transcriber.transcribe({
-          ...audio,
-          projectId: current.attemptQuestion.attempt.projectId,
-          attemptId: current.attemptQuestion.attempt.id,
-          vocabularyPrompt: buildTrainingVocabularyPrompt({
-            projectTitle: snapshot.projectTitle,
-            relatedObjectTitle: snapshot.relatedObjectTitle,
-            facts: question.facts,
-          }),
-        });
+        const transcriptionSignal = await this.beginExternalCall(answer);
+        if (!transcriptionSignal) return;
+        const transcription = await this.transcriber.transcribe(
+          {
+            ...audio,
+            projectId: current.attemptQuestion.attempt.projectId,
+            attemptId: current.attemptQuestion.attempt.id,
+            vocabularyPrompt: buildTrainingVocabularyPrompt({
+              projectTitle: snapshot.projectTitle,
+              relatedObjectTitle: snapshot.relatedObjectTitle,
+              facts: question.facts,
+            }),
+          },
+          { signal: transcriptionSignal },
+        );
         const saved = await this.prisma.trainingAnswer.updateMany({
           where: {
             id: answer.id,
@@ -363,8 +390,12 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
         failedStep = 'evaluation';
         if (!current.text) throw new VoiceWorkerError('TRANSCRIPT_CHECKPOINT_MISSING', false);
         const evaluationInput = createEvaluationInput(snapshot, question, current);
-        if (!(await this.canContinueClaim(answer, true))) return;
-        const result = await this.evaluator.evaluate(evaluationInput);
+        const evaluationSignal = await this.beginExternalCall(answer);
+        if (!evaluationSignal) return;
+        const result = await this.evaluator.evaluate(
+          evaluationInput,
+          { signal: evaluationSignal },
+        );
         const scoring = scoreTrainingEvaluation(result.evaluation, evaluationInput);
         const saved = await this.prisma.trainingAnswer.updateMany({
           where: {
@@ -457,6 +488,15 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
     error: unknown,
     failedStep: 'transcription' | 'evaluation' | 'processing',
   ) {
+    if (
+      this.stopping &&
+      error instanceof TrainingOpenAIError &&
+      error.code === 'OPENAI_ABORTED'
+    ) {
+      await this.releaseClaim(answer, false);
+      return;
+    }
+
     const openAiEvaluationError =
       failedStep === 'evaluation' && error instanceof TrainingOpenAIError
         ? error
@@ -531,22 +571,29 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
     });
   }
 
-  private async canContinueClaim(answer: ClaimedAnswer, beforeExternal: boolean) {
+  private async canContinueClaim(answer: ClaimedAnswer) {
     if (!isTrainingModuleEnabled()) {
       await this.releaseClaim(answer, !this.hasStartedExternal(answer));
       return false;
     }
-    if (this.stopping && !this.hasStartedExternal(answer)) {
-      await this.releaseClaim(answer, true);
+    if (this.stopping) {
+      await this.releaseClaim(answer, !this.hasStartedExternal(answer));
       return false;
     }
     if (!(await this.isStillClaimed(answer.id, answer.lock_owner))) return false;
-
-    if (beforeExternal) {
-      const active = this.activeClaims.get(answer.lock_owner);
-      if (active) active.externalStarted = true;
-    }
     return true;
+  }
+
+  private async beginExternalCall(answer: ClaimedAnswer) {
+    if (!(await this.canContinueClaim(answer))) return null;
+    if (this.externalAbortController.signal.aborted) {
+      await this.releaseClaim(answer, !this.hasStartedExternal(answer));
+      return null;
+    }
+
+    const active = this.activeClaims.get(answer.lock_owner);
+    if (active) active.externalStarted = true;
+    return this.externalAbortController.signal;
   }
 
   private hasStartedExternal(answer: ClaimedAnswer) {

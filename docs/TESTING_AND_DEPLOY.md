@@ -152,6 +152,46 @@ Production-действия выполняются
 10. enable feature;
 11. post-deploy checks.
 
+### Training voice worker
+
+Voice worker запускается отдельным Compose-сервисом
+`training-voice-worker` из того же API image.
+
+Обычный rollout только HTTP API выполняется адресно:
+
+```sh
+docker compose up -d --build --no-deps api
+```
+
+Эта команда не пересоздаёт работающий voice worker.
+Не используй полный `docker compose up -d --build`
+как замену адресному API rollout: полный запуск может пересоздать worker.
+
+Перед пересозданием `training-voice-worker` обязательно выполни:
+
+```sh
+pnpm training:worker:predeploy
+```
+
+Проверка печатает безопасный JSON с количеством активных claims
+и возрастом самого старого. При активной работе команда завершается
+с exit code `2` и блокирует rollout. После явного решения оператора
+допускается повторная проверка с подтверждением:
+
+```sh
+pnpm run training:worker:predeploy --confirm-active
+```
+
+После успешной проверки worker пересоздаётся отдельно:
+
+```sh
+docker compose up -d --no-deps --force-recreate training-voice-worker
+```
+
+Не увеличивай число replicas выше `1`, пока PostgreSQL fencing,
+stale recovery и глобальный concurrency limit не прошли повторную
+production-like проверку для новой топологии.
+
 ## Rollback
 
 Rollback после применённых migrations

@@ -20,6 +20,7 @@
     "training:webhook:status": "node --env-file-if-exists=.env apps/api/scripts/training-telegram-webhook.cjs status",
     "training:webhook:register": "node --env-file-if-exists=.env apps/api/scripts/training-telegram-webhook.cjs register",
     "training:webhook:delete": "node --env-file-if-exists=.env apps/api/scripts/training-telegram-webhook.cjs delete",
+    "training:worker:predeploy": "node --env-file-if-exists=.env apps/api/scripts/training-voice-worker-predeploy.cjs",
     "feed-import:preview": "pnpm --filter @platforma/feed-import run preview",
     "feed-import:run": "pnpm --filter @platforma/feed-import run run",
     "wp-import:preview": "pnpm --filter @platforma/wp-import run preview",

@@ -25,7 +25,10 @@ export class OpenAITrainingTranscriber implements TrainingTranscriber {
 
   constructor(private readonly client: TrainingOpenAIClient) {}
 
-  async transcribe(input: TrainingTranscriptionInput): Promise<TrainingTranscriptionResult> {
+  async transcribe(
+    input: TrainingTranscriptionInput,
+    options?: { signal?: AbortSignal },
+  ): Promise<TrainingTranscriptionResult> {
     if (
       input.sizeBytes !== input.wav.length ||
       input.sizeBytes <= 44 ||
@@ -52,6 +55,7 @@ export class OpenAITrainingTranscriber implements TrainingTranscriber {
     const response = await this.client.request({
       path: '/audio/transcriptions',
       body: form,
+      signal: options?.signal,
       policy: {
         timeoutMs: readTrainingOpenAIInteger(
           'OPENAI_TRANSCRIPTION_TIMEOUT_MS',

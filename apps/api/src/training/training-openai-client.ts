@@ -50,6 +50,7 @@ export class TrainingOpenAIClient {
     body: BodyInit;
     contentType?: string;
     clientRequestId?: string;
+    signal?: AbortSignal;
     policy: TrainingOpenAIRequestPolicy;
     parse: (response: Response) => Promise<T>;
     observeResponse?: (observation: TrainingOpenAIResponseObservation) => Promise<void> | void;
@@ -59,6 +60,10 @@ export class TrainingOpenAIClient {
     let attempts = 0;
 
     while (attempts <= input.policy.maxRetries) {
+      if (input.signal?.aborted) {
+        throw new TrainingOpenAIError('OPENAI_ABORTED', true, attempts);
+      }
+
       attempts += 1;
       const remainingMs = deadline - Date.now();
 
@@ -69,6 +74,12 @@ export class TrainingOpenAIClient {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), remainingMs);
       const attemptStartedAt = Date.now();
+      let responseReceived = false;
+      const abortRequest = () => {
+        if (!responseReceived) controller.abort();
+      };
+
+      input.signal?.addEventListener('abort', abortRequest, { once: true });
 
       try {
         const response = await this.fetchImplementation(`${this.baseUrl}${input.path}`, {
@@ -83,6 +94,8 @@ export class TrainingOpenAIClient {
           body: input.body,
           signal: controller.signal,
         });
+        responseReceived = true;
+        input.signal?.removeEventListener('abort', abortRequest);
         const requestId = boundedHeader(response.headers.get('x-request-id'));
         if (input.observeResponse) {
           await Promise.resolve(input.observeResponse({
@@ -102,6 +115,7 @@ export class TrainingOpenAIClient {
             response.headers.get('retry-after'),
             deadline,
             attempts,
+            input.signal,
           );
           continue;
         }
@@ -126,14 +140,19 @@ export class TrainingOpenAIClient {
             : new TrainingOpenAIError('OPENAI_MALFORMED_RESPONSE', true, attempts);
 
           if (!parsedError.retryable || attempts > input.policy.maxRetries) throw parsedError;
-          await waitBeforeTrainingOpenAIRetry(null, deadline, attempts);
+          await waitBeforeTrainingOpenAIRetry(null, deadline, attempts, input.signal);
         }
       } catch (error) {
+        if (!responseReceived && input.signal?.aborted) {
+          throw new TrainingOpenAIError('OPENAI_ABORTED', true, attempts);
+        }
+
         const normalized = normalizeFetchError(error, attempts);
 
         if (!normalized.retryable || attempts > input.policy.maxRetries) throw normalized;
-        await waitBeforeTrainingOpenAIRetry(null, deadline, attempts);
+        await waitBeforeTrainingOpenAIRetry(null, deadline, attempts, input.signal);
       } finally {
+        input.signal?.removeEventListener('abort', abortRequest);
         clearTimeout(timer);
       }
     }
@@ -205,14 +224,30 @@ export async function waitBeforeTrainingOpenAIRetry(
   retryAfter: string | null,
   deadline: number,
   attempts: number,
+  signal?: AbortSignal,
 ) {
+  if (signal?.aborted) {
+    throw new TrainingOpenAIError('OPENAI_ABORTED', true, attempts);
+  }
+
   const delayMs = Math.min(parseRetryAfter(retryAfter) ?? 100, 2_000);
 
   if (Date.now() + delayMs >= deadline) {
     throw new TrainingOpenAIError('OPENAI_TIMEOUT', false, attempts);
   }
 
-  await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', abortRetry);
+      resolve();
+    }, delayMs);
+    const abortRetry = () => {
+      clearTimeout(timer);
+      reject(new TrainingOpenAIError('OPENAI_ABORTED', true, attempts));
+    };
+
+    signal?.addEventListener('abort', abortRetry, { once: true });
+  });
 }
 
 function parseRetryAfter(value: string | null) {

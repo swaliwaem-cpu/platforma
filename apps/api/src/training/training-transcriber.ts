@@ -32,7 +32,10 @@ export type TrainingTranscriptionResult = {
 };
 
 export interface TrainingTranscriber {
-  transcribe(input: TrainingTranscriptionInput): Promise<TrainingTranscriptionResult>;
+  transcribe(
+    input: TrainingTranscriptionInput,
+    options?: { signal?: AbortSignal },
+  ): Promise<TrainingTranscriptionResult>;
 }
 
 @Injectable()

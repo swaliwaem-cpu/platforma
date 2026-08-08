@@ -328,15 +328,24 @@ test('Docker and ordinary-test contracts preserve signal, ffmpeg and opt-in Open
   const dockerfile = readFileSync(resolve(root, 'apps/api/Dockerfile'), 'utf8');
   const compose = readFileSync(resolve(root, 'docker-compose.yml'), 'utf8');
   const main = readFileSync(resolve(root, 'apps/api/src/main.ts'), 'utf8');
+  const workerMain = readFileSync(
+    resolve(root, 'apps/api/src/training-voice-worker.main.ts'),
+    'utf8',
+  );
   const ordinaryTests = readFileSync(resolve(root, 'apps/api/tests/run-tests.cjs'), 'utf8');
   const packageJson = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
 
   assert.match(dockerfile, /apk add --no-cache chromium ffmpeg/u);
   assert.match(dockerfile, /exec node apps\/api\/dist\/main\.js/u);
   assert.match(main, /enableShutdownHooks\(\['SIGTERM', 'SIGINT'\]\)/u);
+  assert.match(workerMain, /createApplicationContext\(TrainingModule\)/u);
+  assert.match(workerMain, /enableShutdownHooks\(\['SIGTERM', 'SIGINT'\]\)/u);
   assert.match(compose, /stop_grace_period: 30s/u);
   assert.match(compose, /TRAINING_VOICE_WORKER_CONCURRENCY/u);
-  assert.doesNotMatch(compose, /training[-_ ]voice[-_ ]worker:\s*\n/iu);
+  assert.match(compose, /training-voice-worker:\s*\n[\s\S]*training-voice-worker\.main\.js/u);
+  assert.match(compose, /training-voice-worker:\s*[\s\S]*deploy:\s*\n\s+replicas: 1/u);
+  assert.match(compose, /api:\s*[\s\S]*TRAINING_VOICE_WORKER_ENABLED: "false"/u);
+  assert.match(compose, /training-voice-worker:\s*[\s\S]*TRAINING_VOICE_WORKER_ENABLED: "true"/u);
   assert.match(ordinaryTests, /TRAINING_AI_MODE = 'fake'/u);
   assert.match(ordinaryTests, /delete environment\.OPENAI_API_KEY/u);
   assert.notEqual(packageJson.scripts.test, packageJson.scripts['test:training:openai:smoke']);

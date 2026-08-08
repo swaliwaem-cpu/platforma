@@ -95,6 +95,41 @@ test('OpenAI transcription bounds timeout and rejects empty/malformed responses'
   });
 });
 
+test('OpenAI transcription forwards caller abort and does not retry a cancelled request', async () => {
+  await withProviderEnv(async () => {
+    process.env.OPENAI_TRANSCRIPTION_TIMEOUT_MS = '10000';
+    process.env.OPENAI_TRANSCRIPTION_MAX_RETRIES = '2';
+    const controller = new AbortController();
+    let calls = 0;
+    let signalStarted;
+    const started = new Promise((resolve) => { signalStarted = resolve; });
+    const transcriber = makeTranscriber((_url, init) => {
+      calls += 1;
+      signalStarted();
+      return new Promise((_resolve, reject) => {
+        init.signal.addEventListener(
+          'abort',
+          () => reject(new DOMException('aborted', 'AbortError')),
+          { once: true },
+        );
+      });
+    });
+    const request = transcriber.transcribe(
+      makeInput(makeWav(), ''),
+      { signal: controller.signal },
+    );
+
+    await started;
+    controller.abort();
+
+    await assert.rejects(
+      () => request,
+      (error) => error.code === 'OPENAI_ABORTED' && error.attempts === 1,
+    );
+    assert.equal(calls, 1);
+  });
+});
+
 test('Retry-After outside the hard deadline preserves the completed request count', async () => {
   await withProviderEnv(async () => {
     process.env.OPENAI_TRANSCRIPTION_TIMEOUT_MS = '1000';

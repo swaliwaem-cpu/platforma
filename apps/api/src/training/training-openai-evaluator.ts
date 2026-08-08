@@ -41,7 +41,10 @@ export class OpenAITrainingEvaluator implements TrainingEvaluator {
 
   constructor(private readonly client: TrainingOpenAIClient) {}
 
-  async evaluate(input: TrainingEvaluationInput): Promise<TrainingEvaluationResult> {
+  async evaluate(
+    input: TrainingEvaluationInput,
+    options?: { signal?: AbortSignal },
+  ): Promise<TrainingEvaluationResult> {
     const model = (
       process.env.OPENAI_EVALUATOR_MODEL?.trim() ||
       process.env.OPENAI_EVALUATION_MODEL?.trim() ||
@@ -125,6 +128,7 @@ export class OpenAITrainingEvaluator implements TrainingEvaluator {
       path: '/responses',
       body: JSON.stringify(body),
       contentType: 'application/json',
+      signal: options?.signal,
       policy: {
         timeoutMs: readTrainingOpenAIInteger(
           'OPENAI_EVALUATION_TIMEOUT_MS',

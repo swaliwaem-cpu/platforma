@@ -82,7 +82,10 @@ export type TrainingEvaluationResult = {
 
 export interface TrainingEvaluator {
   readonly version: string;
-  evaluate(input: TrainingEvaluationInput): Promise<TrainingEvaluationResult>;
+  evaluate(
+    input: TrainingEvaluationInput,
+    options?: { signal?: AbortSignal },
+  ): Promise<TrainingEvaluationResult>;
 }
 
 @Injectable()
