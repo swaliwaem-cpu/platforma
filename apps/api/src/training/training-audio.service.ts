@@ -10,6 +10,7 @@ import {
   FileStorage,
   TrainingAnswerProcessingStatus,
   TrainingAnswerSource,
+  TrainingAudioStorageObjectKind,
 } from '@prisma/client';
 
 import { S3StorageService } from '../files/s3-storage.service';
@@ -20,7 +21,11 @@ import {
   TrainingAudioLimitsError,
   type TrainingAudioLimits,
 } from './training-audio-limits';
-import { recordTrainingProjectDeleteCleanupObject } from './training-project-cleanup';
+import {
+  assertTrainingAudioStorageObjectWritable,
+  upsertTrainingAudioStorageEntry,
+  type TrainingAudioStorageSnapshot,
+} from './training-audio-storage.service';
 import {
   TRAINING_TELEGRAM_CLIENT,
   TrainingTelegramClientError,
@@ -168,7 +173,15 @@ export class TrainingAudioService {
       where: { id: answerId },
       include: {
         attemptQuestion: {
-          select: { attempt: { select: { projectId: true } } },
+          select: {
+            attempt: {
+              select: {
+                id: true,
+                project: { select: { id: true, title: true } },
+                user: { select: { id: true, name: true, email: true } },
+              },
+            },
+          },
         },
         mergedAudioFile: true,
         segments: {
@@ -194,6 +207,18 @@ export class TrainingAudioService {
     if (durationSeconds > limits.maxDurationSeconds) {
       throw new TrainingAudioError('VOICE_DURATION_LIMIT', false);
     }
+    const storageSnapshot = {
+      projectId: answer.attemptQuestion.attempt.project.id,
+      projectTitle: answer.attemptQuestion.attempt.project.title,
+      userId: answer.attemptQuestion.attempt.user.id,
+      userName: answer.attemptQuestion.attempt.user.name,
+      userEmail: answer.attemptQuestion.attempt.user.email,
+      attemptId: answer.attemptQuestion.attempt.id,
+      answerId,
+    } satisfies Omit<
+      TrainingAudioStorageSnapshot,
+      'bucket' | 'key' | 'kind'
+    >;
 
     const directory = await mkdtemp(join(tmpdir(), 'platforma-training-voice-'));
     const cleanup = createDirectoryCleanup(directory);
@@ -222,7 +247,7 @@ export class TrainingAudioService {
         );
         const segmentBytes = await this.materializeSegment({
           answerId,
-          projectId: answer.attemptQuestion.attempt.projectId,
+          storageSnapshot,
           segment,
           bucket,
           inputPath,
@@ -267,18 +292,23 @@ export class TrainingAudioService {
         durationSeconds,
         inputBytes,
         ffmpegLatencyMs,
+        storageSnapshot,
       }).catch(async (error: unknown) => {
         try {
-          await this.storage.deleteObject(key, bucket);
-        } catch (cleanupError) {
-          await recordTrainingProjectDeleteCleanupObject(
-            this.prisma,
-            answer.attemptQuestion.attempt.projectId,
-            { key, bucket },
-          );
+          await this.prisma.$transaction((transaction) =>
+            upsertTrainingAudioStorageEntry(transaction, {
+              ...storageSnapshot,
+              kind: TrainingAudioStorageObjectKind.MERGED,
+              bucket,
+              key,
+              checksum,
+              sizeBytes: output.sizeBytes,
+              mimeType: 'audio/webm',
+            }));
+        } catch (catalogError) {
           throw new AggregateError(
-            [error, cleanupError],
-            'Training merged audio persistence and cleanup failed',
+            [error, catalogError],
+            'Training merged audio persistence and retention catalog failed',
           );
         }
         throw error;
@@ -409,7 +439,7 @@ export class TrainingAudioService {
 
   private async materializeSegment(input: {
     answerId: string;
-    projectId: string;
+    storageSnapshot: Omit<TrainingAudioStorageSnapshot, 'bucket' | 'key' | 'kind'>;
     segment: {
       id: string;
       position: number;
@@ -489,19 +519,24 @@ export class TrainingAudioService {
         key,
         downloaded.sizeBytes,
         checksum,
+        input.storageSnapshot,
       );
     } catch (error) {
       try {
-        await this.storage.deleteObject(key, input.bucket);
-      } catch (cleanupError) {
-        await recordTrainingProjectDeleteCleanupObject(
-          this.prisma,
-          input.projectId,
-          { key, bucket: input.bucket },
-        );
+        await this.prisma.$transaction((transaction) =>
+          upsertTrainingAudioStorageEntry(transaction, {
+            ...input.storageSnapshot,
+            kind: TrainingAudioStorageObjectKind.SEGMENT,
+            bucket: input.bucket,
+            key,
+            checksum,
+            sizeBytes: downloaded.sizeBytes,
+            mimeType: 'audio/ogg',
+          }));
+      } catch (catalogError) {
         throw new AggregateError(
-          [error, cleanupError],
-          'Training voice segment persistence and cleanup failed',
+          [error, catalogError],
+          'Training voice segment persistence and retention catalog failed',
         );
       }
       throw error;
@@ -596,8 +631,10 @@ export class TrainingAudioService {
     key: string,
     sizeBytes: number,
     checksum: string,
+    storageSnapshot: Omit<TrainingAudioStorageSnapshot, 'bucket' | 'key' | 'kind'>,
   ) {
     return this.prisma.$transaction(async (transaction) => {
+      await assertTrainingAudioStorageObjectWritable(transaction, bucket, key);
       const existing = await transaction.file.findFirst({
         where: { storage: FileStorage.MINIO, bucket, key },
       });
@@ -625,6 +662,18 @@ export class TrainingAudioService {
             },
           });
 
+      await upsertTrainingAudioStorageEntry(transaction, {
+        ...storageSnapshot,
+        fileId: file.id,
+        kind: TrainingAudioStorageObjectKind.SEGMENT,
+        bucket,
+        key,
+        checksum,
+        sizeBytes,
+        mimeType: 'audio/ogg',
+        objectCreatedAt: file.createdAt,
+      });
+
       await transaction.trainingAnswerSegment.update({
         where: { id: segmentId },
         data: { storedFileId: file.id },
@@ -643,8 +692,10 @@ export class TrainingAudioService {
     durationSeconds: number;
     inputBytes: number;
     ffmpegLatencyMs: number;
+    storageSnapshot: Omit<TrainingAudioStorageSnapshot, 'bucket' | 'key' | 'kind'>;
   }) {
     return this.prisma.$transaction(async (transaction) => {
+      await assertTrainingAudioStorageObjectWritable(transaction, input.bucket, input.key);
       const answer = await transaction.trainingAnswer.findUnique({
         where: { id: input.answerId },
         select: { processingStatus: true, mergedAudioFile: true },
@@ -654,7 +705,20 @@ export class TrainingAudioService {
         throw new TrainingAudioError('ANSWER_NOT_PROCESSABLE', false);
       }
 
-      if (answer.mergedAudioFile) return answer.mergedAudioFile;
+      if (answer.mergedAudioFile) {
+        await upsertTrainingAudioStorageEntry(transaction, {
+          ...input.storageSnapshot,
+          fileId: answer.mergedAudioFile.id,
+          kind: TrainingAudioStorageObjectKind.MERGED,
+          bucket: input.bucket,
+          key: input.key,
+          checksum: answer.mergedAudioFile.checksum,
+          sizeBytes: answer.mergedAudioFile.sizeBytes,
+          mimeType: answer.mergedAudioFile.mimeType,
+          objectCreatedAt: answer.mergedAudioFile.createdAt,
+        });
+        return answer.mergedAudioFile;
+      }
 
       const existing = await transaction.file.findFirst({
         where: { storage: FileStorage.MINIO, bucket: input.bucket, key: input.key },
@@ -682,6 +746,18 @@ export class TrainingAudioService {
               checksum: input.checksum,
             },
           });
+
+      await upsertTrainingAudioStorageEntry(transaction, {
+        ...input.storageSnapshot,
+        fileId: file.id,
+        kind: TrainingAudioStorageObjectKind.MERGED,
+        bucket: input.bucket,
+        key: input.key,
+        checksum: input.checksum,
+        sizeBytes: input.sizeBytes,
+        mimeType: 'audio/webm',
+        objectCreatedAt: file.createdAt,
+      });
 
       await transaction.trainingAnswer.update({
         where: { id: input.answerId },

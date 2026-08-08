@@ -9,10 +9,18 @@ type SignedRequestOptions = {
   method: 'DELETE' | 'GET' | 'HEAD' | 'PUT';
   bucket: string;
   key?: string;
+  query?: Record<string, string | undefined>;
   body?: Buffer | NodeJS.ReadableStream;
   contentType?: string;
   contentLength?: number;
   payloadHash?: string;
+};
+
+export type S3ListedObject = {
+  key: string;
+  size: number | null;
+  etag: string | null;
+  lastModified: Date | null;
 };
 
 @Injectable()
@@ -126,7 +134,54 @@ export class S3StorageService {
     const contentLength = Number(response.headers.get('content-length'));
     return {
       size: Number.isSafeInteger(contentLength) && contentLength >= 0 ? contentLength : null,
+      etag: normalizeEtag(response.headers.get('etag')),
+      lastModified: parseStorageDate(response.headers.get('last-modified')),
     };
+  }
+
+  async listObjects(input: {
+    bucket?: string;
+    prefix?: string;
+    maxObjects: number;
+  }): Promise<S3ListedObject[]> {
+    const bucket = input.bucket ?? this.bucket;
+    const objects: S3ListedObject[] = [];
+    let continuationToken: string | undefined;
+
+    do {
+      const response = await this.signedFetch({
+        method: 'GET',
+        bucket,
+        query: {
+          'list-type': '2',
+          'max-keys': String(Math.min(1000, input.maxObjects - objects.length + 1)),
+          prefix: input.prefix,
+          'continuation-token': continuationToken,
+        },
+      });
+
+      if (response.status === 404) return [];
+      if (!response.ok) {
+        await this.throwStorageError('Cannot list files in MinIO', response);
+      }
+
+      const page = parseS3ListObjectsV2(await response.text());
+      objects.push(...page.objects);
+      if (objects.length > input.maxObjects) {
+        throw new InternalServerErrorException(
+          `Cannot reconcile MinIO bucket: more than ${input.maxObjects} objects match the prefix`,
+        );
+      }
+      continuationToken = page.isTruncated ? page.nextContinuationToken ?? undefined : undefined;
+
+      if (page.isTruncated && !continuationToken) {
+        throw new InternalServerErrorException(
+          'Cannot reconcile MinIO bucket: continuation token is missing',
+        );
+      }
+    } while (continuationToken);
+
+    return objects;
   }
 
   async getObjectToFile(params: { key: string; filePath: string; bucket?: string }) {
@@ -196,7 +251,7 @@ export class S3StorageService {
     const now = new Date();
     const amzDate = toAmzDate(now);
     const shortDate = amzDate.slice(0, 8);
-    const url = this.buildObjectUrl(options.bucket, options.key);
+    const url = this.buildObjectUrl(options.bucket, options.key, options.query);
     const signableHeaders: Record<string, string> = {
       host: url.host,
       'x-amz-content-sha256': payloadHash,
@@ -227,7 +282,7 @@ export class S3StorageService {
     const canonicalRequest = [
       options.method,
       url.pathname,
-      '',
+      url.search.slice(1),
       canonicalHeaders,
       signedHeaders,
       payloadHash,
@@ -259,10 +314,24 @@ export class S3StorageService {
     return fetch(url, requestInit);
   }
 
-  private buildObjectUrl(bucket: string, key?: string) {
+  private buildObjectUrl(
+    bucket: string,
+    key?: string,
+    query?: Record<string, string | undefined>,
+  ) {
     const path = key ? `${encodePath(bucket)}/${encodePath(key)}` : encodePath(bucket);
+    const url = new URL(`${this.endpoint}/${path}`);
+    const canonicalQuery = Object.entries(query ?? {})
+      .filter((entry): entry is [string, string] => entry[1] !== undefined)
+      .map(([name, value]) => [awsEncode(name), awsEncode(value)] as const)
+      .sort(([leftName, leftValue], [rightName, rightValue]) =>
+        leftName.localeCompare(rightName) || leftValue.localeCompare(rightValue))
+      .map(([name, value]) => `${name}=${value}`)
+      .join('&');
 
-    return new URL(`${this.endpoint}/${path}`);
+    if (canonicalQuery) url.search = canonicalQuery;
+
+    return url;
   }
 
   private getSigningKey(shortDate: string) {
@@ -287,7 +356,12 @@ function normalizeEndpoint(value: string) {
 }
 
 function encodePath(value: string) {
-  return value.split('/').map((segment) => encodeURIComponent(segment)).join('/');
+  return value.split('/').map((segment) => awsEncode(segment)).join('/');
+}
+
+function awsEncode(value: string) {
+  return encodeURIComponent(value).replace(/[!'()*]/gu, (character) =>
+    `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 
 function normalizeHeaderValue(value: string) {
@@ -300,4 +374,55 @@ function toAmzDate(date: Date) {
 
 function hmac(key: string | Buffer, value: string) {
   return createHmac('sha256', key).update(value).digest();
+}
+
+export function parseS3ListObjectsV2(xml: string) {
+  const objects = [...xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/gu)].map((match) => {
+    const contents = match[1] ?? '';
+    const size = Number(readXmlTag(contents, 'Size'));
+
+    return {
+      key: decodeXml(readXmlTag(contents, 'Key') ?? ''),
+      size: Number.isSafeInteger(size) && size >= 0 ? size : null,
+      etag: normalizeEtag(decodeXml(readXmlTag(contents, 'ETag') ?? '')),
+      lastModified: parseStorageDate(readXmlTag(contents, 'LastModified')),
+    } satisfies S3ListedObject;
+  }).filter((object) => object.key.length > 0);
+
+  return {
+    objects,
+    isTruncated: readXmlTag(xml, 'IsTruncated') === 'true',
+    nextContinuationToken: decodeXml(readXmlTag(xml, 'NextContinuationToken') ?? '') || null,
+  };
+}
+
+function readXmlTag(xml: string, tag: string) {
+  return xml.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'u'))?.[1] ?? null;
+}
+
+function decodeXml(value: string) {
+  return value.replace(/&(#x[\da-f]+|#\d+|amp|apos|gt|lt|quot);/giu, (entity, code: string) => {
+    if (code.toLowerCase().startsWith('#x')) {
+      return String.fromCodePoint(Number.parseInt(code.slice(2), 16));
+    }
+    if (code.startsWith('#')) {
+      return String.fromCodePoint(Number.parseInt(code.slice(1), 10));
+    }
+    return ({ amp: '&', apos: "'", gt: '>', lt: '<', quot: '"' } as const)[
+      code.toLowerCase() as 'amp' | 'apos' | 'gt' | 'lt' | 'quot'
+    ] ?? entity;
+  });
+}
+
+function normalizeEtag(value: string | null) {
+  const normalized = value?.trim().replace(/^"|"$/gu, '') ?? '';
+
+  return normalized || null;
+}
+
+function parseStorageDate(value: string | null) {
+  if (!value) return null;
+  const date = new Date(value);
+
+  return Number.isNaN(date.getTime()) ? null : date;
 }

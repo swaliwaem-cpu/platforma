@@ -11,6 +11,10 @@ import type {
   UpdateTrainingProjectDraftInput,
 } from './training-project.service';
 import type { ReviewTrainingAttemptInput } from './training-review.service';
+import type {
+  CreateTrainingAudioDeletionManifestInput,
+  TrainingAudioStorageQuery,
+} from './training-audio-storage.service';
 import {
   TRAINING_FACT_ALIAS_LIMIT,
   TRAINING_FACT_ALIAS_MAX_LENGTH,
@@ -233,6 +237,73 @@ export function parseTrainingAiUsageReportQuery(
   };
 }
 
+export function parseTrainingAudioStorageQuery(
+  query: Record<string, string | undefined>,
+): TrainingAudioStorageQuery {
+  const createdFrom = parseStorageDate(query.createdFrom, 'createdFrom', false);
+  const createdToExclusive = parseStorageDate(query.createdTo, 'createdTo', true);
+
+  if (
+    createdFrom &&
+    createdToExclusive &&
+    createdFrom.getTime() >= createdToExclusive.getTime()
+  ) {
+    throw new BadRequestException('createdFrom must not exceed createdTo');
+  }
+
+  return {
+    page: parseInteger(query.page, 'page', 1, { minimum: 1 }),
+    limit: parseInteger(query.limit, 'limit', 50, { minimum: 1, maximum: 100 }),
+    project: parseOptionalBoundedText(query.project, 'project', 240),
+    user: parseOptionalBoundedText(query.user, 'user', 240),
+    createdFrom,
+    createdToExclusive,
+    state: parseOptionalEnum(
+      query.state,
+      'state',
+      [
+        'LINKED',
+        'UNLINKED',
+        'DB_ONLY',
+        'STORAGE_ONLY',
+        'MISSING',
+        'PENDING_DELETE',
+        'DELETED',
+      ] as const,
+    ) ?? '',
+  };
+}
+
+export function parseCreateTrainingAudioDeletionManifestInput(
+  body: Record<string, unknown>,
+): CreateTrainingAudioDeletionManifestInput {
+  if (!Array.isArray(body.selectionIds) || body.selectionIds.length < 1 || body.selectionIds.length > 100) {
+    throw new BadRequestException('selectionIds must contain from 1 to 100 items');
+  }
+  const selectionIds = body.selectionIds.map((value, index) => {
+    if (typeof value !== 'string' || value.length < 3 || value.length > 2048) {
+      throw new BadRequestException(`selectionIds[${index}] is invalid`);
+    }
+    return value;
+  });
+  if (new Set(selectionIds).size !== selectionIds.length) {
+    throw new BadRequestException('selectionIds must be unique');
+  }
+
+  return {
+    selectionIds,
+    reason: parseRequiredText(body.reason, 'reason', 500),
+  };
+}
+
+export function parseExecuteTrainingAudioDeletionManifestInput(body: Record<string, unknown>) {
+  if (body.confirmed !== true) {
+    throw new BadRequestException('Audio deletion must be explicitly confirmed');
+  }
+
+  return { confirmed: true as const };
+}
+
 export function parseBulkTrainingProjectAssignmentsInput(body: Record<string, unknown>) {
   if (body.action !== 'ASSIGN' && body.action !== 'REVOKE') {
     throw new BadRequestException('action must be ASSIGN or REVOKE');
@@ -404,6 +475,20 @@ function parseOptionalDate(value: unknown, fieldName: string) {
   if (!Number.isFinite(parsed.getTime())) {
     throw new BadRequestException(`${fieldName} must be an ISO date`);
   }
+  return parsed;
+}
+
+function parseStorageDate(value: unknown, fieldName: string, exclusiveEnd: boolean) {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/u.test(value)) {
+    throw new BadRequestException(`${fieldName} must be a date in YYYY-MM-DD format`);
+  }
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
+    throw new BadRequestException(`${fieldName} must be a valid date`);
+  }
+  if (exclusiveEnd) parsed.setUTCDate(parsed.getUTCDate() + 1);
+
   return parsed;
 }
 

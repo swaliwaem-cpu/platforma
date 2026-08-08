@@ -412,12 +412,17 @@ function AppRoutes() {
           hasPermission('admin:access') ? (
             pathname.startsWith('/admin/training') ? (
               trainingEnabled &&
-              (hasPermission('training:projects:manage') || hasPermission('training:results:read')) ? (
+              (
+                hasPermission('training:projects:manage') ||
+                hasPermission('training:results:read') ||
+                hasPermission('training:audio:read')
+              ) ? (
                 <TrainingAdminRoutes
                   canManageProjects={hasPermission('training:projects:manage')}
                   canReadResults={hasPermission('training:results:read')}
                   canReviewResults={hasPermission('training:results:review')}
                   canReadAudio={hasPermission('training:audio:read')}
+                  canDeleteFiles={hasPermission('files:delete')}
                   navigate={navigate}
                   pathname={pathname}
                 />

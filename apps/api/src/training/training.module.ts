@@ -61,6 +61,7 @@ import { TrainingVoiceWorkerService } from './training-voice-worker.service';
 import { TrainingVoiceWorkerWakeupService } from './training-voice-worker-wakeup.service';
 import { TrainingUrlExtractor } from './training-url-extractor';
 import { TrainingAiUsageService } from './training-ai-usage.service';
+import { TrainingAudioStorageService } from './training-audio-storage.service';
 
 @Module({
   imports: [AuthModule, PrismaModule, FilesModule],
@@ -94,6 +95,7 @@ import { TrainingAiUsageService } from './training-ai-usage.service';
     TrainingMaterialService,
     TrainingProjectKnowledgeService,
     TrainingAiUsageService,
+    TrainingAudioStorageService,
     DeterministicFakeTrainingMaterialSuggester,
     SpawnTrainingFfmpegRunner,
     DeterministicFakeTrainingTranscriber,

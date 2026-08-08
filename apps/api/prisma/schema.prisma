@@ -219,6 +219,28 @@ enum TrainingAiStepStatus {
   @@map("training_ai_step_status")
 }
 
+enum TrainingAudioStorageObjectKind {
+  SEGMENT @map("segment")
+  MERGED  @map("merged")
+
+  @@map("training_audio_storage_object_kind")
+}
+
+enum TrainingAudioDeletionManifestStatus {
+  PENDING   @map("pending")
+  COMPLETED @map("completed")
+
+  @@map("training_audio_deletion_manifest_status")
+}
+
+enum TrainingAudioDeletionItemStatus {
+  PENDING    @map("pending")
+  PROCESSING @map("processing")
+  DELETED    @map("deleted")
+
+  @@map("training_audio_deletion_item_status")
+}
+
 enum TrainingReviewStatus {
   NOT_REQUIRED @map("not_required")
   PENDING      @map("pending")
@@ -348,6 +370,7 @@ model User {
   createdTrainingMaterialOperations TrainingMaterialOperation[] @relation("TrainingMaterialOperationCreator")
   trainingProjectAssignments     TrainingProjectAssignment[] @relation("TrainingProjectAssignee")
   assignedTrainingProjects       TrainingProjectAssignment[] @relation("TrainingProjectAssigner")
+  trainingAudioDeletionManifests TrainingAudioDeletionManifest[] @relation("TrainingAudioDeletionManifestCreator")
 
   @@index([roleId])
   @@index([profilePhotoFileId])
@@ -822,10 +845,92 @@ model File {
   trainingMergedAnswers        TrainingAnswer[]                    @relation("TrainingAnswerMergedAudio")
   trainingMaterialRevisions    TrainingMaterialRevision[]          @relation("TrainingMaterialRevisionFile")
   trainingMaterialOperations   TrainingMaterialOperation[]         @relation("TrainingMaterialOperationSourceFile")
+  trainingAudioStorageEntry      TrainingAudioStorageEntry?
 
   @@unique([storage, bucket, key])
   @@index([uploadedById])
   @@map("files")
+}
+
+model TrainingAudioStorageEntry {
+  id                   String                         @id @default(uuid()) @db.Uuid
+  fileId               String?                        @unique @map("file_id") @db.Uuid
+  kind                 TrainingAudioStorageObjectKind
+  bucket               String                         @db.VarChar(255)
+  key                  String
+  checksum             String?                        @db.Char(64)
+  etag                 String?                        @db.VarChar(128)
+  sizeBytes            BigInt?                        @map("size_bytes") @db.BigInt
+  mimeType             String?                        @map("mime_type") @db.VarChar(120)
+  projectIdSnapshot    String?                        @map("project_id_snapshot") @db.Uuid
+  projectTitleSnapshot String?                        @map("project_title_snapshot") @db.VarChar(300)
+  userIdSnapshot       String?                        @map("user_id_snapshot") @db.Uuid
+  userNameSnapshot     String?                        @map("user_name_snapshot") @db.VarChar(200)
+  userEmailSnapshot    String?                        @map("user_email_snapshot") @db.VarChar(320)
+  attemptIdSnapshot    String?                        @map("attempt_id_snapshot") @db.Uuid
+  answerIdSnapshot     String?                        @map("answer_id_snapshot") @db.Uuid
+  objectCreatedAt      DateTime                       @map("object_created_at") @db.Timestamptz(3)
+  deletedAt            DateTime?                      @map("deleted_at") @db.Timestamptz(3)
+  createdAt            DateTime                       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime                       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  file          File?                               @relation(fields: [fileId], references: [id], onDelete: SetNull)
+  manifestItems TrainingAudioDeletionManifestItem[]
+
+  @@unique([bucket, key])
+  @@index([projectIdSnapshot, objectCreatedAt])
+  @@index([userIdSnapshot, objectCreatedAt])
+  @@index([objectCreatedAt])
+  @@index([deletedAt])
+  @@map("training_audio_storage_entries")
+}
+
+model TrainingAudioDeletionManifest {
+  id          String                              @id @default(uuid()) @db.Uuid
+  createdById String?                             @map("created_by_id") @db.Uuid
+  reason      String                              @db.VarChar(500)
+  status      TrainingAudioDeletionManifestStatus @default(PENDING)
+  completedAt DateTime?                           @map("completed_at") @db.Timestamptz(3)
+  createdAt   DateTime                            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime                            @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  createdBy User?                               @relation("TrainingAudioDeletionManifestCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  items     TrainingAudioDeletionManifestItem[]
+
+  @@index([status, createdAt])
+  @@index([createdById])
+  @@map("training_audio_deletion_manifests")
+}
+
+model TrainingAudioDeletionManifestItem {
+  id                   String                          @id @default(uuid()) @db.Uuid
+  manifestId           String                          @map("manifest_id") @db.Uuid
+  storageEntryId       String?                         @map("storage_entry_id") @db.Uuid
+  fileIdSnapshot       String?                         @map("file_id_snapshot") @db.Uuid
+  bucket               String                          @db.VarChar(255)
+  key                  String
+  checksum             String?                         @db.Char(64)
+  etag                 String?                         @db.VarChar(128)
+  sizeBytes            BigInt?                         @map("size_bytes") @db.BigInt
+  projectTitleSnapshot String?                         @map("project_title_snapshot") @db.VarChar(300)
+  userNameSnapshot     String?                         @map("user_name_snapshot") @db.VarChar(200)
+  userEmailSnapshot    String?                         @map("user_email_snapshot") @db.VarChar(320)
+  objectCreatedAt      DateTime                        @map("object_created_at") @db.Timestamptz(3)
+  status               TrainingAudioDeletionItemStatus @default(PENDING)
+  lastErrorCode        String?                         @map("last_error_code") @db.VarChar(64)
+  executionToken       String?                         @map("execution_token") @db.Uuid
+  executionStartedAt   DateTime?                       @map("execution_started_at") @db.Timestamptz(3)
+  deletedAt            DateTime?                       @map("deleted_at") @db.Timestamptz(3)
+  createdAt            DateTime                        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime                        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  manifest     TrainingAudioDeletionManifest @relation(fields: [manifestId], references: [id], onDelete: Cascade)
+  storageEntry TrainingAudioStorageEntry?    @relation(fields: [storageEntryId], references: [id], onDelete: SetNull)
+
+  @@unique([manifestId, bucket, key])
+  @@index([manifestId, status])
+  @@index([storageEntryId])
+  @@map("training_audio_deletion_manifest_items")
 }
 
 model FileVariant {

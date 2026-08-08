@@ -1,6 +1,7 @@
 import type {
   BulkTrainingProjectAssignmentsRequest,
   BulkTrainingProjectAssignmentsResponse,
+  CreateTrainingAudioDeletionManifestRequest,
   CreateTrainingProjectRequest,
   ImportTrainingObjectRequest,
   ApplyTrainingMaterialSuggestionsRequest,
@@ -19,6 +20,9 @@ import type {
   TrainingAdminResultsResponse,
   TrainingAdminRankingQuery,
   TrainingAdminRankingResponse,
+  TrainingAudioDeletionManifestResponse,
+  TrainingAudioStorageReport,
+  TrainingAudioStorageState,
   TrainingEmployeeAttempt,
   TrainingEmployeeAttemptsResponse,
   TrainingEmployeeProjectsResponse,
@@ -36,6 +40,16 @@ import type {
 } from '@platforma/shared';
 
 import { apiRequest, apiResponse } from '../admin/api';
+
+export type TrainingAudioStorageQuery = {
+  page: number;
+  limit: number;
+  project: string;
+  user: string;
+  createdFrom: string;
+  createdTo: string;
+  state: TrainingAudioStorageState | '';
+};
 
 export function getTrainingProjects(accessToken: string, signal?: AbortSignal) {
   return apiRequest<TrainingEmployeeProjectsResponse>('/training/projects', accessToken, {
@@ -108,6 +122,45 @@ export function getTrainingAdminProjects(accessToken: string, signal?: AbortSign
   return apiRequest<TrainingAdminProjectsResponse>('/training/admin/projects', accessToken, {
     signal,
   });
+}
+
+export function getTrainingAudioStorage(
+  accessToken: string,
+  query: TrainingAudioStorageQuery,
+  signal?: AbortSignal,
+) {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== '') search.set(key, String(value));
+  }
+
+  return apiRequest<TrainingAudioStorageReport>(
+    `/training/admin/audio-storage?${search.toString()}`,
+    accessToken,
+    { signal },
+  );
+}
+
+export function createTrainingAudioDeletionManifest(
+  accessToken: string,
+  input: CreateTrainingAudioDeletionManifestRequest,
+) {
+  return apiRequest<TrainingAudioDeletionManifestResponse>(
+    '/training/admin/audio-storage/delete-manifests',
+    accessToken,
+    { method: 'POST', body: JSON.stringify(input) },
+  );
+}
+
+export function executeTrainingAudioDeletionManifest(
+  accessToken: string,
+  manifestId: string,
+) {
+  return apiRequest<TrainingAudioDeletionManifestResponse>(
+    `/training/admin/audio-storage/delete-manifests/${encodeURIComponent(manifestId)}/execute`,
+    accessToken,
+    { method: 'POST', body: JSON.stringify({ confirmed: true }) },
+  );
 }
 
 export function createTrainingAdminProject(

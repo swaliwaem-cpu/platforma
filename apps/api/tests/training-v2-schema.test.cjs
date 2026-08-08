@@ -73,6 +73,9 @@ test('Training V2 preserves its models and includes AI usage events', () => {
   const modelNames = [...schema.matchAll(/^model (Training\w+) \{/gmu)].map((match) => match[1]);
 
   assert.deepEqual(modelNames, [
+    'TrainingAudioStorageEntry',
+    'TrainingAudioDeletionManifest',
+    'TrainingAudioDeletionManifestItem',
     'TrainingProject',
     'TrainingProjectKnowledgeVersion',
     'TrainingQuestionGenerationArtifact',

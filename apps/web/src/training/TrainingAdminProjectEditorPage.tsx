@@ -437,8 +437,8 @@ export function TrainingAdminProjectEditorPage({
             <DialogTitle>Безвозвратно удалить проект «{project.title}»?</DialogTitle>
             <DialogDescription>
               Будут удалены сам проект, все попытки и результаты сотрудников, ответы,
-              аудиозаписи, материалы, назначения и связанные файлы. Восстановить данные
-              будет невозможно.
+              материалы, назначения и связанные файлы материалов. Аудиозаписи останутся
+              в общем хранилище и удаляются отдельно вручную.
             </DialogDescription>
           </DialogHeader>
           {deleteError ? <AdminAlert tone="error">{deleteError}</AdminAlert> : null}
@@ -457,7 +457,7 @@ export function TrainingAdminProjectEditorPage({
               disabled={isDeleting}
               onClick={() => void handleDelete()}
             >
-              {isDeleting ? 'Удаляем…' : 'Удалить всё навсегда'}
+              {isDeleting ? 'Удаляем…' : 'Удалить проект и данные'}
             </AdminButton>
           </DialogFooter>
         </DialogContent>

@@ -26,10 +26,14 @@ import { TrainingResultsService } from './training-results.service';
 import { TrainingRankingService } from './training-ranking.service';
 import { TrainingFeatureGuard } from './training-runtime-config';
 import { TrainingAiUsageService } from './training-ai-usage.service';
+import { TrainingAudioStorageService } from './training-audio-storage.service';
 import {
+  parseCreateTrainingAudioDeletionManifestInput,
   parseCreateTrainingProjectInput,
   parseBulkTrainingProjectAssignmentsInput,
+  parseExecuteTrainingAudioDeletionManifestInput,
   parseTrainingAssignmentUsersQuery,
+  parseTrainingAudioStorageQuery,
   parseTrainingProjectAccessModeInput,
   parseTrainingAvailabilityInput,
   parseReviewTrainingAttemptInput,
@@ -51,6 +55,7 @@ export class TrainingAdminController {
     private readonly results: TrainingResultsService,
     private readonly ranking: TrainingRankingService,
     private readonly aiUsage: TrainingAiUsageService,
+    private readonly audioStorage: TrainingAudioStorageService,
   ) {}
 
   @Get('projects')
@@ -175,6 +180,38 @@ export class TrainingAdminController {
   @RequirePermissions('training:results:read')
   async getAiUsage(@Query() query: Record<string, string | undefined>) {
     return this.aiUsage.report(parseTrainingAiUsageReportQuery(query));
+  }
+
+  @Get('audio-storage')
+  @RequirePermissions('training:audio:read')
+  async getAudioStorage(@Query() query: Record<string, string | undefined>) {
+    return this.audioStorage.report(parseTrainingAudioStorageQuery(query));
+  }
+
+  @Post('audio-storage/delete-manifests')
+  @RequirePermissions('training:audio:read', 'files:delete')
+  async createAudioDeletionManifest(
+    @Body() body: Record<string, unknown>,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.audioStorage.createDeletionManifest(
+      actor.id,
+      parseCreateTrainingAudioDeletionManifestInput(body),
+    );
+  }
+
+  @Post('audio-storage/delete-manifests/:manifestId/execute')
+  @RequirePermissions('training:audio:read', 'files:delete')
+  async executeAudioDeletionManifest(
+    @Param('manifestId') manifestId: string,
+    @Body() body: Record<string, unknown>,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    parseExecuteTrainingAudioDeletionManifestInput(body);
+    return this.audioStorage.executeDeletionManifest(
+      parseUuid(manifestId, 'manifestId'),
+      actor.id,
+    );
   }
 
   @Get('attempts/:attemptId')

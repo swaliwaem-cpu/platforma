@@ -135,6 +135,88 @@ export type TrainingAdminProjectsResponse = {
   items: TrainingAdminProjectSummary[];
 };
 
+export type TrainingAudioStorageState =
+  | 'LINKED'
+  | 'UNLINKED'
+  | 'DB_ONLY'
+  | 'STORAGE_ONLY'
+  | 'MISSING'
+  | 'PENDING_DELETE'
+  | 'DELETED';
+
+export type TrainingAudioStorageItem = {
+  selectionId: string;
+  storageEntryId: string | null;
+  fileId: string | null;
+  kind: 'SEGMENT' | 'MERGED';
+  bucket: string;
+  key: string;
+  checksum: string | null;
+  etag: string | null;
+  sizeBytes: string | null;
+  mimeType: string | null;
+  project: { id: string | null; title: string } | null;
+  user: { id: string | null; name: string | null; email: string | null } | null;
+  createdAt: string;
+  state: TrainingAudioStorageState;
+  isLinked: boolean;
+  objectExists: boolean;
+  dbRowExists: boolean;
+  canDelete: boolean;
+  pendingManifestId: string | null;
+};
+
+export type TrainingAudioDeletionManifestSummary = {
+  id: string;
+  reason: string;
+  createdAt: string;
+  pendingItems: number;
+  deletedItems: number;
+  lastErrorCodes: string[];
+};
+
+export type TrainingAudioStorageReport = {
+  items: TrainingAudioStorageItem[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+  summary: {
+    linked: number;
+    deletable: number;
+    missing: number;
+    totalBytes: string;
+  };
+  facets: {
+    projects: Array<{ id: string | null; title: string }>;
+    users: Array<{ id: string | null; name: string | null; email: string | null }>;
+  };
+  pendingManifests: TrainingAudioDeletionManifestSummary[];
+  reportGeneratedAt: string;
+  readOnly: true;
+};
+
+export type CreateTrainingAudioDeletionManifestRequest = {
+  selectionIds: string[];
+  reason: string;
+};
+
+export type ExecuteTrainingAudioDeletionManifestRequest = {
+  confirmed: true;
+};
+
+export type TrainingAudioDeletionManifestResponse = {
+  id: string;
+  reason: string;
+  status: 'PENDING' | 'COMPLETED';
+  createdAt: string;
+  completedAt: string | null;
+  totalItems: number;
+  deletedItems: number;
+  pendingItems: number;
+  lastErrorCodes: string[];
+};
+
 export type TrainingAdminProject = {
   id: string;
   realEstateObjectId: string | null;

@@ -5,6 +5,7 @@ import { TrainingAdminProjectsPage } from './TrainingAdminProjectsPage';
 import { TrainingAdminResultsPage } from './TrainingAdminResultsPage';
 import { TrainingAdminRankingPage } from './TrainingAdminRankingPage';
 import { TrainingAttemptPage } from './TrainingAttemptPage';
+import { TrainingAudioStoragePage } from './TrainingAudioStoragePage';
 import { TrainingProjectsPage } from './TrainingProjectsPage';
 import './training.css';
 
@@ -32,15 +33,29 @@ export function TrainingAdminRoutes({
   canReadResults,
   canReviewResults,
   canReadAudio,
-}: TrainingRoutesProps & { canManageProjects: boolean; canReadResults: boolean; canReviewResults: boolean; canReadAudio: boolean }) {
+  canDeleteFiles,
+}: TrainingRoutesProps & {
+  canManageProjects: boolean;
+  canReadResults: boolean;
+  canReviewResults: boolean;
+  canReadAudio: boolean;
+  canDeleteFiles: boolean;
+}) {
   if (/^\/admin\/training\/?$/u.test(pathname)) {
     return (
       <TrainingAdminProjectsPage
         canManageProjects={canManageProjects}
         canReadResults={canReadResults}
+        canReadAudio={canReadAudio}
         navigate={navigate}
       />
     );
+  }
+
+  if (/^\/admin\/training\/audio-storage\/?$/u.test(pathname)) {
+    return canReadAudio
+      ? <TrainingAudioStoragePage canDeleteFiles={canDeleteFiles} navigate={navigate} />
+      : <TrainingRouteDenied />;
   }
 
   if (/^\/admin\/training\/results\/?$/u.test(pathname)) {
