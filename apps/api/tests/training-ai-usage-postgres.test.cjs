@@ -144,9 +144,12 @@ if (!databaseUrl) {
     });
 
     assert.equal(report.totals.attempts, 3);
+    assert.equal(report.totals.runs, 1);
     assert.equal(report.totals.acceptedAttempts, 1);
     assert.equal(report.totals.failedAttempts, 2);
     assert.equal(report.totals.retryAttempts, 1);
+    assert.equal(report.totals.retryRate, 1);
+    assert.equal(report.totals.extraCallRatio, 2);
     assert.equal(report.totals.fallbackAttempts, 1);
     assert.equal(report.totals.inputTokens, 300);
     assert.equal(report.totals.cachedTokens, 120);

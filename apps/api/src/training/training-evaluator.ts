@@ -13,6 +13,23 @@ export const TRAINING_MAIN_MAX_SCORE = 55;
 export const TRAINING_FOLLOW_UP_MAX_SCORE = 15;
 const TRAINING_TOTAL_MAX_SCORE = 100;
 
+export type TrainingEvaluationOutputLimits = Readonly<{
+  evidenceMaxChars: number;
+  explanationMaxChars: number;
+  summaryMaxChars: number;
+  unsupportedClaimsMax: number;
+  unsupportedClaimMaxChars: number;
+}>;
+
+export const DEFAULT_TRAINING_EVALUATION_OUTPUT_LIMITS: TrainingEvaluationOutputLimits =
+  Object.freeze({
+    evidenceMaxChars: 500,
+    explanationMaxChars: 1_000,
+    summaryMaxChars: 1_000,
+    unsupportedClaimsMax: 20,
+    unsupportedClaimMaxChars: 500,
+  });
+
 export type TrainingLegacyEvaluation = {
   score: number;
   outcome: 'SCORED' | 'REQUIRES_REVIEW';
@@ -168,6 +185,7 @@ export function evaluateLegacyTrainingText(
 export function validateTrainingStructuredEvaluation(
   value: unknown,
   input: TrainingEvaluationInput,
+  limits: TrainingEvaluationOutputLimits = DEFAULT_TRAINING_EVALUATION_OUTPUT_LIMITS,
 ): TrainingStructuredEvaluation {
   if (!isRecord(value)) throw new Error('INVALID_EVALUATION_OBJECT');
   assertExactKeys(value, [
@@ -186,7 +204,7 @@ export function validateTrainingStructuredEvaluation(
     !Array.isArray(value.unsupported_claims) ||
     typeof value.summary !== 'string' ||
     value.summary.trim().length < 1 ||
-    value.summary.length > 1_000 ||
+    value.summary.length > limits.summaryMaxChars ||
     typeof value.requires_review !== 'boolean'
   ) {
     throw new Error('INVALID_EVALUATION_SCHEMA');
@@ -194,9 +212,11 @@ export function validateTrainingStructuredEvaluation(
 
   const factsById = new Map(input.facts.map((fact) => [fact.id, fact]));
   const criteriaById = new Map(input.criteria.map((criterion) => [criterion.id, criterion]));
-  const factAssessments = value.fact_assessments.map((item) => parseFactAssessment(item, input));
+  const factAssessments = value.fact_assessments.map((item) =>
+    parseFactAssessment(item, input, limits),
+  );
   const criterionAssessments = value.criterion_assessments.map((item) =>
-    parseCriterionAssessment(item, input, criteriaById),
+    parseCriterionAssessment(item, input, criteriaById, limits),
   );
   assertExactIds(factAssessments.map((item) => item.fact_id), factsById, 'FACT');
   assertExactIds(
@@ -205,7 +225,9 @@ export function validateTrainingStructuredEvaluation(
     'CRITERION',
   );
 
-  if (value.unsupported_claims.length > 20) throw new Error('TOO_MANY_UNSUPPORTED_CLAIMS');
+  if (value.unsupported_claims.length > limits.unsupportedClaimsMax) {
+    throw new Error('TOO_MANY_UNSUPPORTED_CLAIMS');
+  }
   const approvedClaims = new Set(
     input.facts.flatMap((fact) => [fact.statement, ...fact.aliases]).map(canonicalizeClaim),
   );
@@ -216,10 +238,10 @@ export function validateTrainingStructuredEvaluation(
     if (
       typeof item.claim !== 'string' ||
       item.claim.trim().length < 1 ||
-      item.claim.length > 500 ||
+      item.claim.length > limits.unsupportedClaimMaxChars ||
       typeof item.evidence !== 'string' ||
       item.evidence.trim().length < 1 ||
-      item.evidence.length > 500
+      item.evidence.length > limits.evidenceMaxChars
     ) {
       throw new Error('INVALID_UNSUPPORTED_CLAIM');
     }
@@ -322,7 +344,11 @@ export function clampTrainingTotalScore(score: number) {
   return clampScore(score, TRAINING_TOTAL_MAX_SCORE);
 }
 
-function parseFactAssessment(value: unknown, input: TrainingEvaluationInput) {
+function parseFactAssessment(
+  value: unknown,
+  input: TrainingEvaluationInput,
+  limits: TrainingEvaluationOutputLimits,
+) {
   if (!isRecord(value)) throw new Error('INVALID_FACT_ASSESSMENT');
   assertExactKeys(value, ['fact_id', 'verdict', 'evidence', 'explanation']);
   const verdicts = new Set(['CORRECT', 'PARTIAL', 'MISSING', 'INCORRECT']);
@@ -333,15 +359,20 @@ function parseFactAssessment(value: unknown, input: TrainingEvaluationInput) {
     (value.evidence !== null && typeof value.evidence !== 'string') ||
     typeof value.explanation !== 'string' ||
     value.explanation.trim().length < 1 ||
-    value.explanation.length > 1_000
+    value.explanation.length > limits.explanationMaxChars
   ) {
     throw new Error('INVALID_FACT_ASSESSMENT');
   }
 
   if (value.verdict !== 'MISSING') {
-    if (!value.evidence || value.evidence.length > 500) throw new Error('FACT_EVIDENCE_REQUIRED');
+    if (!value.evidence || value.evidence.length > limits.evidenceMaxChars) {
+      throw new Error('FACT_EVIDENCE_REQUIRED');
+    }
     assertTranscriptEvidence(value.evidence, input.transcript);
   } else if (value.evidence !== null) {
+    if (value.evidence.length > limits.evidenceMaxChars) {
+      throw new Error('FACT_EVIDENCE_REQUIRED');
+    }
     assertTranscriptEvidence(value.evidence, input.transcript);
   }
 
@@ -357,6 +388,7 @@ function parseCriterionAssessment(
   value: unknown,
   input: TrainingEvaluationInput,
   criteriaById: Map<string, TrainingProjectSnapshotCriterion>,
+  limits: TrainingEvaluationOutputLimits,
 ) {
   if (!isRecord(value)) throw new Error('INVALID_CRITERION_ASSESSMENT');
   assertExactKeys(value, ['criterion_id', 'awarded_points', 'evidence', 'explanation']);
@@ -370,7 +402,7 @@ function parseCriterionAssessment(
     (value.evidence !== null && typeof value.evidence !== 'string') ||
     typeof value.explanation !== 'string' ||
     value.explanation.trim().length < 1 ||
-    value.explanation.length > 1_000
+    value.explanation.length > limits.explanationMaxChars
   ) {
     throw new Error('INVALID_CRITERION_ASSESSMENT');
   }
@@ -383,7 +415,7 @@ function parseCriterionAssessment(
   }
 
   if (typeof value.evidence === 'string') {
-    if (!value.evidence.trim() || value.evidence.length > 500) {
+    if (!value.evidence.trim() || value.evidence.length > limits.evidenceMaxChars) {
       throw new Error('INVALID_CRITERION_EVIDENCE');
     }
     assertTranscriptEvidence(value.evidence, input.transcript);

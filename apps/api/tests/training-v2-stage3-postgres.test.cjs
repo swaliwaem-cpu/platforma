@@ -170,6 +170,33 @@ if (!databaseUrl) {
     assert.equal(await worker.runOnce(), false);
   });
 
+  test('deterministic evaluation failure is not repeated by the voice worker', async () => {
+    const item = await createProcessingAnswer('evaluation-deterministic');
+    const transcriber = new RecordingTranscriber();
+    const evaluator = new AlwaysDeterministicInvalidEvaluator(fakeEvaluator);
+    const worker = createWorker(new FakeAudio(prisma), transcriber, evaluator, state);
+
+    assert.equal(await worker.runOnce(), true);
+    const failedAnswer = await prisma.trainingAnswer.findUniqueOrThrow({
+      where: { id: item.answerId },
+    });
+    const failedAttempt = await prisma.trainingAttempt.findUniqueOrThrow({
+      where: { id: item.attempt.id },
+    });
+    assert.equal(transcriber.calls, 1);
+    assert.equal(evaluator.calls, 1);
+    assert.equal(failedAnswer.processingStatus, 'FAILED');
+    assert.equal(failedAnswer.processingAttempts, 1);
+    assert.equal(failedAnswer.evaluationAttempts, 2);
+    assert.equal(
+      failedAnswer.processingErrorCode,
+      'OPENAI_EVALUATION_INVALID_EVIDENCE_NOT_IN_TRANSCRIPT',
+    );
+    assert.equal(failedAttempt.status, 'TECHNICAL_FAILED');
+    assert.equal(failedAttempt.finalScore, null);
+    assert.equal(await worker.runOnce(), false);
+  });
+
   test('evaluation checkpoint survives progression restart and creates follow-ups exactly once', async () => {
     const item = await createProcessingAnswer('resume-evaluation');
     const transcriber = new RecordingTranscriber();
@@ -500,6 +527,18 @@ if (!databaseUrl) {
         true,
         2,
         'CRITERION_POINTS_OUT_OF_RANGE',
+      );
+    }
+  }
+
+  class AlwaysDeterministicInvalidEvaluator extends RecordingEvaluator {
+    async evaluate() {
+      this.calls += 1;
+      throw new TrainingOpenAIError(
+        'OPENAI_EVALUATION_INVALID',
+        false,
+        2,
+        'EVIDENCE_NOT_IN_TRANSCRIPT',
       );
     }
   }

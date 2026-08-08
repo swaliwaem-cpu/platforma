@@ -51,6 +51,8 @@ export interface TrainingAiUsageRecorder {
 }
 
 type AggregateRow = {
+  runs: bigint;
+  retriedRuns: bigint;
   attempts: bigint;
   acceptedAttempts: bigint;
   tokenReportedAttempts: bigint;
@@ -89,6 +91,8 @@ type RunAggregateRow = AggregateRow & {
 };
 
 const AGGREGATE_COLUMNS = Prisma.sql`
+  COUNT(DISTINCT "operation_run_id")::bigint AS "runs",
+  COUNT(DISTINCT "operation_run_id") FILTER (WHERE "is_retry")::bigint AS "retriedRuns",
   COUNT(*)::bigint AS "attempts",
   COUNT(*) FILTER (WHERE "outcome" = 'accepted')::bigint AS "acceptedAttempts",
   COUNT(*) FILTER (WHERE "total_tokens" IS NOT NULL)::bigint AS "tokenReportedAttempts",
@@ -315,15 +319,19 @@ function qualifiedUsageWhere(filter: TrainingAiUsageReportFilter) {
 }
 
 function serializeAggregate(row: AggregateRow) {
+  const runs = Number(row.runs);
   const attempts = Number(row.attempts);
   const inputTokens = Number(row.inputTokens);
 
   return {
+    runs,
     attempts,
     acceptedAttempts: Number(row.acceptedAttempts),
     failedAttempts: attempts - Number(row.acceptedAttempts),
     tokenReportedAttempts: Number(row.tokenReportedAttempts),
     retryAttempts: Number(row.retryAttempts),
+    retryRate: ratio(Number(row.retriedRuns), runs),
+    extraCallRatio: ratio(Math.max(0, attempts - runs), runs),
     fallbackAttempts: Number(row.fallbackAttempts),
     inputTokens,
     cachedTokens: Number(row.cachedTokens),
@@ -392,6 +400,8 @@ function createSpikeWarnings(
 
 function emptyAggregate(): AggregateRow {
   return {
+    runs: 0n,
+    retriedRuns: 0n,
     attempts: 0n,
     acceptedAttempts: 0n,
     tokenReportedAttempts: 0n,

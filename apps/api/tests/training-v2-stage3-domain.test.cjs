@@ -118,6 +118,32 @@ test('evidence normalization is exact and deterministic', () => {
   }, makeEvaluationInput()), /EVIDENCE_NOT_IN_TRANSCRIPT/);
 });
 
+test('configured compact evaluator limits are enforced after provider output', () => {
+  const input = makeEvaluationInput();
+  const limits = {
+    evidenceMaxChars: 240,
+    explanationMaxChars: 320,
+    summaryMaxChars: 400,
+    unsupportedClaimsMax: 0,
+    unsupportedClaimMaxChars: 200,
+  };
+
+  assert.throws(() => validateTrainingStructuredEvaluation({
+    ...makeEvaluation(),
+    fact_assessments: makeEvaluation().fact_assessments.map((item, index) => index === 0
+      ? { ...item, explanation: 'x'.repeat(321) }
+      : item),
+  }, input, limits), /INVALID_FACT_ASSESSMENT/u);
+  assert.throws(() => validateTrainingStructuredEvaluation({
+    ...makeEvaluation(),
+    summary: 'x'.repeat(401),
+  }, input, limits), /INVALID_EVALUATION_SCHEMA/u);
+  assert.throws(() => validateTrainingStructuredEvaluation({
+    ...makeEvaluation(),
+    unsupported_claims: [{ claim: 'Есть бассейн', evidence: 'Есть бассейн' }],
+  }, input, limits), /TOO_MANY_UNSUPPORTED_CLAIMS/u);
+});
+
 test('backend scoring applies one distinct minus five penalty, clamps and sends unsupported to review', () => {
   const input = makeEvaluationInput();
   const evaluation = validateTrainingStructuredEvaluation(makeEvaluation(), input);

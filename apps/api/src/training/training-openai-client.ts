@@ -187,7 +187,7 @@ export class TrainingOpenAIClient {
             durationMs: Math.max(0, Date.now() - attemptStartedAt),
             httpStatus: response.status,
             outcome: 'local_validation_failed',
-            errorCode: parsedError.code,
+            errorCode: getTrainingOpenAIAttemptErrorCode(parsedError),
           });
 
           if (!parsedError.retryable || attempts > input.policy.maxRetries) throw parsedError;
@@ -325,6 +325,10 @@ function parseRetryAfter(value: string | null) {
 
 function boundedHeader(value: string | null) {
   return value && value.length <= 160 ? value : null;
+}
+
+function getTrainingOpenAIAttemptErrorCode(error: TrainingOpenAIError) {
+  return [error.code, error.detailCode].filter(Boolean).join('_').slice(0, 120);
 }
 
 async function safelyObserveAttempt(

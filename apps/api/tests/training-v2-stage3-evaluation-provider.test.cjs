@@ -1,4 +1,6 @@
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
+const { resolve } = require('node:path');
 const test = require('node:test');
 
 const {
@@ -11,6 +13,25 @@ const { parseTrainingOpenAIUsage } = require('../dist/training/training-openai-u
 
 const factId = '11111111-1111-4111-8111-111111111111';
 const criterionId = '22222222-2222-4222-8222-222222222222';
+
+test('evaluator golden benchmark is fail-closed unless explicitly enabled', () => {
+  const script = resolve(__dirname, 'training-v2-evaluator-efficiency-benchmark.cjs');
+  const result = spawnSync(process.execPath, [script], {
+    env: {
+      ...process.env,
+      OPENAI_EVALUATOR_BENCHMARK_ENABLED: 'false',
+      OPENAI_API_KEY: '',
+    },
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0);
+  assert.deepEqual(JSON.parse(result.stdout), {
+    status: 'skipped',
+    reason: 'OPENAI_EVALUATOR_BENCHMARK_DISABLED',
+    required: ['OPENAI_EVALUATOR_BENCHMARK_ENABLED=true'],
+  });
+});
 
 test('Responses request is strict, store=false and contains only current approved context', async () => {
   let requestBody;
@@ -138,12 +159,26 @@ test('evaluation schema fixes expected IDs and bounded arrays', () => {
   assert.equal(schema.properties.criterion_assessments.maxItems, 2);
   assert.equal(schema.properties.unsupported_claims.maxItems, 20);
   assert.equal(Object.hasOwn(schema.properties, 'final_score'), false);
+
+  const compact = createEvaluationSchema(input, {
+    evidenceMaxChars: 240,
+    explanationMaxChars: 320,
+    summaryMaxChars: 400,
+    unsupportedClaimsMax: 8,
+    unsupportedClaimMaxChars: 200,
+  });
+  assert.equal(compact.properties.fact_assessments.items.properties.evidence.maxLength, 240);
+  assert.equal(compact.properties.fact_assessments.items.properties.explanation.maxLength, 320);
+  assert.equal(compact.properties.summary.maxLength, 400);
+  assert.equal(compact.properties.unsupported_claims.maxItems, 8);
+  assert.equal(compact.properties.unsupported_claims.items.properties.claim.maxLength, 200);
 });
 
-test('safe validation detail survives bounded provider retries', async () => {
+test('safe validation detail survives one changed repair without identical retries', async () => {
   await withEvaluationEnv(async () => {
-    process.env.OPENAI_EVALUATION_MAX_RETRIES = '1';
+    process.env.OPENAI_EVALUATION_MAX_RETRIES = '5';
     let calls = 0;
+    const bodies = [];
     const input = makeInput();
     input.criteria = [
       { ...input.criteria[0], maxPoints: 20 },
@@ -168,8 +203,9 @@ test('safe validation detail survives bounded provider retries', async () => {
         },
       ],
     };
-    const evaluator = makeEvaluator(async () => {
+    const evaluator = makeEvaluator(async (_url, init) => {
       calls += 1;
+      bodies.push(JSON.parse(init.body));
       return jsonResponse(makeResponse(invalid));
     });
 
@@ -181,24 +217,78 @@ test('safe validation detail survives bounded provider retries', async () => {
         error.attempts === 2,
     );
     assert.equal(calls, 2);
+    assert.equal(bodies[0].input[0].content.length, 2);
+    assert.equal(bodies[1].input[0].content.length, 3);
+    assert.deepEqual(bodies[0].input[0].content[0], bodies[1].input[0].content[0]);
+    assert.match(
+      bodies[1].input[0].content[2].text,
+      /OPENAI_EVALUATION_INVALID_CRITERION_POINTS_OUT_OF_RANGE/u,
+    );
   });
 });
 
-test('Responses provider rejects refusal, incomplete, invalid schema and evidence mismatch', async () => {
-  const payloads = [
-    { status: 'completed', output: [{ type: 'message', content: [{ type: 'refusal', refusal: 'no' }] }] },
-    { status: 'incomplete', output: [], incomplete_details: { reason: 'max_output_tokens' } },
-    makeResponse({ ...makeEvaluation(), schema_version: 'wrong' }),
-    makeResponse({ ...makeEvaluation(), fact_assessments: [{ ...makeEvaluation().fact_assessments[0], fact_id: '99999999-9999-4999-8999-999999999999' }] }),
-    makeResponse({ ...makeEvaluation(), criterion_assessments: [{ ...makeEvaluation().criterion_assessments[0], criterion_id: '99999999-9999-4999-8999-999999999999' }] }),
-    makeResponse({ ...makeEvaluation(), fact_assessments: [{ ...makeEvaluation().fact_assessments[0], evidence: 'Нет такой цитаты' }] }),
+test('Responses provider classifies deterministic local failures and bounds repair', async () => {
+  const scenarios = [
+    {
+      payload: { status: 'completed', output: [{ type: 'message', content: [{ type: 'refusal', refusal: 'no' }] }] },
+      code: 'OPENAI_EVALUATION_REFUSED',
+      detailCode: null,
+      calls: 1,
+    },
+    {
+      payload: { status: 'incomplete', output: [], incomplete_details: { reason: 'content_filter' } },
+      code: 'OPENAI_EVALUATION_INCOMPLETE',
+      detailCode: 'CONTENT_FILTER',
+      calls: 1,
+    },
+    {
+      payload: { status: 'incomplete', output: [], incomplete_details: { reason: 'max_output_tokens' } },
+      code: 'OPENAI_EVALUATION_OUTPUT_LIMIT',
+      detailCode: null,
+      calls: 2,
+    },
+    {
+      payload: { malformed: true },
+      code: 'OPENAI_EVALUATION_MALFORMED',
+      detailCode: null,
+      calls: 2,
+    },
+    {
+      payload: makeResponse({ ...makeEvaluation(), schema_version: 'wrong' }),
+      code: 'OPENAI_EVALUATION_INVALID',
+      detailCode: 'INVALID_EVALUATION_SCHEMA',
+      calls: 2,
+    },
+    {
+      payload: makeResponse({ ...makeEvaluation(), fact_assessments: [{ ...makeEvaluation().fact_assessments[0], fact_id: '99999999-9999-4999-8999-999999999999' }] }),
+      code: 'OPENAI_EVALUATION_INVALID',
+      detailCode: 'FACT_IDS_MISMATCH',
+      calls: 2,
+    },
+    {
+      payload: makeResponse({ ...makeEvaluation(), fact_assessments: [{ ...makeEvaluation().fact_assessments[0], evidence: 'Нет такой цитаты' }] }),
+      code: 'OPENAI_EVALUATION_INVALID',
+      detailCode: 'EVIDENCE_NOT_IN_TRANSCRIPT',
+      calls: 2,
+    },
   ];
 
   await withEvaluationEnv(async () => {
-    process.env.OPENAI_EVALUATION_MAX_RETRIES = '0';
-    for (const payload of payloads) {
-      const evaluator = makeEvaluator(async () => jsonResponse(payload));
-      await assert.rejects(() => evaluator.evaluate(makeInput()));
+    process.env.OPENAI_EVALUATION_MAX_RETRIES = '5';
+    for (const scenario of scenarios) {
+      let calls = 0;
+      const evaluator = makeEvaluator(async () => {
+        calls += 1;
+        return jsonResponse(scenario.payload);
+      });
+      await assert.rejects(
+        () => evaluator.evaluate(makeInput()),
+        (error) =>
+          error.code === scenario.code &&
+          error.detailCode === scenario.detailCode &&
+          error.attempts === scenario.calls,
+      );
+      assert.equal(calls, scenario.calls);
     }
   });
 });
@@ -217,12 +307,11 @@ test('unsupported claims survive validation and force review without arbitrary p
   assert.equal(Object.hasOwn(result.evaluation, 'final_score'), false);
 });
 
-test('Responses provider retries 429, 500 and malformed upstream within one policy', async () => {
+test('Responses provider retries only 429 and 5xx within the identical-request policy', async () => {
   await withEvaluationEnv(async () => {
     for (const firstResponse of [
       new Response('', { status: 429, headers: { 'retry-after': '0' } }),
       new Response('', { status: 500 }),
-      jsonResponse({ malformed: true }),
     ]) {
       let calls = 0;
       const evaluator = makeEvaluator(async () => {
@@ -232,6 +321,24 @@ test('Responses provider retries 429, 500 and malformed upstream within one poli
       assert.equal((await evaluator.evaluate(makeInput())).evaluation.summary, 'Ответ оценён.');
       assert.equal(calls, 2);
     }
+  });
+});
+
+test('malformed JSON receives one narrow repair request', async () => {
+  await withEvaluationEnv(async () => {
+    process.env.OPENAI_EVALUATION_MAX_RETRIES = '5';
+    const bodies = [];
+    const evaluator = makeEvaluator(async (_url, init) => {
+      bodies.push(JSON.parse(init.body));
+      return bodies.length === 1
+        ? new Response('{', { status: 200, headers: { 'content-type': 'application/json' } })
+        : jsonResponse(makeResponse(makeEvaluation()));
+    });
+
+    const result = await evaluator.evaluate(makeInput());
+    assert.equal(result.attempts, 2);
+    assert.equal(bodies.length, 2);
+    assert.match(bodies[1].input[0].content[2].text, /OPENAI_EVALUATION_MALFORMED/u);
   });
 });
 
@@ -246,6 +353,7 @@ test('usage observer records every HTTP response in a retry chain with actual mo
           ...makeResponse(makeEvaluation()),
           id: 'response-incomplete',
           status: 'incomplete',
+          incomplete_details: { reason: 'max_output_tokens' },
           model: 'gpt-5.6-terra-observed',
           output: [],
         });
@@ -269,9 +377,37 @@ test('usage observer records every HTTP response in a retry chain with actual mo
       'local_validation_failed',
       'accepted',
     ]);
-    assert.equal(records[0].promptVersion, 'training-evaluator-prompt-v2');
+    assert.equal(records[0].errorCode, 'OPENAI_EVALUATION_OUTPUT_LIMIT');
+    assert.equal(records[0].promptVersion, 'training-evaluator-prompt-v3');
     assert.equal(records[0].schemaVersion, 'training-v2-evaluation-v1');
     assert.equal(records[0].projectId, makeInput().projectId);
+  });
+});
+
+test('question-specific reasoning and compact limits are opt-in', async () => {
+  await withEvaluationEnv(async () => {
+    process.env.OPENAI_EVALUATOR_FOLLOW_UP_REASONING = 'low';
+    process.env.OPENAI_EVALUATION_MAX_OUTPUT_TOKENS = '2400';
+    process.env.OPENAI_EVALUATION_EVIDENCE_MAX_CHARS = '240';
+    process.env.OPENAI_EVALUATION_EXPLANATION_MAX_CHARS = '320';
+    process.env.OPENAI_EVALUATION_SUMMARY_MAX_CHARS = '400';
+    process.env.OPENAI_EVALUATION_UNSUPPORTED_CLAIMS_MAX = '8';
+    process.env.OPENAI_EVALUATION_UNSUPPORTED_CLAIM_MAX_CHARS = '200';
+    let body;
+    const evaluator = makeEvaluator(async (_url, init) => {
+      body = JSON.parse(init.body);
+      return jsonResponse(makeResponse(makeEvaluation()));
+    });
+    const input = makeInput();
+    input.questionType = 'FOLLOW_UP';
+    input.maxScore = 15;
+
+    await evaluator.evaluate(input);
+
+    assert.deepEqual(body.reasoning, { effort: 'low' });
+    assert.equal(body.max_output_tokens, 2400);
+    assert.equal(body.text.format.schema.properties.summary.maxLength, 400);
+    assert.equal(body.text.format.schema.properties.unsupported_claims.maxItems, 8);
   });
 });
 
@@ -357,6 +493,13 @@ async function withEvaluationEnv(run) {
   process.env.OPENAI_EVALUATION_TIMEOUT_MS = '2000';
   process.env.OPENAI_EVALUATION_MAX_RETRIES = '1';
   process.env.OPENAI_EVALUATION_MAX_OUTPUT_TOKENS = '4000';
+  process.env.OPENAI_EVALUATION_EVIDENCE_MAX_CHARS = '500';
+  process.env.OPENAI_EVALUATION_EXPLANATION_MAX_CHARS = '1000';
+  process.env.OPENAI_EVALUATION_SUMMARY_MAX_CHARS = '1000';
+  process.env.OPENAI_EVALUATION_UNSUPPORTED_CLAIMS_MAX = '20';
+  process.env.OPENAI_EVALUATION_UNSUPPORTED_CLAIM_MAX_CHARS = '500';
+  delete process.env.OPENAI_EVALUATOR_MAIN_REASONING;
+  delete process.env.OPENAI_EVALUATOR_FOLLOW_UP_REASONING;
 
   try {
     return await run();
