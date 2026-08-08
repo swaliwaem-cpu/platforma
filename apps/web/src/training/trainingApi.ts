@@ -3,7 +3,6 @@ import type {
   BulkTrainingProjectAssignmentsResponse,
   CreateTrainingProjectRequest,
   ImportTrainingObjectRequest,
-  ImportTrainingObjectResponse,
   ApplyTrainingMaterialSuggestionsRequest,
   CreateTrainingManualMaterialRequest,
   CreateTrainingObjectSnapshotMaterialRequest,
@@ -24,6 +23,8 @@ import type {
   TrainingEmployeeAttemptsResponse,
   TrainingEmployeeProjectsResponse,
   TrainingMaterialDetail,
+  TrainingMaterialOperation,
+  TrainingMaterialOperationsResponse,
   TrainingMaterialsResponse,
   TrainingObjectOptionsResponse,
   TrainingProjectAssignmentUsersResponse,
@@ -223,11 +224,36 @@ export function importTrainingObjectContent(
   accessToken: string,
   projectId: string,
   input: ImportTrainingObjectRequest,
+  idempotencyKey: string,
 ) {
-  return apiRequest<ImportTrainingObjectResponse>(
+  return apiRequest<TrainingMaterialOperation>(
     `/training/admin/projects/${encodeURIComponent(projectId)}/import-object`,
     accessToken,
-    { method: 'POST', body: JSON.stringify(input) },
+    {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export function getTrainingMaterialOperations(
+  accessToken: string,
+  projectId: string,
+  signal?: AbortSignal,
+) {
+  return apiRequest<TrainingMaterialOperationsResponse>(
+    `/training/admin/projects/${encodeURIComponent(projectId)}/material-operations`,
+    accessToken,
+    { signal },
+  );
+}
+
+export function retryTrainingMaterialOperation(accessToken: string, operationId: string) {
+  return apiRequest<TrainingMaterialOperation>(
+    `/training/admin/material-operations/${encodeURIComponent(operationId)}/retry`,
+    accessToken,
+    { method: 'POST' },
   );
 }
 
@@ -255,11 +281,16 @@ export function createTrainingUrlMaterial(
   accessToken: string,
   projectId: string,
   input: CreateTrainingUrlMaterialRequest,
+  idempotencyKey: string,
 ) {
-  return apiRequest<TrainingMaterialDetail>(
+  return apiRequest<TrainingMaterialOperation>(
     `/training/admin/projects/${encodeURIComponent(projectId)}/materials`,
     accessToken,
-    { method: 'POST', body: JSON.stringify({ type: 'OFFICIAL_URL', ...input }) },
+    {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify({ type: 'OFFICIAL_URL', ...input }),
+    },
   );
 }
 
@@ -280,16 +311,17 @@ export function createTrainingPdfMaterial(
   projectId: string,
   title: string,
   file: File,
+  idempotencyKey: string,
   replaceExistingQuestions = false,
 ) {
   const form = new FormData();
   form.set('title', title);
   form.set('file', file);
   form.set('replaceExistingQuestions', String(replaceExistingQuestions));
-  return apiRequest<TrainingMaterialDetail>(
+  return apiRequest<TrainingMaterialOperation>(
     `/training/admin/projects/${encodeURIComponent(projectId)}/materials/pdf`,
     accessToken,
-    { method: 'POST', body: form },
+    { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: form },
   );
 }
 

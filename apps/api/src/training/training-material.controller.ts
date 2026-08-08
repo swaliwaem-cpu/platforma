@@ -3,6 +3,9 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
+  HttpCode,
+  HttpStatus,
   Param,
   Patch,
   Post,
@@ -21,18 +24,26 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RequirePermissions } from '../auth/permissions.decorator';
 import { PermissionsGuard } from '../auth/permissions.guard';
 import type { UploadedFile as UploadedFileData } from '../files/uploaded-file.type';
+import { TrainingMaterialOperationService } from './training-material-operation.service';
 import { TrainingMaterialService } from './training-material.service';
+import {
+  cleanupTrainingPdfUpload,
+  trainingMaterialPdfUploadOptions,
+} from './training-material-upload';
 import { TrainingFeatureGuard } from './training-runtime-config';
 import { parseUuid } from './training.validation';
 
-const PDF_UPLOAD_LIMIT = 100 * 1024 * 1024;
 type ContentResponse = { setHeader(name: string, value: string | number): void; send(body: Buffer): void };
+type StatusResponse = { status(code: number): StatusResponse };
 
 @Controller('training/admin')
 @UseGuards(TrainingFeatureGuard, JwtAuthGuard, PermissionsGuard)
 @RequirePermissions('training:projects:manage')
 export class TrainingMaterialController {
-  constructor(private readonly materials: TrainingMaterialService) {}
+  constructor(
+    private readonly materials: TrainingMaterialService,
+    private readonly operations: TrainingMaterialOperationService,
+  ) {}
 
   @Get('projects/:projectId/materials')
   list(@Param('projectId') projectId: string) {
@@ -48,17 +59,20 @@ export class TrainingMaterialController {
   }
 
   @Post('projects/:projectId/import-object')
+  @HttpCode(HttpStatus.ACCEPTED)
   importObjectContent(
     @Param('projectId') projectId: string,
     @Body() body: Record<string, unknown>,
     @CurrentUser() actor: AuthenticatedUser,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
   ) {
-    return this.materials.importObjectContent(
-      parseUuid(projectId, 'projectId'),
-      actor.id,
-      parseUuid(body.objectId, 'objectId'),
-      requiredBoolean(body.replaceExistingQuestions, 'replaceExistingQuestions'),
-    );
+    return this.operations.queueObjectImport({
+      projectId: parseUuid(projectId, 'projectId'),
+      actorId: actor.id,
+      idempotencyKey: parseUuid(idempotencyKey, 'Idempotency-Key'),
+      objectId: parseUuid(body.objectId, 'objectId'),
+      replaceExistingQuestions: requiredBoolean(body.replaceExistingQuestions, 'replaceExistingQuestions'),
+    });
   }
 
   @Post('projects/:projectId/materials')
@@ -66,6 +80,8 @@ export class TrainingMaterialController {
     @Param('projectId') projectId: string,
     @Body() body: Record<string, unknown>,
     @CurrentUser() actor: AuthenticatedUser,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Res({ passthrough: true }) response: StatusResponse,
   ) {
     const parsedProjectId = parseUuid(projectId, 'projectId');
     const title = requiredText(body.title, 'title', 240);
@@ -75,11 +91,16 @@ export class TrainingMaterialController {
       );
     }
     if (body.type === 'OFFICIAL_URL') {
-      return this.materials.createOfficialUrl(
-        parsedProjectId, actor.id, title, requiredText(body.url, 'url', 2_048),
-        body.officialConfirmed === true,
-        optionalBoolean(body.replaceExistingQuestions, 'replaceExistingQuestions'),
-      );
+      response.status(HttpStatus.ACCEPTED);
+      return this.operations.queueOfficialUrl({
+        projectId: parsedProjectId,
+        actorId: actor.id,
+        idempotencyKey: parseUuid(idempotencyKey, 'Idempotency-Key'),
+        title,
+        sourceUrl: requiredText(body.url, 'url', 2_048),
+        officialConfirmed: body.officialConfirmed === true,
+        replaceExistingQuestions: optionalBoolean(body.replaceExistingQuestions, 'replaceExistingQuestions'),
+      });
     }
     if (body.type === 'OBJECT_SNAPSHOT') {
       return this.materials.createObjectSnapshot(
@@ -90,21 +111,47 @@ export class TrainingMaterialController {
   }
 
   @Post('projects/:projectId/materials/pdf')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: PDF_UPLOAD_LIMIT } }))
-  createPdf(
+  @HttpCode(HttpStatus.ACCEPTED)
+  @UseInterceptors(FileInterceptor('file', trainingMaterialPdfUploadOptions))
+  async createPdf(
     @Param('projectId') projectId: string,
     @Body('title') title: string,
     @Body('replaceExistingQuestions') replaceExistingQuestions: unknown,
     @UploadedFile() file: UploadedFileData | undefined,
     @CurrentUser() actor: AuthenticatedUser,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
   ) {
-    return this.materials.createPdf(
-      parseUuid(projectId, 'projectId'),
-      actor.id,
-      requiredText(title, 'title', 240),
-      file,
-      optionalMultipartBoolean(replaceExistingQuestions, 'replaceExistingQuestions'),
-    );
+    try {
+      return await this.operations.queuePdf({
+        projectId: parseUuid(projectId, 'projectId'),
+        actorId: actor.id,
+        idempotencyKey: parseUuid(idempotencyKey, 'Idempotency-Key'),
+        title: requiredText(title, 'title', 240),
+        file,
+        replaceExistingQuestions: optionalMultipartBoolean(
+          replaceExistingQuestions,
+          'replaceExistingQuestions',
+        ),
+      });
+    } finally {
+      await cleanupTrainingPdfUpload(file);
+    }
+  }
+
+  @Get('projects/:projectId/material-operations')
+  listOperations(@Param('projectId') projectId: string) {
+    return this.operations.list(parseUuid(projectId, 'projectId'));
+  }
+
+  @Get('material-operations/:operationId')
+  getOperation(@Param('operationId') operationId: string) {
+    return this.operations.get(parseUuid(operationId, 'operationId'));
+  }
+
+  @Post('material-operations/:operationId/retry')
+  @HttpCode(HttpStatus.ACCEPTED)
+  retryOperation(@Param('operationId') operationId: string) {
+    return this.operations.retry(parseUuid(operationId, 'operationId'));
   }
 
   @Get('materials/:materialId')
@@ -113,19 +160,23 @@ export class TrainingMaterialController {
   }
 
   @Post('materials/:materialId/revisions')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: PDF_UPLOAD_LIMIT } }))
-  refresh(
+  @UseInterceptors(FileInterceptor('file', trainingMaterialPdfUploadOptions))
+  async refresh(
     @Param('materialId') materialId: string,
     @Body() body: Record<string, unknown>,
     @UploadedFile() file: UploadedFileData | undefined,
     @CurrentUser() actor: AuthenticatedUser,
   ) {
     const parsedMaterialId = parseUuid(materialId, 'materialId');
-    if (file) return this.materials.refreshPdf(parsedMaterialId, actor.id, file);
-    return this.materials.refresh(parsedMaterialId, actor.id, {
-      ...(body.text === undefined ? {} : { text: requiredText(body.text, 'text') }),
-      ...(body.fieldCodes === undefined ? {} : { fieldCodes: stringArray(body.fieldCodes, 'fieldCodes') }),
-    });
+    try {
+      if (file) return await this.materials.refreshPdf(parsedMaterialId, actor.id, file);
+      return await this.materials.refresh(parsedMaterialId, actor.id, {
+        ...(body.text === undefined ? {} : { text: requiredText(body.text, 'text') }),
+        ...(body.fieldCodes === undefined ? {} : { fieldCodes: stringArray(body.fieldCodes, 'fieldCodes') }),
+      });
+    } finally {
+      await cleanupTrainingPdfUpload(file);
+    }
   }
 
   @Post('material-revisions/:revisionId/suggestions')

@@ -213,6 +213,16 @@ export type TrainingMaterialType = 'PDF' | 'OFFICIAL_URL' | 'MANUAL_TEXT' | 'OBJ
 export type TrainingMaterialStatus = 'ACTIVE' | 'ARCHIVED';
 export type TrainingMaterialRevisionStatus = 'READY' | 'FAILED';
 export type TrainingMaterialSuggestionStatus = 'NOT_GENERATED' | 'READY' | 'FAILED';
+export type TrainingMaterialOperationType = 'CREATE_PDF' | 'CREATE_OFFICIAL_URL' | 'IMPORT_OBJECT';
+export type TrainingMaterialOperationStatus =
+  | 'QUEUED'
+  | 'STORING'
+  | 'EXTRACTING'
+  | 'GENERATING'
+  | 'PERSISTING'
+  | 'READY'
+  | 'FAILED'
+  | 'CANCELLED';
 
 export type TrainingMaterialSegment = { locator: string; label: string; text: string };
 export type TrainingMaterialDiff = {
@@ -297,6 +307,47 @@ export type ImportTrainingObjectResponse = {
   followUpQuestions: string[];
   questionGenerationModel: string;
   questionGenerationSourceChars: number;
+};
+
+export type TrainingMaterialOperationItem = {
+  id: string;
+  itemKey: string;
+  ordinal: number;
+  title: string;
+  status: TrainingMaterialOperationStatus;
+  resultMaterialId: string | null;
+  resultRevisionId: string | null;
+  sourceHash: string | null;
+  errorCode: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+};
+
+export type TrainingMaterialOperation = {
+  id: string;
+  projectId: string;
+  type: TrainingMaterialOperationType;
+  status: TrainingMaterialOperationStatus;
+  baseKnowledgeVersion: number;
+  completedKnowledgeVersion: number | null;
+  sourceHash: string | null;
+  progress: {
+    total: number;
+    completed: number;
+    failed: number;
+  };
+  attempts: number;
+  errorCode: string | null;
+  result: Record<string, unknown> | null;
+  items: TrainingMaterialOperationItem[];
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TrainingMaterialOperationsResponse = {
+  items: TrainingMaterialOperation[];
 };
 
 export type CreateTrainingManualMaterialRequest = { title: string; text: string };

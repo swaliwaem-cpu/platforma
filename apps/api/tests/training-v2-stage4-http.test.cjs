@@ -20,8 +20,10 @@ if (!databaseUrl) {
   process.env.JWT_ACCESS_SECRET = 'training-v2-stage4-http-secret';
   process.env.TRAINING_AI_MODE = 'fake';
   process.env.TELEGRAM_TRANSPORT_MODE = 'fake';
+  process.env.TRAINING_MATERIAL_WORKER_ENABLED = 'false';
 
   const { TrainingModule } = require('../dist/training/training.module.js');
+  const { TrainingMaterialOperationService } = require('../dist/training/training-material-operation.service.js');
   const { S3StorageService } = require('../dist/files/s3-storage.service.js');
   const { TRAINING_MATERIAL_SUGGESTER } = require('../dist/training/training-material-suggester.js');
   const { TrainingUrlExtractor } = require('../dist/training/training-url-extractor.js');
@@ -34,6 +36,7 @@ if (!databaseUrl) {
   let adminToken;
   let employeeToken;
   let storage;
+  let operationWorker;
 
   before(async () => {
     await prisma.$connect();
@@ -45,6 +48,7 @@ if (!databaseUrl) {
     app = await NestFactory.create(TrainingModule, { logger: false });
     await app.listen(0, '127.0.0.1');
     storage = app.get(S3StorageService);
+    operationWorker = app.get(TrainingMaterialOperationService);
     baseUrl = `http://127.0.0.1:${app.getHttpServer().address().port}`;
   });
 
@@ -157,10 +161,18 @@ if (!databaseUrl) {
     form.set('title', 'Private PDF');
     form.set('file', new Blob([pdf], { type: 'application/pdf' }), 'fixture.pdf');
     const uploadedResponse = await fetch(`${baseUrl}/training/admin/projects/${created.body.id}/materials/pdf`, {
-      method: 'POST', headers: { Authorization: `Bearer ${adminToken}` }, body: form,
+      method: 'POST', headers: {
+        Authorization: `Bearer ${adminToken}`,
+        'Idempotency-Key': randomUUID(),
+      }, body: form,
     });
-    const uploaded = await uploadedResponse.json();
-    assert.equal(uploadedResponse.status, 201, JSON.stringify(uploaded));
+    const uploadedOperation = await uploadedResponse.json();
+    assert.equal(uploadedResponse.status, 202, JSON.stringify(uploadedOperation));
+    const uploadedCompleted = await finishOperation(uploadedOperation);
+    assert.equal(uploadedCompleted.status, 'READY', JSON.stringify(uploadedCompleted));
+    const uploaded = (await request(`/training/admin/materials/${uploadedCompleted.result.materialId}`, {
+      token: adminToken,
+    })).body;
     assert.equal(uploaded.latestRevision.extractionMetadata.pageCount, 1);
     const persistedRevision = await prisma.trainingMaterialRevision.findUnique({
       where: { id: uploaded.latestRevision.id }, include: { file: true },
@@ -182,7 +194,10 @@ if (!databaseUrl) {
     replacementRequiredForm.set('file', new Blob([pdf], { type: 'application/pdf' }), 'second.pdf');
     const replacementRequired = await fetch(
       `${baseUrl}/training/admin/projects/${created.body.id}/materials/pdf`,
-      { method: 'POST', headers: { Authorization: `Bearer ${adminToken}` }, body: replacementRequiredForm },
+      { method: 'POST', headers: {
+        Authorization: `Bearer ${adminToken}`,
+        'Idempotency-Key': randomUUID(),
+      }, body: replacementRequiredForm },
     );
     assert.equal(replacementRequired.status, 409);
     assert.equal((await replacementRequired.json()).message, 'PROJECT_QUESTIONS_REPLACE_CONFIRMATION_REQUIRED');
@@ -194,18 +209,34 @@ if (!databaseUrl) {
     replacementConfirmedForm.set('replaceExistingQuestions', 'true');
     const replacementConfirmedResponse = await fetch(
       `${baseUrl}/training/admin/projects/${created.body.id}/materials/pdf`,
-      { method: 'POST', headers: { Authorization: `Bearer ${adminToken}` }, body: replacementConfirmedForm },
+      { method: 'POST', headers: {
+        Authorization: `Bearer ${adminToken}`,
+        'Idempotency-Key': randomUUID(),
+      }, body: replacementConfirmedForm },
     );
-    const replacementConfirmed = await replacementConfirmedResponse.json();
-    assert.equal(replacementConfirmedResponse.status, 201, JSON.stringify(replacementConfirmed));
+    const replacementOperation = await replacementConfirmedResponse.json();
+    assert.equal(replacementConfirmedResponse.status, 202, JSON.stringify(replacementOperation));
+    const replacementCompleted = await finishOperation(replacementOperation);
+    const replacementConfirmed = (await request(
+      `/training/admin/materials/${replacementCompleted.result.materialId}`,
+      { token: adminToken },
+    )).body;
     const replacementFacts = await assertGeneratedFacts(created.body.id);
+    const replacementSourceRevisionIds = new Set([
+      uploaded.latestRevision.id,
+      replacementConfirmed.latestRevision.id,
+    ]);
     assert.equal(
-      replacementFacts.every((fact) => fact.sourceRevisionId === replacementConfirmed.latestRevision.id),
+      replacementFacts.every((fact) => replacementSourceRevisionIds.has(fact.sourceRevisionId)),
       true,
     );
     assert.equal(await prisma.trainingFact.count({
       where: { id: { in: generatedFacts.map((fact) => fact.id) } },
-    }), 0);
+    }), generatedFacts.length);
+    assert.deepEqual(
+      replacementFacts.map((fact) => fact.id),
+      generatedFacts.map((fact) => fact.id),
+    );
 
     const generic = await request(`/files/${persistedRevision.file.id}/content`, { token: adminToken });
     assert.equal(generic.status, 404);
@@ -225,10 +256,19 @@ if (!databaseUrl) {
     blankForm.set('file', new Blob([blankPdf], { type: 'application/pdf' }), 'blank.pdf');
     blankForm.set('replaceExistingQuestions', 'true');
     const blankResponse = await fetch(`${baseUrl}/training/admin/projects/${created.body.id}/materials/pdf`, {
-      method: 'POST', headers: { Authorization: `Bearer ${adminToken}` }, body: blankForm,
+      method: 'POST', headers: {
+        Authorization: `Bearer ${adminToken}`,
+        'Idempotency-Key': randomUUID(),
+      }, body: blankForm,
     });
-    const blankMaterial = await blankResponse.json();
-    assert.equal(blankResponse.status, 201, JSON.stringify(blankMaterial));
+    const blankOperation = await blankResponse.json();
+    assert.equal(blankResponse.status, 202, JSON.stringify(blankOperation));
+    const blankCompleted = await finishOperation(blankOperation);
+    assert.equal(blankCompleted.status, 'FAILED');
+    const blankMaterial = (await request(
+      `/training/admin/materials/${blankCompleted.result.materialId}`,
+      { token: adminToken },
+    )).body;
     assert.equal(blankMaterial.latestRevision.status, 'FAILED');
     assert.equal(blankMaterial.latestRevision.extractionMetadata.errorCode, 'PDF_TEXT_LAYER_MISSING');
     assert.equal(blankMaterial.latestRevision.suggestions, null);
@@ -242,7 +282,10 @@ if (!databaseUrl) {
     invalidForm.set('file', new Blob([Buffer.from('not-pdf')], { type: 'application/pdf' }), 'invalid.pdf');
     invalidForm.set('replaceExistingQuestions', 'true');
     const invalid = await fetch(`${baseUrl}/training/admin/projects/${created.body.id}/materials/pdf`, {
-      method: 'POST', headers: { Authorization: `Bearer ${adminToken}` }, body: invalidForm,
+      method: 'POST', headers: {
+        Authorization: `Bearer ${adminToken}`,
+        'Idempotency-Key': randomUUID(),
+      }, body: invalidForm,
     });
     assert.equal(invalid.status, 400);
 
@@ -251,7 +294,10 @@ if (!databaseUrl) {
     wrongMimeForm.set('file', new Blob([pdf], { type: 'text/plain' }), 'fixture.pdf');
     wrongMimeForm.set('replaceExistingQuestions', 'true');
     assert.equal((await fetch(`${baseUrl}/training/admin/projects/${created.body.id}/materials/pdf`, {
-      method: 'POST', headers: { Authorization: `Bearer ${adminToken}` }, body: wrongMimeForm,
+      method: 'POST', headers: {
+        Authorization: `Bearer ${adminToken}`,
+        'Idempotency-Key': randomUUID(),
+      }, body: wrongMimeForm,
     })).status, 400);
 
     const previousLimit = process.env.TRAINING_MATERIAL_MAX_BYTES;
@@ -261,7 +307,10 @@ if (!databaseUrl) {
     oversizedForm.set('file', new Blob([pdf], { type: 'application/pdf' }), 'oversized.pdf');
     oversizedForm.set('replaceExistingQuestions', 'true');
     assert.equal((await fetch(`${baseUrl}/training/admin/projects/${created.body.id}/materials/pdf`, {
-      method: 'POST', headers: { Authorization: `Bearer ${adminToken}` }, body: oversizedForm,
+      method: 'POST', headers: {
+        Authorization: `Bearer ${adminToken}`,
+        'Idempotency-Key': randomUUID(),
+      }, body: oversizedForm,
     })).status, 400);
     if (previousLimit === undefined) delete process.env.TRAINING_MATERIAL_MAX_BYTES;
     else process.env.TRAINING_MATERIAL_MAX_BYTES = previousLimit;
@@ -300,6 +349,7 @@ if (!databaseUrl) {
       const first = await request(`/training/admin/projects/${created.body.id}/materials`, {
         token: adminToken,
         method: 'POST',
+        headers: { 'Idempotency-Key': randomUUID() },
         body: {
           type: 'OFFICIAL_URL',
           title: 'Официальный источник',
@@ -308,7 +358,13 @@ if (!databaseUrl) {
           replaceExistingQuestions: false,
         },
       });
-      assert.equal(first.status, 201, JSON.stringify(first.body));
+      assert.equal(first.status, 202, JSON.stringify(first.body));
+      const firstCompleted = await finishOperation(first.body);
+      assert.equal(firstCompleted.status, 'READY', JSON.stringify(firstCompleted));
+      const firstMaterial = (await request(
+        `/training/admin/materials/${firstCompleted.result.materialId}`,
+        { token: adminToken },
+      )).body;
       const initialQuestions = await prisma.trainingQuestion.findMany({
         where: { projectId: created.body.id, isActive: true },
         orderBy: [{ type: 'asc' }, { position: 'asc' }],
@@ -317,11 +373,12 @@ if (!databaseUrl) {
       assert.equal(initialQuestions.filter((question) => question.type === 'MAIN').length, 1);
       assert.equal(initialQuestions.filter((question) => question.type === 'FOLLOW_UP').length, 10);
       const initialFacts = await assertGeneratedFacts(created.body.id);
-      assert.equal(initialFacts.every((fact) => fact.sourceRevisionId === first.body.latestRevision.id), true);
+      assert.equal(initialFacts.every((fact) => fact.sourceRevisionId === firstMaterial.latestRevision.id), true);
 
       const replacementRequired = await request(`/training/admin/projects/${created.body.id}/materials`, {
         token: adminToken,
         method: 'POST',
+        headers: { 'Idempotency-Key': randomUUID() },
         body: {
           type: 'OFFICIAL_URL',
           title: 'Новый официальный источник',
@@ -338,6 +395,7 @@ if (!databaseUrl) {
       const replaced = await request(`/training/admin/projects/${created.body.id}/materials`, {
         token: adminToken,
         method: 'POST',
+        headers: { 'Idempotency-Key': randomUUID() },
         body: {
           type: 'OFFICIAL_URL',
           title: 'Новый официальный источник',
@@ -346,7 +404,13 @@ if (!databaseUrl) {
           replaceExistingQuestions: true,
         },
       });
-      assert.equal(replaced.status, 201, JSON.stringify(replaced.body));
+      assert.equal(replaced.status, 202, JSON.stringify(replaced.body));
+      const replacedCompleted = await finishOperation(replaced.body);
+      assert.equal(replacedCompleted.status, 'READY', JSON.stringify(replacedCompleted));
+      const replacedMaterial = (await request(
+        `/training/admin/materials/${replacedCompleted.result.materialId}`,
+        { token: adminToken },
+      )).body;
       assert.equal(extractCalls, 2);
       const replacedQuestions = await prisma.trainingQuestion.findMany({
         where: { projectId: created.body.id, isActive: true },
@@ -355,7 +419,14 @@ if (!databaseUrl) {
       assert.equal(replacedQuestions.length, 11);
       assert.deepEqual(replacedQuestions.map((question) => question.id), initialQuestions.map((question) => question.id));
       const replacedFacts = await assertGeneratedFacts(created.body.id);
-      assert.equal(replacedFacts.every((fact) => fact.sourceRevisionId === replaced.body.latestRevision.id), true);
+      const replacementSourceRevisionIds = new Set([
+        firstMaterial.latestRevision.id,
+        replacedMaterial.latestRevision.id,
+      ]);
+      assert.equal(
+        replacedFacts.every((fact) => replacementSourceRevisionIds.has(fact.sourceRevisionId)),
+        true,
+      );
       assert.equal(await prisma.trainingFact.count({
         where: { id: { in: initialFacts.map((fact) => fact.id) } },
       }), 0);
@@ -476,13 +547,17 @@ if (!databaseUrl) {
     const imported = await request(`/training/admin/projects/${created.body.id}/import-object`, {
       token: adminToken,
       method: 'POST',
+      headers: { 'Idempotency-Key': randomUUID() },
       body: { objectId: object.id, replaceExistingQuestions: false },
     });
-    assert.equal(imported.status, 201, JSON.stringify(imported.body));
-    assert.equal(imported.body.object.id, object.id);
-    assert.equal(imported.body.importedPdfCount, 1);
-    assert.deepEqual(imported.body.failedPdfTitles, ['Повреждённое вложение']);
-    assert.equal(imported.body.followUpQuestions.length, 10);
+    assert.equal(imported.status, 202, JSON.stringify(imported.body));
+    const importedCompleted = await finishOperation(imported.body);
+    assert.equal(importedCompleted.status, 'READY', JSON.stringify(importedCompleted));
+    assert.equal(importedCompleted.result.objectId, object.id);
+    assert.equal(importedCompleted.result.importedPdfCount, 1);
+    assert.deepEqual(importedCompleted.result.failedPdfTitles, ['Повреждённое вложение']);
+    assert.equal(importedCompleted.items.length, 3);
+    assert.equal(importedCompleted.items.filter((item) => item.status === 'FAILED').length, 1);
 
     const project = await prisma.trainingProject.findUnique({ where: { id: created.body.id } });
     assert.equal(project.realEstateObjectId, object.id);
@@ -520,6 +595,7 @@ if (!databaseUrl) {
     const confirmationRequired = await request(`/training/admin/projects/${created.body.id}/import-object`, {
       token: adminToken,
       method: 'POST',
+      headers: { 'Idempotency-Key': randomUUID() },
       body: { objectId: object.id, replaceExistingQuestions: false },
     });
     assert.equal(confirmationRequired.status, 409);
@@ -527,26 +603,30 @@ if (!databaseUrl) {
     const replaced = await request(`/training/admin/projects/${created.body.id}/import-object`, {
       token: adminToken,
       method: 'POST',
+      headers: { 'Idempotency-Key': randomUUID() },
       body: { objectId: object.id, replaceExistingQuestions: true },
     });
-    assert.equal(replaced.status, 201, JSON.stringify(replaced.body));
+    assert.equal(replaced.status, 202, JSON.stringify(replaced.body));
+    assert.equal((await finishOperation(replaced.body)).status, 'READY');
     assert.equal(await prisma.trainingQuestion.count({ where: { projectId: created.body.id, isActive: true } }), 11);
     assert.equal(await prisma.trainingFact.count({
       where: { id: { in: importedFacts.map((fact) => fact.id) } },
-    }), 0);
+    }), importedFacts.length);
     const replacedObjectFacts = await assertGeneratedFacts(created.body.id);
-    const latestReadyRevisions = await prisma.trainingMaterialRevision.findMany({
+    assert.deepEqual(
+      replacedObjectFacts.map((fact) => fact.id),
+      importedFacts.map((fact) => fact.id),
+    );
+    const readyRevisions = await prisma.trainingMaterialRevision.findMany({
       where: {
         material: { projectId: created.body.id, status: 'ACTIVE' },
         status: 'READY',
       },
-      orderBy: { revisionNumber: 'desc' },
-      distinct: ['materialId'],
       select: { id: true },
     });
-    const latestReadyRevisionIds = new Set(latestReadyRevisions.map((revision) => revision.id));
+    const readyRevisionIds = new Set(readyRevisions.map((revision) => revision.id));
     assert.equal(
-      replacedObjectFacts.every((fact) => latestReadyRevisionIds.has(fact.sourceRevisionId)),
+      replacedObjectFacts.every((fact) => readyRevisionIds.has(fact.sourceRevisionId)),
       true,
     );
 
@@ -554,10 +634,12 @@ if (!databaseUrl) {
     const withoutRemovedPdf = await request(`/training/admin/projects/${created.body.id}/import-object`, {
       token: adminToken,
       method: 'POST',
+      headers: { 'Idempotency-Key': randomUUID() },
       body: { objectId: object.id, replaceExistingQuestions: true },
     });
-    assert.equal(withoutRemovedPdf.status, 201, JSON.stringify(withoutRemovedPdf.body));
-    assert.equal(withoutRemovedPdf.body.importedPdfCount, 0);
+    assert.equal(withoutRemovedPdf.status, 202, JSON.stringify(withoutRemovedPdf.body));
+    const withoutRemovedPdfCompleted = await finishOperation(withoutRemovedPdf.body);
+    assert.equal(withoutRemovedPdfCompleted.result.importedPdfCount, 0);
     assert.equal(await prisma.trainingMaterial.count({
       where: { projectId: created.body.id, type: 'PDF', status: 'ACTIVE' },
     }), 0);
@@ -632,6 +714,18 @@ if (!databaseUrl) {
     return { status: response.status, body };
   }
 
+  async function finishOperation(operation) {
+    assert.match(operation.id, /^[0-9a-f-]{36}$/u);
+    assert.equal(['QUEUED', 'STORING'].includes(operation.status), true);
+    assert.equal(await operationWorker.runOnce(), true);
+    const completed = await request(`/training/admin/material-operations/${operation.id}`, {
+      token: adminToken,
+    });
+    assert.equal(completed.status, 200, JSON.stringify(completed.body));
+    assert.equal(['READY', 'FAILED'].includes(completed.body.status), true);
+    return completed.body;
+  }
+
   function sign(user) {
     return jwt.sign({ sub: user.id, email: user.email, type: 'access' }, {
       secret: process.env.JWT_ACCESS_SECRET, expiresIn: '1h',
@@ -654,6 +748,7 @@ if (!databaseUrl) {
     const storedFiles = await prisma.file.findMany({
       where: { OR: [
         { key: { startsWith: 'training-v2/materials/' } },
+        { key: { startsWith: 'training-v2/material-operations/' } },
         { key: { startsWith: 'training-v2/stage4-object-source/' } },
       ] },
       select: { key: true, bucket: true },
@@ -671,6 +766,8 @@ if (!databaseUrl) {
     await prisma.trainingTelegramAccount.deleteMany();
     await prisma.trainingProjectAssignment.deleteMany();
     await prisma.trainingFact.deleteMany();
+    await prisma.trainingMaterialOperationItem.deleteMany();
+    await prisma.trainingMaterialOperation.deleteMany();
     await prisma.trainingMaterialRevision.deleteMany();
     await prisma.trainingMaterial.deleteMany();
     await prisma.trainingCriterion.deleteMany();
@@ -682,6 +779,7 @@ if (!databaseUrl) {
     await prisma.realEstateObject.deleteMany({ where: { slug: { startsWith: 'stage4-object-' } } });
     await prisma.file.deleteMany({ where: { OR: [
       { key: { startsWith: 'training-v2/materials/' } },
+      { key: { startsWith: 'training-v2/material-operations/' } },
       { key: { startsWith: 'training-v2/stage4-object-source/' } },
     ] } });
     await prisma.user.deleteMany({ where: { email: { endsWith: '@training-s4.test' } } });

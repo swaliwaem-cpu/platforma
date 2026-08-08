@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 
 import { BadRequestException, Injectable, RequestTimeoutException } from '@nestjs/common';
 import type { TrainingMaterialSegment } from '@platforma/shared' with { 'resolution-mode': 'import' };
@@ -43,6 +44,21 @@ export class TrainingMaterialExtractionService {
     return withTimeout(this.extractPdfWithinDeadline(buffer), timeoutMs, 'PDF_EXTRACTION_TIMEOUT');
   }
 
+  async extractPdfFile(filePath: string): Promise<TrainingMaterialExtraction> {
+    const timeoutMs = readBoundedInteger(
+      'TRAINING_MATERIAL_EXTRACTION_TIMEOUT_MS',
+      60_000,
+      1_000,
+      180_000,
+    );
+
+    return withTimeout(
+      this.extractPdfWithinDeadline(pathToFileURL(filePath)),
+      timeoutMs,
+      'PDF_EXTRACTION_TIMEOUT',
+    );
+  }
+
   complete(
     segments: TrainingMaterialSegment[],
     metadata: Record<string, unknown>,
@@ -59,13 +75,15 @@ export class TrainingMaterialExtractionService {
     };
   }
 
-  private async extractPdfWithinDeadline(buffer: Buffer): Promise<TrainingMaterialExtraction> {
+  private async extractPdfWithinDeadline(source: Buffer | URL): Promise<TrainingMaterialExtraction> {
     let loadingTask: { destroy(): Promise<void> } | null = null;
 
     try {
       const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
       const task = pdfjs.getDocument({
-        data: new Uint8Array(buffer),
+        ...(Buffer.isBuffer(source)
+          ? { data: new Uint8Array(source) }
+          : { url: source }),
         useSystemFonts: true,
       });
       loadingTask = task;

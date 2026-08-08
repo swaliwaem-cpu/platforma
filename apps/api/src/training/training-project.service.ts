@@ -160,6 +160,7 @@ const projectDeletionFileSelect = {
       trainingAnswerSegments: true,
       trainingMergedAnswers: true,
       trainingMaterialRevisions: true,
+      trainingMaterialOperations: true,
     },
   },
 } as const satisfies Prisma.FileSelect;
@@ -311,6 +312,10 @@ export class TrainingProjectService {
         where: { material: { projectId } },
         select: { id: true, previousRevisionId: true, fileId: true },
       });
+      const materialOperations = await transaction.trainingMaterialOperation.findMany({
+        where: { projectId },
+        select: { sourceFileId: true },
+      });
       const revisionDeletionLayers = getRevisionDeletionLayers(materialRevisions);
       const mergedAnswerFiles = await transaction.trainingAnswer.findMany({
         where: { attemptQuestion: { attempt: { projectId } } },
@@ -324,6 +329,7 @@ export class TrainingProjectService {
         ...materialRevisions.map((revision) => revision.fileId),
         ...mergedAnswerFiles.map((file) => file.mergedAudioFileId),
         ...segmentFiles.map((file) => file.storedFileId),
+        ...materialOperations.map((operation) => operation.sourceFileId),
       ].filter((fileId): fileId is string => Boolean(fileId)))];
       await this.lockDeletionFiles(transaction, candidateFileIds);
 
@@ -339,6 +345,10 @@ export class TrainingProjectService {
       await transaction.trainingAttempt.deleteMany({ where: { projectId } });
       await transaction.trainingTelegramLinkToken.deleteMany({ where: { projectId } });
       await transaction.trainingProjectAssignment.deleteMany({ where: { projectId } });
+      await transaction.trainingMaterialOperationItem.deleteMany({
+        where: { operation: { projectId } },
+      });
+      await transaction.trainingMaterialOperation.deleteMany({ where: { projectId } });
       await transaction.trainingFact.deleteMany({
         where: { question: { projectId } },
       });
@@ -931,6 +941,21 @@ export class TrainingProjectService {
       FOR UPDATE OF segment
     `);
     await transaction.$queryRaw(Prisma.sql`
+      SELECT operation."id"
+      FROM "training_material_operations" AS operation
+      WHERE operation."project_id" = CAST(${projectId} AS uuid)
+      ORDER BY operation."id"
+      FOR UPDATE OF operation
+    `);
+    await transaction.$queryRaw(Prisma.sql`
+      SELECT item."id"
+      FROM "training_material_operation_items" AS item
+      JOIN "training_material_operations" AS operation ON operation."id" = item."operation_id"
+      WHERE operation."project_id" = CAST(${projectId} AS uuid)
+      ORDER BY item."id"
+      FOR UPDATE OF item
+    `);
+    await transaction.$queryRaw(Prisma.sql`
       SELECT material."id"
       FROM "training_materials" AS material
       WHERE material."project_id" = CAST(${projectId} AS uuid)
@@ -1013,7 +1038,8 @@ function isProjectDeletionFileUnlinked(file: ProjectDeletionFile) {
     file._count.projectPresentationAssets === 0 &&
     file._count.trainingAnswerSegments === 0 &&
     file._count.trainingMergedAnswers === 0 &&
-    file._count.trainingMaterialRevisions === 0
+    file._count.trainingMaterialRevisions === 0 &&
+    file._count.trainingMaterialOperations === 0
   );
 }
 

@@ -79,6 +79,8 @@ test('Training V2 preserves Stage 4 models and adds the accepted assignment laye
     'TrainingProjectAssignment',
     'TrainingQuestion',
     'TrainingFact',
+    'TrainingMaterialOperation',
+    'TrainingMaterialOperationItem',
     'TrainingMaterial',
     'TrainingMaterialRevision',
     'TrainingCriterion',

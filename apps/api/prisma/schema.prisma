@@ -282,6 +282,27 @@ enum TrainingMaterialSuggestionStatus {
   @@map("training_material_suggestion_status")
 }
 
+enum TrainingMaterialOperationType {
+  CREATE_PDF          @map("create_pdf")
+  CREATE_OFFICIAL_URL @map("create_official_url")
+  IMPORT_OBJECT       @map("import_object")
+
+  @@map("training_material_operation_type")
+}
+
+enum TrainingMaterialOperationStatus {
+  QUEUED     @map("queued")
+  STORING    @map("storing")
+  EXTRACTING @map("extracting")
+  GENERATING @map("generating")
+  PERSISTING @map("persisting")
+  READY      @map("ready")
+  FAILED     @map("failed")
+  CANCELLED  @map("cancelled")
+
+  @@map("training_material_operation_status")
+}
+
 enum TrainingFactSourceType {
   MANUAL   @map("manual")
   MATERIAL @map("material")
@@ -324,6 +345,7 @@ model User {
   createdTrainingMaterials       TrainingMaterial[]         @relation("TrainingMaterialCreator")
   confirmedTrainingMaterials     TrainingMaterial[]         @relation("TrainingMaterialOfficialConfirmer")
   createdTrainingMaterialRevisions TrainingMaterialRevision[] @relation("TrainingMaterialRevisionCreator")
+  createdTrainingMaterialOperations TrainingMaterialOperation[] @relation("TrainingMaterialOperationCreator")
   trainingProjectAssignments     TrainingProjectAssignment[] @relation("TrainingProjectAssignee")
   assignedTrainingProjects       TrainingProjectAssignment[] @relation("TrainingProjectAssigner")
 
@@ -799,6 +821,7 @@ model File {
   trainingAnswerSegments       TrainingAnswerSegment[]             @relation("TrainingAnswerSegmentStoredFile")
   trainingMergedAnswers        TrainingAnswer[]                    @relation("TrainingAnswerMergedAudio")
   trainingMaterialRevisions    TrainingMaterialRevision[]          @relation("TrainingMaterialRevisionFile")
+  trainingMaterialOperations   TrainingMaterialOperation[]         @relation("TrainingMaterialOperationSourceFile")
 
   @@unique([storage, bucket, key])
   @@index([uploadedById])
@@ -1142,6 +1165,7 @@ model TrainingProject {
   criteria         TrainingCriterion[]
   telegramLinkTokens TrainingTelegramLinkToken[]
   materials          TrainingMaterial[]
+  materialOperations TrainingMaterialOperation[]
   assignments        TrainingProjectAssignment[]
   knowledgeVersions  TrainingProjectKnowledgeVersion[]
 
@@ -1275,6 +1299,71 @@ model TrainingFact {
   @@unique([questionId, position])
   @@index([sourceRevisionId])
   @@map("training_facts")
+}
+
+model TrainingMaterialOperation {
+  id                        String                          @id @default(uuid()) @db.Uuid
+  projectId                 String                          @map("project_id") @db.Uuid
+  createdById               String                          @map("created_by_id") @db.Uuid
+  type                      TrainingMaterialOperationType
+  status                    TrainingMaterialOperationStatus @default(QUEUED)
+  idempotencyKey            String                          @map("idempotency_key") @db.Uuid
+  inputFingerprint          String                          @map("input_fingerprint") @db.Char(64)
+  inputJson                 Json                            @map("input_json")
+  sourceFileId              String?                         @map("source_file_id") @db.Uuid
+  resultMaterialId          String?                         @map("result_material_id") @db.Uuid
+  resultRevisionId          String?                         @map("result_revision_id") @db.Uuid
+  baseKnowledgeVersion      Int                             @map("base_knowledge_version")
+  completedKnowledgeVersion Int?                            @map("completed_knowledge_version")
+  sourceHash                String?                         @map("source_hash") @db.Char(64)
+  progressTotal             Int                             @default(0) @map("progress_total")
+  progressCompleted         Int                             @default(0) @map("progress_completed")
+  progressFailed            Int                             @default(0) @map("progress_failed")
+  attempts                  Int                             @default(0)
+  availableAt               DateTime                        @default(now()) @map("available_at")
+  lockedAt                  DateTime?                       @map("locked_at")
+  lockedBy                  String?                         @map("locked_by") @db.VarChar(160)
+  errorCode                 String?                         @map("error_code") @db.VarChar(120)
+  resultJson                Json?                           @map("result_json")
+  startedAt                 DateTime?                       @map("started_at")
+  finishedAt                DateTime?                       @map("finished_at")
+  createdAt                 DateTime                        @default(now()) @map("created_at")
+  updatedAt                 DateTime                        @updatedAt @map("updated_at")
+
+  project    TrainingProject                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy  User                             @relation("TrainingMaterialOperationCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  sourceFile File?                            @relation("TrainingMaterialOperationSourceFile", fields: [sourceFileId], references: [id], onDelete: Restrict)
+  items      TrainingMaterialOperationItem[]
+
+  @@unique([projectId, createdById, idempotencyKey])
+  @@index([projectId, createdAt])
+  @@index([createdById])
+  @@index([sourceFileId])
+  @@map("training_material_operations")
+}
+
+model TrainingMaterialOperationItem {
+  id               String                          @id @default(uuid()) @db.Uuid
+  operationId      String                          @map("operation_id") @db.Uuid
+  itemKey          String                          @map("item_key") @db.VarChar(120)
+  ordinal          Int
+  title            String                          @db.VarChar(240)
+  status           TrainingMaterialOperationStatus @default(QUEUED)
+  sourceFileId     String?                         @map("source_file_id") @db.Uuid
+  resultMaterialId String?                         @map("result_material_id") @db.Uuid
+  resultRevisionId String?                         @map("result_revision_id") @db.Uuid
+  sourceHash       String?                         @map("source_hash") @db.Char(64)
+  errorCode        String?                         @map("error_code") @db.VarChar(120)
+  startedAt        DateTime?                       @map("started_at")
+  finishedAt       DateTime?                       @map("finished_at")
+  createdAt        DateTime                        @default(now()) @map("created_at")
+  updatedAt        DateTime                        @updatedAt @map("updated_at")
+
+  operation TrainingMaterialOperation @relation(fields: [operationId], references: [id], onDelete: Cascade)
+
+  @@unique([operationId, itemKey])
+  @@index([operationId, ordinal])
+  @@map("training_material_operation_items")
 }
 
 model TrainingMaterial {

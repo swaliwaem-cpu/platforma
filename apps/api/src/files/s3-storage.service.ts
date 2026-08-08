@@ -1,5 +1,7 @@
 import { createHmac, createHash } from 'node:crypto';
-import { createReadStream } from 'node:fs';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 
@@ -114,6 +116,64 @@ export class S3StorageService {
     }
 
     return Buffer.from(await response.arrayBuffer());
+  }
+
+  async statObject(key: string, bucket = this.bucket) {
+    await this.ensureBucket(bucket);
+    const response = await this.signedFetch({ method: 'HEAD', bucket, key });
+    if (response.status === 404) return null;
+    if (!response.ok) await this.throwStorageError('Cannot inspect file in MinIO', response);
+    const contentLength = Number(response.headers.get('content-length'));
+    return {
+      size: Number.isSafeInteger(contentLength) && contentLength >= 0 ? contentLength : null,
+    };
+  }
+
+  async getObjectToFile(params: { key: string; filePath: string; bucket?: string }) {
+    const bucket = params.bucket ?? this.bucket;
+    await this.ensureBucket(bucket);
+
+    const response = await this.signedFetch({
+      method: 'GET',
+      bucket,
+      key: params.key,
+    });
+
+    if (!response.ok) {
+      await this.throwStorageError('Cannot read file from MinIO', response);
+    }
+    if (!response.body) {
+      throw new InternalServerErrorException('Cannot read file from MinIO: empty response body');
+    }
+
+    const reader = response.body.getReader();
+    const checksum = createHash('sha256');
+    let size = 0;
+    const source = Readable.from((async function* () {
+      try {
+        while (true) {
+          const chunk = await reader.read();
+          if (chunk.done) return;
+          yield Buffer.from(chunk.value);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    })());
+    const meter = new Transform({
+      transform(
+        chunk: Buffer | string,
+        encoding: BufferEncoding,
+        callback: (error?: Error | null, data?: Buffer) => void,
+      ) {
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding);
+        size += buffer.length;
+        checksum.update(buffer);
+        callback(null, buffer);
+      },
+    });
+    await pipeline(source, meter, createWriteStream(params.filePath, { flags: 'wx' }));
+    return { size, checksum: checksum.digest('hex') };
   }
 
   async deleteObject(key: string, bucket = this.bucket) {

@@ -41,7 +41,7 @@ test('image variants and MinIO upload support file-backed streaming', () => {
   assert.match(variantsSource, /export async function generateImageVariantsFromFile\(filePath: string,\s*originalKey: string\)/);
   assert.match(variantsSource, /return generateImageVariantsFromSharp\(sharp\(filePath\),\s*originalKey\);/);
 
-  assert.match(storageSource, /import \{ createReadStream \} from 'node:fs';/);
+  assert.match(storageSource, /import \{[^}]*createReadStream[^}]*\} from 'node:fs';/);
   assert.match(storageSource, /async putObjectFromFile\(params: \{ key: string; filePath: string; contentType: string; checksum: string; contentLength: number; bucket\?: string \}\)/);
   assert.match(storageSource, /body:\s*createReadStream\(params\.filePath\)/);
   assert.match(storageSource, /payloadHash:\s*params\.checksum/);

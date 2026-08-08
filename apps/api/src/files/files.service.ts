@@ -275,6 +275,7 @@ export class FilesService {
             projectPresentationAssets: true,
             trainingAnswerSegments: true,
             trainingMergedAnswers: true,
+            trainingMaterialOperations: true,
             trainingMaterialRevisions: true,
           },
         },
@@ -297,6 +298,7 @@ export class FilesService {
       file._count.projectPresentationAssets > 0 ||
       file._count.trainingAnswerSegments > 0 ||
       file._count.trainingMergedAnswers > 0 ||
+      file._count.trainingMaterialOperations > 0 ||
       file._count.trainingMaterialRevisions > 0
     ) {
       throw new ConflictException('File is linked and cannot be deleted');
@@ -650,7 +652,9 @@ export class FilesService {
   private assertNotPrivateTrainingFile(file: { url: string | null; key: string }) {
     if (
       file.url === null &&
-      (file.key.startsWith('training-v2/answers/') || file.key.startsWith('training-v2/materials/'))
+      (file.key.startsWith('training-v2/answers/') ||
+        file.key.startsWith('training-v2/materials/') ||
+        file.key.startsWith('training-v2/material-operations/'))
     ) {
       throw new NotFoundException('File not found');
     }

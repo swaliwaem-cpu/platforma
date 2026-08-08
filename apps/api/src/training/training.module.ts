@@ -29,6 +29,7 @@ import { OpenAITrainingTranscriber } from './training-openai-transcriber';
 import { TrainingFollowUpSelector } from './training-follow-up-selector';
 import { TrainingMaterialController } from './training-material.controller';
 import { TrainingMaterialExtractionService } from './training-material-extraction';
+import { TrainingMaterialOperationService } from './training-material-operation.service';
 import { TrainingMaterialService } from './training-material.service';
 import {
   DeterministicFakeTrainingMaterialSuggester,
@@ -85,6 +86,7 @@ import { TrainingUrlExtractor } from './training-url-extractor';
     TrainingAudioService,
     TrainingVoiceWorkerService,
     TrainingMaterialExtractionService,
+    TrainingMaterialOperationService,
     TrainingUrlExtractor,
     TrainingMaterialService,
     TrainingProjectKnowledgeService,

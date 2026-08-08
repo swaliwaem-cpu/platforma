@@ -849,6 +849,111 @@
   width: 100%;
 }
 
+.training-material-operations {
+  display: flex;
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--catalog-border);
+  border-radius: var(--catalog-radius-lg);
+  background: var(--catalog-panel);
+  flex-direction: column;
+  gap: 14px;
+}
+
+.training-material-operations-heading,
+.training-material-operation-header,
+.training-material-operation-error {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.training-material-operations-heading h3,
+.training-material-operations-heading p {
+  margin: 0;
+}
+
+.training-material-operations-heading p {
+  margin-top: 5px;
+}
+
+.training-material-operation-list,
+.training-material-operation-items {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.training-material-operation-list {
+  gap: 10px;
+}
+
+.training-material-operation {
+  display: grid;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--catalog-border-soft);
+  border-radius: var(--catalog-radius-md);
+  background: var(--catalog-panel-soft);
+  gap: 10px;
+}
+
+.training-material-operation-header > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.training-material-operation-header strong,
+.training-material-operation-header span,
+.training-material-operation-items span {
+  overflow-wrap: anywhere;
+}
+
+.training-material-operation-header span,
+.training-material-operation-progress span,
+.training-material-operation-items small {
+  color: var(--catalog-ink-500);
+  font-size: 0.76rem;
+}
+
+.training-material-operation-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.training-material-operation-progress progress {
+  width: 100%;
+  height: 8px;
+  border: 0;
+  border-radius: 999px;
+  overflow: hidden;
+  accent-color: var(--catalog-blue);
+}
+
+.training-material-operation-items {
+  max-height: 220px;
+  gap: 1px;
+  overflow: auto;
+}
+
+.training-material-operation-items li {
+  display: grid;
+  padding: 8px 0;
+  border-top: 1px solid var(--catalog-border-soft);
+  gap: 2px;
+}
+
+.training-material-operation-error {
+  align-items: center;
+  color: var(--catalog-danger);
+  font-size: 0.82rem;
+}
+
 .training-object-search .searchable-multi-select-option > span:first-child {
   display: grid;
   gap: 3px;
@@ -2003,8 +2108,16 @@
     flex-direction: column;
   }
 
-  .training-material-browser-heading .admin-button {
+  .training-material-browser-heading .admin-button,
+  .training-material-operation-error .admin-button {
     width: 100%;
+  }
+
+  .training-material-operations-heading,
+  .training-material-operation-header,
+  .training-material-operation-error {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .training-material-filters {
