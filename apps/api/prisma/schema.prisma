@@ -1255,7 +1255,7 @@ model TrainingProject {
   isOpen               Boolean               @default(false) @map("is_open")
   sortOrder            Int                   @default(0) @map("sort_order")
   attemptLimit         Int                   @default(3) @map("attempt_limit")
-  timeLimitSeconds     Int                   @default(420) @map("time_limit_seconds")
+  timeLimitSeconds     Int                   @default(1200) @map("time_limit_seconds")
   passScore            Int                   @default(75) @map("pass_score")
   allowRetakeAfterPass Boolean               @map("allow_retake_after_pass")
   contentSchemaVersion Int                   @default(1) @map("content_schema_version")

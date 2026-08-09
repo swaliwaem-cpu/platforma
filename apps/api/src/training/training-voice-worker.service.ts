@@ -89,7 +89,8 @@ export class TrainingVoiceWorkerService implements OnModuleInit, OnModuleDestroy
     @Inject(TRAINING_EVALUATOR) private readonly evaluator: TrainingEvaluator,
     private readonly attemptState: TrainingAttemptStateService,
     private readonly telegramOutbox: TrainingTelegramOutboxWorkerService,
-    private readonly wakeup = new TrainingVoiceWorkerWakeupService(),
+    private readonly wakeup: TrainingVoiceWorkerWakeupService =
+      new TrainingVoiceWorkerWakeupService(),
   ) {}
 
   async onModuleInit() {

@@ -77,14 +77,20 @@ if (!databaseUrl) {
       });
 
       const firstRun = firstWorker.runOnce();
-      await materials.waitUntilStarted();
-      assert.equal(await secondWorker.runOnce(), false);
-      assert.equal(materials.calls, 1);
-      assert.equal((await prisma.trainingMaterialOperation.findUniqueOrThrow({
-        where: { id: secondOperation.id },
-      })).status, TrainingMaterialOperationStatus.QUEUED);
-      materials.release();
-      assert.equal(await firstRun, true);
+      let firstRunOutcome;
+      try {
+        await materials.waitUntilStarted(firstRun);
+        assert.equal(await secondWorker.runOnce(), false);
+        assert.equal(materials.calls, 1);
+        assert.equal((await prisma.trainingMaterialOperation.findUniqueOrThrow({
+          where: { id: secondOperation.id },
+        })).status, TrainingMaterialOperationStatus.QUEUED);
+      } finally {
+        materials.release();
+        firstRunOutcome = await captureOutcome(firstRun);
+      }
+      if (firstRunOutcome.error) throw firstRunOutcome.error;
+      assert.equal(firstRunOutcome.value, true);
 
       const completed = await prisma.trainingMaterialOperation.findUniqueOrThrow({
         where: { id: operation.id },
@@ -149,13 +155,19 @@ if (!databaseUrl) {
       const operation = await queueUrl(worker, scenario);
 
       const running = worker.runOnce();
-      await materials.waitUntilStarted();
-      await prisma.trainingMaterialOperation.update({
-        where: { id: operation.id },
-        data: { lockedBy: 'replacement-token' },
-      });
-      materials.release();
-      assert.equal(await running, true);
+      let runningOutcome;
+      try {
+        await materials.waitUntilStarted(running);
+        await prisma.trainingMaterialOperation.update({
+          where: { id: operation.id },
+          data: { lockedBy: 'replacement-token' },
+        });
+      } finally {
+        materials.release();
+        runningOutcome = await captureOutcome(running);
+      }
+      if (runningOutcome.error) throw runningOutcome.error;
+      assert.equal(runningOutcome.value, true);
 
       const fenced = await prisma.trainingMaterialOperation.findUniqueOrThrow({
         where: { id: operation.id },
@@ -170,8 +182,8 @@ if (!databaseUrl) {
       }, materials);
     }
 
-    function queueUrl(worker, scenario) {
-      return worker.queueOfficialUrl({
+    async function queueUrl(worker, scenario) {
+      const operation = await worker.queueOfficialUrl({
         projectId: scenario.project.id,
         actorId: scenario.user.id,
         idempotencyKey: randomUUID(),
@@ -180,6 +192,22 @@ if (!databaseUrl) {
         officialConfirmed: true,
         replaceExistingQuestions: false,
       });
+      await waitUntilClaimEligible(operation.id);
+      return operation;
+    }
+
+    async function waitUntilClaimEligible(operationId) {
+      const deadline = Date.now() + 1000;
+      do {
+        const [row] = await prisma.$queryRaw`
+          SELECT "available_at" <= CURRENT_TIMESTAMP AS "eligible"
+          FROM "training_material_operations"
+          WHERE "id" = CAST(${operationId} AS uuid)
+        `;
+        if (row?.eligible === true) return;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      } while (Date.now() < deadline);
+      throw new Error('MATERIAL_OPERATION_CLAIM_ELIGIBILITY_TIMEOUT');
     }
 
     async function createScenario(label) {
@@ -255,12 +283,32 @@ if (!databaseUrl) {
       };
     }
 
-    waitUntilStarted() {
-      return this.started;
+    async waitUntilStarted(running) {
+      let timeout;
+      try {
+        await Promise.race([
+          this.started,
+          running.then((result) => {
+            throw new Error(`MATERIAL_WORKER_COMPLETED_BEFORE_START:${String(result)}`);
+          }),
+          new Promise((_, reject) => {
+            timeout = setTimeout(() => reject(new Error('MATERIAL_WORKER_START_TIMEOUT')), 5000);
+          }),
+        ]);
+      } finally {
+        if (timeout) clearTimeout(timeout);
+      }
     }
 
     release() {
       this.releaseBarrier();
     }
+  }
+
+  function captureOutcome(promise) {
+    return promise.then(
+      (value) => ({ value, error: null }),
+      (error) => ({ value: undefined, error }),
+    );
   }
 }

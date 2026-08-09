@@ -85,7 +85,8 @@ export class TrainingAttemptStateService {
     @Inject(TRAINING_EVALUATOR) private readonly evaluator: TrainingEvaluator,
     private readonly followUpSelector: TrainingFollowUpSelector,
     private readonly projectAccess: TrainingProjectAccessService,
-    private readonly voiceWorkerWakeup = new TrainingVoiceWorkerWakeupService(),
+    private readonly voiceWorkerWakeup: TrainingVoiceWorkerWakeupService =
+      new TrainingVoiceWorkerWakeupService(),
   ) {}
 
   async startAttempt(projectId: string, userId: string, input: StartTrainingAttemptInput) {

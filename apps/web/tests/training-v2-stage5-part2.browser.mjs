@@ -10,7 +10,8 @@ const page = await browser.newPage();
 const queries = [];
 const exportQueries = [];
 let exportReads = 0;
-let initialDelay = true;
+let holdInitialRankingResponses = true;
+const initialRankingBarrier = createBarrier(10_000);
 
 try {
   await page.route('http://localhost:3000/**', async (route) => {
@@ -20,7 +21,7 @@ try {
     if (url.pathname === '/auth/refresh') return json(route, { accessToken: 'ranking-token', user: { id: '1', email: 'admin@test', name: 'Admin', status: 'ACTIVE', role: { id: '1', name: 'admin' }, permissions: ['admin:access', 'training:results:read'] } });
     if (url.pathname === '/training/admin/ranking') {
       queries.push(Object.fromEntries(url.searchParams.entries()));
-      if (initialDelay) { initialDelay = false; await new Promise((resolve) => setTimeout(resolve, 150)); }
+      if (holdInitialRankingResponses) await initialRankingBarrier.hold();
       const search = url.searchParams.get('search');
       if (search === 'error') return json(route, { message: 'RANKING_FAILED' }, 500);
       return json(route, { items: search === 'empty' ? [] : [fixture(), fixture('u2', 'Борис Брокер', '75.00')], total: search === 'empty' ? 0 : 21, page: Number(url.searchParams.get('page') ?? 1), limit: 20, totalPages: search === 'empty' ? 0 : 2 });
@@ -34,7 +35,13 @@ try {
   });
 
   await page.goto(`${baseUrl}/admin/training/ranking`, { waitUntil: 'domcontentloaded' });
-  await page.getByLabel('Загрузка рейтинга').waitFor();
+  await initialRankingBarrier.waitForArrival();
+  try {
+    await page.getByLabel('Загрузка рейтинга').waitFor({ timeout: 5_000 });
+  } finally {
+    holdInitialRankingResponses = false;
+    initialRankingBarrier.release();
+  }
   await page.getByText('Рейтинг сотрудников').waitFor();
   await page.getByText('Анна Брокер').waitFor();
   assert.deepEqual(await page.locator('tbody tr td:first-child strong').allTextContents(), ['1. Анна Брокер', '2. Борис Брокер']);
@@ -62,7 +69,13 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
   process.stdout.write('TRAINING_STAGE5_PART2_BROWSER_OK\n');
 } finally {
-  await browser.close();
+  holdInitialRankingResponses = false;
+  initialRankingBarrier.release();
+  try {
+    await page.unrouteAll({ behavior: 'wait' });
+  } finally {
+    await browser.close();
+  }
 }
 
 function fixture(id = 'u1', name = 'Анна Брокер', coverage = '87.50') {
@@ -71,4 +84,44 @@ function fixture(id = 'u1', name = 'Анна Брокер', coverage = '87.50') 
 
 async function json(route, body, status = 200) {
   await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+}
+
+function createBarrier(timeoutMs) {
+  let resolveArrival;
+  const arrival = new Promise((resolve) => { resolveArrival = resolve; });
+  let resolveRelease;
+  const released = new Promise((resolve) => { resolveRelease = resolve; });
+  let releaseTimeout;
+  let isReleased = false;
+
+  const release = () => {
+    if (isReleased) return;
+    isReleased = true;
+    clearTimeout(releaseTimeout);
+    resolveRelease();
+  };
+
+  return {
+    async hold() {
+      resolveArrival();
+      releaseTimeout ??= setTimeout(release, timeoutMs);
+      await released;
+    },
+    async waitForArrival() {
+      await withTimeout(arrival, timeoutMs, 'Ranking request did not reach the fixture barrier');
+    },
+    release,
+  };
+}
+
+async function withTimeout(promise, timeoutMs, message) {
+  let timeout;
+  try {
+    await Promise.race([
+      promise,
+      new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error(message)), timeoutMs); }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
 }

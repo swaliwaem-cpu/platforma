@@ -12,7 +12,15 @@ const objectLotMediaCarouselSource =
   objectDetailSource.match(/function ObjectLotMediaCarousel[\s\S]*?\nfunction hasFeedMediaFile/)?.[0] ?? '';
 
 test('app routes object lot URLs to lot detail page', () => {
-  assert.match(appSource, /import \{ ObjectDetailPage, ObjectLotDetailPage \} from '\.\/objects\/ObjectDetailPage';/);
+  assert.doesNotMatch(appSource, /import \{ ObjectDetailPage, ObjectLotDetailPage \} from '\.\/objects\/ObjectDetailPage';/);
+  assert.match(
+    appSource,
+    /const ObjectDetailPage = lazy\([\s\S]*?import\('\.\/objects\/ObjectDetailPage'\)[\s\S]*?default: module\.ObjectDetailPage/,
+  );
+  assert.match(
+    appSource,
+    /const ObjectLotDetailPage = lazy\([\s\S]*?import\('\.\/objects\/ObjectDetailPage'\)[\s\S]*?default: module\.ObjectLotDetailPage/,
+  );
   assert.match(appSource, /const objectLotRoute = parseObjectLotRoute\(pathname\);/);
   assert.match(appSource, /function parseObjectLotRoute\(pathname: string\)/);
   assert.match(appSource, /\^\\\/objects\\\/\(\[\^\/\]\+\)\\\/lots\\\/\(\[\^\/\]\+\)\\\/\?\$/);
