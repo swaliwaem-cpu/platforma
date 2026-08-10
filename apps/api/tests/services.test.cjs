@@ -4287,8 +4287,112 @@ test('UsersService.updateOwnProfile saves broker contacts for presentations', as
   });
 });
 
-test('UsersService.deactivate archives access by status and clears refresh session', async () => {
+test('UsersService.update revokes Telegram access and refresh sessions after training permission is removed', async () => {
+  const calls = {
+    audits: [],
+  };
+  const targetRoleId = '55555555-5555-4555-8555-555555555555';
+  const telegramAccountId = '66666666-6666-4666-8666-666666666666';
+  const existingUser = userRecord();
+  const updatedUser = userRecord({
+    roleId: targetRoleId,
+    refreshTokenHash: null,
+    refreshTokenExpiresAt: null,
+    role: {
+      id: targetRoleId,
+      name: 'restricted',
+      description: 'Restricted',
+      permissions: [],
+    },
+  });
+  const prisma = {
+    role: {
+      findUnique: async (args) => {
+        calls.roleLookup = args;
+        return { id: targetRoleId };
+      },
+    },
+    rolePermission: {
+      findFirst: async (args) => {
+        calls.rolePermission = args;
+        return null;
+      },
+    },
+    user: {
+      findFirst: async (args) => {
+        calls.findFirst = args;
+        return existingUser;
+      },
+      update: async (args) => {
+        calls.update = args;
+        return updatedUser;
+      },
+    },
+    auditLog: {
+      create: async (args) => {
+        calls.audits.push(args.data);
+      },
+    },
+    trainingTelegramAccount: {
+      findFirst: async (args) => {
+        calls.accountLookup = args;
+        return { id: telegramAccountId, revokedAt: null };
+      },
+      updateMany: async (args) => {
+        calls.accountRevoke = args;
+        return { count: 1 };
+      },
+    },
+    trainingTelegramLinkToken: {
+      updateMany: async (args) => {
+        calls.tokenRevoke = args;
+        return { count: 2 };
+      },
+    },
+  };
+  prisma.$transaction = async (callback) => callback(prisma);
+  const service = new UsersService(prisma);
+
+  const result = await service.update(existingUser.id, { roleId: targetRoleId }, actor, request);
+
+  assert.equal(result.user.role.id, targetRoleId);
+  assert.deepEqual(calls.roleLookup, {
+    where: { id: targetRoleId },
+    select: { id: true },
+  });
+  assert.deepEqual(calls.update.data.role, { connect: { id: targetRoleId } });
+  assert.equal(calls.update.data.refreshTokenHash, null);
+  assert.equal(calls.update.data.refreshTokenExpiresAt, null);
+  assert.deepEqual(calls.update.data.sessions, { deleteMany: {} });
+  assert.deepEqual(calls.rolePermission.where, {
+    roleId: targetRoleId,
+    permission: { key: 'training:participate' },
+  });
+  assert.deepEqual(calls.tokenRevoke.where, {
+    userId: existingUser.id,
+    usedAt: null,
+    revokedAt: null,
+  });
+  assert.deepEqual(calls.accountRevoke.where, {
+    id: telegramAccountId,
+    revokedAt: null,
+  });
+  assert.equal(calls.accountRevoke.data.revokedAt, calls.tokenRevoke.data.revokedAt);
+  assert.deepEqual(
+    calls.audits.map((entry) => entry.action),
+    ['user.update', 'user.role_change', 'training.telegram.auto_revoke'],
+  );
+  assert.deepEqual(calls.audits.at(-1).metadata, {
+    userId: existingUser.id,
+    accountId: telegramAccountId,
+    reason: 'training_permission_removed',
+  });
+});
+
+test('UsersService.deactivate revokes Telegram access and clears refresh sessions', async () => {
   const calls = {};
+  calls.audits = [];
+  const telegramAccountId = '66666666-6666-4666-8666-666666666666';
   const prisma = {
     user: {
       findFirst: async (args) => {
@@ -4306,14 +4410,24 @@ test('UsersService.deactivate archives access by status and clears refresh sessi
     },
     auditLog: {
       create: async (args) => {
-        calls.auditLog = args;
+        calls.audits.push(args.data);
       },
     },
     trainingTelegramAccount: {
-      findFirst: async () => null,
+      findFirst: async (args) => {
+        calls.accountLookup = args;
+        return { id: telegramAccountId, revokedAt: null };
+      },
+      updateMany: async (args) => {
+        calls.accountRevoke = args;
+        return { count: 1 };
+      },
     },
     trainingTelegramLinkToken: {
-      updateMany: async () => ({ count: 0 }),
+      updateMany: async (args) => {
+        calls.tokenRevoke = args;
+        return { count: 1 };
+      },
     },
   };
   prisma.$transaction = async (callback) => callback(prisma);
@@ -4327,7 +4441,25 @@ test('UsersService.deactivate archives access by status and clears refresh sessi
   assert.equal(calls.update.data.refreshTokenHash, null);
   assert.equal(calls.update.data.refreshTokenExpiresAt, null);
   assert.deepEqual(calls.update.data.sessions, { deleteMany: {} });
-  assert.equal(calls.auditLog.data.action, 'user.deactivate');
+  assert.deepEqual(calls.tokenRevoke.where, {
+    userId: '33333333-3333-4333-8333-333333333333',
+    usedAt: null,
+    revokedAt: null,
+  });
+  assert.deepEqual(calls.accountRevoke.where, {
+    id: telegramAccountId,
+    revokedAt: null,
+  });
+  assert.equal(calls.accountRevoke.data.revokedAt, calls.tokenRevoke.data.revokedAt);
+  assert.deepEqual(
+    calls.audits.map((entry) => entry.action),
+    ['user.deactivate', 'training.telegram.auto_revoke'],
+  );
+  assert.deepEqual(calls.audits.at(-1).metadata, {
+    userId: '33333333-3333-4333-8333-333333333333',
+    accountId: telegramAccountId,
+    reason: 'user_deactivated',
+  });
 });
 
 test('AuthService.requestEmailRegistration creates invited user role and sends activation email', async () => {

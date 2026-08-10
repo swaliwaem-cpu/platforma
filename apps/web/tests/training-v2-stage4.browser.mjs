@@ -271,6 +271,7 @@ try {
   await createManual();
   await createOfficialUrl();
   await createPdf();
+  await page.locator('.training-material-row').nth(4).waitFor();
   assert.equal(await page.locator('.training-material-row').count(), 5);
 
   await page.locator('.training-material-row').filter({ hasText: 'URL source' }).getByRole('button', { name: 'Открыть URL source' }).click();
