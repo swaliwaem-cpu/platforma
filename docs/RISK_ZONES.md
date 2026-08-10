@@ -1,171 +1,233 @@
 # Risk Zones
 
-Дата индексации: 2026-06-01.
+Этот файл содержит только постоянные зоны риска проекта.
 
-## Опасные зоны
+Он не является журналом найденных багов.
 
-| Зона | Файлы | Почему опасно | Что может сломаться | Что обязательно проверить |
-| --- | --- | --- | --- | --- |
-| Product/UI context drift | `docs/PRODUCT_AND_UI_CONTEXT.md`, `rules/frontend.md`, `apps/web/src/App.tsx`, `apps/web/src/catalog/CatalogPage.tsx`, `apps/web/src/map/YandexMap.tsx`, `apps/web/src/styles.css`, `apps/web/src/app-theme.css` | UI-задачи должны сохранять характер внутреннего рабочего продукта, текущий layout, catalog/map/list/filter/permissions/import flows | Приложение может стать лендингом/decorative SaaS UI, сломать плотность данных, порядок блоков, protected map/list model или accessibility states | Перед UI-правками прочитать `docs/PRODUCT_AND_UI_CONTEXT.md`; вручную проверить `/cabinet`, `/catalog`, `/catalog?view=list`, `/catalog/map`, `/objects/:slug`, `/admin/*` |
-| AuthProvider/cookies/refresh | `apps/web/src/auth/AuthProvider.tsx`, `apps/web/src/admin/api.ts`, `apps/api/src/auth/auth.controller.ts`, `apps/api/src/auth/auth.service.ts`, `apps/api/src/auth/cookies.ts`, `apps/api/src/main.ts` | Auth depends on bearer token, refresh cookie, media cookie, CORS credentials and browser events | Login, auto-refresh, logout, image/media access, cross-origin requests | Login, refresh after 401, logout, `/auth/refresh`, profile/media image loading |
-| RBAC guards/permissions | `apps/web/src/App.tsx`, `apps/web/src/auth/AuthProvider.tsx`, `apps/api/src/auth/permissions.guard.ts`, `apps/api/src/auth/permissions.decorator.ts`, `apps/api/prisma/seed.ts`, controllers in `apps/api/src` | Frontend and backend permissions can drift | Users see wrong routes or get 403; admin/editor/user roles lose access | Check admin/editor/user navigation, denied screen, backend 403/401, seed permissions |
-| Prisma schema/migrations | `apps/api/prisma/schema.prisma`, `apps/api/prisma/migrations`, `apps/api/prisma/seed.ts` | Schema is central for auth, objects, files, imports, feed data | DB migrations fail, shared enums drift, import writes invalid data | `pnpm --filter @platforma/api prisma:generate`, migrations in staging, seed, API contract tests |
-| Shared contracts | `packages/shared/src/index.ts`, `packages/shared/src/search-normalization.mjs`, `packages/shared/src/search-normalization.cjs`, `packages/shared/src/search-normalization.d.cts` | Manual API serializers rely on shared shapes | Frontend compile breaks, runtime fields missing, search behavior diverges | `pnpm build`, `pnpm test`, check consumers via `rg '@platforma/shared'` |
-| Object serialization | `apps/api/src/objects/objects.service.ts`, `apps/api/src/map/map.service.ts`, `packages/shared/src/index.ts` | Decimal/coordinate/nested file serialization is hand-written | Catalog/detail/admin/map display wrong values; type mismatches | Catalog list, detail page, admin edit, map markers, API contract tests |
-| Catalog filters/query params | `apps/web/src/catalog/CatalogPage.tsx`, `apps/api/src/objects/objects.service.ts`, `apps/api/src/search/search-filters.ts`, `apps/api/src/objects/object-search.ts` | Query params are source of truth and must match backend names | Broken filters, pagination, sorting, lot filtering, shared links | `/catalog` search, directory filters, lot filters, pagination, sort, URL reload |
-| Map objects endpoint | `apps/api/src/map/map.controller.ts`, `apps/api/src/map/map.service.ts`, `apps/web/src/catalog/CatalogPage.tsx` | Must stay aligned with catalog filters but returns a different response shape | Map shows wrong or missing objects; selected card fields missing | `/catalog/map`, filter parity with list, coordinates-only behavior, `limit` behavior |
-| YandexMap/no-key mode | `apps/web/src/map/YandexMap.tsx`, `apps/web/src/map/mapMarkerLabels.ts`, `apps/web/.env.example`, `.env.example` | External script behavior differs with/without `VITE_YANDEX_MAPS_API_KEY` | Blank map, script load error, marker labels/selection fail | Run with empty key and with key, empty points, marker selection, fullscreen |
-| File upload/delete | `apps/api/src/files/files.service.ts`, `apps/api/src/files/files.controller.ts`, `apps/api/src/files/media.controller.ts`, `apps/api/src/files/s3-storage.service.ts`, `apps/web/src/files/SecureImage.tsx`, `apps/web/src/admin/ObjectsAdminPage.tsx` | Storage, MIME limits, variants and linked file checks interact | Orphaned files, failed downloads, broken images, accidental delete refusal/bypass | Upload image/PDF, variants, delete linked/unlinked file, media cookie display, MinIO env |
-| WordPress mapper/importer | `tools/wp-import/src/mapper.ts`, `tools/wp-import/src/importer.ts`, `tools/wp-import/src/wordpress-client.ts`, `tools/wp-import/src/storage.ts`, `apps/api/src/wordpress-import/wordpress-import.service.ts` | Legacy WP meta/term/media assumptions are brittle | Wrong object fields, duplicate developers/locations, missing media, unintended archive | Preview before run, report warnings/errors, media paths, imported object detail/catalog |
-| Feed importer | `tools/feed-import/src/index.ts`, `apps/api/src/feeds/feeds.service.ts`, `apps/web/src/admin/FeedsAdminPage.tsx`, `apps/api/prisma/schema.prisma` | Multiple XML formats, mappings, queued long-running processes and media import | Wrong units/prices/media, stuck runs, catalog feed fallback wrong | Analyze, preview, run, stop, units list, catalog price/lot filters, object detail lots |
-| Repair scripts | `tools/wp-import/src/index.ts`, `tools/wp-import/src/repair.ts`, `tools/wp-import/src/developer-aliases.ts`, root `package.json` | Repair mutates primary location and developer records outside normal import | Objects move district/area incorrectly, developers merged/deleted incorrectly | Always run preview first, inspect candidates, then verify catalog filters and admin object editor |
-| Object admin form | `apps/web/src/admin/ObjectsAdminPage.tsx`, `apps/web/src/admin/objectQuickEditPersistence.ts`, `apps/web/src/admin/objectQuickEditTransforms.ts`, `apps/api/src/objects/objects.service.ts` | Complex create/edit/media/publish lifecycle with local and backend validation | Partial object creation, publish failure, gallery/file inconsistencies, quick edit invalid values | Create draft, edit, publish, quick edit fields, gallery batch, linked files, validation messages |
-| App routing | `apps/web/src/App.tsx` | Manual client routing and permission gates are centralized | New route not intercepted, wrong back behavior, denied logic mismatch | Check all routes in `docs/PAGES_AND_ROUTES.md`, direct URL reload, nav links, browser history |
-| Global styles | `apps/web/src/styles.css`, `apps/web/src/app-theme.css` | Global selectors affect catalog/map/admin/detail together | Layout regressions, hidden overlays, broken responsive states | `/catalog`, `/catalog/map`, `/objects/:slug`, admin pages, mobile widths |
+## Auth, sessions и cookies
 
-## Особо хрупкие data flows
+Риск:
 
-1. `RealEstateObject` from `apps/api/prisma/schema.prisma` -> serializer in `apps/api/src/objects/objects.service.ts` -> shared types in `packages/shared/src/index.ts` -> frontend consumers in `apps/web/src/catalog`, `apps/web/src/admin`, `apps/web/src/objects`.
-2. Auth session from `apps/api/src/auth/auth.service.ts` -> cookies in `apps/api/src/auth/cookies.ts` -> frontend state in `apps/web/src/auth/AuthProvider.tsx` -> `apiRequest` retry in `apps/web/src/admin/api.ts`.
-3. Media file from upload in `apps/api/src/files/files.service.ts` -> S3/MinIO in `apps/api/src/files/s3-storage.service.ts` -> media cookie guard in `apps/api/src/auth/media-token.guard.ts` -> image display in `apps/web/src/files/SecureImage.tsx`.
-4. Feed unit from `tools/feed-import/src/index.ts` -> Prisma feed models -> object feed summary -> catalog filters in `apps/api/src/objects/objects.service.ts` -> detail lots in `apps/web/src/objects/ObjectDetailPage.tsx`.
-5. WordPress object from `tools/wp-import/src/mapper.ts` -> `tools/wp-import/src/importer.ts` -> Prisma object/media -> admin/catalog/detail frontend.
+- login, refresh и logout;
+- access token;
+- refresh и media cookies;
+- CORS credentials;
+- параллельные запросы после `401`.
 
-## Неясные зоны
+Проверить:
 
-- Direct Redis usage in application code was not found, although Redis exists in `.env.example`, `apps/api/.env.example`, `docker-compose.yml`.
-- Dedicated audit log API/UI was not found, although `AuditLog` exists in `apps/api/prisma/schema.prisma` and services write audit rows.
-- Dedicated tests for `tools/wp-import/src/repair.ts` were not found.
-- `tools/feed-import/.env.example` was not found.
+- login;
+- refresh;
+- параллельный refresh;
+- logout;
+- reload;
+- protected media.
 
-## Deep frontend risk index
+## RBAC и permissions
 
-Дата углубленного frontend-индекса: 2026-06-01.
+Риск:
 
-Сканировался `apps/web` полностью, кроме `dist` и `node_modules`. Ниже перечислены frontend-зоны, которые нельзя менять без точечной проверки поведения и верстки.
+- frontend navigation и backend permissions
+  могут разойтись;
+- seed может случайно выдать или отнять доступ;
+- UUID probing может обойти ownership.
 
-| Frontend zone | Files | Why risky | Required manual checks |
-| --- | --- | --- | --- |
-| Manual SPA routing | `apps/web/src/App.tsx`, `apps/web/src/main.tsx` | `App.tsx` manually parses `window.location.pathname`, intercepts document clicks and gates permissions. A route can be missed in `isAppRoute()`, active section or render branch. | Direct reload and navigation for `/login`, `/cabinet`, `/catalog`, `/catalog/map`, `/objects/:slug`, `/objects/:slug/lots/:unitId`, `/admin`, every `/admin/*`; browser back/forward; internal links with and without `target="_blank"`. |
-| Login/register redirects | `apps/web/src/App.tsx`, `apps/web/src/auth/AuthProvider.tsx` | Login success route differs for `/login`, `/`, and protected target path; registration token from `auth_token` triggers activation and navigation. | Login from `/login`, direct open protected route while logged out, `/` redirect, email/password registration request, `auth_token` activation registration, failed login copy. |
-| Auth refresh and API retry | `apps/web/src/auth/AuthProvider.tsx`, `apps/web/src/admin/api.ts`, `apps/api/src/auth/cookies.ts`, `apps/api/src/main.ts` | Auth uses access token in memory, refresh cookie, one-flight refresh promise and browser events. Changes can create loops or clear sessions unexpectedly. | Expired access token retry, parallel API requests after 401, logout, page reload with valid refresh cookie, page reload with invalid refresh cookie. |
-| Media auth and secure images | `apps/web/src/files/SecureImage.tsx`, `apps/web/src/App.tsx`, `apps/web/src/catalog/CatalogPage.tsx`, `apps/web/src/objects/ObjectDetailPage.tsx`, `apps/web/src/admin/ObjectsAdminPage.tsx`, `apps/api/src/files/media.controller.ts`, `apps/api/src/auth/media-token.guard.ts` | Images use browser `src`, lazy preload and media cookie rather than Authorization header. Variant names and media cookies must align. | Profile photo, catalog cover thumbnails, map card image, object gallery original/thumbnail/card variants, feed lot media, download links. |
-| Cabinet profile/password/photo | `apps/web/src/App.tsx`, `apps/web/src/auth/AuthProvider.tsx`, `apps/api/src/users/users.controller.ts`, `apps/api/src/users/users.service.ts` | Cabinet mutates the global `AuthUser`; password/photo/profile changes rely on backend returning current user shape. | Save name, upload invalid/valid photo, display fallback initials, change password with mismatch/current wrong/current right, reload after changes. |
-| Catalog URL state | `apps/web/src/catalog/CatalogPage.tsx`, `apps/api/src/objects/objects.service.ts`, `apps/api/src/search/search-filters.ts`, `packages/shared/src/index.ts` | Query params are the source of truth and also copied into object links for lot filters. | Apply each filter, reload URL, share URL, reset filters, cards/list switch, pagination, load more, sort, object link preserves lot filters only. |
-| Catalog quick links | `apps/web/src/catalog/CatalogPage.tsx`, `apps/web/src/admin/CatalogLinksAdminPage.tsx`, `apps/api/src/catalog-links/catalog-links.service.ts` | Public links depend on admin-configured target validity, published object slugs and exact KRT/developer IDs. | Public developer links, KRT links, sales start links, disabled/empty links, admin validation and save order. |
-| Catalog map protected model | `apps/web/src/catalog/CatalogPage.tsx`, `apps/web/src/map/YandexMap.tsx`, `apps/web/src/map/mapMarkerLabels.ts`, `apps/web/src/styles.css`, `rules/frontend.md` | Map, placeholders, balloons, selected card and list overlay are protected functionality. Overlay is portaled into Yandex DOM. | `/catalog/map` with data, empty map, selected marker/card, list overlay hide/show, visible bounds list, fullscreen, mobile, object link from marker/card. |
-| Yandex no-key mode | `apps/web/src/map/YandexMap.tsx`, `apps/web/.env.example`, `.env.example` | Frontend intentionally omits `apikey` when env is empty; behavior depends on external Yandex Maps JS API. | Run with empty `VITE_YANDEX_MAPS_API_KEY`, run with key, script error state, map loading state, no points fallback. |
-| Map marker labels | `apps/web/src/map/mapMarkerLabels.ts`, `apps/web/src/catalog/CatalogPage.tsx`, `apps/web/src/styles.css` | Marker labels strip leading object type and truncate names; CSS expands markers by zoom. | Objects with `mapName`, long titles, titles starting with ЖК/дом/квартал, selected marker, zoom >= expanded threshold. |
-| Object detail serializer/view model | `apps/web/src/objects/ObjectDetailPage.tsx`, `apps/web/src/objects/objectDetailViewModel.ts`, `apps/api/src/objects/objects.service.ts`, `packages/shared/src/index.ts` | Detail page expects nested `RealEstateObjectDetail`, local formatting and content-section mapping. | Object with complete data, missing description, missing architecture/infrastructure/filling, missing locations, missing metro, non-published object visibility. |
-| Object gallery/lightbox | `apps/web/src/objects/ObjectDetailPage.tsx`, `apps/web/src/files/SecureImage.tsx`, `apps/web/src/styles.css` | Gallery has cover-first ordering, section filters, thumbnail zone, modal and download links. | Empty gallery, single image, multiple images, section filters, keyboard arrows/Escape, original download, mobile. |
-| Object feed lots | `apps/web/src/objects/ObjectDetailPage.tsx`, `apps/api/src/objects/objects.service.ts`, `packages/shared/src/index.ts` | Lot table filters initialize from catalog query once, then local state controls API params and display sorting. | Catalog lot filters -> detail lot filters, status/type/price/room/floor/year filters, sorting, pagination, empty/error states, lot detail route. |
-| Object detail map | `apps/web/src/objects/ObjectDetailPage.tsx`, `apps/web/src/map/YandexMap.tsx`, `apps/web/src/files/SecureImage.tsx` | Object map shares Yandex component with catalog but uses single point and optional balloon image from secure media. | Object with coordinates, object without coordinates, balloon image loaded/unavailable, no-key mode. |
-| Admin object list and quick edit | `apps/web/src/admin/ObjectsAdminPage.tsx`, `apps/web/src/admin/ObjectQuickEditTable.tsx`, `apps/web/src/admin/objectQuickEditPersistence.ts`, `apps/web/src/admin/objectQuickEditTransforms.ts`, `apps/api/src/objects/objects.service.ts` | Quick edit serializes different payloads per column and can remove rows when status filter no longer matches. | Search/status/location filters, every editable quick column, invalid developer/coordinates/completion, status change with active filter. |
-| Admin object editor form | `apps/web/src/admin/ObjectsAdminPage.tsx`, `apps/api/src/objects/objects.service.ts` | Local validation/payload mapping must match backend validation. `featuresText` is JSON and coordinates are parsed manually. | Create draft, edit all content sections, invalid/valid URL, invalid/valid coordinates, JSON error/object JSON, publish validation. |
-| Admin object media lifecycle | `apps/web/src/admin/ObjectsAdminPage.tsx`, `apps/api/src/objects/objects.controller.ts`, `apps/api/src/files/files.controller.ts`, `apps/api/src/files/files.service.ts` | Create route can create object before PDF/gallery save. Gallery uses staged stream upload, batch layout and best-effort cleanup. | Create with PDF, create with gallery, edit gallery reorder/cover/section/delete, upload failure, cleanup permissions, PDF upload limit/delete. |
-| Admin users permissions display/actions | `apps/web/src/admin/UsersAdminPage.tsx`, `apps/api/src/users/users.service.ts`, `apps/api/prisma/seed.ts` | Role permissions are displayed from backend role data; user role/status changes can affect sessions and current user. | Load roles, create user, edit role/status/password, deactivate/reactivate, current user action restrictions, permissions panel. |
-| Admin catalog links | `apps/web/src/admin/CatalogLinksAdminPage.tsx`, `apps/api/src/catalog-links/catalog-links.service.ts`, `apps/api/src/objects/objects.service.ts` | Admin page loads all published objects by paginating `GET /objects`; public links rely on valid targets. | Many published objects, add/delete/reorder links, disabled links, duplicate labels, invalid KRT/developer/object target. |
-| Admin imports and feeds | `apps/web/src/admin/ImportAdminPage.tsx`, `apps/web/src/admin/FeedsAdminPage.tsx`, `apps/api/src/wordpress-import/wordpress-import.service.ts`, `apps/api/src/feeds/feeds.service.ts` | UI triggers long-running backend commands and polls feed runs. State can go stale while commands run. | WP preview/run disabled states and reports, feed analyze URL/file, source create/edit/delete, preview/run/stop, polling updates, run detail units. |
-| Global styles and themes | `apps/web/src/styles.css`, `apps/web/src/app-theme.css`, `apps/web/src/appTheme.ts` | Broad selectors and `html[data-app-theme]` overrides affect shell, catalog, map, object detail and admin together. | Both themes, `/cabinet`, `/catalog`, `/catalog?view=list`, `/catalog/map`, `/objects/:slug`, `/admin/objects`, editor gallery modal, `/admin/users`, `/admin/catalog-links`, `/admin/import`, `/admin/feeds`, mobile width. |
+Проверить:
 
-### App.tsx-specific risks
+- 401;
+- 403;
+- безопасный 404;
+- разные роли;
+- прямой переход по URL;
+- seed permissions;
+- IDOR.
 
-- `apps/web/src/App.tsx` owns `AuthProvider` composition, route rendering, sidebar, theme toggle, login/register UI, cabinet profile/password/photo, admin home and `AccessDenied`.
-- Changing `apps/web/src/App.tsx` can affect authenticated and unauthenticated routes at once, because `/login`, `/cabinet`, `/catalog`, `/objects/*`, `/admin/*` all pass through the same render branch.
-- `apps/web/src/App.tsx` uses `pathname.startsWith('/admin/...')`; route prefix order matters for nested admin routes.
-- `apps/web/src/App.tsx` treats unknown authenticated app paths that pass active-section logic as cabinet/admin/catalog fallback depending on prefix; direct QA is required for malformed paths like `/catalog/unknown` and `/admin/unknown`.
-- `apps/web/src/App.tsx` imports global styles directly; editing/removing imports can blank styling across the whole frontend.
+## Prisma, migrations и seed
 
-### Styles that require manual verification before changes
+Риск:
 
-- Shell/layout: `.app-shell`, `.sidebar`, `.sidebar--open`, `.workspace`, `.workspace:has(...)`, `.page-header`, `.content-panel` in `apps/web/src/styles.css`.
-- Catalog: `.catalog-page`, `.catalog-filters`, `.catalog-quick-links`, `.catalog-grid`, `.catalog-list`, `.catalog-card`, `.catalog-list-item`, `.catalog-pagination` in `apps/web/src/styles.css`.
-- Map: `.catalog-map-layout`, `.catalog-map-panel`, `.catalog-map-list`, `.catalog-map-list-toggle`, `.yandex-map-shell`, `.yandex-map`, `.map-price-marker`, `.map-object-card`, `.map-fallback`, `.map-balloon` in `apps/web/src/styles.css`.
-- Admin: `.admin-users`, `.admin-objects`, `.admin-catalog-links`, `.admin-feeds`, `.admin-import`, `.toolbar`, `.admin-panel`, `.object-quick-edit-table`, `.object-form-section`, `.gallery-modal`, `.gallery-tile-*`, `.catalog-link-*` in `apps/web/src/styles.css`.
-- Object detail: `.object-detail-page`, `.object-detail-header`, `.detail-section`, `.media-gallery-frame`, `.object-image-carousel`, `.carousel-*`, `.object-feed-units-*`, `.object-feed-media-*`, `.object-content-sections` in `apps/web/src/styles.css`.
-- Themes: all broad `html[data-app-theme]` override groups in `apps/web/src/app-theme.css`.
+- потеря данных;
+- cascade delete;
+- drift;
+- concurrent writes;
+- изменение исторического поведения.
 
-## Deep backend/API risk index
+Проверить:
 
-Дата углубленного backend/API-индекса: 2026-06-01.
+- schema;
+- существующие migrations;
+- migration на чистой временной БД;
+- backup;
+- seed idempotency;
+- FK и unique constraints;
+- реальные PostgreSQL race tests.
 
-Сканировался `apps/api` полностью, кроме `apps/api/dist` и `apps/api/node_modules`. Этот раздел дополняет общие риски backend/API-конкретикой.
+## Shared contracts и serialization
 
-| Backend/API zone | Files | Why risky | Required checks |
-| --- | --- | --- | --- |
-| Object response shape | `apps/api/src/objects/objects.service.ts`, `packages/shared/src/index.ts`, `apps/web/src/catalog/CatalogPage.tsx`, `apps/web/src/admin/ObjectsAdminPage.tsx`, `apps/web/src/objects/ObjectDetailPage.tsx` | `serializeObjectBase()`, `serializeObjectSummary()` and `serializeObjectDetail()` manually shape shared contracts; decimals become strings and coordinates become numbers. | `pnpm --filter @platforma/api test`, `apps/api/tests/api-contract.test.cjs`, catalog list, admin edit, object detail, lot detail. |
-| Shared contracts | `packages/shared/src/index.ts`, `apps/api/src/objects/objects.service.ts`, `apps/api/src/feeds/feeds.service.ts`, `apps/api/src/files/files.service.ts`, `apps/web/src` | No generated OpenAPI/DTO layer was found; frontend/backend rely on manual agreement. | `pnpm build`, `pnpm test`, `apps/api/tests/api-contract.test.cjs`, frontend tests consuming shared types. |
-| Permissions/RBAC | `apps/api/src/auth/permissions.guard.ts`, `apps/api/src/auth/permissions.decorator.ts`, `apps/api/prisma/seed.ts`, controllers under `apps/api/src`, `apps/web/src/App.tsx` | Backend guards and frontend route/action gates can drift; `audit-log:read` is seeded but no audit API was found. | Admin/editor/user login, route visibility, 401/403 behavior, `apps/api/tests/auth-rbac.test.cjs`. |
-| Prisma schema/data model | `apps/api/prisma/schema.prisma`, `apps/api/prisma/migrations`, `apps/api/prisma/seed.ts`, serializers in `apps/api/src` | Schema drives auth, object, file, import, feed and shared response assumptions. | `pnpm --filter @platforma/api prisma:generate`, migrations in staging, API/feed/file/schema tests. |
-| Import idempotency | `tools/wp-import/src/importer.ts`, `tools/feed-import/src/index.ts`, `apps/api/src/wordpress-import/wordpress-import.service.ts`, `apps/api/src/feeds/feeds.service.ts` | API only shells out and locates reports/runs; idempotent upsert/archive/media behavior lives in tools. | WP preview then run, feed preview then run, duplicate run, archive behavior, `tools/wp-import/tests/*`, `tools/feed-import/tests/*`. |
-| Files upload/delete | `apps/api/src/files/files.service.ts`, `apps/api/src/files/files.controller.ts`, `apps/api/src/files/media.controller.ts`, `apps/api/src/files/s3-storage.service.ts`, `apps/api/src/files/image-variants.ts` | Upload limits, MinIO writes, variants and linked delete checks interact; media display uses cookie path. | Upload image/PDF/XML, variants, `/files/:id/content`, `/media/files/:id/content`, delete linked/unlinked files. |
-| Feed media file links | `apps/api/src/files/files.service.ts`, `apps/api/prisma/schema.prisma`, `tools/feed-import/src/index.ts` | `File` has `feedMediaAssets`, but current `FilesService.delete()` linked-file count checks profile photos, object images, object files and feed XML sources; feed media delete behavior is a review point before changing deletion. | Feed import with media, object detail lot media, delete attempts for feed media files, file variant tests. |
-| Map object query | `apps/api/src/map/map.service.ts`, `apps/api/src/objects/objects.service.ts`, `apps/web/src/catalog/CatalogPage.tsx`, `apps/web/src/map/YandexMap.tsx` | Map endpoint duplicates catalog-like filters but forces coordinates and returns `MapObject`, not `RealEstateObjectSummary`. | `/catalog` vs `/catalog/map` filter parity, coordinate-only behavior, `limit` cap, marker card fields. |
-| Auth cookies/refresh | `apps/api/src/auth/auth.controller.ts`, `apps/api/src/auth/auth.service.ts`, `apps/api/src/auth/cookies.ts`, `apps/api/src/main.ts`, `apps/web/src/auth/AuthProvider.tsx`, `apps/web/src/admin/api.ts` | Access token, refresh cookie, media cookie and CORS credentials must work as one flow. | Login, refresh after 401, parallel refresh, logout, media images, cross-origin deploy. |
-| Feed run queue/stop | `apps/api/src/feeds/feeds.service.ts`, `tools/feed-import/src/index.ts`, `apps/web/src/admin/FeedsAdminPage.tsx` | `POST /feeds/sources/:id/run` returns pending run before detached process finishes; stop searches active map, `/proc` and `pgrep`. | Run feed, poll `GET /feeds/runs/:id`, stop queued run, stop running process, verify final status. |
-| WordPress command/report lookup | `apps/api/src/wordpress-import/wordpress-import.service.ts`, `tools/wp-import/src/index.ts`, `apps/web/src/admin/ImportAdminPage.tsx` | Service returns latest report created after command start; active command lock is in memory. | Preview/run reports, concurrent import attempt, command failure with report, command failure without report. |
-| Catalog links replace semantics | `apps/api/src/catalog-links/catalog-links.service.ts`, `apps/web/src/admin/CatalogLinksAdminPage.tsx` | Admin `PUT /catalog-links/admin` deletes rows omitted from payload and validates target by type. | Add/reorder/delete/disable links, developer/KRT/sales targets, public `GET /catalog-links`. |
-| Audit log absent API | `apps/api/prisma/schema.prisma`, `apps/api/src/objects/objects.service.ts`, `apps/api/src/users/users.service.ts`, `apps/api/prisma/seed.ts` | Services write `AuditLog` and seed `audit-log:read`, but no controller/shared type/frontend consumer was found. | Service audit assertions, DB inspection if audit behavior matters; do not assume an HTTP audit API exists. |
+Риск:
 
-### Most dangerous backend endpoints
+- frontend compile проходит,
+  но runtime response отличается;
+- Prisma Decimal, BigInt, Date и JSON
+  сериализуются неверно;
+- backend возвращает лишние чувствительные поля.
 
-- `GET /objects`, `GET /objects/:id`, `GET /objects/slug/:slug`: shared object response drives catalog/admin/detail/map-adjacent flows; confirmed in `apps/api/src/objects/objects.service.ts` and `apps/web/src`.
-- `PATCH /objects/:id`, `PATCH /objects/:id/status`, `POST /objects/:id/publish`: lifecycle, validation and audit behavior are tightly coupled in `apps/api/src/objects/objects.service.ts`.
-- `POST /objects/:id/gallery/stream`, `PATCH /objects/:id/gallery/batch`, `DELETE /objects/:id/gallery/:imageId`: staged files, batch layout, cover and cleanup logic cross `apps/api/src/objects/objects.service.ts` and `apps/api/src/files/files.service.ts`.
-- `POST /files/upload`, `GET /files/:id/content`, `GET /media/files/:id/content`, `DELETE /files/:id`: storage, variants, cookie auth and linked delete protection cross `apps/api/src/files` and `apps/web/src/files/SecureImage.tsx`.
-- `POST /auth/refresh`, `POST /auth/logout`, `POST /auth/login`: session/cookie behavior crosses `apps/api/src/auth`, `apps/api/src/main.ts`, `apps/web/src/auth/AuthProvider.tsx`, `apps/web/src/admin/api.ts`.
-- `GET /map/objects`: filter parity with catalog and coordinate-only behavior live in `apps/api/src/map/map.service.ts`.
-- `POST /wordpress-import/run`: can mutate objects/media and archive imported objects through `tools/wp-import/src/importer.ts`.
-- `POST /feeds/sources/:id/run`, `POST /feeds/runs/:id/stop`: long-running detached process and queue state live in `apps/api/src/feeds/feeds.service.ts`.
+Проверить:
 
-### Backend test set after changes
+- explicit serializers;
+- shared consumers;
+- API contract tests;
+- отсутствие запрещённых полей.
 
-- `pnpm --filter @platforma/api test`
-- `pnpm --filter @platforma/wp-import test` after WordPress import changes.
-- `pnpm --filter @platforma/feed-import test` after feed import/parser/media changes.
-- `pnpm test` after shared contract, permissions, object response, file/media or auth changes.
+## Files, media и object storage
 
-## Deep import risk index
+Риск:
 
-Дата углубленного import-индекса: 2026-06-01.
+- публичный доступ;
+- orphan objects;
+- удаление связанного файла;
+- MIME и size mismatch;
+- storage и DB расходятся.
 
-Подробный import-index: `docs/IMPORT_INDEX.md`.
+Проверить:
 
-| Import risk zone | Files | Why risky | Required manual checks |
-| --- | --- | --- | --- |
-| WordPress preview write boundary | `tools/wp-import/src/index.ts`, `tools/wp-import/src/importer.ts`, `apps/api/src/wordpress-import/wordpress-import.service.ts`, `apps/web/src/admin/ImportAdminPage.tsx` | Preview still writes `ImportReport`, but must not call object/media persistence. The boundary is `if (mode === 'run')` in `tools/wp-import/src/importer.ts`. | Run WP preview on staging only, verify `ImportReport` exists and `RealEstateObject`/media counts do not change. |
-| WordPress run idempotency | `tools/wp-import/src/importer.ts`, `apps/api/prisma/schema.prisma`, `tools/wp-import/tests/importer-manual-overrides.test.cjs`, `tools/wp-import/tests/importer-archive-source.test.cjs` | Object/file/link dedup depends on `wpPostId`, `wpAttachmentId`, slug conflict handling, `sourceMetaKey` cleanup and manual override audit replay. | Run twice on staging, inspect duplicate objects/files/images/files, verify manually edited address/coords/developer/location fields survive. |
-| WordPress archive behavior | `tools/wp-import/src/importer.ts`, `tools/wp-import/tests/importer-archive-source.test.cjs`, `.env.example`, `tools/wp-import/.env.example` | Missing imported WP objects are archived only when `WP_IMPORT_LIMIT` is empty/null. A mistaken full run can archive objects unexpectedly. | Check `WP_IMPORT_LIMIT`, compare source WP ids, inspect archived object count in report and catalog/admin filters. |
-| WordPress source and local uploads | `tools/wp-import/src/env.ts`, `tools/wp-import/src/wordpress-client.ts`, `.env.example`, `tools/wp-import/.env.example`, `docs/staging-production-env-checklist.md` | WP DB connection, post type, table prefix and uploads path are environment-sensitive. Local file absence produces warnings and missing media. | Verify `WP_DB_*`, `WP_TABLE_PREFIX`, `WP_POST_TYPE`, `WP_UPLOADS_PATH`, Docker mount path and read-only WP DB user before run. |
-| WordPress mapper assumptions | `tools/wp-import/src/mapper.ts`, `tools/wp-import/tests/mapper.test.cjs` | Legacy meta keys, taxonomy slugs and MIME allow-lists are brittle. Empty developer/coordinates/prices can produce nulls or warnings. | Check sample mapped objects for developer, locations, metro, coordinates, prices, descriptions, images and PDFs in preview report. |
-| WordPress repair separation | `tools/wp-import/src/index.ts`, `tools/wp-import/src/repair.ts`, `tools/wp-import/src/developer-aliases.ts` | Repair mutates primary locations and developers, has no HTTP endpoint and no `ImportReport`; it is not the same flow as main import. | Always run repair preview first, inspect location candidates and developer alias plans, then verify catalog filters/admin object locations after repair run. |
-| Feed preview write boundary | `tools/feed-import/src/index.ts`, `apps/api/src/feeds/feeds.service.ts`, `apps/web/src/admin/FeedsAdminPage.tsx` | Preview writes `FeedImportRun` and source timestamps but must not persist `FeedUnit`, media or object feed aggregates. Boundary is `if (options.mode === 'run')` in `tools/feed-import/src/index.ts`. | Run feed preview on staging, verify run summary, no new/updated units/media/object aggregate changes. |
-| Feed run queue and stop | `apps/api/src/feeds/feeds.service.ts`, `tools/feed-import/src/index.ts`, `apps/web/src/admin/FeedsAdminPage.tsx` | Run returns pending immediately, queue concurrency is 3, detached process tracking is in memory and stop depends on active map, `/proc` and `pgrep`. | Start run, observe polling/progress, stop queued and running jobs, verify final run status and no stuck `PENDING` run. |
-| Feed idempotency and archiving | `tools/feed-import/src/index.ts`, `apps/api/prisma/schema.prisma`, `tools/feed-import/tests/import-engine.test.cjs` | Units upsert by `(sourceId, externalId)`, missing units are archived, index feeds namespace ids, and media links are replaced. | Run same source twice, inspect created/updated/archived counts, duplicate units, archived missing units, object feed aggregates. |
-| Feed source mapping | `apps/api/src/feeds/feeds.service.ts`, `tools/feed-import/src/index.ts`, `apps/web/src/admin/FeedsAdminPage.tsx`, `apps/web/src/admin/feedSourceMatching.ts` | Incorrect mapping/filterJson can route units to wrong objects or drop units entirely. Active mappings override `FeedSource.objectId`. | Analyze source, inspect generated mappings, preview units by object, verify catalog lot counts and object detail lots. |
-| Feed XML/file validation | `apps/api/src/feeds/feeds.service.ts`, `apps/api/src/files/files.service.ts`, `apps/api/src/files/file-upload.constants.ts`, `tools/feed-import/src/storage.ts`, `tools/feed-import/src/index.ts` | Analyze XML validation and saved FILE source validation are different paths; FILE source run depends on stored `File.key` in MinIO/S3. | Upload valid/invalid XML, analyze URL/file/index, run FILE source, verify missing file errors and size/MIME behavior. |
-| Feed media import | `tools/feed-import/src/index.ts`, `tools/feed-import/src/storage.ts`, `tools/feed-import/src/image-variants.ts`, `apps/api/prisma/schema.prisma`, `apps/api/src/files/files.service.ts` | Media download failures are warnings; content type may fall back to extension/octet-stream; feed media files link through `FeedMediaAsset`. File delete behavior for feed media needs review before storage changes. | Run feed with media, verify media warnings, variants, object detail lot media, and linked file delete protection expectations. |
-| MinIO/S3 for imports | `tools/wp-import/src/storage.ts`, `tools/feed-import/src/storage.ts`, `.env.example`, `apps/api/.env.example`, `tools/wp-import/.env.example` | Both import tools need S3-compatible storage for media and feed FILE reads. Bucket creation/read/write failures can fail runs or media imports. | Verify `S3_ENDPOINT`, `S3_PUBLIC_ENDPOINT`, `MINIO_BUCKET`, credentials, bucket existence and public/media content access. |
+- upload;
+- download;
+- linked delete;
+- private access;
+- checksums;
+- cleanup и recovery;
+- anonymous bucket access;
+- auth cookies и headers.
 
-### Import checks after changes
+## Frontend routing и navigation
 
-- Documentation-only import index changes do not require running import/repair/feed runs.
-- After WordPress import code changes: run targeted tests `pnpm --filter @platforma/wp-import test`, then manually verify WP preview before any run.
-- After WordPress repair code changes: inspect repair preview output before run; dedicated repair tests are currently not found in `tools/wp-import/tests`.
-- After feed parser/import changes: run `pnpm --filter @platforma/feed-import test`, `pnpm --filter @platforma/api test` for feed API changes, then manually verify analyze/preview/run/stop on staging.
-- Before production import actions: verify env with `.env.example`, `apps/api/.env.example`, `tools/wp-import/.env.example`, `docs/staging-production-env-checklist.md`.
+Риск:
 
-## Project presentations risk zone
+- route не перехвачен;
+- direct reload не работает;
+- permission gate отличается от backend;
+- browser back/forward ломает state.
 
-Дата добавления: 2026-07-20.
+Проверить:
 
-| Risk | Files | Required checks |
-| --- | --- | --- |
-| Authenticated access boundary | `apps/api/src/project-presentations/project-presentations-admin.guard.ts`, `apps/api/src/lot-presentations/lot-presentations-access.guard.ts`, `apps/web/src/presentations/presentationAccess.ts`, `apps/web/src/App.tsx` | Проверить доступ ролей admin/editor/user в production и обязательный 401 без JWT; frontend visibility не заменяет backend `JwtAuthGuard` |
-| Snapshot correctness | `apps/api/src/project-presentations/project-presentations.service.ts`, `project-presentations.types.ts` | После постановки изменить черновик/объект и убедиться, что document snapshot и PDF не изменились |
-| Worker recovery and retry | `project-presentations-worker.service.ts` | Проверить restart на `PENDING/RUNNING`, CAS claim, failure progress и лимит retry |
-| Storage lifecycle | `project-presentations.service.ts`, `project-presentations-pdf.service.ts`, `apps/api/src/files/files.service.ts` | Проверить missing source file, custom cover upload/replace, лимит 10 МБ, переключение на фото ЖК, удаление draft/document и отсутствие orphan File/object |
-| PDF layout and fonts | `project-presentations-pdf.service.ts`, `apps/api/assets/project-presentations` | Сгенерировать 1 и 12 ЖК, проверить `540 x 675`, кириллицу/₽, длинные поля, 0–3 изображения, QR и кликабельные CTA |
-| Optimistic autosave | `ProjectPresentationEditorPage.tsx`, `projectPresentationApi.ts` | Открыть один черновик в двух вкладках и проверить понятный version conflict без тихой потери данных |
+- direct URL;
+- internal navigation;
+- back и forward;
+- logged-out redirect;
+- denied route;
+- unknown entity.
 
-После изменений этой зоны обязательны targeted project-presentation tests, `pnpm --filter @platforma/api test`, `pnpm --filter @platforma/web test`, сборка и ручный просмотр реального PDF.
+## Async frontend lifecycle
+
+Риск:
+
+- stale response;
+- duplicate submit;
+- request после unmount;
+- Blob URL leak;
+- polling race;
+- infinite effect loop.
+
+Проверить:
+
+- `AbortController`;
+- request ownership;
+- retry semantics;
+- double click;
+- unmount;
+- route или entity switch;
+- timer cleanup.
+
+## Catalog, map и global styles
+
+Риск:
+
+- catalog filters и URL расходятся;
+- map и list behavior ломается;
+- global CSS влияет на несвязанные страницы.
+
+Проверить:
+
+- catalog filters;
+- pagination;
+- shared URL;
+- map markers и list;
+- selected state;
+- mobile;
+- соседние admin и detail страницы.
+
+## Import tools
+
+Риск:
+
+- неверный mapping;
+- duplicate entities;
+- архивирование данных;
+- неверные media paths;
+- long-running run остаётся зависшим.
+
+Проверить:
+
+- analyze;
+- preview;
+- run;
+- stop и recovery;
+- report warnings и errors;
+- повторный запуск;
+- catalog и detail после import.
+
+## External providers и background jobs
+
+Риск:
+
+- duplicate billing или message;
+- зависший request;
+- lost job;
+- stale lease;
+- повторный side effect;
+- секрет в логах.
+
+Проверить:
+
+- timeout;
+- retries;
+- idempotency;
+- persisted intent;
+- crash и restart;
+- stale recovery;
+- graceful shutdown;
+- safe logging;
+- fake tests.
+
+## Docker, env и deploy
+
+Риск:
+
+- development config попадает в production;
+- secret отсутствует или раскрывается;
+- SIGTERM не доходит до Node;
+- migrations запускаются не тем image;
+- staging использует production resource.
+
+Проверить:
+
+- Compose overlays;
+- required env;
+- `docker compose config`;
+- PID и signal path;
+- healthchecks;
+- distinct DB и buckets;
+- backup;
+- migrate deploy;
+- rollback.
+
+## Правило работы с risk zone
+
+Если задача затрагивает одну из зон:
+
+1. Назови зону в плане.
+2. Найди реальные связанные файлы.
+3. Запусти обязательные проверки.
+4. Не выполняй попутный рефакторинг.
+5. В финальном ответе укажи остаточный риск.

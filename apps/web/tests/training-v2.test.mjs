@@ -8,6 +8,8 @@ const currentDir = dirname(fileURLToPath(import.meta.url));
 const source = (path) => readFileSync(resolve(currentDir, `../src/${path}`), 'utf8');
 const appSource = source('App.tsx');
 const routesSource = source('training/TrainingRoutes.tsx');
+const employeeRoutesSource = source('training/TrainingEmployeeRoutes.tsx');
+const adminRoutesSource = source('training/TrainingAdminRoutes.tsx');
 const apiSource = source('training/trainingApi.ts');
 const projectsSource = source('training/TrainingProjectsPage.tsx');
 const attemptSource = source('training/TrainingAttemptPage.tsx');
@@ -17,26 +19,39 @@ const adminAttemptSource = source('training/TrainingAdminAttemptPage.tsx');
 const viewSource = source('training/trainingView.ts');
 const stylesSource = source('training/training.css');
 const dashboardStylesSource = source('training/trainingAdminDashboard.css');
+const audioStorageSource = source('training/TrainingAudioStoragePage.tsx');
+const audioStorageStylesSource = source('training/trainingAudioStorage.css');
 const appThemeSource = source('app-theme.css');
 
 test('Training V2 keeps existing routes and adds the Stage 5 Part 2 ranking route', () => {
-  assert.equal(routesSource.includes('/^\\/training\\/?$/u'), true);
-  assert.equal(routesSource.includes('/^\\/training\\/attempts\\/([^/]+)\\/?$/u'), true);
-  assert.equal(routesSource.includes('/^\\/admin\\/training\\/?$/u'), true);
-  assert.equal(routesSource.includes('/^\\/admin\\/training\\/projects\\/([^/]+)\\/?$/u'), true);
-  assert.equal(routesSource.includes('/^\\/admin\\/training\\/attempts\\/([^/]+)\\/?$/u'), true);
-  assert.equal(routesSource.includes('/^\\/admin\\/training\\/results\\/?$/u'), true);
-  assert.equal(routesSource.includes('/^\\/admin\\/training\\/ranking\\/?$/u'), true);
+  assert.equal(employeeRoutesSource.includes('/^\\/training\\/?$/u'), true);
+  assert.equal(employeeRoutesSource.includes('/^\\/training\\/attempts\\/([^/]+)\\/?$/u'), true);
+  assert.equal(adminRoutesSource.includes('/^\\/admin\\/training\\/?$/u'), true);
+  assert.equal(adminRoutesSource.includes('/^\\/admin\\/training\\/projects\\/([^/]+)\\/?$/u'), true);
+  assert.equal(adminRoutesSource.includes('/^\\/admin\\/training\\/attempts\\/([^/]+)\\/?$/u'), true);
+  assert.equal(adminRoutesSource.includes('/^\\/admin\\/training\\/results\\/?$/u'), true);
+  assert.equal(adminRoutesSource.includes('/^\\/admin\\/training\\/ranking\\/?$/u'), true);
+  assert.equal(adminRoutesSource.includes('/^\\/admin\\/training\\/audio-storage\\/?$/u'), true);
+});
+
+test('training employee and admin routes are isolated behind lazy route chunks', () => {
+  assert.match(routesSource, /lazy\([\s\S]*?import\('\.\/TrainingEmployeeRoutes'\)/);
+  assert.match(routesSource, /lazy\([\s\S]*?import\('\.\/TrainingAdminRoutes'\)/);
+  assert.match(routesSource, /<Suspense fallback=\{<TrainingRouteLoading \/>\}>/);
+  assert.match(routesSource, /Обновить страницу/);
+  assert.doesNotMatch(employeeRoutesSource, /TrainingAdmin/u);
+  assert.doesNotMatch(adminRoutesSource, /TrainingProjectsPage|TrainingAttemptPage/u);
 });
 
 test('application shell enforces employee and admin permission gates', () => {
   assert.match(appSource, /requiredPermissions: \['training:participate'\]/);
   assert.match(appSource, /hasPermission\('training:participate'\)[\s\S]*?<TrainingEmployeeRoutes/);
   assert.match(appSource, /hasPermission\('admin:access'\)[\s\S]*?pathname\.startsWith\('\/admin\/training'\)/);
-  assert.match(appSource, /hasPermission\('training:projects:manage'\) \|\| hasPermission\('training:results:read'\)/);
-  assert.match(routesSource, /canManageProjects[\s\S]*?TrainingAdminProjectEditorPage/);
-  assert.match(routesSource, /canReadResults[\s\S]*?TrainingAdminAttemptPage/);
+  assert.match(appSource, /hasPermission\('training:projects:manage'\)[\s\S]*?hasPermission\('training:results:read'\)[\s\S]*?hasPermission\('training:audio:read'\)/);
+  assert.match(adminRoutesSource, /canManageProjects[\s\S]*?TrainingAdminProjectEditorPage/);
+  assert.match(adminRoutesSource, /canReadResults[\s\S]*?TrainingAdminAttemptPage/);
   assert.match(appSource, /canReadAudio=\{hasPermission\('training:audio:read'\)\}/);
+  assert.match(appSource, /canDeleteFiles=\{hasPermission\('files:delete'\)\}/);
 });
 
 test('employee flow uses server state, stable start idempotency and current question only', () => {
@@ -114,15 +129,6 @@ test('admin projects overview renders an accessible responsive operations dashbo
   assert.match(adminProjectsSource, /size="icon"[\s\S]*?aria-label="Результаты сотрудников"/u);
   assert.match(adminProjectsSource, /size="icon"[\s\S]*?aria-label="Рейтинг"/u);
   assert.match(adminProjectsSource, /<DialogTitle>Создать проект<\/DialogTitle>/u);
-  assert.match(
-    adminProjectsSource,
-    /<input[\s\S]*?id="training-project-retake"[\s\S]*?type="checkbox"[\s\S]*?\/>\s*<FieldLabel htmlFor="training-project-retake">\s*Разрешить пересдачу после успешного результата/u,
-  );
-  assert.doesNotMatch(adminProjectsSource, /Общий лимит попыток продолжает действовать\./u);
-  assert.match(
-    dashboardStylesSource,
-    /\.training-dashboard-retake-field > input\[type='checkbox'\][\s\S]*?width:\s*18px;[\s\S]*?flex:\s*0 0 18px;/u,
-  );
   assert.match(adminProjectsSource, /aria-label=\{`Открыть проект «\$\{project\.title\}»`\}/u);
   assert.match(adminProjectsSource, /required[\s\S]*?autoComplete="off"[\s\S]*?disabled=\{isCreating\}/u);
   assert.match(dashboardStylesSource, /\.training-dashboard-project-panel\s*\{[\s\S]*?width:\s*100%;/u);
@@ -145,15 +151,30 @@ test('admin project deletion is explicit, destructive and guarded against duplic
   assert.match(editorSource, /Безвозвратно удалить проект «\{project\.title\}»\?/);
   assert.match(editorSource, /tone="danger"[\s\S]*?className="training-editor-delete-action"/);
   assert.match(editorSource, /все попытки и результаты сотрудников/);
-  assert.match(editorSource, /аудиозаписи, материалы, назначения и связанные файлы/);
+  assert.match(editorSource, /Аудиозаписи останутся[\s\S]*?удаляются отдельно вручную/);
   assert.match(editorSource, /pendingAction === 'delete'/);
   assert.match(editorSource, /if \(!accessToken \|\| !project \|\| pendingAction\) return/);
   assert.match(editorSource, /showCloseButton=\{!isDeleting\}/);
   assert.match(editorSource, /disabled=\{isDeleting\}[\s\S]*?Отмена/);
-  assert.match(editorSource, /Удалить всё навсегда/);
+  assert.match(editorSource, /Удалить проект и данные/);
   assert.match(editorSource, /await deleteTrainingAdminProject\(accessToken, project\.id\)/);
   assert.match(editorSource, /navigate\('\/admin\/training'\)/);
   assert.match(editorSource, /deleteError \? <AdminAlert tone="error">/);
+});
+
+test('audio storage page is manual-only, filterable and double-confirmed', () => {
+  assert.match(adminRoutesSource, /canReadAudio[\s\S]*?TrainingAudioStoragePage/);
+  assert.match(adminProjectsSource, /aria-label="Хранилище аудио"[\s\S]*?\/admin\/training\/audio-storage/);
+  assert.match(audioStorageSource, /Автоматического GC нет/);
+  assert.match(audioStorageSource, /Название, включая удалённые/);
+  assert.match(audioStorageSource, /Имя или email/);
+  assert.match(audioStorageSource, /type="date"/);
+  assert.match(audioStorageSource, /confirmationPhrase = `УДАЛИТЬ \$\{selectedItems\.length\}`/);
+  assert.match(audioStorageSource, /createTrainingAudioDeletionManifest[\s\S]*?executeTrainingAudioDeletionManifest/);
+  assert.match(audioStorageSource, /backend повторно проверяет все ссылки на File/);
+  assert.match(audioStorageStylesSource, /overflow-x:\s*auto/);
+  assert.match(audioStorageStylesSource, /@media \(max-width: 720px\)/);
+  assert.match(audioStorageStylesSource, /@media \(prefers-reduced-motion: reduce\)/);
 });
 
 test('question fact actions stay grouped and dark-theme feedback uses readable semantic colors', () => {

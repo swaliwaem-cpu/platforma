@@ -41,7 +41,9 @@ async function run() {
   const requestedTranscriptionModel =
     process.env.OPENAI_TRANSCRIPTION_MODEL ?? DEFAULT_OPENAI_TRANSCRIPTION_MODEL;
   const requestedEvaluationModel =
-    process.env.OPENAI_EVALUATION_MODEL ?? DEFAULT_OPENAI_EVALUATION_MODEL;
+    process.env.OPENAI_EVALUATOR_MODEL ??
+    process.env.OPENAI_EVALUATION_MODEL ??
+    DEFAULT_OPENAI_EVALUATION_MODEL;
   const client = new TrainingOpenAIClient(process.env.OPENAI_API_KEY);
   const transcriber = new OpenAITrainingTranscriber(client);
   const evaluator = new OpenAITrainingEvaluator(client);
@@ -49,9 +51,14 @@ async function run() {
   const failures = [];
   let transcription = null;
   let evaluation = null;
+  const projectId = randomUUID();
+  const attemptId = randomUUID();
+  const questionId = randomUUID();
 
   try {
     transcription = await transcriber.transcribe({
+      projectId,
+      attemptId,
       answerId: randomUUID(),
       fileId: randomUUID(),
       mimeType: 'audio/wav',
@@ -76,6 +83,10 @@ async function run() {
 
   try {
     evaluation = await evaluator.evaluate({
+      projectId,
+      attemptId,
+      questionId,
+      projectKnowledgeVersion: 1,
       questionText: 'Повторите содержание короткой синтетической записи.',
       questionType: 'FOLLOW_UP',
       transcript: evaluationTranscript,

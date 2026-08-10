@@ -5,7 +5,11 @@ export const TRAINING_STAGE3_SNAPSHOT_SCHEMA_VERSION = 2;
 export const TRAINING_SNAPSHOT_SCHEMA_VERSION = 3;
 export const TRAINING_SNAPSHOT_FOLLOW_UP_COUNT = 10;
 export const TRAINING_SCORING_VERSION = 'training-v2-scoring-v1';
-export const TRAINING_EVALUATION_SCHEMA_VERSION = 'training-v2-evaluation-v1';
+export const TRAINING_LEGACY_EVALUATION_SCHEMA_VERSION = 'training-v2-evaluation-v1';
+export const TRAINING_EVALUATION_SCHEMA_VERSION = 'training-v2-evaluation-v2';
+export type TrainingEvaluationSchemaVersion =
+  | typeof TRAINING_LEGACY_EVALUATION_SCHEMA_VERSION
+  | typeof TRAINING_EVALUATION_SCHEMA_VERSION;
 export const TRAINING_FACT_ALIAS_LIMIT = 20;
 export const TRAINING_FACT_ALIAS_MAX_LENGTH = 80;
 export const TRAINING_FACT_ALIAS_MAX_WORDS = 15;
@@ -65,7 +69,7 @@ export type TrainingProjectSnapshotV2 = {
   relatedObjectTitle: string | null;
   settings: TrainingProjectSnapshotSettings;
   scoringVersion: typeof TRAINING_SCORING_VERSION;
-  evaluationSchemaVersion: typeof TRAINING_EVALUATION_SCHEMA_VERSION;
+  evaluationSchemaVersion: TrainingEvaluationSchemaVersion;
   projectKnowledgeVersion: number;
   criteria: {
     main: TrainingProjectSnapshotCriterion[];
@@ -156,7 +160,7 @@ function parseStage3Snapshot(value: Record<string, unknown>): TrainingProjectSna
   if (
     (value.relatedObjectTitle !== null && typeof value.relatedObjectTitle !== 'string') ||
     value.scoringVersion !== TRAINING_SCORING_VERSION ||
-    value.evaluationSchemaVersion !== TRAINING_EVALUATION_SCHEMA_VERSION ||
+    !isTrainingEvaluationSchemaVersion(value.evaluationSchemaVersion) ||
     !isRecord(value.criteria)
   ) {
     throw new Error('Invalid Stage 3 training snapshot');
@@ -176,7 +180,7 @@ function parseStage3Snapshot(value: Record<string, unknown>): TrainingProjectSna
     relatedObjectTitle: value.relatedObjectTitle,
     settings: common.settings,
     scoringVersion: TRAINING_SCORING_VERSION,
-    evaluationSchemaVersion: TRAINING_EVALUATION_SCHEMA_VERSION,
+    evaluationSchemaVersion: value.evaluationSchemaVersion,
     projectKnowledgeVersion: parseProjectKnowledgeVersion(value.projectKnowledgeVersion),
     criteria: { main: mainCriteria, followUp: followUpCriteria },
     questions: common.questions as TrainingProjectSnapshotV2['questions'],
@@ -193,7 +197,7 @@ function parseStage4Snapshot(value: Record<string, unknown>): TrainingProjectSna
     relatedObjectTitle: stage3Shape.relatedObjectTitle,
     settings: common.settings,
     scoringVersion: TRAINING_SCORING_VERSION,
-    evaluationSchemaVersion: TRAINING_EVALUATION_SCHEMA_VERSION,
+    evaluationSchemaVersion: stage3Shape.evaluationSchemaVersion,
     projectKnowledgeVersion: stage3Shape.projectKnowledgeVersion,
     criteria: stage3Shape.criteria,
     questions: common.questions as TrainingProjectSnapshotV3['questions'],
@@ -204,7 +208,7 @@ function parseScoredSnapshotFields(value: Record<string, unknown>, stage: string
   if (
     (value.relatedObjectTitle !== null && typeof value.relatedObjectTitle !== 'string') ||
     value.scoringVersion !== TRAINING_SCORING_VERSION ||
-    value.evaluationSchemaVersion !== TRAINING_EVALUATION_SCHEMA_VERSION ||
+    !isTrainingEvaluationSchemaVersion(value.evaluationSchemaVersion) ||
     !isRecord(value.criteria)
   ) {
     throw new Error(`Invalid ${stage} training snapshot`);
@@ -217,9 +221,17 @@ function parseScoredSnapshotFields(value: Record<string, unknown>, stage: string
 
   return {
     relatedObjectTitle: value.relatedObjectTitle,
+    evaluationSchemaVersion: value.evaluationSchemaVersion,
     projectKnowledgeVersion: parseProjectKnowledgeVersion(value.projectKnowledgeVersion),
     criteria: { main, followUp },
   };
+}
+
+function isTrainingEvaluationSchemaVersion(
+  value: unknown,
+): value is TrainingEvaluationSchemaVersion {
+  return value === TRAINING_LEGACY_EVALUATION_SCHEMA_VERSION ||
+    value === TRAINING_EVALUATION_SCHEMA_VERSION;
 }
 
 function parseProjectKnowledgeVersion(value: unknown) {

@@ -30,6 +30,7 @@ if (!databaseUrl) {
   const { TrainingModule } = require('../dist/training/training.module.js');
   const {
     FakeTrainingTelegramClient,
+    TrainingTelegramClientError,
   } = require('../dist/training/training-telegram-client.js');
   const prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
   const jwt = new JwtService();
@@ -185,6 +186,78 @@ if (!databaseUrl) {
           (message) => message.text === 'Ответ отправьте голосовым сообщением',
         ),
       );
+      client.sendMessage = originalSendMessage;
+    }
+  });
+
+  test('callback answer is dispatched before a slow Telegram message', async () => {
+    const question = await prisma.trainingAttemptQuestion.findFirstOrThrow({
+      where: {
+        status: 'PRESENTED',
+        attempt: { userId: employee.id, projectId: project.id },
+      },
+      orderBy: { sequence: 'asc' },
+    });
+    const originalSendMessage = client.sendMessage.bind(client);
+    const originalAnswerCallbackQuery = client.answerCallbackQuery.bind(client);
+    let releaseMessage;
+    const messageBarrier = new Promise((resolve) => { releaseMessage = resolve; });
+    let messageStarted = false;
+    let callbackAnswered = false;
+
+    client.sendMessage = async (input) => {
+      messageStarted = true;
+      await messageBarrier;
+      await originalSendMessage(input);
+    };
+    client.answerCallbackQuery = async (...args) => {
+      callbackAnswered = true;
+      await originalAnswerCallbackQuery(...args);
+    };
+
+    try {
+      const response = await webhook(
+        callbackUpdate(501, `tr:finish:${question.id}`, 'priority-callback'),
+      );
+
+      assert.equal(response.status, 200);
+      await waitFor(() => messageStarted && callbackAnswered);
+      assert.equal(callbackAnswered, true);
+    } finally {
+      releaseMessage();
+      await waitFor(() =>
+        client.sentMessages.some((message) =>
+          message.text === 'Ответ принят. Следующий вопрос придёт автоматически.',
+        ),
+      );
+      client.sendMessage = originalSendMessage;
+      client.answerCallbackQuery = originalAnswerCallbackQuery;
+    }
+  });
+
+  test('retryable Telegram delivery failure is retried after the webhook ACK', async () => {
+    const originalSendMessage = client.sendMessage.bind(client);
+    let deliveryAttempts = 0;
+    const messagesBefore = client.sentMessages.length;
+
+    client.sendMessage = async (input) => {
+      deliveryAttempts += 1;
+
+      if (deliveryAttempts === 1) {
+        throw new TrainingTelegramClientError('SENDMESSAGE_NETWORK', true);
+      }
+
+      await originalSendMessage(input);
+    };
+
+    try {
+      const response = await webhook(messageUpdate(501, 102, { text: 'Не voice' }));
+
+      assert.equal(response.status, 200);
+      await waitFor(() => client.sentMessages.length === messagesBefore + 1);
+      assert.equal(deliveryAttempts, 2);
+      assert.equal(client.sentMessages.at(-1)?.text, 'Ответ отправьте голосовым сообщением');
+    } finally {
       client.sendMessage = originalSendMessage;
     }
   });

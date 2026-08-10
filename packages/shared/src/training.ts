@@ -33,7 +33,7 @@ export type TrainingLegacySafeBreakdown = {
 };
 
 export type TrainingAiSafeBreakdown = {
-  version: 'training-v2-evaluation-v1';
+  version: 'training-v2-evaluation-v1' | 'training-v2-evaluation-v2';
   basis: 'AI_CRITERIA';
   criteriaPoints: number;
   incorrectFactCount: number;
@@ -53,8 +53,14 @@ export type TrainingObjectiveMetrics = {
   fillerWordsFound: string[];
 };
 
+export type TrainingUnsupportedClaimCategory =
+  | 'HARMLESS_EXTRA'
+  | 'MATERIAL_UNVERIFIED'
+  | 'CONTRADICTORY'
+  | 'UNSAFE_TO_SCORE';
+
 export type TrainingStructuredEvaluation = {
-  schema_version: 'training-v2-evaluation-v1';
+  schema_version: 'training-v2-evaluation-v1' | 'training-v2-evaluation-v2';
   fact_assessments: Array<{
     fact_id: string;
     verdict: 'CORRECT' | 'PARTIAL' | 'MISSING' | 'INCORRECT';
@@ -67,7 +73,11 @@ export type TrainingStructuredEvaluation = {
     evidence: string | null;
     explanation: string;
   }>;
-  unsupported_claims: Array<{ claim: string; evidence: string }>;
+  unsupported_claims: Array<{
+    claim: string;
+    evidence: string;
+    category?: TrainingUnsupportedClaimCategory;
+  }>;
   summary: string;
   requires_review: boolean;
 };
@@ -123,6 +133,88 @@ export type TrainingAdminProjectSummary = {
 
 export type TrainingAdminProjectsResponse = {
   items: TrainingAdminProjectSummary[];
+};
+
+export type TrainingAudioStorageState =
+  | 'LINKED'
+  | 'UNLINKED'
+  | 'DB_ONLY'
+  | 'STORAGE_ONLY'
+  | 'MISSING'
+  | 'PENDING_DELETE'
+  | 'DELETED';
+
+export type TrainingAudioStorageItem = {
+  selectionId: string;
+  storageEntryId: string | null;
+  fileId: string | null;
+  kind: 'SEGMENT' | 'MERGED';
+  bucket: string;
+  key: string;
+  checksum: string | null;
+  etag: string | null;
+  sizeBytes: string | null;
+  mimeType: string | null;
+  project: { id: string | null; title: string } | null;
+  user: { id: string | null; name: string | null; email: string | null } | null;
+  createdAt: string;
+  state: TrainingAudioStorageState;
+  isLinked: boolean;
+  objectExists: boolean;
+  dbRowExists: boolean;
+  canDelete: boolean;
+  pendingManifestId: string | null;
+};
+
+export type TrainingAudioDeletionManifestSummary = {
+  id: string;
+  reason: string;
+  createdAt: string;
+  pendingItems: number;
+  deletedItems: number;
+  lastErrorCodes: string[];
+};
+
+export type TrainingAudioStorageReport = {
+  items: TrainingAudioStorageItem[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+  summary: {
+    linked: number;
+    deletable: number;
+    missing: number;
+    totalBytes: string;
+  };
+  facets: {
+    projects: Array<{ id: string | null; title: string }>;
+    users: Array<{ id: string | null; name: string | null; email: string | null }>;
+  };
+  pendingManifests: TrainingAudioDeletionManifestSummary[];
+  reportGeneratedAt: string;
+  readOnly: true;
+};
+
+export type CreateTrainingAudioDeletionManifestRequest = {
+  selectionIds: string[];
+  reason: string;
+};
+
+export type ExecuteTrainingAudioDeletionManifestRequest = {
+  confirmed: true;
+};
+
+export type TrainingAudioDeletionManifestResponse = {
+  id: string;
+  reason: string;
+  status: 'PENDING' | 'COMPLETED';
+  createdAt: string;
+  completedAt: string | null;
+  totalItems: number;
+  deletedItems: number;
+  pendingItems: number;
+  lastErrorCodes: string[];
 };
 
 export type TrainingAdminProject = {
@@ -213,6 +305,16 @@ export type TrainingMaterialType = 'PDF' | 'OFFICIAL_URL' | 'MANUAL_TEXT' | 'OBJ
 export type TrainingMaterialStatus = 'ACTIVE' | 'ARCHIVED';
 export type TrainingMaterialRevisionStatus = 'READY' | 'FAILED';
 export type TrainingMaterialSuggestionStatus = 'NOT_GENERATED' | 'READY' | 'FAILED';
+export type TrainingMaterialOperationType = 'CREATE_PDF' | 'CREATE_OFFICIAL_URL' | 'IMPORT_OBJECT';
+export type TrainingMaterialOperationStatus =
+  | 'QUEUED'
+  | 'STORING'
+  | 'EXTRACTING'
+  | 'GENERATING'
+  | 'PERSISTING'
+  | 'READY'
+  | 'FAILED'
+  | 'CANCELLED';
 
 export type TrainingMaterialSegment = { locator: string; label: string; text: string };
 export type TrainingMaterialDiff = {
@@ -297,6 +399,47 @@ export type ImportTrainingObjectResponse = {
   followUpQuestions: string[];
   questionGenerationModel: string;
   questionGenerationSourceChars: number;
+};
+
+export type TrainingMaterialOperationItem = {
+  id: string;
+  itemKey: string;
+  ordinal: number;
+  title: string;
+  status: TrainingMaterialOperationStatus;
+  resultMaterialId: string | null;
+  resultRevisionId: string | null;
+  sourceHash: string | null;
+  errorCode: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+};
+
+export type TrainingMaterialOperation = {
+  id: string;
+  projectId: string;
+  type: TrainingMaterialOperationType;
+  status: TrainingMaterialOperationStatus;
+  baseKnowledgeVersion: number;
+  completedKnowledgeVersion: number | null;
+  sourceHash: string | null;
+  progress: {
+    total: number;
+    completed: number;
+    failed: number;
+  };
+  attempts: number;
+  errorCode: string | null;
+  result: Record<string, unknown> | null;
+  items: TrainingMaterialOperationItem[];
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TrainingMaterialOperationsResponse = {
+  items: TrainingMaterialOperation[];
 };
 
 export type CreateTrainingManualMaterialRequest = { title: string; text: string };
@@ -536,6 +679,8 @@ export type TrainingRankingProjectResult = {
   durationSeconds: number;
   factualErrorsCount: number;
   unsupportedClaimsCount: number;
+  harmlessExtraClaimsCount: number;
+  reviewRequiredClaimsCount: number;
 };
 
 export type TrainingAdminRankingRow = {
@@ -563,6 +708,8 @@ export type TrainingAdminRankingRow = {
     weakestCriterion: TrainingRankingCriterionSummary | null;
     factualErrorsCount: number;
     unsupportedClaimsCount: number;
+    harmlessExtraClaimsCount: number;
+    reviewRequiredClaimsCount: number;
   };
 };
 

@@ -29,7 +29,7 @@ export class TrainingAudioAccessController {
     response.setHeader('Cache-Control', 'private, no-store');
     response.setHeader('Pragma', 'no-cache');
     response.setHeader('X-Content-Type-Options', 'nosniff');
-    response.setHeader('Content-Disposition', 'inline; filename="training-answer-audio.wav"');
+    response.setHeader('Content-Disposition', `inline; filename="${audio.fileName}"`);
     response.send(audio.buffer);
   }
 }

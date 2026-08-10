@@ -73,6 +73,8 @@ type CsvDetailRow = {
   isPassed: boolean;
   factualErrorsCount: bigint;
   unsupportedClaimsCount: bigint;
+  harmlessExtraClaimsCount: bigint;
+  reviewRequiredClaimsCount: bigint;
 };
 
 type CriterionAggregate = {
@@ -136,6 +138,14 @@ export class TrainingRankingService {
           (total, detail) => total + toNumber(detail.unsupportedClaimsCount),
           0,
         );
+        const harmlessExtraClaims = rowDetails.reduce(
+          (total, detail) => total + toNumber(detail.harmlessExtraClaimsCount),
+          0,
+        );
+        const reviewRequiredClaims = rowDetails.reduce(
+          (total, detail) => total + toNumber(detail.reviewRequiredClaimsCount),
+          0,
+        );
         lines.push(serializeTrainingRankingCsv([
           row.userId,
           row.userName ?? '',
@@ -157,6 +167,8 @@ export class TrainingRankingService {
           buildAccessSummary(row),
           factualErrors,
           unsupportedClaims,
+          harmlessExtraClaims,
+          reviewRequiredClaims,
         ]));
       }
 
@@ -445,7 +457,11 @@ export class TrainingRankingService {
         COALESCE(SUM(answer_metrics."factualErrorsCount"), 0)::bigint
           AS "factualErrorsCount",
         COALESCE(SUM(answer_metrics."unsupportedClaimsCount"), 0)::bigint
-          AS "unsupportedClaimsCount"
+          AS "unsupportedClaimsCount",
+        COALESCE(SUM(answer_metrics."harmlessExtraClaimsCount"), 0)::bigint
+          AS "harmlessExtraClaimsCount",
+        COALESCE(SUM(answer_metrics."reviewRequiredClaimsCount"), 0)::bigint
+          AS "reviewRequiredClaimsCount"
       FROM best_results
       JOIN scoped_projects p ON p."id" = best_results."projectId"
       LEFT JOIN "training_attempt_questions" question ON question."attempt_id" = best_results."id"
@@ -458,7 +474,24 @@ export class TrainingRankingService {
           jsonb_array_length(
             CASE WHEN jsonb_typeof(answer."evaluation_json" -> 'unsupported_claims') = 'array'
               THEN answer."evaluation_json" -> 'unsupported_claims' ELSE '[]'::jsonb END
-          )::bigint AS "unsupportedClaimsCount"
+          )::bigint AS "unsupportedClaimsCount",
+          (
+            SELECT COUNT(*)::bigint
+            FROM jsonb_array_elements(
+              CASE WHEN jsonb_typeof(answer."evaluation_json" -> 'unsupported_claims') = 'array'
+                THEN answer."evaluation_json" -> 'unsupported_claims' ELSE '[]'::jsonb END
+            ) unsupported_claim(value)
+            WHERE unsupported_claim.value ->> 'category' = 'HARMLESS_EXTRA'
+          ) AS "harmlessExtraClaimsCount",
+          (
+            SELECT COUNT(*)::bigint
+            FROM jsonb_array_elements(
+              CASE WHEN jsonb_typeof(answer."evaluation_json" -> 'unsupported_claims') = 'array'
+                THEN answer."evaluation_json" -> 'unsupported_claims' ELSE '[]'::jsonb END
+            ) unsupported_claim(value)
+            WHERE COALESCE(unsupported_claim.value ->> 'category', 'LEGACY_REVIEW')
+              <> 'HARMLESS_EXTRA'
+          ) AS "reviewRequiredClaimsCount"
         FROM jsonb_array_elements(
           CASE WHEN jsonb_typeof(answer."evaluation_json" -> 'fact_assessments') = 'array'
             THEN answer."evaluation_json" -> 'fact_assessments' ELSE '[]'::jsonb END
@@ -494,6 +527,8 @@ export class TrainingRankingService {
       durationSeconds: detail.durationSeconds,
       factualErrorsCount: analytics.byAttempt.get(detail.attemptId)?.factualErrorsCount ?? 0,
       unsupportedClaimsCount: analytics.byAttempt.get(detail.attemptId)?.unsupportedClaimsCount ?? 0,
+      harmlessExtraClaimsCount: analytics.byAttempt.get(detail.attemptId)?.harmlessExtraClaimsCount ?? 0,
+      reviewRequiredClaimsCount: analytics.byAttempt.get(detail.attemptId)?.reviewRequiredClaimsCount ?? 0,
     }));
 
     return {
@@ -523,6 +558,8 @@ export class TrainingRankingService {
         weakestCriterion: analytics.weakest,
         factualErrorsCount: analytics.factualErrorsCount,
         unsupportedClaimsCount: analytics.unsupportedClaimsCount,
+        harmlessExtraClaimsCount: analytics.harmlessExtraClaimsCount,
+        reviewRequiredClaimsCount: analytics.reviewRequiredClaimsCount,
       },
     };
   }
@@ -544,12 +581,24 @@ function buildScopedProjectsWhere(query: TrainingAdminRankingQueryInput) {
 
 function aggregateDetails(details: RankingDetailRow[]) {
   const criteria = new Map<string, CriterionAggregate>();
-  const byAttempt = new Map<string, { factualErrorsCount: number; unsupportedClaimsCount: number }>();
+  const byAttempt = new Map<string, {
+    factualErrorsCount: number;
+    unsupportedClaimsCount: number;
+    harmlessExtraClaimsCount: number;
+    reviewRequiredClaimsCount: number;
+  }>();
   let factualErrorsCount = 0;
   let unsupportedClaimsCount = 0;
+  let harmlessExtraClaimsCount = 0;
+  let reviewRequiredClaimsCount = 0;
 
   for (const detail of details) {
-    const attemptMetrics = { factualErrorsCount: 0, unsupportedClaimsCount: 0 };
+    const attemptMetrics = {
+      factualErrorsCount: 0,
+      unsupportedClaimsCount: 0,
+      harmlessExtraClaimsCount: 0,
+      reviewRequiredClaimsCount: 0,
+    };
     const evaluations = Array.isArray(detail.evaluations) ? detail.evaluations : [];
     let snapshot;
     try {
@@ -575,9 +624,17 @@ function aggregateDetails(details: RankingDetailRow[]) {
           .map((assessment) => String((assessment as Record<string, unknown>).fact_id)),
       );
       attemptMetrics.factualErrorsCount += incorrectIds.size;
-      attemptMetrics.unsupportedClaimsCount += Array.isArray(evaluation.unsupported_claims)
-        ? evaluation.unsupported_claims.length
-        : 0;
+      const unsupportedClaims = Array.isArray(evaluation.unsupported_claims)
+        ? evaluation.unsupported_claims
+        : [];
+      attemptMetrics.unsupportedClaimsCount += unsupportedClaims.length;
+      for (const claim of unsupportedClaims) {
+        if (isRecord(claim) && claim.category === 'HARMLESS_EXTRA') {
+          attemptMetrics.harmlessExtraClaimsCount += 1;
+        } else {
+          attemptMetrics.reviewRequiredClaimsCount += 1;
+        }
+      }
 
       if (detail.reviewDecision === 'OVERRIDDEN') continue;
       const criterionAssessments = Array.isArray(evaluation.criterion_assessments)
@@ -601,6 +658,8 @@ function aggregateDetails(details: RankingDetailRow[]) {
     byAttempt.set(detail.attemptId, attemptMetrics);
     factualErrorsCount += attemptMetrics.factualErrorsCount;
     unsupportedClaimsCount += attemptMetrics.unsupportedClaimsCount;
+    harmlessExtraClaimsCount += attemptMetrics.harmlessExtraClaimsCount;
+    reviewRequiredClaimsCount += attemptMetrics.reviewRequiredClaimsCount;
   }
 
   const criterionSummaries = [...criteria.values()]
@@ -612,6 +671,8 @@ function aggregateDetails(details: RankingDetailRow[]) {
     byAttempt,
     factualErrorsCount,
     unsupportedClaimsCount,
+    harmlessExtraClaimsCount,
+    reviewRequiredClaimsCount,
     strongest: criterionSummaries[0] ?? null,
     weakest: criterionSummaries.length > 1 ? criterionSummaries.at(-1) ?? null : null,
   };
@@ -636,7 +697,7 @@ function buildSummaryText(input: {
     ? ` Сильнейший критерий: ${input.analytics.strongest.title}; слабейший: ${input.analytics.weakest.title}.`
     : ' Недостаточно данных для сравнения критериев.';
   const coverageText = input.coverage === null ? 'нет текущих доступных проектов' : `текущий охват ${input.coverage}%`;
-  return `Пройдено ${input.passed} из ${input.completed} завершённых проектов; средний лучший балл ${input.averageBestScore}; ${coverageText}. Ошибок в фактах: ${input.analytics.factualErrorsCount}; неподтверждённых утверждений: ${input.analytics.unsupportedClaimsCount}.${criterionText}`;
+  return `Пройдено ${input.passed} из ${input.completed} завершённых проектов; средний лучший балл ${input.averageBestScore}; ${coverageText}. Ошибок в фактах: ${input.analytics.factualErrorsCount}; неподтверждённых утверждений: ${input.analytics.unsupportedClaimsCount} (безобидных: ${input.analytics.harmlessExtraClaimsCount}; требующих проверки: ${input.analytics.reviewRequiredClaimsCount}).${criterionText}`;
 }
 
 function buildAccessSummary(row: RankingCoreRow) {
@@ -706,4 +767,6 @@ const CSV_HEADERS = [
   'currentAccessSummary',
   'factualErrorsCount',
   'unsupportedClaimsCount',
+  'harmlessExtraClaimsCount',
+  'reviewRequiredClaimsCount',
 ];

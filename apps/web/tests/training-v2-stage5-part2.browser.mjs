@@ -10,14 +10,8 @@ const page = await browser.newPage();
 const queries = [];
 const exportQueries = [];
 let exportReads = 0;
-let initialRankingReleased = false;
-let releaseInitialRanking;
-const initialRankingGate = new Promise((resolve) => {
-  releaseInitialRanking = () => {
-    initialRankingReleased = true;
-    resolve();
-  };
-});
+let holdInitialRankingResponses = true;
+const initialRankingBarrier = createBarrier(10_000);
 
 try {
   await page.route('http://localhost:3000/**', async (route) => {
@@ -27,7 +21,7 @@ try {
     if (url.pathname === '/auth/refresh') return json(route, { accessToken: 'ranking-token', user: { id: '1', email: 'admin@test', name: 'Admin', status: 'ACTIVE', role: { id: '1', name: 'admin' }, permissions: ['admin:access', 'training:results:read'] } });
     if (url.pathname === '/training/admin/ranking') {
       queries.push(Object.fromEntries(url.searchParams.entries()));
-      if (!initialRankingReleased) await initialRankingGate;
+      if (holdInitialRankingResponses) await initialRankingBarrier.hold();
       const search = url.searchParams.get('search');
       if (search === 'error') return json(route, { message: 'RANKING_FAILED' }, 500);
       return json(route, { items: search === 'empty' ? [] : [fixture(), fixture('u2', 'Борис Брокер', '75.00')], total: search === 'empty' ? 0 : 21, page: Number(url.searchParams.get('page') ?? 1), limit: 20, totalPages: search === 'empty' ? 0 : 2 });
@@ -40,25 +34,26 @@ try {
     return json(route, { message: `Unexpected ${url.pathname}` }, 404);
   });
 
-  await page.goto(`${baseUrl}/admin/training/ranking?theme=c`, { waitUntil: 'domcontentloaded' });
-  await page.getByLabel('Загрузка рейтинга').waitFor();
-  releaseInitialRanking();
+  await page.goto(`${baseUrl}/admin/training/ranking`, { waitUntil: 'domcontentloaded' });
+  await initialRankingBarrier.waitForArrival();
+  try {
+    await page.getByLabel('Загрузка рейтинга').waitFor({ timeout: 5_000 });
+  } finally {
+    holdInitialRankingResponses = false;
+    initialRankingBarrier.release();
+  }
   await page.getByText('Рейтинг сотрудников').waitFor();
   await page.getByText('Анна Брокер').waitFor();
-  assert.deepEqual(await page.locator('tbody tr.training-ranking-row td:nth-child(2) strong').allTextContents(), ['Анна Брокер', 'Борис Брокер']);
+  assert.deepEqual(await page.locator('tbody tr td:first-child strong').allTextContents(), ['1. Анна Брокер', '2. Борис Брокер']);
   await page.getByText('87.50%').waitFor();
-  await page.locator('tbody .training-ranking-access--yes').first().waitFor();
-  assert.equal(await page.getByText('Стабильный результат.').count(), 0);
-  await page.getByRole('button', { name: 'Детали' }).first().click();
-  await page.getByText('Стабильный результат.').waitFor();
-  await page.getByText('Результаты по проектам').click();
+  await page.getByText('По проектам').first().click();
   await page.getByText('Проект А').first().waitFor();
   await page.getByRole('button', { name: 'Далее' }).click();
   await page.getByText('Страница 2 из 2').waitFor();
   assert.equal(queries.at(-1).page, '2');
   await page.getByLabel('Сотрудник').fill('empty');
-  await page.getByLabel('Доступ').selectOption('true');
-  await page.getByRole('button', { name: 'Показать' }).click();
+  await page.getByLabel('Сейчас доступно').selectOption('true');
+  await page.getByRole('button', { name: 'Применить' }).click();
   await page.getByText('Рейтинг пуст').waitFor();
   assert.equal(queries.at(-1).currentlyEligible, 'true');
   await page.getByRole('button', { name: 'Скачать CSV' }).click();
@@ -67,20 +62,66 @@ try {
   assert.equal(exportQueries[0].search, 'empty');
   assert.equal(exportQueries[0].currentlyEligible, 'true');
   await page.getByLabel('Сотрудник').fill('error');
-  await page.getByRole('button', { name: 'Показать' }).click();
+  await page.getByRole('button', { name: 'Применить' }).click();
   await page.getByText('RANKING_FAILED').waitFor();
   assert.equal(await page.getByText('Анна Брокер').count(), 0);
   await page.setViewportSize({ width: 500, height: 900 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
   process.stdout.write('TRAINING_STAGE5_PART2_BROWSER_OK\n');
 } finally {
-  await browser.close();
+  holdInitialRankingResponses = false;
+  initialRankingBarrier.release();
+  try {
+    await page.unrouteAll({ behavior: 'wait' });
+  } finally {
+    await browser.close();
+  }
 }
 
 function fixture(id = 'u1', name = 'Анна Брокер', coverage = '87.50') {
-  return { user: { id, email: `${id}@test`, name }, passedProjectsCount: 2, completedProjectsCount: 2, averageBestScore: '91.50', attemptsUsed: 3, lastCompletedAt: '2026-08-02T10:00:00.000Z', totalDurationSeconds: 240, averageDurationSeconds: '120.00', currentEligibleProjectsCount: 8, currentCompletedEligibleProjectsCount: 7, currentPassedEligibleProjectsCount: 6, currentCoveragePercent: coverage, currentAccess: { allParticipantsProjectsCount: 5, assignedProjectsCount: 3, activeAssignmentsCount: 3 }, bestResults: [{ attemptId: `a-${id}`, projectId: `p-${id}`, projectTitle: 'Проект А', accessMode: 'ASSIGNED_USERS', assignmentStatus: 'ASSIGNED', currentlyEligible: true, finalScore: 95, isPassed: true, completedAt: '2026-08-02T10:00:00.000Z', durationSeconds: 120, factualErrorsCount: 0, unsupportedClaimsCount: 0 }], summary: { text: 'Стабильный результат.', strongestCriterion: null, weakestCriterion: null, factualErrorsCount: 0, unsupportedClaimsCount: 0 } };
+  return { user: { id, email: `${id}@test`, name }, passedProjectsCount: 2, completedProjectsCount: 2, averageBestScore: '91.50', attemptsUsed: 3, lastCompletedAt: '2026-08-02T10:00:00.000Z', totalDurationSeconds: 240, averageDurationSeconds: '120.00', currentEligibleProjectsCount: 8, currentCompletedEligibleProjectsCount: 7, currentPassedEligibleProjectsCount: 6, currentCoveragePercent: coverage, currentAccess: { allParticipantsProjectsCount: 5, assignedProjectsCount: 3, activeAssignmentsCount: 3 }, bestResults: [{ attemptId: `a-${id}`, projectId: `p-${id}`, projectTitle: 'Проект А', accessMode: 'ASSIGNED_USERS', assignmentStatus: 'ASSIGNED', currentlyEligible: true, finalScore: 95, isPassed: true, completedAt: '2026-08-02T10:00:00.000Z', durationSeconds: 120, factualErrorsCount: 0, unsupportedClaimsCount: 0, harmlessExtraClaimsCount: 0, reviewRequiredClaimsCount: 0 }], summary: { text: 'Стабильный результат.', strongestCriterion: null, weakestCriterion: null, factualErrorsCount: 0, unsupportedClaimsCount: 0, harmlessExtraClaimsCount: 0, reviewRequiredClaimsCount: 0 } };
 }
 
 async function json(route, body, status = 200) {
   await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+}
+
+function createBarrier(timeoutMs) {
+  let resolveArrival;
+  const arrival = new Promise((resolve) => { resolveArrival = resolve; });
+  let resolveRelease;
+  const released = new Promise((resolve) => { resolveRelease = resolve; });
+  let releaseTimeout;
+  let isReleased = false;
+
+  const release = () => {
+    if (isReleased) return;
+    isReleased = true;
+    clearTimeout(releaseTimeout);
+    resolveRelease();
+  };
+
+  return {
+    async hold() {
+      resolveArrival();
+      releaseTimeout ??= setTimeout(release, timeoutMs);
+      await released;
+    },
+    async waitForArrival() {
+      await withTimeout(arrival, timeoutMs, 'Ranking request did not reach the fixture barrier');
+    },
+    release,
+  };
+}
+
+async function withTimeout(promise, timeoutMs, message) {
+  let timeout;
+  try {
+    await Promise.race([
+      promise,
+      new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error(message)), timeoutMs); }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
 }

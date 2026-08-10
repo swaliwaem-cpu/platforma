@@ -7,8 +7,7 @@
     "build": "tsc -b && vite build",
     "dev": "vite --host 0.0.0.0",
     "preview": "vite preview --host 0.0.0.0",
-    "test": "node --test tests/*.test.mjs",
-    "test:training:browser": "playwright test --config=playwright.training.config.ts"
+    "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@platforma/shared": "workspace:*",

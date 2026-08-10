@@ -1,4 +1,14 @@
-import { FormEvent, useEffect, useRef, useState } from 'react';
+import {
+  Component,
+  FormEvent,
+  lazy,
+  Suspense,
+  useEffect,
+  useRef,
+  useState,
+  type ErrorInfo,
+  type ReactNode,
+} from 'react';
 import { MenuIcon, MoonIcon, SunIcon } from 'lucide-react';
 import type { AuthUser, UserStatus } from '@platforma/shared';
 
@@ -7,13 +17,10 @@ import { CatalogLinksAdminPage } from './admin/CatalogLinksAdminPage';
 import { FeedsAdminPage } from './admin/FeedsAdminPage';
 import { ImportAdminPage } from './admin/ImportAdminPage';
 import { AdminButton, AdminPanel, AdminStatusBadge } from './admin/AdminUi';
-import { ObjectsAdminPage } from './admin/ObjectsAdminPage';
 import { UsersAdminPage } from './admin/UsersAdminPage';
 import { apiRequest } from './admin/api';
 import { AuthProvider, useAuth } from './auth/AuthProvider';
-import { CatalogPage } from './catalog/CatalogPage';
 import { buildMediaFileContentUrl } from './files/SecureImage';
-import { ObjectDetailPage, ObjectLotDetailPage } from './objects/ObjectDetailPage';
 import { LotPresentationsPage } from './presentations/LotPresentationsPage';
 import { canAccessLotPresentations, canAccessProjectPresentations } from './presentations/presentationAccess';
 import { ProjectPresentationEditorPage } from './presentations/projects/ProjectPresentationEditorPage';
@@ -45,6 +52,30 @@ type CabinetSection = {
   path: string;
   requiredPermissions: readonly string[];
 };
+
+const ObjectsAdminPage = lazy(() =>
+  import('./admin/ObjectsAdminPage').then((module) => ({
+    default: module.ObjectsAdminPage,
+  })),
+);
+
+const CatalogPage = lazy(() =>
+  import('./catalog/CatalogPage').then((module) => ({
+    default: module.CatalogPage,
+  })),
+);
+
+const ObjectDetailPage = lazy(() =>
+  import('./objects/ObjectDetailPage').then((module) => ({
+    default: module.ObjectDetailPage,
+  })),
+);
+
+const ObjectLotDetailPage = lazy(() =>
+  import('./objects/ObjectDetailPage').then((module) => ({
+    default: module.ObjectLotDetailPage,
+  })),
+);
 
 const userStatusLabels: Record<UserStatus, string> = {
   ACTIVE: 'Активен',
@@ -412,12 +443,17 @@ function AppRoutes() {
           hasPermission('admin:access') ? (
             pathname.startsWith('/admin/training') ? (
               trainingEnabled &&
-              (hasPermission('training:projects:manage') || hasPermission('training:results:read')) ? (
+              (
+                hasPermission('training:projects:manage') ||
+                hasPermission('training:results:read') ||
+                hasPermission('training:audio:read')
+              ) ? (
                 <TrainingAdminRoutes
                   canManageProjects={hasPermission('training:projects:manage')}
                   canReadResults={hasPermission('training:results:read')}
                   canReviewResults={hasPermission('training:results:review')}
                   canReadAudio={hasPermission('training:audio:read')}
+                  canDeleteFiles={hasPermission('files:delete')}
                   navigate={navigate}
                   pathname={pathname}
                 />
@@ -432,7 +468,9 @@ function AppRoutes() {
               )
             ) : pathname.startsWith('/admin/objects') ? (
               hasPermission('objects:read') ? (
-                <ObjectsAdminPage pathname={pathname} navigate={navigate} onBack={() => navigate('/admin')} />
+                <ObjectRouteChunk pathname={pathname}>
+                  <ObjectsAdminPage pathname={pathname} navigate={navigate} onBack={() => navigate('/admin')} />
+                </ObjectRouteChunk>
               ) : (
                 <AccessDenied />
               )
@@ -476,18 +514,22 @@ function AppRoutes() {
           )
         ) : objectLotRoute ? (
           hasPermission('objects:read') ? (
-            <ObjectLotDetailPage
-              navigate={navigate}
-              slug={objectLotRoute.slug}
-              unitId={objectLotRoute.unitId}
-              onBack={() => navigate(`/objects/${encodeURIComponent(objectLotRoute.slug)}`)}
-            />
+            <ObjectRouteChunk pathname={pathname}>
+              <ObjectLotDetailPage
+                navigate={navigate}
+                slug={objectLotRoute.slug}
+                unitId={objectLotRoute.unitId}
+                onBack={() => navigate(`/objects/${encodeURIComponent(objectLotRoute.slug)}`)}
+              />
+            </ObjectRouteChunk>
           ) : (
             <AccessDenied />
           )
         ) : objectSlug ? (
           hasPermission('objects:read') ? (
-            <ObjectDetailPage navigate={navigate} slug={objectSlug} onBack={() => navigate('/catalog')} />
+            <ObjectRouteChunk pathname={pathname}>
+              <ObjectDetailPage navigate={navigate} slug={objectSlug} onBack={() => navigate('/catalog')} />
+            </ObjectRouteChunk>
           ) : (
             <AccessDenied />
           )
@@ -512,7 +554,9 @@ function AppRoutes() {
           )
         ) : activeSection === 'catalog' ? (
           hasPermission('objects:read') ? (
-            <CatalogPage navigate={navigate} pathname={pathname} />
+            <ObjectRouteChunk pathname={pathname}>
+              <CatalogPage navigate={navigate} pathname={pathname} />
+            </ObjectRouteChunk>
           ) : (
             <AccessDenied />
           )
@@ -1365,6 +1409,58 @@ function AccessDenied() {
       <p className="muted-text">Текущая роль не открывает этот раздел.</p>
     </div>
   );
+}
+
+function ObjectRouteChunk({ children, pathname }: { children: ReactNode; pathname: string }) {
+  return (
+    <ObjectRouteChunkBoundary pathname={pathname}>
+      <Suspense fallback={<ObjectRouteLoading />}>
+        {children}
+      </Suspense>
+    </ObjectRouteChunkBoundary>
+  );
+}
+
+function ObjectRouteLoading() {
+  return (
+    <AdminPanel className="content-panel" role="status" aria-live="polite">
+      <p className="eyebrow">Объекты</p>
+      <h2>Загрузка раздела</h2>
+      <p className="muted-text">Подготавливаем страницу объектов…</p>
+    </AdminPanel>
+  );
+}
+
+class ObjectRouteChunkBoundary extends Component<
+  { children: ReactNode; pathname: string },
+  { failedPathname: string | null }
+> {
+  override state: { failedPathname: string | null } = { failedPathname: null };
+
+  static getDerivedStateFromError() {
+    return { failedPathname: window.location.pathname };
+  }
+
+  override componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('Failed to render an object route chunk.', error, errorInfo);
+  }
+
+  override render() {
+    if (this.state.failedPathname === this.props.pathname) {
+      return (
+        <AdminPanel className="content-panel" role="alert">
+          <p className="eyebrow">Объекты</p>
+          <h2>Не удалось открыть раздел</h2>
+          <p className="muted-text">Обновите страницу, чтобы загрузить раздел ещё раз.</p>
+          <AdminButton type="button" tone="primary" onClick={() => window.location.reload()}>
+            Обновить страницу
+          </AdminButton>
+        </AdminPanel>
+      );
+    }
+
+    return this.props.children;
+  }
 }
 
 function canAccessPermissions(

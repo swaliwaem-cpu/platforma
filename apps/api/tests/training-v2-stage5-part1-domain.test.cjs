@@ -94,7 +94,29 @@ test('Stage 5 Part 1 protected audio fails closed without an audit on invalid st
   assert.deepEqual(auditWrites, []);
 });
 
-function answerRecord(wav) {
+test('protected audio serves new private WebM Opus files without weakening the audit', async () => {
+  const webm = Buffer.alloc(64);
+  Buffer.from([0x1a, 0x45, 0xdf, 0xa3]).copy(webm);
+  const auditWrites = [];
+  const prisma = {
+    trainingAnswer: { findUnique: async () => answerRecord(webm, 'webm') },
+    auditLog: { create: async (input) => auditWrites.push(input.data) },
+  };
+  const storage = {
+    getBucket: () => 'platforma',
+    getObject: async () => webm,
+  };
+
+  const audio = await new TrainingAudioAccessService(prisma, storage)
+    .readAnswerAudio(answerId, actorId);
+
+  assert.equal(audio.mimeType, 'audio/webm');
+  assert.equal(audio.fileName, 'training-answer-audio.webm');
+  assert.equal(auditWrites.length, 1);
+});
+
+function answerRecord(audio, format = 'wav') {
+  const mimeType = format === 'webm' ? 'audio/webm' : 'audio/wav';
   return {
     id: answerId,
     source: 'TELEGRAM',
@@ -102,11 +124,11 @@ function answerRecord(wav) {
       id: fileId,
       storage: 'MINIO',
       bucket: 'platforma-training-audio',
-      key: `training-v2/answers/${answerId}/merged.wav`,
+      key: `training-v2/answers/${answerId}/merged.${format}`,
       url: null,
-      mimeType: 'audio/wav',
-      sizeBytes: BigInt(wav.length),
-      checksum: createHash('sha256').update(wav).digest('hex'),
+      mimeType,
+      sizeBytes: BigInt(audio.length),
+      checksum: createHash('sha256').update(audio).digest('hex'),
     },
     attemptQuestion: { attempt: { id: attemptId, projectId } },
   };

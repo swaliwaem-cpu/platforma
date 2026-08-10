@@ -9,15 +9,29 @@ import type { TrainingOpenAIUsage } from './training-openai-usage';
 
 export const TRAINING_TRANSCRIBER = Symbol('TRAINING_TRANSCRIBER');
 
+export type TrainingTranscriptionUpload = {
+  sequence: number;
+  filePath: string;
+  fileName: string;
+  mimeType: 'audio/webm' | 'audio/wav';
+  sizeBytes: number;
+  checksum: string;
+  startSeconds: number;
+  endSeconds: number;
+};
+
 export type TrainingTranscriptionInput = {
   projectId: string;
   attemptId: string;
   answerId: string;
   fileId: string;
-  mimeType: 'audio/wav';
+  mimeType: 'audio/webm' | 'audio/wav';
   sizeBytes: number;
   checksum: string;
-  wav: Buffer;
+  filePath?: string;
+  fileName?: string;
+  providerUploads?: TrainingTranscriptionUpload[];
+  wav?: Buffer;
   vocabularyPrompt: string;
 };
 
@@ -32,7 +46,10 @@ export type TrainingTranscriptionResult = {
 };
 
 export interface TrainingTranscriber {
-  transcribe(input: TrainingTranscriptionInput): Promise<TrainingTranscriptionResult>;
+  transcribe(
+    input: TrainingTranscriptionInput,
+    options?: { signal?: AbortSignal },
+  ): Promise<TrainingTranscriptionResult>;
 }
 
 @Injectable()

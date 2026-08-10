@@ -14,9 +14,11 @@ const {
 
 test('OpenAI transcription serializes one WAV multipart part and bounded vocabulary', async () => {
   const wav = makeWav();
+  const usageRecords = [];
   const request = await captureNativeRequest({ text: 'Тестовая расшифровка' }, async (baseUrl) => {
     const transcriber = new OpenAITrainingTranscriber(
       new TrainingOpenAIClient('test-key', fetch, baseUrl),
+      { record: async (value) => { usageRecords.push(value); return true; } },
     );
     const result = await transcriber.transcribe(makeInput(wav, 'Словарь: ЖК Север'));
 
@@ -33,6 +35,10 @@ test('OpenAI transcription serializes one WAV multipart part and bounded vocabul
   assert.match(request.body, /name="language"[\s\S]*ru/u);
   assert.match(request.body, /ЖК Север/u);
   assert.equal(request.raw.includes(wav), true);
+  assert.equal(usageRecords.length, 1);
+  assert.equal(usageRecords[0].outcome, 'accepted');
+  assert.equal(usageRecords[0].operation, 'training_audio_transcription');
+  assert.equal(usageRecords[0].attemptOrdinal, 1);
 });
 
 test('transcription vocabulary normalizes, deduplicates and excludes fact statements', () => {
@@ -95,6 +101,41 @@ test('OpenAI transcription bounds timeout and rejects empty/malformed responses'
   });
 });
 
+test('OpenAI transcription forwards caller abort and does not retry a cancelled request', async () => {
+  await withProviderEnv(async () => {
+    process.env.OPENAI_TRANSCRIPTION_TIMEOUT_MS = '10000';
+    process.env.OPENAI_TRANSCRIPTION_MAX_RETRIES = '2';
+    const controller = new AbortController();
+    let calls = 0;
+    let signalStarted;
+    const started = new Promise((resolve) => { signalStarted = resolve; });
+    const transcriber = makeTranscriber((_url, init) => {
+      calls += 1;
+      signalStarted();
+      return new Promise((_resolve, reject) => {
+        init.signal.addEventListener(
+          'abort',
+          () => reject(new DOMException('aborted', 'AbortError')),
+          { once: true },
+        );
+      });
+    });
+    const request = transcriber.transcribe(
+      makeInput(makeWav(), ''),
+      { signal: controller.signal },
+    );
+
+    await started;
+    controller.abort();
+
+    await assert.rejects(
+      () => request,
+      (error) => error.code === 'OPENAI_ABORTED' && error.attempts === 1,
+    );
+    assert.equal(calls, 1);
+  });
+});
+
 test('Retry-After outside the hard deadline preserves the completed request count', async () => {
   await withProviderEnv(async () => {
     process.env.OPENAI_TRANSCRIPTION_TIMEOUT_MS = '1000';
@@ -133,6 +174,8 @@ function makeTranscriber(fetchImplementation) {
 
 function makeInput(wav, vocabularyPrompt) {
   return {
+    projectId: 'project-id',
+    attemptId: 'attempt-id',
     answerId: 'answer-id',
     fileId: 'file-id',
     mimeType: 'audio/wav',

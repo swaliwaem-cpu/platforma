@@ -7,12 +7,14 @@ const { spawn, spawnSync } = require('node:child_process');
 const { randomUUID, createHash } = require('node:crypto');
 
 const INNER_FLAG = '--inner';
+const IMAGE_ID_FAIL_FAST_FLAG = '--image-id-fail-fast-check';
 const RESOURCE_PREFIX = 'platforma-training-v2-e2e';
-const API_IMAGE = process.env.PLATFORMA_API_IMAGE ?? 'platforma-api:local';
-const WEB_IMAGE = process.env.PLATFORMA_WEB_IMAGE ?? 'platforma-web:local';
+const COMPOSE_ARGS = ['compose', '--file', 'docker-compose.yml', '--env-file', '/dev/null'];
 
 if (process.argv.includes(INNER_FLAG)) {
   runInner().catch(fail);
+} else if (process.argv.includes(IMAGE_ID_FAIL_FAST_FLAG)) {
+  runImageIdFailFastCheck().catch(fail);
 } else {
   runOuter().catch(fail);
 }
@@ -23,6 +25,7 @@ async function runOuter() {
     network: `${RESOURCE_PREFIX}-${suffix}`,
     postgres: `${RESOURCE_PREFIX}-postgres-${suffix}`,
     minio: `${RESOURCE_PREFIX}-minio-${suffix}`,
+    prisma: `${RESOURCE_PREFIX}-prisma-${suffix}`,
     web: `${RESOURCE_PREFIX}-web-${suffix}`,
     e2e: `${RESOURCE_PREFIX}-runner-${suffix}`,
     shutdown: `${RESOURCE_PREFIX}-shutdown-${suffix}`,
@@ -42,6 +45,7 @@ async function runOuter() {
         resources.e2e,
         resources.shutdown,
         resources.web,
+        resources.prisma,
         resources.minio,
         resources.postgres,
       ], { silent: true });
@@ -64,7 +68,18 @@ async function runOuter() {
 
   try {
     await run('docker', ['version', '--format', '{{.Server.Version}}']);
-    await run('docker', ['compose', '--progress', 'plain', 'build', 'api', 'web']);
+    const composeEnvironment = dockerComposeEnvironment();
+    const imageTags = await resolveComposeBuildTags(composeEnvironment);
+    await run('docker', [
+      ...COMPOSE_ARGS,
+      '--progress', 'plain',
+      'build', 'api', 'web',
+    ], { env: composeEnvironment });
+    const apiImageId = await resolveDockerImageId('API', imageTags.api);
+    const webImageId = await resolveDockerImageId('web', imageTags.web);
+    process.stdout.write(`TRAINING_V2_E2E_API_IMAGE_ID=${apiImageId}\n`);
+    process.stdout.write(`TRAINING_V2_E2E_WEB_IMAGE_ID=${webImageId}\n`);
+
     await run('docker', ['network', 'create', resources.network]);
     await run('docker', ['volume', 'create', resources.postgresVolume]);
     await run('docker', ['volume', 'create', resources.minioVolume]);
@@ -91,7 +106,7 @@ async function runOuter() {
       'server', '/data', '--console-address', ':9001',
     ]);
 
-    await waitForStableCommand(
+    await waitForCommand(
       'temporary PostgreSQL',
       'docker',
       ['exec', resources.postgres, 'pg_isready', '-U', 'platforma_e2e', '-d', 'platforma_e2e'],
@@ -105,23 +120,26 @@ async function runOuter() {
     const commonEnvironment = dockerEnvironment();
     await run('docker', [
       'run', '--rm',
+      '--name', resources.prisma,
       '--network', resources.network,
       ...commonEnvironment,
-      API_IMAGE,
+      apiImageId,
       'pnpm', '--dir', 'apps/api', 'exec', 'prisma', 'validate', '--schema', 'prisma/schema.prisma',
     ]);
     await run('docker', [
       'run', '--rm',
+      '--name', resources.prisma,
       '--network', resources.network,
       ...commonEnvironment,
-      API_IMAGE,
+      apiImageId,
       'pnpm', '--dir', 'apps/api', 'exec', 'prisma', 'migrate', 'deploy', '--schema', 'prisma/schema.prisma',
     ]);
     await run('docker', [
       'run', '--rm',
+      '--name', resources.prisma,
       '--network', resources.network,
       ...commonEnvironment,
-      API_IMAGE,
+      apiImageId,
       'pnpm', '--dir', 'apps/api', 'exec', 'prisma', 'migrate', 'status', '--schema', 'prisma/schema.prisma',
     ]);
 
@@ -130,7 +148,7 @@ async function runOuter() {
       '--name', resources.web,
       '--network', resources.network,
       '--network-alias', 'web',
-      WEB_IMAGE,
+      webImageId,
     ]);
     await waitForCommand(
       'built web',
@@ -145,8 +163,7 @@ async function runOuter() {
       '--network', resources.network,
       '--network-alias', 'api',
       ...commonEnvironment,
-      '-v', `${__dirname}:/app/apps/api/tests:ro`,
-      API_IMAGE,
+      apiImageId,
       'node', 'apps/api/tests/training-v2-stage5-part4-e2e.cjs', INNER_FLAG,
     ], { returnChild: true });
     activeChild = null;
@@ -158,7 +175,7 @@ async function runOuter() {
       '--network', resources.network,
       ...commonEnvironment,
       '-e', 'TRAINING_VOICE_WORKER_ENABLED=false',
-      API_IMAGE,
+      apiImageId,
     ]);
     await waitForCommand(
       'API graceful-shutdown fixture',
@@ -178,6 +195,62 @@ async function runOuter() {
     process.removeListener('SIGTERM', handleSignal);
     await cleanup();
   }
+}
+
+function dockerComposeEnvironment() {
+  return {
+    ...process.env,
+    API_IMAGE: 'platforma-api:local',
+    TELEGRAM_TRANSPORT_MODE: 'fake',
+    TRAINING_AI_MODE: 'fake',
+    VITE_API_URL: 'http://localhost:3000',
+    VITE_YANDEX_MAPS_API_KEY: '',
+  };
+}
+
+async function resolveComposeBuildTags(environment) {
+  const rawPlan = await capture('docker', [
+    ...COMPOSE_ARGS,
+    'build', '--print', 'api', 'web',
+  ], { env: environment });
+  let plan;
+  try {
+    plan = JSON.parse(rawPlan);
+  } catch (error) {
+    throw new Error('Docker Compose returned an invalid build plan', { cause: error });
+  }
+  return {
+    api: singleComposeBuildTag(plan, 'api'),
+    web: singleComposeBuildTag(plan, 'web'),
+  };
+}
+
+function singleComposeBuildTag(plan, service) {
+  const tags = plan?.target?.[service]?.tags;
+  if (tags?.length !== 1 || typeof tags[0] !== 'string' || tags[0].trim() === '') {
+    throw new Error(`Docker Compose did not resolve exactly one ${service} build tag`);
+  }
+  return tags[0];
+}
+
+async function resolveDockerImageId(label, imageTag) {
+  let imageId;
+  try {
+    imageId = (await capture('docker', [
+      'image', 'inspect', '--format', '{{.Id}}', imageTag,
+    ])).trim();
+  } catch (error) {
+    throw new Error(`Unable to resolve built ${label} Docker image ID`, { cause: error });
+  }
+  if (!/^sha256:[0-9a-f]{64}$/u.test(imageId)) {
+    throw new Error(`Docker returned an invalid ${label} image ID`);
+  }
+  return imageId;
+}
+
+async function runImageIdFailFastCheck() {
+  const missingTag = `${RESOURCE_PREFIX}-missing:${process.pid}-${randomUUID().slice(0, 8)}`;
+  await resolveDockerImageId('fail-fast fixture', missingTag);
 }
 
 function dockerEnvironment() {
@@ -233,17 +306,26 @@ async function runInner() {
   const { TRAINING_EVALUATOR } = require('../dist/training/training-evaluator.js');
   const { TrainingMaterialExtractionService } = require('../dist/training/training-material-extraction.js');
   const {
+    TrainingMaterialOperationService,
+  } = require('../dist/training/training-material-operation.service.js');
+  const {
     TrainingMaterialService,
   } = require('../dist/training/training-material.service.js');
   const {
     TRAINING_MATERIAL_SUGGESTER,
   } = require('../dist/training/training-material-suggester.js');
+  const {
+    TrainingProjectKnowledgeService,
+  } = require('../dist/training/training-project-knowledge.service.js');
   const { TrainingProjectAccessService } = require('../dist/training/training-project-access.service.js');
   const { TrainingRankingService } = require('../dist/training/training-ranking.service.js');
   const {
     FakeTrainingTelegramClient,
   } = require('../dist/training/training-telegram-client.js');
   const { TrainingTelegramService } = require('../dist/training/training-telegram.service.js');
+  const {
+    TrainingTelegramOutboxWorkerService,
+  } = require('../dist/training/training-telegram-outbox-worker.service.js');
   const {
     DeterministicFakeTrainingTranscriber,
   } = require('../dist/training/training-transcriber.js');
@@ -264,11 +346,13 @@ async function runInner() {
     const storage = app.get(S3StorageService);
     const fakeTelegram = app.get(FakeTrainingTelegramClient);
     const telegram = app.get(TrainingTelegramService);
+    const telegramOutbox = app.get(TrainingTelegramOutboxWorkerService);
     const audio = app.get(TrainingAudioService);
     const attemptState = app.get(TrainingAttemptStateService);
     const evaluator = app.get(TRAINING_EVALUATOR);
     const baseTranscriber = app.get(DeterministicFakeTrainingTranscriber);
     const access = app.get(TrainingProjectAccessService);
+    const materialOperations = app.get(TrainingMaterialOperationService);
     const jwt = new JwtService();
     const identities = await seedIdentities(prisma, jwt);
     const context = {
@@ -277,11 +361,13 @@ async function runInner() {
       storage,
       fakeTelegram,
       telegram,
+      telegramOutbox,
       audio,
       attemptState,
       evaluator,
       baseTranscriber,
       access,
+      materialOperations,
       jwt,
       identities,
       Prisma,
@@ -289,6 +375,7 @@ async function runInner() {
       TrainingMaterialExtractionService,
       TrainingMaterialService,
       TRAINING_MATERIAL_SUGGESTER,
+      TrainingProjectKnowledgeService,
       TrainingRankingService,
       TrainingVoiceWorkerService,
       TrainingOpenAIError,
@@ -426,7 +513,7 @@ async function seedIdentities(prisma, jwt) {
 }
 
 async function runConnectedScenario(context) {
-  const { prisma, storage, identities } = context;
+  const { prisma, storage, identities, materialOperations } = context;
   const pdf = await makePdf(context.PDFDocument, [
     'Platforma E2E residential project source.',
     'Stable project facts for employee training.',
@@ -525,15 +612,26 @@ async function runConnectedScenario(context) {
   const imported = await apiRequest(`/training/admin/projects/${project.id}/import-object`, {
     method: 'POST',
     token: identities.tokens.admin,
+    headers: { 'Idempotency-Key': randomUUID() },
     body: { objectId: object.id, replaceExistingQuestions: false },
   });
-  assert.equal(imported.status, 201);
-  assert.equal(imported.body.importedPdfCount, 1);
-  assert.equal(imported.body.failedPdfTitles.length, 0);
-  assert.equal(imported.body.followUpQuestions.length, 10);
+  assert.equal(imported.status, 202, JSON.stringify(imported.body));
+  assert.equal(await materialOperations.runOnce(), true);
+  const importedCompleted = await apiRequest(
+    `/training/admin/material-operations/${imported.body.id}`,
+    { token: identities.tokens.admin },
+  );
+  assert.equal(importedCompleted.status, 200, JSON.stringify(importedCompleted.body));
+  assert.equal(importedCompleted.body.status, 'READY', JSON.stringify(importedCompleted.body));
+  assert.equal(importedCompleted.body.result.importedPdfCount, 1);
+  assert.equal(importedCompleted.body.result.failedPdfTitles.length, 0);
+  assert.equal(await prisma.trainingQuestion.count({
+    where: { projectId: project.id, type: 'FOLLOW_UP', isActive: true },
+  }), 10);
 
   const extraction = context.app.get(context.TrainingMaterialExtractionService);
   const suggester = context.app.get(context.TRAINING_MATERIAL_SUGGESTER);
+  const knowledge = context.app.get(context.TrainingProjectKnowledgeService);
   const urlExtractor = {
     async extract(url) {
       return {
@@ -558,6 +656,7 @@ async function runConnectedScenario(context) {
     extraction,
     urlExtractor,
     suggester,
+    knowledge,
   );
   const manualMaterial = await fixtureMaterials.createManual(
     project.id,
@@ -593,11 +692,9 @@ async function runConnectedScenario(context) {
       })),
     },
   );
-  assert.equal(
-    applied.createdFactIds.length + applied.duplicates.length,
-    suggested.latestRevision.suggestions.length,
-  );
-  assert.ok(applied.duplicates.every((duplicate) => duplicate.reason === 'DUPLICATE_FACT'));
+  assert.equal(applied.createdFactIds.length, 0);
+  assert.equal(applied.duplicates.length, suggested.latestRevision.suggestions.length);
+  assert.equal(applied.duplicates.every((duplicate) => duplicate.reason === 'DUPLICATE_FACT'), true);
 
   const richDraft = await apiRequest(`/training/admin/projects/${project.id}`, {
     token: identities.tokens.admin,
@@ -1112,7 +1209,15 @@ async function runReviewAndPerformance(context) {
   });
   assert.equal(audioRead.status, 200);
   assert.equal(audioRead.headers.get('cache-control'), 'private, no-store');
-  assert.equal(audioRead.body.subarray(0, 4).toString('ascii'), 'RIFF');
+  assert.equal(audioRead.headers.get('content-type'), 'audio/webm');
+  assert.equal(
+    audioRead.headers.get('content-disposition'),
+    'inline; filename="training-answer-audio.webm"',
+  );
+  assert.deepEqual(
+    audioRead.body.subarray(0, 4),
+    Buffer.from([0x1a, 0x45, 0xdf, 0xa3]),
+  );
   const mergedFile = await prisma.file.findUniqueOrThrow({
     where: { id: (await prisma.trainingAnswer.findUniqueOrThrow({
       where: { id: audioAnswer.id }, select: { mergedAudioFileId: true },
@@ -1530,7 +1635,7 @@ function createWorker(context, transcriber) {
     transcriber,
     context.evaluator,
     context.attemptState,
-    context.telegram,
+    context.telegramOutbox,
   );
 }
 
@@ -1791,26 +1896,11 @@ async function waitForCommand(label, command, args) {
   });
 }
 
-async function waitForStableCommand(label, command, args, stableMs = 3_000) {
-  let readySince = null;
-  await waitFor(async () => {
-    const result = await runAllowFailure(command, args, { silent: true });
-    if (result !== 0) {
-      readySince = null;
-      return null;
-    }
-    readySince ??= Date.now();
-    return Date.now() - readySince >= stableMs ? true : null;
-  }, 60_000).catch((error) => {
-    throw new Error(`${label} did not become stably ready`, { cause: error });
-  });
-}
-
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: process.cwd(),
-      env: process.env,
+      env: options.env ?? process.env,
       stdio: options.silent ? 'ignore' : 'inherit',
     });
     child.once('error', reject);
@@ -1830,9 +1920,12 @@ async function runAllowFailure(command, args, options = {}) {
   }
 }
 
-function capture(command, args) {
+function capture(command, args, options = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd: process.cwd(), env: process.env });
+    const child = spawn(command, args, {
+      cwd: process.cwd(),
+      env: options.env ?? process.env,
+    });
     const output = [];
     const errors = [];
     child.stdout.on('data', (chunk) => output.push(chunk));

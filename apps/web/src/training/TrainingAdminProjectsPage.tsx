@@ -10,6 +10,7 @@ import {
   FilePenLineIcon,
   FolderKanbanIcon,
   FolderPlusIcon,
+  HardDriveIcon,
   TrophyIcon,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -22,7 +23,7 @@ import {
   AdminStatusBadge,
 } from '../admin/AdminUi';
 import { useAuth } from '../auth/AuthProvider';
-import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -46,6 +47,7 @@ import './trainingAdminDashboard.css';
 type TrainingAdminProjectsPageProps = {
   canManageProjects: boolean;
   canReadResults: boolean;
+  canReadAudio: boolean;
   navigate: (pathname: string) => void;
 };
 
@@ -82,6 +84,7 @@ function TrainingDashboardMetric({
 export function TrainingAdminProjectsPage({
   canManageProjects,
   canReadResults,
+  canReadAudio,
   navigate,
 }: TrainingAdminProjectsPageProps) {
   const { accessToken } = useAuth();
@@ -166,8 +169,21 @@ export function TrainingAdminProjectsPage({
           <h2>Модуль обучения</h2>
           <p className="muted-text">Управление учебными проектами и отдельный реестр результатов.</p>
         </div>
-        {canReadResults || canManageProjects ? (
+        {canReadResults || canReadAudio || canManageProjects ? (
           <div className="training-admin-dashboard-actions">
+            {canReadAudio ? (
+              <AdminButton
+                className="training-dashboard-icon-action"
+                type="button"
+                tone="secondary"
+                size="icon"
+                aria-label="Хранилище аудио"
+                title="Хранилище аудио"
+                onClick={() => navigate('/admin/training/audio-storage')}
+              >
+                <HardDriveIcon />
+              </AdminButton>
+            ) : null}
             {canReadResults ? (
               <>
                 <AdminButton
@@ -385,9 +401,12 @@ export function TrainingAdminProjectsPage({
                       disabled={isCreating}
                       onChange={(event) => setAllowRetakeAfterPass(event.target.checked)}
                     />
-                    <FieldLabel htmlFor="training-project-retake">
-                      Разрешить пересдачу после успешного результата
-                    </FieldLabel>
+                    <div>
+                      <FieldLabel htmlFor="training-project-retake">
+                        Разрешить пересдачу после успешного результата
+                      </FieldLabel>
+                      <FieldDescription>Общий лимит попыток продолжает действовать.</FieldDescription>
+                    </div>
                   </Field>
                 </FieldGroup>
                 {createError && title.trim() ? <AdminAlert tone="error">{createError}</AdminAlert> : null}

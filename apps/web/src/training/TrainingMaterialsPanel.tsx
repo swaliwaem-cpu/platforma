@@ -2,6 +2,8 @@ import { FocusEvent, FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useSt
 import type {
   TrainingMaterial,
   TrainingMaterialDetail,
+  TrainingMaterialOperation,
+  TrainingMaterialOperationStatus,
   TrainingMaterialRevisionStatus,
   TrainingMaterialStatus,
   TrainingMaterialSuggestion,
@@ -62,11 +64,13 @@ import {
   downloadTrainingMaterialPdf,
   generateTrainingMaterialSuggestions,
   getTrainingMaterial,
+  getTrainingMaterialOperations,
   getTrainingMaterials,
   getTrainingObjectOptions,
   importTrainingObjectContent,
   refreshTrainingMaterial,
   refreshTrainingPdfMaterial,
+  retryTrainingMaterialOperation,
 } from './trainingApi';
 
 type TrainingMaterialsPanelProps = {
@@ -100,6 +104,17 @@ const materialStatusLabels: Record<TrainingMaterialStatus, string> = {
 const revisionStatusLabels: Record<TrainingMaterialRevisionStatus, string> = {
   READY: 'Готово',
   FAILED: 'Ошибка',
+};
+
+const operationStatusLabels: Record<TrainingMaterialOperationStatus, string> = {
+  QUEUED: 'В очереди',
+  STORING: 'Сохранение файла',
+  EXTRACTING: 'Извлечение данных',
+  GENERATING: 'Создание вопросов',
+  PERSISTING: 'Сохранение результата',
+  READY: 'Готово',
+  FAILED: 'Ошибка',
+  CANCELLED: 'Отменено',
 };
 
 const objectStatusLabels: Record<TrainingObjectOption['status'], string> = {
@@ -176,9 +191,14 @@ export function TrainingMaterialsPanel({
   const [objectSearch, setObjectSearch] = useState('');
   const [isObjectOptionsLoading, setIsObjectOptionsLoading] = useState(false);
   const [objectOptionsError, setObjectOptionsError] = useState<string | null>(null);
+  const [operations, setOperations] = useState<TrainingMaterialOperation[]>([]);
+  const [operationsError, setOperationsError] = useState<string | null>(null);
+  const [operationsReloadKey, setOperationsReloadKey] = useState(0);
+  const activeOperationIdsRef = useRef(new Set<string>());
   const selectedRevision = selected?.revisions.find((revision) => revision.id === selectedRevisionId)
     ?? selected?.revisions[0]
     ?? null;
+  const hasActiveOperations = operations.some(isActiveMaterialOperation);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -233,6 +253,10 @@ export function TrainingMaterialsPanel({
   }, [linkedObjectId]);
 
   useEffect(() => {
+    activeOperationIdsRef.current.clear();
+  }, [projectId]);
+
+  useEffect(() => {
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       setIsObjectOptionsLoading(true);
@@ -261,6 +285,58 @@ export function TrainingMaterialsPanel({
       controller.abort();
     };
   }, [accessToken, objectSearch, projectId, selectedObjectId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let timer: number | null = null;
+
+    const poll = async () => {
+      try {
+        const response = await getTrainingMaterialOperations(
+          accessToken,
+          projectId,
+          controller.signal,
+        );
+        if (controller.signal.aborted) return;
+        let completedTrackedOperation: TrainingMaterialOperation | null = null;
+        for (const operation of response.items) {
+          if (isActiveMaterialOperation(operation)) {
+            activeOperationIdsRef.current.add(operation.id);
+          } else if (activeOperationIdsRef.current.delete(operation.id)) {
+            completedTrackedOperation = operation;
+          }
+        }
+        setOperations(response.items);
+        setOperationsError(null);
+
+        if (completedTrackedOperation) {
+          setReloadKey((value) => value + 1);
+          setNotice(formatOperationCompletion(completedTrackedOperation));
+          if (completedTrackedOperation.status === 'READY') {
+            await onProjectContentChanged();
+          }
+        }
+        if (!controller.signal.aborted && response.items.some(isActiveMaterialOperation)) {
+          timer = window.setTimeout(() => void poll(), 1_500);
+        }
+      } catch (loadError) {
+        if (!controller.signal.aborted) {
+          setOperationsError(
+            loadError instanceof Error
+              ? loadError.message
+              : 'Не удалось загрузить операции обработки',
+          );
+          timer = window.setTimeout(() => void poll(), 4_000);
+        }
+      }
+    };
+
+    void poll();
+    return () => {
+      controller.abort();
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [accessToken, onProjectContentChanged, operationsReloadKey, projectId]);
 
   const selectedSuggestions = useMemo(
     () => suggestionDrafts.filter((suggestion) => selectedSuggestionIds.includes(suggestion.id)),
@@ -309,6 +385,7 @@ export function TrainingMaterialsPanel({
     }
 
     const submittedType = createType;
+    const idempotencyKey = crypto.randomUUID();
     const createMaterial = (replaceExistingQuestions: boolean) => {
       if (submittedType === 'PDF') {
         return createTrainingPdfMaterial(
@@ -316,6 +393,7 @@ export function TrainingMaterialsPanel({
           projectId,
           title.trim(),
           file as File,
+          idempotencyKey,
           replaceExistingQuestions,
         );
       }
@@ -325,7 +403,7 @@ export function TrainingMaterialsPanel({
           url: url.trim(),
           officialConfirmed: officialConfirmed as true,
           replaceExistingQuestions,
-        });
+        }, idempotencyKey);
       }
       return createTrainingManualMaterial(accessToken, projectId, {
         title: title.trim(), text,
@@ -337,9 +415,9 @@ export function TrainingMaterialsPanel({
     setCreateError(null);
     setNotice(null);
     try {
-      let detail: TrainingMaterialDetail;
+      let created: TrainingMaterialDetail | TrainingMaterialOperation;
       try {
-        detail = await createMaterial(false);
+        created = await createMaterial(false);
       } catch (createError) {
         const message = createError instanceof Error ? createError.message : 'Не удалось создать материал';
         const createsQuestions = submittedType === 'PDF' || submittedType === 'OFFICIAL_URL';
@@ -350,20 +428,20 @@ export function TrainingMaterialsPanel({
           'В проекте уже есть вопросы и эталонные ответы. Заменить их новыми автоматически созданными черновиками на основе этого источника?',
         );
         if (!confirmed) return;
-        detail = await createMaterial(true);
+        created = await createMaterial(true);
       }
 
-      setSelected(detail);
       setIsCreateOpen(false);
-      setReloadKey((value) => value + 1);
-      const questionsGenerated = (submittedType === 'PDF' || submittedType === 'OFFICIAL_URL') &&
-        detail.latestRevision?.status === 'READY';
-      setNotice(questionsGenerated
-        ? 'Материал создан. Сформированы 1 главный и 10 дополнительных вопросов с активными эталонными ответами.'
-        : detail.latestRevision?.status === 'FAILED'
-          ? 'Материал сохранён, но текст не извлечён, поэтому вопросы и ответы не созданы.'
-          : 'Материал создан. Извлечённый текст остаётся административным черновиком.');
-      if (questionsGenerated) await onProjectContentChanged();
+      if (isMaterialOperation(created)) {
+        activeOperationIdsRef.current.add(created.id);
+        setOperations((current) => mergeOperations(current, created));
+        setOperationsReloadKey((value) => value + 1);
+        setNotice('Операция поставлена в очередь. Прогресс сохранится после перезагрузки страницы.');
+      } else {
+        setSelected(created);
+        setReloadKey((value) => value + 1);
+        setNotice('Материал создан. Извлечённый текст остаётся административным черновиком.');
+      }
     } catch (createError) {
       setCreateError({
         field: submittedType === 'OFFICIAL_URL'
@@ -439,7 +517,10 @@ export function TrainingMaterialsPanel({
     }
   };
 
-  const handleObjectImport = async (replaceExistingQuestions = false) => {
+  const handleObjectImport = async (
+    replaceExistingQuestions = false,
+    idempotencyKey = crypto.randomUUID(),
+  ) => {
     if (!selectedObjectId || pendingAction) return;
     setPendingAction('object-import');
     setError(null);
@@ -448,15 +529,11 @@ export function TrainingMaterialsPanel({
       const response = await importTrainingObjectContent(accessToken, projectId, {
         objectId: selectedObjectId,
         replaceExistingQuestions,
-      });
-      const failedSuffix = response.failedPdfTitles.length
-        ? ` Не удалось извлечь PDF: ${response.failedPdfTitles.join(', ')}.`
-        : '';
-      setNotice(
-        `ЖК «${response.object.title}» связан с проектом. Карточка и PDF загружены: ${response.importedPdfCount}. Созданы 1 главный и 10 дополнительных вопросов с активными эталонными ответами.${failedSuffix}`,
-      );
-      setReloadKey((value) => value + 1);
-      await onProjectContentChanged();
+      }, idempotencyKey);
+      activeOperationIdsRef.current.add(response.id);
+      setOperations((current) => mergeOperations(current, response));
+      setOperationsReloadKey((value) => value + 1);
+      setNotice('Импорт поставлен в очередь. Здесь появится прогресс по каждому PDF.');
     } catch (importError) {
       const message = importError instanceof Error ? importError.message : 'Не удалось загрузить данные ЖК';
       if (!replaceExistingQuestions && message === 'PROJECT_QUESTIONS_REPLACE_CONFIRMATION_REQUIRED') {
@@ -464,7 +541,7 @@ export function TrainingMaterialsPanel({
         const confirmed = window.confirm(
           'В проекте уже есть вопросы и эталонные ответы. Заменить их новыми автоматически созданными черновиками из карточки ЖК и вложений?',
         );
-        if (confirmed) await handleObjectImport(true);
+        if (confirmed) await handleObjectImport(true, idempotencyKey);
         return;
       }
       setError(message);
@@ -473,12 +550,35 @@ export function TrainingMaterialsPanel({
     }
   };
 
+  const handleOperationRetry = async (operationId: string) => {
+    if (pendingAction || disabled) return;
+    setPendingAction(`operation-retry:${operationId}`);
+    setError(null);
+    try {
+      const operation = await retryTrainingMaterialOperation(accessToken, operationId);
+      activeOperationIdsRef.current.add(operation.id);
+      setOperations((current) => mergeOperations(current, operation));
+      setOperationsReloadKey((value) => value + 1);
+      setNotice('Неуспешная операция возвращена в очередь.');
+    } catch (retryError) {
+      setError(retryError instanceof Error ? retryError.message : 'Не удалось повторить операцию');
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
   return (
     <div className="training-materials-layout">
       {error ? <AdminAlert tone="error">{error}</AdminAlert> : null}
+      {operationsError ? <AdminAlert tone="error">{operationsError}</AdminAlert> : null}
       {notice ? <AdminAlert tone="notice">{notice}</AdminAlert> : null}
       {disabled ? (
         <AdminAlert tone="notice">Закройте проект перед изменением материалов. Предпросмотр и история доступны для чтения.</AdminAlert>
+      ) : null}
+      {hasActiveOperations ? (
+        <AdminAlert tone="notice">
+          Идёт обработка источника. Новые операции создания временно недоступны, чтобы не перезаписать более свежую редакцию проекта.
+        </AdminAlert>
       ) : null}
 
       <div className="training-material-workspace">
@@ -513,14 +613,23 @@ export function TrainingMaterialsPanel({
               <AdminButton
                 type="button"
                 tone="primary"
-                disabled={disabled || !selectedObjectId || Boolean(pendingAction)}
+                disabled={disabled || hasActiveOperations || !selectedObjectId || Boolean(pendingAction)}
                 onClick={() => void handleObjectImport()}
               >
                 <SparklesIcon data-icon="inline-start" />
-                {pendingAction === 'object-import' ? 'Загрузка и генерация…' : 'Создать вопросы и ответы из данных ЖК'}
+                {pendingAction === 'object-import' ? 'Постановка в очередь…' : 'Создать вопросы и ответы из данных ЖК'}
               </AdminButton>
             </CardFooter>
           </Card>
+
+          {operations.length ? (
+            <MaterialOperationsPanel
+              disabled={disabled || Boolean(pendingAction)}
+              operations={operations}
+              onRetry={(operationId) => void handleOperationRetry(operationId)}
+              pendingAction={pendingAction}
+            />
+          ) : null}
 
           <section className="training-material-browser" aria-labelledby="training-materials-list-title">
             <div className="training-material-browser-heading">
@@ -531,7 +640,7 @@ export function TrainingMaterialsPanel({
               <AdminButton
                 type="button"
                 tone={isCreateOpen ? 'secondary' : 'primary'}
-                disabled={disabled}
+                disabled={disabled || hasActiveOperations}
                 aria-expanded={isCreateOpen}
                 onClick={() => setIsCreateOpen((value) => {
                   setCreateError(null);
@@ -643,8 +752,8 @@ export function TrainingMaterialsPanel({
                         </Field>
                       ) : null}
                       {createError?.field === 'form' ? <AdminAlert tone="error">{createError.message}</AdminAlert> : null}
-                      <AdminButton type="submit" tone="primary" disabled={disabled || pendingAction === 'create' || (createType === 'OFFICIAL_URL' && !officialConfirmed)}>
-                        {pendingAction === 'create' ? 'Извлечение…' : 'Создать материал'}
+                      <AdminButton type="submit" tone="primary" disabled={disabled || hasActiveOperations || pendingAction === 'create' || (createType === 'OFFICIAL_URL' && !officialConfirmed)}>
+                        {pendingAction === 'create' ? 'Постановка в очередь…' : 'Создать материал'}
                       </AdminButton>
                     </FieldGroup>
                   </form>
@@ -852,6 +961,153 @@ export function TrainingMaterialsPanel({
       </div>
     </div>
   );
+}
+
+function MaterialOperationsPanel({
+  disabled,
+  onRetry,
+  operations,
+  pendingAction,
+}: {
+  disabled: boolean;
+  onRetry: (operationId: string) => void;
+  operations: TrainingMaterialOperation[];
+  pendingAction: string | null;
+}) {
+  return (
+    <section
+      className="training-material-operations"
+      aria-labelledby="training-material-operations-title"
+      aria-live="polite"
+    >
+      <div className="training-material-operations-heading">
+        <div>
+          <h3 id="training-material-operations-title">Обработка источников</h3>
+          <p className="muted-text">Последние операции сохраняются и продолжаются независимо от открытой страницы.</p>
+        </div>
+        <Badge variant="outline">Последние {operations.length}</Badge>
+      </div>
+      <ol className="training-material-operation-list">
+        {operations.map((operation) => {
+          const settled = operation.progress.completed + operation.progress.failed;
+          const total = Math.max(operation.progress.total, settled, 1);
+          const isActive = isActiveMaterialOperation(operation);
+          return (
+            <li className="training-material-operation" key={operation.id}>
+              <div className="training-material-operation-header">
+                <div>
+                  <strong>{formatOperationType(operation)}</strong>
+                  <span>{new Date(operation.createdAt).toLocaleString('ru-RU')}</span>
+                </div>
+                <Badge variant={operation.status === 'FAILED' ? 'destructive' : operation.status === 'READY' ? 'secondary' : 'outline'}>
+                  {operationStatusLabels[operation.status]}
+                </Badge>
+              </div>
+              <div className="training-material-operation-progress">
+                <progress value={settled} max={total} aria-label={`Выполнено ${settled} из ${total}`} />
+                <span>
+                  {operation.progress.total > 0
+                    ? `${settled} из ${operation.progress.total}`
+                    : isActive ? 'Подготовка списка' : 'Нет элементов'}
+                </span>
+              </div>
+              {operation.items.length ? (
+                <ol className="training-material-operation-items">
+                  {operation.items.map((item) => (
+                    <li key={item.id}>
+                      <span>{item.title}</span>
+                      <small>
+                        {operationStatusLabels[item.status]}
+                        {item.errorCode ? ` · ${formatOperationError(item.errorCode)}` : ''}
+                      </small>
+                    </li>
+                  ))}
+                </ol>
+              ) : null}
+              {operation.status === 'FAILED' ? (
+                <div className="training-material-operation-error">
+                  <span>{formatOperationError(operation.errorCode)}</span>
+                  {operation.type !== 'CREATE_PDF' || operation.errorCode !== 'MATERIAL_SOURCE_UPLOAD_INTERRUPTED' ? (
+                    <AdminButton
+                      type="button"
+                      tone="secondary"
+                      disabled={disabled}
+                      onClick={() => onRetry(operation.id)}
+                    >
+                      <RefreshCwIcon data-icon="inline-start" />
+                      {pendingAction === `operation-retry:${operation.id}` ? 'Повтор…' : 'Повторить'}
+                    </AdminButton>
+                  ) : null}
+                </div>
+              ) : null}
+            </li>
+          );
+        })}
+      </ol>
+    </section>
+  );
+}
+
+function isActiveMaterialOperation(operation: TrainingMaterialOperation) {
+  return operation.status === 'QUEUED' || operation.status === 'STORING' ||
+    operation.status === 'EXTRACTING' || operation.status === 'GENERATING' ||
+    operation.status === 'PERSISTING';
+}
+
+function isMaterialOperation(
+  value: TrainingMaterialDetail | TrainingMaterialOperation,
+): value is TrainingMaterialOperation {
+  return 'progress' in value && 'items' in value && 'attempts' in value;
+}
+
+function mergeOperations(
+  operations: TrainingMaterialOperation[],
+  operation: TrainingMaterialOperation,
+) {
+  return [operation, ...operations.filter((item) => item.id !== operation.id)]
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .slice(0, 25);
+}
+
+function formatOperationType(operation: TrainingMaterialOperation) {
+  if (operation.type === 'CREATE_PDF') return 'Документ PDF';
+  if (operation.type === 'CREATE_OFFICIAL_URL') return 'Официальная ссылка';
+  if (typeof operation.result?.objectTitle === 'string') {
+    return `Карточка Platforma · ${operation.result.objectTitle}`;
+  }
+  return 'Карточка Platforma и документы';
+}
+
+function formatOperationCompletion(operation: TrainingMaterialOperation) {
+  if (operation.status === 'READY') {
+    if (operation.type === 'IMPORT_OBJECT') {
+      const imported = typeof operation.result?.importedPdfCount === 'number'
+        ? operation.result.importedPdfCount
+        : operation.progress.completed;
+      const failed = Array.isArray(operation.result?.failedPdfTitles)
+        ? operation.result.failedPdfTitles.length
+        : operation.progress.failed;
+      return `Созданы 1 главный и 10 дополнительных вопросов с активными эталонными ответами. PDF загружено: ${imported}; с ошибкой: ${failed}.`;
+    }
+    return 'Сформированы 1 главный и 10 дополнительных вопросов с активными эталонными ответами. Источник обработан.';
+  }
+  if (operation.status === 'FAILED') {
+    return `Обработка завершилась с ошибкой: ${formatOperationError(operation.errorCode)}.`;
+  }
+  return 'Обработка источника отменена.';
+}
+
+function formatOperationError(errorCode: string | null) {
+  if (!errorCode) return 'Причина не указана';
+  return ({
+    MATERIAL_SOURCE_UPLOAD_INTERRUPTED: 'загрузка исходного файла была прервана',
+    MATERIAL_OPERATION_INPUT_INVALID: 'параметры операции повреждены',
+    MATERIAL_EXTRACTION_FAILED: 'не удалось извлечь текст',
+    PDF_TEXT_LAYER_MISSING: 'в PDF нет текстового слоя',
+    QUESTION_DRAFT_GENERATION_FAILED: 'не удалось сформировать вопросы',
+    QUESTION_KNOWLEDGE_STALE: 'материалы проекта изменились во время обработки',
+    MATERIAL_OPERATION_CLAIM_LOST: 'операция была передана другому worker',
+  } as Record<string, string>)[errorCode] ?? errorCode;
 }
 
 function ObjectSearchCombobox({

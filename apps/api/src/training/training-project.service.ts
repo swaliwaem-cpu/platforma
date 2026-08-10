@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import {
   Prisma,
+  TrainingAudioStorageObjectKind,
   TrainingProjectAccessMode,
   TrainingProjectStatus,
   TrainingQuestionType,
@@ -21,6 +22,10 @@ import type {
 import { FilesService } from '../files/files.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { TrainingProjectCleanupObject } from './training-project-cleanup';
+import {
+  lockTrainingAudioStorageObject,
+  upsertTrainingAudioStorageEntry,
+} from './training-audio-storage.service';
 import {
   TRAINING_FACT_ALIAS_LIMIT,
   TRAINING_FACT_ALIAS_MAX_LENGTH,
@@ -160,6 +165,7 @@ const projectDeletionFileSelect = {
       trainingAnswerSegments: true,
       trainingMergedAnswers: true,
       trainingMaterialRevisions: true,
+      trainingMaterialOperations: true,
     },
   },
 } as const satisfies Prisma.FileSelect;
@@ -270,7 +276,7 @@ export class TrainingProjectService {
   }
 
   async deleteProject(projectId: string, actorUserId: string) {
-    const cleanup = await this.prisma.$transaction(async (transaction) => {
+    let cleanup = await this.prisma.$transaction(async (transaction) => {
       await this.lockActor(transaction, actorUserId);
       await this.lockProjectDeletionGraph(transaction, projectId);
       const project = await transaction.trainingProject.findUnique({
@@ -311,21 +317,117 @@ export class TrainingProjectService {
         where: { material: { projectId } },
         select: { id: true, previousRevisionId: true, fileId: true },
       });
+      const materialOperations = await transaction.trainingMaterialOperation.findMany({
+        where: { projectId },
+        select: { sourceFileId: true },
+      });
       const revisionDeletionLayers = getRevisionDeletionLayers(materialRevisions);
       const mergedAnswerFiles = await transaction.trainingAnswer.findMany({
         where: { attemptQuestion: { attempt: { projectId } } },
-        select: { id: true, mergedAudioFileId: true },
+        select: {
+          id: true,
+          mergedAudioFileId: true,
+          mergedAudioFile: true,
+          attemptQuestion: {
+            select: {
+              attempt: {
+                select: {
+                  id: true,
+                  user: { select: { id: true, name: true, email: true } },
+                },
+              },
+            },
+          },
+        },
       });
       const segmentFiles = await transaction.trainingAnswerSegment.findMany({
         where: { answer: { attemptQuestion: { attempt: { projectId } } } },
-        select: { id: true, answerId: true, storedFileId: true },
+        select: {
+          id: true,
+          answerId: true,
+          storedFileId: true,
+          storedFile: true,
+          answer: {
+            select: {
+              attemptQuestion: {
+                select: {
+                  attempt: {
+                    select: {
+                      id: true,
+                      user: { select: { id: true, name: true, email: true } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
       });
-      const candidateFileIds = [...new Set([
+      const materialFileIds = [...new Set([
         ...materialRevisions.map((revision) => revision.fileId),
-        ...mergedAnswerFiles.map((file) => file.mergedAudioFileId),
-        ...segmentFiles.map((file) => file.storedFileId),
+        ...materialOperations.map((operation) => operation.sourceFileId),
       ].filter((fileId): fileId is string => Boolean(fileId)))];
-      await this.lockDeletionFiles(transaction, candidateFileIds);
+      const audioFileIds = [...new Set([
+        ...mergedAnswerFiles.map((answer) => answer.mergedAudioFileId),
+        ...segmentFiles.map((segment) => segment.storedFileId),
+      ].filter((fileId): fileId is string => Boolean(fileId)))];
+      const audioStorageObjects = [...mergedAnswerFiles.flatMap((answer) =>
+        answer.mergedAudioFile?.bucket
+          ? [{ bucket: answer.mergedAudioFile.bucket, key: answer.mergedAudioFile.key }]
+          : []), ...segmentFiles.flatMap((segment) =>
+        segment.storedFile?.bucket
+          ? [{ bucket: segment.storedFile.bucket, key: segment.storedFile.key }]
+          : [])].sort((left, right) =>
+        left.bucket.localeCompare(right.bucket) || left.key.localeCompare(right.key));
+      for (const object of audioStorageObjects) {
+        await lockTrainingAudioStorageObject(transaction, object.bucket, object.key);
+      }
+      await this.lockDeletionFiles(transaction, [...new Set([...materialFileIds, ...audioFileIds])]);
+
+      for (const answer of mergedAnswerFiles) {
+        const file = answer.mergedAudioFile;
+        if (!file?.bucket) continue;
+        const attempt = answer.attemptQuestion.attempt;
+        await upsertTrainingAudioStorageEntry(transaction, {
+          fileId: file.id,
+          kind: TrainingAudioStorageObjectKind.MERGED,
+          bucket: file.bucket,
+          key: file.key,
+          checksum: file.checksum,
+          sizeBytes: file.sizeBytes,
+          mimeType: file.mimeType,
+          projectId,
+          projectTitle: project.title,
+          userId: attempt.user.id,
+          userName: attempt.user.name,
+          userEmail: attempt.user.email,
+          attemptId: attempt.id,
+          answerId: answer.id,
+          objectCreatedAt: file.createdAt,
+        });
+      }
+      for (const segment of segmentFiles) {
+        const file = segment.storedFile;
+        if (!file?.bucket) continue;
+        const attempt = segment.answer.attemptQuestion.attempt;
+        await upsertTrainingAudioStorageEntry(transaction, {
+          fileId: file.id,
+          kind: TrainingAudioStorageObjectKind.SEGMENT,
+          bucket: file.bucket,
+          key: file.key,
+          checksum: file.checksum,
+          sizeBytes: file.sizeBytes,
+          mimeType: file.mimeType,
+          projectId,
+          projectTitle: project.title,
+          userId: attempt.user.id,
+          userName: attempt.user.name,
+          userEmail: attempt.user.email,
+          attemptId: attempt.id,
+          answerId: segment.answerId,
+          objectCreatedAt: file.createdAt,
+        });
+      }
 
       await transaction.trainingAnswerSegment.deleteMany({
         where: { answer: { attemptQuestion: { attempt: { projectId } } } },
@@ -339,6 +441,10 @@ export class TrainingProjectService {
       await transaction.trainingAttempt.deleteMany({ where: { projectId } });
       await transaction.trainingTelegramLinkToken.deleteMany({ where: { projectId } });
       await transaction.trainingProjectAssignment.deleteMany({ where: { projectId } });
+      await transaction.trainingMaterialOperationItem.deleteMany({
+        where: { operation: { projectId } },
+      });
+      await transaction.trainingMaterialOperation.deleteMany({ where: { projectId } });
       await transaction.trainingFact.deleteMany({
         where: { question: { projectId } },
       });
@@ -352,7 +458,11 @@ export class TrainingProjectService {
       await transaction.trainingQuestion.deleteMany({ where: { projectId } });
 
       const candidateFiles = await transaction.file.findMany({
-        where: { id: { in: candidateFileIds } },
+        where: {
+          id: {
+            in: materialFileIds.filter((fileId) => !audioFileIds.includes(fileId)),
+          },
+        },
         select: projectDeletionFileSelect,
       });
       const unlinkedFiles = candidateFiles.filter(isProjectDeletionFileUnlinked);
@@ -361,31 +471,6 @@ export class TrainingProjectService {
           where: { id: { in: unlinkedFiles.map((file) => file.id) } },
         });
       }
-      const deletedFileIds = new Set(unlinkedFiles.map((file) => file.id));
-      const trainingAudioBucket = getTrainingAudioBucket();
-      const expectedAudioObjects: StoredObjectCleanup[] = trainingAudioBucket
-        ? [
-            ...mergedAnswerFiles
-              .filter(
-                (answer) =>
-                  !answer.mergedAudioFileId || deletedFileIds.has(answer.mergedAudioFileId),
-              )
-              .map((answer) => ({
-                key: `training-v2/answers/${answer.id}/merged.wav`,
-                bucket: trainingAudioBucket,
-              })),
-            ...segmentFiles
-              .filter(
-                (segment) =>
-                  !segment.storedFileId || deletedFileIds.has(segment.storedFileId),
-              )
-              .map((segment) => ({
-                key: `training-v2/answers/${segment.answerId}/segments/${segment.id}.ogg`,
-                bucket: trainingAudioBucket,
-              })),
-          ]
-        : [];
-
       const metadata: ProjectDeleteAuditMetadata = {
         title: project.title,
         attemptsCount: project._count.attempts,
@@ -400,7 +485,7 @@ export class TrainingProjectService {
               bucket: variant.bucket,
             })),
             { key: file.key, bucket: file.bucket },
-          ]).concat(expectedAudioObjects),
+          ]),
         ),
       };
       const audit = await transaction.auditLog.create({
@@ -419,6 +504,11 @@ export class TrainingProjectService {
     }, {
       timeout: PROJECT_DELETE_TRANSACTION_TIMEOUT_MS,
     });
+    cleanup = await this.retainManualAudioCleanupObjects(
+      cleanup.auditId,
+      projectId,
+      cleanup.metadata,
+    );
 
     const failedObjects: StoredObjectCleanup[] = [];
     for (
@@ -931,6 +1021,21 @@ export class TrainingProjectService {
       FOR UPDATE OF segment
     `);
     await transaction.$queryRaw(Prisma.sql`
+      SELECT operation."id"
+      FROM "training_material_operations" AS operation
+      WHERE operation."project_id" = CAST(${projectId} AS uuid)
+      ORDER BY operation."id"
+      FOR UPDATE OF operation
+    `);
+    await transaction.$queryRaw(Prisma.sql`
+      SELECT item."id"
+      FROM "training_material_operation_items" AS item
+      JOIN "training_material_operations" AS operation ON operation."id" = item."operation_id"
+      WHERE operation."project_id" = CAST(${projectId} AS uuid)
+      ORDER BY item."id"
+      FOR UPDATE OF item
+    `);
+    await transaction.$queryRaw(Prisma.sql`
       SELECT material."id"
       FROM "training_materials" AS material
       WHERE material."project_id" = CAST(${projectId} AS uuid)
@@ -983,6 +1088,72 @@ export class TrainingProjectService {
     });
   }
 
+  private async retainManualAudioCleanupObjects(
+    auditId: string,
+    projectId: string,
+    metadata: ProjectDeleteAuditMetadata,
+  ) {
+    const audioBucket = getTrainingAudioBucket();
+    if (!audioBucket) return { auditId, metadata };
+    const retained = metadata.storageObjects.filter(
+      (object) => object.bucket === audioBucket && isTrainingAudioStorageKey(object.key),
+    );
+    if (!retained.length) return { auditId, metadata };
+
+    const updatedMetadata = await this.prisma.$transaction(async (transaction) => {
+      await transaction.$queryRaw(
+        Prisma.sql`SELECT "id" FROM "audit_logs" WHERE "id" = CAST(${auditId} AS uuid) FOR UPDATE`,
+      );
+      const audit = await transaction.auditLog.findUnique({
+        where: { id: auditId },
+        select: { metadata: true },
+      });
+      const latest = parseProjectDeleteAuditMetadata(audit?.metadata);
+      if (!latest) return metadata;
+
+      const latestRetained = latest.storageObjects.filter(
+        (object) => object.bucket === audioBucket && isTrainingAudioStorageKey(object.key),
+      );
+      for (const object of latestRetained) {
+        await lockTrainingAudioStorageObject(transaction, audioBucket, object.key);
+        const reserved = await transaction.trainingAudioDeletionManifestItem.findFirst({
+          where: { bucket: audioBucket, key: object.key },
+          select: { id: true },
+        });
+        if (!reserved) {
+          await upsertTrainingAudioStorageEntry(transaction, {
+            fileId: null,
+            kind: object.key.includes('/segments/')
+              ? TrainingAudioStorageObjectKind.SEGMENT
+              : TrainingAudioStorageObjectKind.MERGED,
+            bucket: audioBucket,
+            key: object.key,
+            projectId,
+            projectTitle: latest.title,
+          });
+        }
+      }
+
+      const next: ProjectDeleteAuditMetadata = {
+        ...latest,
+        cleanupStatus: 'PENDING',
+        cleanupRevision: latest.cleanupRevision + 1,
+        storageObjects: latest.storageObjects.filter(
+          (object) => !(object.bucket === audioBucket && isTrainingAudioStorageKey(object.key)),
+        ),
+      };
+      delete next.cleanupCompletedAt;
+      await transaction.auditLog.update({
+        where: { id: auditId },
+        data: { metadata: next },
+      });
+
+      return next;
+    });
+
+    return { auditId, metadata: updatedMetadata };
+  }
+
   private async ensureRealEstateObjectExists(
     realEstateObjectId: string | null,
     client: Prisma.TransactionClient | PrismaService = this.prisma,
@@ -1013,7 +1184,8 @@ function isProjectDeletionFileUnlinked(file: ProjectDeletionFile) {
     file._count.projectPresentationAssets === 0 &&
     file._count.trainingAnswerSegments === 0 &&
     file._count.trainingMergedAnswers === 0 &&
-    file._count.trainingMaterialRevisions === 0
+    file._count.trainingMaterialRevisions === 0 &&
+    file._count.trainingMaterialOperations === 0
   );
 }
 
@@ -1044,7 +1216,12 @@ function hasSameStoredObjects(
 
 function getTrainingAudioBucket() {
   const bucket = (process.env.TRAINING_AUDIO_BUCKET ?? 'platforma-training-audio').trim();
+
   return /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/u.test(bucket) ? bucket : null;
+}
+
+function isTrainingAudioStorageKey(key: string) {
+  return /^training-v2\/answers\/[0-9a-f-]{36}\/(?:merged\.(?:wav|webm)|segments\/[0-9a-f-]{36}\.ogg)$/iu.test(key);
 }
 
 function parseProjectDeleteAuditMetadata(

@@ -61,6 +61,7 @@ if (!databaseUrl) {
     const snapshot = stored.projectSnapshotJson;
 
     assert.equal(snapshot.schemaVersion, 3);
+    assert.equal(snapshot.evaluationSchemaVersion, 'training-v2-evaluation-v2');
     assert.equal(snapshot.questions.every((question) => question.facts.length === 1), true);
     assert.equal(snapshot.criteria.main.reduce((sum, item) => sum + item.maxPoints, 0), 55);
     assert.equal(snapshot.criteria.followUp.reduce((sum, item) => sum + item.maxPoints, 0), 15);
@@ -134,7 +135,111 @@ if (!databaseUrl) {
     assert.equal(evaluator.calls, 2);
     assert.equal(completed.processingStatus, 'COMPLETED');
     assert.equal(completed.evaluationStatus, 'COMPLETED');
+    assert.equal(completed.processingAttempts, 2);
+    assert.equal(completed.evaluationAttempts, 2);
     assert.equal(await prisma.trainingAttemptQuestion.count({ where: { attemptId: item.attempt.id } }), 4);
+  });
+
+  test('classified harmless voice answer persists its route and does not block final completion', async () => {
+    const item = await createProcessingAnswer('harmless-routing');
+    const transcriber = {
+      transcribe: async () => ({
+        text: '[fake:harmless]',
+        model: 'stub-transcriber',
+        requestId: 'harmless-transcription',
+        latencyMs: 1,
+        attempts: 1,
+        usage: null,
+      }),
+    };
+    const worker = createWorker(new FakeAudio(prisma), transcriber, fakeEvaluator, state);
+    const previous = process.env.TRAINING_HARMLESS_EXTRA_ROUTING_ENABLED;
+    process.env.TRAINING_HARMLESS_EXTRA_ROUTING_ENABLED = 'true';
+
+    try {
+      assert.equal(await worker.runOnce(), true);
+    } finally {
+      if (previous === undefined) delete process.env.TRAINING_HARMLESS_EXTRA_ROUTING_ENABLED;
+      else process.env.TRAINING_HARMLESS_EXTRA_ROUTING_ENABLED = previous;
+    }
+
+    const storedAnswer = await prisma.trainingAnswer.findUniqueOrThrow({
+      where: { id: item.answerId },
+    });
+    assert.equal(storedAnswer.fakeOutcome, 'SCORED');
+    assert.equal(storedAnswer.evaluationSchemaVersion, 'training-v2-evaluation-v2');
+    assert.deepEqual(storedAnswer.evaluationJson.unsupported_claims, [{
+      claim: 'fake harmless extra',
+      evidence: '[fake:harmless]',
+      category: 'HARMLESS_EXTRA',
+    }]);
+    assert.equal(storedAnswer.evaluationJson.requires_review, false);
+
+    const completed = await answerAll(
+      await attempts.getEmployeeAttempt(item.attempt.id, item.user.id),
+      item.user.id,
+      '[fake:pass]',
+    );
+    assert.equal(completed.status, 'COMPLETED');
+    assert.notEqual(completed.result.finalScore, null);
+  });
+
+  test('retryable evaluation exhausts after two worker cycles with safe detail and refunded attempt', async () => {
+    const item = await createProcessingAnswer('evaluation-exhausted');
+    const transcriber = new RecordingTranscriber();
+    const evaluator = new AlwaysRetryableEvaluator(fakeEvaluator);
+    const worker = createWorker(new FakeAudio(prisma), transcriber, evaluator, state);
+
+    assert.equal(await worker.runOnce(), true);
+    const retrying = await prisma.trainingAnswer.findUniqueOrThrow({ where: { id: item.answerId } });
+    assert.equal(retrying.processingStatus, 'PROCESSING');
+    assert.equal(retrying.processingErrorCode, null);
+    assert.equal(retrying.processingAttempts, 1);
+    assert.equal(retrying.evaluationAttempts, 2);
+
+    assert.equal(await worker.runOnce(), true);
+    const failedAnswer = await prisma.trainingAnswer.findUniqueOrThrow({ where: { id: item.answerId } });
+    const failedAttempt = await prisma.trainingAttempt.findUniqueOrThrow({ where: { id: item.attempt.id } });
+    assert.equal(transcriber.calls, 1);
+    assert.equal(evaluator.calls, 2);
+    assert.equal(failedAnswer.processingStatus, 'FAILED');
+    assert.equal(failedAnswer.processingAttempts, 2);
+    assert.equal(failedAnswer.evaluationAttempts, 4);
+    assert.equal(
+      failedAnswer.processingErrorCode,
+      'OPENAI_EVALUATION_INVALID_CRITERION_POINTS_OUT_OF_RANGE',
+    );
+    assert.equal(failedAttempt.status, 'TECHNICAL_FAILED');
+    assert.equal(failedAttempt.countsTowardAttemptLimit, false);
+    assert.equal(failedAttempt.finalScore, null);
+    assert.equal(await worker.runOnce(), false);
+  });
+
+  test('deterministic evaluation failure is not repeated by the voice worker', async () => {
+    const item = await createProcessingAnswer('evaluation-deterministic');
+    const transcriber = new RecordingTranscriber();
+    const evaluator = new AlwaysDeterministicInvalidEvaluator(fakeEvaluator);
+    const worker = createWorker(new FakeAudio(prisma), transcriber, evaluator, state);
+
+    assert.equal(await worker.runOnce(), true);
+    const failedAnswer = await prisma.trainingAnswer.findUniqueOrThrow({
+      where: { id: item.answerId },
+    });
+    const failedAttempt = await prisma.trainingAttempt.findUniqueOrThrow({
+      where: { id: item.attempt.id },
+    });
+    assert.equal(transcriber.calls, 1);
+    assert.equal(evaluator.calls, 1);
+    assert.equal(failedAnswer.processingStatus, 'FAILED');
+    assert.equal(failedAnswer.processingAttempts, 1);
+    assert.equal(failedAnswer.evaluationAttempts, 2);
+    assert.equal(
+      failedAnswer.processingErrorCode,
+      'OPENAI_EVALUATION_INVALID_EVIDENCE_NOT_IN_TRANSCRIPT',
+    );
+    assert.equal(failedAttempt.status, 'TECHNICAL_FAILED');
+    assert.equal(failedAttempt.finalScore, null);
+    assert.equal(await worker.runOnce(), false);
   });
 
   test('evaluation checkpoint survives progression restart and creates follow-ups exactly once', async () => {
@@ -447,8 +552,39 @@ if (!databaseUrl) {
   class FailOnceEvaluator extends RecordingEvaluator {
     async evaluate(input) {
       this.calls += 1;
-      if (this.calls === 1) throw new Error('simulated restart before evaluation response');
+      if (this.calls === 1) {
+        throw new TrainingOpenAIError(
+          'OPENAI_EVALUATION_INVALID',
+          true,
+          1,
+          'CRITERION_POINTS_OUT_OF_RANGE',
+        );
+      }
       return this.delegate.evaluate(input);
+    }
+  }
+
+  class AlwaysRetryableEvaluator extends RecordingEvaluator {
+    async evaluate() {
+      this.calls += 1;
+      throw new TrainingOpenAIError(
+        'OPENAI_EVALUATION_INVALID',
+        true,
+        2,
+        'CRITERION_POINTS_OUT_OF_RANGE',
+      );
+    }
+  }
+
+  class AlwaysDeterministicInvalidEvaluator extends RecordingEvaluator {
+    async evaluate() {
+      this.calls += 1;
+      throw new TrainingOpenAIError(
+        'OPENAI_EVALUATION_INVALID',
+        false,
+        2,
+        'EVIDENCE_NOT_IN_TRANSCRIPT',
+      );
     }
   }
 }

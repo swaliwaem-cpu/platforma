@@ -15,6 +15,7 @@ import {
   TrainingAnswerProcessingStatus,
   TrainingAttemptQuestionStatus,
   TrainingAttemptStatus,
+  TrainingTelegramOutboxEventType,
 } from '@prisma/client';
 import type {
   TrainingTelegramAccountState,
@@ -37,6 +38,7 @@ import {
 
 const TELEGRAM_LINK_TTL_MS = 15 * 60 * 1000;
 const TELEGRAM_MAX_UPDATE_BYTES = 64 * 1024;
+const TELEGRAM_WEBHOOK_DELIVERY_RETRY_DELAYS_MS = [250, 1_000] as const;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 type TelegramIdentity = {
@@ -136,11 +138,40 @@ export class TrainingTelegramService {
   }
 
   private async deliverAndLog(delivery: TrainingTelegramDelivery) {
-    try {
-      await delivery.deliver();
-    } catch (error) {
-      this.logDeliveryFailure(delivery.operation, error);
+    let lastError: unknown;
+
+    for (
+      let attempt = 0;
+      attempt <= TELEGRAM_WEBHOOK_DELIVERY_RETRY_DELAYS_MS.length;
+      attempt += 1
+    ) {
+      try {
+        await delivery.deliver();
+        return;
+      } catch (error) {
+        lastError = error;
+        const retryDelayMs = TELEGRAM_WEBHOOK_DELIVERY_RETRY_DELAYS_MS[attempt];
+
+        if (
+          !(error instanceof TrainingTelegramClientError) ||
+          !error.retryable ||
+          retryDelayMs === undefined
+        ) {
+          break;
+        }
+
+        this.logger.warn({
+          event: 'training_telegram_delivery_retry_scheduled',
+          operation: delivery.operation,
+          code: error.code,
+          attempt: attempt + 1,
+          retryDelayMs,
+        });
+        await delayTelegramDelivery(retryDelayMs);
+      }
     }
+
+    this.logDeliveryFailure(delivery.operation, lastError);
   }
 
   private logDeliveryFailure(operation: TrainingTelegramDelivery['operation'], error: unknown) {
@@ -252,18 +283,36 @@ export class TrainingTelegramService {
     }
   }
 
-  async notifyAnswerProcessed(
-    answerId: string,
-    expectedAttemptStatus?: TrainingAttemptStatus,
-  ) {
+  async deliverOutboxNotification(input: {
+    eventType: TrainingTelegramOutboxEventType;
+    attemptId: string;
+    answerId: string | null;
+  }): Promise<'DELIVERED' | 'OBSOLETE' | 'RECIPIENT_UNAVAILABLE'> {
+    await this.attemptState.finalizeAttemptIfExpired(input.attemptId);
+
+    if (input.eventType === TrainingTelegramOutboxEventType.ATTEMPT_STATE) {
+      return (await this.notifyAttemptState(input.attemptId))
+        ? 'DELIVERED'
+        : 'RECIPIENT_UNAVAILABLE';
+    }
+
+    if (!input.answerId) return 'OBSOLETE';
     const answer = await this.prisma.trainingAnswer.findUnique({
-      where: { id: answerId },
+      where: { id: input.answerId },
       select: {
+        processingStatus: true,
         attemptQuestion: {
           select: {
+            sequence: true,
             attempt: {
               select: {
                 id: true,
+                status: true,
+                questions: {
+                  where: { status: TrainingAttemptQuestionStatus.PRESENTED },
+                  orderBy: { sequence: 'asc' },
+                  select: { sequence: true },
+                },
               },
             },
           },
@@ -271,12 +320,50 @@ export class TrainingTelegramService {
       },
     });
 
-    if (!answer) return;
+    if (!answer || answer.attemptQuestion.attempt.id !== input.attemptId) {
+      return 'OBSOLETE';
+    }
 
-    await this.notifyAttemptState(
-      answer.attemptQuestion.attempt.id,
-      expectedAttemptStatus,
-    );
+    if (input.eventType === TrainingTelegramOutboxEventType.ANSWER_FAILED) {
+      if (
+        answer.processingStatus !== TrainingAnswerProcessingStatus.FAILED ||
+        answer.attemptQuestion.attempt.status !== TrainingAttemptStatus.TECHNICAL_FAILED
+      ) {
+        return 'OBSOLETE';
+      }
+
+      return (await this.notifyAnswerFailed(input.answerId))
+        ? 'DELIVERED'
+        : 'RECIPIENT_UNAVAILABLE';
+    }
+
+    if (answer.processingStatus !== TrainingAnswerProcessingStatus.COMPLETED) {
+      throw new Error('Training Telegram outbox domain state is not ready');
+    }
+
+    const attempt = answer.attemptQuestion.attempt;
+    if (
+      attempt.status === TrainingAttemptStatus.COMPLETED ||
+      attempt.status === TrainingAttemptStatus.REQUIRES_REVIEW
+    ) {
+      if (answer.attemptQuestion.sequence !== 4) return 'OBSOLETE';
+    } else if (attempt.status === TrainingAttemptStatus.IN_PROGRESS) {
+      const presentedSequence = attempt.questions[0]?.sequence;
+      const expectedSequence = answer.attemptQuestion.sequence + 1;
+
+      if (presentedSequence !== expectedSequence) {
+        if (presentedSequence !== undefined && presentedSequence > expectedSequence) {
+          return 'OBSOLETE';
+        }
+        throw new Error('Training Telegram outbox progression is not ready');
+      }
+    } else {
+      return 'OBSOLETE';
+    }
+
+    return (await this.notifyAttemptState(input.attemptId))
+      ? 'DELIVERED'
+      : 'RECIPIENT_UNAVAILABLE';
   }
 
   async notifyAttemptState(
@@ -292,7 +379,7 @@ export class TrainingTelegramService {
       !attempt ||
       (expectedAttemptStatus !== undefined && attempt.status !== expectedAttemptStatus)
     ) {
-      return;
+      return false;
     }
 
     const account = await this.prisma.trainingTelegramAccount.findFirst({
@@ -302,16 +389,10 @@ export class TrainingTelegramService {
 
     if (account) {
       await this.sendAttemptState(account.chatId, attemptId, expectedAttemptStatus);
+      return true;
     }
-  }
 
-  dispatchAttemptStateNotification(attemptId: string) {
-    queueMicrotask(() => {
-      void this.notifyAttemptState(
-        attemptId,
-        TrainingAttemptStatus.COMPLETED,
-      ).catch((error: unknown) => this.logDeliveryFailure('sendMessage', error));
-    });
+    return false;
   }
 
   async notifyAnswerFailed(answerId: string) {
@@ -324,7 +405,7 @@ export class TrainingTelegramService {
       },
     });
 
-    if (!answer) return;
+    if (!answer) return false;
 
     const account = await this.prisma.trainingTelegramAccount.findFirst({
       where: { userId: answer.attemptQuestion.attempt.userId, revokedAt: null },
@@ -336,7 +417,10 @@ export class TrainingTelegramService {
         chatId: account.chatId,
         text: 'Не удалось обработать голосовой ответ. Попытка не получила обычную оценку.',
       });
+      return true;
     }
+
+    return false;
   }
 
   private async handleStartToken(identity: TelegramIdentity, rawToken: string) {
@@ -461,7 +545,7 @@ export class TrainingTelegramService {
           status: TrainingAttemptStatus.IN_PROGRESS,
         },
       },
-      select: { attemptId: true },
+      select: { attemptId: true, sequence: true },
     });
 
     if (!question) {
@@ -481,7 +565,10 @@ export class TrainingTelegramService {
     if (result.status === 'PROCESSING') {
       await this.outboundClient.sendMessage({
         chatId: callback.identity.chatId,
-        text: 'Ответ принят. Следующий вопрос придёт автоматически.',
+        text:
+          question.sequence === 4
+            ? 'Ваши ответы приняты. Ожидайте решения.'
+            : 'Ответ принят. Следующий вопрос придёт автоматически.',
       });
     } else if (result.status === 'TIMED_OUT') {
       await this.outboundClient.sendMessage({
@@ -1028,4 +1115,8 @@ async function getTransactionNow(transaction: Prisma.TransactionClient) {
 
   if (!row) throw new Error('Database timestamp unavailable');
   return row.now;
+}
+
+function delayTelegramDelivery(milliseconds: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 }

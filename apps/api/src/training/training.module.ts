@@ -29,6 +29,7 @@ import { OpenAITrainingTranscriber } from './training-openai-transcriber';
 import { TrainingFollowUpSelector } from './training-follow-up-selector';
 import { TrainingMaterialController } from './training-material.controller';
 import { TrainingMaterialExtractionService } from './training-material-extraction';
+import { TrainingMaterialOperationService } from './training-material-operation.service';
 import { TrainingMaterialService } from './training-material.service';
 import {
   DeterministicFakeTrainingMaterialSuggester,
@@ -50,13 +51,17 @@ import {
   validateTrainingTelegramRealConfig,
 } from './training-telegram-client';
 import { TrainingTelegramController } from './training-telegram.controller';
+import { TrainingTelegramOutboxWorkerService } from './training-telegram-outbox-worker.service';
 import { TrainingTelegramService } from './training-telegram.service';
 import {
   DeterministicFakeTrainingTranscriber,
   TRAINING_TRANSCRIBER,
 } from './training-transcriber';
 import { TrainingVoiceWorkerService } from './training-voice-worker.service';
+import { TrainingVoiceWorkerWakeupService } from './training-voice-worker-wakeup.service';
 import { TrainingUrlExtractor } from './training-url-extractor';
+import { TrainingAiUsageService } from './training-ai-usage.service';
+import { TrainingAudioStorageService } from './training-audio-storage.service';
 
 @Module({
   imports: [AuthModule, PrismaModule, FilesModule],
@@ -80,12 +85,17 @@ import { TrainingUrlExtractor } from './training-url-extractor';
     TrainingFeatureGuard,
     TrainingFollowUpSelector,
     TrainingTelegramService,
+    TrainingTelegramOutboxWorkerService,
     TrainingAudioService,
+    TrainingVoiceWorkerWakeupService,
     TrainingVoiceWorkerService,
     TrainingMaterialExtractionService,
+    TrainingMaterialOperationService,
     TrainingUrlExtractor,
     TrainingMaterialService,
     TrainingProjectKnowledgeService,
+    TrainingAiUsageService,
+    TrainingAudioStorageService,
     DeterministicFakeTrainingMaterialSuggester,
     SpawnTrainingFfmpegRunner,
     DeterministicFakeTrainingTranscriber,
@@ -106,10 +116,16 @@ import { TrainingUrlExtractor } from './training-url-extractor';
     },
     {
       provide: TRAINING_EVALUATOR,
-      inject: [DeterministicFakeTrainingEvaluator],
-      useFactory: (fakeEvaluator: DeterministicFakeTrainingEvaluator) =>
+      inject: [DeterministicFakeTrainingEvaluator, TrainingAiUsageService],
+      useFactory: (
+        fakeEvaluator: DeterministicFakeTrainingEvaluator,
+        aiUsage: TrainingAiUsageService,
+      ) =>
         getTrainingAiMode() === 'openai'
-          ? new OpenAITrainingEvaluator(new TrainingOpenAIClient(getOpenAIApiKey()))
+          ? new OpenAITrainingEvaluator(
+              new TrainingOpenAIClient(getOpenAIApiKey()),
+              aiUsage,
+            )
           : fakeEvaluator,
     },
     {
@@ -118,18 +134,30 @@ import { TrainingUrlExtractor } from './training-url-extractor';
     },
     {
       provide: TRAINING_MATERIAL_SUGGESTER,
-      inject: [DeterministicFakeTrainingMaterialSuggester],
-      useFactory: (fakeSuggester: DeterministicFakeTrainingMaterialSuggester) =>
+      inject: [DeterministicFakeTrainingMaterialSuggester, TrainingAiUsageService],
+      useFactory: (
+        fakeSuggester: DeterministicFakeTrainingMaterialSuggester,
+        aiUsage: TrainingAiUsageService,
+      ) =>
         getTrainingAiMode() === 'openai'
-          ? new OpenAITrainingMaterialSuggester(new TrainingOpenAIClient(getOpenAIApiKey()))
+          ? new OpenAITrainingMaterialSuggester(
+              new TrainingOpenAIClient(getOpenAIApiKey()),
+              aiUsage,
+            )
           : fakeSuggester,
     },
     {
       provide: TRAINING_TRANSCRIBER,
-      inject: [DeterministicFakeTrainingTranscriber],
-      useFactory: (fakeTranscriber: DeterministicFakeTrainingTranscriber) =>
+      inject: [DeterministicFakeTrainingTranscriber, TrainingAiUsageService],
+      useFactory: (
+        fakeTranscriber: DeterministicFakeTrainingTranscriber,
+        aiUsage: TrainingAiUsageService,
+      ) =>
         getTrainingAiMode() === 'openai'
-          ? new OpenAITrainingTranscriber(new TrainingOpenAIClient(getOpenAIApiKey()))
+          ? new OpenAITrainingTranscriber(
+              new TrainingOpenAIClient(getOpenAIApiKey()),
+              aiUsage,
+            )
           : fakeTranscriber,
     },
   ],

@@ -21,7 +21,9 @@ const answerId = '92222222-2222-4222-8222-222222222222';
 const resultQueries = [];
 let detailReads = 0;
 let reviewPosts = 0;
-let resultDelayMs = 250;
+let releaseInitialResults;
+const initialResultsBarrier = new Promise((resolve) => { releaseInitialResults = resolve; });
+let initialResultsPending = true;
 let audioFails = false;
 
 try {
@@ -52,7 +54,10 @@ try {
 
     if (path === '/training/admin/results') {
       resultQueries.push(Object.fromEntries(url.searchParams.entries()));
-      if (resultDelayMs) await new Promise((resolve) => setTimeout(resolve, resultDelayMs));
+      if (initialResultsPending) {
+        initialResultsPending = false;
+        await initialResultsBarrier;
+      }
       const search = url.searchParams.get('search');
       if (search === 'error') {
         await json(route, { message: 'RESULTS_FAILED' }, 500);
@@ -131,12 +136,12 @@ try {
 
   await page.goto(`${baseUrl}/admin/training/results`, { waitUntil: 'domcontentloaded' });
   await page.locator('.training-list-skeleton').waitFor();
+  releaseInitialResults();
   await page.getByText('Результаты сотрудников').waitFor();
   await page.getByText('Анна Брокер').waitFor();
   assert.equal(await page.title(), 'Platforma');
   assert.equal(new URL(page.url()).pathname, '/admin/training/results');
   assert.equal(await page.locator('vite-error-overlay').count(), 0);
-  resultDelayMs = 0;
   assert.equal(await page.locator('html').getAttribute('data-app-theme'), 'minimal-luxury');
   await page.getByRole('button', { name: 'Раскрыть меню' }).click();
   await page.getByRole('button', { name: 'Включить темную тему' }).click();
@@ -211,6 +216,7 @@ try {
 
   process.stdout.write('TRAINING_STAGE5_PART1_BROWSER_OK\n');
 } finally {
+  releaseInitialResults();
   await browser.close();
 }
 

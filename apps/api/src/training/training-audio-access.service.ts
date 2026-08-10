@@ -42,16 +42,18 @@ export class TrainingAudioAccessService {
     });
     const file = answer?.mergedAudioFile;
     const privateBucket = getPrivateAudioBucket(this.storage.getBucket());
+    const format = answer && file
+      ? resolveAudioFormat(answer.id, file.key, file.mimeType)
+      : null;
 
     if (
       !answer ||
       answer.source !== TrainingAnswerSource.TELEGRAM ||
       !file ||
+      !format ||
       file.storage !== FileStorage.MINIO ||
       file.bucket !== privateBucket ||
-      file.key !== `training-v2/answers/${answer.id}/merged.wav` ||
       file.url !== null ||
-      file.mimeType !== 'audio/wav' ||
       file.sizeBytes === null ||
       !file.checksum
     ) {
@@ -69,12 +71,11 @@ export class TrainingAudioAccessService {
     const checksum = createHash('sha256').update(buffer).digest('hex');
 
     if (
-      buffer.length <= 44 ||
-      buffer.length > MAX_AUDIO_BYTES ||
+      buffer.length <= format.minimumBytes ||
+      buffer.length > format.maximumBytes ||
       BigInt(buffer.length) !== file.sizeBytes ||
       checksum !== file.checksum ||
-      buffer.toString('ascii', 0, 4) !== 'RIFF' ||
-      buffer.toString('ascii', 8, 12) !== 'WAVE'
+      !format.hasValidHeader(buffer)
     ) {
       throw safeNotFound();
     }
@@ -94,8 +95,39 @@ export class TrainingAudioAccessService {
       },
     });
 
-    return { buffer, mimeType: 'audio/wav' as const };
+    return { buffer, mimeType: format.mimeType, fileName: format.fileName };
   }
+}
+
+function resolveAudioFormat(answerId: string, key: string, mimeType: string | null) {
+  if (
+    key === `training-v2/answers/${answerId}/merged.webm` &&
+    mimeType === 'audio/webm'
+  ) {
+    return {
+      mimeType: 'audio/webm' as const,
+      fileName: 'training-answer-audio.webm',
+      minimumBytes: 4,
+      maximumBytes: 25 * 1024 * 1024,
+      hasValidHeader: (buffer: Buffer) =>
+        buffer.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3])),
+    };
+  }
+  if (
+    key === `training-v2/answers/${answerId}/merged.wav` &&
+    mimeType === 'audio/wav'
+  ) {
+    return {
+      mimeType: 'audio/wav' as const,
+      fileName: 'training-answer-audio.wav',
+      minimumBytes: 44,
+      maximumBytes: MAX_AUDIO_BYTES,
+      hasValidHeader: (buffer: Buffer) =>
+        buffer.toString('ascii', 0, 4) === 'RIFF' &&
+        buffer.toString('ascii', 8, 12) === 'WAVE',
+    };
+  }
+  return null;
 }
 
 function getPrivateAudioBucket(publicBucket: string) {

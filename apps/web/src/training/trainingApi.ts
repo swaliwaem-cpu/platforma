@@ -1,9 +1,9 @@
 import type {
   BulkTrainingProjectAssignmentsRequest,
   BulkTrainingProjectAssignmentsResponse,
+  CreateTrainingAudioDeletionManifestRequest,
   CreateTrainingProjectRequest,
   ImportTrainingObjectRequest,
-  ImportTrainingObjectResponse,
   ApplyTrainingMaterialSuggestionsRequest,
   CreateTrainingManualMaterialRequest,
   CreateTrainingObjectSnapshotMaterialRequest,
@@ -20,10 +20,15 @@ import type {
   TrainingAdminResultsResponse,
   TrainingAdminRankingQuery,
   TrainingAdminRankingResponse,
+  TrainingAudioDeletionManifestResponse,
+  TrainingAudioStorageReport,
+  TrainingAudioStorageState,
   TrainingEmployeeAttempt,
   TrainingEmployeeAttemptsResponse,
   TrainingEmployeeProjectsResponse,
   TrainingMaterialDetail,
+  TrainingMaterialOperation,
+  TrainingMaterialOperationsResponse,
   TrainingMaterialsResponse,
   TrainingObjectOptionsResponse,
   TrainingProjectAssignmentUsersResponse,
@@ -35,6 +40,16 @@ import type {
 } from '@platforma/shared';
 
 import { apiRequest, apiResponse } from '../admin/api';
+
+export type TrainingAudioStorageQuery = {
+  page: number;
+  limit: number;
+  project: string;
+  user: string;
+  createdFrom: string;
+  createdTo: string;
+  state: TrainingAudioStorageState | '';
+};
 
 export function getTrainingProjects(accessToken: string, signal?: AbortSignal) {
   return apiRequest<TrainingEmployeeProjectsResponse>('/training/projects', accessToken, {
@@ -107,6 +122,45 @@ export function getTrainingAdminProjects(accessToken: string, signal?: AbortSign
   return apiRequest<TrainingAdminProjectsResponse>('/training/admin/projects', accessToken, {
     signal,
   });
+}
+
+export function getTrainingAudioStorage(
+  accessToken: string,
+  query: TrainingAudioStorageQuery,
+  signal?: AbortSignal,
+) {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== '') search.set(key, String(value));
+  }
+
+  return apiRequest<TrainingAudioStorageReport>(
+    `/training/admin/audio-storage?${search.toString()}`,
+    accessToken,
+    { signal },
+  );
+}
+
+export function createTrainingAudioDeletionManifest(
+  accessToken: string,
+  input: CreateTrainingAudioDeletionManifestRequest,
+) {
+  return apiRequest<TrainingAudioDeletionManifestResponse>(
+    '/training/admin/audio-storage/delete-manifests',
+    accessToken,
+    { method: 'POST', body: JSON.stringify(input) },
+  );
+}
+
+export function executeTrainingAudioDeletionManifest(
+  accessToken: string,
+  manifestId: string,
+) {
+  return apiRequest<TrainingAudioDeletionManifestResponse>(
+    `/training/admin/audio-storage/delete-manifests/${encodeURIComponent(manifestId)}/execute`,
+    accessToken,
+    { method: 'POST', body: JSON.stringify({ confirmed: true }) },
+  );
 }
 
 export function createTrainingAdminProject(
@@ -223,11 +277,36 @@ export function importTrainingObjectContent(
   accessToken: string,
   projectId: string,
   input: ImportTrainingObjectRequest,
+  idempotencyKey: string,
 ) {
-  return apiRequest<ImportTrainingObjectResponse>(
+  return apiRequest<TrainingMaterialOperation>(
     `/training/admin/projects/${encodeURIComponent(projectId)}/import-object`,
     accessToken,
-    { method: 'POST', body: JSON.stringify(input) },
+    {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export function getTrainingMaterialOperations(
+  accessToken: string,
+  projectId: string,
+  signal?: AbortSignal,
+) {
+  return apiRequest<TrainingMaterialOperationsResponse>(
+    `/training/admin/projects/${encodeURIComponent(projectId)}/material-operations`,
+    accessToken,
+    { signal },
+  );
+}
+
+export function retryTrainingMaterialOperation(accessToken: string, operationId: string) {
+  return apiRequest<TrainingMaterialOperation>(
+    `/training/admin/material-operations/${encodeURIComponent(operationId)}/retry`,
+    accessToken,
+    { method: 'POST' },
   );
 }
 
@@ -255,11 +334,16 @@ export function createTrainingUrlMaterial(
   accessToken: string,
   projectId: string,
   input: CreateTrainingUrlMaterialRequest,
+  idempotencyKey: string,
 ) {
-  return apiRequest<TrainingMaterialDetail>(
+  return apiRequest<TrainingMaterialOperation>(
     `/training/admin/projects/${encodeURIComponent(projectId)}/materials`,
     accessToken,
-    { method: 'POST', body: JSON.stringify({ type: 'OFFICIAL_URL', ...input }) },
+    {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify({ type: 'OFFICIAL_URL', ...input }),
+    },
   );
 }
 
@@ -280,16 +364,17 @@ export function createTrainingPdfMaterial(
   projectId: string,
   title: string,
   file: File,
+  idempotencyKey: string,
   replaceExistingQuestions = false,
 ) {
   const form = new FormData();
   form.set('title', title);
   form.set('file', file);
   form.set('replaceExistingQuestions', String(replaceExistingQuestions));
-  return apiRequest<TrainingMaterialDetail>(
+  return apiRequest<TrainingMaterialOperation>(
     `/training/admin/projects/${encodeURIComponent(projectId)}/materials/pdf`,
     accessToken,
-    { method: 'POST', body: form },
+    { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: form },
   );
 }
 

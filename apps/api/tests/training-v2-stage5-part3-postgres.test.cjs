@@ -1,7 +1,9 @@
 require('reflect-metadata');
 
 const assert = require('node:assert/strict');
+const { fork, spawnSync } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
+const { resolve } = require('node:path');
 const { after, before, beforeEach, test } = require('node:test');
 const {
   PrismaClient,
@@ -16,8 +18,15 @@ const { DeterministicFakeTrainingEvaluator } = require('../dist/training/trainin
 const { TrainingProjectService } = require('../dist/training/training-project.service.js');
 const { TrainingProjectAccessService } = require('../dist/training/training-project-access.service.js');
 const { FakeTrainingTelegramClient } = require('../dist/training/training-telegram-client.js');
+const { TrainingOpenAIError } = require('../dist/training/training-openai-client.js');
 const { TrainingTelegramService } = require('../dist/training/training-telegram.service.js');
+const {
+  TrainingTelegramOutboxWorkerService,
+} = require('../dist/training/training-telegram-outbox-worker.service.js');
 const { TrainingVoiceWorkerService } = require('../dist/training/training-voice-worker.service.js');
+const {
+  TrainingVoiceWorkerWakeupService,
+} = require('../dist/training/training-voice-worker-wakeup.service.js');
 
 const databaseUrl = process.env.TRAINING_TEST_DATABASE_URL;
 
@@ -37,11 +46,13 @@ if (!databaseUrl) {
   const prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
   const projectAccess = new TrainingProjectAccessService(prisma);
   const evaluator = new DeterministicFakeTrainingEvaluator();
+  const voiceWorkerWakeup = new TrainingVoiceWorkerWakeupService();
   const state = new TrainingAttemptStateService(
     prisma,
     evaluator,
     { select: (candidates) => candidates.slice(0, 3) },
     projectAccess,
+    voiceWorkerWakeup,
   );
   const attempts = new TrainingAttemptService(prisma, state, projectAccess);
   const projects = new TrainingProjectService(prisma);
@@ -145,6 +156,93 @@ if (!databaseUrl) {
     );
   });
 
+  test('committed PROCESSING answer wakes a local idle worker without waiting for polling', async (context) => {
+    process.env.TRAINING_VOICE_WORKER_POLL_INTERVAL_MS = '1000';
+    const project = await createOpenProject('Part 3 local wakeup');
+    const [user] = await createUsers(1, 'local-wakeup');
+    const attempt = await attempts.startAttempt(project.id, user.id, {
+      confirmed: true,
+      idempotencyKey: randomUUID(),
+    });
+    const telegramUserId = 91_001;
+    const chatId = 92_001;
+    await prisma.trainingTelegramAccount.create({
+      data: {
+        userId: user.id,
+        telegramUserId: BigInt(telegramUserId),
+        chatId: BigInt(chatId),
+      },
+    });
+    const client = new FakeTrainingTelegramClient();
+    const telegram = new TrainingTelegramService(prisma, state, projectAccess, client);
+    const transcriber = new BarrierTranscriber();
+    const worker = createWorker(
+      new ImmediateAudio(),
+      transcriber,
+      evaluator,
+      state,
+      telegram,
+    );
+    context.after(async () => {
+      process.env.TRAINING_VOICE_WORKER_POLL_INTERVAL_MS = '250';
+      transcriber.release();
+      await worker.shutdown();
+    });
+    await worker.onModuleInit();
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await telegram.handleUpdate(voiceUpdate(
+      telegramUserId,
+      chatId,
+      93_001,
+      'local-wakeup-file',
+      'local-wakeup-unique',
+    ));
+
+    const startedAt = Date.now();
+    await telegram.handleUpdate(finishUpdate(
+      telegramUserId,
+      chatId,
+      attempt.currentQuestion.id,
+      'local-wakeup-finish',
+    ));
+    await Promise.race([
+      transcriber.waitUntilStarted(),
+      new Promise((_, reject) => setTimeout(
+        () => reject(new Error('Local worker wakeup was not immediate')),
+        750,
+      )),
+    ]);
+    assert.ok(Date.now() - startedAt < 750);
+    transcriber.release();
+    await waitFor(async () =>
+      (await prisma.trainingAnswer.findFirst({
+        where: { attemptQuestionId: attempt.currentQuestion.id },
+        select: { processingStatus: true },
+      }))?.processingStatus === TrainingAnswerProcessingStatus.COMPLETED,
+    );
+  });
+
+  test('periodic polling recovers work when no local wakeup signal is delivered', async (context) => {
+    process.env.TRAINING_VOICE_WORKER_POLL_INTERVAL_MS = '250';
+    const transcriber = new BoundedTranscriber(0);
+    const worker = createWorker(new ImmediateAudio(), transcriber, evaluator, state);
+    context.after(() => worker.shutdown());
+    await worker.onModuleInit();
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const [item] = await createProcessingAnswers(1, 'lost-wakeup-signal');
+    await waitFor(async () =>
+      (await prisma.trainingAnswer.findUniqueOrThrow({
+        where: { id: item.answerId },
+        select: { processingStatus: true },
+      })).processingStatus === TrainingAnswerProcessingStatus.COMPLETED,
+      4_000,
+    );
+
+    assert.equal(transcriber.calls, 1);
+    assert.equal((await getAnswer(item.answerId)).processingAttempts, 1);
+  });
+
   test('lost ownership cannot save a stale transcript and a fresh owner resumes it', async () => {
     const item = await createProcessingAnswers(1, 'lost-owner');
     const barrier = new BarrierTranscriber();
@@ -171,8 +269,16 @@ if (!databaseUrl) {
     assert.equal(completed.text, `transcript:${completed.id}`);
   });
 
-  test('two workers cannot process one answer twice', async () => {
+  test('one worker recovers a stale crash claim while a second cannot duplicate it', async () => {
     const item = await createProcessingAnswers(1, 'two-workers');
+    await prisma.trainingAnswer.update({
+      where: { id: item[0].answerId },
+      data: {
+        processingAttempts: 1,
+        processingLockedAt: new Date(Date.now() - 10_000),
+        processingLockedBy: 'crashed-worker',
+      },
+    });
     const barrier = new BarrierTranscriber();
     const first = createWorker(new ImmediateAudio(), barrier, evaluator, state);
     const secondTranscriber = new BoundedTranscriber(0);
@@ -186,7 +292,48 @@ if (!databaseUrl) {
     assert.equal(await firstRun, true);
     const completed = await getAnswer(item[0].answerId);
     assert.equal(completed.processingStatus, 'COMPLETED');
-    assert.equal(completed.processingAttempts, 1);
+    assert.equal(completed.processingAttempts, 2);
+  });
+
+  test('two worker processes share one deployment-wide provider concurrency limit', async (context) => {
+    process.env.TRAINING_VOICE_WORKER_CONCURRENCY = '3';
+    const items = await createProcessingAnswers(12, 'two-worker-processes');
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "training_voice_worker_test_stats" (
+        "id" integer PRIMARY KEY,
+        "active" integer NOT NULL,
+        "peak" integer NOT NULL,
+        "total" integer NOT NULL
+      )
+    `);
+    await prisma.$executeRawUnsafe(`
+      INSERT INTO "training_voice_worker_test_stats" ("id", "active", "peak", "total")
+      VALUES (1, 0, 0, 0)
+      ON CONFLICT ("id") DO UPDATE SET "active" = 0, "peak" = 0, "total" = 0
+    `);
+
+    const children = [startWorkerProcess(), startWorkerProcess()];
+    context.after(async () => {
+      await Promise.all(children.map((child) => stopWorkerProcess(child)));
+      await prisma.$executeRawUnsafe('DROP TABLE IF EXISTS "training_voice_worker_test_stats"');
+    });
+    await Promise.all(children.map((child) => waitForWorkerProcess(child)));
+    await waitFor(async () =>
+      (await prisma.trainingAnswer.count({
+        where: {
+          id: { in: items.map((item) => item.answerId) },
+          processingStatus: TrainingAnswerProcessingStatus.COMPLETED,
+        },
+      })) === items.length,
+    );
+    await Promise.all(children.map((child) => stopWorkerProcess(child)));
+
+    const [stats] = await prisma.$queryRawUnsafe(
+      'SELECT "active", "peak", "total" FROM "training_voice_worker_test_stats" WHERE "id" = 1',
+    );
+    assert.equal(stats.active, 0);
+    assert.equal(stats.total, items.length);
+    assert.equal(stats.peak, 3);
   });
 
   test('disable before claim and between claim/external call makes no call and re-enable resumes', async () => {
@@ -274,18 +421,18 @@ if (!databaseUrl) {
     let signalClaimQuery;
     const claimQueryStarted = new Promise((resolve) => { signalClaimQuery = resolve; });
     const claimQueryBarrier = new Promise((resolve) => { releaseClaimQuery = resolve; });
-    const originalQueryRaw = prisma.$queryRaw.bind(prisma);
-    let gateNextQuery = true;
+    const originalTransaction = prisma.$transaction.bind(prisma);
+    let gateNextTransaction = true;
     const gatedPrisma = new Proxy(prisma, {
       get(target, property) {
-        if (property === '$queryRaw') {
+        if (property === '$transaction') {
           return async (...args) => {
-            if (gateNextQuery) {
-              gateNextQuery = false;
+            if (gateNextTransaction) {
+              gateNextTransaction = false;
               signalClaimQuery();
               await claimQueryBarrier;
             }
-            return originalQueryRaw(...args);
+            return originalTransaction(...args);
           };
         }
         const value = Reflect.get(target, property, target);
@@ -323,14 +470,14 @@ if (!databaseUrl) {
     let signalClaimQuery;
     const claimQueryStarted = new Promise((resolve) => { signalClaimQuery = resolve; });
     const claimQueryBarrier = new Promise((resolve) => { releaseClaimQuery = resolve; });
-    const originalQueryRaw = prisma.$queryRaw.bind(prisma);
+    const originalTransaction = prisma.$transaction.bind(prisma);
     const gatedPrisma = new Proxy(prisma, {
       get(target, property) {
-        if (property === '$queryRaw') {
+        if (property === '$transaction') {
           return async (...args) => {
             signalClaimQuery();
             await claimQueryBarrier;
-            return originalQueryRaw(...args);
+            return originalTransaction(...args);
           };
         }
         const value = Reflect.get(target, property, target);
@@ -361,7 +508,7 @@ if (!databaseUrl) {
     });
   });
 
-  test('shutdown drains active work when it finishes inside the grace bound', async (context) => {
+  test('shutdown saves a completed transcription checkpoint inside the grace bound', async (context) => {
     process.env.TRAINING_VOICE_WORKER_CONCURRENCY = '1';
     const item = await createProcessingAnswers(1, 'bounded-drain');
     const barrier = new BarrierTranscriber();
@@ -377,8 +524,210 @@ if (!databaseUrl) {
     await shutdown;
 
     const answer = await getAnswer(item[0].answerId);
-    assert.equal(answer.processingStatus, 'COMPLETED');
+    assert.equal(answer.processingStatus, 'PROCESSING');
     assert.equal(answer.processingLockedBy, null);
+    assert.equal(answer.transcriptionStatus, 'COMPLETED');
+    assert.equal(answer.evaluationStatus, 'PENDING');
+
+    const skippedTranscriber = new BoundedTranscriber(0);
+    const restarted = createWorker(
+      new ImmediateAudio(),
+      skippedTranscriber,
+      evaluator,
+      state,
+    );
+    assert.equal(await restarted.runOnce(), true);
+    assert.equal(skippedTranscriber.calls, 0);
+    assert.equal((await getAnswer(item[0].answerId)).processingStatus, 'COMPLETED');
+  });
+
+  test('shutdown aborts an in-flight transcription and restart resumes the pending checkpoint', async () => {
+    process.env.TRAINING_VOICE_WORKER_CONCURRENCY = '1';
+    const item = await createProcessingAnswers(1, 'abort-transcription');
+    const transcriber = new AbortAwareTranscriber();
+    const worker = createWorker(new ImmediateAudio(), transcriber, evaluator, state);
+    const running = worker.runOnce();
+
+    await transcriber.waitUntilStarted();
+    await worker.shutdown();
+    assert.equal(await running, true);
+
+    const cancelled = await getAnswer(item[0].answerId);
+    assert.equal(transcriber.aborted, true);
+    assert.equal(cancelled.processingStatus, 'PROCESSING');
+    assert.equal(cancelled.processingAttempts, 1);
+    assert.equal(cancelled.processingLockedBy, null);
+    assert.equal(cancelled.transcriptionStatus, 'PENDING');
+
+    const restartedTranscriber = new BoundedTranscriber(0);
+    const restarted = createWorker(
+      new ImmediateAudio(),
+      restartedTranscriber,
+      evaluator,
+      state,
+    );
+    assert.equal(await restarted.runOnce(), true);
+    assert.equal(restartedTranscriber.calls, 1);
+    assert.equal((await getAnswer(item[0].answerId)).processingStatus, 'COMPLETED');
+  });
+
+  test('shutdown before the first provider call rolls back the processing attempt', async (context) => {
+    process.env.TRAINING_VOICE_WORKER_CONCURRENCY = '1';
+    const item = await createProcessingAnswers(1, 'before-provider');
+    const audio = new BarrierAudio();
+    const transcriber = new BoundedTranscriber(0);
+    const worker = createWorker(audio, transcriber, evaluator, state);
+    context.after(async () => {
+      audio.release();
+      await worker.shutdown();
+    });
+    await worker.onModuleInit();
+    await audio.waitUntilStarted();
+    await worker.shutdown();
+
+    const released = await getAnswer(item[0].answerId);
+    assert.equal(transcriber.calls, 0);
+    assert.equal(released.processingStatus, 'PROCESSING');
+    assert.equal(released.processingAttempts, 0);
+    assert.equal(released.processingLockedBy, null);
+    audio.release();
+    await audio.waitUntilFinished();
+
+    const restarted = createWorker(
+      new ImmediateAudio(),
+      transcriber,
+      evaluator,
+      state,
+    );
+    assert.equal(await restarted.runOnce(), true);
+    assert.equal(transcriber.calls, 1);
+    assert.equal((await getAnswer(item[0].answerId)).processingAttempts, 1);
+  });
+
+  test('shutdown between checkpoints preserves transcription and restart does not repeat it', async () => {
+    process.env.TRAINING_VOICE_WORKER_CONCURRENCY = '1';
+    const item = await createProcessingAnswers(1, 'transcription-checkpoint');
+    const transcriber = new BoundedTranscriber(0);
+    const barrierEvaluator = new AbortAwareEvaluator(evaluator);
+    const worker = createWorker(
+      new ImmediateAudio(),
+      transcriber,
+      barrierEvaluator,
+      state,
+    );
+    const running = worker.runOnce();
+
+    await barrierEvaluator.waitUntilStarted();
+    const checkpoint = await getAnswer(item[0].answerId);
+    assert.equal(checkpoint.transcriptionStatus, 'COMPLETED');
+    assert.equal(checkpoint.evaluationStatus, 'PENDING');
+    await worker.shutdown();
+    assert.equal(await running, true);
+
+    const cancelled = await getAnswer(item[0].answerId);
+    assert.equal(barrierEvaluator.aborted, true);
+    assert.equal(cancelled.processingStatus, 'PROCESSING');
+    assert.equal(cancelled.processingLockedBy, null);
+    assert.equal(cancelled.transcriptionStatus, 'COMPLETED');
+    assert.equal(cancelled.evaluationStatus, 'PENDING');
+
+    const skippedTranscriber = new BoundedTranscriber(0);
+    const restarted = createWorker(
+      new ImmediateAudio(),
+      skippedTranscriber,
+      evaluator,
+      state,
+    );
+    assert.equal(await restarted.runOnce(), true);
+    assert.equal(skippedTranscriber.calls, 0);
+    assert.equal((await getAnswer(item[0].answerId)).processingStatus, 'COMPLETED');
+  });
+
+  test('restart after the evaluation checkpoint repeats neither paid provider step', async (context) => {
+    process.env.TRAINING_VOICE_WORKER_CONCURRENCY = '1';
+    const item = await createProcessingAnswers(1, 'evaluation-checkpoint');
+    const transcriber = new BoundedTranscriber(0);
+    const countingEvaluator = new CountingEvaluator(evaluator);
+    const completionGate = new CompletionGate(state);
+    const worker = createWorker(
+      new ImmediateAudio(),
+      transcriber,
+      countingEvaluator,
+      completionGate,
+    );
+    context.after(async () => {
+      completionGate.release();
+      await worker.shutdown();
+    });
+    await worker.onModuleInit();
+    await completionGate.waitUntilStarted();
+
+    const checkpoint = await getAnswer(item[0].answerId);
+    assert.equal(checkpoint.transcriptionStatus, 'COMPLETED');
+    assert.equal(checkpoint.evaluationStatus, 'COMPLETED');
+    await worker.shutdown();
+
+    const released = await getAnswer(item[0].answerId);
+    assert.equal(released.processingStatus, 'PROCESSING');
+    assert.equal(released.processingLockedBy, null);
+    assert.equal(released.transcriptionStatus, 'COMPLETED');
+    assert.equal(released.evaluationStatus, 'COMPLETED');
+    completionGate.release();
+    await completionGate.waitUntilFinished();
+
+    const skippedTranscriber = new BoundedTranscriber(0);
+    const skippedEvaluator = new CountingEvaluator(evaluator);
+    const restarted = createWorker(
+      new ImmediateAudio(),
+      skippedTranscriber,
+      skippedEvaluator,
+      state,
+    );
+    assert.equal(await restarted.runOnce(), true);
+    assert.equal(skippedTranscriber.calls, 0);
+    assert.equal(skippedEvaluator.calls, 0);
+    assert.equal(transcriber.calls, 1);
+    assert.equal(countingEvaluator.calls, 1);
+    assert.equal((await getAnswer(item[0].answerId)).processingStatus, 'COMPLETED');
+  });
+
+  test('pre-deploy probe reports active claim age and requires explicit confirmation', async () => {
+    const item = await createProcessingAnswers(1, 'predeploy-probe');
+    await prisma.trainingAnswer.update({
+      where: { id: item[0].answerId },
+      data: {
+        processingAttempts: 1,
+        processingLockedAt: new Date(),
+        processingLockedBy: 'predeploy-probe-owner',
+      },
+    });
+    const root = resolve(__dirname, '../../..');
+    const script = resolve(__dirname, '../scripts/training-voice-worker-predeploy.cjs');
+    const environment = { ...process.env, DATABASE_URL: databaseUrl };
+    const blocked = spawnSync(process.execPath, [script], {
+      cwd: root,
+      env: environment,
+      encoding: 'utf8',
+    });
+
+    assert.equal(blocked.status, 2);
+    const blockedReport = JSON.parse(blocked.stdout);
+    assert.equal(blockedReport.event, 'training_voice_worker_predeploy');
+    assert.equal(blockedReport.activeClaims, 1);
+    assert.equal(Number.isInteger(blockedReport.oldestActiveAgeSeconds), true);
+    assert.equal(blockedReport.oldestActiveAgeSeconds >= 0, true);
+    assert.equal(blockedReport.activeDeployConfirmed, false);
+    assert.match(blocked.stderr, /deploy blocked/u);
+
+    const confirmed = spawnSync(process.execPath, [script, '--confirm-active'], {
+      cwd: root,
+      env: environment,
+      encoding: 'utf8',
+    });
+    const confirmedReport = JSON.parse(confirmed.stdout);
+    assert.equal(confirmed.status, 0);
+    assert.equal(confirmedReport.activeClaims, 1);
+    assert.equal(confirmedReport.activeDeployConfirmed, true);
   });
 
   async function createProcessingAnswers(count, label) {
@@ -484,8 +833,64 @@ if (!databaseUrl) {
       transcriber,
       workerEvaluator,
       attemptState,
-      telegram ?? { notifyAnswerProcessed: async () => undefined, notifyAnswerFailed: async () => undefined },
+      telegram
+        ? new TrainingTelegramOutboxWorkerService(prisma, telegram)
+        : { notifyAnswerProcessed: async () => undefined, notifyAnswerFailed: async () => undefined },
+      voiceWorkerWakeup,
     );
+  }
+
+  function startWorkerProcess() {
+    return fork(resolve(__dirname, 'training-v2-voice-worker-process.cjs'), [], {
+      cwd: resolve(__dirname, '..'),
+      env: {
+        ...process.env,
+        TRAINING_TEST_DATABASE_URL: databaseUrl,
+        TRAINING_TEST_PROVIDER_DELAY_MS: '250',
+      },
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+    });
+  }
+
+  function waitForWorkerProcess(child) {
+    return new Promise((resolveReady, rejectReady) => {
+      const timeout = setTimeout(
+        () => rejectReady(new Error('Timed out starting voice worker process')),
+        10_000,
+      );
+      const onExit = (code) => {
+        clearTimeout(timeout);
+        rejectReady(new Error(`Voice worker process exited before ready: ${code}`));
+      };
+
+      child.once('exit', onExit);
+      child.on('message', (message) => {
+        if (message?.event === 'ready') {
+          clearTimeout(timeout);
+          child.off('exit', onExit);
+          resolveReady();
+        } else if (message?.event === 'error') {
+          clearTimeout(timeout);
+          child.off('exit', onExit);
+          rejectReady(new Error(`Voice worker process failed: ${message.code}`));
+        }
+      });
+    });
+  }
+
+  function stopWorkerProcess(child) {
+    if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+
+    return new Promise((resolveStopped) => {
+      const timeout = setTimeout(() => {
+        child.kill('SIGKILL');
+      }, 2_000);
+      child.once('exit', () => {
+        clearTimeout(timeout);
+        resolveStopped();
+      });
+      child.kill('SIGTERM');
+    });
   }
 
   function voiceUpdate(telegramUserId, chatId, messageId, fileId, uniqueId) {
@@ -536,7 +941,14 @@ if (!databaseUrl) {
     await prisma.trainingCriterion.deleteMany();
     await prisma.trainingQuestion.deleteMany();
     await prisma.trainingProject.deleteMany();
-    await prisma.file.deleteMany({ where: { key: { startsWith: 'training-stage5-part3-test/' } } });
+    await prisma.file.deleteMany({
+      where: {
+        OR: [
+          { key: { startsWith: 'training-stage5-part3-test/' } },
+          { key: { startsWith: 'training-worker-process-test/' } },
+        ],
+      },
+    });
     await prisma.user.deleteMany({ where: { email: { endsWith: '@training-part3.test' } } });
     await prisma.role.deleteMany({ where: { name: { startsWith: 'training-stage5-part3-' } } });
   }
@@ -603,6 +1015,27 @@ if (!databaseUrl) {
     }
   }
 
+  class BarrierAudio {
+    constructor() {
+      this.delegate = new ImmediateAudio();
+      this.started = new Promise((resolve) => { this.signalStarted = resolve; });
+      this.barrier = new Promise((resolve) => { this.releaseBarrier = resolve; });
+      this.finished = new Promise((resolve) => { this.signalFinished = resolve; });
+    }
+    async prepareAnswerAudio(answerId) {
+      this.signalStarted();
+      await this.barrier;
+      try {
+        return await this.delegate.prepareAnswerAudio(answerId);
+      } finally {
+        this.signalFinished();
+      }
+    }
+    waitUntilStarted() { return this.started; }
+    waitUntilFinished() { return this.finished; }
+    release() { this.releaseBarrier(); }
+  }
+
   class BarrierTranscriber extends BoundedTranscriber {
     constructor() {
       super(0);
@@ -629,6 +1062,64 @@ if (!databaseUrl) {
     release() { this.releaseBarrier(); }
   }
 
+  class AbortAwareTranscriber extends BoundedTranscriber {
+    constructor() {
+      super(0);
+      this.aborted = false;
+      this.started = new Promise((resolve) => { this.signalStarted = resolve; });
+    }
+    async transcribe(_input, options) {
+      this.calls += 1;
+      this.signalStarted();
+      return new Promise((_resolve, reject) => {
+        options.signal.addEventListener('abort', () => {
+          this.aborted = true;
+          reject(new TrainingOpenAIError(
+            'OPENAI_ABORTED',
+            true,
+            1,
+          ));
+        }, { once: true });
+      });
+    }
+    waitUntilStarted() { return this.started; }
+  }
+
+  class AbortAwareEvaluator {
+    constructor(delegate) {
+      this.delegate = delegate;
+      this.version = delegate.version;
+      this.aborted = false;
+      this.started = new Promise((resolve) => { this.signalStarted = resolve; });
+    }
+    async evaluate(_input, options) {
+      this.signalStarted();
+      return new Promise((_resolve, reject) => {
+        options.signal.addEventListener('abort', () => {
+          this.aborted = true;
+          reject(new TrainingOpenAIError(
+            'OPENAI_ABORTED',
+            true,
+            1,
+          ));
+        }, { once: true });
+      });
+    }
+    waitUntilStarted() { return this.started; }
+  }
+
+  class CountingEvaluator {
+    constructor(delegate) {
+      this.delegate = delegate;
+      this.version = delegate.version;
+      this.calls = 0;
+    }
+    evaluate(input, options) {
+      this.calls += 1;
+      return this.delegate.evaluate(input, options);
+    }
+  }
+
   class StateGate {
     constructor(delegate) {
       this.delegate = delegate;
@@ -650,6 +1141,36 @@ if (!databaseUrl) {
       return this.delegate.failTelegramVoiceAttempt(...args);
     }
     waitUntilClaimed() { return this.claimed; }
+    release() { this.releaseBarrier(); }
+  }
+
+  class CompletionGate {
+    constructor(delegate) {
+      this.delegate = delegate;
+      this.started = new Promise((resolve) => { this.signalStarted = resolve; });
+      this.barrier = new Promise((resolve) => { this.releaseBarrier = resolve; });
+      this.finished = new Promise((resolve) => { this.signalFinished = resolve; });
+    }
+    finalizeAttemptIfExpired(...args) {
+      return this.delegate.finalizeAttemptIfExpired(...args);
+    }
+    async completeEvaluatedTelegramVoiceAnswer(...args) {
+      this.signalStarted();
+      await this.barrier;
+      try {
+        return await this.delegate.completeEvaluatedTelegramVoiceAnswer(...args);
+      } finally {
+        this.signalFinished();
+      }
+    }
+    completeTelegramVoiceAnswer(...args) {
+      return this.delegate.completeTelegramVoiceAnswer(...args);
+    }
+    failTelegramVoiceAttempt(...args) {
+      return this.delegate.failTelegramVoiceAttempt(...args);
+    }
+    waitUntilStarted() { return this.started; }
+    waitUntilFinished() { return this.finished; }
     release() { this.releaseBarrier(); }
   }
 }

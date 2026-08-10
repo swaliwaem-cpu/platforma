@@ -177,33 +177,25 @@ test('fake Telegram client records outbound calls and serves bounded local files
   );
 });
 
-test('ffmpeg arguments preserve persisted input order and normalize to mono 16 kHz PCM WAV', () => {
+test('ffmpeg arguments preserve persisted input order and normalize to bounded mono WebM Opus', () => {
   const args = buildTrainingFfmpegArgs(
     ['/tmp/segment-001.ogg', '/tmp/segment-002.ogg'],
-    '/tmp/merged.wav',
+    '/tmp/merged.webm',
   );
 
   assert.deepEqual(args.slice(0, 5), ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y']);
   assert.equal(args.indexOf('/tmp/segment-001.ogg') < args.indexOf('/tmp/segment-002.ogg'), true);
   assert.equal(args.includes('[0:a][1:a]concat=n=2:v=0:a=1[out]'), true);
-  assert.deepEqual(args.slice(-9), [
-    '-map',
-    '[out]',
-    '-ac',
-    '1',
-    '-ar',
-    '16000',
-    '-c:a',
-    'pcm_s16le',
-    '-f',
-    'wav',
-    '/tmp/merged.wav',
-  ].slice(-9));
+  assert.equal(args.includes('libopus'), true);
+  assert.equal(args.includes('32000'), true);
+  assert.equal(args.includes('constrained'), true);
+  assert.equal(args.includes('webm'), true);
+  assert.equal(args.at(-1), '/tmp/merged.webm');
   assert.equal(args.includes('shell'), false);
 });
 
 test('one voice segment is still normalized and fake transcription is deterministic pass text', async () => {
-  const args = buildTrainingFfmpegArgs(['/tmp/only.ogg'], '/tmp/merged.wav');
+  const args = buildTrainingFfmpegArgs(['/tmp/only.ogg'], '/tmp/merged.webm');
   const transcriber = new DeterministicFakeTrainingTranscriber();
   const metadata = {
     answerId: 'answer-id',
@@ -223,6 +215,7 @@ test('one voice segment is still normalized and fake transcription is determinis
     requestId: null,
     latencyMs: 0,
     attempts: 1,
+    responseId: null,
     usage: null,
   });
 });

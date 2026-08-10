@@ -219,6 +219,28 @@ enum TrainingAiStepStatus {
   @@map("training_ai_step_status")
 }
 
+enum TrainingAudioStorageObjectKind {
+  SEGMENT @map("segment")
+  MERGED  @map("merged")
+
+  @@map("training_audio_storage_object_kind")
+}
+
+enum TrainingAudioDeletionManifestStatus {
+  PENDING   @map("pending")
+  COMPLETED @map("completed")
+
+  @@map("training_audio_deletion_manifest_status")
+}
+
+enum TrainingAudioDeletionItemStatus {
+  PENDING    @map("pending")
+  PROCESSING @map("processing")
+  DELETED    @map("deleted")
+
+  @@map("training_audio_deletion_item_status")
+}
+
 enum TrainingReviewStatus {
   NOT_REQUIRED @map("not_required")
   PENDING      @map("pending")
@@ -232,6 +254,23 @@ enum TrainingReviewDecision {
   OVERRIDDEN @map("overridden")
 
   @@map("training_review_decision")
+}
+
+enum TrainingTelegramOutboxEventType {
+  ANSWER_PROCESSED @map("answer_processed")
+  ANSWER_FAILED    @map("answer_failed")
+  ATTEMPT_STATE    @map("attempt_state")
+
+  @@map("training_telegram_outbox_event_type")
+}
+
+enum TrainingTelegramOutboxStatus {
+  PENDING    @map("pending")
+  PROCESSING @map("processing")
+  SENT       @map("sent")
+  FAILED     @map("failed")
+
+  @@map("training_telegram_outbox_status")
 }
 
 enum TrainingMaterialType {
@@ -263,6 +302,27 @@ enum TrainingMaterialSuggestionStatus {
   FAILED        @map("failed")
 
   @@map("training_material_suggestion_status")
+}
+
+enum TrainingMaterialOperationType {
+  CREATE_PDF          @map("create_pdf")
+  CREATE_OFFICIAL_URL @map("create_official_url")
+  IMPORT_OBJECT       @map("import_object")
+
+  @@map("training_material_operation_type")
+}
+
+enum TrainingMaterialOperationStatus {
+  QUEUED     @map("queued")
+  STORING    @map("storing")
+  EXTRACTING @map("extracting")
+  GENERATING @map("generating")
+  PERSISTING @map("persisting")
+  READY      @map("ready")
+  FAILED     @map("failed")
+  CANCELLED  @map("cancelled")
+
+  @@map("training_material_operation_status")
 }
 
 enum TrainingFactSourceType {
@@ -307,8 +367,10 @@ model User {
   createdTrainingMaterials       TrainingMaterial[]         @relation("TrainingMaterialCreator")
   confirmedTrainingMaterials     TrainingMaterial[]         @relation("TrainingMaterialOfficialConfirmer")
   createdTrainingMaterialRevisions TrainingMaterialRevision[] @relation("TrainingMaterialRevisionCreator")
+  createdTrainingMaterialOperations TrainingMaterialOperation[] @relation("TrainingMaterialOperationCreator")
   trainingProjectAssignments     TrainingProjectAssignment[] @relation("TrainingProjectAssignee")
   assignedTrainingProjects       TrainingProjectAssignment[] @relation("TrainingProjectAssigner")
+  trainingAudioDeletionManifests TrainingAudioDeletionManifest[] @relation("TrainingAudioDeletionManifestCreator")
 
   @@index([roleId])
   @@index([profilePhotoFileId])
@@ -503,6 +565,7 @@ model RealEstateObject {
   projectPresentationDraftItems    ProjectPresentationDraftObject[]
   projectPresentationDocumentItems ProjectPresentationDocumentObject[]
   trainingProjects                  TrainingProject[]
+  trainingQuestionGenerationArtifacts TrainingQuestionGenerationArtifact[]
 
   @@index([status])
   @@index([type])
@@ -781,10 +844,93 @@ model File {
   trainingAnswerSegments       TrainingAnswerSegment[]             @relation("TrainingAnswerSegmentStoredFile")
   trainingMergedAnswers        TrainingAnswer[]                    @relation("TrainingAnswerMergedAudio")
   trainingMaterialRevisions    TrainingMaterialRevision[]          @relation("TrainingMaterialRevisionFile")
+  trainingMaterialOperations   TrainingMaterialOperation[]         @relation("TrainingMaterialOperationSourceFile")
+  trainingAudioStorageEntry      TrainingAudioStorageEntry?
 
   @@unique([storage, bucket, key])
   @@index([uploadedById])
   @@map("files")
+}
+
+model TrainingAudioStorageEntry {
+  id                   String                         @id @default(uuid()) @db.Uuid
+  fileId               String?                        @unique @map("file_id") @db.Uuid
+  kind                 TrainingAudioStorageObjectKind
+  bucket               String                         @db.VarChar(255)
+  key                  String
+  checksum             String?                        @db.Char(64)
+  etag                 String?                        @db.VarChar(128)
+  sizeBytes            BigInt?                        @map("size_bytes") @db.BigInt
+  mimeType             String?                        @map("mime_type") @db.VarChar(120)
+  projectIdSnapshot    String?                        @map("project_id_snapshot") @db.Uuid
+  projectTitleSnapshot String?                        @map("project_title_snapshot") @db.VarChar(300)
+  userIdSnapshot       String?                        @map("user_id_snapshot") @db.Uuid
+  userNameSnapshot     String?                        @map("user_name_snapshot") @db.VarChar(200)
+  userEmailSnapshot    String?                        @map("user_email_snapshot") @db.VarChar(320)
+  attemptIdSnapshot    String?                        @map("attempt_id_snapshot") @db.Uuid
+  answerIdSnapshot     String?                        @map("answer_id_snapshot") @db.Uuid
+  objectCreatedAt      DateTime                       @map("object_created_at") @db.Timestamptz(3)
+  deletedAt            DateTime?                      @map("deleted_at") @db.Timestamptz(3)
+  createdAt            DateTime                       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime                       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  file          File?                               @relation(fields: [fileId], references: [id], onDelete: SetNull)
+  manifestItems TrainingAudioDeletionManifestItem[]
+
+  @@unique([bucket, key])
+  @@index([projectIdSnapshot, objectCreatedAt])
+  @@index([userIdSnapshot, objectCreatedAt])
+  @@index([objectCreatedAt])
+  @@index([deletedAt])
+  @@map("training_audio_storage_entries")
+}
+
+model TrainingAudioDeletionManifest {
+  id          String                              @id @default(uuid()) @db.Uuid
+  createdById String?                             @map("created_by_id") @db.Uuid
+  reason      String                              @db.VarChar(500)
+  status      TrainingAudioDeletionManifestStatus @default(PENDING)
+  completedAt DateTime?                           @map("completed_at") @db.Timestamptz(3)
+  createdAt   DateTime                            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime                            @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  createdBy User?                               @relation("TrainingAudioDeletionManifestCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  items     TrainingAudioDeletionManifestItem[]
+
+  @@index([status, createdAt])
+  @@index([createdById])
+  @@map("training_audio_deletion_manifests")
+}
+
+model TrainingAudioDeletionManifestItem {
+  id                   String                          @id @default(uuid()) @db.Uuid
+  manifestId           String                          @map("manifest_id") @db.Uuid
+  storageEntryId       String?                         @map("storage_entry_id") @db.Uuid
+  fileIdSnapshot       String?                         @map("file_id_snapshot") @db.Uuid
+  bucket               String                          @db.VarChar(255)
+  key                  String
+  checksum             String?                         @db.Char(64)
+  etag                 String?                         @db.VarChar(128)
+  sizeBytes            BigInt?                         @map("size_bytes") @db.BigInt
+  projectTitleSnapshot String?                         @map("project_title_snapshot") @db.VarChar(300)
+  userNameSnapshot     String?                         @map("user_name_snapshot") @db.VarChar(200)
+  userEmailSnapshot    String?                         @map("user_email_snapshot") @db.VarChar(320)
+  objectCreatedAt      DateTime                        @map("object_created_at") @db.Timestamptz(3)
+  status               TrainingAudioDeletionItemStatus @default(PENDING)
+  lastErrorCode        String?                         @map("last_error_code") @db.VarChar(64)
+  executionToken       String?                         @map("execution_token") @db.Uuid
+  executionStartedAt   DateTime?                       @map("execution_started_at") @db.Timestamptz(3)
+  deletedAt            DateTime?                       @map("deleted_at") @db.Timestamptz(3)
+  createdAt            DateTime                        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime                        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  manifest     TrainingAudioDeletionManifest @relation(fields: [manifestId], references: [id], onDelete: Cascade)
+  storageEntry TrainingAudioStorageEntry?    @relation(fields: [storageEntryId], references: [id], onDelete: SetNull)
+
+  @@unique([manifestId, bucket, key])
+  @@index([manifestId, status])
+  @@index([storageEntryId])
+  @@map("training_audio_deletion_manifest_items")
 }
 
 model FileVariant {
@@ -1124,8 +1270,10 @@ model TrainingProject {
   criteria         TrainingCriterion[]
   telegramLinkTokens TrainingTelegramLinkToken[]
   materials          TrainingMaterial[]
+  materialOperations TrainingMaterialOperation[]
   assignments        TrainingProjectAssignment[]
   knowledgeVersions  TrainingProjectKnowledgeVersion[]
+  aiUsageEvents      TrainingAiUsageEvent[]
 
   @@index([realEstateObjectId])
   @@index([status, isOpen, sortOrder])
@@ -1149,15 +1297,52 @@ model TrainingProjectKnowledgeVersion {
   generationToken          String?   @map("generation_token") @db.VarChar(128)
   lockedAt                 DateTime? @map("locked_at")
   errorCode                String?   @map("error_code") @db.VarChar(120)
+  generationArtifactId     String?   @map("generation_artifact_id") @db.Uuid
   createdAt                DateTime  @default(now()) @map("created_at")
   updatedAt                DateTime  @updatedAt @map("updated_at")
 
-  project TrainingProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project            TrainingProject                    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  generationArtifact TrainingQuestionGenerationArtifact? @relation(fields: [generationArtifactId], references: [id], onDelete: SetNull)
 
   @@unique([projectId, version])
   @@unique([projectId, sourceHash])
   @@index([status, lockedAt])
+  @@index([generationArtifactId])
   @@map("training_project_knowledge_versions")
+}
+
+model TrainingQuestionGenerationArtifact {
+  id                       String    @id @default(uuid()) @db.Uuid
+  realEstateObjectId       String    @map("real_estate_object_id") @db.Uuid
+  generationKeyHash        String    @map("generation_key_hash") @db.Char(64)
+  generationKeyJson        Json      @map("generation_key_json")
+  sourceFingerprint        String    @map("source_fingerprint") @db.Char(64)
+  artifactSchemaVersion    Int       @map("artifact_schema_version")
+  compilerVersion          String    @map("compiler_version") @db.VarChar(64)
+  promptVersion            String    @map("prompt_version") @db.VarChar(64)
+  generationModel          String    @map("generation_model") @db.VarChar(120)
+  generationReasoning      String    @map("generation_reasoning") @db.VarChar(16)
+  routingStrategy          String    @map("routing_strategy") @db.VarChar(64)
+  chosenBudget             Int       @map("chosen_budget")
+  budgetPolicyVersion      String    @map("budget_policy_version") @db.VarChar(64)
+  maxOutputTokens          Int       @map("max_output_tokens")
+  status                   String    @db.VarChar(16)
+  artifactJson             Json?     @map("artifact_json")
+  sourceChars              Int?      @map("source_chars")
+  generationRequestIdsJson Json?     @map("generation_request_ids_json")
+  generationAttempts       Int       @default(0) @map("generation_attempts")
+  generationToken          String?   @map("generation_token") @db.VarChar(128)
+  lockedAt                 DateTime? @map("locked_at")
+  errorCode                String?   @map("error_code") @db.VarChar(120)
+  createdAt                DateTime  @default(now()) @map("created_at")
+  updatedAt                DateTime  @updatedAt @map("updated_at")
+
+  realEstateObject  RealEstateObject                @relation(fields: [realEstateObjectId], references: [id], onDelete: Cascade)
+  knowledgeVersions TrainingProjectKnowledgeVersion[]
+
+  @@unique([realEstateObjectId, generationKeyHash])
+  @@index([status, lockedAt])
+  @@map("training_question_generation_artifacts")
 }
 
 model TrainingProjectAssignment {
@@ -1193,6 +1378,7 @@ model TrainingQuestion {
   project          TrainingProject           @relation(fields: [projectId], references: [id], onDelete: Restrict)
   attemptQuestions TrainingAttemptQuestion[]
   facts            TrainingFact[]
+  aiUsageEvents    TrainingAiUsageEvent[]
 
   @@unique([projectId, type, position])
   @@map("training_questions")
@@ -1220,6 +1406,71 @@ model TrainingFact {
   @@unique([questionId, position])
   @@index([sourceRevisionId])
   @@map("training_facts")
+}
+
+model TrainingMaterialOperation {
+  id                        String                          @id @default(uuid()) @db.Uuid
+  projectId                 String                          @map("project_id") @db.Uuid
+  createdById               String                          @map("created_by_id") @db.Uuid
+  type                      TrainingMaterialOperationType
+  status                    TrainingMaterialOperationStatus @default(QUEUED)
+  idempotencyKey            String                          @map("idempotency_key") @db.Uuid
+  inputFingerprint          String                          @map("input_fingerprint") @db.Char(64)
+  inputJson                 Json                            @map("input_json")
+  sourceFileId              String?                         @map("source_file_id") @db.Uuid
+  resultMaterialId          String?                         @map("result_material_id") @db.Uuid
+  resultRevisionId          String?                         @map("result_revision_id") @db.Uuid
+  baseKnowledgeVersion      Int                             @map("base_knowledge_version")
+  completedKnowledgeVersion Int?                            @map("completed_knowledge_version")
+  sourceHash                String?                         @map("source_hash") @db.Char(64)
+  progressTotal             Int                             @default(0) @map("progress_total")
+  progressCompleted         Int                             @default(0) @map("progress_completed")
+  progressFailed            Int                             @default(0) @map("progress_failed")
+  attempts                  Int                             @default(0)
+  availableAt               DateTime                        @default(now()) @map("available_at")
+  lockedAt                  DateTime?                       @map("locked_at")
+  lockedBy                  String?                         @map("locked_by") @db.VarChar(160)
+  errorCode                 String?                         @map("error_code") @db.VarChar(120)
+  resultJson                Json?                           @map("result_json")
+  startedAt                 DateTime?                       @map("started_at")
+  finishedAt                DateTime?                       @map("finished_at")
+  createdAt                 DateTime                        @default(now()) @map("created_at")
+  updatedAt                 DateTime                        @updatedAt @map("updated_at")
+
+  project    TrainingProject                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy  User                             @relation("TrainingMaterialOperationCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  sourceFile File?                            @relation("TrainingMaterialOperationSourceFile", fields: [sourceFileId], references: [id], onDelete: Restrict)
+  items      TrainingMaterialOperationItem[]
+
+  @@unique([projectId, createdById, idempotencyKey])
+  @@index([projectId, createdAt])
+  @@index([createdById])
+  @@index([sourceFileId])
+  @@map("training_material_operations")
+}
+
+model TrainingMaterialOperationItem {
+  id               String                          @id @default(uuid()) @db.Uuid
+  operationId      String                          @map("operation_id") @db.Uuid
+  itemKey          String                          @map("item_key") @db.VarChar(120)
+  ordinal          Int
+  title            String                          @db.VarChar(240)
+  status           TrainingMaterialOperationStatus @default(QUEUED)
+  sourceFileId     String?                         @map("source_file_id") @db.Uuid
+  resultMaterialId String?                         @map("result_material_id") @db.Uuid
+  resultRevisionId String?                         @map("result_revision_id") @db.Uuid
+  sourceHash       String?                         @map("source_hash") @db.Char(64)
+  errorCode        String?                         @map("error_code") @db.VarChar(120)
+  startedAt        DateTime?                       @map("started_at")
+  finishedAt       DateTime?                       @map("finished_at")
+  createdAt        DateTime                        @default(now()) @map("created_at")
+  updatedAt        DateTime                        @updatedAt @map("updated_at")
+
+  operation TrainingMaterialOperation @relation(fields: [operationId], references: [id], onDelete: Cascade)
+
+  @@unique([operationId, itemKey])
+  @@index([operationId, ordinal])
+  @@map("training_material_operation_items")
 }
 
 model TrainingMaterial {
@@ -1335,12 +1586,64 @@ model TrainingAttempt {
   reviewedBy User?                    @relation("TrainingAttemptReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
   project   TrainingProject           @relation(fields: [projectId], references: [id], onDelete: Restrict)
   questions TrainingAttemptQuestion[]
+  telegramOutboxEntries TrainingTelegramOutbox[]
+  aiUsageEvents TrainingAiUsageEvent[]
 
   @@unique([userId, projectId, attemptNumber])
   @@unique([userId, projectId, startIdempotencyKey])
   @@index([projectId, startedAt])
   @@index([reviewedById])
   @@map("training_attempts")
+}
+
+model TrainingAiUsageEvent {
+  id                 String   @id @default(uuid()) @db.Uuid
+  operationRunId     String   @map("operation_run_id") @db.Uuid
+  provider           String   @db.VarChar(32)
+  operation          String   @db.VarChar(64)
+  requestedModel     String   @map("requested_model") @db.VarChar(120)
+  model              String   @db.VarChar(120)
+  reasoningEffort    String?  @map("reasoning_effort") @db.VarChar(16)
+  promptVersion      String?  @map("prompt_version") @db.VarChar(64)
+  compilerVersion    String?  @map("compiler_version") @db.VarChar(64)
+  schemaVersion      String?  @map("schema_version") @db.VarChar(64)
+  projectId          String?  @map("project_id") @db.Uuid
+  attemptId          String?  @map("attempt_id") @db.Uuid
+  questionId         String?  @map("question_id") @db.Uuid
+  attemptOrdinal     Int      @map("attempt_ordinal")
+  clientRequestId    String?  @map("client_request_id") @db.VarChar(160)
+  requestId          String?  @map("request_id") @db.VarChar(160)
+  responseId         String?  @map("response_id") @db.VarChar(160)
+  httpStatus         Int?     @map("http_status") @db.SmallInt
+  outcome            String   @db.VarChar(32)
+  errorCode          String?  @map("error_code") @db.VarChar(120)
+  fallbackReason     String?  @map("fallback_reason") @db.VarChar(120)
+  isRetry            Boolean  @map("is_retry")
+  isFallback         Boolean  @map("is_fallback")
+  inputTokens        Int?     @map("input_tokens")
+  cachedTokens       Int?     @map("cached_tokens")
+  cacheWriteTokens   Int?     @map("cache_write_tokens")
+  outputTokens       Int?     @map("output_tokens")
+  reasoningTokens    Int?     @map("reasoning_tokens")
+  totalTokens        Int?     @map("total_tokens")
+  pricingVersion     String?  @map("pricing_version") @db.VarChar(64)
+  pricingStatus      String   @map("pricing_status") @db.VarChar(32)
+  estimatedCostUsd   Decimal? @map("estimated_cost_usd") @db.Decimal(18, 8)
+  latencyMs          Int      @map("latency_ms")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  project  TrainingProject?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  attempt  TrainingAttempt?  @relation(fields: [attemptId], references: [id], onDelete: SetNull)
+  question TrainingQuestion? @relation(fields: [questionId], references: [id], onDelete: SetNull)
+
+  @@unique([operationRunId, attemptOrdinal])
+  @@index([createdAt])
+  @@index([projectId, createdAt])
+  @@index([attemptId, createdAt])
+  @@index([questionId])
+  @@index([operation, createdAt])
+  @@index([model, createdAt])
+  @@map("training_ai_usage_events")
 }
 
 model TrainingAttemptQuestion {
@@ -1391,6 +1694,10 @@ model TrainingAnswer {
   evaluationRequestId String?                        @map("evaluation_request_id") @db.VarChar(160)
   transcriptionLatencyMs Int?                        @map("transcription_latency_ms")
   evaluationLatencyMs Int?                           @map("evaluation_latency_ms")
+  audioDurationSeconds Int?                          @map("audio_duration_seconds")
+  audioInputBytes     BigInt?                        @map("audio_input_bytes") @db.BigInt
+  audioOutputBytes    BigInt?                        @map("audio_output_bytes") @db.BigInt
+  audioFfmpegLatencyMs Int?                          @map("audio_ffmpeg_latency_ms")
   evaluationSchemaVersion String?                    @map("evaluation_schema_version") @db.VarChar(64)
   evaluationJson      Json?                          @map("evaluation_json")
   objectiveMetricsJson Json?                         @map("objective_metrics_json")
@@ -1401,6 +1708,7 @@ model TrainingAnswer {
   attemptQuestion TrainingAttemptQuestion @relation(fields: [attemptQuestionId], references: [id], onDelete: Restrict)
   mergedAudioFile File?                   @relation("TrainingAnswerMergedAudio", fields: [mergedAudioFileId], references: [id], onDelete: Restrict)
   segments        TrainingAnswerSegment[]
+  telegramOutboxEntries TrainingTelegramOutbox[]
 
   @@index([processingStatus, processingLockedAt, createdAt])
   @@map("training_answers")
@@ -1442,6 +1750,30 @@ model TrainingTelegramLinkToken {
   @@index([projectId])
   @@index([expiresAt])
   @@map("training_telegram_link_tokens")
+}
+
+model TrainingTelegramOutbox {
+  id               String                          @id @default(uuid()) @db.Uuid
+  eventType        TrainingTelegramOutboxEventType @map("event_type")
+  attemptId        String                          @map("attempt_id") @db.Uuid
+  answerId         String?                         @map("answer_id") @db.Uuid
+  deduplicationKey String                          @unique @map("deduplication_key") @db.VarChar(160)
+  status           TrainingTelegramOutboxStatus    @default(PENDING)
+  attempts         Int                             @default(0)
+  availableAt      DateTime                        @default(now()) @map("available_at")
+  lockedAt         DateTime?                       @map("locked_at")
+  lockedBy         String?                         @map("locked_by") @db.VarChar(160)
+  lastErrorCode    String?                         @map("last_error_code") @db.VarChar(64)
+  sentAt           DateTime?                       @map("sent_at")
+  createdAt        DateTime                        @default(now()) @map("created_at")
+  updatedAt        DateTime                        @updatedAt @map("updated_at")
+
+  attempt TrainingAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  answer  TrainingAnswer? @relation(fields: [answerId], references: [id], onDelete: Cascade)
+
+  @@index([attemptId])
+  @@index([answerId])
+  @@map("training_telegram_outbox")
 }
 
 model TrainingAnswerSegment {

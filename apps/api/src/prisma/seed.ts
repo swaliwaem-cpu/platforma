@@ -1,20 +1,9 @@
-import {
-  Prisma,
-  PrismaClient,
-  UserStatus,
-} from '@prisma/client';
+import { PrismaClient, UserStatus } from '@prisma/client';
 import * as argon2 from 'argon2';
 
 const prisma = new PrismaClient();
 
-const BASE_USER_PERMISSION_KEYS = [
-  'objects:read',
-  'developers:read',
-  'locations:read',
-  'metro:read',
-] as const;
-
-const NON_TRAINING_PERMISSION_DEFINITIONS = [
+const permissions = [
   ['admin:access', 'Access admin area'],
   ['users:read', 'Read users'],
   ['users:create', 'Create users'],
@@ -35,9 +24,6 @@ const NON_TRAINING_PERMISSION_DEFINITIONS = [
   ['feeds:manage', 'Manage feed sources'],
   ['feeds:run', 'Run feed imports'],
   ['audit-log:read', 'Read audit log'],
-] as const;
-
-const TRAINING_PERMISSION_DEFINITIONS = [
   ['training:participate', 'Participate in training projects'],
   ['training:projects:manage', 'Manage training projects'],
   ['training:results:read', 'Read training attempt results'],
@@ -45,21 +31,8 @@ const TRAINING_PERMISSION_DEFINITIONS = [
   ['training:audio:read', 'Read protected training answer audio'],
 ] as const;
 
-const TRAINING_ADMIN_PERMISSION_KEYS = TRAINING_PERMISSION_DEFINITIONS.map(
-  ([key]) => key,
-);
-
-const permissions = [
-  ...NON_TRAINING_PERMISSION_DEFINITIONS,
-  ...TRAINING_PERMISSION_DEFINITIONS,
-] as const;
-
-const rolePermissions: Record<string, readonly string[]> = {
-  admin: [
-    ...NON_TRAINING_PERMISSION_DEFINITIONS.map(([key]) => key),
-    ...TRAINING_ADMIN_PERMISSION_KEYS,
-  ],
-  training_admin: ['admin:access', ...TRAINING_ADMIN_PERMISSION_KEYS],
+const rolePermissions = {
+  admin: permissions.map(([key]) => key),
   editor: [
     'admin:access',
     'objects:read',
@@ -72,172 +45,107 @@ const rolePermissions: Record<string, readonly string[]> = {
     'files:upload',
     'files:delete',
   ],
-  user: [...BASE_USER_PERMISSION_KEYS, 'training:participate'],
-  training_pilot: [
-    ...BASE_USER_PERMISSION_KEYS,
+  user: [
+    'objects:read',
+    'developers:read',
+    'locations:read',
+    'metro:read',
     'training:participate',
   ],
-};
-
-type SeedEnvironment = {
-  ADMIN_EMAIL?: string;
-  ADMIN_NAME?: string;
-  ADMIN_PASSWORD?: string;
-  ADMIN_PASSWORD_HASH?: string;
-};
-
-export async function seedPlatforma(
-  client: PrismaClient,
-  environment: SeedEnvironment = process.env,
-) {
-  return client.$transaction(async (tx) => {
-    const permissionRecords = new Map<string, { id: string }>();
-
-    for (const [key, description] of permissions) {
-      const permission = await tx.permission.upsert({
-        where: { key },
-        update: { description },
-        create: { key, description },
-        select: { id: true },
-      });
-
-      permissionRecords.set(key, permission);
-    }
-
-    const roleRecords = new Map<string, { id: string }>();
-    for (const [name, permissionKeys] of Object.entries(rolePermissions)) {
-      const description = roleDescription(name);
-      const role = await tx.role.upsert({
-        where: { name },
-        update: {
-          description,
-        },
-        create: {
-          name,
-          description,
-        },
-        select: { id: true },
-      });
-      const permissionIds = permissionKeys.map((key) => {
-        const permission = permissionRecords.get(key);
-
-        if (!permission) {
-          throw new Error(`Permission "${key}" was not seeded`);
-        }
-        return permission.id;
-      });
-
-      await tx.rolePermission.deleteMany({
-        where: {
-          roleId: role.id,
-          permissionId: { notIn: permissionIds },
-        },
-      });
-      await tx.rolePermission.createMany({
-        data: permissionIds.map((permissionId) => ({
-          roleId: role.id,
-          permissionId,
-        })),
-        skipDuplicates: true,
-      });
-
-      roleRecords.set(name, role);
-    }
-
-    const adminRole = roleRecords.get('admin');
-    if (!adminRole) {
-      throw new Error('Admin role was not seeded');
-    }
-
-    const adminEmail = environment.ADMIN_EMAIL ?? 'admin@example.com';
-    const existingAdmin = await tx.user.findUnique({
-      where: { email: adminEmail },
-      select: {
-        id: true,
-        roleId: true,
-        status: true,
-        deletedAt: true,
-      },
-    });
-    const admin = existingAdmin
-      ? assertExistingAdminIsSafe(existingAdmin, adminRole.id, adminEmail)
-      : await createInitialAdmin(tx, adminRole.id, adminEmail, environment);
-
-    return {
-      adminEmail,
-      permissionCount: permissions.length,
-    };
-  });
-}
+} as const;
 
 async function seed() {
-  const result = await seedPlatforma(prisma);
-  console.log(
-    `Seeded ${result.permissionCount} permissions, roles and admin user ${result.adminEmail}.`,
-  );
-}
+  const permissionRecords = new Map<string, { id: string }>();
 
-function roleDescription(name: string) {
-  if (name === 'training_admin') return 'Training administrator role';
-  if (name === 'training_pilot') return 'Temporary training pilot role';
-  return `${name[0]?.toUpperCase()}${name.slice(1)} role`;
-}
+  for (const [key, description] of permissions) {
+    const permission = await prisma.permission.upsert({
+      where: { key },
+      update: { description },
+      create: { key, description },
+      select: { id: true },
+    });
 
-function assertExistingAdminIsSafe(
-  admin: {
-    id: string;
-    roleId: string;
-    status: UserStatus;
-    deletedAt: Date | null;
-  },
-  adminRoleId: string,
-  adminEmail: string,
-) {
-  if (
-    admin.roleId !== adminRoleId ||
-    admin.status !== UserStatus.ACTIVE ||
-    admin.deletedAt !== null
-  ) {
-    throw new Error(
-      `Existing admin user "${adminEmail}" must already be active, undeleted and assigned to role "admin"`,
-    );
+    permissionRecords.set(key, permission);
   }
-  return { id: admin.id };
-}
 
-async function createInitialAdmin(
-  tx: Prisma.TransactionClient,
-  adminRoleId: string,
-  adminEmail: string,
-  environment: SeedEnvironment,
-) {
-  const explicitAdminPasswordHash = environment.ADMIN_PASSWORD_HASH;
-  const explicitAdminPassword = environment.ADMIN_PASSWORD;
-  const passwordHash =
+  for (const [name, permissionKeys] of Object.entries(rolePermissions)) {
+    const role = await prisma.role.upsert({
+      where: { name },
+      update: {
+        description: `${name[0]?.toUpperCase()}${name.slice(1)} role`,
+      },
+      create: {
+        name,
+        description: `${name[0]?.toUpperCase()}${name.slice(1)} role`,
+      },
+      select: { id: true },
+    });
+
+    for (const key of permissionKeys) {
+      const permission = permissionRecords.get(key);
+
+      if (!permission) {
+        throw new Error(`Permission "${key}" was not seeded`);
+      }
+
+      await prisma.rolePermission.upsert({
+        where: {
+          roleId_permissionId: {
+            roleId: role.id,
+            permissionId: permission.id,
+          },
+        },
+        update: {},
+        create: {
+          roleId: role.id,
+          permissionId: permission.id,
+        },
+      });
+    }
+  }
+
+  const adminRole = await prisma.role.findUniqueOrThrow({
+    where: { name: 'admin' },
+    select: { id: true },
+  });
+
+  const adminEmail = process.env.ADMIN_EMAIL ?? 'admin@example.com';
+  const adminName = process.env.ADMIN_NAME ?? 'Platform Admin';
+  const explicitAdminPasswordHash = process.env.ADMIN_PASSWORD_HASH;
+  const explicitAdminPassword = process.env.ADMIN_PASSWORD;
+  const adminPasswordHash =
     explicitAdminPasswordHash && explicitAdminPasswordHash.length > 0
       ? explicitAdminPasswordHash
       : await argon2.hash(explicitAdminPassword ?? '12345', {
           type: argon2.argon2id,
         });
-  return tx.user.create({
-    data: {
-      email: adminEmail,
-      name: environment.ADMIN_NAME ?? 'Platform Admin',
-      passwordHash,
-      roleId: adminRoleId,
+  const shouldUpdateAdminPassword = Boolean(explicitAdminPasswordHash || explicitAdminPassword);
+
+  await prisma.user.upsert({
+    where: { email: adminEmail },
+    update: {
+      name: adminName,
+      ...(shouldUpdateAdminPassword ? { passwordHash: adminPasswordHash } : {}),
+      roleId: adminRole.id,
       status: UserStatus.ACTIVE,
     },
-    select: { id: true },
+    create: {
+      email: adminEmail,
+      name: adminName,
+      passwordHash: adminPasswordHash,
+      roleId: adminRole.id,
+      status: UserStatus.ACTIVE,
+    },
   });
+
+  console.log(`Seeded ${permissions.length} permissions, roles and admin user ${adminEmail}.`);
 }
 
-if (require.main === module) {
-  void seed()
-    .catch((error) => {
-      console.error(error);
-      process.exitCode = 1;
-    })
-    .finally(async () => {
-      await prisma.$disconnect();
-    });
-}
+void seed()
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });

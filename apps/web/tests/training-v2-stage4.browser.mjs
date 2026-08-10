@@ -18,6 +18,7 @@ page.on('pageerror', (error) => consoleIssues.push(`pageerror: ${error.message}`
 const projectId = '61111111-1111-4111-8111-111111111111';
 const questionId = '62222222-2222-4222-8222-222222222222';
 const objectId = '67777777-7777-4777-8777-777777777777';
+const objectImportOperationId = '68888888-8888-4888-8888-888888888888';
 const materials = [];
 let listFailuresRemaining = 1;
 let listDelaysRemaining = 0;
@@ -76,6 +77,13 @@ try {
       return;
     }
 
+    if (path === `/training/admin/projects/${projectId}/material-operations` && request.method() === 'GET') {
+      await json(route, {
+        items: objectImported ? [objectImportOperation('READY')] : [],
+      });
+      return;
+    }
+
     if (path === `/training/admin/projects/${projectId}/object-options` && request.method() === 'GET') {
       objectSearchQueries.push(url.searchParams.get('search') ?? '');
       const option = {
@@ -102,22 +110,7 @@ try {
       objectImported = true;
       materials.unshift(makeMaterial('pdf', 'Презентация ЖК', materials.length + 1));
       materials.unshift(makeMaterial('object-snapshot', 'Карточка Platforma · ЖК Северный', materials.length + 1));
-      await json(route, {
-        object: {
-          id: objectId,
-          title: 'ЖК Северный',
-          status: 'PUBLISHED',
-          developerName: 'Тестовый девелопер',
-          pdfCount: 1,
-        },
-        objectSnapshotMaterialId: materials[0].id,
-        importedPdfCount: 1,
-        failedPdfTitles: [],
-        mainQuestion: generatedMainQuestion(),
-        followUpQuestions: generatedFollowUpQuestions(),
-        questionGenerationModel: 'training-question-fake-v1',
-        questionGenerationSourceChars: 250,
-      }, 201);
+      await json(route, objectImportOperation('QUEUED'), 202);
       return;
     }
 
@@ -260,7 +253,7 @@ try {
     return response.request().postDataJSON()?.replaceExistingQuestions === true;
   });
   await page.getByRole('button', { name: 'Создать вопросы и ответы из данных ЖК' }).click();
-  assert.equal((await importResponsePromise).status(), 201);
+  assert.equal((await importResponsePromise).status(), 202);
   await page.getByText(/Созданы 1 главный и 10 дополнительных вопросов с активными эталонными ответами/u).waitFor();
   assert.ok(await contrastRatio(page.locator('.admin-alert--notice').last()) >= 4.5);
   if (process.env.TRAINING_NOTICE_SCREENSHOT) {
@@ -342,6 +335,32 @@ try {
   assert.deepEqual(unexpectedConsoleIssues, []);
 } finally {
   await browser.close();
+}
+
+function objectImportOperation(status) {
+  const ready = status === 'READY';
+  return {
+    id: objectImportOperationId,
+    projectId,
+    type: 'IMPORT_OBJECT',
+    status,
+    baseKnowledgeVersion: 0,
+    completedKnowledgeVersion: ready ? 1 : null,
+    sourceHash: null,
+    progress: { total: 2, completed: ready ? 2 : 0, failed: 0 },
+    attempts: ready ? 1 : 0,
+    errorCode: null,
+    result: ready ? {
+      objectTitle: 'ЖК Северный',
+      importedPdfCount: 1,
+      failedPdfTitles: [],
+    } : null,
+    items: [],
+    startedAt: ready ? '2026-08-08T09:00:00.000Z' : null,
+    finishedAt: ready ? '2026-08-08T09:00:01.000Z' : null,
+    createdAt: '2026-08-08T09:00:00.000Z',
+    updatedAt: ready ? '2026-08-08T09:00:01.000Z' : '2026-08-08T09:00:00.000Z',
+  };
 }
 
 async function createManual() {

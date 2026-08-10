@@ -18,6 +18,9 @@ const { TrainingProjectAccessService } = require('../dist/training/training-proj
 const { TrainingProjectService } = require('../dist/training/training-project.service.js');
 const { TrainingReviewService } = require('../dist/training/training-review.service.js');
 const { FakeTrainingTelegramClient } = require('../dist/training/training-telegram-client.js');
+const {
+  TrainingTelegramOutboxWorkerService,
+} = require('../dist/training/training-telegram-outbox-worker.service.js');
 const { TrainingTelegramService } = require('../dist/training/training-telegram.service.js');
 const { TrainingVoiceWorkerService } = require('../dist/training/training-voice-worker.service.js');
 
@@ -45,7 +48,8 @@ if (!databaseUrl) {
     access,
     telegramClient,
   );
-  const reviews = new TrainingReviewService(prisma, telegram);
+  const telegramOutbox = new TrainingTelegramOutboxWorkerService(prisma, telegram);
+  const reviews = new TrainingReviewService(prisma, telegramOutbox);
   let admin;
   let participants;
 
@@ -373,7 +377,7 @@ if (!databaseUrl) {
       { transcribe: async () => fakeTranscription() },
       new DeterministicFakeTrainingEvaluator(),
       state,
-      telegram,
+      telegramOutbox,
     );
 
     for (let sequence = 1; sequence <= 4; sequence += 1) {
@@ -555,6 +559,12 @@ if (!databaseUrl) {
     await new Promise((resolve) => setTimeout(resolve, 25));
     assert.equal(
       telegramClient.sentMessages.filter((message) => message.text === passMessage).length,
+      1,
+    );
+    assert.equal(
+      await prisma.trainingTelegramOutbox.count({
+        where: { attemptId: passPending.id, eventType: 'ATTEMPT_STATE' },
+      }),
       1,
     );
     const messagesBeforeStaleWorker = telegramClient.sentMessages.length;

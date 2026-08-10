@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const source = (path) => readFileSync(resolve(currentDir, `../src/${path}`), 'utf8');
-const routes = source('training/TrainingRoutes.tsx');
+const routes = source('training/TrainingAdminRoutes.tsx');
 const editor = source('training/TrainingAdminProjectEditorPage.tsx');
 const panel = source('training/TrainingProjectAccessPanel.tsx');
 const api = source('training/trainingApi.ts');

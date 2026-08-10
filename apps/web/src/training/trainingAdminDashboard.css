@@ -331,25 +331,19 @@ html[data-app-theme='dark-premium'] .training-admin-dashboard .training-dashboar
 }
 
 .training-dashboard-retake-field {
-  min-height: 44px;
-  align-items: center;
+  min-height: 48px;
+  align-items: flex-start;
   cursor: pointer;
 }
 
-.training-dashboard-retake-field > input[type='checkbox'] {
-  width: 18px;
-  min-width: 18px;
-  height: 18px;
-  min-height: 18px;
-  margin: 0;
-  padding: 0;
-  flex: 0 0 18px;
-  accent-color: var(--catalog-blue);
+.training-dashboard-retake-field > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .training-dashboard-retake-field label {
-  min-height: 44px;
-  align-items: center;
   cursor: pointer;
 }
 

@@ -2,7 +2,6 @@
 node_modules
 **/node_modules
 **/dist
-apps/api/tests
 **/.env
 pnpm-store
 .DS_Store

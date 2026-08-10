@@ -5,4 +5,6 @@ export type UploadedFile = {
   mimetype: string;
   size: number;
   buffer?: Buffer;
+  path?: string;
+  checksum?: string;
 };

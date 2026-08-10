@@ -2,10 +2,7 @@
 
 ## API
 
-- Production uses `.env.production` and both Compose files:
-  `docker-compose.yml` + `docker-compose.production.yml`.
-- `docker-compose.production.yml` fixes `NODE_ENV=production`; it is not
-  inherited from the development default.
+- `NODE_ENV` is set to `production` outside local development.
 - `PORT` matches the runtime ingress or container port.
 - `WEB_ORIGIN` contains the exact frontend origin and allows credentials.
 - `DATABASE_URL` points to PostgreSQL with PostGIS enabled.
@@ -14,43 +11,6 @@
 - `JWT_ACCESS_TTL`, `JWT_REFRESH_TTL_DAYS`, and `REFRESH_COOKIE_NAME` are reviewed for the environment.
 - `ADMIN_EMAIL`, `ADMIN_NAME`, and either `ADMIN_PASSWORD` or `ADMIN_PASSWORD_HASH` are set for initial seed only.
 
-## Training Telegram
-
-- `docker compose -f docker-compose.yml -f docker-compose.production.yml --env-file .env.production config`
-  succeeds before containers are started.
-- The production override fixes `TELEGRAM_TRANSPORT_MODE=real`; there is no
-  silent fallback to fake transport.
-- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`,
-  `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_WEBHOOK_URL`, and `PUBLIC_APP_URL`
-  are mandatory Compose variables without defaults.
-- Telegram token/secret values are real, not `fake`, `test`, `change-me`,
-  `REPLACE_WITH_*`, or other placeholders.
-- `TELEGRAM_WEBHOOK_URL` and `PUBLIC_APP_URL` are absolute HTTPS URLs using
-  real production hosts, not localhost, `127.0.0.1`, example/test/fake hosts.
-- Inside the running API container, `NODE_ENV=production` and
-  `TELEGRAM_TRANSPORT_MODE=real` are verified without printing secrets.
-- The Telegram webhook is configured in Bot API with the same HTTPS route and
-  secret header only after the API healthcheck succeeds.
-
-## Training OpenAI
-
-- Production Compose fixes `OPENAI_PROVIDER_MODE=real` for API and worker.
-- `OPENAI_API_KEY`, `OPENAI_TRANSCRIPTION_MODEL`,
-  `OPENAI_TRANSCRIPTION_REVIEW_MODEL`, `OPENAI_EVALUATION_MODEL`,
-  `OPENAI_EVALUATION_REASONING`, `OPENAI_REVIEW_MODEL`, and
-  `OPENAI_REVIEW_REASONING` are mandatory Compose variables without defaults.
-- The key is supplied through the secret store and is not a marker
-  placeholder, repeated `x/0/*` mask, test/fake/example value or short token.
-- API and worker fail-fast is checked without printing the key or saving it in
-  Compose output/log artifacts.
-- `OPENAI_SMOKE_ENABLED=false` remains set for normal deploy. The billable
-  smoke is run only after separate approval and sends exactly one
-  transcription plus one evaluation request with retries disabled.
-- Approved model access, project data controls, retention, target rate limits
-  and consented synthetic/staging payload policy are confirmed before smoke.
-- Review callers always send a stable `Idempotency-Key`; duplicate and
-  conflicting-key behavior is checked without extra review/audit rows.
-
 ## Storage
 
 - `S3_ENDPOINT` points to the internal S3-compatible endpoint.
@@ -58,41 +18,6 @@
 - `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, and `MINIO_BUCKET` are set.
 - `FILE_IMAGE_MAX_SIZE_BYTES` and `FILE_PDF_MAX_SIZE_BYTES` match operational limits.
 - Bucket creation permissions are available at startup or the bucket is pre-created.
-- `TRAINING_AUDIO_BUCKET` is a separate private bucket without anonymous
-  read/list/write/delete/ACL capabilities, CDN publication or permanent public
-  URLs.
-- Production Compose requires `TRAINING_AUDIO_BUCKET`; it differs from
-  `MINIO_BUCKET`, and API/worker startup succeeds only after policy/ACL plus
-  anonymous object GET, bucket LIST, object DELETE and mandatory object PUT
-  prove that access is private. Only `401/403` are accepted; successful PUT
-  sentinel cleanup is confirmed by signed delete plus HEAD.
-- `TRAINING_AUDIO_RETENTION_DAYS=0` is preserved for approved indefinite
-  retention; original voice objects remain after merge and Telegram unlink.
-
-## Training audio worker
-
-- API and `training-worker` use the same image, and both `ffmpeg` and `ffprobe`
-  are available inside it.
-- Only API runs migrations; `training-worker` starts after the API healthcheck.
-- Audio size/duration/segment limits and download/ffmpeg/transcription
-  timeouts match the target environment.
-- `TRAINING_AUDIO_WORKER_HEARTBEAT_MS` is lower than
-  `TRAINING_AUDIO_WORKER_LEASE_MS`.
-- `TRAINING_AUDIO_TEMP_DIR` is absolute and backed by bounded private temp
-  storage; Compose uses a 512 MiB `tmpfs`.
-- `training-worker` receives SIGTERM through Docker init/reaper and has a `45s`
-  grace period, exceeding the default audio drain timeout `30000ms`.
-- Docker init/reaper is enabled; ffmpeg/ffprobe timeouts terminate the complete
-  POSIX process group with SIGTERM, bounded grace and SIGKILL fallback.
-- `pnpm --filter @platforma/api test:training:audio:docker` passes against
-  isolated PostgreSQL/MinIO and the built API image before stage 8/deploy.
-- Controlled stop/restart leaves no audio job locked by the stopped worker and
-  creates no duplicate segment or merged `File`.
-- Protected playback requires JWT + `training:audio:read`, checks
-  ownership/administrative scope, returns no key/public URL and writes
-  `training.audio.read` to `AuditLog`.
-- Real Bot API voice download is an explicit staging smoke; Compose does not
-  register the Telegram webhook automatically.
 
 ## WordPress Import
 
@@ -120,16 +45,6 @@
 ## Deployment Checks
 
 - Prisma migrations are applied before starting the API.
-- API Docker CMD finishes migrations and then uses `exec node
-  apps/api/dist/main.js`, so Node is PID 1.
-- Nest shutdown hooks are enabled for `SIGTERM` and `SIGINT`.
-- API `stop_grace_period` is `30s`, exceeding the default Telegram worker drain
-  timeout `TELEGRAM_WORKER_DRAIN_TIMEOUT_MS=10000`.
-- A controlled `docker compose ... stop api` confirms that no new Telegram jobs
-  are claimed after shutdown starts; active work either completes during drain
-  or is returned to `PENDING` with `TELEGRAM_SHUTDOWN_RELEASE`.
-- After API stop, recent `training_jobs` contain no `RUNNING` Telegram job
-  locked by the stopped worker.
 - Seed is run once per environment and default credentials are rotated.
 - Healthcheck `/health` returns database `ok` and `postgis: true`.
 - Same-origin healthcheck `/api/health` returns database `ok` and `postgis: true` after proxy changes.

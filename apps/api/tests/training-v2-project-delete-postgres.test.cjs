@@ -1,13 +1,14 @@
 require('reflect-metadata');
 
 const assert = require('node:assert/strict');
-const { randomUUID } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 const { readFile, writeFile } = require('node:fs/promises');
 const { after, before, beforeEach, test } = require('node:test');
 const {
   FileStorage,
   PrismaClient,
   TrainingAiStepStatus,
+  TrainingAudioStorageObjectKind,
   TrainingAnswerProcessingStatus,
   TrainingAnswerSource,
   TrainingAttemptQuestionStatus,
@@ -21,10 +22,18 @@ const {
   TrainingReviewStatus,
   UserStatus,
 } = require('@prisma/client');
-const { NotFoundException, ServiceUnavailableException } = require('@nestjs/common');
+const {
+  ConflictException,
+  NotFoundException,
+  ServiceUnavailableException,
+} = require('@nestjs/common');
 
 const { FilesService } = require('../dist/files/files.service.js');
 const { TrainingAudioService } = require('../dist/training/training-audio.service.js');
+const {
+  TrainingAudioStorageService,
+  upsertTrainingAudioStorageEntry,
+} = require('../dist/training/training-audio-storage.service.js');
 const { TrainingAttemptStateService } = require('../dist/training/training-attempt-state.service.js');
 const { TrainingMaterialService } = require('../dist/training/training-material.service.js');
 const { TrainingProjectService } = require('../dist/training/training-project.service.js');
@@ -205,11 +214,7 @@ if (!databaseUrl) {
       data: revisionData(unrelatedMaterial.id, 1, null, firstMaterialFile.id),
     });
     const unrelatedFile = await createStoredFile(storage, 'unrelated/keep.pdf');
-    const deletedFileIds = [
-      secondMaterialFile.id,
-      mergedFile.id,
-      segmentFile.id,
-    ];
+    const retainedAudioFileIds = [mergedFile.id, segmentFile.id];
 
     await projects.deleteProject(project.id, actor.id);
 
@@ -234,11 +239,14 @@ if (!databaseUrl) {
       0,
     );
     assert.equal(await prisma.trainingAnswerSegment.count({ where: { answerId: answer.id } }), 0);
-    assert.equal(await prisma.file.count({ where: { id: { in: deletedFileIds } } }), 0);
+    assert.equal(await prisma.file.count({ where: { id: secondMaterialFile.id } }), 0);
+    assert.equal(await prisma.file.count({ where: { id: { in: retainedAudioFileIds } } }), 2);
     assert.equal(await prisma.file.count({ where: { id: firstMaterialFile.id } }), 1);
-    assert.equal(storage.objects.size, 2);
+    assert.equal(storage.objects.size, 4);
     assert.equal(storage.has(firstMaterialFile), true);
     assert.equal(storage.has(unrelatedFile), true);
+    assert.equal(storage.has(mergedFile), true);
+    assert.equal(storage.has(segmentFile), true);
     assert.equal(await prisma.trainingProject.count({ where: { id: unrelatedProject.id } }), 1);
     assert.equal(
       await prisma.trainingMaterialRevision.count({
@@ -248,6 +256,20 @@ if (!databaseUrl) {
     );
     assert.equal(await prisma.trainingTelegramAccount.count({ where: { id: account.id } }), 1);
     assert.equal(await prisma.user.count({ where: { id: { in: [actor.id, employee.id] } } }), 2);
+
+    const retainedAudio = await prisma.trainingAudioStorageEntry.findMany({
+      where: { fileId: { in: retainedAudioFileIds } },
+      orderBy: { kind: 'asc' },
+    });
+    assert.equal(retainedAudio.length, 2);
+    for (const entry of retainedAudio) {
+      assert.equal(entry.projectIdSnapshot, project.id);
+      assert.equal(entry.projectTitleSnapshot, project.title);
+      assert.equal(entry.userIdSnapshot, employee.id);
+      assert.equal(entry.userNameSnapshot, employee.name);
+      assert.equal(entry.userEmailSnapshot, employee.email);
+      assert.equal(entry.deletedAt, null);
+    }
 
     const audit = await prisma.auditLog.findFirst({
       where: { action: 'training.project.delete', entityId: project.id },
@@ -263,10 +285,14 @@ if (!databaseUrl) {
       audit.metadata.storageObjects.some((object) => object.key === firstMaterialFile.key),
       false,
     );
-    for (const file of [secondMaterialFile, mergedFile, segmentFile]) {
+    assert.equal(
+      audit.metadata.storageObjects.some((object) => object.key === secondMaterialFile.key),
+      true,
+    );
+    for (const file of [mergedFile, segmentFile]) {
       assert.equal(
         audit.metadata.storageObjects.some((object) => object.key === file.key),
-        true,
+        false,
       );
     }
     assert.equal(typeof audit.metadata.cleanupCompletedAt, 'string');
@@ -316,11 +342,179 @@ if (!databaseUrl) {
     await projects.deleteProject(project.id, actor.id);
   });
 
+  test('manual audio storage deletion filters by deleted snapshots and retries idempotently', async () => {
+    const storage = new MemoryStorage();
+    const audioStorage = new TrainingAudioStorageService(prisma, storage);
+    const formerUser = await createUser('former-owner');
+    const formerProject = await createProject('Архивный проект ручного удаления');
+    const answerId = randomUUID();
+    const storedFile = await createStoredFile(
+      storage,
+      `training-v2/answers/${answerId}/merged.webm`,
+      'audio/webm',
+      Buffer.from('manual-delete-audio'),
+    );
+    const entry = await prisma.trainingAudioStorageEntry.create({
+      data: {
+        fileId: storedFile.id,
+        kind: TrainingAudioStorageObjectKind.MERGED,
+        bucket: storedFile.bucket,
+        key: storedFile.key,
+        checksum: storedFile.checksum,
+        sizeBytes: storedFile.sizeBytes,
+        mimeType: storedFile.mimeType,
+        projectIdSnapshot: formerProject.id,
+        projectTitleSnapshot: formerProject.title,
+        userIdSnapshot: formerUser.id,
+        userNameSnapshot: formerUser.name,
+        userEmailSnapshot: formerUser.email,
+        answerIdSnapshot: answerId,
+        objectCreatedAt: storedFile.createdAt,
+      },
+    });
+
+    await prisma.trainingProject.delete({ where: { id: formerProject.id } });
+    await prisma.user.delete({ where: { id: formerUser.id } });
+
+    const query = {
+      page: 1,
+      limit: 50,
+      project: 'архивный проект',
+      user: 'former-owner',
+      createdFrom: null,
+      createdToExclusive: null,
+      state: '',
+    };
+    const report = await audioStorage.report(query);
+    assert.equal(report.readOnly, true);
+    assert.equal(report.total, 1);
+    assert.equal(report.items[0].storageEntryId, entry.id);
+    assert.equal(report.items[0].project.title, formerProject.title);
+    assert.equal(report.items[0].user.name, formerUser.name);
+    assert.equal(report.items[0].state, 'UNLINKED');
+    assert.equal(report.items[0].canDelete, true);
+
+    const manifest = await audioStorage.createDeletionManifest(actor.id, {
+      selectionIds: [report.items[0].selectionId],
+      reason: 'Подтверждённое ручное удаление архивного аудио',
+    });
+    await assert.rejects(
+      () => prisma.$transaction((transaction) => upsertTrainingAudioStorageEntry(transaction, {
+        fileId: storedFile.id,
+        kind: TrainingAudioStorageObjectKind.MERGED,
+        bucket: storedFile.bucket,
+        key: storedFile.key,
+      })),
+      ConflictException,
+    );
+    storage.hooks.deleteFailuresRemaining = 1;
+    const pending = await audioStorage.executeDeletionManifest(manifest.id, actor.id);
+    assert.equal(pending.status, 'PENDING');
+    assert.deepEqual(pending.lastErrorCodes, ['STORAGE_DELETE_FAILED']);
+    assert.equal(await prisma.file.count({ where: { id: storedFile.id } }), 0);
+    assert.equal(storage.has(storedFile), true);
+
+    const completed = await audioStorage.executeDeletionManifest(manifest.id, actor.id);
+    assert.equal(completed.status, 'COMPLETED');
+    assert.equal(completed.deletedItems, 1);
+    assert.equal(storage.has(storedFile), false);
+    assert.notEqual(
+      (await prisma.trainingAudioStorageEntry.findUniqueOrThrow({ where: { id: entry.id } })).deletedAt,
+      null,
+    );
+    assert.equal(
+      await prisma.auditLog.count({
+        where: {
+          action: 'training.audio_storage.delete_manifest.complete',
+          entityId: manifest.id,
+        },
+      }),
+      1,
+    );
+
+    const repeated = await audioStorage.executeDeletionManifest(manifest.id, actor.id);
+    assert.equal(repeated.status, 'COMPLETED');
+    assert.equal(
+      await prisma.auditLog.count({
+        where: {
+          action: 'training.audio_storage.delete_manifest.complete',
+          entityId: manifest.id,
+        },
+      }),
+      1,
+    );
+    assert.equal((await audioStorage.report(query)).total, 0);
+    assert.equal(
+      (await audioStorage.report({ ...query, state: 'DELETED' })).items[0].user.email,
+      formerUser.email,
+    );
+  });
+
+  test('shared audio file never enters a manual deletion manifest', async () => {
+    const storage = new MemoryStorage();
+    const audioStorage = new TrainingAudioStorageService(prisma, storage);
+    const project = await createProject('Проект с общей ссылкой');
+    const material = await prisma.trainingMaterial.create({
+      data: {
+        projectId: project.id,
+        type: TrainingMaterialType.PDF,
+        title: 'Материал с общей ссылкой',
+        createdById: actor.id,
+      },
+    });
+    const answerId = randomUUID();
+    const storedFile = await createStoredFile(
+      storage,
+      `training-v2/answers/${answerId}/merged.webm`,
+      'audio/webm',
+    );
+    await prisma.trainingMaterialRevision.create({
+      data: revisionData(material.id, 1, null, storedFile.id),
+    });
+    const entry = await prisma.trainingAudioStorageEntry.create({
+      data: {
+        fileId: storedFile.id,
+        kind: TrainingAudioStorageObjectKind.MERGED,
+        bucket: storedFile.bucket,
+        key: storedFile.key,
+        checksum: storedFile.checksum,
+        sizeBytes: storedFile.sizeBytes,
+        mimeType: storedFile.mimeType,
+        projectIdSnapshot: project.id,
+        projectTitleSnapshot: project.title,
+        answerIdSnapshot: answerId,
+        objectCreatedAt: storedFile.createdAt,
+      },
+    });
+
+    const report = await audioStorage.report({
+      page: 1,
+      limit: 50,
+      project: '',
+      user: '',
+      createdFrom: null,
+      createdToExclusive: null,
+      state: '',
+    });
+    const item = report.items.find((candidate) => candidate.storageEntryId === entry.id);
+    assert.equal(item.state, 'LINKED');
+    assert.equal(item.canDelete, false);
+    await assert.rejects(
+      () => audioStorage.createDeletionManifest(actor.id, {
+        selectionIds: [item.selectionId],
+        reason: 'Попытка удалить shared file',
+      }),
+      ConflictException,
+    );
+    assert.equal(await prisma.trainingAudioDeletionManifest.count(), 0);
+    assert.equal(storage.has(storedFile), true);
+  });
+
   test('late PDF cleanup failure is appended to the deletion audit and retried', async () => {
     const storage = new MemoryStorage();
     const files = new FilesService(prisma, storage);
     const projects = new TrainingProjectService(prisma, files);
-    const materials = new TrainingMaterialService(prisma, storage, {}, {}, {});
+    const materials = new TrainingMaterialService(prisma, storage, {}, {}, {}, {});
     const project = await createProject('Late PDF race');
 
     await projects.deleteProject(project.id, actor.id);
@@ -407,7 +601,7 @@ if (!databaseUrl) {
     assert.equal(await prisma.trainingTelegramLinkToken.count({ where: { id: token.id } }), 0);
   });
 
-  test('segment uploaded while a project is deleted is compensated in storage', async () => {
+  test('segment uploaded while a project is deleted is retained for manual cleanup', async () => {
     const barrier = deferred();
     const release = deferred();
     const storage = new MemoryStorage({
@@ -440,12 +634,24 @@ if (!databaseUrl) {
     release.resolve();
 
     await assert.rejects(processing);
-    assert.equal(storage.objects.size, 0);
+    assert.equal(storage.objects.size, 1);
     assert.equal(await prisma.file.count({ where: { key: { contains: segment.id } } }), 0);
     assert.equal(await prisma.trainingProject.count({ where: { id: project.id } }), 0);
+    const retained = await prisma.trainingAudioStorageEntry.findUniqueOrThrow({
+      where: {
+        bucket_key: {
+          bucket: process.env.TRAINING_AUDIO_BUCKET,
+          key: `training-v2/answers/${answer.id}/segments/${segment.id}.ogg`,
+        },
+      },
+    });
+    assert.equal(retained.fileId, null);
+    assert.equal(retained.projectIdSnapshot, project.id);
+    assert.equal(retained.projectTitleSnapshot, project.title);
+    assert.equal(retained.userIdSnapshot, employee.id);
   });
 
-  test('late audio upload remains recoverable after its compensation fails', async () => {
+  test('late audio upload stays in storage until an explicit manual deletion', async () => {
     const uploadStarted = deferred();
     const releaseUpload = deferred();
     const storage = new MemoryStorage({
@@ -475,7 +681,6 @@ if (!databaseUrl) {
     const processing = audio.prepareAnswerAudio(answer.id);
     await uploadStarted.promise;
     await projects.deleteProject(project.id, actor.id);
-    storage.hooks.deleteFailuresRemaining = 1;
     releaseUpload.resolve();
 
     await assert.rejects(processing);
@@ -489,18 +694,28 @@ if (!databaseUrl) {
       ),
       true,
     );
-    const pendingAudit = await prisma.auditLog.findFirstOrThrow({
+    const projectAudit = await prisma.auditLog.findFirstOrThrow({
       where: { action: 'training.project.delete', entityId: project.id },
       orderBy: { createdAt: 'desc' },
     });
-    assert.equal(pendingAudit.metadata.cleanupStatus, 'PENDING');
-    assert.equal(pendingAudit.metadata.cleanupRevision, 1);
+    assert.equal(projectAudit.metadata.cleanupStatus, 'COMPLETED');
+    assert.equal(projectAudit.metadata.storageObjects.length, 0);
 
     await projects.deleteProject(project.id, actor.id);
-    assert.equal(storage.objects.size, 0);
+    assert.equal(storage.objects.size, 1);
+    assert.equal(
+      await prisma.trainingAudioStorageEntry.count({
+        where: {
+          bucket: process.env.TRAINING_AUDIO_BUCKET,
+          key: `training-v2/answers/${answer.id}/segments/${segment.id}.ogg`,
+          deletedAt: null,
+        },
+      }),
+      1,
+    );
   });
 
-  test('merged audio uploaded while a project is deleted is compensated in storage', async () => {
+  test('merged audio uploaded while a project is deleted is retained with its segment', async () => {
     const barrier = deferred();
     const release = deferred();
     const storage = new MemoryStorage({
@@ -530,10 +745,9 @@ if (!databaseUrl) {
       {
         run: async (args) => {
           const outputPath = args.at(-1);
-          const wav = Buffer.alloc(64);
-          wav.write('RIFF', 0, 'ascii');
-          wav.write('WAVE', 8, 'ascii');
-          await writeFile(outputPath, wav);
+          const webm = Buffer.alloc(64);
+          Buffer.from([0x1a, 0x45, 0xdf, 0xa3]).copy(webm);
+          await writeFile(outputPath, webm);
         },
       },
     );
@@ -544,11 +758,23 @@ if (!databaseUrl) {
     release.resolve();
 
     await assert.rejects(processing);
-    assert.equal(storage.objects.size, 0);
-    assert.equal(await prisma.file.count({ where: { id: segmentFile.id } }), 0);
+    assert.equal(storage.objects.size, 2);
+    assert.equal(await prisma.file.count({ where: { id: segmentFile.id } }), 1);
     assert.equal(
-      await prisma.file.count({ where: { key: `training-v2/answers/${answer.id}/merged.wav` } }),
+      await prisma.file.count({ where: { key: `training-v2/answers/${answer.id}/merged.webm` } }),
       0,
+    );
+    assert.equal(
+      await prisma.trainingAudioStorageEntry.count({
+        where: {
+          projectIdSnapshot: project.id,
+          key: { in: [
+            segmentFile.key,
+            `training-v2/answers/${answer.id}/merged.webm`,
+          ] },
+        },
+      }),
+      2,
     );
   });
 
@@ -676,7 +902,7 @@ if (!databaseUrl) {
         originalName: suffix.split('/').at(-1),
         mimeType,
         sizeBytes: BigInt(body.length),
-        checksum: 'a'.repeat(64),
+        checksum: createHash('sha256').update(body).digest('hex'),
         uploadedById: actor.id,
       },
     });
@@ -685,6 +911,8 @@ if (!databaseUrl) {
   }
 
   async function clearProjectData() {
+    await prisma.trainingAudioDeletionManifest.deleteMany();
+    await prisma.trainingAudioStorageEntry.deleteMany();
     await prisma.trainingAnswerSegment.deleteMany();
     await prisma.trainingAnswer.deleteMany();
     await prisma.trainingAttemptQuestion.deleteMany();
@@ -706,7 +934,17 @@ if (!databaseUrl) {
     await prisma.trainingTelegramAccount.deleteMany();
     await prisma.file.deleteMany({ where: { key: { startsWith: 'training-v2/delete-test/' } } });
     await prisma.file.deleteMany({ where: { key: { startsWith: 'training-v2/answers/' } } });
-    await prisma.auditLog.deleteMany({ where: { action: 'training.project.delete' } });
+    await prisma.auditLog.deleteMany({
+      where: {
+        action: {
+          in: [
+            'training.project.delete',
+            'training.audio_storage.delete_manifest.create',
+            'training.audio_storage.delete_manifest.complete',
+          ],
+        },
+      },
+    });
   }
 
   async function clearData() {
@@ -740,6 +978,35 @@ class MemoryStorage {
     return body;
   }
 
+  async getObjectToFile({ key, bucket, filePath }) {
+    const body = await this.getObject(key, bucket);
+    await writeFile(filePath, body, { flag: 'wx' });
+    return {
+      size: body.length,
+      checksum: createHash('sha256').update(body).digest('hex'),
+    };
+  }
+
+  async listObjects({ bucket, prefix, maxObjects }) {
+    const objects = [];
+    const bucketPrefix = `${bucket}/`;
+
+    for (const [id, body] of this.objects) {
+      if (!id.startsWith(bucketPrefix)) continue;
+      const key = id.slice(bucketPrefix.length);
+      if (!key.startsWith(prefix)) continue;
+      objects.push({
+        key,
+        size: body.length,
+        etag: createHash('md5').update(body).digest('hex'),
+        lastModified: new Date(),
+      });
+      if (objects.length > maxObjects) throw new Error('Reconciliation limit exceeded');
+    }
+
+    return objects;
+  }
+
   async putObject(input) {
     if (input.key.includes('/segments/')) await this.hooks.onSegmentPutBeforeStore?.();
     this.objects.set(this.objectId(input.key, input.bucket), input.body);
@@ -747,8 +1014,10 @@ class MemoryStorage {
   }
 
   async putObjectFromFile(input) {
+    if (input.key.includes('/segments/')) await this.hooks.onSegmentPutBeforeStore?.();
     this.objects.set(this.objectId(input.key, input.bucket), await readFile(input.filePath));
-    if (input.key.endsWith('/merged.wav')) await this.hooks.onMergedPut?.();
+    if (input.key.includes('/segments/')) await this.hooks.onSegmentPut?.();
+    if (input.key.endsWith('/merged.webm')) await this.hooks.onMergedPut?.();
   }
 
   async deleteObject(key, bucket) {

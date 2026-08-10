@@ -13,9 +13,14 @@ const { HealthController } = require('../dist/health/health.controller.js');
 const {
   TrainingFeatureGuard,
   TrainingRuntimeConfigError,
+  isTrainingCrossProjectGenerationReuseEnabled,
+  isTrainingHarmlessExtraRoutingEnabled,
   isTrainingModuleEnabled,
   validateTrainingRuntimeConfig,
 } = require('../dist/training/training-runtime-config.js');
+const {
+  readQuestionGenerationRoutingConfig,
+} = require('../dist/training/training-question-generation-router.js');
 const {
   ALLOWED_UPDATES,
   createOperation,
@@ -31,11 +36,13 @@ function validProductionEnvironment() {
     TELEGRAM_BOT_TOKEN: '123456789:abcdefghijklmnopqrstuvwxyz_123456',
     TELEGRAM_BOT_USERNAME: 'platforma_training_bot',
     TELEGRAM_WEBHOOK_SECRET: 'safe_webhook_secret_123456',
-    TELEGRAM_WEBHOOK_URL: 'https://training.fluffywhite.moscow/api/training/telegram/webhook',
+    TELEGRAM_WEBHOOK_URL: 'https://training.fluffywhite.moscow/training/telegram/webhook',
     TRAINING_AI_MODE: 'openai',
     OPENAI_API_KEY: 'sk-live-project-key-value-123456',
     OPENAI_TRANSCRIPTION_MODEL: 'gpt-transcribe-production',
-    OPENAI_EVALUATION_MODEL: 'gpt-evaluation-production',
+    OPENAI_QUESTION_GENERATION_MODEL: 'gpt-5.6-terra',
+    OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS: '30000',
+    OPENAI_EVALUATOR_MODEL: 'gpt-5.6-terra',
     PUBLIC_APP_URL: 'https://platforma.fluffywhite.moscow',
     MINIO_BUCKET: 'platforma',
     TRAINING_AUDIO_BUCKET: 'platforma-training-audio',
@@ -54,6 +61,61 @@ test('Training module flag is strict and defaults enabled outside production val
   );
 });
 
+test('cross-project generation reuse flag is strict and defaults disabled', () => {
+  assert.equal(isTrainingCrossProjectGenerationReuseEnabled({}), false);
+  assert.equal(isTrainingCrossProjectGenerationReuseEnabled({
+    TRAINING_CROSS_PROJECT_GENERATION_REUSE_ENABLED: 'true',
+  }), true);
+  assert.equal(isTrainingCrossProjectGenerationReuseEnabled({
+    TRAINING_CROSS_PROJECT_GENERATION_REUSE_ENABLED: 'false',
+  }), false);
+  assert.throws(
+    () => isTrainingCrossProjectGenerationReuseEnabled({
+      TRAINING_CROSS_PROJECT_GENERATION_REUSE_ENABLED: 'TRUE',
+    }),
+    (error) => error instanceof TrainingRuntimeConfigError &&
+      error.code === 'TRAINING_CROSS_PROJECT_GENERATION_REUSE_ENABLED_INVALID',
+  );
+});
+
+test('harmless-extra routing is strict and remains fail-closed before calibration', () => {
+  assert.equal(isTrainingHarmlessExtraRoutingEnabled({}), false);
+  assert.equal(isTrainingHarmlessExtraRoutingEnabled({
+    TRAINING_HARMLESS_EXTRA_ROUTING_ENABLED: 'true',
+  }), true);
+  assert.equal(isTrainingHarmlessExtraRoutingEnabled({
+    TRAINING_HARMLESS_EXTRA_ROUTING_ENABLED: 'false',
+  }), false);
+  assert.throws(
+    () => isTrainingHarmlessExtraRoutingEnabled({
+      TRAINING_HARMLESS_EXTRA_ROUTING_ENABLED: 'TRUE',
+    }),
+    (error) => error instanceof TrainingRuntimeConfigError &&
+      error.code === 'TRAINING_HARMLESS_EXTRA_ROUTING_ENABLED_INVALID',
+  );
+});
+
+test('question generation routing defaults to terra_only and requires exact official models', () => {
+  assert.deepEqual(readQuestionGenerationRoutingConfig({}), {
+    strategy: 'terra_only',
+    routingVersion: 'luna-terra-router-v1',
+    validatorVersion: 'training-question-validator-v1',
+    primaryModel: 'gpt-5.6-terra',
+    fallbackModel: null,
+    terraModel: 'gpt-5.6-terra',
+    lunaModel: 'gpt-5.6-luna',
+  });
+  assert.equal(readQuestionGenerationRoutingConfig({
+    OPENAI_QUESTION_GENERATION_STRATEGY: 'luna_then_terra',
+  }).primaryModel, 'gpt-5.6-luna');
+  assert.throws(
+    () => readQuestionGenerationRoutingConfig({
+      OPENAI_QUESTION_GENERATION_MODEL: 'gpt-5.6-luna',
+    }),
+    /OPENAI_QUESTION_GENERATION_MODEL_INVALID/,
+  );
+});
+
 test('production disabled mode preserves a safe fake configuration', () => {
   assert.deepEqual(validateTrainingRuntimeConfig({
     NODE_ENV: 'production',
@@ -67,12 +129,18 @@ test('production enabled mode requires real providers, HTTPS and pairwise distin
   assert.deepEqual(validateTrainingRuntimeConfig(validProductionEnvironment()), { enabled: true });
   assert.deepEqual(validateTrainingRuntimeConfig({
     ...validProductionEnvironment(),
-    TELEGRAM_WEBHOOK_URL: 'https://training.fluffywhite.moscow/training/telegram/webhook',
+    TELEGRAM_WEBHOOK_URL:
+      'https://training.fluffywhite.moscow/api/training/telegram/webhook',
   }), { enabled: true });
 
   const invalidCases = [
     ['TELEGRAM_TRANSPORT_MODE', 'fake'],
     ['TRAINING_AI_MODE', 'fake'],
+    ['TRAINING_CROSS_PROJECT_GENERATION_REUSE_ENABLED', 'TRUE'],
+    ['TRAINING_HARMLESS_EXTRA_ROUTING_ENABLED', 'TRUE'],
+    ['OPENAI_QUESTION_GENERATION_STRATEGY', 'luna_first'],
+    ['OPENAI_QUESTION_GENERATION_MODEL', 'gpt-5.6-luna'],
+    ['OPENAI_QUESTION_GENERATION_LUNA_MODEL', 'gpt-5.6-terra'],
     ['PUBLIC_APP_URL', 'http://platforma.fluffywhite.moscow'],
     ['PUBLIC_APP_URL', 'https://127.0.0.1'],
     ['PUBLIC_APP_URL', 'https://10.1.2.3'],
@@ -80,13 +148,35 @@ test('production enabled mode requires real providers, HTTPS and pairwise distin
     ['TELEGRAM_WEBHOOK_URL', 'https://localhost/training/telegram/webhook'],
     ['TRAINING_AUDIO_BUCKET', 'platforma'],
     ['TRAINING_MATERIAL_BUCKET', 'Invalid_Bucket'],
-    ['OPENAI_EVALUATION_MODEL', ''],
+    ['OPENAI_QUESTION_GENERATION_MODEL', ''],
+    ['OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS', '4999'],
+    ['OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS', '120001'],
+    ['OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS', 'not-a-number'],
+    ['OPENAI_QUESTION_GENERATION_SOURCE_MAX_CHARS', '   '],
+    ['OPENAI_EVALUATOR_MODEL', ''],
   ];
 
   for (const [key, value] of invalidCases) {
     const environment = { ...validProductionEnvironment(), [key]: value };
     assert.throws(() => validateTrainingRuntimeConfig(environment), TrainingRuntimeConfigError);
   }
+});
+
+test('production evaluator model validation follows primary then legacy fallback precedence', () => {
+  const legacyOnly = validProductionEnvironment();
+  delete legacyOnly.OPENAI_EVALUATOR_MODEL;
+  legacyOnly.OPENAI_EVALUATION_MODEL = 'gpt-5.6-terra';
+  assert.deepEqual(validateTrainingRuntimeConfig(legacyOnly), { enabled: true });
+
+  const invalidPrimary = {
+    ...legacyOnly,
+    OPENAI_EVALUATOR_MODEL: 'placeholder',
+  };
+  assert.throws(
+    () => validateTrainingRuntimeConfig(invalidPrimary),
+    (error) => error instanceof TrainingRuntimeConfigError &&
+      error.code === 'OPENAI_EVALUATOR_MODEL_INVALID',
+  );
 });
 
 test('production validation errors are redacted and never contain configured secrets', () => {
@@ -158,10 +248,6 @@ test('webhook register builds the exact secret and allowed-updates request', () 
   assert.equal(operation.body.secret_token, environment.TELEGRAM_WEBHOOK_SECRET);
   assert.deepEqual(operation.body.allowed_updates, ALLOWED_UPDATES);
   assert.equal(operation.body.drop_pending_updates, false);
-  assert.equal(
-    validateWebhookUrl('https://training.fluffywhite.moscow/training/telegram/webhook'),
-    'https://training.fluffywhite.moscow/training/telegram/webhook',
-  );
   assert.throws(() => validateWebhookUrl('http://example.com/training/telegram/webhook'));
   assert.throws(() => validateWebhookUrl('https://127.0.0.1/training/telegram/webhook'));
   assert.throws(() => validateWebhookUrl('https://[fd00::1]/training/telegram/webhook'));
@@ -261,17 +347,32 @@ test('Docker and ordinary-test contracts preserve signal, ffmpeg and opt-in Open
   const dockerfile = readFileSync(resolve(root, 'apps/api/Dockerfile'), 'utf8');
   const compose = readFileSync(resolve(root, 'docker-compose.yml'), 'utf8');
   const main = readFileSync(resolve(root, 'apps/api/src/main.ts'), 'utf8');
+  const workerMain = readFileSync(
+    resolve(root, 'apps/api/src/training-voice-worker.main.ts'),
+    'utf8',
+  );
   const ordinaryTests = readFileSync(resolve(root, 'apps/api/tests/run-tests.cjs'), 'utf8');
   const packageJson = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
 
   assert.match(dockerfile, /apk add --no-cache chromium ffmpeg/u);
   assert.match(dockerfile, /exec node apps\/api\/dist\/main\.js/u);
   assert.match(main, /enableShutdownHooks\(\['SIGTERM', 'SIGINT'\]\)/u);
+  assert.match(workerMain, /createApplicationContext\(TrainingModule\)/u);
+  assert.match(workerMain, /enableShutdownHooks\(\['SIGTERM', 'SIGINT'\]\)/u);
   assert.match(compose, /stop_grace_period: 30s/u);
   assert.match(compose, /TRAINING_VOICE_WORKER_CONCURRENCY/u);
-  assert.doesNotMatch(compose, /training[-_ ]voice[-_ ]worker:\s*\n/iu);
+  assert.match(compose, /TRAINING_HARMLESS_EXTRA_ROUTING_ENABLED:\s*\$\{TRAINING_HARMLESS_EXTRA_ROUTING_ENABLED:-false\}/u);
+  assert.match(compose, /training-voice-worker:\s*\n[\s\S]*training-voice-worker\.main\.js/u);
+  assert.match(compose, /training-voice-worker:\s*[\s\S]*deploy:\s*\n\s+replicas: 1/u);
+  assert.match(compose, /api:\s*[\s\S]*TRAINING_VOICE_WORKER_ENABLED: "false"/u);
+  assert.match(compose, /training-voice-worker:\s*[\s\S]*TRAINING_VOICE_WORKER_ENABLED: "true"/u);
   assert.match(ordinaryTests, /TRAINING_AI_MODE = 'fake'/u);
   assert.match(ordinaryTests, /delete environment\.OPENAI_API_KEY/u);
   assert.notEqual(packageJson.scripts.test, packageJson.scripts['test:training:openai:smoke']);
   assert.doesNotMatch(packageJson.scripts.test, /openai.*smoke/iu);
+  assert.notEqual(
+    packageJson.scripts.test,
+    packageJson.scripts['benchmark:training:question-budget'],
+  );
+  assert.doesNotMatch(packageJson.scripts.test, /question.*budget.*benchmark/iu);
 });

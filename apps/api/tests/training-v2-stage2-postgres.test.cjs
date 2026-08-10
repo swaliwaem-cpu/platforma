@@ -1,7 +1,7 @@
 require('reflect-metadata');
 
 const assert = require('node:assert/strict');
-const { randomUUID } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 const { access, readFile, writeFile } = require('node:fs/promises');
 const { after, before, beforeEach, test } = require('node:test');
 const {
@@ -32,6 +32,9 @@ const {
   TrainingTelegramService,
 } = require('../dist/training/training-telegram.service.js');
 const {
+  TrainingTelegramOutboxWorkerService,
+} = require('../dist/training/training-telegram-outbox-worker.service.js');
+const {
   TrainingAudioError,
   TrainingAudioService,
 } = require('../dist/training/training-audio.service.js');
@@ -58,6 +61,7 @@ if (!databaseUrl) {
   const projects = new TrainingProjectService(prisma);
   let client;
   let telegram;
+  let telegramOutbox;
 
   before(async () => {
     await prisma.$connect();
@@ -67,6 +71,7 @@ if (!databaseUrl) {
     await clearTrainingData();
     client = new FakeTrainingTelegramClient();
     telegram = new TrainingTelegramService(prisma, state, projectAccess, client);
+    telegramOutbox = new TrainingTelegramOutboxWorkerService(prisma, telegram);
   });
 
   after(async () => {
@@ -165,7 +170,9 @@ if (!databaseUrl) {
     assert.equal(processing.processingStatus, TrainingAnswerProcessingStatus.PROCESSING);
     assert.equal(await prisma.trainingAnswer.count({ where: { id: answer.id } }), 1);
     assert.equal(
-      client.sentMessages.filter((message) => message.text === 'Ответ обрабатывается').length,
+      client.sentMessages.filter((message) =>
+        message.text === 'Ответ принят. Следующий вопрос придёт автоматически.',
+      ).length,
       2,
     );
   });
@@ -220,6 +227,41 @@ if (!databaseUrl) {
     assert.equal(storedAnswer.processingErrorCode, 'ATTEMPT_TIMED_OUT');
     assert.equal(storedAnswer.score, null);
     assert.equal(storedAnswer.segments.length, 1);
+    assert.equal(
+      await prisma.trainingTelegramOutbox.count({
+        where: { attemptId: attempt.id, eventType: 'ATTEMPT_STATE' },
+      }),
+      1,
+    );
+  });
+
+  test('finish at an expired deadline times out instead of submitting for processing', async () => {
+    const user = await createUser('finish-timeout');
+    const project = await createOpenProject('Finish timeout project');
+    const { token, telegramId } = await consumeLink(user.id, project.id, 402);
+    await telegram.handleUpdate(callbackUpdate(telegramId, `tr:start:${token.id}`, 'start-finish-timeout'));
+    const attempt = await prisma.trainingAttempt.findFirstOrThrow({ where: { userId: user.id } });
+    const question = await prisma.trainingAttemptQuestion.findFirstOrThrow({
+      where: { attemptId: attempt.id, status: 'PRESENTED' },
+    });
+    await telegram.handleUpdate(voiceUpdate(telegramId, 22, 'file-finish-timeout', 'unique-finish-timeout'));
+    await prisma.$executeRawUnsafe(
+      `UPDATE training_attempts SET expires_at = CURRENT_TIMESTAMP WHERE id = $1::uuid`,
+      attempt.id,
+    );
+
+    await telegram.handleUpdate(
+      callbackUpdate(telegramId, `tr:finish:${question.id}`, 'finish-after-deadline'),
+    );
+
+    const storedAttempt = await prisma.trainingAttempt.findUniqueOrThrow({ where: { id: attempt.id } });
+    const storedAnswer = await prisma.trainingAnswer.findFirstOrThrow({
+      where: { attemptQuestion: { attemptId: attempt.id } },
+    });
+    assert.equal(storedAttempt.status, 'TIMED_OUT');
+    assert.equal(storedAnswer.processingStatus, TrainingAnswerProcessingStatus.FAILED);
+    assert.equal(storedAnswer.processingErrorCode, 'ATTEMPT_TIMED_OUT');
+    assert.equal(storedAnswer.submittedAt, null);
   });
 
   test('audio processing downloads ordered segments, stores private files and cleans temp data', async () => {
@@ -262,6 +304,10 @@ if (!databaseUrl) {
     assert.equal(files.every((file) => file.url === null), true);
     assert.equal(files.every((file) => file.bucket === process.env.TRAINING_AUDIO_BUCKET), true);
     assert.equal(storage.objects.size, 3);
+    assert.equal(result.mimeType, 'audio/webm');
+    assert.equal(result.providerUploads.length, 1);
+    await result.cleanup();
+    await repeated.cleanup();
     await assert.rejects(() => access(runner.tempDirectory));
   });
 
@@ -397,7 +443,16 @@ if (!databaseUrl) {
       );
       if (sequence === 1) {
         await telegram.handleUpdate(plainStartUpdate(telegramId));
-        assert.equal(client.sentMessages.at(-1)?.text, 'Ответ обрабатывается');
+        assert.equal(
+          client.sentMessages.at(-1)?.text,
+          'Ответ принят. Следующий вопрос придёт автоматически.',
+        );
+      }
+      if (sequence === 4) {
+        assert.equal(
+          client.sentMessages.at(-1)?.text,
+          'Ваши ответы приняты. Ожидайте решения.',
+        );
       }
       assert.equal(await worker.runOnce(), true);
     }
@@ -423,6 +478,16 @@ if (!databaseUrl) {
       ),
       true,
     );
+    const notifications = await prisma.trainingTelegramOutbox.findMany({
+      where: { attemptId: attempt.id },
+      orderBy: { createdAt: 'asc' },
+    });
+    assert.equal(notifications.length, 4);
+    assert.equal(
+      notifications.every((notification) => notification.eventType === 'ANSWER_PROCESSED'),
+      true,
+    );
+    assert.equal(new Set(notifications.map((notification) => notification.deduplicationKey)).size, 4);
     assert.equal(await worker.runOnce(), false);
     const history = await attempts.listEmployeeAttempts(user.id);
     assert.equal(history.items.some((item) => item.id === attempt.id), true);
@@ -485,7 +550,7 @@ if (!databaseUrl) {
     );
   });
 
-  test('worker timeout after finish commits timeout result and notifies Telegram', async () => {
+  test('worker returns processing time to the attempt deadline after finish', async () => {
     const user = await createUser('worker-timeout');
     const project = await createOpenProject('Worker timeout');
     const { token, telegramId } = await consumeLink(user.id, project.id, 851);
@@ -505,6 +570,14 @@ if (!databaseUrl) {
       `UPDATE training_attempts SET started_at = CURRENT_TIMESTAMP - INTERVAL '2 minutes', expires_at = CURRENT_TIMESTAMP - INTERVAL '1 minute' WHERE id = $1::uuid`,
       attempt.id,
     );
+    await prisma.$executeRawUnsafe(
+      `UPDATE training_answers SET submitted_at = CURRENT_TIMESTAMP - INTERVAL '2 minutes' WHERE attempt_question_id = $1::uuid`,
+      question.id,
+    );
+    const beforeAttempt = await prisma.trainingAttempt.findUniqueOrThrow({ where: { id: attempt.id } });
+    const beforeAnswer = await prisma.trainingAnswer.findFirstOrThrow({
+      where: { attemptQuestion: { attemptId: attempt.id } },
+    });
     const worker = createWorker(
       new ImmediateWorkerAudio(prisma),
       { transcribe: async () => fakeTranscription() },
@@ -518,20 +591,35 @@ if (!databaseUrl) {
     const answer = await prisma.trainingAnswer.findFirstOrThrow({
       where: { attemptQuestion: { attemptId: attempt.id } },
     });
-    assert.equal(storedAttempt.status, 'TIMED_OUT');
-    assert.equal(storedAttempt.isPassed, false);
-    assert.equal(answer.processingStatus, TrainingAnswerProcessingStatus.FAILED);
-    assert.equal(answer.processingErrorCode, 'ATTEMPT_TIMED_OUT');
-    assert.equal(answer.score, null);
+    const answeredQuestion = await prisma.trainingAttemptQuestion.findUniqueOrThrow({
+      where: { id: question.id },
+    });
+    const expectedExpiresAt = beforeAttempt.expiresAt.getTime() +
+      (answeredQuestion.answeredAt.getTime() - beforeAnswer.submittedAt.getTime());
+    assert.equal(storedAttempt.status, 'IN_PROGRESS');
+    assert.equal(storedAttempt.expiresAt.getTime() > Date.now(), true);
+    assert.equal(storedAttempt.expiresAt.getTime(), expectedExpiresAt);
+    assert.equal(answer.processingStatus, TrainingAnswerProcessingStatus.COMPLETED);
+    assert.equal(answer.processingErrorCode, null);
+    assert.equal(answer.score, 55);
     assert.equal(
       client.sentMessages.filter(
-        (message) => message.text === 'Время попытки истекло. Аттестация не пройдена.',
+        (message) => message.text.startsWith('Вопрос 2 из 4'),
       ).length,
       1,
     );
+    assert.doesNotMatch(
+      client.sentMessages.find((message) => message.text.startsWith('Вопрос 2 из 4'))?.text ?? '',
+      /Рекомендуем ответить за 60–90 секунд/,
+    );
+    assert.equal(await worker.runOnce(), false);
+    const afterRepeatedRun = await prisma.trainingAttempt.findUniqueOrThrow({
+      where: { id: attempt.id },
+    });
+    assert.equal(afterRepeatedRun.expiresAt.getTime(), storedAttempt.expiresAt.getTime());
   });
 
-  test('worker notifies timeout that occurs while claimed audio is processing', async () => {
+  test('expiry sweep cannot time out a submitted answer while worker is processing it', async () => {
     const user = await createUser('worker-mid-timeout');
     const project = await createOpenProject('Worker mid timeout');
     const { token, telegramId } = await consumeLink(user.id, project.id, 852);
@@ -558,6 +646,15 @@ if (!databaseUrl) {
       `UPDATE training_attempts SET started_at = CURRENT_TIMESTAMP - INTERVAL '2 minutes', expires_at = CURRENT_TIMESTAMP - INTERVAL '1 minute' WHERE id = $1::uuid`,
       attempt.id,
     );
+    await prisma.$executeRawUnsafe(
+      `UPDATE training_answers SET submitted_at = CURRENT_TIMESTAMP - INTERVAL '2 minutes' WHERE attempt_question_id = $1::uuid`,
+      question.id,
+    );
+    assert.equal(await state.finalizeAttemptIfExpired(attempt.id), false);
+    const duringProcessing = await prisma.trainingAttempt.findUniqueOrThrow({
+      where: { id: attempt.id },
+    });
+    assert.equal(duringProcessing.status, 'IN_PROGRESS');
     waitingAudio.release();
 
     assert.equal(await run, true);
@@ -568,14 +665,15 @@ if (!databaseUrl) {
     const answer = await prisma.trainingAnswer.findFirstOrThrow({
       where: { attemptQuestion: { attemptId: attempt.id } },
     });
-    assert.equal(storedAttempt.status, 'TIMED_OUT');
-    assert.equal(answer.processingStatus, TrainingAnswerProcessingStatus.FAILED);
-    assert.equal(answer.processingErrorCode, 'ATTEMPT_TIMED_OUT');
+    assert.equal(storedAttempt.status, 'IN_PROGRESS');
+    assert.equal(storedAttempt.expiresAt.getTime() > Date.now(), true);
+    assert.equal(answer.processingStatus, TrainingAnswerProcessingStatus.COMPLETED);
+    assert.equal(answer.processingErrorCode, null);
     assert.equal(answer.score, 55);
-    assert.equal(storedAttempt.finalScore, 0);
+    assert.equal(storedAttempt.finalScore, null);
     assert.equal(
       client.sentMessages.filter(
-        (message) => message.text === 'Время попытки истекло. Аттестация не пройдена.',
+        (message) => message.text.startsWith('Вопрос 2 из 4'),
       ).length,
       1,
     );
@@ -614,6 +712,12 @@ if (!databaseUrl) {
     assert.equal(attempt.status, 'TECHNICAL_FAILED');
     assert.equal(attempt.countsTowardAttemptLimit, false);
     assert.equal(attempt.finalScore, null);
+    assert.equal(
+      await prisma.trainingTelegramOutbox.count({
+        where: { attemptId: item.attempt.id, eventType: 'ANSWER_FAILED' },
+      }),
+      1,
+    );
     assert.equal(await worker.runOnce(), false);
   });
 
@@ -792,7 +896,7 @@ if (!databaseUrl) {
       transcriber,
       new DeterministicFakeTrainingEvaluator(),
       state,
-      telegram,
+      telegramOutbox,
     );
   }
 
@@ -837,6 +941,19 @@ if (!databaseUrl) {
       if (!body) throw new Error('Missing fake object');
       return Buffer.from(body);
     }
+
+    async getObjectToFile({ key, bucket, filePath }) {
+      const body = await this.getObject(key, bucket);
+      await writeFile(filePath, body, { flag: 'wx' });
+      return {
+        size: body.length,
+        checksum: createHash('sha256').update(body).digest('hex'),
+      };
+    }
+
+    async deleteObject(key, bucket) {
+      this.objects.delete(`${bucket}/${key}`);
+    }
   }
 
   class SyntheticWavRunner {
@@ -852,10 +969,9 @@ if (!databaseUrl) {
       const outputPath = args.at(-1);
       this.inputBodies = await Promise.all(inputPaths.map((path) => readFile(path)));
       this.tempDirectory = outputPath.slice(0, outputPath.lastIndexOf('/'));
-      const wav = Buffer.alloc(64);
-      wav.write('RIFF', 0, 'ascii');
-      wav.write('WAVE', 8, 'ascii');
-      await writeFile(outputPath, wav);
+      const webm = Buffer.alloc(64);
+      Buffer.from([0x1a, 0x45, 0xdf, 0xa3]).copy(webm);
+      await writeFile(outputPath, webm);
     }
   }
 

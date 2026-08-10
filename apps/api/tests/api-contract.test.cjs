@@ -302,10 +302,7 @@ test('seed includes feed permissions for admin role', () => {
   assert.match(seed, /\['feeds:read', 'Read feed sources and units'\]/);
   assert.match(seed, /\['feeds:manage', 'Manage feed sources'\]/);
   assert.match(seed, /\['feeds:run', 'Run feed imports'\]/);
-  assert.match(
-    seed,
-    /admin:\s*\[[\s\S]*\.\.\.NON_TRAINING_PERMISSION_DEFINITIONS\.map\(\(\[key\]\) => key\)/,
-  );
+  assert.match(seed, /admin: permissions\.map\(\(\[key\]\) => key\)/);
 });
 
 test('FeedsModule imports AuthModule for guarded feed routes', () => {

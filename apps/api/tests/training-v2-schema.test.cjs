@@ -40,26 +40,133 @@ const stage4Migration = readFileSync(
   ),
   'utf8',
 );
+const knowledgeMigration = readFileSync(
+  resolve(
+    repositoryRoot,
+    'apps/api/prisma/migrations/20260805120000_add_training_project_knowledge/migration.sql',
+  ),
+  'utf8',
+);
+const sharedArtifactMigration = readFileSync(
+  resolve(
+    repositoryRoot,
+    'apps/api/prisma/migrations/20260807140000_add_training_question_generation_artifacts/migration.sql',
+  ),
+  'utf8',
+);
+const telegramOutboxMigration = readFileSync(
+  resolve(
+    repositoryRoot,
+    'apps/api/prisma/migrations/20260807190000_add_training_telegram_delivery_outbox/migration.sql',
+  ),
+  'utf8',
+);
+const rootEnvironmentExample = readFileSync(resolve(repositoryRoot, '.env.example'), 'utf8');
+const apiEnvironmentExample = readFileSync(
+  resolve(repositoryRoot, 'apps/api/.env.example'),
+  'utf8',
+);
+const compose = readFileSync(resolve(repositoryRoot, 'docker-compose.yml'), 'utf8');
 const seed = readFileSync(resolve(repositoryRoot, 'apps/api/src/prisma/seed.ts'), 'utf8');
 
-test('Training V2 preserves Stage 4 models and adds the accepted assignment layer', () => {
+test('Training V2 preserves its models and includes AI usage events', () => {
   const modelNames = [...schema.matchAll(/^model (Training\w+) \{/gmu)].map((match) => match[1]);
 
   assert.deepEqual(modelNames, [
+    'TrainingAudioStorageEntry',
+    'TrainingAudioDeletionManifest',
+    'TrainingAudioDeletionManifestItem',
     'TrainingProject',
+    'TrainingProjectKnowledgeVersion',
+    'TrainingQuestionGenerationArtifact',
     'TrainingProjectAssignment',
     'TrainingQuestion',
     'TrainingFact',
+    'TrainingMaterialOperation',
+    'TrainingMaterialOperationItem',
     'TrainingMaterial',
     'TrainingMaterialRevision',
     'TrainingCriterion',
     'TrainingAttempt',
+    'TrainingAiUsageEvent',
     'TrainingAttemptQuestion',
     'TrainingAnswer',
     'TrainingTelegramAccount',
     'TrainingTelegramLinkToken',
+    'TrainingTelegramOutbox',
     'TrainingAnswerSegment',
   ]);
+});
+
+test('Telegram delivery outbox is narrow, additive and indexed for claim/recovery', () => {
+  assert.match(telegramOutboxMigration, /CREATE TABLE "training_telegram_outbox"/u);
+  assert.match(telegramOutboxMigration, /training_telegram_outbox_deduplication_key_key/u);
+  assert.match(
+    telegramOutboxMigration,
+    /training_telegram_outbox_pending_claim_idx[\s\S]*WHERE "status" = 'pending'/u,
+  );
+  assert.match(
+    telegramOutboxMigration,
+    /training_telegram_outbox_processing_recovery_idx[\s\S]*WHERE "status" = 'processing'/u,
+  );
+  assert.match(telegramOutboxMigration, /training_telegram_outbox_state_check/u);
+  assert.match(telegramOutboxMigration, /training_telegram_outbox_event_reference_check/u);
+  assert.doesNotMatch(
+    telegramOutboxMigration,
+    /bot_token|webhook_secret|transcript|audio|payload|request_json/iu,
+  );
+  assert.doesNotMatch(
+    telegramOutboxMigration,
+    /DROP TABLE|DROP TYPE|DELETE FROM|TRUNCATE/iu,
+  );
+});
+
+test('shared question artifact migration is additive, indexed and project-independent', () => {
+  assert.match(
+    sharedArtifactMigration,
+    /CREATE TABLE "training_question_generation_artifacts"/u,
+  );
+  assert.match(
+    sharedArtifactMigration,
+    /UNIQUE INDEX[\s\S]*"real_estate_object_id", "generation_key_hash"/u,
+  );
+  assert.match(
+    sharedArtifactMigration,
+    /real_estate_object_id_fkey[\s\S]*ON DELETE CASCADE/u,
+  );
+  assert.match(
+    sharedArtifactMigration,
+    /generation_artifact_id_fkey[\s\S]*ON DELETE SET NULL/u,
+  );
+  assert.match(
+    sharedArtifactMigration,
+    /generation_artifact_id_idx/u,
+  );
+  assert.doesNotMatch(
+    sharedArtifactMigration,
+    /DROP\s|DELETE\s+FROM|TRUNCATE|ALTER\s+COLUMN/iu,
+  );
+  assert.doesNotMatch(
+    sharedArtifactMigration,
+    /training_question_generation_artifacts[\s\S]*"project_id"/u,
+  );
+});
+
+test('cross-project generation reuse flag is documented off by default', () => {
+  for (const contract of [rootEnvironmentExample, apiEnvironmentExample, compose]) {
+    assert.match(
+      contract,
+      /TRAINING_CROSS_PROJECT_GENERATION_REUSE_ENABLED(?::|=)[^\n]*false/u,
+    );
+  }
+});
+
+test('project knowledge migration is additive and enforces hash/version claims', () => {
+  assert.match(knowledgeMigration, /CREATE TABLE "training_project_knowledge_versions"/u);
+  assert.match(knowledgeMigration, /UNIQUE INDEX[\s\S]*"project_id", "source_hash"/u);
+  assert.match(knowledgeMigration, /"status" IN \('GENERATING', 'READY', 'FAILED'\)/u);
+  assert.match(knowledgeMigration, /"compiled_knowledge_json" IS NOT NULL/u);
+  assert.doesNotMatch(knowledgeMigration, /DROP TABLE|DROP TYPE|DELETE FROM|TRUNCATE/iu);
 });
 
 test('Stage 4 migration is additive and enforces revision and source invariants', () => {
@@ -166,10 +273,7 @@ test('Training permissions are seeded idempotently with the fixed role mapping',
   assert.match(seed, /\['training:projects:manage', 'Manage training projects'\]/);
   assert.match(seed, /\['training:results:read', 'Read training attempt results'\]/);
   assert.match(seed, /\['training:results:review', 'Review training attempt results'\]/);
-  assert.match(
-    seed,
-    /admin:\s*\[[\s\S]*\.\.\.NON_TRAINING_PERMISSION_DEFINITIONS\.map\(\(\[key\]\) => key\)[\s\S]*\.\.\.TRAINING_ADMIN_PERMISSION_KEYS/,
-  );
+  assert.match(seed, /admin: permissions\.map\(\(\[key\]\) => key\)/);
   assert.match(seed, /user:[\s\S]*'training:participate'/);
 
   const editorBlock = seed.match(/editor:\s*\[([\s\S]*?)\],\n\s*user:/u)?.[1] ?? '';
