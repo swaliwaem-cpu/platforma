@@ -13,3 +13,4 @@ backups/
 .superpowers/
 tools/wp-import/uploads/*
 !tools/wp-import/uploads/.gitkeep
+.md
