@@ -165,13 +165,13 @@ test('admin project deletion is explicit, destructive and guarded against duplic
 test('audio storage page is manual-only, filterable and double-confirmed', () => {
   assert.match(adminRoutesSource, /canReadAudio[\s\S]*?TrainingAudioStoragePage/);
   assert.match(adminProjectsSource, /aria-label="Хранилище аудио"[\s\S]*?\/admin\/training\/audio-storage/);
-  assert.match(audioStorageSource, /Автоматического GC нет/);
+  assert.doesNotMatch(audioStorageSource, /Автоматического GC нет/);
+  assert.match(audioStorageSource, /Файлы удаляются только выбранным вручную манифестом/);
   assert.match(audioStorageSource, /Название, включая удалённые/);
   assert.match(audioStorageSource, /Имя или email/);
   assert.match(audioStorageSource, /type="date"/);
   assert.match(audioStorageSource, /confirmationPhrase = `УДАЛИТЬ \$\{selectedItems\.length\}`/);
   assert.match(audioStorageSource, /createTrainingAudioDeletionManifest[\s\S]*?executeTrainingAudioDeletionManifest/);
-  assert.match(audioStorageSource, /backend повторно проверяет все ссылки на File/);
   assert.match(audioStorageStylesSource, /overflow-x:\s*auto/);
   assert.match(audioStorageStylesSource, /@media \(max-width: 720px\)/);
   assert.match(audioStorageStylesSource, /@media \(prefers-reduced-motion: reduce\)/);

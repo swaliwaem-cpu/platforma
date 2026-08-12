@@ -11,7 +11,6 @@ import {
   HardDriveIcon,
   LinkIcon,
   RefreshCwIcon,
-  ShieldCheckIcon,
   Trash2Icon,
 } from 'lucide-react';
 
@@ -222,11 +221,6 @@ export function TrainingAudioStoragePage({
           </AdminButton>
         </div>
       </header>
-
-      <AdminAlert tone="notice">
-        <ShieldCheckIcon aria-hidden="true" />
-        <span>Автоматического GC нет. Перед удалением backend повторно проверяет все ссылки на File.</span>
-      </AdminAlert>
 
       <AdminPanel className="training-audio-storage-filter-panel">
         <form onSubmit={applyFilters}>

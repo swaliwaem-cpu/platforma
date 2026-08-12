@@ -93,6 +93,27 @@ const navItems: readonly NavItem[] = [
     requiredPermissions: [],
   },
   {
+    id: 'presentations',
+    label: 'Подборки',
+    path: '/presentations',
+    section: 'presentations',
+    requiredPermissions: [],
+  },
+  {
+    id: 'training',
+    label: 'Обучение',
+    path: '/training',
+    section: 'training',
+    requiredPermissions: ['training:participate'],
+  },
+  {
+    id: 'admin',
+    label: 'Админка',
+    path: '/admin',
+    section: 'admin',
+    requiredPermissions: ['admin:access'],
+  },
+  {
     id: 'catalog',
     label: 'Каталог',
     path: '/catalog',
@@ -115,27 +136,6 @@ const navItems: readonly NavItem[] = [
         path: '/catalog',
       },
     ],
-  },
-  {
-    id: 'presentations',
-    label: 'Подборки',
-    path: '/presentations',
-    section: 'presentations',
-    requiredPermissions: [],
-  },
-  {
-    id: 'training',
-    label: 'Обучение',
-    path: '/training',
-    section: 'training',
-    requiredPermissions: ['training:participate'],
-  },
-  {
-    id: 'admin',
-    label: 'Админка',
-    path: '/admin',
-    section: 'admin',
-    requiredPermissions: ['admin:access'],
   },
 ];
 
