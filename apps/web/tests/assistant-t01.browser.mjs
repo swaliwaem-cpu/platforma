@@ -67,7 +67,11 @@ try {
   assert.equal(await desktop.getByText('Текущий ЖК', { exact: true }).count(), 0);
 
   await desktop.evaluate(() => {
-    history.pushState(null, '', '/catalog?developerId=developer-test');
+    history.pushState(
+      null,
+      '',
+      '/catalog/comm?developerId=11111111-1111-4111-8111-111111111111&metroStationId=22222222-2222-4222-8222-222222222222&lotRooms=2',
+    );
     window.dispatchEvent(new Event('platforma-location-changed'));
   });
   await desktop.getByText('Застройщик из фильтра', { exact: true }).waitFor();
@@ -104,6 +108,18 @@ try {
   }), ['Понимаю запрос', 'Ищу данные', 'Сравниваю варианты', 'Формирую ответ']);
   assert.equal(desktopState.messageIdempotencyKeys.length, 2);
   assert.equal(desktopState.messageIdempotencyKeys[0], desktopState.messageIdempotencyKeys[1]);
+  assert.deepEqual(desktopState.messageContexts, [
+    {
+      kind: 'CATALOG_FILTERS',
+      key: 'developerId=11111111-1111-4111-8111-111111111111&metroStationId=22222222-2222-4222-8222-222222222222&lotRooms=2&type=COMMERCIAL',
+      label: 'Застройщик из фильтра',
+    },
+    {
+      kind: 'CATALOG_FILTERS',
+      key: 'developerId=11111111-1111-4111-8111-111111111111&metroStationId=22222222-2222-4222-8222-222222222222&lotRooms=2&type=COMMERCIAL',
+      label: 'Застройщик из фильтра',
+    },
+  ]);
   assert.equal(desktopState.conversationCreationKeys.length, 2);
   assert.equal(desktopState.conversationCreationKeys[0], desktopState.conversationCreationKeys[1]);
 
@@ -171,6 +187,7 @@ function createAssistantState(overrides = {}) {
     runReads: 0,
     messagePosts: 0,
     messageIdempotencyKeys: [],
+    messageContexts: [],
     ...overrides,
   };
 }
@@ -232,6 +249,7 @@ async function installRoutes(page, state, permissions) {
     if (path === '/assistant/conversations/33333333-3333-4333-8333-333333333333/messages') {
       state.messagePosts += 1;
       state.messageIdempotencyKeys.push(request.headers()['idempotency-key']);
+      state.messageContexts.push(request.postDataJSON().context);
       if (state.messagePosts === 1) {
         await json(route, { message: 'TEMPORARY_ASSISTANT_ERROR' }, 503);
         return;

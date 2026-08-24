@@ -1,5 +1,6 @@
 import {
   createEmptyAssistantSearchFilters,
+  extractAssistantExplicitHardFilters,
   type AssistantPlannerGateway,
   type AssistantPlannerGatewayResult,
   type AssistantPlannerRequest,
@@ -58,9 +59,8 @@ export class AssistantOpenAiPlannerGateway implements AssistantPlannerGateway {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     const clientRequestId = createClientRequestId(request);
-    let response: Response;
     try {
-      response = await this.fetchImplementation(`${this.baseUrl.replace(/\/$/u, '')}/responses`, {
+      const response = await this.fetchImplementation(`${this.baseUrl.replace(/\/$/u, '')}/responses`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${this.apiKey}`,
@@ -70,41 +70,42 @@ export class AssistantOpenAiPlannerGateway implements AssistantPlannerGateway {
         body: JSON.stringify(createAssistantPlannerRequestBody(request)),
         signal: controller.signal,
       });
-    } catch {
+      const requestId = readBoundedString(response.headers.get('x-request-id'), 160);
+      let value: unknown;
+      try {
+        value = await response.json();
+      } catch {
+        if (controller.signal.aborted) throw new AssistantPlannerGatewayError('ASSISTANT_OPENAI_TIMEOUT');
+        throw new AssistantPlannerGatewayError('ASSISTANT_OPENAI_MALFORMED_RESPONSE');
+      }
+      if (!response.ok) throw new AssistantPlannerGatewayError(`ASSISTANT_OPENAI_HTTP_${response.status}`);
+      if (!isRecord(value)) throw new AssistantPlannerGatewayError('ASSISTANT_OPENAI_MALFORMED_RESPONSE');
+      const outputText = readOutputText(value.output);
+      if (!outputText) throw new AssistantPlannerGatewayError('ASSISTANT_OPENAI_OUTPUT_MISSING');
+
+      let output: unknown;
+      try {
+        output = JSON.parse(outputText);
+      } catch {
+        output = null;
+      }
+      const usage = parseUsage(value.usage);
+      return {
+        output,
+        provider: 'openai',
+        requestId,
+        responseId: readBoundedString(value.id, 160),
+        httpStatus: response.status,
+        ...usage,
+      };
+    } catch (error) {
+      if (error instanceof AssistantPlannerGatewayError) throw error;
       throw new AssistantPlannerGatewayError(controller.signal.aborted
         ? 'ASSISTANT_OPENAI_TIMEOUT'
         : 'ASSISTANT_OPENAI_NETWORK_ERROR');
     } finally {
       clearTimeout(timeout);
     }
-
-    const requestId = readBoundedString(response.headers.get('x-request-id'), 160);
-    let value: unknown;
-    try {
-      value = await response.json();
-    } catch {
-      throw new AssistantPlannerGatewayError('ASSISTANT_OPENAI_MALFORMED_RESPONSE');
-    }
-    if (!response.ok) throw new AssistantPlannerGatewayError(`ASSISTANT_OPENAI_HTTP_${response.status}`);
-    if (!isRecord(value)) throw new AssistantPlannerGatewayError('ASSISTANT_OPENAI_MALFORMED_RESPONSE');
-    const outputText = readOutputText(value.output);
-    if (!outputText) throw new AssistantPlannerGatewayError('ASSISTANT_OPENAI_OUTPUT_MISSING');
-
-    let output: unknown;
-    try {
-      output = JSON.parse(outputText);
-    } catch {
-      output = null;
-    }
-    const usage = parseUsage(value.usage);
-    return {
-      output,
-      provider: 'openai',
-      requestId,
-      responseId: readBoundedString(value.id, 160),
-      httpStatus: response.status,
-      ...usage,
-    };
   }
 }
 
@@ -221,39 +222,10 @@ function createAssistantPlannerRequestBody(request: AssistantPlannerRequest) {
 function createDeterministicIntent(messages: string[]): AssistantStructuredIntent {
   const text = messages.join('\n').replace(/ё/giu, 'е');
   const normalized = text.toLocaleLowerCase('ru-RU');
-  const hardFilters = createEmptyAssistantSearchFilters();
-  hardFilters.objectType = /коммерчес\p{L}*/iu.test(normalized) ? 'COMMERCIAL' : 'RESIDENTIAL';
-  hardFilters.district = extractNamedCondition(
-    text,
-    /(?:в\s+)?район(?:е)?\s+[«"]?(.+?)[»"]?(?=\s+(?:у\s+метро|метро|от\s+\p{L}|до\s+\d|сдач\p{L}*)|[,.;]|$)/iu,
-  );
-  hardFilters.metro = extractNamedCondition(
-    text,
-    /(?:у\s+)?метро\s+[«"]?(.+?)[»"]?(?=\s+(?:от\s+\p{L}|до\s+\d|сдач\p{L}*)|[,.;]|$)/iu,
-  );
-  hardFilters.developer = extractNamedCondition(
-    text,
-    /(?:застройщик(?:а|ом)?|от)\s+[«"]?(.+?)[»"]?(?=\s+(?:сдач\p{L}*|до\s+\d)|[,.;]|$)/iu,
-  );
-  const completionMaximum = normalized.match(/(?:сдач\p{L}*\s+)?(?:до|не\s+позднее)\s+(20\d{2})/iu);
-  const completionExact = normalized.match(/(?:сдач\p{L}*|готов\p{L}*)[^\d]{0,16}(20\d{2})/iu);
-  if (completionMaximum) hardFilters.completionYearMax = Number(completionMaximum[1]);
-  else if (completionExact) {
-    hardFilters.completionYearMin = Number(completionExact[1]);
-    hardFilters.completionYearMax = Number(completionExact[1]);
-  }
-  const quarter = normalized.match(/([1-4])\s*(?:кв\.?|квартал)/iu);
-  if (quarter) hardFilters.completionQuarter = Number(quarter[1]);
-  const propertyClass = normalized.match(/(?:класс(?:а)?\s+)?(комфорт|бизнес|премиум|элит)\s*[- ]?класс/iu);
-  if (propertyClass) hardFilters.propertyClass = propertyClass[1]!;
-  const areaMinimum = normalized.match(/(?:площад\p{L}*\s+)?(?:от|не\s+меньше)\s+(\d+(?:[.,]\d+)?)\s*(?:м2|м²|кв)/iu);
-  const areaMaximum = normalized.match(/(?:площад\p{L}*\s+)?(?:до|не\s+больше)\s+(\d+(?:[.,]\d+)?)\s*(?:м2|м²|кв)/iu);
-  if (areaMinimum) hardFilters.areaMin = Number(areaMinimum[1]!.replace(',', '.'));
-  if (areaMaximum) hardFilters.areaMax = Number(areaMaximum[1]!.replace(',', '.'));
-  const floorMinimum = normalized.match(/(?:этаж\p{L}*\s+)?(?:от|не\s+ниже)\s+(-?\d+)\s*(?:этаж\p{L}*)/iu);
-  const floorMaximum = normalized.match(/(?:этаж\p{L}*\s+)?(?:до|не\s+выше)\s+(-?\d+)\s*(?:этаж\p{L}*)/iu);
-  if (floorMinimum) hardFilters.floorMin = Number(floorMinimum[1]);
-  if (floorMaximum) hardFilters.floorMax = Number(floorMaximum[1]);
+  const hardFilters = {
+    ...createEmptyAssistantSearchFilters(),
+    ...extractAssistantExplicitHardFilters(messages),
+  };
 
   return {
     taskType: /(?:налог\p{L}*|юрид\p{L}*|договор\p{L}*|закон\p{L}*)/iu.test(normalized)
@@ -267,11 +239,6 @@ function createDeterministicIntent(messages: string[]): AssistantStructuredInten
     needsClarification: false,
     clarificationQuestion: null,
   };
-}
-
-function extractNamedCondition(text: string, pattern: RegExp) {
-  const match = text.match(pattern)?.[1]?.trim().replace(/^[«"]|[»"]$/gu, '');
-  return match && match.length <= 160 ? match : null;
 }
 
 function createClientRequestId(request: AssistantPlannerRequest) {

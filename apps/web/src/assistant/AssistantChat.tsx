@@ -724,12 +724,15 @@ function resolvePageContext(pathname: string, search: string): AssistantPageCont
   }
   if (pathname.startsWith('/catalog')) {
     const params = new URLSearchParams(search);
+    if (pathname === '/catalog/life') params.set('type', 'RESIDENTIAL');
+    if (pathname === '/catalog/comm') params.set('type', 'COMMERCIAL');
     const developerId = params.get('developerId');
-    if (developerId) {
-      return { kind: 'DEVELOPER', key: developerId, label: 'Застройщик из фильтра' };
-    }
     if ([...params.keys()].length > 0) {
-      return { kind: 'CATALOG_FILTERS', key: params.toString(), label: 'Фильтры каталога' };
+      return {
+        kind: 'CATALOG_FILTERS',
+        key: params.toString(),
+        label: developerId ? 'Застройщик из фильтра' : 'Фильтры каталога',
+      };
     }
   }
   return null;

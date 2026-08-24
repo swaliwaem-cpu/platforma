@@ -1,17 +1,16 @@
 import type {
-  AssistantSearchFilters,
-  AssistantStructuredIntent,
+  AssistantAlternativeDeviation,
+  AssistantSearchResultCard,
+} from '@platforma/shared' with { 'resolution-mode': 'import' };
+
+import {
+  AssistantPlannerFallbackValidationError,
+  type AssistantSearchFilters,
+  type AssistantStructuredIntent,
 } from './assistant-query-planner';
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const allowedDeviationTypes = ['BUDGET', 'DISTRICT', 'DEVELOPER', 'ROOMS'] as const;
-
-export type AssistantAlternativeDeviationType = (typeof allowedDeviationTypes)[number];
-
-export type AssistantAlternativeDeviation = {
-  type: AssistantAlternativeDeviationType;
-  label: string;
-};
 
 export type AssistantCandidatePdf = {
   fileId: string;
@@ -43,20 +42,6 @@ export type AssistantSearchEvidence = {
   deviations: AssistantAlternativeDeviation[];
 };
 
-export type AssistantSearchResultCard = {
-  unitId: string;
-  title: string;
-  subtitle: string;
-  priceRub: number;
-  availabilityLabel: string;
-  freshnessLabel: string;
-  isStale: boolean;
-  href: string;
-  facts: string[];
-  pdfs: Array<{ title: string; href: string }>;
-  deviations: AssistantAlternativeDeviation[];
-};
-
 export type AssistantSearchAnswer = {
   kind: 'SEARCH_RESULTS';
   content: string;
@@ -64,8 +49,8 @@ export type AssistantSearchAnswer = {
   alternatives: AssistantSearchResultCard[];
 };
 
-export class AssistantAnswerValidationError extends Error {
-  constructor(readonly code = 'ASSISTANT_ANSWER_EVIDENCE_INVALID') {
+export class AssistantAnswerValidationError extends AssistantPlannerFallbackValidationError {
+  constructor(code = 'ASSISTANT_ANSWER_EVIDENCE_INVALID') {
     super(code);
     this.name = 'AssistantAnswerValidationError';
   }

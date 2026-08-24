@@ -1,5 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import type { AssistantPageContext } from '@platforma/shared' with { 'resolution-mode': 'import' };
+import type {
+  AssistantPageContext,
+  AssistantSearchResultCard,
+} from '@platforma/shared' with { 'resolution-mode': 'import' };
 
 import {
   AssistantQueryPlanner,
@@ -10,7 +13,6 @@ import {
   buildAssistantSearchAnswer,
   validateAssistantSearchAnswer,
   type AssistantSearchEvidence,
-  type AssistantSearchResultCard,
 } from './assistant-search-ranking';
 import { AssistantSearchService } from './assistant-search.service';
 

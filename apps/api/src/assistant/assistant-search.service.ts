@@ -5,57 +5,88 @@ import {
   ObjectFileType,
   Prisma,
 } from '@prisma/client';
-import type { AssistantPageContext } from '@platforma/shared' with { 'resolution-mode': 'import' };
+import type {
+  AssistantAlternativeDeviation,
+  AssistantPageContext,
+} from '@platforma/shared' with { 'resolution-mode': 'import' };
 
 import { PrismaService } from '../prisma/prisma.service';
+import { findCatalogSearchObjectIds } from '../objects/object-search';
 import type {
   AssistantSearchFilters,
   AssistantStructuredIntent,
 } from './assistant-query-planner';
-import type {
-  AssistantAlternativeDeviation,
-  AssistantSearchEvidence,
-} from './assistant-search-ranking';
+import type { AssistantSearchEvidence } from './assistant-search-ranking';
 
 const candidateLimit = 120;
 const budgetRelaxationRub = 7_000_000;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
-const candidateInclude = {
+const candidateSelect = {
+  id: true,
+  status: true,
+  effectivePrice: true,
+  discountPrice: true,
+  price: true,
+  title: true,
+  rooms: true,
+  completionYear: true,
+  completionQuarter: true,
+  area: true,
+  floor: true,
+  updatedAt: true,
   object: {
-    include: {
+    select: {
+      id: true,
+      type: true,
+      title: true,
+      slug: true,
+      feedCompletionYear: true,
+      completionYear: true,
+      feedCompletionQuarter: true,
+      completionQuarter: true,
+      propertyClass: true,
+      latitude: true,
+      longitude: true,
       developer: { select: { name: true } },
       primaryLocation: { select: { name: true, type: true } },
       locations: {
-        include: { location: { select: { name: true, type: true } } },
+        select: { location: { select: { name: true, type: true } } },
         orderBy: { sortOrder: 'asc' as const },
       },
       metroStations: {
-        include: { metroStation: { select: { name: true } } },
+        select: { metroStation: { select: { name: true } } },
         orderBy: { sortOrder: 'asc' as const },
       },
       files: {
         where: { type: { in: [ObjectFileType.PRESENTATION, ObjectFileType.FLOOR_PLAN] } },
-        include: { file: { select: { id: true, mimeType: true, originalName: true } } },
+        select: {
+          type: true,
+          title: true,
+          file: { select: { id: true, mimeType: true, originalName: true } },
+        },
         orderBy: { sortOrder: 'asc' as const },
       },
     },
   },
   media: {
-    include: {
+    select: {
+      label: true,
       mediaAsset: {
-        include: {
+        select: {
+          contentType: true,
           file: { select: { id: true, mimeType: true, originalName: true } },
         },
       },
     },
     orderBy: { sortOrder: 'asc' as const },
   },
-} satisfies Prisma.FeedUnitInclude;
+} satisfies Prisma.FeedUnitSelect;
 
-type CandidateRecord = Prisma.FeedUnitGetPayload<{ include: typeof candidateInclude }>;
+type CandidateRecord = Prisma.FeedUnitGetPayload<{ select: typeof candidateSelect }>;
 type SearchOptions = {
   nearbyDistrictParentIds?: string[];
+  catalogSearchObjectIds?: string[];
 };
 
 @Injectable()
@@ -66,12 +97,13 @@ export class AssistantSearchService {
     intent: AssistantStructuredIntent,
     context: AssistantPageContext | null,
   ): Promise<{ exact: AssistantSearchEvidence[]; alternatives: AssistantSearchEvidence[] }> {
-    const exact = await this.findEvidence(intent.hardFilters, context);
+    const contextOptions = await this.resolveContextOptions(context);
+    const exact = await this.findEvidence(intent.hardFilters, context, contextOptions);
     if (exact.length > 0) return { exact, alternatives: [] };
 
     const relaxationRequests: Array<Promise<AssistantSearchEvidence[]>> = [];
     if (intent.hardFilters.district) {
-      relaxationRequests.push(this.findNearbyDistrictAlternatives(intent.hardFilters, context));
+      relaxationRequests.push(this.findNearbyDistrictAlternatives(intent.hardFilters, context, contextOptions));
     }
     if (intent.hardFilters.developer) {
       relaxationRequests.push(this.findRelaxedEvidence(
@@ -80,6 +112,7 @@ export class AssistantSearchService {
         (candidate) => candidate.developer
           ? { type: 'DEVELOPER', label: `Другой застройщик: ${candidate.developer}` }
           : null,
+        contextOptions,
       ));
     }
     if (intent.hardFilters.rooms.length > 0) {
@@ -90,6 +123,7 @@ export class AssistantSearchService {
         (candidate) => candidate.rooms === null
           ? null
           : { type: 'ROOMS', label: `${formatRooms(candidate.rooms)} вместо ${requestedRooms}` },
+        contextOptions,
       ));
     }
     if (intent.hardFilters.budgetMinRub !== null || intent.hardFilters.budgetMaxRub !== null) {
@@ -106,6 +140,7 @@ export class AssistantSearchService {
         expandedFilters,
         context,
         (candidate) => createBudgetDeviation(candidate, intent.hardFilters),
+        contextOptions,
       ));
     }
 
@@ -122,6 +157,7 @@ export class AssistantSearchService {
   private async findNearbyDistrictAlternatives(
     filters: AssistantSearchFilters,
     context: AssistantPageContext | null,
+    contextOptions: SearchOptions,
   ) {
     const normalizedDistrict = filters.district!;
     const districtRows = await this.prisma.location.findMany({
@@ -142,7 +178,7 @@ export class AssistantSearchService {
       (candidate) => candidate.district && !containsNormalized(candidate.district, normalizedDistrict)
         ? { type: 'DISTRICT', label: `Близкий район: ${candidate.district}` }
         : null,
-      { nearbyDistrictParentIds: parentIds },
+      { ...contextOptions, nearbyDistrictParentIds: parentIds },
     );
   }
 
@@ -182,7 +218,7 @@ export class AssistantSearchService {
 
     const records = await this.prisma.feedUnit.findMany({
       where: { id: { in: rows.map(({ id }) => id) } },
-      include: candidateInclude,
+      select: candidateSelect,
     });
     const recordsById = new Map(records.map((record) => [record.id, record]));
     return rows.flatMap(({ id }) => {
@@ -253,8 +289,20 @@ export class AssistantSearchService {
           AND l.parent_id IN (${Prisma.join(options.nearbyDistrictParentIds.map((id) => Prisma.sql`${id}::uuid`))})
       )`);
     }
+    if (options.catalogSearchObjectIds) {
+      conditions.push(options.catalogSearchObjectIds.length > 0
+        ? Prisma.sql`o.id IN (${Prisma.join(options.catalogSearchObjectIds.map((id) => Prisma.sql`${id}::uuid`))})`
+        : Prisma.sql`FALSE`);
+    }
     this.applyContextConditions(conditions, context);
     return conditions;
+  }
+
+  private async resolveContextOptions(context: AssistantPageContext | null): Promise<SearchOptions> {
+    if (context?.kind !== 'CATALOG_FILTERS') return {};
+    const search = new URLSearchParams(context.key).get('search')?.trim() ?? '';
+    if (!search) return {};
+    return { catalogSearchObjectIds: await findCatalogSearchObjectIds(this.prisma, search.slice(0, 240)) };
   }
 
   private createDistrictCondition(district: string) {
@@ -304,6 +352,14 @@ export class AssistantSearchService {
           AND ol.location_id IN (${Prisma.join(ids.map((id) => Prisma.sql`${id}::uuid`))})
       )
     )`);
+    addUuidListCondition(conditions, params.get('areaId'), (ids) => Prisma.sql`EXISTS (
+      SELECT 1
+      FROM object_locations ol
+      JOIN locations l ON l.id = ol.location_id
+      WHERE ol.object_id = o.id
+        AND l.type = 'area'::location_type
+        AND l.id IN (${Prisma.join(ids.map((id) => Prisma.sql`${id}::uuid`))})
+    )`);
     addUuidListCondition(conditions, params.get('metroStationId'), (ids) => Prisma.sql`EXISTS (
       SELECT 1 FROM object_metro_stations oms
       WHERE oms.object_id = o.id
@@ -315,11 +371,28 @@ export class AssistantSearchService {
     }
     const rooms = parseIntegerList(params.get('lotRooms'), 0, 10);
     if (rooms.length > 0) conditions.push(Prisma.sql`fu.rooms IN (${Prisma.join(rooms)})`);
+    const floorMinimum = parseInteger(params.get('lotFloorMin'), -20, 500);
+    const floorMaximum = parseInteger(params.get('lotFloorMax'), -20, 500);
+    if (floorMinimum !== null) conditions.push(Prisma.sql`fu.floor >= ${floorMinimum}`);
+    if (floorMaximum !== null) conditions.push(Prisma.sql`fu.floor <= ${floorMaximum}`);
     const minimum = parseNumber(params.get('lotPriceMin'), 0, 1_000_000_000_000);
     const maximum = parseNumber(params.get('lotPriceMax'), 0, 1_000_000_000_000);
     const price = Prisma.sql`COALESCE(fu.effective_price, fu.discount_price, fu.price)`;
     if (minimum !== null) conditions.push(Prisma.sql`${price} >= ${minimum}`);
     if (maximum !== null) conditions.push(Prisma.sql`${price} <= ${maximum}`);
+    const pricePerMeter = Prisma.sql`COALESCE(fu.effective_price_per_meter, fu.discount_price_per_meter, fu.price_per_meter)`;
+    const pricePerMeterMinimum = parseNumber(params.get('lotPricePerMeterMin'), 0, 1_000_000_000_000);
+    const pricePerMeterMaximum = parseNumber(params.get('lotPricePerMeterMax'), 0, 1_000_000_000_000);
+    if (pricePerMeterMinimum !== null) conditions.push(Prisma.sql`${pricePerMeter} >= ${pricePerMeterMinimum}`);
+    if (pricePerMeterMaximum !== null) conditions.push(Prisma.sql`${pricePerMeter} <= ${pricePerMeterMaximum}`);
+    const objectType = params.get('type');
+    if (objectType === 'RESIDENTIAL' || objectType === 'COMMERCIAL') {
+      const databaseValue = objectType === 'RESIDENTIAL' ? 'residential' : 'commercial';
+      conditions.push(Prisma.sql`o.type = ${databaseValue}::real_estate_object_type`);
+      conditions.push(Prisma.sql`fu.type = ${databaseValue}::feed_unit_type`);
+    }
+    const krtName = params.get('krtName')?.trim();
+    if (krtName) conditions.push(Prisma.sql`lower(o.krt_name) = lower(${krtName.slice(0, 240)})`);
   }
 
   private toEvidence(record: CandidateRecord): AssistantSearchEvidence | null {

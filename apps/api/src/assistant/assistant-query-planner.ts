@@ -127,6 +127,13 @@ export class AssistantPlannerError extends Error {
   }
 }
 
+export class AssistantPlannerFallbackValidationError extends Error {
+  constructor(readonly code: string) {
+    super(code);
+    this.name = 'AssistantPlannerFallbackValidationError';
+  }
+}
+
 export class AssistantQueryPlanner {
   constructor(private readonly gateway: AssistantPlannerGateway) {}
 
@@ -168,18 +175,10 @@ export class AssistantQueryPlanner {
       }
 
       const result = unwrapGatewayResult(gatewayResult);
+      let intent: AssistantStructuredIntent;
       try {
         const parsedIntent = parseAssistantStructuredIntent(result.output);
-        const intent = normalizeIntentAgainstRequest(parsedIntent, messages, input.context);
-        const value = await validate(intent, request);
-        attempts.push(createTelemetry(
-          request,
-          attemptIndex === 1,
-          'ACCEPTED',
-          Date.now() - startedAt,
-          result.metadata,
-        ));
-        return { intent, value, telemetry: attempts };
+        intent = normalizeIntentAgainstRequest(parsedIntent, messages, input.context);
       } catch {
         attempts.push(createTelemetry(
           request,
@@ -188,7 +187,32 @@ export class AssistantQueryPlanner {
           Date.now() - startedAt,
           result.metadata,
         ));
+        continue;
       }
+
+      let value: Value;
+      try {
+        value = await validate(intent, request);
+      } catch (error) {
+        if (!(error instanceof AssistantPlannerFallbackValidationError)) throw error;
+        attempts.push(createTelemetry(
+          request,
+          attemptIndex === 1,
+          'LOCAL_VALIDATION_FAILED',
+          Date.now() - startedAt,
+          result.metadata,
+        ));
+        continue;
+      }
+
+      attempts.push(createTelemetry(
+        request,
+        attemptIndex === 1,
+        'ACCEPTED',
+        Date.now() - startedAt,
+        result.metadata,
+      ));
+      return { intent, value, telemetry: attempts };
     }
 
     throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID', attempts);
@@ -249,8 +273,7 @@ export function parseAssistantStructuredIntent(value: unknown): AssistantStructu
 }
 
 function chooseReasoningEffort(messages: string[]): AssistantReasoningEffort {
-  const latest = messages[messages.length - 1] ?? '';
-  return complexRequestPattern.test(latest) ? 'high' : 'medium';
+  return complexRequestPattern.test(messages.join('\n')) ? 'high' : 'medium';
 }
 
 function normalizeIntentAgainstRequest(
@@ -258,11 +281,13 @@ function normalizeIntentAgainstRequest(
   messages: string[],
   context: unknown,
 ): AssistantStructuredIntent {
-  const explicitFilters = extractExplicitFilters(messages.join('\n'));
+  const explicitFilters = extractAssistantExplicitHardFilters(messages);
+  const contextFilters = extractContextHardFilters(context);
   const hardFilters: AssistantSearchFilters = {
     ...intent.hardFilters,
     ...explicitFilters,
-    rooms: explicitFilters.rooms ?? intent.hardFilters.rooms,
+    ...contextFilters,
+    rooms: contextFilters.rooms ?? explicitFilters.rooms ?? intent.hardFilters.rooms,
   };
   const isLegalOrTax = messages.some((message) => legalOrTaxPattern.test(message));
   if (isLegalOrTax) {
@@ -296,6 +321,12 @@ function normalizeIntentAgainstRequest(
   };
 }
 
+export function extractAssistantExplicitHardFilters(
+  messages: string[],
+): Partial<AssistantSearchFilters> & { rooms?: number[] } {
+  return extractExplicitFilters(messages.join('\n'));
+}
+
 function extractExplicitFilters(text: string): Partial<AssistantSearchFilters> & { rooms?: number[] } {
   const filters: Partial<AssistantSearchFilters> & { rooms?: number[] } = {};
   const normalized = text.toLocaleLowerCase('ru-RU').replace(/ё/gu, 'е');
@@ -327,7 +358,97 @@ function extractExplicitFilters(text: string): Partial<AssistantSearchFilters> &
   if (/(?:треш\p{L}*|трехкомнат\p{L}*)/iu.test(normalized)) rooms.add(3);
   if (rooms.size > 0) filters.rooms = [...rooms].sort((left, right) => left - right);
 
+  const district = extractNamedCondition(
+    text,
+    /(?:в\s+)?район(?:е)?\s+[«"]?(.+?)[»"]?(?=\s+(?:у\s+метро|метро|от\s+[\p{L}«"]|сдач\p{L}*|\d+\s*квартал)|[,.;]|$)/iu,
+  );
+  if (district) filters.district = district;
+  const metro = extractNamedCondition(
+    text,
+    /(?:у\s+)?метро\s+[«"]?(.+?)[»"]?(?=\s+(?:от\s+[\p{L}«"]|сдач\p{L}*|\d+\s*квартал)|[,.;]|$)/iu,
+  );
+  if (metro) filters.metro = metro;
+  const developer = extractNamedCondition(
+    text,
+    /(?:застройщик(?:а|ом)?|от\s+(?=[\p{L}«"]))\s*[«"]?(.+?)[»"]?(?=\s+(?:сдач\p{L}*|\d+\s*квартал)|[,.;]|$)/iu,
+  );
+  if (developer) filters.developer = developer;
+
+  const completionMaximum = normalized.match(/(?:сдач\p{L}*\s+)?(?:до|не\s+позднее)\s+(20\d{2})/iu);
+  const completionMinimum = normalized.match(/(?:сдач\p{L}*\s+)?(?:от|не\s+раньше)\s+(20\d{2})/iu);
+  const completionExact = normalized.match(/(?:сдач\p{L}*|готов\p{L}*)[^\d]{0,16}(20\d{2})/iu);
+  if (completionMaximum) filters.completionYearMax = Number(completionMaximum[1]);
+  if (completionMinimum) filters.completionYearMin = Number(completionMinimum[1]);
+  if (!completionMaximum && !completionMinimum && completionExact) {
+    filters.completionYearMin = Number(completionExact[1]);
+    filters.completionYearMax = Number(completionExact[1]);
+  }
+  const completionQuarter = normalized.match(/([1-4])\s*(?:кв\.?|квартал)/iu);
+  if (completionQuarter) filters.completionQuarter = Number(completionQuarter[1]);
+
+  const propertyClass = normalized.match(/(?:класс(?:а)?\s+)?(комфорт|бизнес|премиум|элит)\s*[- ]?класс/iu);
+  if (propertyClass) filters.propertyClass = propertyClass[1]!;
+  const areaMinimum = normalized.match(/(?:площад\p{L}*\s+)?(?:от|не\s+меньше)\s+(\d+(?:[.,]\d+)?)\s*(?:м2|м²|кв)/iu);
+  const areaMaximum = normalized.match(/(?:площад\p{L}*\s+)?(?:до|не\s+больше)\s+(\d+(?:[.,]\d+)?)\s*(?:м2|м²|кв)/iu);
+  if (areaMinimum) filters.areaMin = Number(areaMinimum[1]!.replace(',', '.'));
+  if (areaMaximum) filters.areaMax = Number(areaMaximum[1]!.replace(',', '.'));
+  const floorMinimum = normalized.match(/(?:этаж\p{L}*\s+)?(?:от|не\s+ниже)\s+(-?\d+)\s*(?:этаж\p{L}*)/iu);
+  const floorMaximum = normalized.match(/(?:этаж\p{L}*\s+)?(?:до|не\s+выше)\s+(-?\d+)\s*(?:этаж\p{L}*)/iu);
+  if (floorMinimum) filters.floorMin = Number(floorMinimum[1]);
+  if (floorMaximum) filters.floorMax = Number(floorMaximum[1]);
+  if (/коммерчес\p{L}*/iu.test(normalized)) filters.objectType = 'COMMERCIAL';
+  if (/(?:жил\p{L}*|квартир\p{L}*|апартамент\p{L}*)/iu.test(normalized)) filters.objectType = 'RESIDENTIAL';
+
   return filters;
+}
+
+function extractContextHardFilters(context: unknown): Partial<AssistantSearchFilters> {
+  if (!isRecord(context) || context.kind !== 'CATALOG_FILTERS' || typeof context.key !== 'string') return {};
+  const params = new URLSearchParams(context.key);
+  const objectType = params.get('type');
+  const filters: Partial<AssistantSearchFilters> = {};
+  if (objectType === 'RESIDENTIAL' || objectType === 'COMMERCIAL') filters.objectType = objectType;
+  const rooms = parseContextIntegerList(params.get('lotRooms'), 0, 10);
+  if (rooms.length > 0) filters.rooms = rooms;
+  const budgetMinimum = parseContextNumber(params.get('lotPriceMin'), 0, 1_000_000_000_000);
+  const budgetMaximum = parseContextNumber(params.get('lotPriceMax'), 0, 1_000_000_000_000);
+  if (budgetMinimum !== null) filters.budgetMinRub = budgetMinimum;
+  if (budgetMaximum !== null) filters.budgetMaxRub = budgetMaximum;
+  const completionYear = parseContextInteger(params.get('completionYear'), 1900, 2200);
+  if (completionYear !== null) {
+    filters.completionYearMin = completionYear;
+    filters.completionYearMax = completionYear;
+  }
+  const floorMinimum = parseContextInteger(params.get('lotFloorMin'), -20, 500);
+  const floorMaximum = parseContextInteger(params.get('lotFloorMax'), -20, 500);
+  if (floorMinimum !== null) filters.floorMin = floorMinimum;
+  if (floorMaximum !== null) filters.floorMax = floorMaximum;
+  return filters;
+}
+
+function parseContextIntegerList(value: string | null, minimum: number, maximum: number) {
+  if (!value) return [];
+  return [...new Set(value.split(',').flatMap((item) => {
+    const parsed = parseContextInteger(item, minimum, maximum);
+    return parsed === null ? [] : [parsed];
+  }))];
+}
+
+function parseContextInteger(value: string | null, minimum: number, maximum: number) {
+  if (value === null || !/^-?\d+$/u.test(value.trim())) return null;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : null;
+}
+
+function parseContextNumber(value: string | null, minimum: number, maximum: number) {
+  if (value === null || value.trim() === '') return null;
+  const parsed = Number(value.replace(',', '.'));
+  return Number.isFinite(parsed) && parsed >= minimum && parsed <= maximum ? parsed : null;
+}
+
+function extractNamedCondition(text: string, pattern: RegExp) {
+  const match = text.match(pattern)?.[1]?.trim().replace(/^[«"]|[»"]$/gu, '');
+  return match && match.length <= 160 ? match : null;
 }
 
 function parseMoneyText(value: string, unit: string) {
@@ -346,7 +467,7 @@ function hasLocationConstraint(filters: AssistantSearchFilters, context: unknown
   if (context.kind === 'OBJECT' || context.kind === 'LOT' || context.kind === 'DEVELOPER') return true;
   if (context.kind !== 'CATALOG_FILTERS' || typeof context.key !== 'string') return false;
   const params = new URLSearchParams(context.key);
-  return ['districtId', 'metroId', 'developerId', 'locationId']
+  return ['developerId', 'locationId', 'areaId', 'metroStationId']
     .some((key) => Boolean(params.get(key)));
 }
 

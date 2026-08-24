@@ -23,6 +23,7 @@ import { isAssistantModuleEnabled } from './assistant-runtime-config';
 
 const assistantRunPollIntervalMs = 1_000;
 const assistantRunLeaseMs = 30_000;
+const assistantRunLeaseHeartbeatMs = 10_000;
 const assistantRunClaimBatchSize = 20;
 
 export const assistantProgressDefinitions: readonly {
@@ -153,22 +154,21 @@ export class AssistantRunProcessor implements OnModuleInit, OnModuleDestroy {
         if (delayMs > 0) await this.delay(delayMs);
       }
 
-      const leaseRenewed = await this.renewLease(runId);
-      if (!leaseRenewed) return;
-      const recentMessages = await this.prisma.assistantMessage.findMany({
-        where: {
-          conversationId: run.conversationId,
-          role: AssistantMessageRole.USER,
-        },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        take: 20,
-        select: { content: true },
+      const answerResult = await this.withLeaseHeartbeat(runId, async () => {
+        const recentMessages = await this.prisma.assistantMessage.findMany({
+          where: {
+            conversationId: run.conversationId,
+            role: AssistantMessageRole.USER,
+          },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          take: 20,
+          select: { content: true },
+        });
+        return this.answerService.answer({
+          messages: recentMessages.reverse().map(({ content }) => content),
+          context: this.parseContext(run.userMessage.contextJson),
+        });
       });
-      const answerResult = await this.answerService.answer({
-        messages: recentMessages.reverse().map(({ content }) => content),
-        context: this.parseContext(run.userMessage.contextJson),
-      });
-      if (!await this.renewLease(runId)) return;
       await this.prisma.$transaction(async (transaction) => {
         const assistantMessage = await transaction.assistantMessage.create({
           data: {
@@ -241,6 +241,31 @@ export class AssistantRunProcessor implements OnModuleInit, OnModuleDestroy {
       },
     });
     return renewed.count === 1;
+  }
+
+  private async withLeaseHeartbeat<Value>(runId: string, action: () => Promise<Value>) {
+    let leaseIsCurrent = await this.renewLease(runId);
+    if (!leaseIsCurrent) throw new Error('ASSISTANT_RUN_LEASE_LOST');
+    let renewal = Promise.resolve();
+    const heartbeat = setInterval(() => {
+      renewal = renewal.then(async () => {
+        if (leaseIsCurrent) leaseIsCurrent = await this.renewLease(runId);
+      }).catch(() => {
+        leaseIsCurrent = false;
+      });
+    }, assistantRunLeaseHeartbeatMs);
+    heartbeat.unref();
+
+    try {
+      const value = await action();
+      await renewal;
+      leaseIsCurrent = leaseIsCurrent && await this.renewLease(runId);
+      if (!leaseIsCurrent) throw new Error('ASSISTANT_RUN_LEASE_LOST');
+      return value;
+    } finally {
+      clearInterval(heartbeat);
+      await renewal;
+    }
   }
 
   private parseContext(value: Prisma.JsonValue | null): AssistantPageContext | null {

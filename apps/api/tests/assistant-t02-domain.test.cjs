@@ -1,6 +1,7 @@
 require('reflect-metadata');
 
 const assert = require('node:assert/strict');
+const { createServer } = require('node:http');
 const { test } = require('node:test');
 
 const {
@@ -13,6 +14,7 @@ const {
   validateAssistantSearchAnswer,
 } = require('../dist/assistant/assistant-search-ranking.js');
 const {
+  AssistantOpenAiPlannerGateway,
   createAssistantPlannerGateway,
 } = require('../dist/assistant/assistant-planner-gateway.js');
 const {
@@ -122,6 +124,83 @@ test('Assistant T02 planner keeps previously stated conditions and applies the p
 
   assert.equal(result.intent.hardFilters.budgetMaxRub, 30_000_000);
   assert.deepEqual(result.intent.hardFilters.rooms, [2]);
+  assert.equal(result.intent.needsClarification, false);
+  assert.equal(result.intent.clarificationQuestion, null);
+});
+
+test('Assistant T02 planner pins every explicit supported hard filter instead of trusting model placement', async () => {
+  const planner = new AssistantQueryPlanner({
+    async plan() {
+      return validIntent({
+        softPreferences: {
+          ...emptyFilters(),
+          district: 'Хамовники',
+          metro: 'Спортивная',
+          developer: 'ПИК',
+          completionYearMax: 2028,
+          completionQuarter: 3,
+          propertyClass: 'бизнес',
+          areaMin: 55,
+          floorMin: 5,
+        },
+      });
+    },
+  });
+
+  const result = await planner.plan({
+    messages: [
+      'Нужна двушка до 25 млн в районе Хамовники у метро Спортивная от ПИК, '
+        + 'бизнес-класс, площадь от 55 м², не ниже 5 этажа, сдача до 2028 года, 3 квартал',
+    ],
+    context: null,
+  });
+
+  assert.deepEqual(result.intent.hardFilters, {
+    ...emptyFilters(),
+    budgetMaxRub: 25_000_000,
+    rooms: [2],
+    district: 'Хамовники',
+    metro: 'Спортивная',
+    developer: 'ПИК',
+    completionYearMax: 2028,
+    completionQuarter: 3,
+    propertyClass: 'бизнес',
+    areaMin: 55,
+    floorMin: 5,
+  });
+  assert.equal(result.intent.needsClarification, false);
+});
+
+test('Assistant T02 planner preserves high reasoning across a multi-turn comparison', async () => {
+  const calls = [];
+  const planner = new AssistantQueryPlanner({
+    async plan(request) {
+      calls.push(request);
+      return validIntent({ hardFilters: { ...emptyFilters(), budgetMaxRub: 30_000_000, rooms: [2], metro: 'Сокол' } });
+    },
+  });
+
+  await planner.plan({
+    messages: ['Сравни варианты и учти скрытые расходы', 'До 30 млн, две комнаты, метро Сокол'],
+    context: null,
+  });
+
+  assert.equal(calls[0].reasoningEffort, 'high');
+});
+
+test('Assistant T02 planner treats real catalog metro and object type filters as hard context', async () => {
+  const planner = new AssistantQueryPlanner({ async plan() { return validIntent(); } });
+
+  const result = await planner.plan({
+    messages: ['Коммерческое помещение до 25 млн'],
+    context: {
+      kind: 'CATALOG_FILTERS',
+      key: 'metroStationId=11111111-1111-4111-8111-111111111111&type=COMMERCIAL',
+      label: 'Фильтры каталога',
+    },
+  });
+
+  assert.equal(result.intent.hardFilters.objectType, 'COMMERCIAL');
   assert.equal(result.intent.needsClarification, false);
   assert.equal(result.intent.clarificationQuestion, null);
 });
@@ -260,6 +339,18 @@ test('Assistant T02 fake Luna planner extracts supported Platforma conditions wi
   ]);
 });
 
+test('Assistant T02 fake Luna planner keeps absent optional filters nullable for clarification', async () => {
+  const planner = new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' }));
+
+  const result = await planner.plan({ messages: ['Найди подходящий объект'], context: null });
+
+  assert.equal(result.intent.hardFilters.district, null);
+  assert.equal(result.intent.hardFilters.metro, null);
+  assert.equal(result.intent.hardFilters.developer, null);
+  assert.equal(result.intent.needsClarification, true);
+  assert.equal(result.telemetry.length, 1);
+});
+
 test('Assistant T02 planner records bounded usage telemetry without exposing it in the intent', async () => {
   const planner = new AssistantQueryPlanner({
     async plan() {
@@ -320,6 +411,83 @@ test('Assistant T02 planner uses the same single fallback budget for downstream 
     ['LOCAL_VALIDATION_FAILED', false],
     ['ACCEPTED', true],
   ]);
+});
+
+test('Assistant T02 planner does not turn a database failure into a Terra fallback', async () => {
+  const calls = [];
+  const databaseError = new Error('DATABASE_UNAVAILABLE');
+  const planner = new AssistantQueryPlanner({
+    async plan(request) {
+      calls.push(request.model);
+      return validIntent({ hardFilters: { ...emptyFilters(), budgetMaxRub: 20_000_000, rooms: [1], metro: 'Сокол' } });
+    },
+  });
+
+  await assert.rejects(
+    planner.planWithValidation(
+      { messages: ['Однушка до 20 млн у метро Сокол'], context: null },
+      async () => { throw databaseError; },
+    ),
+    (error) => error === databaseError,
+  );
+  assert.deepEqual(calls, ['gpt-5.6-luna']);
+});
+
+test('Assistant T02 OpenAI gateway uses a bounded local HTTP stub and validates the real response shape', async () => {
+  await withHttpStub(async (request, response) => {
+    const body = await readRequestBody(request);
+    assert.equal(body.model, 'gpt-5.6-luna');
+    assert.equal(body.reasoning.effort, 'medium');
+    assert.equal(body.store, false);
+    response.writeHead(200, {
+      'content-type': 'application/json',
+      'x-request-id': 'stub-request-id',
+    });
+    response.end(JSON.stringify({
+      id: 'stub-response-id',
+      output: [{ content: [{ type: 'output_text', text: JSON.stringify(validIntent()) }] }],
+      usage: {
+        input_tokens: 12,
+        output_tokens: 8,
+        total_tokens: 20,
+        output_tokens_details: { reasoning_tokens: 3 },
+      },
+    }));
+  }, async (baseUrl) => {
+    const gateway = new AssistantOpenAiPlannerGateway('stub-key', fetch, baseUrl, 1_000);
+    const result = await gateway.plan({
+      model: 'gpt-5.6-luna',
+      reasoningEffort: 'medium',
+      messages: ['Нужна квартира'],
+      context: null,
+    });
+
+    assert.equal(result.provider, 'openai');
+    assert.equal(result.requestId, 'stub-request-id');
+    assert.equal(result.responseId, 'stub-response-id');
+    assert.equal(result.totalTokens, 20);
+    assert.deepEqual(result.output, validIntent());
+  });
+});
+
+test('Assistant T02 OpenAI gateway keeps its timeout active while reading the response body', async () => {
+  await withHttpStub(async (_request, response) => {
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.flushHeaders();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    response.end(JSON.stringify({ output: [] }));
+  }, async (baseUrl) => {
+    const gateway = new AssistantOpenAiPlannerGateway('stub-key', fetch, baseUrl, 25);
+    await assert.rejects(
+      gateway.plan({
+        model: 'gpt-5.6-luna',
+        reasoningEffort: 'medium',
+        messages: ['Нужна квартира'],
+        context: null,
+      }),
+      (error) => error.code === 'ASSISTANT_OPENAI_TIMEOUT',
+    );
+  });
 });
 
 test('Assistant T02 answer service skips search for clarification and legal boundaries', async () => {
@@ -431,4 +599,29 @@ function candidate(unitId, overrides = {}) {
     deviations: [],
     ...overrides,
   };
+}
+
+async function withHttpStub(handler, run) {
+  const server = createServer((request, response) => {
+    void Promise.resolve(handler(request, response)).catch((error) => {
+      response.destroy(error);
+    });
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  try {
+    await run(`http://127.0.0.1:${address.port}`);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+}
+
+async function readRequestBody(request) {
+  const chunks = [];
+  for await (const chunk of request) chunks.push(chunk);
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }

@@ -169,6 +169,35 @@ if (!databaseUrl) {
         ['gpt-5.6-luna', 'medium', 'ACCEPTED'],
       ]);
 
+      const catalogConversation = await createConversation();
+      const catalogParams = new URLSearchParams({
+        search: fixture.object.title,
+        developerId: fixture.developer.id,
+        krtName: fixture.object.krtName,
+        locationId: fixture.district.id,
+        areaId: fixture.area.id,
+        metroStationId: fixture.metro.id,
+        type: 'RESIDENTIAL',
+        completionYear: '2027',
+        lotPriceMin: '19000000',
+        lotPriceMax: '25000000',
+        lotPricePerMeterMin: '300000',
+        lotPricePerMeterMax: '400000',
+        lotRooms: '2',
+        lotFloorMin: '8',
+        lotFloorMax: '10',
+      });
+      const catalogQueued = await sendMessage(catalogConversation.body.conversation.id, {
+        content: 'Покажи лучшие варианты из текущего каталога',
+        context: { kind: 'CATALOG_FILTERS', key: catalogParams.toString(), label: 'Фильтры каталога' },
+      }, randomUUID());
+      const catalogRun = await waitForRun(catalogQueued.body.run.id, ownerToken);
+      assert.equal(catalogRun.assistantMessage.answer.kind, 'SEARCH_RESULTS');
+      assert.deepEqual(
+        catalogRun.assistantMessage.answer.exactResults.map(({ priceRub }) => priceRub),
+        [20_000_000, 21_000_000, 22_000_000],
+      );
+
       await prisma.feedUnit.update({
         where: { id: fixture.units[1].id },
         data: { effectivePrice: 19_000_000 },
@@ -483,6 +512,9 @@ if (!databaseUrl) {
     const district = await prisma.location.create({
       data: { name: 'Хамовники', slug: `hamovniki-${suffix}`, type: 'DISTRICT' },
     });
+    const area = await prisma.location.create({
+      data: { name: `ЦАО ${suffix}`, slug: `cao-${suffix}`, type: 'AREA' },
+    });
     const metro = await prisma.metroStation.create({
       data: { name: 'Спортивная', slug: `sportivnaya-${suffix}`, lineName: `Тестовая ${suffix}` },
     });
@@ -494,10 +526,12 @@ if (!databaseUrl) {
         type: 'RESIDENTIAL',
         developerId: developer.id,
         primaryLocationId: district.id,
+        krtName: `Тест КРТ ${suffix}`,
         completionYear: 2027,
         completionQuarter: 3,
         feedUpdatedAt: new Date(),
         metroStations: { create: { metroStationId: metro.id } },
+        locations: { create: { locationId: area.id } },
       },
     });
     const file = await prisma.file.create({
@@ -537,6 +571,7 @@ if (!databaseUrl) {
           title: `Квартира ${index + 1}`,
           rooms: 2,
           effectivePrice: price,
+          effectivePricePerMeter: 330_000 + index * 5_000,
           currency: 'RUB',
           area: 60 + index,
           floor: 8 + index,
@@ -545,7 +580,7 @@ if (!databaseUrl) {
         },
       }));
     }
-    return { developer, district, metro, object, file, source, units };
+    return { developer, district, area, metro, object, file, source, units };
   }
 
   async function deleteSearchFixture(fixture) {
@@ -553,7 +588,7 @@ if (!databaseUrl) {
     await prisma.realEstateObject.deleteMany({ where: { id: fixture.object.id } });
     await prisma.file.deleteMany({ where: { id: fixture.file.id } });
     await prisma.metroStation.deleteMany({ where: { id: fixture.metro.id } });
-    await prisma.location.deleteMany({ where: { id: fixture.district.id } });
+    await prisma.location.deleteMany({ where: { id: { in: [fixture.district.id, fixture.area.id] } } });
     await prisma.developer.deleteMany({ where: { id: fixture.developer.id } });
   }
 }
