@@ -264,7 +264,7 @@ if (!databaseUrl) {
     try {
       const created = await createConversation();
       const queued = await sendMessage(created.body.conversation.id, {
-        content: `Сравни застройщиков ${fixture.firstDeveloper.name} и ${fixture.secondDeveloper.name}, двушки до 25 млн в районе ${fixture.district.name} у метро ${fixture.metro.name}`,
+        content: `Сравни застройщика ${fixture.firstDeveloper.name} с Самолётом, двушки до 25 млн в районе ${fixture.district.name} у метро ${fixture.metro.name}`,
         context: null,
       }, randomUUID());
       const completed = await waitForRun(queued.body.run.id, ownerToken);
@@ -279,7 +279,7 @@ if (!databaseUrl) {
       const persisted = await prisma.assistantRun.findUniqueOrThrow({ where: { id: completed.id } });
       assert.deepEqual(persisted.intentJson.comparisonTargets, [
         fixture.firstDeveloper.name,
-        fixture.secondDeveloper.name,
+        'Самолётом',
       ]);
       assert.equal(persisted.intentJson.hardFilters.developer, null);
 
@@ -762,8 +762,8 @@ if (!databaseUrl) {
   async function createComparisonFixture() {
     const suffix = randomUUID().slice(0, 8);
     const [firstDeveloper, secondDeveloper] = await Promise.all([
-      prisma.developer.create({ data: { name: `ПИК ${suffix}` } }),
-      prisma.developer.create({ data: { name: `Самолёт ${suffix}` } }),
+      prisma.developer.create({ data: { name: 'ПИК' } }),
+      prisma.developer.create({ data: { name: 'Самолёт' } }),
     ]);
     const district = await prisma.location.create({
       data: { name: `Хамовники ${suffix}`, slug: `compare-district-${suffix}`, type: 'DISTRICT' },

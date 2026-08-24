@@ -5,6 +5,7 @@ import type {
 
 import {
   AssistantPlannerFallbackValidationError,
+  createAssistantComparisonTargetVariants,
   type AssistantSearchFilters,
   type AssistantStructuredIntent,
 } from './assistant-query-planner';
@@ -85,7 +86,7 @@ export function buildAssistantSearchAnswer(
     kind: 'SEARCH_RESULTS',
     content: exactResults.length > 0
       ? intent.taskType === 'COMPARE' && intent.comparisonTargets.length === 2
-        ? `Сравнил подтверждённые предложения: ${intent.comparisonTargets.join(' и ')}.`
+        ? 'Сравнил подтверждённые предложения по двум выбранным вариантам.'
         : 'Нашёл точные предложения по указанным критериям.'
       : alternatives.length > 0
         ? 'Точных совпадений нет. Показываю ближайшие альтернативы с явными отклонениями.'
@@ -116,7 +117,8 @@ function selectComparisonCandidates(
 }
 
 function matchesComparisonTarget(candidate: AssistantSearchEvidence, target: string) {
-  return containsNormalized(candidate.objectTitle, target) || containsNormalized(candidate.developer, target);
+  return createAssistantComparisonTargetVariants(target).some((variant) =>
+    containsNormalized(candidate.objectTitle, variant) || containsNormalized(candidate.developer, variant));
 }
 
 export function validateAssistantSearchAnswer(

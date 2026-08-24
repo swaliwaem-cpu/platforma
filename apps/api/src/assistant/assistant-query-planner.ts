@@ -367,6 +367,37 @@ function normalizeComparableText(value: string) {
   return value.toLocaleLowerCase('ru-RU').replace(/ё/gu, 'е').trim();
 }
 
+export function createAssistantComparisonTargetVariants(value: string) {
+  const target = value.trim().replace(/^[«"]|[»"]$/gu, '');
+  const wordMatch = target.match(/^(.*?)([\p{L}]+)$/u);
+  if (!wordMatch) return [target];
+  const [, prefix = '', word = ''] = wordMatch;
+  const normalizedWord = normalizeComparableText(word);
+  const replacements: string[] = [];
+  const addStem = (ending: string, suffixes: string[]) => {
+    if (!normalizedWord.endsWith(ending)) return;
+    const stem = word.slice(0, -ending.length);
+    if ([...stem].length < 3) return;
+    suffixes.forEach((suffix) => replacements.push(`${prefix}${stem}${suffix}`));
+  };
+
+  addStem('ом', ['']);
+  addStem('ем', ['е', 'ь']);
+  addStem('ой', ['а', 'я', 'ая']);
+  addStem('ей', ['я', 'е', 'яя']);
+  addStem('ью', ['ь']);
+  addStem('ою', ['а', 'я', 'ая']);
+  addStem('ею', ['я', 'е', 'яя']);
+
+  const seen = new Set<string>();
+  return [target, ...replacements].filter((candidate) => {
+    const normalized = normalizeComparableText(candidate);
+    if (!normalized || seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  });
+}
+
 export function extractAssistantExplicitHardFilters(
   messages: string[],
 ): Partial<AssistantSearchFilters> & { rooms?: number[] } {

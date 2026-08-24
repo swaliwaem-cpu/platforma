@@ -12,9 +12,10 @@ import type {
 
 import { PrismaService } from '../prisma/prisma.service';
 import { findCatalogSearchObjectIds } from '../objects/object-search';
-import type {
-  AssistantSearchFilters,
-  AssistantStructuredIntent,
+import {
+  createAssistantComparisonTargetVariants,
+  type AssistantSearchFilters,
+  type AssistantStructuredIntent,
 } from './assistant-query-planner';
 import type { AssistantSearchEvidence } from './assistant-search-ranking';
 
@@ -405,10 +406,12 @@ export class AssistantSearchService {
         : Prisma.sql`FALSE`);
     }
     if (options.comparisonTargets?.length) {
-      conditions.push(Prisma.sql`(${Prisma.join(options.comparisonTargets.map((target) => Prisma.sql`(
-        ${createNormalizedContains(Prisma.sql`o.title`, target)}
-        OR ${createNormalizedContains(Prisma.sql`d.name`, target)}
-      )`), ' OR ')})`);
+      const targetConditions = options.comparisonTargets.flatMap((target) =>
+        createAssistantComparisonTargetVariants(target).map((variant) => Prisma.sql`(
+          ${createNormalizedContains(Prisma.sql`o.title`, variant)}
+          OR ${createNormalizedContains(Prisma.sql`d.name`, variant)}
+        )`));
+      conditions.push(Prisma.sql`(${Prisma.join(targetConditions, ' OR ')})`);
     }
     this.applyContextConditions(conditions, context);
     return conditions;

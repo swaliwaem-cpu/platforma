@@ -330,7 +330,7 @@ test('Assistant T02 ranking exposes at most two allowed alternatives only when e
 test('Assistant T02 comparison returns grounded representatives for both explicit targets', () => {
   const intent = validIntent({
     taskType: 'COMPARE',
-    comparisonTargets: ['ПИК', 'Самолёт'],
+    comparisonTargets: ['ПИК', 'Самолётом'],
     hardFilters: { ...emptyFilters(), budgetMaxRub: 25_000_000, rooms: [2], metro: 'Спортивная' },
   });
   const candidates = [
@@ -346,7 +346,7 @@ test('Assistant T02 comparison returns grounded representatives for both explici
     '33333333-3333-4333-8333-333333333333',
     '22222222-2222-4222-8222-222222222222',
   ]);
-  assert.match(answer.content, /ПИК и Самолёт/iu);
+  assert.match(answer.content, /двум выбранным вариантам/iu);
 });
 
 test('Assistant T02 comparison refuses partial evidence that covers only one explicit target', () => {
