@@ -59,7 +59,15 @@ const candidateSelect = {
         orderBy: { sortOrder: 'asc' as const },
       },
       files: {
-        where: { type: { in: [ObjectFileType.PRESENTATION, ObjectFileType.FLOOR_PLAN] } },
+        where: {
+          type: { in: [ObjectFileType.PRESENTATION, ObjectFileType.FLOOR_PLAN] },
+          file: {
+            OR: [
+              { mimeType: { equals: 'application/pdf', mode: 'insensitive' as const } },
+              { originalName: { endsWith: '.pdf', mode: 'insensitive' as const } },
+            ],
+          },
+        },
         select: {
           type: true,
           title: true,
@@ -70,6 +78,23 @@ const candidateSelect = {
     },
   },
   media: {
+    where: {
+      mediaAsset: {
+        OR: [
+          { contentType: { equals: 'application/pdf', mode: 'insensitive' as const } },
+          {
+            file: {
+              is: {
+                OR: [
+                  { mimeType: { equals: 'application/pdf', mode: 'insensitive' as const } },
+                  { originalName: { endsWith: '.pdf', mode: 'insensitive' as const } },
+                ],
+              },
+            },
+          },
+        ],
+      },
+    },
     select: {
       label: true,
       mediaAsset: {
@@ -87,6 +112,7 @@ type CandidateRecord = Prisma.FeedUnitGetPayload<{ select: typeof candidateSelec
 type SearchOptions = {
   nearbyDistrictParentIds?: string[];
   catalogSearchObjectIds?: string[];
+  comparisonTargets?: string[];
 };
 
 @Injectable()
@@ -98,12 +124,13 @@ export class AssistantSearchService {
     context: AssistantPageContext | null,
   ): Promise<{ exact: AssistantSearchEvidence[]; alternatives: AssistantSearchEvidence[] }> {
     const contextOptions = await this.resolveContextOptions(context);
-    const exact = await this.findEvidence(intent.hardFilters, context, contextOptions);
+    const searchOptions = { ...contextOptions, comparisonTargets: intent.comparisonTargets };
+    const exact = await this.findEvidence(intent.hardFilters, context, searchOptions);
     if (exact.length > 0) return { exact, alternatives: [] };
 
     const relaxationRequests: Array<Promise<AssistantSearchEvidence[]>> = [];
     if (intent.hardFilters.district) {
-      relaxationRequests.push(this.findNearbyDistrictAlternatives(intent.hardFilters, context, contextOptions));
+      relaxationRequests.push(this.findNearbyDistrictAlternatives(intent.hardFilters, context, searchOptions));
     }
     if (intent.hardFilters.developer) {
       relaxationRequests.push(this.findRelaxedEvidence(
@@ -112,7 +139,7 @@ export class AssistantSearchService {
         (candidate) => candidate.developer
           ? { type: 'DEVELOPER', label: `Другой застройщик: ${candidate.developer}` }
           : null,
-        contextOptions,
+        searchOptions,
       ));
     }
     if (intent.hardFilters.rooms.length > 0) {
@@ -123,7 +150,7 @@ export class AssistantSearchService {
         (candidate) => candidate.rooms === null
           ? null
           : { type: 'ROOMS', label: `${formatRooms(candidate.rooms)} вместо ${requestedRooms}` },
-        contextOptions,
+        searchOptions,
       ));
     }
     if (intent.hardFilters.budgetMinRub !== null || intent.hardFilters.budgetMaxRub !== null) {
@@ -140,7 +167,7 @@ export class AssistantSearchService {
         expandedFilters,
         context,
         (candidate) => createBudgetDeviation(candidate, intent.hardFilters),
-        contextOptions,
+        searchOptions,
       ));
     }
 
@@ -280,19 +307,34 @@ export class AssistantSearchService {
     if (filters.floorMax !== null) conditions.push(Prisma.sql`fu.floor <= ${filters.floorMax}`);
 
     if (options.nearbyDistrictParentIds?.length) {
-      conditions.push(Prisma.sql`EXISTS (
-        SELECT 1
-        FROM object_locations ol
-        JOIN locations l ON l.id = ol.location_id
-        WHERE ol.object_id = o.id
-          AND l.type = 'district'::location_type
-          AND l.parent_id IN (${Prisma.join(options.nearbyDistrictParentIds.map((id) => Prisma.sql`${id}::uuid`))})
+      const parentIds = Prisma.join(options.nearbyDistrictParentIds.map((id) => Prisma.sql`${id}::uuid`));
+      conditions.push(Prisma.sql`(
+        EXISTS (
+          SELECT 1
+          FROM locations pl
+          WHERE pl.id = o.primary_location_id
+            AND pl.type = 'district'::location_type
+            AND pl.parent_id IN (${parentIds})
+        ) OR EXISTS (
+          SELECT 1
+          FROM object_locations ol
+          JOIN locations l ON l.id = ol.location_id
+          WHERE ol.object_id = o.id
+            AND l.type = 'district'::location_type
+            AND l.parent_id IN (${parentIds})
+        )
       )`);
     }
     if (options.catalogSearchObjectIds) {
       conditions.push(options.catalogSearchObjectIds.length > 0
         ? Prisma.sql`o.id IN (${Prisma.join(options.catalogSearchObjectIds.map((id) => Prisma.sql`${id}::uuid`))})`
         : Prisma.sql`FALSE`);
+    }
+    if (options.comparisonTargets?.length) {
+      conditions.push(Prisma.sql`(${Prisma.join(options.comparisonTargets.map((target) => Prisma.sql`(
+        ${createNormalizedContains(Prisma.sql`o.title`, target)}
+        OR ${createNormalizedContains(Prisma.sql`d.name`, target)}
+      )`), ' OR ')})`);
     }
     this.applyContextConditions(conditions, context);
     return conditions;

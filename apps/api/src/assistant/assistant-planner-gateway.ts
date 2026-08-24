@@ -1,5 +1,6 @@
 import {
   createEmptyAssistantSearchFilters,
+  extractAssistantComparisonTargets,
   extractAssistantExplicitHardFilters,
   type AssistantPlannerGateway,
   type AssistantPlannerGatewayResult,
@@ -14,7 +15,14 @@ const assistantPlannerSchema = createAssistantPlannerSchema();
 const assistantPlannerPromptVersion = 'assistant-query-planner-v1';
 
 export class AssistantPlannerGatewayError extends Error {
-  constructor(readonly code: string) {
+  readonly provider = 'openai' as const;
+
+  constructor(
+    readonly code: string,
+    readonly requestId: string | null = null,
+    readonly responseId: string | null = null,
+    readonly httpStatus: number | null = null,
+  ) {
     super(code);
     this.name = 'AssistantPlannerGatewayError';
   }
@@ -75,13 +83,26 @@ export class AssistantOpenAiPlannerGateway implements AssistantPlannerGateway {
       try {
         value = await response.json();
       } catch {
-        if (controller.signal.aborted) throw new AssistantPlannerGatewayError('ASSISTANT_OPENAI_TIMEOUT');
-        throw new AssistantPlannerGatewayError('ASSISTANT_OPENAI_MALFORMED_RESPONSE');
+        if (controller.signal.aborted) {
+          throw new AssistantPlannerGatewayError('ASSISTANT_OPENAI_TIMEOUT', requestId, null, response.status);
+        }
+        throw new AssistantPlannerGatewayError('ASSISTANT_OPENAI_MALFORMED_RESPONSE', requestId, null, response.status);
       }
-      if (!response.ok) throw new AssistantPlannerGatewayError(`ASSISTANT_OPENAI_HTTP_${response.status}`);
-      if (!isRecord(value)) throw new AssistantPlannerGatewayError('ASSISTANT_OPENAI_MALFORMED_RESPONSE');
+      if (!response.ok) {
+        throw new AssistantPlannerGatewayError(`ASSISTANT_OPENAI_HTTP_${response.status}`, requestId, null, response.status);
+      }
+      if (!isRecord(value)) {
+        throw new AssistantPlannerGatewayError('ASSISTANT_OPENAI_MALFORMED_RESPONSE', requestId, null, response.status);
+      }
       const outputText = readOutputText(value.output);
-      if (!outputText) throw new AssistantPlannerGatewayError('ASSISTANT_OPENAI_OUTPUT_MISSING');
+      if (!outputText) {
+        throw new AssistantPlannerGatewayError(
+          'ASSISTANT_OPENAI_OUTPUT_MISSING',
+          requestId,
+          readBoundedString(value.id, 160),
+          response.status,
+        );
+      }
 
       let output: unknown;
       try {
@@ -156,6 +177,7 @@ export function createAssistantPlannerSchema() {
     additionalProperties: false,
     required: [
       'taskType',
+      'comparisonTargets',
       'hardFilters',
       'softPreferences',
       'requiredFacts',
@@ -164,6 +186,12 @@ export function createAssistantPlannerSchema() {
     ],
     properties: {
       taskType: { type: 'string', enum: ['SEARCH', 'COMPARE', 'FACT', 'LEGAL_TAX'] },
+      comparisonTargets: {
+        type: 'array',
+        uniqueItems: true,
+        maxItems: 2,
+        items: { type: 'string', minLength: 1, maxLength: 160 },
+      },
       hardFilters: filters,
       softPreferences: filters,
       requiredFacts: {
@@ -195,6 +223,7 @@ function createAssistantPlannerRequestBody(request: AssistantPlannerRequest) {
       'Не выдумывай названия, цены, наличие, координаты, ссылки или факты: их проверит сервер по базе.',
       'Для налоговых и юридических вопросов выбери LEGAL_TAX. Не давай правовую консультацию.',
       'PRICE, AVAILABILITY, FRESHNESS и LINK обязательны для всех задач кроме LEGAL_TAX.',
+      'Для явного сравнения двух ЖК или застройщиков заполни comparisonTargets двумя точными названиями.',
       'Если критичных условий поиска не хватает, задай один короткий составной clarificationQuestion.',
     ].join(' '),
     input: [{
@@ -233,6 +262,7 @@ function createDeterministicIntent(messages: string[]): AssistantStructuredInten
       : /сравн\p{L}*/iu.test(normalized)
         ? 'COMPARE'
         : 'SEARCH',
+    comparisonTargets: extractAssistantComparisonTargets(messages) ?? [],
     hardFilters,
     softPreferences: createEmptyAssistantSearchFilters(),
     requiredFacts: ['PRICE', 'AVAILABILITY', 'FRESHNESS', 'LINK'],

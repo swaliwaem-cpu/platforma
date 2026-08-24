@@ -21,6 +21,7 @@ const filterKeys = [
 
 const intentKeys = [
   'taskType',
+  'comparisonTargets',
   'hardFilters',
   'softPreferences',
   'requiredFacts',
@@ -71,6 +72,7 @@ export type AssistantSearchFilters = {
 
 export type AssistantStructuredIntent = {
   taskType: AssistantTaskType;
+  comparisonTargets: string[];
   hardFilters: AssistantSearchFilters;
   softPreferences: AssistantSearchFilters;
   requiredFacts: AssistantRequiredFact[];
@@ -94,6 +96,7 @@ export type AssistantPlannerTelemetry = {
   model: string;
   reasoningEffort: AssistantReasoningEffort;
   outcome: 'ACCEPTED' | 'LOCAL_VALIDATION_FAILED' | 'PROVIDER_ERROR';
+  errorCode: string | null;
   isFallback: boolean;
   requestId: string | null;
   responseId: string | null;
@@ -169,9 +172,17 @@ export class AssistantQueryPlanner {
       let gatewayResult: unknown;
       try {
         gatewayResult = await this.gateway.plan(request);
-      } catch {
-        attempts.push(createTelemetry(request, attemptIndex === 1, 'PROVIDER_ERROR', Date.now() - startedAt));
-        throw new AssistantPlannerError('ASSISTANT_PLANNER_PROVIDER_FAILED', attempts);
+      } catch (error) {
+        const failure = readPlannerGatewayFailure(error);
+        attempts.push(createTelemetry(
+          request,
+          attemptIndex === 1,
+          'PROVIDER_ERROR',
+          Date.now() - startedAt,
+          failure,
+          failure?.errorCode ?? 'ASSISTANT_PLANNER_PROVIDER_FAILED',
+        ));
+        throw new AssistantPlannerError(failure?.errorCode ?? 'ASSISTANT_PLANNER_PROVIDER_FAILED', attempts);
       }
 
       const result = unwrapGatewayResult(gatewayResult);
@@ -247,6 +258,7 @@ export function parseAssistantStructuredIntent(value: unknown): AssistantStructu
 
   const hardFilters = parseFilters(value.hardFilters);
   const softPreferences = parseFilters(value.softPreferences);
+  const comparisonTargets = parseComparisonTargets(value.comparisonTargets);
   const requiredFacts = parseRequiredFacts(value.requiredFacts);
   if (value.taskType !== 'LEGAL_TAX' && mandatorySearchFacts.some((fact) => !requiredFacts.includes(fact))) {
     throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
@@ -264,6 +276,7 @@ export function parseAssistantStructuredIntent(value: unknown): AssistantStructu
 
   return {
     taskType: value.taskType as AssistantTaskType,
+    comparisonTargets,
     hardFilters,
     softPreferences,
     requiredFacts,
@@ -283,8 +296,11 @@ function normalizeIntentAgainstRequest(
 ): AssistantStructuredIntent {
   const explicitFilters = extractAssistantExplicitHardFilters(messages);
   const contextFilters = extractContextHardFilters(context);
+  const explicitComparisonTargets = extractAssistantComparisonTargets(messages);
+  const hardMarkedSoftFilters = promoteHardMarkedSoftFilters(intent.softPreferences, messages.join('\n'));
   const hardFilters: AssistantSearchFilters = {
     ...intent.hardFilters,
+    ...hardMarkedSoftFilters,
     ...explicitFilters,
     ...contextFilters,
     rooms: contextFilters.rooms ?? explicitFilters.rooms ?? intent.hardFilters.rooms,
@@ -294,6 +310,7 @@ function normalizeIntentAgainstRequest(
     return {
       ...intent,
       taskType: 'LEGAL_TAX',
+      comparisonTargets: [],
       hardFilters,
       needsClarification: false,
       clarificationQuestion: null,
@@ -301,7 +318,7 @@ function normalizeIntentAgainstRequest(
   }
 
   if (intent.taskType === 'FACT') {
-    return { ...intent, hardFilters };
+    return { ...intent, hardFilters, comparisonTargets: explicitComparisonTargets ?? intent.comparisonTargets };
   }
 
   const missingFacts: string[] = [];
@@ -313,12 +330,31 @@ function normalizeIntentAgainstRequest(
 
   return {
     ...intent,
+    comparisonTargets: explicitComparisonTargets ?? intent.comparisonTargets,
     hardFilters,
     needsClarification: missingFacts.length > 0,
     clarificationQuestion: missingFacts.length > 0
       ? `Уточните, пожалуйста: ${joinRussianList(missingFacts)}.`
       : null,
   };
+}
+
+export function extractAssistantComparisonTargets(messages: string[]) {
+  const text = messages.join('\n');
+  const match = text.match(
+    /сравн\p{L}*\s+(?:застройщик\p{L}*\s+|жк\s+)?[«"]?(.+?)[»"]?\s+(?:и|с)\s+[«"]?(.+?)[»"]?(?=\s+(?:до\s+\d|бюджет\p{L}*|в\s+район)|[,.;\r\n]|$)/iu,
+  );
+  if (!match) return null;
+  const targets = [match[1], match[2]].map((value) => value?.trim().replace(/^[«"]|[»"]$/gu, '') ?? '');
+  const genericTargets = new Set(['вариант', 'варианты', 'объект', 'объекты', 'цены', 'предложения']);
+  if (targets.some((target) => !target || target.length > 160 || genericTargets.has(normalizeComparableText(target)))) {
+    return null;
+  }
+  return targets;
+}
+
+function normalizeComparableText(value: string) {
+  return value.toLocaleLowerCase('ru-RU').replace(/ё/gu, 'е').trim();
 }
 
 export function extractAssistantExplicitHardFilters(
@@ -360,17 +396,17 @@ function extractExplicitFilters(text: string): Partial<AssistantSearchFilters> &
 
   const district = extractNamedCondition(
     text,
-    /(?:в\s+)?район(?:е)?\s+[«"]?(.+?)[»"]?(?=\s+(?:у\s+метро|метро|от\s+[\p{L}«"]|сдач\p{L}*|\d+\s*квартал)|[,.;]|$)/iu,
+    /(?:в\s+)?район(?:е)?\s+[«"]?(.+?)[»"]?(?=\s+(?:у\s+метро|метро|от\s+[\p{L}«"]|сдач\p{L}*|\d+\s*квартал)|[,.;\r\n]|$)/iu,
   );
   if (district) filters.district = district;
   const metro = extractNamedCondition(
     text,
-    /(?:у\s+)?метро\s+[«"]?(.+?)[»"]?(?=\s+(?:от\s+[\p{L}«"]|сдач\p{L}*|\d+\s*квартал)|[,.;]|$)/iu,
+    /(?:у\s+)?метро\s+[«"]?(.+?)[»"]?(?=\s+(?:от\s+[\p{L}«"]|сдач\p{L}*|\d+\s*квартал)|[,.;\r\n]|$)/iu,
   );
   if (metro) filters.metro = metro;
   const developer = extractNamedCondition(
     text,
-    /(?:застройщик(?:а|ом)?|от\s+(?=[\p{L}«"]))\s*[«"]?(.+?)[»"]?(?=\s+(?:сдач\p{L}*|\d+\s*квартал)|[,.;]|$)/iu,
+    /(?:застройщик(?:а|ом)?|от\s+(?=[\p{L}«"]))\s*[«"]?(.+?)[»"]?(?=\s+(?:сдач\p{L}*|\d+\s*квартал)|[,.;\r\n]|$)/iu,
   );
   if (developer) filters.developer = developer;
 
@@ -390,6 +426,11 @@ function extractExplicitFilters(text: string): Partial<AssistantSearchFilters> &
   if (propertyClass) filters.propertyClass = propertyClass[1]!;
   const areaMinimum = normalized.match(/(?:площад\p{L}*\s+)?(?:от|не\s+меньше)\s+(\d+(?:[.,]\d+)?)\s*(?:м2|м²|кв)/iu);
   const areaMaximum = normalized.match(/(?:площад\p{L}*\s+)?(?:до|не\s+больше)\s+(\d+(?:[.,]\d+)?)\s*(?:м2|м²|кв)/iu);
+  const areaRange = normalized.match(/(?:площад\p{L}*\s+)?(\d+(?:[.,]\d+)?)\s*(?:-|–|—|до)\s*(\d+(?:[.,]\d+)?)\s*(?:м2|м²|кв)/iu);
+  if (areaRange) {
+    filters.areaMin = Number(areaRange[1]!.replace(',', '.'));
+    filters.areaMax = Number(areaRange[2]!.replace(',', '.'));
+  }
   if (areaMinimum) filters.areaMin = Number(areaMinimum[1]!.replace(',', '.'));
   if (areaMaximum) filters.areaMax = Number(areaMaximum[1]!.replace(',', '.'));
   const floorMinimum = normalized.match(/(?:этаж\p{L}*\s+)?(?:от|не\s+ниже)\s+(-?\d+)\s*(?:этаж\p{L}*)/iu);
@@ -400,6 +441,25 @@ function extractExplicitFilters(text: string): Partial<AssistantSearchFilters> &
   if (/(?:жил\p{L}*|квартир\p{L}*|апартамент\p{L}*)/iu.test(normalized)) filters.objectType = 'RESIDENTIAL';
 
   return filters;
+}
+
+function promoteHardMarkedSoftFilters(
+  softPreferences: AssistantSearchFilters,
+  text: string,
+): Partial<AssistantSearchFilters> {
+  const normalizedText = normalizeComparableText(text);
+  const promoted: Partial<AssistantSearchFilters> = {};
+  for (const key of ['district', 'metro', 'developer', 'propertyClass'] as const) {
+    const value = softPreferences[key];
+    if (!value) continue;
+    const normalizedValue = normalizeComparableText(value);
+    if (['только', 'строго', 'обязательно', 'исключительно'].some((marker) =>
+      normalizedText.includes(`${marker} ${normalizedValue}`)
+      || normalizedText.includes(`${marker} в ${normalizedValue}`))) {
+      promoted[key] = value;
+    }
+  }
+  return promoted;
 }
 
 function extractContextHardFilters(context: unknown): Partial<AssistantSearchFilters> {
@@ -528,6 +588,15 @@ function parseRequiredFacts(value: unknown): AssistantRequiredFact[] {
   return facts;
 }
 
+function parseComparisonTargets(value: unknown) {
+  if (!Array.isArray(value) || value.length > 2) throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
+  const targets = value.map((target) => parseBoundedString(target, 160));
+  if (new Set(targets.map(normalizeComparableText)).size !== targets.length) {
+    throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
+  }
+  return targets;
+}
+
 function parseRooms(value: unknown) {
   if (!Array.isArray(value) || value.length > 11) throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
   const rooms = value.map((room) => {
@@ -594,13 +663,15 @@ function createTelemetry(
   isFallback: boolean,
   outcome: AssistantPlannerTelemetry['outcome'],
   durationMs: number,
-  metadata: AssistantPlannerGatewayResult | null = null,
+  metadata: Partial<AssistantPlannerGatewayResult> | null = null,
+  errorCode: string | null = null,
 ): AssistantPlannerTelemetry {
   return {
     provider: metadata?.provider ?? 'fake',
     model: request.model,
     reasoningEffort: request.reasoningEffort,
     outcome,
+    errorCode: readNullableBoundedString(errorCode, 120),
     isFallback,
     requestId: readNullableBoundedString(metadata?.requestId, 160),
     responseId: readNullableBoundedString(metadata?.responseId, 160),
@@ -610,6 +681,19 @@ function createTelemetry(
     reasoningTokens: readNullableInteger(metadata?.reasoningTokens, 0, Number.MAX_SAFE_INTEGER),
     totalTokens: readNullableInteger(metadata?.totalTokens, 0, Number.MAX_SAFE_INTEGER),
     durationMs: Math.max(0, Math.trunc(durationMs)),
+  };
+}
+
+function readPlannerGatewayFailure(error: unknown) {
+  if (!isRecord(error) || error.provider !== 'openai') return null;
+  const errorCode = readNullableBoundedString(error.code, 120);
+  if (!errorCode) return null;
+  return {
+    provider: 'openai' as const,
+    errorCode,
+    requestId: readNullableBoundedString(error.requestId, 160),
+    responseId: readNullableBoundedString(error.responseId, 160),
+    httpStatus: readNullableInteger(error.httpStatus, 100, 599),
   };
 }
 

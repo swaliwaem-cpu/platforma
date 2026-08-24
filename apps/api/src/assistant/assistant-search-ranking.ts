@@ -62,14 +62,14 @@ export function buildAssistantSearchAnswer(
   alternativeEvidence: AssistantSearchEvidence[],
   now = new Date(),
 ): AssistantSearchAnswer {
-  const exactResults = rankCandidates(
+  const rankedExactCandidates = rankCandidates(
     exactEvidence.filter((candidate) =>
       isValidEvidence(candidate)
       && hasRequiredFacts(candidate, intent.requiredFacts)
       && matchesFilters(candidate, intent.hardFilters)),
     intent.softPreferences,
-  )
-    .slice(0, 3)
+  );
+  const exactResults = selectComparisonCandidates(rankedExactCandidates, intent.comparisonTargets, 3)
     .map((candidate) => createResultCard(candidate, now));
   const alternatives = exactResults.length === 0
     ? rankCandidates(
@@ -84,13 +84,39 @@ export function buildAssistantSearchAnswer(
   return {
     kind: 'SEARCH_RESULTS',
     content: exactResults.length > 0
-      ? 'Нашёл точные предложения по указанным критериям.'
+      ? intent.taskType === 'COMPARE' && intent.comparisonTargets.length === 2
+        ? `Сравнил подтверждённые предложения: ${intent.comparisonTargets.join(' и ')}.`
+        : 'Нашёл точные предложения по указанным критериям.'
       : alternatives.length > 0
         ? 'Точных совпадений нет. Показываю ближайшие альтернативы с явными отклонениями.'
         : 'Не могу подтвердить подходящие предложения по текущим данным Platforma.',
     exactResults,
     alternatives,
   };
+}
+
+function selectComparisonCandidates(
+  candidates: AssistantSearchEvidence[],
+  comparisonTargets: string[],
+  limit: number,
+) {
+  if (comparisonTargets.length !== 2) return candidates.slice(0, limit);
+  const selected: AssistantSearchEvidence[] = [];
+  for (const target of comparisonTargets) {
+    const candidate = candidates.find((item) =>
+      !selected.some(({ unitId }) => unitId === item.unitId) && matchesComparisonTarget(item, target));
+    if (!candidate) return [];
+    selected.push(candidate);
+  }
+  for (const candidate of candidates) {
+    if (selected.length >= limit) break;
+    if (!selected.some(({ unitId }) => unitId === candidate.unitId)) selected.push(candidate);
+  }
+  return selected;
+}
+
+function matchesComparisonTarget(candidate: AssistantSearchEvidence, target: string) {
+  return containsNormalized(candidate.objectTitle, target) || containsNormalized(candidate.developer, target);
 }
 
 export function validateAssistantSearchAnswer(

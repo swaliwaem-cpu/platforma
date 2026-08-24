@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type {
+  AssistantAnswer,
   AssistantPageContext,
-  AssistantSearchResultCard,
 } from '@platforma/shared' with { 'resolution-mode': 'import' };
 
 import {
@@ -16,19 +16,9 @@ import {
 } from './assistant-search-ranking';
 import { AssistantSearchService } from './assistant-search.service';
 
-export type AssistantPublicAnswer =
-  | {
-      kind: 'SEARCH_RESULTS';
-      exactResults: AssistantSearchResultCard[];
-      alternatives: AssistantSearchResultCard[];
-    }
-  | { kind: 'CLARIFICATION' }
-  | { kind: 'REFUSAL' }
-  | { kind: 'SAFE_BOUNDARY' };
-
 export type AssistantAnswerResult = {
   content: string;
-  answer: AssistantPublicAnswer;
+  answer: AssistantAnswer;
   intent: AssistantStructuredIntent;
   evidence: AssistantSearchEvidence[];
   telemetry: AssistantPlannerTelemetry[];

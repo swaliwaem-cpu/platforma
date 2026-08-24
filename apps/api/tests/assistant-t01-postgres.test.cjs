@@ -25,6 +25,10 @@ if (!databaseUrl) {
   process.env.TRAINING_MODULE_ENABLED = 'false';
 
   const { AppModule } = require('../dist/app.module.js');
+  const { AssistantRunProcessor } = require('../dist/assistant/assistant-run.processor.js');
+  const { createEmptyAssistantSearchFilters } = require('../dist/assistant/assistant-query-planner.js');
+  const { buildAssistantSearchAnswer } = require('../dist/assistant/assistant-search-ranking.js');
+  const { AssistantSearchService } = require('../dist/assistant/assistant-search.service.js');
   const prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
   const jwt = new JwtService();
   let app;
@@ -214,6 +218,47 @@ if (!databaseUrl) {
     }
   });
 
+  test('grounded search generates only the four allowed relaxations from current PostgreSQL data', async () => {
+    const fixture = await createSearchFixture();
+    const searchService = app.get(AssistantSearchService);
+    try {
+      const budgetIntent = createSearchIntent({ budgetMaxRub: 19_000_000 });
+      const budgetSearch = await searchService.search(budgetIntent, null);
+      const budgetAnswer = buildAssistantSearchAnswer(
+        budgetIntent,
+        budgetSearch.exact,
+        budgetSearch.alternatives,
+      );
+      assert.equal(budgetSearch.exact.length, 0);
+      assert.equal(budgetSearch.alternatives.every(({ priceRub }) => priceRub <= 26_000_000), true);
+      assert.equal(budgetSearch.alternatives.some(({ priceRub }) => priceRub === 27_000_000), false);
+      assertRelaxationAnswer(budgetAnswer, 'BUDGET');
+
+      const roomsIntent = createSearchIntent({ rooms: [3] });
+      const roomsSearch = await searchService.search(roomsIntent, null);
+      assertRelaxationAnswer(
+        buildAssistantSearchAnswer(roomsIntent, roomsSearch.exact, roomsSearch.alternatives),
+        'ROOMS',
+      );
+
+      const developerIntent = createSearchIntent({ developer: 'Несуществующий девелопер' });
+      const developerSearch = await searchService.search(developerIntent, null);
+      assertRelaxationAnswer(
+        buildAssistantSearchAnswer(developerIntent, developerSearch.exact, developerSearch.alternatives),
+        'DEVELOPER',
+      );
+
+      const districtIntent = createSearchIntent({ district: fixture.emptyDistrict.name });
+      const districtSearch = await searchService.search(districtIntent, null);
+      assertRelaxationAnswer(
+        buildAssistantSearchAnswer(districtIntent, districtSearch.exact, districtSearch.alternatives),
+        'DISTRICT',
+      );
+    } finally {
+      await deleteSearchFixture(fixture);
+    }
+  });
+
   test('conversation and run ownership fail closed without exposing another user data', async () => {
     const created = await createConversation();
     const queued = await sendMessage(
@@ -358,6 +403,54 @@ if (!databaseUrl) {
     assert.equal(recovered.assistantMessage.answer.kind, 'CLARIFICATION');
   });
 
+  test('a long grounded answer renews its PostgreSQL lease until completion', async () => {
+    const processor = app.get(AssistantRunProcessor);
+    const answerService = processor.answerService;
+    const originalAnswer = answerService.answer;
+    let answerCalls = 0;
+    let markAnswerStarted;
+    const answerStarted = new Promise((resolve) => {
+      markAnswerStarted = resolve;
+    });
+    answerService.answer = async function delayedAnswer(input) {
+      answerCalls += 1;
+      markAnswerStarted();
+      await new Promise((resolve) => setTimeout(resolve, 15_000));
+      return originalAnswer.call(this, input);
+    };
+
+    try {
+      const created = await createConversation();
+      const queued = await sendMessage(
+        created.body.conversation.id,
+        { content: 'Проверь продление аренды', context: null },
+        randomUUID(),
+      );
+      await answerStarted;
+
+      const shortenedLease = new Date(Date.now() + 12_000);
+      const shortened = await prisma.assistantRun.updateMany({
+        where: { id: queued.body.run.id, status: 'RUNNING' },
+        data: { leaseExpiresAt: shortenedLease },
+      });
+      assert.equal(shortened.count, 1);
+
+      const renewedLease = await waitForLeaseRenewal(queued.body.run.id, shortenedLease);
+      assert.equal(renewedLease > shortenedLease, true);
+      const completed = await waitForRun(queued.body.run.id, ownerToken, 8_000);
+      assert.equal(completed.status, 'COMPLETED');
+      assert.equal(answerCalls, 1);
+
+      const persisted = await prisma.assistantRun.findUniqueOrThrow({
+        where: { id: queued.body.run.id },
+        select: { leaseOwner: true, leaseExpiresAt: true },
+      });
+      assert.deepEqual(persisted, { leaseOwner: null, leaseExpiresAt: null });
+    } finally {
+      answerService.answer = originalAnswer;
+    }
+  });
+
   test('conversation message bound remains enforced under concurrent sends', async () => {
     const created = await createConversation();
     await prisma.assistantMessage.createMany({
@@ -425,8 +518,8 @@ if (!databaseUrl) {
       .digest('hex');
   }
 
-  async function waitForRun(runId, token) {
-    const deadline = Date.now() + 3_000;
+  async function waitForRun(runId, token, timeoutMs = 3_000) {
+    const deadline = Date.now() + timeoutMs;
 
     do {
       const response = await request(`/assistant/runs/${runId}`, { token });
@@ -438,6 +531,20 @@ if (!databaseUrl) {
     } while (Date.now() < deadline);
 
     throw new Error('ASSISTANT_RUN_TIMEOUT');
+  }
+
+  async function waitForLeaseRenewal(runId, shortenedLease) {
+    const deadline = Date.now() + 13_000;
+    do {
+      const run = await prisma.assistantRun.findUniqueOrThrow({
+        where: { id: runId },
+        select: { status: true, leaseExpiresAt: true },
+      });
+      if (run.status !== 'RUNNING') throw new Error(`ASSISTANT_RUN_NOT_RUNNING_${run.status}`);
+      if (run.leaseExpiresAt && run.leaseExpiresAt > shortenedLease) return run.leaseExpiresAt;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    } while (Date.now() < deadline);
+    throw new Error('ASSISTANT_LEASE_RENEWAL_TIMEOUT');
   }
 
   async function request(path, options = {}) {
@@ -509,8 +616,24 @@ if (!databaseUrl) {
     const developer = await prisma.developer.create({
       data: { name: `Тест Девелопмент ${suffix}` },
     });
+    const locationParent = await prisma.location.create({
+      data: { name: `Москва ${suffix}`, slug: `moscow-${suffix}`, type: 'CUSTOM' },
+    });
     const district = await prisma.location.create({
-      data: { name: 'Хамовники', slug: `hamovniki-${suffix}`, type: 'DISTRICT' },
+      data: {
+        name: 'Хамовники',
+        slug: `hamovniki-${suffix}`,
+        type: 'DISTRICT',
+        parentId: locationParent.id,
+      },
+    });
+    const emptyDistrict = await prisma.location.create({
+      data: {
+        name: `Арбат ${suffix}`,
+        slug: `arbat-${suffix}`,
+        type: 'DISTRICT',
+        parentId: locationParent.id,
+      },
     });
     const area = await prisma.location.create({
       data: { name: `ЦАО ${suffix}`, slug: `cao-${suffix}`, type: 'AREA' },
@@ -580,7 +703,7 @@ if (!databaseUrl) {
         },
       }));
     }
-    return { developer, district, area, metro, object, file, source, units };
+    return { developer, locationParent, district, emptyDistrict, area, metro, object, file, source, units };
   }
 
   async function deleteSearchFixture(fixture) {
@@ -588,7 +711,31 @@ if (!databaseUrl) {
     await prisma.realEstateObject.deleteMany({ where: { id: fixture.object.id } });
     await prisma.file.deleteMany({ where: { id: fixture.file.id } });
     await prisma.metroStation.deleteMany({ where: { id: fixture.metro.id } });
-    await prisma.location.deleteMany({ where: { id: { in: [fixture.district.id, fixture.area.id] } } });
+    await prisma.location.deleteMany({
+      where: { id: { in: [fixture.district.id, fixture.emptyDistrict.id, fixture.area.id, fixture.locationParent.id] } },
+    });
     await prisma.developer.deleteMany({ where: { id: fixture.developer.id } });
+  }
+
+  function createSearchIntent(hardFilterOverrides) {
+    return {
+      taskType: 'SEARCH',
+      comparisonTargets: [],
+      hardFilters: { ...createEmptyAssistantSearchFilters(), ...hardFilterOverrides },
+      softPreferences: createEmptyAssistantSearchFilters(),
+      requiredFacts: ['PRICE', 'AVAILABILITY', 'FRESHNESS', 'LINK'],
+      needsClarification: false,
+      clarificationQuestion: null,
+    };
+  }
+
+  function assertRelaxationAnswer(answer, expectedType) {
+    assert.equal(answer.exactResults.length, 0);
+    assert.equal(answer.alternatives.length > 0 && answer.alternatives.length <= 2, true);
+    assert.equal(
+      answer.alternatives.every(({ deviations }) =>
+        deviations.length === 1 && deviations[0].type === expectedType),
+      true,
+    );
   }
 }

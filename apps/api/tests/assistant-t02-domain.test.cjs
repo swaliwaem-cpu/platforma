@@ -128,6 +128,38 @@ test('Assistant T02 planner keeps previously stated conditions and applies the p
   assert.equal(result.intent.clarificationQuestion, null);
 });
 
+test('Assistant T02 fake planner keeps a district from the previous turn and accepts bounded area ranges', async () => {
+  const planner = new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' }));
+
+  const result = await planner.plan({
+    messages: ['Нужна квартира в районе Хамовники', 'До 25 млн, двушка, площадь 55–70 м²'],
+    context: null,
+  });
+
+  assert.equal(result.intent.hardFilters.district, 'Хамовники');
+  assert.equal(result.intent.hardFilters.budgetMaxRub, 25_000_000);
+  assert.deepEqual(result.intent.hardFilters.rooms, [2]);
+  assert.equal(result.intent.hardFilters.areaMin, 55);
+  assert.equal(result.intent.hardFilters.areaMax, 70);
+  assert.equal(result.intent.needsClarification, false);
+});
+
+test('Assistant T02 planner promotes model-extracted soft values marked as mandatory by the user', async () => {
+  const planner = new AssistantQueryPlanner({
+    async plan() {
+      return validIntent({
+        hardFilters: { ...emptyFilters(), budgetMaxRub: 25_000_000, rooms: [2] },
+        softPreferences: { ...emptyFilters(), district: 'Хамовники' },
+      });
+    },
+  });
+
+  const result = await planner.plan({ messages: ['Двушка до 25 млн, только Хамовники'], context: null });
+
+  assert.equal(result.intent.hardFilters.district, 'Хамовники');
+  assert.equal(result.intent.needsClarification, false);
+});
+
 test('Assistant T02 planner pins every explicit supported hard filter instead of trusting model placement', async () => {
   const planner = new AssistantQueryPlanner({
     async plan() {
@@ -282,6 +314,43 @@ test('Assistant T02 ranking exposes at most two allowed alternatives only when e
   assert.match(answer.content, /Точных совпадений нет/iu);
 });
 
+test('Assistant T02 comparison returns grounded representatives for both explicit targets', () => {
+  const intent = validIntent({
+    taskType: 'COMPARE',
+    comparisonTargets: ['ПИК', 'Самолёт'],
+    hardFilters: { ...emptyFilters(), budgetMaxRub: 25_000_000, rooms: [2], metro: 'Спортивная' },
+  });
+  const candidates = [
+    candidate('11111111-1111-4111-8111-111111111111', { developer: 'ПИК', priceRub: 20_000_000 }),
+    candidate('22222222-2222-4222-8222-222222222222', { developer: 'ПИК', priceRub: 21_000_000 }),
+    candidate('33333333-3333-4333-8333-333333333333', { developer: 'Самолёт', priceRub: 24_000_000 }),
+  ];
+
+  const answer = buildAssistantSearchAnswer(intent, candidates, [], new Date('2026-08-24T12:00:00.000Z'));
+
+  assert.deepEqual(answer.exactResults.map(({ unitId }) => unitId), [
+    '11111111-1111-4111-8111-111111111111',
+    '33333333-3333-4333-8333-333333333333',
+    '22222222-2222-4222-8222-222222222222',
+  ]);
+  assert.match(answer.content, /ПИК и Самолёт/iu);
+});
+
+test('Assistant T02 comparison refuses partial evidence that covers only one explicit target', () => {
+  const intent = validIntent({
+    taskType: 'COMPARE',
+    comparisonTargets: ['ПИК', 'Самолёт'],
+    hardFilters: { ...emptyFilters(), budgetMaxRub: 25_000_000, rooms: [2], metro: 'Спортивная' },
+  });
+
+  const answer = buildAssistantSearchAnswer(intent, [
+    candidate('11111111-1111-4111-8111-111111111111', { developer: 'ПИК' }),
+  ], [], new Date('2026-08-24T12:00:00.000Z'));
+
+  assert.equal(answer.exactResults.length, 0);
+  assert.match(answer.content, /Не могу подтвердить/iu);
+});
+
 test('Assistant T02 evidence validation rejects invented price, freshness and links', () => {
   const intent = validIntent({
     hardFilters: { ...emptyFilters(), budgetMaxRub: 25_000_000, rooms: [2], district: 'Хамовники' },
@@ -376,6 +445,7 @@ test('Assistant T02 planner records bounded usage telemetry without exposing it 
     model: 'gpt-5.6-luna',
     reasoningEffort: 'medium',
     outcome: 'ACCEPTED',
+    errorCode: null,
     isFallback: false,
     requestId: 'request-safe',
     responseId: 'response-safe',
@@ -490,6 +560,27 @@ test('Assistant T02 OpenAI gateway keeps its timeout active while reading the re
   });
 });
 
+test('Assistant T02 planner preserves OpenAI provider failure classification in private telemetry', async () => {
+  await withHttpStub(async (_request, response) => {
+    response.writeHead(200, { 'content-type': 'application/json', 'x-request-id': 'timeout-request-id' });
+    response.flushHeaders();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    response.end(JSON.stringify({ output: [] }));
+  }, async (baseUrl) => {
+    const planner = new AssistantQueryPlanner(new AssistantOpenAiPlannerGateway('stub-key', fetch, baseUrl, 25));
+    await assert.rejects(
+      planner.plan({ messages: ['Нужна квартира'], context: null }),
+      (error) => {
+        assert.equal(error.code, 'ASSISTANT_OPENAI_TIMEOUT');
+        assert.equal(error.telemetry[0].provider, 'openai');
+        assert.equal(error.telemetry[0].errorCode, 'ASSISTANT_OPENAI_TIMEOUT');
+        assert.equal(error.telemetry[0].requestId, 'timeout-request-id');
+        return true;
+      },
+    );
+  });
+});
+
 test('Assistant T02 answer service skips search for clarification and legal boundaries', async () => {
   let searchCalls = 0;
   const search = { async search() { searchCalls += 1; return { exact: [], alternatives: [] }; } };
@@ -539,6 +630,7 @@ test('Assistant T02 answer service returns grounded public cards and keeps inter
 function validIntent(overrides = {}) {
   return {
     taskType: 'SEARCH',
+    comparisonTargets: [],
     hardFilters: emptyFilters(),
     softPreferences: emptyFilters(),
     requiredFacts: ['PRICE', 'AVAILABILITY', 'FRESHNESS', 'LINK'],
