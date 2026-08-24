@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 
+import { AssistantModule } from './assistant/assistant.module';
 import { AuthModule } from './auth/auth.module';
 import { CatalogLinksModule } from './catalog-links/catalog-links.module';
 import { DirectoriesModule } from './directories/directories.module';
@@ -18,6 +19,7 @@ import { WordpressImportModule } from './wordpress-import/wordpress-import.modul
 @Module({
   imports: [
     PrismaModule,
+    AssistantModule,
     ProjectPresentationsModule,
     TrainingModule,
     AuthModule,

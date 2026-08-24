@@ -1,0 +1,653 @@
+import type {
+  AssistantConversation,
+  AssistantConversationSummary,
+  AssistantPageContext,
+  AssistantRun,
+} from '@platforma/shared';
+import {
+  Clock3Icon,
+  MessageCircleIcon,
+  PlusIcon,
+  RotateCcwIcon,
+  SendIcon,
+  XIcon,
+} from 'lucide-react';
+import {
+  FormEvent,
+  PointerEvent as ReactPointerEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+
+import {
+  createAssistantConversation,
+  getAssistantConfig,
+  getAssistantConversation,
+  getAssistantRun,
+  listAssistantConversations,
+  sendAssistantMessage,
+} from './assistantApi';
+import './assistant.css';
+
+type AssistantChatProps = {
+  accessToken: string;
+  logoUrl: string;
+  pathname: string;
+  userId: string;
+};
+
+type AssistantGeometry = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
+
+type PendingSubmission = {
+  content: string;
+  context: AssistantPageContext | null;
+  conversationId: string | null;
+  idempotencyKey: string;
+};
+
+type DragState = {
+  pointerId: number;
+  originX: number;
+  originY: number;
+  startLeft: number;
+  startTop: number;
+};
+
+const mobileMediaQuery = '(max-width: 760px)';
+const pollIntervalMs = 180;
+
+export function AssistantChat({ accessToken, logoUrl, pathname, userId }: AssistantChatProps) {
+  const [enabled, setEnabled] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [conversations, setConversations] = useState<AssistantConversationSummary[]>([]);
+  const [conversation, setConversation] = useState<AssistantConversation | null>(null);
+  const [draft, setDraft] = useState('');
+  const [pageContext, setPageContext] = useState<AssistantPageContext | null>(null);
+  const [activeRun, setActiveRun] = useState<AssistantRun | null>(null);
+  const [optimisticContent, setOptimisticContent] = useState<string | null>(null);
+  const [isSending, setIsSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [geometry, setGeometry] = useState<AssistantGeometry>(() => readGeometry(userId));
+  const chatRef = useRef<HTMLElement | null>(null);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const messagesRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<DragState | null>(null);
+  const pendingSubmissionRef = useRef<PendingSubmission | null>(null);
+  const conversationRequestRef = useRef<AbortController | null>(null);
+  const sendRequestRef = useRef<AbortController | null>(null);
+  const completionRequestRef = useRef<AbortController | null>(null);
+  const activeOperationVersionRef = useRef(0);
+  const skipGeometryWriteRef = useRef(false);
+
+  const invalidateActiveOperation = useCallback(() => {
+    activeOperationVersionRef.current += 1;
+    sendRequestRef.current?.abort();
+    completionRequestRef.current?.abort();
+    conversationRequestRef.current?.abort();
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    void getAssistantConfig(accessToken, controller.signal)
+      .then((config) => setEnabled(config.enabled === true))
+      .catch(() => setEnabled(false));
+
+    return () => controller.abort();
+  }, [accessToken]);
+
+  const refreshHistory = useCallback(async (signal?: AbortSignal) => {
+    const response = await listAssistantConversations(accessToken, signal);
+    setConversations(response.items);
+    return response.items;
+  }, [accessToken]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const controller = new AbortController();
+    void refreshHistory(controller.signal).catch(() => undefined);
+    return () => controller.abort();
+  }, [enabled, refreshHistory]);
+
+  useEffect(() => {
+    setGeometry(readGeometry(userId));
+  }, [userId]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setPageContext(resolvePageContext(window.location.pathname, window.location.search));
+  }, [isOpen, pathname]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const frameId = window.requestAnimationFrame(() => composerRef.current?.focus());
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsOpen(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
+    const container = messagesRef.current;
+    if (container) container.scrollTop = container.scrollHeight;
+  }, [activeRun, conversation?.messages, optimisticContent]);
+
+  useEffect(() => {
+    if (!isOpen || isMobileViewport() || !chatRef.current) return;
+    const chat = chatRef.current;
+    const observer = new ResizeObserver(() => {
+      const bounds = chat.getBoundingClientRect();
+      setGeometry((current) => {
+        const next = clampGeometry({
+          ...current,
+          width: Math.round(bounds.width),
+          height: Math.round(bounds.height),
+        });
+        return next.width === current.width && next.height === current.height ? current : next;
+      });
+    });
+    observer.observe(chat);
+    return () => observer.disconnect();
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || isMobileViewport()) return;
+    if (skipGeometryWriteRef.current) {
+      skipGeometryWriteRef.current = false;
+      return;
+    }
+    writeGeometry(userId, geometry);
+  }, [geometry, isOpen, userId]);
+
+  useEffect(() => {
+    const handleResize = () => setGeometry((current) => clampGeometry(current));
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useEffect(() => () => invalidateActiveOperation(), [invalidateActiveOperation]);
+
+  const finishRun = useCallback(async (run: AssistantRun, operationVersion: number) => {
+    if (activeOperationVersionRef.current !== operationVersion) return;
+    setActiveRun(run);
+    if (run.status === 'FAILED') {
+      setError(run.errorCode ?? 'Не удалось сформировать ответ');
+      setIsSending(false);
+      return;
+    }
+    if (run.status !== 'COMPLETED') return;
+
+    completionRequestRef.current?.abort();
+    const controller = new AbortController();
+    completionRequestRef.current = controller;
+    const detail = await getAssistantConversation(accessToken, run.conversationId, controller.signal);
+    if (activeOperationVersionRef.current !== operationVersion) return;
+    setConversation(detail.conversation);
+    setOptimisticContent(null);
+    setIsSending(false);
+    pendingSubmissionRef.current = null;
+    await refreshHistory(controller.signal);
+  }, [accessToken, refreshHistory]);
+
+  useEffect(() => {
+    if (!activeRun || activeRun.status === 'COMPLETED' || activeRun.status === 'FAILED') return;
+    const controller = new AbortController();
+    const operationVersion = activeOperationVersionRef.current;
+
+    void (async () => {
+      try {
+        while (!controller.signal.aborted) {
+          await waitForPoll(controller.signal);
+          const response = await getAssistantRun(accessToken, activeRun.id, controller.signal);
+          if (response.run.status === 'COMPLETED' || response.run.status === 'FAILED') {
+            await finishRun(response.run, operationVersion);
+            return;
+          }
+          if (activeOperationVersionRef.current !== operationVersion) return;
+          setActiveRun(response.run);
+        }
+      } catch (pollError) {
+        if (controller.signal.aborted || activeOperationVersionRef.current !== operationVersion) return;
+        setError(readErrorMessage(pollError));
+        setIsSending(false);
+      }
+    })();
+
+    return () => controller.abort();
+  }, [accessToken, activeRun?.id, activeRun?.status, finishRun]);
+
+  const loadConversation = useCallback(async (conversationId: string) => {
+    invalidateActiveOperation();
+    const operationVersion = activeOperationVersionRef.current;
+    const controller = new AbortController();
+    conversationRequestRef.current = controller;
+    setError(null);
+    setActiveRun(null);
+    setOptimisticContent(null);
+    setIsSending(false);
+    pendingSubmissionRef.current = null;
+
+    try {
+      const response = await getAssistantConversation(accessToken, conversationId, controller.signal);
+      if (activeOperationVersionRef.current !== operationVersion) return;
+      setConversation(response.conversation);
+      setIsHistoryOpen(false);
+    } catch (loadError) {
+      if (!controller.signal.aborted) setError(readErrorMessage(loadError));
+    }
+  }, [accessToken, invalidateActiveOperation]);
+
+  const sendPendingSubmission = useCallback(async (submission: PendingSubmission) => {
+    sendRequestRef.current?.abort();
+    activeOperationVersionRef.current += 1;
+    const operationVersion = activeOperationVersionRef.current;
+    const controller = new AbortController();
+    sendRequestRef.current = controller;
+    setError(null);
+    setIsSending(true);
+    setOptimisticContent(submission.content);
+
+    try {
+      let conversationId = submission.conversationId;
+      if (!conversationId) {
+        const created = await createAssistantConversation(accessToken, controller.signal);
+        if (activeOperationVersionRef.current !== operationVersion) return;
+        conversationId = created.conversation.id;
+        setConversation(created.conversation);
+        submission = { ...submission, conversationId };
+        pendingSubmissionRef.current = submission;
+      }
+
+      const response = await sendAssistantMessage({
+        accessToken,
+        conversationId,
+        idempotencyKey: submission.idempotencyKey,
+        message: { content: submission.content, context: submission.context },
+        signal: controller.signal,
+      });
+      if (activeOperationVersionRef.current !== operationVersion) return;
+      setActiveRun(response.run);
+      if (response.run.status === 'COMPLETED' || response.run.status === 'FAILED') {
+        await finishRun(response.run, operationVersion);
+      }
+    } catch (sendError) {
+      if (controller.signal.aborted || activeOperationVersionRef.current !== operationVersion) return;
+      setError(readErrorMessage(sendError));
+      setIsSending(false);
+    }
+  }, [accessToken, finishRun]);
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const content = draft.trim();
+    if (!content || isSending) return;
+
+    const submission: PendingSubmission = {
+      content,
+      context: pageContext,
+      conversationId: conversation?.id ?? null,
+      idempotencyKey: crypto.randomUUID(),
+    };
+    pendingSubmissionRef.current = submission;
+    setDraft('');
+    void sendPendingSubmission(submission);
+  };
+
+  const handleRetry = () => {
+    const submission = pendingSubmissionRef.current;
+    if (submission && !isSending) void sendPendingSubmission(submission);
+  };
+
+  const handleNewConversation = () => {
+    invalidateActiveOperation();
+    setConversation(null);
+    setActiveRun(null);
+    setOptimisticContent(null);
+    setError(null);
+    setIsHistoryOpen(false);
+    pendingSubmissionRef.current = null;
+    window.requestAnimationFrame(() => composerRef.current?.focus());
+  };
+
+  const handleDragStart = (event: ReactPointerEvent<HTMLElement>) => {
+    if (isMobileViewport() || event.button !== 0 || (event.target as Element).closest('button')) return;
+    dragRef.current = {
+      pointerId: event.pointerId,
+      originX: event.clientX,
+      originY: event.clientY,
+      startLeft: geometry.left,
+      startTop: geometry.top,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handleDragMove = (event: ReactPointerEvent<HTMLElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    setGeometry(clampGeometry({
+      ...geometry,
+      left: drag.startLeft + event.clientX - drag.originX,
+      top: drag.startTop + event.clientY - drag.originY,
+    }));
+  };
+
+  const handleDragEnd = (event: ReactPointerEvent<HTMLElement>) => {
+    if (dragRef.current?.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  const resetGeometry = () => {
+    removeGeometry(userId);
+    skipGeometryWriteRef.current = true;
+    setGeometry(defaultGeometry());
+  };
+
+  const latestProgress = activeRun?.status === 'RUNNING' || activeRun?.status === 'PENDING'
+    ? activeRun.progressEvents.at(-1) ?? null
+    : null;
+  const renderedMessages = useMemo(() => conversation?.messages ?? [], [conversation]);
+
+  if (!enabled) return null;
+
+  return (
+    <>
+      {!isOpen ? (
+        <button
+          aria-label="Открыть ИИ-помощника"
+          className="assistant-launcher"
+          type="button"
+          onClick={() => setIsOpen(true)}
+        >
+          <img src={logoUrl} alt="" aria-hidden="true" />
+          <MessageCircleIcon aria-hidden="true" />
+        </button>
+      ) : (
+        <section
+          ref={chatRef}
+          aria-label="ИИ-помощник по недвижимости"
+          className="assistant-chat"
+          data-assistant-chat
+          role="dialog"
+          style={{
+            left: geometry.left,
+            top: geometry.top,
+            width: geometry.width,
+            height: geometry.height,
+          }}
+        >
+          <header
+            className="assistant-chat-header"
+            data-assistant-drag-handle
+            onPointerDown={handleDragStart}
+            onPointerMove={handleDragMove}
+            onPointerUp={handleDragEnd}
+            onPointerCancel={handleDragEnd}
+          >
+            <div className="assistant-chat-heading">
+              <img src={logoUrl} alt="" aria-hidden="true" />
+              <div>
+                <strong>Помощник по недвижимости</strong>
+                <span>Тестовый поиск Platforma</span>
+              </div>
+            </div>
+            <div className="assistant-chat-controls">
+              <button
+                aria-label="История разговоров"
+                aria-pressed={isHistoryOpen}
+                type="button"
+                onClick={() => setIsHistoryOpen((current) => !current)}
+              >
+                <Clock3Icon aria-hidden="true" />
+              </button>
+              <button aria-label="Сбросить размер и положение" type="button" onClick={resetGeometry}>
+                <RotateCcwIcon aria-hidden="true" />
+              </button>
+              <button aria-label="Закрыть помощника" type="button" onClick={() => setIsOpen(false)}>
+                <XIcon aria-hidden="true" />
+              </button>
+            </div>
+          </header>
+
+          <div className={isHistoryOpen ? 'assistant-chat-layout assistant-chat-layout--history' : 'assistant-chat-layout'}>
+            {isHistoryOpen ? (
+              <aside className="assistant-history" aria-label="История разговоров">
+                <button className="assistant-history-new" type="button" onClick={handleNewConversation}>
+                  <PlusIcon aria-hidden="true" />
+                  Новый разговор
+                </button>
+                <div className="assistant-history-list">
+                  {conversations.length === 0 ? (
+                    <p>За последние 30 дней разговоров нет.</p>
+                  ) : conversations.map((item) => (
+                    <button
+                      className={item.id === conversation?.id ? 'assistant-history-item assistant-history-item--active' : 'assistant-history-item'}
+                      key={item.id}
+                      type="button"
+                      onClick={() => void loadConversation(item.id)}
+                    >
+                      <strong>{item.title}</strong>
+                      <span>{formatConversationDate(item.updatedAt)}</span>
+                    </button>
+                  ))}
+                </div>
+              </aside>
+            ) : null}
+
+            <div className="assistant-conversation">
+              <div ref={messagesRef} className="assistant-messages" aria-live="polite">
+                {renderedMessages.length === 0 && !optimisticContent ? (
+                  <div className="assistant-empty">
+                    <MessageCircleIcon aria-hidden="true" />
+                    <strong>С чего начнём?</strong>
+                    <p>Напишите вопрос по недвижимости или условия поиска.</p>
+                  </div>
+                ) : null}
+                {renderedMessages.map((message) => (
+                  <article
+                    className={`assistant-message assistant-message--${message.role.toLocaleLowerCase('en-US')}`}
+                    key={message.id}
+                  >
+                    <span>{message.role === 'USER' ? 'Вы' : 'Помощник'}</span>
+                    <p>{message.content}</p>
+                  </article>
+                ))}
+                {optimisticContent && !renderedMessages.some((message) => message.content === optimisticContent) ? (
+                  <article className="assistant-message assistant-message--user assistant-message--pending">
+                    <span>Вы</span>
+                    <p>{optimisticContent}</p>
+                  </article>
+                ) : null}
+                {latestProgress ? (
+                  <div className="assistant-progress" role="status">
+                    <span aria-hidden="true" />
+                    {latestProgress.label}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="assistant-composer-area">
+                {pageContext ? (
+                  <div className="assistant-context-chip">
+                    <span>{pageContext.label}</span>
+                    <button
+                      aria-label={`Убрать контекст «${pageContext.label}»`}
+                      type="button"
+                      onClick={() => setPageContext(null)}
+                    >
+                      <XIcon aria-hidden="true" />
+                    </button>
+                  </div>
+                ) : null}
+                {error ? (
+                  <div className="assistant-error" role="alert">
+                    <p>{error}</p>
+                    {pendingSubmissionRef.current ? (
+                      <button type="button" onClick={handleRetry} disabled={isSending}>
+                        Повторить отправку
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+                <form className="assistant-composer" onSubmit={handleSubmit}>
+                  <label htmlFor="assistant-message-input">Сообщение помощнику</label>
+                  <textarea
+                    ref={composerRef}
+                    id="assistant-message-input"
+                    maxLength={4_000}
+                    placeholder="Например: найди квартиру рядом с Павелецкой"
+                    rows={2}
+                    value={draft}
+                    onChange={(event) => setDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                        event.currentTarget.form?.requestSubmit();
+                      }
+                    }}
+                  />
+                  <button aria-label="Отправить" disabled={isSending || draft.trim().length === 0} type="submit">
+                    <SendIcon aria-hidden="true" />
+                  </button>
+                </form>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+    </>
+  );
+}
+
+function resolvePageContext(pathname: string, search: string): AssistantPageContext | null {
+  const lotMatch = pathname.match(/^\/objects\/([^/]+)\/lots\/([^/]+)\/?$/u);
+  if (lotMatch?.[2]) {
+    return { kind: 'LOT', key: decodePathValue(lotMatch[2]), label: 'Текущий лот' };
+  }
+  const objectMatch = pathname.match(/^\/objects\/([^/]+)\/?$/u);
+  if (objectMatch?.[1]) {
+    return { kind: 'OBJECT', key: decodePathValue(objectMatch[1]), label: 'Текущий ЖК' };
+  }
+  if (pathname.startsWith('/catalog')) {
+    const params = new URLSearchParams(search);
+    const developerId = params.get('developerId');
+    if (developerId) {
+      return { kind: 'DEVELOPER', key: developerId, label: 'Застройщик из фильтра' };
+    }
+    if ([...params.keys()].length > 0) {
+      return { kind: 'CATALOG_FILTERS', key: params.toString(), label: 'Фильтры каталога' };
+    }
+  }
+  return null;
+}
+
+function decodePathValue(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function geometryKey(userId: string) {
+  return `platforma-assistant-geometry:${userId}`;
+}
+
+function readGeometry(userId: string) {
+  try {
+    const raw = localStorage.getItem(geometryKey(userId));
+    if (!raw) return defaultGeometry();
+    const value = JSON.parse(raw) as Partial<AssistantGeometry>;
+    if (
+      !Number.isFinite(value.left) ||
+      !Number.isFinite(value.top) ||
+      !Number.isFinite(value.width) ||
+      !Number.isFinite(value.height)
+    ) return defaultGeometry();
+    return clampGeometry(value as AssistantGeometry);
+  } catch {
+    return defaultGeometry();
+  }
+}
+
+function writeGeometry(userId: string, geometry: AssistantGeometry) {
+  try {
+    localStorage.setItem(geometryKey(userId), JSON.stringify(geometry));
+  } catch {
+    // The chat remains usable when browser storage is unavailable.
+  }
+}
+
+function removeGeometry(userId: string) {
+  try {
+    localStorage.removeItem(geometryKey(userId));
+  } catch {
+    // The reset still applies to the current session.
+  }
+}
+
+function defaultGeometry(): AssistantGeometry {
+  const width = Math.min(460, Math.max(360, window.innerWidth - 32));
+  const height = Math.min(680, Math.max(480, window.innerHeight - 48));
+  return clampGeometry({
+    left: window.innerWidth - width - 24,
+    top: window.innerHeight - height - 24,
+    width,
+    height,
+  });
+}
+
+function clampGeometry(value: AssistantGeometry): AssistantGeometry {
+  const margin = 12;
+  const width = Math.min(Math.max(360, value.width), Math.max(360, window.innerWidth - margin * 2));
+  const height = Math.min(Math.max(480, value.height), Math.max(480, window.innerHeight - margin * 2));
+  return {
+    left: Math.min(Math.max(margin, value.left), Math.max(margin, window.innerWidth - width - margin)),
+    top: Math.min(Math.max(margin, value.top), Math.max(margin, window.innerHeight - height - margin)),
+    width,
+    height,
+  };
+}
+
+function isMobileViewport() {
+  return window.matchMedia(mobileMediaQuery).matches;
+}
+
+function waitForPoll(signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => {
+      signal.removeEventListener('abort', handleAbort);
+      resolve();
+    }, pollIntervalMs);
+    const handleAbort = () => {
+      window.clearTimeout(timeoutId);
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    signal.addEventListener('abort', handleAbort, { once: true });
+  });
+}
+
+function readErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : 'Не удалось выполнить запрос';
+}
+
+function formatConversationDate(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? ''
+    : new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: 'short' }).format(date);
+}

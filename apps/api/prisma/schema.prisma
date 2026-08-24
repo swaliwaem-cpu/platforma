@@ -332,6 +332,22 @@ enum TrainingFactSourceType {
   @@map("training_fact_source_type")
 }
 
+enum AssistantMessageRole {
+  USER      @map("user")
+  ASSISTANT @map("assistant")
+
+  @@map("assistant_message_role")
+}
+
+enum AssistantRunStatus {
+  PENDING   @map("pending")
+  RUNNING   @map("running")
+  COMPLETED @map("completed")
+  FAILED    @map("failed")
+
+  @@map("assistant_run_status")
+}
+
 model User {
   id                    String     @id @default(uuid()) @db.Uuid
   email                 String     @unique @db.VarChar(320)
@@ -371,11 +387,72 @@ model User {
   trainingProjectAssignments     TrainingProjectAssignment[] @relation("TrainingProjectAssignee")
   assignedTrainingProjects       TrainingProjectAssignment[] @relation("TrainingProjectAssigner")
   trainingAudioDeletionManifests TrainingAudioDeletionManifest[] @relation("TrainingAudioDeletionManifestCreator")
+  assistantConversations         AssistantConversation[]
+  assistantRuns                  AssistantRun[]
 
   @@index([roleId])
   @@index([profilePhotoFileId])
   @@index([status])
   @@map("users")
+}
+
+model AssistantConversation {
+  id          String   @id @default(uuid()) @db.Uuid
+  ownerUserId String   @map("owner_user_id") @db.Uuid
+  title       String   @default("Новый разговор") @db.VarChar(160)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  owner    User               @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  messages AssistantMessage[]
+  runs     AssistantRun[]
+
+  @@index([ownerUserId, updatedAt])
+  @@map("assistant_conversations")
+}
+
+model AssistantMessage {
+  id             String               @id @default(uuid()) @db.Uuid
+  conversationId String               @map("conversation_id") @db.Uuid
+  role           AssistantMessageRole
+  content        String               @db.Text
+  contextJson    Json?                @map("context_json")
+  createdAt      DateTime             @default(now()) @map("created_at")
+
+  conversation     AssistantConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userMessageRun   AssistantRun?         @relation("AssistantRunUserMessage")
+  assistantRun     AssistantRun?         @relation("AssistantRunAssistantMessage")
+
+  @@index([conversationId, createdAt])
+  @@map("assistant_messages")
+}
+
+model AssistantRun {
+  id                 String             @id @default(uuid()) @db.Uuid
+  ownerUserId        String             @map("owner_user_id") @db.Uuid
+  conversationId     String             @map("conversation_id") @db.Uuid
+  userMessageId      String             @unique @map("user_message_id") @db.Uuid
+  assistantMessageId String?            @unique @map("assistant_message_id") @db.Uuid
+  idempotencyKey     String             @map("idempotency_key") @db.Uuid
+  requestHash        String             @map("request_hash") @db.Char(64)
+  status             AssistantRunStatus @default(PENDING)
+  progressJson       Json               @default("[]") @map("progress_json")
+  errorCode          String?            @map("error_code") @db.VarChar(120)
+  startedAt          DateTime?          @map("started_at")
+  completedAt        DateTime?          @map("completed_at")
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+
+  owner            User                  @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  conversation     AssistantConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userMessage      AssistantMessage      @relation("AssistantRunUserMessage", fields: [userMessageId], references: [id], onDelete: Cascade)
+  assistantMessage AssistantMessage?     @relation("AssistantRunAssistantMessage", fields: [assistantMessageId], references: [id], onDelete: SetNull)
+
+  @@unique([ownerUserId, idempotencyKey])
+  @@index([conversationId, createdAt])
+  @@index([ownerUserId, createdAt])
+  @@index([status, updatedAt])
+  @@map("assistant_runs")
 }
 
 model UserSession {

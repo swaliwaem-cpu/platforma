@@ -77,6 +77,12 @@ const ObjectLotDetailPage = lazy(() =>
   })),
 );
 
+const AssistantChat = lazy(() =>
+  import('./assistant/AssistantChat').then((module) => ({
+    default: module.AssistantChat,
+  })),
+);
+
 const userStatusLabels: Record<UserStatus, string> = {
   ACTIVE: 'Активен',
   BLOCKED: 'Заблокирован',
@@ -564,6 +570,16 @@ function AppRoutes() {
           <CabinetHome navigate={navigate} />
         )}
       </section>
+      {accessToken && hasPermission('objects:read') ? (
+        <Suspense fallback={null}>
+          <AssistantChat
+            accessToken={accessToken}
+            logoUrl={platformLogoUrl}
+            pathname={pathname}
+            userId={user.id}
+          />
+        </Suspense>
+      ) : null}
     </main>
   );
 }
