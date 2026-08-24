@@ -7,6 +7,7 @@ import {
   HttpStatus,
   Param,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 
@@ -31,14 +32,20 @@ export class AssistantController {
 
   @Get('conversations')
   @UseGuards(AssistantFeatureGuard)
-  listConversations(@CurrentUser() actor: AuthenticatedUser) {
-    return this.assistant.listConversations(actor.id);
+  listConversations(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.assistant.listConversations(actor.id, cursor);
   }
 
   @Post('conversations')
   @UseGuards(AssistantFeatureGuard)
-  createConversation(@CurrentUser() actor: AuthenticatedUser) {
-    return this.assistant.createConversation(actor.id);
+  createConversation(
+    @Headers('Idempotency-Key') idempotencyKey: string | undefined,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.assistant.createConversation(actor.id, idempotencyKey);
   }
 
   @Get('conversations/:conversationId')

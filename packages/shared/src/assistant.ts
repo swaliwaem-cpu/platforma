@@ -58,6 +58,7 @@ export type AssistantConversationResponse = {
 
 export type AssistantConversationsResponse = {
   items: AssistantConversationSummary[];
+  nextCursor: string | null;
 };
 
 export type AssistantRunResponse = {

@@ -30,12 +30,14 @@ import {
   listAssistantConversations,
   sendAssistantMessage,
 } from './assistantApi';
+import { appLocationChangeEventName } from '../navigation/appLocation';
 import './assistant.css';
 
 type AssistantChatProps = {
   accessToken: string;
   logoUrl: string;
   pathname: string;
+  search: string;
   userId: string;
 };
 
@@ -64,12 +66,17 @@ type DragState = {
 const mobileMediaQuery = '(max-width: 760px)';
 const pollIntervalMs = 180;
 
-export function AssistantChat({ accessToken, logoUrl, pathname, userId }: AssistantChatProps) {
+export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }: AssistantChatProps) {
   const [enabled, setEnabled] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [conversations, setConversations] = useState<AssistantConversationSummary[]>([]);
+  const [historyCursor, setHistoryCursor] = useState<string | null>(null);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [conversation, setConversation] = useState<AssistantConversation | null>(null);
+  const [isConversationLoading, setIsConversationLoading] = useState(false);
+  const [failedConversationId, setFailedConversationId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [pageContext, setPageContext] = useState<AssistantPageContext | null>(null);
   const [activeRun, setActiveRun] = useState<AssistantRun | null>(null);
@@ -83,6 +90,8 @@ export function AssistantChat({ accessToken, logoUrl, pathname, userId }: Assist
   const dragRef = useRef<DragState | null>(null);
   const pendingSubmissionRef = useRef<PendingSubmission | null>(null);
   const conversationRequestRef = useRef<AbortController | null>(null);
+  const historyRequestRef = useRef<AbortController | null>(null);
+  const historyRequestVersionRef = useRef(0);
   const sendRequestRef = useRef<AbortController | null>(null);
   const completionRequestRef = useRef<AbortController | null>(null);
   const activeOperationVersionRef = useRef(0);
@@ -93,6 +102,7 @@ export function AssistantChat({ accessToken, logoUrl, pathname, userId }: Assist
     sendRequestRef.current?.abort();
     completionRequestRef.current?.abort();
     conversationRequestRef.current?.abort();
+    historyRequestRef.current?.abort();
   }, []);
 
   useEffect(() => {
@@ -105,16 +115,46 @@ export function AssistantChat({ accessToken, logoUrl, pathname, userId }: Assist
     return () => controller.abort();
   }, [accessToken]);
 
-  const refreshHistory = useCallback(async (signal?: AbortSignal) => {
-    const response = await listAssistantConversations(accessToken, signal);
-    setConversations(response.items);
-    return response.items;
+  const loadHistory = useCallback(async (cursor: string | null, signal?: AbortSignal) => {
+    historyRequestRef.current?.abort();
+    historyRequestVersionRef.current += 1;
+    const requestVersion = historyRequestVersionRef.current;
+    const controller = new AbortController();
+    const handleParentAbort = () => controller.abort();
+    historyRequestRef.current = controller;
+    if (signal?.aborted) controller.abort();
+    else signal?.addEventListener('abort', handleParentAbort, { once: true });
+    setIsHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const response = await listAssistantConversations(accessToken, cursor, controller.signal);
+      if (historyRequestVersionRef.current !== requestVersion) return;
+      setConversations((current) => cursor
+        ? mergeConversationHistory(current, response.items)
+        : response.items);
+      setHistoryCursor(response.nextCursor);
+    } catch (loadError) {
+      if (!controller.signal.aborted && historyRequestVersionRef.current === requestVersion) {
+        setHistoryError(readErrorMessage(loadError));
+      }
+    } finally {
+      signal?.removeEventListener('abort', handleParentAbort);
+      if (historyRequestVersionRef.current === requestVersion) {
+        historyRequestRef.current = null;
+        setIsHistoryLoading(false);
+      }
+    }
   }, [accessToken]);
+
+  const refreshHistory = useCallback(
+    (signal?: AbortSignal) => loadHistory(null, signal),
+    [loadHistory],
+  );
 
   useEffect(() => {
     if (!enabled) return;
     const controller = new AbortController();
-    void refreshHistory(controller.signal).catch(() => undefined);
+    void refreshHistory(controller.signal);
     return () => controller.abort();
   }, [enabled, refreshHistory]);
 
@@ -124,8 +164,13 @@ export function AssistantChat({ accessToken, logoUrl, pathname, userId }: Assist
 
   useEffect(() => {
     if (!isOpen) return;
-    setPageContext(resolvePageContext(window.location.pathname, window.location.search));
-  }, [isOpen, pathname]);
+    const updateContext = () => {
+      setPageContext(resolvePageContext(window.location.pathname, window.location.search));
+    };
+    updateContext();
+    window.addEventListener(appLocationChangeEventName, updateContext);
+    return () => window.removeEventListener(appLocationChangeEventName, updateContext);
+  }, [isOpen, pathname, search]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -235,6 +280,9 @@ export function AssistantChat({ accessToken, logoUrl, pathname, userId }: Assist
     const controller = new AbortController();
     conversationRequestRef.current = controller;
     setError(null);
+    setFailedConversationId(null);
+    setIsConversationLoading(true);
+    setConversation(null);
     setActiveRun(null);
     setOptimisticContent(null);
     setIsSending(false);
@@ -246,7 +294,14 @@ export function AssistantChat({ accessToken, logoUrl, pathname, userId }: Assist
       setConversation(response.conversation);
       setIsHistoryOpen(false);
     } catch (loadError) {
-      if (!controller.signal.aborted) setError(readErrorMessage(loadError));
+      if (!controller.signal.aborted) {
+        setError(readErrorMessage(loadError));
+        setFailedConversationId(conversationId);
+      }
+    } finally {
+      if (!controller.signal.aborted && activeOperationVersionRef.current === operationVersion) {
+        setIsConversationLoading(false);
+      }
     }
   }, [accessToken, invalidateActiveOperation]);
 
@@ -263,7 +318,11 @@ export function AssistantChat({ accessToken, logoUrl, pathname, userId }: Assist
     try {
       let conversationId = submission.conversationId;
       if (!conversationId) {
-        const created = await createAssistantConversation(accessToken, controller.signal);
+        const created = await createAssistantConversation(
+          accessToken,
+          submission.idempotencyKey,
+          controller.signal,
+        );
         if (activeOperationVersionRef.current !== operationVersion) return;
         conversationId = created.conversation.id;
         setConversation(created.conversation);
@@ -317,6 +376,8 @@ export function AssistantChat({ accessToken, logoUrl, pathname, userId }: Assist
     setActiveRun(null);
     setOptimisticContent(null);
     setError(null);
+    setFailedConversationId(null);
+    setIsConversationLoading(false);
     setIsHistoryOpen(false);
     pendingSubmissionRef.current = null;
     window.requestAnimationFrame(() => composerRef.current?.focus());
@@ -361,6 +422,8 @@ export function AssistantChat({ accessToken, logoUrl, pathname, userId }: Assist
   const latestProgress = activeRun?.status === 'RUNNING' || activeRun?.status === 'PENDING'
     ? activeRun.progressEvents.at(-1) ?? null
     : null;
+  const progressLabel = latestProgress?.label
+    ?? (isSending && activeRun?.status === 'PENDING' ? 'Понимаю запрос' : null);
   const renderedMessages = useMemo(() => conversation?.messages ?? [], [conversation]);
 
   if (!enabled) return null;
@@ -432,7 +495,16 @@ export function AssistantChat({ accessToken, logoUrl, pathname, userId }: Assist
                   Новый разговор
                 </button>
                 <div className="assistant-history-list">
-                  {conversations.length === 0 ? (
+                  {isHistoryLoading && conversations.length === 0 ? (
+                    <p role="status">Загружаю историю</p>
+                  ) : historyError && conversations.length === 0 ? (
+                    <div className="assistant-history-error" role="alert">
+                      <p>{historyError}</p>
+                      <button type="button" onClick={() => void refreshHistory()}>
+                        Повторить загрузку истории
+                      </button>
+                    </div>
+                  ) : conversations.length === 0 ? (
                     <p>За последние 30 дней разговоров нет.</p>
                   ) : conversations.map((item) => (
                     <button
@@ -445,13 +517,36 @@ export function AssistantChat({ accessToken, logoUrl, pathname, userId }: Assist
                       <span>{formatConversationDate(item.updatedAt)}</span>
                     </button>
                   ))}
+                  {historyError && conversations.length > 0 ? (
+                    <div className="assistant-history-error" role="alert">
+                      <p>{historyError}</p>
+                      <button type="button" onClick={() => void loadHistory(historyCursor)}>
+                        Повторить
+                      </button>
+                    </div>
+                  ) : null}
+                  {historyCursor && !historyError ? (
+                    <button
+                      className="assistant-history-more"
+                      disabled={isHistoryLoading}
+                      type="button"
+                      onClick={() => void loadHistory(historyCursor)}
+                    >
+                      {isHistoryLoading ? 'Загружаю историю' : 'Показать ещё'}
+                    </button>
+                  ) : null}
                 </div>
               </aside>
             ) : null}
 
             <div className="assistant-conversation">
               <div ref={messagesRef} className="assistant-messages" aria-live="polite">
-                {renderedMessages.length === 0 && !optimisticContent ? (
+                {isConversationLoading ? (
+                  <div className="assistant-progress" role="status">
+                    <span aria-hidden="true" />
+                    Загружаю разговор
+                  </div>
+                ) : renderedMessages.length === 0 && !optimisticContent ? (
                   <div className="assistant-empty">
                     <MessageCircleIcon aria-hidden="true" />
                     <strong>С чего начнём?</strong>
@@ -473,10 +568,10 @@ export function AssistantChat({ accessToken, logoUrl, pathname, userId }: Assist
                     <p>{optimisticContent}</p>
                   </article>
                 ) : null}
-                {latestProgress ? (
+                {progressLabel ? (
                   <div className="assistant-progress" role="status">
                     <span aria-hidden="true" />
-                    {latestProgress.label}
+                    {progressLabel}
                   </div>
                 ) : null}
               </div>
@@ -500,6 +595,10 @@ export function AssistantChat({ accessToken, logoUrl, pathname, userId }: Assist
                     {pendingSubmissionRef.current ? (
                       <button type="button" onClick={handleRetry} disabled={isSending}>
                         Повторить отправку
+                      </button>
+                    ) : failedConversationId ? (
+                      <button type="button" onClick={() => void loadConversation(failedConversationId)}>
+                        Повторить загрузку разговора
                       </button>
                     ) : null}
                   </div>
@@ -553,6 +652,15 @@ function resolvePageContext(pathname: string, search: string): AssistantPageCont
     }
   }
   return null;
+}
+
+function mergeConversationHistory(
+  current: AssistantConversationSummary[],
+  nextPage: AssistantConversationSummary[],
+) {
+  const byId = new Map(current.map((item) => [item.id, item]));
+  nextPage.forEach((item) => byId.set(item.id, item));
+  return [...byId.values()];
 }
 
 function decodePathValue(value: string) {

@@ -66,17 +66,41 @@ try {
   await desktop.getByRole('button', { name: 'Убрать контекст «Текущий ЖК»' }).click();
   assert.equal(await desktop.getByText('Текущий ЖК', { exact: true }).count(), 0);
 
+  await desktop.evaluate(() => {
+    history.pushState(null, '', '/catalog?developerId=developer-test');
+    window.dispatchEvent(new Event('platforma-location-changed'));
+  });
+  await desktop.getByText('Застройщик из фильтра', { exact: true }).waitFor();
+
+  await desktop.evaluate(() => {
+    window.__assistantProgressLabels = [];
+    const captureProgress = () => {
+      const label = document.querySelector('.assistant-progress')?.textContent?.trim();
+      if (label && !window.__assistantProgressLabels.includes(label)) {
+        window.__assistantProgressLabels.push(label);
+      }
+    };
+    window.__assistantProgressObserver = new MutationObserver(captureProgress);
+    window.__assistantProgressObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+    captureProgress();
+  });
+
   await desktop.getByLabel('Сообщение помощнику').fill('Найди квартиру рядом');
   await desktop.getByRole('button', { name: 'Отправить' }).click();
+  await desktop.getByText('TEMPORARY_CREATE_ERROR').waitFor();
+  await desktop.getByRole('button', { name: 'Повторить отправку' }).click();
   await desktop.getByText('TEMPORARY_ASSISTANT_ERROR').waitFor();
   await desktop.getByRole('button', { name: 'Повторить отправку' }).click();
   await desktop.getByText('Понимаю запрос').waitFor();
-  await desktop.getByText('Ищу данные').waitFor();
-  await desktop.getByText('Сравниваю варианты').waitFor();
-  await desktop.getByText('Формирую ответ').waitFor();
   await desktop.getByText('Тестовый помощник получил запрос: «Найди квартиру рядом».').waitFor();
+  assert.deepEqual(await desktop.evaluate(() => {
+    window.__assistantProgressObserver?.disconnect();
+    return window.__assistantProgressLabels;
+  }), ['Понимаю запрос', 'Ищу данные', 'Сравниваю варианты', 'Формирую ответ']);
   assert.equal(desktopState.messageIdempotencyKeys.length, 2);
   assert.equal(desktopState.messageIdempotencyKeys[0], desktopState.messageIdempotencyKeys[1]);
+  assert.equal(desktopState.conversationCreationKeys.length, 2);
+  assert.equal(desktopState.conversationCreationKeys[0], desktopState.conversationCreationKeys[1]);
 
   await desktop.getByRole('button', { name: 'История разговоров' }).click();
   await desktop.getByRole('button', { name: 'Найди квартиру рядом' }).waitFor();
@@ -89,7 +113,7 @@ try {
   await desktop.getByText('Недостаточно прав').waitFor();
   await dialog.waitFor();
   await desktop.getByText('Тестовый помощник получил запрос: «Найди квартиру рядом».').waitFor();
-  assert.equal(expectedRetryNetworkErrors, 1);
+  assert.equal(expectedRetryNetworkErrors, 2);
   assert.deepEqual(consoleIssues, []);
 
   await desktop.keyboard.press('Escape');
@@ -112,7 +136,7 @@ try {
 
   const mobile = await browser.newPage({ viewport: { width: 500, height: 900 } });
   await installRoutes(mobile, createAssistantState(), ['objects:read']);
-  await mobile.goto(`${baseUrl}/cabinet`, { waitUntil: 'domcontentloaded' });
+  await mobile.goto(`${baseUrl}/objects/zhk-mobile`, { waitUntil: 'domcontentloaded' });
   await mobile.getByRole('button', { name: 'Открыть ИИ-помощника' }).click();
   const mobileDialog = mobile.getByRole('dialog', { name: 'ИИ-помощник по недвижимости' });
   const mobileBox = await mobileDialog.boundingBox();
@@ -122,6 +146,10 @@ try {
   assert.equal(mobileBox.width, 500);
   assert.equal(mobileBox.height, 900);
   assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  const mobileContextCloseBox = await mobile.getByRole('button', { name: 'Убрать контекст «Текущий ЖК»' }).boundingBox();
+  const mobileSendBox = await mobile.getByRole('button', { name: 'Отправить' }).boundingBox();
+  assert.ok(mobileContextCloseBox && mobileContextCloseBox.width >= 44 && mobileContextCloseBox.height >= 44);
+  assert.ok(mobileSendBox && mobileSendBox.width >= 44 && mobileSendBox.height >= 44);
   await mobile.close();
 
   process.stdout.write('ASSISTANT_T01_BROWSER_OK\n');
@@ -133,6 +161,8 @@ function createAssistantState(overrides = {}) {
   return {
     enabled: true,
     conversationCreated: false,
+    conversationPosts: 0,
+    conversationCreationKeys: [],
     runReads: 0,
     messagePosts: 0,
     messageIdempotencyKeys: [],
@@ -177,12 +207,19 @@ async function installRoutes(page, state, permissions) {
     if (path === '/assistant/conversations' && request.method() === 'GET') {
       await json(route, {
         items: state.conversationCreated ? [conversationSummary()] : [],
+        nextCursor: null,
       });
       return;
     }
 
     if (path === '/assistant/conversations' && request.method() === 'POST') {
+      state.conversationPosts += 1;
+      state.conversationCreationKeys.push(request.headers()['idempotency-key']);
       state.conversationCreated = true;
+      if (state.conversationPosts === 1) {
+        await json(route, { message: 'TEMPORARY_CREATE_ERROR' }, 503);
+        return;
+      }
       await json(route, { conversation: conversationDetail([]) }, 201);
       return;
     }

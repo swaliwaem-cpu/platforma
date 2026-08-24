@@ -2,9 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
-  Logger,
   NotFoundException,
-  OnModuleDestroy,
 } from '@nestjs/common';
 import {
   AssistantMessageRole as PrismaAssistantMessageRole,
@@ -24,63 +22,114 @@ import type {
 import { createHash } from 'node:crypto';
 
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  AssistantRunProcessor,
+  assistantProgressDefinitions,
+} from './assistant-run.processor';
 
 const assistantHistoryDays = 30;
-const assistantHistoryLimit = 50;
+const assistantHistoryPageSize = 50;
+const assistantConversationMessageLimit = 200;
 const assistantMessageMaxLength = 4_000;
 const assistantContextKeyMaxLength = 512;
 const assistantContextLabelMaxLength = 160;
 const assistantConversationTitleMaxLength = 80;
+const assistantHistoryCursorMaxLength = 512;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const contextKinds = new Set(['OBJECT', 'LOT', 'DEVELOPER', 'CATALOG_FILTERS']);
-const progressDefinitions: readonly { step: AssistantProgressStep; label: string }[] = [
-  { step: 'UNDERSTANDING', label: 'Понимаю запрос' },
-  { step: 'SEARCHING', label: 'Ищу данные' },
-  { step: 'COMPARING', label: 'Сравниваю варианты' },
-  { step: 'ANSWERING', label: 'Формирую ответ' },
-];
+
+const messageSelect = {
+  id: true,
+  role: true,
+  content: true,
+  contextJson: true,
+  createdAt: true,
+} satisfies Prisma.AssistantMessageSelect;
+
+const conversationDetailInclude = {
+  messages: {
+    orderBy: [{ createdAt: 'asc' as const }, { id: 'asc' as const }],
+    take: assistantConversationMessageLimit,
+    select: messageSelect,
+  },
+  _count: { select: { messages: true } },
+} satisfies Prisma.AssistantConversationInclude;
+
+const conversationSummarySelect = {
+  id: true,
+  title: true,
+  createdAt: true,
+  updatedAt: true,
+  _count: { select: { messages: true } },
+} satisfies Prisma.AssistantConversationSelect;
 
 const runInclude = {
-  assistantMessage: true,
+  assistantMessage: { select: messageSelect },
 } satisfies Prisma.AssistantRunInclude;
 
+type StoredConversation = Prisma.AssistantConversationGetPayload<{
+  include: typeof conversationDetailInclude;
+}>;
+type StoredConversationSummary = Prisma.AssistantConversationGetPayload<{
+  select: typeof conversationSummarySelect;
+}>;
 type StoredRun = Prisma.AssistantRunGetPayload<{ include: typeof runInclude }>;
-type StoredMessage = Prisma.AssistantMessageGetPayload<Record<string, never>>;
+type StoredMessage = Prisma.AssistantMessageGetPayload<{ select: typeof messageSelect }>;
+type AssistantHistoryCursor = { id: string; updatedAt: Date };
 
 @Injectable()
-export class AssistantService implements OnModuleDestroy {
-  private readonly logger = new Logger(AssistantService.name);
-  private readonly activeTasks = new Set<Promise<void>>();
+export class AssistantService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly runProcessor: AssistantRunProcessor,
+  ) {}
 
-  constructor(private readonly prisma: PrismaService) {}
+  async createConversation(ownerUserId: string, idempotencyKeyValue: unknown) {
+    const creationKey = this.parseUuid(idempotencyKeyValue, 'Idempotency-Key');
+    const existing = await this.findConversationByCreationKey(ownerUserId, creationKey);
+    if (existing) return { conversation: this.serializeConversation(existing) };
 
-  async onModuleDestroy() {
-    await Promise.allSettled(this.activeTasks);
+    try {
+      const conversation = await this.prisma.assistantConversation.create({
+        data: { ownerUserId, creationKey },
+        include: conversationDetailInclude,
+      });
+      return { conversation: this.serializeConversation(conversation) };
+    } catch (error) {
+      if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
+        throw error;
+      }
+      const concurrent = await this.findConversationByCreationKey(ownerUserId, creationKey);
+      if (!concurrent) throw error;
+      return { conversation: this.serializeConversation(concurrent) };
+    }
   }
 
-  async createConversation(ownerUserId: string) {
-    const conversation = await this.prisma.assistantConversation.create({
-      data: { ownerUserId },
-      include: {
-        messages: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
-        _count: { select: { messages: true } },
-      },
-    });
-
-    return { conversation: this.serializeConversation(conversation) };
-  }
-
-  async listConversations(ownerUserId: string) {
+  async listConversations(ownerUserId: string, cursorValue?: unknown) {
     const cutoff = new Date(Date.now() - assistantHistoryDays * 24 * 60 * 60 * 1_000);
+    const cursor = this.parseHistoryCursor(cursorValue);
     const conversations = await this.prisma.assistantConversation.findMany({
-      where: { ownerUserId, updatedAt: { gte: cutoff } },
+      where: {
+        ownerUserId,
+        updatedAt: { gte: cutoff },
+        ...(cursor ? {
+          OR: [
+            { updatedAt: { lt: cursor.updatedAt } },
+            { updatedAt: cursor.updatedAt, id: { lt: cursor.id } },
+          ],
+        } : {}),
+      },
       orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
-      take: assistantHistoryLimit,
-      include: { _count: { select: { messages: true } } },
+      take: assistantHistoryPageSize + 1,
+      select: conversationSummarySelect,
     });
+    const page = conversations.slice(0, assistantHistoryPageSize);
 
     return {
-      items: conversations.map((conversation) => this.serializeConversationSummary(conversation)),
+      items: page.map((conversation) => this.serializeConversationSummary(conversation)),
+      nextCursor: conversations.length > assistantHistoryPageSize && page.length > 0
+        ? this.encodeHistoryCursor(page[page.length - 1]!)
+        : null,
     };
   }
 
@@ -88,10 +137,7 @@ export class AssistantService implements OnModuleDestroy {
     const normalizedConversationId = this.parseUuid(conversationId, 'conversationId');
     const conversation = await this.prisma.assistantConversation.findFirst({
       where: { id: normalizedConversationId, ownerUserId },
-      include: {
-        messages: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
-        _count: { select: { messages: true } },
-      },
+      include: conversationDetailInclude,
     });
 
     if (!conversation) throw new NotFoundException('ASSISTANT_CONVERSATION_NOT_FOUND');
@@ -112,14 +158,38 @@ export class AssistantService implements OnModuleDestroy {
 
     if (existing) return this.replayExistingRun(existing, conversationId, requestHash);
 
-    let run: StoredRun;
+    let transactionResult: { run: StoredRun; created: boolean };
     try {
-      run = await this.prisma.$transaction(async (transaction) => {
+      transactionResult = await this.prisma.$transaction(async (transaction) => {
+        await transaction.$queryRaw(Prisma.sql`
+          SELECT "id"
+          FROM "assistant_conversations"
+          WHERE "id" = ${conversationId}::uuid
+          FOR UPDATE
+        `);
+        const concurrent = await transaction.assistantRun.findUnique({
+          where: {
+            ownerUserId_idempotencyKey: {
+              ownerUserId: input.ownerUserId,
+              idempotencyKey,
+            },
+          },
+          include: runInclude,
+        });
+        if (concurrent) return { run: concurrent, created: false };
+
         const conversation = await transaction.assistantConversation.findFirst({
           where: { id: conversationId, ownerUserId: input.ownerUserId },
-          select: { id: true, title: true },
+          select: {
+            id: true,
+            title: true,
+            _count: { select: { messages: true } },
+          },
         });
         if (!conversation) throw new NotFoundException('ASSISTANT_CONVERSATION_NOT_FOUND');
+        if (conversation._count.messages + 2 > assistantConversationMessageLimit) {
+          throw new ConflictException('ASSISTANT_CONVERSATION_MESSAGE_LIMIT_REACHED');
+        }
 
         const userMessage = await transaction.assistantMessage.create({
           data: {
@@ -150,7 +220,7 @@ export class AssistantService implements OnModuleDestroy {
           },
         });
 
-        return createdRun;
+        return { run: createdRun, created: true };
       });
     } catch (error) {
       if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
@@ -161,7 +231,12 @@ export class AssistantService implements OnModuleDestroy {
       return this.replayExistingRun(concurrent, conversationId, requestHash);
     }
 
-    this.queueRun(run.id);
+    if (!transactionResult.created) {
+      return this.replayExistingRun(transactionResult.run, conversationId, requestHash);
+    }
+
+    const run = transactionResult.run;
+    this.runProcessor.queueRun(run.id);
     return { run: this.serializeRun(run) };
   }
 
@@ -181,9 +256,8 @@ export class AssistantService implements OnModuleDestroy {
       throw new ConflictException('ASSISTANT_IDEMPOTENCY_KEY_REUSED');
     }
 
-    let run = existing;
     if (existing.status === PrismaAssistantRunStatus.FAILED) {
-      const retried = await this.prisma.assistantRun.updateMany({
+      await this.prisma.assistantRun.updateMany({
         where: { id: existing.id, status: PrismaAssistantRunStatus.FAILED },
         data: {
           status: PrismaAssistantRunStatus.PENDING,
@@ -191,18 +265,25 @@ export class AssistantService implements OnModuleDestroy {
           errorCode: null,
           startedAt: null,
           completedAt: null,
+          leaseOwner: null,
+          leaseExpiresAt: null,
         },
       });
-      if (retried.count === 1) {
-        run = await this.prisma.assistantRun.findUniqueOrThrow({
-          where: { id: existing.id },
-          include: runInclude,
-        });
-      }
     }
 
-    if (run.status === PrismaAssistantRunStatus.PENDING) this.queueRun(run.id);
+    const run = await this.prisma.assistantRun.findUniqueOrThrow({
+      where: { id: existing.id },
+      include: runInclude,
+    });
+    if (run.status === PrismaAssistantRunStatus.PENDING) this.runProcessor.queueRun(run.id);
     return { run: this.serializeRun(run) };
+  }
+
+  private findConversationByCreationKey(ownerUserId: string, creationKey: string) {
+    return this.prisma.assistantConversation.findUnique({
+      where: { ownerUserId_creationKey: { ownerUserId, creationKey } },
+      include: conversationDetailInclude,
+    });
   }
 
   private findRunByIdempotencyKey(ownerUserId: string, idempotencyKey: string) {
@@ -210,72 +291,6 @@ export class AssistantService implements OnModuleDestroy {
       where: { ownerUserId_idempotencyKey: { ownerUserId, idempotencyKey } },
       include: runInclude,
     });
-  }
-
-  private queueRun(runId: string) {
-    const task = Promise.resolve()
-      .then(() => this.executeRun(runId))
-      .finally(() => this.activeTasks.delete(task));
-    this.activeTasks.add(task);
-  }
-
-  private async executeRun(runId: string) {
-    const claimed = await this.prisma.assistantRun.updateMany({
-      where: { id: runId, status: PrismaAssistantRunStatus.PENDING },
-      data: { status: PrismaAssistantRunStatus.RUNNING, startedAt: new Date() },
-    });
-    if (claimed.count !== 1) return;
-
-    try {
-      const run = await this.prisma.assistantRun.findUniqueOrThrow({
-        where: { id: runId },
-        include: { userMessage: true },
-      });
-      const events: AssistantProgressEvent[] = [];
-      const delayMs = this.getFakeStepDelayMs();
-
-      for (const definition of progressDefinitions) {
-        events.push({ ...definition, createdAt: new Date().toISOString() });
-        await this.prisma.assistantRun.update({
-          where: { id: runId },
-          data: { progressJson: events as unknown as Prisma.InputJsonValue },
-        });
-        if (delayMs > 0) await this.delay(delayMs);
-      }
-
-      const content = `Тестовый помощник получил запрос: «${run.userMessage.content}».`;
-      await this.prisma.$transaction(async (transaction) => {
-        const assistantMessage = await transaction.assistantMessage.create({
-          data: {
-            conversationId: run.conversationId,
-            role: PrismaAssistantMessageRole.ASSISTANT,
-            content,
-          },
-        });
-        await transaction.assistantRun.update({
-          where: { id: runId },
-          data: {
-            status: PrismaAssistantRunStatus.COMPLETED,
-            assistantMessageId: assistantMessage.id,
-            completedAt: new Date(),
-          },
-        });
-        await transaction.assistantConversation.update({
-          where: { id: run.conversationId },
-          data: { updatedAt: new Date() },
-        });
-      });
-    } catch {
-      this.logger.error(`Assistant fake run failed: ${runId}`);
-      await this.prisma.assistantRun.updateMany({
-        where: { id: runId, status: PrismaAssistantRunStatus.RUNNING },
-        data: {
-          status: PrismaAssistantRunStatus.FAILED,
-          errorCode: 'ASSISTANT_FAKE_RUN_FAILED',
-          completedAt: new Date(),
-        },
-      });
-    }
   }
 
   private parseMessageInput(value: unknown): AssistantSendMessageInput {
@@ -297,6 +312,32 @@ export class AssistantService implements OnModuleDestroy {
       key: this.parseString(value.key, 'context.key', assistantContextKeyMaxLength),
       label: this.parseString(value.label, 'context.label', assistantContextLabelMaxLength),
     };
+  }
+
+  private parseHistoryCursor(value: unknown): AssistantHistoryCursor | null {
+    if (value === undefined || value === null || value === '') return null;
+    if (typeof value !== 'string' || value.length > assistantHistoryCursorMaxLength) {
+      throw new BadRequestException('ASSISTANT_HISTORY_CURSOR_INVALID');
+    }
+
+    try {
+      const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as unknown;
+      if (!this.isRecord(parsed)) throw new Error('invalid');
+      const id = this.parseUuid(parsed.id, 'cursor.id');
+      if (typeof parsed.updatedAt !== 'string') throw new Error('invalid');
+      const updatedAt = new Date(parsed.updatedAt);
+      if (Number.isNaN(updatedAt.getTime())) throw new Error('invalid');
+      return { id, updatedAt };
+    } catch {
+      throw new BadRequestException('ASSISTANT_HISTORY_CURSOR_INVALID');
+    }
+  }
+
+  private encodeHistoryCursor(conversation: Pick<StoredConversationSummary, 'id' | 'updatedAt'>) {
+    return Buffer.from(JSON.stringify({
+      id: conversation.id,
+      updatedAt: conversation.updatedAt.toISOString(),
+    }), 'utf8').toString('base64url');
   }
 
   private parseString(value: unknown, field: string, maxLength: number) {
@@ -327,24 +368,7 @@ export class AssistantService implements OnModuleDestroy {
       : `${content.slice(0, assistantConversationTitleMaxLength - 1).trimEnd()}…`;
   }
 
-  private getFakeStepDelayMs() {
-    const raw = process.env.ASSISTANT_FAKE_STEP_DELAY_MS;
-    const value = raw === undefined || raw === '' ? 120 : Number(raw);
-    if (!Number.isInteger(value) || value < 0 || value > 2_000) return 120;
-    return value;
-  }
-
-  private delay(milliseconds: number) {
-    return new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
-  }
-
-  private serializeConversationSummary(conversation: {
-    id: string;
-    title: string;
-    createdAt: Date;
-    updatedAt: Date;
-    _count: { messages: number };
-  }): AssistantConversationSummary {
+  private serializeConversationSummary(conversation: StoredConversationSummary): AssistantConversationSummary {
     return {
       id: conversation.id,
       title: conversation.title,
@@ -354,14 +378,7 @@ export class AssistantService implements OnModuleDestroy {
     };
   }
 
-  private serializeConversation(conversation: {
-    id: string;
-    title: string;
-    createdAt: Date;
-    updatedAt: Date;
-    messages: StoredMessage[];
-    _count: { messages: number };
-  }): AssistantConversation {
+  private serializeConversation(conversation: StoredConversation): AssistantConversation {
     return {
       ...this.serializeConversationSummary(conversation),
       messages: conversation.messages.map((message) => this.serializeMessage(message)),
@@ -406,7 +423,7 @@ export class AssistantService implements OnModuleDestroy {
       if (!this.isRecord(entry)) return [];
       if (
         typeof entry.step !== 'string' ||
-        !progressDefinitions.some(({ step }) => step === entry.step) ||
+        !assistantProgressDefinitions.some(({ step }) => step === entry.step) ||
         typeof entry.label !== 'string' ||
         typeof entry.createdAt !== 'string'
       ) return [];

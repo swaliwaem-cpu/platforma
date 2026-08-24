@@ -36,6 +36,8 @@ import type {
   RealEstateObjectSummary,
   RealEstateObjectType,
 } from '@platforma/shared';
+
+import { notifyAppLocationChanged } from '../navigation/appLocation';
 import { matchesSearchVariants } from '@platforma/shared/search-normalization';
 
 import { apiRequest } from '../admin/api';
@@ -407,6 +409,7 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
     } else {
       window.history.pushState(null, '', `${nextPathname}${nextSearch}`);
       setQueryString(window.location.search);
+      notifyAppLocationChanged();
     }
   }
 

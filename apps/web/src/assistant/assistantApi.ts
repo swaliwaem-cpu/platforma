@@ -12,13 +12,23 @@ export function getAssistantConfig(accessToken: string, signal?: AbortSignal) {
   return apiRequest<AssistantConfigResponse>('/assistant/config', accessToken, { signal });
 }
 
-export function listAssistantConversations(accessToken: string, signal?: AbortSignal) {
-  return apiRequest<AssistantConversationsResponse>('/assistant/conversations', accessToken, { signal });
+export function listAssistantConversations(
+  accessToken: string,
+  cursor?: string | null,
+  signal?: AbortSignal,
+) {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
+  return apiRequest<AssistantConversationsResponse>(`/assistant/conversations${query}`, accessToken, { signal });
 }
 
-export function createAssistantConversation(accessToken: string, signal?: AbortSignal) {
+export function createAssistantConversation(
+  accessToken: string,
+  idempotencyKey: string,
+  signal?: AbortSignal,
+) {
   return apiRequest<AssistantConversationResponse>('/assistant/conversations', accessToken, {
     method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey },
     signal,
   });
 }

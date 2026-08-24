@@ -1,7 +1,7 @@
 require('reflect-metadata');
 
 const assert = require('node:assert/strict');
-const { randomUUID } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 const { after, before, test } = require('node:test');
 const { JwtService } = require('@nestjs/jwt');
 const { NestFactory } = require('@nestjs/core');
@@ -84,10 +84,7 @@ if (!databaseUrl) {
   });
 
   test('authenticated user receives one persisted fake run with safe progress and idempotent replay', async () => {
-    const created = await request('/assistant/conversations', {
-      method: 'POST',
-      token: ownerToken,
-    });
+    const created = await createConversation();
     assert.equal(created.status, 201);
     assert.equal(created.body.conversation.ownerUserId, undefined);
     assert.equal(created.body.conversation.title, 'Новый разговор');
@@ -146,10 +143,7 @@ if (!databaseUrl) {
   });
 
   test('conversation and run ownership fail closed without exposing another user data', async () => {
-    const created = await request('/assistant/conversations', {
-      method: 'POST',
-      token: ownerToken,
-    });
+    const created = await createConversation();
     const queued = await sendMessage(
       created.body.conversation.id,
       { content: 'Приватный запрос', context: null },
@@ -173,10 +167,7 @@ if (!databaseUrl) {
   });
 
   test('history excludes conversations inactive for more than 30 days and input validation is bounded', async () => {
-    const old = await request('/assistant/conversations', {
-      method: 'POST',
-      token: ownerToken,
-    });
+    const old = await createConversation();
     await prisma.assistantConversation.update({
       where: { id: old.body.conversation.id },
       data: { updatedAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000) },
@@ -190,7 +181,162 @@ if (!databaseUrl) {
       token: ownerToken,
       body: { content: 'Без ключа' },
     })).status, 400);
+
+    const pagedIds = Array.from({ length: 55 }, () => randomUUID());
+    await prisma.assistantConversation.createMany({
+      data: pagedIds.map((id, index) => ({
+        id,
+        ownerUserId: owner.id,
+        creationKey: randomUUID(),
+        title: `Страница истории ${index}`,
+      })),
+    });
+    const visibleIds = new Set();
+    let cursor = null;
+    do {
+      const page = await request(`/assistant/conversations${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`, {
+        token: ownerToken,
+      });
+      assert.equal(page.status, 200);
+      page.body.items.forEach((item) => visibleIds.add(item.id));
+      cursor = page.body.nextCursor;
+    } while (cursor);
+    assert.equal(pagedIds.every((id) => visibleIds.has(id)), true);
+    assert.equal((await request('/assistant/conversations?cursor=broken', { token: ownerToken })).status, 400);
   });
+
+  test('conversation creation replays one result after a lost response', async () => {
+    const idempotencyKey = randomUUID();
+    const first = await createConversation(idempotencyKey);
+    const replay = await createConversation(idempotencyKey);
+
+    assert.equal(first.status, 201);
+    assert.equal(replay.status, 201);
+    assert.equal(replay.body.conversation.id, first.body.conversation.id);
+    assert.equal(await prisma.assistantConversation.count({
+      where: { ownerUserId: owner.id, creationKey: idempotencyKey },
+    }), 1);
+  });
+
+  test('concurrent failed-run retry never returns a stale failed snapshot or duplicates work', async () => {
+    const created = await createConversation();
+    const content = 'Повтори конкурентно';
+    const idempotencyKey = randomUUID();
+    const userMessage = await prisma.assistantMessage.create({
+      data: {
+        conversationId: created.body.conversation.id,
+        role: 'USER',
+        content,
+      },
+    });
+    const failed = await prisma.assistantRun.create({
+      data: {
+        ownerUserId: owner.id,
+        conversationId: created.body.conversation.id,
+        userMessageId: userMessage.id,
+        idempotencyKey,
+        requestHash: hashAssistantRequest(created.body.conversation.id, content),
+        status: 'FAILED',
+        startedAt: new Date(Date.now() - 2_000),
+        completedAt: new Date(Date.now() - 1_000),
+        errorCode: 'ASSISTANT_FAKE_RUN_FAILED',
+      },
+    });
+
+    const responses = await Promise.all([
+      sendMessage(created.body.conversation.id, { content, context: null }, idempotencyKey),
+      sendMessage(created.body.conversation.id, { content, context: null }, idempotencyKey),
+    ]);
+    assert.deepEqual(responses.map((response) => response.status), [202, 202]);
+    assert.equal(responses.some((response) => response.body.run.status === 'FAILED'), false);
+
+    await waitForRun(failed.id, ownerToken);
+    assert.equal(await prisma.assistantRun.count({ where: { id: failed.id } }), 1);
+    assert.equal(await prisma.assistantMessage.count({
+      where: { conversationId: created.body.conversation.id, role: 'USER' },
+    }), 1);
+  });
+
+  test('persisted running work is recovered after its original process disappears', async () => {
+    const created = await createConversation();
+    const content = 'Восстанови запуск';
+    const userMessage = await prisma.assistantMessage.create({
+      data: {
+        conversationId: created.body.conversation.id,
+        role: 'USER',
+        content,
+      },
+    });
+    const staleRun = await prisma.assistantRun.create({
+      data: {
+        ownerUserId: owner.id,
+        conversationId: created.body.conversation.id,
+        userMessageId: userMessage.id,
+        idempotencyKey: randomUUID(),
+        requestHash: hashAssistantRequest(created.body.conversation.id, content),
+        status: 'RUNNING',
+        startedAt: new Date(Date.now() - 60_000),
+        leaseOwner: 'dead-process',
+        leaseExpiresAt: new Date(Date.now() - 30_000),
+      },
+    });
+
+    const recovered = await waitForRun(staleRun.id, ownerToken);
+    assert.equal(recovered.status, 'COMPLETED');
+    assert.equal(recovered.assistantMessage.content.includes(content), true);
+  });
+
+  test('conversation message bound remains enforced under concurrent sends', async () => {
+    const created = await createConversation();
+    await prisma.assistantMessage.createMany({
+      data: Array.from({ length: 198 }, (_, index) => ({
+        conversationId: created.body.conversation.id,
+        role: 'USER',
+        content: `Ограниченный контекст ${index}`,
+      })),
+    });
+
+    const responses = await Promise.all([
+      sendMessage(created.body.conversation.id, { content: 'Запрос A' }, randomUUID()),
+      sendMessage(created.body.conversation.id, { content: 'Запрос B' }, randomUUID()),
+    ]);
+    assert.deepEqual(responses.map(({ status }) => status).sort(), [202, 409]);
+  });
+
+  test('same idempotency key replays at the conversation message bound', async () => {
+    const created = await createConversation();
+    await prisma.assistantMessage.createMany({
+      data: Array.from({ length: 198 }, (_, index) => ({
+        conversationId: created.body.conversation.id,
+        role: 'USER',
+        content: `Контекст идемпотентного повтора ${index}`,
+      })),
+    });
+
+    const idempotencyKey = randomUUID();
+    const responses = await Promise.all([
+      sendMessage(created.body.conversation.id, { content: 'Один запрос' }, idempotencyKey),
+      sendMessage(created.body.conversation.id, { content: 'Один запрос' }, idempotencyKey),
+    ]);
+    assert.deepEqual(responses.map(({ status }) => status), [202, 202]);
+    assert.equal(responses[0].body.run.id, responses[1].body.run.id);
+
+    await waitForRun(responses[0].body.run.id, ownerToken);
+    assert.equal(await prisma.assistantRun.count({
+      where: { conversationId: created.body.conversation.id },
+    }), 1);
+    assert.equal(await prisma.assistantMessage.count({
+      where: { conversationId: created.body.conversation.id },
+    }), 200);
+  });
+
+  function createConversation(idempotencyKey = randomUUID()) {
+    return request('/assistant/conversations', {
+      method: 'POST',
+      token: ownerToken,
+      headers: { 'Idempotency-Key': idempotencyKey },
+    });
+  }
 
   function sendMessage(conversationId, body, idempotencyKey) {
     return request(`/assistant/conversations/${conversationId}/messages`, {
@@ -199,6 +345,12 @@ if (!databaseUrl) {
       headers: { 'Idempotency-Key': idempotencyKey },
       body,
     });
+  }
+
+  function hashAssistantRequest(conversationId, content) {
+    return createHash('sha256')
+      .update(JSON.stringify({ conversationId, content, context: null }))
+      .digest('hex');
   }
 
   async function waitForRun(runId, token) {

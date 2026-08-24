@@ -399,14 +399,16 @@ model User {
 model AssistantConversation {
   id          String   @id @default(uuid()) @db.Uuid
   ownerUserId String   @map("owner_user_id") @db.Uuid
+  creationKey String   @map("creation_key") @db.Uuid
   title       String   @default("Новый разговор") @db.VarChar(160)
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  owner    User               @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  owner    User               @relation(fields: [ownerUserId], references: [id], onDelete: Restrict)
   messages AssistantMessage[]
   runs     AssistantRun[]
 
+  @@unique([ownerUserId, creationKey])
   @@index([ownerUserId, updatedAt])
   @@map("assistant_conversations")
 }
@@ -419,7 +421,7 @@ model AssistantMessage {
   contextJson    Json?                @map("context_json")
   createdAt      DateTime             @default(now()) @map("created_at")
 
-  conversation     AssistantConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversation     AssistantConversation @relation(fields: [conversationId], references: [id], onDelete: Restrict)
   userMessageRun   AssistantRun?         @relation("AssistantRunUserMessage")
   assistantRun     AssistantRun?         @relation("AssistantRunAssistantMessage")
 
@@ -438,15 +440,17 @@ model AssistantRun {
   status             AssistantRunStatus @default(PENDING)
   progressJson       Json               @default("[]") @map("progress_json")
   errorCode          String?            @map("error_code") @db.VarChar(120)
+  leaseOwner         String?            @map("lease_owner") @db.VarChar(100)
+  leaseExpiresAt     DateTime?          @map("lease_expires_at")
   startedAt          DateTime?          @map("started_at")
   completedAt        DateTime?          @map("completed_at")
   createdAt          DateTime           @default(now()) @map("created_at")
   updatedAt          DateTime           @updatedAt @map("updated_at")
 
-  owner            User                  @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
-  conversation     AssistantConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  userMessage      AssistantMessage      @relation("AssistantRunUserMessage", fields: [userMessageId], references: [id], onDelete: Cascade)
-  assistantMessage AssistantMessage?     @relation("AssistantRunAssistantMessage", fields: [assistantMessageId], references: [id], onDelete: SetNull)
+  owner            User                  @relation(fields: [ownerUserId], references: [id], onDelete: Restrict)
+  conversation     AssistantConversation @relation(fields: [conversationId], references: [id], onDelete: Restrict)
+  userMessage      AssistantMessage      @relation("AssistantRunUserMessage", fields: [userMessageId], references: [id], onDelete: Restrict)
+  assistantMessage AssistantMessage?     @relation("AssistantRunAssistantMessage", fields: [assistantMessageId], references: [id], onDelete: Restrict)
 
   @@unique([ownerUserId, idempotencyKey])
   @@index([conversationId, createdAt])

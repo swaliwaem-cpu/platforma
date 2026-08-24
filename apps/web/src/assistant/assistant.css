@@ -167,6 +167,8 @@
 
 .assistant-history-new,
 .assistant-history-item,
+.assistant-history-more,
+.assistant-history-error button,
 .assistant-error button {
   padding: 9px 10px;
   color: inherit;
@@ -221,6 +223,37 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.assistant-history-more {
+  width: 100%;
+  color: #8a3c18;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.assistant-history-error {
+  display: grid;
+  padding: 8px;
+  color: #8a281a;
+  background: #fff0ed;
+  border: 1px solid #efbeb5;
+  border-radius: 10px;
+  font-size: 11px;
+  gap: 6px;
+}
+
+.assistant-history-error p {
+  margin: 0;
+}
+
+.assistant-history-error button {
+  padding: 6px 8px;
+  color: inherit;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .assistant-history-item strong {
@@ -500,6 +533,16 @@
   .assistant-chat-controls button {
     width: 44px;
     height: 44px;
+  }
+
+  .assistant-context-chip button,
+  .assistant-composer button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .assistant-composer {
+    grid-template-columns: minmax(0, 1fr) 50px;
   }
 
   .assistant-chat-layout--history {

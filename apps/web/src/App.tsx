@@ -212,10 +212,10 @@ const cabinetSections = [
 ] as const satisfies readonly CabinetSection[];
 
 function usePathname() {
-  const [pathname, setPathname] = useState(window.location.pathname);
+  const [location, setLocation] = useState(() => readAppLocation());
 
   useEffect(() => {
-    const handlePopState = () => setPathname(window.location.pathname);
+    const handleLocationChange = () => setLocation(readAppLocation());
     const handleDocumentClick = (event: MouseEvent) => {
       if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
         return;
@@ -239,25 +239,30 @@ function usePathname() {
 
       event.preventDefault();
       window.history.pushState(null, '', `${url.pathname}${url.search}${url.hash}`);
-      setPathname(window.location.pathname);
+      setLocation(readAppLocation());
     };
 
-    window.addEventListener('popstate', handlePopState);
+    window.addEventListener('popstate', handleLocationChange);
     document.addEventListener('click', handleDocumentClick);
 
     return () => {
-      window.removeEventListener('popstate', handlePopState);
+      window.removeEventListener('popstate', handleLocationChange);
       document.removeEventListener('click', handleDocumentClick);
     };
   }, []);
 
   return {
-    pathname,
+    pathname: location.pathname,
+    search: location.search,
     navigate: (nextPathname: string) => {
       window.history.pushState(null, '', nextPathname);
-      setPathname(window.location.pathname);
+      setLocation(readAppLocation());
     },
   };
+}
+
+function readAppLocation() {
+  return { pathname: window.location.pathname, search: window.location.search };
 }
 
 export function App() {
@@ -269,7 +274,7 @@ export function App() {
 }
 
 function AppRoutes() {
-  const { pathname, navigate } = usePathname();
+  const { pathname, search, navigate } = usePathname();
   const { accessToken, user, isLoading, logout, hasPermission } = useAuth();
   const sidebarRef = useRef<HTMLElement | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -576,6 +581,7 @@ function AppRoutes() {
             accessToken={accessToken}
             logoUrl={platformLogoUrl}
             pathname={pathname}
+            search={search}
             userId={user.id}
           />
         </Suspense>
