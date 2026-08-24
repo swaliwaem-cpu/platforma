@@ -279,8 +279,9 @@ if (!databaseUrl) {
       const persisted = await prisma.assistantRun.findUniqueOrThrow({ where: { id: completed.id } });
       assert.deepEqual(persisted.intentJson.comparisonTargets, [
         fixture.firstDeveloper.name,
-        fixture.secondDeveloper.name,
+        'Самолётом',
       ]);
+      assert.deepEqual(persisted.intentJson.comparisonTargetModes, ['EXACT', 'INSTRUMENTAL']);
       assert.equal(persisted.intentJson.hardFilters.developer, null);
 
       const softIntent = createSearchIntent({

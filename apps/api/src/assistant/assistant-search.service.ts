@@ -12,9 +12,11 @@ import type {
 
 import { PrismaService } from '../prisma/prisma.service';
 import { findCatalogSearchObjectIds } from '../objects/object-search';
-import type {
-  AssistantSearchFilters,
-  AssistantStructuredIntent,
+import {
+  createAssistantComparisonTargetVariants,
+  type AssistantComparisonTargetMode,
+  type AssistantSearchFilters,
+  type AssistantStructuredIntent,
 } from './assistant-query-planner';
 import type { AssistantSearchEvidence } from './assistant-search-ranking';
 
@@ -113,6 +115,7 @@ type SearchOptions = {
   nearbyDistrictParentIds?: string[];
   catalogSearchObjectIds?: string[];
   comparisonTargets?: string[];
+  comparisonTargetModes?: AssistantComparisonTargetMode[];
   softPreferences?: AssistantSearchFilters;
 };
 
@@ -128,6 +131,7 @@ export class AssistantSearchService {
     const searchOptions = {
       ...contextOptions,
       comparisonTargets: intent.comparisonTargets,
+      comparisonTargetModes: intent.comparisonTargetModes,
       softPreferences: intent.softPreferences,
     };
     const exact = await this.findEvidence(intent.hardFilters, context, searchOptions);
@@ -234,18 +238,28 @@ export class AssistantSearchService {
   ) {
     return this.prisma.$transaction(async (transaction) => {
       const comparisonGroups = options.comparisonTargets?.length === 2
-        ? options.comparisonTargets.map((target) => [target])
-        : [options.comparisonTargets];
+        ? options.comparisonTargets.map((target, index) => ({
+            targets: [target],
+            modes: [options.comparisonTargetModes?.[index] ?? 'EXACT'] as AssistantComparisonTargetMode[],
+          }))
+        : [{
+            targets: options.comparisonTargets,
+            modes: options.comparisonTargetModes,
+          }];
       const groupLimit = comparisonGroups.length === 2 ? Math.ceil(candidateLimit / 2) : candidateLimit;
       const rowIds: string[] = [];
       const seenRowIds = new Set<string>();
 
-      for (const comparisonTargets of comparisonGroups) {
+      for (const comparisonGroup of comparisonGroups) {
         const rows = await this.findCandidateRows(
           transaction,
           filters,
           context,
-          { ...options, comparisonTargets },
+          {
+            ...options,
+            comparisonTargets: comparisonGroup.targets,
+            comparisonTargetModes: comparisonGroup.modes,
+          },
           groupLimit,
         );
         for (const { id } of rows) {
@@ -278,6 +292,7 @@ export class AssistantSearchService {
   ) {
     const conditions = this.createSqlConditions(filters, context, options);
     const softPreferenceScore = this.createSoftPreferenceScore(options.softPreferences);
+    const comparisonTargetPriority = this.createComparisonTargetPriority(options);
     return transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
       SELECT fu.id::text AS id
       FROM feed_units fu
@@ -286,6 +301,7 @@ export class AssistantSearchService {
       LEFT JOIN developers d ON d.id = o.developer_id
       WHERE ${Prisma.join(conditions, ' AND ')}
       ORDER BY
+        ${comparisonTargetPriority} DESC,
         ${softPreferenceScore} DESC,
         COALESCE(fu.effective_price, fu.discount_price, fu.price) ASC NULLS LAST,
         fu.updated_at DESC,
@@ -327,6 +343,16 @@ export class AssistantSearchService {
     return terms.length > 0
       ? Prisma.sql`(${Prisma.join(terms, ' + ')})`
       : Prisma.sql`CAST(0 AS integer)`;
+  }
+
+  private createComparisonTargetPriority(options: SearchOptions) {
+    if (options.comparisonTargets?.length !== 1) return Prisma.sql`CAST(0 AS integer)`;
+    const target = options.comparisonTargets[0]!;
+    const rawMatch = Prisma.sql`(
+      ${createNormalizedPhraseMatch(Prisma.sql`o.title`, target)}
+      OR ${createNormalizedPhraseMatch(Prisma.sql`d.name`, target)}
+    )`;
+    return Prisma.sql`CASE WHEN ${rawMatch} THEN 1 ELSE 0 END`;
   }
 
   private createSqlConditions(
@@ -405,10 +431,14 @@ export class AssistantSearchService {
         : Prisma.sql`FALSE`);
     }
     if (options.comparisonTargets?.length) {
-      const targetConditions = options.comparisonTargets.map((target) => Prisma.sql`(
-        ${createNormalizedPhraseMatch(Prisma.sql`o.title`, target)}
-        OR ${createNormalizedPhraseMatch(Prisma.sql`d.name`, target)}
-      )`);
+      const targetConditions = options.comparisonTargets.flatMap((target, index) =>
+        createAssistantComparisonTargetVariants(
+          target,
+          options.comparisonTargetModes?.[index] ?? 'EXACT',
+        ).map((variant) => Prisma.sql`(
+          ${createNormalizedPhraseMatch(Prisma.sql`o.title`, variant)}
+          OR ${createNormalizedPhraseMatch(Prisma.sql`d.name`, variant)}
+        )`));
       conditions.push(Prisma.sql`(${Prisma.join(targetConditions, ' OR ')})`);
     }
     this.applyContextConditions(conditions, context);

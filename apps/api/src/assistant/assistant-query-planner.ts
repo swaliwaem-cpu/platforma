@@ -51,6 +51,7 @@ export type AssistantTaskType = (typeof taskTypes)[number];
 export type AssistantRequiredFact = (typeof requiredFactValues)[number];
 export type AssistantObjectType = 'RESIDENTIAL' | 'COMMERCIAL';
 export type AssistantReasoningEffort = 'medium' | 'high';
+export type AssistantComparisonTargetMode = 'EXACT' | 'INSTRUMENTAL';
 
 export type AssistantSearchFilters = {
   budgetMinRub: number | null;
@@ -73,6 +74,7 @@ export type AssistantSearchFilters = {
 export type AssistantStructuredIntent = {
   taskType: AssistantTaskType;
   comparisonTargets: string[];
+  comparisonTargetModes?: AssistantComparisonTargetMode[];
   hardFilters: AssistantSearchFilters;
   softPreferences: AssistantSearchFilters;
   requiredFacts: AssistantRequiredFact[];
@@ -296,8 +298,11 @@ function normalizeIntentAgainstRequest(
 ): AssistantStructuredIntent {
   const explicitFilters = extractAssistantExplicitHardFilters(messages);
   const contextFilters = extractContextHardFilters(context);
-  const explicitComparisonTargets = extractAssistantComparisonTargets(messages);
-  const comparisonTargets = explicitComparisonTargets ?? intent.comparisonTargets;
+  const explicitComparison = extractAssistantComparison(messages);
+  const comparisonTargets = explicitComparison?.targets ?? intent.comparisonTargets;
+  const comparisonTargetModes = explicitComparison?.modes
+    ?? intent.comparisonTargetModes
+    ?? comparisonTargets.map(() => 'EXACT' as const);
   const hardMarkedSoftFilters = promoteHardMarkedSoftFilters(intent.softPreferences, messages.join('\n'));
   const mergedHardFilters: AssistantSearchFilters = {
     ...intent.hardFilters,
@@ -315,6 +320,7 @@ function normalizeIntentAgainstRequest(
       ...intent,
       taskType: 'LEGAL_TAX',
       comparisonTargets: [],
+      comparisonTargetModes: [],
       hardFilters,
       needsClarification: false,
       clarificationQuestion: null,
@@ -322,7 +328,7 @@ function normalizeIntentAgainstRequest(
   }
 
   if (intent.taskType === 'FACT') {
-    return { ...intent, hardFilters, comparisonTargets };
+    return { ...intent, hardFilters, comparisonTargets, comparisonTargetModes };
   }
 
   const missingFacts: string[] = [];
@@ -335,6 +341,7 @@ function normalizeIntentAgainstRequest(
   return {
     ...intent,
     comparisonTargets,
+    comparisonTargetModes,
     hardFilters,
     needsClarification: missingFacts.length > 0,
     clarificationQuestion: missingFacts.length > 0
@@ -350,6 +357,10 @@ function isCombinedComparisonDeveloper(value: string | null, comparisonTargets: 
 }
 
 export function extractAssistantComparisonTargets(messages: string[]) {
+  return extractAssistantComparison(messages)?.targets ?? null;
+}
+
+function extractAssistantComparison(messages: string[]) {
   const text = messages.join('\n');
   const match = text.match(
     /сравн\p{L}*\s+(?:застройщик\p{L}*\s+|жк\s+)?(?<firstQuote>[«"]?)(?<first>.+?)[»"]?\s+(?<conjunction>и|с)\s+(?<secondQuote>[«"]?)(?<second>.+?)[»"]?(?=\s+(?:по\s+(?:цен|стоим|услов|срок|сдач|локац|располож|инфраструкт|доход|ликвид|планиров|площад|метро)\p{L}*|до\s+\d|бюджет\p{L}*|в\s+район)|[,.;\r\n]|$)/iu,
@@ -357,15 +368,17 @@ export function extractAssistantComparisonTargets(messages: string[]) {
   if (!match?.groups) return null;
   const first = cleanComparisonTarget(match.groups.first);
   const rawSecond = cleanComparisonTarget(match.groups.second);
-  const second = normalizeComparableText(match.groups.conjunction ?? '') === 'с' && !match.groups.secondQuote
-    ? normalizeInstrumentalComparisonTarget(rawSecond)
-    : rawSecond;
-  const targets = [first, second];
+  const isInstrumental = normalizeComparableText(match.groups.conjunction ?? '') === 'с'
+    && !match.groups.secondQuote;
+  const targets = [first, rawSecond];
   const genericTargets = new Set(['вариант', 'варианты', 'объект', 'объекты', 'цены', 'предложения']);
   if (targets.some((target) => !target || target.length > 160 || genericTargets.has(normalizeComparableText(target)))) {
     return null;
   }
-  return targets;
+  return {
+    targets,
+    modes: ['EXACT', isInstrumental ? 'INSTRUMENTAL' : 'EXACT'] as AssistantComparisonTargetMode[],
+  };
 }
 
 function normalizeComparableText(value: string) {
@@ -376,26 +389,41 @@ function cleanComparisonTarget(value: string | undefined) {
   return value?.trim().replace(/^[«"]|[»"]$/gu, '') ?? '';
 }
 
-function normalizeInstrumentalComparisonTarget(target: string) {
+export function createAssistantComparisonTargetVariants(
+  target: string,
+  mode: AssistantComparisonTargetMode = 'EXACT',
+) {
+  if (mode !== 'INSTRUMENTAL') return [target];
   const wordMatch = target.match(/^(.*?)([\p{L}]+)$/u);
-  if (!wordMatch) return target;
+  if (!wordMatch) return [target];
   const [, prefix = '', word = ''] = wordMatch;
   const normalizedWord = normalizeComparableText(word);
-  const endings: Array<[string, string]> = [
-    ['ью', 'ь'],
-    ['ою', 'а'],
-    ['ею', 'я'],
-    ['ом', ''],
-    ['ем', 'е'],
-    ['ой', 'а'],
-    ['ей', 'я'],
+  const endings: Array<[string, string[]]> = [
+    ['оем', ['ой']],
+    ['ью', ['ь']],
+    ['ою', ['а', 'я', 'ая']],
+    ['ею', ['я', 'е', 'яя']],
+    ['ом', ['']],
+    ['ем', ['е', 'ь']],
+    ['ой', ['а', 'я', 'ая']],
+    ['ей', ['я', 'е', 'яя']],
   ];
-  for (const [ending, replacement] of endings) {
+  const variants = [target];
+  for (const [ending, replacements] of endings) {
     if (!normalizedWord.endsWith(ending)) continue;
     const stem = word.slice(0, -ending.length);
-    if ([...stem].length >= 3) return `${prefix}${stem}${replacement}`;
+    if ([...stem].length >= 3) {
+      replacements.forEach((replacement) => variants.push(`${prefix}${stem}${replacement}`));
+    }
+    break;
   }
-  return target;
+  const seen = new Set<string>();
+  return variants.filter((variant) => {
+    const normalized = normalizeComparableText(variant);
+    if (!normalized || seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  });
 }
 
 export function extractAssistantExplicitHardFilters(

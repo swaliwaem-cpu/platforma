@@ -5,6 +5,8 @@ import type {
 
 import {
   AssistantPlannerFallbackValidationError,
+  createAssistantComparisonTargetVariants,
+  type AssistantComparisonTargetMode,
   type AssistantSearchFilters,
   type AssistantStructuredIntent,
 } from './assistant-query-planner';
@@ -69,16 +71,25 @@ export function buildAssistantSearchAnswer(
       && matchesFilters(candidate, intent.hardFilters)),
     intent.softPreferences,
   );
-  const exactResults = selectComparisonCandidates(rankedExactCandidates, intent.comparisonTargets, 3)
+  const exactResults = selectComparisonCandidates(
+    rankedExactCandidates,
+    intent.comparisonTargets,
+    intent.comparisonTargetModes,
+    3,
+  )
     .map((candidate) => createResultCard(candidate, now));
+  const rankedAlternatives = rankCandidates(
+    alternativeEvidence.filter((candidate) =>
+      isValidAlternativeEvidence(candidate) && hasRequiredFacts(candidate, intent.requiredFacts)),
+    intent.softPreferences,
+  );
   const alternatives = exactResults.length === 0
-    ? rankCandidates(
-        alternativeEvidence.filter((candidate) =>
-          isValidAlternativeEvidence(candidate) && hasRequiredFacts(candidate, intent.requiredFacts)),
-        intent.softPreferences,
-      )
-        .slice(0, 2)
-        .map((candidate) => createResultCard(candidate, now))
+    ? selectComparisonCandidates(
+        rankedAlternatives,
+        intent.comparisonTargets,
+        intent.comparisonTargetModes,
+        2,
+      ).map((candidate) => createResultCard(candidate, now))
     : [];
 
   return {
@@ -98,17 +109,30 @@ export function buildAssistantSearchAnswer(
 function selectComparisonCandidates(
   candidates: AssistantSearchEvidence[],
   comparisonTargets: string[],
+  comparisonTargetModes: AssistantComparisonTargetMode[] | undefined,
   limit: number,
 ) {
   if (comparisonTargets.length !== 2) return candidates.slice(0, limit);
   const selected: AssistantSearchEvidence[] = [];
-  for (const target of comparisonTargets) {
-    const candidate = candidates.find((item) =>
-      !selected.some(({ unitId }) => unitId === item.unitId) && matchesComparisonTarget(item, target));
+  const resolvedTargets = comparisonTargets.map((target, index) => {
+    const rawMatches = candidates.filter((item) => matchesComparisonTarget(item, target));
+    if (rawMatches.length > 0) return [target];
+    return createAssistantComparisonTargetVariants(
+      target,
+      comparisonTargetModes?.[index] ?? 'EXACT',
+    ).slice(1);
+  });
+  for (const [index, target] of comparisonTargets.entries()) {
+    const available = candidates.filter((item) =>
+      !selected.some(({ unitId }) => unitId === item.unitId));
+    const candidate = available.find((item) =>
+      resolvedTargets[index]!.some((variant) => matchesComparisonTarget(item, variant)));
     if (!candidate) return [];
     selected.push(candidate);
   }
-  for (const candidate of candidates) {
+  const eligibleCandidates = candidates.filter((candidate) => resolvedTargets.some((variants) =>
+    variants.some((variant) => matchesComparisonTarget(candidate, variant))));
+  for (const candidate of eligibleCandidates) {
     if (selected.length >= limit) break;
     if (!selected.some(({ unitId }) => unitId === candidate.unitId)) selected.push(candidate);
   }

@@ -228,7 +228,8 @@ test('Assistant T02 planner bounds comparison criteria and normalizes a confirme
     context: null,
   });
 
-  assert.deepEqual(result.intent.comparisonTargets, ['ПИК', 'Самолёт']);
+  assert.deepEqual(result.intent.comparisonTargets, ['ПИК', 'Самолётом']);
+  assert.deepEqual(result.intent.comparisonTargetModes, ['EXACT', 'INSTRUMENTAL']);
   assert.equal(result.intent.hardFilters.developer, null);
   assert.equal(result.intent.needsClarification, false);
 });
@@ -379,6 +380,47 @@ test('Assistant T02 comparison does not confirm a target through a partial brand
 
   assert.equal(answer.exactResults.length, 0);
   assert.match(answer.content, /Не могу подтвердить/iu);
+});
+
+test('Assistant T02 comparison resolves confirmed instrumental brands ending in -строй', () => {
+  const intent = validIntent({
+    taskType: 'COMPARE',
+    comparisonTargets: ['ПИК', 'Главстроем'],
+    comparisonTargetModes: ['EXACT', 'INSTRUMENTAL'],
+    hardFilters: { ...emptyFilters(), budgetMaxRub: 25_000_000, rooms: [2], metro: 'Спортивная' },
+  });
+  const candidates = [
+    candidate('11111111-1111-4111-8111-111111111111', { developer: 'ПИК' }),
+    candidate('22222222-2222-4222-8222-222222222222', { developer: 'Главстрой' }),
+  ];
+
+  const answer = buildAssistantSearchAnswer(intent, candidates, [], new Date('2026-08-24T12:00:00.000Z'));
+
+  assert.deepEqual(answer.exactResults.map(({ unitId }) => unitId), [
+    '11111111-1111-4111-8111-111111111111',
+    '22222222-2222-4222-8222-222222222222',
+  ]);
+});
+
+test('Assistant T02 comparison keeps an exact -ом brand ahead of an instrumental fallback', () => {
+  const intent = validIntent({
+    taskType: 'COMPARE',
+    comparisonTargets: ['ПИК', 'Ростелеком'],
+    comparisonTargetModes: ['EXACT', 'INSTRUMENTAL'],
+    hardFilters: { ...emptyFilters(), budgetMaxRub: 25_000_000, rooms: [2], metro: 'Спортивная' },
+  });
+  const candidates = [
+    candidate('11111111-1111-4111-8111-111111111111', { developer: 'Ростелек', priceRub: 10_000_000 }),
+    candidate('22222222-2222-4222-8222-222222222222', { developer: 'ПИК', priceRub: 20_000_000 }),
+    candidate('33333333-3333-4333-8333-333333333333', { developer: 'Ростелеком', priceRub: 24_000_000 }),
+  ];
+
+  const answer = buildAssistantSearchAnswer(intent, candidates, [], new Date('2026-08-24T12:00:00.000Z'));
+
+  assert.deepEqual(answer.exactResults.map(({ unitId }) => unitId), [
+    '22222222-2222-4222-8222-222222222222',
+    '33333333-3333-4333-8333-333333333333',
+  ]);
 });
 
 test('Assistant T02 evidence validation rejects invented price, freshness and links', () => {
