@@ -234,6 +234,19 @@ test('Assistant T02 planner bounds comparison criteria and normalizes a confirme
   assert.equal(result.intent.needsClarification, false);
 });
 
+test('Assistant T02 planner marks an inflected adjective comparison target as instrumental', async () => {
+  const planner = new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' }));
+
+  const result = await planner.plan({
+    messages: ['Сравни ЖК Первый с Вторым по цене, двушки до 25 млн у метро Спортивная'],
+    context: null,
+  });
+
+  assert.deepEqual(result.intent.comparisonTargets, ['Первый', 'Вторым']);
+  assert.deepEqual(result.intent.comparisonTargetModes, ['EXACT', 'INSTRUMENTAL']);
+  assert.equal(result.intent.needsClarification, false);
+});
+
 test('Assistant T02 planner treats real catalog metro and object type filters as hard context', async () => {
   const planner = new AssistantQueryPlanner({ async plan() { return validIntent(); } });
 
@@ -392,6 +405,26 @@ test('Assistant T02 comparison resolves confirmed instrumental brands ending in 
   const candidates = [
     candidate('11111111-1111-4111-8111-111111111111', { developer: 'ПИК' }),
     candidate('22222222-2222-4222-8222-222222222222', { developer: 'Главстрой' }),
+  ];
+
+  const answer = buildAssistantSearchAnswer(intent, candidates, [], new Date('2026-08-24T12:00:00.000Z'));
+
+  assert.deepEqual(answer.exactResults.map(({ unitId }) => unitId), [
+    '11111111-1111-4111-8111-111111111111',
+    '22222222-2222-4222-8222-222222222222',
+  ]);
+});
+
+test('Assistant T02 comparison resolves confirmed instrumental adjective targets', () => {
+  const intent = validIntent({
+    taskType: 'COMPARE',
+    comparisonTargets: ['Первый', 'Вторым'],
+    comparisonTargetModes: ['EXACT', 'INSTRUMENTAL'],
+    hardFilters: { ...emptyFilters(), budgetMaxRub: 25_000_000, rooms: [2], metro: 'Спортивная' },
+  });
+  const candidates = [
+    candidate('11111111-1111-4111-8111-111111111111', { objectTitle: 'ЖК Первый' }),
+    candidate('22222222-2222-4222-8222-222222222222', { objectTitle: 'ЖК Второй' }),
   ];
 
   const answer = buildAssistantSearchAnswer(intent, candidates, [], new Date('2026-08-24T12:00:00.000Z'));
