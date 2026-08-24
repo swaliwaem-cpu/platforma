@@ -264,7 +264,7 @@ if (!databaseUrl) {
     try {
       const created = await createConversation();
       const queued = await sendMessage(created.body.conversation.id, {
-        content: `Сравни застройщика ${fixture.firstDeveloper.name} с Самолётом, двушки до 25 млн в районе ${fixture.district.name} у метро ${fixture.metro.name}`,
+        content: `Сравни застройщика ${fixture.firstDeveloper.name} с Самолётом по цене, двушки до 25 млн в районе ${fixture.district.name} у метро ${fixture.metro.name}`,
         context: null,
       }, randomUUID());
       const completed = await waitForRun(queued.body.run.id, ownerToken);
@@ -279,7 +279,7 @@ if (!databaseUrl) {
       const persisted = await prisma.assistantRun.findUniqueOrThrow({ where: { id: completed.id } });
       assert.deepEqual(persisted.intentJson.comparisonTargets, [
         fixture.firstDeveloper.name,
-        'Самолётом',
+        fixture.secondDeveloper.name,
       ]);
       assert.equal(persisted.intentJson.hardFilters.developer, null);
 

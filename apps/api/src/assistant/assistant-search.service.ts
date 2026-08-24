@@ -12,10 +12,9 @@ import type {
 
 import { PrismaService } from '../prisma/prisma.service';
 import { findCatalogSearchObjectIds } from '../objects/object-search';
-import {
-  createAssistantComparisonTargetVariants,
-  type AssistantSearchFilters,
-  type AssistantStructuredIntent,
+import type {
+  AssistantSearchFilters,
+  AssistantStructuredIntent,
 } from './assistant-query-planner';
 import type { AssistantSearchEvidence } from './assistant-search-ranking';
 
@@ -406,11 +405,10 @@ export class AssistantSearchService {
         : Prisma.sql`FALSE`);
     }
     if (options.comparisonTargets?.length) {
-      const targetConditions = options.comparisonTargets.flatMap((target) =>
-        createAssistantComparisonTargetVariants(target).map((variant) => Prisma.sql`(
-          ${createNormalizedContains(Prisma.sql`o.title`, variant)}
-          OR ${createNormalizedContains(Prisma.sql`d.name`, variant)}
-        )`));
+      const targetConditions = options.comparisonTargets.map((target) => Prisma.sql`(
+        ${createNormalizedPhraseMatch(Prisma.sql`o.title`, target)}
+        OR ${createNormalizedPhraseMatch(Prisma.sql`d.name`, target)}
+      )`);
       conditions.push(Prisma.sql`(${Prisma.join(targetConditions, ' OR ')})`);
     }
     this.applyContextConditions(conditions, context);
@@ -556,6 +554,14 @@ function createNormalizedContains(field: Prisma.Sql, value: string) {
   const normalized = normalize(value);
   const pattern = `%${escapeLikePattern(normalized)}%`;
   return Prisma.sql`replace(lower(coalesce(${field}, '')), 'ё', 'е') LIKE ${pattern} ESCAPE '\\'`;
+}
+
+function createNormalizedPhraseMatch(field: Prisma.Sql, value: string) {
+  const normalized = normalize(value).replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const pattern = `% ${escapeLikePattern(normalized)} %`;
+  return Prisma.sql`(
+    ' ' || regexp_replace(replace(lower(coalesce(${field}, '')), 'ё', 'е'), '[^[:alnum:]]+', ' ', 'g') || ' '
+  ) LIKE ${pattern} ESCAPE '\\'`;
 }
 
 function collectPdfs(record: CandidateRecord) {

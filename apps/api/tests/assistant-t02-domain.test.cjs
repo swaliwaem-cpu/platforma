@@ -220,11 +220,11 @@ test('Assistant T02 planner preserves high reasoning across a multi-turn compari
   assert.equal(calls[0].reasoningEffort, 'high');
 });
 
-test('Assistant T02 planner does not turn two compared developers into one hard filter', async () => {
+test('Assistant T02 planner bounds comparison criteria and normalizes a confirmed instrumental target', async () => {
   const planner = new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' }));
 
   const result = await planner.plan({
-    messages: ['Сравни застройщиков ПИК и Самолёт, двушки до 25 млн у метро Спортивная'],
+    messages: ['Сравни застройщика ПИК с Самолётом по цене, двушки до 25 млн у метро Спортивная'],
     context: null,
   });
 
@@ -330,7 +330,7 @@ test('Assistant T02 ranking exposes at most two allowed alternatives only when e
 test('Assistant T02 comparison returns grounded representatives for both explicit targets', () => {
   const intent = validIntent({
     taskType: 'COMPARE',
-    comparisonTargets: ['ПИК', 'Самолётом'],
+    comparisonTargets: ['ПИК', 'Самолёт'],
     hardFilters: { ...emptyFilters(), budgetMaxRub: 25_000_000, rooms: [2], metro: 'Спортивная' },
   });
   const candidates = [
@@ -359,6 +359,23 @@ test('Assistant T02 comparison refuses partial evidence that covers only one exp
   const answer = buildAssistantSearchAnswer(intent, [
     candidate('11111111-1111-4111-8111-111111111111', { developer: 'ПИК' }),
   ], [], new Date('2026-08-24T12:00:00.000Z'));
+
+  assert.equal(answer.exactResults.length, 0);
+  assert.match(answer.content, /Не могу подтвердить/iu);
+});
+
+test('Assistant T02 comparison does not confirm a target through a partial brand substring', () => {
+  const intent = validIntent({
+    taskType: 'COMPARE',
+    comparisonTargets: ['ПИК', 'Строй'],
+    hardFilters: { ...emptyFilters(), budgetMaxRub: 25_000_000, rooms: [2], metro: 'Спортивная' },
+  });
+  const candidates = [
+    candidate('11111111-1111-4111-8111-111111111111', { developer: 'ПИК' }),
+    candidate('22222222-2222-4222-8222-222222222222', { developer: 'Страна' }),
+  ];
+
+  const answer = buildAssistantSearchAnswer(intent, candidates, [], new Date('2026-08-24T12:00:00.000Z'));
 
   assert.equal(answer.exactResults.length, 0);
   assert.match(answer.content, /Не могу подтвердить/iu);

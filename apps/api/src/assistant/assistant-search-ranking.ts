@@ -5,7 +5,6 @@ import type {
 
 import {
   AssistantPlannerFallbackValidationError,
-  createAssistantComparisonTargetVariants,
   type AssistantSearchFilters,
   type AssistantStructuredIntent,
 } from './assistant-query-planner';
@@ -117,8 +116,15 @@ function selectComparisonCandidates(
 }
 
 function matchesComparisonTarget(candidate: AssistantSearchEvidence, target: string) {
-  return createAssistantComparisonTargetVariants(target).some((variant) =>
-    containsNormalized(candidate.objectTitle, variant) || containsNormalized(candidate.developer, variant));
+  return containsNormalizedPhrase(candidate.objectTitle, target)
+    || containsNormalizedPhrase(candidate.developer, target);
+}
+
+function containsNormalizedPhrase(value: string | null, expected: string) {
+  const normalizePhrase = (text: string) => normalize(text).replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const normalizedValue = normalizePhrase(value ?? '');
+  const normalizedExpected = normalizePhrase(expected);
+  return normalizedExpected.length > 0 && ` ${normalizedValue} `.includes(` ${normalizedExpected} `);
 }
 
 export function validateAssistantSearchAnswer(

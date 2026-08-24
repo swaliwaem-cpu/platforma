@@ -352,10 +352,15 @@ function isCombinedComparisonDeveloper(value: string | null, comparisonTargets: 
 export function extractAssistantComparisonTargets(messages: string[]) {
   const text = messages.join('\n');
   const match = text.match(
-    /сравн\p{L}*\s+(?:застройщик\p{L}*\s+|жк\s+)?[«"]?(.+?)[»"]?\s+(?:и|с)\s+[«"]?(.+?)[»"]?(?=\s+(?:до\s+\d|бюджет\p{L}*|в\s+район)|[,.;\r\n]|$)/iu,
+    /сравн\p{L}*\s+(?:застройщик\p{L}*\s+|жк\s+)?(?<firstQuote>[«"]?)(?<first>.+?)[»"]?\s+(?<conjunction>и|с)\s+(?<secondQuote>[«"]?)(?<second>.+?)[»"]?(?=\s+(?:по\s+(?:цен|стоим|услов|срок|сдач|локац|располож|инфраструкт|доход|ликвид|планиров|площад|метро)\p{L}*|до\s+\d|бюджет\p{L}*|в\s+район)|[,.;\r\n]|$)/iu,
   );
-  if (!match) return null;
-  const targets = [match[1], match[2]].map((value) => value?.trim().replace(/^[«"]|[»"]$/gu, '') ?? '');
+  if (!match?.groups) return null;
+  const first = cleanComparisonTarget(match.groups.first);
+  const rawSecond = cleanComparisonTarget(match.groups.second);
+  const second = normalizeComparableText(match.groups.conjunction ?? '') === 'с' && !match.groups.secondQuote
+    ? normalizeInstrumentalComparisonTarget(rawSecond)
+    : rawSecond;
+  const targets = [first, second];
   const genericTargets = new Set(['вариант', 'варианты', 'объект', 'объекты', 'цены', 'предложения']);
   if (targets.some((target) => !target || target.length > 160 || genericTargets.has(normalizeComparableText(target)))) {
     return null;
@@ -367,35 +372,30 @@ function normalizeComparableText(value: string) {
   return value.toLocaleLowerCase('ru-RU').replace(/ё/gu, 'е').trim();
 }
 
-export function createAssistantComparisonTargetVariants(value: string) {
-  const target = value.trim().replace(/^[«"]|[»"]$/gu, '');
+function cleanComparisonTarget(value: string | undefined) {
+  return value?.trim().replace(/^[«"]|[»"]$/gu, '') ?? '';
+}
+
+function normalizeInstrumentalComparisonTarget(target: string) {
   const wordMatch = target.match(/^(.*?)([\p{L}]+)$/u);
-  if (!wordMatch) return [target];
+  if (!wordMatch) return target;
   const [, prefix = '', word = ''] = wordMatch;
   const normalizedWord = normalizeComparableText(word);
-  const replacements: string[] = [];
-  const addStem = (ending: string, suffixes: string[]) => {
-    if (!normalizedWord.endsWith(ending)) return;
+  const endings: Array<[string, string]> = [
+    ['ью', 'ь'],
+    ['ою', 'а'],
+    ['ею', 'я'],
+    ['ом', ''],
+    ['ем', 'е'],
+    ['ой', 'а'],
+    ['ей', 'я'],
+  ];
+  for (const [ending, replacement] of endings) {
+    if (!normalizedWord.endsWith(ending)) continue;
     const stem = word.slice(0, -ending.length);
-    if ([...stem].length < 3) return;
-    suffixes.forEach((suffix) => replacements.push(`${prefix}${stem}${suffix}`));
-  };
-
-  addStem('ом', ['']);
-  addStem('ем', ['е', 'ь']);
-  addStem('ой', ['а', 'я', 'ая']);
-  addStem('ей', ['я', 'е', 'яя']);
-  addStem('ью', ['ь']);
-  addStem('ою', ['а', 'я', 'ая']);
-  addStem('ею', ['я', 'е', 'яя']);
-
-  const seen = new Set<string>();
-  return [target, ...replacements].filter((candidate) => {
-    const normalized = normalizeComparableText(candidate);
-    if (!normalized || seen.has(normalized)) return false;
-    seen.add(normalized);
-    return true;
-  });
+    if ([...stem].length >= 3) return `${prefix}${stem}${replacement}`;
+  }
+  return target;
 }
 
 export function extractAssistantExplicitHardFilters(
