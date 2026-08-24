@@ -93,6 +93,11 @@ try {
   await desktop.getByRole('button', { name: 'Повторить отправку' }).click();
   await desktop.getByText('Понимаю запрос').waitFor();
   await desktop.getByText('Тестовый помощник получил запрос: «Найди квартиру рядом».').waitFor();
+  await desktop.getByRole('heading', { name: 'Лучшие по этим критериям' }).waitFor();
+  assert.equal(await desktop.getByRole('link', { name: 'ЖК Тест' }).getAttribute('href'), '/objects/zhk-test/lots/77777777-7777-4777-8777-777777777777');
+  await desktop.getByText('25 000 000 ₽').waitFor();
+  await desktop.getByText('обновлено 10 часов назад').waitFor();
+  assert.equal(await desktop.getByRole('link', { name: 'Презентация проекта' }).getAttribute('href'), '/media/files/88888888-8888-4888-8888-888888888888/content?download=true');
   assert.deepEqual(await desktop.evaluate(() => {
     window.__assistantProgressObserver?.disconnect();
     return window.__assistantProgressLabels;
@@ -134,7 +139,7 @@ try {
   assert.equal(await disabled.getByRole('button', { name: 'Открыть ИИ-помощника' }).count(), 0);
   await disabled.close();
 
-  const mobile = await browser.newPage({ viewport: { width: 500, height: 900 } });
+  const mobile = await browser.newPage({ viewport: { width: 375, height: 900 } });
   await installRoutes(mobile, createAssistantState(), ['objects:read']);
   await mobile.goto(`${baseUrl}/objects/zhk-mobile`, { waitUntil: 'domcontentloaded' });
   await mobile.getByRole('button', { name: 'Открыть ИИ-помощника' }).click();
@@ -143,7 +148,7 @@ try {
   assert.ok(mobileBox);
   assert.equal(mobileBox.x, 0);
   assert.equal(mobileBox.y, 0);
-  assert.equal(mobileBox.width, 500);
+  assert.equal(mobileBox.width, 375);
   assert.equal(mobileBox.height, 900);
   assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
   const mobileContextCloseBox = await mobile.getByRole('button', { name: 'Убрать контекст «Текущий ЖК»' }).boundingBox();
@@ -295,6 +300,30 @@ function assistantMessage() {
     role: 'ASSISTANT',
     content: 'Тестовый помощник получил запрос: «Найди квартиру рядом».',
     context: null,
+    answer: {
+      kind: 'SEARCH_RESULTS',
+      exactResults: [
+        {
+          unitId: '77777777-7777-4777-8777-777777777777',
+          title: 'ЖК Тест',
+          subtitle: '2-комнатная · 60 м² · 8 этаж',
+          priceRub: 25_000_000,
+          availabilityLabel: 'В продаже',
+          freshnessLabel: 'обновлено 10 часов назад',
+          isStale: false,
+          href: '/objects/zhk-test/lots/77777777-7777-4777-8777-777777777777',
+          facts: ['Хамовники', 'м. Спортивная', '3 кв. 2027'],
+          pdfs: [
+            {
+              title: 'Презентация проекта',
+              href: '/media/files/88888888-8888-4888-8888-888888888888/content?download=true',
+            },
+          ],
+          deviations: [],
+        },
+      ],
+      alternatives: [],
+    },
     createdAt: '2026-08-24T12:00:01.000Z',
   };
 }

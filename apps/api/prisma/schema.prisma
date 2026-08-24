@@ -419,6 +419,7 @@ model AssistantMessage {
   role           AssistantMessageRole
   content        String               @db.Text
   contextJson    Json?                @map("context_json")
+  answerJson     Json?                @map("answer_json")
   createdAt      DateTime             @default(now()) @map("created_at")
 
   conversation     AssistantConversation @relation(fields: [conversationId], references: [id], onDelete: Restrict)
@@ -439,6 +440,9 @@ model AssistantRun {
   requestHash        String             @map("request_hash") @db.Char(64)
   status             AssistantRunStatus @default(PENDING)
   progressJson       Json               @default("[]") @map("progress_json")
+  intentJson         Json?              @map("intent_json")
+  evidenceJson       Json               @default("[]") @map("evidence_json")
+  telemetryJson      Json               @default("[]") @map("telemetry_json")
   errorCode          String?            @map("error_code") @db.VarChar(120)
   leaseOwner         String?            @map("lease_owner") @db.VarChar(100)
   leaseExpiresAt     DateTime?          @map("lease_expires_at")

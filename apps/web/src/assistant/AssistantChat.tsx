@@ -1,8 +1,10 @@
 import type {
   AssistantConversation,
   AssistantConversationSummary,
+  AssistantMessage,
   AssistantPageContext,
   AssistantRun,
+  AssistantSearchResultCard,
 } from '@platforma/shared';
 import {
   Clock3Icon,
@@ -555,11 +557,15 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
                 ) : null}
                 {renderedMessages.map((message) => (
                   <article
-                    className={`assistant-message assistant-message--${message.role.toLocaleLowerCase('en-US')}`}
+                    className={[
+                      'assistant-message',
+                      `assistant-message--${message.role.toLocaleLowerCase('en-US')}`,
+                      message.answer?.kind === 'SEARCH_RESULTS' ? 'assistant-message--results' : '',
+                    ].filter(Boolean).join(' ')}
                     key={message.id}
                   >
                     <span>{message.role === 'USER' ? 'Вы' : 'Помощник'}</span>
-                    <p>{message.content}</p>
+                    <AssistantMessageContent message={message} />
                   </article>
                 ))}
                 {optimisticContent && !renderedMessages.some((message) => message.content === optimisticContent) ? (
@@ -630,6 +636,81 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
       )}
     </>
   );
+}
+
+function AssistantMessageContent({ message }: { message: AssistantMessage }) {
+  return (
+    <>
+      <p>{message.content}</p>
+      {message.answer?.kind === 'SEARCH_RESULTS' ? (
+        <div className="assistant-results">
+          <section aria-labelledby={`assistant-exact-${message.id}`}>
+            <h3 id={`assistant-exact-${message.id}`}>Лучшие по этим критериям</h3>
+            {message.answer.exactResults.length > 0 ? (
+              <div className="assistant-result-list">
+                {message.answer.exactResults.map((result) => (
+                  <AssistantResultCard key={result.unitId} result={result} />
+                ))}
+              </div>
+            ) : (
+              <p className="assistant-results-empty">Точных совпадений нет.</p>
+            )}
+          </section>
+          {message.answer.alternatives.length > 0 ? (
+            <section aria-labelledby={`assistant-alternatives-${message.id}`}>
+              <h3 id={`assistant-alternatives-${message.id}`}>Альтернативы</h3>
+              <div className="assistant-result-list">
+                {message.answer.alternatives.map((result) => (
+                  <AssistantResultCard key={result.unitId} result={result} />
+                ))}
+              </div>
+            </section>
+          ) : null}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function AssistantResultCard({ result }: { result: AssistantSearchResultCard }) {
+  return (
+    <section className="assistant-result-card" aria-label={`${result.title}, ${formatRub(result.priceRub)}`}>
+      {result.deviations.length > 0 ? (
+        <div className="assistant-result-deviations" aria-label="Отклонения от запроса">
+          {result.deviations.map((deviation) => (
+            <span key={`${deviation.type}-${deviation.label}`}>{deviation.label}</span>
+          ))}
+        </div>
+      ) : null}
+      <a className="assistant-result-title" href={result.href}>{result.title}</a>
+      <p className="assistant-result-subtitle">{result.subtitle}</p>
+      <strong className="assistant-result-price">{formatRub(result.priceRub)}</strong>
+      <div className="assistant-result-status">
+        <span>{result.availabilityLabel}</span>
+        <span className={result.isStale ? 'assistant-result-freshness assistant-result-freshness--stale' : 'assistant-result-freshness'}>
+          {result.freshnessLabel}
+        </span>
+      </div>
+      {result.facts.length > 0 ? (
+        <ul className="assistant-result-facts">
+          {result.facts.map((fact) => <li key={fact}>{fact}</li>)}
+        </ul>
+      ) : null}
+      {result.pdfs.length > 0 ? (
+        <div className="assistant-result-pdfs" aria-label="Доступные PDF">
+          {result.pdfs.map((pdf) => (
+            <a href={pdf.href} key={pdf.href} rel="noopener noreferrer" target="_blank">
+              {pdf.title}
+            </a>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function formatRub(value: number) {
+  return `${value.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} ₽`;
 }
 
 function resolvePageContext(pathname: string, search: string): AssistantPageContext | null {

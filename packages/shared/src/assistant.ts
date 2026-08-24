@@ -10,11 +10,41 @@ export type AssistantMessageRole = 'USER' | 'ASSISTANT';
 export type AssistantRunStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED';
 export type AssistantProgressStep = 'UNDERSTANDING' | 'SEARCHING' | 'COMPARING' | 'ANSWERING';
 
+export type AssistantAlternativeDeviation = {
+  type: 'BUDGET' | 'DISTRICT' | 'DEVELOPER' | 'ROOMS';
+  label: string;
+};
+
+export type AssistantSearchResultCard = {
+  unitId: string;
+  title: string;
+  subtitle: string;
+  priceRub: number;
+  availabilityLabel: string;
+  freshnessLabel: string;
+  isStale: boolean;
+  href: string;
+  facts: string[];
+  pdfs: Array<{ title: string; href: string }>;
+  deviations: AssistantAlternativeDeviation[];
+};
+
+export type AssistantAnswer =
+  | {
+      kind: 'SEARCH_RESULTS';
+      exactResults: AssistantSearchResultCard[];
+      alternatives: AssistantSearchResultCard[];
+    }
+  | { kind: 'CLARIFICATION' }
+  | { kind: 'REFUSAL' }
+  | { kind: 'SAFE_BOUNDARY' };
+
 export type AssistantMessage = {
   id: string;
   role: AssistantMessageRole;
   content: string;
   context: AssistantPageContext | null;
+  answer: AssistantAnswer | null;
   createdAt: string;
 };
 

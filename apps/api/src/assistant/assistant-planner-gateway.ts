@@ -1,0 +1,338 @@
+import {
+  createEmptyAssistantSearchFilters,
+  type AssistantPlannerGateway,
+  type AssistantPlannerGatewayResult,
+  type AssistantPlannerRequest,
+  type AssistantStructuredIntent,
+} from './assistant-query-planner';
+
+type AssistantEnvironment = NodeJS.ProcessEnv | Record<string, string | undefined>;
+type AssistantAiMode = 'fake' | 'openai';
+
+const assistantPlannerSchema = createAssistantPlannerSchema();
+const assistantPlannerPromptVersion = 'assistant-query-planner-v1';
+
+export class AssistantPlannerGatewayError extends Error {
+  constructor(readonly code: string) {
+    super(code);
+    this.name = 'AssistantPlannerGatewayError';
+  }
+}
+
+export function createAssistantPlannerGateway(
+  environment: AssistantEnvironment = process.env,
+  fetchImplementation: typeof fetch = fetch,
+): AssistantPlannerGateway {
+  const mode = readAssistantAiMode(environment);
+  if (mode === 'fake') return new AssistantFakePlannerGateway();
+  const apiKey = environment.OPENAI_API_KEY?.trim() ?? '';
+  if (!apiKey) throw new AssistantPlannerGatewayError('OPENAI_API_KEY_MISSING');
+  const baseUrl = environment.ASSISTANT_OPENAI_BASE_URL?.trim() || 'https://api.openai.com/v1';
+  const timeoutMs = readBoundedInteger(environment.ASSISTANT_OPENAI_TIMEOUT_MS, 20_000, 1_000, 120_000);
+  return new AssistantOpenAiPlannerGateway(apiKey, fetchImplementation, baseUrl, timeoutMs);
+}
+
+export class AssistantFakePlannerGateway implements AssistantPlannerGateway {
+  async plan(request: AssistantPlannerRequest): Promise<AssistantPlannerGatewayResult> {
+    return {
+      output: createDeterministicIntent(request.messages),
+      provider: 'fake',
+      httpStatus: 200,
+      inputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 0,
+    };
+  }
+}
+
+export class AssistantOpenAiPlannerGateway implements AssistantPlannerGateway {
+  constructor(
+    private readonly apiKey: string,
+    private readonly fetchImplementation: typeof fetch = fetch,
+    private readonly baseUrl = 'https://api.openai.com/v1',
+    private readonly timeoutMs = 20_000,
+  ) {}
+
+  async plan(request: AssistantPlannerRequest): Promise<AssistantPlannerGatewayResult> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    const clientRequestId = createClientRequestId(request);
+    let response: Response;
+    try {
+      response = await this.fetchImplementation(`${this.baseUrl.replace(/\/$/u, '')}/responses`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+          'X-Client-Request-Id': clientRequestId,
+        },
+        body: JSON.stringify(createAssistantPlannerRequestBody(request)),
+        signal: controller.signal,
+      });
+    } catch {
+      throw new AssistantPlannerGatewayError(controller.signal.aborted
+        ? 'ASSISTANT_OPENAI_TIMEOUT'
+        : 'ASSISTANT_OPENAI_NETWORK_ERROR');
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    const requestId = readBoundedString(response.headers.get('x-request-id'), 160);
+    let value: unknown;
+    try {
+      value = await response.json();
+    } catch {
+      throw new AssistantPlannerGatewayError('ASSISTANT_OPENAI_MALFORMED_RESPONSE');
+    }
+    if (!response.ok) throw new AssistantPlannerGatewayError(`ASSISTANT_OPENAI_HTTP_${response.status}`);
+    if (!isRecord(value)) throw new AssistantPlannerGatewayError('ASSISTANT_OPENAI_MALFORMED_RESPONSE');
+    const outputText = readOutputText(value.output);
+    if (!outputText) throw new AssistantPlannerGatewayError('ASSISTANT_OPENAI_OUTPUT_MISSING');
+
+    let output: unknown;
+    try {
+      output = JSON.parse(outputText);
+    } catch {
+      output = null;
+    }
+    const usage = parseUsage(value.usage);
+    return {
+      output,
+      provider: 'openai',
+      requestId,
+      responseId: readBoundedString(value.id, 160),
+      httpStatus: response.status,
+      ...usage,
+    };
+  }
+}
+
+export function createAssistantPlannerSchema() {
+  const nullableNumber = { type: ['number', 'null'] };
+  const nullableInteger = { type: ['integer', 'null'] };
+  const nullableString = { type: ['string', 'null'], minLength: 1, maxLength: 160 };
+  const filters = {
+    type: 'object',
+    additionalProperties: false,
+    required: [
+      'budgetMinRub',
+      'budgetMaxRub',
+      'rooms',
+      'district',
+      'metro',
+      'developer',
+      'completionYearMin',
+      'completionYearMax',
+      'completionQuarter',
+      'objectType',
+      'propertyClass',
+      'areaMin',
+      'areaMax',
+      'floorMin',
+      'floorMax',
+    ],
+    properties: {
+      budgetMinRub: { ...nullableNumber, minimum: 0, maximum: 1_000_000_000_000 },
+      budgetMaxRub: { ...nullableNumber, minimum: 0, maximum: 1_000_000_000_000 },
+      rooms: { type: 'array', uniqueItems: true, maxItems: 11, items: { type: 'integer', minimum: 0, maximum: 10 } },
+      district: nullableString,
+      metro: nullableString,
+      developer: nullableString,
+      completionYearMin: { ...nullableInteger, minimum: 1900, maximum: 2200 },
+      completionYearMax: { ...nullableInteger, minimum: 1900, maximum: 2200 },
+      completionQuarter: { ...nullableInteger, minimum: 1, maximum: 4 },
+      objectType: { type: 'string', enum: ['RESIDENTIAL', 'COMMERCIAL'] },
+      propertyClass: { ...nullableString, maxLength: 120 },
+      areaMin: { ...nullableNumber, minimum: 0, maximum: 100_000 },
+      areaMax: { ...nullableNumber, minimum: 0, maximum: 100_000 },
+      floorMin: { ...nullableInteger, minimum: -20, maximum: 500 },
+      floorMax: { ...nullableInteger, minimum: -20, maximum: 500 },
+    },
+  };
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: [
+      'taskType',
+      'hardFilters',
+      'softPreferences',
+      'requiredFacts',
+      'needsClarification',
+      'clarificationQuestion',
+    ],
+    properties: {
+      taskType: { type: 'string', enum: ['SEARCH', 'COMPARE', 'FACT', 'LEGAL_TAX'] },
+      hardFilters: filters,
+      softPreferences: filters,
+      requiredFacts: {
+        type: 'array',
+        uniqueItems: true,
+        maxItems: 11,
+        items: {
+          type: 'string',
+          enum: ['PRICE', 'AVAILABILITY', 'FRESHNESS', 'LINK', 'ROOMS', 'LOCATION', 'DEVELOPER', 'COMPLETION', 'AREA', 'FLOOR', 'PDF'],
+        },
+      },
+      needsClarification: { type: 'boolean' },
+      clarificationQuestion: { type: ['string', 'null'], minLength: 1, maxLength: 300 },
+    },
+  };
+}
+
+function createAssistantPlannerRequestBody(request: AssistantPlannerRequest) {
+  return {
+    model: request.model,
+    reasoning: { effort: request.reasoningEffort },
+    store: false,
+    max_output_tokens: 2_500,
+    instructions: [
+      `Contract: ${assistantPlannerPromptVersion}.`,
+      'Ты Query Planner внутренней Platforma по недвижимости.',
+      'Преобразуй русскоязычный запрос в строгий structured intent.',
+      'Явные условия пользователя всегда являются hard filters. Пожелания без обязательности являются soft preferences.',
+      'Не выдумывай названия, цены, наличие, координаты, ссылки или факты: их проверит сервер по базе.',
+      'Для налоговых и юридических вопросов выбери LEGAL_TAX. Не давай правовую консультацию.',
+      'PRICE, AVAILABILITY, FRESHNESS и LINK обязательны для всех задач кроме LEGAL_TAX.',
+      'Если критичных условий поиска не хватает, задай один короткий составной clarificationQuestion.',
+    ].join(' '),
+    input: [{
+      role: 'user',
+      content: [{
+        type: 'input_text',
+        text: JSON.stringify({
+          trust_boundary: 'UNTRUSTED_USER_TEXT',
+          messages: request.messages,
+          page_context: request.context,
+        }),
+      }],
+    }],
+    text: {
+      format: {
+        type: 'json_schema',
+        name: 'platforma_assistant_intent',
+        strict: true,
+        schema: assistantPlannerSchema,
+      },
+    },
+  };
+}
+
+function createDeterministicIntent(messages: string[]): AssistantStructuredIntent {
+  const text = messages.join('\n').replace(/ё/giu, 'е');
+  const normalized = text.toLocaleLowerCase('ru-RU');
+  const hardFilters = createEmptyAssistantSearchFilters();
+  hardFilters.objectType = /коммерчес\p{L}*/iu.test(normalized) ? 'COMMERCIAL' : 'RESIDENTIAL';
+  hardFilters.district = extractNamedCondition(
+    text,
+    /(?:в\s+)?район(?:е)?\s+[«"]?(.+?)[»"]?(?=\s+(?:у\s+метро|метро|от\s+\p{L}|до\s+\d|сдач\p{L}*)|[,.;]|$)/iu,
+  );
+  hardFilters.metro = extractNamedCondition(
+    text,
+    /(?:у\s+)?метро\s+[«"]?(.+?)[»"]?(?=\s+(?:от\s+\p{L}|до\s+\d|сдач\p{L}*)|[,.;]|$)/iu,
+  );
+  hardFilters.developer = extractNamedCondition(
+    text,
+    /(?:застройщик(?:а|ом)?|от)\s+[«"]?(.+?)[»"]?(?=\s+(?:сдач\p{L}*|до\s+\d)|[,.;]|$)/iu,
+  );
+  const completionMaximum = normalized.match(/(?:сдач\p{L}*\s+)?(?:до|не\s+позднее)\s+(20\d{2})/iu);
+  const completionExact = normalized.match(/(?:сдач\p{L}*|готов\p{L}*)[^\d]{0,16}(20\d{2})/iu);
+  if (completionMaximum) hardFilters.completionYearMax = Number(completionMaximum[1]);
+  else if (completionExact) {
+    hardFilters.completionYearMin = Number(completionExact[1]);
+    hardFilters.completionYearMax = Number(completionExact[1]);
+  }
+  const quarter = normalized.match(/([1-4])\s*(?:кв\.?|квартал)/iu);
+  if (quarter) hardFilters.completionQuarter = Number(quarter[1]);
+  const propertyClass = normalized.match(/(?:класс(?:а)?\s+)?(комфорт|бизнес|премиум|элит)\s*[- ]?класс/iu);
+  if (propertyClass) hardFilters.propertyClass = propertyClass[1]!;
+  const areaMinimum = normalized.match(/(?:площад\p{L}*\s+)?(?:от|не\s+меньше)\s+(\d+(?:[.,]\d+)?)\s*(?:м2|м²|кв)/iu);
+  const areaMaximum = normalized.match(/(?:площад\p{L}*\s+)?(?:до|не\s+больше)\s+(\d+(?:[.,]\d+)?)\s*(?:м2|м²|кв)/iu);
+  if (areaMinimum) hardFilters.areaMin = Number(areaMinimum[1]!.replace(',', '.'));
+  if (areaMaximum) hardFilters.areaMax = Number(areaMaximum[1]!.replace(',', '.'));
+  const floorMinimum = normalized.match(/(?:этаж\p{L}*\s+)?(?:от|не\s+ниже)\s+(-?\d+)\s*(?:этаж\p{L}*)/iu);
+  const floorMaximum = normalized.match(/(?:этаж\p{L}*\s+)?(?:до|не\s+выше)\s+(-?\d+)\s*(?:этаж\p{L}*)/iu);
+  if (floorMinimum) hardFilters.floorMin = Number(floorMinimum[1]);
+  if (floorMaximum) hardFilters.floorMax = Number(floorMaximum[1]);
+
+  return {
+    taskType: /(?:налог\p{L}*|юрид\p{L}*|договор\p{L}*|закон\p{L}*)/iu.test(normalized)
+      ? 'LEGAL_TAX'
+      : /сравн\p{L}*/iu.test(normalized)
+        ? 'COMPARE'
+        : 'SEARCH',
+    hardFilters,
+    softPreferences: createEmptyAssistantSearchFilters(),
+    requiredFacts: ['PRICE', 'AVAILABILITY', 'FRESHNESS', 'LINK'],
+    needsClarification: false,
+    clarificationQuestion: null,
+  };
+}
+
+function extractNamedCondition(text: string, pattern: RegExp) {
+  const match = text.match(pattern)?.[1]?.trim().replace(/^[«"]|[»"]$/gu, '');
+  return match && match.length <= 160 ? match : null;
+}
+
+function createClientRequestId(request: AssistantPlannerRequest) {
+  const suffix = request.model.endsWith('luna') ? 'luna' : 'terra';
+  return `assistant-planner-${suffix}-${Date.now()}`.slice(0, 160);
+}
+
+function readOutputText(value: unknown) {
+  if (!Array.isArray(value)) return null;
+  for (const item of value) {
+    if (!isRecord(item) || !Array.isArray(item.content)) continue;
+    for (const content of item.content) {
+      if (isRecord(content) && content.type === 'output_text' && typeof content.text === 'string') {
+        return content.text;
+      }
+    }
+  }
+  return null;
+}
+
+function parseUsage(value: unknown) {
+  if (!isRecord(value)) {
+    return { inputTokens: null, outputTokens: null, reasoningTokens: null, totalTokens: null };
+  }
+  const outputDetails = isRecord(value.output_tokens_details) ? value.output_tokens_details : null;
+  return {
+    inputTokens: readTokenCount(value.input_tokens),
+    outputTokens: readTokenCount(value.output_tokens),
+    reasoningTokens: readTokenCount(outputDetails?.reasoning_tokens),
+    totalTokens: readTokenCount(value.total_tokens),
+  };
+}
+
+function readTokenCount(value: unknown) {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function readAssistantAiMode(environment: AssistantEnvironment): AssistantAiMode {
+  const mode = (environment.ASSISTANT_AI_MODE ?? 'fake').trim().toLocaleLowerCase('en-US');
+  if (mode !== 'fake' && mode !== 'openai') throw new AssistantPlannerGatewayError('ASSISTANT_AI_MODE_INVALID');
+  return mode;
+}
+
+function readBoundedInteger(
+  value: string | undefined,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+) {
+  if (value === undefined || value === '') return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new AssistantPlannerGatewayError('ASSISTANT_OPENAI_TIMEOUT_MS_INVALID');
+  }
+  return parsed;
+}
+
+function readBoundedString(value: unknown, maximumLength: number) {
+  return typeof value === 'string' && value.length > 0 && value.length <= maximumLength ? value : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}

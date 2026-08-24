@@ -10,6 +10,7 @@ import {
   Prisma,
 } from '@prisma/client';
 import type {
+  AssistantAnswer,
   AssistantConversation,
   AssistantConversationSummary,
   AssistantMessage,
@@ -17,6 +18,7 @@ import type {
   AssistantProgressEvent,
   AssistantProgressStep,
   AssistantRun,
+  AssistantSearchResultCard,
   AssistantSendMessageInput,
 } from '@platforma/shared' with { 'resolution-mode': 'import' };
 import { createHash } from 'node:crypto';
@@ -37,12 +39,15 @@ const assistantConversationTitleMaxLength = 80;
 const assistantHistoryCursorMaxLength = 512;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const contextKinds = new Set(['OBJECT', 'LOT', 'DEVELOPER', 'CATALOG_FILTERS']);
+const answerKinds = new Set(['SEARCH_RESULTS', 'CLARIFICATION', 'REFUSAL', 'SAFE_BOUNDARY']);
+const deviationTypes = new Set(['BUDGET', 'DISTRICT', 'DEVELOPER', 'ROOMS']);
 
 const messageSelect = {
   id: true,
   role: true,
   content: true,
   contextJson: true,
+  answerJson: true,
   createdAt: true,
 } satisfies Prisma.AssistantMessageSelect;
 
@@ -262,6 +267,9 @@ export class AssistantService {
         data: {
           status: PrismaAssistantRunStatus.PENDING,
           progressJson: [],
+          intentJson: Prisma.DbNull,
+          evidenceJson: [],
+          telemetryJson: [],
           errorCode: null,
           startedAt: null,
           completedAt: null,
@@ -391,6 +399,9 @@ export class AssistantService {
       role: message.role,
       content: message.content,
       context: this.parseStoredContext(message.contextJson),
+      answer: message.role === PrismaAssistantMessageRole.ASSISTANT
+        ? this.parseStoredAnswer(message.answerJson)
+        : null,
       createdAt: message.createdAt.toISOString(),
     };
   }
@@ -415,6 +426,80 @@ export class AssistantService {
     } catch {
       return null;
     }
+  }
+
+  private parseStoredAnswer(value: Prisma.JsonValue | null): AssistantAnswer | null {
+    if (!this.isRecord(value) || typeof value.kind !== 'string' || !answerKinds.has(value.kind)) return null;
+    if (value.kind !== 'SEARCH_RESULTS') return { kind: value.kind } as AssistantAnswer;
+    if (!Array.isArray(value.exactResults) || !Array.isArray(value.alternatives)) return null;
+    if (value.exactResults.length > 3 || value.alternatives.length > 2) return null;
+
+    const exactResults = value.exactResults.flatMap((item) => {
+      const parsed = this.parseStoredResultCard(item, false);
+      return parsed ? [parsed] : [];
+    });
+    const alternatives = value.alternatives.flatMap((item) => {
+      const parsed = this.parseStoredResultCard(item, true);
+      return parsed ? [parsed] : [];
+    });
+    if (exactResults.length !== value.exactResults.length || alternatives.length !== value.alternatives.length) return null;
+    if (exactResults.length > 0 && alternatives.length > 0) return null;
+    return { kind: 'SEARCH_RESULTS', exactResults, alternatives };
+  }
+
+  private parseStoredResultCard(value: unknown, alternative: boolean): AssistantSearchResultCard | null {
+    if (!this.isRecord(value)) return null;
+    if (
+      typeof value.unitId !== 'string' || !uuidPattern.test(value.unitId) ||
+      typeof value.title !== 'string' || !this.isBoundedText(value.title, 300) ||
+      typeof value.subtitle !== 'string' || !this.isBoundedText(value.subtitle, 300) ||
+      typeof value.priceRub !== 'number' || !Number.isFinite(value.priceRub) || value.priceRub <= 0 ||
+      typeof value.availabilityLabel !== 'string' || !this.isBoundedText(value.availabilityLabel, 80) ||
+      typeof value.freshnessLabel !== 'string' || !this.isBoundedText(value.freshnessLabel, 160) ||
+      typeof value.isStale !== 'boolean' ||
+      typeof value.href !== 'string' || !this.isExistingLotHref(value.href, value.unitId) ||
+      !Array.isArray(value.facts) || value.facts.length > 8 ||
+      !Array.isArray(value.pdfs) || value.pdfs.length > 4 ||
+      !Array.isArray(value.deviations)
+    ) return null;
+    const facts = value.facts.flatMap((fact) =>
+      typeof fact === 'string' && this.isBoundedText(fact, 240) ? [fact] : []);
+    const pdfs = value.pdfs.flatMap((pdf) => {
+      if (!this.isRecord(pdf) || typeof pdf.title !== 'string' || !this.isBoundedText(pdf.title, 240)) return [];
+      if (typeof pdf.href !== 'string' || !/^\/media\/files\/[0-9a-f-]{36}\/content\?download=true$/iu.test(pdf.href)) return [];
+      return [{ title: pdf.title, href: pdf.href }];
+    });
+    const deviations = value.deviations.flatMap((deviation) => {
+      if (!this.isRecord(deviation) || typeof deviation.type !== 'string' || !deviationTypes.has(deviation.type)) return [];
+      if (typeof deviation.label !== 'string' || !this.isBoundedText(deviation.label, 240)) return [];
+      return [{
+        type: deviation.type as AssistantSearchResultCard['deviations'][number]['type'],
+        label: deviation.label,
+      }];
+    });
+    if (facts.length !== value.facts.length || pdfs.length !== value.pdfs.length) return null;
+    if (deviations.length !== value.deviations.length || deviations.length !== (alternative ? 1 : 0)) return null;
+    return {
+      unitId: value.unitId,
+      title: value.title,
+      subtitle: value.subtitle,
+      priceRub: value.priceRub,
+      availabilityLabel: value.availabilityLabel,
+      freshnessLabel: value.freshnessLabel,
+      isStale: value.isStale,
+      href: value.href,
+      facts,
+      pdfs,
+      deviations,
+    };
+  }
+
+  private isExistingLotHref(value: string, unitId: string) {
+    return new RegExp(`^/objects/[^/]+/lots/${unitId}$`, 'u').test(value);
+  }
+
+  private isBoundedText(value: string, maximumLength: number) {
+    return value.trim().length > 0 && value.length <= maximumLength;
   }
 
   private parseProgressEvents(value: Prisma.JsonValue): AssistantProgressEvent[] {
