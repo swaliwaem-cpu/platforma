@@ -259,6 +259,48 @@ if (!databaseUrl) {
     }
   });
 
+  test('planner and PostgreSQL comparison keep evidence for both developers beyond the global candidate limit', async () => {
+    const fixture = await createComparisonFixture();
+    try {
+      const created = await createConversation();
+      const queued = await sendMessage(created.body.conversation.id, {
+        content: `Сравни застройщиков ${fixture.firstDeveloper.name} и ${fixture.secondDeveloper.name}, двушки до 25 млн в районе ${fixture.district.name} у метро ${fixture.metro.name}`,
+        context: null,
+      }, randomUUID());
+      const completed = await waitForRun(queued.body.run.id, ownerToken);
+
+      assert.equal(completed.status, 'COMPLETED');
+      assert.equal(completed.assistantMessage.answer.kind, 'SEARCH_RESULTS');
+      assert.equal(completed.assistantMessage.answer.exactResults.length, 3);
+      const facts = completed.assistantMessage.answer.exactResults.flatMap(({ facts: resultFacts }) => resultFacts);
+      assert.equal(facts.includes(fixture.firstDeveloper.name), true);
+      assert.equal(facts.includes(fixture.secondDeveloper.name), true);
+
+      const persisted = await prisma.assistantRun.findUniqueOrThrow({ where: { id: completed.id } });
+      assert.deepEqual(persisted.intentJson.comparisonTargets, [
+        fixture.firstDeveloper.name,
+        fixture.secondDeveloper.name,
+      ]);
+      assert.equal(persisted.intentJson.hardFilters.developer, null);
+
+      const softIntent = createSearchIntent({
+        budgetMaxRub: 25_000_000,
+        rooms: [2],
+        district: fixture.district.name,
+        metro: fixture.metro.name,
+      });
+      softIntent.softPreferences = {
+        ...createEmptyAssistantSearchFilters(),
+        developer: fixture.secondDeveloper.name,
+      };
+      const softSearch = await app.get(AssistantSearchService).search(softIntent, null);
+      const softAnswer = buildAssistantSearchAnswer(softIntent, softSearch.exact, [], new Date());
+      assert.equal(softAnswer.exactResults[0].facts.includes(fixture.secondDeveloper.name), true);
+    } finally {
+      await deleteComparisonFixture(fixture);
+    }
+  });
+
   test('conversation and run ownership fail closed without exposing another user data', async () => {
     const created = await createConversation();
     const queued = await sendMessage(
@@ -715,6 +757,124 @@ if (!databaseUrl) {
       where: { id: { in: [fixture.district.id, fixture.emptyDistrict.id, fixture.area.id, fixture.locationParent.id] } },
     });
     await prisma.developer.deleteMany({ where: { id: fixture.developer.id } });
+  }
+
+  async function createComparisonFixture() {
+    const suffix = randomUUID().slice(0, 8);
+    const [firstDeveloper, secondDeveloper] = await Promise.all([
+      prisma.developer.create({ data: { name: `ПИК ${suffix}` } }),
+      prisma.developer.create({ data: { name: `Самолёт ${suffix}` } }),
+    ]);
+    const district = await prisma.location.create({
+      data: { name: `Хамовники ${suffix}`, slug: `compare-district-${suffix}`, type: 'DISTRICT' },
+    });
+    const metro = await prisma.metroStation.create({
+      data: { name: `Спортивная ${suffix}`, slug: `compare-metro-${suffix}`, lineName: `Тестовая ${suffix}` },
+    });
+    const firstObject = await prisma.realEstateObject.create({
+      data: {
+        title: `ЖК Первый ${suffix}`,
+        slug: `compare-first-${suffix}`,
+        status: 'PUBLISHED',
+        type: 'RESIDENTIAL',
+        developerId: firstDeveloper.id,
+        primaryLocationId: district.id,
+        completionYear: 2027,
+        feedUpdatedAt: new Date(),
+        metroStations: { create: { metroStationId: metro.id } },
+      },
+    });
+    const secondObject = await prisma.realEstateObject.create({
+      data: {
+        title: `ЖК Второй ${suffix}`,
+        slug: `compare-second-${suffix}`,
+        status: 'PUBLISHED',
+        type: 'RESIDENTIAL',
+        developerId: secondDeveloper.id,
+        primaryLocationId: district.id,
+        completionYear: 2027,
+        feedUpdatedAt: new Date(),
+        metroStations: { create: { metroStationId: metro.id } },
+      },
+    });
+    const [firstSource, secondSource] = await Promise.all([
+      prisma.feedSource.create({
+        data: {
+          url: `https://example.test/compare-first-${suffix}.xml`,
+          format: 'CIAN_XML',
+          developerId: firstDeveloper.id,
+          objectId: firstObject.id,
+          isActive: true,
+          lastSuccessAt: new Date(),
+        },
+      }),
+      prisma.feedSource.create({
+        data: {
+          url: `https://example.test/compare-second-${suffix}.xml`,
+          format: 'CIAN_XML',
+          developerId: secondDeveloper.id,
+          objectId: secondObject.id,
+          isActive: true,
+          lastSuccessAt: new Date(),
+        },
+      }),
+    ]);
+    await prisma.feedUnit.createMany({
+      data: Array.from({ length: 121 }, (_, index) => ({
+        sourceId: firstSource.id,
+        objectId: firstObject.id,
+        externalId: `compare-first-${suffix}-${index}`,
+        type: 'RESIDENTIAL',
+        status: 'AVAILABLE',
+        title: `Квартира ${index + 1}`,
+        rooms: 2,
+        effectivePrice: 10_000_000 + index * 10_000,
+        currency: 'RUB',
+        area: 60,
+        floor: 8,
+        completionYear: 2027,
+      })),
+    });
+    await prisma.feedUnit.create({
+      data: {
+        sourceId: secondSource.id,
+        objectId: secondObject.id,
+        externalId: `compare-second-${suffix}`,
+        type: 'RESIDENTIAL',
+        status: 'AVAILABLE',
+        title: 'Квартира сравнения',
+        rooms: 2,
+        effectivePrice: 20_000_000,
+        currency: 'RUB',
+        area: 60,
+        floor: 8,
+        completionYear: 2027,
+      },
+    });
+    return {
+      firstDeveloper,
+      secondDeveloper,
+      district,
+      metro,
+      firstObject,
+      secondObject,
+      firstSource,
+      secondSource,
+    };
+  }
+
+  async function deleteComparisonFixture(fixture) {
+    await prisma.feedSource.deleteMany({
+      where: { id: { in: [fixture.firstSource.id, fixture.secondSource.id] } },
+    });
+    await prisma.realEstateObject.deleteMany({
+      where: { id: { in: [fixture.firstObject.id, fixture.secondObject.id] } },
+    });
+    await prisma.metroStation.deleteMany({ where: { id: fixture.metro.id } });
+    await prisma.location.deleteMany({ where: { id: fixture.district.id } });
+    await prisma.developer.deleteMany({
+      where: { id: { in: [fixture.firstDeveloper.id, fixture.secondDeveloper.id] } },
+    });
   }
 
   function createSearchIntent(hardFilterOverrides) {

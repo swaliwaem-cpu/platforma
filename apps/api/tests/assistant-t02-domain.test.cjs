@@ -220,6 +220,19 @@ test('Assistant T02 planner preserves high reasoning across a multi-turn compari
   assert.equal(calls[0].reasoningEffort, 'high');
 });
 
+test('Assistant T02 planner does not turn two compared developers into one hard filter', async () => {
+  const planner = new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' }));
+
+  const result = await planner.plan({
+    messages: ['Сравни застройщиков ПИК и Самолёт, двушки до 25 млн у метро Спортивная'],
+    context: null,
+  });
+
+  assert.deepEqual(result.intent.comparisonTargets, ['ПИК', 'Самолёт']);
+  assert.equal(result.intent.hardFilters.developer, null);
+  assert.equal(result.intent.needsClarification, false);
+});
+
 test('Assistant T02 planner treats real catalog metro and object type filters as hard context', async () => {
   const planner = new AssistantQueryPlanner({ async plan() { return validIntent(); } });
 

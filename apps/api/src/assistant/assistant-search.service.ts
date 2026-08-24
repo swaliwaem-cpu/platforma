@@ -113,6 +113,7 @@ type SearchOptions = {
   nearbyDistrictParentIds?: string[];
   catalogSearchObjectIds?: string[];
   comparisonTargets?: string[];
+  softPreferences?: AssistantSearchFilters;
 };
 
 @Injectable()
@@ -124,7 +125,11 @@ export class AssistantSearchService {
     context: AssistantPageContext | null,
   ): Promise<{ exact: AssistantSearchEvidence[]; alternatives: AssistantSearchEvidence[] }> {
     const contextOptions = await this.resolveContextOptions(context);
-    const searchOptions = { ...contextOptions, comparisonTargets: intent.comparisonTargets };
+    const searchOptions = {
+      ...contextOptions,
+      comparisonTargets: intent.comparisonTargets,
+      softPreferences: intent.softPreferences,
+    };
     const exact = await this.findEvidence(intent.hardFilters, context, searchOptions);
     if (exact.length > 0) return { exact, alternatives: [] };
 
@@ -227,8 +232,53 @@ export class AssistantSearchService {
     context: AssistantPageContext | null,
     options: SearchOptions = {},
   ) {
+    return this.prisma.$transaction(async (transaction) => {
+      const comparisonGroups = options.comparisonTargets?.length === 2
+        ? options.comparisonTargets.map((target) => [target])
+        : [options.comparisonTargets];
+      const groupLimit = comparisonGroups.length === 2 ? Math.ceil(candidateLimit / 2) : candidateLimit;
+      const rowIds: string[] = [];
+      const seenRowIds = new Set<string>();
+
+      for (const comparisonTargets of comparisonGroups) {
+        const rows = await this.findCandidateRows(
+          transaction,
+          filters,
+          context,
+          { ...options, comparisonTargets },
+          groupLimit,
+        );
+        for (const { id } of rows) {
+          if (seenRowIds.has(id)) continue;
+          seenRowIds.add(id);
+          rowIds.push(id);
+        }
+      }
+      if (rowIds.length === 0) return [];
+
+      const records = await transaction.feedUnit.findMany({
+        where: { id: { in: rowIds } },
+        select: candidateSelect,
+      });
+      const recordsById = new Map(records.map((record) => [record.id, record]));
+      return rowIds.flatMap((id) => {
+        const record = recordsById.get(id);
+        const evidence = record ? this.toEvidence(record) : null;
+        return evidence ? [evidence] : [];
+      });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+  }
+
+  private async findCandidateRows(
+    transaction: Prisma.TransactionClient,
+    filters: AssistantSearchFilters,
+    context: AssistantPageContext | null,
+    options: SearchOptions,
+    limit: number,
+  ) {
     const conditions = this.createSqlConditions(filters, context, options);
-    const rows = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+    const softPreferenceScore = this.createSoftPreferenceScore(options.softPreferences);
+    return transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
       SELECT fu.id::text AS id
       FROM feed_units fu
       JOIN feed_sources fs ON fs.id = fu.source_id
@@ -236,23 +286,47 @@ export class AssistantSearchService {
       LEFT JOIN developers d ON d.id = o.developer_id
       WHERE ${Prisma.join(conditions, ' AND ')}
       ORDER BY
+        ${softPreferenceScore} DESC,
         COALESCE(fu.effective_price, fu.discount_price, fu.price) ASC NULLS LAST,
         fu.updated_at DESC,
         fu.id ASC
-      LIMIT ${candidateLimit}
+      LIMIT ${limit}
     `);
-    if (rows.length === 0) return [];
+  }
 
-    const records = await this.prisma.feedUnit.findMany({
-      where: { id: { in: rows.map(({ id }) => id) } },
-      select: candidateSelect,
-    });
-    const recordsById = new Map(records.map((record) => [record.id, record]));
-    return rows.flatMap(({ id }) => {
-      const record = recordsById.get(id);
-      const evidence = record ? this.toEvidence(record) : null;
-      return evidence ? [evidence] : [];
-    });
+  private createSoftPreferenceScore(filters: AssistantSearchFilters | undefined) {
+    if (!filters) return Prisma.sql`CAST(0 AS integer)`;
+    const price = Prisma.sql`COALESCE(fu.effective_price, fu.discount_price, fu.price)`;
+    const completionYear = Prisma.sql`COALESCE(fu.completion_year, o.feed_completion_year, o.completion_year)`;
+    const completionQuarter = Prisma.sql`COALESCE(fu.completion_quarter, o.feed_completion_quarter, o.completion_quarter)`;
+    const terms: Prisma.Sql[] = [];
+    const addTerm = (condition: Prisma.Sql) => {
+      terms.push(Prisma.sql`CASE WHEN ${condition} THEN 1 ELSE 0 END`);
+    };
+
+    if (filters.budgetMinRub !== null) addTerm(Prisma.sql`${price} >= ${filters.budgetMinRub}`);
+    if (filters.budgetMaxRub !== null) addTerm(Prisma.sql`${price} <= ${filters.budgetMaxRub}`);
+    if (filters.rooms.length > 0) addTerm(Prisma.sql`fu.rooms IN (${Prisma.join(filters.rooms)})`);
+    if (filters.district) addTerm(this.createDistrictCondition(filters.district));
+    if (filters.metro) addTerm(Prisma.sql`EXISTS (
+      SELECT 1
+      FROM object_metro_stations oms
+      JOIN metro_stations ms ON ms.id = oms.metro_station_id
+      WHERE oms.object_id = o.id
+        AND ${createNormalizedContains(Prisma.sql`ms.name`, filters.metro)}
+    )`);
+    if (filters.developer) addTerm(createNormalizedContains(Prisma.sql`d.name`, filters.developer));
+    if (filters.completionYearMin !== null) addTerm(Prisma.sql`${completionYear} >= ${filters.completionYearMin}`);
+    if (filters.completionYearMax !== null) addTerm(Prisma.sql`${completionYear} <= ${filters.completionYearMax}`);
+    if (filters.completionQuarter !== null) addTerm(Prisma.sql`${completionQuarter} = ${filters.completionQuarter}`);
+    if (filters.propertyClass) addTerm(createNormalizedContains(Prisma.sql`o.property_class`, filters.propertyClass));
+    if (filters.areaMin !== null) addTerm(Prisma.sql`fu.area >= ${filters.areaMin}`);
+    if (filters.areaMax !== null) addTerm(Prisma.sql`fu.area <= ${filters.areaMax}`);
+    if (filters.floorMin !== null) addTerm(Prisma.sql`fu.floor >= ${filters.floorMin}`);
+    if (filters.floorMax !== null) addTerm(Prisma.sql`fu.floor <= ${filters.floorMax}`);
+    return terms.length > 0
+      ? Prisma.sql`(${Prisma.join(terms, ' + ')})`
+      : Prisma.sql`CAST(0 AS integer)`;
   }
 
   private createSqlConditions(

@@ -297,14 +297,18 @@ function normalizeIntentAgainstRequest(
   const explicitFilters = extractAssistantExplicitHardFilters(messages);
   const contextFilters = extractContextHardFilters(context);
   const explicitComparisonTargets = extractAssistantComparisonTargets(messages);
+  const comparisonTargets = explicitComparisonTargets ?? intent.comparisonTargets;
   const hardMarkedSoftFilters = promoteHardMarkedSoftFilters(intent.softPreferences, messages.join('\n'));
-  const hardFilters: AssistantSearchFilters = {
+  const mergedHardFilters: AssistantSearchFilters = {
     ...intent.hardFilters,
     ...hardMarkedSoftFilters,
     ...explicitFilters,
     ...contextFilters,
     rooms: contextFilters.rooms ?? explicitFilters.rooms ?? intent.hardFilters.rooms,
   };
+  const hardFilters = isCombinedComparisonDeveloper(mergedHardFilters.developer, comparisonTargets)
+    ? { ...mergedHardFilters, developer: null }
+    : mergedHardFilters;
   const isLegalOrTax = messages.some((message) => legalOrTaxPattern.test(message));
   if (isLegalOrTax) {
     return {
@@ -318,7 +322,7 @@ function normalizeIntentAgainstRequest(
   }
 
   if (intent.taskType === 'FACT') {
-    return { ...intent, hardFilters, comparisonTargets: explicitComparisonTargets ?? intent.comparisonTargets };
+    return { ...intent, hardFilters, comparisonTargets };
   }
 
   const missingFacts: string[] = [];
@@ -330,13 +334,19 @@ function normalizeIntentAgainstRequest(
 
   return {
     ...intent,
-    comparisonTargets: explicitComparisonTargets ?? intent.comparisonTargets,
+    comparisonTargets,
     hardFilters,
     needsClarification: missingFacts.length > 0,
     clarificationQuestion: missingFacts.length > 0
       ? `Уточните, пожалуйста: ${joinRussianList(missingFacts)}.`
       : null,
   };
+}
+
+function isCombinedComparisonDeveloper(value: string | null, comparisonTargets: string[]) {
+  if (!value || comparisonTargets.length !== 2) return false;
+  const normalizedValue = normalizeComparableText(value);
+  return comparisonTargets.every((target) => normalizedValue.includes(normalizeComparableText(target)));
 }
 
 export function extractAssistantComparisonTargets(messages: string[]) {
