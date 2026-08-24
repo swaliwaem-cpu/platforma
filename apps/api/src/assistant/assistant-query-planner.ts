@@ -394,38 +394,54 @@ export function createAssistantComparisonTargetVariants(
   mode: AssistantComparisonTargetMode = 'EXACT',
 ) {
   if (mode !== 'INSTRUMENTAL') return [target];
-  const wordMatch = target.match(/^(.*?)([\p{L}]+)$/u);
-  if (!wordMatch) return [target];
-  const [, prefix = '', word = ''] = wordMatch;
-  const normalizedWord = normalizeComparableText(word);
+  const maxVariants = 12;
   const endings: Array<[string, string[]]> = [
     ['оем', ['ой']],
     ['ью', ['ь']],
     ['ою', ['а', 'я', 'ая']],
     ['ею', ['я', 'е', 'яя']],
+    ['ьим', ['ий']],
     ['ым', ['ый', 'ой']],
-    ['им', ['ий']],
+    ['им', ['ий', 'ой']],
     ['ом', ['']],
     ['ем', ['е', 'ь']],
     ['ой', ['а', 'я', 'ая']],
     ['ей', ['я', 'е', 'яя']],
   ];
-  const variants = [target];
-  for (const [ending, replacements] of endings) {
-    if (!normalizedWord.endsWith(ending)) continue;
-    const stem = word.slice(0, -ending.length);
-    if ([...stem].length >= 3) {
-      replacements.forEach((replacement) => variants.push(`${prefix}${stem}${replacement}`));
+
+  const parts = target.split(/([\p{L}]+)/u);
+  const choices = parts.map((part, index) => {
+    if (index % 2 === 0) return [part];
+    const normalizedWord = normalizeComparableText(part);
+    for (const [ending, replacements] of endings) {
+      if (!normalizedWord.endsWith(ending)) continue;
+      const stem = part.slice(0, -ending.length);
+      if ([...stem].length < 3) break;
+      return [...replacements.map((replacement) => `${stem}${replacement}`), part];
     }
-    break;
+    return [part];
+  });
+
+  let combinations = [''];
+  for (const partChoices of choices) {
+    const next: string[] = [];
+    for (const prefix of combinations) {
+      for (const choice of partChoices) {
+        next.push(`${prefix}${choice}`);
+        if (next.length >= maxVariants) break;
+      }
+      if (next.length >= maxVariants) break;
+    }
+    combinations = next;
   }
+
   const seen = new Set<string>();
-  return variants.filter((variant) => {
+  return [target, ...combinations].filter((variant) => {
     const normalized = normalizeComparableText(variant);
     if (!normalized || seen.has(normalized)) return false;
     seen.add(normalized);
     return true;
-  });
+  }).slice(0, maxVariants);
 }
 
 export function extractAssistantExplicitHardFilters(

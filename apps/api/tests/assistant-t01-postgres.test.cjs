@@ -259,12 +259,12 @@ if (!databaseUrl) {
     }
   });
 
-  test('planner and PostgreSQL comparison keep evidence for both adjective targets beyond the global candidate limit', async () => {
+  test('planner and PostgreSQL comparison keep evidence for an inflected multiword target beyond the global candidate limit', async () => {
     const fixture = await createComparisonFixture();
     try {
       const created = await createConversation();
       const queued = await sendMessage(created.body.conversation.id, {
-        content: `Сравни ЖК Первый с Вторым по цене, двушки до 25 млн в районе ${fixture.district.name} у метро ${fixture.metro.name}`,
+        content: `Сравни ЖК Первый с Сердцем Столицы по цене, двушки до 25 млн в районе ${fixture.district.name} у метро ${fixture.metro.name}`,
         context: null,
       }, randomUUID());
       const completed = await waitForRun(queued.body.run.id, ownerToken);
@@ -279,7 +279,7 @@ if (!databaseUrl) {
       const persisted = await prisma.assistantRun.findUniqueOrThrow({ where: { id: completed.id } });
       assert.deepEqual(persisted.intentJson.comparisonTargets, [
         'Первый',
-        'Вторым',
+        'Сердцем Столицы',
       ]);
       assert.deepEqual(persisted.intentJson.comparisonTargetModes, ['EXACT', 'INSTRUMENTAL']);
       assert.equal(persisted.intentJson.hardFilters.developer, null);
@@ -787,7 +787,7 @@ if (!databaseUrl) {
     });
     const secondObject = await prisma.realEstateObject.create({
       data: {
-        title: `ЖК Второй ${suffix}`,
+        title: `ЖК Сердце Столицы ${suffix}`,
         slug: `compare-second-${suffix}`,
         status: 'PUBLISHED',
         type: 'RESIDENTIAL',

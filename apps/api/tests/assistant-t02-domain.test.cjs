@@ -7,6 +7,7 @@ const { test } = require('node:test');
 const {
   AssistantPlannerError,
   AssistantQueryPlanner,
+  createAssistantComparisonTargetVariants,
 } = require('../dist/assistant/assistant-query-planner.js');
 const {
   AssistantAnswerValidationError,
@@ -247,6 +248,19 @@ test('Assistant T02 planner marks an inflected adjective comparison target as in
   assert.equal(result.intent.needsClarification, false);
 });
 
+test('Assistant T02 comparison variants stay bounded across multiword and ambiguous adjective forms', () => {
+  assert.deepEqual(
+    createAssistantComparisonTargetVariants('Сердцем Столицы', 'INSTRUMENTAL').slice(0, 2),
+    ['Сердцем Столицы', 'Сердце Столицы'],
+  );
+  assert.equal(createAssistantComparisonTargetVariants('Большим', 'INSTRUMENTAL').includes('Большой'), true);
+  assert.equal(createAssistantComparisonTargetVariants('Третьим', 'INSTRUMENTAL').includes('Третий'), true);
+  assert.equal(
+    createAssistantComparisonTargetVariants('Европейским Большим Берегом', 'INSTRUMENTAL').length <= 12,
+    true,
+  );
+});
+
 test('Assistant T02 planner treats real catalog metro and object type filters as hard context', async () => {
   const planner = new AssistantQueryPlanner({ async plan() { return validIntent(); } });
 
@@ -425,6 +439,26 @@ test('Assistant T02 comparison resolves confirmed instrumental adjective targets
   const candidates = [
     candidate('11111111-1111-4111-8111-111111111111', { objectTitle: 'ЖК Первый' }),
     candidate('22222222-2222-4222-8222-222222222222', { objectTitle: 'ЖК Второй' }),
+  ];
+
+  const answer = buildAssistantSearchAnswer(intent, candidates, [], new Date('2026-08-24T12:00:00.000Z'));
+
+  assert.deepEqual(answer.exactResults.map(({ unitId }) => unitId), [
+    '11111111-1111-4111-8111-111111111111',
+    '22222222-2222-4222-8222-222222222222',
+  ]);
+});
+
+test('Assistant T02 comparison resolves a confirmed inflected word inside a multiword target', () => {
+  const intent = validIntent({
+    taskType: 'COMPARE',
+    comparisonTargets: ['Событие', 'Сердцем Столицы'],
+    comparisonTargetModes: ['EXACT', 'INSTRUMENTAL'],
+    hardFilters: { ...emptyFilters(), budgetMaxRub: 25_000_000, rooms: [2], metro: 'Спортивная' },
+  });
+  const candidates = [
+    candidate('11111111-1111-4111-8111-111111111111', { objectTitle: 'ЖК Событие' }),
+    candidate('22222222-2222-4222-8222-222222222222', { objectTitle: 'ЖК Сердце Столицы' }),
   ];
 
   const answer = buildAssistantSearchAnswer(intent, candidates, [], new Date('2026-08-24T12:00:00.000Z'));
