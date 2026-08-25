@@ -164,7 +164,7 @@ const objectStatusLabels: Record<ObjectStatus, string> = {
 };
 
 export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
-  const { accessToken } = useAuth();
+  const { accessToken, hasPermission } = useAuth();
   const [queryString, setQueryString] = useState(window.location.search);
   const routeObjectType = getCatalogRouteObjectType(pathname);
   const filters = useMemo(() => parseCatalogFilters(queryString, routeObjectType), [queryString, routeObjectType]);
@@ -565,6 +565,7 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
       {isMapView ? (
         <CatalogMapView
           accessToken={accessToken ?? ''}
+          canRefreshWalkingRoutes={hasPermission('admin:access')}
           error={mapError}
           filters={filters}
           isLoading={isMapLoading}
@@ -1416,6 +1417,7 @@ function CatalogListView({
 
 function CatalogMapView({
   accessToken,
+  canRefreshWalkingRoutes,
   error,
   filters,
   isLoading,
@@ -1423,6 +1425,7 @@ function CatalogMapView({
   total,
 }: {
   accessToken: string;
+  canRefreshWalkingRoutes: boolean;
   error: string | null;
   filters: CatalogFilters;
   isLoading: boolean;
@@ -1445,6 +1448,7 @@ function CatalogMapView({
   });
   const [walkingRoutesRetryKey, setWalkingRoutesRetryKey] = useState(0);
   const walkingRoutesRequestRef = useRef(0);
+  const forceWalkingRoutesRefreshRef = useRef(false);
   const points = useMemo(() => objects.map((object) => mapObjectToPoint(object, filters)), [filters, objects]);
   const visibleObjects = useMemo(
     () => (visibleBounds ? objects.filter((object) => isMapObjectInBounds(object, visibleBounds)) : objects),
@@ -1471,6 +1475,10 @@ function CatalogMapView({
     setNearbyTransit({ pointId: null, status: 'idle', stations: [] });
   }, []);
   const handleRetryWalkingRoutes = useCallback(() => {
+    setWalkingRoutesRetryKey((current) => current + 1);
+  }, []);
+  const handleRefreshWalkingRoutes = useCallback(() => {
+    forceWalkingRoutesRefreshRef.current = true;
     setWalkingRoutesRetryKey((current) => current + 1);
   }, []);
   const handleMapStatusChange = useCallback((status: MapStatus) => {
@@ -1507,6 +1515,8 @@ function CatalogMapView({
     }
 
     const controller = new AbortController();
+    const shouldForceRefresh = forceWalkingRoutesRefreshRef.current;
+    forceWalkingRoutesRefreshRef.current = false;
     const request: MapWalkingRoutesRequest = {
       origin: [selectedObject.latitude, selectedObject.longitude],
       destinations: stations.map((station) => station.coordinates),
@@ -1514,11 +1524,15 @@ function CatalogMapView({
 
     setWalkingRoutes({ pointId: selectedObject.id, status: 'loading', routes: [] });
 
-    void apiRequest<unknown>('/map/walking-routes', accessToken, {
-      body: JSON.stringify(request),
-      method: 'POST',
-      signal: controller.signal,
-    })
+    void apiRequest<unknown>(
+      shouldForceRefresh ? '/map/walking-routes/refresh' : '/map/walking-routes',
+      accessToken,
+      {
+        body: JSON.stringify(request),
+        method: 'POST',
+        signal: controller.signal,
+      },
+    )
       .then((response) => {
         if (walkingRoutesRequestRef.current !== requestId) {
           return;
@@ -1561,10 +1575,12 @@ function CatalogMapView({
       {selectedObject ? (
         <MapObjectCard
           accessToken={accessToken}
+          canRefreshWalkingRoutes={canRefreshWalkingRoutes}
           filters={filters}
           nearbyTransit={nearbyTransit.pointId === selectedObject.id ? nearbyTransit : null}
           object={selectedObject}
           onClose={handleCloseObject}
+          onRefreshWalkingRoutes={handleRefreshWalkingRoutes}
           onRetryWalkingRoutes={handleRetryWalkingRoutes}
           walkingRoutes={walkingRoutes.pointId === selectedObject.id ? walkingRoutes : null}
         />
@@ -1627,18 +1643,22 @@ function CatalogMapView({
 
 function MapObjectCard({
   accessToken,
+  canRefreshWalkingRoutes,
   filters,
   nearbyTransit,
   object,
   onClose,
+  onRefreshWalkingRoutes,
   onRetryWalkingRoutes,
   walkingRoutes,
 }: {
   accessToken: string;
+  canRefreshWalkingRoutes: boolean;
   filters: CatalogFilters;
   nearbyTransit: MapNearbyTransitResult | null;
   object: MapObject;
   onClose: () => void;
+  onRefreshWalkingRoutes: () => void;
   onRetryWalkingRoutes: () => void;
   walkingRoutes: MapWalkingRoutesState | null;
 }) {
@@ -1734,25 +1754,37 @@ function MapObjectCard({
             </p>
           ) : null}
           {nearbyTransit?.status === 'ready' && walkingRoutes?.status === 'ready' ? (
-            <ol className="map-nearby-metro-list">
-              {nearbyTransit.stations.slice(0, 3).map((station, destinationIndex) => {
-                const route = walkingRoutesByDestination.get(destinationIndex);
+            <>
+              <ol className="map-nearby-metro-list">
+                {nearbyTransit.stations.slice(0, 3).map((station, destinationIndex) => {
+                  const route = walkingRoutesByDestination.get(destinationIndex);
 
-                return (
-                  <li key={`${station.name}-${station.coordinates.join('-')}`}>
-                    <span className="map-nearby-metro-icon" aria-hidden="true">
-                      М
-                    </span>
-                    <span>{station.name}</span>
-                    <strong>
-                      {route && route.distanceMeters !== null && route.durationSeconds !== null
-                        ? `${formatMapDistance(route.distanceMeters)} · ${formatWalkingDuration(route.durationSeconds)}`
-                        : 'Маршрут не найден'}
-                    </strong>
-                  </li>
-                );
-              })}
-            </ol>
+                  return (
+                    <li key={`${station.name}-${station.coordinates.join('-')}`}>
+                      <span className="map-nearby-metro-icon" aria-hidden="true">
+                        М
+                      </span>
+                      <span>{station.name}</span>
+                      <strong>
+                        {route && route.distanceMeters !== null && route.durationSeconds !== null
+                          ? `${formatMapDistance(route.distanceMeters)} · ${formatWalkingDuration(route.durationSeconds)}`
+                          : 'Маршрут не найден'}
+                      </strong>
+                    </li>
+                  );
+                })}
+              </ol>
+              {canRefreshWalkingRoutes ? (
+                <button
+                  aria-label="Обновить маршруты метро"
+                  className="text-button map-nearby-metro-retry"
+                  type="button"
+                  onClick={onRefreshWalkingRoutes}
+                >
+                  Обновить маршруты
+                </button>
+              ) : null}
+            </>
           ) : null}
           {nearbyTransit?.status === 'ready' && walkingRoutes?.status === 'unavailable' ? (
             <>

@@ -15,11 +15,19 @@ const { MapService } = require('../dist/map/map.service.js');
 const { PrismaService } = require('../dist/prisma/prisma.service.js');
 
 test('walking routes HTTP endpoint enforces auth, objects:read and server-side validation', { concurrency: false }, async () => {
+  let providerCalls = 0;
   const providerServer = createServer((request, response) => {
     request.resume();
     request.on('end', () => {
+      providerCalls += 1;
       response.writeHead(200, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ distances: [[920]], durations: [[680]] }));
+      response.end(
+        JSON.stringify(
+          providerCalls === 1
+            ? { distances: [[920]], durations: [[680]] }
+            : { distances: [[980]], durations: [[720]] },
+        ),
+      );
     });
   });
   await new Promise((resolve) => providerServer.listen(0, '127.0.0.1', resolve));
@@ -39,12 +47,28 @@ test('walking routes HTTP endpoint enforces auth, objects:read and server-side v
 
   const users = new Map([
     ['allowed-user', makeUser('allowed-user', ['objects:read'])],
+    ['admin-user', makeUser('admin-user', ['objects:read', 'admin:access'])],
     ['denied-user', makeUser('denied-user', [])],
   ]);
+  const routeCache = new Map();
   const prisma = {
     user: {
       findFirst: async ({ where }) => users.get(where.id) ?? null,
     },
+    mapWalkingRouteCache: {
+      findMany: async ({ where }) =>
+        [...new Set(where.cacheKey.in)].flatMap((cacheKey) =>
+          routeCache.has(cacheKey) ? [routeCache.get(cacheKey)] : [],
+        ),
+      upsert: async ({ where, create, update }) => {
+        const value = routeCache.has(where.cacheKey)
+          ? { ...routeCache.get(where.cacheKey), ...update }
+          : { ...create };
+        routeCache.set(where.cacheKey, value);
+        return value;
+      },
+    },
+    $transaction: async (operations) => Promise.all(operations),
   };
 
   class MapRoutingHttpTestModule {}
@@ -67,6 +91,10 @@ test('walking routes HTTP endpoint enforces auth, objects:read and server-side v
   );
   const deniedToken = jwt.sign(
     { sub: 'denied-user', email: 'denied@example.test', type: 'access' },
+    { secret: process.env.JWT_ACCESS_SECRET, expiresIn: '5m' },
+  );
+  const adminToken = jwt.sign(
+    { sub: 'admin-user', email: 'admin@example.test', type: 'access' },
     { secret: process.env.JWT_ACCESS_SECRET, expiresIn: '5m' },
   );
   let app;
@@ -94,6 +122,14 @@ test('walking routes HTTP endpoint enforces auth, objects:read and server-side v
     const invalid = await request(baseUrl, { origin: [95, 37.61], destinations: [[55.76, 37.62]] }, allowedToken);
     assert.equal(invalid.status, 400);
     assert.equal(invalid.body.message, 'Origin coordinates are invalid');
+
+    assert.equal((await request(baseUrl, validBody, undefined, '/map/walking-routes/refresh')).status, 401);
+    assert.equal((await request(baseUrl, validBody, allowedToken, '/map/walking-routes/refresh')).status, 403);
+    assert.deepEqual(await request(baseUrl, validBody, adminToken, '/map/walking-routes/refresh'), {
+      status: 200,
+      body: { routes: [{ destinationIndex: 0, distanceMeters: 980, durationSeconds: 720 }] },
+    });
+    assert.equal(providerCalls, 2);
   } finally {
     await app?.close();
     await new Promise((resolve, reject) => providerServer.close((error) => (error ? reject(error) : resolve())));
@@ -101,8 +137,8 @@ test('walking routes HTTP endpoint enforces auth, objects:read and server-side v
   }
 });
 
-async function request(baseUrl, body, token) {
-  const response = await fetch(`${baseUrl}/map/walking-routes`, {
+async function request(baseUrl, body, token, pathname = '/map/walking-routes') {
+  const response = await fetch(`${baseUrl}${pathname}`, {
     body: JSON.stringify(body),
     headers: {
       'Content-Type': 'application/json',

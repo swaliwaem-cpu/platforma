@@ -25,8 +25,8 @@ test('MapRoutingService returns walking matrix routes and caches identical reque
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(
         JSON.stringify({
-          distances: [[1200.4, 2500.6]],
-          durations: [[900.2, 1800.7]],
+          distances: [[1200.4, 2500.6, 1200.4]],
+          durations: [[900.2, 1800.7, 900.2]],
         }),
       );
     });
@@ -38,19 +38,20 @@ test('MapRoutingService returns walking matrix routes and caches identical reque
   const previousEnvironment = {
     apiKey: process.env.OPENROUTESERVICE_API_KEY,
     apiUrl: process.env.OPENROUTESERVICE_API_URL,
-    cacheTtl: process.env.OPENROUTESERVICE_CACHE_TTL_MS,
+    cacheStaleAfter: process.env.OPENROUTESERVICE_CACHE_STALE_AFTER_MS,
   };
   process.env.OPENROUTESERVICE_API_KEY = 'test-routing-key';
   process.env.OPENROUTESERVICE_API_URL = `http://127.0.0.1:${address.port}`;
-  process.env.OPENROUTESERVICE_CACHE_TTL_MS = '60000';
+  process.env.OPENROUTESERVICE_CACHE_STALE_AFTER_MS = '60000';
 
   try {
-    const service = new MapRoutingService();
+    const service = new MapRoutingService(createTestPrisma());
     const input = {
       origin: [55.75, 37.61],
       destinations: [
         [55.76, 37.62],
         [55.77, 37.63],
+        [55.76, 37.62],
       ],
     };
 
@@ -64,6 +65,7 @@ test('MapRoutingService returns walking matrix routes and caches identical reque
       routes: [
         { destinationIndex: 0, distanceMeters: 1200, durationSeconds: 900 },
         { destinationIndex: 1, distanceMeters: 2501, durationSeconds: 1801 },
+        { destinationIndex: 2, distanceMeters: 1200, durationSeconds: 900 },
       ],
     });
     assert.deepEqual(concurrentResult, firstResult);
@@ -72,11 +74,12 @@ test('MapRoutingService returns walking matrix routes and caches identical reque
     assert.deepEqual(requests[0], {
       authorization: 'test-routing-key',
       body: {
-        destinations: [1, 2],
+        destinations: [1, 2, 3],
         locations: [
           [37.61, 55.75],
           [37.62, 55.76],
           [37.63, 55.77],
+          [37.62, 55.76],
         ],
         metrics: ['distance', 'duration'],
         sources: [0],
@@ -89,7 +92,7 @@ test('MapRoutingService returns walking matrix routes and caches identical reque
     await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     restoreEnvironment('OPENROUTESERVICE_API_KEY', previousEnvironment.apiKey);
     restoreEnvironment('OPENROUTESERVICE_API_URL', previousEnvironment.apiUrl);
-    restoreEnvironment('OPENROUTESERVICE_CACHE_TTL_MS', previousEnvironment.cacheTtl);
+    restoreEnvironment('OPENROUTESERVICE_CACHE_STALE_AFTER_MS', previousEnvironment.cacheStaleAfter);
   }
 });
 
@@ -102,7 +105,7 @@ test('MapRoutingService rejects invalid coordinates and more than three destinat
   process.env.OPENROUTESERVICE_API_URL = 'http://127.0.0.1:1';
 
   try {
-    const service = new MapRoutingService();
+    const service = new MapRoutingService(createTestPrisma());
 
     await assert.rejects(
       service.getWalkingRoutes({
@@ -149,7 +152,7 @@ test('MapRoutingService preserves an unreachable walking destination without dro
   process.env.OPENROUTESERVICE_API_URL = `http://127.0.0.1:${address.port}`;
 
   try {
-    const service = new MapRoutingService();
+    const service = new MapRoutingService(createTestPrisma());
     const result = await service.getWalkingRoutes({
       origin: [55.75, 37.61],
       destinations: [
@@ -208,7 +211,7 @@ test('MapRoutingService retries temporary provider failures and respects Retry-A
   process.env.OPENROUTESERVICE_MAX_RETRIES = '2';
 
   try {
-    const service = new MapRoutingService();
+    const service = new MapRoutingService(createTestPrisma());
     const result = await service.getWalkingRoutes({
       origin: [55.75, 37.61],
       destinations: [[55.76, 37.62]],
@@ -248,7 +251,7 @@ test('MapRoutingService does not retry permanent provider authorization failures
   process.env.OPENROUTESERVICE_MAX_RETRIES = '2';
 
   try {
-    const service = new MapRoutingService();
+    const service = new MapRoutingService(createTestPrisma());
 
     await assert.rejects(
       service.getWalkingRoutes({
@@ -286,7 +289,7 @@ test('MapRoutingService bounds a timed out provider request', { concurrency: fal
   process.env.OPENROUTESERVICE_TIMEOUT_MS = '30';
 
   try {
-    const service = new MapRoutingService();
+    const service = new MapRoutingService(createTestPrisma());
 
     await assert.rejects(
       service.getWalkingRoutes({
@@ -308,6 +311,27 @@ function restoreEnvironment(name, value) {
   } else {
     process.env[name] = value;
   }
+}
+
+function createTestPrisma() {
+  const routeCache = new Map();
+
+  return {
+    mapWalkingRouteCache: {
+      findMany: async ({ where }) =>
+        [...new Set(where.cacheKey.in)].flatMap((cacheKey) =>
+          routeCache.has(cacheKey) ? [routeCache.get(cacheKey)] : [],
+        ),
+      upsert: async ({ where, create, update }) => {
+        const value = routeCache.has(where.cacheKey)
+          ? { ...routeCache.get(where.cacheKey), ...update }
+          : { ...create };
+        routeCache.set(where.cacheKey, value);
+        return value;
+      },
+    },
+    $transaction: async (operations) => Promise.all(operations),
+  };
 }
 
 function captureEnvironment(names) {

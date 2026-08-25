@@ -17,6 +17,7 @@ const browser = await chromium.launch({ headless: true });
 try {
   await verifyCatalogMap();
   await verifyWalkingRouteRetry();
+  await verifyAdminWalkingRouteRefresh();
   await verifyObjectDetailMap();
   await verifyProviderFailureKeepsCatalogUsable();
   await verifyProviderTimeoutKeepsCatalogUsable();
@@ -81,6 +82,7 @@ async function verifyCatalogMap() {
     await northCard.getByRole('heading', { name: 'Ближайшее метро пешком' }).waitFor();
     await northCard.getByText('Метро Северная', { exact: true }).waitFor();
     await northCard.getByText('1,3 км · 16 мин', { exact: true }).waitFor();
+    assert.equal(await northCard.getByRole('button', { name: 'Обновить маршруты метро' }).count(), 0);
     assert.equal(await northCard.locator('.map-nearby-metro-list li').count(), 3);
     assert.equal(walkingRouteRequests.length, 1);
     assert.deepEqual(walkingRouteRequests[0].origin, [55.79, 37.61]);
@@ -182,6 +184,38 @@ async function verifyWalkingRouteRetry() {
 
     assert.equal(walkingRouteRequests.length, 2);
     assert.deepEqual(runtimeErrors.filter((error) => !error.includes('502 (Bad Gateway)')), []);
+  } finally {
+    await context.close();
+  }
+}
+
+async function verifyAdminWalkingRouteRefresh() {
+  const context = await browser.newContext({ viewport: { width: 1366, height: 850 } });
+  const page = await context.newPage();
+  const walkingRouteRefreshRequests = [];
+  const runtimeErrors = collectRuntimeErrors(page);
+
+  try {
+    await installApiFixtures(page, {
+      permissions: ['objects:read', 'admin:access'],
+      walkingRouteRefreshRequests,
+    });
+    await installMapFixtures(page);
+
+    await page.goto(`${baseUrl}/catalog/map`, { waitUntil: 'domcontentloaded' });
+    const map = page.getByRole('region', { name: 'Карта объектов' });
+    const northMarker = map.locator('.map-price-marker[aria-label="ЖК Северный"]');
+    await northMarker.waitFor();
+    await northMarker.click();
+
+    const card = page.getByRole('article', { name: 'Объект ЖК Северный' });
+    await card.getByText('1,3 км · 16 мин', { exact: true }).waitFor();
+    await card.getByRole('button', { name: 'Обновить маршруты метро' }).click();
+    await card.getByText('1,5 км · 17 мин', { exact: true }).waitFor();
+
+    assert.equal(walkingRouteRefreshRequests.length, 1);
+    assert.equal(walkingRouteRefreshRequests[0].destinations.length, 3);
+    assert.deepEqual(runtimeErrors, []);
   } finally {
     await context.close();
   }
@@ -299,7 +333,15 @@ async function installMapFixtures(
   });
 }
 
-async function installApiFixtures(page, { walkingRouteFailures = 0, walkingRouteRequests = [] } = {}) {
+async function installApiFixtures(
+  page,
+  {
+    permissions = ['objects:read'],
+    walkingRouteFailures = 0,
+    walkingRouteRefreshRequests = [],
+    walkingRouteRequests = [],
+  } = {},
+) {
   let remainingWalkingRouteFailures = walkingRouteFailures;
   await page.route('https://fonts.googleapis.com/**', async (route) => {
     await route.fulfill({ status: 200, contentType: 'text/css', body: '' });
@@ -321,7 +363,7 @@ async function installApiFixtures(page, { walkingRouteFailures = 0, walkingRoute
           status: 'ACTIVE',
           role: { id: '22222222-2222-4222-8222-222222222222', name: 'user' },
           profilePhotoFile: null,
-          permissions: ['objects:read'],
+          permissions,
         },
       });
       return;
@@ -366,6 +408,18 @@ async function installApiFixtures(page, { walkingRouteFailures = 0, walkingRoute
           { destinationIndex: 0, distanceMeters: 1340, durationSeconds: 960 },
           { destinationIndex: 1, distanceMeters: 2210, durationSeconds: 1600 },
           { destinationIndex: 2, distanceMeters: 3810, durationSeconds: 2700 },
+        ],
+      });
+      return;
+    }
+
+    if (pathname === '/map/walking-routes/refresh' && request.method() === 'POST') {
+      walkingRouteRefreshRequests.push(request.postDataJSON());
+      await json(route, {
+        routes: [
+          { destinationIndex: 0, distanceMeters: 1450, durationSeconds: 1020 },
+          { destinationIndex: 1, distanceMeters: 2300, durationSeconds: 1650 },
+          { destinationIndex: 2, distanceMeters: 3900, durationSeconds: 2760 },
         ],
       });
       return;

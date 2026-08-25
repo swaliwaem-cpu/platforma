@@ -27,4 +27,11 @@ export class MapController {
   async getWalkingRoutes(@Body() body: MapWalkingRoutesRequest) {
     return this.mapRoutingService.getWalkingRoutes(body);
   }
+
+  @Post('walking-routes/refresh')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions('objects:read', 'admin:access')
+  async refreshWalkingRoutes(@Body() body: MapWalkingRoutesRequest) {
+    return this.mapRoutingService.refreshWalkingRoutes(body);
+  }
 }
