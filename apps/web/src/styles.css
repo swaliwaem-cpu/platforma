@@ -5145,6 +5145,11 @@ tr.user-row--deactivated .text-button {
   font-size: 13px !important;
 }
 
+.map-nearby-metro-retry {
+  justify-self: start;
+  font-size: 13px;
+}
+
 .map-nearby-metro-list {
   display: grid;
   gap: 8px;

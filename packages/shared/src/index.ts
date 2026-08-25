@@ -735,6 +735,23 @@ export type MapObjectsResponse = {
   total: number;
 };
 
+export type MapRoutingCoordinate = [latitude: number, longitude: number];
+
+export type MapWalkingRoutesRequest = {
+  origin: MapRoutingCoordinate;
+  destinations: MapRoutingCoordinate[];
+};
+
+export type MapWalkingRoute = {
+  destinationIndex: number;
+  distanceMeters: number | null;
+  durationSeconds: number | null;
+};
+
+export type MapWalkingRoutesResponse = {
+  routes: MapWalkingRoute[];
+};
+
 export type ImportReportUser = {
   id: string;
   email: string;

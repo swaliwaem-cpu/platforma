@@ -24,6 +24,8 @@ import type {
   LocationsResponse,
   MapObject,
   MapObjectsResponse,
+  MapWalkingRoute,
+  MapWalkingRoutesRequest,
   MetroStationsResponse,
   ObjectDeveloper,
   ObjectLocation,
@@ -68,6 +70,11 @@ type CatalogStatusFilter = ObjectStatus | 'ALL';
 type CatalogViewMode = 'cards' | 'list';
 type CatalogSortField = 'createdAt' | 'priceFrom' | 'pricePerMeterFrom' | 'completionDate';
 type CatalogPageSize = 25 | 50 | 75;
+type MapWalkingRoutesState = {
+  pointId: string | null;
+  status: 'idle' | 'loading' | 'ready' | 'unavailable';
+  routes: MapWalkingRoute[];
+};
 type SortDirection = 'asc' | 'desc';
 
 type CatalogFilters = {
@@ -1431,6 +1438,13 @@ function CatalogMapView({
     status: 'idle',
     stations: [],
   });
+  const [walkingRoutes, setWalkingRoutes] = useState<MapWalkingRoutesState>({
+    pointId: null,
+    status: 'idle',
+    routes: [],
+  });
+  const [walkingRoutesRetryKey, setWalkingRoutesRetryKey] = useState(0);
+  const walkingRoutesRequestRef = useRef(0);
   const points = useMemo(() => objects.map((object) => mapObjectToPoint(object, filters)), [filters, objects]);
   const visibleObjects = useMemo(
     () => (visibleBounds ? objects.filter((object) => isMapObjectInBounds(object, visibleBounds)) : objects),
@@ -1456,6 +1470,9 @@ function CatalogMapView({
     setSelectedObjectId(null);
     setNearbyTransit({ pointId: null, status: 'idle', stations: [] });
   }, []);
+  const handleRetryWalkingRoutes = useCallback(() => {
+    setWalkingRoutesRetryKey((current) => current + 1);
+  }, []);
   const handleMapStatusChange = useCallback((status: MapStatus) => {
     setMapStatus(status);
 
@@ -1475,6 +1492,52 @@ function CatalogMapView({
       setSelectedObjectId(null);
     }
   }, [objects, selectedObjectId]);
+
+  useEffect(() => {
+    const requestId = walkingRoutesRequestRef.current + 1;
+    walkingRoutesRequestRef.current = requestId;
+    const stations =
+      selectedObject && nearbyTransit.pointId === selectedObject.id && nearbyTransit.status === 'ready'
+        ? nearbyTransit.stations.slice(0, 3)
+        : [];
+
+    if (!selectedObject || stations.length === 0) {
+      setWalkingRoutes({ pointId: selectedObject?.id ?? null, status: 'idle', routes: [] });
+      return;
+    }
+
+    const controller = new AbortController();
+    const request: MapWalkingRoutesRequest = {
+      origin: [selectedObject.latitude, selectedObject.longitude],
+      destinations: stations.map((station) => station.coordinates),
+    };
+
+    setWalkingRoutes({ pointId: selectedObject.id, status: 'loading', routes: [] });
+
+    void apiRequest<unknown>('/map/walking-routes', accessToken, {
+      body: JSON.stringify(request),
+      method: 'POST',
+      signal: controller.signal,
+    })
+      .then((response) => {
+        if (walkingRoutesRequestRef.current !== requestId) {
+          return;
+        }
+
+        setWalkingRoutes({
+          pointId: selectedObject.id,
+          status: 'ready',
+          routes: parseMapWalkingRoutesResponse(response, stations.length),
+        });
+      })
+      .catch(() => {
+        if (!controller.signal.aborted && walkingRoutesRequestRef.current === requestId) {
+          setWalkingRoutes({ pointId: selectedObject.id, status: 'unavailable', routes: [] });
+        }
+      });
+
+    return () => controller.abort();
+  }, [accessToken, nearbyTransit, selectedObject, walkingRoutesRetryKey]);
 
   if (error) {
     return <p className="form-error">{error}</p>;
@@ -1502,6 +1565,8 @@ function CatalogMapView({
           nearbyTransit={nearbyTransit.pointId === selectedObject.id ? nearbyTransit : null}
           object={selectedObject}
           onClose={handleCloseObject}
+          onRetryWalkingRoutes={handleRetryWalkingRoutes}
+          walkingRoutes={walkingRoutes.pointId === selectedObject.id ? walkingRoutes : null}
         />
       ) : null}
 
@@ -1566,12 +1631,16 @@ function MapObjectCard({
   nearbyTransit,
   object,
   onClose,
+  onRetryWalkingRoutes,
+  walkingRoutes,
 }: {
   accessToken: string;
   filters: CatalogFilters;
   nearbyTransit: MapNearbyTransitResult | null;
   object: MapObject;
   onClose: () => void;
+  onRetryWalkingRoutes: () => void;
+  walkingRoutes: MapWalkingRoutesState | null;
 }) {
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const metroLabel = formatMetroStations(object.metroStations ?? []);
@@ -1582,6 +1651,9 @@ function MapObjectCard({
   const activeImage = galleryImages[activeImageIndex] ?? galleryImages[0] ?? null;
   const hasGalleryNavigation = galleryImages.length > 1;
   const activeImageOrdinal = galleryImages[activeImageIndex] ? activeImageIndex + 1 : 1;
+  const walkingRoutesByDestination = new Map(
+    walkingRoutes?.routes.map((route) => [route.destinationIndex, route]) ?? [],
+  );
 
   useEffect(() => {
     setActiveImageIndex(0);
@@ -1650,24 +1722,50 @@ function MapObjectCard({
           </a>
         </h3>
         <section className="map-nearby-metro" aria-labelledby="map-nearby-metro-title">
-          <h4 id="map-nearby-metro-title">Ближайшее метро (по прямой)</h4>
+          <h4 id="map-nearby-metro-title">Ближайшее метро пешком</h4>
           {!nearbyTransit || nearbyTransit.status === 'loading' ? (
             <p className="map-nearby-metro-status" role="status">
               Ищем станции рядом…
             </p>
           ) : null}
-          {nearbyTransit?.status === 'ready' ? (
+          {nearbyTransit?.status === 'ready' && (!walkingRoutes || walkingRoutes.status === 'loading') ? (
+            <p className="map-nearby-metro-status" role="status">
+              Строим пешие маршруты…
+            </p>
+          ) : null}
+          {nearbyTransit?.status === 'ready' && walkingRoutes?.status === 'ready' ? (
             <ol className="map-nearby-metro-list">
-              {nearbyTransit.stations.slice(0, 3).map((station) => (
-                <li key={`${station.name}-${station.coordinates.join('-')}`}>
-                  <span className="map-nearby-metro-icon" aria-hidden="true">
-                    М
-                  </span>
-                  <span>{station.name}</span>
-                  <strong>{formatMapDistance(station.distanceMeters)}</strong>
-                </li>
-              ))}
+              {nearbyTransit.stations.slice(0, 3).map((station, destinationIndex) => {
+                const route = walkingRoutesByDestination.get(destinationIndex);
+
+                return (
+                  <li key={`${station.name}-${station.coordinates.join('-')}`}>
+                    <span className="map-nearby-metro-icon" aria-hidden="true">
+                      М
+                    </span>
+                    <span>{station.name}</span>
+                    <strong>
+                      {route && route.distanceMeters !== null && route.durationSeconds !== null
+                        ? `${formatMapDistance(route.distanceMeters)} · ${formatWalkingDuration(route.durationSeconds)}`
+                        : 'Маршрут не найден'}
+                    </strong>
+                  </li>
+                );
+              })}
             </ol>
+          ) : null}
+          {nearbyTransit?.status === 'ready' && walkingRoutes?.status === 'unavailable' ? (
+            <>
+              <p className="map-nearby-metro-status">Пешие маршруты временно недоступны.</p>
+              <button
+                aria-label="Повторить построение маршрутов"
+                className="text-button map-nearby-metro-retry"
+                type="button"
+                onClick={onRetryWalkingRoutes}
+              >
+                Повторить
+              </button>
+            </>
           ) : null}
           {nearbyTransit?.status === 'unavailable' ? (
             <p className="map-nearby-metro-status">Не удалось определить станции по данным текущей подложки.</p>
@@ -1707,6 +1805,57 @@ function MapObjectCard({
       </div>
     </article>
   );
+}
+
+function parseMapWalkingRoutesResponse(response: unknown, destinationsCount: number): MapWalkingRoute[] {
+  if (!response || typeof response !== 'object' || !Array.isArray((response as { routes?: unknown }).routes)) {
+    throw new Error('Walking routes response is invalid');
+  }
+
+  const routes = (response as { routes: unknown[] }).routes;
+  const destinationIndexes = new Set<number>();
+
+  if (routes.length !== destinationsCount) {
+    throw new Error('Walking routes response is invalid');
+  }
+
+  const parsedRoutes = routes.map((route) => {
+    if (!route || typeof route !== 'object') {
+      throw new Error('Walking routes response is invalid');
+    }
+
+    const candidate = route as Record<string, unknown>;
+
+    if (
+      !Number.isInteger(candidate.destinationIndex) ||
+      (candidate.destinationIndex as number) < 0 ||
+      (candidate.destinationIndex as number) >= destinationsCount ||
+      destinationIndexes.has(candidate.destinationIndex as number) ||
+      !isNullableRouteMetric(candidate.distanceMeters) ||
+      !isNullableRouteMetric(candidate.durationSeconds)
+    ) {
+      throw new Error('Walking routes response is invalid');
+    }
+
+    const parsedRoute: MapWalkingRoute = {
+      destinationIndex: candidate.destinationIndex as number,
+      distanceMeters: candidate.distanceMeters as number | null,
+      durationSeconds: candidate.durationSeconds as number | null,
+    };
+    destinationIndexes.add(parsedRoute.destinationIndex);
+
+    return parsedRoute;
+  });
+
+  return parsedRoutes;
+}
+
+function isNullableRouteMetric(value: unknown): value is number | null {
+  return value === null || (typeof value === 'number' && Number.isFinite(value) && value >= 0);
+}
+
+function formatWalkingDuration(durationSeconds: number) {
+  return `${Math.max(1, Math.ceil(durationSeconds / 60)).toLocaleString('ru-RU')} мин`;
 }
 
 function CatalogListItem({

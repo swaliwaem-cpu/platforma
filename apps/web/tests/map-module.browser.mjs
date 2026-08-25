@@ -16,6 +16,7 @@ const browser = await chromium.launch({ headless: true });
 
 try {
   await verifyCatalogMap();
+  await verifyWalkingRouteRetry();
   await verifyObjectDetailMap();
   await verifyProviderFailureKeepsCatalogUsable();
   await verifyProviderTimeoutKeepsCatalogUsable();
@@ -30,11 +31,12 @@ async function verifyCatalogMap() {
   const page = await context.newPage();
   const styleBarrier = createBarrier(10_000, 'Map style request did not reach the fixture barrier');
   const requestedUrls = [];
+  const walkingRouteRequests = [];
   const runtimeErrors = collectRuntimeErrors(page);
 
   try {
     page.on('request', (request) => requestedUrls.push(request.url()));
-    await installApiFixtures(page);
+    await installApiFixtures(page, { walkingRouteRequests });
     await installMapFixtures(page, { styleBarrier });
 
     await page.goto(`${baseUrl}/catalog/map`, { waitUntil: 'domcontentloaded' });
@@ -76,9 +78,13 @@ async function verifyCatalogMap() {
     await northMarker.click();
     const northCard = page.getByRole('article', { name: 'Объект ЖК Северный' });
     await northCard.waitFor();
-    await northCard.getByRole('heading', { name: 'Ближайшее метро (по прямой)' }).waitFor();
+    await northCard.getByRole('heading', { name: 'Ближайшее метро пешком' }).waitFor();
     await northCard.getByText('Метро Северная', { exact: true }).waitFor();
+    await northCard.getByText('1,3 км · 16 мин', { exact: true }).waitFor();
     assert.equal(await northCard.locator('.map-nearby-metro-list li').count(), 3);
+    assert.equal(walkingRouteRequests.length, 1);
+    assert.deepEqual(walkingRouteRequests[0].origin, [55.79, 37.61]);
+    assert.equal(walkingRouteRequests[0].destinations.length, 3);
     assert.equal(await northMarker.getAttribute('aria-pressed'), 'true');
     await page.waitForFunction(
       ({ selector, previous }) => document.querySelector(selector)?.textContent?.trim() !== previous,
@@ -148,6 +154,34 @@ async function verifyObjectDetailMap() {
     const styleRequestsAfterMissingCoordinates = requestedUrls.filter((url) => url.includes('tiles.openfreemap.org/styles')).length;
 
     assert.equal(styleRequestsAfterMissingCoordinates, styleRequestsBeforeMissingCoordinates);
+  } finally {
+    await context.close();
+  }
+}
+
+async function verifyWalkingRouteRetry() {
+  const context = await browser.newContext({ viewport: { width: 1366, height: 850 } });
+  const page = await context.newPage();
+  const walkingRouteRequests = [];
+  const runtimeErrors = collectRuntimeErrors(page);
+
+  try {
+    await installApiFixtures(page, { walkingRouteFailures: 1, walkingRouteRequests });
+    await installMapFixtures(page);
+
+    await page.goto(`${baseUrl}/catalog/map`, { waitUntil: 'domcontentloaded' });
+    const map = page.getByRole('region', { name: 'Карта объектов' });
+    const northMarker = map.locator('.map-price-marker[aria-label="ЖК Северный"]');
+    await northMarker.waitFor();
+    await northMarker.click();
+
+    const card = page.getByRole('article', { name: 'Объект ЖК Северный' });
+    await card.getByText('Пешие маршруты временно недоступны.', { exact: true }).waitFor();
+    await card.getByRole('button', { name: 'Повторить построение маршрутов' }).click();
+    await card.getByText('1,3 км · 16 мин', { exact: true }).waitFor();
+
+    assert.equal(walkingRouteRequests.length, 2);
+    assert.deepEqual(runtimeErrors.filter((error) => !error.includes('502 (Bad Gateway)')), []);
   } finally {
     await context.close();
   }
@@ -265,7 +299,8 @@ async function installMapFixtures(
   });
 }
 
-async function installApiFixtures(page) {
+async function installApiFixtures(page, { walkingRouteFailures = 0, walkingRouteRequests = [] } = {}) {
+  let remainingWalkingRouteFailures = walkingRouteFailures;
   await page.route('https://fonts.googleapis.com/**', async (route) => {
     await route.fulfill({ status: 200, contentType: 'text/css', body: '' });
   });
@@ -314,6 +349,25 @@ async function installApiFixtures(page) {
 
     if (pathname === '/map/objects') {
       await json(route, { items: [mapObjectFixture('north'), mapObjectFixture('south')], total: 2 });
+      return;
+    }
+
+    if (pathname === '/map/walking-routes' && request.method() === 'POST') {
+      walkingRouteRequests.push(request.postDataJSON());
+
+      if (remainingWalkingRouteFailures > 0) {
+        remainingWalkingRouteFailures -= 1;
+        await json(route, { message: 'Walking routes are temporarily unavailable' }, 502);
+        return;
+      }
+
+      await json(route, {
+        routes: [
+          { destinationIndex: 0, distanceMeters: 1340, durationSeconds: 960 },
+          { destinationIndex: 1, distanceMeters: 2210, durationSeconds: 1600 },
+          { destinationIndex: 2, distanceMeters: 3810, durationSeconds: 2700 },
+        ],
+      });
       return;
     }
 
