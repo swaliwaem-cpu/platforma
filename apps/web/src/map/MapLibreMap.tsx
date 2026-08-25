@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
+import mapLibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 
 import { getMapPointBounds, getMapPointCenter, isValidMapCoordinatePair } from './mapContract';
 import type { MapBounds, MapPoint, MapStatus, MapViewport, PlatformMapProps } from './mapTypes';
@@ -20,11 +21,15 @@ type MapCallbacks = Pick<
   'onBoundsChange' | 'onFullscreenChange' | 'onMapClick' | 'onOpenPoint' | 'onSelectPoint' | 'onStatusChange' | 'onViewportChange'
 >;
 
+const MAP_LOAD_TIMEOUT_MS = 15_000;
+
 const providerErrorState = {
   eyebrow: 'Карта',
   title: 'Карта временно недоступна',
   description: 'Не удалось загрузить картографическую подложку. Данные объектов и рабочие ссылки остаются доступны.',
 };
+
+maplibregl.setWorkerUrl(mapLibreWorkerUrl);
 
 export default function MapLibreMap({
   ariaLabel,
@@ -82,6 +87,7 @@ export default function MapLibreMap({
 
     let isDisposed = false;
     let fullscreenControl: maplibregl.FullscreenControl | null = null;
+    let loadTimeoutId: number | null = null;
     let resizeFrameId: number | null = null;
     const initial = initialViewportRef.current;
     let map: maplibregl.Map;
@@ -164,6 +170,11 @@ export default function MapLibreMap({
         return;
       }
 
+      if (loadTimeoutId !== null) {
+        window.clearTimeout(loadTimeoutId);
+        loadTimeoutId = null;
+      }
+
       setStatus('ready');
       callbacksRef.current.onStatusChange?.('ready');
       notifyMapPosition(map, callbacksRef.current);
@@ -171,6 +182,11 @@ export default function MapLibreMap({
     const handleError = () => {
       if (isDisposed) {
         return;
+      }
+
+      if (loadTimeoutId !== null) {
+        window.clearTimeout(loadTimeoutId);
+        loadTimeoutId = null;
       }
 
       setStatus('error');
@@ -189,6 +205,7 @@ export default function MapLibreMap({
     map.on('click', handleMapClick);
     map.on('moveend', handleMoveEnd);
     map.on('zoom', handleZoom);
+    loadTimeoutId = window.setTimeout(handleError, MAP_LOAD_TIMEOUT_MS);
     handleZoom();
 
     return () => {
@@ -196,6 +213,10 @@ export default function MapLibreMap({
 
       if (resizeFrameId !== null) {
         window.cancelAnimationFrame(resizeFrameId);
+      }
+
+      if (loadTimeoutId !== null) {
+        window.clearTimeout(loadTimeoutId);
       }
 
       if (fullscreenControl) {

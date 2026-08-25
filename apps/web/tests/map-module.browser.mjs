@@ -1,13 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { chromium } from '@playwright/test';
 
-const currentDir = dirname(fileURLToPath(import.meta.url));
 const baseUrl = process.env.MAP_WEB_TEST_URL;
-const tileFixture = readFileSync(resolve(currentDir, '../../../aerotour-icon.png'));
+const vectorTileFixture = Buffer.from('Gi14AgoGcG9pbnRzKIAgEg0SAgAAGAEiBQnYJoIUGgRraW5kIgkKB2ZpeHR1cmU=', 'base64');
 
 if (!baseUrl) {
   throw new Error('MAP_WEB_TEST_URL is required');
@@ -19,6 +15,7 @@ try {
   await verifyCatalogMap();
   await verifyObjectDetailMap();
   await verifyProviderFailureKeepsCatalogUsable();
+  await verifyProviderTimeoutKeepsCatalogUsable();
   await verifyMobileMap();
   process.stdout.write('MAP_MODULE_BROWSER_OK\n');
 } finally {
@@ -47,7 +44,21 @@ async function verifyCatalogMap() {
     await map.locator('[data-map-surface] canvas').waitFor();
     await map.getByText('OpenFreeMap', { exact: true }).waitFor();
     await map.getByText('OpenStreetMap', { exact: true }).waitFor();
-    await map.locator('.platform-map-shell[data-map-status="ready"]').waitFor();
+    try {
+      await map.locator('.platform-map-shell[data-map-status="ready"]').waitFor({ timeout: 10_000 });
+    } catch (error) {
+      const mapRequests = requestedUrls.filter((url) => url.includes('maplibre') || url.includes('map-fixtures'));
+
+      throw new Error(
+        [
+          error instanceof Error ? error.message : String(error),
+          'Runtime errors:',
+          runtimeErrors.join('\n') || '(none)',
+          'Map requests:',
+          mapRequests.join('\n') || '(none)',
+        ].join('\n'),
+      );
+    }
     await page.waitForTimeout(100);
     assert.equal(
       await map.locator('.platform-map-shell').getAttribute('data-map-status'),
@@ -157,6 +168,28 @@ async function verifyProviderFailureKeepsCatalogUsable() {
   }
 }
 
+async function verifyProviderTimeoutKeepsCatalogUsable() {
+  const context = await browser.newContext({ viewport: { width: 1366, height: 850 } });
+  const page = await context.newPage();
+  const tileBarrier = createBarrier(10_000, 'Vector tile request did not reach the fixture barrier');
+
+  try {
+    await installApiFixtures(page);
+    await installMapFixtures(page, { tileBarrier });
+
+    await page.goto(`${baseUrl}/catalog/map`, { waitUntil: 'domcontentloaded' });
+    await tileBarrier.waitForArrival();
+    await page.getByRole('heading', { name: 'Карта временно недоступна', exact: true }).waitFor({ timeout: 20_000 });
+
+    const mapList = page.getByRole('complementary', { name: 'Объекты на карте' });
+    await mapList.getByRole('button', { name: 'ЖК Южный', exact: true }).click();
+    await page.getByRole('article', { name: 'Объект ЖК Южный' }).waitFor();
+  } finally {
+    tileBarrier.release();
+    await context.close();
+  }
+}
+
 async function verifyMobileMap() {
   const context = await browser.newContext({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } });
   const page = await context.newPage();
@@ -185,7 +218,10 @@ async function verifyMobileMap() {
   }
 }
 
-async function installMapFixtures(page, { failStyle = false, failTiles = false, styleBarrier = null } = {}) {
+async function installMapFixtures(
+  page,
+  { failStyle = false, failTiles = false, styleBarrier = null, tileBarrier = null } = {},
+) {
   await page.route('https://tiles.openfreemap.org/styles/liberty', async (route) => {
     if (styleBarrier) {
       await styleBarrier.hold();
@@ -204,6 +240,10 @@ async function installMapFixtures(page, { failStyle = false, failTiles = false, 
   });
 
   await page.route(`${baseUrl}/map-fixtures/tiles/**`, async (route) => {
+    if (tileBarrier) {
+      await tileBarrier.hold();
+    }
+
     if (failTiles) {
       await route.fulfill({ status: 503, contentType: 'text/plain', body: 'tile unavailable' });
       return;
@@ -211,8 +251,8 @@ async function installMapFixtures(page, { failStyle = false, failTiles = false, 
 
     await route.fulfill({
       status: 200,
-      contentType: 'image/png',
-      body: tileFixture,
+      contentType: 'application/vnd.mapbox-vector-tile',
+      body: vectorTileFixture,
     });
   });
 }
@@ -292,17 +332,22 @@ function mapStyleFixture() {
   return {
     version: 8,
     sources: {
-      'local-raster': {
-        type: 'raster',
-        tiles: [`${baseUrl}/map-fixtures/tiles/{z}/{x}/{y}.png`],
-        tileSize: 256,
+      'local-vector': {
+        type: 'vector',
+        tiles: [`${baseUrl}/map-fixtures/tiles/{z}/{x}/{y}.pbf`],
         attribution:
           '<a href="https://openfreemap.org/">OpenFreeMap</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
       },
     },
     layers: [
       { id: 'background', type: 'background', paint: { 'background-color': '#e8edf2' } },
-      { id: 'local-raster', type: 'raster', source: 'local-raster' },
+      {
+        id: 'local-vector',
+        type: 'circle',
+        source: 'local-vector',
+        'source-layer': 'points',
+        paint: { 'circle-color': '#c9ab72', 'circle-radius': 4 },
+      },
     ],
   };
 }
