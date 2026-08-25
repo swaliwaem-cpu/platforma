@@ -18,6 +18,10 @@ import {
   type AssistantSearchFilters,
   type AssistantStructuredIntent,
 } from './assistant-query-planner';
+import type {
+  AssistantGeoPolygon,
+  AssistantGeoSearchInput,
+} from './geo/assistant-geo-contract';
 import type { AssistantSearchEvidence } from './assistant-search-ranking';
 
 const candidateLimit = 120;
@@ -117,6 +121,11 @@ type SearchOptions = {
   comparisonTargets?: string[];
   comparisonTargetModes?: AssistantComparisonTargetMode[];
   softPreferences?: AssistantSearchFilters;
+  geo?: AssistantGeoSearchInput | null;
+};
+
+export type AssistantGeoSearchResult = AssistantGeoSearchInput & {
+  polygon: AssistantGeoPolygon;
 };
 
 @Injectable()
@@ -126,16 +135,25 @@ export class AssistantSearchService {
   async search(
     intent: AssistantStructuredIntent,
     context: AssistantPageContext | null,
-  ): Promise<{ exact: AssistantSearchEvidence[]; alternatives: AssistantSearchEvidence[] }> {
-    const contextOptions = await this.resolveContextOptions(context);
+    geo: AssistantGeoSearchInput | null = null,
+  ): Promise<{
+    exact: AssistantSearchEvidence[];
+    alternatives: AssistantSearchEvidence[];
+    geo: AssistantGeoSearchResult | null;
+  }> {
+    const [contextOptions, geoResult] = await Promise.all([
+      this.resolveContextOptions(context),
+      geo ? this.createGeoResult(geo) : Promise.resolve(null),
+    ]);
     const searchOptions = {
       ...contextOptions,
       comparisonTargets: intent.comparisonTargets,
       comparisonTargetModes: intent.comparisonTargetModes,
       softPreferences: intent.softPreferences,
+      geo,
     };
     const exact = await this.findEvidence(intent.hardFilters, context, searchOptions);
-    if (exact.length > 0) return { exact, alternatives: [] };
+    if (exact.length > 0) return { exact, alternatives: [], geo: geoResult };
 
     const relaxationRequests: Array<Promise<AssistantSearchEvidence[]>> = [];
     if (intent.hardFilters.district) {
@@ -187,7 +205,22 @@ export class AssistantSearchService {
         if (!alternativesByUnitId.has(candidate.unitId)) alternativesByUnitId.set(candidate.unitId, candidate);
       }
     }
-    return { exact: [], alternatives: [...alternativesByUnitId.values()] };
+    return { exact: [], alternatives: [...alternativesByUnitId.values()], geo: geoResult };
+  }
+
+  private async createGeoResult(geo: AssistantGeoSearchInput): Promise<AssistantGeoSearchResult> {
+    const rows = await this.prisma.$queryRaw<Array<{ polygon: string }>>(Prisma.sql`
+      SELECT ST_AsGeoJSON(
+        ST_Buffer(
+          ST_SetSRID(ST_MakePoint(${geo.anchor.longitude}, ${geo.anchor.latitude}), 4326)::geography,
+          ${geo.radiusMeters}
+        )::geometry,
+        7
+      ) AS polygon
+    `);
+    const polygon = rows[0]?.polygon ? JSON.parse(rows[0].polygon) as unknown : null;
+    if (!isGeoPolygon(polygon)) throw new Error('ASSISTANT_GEO_POLYGON_INVALID');
+    return { ...geo, polygon };
   }
 
   private async findNearbyDistrictAlternatives(
@@ -248,6 +281,7 @@ export class AssistantSearchService {
           }];
       const groupLimit = comparisonGroups.length === 2 ? Math.ceil(candidateLimit / 2) : candidateLimit;
       const rowIds: string[] = [];
+      const rowDistances = new Map<string, number | null>();
       const seenRowIds = new Set<string>();
 
       for (const comparisonGroup of comparisonGroups) {
@@ -262,10 +296,11 @@ export class AssistantSearchService {
           },
           groupLimit,
         );
-        for (const { id } of rows) {
+        for (const { id, distanceMeters } of rows) {
           if (seenRowIds.has(id)) continue;
           seenRowIds.add(id);
           rowIds.push(id);
+          rowDistances.set(id, distanceMeters);
         }
       }
       if (rowIds.length === 0) return [];
@@ -278,7 +313,7 @@ export class AssistantSearchService {
       return rowIds.flatMap((id) => {
         const record = recordsById.get(id);
         const evidence = record ? this.toEvidence(record) : null;
-        return evidence ? [evidence] : [];
+        return evidence ? [{ ...evidence, distanceMeters: rowDistances.get(id) ?? null }] : [];
       });
     }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
   }
@@ -293,8 +328,15 @@ export class AssistantSearchService {
     const conditions = this.createSqlConditions(filters, context, options);
     const softPreferenceScore = this.createSoftPreferenceScore(options.softPreferences);
     const comparisonTargetPriority = this.createComparisonTargetPriority(options);
-    return transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+    const distance = options.geo
+      ? Prisma.sql`ST_Distance(
+          o.search_point,
+          ST_SetSRID(ST_MakePoint(${options.geo.anchor.longitude}, ${options.geo.anchor.latitude}), 4326)::geography
+        )`
+      : Prisma.sql`NULL::double precision`;
+    return transaction.$queryRaw<Array<{ id: string; distanceMeters: number | null }>>(Prisma.sql`
       SELECT fu.id::text AS id
+        , ${distance} AS "distanceMeters"
       FROM feed_units fu
       JOIN feed_sources fs ON fs.id = fu.source_id
       JOIN real_estate_objects o ON o.id = fu.object_id
@@ -303,6 +345,7 @@ export class AssistantSearchService {
       ORDER BY
         ${comparisonTargetPriority} DESC,
         ${softPreferenceScore} DESC,
+        ${distance} ASC NULLS LAST,
         COALESCE(fu.effective_price, fu.discount_price, fu.price) ASC NULLS LAST,
         fu.updated_at DESC,
         fu.id ASC
@@ -405,6 +448,15 @@ export class AssistantSearchService {
     if (filters.areaMax !== null) conditions.push(Prisma.sql`fu.area <= ${filters.areaMax}`);
     if (filters.floorMin !== null) conditions.push(Prisma.sql`fu.floor >= ${filters.floorMin}`);
     if (filters.floorMax !== null) conditions.push(Prisma.sql`fu.floor <= ${filters.floorMax}`);
+
+    if (options.geo) {
+      const anchor = Prisma.sql`ST_SetSRID(
+        ST_MakePoint(${options.geo.anchor.longitude}, ${options.geo.anchor.latitude}),
+        4326
+      )::geography`;
+      conditions.push(Prisma.sql`o.search_point IS NOT NULL`);
+      conditions.push(Prisma.sql`ST_DWithin(o.search_point, ${anchor}, ${options.geo.radiusMeters})`);
+    }
 
     if (options.nearbyDistrictParentIds?.length) {
       const parentIds = Prisma.join(options.nearbyDistrictParentIds.map((id) => Prisma.sql`${id}::uuid`));
@@ -574,6 +626,7 @@ export class AssistantSearchService {
       floor: record.floor,
       latitude: toFiniteNumber(record.object.latitude),
       longitude: toFiniteNumber(record.object.longitude),
+      distanceMeters: null,
       pdfs: collectPdfs(record),
       deviations: [],
     };
@@ -708,4 +761,17 @@ function normalize(value: string) {
 
 function escapeLikePattern(value: string) {
   return value.replace(/[\\%_]/gu, '\\$&');
+}
+
+function isGeoPolygon(value: unknown): value is AssistantGeoPolygon {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const polygon = value as { type?: unknown; coordinates?: unknown };
+  if (polygon.type !== 'Polygon' || !Array.isArray(polygon.coordinates) || polygon.coordinates.length !== 1) {
+    return false;
+  }
+  const ring = polygon.coordinates[0];
+  return Array.isArray(ring) && ring.length >= 4 && ring.every((coordinate) =>
+    Array.isArray(coordinate)
+    && coordinate.length === 2
+    && coordinate.every((part) => typeof part === 'number' && Number.isFinite(part)));
 }

@@ -236,6 +236,11 @@ async function installRoutes(page, state, permissions) {
       return;
     }
 
+    if (path === '/assistant/geo/resolve' && request.method() === 'POST') {
+      await json(route, { status: 'NOT_APPLICABLE' });
+      return;
+    }
+
     if (path === '/assistant/conversations' && request.method() === 'GET') {
       await json(route, {
         items: state.conversationCreated ? [knowledgeConversationSummary(), conversationSummary()] : [],

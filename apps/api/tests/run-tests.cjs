@@ -12,7 +12,11 @@ const environment = { ...process.env };
 environment.NODE_ENV = 'test';
 environment.TRAINING_AI_MODE = 'fake';
 environment.TELEGRAM_TRANSPORT_MODE = 'fake';
+environment.ASSISTANT_AI_MODE = 'fake';
+environment.ASSISTANT_EMBEDDING_MODE = 'fake';
+environment.ASSISTANT_GEO_PROVIDER_MODE = 'fake';
 delete environment.OPENAI_API_KEY;
+delete environment.LOCATIONIQ_API_KEY;
 
 const result = spawnSync(process.execPath, ['--test', ...testFiles], {
   cwd: resolve(__dirname, '..'),

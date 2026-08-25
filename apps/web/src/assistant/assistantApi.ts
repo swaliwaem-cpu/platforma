@@ -4,6 +4,8 @@ import type {
   AssistantConversationsResponse,
   AssistantRunResponse,
   AssistantSendMessageInput,
+  AssistantGeoResolution,
+  AssistantGeoResolveInput,
 } from '@platforma/shared';
 
 import { apiRequest } from '../admin/api';
@@ -70,4 +72,16 @@ export function getAssistantRun(accessToken: string, runId: string, signal?: Abo
     accessToken,
     { signal },
   );
+}
+
+export function resolveAssistantGeo(
+  accessToken: string,
+  input: AssistantGeoResolveInput,
+  signal?: AbortSignal,
+) {
+  return apiRequest<AssistantGeoResolution>('/assistant/geo/resolve', accessToken, {
+    method: 'POST',
+    body: JSON.stringify(input),
+    signal,
+  });
 }

@@ -38,8 +38,9 @@ export type AssistantSearchEvidence = {
   propertyClass: string | null;
   area: number | null;
   floor: number | null;
-  latitude: number | null;
-  longitude: number | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  distanceMeters?: number | null;
   pdfs: AssistantCandidatePdf[];
   deviations: AssistantAlternativeDeviation[];
 };
@@ -172,6 +173,9 @@ function rankCandidates(candidates: AssistantSearchEvidence[], softPreferences: 
     const softDifference = scoreSoftPreferences(right, softPreferences)
       - scoreSoftPreferences(left, softPreferences);
     if (softDifference !== 0) return softDifference;
+    const leftDistance = left.distanceMeters ?? Number.POSITIVE_INFINITY;
+    const rightDistance = right.distanceMeters ?? Number.POSITIVE_INFINITY;
+    if (leftDistance !== rightDistance) return leftDistance - rightDistance;
     const priceDifference = left.priceRub - right.priceRub;
     if (priceDifference !== 0) return priceDifference;
     const freshnessDifference = Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
@@ -239,6 +243,9 @@ function createResultCard(candidate: AssistantSearchEvidence, now: Date): Assist
       href: `/media/files/${pdf.fileId}/content?download=true`,
     })),
     deviations: candidate.deviations.map((deviation) => ({ ...deviation })),
+    ...(typeof candidate.distanceMeters === 'number'
+      ? { distanceMeters: candidate.distanceMeters }
+      : {}),
   };
 }
 
@@ -307,6 +314,9 @@ function isValidEvidence(candidate: AssistantSearchEvidence) {
     && candidate.priceRub > 0
     && candidate.availability === 'AVAILABLE'
     && Number.isFinite(Date.parse(candidate.updatedAt))
+    && (candidate.distanceMeters === undefined
+      || candidate.distanceMeters === null
+      || (Number.isFinite(candidate.distanceMeters) && candidate.distanceMeters >= 0))
     && candidate.deviations.length === 0;
 }
 

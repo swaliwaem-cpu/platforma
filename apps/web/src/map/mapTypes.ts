@@ -16,6 +16,13 @@ export type MapPoint = {
   hint: string;
   popupHtml?: string;
   markerLabel?: string;
+  variant?: 'DEFAULT' | 'ANCHOR' | 'PRIMARY' | 'ALTERNATIVE';
+};
+
+export type MapPolygon = {
+  id: string;
+  coordinates: [longitude: number, latitude: number][][];
+  variant?: 'RADIUS';
 };
 
 export type MapFallbackState = {
@@ -46,6 +53,7 @@ export type PlatformMapProps = {
   enableMeasurement?: boolean;
   initialViewport?: MapViewport;
   points: MapPoint[];
+  polygons?: MapPolygon[];
   renderWithoutPoints?: boolean;
   selectedPointId?: string | null;
   onBoundsChange?: (bounds: MapBounds) => void;

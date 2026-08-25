@@ -182,9 +182,11 @@ export class AssistantKnowledgeRetrievalService {
     scope: KnowledgeScope,
   ) {
     const filters = intent.hardFilters;
+    const answerKinds = Object.values(AssistantSourceFactKind)
+      .filter((kind) => kind !== AssistantSourceFactKind.ADDRESS);
     const kinds = includeExternalLots
-      ? Object.values(AssistantSourceFactKind)
-      : Object.values(AssistantSourceFactKind).filter((kind) => kind !== AssistantSourceFactKind.EXTERNAL_LOT);
+      ? answerKinds
+      : answerKinds.filter((kind) => kind !== AssistantSourceFactKind.EXTERNAL_LOT);
     const conditions: Prisma.Sql[] = [
       Prisma.sql`f."is_active" = TRUE`,
       Prisma.sql`s."state" = 'active'::assistant_knowledge_source_state`,

@@ -381,6 +381,7 @@ enum AssistantSourceFactKind {
   INFRASTRUCTURE     @map("infrastructure")
   PROMOTION          @map("promotion")
   EXTERNAL_LOT       @map("external_lot")
+  ADDRESS            @map("address")
 
   @@map("assistant_source_fact_kind")
 }
@@ -444,6 +445,7 @@ model User {
   assistantRuns                  AssistantRun[]
   createdAssistantKnowledgeSources AssistantKnowledgeSource[] @relation("AssistantKnowledgeSourceCreator")
   requestedAssistantSourceJobs    AssistantSourceJob[]         @relation("AssistantSourceJobRequester")
+  createdAssistantGeoAliases      AssistantGeoAlias[]           @relation("AssistantGeoAliasCreator")
 
   @@index([roleId])
   @@index([profilePhotoFileId])
@@ -474,6 +476,7 @@ model AssistantMessage {
   role           AssistantMessageRole
   content        String               @db.Text
   contextJson    Json?                @map("context_json")
+  geoContextJson Json?                @map("geo_context_json")
   answerJson     Json?                @map("answer_json")
   createdAt      DateTime             @default(now()) @map("created_at")
 
@@ -483,6 +486,54 @@ model AssistantMessage {
 
   @@index([conversationId, createdAt])
   @@map("assistant_messages")
+}
+
+model AssistantGeoAlias {
+  id                String   @id @default(uuid()) @db.Uuid
+  normalizedQuery   String   @map("normalized_query") @db.VarChar(240)
+  query             String   @db.VarChar(240)
+  locale            String   @db.VarChar(16)
+  country           String   @default("") @db.VarChar(2)
+  label             String   @db.VarChar(300)
+  city              String?  @db.VarChar(160)
+  countryCode       String?  @map("country_code") @db.VarChar(2)
+  latitude          Decimal  @db.Decimal(10, 7)
+  longitude         Decimal  @db.Decimal(10, 7)
+  createdByUserId   String   @map("created_by_user_id") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  createdBy User @relation("AssistantGeoAliasCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([normalizedQuery, locale, country])
+  @@index([createdByUserId, updatedAt])
+  @@map("assistant_geo_aliases")
+}
+
+model AssistantGeoCache {
+  cacheKey        String   @id @map("cache_key") @db.Char(64)
+  normalizedQuery String   @map("normalized_query") @db.VarChar(240)
+  locale          String   @db.VarChar(16)
+  country         String   @default("") @db.VarChar(2)
+  viewboxKey      String   @map("viewbox_key") @db.VarChar(120)
+  provider        String   @db.VarChar(40)
+  candidatesJson  Json     @map("candidates_json")
+  expiresAt       DateTime @map("expires_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@index([expiresAt])
+  @@map("assistant_geo_cache")
+}
+
+model AssistantGeoProviderDailyUsage {
+  provider     String   @db.VarChar(40)
+  usageDate   DateTime @map("usage_date") @db.Date
+  requestCount Int      @default(0) @map("request_count")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@id([provider, usageDate])
+  @@map("assistant_geo_provider_daily_usage")
 }
 
 model AssistantRun {
@@ -817,6 +868,7 @@ model RealEstateObject {
   address                   String?
   latitude                  Decimal?     @db.Decimal(9, 6)
   longitude                 Decimal?     @db.Decimal(9, 6)
+  searchPoint               Unsupported("geography(Point, 4326)")? @map("search_point")
   featuresJson              Json         @default("{}") @map("features_json")
   developerId               String?      @map("developer_id") @db.Uuid
   primaryLocationId         String?      @map("primary_location_id") @db.Uuid

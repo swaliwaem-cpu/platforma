@@ -1,0 +1,191 @@
+import { Logger } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+
+import { PrismaService } from '../../prisma/prisma.service';
+import {
+  AssistantGeoProviderError,
+  FakeAssistantGeoProvider,
+  LocationIqGeoProvider,
+  type AssistantGeoProvider,
+  type AssistantGeoProviderCandidate,
+  type AssistantGeoProviderRequest,
+} from './assistant-geo-provider';
+
+type GeoPolicyEnvironment = NodeJS.ProcessEnv | Record<string, string | undefined>;
+
+export class AssistantGeoProviderPolicyService {
+  private readonly logger = new Logger(AssistantGeoProviderPolicyService.name);
+  private readonly providerName: 'fake' | 'locationiq';
+  private readonly requestsPerSecond: number;
+  private readonly dailyBudget: number;
+  private readonly circuitFailureThreshold: number;
+  private readonly circuitOpenMs: number;
+  private readonly cacheRetentionMs: number;
+  private readonly providerUsesPhysicalRequestGate: boolean;
+  private consecutiveFailures = 0;
+  private circuitOpenUntil = 0;
+  private nextRequestAt = 0;
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly provider: AssistantGeoProvider,
+    environment: GeoPolicyEnvironment = process.env,
+    private readonly now: () => Date = () => new Date(),
+    private readonly delay: (milliseconds: number) => Promise<void> = wait,
+  ) {
+    this.providerName = readMode(environment.ASSISTANT_GEO_PROVIDER_MODE);
+    if (this.providerName === 'fake' && environment.DEPLOYMENT_ENV === 'production') {
+      throw new AssistantGeoProviderError('ASSISTANT_GEO_FAKE_PROVIDER_FORBIDDEN', false);
+    }
+    this.requestsPerSecond = readInteger(environment.ASSISTANT_GEO_PROVIDER_RPS, 1, 1, 20);
+    this.dailyBudget = readProviderPlanInteger(
+      environment.ASSISTANT_GEO_PROVIDER_DAILY_BUDGET,
+      this.providerName === 'fake' ? 10_000 : null,
+      1,
+      1_000_000,
+      'ASSISTANT_GEO_PROVIDER_DAILY_BUDGET_REQUIRED',
+    );
+    this.cacheRetentionMs = readProviderPlanInteger(
+      environment.ASSISTANT_GEO_CACHE_TTL_SECONDS,
+      this.providerName === 'fake' ? 86_400 : null,
+      60,
+      31_536_000,
+      'ASSISTANT_GEO_CACHE_TTL_SECONDS_REQUIRED',
+    ) * 1_000;
+    this.circuitFailureThreshold = readInteger(
+      environment.ASSISTANT_GEO_CIRCUIT_FAILURE_THRESHOLD,
+      3,
+      1,
+      20,
+    );
+    this.circuitOpenMs = readInteger(
+      environment.ASSISTANT_GEO_CIRCUIT_OPEN_MS,
+      60_000,
+      1_000,
+      3_600_000,
+    );
+    this.providerUsesPhysicalRequestGate = provider instanceof LocationIqGeoProvider;
+    if (provider instanceof LocationIqGeoProvider) {
+      provider.setBeforeRequest(async () => {
+        await this.waitForRateSlot();
+        await this.reserveDailyBudget();
+      });
+    }
+  }
+
+  getProviderName() {
+    return this.providerName;
+  }
+
+  getCacheRetentionMs() {
+    return this.cacheRetentionMs;
+  }
+
+  async search(request: AssistantGeoProviderRequest): Promise<AssistantGeoProviderCandidate[]> {
+    const startedAt = Date.now();
+    if (this.now().getTime() < this.circuitOpenUntil) {
+      this.log('circuit_open', startedAt);
+      throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_CIRCUIT_OPEN', true);
+    }
+
+    if (!this.providerUsesPhysicalRequestGate) {
+      await this.waitForRateSlot();
+      await this.reserveDailyBudget();
+    }
+    try {
+      const candidates = await this.provider.search(request);
+      this.consecutiveFailures = 0;
+      this.circuitOpenUntil = 0;
+      this.log('success', startedAt);
+      return candidates;
+    } catch (error) {
+      const providerError = error instanceof AssistantGeoProviderError
+        ? error
+        : new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_UNAVAILABLE', true);
+      if (providerError.retryable) {
+        this.consecutiveFailures += 1;
+        if (this.consecutiveFailures >= this.circuitFailureThreshold) {
+          this.circuitOpenUntil = this.now().getTime() + this.circuitOpenMs;
+        }
+      }
+      this.log(providerError.code, startedAt, providerError.httpStatus);
+      throw providerError;
+    }
+  }
+
+  private async waitForRateSlot() {
+    const nowMs = this.now().getTime();
+    const intervalMs = Math.ceil(1_000 / this.requestsPerSecond);
+    const reservedAt = Math.max(nowMs, this.nextRequestAt);
+    this.nextRequestAt = reservedAt + intervalMs;
+    if (reservedAt > nowMs) await this.delay(reservedAt - nowMs);
+  }
+
+  private async reserveDailyBudget() {
+    const usageDate = this.now().toISOString().slice(0, 10);
+    const rows = await this.prisma.$queryRaw<Array<{ requestCount: number }>>(Prisma.sql`
+      INSERT INTO "assistant_geo_provider_daily_usage" (
+        "provider", "usage_date", "request_count", "updated_at"
+      ) VALUES (
+        ${this.providerName}, ${usageDate}::date, 1, NOW()
+      )
+      ON CONFLICT ("provider", "usage_date") DO UPDATE SET
+        "request_count" = "assistant_geo_provider_daily_usage"."request_count" + 1,
+        "updated_at" = NOW()
+      WHERE "assistant_geo_provider_daily_usage"."request_count" < ${this.dailyBudget}
+      RETURNING "request_count" AS "requestCount"
+    `);
+    if (rows.length !== 1) {
+      this.log('daily_budget_exhausted', Date.now());
+      throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_DAILY_BUDGET_EXHAUSTED', false);
+    }
+  }
+
+  private log(outcome: string, startedAt: number, httpStatus: number | null = null) {
+    this.logger.log(JSON.stringify({
+      event: 'assistant_geo_provider',
+      provider: this.providerName,
+      outcome,
+      httpStatus,
+      durationMs: Math.max(0, Date.now() - startedAt),
+    }));
+  }
+}
+
+export function createAssistantGeoProvider(environment: GeoPolicyEnvironment = process.env) {
+  const mode = readMode(environment.ASSISTANT_GEO_PROVIDER_MODE);
+  return mode === 'fake'
+    ? new FakeAssistantGeoProvider()
+    : new LocationIqGeoProvider(environment);
+}
+
+function readMode(value: string | undefined) {
+  const normalized = (value ?? 'fake').trim().toLocaleLowerCase('en-US');
+  if (normalized === 'fake' || normalized === 'locationiq') return normalized;
+  throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_MODE_INVALID', false);
+}
+
+function readInteger(value: string | undefined, fallback: number, minimum: number, maximum: number) {
+  const parsed = value === undefined || value.trim() === '' ? fallback : Number(value);
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_CONFIG_INVALID', false);
+  }
+  return parsed;
+}
+
+function readProviderPlanInteger(
+  value: string | undefined,
+  fallback: number | null,
+  minimum: number,
+  maximum: number,
+  requiredCode: string,
+) {
+  if ((value === undefined || value.trim() === '') && fallback === null) {
+    throw new AssistantGeoProviderError(requiredCode, false);
+  }
+  return readInteger(value, fallback ?? minimum, minimum, maximum);
+}
+
+function wait(milliseconds: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+}

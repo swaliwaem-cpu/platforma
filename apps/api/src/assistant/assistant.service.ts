@@ -14,6 +14,8 @@ import type {
   AssistantConversation,
   AssistantConversationSummary,
   AssistantExternalLotCard,
+  AssistantGeoSearchContext,
+  AssistantGeoSearchView,
   AssistantKnowledgeFactCard,
   AssistantMessage,
   AssistantPageContext,
@@ -26,6 +28,7 @@ import type {
 import { createHash } from 'node:crypto';
 
 import { PrismaService } from '../prisma/prisma.service';
+import { parseAssistantGeoSearchInput } from './geo/assistant-geo-contract';
 import {
   AssistantRunProcessor,
   assistantProgressDefinitions,
@@ -50,6 +53,7 @@ const messageSelect = {
   role: true,
   content: true,
   contextJson: true,
+  geoContextJson: true,
   answerJson: true,
   createdAt: true,
 } satisfies Prisma.AssistantMessageSelect;
@@ -207,6 +211,9 @@ export class AssistantService {
             contextJson: messageInput.context
               ? messageInput.context as unknown as Prisma.InputJsonValue
               : Prisma.JsonNull,
+            geoContextJson: messageInput.geo
+              ? messageInput.geo as unknown as Prisma.InputJsonValue
+              : Prisma.JsonNull,
           },
         });
         const createdRun = await transaction.assistantRun.create({
@@ -310,7 +317,10 @@ export class AssistantService {
     const context = value.context === undefined || value.context === null
       ? null
       : this.parseContext(value.context);
-    return { content, context };
+    const geo = value.geo === undefined || value.geo === null
+      ? null
+      : parseAssistantGeoSearchInput(value.geo);
+    return { content, context, geo };
   }
 
   private parseContext(value: unknown): AssistantPageContext {
@@ -369,7 +379,12 @@ export class AssistantService {
 
   private hashRequest(conversationId: string, input: AssistantSendMessageInput) {
     return createHash('sha256')
-      .update(JSON.stringify({ conversationId, content: input.content, context: input.context ?? null }))
+      .update(JSON.stringify({
+        conversationId,
+        content: input.content,
+        context: input.context ?? null,
+        geo: input.geo ?? null,
+      }))
       .digest('hex');
   }
 
@@ -402,6 +417,7 @@ export class AssistantService {
       role: message.role,
       content: message.content,
       context: this.parseStoredContext(message.contextJson),
+      geo: this.parseStoredGeoContext(message.geoContextJson),
       answer: message.role === PrismaAssistantMessageRole.ASSISTANT
         ? this.parseStoredAnswer(message.answerJson)
         : null,
@@ -431,6 +447,17 @@ export class AssistantService {
     }
   }
 
+  private parseStoredGeoContext(value: Prisma.JsonValue | null): AssistantGeoSearchContext | null {
+    try {
+      return value === null ? null : parseAssistantGeoSearchInput(value, {
+        ASSISTANT_GEO_RADIUS_MIN_METERS: '1',
+        ASSISTANT_GEO_RADIUS_MAX_METERS: '100000',
+      });
+    } catch {
+      return null;
+    }
+  }
+
   private parseStoredAnswer(value: Prisma.JsonValue | null): AssistantAnswer | null {
     if (!this.isRecord(value) || typeof value.kind !== 'string' || !answerKinds.has(value.kind)) return null;
     if (value.kind === 'KNOWLEDGE_RESULTS') return this.parseStoredKnowledgeAnswer(value);
@@ -448,7 +475,74 @@ export class AssistantService {
     });
     if (exactResults.length !== value.exactResults.length || alternatives.length !== value.alternatives.length) return null;
     if (exactResults.length > 0 && alternatives.length > 0) return null;
-    return { kind: 'SEARCH_RESULTS', exactResults, alternatives };
+    const geo = value.geo === undefined ? undefined : this.parseStoredGeoView(value.geo);
+    if (value.geo !== undefined && !geo) return null;
+    if (geo && !this.geoMarkersMatchResults(geo, exactResults, alternatives)) return null;
+    return {
+      kind: 'SEARCH_RESULTS',
+      exactResults,
+      alternatives,
+      ...(geo ? { geo } : {}),
+    };
+  }
+
+  private parseStoredGeoView(value: unknown): AssistantGeoSearchView | null {
+    if (!this.isRecord(value)) return null;
+    const context = this.parseStoredGeoContext({
+      anchor: value.anchor,
+      radiusMeters: value.radiusMeters,
+    } as Prisma.JsonObject);
+    if (!context || !this.isRecord(value.polygon) || value.polygon.type !== 'Polygon'
+      || !Array.isArray(value.polygon.coordinates) || value.polygon.coordinates.length !== 1) return null;
+    const ring = value.polygon.coordinates[0];
+    if (!Array.isArray(ring) || ring.length < 4 || ring.length > 513) return null;
+    const coordinates = ring.flatMap((coordinate) => {
+      if (!Array.isArray(coordinate) || coordinate.length !== 2
+        || coordinate.some((part) => typeof part !== 'number' || !Number.isFinite(part))) return [];
+      return [[coordinate[0] as number, coordinate[1] as number] as [number, number]];
+    });
+    if (coordinates.length !== ring.length || !Array.isArray(value.markers) || value.markers.length > 5) return null;
+    const markers = value.markers.flatMap((marker) => {
+      if (!this.isRecord(marker)
+        || typeof marker.unitId !== 'string' || !uuidPattern.test(marker.unitId)
+        || typeof marker.latitude !== 'number' || !Number.isFinite(marker.latitude)
+        || marker.latitude < -90 || marker.latitude > 90
+        || typeof marker.longitude !== 'number' || !Number.isFinite(marker.longitude)
+        || marker.longitude < -180 || marker.longitude > 180
+        || typeof marker.distanceMeters !== 'number' || !Number.isFinite(marker.distanceMeters)
+        || marker.distanceMeters < 0 || marker.distanceMeters > context.radiusMeters + 2
+        || (marker.kind !== 'PRIMARY' && marker.kind !== 'ALTERNATIVE')) return [];
+      return [{
+        unitId: marker.unitId,
+        latitude: marker.latitude,
+        longitude: marker.longitude,
+        distanceMeters: marker.distanceMeters,
+        kind: marker.kind as 'PRIMARY' | 'ALTERNATIVE',
+      }];
+    });
+    if (markers.length !== value.markers.length) return null;
+    return {
+      ...context,
+      polygon: { type: 'Polygon', coordinates: [coordinates] },
+      markers,
+    };
+  }
+
+  private geoMarkersMatchResults(
+    geo: AssistantGeoSearchView,
+    exactResults: AssistantSearchResultCard[],
+    alternatives: AssistantSearchResultCard[],
+  ) {
+    const expected = new Map([
+      ...exactResults.map((result) => [result.unitId, 'PRIMARY'] as const),
+      ...alternatives.map((result) => [result.unitId, 'ALTERNATIVE'] as const),
+    ]);
+    return geo.markers.length === expected.size
+      && geo.markers.every((marker) => expected.get(marker.unitId) === marker.kind)
+      && [...exactResults, ...alternatives].every((result) =>
+        typeof result.distanceMeters === 'number'
+        && geo.markers.some((marker) => marker.unitId === result.unitId
+          && Math.abs(marker.distanceMeters - result.distanceMeters!) < 0.01));
   }
 
   private parseStoredKnowledgeAnswer(value: Record<string, unknown>): AssistantAnswer | null {
@@ -520,6 +614,12 @@ export class AssistantService {
       !Array.isArray(value.pdfs) || value.pdfs.length > 4 ||
       !Array.isArray(value.deviations)
     ) return null;
+    const distanceMeters = value.distanceMeters === undefined
+      ? undefined
+      : typeof value.distanceMeters === 'number' && Number.isFinite(value.distanceMeters) && value.distanceMeters >= 0
+        ? value.distanceMeters
+        : null;
+    if (distanceMeters === null) return null;
     const facts = value.facts.flatMap((fact) =>
       typeof fact === 'string' && this.isBoundedText(fact, 240) ? [fact] : []);
     const pdfs = value.pdfs.flatMap((pdf) => {
@@ -549,6 +649,7 @@ export class AssistantService {
       facts,
       pdfs,
       deviations,
+      ...(distanceMeters === undefined ? {} : { distanceMeters }),
     };
   }
 

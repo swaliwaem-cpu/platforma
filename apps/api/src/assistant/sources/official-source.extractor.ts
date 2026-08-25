@@ -17,7 +17,7 @@ export type ExtractableKnowledgeSource = {
 };
 
 export type ExtractedSourceFact = {
-  kind: 'STATIC_DESCRIPTION' | 'ARCHITECTURE' | 'INFRASTRUCTURE' | 'PROMOTION' | 'EXTERNAL_LOT';
+  kind: 'STATIC_DESCRIPTION' | 'ARCHITECTURE' | 'INFRASTRUCTURE' | 'PROMOTION' | 'EXTERNAL_LOT' | 'ADDRESS';
   label: string;
   value: unknown;
   searchText: string;
@@ -116,6 +116,18 @@ export class OfficialSourceExtractor {
       if (description && isStaticJsonLdType(node['@type'])) {
         facts.push(createFact('STATIC_DESCRIPTION', name, description, source.canonicalUrl, fetchedAt));
       }
+      const address = readStructuredAddress(node);
+      if (address) {
+        facts.push({
+          kind: 'ADDRESS',
+          label: name,
+          value: address,
+          searchText: normalizeText(`${name} ${address.label}`),
+          canonicalUrl: source.canonicalUrl,
+          observedAt: fetchedAt,
+          validFrom: null,
+        });
+      }
       const lot = readExternalLot(node, source);
       if (lot) {
         facts.push({
@@ -137,6 +149,28 @@ export class OfficialSourceExtractor {
     }
     return facts;
   }
+}
+
+function readStructuredAddress(node: Record<string, unknown>) {
+  const address = isRecord(node.address) ? node.address : null;
+  const geo = isRecord(node.geo) ? node.geo : null;
+  if (!address || !geo) return null;
+  const label = readText(address.streetAddress)
+    ?? normalizeText([
+      readText(address.addressLocality),
+      readText(address.addressRegion),
+      readText(address.addressCountry),
+    ].filter(Boolean).join(', '));
+  const latitude = readCoordinate(geo.latitude, -90, 90);
+  const longitude = readCoordinate(geo.longitude, -180, 180);
+  if (!label || latitude === null || longitude === null) return null;
+  return {
+    label,
+    latitude,
+    longitude,
+    city: readText(address.addressLocality),
+    countryCode: readCountryCode(address.addressCountry),
+  };
 }
 
 function createFact(
@@ -287,6 +321,16 @@ function readNonNegativeInteger(value: unknown) {
 function readIntegerInRange(value: unknown, minimum: number, maximum: number) {
   const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
   return Number.isInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : null;
+}
+
+function readCoordinate(value: unknown, minimum: number, maximum: number) {
+  const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
+  return Number.isFinite(parsed) && parsed >= minimum && parsed <= maximum ? parsed : null;
+}
+
+function readCountryCode(value: unknown) {
+  const normalized = readText(value)?.toLocaleLowerCase('en-US') ?? null;
+  return normalized && /^[a-z]{2}$/u.test(normalized) ? normalized : null;
 }
 
 function readText(value: unknown) {

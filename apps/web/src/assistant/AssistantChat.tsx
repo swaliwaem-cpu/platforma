@@ -2,6 +2,9 @@ import type {
   AssistantConversation,
   AssistantConversationSummary,
   AssistantExternalLotCard,
+  AssistantGeoCandidate,
+  AssistantGeoResolution,
+  AssistantGeoSearchContext,
   AssistantKnowledgeFactCard,
   AssistantMessage,
   AssistantPageContext,
@@ -11,6 +14,8 @@ import type {
 import {
   Clock3Icon,
   MessageCircleIcon,
+  MapPinIcon,
+  PencilIcon,
   PlusIcon,
   RotateCcwIcon,
   SendIcon,
@@ -32,8 +37,11 @@ import {
   getAssistantConversation,
   getAssistantRun,
   listAssistantConversations,
+  resolveAssistantGeo,
   sendAssistantMessage,
 } from './assistantApi';
+import { AssistantGeoPicker } from './AssistantGeoPicker';
+import { AssistantGeoResultMap, formatDistance } from './AssistantGeoResultMap';
 import { appLocationChangeEventName } from '../navigation/appLocation';
 import './assistant.css';
 
@@ -55,8 +63,13 @@ type AssistantGeometry = {
 type PendingSubmission = {
   content: string;
   context: AssistantPageContext | null;
+  geo: AssistantGeoSearchContext | null;
   conversationId: string | null;
   idempotencyKey: string;
+};
+
+type PendingGeoSubmission = {
+  content: string;
 };
 
 type DragState = {
@@ -83,6 +96,13 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
   const [failedConversationId, setFailedConversationId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [pageContext, setPageContext] = useState<AssistantPageContext | null>(null);
+  const [activeGeo, setActiveGeo] = useState<AssistantGeoSearchContext | null>(null);
+  const [isGeoPickerOpen, setIsGeoPickerOpen] = useState(false);
+  const [geoPickerPurpose, setGeoPickerPurpose] = useState<'SELECT' | 'EDIT'>('SELECT');
+  const [geoResolution, setGeoResolution] = useState<AssistantGeoResolution | null>(null);
+  const [pendingGeoSubmission, setPendingGeoSubmission] = useState<PendingGeoSubmission | null>(null);
+  const [isResolvingGeo, setIsResolvingGeo] = useState(false);
+  const [geoError, setGeoError] = useState<string | null>(null);
   const [activeRun, setActiveRun] = useState<AssistantRun | null>(null);
   const [optimisticContent, setOptimisticContent] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
@@ -97,6 +117,7 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
   const historyRequestRef = useRef<AbortController | null>(null);
   const historyRequestVersionRef = useRef(0);
   const sendRequestRef = useRef<AbortController | null>(null);
+  const geoResolveRequestRef = useRef<AbortController | null>(null);
   const completionRequestRef = useRef<AbortController | null>(null);
   const activeOperationVersionRef = useRef(0);
   const skipGeometryWriteRef = useRef(false);
@@ -104,6 +125,7 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
   const invalidateActiveOperation = useCallback(() => {
     activeOperationVersionRef.current += 1;
     sendRequestRef.current?.abort();
+    geoResolveRequestRef.current?.abort();
     completionRequestRef.current?.abort();
     conversationRequestRef.current?.abort();
     historyRequestRef.current?.abort();
@@ -180,14 +202,21 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
     if (!isOpen) return;
     const frameId = window.requestAnimationFrame(() => composerRef.current?.focus());
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setIsOpen(false);
+      if (event.key !== 'Escape') return;
+      if (isGeoPickerOpen) {
+        setIsGeoPickerOpen(false);
+        if (geoPickerPurpose === 'EDIT') setPendingGeoSubmission(null);
+        setGeoPickerPurpose('SELECT');
+        return;
+      }
+      setIsOpen(false);
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => {
       window.cancelAnimationFrame(frameId);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [isOpen]);
+  }, [geoPickerPurpose, isGeoPickerOpen, isOpen]);
 
   useEffect(() => {
     const container = messagesRef.current;
@@ -296,6 +325,7 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
       const response = await getAssistantConversation(accessToken, conversationId, controller.signal);
       if (activeOperationVersionRef.current !== operationVersion) return;
       setConversation(response.conversation);
+      setActiveGeo(readLatestGeoContext(response.conversation.messages));
       setIsHistoryOpen(false);
     } catch (loadError) {
       if (!controller.signal.aborted) {
@@ -338,7 +368,11 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
         accessToken,
         conversationId,
         idempotencyKey: submission.idempotencyKey,
-        message: { content: submission.content, context: submission.context },
+        message: {
+          content: submission.content,
+          context: submission.context,
+          geo: submission.geo,
+        },
         signal: controller.signal,
       });
       if (activeOperationVersionRef.current !== operationVersion) return;
@@ -353,20 +387,94 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
     }
   }, [accessToken, finishRun]);
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const content = draft.trim();
-    if (!content || isSending) return;
-
+  const beginSubmission = useCallback((content: string, geo: AssistantGeoSearchContext | null) => {
     const submission: PendingSubmission = {
       content,
       context: pageContext,
+      geo,
       conversationId: conversation?.id ?? null,
       idempotencyKey: crypto.randomUUID(),
     };
     pendingSubmissionRef.current = submission;
     setDraft('');
+    setGeoResolution(null);
+    setPendingGeoSubmission(null);
+    setGeoError(null);
     void sendPendingSubmission(submission);
+  }, [conversation?.id, pageContext, sendPendingSubmission]);
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const content = draft.trim();
+    if (!content || isSending || isResolvingGeo) return;
+    if (activeGeo) {
+      beginSubmission(content, activeGeo);
+      return;
+    }
+
+    geoResolveRequestRef.current?.abort();
+    const controller = new AbortController();
+    geoResolveRequestRef.current = controller;
+    setIsResolvingGeo(true);
+    setGeoError(null);
+    setGeoResolution(null);
+    setPendingGeoSubmission({ content });
+    void resolveAssistantGeo(accessToken, { content, locale: 'ru', country: null }, controller.signal)
+      .then((resolution) => {
+        if (controller.signal.aborted) return;
+        if (resolution.status === 'NOT_APPLICABLE') {
+          beginSubmission(content, null);
+          return;
+        }
+        if (resolution.status === 'RESOLVED') {
+          const candidate = resolution.candidates[0];
+          if (candidate) {
+            const geo = candidateToGeo(candidate, resolution.radiusMeters);
+            setActiveGeo(geo);
+            beginSubmission(content, geo);
+            return;
+          }
+        }
+        setDraft('');
+        setGeoResolution(resolution);
+      })
+      .catch((resolveError) => {
+        if (controller.signal.aborted) return;
+        setDraft('');
+        setGeoError(readErrorMessage(resolveError));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsResolvingGeo(false);
+      });
+  };
+
+  const handleCandidateSelect = (candidate: AssistantGeoCandidate) => {
+    if (!pendingGeoSubmission || !geoResolution
+      || (geoResolution.status !== 'AMBIGUOUS' && geoResolution.status !== 'RESOLVED')) return;
+    const geo = candidateToGeo(candidate, geoResolution.radiusMeters);
+    setActiveGeo(geo);
+    beginSubmission(pendingGeoSubmission.content, geo);
+  };
+
+  const handleGeoPickerConfirm = (geo: AssistantGeoSearchContext) => {
+    setActiveGeo(geo);
+    setIsGeoPickerOpen(false);
+    setGeoPickerPurpose('SELECT');
+    if (pendingGeoSubmission) beginSubmission(pendingGeoSubmission.content, geo);
+  };
+
+  const handleGeoPickerCancel = () => {
+    setIsGeoPickerOpen(false);
+    if (geoPickerPurpose === 'EDIT') setPendingGeoSubmission(null);
+    setGeoPickerPurpose('SELECT');
+  };
+
+  const handleGeoRefine = () => {
+    if (pendingGeoSubmission) setDraft(pendingGeoSubmission.content);
+    setGeoResolution(null);
+    setPendingGeoSubmission(null);
+    setGeoError(null);
+    window.requestAnimationFrame(() => composerRef.current?.focus());
   };
 
   const handleRetry = () => {
@@ -383,6 +491,11 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
     setFailedConversationId(null);
     setIsConversationLoading(false);
     setIsHistoryOpen(false);
+    setActiveGeo(null);
+    setGeoResolution(null);
+    setPendingGeoSubmission(null);
+    setGeoError(null);
+    setIsGeoPickerOpen(false);
     pendingSubmissionRef.current = null;
     window.requestAnimationFrame(() => composerRef.current?.focus());
   };
@@ -421,6 +534,32 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
     removeGeometry(userId);
     skipGeometryWriteRef.current = true;
     setGeometry(defaultGeometry());
+  };
+
+  const openGeoPicker = () => {
+    if (!isMobileViewport()) {
+      setGeometry((current) => clampGeometry({
+        ...current,
+        width: Math.max(current.width, Math.min(760, window.innerWidth - 48)),
+        height: Math.max(current.height, Math.min(760, window.innerHeight - 48)),
+      }));
+    }
+    setGeoPickerPurpose('SELECT');
+    setIsGeoPickerOpen(true);
+  };
+
+  const editGeoPicker = () => {
+    const lastUserContent = readLatestUserContent(conversation?.messages ?? []);
+    if (lastUserContent) setPendingGeoSubmission({ content: lastUserContent });
+    setGeoPickerPurpose('EDIT');
+    if (!isMobileViewport()) {
+      setGeometry((current) => clampGeometry({
+        ...current,
+        width: Math.max(current.width, Math.min(760, window.innerWidth - 48)),
+        height: Math.max(current.height, Math.min(760, window.innerHeight - 48)),
+      }));
+    }
+    setIsGeoPickerOpen(true);
   };
 
   const latestProgress = activeRun?.status === 'RUNNING' || activeRun?.status === 'PENDING'
@@ -491,6 +630,13 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
             </div>
           </header>
 
+          {isGeoPickerOpen ? (
+            <AssistantGeoPicker
+              initialGeo={activeGeo}
+              onCancel={handleGeoPickerCancel}
+              onConfirm={handleGeoPickerConfirm}
+            />
+          ) : (
           <div className={isHistoryOpen ? 'assistant-chat-layout assistant-chat-layout--history' : 'assistant-chat-layout'}>
             {isHistoryOpen ? (
               <aside className="assistant-history" aria-label="История разговоров">
@@ -587,6 +733,7 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
               </div>
 
               <div className="assistant-composer-area">
+                <div className="assistant-context-chips">
                 {pageContext ? (
                   <div className="assistant-context-chip">
                     <span>{pageContext.label}</span>
@@ -597,6 +744,47 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
                     >
                       <XIcon aria-hidden="true" />
                     </button>
+                  </div>
+                ) : null}
+                {activeGeo ? (
+                  <div className="assistant-context-chip assistant-context-chip--geo" data-assistant-geo-chip>
+                    <MapPinIcon aria-hidden="true" />
+                    <span>{activeGeo.anchor.label} · {formatDistance(activeGeo.radiusMeters)}</span>
+                    <button
+                      aria-label="Изменить точку и радиус"
+                      type="button"
+                      onClick={editGeoPicker}
+                    >
+                      <PencilIcon aria-hidden="true" />
+                    </button>
+                    <button
+                      aria-label="Убрать геопоиск"
+                      type="button"
+                      onClick={() => setActiveGeo(null)}
+                    >
+                      <XIcon aria-hidden="true" />
+                    </button>
+                  </div>
+                ) : null}
+                </div>
+                {isResolvingGeo ? (
+                  <div className="assistant-geo-resolution" role="status">Уточняю место…</div>
+                ) : null}
+                {geoResolution && geoResolution.status !== 'NOT_APPLICABLE' ? (
+                  <AssistantGeoResolutionPanel
+                    resolution={geoResolution}
+                    onCandidateSelect={handleCandidateSelect}
+                    onManual={openGeoPicker}
+                    onRefine={handleGeoRefine}
+                  />
+                ) : null}
+                {geoError ? (
+                  <div className="assistant-geo-resolution assistant-geo-resolution--error" role="alert">
+                    <p>Не удалось определить место. Можно указать точку вручную или уточнить название.</p>
+                    <div>
+                      <button type="button" onClick={openGeoPicker}>Указать на карте</button>
+                      <button type="button" onClick={handleGeoRefine}>Уточнить название</button>
+                    </div>
                   </div>
                 ) : null}
                 {error ? (
@@ -629,13 +817,27 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
                       }
                     }}
                   />
-                  <button aria-label="Отправить" disabled={isSending || draft.trim().length === 0} type="submit">
+                  <button
+                    aria-label="Выбрать точку на карте"
+                    className="assistant-map-button"
+                    disabled={isSending || isResolvingGeo}
+                    type="button"
+                    onClick={openGeoPicker}
+                  >
+                    <MapPinIcon aria-hidden="true" />
+                  </button>
+                  <button
+                    aria-label="Отправить"
+                    disabled={isSending || isResolvingGeo || draft.trim().length === 0}
+                    type="submit"
+                  >
                     <SendIcon aria-hidden="true" />
                   </button>
                 </form>
               </div>
             </div>
           </div>
+          )}
         </section>
       )}
     </>
@@ -648,6 +850,7 @@ function AssistantMessageContent({ message }: { message: AssistantMessage }) {
       <p>{message.content}</p>
       {message.answer?.kind === 'SEARCH_RESULTS' ? (
         <div className="assistant-results">
+          {message.answer.geo ? <AssistantGeoResultMap geo={message.answer.geo} /> : null}
           <section aria-labelledby={`assistant-exact-${message.id}`}>
             <h3 id={`assistant-exact-${message.id}`}>Лучшие по этим критериям</h3>
             {message.answer.exactResults.length > 0 ? (
@@ -748,6 +951,9 @@ function AssistantResultCard({ result }: { result: AssistantSearchResultCard }) 
       <a className="assistant-result-title" href={result.href}>{result.title}</a>
       <p className="assistant-result-subtitle">{result.subtitle}</p>
       <strong className="assistant-result-price">{formatRub(result.priceRub)}</strong>
+      {result.distanceMeters !== undefined ? (
+        <span className="assistant-result-distance">{formatDistance(result.distanceMeters)} по прямой</span>
+      ) : null}
       <div className="assistant-result-status">
         <span>{result.availabilityLabel}</span>
         <span className={result.isStale ? 'assistant-result-freshness assistant-result-freshness--stale' : 'assistant-result-freshness'}>
@@ -770,6 +976,74 @@ function AssistantResultCard({ result }: { result: AssistantSearchResultCard }) 
       ) : null}
     </section>
   );
+}
+
+function AssistantGeoResolutionPanel({
+  onCandidateSelect,
+  onManual,
+  onRefine,
+  resolution,
+}: {
+  onCandidateSelect: (candidate: AssistantGeoCandidate) => void;
+  onManual: () => void;
+  onRefine: () => void;
+  resolution: Exclude<AssistantGeoResolution, { status: 'NOT_APPLICABLE' }>;
+}) {
+  if (resolution.status === 'AMBIGUOUS' || resolution.status === 'RESOLVED') {
+    return (
+      <div className="assistant-geo-resolution" data-assistant-geo-candidates>
+        <strong>Какое место вы имели в виду?</strong>
+        <div className="assistant-geo-candidates">
+          {resolution.candidates.slice(0, 3).map((candidate) => (
+            <button key={candidate.id} type="button" onClick={() => onCandidateSelect(candidate)}>
+              <span>{candidate.label}</span>
+              {candidate.city ? <small>{candidate.city}</small> : null}
+            </button>
+          ))}
+        </div>
+        <button className="assistant-geo-refine" type="button" onClick={onRefine}>Уточнить название</button>
+      </div>
+    );
+  }
+  if (resolution.status === 'RADIUS_REQUIRED') {
+    return (
+      <div className="assistant-geo-resolution" role="alert">
+        <p>Для геопоиска нужен точный радиус: например, 1, 2, 3 или 5 км.</p>
+        <button className="assistant-geo-refine" type="button" onClick={onRefine}>Добавить радиус</button>
+      </div>
+    );
+  }
+  return (
+    <div className="assistant-geo-resolution" role="alert">
+      <p>{resolution.status === 'UNAVAILABLE'
+        ? 'Геокодер сейчас недоступен. Поиск по ручной точке продолжает работать.'
+        : 'Место не найдено. Укажите точку вручную или уточните название.'}</p>
+      <div>
+        <button type="button" onClick={onManual}>Указать на карте</button>
+        <button type="button" onClick={onRefine}>Уточнить название</button>
+      </div>
+    </div>
+  );
+}
+
+function candidateToGeo(candidate: AssistantGeoCandidate, radiusMeters: number): AssistantGeoSearchContext {
+  return {
+    anchor: {
+      latitude: candidate.latitude,
+      longitude: candidate.longitude,
+      label: candidate.label,
+      source: candidate.source,
+    },
+    radiusMeters,
+  };
+}
+
+function readLatestGeoContext(messages: AssistantMessage[]) {
+  return [...messages].reverse().find((message) => message.role === 'USER')?.geo ?? null;
+}
+
+function readLatestUserContent(messages: AssistantMessage[]) {
+  return [...messages].reverse().find((message) => message.role === 'USER')?.content ?? null;
 }
 
 function formatRub(value: number) {

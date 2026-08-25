@@ -11,6 +11,7 @@ import {
 } from '@prisma/client';
 import type {
   AssistantPageContext,
+  AssistantGeoSearchContext,
   AssistantProgressEvent,
   AssistantProgressStep,
 } from '@platforma/shared' with { 'resolution-mode': 'import' };
@@ -19,6 +20,7 @@ import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AssistantAnswerService } from './assistant-answer.service';
 import { AssistantPlannerError } from './assistant-query-planner';
+import { parseAssistantGeoSearchInput } from './geo/assistant-geo-contract';
 import { isAssistantModuleEnabled } from './assistant-runtime-config';
 
 const assistantRunPollIntervalMs = 1_000;
@@ -167,6 +169,7 @@ export class AssistantRunProcessor implements OnModuleInit, OnModuleDestroy {
         return this.answerService.answer({
           messages: recentMessages.reverse().map(({ content }) => content),
           context: this.parseContext(run.userMessage.contextJson),
+          geo: this.parseGeoContext(run.userMessage.geoContextJson),
         });
       });
       await this.prisma.$transaction(async (transaction) => {
@@ -277,6 +280,17 @@ export class AssistantRunProcessor implements OnModuleInit, OnModuleDestroy {
       key: value.key,
       label: value.label,
     };
+  }
+
+  private parseGeoContext(value: Prisma.JsonValue | null): AssistantGeoSearchContext | null {
+    try {
+      return value === null ? null : parseAssistantGeoSearchInput(value, {
+        ASSISTANT_GEO_RADIUS_MIN_METERS: '1',
+        ASSISTANT_GEO_RADIUS_MAX_METERS: '100000',
+      });
+    } catch {
+      return null;
+    }
   }
 
   private getFakeStepDelayMs() {

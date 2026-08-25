@@ -550,8 +550,9 @@ function promoteHardMarkedSoftFilters(
 }
 
 function extractContextHardFilters(context: unknown): Partial<AssistantSearchFilters> {
-  if (!isRecord(context) || context.kind !== 'CATALOG_FILTERS' || typeof context.key !== 'string') return {};
-  const params = new URLSearchParams(context.key);
+  const pageContext = readPageContext(context);
+  if (!isRecord(pageContext) || pageContext.kind !== 'CATALOG_FILTERS' || typeof pageContext.key !== 'string') return {};
+  const params = new URLSearchParams(pageContext.key);
   const objectType = params.get('type');
   const filters: Partial<AssistantSearchFilters> = {};
   if (objectType === 'RESIDENTIAL' || objectType === 'COMMERCIAL') filters.objectType = objectType;
@@ -610,12 +611,29 @@ function parseMoneyText(value: string, unit: string) {
 
 function hasLocationConstraint(filters: AssistantSearchFilters, context: unknown) {
   if (filters.district || filters.metro || filters.developer) return true;
-  if (!isRecord(context) || typeof context.kind !== 'string') return false;
-  if (context.kind === 'OBJECT' || context.kind === 'LOT' || context.kind === 'DEVELOPER') return true;
-  if (context.kind !== 'CATALOG_FILTERS' || typeof context.key !== 'string') return false;
-  const params = new URLSearchParams(context.key);
+  if (hasGeoContext(context)) return true;
+  const pageContext = readPageContext(context);
+  if (!isRecord(pageContext) || typeof pageContext.kind !== 'string') return false;
+  if (pageContext.kind === 'OBJECT' || pageContext.kind === 'LOT' || pageContext.kind === 'DEVELOPER') return true;
+  if (pageContext.kind !== 'CATALOG_FILTERS' || typeof pageContext.key !== 'string') return false;
+  const params = new URLSearchParams(pageContext.key);
   return ['developerId', 'locationId', 'areaId', 'metroStationId']
     .some((key) => Boolean(params.get(key)));
+}
+
+function readPageContext(context: unknown) {
+  return isRecord(context) && 'pageContext' in context ? context.pageContext : context;
+}
+
+function hasGeoContext(context: unknown) {
+  if (!isRecord(context) || !isRecord(context.geo) || !isRecord(context.geo.anchor)) return false;
+  return typeof context.geo.anchor.latitude === 'number'
+    && Number.isFinite(context.geo.anchor.latitude)
+    && typeof context.geo.anchor.longitude === 'number'
+    && Number.isFinite(context.geo.anchor.longitude)
+    && typeof context.geo.radiusMeters === 'number'
+    && Number.isFinite(context.geo.radiusMeters)
+    && context.geo.radiusMeters > 0;
 }
 
 function joinRussianList(values: string[]) {

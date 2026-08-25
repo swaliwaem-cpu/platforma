@@ -16,7 +16,7 @@ import {
   hasOpenMapTilesPoiSource,
   NEARBY_TRANSIT_SEARCH_ZOOM,
 } from './openMapTilesEnhancements';
-import type { MapBounds, MapCoordinate, MapPoint, MapStatus, MapViewport, PlatformMapProps } from './mapTypes';
+import type { MapBounds, MapCoordinate, MapPoint, MapPolygon, MapStatus, MapViewport, PlatformMapProps } from './mapTypes';
 
 type MapLibreMapProps = Omit<PlatformMapProps, 'emptyState' | 'renderWithoutPoints'> & {
   styleUrl: string;
@@ -45,6 +45,9 @@ const NEARBY_TRANSIT_LOOKUP_TIMEOUT_MS = 4_000;
 const MEASUREMENT_SOURCE_ID = 'platforma-measurement';
 const MEASUREMENT_LINE_LAYER_ID = 'platforma-measurement-line';
 const MEASUREMENT_POINT_LAYER_ID = 'platforma-measurement-points';
+const ASSISTANT_GEO_SOURCE_ID = 'platforma-assistant-geo-polygons';
+const ASSISTANT_GEO_FILL_LAYER_ID = 'platforma-assistant-geo-fill';
+const ASSISTANT_GEO_LINE_LAYER_ID = 'platforma-assistant-geo-line';
 
 const providerErrorState = {
   eyebrow: 'Карта',
@@ -61,6 +64,7 @@ export default function MapLibreMap({
   enableMeasurement = true,
   initialViewport,
   points,
+  polygons = [],
   selectedPointId = null,
   styleUrl,
   onBoundsChange,
@@ -89,6 +93,10 @@ export default function MapLibreMap({
   const pointCoordinatesKey = useMemo(
     () => points.map((point) => `${point.id}:${point.coordinates[0]}:${point.coordinates[1]}`).join('|'),
     [points],
+  );
+  const polygonCoordinatesKey = useMemo(
+    () => polygons.map((polygon) => `${polygon.id}:${JSON.stringify(polygon.coordinates)}`).join('|'),
+    [polygons],
   );
   const prefersReducedMotion = useMemo(
     () => typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
@@ -121,6 +129,7 @@ export default function MapLibreMap({
     let fullscreenControl: maplibregl.FullscreenControl | null = null;
     let loadTimeoutId: number | null = null;
     let resizeFrameId: number | null = null;
+    let resizeObserver: ResizeObserver | null = null;
     const initial = initialViewportRef.current;
     let map: maplibregl.Map;
 
@@ -179,6 +188,8 @@ export default function MapLibreMap({
         notifyMapPosition(map, callbacksRef.current);
       });
     };
+    resizeObserver = new ResizeObserver(scheduleResize);
+    resizeObserver.observe(shell);
     const handleFullscreenStart = () => {
       setIsFullscreen(true);
       callbacksRef.current.onFullscreenChange?.(true);
@@ -209,6 +220,7 @@ export default function MapLibreMap({
 
       enhanceOpenMapTilesStyle(map);
       ensureMeasurementLayers(map);
+      ensureAssistantGeoLayers(map);
 
       setStatus('ready');
       callbacksRef.current.onStatusChange?.('ready');
@@ -254,6 +266,7 @@ export default function MapLibreMap({
       if (resizeFrameId !== null) {
         window.cancelAnimationFrame(resizeFrameId);
       }
+      resizeObserver?.disconnect();
 
       if (loadTimeoutId !== null) {
         window.clearTimeout(loadTimeoutId);
@@ -275,6 +288,13 @@ export default function MapLibreMap({
       shell.classList.remove('platform-map--measuring');
     };
   }, [enableFullscreen, enableMeasurement, prefersReducedMotion, styleUrl]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== 'ready') return;
+    const source = map.getSource(ASSISTANT_GEO_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+    if (source) void source.setData(createPolygonGeoJson(polygons));
+  }, [polygonCoordinatesKey, polygons, status]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -301,8 +321,8 @@ export default function MapLibreMap({
       return;
     }
 
-    fitMapToPoints(map, points, prefersReducedMotion);
-  }, [pointCoordinatesKey, points, prefersReducedMotion, status]);
+    fitMapToContent(map, points, polygons, prefersReducedMotion);
+  }, [pointCoordinatesKey, points, polygonCoordinatesKey, polygons, prefersReducedMotion, status]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -516,6 +536,42 @@ function ensureMeasurementLayers(map: maplibregl.Map) {
   }
 }
 
+function ensureAssistantGeoLayers(map: maplibregl.Map) {
+  if (!map.getSource(ASSISTANT_GEO_SOURCE_ID)) {
+    map.addSource(ASSISTANT_GEO_SOURCE_ID, {
+      type: 'geojson',
+      data: createPolygonGeoJson([]),
+    });
+  }
+  if (!map.getLayer(ASSISTANT_GEO_FILL_LAYER_ID)) {
+    map.addLayer({
+      id: ASSISTANT_GEO_FILL_LAYER_ID,
+      type: 'fill',
+      source: ASSISTANT_GEO_SOURCE_ID,
+      paint: { 'fill-color': '#e85a18', 'fill-opacity': 0.12 },
+    });
+  }
+  if (!map.getLayer(ASSISTANT_GEO_LINE_LAYER_ID)) {
+    map.addLayer({
+      id: ASSISTANT_GEO_LINE_LAYER_ID,
+      type: 'line',
+      source: ASSISTANT_GEO_SOURCE_ID,
+      paint: { 'line-color': '#d84f12', 'line-opacity': 0.88, 'line-width': 2.5 },
+    });
+  }
+}
+
+function createPolygonGeoJson(polygons: MapPolygon[]) {
+  return {
+    type: 'FeatureCollection' as const,
+    features: polygons.map((polygon) => ({
+      type: 'Feature' as const,
+      properties: { id: polygon.id, variant: polygon.variant ?? 'RADIUS' },
+      geometry: { type: 'Polygon' as const, coordinates: polygon.coordinates },
+    })),
+  };
+}
+
 type MeasurementGeoJson = Exclude<Parameters<maplibregl.GeoJSONSource['setData']>[0], string>;
 
 function createMeasurementGeoJson(points: MapCoordinate[]): MeasurementGeoJson {
@@ -651,7 +707,7 @@ function createMarkerElement(point: MapPoint) {
   const label = document.createElement('span');
 
   element.type = 'button';
-  element.className = 'map-price-marker';
+  element.className = `map-price-marker map-price-marker--${(point.variant ?? 'DEFAULT').toLocaleLowerCase('en-US')}`;
   element.dataset.mapPointId = point.id;
   element.setAttribute('aria-label', point.hint);
   element.setAttribute('aria-pressed', 'false');
@@ -701,6 +757,23 @@ function fitMapToPoints(map: maplibregl.Map, points: MapPoint[], prefersReducedM
   });
 }
 
+function fitMapToContent(
+  map: maplibregl.Map,
+  points: MapPoint[],
+  polygons: MapPolygon[],
+  prefersReducedMotion: boolean,
+) {
+  const polygonPoints: MapPoint[] = polygons.flatMap((polygon) => polygon.coordinates.flatMap((ring) => (
+    ring.map(([longitude, latitude], index) => ({
+      id: `${polygon.id}-${index}-${latitude}-${longitude}`,
+      title: polygon.id,
+      hint: polygon.id,
+      coordinates: [latitude, longitude],
+    }))
+  )));
+  fitMapToPoints(map, [...points, ...polygonPoints], prefersReducedMotion);
+}
+
 function notifyMapPosition(map: maplibregl.Map, callbacks: MapCallbacks) {
   const bounds = map.getBounds();
   const center = map.getCenter();
@@ -732,6 +805,7 @@ function createPointSignature(point: MapPoint) {
     point.markerLabel ?? '',
     point.popupHtml ?? '',
     point.title,
+    point.variant ?? 'DEFAULT',
   ].join('|');
 }
 

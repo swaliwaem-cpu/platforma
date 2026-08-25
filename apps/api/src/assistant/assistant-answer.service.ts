@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import type {
   AssistantAnswer,
+  AssistantGeoSearchContext,
+  AssistantGeoSearchView,
   AssistantPageContext,
 } from '@platforma/shared' with { 'resolution-mode': 'import' };
 
@@ -40,11 +42,17 @@ export class AssistantAnswerService {
   async answer(input: {
     messages: string[];
     context: AssistantPageContext | null;
+    geo?: AssistantGeoSearchContext | null;
     now?: Date;
   }): Promise<AssistantAnswerResult> {
     const now = input.now ?? new Date();
     const planned = await this.planner.planWithValidation(
-      { messages: input.messages, context: input.context },
+      {
+        messages: input.messages,
+        context: input.geo
+          ? { pageContext: input.context, geo: input.geo }
+          : input.context,
+      },
       async (intent) => {
         if (intent.taskType === 'LEGAL_TAX') {
           return {
@@ -82,7 +90,7 @@ export class AssistantAnswerService {
           };
         }
 
-        const searchResult = await this.search.search(intent, input.context);
+        const searchResult = await this.search.search(intent, input.context, input.geo ?? null);
         if (searchResult.exact.length === 0 && this.knowledge) {
           const knowledgeEvidence = await this.knowledge.retrieve({
             query,
@@ -113,14 +121,23 @@ export class AssistantAnswerService {
           ...grounded.exactResults.map(({ unitId }) => unitId),
           ...grounded.alternatives.map(({ unitId }) => unitId),
         ]);
+        const selectedEvidence = evidence.filter(({ unitId }) => selectedIds.has(unitId));
+        const geo = searchResult.geo
+          ? createGeoSearchView(
+              searchResult.geo,
+              selectedEvidence,
+              new Set(grounded.exactResults.map(({ unitId }) => unitId)),
+            )
+          : null;
         return {
           content: grounded.content,
           answer: {
             kind: 'SEARCH_RESULTS',
             exactResults: grounded.exactResults,
             alternatives: grounded.alternatives,
+            ...(geo ? { geo } : {}),
           } as const,
-          evidence: evidence.filter(({ unitId }) => selectedIds.has(unitId)),
+          evidence: selectedEvidence,
         };
       },
     );
@@ -131,4 +148,33 @@ export class AssistantAnswerService {
       telemetry: planned.telemetry,
     };
   }
+}
+
+function createGeoSearchView(
+  geo: Omit<AssistantGeoSearchView, 'markers'>,
+  evidence: AssistantSearchEvidence[],
+  primaryIds: Set<string>,
+): AssistantGeoSearchView {
+  let primaryCount = 0;
+  let alternativeCount = 0;
+  return {
+    ...geo,
+    markers: evidence.flatMap((candidate) => {
+      if (typeof candidate.latitude !== 'number'
+        || typeof candidate.longitude !== 'number'
+        || typeof candidate.distanceMeters !== 'number') return [];
+      const kind = primaryIds.has(candidate.unitId) ? 'PRIMARY' as const : 'ALTERNATIVE' as const;
+      if (kind === 'PRIMARY' && primaryCount >= 3) return [];
+      if (kind === 'ALTERNATIVE' && alternativeCount >= 2) return [];
+      if (kind === 'PRIMARY') primaryCount += 1;
+      else alternativeCount += 1;
+      return [{
+        unitId: candidate.unitId,
+        latitude: candidate.latitude,
+        longitude: candidate.longitude,
+        distanceMeters: candidate.distanceMeters,
+        kind,
+      }];
+    }),
+  };
 }

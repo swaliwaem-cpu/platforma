@@ -15,6 +15,76 @@ export type AssistantAlternativeDeviation = {
   label: string;
 };
 
+export type AssistantGeoAnchor = {
+  latitude: number;
+  longitude: number;
+  label: string;
+  source: 'MANUAL' | 'PLACE' | 'ALIAS' | 'KNOWLEDGE';
+};
+
+export type AssistantGeoSearchContext = {
+  anchor: AssistantGeoAnchor;
+  radiusMeters: number;
+};
+
+export type AssistantGeoCandidate = {
+  id: string;
+  label: string;
+  latitude: number;
+  longitude: number;
+  city: string | null;
+  countryCode: string | null;
+  source: 'ALIAS' | 'PLACE' | 'KNOWLEDGE';
+};
+
+export type AssistantGeoResolution =
+  | { status: 'NOT_APPLICABLE' }
+  | { status: 'RADIUS_REQUIRED'; placeQuery: string; actions: ['REFINE'] }
+  | {
+      status: 'RESOLVED' | 'AMBIGUOUS';
+      placeQuery: string;
+      radiusMeters: number;
+      candidates: AssistantGeoCandidate[];
+    }
+  | {
+      status: 'NOT_FOUND' | 'UNAVAILABLE';
+      placeQuery: string;
+      radiusMeters: number;
+      actions: ['MANUAL', 'REFINE'];
+    };
+
+export type AssistantGeoResolveInput = {
+  content: string;
+  locale?: string;
+  country?: string | null;
+  viewbox?: [west: number, south: number, east: number, north: number] | null;
+};
+
+export type AssistantGeoAliasInput = {
+  query: string;
+  locale: string;
+  country: string | null;
+  candidate: Omit<AssistantGeoCandidate, 'id' | 'source'>;
+};
+
+export type AssistantGeoPolygon = {
+  type: 'Polygon';
+  coordinates: [longitude: number, latitude: number][][];
+};
+
+export type AssistantGeoResultMarker = {
+  unitId: string;
+  latitude: number;
+  longitude: number;
+  distanceMeters: number;
+  kind: 'PRIMARY' | 'ALTERNATIVE';
+};
+
+export type AssistantGeoSearchView = AssistantGeoSearchContext & {
+  polygon: AssistantGeoPolygon;
+  markers: AssistantGeoResultMarker[];
+};
+
 export type AssistantSearchResultCard = {
   unitId: string;
   title: string;
@@ -27,6 +97,7 @@ export type AssistantSearchResultCard = {
   facts: string[];
   pdfs: Array<{ title: string; href: string }>;
   deviations: AssistantAlternativeDeviation[];
+  distanceMeters?: number;
 };
 
 export type AssistantKnowledgeFactCard = {
@@ -53,6 +124,7 @@ export type AssistantAnswer =
       kind: 'SEARCH_RESULTS';
       exactResults: AssistantSearchResultCard[];
       alternatives: AssistantSearchResultCard[];
+      geo?: AssistantGeoSearchView;
     }
   | {
       kind: 'KNOWLEDGE_RESULTS';
@@ -68,6 +140,7 @@ export type AssistantMessage = {
   role: AssistantMessageRole;
   content: string;
   context: AssistantPageContext | null;
+  geo: AssistantGeoSearchContext | null;
   answer: AssistantAnswer | null;
   createdAt: string;
 };
@@ -122,4 +195,5 @@ export type AssistantRunResponse = {
 export type AssistantSendMessageInput = {
   content: string;
   context?: AssistantPageContext | null;
+  geo?: AssistantGeoSearchContext | null;
 };
