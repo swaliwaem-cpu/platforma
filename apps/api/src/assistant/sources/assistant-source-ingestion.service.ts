@@ -146,8 +146,7 @@ export class AssistantSourceIngestionService {
       `);
       await assertIngestionFence(transaction, fence);
       const previous = await transaction.assistantSourceRevision.findFirst({
-        where: { sourceId: source.id },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        where: { sourceId: source.id, nextRevision: { is: null } },
         select: { id: true, checksum: true, processingStatus: true },
       });
       await transaction.$executeRaw(Prisma.sql`
