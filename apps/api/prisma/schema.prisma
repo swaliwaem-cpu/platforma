@@ -348,6 +348,59 @@ enum AssistantRunStatus {
   @@map("assistant_run_status")
 }
 
+enum AssistantKnowledgeSourceType {
+  DEVELOPMENT_PAGE      @map("development_page")
+  DEVELOPER_PROMOTION   @map("developer_promotion")
+  BANK_PROMOTION        @map("bank_promotion")
+  AGGREGATOR_CIAN       @map("aggregator_cian")
+  AGGREGATOR_DOMCLICK   @map("aggregator_domclick")
+  AGGREGATOR_YANDEX     @map("aggregator_yandex")
+  AGGREGATOR_NOVOSTROY  @map("aggregator_novostroy")
+
+  @@map("assistant_knowledge_source_type")
+}
+
+enum AssistantKnowledgeSourceState {
+  ACTIVE   @map("active")
+  PAUSED   @map("paused")
+  DISABLED @map("disabled")
+
+  @@map("assistant_knowledge_source_state")
+}
+
+enum AssistantSourceRevisionStatus {
+  INDEXED @map("indexed")
+  FAILED  @map("failed")
+
+  @@map("assistant_source_revision_status")
+}
+
+enum AssistantSourceFactKind {
+  STATIC_DESCRIPTION @map("static_description")
+  ARCHITECTURE       @map("architecture")
+  INFRASTRUCTURE     @map("infrastructure")
+  PROMOTION          @map("promotion")
+  EXTERNAL_LOT       @map("external_lot")
+
+  @@map("assistant_source_fact_kind")
+}
+
+enum AssistantSourceJobStatus {
+  PENDING   @map("pending")
+  RUNNING   @map("running")
+  COMPLETED @map("completed")
+  FAILED    @map("failed")
+
+  @@map("assistant_source_job_status")
+}
+
+enum AssistantSourceJobTrigger {
+  MANUAL    @map("manual")
+  SCHEDULED @map("scheduled")
+
+  @@map("assistant_source_job_trigger")
+}
+
 model User {
   id                    String     @id @default(uuid()) @db.Uuid
   email                 String     @unique @db.VarChar(320)
@@ -389,6 +442,8 @@ model User {
   trainingAudioDeletionManifests TrainingAudioDeletionManifest[] @relation("TrainingAudioDeletionManifestCreator")
   assistantConversations         AssistantConversation[]
   assistantRuns                  AssistantRun[]
+  createdAssistantKnowledgeSources AssistantKnowledgeSource[] @relation("AssistantKnowledgeSourceCreator")
+  requestedAssistantSourceJobs    AssistantSourceJob[]         @relation("AssistantSourceJobRequester")
 
   @@index([roleId])
   @@index([profilePhotoFileId])
@@ -461,6 +516,140 @@ model AssistantRun {
   @@index([ownerUserId, createdAt])
   @@index([status, updatedAt])
   @@map("assistant_runs")
+}
+
+model AssistantKnowledgeSource {
+  id                  String                        @id @default(uuid()) @db.Uuid
+  canonicalUrl        String                        @unique @map("canonical_url") @db.VarChar(2048)
+  type                AssistantKnowledgeSourceType
+  state               AssistantKnowledgeSourceState @default(ACTIVE)
+  priority            Int                           @default(100) @db.SmallInt
+  scheduleMinutes     Int                           @default(1440) @map("schedule_minutes")
+  connectorKey        String                        @map("connector_key") @db.VarChar(80)
+  connectorConfigJson Json                          @default("{}") @map("connector_config_json")
+  projectKey          String?                       @map("project_key") @db.VarChar(120)
+  developerKey        String?                       @map("developer_key") @db.VarChar(120)
+  createdByUserId     String                        @map("created_by_user_id") @db.Uuid
+  nextRefreshAt       DateTime?                     @map("next_refresh_at")
+  lastAttemptAt       DateTime?                     @map("last_attempt_at")
+  lastSuccessAt       DateTime?                     @map("last_success_at")
+  lastIndexedAt       DateTime?                     @map("last_indexed_at")
+  lastErrorCode       String?                       @map("last_error_code") @db.VarChar(120)
+  lastErrorMessage    String?                       @map("last_error_message") @db.VarChar(240)
+  createdAt           DateTime                      @default(now()) @map("created_at")
+  updatedAt           DateTime                      @updatedAt @map("updated_at")
+
+  createdBy User                      @relation("AssistantKnowledgeSourceCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  revisions AssistantSourceRevision[]
+  facts     AssistantSourceFact[]
+  chunks    AssistantSourceChunk[]
+  jobs      AssistantSourceJob[]
+
+  @@index([state, nextRefreshAt])
+  @@index([projectKey])
+  @@index([developerKey])
+  @@map("assistant_knowledge_sources")
+}
+
+model AssistantSourceRevision {
+  id                 String                        @id @default(uuid()) @db.Uuid
+  sourceId           String                        @map("source_id") @db.Uuid
+  previousRevisionId String?                       @unique @map("previous_revision_id") @db.Uuid
+  checksum           String                        @db.Char(64)
+  rawPayload         Bytes                         @map("raw_payload")
+  rawEncoding        String                        @default("gzip") @map("raw_encoding") @db.VarChar(20)
+  rawSizeBytes       Int                           @map("raw_size_bytes")
+  contentType        String                        @map("content_type") @db.VarChar(120)
+  finalUrl           String                        @map("final_url") @db.VarChar(2048)
+  httpStatus         Int                           @map("http_status") @db.SmallInt
+  etag               String?                       @db.VarChar(512)
+  lastModified       String?                       @map("last_modified") @db.VarChar(512)
+  fetchedAt          DateTime                      @map("fetched_at")
+  processingStatus   AssistantSourceRevisionStatus @map("processing_status")
+  processingErrorCode String?                      @map("processing_error_code") @db.VarChar(120)
+  createdAt          DateTime                      @default(now()) @map("created_at")
+
+  source           AssistantKnowledgeSource @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  previousRevision AssistantSourceRevision?  @relation("AssistantSourceRevisionChain", fields: [previousRevisionId], references: [id], onDelete: Restrict)
+  nextRevision     AssistantSourceRevision?  @relation("AssistantSourceRevisionChain")
+  facts            AssistantSourceFact[]
+  chunks           AssistantSourceChunk[]
+
+  @@unique([sourceId, checksum])
+  @@index([sourceId, fetchedAt])
+  @@map("assistant_source_revisions")
+}
+
+model AssistantSourceFact {
+  id               String                  @id @default(uuid()) @db.Uuid
+  sourceId         String                  @map("source_id") @db.Uuid
+  sourceRevisionId String                  @map("source_revision_id") @db.Uuid
+  kind             AssistantSourceFactKind
+  label            String                  @db.VarChar(300)
+  valueJson        Json                    @map("value_json")
+  valueHash        String                  @map("value_hash") @db.Char(64)
+  searchText       String                  @map("search_text") @db.Text
+  canonicalUrl     String                  @map("canonical_url") @db.VarChar(2048)
+  observedAt       DateTime                @map("observed_at")
+  validFrom        DateTime?               @map("valid_from")
+  isActive         Boolean                 @default(true) @map("is_active")
+  createdAt        DateTime                @default(now()) @map("created_at")
+
+  source         AssistantKnowledgeSource @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  sourceRevision AssistantSourceRevision  @relation(fields: [sourceRevisionId], references: [id], onDelete: Restrict)
+
+  @@unique([sourceRevisionId, kind, valueHash])
+  @@index([sourceId, kind, isActive])
+  @@index([isActive, observedAt])
+  @@map("assistant_source_facts")
+}
+
+model AssistantSourceChunk {
+  id               String                 @id @default(uuid()) @db.Uuid
+  sourceId         String                 @map("source_id") @db.Uuid
+  sourceRevisionId String                 @map("source_revision_id") @db.Uuid
+  ordinal          Int
+  text             String                 @db.Text
+  contentHash      String                 @map("content_hash") @db.Char(64)
+  embedding        Unsupported("vector")?
+  embeddingModel   String?                @map("embedding_model") @db.VarChar(160)
+  embeddedAt       DateTime?              @map("embedded_at")
+  isActive         Boolean                @default(true) @map("is_active")
+  createdAt        DateTime               @default(now()) @map("created_at")
+
+  source         AssistantKnowledgeSource @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  sourceRevision AssistantSourceRevision  @relation(fields: [sourceRevisionId], references: [id], onDelete: Restrict)
+
+  @@unique([sourceRevisionId, ordinal])
+  @@index([sourceId, isActive])
+  @@index([contentHash, embeddingModel])
+  @@map("assistant_source_chunks")
+}
+
+model AssistantSourceJob {
+  id                String                   @id @default(uuid()) @db.Uuid
+  sourceId          String                   @map("source_id") @db.Uuid
+  trigger           AssistantSourceJobTrigger
+  status            AssistantSourceJobStatus @default(PENDING)
+  idempotencyKey    String                   @map("idempotency_key") @db.VarChar(160)
+  requestedByUserId String?                  @map("requested_by_user_id") @db.Uuid
+  attempt           Int                      @default(0) @db.SmallInt
+  maxAttempts       Int                      @default(3) @map("max_attempts") @db.SmallInt
+  availableAt       DateTime                 @default(now()) @map("available_at")
+  leaseOwner        String?                  @map("lease_owner") @db.VarChar(100)
+  leaseExpiresAt    DateTime?                @map("lease_expires_at")
+  errorCode         String?                  @map("error_code") @db.VarChar(120)
+  completedAt       DateTime?                @map("completed_at")
+  createdAt         DateTime                 @default(now()) @map("created_at")
+  updatedAt         DateTime                 @updatedAt @map("updated_at")
+
+  source      AssistantKnowledgeSource @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  requestedBy User?                    @relation("AssistantSourceJobRequester", fields: [requestedByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([sourceId, idempotencyKey])
+  @@index([status, availableAt])
+  @@index([sourceId, createdAt])
+  @@map("assistant_source_jobs")
 }
 
 model UserSession {

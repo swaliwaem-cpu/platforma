@@ -1,6 +1,8 @@
 import type {
   AssistantConversation,
   AssistantConversationSummary,
+  AssistantExternalLotCard,
+  AssistantKnowledgeFactCard,
   AssistantMessage,
   AssistantPageContext,
   AssistantRun,
@@ -560,7 +562,9 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
                     className={[
                       'assistant-message',
                       `assistant-message--${message.role.toLocaleLowerCase('en-US')}`,
-                      message.answer?.kind === 'SEARCH_RESULTS' ? 'assistant-message--results' : '',
+                      message.answer?.kind === 'SEARCH_RESULTS' || message.answer?.kind === 'KNOWLEDGE_RESULTS'
+                        ? 'assistant-message--results'
+                        : '',
                     ].filter(Boolean).join(' ')}
                     key={message.id}
                   >
@@ -668,7 +672,66 @@ function AssistantMessageContent({ message }: { message: AssistantMessage }) {
           ) : null}
         </div>
       ) : null}
+      {message.answer?.kind === 'KNOWLEDGE_RESULTS' ? (
+        <div className="assistant-results">
+          {message.answer.facts.length > 0 ? (
+            <section aria-labelledby={`assistant-knowledge-${message.id}`}>
+              <h3 id={`assistant-knowledge-${message.id}`}>Подтверждённые факты</h3>
+              <div className="assistant-result-list">
+                {message.answer.facts.map((fact) => (
+                  <AssistantKnowledgeFact key={fact.id} fact={fact} />
+                ))}
+              </div>
+            </section>
+          ) : null}
+          {message.answer.externalLots.length > 0 ? (
+            <section aria-labelledby={`assistant-external-lots-${message.id}`}>
+              <h3 id={`assistant-external-lots-${message.id}`}>На официальном сайте застройщика</h3>
+              <div className="assistant-result-list">
+                {message.answer.externalLots.map((lot) => (
+                  <AssistantExternalLot key={lot.id} lot={lot} />
+                ))}
+              </div>
+            </section>
+          ) : null}
+        </div>
+      ) : null}
     </>
+  );
+}
+
+function AssistantKnowledgeFact({ fact }: { fact: AssistantKnowledgeFactCard }) {
+  return (
+    <section className="assistant-result-card" aria-label={fact.label}>
+      <strong className="assistant-knowledge-label">{fact.label}</strong>
+      <p className="assistant-knowledge-value">{fact.value}</p>
+      <span className={fact.isStale ? 'assistant-result-freshness assistant-result-freshness--stale' : 'assistant-result-freshness'}>
+        {fact.freshnessLabel}
+      </span>
+    </section>
+  );
+}
+
+function AssistantExternalLot({ lot }: { lot: AssistantExternalLotCard }) {
+  return (
+    <section className="assistant-result-card" aria-label={`${lot.title}, ${formatRub(lot.priceRub)}`}>
+      <a
+        className="assistant-result-title"
+        href={lot.href}
+        rel="noopener noreferrer"
+        target="_blank"
+      >
+        {lot.title}
+      </a>
+      <p className="assistant-result-subtitle">{lot.subtitle}</p>
+      <strong className="assistant-result-price">{formatRub(lot.priceRub)}</strong>
+      <div className="assistant-result-status">
+        <span>{lot.availabilityLabel}</span>
+        <span className={lot.isStale ? 'assistant-result-freshness assistant-result-freshness--stale' : 'assistant-result-freshness'}>
+          {lot.freshnessLabel}
+        </span>
+      </div>
+    </section>
   );
 }
 

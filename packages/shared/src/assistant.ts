@@ -29,11 +29,35 @@ export type AssistantSearchResultCard = {
   deviations: AssistantAlternativeDeviation[];
 };
 
+export type AssistantKnowledgeFactCard = {
+  id: string;
+  label: string;
+  value: string;
+  freshnessLabel: string;
+  isStale: boolean;
+};
+
+export type AssistantExternalLotCard = {
+  id: string;
+  title: string;
+  subtitle: string;
+  priceRub: number;
+  availabilityLabel: string;
+  freshnessLabel: string;
+  isStale: boolean;
+  href: string;
+};
+
 export type AssistantAnswer =
   | {
       kind: 'SEARCH_RESULTS';
       exactResults: AssistantSearchResultCard[];
       alternatives: AssistantSearchResultCard[];
+    }
+  | {
+      kind: 'KNOWLEDGE_RESULTS';
+      facts: AssistantKnowledgeFactCard[];
+      externalLots: AssistantExternalLotCard[];
     }
   | { kind: 'CLARIFICATION' }
   | { kind: 'REFUSAL' }

@@ -24,6 +24,7 @@ const permissions = [
   ['feeds:manage', 'Manage feed sources'],
   ['feeds:run', 'Run feed imports'],
   ['audit-log:read', 'Read audit log'],
+  ['assistant:sources:manage', 'Manage assistant knowledge sources'],
   ['training:participate', 'Participate in training projects'],
   ['training:projects:manage', 'Manage training projects'],
   ['training:results:read', 'Read training attempt results'],

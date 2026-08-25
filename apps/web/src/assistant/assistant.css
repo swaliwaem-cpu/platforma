@@ -411,7 +411,7 @@
 
 .assistant-result-subtitle {
   margin: -6px 0 0;
-  color: var(--color-muted, #756a64);
+  color: var(--color-muted-foreground, #756a64);
   font-size: 12px;
   line-height: 1.45;
 }
@@ -421,6 +421,19 @@
   font-size: 16px;
   font-variant-numeric: tabular-nums;
   line-height: 1.35;
+}
+
+.assistant-knowledge-label {
+  color: var(--color-text, #251d19);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.assistant-knowledge-value {
+  margin: 0;
+  color: var(--color-text, #251d19);
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .assistant-result-status {
@@ -434,7 +447,7 @@
 }
 
 .assistant-result-freshness {
-  color: var(--color-muted, #756a64);
+  color: var(--color-muted-foreground, #756a64);
   font-weight: 500;
 }
 

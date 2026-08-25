@@ -18,6 +18,7 @@
     "benchmark:training:question-budget": "pnpm build:api && node --env-file-if-exists=.env apps/api/tests/training-v2-question-budget-benchmark.cjs",
     "benchmark:training:luna-terra": "pnpm build:api && node --env-file-if-exists=.env apps/api/tests/training-v2-luna-terra-benchmark.cjs",
     "benchmark:training:evaluator": "pnpm build:api && node --env-file-if-exists=.env apps/api/tests/training-v2-evaluator-efficiency-benchmark.cjs",
+    "benchmark:assistant:embeddings": "pnpm build:api && node --env-file-if-exists=.env apps/api/scripts/assistant-embedding-benchmark.cjs",
     "training:webhook:status": "node --env-file-if-exists=.env apps/api/scripts/training-telegram-webhook.cjs status",
     "training:webhook:register": "node --env-file-if-exists=.env apps/api/scripts/training-telegram-webhook.cjs register",
     "training:webhook:delete": "node --env-file-if-exists=.env apps/api/scripts/training-telegram-webhook.cjs delete",

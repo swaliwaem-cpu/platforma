@@ -740,6 +740,7 @@ test('Assistant T02 answer service skips search for clarification and legal boun
 
 test('Assistant T02 answer service returns grounded public cards and keeps internals separate', async () => {
   const evidence = candidate('11111111-1111-4111-8111-111111111111');
+  let knowledgeCalls = 0;
   const service = new AssistantAnswerService(
     new AssistantQueryPlanner({
       async plan() {
@@ -749,6 +750,7 @@ test('Assistant T02 answer service returns grounded public cards and keeps inter
       },
     }),
     { async search() { return { exact: [evidence], alternatives: [] }; } },
+    { async retrieve() { knowledgeCalls += 1; return []; } },
   );
 
   const result = await service.answer({
@@ -764,6 +766,7 @@ test('Assistant T02 answer service returns grounded public cards and keeps inter
   assert.equal(result.answer.evidence, undefined);
   assert.equal(result.evidence.length, 1);
   assert.equal(result.telemetry.length, 1);
+  assert.equal(knowledgeCalls, 0);
 });
 
 function validIntent(overrides = {}) {

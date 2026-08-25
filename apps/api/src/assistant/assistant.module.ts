@@ -10,9 +10,10 @@ import { AssistantRunProcessor } from './assistant-run.processor';
 import { AssistantFeatureGuard } from './assistant-runtime-config';
 import { AssistantSearchService } from './assistant-search.service';
 import { AssistantService } from './assistant.service';
+import { AssistantSourcesModule } from './sources/assistant-sources.module';
 
 @Module({
-  imports: [AuthModule, PrismaModule],
+  imports: [AuthModule, PrismaModule, AssistantSourcesModule],
   controllers: [AssistantController],
   providers: [
     AssistantService,

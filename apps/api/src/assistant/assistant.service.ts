@@ -13,6 +13,8 @@ import type {
   AssistantAnswer,
   AssistantConversation,
   AssistantConversationSummary,
+  AssistantExternalLotCard,
+  AssistantKnowledgeFactCard,
   AssistantMessage,
   AssistantPageContext,
   AssistantProgressEvent,
@@ -39,7 +41,7 @@ const assistantConversationTitleMaxLength = 80;
 const assistantHistoryCursorMaxLength = 512;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const contextKinds = new Set(['OBJECT', 'LOT', 'DEVELOPER', 'CATALOG_FILTERS']);
-const answerKinds = new Set(['SEARCH_RESULTS', 'CLARIFICATION', 'REFUSAL', 'SAFE_BOUNDARY']);
+const answerKinds = new Set(['SEARCH_RESULTS', 'KNOWLEDGE_RESULTS', 'CLARIFICATION', 'REFUSAL', 'SAFE_BOUNDARY']);
 const deviationTypes = new Set(['BUDGET', 'DISTRICT', 'DEVELOPER', 'ROOMS']);
 
 const messageSelect = {
@@ -430,6 +432,7 @@ export class AssistantService {
 
   private parseStoredAnswer(value: Prisma.JsonValue | null): AssistantAnswer | null {
     if (!this.isRecord(value) || typeof value.kind !== 'string' || !answerKinds.has(value.kind)) return null;
+    if (value.kind === 'KNOWLEDGE_RESULTS') return this.parseStoredKnowledgeAnswer(value);
     if (value.kind !== 'SEARCH_RESULTS') return { kind: value.kind } as AssistantAnswer;
     if (!Array.isArray(value.exactResults) || !Array.isArray(value.alternatives)) return null;
     if (value.exactResults.length > 3 || value.alternatives.length > 2) return null;
@@ -445,6 +448,60 @@ export class AssistantService {
     if (exactResults.length !== value.exactResults.length || alternatives.length !== value.alternatives.length) return null;
     if (exactResults.length > 0 && alternatives.length > 0) return null;
     return { kind: 'SEARCH_RESULTS', exactResults, alternatives };
+  }
+
+  private parseStoredKnowledgeAnswer(value: Record<string, unknown>): AssistantAnswer | null {
+    if (!Array.isArray(value.facts) || value.facts.length > 6
+      || !Array.isArray(value.externalLots) || value.externalLots.length > 3) return null;
+    const facts = value.facts.flatMap((fact) => {
+      const parsed = this.parseStoredKnowledgeFact(fact);
+      return parsed ? [parsed] : [];
+    });
+    const externalLots = value.externalLots.flatMap((lot) => {
+      const parsed = this.parseStoredExternalLot(lot);
+      return parsed ? [parsed] : [];
+    });
+    if (facts.length !== value.facts.length || externalLots.length !== value.externalLots.length
+      || (facts.length === 0 && externalLots.length === 0)) return null;
+    return { kind: 'KNOWLEDGE_RESULTS', facts, externalLots };
+  }
+
+  private parseStoredKnowledgeFact(value: unknown): AssistantKnowledgeFactCard | null {
+    if (!this.isRecord(value)
+      || typeof value.id !== 'string' || !uuidPattern.test(value.id)
+      || typeof value.label !== 'string' || !this.isBoundedText(value.label, 300)
+      || typeof value.value !== 'string' || !this.isBoundedText(value.value, 2_000)
+      || typeof value.freshnessLabel !== 'string' || !this.isBoundedText(value.freshnessLabel, 160)
+      || typeof value.isStale !== 'boolean') return null;
+    return {
+      id: value.id,
+      label: value.label,
+      value: value.value,
+      freshnessLabel: value.freshnessLabel,
+      isStale: value.isStale,
+    };
+  }
+
+  private parseStoredExternalLot(value: unknown): AssistantExternalLotCard | null {
+    if (!this.isRecord(value)
+      || typeof value.id !== 'string' || !uuidPattern.test(value.id)
+      || typeof value.title !== 'string' || !this.isBoundedText(value.title, 300)
+      || typeof value.subtitle !== 'string' || !this.isBoundedText(value.subtitle, 300)
+      || typeof value.priceRub !== 'number' || !Number.isFinite(value.priceRub) || value.priceRub <= 0
+      || typeof value.availabilityLabel !== 'string' || !this.isBoundedText(value.availabilityLabel, 120)
+      || typeof value.freshnessLabel !== 'string' || !this.isBoundedText(value.freshnessLabel, 160)
+      || typeof value.isStale !== 'boolean'
+      || typeof value.href !== 'string' || !this.isSafeExternalHttpsUrl(value.href)) return null;
+    return {
+      id: value.id,
+      title: value.title,
+      subtitle: value.subtitle,
+      priceRub: value.priceRub,
+      availabilityLabel: value.availabilityLabel,
+      freshnessLabel: value.freshnessLabel,
+      isStale: value.isStale,
+      href: value.href,
+    };
   }
 
   private parseStoredResultCard(value: unknown, alternative: boolean): AssistantSearchResultCard | null {
@@ -496,6 +553,15 @@ export class AssistantService {
 
   private isExistingLotHref(value: string, unitId: string) {
     return new RegExp(`^/objects/[^/]+/lots/${unitId}$`, 'u').test(value);
+  }
+
+  private isSafeExternalHttpsUrl(value: string) {
+    try {
+      const url = new URL(value);
+      return url.protocol === 'https:' && !url.username && !url.password && !url.hash;
+    } catch {
+      return false;
+    }
   }
 
   private isBoundedText(value: string, maximumLength: number) {

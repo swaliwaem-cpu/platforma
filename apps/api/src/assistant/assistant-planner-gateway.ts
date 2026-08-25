@@ -13,6 +13,7 @@ type AssistantAiMode = 'fake' | 'openai';
 
 const assistantPlannerSchema = createAssistantPlannerSchema();
 const assistantPlannerPromptVersion = 'assistant-query-planner-v1';
+const officialKnowledgeFactPattern = /(?:архитектур\p{L}*|инфраструктур\p{L}*|благоустрой\p{L}*|описан\p{L}*|ипотек\p{L}*|рассроч\p{L}*|акци\p{L}*|скидк\p{L}*|бонус\p{L}*)/iu;
 
 export class AssistantPlannerGatewayError extends Error {
   readonly provider = 'openai' as const;
@@ -222,6 +223,7 @@ function createAssistantPlannerRequestBody(request: AssistantPlannerRequest) {
       'Явные условия пользователя всегда являются hard filters. Пожелания без обязательности являются soft preferences.',
       'Не выдумывай названия, цены, наличие, координаты, ссылки или факты: их проверит сервер по базе.',
       'Для налоговых и юридических вопросов выбери LEGAL_TAX. Не давай правовую консультацию.',
+      'Для описания проекта, архитектуры, инфраструктуры, благоустройства, ипотеки, рассрочки и акций выбери FACT.',
       'PRICE, AVAILABILITY, FRESHNESS и LINK обязательны для всех задач кроме LEGAL_TAX.',
       'Для явного сравнения двух ЖК или застройщиков заполни comparisonTargets двумя точными названиями.',
       'Если критичных условий поиска не хватает, задай один короткий составной clarificationQuestion.',
@@ -261,7 +263,9 @@ function createDeterministicIntent(messages: string[]): AssistantStructuredInten
       ? 'LEGAL_TAX'
       : /сравн\p{L}*/iu.test(normalized)
         ? 'COMPARE'
-        : 'SEARCH',
+        : officialKnowledgeFactPattern.test(normalized)
+          ? 'FACT'
+          : 'SEARCH',
     comparisonTargets: extractAssistantComparisonTargets(messages) ?? [],
     hardFilters,
     softPreferences: createEmptyAssistantSearchFilters(),
