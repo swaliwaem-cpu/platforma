@@ -37,6 +37,7 @@ export type PlatformMapProps = {
   selectedPointId?: string | null;
   onBoundsChange?: (bounds: MapBounds) => void;
   onFullscreenChange?: (isFullscreen: boolean) => void;
+  onMapClick?: (coordinate: MapCoordinate) => void;
   onOpenPoint?: (point: MapPoint) => void;
   onSelectPoint?: (point: MapPoint) => void;
   onStatusChange?: (status: MapStatus) => void;

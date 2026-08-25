@@ -4798,15 +4798,9 @@ tr.user-row--deactivated .text-button {
   outline-offset: 2px;
 }
 
-.maplibregl-ctrl-attrib {
+.platform-map-shell .maplibregl-ctrl-attrib {
   color: #18202a;
   font-family: var(--platforma-font-sans);
-}
-
-.map-price-marker-anchor {
-  position: relative;
-  width: 70.4px;
-  height: 36px;
 }
 
 .map-price-marker {

@@ -8,7 +8,7 @@
 - [ ] Выполнен seed ролей, permissions и admin-пользователя.
 - [ ] API доступен по `VITE_API_URL`.
 - [ ] MinIO доступен API-сервису.
-- [ ] Карта проверяется без `VITE_YANDEX_MAPS_API_KEY`; при наличии ключа отдельно проверяется JS API режим.
+- [ ] Для web заданы runtime-настройки `MAP_PROVIDER_ENABLED` и `MAP_STYLE_URL` (по умолчанию OpenFreeMap).
 
 ## Роли и доступы
 
@@ -40,9 +40,11 @@
 
 - [ ] `/catalog/map` открывается и загружает markers объектов.
 - [ ] Объекты без координат не попадают на карту и не ломают загрузку.
-- [ ] Marker popup/card открывается по клику без API key.
+- [ ] Marker popup/card открывается по клику и синхронизируется со списком объектов.
 - [ ] Переход с marker на страницу объекта работает.
-- [ ] Кластеризация включается на большом количестве объектов в no-key и JS API режимах.
+- [ ] Стандартный attribution OpenFreeMap/OpenStreetMap виден на карте.
+- [ ] При недоступном tile provider карта показывает fallback, а список объектов и ссылки остаются рабочими.
+- [ ] Pan, zoom и fullscreen работают на desktop и mobile; touch controls имеют удобный размер.
 
 ## Файлы
 

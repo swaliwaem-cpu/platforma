@@ -34,7 +34,8 @@
 ## Web
 
 - `VITE_API_URL` points to the API entrypoint reachable by browsers. For production behind the same nginx origin, prefer `/api` and proxy `/api/*` to the API container to avoid cross-origin browser issues.
-- `VITE_YANDEX_MAPS_API_KEY` is optional: if it is empty, maps render through the no-key Yandex widget mode with app-side markers and balloons.
+- `MAP_PROVIDER_ENABLED` controls the web runtime map module and is explicitly reviewed for the environment.
+- `MAP_STYLE_URL` points to the approved MapLibre style; OpenFreeMap Liberty is the default.
 - The frontend origin matches `WEB_ORIGIN` on the API.
 
 ## Nginx / Proxy

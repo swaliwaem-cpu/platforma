@@ -17,7 +17,7 @@ type MarkerRecord = {
 
 type MapCallbacks = Pick<
   PlatformMapProps,
-  'onBoundsChange' | 'onFullscreenChange' | 'onOpenPoint' | 'onSelectPoint' | 'onStatusChange' | 'onViewportChange'
+  'onBoundsChange' | 'onFullscreenChange' | 'onMapClick' | 'onOpenPoint' | 'onSelectPoint' | 'onStatusChange' | 'onViewportChange'
 >;
 
 const providerErrorState = {
@@ -36,6 +36,7 @@ export default function MapLibreMap({
   styleUrl,
   onBoundsChange,
   onFullscreenChange,
+  onMapClick,
   onOpenPoint,
   onSelectPoint,
   onStatusChange,
@@ -64,6 +65,7 @@ export default function MapLibreMap({
   callbacksRef.current = {
     onBoundsChange,
     onFullscreenChange,
+    onMapClick,
     onOpenPoint,
     onSelectPoint,
     onStatusChange,
@@ -175,12 +177,16 @@ export default function MapLibreMap({
       callbacksRef.current.onStatusChange?.('error');
     };
     const handleMoveEnd = () => notifyMapPosition(map, callbacksRef.current);
+    const handleMapClick = (event: maplibregl.MapMouseEvent) => {
+      callbacksRef.current.onMapClick?.([event.lngLat.lat, event.lngLat.lng]);
+    };
     const handleZoom = () => {
       shell.classList.toggle('platform-map--markers-expanded', map.getZoom() >= 14);
     };
 
     map.on('load', handleLoad);
     map.on('error', handleError);
+    map.on('click', handleMapClick);
     map.on('moveend', handleMoveEnd);
     map.on('zoom', handleZoom);
     handleZoom();
@@ -196,6 +202,8 @@ export default function MapLibreMap({
         fullscreenControl.off('fullscreenstart', handleFullscreenStart);
         fullscreenControl.off('fullscreenend', handleFullscreenEnd);
       }
+
+      map.off('click', handleMapClick);
 
       popupRef.current?.remove();
       popupRef.current = null;
@@ -256,7 +264,7 @@ export default function MapLibreMap({
           <p className="muted-text">{providerErrorState.description}</p>
         </div>
       ) : null}
-      <div ref={containerRef} className="platform-map-canvas" />
+      <div ref={containerRef} className="platform-map-canvas" data-map-surface />
       <div className="platform-map-overlay-root">{children}</div>
     </div>
   );
@@ -303,7 +311,8 @@ function syncMarkers({
 
     if (!record) {
       const element = createMarkerElement(point);
-      const handleClick = () => {
+      const handleClick = (event: MouseEvent) => {
+        event.stopPropagation();
         const currentPoint = pointsByIdRef.current.get(point.id);
 
         if (!currentPoint) {
@@ -322,7 +331,13 @@ function syncMarkers({
 
         if (currentPoint.popupHtml) {
           popupRef.current?.remove();
-          popupRef.current = new maplibregl.Popup({ closeButton: true, closeOnClick: false, maxWidth: '320px', offset: 34 })
+          popupRef.current = new maplibregl.Popup({
+            className: 'platform-map-popup',
+            closeButton: true,
+            closeOnClick: false,
+            maxWidth: '320px',
+            offset: 34,
+          })
             .setLngLat(toMapLibreCoordinate(currentPoint.coordinates))
             .setHTML(currentPoint.popupHtml)
             .addTo(map);

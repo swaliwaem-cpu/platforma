@@ -40,7 +40,7 @@ test('static web server exposes map provider settings through no-cache runtime J
   assert.match(response.headers.get('content-type') ?? '', /^text\/javascript/);
   assert.equal(
     source,
-    'window.__PLATFORMA_RUNTIME_CONFIG__ = {"mapProviderEnabled":false,"mapStyleUrl":"https://maps.example.test/styles/platforma.json"};\n',
+    'window.__PLATFORMA_RUNTIME_CONFIG__ = {"mapProviderEnabled":"false","mapStyleUrl":"https://maps.example.test/styles/platforma.json"};\n',
   );
 
   const headResponse = await fetch(`http://127.0.0.1:${port}/runtime-config.js`, { method: 'HEAD' });

@@ -9,6 +9,8 @@ const webRoot = resolve(currentDir, '..');
 const contractPath = resolve(webRoot, 'src/map/mapContract.ts');
 const yandexRendererPath = resolve(webRoot, 'src/map/YandexMap.tsx');
 const catalogSource = readFileSync(resolve(webRoot, 'src/catalog/CatalogPage.tsx'), 'utf8');
+const mapLibreSource = readFileSync(resolve(webRoot, 'src/map/MapLibreMap.tsx'), 'utf8');
+const mapTypesSource = readFileSync(resolve(webRoot, 'src/map/mapTypes.ts'), 'utf8');
 const objectDetailSource = readFileSync(resolve(webRoot, 'src/objects/ObjectDetailPage.tsx'), 'utf8');
 const styles = readFileSync(resolve(webRoot, 'src/styles.css'), 'utf8');
 const dockerfile = readFileSync(resolve(webRoot, 'Dockerfile'), 'utf8');
@@ -19,6 +21,9 @@ const indexHtml = readFileSync(resolve(webRoot, 'index.html'), 'utf8');
 const runtimeConfigSource = readFileSync(resolve(webRoot, 'public/runtime-config.js'), 'utf8');
 const serverSource = readFileSync(resolve(webRoot, 'server.mjs'), 'utf8');
 const viteConfigSource = readFileSync(resolve(webRoot, 'vite.config.ts'), 'utf8');
+const browserTestSource = readFileSync(resolve(webRoot, 'tests/map-module.browser.mjs'), 'utf8');
+const manualQaSource = readFileSync(resolve(webRoot, '../../docs/manual-qa-checklist.md'), 'utf8');
+const productionChecklistSource = readFileSync(resolve(webRoot, '../../docs/staging-production-env-checklist.md'), 'utf8');
 
 const {
   DEFAULT_MAP_STYLE_URL,
@@ -93,6 +98,21 @@ test('web loads map provider settings from a no-cache runtime config before the 
   assert.match(serverSource, /process\.env\.MAP_PROVIDER_ENABLED/);
   assert.match(serverSource, /process\.env\.MAP_STYLE_URL/);
   assert.match(serverSource, /'Cache-Control': 'no-store'/);
+  assert.doesNotMatch(serverSource, /defaultMapStyleUrl|getMapProviderEnabled/);
+});
+
+test('provider-neutral map contract exposes coordinate selection without leaking MapLibre test selectors', () => {
+  assert.match(mapTypesSource, /onMapClick\?: \(coordinate: MapCoordinate\) => void/);
+  assert.match(mapLibreSource, /onMapClick\?\.\(\[event\.lngLat\.lat, event\.lngLat\.lng\]\)/);
+  assert.doesNotMatch(browserTestSource, /\.maplibregl-/);
+});
+
+test('map operations checklists document provider-neutral runtime configuration', () => {
+  const operationsDocs = `${manualQaSource}\n${productionChecklistSource}`;
+
+  assert.doesNotMatch(operationsDocs, /VITE_YANDEX_MAPS_API_KEY|no-key Yandex|JS API mode/);
+  assert.match(operationsDocs, /MAP_PROVIDER_ENABLED/);
+  assert.match(operationsDocs, /MAP_STYLE_URL/);
 });
 
 test('MapLibre styles preserve marker focus, reduced motion, responsive controls, and visible attribution', () => {
@@ -101,8 +121,9 @@ test('MapLibre styles preserve marker focus, reduced motion, responsive controls
   assert.match(styles, /\.platform-map--markers-expanded \.map-price-marker-dot\s*\{/);
   assert.match(styles, /\.map-price-marker:focus-visible\s*\{/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
-  assert.match(styles, /\.maplibregl-ctrl-attrib\s*\{/);
-  assert.doesNotMatch(styles, /\.maplibregl-ctrl-attrib[^}]*display:\s*none/s);
+  assert.match(styles, /\.platform-map-shell \.maplibregl-ctrl-attrib\s*\{/);
+  assert.doesNotMatch(styles, /\.platform-map-shell \.maplibregl-ctrl-attrib[^}]*display:\s*none/s);
+  assert.doesNotMatch(styles, /\.map-price-marker-anchor/);
   assert.match(
     styles,
     /@media\s*\(max-width:\s*760px\)[\s\S]*?\.platform-map-shell \.maplibregl-ctrl-group button\s*\{[\s\S]*?width:\s*44px;[\s\S]*?height:\s*44px;/,

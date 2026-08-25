@@ -44,7 +44,7 @@ async function verifyCatalogMap() {
     styleBarrier.release();
 
     const map = page.getByRole('region', { name: 'Карта объектов' });
-    await map.locator('canvas.maplibregl-canvas').waitFor();
+    await map.locator('[data-map-surface] canvas').waitFor();
     await map.getByText('OpenFreeMap', { exact: true }).waitFor();
     await map.getByText('OpenStreetMap', { exact: true }).waitFor();
     await map.locator('.platform-map-shell[data-map-status="ready"]').waitFor();
@@ -71,7 +71,7 @@ async function verifyCatalogMap() {
     assert.equal(await southMarker.getAttribute('aria-pressed'), 'true');
 
     const initialBoundsLabel = await mapList.locator('.table-meta span').first().innerText();
-    const zoomIn = map.locator('.maplibregl-ctrl-zoom-in');
+    const zoomIn = map.getByRole('button', { name: 'Увеличить масштаб' });
 
     for (let index = 0; index < 4; index += 1) {
       await zoomIn.click();
@@ -115,7 +115,7 @@ async function verifyObjectDetailMap() {
     const marker = map.locator('.map-price-marker[aria-label="ЖК Северный"]');
     await marker.waitFor();
     await marker.click();
-    const popup = map.locator('.maplibregl-popup');
+    const popup = map.locator('.platform-map-popup');
     await popup.getByText('ЖК Северный', { exact: true }).waitFor();
     await popup.getByText('Москва, Северная улица, 1', { exact: true }).waitFor();
     await page.screenshot({ path: '/tmp/platforma-maplibre-object-detail.png' });
@@ -170,7 +170,7 @@ async function verifyMobileMap() {
     const map = page.getByRole('region', { name: 'Карта объектов' });
     const marker = map.locator('.map-price-marker[aria-label="ЖК Северный"]');
     await marker.waitFor();
-    const zoomControlBox = await map.locator('.maplibregl-ctrl-zoom-in').boundingBox();
+    const zoomControlBox = await map.getByRole('button', { name: 'Увеличить масштаб' }).boundingBox();
     const fullscreenControlBox = await map.getByRole('button', { name: 'Открыть карту на весь экран' }).boundingBox();
 
     assert.ok(zoomControlBox && zoomControlBox.width >= 44 && zoomControlBox.height >= 44);
