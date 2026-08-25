@@ -84,6 +84,16 @@ async function verifyCatalogMap() {
     await northCard.getByText('1,3 км · 16 мин', { exact: true }).waitFor();
     assert.equal(await northCard.getByRole('button', { name: 'Обновить маршруты метро' }).count(), 0);
     assert.equal(await northCard.locator('.map-nearby-metro-list li').count(), 3);
+    const singleLineMarker = northCard.getByRole('img', { name: 'Линии метро: Солнцевская' });
+    const transferMarker = northCard.getByRole('img', {
+      name: 'Линии метро: Арбатско-Покровская, Троицкая',
+    });
+    assert.equal(await singleLineMarker.evaluate((element) => getComputedStyle(element).backgroundColor), 'rgb(255, 205, 28)');
+    assert.match(
+      await transferMarker.evaluate((element) => getComputedStyle(element).backgroundImage),
+      /conic-gradient\(rgb\(0, 114, 186\).*rgb\(3, 121, 95\)/,
+    );
+    assert.deepEqual(await northCard.locator('.map-nearby-metro-icon').allTextContents(), ['', '', '']);
     assert.equal(walkingRouteRequests.length, 1);
     assert.deepEqual(walkingRouteRequests[0].origin, [55.79, 37.61]);
     assert.equal(walkingRouteRequests[0].destinations.length, 3);
@@ -210,7 +220,11 @@ async function verifyAdminWalkingRouteRefresh() {
 
     const card = page.getByRole('article', { name: 'Объект ЖК Северный' });
     await card.getByText('1,3 км · 16 мин', { exact: true }).waitFor();
-    await card.getByRole('button', { name: 'Обновить маршруты метро' }).click();
+    const refreshButton = card.getByRole('button', { name: 'Обновить маршруты метро' });
+    assert.equal(await refreshButton.locator('svg').count(), 1);
+    assert.equal(await refreshButton.evaluate((button) => button.textContent?.trim()), '');
+    assert.equal(await refreshButton.locator('xpath=..').getAttribute('class'), 'map-nearby-metro-heading');
+    await refreshButton.click();
     await card.getByText('1,5 км · 17 мин', { exact: true }).waitFor();
 
     assert.equal(walkingRouteRefreshRequests.length, 1);
@@ -384,7 +398,12 @@ async function installApiFixtures(
       return;
     }
 
-    if (pathname === '/developers' || pathname === '/locations' || pathname === '/metro') {
+    if (pathname === '/metro') {
+      await json(route, { items: metroDirectoryFixture() });
+      return;
+    }
+
+    if (pathname === '/developers' || pathname === '/locations') {
       await json(route, { items: [] });
       return;
     }
@@ -442,6 +461,43 @@ async function installApiFixtures(
 
     await json(route, { message: `Unexpected ${request.method()} ${pathname}` }, 404);
   });
+}
+
+function metroDirectoryFixture() {
+  return [
+    {
+      id: '95555555-5555-4555-8555-555555555551',
+      wpTermId: null,
+      name: 'Метро Северная',
+      slug: 'metro-severnaya',
+      lineName: 'Солнцевская',
+      lineColor: '#FFCD1C',
+    },
+    {
+      id: '95555555-5555-4555-8555-555555555552',
+      wpTermId: null,
+      name: 'Метро Центральная',
+      slug: 'metro-centralnaya-blue',
+      lineName: 'Арбатско-Покровская',
+      lineColor: '#0072BA',
+    },
+    {
+      id: '95555555-5555-4555-8555-555555555553',
+      wpTermId: null,
+      name: 'Метро Центральная',
+      slug: 'metro-centralnaya-green',
+      lineName: 'Троицкая',
+      lineColor: '#03795F',
+    },
+    {
+      id: '95555555-5555-4555-8555-555555555554',
+      wpTermId: null,
+      name: 'Метро Южная',
+      slug: 'metro-yuzhnaya',
+      lineName: 'Сокольническая',
+      lineColor: '#E42313',
+    },
+  ];
 }
 
 function mapStyleFixture() {

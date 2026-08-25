@@ -4977,8 +4977,13 @@ tr.user-row--deactivated .text-button {
 @media (prefers-reduced-motion: reduce) {
   .map-price-marker,
   .map-price-marker-dot,
-  .map-price-marker-pin {
+  .map-price-marker-pin,
+  .map-nearby-metro-refresh svg {
     transition: none;
+  }
+
+  .map-nearby-metro-refresh-icon--loading {
+    animation: none;
   }
 }
 
@@ -5145,6 +5150,64 @@ tr.user-row--deactivated .text-button {
   font-size: 13px !important;
 }
 
+.map-nearby-metro-heading {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.map-nearby-metro-refresh {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  margin: -6px -6px -6px 0;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--catalog-ink-800);
+}
+
+.map-nearby-metro-refresh svg {
+  box-sizing: border-box;
+  width: 32px;
+  height: 32px;
+  padding: 7px;
+  border: 1px solid var(--catalog-border-strong);
+  border-radius: inherit;
+  background: color-mix(in oklch, var(--catalog-panel) 94%, transparent);
+  transition: border-color 180ms ease, background-color 180ms ease, color 180ms ease;
+}
+
+.map-nearby-metro-refresh:hover:not(:disabled),
+.map-nearby-metro-refresh:focus-visible {
+  background: transparent;
+  color: var(--catalog-ink-900);
+}
+
+.map-nearby-metro-refresh:hover:not(:disabled) svg,
+.map-nearby-metro-refresh:focus-visible svg {
+  border-color: var(--catalog-ink-700);
+  background: var(--catalog-panel);
+}
+
+.map-nearby-metro-refresh:focus-visible {
+  outline: 2px solid var(--catalog-blue);
+  outline-offset: 1px;
+}
+
+.map-nearby-metro-refresh:disabled {
+  cursor: progress;
+  opacity: 0.72;
+}
+
+.map-nearby-metro-refresh-icon--loading {
+  animation: map-nearby-metro-refresh-spin 850ms linear infinite;
+}
+
 .map-nearby-metro-retry {
   justify-self: start;
   font-size: 13px;
@@ -5175,16 +5238,20 @@ tr.user-row--deactivated .text-button {
 }
 
 .map-nearby-metro-icon {
-  display: grid;
+  display: block;
   width: 22px;
   height: 22px;
-  place-items: center;
+  box-sizing: border-box;
+  border: 1px solid rgb(255 255 255 / 72%);
   border-radius: 999px;
-  background: #d84a44;
-  color: #ffffff;
-  font-size: 12px;
-  font-weight: 950;
-  line-height: 1;
+  background: var(--catalog-ink-600);
+  box-shadow: 0 0 0 1px rgb(24 32 42 / 24%);
+}
+
+@keyframes map-nearby-metro-refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .map-object-card dt {

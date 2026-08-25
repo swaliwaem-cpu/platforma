@@ -17,6 +17,7 @@ import {
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  RefreshCwIcon,
 } from 'lucide-react';
 import type {
   CatalogLinksResponse,
@@ -49,6 +50,11 @@ import { SecureImage } from '../files/SecureImage';
 import { formatCurrencyInputValue, getCurrencyInputBackspaceValue } from '../lib/numberInput';
 import { resolveMapMarkerLabel } from '../map/mapMarkerLabels';
 import { formatMapDistance } from '../map/mapContract';
+import {
+  buildMetroLineLookup,
+  resolveMetroLineMarker,
+  type MetroLineLookup,
+} from '../map/metroLineMarker';
 import {
   PlatformMap,
   type MapBounds,
@@ -569,6 +575,7 @@ export function CatalogPage({ navigate, pathname }: CatalogPageProps) {
           error={mapError}
           filters={filters}
           isLoading={isMapLoading}
+          metroStations={directories.metroStations}
           objects={mapObjects}
           total={mapTotal}
         />
@@ -1421,6 +1428,7 @@ function CatalogMapView({
   error,
   filters,
   isLoading,
+  metroStations,
   objects,
   total,
 }: {
@@ -1429,6 +1437,7 @@ function CatalogMapView({
   error: string | null;
   filters: CatalogFilters;
   isLoading: boolean;
+  metroStations: ObjectMetroStation[];
   objects: MapObject[];
   total: number;
 }) {
@@ -1450,6 +1459,7 @@ function CatalogMapView({
   const walkingRoutesRequestRef = useRef(0);
   const forceWalkingRoutesRefreshRef = useRef(false);
   const points = useMemo(() => objects.map((object) => mapObjectToPoint(object, filters)), [filters, objects]);
+  const metroLineLookup = useMemo(() => buildMetroLineLookup(metroStations), [metroStations]);
   const visibleObjects = useMemo(
     () => (visibleBounds ? objects.filter((object) => isMapObjectInBounds(object, visibleBounds)) : objects),
     [objects, visibleBounds],
@@ -1577,6 +1587,7 @@ function CatalogMapView({
           accessToken={accessToken}
           canRefreshWalkingRoutes={canRefreshWalkingRoutes}
           filters={filters}
+          metroLineLookup={metroLineLookup}
           nearbyTransit={nearbyTransit.pointId === selectedObject.id ? nearbyTransit : null}
           object={selectedObject}
           onClose={handleCloseObject}
@@ -1645,6 +1656,7 @@ function MapObjectCard({
   accessToken,
   canRefreshWalkingRoutes,
   filters,
+  metroLineLookup,
   nearbyTransit,
   object,
   onClose,
@@ -1655,6 +1667,7 @@ function MapObjectCard({
   accessToken: string;
   canRefreshWalkingRoutes: boolean;
   filters: CatalogFilters;
+  metroLineLookup: MetroLineLookup;
   nearbyTransit: MapNearbyTransitResult | null;
   object: MapObject;
   onClose: () => void;
@@ -1671,6 +1684,7 @@ function MapObjectCard({
   const activeImage = galleryImages[activeImageIndex] ?? galleryImages[0] ?? null;
   const hasGalleryNavigation = galleryImages.length > 1;
   const activeImageOrdinal = galleryImages[activeImageIndex] ? activeImageIndex + 1 : 1;
+  const isWalkingRoutesLoading = walkingRoutes?.status === 'loading';
   const walkingRoutesByDestination = new Map(
     walkingRoutes?.routes.map((route) => [route.destinationIndex, route]) ?? [],
   );
@@ -1742,7 +1756,24 @@ function MapObjectCard({
           </a>
         </h3>
         <section className="map-nearby-metro" aria-labelledby="map-nearby-metro-title">
-          <h4 id="map-nearby-metro-title">Ближайшее метро пешком</h4>
+          <div className="map-nearby-metro-heading">
+            <h4 id="map-nearby-metro-title">Ближайшее метро пешком</h4>
+            {canRefreshWalkingRoutes && nearbyTransit?.status === 'ready' ? (
+              <button
+                aria-busy={isWalkingRoutesLoading}
+                aria-label="Обновить маршруты метро"
+                className="map-nearby-metro-refresh"
+                disabled={isWalkingRoutesLoading}
+                type="button"
+                onClick={onRefreshWalkingRoutes}
+              >
+                <RefreshCwIcon
+                  aria-hidden="true"
+                  className={isWalkingRoutesLoading ? 'map-nearby-metro-refresh-icon--loading' : undefined}
+                />
+              </button>
+            ) : null}
+          </div>
           {!nearbyTransit || nearbyTransit.status === 'loading' ? (
             <p className="map-nearby-metro-status" role="status">
               Ищем станции рядом…
@@ -1758,12 +1789,18 @@ function MapObjectCard({
               <ol className="map-nearby-metro-list">
                 {nearbyTransit.stations.slice(0, 3).map((station, destinationIndex) => {
                   const route = walkingRoutesByDestination.get(destinationIndex);
+                  const lineMarker = resolveMetroLineMarker(station.name, metroLineLookup);
 
                   return (
                     <li key={`${station.name}-${station.coordinates.join('-')}`}>
-                      <span className="map-nearby-metro-icon" aria-hidden="true">
-                        М
-                      </span>
+                      <span
+                        aria-hidden={lineMarker.label ? undefined : true}
+                        aria-label={lineMarker.label ? `Линии метро: ${lineMarker.label}` : undefined}
+                        className="map-nearby-metro-icon"
+                        role={lineMarker.label ? 'img' : undefined}
+                        style={lineMarker.background ? { background: lineMarker.background } : undefined}
+                        title={lineMarker.label ?? undefined}
+                      />
                       <span>{station.name}</span>
                       <strong>
                         {route && route.distanceMeters !== null && route.durationSeconds !== null
@@ -1774,16 +1811,6 @@ function MapObjectCard({
                   );
                 })}
               </ol>
-              {canRefreshWalkingRoutes ? (
-                <button
-                  aria-label="Обновить маршруты метро"
-                  className="text-button map-nearby-metro-retry"
-                  type="button"
-                  onClick={onRefreshWalkingRoutes}
-                >
-                  Обновить маршруты
-                </button>
-              ) : null}
             </>
           ) : null}
           {nearbyTransit?.status === 'ready' && walkingRoutes?.status === 'unavailable' ? (
