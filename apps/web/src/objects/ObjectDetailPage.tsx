@@ -42,8 +42,9 @@ import { MultiSelectDropdown } from '../components/MultiSelectDropdown';
 import { getLinkedFileTitle } from '../files/fileDisplay';
 import { SecureImage, buildMediaFileContentUrl, useSecureImageObjectUrl } from '../files/SecureImage';
 import { formatCurrencyInputValue, getCurrencyInputBackspaceValue } from '../lib/numberInput';
+import { getValidMapCoordinate } from '../map/mapContract';
 import { resolveMapMarkerLabel } from '../map/mapMarkerLabels';
-import { YandexMap, type YandexMapPoint } from '../map/YandexMap';
+import { PlatformMap, type MapPoint } from '../map/PlatformMap';
 import { LotCollectionAction } from '../presentations/LotCollectionAction';
 import {
   formatCompletion,
@@ -549,7 +550,8 @@ function ObjectDetail({
           <h3 id="object-map-title">Локация и расположение</h3>
         </div>
 
-        <YandexMap
+        <PlatformMap
+          ariaLabel="Карта объекта"
           emptyState={{
             eyebrow: 'Карта объекта',
             title: 'Координаты не указаны',
@@ -2822,8 +2824,10 @@ function getCarouselImages(object: RealEstateObjectDetail) {
   return [coverImage, ...object.images.filter((image) => image.id !== coverImage.id)];
 }
 
-function getObjectMapPoints(object: RealEstateObjectDetail, imageUrl: string | null): YandexMapPoint[] {
-  if (object.latitude === null || object.longitude === null) {
+function getObjectMapPoints(object: RealEstateObjectDetail, imageUrl: string | null): MapPoint[] {
+  const coordinates = getValidMapCoordinate(object.latitude, object.longitude);
+
+  if (!coordinates) {
     return [];
   }
 
@@ -2832,14 +2836,14 @@ function getObjectMapPoints(object: RealEstateObjectDetail, imageUrl: string | n
       id: object.id,
       title: object.title,
       hint: object.title,
-      coordinates: [object.latitude, object.longitude],
-      balloonHtml: buildObjectMapBalloon(object, imageUrl),
+      coordinates,
+      popupHtml: buildObjectMapPopup(object, imageUrl),
       markerLabel: resolveMapMarkerLabel(object),
     },
   ];
 }
 
-function buildObjectMapBalloon(object: RealEstateObjectDetail, imageUrl: string | null) {
+function buildObjectMapPopup(object: RealEstateObjectDetail, imageUrl: string | null) {
   const title = escapeHtml(object.title);
   const location = escapeHtml(getObjectDistrictLocation(object)?.name ?? 'Район не указан');
   const address = object.address ? escapeHtml(object.address) : null;

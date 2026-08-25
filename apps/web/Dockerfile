@@ -25,9 +25,8 @@ COPY apps/web ./apps/web
 COPY packages/shared ./packages/shared
 
 ARG VITE_API_URL=http://localhost:3000
-ARG VITE_YANDEX_MAPS_API_KEY=
 
-RUN VITE_API_URL="$VITE_API_URL" VITE_YANDEX_MAPS_API_KEY="$VITE_YANDEX_MAPS_API_KEY" pnpm --filter @platforma/web build
+RUN VITE_API_URL="$VITE_API_URL" pnpm --filter @platforma/web build
 
 FROM node:22-alpine AS runner
 

@@ -8,6 +8,7 @@ const port = Number(process.env.PORT ?? 5173);
 const host = process.env.HOST ?? '0.0.0.0';
 const rootDir = resolve(fileURLToPath(new URL('./dist/', import.meta.url)));
 const indexPath = join(rootDir, 'index.html');
+const defaultMapStyleUrl = 'https://tiles.openfreemap.org/styles/liberty';
 
 const mimeTypes = new Map([
   ['.css', 'text/css; charset=utf-8'],
@@ -40,6 +41,11 @@ const server = createServer(async (request, response) => {
 
     if (!pathname || isBlockedSourceRequest(pathname)) {
       sendText(response, 404, 'Not found');
+      return;
+    }
+
+    if (pathname === '/runtime-config.js') {
+      sendRuntimeConfig(request, response);
       return;
     }
 
@@ -121,6 +127,33 @@ function sendText(response, statusCode, message) {
     'Content-Type': 'text/plain; charset=utf-8',
   });
   response.end(message);
+}
+
+function sendRuntimeConfig(request, response) {
+  const source = `window.__PLATFORMA_RUNTIME_CONFIG__ = ${JSON.stringify({
+    mapProviderEnabled: getMapProviderEnabled(process.env.MAP_PROVIDER_ENABLED),
+    mapStyleUrl: process.env.MAP_STYLE_URL?.trim() || defaultMapStyleUrl,
+  })};\n`;
+  const headers = {
+    'Cache-Control': 'no-store',
+    'Content-Length': String(Buffer.byteLength(source)),
+    'Content-Type': 'text/javascript; charset=utf-8',
+  };
+
+  response.writeHead(200, headers);
+
+  if (request.method === 'HEAD') {
+    response.end();
+    return;
+  }
+
+  response.end(source);
+}
+
+function getMapProviderEnabled(rawValue) {
+  const normalizedValue = rawValue?.trim().toLowerCase();
+
+  return !['0', 'false', 'off', 'disabled'].includes(normalizedValue);
 }
 
 function getContentType(filePath) {

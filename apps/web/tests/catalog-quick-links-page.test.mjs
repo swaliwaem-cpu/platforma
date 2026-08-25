@@ -79,7 +79,7 @@ test('catalog object detail links open in new browser tabs', () => {
   const listItemSource = extractSourceBetween(source, 'function CatalogListItem', 'function CatalogCard');
   const cardSource = extractSourceBetween(source, 'function CatalogCard', 'function CatalogCardMetroLabel');
   const mapCardSource = extractSourceBetween(source, 'function MapObjectCard', 'function CatalogListItem');
-  const mapBalloonSource = extractSourceBetween(source, 'function buildMapBalloon', 'type CatalogObjectWithLocations');
+  const mapPopupSource = extractSourceBetween(source, 'function buildMapPopup', 'type CatalogObjectWithLocations');
 
   assert.equal(countMatches(quickLinkSource, /target="_blank"/g), 1);
   assert.equal(countMatches(quickLinkSource, /rel="noopener noreferrer"/g), 1);
@@ -102,9 +102,9 @@ test('catalog object detail links open in new browser tabs', () => {
   assert.match(mapCardSource, /<a className="catalog-card-link map-object-card-link" href=\{objectHref\}/);
   assert.doesNotMatch(mapCardSource, /<button className="catalog-card-link map-object-card-link"/);
 
-  assert.match(mapBalloonSource, /target="_blank"/);
-  assert.match(mapBalloonSource, /rel="noopener noreferrer"/);
-  assert.doesNotMatch(mapBalloonSource, /data-map-point-id/);
+  assert.match(mapPopupSource, /target="_blank"/);
+  assert.match(mapPopupSource, /rel="noopener noreferrer"/);
+  assert.doesNotMatch(mapPopupSource, /data-map-point-id/);
 });
 
 test('catalog view controls render below quick links instead of inside the header', () => {

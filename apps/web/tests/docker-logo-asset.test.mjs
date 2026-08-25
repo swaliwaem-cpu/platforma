@@ -17,10 +17,9 @@ test('web Docker image includes root logo asset used by App import', () => {
 
 test('web Docker image serves a built production bundle without Vite runtime', () => {
   assert.match(dockerfile, /ARG VITE_API_URL=http:\/\/localhost:3000/);
-  assert.match(dockerfile, /ARG VITE_YANDEX_MAPS_API_KEY=/);
   assert.match(
     dockerfile,
-    /RUN VITE_API_URL="\$VITE_API_URL" VITE_YANDEX_MAPS_API_KEY="\$VITE_YANDEX_MAPS_API_KEY" pnpm --filter @platforma\/web build/,
+    /RUN VITE_API_URL="\$VITE_API_URL" pnpm --filter @platforma\/web build/,
   );
   assert.match(dockerfile, /COPY apps\/web\/server\.mjs \.\/apps\/web\/server\.mjs/);
   assert.match(dockerfile, /COPY --from=builder \/app\/apps\/web\/dist \.\/apps\/web\/dist/);
@@ -28,7 +27,8 @@ test('web Docker image serves a built production bundle without Vite runtime', (
   assert.doesNotMatch(dockerfile, /"dev"/);
   assert.doesNotMatch(dockerfile, /vite", "preview"/);
   assert.match(composeFile, /args:[\s\S]*VITE_API_URL: \$\{VITE_API_URL:-http:\/\/localhost:3000\}/);
-  assert.match(composeFile, /args:[\s\S]*VITE_YANDEX_MAPS_API_KEY: \$\{VITE_YANDEX_MAPS_API_KEY:-\}/);
+  assert.match(composeFile, /environment:[\s\S]*MAP_PROVIDER_ENABLED: \$\{MAP_PROVIDER_ENABLED:-true\}/);
+  assert.match(composeFile, /environment:[\s\S]*MAP_STYLE_URL: \$\{MAP_STYLE_URL:-https:\/\/tiles\.openfreemap\.org\/styles\/liberty\}/);
 });
 
 test('web static server blocks source and Vite client requests', () => {

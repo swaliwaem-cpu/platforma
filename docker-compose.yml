@@ -291,10 +291,10 @@ services:
       dockerfile: apps/web/Dockerfile
       args:
         VITE_API_URL: ${VITE_API_URL:-http://localhost:3000}
-        VITE_YANDEX_MAPS_API_KEY: ${VITE_YANDEX_MAPS_API_KEY:-}
     environment:
       VITE_API_URL: ${VITE_API_URL:-http://localhost:3000}
-      VITE_YANDEX_MAPS_API_KEY: ${VITE_YANDEX_MAPS_API_KEY:-}
+      MAP_PROVIDER_ENABLED: ${MAP_PROVIDER_ENABLED:-true}
+      MAP_STYLE_URL: ${MAP_STYLE_URL:-https://tiles.openfreemap.org/styles/liberty}
     depends_on:
       api:
         condition: service_started

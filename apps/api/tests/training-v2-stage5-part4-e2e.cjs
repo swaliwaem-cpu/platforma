@@ -204,7 +204,8 @@ function dockerComposeEnvironment() {
     TELEGRAM_TRANSPORT_MODE: 'fake',
     TRAINING_AI_MODE: 'fake',
     VITE_API_URL: 'http://localhost:3000',
-    VITE_YANDEX_MAPS_API_KEY: '',
+    MAP_PROVIDER_ENABLED: 'false',
+    MAP_STYLE_URL: '',
   };
 }
 

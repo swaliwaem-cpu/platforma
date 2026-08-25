@@ -1,0 +1,428 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { chromium } from '@playwright/test';
+
+const currentDir = dirname(fileURLToPath(import.meta.url));
+const baseUrl = process.env.MAP_WEB_TEST_URL;
+const tileFixture = readFileSync(resolve(currentDir, '../../../aerotour-icon.png'));
+
+if (!baseUrl) {
+  throw new Error('MAP_WEB_TEST_URL is required');
+}
+
+const browser = await chromium.launch({ headless: true });
+
+try {
+  await verifyCatalogMap();
+  await verifyObjectDetailMap();
+  await verifyProviderFailureKeepsCatalogUsable();
+  await verifyMobileMap();
+  process.stdout.write('MAP_MODULE_BROWSER_OK\n');
+} finally {
+  await browser.close();
+}
+
+async function verifyCatalogMap() {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 960 } });
+  const page = await context.newPage();
+  const styleBarrier = createBarrier(10_000, 'Map style request did not reach the fixture barrier');
+  const requestedUrls = [];
+  const runtimeErrors = collectRuntimeErrors(page);
+
+  try {
+    page.on('request', (request) => requestedUrls.push(request.url()));
+    await installApiFixtures(page);
+    await installMapFixtures(page, { styleBarrier });
+
+    await page.goto(`${baseUrl}/catalog/map`, { waitUntil: 'domcontentloaded' });
+    await styleBarrier.waitForArrival();
+    await page.getByText('Загрузка карты', { exact: true }).waitFor();
+
+    styleBarrier.release();
+
+    const map = page.getByRole('region', { name: 'Карта объектов' });
+    await map.locator('canvas.maplibregl-canvas').waitFor();
+    await map.getByText('OpenFreeMap', { exact: true }).waitFor();
+    await map.getByText('OpenStreetMap', { exact: true }).waitFor();
+    await map.locator('.platform-map-shell[data-map-status="ready"]').waitFor();
+    await page.waitForTimeout(100);
+    assert.equal(
+      await map.locator('.platform-map-shell').getAttribute('data-map-status'),
+      'ready',
+      'local map fixtures should not trigger a provider error',
+    );
+
+    const northMarker = map.locator('.map-price-marker[aria-label="ЖК Северный"]');
+    await northMarker.waitFor();
+    await northMarker.click();
+    await page.getByRole('article', { name: 'Объект ЖК Северный' }).waitFor();
+    assert.equal(await northMarker.getAttribute('aria-pressed'), 'true');
+    assert.equal(
+      await page.getByRole('article', { name: 'Объект ЖК Северный' }).getByRole('link', { name: 'Подробнее' }).getAttribute('href'),
+      '/objects/zhk-severnyy',
+    );
+
+    const mapList = page.getByRole('complementary', { name: 'Объекты на карте' });
+    await mapList.getByRole('button', { name: 'ЖК Южный', exact: true }).click();
+    const southMarker = map.locator('.map-price-marker[aria-label="ЖК Южный"]');
+    assert.equal(await southMarker.getAttribute('aria-pressed'), 'true');
+
+    const initialBoundsLabel = await mapList.locator('.table-meta span').first().innerText();
+    const zoomIn = map.locator('.maplibregl-ctrl-zoom-in');
+
+    for (let index = 0; index < 4; index += 1) {
+      await zoomIn.click();
+    }
+
+    await page.waitForFunction(
+      ({ selector, previous }) => document.querySelector(selector)?.textContent?.trim() !== previous,
+      { selector: '.catalog-map-list .table-meta span', previous: initialBoundsLabel },
+    );
+
+    const fullscreen = map.getByRole('button', { name: 'Открыть карту на весь экран' });
+    await fullscreen.click();
+    await page.locator('.platform-map-shell[data-map-fullscreen="true"]').waitFor();
+    await map.getByRole('button', { name: 'Закрыть полноэкранную карту' }).click();
+    await page.locator('.platform-map-shell[data-map-fullscreen="false"]').waitFor();
+
+    await page.screenshot({ path: '/tmp/platforma-maplibre-catalog-desktop.png' });
+
+    assert.equal(requestedUrls.some((url) => /api-maps\.yandex\.ru|yandex\.net\/maps/u.test(url)), false);
+    assert.deepEqual(runtimeErrors, []);
+  } finally {
+    styleBarrier.release();
+    await context.close();
+  }
+}
+
+async function verifyObjectDetailMap() {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+  const requestedUrls = [];
+  const runtimeErrors = collectRuntimeErrors(page);
+
+  try {
+    page.on('request', (request) => requestedUrls.push(request.url()));
+    await installApiFixtures(page);
+    await installMapFixtures(page);
+
+    await page.goto(`${baseUrl}/objects/zhk-severnyy`, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('heading', { name: 'ЖК Северный', exact: true }).waitFor();
+    const map = page.getByRole('region', { name: 'Карта объекта' });
+    const marker = map.locator('.map-price-marker[aria-label="ЖК Северный"]');
+    await marker.waitFor();
+    await marker.click();
+    const popup = map.locator('.maplibregl-popup');
+    await popup.getByText('ЖК Северный', { exact: true }).waitFor();
+    await popup.getByText('Москва, Северная улица, 1', { exact: true }).waitFor();
+    await page.screenshot({ path: '/tmp/platforma-maplibre-object-detail.png' });
+
+    assert.equal(requestedUrls.some((url) => /api-maps\.yandex\.ru|yandex\.net\/maps/u.test(url)), false);
+    assert.deepEqual(runtimeErrors, []);
+
+    const styleRequestsBeforeMissingCoordinates = requestedUrls.filter((url) => url.includes('tiles.openfreemap.org/styles')).length;
+    await page.goto(`${baseUrl}/objects/no-coordinates`, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('heading', { name: 'Объект без координат', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Координаты не указаны', exact: true }).waitFor();
+    const styleRequestsAfterMissingCoordinates = requestedUrls.filter((url) => url.includes('tiles.openfreemap.org/styles')).length;
+
+    assert.equal(styleRequestsAfterMissingCoordinates, styleRequestsBeforeMissingCoordinates);
+  } finally {
+    await context.close();
+  }
+}
+
+async function verifyProviderFailureKeepsCatalogUsable() {
+  const context = await browser.newContext({ viewport: { width: 1366, height: 850 } });
+  const page = await context.newPage();
+
+  try {
+    await installApiFixtures(page);
+    await installMapFixtures(page, { failTiles: true });
+
+    await page.goto(`${baseUrl}/catalog/map`, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('heading', { name: 'Карта временно недоступна', exact: true }).waitFor();
+
+    const mapList = page.getByRole('complementary', { name: 'Объекты на карте' });
+    await mapList.getByRole('button', { name: 'ЖК Северный', exact: true }).click();
+    const card = page.getByRole('article', { name: 'Объект ЖК Северный' });
+    await card.waitFor();
+    assert.equal(await card.getByRole('link', { name: 'Подробнее' }).getAttribute('href'), '/objects/zhk-severnyy');
+    await page.screenshot({ path: '/tmp/platforma-maplibre-provider-fallback.png' });
+  } finally {
+    await context.close();
+  }
+}
+
+async function verifyMobileMap() {
+  const context = await browser.newContext({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } });
+  const page = await context.newPage();
+  const runtimeErrors = collectRuntimeErrors(page);
+
+  try {
+    await installApiFixtures(page);
+    await installMapFixtures(page);
+
+    await page.goto(`${baseUrl}/catalog/map`, { waitUntil: 'domcontentloaded' });
+    const map = page.getByRole('region', { name: 'Карта объектов' });
+    const marker = map.locator('.map-price-marker[aria-label="ЖК Северный"]');
+    await marker.waitFor();
+    const zoomControlBox = await map.locator('.maplibregl-ctrl-zoom-in').boundingBox();
+    const fullscreenControlBox = await map.getByRole('button', { name: 'Открыть карту на весь экран' }).boundingBox();
+
+    assert.ok(zoomControlBox && zoomControlBox.width >= 44 && zoomControlBox.height >= 44);
+    assert.ok(fullscreenControlBox && fullscreenControlBox.width >= 44 && fullscreenControlBox.height >= 44);
+    await marker.tap();
+    await page.getByRole('article', { name: 'Объект ЖК Северный' }).waitFor();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await page.screenshot({ path: '/tmp/platforma-maplibre-catalog-mobile.png' });
+    assert.deepEqual(runtimeErrors, []);
+  } finally {
+    await context.close();
+  }
+}
+
+async function installMapFixtures(page, { failStyle = false, failTiles = false, styleBarrier = null } = {}) {
+  await page.route('https://tiles.openfreemap.org/styles/liberty', async (route) => {
+    if (styleBarrier) {
+      await styleBarrier.hold();
+    }
+
+    if (failStyle) {
+      await route.fulfill({ status: 503, contentType: 'application/json', body: '{}' });
+      return;
+    }
+
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(mapStyleFixture()),
+    });
+  });
+
+  await page.route(`${baseUrl}/map-fixtures/tiles/**`, async (route) => {
+    if (failTiles) {
+      await route.fulfill({ status: 503, contentType: 'text/plain', body: 'tile unavailable' });
+      return;
+    }
+
+    await route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      body: tileFixture,
+    });
+  });
+}
+
+async function installApiFixtures(page) {
+  await page.route('https://fonts.googleapis.com/**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'text/css', body: '' });
+  });
+
+  await page.route('http://localhost:3000/**', async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+
+    if (pathname === '/auth/refresh' && request.method() === 'POST') {
+      await json(route, {
+        accessToken: 'map-browser-access-token',
+        user: {
+          id: '11111111-1111-4111-8111-111111111111',
+          email: 'map-browser@example.test',
+          name: 'Map Browser User',
+          brokerPhone: null,
+          brokerEmail: null,
+          status: 'ACTIVE',
+          role: { id: '22222222-2222-4222-8222-222222222222', name: 'user' },
+          profilePhotoFile: null,
+          permissions: ['objects:read'],
+        },
+      });
+      return;
+    }
+
+    if (pathname === '/training/config') {
+      await json(route, { enabled: false });
+      return;
+    }
+
+    if (pathname === '/assistant/config') {
+      await json(route, { enabled: false });
+      return;
+    }
+
+    if (pathname === '/catalog-links') {
+      await json(route, { items: [] });
+      return;
+    }
+
+    if (pathname === '/developers' || pathname === '/locations' || pathname === '/metro') {
+      await json(route, { items: [] });
+      return;
+    }
+
+    if (pathname === '/map/objects') {
+      await json(route, { items: [mapObjectFixture('north'), mapObjectFixture('south')], total: 2 });
+      return;
+    }
+
+    if (pathname === '/objects/slug/zhk-severnyy') {
+      await json(route, { object: objectDetailFixture('north') });
+      return;
+    }
+
+    if (pathname === '/objects/slug/no-coordinates') {
+      await json(route, { object: objectDetailFixture('missing') });
+      return;
+    }
+
+    if (/^\/objects\/[^/]+\/feed-units\/groups$/u.test(pathname)) {
+      await json(route, { groups: [], total: 0, hasDiscountPrices: false });
+      return;
+    }
+
+    await json(route, { message: `Unexpected ${request.method()} ${pathname}` }, 404);
+  });
+}
+
+function mapStyleFixture() {
+  return {
+    version: 8,
+    sources: {
+      'local-raster': {
+        type: 'raster',
+        tiles: [`${baseUrl}/map-fixtures/tiles/{z}/{x}/{y}.png`],
+        tileSize: 256,
+        attribution:
+          '<a href="https://openfreemap.org/">OpenFreeMap</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      },
+    },
+    layers: [
+      { id: 'background', type: 'background', paint: { 'background-color': '#e8edf2' } },
+      { id: 'local-raster', type: 'raster', source: 'local-raster' },
+    ],
+  };
+}
+
+function mapObjectFixture(kind) {
+  const isNorth = kind === 'north';
+
+  return {
+    id: isNorth ? '91111111-1111-4111-8111-111111111111' : '92222222-2222-4222-8222-222222222222',
+    type: 'RESIDENTIAL',
+    title: isNorth ? 'ЖК Северный' : 'ЖК Южный',
+    slug: isNorth ? 'zhk-severnyy' : 'zhk-yuzhnyy',
+    status: 'PUBLISHED',
+    address: isNorth ? 'Москва, Северная улица, 1' : 'Москва, Южная улица, 2',
+    mapName: isNorth ? 'Северный' : 'Южный',
+    latitude: isNorth ? 55.79 : 55.71,
+    longitude: isNorth ? 37.61 : 37.69,
+    priceFrom: isNorth ? '25000000' : '21000000',
+    pricePerMeterFrom: isNorth ? '420000' : '390000',
+    apartmentAreaRange: '45–90 м²',
+    feedPriceFrom: null,
+    feedPricePerMeterFrom: null,
+    feedAreaRange: null,
+    feedFloorRange: null,
+    feedUnitsCount: 0,
+    feedUnitsCountText: null,
+    feedCompletionYear: null,
+    feedCompletionQuarter: null,
+    feedUpdatedAt: null,
+    completionYear: 2028,
+    completionQuarter: 2,
+    developer: { id: '93333333-3333-4333-8333-333333333333', name: 'Тест Девелопмент' },
+    primaryLocation: null,
+    locations: [],
+    metroStations: [],
+    images: [],
+    coverImage: null,
+  };
+}
+
+function objectDetailFixture(kind) {
+  const missingCoordinates = kind === 'missing';
+  const mapObject = mapObjectFixture('north');
+
+  return {
+    ...mapObject,
+    id: missingCoordinates ? '94444444-4444-4444-8444-444444444444' : mapObject.id,
+    title: missingCoordinates ? 'Объект без координат' : mapObject.title,
+    slug: missingCoordinates ? 'no-coordinates' : mapObject.slug,
+    description: 'Объект для проверки provider-neutral карты.',
+    architectureDescription: null,
+    infrastructureDescription: null,
+    fillingDescription: null,
+    shortDescription: null,
+    aerotourUrl: null,
+    layoutsUrl: null,
+    krtName: null,
+    ceilingHeight: null,
+    propertyClass: null,
+    floorRange: null,
+    apartmentsCountText: null,
+    matchedFeedUnitsCount: 0,
+    latitude: missingCoordinates ? null : mapObject.latitude,
+    longitude: missingCoordinates ? null : mapObject.longitude,
+    featuresJson: {},
+    publishedAt: '2026-08-25T00:00:00.000Z',
+    createdAt: '2026-08-25T00:00:00.000Z',
+    updatedAt: '2026-08-25T00:00:00.000Z',
+    deletedAt: null,
+    files: [],
+  };
+}
+
+function collectRuntimeErrors(page) {
+  const errors = [];
+
+  page.on('pageerror', (error) => errors.push(`pageerror:${error.message}`));
+  page.on('console', (message) => {
+    if (message.type() === 'error' || message.type() === 'warning') {
+      if (message.text().includes('GL Driver Message')) {
+        return;
+      }
+
+      errors.push(`${message.type()}:${message.text()}`);
+    }
+  });
+
+  return errors;
+}
+
+function createBarrier(timeoutMs, timeoutMessage) {
+  let resolveArrival;
+  const arrival = new Promise((resolve) => {
+    resolveArrival = resolve;
+  });
+  let resolveRelease;
+  const released = new Promise((resolve) => {
+    resolveRelease = resolve;
+  });
+  let isReleased = false;
+
+  return {
+    async hold() {
+      resolveArrival();
+      await released;
+    },
+    async waitForArrival() {
+      await Promise.race([
+        arrival,
+        new Promise((_, reject) => setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs)),
+      ]);
+    },
+    release() {
+      if (isReleased) return;
+      isReleased = true;
+      resolveRelease();
+    },
+  };
+}
+
+async function json(route, body, status = 200) {
+  await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+}

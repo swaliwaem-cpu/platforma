@@ -4750,14 +4750,14 @@ tr.user-row--deactivated .text-button {
   line-height: 1.45;
 }
 
-.yandex-map-shell {
+.platform-map-shell {
   position: relative;
   height: 640px;
   min-height: 640px;
   overflow: hidden;
 }
 
-.yandex-map {
+.platform-map-canvas {
   position: relative;
   width: 100%;
   max-width: 100%;
@@ -4766,15 +4766,41 @@ tr.user-row--deactivated .text-button {
   overflow: hidden;
 }
 
-.yandex-map-overlay-root {
+.platform-map-overlay-root {
   position: absolute;
-  z-index: 2147483000;
+  z-index: 4;
   inset: 0;
   pointer-events: none;
 }
 
-.yandex-map-overlay-root > * {
+.platform-map-overlay-root > * {
   pointer-events: auto;
+}
+
+.platform-map-shell:fullscreen,
+.platform-map-shell.maplibregl-map-fullscreen {
+  width: 100vw;
+  height: 100vh;
+  min-height: 100vh;
+  border: 0;
+  border-radius: 0;
+}
+
+.platform-map-shell:fullscreen .platform-map-canvas,
+.platform-map-shell.maplibregl-map-fullscreen .platform-map-canvas {
+  height: 100vh;
+  min-height: 100vh;
+}
+
+.platform-map-shell .maplibregl-ctrl button:focus-visible,
+.platform-map-shell .maplibregl-popup-close-button:focus-visible {
+  outline: 3px solid color-mix(in oklch, var(--catalog-blue) 30%, transparent);
+  outline-offset: 2px;
+}
+
+.maplibregl-ctrl-attrib {
+  color: #18202a;
+  font-family: var(--platforma-font-sans);
 }
 
 .map-price-marker-anchor {
@@ -4858,12 +4884,12 @@ tr.user-row--deactivated .text-button {
   white-space: nowrap;
 }
 
-.yandex-map--markers-expanded .map-price-marker-dot {
+.platform-map--markers-expanded .map-price-marker-dot {
   opacity: 0;
   transform: translate(-50%, 3px) scale(0.6);
 }
 
-.yandex-map--markers-expanded .map-price-marker-pin {
+.platform-map--markers-expanded .map-price-marker-pin {
   opacity: 1;
   transform: none;
 }
@@ -5166,14 +5192,14 @@ tr.user-row--deactivated .text-button {
   text-decoration: none;
 }
 
-.object-map-section .yandex-map-shell,
-.object-map-section .yandex-map,
+.object-map-section .platform-map-shell,
+.object-map-section .platform-map-canvas,
 .object-map-section .map-fallback {
   height: 70svh;
   min-height: 520px;
 }
 
-.object-map-section .yandex-map-shell {
+.object-map-section .platform-map-shell {
   overflow: hidden;
   border: 1px solid #e0e6ed;
   border-radius: 6px;
@@ -8404,14 +8430,14 @@ tr.user-row--deactivated .text-button {
 
   .catalog-map-panel,
   .catalog-map-list,
-  .yandex-map-shell,
-  .yandex-map,
+  .platform-map-shell,
+  .platform-map-canvas,
   .map-fallback {
     min-height: 420px;
   }
 
-  .yandex-map-shell,
-  .yandex-map,
+  .platform-map-shell,
+  .platform-map-canvas,
   .map-fallback {
     height: 420px;
   }
@@ -8419,7 +8445,7 @@ tr.user-row--deactivated .text-button {
   .catalog-map-list {
     top: auto;
     right: 12px;
-    bottom: 12px;
+    bottom: 44px;
     left: 12px;
     width: auto;
     max-height: 42%;
@@ -8460,11 +8486,16 @@ tr.user-row--deactivated .text-button {
     gap: 4px;
   }
 
-  .object-map-section .yandex-map-shell,
-  .object-map-section .yandex-map,
+  .object-map-section .platform-map-shell,
+  .object-map-section .platform-map-canvas,
   .object-map-section .map-fallback {
     height: 70svh;
     min-height: 420px;
+  }
+
+  .platform-map-shell .maplibregl-ctrl-group button {
+    width: 44px;
+    height: 44px;
   }
 
   .field-wide {

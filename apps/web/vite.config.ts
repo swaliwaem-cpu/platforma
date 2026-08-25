@@ -4,6 +4,9 @@ import path from 'node:path';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
+  optimizeDeps: {
+    exclude: ['maplibre-gl'],
+  },
   plugins: [tailwindcss(), react()],
   resolve: {
     alias: {

@@ -152,7 +152,7 @@ test('catalog passes active lot filters through object links', () => {
   assert.match(source, /<CatalogListItem[\s\S]*?filters=\{filters\}/);
   assert.match(source, /<CatalogCard[\s\S]*?filters=\{filters\}/);
   assert.match(source, /<MapObjectCard[\s\S]*?filters=\{filters\}/);
-  assert.match(source, /balloonHtml: buildMapBalloon\(object, filters\)/);
+  assert.match(source, /popupHtml: buildMapPopup\(object, filters\)/);
 });
 
 test('catalog result cards show matched lot count only for lot-filtered results', () => {

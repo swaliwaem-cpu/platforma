@@ -46,7 +46,7 @@ import { MultiSelectDropdown } from '../components/MultiSelectDropdown';
 import { SecureImage } from '../files/SecureImage';
 import { formatCurrencyInputValue, getCurrencyInputBackspaceValue } from '../lib/numberInput';
 import { resolveMapMarkerLabel } from '../map/mapMarkerLabels';
-import { YandexMap, type YandexMapBounds, type YandexMapPoint } from '../map/YandexMap';
+import { PlatformMap, type MapBounds, type MapPoint } from '../map/PlatformMap';
 import aerotourIconUrl from '../../../../aerotour-icon.png';
 import floorPlanIconUrl from '../../../../floor-plan.svg';
 
@@ -1415,7 +1415,7 @@ function CatalogMapView({
   objects: MapObject[];
   total: number;
 }) {
-  const [visibleBounds, setVisibleBounds] = useState<YandexMapBounds | null>(null);
+  const [visibleBounds, setVisibleBounds] = useState<MapBounds | null>(null);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [isListVisible, setIsListVisible] = useState(true);
   const points = useMemo(() => objects.map((object) => mapObjectToPoint(object, filters)), [filters, objects]);
@@ -1427,10 +1427,10 @@ function CatalogMapView({
     () => objects.find((object) => object.id === selectedObjectId) ?? null,
     [objects, selectedObjectId],
   );
-  const handleBoundsChange = useCallback((bounds: YandexMapBounds) => {
+  const handleBoundsChange = useCallback((bounds: MapBounds) => {
     setVisibleBounds(bounds);
   }, []);
-  const handleSelectPoint = useCallback((point: YandexMapPoint) => {
+  const handleSelectPoint = useCallback((point: MapPoint) => {
     setSelectedObjectId(point.id);
   }, []);
 
@@ -1510,14 +1510,14 @@ function CatalogMapView({
   return (
     <section className="catalog-map-layout" aria-label="Карта объектов">
       <div className="catalog-map-panel">
-        <YandexMap
+        <PlatformMap
           onBoundsChange={handleBoundsChange}
           points={points}
           selectedPointId={selectedObjectId}
           onSelectPoint={handleSelectPoint}
         >
           {shouldRenderOverlayInsideMap ? mapOverlay : null}
-        </YandexMap>
+        </PlatformMap>
 
         {shouldRenderOverlayInsideMap ? null : mapOverlay}
       </div>
@@ -2177,18 +2177,18 @@ function getCatalogAreaRange(object: CatalogFeedFallbackObject) {
   return object.feedAreaRange ?? object.apartmentAreaRange;
 }
 
-function mapObjectToPoint(object: MapObject, filters: CatalogFilters): YandexMapPoint {
+function mapObjectToPoint(object: MapObject, filters: CatalogFilters): MapPoint {
   return {
     id: object.id,
     title: object.title,
     hint: object.title,
     coordinates: [object.latitude, object.longitude],
-    balloonHtml: buildMapBalloon(object, filters),
+    popupHtml: buildMapPopup(object, filters),
     markerLabel: resolveMapMarkerLabel(object),
   };
 }
 
-function isMapObjectInBounds(object: MapObject, bounds: YandexMapBounds) {
+function isMapObjectInBounds(object: MapObject, bounds: MapBounds) {
   const [[firstLatitude, firstLongitude], [secondLatitude, secondLongitude]] = bounds;
   const minLatitude = Math.min(firstLatitude, secondLatitude);
   const maxLatitude = Math.max(firstLatitude, secondLatitude);
@@ -2203,7 +2203,7 @@ function isMapObjectInBounds(object: MapObject, bounds: YandexMapBounds) {
   );
 }
 
-function buildMapBalloon(object: MapObject, filters: CatalogFilters) {
+function buildMapPopup(object: MapObject, filters: CatalogFilters) {
   const title = escapeHtml(object.title);
   const district = escapeHtml(getObjectDistrictLabel(object));
   const developer = escapeHtml(object.developer?.name ?? 'Застройщик не указан');

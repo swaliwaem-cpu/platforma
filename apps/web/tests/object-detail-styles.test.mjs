@@ -334,11 +334,11 @@ test('object actions and map keep the stage seven layout constraints', () => {
 
   assert.match(
     styles,
-    /\.object-map-section \.yandex-map-shell,\s*\.object-map-section \.yandex-map,\s*\.object-map-section \.map-fallback\s*\{[\s\S]*?height:\s*70svh;[\s\S]*?min-height:\s*520px;[\s\S]*?\}/,
+    /\.object-map-section \.platform-map-shell,\s*\.object-map-section \.platform-map-canvas,\s*\.object-map-section \.map-fallback\s*\{[\s\S]*?height:\s*70svh;[\s\S]*?min-height:\s*520px;[\s\S]*?\}/,
   );
 
   assert.match(
     styles,
-    /@media\s*\(max-width:\s*760px\)\s*\{[\s\S]*?\.object-map-section \.yandex-map-shell,\s*[\s\S]*?\.object-map-section \.yandex-map,\s*[\s\S]*?\.object-map-section \.map-fallback\s*\{[\s\S]*?min-height:\s*420px;[\s\S]*?\}/,
+    /@media\s*\(max-width:\s*760px\)\s*\{[\s\S]*?\.object-map-section \.platform-map-shell,\s*[\s\S]*?\.object-map-section \.platform-map-canvas,\s*[\s\S]*?\.object-map-section \.map-fallback\s*\{[\s\S]*?min-height:\s*420px;[\s\S]*?\}/,
   );
 });
