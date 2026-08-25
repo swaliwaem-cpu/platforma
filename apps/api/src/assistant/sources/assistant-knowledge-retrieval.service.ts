@@ -9,7 +9,10 @@ import type { AssistantPageContext } from '@platforma/shared' with { 'resolution
 import { PrismaService } from '../../prisma/prisma.service';
 import type { AssistantStructuredIntent } from '../assistant-query-planner';
 import { AssistantEmbeddingGateway } from './assistant-embedding.gateway';
-import { assistantKnowledgeAuthorityScore } from './assistant-knowledge-policy';
+import {
+  assistantKnowledgeAuthorityScore,
+  normalizeAssistantKnowledgeRegistryKey,
+} from './assistant-knowledge-policy';
 
 const maximumRetrievalCacheMilliseconds = 6 * 60 * 60 * 1_000;
 const maximumEvidenceItems = 12;
@@ -129,9 +132,14 @@ export class AssistantKnowledgeRetrievalService {
     }
 
     let candidateValues = [...candidates.values()].filter(({ score }) => score > 0);
-    if (input.intent.taskType === 'FACT') {
+    if (input.intent.taskType === 'FACT' && !scope.developerKey) {
       const projectKey = scope.projectKey ?? chooseMostRelevantProjectKey(candidateValues);
-      if (projectKey) candidateValues = candidateValues.filter(({ row }) => row.projectKey === projectKey);
+      if (projectKey) {
+        candidateValues = candidateValues.filter(({ row }) => row.projectKey === projectKey
+          || (scope.projectKey !== null
+            && row.projectKey === null
+            && row.kind === AssistantSourceFactKind.PROMOTION));
+      }
     }
     const evidence = candidateValues
       .sort(compareCandidates)
@@ -345,7 +353,25 @@ export class AssistantKnowledgeRetrievalService {
         ':',
         COALESCE(MAX("assistant_source_revisions"."created_at")::text, ''),
         ':',
-        COALESCE(MAX("assistant_source_revisions"."id"::text), '')
+        COALESCE(MAX("assistant_source_revisions"."id"::text), ''),
+        ':',
+        COALESCE(MD5(STRING_AGG(DISTINCT CONCAT(
+          "assistant_knowledge_sources"."id"::text,
+          ':',
+          "assistant_knowledge_sources"."state"::text,
+          ':',
+          "assistant_knowledge_sources"."priority"::text,
+          ':',
+          "assistant_knowledge_sources"."updated_at"::text
+        ), '|' ORDER BY CONCAT(
+          "assistant_knowledge_sources"."id"::text,
+          ':',
+          "assistant_knowledge_sources"."state"::text,
+          ':',
+          "assistant_knowledge_sources"."priority"::text,
+          ':',
+          "assistant_knowledge_sources"."updated_at"::text
+        ))), '')
       ) AS "fingerprint"
       FROM "assistant_source_revisions"
       JOIN "assistant_knowledge_sources" ON "assistant_knowledge_sources"."id" = "assistant_source_revisions"."source_id"
@@ -466,29 +492,38 @@ function createCacheKey(
 function createKnowledgeScope(context: AssistantPageContext | null | undefined): KnowledgeScope {
   if (!context) return { projectKey: null, developerKey: null };
   if (context.kind === 'OBJECT') {
-    return { projectKey: normalizeRegistryKey(context.key), developerKey: null };
+    return { projectKey: normalizeAssistantKnowledgeRegistryKey(context.key), developerKey: null };
   }
   if (context.kind === 'DEVELOPER') {
-    return { projectKey: null, developerKey: normalizeRegistryKey(context.key) };
+    return { projectKey: null, developerKey: normalizeAssistantKnowledgeRegistryKey(context.key) };
   }
   if (context.kind === 'CATALOG_FILTERS') {
     const developerKey = new URLSearchParams(context.key).get('developerId');
-    return { projectKey: null, developerKey: normalizeRegistryKey(developerKey) };
+    return { projectKey: null, developerKey: normalizeAssistantKnowledgeRegistryKey(developerKey) };
   }
   return { projectKey: null, developerKey: null };
 }
 
-function normalizeRegistryKey(value: string | null) {
-  if (!value) return null;
-  const normalized = value.trim().toLocaleLowerCase('ru-RU');
-  return normalized.length <= 120 && /^[\p{L}\p{N}](?:[\p{L}\p{N}._-]{0,118}[\p{L}\p{N}])?$/u.test(normalized)
-    ? normalized
-    : null;
-}
-
 function createKnowledgeScopeSql(scope: KnowledgeScope) {
   const conditions: Prisma.Sql[] = [];
-  if (scope.projectKey) conditions.push(Prisma.sql`s."project_key" = ${scope.projectKey}`);
+  if (scope.projectKey) conditions.push(Prisma.sql`(
+    s."project_key" = ${scope.projectKey}
+    OR (
+      s."project_key" IS NULL
+      AND (
+        s."type" = 'bank_promotion'::assistant_knowledge_source_type
+        OR (
+          s."type" = 'developer_promotion'::assistant_knowledge_source_type
+          AND s."developer_key" IN (
+            SELECT project_source."developer_key"
+            FROM "assistant_knowledge_sources" project_source
+            WHERE project_source."project_key" = ${scope.projectKey}
+              AND project_source."developer_key" IS NOT NULL
+          )
+        )
+      )
+    )
+  )`);
   if (scope.developerKey) conditions.push(Prisma.sql`s."developer_key" = ${scope.developerKey}`);
   return conditions.length > 0 ? Prisma.join(conditions, ' AND ') : Prisma.sql`TRUE`;
 }

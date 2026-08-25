@@ -33,3 +33,12 @@ export function isSafeOfficialHttpsUrl(value: string) {
     return false;
   }
 }
+
+export function normalizeAssistantKnowledgeRegistryKey(value: string | null | undefined) {
+  if (!value) return null;
+  const normalized = value.trim().toLocaleLowerCase('ru-RU');
+  return normalized.length <= 120
+    && /^[\p{L}\p{N}](?:[\p{L}\p{N}._-]{0,118}[\p{L}\p{N}])?$/u.test(normalized)
+    ? normalized
+    : null;
+}

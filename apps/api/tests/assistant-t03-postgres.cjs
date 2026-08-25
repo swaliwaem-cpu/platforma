@@ -68,15 +68,40 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
     });
     const originalHtml = await readFile(resolve(__dirname, 'fixtures/assistant/official-development.html'));
     let currentHtml = originalHtml;
+    let currentContentType = 'text/html; charset=utf-8';
     const fetchCalls = [];
+    let concurrentRequestCount = 0;
+    let signalFirstConcurrentRequest;
+    const firstConcurrentRequest = new Promise((resolveRequest) => {
+      signalFirstConcurrentRequest = resolveRequest;
+    });
+    const concurrentNewerHtml = Buffer.from(originalHtml.toString('utf8').replace(
+      'Ставка 3,5% при покупке до 30 сентября 2026 года.',
+      'Ставка 1,1% при покупке до 31 декабря 2026 года.',
+    ));
     const server = createServer((request, response) => {
       fetchCalls.push(request.url);
-      response.writeHead(200, {
-        'content-type': 'text/html; charset=utf-8',
-        etag: `"${createHash('sha256').update(currentHtml).digest('hex').slice(0, 12)}"`,
-        'last-modified': 'Tue, 25 Aug 2026 08:00:00 GMT',
-      });
-      response.end(currentHtml);
+      const isConcurrent = request.url?.includes('/projects/concurrent/') === true;
+      const concurrentIndex = isConcurrent ? ++concurrentRequestCount : 0;
+      const payload = concurrentIndex === 1
+        ? originalHtml
+        : concurrentIndex === 2
+          ? concurrentNewerHtml
+          : currentHtml;
+      const send = () => {
+        response.writeHead(200, {
+          'content-type': isConcurrent ? 'text/html; charset=utf-8' : currentContentType,
+          etag: `"${createHash('sha256').update(payload).digest('hex').slice(0, 12)}"`,
+          'last-modified': 'Tue, 25 Aug 2026 08:00:00 GMT',
+        });
+        response.end(payload);
+      };
+      if (concurrentIndex === 1) {
+        signalFirstConcurrentRequest();
+        setTimeout(send, 120);
+      } else {
+        send();
+      }
     });
     await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
     context.after(() => new Promise((resolveClose) => server.close(resolveClose)));
@@ -260,6 +285,41 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
       where: { sourceRevisionId: second.revisionId, isActive: true },
     }), 0);
 
+    const concurrentSource = await registry.register(actorId, {
+      canonicalUrl: `http://developer.example:${address.port}/projects/concurrent/${randomUUID()}`,
+      type: 'DEVELOPMENT_PAGE',
+      state: 'ACTIVE',
+      priority: 100,
+      scheduleMinutes: 1_440,
+      connectorKey: 'OFFICIAL_HTML',
+      connectorConfig: { allowedHosts: ['developer.example'] },
+      projectKey: 'concurrent-sad',
+      developerKey: 'developer-concurrent',
+    });
+    const olderIngestion = ingestion.ingest(concurrentSource.source.id);
+    await firstConcurrentRequest;
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 10));
+    const newerIngestion = ingestion.ingest(concurrentSource.source.id);
+    await Promise.all([olderIngestion, newerIngestion]);
+    const concurrentActivePromotions = await prisma.assistantSourceFact.findMany({
+      where: {
+        sourceId: concurrentSource.source.id,
+        kind: 'PROMOTION',
+        isActive: true,
+      },
+      select: { searchText: true },
+    });
+    assert.equal(concurrentActivePromotions.length > 0, true);
+    assert.equal(concurrentActivePromotions.every(({ searchText }) => /1,1%/u.test(searchText)), true);
+    assert.equal(concurrentActivePromotions.some(({ searchText }) => /3,5%/u.test(searchText)), false);
+    const concurrentRevisions = await prisma.assistantSourceRevision.findMany({
+      where: { sourceId: concurrentSource.source.id },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      select: { id: true, previousRevisionId: true },
+    });
+    assert.equal(concurrentRevisions.length, 2);
+    assert.equal(concurrentRevisions[1].previousRevisionId, concurrentRevisions[0].id);
+
     const otherSource = await registry.register(actorId, {
       canonicalUrl: `http://developer.example:${address.port}/projects/yuzhny-sad/${randomUUID()}`,
       type: 'DEVELOPMENT_PAGE',
@@ -284,6 +344,90 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
     });
     assert.equal(scopedEvidence.length > 0, true);
     assert.equal(scopedEvidence.every(({ projectKey }) => projectKey === 'severny-sad'), true);
+
+    const developerPromotion = await registry.register(actorId, {
+      canonicalUrl: `http://developer.example:${address.port}/promotions/developer/${randomUUID()}`,
+      type: 'DEVELOPER_PROMOTION',
+      state: 'ACTIVE',
+      priority: 100,
+      scheduleMinutes: 1_440,
+      connectorKey: 'OFFICIAL_HTML',
+      connectorConfig: { allowedHosts: ['developer.example'] },
+      projectKey: null,
+      developerKey: 'developer-example',
+    });
+    currentHtml = Buffer.from(`<!doctype html><html><body><main>
+      <h1>Акции застройщика</h1><h2>Семейная ипотека застройщика</h2>
+      <p>Ставка 4,4% для проектов developer-example.</p>
+    </main></body></html>`);
+    await ingestion.ingest(developerPromotion.source.id);
+    const bankPromotion = await registry.register(actorId, {
+      canonicalUrl: `http://developer.example:${address.port}/promotions/bank/${randomUUID()}`,
+      type: 'BANK_PROMOTION',
+      state: 'ACTIVE',
+      priority: 900,
+      scheduleMinutes: 1_440,
+      connectorKey: 'OFFICIAL_HTML',
+      connectorConfig: { allowedHosts: ['developer.example'] },
+      projectKey: null,
+      developerKey: null,
+    });
+    currentHtml = Buffer.from(`<!doctype html><html><body><main>
+      <h1>Акции банка</h1><h2>Семейная ипотека банка</h2>
+      <p>Ставка 5,5% для новостроек из партнёрского списка.</p>
+    </main></body></html>`);
+    await ingestion.ingest(bankPromotion.source.id);
+    const sharedPromotionInput = {
+      query: 'Какая семейная ипотека действует?',
+      intent,
+      includeExternalLots: false,
+      context: { kind: 'OBJECT', key: 'severny-sad', label: 'ЖК Северный сад' },
+      now: new Date('2026-08-25T18:03:00.000Z'),
+    };
+    const sharedPromotionsBeforePriorityUpdate = (await retrieval.retrieve(sharedPromotionInput))
+      .filter(({ sourceId: evidenceSourceId }) => (
+        evidenceSourceId === developerPromotion.source.id || evidenceSourceId === bankPromotion.source.id
+      ));
+    assert.equal(sharedPromotionsBeforePriorityUpdate.length, 2);
+    assert.equal(sharedPromotionsBeforePriorityUpdate[0].sourceId, bankPromotion.source.id);
+
+    await registry.update(developerPromotion.source.id, { priority: 1_000 });
+    const sharedPromotionsAfterPriorityUpdate = (await retrieval.retrieve({
+      ...sharedPromotionInput,
+      now: new Date('2026-08-25T18:04:00.000Z'),
+    })).filter(({ sourceId: evidenceSourceId }) => (
+      evidenceSourceId === developerPromotion.source.id || evidenceSourceId === bankPromotion.source.id
+    ));
+    assert.equal(sharedPromotionsAfterPriorityUpdate.length, 2);
+    assert.equal(sharedPromotionsAfterPriorityUpdate[0].sourceId, developerPromotion.source.id);
+    assert.equal(sharedPromotionsAfterPriorityUpdate[0].sourcePriority, 1_000);
+
+    const activeFactIdsBeforeFailedExtraction = (await prisma.assistantSourceFact.findMany({
+      where: { sourceId, isActive: true },
+      orderBy: { id: 'asc' },
+      select: { id: true },
+    })).map(({ id }) => id);
+    currentContentType = 'application/json';
+    currentHtml = Buffer.from('{"broken":');
+    await assert.rejects(
+      ingestion.ingest(sourceId),
+      /SOURCE_EXTRACTION_EMPTY/u,
+    );
+    const failedRevision = await prisma.assistantSourceRevision.findFirstOrThrow({
+      where: { sourceId },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    });
+    assert.equal(failedRevision.processingStatus, 'FAILED');
+    assert.equal(failedRevision.processingErrorCode, 'SOURCE_EXTRACTION_EMPTY');
+    assert.equal(await prisma.assistantSourceFact.count({ where: { sourceRevisionId: failedRevision.id } }), 0);
+    assert.equal(await prisma.assistantSourceChunk.count({ where: { sourceRevisionId: failedRevision.id } }), 0);
+    assert.deepEqual((await prisma.assistantSourceFact.findMany({
+      where: { sourceId, isActive: true },
+      orderBy: { id: 'asc' },
+      select: { id: true },
+    })).map(({ id }) => id), activeFactIdsBeforeFailedExtraction);
+    currentContentType = 'text/html; charset=utf-8';
+    currentHtml = originalHtml;
 
     await assert.rejects(
       prisma.assistantSourceRevision.update({
@@ -346,9 +490,33 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
         leaseExpiresAt: new Date('2026-08-25T06:00:00.000Z'),
       },
     });
+    const stolenJob = await registry.queueManualRefresh(sourceId, actorId, randomUUID());
+    await prisma.assistantSourceJob.update({
+      where: { id: stolenJob.job.id },
+      data: { availableAt: new Date('2026-08-25T06:00:00.000Z') },
+    });
+    const replacementHealthAt = new Date('2026-08-25T07:00:30.000Z');
     let recoveredRuns = 0;
     const worker = new AssistantSourceWorker(prisma, {
-      async ingest() {
+      async ingest(_workerSourceId, fence) {
+        if (fence.jobId === stolenJob.job.id) {
+          await prisma.assistantSourceJob.update({
+            where: { id: fence.jobId },
+            data: {
+              leaseOwner: 'replacement-worker',
+              leaseExpiresAt: new Date('2099-08-25T08:00:00.000Z'),
+            },
+          });
+          await prisma.assistantKnowledgeSource.update({
+            where: { id: sourceId },
+            data: {
+              lastSuccessAt: replacementHealthAt,
+              lastErrorCode: null,
+              lastErrorMessage: null,
+            },
+          });
+          throw { code: 'SOURCE_OLD_WORKER_FAILED', retryable: true };
+        }
         recoveredRuns += 1;
         return { outcome: 'UNCHANGED' };
       },
@@ -356,10 +524,26 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
     await worker.runOnce(new Date('2026-08-25T07:00:00.000Z'));
     const recovered = await prisma.assistantSourceJob.findUniqueOrThrow({ where: { id: queued.job.id } });
     const exhausted = await prisma.assistantSourceJob.findUniqueOrThrow({ where: { id: exhaustedJob.job.id } });
+    const stolen = await prisma.assistantSourceJob.findUniqueOrThrow({ where: { id: stolenJob.job.id } });
+    const sourceHealth = await prisma.assistantKnowledgeSource.findUniqueOrThrow({ where: { id: sourceId } });
     assert.equal(recovered.status, 'COMPLETED');
     assert.equal(exhausted.status, 'FAILED');
     assert.equal(exhausted.errorCode, 'SOURCE_JOB_RETRY_EXHAUSTED');
+    assert.equal(stolen.status, 'RUNNING');
+    assert.equal(stolen.leaseOwner, 'replacement-worker');
+    assert.equal(sourceHealth.lastSuccessAt.toISOString(), replacementHealthAt.toISOString());
+    assert.equal(sourceHealth.lastErrorCode, null);
     assert.equal(recoveredRuns, 1);
+    await prisma.assistantSourceJob.update({
+      where: { id: stolenJob.job.id },
+      data: {
+        status: AssistantSourceJobStatus.FAILED,
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        errorCode: 'SOURCE_JOB_LEASE_LOST',
+        completedAt: new Date(),
+      },
+    });
   });
 
   test('Assistant T03 source HTTP API enforces 401, independent 403 and permitted health/refresh access', async () => {

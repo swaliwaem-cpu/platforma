@@ -132,17 +132,27 @@ test('Assistant T03 connector rejects redirect loops, unsupported content and ov
 });
 
 test('Assistant T03 connector blocks private DNS results unless the explicit test-only policy is enabled', async () => {
-  const connector = new OfficialHtmlSourceConnector({
-    allowHttp: true,
-    resolveHost: async () => [{ address: '127.0.0.1', family: 4 }],
-  });
-
-  await assert.rejects(
-    connector.fetch(createSource('/official')),
-    (error) => error instanceof SourceConnectorError
-      && error.code === 'SOURCE_DNS_PRIVATE_ADDRESS'
-      && error.retryable === false,
-  );
+  for (const [address, family] of [
+    ['127.0.0.1', 4],
+    ['0:0:0:0:0:0:0:1', 6],
+    ['fec0::1', 6],
+    ['64:ff9b::127.0.0.1', 6],
+    ['2001::7f00:1', 6],
+    ['2002:7f00:1::', 6],
+    ['3fff::1', 6],
+  ]) {
+    const connector = new OfficialHtmlSourceConnector({
+      allowHttp: true,
+      resolveHost: async () => [{ address, family }],
+    });
+    await assert.rejects(
+      connector.fetch(createSource('/official')),
+      (error) => error instanceof SourceConnectorError
+        && error.code === 'SOURCE_DNS_PRIVATE_ADDRESS'
+        && error.retryable === false,
+      address,
+    );
+  }
 });
 
 test('Assistant T03 extractor creates source-revision facts, searchable chunks and a direct official lot link', async () => {

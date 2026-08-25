@@ -179,7 +179,12 @@ export class AssistantSourceWorker implements OnModuleInit, OnModuleDestroy {
         leaseOwner: this.instanceId,
       }));
       await this.prisma.assistantSourceJob.updateMany({
-        where: { id: jobId, status: AssistantSourceJobStatus.RUNNING, leaseOwner: this.instanceId },
+        where: {
+          id: jobId,
+          status: AssistantSourceJobStatus.RUNNING,
+          leaseOwner: this.instanceId,
+          leaseExpiresAt: { gt: new Date() },
+        },
         data: {
           status: AssistantSourceJobStatus.COMPLETED,
           leaseOwner: null,
@@ -192,9 +197,14 @@ export class AssistantSourceWorker implements OnModuleInit, OnModuleDestroy {
       const failure = normalizeWorkerError(error);
       const retry = failure.retryable && job.attempt < job.maxAttempts;
       const completedAt = retry ? null : new Date();
-      await this.prisma.$transaction([
-        this.prisma.assistantSourceJob.updateMany({
-          where: { id: jobId, status: AssistantSourceJobStatus.RUNNING, leaseOwner: this.instanceId },
+      await this.prisma.$transaction(async (transaction) => {
+        const owned = await transaction.assistantSourceJob.updateMany({
+          where: {
+            id: jobId,
+            status: AssistantSourceJobStatus.RUNNING,
+            leaseOwner: this.instanceId,
+            leaseExpiresAt: { gt: new Date() },
+          },
           data: {
             status: retry ? AssistantSourceJobStatus.PENDING : AssistantSourceJobStatus.FAILED,
             availableAt: retry
@@ -205,16 +215,17 @@ export class AssistantSourceWorker implements OnModuleInit, OnModuleDestroy {
             errorCode: failure.code,
             completedAt,
           },
-        }),
-        this.prisma.assistantKnowledgeSource.update({
+        });
+        if (owned.count !== 1) return;
+        await transaction.assistantKnowledgeSource.update({
           where: { id: job.sourceId },
           data: {
             lastAttemptAt: new Date(),
             lastErrorCode: failure.code,
             lastErrorMessage: failure.code,
           },
-        }),
-      ]);
+        });
+      });
     }
   }
 
@@ -225,7 +236,12 @@ export class AssistantSourceWorker implements OnModuleInit, OnModuleDestroy {
       renewal = renewal.then(async () => {
         if (!leaseCurrent) return;
         const renewed = await this.prisma.assistantSourceJob.updateMany({
-          where: { id: jobId, status: AssistantSourceJobStatus.RUNNING, leaseOwner: this.instanceId },
+          where: {
+            id: jobId,
+            status: AssistantSourceJobStatus.RUNNING,
+            leaseOwner: this.instanceId,
+            leaseExpiresAt: { gt: new Date() },
+          },
           data: { leaseExpiresAt: new Date(Date.now() + leaseMilliseconds) },
         });
         leaseCurrent = renewed.count === 1;

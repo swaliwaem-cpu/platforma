@@ -331,16 +331,29 @@ function isPublicIpv4(address: string) {
 }
 
 function isPublicIpv6(address: string) {
-  const normalized = address.toLocaleLowerCase('en-US').split('%', 1)[0]!;
-  if (normalized === '::' || normalized === '::1') return false;
-  if (normalized.startsWith('fc') || normalized.startsWith('fd')) return false;
-  if (/^fe[89ab]/u.test(normalized)) return false;
-  if (normalized.startsWith('ff')) return false;
-  if (normalized.startsWith('2001:db8:')) return false;
-  if (normalized.startsWith('::ffff:')) {
-    const embedded = normalized.slice('::ffff:'.length);
-    return isIP(embedded) === 4 && isPublicIpv4(embedded);
+  const withoutZone = address.toLocaleLowerCase('en-US').split('%', 1)[0]!;
+  let normalized: string;
+  try {
+    const hostname = new URL(`http://[${withoutZone}]/`).hostname;
+    normalized = hostname.slice(1, -1);
+  } catch {
+    return false;
   }
+  const [firstValue, secondValue = '0'] = normalized.split(':');
+  const first = Number.parseInt(firstValue || '0', 16);
+  const second = Number.parseInt(secondValue || '0', 16);
+  if (!Number.isInteger(first) || !Number.isInteger(second)) return false;
+
+  // Fail closed to globally routable unicast and reject special transition/documentation blocks.
+  if (first < 0x2000 || first > 0x3fff) return false;
+  if (first === 0x2002) return false;
+  if (first === 0x2001 && (
+    second === 0x0000
+    || second === 0x0002
+    || second === 0x0db8
+    || (second >= 0x0010 && second <= 0x002f)
+  )) return false;
+  if (first === 0x3fff && second <= 0x0fff) return false;
   return true;
 }
 

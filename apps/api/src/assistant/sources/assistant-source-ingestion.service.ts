@@ -78,7 +78,7 @@ export class AssistantSourceIngestionService {
     });
     const persisted = await this.persistFetchedRevision(source, fetched, fetchedAt, fence);
     if (persisted.processingStatus === AssistantSourceRevisionStatus.INDEXED) {
-      await this.markSourceSuccess(source.id, source.scheduleMinutes, fetchedAt, false);
+      await this.markSourceSuccess(source.id, source.scheduleMinutes, fetchedAt, false, fence);
       return { outcome: 'UNCHANGED' as const, revisionId: persisted.id, embeddedChunks: 0 };
     }
 
@@ -147,13 +147,16 @@ export class AssistantSourceIngestionService {
       await assertIngestionFence(transaction, fence);
       const previous = await transaction.assistantSourceRevision.findFirst({
         where: { sourceId: source.id },
-        orderBy: [{ fetchedAt: 'desc' }, { id: 'desc' }],
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         select: { id: true, checksum: true, processingStatus: true },
       });
-      await transaction.assistantKnowledgeSource.update({
-        where: { id: source.id },
-        data: { lastAttemptAt: fetchedAt },
-      });
+      await transaction.$executeRaw(Prisma.sql`
+        UPDATE "assistant_knowledge_sources"
+        SET
+          "last_attempt_at" = GREATEST(COALESCE("last_attempt_at", ${fetchedAt}), ${fetchedAt}),
+          "updated_at" = CURRENT_TIMESTAMP
+        WHERE "id" = ${source.id}::uuid
+      `);
       if (previous?.checksum === fetched.checksum) return previous;
       return transaction.assistantSourceRevision.create({
         data: {
@@ -246,14 +249,30 @@ export class AssistantSourceIngestionService {
       });
       if (revision.processingStatus === AssistantSourceRevisionStatus.INDEXED) return;
 
-      await transaction.assistantSourceFact.updateMany({
-        where: { sourceId: input.sourceId, isActive: true },
-        data: { isActive: false },
+      const sourceHealth = await transaction.assistantKnowledgeSource.findUniqueOrThrow({
+        where: { id: input.sourceId },
+        select: {
+          lastAttemptAt: true,
+          lastSuccessAt: true,
+          lastIndexedAt: true,
+          nextRefreshAt: true,
+          lastErrorCode: true,
+          lastErrorMessage: true,
+        },
       });
-      await transaction.assistantSourceChunk.updateMany({
-        where: { sourceId: input.sourceId, isActive: true },
-        data: { isActive: false },
-      });
+      const shouldActivate = sourceHealth.lastIndexedAt === null
+        || input.fetchedAt >= sourceHealth.lastIndexedAt;
+
+      if (shouldActivate) {
+        await transaction.assistantSourceFact.updateMany({
+          where: { sourceId: input.sourceId, isActive: true },
+          data: { isActive: false },
+        });
+        await transaction.assistantSourceChunk.updateMany({
+          where: { sourceId: input.sourceId, isActive: true },
+          data: { isActive: false },
+        });
+      }
       if (input.facts.length > 0) {
         await transaction.assistantSourceFact.createMany({
           data: input.facts.map((fact) => ({
@@ -267,6 +286,7 @@ export class AssistantSourceIngestionService {
             canonicalUrl: fact.canonicalUrl,
             observedAt: fact.observedAt,
             validFrom: fact.validFrom,
+            isActive: shouldActivate,
           })),
         });
       }
@@ -290,7 +310,7 @@ export class AssistantSourceIngestionService {
             ${chunk.embeddingModel},
             ${chunk.embeddingDimensions},
             ${embeddedAt},
-            TRUE,
+            ${shouldActivate},
             CURRENT_TIMESTAMP
           )
         `);
@@ -305,29 +325,76 @@ export class AssistantSourceIngestionService {
       await transaction.assistantKnowledgeSource.update({
         where: { id: input.sourceId },
         data: {
-          lastSuccessAt: input.fetchedAt,
-          lastIndexedAt: input.fetchedAt,
-          lastErrorCode: null,
-          lastErrorMessage: null,
-          nextRefreshAt: new Date(input.fetchedAt.getTime() + input.scheduleMinutes * 60_000),
+          lastAttemptAt: latestDate(sourceHealth.lastAttemptAt, input.fetchedAt),
+          lastSuccessAt: latestDate(sourceHealth.lastSuccessAt, input.fetchedAt),
+          ...(shouldActivate ? { lastIndexedAt: input.fetchedAt } : {}),
+          ...(sourceHealth.lastAttemptAt === null || input.fetchedAt >= sourceHealth.lastAttemptAt
+            ? { lastErrorCode: null, lastErrorMessage: null }
+            : {
+                lastErrorCode: sourceHealth.lastErrorCode,
+                lastErrorMessage: sourceHealth.lastErrorMessage,
+              }),
+          nextRefreshAt: latestDate(
+            sourceHealth.nextRefreshAt,
+            new Date(input.fetchedAt.getTime() + input.scheduleMinutes * 60_000),
+          ),
         },
       });
     });
   }
 
-  private markSourceSuccess(sourceId: string, scheduleMinutes: number, fetchedAt: Date, indexed: boolean) {
-    return this.prisma.assistantKnowledgeSource.update({
-      where: { id: sourceId },
-      data: {
-        lastSuccessAt: fetchedAt,
-        ...(indexed ? { lastIndexedAt: fetchedAt } : {}),
-        lastErrorCode: null,
-        lastErrorMessage: null,
-        nextRefreshAt: new Date(fetchedAt.getTime() + scheduleMinutes * 60_000),
-      },
-      select: { id: true },
+  private markSourceSuccess(
+    sourceId: string,
+    scheduleMinutes: number,
+    fetchedAt: Date,
+    indexed: boolean,
+    fence?: AssistantSourceIngestionFence,
+  ) {
+    return this.prisma.$transaction(async (transaction) => {
+      await transaction.$queryRaw(Prisma.sql`
+        SELECT "id"
+        FROM "assistant_knowledge_sources"
+        WHERE "id" = ${sourceId}::uuid
+        FOR UPDATE
+      `);
+      await assertIngestionFence(transaction, fence);
+      const sourceHealth = await transaction.assistantKnowledgeSource.findUniqueOrThrow({
+        where: { id: sourceId },
+        select: {
+          lastAttemptAt: true,
+          lastSuccessAt: true,
+          lastIndexedAt: true,
+          nextRefreshAt: true,
+          lastErrorCode: true,
+          lastErrorMessage: true,
+        },
+      });
+      const isLatestAttempt = sourceHealth.lastAttemptAt === null || fetchedAt >= sourceHealth.lastAttemptAt;
+      return transaction.assistantKnowledgeSource.update({
+        where: { id: sourceId },
+        data: {
+          lastAttemptAt: latestDate(sourceHealth.lastAttemptAt, fetchedAt),
+          lastSuccessAt: latestDate(sourceHealth.lastSuccessAt, fetchedAt),
+          ...(indexed ? { lastIndexedAt: latestDate(sourceHealth.lastIndexedAt, fetchedAt) } : {}),
+          ...(isLatestAttempt
+            ? { lastErrorCode: null, lastErrorMessage: null }
+            : {
+                lastErrorCode: sourceHealth.lastErrorCode,
+                lastErrorMessage: sourceHealth.lastErrorMessage,
+              }),
+          nextRefreshAt: latestDate(
+            sourceHealth.nextRefreshAt,
+            new Date(fetchedAt.getTime() + scheduleMinutes * 60_000),
+          ),
+        },
+        select: { id: true },
+      });
     });
   }
+}
+
+function latestDate(current: Date | null, candidate: Date) {
+  return current && current > candidate ? current : candidate;
 }
 
 async function assertIngestionFence(

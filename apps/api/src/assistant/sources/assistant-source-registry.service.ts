@@ -14,6 +14,7 @@ import {
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { AssistantSourceConnectorRegistry } from './assistant-source-connector.registry';
+import { normalizeAssistantKnowledgeRegistryKey } from './assistant-knowledge-policy';
 
 const maximumPilotProjects = 20;
 const maximumPilotDevelopers = 7;
@@ -332,8 +333,10 @@ export class AssistantSourceRegistryService {
 
   private parseOptionalKey(value: unknown, field: string) {
     if (value === undefined || value === null || value === '') return null;
-    const normalized = this.parseBoundedString(value, field, 120).toLocaleLowerCase('ru-RU');
-    if (!/^[\p{L}\p{N}](?:[\p{L}\p{N}._-]{0,118}[\p{L}\p{N}])?$/u.test(normalized)) {
+    const normalized = normalizeAssistantKnowledgeRegistryKey(
+      this.parseBoundedString(value, field, 120),
+    );
+    if (!normalized) {
       throw new BadRequestException(`ASSISTANT_SOURCE_${field.toLocaleUpperCase('en-US')}_INVALID`);
     }
     return normalized;
