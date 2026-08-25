@@ -100,7 +100,7 @@ try {
   await desktop.getByRole('heading', { name: 'Лучшие по этим критериям' }).waitFor();
   assert.equal(await desktop.getByRole('link', { name: 'ЖК Тест' }).getAttribute('href'), '/objects/zhk-test/lots/77777777-7777-4777-8777-777777777777');
   await desktop.getByText('25 000 000 ₽').waitFor();
-  await desktop.getByText('обновлено 10 часов назад').waitFor();
+  await desktop.getByText('обновлено 10 часов назад').first().waitFor();
   assert.equal(await desktop.getByRole('link', { name: 'Презентация проекта' }).getAttribute('href'), '/media/files/88888888-8888-4888-8888-888888888888/content?download=true');
   assert.deepEqual(await desktop.evaluate(() => {
     window.__assistantProgressObserver?.disconnect();
@@ -125,6 +125,16 @@ try {
 
   await desktop.getByRole('button', { name: 'История разговоров' }).click();
   await desktop.getByRole('button', { name: 'Найди квартиру рядом' }).waitFor();
+  await desktop.getByRole('button', { name: 'Что известно о Северном саде' }).click();
+  await desktop.getByRole('heading', { name: 'Подтверждённые факты' }).waitFor();
+  await desktop.getByText('Кирпичные фасады и закрытый двор.').waitFor();
+  await desktop.getByRole('heading', { name: 'На официальном сайте застройщика' }).waitFor();
+  const officialLotLink = desktop.getByRole('link', { name: '2-комнатная квартира 67 м²' });
+  assert.equal(await officialLotLink.getAttribute('href'), 'https://developer.example/apartments/lot-42');
+  assert.equal(await officialLotLink.getAttribute('target'), '_blank');
+  assert.equal(await officialLotLink.getAttribute('rel'), 'noopener noreferrer');
+  await desktop.getByText('23 900 000 ₽').waitFor();
+  await desktop.getByText('обновлено 10 часов назад').first().waitFor();
   await desktop.getByRole('button', { name: 'История разговоров' }).click();
 
   await desktop.evaluate(() => {
@@ -133,7 +143,7 @@ try {
   });
   await desktop.getByText('Недостаточно прав').waitFor();
   await dialog.waitFor();
-  await desktop.getByText('Тестовый помощник получил запрос: «Найди квартиру рядом».').waitFor();
+  await desktop.getByText('Нашёл подтверждённые данные в официальных источниках.').waitFor();
   assert.equal(expectedRetryNetworkErrors, 2);
   assert.deepEqual(consoleIssues, []);
 
@@ -228,7 +238,7 @@ async function installRoutes(page, state, permissions) {
 
     if (path === '/assistant/conversations' && request.method() === 'GET') {
       await json(route, {
-        items: state.conversationCreated ? [conversationSummary()] : [],
+        items: state.conversationCreated ? [knowledgeConversationSummary(), conversationSummary()] : [],
         nextCursor: null,
       });
       return;
@@ -294,6 +304,16 @@ async function installRoutes(page, state, permissions) {
       return;
     }
 
+    if (path === '/assistant/conversations/99999999-9999-4999-8999-999999999999') {
+      await json(route, {
+        conversation: {
+          ...knowledgeConversationSummary(),
+          messages: [knowledgeAssistantMessage()],
+        },
+      });
+      return;
+    }
+
     await json(route, { message: `Unexpected ${request.method()} ${path}` }, 404);
   });
 }
@@ -310,6 +330,46 @@ function conversationSummary() {
 
 function conversationDetail(messages) {
   return { ...conversationSummary(), messages };
+}
+
+function knowledgeConversationSummary() {
+  return {
+    id: '99999999-9999-4999-8999-999999999999',
+    title: 'Что известно о Северном саде',
+    createdAt: '2026-08-24T13:00:00.000Z',
+    updatedAt: '2026-08-24T13:00:01.000Z',
+    messagesCount: 1,
+  };
+}
+
+function knowledgeAssistantMessage() {
+  return {
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    role: 'ASSISTANT',
+    content: 'Нашёл подтверждённые данные в официальных источниках.',
+    context: { kind: 'OBJECT', key: 'severny-sad', label: 'ЖК Северный сад' },
+    answer: {
+      kind: 'KNOWLEDGE_RESULTS',
+      facts: [{
+        id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        label: 'Архитектура',
+        value: 'Кирпичные фасады и закрытый двор.',
+        freshnessLabel: 'обновлено 10 часов назад',
+        isStale: false,
+      }],
+      externalLots: [{
+        id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+        title: '2-комнатная квартира 67 м²',
+        subtitle: '2-комнатная · 67 м² · 8 этаж',
+        priceRub: 23_900_000,
+        availabilityLabel: 'В продаже на официальном сайте',
+        freshnessLabel: 'обновлено 10 часов назад',
+        isStale: false,
+        href: 'https://developer.example/apartments/lot-42',
+      }],
+    },
+    createdAt: '2026-08-24T13:00:01.000Z',
+  };
 }
 
 function assistantMessage() {

@@ -3,15 +3,16 @@ require('reflect-metadata');
 const assert = require('node:assert/strict');
 const { createHash, randomUUID } = require('node:crypto');
 const { readFile } = require('node:fs/promises');
+const { createServer } = require('node:http');
 const { resolve } = require('node:path');
 const { test } = require('node:test');
 const { gunzipSync } = require('node:zlib');
 
 const databaseUrl = process.env.ASSISTANT_T03_TEST_DATABASE_URL;
 
-if (!databaseUrl) {
-  test('Assistant T03 PostgreSQL integration (set ASSISTANT_T03_TEST_DATABASE_URL)', { skip: true }, () => {});
-} else {
+if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
+
+{
   process.env.NODE_ENV = 'test';
   process.env.ASSISTANT_SOURCE_ALLOW_PRIVATE_TEST_URLS = 'true';
   process.env.ASSISTANT_EMBEDDING_MODE = 'fake';
@@ -53,39 +54,45 @@ if (!databaseUrl) {
     OfficialSourceExtractor,
   } = require('../dist/assistant/sources/official-source.extractor.js');
   const {
+    OfficialHtmlSourceConnector,
+  } = require('../dist/assistant/sources/official-html-source.connector.js');
+  const {
     AssistantSourcesModule,
   } = require('../dist/assistant/sources/assistant-sources.module.js');
 
   const prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
 
-  test('Assistant T03 runs register → revision → extraction → hybrid retrieval → grounded answer with checksum no-op', async () => {
+  test('Assistant T03 runs real HTTP connector → revision → extraction → hybrid retrieval → grounded answer', async (context) => {
     await prisma.assistantKnowledgeSource.updateMany({
       data: { state: 'PAUSED', nextRefreshAt: null },
     });
     const originalHtml = await readFile(resolve(__dirname, 'fixtures/assistant/official-development.html'));
     let currentHtml = originalHtml;
     const fetchCalls = [];
-    const connector = {
-      async fetch(source) {
-        fetchCalls.push(source.canonicalUrl);
-        return {
-          finalUrl: source.canonicalUrl,
-          statusCode: 200,
-          contentType: 'text/html',
-          checksum: createHash('sha256').update(currentHtml).digest('hex'),
-          payload: currentHtml,
-          etag: `"${createHash('sha256').update(currentHtml).digest('hex').slice(0, 12)}"`,
-          lastModified: 'Tue, 25 Aug 2026 08:00:00 GMT',
-          redirects: [],
-        };
-      },
-    };
+    const server = createServer((request, response) => {
+      fetchCalls.push(request.url);
+      response.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        etag: `"${createHash('sha256').update(currentHtml).digest('hex').slice(0, 12)}"`,
+        'last-modified': 'Tue, 25 Aug 2026 08:00:00 GMT',
+      });
+      response.end(currentHtml);
+    });
+    await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+    context.after(() => new Promise((resolveClose) => server.close(resolveClose)));
+    const address = server.address();
+    const connector = new OfficialHtmlSourceConnector({
+      allowHttp: true,
+      allowPrivateNetwork: true,
+      resolveHost: async () => [{ address: '127.0.0.1', family: 4 }],
+    });
     const connectorRegistry = new AssistantSourceConnectorRegistry(connector);
     const baseEmbeddings = new AssistantEmbeddingGateway({ ASSISTANT_EMBEDDING_MODE: 'fake' });
     const embeddingCalls = [];
     const embeddings = {
       isEnabled: () => true,
       getModel: () => baseEmbeddings.getModel(),
+      getDimensions: () => baseEmbeddings.getDimensions(),
       async embed(values) {
         embeddingCalls.push([...values]);
         return baseEmbeddings.embed(values);
@@ -99,7 +106,7 @@ if (!databaseUrl) {
       embeddings,
     );
     const actorId = await createActor();
-    const sourceCanonicalUrl = `https://developer.example/projects/severny-sad/${randomUUID()}`;
+    const sourceCanonicalUrl = `http://developer.example:${address.port}/projects/severny-sad/${randomUUID()}`;
     const registered = await registry.register(actorId, {
       canonicalUrl: sourceCanonicalUrl,
       type: 'DEVELOPMENT_PAGE',
@@ -147,7 +154,12 @@ if (!databaseUrl) {
       where: { sourceRevisionId: first.revisionId, isActive: true },
     }), first.facts);
     assert.equal(await prisma.assistantSourceChunk.count({
-      where: { sourceRevisionId: first.revisionId, isActive: true, embeddingModel: 'assistant-hash-embedding-v1' },
+      where: {
+        sourceRevisionId: first.revisionId,
+        isActive: true,
+        embeddingModel: 'assistant-hash-embedding-v1',
+        embeddingDimensions: 64,
+      },
     }), first.chunks);
 
     const unchanged = await ingestion.ingest(sourceId);
@@ -162,6 +174,7 @@ if (!databaseUrl) {
       query: 'Какая семейная ипотека в ЖК Северный сад?',
       intent,
       includeExternalLots: false,
+      context: { kind: 'OBJECT', key: 'severny-sad', label: 'ЖК Северный сад' },
       now: new Date('2026-08-25T18:00:00.000Z'),
     });
     const promotion = evidence.find(({ kind }) => kind === 'PROMOTION');
@@ -177,12 +190,35 @@ if (!databaseUrl) {
         hardFilters: { ...emptyFilters(), budgetMaxRub: 24_000_000, rooms: [2] },
       }),
       includeExternalLots: true,
+      context: { kind: 'OBJECT', key: 'severny-sad', label: 'ЖК Северный сад' },
       now: new Date('2026-08-25T18:00:00.000Z'),
     });
     const answer = buildAssistantKnowledgeAnswer(lotEvidence, new Date('2026-08-25T18:00:00.000Z'));
     assert.equal(answer.answer.externalLots.length, 1);
     assert.equal(answer.answer.externalLots[0].href, 'https://developer.example/apartments/lot-42');
     assert.equal(answer.evidence[0].sourceRevisionId, first.revisionId);
+
+    const rejectedLotEvidence = await retrieval.retrieve({
+      query: 'Большая квартира на высоком этаже в Северном саду',
+      intent: createIntent({
+        hardFilters: { ...emptyFilters(), areaMin: 80, floorMin: 9 },
+      }),
+      includeExternalLots: true,
+      context: { kind: 'OBJECT', key: 'severny-sad', label: 'ЖК Северный сад' },
+      now: new Date('2026-08-25T18:00:00.000Z'),
+    });
+    assert.equal(rejectedLotEvidence.some(({ kind }) => kind === 'EXTERNAL_LOT'), false);
+
+    const matchingLotEvidence = await retrieval.retrieve({
+      query: 'Квартира 67 м² на 8 этаже в Северном саду',
+      intent: createIntent({
+        hardFilters: { ...emptyFilters(), areaMin: 65, areaMax: 70, floorMin: 8, floorMax: 8 },
+      }),
+      includeExternalLots: true,
+      context: { kind: 'OBJECT', key: 'severny-sad', label: 'ЖК Северный сад' },
+      now: new Date('2026-08-25T18:00:00.000Z'),
+    });
+    assert.equal(matchingLotEvidence.filter(({ kind }) => kind === 'EXTERNAL_LOT').length, 1);
 
     currentHtml = Buffer.from(originalHtml.toString('utf8').replace(
       'Ставка 3,5% при покупке до 30 сентября 2026 года.',
@@ -205,10 +241,49 @@ if (!databaseUrl) {
       query: 'Какая семейная ипотека в ЖК Северный сад?',
       intent,
       includeExternalLots: false,
+      context: { kind: 'OBJECT', key: 'severny-sad', label: 'ЖК Северный сад' },
       now: new Date('2026-08-25T18:01:00.000Z'),
     });
     assert.equal(refreshedEvidence.some(({ sourceRevisionId }) => sourceRevisionId === second.revisionId), true);
     assert.equal(refreshedEvidence.some(({ sourceRevisionId }) => sourceRevisionId === first.revisionId), false);
+
+    currentHtml = originalHtml;
+    const third = await ingestion.ingest(sourceId);
+    assert.equal(third.outcome, 'INDEXED');
+    assert.notEqual(third.revisionId, first.revisionId);
+    assert.notEqual(third.revisionId, second.revisionId);
+    const thirdRevision = await prisma.assistantSourceRevision.findUniqueOrThrow({ where: { id: third.revisionId } });
+    assert.equal(thirdRevision.previousRevisionId, second.revisionId);
+    assert.equal(thirdRevision.checksum, firstRevision.checksum);
+    assert.equal(await prisma.assistantSourceRevision.count({ where: { sourceId } }), 3);
+    assert.equal(await prisma.assistantSourceFact.count({
+      where: { sourceRevisionId: second.revisionId, isActive: true },
+    }), 0);
+
+    const otherSource = await registry.register(actorId, {
+      canonicalUrl: `http://developer.example:${address.port}/projects/yuzhny-sad/${randomUUID()}`,
+      type: 'DEVELOPMENT_PAGE',
+      state: 'ACTIVE',
+      priority: 1_000,
+      scheduleMinutes: 1_440,
+      connectorKey: 'OFFICIAL_HTML',
+      connectorConfig: { allowedHosts: ['developer.example'] },
+      projectKey: 'yuzhny-sad',
+      developerKey: 'developer-other',
+    });
+    currentHtml = Buffer.from(originalHtml.toString('utf8')
+      .replaceAll('Северный сад', 'Южный сад')
+      .replace('Ставка 3,5%', 'Ставка 0,1%'));
+    await ingestion.ingest(otherSource.source.id);
+    const scopedEvidence = await retrieval.retrieve({
+      query: 'Какая архитектура и ипотека у проекта?',
+      intent,
+      includeExternalLots: false,
+      context: { kind: 'OBJECT', key: 'severny-sad', label: 'ЖК Северный сад' },
+      now: new Date('2026-08-25T18:02:00.000Z'),
+    });
+    assert.equal(scopedEvidence.length > 0, true);
+    assert.equal(scopedEvidence.every(({ projectKey }) => projectKey === 'severny-sad'), true);
 
     await assert.rejects(
       prisma.assistantSourceRevision.update({
@@ -221,6 +296,45 @@ if (!databaseUrl) {
       prisma.assistantSourceRevision.delete({ where: { id: first.revisionId } }),
       /retained indefinitely/iu,
     );
+
+    const fencedJob = await registry.queueManualRefresh(sourceId, actorId, randomUUID());
+    await prisma.assistantSourceJob.update({
+      where: { id: fencedJob.job.id },
+      data: {
+        status: AssistantSourceJobStatus.RUNNING,
+        attempt: 1,
+        leaseOwner: 'expired-worker',
+        leaseExpiresAt: new Date('2026-08-25T06:00:00.000Z'),
+      },
+    });
+    const revisionCountBeforeLostLease = await prisma.assistantSourceRevision.count({ where: { sourceId } });
+    await assert.rejects(
+      ingestion.ingest(sourceId, { jobId: fencedJob.job.id, leaseOwner: 'expired-worker' }),
+      /SOURCE_JOB_LEASE_LOST/u,
+    );
+    assert.equal(await prisma.assistantSourceRevision.count({ where: { sourceId } }), revisionCountBeforeLostLease);
+    await prisma.assistantSourceJob.update({
+      where: { id: fencedJob.job.id },
+      data: {
+        status: AssistantSourceJobStatus.FAILED,
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        errorCode: 'SOURCE_JOB_LEASE_LOST',
+        completedAt: new Date(),
+      },
+    });
+
+    const exhaustedJob = await registry.queueManualRefresh(sourceId, actorId, randomUUID());
+    await prisma.assistantSourceJob.update({
+      where: { id: exhaustedJob.job.id },
+      data: {
+        status: AssistantSourceJobStatus.RUNNING,
+        attempt: 3,
+        maxAttempts: 3,
+        leaseOwner: 'exhausted-worker',
+        leaseExpiresAt: new Date('2026-08-25T06:00:00.000Z'),
+      },
+    });
 
     const queued = await registry.queueManualRefresh(sourceId, actorId, randomUUID());
     await prisma.assistantSourceJob.update({
@@ -241,7 +355,10 @@ if (!databaseUrl) {
     });
     await worker.runOnce(new Date('2026-08-25T07:00:00.000Z'));
     const recovered = await prisma.assistantSourceJob.findUniqueOrThrow({ where: { id: queued.job.id } });
+    const exhausted = await prisma.assistantSourceJob.findUniqueOrThrow({ where: { id: exhaustedJob.job.id } });
     assert.equal(recovered.status, 'COMPLETED');
+    assert.equal(exhausted.status, 'FAILED');
+    assert.equal(exhausted.errorCode, 'SOURCE_JOB_RETRY_EXHAUSTED');
     assert.equal(recoveredRuns, 1);
   });
 
@@ -284,6 +401,35 @@ if (!databaseUrl) {
         },
       });
       assert.equal(refresh.status, 202);
+
+      const projectRefreshKey = randomUUID();
+      const projectRefresh = await fetch(`${origin}/assistant/sources/projects/${source.projectKey}/refresh`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${sign(permitted)}`,
+          'Idempotency-Key': projectRefreshKey,
+        },
+      });
+      assert.equal(projectRefresh.status, 202);
+      const projectRefreshBody = await projectRefresh.json();
+      assert.equal(projectRefreshBody.projectKey, source.projectKey);
+      assert.equal(projectRefreshBody.jobs.length > 0, true);
+      assert.equal(projectRefreshBody.jobs.every(({ sourceId }) => body.items.some(
+        (item) => item.id === sourceId && item.projectKey === source.projectKey,
+      )), true);
+
+      const repeatedProjectRefresh = await fetch(`${origin}/assistant/sources/projects/${source.projectKey}/refresh`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${sign(permitted)}`,
+          'Idempotency-Key': projectRefreshKey,
+        },
+      });
+      assert.equal(repeatedProjectRefresh.status, 202);
+      assert.deepEqual(
+        (await repeatedProjectRefresh.json()).jobs.map(({ id }) => id),
+        projectRefreshBody.jobs.map(({ id }) => id),
+      );
     } finally {
       await app.close();
     }

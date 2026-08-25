@@ -174,6 +174,50 @@ export class AssistantSourceRegistryService {
     return { job: serializeDates(job) };
   }
 
+  async queueProjectRefresh(
+    projectKeyValue: unknown,
+    actorId: string,
+    idempotencyKeyValue: unknown,
+  ) {
+    const projectKey = this.parseOptionalKey(projectKeyValue, 'projectKey');
+    if (!projectKey) throw new BadRequestException('ASSISTANT_SOURCE_PROJECTKEY_INVALID');
+    const idempotencyKey = this.parseUuid(idempotencyKeyValue, 'Idempotency-Key');
+    const sources = await this.prisma.assistantKnowledgeSource.findMany({
+      where: {
+        projectKey,
+        state: AssistantKnowledgeSourceState.ACTIVE,
+        type: { in: [...officialTypes] },
+      },
+      orderBy: [{ priority: 'desc' }, { id: 'asc' }],
+      select: { id: true },
+    });
+    if (sources.length === 0) throw new NotFoundException('ASSISTANT_SOURCE_PROJECT_NOT_FOUND');
+    const jobs = await this.prisma.$transaction(sources.map(({ id: sourceId }) => (
+      this.prisma.assistantSourceJob.upsert({
+        where: { sourceId_idempotencyKey: { sourceId, idempotencyKey } },
+        update: {},
+        create: {
+          sourceId,
+          trigger: AssistantSourceJobTrigger.MANUAL,
+          status: AssistantSourceJobStatus.PENDING,
+          idempotencyKey,
+          requestedByUserId: actorId,
+        },
+        select: {
+          id: true,
+          sourceId: true,
+          trigger: true,
+          status: true,
+          attempt: true,
+          maxAttempts: true,
+          availableAt: true,
+          createdAt: true,
+        },
+      })
+    )));
+    return { projectKey, jobs: jobs.map((job) => serializeDates(job)) };
+  }
+
   private parseCreateInput(body: unknown) {
     if (!isRecord(body)) throw new BadRequestException('ASSISTANT_SOURCE_INPUT_INVALID');
     const type = this.parseEnum(body.type, Object.values(AssistantKnowledgeSourceType), 'type');
@@ -244,7 +288,7 @@ export class AssistantSourceRegistryService {
     if (!isRecord(config) || JSON.stringify(config).length > 8_000) {
       throw new BadRequestException('ASSISTANT_SOURCE_CONNECTOR_CONFIG_INVALID');
     }
-    const allowedKeys = new Set(['allowedHosts', 'selectors']);
+    const allowedKeys = new Set(['allowedHosts']);
     if (Object.keys(config).some((key) => !allowedKeys.has(key))) {
       throw new BadRequestException('ASSISTANT_SOURCE_CONNECTOR_CONFIG_INVALID');
     }
@@ -257,10 +301,6 @@ export class AssistantSourceRegistryService {
           throw new BadRequestException('ASSISTANT_SOURCE_CONNECTOR_CONFIG_INVALID');
         }
       }
-    }
-    if (config.selectors !== undefined && (!isRecord(config.selectors)
-      || Object.values(config.selectors).some((selector) => typeof selector !== 'string' || selector.length > 300))) {
-      throw new BadRequestException('ASSISTANT_SOURCE_CONNECTOR_CONFIG_INVALID');
     }
     if (canonicalUrl && Array.isArray(config.allowedHosts)) {
       const canonicalHostname = new URL(canonicalUrl).hostname.toLocaleLowerCase('en-US');
@@ -342,7 +382,7 @@ export class AssistantSourceRegistryService {
     developerKey: string | null,
   ) {
     const registered = await transaction.assistantKnowledgeSource.findMany({
-      where: { type: AssistantKnowledgeSourceType.DEVELOPMENT_PAGE },
+      where: { type: { in: [...officialTypes] } },
       select: { projectKey: true, developerKey: true },
     });
     const projectKeys = new Set(registered.flatMap(({ projectKey: key }) => key ? [key] : []));

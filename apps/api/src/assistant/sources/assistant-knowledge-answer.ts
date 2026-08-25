@@ -1,7 +1,4 @@
-import {
-  AssistantKnowledgeSourceType,
-  AssistantSourceFactKind,
-} from '@prisma/client';
+import { AssistantSourceFactKind } from '@prisma/client';
 import type {
   AssistantAnswer,
   AssistantExternalLotCard,
@@ -9,6 +6,10 @@ import type {
 } from '@platforma/shared' with { 'resolution-mode': 'import' };
 
 import type { AssistantKnowledgeEvidence } from './assistant-knowledge-retrieval.service';
+import {
+  assistantKnowledgeAuthorityScore,
+  isSafeOfficialHttpsUrl,
+} from './assistant-knowledge-policy';
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
@@ -65,29 +66,13 @@ export function buildAssistantKnowledgeAnswer(
 }
 
 function compareEvidence(left: AssistantKnowledgeEvidence, right: AssistantKnowledgeEvidence) {
-  const authority = authorityScore(right) - authorityScore(left);
+  const authority = assistantKnowledgeAuthorityScore(right) - assistantKnowledgeAuthorityScore(left);
   if (authority !== 0) return authority;
   const relevance = right.retrievalScore - left.retrievalScore;
   if (relevance !== 0) return relevance;
   const freshness = Date.parse(right.observedAt) - Date.parse(left.observedAt);
   if (freshness !== 0) return freshness;
   return left.factId.localeCompare(right.factId, 'en-US');
-}
-
-function authorityScore(evidence: AssistantKnowledgeEvidence) {
-  if (evidence.kind === AssistantSourceFactKind.PROMOTION) {
-    return (evidence.sourceType === AssistantKnowledgeSourceType.BANK_PROMOTION
-      || evidence.sourceType === AssistantKnowledgeSourceType.DEVELOPER_PROMOTION ? 4_000 : 3_000)
-      + evidence.sourcePriority;
-  }
-  if (evidence.kind === AssistantSourceFactKind.STATIC_DESCRIPTION
-    || evidence.kind === AssistantSourceFactKind.ARCHITECTURE
-    || evidence.kind === AssistantSourceFactKind.INFRASTRUCTURE) {
-    return (evidence.sourceType === AssistantKnowledgeSourceType.DEVELOPMENT_PAGE ? 4_000 : 2_000)
-      + evidence.sourcePriority;
-  }
-  return (evidence.sourceType === AssistantKnowledgeSourceType.DEVELOPMENT_PAGE ? 3_000 : 1_000)
-    + evidence.sourcePriority;
 }
 
 function parseExternalLot(
@@ -99,7 +84,7 @@ function parseExternalLot(
   if (typeof value.title !== 'string' || !value.title.trim() || value.title.length > 300
     || typeof value.priceRub !== 'number' || !Number.isFinite(value.priceRub) || value.priceRub <= 0
     || value.availability !== 'AVAILABLE'
-    || typeof value.href !== 'string' || value.href !== evidence.canonicalUrl || !isOfficialHttpsUrl(value.href)) {
+    || typeof value.href !== 'string' || value.href !== evidence.canonicalUrl || !isSafeOfficialHttpsUrl(value.href)) {
     return null;
   }
   const rooms = typeof value.rooms === 'number' && Number.isInteger(value.rooms) && value.rooms >= 0
@@ -134,7 +119,7 @@ function isValidEvidence(evidence: AssistantKnowledgeEvidence) {
     && evidence.label.length <= 300
     && Number.isFinite(Date.parse(evidence.observedAt))
     && Number.isFinite(Date.parse(evidence.fetchedAt))
-    && isOfficialHttpsUrl(evidence.canonicalUrl);
+    && isSafeOfficialHttpsUrl(evidence.canonicalUrl);
 }
 
 function createFreshness(value: string, now: Date) {
@@ -149,15 +134,6 @@ function createFreshness(value: string, now: Date) {
     label: `данные могут быть устаревшими · обновлено ${days} ${pluralize(days, 'день', 'дня', 'дней')} назад`,
     isStale: true,
   };
-}
-
-function isOfficialHttpsUrl(value: string) {
-  try {
-    const url = new URL(value);
-    return url.protocol === 'https:' && !url.username && !url.password && !url.hash;
-  } catch {
-    return false;
-  }
 }
 
 function formatNumber(value: number) {

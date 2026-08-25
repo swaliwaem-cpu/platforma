@@ -29,7 +29,13 @@ export class AssistantSourceIngestionError extends Error {
 
 type PreparedChunk = ExtractedSourceChunk & {
   embeddingModel: string | null;
+  embeddingDimensions: number | null;
   embeddingVector: number[] | null;
+};
+
+export type AssistantSourceIngestionFence = {
+  jobId: string;
+  leaseOwner: string;
 };
 
 @Injectable()
@@ -41,7 +47,7 @@ export class AssistantSourceIngestionService {
     private readonly embeddings: AssistantEmbeddingGateway,
   ) {}
 
-  async ingest(sourceId: string) {
+  async ingest(sourceId: string, fence?: AssistantSourceIngestionFence) {
     const source = await this.prisma.assistantKnowledgeSource.findUnique({
       where: { id: sourceId },
       select: {
@@ -70,7 +76,7 @@ export class AssistantSourceIngestionService {
       connectorKey: source.connectorKey,
       connectorConfig: source.connectorConfigJson,
     });
-    const persisted = await this.persistFetchedRevision(source, fetched, fetchedAt);
+    const persisted = await this.persistFetchedRevision(source, fetched, fetchedAt, fence);
     if (persisted.processingStatus === AssistantSourceRevisionStatus.INDEXED) {
       await this.markSourceSuccess(source.id, source.scheduleMinutes, fetchedAt, false);
       return { outcome: 'UNCHANGED' as const, revisionId: persisted.id, embeddedChunks: 0 };
@@ -105,6 +111,7 @@ export class AssistantSourceIngestionService {
         fetchedAt,
         facts: extracted.facts,
         chunks,
+        fence,
       });
     } catch (error) {
       const failure = normalizeIngestionError(error);
@@ -128,6 +135,7 @@ export class AssistantSourceIngestionService {
     source: { id: string },
     fetched: Awaited<ReturnType<ReturnType<AssistantSourceConnectorRegistry['get']>['fetch']>>,
     fetchedAt: Date,
+    fence?: AssistantSourceIngestionFence,
   ) {
     return this.prisma.$transaction(async (transaction) => {
       await transaction.$queryRaw(Prisma.sql`
@@ -136,21 +144,17 @@ export class AssistantSourceIngestionService {
         WHERE "id" = ${source.id}::uuid
         FOR UPDATE
       `);
-      const existing = await transaction.assistantSourceRevision.findUnique({
-        where: { sourceId_checksum: { sourceId: source.id, checksum: fetched.checksum } },
-        select: { id: true, processingStatus: true },
+      await assertIngestionFence(transaction, fence);
+      const previous = await transaction.assistantSourceRevision.findFirst({
+        where: { sourceId: source.id },
+        orderBy: [{ fetchedAt: 'desc' }, { id: 'desc' }],
+        select: { id: true, checksum: true, processingStatus: true },
       });
       await transaction.assistantKnowledgeSource.update({
         where: { id: source.id },
         data: { lastAttemptAt: fetchedAt },
       });
-      if (existing) return existing;
-
-      const previous = await transaction.assistantSourceRevision.findFirst({
-        where: { sourceId: source.id },
-        orderBy: [{ fetchedAt: 'desc' }, { id: 'desc' }],
-        select: { id: true },
-      });
+      if (previous?.checksum === fetched.checksum) return previous;
       return transaction.assistantSourceRevision.create({
         data: {
           id: randomUUID(),
@@ -176,10 +180,18 @@ export class AssistantSourceIngestionService {
 
   private async prepareEmbeddings(sourceId: string, chunks: ExtractedSourceChunk[]) {
     if (!this.embeddings.isEnabled() || chunks.length === 0) {
-      return chunks.map((chunk) => ({ ...chunk, embeddingModel: null, embeddingVector: null }));
+      return chunks.map((chunk) => ({
+        ...chunk,
+        embeddingModel: null,
+        embeddingDimensions: null,
+        embeddingVector: null,
+      }));
     }
     const model = this.embeddings.getModel();
-    if (!model) throw new AssistantSourceIngestionError('ASSISTANT_EMBEDDING_MODEL_REQUIRED', false);
+    const dimensions = this.embeddings.getDimensions();
+    if (!model || !dimensions) {
+      throw new AssistantSourceIngestionError('ASSISTANT_EMBEDDING_MODEL_REQUIRED', false);
+    }
     const hashes = [...new Set(chunks.map(({ contentHash }) => contentHash))];
     const reusable = hashes.length === 0 ? [] : await this.prisma.$queryRaw<Array<{
       contentHash: string;
@@ -192,6 +204,7 @@ export class AssistantSourceIngestionService {
       WHERE "source_id" = ${sourceId}::uuid
         AND "content_hash" IN (${Prisma.join(hashes)})
         AND "embedding_model" = ${model}
+        AND "embedding_dimensions" = ${dimensions}
         AND "embedding" IS NOT NULL
       ORDER BY "content_hash", "created_at" DESC
     `);
@@ -205,6 +218,7 @@ export class AssistantSourceIngestionService {
     return chunks.map((chunk) => ({
       ...chunk,
       embeddingModel: model,
+      embeddingDimensions: dimensions,
       embeddingVector: vectorsByHash.get(chunk.contentHash) ?? null,
     }));
   }
@@ -216,6 +230,7 @@ export class AssistantSourceIngestionService {
     fetchedAt: Date;
     facts: ExtractedSourceFact[];
     chunks: PreparedChunk[];
+    fence?: AssistantSourceIngestionFence;
   }) {
     await this.prisma.$transaction(async (transaction) => {
       await transaction.$queryRaw(Prisma.sql`
@@ -224,6 +239,7 @@ export class AssistantSourceIngestionService {
         WHERE "id" = ${input.sourceId}::uuid
         FOR UPDATE
       `);
+      await assertIngestionFence(transaction, input.fence);
       const revision = await transaction.assistantSourceRevision.findUniqueOrThrow({
         where: { id: input.revisionId },
         select: { processingStatus: true },
@@ -262,7 +278,7 @@ export class AssistantSourceIngestionService {
         await transaction.$executeRaw(Prisma.sql`
           INSERT INTO "assistant_source_chunks" (
             "id", "source_id", "source_revision_id", "ordinal", "text", "content_hash",
-            "embedding", "embedding_model", "embedded_at", "is_active", "created_at"
+            "embedding", "embedding_model", "embedding_dimensions", "embedded_at", "is_active", "created_at"
           ) VALUES (
             ${randomUUID()}::uuid,
             ${input.sourceId}::uuid,
@@ -272,6 +288,7 @@ export class AssistantSourceIngestionService {
             ${chunk.contentHash},
             ${embedding},
             ${chunk.embeddingModel},
+            ${chunk.embeddingDimensions},
             ${embeddedAt},
             TRUE,
             CURRENT_TIMESTAMP
@@ -310,6 +327,25 @@ export class AssistantSourceIngestionService {
       },
       select: { id: true },
     });
+  }
+}
+
+async function assertIngestionFence(
+  transaction: Prisma.TransactionClient,
+  fence: AssistantSourceIngestionFence | undefined,
+) {
+  if (!fence) return;
+  const rows = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+    SELECT "id"::text AS "id"
+    FROM "assistant_source_jobs"
+    WHERE "id" = ${fence.jobId}::uuid
+      AND "status" = 'running'::assistant_source_job_status
+      AND "lease_owner" = ${fence.leaseOwner}
+      AND "lease_expires_at" > CURRENT_TIMESTAMP
+    FOR UPDATE
+  `);
+  if (rows.length !== 1) {
+    throw new AssistantSourceIngestionError('SOURCE_JOB_LEASE_LOST', true);
   }
 }
 

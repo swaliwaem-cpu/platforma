@@ -79,6 +79,21 @@ export class AssistantSourceWorker implements OnModuleInit, OnModuleDestroy {
       where: {
         status: AssistantSourceJobStatus.RUNNING,
         leaseExpiresAt: { lte: now },
+        attempt: { gte: this.prisma.assistantSourceJob.fields.maxAttempts },
+      },
+      data: {
+        status: AssistantSourceJobStatus.FAILED,
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        errorCode: 'SOURCE_JOB_RETRY_EXHAUSTED',
+        completedAt: now,
+      },
+    });
+    await this.prisma.assistantSourceJob.updateMany({
+      where: {
+        status: AssistantSourceJobStatus.RUNNING,
+        leaseExpiresAt: { lte: now },
+        attempt: { lt: this.prisma.assistantSourceJob.fields.maxAttempts },
       },
       data: {
         status: AssistantSourceJobStatus.PENDING,
@@ -159,7 +174,10 @@ export class AssistantSourceWorker implements OnModuleInit, OnModuleDestroy {
       select: { sourceId: true, attempt: true, maxAttempts: true },
     });
     try {
-      await this.withHeartbeat(jobId, () => this.ingestion.ingest(job.sourceId));
+      await this.withHeartbeat(jobId, () => this.ingestion.ingest(job.sourceId, {
+        jobId,
+        leaseOwner: this.instanceId,
+      }));
       await this.prisma.assistantSourceJob.updateMany({
         where: { id: jobId, status: AssistantSourceJobStatus.RUNNING, leaseOwner: this.instanceId },
         data: {

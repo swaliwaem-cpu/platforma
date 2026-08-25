@@ -11,6 +11,7 @@ const {
 const {
   AssistantEmbeddingGateway,
   AssistantEmbeddingError,
+  assistantEmbeddingBenchmarkDatasetSha256,
 } = require('../dist/assistant/sources/assistant-embedding.gateway.js');
 const {
   buildAssistantKnowledgeAnswer,
@@ -32,6 +33,7 @@ test('Assistant T03 source administration uses one independent additive permissi
   ]);
   assert.equal(Reflect.getMetadata(PERMISSIONS_KEY, AssistantSourcesController.prototype.list), undefined);
   assert.equal(Reflect.getMetadata(PERMISSIONS_KEY, AssistantSourcesController.prototype.refresh), undefined);
+  assert.equal(Reflect.getMetadata(PERMISSIONS_KEY, AssistantSourcesController.prototype.refreshProject), undefined);
 });
 
 test('Assistant T03 fake planner routes official project and promotion questions to grounded facts', async () => {
@@ -60,8 +62,32 @@ test('Assistant T03 fake embedding gateway batches changed chunks deterministica
   assert.equal(first.model, 'assistant-hash-embedding-v1');
   assert.equal(first.vectors.length, 2);
   assert.equal(first.vectors[0].length, 64);
+  assert.equal(gateway.getDimensions(), 64);
   assert.deepEqual(first.vectors[0], second.vectors[0]);
   assert.notDeepEqual(first.vectors[0], first.vectors[1]);
+});
+
+test('Assistant T03 production OpenAI embeddings require the exact reproducible benchmark winner', () => {
+  const environment = {
+    ASSISTANT_EMBEDDING_MODE: 'openai',
+    ASSISTANT_EMBEDDING_MODEL: 'text-embedding-3-small',
+    ASSISTANT_EMBEDDING_DIMENSIONS: '256',
+    OPENAI_API_KEY: 'test-only',
+    DEPLOYMENT_ENV: 'production',
+  };
+  assert.throws(
+    () => new AssistantEmbeddingGateway(environment),
+    (error) => error instanceof AssistantEmbeddingError
+      && error.code === 'ASSISTANT_EMBEDDING_BENCHMARK_WINNER_REQUIRED',
+  );
+
+  const gateway = new AssistantEmbeddingGateway({
+    ...environment,
+    ASSISTANT_EMBEDDING_BENCHMARK_WINNER:
+      `text-embedding-3-small:256:${assistantEmbeddingBenchmarkDatasetSha256}`,
+  });
+  assert.equal(gateway.getModel(), 'text-embedding-3-small');
+  assert.equal(gateway.getDimensions(), 256);
 });
 
 test('Assistant T03 OpenAI embedding gateway validates the configured benchmark winner and response shape', async () => {

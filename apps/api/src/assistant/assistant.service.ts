@@ -30,6 +30,7 @@ import {
   AssistantRunProcessor,
   assistantProgressDefinitions,
 } from './assistant-run.processor';
+import { isSafeOfficialHttpsUrl } from './sources/assistant-knowledge-policy';
 
 const assistantHistoryDays = 30;
 const assistantHistoryPageSize = 50;
@@ -491,7 +492,7 @@ export class AssistantService {
       || typeof value.availabilityLabel !== 'string' || !this.isBoundedText(value.availabilityLabel, 120)
       || typeof value.freshnessLabel !== 'string' || !this.isBoundedText(value.freshnessLabel, 160)
       || typeof value.isStale !== 'boolean'
-      || typeof value.href !== 'string' || !this.isSafeExternalHttpsUrl(value.href)) return null;
+      || typeof value.href !== 'string' || !isSafeOfficialHttpsUrl(value.href)) return null;
     return {
       id: value.id,
       title: value.title,
@@ -553,15 +554,6 @@ export class AssistantService {
 
   private isExistingLotHref(value: string, unitId: string) {
     return new RegExp(`^/objects/[^/]+/lots/${unitId}$`, 'u').test(value);
-  }
-
-  private isSafeExternalHttpsUrl(value: string) {
-    try {
-      const url = new URL(value);
-      return url.protocol === 'https:' && !url.username && !url.password && !url.hash;
-    } catch {
-      return false;
-    }
   }
 
   private isBoundedText(value: string, maximumLength: number) {

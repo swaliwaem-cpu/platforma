@@ -70,6 +70,7 @@ export class AssistantAnswerService {
             query,
             intent,
             includeExternalLots: false,
+            context: input.context,
             now,
           });
           const grounded = buildAssistantKnowledgeAnswer(evidence, now);
@@ -87,6 +88,7 @@ export class AssistantAnswerService {
             query,
             intent,
             includeExternalLots: true,
+            context: input.context,
             now,
           });
           const knowledgeAnswer = buildAssistantKnowledgeAnswer(knowledgeEvidence, now);

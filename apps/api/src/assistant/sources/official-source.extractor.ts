@@ -89,8 +89,8 @@ export class OfficialSourceExtractor {
     $('h1,h2,h3,h4').each((_index, heading) => {
       const label = normalizeText($(heading).text());
       if (!label) return;
-      const content = normalizeText($(heading).parent().text())
-        || normalizeText($(heading).nextUntil('h1,h2,h3,h4').text());
+      const content = normalizeText($(heading).nextUntil('h1,h2,h3,h4').text())
+        || normalizeText($(heading).parent().text());
       if (!content || content === label) return;
       if (/архитектур/iu.test(label)) {
         facts.push(createFact('ARCHITECTURE', label, content, source.canonicalUrl, fetchedAt));
@@ -126,6 +126,7 @@ export class OfficialSourceExtractor {
             lot.title,
             lot.rooms === null ? '' : `${lot.rooms} комнаты`,
             lot.area === null ? '' : `${lot.area} м²`,
+            lot.floor === null ? '' : `${lot.floor} этаж`,
             `${lot.priceRub} RUB`,
           ].join(' ')),
           canonicalUrl: lot.href,
@@ -178,6 +179,7 @@ function readExternalLot(node: Record<string, unknown>, source: ExtractableKnowl
       availability: 'AVAILABLE' as const,
       rooms: readNonNegativeInteger(node.numberOfRooms ?? node.numberOfBedrooms),
       area: readArea(node.floorSize),
+      floor: readIntegerInRange(node.floorLevel, -20, 500),
       href,
     };
   }
@@ -280,6 +282,11 @@ function readPositiveNumber(value: unknown) {
 function readNonNegativeInteger(value: unknown) {
   const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
   return Number.isInteger(parsed) && parsed >= 0 && parsed <= 20 ? parsed : null;
+}
+
+function readIntegerInRange(value: unknown, minimum: number, maximum: number) {
+  const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
+  return Number.isInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : null;
 }
 
 function readText(value: unknown) {

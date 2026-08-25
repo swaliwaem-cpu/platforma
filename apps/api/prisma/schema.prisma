@@ -575,7 +575,7 @@ model AssistantSourceRevision {
   facts            AssistantSourceFact[]
   chunks           AssistantSourceChunk[]
 
-  @@unique([sourceId, checksum])
+  @@index([sourceId, checksum])
   @@index([sourceId, fetchedAt])
   @@map("assistant_source_revisions")
 }
@@ -613,6 +613,7 @@ model AssistantSourceChunk {
   contentHash      String                 @map("content_hash") @db.Char(64)
   embedding        Unsupported("vector")?
   embeddingModel   String?                @map("embedding_model") @db.VarChar(160)
+  embeddingDimensions Int?                @map("embedding_dimensions") @db.SmallInt
   embeddedAt       DateTime?              @map("embedded_at")
   isActive         Boolean                @default(true) @map("is_active")
   createdAt        DateTime               @default(now()) @map("created_at")
@@ -622,7 +623,7 @@ model AssistantSourceChunk {
 
   @@unique([sourceRevisionId, ordinal])
   @@index([sourceId, isActive])
-  @@index([contentHash, embeddingModel])
+  @@index([contentHash, embeddingModel, embeddingDimensions])
   @@map("assistant_source_chunks")
 }
 

@@ -4,10 +4,12 @@ import {
   AssistantSourceFactKind,
   Prisma,
 } from '@prisma/client';
+import type { AssistantPageContext } from '@platforma/shared' with { 'resolution-mode': 'import' };
 
 import { PrismaService } from '../../prisma/prisma.service';
 import type { AssistantStructuredIntent } from '../assistant-query-planner';
 import { AssistantEmbeddingGateway } from './assistant-embedding.gateway';
+import { assistantKnowledgeAuthorityScore } from './assistant-knowledge-policy';
 
 const maximumRetrievalCacheMilliseconds = 6 * 60 * 60 * 1_000;
 const maximumEvidenceItems = 12;
@@ -57,6 +59,11 @@ type RetrievalCacheEntry = {
   evidence: AssistantKnowledgeEvidence[];
 };
 
+type KnowledgeScope = {
+  projectKey: string | null;
+  developerKey: string | null;
+};
+
 @Injectable()
 export class AssistantKnowledgeRetrievalService {
   private readonly cache = new Map<string, RetrievalCacheEntry>();
@@ -73,27 +80,29 @@ export class AssistantKnowledgeRetrievalService {
     query: string;
     intent: AssistantStructuredIntent;
     includeExternalLots: boolean;
+    context?: AssistantPageContext | null;
     now?: Date;
   }) {
     const now = input.now ?? new Date();
     const query = normalizeQuery(input.query);
     if (!query) return [];
+    const scope = createKnowledgeScope(input.context);
     const fingerprint = await this.readRevisionFingerprint();
-    const cacheKey = createCacheKey(query, input.intent, input.includeExternalLots);
+    const cacheKey = createCacheKey(query, input.intent, input.includeExternalLots, scope);
     const cached = this.cache.get(cacheKey);
     if (cached && cached.expiresAt > now.getTime() && cached.revisionFingerprint === fingerprint) {
       return cached.evidence.map(copyEvidence);
     }
 
-    const structured = await this.retrieveStructured(input.intent, input.includeExternalLots);
-    const ftsRevisions = await this.retrieveFtsRevisionScores(query);
-    const vectorRevisions = await this.retrieveVectorRevisionScores(query);
+    const structured = await this.retrieveStructured(input.intent, input.includeExternalLots, scope);
+    const ftsRevisions = await this.retrieveFtsRevisionScores(query, scope);
+    const vectorRevisions = await this.retrieveVectorRevisionScores(query, scope);
     const revisionIds = [...new Set([
       ...ftsRevisions.keys(),
       ...vectorRevisions.keys(),
     ])];
     const retrievedByText = revisionIds.length > 0
-      ? await this.readFactsForRevisions(revisionIds, input.includeExternalLots)
+      ? await this.readFactsForRevisions(revisionIds)
       : [];
     const candidates = new Map<string, { row: FactRow; channels: Set<RetrievalChannel>; score: number }>();
 
@@ -101,7 +110,7 @@ export class AssistantKnowledgeRetrievalService {
       candidates.set(row.id, {
         row,
         channels: new Set(['STRUCTURED_SQL']),
-        score: lexicalScore(query, row),
+        score: lexicalScore(query, row) + externalLotScopeScore(row, input.intent, scope),
       });
     }
     for (const row of retrievedByText) {
@@ -119,8 +128,12 @@ export class AssistantKnowledgeRetrievalService {
       candidates.set(row.id, candidate);
     }
 
-    const evidence = [...candidates.values()]
-      .filter(({ row, score }) => score > 0 || shouldIncludeStructuredExternalLot(row, input.includeExternalLots))
+    let candidateValues = [...candidates.values()].filter(({ score }) => score > 0);
+    if (input.intent.taskType === 'FACT') {
+      const projectKey = scope.projectKey ?? chooseMostRelevantProjectKey(candidateValues);
+      if (projectKey) candidateValues = candidateValues.filter(({ row }) => row.projectKey === projectKey);
+    }
+    const evidence = candidateValues
       .sort(compareCandidates)
       .filter(deduplicateCanonicalFacts())
       .slice(0, maximumEvidenceItems)
@@ -155,7 +168,11 @@ export class AssistantKnowledgeRetrievalService {
     this.cache.clear();
   }
 
-  private retrieveStructured(intent: AssistantStructuredIntent, includeExternalLots: boolean) {
+  private retrieveStructured(
+    intent: AssistantStructuredIntent,
+    includeExternalLots: boolean,
+    scope: KnowledgeScope,
+  ) {
     const filters = intent.hardFilters;
     const kinds = includeExternalLots
       ? Object.values(AssistantSourceFactKind)
@@ -165,8 +182,12 @@ export class AssistantKnowledgeRetrievalService {
       Prisma.sql`s."state" = 'active'::assistant_knowledge_source_state`,
       Prisma.sql`r."processing_status" = 'indexed'::assistant_source_revision_status`,
       Prisma.sql`f."kind" IN (${Prisma.join(kinds.map((kind) => Prisma.sql`${kind.toLocaleLowerCase('en-US')}::assistant_source_fact_kind`))})`,
+      createKnowledgeScopeSql(scope),
     ];
     if (includeExternalLots) {
+      if (filters.objectType === 'COMMERCIAL') {
+        conditions.push(Prisma.sql`f."kind" <> 'external_lot'::assistant_source_fact_kind`);
+      }
       if (filters.budgetMinRub !== null) {
         conditions.push(Prisma.sql`(
           f."kind" <> 'external_lot'::assistant_source_fact_kind OR
@@ -185,6 +206,67 @@ export class AssistantKnowledgeRetrievalService {
           (f."value_json"->>'rooms')::integer IN (${Prisma.join(filters.rooms)})
         )`);
       }
+      if (filters.areaMin !== null) {
+        conditions.push(Prisma.sql`(
+          f."kind" <> 'external_lot'::assistant_source_fact_kind OR
+          (f."value_json"->>'area')::numeric >= ${filters.areaMin}
+        )`);
+      }
+      if (filters.areaMax !== null) {
+        conditions.push(Prisma.sql`(
+          f."kind" <> 'external_lot'::assistant_source_fact_kind OR
+          (f."value_json"->>'area')::numeric <= ${filters.areaMax}
+        )`);
+      }
+      if (filters.floorMin !== null) {
+        conditions.push(Prisma.sql`(
+          f."kind" <> 'external_lot'::assistant_source_fact_kind OR
+          (f."value_json"->>'floor')::integer >= ${filters.floorMin}
+        )`);
+      }
+      if (filters.floorMax !== null) {
+        conditions.push(Prisma.sql`(
+          f."kind" <> 'external_lot'::assistant_source_fact_kind OR
+          (f."value_json"->>'floor')::integer <= ${filters.floorMax}
+        )`);
+      }
+      if (filters.developer) {
+        const developer = normalizeQuery(filters.developer).replace(/[-_.]+/gu, ' ');
+        conditions.push(Prisma.sql`(
+          f."kind" <> 'external_lot'::assistant_source_fact_kind OR
+          regexp_replace(LOWER(COALESCE(s."developer_key", '')), '[-_.]+', ' ', 'g') LIKE ${`%${developer}%`}
+        )`);
+      }
+      for (const location of [filters.district, filters.metro].filter((value): value is string => Boolean(value))) {
+        conditions.push(Prisma.sql`(
+          f."kind" <> 'external_lot'::assistant_source_fact_kind OR
+          LOWER(f."search_text") LIKE ${`%${normalizeQuery(location)}%`}
+        )`);
+      }
+      if (filters.completionYearMin !== null) {
+        conditions.push(Prisma.sql`(
+          f."kind" <> 'external_lot'::assistant_source_fact_kind OR
+          (f."value_json"->>'completionYear')::integer >= ${filters.completionYearMin}
+        )`);
+      }
+      if (filters.completionYearMax !== null) {
+        conditions.push(Prisma.sql`(
+          f."kind" <> 'external_lot'::assistant_source_fact_kind OR
+          (f."value_json"->>'completionYear')::integer <= ${filters.completionYearMax}
+        )`);
+      }
+      if (filters.completionQuarter !== null) {
+        conditions.push(Prisma.sql`(
+          f."kind" <> 'external_lot'::assistant_source_fact_kind OR
+          (f."value_json"->>'completionQuarter')::integer = ${filters.completionQuarter}
+        )`);
+      }
+      if (filters.propertyClass) {
+        conditions.push(Prisma.sql`(
+          f."kind" <> 'external_lot'::assistant_source_fact_kind OR
+          LOWER(f."value_json"->>'propertyClass') = ${normalizeQuery(filters.propertyClass)}
+        )`);
+      }
     }
     return this.prisma.$queryRaw<FactRow[]>(Prisma.sql`
       ${factSelectSql}
@@ -194,7 +276,7 @@ export class AssistantKnowledgeRetrievalService {
     `);
   }
 
-  private async retrieveFtsRevisionScores(query: string) {
+  private async retrieveFtsRevisionScores(query: string, scope: KnowledgeScope) {
     const tsQuery = significantTokens(query).join(' | ');
     if (!tsQuery) return new Map<string, number>();
     const rows = await this.prisma.$queryRaw<Array<{ sourceRevisionId: string; score: number }>>(Prisma.sql`
@@ -207,6 +289,7 @@ export class AssistantKnowledgeRetrievalService {
       WHERE c."is_active" = TRUE
         AND s."state" = 'active'::assistant_knowledge_source_state
         AND r."processing_status" = 'indexed'::assistant_source_revision_status
+        AND ${createKnowledgeScopeSql(scope)}
         AND to_tsvector('russian', c."text") @@ to_tsquery('russian', ${tsQuery})
       GROUP BY c."source_revision_id"
       ORDER BY "score" DESC
@@ -215,10 +298,11 @@ export class AssistantKnowledgeRetrievalService {
     return new Map(rows.map(({ sourceRevisionId, score }) => [sourceRevisionId, Number(score)]));
   }
 
-  private async retrieveVectorRevisionScores(query: string) {
+  private async retrieveVectorRevisionScores(query: string, scope: KnowledgeScope) {
     if (!this.embeddings.isEnabled()) return new Map<string, number>();
     const model = this.embeddings.getModel();
-    if (!model) return new Map<string, number>();
+    const dimensions = this.embeddings.getDimensions();
+    if (!model || !dimensions) return new Map<string, number>();
     const embedded = await this.embeddings.embed([query]);
     const vector = formatVector(embedded.vectors[0]!);
     const rows = await this.prisma.$queryRaw<Array<{ sourceRevisionId: string; score: number }>>(Prisma.sql`
@@ -231,8 +315,10 @@ export class AssistantKnowledgeRetrievalService {
       WHERE c."is_active" = TRUE
         AND s."state" = 'active'::assistant_knowledge_source_state
         AND c."embedding_model" = ${model}
+        AND c."embedding_dimensions" = ${dimensions}
         AND c."embedding" IS NOT NULL
         AND r."processing_status" = 'indexed'::assistant_source_revision_status
+        AND ${createKnowledgeScopeSql(scope)}
       GROUP BY c."source_revision_id"
       ORDER BY "score" DESC
       LIMIT 20
@@ -240,17 +326,14 @@ export class AssistantKnowledgeRetrievalService {
     return new Map(rows.map(({ sourceRevisionId, score }) => [sourceRevisionId, Number(score)]));
   }
 
-  private readFactsForRevisions(revisionIds: string[], includeExternalLots: boolean) {
-    const kindCondition = includeExternalLots
-      ? Prisma.sql`TRUE`
-      : Prisma.sql`f."kind" <> 'external_lot'::assistant_source_fact_kind`;
+  private readFactsForRevisions(revisionIds: string[]) {
     return this.prisma.$queryRaw<FactRow[]>(Prisma.sql`
       ${factSelectSql}
       WHERE f."is_active" = TRUE
         AND s."state" = 'active'::assistant_knowledge_source_state
         AND r."processing_status" = 'indexed'::assistant_source_revision_status
         AND f."source_revision_id" IN (${Prisma.join(revisionIds.map((id) => Prisma.sql`${id}::uuid`))})
-        AND ${kindCondition}
+        AND f."kind" <> 'external_lot'::assistant_source_fact_kind
       ORDER BY s."priority" DESC, f."observed_at" DESC, f."id" ASC
     `);
   }
@@ -306,29 +389,13 @@ function compareCandidates(
   left: { row: FactRow; score: number },
   right: { row: FactRow; score: number },
 ) {
-  const authority = authorityScore(right.row) - authorityScore(left.row);
+  const authority = assistantKnowledgeAuthorityScore(right.row) - assistantKnowledgeAuthorityScore(left.row);
   if (authority !== 0) return authority;
   const relevance = right.score - left.score;
   if (relevance !== 0) return relevance;
   const freshness = right.row.observedAt.getTime() - left.row.observedAt.getTime();
   if (freshness !== 0) return freshness;
   return left.row.id.localeCompare(right.row.id, 'en-US');
-}
-
-function authorityScore(row: FactRow) {
-  if (row.kind === AssistantSourceFactKind.PROMOTION) {
-    return (row.sourceType === AssistantKnowledgeSourceType.BANK_PROMOTION
-      || row.sourceType === AssistantKnowledgeSourceType.DEVELOPER_PROMOTION ? 4_000 : 3_000)
-      + row.sourcePriority;
-  }
-  if (row.kind === AssistantSourceFactKind.STATIC_DESCRIPTION
-    || row.kind === AssistantSourceFactKind.ARCHITECTURE
-    || row.kind === AssistantSourceFactKind.INFRASTRUCTURE) {
-    return (row.sourceType === AssistantKnowledgeSourceType.DEVELOPMENT_PAGE ? 4_000 : 2_000)
-      + row.sourcePriority;
-  }
-  return (row.sourceType === AssistantKnowledgeSourceType.DEVELOPMENT_PAGE ? 3_000 : 1_000)
-    + row.sourcePriority;
 }
 
 function lexicalScore(query: string, row: FactRow) {
@@ -343,8 +410,29 @@ function significantTokens(value: string) {
 
 const stopWords = new Set(['для', 'про', 'что', 'как', 'где', 'когда', 'мне', 'есть', 'это', 'или', 'под', 'над']);
 
-function shouldIncludeStructuredExternalLot(row: FactRow, includeExternalLots: boolean) {
-  return includeExternalLots && row.kind === AssistantSourceFactKind.EXTERNAL_LOT;
+function externalLotScopeScore(
+  row: FactRow,
+  intent: AssistantStructuredIntent,
+  scope: KnowledgeScope,
+) {
+  if (row.kind !== AssistantSourceFactKind.EXTERNAL_LOT) return 0;
+  const filters = intent.hardFilters;
+  return scope.projectKey || scope.developerKey
+    || filters.budgetMinRub !== null || filters.budgetMaxRub !== null
+    || filters.rooms.length > 0 || filters.areaMin !== null || filters.areaMax !== null
+    || filters.floorMin !== null || filters.floorMax !== null || filters.developer
+    || filters.district || filters.metro || filters.completionYearMin !== null
+    || filters.completionYearMax !== null || filters.completionQuarter !== null
+    || filters.propertyClass ? 1 : 0;
+}
+
+function chooseMostRelevantProjectKey(
+  candidates: Array<{ row: FactRow; score: number }>,
+) {
+  return [...candidates]
+    .filter(({ row }) => row.projectKey !== null)
+    .sort((left, right) => right.score - left.score || compareCandidates(left, right))[0]
+    ?.row.projectKey ?? null;
 }
 
 function deduplicateCanonicalFacts() {
@@ -359,14 +447,50 @@ function deduplicateCanonicalFacts() {
   };
 }
 
-function createCacheKey(query: string, intent: AssistantStructuredIntent, includeExternalLots: boolean) {
+function createCacheKey(
+  query: string,
+  intent: AssistantStructuredIntent,
+  includeExternalLots: boolean,
+  scope: KnowledgeScope,
+) {
   return JSON.stringify({
     query,
     taskType: intent.taskType,
     hardFilters: intent.hardFilters,
     requiredFacts: intent.requiredFacts,
     includeExternalLots,
+    scope,
   });
+}
+
+function createKnowledgeScope(context: AssistantPageContext | null | undefined): KnowledgeScope {
+  if (!context) return { projectKey: null, developerKey: null };
+  if (context.kind === 'OBJECT') {
+    return { projectKey: normalizeRegistryKey(context.key), developerKey: null };
+  }
+  if (context.kind === 'DEVELOPER') {
+    return { projectKey: null, developerKey: normalizeRegistryKey(context.key) };
+  }
+  if (context.kind === 'CATALOG_FILTERS') {
+    const developerKey = new URLSearchParams(context.key).get('developerId');
+    return { projectKey: null, developerKey: normalizeRegistryKey(developerKey) };
+  }
+  return { projectKey: null, developerKey: null };
+}
+
+function normalizeRegistryKey(value: string | null) {
+  if (!value) return null;
+  const normalized = value.trim().toLocaleLowerCase('ru-RU');
+  return normalized.length <= 120 && /^[\p{L}\p{N}](?:[\p{L}\p{N}._-]{0,118}[\p{L}\p{N}])?$/u.test(normalized)
+    ? normalized
+    : null;
+}
+
+function createKnowledgeScopeSql(scope: KnowledgeScope) {
+  const conditions: Prisma.Sql[] = [];
+  if (scope.projectKey) conditions.push(Prisma.sql`s."project_key" = ${scope.projectKey}`);
+  if (scope.developerKey) conditions.push(Prisma.sql`s."developer_key" = ${scope.developerKey}`);
+  return conditions.length > 0 ? Prisma.join(conditions, ' AND ') : Prisma.sql`TRUE`;
 }
 
 function copyEvidence(evidence: AssistantKnowledgeEvidence): AssistantKnowledgeEvidence {

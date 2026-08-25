@@ -54,4 +54,14 @@ export class AssistantSourcesController {
   ) {
     return this.sources.queueManualRefresh(sourceId, actor.id, idempotencyKey);
   }
+
+  @Post('projects/:projectKey/refresh')
+  @HttpCode(HttpStatus.ACCEPTED)
+  refreshProject(
+    @Param('projectKey') projectKey: string,
+    @Headers('Idempotency-Key') idempotencyKey: string | undefined,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.sources.queueProjectRefresh(projectKey, actor.id, idempotencyKey);
+  }
 }

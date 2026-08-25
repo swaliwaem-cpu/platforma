@@ -4,6 +4,7 @@ const { resolve } = require('node:path');
 
 const {
   AssistantEmbeddingGateway,
+  assistantEmbeddingBenchmarkDatasetSha256,
 } = require('../dist/assistant/sources/assistant-embedding.gateway.js');
 
 if (process.env.ASSISTANT_EMBEDDING_BENCHMARK_ENABLED !== 'true') {
@@ -25,6 +26,10 @@ void run().catch((error) => {
 });
 
 async function run() {
+  const datasetSha256 = createHash('sha256').update(datasetBytes).digest('hex');
+  if (datasetSha256 !== assistantEmbeddingBenchmarkDatasetSha256) {
+    throw new Error('ASSISTANT_EMBEDDING_BENCHMARK_DATASET_HASH_MISMATCH');
+  }
   const results = [];
   const documentTexts = dataset.documents.map(({ text }) => text);
   const queryTexts = dataset.cases.map(({ query }) => query);
@@ -68,10 +73,13 @@ async function run() {
     || left.model.localeCompare(right.model));
   console.log(JSON.stringify({
     benchmark: 'assistant-embedding-retrieval-v1',
-    datasetSha256: createHash('sha256').update(datasetBytes).digest('hex'),
+    datasetSha256,
     cases: dataset.cases.length,
     documents: dataset.documents.length,
     winner: results[0] ?? null,
+    rolloutGate: results[0]
+      ? `${results[0].model}:${results[0].dimensions}:${datasetSha256}`
+      : null,
     results,
   }, null, 2));
 }

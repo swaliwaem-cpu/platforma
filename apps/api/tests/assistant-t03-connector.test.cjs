@@ -175,12 +175,36 @@ test('Assistant T03 extractor creates source-revision facts, searchable chunks a
     availability: 'AVAILABLE',
     rooms: 2,
     area: 67,
+    floor: 8,
     href: 'https://developer.example/apartments/lot-42',
   });
+  const architecture = extracted.facts.find((fact) => fact.kind === 'ARCHITECTURE');
+  assert.match(String(architecture?.value), /Кирпичные фасады/iu);
+  assert.doesNotMatch(String(architecture?.value), /Закрытый двор/iu);
   assert.equal(extracted.chunks.length > 0, true);
   assert.equal(extracted.chunks.every((chunk) => chunk.sourceRevisionId.endsWith('0002')), true);
   assert.equal(extracted.chunks.every((chunk) => /^[0-9a-f]{64}$/u.test(chunk.contentHash)), true);
   assert.equal(extracted.chunks.some((chunk) => chunk.text.includes('privateRuntimeState')), false);
+});
+
+test('Assistant T03 extractor fails closed on malformed JSON without leaking synthetic facts', () => {
+  const extracted = new OfficialSourceExtractor().extract({
+    source: {
+      id: '00000000-0000-4000-8000-000000000001',
+      type: 'DEVELOPMENT_PAGE',
+      canonicalUrl: 'https://developer.example/projects/severny-sad',
+      projectKey: 'severny-sad',
+      developerKey: 'developer-example',
+      priority: 100,
+      connectorConfig: {},
+    },
+    revisionId: '00000000-0000-4000-8000-000000000002',
+    fetchedAt: new Date('2026-08-25T08:00:00.000Z'),
+    contentType: 'application/json',
+    payload: Buffer.from('{"broken":'),
+  });
+
+  assert.deepEqual(extracted, { facts: [], chunks: [] });
 });
 
 test('Assistant T03 connector registry exposes aggregator entry points but keeps production parsers disabled', () => {

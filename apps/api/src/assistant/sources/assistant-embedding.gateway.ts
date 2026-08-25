@@ -6,6 +6,7 @@ const fakeEmbeddingModel = 'assistant-hash-embedding-v1';
 const fakeEmbeddingDimensions = 64;
 const maximumBatchInputs = 64;
 const maximumInputCharacters = 8_000;
+export const assistantEmbeddingBenchmarkDatasetSha256 = '12738976501f102bcf2f8dcc26f54520cc1bee9a5c5af63894bdf998092de018';
 
 type EmbeddingEnvironment = NodeJS.ProcessEnv | Record<string, string | undefined>;
 type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
@@ -45,6 +46,12 @@ export class AssistantEmbeddingGateway {
         throw new AssistantEmbeddingError('ASSISTANT_EMBEDDING_DIMENSIONS_REQUIRED', false);
       }
       readRequiredString(environment.OPENAI_API_KEY, 'OPENAI_API_KEY_REQUIRED');
+      if (environment.DEPLOYMENT_ENV === 'production') {
+        const expectedWinner = `${this.model}:${this.dimensions}:${assistantEmbeddingBenchmarkDatasetSha256}`;
+        if (environment.ASSISTANT_EMBEDDING_BENCHMARK_WINNER !== expectedWinner) {
+          throw new AssistantEmbeddingError('ASSISTANT_EMBEDDING_BENCHMARK_WINNER_REQUIRED', false);
+        }
+      }
       return;
     }
     this.model = null;
@@ -57,6 +64,10 @@ export class AssistantEmbeddingGateway {
 
   getModel() {
     return this.model;
+  }
+
+  getDimensions() {
+    return this.dimensions;
   }
 
   async embed(values: string[]): Promise<{ model: string; vectors: number[][] }> {
