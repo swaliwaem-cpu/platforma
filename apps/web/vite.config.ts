@@ -4,6 +4,23 @@ import path from 'node:path';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
+  build: {
+    // MapLibre is intentionally lazy-loaded. Keep the stable vendor chunk cached across map feature releases.
+    chunkSizeWarningLimit: 1_100,
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          includeDependenciesRecursively: true,
+          groups: [
+            {
+              name: 'maplibre',
+              test: /node_modules[\\/]maplibre-gl(?:[\\/]|$)/,
+            },
+          ],
+        },
+      },
+    },
+  },
   optimizeDeps: {
     exclude: ['maplibre-gl'],
   },

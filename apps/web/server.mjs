@@ -2,12 +2,16 @@ import { createReadStream } from 'node:fs';
 import { access, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { extname, join, normalize, relative, resolve } from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
+import { constants as zlibConstants, createBrotliCompress, createGzip } from 'node:zlib';
 
 const port = Number(process.env.PORT ?? 5173);
 const host = process.env.HOST ?? '0.0.0.0';
 const rootDir = resolve(fileURLToPath(new URL('./dist/', import.meta.url)));
 const indexPath = join(rootDir, 'index.html');
+const compressionMinimumBytes = 1_024;
+const compressibleExtensions = new Set(['.css', '.html', '.js', '.json', '.map', '.svg', '.txt']);
 
 const mimeTypes = new Map([
   ['.css', 'text/css; charset=utf-8'],
@@ -59,7 +63,12 @@ const server = createServer(async (request, response) => {
     await sendFile(request, response, indexPath, '/index.html');
   } catch (error) {
     console.error(error);
-    sendText(response, 500, 'Internal server error');
+
+    if (response.headersSent) {
+      response.destroy();
+    } else {
+      sendText(response, 500, 'Internal server error');
+    }
   }
 });
 
@@ -104,11 +113,23 @@ async function getExistingFile(filePath) {
 
 async function sendFile(request, response, filePath, pathname) {
   const fileStat = await stat(filePath);
+  const compressionEligible =
+    fileStat.size >= compressionMinimumBytes && compressibleExtensions.has(extname(filePath).toLowerCase());
+  const contentEncoding = compressionEligible ? selectContentEncoding(request.headers['accept-encoding']) : null;
   const headers = {
     'Cache-Control': getCacheControl(pathname),
-    'Content-Length': String(fileStat.size),
     'Content-Type': getContentType(filePath),
   };
+
+  if (compressionEligible) {
+    headers.Vary = 'Accept-Encoding';
+  }
+
+  if (contentEncoding) {
+    headers['Content-Encoding'] = contentEncoding;
+  } else {
+    headers['Content-Length'] = String(fileStat.size);
+  }
 
   response.writeHead(200, headers);
 
@@ -117,7 +138,62 @@ async function sendFile(request, response, filePath, pathname) {
     return;
   }
 
-  createReadStream(filePath).pipe(response);
+  const fileStream = createReadStream(filePath);
+
+  if (contentEncoding === 'br') {
+    await pipeline(
+      fileStream,
+      createBrotliCompress({
+        params: {
+          [zlibConstants.BROTLI_PARAM_QUALITY]: 4,
+        },
+      }),
+      response,
+    );
+    return;
+  }
+
+  if (contentEncoding === 'gzip') {
+    await pipeline(fileStream, createGzip({ level: 6 }), response);
+    return;
+  }
+
+  await pipeline(fileStream, response);
+}
+
+function selectContentEncoding(acceptEncodingHeader) {
+  const header = Array.isArray(acceptEncodingHeader) ? acceptEncodingHeader.join(',') : acceptEncodingHeader;
+
+  if (!header) {
+    return null;
+  }
+
+  const qualities = new Map();
+
+  for (const entry of header.split(',')) {
+    const [rawName, ...parameters] = entry.trim().split(';');
+    const name = rawName?.trim().toLowerCase();
+
+    if (!name) {
+      continue;
+    }
+
+    const qualityParameter = parameters.find((parameter) => parameter.trim().toLowerCase().startsWith('q='));
+    const parsedQuality = qualityParameter ? Number.parseFloat(qualityParameter.split('=')[1] ?? '') : 1;
+    const quality = Number.isFinite(parsedQuality) && parsedQuality >= 0 && parsedQuality <= 1 ? parsedQuality : 0;
+
+    qualities.set(name, quality);
+  }
+
+  const wildcardQuality = qualities.get('*') ?? 0;
+  const brotliQuality = qualities.get('br') ?? wildcardQuality;
+  const gzipQuality = qualities.get('gzip') ?? wildcardQuality;
+
+  if (brotliQuality <= 0 && gzipQuality <= 0) {
+    return null;
+  }
+
+  return brotliQuality >= gzipQuality ? 'br' : 'gzip';
 }
 
 function sendText(response, statusCode, message) {

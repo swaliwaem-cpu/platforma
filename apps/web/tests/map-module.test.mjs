@@ -97,6 +97,10 @@ test('web production runtime uses provider-neutral MapLibre configuration withou
   assert.match(rootEnvExample, /MAP_STYLE_URL=https:\/\/tiles\.openfreemap\.org\/styles\/liberty/);
   assert.doesNotMatch(rootEnvExample, /VITE_YANDEX_MAPS_API_KEY/);
   assert.match(viteConfigSource, /exclude:\s*\['maplibre-gl'\]/);
+  assert.match(viteConfigSource, /chunkSizeWarningLimit:\s*1_100/);
+  assert.match(viteConfigSource, /name:\s*'maplibre'/);
+  assert.match(viteConfigSource, /test:\s*\/node_modules\[\\\\\/\]maplibre-gl/);
+  assert.match(viteConfigSource, /includeDependenciesRecursively:\s*true/);
 });
 
 test('web loads map provider settings from a no-cache runtime config before the application bundle', () => {
