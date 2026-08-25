@@ -377,6 +377,13 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
     await firstSameChecksumRequest;
     const intermediateSameChecksumIngestion = await ingestion.ingest(sameChecksumSource.source.id);
     assert.equal(intermediateSameChecksumIngestion.outcome, 'INDEXED');
+    await prisma.assistantKnowledgeSource.update({
+      where: { id: sameChecksumSource.source.id },
+      data: {
+        lastErrorCode: 'SOURCE_STALE_ERROR',
+        lastErrorMessage: 'SOURCE_STALE_ERROR',
+      },
+    });
     const newerSameChecksumIngestion = ingestion.ingest(sameChecksumSource.source.id);
     await firstSameChecksumEmbedding;
     releaseFirstSameChecksumResponse();
@@ -397,6 +404,13 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
     )), true);
     assert.equal(sameChecksumActiveFacts.some(({ searchText }) => /Гонка X canonical revision/u.test(searchText)), true);
     assert.equal(sameChecksumActiveFacts.some(({ searchText }) => /Гонка Y intermediate revision/u.test(searchText)), false);
+    const sameChecksumSourceHealth = await prisma.assistantKnowledgeSource.findUniqueOrThrow({
+      where: { id: sameChecksumSource.source.id },
+    });
+    assert.equal(sameChecksumSourceHealth.lastSuccessAt.toISOString(), sameChecksumSourceHealth.lastAttemptAt.toISOString());
+    assert.equal(sameChecksumSourceHealth.lastIndexedAt.toISOString(), sameChecksumRevision.fetchedAt.toISOString());
+    assert.equal(sameChecksumSourceHealth.lastErrorCode, null);
+    assert.equal(sameChecksumSourceHealth.lastErrorMessage, null);
 
     const otherSource = await registry.register(actorId, {
       canonicalUrl: `http://developer.example:${address.port}/projects/yuzhny-sad/${randomUUID()}`,
@@ -544,9 +558,6 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
     });
     const olderValidRun = olderValidWorker.runOnce(new Date());
     await olderValidAttemptStarted;
-    while (Date.now() <= olderValidHealthAt.getTime()) {
-      await new Promise((resolveDelay) => setTimeout(resolveDelay, 1));
-    }
     const newerValidJob = await registry.queueManualRefresh(sourceId, actorId, randomUUID());
     await prisma.assistantSourceJob.update({
       where: { id: newerValidJob.job.id },
@@ -570,6 +581,7 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
       },
     });
     await newerValidWorker.runOnce(new Date());
+    assert.equal(newerValidHealthAt > olderValidHealthAt, true);
     releaseOlderValidAttempt();
     await olderValidRun;
     const latestValidHealth = await prisma.assistantKnowledgeSource.findUniqueOrThrow({ where: { id: sourceId } });

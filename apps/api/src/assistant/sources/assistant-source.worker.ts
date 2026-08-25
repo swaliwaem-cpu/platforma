@@ -13,7 +13,10 @@ import {
 import { randomUUID } from 'node:crypto';
 
 import { PrismaService } from '../../prisma/prisma.service';
-import { AssistantSourceIngestionService } from './assistant-source-ingestion.service';
+import {
+  AssistantSourceIngestionService,
+  reserveAssistantSourceAttempt,
+} from './assistant-source-ingestion.service';
 
 const pollIntervalMs = 5_000;
 const leaseMilliseconds = 90_000;
@@ -155,25 +158,30 @@ export class AssistantSourceWorker implements OnModuleInit, OnModuleDestroy {
   }
 
   private async processJob(jobId: string, now: Date) {
-    const claimed = await this.prisma.assistantSourceJob.updateMany({
-      where: {
-        id: jobId,
-        status: AssistantSourceJobStatus.PENDING,
-        availableAt: { lte: now },
-      },
-      data: {
-        status: AssistantSourceJobStatus.RUNNING,
-        attempt: { increment: 1 },
-        leaseOwner: this.instanceId,
-        leaseExpiresAt: new Date(Date.now() + leaseMilliseconds),
-      },
+    const job = await this.prisma.$transaction(async (transaction) => {
+      const claimed = await transaction.assistantSourceJob.updateMany({
+        where: {
+          id: jobId,
+          status: AssistantSourceJobStatus.PENDING,
+          availableAt: { lte: now },
+        },
+        data: {
+          status: AssistantSourceJobStatus.RUNNING,
+          attempt: { increment: 1 },
+          leaseOwner: this.instanceId,
+          leaseExpiresAt: new Date(Date.now() + leaseMilliseconds),
+        },
+      });
+      if (claimed.count !== 1) return null;
+      const claimedJob = await transaction.assistantSourceJob.findUniqueOrThrow({
+        where: { id: jobId },
+        select: { sourceId: true, attempt: true, maxAttempts: true },
+      });
+      const attemptStartedAt = await reserveAssistantSourceAttempt(transaction, claimedJob.sourceId);
+      return { ...claimedJob, attemptStartedAt };
     });
-    if (claimed.count !== 1) return;
-    const job = await this.prisma.assistantSourceJob.findUniqueOrThrow({
-      where: { id: jobId },
-      select: { sourceId: true, attempt: true, maxAttempts: true },
-    });
-    const attemptStartedAt = new Date();
+    if (!job) return;
+    const { attemptStartedAt } = job;
     try {
       await this.withHeartbeat(jobId, () => this.ingestion.ingest(job.sourceId, {
         jobId,
@@ -226,7 +234,7 @@ export class AssistantSourceWorker implements OnModuleInit, OnModuleDestroy {
           FOR UPDATE
         `);
         if (sourceHealth && (
-          sourceHealth.lastAttemptAt === null || attemptStartedAt >= sourceHealth.lastAttemptAt
+          sourceHealth.lastAttemptAt?.getTime() === attemptStartedAt.getTime()
         )) {
           await transaction.assistantKnowledgeSource.update({
             where: { id: job.sourceId },
