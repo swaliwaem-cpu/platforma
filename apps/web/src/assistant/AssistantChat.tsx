@@ -465,7 +465,7 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
 
   const handleGeoPickerCancel = () => {
     setIsGeoPickerOpen(false);
-    if (geoPickerPurpose === 'EDIT') setPendingGeoSubmission(null);
+    if (geoPickerPurpose === 'EDIT' || draft.trim()) setPendingGeoSubmission(null);
     setGeoPickerPurpose('SELECT');
   };
 

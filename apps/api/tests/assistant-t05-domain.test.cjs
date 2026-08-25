@@ -113,7 +113,13 @@ test('Assistant T05 geo search never replaces radius-filtered results with unbou
 
   const result = await service.answer({ messages: ['Найди рядом'], context: null, geo });
 
-  assert.equal(result.answer.kind, 'REFUSAL');
+  assert.equal(result.answer.kind, 'SEARCH_RESULTS');
+  assert.deepEqual(result.answer.exactResults, []);
+  assert.deepEqual(result.answer.alternatives, []);
+  assert.deepEqual(result.answer.geo.anchor, geo.anchor);
+  assert.equal(result.answer.geo.radiusMeters, geo.radiusMeters);
+  assert.equal(result.answer.geo.polygon.type, 'Polygon');
+  assert.deepEqual(result.answer.geo.markers, []);
   assert.equal(knowledgeCalls, 0);
 });
 

@@ -110,7 +110,9 @@ export class AssistantAnswerService {
           now,
         );
         validateAssistantSearchAnswer(grounded, evidence, intent, now);
-        if (grounded.exactResults.length === 0 && grounded.alternatives.length === 0) {
+        if (grounded.exactResults.length === 0
+          && grounded.alternatives.length === 0
+          && !searchResult.geo) {
           return {
             content: grounded.content,
             answer: { kind: 'REFUSAL' } as const,

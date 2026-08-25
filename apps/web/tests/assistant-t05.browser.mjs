@@ -9,6 +9,7 @@ const browser = await chromium.launch({ headless: true });
 
 try {
   await verifyDesktopGeoFlow();
+  await verifyRenderedMarkerVariants();
   await verifyMobilePicker();
   process.stdout.write('ASSISTANT_T05_BROWSER_OK\n');
 } finally {
@@ -47,10 +48,17 @@ async function verifyDesktopGeoFlow() {
     assert.equal(await input.inputValue(), 'Найди квартиры до 25 млн');
     assert.equal(state.messageBodies.length, 0, 'cancel must not start property search');
 
+    await input.fill('');
+    await page.getByRole('button', { name: 'Выбрать точку на карте' }).click();
+    await picker.getByRole('button', { name: 'Подтвердить точку' }).click();
+    assert.equal(state.messageBodies.length, 0, 'cancelled draft must not survive as hidden pending state');
+    await page.getByRole('button', { name: 'Убрать геопоиск' }).click();
+    await input.fill('Найди квартиры до 25 млн');
+
     await page.getByRole('button', { name: 'Выбрать точку на карте' }).click();
     await picker.getByRole('button', { name: '3 км' }).click();
     await picker.getByRole('button', { name: 'Подтвердить точку' }).click();
-    await page.getByText('ЖК Радиус', { exact: true }).waitFor();
+    await page.getByText('ЖК Радиус 1', { exact: true }).waitFor();
     assert.equal(state.messageBodies.length, 1, 'confirm must start exactly one run');
     assert.equal(state.resolveBodies.length, 0, 'manual picker must bypass geocoder');
     assert.equal(state.messageBodies[0].geo.anchor.source, 'MANUAL');
@@ -106,6 +114,40 @@ async function verifyDesktopGeoFlow() {
   }
 }
 
+async function verifyRenderedMarkerVariants() {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+  const state = createState({ markerSequence: true });
+  await enableFixtureMap(page);
+  await installRoutes(page, state);
+
+  try {
+    await page.goto(`${baseUrl}/cabinet`, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: 'Открыть ИИ-помощника' }).click();
+    const input = page.getByLabel('Сообщение помощнику');
+    await input.fill('Найди лучшие квартиры');
+    await page.getByRole('button', { name: 'Выбрать точку на карте' }).click();
+    await page.getByRole('button', { name: 'Подтвердить точку' }).click();
+    await page.locator('.map-price-marker--primary').first().waitFor();
+    assert.equal(await page.locator('.map-price-marker--primary').count(), 3);
+
+    await input.fill('Покажи ближайшие альтернативы');
+    await page.getByRole('button', { name: 'Отправить' }).click();
+    await page.locator('.map-price-marker--alternative').first().waitFor();
+    assert.equal(await page.locator('.map-price-marker--primary').count(), 3);
+    assert.equal(await page.locator('.map-price-marker--alternative').count(), 2);
+    const [primaryColor, alternativeColor] = await Promise.all([
+      page.locator('.map-price-marker--primary .map-price-marker-dot').first()
+        .evaluate((element) => getComputedStyle(element).backgroundColor),
+      page.locator('.map-price-marker--alternative .map-price-marker-dot').first()
+        .evaluate((element) => getComputedStyle(element).backgroundColor),
+    ]);
+    assert.notEqual(primaryColor, alternativeColor);
+  } finally {
+    await context.close();
+  }
+}
+
 async function verifyMobilePicker() {
   const context = await browser.newContext({ viewport: { width: 375, height: 812 } });
   const page = await context.newPage();
@@ -138,13 +180,27 @@ async function disableMapTiles(page) {
   });
 }
 
-function createState() {
+async function enableFixtureMap(page) {
+  await page.addInitScript(() => {
+    window.__PLATFORMA_RUNTIME_CONFIG__ = {
+      mapProviderEnabled: true,
+      mapStyleUrl: 'https://map-fixtures.test/style.json',
+    };
+  });
+  await page.route('https://map-fixtures.test/style.json', async (route) => {
+    await json(route, { version: 8, sources: {}, layers: [] });
+  });
+}
+
+function createState(overrides = {}) {
   return {
     conversationCreated: false,
     messageBodies: [],
     resolveBodies: [],
     messages: [],
     failNextPropertySearch: false,
+    markerSequence: false,
+    ...overrides,
   };
 }
 
@@ -217,8 +273,11 @@ async function installRoutes(page, state) {
         await json(route, { message: 'PROPERTY_SEARCH_UNAVAILABLE' }, 503);
         return;
       }
-      state.messages.push(userMessage(body), assistantMessage(body.geo));
-      await json(route, { run: runFixture(assistantMessage(body.geo)) }, 202);
+      const mode = state.markerSequence && state.messageBodies.length > 1 ? 'ALTERNATIVE' : 'PRIMARY';
+      const resultCount = state.markerSequence ? (mode === 'PRIMARY' ? 3 : 2) : 1;
+      const responseMessage = assistantMessage(body.geo, mode, resultCount);
+      state.messages.push(userMessage(body), responseMessage);
+      await json(route, { run: runFixture(responseMessage) }, 202);
       return;
     }
     if (path === '/assistant/conversations/33333333-3333-4333-8333-333333333333') {
@@ -252,8 +311,34 @@ function userMessage(body) {
   };
 }
 
-function assistantMessage(geo) {
-  const distanceMeters = 650;
+function assistantMessage(geo, mode = 'PRIMARY', resultCount = 1) {
+  const unitIds = mode === 'PRIMARY'
+    ? [
+        '70000001-7000-4000-8000-700000000001',
+        '70000002-7000-4000-8000-700000000002',
+        '70000003-7000-4000-8000-700000000003',
+      ]
+    : [
+        '80000001-8000-4000-8000-800000000001',
+        '80000002-8000-4000-8000-800000000002',
+      ];
+  const results = unitIds.slice(0, resultCount).map((unitId, index) => {
+    const distanceMeters = 650 + index * 150;
+    return {
+      unitId,
+      title: `ЖК Радиус ${index + 1}`,
+      subtitle: '2-комнатная · 60 м²',
+      priceRub: 20_000_000 + index * 1_000_000,
+      availabilityLabel: 'В продаже',
+      freshnessLabel: 'обновлено менее часа назад',
+      isStale: false,
+      href: `/objects/geo/lots/${unitId}`,
+      facts: [],
+      pdfs: [],
+      deviations: mode === 'ALTERNATIVE' ? [{ type: 'BUDGET', label: 'Выше бюджета' }] : [],
+      distanceMeters,
+    };
+  });
   return {
     id: crypto.randomUUID(),
     role: 'ASSISTANT',
@@ -262,34 +347,21 @@ function assistantMessage(geo) {
     geo: null,
     answer: {
       kind: 'SEARCH_RESULTS',
-      exactResults: [{
-        unitId: '77777777-7777-4777-8777-777777777777',
-        title: 'ЖК Радиус',
-        subtitle: '2-комнатная · 60 м²',
-        priceRub: 20_000_000,
-        availabilityLabel: 'В продаже',
-        freshnessLabel: 'обновлено менее часа назад',
-        isStale: false,
-        href: '/objects/geo/lots/77777777-7777-4777-8777-777777777777',
-        facts: [],
-        pdfs: [],
-        deviations: [],
-        distanceMeters,
-      }],
-      alternatives: [],
+      exactResults: mode === 'PRIMARY' ? results : [],
+      alternatives: mode === 'ALTERNATIVE' ? results : [],
       geo: {
         ...geo,
         polygon: {
           type: 'Polygon',
           coordinates: [[[37.60, 55.74], [37.64, 55.74], [37.64, 55.77], [37.60, 55.74]]],
         },
-        markers: [{
-          unitId: '77777777-7777-4777-8777-777777777777',
-          latitude: geo.anchor.latitude,
-          longitude: geo.anchor.longitude,
-          distanceMeters,
-          kind: 'PRIMARY',
-        }],
+        markers: results.map((result, index) => ({
+          unitId: result.unitId,
+          latitude: geo.anchor.latitude + index * 0.001,
+          longitude: geo.anchor.longitude + index * 0.001,
+          distanceMeters: result.distanceMeters,
+          kind: mode,
+        })),
       },
     },
     createdAt: '2026-08-26T00:00:01.000Z',
