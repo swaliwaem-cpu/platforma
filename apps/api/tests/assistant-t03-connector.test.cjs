@@ -53,6 +53,24 @@ before(async () => {
       }, 150);
       return;
     }
+    if (request.url === '/slow-drip') {
+      response.writeHead(200, { 'content-type': 'text/html' });
+      let writes = 0;
+      const timer = setInterval(() => {
+        if (response.destroyed) {
+          clearInterval(timer);
+          return;
+        }
+        response.write('x');
+        writes += 1;
+        if (writes === 20) {
+          clearInterval(timer);
+          response.end();
+        }
+      }, 10);
+      response.on('close', () => clearInterval(timer));
+      return;
+    }
     if (request.url === '/retryable') {
       response.writeHead(503, { 'content-type': 'text/plain' });
       response.end('temporarily unavailable');
@@ -103,6 +121,12 @@ test('Assistant T03 connector classifies timeout and retryable HTTP failures saf
 
   await assert.rejects(
     connector.fetch(createSource('/slow')),
+    (error) => error instanceof SourceConnectorError
+      && error.code === 'SOURCE_FETCH_TIMEOUT'
+      && error.retryable === true,
+  );
+  await assert.rejects(
+    connector.fetch(createSource('/slow-drip')),
     (error) => error instanceof SourceConnectorError
       && error.code === 'SOURCE_FETCH_TIMEOUT'
       && error.retryable === true,

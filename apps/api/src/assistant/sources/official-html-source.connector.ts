@@ -124,9 +124,36 @@ export class OfficialHtmlSourceConnector {
     lastModified: string | null;
     redirectLocation: string | null;
   }> {
+    const controller = new AbortController();
+    let timeout: NodeJS.Timeout | null = null;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        reject(new SourceConnectorError('SOURCE_FETCH_TIMEOUT', true));
+        controller.abort();
+      }, this.timeoutMs);
+      timeout.unref();
+    });
+    try {
+      return await Promise.race([
+        this.fetchOnceWithinDeadline(url, controller.signal),
+        deadline,
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+  }
+
+  private async fetchOnceWithinDeadline(url: URL, signal: AbortSignal): Promise<{
+    statusCode: number;
+    contentType: string;
+    payload: Buffer;
+    etag: string | null;
+    lastModified: string | null;
+    redirectLocation: string | null;
+  }> {
     const addresses = await this.resolveAddresses(url.hostname);
     const address = addresses[0]!;
-    const response = await this.request(url, address.address);
+    const response = await this.request(url, address.address, signal);
     const statusCode = response.statusCode ?? 0;
     const redirectLocation = readSingleHeader(response.headers.location);
 
@@ -184,7 +211,7 @@ export class OfficialHtmlSourceConnector {
     return addresses;
   }
 
-  private request(url: URL, address: string) {
+  private request(url: URL, address: string, signal: AbortSignal) {
     return new Promise<import('node:http').IncomingMessage>((resolve, reject) => {
       const request = (url.protocol === 'https:' ? requestHttps : requestHttp)({
         protocol: url.protocol,
@@ -199,10 +226,8 @@ export class OfficialHtmlSourceConnector {
           host: url.host,
           'user-agent': 'PlatformaKnowledgeSource/1.0',
         },
+        signal,
       }, resolve);
-      request.setTimeout(this.timeoutMs, () => {
-        request.destroy(new SourceConnectorError('SOURCE_FETCH_TIMEOUT', true));
-      });
       request.on('error', (error) => {
         reject(error instanceof SourceConnectorError
           ? error

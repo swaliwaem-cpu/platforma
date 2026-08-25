@@ -36,6 +36,7 @@ type PreparedChunk = ExtractedSourceChunk & {
 export type AssistantSourceIngestionFence = {
   jobId: string;
   leaseOwner: string;
+  attemptStartedAt: Date;
 };
 
 @Injectable()
@@ -69,16 +70,16 @@ export class AssistantSourceIngestionService {
     }
 
     const connector = this.connectors.get(source.connectorKey);
-    const fetchedAt = new Date();
+    const attemptStartedAt = fence?.attemptStartedAt ?? new Date();
     const fetched = await connector.fetch({
       id: source.id,
       canonicalUrl: source.canonicalUrl,
       connectorKey: source.connectorKey,
       connectorConfig: source.connectorConfigJson,
     });
-    const persisted = await this.persistFetchedRevision(source, fetched, fetchedAt, fence);
+    const persisted = await this.persistFetchedRevision(source, fetched, attemptStartedAt, fence);
     if (persisted.processingStatus === AssistantSourceRevisionStatus.INDEXED) {
-      await this.markSourceSuccess(source.id, source.scheduleMinutes, fetchedAt, false, fence);
+      await this.markSourceSuccess(source.id, source.scheduleMinutes, attemptStartedAt, false, fence);
       return { outcome: 'UNCHANGED' as const, revisionId: persisted.id, embeddedChunks: 0 };
     }
 
@@ -96,7 +97,7 @@ export class AssistantSourceIngestionService {
           connectorConfig: source.connectorConfigJson,
         },
         revisionId: persisted.id,
-        fetchedAt,
+        fetchedAt: persisted.fetchedAt,
         contentType: fetched.contentType,
         payload: fetched.payload,
       });
@@ -108,7 +109,8 @@ export class AssistantSourceIngestionService {
         sourceId: source.id,
         revisionId: persisted.id,
         scheduleMinutes: source.scheduleMinutes,
-        fetchedAt,
+        revisionFetchedAt: persisted.fetchedAt,
+        attemptStartedAt,
         facts: extracted.facts,
         chunks,
         fence,
@@ -134,25 +136,28 @@ export class AssistantSourceIngestionService {
   private async persistFetchedRevision(
     source: { id: string },
     fetched: Awaited<ReturnType<ReturnType<AssistantSourceConnectorRegistry['get']>['fetch']>>,
-    fetchedAt: Date,
+    attemptStartedAt: Date,
     fence?: AssistantSourceIngestionFence,
   ) {
     return this.prisma.$transaction(async (transaction) => {
+      await assertIngestionFence(transaction, fence);
       await transaction.$queryRaw(Prisma.sql`
         SELECT "id"
         FROM "assistant_knowledge_sources"
         WHERE "id" = ${source.id}::uuid
         FOR UPDATE
       `);
-      await assertIngestionFence(transaction, fence);
       const previous = await transaction.assistantSourceRevision.findFirst({
         where: { sourceId: source.id, nextRevision: { is: null } },
-        select: { id: true, checksum: true, processingStatus: true },
+        select: { id: true, checksum: true, fetchedAt: true, processingStatus: true },
       });
       await transaction.$executeRaw(Prisma.sql`
         UPDATE "assistant_knowledge_sources"
         SET
-          "last_attempt_at" = GREATEST(COALESCE("last_attempt_at", ${fetchedAt}), ${fetchedAt}),
+          "last_attempt_at" = GREATEST(
+            COALESCE("last_attempt_at", ${attemptStartedAt}),
+            ${attemptStartedAt}
+          ),
           "updated_at" = CURRENT_TIMESTAMP
         WHERE "id" = ${source.id}::uuid
       `);
@@ -171,11 +176,11 @@ export class AssistantSourceIngestionService {
           httpStatus: fetched.statusCode,
           etag: fetched.etag,
           lastModified: fetched.lastModified,
-          fetchedAt,
+          fetchedAt: attemptStartedAt,
           processingStatus: AssistantSourceRevisionStatus.FAILED,
           processingErrorCode: 'SOURCE_PROCESSING_PENDING',
         },
-        select: { id: true, processingStatus: true },
+        select: { id: true, fetchedAt: true, processingStatus: true },
       });
     });
   }
@@ -229,19 +234,20 @@ export class AssistantSourceIngestionService {
     sourceId: string;
     revisionId: string;
     scheduleMinutes: number;
-    fetchedAt: Date;
+    revisionFetchedAt: Date;
+    attemptStartedAt: Date;
     facts: ExtractedSourceFact[];
     chunks: PreparedChunk[];
     fence?: AssistantSourceIngestionFence;
   }) {
     await this.prisma.$transaction(async (transaction) => {
+      await assertIngestionFence(transaction, input.fence);
       await transaction.$queryRaw(Prisma.sql`
         SELECT "id"
         FROM "assistant_knowledge_sources"
         WHERE "id" = ${input.sourceId}::uuid
         FOR UPDATE
       `);
-      await assertIngestionFence(transaction, input.fence);
       const revision = await transaction.assistantSourceRevision.findUniqueOrThrow({
         where: { id: input.revisionId },
         select: { processingStatus: true },
@@ -260,7 +266,7 @@ export class AssistantSourceIngestionService {
         },
       });
       const shouldActivate = sourceHealth.lastIndexedAt === null
-        || input.fetchedAt >= sourceHealth.lastIndexedAt;
+        || input.revisionFetchedAt >= sourceHealth.lastIndexedAt;
 
       if (shouldActivate) {
         await transaction.assistantSourceFact.updateMany({
@@ -293,7 +299,7 @@ export class AssistantSourceIngestionService {
         const embedding = chunk.embeddingVector
           ? Prisma.sql`${formatVector(chunk.embeddingVector)}::vector`
           : Prisma.sql`NULL`;
-        const embeddedAt = chunk.embeddingVector ? input.fetchedAt : null;
+        const embeddedAt = chunk.embeddingVector ? input.revisionFetchedAt : null;
         await transaction.$executeRaw(Prisma.sql`
           INSERT INTO "assistant_source_chunks" (
             "id", "source_id", "source_revision_id", "ordinal", "text", "content_hash",
@@ -324,10 +330,10 @@ export class AssistantSourceIngestionService {
       await transaction.assistantKnowledgeSource.update({
         where: { id: input.sourceId },
         data: {
-          lastAttemptAt: latestDate(sourceHealth.lastAttemptAt, input.fetchedAt),
-          lastSuccessAt: latestDate(sourceHealth.lastSuccessAt, input.fetchedAt),
-          ...(shouldActivate ? { lastIndexedAt: input.fetchedAt } : {}),
-          ...(sourceHealth.lastAttemptAt === null || input.fetchedAt >= sourceHealth.lastAttemptAt
+          lastAttemptAt: latestDate(sourceHealth.lastAttemptAt, input.attemptStartedAt),
+          lastSuccessAt: latestDate(sourceHealth.lastSuccessAt, input.attemptStartedAt),
+          ...(shouldActivate ? { lastIndexedAt: input.revisionFetchedAt } : {}),
+          ...(sourceHealth.lastAttemptAt === null || input.attemptStartedAt >= sourceHealth.lastAttemptAt
             ? { lastErrorCode: null, lastErrorMessage: null }
             : {
                 lastErrorCode: sourceHealth.lastErrorCode,
@@ -335,7 +341,7 @@ export class AssistantSourceIngestionService {
               }),
           nextRefreshAt: latestDate(
             sourceHealth.nextRefreshAt,
-            new Date(input.fetchedAt.getTime() + input.scheduleMinutes * 60_000),
+            new Date(input.attemptStartedAt.getTime() + input.scheduleMinutes * 60_000),
           ),
         },
       });
@@ -350,13 +356,13 @@ export class AssistantSourceIngestionService {
     fence?: AssistantSourceIngestionFence,
   ) {
     return this.prisma.$transaction(async (transaction) => {
+      await assertIngestionFence(transaction, fence);
       await transaction.$queryRaw(Prisma.sql`
         SELECT "id"
         FROM "assistant_knowledge_sources"
         WHERE "id" = ${sourceId}::uuid
         FOR UPDATE
       `);
-      await assertIngestionFence(transaction, fence);
       const sourceHealth = await transaction.assistantKnowledgeSource.findUniqueOrThrow({
         where: { id: sourceId },
         select: {

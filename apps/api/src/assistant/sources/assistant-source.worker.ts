@@ -173,10 +173,12 @@ export class AssistantSourceWorker implements OnModuleInit, OnModuleDestroy {
       where: { id: jobId },
       select: { sourceId: true, attempt: true, maxAttempts: true },
     });
+    const attemptStartedAt = new Date();
     try {
       await this.withHeartbeat(jobId, () => this.ingestion.ingest(job.sourceId, {
         jobId,
         leaseOwner: this.instanceId,
+        attemptStartedAt,
       }));
       await this.prisma.assistantSourceJob.updateMany({
         where: {
@@ -217,14 +219,24 @@ export class AssistantSourceWorker implements OnModuleInit, OnModuleDestroy {
           },
         });
         if (owned.count !== 1) return;
-        await transaction.assistantKnowledgeSource.update({
-          where: { id: job.sourceId },
-          data: {
-            lastAttemptAt: new Date(),
-            lastErrorCode: failure.code,
-            lastErrorMessage: failure.code,
-          },
-        });
+        const [sourceHealth] = await transaction.$queryRaw<Array<{ lastAttemptAt: Date | null }>>(Prisma.sql`
+          SELECT "last_attempt_at" AS "lastAttemptAt"
+          FROM "assistant_knowledge_sources"
+          WHERE "id" = ${job.sourceId}::uuid
+          FOR UPDATE
+        `);
+        if (sourceHealth && (
+          sourceHealth.lastAttemptAt === null || attemptStartedAt >= sourceHealth.lastAttemptAt
+        )) {
+          await transaction.assistantKnowledgeSource.update({
+            where: { id: job.sourceId },
+            data: {
+              lastAttemptAt: attemptStartedAt,
+              lastErrorCode: failure.code,
+              lastErrorMessage: failure.code,
+            },
+          });
+        }
       });
     }
   }

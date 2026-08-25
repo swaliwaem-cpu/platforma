@@ -71,6 +71,7 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
     let currentContentType = 'text/html; charset=utf-8';
     const fetchCalls = [];
     let concurrentRequestCount = 0;
+    let sameChecksumRequestCount = 0;
     let signalFirstConcurrentRequest;
     const firstConcurrentRequest = new Promise((resolveRequest) => {
       signalFirstConcurrentRequest = resolveRequest;
@@ -79,15 +80,37 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
       'Ставка 3,5% при покупке до 30 сентября 2026 года.',
       'Ставка 1,1% при покупке до 31 декабря 2026 года.',
     ));
+    const sameChecksumOlderHtml = Buffer.from(`<!doctype html><html><body><main>
+      <h1>ЖК Гонка checksum</h1><h2>Архитектура</h2>
+      <p>Гонка X canonical revision должна оставаться активной.</p>
+    </main></body></html>`);
+    const sameChecksumIntermediateHtml = Buffer.from(`<!doctype html><html><body><main>
+      <h1>ЖК Гонка checksum</h1><h2>Архитектура</h2>
+      <p>Гонка Y intermediate revision не должна оставаться активной.</p>
+    </main></body></html>`);
+    let signalFirstSameChecksumRequest;
+    const firstSameChecksumRequest = new Promise((resolveRequest) => {
+      signalFirstSameChecksumRequest = resolveRequest;
+    });
+    let releaseFirstSameChecksumResponse;
+    const firstSameChecksumResponseReleased = new Promise((resolveResponse) => {
+      releaseFirstSameChecksumResponse = resolveResponse;
+    });
     const server = createServer((request, response) => {
       fetchCalls.push(request.url);
       const isConcurrent = request.url?.includes('/projects/concurrent/') === true;
+      const isSameChecksum = request.url?.includes('/projects/same-checksum/') === true;
       const concurrentIndex = isConcurrent ? ++concurrentRequestCount : 0;
-      const payload = concurrentIndex === 1
-        ? originalHtml
-        : concurrentIndex === 2
-          ? concurrentNewerHtml
-          : currentHtml;
+      const sameChecksumIndex = isSameChecksum ? ++sameChecksumRequestCount : 0;
+      const payload = isSameChecksum
+        ? sameChecksumIndex === 2
+          ? sameChecksumIntermediateHtml
+          : sameChecksumOlderHtml
+        : concurrentIndex === 1
+          ? originalHtml
+          : concurrentIndex === 2
+            ? concurrentNewerHtml
+            : currentHtml;
       const send = () => {
         response.writeHead(200, {
           'content-type': isConcurrent ? 'text/html; charset=utf-8' : currentContentType,
@@ -99,6 +122,9 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
       if (concurrentIndex === 1) {
         signalFirstConcurrentRequest();
         setTimeout(send, 120);
+      } else if (sameChecksumIndex === 1) {
+        signalFirstSameChecksumRequest();
+        void firstSameChecksumResponseReleased.then(send);
       } else {
         send();
       }
@@ -114,12 +140,28 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
     const connectorRegistry = new AssistantSourceConnectorRegistry(connector);
     const baseEmbeddings = new AssistantEmbeddingGateway({ ASSISTANT_EMBEDDING_MODE: 'fake' });
     const embeddingCalls = [];
+    let sameChecksumEmbeddingCalls = 0;
+    let signalFirstSameChecksumEmbedding;
+    const firstSameChecksumEmbedding = new Promise((resolveEmbedding) => {
+      signalFirstSameChecksumEmbedding = resolveEmbedding;
+    });
+    let releaseFirstSameChecksumEmbedding;
+    const firstSameChecksumEmbeddingReleased = new Promise((resolveEmbedding) => {
+      releaseFirstSameChecksumEmbedding = resolveEmbedding;
+    });
     const embeddings = {
       isEnabled: () => true,
       getModel: () => baseEmbeddings.getModel(),
       getDimensions: () => baseEmbeddings.getDimensions(),
       async embed(values) {
         embeddingCalls.push([...values]);
+        if (values.some((value) => value.includes('Гонка X canonical revision'))) {
+          sameChecksumEmbeddingCalls += 1;
+          if (sameChecksumEmbeddingCalls === 1) {
+            signalFirstSameChecksumEmbedding();
+            await firstSameChecksumEmbeddingReleased;
+          }
+        }
         return baseEmbeddings.embed(values);
       },
     };
@@ -320,6 +362,42 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
     assert.equal(concurrentRevisions.length, 2);
     assert.equal(concurrentRevisions[1].previousRevisionId, concurrentRevisions[0].id);
 
+    const sameChecksumSource = await registry.register(actorId, {
+      canonicalUrl: `http://developer.example:${address.port}/projects/same-checksum/${randomUUID()}`,
+      type: 'DEVELOPMENT_PAGE',
+      state: 'ACTIVE',
+      priority: 100,
+      scheduleMinutes: 1_440,
+      connectorKey: 'OFFICIAL_HTML',
+      connectorConfig: { allowedHosts: ['developer.example'] },
+      projectKey: 'same-checksum-sad',
+      developerKey: 'developer-same-checksum',
+    });
+    const olderSameChecksumIngestion = ingestion.ingest(sameChecksumSource.source.id);
+    await firstSameChecksumRequest;
+    const intermediateSameChecksumIngestion = await ingestion.ingest(sameChecksumSource.source.id);
+    assert.equal(intermediateSameChecksumIngestion.outcome, 'INDEXED');
+    const newerSameChecksumIngestion = ingestion.ingest(sameChecksumSource.source.id);
+    await firstSameChecksumEmbedding;
+    releaseFirstSameChecksumResponse();
+    const sameChecksumRevision = await waitForRevisionStatus(
+      sameChecksumSource.source.id,
+      createHash('sha256').update(sameChecksumOlderHtml).digest('hex'),
+      'INDEXED',
+    );
+    releaseFirstSameChecksumEmbedding();
+    await Promise.all([olderSameChecksumIngestion, newerSameChecksumIngestion]);
+    const sameChecksumActiveFacts = await prisma.assistantSourceFact.findMany({
+      where: { sourceId: sameChecksumSource.source.id, isActive: true },
+      select: { searchText: true, sourceRevisionId: true },
+    });
+    assert.equal(sameChecksumActiveFacts.length > 0, true);
+    assert.equal(sameChecksumActiveFacts.every(({ sourceRevisionId }) => (
+      sourceRevisionId === sameChecksumRevision.id
+    )), true);
+    assert.equal(sameChecksumActiveFacts.some(({ searchText }) => /Гонка X canonical revision/u.test(searchText)), true);
+    assert.equal(sameChecksumActiveFacts.some(({ searchText }) => /Гонка Y intermediate revision/u.test(searchText)), false);
+
     const otherSource = await registry.register(actorId, {
       canonicalUrl: `http://developer.example:${address.port}/projects/yuzhny-sad/${randomUUID()}`,
       type: 'DEVELOPMENT_PAGE',
@@ -441,6 +519,65 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
       /retained indefinitely/iu,
     );
 
+    const olderValidJob = await registry.queueManualRefresh(sourceId, actorId, randomUUID());
+    await prisma.assistantSourceJob.update({
+      where: { id: olderValidJob.job.id },
+      data: { availableAt: new Date('2000-01-01T00:00:00.000Z') },
+    });
+    let signalOlderValidAttempt;
+    const olderValidAttemptStarted = new Promise((resolveAttempt) => {
+      signalOlderValidAttempt = resolveAttempt;
+    });
+    let releaseOlderValidAttempt;
+    const olderValidAttemptReleased = new Promise((resolveAttempt) => {
+      releaseOlderValidAttempt = resolveAttempt;
+    });
+    let olderValidHealthAt;
+    const olderValidWorker = new AssistantSourceWorker(prisma, {
+      async ingest(_workerSourceId, fence) {
+        assert.ok(fence.attemptStartedAt instanceof Date);
+        olderValidHealthAt = fence.attemptStartedAt;
+        signalOlderValidAttempt();
+        await olderValidAttemptReleased;
+        throw { code: 'SOURCE_OLDER_VALID_JOB_FAILED', retryable: false };
+      },
+    });
+    const olderValidRun = olderValidWorker.runOnce(new Date());
+    await olderValidAttemptStarted;
+    while (Date.now() <= olderValidHealthAt.getTime()) {
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 1));
+    }
+    const newerValidJob = await registry.queueManualRefresh(sourceId, actorId, randomUUID());
+    await prisma.assistantSourceJob.update({
+      where: { id: newerValidJob.job.id },
+      data: { availableAt: new Date('2000-01-01T00:00:00.000Z') },
+    });
+    let newerValidHealthAt;
+    const newerValidWorker = new AssistantSourceWorker(prisma, {
+      async ingest(_workerSourceId, fence) {
+        assert.ok(fence.attemptStartedAt instanceof Date);
+        newerValidHealthAt = fence.attemptStartedAt;
+        await prisma.assistantKnowledgeSource.update({
+          where: { id: sourceId },
+          data: {
+            lastAttemptAt: newerValidHealthAt,
+            lastSuccessAt: newerValidHealthAt,
+            lastErrorCode: null,
+            lastErrorMessage: null,
+          },
+        });
+        return { outcome: 'UNCHANGED' };
+      },
+    });
+    await newerValidWorker.runOnce(new Date());
+    releaseOlderValidAttempt();
+    await olderValidRun;
+    const latestValidHealth = await prisma.assistantKnowledgeSource.findUniqueOrThrow({ where: { id: sourceId } });
+    assert.equal(latestValidHealth.lastAttemptAt.toISOString(), newerValidHealthAt.toISOString());
+    assert.equal(latestValidHealth.lastSuccessAt.toISOString(), newerValidHealthAt.toISOString());
+    assert.equal(latestValidHealth.lastErrorCode, null);
+    assert.equal(latestValidHealth.lastErrorMessage, null);
+
     const fencedJob = await registry.queueManualRefresh(sourceId, actorId, randomUUID());
     await prisma.assistantSourceJob.update({
       where: { id: fencedJob.job.id },
@@ -453,7 +590,11 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
     });
     const revisionCountBeforeLostLease = await prisma.assistantSourceRevision.count({ where: { sourceId } });
     await assert.rejects(
-      ingestion.ingest(sourceId, { jobId: fencedJob.job.id, leaseOwner: 'expired-worker' }),
+      ingestion.ingest(sourceId, {
+        jobId: fencedJob.job.id,
+        leaseOwner: 'expired-worker',
+        attemptStartedAt: new Date('2026-08-25T06:00:00.000Z'),
+      }),
       /SOURCE_JOB_LEASE_LOST/u,
     );
     assert.equal(await prisma.assistantSourceRevision.count({ where: { sourceId } }), revisionCountBeforeLostLease);
@@ -640,6 +781,17 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
       },
     });
     return user.id;
+  }
+
+  async function waitForRevisionStatus(sourceId, checksum, processingStatus) {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const revision = await prisma.assistantSourceRevision.findFirst({
+        where: { sourceId, checksum, processingStatus },
+      });
+      if (revision) return revision;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 10));
+    }
+    throw new Error(`REVISION_STATUS_TIMEOUT:${processingStatus}`);
   }
 
   function createIntent(overrides = {}) {
