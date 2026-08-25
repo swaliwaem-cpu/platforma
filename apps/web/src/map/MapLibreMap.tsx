@@ -95,7 +95,9 @@ export default function MapLibreMap({
     [points],
   );
   const polygonCoordinatesKey = useMemo(
-    () => polygons.map((polygon) => `${polygon.id}:${JSON.stringify(polygon.coordinates)}`).join('|'),
+    () => polygons.map((polygon) => (
+      `${polygon.id}:${polygon.variant ?? 'RADIUS'}:${JSON.stringify(polygon.coordinates)}`
+    )).join('|'),
     [polygons],
   );
   const prefersReducedMotion = useMemo(
@@ -294,7 +296,7 @@ export default function MapLibreMap({
     if (!map || status !== 'ready') return;
     const source = map.getSource(ASSISTANT_GEO_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
     if (source) void source.setData(createPolygonGeoJson(polygons));
-  }, [polygonCoordinatesKey, polygons, status]);
+  }, [polygonCoordinatesKey, status]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -322,7 +324,7 @@ export default function MapLibreMap({
     }
 
     fitMapToContent(map, points, polygons, prefersReducedMotion);
-  }, [pointCoordinatesKey, points, polygonCoordinatesKey, polygons, prefersReducedMotion, status]);
+  }, [pointCoordinatesKey, polygonCoordinatesKey, prefersReducedMotion, status]);
 
   useEffect(() => {
     const map = mapRef.current;

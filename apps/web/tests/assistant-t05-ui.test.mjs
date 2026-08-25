@@ -18,6 +18,7 @@ test('Assistant T05 picker keeps map movement as draft and searches only from ex
   assert.doesNotMatch(pickerSource, /sendAssistantMessage|resolveAssistantGeo/u);
   assert.match(chatSource, /handleGeoPickerConfirm[\s\S]*beginSubmission\(pendingGeoSubmission\.content, geo\)/u);
   assert.match(chatSource, /handleGeoPickerCancel[\s\S]*geoPickerPurpose === 'EDIT'/u);
+  assert.match(chatSource, /openGeoPicker[\s\S]*setPendingGeoSubmission\(\{ content \}\)/u);
 });
 
 test('Assistant T05 browser keeps LocationIQ backend-only and exposes explicit degraded actions', () => {

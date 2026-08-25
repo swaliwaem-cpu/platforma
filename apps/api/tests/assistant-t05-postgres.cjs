@@ -2,6 +2,8 @@ require('reflect-metadata');
 
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
+const { readFileSync } = require('node:fs');
+const { resolve } = require('node:path');
 const { after, before, test } = require('node:test');
 const { NestFactory } = require('@nestjs/core');
 const { JwtService } = require('@nestjs/jwt');
@@ -69,6 +71,56 @@ test('Assistant T05 radius search keeps inside and boundary FeedUnits, excludes 
   assert.equal(result.geo.radiusMeters, 2_000);
   assert.equal(result.geo.polygon.type, 'Polygon');
   assert.equal(result.geo.polygon.coordinates[0].length >= 33, true);
+});
+
+test('Assistant T05 migration backfills pre-existing valid coordinates without changing canonical values', async () => {
+  const scratchTable = `assistant_t05_backfill_${suffix.replaceAll('-', '')}`;
+  const migration = readFileSync(resolve(
+    __dirname,
+    '../prisma/migrations/20260826120000_add_assistant_t05_geo_search/migration.sql',
+  ), 'utf8');
+  const addSearchPoint = migration.match(
+    /ALTER TABLE "real_estate_objects"[\s\S]*?\) STORED;/u,
+  )?.[0];
+  assert.ok(addSearchPoint);
+
+  try {
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE "${scratchTable}" (
+        label TEXT PRIMARY KEY,
+        latitude NUMERIC(9, 6),
+        longitude NUMERIC(9, 6)
+      )
+    `);
+    await prisma.$executeRawUnsafe(`
+      INSERT INTO "${scratchTable}" (label, latitude, longitude) VALUES
+        ('valid', 56.837700, 60.603800),
+        ('partial', 56.837700, NULL),
+        ('invalid', 91.000000, 60.603800)
+    `);
+    await prisma.$executeRawUnsafe(addSearchPoint.replace(
+      'ALTER TABLE "real_estate_objects"',
+      `ALTER TABLE "${scratchTable}"`,
+    ));
+    const rows = await prisma.$queryRawUnsafe(`
+      SELECT
+        label,
+        latitude::text AS latitude,
+        longitude::text AS longitude,
+        search_point IS NOT NULL AS has_point,
+        CASE WHEN search_point IS NULL THEN NULL ELSE ST_SRID(search_point::geometry) END AS srid
+      FROM "${scratchTable}"
+      ORDER BY label
+    `);
+
+    assert.deepEqual(rows, [
+      { label: 'invalid', latitude: '91.000000', longitude: '60.603800', has_point: false, srid: null },
+      { label: 'partial', latitude: '56.837700', longitude: null, has_point: false, srid: null },
+      { label: 'valid', latitude: '56.837700', longitude: '60.603800', has_point: true, srid: 4326 },
+    ]);
+  } finally {
+    await prisma.$executeRawUnsafe(`DROP TABLE IF EXISTS "${scratchTable}"`);
+  }
 });
 
 test('Assistant T05 PostGIS geography predicate includes the meter-precision boundary', async () => {

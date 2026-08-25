@@ -1,0 +1,315 @@
+import assert from 'node:assert/strict';
+
+import { chromium } from '@playwright/test';
+
+const baseUrl = process.env.ASSISTANT_T05_WEB_TEST_URL;
+if (!baseUrl) throw new Error('ASSISTANT_T05_WEB_TEST_URL is required');
+
+const browser = await chromium.launch({ headless: true });
+
+try {
+  await verifyDesktopGeoFlow();
+  await verifyMobilePicker();
+  process.stdout.write('ASSISTANT_T05_BROWSER_OK\n');
+} finally {
+  await browser.close();
+}
+
+async function verifyDesktopGeoFlow() {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 960 } });
+  const page = await context.newPage();
+  const state = createState();
+  const runtimeIssues = [];
+  const requestedUrls = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error' || message.type() === 'warning') runtimeIssues.push(message.text());
+  });
+  page.on('pageerror', (error) => runtimeIssues.push(error.message));
+  page.on('request', (request) => requestedUrls.push(request.url()));
+  await disableMapTiles(page);
+  await installRoutes(page, state);
+
+  try {
+    await page.goto(`${baseUrl}/cabinet`, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: 'Открыть ИИ-помощника' }).click();
+    const dialog = page.getByRole('dialog', { name: 'ИИ-помощник по недвижимости' });
+    const input = page.getByLabel('Сообщение помощнику');
+    await input.fill('Найди квартиры до 25 млн');
+    await page.getByRole('button', { name: 'Выбрать точку на карте' }).click();
+
+    const picker = page.getByRole('region', { name: 'Выбор точки и радиуса' });
+    await picker.waitFor();
+    const pickerDialogBox = await dialog.boundingBox();
+    assert.ok(pickerDialogBox && pickerDialogBox.width >= 700 && pickerDialogBox.height >= 700);
+    await picker.getByRole('button', { name: '3 км' }).click();
+    assert.equal(state.messageBodies.length, 0, 'map draft must not start property search');
+    await picker.getByRole('button', { name: 'Отмена' }).click();
+    assert.equal(await input.inputValue(), 'Найди квартиры до 25 млн');
+    assert.equal(state.messageBodies.length, 0, 'cancel must not start property search');
+
+    await page.getByRole('button', { name: 'Выбрать точку на карте' }).click();
+    await picker.getByRole('button', { name: '3 км' }).click();
+    await picker.getByRole('button', { name: 'Подтвердить точку' }).click();
+    await page.getByText('ЖК Радиус', { exact: true }).waitFor();
+    assert.equal(state.messageBodies.length, 1, 'confirm must start exactly one run');
+    assert.equal(state.resolveBodies.length, 0, 'manual picker must bypass geocoder');
+    assert.equal(state.messageBodies[0].geo.anchor.source, 'MANUAL');
+    assert.equal(state.messageBodies[0].geo.radiusMeters, 3_000);
+    await page.getByText('Точка на карте · 3 км', { exact: true }).waitFor();
+    await page.getByText('650 м по прямой', { exact: true }).waitFor();
+    await page.getByText('Карта временно отключена', { exact: true }).waitFor();
+
+    await page.getByRole('button', { name: 'Изменить точку и радиус' }).click();
+    await picker.getByRole('button', { name: '2 км' }).click();
+    await picker.getByRole('button', { name: 'Отмена' }).click();
+    await page.getByText('Точка на карте · 3 км', { exact: true }).waitFor();
+    assert.equal(state.messageBodies.length, 1);
+
+    await page.getByRole('button', { name: 'Изменить точку и радиус' }).click();
+    await picker.getByRole('button', { name: '5 км' }).click();
+    await picker.getByRole('button', { name: 'Подтвердить точку' }).click();
+    await page.getByText('Точка на карте · 5 км', { exact: true }).waitFor();
+    assert.equal(state.messageBodies.length, 2);
+    assert.equal(state.resolveBodies.length, 0, 'moving confirmed manual anchor must bypass geocoder');
+
+    await page.getByRole('button', { name: 'Убрать геопоиск' }).click();
+    await input.fill('Найди в радиусе 2 км от Плотинки ambiguous');
+    await page.getByRole('button', { name: 'Отправить' }).click();
+    const candidates = page.locator('[data-assistant-geo-candidates] .assistant-geo-candidates button');
+    await candidates.first().waitFor();
+    assert.equal(await candidates.count(), 3);
+    assert.equal(state.messageBodies.length, 2, 'ambiguity must not start property search');
+    await candidates.nth(2).click();
+    await page.getByText('Плотинка · вариант 3 · 2 км', { exact: true }).waitFor();
+    assert.equal(state.messageBodies.length, 3);
+
+    await page.getByRole('button', { name: 'Убрать геопоиск' }).click();
+    await input.fill('Найди в радиусе 2 км от geocoder unavailable');
+    await page.getByRole('button', { name: 'Отправить' }).click();
+    await page.getByText('Не удалось определить место. Можно указать точку вручную или уточнить название.').waitFor();
+    assert.equal(state.messageBodies.length, 3);
+
+    state.failNextPropertySearch = true;
+    await page.getByRole('button', { name: 'Указать на карте' }).click();
+    await picker.getByRole('button', { name: 'Подтвердить точку' }).click();
+    await page.getByText('PROPERTY_SEARCH_UNAVAILABLE', { exact: true }).waitFor();
+    await page.getByText('Точка на карте · 2 км', { exact: true }).waitFor();
+    assert.equal(state.messageBodies.length, 4);
+
+    assert.equal(
+      requestedUrls.some((url) => /locationiq|api-maps\.yandex|tiles\.openfreemap/iu.test(url)),
+      false,
+    );
+    assert.deepEqual(runtimeIssues.filter((message) => !message.includes('503 (Service Unavailable)')), []);
+  } finally {
+    await context.close();
+  }
+}
+
+async function verifyMobilePicker() {
+  const context = await browser.newContext({ viewport: { width: 375, height: 812 } });
+  const page = await context.newPage();
+  await disableMapTiles(page);
+  await installRoutes(page, createState());
+
+  try {
+    await page.goto(`${baseUrl}/cabinet`, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: 'Открыть ИИ-помощника' }).click();
+    await page.getByLabel('Сообщение помощнику').fill('Найди квартиру');
+    await page.getByRole('button', { name: 'Выбрать точку на карте' }).click();
+    const dialog = page.getByRole('dialog', { name: 'ИИ-помощник по недвижимости' });
+    const box = await dialog.boundingBox();
+    assert.deepEqual(box && {
+      x: Math.round(box.x), y: Math.round(box.y), width: Math.round(box.width), height: Math.round(box.height),
+    }, { x: 0, y: 0, width: 375, height: 812 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    for (const label of ['1 км', '2 км', '3 км', '5 км']) {
+      const control = await page.getByRole('button', { name: label }).boundingBox();
+      assert.ok(control && control.width >= 44 && control.height >= 44);
+    }
+  } finally {
+    await context.close();
+  }
+}
+
+async function disableMapTiles(page) {
+  await page.addInitScript(() => {
+    window.__PLATFORMA_RUNTIME_CONFIG__ = { mapProviderEnabled: false };
+  });
+}
+
+function createState() {
+  return {
+    conversationCreated: false,
+    messageBodies: [],
+    resolveBodies: [],
+    messages: [],
+    failNextPropertySearch: false,
+  };
+}
+
+async function installRoutes(page, state) {
+  await page.route('http://localhost:3000/**', async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === '/auth/refresh') {
+      await json(route, {
+        accessToken: 'assistant-t05-browser-token',
+        user: {
+          id: '11111111-1111-4111-8111-111111111111',
+          email: 'assistant-t05@example.test',
+          name: 'Assistant T05',
+          brokerPhone: null,
+          brokerEmail: null,
+          status: 'ACTIVE',
+          role: { id: '22222222-2222-4222-8222-222222222222', name: 'user' },
+          profilePhotoFile: null,
+          permissions: ['objects:read'],
+        },
+      });
+      return;
+    }
+    if (path === '/training/config') {
+      await json(route, { enabled: false });
+      return;
+    }
+    if (path === '/assistant/config') {
+      await json(route, { enabled: true });
+      return;
+    }
+    if (path === '/assistant/conversations' && request.method() === 'GET') {
+      await json(route, { items: [], nextCursor: null });
+      return;
+    }
+    if (path === '/assistant/conversations' && request.method() === 'POST') {
+      state.conversationCreated = true;
+      await json(route, { conversation: conversation(state.messages) }, 201);
+      return;
+    }
+    if (path === '/assistant/geo/resolve' && request.method() === 'POST') {
+      const body = request.postDataJSON();
+      state.resolveBodies.push(body);
+      if (body.content.includes('geocoder unavailable')) {
+        await json(route, { message: 'GEOCODER_UNAVAILABLE' }, 503);
+        return;
+      }
+      await json(route, {
+        status: 'AMBIGUOUS',
+        placeQuery: 'Плотинка',
+        radiusMeters: 2_000,
+        candidates: [1, 2, 3].map((value) => ({
+          id: `candidate-${value}`,
+          label: `Плотинка · вариант ${value}`,
+          latitude: 56.837 + value * 0.001,
+          longitude: 60.603 + value * 0.001,
+          city: 'Екатеринбург',
+          countryCode: 'ru',
+          source: 'PLACE',
+        })),
+      });
+      return;
+    }
+    if (path === '/assistant/conversations/33333333-3333-4333-8333-333333333333/messages') {
+      const body = request.postDataJSON();
+      state.messageBodies.push(body);
+      if (state.failNextPropertySearch) {
+        state.failNextPropertySearch = false;
+        await json(route, { message: 'PROPERTY_SEARCH_UNAVAILABLE' }, 503);
+        return;
+      }
+      state.messages.push(userMessage(body), assistantMessage(body.geo));
+      await json(route, { run: runFixture(assistantMessage(body.geo)) }, 202);
+      return;
+    }
+    if (path === '/assistant/conversations/33333333-3333-4333-8333-333333333333') {
+      await json(route, { conversation: conversation(state.messages) });
+      return;
+    }
+    await json(route, { message: `Unexpected ${request.method()} ${path}` }, 404);
+  });
+}
+
+function conversation(messages) {
+  return {
+    id: '33333333-3333-4333-8333-333333333333',
+    title: 'Geo search',
+    createdAt: '2026-08-26T00:00:00.000Z',
+    updatedAt: '2026-08-26T00:00:01.000Z',
+    messagesCount: messages.length,
+    messages,
+  };
+}
+
+function userMessage(body) {
+  return {
+    id: crypto.randomUUID(),
+    role: 'USER',
+    content: body.content,
+    context: body.context ?? null,
+    geo: body.geo ?? null,
+    answer: null,
+    createdAt: '2026-08-26T00:00:00.000Z',
+  };
+}
+
+function assistantMessage(geo) {
+  const distanceMeters = 650;
+  return {
+    id: crypto.randomUUID(),
+    role: 'ASSISTANT',
+    content: 'Нашёл предложения в заданном радиусе.',
+    context: null,
+    geo: null,
+    answer: {
+      kind: 'SEARCH_RESULTS',
+      exactResults: [{
+        unitId: '77777777-7777-4777-8777-777777777777',
+        title: 'ЖК Радиус',
+        subtitle: '2-комнатная · 60 м²',
+        priceRub: 20_000_000,
+        availabilityLabel: 'В продаже',
+        freshnessLabel: 'обновлено менее часа назад',
+        isStale: false,
+        href: '/objects/geo/lots/77777777-7777-4777-8777-777777777777',
+        facts: [],
+        pdfs: [],
+        deviations: [],
+        distanceMeters,
+      }],
+      alternatives: [],
+      geo: {
+        ...geo,
+        polygon: {
+          type: 'Polygon',
+          coordinates: [[[37.60, 55.74], [37.64, 55.74], [37.64, 55.77], [37.60, 55.74]]],
+        },
+        markers: [{
+          unitId: '77777777-7777-4777-8777-777777777777',
+          latitude: geo.anchor.latitude,
+          longitude: geo.anchor.longitude,
+          distanceMeters,
+          kind: 'PRIMARY',
+        }],
+      },
+    },
+    createdAt: '2026-08-26T00:00:01.000Z',
+  };
+}
+
+function runFixture(message) {
+  return {
+    id: '44444444-4444-4444-8444-444444444444',
+    conversationId: '33333333-3333-4333-8333-333333333333',
+    status: 'COMPLETED',
+    progressEvents: [],
+    assistantMessage: message,
+    errorCode: null,
+    createdAt: '2026-08-26T00:00:00.000Z',
+    updatedAt: '2026-08-26T00:00:01.000Z',
+    completedAt: '2026-08-26T00:00:01.000Z',
+  };
+}
+
+async function json(route, body, status = 200) {
+  await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+}

@@ -156,9 +156,9 @@ export function parseResolveInput(value: unknown): ParsedResolveInput | null {
   if (!isRecord(value)) throw new BadRequestException('ASSISTANT_GEO_RESOLVE_INPUT_INVALID');
   const content = readText(value.content, 2_000);
   if (!content) throw new BadRequestException('ASSISTANT_GEO_CONTENT_INVALID');
-  const placeQuery = extractPlaceQuery(content);
-  if (!placeQuery) return null;
   const radiusMeters = extractRadiusMeters(content);
+  const placeQuery = extractPlaceQuery(content, radiusMeters !== null);
+  if (!placeQuery) return null;
   if (radiusMeters !== null) {
     parseAssistantGeoSearchInput({
       anchor: { latitude: 0, longitude: 0, label: placeQuery, source: 'PLACE' },
@@ -201,12 +201,14 @@ function extractRadiusMeters(content: string) {
   return Math.round(value * (/^(?:км|километр)/iu.test(match[2]!) ? 1_000 : 1));
 }
 
-function extractPlaceQuery(content: string) {
+function extractPlaceQuery(content: string, hasExplicitRadius: boolean) {
   const withoutRadius = content.replace(
     /(?:в\s+радиусе|радиус(?:ом)?|не\s+дальше)\s*\d+(?:[.,]\d+)?\s*(?:км|километр(?:а|ов)?|м|метр(?:а|ов)?)/giu,
     ' ',
   );
-  const match = withoutRadius.match(/(?:рядом\s+с|возле|около|вокруг|(?:^|\s)от)\s+(.+)$/iu);
+  const match = hasExplicitRadius
+    ? withoutRadius.match(/(?:рядом\s+с|возле|около|вокруг|(?:^|\s)от)\s+(.+)$/iu)
+    : withoutRadius.match(/(?:рядом\s+с|возле|около|вокруг)\s+(.+)$/iu);
   if (!match) return null;
   const query = match[1]!
     .replace(/\s+(?:найди|покажи|подбери)\b.*$/iu, '')

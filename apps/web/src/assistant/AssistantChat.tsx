@@ -537,6 +537,8 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
   };
 
   const openGeoPicker = () => {
+    const content = draft.trim();
+    if (content) setPendingGeoSubmission({ content });
     if (!isMobileViewport()) {
       setGeometry((current) => clampGeometry({
         ...current,

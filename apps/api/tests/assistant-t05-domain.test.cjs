@@ -8,6 +8,15 @@ const {
   AssistantGeoConfigError,
   parseAssistantGeoSearchInput,
 } = require('../dist/assistant/geo/assistant-geo-contract.js');
+const {
+  parseResolveInput,
+} = require('../dist/assistant/geo/assistant-place-resolver.service.js');
+const {
+  AssistantAnswerService,
+} = require('../dist/assistant/assistant-answer.service.js');
+const {
+  createEmptyAssistantSearchFilters,
+} = require('../dist/assistant/assistant-query-planner.js');
 
 test('Assistant T05 radius contract validates a manual anchor within configured hard bounds', () => {
   const input = parseAssistantGeoSearchInput({
@@ -56,6 +65,56 @@ test('Assistant T05 radius contract validates a manual anchor within configured 
     (error) => error instanceof AssistantGeoConfigError
       && error.code === 'ASSISTANT_GEO_RADIUS_MIN_METERS_INVALID',
   );
+});
+
+test('Assistant T05 resolver ignores an ordinary Russian preposition without an explicit geo phrase', () => {
+  assert.equal(parseResolveInput({ content: 'Что зависит от ставки?' }), null);
+});
+
+test('Assistant T05 geo search never replaces radius-filtered results with unbounded Knowledge Base lots', async () => {
+  let knowledgeCalls = 0;
+  const filters = createEmptyAssistantSearchFilters();
+  const intent = {
+    taskType: 'SEARCH',
+    comparisonTargets: [],
+    hardFilters: filters,
+    softPreferences: filters,
+    requiredFacts: ['PRICE', 'AVAILABILITY', 'FRESHNESS', 'LINK'],
+    needsClarification: false,
+    clarificationQuestion: null,
+  };
+  const geo = {
+    anchor: { latitude: 55.751244, longitude: 37.618423, label: 'Точка', source: 'MANUAL' },
+    radiusMeters: 2_000,
+  };
+  const service = new AssistantAnswerService(
+    {
+      async planWithValidation(_input, validate) {
+        return { value: await validate(intent), intent, telemetry: [] };
+      },
+    },
+    {
+      async search() {
+        return {
+          exact: [],
+          alternatives: [],
+          geo: {
+            ...geo,
+            polygon: {
+              type: 'Polygon',
+              coordinates: [[[37.61, 55.74], [37.62, 55.74], [37.62, 55.75], [37.61, 55.74]]],
+            },
+          },
+        };
+      },
+    },
+    { async retrieve() { knowledgeCalls += 1; return []; } },
+  );
+
+  const result = await service.answer({ messages: ['Найди рядом'], context: null, geo });
+
+  assert.equal(result.answer.kind, 'REFUSAL');
+  assert.equal(knowledgeCalls, 0);
 });
 
 test('Assistant T05 migration derives nullable geography from canonical object coordinates only', () => {

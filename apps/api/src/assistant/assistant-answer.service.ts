@@ -91,7 +91,7 @@ export class AssistantAnswerService {
         }
 
         const searchResult = await this.search.search(intent, input.context, input.geo ?? null);
-        if (searchResult.exact.length === 0 && this.knowledge) {
+        if (!input.geo && searchResult.exact.length === 0 && this.knowledge) {
           const knowledgeEvidence = await this.knowledge.retrieve({
             query,
             intent,
