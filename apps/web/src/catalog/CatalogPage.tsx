@@ -46,7 +46,14 @@ import { MultiSelectDropdown } from '../components/MultiSelectDropdown';
 import { SecureImage } from '../files/SecureImage';
 import { formatCurrencyInputValue, getCurrencyInputBackspaceValue } from '../lib/numberInput';
 import { resolveMapMarkerLabel } from '../map/mapMarkerLabels';
-import { PlatformMap, type MapBounds, type MapPoint } from '../map/PlatformMap';
+import { formatMapDistance } from '../map/mapContract';
+import {
+  PlatformMap,
+  type MapBounds,
+  type MapNearbyTransitResult,
+  type MapPoint,
+  type MapStatus,
+} from '../map/PlatformMap';
 import aerotourIconUrl from '../../../../aerotour-icon.png';
 import floorPlanIconUrl from '../../../../floor-plan.svg';
 
@@ -1418,6 +1425,12 @@ function CatalogMapView({
   const [visibleBounds, setVisibleBounds] = useState<MapBounds | null>(null);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [isListVisible, setIsListVisible] = useState(true);
+  const [mapStatus, setMapStatus] = useState<MapStatus>('loading');
+  const [nearbyTransit, setNearbyTransit] = useState<MapNearbyTransitResult>({
+    pointId: null,
+    status: 'idle',
+    stations: [],
+  });
   const points = useMemo(() => objects.map((object) => mapObjectToPoint(object, filters)), [filters, objects]);
   const visibleObjects = useMemo(
     () => (visibleBounds ? objects.filter((object) => isMapObjectInBounds(object, visibleBounds)) : objects),
@@ -1430,8 +1443,27 @@ function CatalogMapView({
   const handleBoundsChange = useCallback((bounds: MapBounds) => {
     setVisibleBounds(bounds);
   }, []);
-  const handleSelectPoint = useCallback((point: MapPoint) => {
-    setSelectedObjectId(point.id);
+  const handleSelectObject = useCallback((objectId: string) => {
+    setSelectedObjectId(objectId);
+    setNearbyTransit({
+      pointId: objectId,
+      status: mapStatus === 'error' || mapStatus === 'disabled' ? 'unavailable' : 'loading',
+      stations: [],
+    });
+  }, [mapStatus]);
+  const handleSelectPoint = useCallback((point: MapPoint) => handleSelectObject(point.id), [handleSelectObject]);
+  const handleCloseObject = useCallback(() => {
+    setSelectedObjectId(null);
+    setNearbyTransit({ pointId: null, status: 'idle', stations: [] });
+  }, []);
+  const handleMapStatusChange = useCallback((status: MapStatus) => {
+    setMapStatus(status);
+
+    if (status === 'error' || status === 'disabled') {
+      setNearbyTransit((current) =>
+        current.pointId ? { pointId: current.pointId, status: 'unavailable', stations: [] } : current,
+      );
+    }
   }, []);
 
   useEffect(() => {
@@ -1467,8 +1499,9 @@ function CatalogMapView({
         <MapObjectCard
           accessToken={accessToken}
           filters={filters}
+          nearbyTransit={nearbyTransit.pointId === selectedObject.id ? nearbyTransit : null}
           object={selectedObject}
-          onClose={() => setSelectedObjectId(null)}
+          onClose={handleCloseObject}
         />
       ) : null}
 
@@ -1487,7 +1520,7 @@ function CatalogMapView({
             <ul>
               {visibleObjects.map((object) => (
                 <li key={object.id} className={object.id === selectedObjectId ? 'catalog-map-list-item--selected' : undefined}>
-                  <button className="text-button" type="button" onClick={() => setSelectedObjectId(object.id)}>
+                  <button className="text-button" type="button" onClick={() => handleSelectObject(object.id)}>
                     {object.title}
                   </button>
                   <span>{getObjectDistrictLabel(object)}</span>
@@ -1512,6 +1545,8 @@ function CatalogMapView({
       <div className="catalog-map-panel">
         <PlatformMap
           onBoundsChange={handleBoundsChange}
+          onNearbyTransitChange={setNearbyTransit}
+          onStatusChange={handleMapStatusChange}
           points={points}
           selectedPointId={selectedObjectId}
           onSelectPoint={handleSelectPoint}
@@ -1528,11 +1563,13 @@ function CatalogMapView({
 function MapObjectCard({
   accessToken,
   filters,
+  nearbyTransit,
   object,
   onClose,
 }: {
   accessToken: string;
   filters: CatalogFilters;
+  nearbyTransit: MapNearbyTransitResult | null;
   object: MapObject;
   onClose: () => void;
 }) {
@@ -1612,6 +1649,30 @@ function MapObjectCard({
             {object.title}
           </a>
         </h3>
+        <section className="map-nearby-metro" aria-labelledby="map-nearby-metro-title">
+          <h4 id="map-nearby-metro-title">Ближайшее метро (по прямой)</h4>
+          {!nearbyTransit || nearbyTransit.status === 'loading' ? (
+            <p className="map-nearby-metro-status" role="status">
+              Ищем станции рядом…
+            </p>
+          ) : null}
+          {nearbyTransit?.status === 'ready' ? (
+            <ol className="map-nearby-metro-list">
+              {nearbyTransit.stations.slice(0, 3).map((station) => (
+                <li key={`${station.name}-${station.coordinates.join('-')}`}>
+                  <span className="map-nearby-metro-icon" aria-hidden="true">
+                    М
+                  </span>
+                  <span>{station.name}</span>
+                  <strong>{formatMapDistance(station.distanceMeters)}</strong>
+                </li>
+              ))}
+            </ol>
+          ) : null}
+          {nearbyTransit?.status === 'unavailable' ? (
+            <p className="map-nearby-metro-status">Не удалось определить станции по данным текущей подложки.</p>
+          ) : null}
+        </section>
         <dl>
           <div>
             <dt>Застройщик</dt>

@@ -3,8 +3,20 @@ import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import mapLibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 
-import { getMapPointBounds, getMapPointCenter, isValidMapCoordinatePair } from './mapContract';
-import type { MapBounds, MapPoint, MapStatus, MapViewport, PlatformMapProps } from './mapTypes';
+import {
+  formatMapDistance,
+  getMapPathDistanceMeters,
+  getMapPointBounds,
+  getMapPointCenter,
+  isValidMapCoordinatePair,
+} from './mapContract';
+import {
+  enhanceOpenMapTilesStyle,
+  findNearestSubwayStations,
+  hasOpenMapTilesPoiSource,
+  NEARBY_TRANSIT_SEARCH_ZOOM,
+} from './openMapTilesEnhancements';
+import type { MapBounds, MapCoordinate, MapPoint, MapStatus, MapViewport, PlatformMapProps } from './mapTypes';
 
 type MapLibreMapProps = Omit<PlatformMapProps, 'emptyState' | 'renderWithoutPoints'> & {
   styleUrl: string;
@@ -18,10 +30,21 @@ type MarkerRecord = {
 
 type MapCallbacks = Pick<
   PlatformMapProps,
-  'onBoundsChange' | 'onFullscreenChange' | 'onMapClick' | 'onOpenPoint' | 'onSelectPoint' | 'onStatusChange' | 'onViewportChange'
+  | 'onBoundsChange'
+  | 'onFullscreenChange'
+  | 'onMapClick'
+  | 'onNearbyTransitChange'
+  | 'onOpenPoint'
+  | 'onSelectPoint'
+  | 'onStatusChange'
+  | 'onViewportChange'
 >;
 
 const MAP_LOAD_TIMEOUT_MS = 15_000;
+const NEARBY_TRANSIT_LOOKUP_TIMEOUT_MS = 4_000;
+const MEASUREMENT_SOURCE_ID = 'platforma-measurement';
+const MEASUREMENT_LINE_LAYER_ID = 'platforma-measurement-line';
+const MEASUREMENT_POINT_LAYER_ID = 'platforma-measurement-points';
 
 const providerErrorState = {
   eyebrow: 'Карта',
@@ -35,6 +58,7 @@ export default function MapLibreMap({
   ariaLabel,
   children,
   enableFullscreen = true,
+  enableMeasurement = true,
   initialViewport,
   points,
   selectedPointId = null,
@@ -42,6 +66,7 @@ export default function MapLibreMap({
   onBoundsChange,
   onFullscreenChange,
   onMapClick,
+  onNearbyTransitChange,
   onOpenPoint,
   onSelectPoint,
   onStatusChange,
@@ -54,9 +79,13 @@ export default function MapLibreMap({
   const popupRef = useRef<maplibregl.Popup | null>(null);
   const pointsByIdRef = useRef(new Map<string, MapPoint>());
   const callbacksRef = useRef<MapCallbacks>({});
+  const nearbyTransitRequestRef = useRef(0);
+  const measurementActiveRef = useRef(false);
   const initialViewportRef = useRef<MapViewport>(initialViewport ?? createInitialViewport(points));
   const [status, setStatus] = useState<MapStatus>('loading');
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isMeasurementActive, setIsMeasurementActive] = useState(false);
+  const [measurementPoints, setMeasurementPoints] = useState<MapCoordinate[]>([]);
   const pointCoordinatesKey = useMemo(
     () => points.map((point) => `${point.id}:${point.coordinates[0]}:${point.coordinates[1]}`).join('|'),
     [points],
@@ -65,12 +94,15 @@ export default function MapLibreMap({
     () => typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
     [],
   );
+  const measurementDistance = useMemo(() => getMapPathDistanceMeters(measurementPoints), [measurementPoints]);
 
   pointsByIdRef.current = new Map(points.map((point) => [point.id, point]));
+  measurementActiveRef.current = isMeasurementActive;
   callbacksRef.current = {
     onBoundsChange,
     onFullscreenChange,
     onMapClick,
+    onNearbyTransitChange,
     onOpenPoint,
     onSelectPoint,
     onStatusChange,
@@ -175,6 +207,9 @@ export default function MapLibreMap({
         loadTimeoutId = null;
       }
 
+      enhanceOpenMapTilesStyle(map);
+      ensureMeasurementLayers(map);
+
       setStatus('ready');
       callbacksRef.current.onStatusChange?.('ready');
       notifyMapPosition(map, callbacksRef.current);
@@ -194,6 +229,11 @@ export default function MapLibreMap({
     };
     const handleMoveEnd = () => notifyMapPosition(map, callbacksRef.current);
     const handleMapClick = (event: maplibregl.MapMouseEvent) => {
+      if (enableMeasurement && measurementActiveRef.current) {
+        setMeasurementPoints((currentPoints) => [...currentPoints, [event.lngLat.lat, event.lngLat.lng]]);
+        return;
+      }
+
       callbacksRef.current.onMapClick?.([event.lngLat.lat, event.lngLat.lng]);
     };
     const handleZoom = () => {
@@ -232,8 +272,9 @@ export default function MapLibreMap({
       map.remove();
       mapRef.current = null;
       shell.classList.remove('platform-map--markers-expanded');
+      shell.classList.remove('platform-map--measuring');
     };
-  }, [enableFullscreen, prefersReducedMotion, styleUrl]);
+  }, [enableFullscreen, enableMeasurement, prefersReducedMotion, styleUrl]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -263,6 +304,120 @@ export default function MapLibreMap({
     fitMapToPoints(map, points, prefersReducedMotion);
   }, [pointCoordinatesKey, points, prefersReducedMotion, status]);
 
+  useEffect(() => {
+    const map = mapRef.current;
+    const shell = shellRef.current;
+
+    if (!map || !shell || status !== 'ready') {
+      return;
+    }
+
+    shell.classList.toggle('platform-map--measuring', isMeasurementActive);
+
+    if (isMeasurementActive) {
+      map.doubleClickZoom.disable();
+    } else {
+      map.doubleClickZoom.enable();
+    }
+
+    return () => {
+      shell.classList.remove('platform-map--measuring');
+    };
+  }, [isMeasurementActive, status]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+
+    if (!map || status !== 'ready') {
+      return;
+    }
+
+    const source = map.getSource(MEASUREMENT_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+
+    if (source) {
+      void source.setData(createMeasurementGeoJson(measurementPoints));
+    }
+  }, [measurementPoints, status]);
+
+  useEffect(() => {
+    if (!isMeasurementActive) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsMeasurementActive(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isMeasurementActive]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const point = selectedPointId ? pointsByIdRef.current.get(selectedPointId) : null;
+    const requestId = nearbyTransitRequestRef.current + 1;
+
+    nearbyTransitRequestRef.current = requestId;
+
+    if (!point) {
+      callbacksRef.current.onNearbyTransitChange?.({ pointId: null, status: 'idle', stations: [] });
+      return;
+    }
+
+    if (!map || status !== 'ready') {
+      callbacksRef.current.onNearbyTransitChange?.({
+        pointId: point.id,
+        status: status === 'error' ? 'unavailable' : 'loading',
+        stations: [],
+      });
+      return;
+    }
+
+    callbacksRef.current.onNearbyTransitChange?.({ pointId: point.id, status: 'loading', stations: [] });
+    map.easeTo({
+      center: toMapLibreCoordinate(point.coordinates),
+      duration: prefersReducedMotion ? 0 : 320,
+      zoom: Math.max(map.getZoom(), NEARBY_TRANSIT_SEARCH_ZOOM),
+    });
+
+    let timeoutId: number | null = null;
+    let isComplete = false;
+    const finishLookup = () => {
+      if (isComplete || nearbyTransitRequestRef.current !== requestId) {
+        return;
+      }
+
+      isComplete = true;
+
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+
+      const supportsNearbyTransit = hasOpenMapTilesPoiSource(map);
+      const stations = supportsNearbyTransit ? findNearestSubwayStations(map, point.coordinates, 3) : [];
+
+      callbacksRef.current.onNearbyTransitChange?.({
+        pointId: point.id,
+        status: supportsNearbyTransit && stations.length > 0 ? 'ready' : 'unavailable',
+        stations,
+      });
+    };
+
+    map.once('idle', finishLookup);
+    timeoutId = window.setTimeout(finishLookup, NEARBY_TRANSIT_LOOKUP_TIMEOUT_MS);
+
+    return () => {
+      map.off('idle', finishLookup);
+
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+    };
+  }, [points, prefersReducedMotion, selectedPointId, status]);
+
   return (
     <div
       ref={shellRef}
@@ -286,9 +441,112 @@ export default function MapLibreMap({
         </div>
       ) : null}
       <div ref={containerRef} className="platform-map-canvas" data-map-surface />
+      {enableMeasurement && status === 'ready' ? (
+        <div className="map-measurement-tools" aria-label="Линейка расстояния">
+          <button
+            aria-label={isMeasurementActive ? 'Завершить измерение' : 'Измерить расстояние'}
+            aria-pressed={isMeasurementActive}
+            className="map-measurement-button"
+            type="button"
+            onClick={() => setIsMeasurementActive((isActive) => !isActive)}
+          >
+            {isMeasurementActive ? 'Готово' : measurementPoints.length > 0 ? 'Продолжить' : 'Линейка'}
+          </button>
+          {isMeasurementActive || measurementPoints.length > 0 ? (
+            <output className="map-measurement-result" aria-live="polite">
+              {measurementPoints.length === 0 ? (
+                'Выберите начальную точку'
+              ) : measurementPoints.length === 1 ? (
+                'Выберите следующую точку'
+              ) : (
+                <span className="map-measurement-distance">{formatMapDistance(measurementDistance)}</span>
+              )}
+            </output>
+          ) : null}
+          {measurementPoints.length > 0 ? (
+            <button
+              aria-label="Очистить измерение"
+              className="map-measurement-clear"
+              type="button"
+              onClick={() => setMeasurementPoints([])}
+            >
+              Очистить
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <div className="platform-map-overlay-root">{children}</div>
     </div>
   );
+}
+
+function ensureMeasurementLayers(map: maplibregl.Map) {
+  if (!map.getSource(MEASUREMENT_SOURCE_ID)) {
+    map.addSource(MEASUREMENT_SOURCE_ID, {
+      type: 'geojson',
+      data: createMeasurementGeoJson([]),
+    });
+  }
+
+  if (!map.getLayer(MEASUREMENT_LINE_LAYER_ID)) {
+    map.addLayer({
+      id: MEASUREMENT_LINE_LAYER_ID,
+      type: 'line',
+      source: MEASUREMENT_SOURCE_ID,
+      paint: {
+        'line-color': '#c8862f',
+        'line-opacity': 0.95,
+        'line-width': 4,
+      },
+    });
+  }
+
+  if (!map.getLayer(MEASUREMENT_POINT_LAYER_ID)) {
+    map.addLayer({
+      id: MEASUREMENT_POINT_LAYER_ID,
+      type: 'circle',
+      source: MEASUREMENT_SOURCE_ID,
+      paint: {
+        'circle-color': '#ffffff',
+        'circle-radius': 6,
+        'circle-stroke-color': '#c8862f',
+        'circle-stroke-width': 3,
+      },
+    });
+  }
+}
+
+type MeasurementGeoJson = Exclude<Parameters<maplibregl.GeoJSONSource['setData']>[0], string>;
+
+function createMeasurementGeoJson(points: MapCoordinate[]): MeasurementGeoJson {
+  const coordinates = points.map(toMapLibreCoordinate);
+  const features: Array<{
+    type: 'Feature';
+    properties: Record<string, number>;
+    geometry:
+      | { type: 'Point'; coordinates: [number, number] }
+      | { type: 'LineString'; coordinates: [number, number][] };
+  }> = points.map((point, index) => ({
+    type: 'Feature',
+    properties: { index },
+    geometry: {
+      type: 'Point',
+      coordinates: toMapLibreCoordinate(point),
+    },
+  }));
+
+  if (coordinates.length > 1) {
+    features.unshift({
+      type: 'Feature',
+      properties: {},
+      geometry: {
+        type: 'LineString',
+        coordinates,
+      },
+    });
+  }
+
+  return { type: 'FeatureCollection', features } as MeasurementGeoJson;
 }
 
 function syncMarkers({
@@ -439,7 +697,7 @@ function fitMapToPoints(map: maplibregl.Map, points: MapPoint[], prefersReducedM
     duration,
     linear: true,
     maxZoom: 15,
-    padding: 48,
+    padding: { top: 96, right: 48, bottom: 48, left: 120 },
   });
 }
 

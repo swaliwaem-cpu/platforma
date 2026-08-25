@@ -27,6 +27,8 @@ const productionChecklistSource = readFileSync(resolve(webRoot, '../../docs/stag
 
 const {
   DEFAULT_MAP_STYLE_URL,
+  formatMapDistance,
+  getMapDistanceMeters,
   getValidMapCoordinate,
   getMapPointBounds,
   isValidMapCoordinatePair,
@@ -68,6 +70,16 @@ test('provider-neutral map geometry keeps latitude and longitude in canonical or
   assert.equal(isValidMapCoordinatePair(55.751244, -181), false);
   assert.deepEqual(getValidMapCoordinate(55.751244, 37.618423), [55.751244, 37.618423]);
   assert.equal(getValidMapCoordinate(55.751244, null), null);
+});
+
+test('map distance uses geographic coordinates and readable metric formatting', () => {
+  const distance = getMapDistanceMeters([55.751244, 37.618423], [55.760186, 37.618423]);
+
+  assert.ok(distance > 990 && distance < 1_010);
+  assert.equal(formatMapDistance(742), '750 м');
+  assert.equal(formatMapDistance(1_000), '1 км');
+  assert.equal(formatMapDistance(1_240), '1,2 км');
+  assert.equal(formatMapDistance(12_540), '12,5 км');
 });
 
 test('web production runtime uses provider-neutral MapLibre configuration without Yandex Maps', () => {

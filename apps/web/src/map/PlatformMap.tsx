@@ -144,6 +144,8 @@ export type {
   MapBounds,
   MapCoordinate,
   MapFallbackState,
+  MapNearbyTransitResult,
+  MapNearbyTransitStation,
   MapPoint,
   MapStatus,
   MapViewport,

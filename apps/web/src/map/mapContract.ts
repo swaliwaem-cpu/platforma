@@ -90,3 +90,47 @@ export function getMapPointCenter(points: Array<Pick<MapPoint, 'coordinates'>>):
 
   return [(bounds[0][0] + bounds[1][0]) / 2, (bounds[0][1] + bounds[1][1]) / 2];
 }
+
+const EARTH_RADIUS_METERS = 6_371_008.8;
+
+export function getMapDistanceMeters(from: MapCoordinate, to: MapCoordinate): number {
+  const latitudeDelta = toRadians(to[0] - from[0]);
+  const longitudeDelta = toRadians(to[1] - from[1]);
+  const fromLatitude = toRadians(from[0]);
+  const toLatitude = toRadians(to[0]);
+  const haversine =
+    Math.sin(latitudeDelta / 2) ** 2 +
+    Math.cos(fromLatitude) * Math.cos(toLatitude) * Math.sin(longitudeDelta / 2) ** 2;
+
+  return 2 * EARTH_RADIUS_METERS * Math.asin(Math.min(1, Math.sqrt(haversine)));
+}
+
+export function getMapPathDistanceMeters(coordinates: MapCoordinate[]): number {
+  let distance = 0;
+
+  for (let index = 1; index < coordinates.length; index += 1) {
+    const previous = coordinates[index - 1];
+    const current = coordinates[index];
+
+    if (previous && current) {
+      distance += getMapDistanceMeters(previous, current);
+    }
+  }
+
+  return distance;
+}
+
+export function formatMapDistance(distanceMeters: number): string {
+  if (distanceMeters < 1_000) {
+    return `${Math.max(0, Math.round(distanceMeters / 50) * 50).toLocaleString('ru-RU')} м`;
+  }
+
+  return `${(distanceMeters / 1_000).toLocaleString('ru-RU', {
+    maximumFractionDigits: 1,
+    minimumFractionDigits: 0,
+  })} км`;
+}
+
+function toRadians(degrees: number) {
+  return (degrees * Math.PI) / 180;
+}

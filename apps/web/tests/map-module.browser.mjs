@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { chromium } from '@playwright/test';
 
 const baseUrl = process.env.MAP_WEB_TEST_URL;
-const vectorTileFixture = Buffer.from('Gi14AgoGcG9pbnRzKIAgEg0SAgAAGAEiBQnYJoIUGgRraW5kIgkKB2ZpeHR1cmU=', 'base64');
+const vectorTileFixture = Buffer.from(
+  'GmN4AgoGcG9pbnRzKIAgEhMSCAAAAQECAgMDGAEiBQmAIIAgGgRuYW1lGgVjbGFzcxoIc3ViY2xhc3MaBHJhbmsiCQoHZml4dHVyZSIJCgdyYWlsd2F5IggKBnN1YndheSICKAEa5AF4AgoDcG9pKIAgEhMSCAAAAQECAgMDGAEiBQnoIIQgEhMSCAAEAQECAgMFGAEiBQmIJ7AiEhMSCAAGAQECAgMHGAEiBQnwLtAoGgRuYW1lGgVjbGFzcxoIc3ViY2xhc3MaBHJhbmsiHQob0JzQtdGC0YDQviDQodC10LLQtdGA0L3QsNGPIgkKB3JhaWx3YXkiCAoGc3Vid2F5IgIoASIjCiHQnNC10YLRgNC+INCm0LXQvdGC0YDQsNC70YzQvdCw0Y8iAigCIhcKFdCc0LXRgtGA0L4g0K7QttC90LDRjyICKAMagAF4AgoOdHJhbnNwb3J0YXRpb24ogCASFBIGAAABAQICGAIiCAkA6CAKgEAAEhISBAADAQMYAiIICQCIJwqAQAAaBWNsYXNzGghzdWJjbGFzcxoHYnJ1bm5lbCIJCgd0cmFuc2l0IggKBnN1YndheSIICgZ0dW5uZWwiBgoEcmFpbA==',
+  'base64',
+);
 
 if (!baseUrl) {
   throw new Error('MAP_WEB_TEST_URL is required');
@@ -66,32 +69,36 @@ async function verifyCatalogMap() {
       'local map fixtures should not trigger a provider error',
     );
 
+    const mapList = page.getByRole('complementary', { name: 'Объекты на карте' });
+    const initialBoundsLabel = await mapList.locator('.table-meta span').first().innerText();
     const northMarker = map.locator('.map-price-marker[aria-label="ЖК Северный"]');
     await northMarker.waitFor();
     await northMarker.click();
-    await page.getByRole('article', { name: 'Объект ЖК Северный' }).waitFor();
+    const northCard = page.getByRole('article', { name: 'Объект ЖК Северный' });
+    await northCard.waitFor();
+    await northCard.getByRole('heading', { name: 'Ближайшее метро (по прямой)' }).waitFor();
+    await northCard.getByText('Метро Северная', { exact: true }).waitFor();
+    assert.equal(await northCard.locator('.map-nearby-metro-list li').count(), 3);
     assert.equal(await northMarker.getAttribute('aria-pressed'), 'true');
+    await page.waitForFunction(
+      ({ selector, previous }) => document.querySelector(selector)?.textContent?.trim() !== previous,
+      { selector: '.catalog-map-list .table-meta span', previous: initialBoundsLabel },
+    );
     assert.equal(
       await page.getByRole('article', { name: 'Объект ЖК Северный' }).getByRole('link', { name: 'Подробнее' }).getAttribute('href'),
       '/objects/zhk-severnyy',
     );
 
-    const mapList = page.getByRole('complementary', { name: 'Объекты на карте' });
-    await mapList.getByRole('button', { name: 'ЖК Южный', exact: true }).click();
-    const southMarker = map.locator('.map-price-marker[aria-label="ЖК Южный"]');
-    assert.equal(await southMarker.getAttribute('aria-pressed'), 'true');
-
-    const initialBoundsLabel = await mapList.locator('.table-meta span').first().innerText();
-    const zoomIn = map.getByRole('button', { name: 'Увеличить масштаб' });
-
-    for (let index = 0; index < 4; index += 1) {
-      await zoomIn.click();
-    }
-
-    await page.waitForFunction(
-      ({ selector, previous }) => document.querySelector(selector)?.textContent?.trim() !== previous,
-      { selector: '.catalog-map-list .table-meta span', previous: initialBoundsLabel },
-    );
+    const measureButton = map.getByRole('button', { name: 'Измерить расстояние' });
+    await measureButton.click();
+    assert.equal(await map.getByRole('button', { name: 'Завершить измерение' }).getAttribute('aria-pressed'), 'true');
+    const mapSurface = map.locator('[data-map-surface]');
+    await mapSurface.click({ position: { x: 520, y: 360 } });
+    await map.getByText('Выберите следующую точку', { exact: true }).waitFor();
+    await mapSurface.click({ position: { x: 700, y: 440 } });
+    await map.locator('.map-measurement-distance').waitFor();
+    await map.getByRole('button', { name: 'Очистить измерение' }).click();
+    await map.getByText('Выберите начальную точку', { exact: true }).waitFor();
 
     const fullscreen = map.getByRole('button', { name: 'Открыть карту на весь экран' });
     await fullscreen.click();
@@ -161,6 +168,7 @@ async function verifyProviderFailureKeepsCatalogUsable() {
     await mapList.getByRole('button', { name: 'ЖК Северный', exact: true }).click();
     const card = page.getByRole('article', { name: 'Объект ЖК Северный' });
     await card.waitFor();
+    await card.getByText('Не удалось определить станции по данным текущей подложки.', { exact: true }).waitFor();
     assert.equal(await card.getByRole('link', { name: 'Подробнее' }).getAttribute('href'), '/objects/zhk-severnyy');
     await page.screenshot({ path: '/tmp/platforma-maplibre-provider-fallback.png' });
   } finally {
@@ -347,6 +355,30 @@ function mapStyleFixture() {
         source: 'local-vector',
         'source-layer': 'points',
         paint: { 'circle-color': '#c9ab72', 'circle-radius': 4 },
+      },
+      {
+        id: 'road_transit_rail',
+        type: 'line',
+        source: 'local-vector',
+        'source-layer': 'transportation',
+        paint: { 'line-color': '#a0a8b3', 'line-width': 1 },
+      },
+      {
+        id: 'poi_r1',
+        type: 'circle',
+        source: 'local-vector',
+        'source-layer': 'poi',
+        minzoom: 15,
+        filter: ['<', ['get', 'rank'], 7],
+        paint: { 'circle-color': '#7891a6', 'circle-radius': 3 },
+      },
+      {
+        id: 'poi_transit',
+        type: 'circle',
+        source: 'local-vector',
+        'source-layer': 'poi',
+        filter: ['==', ['get', 'class'], 'rail'],
+        paint: { 'circle-color': '#d64b45', 'circle-radius': 5 },
       },
     ],
   };

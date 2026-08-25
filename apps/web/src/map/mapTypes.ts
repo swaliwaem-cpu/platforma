@@ -24,6 +24,18 @@ export type MapFallbackState = {
   description: string;
 };
 
+export type MapNearbyTransitStation = {
+  name: string;
+  coordinates: MapCoordinate;
+  distanceMeters: number;
+};
+
+export type MapNearbyTransitResult = {
+  pointId: string | null;
+  status: 'idle' | 'loading' | 'ready' | 'unavailable';
+  stations: MapNearbyTransitStation[];
+};
+
 export type MapStatus = 'loading' | 'ready' | 'error' | 'disabled' | 'empty';
 
 export type PlatformMapProps = {
@@ -31,6 +43,7 @@ export type PlatformMapProps = {
   children?: ReactNode;
   emptyState?: MapFallbackState;
   enableFullscreen?: boolean;
+  enableMeasurement?: boolean;
   initialViewport?: MapViewport;
   points: MapPoint[];
   renderWithoutPoints?: boolean;
@@ -38,6 +51,7 @@ export type PlatformMapProps = {
   onBoundsChange?: (bounds: MapBounds) => void;
   onFullscreenChange?: (isFullscreen: boolean) => void;
   onMapClick?: (coordinate: MapCoordinate) => void;
+  onNearbyTransitChange?: (result: MapNearbyTransitResult) => void;
   onOpenPoint?: (point: MapPoint) => void;
   onSelectPoint?: (point: MapPoint) => void;
   onStatusChange?: (status: MapStatus) => void;
