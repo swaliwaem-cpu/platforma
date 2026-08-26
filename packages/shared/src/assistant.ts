@@ -9,6 +9,24 @@ export type AssistantPageContext = {
 export type AssistantMessageRole = 'USER' | 'ASSISTANT';
 export type AssistantRunStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED';
 export type AssistantProgressStep = 'UNDERSTANDING' | 'SEARCHING' | 'COMPARING' | 'ANSWERING';
+export type AssistantFeedbackRating = 'LIKE' | 'DISLIKE';
+export type AssistantFeedbackReason =
+  | 'WRONG_FACT'
+  | 'MISSING_RESULT'
+  | 'IRRELEVANT'
+  | 'STALE_DATA'
+  | 'BROKEN_LINK'
+  | 'SLOW_RESPONSE'
+  | 'OTHER';
+
+export type AssistantFeedback = {
+  id: string;
+  rating: AssistantFeedbackRating;
+  reason: AssistantFeedbackReason | null;
+  comment: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
 
 export type AssistantAlternativeDeviation = {
   type: 'BUDGET' | 'DISTRICT' | 'DEVELOPER' | 'ROOMS';
@@ -142,6 +160,7 @@ export type AssistantMessage = {
   context: AssistantPageContext | null;
   geo: AssistantGeoSearchContext | null;
   answer: AssistantAnswer | null;
+  feedback: AssistantFeedback | null;
   createdAt: string;
 };
 
@@ -196,4 +215,14 @@ export type AssistantSendMessageInput = {
   content: string;
   context?: AssistantPageContext | null;
   geo?: AssistantGeoSearchContext | null;
+};
+
+export type AssistantFeedbackInput = {
+  rating: AssistantFeedbackRating;
+  reason?: AssistantFeedbackReason | null;
+  comment?: string | null;
+};
+
+export type AssistantFeedbackResponse = {
+  feedback: AssistantFeedback;
 };

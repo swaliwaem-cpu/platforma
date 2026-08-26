@@ -14,6 +14,7 @@ import type {
   AssistantConversation,
   AssistantConversationSummary,
   AssistantExternalLotCard,
+  AssistantFeedback,
   AssistantGeoSearchContext,
   AssistantGeoSearchView,
   AssistantKnowledgeFactCard,
@@ -55,6 +56,20 @@ const messageSelect = {
   contextJson: true,
   geoContextJson: true,
   answerJson: true,
+  assistantRun: {
+    select: {
+      feedback: {
+        select: {
+          id: true,
+          rating: true,
+          reason: true,
+          comment: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      },
+    },
+  },
   createdAt: true,
 } satisfies Prisma.AssistantMessageSelect;
 
@@ -280,6 +295,9 @@ export class AssistantService {
           intentJson: Prisma.DbNull,
           evidenceJson: [],
           telemetryJson: [],
+          auditJson: {},
+          qualityFlags: [],
+          latencyMs: null,
           errorCode: null,
           startedAt: null,
           completedAt: null,
@@ -421,7 +439,23 @@ export class AssistantService {
       answer: message.role === PrismaAssistantMessageRole.ASSISTANT
         ? this.parseStoredAnswer(message.answerJson)
         : null,
+      feedback: message.assistantRun?.feedback
+        ? this.serializeFeedback(message.assistantRun.feedback)
+        : null,
       createdAt: message.createdAt.toISOString(),
+    };
+  }
+
+  private serializeFeedback(
+    feedback: NonNullable<NonNullable<StoredMessage['assistantRun']>['feedback']>,
+  ): AssistantFeedback {
+    return {
+      id: feedback.id,
+      rating: feedback.rating,
+      reason: feedback.reason,
+      comment: feedback.comment,
+      createdAt: feedback.createdAt.toISOString(),
+      updatedAt: feedback.updatedAt.toISOString(),
     };
   }
 

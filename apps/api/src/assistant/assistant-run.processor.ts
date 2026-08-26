@@ -19,6 +19,7 @@ import { randomUUID } from 'node:crypto';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { AssistantAnswerService } from './assistant-answer.service';
+import { buildAssistantRunAudit } from './audit/assistant-run-audit';
 import { AssistantPlannerError } from './assistant-query-planner';
 import { parseAssistantGeoSearchInput } from './geo/assistant-geo-contract';
 import { isAssistantModuleEnabled } from './assistant-runtime-config';
@@ -172,6 +173,15 @@ export class AssistantRunProcessor implements OnModuleInit, OnModuleDestroy {
           geo: this.parseGeoContext(run.userMessage.geoContextJson),
         });
       });
+      const latencyMs = Math.max(0, Date.now() - startedAt.getTime());
+      const audit = buildAssistantRunAudit({
+        intent: answerResult.intent,
+        answer: answerResult.answer,
+        candidateEvidence: answerResult.candidateEvidence,
+        selectedEvidence: answerResult.evidence,
+        telemetry: answerResult.telemetry,
+        latencyMs,
+      });
       await this.prisma.$transaction(async (transaction) => {
         const assistantMessage = await transaction.assistantMessage.create({
           data: {
@@ -193,6 +203,9 @@ export class AssistantRunProcessor implements OnModuleInit, OnModuleDestroy {
             intentJson: answerResult.intent as unknown as Prisma.InputJsonValue,
             evidenceJson: answerResult.evidence as unknown as Prisma.InputJsonValue,
             telemetryJson: answerResult.telemetry as unknown as Prisma.InputJsonValue,
+            auditJson: audit as unknown as Prisma.InputJsonValue,
+            qualityFlags: audit.qualityFlags,
+            latencyMs,
             completedAt: new Date(),
             leaseOwner: null,
             leaseExpiresAt: null,
@@ -207,6 +220,13 @@ export class AssistantRunProcessor implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       this.logger.error(`Assistant grounded run failed: ${runId}`);
       try {
+        const telemetry = error instanceof AssistantPlannerError ? error.telemetry : [];
+        const latencyMs = Math.max(0, Date.now() - startedAt.getTime());
+        const qualityFlags = [
+          ...(telemetry.some(({ isFallback }) => isFallback) ? ['MODEL_FALLBACK'] : []),
+          ...(telemetry.some(({ outcome }) => outcome === 'PROVIDER_ERROR') ? ['PROVIDER_ERROR'] : []),
+          ...(latencyMs > 15_000 ? ['LATENCY_BREACH'] : []),
+        ];
         await this.prisma.assistantRun.updateMany({
           where: {
             id: runId,
@@ -216,9 +236,18 @@ export class AssistantRunProcessor implements OnModuleInit, OnModuleDestroy {
           data: {
             status: AssistantRunStatus.FAILED,
             errorCode: 'ASSISTANT_GROUNDED_RUN_FAILED',
-            telemetryJson: error instanceof AssistantPlannerError
-              ? error.telemetry as unknown as Prisma.InputJsonValue
-              : [],
+            telemetryJson: telemetry as unknown as Prisma.InputJsonValue,
+            auditJson: {
+              schemaVersion: 1,
+              appliedFilters: null,
+              softPreferences: null,
+              candidateSet: [],
+              rankingDecisions: [],
+              evidenceRevisions: [],
+              qualityFlags,
+            },
+            qualityFlags,
+            latencyMs,
             completedAt: new Date(),
             leaseOwner: null,
             leaseExpiresAt: null,

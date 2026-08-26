@@ -28,22 +28,45 @@ export class AssistantPlaceResolverService {
     private readonly provider: AssistantGeoProviderPolicyService,
   ) {}
 
-  async resolve(body: unknown): Promise<AssistantGeoResolution> {
+  async resolve(body: unknown, actorUserId: string | null = null): Promise<AssistantGeoResolution> {
+    const startedAt = Date.now();
     const input = parseResolveInput(body);
     if (!input) return { status: 'NOT_APPLICABLE' };
     if (input.radiusMeters === null) {
-      return { status: 'RADIUS_REQUIRED', placeQuery: input.placeQuery, actions: ['REFINE'] };
+      const result: AssistantGeoResolution = {
+        status: 'RADIUS_REQUIRED',
+        placeQuery: input.placeQuery,
+        actions: ['REFINE'],
+      };
+      await this.recordOperation(input, actorUserId, 'none', result.status, startedAt, false, 0, null);
+      return result;
     }
 
     const alias = await this.findAlias(input);
-    if (alias) return resolved(input, [alias]);
+    if (alias) {
+      const result = resolved(input, [alias]);
+      await this.recordOperation(input, actorUserId, 'alias', result.status, startedAt, false, 0, null);
+      return result;
+    }
 
     const cacheKey = createCacheKey(input);
     const cached = await this.readCache(cacheKey);
     if (cached) {
       const candidates = cached.map((candidate) => ({ ...candidate, source: 'PLACE' as const }));
-      if (candidates.length > 0) return resolved(input, candidates);
-      return this.resolveFromKnowledgeOrNotFound(input);
+      const result = candidates.length > 0
+        ? resolved(input, candidates)
+        : await this.resolveFromKnowledgeOrNotFound(input);
+      await this.recordOperation(
+        input,
+        actorUserId,
+        this.provider.getProviderName(),
+        result.status,
+        startedAt,
+        true,
+        0,
+        null,
+      );
+      return result;
     }
 
     try {
@@ -55,18 +78,79 @@ export class AssistantPlaceResolverService {
       });
       await this.writeCache(cacheKey, input, providerCandidates);
       if (providerCandidates.length > 0) {
-        return resolved(input, providerCandidates.map((candidate) => ({
+        const result = resolved(input, providerCandidates.map((candidate) => ({
           ...candidate,
           source: 'PLACE' as const,
         })));
+        await this.recordOperation(
+          input,
+          actorUserId,
+          this.provider.getProviderName(),
+          result.status,
+          startedAt,
+          false,
+          1,
+          null,
+        );
+        return result;
       }
-      return this.resolveFromKnowledgeOrNotFound(input);
+      const result = await this.resolveFromKnowledgeOrNotFound(input);
+      await this.recordOperation(
+        input,
+        actorUserId,
+        this.provider.getProviderName(),
+        result.status,
+        startedAt,
+        false,
+        1,
+        null,
+      );
+      return result;
     } catch (error) {
       if (!(error instanceof AssistantGeoProviderError)) throw error;
       const knowledge = await this.findKnowledgeAddresses(input.placeQuery);
-      return knowledge.length > 0
+      const result = knowledge.length > 0
         ? resolved(input, knowledge)
         : unavailable(input);
+      await this.recordOperation(
+        input,
+        actorUserId,
+        this.provider.getProviderName(),
+        result.status,
+        startedAt,
+        false,
+        1,
+        error.code,
+      );
+      return result;
+    }
+  }
+
+  private async recordOperation(
+    input: ParsedResolveInput,
+    actorUserId: string | null,
+    provider: string,
+    status: AssistantGeoResolution['status'],
+    startedAt: number,
+    cacheHit: boolean,
+    providerCallCount: number,
+    errorCode: string | null,
+  ) {
+    try {
+      await this.prisma.assistantGeoOperation.create({
+        data: {
+          actorUserId,
+          normalizedQuery: normalizePlaceQuery(input.placeQuery),
+          provider,
+          status,
+          durationMs: Math.max(0, Date.now() - startedAt),
+          cacheHit,
+          providerCallCount,
+          errorCode,
+        },
+      });
+    } catch {
+      // Geo resolution remains available when operational telemetry persistence is degraded.
     }
   }
 

@@ -29,6 +29,6 @@ import { OfficialSourceExtractor } from './official-source.extractor';
       useFactory: () => new AssistantEmbeddingGateway(),
     },
   ],
-  exports: [AssistantKnowledgeRetrievalService],
+  exports: [AssistantKnowledgeRetrievalService, AssistantSourceRegistryService],
 })
 export class AssistantSourcesModule {}

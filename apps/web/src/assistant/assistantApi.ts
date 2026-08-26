@@ -6,6 +6,8 @@ import type {
   AssistantSendMessageInput,
   AssistantGeoResolution,
   AssistantGeoResolveInput,
+  AssistantFeedbackInput,
+  AssistantFeedbackResponse,
 } from '@platforma/shared';
 
 import { apiRequest } from '../admin/api';
@@ -71,6 +73,23 @@ export function getAssistantRun(accessToken: string, runId: string, signal?: Abo
     `/assistant/runs/${encodeURIComponent(runId)}`,
     accessToken,
     { signal },
+  );
+}
+
+export function saveAssistantFeedback(
+  accessToken: string,
+  messageId: string,
+  input: AssistantFeedbackInput,
+  signal?: AbortSignal,
+) {
+  return apiRequest<AssistantFeedbackResponse>(
+    `/assistant/messages/${encodeURIComponent(messageId)}/feedback`,
+    accessToken,
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+      signal,
+    },
   );
 }
 

@@ -16,8 +16,8 @@ export class AssistantGeoController {
   constructor(private readonly resolver: AssistantPlaceResolverService) {}
 
   @Post('resolve')
-  resolve(@Body() body: unknown) {
-    return this.resolver.resolve(body);
+  resolve(@Body() body: unknown, @CurrentUser() actor: AuthenticatedUser) {
+    return this.resolver.resolve(body, actor.id);
   }
 }
 

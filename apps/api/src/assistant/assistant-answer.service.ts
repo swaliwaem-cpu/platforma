@@ -28,6 +28,7 @@ export type AssistantAnswerResult = {
   answer: AssistantAnswer;
   intent: AssistantStructuredIntent;
   evidence: Array<AssistantSearchEvidence | AssistantKnowledgeEvidence>;
+  candidateEvidence: Array<AssistantSearchEvidence | AssistantKnowledgeEvidence>;
   telemetry: AssistantPlannerTelemetry[];
 };
 
@@ -62,6 +63,7 @@ export class AssistantAnswerService {
             ].join(' '),
             answer: { kind: 'SAFE_BOUNDARY' } as const,
             evidence: [] as AssistantSearchEvidence[],
+            candidateEvidence: [] as AssistantSearchEvidence[],
           };
         }
         if (intent.needsClarification) {
@@ -69,6 +71,7 @@ export class AssistantAnswerService {
             content: intent.clarificationQuestion!,
             answer: { kind: 'CLARIFICATION' } as const,
             evidence: [] as AssistantSearchEvidence[],
+            candidateEvidence: [] as AssistantSearchEvidence[],
           };
         }
 
@@ -82,11 +85,12 @@ export class AssistantAnswerService {
             now,
           });
           const grounded = buildAssistantKnowledgeAnswer(evidence, now);
-          if (grounded.answer.facts.length > 0) return grounded;
+          if (grounded.answer.facts.length > 0) return { ...grounded, candidateEvidence: evidence };
           return {
             content: 'Не могу подтвердить ответ по доступным источникам.',
             answer: { kind: 'REFUSAL' } as const,
             evidence: [] as AssistantKnowledgeEvidence[],
+            candidateEvidence: evidence,
           };
         }
 
@@ -100,7 +104,9 @@ export class AssistantAnswerService {
             now,
           });
           const knowledgeAnswer = buildAssistantKnowledgeAnswer(knowledgeEvidence, now);
-          if (knowledgeAnswer.answer.externalLots.length > 0) return knowledgeAnswer;
+          if (knowledgeAnswer.answer.externalLots.length > 0) {
+            return { ...knowledgeAnswer, candidateEvidence: knowledgeEvidence };
+          }
         }
         const evidence = [...searchResult.exact, ...searchResult.alternatives];
         const grounded = buildAssistantSearchAnswer(
@@ -117,6 +123,7 @@ export class AssistantAnswerService {
             content: grounded.content,
             answer: { kind: 'REFUSAL' } as const,
             evidence: [] as AssistantSearchEvidence[],
+            candidateEvidence: evidence,
           };
         }
         const selectedIds = new Set([
@@ -140,6 +147,7 @@ export class AssistantAnswerService {
             ...(geo ? { geo } : {}),
           } as const,
           evidence: selectedEvidence,
+          candidateEvidence: evidence,
         };
       },
     );

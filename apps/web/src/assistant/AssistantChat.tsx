@@ -1,6 +1,9 @@
 import type {
   AssistantConversation,
   AssistantConversationSummary,
+  AssistantFeedback,
+  AssistantFeedbackRating,
+  AssistantFeedbackReason,
   AssistantExternalLotCard,
   AssistantGeoCandidate,
   AssistantGeoResolution,
@@ -19,6 +22,8 @@ import {
   PlusIcon,
   RotateCcwIcon,
   SendIcon,
+  ThumbsDownIcon,
+  ThumbsUpIcon,
   XIcon,
 } from 'lucide-react';
 import {
@@ -38,6 +43,7 @@ import {
   getAssistantRun,
   listAssistantConversations,
   resolveAssistantGeo,
+  saveAssistantFeedback,
   sendAssistantMessage,
 } from './assistantApi';
 import { AssistantGeoPicker } from './AssistantGeoPicker';
@@ -570,6 +576,14 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
   const progressLabel = latestProgress?.label
     ?? (isSending && activeRun?.status === 'PENDING' ? 'Понимаю запрос' : null);
   const renderedMessages = useMemo(() => conversation?.messages ?? [], [conversation]);
+  const handleFeedbackSaved = useCallback((messageId: string, feedback: AssistantFeedback) => {
+    setConversation((current) => current ? {
+      ...current,
+      messages: current.messages.map((message) => message.id === messageId
+        ? { ...message, feedback }
+        : message),
+    } : current);
+  }, []);
 
   if (!enabled) return null;
 
@@ -718,6 +732,14 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
                   >
                     <span>{message.role === 'USER' ? 'Вы' : 'Помощник'}</span>
                     <AssistantMessageContent message={message} />
+                    {message.role === 'ASSISTANT' ? (
+                      <AssistantFeedbackForm
+                        accessToken={accessToken}
+                        feedback={message.feedback}
+                        messageId={message.id}
+                        onSaved={handleFeedbackSaved}
+                      />
+                    ) : null}
                   </article>
                 ))}
                 {optimisticContent && !renderedMessages.some((message) => message.content === optimisticContent) ? (
@@ -902,6 +924,136 @@ function AssistantMessageContent({ message }: { message: AssistantMessage }) {
         </div>
       ) : null}
     </>
+  );
+}
+
+const feedbackReasonOptions: Array<{ value: AssistantFeedbackReason; label: string }> = [
+  { value: 'WRONG_FACT', label: 'Неверный факт' },
+  { value: 'MISSING_RESULT', label: 'Не хватает результата' },
+  { value: 'IRRELEVANT', label: 'Ответ не по теме' },
+  { value: 'STALE_DATA', label: 'Устаревшие данные' },
+  { value: 'BROKEN_LINK', label: 'Не работает ссылка' },
+  { value: 'SLOW_RESPONSE', label: 'Слишком медленно' },
+  { value: 'OTHER', label: 'Другое' },
+];
+
+function AssistantFeedbackForm({
+  accessToken,
+  feedback,
+  messageId,
+  onSaved,
+}: {
+  accessToken: string;
+  feedback: AssistantFeedback | null;
+  messageId: string;
+  onSaved: (messageId: string, feedback: AssistantFeedback) => void;
+}) {
+  const [rating, setRating] = useState<AssistantFeedbackRating | null>(feedback?.rating ?? null);
+  const [reason, setReason] = useState<AssistantFeedbackReason | ''>(feedback?.reason ?? '');
+  const [comment, setComment] = useState(feedback?.comment ?? '');
+  const [isSaving, setIsSaving] = useState(false);
+  const [saved, setSaved] = useState(Boolean(feedback));
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setRating(feedback?.rating ?? null);
+    setReason(feedback?.reason ?? '');
+    setComment(feedback?.comment ?? '');
+    setSaved(Boolean(feedback));
+  }, [feedback]);
+
+  const selectRating = (nextRating: AssistantFeedbackRating) => {
+    setRating(nextRating);
+    setSaved(false);
+    setFeedbackError(null);
+  };
+
+  const handleSave = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!rating) return;
+    setIsSaving(true);
+    setFeedbackError(null);
+    try {
+      const response = await saveAssistantFeedback(accessToken, messageId, {
+        rating,
+        reason: reason || null,
+        comment: comment.trim() || null,
+      });
+      onSaved(messageId, response.feedback);
+      setSaved(true);
+    } catch (saveError) {
+      setFeedbackError(readErrorMessage(saveError));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <form className="assistant-feedback" onSubmit={handleSave}>
+      <fieldset>
+        <legend>Был ли ответ полезен?</legend>
+        <button
+          aria-label="Ответ полезен"
+          aria-pressed={rating === 'LIKE'}
+          className={rating === 'LIKE' ? 'assistant-feedback-rating assistant-feedback-rating--selected' : 'assistant-feedback-rating'}
+          disabled={isSaving}
+          type="button"
+          onClick={() => selectRating('LIKE')}
+        >
+          <ThumbsUpIcon aria-hidden="true" />
+        </button>
+        <button
+          aria-label="Ответ не помог"
+          aria-pressed={rating === 'DISLIKE'}
+          className={rating === 'DISLIKE' ? 'assistant-feedback-rating assistant-feedback-rating--selected' : 'assistant-feedback-rating'}
+          disabled={isSaving}
+          type="button"
+          onClick={() => selectRating('DISLIKE')}
+        >
+          <ThumbsDownIcon aria-hidden="true" />
+        </button>
+      </fieldset>
+      {rating ? (
+        <div className="assistant-feedback-details">
+          <label>
+            Причина <span>необязательно</span>
+            <select
+              disabled={isSaving}
+              value={reason}
+              onChange={(event) => {
+                setReason(event.target.value as AssistantFeedbackReason | '');
+                setSaved(false);
+              }}
+            >
+              <option value="">Не выбрана</option>
+              {feedbackReasonOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Комментарий <span>до 500 символов</span>
+            <textarea
+              disabled={isSaving}
+              maxLength={500}
+              rows={2}
+              value={comment}
+              onChange={(event) => {
+                setComment(event.target.value);
+                setSaved(false);
+              }}
+            />
+          </label>
+          <div className="assistant-feedback-actions">
+            <button disabled={isSaving || saved} type="submit">
+              {isSaving ? 'Сохраняю…' : saved ? 'Сохранено' : 'Сохранить оценку'}
+            </button>
+            {saved ? <span role="status">Спасибо, оценка попадёт на проверку.</span> : null}
+          </div>
+        </div>
+      ) : null}
+      {feedbackError ? <p className="assistant-feedback-error" role="alert">{feedbackError}</p> : null}
+    </form>
   );
 }
 

@@ -348,6 +348,48 @@ enum AssistantRunStatus {
   @@map("assistant_run_status")
 }
 
+enum AssistantFeedbackRating {
+  LIKE    @map("like")
+  DISLIKE @map("dislike")
+
+  @@map("assistant_feedback_rating")
+}
+
+enum AssistantFeedbackReason {
+  WRONG_FACT     @map("wrong_fact")
+  MISSING_RESULT @map("missing_result")
+  IRRELEVANT     @map("irrelevant")
+  STALE_DATA     @map("stale_data")
+  BROKEN_LINK    @map("broken_link")
+  SLOW_RESPONSE  @map("slow_response")
+  OTHER          @map("other")
+
+  @@map("assistant_feedback_reason")
+}
+
+enum AssistantReviewStatus {
+  PENDING  @map("pending")
+  REVIEWED @map("reviewed")
+
+  @@map("assistant_review_status")
+}
+
+enum AssistantReviewClassification {
+  CONFIRMED_ERROR       @map("confirmed_error")
+  USER_RATING_INCORRECT @map("user_rating_incorrect")
+  NO_ERROR              @map("no_error")
+  INCONCLUSIVE          @map("inconclusive")
+
+  @@map("assistant_review_classification")
+}
+
+enum AssistantUsageWindow {
+  MINUTE @map("minute")
+  DAY    @map("day")
+
+  @@map("assistant_usage_window")
+}
+
 enum AssistantKnowledgeSourceType {
   DEVELOPMENT_PAGE      @map("development_page")
   DEVELOPER_PROMOTION   @map("developer_promotion")
@@ -446,6 +488,9 @@ model User {
   createdAssistantKnowledgeSources AssistantKnowledgeSource[] @relation("AssistantKnowledgeSourceCreator")
   requestedAssistantSourceJobs    AssistantSourceJob[]         @relation("AssistantSourceJobRequester")
   createdAssistantGeoAliases      AssistantGeoAlias[]           @relation("AssistantGeoAliasCreator")
+  assistantFeedback               AssistantFeedback[]            @relation("AssistantFeedbackOwner")
+  reviewedAssistantItems          AssistantReviewItem[]          @relation("AssistantReviewItemReviewer")
+  assistantGeoOperations          AssistantGeoOperation[]        @relation("AssistantGeoOperationActor")
 
   @@index([roleId])
   @@index([profilePhotoFileId])
@@ -549,6 +594,9 @@ model AssistantRun {
   intentJson         Json?              @map("intent_json")
   evidenceJson       Json               @default("[]") @map("evidence_json")
   telemetryJson      Json               @default("[]") @map("telemetry_json")
+  auditJson          Json               @default("{}") @map("audit_json")
+  qualityFlags       String[]           @default([]) @map("quality_flags")
+  latencyMs          Int?               @map("latency_ms")
   errorCode          String?            @map("error_code") @db.VarChar(120)
   leaseOwner         String?            @map("lease_owner") @db.VarChar(100)
   leaseExpiresAt     DateTime?          @map("lease_expires_at")
@@ -561,12 +609,96 @@ model AssistantRun {
   conversation     AssistantConversation @relation(fields: [conversationId], references: [id], onDelete: Restrict)
   userMessage      AssistantMessage      @relation("AssistantRunUserMessage", fields: [userMessageId], references: [id], onDelete: Restrict)
   assistantMessage AssistantMessage?     @relation("AssistantRunAssistantMessage", fields: [assistantMessageId], references: [id], onDelete: Restrict)
+  feedback         AssistantFeedback?
+  reviewItem       AssistantReviewItem?
 
   @@unique([ownerUserId, idempotencyKey])
   @@index([conversationId, createdAt])
   @@index([ownerUserId, createdAt])
   @@index([status, updatedAt])
+  @@index([createdAt, status])
   @@map("assistant_runs")
+}
+
+model AssistantFeedback {
+  id          String                  @id @default(uuid()) @db.Uuid
+  runId       String                  @unique @map("run_id") @db.Uuid
+  ownerUserId String                  @map("owner_user_id") @db.Uuid
+  rating      AssistantFeedbackRating
+  reason      AssistantFeedbackReason?
+  comment     String?                 @db.VarChar(500)
+  createdAt   DateTime                @default(now()) @map("created_at")
+  updatedAt   DateTime                @updatedAt @map("updated_at")
+
+  run        AssistantRun         @relation(fields: [runId], references: [id], onDelete: Restrict)
+  owner      User                 @relation("AssistantFeedbackOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
+  reviewItem AssistantReviewItem?
+
+  @@index([ownerUserId, createdAt])
+  @@index([rating, createdAt])
+  @@map("assistant_feedback")
+}
+
+model AssistantReviewItem {
+  id                String                         @id @default(uuid()) @db.Uuid
+  runId             String                         @unique @map("run_id") @db.Uuid
+  feedbackId        String                         @unique @map("feedback_id") @db.Uuid
+  status            AssistantReviewStatus          @default(PENDING)
+  classification    AssistantReviewClassification?
+  reviewerUserId    String?                        @map("reviewer_user_id") @db.Uuid
+  reviewerComment   String?                        @map("reviewer_comment") @db.VarChar(500)
+  reviewedAt        DateTime?                      @map("reviewed_at")
+  createdAt         DateTime                       @default(now()) @map("created_at")
+  updatedAt         DateTime                       @updatedAt @map("updated_at")
+
+  run      AssistantRun      @relation(fields: [runId], references: [id], onDelete: Restrict)
+  feedback AssistantFeedback @relation(fields: [feedbackId], references: [id], onDelete: Restrict)
+  reviewer User?             @relation("AssistantReviewItemReviewer", fields: [reviewerUserId], references: [id], onDelete: Restrict)
+
+  @@index([status, createdAt])
+  @@index([classification, reviewedAt])
+  @@index([reviewerUserId])
+  @@map("assistant_review_items")
+}
+
+model AssistantGeoOperation {
+  id                String   @id @default(uuid()) @db.Uuid
+  actorUserId       String?  @map("actor_user_id") @db.Uuid
+  normalizedQuery   String   @map("normalized_query") @db.VarChar(240)
+  provider          String   @db.VarChar(40)
+  status            String   @db.VarChar(64)
+  durationMs        Int      @map("duration_ms")
+  cacheHit          Boolean  @default(false) @map("cache_hit")
+  providerCallCount Int      @default(0) @map("provider_call_count")
+  errorCode         String?  @map("error_code") @db.VarChar(120)
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  actor User? @relation("AssistantGeoOperationActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@index([createdAt])
+  @@index([provider, status, createdAt])
+  @@index([actorUserId, createdAt])
+  @@map("assistant_geo_operations")
+}
+
+model AssistantUsageMetric {
+  provider              String               @db.VarChar(40)
+  model                 String               @default("") @db.VarChar(160)
+  window                AssistantUsageWindow
+  windowStartedAt       DateTime             @map("window_started_at")
+  requestCount          Int                  @default(0) @map("request_count")
+  completedCount        Int                  @default(0) @map("completed_count")
+  errorCount            Int                  @default(0) @map("error_count")
+  inputTokens           BigInt               @default(0) @map("input_tokens")
+  outputTokens          BigInt               @default(0) @map("output_tokens")
+  reasoningTokens       BigInt               @default(0) @map("reasoning_tokens")
+  totalTokens           BigInt               @default(0) @map("total_tokens")
+  totalLatencyMs        BigInt               @default(0) @map("total_latency_ms")
+  updatedAt             DateTime             @updatedAt @map("updated_at")
+
+  @@id([provider, model, window, windowStartedAt])
+  @@index([windowStartedAt])
+  @@map("assistant_usage_metrics")
 }
 
 model AssistantKnowledgeSource {

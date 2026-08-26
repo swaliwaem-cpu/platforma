@@ -353,6 +353,134 @@
   max-width: 100%;
 }
 
+.assistant-feedback {
+  display: grid;
+  margin-top: 4px;
+  gap: 8px;
+}
+
+.assistant-feedback fieldset {
+  display: flex;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  align-items: center;
+  border: 0;
+  gap: 5px;
+}
+
+.assistant-feedback legend {
+  margin-right: 3px;
+  color: var(--color-muted, #756a64);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.assistant-feedback-rating {
+  display: inline-grid;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  place-items: center;
+  color: #756a64;
+  background: transparent;
+  border: 1px solid rgb(78 49 32 / 16%);
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.assistant-feedback-rating svg {
+  width: 15px;
+  height: 15px;
+}
+
+.assistant-feedback-rating:hover,
+.assistant-feedback-rating--selected {
+  color: #b8430f;
+  background: #fff3eb;
+  border-color: #e85a18;
+}
+
+.assistant-feedback-rating:focus-visible,
+.assistant-feedback-details select:focus-visible,
+.assistant-feedback-details textarea:focus-visible,
+.assistant-feedback-actions button:focus-visible {
+  outline: 2px solid #e85a18;
+  outline-offset: 2px;
+}
+
+.assistant-feedback-details {
+  display: grid;
+  padding: 10px;
+  background: #fffaf6;
+  border: 1px solid #f1d4c4;
+  border-radius: 12px;
+  gap: 8px;
+}
+
+.assistant-feedback-details label {
+  display: grid;
+  color: var(--color-text, #251d19);
+  font-size: 11px;
+  font-weight: 700;
+  gap: 4px;
+}
+
+.assistant-feedback-details label span {
+  color: var(--color-muted, #756a64);
+  font-weight: 400;
+}
+
+.assistant-feedback-details select,
+.assistant-feedback-details textarea {
+  width: 100%;
+  padding: 8px 9px;
+  color: var(--color-text, #251d19);
+  background: #fff;
+  border: 1px solid rgb(78 49 32 / 18%);
+  border-radius: 8px;
+  font: inherit;
+}
+
+.assistant-feedback-details textarea {
+  resize: vertical;
+}
+
+.assistant-feedback-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.assistant-feedback-actions button {
+  min-height: 38px;
+  padding: 7px 11px;
+  color: #fff;
+  background: #dc581b;
+  border: 0;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.assistant-feedback-actions button:disabled {
+  cursor: default;
+  opacity: 0.62;
+}
+
+.assistant-feedback-actions span,
+.assistant-feedback-error {
+  margin: 0;
+  color: var(--color-muted, #756a64);
+  font-size: 10px;
+}
+
+.assistant-feedback-error {
+  color: #a22b1f;
+}
+
 .assistant-results {
   display: grid;
   gap: 14px;
@@ -999,7 +1127,8 @@
   }
 
   .assistant-context-chip button,
-  .assistant-composer button {
+  .assistant-composer button,
+  .assistant-feedback-rating {
     width: 44px;
     height: 44px;
   }

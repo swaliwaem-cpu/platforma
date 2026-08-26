@@ -3,6 +3,12 @@ import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import {
+  AssistantUsageBudgetError,
+  AssistantUsageBudgetService,
+  readAssistantBudgetLimit,
+  type AssistantUsageReservation,
+} from '../operations/assistant-usage-budget.service';
+import {
   AssistantGeoProviderError,
   FakeAssistantGeoProvider,
   LocationIqGeoProvider,
@@ -21,6 +27,7 @@ export class AssistantGeoProviderPolicyService {
   private readonly circuitFailureThreshold: number;
   private readonly circuitOpenMs: number;
   private readonly cacheRetentionMs: number;
+  private readonly perMinuteBudget: number;
   private readonly providerUsesPhysicalRequestGate: boolean;
   private consecutiveFailures = 0;
   private circuitOpenUntil = 0;
@@ -32,6 +39,7 @@ export class AssistantGeoProviderPolicyService {
     environment: GeoPolicyEnvironment = process.env,
     private readonly now: () => Date = () => new Date(),
     private readonly delay: (milliseconds: number) => Promise<void> = wait,
+    private readonly budgets?: AssistantUsageBudgetService,
   ) {
     this.providerName = readMode(environment.ASSISTANT_GEO_PROVIDER_MODE);
     if (this.providerName === 'fake' && environment.DEPLOYMENT_ENV === 'production') {
@@ -52,6 +60,13 @@ export class AssistantGeoProviderPolicyService {
       31_536_000,
       'ASSISTANT_GEO_CACHE_TTL_SECONDS_REQUIRED',
     ) * 1_000;
+    this.perMinuteBudget = readAssistantBudgetLimit(
+      environment.ASSISTANT_GEO_PROVIDER_REQUESTS_PER_MINUTE,
+      this.providerName === 'fake' ? 10_000 : 60,
+      1,
+      1_000_000,
+      'ASSISTANT_GEO_PROVIDER_REQUESTS_PER_MINUTE_INVALID',
+    );
     this.circuitFailureThreshold = readInteger(
       environment.ASSISTANT_GEO_CIRCUIT_FAILURE_THRESHOLD,
       3,
@@ -83,9 +98,26 @@ export class AssistantGeoProviderPolicyService {
 
   async search(request: AssistantGeoProviderRequest): Promise<AssistantGeoProviderCandidate[]> {
     const startedAt = Date.now();
+    let reservation: AssistantUsageReservation | undefined;
     if (this.now().getTime() < this.circuitOpenUntil) {
       this.log('circuit_open', startedAt);
       throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_CIRCUIT_OPEN', true);
+    }
+
+    try {
+      reservation = await this.budgets?.reserve({
+        provider: this.providerName,
+        model: this.providerName === 'locationiq' ? 'locationiq' : 'fake-geo',
+        perMinuteLimit: this.perMinuteBudget,
+        dailyLimit: this.dailyBudget,
+        now: this.now(),
+        errorPrefix: 'ASSISTANT_GEO_PROVIDER',
+      });
+    } catch (error) {
+      if (error instanceof AssistantUsageBudgetError) {
+        throw new AssistantGeoProviderError(error.code, false);
+      }
+      throw error;
     }
 
     if (!this.providerUsesPhysicalRequestGate) {
@@ -97,6 +129,7 @@ export class AssistantGeoProviderPolicyService {
       this.consecutiveFailures = 0;
       this.circuitOpenUntil = 0;
       this.log('success', startedAt);
+      await this.recordUsage(reservation, 'SUCCESS', startedAt);
       return candidates;
     } catch (error) {
       const providerError = error instanceof AssistantGeoProviderError
@@ -109,7 +142,25 @@ export class AssistantGeoProviderPolicyService {
         }
       }
       this.log(providerError.code, startedAt, providerError.httpStatus);
+      await this.recordUsage(reservation, 'ERROR', startedAt);
       throw providerError;
+    }
+  }
+
+  private async recordUsage(
+    reservation: AssistantUsageReservation | undefined,
+    outcome: 'SUCCESS' | 'ERROR',
+    startedAt: number,
+  ) {
+    if (!reservation || !this.budgets) return;
+    try {
+      await this.budgets.complete({
+        reservation,
+        outcome,
+        durationMs: Math.max(0, Date.now() - startedAt),
+      });
+    } catch {
+      // Per-operation telemetry is still recorded by the resolver.
     }
   }
 

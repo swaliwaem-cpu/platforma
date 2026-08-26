@@ -83,6 +83,12 @@ const AssistantChat = lazy(() =>
   })),
 );
 
+const AssistantAuditAdminPage = lazy(() =>
+  import('./admin/AssistantAuditAdminPage').then((module) => ({
+    default: module.AssistantAuditAdminPage,
+  })),
+);
+
 const userStatusLabels: Record<UserStatus, string> = {
   ACTIVE: 'Активен',
   BLOCKED: 'Заблокирован',
@@ -201,6 +207,13 @@ const cabinetSections = [
     group: 'Админка',
     path: '/admin/feeds',
     requiredPermissions: ['admin:access', 'feeds:read'],
+  },
+  {
+    id: 'admin-assistant-audit',
+    label: 'Аудит ИИ-помощника',
+    group: 'Админка',
+    path: '/admin/assistant-audit',
+    requiredPermissions: ['admin:access', 'assistant:audit:read'],
   },
   {
     id: 'admin-import',
@@ -503,8 +516,21 @@ function AppRoutes() {
               ) : (
                 <AccessDenied />
               )
+            ) : pathname.startsWith('/admin/assistant-audit') ? (
+              hasPermission('assistant:audit:read') ? (
+                <Suspense fallback={<ObjectRouteLoading />}>
+                  <AssistantAuditAdminPage
+                    navigate={navigate}
+                    pathname={pathname}
+                    onBack={() => navigate('/admin')}
+                  />
+                </Suspense>
+              ) : (
+                <AccessDenied />
+              )
             ) : (
               <AdminHome
+                onOpenAssistantAudit={() => navigate('/admin/assistant-audit')}
                 onOpenCatalogLinks={() => navigate('/admin/catalog-links')}
                 onOpenFeeds={() => navigate('/admin/feeds')}
                 onOpenImport={() => navigate('/admin/import')}
@@ -1330,6 +1356,7 @@ function getProfileInitials(user: AuthUser) {
 }
 
 function AdminHome({
+  onOpenAssistantAudit,
   onOpenCatalogLinks,
   onOpenFeeds,
   onOpenImport,
@@ -1338,6 +1365,7 @@ function AdminHome({
   trainingEnabled,
   onOpenUsers,
 }: {
+  onOpenAssistantAudit: () => void;
   onOpenCatalogLinks: () => void;
   onOpenFeeds: () => void;
   onOpenImport: () => void;
@@ -1348,6 +1376,13 @@ function AdminHome({
 }) {
   const { hasPermission } = useAuth();
   const actions = [
+    {
+      label: 'Аудит ИИ-помощника',
+      description: 'Feedback, evidence trail, источники и provider telemetry.',
+      tone: 'primary',
+      canAccess: hasPermission('assistant:audit:read'),
+      onClick: onOpenAssistantAudit,
+    },
     {
       label: 'Обучение',
       description: 'Проекты, попытки и результаты обучения.',

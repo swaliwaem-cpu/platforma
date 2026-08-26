@@ -93,6 +93,11 @@ export type AssistantPlannerGateway = {
   plan(request: AssistantPlannerRequest): Promise<unknown>;
 };
 
+export type AssistantPlannerUsagePolicy = {
+  beforeAttempt(request: AssistantPlannerRequest): Promise<unknown>;
+  afterAttempt(reservation: unknown, telemetry: AssistantPlannerTelemetry): Promise<void>;
+};
+
 export type AssistantPlannerTelemetry = {
   provider: 'fake' | 'openai';
   model: string;
@@ -140,7 +145,10 @@ export class AssistantPlannerFallbackValidationError extends Error {
 }
 
 export class AssistantQueryPlanner {
-  constructor(private readonly gateway: AssistantPlannerGateway) {}
+  constructor(
+    private readonly gateway: AssistantPlannerGateway,
+    private readonly usagePolicy?: AssistantPlannerUsagePolicy,
+  ) {}
 
   async plan(input: { messages: string[]; context: unknown }) {
     const result = await this.planWithValidation(input, async () => undefined);
@@ -172,18 +180,22 @@ export class AssistantQueryPlanner {
     for (const [attemptIndex, request] of requests.entries()) {
       const startedAt = Date.now();
       let gatewayResult: unknown;
+      let reservation: unknown;
       try {
+        reservation = await this.usagePolicy?.beforeAttempt(request);
         gatewayResult = await this.gateway.plan(request);
       } catch (error) {
         const failure = readPlannerGatewayFailure(error);
-        attempts.push(createTelemetry(
+        const telemetry = createTelemetry(
           request,
           attemptIndex === 1,
           'PROVIDER_ERROR',
           Date.now() - startedAt,
           failure,
           failure?.errorCode ?? 'ASSISTANT_PLANNER_PROVIDER_FAILED',
-        ));
+        );
+        attempts.push(telemetry);
+        await this.recordUsage(reservation, telemetry);
         throw new AssistantPlannerError(failure?.errorCode ?? 'ASSISTANT_PLANNER_PROVIDER_FAILED', attempts);
       }
 
@@ -193,13 +205,15 @@ export class AssistantQueryPlanner {
         const parsedIntent = parseAssistantStructuredIntent(result.output);
         intent = normalizeIntentAgainstRequest(parsedIntent, messages, input.context);
       } catch {
-        attempts.push(createTelemetry(
+        const telemetry = createTelemetry(
           request,
           attemptIndex === 1,
           'LOCAL_VALIDATION_FAILED',
           Date.now() - startedAt,
           result.metadata,
-        ));
+        );
+        attempts.push(telemetry);
+        await this.recordUsage(reservation, telemetry);
         continue;
       }
 
@@ -208,27 +222,40 @@ export class AssistantQueryPlanner {
         value = await validate(intent, request);
       } catch (error) {
         if (!(error instanceof AssistantPlannerFallbackValidationError)) throw error;
-        attempts.push(createTelemetry(
+        const telemetry = createTelemetry(
           request,
           attemptIndex === 1,
           'LOCAL_VALIDATION_FAILED',
           Date.now() - startedAt,
           result.metadata,
-        ));
+        );
+        attempts.push(telemetry);
+        await this.recordUsage(reservation, telemetry);
         continue;
       }
 
-      attempts.push(createTelemetry(
+      const telemetry = createTelemetry(
         request,
         attemptIndex === 1,
         'ACCEPTED',
         Date.now() - startedAt,
         result.metadata,
-      ));
+      );
+      attempts.push(telemetry);
+      await this.recordUsage(reservation, telemetry);
       return { intent, value, telemetry: attempts };
     }
 
     throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID', attempts);
+  }
+
+  private async recordUsage(reservation: unknown, telemetry: AssistantPlannerTelemetry) {
+    if (!this.usagePolicy || reservation === undefined) return;
+    try {
+      await this.usagePolicy.afterAttempt(reservation, telemetry);
+    } catch {
+      // Full per-run telemetry remains persisted even if aggregate metrics are temporarily unavailable.
+    }
   }
 }
 
@@ -789,12 +816,18 @@ function createTelemetry(
   };
 }
 
-function readPlannerGatewayFailure(error: unknown) {
-  if (!isRecord(error) || error.provider !== 'openai') return null;
+function readPlannerGatewayFailure(error: unknown): {
+  provider: 'fake' | 'openai';
+  errorCode: string;
+  requestId: string | null;
+  responseId: string | null;
+  httpStatus: number | null;
+} | null {
+  if (!isRecord(error) || (error.provider !== 'openai' && error.provider !== 'fake')) return null;
   const errorCode = readNullableBoundedString(error.code, 120);
   if (!errorCode) return null;
   return {
-    provider: 'openai' as const,
+    provider: error.provider,
     errorCode,
     requestId: readNullableBoundedString(error.requestId, 160),
     responseId: readNullableBoundedString(error.responseId, 160),
