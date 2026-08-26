@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   AssistantFeedbackRating,
   AssistantReviewClassification,
@@ -108,20 +113,28 @@ export class AssistantAuditService {
   async review(reviewIdValue: unknown, reviewerUserId: string, body: unknown) {
     const reviewId = parseUuid(reviewIdValue, 'reviewId');
     const input = parseReviewInput(body);
-    const existing = await this.prisma.assistantReviewItem.findUnique({
-      where: { id: reviewId },
-      select: { id: true },
-    });
-    if (!existing) throw new NotFoundException('ASSISTANT_REVIEW_ITEM_NOT_FOUND');
-    const review = await this.prisma.assistantReviewItem.update({
-      where: { id: reviewId },
-      data: {
-        status: AssistantReviewStatus.REVIEWED,
-        classification: input.classification,
-        reviewerComment: input.comment,
-        reviewerUserId,
-        reviewedAt: new Date(),
-      },
+    const review = await this.prisma.$transaction(async (transaction) => {
+      const locked = await transaction.$queryRaw<Array<{ feedbackUpdatedAt: Date }>>(Prisma.sql`
+        SELECT "feedback"."updated_at" AS "feedbackUpdatedAt"
+        FROM "assistant_review_items" AS "review"
+        INNER JOIN "assistant_feedback" AS "feedback" ON "feedback"."id" = "review"."feedback_id"
+        WHERE "review"."id" = CAST(${reviewId} AS uuid)
+        FOR UPDATE OF "review", "feedback"
+      `);
+      if (!locked[0]) throw new NotFoundException('ASSISTANT_REVIEW_ITEM_NOT_FOUND');
+      if (locked[0].feedbackUpdatedAt.getTime() !== input.expectedFeedbackUpdatedAt.getTime()) {
+        throw new ConflictException('ASSISTANT_REVIEW_FEEDBACK_STALE');
+      }
+      return transaction.assistantReviewItem.update({
+        where: { id: reviewId },
+        data: {
+          status: AssistantReviewStatus.REVIEWED,
+          classification: input.classification,
+          reviewerComment: input.comment,
+          reviewerUserId,
+          reviewedAt: new Date(),
+        },
+      });
     });
     return { review: serializeDates(review) };
   }
@@ -216,7 +229,8 @@ function parseRunFilters(value: unknown) {
 }
 
 function parseReviewInput(value: unknown) {
-  if (!isRecord(value) || Object.keys(value).some((key) => key !== 'classification' && key !== 'comment')) {
+  if (!isRecord(value) || Object.keys(value).some((key) =>
+    key !== 'classification' && key !== 'comment' && key !== 'expectedFeedbackUpdatedAt')) {
     throw new BadRequestException('ASSISTANT_REVIEW_INPUT_INVALID');
   }
   const classification = typeof value.classification === 'string'
@@ -228,10 +242,15 @@ function parseReviewInput(value: unknown) {
     : typeof value.comment === 'string'
       ? value.comment.trim().replace(/\s+/gu, ' ')
       : undefined;
-  if (!classification || comment === undefined || (comment !== null && (!comment || comment.length > 500))) {
+  const expectedFeedbackUpdatedAt = typeof value.expectedFeedbackUpdatedAt === 'string'
+    ? new Date(value.expectedFeedbackUpdatedAt)
+    : null;
+  if (!classification || comment === undefined || (comment !== null && (!comment || comment.length > 500))
+    || !expectedFeedbackUpdatedAt || Number.isNaN(expectedFeedbackUpdatedAt.getTime())
+    || expectedFeedbackUpdatedAt.toISOString() !== value.expectedFeedbackUpdatedAt) {
     throw new BadRequestException('ASSISTANT_REVIEW_INPUT_INVALID');
   }
-  return { classification, comment };
+  return { classification, comment, expectedFeedbackUpdatedAt };
 }
 
 function serializeRunSummary(run: Prisma.AssistantRunGetPayload<{ include: typeof listInclude }>) {

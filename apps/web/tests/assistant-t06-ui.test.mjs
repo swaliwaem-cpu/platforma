@@ -49,6 +49,10 @@ test('Assistant T06 admin audit is lazy, additive-permission gated and covers ev
   assert.match(auditSource, /page: String\(page\)/u);
   assert.match(auditSource, /Provider attempts/u);
   assert.match(auditSource, /Idempotency-Key/u);
+  assert.match(auditSource, /sourceRefreshKeys = useRef\(new Map/u);
+  assert.match(auditSource, /sourceRefreshKeys\.current\.delete\(operationKey\)/u);
+  assert.match(auditSource, /response\.page > lastPage/u);
+  assert.match(auditSource, /expectedFeedbackUpdatedAt: runDetail\.feedback\.updatedAt/u);
   assert.match(auditSource, /\/assistant\/geo\/aliases/u);
 });
 

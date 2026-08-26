@@ -69,20 +69,21 @@ test('Assistant T06 audit is assembled deterministically from selected evidence 
     clarificationQuestion: null,
   };
   const candidates = [
-    createCandidate('11111111-1111-4111-8111-111111111111', 20_000_000),
-    createCandidate('22222222-2222-4222-8222-222222222222', 30_000_000),
+    createCandidate('11111111-1111-4111-8111-111111111111', 24_000_000),
+    createCandidate('22222222-2222-4222-8222-222222222222', 20_000_000),
+    createCandidate('33333333-3333-4333-8333-333333333333', 30_000_000),
   ];
   const answer = {
     kind: 'SEARCH_RESULTS',
     exactResults: [{
-      unitId: candidates[0].unitId,
+      unitId: candidates[1].unitId,
       title: 'ЖК Аудит',
       subtitle: '2-комнатная',
       priceRub: 20_000_000,
       availabilityLabel: 'В продаже',
       freshnessLabel: 'обновлено менее часа назад',
       isStale: false,
-      href: `/objects/audit/lots/${candidates[0].unitId}`,
+      href: `/objects/audit/lots/${candidates[1].unitId}`,
       facts: [],
       pdfs: [],
       deviations: [],
@@ -110,7 +111,7 @@ test('Assistant T06 audit is assembled deterministically from selected evidence 
     intent,
     answer,
     candidateEvidence: candidates,
-    selectedEvidence: [candidates[0]],
+    selectedEvidence: [candidates[1]],
     telemetry,
     latencyMs: 16_000,
     now: new Date('2026-08-26T12:00:00.000Z'),
@@ -118,19 +119,24 @@ test('Assistant T06 audit is assembled deterministically from selected evidence 
 
   assert.equal(audit.schemaVersion, 1);
   assert.deepEqual(audit.appliedFilters, emptyFilters);
-  assert.deepEqual(audit.candidateSet.map(({ evidenceId }) => evidenceId), candidates.map(({ unitId }) => unitId));
-  assert.deepEqual(audit.candidateSet.map(({ candidateRank }) => candidateRank), [1, 2]);
+  assert.deepEqual(audit.candidateSet.map(({ evidenceId }) => evidenceId), [
+    candidates[1].unitId,
+    candidates[0].unitId,
+    candidates[2].unitId,
+  ]);
+  assert.deepEqual(audit.candidateSet.map(({ candidateRank }) => candidateRank), [1, 2, null]);
+  assert.deepEqual(audit.candidateSet.map(({ rankingPool }) => rankingPool), ['EXACT', 'EXACT', 'REJECTED']);
   assert.equal(audit.candidateSet[0].rooms, 2);
   assert.equal(audit.candidateSet[0].area, 60);
-  assert.deepEqual(audit.rankingDecisions.map(({ outcome }) => outcome), ['PRIMARY', 'REJECTED']);
-  assert.deepEqual(audit.rankingDecisions.map(({ candidateRank }) => candidateRank), [1, 2]);
-  assert.equal(audit.rankingDecisions[1].answerRank, null);
-  assert.match(audit.rankingDecisions[1].reason, /BUDGET_MAX/u);
+  assert.deepEqual(audit.rankingDecisions.map(({ outcome }) => outcome), ['PRIMARY', 'REJECTED', 'REJECTED']);
+  assert.deepEqual(audit.rankingDecisions.map(({ candidateRank }) => candidateRank), [1, 2, null]);
+  assert.equal(audit.rankingDecisions[2].answerRank, null);
+  assert.match(audit.rankingDecisions[2].reason, /HARD_FILTER_MISMATCH/u);
   assert.deepEqual(audit.evidenceRevisions, [{
     kind: 'PLATFORMA_FEED_UNIT',
-    evidenceId: candidates[0].unitId,
-    revisionId: candidates[0].unitId,
-    observedAt: candidates[0].updatedAt,
+    evidenceId: candidates[1].unitId,
+    revisionId: candidates[1].unitId,
+    observedAt: candidates[1].updatedAt,
   }]);
   assert.deepEqual([...audit.qualityFlags].sort(), ['LATENCY_BREACH', 'MODEL_FALLBACK']);
   assert.equal(JSON.stringify(audit).includes('citation'), false);

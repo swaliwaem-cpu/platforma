@@ -5,7 +5,10 @@ import type {
   AssistantSearchFilters,
   AssistantStructuredIntent,
 } from '../assistant-query-planner';
-import type { AssistantSearchEvidence } from '../assistant-search-ranking';
+import {
+  createAssistantSearchRankingTrace,
+  type AssistantSearchEvidence,
+} from '../assistant-search-ranking';
 import type { AssistantKnowledgeEvidence } from '../sources/assistant-knowledge-retrieval.service';
 import { isSafeOfficialHttpsUrl } from '../sources/assistant-knowledge-policy';
 
@@ -30,7 +33,7 @@ export type AssistantRunAudit = {
   rankingDecisions: Array<{
     evidenceId: string;
     outcome: 'PRIMARY' | 'ALTERNATIVE' | 'SELECTED_FACT' | 'REJECTED';
-    candidateRank: number;
+    candidateRank: number | null;
     answerRank: number | null;
     reason: string;
   }>;
@@ -56,9 +59,12 @@ export function buildAssistantRunAudit(input: {
   const now = input.now ?? new Date();
   const latencyBreachMs = input.latencyBreachMs ?? readLatencyBreachMs(process.env.ASSISTANT_LATENCY_BREACH_MS);
   const selected = selectedOutcomes(input.answer);
-  const candidateSet = input.candidateEvidence.map((evidence, index) => ({
+  const rankingTrace = createRankingTrace(input.intent, input.candidateEvidence);
+  const candidateSet = rankingTrace.map(({ evidence, candidateRank, rankingPool, rankingScore }) => ({
     ...serializeCandidate(evidence),
-    candidateRank: index + 1,
+    candidateRank,
+    rankingPool,
+    rankingScore,
   }));
   const selectedEvidenceIds = new Set(input.selectedEvidence.map(evidenceId));
   const qualityFlags = new Set<AssistantQualityFlag>();
@@ -85,17 +91,20 @@ export function buildAssistantRunAudit(input: {
     appliedFilters: structuredClone(input.intent.hardFilters),
     softPreferences: structuredClone(input.intent.softPreferences),
     candidateSet,
-    rankingDecisions: candidateSet.map(({ evidenceId, candidateRank }, index) => {
-      const decision = selected.get(evidenceId);
+    rankingDecisions: rankingTrace.map(({ evidence, candidateRank, rejectionCodes }) => {
+      const evidenceIdValue = evidenceId(evidence);
+      const decision = selected.get(evidenceIdValue);
       return decision ? {
         ...decision,
         candidateRank,
       } : {
-        evidenceId,
+        evidenceId: evidenceIdValue,
         outcome: 'REJECTED' as const,
         candidateRank,
         answerRank: null,
-        reason: describeRejection(input.candidateEvidence[index]!, input.intent.hardFilters),
+        reason: rejectionCodes.length > 0
+          ? `Rejected before ranking: ${rejectionCodes.join(', ')}`
+          : describeRejection(evidence, input.intent.hardFilters),
       };
     }),
     evidenceRevisions: input.selectedEvidence.map((evidence) => isSearchEvidence(evidence)
@@ -113,6 +122,22 @@ export function buildAssistantRunAudit(input: {
         }),
     qualityFlags: assistantQualityFlags.filter((flag) => qualityFlags.has(flag)),
   };
+}
+
+function createRankingTrace(intent: AssistantStructuredIntent, evidence: AssistantRunEvidence[]) {
+  if (evidence.every(isSearchEvidence)) {
+    return createAssistantSearchRankingTrace(intent, evidence);
+  }
+  return evidence.map((item, index) => ({
+    evidence: item,
+    candidateRank: index + 1,
+    rankingPool: 'KNOWLEDGE' as const,
+    rankingScore: isSearchEvidence(item) ? null : {
+      retrievalScore: item.retrievalScore,
+      sourcePriority: item.sourcePriority,
+    },
+    rejectionCodes: [] as string[],
+  }));
 }
 
 function selectedOutcomes(answer: AssistantAnswer) {

@@ -4,6 +4,7 @@ import {
   AssistantFeedbackReason,
   AssistantReviewStatus,
   AssistantRunStatus,
+  Prisma,
 } from '@prisma/client';
 import type { AssistantFeedback } from '@platforma/shared' with { 'resolution-mode': 'import' };
 
@@ -30,24 +31,50 @@ export class AssistantFeedbackService {
     if (!run) throw new NotFoundException('ASSISTANT_MESSAGE_NOT_FOUND');
 
     const feedback = await this.prisma.$transaction(async (transaction) => {
-      const existing = await transaction.assistantFeedback.findUnique({
-        where: { runId: run.id },
-        select: { rating: true, reason: true, comment: true },
-      });
+      const existing = (await transaction.$queryRaw<Array<{
+        id: string;
+        rating: AssistantFeedbackRating;
+        reason: AssistantFeedbackReason | null;
+        comment: string | null;
+        createdAt: Date;
+        updatedAt: Date;
+      }>>(Prisma.sql`
+        SELECT
+          "feedback"."id"::text AS "id",
+          UPPER("feedback"."rating"::text) AS "rating",
+          UPPER("feedback"."reason"::text) AS "reason",
+          "feedback"."comment" AS "comment",
+          "feedback"."created_at" AS "createdAt",
+          "feedback"."updated_at" AS "updatedAt"
+        FROM "assistant_review_items" AS "review"
+        INNER JOIN "assistant_feedback" AS "feedback" ON "feedback"."id" = "review"."feedback_id"
+        WHERE "review"."run_id" = CAST(${run.id} AS uuid)
+        FOR UPDATE OF "review", "feedback"
+      `))[0] ?? null;
       const changed = existing !== null && (
         existing.rating !== input.rating
         || existing.reason !== input.reason
         || existing.comment !== input.comment
       );
-      const saved = await transaction.assistantFeedback.upsert({
-        where: { runId: run.id },
-        update: input,
-        create: {
-          runId: run.id,
-          ownerUserId,
-          ...input,
-        },
-      });
+      const saved = existing === null
+        ? await transaction.assistantFeedback.upsert({
+            where: { runId: run.id },
+            update: input,
+            create: {
+              runId: run.id,
+              ownerUserId,
+              ...input,
+            },
+          })
+        : changed
+          ? await transaction.assistantFeedback.update({
+              where: { id: existing.id },
+              data: {
+                ...input,
+                updatedAt: new Date(Math.max(Date.now(), existing.updatedAt.getTime() + 1)),
+              },
+            })
+          : existing;
       await transaction.assistantReviewItem.upsert({
         where: { runId: run.id },
         update: {

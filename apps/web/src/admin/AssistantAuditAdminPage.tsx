@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeftIcon,
   CheckCircle2Icon,
@@ -40,6 +40,7 @@ type FeedbackSummary = {
   reason: string | null;
   comment: string | null;
   createdAt: string;
+  updatedAt: string;
 };
 
 type ReviewSummary = {
@@ -218,6 +219,7 @@ export function AssistantAuditAdminPage({
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const sourceRefreshKeys = useRef(new Map<string, string>());
   const selectedRunId = useMemo(() => {
     const match = pathname.match(/^\/admin\/assistant-audit\/runs\/([0-9a-f-]+)$/iu);
     return match?.[1] ?? null;
@@ -242,10 +244,15 @@ export function AssistantAuditAdminPage({
         })
       : activeTab === 'runs'
         ? loadRuns(accessToken, issue, runPage, controller.signal).then((response) => {
-            setRuns(response.items);
+            const lastPage = Math.max(1, response.totalPages);
             setRunTotal(response.total);
+            setRunTotalPages(lastPage);
+            if (response.page > lastPage) {
+              setRunPage(lastPage);
+              return;
+            }
+            setRuns(response.items);
             setRunPage(response.page);
-            setRunTotalPages(response.totalPages);
           })
         : activeTab === 'sources'
           ? apiRequest<{ items: SourceRecord[] }>('/assistant/audit/sources', accessToken, {
@@ -284,7 +291,7 @@ export function AssistantAuditAdminPage({
 
   const handleReview = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!accessToken || !runDetail?.review || !classification) return;
+    if (!accessToken || !runDetail?.review || !runDetail.feedback || !classification) return;
     setIsSubmitting(true);
     setError(null);
     try {
@@ -296,6 +303,7 @@ export function AssistantAuditAdminPage({
           body: JSON.stringify({
             classification,
             comment: reviewComment.trim() || null,
+            expectedFeedbackUpdatedAt: runDetail.feedback.updatedAt,
           }),
         },
       );
@@ -316,11 +324,15 @@ export function AssistantAuditAdminPage({
     const path = kind === 'source'
       ? `/assistant/sources/${encodeURIComponent(value)}/refresh`
       : `/assistant/sources/projects/${encodeURIComponent(value)}/refresh`;
+    const operationKey = `${kind}:${value}`;
+    const idempotencyKey = sourceRefreshKeys.current.get(operationKey) ?? crypto.randomUUID();
+    sourceRefreshKeys.current.set(operationKey, idempotencyKey);
     try {
       await apiRequest(path, accessToken, {
         method: 'POST',
-        headers: { 'Idempotency-Key': crypto.randomUUID() },
+        headers: { 'Idempotency-Key': idempotencyKey },
       });
+      sourceRefreshKeys.current.delete(operationKey);
       setNotice(kind === 'source' ? 'Refresh источника поставлен в очередь.' : 'Refresh ЖК поставлен в очередь.');
     } catch (refreshError) {
       setError(readError(refreshError));

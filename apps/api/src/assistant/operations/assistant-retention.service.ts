@@ -43,11 +43,13 @@ export class AssistantRetentionService implements OnModuleInit, OnModuleDestroy 
       const batch = await this.prisma.$transaction(async (transaction) => {
         const runs = await transaction.$queryRaw<Array<{
           id: string;
+          conversationId: string;
           userMessageId: string;
           assistantMessageId: string | null;
         }>>(Prisma.sql`
           SELECT
             "id"::text AS "id",
+            "conversation_id"::text AS "conversationId",
             "user_message_id"::text AS "userMessageId",
             "assistant_message_id"::text AS "assistantMessageId"
           FROM "assistant_runs"
@@ -66,8 +68,10 @@ export class AssistantRetentionService implements OnModuleInit, OnModuleDestroy 
           await transaction.assistantMessage.deleteMany({ where: { id: { in: linkedMessageIds } } });
         }
 
-        const orphanMessages = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-          SELECT "message"."id"::text AS "id"
+        const orphanMessages = await transaction.$queryRaw<Array<{ id: string; conversationId: string }>>(Prisma.sql`
+          SELECT
+            "message"."id"::text AS "id",
+            "message"."conversation_id"::text AS "conversationId"
           FROM "assistant_messages" AS "message"
           WHERE "message"."created_at" < ${auditCutoff}
             AND NOT EXISTS (
@@ -83,6 +87,41 @@ export class AssistantRetentionService implements OnModuleInit, OnModuleDestroy 
           await transaction.assistantMessage.deleteMany({
             where: { id: { in: orphanMessages.map(({ id }) => id) } },
           });
+        }
+
+        const affectedConversationIds = [...new Set([
+          ...runs.map(({ conversationId }) => conversationId),
+          ...orphanMessages.map(({ conversationId }) => conversationId),
+        ])];
+        if (affectedConversationIds.length > 0) {
+          const remainingTitles = await transaction.$queryRaw<Array<{ id: string; content: string | null }>>(
+            Prisma.sql`
+              SELECT
+                "conversation"."id"::text AS "id",
+                (
+                  SELECT "message"."content"
+                  FROM "assistant_messages" AS "message"
+                  WHERE "message"."conversation_id" = "conversation"."id"
+                    AND "message"."role" = 'user'::"assistant_message_role"
+                  ORDER BY "message"."created_at" ASC, "message"."id" ASC
+                  LIMIT 1
+                ) AS "content"
+              FROM "assistant_conversations" AS "conversation"
+              WHERE "conversation"."id" IN (${Prisma.join(
+                affectedConversationIds.map((id) => Prisma.sql`${id}::uuid`),
+              )})
+                AND EXISTS (
+                  SELECT 1 FROM "assistant_messages" AS "message"
+                  WHERE "message"."conversation_id" = "conversation"."id"
+                )
+            `,
+          );
+          for (const { id, content } of remainingTitles) {
+            await transaction.assistantConversation.update({
+              where: { id },
+              data: { title: content ? buildConversationTitle(content) : 'Новый разговор' },
+            });
+          }
         }
 
         const emptyConversations = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
@@ -161,4 +200,8 @@ export class AssistantRetentionService implements OnModuleInit, OnModuleDestroy 
       if (batch.processed === 0) return totals;
     }
   }
+}
+
+function buildConversationTitle(content: string) {
+  return content.length <= 160 ? content : `${content.slice(0, 159).trimEnd()}…`;
 }

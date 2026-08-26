@@ -52,6 +52,20 @@ export type AssistantSearchAnswer = {
   alternatives: AssistantSearchResultCard[];
 };
 
+export type AssistantSearchRankingTrace = {
+  evidence: AssistantSearchEvidence;
+  candidateRank: number | null;
+  rankingPool: 'EXACT' | 'ALTERNATIVE' | 'REJECTED';
+  rankingScore: {
+    deviationCount: number;
+    softPreferenceScore: number;
+    distanceMeters: number | null;
+    priceRub: number;
+    freshnessTimestamp: number | null;
+  };
+  rejectionCodes: string[];
+};
+
 export class AssistantAnswerValidationError extends AssistantPlannerFallbackValidationError {
   constructor(code = 'ASSISTANT_ANSWER_EVIDENCE_INVALID') {
     super(code);
@@ -164,6 +178,63 @@ export function validateAssistantSearchAnswer(
   if (JSON.stringify(answer) !== JSON.stringify(expected)) {
     throw new AssistantAnswerValidationError();
   }
+}
+
+export function createAssistantSearchRankingTrace(
+  intent: AssistantStructuredIntent,
+  candidates: AssistantSearchEvidence[],
+): AssistantSearchRankingTrace[] {
+  const exact: AssistantSearchEvidence[] = [];
+  const alternatives: AssistantSearchEvidence[] = [];
+  const rejected: AssistantSearchRankingTrace[] = [];
+
+  for (const candidate of candidates) {
+    const rejectionCodes: string[] = [];
+    if (candidate.deviations.length === 0) {
+      if (!isValidEvidence(candidate)) rejectionCodes.push('INVALID_EVIDENCE');
+      if (!hasRequiredFacts(candidate, intent.requiredFacts)) rejectionCodes.push('MISSING_REQUIRED_FACTS');
+      if (!matchesFilters(candidate, intent.hardFilters)) rejectionCodes.push('HARD_FILTER_MISMATCH');
+      if (rejectionCodes.length === 0) exact.push(candidate);
+    } else {
+      if (!isValidAlternativeEvidence(candidate)) rejectionCodes.push('INVALID_ALTERNATIVE_EVIDENCE');
+      if (!hasRequiredFacts(candidate, intent.requiredFacts)) rejectionCodes.push('MISSING_REQUIRED_FACTS');
+      if (rejectionCodes.length === 0) alternatives.push(candidate);
+    }
+    if (rejectionCodes.length > 0) {
+      rejected.push(createRankingTraceEntry(candidate, null, 'REJECTED', intent, rejectionCodes));
+    }
+  }
+
+  return [
+    ...rankCandidates(exact, intent.softPreferences).map((candidate, index) =>
+      createRankingTraceEntry(candidate, index + 1, 'EXACT', intent)),
+    ...rankCandidates(alternatives, intent.softPreferences).map((candidate, index) =>
+      createRankingTraceEntry(candidate, index + 1, 'ALTERNATIVE', intent)),
+    ...rejected,
+  ];
+}
+
+function createRankingTraceEntry(
+  evidence: AssistantSearchEvidence,
+  candidateRank: number | null,
+  rankingPool: AssistantSearchRankingTrace['rankingPool'],
+  intent: AssistantStructuredIntent,
+  rejectionCodes: string[] = [],
+): AssistantSearchRankingTrace {
+  const freshnessTimestamp = Date.parse(evidence.updatedAt);
+  return {
+    evidence,
+    candidateRank,
+    rankingPool,
+    rankingScore: {
+      deviationCount: evidence.deviations.length,
+      softPreferenceScore: scoreSoftPreferences(evidence, intent.softPreferences),
+      distanceMeters: evidence.distanceMeters ?? null,
+      priceRub: evidence.priceRub,
+      freshnessTimestamp: Number.isFinite(freshnessTimestamp) ? freshnessTimestamp : null,
+    },
+    rejectionCodes,
+  };
 }
 
 function rankCandidates(candidates: AssistantSearchEvidence[], softPreferences: AssistantSearchFilters) {

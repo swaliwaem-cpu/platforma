@@ -6,7 +6,7 @@ const { gzipSync } = require('node:zlib');
 const { after, before, test } = require('node:test');
 const { JwtService } = require('@nestjs/jwt');
 const { NestFactory } = require('@nestjs/core');
-const { PrismaClient } = require('@prisma/client');
+const { Prisma, PrismaClient } = require('@prisma/client');
 
 const databaseUrl = process.env.ASSISTANT_T06_TEST_DATABASE_URL;
 
@@ -134,12 +134,14 @@ test('Assistant T06 feedback and audit enforce 401/403/IDOR and keep review clas
   assert.equal(JSON.stringify(detail.body).includes('credential'), false);
 
   const reviewId = detail.body.run.review.id;
+  const reviewedFeedbackUpdatedAt = detail.body.run.feedback.updatedAt;
   const reviewed = await httpJson(`/assistant/audit/reviews/${reviewId}`, {
     method: 'PATCH',
     token: fixtures.audit.token,
     body: {
       classification: 'USER_RATING_INCORRECT',
       comment: 'Evidence подтверждает цену на момент ответа',
+      expectedFeedbackUpdatedAt: reviewedFeedbackUpdatedAt,
     },
   });
   assert.equal(reviewed.status, 200);
@@ -148,7 +150,7 @@ test('Assistant T06 feedback and audit enforce 401/403/IDOR and keep review clas
     where: { runId: fixtures.run.id },
   })).rating, 'DISLIKE');
 
-  await httpJson(`/assistant/messages/${fixtures.run.assistantMessageId}/feedback`, {
+  const exactRetry = await httpJson(`/assistant/messages/${fixtures.run.assistantMessageId}/feedback`, {
     method: 'POST',
     token: fixtures.owner.token,
     body: {
@@ -157,6 +159,7 @@ test('Assistant T06 feedback and audit enforce 401/403/IDOR and keep review clas
       comment: 'Цена в ответе устарела',
     },
   });
+  assert.equal(exactRetry.body.feedback.updatedAt, reviewedFeedbackUpdatedAt);
   assert.equal((await prisma.assistantReviewItem.findUniqueOrThrow({
     where: { runId: fixtures.run.id },
   })).status, 'REVIEWED');
@@ -175,6 +178,76 @@ test('Assistant T06 feedback and audit enforce 401/403/IDOR and keep review clas
   assert.equal(reopenedReview.reviewerComment, null);
   assert.equal(reopenedReview.reviewedAt, null);
 
+  const staleReview = await httpJson(`/assistant/audit/reviews/${reviewId}`, {
+    method: 'PATCH',
+    token: fixtures.audit.token,
+    body: {
+      classification: 'NO_ERROR',
+      comment: 'Эта классификация основана на старом feedback',
+      expectedFeedbackUpdatedAt: reviewedFeedbackUpdatedAt,
+    },
+  });
+  assert.equal(staleReview.status, 409);
+  assert.equal(staleReview.body.message, 'ASSISTANT_REVIEW_FEEDBACK_STALE');
+  assert.equal((await prisma.assistantReviewItem.findUniqueOrThrow({
+    where: { runId: fixtures.run.id },
+  })).status, 'PENDING');
+
+  const currentDetail = await httpJson(`/assistant/audit/runs/${fixtures.run.id}`, {
+    token: fixtures.audit.token,
+  });
+  const freshReview = await httpJson(`/assistant/audit/reviews/${reviewId}`, {
+    method: 'PATCH',
+    token: fixtures.audit.token,
+    body: {
+      classification: 'NO_ERROR',
+      comment: 'Классификация актуального feedback',
+      expectedFeedbackUpdatedAt: currentDetail.body.run.feedback.updatedAt,
+    },
+  });
+  assert.equal(freshReview.status, 200);
+
+  let racingFeedbackPromise;
+  let racingReviewPromise;
+  await prisma.$transaction(async (transaction) => {
+    await transaction.$queryRaw(Prisma.sql`
+      SELECT "feedback"."id"
+      FROM "assistant_review_items" AS "review"
+      INNER JOIN "assistant_feedback" AS "feedback" ON "feedback"."id" = "review"."feedback_id"
+      WHERE "review"."id" = CAST(${reviewId} AS uuid)
+      FOR UPDATE OF "review", "feedback"
+    `);
+    racingFeedbackPromise = httpJson(`/assistant/messages/${fixtures.run.assistantMessageId}/feedback`, {
+      method: 'POST',
+      token: fixtures.owner.token,
+      body: {
+        rating: 'DISLIKE',
+        reason: 'IRRELEVANT',
+        comment: 'Feedback изменён во время review',
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    racingReviewPromise = httpJson(`/assistant/audit/reviews/${reviewId}`, {
+      method: 'PATCH',
+      token: fixtures.audit.token,
+      body: {
+        classification: 'NO_ERROR',
+        comment: 'Конкурирующая классификация старой версии',
+        expectedFeedbackUpdatedAt: currentDetail.body.run.feedback.updatedAt,
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+  });
+  const [racingFeedback, racingReview] = await Promise.all([
+    racingFeedbackPromise,
+    racingReviewPromise,
+  ]);
+  assert.equal(racingFeedback.status, 201);
+  assert.equal(racingReview.status, 409);
+  assert.equal((await prisma.assistantReviewItem.findUniqueOrThrow({
+    where: { runId: fixtures.run.id },
+  })).status, 'PENDING');
+
   const [sources, geo, aliases, metrics] = await Promise.all([
     httpJson('/assistant/audit/sources', { token: fixtures.audit.token }),
     httpJson('/assistant/audit/geo/operations', { token: fixtures.audit.token }),
@@ -189,13 +262,17 @@ test('Assistant T06 feedback and audit enforce 401/403/IDOR and keep review clas
 });
 
 test('Assistant T06 feedback cannot influence the full planning, retrieval, ranking or routing seam', async () => {
-  const query = 'Найди двухкомнатную квартиру до 20 млн рублей';
+  const query = `Найди 2-комнатную квартиру, застройщика ${fixtures.searchDeveloper.name}, до 20 млн рублей`;
   const sourcePrioritiesBefore = await readSourcePriorities();
   const firstRun = await runAssistantQuery(query, fixtures.owner.token);
   const firstAudit = await httpJson(`/assistant/audit/runs/${firstRun.id}`, {
     token: fixtures.audit.token,
   });
   assert.equal(firstAudit.status, 200);
+  assert.equal(firstAudit.body.run.structuredIntent.needsClarification, false);
+  assert.equal(firstAudit.body.run.audit.candidateSet.length >= 2, true);
+  assert.equal(firstAudit.body.run.audit.rankingDecisions.length >= 2, true);
+  assert.equal(firstAudit.body.run.evidence.length > 0, true);
 
   const feedback = await httpJson(`/assistant/messages/${firstRun.assistantMessage.id}/feedback`, {
     method: 'POST',
@@ -340,6 +417,11 @@ test('Assistant T06 retention drains more than one batch, prunes old turns in ac
     where: { id: { in: [oldRun.userMessageId, oldRun.assistantMessageId] } },
   }), 0);
   assert.equal(await prisma.assistantConversation.count({ where: { id: oldRun.conversationId } }), 1);
+  const retainedConversation = await prisma.assistantConversation.findUniqueOrThrow({
+    where: { id: oldRun.conversationId },
+  });
+  assert.equal(retainedConversation.title, recentRun.query);
+  assert.equal(retainedConversation.title.includes(oldRun.query), false);
   assert.equal(await prisma.assistantRun.count({ where: { id: recentRun.id } }), 1);
   assert.equal(await prisma.assistantMessage.count({
     where: { id: { in: [recentRun.userMessageId, recentRun.assistantMessageId] } },
@@ -436,7 +518,66 @@ async function createFixtures() {
       totalLatencyMs: 100n,
     },
   });
-  return { owner, other, audit, run, source, revision, alias, geoOperation };
+  const searchDeveloper = await prisma.developer.create({
+    data: {
+      name: `T06 developer ${suffix}`,
+      slug: `t06-developer-${suffix}`,
+    },
+  });
+  const searchObject = await prisma.realEstateObject.create({
+    data: {
+      type: 'RESIDENTIAL',
+      title: `ЖК T06 ${suffix}`,
+      slug: `t06-search-${suffix}`,
+      status: 'PUBLISHED',
+      developerId: searchDeveloper.id,
+      publishedAt: new Date('2026-08-26T10:00:00.000Z'),
+    },
+  });
+  const searchSource = await prisma.feedSource.create({
+    data: {
+      sourceKind: 'URL',
+      url: `https://feed.example/t06/${suffix}.xml`,
+      format: 'CIAN_XML',
+      developerId: searchDeveloper.id,
+      objectId: searchObject.id,
+      isActive: true,
+    },
+  });
+  const searchUnits = await Promise.all([
+    { externalId: `t06-unit-a-${suffix}`, price: 18_000_000, area: 58, floor: 6 },
+    { externalId: `t06-unit-b-${suffix}`, price: 19_000_000, area: 64, floor: 9 },
+  ].map((unit) => prisma.feedUnit.create({
+    data: {
+      sourceId: searchSource.id,
+      objectId: searchObject.id,
+      externalId: unit.externalId,
+      type: 'RESIDENTIAL',
+      status: 'AVAILABLE',
+      title: '2-комнатная квартира',
+      rooms: 2,
+      effectivePrice: unit.price,
+      currency: 'RUB',
+      area: unit.area,
+      floor: unit.floor,
+      createdAt: new Date('2026-08-26T10:30:00.000Z'),
+      updatedAt: new Date('2026-08-26T11:30:00.000Z'),
+    },
+  })));
+  return {
+    owner,
+    other,
+    audit,
+    run,
+    source,
+    revision,
+    alias,
+    geoOperation,
+    searchDeveloper,
+    searchObject,
+    searchSource,
+    searchUnits,
+  };
 }
 
 async function createRun(ownerUserId, at, query, answer, conversationId = null) {
@@ -538,6 +679,15 @@ async function createUser(label, permissionIds) {
 }
 
 async function cleanupFixtures() {
+  if (fixtures?.searchSource) {
+    await prisma.feedSource.deleteMany({ where: { id: fixtures.searchSource.id } });
+  }
+  if (fixtures?.searchObject) {
+    await prisma.realEstateObject.deleteMany({ where: { id: fixtures.searchObject.id } });
+  }
+  if (fixtures?.searchDeveloper) {
+    await prisma.developer.deleteMany({ where: { id: fixtures.searchDeveloper.id } });
+  }
   await prisma.assistantReviewItem.deleteMany({
     where: { run: { ownerUserId: { in: userIds() } } },
   });

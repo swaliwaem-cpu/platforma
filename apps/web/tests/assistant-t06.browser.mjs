@@ -41,6 +41,15 @@ async function verifyAuditFlow() {
     await page.getByText('Страница 2 из 2').waitFor();
     await page.getByRole('button', { name: 'Предыдущая страница' }).click();
     await page.getByText('Страница 1 из 2').waitFor();
+    const recoveredPage = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.pathname === '/assistant/audit/runs' && url.searchParams.get('page') === '1'
+        && state.pageTwoRequests >= 2;
+    });
+    await page.getByRole('button', { name: 'Следующая страница' }).click();
+    await recoveredPage;
+    await page.getByRole('button', { name: 'Открыть', exact: true }).waitFor();
+    assert.equal(state.runPages.at(-1), 1);
     assert.equal(state.runPages.includes(2), true);
     await page.getByRole('button', { name: 'Открыть', exact: true }).click();
     await page.getByRole('heading', { name: 'Candidate set' }).waitFor();
@@ -53,16 +62,23 @@ async function verifyAuditFlow() {
     assert.deepEqual(state.reviewBodies, [{
       classification: 'USER_RATING_INCORRECT',
       comment: 'Evidence подтверждает цену',
+      expectedFeedbackUpdatedAt: now,
     }]);
 
     await page.getByRole('button', { name: 'К списку' }).click();
     await page.getByRole('tab', { name: 'Источники' }).click();
     await page.getByText('severny-sad', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Refresh источника' }).click();
+    await page.getByText('Не удалось связаться с сервером').waitFor();
+    await page.getByRole('button', { name: 'Refresh источника' }).click();
+    await page.getByText('Refresh источника поставлен в очередь.').waitFor();
+    assert.equal(state.sourceRefreshKeys.length, 2);
+    assert.equal(state.sourceRefreshKeys[0], state.sourceRefreshKeys[1]);
     await page.getByRole('tab', { name: 'Geo' }).click();
     await page.getByText('fake / RESOLVED', { exact: true }).waitFor();
     await page.getByRole('tab', { name: 'Лимиты и метрики' }).click();
     await page.getByText('gpt-5.6-terra', { exact: true }).waitFor();
-    assert.deepEqual(issues, []);
+    assert.equal(issues.every((issue) => /ERR_FAILED|Failed to fetch/iu.test(issue)), true);
     assert.equal(state.externalProviderCalls, 0);
   } finally {
     await context.close();
@@ -146,6 +162,8 @@ function createState() {
     feedbackBodies: [],
     reviewBodies: [],
     runPages: [],
+    pageTwoRequests: 0,
+    sourceRefreshKeys: [],
     missingRunRequests: 0,
     externalProviderCalls: 0,
   };
@@ -185,6 +203,12 @@ async function installRoutes(page, state) {
     if (path === '/assistant/audit/runs') {
       const page = Number(url.searchParams.get('page') ?? '1');
       state.runPages.push(page);
+      if (page === 2) {
+        state.pageTwoRequests += 1;
+        if (state.pageTwoRequests >= 2) {
+          return json(route, { items: [], total: 1, page, limit: 50, totalPages: 1 });
+        }
+      }
       return json(route, { items: [runSummary()], total: 51, page, limit: 50, totalPages: 2 });
     }
     if (path === `/assistant/audit/runs/${ids.run}`) return json(route, { run: runDetail() });
@@ -199,6 +223,12 @@ async function installRoutes(page, state) {
         ...runSummary().review,
         status: 'REVIEWED', classification: body.classification, reviewerComment: body.comment, reviewedAt: now,
       } });
+    }
+    if (path === `/assistant/sources/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/refresh`
+      && request.method() === 'POST') {
+      state.sourceRefreshKeys.push(request.headers()['idempotency-key']);
+      if (state.sourceRefreshKeys.length === 1) return route.abort('failed');
+      return json(route, { operation: { id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd' } }, 202);
     }
     if (path === '/assistant/audit/sources') return json(route, { items: [sourceFixture()] });
     if (path === '/assistant/audit/geo/operations') return json(route, { items: [geoFixture()] });
@@ -232,7 +262,14 @@ function runSummary() {
     id: ids.run, status: 'COMPLETED', query: 'Найди квартиру рядом с Плотинкой до 20 млн',
     answer: 'Подходит квартира за 19 млн рублей.', qualityFlags: ['UNSUPPORTED_FACT', 'MODEL_FALLBACK'],
     latencyMs: 1630, model: 'gpt-5.6-terra', reasoningEffort: 'medium', fallback: true,
-    feedback: { id: ids.feedback, rating: 'DISLIKE', reason: 'WRONG_FACT', comment: 'Цена устарела', createdAt: now },
+    feedback: {
+      id: ids.feedback,
+      rating: 'DISLIKE',
+      reason: 'WRONG_FACT',
+      comment: 'Цена устарела',
+      createdAt: now,
+      updatedAt: now,
+    },
     review: { id: ids.review, status: 'PENDING', classification: null, reviewerComment: null, reviewedAt: null },
     createdAt: now,
   };
