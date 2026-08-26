@@ -61,12 +61,6 @@ export class AssistantRetentionService implements OnModuleInit, OnModuleDestroy 
         const runIds = runs.map(({ id }) => id);
         const linkedMessageIds = [...new Set(runs.flatMap(({ userMessageId, assistantMessageId }) =>
           assistantMessageId ? [userMessageId, assistantMessageId] : [userMessageId]))];
-        if (runIds.length > 0) {
-          await transaction.assistantReviewItem.deleteMany({ where: { runId: { in: runIds } } });
-          await transaction.assistantFeedback.deleteMany({ where: { runId: { in: runIds } } });
-          await transaction.assistantRun.deleteMany({ where: { id: { in: runIds } } });
-          await transaction.assistantMessage.deleteMany({ where: { id: { in: linkedMessageIds } } });
-        }
 
         const orphanMessages = await transaction.$queryRaw<Array<{ id: string; conversationId: string }>>(Prisma.sql`
           SELECT
@@ -83,16 +77,37 @@ export class AssistantRetentionService implements OnModuleInit, OnModuleDestroy 
           LIMIT ${cleanupBatchSize}
           FOR UPDATE OF "message" SKIP LOCKED
         `);
+        const affectedConversationIds = [...new Set([
+          ...runs.map(({ conversationId }) => conversationId),
+          ...orphanMessages.map(({ conversationId }) => conversationId),
+        ])];
+        const lockedConversations = affectedConversationIds.length === 0
+          ? []
+          : await transaction.$queryRaw<Array<{ id: string; updatedAt: Date }>>(Prisma.sql`
+              SELECT
+                "id"::text AS "id",
+                "updated_at" AS "updatedAt"
+              FROM "assistant_conversations"
+              WHERE "id" IN (${Prisma.join(
+                affectedConversationIds.map((id) => Prisma.sql`${id}::uuid`),
+              )})
+              ORDER BY "id" ASC
+              FOR UPDATE
+            `);
+        const activityByConversationId = new Map(lockedConversations.map(({ id, updatedAt }) => [id, updatedAt]));
+
+        if (runIds.length > 0) {
+          await transaction.assistantReviewItem.deleteMany({ where: { runId: { in: runIds } } });
+          await transaction.assistantFeedback.deleteMany({ where: { runId: { in: runIds } } });
+          await transaction.assistantRun.deleteMany({ where: { id: { in: runIds } } });
+          await transaction.assistantMessage.deleteMany({ where: { id: { in: linkedMessageIds } } });
+        }
         if (orphanMessages.length > 0) {
           await transaction.assistantMessage.deleteMany({
             where: { id: { in: orphanMessages.map(({ id }) => id) } },
           });
         }
 
-        const affectedConversationIds = [...new Set([
-          ...runs.map(({ conversationId }) => conversationId),
-          ...orphanMessages.map(({ conversationId }) => conversationId),
-        ])];
         if (affectedConversationIds.length > 0) {
           const remainingTitles = await transaction.$queryRaw<Array<{ id: string; content: string | null }>>(
             Prisma.sql`
@@ -117,9 +132,14 @@ export class AssistantRetentionService implements OnModuleInit, OnModuleDestroy 
             `,
           );
           for (const { id, content } of remainingTitles) {
+            const updatedAt = activityByConversationId.get(id);
+            if (!updatedAt) continue;
             await transaction.assistantConversation.update({
               where: { id },
-              data: { title: content ? buildConversationTitle(content) : 'Новый разговор' },
+              data: {
+                title: content ? buildConversationTitle(content) : 'Новый разговор',
+                updatedAt,
+              },
             });
           }
         }

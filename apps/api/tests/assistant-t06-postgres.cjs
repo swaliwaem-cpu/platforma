@@ -438,6 +438,66 @@ test('Assistant T06 retention drains more than one batch, prunes old turns in ac
   assert.equal(await prisma.assistantSourceRevision.count({
     where: { id: fixtures.revision.id },
   }), revisionCountBefore);
+
+  const batchedConversation = await prisma.assistantConversation.create({
+    data: {
+      ownerUserId: fixtures.owner.user.id,
+      creationKey: randomUUID(),
+      title: 'Удаляемый batched title T06',
+      createdAt: old,
+      updatedAt: old,
+    },
+  });
+  await prisma.assistantMessage.createMany({
+    data: Array.from({ length: 501 }, (_, index) => ({
+      conversationId: batchedConversation.id,
+      role: 'USER',
+      content: `Удаляемый batched запрос T06 ${index}`,
+      createdAt: old,
+    })),
+  });
+  const raceRun = await createRun(
+    fixtures.owner.user.id,
+    old,
+    'Старый конкурентный запрос T06',
+    'Старый конкурентный ответ T06',
+  );
+  let queuedMessagePromise;
+  let firstCleanupPromise;
+  let secondCleanupPromise;
+  await prisma.$transaction(async (transaction) => {
+    await transaction.$queryRaw(Prisma.sql`
+      SELECT "id"
+      FROM "assistant_conversations"
+      WHERE "id" = CAST(${raceRun.conversationId} AS uuid)
+      FOR UPDATE
+    `);
+    queuedMessagePromise = httpJson(`/assistant/conversations/${raceRun.conversationId}/messages`, {
+      method: 'POST',
+      token: fixtures.owner.token,
+      idempotencyKey: randomUUID(),
+      body: { content: 'Свежий конкурентный запрос T06', context: null },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    firstCleanupPromise = new AssistantRetentionService(prisma).runCleanup(now);
+    secondCleanupPromise = new AssistantRetentionService(prisma).runCleanup(now);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+  });
+  const [queuedMessage] = await Promise.all([
+    queuedMessagePromise,
+    firstCleanupPromise,
+    secondCleanupPromise,
+  ]);
+  assert.equal(queuedMessage.status, 202, JSON.stringify(queuedMessage.body));
+  await waitForAssistantRun(queuedMessage.body.run.id, fixtures.owner.token);
+  assert.equal(await prisma.assistantConversation.count({
+    where: { id: batchedConversation.id },
+  }), 0);
+  const raceConversation = await prisma.assistantConversation.findUniqueOrThrow({
+    where: { id: raceRun.conversationId },
+  });
+  assert.equal(raceConversation.title, 'Свежий конкурентный запрос T06');
+  assert.equal(raceConversation.title.includes(raceRun.query), false);
 });
 
 async function createFixtures() {
@@ -735,8 +795,12 @@ async function runAssistantQuery(content, token) {
     body: { content, context: null },
   });
   assert.equal(queued.status, 202, JSON.stringify(queued.body));
+  return waitForAssistantRun(queued.body.run.id, token);
+}
+
+async function waitForAssistantRun(runId, token) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    const response = await httpJson(`/assistant/runs/${queued.body.run.id}`, { token });
+    const response = await httpJson(`/assistant/runs/${runId}`, { token });
     if (response.body.run.status === 'COMPLETED') return response.body.run;
     if (response.body.run.status === 'FAILED') throw new Error(response.body.run.errorCode ?? 'ASSISTANT_T06_RUN_FAILED');
     await new Promise((resolve) => setTimeout(resolve, 20));
