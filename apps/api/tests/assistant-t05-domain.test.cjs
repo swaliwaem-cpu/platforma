@@ -315,6 +315,7 @@ test('Assistant T05 provider policy enforces persisted budget and opens a retrya
   const prisma = { $queryRaw: async () => [{ requestCount: providerCalls + 1 }] };
   const policy = new AssistantGeoProviderPolicyService(prisma, provider, {
     ASSISTANT_GEO_PROVIDER_MODE: 'fake',
+    ASSISTANT_GEO_PROVIDER_ENABLED: 'true',
     ASSISTANT_GEO_PROVIDER_RPS: '20',
     ASSISTANT_GEO_PROVIDER_DAILY_BUDGET: '3',
     ASSISTANT_GEO_CACHE_TTL_SECONDS: '60',
@@ -334,7 +335,7 @@ test('Assistant T05 provider policy enforces persisted budget and opens a retrya
   const exhausted = new AssistantGeoProviderPolicyService(
     { $queryRaw: async () => [] },
     { async search() { exhaustedCalls += 1; return []; } },
-    { ASSISTANT_GEO_PROVIDER_MODE: 'fake' },
+    { ASSISTANT_GEO_PROVIDER_MODE: 'fake', ASSISTANT_GEO_PROVIDER_ENABLED: 'true' },
   );
   await assert.rejects(exhausted.search(request), /ASSISTANT_GEO_PROVIDER_DAILY_BUDGET_EXHAUSTED/u);
   assert.equal(exhaustedCalls, 0);
@@ -348,6 +349,7 @@ test('Assistant T05 LocationIQ retries reserve RPS and daily budget per physical
   let timestamp = Date.parse('2026-08-26T10:00:00.000Z');
   const environment = {
     ASSISTANT_GEO_PROVIDER_MODE: 'locationiq',
+    ASSISTANT_GEO_PROVIDER_ENABLED: 'true',
     LOCATIONIQ_API_KEY: 'test-key',
     LOCATIONIQ_API_URL: 'http://127.0.0.1:3009/v1/search',
     ASSISTANT_GEO_PROVIDER_MAX_RETRIES: '1',
@@ -420,6 +422,104 @@ test('Assistant T05 resolver keeps another city explicit, prefers aliases and se
   assert.equal(providerRequests[0].query, 'Плотинки, Екатеринбург');
   assert.equal(providerRequests[0].viewbox, null);
   assert.equal(cacheWrites.length, 1);
+
+  await resolver.resolve({
+    content: 'Найди квартиру в радиусе 2 км от Павелецкой Плаза от застройщика ПИК',
+    locale: 'ru',
+    country: 'ru',
+  });
+  assert.equal(providerRequests[1].query, 'Павелецкой Плаза');
+
+  await resolver.resolve({
+    content: 'Найди квартиру в радиусе 2 км от станции метро Спортивная',
+    locale: 'ru',
+    country: 'ru',
+  });
+  assert.equal(providerRequests[2].query, 'станции метро Спортивная');
+
+  await resolver.resolve({
+    content: 'Найди квартиру в радиусе 2 км от ул. Ленина',
+    locale: 'ru',
+    country: 'ru',
+  });
+  assert.equal(providerRequests[3].query, 'ул. Ленина');
+
+  await resolver.resolve({
+    content: 'Найди квартиру в радиусе 2 км от ст. метро Спортивная',
+    locale: 'ru',
+    country: 'ru',
+  });
+  assert.equal(providerRequests[4].query, 'ст. метро Спортивная');
+
+  await resolver.resolve({
+    content: 'Найди квартиру в радиусе 2 км от Павелецкой Плаза до 20 млн рублей',
+    locale: 'ru',
+    country: 'ru',
+  });
+  assert.equal(providerRequests[5].query, 'Павелецкой Плаза');
+
+  await resolver.resolve({
+    content: 'Найди квартиру в радиусе 2 км от Павелецкой Плаза бюджет от 20 млн рублей',
+    locale: 'ru',
+    country: 'ru',
+  });
+  assert.equal(providerRequests[6].query, 'Павелецкой Плаза');
+
+  await resolver.resolve({
+    content: 'Найди квартиру в радиусе 2 км от Павелецкой Плаза от 4 этажа',
+    locale: 'ru',
+    country: 'ru',
+  });
+  assert.equal(providerRequests[7].query, 'Павелецкой Плаза');
+
+  await resolver.resolve({
+    content: 'Найди квартиру в радиусе 2 км от Павелецкой Плаза бизнес-класса',
+    locale: 'ru',
+    country: 'ru',
+  });
+  assert.equal(providerRequests[8].query, 'Павелецкой Плаза');
+
+  await resolver.resolve({
+    content: 'Найди квартиру в радиусе 2 км от Павелецкой Плаза бюджет от 20 до 30 млн рублей',
+    locale: 'ru',
+    country: 'ru',
+  });
+  assert.equal(providerRequests[9].query, 'Павелецкой Плаза');
+
+  await resolver.resolve({
+    content: 'Найди квартиру в радиусе 2 км от Павелецкой Плаза площадь 50–70 м²',
+    locale: 'ru',
+    country: 'ru',
+  });
+  assert.equal(providerRequests[10].query, 'Павелецкой Плаза');
+
+  await resolver.resolve({
+    content: 'Найди квартиру в радиусе 2 км от Павелецкой Плаза до 2027 года',
+    locale: 'ru',
+    country: 'ru',
+  });
+  assert.equal(providerRequests[11].query, 'Павелецкой Плаза');
+
+  await resolver.resolve({
+    content: 'Найди квартиру в радиусе 2 км от Павелецкой Плаза метро Спортивная',
+    locale: 'ru',
+    country: 'ru',
+  });
+  assert.equal(providerRequests[12].query, 'Павелецкой Плаза');
+
+  await resolver.resolve({
+    content: 'Найди квартиру в радиусе 2 км от Павелецкой Плаза от 20 до 30 млн рублей',
+    locale: 'ru',
+    country: 'ru',
+  });
+  assert.equal(providerRequests[13].query, 'Павелецкой Плаза');
+
+  await resolver.resolve({
+    content: 'Найди в радиусе 2 км от Павелецкой Плаза жилую квартиру',
+    locale: 'ru',
+    country: 'ru',
+  });
+  assert.equal(providerRequests[14].query, 'Павелецкой Плаза');
 
   const noViewbox = createCacheKey({
     placeQuery: 'Плотинка', locale: 'ru', country: 'ru', viewbox: null,

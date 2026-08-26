@@ -25,11 +25,12 @@ import type {
 import type { AssistantSearchEvidence } from './assistant-search-ranking';
 
 const candidateLimit = 120;
-const budgetRelaxationRub = 7_000_000;
+export const assistantBudgetRelaxationRub = 7_000_000;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 const candidateSelect = {
   id: true,
+  externalId: true,
   status: true,
   effectivePrice: true,
   discountPrice: true,
@@ -185,10 +186,10 @@ export class AssistantSearchService {
         ...intent.hardFilters,
         budgetMinRub: intent.hardFilters.budgetMinRub === null
           ? null
-          : Math.max(0, intent.hardFilters.budgetMinRub - budgetRelaxationRub),
+          : Math.max(0, intent.hardFilters.budgetMinRub - assistantBudgetRelaxationRub),
         budgetMaxRub: intent.hardFilters.budgetMaxRub === null
           ? null
-          : intent.hardFilters.budgetMaxRub + budgetRelaxationRub,
+          : intent.hardFilters.budgetMaxRub + assistantBudgetRelaxationRub,
       };
       relaxationRequests.push(this.findRelaxedEvidence(
         expandedFilters,
@@ -605,6 +606,7 @@ export class AssistantSearchService {
 
     return {
       unitId: record.id,
+      unitExternalId: record.externalId,
       objectId: record.object.id,
       objectType: record.object.type,
       objectTitle: record.object.title,
@@ -677,12 +679,12 @@ function createBudgetDeviation(
 ): AssistantAlternativeDeviation | null {
   if (filters.budgetMaxRub !== null && candidate.priceRub > filters.budgetMaxRub) {
     const difference = candidate.priceRub - filters.budgetMaxRub;
-    if (difference > budgetRelaxationRub) return null;
+    if (difference > assistantBudgetRelaxationRub) return null;
     return { type: 'BUDGET', label: `Бюджет выше на ${formatRubMillions(difference)}` };
   }
   if (filters.budgetMinRub !== null && candidate.priceRub < filters.budgetMinRub) {
     const difference = filters.budgetMinRub - candidate.priceRub;
-    if (difference > budgetRelaxationRub) return null;
+    if (difference > assistantBudgetRelaxationRub) return null;
     return { type: 'BUDGET', label: `Бюджет ниже на ${formatRubMillions(difference)}` };
   }
   return null;

@@ -16,7 +16,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RequirePermissions } from '../auth/permissions.decorator';
 import { PermissionsGuard } from '../auth/permissions.guard';
-import { AssistantFeatureGuard, isAssistantModuleEnabled } from './assistant-runtime-config';
+import { AssistantFeatureGuard, isAssistantEnabledForActor } from './assistant-runtime-config';
 import { AssistantService } from './assistant.service';
 
 @Controller('assistant')
@@ -26,8 +26,8 @@ export class AssistantController {
   constructor(private readonly assistant: AssistantService) {}
 
   @Get('config')
-  getConfig() {
-    return { enabled: isAssistantModuleEnabled() };
+  getConfig(@CurrentUser() actor: AuthenticatedUser) {
+    return { enabled: isAssistantEnabledForActor(actor) };
   }
 
   @Get('conversations')

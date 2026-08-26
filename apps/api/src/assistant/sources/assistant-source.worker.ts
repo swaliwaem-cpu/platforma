@@ -13,6 +13,7 @@ import {
 import { randomUUID } from 'node:crypto';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { areAssistantExternalConnectorsEnabled } from '../assistant-runtime-config';
 import {
   AssistantSourceIngestionService,
   reserveAssistantSourceAttempt,
@@ -36,7 +37,7 @@ export class AssistantSourceWorker implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   async onModuleInit() {
-    if (!isSourceWorkerEnabled()) return;
+    if (!isAssistantSourceWorkerRunnable()) return;
     await this.runOnce();
     this.timer = setInterval(() => this.schedule(), pollIntervalMs);
     this.timer.unref();
@@ -287,6 +288,10 @@ export function isSourceWorkerEnabled(environment: NodeJS.ProcessEnv = process.e
   if (value === 'true') return true;
   if (value === 'false') return false;
   throw new Error('ASSISTANT_SOURCE_WORKER_ENABLED_INVALID');
+}
+
+export function isAssistantSourceWorkerRunnable(environment: NodeJS.ProcessEnv = process.env) {
+  return isSourceWorkerEnabled(environment) && areAssistantExternalConnectorsEnabled(environment);
 }
 
 function normalizeWorkerError(error: unknown) {

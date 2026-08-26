@@ -21,6 +21,7 @@ export type AssistantCandidatePdf = {
 
 export type AssistantSearchEvidence = {
   unitId: string;
+  unitExternalId?: string;
   objectId: string;
   objectType: 'RESIDENTIAL' | 'COMMERCIAL';
   objectTitle: string;
@@ -81,9 +82,9 @@ export function buildAssistantSearchAnswer(
 ): AssistantSearchAnswer {
   const rankedExactCandidates = rankCandidates(
     exactEvidence.filter((candidate) =>
-      isValidEvidence(candidate)
+      isValidAssistantSearchEvidence(candidate)
       && hasRequiredFacts(candidate, intent.requiredFacts)
-      && matchesFilters(candidate, intent.hardFilters)),
+      && matchesAssistantSearchFilters(candidate, intent.hardFilters)),
     intent.softPreferences,
   );
   const exactResults = selectComparisonCandidates(
@@ -95,7 +96,7 @@ export function buildAssistantSearchAnswer(
     .map((candidate) => createResultCard(candidate, now));
   const rankedAlternatives = rankCandidates(
     alternativeEvidence.filter((candidate) =>
-      isValidAlternativeEvidence(candidate) && hasRequiredFacts(candidate, intent.requiredFacts)),
+      isValidAssistantAlternativeEvidence(candidate) && hasRequiredFacts(candidate, intent.requiredFacts)),
     intent.softPreferences,
   );
   const alternatives = exactResults.length === 0
@@ -191,12 +192,12 @@ export function createAssistantSearchRankingTrace(
   for (const candidate of candidates) {
     const rejectionCodes: string[] = [];
     if (candidate.deviations.length === 0) {
-      if (!isValidEvidence(candidate)) rejectionCodes.push('INVALID_EVIDENCE');
+      if (!isValidAssistantSearchEvidence(candidate)) rejectionCodes.push('INVALID_EVIDENCE');
       if (!hasRequiredFacts(candidate, intent.requiredFacts)) rejectionCodes.push('MISSING_REQUIRED_FACTS');
-      if (!matchesFilters(candidate, intent.hardFilters)) rejectionCodes.push('HARD_FILTER_MISMATCH');
+      if (!matchesAssistantSearchFilters(candidate, intent.hardFilters)) rejectionCodes.push('HARD_FILTER_MISMATCH');
       if (rejectionCodes.length === 0) exact.push(candidate);
     } else {
-      if (!isValidAlternativeEvidence(candidate)) rejectionCodes.push('INVALID_ALTERNATIVE_EVIDENCE');
+      if (!isValidAssistantAlternativeEvidence(candidate)) rejectionCodes.push('INVALID_ALTERNATIVE_EVIDENCE');
       if (!hasRequiredFacts(candidate, intent.requiredFacts)) rejectionCodes.push('MISSING_REQUIRED_FACTS');
       if (rejectionCodes.length === 0) alternatives.push(candidate);
     }
@@ -277,7 +278,10 @@ function scoreSoftPreferences(candidate: AssistantSearchEvidence, filters: Assis
   return score;
 }
 
-function matchesFilters(candidate: AssistantSearchEvidence, filters: AssistantSearchFilters) {
+export function matchesAssistantSearchFilters(
+  candidate: AssistantSearchEvidence,
+  filters: AssistantSearchFilters,
+) {
   return candidate.objectType === filters.objectType
     && (filters.budgetMinRub === null || candidate.priceRub >= filters.budgetMinRub)
     && (filters.budgetMaxRub === null || candidate.priceRub <= filters.budgetMaxRub)
@@ -376,7 +380,7 @@ function deduplicatePdfs(pdfs: AssistantCandidatePdf[]) {
   }).slice(0, 4);
 }
 
-function isValidEvidence(candidate: AssistantSearchEvidence) {
+export function isValidAssistantSearchEvidence(candidate: AssistantSearchEvidence) {
   return uuidPattern.test(candidate.unitId)
     && uuidPattern.test(candidate.objectId)
     && candidate.objectTitle.trim().length > 0
@@ -391,8 +395,8 @@ function isValidEvidence(candidate: AssistantSearchEvidence) {
     && candidate.deviations.length === 0;
 }
 
-function isValidAlternativeEvidence(candidate: AssistantSearchEvidence) {
-  return isValidEvidence({ ...candidate, deviations: [] })
+export function isValidAssistantAlternativeEvidence(candidate: AssistantSearchEvidence) {
+  return isValidAssistantSearchEvidence({ ...candidate, deviations: [] })
     && candidate.deviations.length === 1
     && candidate.deviations.every((deviation) =>
       allowedDeviationTypes.includes(deviation.type) && deviation.label.trim().length > 0,

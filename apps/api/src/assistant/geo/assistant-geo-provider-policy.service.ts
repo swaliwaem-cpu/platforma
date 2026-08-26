@@ -4,6 +4,7 @@ import { Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { isAssistantGeoProviderEnabled } from '../assistant-runtime-config';
 import {
   AssistantUsageBudgetError,
   AssistantUsageBudgetService,
@@ -30,6 +31,7 @@ export type AssistantGeoProviderSearchResult = {
 export class AssistantGeoProviderPolicyService {
   private readonly logger = new Logger(AssistantGeoProviderPolicyService.name);
   private readonly providerName: 'fake' | 'locationiq';
+  private readonly enabled: boolean;
   private readonly requestsPerSecond: number;
   private readonly dailyBudget: number;
   private readonly circuitFailureThreshold: number;
@@ -50,21 +52,22 @@ export class AssistantGeoProviderPolicyService {
     private readonly delay: (milliseconds: number) => Promise<void> = wait,
     private readonly budgets?: AssistantUsageBudgetService,
   ) {
+    this.enabled = isAssistantGeoProviderEnabled(environment);
     this.providerName = readMode(environment.ASSISTANT_GEO_PROVIDER_MODE);
-    if (this.providerName === 'fake' && environment.DEPLOYMENT_ENV === 'production') {
+    if (this.enabled && this.providerName === 'fake' && environment.DEPLOYMENT_ENV === 'production') {
       throw new AssistantGeoProviderError('ASSISTANT_GEO_FAKE_PROVIDER_FORBIDDEN', false);
     }
     this.requestsPerSecond = readInteger(environment.ASSISTANT_GEO_PROVIDER_RPS, 1, 1, 20);
     this.dailyBudget = readProviderPlanInteger(
       environment.ASSISTANT_GEO_PROVIDER_DAILY_BUDGET,
-      this.providerName === 'fake' ? 10_000 : null,
+      this.providerName === 'fake' || !this.enabled ? 10_000 : null,
       1,
       1_000_000,
       'ASSISTANT_GEO_PROVIDER_DAILY_BUDGET_REQUIRED',
     );
     this.cacheRetentionMs = readProviderPlanInteger(
       environment.ASSISTANT_GEO_CACHE_TTL_SECONDS,
-      this.providerName === 'fake' ? 86_400 : null,
+      this.providerName === 'fake' || !this.enabled ? 86_400 : null,
       60,
       31_536_000,
       'ASSISTANT_GEO_CACHE_TTL_SECONDS_REQUIRED',
@@ -117,6 +120,9 @@ export class AssistantGeoProviderPolicyService {
     const context: GeoRequestContext = { providerCallCount: 0 };
     return this.requestContext.run(context, async () => {
       const startedAt = Date.now();
+      if (!this.enabled) {
+        throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_DISABLED', false);
+      }
       if (this.now().getTime() < this.circuitOpenUntil) {
         this.log('circuit_open', startedAt);
         throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_CIRCUIT_OPEN', true);
@@ -243,7 +249,7 @@ export class AssistantGeoProviderPolicyService {
 
 export function createAssistantGeoProvider(environment: GeoPolicyEnvironment = process.env) {
   const mode = readMode(environment.ASSISTANT_GEO_PROVIDER_MODE);
-  return mode === 'fake'
+  return mode === 'fake' || !isAssistantGeoProviderEnabled(environment)
     ? new FakeAssistantGeoProvider()
     : new LocationIqGeoProvider(environment);
 }

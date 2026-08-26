@@ -10,6 +10,7 @@ import type {
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { parseAssistantGeoSearchInput } from './assistant-geo-contract';
+import { parseAssistantGeoDistanceClause } from './assistant-geo-query';
 import { AssistantGeoProviderError } from './assistant-geo-provider';
 import { AssistantGeoProviderPolicyService } from './assistant-geo-provider-policy.service';
 
@@ -287,15 +288,19 @@ function extractRadiusMeters(content: string) {
 }
 
 function extractPlaceQuery(content: string, hasExplicitRadius: boolean) {
-  const withoutRadius = content.replace(
-    /(?:в\s+радиусе|радиус(?:ом)?|не\s+дальше)\s*\d+(?:[.,]\d+)?\s*(?:км|километр(?:а|ов)?|м|метр(?:а|ов)?)/giu,
-    ' ',
-  );
-  const match = hasExplicitRadius
-    ? withoutRadius.match(/(?:рядом\s+с|возле|около|вокруг|(?:^|\s)от)\s+(.+)$/iu)
-    : withoutRadius.match(/(?:рядом\s+с|возле|около|вокруг)\s+(.+)$/iu);
-  if (!match) return null;
-  const query = match[1]!
+  const explicitClause = hasExplicitRadius ? parseAssistantGeoDistanceClause(content) : null;
+  const contentWithoutRadius = hasExplicitRadius && explicitClause === null
+    ? content.replace(
+        /(?:в\s+радиусе|радиус(?:ом)?|не\s+дальше)\s*\d+(?:[.,]\d+)?\s*(?:км|километр(?:а|ов)?|м|метр(?:а|ов)?)/giu,
+        ' ',
+      )
+    : content;
+  const nearbyMatch = explicitClause === null
+    ? contentWithoutRadius.match(/(?:рядом\s+с|возле|около|вокруг)\s+(.+)$/iu)
+    : null;
+  const candidate = explicitClause?.anchor ?? nearbyMatch?.[1];
+  if (!candidate) return null;
+  const query = candidate
     .replace(/\s+(?:найди|покажи|подбери)\b.*$/iu, '')
     .replace(/[.!?;]+$/gu, '')
     .replace(/\s+/gu, ' ')

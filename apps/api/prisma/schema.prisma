@@ -620,6 +620,18 @@ model AssistantRun {
   @@map("assistant_runs")
 }
 
+model AssistantRolloutEvent {
+  id           String   @id @default(uuid()) @db.Uuid
+  stage        String   @unique @db.VarChar(16)
+  gateDigest   String   @map("gate_digest") @db.Char(64)
+  approvalJson Json     @map("approval_json")
+  startedAt    DateTime @default(now()) @map("started_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([startedAt])
+  @@map("assistant_rollout_events")
+}
+
 model AssistantFeedback {
   id          String                  @id @default(uuid()) @db.Uuid
   runId       String                  @unique @map("run_id") @db.Uuid

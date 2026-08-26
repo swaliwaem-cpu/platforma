@@ -10,7 +10,7 @@ import { AssistantAnswerService } from './assistant-answer.service';
 import { createAssistantPlannerGateway } from './assistant-planner-gateway';
 import { AssistantQueryPlanner } from './assistant-query-planner';
 import { AssistantRunProcessor } from './assistant-run.processor';
-import { AssistantFeatureGuard } from './assistant-runtime-config';
+import { AssistantExternalConnectorsGuard, AssistantFeatureGuard } from './assistant-runtime-config';
 import { AssistantSearchService } from './assistant-search.service';
 import { AssistantService } from './assistant.service';
 import { AssistantFeedbackController } from './feedback/assistant-feedback.controller';
@@ -26,6 +26,7 @@ import { AssistantPlaceResolverService } from './geo/assistant-place-resolver.se
 import { AssistantModelUsagePolicyService } from './operations/assistant-model-usage-policy.service';
 import { AssistantRetentionService } from './operations/assistant-retention.service';
 import { AssistantUsageBudgetService } from './operations/assistant-usage-budget.service';
+import { AssistantRolloutStageService } from './rollout/assistant-rollout-stage.service';
 
 @Module({
   imports: [AuthModule, PrismaModule, AssistantSourcesModule],
@@ -48,6 +49,7 @@ import { AssistantUsageBudgetService } from './operations/assistant-usage-budget
     AssistantUsageBudgetService,
     AssistantModelUsagePolicyService,
     AssistantRetentionService,
+    AssistantRolloutStageService,
     {
       provide: AssistantGeoProviderPolicyService,
       inject: [PrismaService, AssistantUsageBudgetService],
@@ -69,6 +71,7 @@ import { AssistantUsageBudgetService } from './operations/assistant-usage-budget
       ),
     },
     AssistantFeatureGuard,
+    AssistantExternalConnectorsGuard,
   ],
 })
 export class AssistantModule {}

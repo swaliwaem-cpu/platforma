@@ -171,6 +171,7 @@ function serializeCandidate(evidence: AssistantRunEvidence): Record<string, unkn
     return {
       evidenceId: evidence.unitId,
       kind: 'PLATFORMA_FEED_UNIT',
+      unitExternalId: evidence.unitExternalId ?? null,
       objectId: evidence.objectId,
       objectType: evidence.objectType,
       objectTitle: evidence.objectTitle,

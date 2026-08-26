@@ -1,3 +1,5 @@
+import { stripAssistantGeoDistanceClause } from './geo/assistant-geo-query';
+
 export const ASSISTANT_LUNA_MODEL = 'gpt-5.6-luna';
 export const ASSISTANT_TERRA_MODEL = 'gpt-5.6-terra';
 
@@ -28,6 +30,7 @@ const intentKeys = [
   'needsClarification',
   'clarificationQuestion',
 ] as const;
+const optionalIntentKeys = ['comparisonTargetModes'] as const;
 
 const taskTypes = ['SEARCH', 'COMPARE', 'FACT', 'LEGAL_TAX'] as const;
 const requiredFactValues = [
@@ -285,7 +288,12 @@ export function createEmptyAssistantSearchFilters(): AssistantSearchFilters {
 }
 
 export function parseAssistantStructuredIntent(value: unknown): AssistantStructuredIntent {
-  if (!isExactRecord(value, intentKeys)) throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
+  if (!isRecord(value)
+    || intentKeys.some((key) => !Object.hasOwn(value, key))
+    || Object.keys(value).some((key) => (
+      !intentKeys.includes(key as (typeof intentKeys)[number])
+      && !optionalIntentKeys.includes(key as (typeof optionalIntentKeys)[number])
+    ))) throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
   if (!taskTypes.includes(value.taskType as AssistantTaskType)) {
     throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
   }
@@ -293,6 +301,9 @@ export function parseAssistantStructuredIntent(value: unknown): AssistantStructu
   const hardFilters = parseFilters(value.hardFilters);
   const softPreferences = parseFilters(value.softPreferences);
   const comparisonTargets = parseComparisonTargets(value.comparisonTargets);
+  const comparisonTargetModes = value.comparisonTargetModes === undefined
+    ? undefined
+    : parseComparisonTargetModes(value.comparisonTargetModes, comparisonTargets.length);
   const requiredFacts = parseRequiredFacts(value.requiredFacts);
   if (value.taskType !== 'LEGAL_TAX' && mandatorySearchFacts.some((fact) => !requiredFacts.includes(fact))) {
     throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
@@ -311,6 +322,7 @@ export function parseAssistantStructuredIntent(value: unknown): AssistantStructu
   return {
     taskType: value.taskType as AssistantTaskType,
     comparisonTargets,
+    ...(comparisonTargetModes ? { comparisonTargetModes } : {}),
     hardFilters,
     softPreferences,
     requiredFacts,
@@ -485,6 +497,7 @@ export function extractAssistantExplicitHardFilters(
 function extractExplicitFilters(text: string): Partial<AssistantSearchFilters> & { rooms?: number[] } {
   const filters: Partial<AssistantSearchFilters> & { rooms?: number[] } = {};
   const normalized = text.toLocaleLowerCase('ru-RU').replace(/ё/gu, 'е');
+  const textWithoutGeoDistance = stripGeoDistancePhrases(text);
   const rangeMatch = normalized.match(
     /(?:бюджет\s*)?(?:от\s*)?(\d[\d\s]*(?:[.,]\d+)?)\s*(млн\p{L}*|тыс\p{L}*|руб\p{L}*)?\s*(?:до|-|–|—)\s*(\d[\d\s]*(?:[.,]\d+)?)\s*(млн\p{L}*|тыс\p{L}*|руб\p{L}*)/iu,
   );
@@ -514,18 +527,18 @@ function extractExplicitFilters(text: string): Partial<AssistantSearchFilters> &
   if (rooms.size > 0) filters.rooms = [...rooms].sort((left, right) => left - right);
 
   const district = extractNamedCondition(
-    text,
-    /(?:в\s+)?район(?:е)?\s+[«"]?(.+?)[»"]?(?=\s+(?:у\s+метро|метро|от\s+[\p{L}«"]|сдач\p{L}*|\d+\s*квартал)|[,.;\r\n]|$)/iu,
+    textWithoutGeoDistance,
+    /(?:в\s+)?район(?:е)?\s+[«"]?(.+?)[»"]?(?=\s+(?:у\s+метро|метро|от\s+[\p{L}«"]|сдач\p{L}*|\d+\s*квартал|площад\p{L}*|этаж\p{L}*|готов\p{L}*|в\s+готов\p{L}*|класс\p{L}*|до\s+\d|не\s+(?:дороже|дешевле|позднее|раньше|меньше|больше))|[,.;\r\n]|$)/iu,
   );
   if (district) filters.district = district;
   const metro = extractNamedCondition(
-    text,
+    textWithoutGeoDistance,
     /(?:у\s+)?метро\s+[«"]?(.+?)[»"]?(?=\s+(?:от\s+[\p{L}«"]|сдач\p{L}*|\d+\s*квартал)|[,.;\r\n]|$)/iu,
   );
   if (metro) filters.metro = metro;
   const developer = extractNamedCondition(
-    text,
-    /(?:застройщик(?:а|ом)?|от\s+(?=[\p{L}«"]))\s*[«"]?(.+?)[»"]?(?=\s+(?:сдач\p{L}*|\d+\s*квартал)|[,.;\r\n]|$)/iu,
+    textWithoutGeoDistance,
+    /(?:(?:от\s+)?застройщик(?:а|ом)?|от\s+(?=[\p{L}«"]))\s*[«"]?(.+?)[»"]?(?=\s+(?:сдач\p{L}*|\d+\s*квартал)|[,.;\r\n]|$)/iu,
   );
   if (developer) filters.developer = developer;
 
@@ -552,10 +565,14 @@ function extractExplicitFilters(text: string): Partial<AssistantSearchFilters> &
   }
   if (areaMinimum) filters.areaMin = Number(areaMinimum[1]!.replace(',', '.'));
   if (areaMaximum) filters.areaMax = Number(areaMaximum[1]!.replace(',', '.'));
-  const floorMinimum = normalized.match(/(?:этаж\p{L}*\s+)?(?:от|не\s+ниже)\s+(-?\d+)\s*(?:этаж\p{L}*)/iu);
-  const floorMaximum = normalized.match(/(?:этаж\p{L}*\s+)?(?:до|не\s+выше)\s+(-?\d+)\s*(?:этаж\p{L}*)/iu);
-  if (floorMinimum) filters.floorMin = Number(floorMinimum[1]);
-  if (floorMaximum) filters.floorMax = Number(floorMaximum[1]);
+  const floorMinimum = normalized.match(
+    /(?:этаж\p{L}*\s+(?:от|не\s+ниже)\s+(-?\d+)|(?:от|не\s+ниже)\s+(-?\d+)\s*этаж\p{L}*)/iu,
+  );
+  const floorMaximum = normalized.match(
+    /(?:этаж\p{L}*\s+(?:до|не\s+выше)\s+(-?\d+)|(?:до|не\s+выше)\s+(-?\d+)\s*этаж\p{L}*)/iu,
+  );
+  if (floorMinimum) filters.floorMin = Number(floorMinimum[1] ?? floorMinimum[2]);
+  if (floorMaximum) filters.floorMax = Number(floorMaximum[1] ?? floorMaximum[2]);
   if (/коммерчес\p{L}*/iu.test(normalized)) filters.objectType = 'COMMERCIAL';
   if (/(?:жил\p{L}*|квартир\p{L}*|апартамент\p{L}*)/iu.test(normalized)) filters.objectType = 'RESIDENTIAL';
 
@@ -732,6 +749,22 @@ function parseComparisonTargets(value: unknown) {
     throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
   }
   return targets;
+}
+
+function parseComparisonTargetModes(value: unknown, targetCount: number) {
+  if (!Array.isArray(value) || value.length !== targetCount) {
+    throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
+  }
+  return value.map((mode) => {
+    if (mode !== 'EXACT' && mode !== 'INSTRUMENTAL') {
+      throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID');
+    }
+    return mode;
+  });
+}
+
+function stripGeoDistancePhrases(value: string) {
+  return stripAssistantGeoDistanceClause(value);
 }
 
 function parseRooms(value: unknown) {

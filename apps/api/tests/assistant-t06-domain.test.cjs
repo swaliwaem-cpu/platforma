@@ -189,6 +189,7 @@ test('Assistant T06 planner completes safe telemetry when downstream validation 
 test('Assistant T06 geo budgets and operation telemetry count every physical retry', async () => {
   const environment = {
     ASSISTANT_GEO_PROVIDER_MODE: 'locationiq',
+    ASSISTANT_GEO_PROVIDER_ENABLED: 'true',
     LOCATIONIQ_API_KEY: 'test-key',
     LOCATIONIQ_API_URL: 'https://provider.example/v1/search',
     ASSISTANT_GEO_PROVIDER_MAX_RETRIES: '1',

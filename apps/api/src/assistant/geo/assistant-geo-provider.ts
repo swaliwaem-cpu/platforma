@@ -197,6 +197,17 @@ export class FakeAssistantGeoProvider implements AssistantGeoProvider {
         countryCode: request.country,
       }));
     }
+    const knownMoscowPlace = readFakeMoscowPlace(normalized);
+    if (knownMoscowPlace) {
+      return [{
+        id: `fake-${knownMoscowPlace.id}`,
+        label: knownMoscowPlace.label,
+        latitude: knownMoscowPlace.latitude,
+        longitude: knownMoscowPlace.longitude,
+        city: 'Москва',
+        countryCode: request.country,
+      }];
+    }
     return [{
       id: 'fake-1',
       label: request.query,
@@ -206,6 +217,40 @@ export class FakeAssistantGeoProvider implements AssistantGeoProvider {
       countryCode: request.country,
     }];
   }
+}
+
+function readFakeMoscowPlace(normalizedQuery: string) {
+  const fixtures = [
+    {
+      pattern: /белорусск.*вокзал/u,
+      id: 'belorussky-station',
+      label: 'Белорусский вокзал',
+      latitude: 55.7763,
+      longitude: 37.5801,
+    },
+    {
+      pattern: /москва[ -]сити/u,
+      id: 'moscow-city',
+      label: 'Москва-Сити',
+      latitude: 55.7503,
+      longitude: 37.537,
+    },
+    {
+      pattern: /спортивн/u,
+      id: 'sportivnaya',
+      label: 'Спортивная',
+      latitude: 55.7226,
+      longitude: 37.562,
+    },
+    {
+      pattern: /павелецк.*плаза/u,
+      id: 'paveletskaya-plaza',
+      label: 'Павелецкая Плаза',
+      latitude: 55.7312,
+      longitude: 37.6364,
+    },
+  ];
+  return fixtures.find(({ pattern }) => pattern.test(normalizedQuery)) ?? null;
 }
 
 function normalizeProviderRequest(request: AssistantGeoProviderRequest): AssistantGeoProviderRequest {

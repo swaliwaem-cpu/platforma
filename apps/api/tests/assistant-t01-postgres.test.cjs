@@ -16,6 +16,7 @@ if (!databaseUrl) {
 } else {
   process.env.DATABASE_URL = databaseUrl;
   process.env.ASSISTANT_MODULE_ENABLED = 'true';
+  process.env.ASSISTANT_ROLLOUT_STAGE = 'ALL';
   process.env.ASSISTANT_FAKE_STEP_DELAY_MS = '1';
   process.env.FEED_AUTO_IMPORT_ENABLED = 'false';
   process.env.JWT_ACCESS_SECRET = 'assistant-t01-http-access-secret';

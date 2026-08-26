@@ -13,7 +13,7 @@ type AssistantAiMode = 'fake' | 'openai';
 
 const assistantPlannerSchema = createAssistantPlannerSchema();
 const assistantPlannerPromptVersion = 'assistant-query-planner-v1';
-const officialKnowledgeFactPattern = /(?:архитектур\p{L}*|инфраструктур\p{L}*|благоустрой\p{L}*|описан\p{L}*|ипотек\p{L}*|рассроч\p{L}*|акци\p{L}*|скидк\p{L}*|бонус\p{L}*)/iu;
+const officialKnowledgeFactPattern = /(?:архитектур\p{L}*|инфраструктур\p{L}*|благоустрой\p{L}*|описан\p{L}*|ипотек\p{L}*|рассроч\p{L}*|акци\p{L}*|скидк\p{L}*|бонус\p{L}*|лот\p{L}*\s+\d+)/iu;
 
 export class AssistantPlannerGatewayError extends Error {
   readonly provider = 'openai' as const;

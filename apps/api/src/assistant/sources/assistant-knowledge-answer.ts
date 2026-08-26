@@ -8,6 +8,7 @@ import type {
 import type { AssistantKnowledgeEvidence } from './assistant-knowledge-retrieval.service';
 import {
   assistantKnowledgeAuthorityScore,
+  assistantKnowledgeConflictKey,
   isSafeOfficialHttpsUrl,
 } from './assistant-knowledge-policy';
 
@@ -39,7 +40,7 @@ export function buildAssistantKnowledgeAnswer(
       continue;
     }
     if (facts.length >= 6 || typeof evidence.value !== 'string') continue;
-    const key = `${evidence.kind}:${evidence.projectKey ?? evidence.developerKey ?? evidence.sourceId}`;
+    const key = assistantKnowledgeConflictKey(evidence);
     if (seenFacts.has(key)) continue;
     seenFacts.add(key);
     const freshness = createFreshness(evidence.fetchedAt, now);

@@ -188,6 +188,14 @@ test('Assistant T03 knowledge answer uses deterministic authority, direct extern
       sourcePriority: 100,
     }),
     knowledgeEvidence({
+      factId: '00000000-0000-4000-8000-000000000014',
+      sourceType: 'DEVELOPMENT_PAGE',
+      kind: 'PROMOTION',
+      label: 'Ступенчатая рассрочка',
+      value: 'Взнос 30%, затем 12 ежемесячных платежей.',
+      sourcePriority: 100,
+    }),
+    knowledgeEvidence({
       factId: '00000000-0000-4000-8000-000000000013',
       sourceType: 'DEVELOPMENT_PAGE',
       kind: 'EXTERNAL_LOT',
@@ -208,6 +216,7 @@ test('Assistant T03 knowledge answer uses deterministic authority, direct extern
   assert.equal(answer.answer.facts[0].label, 'ЖК Северный сад');
   assert.equal(answer.answer.facts.some((fact) => fact.label === 'Описание банка'), false);
   assert.equal(answer.answer.facts.some((fact) => fact.label === 'Семейная ипотека'), true);
+  assert.equal(answer.answer.facts.some((fact) => fact.label === 'Ступенчатая рассрочка'), true);
   assert.deepEqual(answer.answer.externalLots[0], {
     id: '00000000-0000-4000-8000-000000000013',
     title: '2-комнатная квартира 67 м²',

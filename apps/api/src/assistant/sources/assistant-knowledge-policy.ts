@@ -9,6 +9,14 @@ type KnowledgeAuthorityInput = {
   sourcePriority: number;
 };
 
+type KnowledgeConflictInput = {
+  kind: AssistantSourceFactKind;
+  label: string;
+  sourceId: string;
+  projectKey: string | null;
+  developerKey: string | null;
+};
+
 export function assistantKnowledgeAuthorityScore(input: KnowledgeAuthorityInput) {
   if (input.kind === AssistantSourceFactKind.PROMOTION) {
     return (input.sourceType === AssistantKnowledgeSourceType.BANK_PROMOTION
@@ -23,6 +31,13 @@ export function assistantKnowledgeAuthorityScore(input: KnowledgeAuthorityInput)
   }
   return (input.sourceType === AssistantKnowledgeSourceType.DEVELOPMENT_PAGE ? 3_000 : 1_000)
     + input.sourcePriority;
+}
+
+export function assistantKnowledgeConflictKey(input: KnowledgeConflictInput) {
+  const scopeKey = input.projectKey ?? input.developerKey ?? input.sourceId;
+  return input.kind === AssistantSourceFactKind.PROMOTION
+    ? `${input.kind}:${scopeKey}:${normalizeKnowledgeFactLabel(input.label)}`
+    : `${input.kind}:${scopeKey}`;
 }
 
 export function isSafeOfficialHttpsUrl(value: string) {
@@ -41,4 +56,8 @@ export function normalizeAssistantKnowledgeRegistryKey(value: string | null | un
     && /^[\p{L}\p{N}](?:[\p{L}\p{N}._-]{0,118}[\p{L}\p{N}])?$/u.test(normalized)
     ? normalized
     : null;
+}
+
+function normalizeKnowledgeFactLabel(value: string) {
+  return value.toLocaleLowerCase('ru-RU').replace(/ё/gu, 'е').replace(/\s+/gu, ' ').trim();
 }

@@ -16,6 +16,7 @@ import { CurrentUser } from '../../auth/current-user.decorator';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { RequirePermissions } from '../../auth/permissions.decorator';
 import { PermissionsGuard } from '../../auth/permissions.guard';
+import { AssistantExternalConnectorsGuard } from '../assistant-runtime-config';
 import { AssistantSourceRegistryService } from './assistant-source-registry.service';
 
 @Controller('assistant/sources')
@@ -46,6 +47,7 @@ export class AssistantSourcesController {
   }
 
   @Post(':sourceId/refresh')
+  @UseGuards(AssistantExternalConnectorsGuard)
   @HttpCode(HttpStatus.ACCEPTED)
   refresh(
     @Param('sourceId') sourceId: string,
@@ -56,6 +58,7 @@ export class AssistantSourcesController {
   }
 
   @Post('projects/:projectKey/refresh')
+  @UseGuards(AssistantExternalConnectorsGuard)
   @HttpCode(HttpStatus.ACCEPTED)
   refreshProject(
     @Param('projectKey') projectKey: string,

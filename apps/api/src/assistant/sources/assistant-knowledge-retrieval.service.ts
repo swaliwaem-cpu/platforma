@@ -468,6 +468,8 @@ function deduplicateCanonicalFacts() {
   return ({ row }: { row: FactRow }) => {
     const key = row.kind === AssistantSourceFactKind.EXTERNAL_LOT
       ? `${row.kind}:${row.canonicalUrl}`
+      : row.kind === AssistantSourceFactKind.PROMOTION
+        ? `${row.kind}:${row.projectKey ?? row.developerKey ?? row.sourceId}:${normalizeQuery(row.label)}`
       : `${row.kind}:${row.projectKey ?? row.developerKey ?? row.sourceId}`;
     if (seen.has(key)) return false;
     seen.add(key);
