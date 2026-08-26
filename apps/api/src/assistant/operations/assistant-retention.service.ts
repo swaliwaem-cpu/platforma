@@ -54,6 +54,10 @@ export class AssistantRetentionService implements OnModuleInit, OnModuleDestroy 
             "assistant_message_id"::text AS "assistantMessageId"
           FROM "assistant_runs"
           WHERE "created_at" < ${auditCutoff}
+            AND "status" IN (
+              'completed'::"assistant_run_status",
+              'failed'::"assistant_run_status"
+            )
           ORDER BY "created_at" ASC, "id" ASC
           LIMIT ${cleanupBatchSize}
           FOR UPDATE SKIP LOCKED
@@ -125,10 +129,6 @@ export class AssistantRetentionService implements OnModuleInit, OnModuleDestroy 
               WHERE "conversation"."id" IN (${Prisma.join(
                 affectedConversationIds.map((id) => Prisma.sql`${id}::uuid`),
               )})
-                AND EXISTS (
-                  SELECT 1 FROM "assistant_messages" AS "message"
-                  WHERE "message"."conversation_id" = "conversation"."id"
-                )
             `,
           );
           for (const { id, content } of remainingTitles) {

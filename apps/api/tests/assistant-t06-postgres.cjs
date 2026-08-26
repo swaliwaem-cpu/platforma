@@ -498,6 +498,69 @@ test('Assistant T06 retention drains more than one batch, prunes old turns in ac
   });
   assert.equal(raceConversation.title, 'Свежий конкурентный запрос T06');
   assert.equal(raceConversation.title.includes(raceRun.query), false);
+
+  const processingRun = await createRun(
+    fixtures.owner.user.id,
+    old,
+    'Старый завершающийся запрос T06',
+    'Старый заменяемый ответ T06',
+  );
+  const leaseOwner = `retention-completion-${suffix}`;
+  await prisma.assistantRun.update({
+    where: { id: processingRun.id },
+    data: {
+      status: 'RUNNING',
+      assistantMessageId: null,
+      leaseOwner,
+      leaseExpiresAt: new Date(now.getTime() + 30_000),
+      startedAt: old,
+      completedAt: null,
+    },
+  });
+  let releaseCompletion;
+  let markMessageInserted;
+  const completionRelease = new Promise((resolve) => { releaseCompletion = resolve; });
+  const messageInserted = new Promise((resolve) => { markMessageInserted = resolve; });
+  const completionPromise = prisma.$transaction(async (transaction) => {
+    const assistantMessage = await transaction.assistantMessage.create({
+      data: {
+        conversationId: processingRun.conversationId,
+        role: 'ASSISTANT',
+        content: 'Свежий завершённый ответ T06',
+        answerJson: { kind: 'CLARIFICATION', question: 'Уточнить параметры?' },
+        createdAt: now,
+      },
+    });
+    markMessageInserted();
+    await completionRelease;
+    const completed = await transaction.assistantRun.updateMany({
+      where: { id: processingRun.id, status: 'RUNNING', leaseOwner },
+      data: {
+        status: 'COMPLETED',
+        assistantMessageId: assistantMessage.id,
+        completedAt: now,
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        updatedAt: now,
+      },
+    });
+    assert.equal(completed.count, 1);
+    await transaction.assistantConversation.update({
+      where: { id: processingRun.conversationId },
+      data: { updatedAt: now },
+    });
+  });
+  await messageInserted;
+  const cleanupDuringCompletion = new AssistantRetentionService(prisma).runCleanup(now);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  releaseCompletion();
+  await Promise.all([completionPromise, cleanupDuringCompletion]);
+  assert.equal(await prisma.assistantRun.count({ where: { id: processingRun.id } }), 0);
+  const completedConversation = await prisma.assistantConversation.findUniqueOrThrow({
+    where: { id: processingRun.conversationId },
+  });
+  assert.equal(completedConversation.title, 'Новый разговор');
+  assert.equal(completedConversation.updatedAt.toISOString(), now.toISOString());
 });
 
 async function createFixtures() {
