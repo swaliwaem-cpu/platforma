@@ -228,7 +228,7 @@ export class AssistantService {
               : Prisma.JsonNull,
             geoContextJson: messageInput.geo
               ? messageInput.geo as unknown as Prisma.InputJsonValue
-              : Prisma.JsonNull,
+              : Prisma.DbNull,
           },
         });
         const createdRun = await transaction.assistantRun.create({

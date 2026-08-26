@@ -70,12 +70,13 @@ export class AssistantPlaceResolverService {
     }
 
     try {
-      const providerCandidates = await this.provider.search({
+      const providerResult = await this.provider.searchWithTelemetry({
         query: input.placeQuery,
         locale: input.locale,
         country: input.country,
         viewbox: input.viewbox,
       });
+      const providerCandidates = providerResult.candidates;
       await this.writeCache(cacheKey, input, providerCandidates);
       if (providerCandidates.length > 0) {
         const result = resolved(input, providerCandidates.map((candidate) => ({
@@ -89,7 +90,7 @@ export class AssistantPlaceResolverService {
           result.status,
           startedAt,
           false,
-          1,
+          providerResult.providerCallCount,
           null,
         );
         return result;
@@ -102,7 +103,7 @@ export class AssistantPlaceResolverService {
         result.status,
         startedAt,
         false,
-        1,
+        providerResult.providerCallCount,
         null,
       );
       return result;
@@ -119,7 +120,7 @@ export class AssistantPlaceResolverService {
         result.status,
         startedAt,
         false,
-        1,
+        error.providerCallCount,
         error.code,
       );
       return result;

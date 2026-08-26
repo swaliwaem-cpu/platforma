@@ -31,45 +31,134 @@ export class AssistantRetentionService implements OnModuleInit, OnModuleDestroy 
   async runCleanup(now = new Date()) {
     const auditCutoff = new Date(now.getTime() - assistantAuditRetentionDays * 24 * 60 * 60 * 1_000);
     const aggregateCutoff = new Date(now.getTime() - assistantAggregateRetentionDays * 24 * 60 * 60 * 1_000);
-    return this.prisma.$transaction(async (transaction) => {
-      const conversations = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-        SELECT "id"::text AS "id"
-        FROM "assistant_conversations"
-        WHERE "updated_at" < ${auditCutoff}
-        ORDER BY "updated_at" ASC, "id" ASC
-        LIMIT ${cleanupBatchSize}
-        FOR UPDATE SKIP LOCKED
-      `);
-      const conversationIds = conversations.map(({ id }) => id);
-      const runs = conversationIds.length > 0
-        ? await transaction.assistantRun.findMany({
-            where: { conversationId: { in: conversationIds } },
-            select: { id: true },
-          })
-        : [];
-      const runIds = runs.map(({ id }) => id);
-      if (runIds.length > 0) {
-        await transaction.assistantReviewItem.deleteMany({ where: { runId: { in: runIds } } });
-        await transaction.assistantFeedback.deleteMany({ where: { runId: { in: runIds } } });
-        await transaction.assistantRun.deleteMany({ where: { id: { in: runIds } } });
-      }
-      if (conversationIds.length > 0) {
-        await transaction.assistantMessage.deleteMany({ where: { conversationId: { in: conversationIds } } });
-        await transaction.assistantConversation.deleteMany({ where: { id: { in: conversationIds } } });
-      }
-      const geo = await transaction.assistantGeoOperation.deleteMany({
-        where: { createdAt: { lt: auditCutoff } },
+    const totals = {
+      conversations: 0,
+      runs: 0,
+      geoOperations: 0,
+      aggregateMetrics: 0,
+      sourceRevisions: 0,
+    };
+
+    for (;;) {
+      const batch = await this.prisma.$transaction(async (transaction) => {
+        const runs = await transaction.$queryRaw<Array<{
+          id: string;
+          userMessageId: string;
+          assistantMessageId: string | null;
+        }>>(Prisma.sql`
+          SELECT
+            "id"::text AS "id",
+            "user_message_id"::text AS "userMessageId",
+            "assistant_message_id"::text AS "assistantMessageId"
+          FROM "assistant_runs"
+          WHERE "created_at" < ${auditCutoff}
+          ORDER BY "created_at" ASC, "id" ASC
+          LIMIT ${cleanupBatchSize}
+          FOR UPDATE SKIP LOCKED
+        `);
+        const runIds = runs.map(({ id }) => id);
+        const linkedMessageIds = [...new Set(runs.flatMap(({ userMessageId, assistantMessageId }) =>
+          assistantMessageId ? [userMessageId, assistantMessageId] : [userMessageId]))];
+        if (runIds.length > 0) {
+          await transaction.assistantReviewItem.deleteMany({ where: { runId: { in: runIds } } });
+          await transaction.assistantFeedback.deleteMany({ where: { runId: { in: runIds } } });
+          await transaction.assistantRun.deleteMany({ where: { id: { in: runIds } } });
+          await transaction.assistantMessage.deleteMany({ where: { id: { in: linkedMessageIds } } });
+        }
+
+        const orphanMessages = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+          SELECT "message"."id"::text AS "id"
+          FROM "assistant_messages" AS "message"
+          WHERE "message"."created_at" < ${auditCutoff}
+            AND NOT EXISTS (
+              SELECT 1 FROM "assistant_runs" AS "run"
+              WHERE "run"."user_message_id" = "message"."id"
+                 OR "run"."assistant_message_id" = "message"."id"
+            )
+          ORDER BY "message"."created_at" ASC, "message"."id" ASC
+          LIMIT ${cleanupBatchSize}
+          FOR UPDATE OF "message" SKIP LOCKED
+        `);
+        if (orphanMessages.length > 0) {
+          await transaction.assistantMessage.deleteMany({
+            where: { id: { in: orphanMessages.map(({ id }) => id) } },
+          });
+        }
+
+        const emptyConversations = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+          SELECT "conversation"."id"::text AS "id"
+          FROM "assistant_conversations" AS "conversation"
+          WHERE "conversation"."updated_at" < ${auditCutoff}
+            AND NOT EXISTS (
+              SELECT 1 FROM "assistant_messages" AS "message"
+              WHERE "message"."conversation_id" = "conversation"."id"
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM "assistant_runs" AS "run"
+              WHERE "run"."conversation_id" = "conversation"."id"
+            )
+          ORDER BY "conversation"."updated_at" ASC, "conversation"."id" ASC
+          LIMIT ${cleanupBatchSize}
+          FOR UPDATE OF "conversation" SKIP LOCKED
+        `);
+        const emptyConversationIds = emptyConversations.map(({ id }) => id);
+        if (emptyConversationIds.length > 0) {
+          await transaction.assistantConversation.deleteMany({ where: { id: { in: emptyConversationIds } } });
+        }
+
+        const geoOperations = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+          SELECT "id"::text AS "id"
+          FROM "assistant_geo_operations"
+          WHERE "created_at" < ${auditCutoff}
+          ORDER BY "created_at" ASC, "id" ASC
+          LIMIT ${cleanupBatchSize}
+          FOR UPDATE SKIP LOCKED
+        `);
+        if (geoOperations.length > 0) {
+          await transaction.assistantGeoOperation.deleteMany({
+            where: { id: { in: geoOperations.map(({ id }) => id) } },
+          });
+        }
+
+        const metrics = await transaction.$queryRaw<Array<{
+          provider: string;
+          model: string;
+          window: 'MINUTE' | 'DAY';
+          windowStartedAt: Date;
+        }>>(Prisma.sql`
+          SELECT
+            "provider",
+            "model",
+            UPPER("window"::text) AS "window",
+            "window_started_at" AS "windowStartedAt"
+          FROM "assistant_usage_metrics"
+          WHERE "window_started_at" < ${aggregateCutoff}
+          ORDER BY "window_started_at" ASC, "provider" ASC, "model" ASC NULLS FIRST
+          LIMIT ${cleanupBatchSize}
+          FOR UPDATE SKIP LOCKED
+        `);
+        for (const metric of metrics) {
+          await transaction.assistantUsageMetric.delete({
+            where: {
+              provider_model_window_windowStartedAt: metric,
+            },
+          });
+        }
+
+        return {
+          conversations: emptyConversationIds.length,
+          runs: runIds.length,
+          geoOperations: geoOperations.length,
+          aggregateMetrics: metrics.length,
+          processed: runIds.length + orphanMessages.length + emptyConversationIds.length
+            + geoOperations.length + metrics.length,
+        };
       });
-      const metrics = await transaction.assistantUsageMetric.deleteMany({
-        where: { windowStartedAt: { lt: aggregateCutoff } },
-      });
-      return {
-        conversations: conversationIds.length,
-        runs: runIds.length,
-        geoOperations: geo.count,
-        aggregateMetrics: metrics.count,
-        sourceRevisions: 0,
-      };
-    });
+      totals.conversations += batch.conversations;
+      totals.runs += batch.runs;
+      totals.geoOperations += batch.geoOperations;
+      totals.aggregateMetrics += batch.aggregateMetrics;
+      if (batch.processed === 0) return totals;
+    }
   }
 }

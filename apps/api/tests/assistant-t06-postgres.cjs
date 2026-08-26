@@ -26,10 +26,6 @@ process.env.TELEGRAM_TRANSPORT_MODE = 'fake';
 process.env.JWT_ACCESS_SECRET = 'assistant-t06-postgres-secret';
 
 const { AppModule } = require('../dist/app.module.js');
-const { AssistantQueryPlanner } = require('../dist/assistant/assistant-query-planner.js');
-const {
-  createAssistantPlannerGateway,
-} = require('../dist/assistant/assistant-planner-gateway.js');
 const {
   AssistantRetentionService,
 } = require('../dist/assistant/operations/assistant-retention.service.js');
@@ -60,13 +56,6 @@ after(async () => {
 });
 
 test('Assistant T06 feedback and audit enforce 401/403/IDOR and keep review classification independent', async () => {
-  const planner = new AssistantQueryPlanner(createAssistantPlannerGateway());
-  const plannerInput = {
-    messages: ['Найди двухкомнатную квартиру до 20 млн рублей'],
-    context: null,
-  };
-  const planBeforeFeedback = await planner.plan(plannerInput);
-
   assert.equal((await fetch(`${baseUrl}/assistant/audit/runs`)).status, 401);
   assert.equal((await httpJson('/assistant/audit/runs', {
     token: fixtures.owner.token,
@@ -159,6 +148,33 @@ test('Assistant T06 feedback and audit enforce 401/403/IDOR and keep review clas
     where: { runId: fixtures.run.id },
   })).rating, 'DISLIKE');
 
+  await httpJson(`/assistant/messages/${fixtures.run.assistantMessageId}/feedback`, {
+    method: 'POST',
+    token: fixtures.owner.token,
+    body: {
+      rating: 'DISLIKE',
+      reason: 'WRONG_FACT',
+      comment: 'Цена в ответе устарела',
+    },
+  });
+  assert.equal((await prisma.assistantReviewItem.findUniqueOrThrow({
+    where: { runId: fixtures.run.id },
+  })).status, 'REVIEWED');
+
+  await httpJson(`/assistant/messages/${fixtures.run.assistantMessageId}/feedback`, {
+    method: 'POST',
+    token: fixtures.owner.token,
+    body: { rating: 'LIKE', reason: null, comment: null },
+  });
+  const reopenedReview = await prisma.assistantReviewItem.findUniqueOrThrow({
+    where: { runId: fixtures.run.id },
+  });
+  assert.equal(reopenedReview.status, 'PENDING');
+  assert.equal(reopenedReview.classification, null);
+  assert.equal(reopenedReview.reviewerUserId, null);
+  assert.equal(reopenedReview.reviewerComment, null);
+  assert.equal(reopenedReview.reviewedAt, null);
+
   const [sources, geo, aliases, metrics] = await Promise.all([
     httpJson('/assistant/audit/sources', { token: fixtures.audit.token }),
     httpJson('/assistant/audit/geo/operations', { token: fixtures.audit.token }),
@@ -170,8 +186,43 @@ test('Assistant T06 feedback and audit enforce 401/403/IDOR and keep review clas
   assert.equal(aliases.body.items.some(({ id }) => id === fixtures.alias.id), true);
   assert.equal(metrics.body.items.some(({ provider }) => provider === `fixture-${suffix}`), true);
 
-  const planAfterFeedback = await planner.plan(plannerInput);
-  assert.deepEqual(planAfterFeedback.intent, planBeforeFeedback.intent);
+});
+
+test('Assistant T06 feedback cannot influence the full planning, retrieval, ranking or routing seam', async () => {
+  const query = 'Найди двухкомнатную квартиру до 20 млн рублей';
+  const sourcePrioritiesBefore = await readSourcePriorities();
+  const firstRun = await runAssistantQuery(query, fixtures.owner.token);
+  const firstAudit = await httpJson(`/assistant/audit/runs/${firstRun.id}`, {
+    token: fixtures.audit.token,
+  });
+  assert.equal(firstAudit.status, 200);
+
+  const feedback = await httpJson(`/assistant/messages/${firstRun.assistantMessage.id}/feedback`, {
+    method: 'POST',
+    token: fixtures.owner.token,
+    body: { rating: 'DISLIKE', reason: 'IRRELEVANT', comment: 'Регрессионный feedback' },
+  });
+  assert.equal(feedback.status, 201);
+
+  const secondRun = await runAssistantQuery(query, fixtures.owner.token);
+  const secondAudit = await httpJson(`/assistant/audit/runs/${secondRun.id}`, {
+    token: fixtures.audit.token,
+  });
+  assert.equal(secondAudit.status, 200);
+  const sourcePrioritiesAfter = await readSourcePriorities();
+  const stableAttempt = ({ provider, model, reasoningEffort, outcome, errorCode, isFallback }) => ({
+    provider, model, reasoningEffort, outcome, errorCode, isFallback,
+  });
+
+  assert.deepEqual(secondAudit.body.run.structuredIntent, firstAudit.body.run.structuredIntent);
+  assert.deepEqual(secondAudit.body.run.audit.candidateSet, firstAudit.body.run.audit.candidateSet);
+  assert.deepEqual(secondAudit.body.run.audit.rankingDecisions, firstAudit.body.run.audit.rankingDecisions);
+  assert.deepEqual(secondAudit.body.run.evidence, firstAudit.body.run.evidence);
+  assert.deepEqual(
+    secondAudit.body.run.telemetry.map(stableAttempt),
+    firstAudit.body.run.telemetry.map(stableAttempt),
+  );
+  assert.deepEqual(sourcePrioritiesAfter, sourcePrioritiesBefore);
 });
 
 test('Assistant T06 server budgets atomically enforce minute and daily limits and record safe metrics', async () => {
@@ -214,12 +265,28 @@ test('Assistant T06 server budgets atomically enforce minute and daily limits an
   assert.equal(buckets.every(({ totalTokens }) => totalTokens === 16n), true);
 });
 
-test('Assistant T06 retention removes full audits at 30 days and aggregate metrics at 180 days but preserves revisions', async () => {
+test('Assistant T06 retention drains more than one batch, prunes old turns in active conversations and preserves revisions', async () => {
   const old = new Date('2026-01-01T00:00:00.000Z');
   const recent = new Date('2026-08-20T00:00:00.000Z');
   const now = new Date('2026-08-26T16:00:00.000Z');
   const oldRun = await createRun(fixtures.owner.user.id, old, 'Старый запрос T06', 'Старый ответ T06');
-  const recentRun = await createRun(fixtures.owner.user.id, recent, 'Свежий запрос T06', 'Свежий ответ T06');
+  const recentRun = await createRun(
+    fixtures.owner.user.id,
+    recent,
+    'Свежий запрос T06',
+    'Свежий ответ T06',
+    oldRun.conversationId,
+  );
+  const emptyConversationKeys = Array.from({ length: 501 }, () => randomUUID());
+  await prisma.assistantConversation.createMany({
+    data: emptyConversationKeys.map((creationKey, index) => ({
+      ownerUserId: fixtures.owner.user.id,
+      creationKey,
+      title: `Старый пустой диалог ${index}`,
+      createdAt: old,
+      updatedAt: old,
+    })),
+  });
   await Promise.all([
     prisma.assistantFeedback.create({
       data: { runId: oldRun.id, ownerUserId: fixtures.owner.user.id, rating: 'DISLIKE' },
@@ -267,10 +334,19 @@ test('Assistant T06 retention removes full audits at 30 days and aggregate metri
 
   const result = await new AssistantRetentionService(prisma).runCleanup(now);
 
-  assert.equal(result.conversations >= 1, true);
+  assert.equal(result.conversations >= 501, true);
   assert.equal(await prisma.assistantRun.count({ where: { id: oldRun.id } }), 0);
-  assert.equal(await prisma.assistantConversation.count({ where: { id: oldRun.conversationId } }), 0);
+  assert.equal(await prisma.assistantMessage.count({
+    where: { id: { in: [oldRun.userMessageId, oldRun.assistantMessageId] } },
+  }), 0);
+  assert.equal(await prisma.assistantConversation.count({ where: { id: oldRun.conversationId } }), 1);
   assert.equal(await prisma.assistantRun.count({ where: { id: recentRun.id } }), 1);
+  assert.equal(await prisma.assistantMessage.count({
+    where: { id: { in: [recentRun.userMessageId, recentRun.assistantMessageId] } },
+  }), 2);
+  assert.equal(await prisma.assistantConversation.count({
+    where: { ownerUserId: fixtures.owner.user.id, creationKey: { in: emptyConversationKeys } },
+  }), 0);
   assert.equal(await prisma.assistantUsageMetric.count({
     where: { provider: `retention-${suffix}`, model: 'old' },
   }), 0);
@@ -363,16 +439,21 @@ async function createFixtures() {
   return { owner, other, audit, run, source, revision, alias, geoOperation };
 }
 
-async function createRun(ownerUserId, at, query, answer) {
-  const conversation = await prisma.assistantConversation.create({
-    data: {
-      ownerUserId,
-      creationKey: randomUUID(),
-      title: query.slice(0, 80),
-      createdAt: at,
-      updatedAt: at,
-    },
-  });
+async function createRun(ownerUserId, at, query, answer, conversationId = null) {
+  const conversation = conversationId
+    ? await prisma.assistantConversation.update({
+        where: { id: conversationId },
+        data: { updatedAt: at },
+      })
+    : await prisma.assistantConversation.create({
+        data: {
+          ownerUserId,
+          creationKey: randomUUID(),
+          title: query.slice(0, 80),
+          createdAt: at,
+          updatedAt: at,
+        },
+      });
   const [userMessage, assistantMessage] = await Promise.all([
     prisma.assistantMessage.create({
       data: { conversationId: conversation.id, role: 'USER', content: query, createdAt: at },
@@ -490,9 +571,40 @@ function userIds() {
     .map(({ user }) => user.id);
 }
 
+async function runAssistantQuery(content, token) {
+  const created = await httpJson('/assistant/conversations', {
+    method: 'POST',
+    token,
+    idempotencyKey: randomUUID(),
+  });
+  assert.equal(created.status, 201);
+  const queued = await httpJson(`/assistant/conversations/${created.body.conversation.id}/messages`, {
+    method: 'POST',
+    token,
+    idempotencyKey: randomUUID(),
+    body: { content, context: null },
+  });
+  assert.equal(queued.status, 202, JSON.stringify(queued.body));
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const response = await httpJson(`/assistant/runs/${queued.body.run.id}`, { token });
+    if (response.body.run.status === 'COMPLETED') return response.body.run;
+    if (response.body.run.status === 'FAILED') throw new Error(response.body.run.errorCode ?? 'ASSISTANT_T06_RUN_FAILED');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error('ASSISTANT_T06_RUN_TIMEOUT');
+}
+
+function readSourcePriorities() {
+  return prisma.assistantKnowledgeSource.findMany({
+    orderBy: { id: 'asc' },
+    select: { id: true, priority: true },
+  });
+}
+
 async function httpJson(path, options = {}) {
   const headers = { accept: 'application/json' };
   if (options.token) headers.authorization = `Bearer ${options.token}`;
+  if (options.idempotencyKey) headers['Idempotency-Key'] = options.idempotencyKey;
   if (options.body !== undefined) headers['content-type'] = 'application/json';
   const response = await fetch(`${baseUrl}${path}`, {
     method: options.method ?? 'GET',

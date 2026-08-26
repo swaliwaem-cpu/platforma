@@ -221,16 +221,21 @@ export class AssistantQueryPlanner {
       try {
         value = await validate(intent, request);
       } catch (error) {
-        if (!(error instanceof AssistantPlannerFallbackValidationError)) throw error;
         const telemetry = createTelemetry(
           request,
           attemptIndex === 1,
           'LOCAL_VALIDATION_FAILED',
           Date.now() - startedAt,
           result.metadata,
+          error instanceof AssistantPlannerFallbackValidationError
+            ? error.code
+            : 'ASSISTANT_PLANNER_PIPELINE_FAILED',
         );
         attempts.push(telemetry);
         await this.recordUsage(reservation, telemetry);
+        if (!(error instanceof AssistantPlannerFallbackValidationError)) {
+          throw new AssistantPlannerError('ASSISTANT_PLANNER_PIPELINE_FAILED', attempts);
+        }
         continue;
       }
 

@@ -10802,12 +10802,20 @@ tr.user-row--deactivated .text-button {
 
 .assistant-audit-panel-heading,
 .assistant-audit-toolbar,
+.assistant-audit-pagination,
 .assistant-audit-card-list > article,
 .assistant-audit-card-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 14px;
+}
+
+.assistant-audit-pagination {
+  justify-content: flex-end;
+  color: var(--app-theme-ink-700, #647180);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .assistant-audit-panel-heading > div,
@@ -11032,6 +11040,7 @@ tr.user-row--deactivated .text-button {
   .assistant-audit-header,
   .assistant-audit-panel-heading,
   .assistant-audit-toolbar,
+  .assistant-audit-pagination,
   .assistant-audit-card-list > article {
     align-items: stretch;
     flex-direction: column;
@@ -11058,5 +11067,9 @@ tr.user-row--deactivated .text-button {
   .assistant-audit-review [data-slot='radio-group'],
   .assistant-audit-form-row {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .assistant-audit-pagination [data-slot='button'] {
+    width: 100%;
   }
 }

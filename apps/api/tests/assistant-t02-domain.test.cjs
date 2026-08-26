@@ -637,7 +637,9 @@ test('Assistant T02 planner does not turn a database failure into a Terra fallba
       { messages: ['Однушка до 20 млн у метро Сокол'], context: null },
       async () => { throw databaseError; },
     ),
-    (error) => error === databaseError,
+    (error) => error instanceof AssistantPlannerError
+      && error.code === 'ASSISTANT_PLANNER_PIPELINE_FAILED'
+      && error.telemetry.length === 1,
   );
   assert.deepEqual(calls, ['gpt-5.6-luna']);
 });

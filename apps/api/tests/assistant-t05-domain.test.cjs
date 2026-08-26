@@ -393,16 +393,19 @@ test('Assistant T05 resolver keeps another city explicit, prefers aliases and se
   const provider = {
     getCacheRetentionMs: () => 60_000,
     getProviderName: () => 'fake',
-    async search(request) {
+    async searchWithTelemetry(request) {
       providerRequests.push(request);
-      return [0, 1, 2].map((index) => ({
-        id: `candidate-${index}`,
-        label: `Плотинка ${index + 1}, Екатеринбург`,
-        latitude: 56.837 + index * 0.001,
-        longitude: 60.603 + index * 0.001,
-        city: 'Екатеринбург',
-        countryCode: 'ru',
-      }));
+      return {
+        candidates: [0, 1, 2].map((index) => ({
+          id: `candidate-${index}`,
+          label: `Плотинка ${index + 1}, Екатеринбург`,
+          latitude: 56.837 + index * 0.001,
+          longitude: 60.603 + index * 0.001,
+          city: 'Екатеринбург',
+          countryCode: 'ru',
+        })),
+        providerCallCount: 1,
+      };
     },
   };
   const resolver = new AssistantPlaceResolverService(basePrisma, provider);

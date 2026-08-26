@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import {
   AssistantFeedbackRating,
   AssistantFeedbackReason,
+  AssistantReviewStatus,
   AssistantRunStatus,
 } from '@prisma/client';
 import type { AssistantFeedback } from '@platforma/shared' with { 'resolution-mode': 'import' };
@@ -29,6 +30,15 @@ export class AssistantFeedbackService {
     if (!run) throw new NotFoundException('ASSISTANT_MESSAGE_NOT_FOUND');
 
     const feedback = await this.prisma.$transaction(async (transaction) => {
+      const existing = await transaction.assistantFeedback.findUnique({
+        where: { runId: run.id },
+        select: { rating: true, reason: true, comment: true },
+      });
+      const changed = existing !== null && (
+        existing.rating !== input.rating
+        || existing.reason !== input.reason
+        || existing.comment !== input.comment
+      );
       const saved = await transaction.assistantFeedback.upsert({
         where: { runId: run.id },
         update: input,
@@ -40,7 +50,16 @@ export class AssistantFeedbackService {
       });
       await transaction.assistantReviewItem.upsert({
         where: { runId: run.id },
-        update: { feedbackId: saved.id },
+        update: {
+          feedbackId: saved.id,
+          ...(changed ? {
+            status: AssistantReviewStatus.PENDING,
+            classification: null,
+            reviewerUserId: null,
+            reviewerComment: null,
+            reviewedAt: null,
+          } : {}),
+        },
         create: {
           runId: run.id,
           feedbackId: saved.id,

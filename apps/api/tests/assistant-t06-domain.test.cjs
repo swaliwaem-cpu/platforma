@@ -12,8 +12,22 @@ const {
   buildAssistantRunAudit,
 } = require('../dist/assistant/audit/assistant-run-audit.js');
 const {
+  AssistantPlannerError,
+  AssistantQueryPlanner,
+} = require('../dist/assistant/assistant-query-planner.js');
+const {
   AssistantFeedbackController,
 } = require('../dist/assistant/feedback/assistant-feedback.controller.js');
+const {
+  AssistantGeoProviderError,
+  LocationIqGeoProvider,
+} = require('../dist/assistant/geo/assistant-geo-provider.js');
+const {
+  AssistantGeoProviderPolicyService,
+} = require('../dist/assistant/geo/assistant-geo-provider-policy.service.js');
+const {
+  AssistantUsageBudgetError,
+} = require('../dist/assistant/operations/assistant-usage-budget.service.js');
 
 const emptyFilters = {
   budgetMinRub: null,
@@ -56,7 +70,7 @@ test('Assistant T06 audit is assembled deterministically from selected evidence 
   };
   const candidates = [
     createCandidate('11111111-1111-4111-8111-111111111111', 20_000_000),
-    createCandidate('22222222-2222-4222-8222-222222222222', 24_000_000),
+    createCandidate('22222222-2222-4222-8222-222222222222', 30_000_000),
   ];
   const answer = {
     kind: 'SEARCH_RESULTS',
@@ -105,7 +119,13 @@ test('Assistant T06 audit is assembled deterministically from selected evidence 
   assert.equal(audit.schemaVersion, 1);
   assert.deepEqual(audit.appliedFilters, emptyFilters);
   assert.deepEqual(audit.candidateSet.map(({ evidenceId }) => evidenceId), candidates.map(({ unitId }) => unitId));
+  assert.deepEqual(audit.candidateSet.map(({ candidateRank }) => candidateRank), [1, 2]);
+  assert.equal(audit.candidateSet[0].rooms, 2);
+  assert.equal(audit.candidateSet[0].area, 60);
   assert.deepEqual(audit.rankingDecisions.map(({ outcome }) => outcome), ['PRIMARY', 'REJECTED']);
+  assert.deepEqual(audit.rankingDecisions.map(({ candidateRank }) => candidateRank), [1, 2]);
+  assert.equal(audit.rankingDecisions[1].answerRank, null);
+  assert.match(audit.rankingDecisions[1].reason, /BUDGET_MAX/u);
   assert.deepEqual(audit.evidenceRevisions, [{
     kind: 'PLATFORMA_FEED_UNIT',
     evidenceId: candidates[0].unitId,
@@ -114,6 +134,131 @@ test('Assistant T06 audit is assembled deterministically from selected evidence 
   }]);
   assert.deepEqual([...audit.qualityFlags].sort(), ['LATENCY_BREACH', 'MODEL_FALLBACK']);
   assert.equal(JSON.stringify(audit).includes('citation'), false);
+});
+
+test('Assistant T06 planner completes safe telemetry when downstream validation unexpectedly fails', async () => {
+  const recorded = [];
+  const planner = new AssistantQueryPlanner({
+    async plan() {
+      return {
+        output: {
+          taskType: 'SEARCH',
+          comparisonTargets: [],
+          hardFilters: emptyFilters,
+          softPreferences: { ...emptyFilters, budgetMaxRub: null },
+          requiredFacts: ['PRICE', 'AVAILABILITY', 'FRESHNESS', 'LINK'],
+          needsClarification: false,
+          clarificationQuestion: null,
+        },
+        provider: 'openai',
+        requestId: 'safe-request-id',
+        responseId: 'safe-response-id',
+        httpStatus: 200,
+        inputTokens: 12,
+        outputTokens: 5,
+        totalTokens: 17,
+      };
+    },
+  }, {
+    async beforeAttempt() { return { reservation: true }; },
+    async afterAttempt(_reservation, telemetry) { recorded.push(telemetry); },
+  });
+
+  await assert.rejects(
+    planner.planWithValidation(
+      { messages: ['Найди квартиру до 25 млн рублей'], context: null },
+      async () => { throw new Error('sensitive downstream detail'); },
+    ),
+    (error) => error instanceof AssistantPlannerError
+      && error.code === 'ASSISTANT_PLANNER_PIPELINE_FAILED'
+      && error.telemetry.length === 1,
+  );
+  assert.equal(recorded.length, 1);
+  assert.equal(recorded[0].outcome, 'LOCAL_VALIDATION_FAILED');
+  assert.equal(recorded[0].errorCode, 'ASSISTANT_PLANNER_PIPELINE_FAILED');
+  assert.equal(recorded[0].totalTokens, 17);
+  assert.equal(JSON.stringify(recorded).includes('sensitive downstream detail'), false);
+});
+
+test('Assistant T06 geo budgets and operation telemetry count every physical retry', async () => {
+  const environment = {
+    ASSISTANT_GEO_PROVIDER_MODE: 'locationiq',
+    LOCATIONIQ_API_KEY: 'test-key',
+    LOCATIONIQ_API_URL: 'https://provider.example/v1/search',
+    ASSISTANT_GEO_PROVIDER_MAX_RETRIES: '1',
+    ASSISTANT_GEO_PROVIDER_RPS: '20',
+    ASSISTANT_GEO_PROVIDER_DAILY_BUDGET: '10',
+    ASSISTANT_GEO_PROVIDER_REQUESTS_PER_MINUTE: '10',
+    ASSISTANT_GEO_CACHE_TTL_SECONDS: '60',
+  };
+  const request = { query: 'Плотинка', locale: 'ru', country: 'ru', viewbox: null };
+  let fetchCalls = 0;
+  const completed = [];
+  const budgets = {
+    async reserve() {
+      return {
+        provider: 'locationiq',
+        model: 'locationiq',
+        minuteStartedAt: new Date('2026-08-26T10:00:00.000Z'),
+        dayStartedAt: new Date('2026-08-26T00:00:00.000Z'),
+      };
+    },
+    async complete(input) { completed.push(input.outcome); },
+  };
+  const provider = new LocationIqGeoProvider(environment, async () => {
+    fetchCalls += 1;
+    return fetchCalls === 1
+      ? new Response('unavailable', { status: 503 })
+      : new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } });
+  }, async () => {});
+  const policy = new AssistantGeoProviderPolicyService(
+    { $queryRaw: async () => { throw new Error('legacy budget must not run'); } },
+    provider,
+    environment,
+    () => new Date('2026-08-26T10:00:00.000Z'),
+    async () => {},
+    budgets,
+  );
+
+  const result = await policy.searchWithTelemetry(request);
+  assert.equal(result.providerCallCount, 2);
+  assert.equal(fetchCalls, 2);
+  assert.deepEqual(completed, ['ERROR', 'SUCCESS']);
+
+  let reservations = 0;
+  fetchCalls = 0;
+  const exhaustedProvider = new LocationIqGeoProvider(environment, async () => {
+    fetchCalls += 1;
+    return new Response('unavailable', { status: 503 });
+  }, async () => {});
+  const exhaustedPolicy = new AssistantGeoProviderPolicyService(
+    { $queryRaw: async () => { throw new Error('legacy budget must not run'); } },
+    exhaustedProvider,
+    environment,
+    () => new Date('2026-08-26T10:00:00.000Z'),
+    async () => {},
+    {
+      async reserve() {
+        reservations += 1;
+        if (reservations === 2) {
+          throw new AssistantUsageBudgetError('ASSISTANT_GEO_PROVIDER_MINUTE_BUDGET_EXHAUSTED', 'locationiq');
+        }
+        return {
+          provider: 'locationiq', model: 'locationiq',
+          minuteStartedAt: new Date('2026-08-26T10:00:00.000Z'),
+          dayStartedAt: new Date('2026-08-26T00:00:00.000Z'),
+        };
+      },
+      async complete() {},
+    },
+  );
+  await assert.rejects(
+    exhaustedPolicy.searchWithTelemetry(request),
+    (error) => error instanceof AssistantGeoProviderError
+      && error.code === 'ASSISTANT_GEO_PROVIDER_MINUTE_BUDGET_EXHAUSTED'
+      && error.providerCallCount === 1,
+  );
+  assert.equal(fetchCalls, 1);
 });
 
 function createCandidate(unitId, priceRub) {

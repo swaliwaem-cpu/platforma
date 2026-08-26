@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 import { Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
@@ -18,6 +20,12 @@ import {
 } from './assistant-geo-provider';
 
 type GeoPolicyEnvironment = NodeJS.ProcessEnv | Record<string, string | undefined>;
+type GeoRequestContext = { providerCallCount: number };
+
+export type AssistantGeoProviderSearchResult = {
+  candidates: AssistantGeoProviderCandidate[];
+  providerCallCount: number;
+};
 
 export class AssistantGeoProviderPolicyService {
   private readonly logger = new Logger(AssistantGeoProviderPolicyService.name);
@@ -28,7 +36,8 @@ export class AssistantGeoProviderPolicyService {
   private readonly circuitOpenMs: number;
   private readonly cacheRetentionMs: number;
   private readonly perMinuteBudget: number;
-  private readonly providerUsesPhysicalRequestGate: boolean;
+  private readonly providerUsesPhysicalRequestLifecycle: boolean;
+  private readonly requestContext = new AsyncLocalStorage<GeoRequestContext>();
   private consecutiveFailures = 0;
   private circuitOpenUntil = 0;
   private nextRequestAt = 0;
@@ -79,12 +88,16 @@ export class AssistantGeoProviderPolicyService {
       1_000,
       3_600_000,
     );
-    this.providerUsesPhysicalRequestGate = provider instanceof LocationIqGeoProvider;
+    this.providerUsesPhysicalRequestLifecycle = provider instanceof LocationIqGeoProvider;
     if (provider instanceof LocationIqGeoProvider) {
-      provider.setBeforeRequest(async () => {
-        await this.waitForRateSlot();
-        await this.reserveDailyBudget();
-      });
+      provider.setRequestLifecycle(
+        () => this.reservePhysicalAttempt(),
+        (reservation, outcome, durationMs) => this.recordUsage(
+          reservation as AssistantUsageReservation | undefined,
+          outcome,
+          durationMs,
+        ),
+      );
     }
   }
 
@@ -97,67 +110,92 @@ export class AssistantGeoProviderPolicyService {
   }
 
   async search(request: AssistantGeoProviderRequest): Promise<AssistantGeoProviderCandidate[]> {
-    const startedAt = Date.now();
-    let reservation: AssistantUsageReservation | undefined;
-    if (this.now().getTime() < this.circuitOpenUntil) {
-      this.log('circuit_open', startedAt);
-      throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_CIRCUIT_OPEN', true);
-    }
+    return (await this.searchWithTelemetry(request)).candidates;
+  }
 
-    try {
-      reservation = await this.budgets?.reserve({
-        provider: this.providerName,
-        model: this.providerName === 'locationiq' ? 'locationiq' : 'fake-geo',
-        perMinuteLimit: this.perMinuteBudget,
-        dailyLimit: this.dailyBudget,
-        now: this.now(),
-        errorPrefix: 'ASSISTANT_GEO_PROVIDER',
-      });
-    } catch (error) {
-      if (error instanceof AssistantUsageBudgetError) {
-        throw new AssistantGeoProviderError(error.code, false);
+  async searchWithTelemetry(request: AssistantGeoProviderRequest): Promise<AssistantGeoProviderSearchResult> {
+    const context: GeoRequestContext = { providerCallCount: 0 };
+    return this.requestContext.run(context, async () => {
+      const startedAt = Date.now();
+      if (this.now().getTime() < this.circuitOpenUntil) {
+        this.log('circuit_open', startedAt);
+        throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_CIRCUIT_OPEN', true);
       }
-      throw error;
-    }
 
-    if (!this.providerUsesPhysicalRequestGate) {
-      await this.waitForRateSlot();
+      try {
+        let candidates: AssistantGeoProviderCandidate[];
+        if (this.providerUsesPhysicalRequestLifecycle) {
+          candidates = await this.provider.search(request);
+        } else {
+          const attemptStartedAt = Date.now();
+          const reservation = await this.reservePhysicalAttempt();
+          try {
+            candidates = await this.provider.search(request);
+            await this.recordUsage(reservation, 'SUCCESS', Math.max(0, Date.now() - attemptStartedAt));
+          } catch (error) {
+            await this.recordUsage(reservation, 'ERROR', Math.max(0, Date.now() - attemptStartedAt));
+            throw error;
+          }
+        }
+        this.consecutiveFailures = 0;
+        this.circuitOpenUntil = 0;
+        this.log('success', startedAt);
+        return { candidates, providerCallCount: context.providerCallCount };
+      } catch (error) {
+        const providerError = error instanceof AssistantGeoProviderError
+          ? error
+          : new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_UNAVAILABLE', true);
+        providerError.providerCallCount = context.providerCallCount;
+        if (providerError.retryable) {
+          this.consecutiveFailures += 1;
+          if (this.consecutiveFailures >= this.circuitFailureThreshold) {
+            this.circuitOpenUntil = this.now().getTime() + this.circuitOpenMs;
+          }
+        }
+        this.log(providerError.code, startedAt, providerError.httpStatus);
+        throw providerError;
+      }
+    });
+  }
+
+  private async reservePhysicalAttempt() {
+    await this.waitForRateSlot();
+    let reservation: AssistantUsageReservation | undefined;
+    if (this.budgets) {
+      try {
+        reservation = await this.budgets.reserve({
+          provider: this.providerName,
+          model: this.providerName === 'locationiq' ? 'locationiq' : 'fake-geo',
+          perMinuteLimit: this.perMinuteBudget,
+          dailyLimit: this.dailyBudget,
+          now: this.now(),
+          errorPrefix: 'ASSISTANT_GEO_PROVIDER',
+        });
+      } catch (error) {
+        if (error instanceof AssistantUsageBudgetError) {
+          throw new AssistantGeoProviderError(error.code, false);
+        }
+        throw error;
+      }
+    } else {
       await this.reserveDailyBudget();
     }
-    try {
-      const candidates = await this.provider.search(request);
-      this.consecutiveFailures = 0;
-      this.circuitOpenUntil = 0;
-      this.log('success', startedAt);
-      await this.recordUsage(reservation, 'SUCCESS', startedAt);
-      return candidates;
-    } catch (error) {
-      const providerError = error instanceof AssistantGeoProviderError
-        ? error
-        : new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_UNAVAILABLE', true);
-      if (providerError.retryable) {
-        this.consecutiveFailures += 1;
-        if (this.consecutiveFailures >= this.circuitFailureThreshold) {
-          this.circuitOpenUntil = this.now().getTime() + this.circuitOpenMs;
-        }
-      }
-      this.log(providerError.code, startedAt, providerError.httpStatus);
-      await this.recordUsage(reservation, 'ERROR', startedAt);
-      throw providerError;
-    }
+    const context = this.requestContext.getStore();
+    if (context) context.providerCallCount += 1;
+    return reservation;
   }
 
   private async recordUsage(
     reservation: AssistantUsageReservation | undefined,
     outcome: 'SUCCESS' | 'ERROR',
-    startedAt: number,
+    durationMs: number,
   ) {
     if (!reservation || !this.budgets) return;
     try {
       await this.budgets.complete({
         reservation,
         outcome,
-        durationMs: Math.max(0, Date.now() - startedAt),
+        durationMs,
       });
     } catch {
       // Per-operation telemetry is still recorded by the resolver.

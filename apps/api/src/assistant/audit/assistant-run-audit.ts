@@ -30,7 +30,8 @@ export type AssistantRunAudit = {
   rankingDecisions: Array<{
     evidenceId: string;
     outcome: 'PRIMARY' | 'ALTERNATIVE' | 'SELECTED_FACT' | 'REJECTED';
-    rank: number | null;
+    candidateRank: number;
+    answerRank: number | null;
     reason: string;
   }>;
   evidenceRevisions: Array<{
@@ -55,7 +56,10 @@ export function buildAssistantRunAudit(input: {
   const now = input.now ?? new Date();
   const latencyBreachMs = input.latencyBreachMs ?? readLatencyBreachMs(process.env.ASSISTANT_LATENCY_BREACH_MS);
   const selected = selectedOutcomes(input.answer);
-  const candidateSet = input.candidateEvidence.map(serializeCandidate);
+  const candidateSet = input.candidateEvidence.map((evidence, index) => ({
+    ...serializeCandidate(evidence),
+    candidateRank: index + 1,
+  }));
   const selectedEvidenceIds = new Set(input.selectedEvidence.map(evidenceId));
   const qualityFlags = new Set<AssistantQualityFlag>();
 
@@ -81,13 +85,17 @@ export function buildAssistantRunAudit(input: {
     appliedFilters: structuredClone(input.intent.hardFilters),
     softPreferences: structuredClone(input.intent.softPreferences),
     candidateSet,
-    rankingDecisions: candidateSet.map(({ evidenceId }, index) => {
+    rankingDecisions: candidateSet.map(({ evidenceId, candidateRank }, index) => {
       const decision = selected.get(evidenceId);
-      return decision ?? {
+      return decision ? {
+        ...decision,
+        candidateRank,
+      } : {
         evidenceId,
         outcome: 'REJECTED' as const,
-        rank: null,
-        reason: 'Not selected after deterministic validation and ranking',
+        candidateRank,
+        answerRank: null,
+        reason: describeRejection(input.candidateEvidence[index]!, input.intent.hardFilters),
       };
     }),
     evidenceRevisions: input.selectedEvidence.map((evidence) => isSearchEvidence(evidence)
@@ -108,25 +116,25 @@ export function buildAssistantRunAudit(input: {
 }
 
 function selectedOutcomes(answer: AssistantAnswer) {
-  const outcomes = new Map<string, AssistantRunAudit['rankingDecisions'][number]>();
+  const outcomes = new Map<string, Omit<AssistantRunAudit['rankingDecisions'][number], 'candidateRank'>>();
   if (answer.kind === 'SEARCH_RESULTS') {
     answer.exactResults.forEach(({ unitId }, index) => outcomes.set(unitId, {
       evidenceId: unitId,
       outcome: 'PRIMARY',
-      rank: index + 1,
+      answerRank: index + 1,
       reason: 'Passed hard filters, evidence validation and deterministic ranking',
     }));
     answer.alternatives.forEach(({ unitId, deviations }, index) => outcomes.set(unitId, {
       evidenceId: unitId,
       outcome: 'ALTERNATIVE',
-      rank: index + 1,
+      answerRank: index + 1,
       reason: deviations.map(({ label }) => label).join('; ') || 'Selected bounded alternative',
     }));
   } else if (answer.kind === 'KNOWLEDGE_RESULTS') {
     [...answer.facts, ...answer.externalLots].forEach(({ id }, index) => outcomes.set(id, {
       evidenceId: id,
       outcome: 'SELECTED_FACT',
-      rank: index + 1,
+      answerRank: index + 1,
       reason: 'Selected from grounded retrieval evidence',
     }));
   }
@@ -139,11 +147,24 @@ function serializeCandidate(evidence: AssistantRunEvidence): Record<string, unkn
       evidenceId: evidence.unitId,
       kind: 'PLATFORMA_FEED_UNIT',
       objectId: evidence.objectId,
+      objectType: evidence.objectType,
       objectTitle: evidence.objectTitle,
+      objectSlug: evidence.objectSlug,
+      lotTitle: evidence.lotTitle,
       priceRub: evidence.priceRub,
       availability: evidence.availability,
+      rooms: evidence.rooms,
+      district: evidence.district,
+      metros: [...evidence.metros],
+      developer: evidence.developer,
+      completionYear: evidence.completionYear,
+      completionQuarter: evidence.completionQuarter,
+      propertyClass: evidence.propertyClass,
+      area: evidence.area,
+      floor: evidence.floor,
       updatedAt: evidence.updatedAt,
       distanceMeters: evidence.distanceMeters ?? null,
+      pdfs: structuredClone(evidence.pdfs),
       deviations: structuredClone(evidence.deviations),
     };
   }
@@ -156,6 +177,10 @@ function serializeCandidate(evidence: AssistantRunEvidence): Record<string, unkn
     sourcePriority: evidence.sourcePriority,
     factKind: evidence.kind,
     label: evidence.label,
+    value: structuredClone(evidence.value),
+    canonicalUrl: evidence.canonicalUrl,
+    projectKey: evidence.projectKey,
+    developerKey: evidence.developerKey,
     observedAt: evidence.observedAt,
     fetchedAt: evidence.fetchedAt,
     retrievalChannels: [...evidence.retrievalChannels],
@@ -172,25 +197,53 @@ function isSearchEvidence(evidence: AssistantRunEvidence): evidence is Assistant
 }
 
 function matchesFilters(candidate: AssistantSearchEvidence, filters: AssistantSearchFilters) {
+  return readFilterViolations(candidate, filters).length === 0;
+}
+
+function readFilterViolations(candidate: AssistantSearchEvidence, filters: AssistantSearchFilters) {
   const contains = (value: string | null, expected: string) => Boolean(value)
     && normalize(value!).includes(normalize(expected));
-  return candidate.objectType === filters.objectType
-    && (filters.budgetMinRub === null || candidate.priceRub >= filters.budgetMinRub)
-    && (filters.budgetMaxRub === null || candidate.priceRub <= filters.budgetMaxRub)
-    && (filters.rooms.length === 0 || (candidate.rooms !== null && filters.rooms.includes(candidate.rooms)))
-    && (!filters.district || contains(candidate.district, filters.district))
-    && (!filters.metro || candidate.metros.some((metro) => contains(metro, filters.metro!)))
-    && (!filters.developer || contains(candidate.developer, filters.developer))
-    && (filters.completionYearMin === null
-      || (candidate.completionYear !== null && candidate.completionYear >= filters.completionYearMin))
-    && (filters.completionYearMax === null
-      || (candidate.completionYear !== null && candidate.completionYear <= filters.completionYearMax))
-    && (filters.completionQuarter === null || candidate.completionQuarter === filters.completionQuarter)
-    && (!filters.propertyClass || contains(candidate.propertyClass, filters.propertyClass))
-    && (filters.areaMin === null || (candidate.area !== null && candidate.area >= filters.areaMin))
-    && (filters.areaMax === null || (candidate.area !== null && candidate.area <= filters.areaMax))
-    && (filters.floorMin === null || (candidate.floor !== null && candidate.floor >= filters.floorMin))
-    && (filters.floorMax === null || (candidate.floor !== null && candidate.floor <= filters.floorMax));
+  const violations: string[] = [];
+  if (candidate.objectType !== filters.objectType) violations.push('OBJECT_TYPE');
+  if (filters.budgetMinRub !== null && candidate.priceRub < filters.budgetMinRub) violations.push('BUDGET_MIN');
+  if (filters.budgetMaxRub !== null && candidate.priceRub > filters.budgetMaxRub) violations.push('BUDGET_MAX');
+  if (filters.rooms.length > 0 && (candidate.rooms === null || !filters.rooms.includes(candidate.rooms))) {
+    violations.push('ROOMS');
+  }
+  if (filters.district && !contains(candidate.district, filters.district)) violations.push('DISTRICT');
+  if (filters.metro && !candidate.metros.some((metro) => contains(metro, filters.metro!))) violations.push('METRO');
+  if (filters.developer && !contains(candidate.developer, filters.developer)) violations.push('DEVELOPER');
+  if (filters.completionYearMin !== null
+    && (candidate.completionYear === null || candidate.completionYear < filters.completionYearMin)) {
+    violations.push('COMPLETION_YEAR_MIN');
+  }
+  if (filters.completionYearMax !== null
+    && (candidate.completionYear === null || candidate.completionYear > filters.completionYearMax)) {
+    violations.push('COMPLETION_YEAR_MAX');
+  }
+  if (filters.completionQuarter !== null && candidate.completionQuarter !== filters.completionQuarter) {
+    violations.push('COMPLETION_QUARTER');
+  }
+  if (filters.propertyClass && !contains(candidate.propertyClass, filters.propertyClass)) {
+    violations.push('PROPERTY_CLASS');
+  }
+  if (filters.areaMin !== null && (candidate.area === null || candidate.area < filters.areaMin)) violations.push('AREA_MIN');
+  if (filters.areaMax !== null && (candidate.area === null || candidate.area > filters.areaMax)) violations.push('AREA_MAX');
+  if (filters.floorMin !== null && (candidate.floor === null || candidate.floor < filters.floorMin)) violations.push('FLOOR_MIN');
+  if (filters.floorMax !== null && (candidate.floor === null || candidate.floor > filters.floorMax)) violations.push('FLOOR_MAX');
+  return violations;
+}
+
+function describeRejection(evidence: AssistantRunEvidence, filters: AssistantSearchFilters) {
+  if (!isSearchEvidence(evidence)) {
+    return `Ranked outside bounded grounded answer (retrievalScore=${evidence.retrievalScore}, sourcePriority=${evidence.sourcePriority})`;
+  }
+  if (evidence.deviations.length > 0) {
+    return `Alternative not selected: ${evidence.deviations.map(({ label }) => label).join('; ')}`;
+  }
+  const violations = readFilterViolations(evidence, filters);
+  if (violations.length > 0) return `Rejected by hard filters: ${violations.join(', ')}`;
+  return 'Ranked outside bounded top results after deterministic evidence validation';
 }
 
 function hasStalePriceWithoutLabel(

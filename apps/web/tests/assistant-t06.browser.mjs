@@ -18,6 +18,7 @@ const browser = await chromium.launch({ headless: true });
 
 try {
   await verifyAuditFlow();
+  await verifyMissingAuditRun();
   await verifyFeedbackFlow();
   await verifyMobileAudit();
   process.stdout.write('ASSISTANT_T06_BROWSER_OK\n');
@@ -36,6 +37,11 @@ async function verifyAuditFlow() {
     await page.getByRole('heading', { name: 'Аудит ответов' }).waitFor();
     assert.equal(await page.title(), 'Platforma');
     await page.getByLabel('Сигнал качества').selectOption('NEGATIVE_FEEDBACK');
+    await page.getByRole('button', { name: 'Следующая страница' }).click();
+    await page.getByText('Страница 2 из 2').waitFor();
+    await page.getByRole('button', { name: 'Предыдущая страница' }).click();
+    await page.getByText('Страница 1 из 2').waitFor();
+    assert.equal(state.runPages.includes(2), true);
     await page.getByRole('button', { name: 'Открыть', exact: true }).click();
     await page.getByRole('heading', { name: 'Candidate set' }).waitFor();
     await page.getByText('unit-primary', { exact: false }).first().waitFor();
@@ -58,6 +64,34 @@ async function verifyAuditFlow() {
     await page.getByText('gpt-5.6-terra', { exact: true }).waitFor();
     assert.deepEqual(issues, []);
     assert.equal(state.externalProviderCalls, 0);
+  } finally {
+    await context.close();
+  }
+}
+
+async function verifyMissingAuditRun() {
+  const context = await browser.newContext({ viewport: { width: 1200, height: 800 } });
+  const page = await context.newPage();
+  const state = createState();
+  const issues = collectRuntimeIssues(page);
+  await installRoutes(page, state);
+  try {
+    await page.goto(
+      `${baseUrl}/admin/assistant-audit/runs/99999999-9999-4999-8999-999999999999`,
+      { waitUntil: 'domcontentloaded' },
+    );
+    await page.getByRole('heading', { name: 'Запуск не удалось открыть' }).waitFor();
+    await page.getByText('ASSISTANT_AUDIT_RUN_NOT_FOUND').waitFor();
+    await Promise.all([
+      page.waitForResponse((response) => response.url().includes('99999999-9999-4999-8999-999999999999')),
+      page.getByRole('button', { name: 'Повторить' }).click(),
+    ]);
+    await page.getByRole('heading', { name: 'Запуск не удалось открыть' }).waitFor();
+    assert.equal(state.missingRunRequests >= 2, true);
+    assert.equal(
+      issues.every((issue) => /Failed to load resource:.*404/iu.test(issue)),
+      true,
+    );
   } finally {
     await context.close();
   }
@@ -108,7 +142,13 @@ async function verifyMobileAudit() {
 }
 
 function createState() {
-  return { feedbackBodies: [], reviewBodies: [], externalProviderCalls: 0 };
+  return {
+    feedbackBodies: [],
+    reviewBodies: [],
+    runPages: [],
+    missingRunRequests: 0,
+    externalProviderCalls: 0,
+  };
 }
 
 function collectRuntimeIssues(page) {
@@ -143,9 +183,15 @@ async function installRoutes(page, state) {
       return json(route, { feedback: { id: ids.feedback, ...body, createdAt: now, updatedAt: now } }, 201);
     }
     if (path === '/assistant/audit/runs') {
-      return json(route, { items: [runSummary()], total: 1, page: 1, limit: 50, totalPages: 1 });
+      const page = Number(url.searchParams.get('page') ?? '1');
+      state.runPages.push(page);
+      return json(route, { items: [runSummary()], total: 51, page, limit: 50, totalPages: 2 });
     }
     if (path === `/assistant/audit/runs/${ids.run}`) return json(route, { run: runDetail() });
+    if (path.startsWith('/assistant/audit/runs/')) {
+      state.missingRunRequests += 1;
+      return json(route, { message: 'ASSISTANT_AUDIT_RUN_NOT_FOUND' }, 404);
+    }
     if (path === `/assistant/audit/reviews/${ids.review}`) {
       const body = request.postDataJSON();
       state.reviewBodies.push(body);

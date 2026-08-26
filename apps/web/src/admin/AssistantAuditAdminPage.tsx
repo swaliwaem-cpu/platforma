@@ -203,6 +203,8 @@ export function AssistantAuditAdminPage({
   const [issue, setIssue] = useState<AuditIssue>('');
   const [runs, setRuns] = useState<AuditRunSummary[]>([]);
   const [runTotal, setRunTotal] = useState(0);
+  const [runPage, setRunPage] = useState(1);
+  const [runTotalPages, setRunTotalPages] = useState(1);
   const [runDetail, setRunDetail] = useState<AuditRunDetail | null>(null);
   const [sources, setSources] = useState<SourceRecord[]>([]);
   const [geoOperations, setGeoOperations] = useState<GeoOperation[]>([]);
@@ -227,6 +229,7 @@ export function AssistantAuditAdminPage({
     const controller = new AbortController();
     setIsLoading(true);
     setError(null);
+    if (selectedRunId) setRunDetail(null);
     const load = selectedRunId
       ? apiRequest<{ run: AuditRunDetail }>(
           `/assistant/audit/runs/${encodeURIComponent(selectedRunId)}`,
@@ -238,9 +241,11 @@ export function AssistantAuditAdminPage({
           setReviewComment(run.review?.reviewerComment ?? '');
         })
       : activeTab === 'runs'
-        ? loadRuns(accessToken, issue, controller.signal).then((response) => {
+        ? loadRuns(accessToken, issue, runPage, controller.signal).then((response) => {
             setRuns(response.items);
             setRunTotal(response.total);
+            setRunPage(response.page);
+            setRunTotalPages(response.totalPages);
           })
         : activeTab === 'sources'
           ? apiRequest<{ items: SourceRecord[] }>('/assistant/audit/sources', accessToken, {
@@ -270,7 +275,7 @@ export function AssistantAuditAdminPage({
         if (!controller.signal.aborted) setIsLoading(false);
       });
     return () => controller.abort();
-  }, [accessToken, activeTab, issue, refreshVersion, selectedRunId]);
+  }, [accessToken, activeTab, issue, refreshVersion, runPage, selectedRunId]);
 
   const refreshCurrentTab = () => {
     setNotice(null);
@@ -422,10 +427,16 @@ export function AssistantAuditAdminPage({
           <RunsPanel
             isLoading={isLoading}
             issue={issue}
+            page={runPage}
             runs={runs}
             total={runTotal}
-            onIssueChange={setIssue}
+            totalPages={runTotalPages}
+            onIssueChange={(nextIssue) => {
+              setIssue(nextIssue);
+              setRunPage(1);
+            }}
             onOpen={(runId) => navigate(`/admin/assistant-audit/runs/${runId}`)}
+            onPageChange={setRunPage}
           />
         </TabsContent>
         <TabsContent value="sources">
@@ -461,17 +472,23 @@ export function AssistantAuditAdminPage({
 function RunsPanel({
   isLoading,
   issue,
+  page,
   runs,
   total,
+  totalPages,
   onIssueChange,
   onOpen,
+  onPageChange,
 }: {
   isLoading: boolean;
   issue: AuditIssue;
+  page: number;
   runs: AuditRunSummary[];
   total: number;
+  totalPages: number;
   onIssueChange: (issue: AuditIssue) => void;
   onOpen: (runId: string) => void;
+  onPageChange: (page: number) => void;
 }) {
   return (
     <AdminPanel className="assistant-audit-panel">
@@ -527,6 +544,27 @@ function RunsPanel({
           </TableBody>
         </Table>
       )}
+      {!isLoading && totalPages > 1 ? (
+        <nav className="assistant-audit-pagination" aria-label="Страницы запусков">
+          <AdminButton
+            disabled={page <= 1}
+            tone="secondary"
+            type="button"
+            onClick={() => onPageChange(page - 1)}
+          >
+            Предыдущая страница
+          </AdminButton>
+          <span>Страница {page} из {totalPages}</span>
+          <AdminButton
+            disabled={page >= totalPages}
+            tone="secondary"
+            type="button"
+            onClick={() => onPageChange(page + 1)}
+          >
+            Следующая страница
+          </AdminButton>
+        </nav>
+      ) : null}
     </AdminPanel>
   );
 }
@@ -558,8 +596,30 @@ function AuditRunDetailView({
   onRefresh: () => void;
   onReview: (event: FormEvent<HTMLFormElement>) => void;
 }) {
-  if (isLoading || !run) {
+  if (isLoading) {
     return <section className="assistant-audit-page"><AuditSkeleton /></section>;
+  }
+  if (!run) {
+    return (
+      <section className="assistant-audit-page">
+        <header className="assistant-audit-header">
+          <div>
+            <AdminButton tone="text" type="button" onClick={onBack}>
+              <ArrowLeftIcon aria-hidden="true" />
+              К списку
+            </AdminButton>
+            <p className="eyebrow">Evidence trail</p>
+            <h1>Запуск не удалось открыть</h1>
+            <p>Он мог быть удалён по retention policy или временно недоступен.</p>
+          </div>
+          <AdminButton tone="secondary" type="button" onClick={onRefresh}>
+            <RefreshCwIcon aria-hidden="true" />
+            Повторить
+          </AdminButton>
+        </header>
+        <AdminAlert tone="error">{error ?? 'Audit data для этого запуска не найдены.'}</AdminAlert>
+      </section>
+    );
   }
   return (
     <section className="assistant-audit-page">
@@ -841,8 +901,8 @@ function AuditSkeleton() {
   return <div className="assistant-audit-skeleton" aria-label="Загрузка"><Skeleton /><Skeleton /><Skeleton /></div>;
 }
 
-function loadRuns(accessToken: string, issue: AuditIssue, signal?: AbortSignal) {
-  const params = new URLSearchParams({ limit: '50' });
+function loadRuns(accessToken: string, issue: AuditIssue, page: number, signal?: AbortSignal) {
+  const params = new URLSearchParams({ limit: '50', page: String(page) });
   if (issue) params.set('issues', issue);
   return apiRequest<AuditRunsResponse>(`/assistant/audit/runs?${params.toString()}`, accessToken, { signal });
 }

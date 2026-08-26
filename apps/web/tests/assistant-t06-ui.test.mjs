@@ -44,6 +44,9 @@ test('Assistant T06 admin audit is lazy, additive-permission gated and covers ev
   assert.match(auditSource, /candidateSet/u);
   assert.match(auditSource, /rankingDecisions/u);
   assert.match(auditSource, /evidenceRevisions/u);
+  assert.match(auditSource, /Страница \{page\} из \{totalPages\}/u);
+  assert.match(auditSource, /Запуск не удалось открыть/u);
+  assert.match(auditSource, /page: String\(page\)/u);
   assert.match(auditSource, /Provider attempts/u);
   assert.match(auditSource, /Idempotency-Key/u);
   assert.match(auditSource, /\/assistant\/geo\/aliases/u);

@@ -28,6 +28,8 @@ export type AssistantGeoProvider = {
 };
 
 export class AssistantGeoProviderError extends Error {
+  providerCallCount = 0;
+
   constructor(
     readonly code: string,
     readonly retryable: boolean,
@@ -43,7 +45,12 @@ export class LocationIqGeoProvider implements AssistantGeoProvider {
   private readonly apiUrl: URL;
   private readonly timeoutMs: number;
   private readonly maximumRetries: number;
-  private beforeRequest: () => Promise<void> = async () => {};
+  private beforeRequest: () => Promise<unknown> = async () => undefined;
+  private afterRequest: (
+    reservation: unknown,
+    outcome: 'SUCCESS' | 'ERROR',
+    durationMs: number,
+  ) => Promise<void> = async () => {};
 
   constructor(
     environment: GeoProviderEnvironment = process.env,
@@ -86,12 +93,22 @@ export class LocationIqGeoProvider implements AssistantGeoProvider {
     throw lastError ?? new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_FAILED', true);
   }
 
-  setBeforeRequest(beforeRequest: () => Promise<void>) {
+  setRequestLifecycle(
+    beforeRequest: () => Promise<unknown>,
+    afterRequest: (
+      reservation: unknown,
+      outcome: 'SUCCESS' | 'ERROR',
+      durationMs: number,
+    ) => Promise<void>,
+  ) {
     this.beforeRequest = beforeRequest;
+    this.afterRequest = afterRequest;
   }
 
   private async searchOnce(request: AssistantGeoProviderRequest) {
-    await this.beforeRequest();
+    const startedAt = Date.now();
+    const reservation = await this.beforeRequest();
+    let outcome: 'SUCCESS' | 'ERROR' = 'ERROR';
     const url = new URL(this.apiUrl);
     url.searchParams.set('key', this.apiKey);
     url.searchParams.set('q', request.query);
@@ -142,7 +159,9 @@ export class LocationIqGeoProvider implements AssistantGeoProvider {
       } catch {
         throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_RESPONSE_INVALID', false, response.status);
       }
-      return normalizeProviderCandidates(payload);
+      const candidates = normalizeProviderCandidates(payload);
+      outcome = 'SUCCESS';
+      return candidates;
     } catch (error) {
       if (error instanceof AssistantGeoProviderError) throw error;
       if (controller.signal.aborted) {
@@ -151,6 +170,11 @@ export class LocationIqGeoProvider implements AssistantGeoProvider {
       throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_UNAVAILABLE', true);
     } finally {
       clearTimeout(timeout);
+      try {
+        await this.afterRequest(reservation, outcome, Math.max(0, Date.now() - startedAt));
+      } catch {
+        // Aggregate telemetry must never change the provider result.
+      }
     }
   }
 }
