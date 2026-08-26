@@ -118,6 +118,26 @@ async function verifyCatalogMap() {
     await map.getByRole('button', { name: 'Очистить измерение' }).click();
     await map.getByText('Выберите начальную точку', { exact: true }).waitFor();
 
+    const educationButton = map.getByRole('button', { name: 'Показать школы и детские сады' });
+    const recreationButton = map.getByRole('button', { name: 'Показать парки и набережные' });
+    const healthcareButton = map.getByRole('button', { name: 'Показать поликлиники и больницы' });
+    assert.equal(await educationButton.locator('svg').count(), 1);
+    assert.equal(await recreationButton.locator('svg').count(), 1);
+    assert.equal(await healthcareButton.locator('svg').count(), 1);
+    assert.equal(await educationButton.getAttribute('aria-pressed'), 'false');
+    assert.equal(await recreationButton.getAttribute('aria-pressed'), 'false');
+    assert.equal(await healthcareButton.getAttribute('aria-pressed'), 'false');
+
+    await educationButton.click();
+    const activeEducationButton = map.getByRole('button', { name: 'Скрыть школы и детские сады' });
+    assert.equal(await activeEducationButton.getAttribute('aria-pressed'), 'true');
+    assert.equal(await recreationButton.getAttribute('aria-pressed'), 'false');
+
+    await recreationButton.click();
+    assert.equal(await map.getByRole('button', { name: 'Скрыть парки и набережные' }).getAttribute('aria-pressed'), 'true');
+    assert.equal(await activeEducationButton.getAttribute('aria-pressed'), 'true');
+    assert.equal(await healthcareButton.getAttribute('aria-pressed'), 'false');
+
     const fullscreen = map.getByRole('button', { name: 'Открыть карту на весь экран' });
     await fullscreen.click();
     await page.locator('.platform-map-shell[data-map-fullscreen="true"]').waitFor();
@@ -295,9 +315,11 @@ async function verifyMobileMap() {
     await marker.waitFor();
     const zoomControlBox = await map.getByRole('button', { name: 'Увеличить масштаб' }).boundingBox();
     const fullscreenControlBox = await map.getByRole('button', { name: 'Открыть карту на весь экран' }).boundingBox();
+    const educationControlBox = await map.getByRole('button', { name: 'Показать школы и детские сады' }).boundingBox();
 
     assert.ok(zoomControlBox && zoomControlBox.width >= 44 && zoomControlBox.height >= 44);
     assert.ok(fullscreenControlBox && fullscreenControlBox.width >= 44 && fullscreenControlBox.height >= 44);
+    assert.ok(educationControlBox && educationControlBox.width >= 44 && educationControlBox.height >= 44);
     await marker.tap();
     await page.getByRole('article', { name: 'Объект ЖК Северный' }).waitFor();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);

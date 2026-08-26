@@ -4808,14 +4808,21 @@ tr.user-row--deactivated .text-button {
   cursor: crosshair;
 }
 
-.map-measurement-tools {
+.map-primary-tools {
   position: absolute;
   z-index: 23;
   top: 16px;
   left: 16px;
+  display: grid;
+  max-width: calc(100% - 32px);
+  justify-items: start;
+  gap: 8px;
+}
+
+.map-measurement-tools {
   display: flex;
   min-height: 40px;
-  max-width: calc(100% - 32px);
+  max-width: 100%;
   align-items: center;
   gap: 8px;
   border: 1px solid color-mix(in oklch, var(--catalog-border) 88%, transparent);
@@ -4824,6 +4831,65 @@ tr.user-row--deactivated .text-button {
   padding: 5px;
   color: var(--catalog-ink-900);
   box-shadow: var(--catalog-shadow-overlay);
+}
+
+.map-amenity-tools {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid color-mix(in oklch, var(--catalog-border) 88%, transparent);
+  border-radius: var(--catalog-radius-sm);
+  background: color-mix(in oklch, var(--catalog-panel) 96%, transparent);
+  padding: 5px;
+  box-shadow: var(--catalog-shadow-overlay);
+}
+
+.map-amenity-button {
+  --map-amenity-accent: var(--catalog-copper);
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid var(--catalog-border);
+  border-radius: calc(var(--catalog-radius-sm) - 2px);
+  background: var(--catalog-panel-soft);
+  color: var(--catalog-ink-700);
+  padding: 0;
+  box-shadow: none;
+  transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.map-amenity-button[data-category='education'] {
+  --map-amenity-accent: #3f82c5;
+}
+
+.map-amenity-button[data-category='recreation'] {
+  --map-amenity-accent: #4f9a68;
+}
+
+.map-amenity-button[data-category='healthcare'] {
+  --map-amenity-accent: #d75a56;
+}
+
+.map-amenity-button svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 1.9;
+}
+
+.map-amenity-button:hover,
+.map-amenity-button:focus-visible {
+  border-color: var(--map-amenity-accent);
+  color: var(--map-amenity-accent);
+  outline: 0;
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--map-amenity-accent) 18%, transparent);
+  transform: translateY(-1px);
+}
+
+.map-amenity-button[aria-pressed='true'] {
+  border-color: var(--map-amenity-accent);
+  background: color-mix(in oklch, var(--map-amenity-accent) 20%, var(--catalog-panel));
+  color: var(--map-amenity-accent);
 }
 
 .map-measurement-button,
@@ -4978,6 +5044,7 @@ tr.user-row--deactivated .text-button {
   .map-price-marker,
   .map-price-marker-dot,
   .map-price-marker-pin,
+  .map-amenity-button,
   .map-nearby-metro-refresh svg {
     transition: none;
   }
@@ -4990,7 +5057,7 @@ tr.user-row--deactivated .text-button {
 .map-object-card {
   position: absolute;
   z-index: 21;
-  top: 72px;
+  top: 120px;
   left: 28px;
   display: grid;
   grid-template-rows: max-content max-content;
@@ -4998,7 +5065,7 @@ tr.user-row--deactivated .text-button {
   gap: 0;
   width: min(430px, calc(100% - 400px));
   min-width: 320px;
-  max-height: calc(100% - 88px);
+  max-height: calc(100% - 136px);
   overflow: auto;
   pointer-events: auto;
   border: 1px solid color-mix(in oklch, var(--catalog-border) 88%, transparent);
@@ -5306,12 +5373,12 @@ tr.user-row--deactivated .text-button {
   }
 
   .map-object-card {
-    top: 68px;
+    top: 116px;
     right: 18px;
     left: 18px;
     width: auto;
     min-width: 0;
-    max-height: calc(100% - 86px);
+    max-height: calc(100% - 134px);
     overflow: auto;
   }
 }
@@ -8649,12 +8716,12 @@ tr.user-row--deactivated .text-button {
   }
 
   .map-object-card {
-    top: 64px;
+    top: 116px;
     right: 12px;
     left: 12px;
     width: auto;
     min-width: 0;
-    max-height: calc(100% - 76px);
+    max-height: calc(100% - 128px);
     overflow: auto;
   }
 
@@ -8688,17 +8755,21 @@ tr.user-row--deactivated .text-button {
     height: 44px;
   }
 
-  .map-measurement-tools {
+  .map-primary-tools {
     top: 10px;
     right: auto;
     left: 10px;
-    min-height: 44px;
     max-width: calc(100% - 20px);
   }
 
   .map-measurement-button,
   .map-measurement-clear {
     min-height: 34px;
+  }
+
+  .map-amenity-button {
+    width: 44px;
+    height: 44px;
   }
 
   .map-measurement-result {

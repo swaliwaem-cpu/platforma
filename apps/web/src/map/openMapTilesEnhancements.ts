@@ -1,6 +1,8 @@
 import type * as maplibregl from 'maplibre-gl';
 
 import { getMapDistanceMeters } from './mapContract';
+import { ensureOpenMapTilesAmenityLayers } from './openMapTilesAmenities';
+import { localizeOpenMapTilesLabels } from './openMapTilesLabelLocalization';
 import type { MapCoordinate, MapNearbyTransitStation } from './mapTypes';
 
 export const NEARBY_TRANSIT_SEARCH_ZOOM = 14;
@@ -63,10 +65,12 @@ const mcdColorExpression: maplibregl.ExpressionSpecification = [
 const fallbackPoiImage = createFallbackPoiImage();
 
 export function enhanceOpenMapTilesStyle(map: maplibregl.Map) {
+  localizeOpenMapTilesLabels(map);
   setLayerZoomRange(map, 'poi_r1', 13);
   setLayerZoomRange(map, 'poi_r7', 15);
   setLayerZoomRange(map, 'poi_r20', 16);
   enhanceTransitStationLayer(map);
+  ensureOpenMapTilesAmenityLayers(map);
 
   const style = map.getStyle();
   const labelLayerId = style.layers.find((layer) => layer.type === 'symbol')?.id;

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
+import { useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
+import { HospitalIcon, SchoolIcon, TreesIcon } from 'lucide-react';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import mapLibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
@@ -16,6 +17,10 @@ import {
   hasOpenMapTilesPoiSource,
   NEARBY_TRANSIT_SEARCH_ZOOM,
 } from './openMapTilesEnhancements';
+import {
+  setOpenMapTilesAmenityVisibility,
+  type OpenMapTilesAmenityCategory,
+} from './openMapTilesAmenities';
 import type { MapBounds, MapCoordinate, MapPoint, MapPolygon, MapStatus, MapViewport, PlatformMapProps } from './mapTypes';
 
 type MapLibreMapProps = Omit<PlatformMapProps, 'emptyState' | 'renderWithoutPoints'> & {
@@ -48,6 +53,12 @@ const MEASUREMENT_POINT_LAYER_ID = 'platforma-measurement-points';
 const ASSISTANT_GEO_SOURCE_ID = 'platforma-assistant-geo-polygons';
 const ASSISTANT_GEO_FILL_LAYER_ID = 'platforma-assistant-geo-fill';
 const ASSISTANT_GEO_LINE_LAYER_ID = 'platforma-assistant-geo-line';
+const amenityCategories: OpenMapTilesAmenityCategory[] = ['education', 'recreation', 'healthcare'];
+const initialAmenityVisibility: Record<OpenMapTilesAmenityCategory, boolean> = {
+  education: false,
+  recreation: false,
+  healthcare: false,
+};
 
 const providerErrorState = {
   eyebrow: 'Карта',
@@ -85,11 +96,13 @@ export default function MapLibreMap({
   const callbacksRef = useRef<MapCallbacks>({});
   const nearbyTransitRequestRef = useRef(0);
   const measurementActiveRef = useRef(false);
+  const amenityVisibilityRef = useRef(initialAmenityVisibility);
   const initialViewportRef = useRef<MapViewport>(initialViewport ?? createInitialViewport(points));
   const [status, setStatus] = useState<MapStatus>('loading');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isMeasurementActive, setIsMeasurementActive] = useState(false);
   const [measurementPoints, setMeasurementPoints] = useState<MapCoordinate[]>([]);
+  const [amenityVisibility, setAmenityVisibility] = useState(() => ({ ...initialAmenityVisibility }));
   const pointCoordinatesKey = useMemo(
     () => points.map((point) => `${point.id}:${point.coordinates[0]}:${point.coordinates[1]}`).join('|'),
     [points],
@@ -108,6 +121,7 @@ export default function MapLibreMap({
 
   pointsByIdRef.current = new Map(points.map((point) => [point.id, point]));
   measurementActiveRef.current = isMeasurementActive;
+  amenityVisibilityRef.current = amenityVisibility;
   callbacksRef.current = {
     onBoundsChange,
     onFullscreenChange,
@@ -223,6 +237,9 @@ export default function MapLibreMap({
       enhanceOpenMapTilesStyle(map);
       ensureMeasurementLayers(map);
       ensureAssistantGeoLayers(map);
+      for (const category of amenityCategories) {
+        setOpenMapTilesAmenityVisibility(map, category, amenityVisibilityRef.current[category]);
+      }
 
       setStatus('ready');
       callbacksRef.current.onStatusChange?.('ready');
@@ -362,6 +379,18 @@ export default function MapLibreMap({
   }, [measurementPoints, status]);
 
   useEffect(() => {
+    const map = mapRef.current;
+
+    if (!map || status !== 'ready') {
+      return;
+    }
+
+    for (const category of amenityCategories) {
+      setOpenMapTilesAmenityVisibility(map, category, amenityVisibility[category]);
+    }
+  }, [amenityVisibility, status]);
+
+  useEffect(() => {
     if (!isMeasurementActive) {
       return;
     }
@@ -464,41 +493,104 @@ export default function MapLibreMap({
       ) : null}
       <div ref={containerRef} className="platform-map-canvas" data-map-surface />
       {enableMeasurement && status === 'ready' ? (
-        <div className="map-measurement-tools" aria-label="Линейка расстояния">
-          <button
-            aria-label={isMeasurementActive ? 'Завершить измерение' : 'Измерить расстояние'}
-            aria-pressed={isMeasurementActive}
-            className="map-measurement-button"
-            type="button"
-            onClick={() => setIsMeasurementActive((isActive) => !isActive)}
-          >
-            {isMeasurementActive ? 'Готово' : measurementPoints.length > 0 ? 'Продолжить' : 'Линейка'}
-          </button>
-          {isMeasurementActive || measurementPoints.length > 0 ? (
-            <output className="map-measurement-result" aria-live="polite">
-              {measurementPoints.length === 0 ? (
-                'Выберите начальную точку'
-              ) : measurementPoints.length === 1 ? (
-                'Выберите следующую точку'
-              ) : (
-                <span className="map-measurement-distance">{formatMapDistance(measurementDistance)}</span>
-              )}
-            </output>
-          ) : null}
-          {measurementPoints.length > 0 ? (
+        <div className="map-primary-tools">
+          <div className="map-measurement-tools" aria-label="Линейка расстояния">
             <button
-              aria-label="Очистить измерение"
-              className="map-measurement-clear"
+              aria-label={isMeasurementActive ? 'Завершить измерение' : 'Измерить расстояние'}
+              aria-pressed={isMeasurementActive}
+              className="map-measurement-button"
               type="button"
-              onClick={() => setMeasurementPoints([])}
+              onClick={() => setIsMeasurementActive((isActive) => !isActive)}
             >
-              Очистить
+              {isMeasurementActive ? 'Готово' : measurementPoints.length > 0 ? 'Продолжить' : 'Линейка'}
             </button>
-          ) : null}
+            {isMeasurementActive || measurementPoints.length > 0 ? (
+              <output className="map-measurement-result" aria-live="polite">
+                {measurementPoints.length === 0 ? (
+                  'Выберите начальную точку'
+                ) : measurementPoints.length === 1 ? (
+                  'Выберите следующую точку'
+                ) : (
+                  <span className="map-measurement-distance">{formatMapDistance(measurementDistance)}</span>
+                )}
+              </output>
+            ) : null}
+            {measurementPoints.length > 0 ? (
+              <button
+                aria-label="Очистить измерение"
+                className="map-measurement-clear"
+                type="button"
+                onClick={() => setMeasurementPoints([])}
+              >
+                Очистить
+              </button>
+            ) : null}
+          </div>
+          <div className="map-amenity-tools" aria-label="Инфраструктура на карте">
+            <AmenityToggleButton
+              category="education"
+              isActive={amenityVisibility.education}
+              label="Школы и детские сады"
+              onToggle={() => toggleAmenityCategory('education')}
+            >
+              <SchoolIcon aria-hidden="true" />
+            </AmenityToggleButton>
+            <AmenityToggleButton
+              category="recreation"
+              isActive={amenityVisibility.recreation}
+              label="Парки и набережные"
+              onToggle={() => toggleAmenityCategory('recreation')}
+            >
+              <TreesIcon aria-hidden="true" />
+            </AmenityToggleButton>
+            <AmenityToggleButton
+              category="healthcare"
+              isActive={amenityVisibility.healthcare}
+              label="Поликлиники и больницы"
+              onToggle={() => toggleAmenityCategory('healthcare')}
+            >
+              <HospitalIcon aria-hidden="true" />
+            </AmenityToggleButton>
+          </div>
         </div>
       ) : null}
       <div className="platform-map-overlay-root">{children}</div>
     </div>
+  );
+
+  function toggleAmenityCategory(category: OpenMapTilesAmenityCategory) {
+    setAmenityVisibility((current) => ({
+      ...current,
+      [category]: !current[category],
+    }));
+  }
+}
+
+function AmenityToggleButton({
+  category,
+  children,
+  isActive,
+  label,
+  onToggle,
+}: {
+  category: OpenMapTilesAmenityCategory;
+  children: ReactNode;
+  isActive: boolean;
+  label: string;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      aria-label={`${isActive ? 'Скрыть' : 'Показать'} ${label.toLocaleLowerCase('ru-RU')}`}
+      aria-pressed={isActive}
+      className="map-amenity-button"
+      data-category={category}
+      title={label}
+      type="button"
+      onClick={onToggle}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -755,7 +847,7 @@ function fitMapToPoints(map: maplibregl.Map, points: MapPoint[], prefersReducedM
     duration,
     linear: true,
     maxZoom: 15,
-    padding: { top: 96, right: 48, bottom: 48, left: 120 },
+    padding: { top: 136, right: 48, bottom: 48, left: 176 },
   });
 }
 
