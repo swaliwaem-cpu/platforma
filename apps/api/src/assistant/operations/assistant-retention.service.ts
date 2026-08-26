@@ -41,32 +41,31 @@ export class AssistantRetentionService implements OnModuleInit, OnModuleDestroy 
 
     for (;;) {
       const batch = await this.prisma.$transaction(async (transaction) => {
-        const runs = await transaction.$queryRaw<Array<{
+        const runCandidates = await transaction.$queryRaw<Array<{
           id: string;
           conversationId: string;
-          userMessageId: string;
-          assistantMessageId: string | null;
         }>>(Prisma.sql`
           SELECT
             "id"::text AS "id",
-            "conversation_id"::text AS "conversationId",
-            "user_message_id"::text AS "userMessageId",
-            "assistant_message_id"::text AS "assistantMessageId"
+            "conversation_id"::text AS "conversationId"
           FROM "assistant_runs"
           WHERE "created_at" < ${auditCutoff}
-            AND "status" IN (
-              'completed'::"assistant_run_status",
-              'failed'::"assistant_run_status"
+            AND (
+              "status" IN (
+                'pending'::"assistant_run_status",
+                'completed'::"assistant_run_status",
+                'failed'::"assistant_run_status"
+              )
+              OR (
+                "status" = 'running'::"assistant_run_status"
+                AND "lease_expires_at" <= ${now}
+              )
             )
           ORDER BY "created_at" ASC, "id" ASC
           LIMIT ${cleanupBatchSize}
-          FOR UPDATE SKIP LOCKED
         `);
-        const runIds = runs.map(({ id }) => id);
-        const linkedMessageIds = [...new Set(runs.flatMap(({ userMessageId, assistantMessageId }) =>
-          assistantMessageId ? [userMessageId, assistantMessageId] : [userMessageId]))];
 
-        const orphanMessages = await transaction.$queryRaw<Array<{ id: string; conversationId: string }>>(Prisma.sql`
+        const orphanCandidates = await transaction.$queryRaw<Array<{ id: string; conversationId: string }>>(Prisma.sql`
           SELECT
             "message"."id"::text AS "id",
             "message"."conversation_id"::text AS "conversationId"
@@ -79,13 +78,12 @@ export class AssistantRetentionService implements OnModuleInit, OnModuleDestroy 
             )
           ORDER BY "message"."created_at" ASC, "message"."id" ASC
           LIMIT ${cleanupBatchSize}
-          FOR UPDATE OF "message" SKIP LOCKED
         `);
-        const affectedConversationIds = [...new Set([
-          ...runs.map(({ conversationId }) => conversationId),
-          ...orphanMessages.map(({ conversationId }) => conversationId),
-        ])];
-        const lockedConversations = affectedConversationIds.length === 0
+        const conversationIdsToLock = [...new Set([
+          ...runCandidates.map(({ conversationId }) => conversationId),
+          ...orphanCandidates.map(({ conversationId }) => conversationId),
+        ])].sort();
+        const lockedConversations = conversationIdsToLock.length === 0
           ? []
           : await transaction.$queryRaw<Array<{ id: string; updatedAt: Date }>>(Prisma.sql`
               SELECT
@@ -93,12 +91,72 @@ export class AssistantRetentionService implements OnModuleInit, OnModuleDestroy 
                 "updated_at" AS "updatedAt"
               FROM "assistant_conversations"
               WHERE "id" IN (${Prisma.join(
-                affectedConversationIds.map((id) => Prisma.sql`${id}::uuid`),
+                conversationIdsToLock.map((id) => Prisma.sql`${id}::uuid`),
               )})
               ORDER BY "id" ASC
               FOR UPDATE
             `);
         const activityByConversationId = new Map(lockedConversations.map(({ id, updatedAt }) => [id, updatedAt]));
+
+        const runs = runCandidates.length === 0
+          ? []
+          : await transaction.$queryRaw<Array<{
+              id: string;
+              conversationId: string;
+              userMessageId: string;
+              assistantMessageId: string | null;
+            }>>(Prisma.sql`
+              SELECT
+                "id"::text AS "id",
+                "conversation_id"::text AS "conversationId",
+                "user_message_id"::text AS "userMessageId",
+                "assistant_message_id"::text AS "assistantMessageId"
+              FROM "assistant_runs"
+              WHERE "id" IN (${Prisma.join(
+                runCandidates.map(({ id }) => Prisma.sql`${id}::uuid`),
+              )})
+                AND "created_at" < ${auditCutoff}
+                AND (
+                  "status" IN (
+                    'pending'::"assistant_run_status",
+                    'completed'::"assistant_run_status",
+                    'failed'::"assistant_run_status"
+                  )
+                  OR (
+                    "status" = 'running'::"assistant_run_status"
+                    AND "lease_expires_at" <= ${now}
+                  )
+                )
+              ORDER BY "created_at" ASC, "id" ASC
+              FOR UPDATE
+            `);
+        const runIds = runs.map(({ id }) => id);
+        const linkedMessageIds = [...new Set(runs.flatMap(({ userMessageId, assistantMessageId }) =>
+          assistantMessageId ? [userMessageId, assistantMessageId] : [userMessageId]))];
+
+        const orphanMessages = orphanCandidates.length === 0
+          ? []
+          : await transaction.$queryRaw<Array<{ id: string; conversationId: string }>>(Prisma.sql`
+              SELECT
+                "message"."id"::text AS "id",
+                "message"."conversation_id"::text AS "conversationId"
+              FROM "assistant_messages" AS "message"
+              WHERE "message"."id" IN (${Prisma.join(
+                orphanCandidates.map(({ id }) => Prisma.sql`${id}::uuid`),
+              )})
+                AND "message"."created_at" < ${auditCutoff}
+                AND NOT EXISTS (
+                  SELECT 1 FROM "assistant_runs" AS "run"
+                  WHERE "run"."user_message_id" = "message"."id"
+                     OR "run"."assistant_message_id" = "message"."id"
+                )
+              ORDER BY "message"."created_at" ASC, "message"."id" ASC
+              FOR UPDATE OF "message"
+            `);
+        const affectedConversationIds = [...new Set([
+          ...runs.map(({ conversationId }) => conversationId),
+          ...orphanMessages.map(({ conversationId }) => conversationId),
+        ])];
 
         if (runIds.length > 0) {
           await transaction.assistantReviewItem.deleteMany({ where: { runId: { in: runIds } } });
@@ -209,7 +267,10 @@ export class AssistantRetentionService implements OnModuleInit, OnModuleDestroy 
           runs: runIds.length,
           geoOperations: geoOperations.length,
           aggregateMetrics: metrics.length,
-          processed: runIds.length + orphanMessages.length + emptyConversationIds.length
+          processed: Math.max(
+            runIds.length + orphanMessages.length,
+            runCandidates.length + orphanCandidates.length,
+          ) + emptyConversationIds.length
             + geoOperations.length + metrics.length,
         };
       });

@@ -439,6 +439,62 @@ test('Assistant T06 retention drains more than one batch, prunes old turns in ac
     where: { id: fixtures.revision.id },
   }), revisionCountBefore);
 
+  const stalePendingRun = await createRun(
+    fixtures.owner.user.id,
+    old,
+    'Старый ожидающий запрос T06',
+    'Неиспользуемый ожидающий ответ T06',
+  );
+  const staleRunningRun = await createRun(
+    fixtures.owner.user.id,
+    old,
+    'Старый запрос с истёкшим lease T06',
+    'Неиспользуемый ответ с истёкшим lease T06',
+  );
+  const activeRunningRun = await createRun(
+    fixtures.owner.user.id,
+    old,
+    'Старый запрос с актуальным lease T06',
+    'Неиспользуемый ответ с актуальным lease T06',
+  );
+  await Promise.all([
+    prisma.assistantRun.update({
+      where: { id: stalePendingRun.id },
+      data: {
+        status: 'PENDING',
+        assistantMessageId: null,
+        startedAt: null,
+        completedAt: null,
+      },
+    }),
+    prisma.assistantRun.update({
+      where: { id: staleRunningRun.id },
+      data: {
+        status: 'RUNNING',
+        assistantMessageId: null,
+        leaseOwner: `retention-stale-${suffix}`,
+        leaseExpiresAt: new Date(now.getTime() - 1_000),
+        completedAt: null,
+      },
+    }),
+    prisma.assistantRun.update({
+      where: { id: activeRunningRun.id },
+      data: {
+        status: 'RUNNING',
+        assistantMessageId: null,
+        leaseOwner: `retention-active-${suffix}`,
+        leaseExpiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1_000),
+        completedAt: null,
+      },
+    }),
+  ]);
+
+  await new AssistantRetentionService(prisma).runCleanup(now);
+
+  assert.equal(await prisma.assistantRun.count({ where: { id: stalePendingRun.id } }), 0);
+  assert.equal(await prisma.assistantRun.count({ where: { id: staleRunningRun.id } }), 0);
+  assert.equal(await prisma.assistantRun.count({ where: { id: activeRunningRun.id } }), 1);
+
   const batchedConversation = await prisma.assistantConversation.create({
     data: {
       ownerUserId: fixtures.owner.user.id,
@@ -512,11 +568,12 @@ test('Assistant T06 retention drains more than one batch, prunes old turns in ac
       status: 'RUNNING',
       assistantMessageId: null,
       leaseOwner,
-      leaseExpiresAt: new Date(now.getTime() + 30_000),
+      leaseExpiresAt: new Date(now.getTime() - 1_000),
       startedAt: old,
       completedAt: null,
     },
   });
+  await prisma.assistantMessage.delete({ where: { id: processingRun.assistantMessageId } });
   let releaseCompletion;
   let markMessageInserted;
   const completionRelease = new Promise((resolve) => { releaseCompletion = resolve; });
