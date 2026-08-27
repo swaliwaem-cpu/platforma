@@ -2,8 +2,8 @@
 
 'use strict';
 
-const { randomUUID } = require('node:crypto');
-const { join } = require('node:path');
+const { createHash, randomUUID } = require('node:crypto');
+const { join, resolve } = require('node:path');
 const { NestFactory } = require('@nestjs/core');
 
 const { AssistantSourcesModule } = require('../dist/assistant/sources/assistant-sources.module.js');
@@ -91,7 +91,8 @@ async function runAssistantSourceDiscovery(input = {}) {
     const pendingProjects = projects.filter(({ projectKey }) => (
       !checkpointProjectKeys.has(projectKey)
     ));
-    const runId = dependencies.runId ?? randomUUID();
+    const runId = dependencies.runId
+      ?? createAssistantSourceDiscoveryOperationRunId(checkpointPath);
     const executionId = dependencies.executionId ?? randomUUID();
     const maximumEstimatedUsd = options.maxCostUsd;
     if (!options.live) {
@@ -120,7 +121,10 @@ async function runAssistantSourceDiscovery(input = {}) {
     if (typeof usageBudgets.reconcileExpiredReservations !== 'function') {
       throw new Error('ASSISTANT_SOURCE_DISCOVERY_USAGE_RECONCILIATION_REQUIRED');
     }
-    await usageBudgets.reconcileExpiredReservations({ operationRunId: runId });
+    await usageBudgets.reconcileExpiredReservations({
+      operationRunId: runId,
+      executionId,
+    });
     const results = pendingProjects.length === 0
       ? []
       : await discoverProjects(
@@ -526,6 +530,13 @@ function createReport(options, results, applyResults, context) {
       ingestionErrorCode: result.ingestionErrorCode,
     })),
   };
+}
+
+function createAssistantSourceDiscoveryOperationRunId(checkpointPath) {
+  const checkpointHash = createHash('sha256')
+    .update(resolve(checkpointPath))
+    .digest('hex');
+  return `assistant-source-discovery:${checkpointHash}`;
 }
 
 function assertLocalApplyEnvironment(environment) {

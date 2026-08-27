@@ -35,6 +35,9 @@ const firstDay = new Date('2098-08-27T00:00:00.000Z');
 const secondDay = new Date('2098-08-28T00:00:00.000Z');
 const thirdDay = new Date('2098-08-29T00:00:00.000Z');
 const fourthDay = new Date('2098-08-30T00:00:00.000Z');
+const fifthDay = new Date('2098-08-31T00:00:00.000Z');
+const sixthDay = new Date('2098-09-01T00:00:00.000Z');
+const seventhDay = new Date('2098-09-02T00:00:00.000Z');
 const assistantFixtures = [];
 
 process.env.ASSISTANT_MODULE_ENABLED = 'true';
@@ -46,6 +49,9 @@ before(async () => {
 
 after(async () => {
   await prisma.assistantAiUsageAttempt.deleteMany({ where: { provider } });
+  await prisma.assistantAiExecutionFence.deleteMany({
+    where: { operationRunId: { startsWith: `fix-token-${suffix}-` } },
+  });
   await prisma.assistantAiDailyBudget.deleteMany({ where: { provider } });
   for (const fixture of assistantFixtures) {
     await prisma.assistantRun.deleteMany({ where: { id: fixture.run.id } });
@@ -190,6 +196,158 @@ test('FIX-TOKEN atomically shares one provider/day USD budget across planner and
   });
   assert.equal(rollover.usageDate.toISOString(), secondDay.toISOString());
   assert.equal((await readBudget(secondDay)).reservedCostUsd.toFixed(8), '0.10000000');
+});
+
+test('FIX-TOKEN reserve retries reuse persisted server-derived dates', async () => {
+  const operationRunId = runId('server-derived-idempotency');
+  const executionId = randomUUID();
+  const input = {
+    provider,
+    model: 'gpt-5.6-luna',
+    operation: 'PLANNER',
+    operationRunId,
+    executionId,
+    attemptOrdinal: 1,
+    dailyBudgetUsd: '0.30000000',
+    reservedCostUsd: '0.10000000',
+    reasoningEffort: 'medium',
+    promptVersion: 'test-prompt-v1',
+    validatorVersion: 'test-validator-v1',
+    isFallback: false,
+  };
+
+  const first = await service.reserve({ ...input, now: seventhDay });
+  const repeated = await service.reserve({
+    ...input,
+    now: new Date(seventhDay.getTime() + 5),
+  });
+
+  assert.equal(repeated.id, first.id);
+  assert.equal(repeated.usageDate.toISOString(), first.usageDate.toISOString());
+  assert.equal(
+    repeated.reservationExpiresAt.toISOString(),
+    first.reservationExpiresAt.toISOString(),
+  );
+  await settleLuna(first);
+});
+
+test('FIX-TOKEN rejects a delayed reserve from an execution fenced by recovery', async () => {
+  const operationRunId = runId('delayed-old-execution');
+  const oldExecutionId = randomUUID();
+  const nextExecutionId = randomUUID();
+  const recoveryNow = new Date(fifthDay.getTime() + 60_000);
+  const expiredAt = new Date(recoveryNow.getTime() - 1);
+  await service.reserve({
+    provider,
+    model: 'gpt-5.6-luna',
+    operation: 'PLANNER',
+    operationRunId,
+    executionId: oldExecutionId,
+    attemptOrdinal: 1,
+    dailyBudgetUsd: '0.30000000',
+    reservedCostUsd: '0.10000000',
+    reasoningEffort: 'medium',
+    promptVersion: 'test-prompt-v1',
+    validatorVersion: 'test-validator-v1',
+    reservationExpiresAt: expiredAt,
+    now: new Date(recoveryNow.getTime() - 10_000),
+  });
+
+  await service.reconcileExpiredReservations({
+    operationRunId,
+    executionId: nextExecutionId,
+    now: recoveryNow,
+  });
+
+  await assert.rejects(
+    service.reserve({
+      provider,
+      model: 'gpt-5.6-terra',
+      operation: 'PLANNER',
+      operationRunId,
+      executionId: oldExecutionId,
+      attemptOrdinal: 2,
+      dailyBudgetUsd: '0.30000000',
+      reservedCostUsd: '0.10000000',
+      reasoningEffort: 'medium',
+      promptVersion: 'test-prompt-v1',
+      validatorVersion: 'test-validator-v1',
+      isFallback: true,
+      now: recoveryNow,
+    }),
+    (error) => error.code === 'ASSISTANT_AI_EXECUTION_STALE',
+  );
+
+  const next = await service.reserve({
+    provider,
+    model: 'gpt-5.6-luna',
+    operation: 'PLANNER',
+    operationRunId,
+    executionId: nextExecutionId,
+    attemptOrdinal: 1,
+    dailyBudgetUsd: '0.30000000',
+    reservedCostUsd: '0.10000000',
+    reasoningEffort: 'medium',
+    promptVersion: 'test-prompt-v1',
+    validatorVersion: 'test-validator-v1',
+    now: recoveryNow,
+  });
+  assert.equal(next.executionId, nextExecutionId);
+});
+
+test('FIX-TOKEN migration keeps a fail-closed compatibility path for the previous writer', async () => {
+  const operationRunId = runId('legacy-writer');
+  const usageDate = sixthDay;
+  const firstAttemptId = randomUUID();
+  const duplicateAttemptId = randomUUID();
+
+  await prisma.$transaction(async (transaction) => {
+    await transaction.$executeRaw`
+      INSERT INTO "assistant_ai_usage_attempts" (
+        "id", "operation_run_id", "attempt_ordinal", "operation", "provider",
+        "requested_model", "reasoning_effort", "prompt_version", "validator_version",
+        "is_fallback", "status", "pricing_catalog_version", "pricing_status",
+        "reserved_cost_usd", "usage_date"
+      ) VALUES (
+        CAST(${firstAttemptId} AS uuid), ${operationRunId}, 1, 'PLANNER', ${provider},
+        'gpt-5.6-luna', 'medium', 'legacy-prompt-v1', 'legacy-validator-v1',
+        false, 'RESERVED', 'openai-standard-pricing-2026-08-27', 'RESERVED',
+        CAST('0.01000000' AS numeric), ${usageDate}
+      )
+    `;
+    await transaction.$executeRaw`
+      INSERT INTO "assistant_ai_daily_budgets" (
+        "provider", "usage_date", "budget_limit_usd", "reserved_cost_usd"
+      ) VALUES (${provider}, ${usageDate}, CAST('0.30000000' AS numeric), CAST('0.01000000' AS numeric))
+      ON CONFLICT ("provider", "usage_date") DO UPDATE SET
+        "reserved_cost_usd" = "assistant_ai_daily_budgets"."reserved_cost_usd"
+          + EXCLUDED."reserved_cost_usd"
+    `;
+  });
+
+  const legacy = await prisma.assistantAiUsageAttempt.findUniqueOrThrow({
+    where: { id: firstAttemptId },
+  });
+  assert.match(legacy.executionId, /^[0-9a-f-]{36}$/u);
+  assert.ok(legacy.reservationExpiresAt > new Date());
+  assert.equal(legacy.dailyBudgetUsd, null);
+
+  await assert.rejects(
+    prisma.$executeRaw`
+      INSERT INTO "assistant_ai_usage_attempts" (
+        "id", "operation_run_id", "attempt_ordinal", "operation", "provider",
+        "requested_model", "reasoning_effort", "prompt_version", "validator_version",
+        "is_fallback", "status", "pricing_catalog_version", "pricing_status",
+        "reserved_cost_usd", "usage_date"
+      ) VALUES (
+        CAST(${duplicateAttemptId} AS uuid), ${operationRunId}, 1, 'PLANNER', ${provider},
+        'gpt-5.6-luna', 'medium', 'legacy-prompt-v1', 'legacy-validator-v1',
+        false, 'RESERVED', 'openai-standard-pricing-2026-08-27', 'RESERVED',
+        CAST('0.01000000' AS numeric), ${usageDate}
+      )
+    `,
+    (error) => error?.meta?.code === '23505',
+  );
 });
 
 test('FIX-TOKEN records an actual charge above reserve without hiding the overage', async () => {
@@ -407,6 +565,9 @@ test('FIX-TOKEN defers a recovered AssistantRun while its previous provider rese
 });
 
 test('FIX-TOKEN keeps provider/day budget atomic while settlement races reconciliation', async () => {
+  assert.equal(await prisma.assistantAiDailyBudget.findUnique({
+    where: { provider_usageDate: { provider, usageDate: fourthDay } },
+  }), null);
   const gate = deferred();
   const reservationInputs = Array.from({ length: 8 }, (_, index) => ({
     model: index % 2 === 0 ? 'gpt-5.6-luna' : 'gpt-5.6-terra',
@@ -441,7 +602,11 @@ test('FIX-TOKEN keeps provider/day budget atomic while settlement races reconcil
     .map(({ value }) => value);
   const rejected = reservationOutcomes.filter(({ status }) => status === 'rejected');
 
-  assert.equal(fulfilled.length, 6);
+  assert.equal(
+    fulfilled.length,
+    6,
+    JSON.stringify(rejected.map(({ reason }) => reason?.code ?? reason?.message)),
+  );
   assert.equal(rejected.length, 2);
   assert.equal(rejected.every(({ reason }) => (
     reason.code === 'ASSISTANT_AI_DAILY_BUDGET_EXHAUSTED'
@@ -466,10 +631,12 @@ test('FIX-TOKEN keeps provider/day budget atomic while settlement races reconcil
   const target = fulfilled.find(({ input }) => input.model === 'gpt-5.6-luna');
   assert.ok(target);
   const reconciliationNow = new Date(fourthDay.getTime() + 120_000);
+  const recoveryExecutionId = randomUUID();
   const settlementRace = await Promise.allSettled([
     settleLuna(target.reservation),
     ...Array.from({ length: 4 }, () => service.reconcileExpiredReservations({
       operationRunId: target.input.operationRunId,
+      executionId: recoveryExecutionId,
       now: reconciliationNow,
     })),
   ]);
@@ -494,10 +661,12 @@ test('FIX-TOKEN keeps provider/day budget atomic while settlement races reconcil
     settleLuna(target.reservation),
     service.reconcileExpiredReservations({
       operationRunId: target.input.operationRunId,
+      executionId: recoveryExecutionId,
       now: reconciliationNow,
     }),
     service.reconcileExpiredReservations({
       operationRunId: target.input.operationRunId,
+      executionId: recoveryExecutionId,
       now: reconciliationNow,
     }),
   ]);

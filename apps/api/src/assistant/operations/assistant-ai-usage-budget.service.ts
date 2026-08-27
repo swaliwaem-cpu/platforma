@@ -40,14 +40,19 @@ type AssistantAiUsageAttemptRow = {
   isFallback: boolean;
   status: string;
   pricingCatalogVersion: string;
-  dailyBudgetUsd: Prisma.Decimal;
+  dailyBudgetUsd: Prisma.Decimal | null;
   reservedCostUsd: Prisma.Decimal;
   usageDate: Date;
   reservationExpiresAt: Date;
 };
 
+type AssistantAiExecutionFenceRow = {
+  executionId: string;
+};
+
 const maximumProviderTimeoutMs = 120_000;
 const assistantAiSettlementGraceMs = 60_000;
+const assistantAiReservationSafetyMs = 5_000;
 const assistantAiSettlementAttempts = 3;
 
 export class AssistantAiUsageBudgetError extends Error {
@@ -122,6 +127,14 @@ export class AssistantAiUsageBudgetService {
     }
 
     return this.prisma.$transaction(async (transaction) => {
+      const fence = await lockOrCreateExecutionFence(
+        transaction,
+        operationRunId,
+        executionId,
+      );
+      if (fence.executionId !== executionId) {
+        throw new AssistantAiUsageBudgetError('ASSISTANT_AI_EXECUTION_STALE');
+      }
       const id = randomUUID();
       const inserted = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
         INSERT INTO "assistant_ai_usage_attempts" (
@@ -182,8 +195,6 @@ export class AssistantAiUsageBudgetService {
           isFallback,
           dailyBudgetUsd,
           reservedCostUsd,
-          usageDate,
-          reservationExpiresAt,
         })) {
           throw new AssistantAiUsageBudgetError('ASSISTANT_AI_ATTEMPT_CONFLICT');
         }
@@ -346,13 +357,21 @@ export class AssistantAiUsageBudgetService {
 
   async reconcileExpiredReservations(input: {
     operationRunId: string;
+    executionId: string;
     now?: Date;
   }) {
     const operationRunId = bounded(input.operationRunId, 160);
+    const executionId = uuid(input.executionId);
     const now = validDate(input.now ?? new Date());
     const result = await this.prisma.$transaction(async (transaction) => {
+      const fence = await lockOrCreateExecutionFence(
+        transaction,
+        operationRunId,
+        executionId,
+      );
       const attempts = await transaction.$queryRaw<Array<{
         id: string;
+        executionId: string;
         provider: string;
         usageDate: Date;
         reservedCostUsd: Prisma.Decimal;
@@ -360,6 +379,7 @@ export class AssistantAiUsageBudgetService {
       }>>(Prisma.sql`
         SELECT
           "id",
+          "execution_id" AS "executionId",
           "provider",
           "usage_date" AS "usageDate",
           "reserved_cost_usd" AS "reservedCostUsd",
@@ -379,6 +399,12 @@ export class AssistantAiUsageBudgetService {
           ? attempt.reservationExpiresAt
           : latest;
       }, null);
+      const activeExecutionIds = new Set(attempts
+        .filter(({ reservationExpiresAt }) => reservationExpiresAt.getTime() > now.getTime())
+        .map(({ executionId: activeExecutionId }) => activeExecutionId));
+      if (activeUntil !== null && activeExecutionIds.size !== 1) {
+        throw new AssistantAiUsageBudgetError('ASSISTANT_AI_EXECUTION_STATE_INVALID');
+      }
 
       const budgetGroups = groupReservationCosts(expiredAttempts);
       for (const group of budgetGroups) {
@@ -429,6 +455,19 @@ export class AssistantAiUsageBudgetService {
           throw new AssistantAiUsageBudgetError('ASSISTANT_AI_ATTEMPT_RECONCILIATION_FAILED');
         }
       }
+
+      const fencedExecutionId = activeUntil
+        ? [...activeExecutionIds][0]!
+        : executionId;
+      const fenceUpdated = await transaction.$executeRaw(Prisma.sql`
+        UPDATE "assistant_ai_execution_fences"
+        SET "execution_id" = CAST(${fencedExecutionId} AS uuid), "updated_at" = ${now}
+        WHERE "operation_run_id" = ${operationRunId}
+          AND "execution_id" = CAST(${fence.executionId} AS uuid)
+      `);
+      if (fenceUpdated !== 1) {
+        throw new AssistantAiUsageBudgetError('ASSISTANT_AI_EXECUTION_FENCE_UPDATE_FAILED');
+      }
       return { reconciledCount: expiredAttempts.length, activeUntil };
     });
 
@@ -478,7 +517,10 @@ export function createAssistantAiReservationExpiresAt(
     || providerTimeoutMs > maximumProviderTimeoutMs) {
     throw new AssistantAiUsageBudgetError('ASSISTANT_AI_PROVIDER_TIMEOUT_INVALID');
   }
-  return new Date(validDate(now).getTime() + providerTimeoutMs + assistantAiSettlementGraceMs);
+  return new Date(validDate(now).getTime()
+    + providerTimeoutMs
+    + assistantAiSettlementGraceMs
+    + assistantAiReservationSafetyMs);
 }
 
 function sameReservationParameters(
@@ -497,8 +539,6 @@ function sameReservationParameters(
     isFallback: boolean;
     dailyBudgetUsd: string;
     reservedCostUsd: string;
-    usageDate: Date;
-    reservationExpiresAt: Date;
   },
 ) {
   return existing.operationRunId === expected.operationRunId
@@ -513,10 +553,8 @@ function sameReservationParameters(
     && existing.validatorVersion === expected.validatorVersion
     && existing.isFallback === expected.isFallback
     && existing.pricingCatalogVersion === ASSISTANT_AI_PRICING_CATALOG_VERSION
-    && existing.dailyBudgetUsd.toFixed(8) === expected.dailyBudgetUsd
-    && existing.reservedCostUsd.toFixed(8) === expected.reservedCostUsd
-    && existing.usageDate.getTime() === expected.usageDate.getTime()
-    && existing.reservationExpiresAt.getTime() === expected.reservationExpiresAt.getTime();
+    && existing.dailyBudgetUsd?.toFixed(8) === expected.dailyBudgetUsd
+    && existing.reservedCostUsd.toFixed(8) === expected.reservedCostUsd;
 }
 
 function toReservation(attempt: AssistantAiUsageAttemptRow): AssistantAiUsageReservation {
@@ -562,6 +600,36 @@ function groupReservationCosts(attempts: Array<{
     usageDate: group.usageDate,
     reservedCostUsd: formatAssistantUsd(group.reservedCostUnits),
   }));
+}
+
+async function lockOrCreateExecutionFence(
+  transaction: Prisma.TransactionClient,
+  operationRunId: string,
+  executionId: string,
+) {
+  const inserted = await transaction.$queryRaw<AssistantAiExecutionFenceRow[]>(Prisma.sql`
+    INSERT INTO "assistant_ai_execution_fences" (
+      "operation_run_id", "execution_id", "updated_at"
+    ) VALUES (
+      ${operationRunId}, CAST(${executionId} AS uuid), NOW()
+    )
+    ON CONFLICT ("operation_run_id") DO NOTHING
+    RETURNING "execution_id" AS "executionId"
+  `);
+  const created = inserted[0];
+  if (created) return created;
+
+  const existing = await transaction.$queryRaw<AssistantAiExecutionFenceRow[]>(Prisma.sql`
+    SELECT "execution_id" AS "executionId"
+    FROM "assistant_ai_execution_fences"
+    WHERE "operation_run_id" = ${operationRunId}
+    FOR UPDATE
+  `);
+  const fence = existing[0];
+  if (!fence || existing.length !== 1) {
+    throw new AssistantAiUsageBudgetError('ASSISTANT_AI_EXECUTION_FENCE_MISSING');
+  }
+  return fence;
 }
 
 function bounded(value: string, maximumLength: number) {

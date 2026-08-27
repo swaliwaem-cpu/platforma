@@ -141,8 +141,12 @@ export class AssistantRunProcessor implements OnModuleInit, OnModuleDestroy {
     if (claimed.count !== 1) return;
 
     try {
+      const executionId = randomUUID();
       try {
-        await this.aiUsageBudgets.reconcileExpiredReservations({ operationRunId: runId });
+        await this.aiUsageBudgets.reconcileExpiredReservations({
+          operationRunId: runId,
+          executionId,
+        });
       } catch (error) {
         if (error instanceof AssistantAiUsageBudgetError
           && error.code === 'ASSISTANT_AI_RESERVATION_ACTIVE'
@@ -152,7 +156,6 @@ export class AssistantRunProcessor implements OnModuleInit, OnModuleDestroy {
         }
         throw error;
       }
-      const executionId = randomUUID();
       const run = await this.prisma.assistantRun.findUniqueOrThrow({
         where: { id: runId },
         include: { userMessage: true },

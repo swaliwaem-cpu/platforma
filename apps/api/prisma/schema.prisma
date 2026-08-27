@@ -727,6 +727,15 @@ model AssistantAiDailyBudget {
   @@map("assistant_ai_daily_budgets")
 }
 
+model AssistantAiExecutionFence {
+  operationRunId String   @id @map("operation_run_id") @db.VarChar(160)
+  executionId    String   @map("execution_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@map("assistant_ai_execution_fences")
+}
+
 model AssistantAiUsageAttempt {
   id                    String    @id @default(uuid()) @db.Uuid
   operationRunId        String    @map("operation_run_id") @db.VarChar(160)
@@ -753,7 +762,7 @@ model AssistantAiUsageAttempt {
   webSearchCalls        Int?      @map("web_search_calls")
   pricingCatalogVersion String    @map("pricing_catalog_version") @db.VarChar(120)
   pricingStatus         String    @map("pricing_status") @db.VarChar(32)
-  dailyBudgetUsd        Decimal   @map("daily_budget_usd") @db.Decimal(18, 8)
+  dailyBudgetUsd        Decimal?  @map("daily_budget_usd") @db.Decimal(18, 8)
   reservedCostUsd       Decimal   @map("reserved_cost_usd") @db.Decimal(18, 8)
   estimatedCostUsd      Decimal?  @map("estimated_cost_usd") @db.Decimal(18, 8)
   chargedCostUsd        Decimal?  @map("charged_cost_usd") @db.Decimal(18, 8)
@@ -764,7 +773,6 @@ model AssistantAiUsageAttempt {
   settledAt             DateTime? @map("settled_at")
 
   @@unique([operationRunId, executionId, attemptOrdinal], map: "assistant_ai_usage_attempts_run_execution_ordinal_key")
-  @@index([operationRunId, status, reservationExpiresAt], map: "assistant_ai_usage_attempts_run_status_expiry_idx")
   @@index([provider, usageDate, status])
   @@index([operation, createdAt])
   @@map("assistant_ai_usage_attempts")

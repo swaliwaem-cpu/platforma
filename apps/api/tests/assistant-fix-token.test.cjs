@@ -608,7 +608,7 @@ test('FIX-TOKEN repeat uses the checkpoint without discovery while refresh runs 
   }
 });
 
-test('FIX-TOKEN CLI reconciles before provider construction and isolates each execution', async () => {
+test('FIX-TOKEN CLI keeps one logical operation while isolating each execution', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-execution-'));
   const checkpointPath = join(directory, 'checkpoint.json');
   const project = {
@@ -710,7 +710,7 @@ test('FIX-TOKEN CLI reconciles before provider construction and isolates each ex
 
     assert.equal(reconciledRunIds.length, 2);
     assert.deepEqual(providerRunIds, reconciledRunIds);
-    assert.notEqual(reconciledRunIds[0], reconciledRunIds[1]);
+    assert.equal(reconciledRunIds[0], reconciledRunIds[1]);
     assert.equal(executionIds.length, 2);
     assert.notEqual(executionIds[0], executionIds[1]);
     executionIds.forEach((executionId) => assert.match(
