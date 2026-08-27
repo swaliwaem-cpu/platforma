@@ -780,6 +780,9 @@ export class AssistantSourceDiscoveryService {
       } catch {
         // A narrow page without project evidence is replaced through the bounded alternative search below.
       }
+      const linkedCatalog = linkedDeveloperPages.pages.find(({ page }) => (
+        findProjectCatalogEvidence(project, page, developerAllowedHosts) !== null
+      ));
       if (renderedCandidate && findProjectCatalogEvidence(
         project,
         renderedCandidate,
@@ -788,12 +791,7 @@ export class AssistantSourceDiscoveryService {
         developerPage = renderedCandidate;
         this.developerCatalogCache.set(developerCandidateUrl, Promise.resolve(renderedCandidate));
         this.renderedDeveloperCatalogUrls.add(developerCandidateUrl);
-      } else if (linkedDeveloperPages.pages.some(({ page }) => (
-        findProjectCatalogEvidence(project, page, developerAllowedHosts) !== null
-      ))) {
-        const linkedCatalog = linkedDeveloperPages.pages.find(({ page }) => (
-          findProjectCatalogEvidence(project, page, developerAllowedHosts) !== null
-        ))!;
+      } else if (linkedCatalog) {
         developerPage = linkedCatalog.page;
         developerCandidateUrl = linkedCatalog.canonicalUrl;
       } else {
