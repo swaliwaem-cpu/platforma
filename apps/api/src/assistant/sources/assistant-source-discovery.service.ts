@@ -59,7 +59,6 @@ import {
 } from '../operations/assistant-ai-cost';
 import {
   AssistantAiUsageBudgetService,
-  createAssistantAiReservationExpiresAt,
   type AssistantAiUsageReservation,
 } from '../operations/assistant-ai-usage-budget.service';
 
@@ -1052,7 +1051,7 @@ export class AssistantSourceDiscoveryService {
         promptVersion: ASSISTANT_SOURCE_DISCOVERY_PROMPT_VERSION,
         validatorVersion: ASSISTANT_SOURCE_DISCOVERY_VALIDATOR_VERSION,
         isFallback,
-        reservationExpiresAt: createAssistantAiReservationExpiresAt(this.timeoutMs),
+        providerTimeoutMs: this.timeoutMs,
       });
     } catch (error) {
       this.runReservedCostUnits -= estimated.estimatedUsdUnits;

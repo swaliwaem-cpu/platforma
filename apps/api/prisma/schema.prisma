@@ -740,7 +740,8 @@ model AssistantAiUsageAttempt {
   id                    String    @id @default(uuid()) @db.Uuid
   operationRunId        String    @map("operation_run_id") @db.VarChar(160)
   executionId           String    @map("execution_id") @db.Uuid
-  attemptOrdinal        Int       @map("attempt_ordinal") @db.SmallInt
+  attemptOrdinal        Int       @map("execution_attempt_ordinal") @db.SmallInt
+  compatibilityOrdinal  Int       @default(dbgenerated("(-nextval('assistant_ai_usage_attempt_compat_ordinal_seq'::regclass))")) @map("attempt_ordinal")
   operation             String    @db.VarChar(40)
   provider              String    @db.VarChar(40)
   requestedModel        String    @map("requested_model") @db.VarChar(160)
@@ -769,6 +770,7 @@ model AssistantAiUsageAttempt {
   durationMs            Int?      @map("duration_ms")
   usageDate             DateTime  @map("usage_date") @db.Date
   reservationExpiresAt  DateTime  @map("reservation_expires_at")
+  providerTimeoutMs     Int?      @map("provider_timeout_ms")
   createdAt             DateTime  @default(now()) @map("created_at")
   settledAt             DateTime? @map("settled_at")
 

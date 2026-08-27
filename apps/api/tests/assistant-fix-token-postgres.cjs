@@ -38,6 +38,7 @@ const fourthDay = new Date('2098-08-30T00:00:00.000Z');
 const fifthDay = new Date('2098-08-31T00:00:00.000Z');
 const sixthDay = new Date('2098-09-01T00:00:00.000Z');
 const seventhDay = new Date('2098-09-02T00:00:00.000Z');
+const eighthDay = new Date('2098-09-03T00:00:00.000Z');
 const assistantFixtures = [];
 
 process.env.ASSISTANT_MODULE_ENABLED = 'true';
@@ -231,6 +232,38 @@ test('FIX-TOKEN reserve retries reuse persisted server-derived dates', async () 
   await settleLuna(first);
 });
 
+test('FIX-TOKEN reserve rejects a mismatched explicit expiry', async () => {
+  const operationRunId = runId('explicit-expiry-conflict');
+  const executionId = randomUUID();
+  const reservationExpiresAt = new Date(eighthDay.getTime() + 300_000);
+  const input = {
+    provider,
+    model: 'gpt-5.6-luna',
+    operation: 'PLANNER',
+    operationRunId,
+    executionId,
+    attemptOrdinal: 1,
+    dailyBudgetUsd: '0.30000000',
+    reservedCostUsd: '0.10000000',
+    reasoningEffort: 'medium',
+    promptVersion: 'test-prompt-v1',
+    validatorVersion: 'test-validator-v1',
+    isFallback: false,
+    reservationExpiresAt,
+    now: eighthDay,
+  };
+  const first = await service.reserve(input);
+
+  await assert.rejects(
+    service.reserve({
+      ...input,
+      reservationExpiresAt: new Date(reservationExpiresAt.getTime() + 1),
+    }),
+    (error) => error.code === 'ASSISTANT_AI_ATTEMPT_CONFLICT',
+  );
+  await settleLuna(first);
+});
+
 test('FIX-TOKEN rejects a delayed reserve from an execution fenced by recovery', async () => {
   const operationRunId = runId('delayed-old-execution');
   const oldExecutionId = randomUUID();
@@ -301,20 +334,25 @@ test('FIX-TOKEN migration keeps a fail-closed compatibility path for the previou
   const firstAttemptId = randomUUID();
   const duplicateAttemptId = randomUUID();
 
-  await prisma.$transaction(async (transaction) => {
-    await transaction.$executeRaw`
+  const insertWithPreviousWriter = (transaction, attemptId) => transaction.$queryRaw`
       INSERT INTO "assistant_ai_usage_attempts" (
         "id", "operation_run_id", "attempt_ordinal", "operation", "provider",
         "requested_model", "reasoning_effort", "prompt_version", "validator_version",
         "is_fallback", "status", "pricing_catalog_version", "pricing_status",
         "reserved_cost_usd", "usage_date"
       ) VALUES (
-        CAST(${firstAttemptId} AS uuid), ${operationRunId}, 1, 'PLANNER', ${provider},
+        CAST(${attemptId} AS uuid), ${operationRunId}, 1, 'PLANNER', ${provider},
         'gpt-5.6-luna', 'medium', 'legacy-prompt-v1', 'legacy-validator-v1',
         false, 'RESERVED', 'openai-standard-pricing-2026-08-27', 'RESERVED',
         CAST('0.01000000' AS numeric), ${usageDate}
       )
+      ON CONFLICT ("operation_run_id", "attempt_ordinal") DO NOTHING
+      RETURNING "id"
     `;
+
+  await prisma.$transaction(async (transaction) => {
+    const inserted = await insertWithPreviousWriter(transaction, firstAttemptId);
+    assert.equal(inserted.length, 1);
     await transaction.$executeRaw`
       INSERT INTO "assistant_ai_daily_budgets" (
         "provider", "usage_date", "budget_limit_usd", "reserved_cost_usd"
@@ -332,22 +370,7 @@ test('FIX-TOKEN migration keeps a fail-closed compatibility path for the previou
   assert.ok(legacy.reservationExpiresAt > new Date());
   assert.equal(legacy.dailyBudgetUsd, null);
 
-  await assert.rejects(
-    prisma.$executeRaw`
-      INSERT INTO "assistant_ai_usage_attempts" (
-        "id", "operation_run_id", "attempt_ordinal", "operation", "provider",
-        "requested_model", "reasoning_effort", "prompt_version", "validator_version",
-        "is_fallback", "status", "pricing_catalog_version", "pricing_status",
-        "reserved_cost_usd", "usage_date"
-      ) VALUES (
-        CAST(${duplicateAttemptId} AS uuid), ${operationRunId}, 1, 'PLANNER', ${provider},
-        'gpt-5.6-luna', 'medium', 'legacy-prompt-v1', 'legacy-validator-v1',
-        false, 'RESERVED', 'openai-standard-pricing-2026-08-27', 'RESERVED',
-        CAST('0.01000000' AS numeric), ${usageDate}
-      )
-    `,
-    (error) => error?.meta?.code === '23505',
-  );
+  assert.deepEqual(await insertWithPreviousWriter(prisma, duplicateAttemptId), []);
 });
 
 test('FIX-TOKEN records an actual charge above reserve without hiding the overage', async () => {

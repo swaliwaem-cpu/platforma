@@ -16,7 +16,6 @@ import {
 } from './assistant-ai-cost';
 import {
   AssistantAiUsageBudgetService,
-  createAssistantAiReservationExpiresAt,
   readAssistantDailyUsdBudget,
   type AssistantAiUsageReservation,
 } from './assistant-ai-usage-budget.service';
@@ -105,7 +104,7 @@ export class AssistantModelUsagePolicyService implements AssistantPlannerUsagePo
         promptVersion: ASSISTANT_PLANNER_PROMPT_VERSION,
         validatorVersion: 'assistant-query-planner-validator-v1',
         isFallback: request.model.endsWith('-terra'),
-        reservationExpiresAt: createAssistantAiReservationExpiresAt(this.providerTimeoutMs),
+        providerTimeoutMs: this.providerTimeoutMs,
       });
     } catch (error) {
       try {

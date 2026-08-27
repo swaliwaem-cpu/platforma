@@ -40,6 +40,7 @@ type AssistantAiUsageAttemptRow = {
   isFallback: boolean;
   status: string;
   pricingCatalogVersion: string;
+  providerTimeoutMs: number | null;
   dailyBudgetUsd: Prisma.Decimal | null;
   reservedCostUsd: Prisma.Decimal;
   usageDate: Date;
@@ -86,6 +87,7 @@ export class AssistantAiUsageBudgetService {
     validatorVersion?: string | null;
     isFallback?: boolean;
     reservationExpiresAt?: Date;
+    providerTimeoutMs?: number;
     now?: Date;
   }): Promise<AssistantAiUsageReservation> {
     const now = validDate(input.now ?? new Date());
@@ -102,8 +104,15 @@ export class AssistantAiUsageBudgetService {
     const isFallback = input.isFallback ?? false;
     const dailyBudgetUsd = formatAssistantUsd(parseAssistantUsd(input.dailyBudgetUsd));
     const reservedCostUsd = formatAssistantUsd(parseAssistantUsd(input.reservedCostUsd));
-    const reservationExpiresAt = validDate(input.reservationExpiresAt
-      ?? createAssistantAiReservationExpiresAt(maximumProviderTimeoutMs, now));
+    if (input.reservationExpiresAt !== undefined && input.providerTimeoutMs !== undefined) {
+      throw new AssistantAiUsageBudgetError('ASSISTANT_AI_RESERVATION_EXPIRY_CONFLICT');
+    }
+    const providerTimeoutMs = input.reservationExpiresAt === undefined
+      ? validProviderTimeoutMs(input.providerTimeoutMs ?? maximumProviderTimeoutMs)
+      : null;
+    const reservationExpiresAt = input.reservationExpiresAt === undefined
+      ? createAssistantAiReservationExpiresAt(providerTimeoutMs!, now)
+      : validDate(input.reservationExpiresAt);
     if (parseAssistantUsd(dailyBudgetUsd) === 0n || parseAssistantUsd(reservedCostUsd) === 0n) {
       throw new AssistantAiUsageBudgetError('ASSISTANT_AI_BUDGET_VALUE_INVALID');
     }
@@ -138,19 +147,20 @@ export class AssistantAiUsageBudgetService {
       const id = randomUUID();
       const inserted = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
         INSERT INTO "assistant_ai_usage_attempts" (
-          "id", "operation_run_id", "execution_id", "attempt_ordinal", "operation", "provider",
+          "id", "operation_run_id", "execution_id", "execution_attempt_ordinal", "operation", "provider",
           "requested_model", "service_tier", "reasoning_effort", "prompt_version", "validator_version",
           "is_fallback", "status", "pricing_catalog_version", "pricing_status",
-          "daily_budget_usd", "reserved_cost_usd", "usage_date", "reservation_expires_at"
+          "daily_budget_usd", "reserved_cost_usd", "usage_date", "reservation_expires_at",
+          "provider_timeout_ms"
         ) VALUES (
           CAST(${id} AS uuid), ${operationRunId}, CAST(${executionId} AS uuid), ${attemptOrdinal},
           ${input.operation}, ${provider}, ${model}, ${serviceTier},
           ${reasoningEffort}, ${promptVersion}, ${validatorVersion}, ${isFallback},
           'RESERVED', ${ASSISTANT_AI_PRICING_CATALOG_VERSION}, 'RESERVED',
           CAST(${dailyBudgetUsd} AS numeric), CAST(${reservedCostUsd} AS numeric),
-          ${usageDate}, ${reservationExpiresAt}
+          ${usageDate}, ${reservationExpiresAt}, ${providerTimeoutMs}
         )
-        ON CONFLICT ("operation_run_id", "execution_id", "attempt_ordinal") DO NOTHING
+        ON CONFLICT ("operation_run_id", "execution_id", "execution_attempt_ordinal") DO NOTHING
         RETURNING "id"
       `);
       if (inserted.length === 0) {
@@ -159,7 +169,7 @@ export class AssistantAiUsageBudgetService {
             "id",
             "operation_run_id" AS "operationRunId",
             "execution_id" AS "executionId",
-            "attempt_ordinal" AS "attemptOrdinal",
+            "execution_attempt_ordinal" AS "attemptOrdinal",
             "operation",
             "provider",
             "requested_model" AS "requestedModel",
@@ -170,6 +180,7 @@ export class AssistantAiUsageBudgetService {
             "is_fallback" AS "isFallback",
             "status",
             "pricing_catalog_version" AS "pricingCatalogVersion",
+            "provider_timeout_ms" AS "providerTimeoutMs",
             "daily_budget_usd" AS "dailyBudgetUsd",
             "reserved_cost_usd" AS "reservedCostUsd",
             "usage_date" AS "usageDate",
@@ -177,7 +188,7 @@ export class AssistantAiUsageBudgetService {
           FROM "assistant_ai_usage_attempts"
           WHERE "operation_run_id" = ${operationRunId}
             AND "execution_id" = CAST(${executionId} AS uuid)
-            AND "attempt_ordinal" = ${attemptOrdinal}
+            AND "execution_attempt_ordinal" = ${attemptOrdinal}
           FOR UPDATE
         `);
         const existing = existingRows[0];
@@ -193,8 +204,10 @@ export class AssistantAiUsageBudgetService {
           promptVersion,
           validatorVersion,
           isFallback,
+          providerTimeoutMs,
           dailyBudgetUsd,
           reservedCostUsd,
+          reservationExpiresAt,
         })) {
           throw new AssistantAiUsageBudgetError('ASSISTANT_AI_ATTEMPT_CONFLICT');
         }
@@ -512,11 +525,7 @@ export function createAssistantAiReservationExpiresAt(
   providerTimeoutMs: number,
   now = new Date(),
 ) {
-  if (!Number.isSafeInteger(providerTimeoutMs)
-    || providerTimeoutMs < 0
-    || providerTimeoutMs > maximumProviderTimeoutMs) {
-    throw new AssistantAiUsageBudgetError('ASSISTANT_AI_PROVIDER_TIMEOUT_INVALID');
-  }
+  validProviderTimeoutMs(providerTimeoutMs);
   return new Date(validDate(now).getTime()
     + providerTimeoutMs
     + assistantAiSettlementGraceMs
@@ -537,8 +546,10 @@ function sameReservationParameters(
     promptVersion: string | null;
     validatorVersion: string | null;
     isFallback: boolean;
+    providerTimeoutMs: number | null;
     dailyBudgetUsd: string;
     reservedCostUsd: string;
+    reservationExpiresAt: Date;
   },
 ) {
   return existing.operationRunId === expected.operationRunId
@@ -553,8 +564,11 @@ function sameReservationParameters(
     && existing.validatorVersion === expected.validatorVersion
     && existing.isFallback === expected.isFallback
     && existing.pricingCatalogVersion === ASSISTANT_AI_PRICING_CATALOG_VERSION
+    && existing.providerTimeoutMs === expected.providerTimeoutMs
     && existing.dailyBudgetUsd?.toFixed(8) === expected.dailyBudgetUsd
-    && existing.reservedCostUsd.toFixed(8) === expected.reservedCostUsd;
+    && existing.reservedCostUsd.toFixed(8) === expected.reservedCostUsd
+    && (expected.providerTimeoutMs !== null
+      || existing.reservationExpiresAt.getTime() === expected.reservationExpiresAt.getTime());
 }
 
 function toReservation(attempt: AssistantAiUsageAttemptRow): AssistantAiUsageReservation {
@@ -657,6 +671,13 @@ function uuid(value: string) {
 function positiveSmallInt(value: number) {
   if (!Number.isSafeInteger(value) || value < 1 || value > 32_767) {
     throw new AssistantAiUsageBudgetError('ASSISTANT_AI_TELEMETRY_INVALID');
+  }
+  return value;
+}
+
+function validProviderTimeoutMs(value: number) {
+  if (!Number.isSafeInteger(value) || value < 0 || value > maximumProviderTimeoutMs) {
+    throw new AssistantAiUsageBudgetError('ASSISTANT_AI_PROVIDER_TIMEOUT_INVALID');
   }
   return value;
 }
