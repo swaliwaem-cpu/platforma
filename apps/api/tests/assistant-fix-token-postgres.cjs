@@ -31,6 +31,7 @@ const prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
 const service = new AssistantAiUsageBudgetService(prisma);
 const suffix = randomUUID().replaceAll('-', '').slice(0, 12);
 const provider = `openai-fix-${suffix}`;
+const expiryProvider = `openai-expiry-${suffix}`;
 const firstDay = new Date('2098-08-27T00:00:00.000Z');
 const secondDay = new Date('2098-08-28T00:00:00.000Z');
 const thirdDay = new Date('2098-08-29T00:00:00.000Z');
@@ -49,11 +50,15 @@ before(async () => {
 });
 
 after(async () => {
-  await prisma.assistantAiUsageAttempt.deleteMany({ where: { provider } });
+  await prisma.assistantAiUsageAttempt.deleteMany({
+    where: { provider: { in: [provider, expiryProvider] } },
+  });
   await prisma.assistantAiExecutionFence.deleteMany({
     where: { operationRunId: { startsWith: `fix-token-${suffix}-` } },
   });
-  await prisma.assistantAiDailyBudget.deleteMany({ where: { provider } });
+  await prisma.assistantAiDailyBudget.deleteMany({
+    where: { provider: { in: [provider, expiryProvider] } },
+  });
   for (const fixture of assistantFixtures) {
     await prisma.assistantRun.deleteMany({ where: { id: fixture.run.id } });
     await prisma.assistantMessage.deleteMany({ where: { conversationId: fixture.conversation.id } });
@@ -232,6 +237,71 @@ test('FIX-TOKEN reserve retries reuse persisted server-derived dates', async () 
   await settleLuna(first);
 });
 
+test('FIX-TOKEN derived expiry starts after a blocking daily-budget wait', async () => {
+  const operationRunId = runId('derived-expiry-after-lock');
+  const executionId = randomUUID();
+  const usageDate = new Date();
+  usageDate.setUTCHours(0, 0, 0, 0);
+  await prisma.assistantAiDailyBudget.upsert({
+    where: { provider_usageDate: { provider: expiryProvider, usageDate } },
+    create: {
+      provider: expiryProvider,
+      usageDate,
+      budgetLimitUsd: '0.30000000',
+      reservedCostUsd: '0.00000000',
+      settledCostUsd: '0.00000000',
+    },
+    update: {
+      budgetLimitUsd: '0.30000000',
+      reservedCostUsd: '0.00000000',
+      settledCostUsd: '0.00000000',
+    },
+  });
+  const locked = deferred();
+  const release = deferred();
+  const blocker = prisma.$transaction(async (transaction) => {
+    const rows = await transaction.$queryRaw`
+      SELECT "provider"
+      FROM "assistant_ai_daily_budgets"
+      WHERE "provider" = ${expiryProvider} AND "usage_date" = ${usageDate}
+      FOR UPDATE
+    `;
+    assert.equal(rows.length, 1);
+    locked.resolve();
+    await release.promise;
+  });
+  await locked.promise;
+
+  const reserveStartedAt = Date.now();
+  const reservePromise = service.reserve({
+    provider: expiryProvider,
+    model: 'gpt-5.6-luna',
+    operation: 'PLANNER',
+    operationRunId,
+    executionId,
+    attemptOrdinal: 1,
+    dailyBudgetUsd: '0.30000000',
+    reservedCostUsd: '0.10000000',
+    reasoningEffort: 'medium',
+    promptVersion: 'test-prompt-v1',
+    validatorVersion: 'test-validator-v1',
+    isFallback: false,
+    providerTimeoutMs: 0,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 1_000));
+  release.resolve();
+  const reservation = await reservePromise;
+  await blocker;
+  const reserveCompletedAt = Date.now();
+
+  assert.ok(reserveCompletedAt - reserveStartedAt >= 900);
+  assert.ok(
+    reservation.reservationExpiresAt.getTime() - reserveCompletedAt >= 64_500,
+    'derived expiry must retain timeout, grace and safety after lock wait',
+  );
+  await settleLuna(reservation);
+});
+
 test('FIX-TOKEN reserve rejects a mismatched explicit expiry', async () => {
   const operationRunId = runId('explicit-expiry-conflict');
   const executionId = randomUUID();
@@ -353,6 +423,7 @@ test('FIX-TOKEN migration keeps a fail-closed compatibility path for the previou
   await prisma.$transaction(async (transaction) => {
     const inserted = await insertWithPreviousWriter(transaction, firstAttemptId);
     assert.equal(inserted.length, 1);
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
     await transaction.$executeRaw`
       INSERT INTO "assistant_ai_daily_budgets" (
         "provider", "usage_date", "budget_limit_usd", "reserved_cost_usd"
@@ -362,12 +433,17 @@ test('FIX-TOKEN migration keeps a fail-closed compatibility path for the previou
           + EXCLUDED."reserved_cost_usd"
     `;
   });
+  const legacyCommitCompletedAt = Date.now();
 
   const legacy = await prisma.assistantAiUsageAttempt.findUniqueOrThrow({
     where: { id: firstAttemptId },
   });
   assert.match(legacy.executionId, /^[0-9a-f-]{36}$/u);
   assert.ok(legacy.reservationExpiresAt > new Date());
+  assert.ok(
+    legacy.reservationExpiresAt.getTime() - legacyCommitCompletedAt >= 239_500,
+    'legacy expiry must be refreshed at the end of its transaction',
+  );
   assert.equal(legacy.dailyBudgetUsd, null);
 
   assert.deepEqual(await insertWithPreviousWriter(prisma, duplicateAttemptId), []);

@@ -58,13 +58,13 @@ BEGIN
     END IF;
 
     IF NEW."reservation_expires_at" IS NULL THEN
-        NEW."reservation_expires_at" := CURRENT_TIMESTAMP + INTERVAL '4 minutes';
+        NEW."reservation_expires_at" := clock_timestamp() + INTERVAL '4 minutes';
     END IF;
 
     INSERT INTO "assistant_ai_execution_fences" (
         "operation_run_id", "execution_id", "updated_at"
     ) VALUES (
-        NEW."operation_run_id", NEW."execution_id", CURRENT_TIMESTAMP
+        NEW."operation_run_id", NEW."execution_id", clock_timestamp()
     )
     ON CONFLICT ("operation_run_id") DO NOTHING;
 
@@ -85,6 +85,29 @@ CREATE TRIGGER "assistant_ai_usage_attempts_recovery_fields_trigger"
 BEFORE INSERT ON "assistant_ai_usage_attempts"
 FOR EACH ROW
 EXECUTE FUNCTION "assistant_ai_usage_attempts_fill_recovery_fields"();
+
+CREATE FUNCTION "assistant_ai_usage_attempts_refresh_legacy_expiry"()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NEW."attempt_ordinal" > 0 AND NEW."status" = 'RESERVED' THEN
+        UPDATE "assistant_ai_usage_attempts"
+        SET "reservation_expires_at" = GREATEST(
+            "reservation_expires_at",
+            clock_timestamp() + INTERVAL '4 minutes'
+        )
+        WHERE "id" = NEW."id" AND "status" = 'RESERVED';
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+CREATE CONSTRAINT TRIGGER "assistant_ai_usage_attempts_legacy_expiry_trigger"
+AFTER INSERT ON "assistant_ai_usage_attempts"
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW
+EXECUTE FUNCTION "assistant_ai_usage_attempts_refresh_legacy_expiry"();
 
 UPDATE "assistant_ai_usage_attempts"
 SET "execution_id" = (
@@ -108,7 +131,7 @@ UPDATE "assistant_ai_usage_attempts"
 SET "reservation_expires_at" = CASE
     WHEN "status" = 'RESERVED' THEN GREATEST(
         "created_at" + INTERVAL '4 minutes',
-        CURRENT_TIMESTAMP + INTERVAL '4 minutes'
+        clock_timestamp() + INTERVAL '4 minutes'
     )
     ELSE COALESCE("settled_at", "created_at")
 END;
@@ -116,7 +139,7 @@ END;
 INSERT INTO "assistant_ai_execution_fences" (
     "operation_run_id", "execution_id", "updated_at"
 )
-SELECT "operation_run_id", MIN("execution_id"::text)::uuid, CURRENT_TIMESTAMP
+SELECT "operation_run_id", MIN("execution_id"::text)::uuid, clock_timestamp()
 FROM "assistant_ai_usage_attempts"
 GROUP BY "operation_run_id";
 
@@ -148,5 +171,27 @@ CREATE UNIQUE INDEX "assistant_ai_usage_attempts_run_execution_ordinal_key"
 ON "assistant_ai_usage_attempts"(
     "operation_run_id", "execution_id", "execution_attempt_ordinal"
 );
+
+UPDATE "assistant_ai_usage_attempts"
+SET "reservation_expires_at" = GREATEST(
+    "reservation_expires_at",
+    clock_timestamp() + INTERVAL '4 minutes'
+)
+WHERE "status" = 'RESERVED';
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM "assistant_ai_usage_attempts"
+        WHERE "status" = 'RESERVED'
+          AND "reservation_expires_at"
+            <= clock_timestamp() + INTERVAL '3 minutes 5 seconds'
+    ) THEN
+        RAISE EXCEPTION 'ASSISTANT_AI_RESERVATION_BACKFILL_EXPIRY_UNSAFE'
+          USING ERRCODE = '23514';
+    END IF;
+END;
+$$;
 
 COMMIT;

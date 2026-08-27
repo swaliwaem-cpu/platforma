@@ -90,7 +90,8 @@ export class AssistantAiUsageBudgetService {
     providerTimeoutMs?: number;
     now?: Date;
   }): Promise<AssistantAiUsageReservation> {
-    const now = validDate(input.now ?? new Date());
+    const requestedNow = input.now === undefined ? null : validDate(input.now);
+    const now = requestedNow ?? new Date();
     const usageDate = truncateUtcDay(now);
     const operationRunId = bounded(input.operationRunId, 160);
     const executionId = uuid(input.executionId);
@@ -110,9 +111,17 @@ export class AssistantAiUsageBudgetService {
     const providerTimeoutMs = input.reservationExpiresAt === undefined
       ? validProviderTimeoutMs(input.providerTimeoutMs ?? maximumProviderTimeoutMs)
       : null;
-    const reservationExpiresAt = input.reservationExpiresAt === undefined
-      ? createAssistantAiReservationExpiresAt(providerTimeoutMs!, now)
+    const reservationLifetimeMs = providerTimeoutMs === null
+      ? null
+      : providerTimeoutMs + assistantAiSettlementGraceMs + assistantAiReservationSafetyMs;
+    const requestedReservationExpiresAt = input.reservationExpiresAt === undefined
+      ? (requestedNow === null
+        ? null
+        : createAssistantAiReservationExpiresAt(providerTimeoutMs!, requestedNow))
       : validDate(input.reservationExpiresAt);
+    const reservationExpiresAtSql = requestedReservationExpiresAt === null
+      ? Prisma.sql`clock_timestamp() + (${reservationLifetimeMs!} * INTERVAL '1 millisecond')`
+      : Prisma.sql`${requestedReservationExpiresAt}`;
     if (parseAssistantUsd(dailyBudgetUsd) === 0n || parseAssistantUsd(reservedCostUsd) === 0n) {
       throw new AssistantAiUsageBudgetError('ASSISTANT_AI_BUDGET_VALUE_INVALID');
     }
@@ -158,7 +167,7 @@ export class AssistantAiUsageBudgetService {
           ${reasoningEffort}, ${promptVersion}, ${validatorVersion}, ${isFallback},
           'RESERVED', ${ASSISTANT_AI_PRICING_CATALOG_VERSION}, 'RESERVED',
           CAST(${dailyBudgetUsd} AS numeric), CAST(${reservedCostUsd} AS numeric),
-          ${usageDate}, ${reservationExpiresAt}, ${providerTimeoutMs}
+          ${usageDate}, ${reservationExpiresAtSql}, ${providerTimeoutMs}
         )
         ON CONFLICT ("operation_run_id", "execution_id", "execution_attempt_ordinal") DO NOTHING
         RETURNING "id"
@@ -207,7 +216,7 @@ export class AssistantAiUsageBudgetService {
           providerTimeoutMs,
           dailyBudgetUsd,
           reservedCostUsd,
-          reservationExpiresAt,
+          reservationExpiresAt: requestedReservationExpiresAt,
         })) {
           throw new AssistantAiUsageBudgetError('ASSISTANT_AI_ATTEMPT_CONFLICT');
         }
@@ -241,6 +250,25 @@ export class AssistantAiUsageBudgetService {
       `);
       if (reserved.length !== 1) {
         throw new AssistantAiUsageBudgetError('ASSISTANT_AI_DAILY_BUDGET_EXHAUSTED');
+      }
+      let reservationExpiresAt = requestedReservationExpiresAt;
+      if (providerTimeoutMs !== null && requestedNow === null) {
+        const refreshed = await transaction.$queryRaw<Array<{
+          reservationExpiresAt: Date;
+        }>>(Prisma.sql`
+          UPDATE "assistant_ai_usage_attempts"
+          SET "reservation_expires_at" =
+            clock_timestamp() + (${reservationLifetimeMs!} * INTERVAL '1 millisecond')
+          WHERE "id" = CAST(${id} AS uuid) AND "status" = 'RESERVED'
+          RETURNING "reservation_expires_at" AS "reservationExpiresAt"
+        `);
+        if (refreshed.length !== 1) {
+          throw new AssistantAiUsageBudgetError('ASSISTANT_AI_RESERVATION_EXPIRY_UPDATE_FAILED');
+        }
+        reservationExpiresAt = refreshed[0]!.reservationExpiresAt;
+      }
+      if (reservationExpiresAt === null) {
+        throw new AssistantAiUsageBudgetError('ASSISTANT_AI_RESERVATION_EXPIRY_UPDATE_FAILED');
       }
       return {
         id,
@@ -549,7 +577,7 @@ function sameReservationParameters(
     providerTimeoutMs: number | null;
     dailyBudgetUsd: string;
     reservedCostUsd: string;
-    reservationExpiresAt: Date;
+    reservationExpiresAt: Date | null;
   },
 ) {
   return existing.operationRunId === expected.operationRunId
@@ -568,7 +596,8 @@ function sameReservationParameters(
     && existing.dailyBudgetUsd?.toFixed(8) === expected.dailyBudgetUsd
     && existing.reservedCostUsd.toFixed(8) === expected.reservedCostUsd
     && (expected.providerTimeoutMs !== null
-      || existing.reservationExpiresAt.getTime() === expected.reservationExpiresAt.getTime());
+      || (expected.reservationExpiresAt !== null
+        && existing.reservationExpiresAt.getTime() === expected.reservationExpiresAt.getTime()));
 }
 
 function toReservation(attempt: AssistantAiUsageAttemptRow): AssistantAiUsageReservation {
