@@ -44,6 +44,7 @@ export class AssistantAnswerService {
     messages: string[];
     context: AssistantPageContext | null;
     geo?: AssistantGeoSearchContext | null;
+    operationRunId?: string;
     now?: Date;
   }): Promise<AssistantAnswerResult> {
     const now = input.now ?? new Date();
@@ -53,6 +54,7 @@ export class AssistantAnswerService {
         context: input.geo
           ? { pageContext: input.context, geo: input.geo }
           : input.context,
+        operationRunId: input.operationRunId,
       },
       async (intent) => {
         if (intent.taskType === 'LEGAL_TAX') {

@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { stripAssistantGeoDistanceClause } from './geo/assistant-geo-query';
 
 export const ASSISTANT_LUNA_MODEL = 'gpt-5.6-luna';
@@ -90,6 +92,8 @@ export type AssistantPlannerRequest = {
   reasoningEffort: AssistantReasoningEffort;
   messages: string[];
   context: unknown;
+  operationRunId?: string;
+  attemptOrdinal?: number;
 };
 
 export type AssistantPlannerGateway = {
@@ -112,9 +116,12 @@ export type AssistantPlannerTelemetry = {
   responseId: string | null;
   httpStatus: number | null;
   inputTokens: number | null;
+  cachedInputTokens: number | null;
+  cacheWriteInputTokens: number | null;
   outputTokens: number | null;
   reasoningTokens: number | null;
   totalTokens: number | null;
+  webSearchCalls: number | null;
   durationMs: number;
 };
 
@@ -125,9 +132,12 @@ export type AssistantPlannerGatewayResult = {
   responseId?: string | null;
   httpStatus?: number | null;
   inputTokens?: number | null;
+  cachedInputTokens?: number | null;
+  cacheWriteInputTokens?: number | null;
   outputTokens?: number | null;
   reasoningTokens?: number | null;
   totalTokens?: number | null;
+  webSearchCalls?: number | null;
 };
 
 export class AssistantPlannerError extends Error {
@@ -159,10 +169,11 @@ export class AssistantQueryPlanner {
   }
 
   async planWithValidation<Value>(
-    input: { messages: string[]; context: unknown },
+    input: { messages: string[]; context: unknown; operationRunId?: string },
     validate: (intent: AssistantStructuredIntent, request: AssistantPlannerRequest) => Promise<Value>,
   ) {
     const messages = normalizeMessages(input.messages);
+    const operationRunId = input.operationRunId ?? randomUUID();
     const reasoningEffort = chooseReasoningEffort(messages);
     const attempts: AssistantPlannerTelemetry[] = [];
     const requests: AssistantPlannerRequest[] = [
@@ -171,12 +182,16 @@ export class AssistantQueryPlanner {
         reasoningEffort,
         messages,
         context: input.context,
+        operationRunId,
+        attemptOrdinal: 1,
       },
       {
         model: ASSISTANT_TERRA_MODEL,
         reasoningEffort: 'medium',
         messages,
         context: input.context,
+        operationRunId,
+        attemptOrdinal: 2,
       },
     ];
 
@@ -847,9 +862,12 @@ function createTelemetry(
     responseId: readNullableBoundedString(metadata?.responseId, 160),
     httpStatus: readNullableInteger(metadata?.httpStatus, 100, 599),
     inputTokens: readNullableInteger(metadata?.inputTokens, 0, Number.MAX_SAFE_INTEGER),
+    cachedInputTokens: readNullableInteger(metadata?.cachedInputTokens, 0, Number.MAX_SAFE_INTEGER),
+    cacheWriteInputTokens: readNullableInteger(metadata?.cacheWriteInputTokens, 0, Number.MAX_SAFE_INTEGER),
     outputTokens: readNullableInteger(metadata?.outputTokens, 0, Number.MAX_SAFE_INTEGER),
     reasoningTokens: readNullableInteger(metadata?.reasoningTokens, 0, Number.MAX_SAFE_INTEGER),
     totalTokens: readNullableInteger(metadata?.totalTokens, 0, Number.MAX_SAFE_INTEGER),
+    webSearchCalls: readNullableInteger(metadata?.webSearchCalls, 0, Number.MAX_SAFE_INTEGER),
     durationMs: Math.max(0, Math.trunc(durationMs)),
   };
 }

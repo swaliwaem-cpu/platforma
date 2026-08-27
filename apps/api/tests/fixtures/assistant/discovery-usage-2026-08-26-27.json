@@ -1,0 +1,45 @@
+{
+  "catalogVersion": "openai-standard-pricing-2026-08-27",
+  "expectedUsd": "9.85379380",
+  "buckets": [
+    {
+      "date": "2026-08-26",
+      "webSearchCalls": 187,
+      "models": [
+        {
+          "model": "gpt-5.6-terra",
+          "pricingTier": "standard",
+          "requests": 126,
+          "inputTokens": 1836847,
+          "cachedInputTokens": 509360,
+          "cacheWriteInputTokens": 68732,
+          "outputTokens": 37043
+        },
+        {
+          "model": "gpt-5.6-luna",
+          "pricingTier": "standard",
+          "requests": 2,
+          "inputTokens": 1465,
+          "cachedInputTokens": 0,
+          "cacheWriteInputTokens": 0,
+          "outputTokens": 637
+        }
+      ]
+    },
+    {
+      "date": "2026-08-27",
+      "webSearchCalls": 177,
+      "models": [
+        {
+          "model": "gpt-5.6-terra",
+          "pricingTier": "standard",
+          "requests": 93,
+          "inputTokens": 1547584,
+          "cachedInputTokens": 368047,
+          "cacheWriteInputTokens": 68026,
+          "outputTokens": 42526
+        }
+      ]
+    }
+  ]
+}

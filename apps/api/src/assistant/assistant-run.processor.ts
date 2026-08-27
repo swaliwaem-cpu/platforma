@@ -171,6 +171,7 @@ export class AssistantRunProcessor implements OnModuleInit, OnModuleDestroy {
           messages: recentMessages.reverse().map(({ content }) => content),
           context: this.parseContext(run.userMessage.contextJson),
           geo: this.parseGeoContext(run.userMessage.geoContextJson),
+          operationRunId: runId,
         });
       });
       const latencyMs = Math.max(0, Date.now() - startedAt.getTime());

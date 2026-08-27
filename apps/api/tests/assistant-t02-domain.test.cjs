@@ -569,9 +569,12 @@ test('Assistant T02 planner records bounded usage telemetry without exposing it 
         responseId: 'response-safe',
         httpStatus: 200,
         inputTokens: 120,
+        cachedInputTokens: 20,
+        cacheWriteInputTokens: 10,
         outputTokens: 80,
         reasoningTokens: 40,
         totalTokens: 240,
+        webSearchCalls: 0,
       };
     },
   });
@@ -590,9 +593,12 @@ test('Assistant T02 planner records bounded usage telemetry without exposing it 
     responseId: 'response-safe',
     httpStatus: 200,
     inputTokens: 120,
+    cachedInputTokens: 20,
+    cacheWriteInputTokens: 10,
     outputTokens: 80,
     reasoningTokens: 40,
     totalTokens: 240,
+    webSearchCalls: 0,
     durationMs: result.telemetry[0].durationMs,
   });
 });
@@ -648,8 +654,11 @@ test('Assistant T02 OpenAI gateway uses a bounded local HTTP stub and validates 
   await withHttpStub(async (request, response) => {
     const body = await readRequestBody(request);
     assert.equal(body.model, 'gpt-5.6-luna');
+    assert.equal(body.service_tier, 'default');
     assert.equal(body.reasoning.effort, 'medium');
     assert.equal(body.store, false);
+    assert.equal(body.tools, undefined);
+    assert.equal(body.tool_choice, undefined);
     response.writeHead(200, {
       'content-type': 'application/json',
       'x-request-id': 'stub-request-id',

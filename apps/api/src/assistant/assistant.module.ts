@@ -24,6 +24,7 @@ import {
 } from './geo/assistant-geo-provider-policy.service';
 import { AssistantPlaceResolverService } from './geo/assistant-place-resolver.service';
 import { AssistantModelUsagePolicyService } from './operations/assistant-model-usage-policy.service';
+import { AssistantAiUsageBudgetService } from './operations/assistant-ai-usage-budget.service';
 import { AssistantRetentionService } from './operations/assistant-retention.service';
 import { AssistantUsageBudgetService } from './operations/assistant-usage-budget.service';
 import { AssistantRolloutStageService } from './rollout/assistant-rollout-stage.service';
@@ -47,7 +48,15 @@ import { AssistantRolloutStageService } from './rollout/assistant-rollout-stage.
     AssistantPlaceResolverService,
     AssistantGeoAliasService,
     AssistantUsageBudgetService,
-    AssistantModelUsagePolicyService,
+    AssistantAiUsageBudgetService,
+    {
+      provide: AssistantModelUsagePolicyService,
+      inject: [AssistantUsageBudgetService, AssistantAiUsageBudgetService],
+      useFactory: (
+        budgets: AssistantUsageBudgetService,
+        aiBudgets: AssistantAiUsageBudgetService,
+      ) => new AssistantModelUsagePolicyService(budgets, process.env, aiBudgets),
+    },
     AssistantRetentionService,
     AssistantRolloutStageService,
     {

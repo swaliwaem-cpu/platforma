@@ -12,7 +12,7 @@ type AssistantEnvironment = NodeJS.ProcessEnv | Record<string, string | undefine
 type AssistantAiMode = 'fake' | 'openai';
 
 const assistantPlannerSchema = createAssistantPlannerSchema();
-const assistantPlannerPromptVersion = 'assistant-query-planner-v1';
+export const ASSISTANT_PLANNER_PROMPT_VERSION = 'assistant-query-planner-v1';
 const officialKnowledgeFactPattern = /(?:архитектур\p{L}*|инфраструктур\p{L}*|благоустрой\p{L}*|описан\p{L}*|ипотек\p{L}*|рассроч\p{L}*|акци\p{L}*|скидк\p{L}*|бонус\p{L}*|лот\p{L}*\s+\d+)/iu;
 
 export class AssistantPlannerGatewayError extends Error {
@@ -35,6 +35,9 @@ export function createAssistantPlannerGateway(
 ): AssistantPlannerGateway {
   const mode = readAssistantAiMode(environment);
   if (mode === 'fake') return new AssistantFakePlannerGateway();
+  if (environment.ASSISTANT_PAID_CALLS_CONFIRMED !== 'true') {
+    throw new AssistantPlannerGatewayError('ASSISTANT_PAID_CALLS_CONFIRMATION_REQUIRED');
+  }
   const apiKey = environment.OPENAI_API_KEY?.trim() ?? '';
   if (!apiKey) throw new AssistantPlannerGatewayError('OPENAI_API_KEY_MISSING');
   const baseUrl = environment.ASSISTANT_OPENAI_BASE_URL?.trim() || 'https://api.openai.com/v1';
@@ -49,9 +52,12 @@ export class AssistantFakePlannerGateway implements AssistantPlannerGateway {
       provider: 'fake',
       httpStatus: 200,
       inputTokens: 0,
+      cachedInputTokens: 0,
+      cacheWriteInputTokens: 0,
       outputTokens: 0,
       reasoningTokens: 0,
       totalTokens: 0,
+      webSearchCalls: 0,
     };
   }
 }
@@ -111,7 +117,7 @@ export class AssistantOpenAiPlannerGateway implements AssistantPlannerGateway {
       } catch {
         output = null;
       }
-      const usage = parseUsage(value.usage);
+      const usage = parseAssistantOpenAiUsage(value);
       return {
         output,
         provider: 'openai',
@@ -210,14 +216,15 @@ export function createAssistantPlannerSchema() {
   };
 }
 
-function createAssistantPlannerRequestBody(request: AssistantPlannerRequest) {
+export function createAssistantPlannerRequestBody(request: AssistantPlannerRequest) {
   return {
     model: request.model,
+    service_tier: 'default',
     reasoning: { effort: request.reasoningEffort },
     store: false,
     max_output_tokens: 2_500,
     instructions: [
-      `Contract: ${assistantPlannerPromptVersion}.`,
+      `Contract: ${ASSISTANT_PLANNER_PROMPT_VERSION}.`,
       'Ты Query Planner внутренней Platforma по недвижимости.',
       'Преобразуй русскоязычный запрос в строгий structured intent.',
       'Явные условия пользователя всегда являются hard filters. Пожелания без обязательности являются soft preferences.',
@@ -293,16 +300,35 @@ function readOutputText(value: unknown) {
   return null;
 }
 
-function parseUsage(value: unknown) {
+export function parseAssistantOpenAiUsage(value: unknown) {
   if (!isRecord(value)) {
-    return { inputTokens: null, outputTokens: null, reasoningTokens: null, totalTokens: null };
+    return {
+      inputTokens: null,
+      cachedInputTokens: null,
+      cacheWriteInputTokens: null,
+      outputTokens: null,
+      reasoningTokens: null,
+      totalTokens: null,
+      webSearchCalls: null,
+    };
   }
-  const outputDetails = isRecord(value.output_tokens_details) ? value.output_tokens_details : null;
+  const usage = isRecord(value.usage) ? value.usage : null;
+  const inputDetails = usage && isRecord(usage.input_tokens_details)
+    ? usage.input_tokens_details
+    : null;
+  const outputDetails = usage && isRecord(usage.output_tokens_details)
+    ? usage.output_tokens_details
+    : null;
   return {
-    inputTokens: readTokenCount(value.input_tokens),
-    outputTokens: readTokenCount(value.output_tokens),
+    inputTokens: readTokenCount(usage?.input_tokens),
+    cachedInputTokens: readTokenCount(inputDetails?.cached_tokens),
+    cacheWriteInputTokens: readTokenCount(inputDetails?.cache_write_tokens),
+    outputTokens: readTokenCount(usage?.output_tokens),
     reasoningTokens: readTokenCount(outputDetails?.reasoning_tokens),
-    totalTokens: readTokenCount(value.total_tokens),
+    totalTokens: readTokenCount(usage?.total_tokens),
+    webSearchCalls: Array.isArray(value.output)
+      ? value.output.filter((item) => isRecord(item) && item.type === 'web_search_call').length
+      : null,
   };
 }
 

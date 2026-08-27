@@ -713,6 +713,58 @@ model AssistantUsageMetric {
   @@map("assistant_usage_metrics")
 }
 
+model AssistantAiDailyBudget {
+  provider        String   @db.VarChar(40)
+  usageDate       DateTime @map("usage_date") @db.Date
+  budgetLimitUsd  Decimal  @map("budget_limit_usd") @db.Decimal(18, 8)
+  reservedCostUsd Decimal  @default(0) @map("reserved_cost_usd") @db.Decimal(18, 8)
+  settledCostUsd  Decimal  @default(0) @map("settled_cost_usd") @db.Decimal(18, 8)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@id([provider, usageDate])
+  @@index([usageDate])
+  @@map("assistant_ai_daily_budgets")
+}
+
+model AssistantAiUsageAttempt {
+  id                    String    @id @default(uuid()) @db.Uuid
+  operationRunId        String    @map("operation_run_id") @db.VarChar(160)
+  attemptOrdinal        Int       @map("attempt_ordinal") @db.SmallInt
+  operation             String    @db.VarChar(40)
+  provider              String    @db.VarChar(40)
+  requestedModel        String    @map("requested_model") @db.VarChar(160)
+  actualModel           String?   @map("actual_model") @db.VarChar(160)
+  reasoningEffort       String?   @map("reasoning_effort") @db.VarChar(20)
+  promptVersion         String?   @map("prompt_version") @db.VarChar(120)
+  validatorVersion      String?   @map("validator_version") @db.VarChar(120)
+  isFallback            Boolean   @default(false) @map("is_fallback")
+  status                String    @db.VarChar(24)
+  outcome               String?   @db.VarChar(40)
+  errorCode             String?   @map("error_code") @db.VarChar(120)
+  inputTokens           BigInt?   @map("input_tokens")
+  cachedInputTokens     BigInt?   @map("cached_input_tokens")
+  cacheWriteInputTokens BigInt?   @map("cache_write_input_tokens")
+  outputTokens          BigInt?   @map("output_tokens")
+  reasoningTokens       BigInt?   @map("reasoning_tokens")
+  totalTokens           BigInt?   @map("total_tokens")
+  webSearchCalls        Int?      @map("web_search_calls")
+  pricingCatalogVersion String    @map("pricing_catalog_version") @db.VarChar(120)
+  pricingStatus         String    @map("pricing_status") @db.VarChar(32)
+  reservedCostUsd       Decimal   @map("reserved_cost_usd") @db.Decimal(18, 8)
+  estimatedCostUsd      Decimal?  @map("estimated_cost_usd") @db.Decimal(18, 8)
+  chargedCostUsd        Decimal?  @map("charged_cost_usd") @db.Decimal(18, 8)
+  durationMs            Int?      @map("duration_ms")
+  usageDate             DateTime  @map("usage_date") @db.Date
+  createdAt             DateTime  @default(now()) @map("created_at")
+  settledAt             DateTime? @map("settled_at")
+
+  @@unique([operationRunId, attemptOrdinal])
+  @@index([provider, usageDate, status])
+  @@index([operation, createdAt])
+  @@map("assistant_ai_usage_attempts")
+}
+
 model AssistantKnowledgeSource {
   id                  String                        @id @default(uuid()) @db.Uuid
   canonicalUrl        String                        @unique @map("canonical_url") @db.VarChar(2048)
