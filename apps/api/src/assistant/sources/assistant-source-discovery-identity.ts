@@ -144,6 +144,9 @@ export function readProjectIdentityError(
 export function findProjectCatalogEvidence(
   project: AssistantSourceIdentityProject,
   fetched: SourceConnectorFetchResult,
+  allowedHosts: readonly string[] = relatedHosts(
+    new URL(normalizeCandidateUrl(fetched.finalUrl)).hostname,
+  ),
 ): AssistantSourceCatalogProjectEvidence | null {
   const jsonValues = readCatalogJsonValues(fetched);
   for (const record of collectCatalogRecords(jsonValues)) {
@@ -175,7 +178,7 @@ export function findProjectCatalogEvidence(
     ? {
       officialProjectName: project.title,
       officialProjectCode: null,
-      officialProjectUrl: findHtmlCatalogProjectUrl(project, fetched),
+      officialProjectUrl: findHtmlCatalogProjectUrl(project, fetched, allowedHosts),
       identity,
     }
     : null;
@@ -252,7 +255,8 @@ export function extractLinkedOfficialDeveloperUrls(
       return;
     }
     const url = new URL(normalizedUrl);
-    if (isUrlWithinAllowedHosts(normalizedUrl, allowedHosts)
+    const isAlreadyAllowed = isUrlWithinAllowedHosts(normalizedUrl, allowedHosts);
+    if (normalizedUrl === normalizeCandidateUrl(fetched.finalUrl)
       || isBlockedDomain(url.hostname)
       || /\.(?:pdf|docx?|xlsx?|zip|jpe?g|png|webp)(?:$|\?)/iu.test(url.pathname)) return;
     const linkSignal = normalizeIdentityText([
@@ -262,7 +266,8 @@ export function extractLinkedOfficialDeveloperUrls(
     ].join(' '));
     if (!/(?:официальн|корпоративн|каталог|жил\w* проект|проекты|projects?|catalog|residential)/iu
       .test(linkSignal)) return;
-    const trustWithoutFetch = /(?:официальн|корпоративн|official|corporate)/iu.test(linkSignal)
+    const trustWithoutFetch = !isAlreadyAllowed
+      && /(?:официальн|корпоративн|official|corporate)/iu.test(linkSignal)
       && /(?:сайт|каталог|site|catalog)/iu.test(linkSignal);
     if (!links.some(({ url }) => url === normalizedUrl)) {
       links.push({ url: normalizedUrl, trustWithoutFetch });
@@ -414,11 +419,11 @@ function readCatalogProjectUrl(record: Record<string, unknown>, baseUrl: string)
 function findHtmlCatalogProjectUrl(
   project: AssistantSourceIdentityProject,
   fetched: SourceConnectorFetchResult,
+  allowedHosts: readonly string[],
 ) {
   if (fetched.contentType === 'application/json' || fetched.contentType === 'application/ld+json') {
     return null;
   }
-  const baseHostname = normalizeHostname(new URL(normalizeCandidateUrl(fetched.finalUrl)).hostname);
   const $ = load(fetched.payload.toString('utf8'));
   let matchedUrl: string | null = null;
   let inspectedLinks = 0;
@@ -433,7 +438,7 @@ function findHtmlCatalogProjectUrl(
     } catch {
       return;
     }
-    if (normalizeHostname(new URL(normalizedUrl).hostname) !== baseHostname) return;
+    if (!isUrlWithinAllowedHosts(normalizedUrl, allowedHosts)) return;
     const linkEvidence = [
       normalizedUrl,
       $(element).text(),

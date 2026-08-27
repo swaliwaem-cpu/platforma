@@ -49,6 +49,22 @@ const { PrismaService } = require('../dist/prisma/prisma.service.js');
 
 const maximumPilotDevelopers = 7;
 const maximumPilotProjects = 20;
+const discoveryRegistrySourceSelect = {
+  id: true,
+  projectKey: true,
+  developerKey: true,
+  type: true,
+  state: true,
+  canonicalUrl: true,
+  connectorKey: true,
+  connectorConfigJson: true,
+  revisions: {
+    where: { processingStatus: 'INDEXED' },
+    orderBy: [{ fetchedAt: 'desc' }, { id: 'desc' }],
+    take: 1,
+    select: { processingStatus: true, checksum: true },
+  },
+};
 
 if (require.main === module) {
   void runAssistantSourceDiscovery().catch((error) => {
@@ -288,32 +304,13 @@ async function selectPilotProjects(prisma, limit, missingOnly, excludedProjectKe
       where: {
         type: { in: ['DEVELOPMENT_PAGE', 'DEVELOPER_PROMOTION', 'BANK_PROMOTION'] },
       },
-      select: {
-        id: true,
-        projectKey: true,
-        developerKey: true,
-        type: true,
-        state: true,
-        canonicalUrl: true,
-        connectorKey: true,
-        connectorConfigJson: true,
-        revisions: {
-          where: { processingStatus: 'INDEXED' },
-          orderBy: [{ fetchedAt: 'desc' }, { id: 'desc' }],
-          take: 1,
-          select: { processingStatus: true, checksum: true },
-        },
-      },
+      select: discoveryRegistrySourceSelect,
     })
     : [];
   const allRegisteredProjectKeys = new Set(registered.flatMap(({ projectKey }) => (
     projectKey ? [projectKey] : []
   )));
-  const registrySources = registered.map(({ connectorConfigJson, revisions, ...source }) => ({
-    ...source,
-    connectorConfig: connectorConfigJson,
-    latestRevision: revisions[0] ?? null,
-  }));
+  const registrySources = registered.map(mapDiscoveryRegistrySource);
   const developerKeys = new Set(registered.flatMap(({ developerKey }) => developerKey ? [developerKey] : []));
   const pilotProjectKeys = new Set(allRegisteredProjectKeys);
   const objects = await prisma.realEstateObject.findMany({
@@ -389,28 +386,17 @@ async function loadDiscoveryRegistrySources(prisma, projects) {
       ],
     },
     orderBy: [{ priority: 'desc' }, { createdAt: 'asc' }, { id: 'asc' }],
-    select: {
-      id: true,
-      state: true,
-      type: true,
-      canonicalUrl: true,
-      projectKey: true,
-      developerKey: true,
-      connectorKey: true,
-      connectorConfigJson: true,
-      revisions: {
-        where: { processingStatus: 'INDEXED' },
-        orderBy: [{ fetchedAt: 'desc' }, { id: 'desc' }],
-        take: 1,
-        select: { processingStatus: true, checksum: true },
-      },
-    },
+    select: discoveryRegistrySourceSelect,
   });
-  return sources.map(({ connectorConfigJson, revisions, ...source }) => ({
+  return sources.map(mapDiscoveryRegistrySource);
+}
+
+function mapDiscoveryRegistrySource({ connectorConfigJson, revisions, ...source }) {
+  return {
     ...source,
     connectorConfig: connectorConfigJson,
     latestRevision: revisions[0] ?? null,
-  }));
+  };
 }
 
 async function discoverProjects(

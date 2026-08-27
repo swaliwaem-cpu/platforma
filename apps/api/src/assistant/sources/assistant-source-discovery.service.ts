@@ -780,15 +780,19 @@ export class AssistantSourceDiscoveryService {
       } catch {
         // A narrow page without project evidence is replaced through the bounded alternative search below.
       }
-      if (renderedCandidate && findProjectCatalogEvidence(project, renderedCandidate)) {
+      if (renderedCandidate && findProjectCatalogEvidence(
+        project,
+        renderedCandidate,
+        developerAllowedHosts,
+      )) {
         developerPage = renderedCandidate;
         this.developerCatalogCache.set(developerCandidateUrl, Promise.resolve(renderedCandidate));
         this.renderedDeveloperCatalogUrls.add(developerCandidateUrl);
       } else if (linkedDeveloperPages.pages.some(({ page }) => (
-        findProjectCatalogEvidence(project, page) !== null
+        findProjectCatalogEvidence(project, page, developerAllowedHosts) !== null
       ))) {
         const linkedCatalog = linkedDeveloperPages.pages.find(({ page }) => (
-          findProjectCatalogEvidence(project, page) !== null
+          findProjectCatalogEvidence(project, page, developerAllowedHosts) !== null
         ))!;
         developerPage = linkedCatalog.page;
         developerCandidateUrl = linkedCatalog.canonicalUrl;
@@ -1218,7 +1222,9 @@ export class AssistantSourceDiscoveryService {
   ): Promise<VerifiedProjectCatalogEvidence | null> {
     for (const catalogUrl of uniqueUrls([developer.canonicalUrl], developer.catalogUrls)) {
       let page = await (this.developerCatalogCache.get(catalogUrl) ?? Promise.resolve(null));
-      let evidence = page ? findProjectCatalogEvidence(project, page) : null;
+      let evidence = page
+        ? findProjectCatalogEvidence(project, page, developer.allowedHosts)
+        : null;
       if (evidence) return { ...evidence, page: page! };
       if (this.renderedDeveloperCatalogUrls.has(catalogUrl)) continue;
       const catalogPromise = this.fetchOfficialSource(
@@ -1230,7 +1236,7 @@ export class AssistantSourceDiscoveryService {
       this.renderedDeveloperCatalogUrls.add(catalogUrl);
       page = await catalogPromise;
       if (!page) continue;
-      evidence = findProjectCatalogEvidence(project, page);
+      evidence = findProjectCatalogEvidence(project, page, developer.allowedHosts);
       if (evidence) return { ...evidence, page };
     }
     return null;
@@ -1306,7 +1312,7 @@ export class AssistantSourceDiscoveryService {
         const page = await this.fetchOfficialSource(canonicalUrl, 'always', allowedHosts);
         if (!findDeveloperAlias(project, page)) continue;
         firstVerified ??= { url: canonicalUrl, page };
-        if (findProjectCatalogEvidence(project, page)) {
+        if (findProjectCatalogEvidence(project, page, allowedHosts)) {
           catalogVerified ??= { url: canonicalUrl, page };
           if (hasMultipleProjectCatalogEntries(page)) {
             broadCatalogVerified = { url: canonicalUrl, page };

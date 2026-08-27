@@ -441,6 +441,68 @@ test('Assistant source discovery follows an exact same-host project link from an
   assert.equal(result.telemetry.phases.length, 0);
 });
 
+test('Assistant source discovery accepts HTML catalog project links on every explicitly allowed host', async (context) => {
+  const registryUrl = 'https://developer.example/';
+  const scenarios = [
+    {
+      name: 'normalized www counterpart',
+      projectUrl: 'https://www.developer.example/residences/amber-city/',
+      allowedHosts: ['developer.example'],
+    },
+    {
+      name: 'explicitly stored catalog host',
+      projectUrl: 'https://catalog.developer.example/residences/amber-city/',
+      allowedHosts: ['developer.example', 'catalog.developer.example'],
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    await context.test(scenario.name, async () => {
+      let providerCalls = 0;
+      const service = new AssistantSourceDiscoveryService(
+        discoveryEnvironment(),
+        async () => {
+          providerCalls += 1;
+          throw new Error('provider must not be called after an allowed HTML catalog link');
+        },
+        {
+          async fetch(source) {
+            if (source.canonicalUrl === registryUrl) {
+              return fetchedPage(source.canonicalUrl, [
+                '<html><body>Официальный каталог жилых проектов застройщика ФСК',
+                `<a href="${scenario.projectUrl}">ЖК Amber City</a>`,
+                '</body></html>',
+              ].join(''));
+            }
+            if (source.canonicalUrl === scenario.projectUrl) {
+              return fetchedPage(
+                source.canonicalUrl,
+                '<html><body>ЖК Amber City — официальный проект застройщика ФСК</body></html>',
+              );
+            }
+            throw new Error('hardcoded known path unavailable');
+          },
+        },
+      );
+
+      const result = await service.discover(project, {
+        registrySources: [activeRegistrySource({
+          type: 'DEVELOPER_PROMOTION',
+          canonicalUrl: registryUrl,
+          projectKey: null,
+          developerKey: project.developerKey,
+          allowedHosts: scenario.allowedHosts,
+        })],
+      });
+
+      assert.equal(result.status, 'VERIFIED', JSON.stringify(result, null, 2));
+      assert.equal(result.canonicalUrl, scenario.projectUrl);
+      assert.equal(providerCalls, 0);
+      assert.equal(result.telemetry.phases.length, 0);
+    });
+  }
+});
+
 test('Assistant source discovery follows a proven catalog link from a registered developer source before Web Search', async () => {
   const registryUrl = 'https://developer.example/';
   const catalogUrl = 'https://catalog.developer.example/';
@@ -458,6 +520,61 @@ test('Assistant source discovery follows a proven catalog link from a registered
           return fetchedPage(source.canonicalUrl, [
             '<html><body>Официальный сайт застройщика ФСК',
             `<a href="${catalogUrl}">Официальный каталог жилых проектов</a>`,
+            '</body></html>',
+          ].join(''));
+        }
+        if (source.canonicalUrl === catalogUrl) {
+          return fetchedPage(source.canonicalUrl, [
+            '<html><body>Официальный каталог жилых проектов застройщика ФСК',
+            '<script type="application/json">',
+            JSON.stringify({ items: [{ name: 'Amber City', code: 'amber-official' }] }),
+            '</script></body></html>',
+          ].join(''));
+        }
+        if (source.canonicalUrl === catalogProjectUrl) {
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>ЖК Amber City — официальный проект застройщика ФСК</body></html>',
+          );
+        }
+        throw new Error('known path unavailable');
+      },
+    },
+  );
+
+  const result = await service.discover(project, {
+    registrySources: [activeRegistrySource({
+      type: 'DEVELOPER_PROMOTION',
+      canonicalUrl: registryUrl,
+      projectKey: null,
+      developerKey: project.developerKey,
+      allowedHosts: ['developer.example', 'www.developer.example'],
+    })],
+  });
+
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result, null, 2));
+  assert.equal(result.canonicalUrl, catalogProjectUrl);
+  assert.equal(providerCalls, 0);
+  assert.equal(result.telemetry.phases.length, 0);
+});
+
+test('Assistant source discovery follows a bounded same-host catalog link before project Web Search', async () => {
+  const registryUrl = 'https://developer.example/';
+  const catalogUrl = 'https://developer.example/projects/';
+  const catalogProjectUrl = 'https://developer.example/projects/amber-official/';
+  let providerCalls = 0;
+  const service = new AssistantSourceDiscoveryService(
+    discoveryEnvironment(),
+    async () => {
+      providerCalls += 1;
+      throw new Error('provider must not be called after a same-host catalog link');
+    },
+    {
+      async fetch(source) {
+        if (source.canonicalUrl === registryUrl) {
+          return fetchedPage(source.canonicalUrl, [
+            '<html><body>Официальный сайт застройщика ФСК',
+            '<a href="/projects/">Каталог жилых проектов</a>',
             '</body></html>',
           ].join(''));
         }
