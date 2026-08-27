@@ -1250,10 +1250,13 @@ export class AssistantSourceDiscoveryService {
     for (const linked of extractLinkedOfficialDeveloperUrls(page, currentAllowedHosts)) {
       const linkedUrl = linked.url;
       const linkedHosts = relatedHosts(new URL(linkedUrl).hostname);
-      const expandedHosts = [...new Set([...allowedHosts, ...linkedHosts])];
+      const usesExistingTrust = isUrlWithinAllowedHosts(linkedUrl, allowedHosts);
+      const expandedHosts = usesExistingTrust
+        ? [...allowedHosts]
+        : [...new Set([...allowedHosts, ...linkedHosts])];
       if (expandedHosts.length > 10) continue;
-      const fetchAllowedHosts = isUrlWithinAllowedHosts(linkedUrl, currentAllowedHosts)
-        ? currentAllowedHosts
+      const fetchAllowedHosts = usesExistingTrust
+        ? allowedHosts
         : linkedHosts;
       try {
         const linkedPage = await this.fetchOfficialSource(linkedUrl, 'always', fetchAllowedHosts);
