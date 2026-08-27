@@ -403,7 +403,7 @@ export class AssistantAiUsageBudgetService {
   }) {
     const operationRunId = bounded(input.operationRunId, 160);
     const executionId = uuid(input.executionId);
-    const now = validDate(input.now ?? new Date());
+    const requestedNow = input.now === undefined ? null : validDate(input.now);
     const result = await this.prisma.$transaction(async (transaction) => {
       const fence = await lockOrCreateExecutionFence(
         transaction,
@@ -431,6 +431,15 @@ export class AssistantAiUsageBudgetService {
         ORDER BY "provider", "usage_date", "id"
         FOR UPDATE
       `);
+      const databaseClock = requestedNow === null
+        ? await transaction.$queryRaw<Array<{ reconciliationNow: Date }>>(Prisma.sql`
+            SELECT clock_timestamp() AS "reconciliationNow"
+          `)
+        : [];
+      const now = requestedNow ?? databaseClock[0]?.reconciliationNow;
+      if (!now || (requestedNow === null && databaseClock.length !== 1)) {
+        throw new AssistantAiUsageBudgetError('ASSISTANT_AI_DATABASE_CLOCK_FAILED');
+      }
       const expiredAttempts = attempts.filter(({ reservationExpiresAt }) => (
         reservationExpiresAt.getTime() <= now.getTime()
       ));
