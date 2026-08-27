@@ -1171,6 +1171,11 @@ test('FIX-TOKEN discovery never uses Terra after parse, transport, HTTP or sourc
       errorCode: 'ASSISTANT_SOURCE_DISCOVERY_OUTPUT_INVALID',
     },
     {
+      name: 'missing structured output',
+      failureKind: 'MISSING',
+      errorCode: 'ASSISTANT_SOURCE_DISCOVERY_OUTPUT_MISSING',
+    },
+    {
       name: 'provider timeout',
       failureKind: 'TIMEOUT',
       errorCode: 'ASSISTANT_SOURCE_DISCOVERY_TIMEOUT',
@@ -1195,15 +1200,35 @@ test('FIX-TOKEN discovery never uses Terra after parse, transport, HTTP or sourc
       permitsLunaRetry: true,
     },
     {
+      name: 'provider HTTP 5xx with malformed error body',
+      failureKind: 'HTTP_503_MALFORMED',
+      errorCode: 'ASSISTANT_SOURCE_DISCOVERY_HTTP_503',
+      permitsLunaRetry: true,
+    },
+    {
       name: 'official source fetch failure',
       failureKind: 'SOURCE_FETCH',
+      sourceErrorCode: 'SOURCE_FETCH_TIMEOUT',
       errorCode: 'SOURCE_FETCH_TIMEOUT',
+    },
+    {
+      name: 'official source network failure',
+      failureKind: 'SOURCE_NETWORK',
+      sourceErrorCode: 'SOURCE_NETWORK_FAILED',
+      errorCode: 'SOURCE_NETWORK_FAILED',
+    },
+    {
+      name: 'official source retryable HTTP failure',
+      failureKind: 'SOURCE_HTTP_RETRYABLE',
+      sourceErrorCode: 'SOURCE_HTTP_RETRYABLE',
+      errorCode: 'SOURCE_HTTP_RETRYABLE',
     },
   ];
 
   for (const scenario of scenarios) {
     await context.test(scenario.name, async () => {
       const providerBodies = [];
+      let failedSourceFetches = 0;
       const candidateUrl = 'https://developer.example/official/amber-city';
       const service = new AssistantSourceDiscoveryService(
         sourceDiscoveryEnvironment(),
@@ -1221,15 +1246,23 @@ test('FIX-TOKEN discovery never uses Terra after parse, transport, HTTP or sourc
           if (scenario.failureKind === 'MALFORMED') {
             return malformedSourceDiscoveryResponse('matrix-malformed');
           }
+          if (scenario.failureKind === 'MISSING') {
+            return missingSourceDiscoveryResponse('matrix-missing');
+          }
           if (scenario.failureKind === 'TIMEOUT') {
             throw new AssistantSourceDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_TIMEOUT');
           }
           if (scenario.failureKind === 'NETWORK') {
             throw new Error('simulated provider network failure');
           }
-          if (scenario.failureKind === 'HTTP_429' || scenario.failureKind === 'HTTP_503') {
+          if (scenario.failureKind === 'HTTP_429'
+            || scenario.failureKind === 'HTTP_503'
+            || scenario.failureKind === 'HTTP_503_MALFORMED') {
             const status = scenario.failureKind === 'HTTP_429' ? 429 : 503;
-            return new Response(JSON.stringify({ id: `matrix-http-${status}`, error: { status } }), {
+            const body = scenario.failureKind === 'HTTP_503_MALFORMED'
+              ? '{not-json'
+              : JSON.stringify({ id: `matrix-http-${status}`, error: { status } });
+            return new Response(body, {
               status,
               headers: { 'content-type': 'application/json' },
             });
@@ -1250,9 +1283,9 @@ test('FIX-TOKEN discovery never uses Terra after parse, transport, HTTP or sourc
                 '<html><body>Официальный сайт застройщика ФСК</body></html>',
               );
             }
-            if (scenario.failureKind === 'SOURCE_FETCH'
-              && source.canonicalUrl === candidateUrl) {
-              throw new SourceConnectorError('SOURCE_FETCH_TIMEOUT', true, 504);
+            if (scenario.sourceErrorCode && source.canonicalUrl === candidateUrl) {
+              failedSourceFetches += 1;
+              throw new SourceConnectorError(scenario.sourceErrorCode, true, 504);
             }
             throw new Error('known path unavailable');
           },
@@ -1269,8 +1302,8 @@ test('FIX-TOKEN discovery never uses Terra after parse, transport, HTTP or sourc
       const requestedModels = providerBodies.map(({ model }) => model);
       assert.equal(requestedModels.includes('gpt-5.6-terra'), false);
       assert.equal(requestedModels.every((model) => model === 'gpt-5.6-luna'), true);
-      assert.equal(requestedModels.length >= 2, true);
-      assert.equal(requestedModels.length <= (scenario.permitsLunaRetry ? 3 : 2), true);
+      assert.equal(requestedModels.length, scenario.permitsLunaRetry ? 3 : 2);
+      assert.equal(failedSourceFetches, scenario.sourceErrorCode ? 2 : 0);
     });
   }
 });
@@ -1570,6 +1603,23 @@ function malformedSourceDiscoveryResponse(responseId) {
       output_tokens: 13,
       output_tokens_details: { reasoning_tokens: 5 },
       total_tokens: 33,
+    },
+  }), {
+    status: 200,
+    headers: { 'content-type': 'application/json', 'x-request-id': `req-${responseId}` },
+  });
+}
+
+function missingSourceDiscoveryResponse(responseId) {
+  return new Response(JSON.stringify({
+    id: responseId,
+    output: [],
+    usage: {
+      input_tokens: 20,
+      input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
+      output_tokens: 0,
+      output_tokens_details: { reasoning_tokens: 0 },
+      total_tokens: 20,
     },
   }), {
     status: 200,

@@ -9,6 +9,7 @@ const {
 } = require('../dist/assistant/sources/assistant-source-discovery.service.js');
 const {
   createDeveloperDiscoveryRequestBody,
+  createProjectDiscoveryRequestBody,
 } = require('../dist/assistant/sources/assistant-source-discovery-provider.js');
 const {
   estimateAssistantAiCallCost,
@@ -1062,6 +1063,18 @@ test('Assistant source discovery allows one Terra only after a seeded Luna candi
     'gpt-5.6-luna',
     'gpt-5.6-terra',
   ]);
+  for (const requestBody of providerBodies) {
+    assert.deepEqual(requestBody.reasoning, { effort: 'medium' });
+    assert.equal(requestBody.service_tier, 'default');
+    assert.equal(requestBody.max_output_tokens, 1_600);
+    assert.equal(requestBody.max_tool_calls, 1);
+    assert.equal(requestBody.tools[0].type, 'web_search');
+    assert.equal(requestBody.tools[0].search_context_size, 'low');
+    assert.deepEqual(requestBody.tools[0].filters.allowed_domains, [
+      'developer.example',
+      'www.developer.example',
+    ]);
+  }
   assert.deepEqual(result.telemetry.phases.map(({ model }) => model), [
     'gpt-5.6-luna',
     'gpt-5.6-terra',
@@ -1069,6 +1082,73 @@ test('Assistant source discovery allows one Terra only after a seeded Luna candi
   assert.ok(events.indexOf(`fetch:${wrongUrl}`) < events.findIndex((event) => (
     event.startsWith('provider:gpt-5.6-terra:')
   )));
+});
+
+test('Assistant source discovery requires Terra to provide its own allowed-host citation', async () => {
+  const providerBodies = [];
+  const fetchedUrls = [];
+  const wrongUrl = 'https://developer.example/official/wrong-project';
+  const correctUrl = 'https://developer.example/official/amber-city';
+  const service = new AssistantSourceDiscoveryService(
+    discoveryEnvironment(),
+    async (_url, init) => {
+      const body = JSON.parse(init.body);
+      providerBodies.push(body);
+      return body.model === 'gpt-5.6-luna'
+        ? projectResponse({
+          canonicalUrl: wrongUrl,
+          officialProjectName: 'Wrong project',
+          matchKind: 'EXACT',
+        }, [wrongUrl])
+        : projectResponse({
+          canonicalUrl: correctUrl,
+          officialProjectName: 'Amber City',
+          matchKind: 'EXACT',
+        }, []);
+    },
+    {
+      async fetch(source) {
+        fetchedUrls.push(source.canonicalUrl);
+        if (source.canonicalUrl === 'https://developer.example/') {
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>Официальный сайт застройщика ФСК</body></html>',
+          );
+        }
+        if (source.canonicalUrl === wrongUrl) {
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>Другой жилой проект застройщика ФСК</body></html>',
+          );
+        }
+        if (source.canonicalUrl === correctUrl) {
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>ЖК Amber City — проект ФСК</body></html>',
+          );
+        }
+        throw new Error('known path unavailable');
+      },
+    },
+  );
+
+  const result = await service.discover(project, {
+    registrySources: [activeRegistrySource({
+      type: 'DEVELOPER_PROMOTION',
+      canonicalUrl: 'https://developer.example/',
+      projectKey: null,
+      developerKey: project.developerKey,
+      allowedHosts: ['developer.example', 'www.developer.example'],
+    })],
+  });
+
+  assert.equal(result.status, 'REJECTED', JSON.stringify(result, null, 2));
+  assert.equal(result.errorCode, 'ASSISTANT_SOURCE_DISCOVERY_PROJECT_CITATION_MISSING');
+  assert.deepEqual(providerBodies.map(({ model }) => model), [
+    'gpt-5.6-luna',
+    'gpt-5.6-terra',
+  ]);
+  assert.equal(fetchedUrls.includes(correctUrl), false);
 });
 
 test('Assistant source discovery verifies the developer first and restricts project search to its domain', async () => {
@@ -1123,6 +1203,9 @@ test('Assistant source discovery verifies the developer first and restricts proj
 
   const developerRequest = JSON.parse(calls[0].init.body);
   const projectRequest = JSON.parse(calls[1].init.body);
+  assert.equal(developerRequest.model, 'gpt-5.6-luna');
+  assert.deepEqual(developerRequest.reasoning, { effort: 'medium' });
+  assert.equal(developerRequest.max_output_tokens, 1_600);
   assert.deepEqual(developerRequest.tools, [{ type: 'web_search', search_context_size: 'low' }]);
   assert.equal(developerRequest.service_tier, 'default');
   assert.equal(developerRequest.max_tool_calls, 1);
@@ -1135,6 +1218,9 @@ test('Assistant source discovery verifies the developer first and restricts proj
   assert.match(projectRequest.instructions, /устарев/u);
   assert.match(projectRequest.instructions, /транслит/u);
   assert.match(projectRequest.instructions, /переимен/u);
+  assert.equal(projectRequest.model, 'gpt-5.6-luna');
+  assert.deepEqual(projectRequest.reasoning, { effort: 'medium' });
+  assert.equal(projectRequest.max_output_tokens, 1_600);
   assert.equal(projectRequest.tool_choice, 'required');
   assert.equal(projectRequest.service_tier, 'default');
   assert.equal(projectRequest.max_tool_calls, 1);
@@ -1187,7 +1273,147 @@ test('Assistant source discovery never turns a transport failure into a Terra fa
     service.discover(project),
     (error) => error.code === 'ASSISTANT_SOURCE_DISCOVERY_NETWORK_FAILED',
   );
-  assert.equal(providerBodies.length, 1);
+  assert.equal(providerBodies.length, 2);
+  assert.deepEqual(providerBodies.map(({ model }) => model), [
+    'gpt-5.6-luna',
+    'gpt-5.6-luna',
+  ]);
+});
+
+test('Assistant source discovery reserves and settles every Luna retry before the next HTTP attempt', async () => {
+  const events = [];
+  let providerCalls = 0;
+  const candidateUrl = 'https://developer.example/projects/amber-city';
+  const service = new AssistantSourceDiscoveryService(
+    {
+      ...discoveryEnvironment(),
+      ASSISTANT_SOURCE_DISCOVERY_LIVE: 'true',
+      ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+    },
+    async (_url, init) => {
+      const body = JSON.parse(init.body);
+      providerCalls += 1;
+      events.push(`http:${providerCalls}:${body.model}`);
+      if (providerCalls === 1) throw new Error('simulated retryable network failure');
+      return projectResponse({
+        canonicalUrl: candidateUrl,
+        officialProjectName: 'Amber City',
+        matchKind: 'EXACT',
+      }, [candidateUrl]);
+    },
+    {
+      async fetch(source) {
+        if (source.canonicalUrl === 'https://developer.example/') {
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>Официальный сайт застройщика ФСК</body></html>',
+          );
+        }
+        if (source.canonicalUrl === candidateUrl) {
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>ЖК Amber City — проект ФСК</body></html>',
+          );
+        }
+        throw new Error('known path unavailable');
+      },
+    },
+    {
+      usageBudgets: {
+        async reserve(input) {
+          events.push(`reserve:${input.attemptOrdinal}:${input.model}`);
+          return usageReservation(input);
+        },
+        async settle(input) {
+          events.push(`settle:${input.reservation.attemptOrdinal}:${input.errorCode ?? input.outcome}`);
+          return true;
+        },
+      },
+      dailyBudgetUsd: '1.00000000',
+      maximumRunCostUsd: '1.00000000',
+      operationRunId: 'stage-4-retry-ledger',
+      executionId: randomUUID(),
+    },
+  );
+
+  const result = await service.discover(project, {
+    registrySources: [activeRegistrySource({
+      type: 'DEVELOPER_PROMOTION',
+      canonicalUrl: 'https://developer.example/',
+      projectKey: null,
+      developerKey: project.developerKey,
+      allowedHosts: ['developer.example', 'www.developer.example'],
+    })],
+  });
+
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result, null, 2));
+  assert.deepEqual(events, [
+    'reserve:1:gpt-5.6-luna',
+    'http:1:gpt-5.6-luna',
+    'settle:1:ASSISTANT_SOURCE_DISCOVERY_NETWORK_FAILED',
+    'reserve:2:gpt-5.6-luna',
+    'http:2:gpt-5.6-luna',
+    'settle:2:PROVIDER_SUCCESS',
+  ]);
+});
+
+test('Assistant source discovery stops after settlement failure without retry or Terra', async () => {
+  const providerBodies = [];
+  let reservations = 0;
+  let settlements = 0;
+  const service = new AssistantSourceDiscoveryService(
+    {
+      ...discoveryEnvironment(),
+      ASSISTANT_SOURCE_DISCOVERY_LIVE: 'true',
+      ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+    },
+    async (_url, init) => {
+      providerBodies.push(JSON.parse(init.body));
+      throw new Error('simulated retryable network failure');
+    },
+    {
+      async fetch(source) {
+        if (source.canonicalUrl === 'https://developer.example/') {
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>Официальный сайт застройщика ФСК</body></html>',
+          );
+        }
+        throw new Error('known path unavailable');
+      },
+    },
+    {
+      usageBudgets: {
+        async reserve(input) {
+          reservations += 1;
+          return usageReservation(input);
+        },
+        async settle() {
+          settlements += 1;
+          throw new Error('simulated settlement database failure');
+        },
+      },
+      dailyBudgetUsd: '1.00000000',
+      maximumRunCostUsd: '1.00000000',
+      operationRunId: 'stage-4-settlement-stop',
+      executionId: randomUUID(),
+    },
+  );
+
+  await assert.rejects(
+    service.discover(project, {
+      registrySources: [activeRegistrySource({
+        type: 'DEVELOPER_PROMOTION',
+        canonicalUrl: 'https://developer.example/',
+        projectKey: null,
+        developerKey: project.developerKey,
+        allowedHosts: ['developer.example', 'www.developer.example'],
+      })],
+    }),
+    (error) => error.code === 'ASSISTANT_SOURCE_DISCOVERY_USAGE_SETTLEMENT_FAILED',
+  );
+  assert.equal(reservations, 1);
+  assert.equal(settlements, 1);
   assert.deepEqual(providerBodies.map(({ model }) => model), ['gpt-5.6-luna']);
 });
 
@@ -1276,7 +1502,7 @@ test('Assistant source discovery stops before a fourth provider call for one pro
 
   await assert.rejects(
     service.discover(project),
-    (error) => error.code === 'ASSISTANT_SOURCE_DISCOVERY_CALL_BUDGET_EXHAUSTED',
+    (error) => error.code === 'ASSISTANT_SOURCE_DISCOVERY_PROJECT_CALL_BUDGET_EXHAUSTED',
   );
   assert.equal(providerBodies.length, 3);
   assert.deepEqual(providerBodies.map(({ model }) => model), [
@@ -1284,6 +1510,162 @@ test('Assistant source discovery stops before a fourth provider call for one pro
     'gpt-5.6-luna',
     'gpt-5.6-luna',
   ]);
+});
+
+test('Assistant source discovery reports batch call exhaustion before another HTTP request', async () => {
+  const providerBodies = [];
+  const service = new AssistantSourceDiscoveryService(
+    {
+      ...discoveryEnvironment(),
+      ASSISTANT_SOURCE_DISCOVERY_MAX_PROVIDER_CALLS: '1',
+    },
+    async (_url, init) => {
+      providerBodies.push(JSON.parse(init.body));
+      return developerResponse({
+        canonicalUrl: 'https://developer.example/',
+        officialDeveloperName: 'ФСК',
+      }, ['https://developer.example/']);
+    },
+    {
+      async fetch(source) {
+        if (source.canonicalUrl === 'https://developer.example/') {
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>Официальный сайт застройщика ФСК</body></html>',
+          );
+        }
+        throw new Error('known path unavailable');
+      },
+    },
+  );
+
+  await assert.rejects(
+    service.discover(project),
+    (error) => error.code === 'ASSISTANT_SOURCE_DISCOVERY_BATCH_CALL_BUDGET_EXHAUSTED',
+  );
+  assert.equal(providerBodies.length, 1);
+});
+
+test('Assistant source discovery reports Terra exhaustion before fallback HTTP', async () => {
+  const providerBodies = [];
+  const wrongUrl = 'https://developer.example/projects/wrong-project';
+  const service = new AssistantSourceDiscoveryService(
+    {
+      ...discoveryEnvironment(),
+      ASSISTANT_SOURCE_DISCOVERY_MAX_TERRA_FALLBACKS: '0',
+    },
+    async (_url, init) => {
+      const body = JSON.parse(init.body);
+      providerBodies.push(body);
+      return projectResponse({
+        canonicalUrl: wrongUrl,
+        officialProjectName: 'Wrong project',
+        matchKind: 'EXACT',
+      }, [wrongUrl]);
+    },
+    {
+      async fetch(source) {
+        if (source.canonicalUrl === 'https://developer.example/') {
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>Официальный сайт застройщика ФСК</body></html>',
+          );
+        }
+        if (source.canonicalUrl === wrongUrl) {
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>Другой жилой проект застройщика ФСК</body></html>',
+          );
+        }
+        throw new Error('known path unavailable');
+      },
+    },
+  );
+
+  await assert.rejects(
+    service.discover(project, {
+      registrySources: [activeRegistrySource({
+        type: 'DEVELOPER_PROMOTION',
+        canonicalUrl: 'https://developer.example/',
+        projectKey: null,
+        developerKey: project.developerKey,
+        allowedHosts: ['developer.example', 'www.developer.example'],
+      })],
+    }),
+    (error) => error.code === 'ASSISTANT_SOURCE_DISCOVERY_TERRA_BUDGET_EXHAUSTED',
+  );
+  assert.deepEqual(providerBodies.map(({ model }) => model), ['gpt-5.6-luna']);
+});
+
+test('Assistant source discovery reports run USD exhaustion before retry reservation and HTTP', async () => {
+  const developer = {
+    canonicalUrl: 'https://developer.example/',
+    allowedHosts: ['developer.example', 'www.developer.example'],
+    officialName: 'ФСК',
+  };
+  const requestBody = createProjectDiscoveryRequestBody(
+    'gpt-5.6-luna',
+    project,
+    developer,
+  );
+  const oneCallBudget = estimateAssistantAiCallCost({
+    model: 'gpt-5.6-luna',
+    requestBytes: Buffer.byteLength(JSON.stringify(requestBody), 'utf8'),
+    maxOutputTokens: 1_600,
+    maxWebSearchCalls: 1,
+  }).estimatedUsd;
+  let providerCalls = 0;
+  let reservations = 0;
+  const service = new AssistantSourceDiscoveryService(
+    {
+      ...discoveryEnvironment(),
+      ASSISTANT_SOURCE_DISCOVERY_LIVE: 'true',
+      ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+    },
+    async () => {
+      providerCalls += 1;
+      throw new Error('simulated retryable network failure');
+    },
+    {
+      async fetch(source) {
+        if (source.canonicalUrl === developer.canonicalUrl) {
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>Официальный сайт застройщика ФСК</body></html>',
+          );
+        }
+        throw new Error('known path unavailable');
+      },
+    },
+    {
+      usageBudgets: {
+        async reserve(input) {
+          reservations += 1;
+          return usageReservation(input);
+        },
+        async settle() { return true; },
+      },
+      dailyBudgetUsd: '1.00000000',
+      maximumRunCostUsd: oneCallBudget,
+      operationRunId: 'stage-4-retry-cost-stop',
+      executionId: randomUUID(),
+    },
+  );
+
+  await assert.rejects(
+    service.discover(project, {
+      registrySources: [activeRegistrySource({
+        type: 'DEVELOPER_PROMOTION',
+        canonicalUrl: developer.canonicalUrl,
+        projectKey: null,
+        developerKey: project.developerKey,
+        allowedHosts: developer.allowedHosts,
+      })],
+    }),
+    (error) => error.code === 'ASSISTANT_SOURCE_DISCOVERY_COST_BUDGET_EXHAUSTED',
+  );
+  assert.equal(reservations, 1);
+  assert.equal(providerCalls, 1);
 });
 
 test('Assistant source discovery keeps the run USD cap atomic across concurrent projects', async () => {
@@ -2419,6 +2801,21 @@ function activeRegistrySource({
       processingStatus: 'INDEXED',
       checksum: 'c'.repeat(64),
     },
+  };
+}
+
+function usageReservation(input) {
+  return {
+    id: `reservation-${input.attemptOrdinal}`,
+    operationRunId: input.operationRunId,
+    executionId: input.executionId,
+    attemptOrdinal: input.attemptOrdinal,
+    provider: input.provider,
+    model: input.model,
+    serviceTier: input.serviceTier,
+    usageDate: new Date('2026-08-27T00:00:00.000Z'),
+    reservationExpiresAt: new Date('2026-08-27T00:03:00.000Z'),
+    reservedCostUsd: input.reservedCostUsd,
   };
 }
 

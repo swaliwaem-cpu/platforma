@@ -3,6 +3,60 @@ import {
   type AssistantSourceCatalogProjectEvidence,
 } from './assistant-source-discovery-identity';
 
+export type AssistantSourceDiscoveryModelRole = 'LUNA' | 'TERRA';
+
+export type AssistantSourceDiscoveryTransitionInput =
+  | {
+    outcome: 'PROVIDER_ERROR';
+    model: AssistantSourceDiscoveryModelRole;
+    errorCode: string;
+    retryCount: number;
+  }
+  | {
+    outcome: 'SOURCE_CONNECTOR_ERROR';
+    errorCode: string;
+    retryCount: number;
+  }
+  | {
+    outcome: 'MALFORMED_OUTPUT'
+      | 'LOCAL_VALIDATION_REJECTED'
+      | 'NOT_FOUND_WITH_CATALOG_EVIDENCE'
+      | 'NOT_FOUND'
+      | 'ACCEPTED';
+    model: AssistantSourceDiscoveryModelRole;
+  };
+
+export type AssistantSourceDiscoveryTransition =
+  | 'ACCEPT'
+  | 'FALLBACK_TERRA'
+  | 'RETRY_CONNECTOR'
+  | 'RETRY_LUNA'
+  | 'STOP';
+
+export function decideAssistantSourceDiscoveryTransition(
+  input: AssistantSourceDiscoveryTransitionInput,
+): AssistantSourceDiscoveryTransition {
+  if (input.outcome === 'PROVIDER_ERROR') {
+    return input.model === 'LUNA'
+      && input.retryCount < 1
+      && isRetryableLunaProviderError(input.errorCode)
+      ? 'RETRY_LUNA'
+      : 'STOP';
+  }
+  if (input.outcome === 'SOURCE_CONNECTOR_ERROR') {
+    return input.retryCount < 1 && isRetryableSourceConnectorError(input.errorCode)
+      ? 'RETRY_CONNECTOR'
+      : 'STOP';
+  }
+  if (input.outcome === 'ACCEPTED') return 'ACCEPT';
+  if ((input.outcome === 'LOCAL_VALIDATION_REJECTED'
+      || input.outcome === 'NOT_FOUND_WITH_CATALOG_EVIDENCE')
+    && input.model === 'LUNA') {
+    return 'FALLBACK_TERRA';
+  }
+  return 'STOP';
+}
+
 export function createDeveloperCacheKey(project: { developerKey: string; developerName: string }) {
   return `${project.developerKey}\u0000${project.developerName}`
     .normalize('NFKC')
@@ -128,4 +182,19 @@ function buildKnownProjectUrlsForIdentifier(
     }
   }
   return urls;
+}
+
+function isRetryableLunaProviderError(errorCode: string) {
+  return errorCode === 'ASSISTANT_SOURCE_DISCOVERY_TIMEOUT'
+    || errorCode === 'ASSISTANT_SOURCE_DISCOVERY_NETWORK_FAILED'
+    || errorCode === 'ASSISTANT_SOURCE_DISCOVERY_HTTP_429'
+    || /^ASSISTANT_SOURCE_DISCOVERY_HTTP_5\d\d$/u.test(errorCode);
+}
+
+function isRetryableSourceConnectorError(errorCode: string) {
+  return errorCode === 'SOURCE_FETCH_TIMEOUT'
+    || errorCode === 'SOURCE_BROWSER_TIMEOUT'
+    || errorCode === 'SOURCE_NETWORK_FAILED'
+    || errorCode === 'SOURCE_DNS_FAILED'
+    || errorCode === 'SOURCE_HTTP_RETRYABLE';
 }

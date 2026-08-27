@@ -49,9 +49,11 @@ import {
   buildKnownProjectUrls,
   catalogCodeMatchesUrl,
   createDeveloperCacheKey,
+  decideAssistantSourceDiscoveryTransition,
   isNarrowNonResidentialDeveloperUrl,
   isSameCanonicalPage,
   uniqueUrls,
+  type AssistantSourceDiscoveryModelRole,
 } from './assistant-source-discovery-policy';
 import {
   findRegisteredDeveloperSources,
@@ -329,7 +331,8 @@ export class AssistantSourceDiscoveryService {
       developer,
       catalogEvidence ?? undefined,
     );
-    let projectCitations = collectCitationUrls(projectProviderResult.value);
+    let currentProjectCitations = collectCitationUrls(projectProviderResult.value);
+    let projectCitations = currentProjectCitations;
     const phaseTelemetries = [
       ...developerPhaseTelemetries,
       createPhaseTelemetry('PROJECT', this.model, projectProviderResult),
@@ -344,9 +347,10 @@ export class AssistantSourceDiscoveryService {
         ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL,
       );
       projectModel = ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL;
+      currentProjectCitations = collectCitationUrls(projectProviderResult.value);
       projectCitations = uniqueUrls(
         projectCitations,
-        collectCitationUrls(projectProviderResult.value),
+        currentProjectCitations,
       );
       phaseTelemetries.push(createPhaseTelemetry(
         'PROJECT',
@@ -354,31 +358,43 @@ export class AssistantSourceDiscoveryService {
         projectProviderResult,
       ));
     };
+    const transitionProject = async (
+      outcome: 'MALFORMED_OUTPUT'
+        | 'LOCAL_VALIDATION_REJECTED'
+        | 'NOT_FOUND_WITH_CATALOG_EVIDENCE'
+        | 'NOT_FOUND'
+        | 'ACCEPTED',
+    ) => {
+      const decision = decideAssistantSourceDiscoveryTransition({
+        outcome,
+        model: modelRole(projectModel, this.model),
+      });
+      if (decision !== 'FALLBACK_TERRA') return decision;
+      await requestTerraFallback();
+      return decision;
+    };
 
     projectValidation: for (;;) {
       let projectCandidate: ReturnType<typeof parseProjectCandidate>;
       try {
         projectCandidate = parseProjectCandidate(projectProviderResult.value);
       } catch (error) {
-        if (projectModel === this.model) {
-          await requestTerraFallback();
-          continue projectValidation;
-        }
+        await transitionProject('MALFORMED_OUTPUT');
         throw error;
-      }
-      if (projectCandidate.status === 'NOT_FOUND'
-        && projectModel === this.model
-        && catalogEvidence) {
-        await requestTerraFallback();
-        continue projectValidation;
       }
       const telemetry = aggregateTelemetry(phaseTelemetries);
       const allCitations = uniqueUrls(developerCitations, projectCitations);
 
       if (projectCandidate.status === 'NOT_FOUND') {
+        const notFoundOutcome = catalogEvidence
+          ? 'NOT_FOUND_WITH_CATALOG_EVIDENCE'
+          : 'NOT_FOUND';
+        if (await transitionProject(notFoundOutcome) === 'FALLBACK_TERRA') {
+          continue projectValidation;
+        }
         const resolvedCatalogEvidence = catalogEvidence;
         const catalogCitationUrl = resolvedCatalogEvidence
-          ? projectCitations.find((citation) => (
+          ? currentProjectCitations.find((citation) => (
             isUrlWithinAllowedHosts(citation, developer.allowedHosts)
               && catalogCodeMatchesUrl(resolvedCatalogEvidence, citation)
           )) ?? null
@@ -445,14 +461,13 @@ export class AssistantSourceDiscoveryService {
       }
       if (!projectCandidateErrorCode
         && bridgeUrl
-        && !projectCitations.some((citation) => (
+        && !currentProjectCitations.some((citation) => (
           isUrlWithinAllowedHosts(citation, developer.allowedHosts)
         ))) {
         projectCandidateErrorCode = 'ASSISTANT_SOURCE_DISCOVERY_PROJECT_CITATION_MISSING';
       }
       if (!bridgeUrl || projectCandidateErrorCode) {
-        if (projectModel === this.model) {
-          await requestTerraFallback();
+        if (await transitionProject('LOCAL_VALIDATION_REJECTED') === 'FALLBACK_TERRA') {
           continue projectValidation;
         }
         return rejectedResult({
@@ -486,11 +501,11 @@ export class AssistantSourceDiscoveryService {
         if (error instanceof SourceConnectorError
           && error.code === 'SOURCE_ANTI_BOT_CHALLENGE') {
           catalogEvidence ??= await this.findDeveloperCatalogEvidence(project, developer);
-          const exactCitation = projectCitations.some((citation) => (
+          const exactCitation = currentProjectCitations.some((citation) => (
             isSameCanonicalPage(citation, bridgeUrl)
           ));
           const catalogCitationUrl = catalogEvidence
-            ? projectCitations.find((citation) => (
+            ? currentProjectCitations.find((citation) => (
               isUrlWithinAllowedHosts(citation, developer.allowedHosts)
                 && catalogCodeMatchesUrl(catalogEvidence!, citation)
             )) ?? null
@@ -536,10 +551,6 @@ export class AssistantSourceDiscoveryService {
             }
           }
         }
-        if (projectModel === this.model) {
-          await requestTerraFallback();
-          continue projectValidation;
-        }
         return rejectedResult({
           status: 'REJECTED',
           project,
@@ -563,8 +574,7 @@ export class AssistantSourceDiscoveryService {
 
       const finalBridgeUrl = normalizeCandidateUrl(bridgePage.finalUrl);
       if (!isUrlWithinAllowedHosts(finalBridgeUrl, developer.allowedHosts)) {
-        if (projectModel === this.model) {
-          await requestTerraFallback();
+        if (await transitionProject('LOCAL_VALIDATION_REJECTED') === 'FALLBACK_TERRA') {
           continue projectValidation;
         }
         return rejectedResult({
@@ -590,8 +600,7 @@ export class AssistantSourceDiscoveryService {
       const identityErrorCode = readProjectIdentityError(projectCandidate.matchKind, identity);
       const groundedDeveloperAlias = identity.matchedDeveloperAlias ?? developer.matchedAlias;
       if (identityErrorCode) {
-        if (projectModel === this.model) {
-          await requestTerraFallback();
+        if (await transitionProject('LOCAL_VALIDATION_REJECTED') === 'FALLBACK_TERRA') {
           continue projectValidation;
         }
         return rejectedResult({
@@ -625,6 +634,7 @@ export class AssistantSourceDiscoveryService {
         bridgePage,
         developer.allowedHosts,
       );
+      await transitionProject('ACCEPTED');
 
       return {
         status: 'VERIFIED',
@@ -954,9 +964,51 @@ export class AssistantSourceDiscoveryService {
     developerAlternativeHosts?: readonly string[],
     model = this.model,
   ) {
+    let retryCount = 0;
+    for (;;) {
+      try {
+        return await this.requestCandidateAttempt(
+          phase,
+          project,
+          developer,
+          projectEvidence,
+          developerAlternativeHosts,
+          model,
+        );
+      } catch (error) {
+        const decision = decideAssistantSourceDiscoveryTransition({
+          outcome: 'PROVIDER_ERROR',
+          model: modelRole(model, this.model),
+          errorCode: readDiscoveryCode(
+            error,
+            'ASSISTANT_SOURCE_DISCOVERY_PROVIDER_FAILED',
+          ),
+          retryCount,
+        });
+        if (decision !== 'RETRY_LUNA') throw error;
+        retryCount += 1;
+      }
+    }
+  }
+
+  private async requestCandidateAttempt(
+    phase: AssistantSourceDiscoveryPhase,
+    project: AssistantSourceDiscoveryProject,
+    developer?: VerifiedDeveloper,
+    projectEvidence?: VerifiedProjectCatalogEvidence,
+    developerAlternativeHosts?: readonly string[],
+    model = this.model,
+  ) {
     const projectCalls = this.projectCallCounts.get(project.projectKey) ?? 0;
-    if (projectCalls >= 3 || this.providerCallCount >= this.maximumProviderCalls) {
-      throw new AssistantSourceDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_CALL_BUDGET_EXHAUSTED');
+    if (projectCalls >= 3) {
+      throw new AssistantSourceDiscoveryError(
+        'ASSISTANT_SOURCE_DISCOVERY_PROJECT_CALL_BUDGET_EXHAUSTED',
+      );
+    }
+    if (this.providerCallCount >= this.maximumProviderCalls) {
+      throw new AssistantSourceDiscoveryError(
+        'ASSISTANT_SOURCE_DISCOVERY_BATCH_CALL_BUDGET_EXHAUSTED',
+      );
     }
     const isFallback = model === ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL;
     if (isFallback) {
@@ -991,7 +1043,7 @@ export class AssistantSourceDiscoveryService {
     }
     const startedAt = Date.now();
     const controller = new AbortController();
-    const clientRequestId = `assistant-source-${phase.toLocaleLowerCase('en-US')}-${Date.now()}`
+    const clientRequestId = `assistant-source-${phase.toLocaleLowerCase('en-US')}-${randomUUID()}`
       .slice(0, 160);
     let timeout: NodeJS.Timeout | null = null;
     const deadline = new Promise<never>((_resolve, reject) => {
@@ -1085,7 +1137,18 @@ export class AssistantSourceDiscoveryService {
       signal,
     });
     const requestId = readOptionalString(response.headers.get('x-request-id'), 160);
-    const body = await readBoundedJson(response, maximumProviderResponseBytes);
+    let body: unknown;
+    try {
+      body = await readBoundedJson(response, maximumProviderResponseBytes);
+    } catch (error) {
+      if (response.ok) throw error;
+      throw new AssistantSourceDiscoveryError(
+        `ASSISTANT_SOURCE_DISCOVERY_HTTP_${response.status}`,
+        requestId,
+        null,
+        response.status,
+      );
+    }
     const responseId = isRecord(body) ? readOptionalString(body.id, 160) : null;
     if (!response.ok) {
       throw new AssistantSourceDiscoveryError(
@@ -1198,20 +1261,34 @@ export class AssistantSourceDiscoveryService {
       || !isUrlWithinAllowedHosts(canonicalUrl, trustedHosts)) {
       throw new SourceConnectorError('SOURCE_REDIRECT_HOST_NOT_ALLOWED', false);
     }
-    const page = await this.sourceConnector.fetch({
-      id: randomUUID(),
-      canonicalUrl,
-      connectorKey: 'OFFICIAL_HTML',
-      connectorConfig: {
-        allowedHosts: [...trustedHosts],
-        browserRenderMode,
-      },
-    });
-    if (!isUrlWithinAllowedHosts(page.finalUrl, trustedHosts)
-      || page.redirects.some((redirect) => !isUrlWithinAllowedHosts(redirect, trustedHosts))) {
-      throw new SourceConnectorError('SOURCE_REDIRECT_HOST_NOT_ALLOWED', false);
+    let retryCount = 0;
+    for (;;) {
+      try {
+        const page = await this.sourceConnector.fetch({
+          id: randomUUID(),
+          canonicalUrl,
+          connectorKey: 'OFFICIAL_HTML',
+          connectorConfig: {
+            allowedHosts: [...trustedHosts],
+            browserRenderMode,
+          },
+        });
+        if (!isUrlWithinAllowedHosts(page.finalUrl, trustedHosts)
+          || page.redirects.some((redirect) => !isUrlWithinAllowedHosts(redirect, trustedHosts))) {
+          throw new SourceConnectorError('SOURCE_REDIRECT_HOST_NOT_ALLOWED', false);
+        }
+        return page;
+      } catch (error) {
+        if (!(error instanceof SourceConnectorError)) throw error;
+        const decision = decideAssistantSourceDiscoveryTransition({
+          outcome: 'SOURCE_CONNECTOR_ERROR',
+          errorCode: error.code,
+          retryCount,
+        });
+        if (decision !== 'RETRY_CONNECTOR') throw error;
+        retryCount += 1;
+      }
     }
-    return page;
   }
 
   private async findDeveloperCatalogEvidence(
@@ -1438,6 +1515,10 @@ function createFailedPhaseTelemetry(
     totalTokens: null,
     webSearchCalls: null,
   };
+}
+
+function modelRole(model: string, lunaModel: string): AssistantSourceDiscoveryModelRole {
+  return model === lunaModel ? 'LUNA' : 'TERRA';
 }
 
 function registeredProjectSourceResult(
