@@ -191,7 +191,7 @@ function isRetryableLunaProviderError(errorCode: string) {
     || /^ASSISTANT_SOURCE_DISCOVERY_HTTP_5\d\d$/u.test(errorCode);
 }
 
-function isRetryableSourceConnectorError(errorCode: string) {
+export function isRetryableSourceConnectorError(errorCode: string) {
   return errorCode === 'SOURCE_FETCH_TIMEOUT'
     || errorCode === 'SOURCE_BROWSER_TIMEOUT'
     || errorCode === 'SOURCE_NETWORK_FAILED'

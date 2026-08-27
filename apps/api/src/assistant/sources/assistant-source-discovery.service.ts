@@ -51,6 +51,7 @@ import {
   createDeveloperCacheKey,
   decideAssistantSourceDiscoveryTransition,
   isNarrowNonResidentialDeveloperUrl,
+  isRetryableSourceConnectorError,
   isSameCanonicalPage,
   uniqueUrls,
   type AssistantSourceDiscoveryModelRole,
@@ -229,6 +230,10 @@ export class AssistantSourceDiscoveryService {
       'ASSISTANT_SOURCE_DISCOVERY_MAX_TERRA_FALLBACKS_INVALID',
     );
     this.live = environment.ASSISTANT_SOURCE_DISCOVERY_LIVE === 'true';
+    if (this.live
+      && (environment.ASSISTANT_AI_MODE ?? 'fake').trim().toLocaleLowerCase('en-US') !== 'openai') {
+      throw new AssistantSourceDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_OPENAI_MODE_REQUIRED');
+    }
     if (this.live && environment.ASSISTANT_PAID_CALLS_CONFIRMED !== 'true') {
       throw new AssistantSourceDiscoveryError('ASSISTANT_PAID_CALLS_CONFIRMATION_REQUIRED');
     }
@@ -665,113 +670,167 @@ export class AssistantSourceDiscoveryService {
   private async discoverDeveloper(
     project: AssistantSourceDiscoveryProject,
   ): Promise<DeveloperResolutionSuccess | DeveloperResolutionFailure> {
-    const developerProviderResult = await this.requestCandidate('DEVELOPER', project);
+    let developerModel = this.model;
+    let developerProviderResult = await this.requestCandidate('DEVELOPER', project);
     let developerCandidate = parseDeveloperCandidate(developerProviderResult.value);
-    const developerPhaseTelemetry = createPhaseTelemetry(
+    const developerPhaseTelemetries = [createPhaseTelemetry(
       'DEVELOPER',
-      this.model,
+      developerModel,
       developerProviderResult,
-    );
-    const developerPhaseTelemetries = [developerPhaseTelemetry];
-    let developerCitations = collectCitationUrls(developerProviderResult.value);
-
-    if (developerCandidate.status === 'NOT_FOUND') {
-      return {
-        status: 'NOT_FOUND',
-        reason: developerCandidate.reason,
-        errorCode: null,
-        developerCanonicalUrl: null,
-        officialDeveloperName: null,
-        developerCitations,
-        telemetry: aggregateTelemetry(developerPhaseTelemetries),
-      };
-    }
-
+    )];
+    let currentDeveloperCitations = collectCitationUrls(developerProviderResult.value);
+    let developerCitations = currentDeveloperCitations;
     let developerCandidateUrl: string | null = null;
-    let developerCandidateErrorCode: string | null = null;
     let developerAllowedHosts: string[] = [];
-    try {
-      developerCandidateUrl = normalizeCandidateUrl(developerCandidate.canonicalUrl);
-      developerAllowedHosts = relatedHosts(new URL(developerCandidateUrl).hostname);
-    } catch (error) {
-      developerCandidateErrorCode = readDiscoveryCode(
-        error,
-        'ASSISTANT_SOURCE_DISCOVERY_DEVELOPER_URL_INVALID',
-      );
-    }
-    if (developerCandidateUrl && isBlockedDomain(new URL(developerCandidateUrl).hostname)) {
-      developerCandidateErrorCode = 'ASSISTANT_SOURCE_DISCOVERY_DEVELOPER_DOMAIN_BLOCKED';
-    }
-    if (developerCandidateUrl) {
-      const hasDeveloperPerimeterCitation = developerCitations.some((citation) => (
-        isUrlWithinAllowedHosts(citation, developerAllowedHosts)
-      ));
-      if (!hasDeveloperPerimeterCitation) {
-        developerCandidateErrorCode = 'ASSISTANT_SOURCE_DISCOVERY_DEVELOPER_CITATION_MISSING';
-      }
-    }
-    if (!developerCandidateUrl || developerCandidateErrorCode) {
-      return {
-        status: 'REJECTED',
-        reason: developerCandidate.reason,
-        errorCode: developerCandidateErrorCode
-          ?? 'ASSISTANT_SOURCE_DISCOVERY_DEVELOPER_CITATION_MISSING',
-        developerCanonicalUrl: developerCandidateUrl,
-        officialDeveloperName: developerCandidate.officialDeveloperName,
-        developerCitations,
-        telemetry: aggregateTelemetry(developerPhaseTelemetries),
-      };
-    }
-
     let developerPage: SourceConnectorFetchResult | null = null;
-    try {
-      developerPage = await this.fetchOfficialSource(
-        developerCandidateUrl,
-        'when-empty',
+    const requestTerraFallback = async () => {
+      developerProviderResult = await this.requestCandidate(
+        'DEVELOPER',
+        project,
+        undefined,
+        undefined,
         developerAllowedHosts,
+        ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL,
       );
-    } catch (error) {
-      if (error instanceof SourceConnectorError && error.code === 'SOURCE_ANTI_BOT_CHALLENGE') {
-        const alternative = await this.findAlternativeDeveloperPage(
-          project,
-          developerAllowedHosts,
+      developerModel = ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL;
+      developerCandidate = parseDeveloperCandidate(developerProviderResult.value);
+      currentDeveloperCitations = collectCitationUrls(developerProviderResult.value);
+      developerCitations = uniqueUrls(developerCitations, currentDeveloperCitations);
+      developerPhaseTelemetries.push(createPhaseTelemetry(
+        'DEVELOPER',
+        developerModel,
+        developerProviderResult,
+      ));
+    };
+    const transitionDeveloper = async () => {
+      const decision = decideAssistantSourceDiscoveryTransition({
+        outcome: 'LOCAL_VALIDATION_REJECTED',
+        model: modelRole(developerModel, this.model),
+      });
+      if (decision === 'FALLBACK_TERRA') await requestTerraFallback();
+      return decision;
+    };
+
+    developerValidation: for (;;) {
+      if (developerCandidate.status === 'NOT_FOUND') {
+        return {
+          status: 'NOT_FOUND',
+          reason: developerCandidate.reason,
+          errorCode: null,
+          developerCanonicalUrl: null,
+          officialDeveloperName: null,
           developerCitations,
+          telemetry: aggregateTelemetry(developerPhaseTelemetries),
+        };
+      }
+
+      developerCandidateUrl = null;
+      developerPage = null;
+      let developerCandidateErrorCode: string | null = null;
+      try {
+        developerCandidateUrl = normalizeCandidateUrl(developerCandidate.canonicalUrl);
+      } catch (error) {
+        developerCandidateErrorCode = readDiscoveryCode(
+          error,
+          'ASSISTANT_SOURCE_DISCOVERY_DEVELOPER_URL_INVALID',
         );
-        developerPhaseTelemetries.push(alternative.phaseTelemetry);
-        developerCitations = alternative.citations;
-        if (alternative.page && alternative.canonicalUrl) {
-          developerPage = alternative.page;
-          developerCandidateUrl = alternative.canonicalUrl;
-          if (alternative.candidate.status === 'FOUND') developerCandidate = alternative.candidate;
+      }
+      if (developerCandidateUrl
+        && isBlockedDomain(new URL(developerCandidateUrl).hostname)) {
+        developerCandidateErrorCode = 'ASSISTANT_SOURCE_DISCOVERY_DEVELOPER_DOMAIN_BLOCKED';
+      }
+      if (developerCandidateUrl && !developerCandidateErrorCode) {
+        if (developerModel === this.model) {
+          developerAllowedHosts = relatedHosts(new URL(developerCandidateUrl).hostname);
+        } else if (!isUrlWithinAllowedHosts(developerCandidateUrl, developerAllowedHosts)) {
+          developerCandidateErrorCode = 'ASSISTANT_SOURCE_DISCOVERY_DEVELOPER_OUTSIDE_ALLOWED_HOSTS';
         }
       }
-      if (!developerPage) {
+      if (!developerCandidateErrorCode
+        && developerCandidateUrl
+        && !currentDeveloperCitations.some((citation) => (
+          isUrlWithinAllowedHosts(citation, developerAllowedHosts)
+        ))) {
+        developerCandidateErrorCode = 'ASSISTANT_SOURCE_DISCOVERY_DEVELOPER_CITATION_MISSING';
+      }
+      if (!developerCandidateUrl || developerCandidateErrorCode) {
+        const canUsePinnedPerimeter = developerAllowedHosts.length > 0
+          && developerCandidateErrorCode === 'ASSISTANT_SOURCE_DISCOVERY_DEVELOPER_CITATION_MISSING';
+        if (canUsePinnedPerimeter
+          && await transitionDeveloper() === 'FALLBACK_TERRA') {
+          continue developerValidation;
+        }
         return {
           status: 'REJECTED',
           reason: developerCandidate.reason,
-          errorCode: error instanceof SourceConnectorError
-            ? error.code
-            : 'ASSISTANT_SOURCE_DISCOVERY_DEVELOPER_FETCH_FAILED',
+          errorCode: developerCandidateErrorCode
+            ?? 'ASSISTANT_SOURCE_DISCOVERY_DEVELOPER_CITATION_MISSING',
           developerCanonicalUrl: developerCandidateUrl,
           officialDeveloperName: developerCandidate.officialDeveloperName,
           developerCitations,
           telemetry: aggregateTelemetry(developerPhaseTelemetries),
         };
       }
+
+      try {
+        developerPage = await this.fetchOfficialSource(
+          developerCandidateUrl,
+          'when-empty',
+          developerAllowedHosts,
+        );
+      } catch (error) {
+        if (developerModel === this.model
+          && error instanceof SourceConnectorError
+          && error.code === 'SOURCE_ANTI_BOT_CHALLENGE') {
+          const alternative = await this.findAlternativeDeveloperPage(
+            project,
+            developerAllowedHosts,
+            developerCitations,
+          );
+          developerPhaseTelemetries.push(alternative.phaseTelemetry);
+          developerCitations = alternative.citations;
+          if (alternative.page && alternative.canonicalUrl) {
+            developerPage = alternative.page;
+            developerCandidateUrl = alternative.canonicalUrl;
+            if (alternative.candidate.status === 'FOUND') developerCandidate = alternative.candidate;
+          }
+        }
+        if (!developerPage) {
+          return {
+            status: 'REJECTED',
+            reason: developerCandidate.reason,
+            errorCode: error instanceof SourceConnectorError
+              ? error.code
+              : 'ASSISTANT_SOURCE_DISCOVERY_DEVELOPER_FETCH_FAILED',
+            developerCanonicalUrl: developerCandidateUrl,
+            officialDeveloperName: developerCandidate.officialDeveloperName,
+            developerCitations,
+            telemetry: aggregateTelemetry(developerPhaseTelemetries),
+          };
+        }
+      }
+
+      const initialMatchedDeveloperAlias = findDeveloperAlias(project, developerPage);
+      if (!initialMatchedDeveloperAlias) {
+        if (await transitionDeveloper() === 'FALLBACK_TERRA') {
+          continue developerValidation;
+        }
+        return {
+          status: 'REJECTED',
+          reason: developerCandidate.reason,
+          errorCode: 'ASSISTANT_SOURCE_DISCOVERY_DEVELOPER_MISMATCH',
+          developerCanonicalUrl: normalizeCandidateUrl(developerPage.finalUrl),
+          officialDeveloperName: developerCandidate.officialDeveloperName,
+          developerCitations,
+          telemetry: aggregateTelemetry(developerPhaseTelemetries),
+        };
+      }
+      break developerValidation;
+    }
+    if (!developerPage) {
+      throw new AssistantSourceDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_DEVELOPER_STATE_INVALID');
     }
 
-    const initialMatchedDeveloperAlias = findDeveloperAlias(project, developerPage);
-    if (!initialMatchedDeveloperAlias) {
-      return {
-        status: 'REJECTED',
-        reason: developerCandidate.reason,
-        errorCode: 'ASSISTANT_SOURCE_DISCOVERY_DEVELOPER_MISMATCH',
-        developerCanonicalUrl: normalizeCandidateUrl(developerPage.finalUrl),
-        officialDeveloperName: developerCandidate.officialDeveloperName,
-        developerCitations,
-        telemetry: aggregateTelemetry(developerPhaseTelemetries),
-      };
-    }
     const linkedDeveloperPages = await this.findLinkedDeveloperPages(
       project,
       developerPage,
@@ -787,7 +846,8 @@ export class AssistantSourceDiscoveryService {
           'always',
           developerAllowedHosts,
         );
-      } catch {
+      } catch (error) {
+        rethrowRetryableSourceConnectorError(error);
         // A narrow page without project evidence is replaced through the bounded alternative search below.
       }
       const linkedCatalog = linkedDeveloperPages.pages.find(({ page }) => (
@@ -937,7 +997,8 @@ export class AssistantSourceDiscoveryService {
         linkedDeveloperPages.pages.forEach(({ canonicalUrl: linkedCanonicalUrl }) => {
           catalogUrls.add(linkedCanonicalUrl);
         });
-      } catch {
+      } catch (error) {
+        rethrowRetryableSourceConnectorError(error);
         // Try the next independently registered developer source.
       }
     }
@@ -1306,7 +1367,10 @@ export class AssistantSourceDiscoveryService {
         catalogUrl,
         'always',
         developer.allowedHosts,
-      ).catch(() => null);
+      ).catch((error) => {
+        rethrowRetryableSourceConnectorError(error);
+        return null;
+      });
       this.developerCatalogCache.set(catalogUrl, catalogPromise);
       this.renderedDeveloperCatalogUrls.add(catalogUrl);
       page = await catalogPromise;
@@ -1343,7 +1407,8 @@ export class AssistantSourceDiscoveryService {
         pages.push({ canonicalUrl, page: linkedPage });
         this.developerCatalogCache.set(canonicalUrl, Promise.resolve(linkedPage));
         this.renderedDeveloperCatalogUrls.add(canonicalUrl);
-      } catch {
+      } catch (error) {
+        rethrowRetryableSourceConnectorError(error);
         if (linked.trustWithoutFetch) {
           allowedHosts.splice(0, allowedHosts.length, ...expandedHosts);
         }
@@ -1400,7 +1465,8 @@ export class AssistantSourceDiscoveryService {
             break;
           }
         }
-      } catch {
+      } catch (error) {
+        rethrowRetryableSourceConnectorError(error);
         // Anti-bot, unavailable and unrelated cited pages are skipped within the bounded perimeter.
       }
     }
@@ -1454,7 +1520,8 @@ export class AssistantSourceDiscoveryService {
         );
         if (!identity.matchedPlatformProjectAlias || !identity.matchedOfficialProjectAlias) continue;
         return { page, identity, officialProjectName };
-      } catch {
+      } catch (error) {
+        rethrowRetryableSourceConnectorError(error);
         // Missing and protected guessed paths are expected; the bounded candidate list is exhausted safely.
       }
     }
@@ -1487,11 +1554,19 @@ export class AssistantSourceDiscoveryService {
         if (!externalIdentity.matchedPlatformProjectAlias
           && !externalIdentity.matchedOfficialProjectAlias) continue;
         return fetchedExternalPage;
-      } catch {
+      } catch (error) {
+        rethrowRetryableSourceConnectorError(error);
         // The verified developer bridge remains canonical if its optional external link is unavailable.
       }
     }
     return bridgePage;
+  }
+}
+
+function rethrowRetryableSourceConnectorError(error: unknown): void {
+  if (error instanceof SourceConnectorError
+    && isRetryableSourceConnectorError(error.code)) {
+    throw error;
   }
 }
 

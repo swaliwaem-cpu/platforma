@@ -559,6 +559,7 @@ test('FIX-TOKEN repeat uses the checkpoint without discovery while refresh runs 
   };
   const environment = {
     OPENAI_API_KEY: 'bounded-local-stub',
+    ASSISTANT_AI_MODE: 'openai',
     ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
     ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
     ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath,
@@ -669,6 +670,7 @@ test('FIX-TOKEN active indexed project registry source takes priority over a che
   };
   const environment = {
     OPENAI_API_KEY: 'bounded-local-stub',
+    ASSISTANT_AI_MODE: 'openai',
     ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
     ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
     ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath,
@@ -1194,6 +1196,11 @@ test('FIX-TOKEN discovery never uses Terra after parse, transport, HTTP or sourc
       permitsLunaRetry: true,
     },
     {
+      name: 'provider HTTP 401 authorization failure',
+      failureKind: 'HTTP_401',
+      errorCode: 'ASSISTANT_SOURCE_DISCOVERY_HTTP_401',
+    },
+    {
       name: 'provider HTTP 5xx',
       failureKind: 'HTTP_503',
       errorCode: 'ASSISTANT_SOURCE_DISCOVERY_HTTP_503',
@@ -1255,10 +1262,15 @@ test('FIX-TOKEN discovery never uses Terra after parse, transport, HTTP or sourc
           if (scenario.failureKind === 'NETWORK') {
             throw new Error('simulated provider network failure');
           }
-          if (scenario.failureKind === 'HTTP_429'
+          if (scenario.failureKind === 'HTTP_401'
+            || scenario.failureKind === 'HTTP_429'
             || scenario.failureKind === 'HTTP_503'
             || scenario.failureKind === 'HTTP_503_MALFORMED') {
-            const status = scenario.failureKind === 'HTTP_429' ? 429 : 503;
+            const status = scenario.failureKind === 'HTTP_401'
+              ? 401
+              : scenario.failureKind === 'HTTP_429'
+                ? 429
+                : 503;
             const body = scenario.failureKind === 'HTTP_503_MALFORMED'
               ? '{not-json'
               : JSON.stringify({ id: `matrix-http-${status}`, error: { status } });

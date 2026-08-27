@@ -786,6 +786,93 @@ test('Assistant source discovery exhausts deterministic catalog and known paths 
   assert.equal(events.filter((event) => event.startsWith('provider:')).length, 1);
 });
 
+test('Assistant source discovery preserves a retryable catalog error before project Web Search', async () => {
+  const registryUrl = 'https://developer.example/';
+  const providerBodies = [];
+  let catalogFetches = 0;
+  const service = new AssistantSourceDiscoveryService(
+    discoveryEnvironment(),
+    async (_url, init) => {
+      const body = JSON.parse(init.body);
+      providerBodies.push(body);
+      return body.text.format.name === 'platforma_official_developer_candidate'
+        ? developerResponse({
+          canonicalUrl: registryUrl,
+          officialDeveloperName: 'ФСК',
+        }, [registryUrl])
+        : projectNotFoundResponse([]);
+    },
+    {
+      async fetch(source) {
+        if (source.canonicalUrl === registryUrl) {
+          catalogFetches += 1;
+          if (catalogFetches === 1) {
+            return fetchedPage(
+              source.canonicalUrl,
+              '<html><body>Официальный сайт застройщика ФСК</body></html>',
+            );
+          }
+          throw new SourceConnectorError('SOURCE_NETWORK_FAILED', true);
+        }
+        throw new Error('known path unavailable');
+      },
+    },
+  );
+
+  await assert.rejects(
+    service.discover(project),
+    (error) => error.code === 'SOURCE_NETWORK_FAILED',
+  );
+  assert.equal(catalogFetches, 3);
+  assert.deepEqual(providerBodies.map(({ text, model }) => ({
+    phase: text.format.name,
+    model,
+  })), [{
+    phase: 'platforma_official_developer_candidate',
+    model: 'gpt-5.6-luna',
+  }]);
+});
+
+test('Assistant source discovery preserves a retryable known-path error before project Web Search', async () => {
+  const registryUrl = 'https://developer.example/';
+  let providerCalls = 0;
+  let knownPathFetches = 0;
+  const service = new AssistantSourceDiscoveryService(
+    discoveryEnvironment(),
+    async () => {
+      providerCalls += 1;
+      return projectNotFoundResponse([]);
+    },
+    {
+      async fetch(source) {
+        if (source.canonicalUrl === registryUrl) {
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>Официальный сайт застройщика ФСК</body></html>',
+          );
+        }
+        knownPathFetches += 1;
+        throw new SourceConnectorError('SOURCE_NETWORK_FAILED', true);
+      },
+    },
+  );
+
+  await assert.rejects(
+    service.discover(project, {
+      registrySources: [activeRegistrySource({
+        type: 'DEVELOPER_PROMOTION',
+        canonicalUrl: registryUrl,
+        projectKey: null,
+        developerKey: project.developerKey,
+        allowedHosts: ['developer.example', 'www.developer.example'],
+      })],
+    }),
+    (error) => error.code === 'SOURCE_NETWORK_FAILED',
+  );
+  assert.equal(knownPathFetches, 2);
+  assert.equal(providerCalls, 0);
+});
+
 test('Assistant source discovery never widens an exact co.jp host to the public suffix or a sibling', async () => {
   const providerBodies = [];
   const fetchedUrls = [];
@@ -1258,6 +1345,18 @@ test('Assistant source discovery fails closed before project search when the dev
   assert.equal(connectorCalls, 0);
 });
 
+test('Assistant source discovery requires explicit OpenAI mode before a live provider call', () => {
+  assert.throws(
+    () => new AssistantSourceDiscoveryService({
+      ...discoveryEnvironment(),
+      ASSISTANT_AI_MODE: 'fake',
+      ASSISTANT_SOURCE_DISCOVERY_LIVE: 'true',
+      ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+    }),
+    (error) => error.code === 'ASSISTANT_SOURCE_DISCOVERY_OPENAI_MODE_REQUIRED',
+  );
+});
+
 test('Assistant source discovery never turns a transport failure into a Terra fallback', async () => {
   const providerBodies = [];
   const service = new AssistantSourceDiscoveryService(
@@ -1287,6 +1386,7 @@ test('Assistant source discovery reserves and settles every Luna retry before th
   const service = new AssistantSourceDiscoveryService(
     {
       ...discoveryEnvironment(),
+      ASSISTANT_AI_MODE: 'openai',
       ASSISTANT_SOURCE_DISCOVERY_LIVE: 'true',
       ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
     },
@@ -1364,6 +1464,7 @@ test('Assistant source discovery stops after settlement failure without retry or
   const service = new AssistantSourceDiscoveryService(
     {
       ...discoveryEnvironment(),
+      ASSISTANT_AI_MODE: 'openai',
       ASSISTANT_SOURCE_DISCOVERY_LIVE: 'true',
       ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
     },
@@ -1619,6 +1720,7 @@ test('Assistant source discovery reports run USD exhaustion before retry reserva
   const service = new AssistantSourceDiscoveryService(
     {
       ...discoveryEnvironment(),
+      ASSISTANT_AI_MODE: 'openai',
       ASSISTANT_SOURCE_DISCOVERY_LIVE: 'true',
       ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
     },
@@ -1691,6 +1793,7 @@ test('Assistant source discovery keeps the run USD cap atomic across concurrent 
   const service = new AssistantSourceDiscoveryService(
     {
       ...discoveryEnvironment(),
+      ASSISTANT_AI_MODE: 'openai',
       ASSISTANT_SOURCE_DISCOVERY_LIVE: 'true',
       ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
     },
@@ -1746,11 +1849,11 @@ test('Assistant source discovery keeps the run USD cap atomic across concurrent 
 });
 
 test('Assistant source discovery rejects a cited site that does not prove the developer identity', async () => {
-  let providerCalls = 0;
+  const providerBodies = [];
   const service = new AssistantSourceDiscoveryService(
     discoveryEnvironment(),
-    async () => {
-      providerCalls += 1;
+    async (_url, init) => {
+      providerBodies.push(JSON.parse(init.body));
       return developerResponse({
         canonicalUrl: 'https://developer.example/',
         officialDeveloperName: 'ФСК',
@@ -1767,7 +1870,114 @@ test('Assistant source discovery rejects a cited site that does not prove the de
 
   assert.equal(result.status, 'REJECTED');
   assert.equal(result.errorCode, 'ASSISTANT_SOURCE_DISCOVERY_DEVELOPER_MISMATCH');
-  assert.equal(providerCalls, 1);
+  assert.deepEqual(providerBodies.map(({ model }) => model), [
+    'gpt-5.6-luna',
+    'gpt-5.6-terra',
+  ]);
+  assert.deepEqual(providerBodies[1].tools[0].filters.allowed_domains, [
+    'developer.example',
+    'www.developer.example',
+  ]);
+});
+
+test('Assistant source discovery accepts one developer Terra fallback inside the Luna host perimeter', async () => {
+  const lunaUrl = 'https://developer.example/wrong-company';
+  const terraUrl = 'https://developer.example/company';
+  const projectUrl = 'https://developer.example/residential/amber-city-official';
+  const providerBodies = [];
+  const responses = [
+    developerResponse({
+      canonicalUrl: lunaUrl,
+      officialDeveloperName: 'ФСК',
+    }, [lunaUrl]),
+    developerResponse({
+      canonicalUrl: terraUrl,
+      officialDeveloperName: 'ФСК',
+    }, [terraUrl]),
+    projectResponse({
+      canonicalUrl: projectUrl,
+      officialProjectName: 'Amber City',
+      matchKind: 'EXACT',
+    }, [projectUrl]),
+  ];
+  const service = new AssistantSourceDiscoveryService(
+    discoveryEnvironment(),
+    async (_url, init) => {
+      providerBodies.push(JSON.parse(init.body));
+      return responses.shift();
+    },
+    {
+      async fetch(source) {
+        if (source.canonicalUrl === lunaUrl) {
+          return fetchedPage(source.canonicalUrl, '<html><body>Другой девелопер</body></html>');
+        }
+        if (source.canonicalUrl === terraUrl) {
+          return fetchedPage(source.canonicalUrl, '<html><body>Официальный сайт ФСК</body></html>');
+        }
+        if (source.canonicalUrl === projectUrl) {
+          return fetchedPage(source.canonicalUrl, '<html><body>ЖК Amber City — проект ФСК</body></html>');
+        }
+        throw new Error('known path unavailable');
+      },
+    },
+  );
+
+  const result = await service.discover(project);
+
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result, null, 2));
+  assert.equal(result.developerCanonicalUrl, terraUrl);
+  assert.equal(result.canonicalUrl, projectUrl);
+  assert.deepEqual(providerBodies.map(({ model }) => model), [
+    'gpt-5.6-luna',
+    'gpt-5.6-terra',
+    'gpt-5.6-luna',
+  ]);
+  assert.deepEqual(providerBodies[1].tools[0].filters.allowed_domains, [
+    'developer.example',
+    'www.developer.example',
+  ]);
+});
+
+test('Assistant source discovery rejects a developer Terra candidate outside the Luna host perimeter', async () => {
+  const lunaUrl = 'https://developer.example/';
+  const terraUrl = 'https://unrelated.example/';
+  const providerBodies = [];
+  const fetchedUrls = [];
+  const service = new AssistantSourceDiscoveryService(
+    discoveryEnvironment(),
+    async (_url, init) => {
+      const body = JSON.parse(init.body);
+      providerBodies.push(body);
+      return body.model === 'gpt-5.6-luna'
+        ? developerResponse({
+          canonicalUrl: lunaUrl,
+          officialDeveloperName: 'ФСК',
+        }, [lunaUrl])
+        : developerResponse({
+          canonicalUrl: terraUrl,
+          officialDeveloperName: 'ФСК',
+        }, [terraUrl]);
+    },
+    {
+      async fetch(source) {
+        fetchedUrls.push(source.canonicalUrl);
+        return fetchedPage(source.canonicalUrl, '<html><body>Другой девелопер</body></html>');
+      },
+    },
+  );
+
+  const result = await service.discover(project);
+
+  assert.equal(result.status, 'REJECTED', JSON.stringify(result, null, 2));
+  assert.equal(
+    result.errorCode,
+    'ASSISTANT_SOURCE_DISCOVERY_DEVELOPER_OUTSIDE_ALLOWED_HOSTS',
+  );
+  assert.deepEqual(providerBodies.map(({ model }) => model), [
+    'gpt-5.6-luna',
+    'gpt-5.6-terra',
+  ]);
+  assert.deepEqual(fetchedUrls, [lunaUrl]);
 });
 
 test('Assistant source discovery expands an exact host only through a verified official link', async () => {
@@ -2183,6 +2393,58 @@ test('Assistant source discovery accepts a standalone project site only through 
   )), true);
   assert.equal(fetchedUrls.includes('https://cityzen.moscow/'), true);
   assert.equal(fetchedUrls.includes('https://retail.cityzen.moscow/'), false);
+});
+
+test('Assistant source discovery preserves a retryable standalone project connector error', async () => {
+  const developerUrl = 'https://mr.example/';
+  const bridgeUrl = 'https://mr.example/projects/cityzen';
+  const standaloneUrl = 'https://cityzen.moscow/';
+  const responses = [
+    developerResponse({
+      canonicalUrl: developerUrl,
+      officialDeveloperName: 'MR Group',
+    }, [developerUrl]),
+    projectResponse({
+      canonicalUrl: bridgeUrl,
+      officialProjectName: 'CITYZEN',
+      matchKind: 'TRANSLITERATION',
+    }, [bridgeUrl]),
+  ];
+  let standaloneFetches = 0;
+  const service = new AssistantSourceDiscoveryService(
+    discoveryEnvironment(),
+    async () => responses.shift(),
+    {
+      async fetch(source) {
+        if (source.canonicalUrl === developerUrl) {
+          return fetchedPage(source.canonicalUrl, '<html><body>Девелопер MR Group</body></html>');
+        }
+        if (source.canonicalUrl.replace(/\/$/u, '') === bridgeUrl) {
+          return fetchedPage(source.canonicalUrl, [
+            '<html><body><h1>Жилой квартал CITYZEN</h1><p>Проект MR Group</p>',
+            `<a href="${standaloneUrl}">Официальный сайт проекта</a>`,
+            '</body></html>',
+          ].join(''));
+        }
+        if (source.canonicalUrl === standaloneUrl) {
+          standaloneFetches += 1;
+          throw new SourceConnectorError('SOURCE_NETWORK_FAILED', true);
+        }
+        throw new Error('known path unavailable');
+      },
+    },
+  );
+
+  await assert.rejects(
+    service.discover({
+      projectKey: 'zhk-cityzen',
+      title: 'Жилой квартал СИТИДЗЕН',
+      developerKey: 'mr-group',
+      developerName: 'MR Group',
+    }),
+    (error) => error.code === 'SOURCE_NETWORK_FAILED',
+  );
+  assert.equal(standaloneFetches, 2);
 });
 
 test('Assistant source discovery does not trust a standalone domain proposed without a developer-site bridge', async () => {
