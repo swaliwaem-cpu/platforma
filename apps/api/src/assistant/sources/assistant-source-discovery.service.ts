@@ -1252,8 +1252,11 @@ export class AssistantSourceDiscoveryService {
       const linkedHosts = relatedHosts(new URL(linkedUrl).hostname);
       const expandedHosts = [...new Set([...allowedHosts, ...linkedHosts])];
       if (expandedHosts.length > 10) continue;
+      const fetchAllowedHosts = isUrlWithinAllowedHosts(linkedUrl, currentAllowedHosts)
+        ? currentAllowedHosts
+        : linkedHosts;
       try {
-        const linkedPage = await this.fetchOfficialSource(linkedUrl, 'always', linkedHosts);
+        const linkedPage = await this.fetchOfficialSource(linkedUrl, 'always', fetchAllowedHosts);
         if (!findDeveloperAlias(project, linkedPage)) continue;
         allowedHosts.splice(0, allowedHosts.length, ...expandedHosts);
         const canonicalUrl = normalizeCandidateUrl(linkedPage.finalUrl);

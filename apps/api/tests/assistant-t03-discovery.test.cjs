@@ -613,6 +613,65 @@ test('Assistant source discovery follows a bounded same-host catalog link before
   assert.equal(result.telemetry.phases.length, 0);
 });
 
+test('Assistant source discovery keeps the stored allowlist for an already trusted catalog redirect', async () => {
+  const registryUrl = 'https://developer.example/';
+  const linkedCatalogUrl = 'https://developer.example/projects/';
+  const redirectedCatalogUrl = 'https://catalog.developer.example/projects/';
+  const catalogProjectUrl = 'https://catalog.developer.example/projects/amber-official/';
+  let providerCalls = 0;
+  const service = new AssistantSourceDiscoveryService(
+    discoveryEnvironment(),
+    async () => {
+      providerCalls += 1;
+      throw new Error('provider must not be called after an allowlisted catalog redirect');
+    },
+    {
+      async fetch(source) {
+        if (source.canonicalUrl === registryUrl) {
+          return fetchedPage(source.canonicalUrl, [
+            '<html><body>Официальный сайт застройщика ФСК',
+            '<a href="/projects/">Каталог жилых проектов</a>',
+            '</body></html>',
+          ].join(''));
+        }
+        if (source.canonicalUrl === linkedCatalogUrl) {
+          return {
+            ...fetchedPage(redirectedCatalogUrl, [
+              '<html><body>Официальный каталог жилых проектов застройщика ФСК',
+              '<script type="application/json">',
+              JSON.stringify({ items: [{ name: 'Amber City', code: 'amber-official' }] }),
+              '</script></body></html>',
+            ].join('')),
+            redirects: [linkedCatalogUrl],
+          };
+        }
+        if (source.canonicalUrl === catalogProjectUrl) {
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>ЖК Amber City — официальный проект застройщика ФСК</body></html>',
+          );
+        }
+        throw new Error('known path unavailable');
+      },
+    },
+  );
+
+  const result = await service.discover(project, {
+    registrySources: [activeRegistrySource({
+      type: 'DEVELOPER_PROMOTION',
+      canonicalUrl: registryUrl,
+      projectKey: null,
+      developerKey: project.developerKey,
+      allowedHosts: ['developer.example', 'catalog.developer.example'],
+    })],
+  });
+
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result, null, 2));
+  assert.equal(result.canonicalUrl, catalogProjectUrl);
+  assert.equal(providerCalls, 0);
+  assert.equal(result.telemetry.phases.length, 0);
+});
+
 test('Assistant source discovery exhausts deterministic catalog and known paths before project Web Search', async () => {
   const registryUrl = 'https://developer.example/';
   const events = [];
