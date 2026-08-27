@@ -741,7 +741,7 @@ model AssistantAiUsageAttempt {
   operationRunId        String    @map("operation_run_id") @db.VarChar(160)
   executionId           String    @map("execution_id") @db.Uuid
   attemptOrdinal        Int       @map("execution_attempt_ordinal") @db.SmallInt
-  compatibilityOrdinal  Int       @default(dbgenerated("(-nextval('assistant_ai_usage_attempt_compat_ordinal_seq'::regclass))")) @map("attempt_ordinal")
+  compatibilityOrdinal  Int       @default(dbgenerated("(- nextval('assistant_ai_usage_attempt_compat_ordinal_seq'::regclass))")) @map("attempt_ordinal")
   operation             String    @db.VarChar(40)
   provider              String    @db.VarChar(40)
   requestedModel        String    @map("requested_model") @db.VarChar(160)
@@ -775,6 +775,7 @@ model AssistantAiUsageAttempt {
   settledAt             DateTime? @map("settled_at")
 
   @@unique([operationRunId, executionId, attemptOrdinal], map: "assistant_ai_usage_attempts_run_execution_ordinal_key")
+  @@unique([operationRunId, compatibilityOrdinal], map: "assistant_ai_usage_attempts_operation_run_id_attempt_ordinal_ke")
   @@index([provider, usageDate, status])
   @@index([operation, createdAt])
   @@map("assistant_ai_usage_attempts")
