@@ -1,14 +1,22 @@
 const assert = require('node:assert/strict');
-const { mkdtempSync, readFileSync, rmSync } = require('node:fs');
+const {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { test } = require('node:test');
+const { Prisma } = require('@prisma/client');
 
 const {
   ASSISTANT_AI_PRICING_CATALOG_VERSION,
   addAssistantUsd,
   calculateAssistantAiCost,
   estimateAssistantAiCallCost,
+  parseAssistantUsd,
 } = require('../dist/assistant/operations/assistant-ai-cost.js');
 const {
   AssistantModelUsagePolicyService,
@@ -18,8 +26,12 @@ const {
   parseAssistantOpenAiUsage,
 } = require('../dist/assistant/assistant-planner-gateway.js');
 const {
+  AssistantSourceDiscoveryError,
   AssistantSourceDiscoveryService,
 } = require('../dist/assistant/sources/assistant-source-discovery.service.js');
+const {
+  SourceConnectorError,
+} = require('../dist/assistant/sources/official-html-source.connector.js');
 const {
   checkpointAssistantSourceDiscoveryResult,
   createEmptyCheckpoint,
@@ -226,6 +238,63 @@ test('FIX-TOKEN checkpoint is versioned, reusable and omits provider narrative a
   }
 });
 
+test('FIX-TOKEN corrupted checkpoint stops the run before provider construction', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-corrupted-checkpoint-'));
+  const checkpointPath = join(directory, 'checkpoint.json');
+  try {
+    writeFileSync(checkpointPath, '{"version":1,"entries":', { mode: 0o600 });
+    await assertCheckpointFailureStopsProvider(
+      checkpointPath,
+      'ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_INVALID',
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('FIX-TOKEN inaccessible checkpoint stops the run before provider construction', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-inaccessible-checkpoint-'));
+  const checkpointPath = join(directory, 'checkpoint.json');
+  try {
+    writeAssistantSourceDiscoveryCheckpoint(
+      checkpointPath,
+      createEmptyCheckpoint(checkpointFingerprint()),
+    );
+    chmodSync(checkpointPath, 0o000);
+    assert.throws(
+      () => readFileSync(checkpointPath, 'utf8'),
+      (error) => error?.code === 'EACCES',
+    );
+    await assertCheckpointFailureStopsProvider(
+      checkpointPath,
+      'ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_READ_FAILED',
+    );
+  } finally {
+    chmodSync(checkpointPath, 0o600);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('FIX-TOKEN fingerprint mismatch stops the run before provider construction', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-fingerprint-checkpoint-'));
+  const checkpointPath = join(directory, 'checkpoint.json');
+  try {
+    writeAssistantSourceDiscoveryCheckpoint(
+      checkpointPath,
+      createEmptyCheckpoint({
+        ...checkpointFingerprint(),
+        validatorVersion: 'outdated-validator-version',
+      }),
+    );
+    await assertCheckpointFailureStopsProvider(
+      checkpointPath,
+      'ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_FINGERPRINT_MISMATCH',
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('FIX-TOKEN discovery defaults to a one-project dry-run and never constructs a provider', async () => {
   let providerConstructed = false;
   const application = {
@@ -263,6 +332,60 @@ test('FIX-TOKEN discovery defaults to a one-project dry-run and never constructs
   assert.equal(report.selection.requestedProjects, 1);
   assert.equal(report.selection.maximumEstimatedUsd, '0.10000000');
   assert.equal(report.summary.providerRequests, 0);
+});
+
+test('FIX-TOKEN dry-run estimate depends on the selected call mix instead of the requested cap', async () => {
+  const projects = [
+    {
+      projectKey: 'dry-estimate-one',
+      title: 'Dry estimate one',
+      developerKey: 'dry-developer-one',
+      developerName: 'Dry developer one',
+    },
+    {
+      projectKey: 'dry-estimate-two-with-a-longer-name',
+      title: 'Dry estimate two with a longer project name',
+      developerKey: 'dry-developer-two',
+      developerName: 'Dry developer two',
+    },
+  ];
+  const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-dry-estimate-'));
+  try {
+    const oneProjectLowCap = await runDryRunEstimate({
+      projects,
+      limit: 1,
+      requestedCostCapUsd: '0.01000000',
+      checkpointPath: join(directory, 'one-low.json'),
+    });
+    const oneProjectHighCap = await runDryRunEstimate({
+      projects,
+      limit: 1,
+      requestedCostCapUsd: '0.02000000',
+      checkpointPath: join(directory, 'one-high.json'),
+    });
+    const twoProjectsLowCap = await runDryRunEstimate({
+      projects,
+      limit: 2,
+      requestedCostCapUsd: '0.01000000',
+      checkpointPath: join(directory, 'two-low.json'),
+    });
+
+    assert.equal(oneProjectLowCap.selection.requestedCostCapUsd, '0.01000000');
+    assert.equal(oneProjectHighCap.selection.requestedCostCapUsd, '0.02000000');
+    assert.equal(twoProjectsLowCap.selection.requestedCostCapUsd, '0.01000000');
+    assert.match(oneProjectLowCap.selection.maximumEstimatedUsd, /^\d+\.\d{8}$/u);
+    assert.equal(
+      oneProjectLowCap.selection.maximumEstimatedUsd,
+      oneProjectHighCap.selection.maximumEstimatedUsd,
+    );
+    assert.ok(
+      parseAssistantUsd(twoProjectsLowCap.selection.maximumEstimatedUsd)
+        > parseAssistantUsd(oneProjectLowCap.selection.maximumEstimatedUsd),
+    );
+    assert.ok(parseAssistantUsd(oneProjectLowCap.selection.maximumEstimatedUsd) > 0n);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('FIX-TOKEN repeat uses the checkpoint without discovery while refresh runs once', async () => {
@@ -377,6 +500,85 @@ test('FIX-TOKEN repeat uses the checkpoint without discovery while refresh runs 
   }
 });
 
+test('FIX-TOKEN live report preserves an early successful attempt when a later phase fails', async () => {
+  const runId = 'fix-token-late-phase-report';
+  const report = await runPersistedDiscoveryReport({
+    runId,
+    attempts: [
+      persistedUsageAttempt({
+        id: '11111111-1111-4111-8111-111111111111',
+        runId,
+        attemptOrdinal: 1,
+        outcome: 'ACCEPTED',
+        inputTokens: 20n,
+        cachedInputTokens: 0n,
+        cacheWriteInputTokens: 0n,
+        outputTokens: 13n,
+        reasoningTokens: 5n,
+        totalTokens: 33n,
+        webSearchCalls: 1,
+        reservedCostUsd: '0.01000000',
+        estimatedCostUsd: '0.00002000',
+        chargedCostUsd: '0.00002000',
+      }),
+      persistedUsageAttempt({
+        id: '22222222-2222-4222-8222-222222222222',
+        runId,
+        attemptOrdinal: 2,
+        outcome: 'PROVIDER_ERROR',
+        errorCode: 'ASSISTANT_SOURCE_DISCOVERY_NETWORK_FAILED',
+        reservedCostUsd: '0.01234567',
+        estimatedCostUsd: null,
+        chargedCostUsd: '0.01234567',
+      }),
+    ],
+    discoveryError: failedDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_NETWORK_FAILED'),
+  });
+
+  assert.equal(report.summary.providerRequests, 2);
+  assert.equal(report.summary.lunaCalls, 2);
+  assert.equal(report.summary.terraCalls, 0);
+  assert.equal(report.summary.fallbackCalls, 0);
+  assert.deepEqual(report.summary.tokenUsage, {
+    inputTokens: 20,
+    cachedInputTokens: 0,
+    cacheWriteInputTokens: 0,
+    outputTokens: 13,
+    reasoningTokens: 5,
+    totalTokens: 33,
+    webSearchCalls: 1,
+  });
+  assert.equal(report.summary.reservedUsd, '0.02234567');
+  assert.equal(report.summary.estimatedUsd, null);
+  assert.equal(report.summary.chargedUsd, '0.01236567');
+  assert.equal(report.results[0].status, 'ERROR');
+  assert.equal(report.results[0].errorCode, 'ASSISTANT_SOURCE_DISCOVERY_NETWORK_FAILED');
+});
+
+test('FIX-TOKEN live report charges the full reserve for failed persisted usage without telemetry', async () => {
+  const runId = 'fix-token-unknown-usage-report';
+  const report = await runPersistedDiscoveryReport({
+    runId,
+    attempts: [persistedUsageAttempt({
+      id: '33333333-3333-4333-8333-333333333333',
+      runId,
+      attemptOrdinal: 1,
+      outcome: 'PROVIDER_ERROR',
+      errorCode: 'ASSISTANT_SOURCE_DISCOVERY_TIMEOUT',
+      reservedCostUsd: '0.01234567',
+      estimatedCostUsd: null,
+      chargedCostUsd: '0.01234567',
+    })],
+    discoveryError: failedDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_TIMEOUT'),
+  });
+
+  assert.equal(report.pricingCatalogVersion, ASSISTANT_AI_PRICING_CATALOG_VERSION);
+  assert.equal(report.summary.providerRequests, 1);
+  assert.equal(report.summary.reservedUsd, '0.01234567');
+  assert.equal(report.summary.estimatedUsd, null);
+  assert.equal(report.summary.chargedUsd, '0.01234567');
+});
+
 test('FIX-TOKEN discovery report counts a failed paid provider attempt without pretending it cost zero', async () => {
   const project = {
     projectKey: 'failed-provider-project',
@@ -407,6 +609,113 @@ test('FIX-TOKEN discovery report counts a failed paid provider attempt without p
   assert.equal(report.results[0].providerRequests, 1);
 });
 
+test('FIX-TOKEN discovery never uses Terra after parse, transport, HTTP or source-fetch failure', async (context) => {
+  const scenarios = [
+    {
+      name: 'malformed structured output',
+      failureKind: 'MALFORMED',
+      errorCode: 'ASSISTANT_SOURCE_DISCOVERY_OUTPUT_INVALID',
+    },
+    {
+      name: 'provider timeout',
+      failureKind: 'TIMEOUT',
+      errorCode: 'ASSISTANT_SOURCE_DISCOVERY_TIMEOUT',
+    },
+    {
+      name: 'provider network failure',
+      failureKind: 'NETWORK',
+      errorCode: 'ASSISTANT_SOURCE_DISCOVERY_NETWORK_FAILED',
+    },
+    {
+      name: 'provider HTTP 429',
+      failureKind: 'HTTP_429',
+      errorCode: 'ASSISTANT_SOURCE_DISCOVERY_HTTP_429',
+    },
+    {
+      name: 'provider HTTP 5xx',
+      failureKind: 'HTTP_503',
+      errorCode: 'ASSISTANT_SOURCE_DISCOVERY_HTTP_503',
+    },
+    {
+      name: 'official source fetch failure',
+      failureKind: 'SOURCE_FETCH',
+      errorCode: 'SOURCE_FETCH_TIMEOUT',
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    await context.test(scenario.name, async () => {
+      const providerBodies = [];
+      const candidateUrl = 'https://developer.example/official/amber-city';
+      const service = new AssistantSourceDiscoveryService(
+        sourceDiscoveryEnvironment(),
+        async (_url, init) => {
+          const requestBody = JSON.parse(init.body);
+          providerBodies.push(requestBody);
+          if (requestBody.text.format.name === 'platforma_official_developer_candidate') {
+            return sourceDiscoveryResponse({
+              status: 'FOUND',
+              canonicalUrl: 'https://developer.example/',
+              officialDeveloperName: 'ФСК',
+              reason: 'Официальный сайт застройщика.',
+            }, ['https://developer.example/'], 'matrix-developer');
+          }
+          if (scenario.failureKind === 'MALFORMED') {
+            return malformedSourceDiscoveryResponse('matrix-malformed');
+          }
+          if (scenario.failureKind === 'TIMEOUT') {
+            throw new AssistantSourceDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_TIMEOUT');
+          }
+          if (scenario.failureKind === 'NETWORK') {
+            throw new Error('simulated provider network failure');
+          }
+          if (scenario.failureKind === 'HTTP_429' || scenario.failureKind === 'HTTP_503') {
+            const status = scenario.failureKind === 'HTTP_429' ? 429 : 503;
+            return new Response(JSON.stringify({ id: `matrix-http-${status}`, error: { status } }), {
+              status,
+              headers: { 'content-type': 'application/json' },
+            });
+          }
+          return sourceDiscoveryResponse({
+            status: 'FOUND',
+            canonicalUrl: candidateUrl,
+            officialProjectName: 'Amber City',
+            matchKind: 'EXACT',
+            reason: 'Проект найден.',
+          }, [candidateUrl], 'matrix-project');
+        },
+        {
+          async fetch(source) {
+            if (source.canonicalUrl === 'https://developer.example/') {
+              return fetchedSourcePage(
+                source.canonicalUrl,
+                '<html><body>Официальный сайт застройщика ФСК</body></html>',
+              );
+            }
+            if (scenario.failureKind === 'SOURCE_FETCH'
+              && source.canonicalUrl === candidateUrl) {
+              throw new SourceConnectorError('SOURCE_FETCH_TIMEOUT', true, 504);
+            }
+            throw new Error('known path unavailable');
+          },
+        },
+      );
+
+      let outcome;
+      try {
+        outcome = await service.discover(fixTokenProject());
+      } catch (error) {
+        outcome = error;
+      }
+      assert.equal(outcome.code ?? outcome.errorCode, scenario.errorCode);
+      assert.deepEqual(providerBodies.map(({ model }) => model), [
+        'gpt-5.6-luna',
+        'gpt-5.6-luna',
+      ]);
+    });
+  }
+});
+
 test('FIX-TOKEN discovery requires both live flag and explicit paid-call confirmation', async () => {
   await assert.rejects(
     runAssistantSourceDiscovery({
@@ -422,3 +731,293 @@ test('FIX-TOKEN discovery requires both live flag and explicit paid-call confirm
   );
   assert.equal(parseArguments(['--refresh']).missingOnly, false);
 });
+
+function checkpointFingerprint() {
+  return {
+    primaryModel: 'gpt-5.6-luna',
+    fallbackModel: 'gpt-5.6-terra',
+    promptVersion: 'assistant-source-discovery-v1',
+    validatorVersion: 'assistant-source-discovery-validator-v1',
+  };
+}
+
+async function assertCheckpointFailureStopsProvider(checkpointPath, expectedCode) {
+  let providerConstructed = false;
+  let runError = null;
+  const application = {
+    get() { return {}; },
+    async close() {},
+  };
+  try {
+    await runAssistantSourceDiscovery({
+      argv: ['--live'],
+      environment: {
+        OPENAI_API_KEY: 'bounded-local-stub',
+        ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+        ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
+        ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath,
+      },
+      silent: true,
+      dependencies: {
+        async createApplicationContext() { return application; },
+        async selectProjects() { return [fixTokenProject()]; },
+        usageBudgets: {},
+        createDiscovery() {
+          providerConstructed = true;
+          return {
+            async discover() { throw new Error('provider construction sentinel'); },
+          };
+        },
+      },
+    });
+  } catch (error) {
+    runError = error;
+  }
+
+  assert.equal(providerConstructed, false);
+  assert.equal(runError?.code ?? runError?.message, expectedCode);
+}
+
+async function runDryRunEstimate({
+  projects,
+  limit,
+  requestedCostCapUsd,
+  checkpointPath,
+}) {
+  const application = {
+    get() { return {}; },
+    async close() {},
+  };
+  return runAssistantSourceDiscovery({
+    argv: [
+      '--limit', String(limit),
+      '--max-cost-usd', requestedCostCapUsd,
+    ],
+    environment: {
+      OPENAI_API_KEY: 'present-but-insufficient',
+      ASSISTANT_PAID_CALLS_CONFIRMED: 'false',
+      ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath,
+    },
+    silent: true,
+    dependencies: {
+      async createApplicationContext() { return application; },
+      async selectProjects(_prisma, selectedLimit) {
+        assert.equal(selectedLimit, limit);
+        return projects.slice(0, selectedLimit);
+      },
+      createDiscovery() {
+        throw new Error('dry-run must not construct a provider');
+      },
+    },
+  });
+}
+
+async function runPersistedDiscoveryReport({ runId, attempts, discoveryError }) {
+  const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-persisted-report-'));
+  const checkpointPath = join(directory, 'checkpoint.json');
+  const project = fixTokenProject();
+  const prisma = {
+    assistantAiUsageAttempt: {
+      async findMany(query) {
+        assert.equal(query.where.operationRunId, runId);
+        assert.ok(query.select);
+        return attempts;
+      },
+    },
+  };
+  const application = {
+    get() { return prisma; },
+    async close() {},
+  };
+
+  try {
+    return await runAssistantSourceDiscovery({
+      argv: ['--live'],
+      environment: {
+        OPENAI_API_KEY: 'bounded-local-stub',
+        ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+        ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
+        ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath,
+      },
+      silent: true,
+      dependencies: {
+        runId,
+        async createApplicationContext() { return application; },
+        async selectProjects() { return [project]; },
+        usageBudgets: {
+          async reconcileExpiredReservations() { return 0; },
+        },
+        createDiscovery(options) {
+          assert.equal(options.operationRunId, runId);
+          return {
+            async discover(candidate) {
+              assert.equal(candidate.projectKey, project.projectKey);
+              throw discoveryError;
+            },
+          };
+        },
+      },
+    });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+function persistedUsageAttempt({
+  id,
+  runId,
+  attemptOrdinal,
+  outcome,
+  errorCode = null,
+  inputTokens = null,
+  cachedInputTokens = null,
+  cacheWriteInputTokens = null,
+  outputTokens = null,
+  reasoningTokens = null,
+  totalTokens = null,
+  webSearchCalls = null,
+  reservedCostUsd,
+  estimatedCostUsd,
+  chargedCostUsd,
+}) {
+  return {
+    id,
+    operationRunId: runId,
+    attemptOrdinal,
+    operation: 'SOURCE_DISCOVERY',
+    provider: 'openai',
+    requestedModel: 'gpt-5.6-luna',
+    actualModel: 'gpt-5.6-luna',
+    reasoningEffort: 'medium',
+    promptVersion: 'assistant-source-discovery-v1',
+    validatorVersion: 'assistant-source-discovery-validator-v1',
+    isFallback: false,
+    status: 'SETTLED',
+    outcome,
+    errorCode,
+    inputTokens,
+    cachedInputTokens,
+    cacheWriteInputTokens,
+    outputTokens,
+    reasoningTokens,
+    totalTokens,
+    webSearchCalls,
+    pricingCatalogVersion: ASSISTANT_AI_PRICING_CATALOG_VERSION,
+    pricingStatus: estimatedCostUsd === null ? 'USAGE_INCOMPLETE' : 'PRICED',
+    reservedCostUsd: new Prisma.Decimal(reservedCostUsd),
+    estimatedCostUsd: estimatedCostUsd === null ? null : new Prisma.Decimal(estimatedCostUsd),
+    chargedCostUsd: new Prisma.Decimal(chargedCostUsd),
+    durationMs: 25,
+    usageDate: new Date('2026-08-27T00:00:00.000Z'),
+    createdAt: new Date('2026-08-27T12:00:00.000Z'),
+    settledAt: new Date('2026-08-27T12:00:01.000Z'),
+  };
+}
+
+function failedDiscoveryError(code) {
+  return new AssistantSourceDiscoveryError(code, null, null, null, {
+    phase: 'PROJECT',
+    provider: 'openai',
+    model: 'gpt-5.6-luna',
+    requestId: null,
+    responseId: null,
+    httpStatus: null,
+    inputTokens: null,
+    cachedInputTokens: null,
+    cacheWriteInputTokens: null,
+    outputTokens: null,
+    reasoningTokens: null,
+    totalTokens: null,
+    webSearchCalls: null,
+  });
+}
+
+function sourceDiscoveryEnvironment() {
+  return {
+    OPENAI_API_KEY: 'test-only',
+    ASSISTANT_SOURCE_DISCOVERY_MODEL: 'gpt-5.6-luna',
+  };
+}
+
+function sourceDiscoveryResponse(candidate, citations, responseId) {
+  return new Response(JSON.stringify({
+    id: responseId,
+    output: [
+      {
+        type: 'web_search_call',
+        action: { sources: citations.map((url) => ({ type: 'url', url })) },
+      },
+      {
+        type: 'message',
+        content: [{
+          type: 'output_text',
+          text: JSON.stringify(candidate),
+          annotations: citations.map((url) => ({
+            type: 'url_citation',
+            url,
+            title: 'Источник',
+          })),
+        }],
+      },
+    ],
+    usage: {
+      input_tokens: 20,
+      input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
+      output_tokens: 13,
+      output_tokens_details: { reasoning_tokens: 5 },
+      total_tokens: 33,
+    },
+  }), {
+    status: 200,
+    headers: {
+      'content-type': 'application/json',
+      'x-request-id': `req-${responseId}`,
+    },
+  });
+}
+
+function malformedSourceDiscoveryResponse(responseId) {
+  return new Response(JSON.stringify({
+    id: responseId,
+    output: [
+      { type: 'web_search_call', action: { sources: [] } },
+      {
+        type: 'message',
+        content: [{ type: 'output_text', text: '{not-json', annotations: [] }],
+      },
+    ],
+    usage: {
+      input_tokens: 20,
+      input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
+      output_tokens: 13,
+      output_tokens_details: { reasoning_tokens: 5 },
+      total_tokens: 33,
+    },
+  }), {
+    status: 200,
+    headers: { 'content-type': 'application/json', 'x-request-id': `req-${responseId}` },
+  });
+}
+
+function fetchedSourcePage(finalUrl, html) {
+  return {
+    finalUrl,
+    statusCode: 200,
+    contentType: 'text/html',
+    checksum: 'f'.repeat(64),
+    payload: Buffer.from(html),
+    etag: null,
+    lastModified: null,
+    redirects: [],
+  };
+}
+
+function fixTokenProject() {
+  return {
+    projectKey: 'zhiloj-kompleks-amber-city',
+    title: 'ЖК Amber City (Эмбер сити)',
+    developerKey: 'fsk',
+    developerName: 'ФСК',
+    address: 'Москва, Шелепихинская набережная, дом 34',
+  };
+}

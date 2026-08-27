@@ -24,6 +24,258 @@ const project = {
   address: 'Москва, Шелепихинская набережная, дом 34',
 };
 
+test('Assistant source discovery reuses an active indexed project source before any provider call', async () => {
+  const providerBodies = [];
+  const canonicalUrl = 'https://developer.example/residences/amber-city-official';
+  const service = new AssistantSourceDiscoveryService(
+    discoveryEnvironment(),
+    async (_url, init) => {
+      const body = JSON.parse(init.body);
+      providerBodies.push(body);
+      if (body.text.format.name === 'platforma_official_developer_candidate') {
+        return developerResponse({
+          canonicalUrl: 'https://developer.example/',
+          officialDeveloperName: 'ФСК',
+        }, ['https://developer.example/']);
+      }
+      return projectResponse({
+        canonicalUrl,
+        officialProjectName: 'Amber City',
+        matchKind: 'EXACT',
+      }, [canonicalUrl]);
+    },
+    {
+      async fetch(source) {
+        if (source.canonicalUrl === 'https://developer.example/') {
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>Официальный сайт застройщика ФСК</body></html>',
+          );
+        }
+        if (source.canonicalUrl === canonicalUrl) {
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>ЖК Amber City — проект ФСК</body></html>',
+          );
+        }
+        throw new Error('known path unavailable');
+      },
+    },
+  );
+
+  const result = await service.discover(project, {
+    registrySources: [activeRegistrySource({
+      type: 'DEVELOPMENT_PAGE',
+      canonicalUrl,
+      projectKey: project.projectKey,
+      developerKey: project.developerKey,
+      allowedHosts: ['developer.example', 'www.developer.example'],
+    })],
+  });
+
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result, null, 2));
+  assert.equal(result.canonicalUrl, canonicalUrl);
+  assert.equal(providerBodies.length, 0);
+  assert.equal(result.telemetry.phases.length, 0);
+  assert.equal(result.telemetry.webSearchCalls, 0);
+});
+
+test('Assistant source discovery probes a registered developer catalog and known paths before project Web Search', async () => {
+  const registryUrl = 'https://catalog.developer.example/';
+  let registryFetched = false;
+  let knownPathProbed = false;
+  const providerBodies = [];
+  const connectorConfigs = [];
+  const service = new AssistantSourceDiscoveryService(
+    discoveryEnvironment(),
+    async (_url, init) => {
+      const body = JSON.parse(init.body);
+      providerBodies.push(body);
+      assert.equal(registryFetched, true);
+      assert.equal(knownPathProbed, true);
+      assert.equal(body.text.format.name, 'platforma_official_project_candidate');
+      return projectNotFoundResponse(['https://catalog.developer.example/projects/']);
+    },
+    {
+      async fetch(source) {
+        connectorConfigs.push(source.connectorConfig);
+        if (source.canonicalUrl === registryUrl) {
+          registryFetched = true;
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>Официальный каталог жилых проектов застройщика ФСК</body></html>',
+          );
+        }
+        knownPathProbed = true;
+        throw new Error('known path unavailable');
+      },
+    },
+  );
+
+  const result = await service.discover(project, {
+    registrySources: [activeRegistrySource({
+      type: 'DEVELOPER_PROMOTION',
+      canonicalUrl: registryUrl,
+      projectKey: null,
+      developerKey: project.developerKey,
+      allowedHosts: ['catalog.developer.example', 'www.catalog.developer.example'],
+    })],
+  });
+
+  assert.equal(result.status, 'NOT_FOUND', JSON.stringify(result, null, 2));
+  assert.equal(result.developerCanonicalUrl, registryUrl);
+  assert.equal(providerBodies.length, 1);
+  assert.deepEqual(providerBodies.map(({ model }) => model), ['gpt-5.6-luna']);
+  assert.deepEqual(providerBodies[0].tools[0].filters.allowed_domains, [
+    'catalog.developer.example',
+  ]);
+  assert.equal(connectorConfigs.some(({ allowedHosts }) => (
+    allowedHosts.includes('catalog.developer.example')
+      && allowedHosts.includes('www.catalog.developer.example')
+  )), true);
+});
+
+test('Assistant source discovery never widens an exact co.jp host to the public suffix or a sibling', async () => {
+  const providerBodies = [];
+  const fetchedUrls = [];
+  const unrelatedUrl = 'https://unrelated.co.jp/projects/amber-city';
+  const service = new AssistantSourceDiscoveryService(
+    discoveryEnvironment(),
+    async (_url, init) => {
+      const body = JSON.parse(init.body);
+      providerBodies.push(body);
+      if (body.text.format.name === 'platforma_official_developer_candidate') {
+        return developerResponse({
+          canonicalUrl: 'https://www.x.example.co.jp/',
+          officialDeveloperName: 'ФСК',
+        }, ['https://www.x.example.co.jp/']);
+      }
+      return projectResponse({
+        canonicalUrl: unrelatedUrl,
+        officialProjectName: 'Amber City',
+        matchKind: 'EXACT',
+      }, [unrelatedUrl]);
+    },
+    {
+      async fetch(source) {
+        fetchedUrls.push(source.canonicalUrl);
+        if (source.canonicalUrl === 'https://www.x.example.co.jp/') {
+          return fetchedPage(
+            'https://x.example.co.jp/',
+            '<html><body>Официальный сайт застройщика ФСК</body></html>',
+          );
+        }
+        if (source.canonicalUrl === 'https://co.jp/') {
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>Официальный сайт застройщика ФСК</body></html>',
+          );
+        }
+        if (source.canonicalUrl === unrelatedUrl) {
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>ЖК Amber City — проект ФСК</body></html>',
+          );
+        }
+        throw new Error('known path unavailable');
+      },
+    },
+  );
+
+  const result = await service.discover(project);
+
+  assert.equal(result.status, 'REJECTED', JSON.stringify(result, null, 2));
+  assert.equal(
+    result.errorCode,
+    'ASSISTANT_SOURCE_DISCOVERY_PROJECT_OUTSIDE_DEVELOPER_DOMAIN',
+  );
+  assert.deepEqual(providerBodies.map(({ model }) => model), [
+    'gpt-5.6-luna',
+    'gpt-5.6-luna',
+    'gpt-5.6-terra',
+  ]);
+  const allowedDomains = providerBodies
+    .filter(({ text }) => text.format.name === 'platforma_official_project_candidate')
+    .flatMap(({ tools }) => tools[0].filters.allowed_domains);
+  assert.equal(allowedDomains.includes('x.example.co.jp'), true);
+  assert.equal(allowedDomains.every((host) => (
+    host === 'x.example.co.jp' || host === 'www.x.example.co.jp'
+  )), true);
+  assert.equal(fetchedUrls.includes('https://co.jp/'), false);
+  assert.equal(fetchedUrls.includes(unrelatedUrl), false);
+});
+
+test('Assistant source discovery allows one Terra only after a seeded Luna candidate fails local identity validation', async () => {
+  const events = [];
+  const providerBodies = [];
+  const wrongUrl = 'https://developer.example/official/wrong-project';
+  const correctUrl = 'https://developer.example/official/amber-city';
+  const service = new AssistantSourceDiscoveryService(
+    discoveryEnvironment(),
+    async (_url, init) => {
+      const body = JSON.parse(init.body);
+      providerBodies.push(body);
+      events.push(`provider:${body.model}:${body.text.format.name}`);
+      assert.equal(body.text.format.name, 'platforma_official_project_candidate');
+      const isFallback = body.model === 'gpt-5.6-terra';
+      const canonicalUrl = isFallback ? correctUrl : wrongUrl;
+      return projectResponse({
+        canonicalUrl,
+        officialProjectName: isFallback ? 'Amber City' : 'Wrong project',
+        matchKind: 'EXACT',
+      }, [canonicalUrl]);
+    },
+    {
+      async fetch(source) {
+        events.push(`fetch:${source.canonicalUrl}`);
+        if (source.canonicalUrl === 'https://developer.example/') {
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>Официальный сайт застройщика ФСК</body></html>',
+          );
+        }
+        if (source.canonicalUrl === wrongUrl) {
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>Другой жилой проект застройщика ФСК</body></html>',
+          );
+        }
+        if (source.canonicalUrl === correctUrl) {
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>ЖК Amber City — проект ФСК</body></html>',
+          );
+        }
+        throw new Error('known path unavailable');
+      },
+    },
+  );
+
+  const result = await service.discover(project, {
+    registrySources: [activeRegistrySource({
+      type: 'DEVELOPER_PROMOTION',
+      canonicalUrl: 'https://developer.example/',
+      projectKey: null,
+      developerKey: project.developerKey,
+      allowedHosts: ['developer.example', 'www.developer.example'],
+    })],
+  });
+
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result, null, 2));
+  assert.equal(result.canonicalUrl, correctUrl);
+  assert.deepEqual(providerBodies.map(({ model }) => model), [
+    'gpt-5.6-luna',
+    'gpt-5.6-terra',
+  ]);
+  assert.deepEqual(result.telemetry.phases.map(({ model }) => model), [
+    'gpt-5.6-luna',
+    'gpt-5.6-terra',
+  ]);
+  assert.ok(events.indexOf(`fetch:${wrongUrl}`) < events.findIndex((event) => (
+    event.startsWith('provider:gpt-5.6-terra:')
+  )));
+});
+
 test('Assistant source discovery verifies the developer first and restricts project search to its domain', async () => {
   const calls = [];
   const connectorCalls = [];
@@ -1197,6 +1449,29 @@ function openAiResponse(candidate, citations, responseId) {
     status: 200,
     headers: { 'content-type': 'application/json', 'x-request-id': `req_${responseId}` },
   });
+}
+
+function activeRegistrySource({
+  type,
+  canonicalUrl,
+  projectKey,
+  developerKey,
+  allowedHosts,
+}) {
+  return {
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    state: 'ACTIVE',
+    type,
+    canonicalUrl,
+    projectKey,
+    developerKey,
+    connectorKey: 'OFFICIAL_HTML',
+    connectorConfig: { allowedHosts },
+    latestRevision: {
+      processingStatus: 'INDEXED',
+      checksum: 'c'.repeat(64),
+    },
+  };
 }
 
 function fetchedPage(finalUrl, html) {
