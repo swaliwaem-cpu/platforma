@@ -5,9 +5,22 @@ import { request as requestHttps } from 'node:https';
 import { isIP } from 'node:net';
 import { createBrotliDecompress, createGunzip, createInflate } from 'node:zlib';
 
+import { load } from 'cheerio';
+import {
+  chromium,
+  type Browser,
+  type BrowserContext,
+  type Page,
+  type Response as BrowserResponse,
+} from 'playwright-core';
+
 const defaultTimeoutMs = 10_000;
 const defaultMaximumResponseBytes = 5 * 1024 * 1024;
 const defaultMaximumRedirects = 3;
+const defaultBrowserTimeoutMs = 20_000;
+const minimumSemanticTextCharacters = 80;
+const maximumCapturedJsonResponses = 4;
+const maximumCapturedJsonBytes = 512 * 1024;
 const supportedContentTypes = new Set([
   'text/html',
   'application/xhtml+xml',
@@ -16,6 +29,7 @@ const supportedContentTypes = new Set([
 ]);
 
 type ResolvedAddress = { address: string; family: number };
+type CapturedBrowserJson = { url: string; payload: Buffer };
 
 export type SourceConnectorRegistryEntry = {
   id: string;
@@ -53,6 +67,14 @@ export type OfficialHtmlSourceConnectorOptions = {
   allowHttp?: boolean;
   allowPrivateNetwork?: boolean;
   resolveHost?: (hostname: string) => Promise<ResolvedAddress[]>;
+  browserFallbackEnabled?: boolean;
+  browserTimeoutMs?: number;
+  browserExecutablePath?: string;
+  renderHtml?: (
+    url: URL,
+    allowedHosts: Set<string>,
+    maximumBytes: number,
+  ) => Promise<Buffer>;
 };
 
 export class OfficialHtmlSourceConnector {
@@ -62,6 +84,14 @@ export class OfficialHtmlSourceConnector {
   private readonly allowHttp: boolean;
   private readonly allowPrivateNetwork: boolean;
   private readonly resolveHost: (hostname: string) => Promise<ResolvedAddress[]>;
+  private readonly browserFallbackEnabled: boolean;
+  private readonly browserTimeoutMs: number;
+  private readonly browserExecutablePath: string | undefined;
+  private readonly renderHtml: (
+    url: URL,
+    allowedHosts: Set<string>,
+    maximumBytes: number,
+  ) => Promise<Buffer>;
 
   constructor(options: OfficialHtmlSourceConnectorOptions = {}) {
     this.timeoutMs = boundedInteger(options.timeoutMs, defaultTimeoutMs, 10, 120_000);
@@ -74,10 +104,32 @@ export class OfficialHtmlSourceConnector {
     this.maxRedirects = boundedInteger(options.maxRedirects, defaultMaximumRedirects, 0, 10);
     this.allowHttp = options.allowHttp === true;
     this.allowPrivateNetwork = options.allowPrivateNetwork === true;
+    this.browserFallbackEnabled = options.browserFallbackEnabled
+      ?? readBooleanEnvironment(
+        process.env.ASSISTANT_SOURCE_BROWSER_FALLBACK_ENABLED,
+        false,
+        'SOURCE_BROWSER_FALLBACK_ENABLED_INVALID',
+      );
+    this.browserTimeoutMs = boundedInteger(
+      options.browserTimeoutMs ?? readOptionalIntegerEnvironment(
+        process.env.ASSISTANT_SOURCE_BROWSER_TIMEOUT_MS,
+        'SOURCE_BROWSER_TIMEOUT_MS_INVALID',
+      ),
+      defaultBrowserTimeoutMs,
+      1_000,
+      60_000,
+    );
+    this.browserExecutablePath = options.browserExecutablePath
+      ?? process.env.ASSISTANT_SOURCE_BROWSER_EXECUTABLE_PATH?.trim()
+      ?? process.env.TRAINING_MATERIAL_BROWSER_EXECUTABLE_PATH?.trim()
+      ?? undefined;
     this.resolveHost = options.resolveHost ?? (async (hostname) => {
       const addresses = await dns.lookup(hostname, { all: true, verbatim: true });
       return addresses.map(({ address, family }) => ({ address, family }));
     });
+    this.renderHtml = options.renderHtml ?? ((url, allowedHosts, maximumBytes) => (
+      this.renderWithBrowser(url, allowedHosts, maximumBytes)
+    ));
   }
 
   async fetch(source: SourceConnectorRegistryEntry): Promise<SourceConnectorFetchResult> {
@@ -103,12 +155,25 @@ export class OfficialHtmlSourceConnector {
         continue;
       }
 
+      if (isAntiBotChallenge(response.payload, response.contentType)) {
+        throw new SourceConnectorError('SOURCE_ANTI_BOT_CHALLENGE', true, response.statusCode);
+      }
+      const browserRenderMode = this.readBrowserRenderMode(source.connectorConfig);
+      const payload = this.browserFallbackEnabled
+        && isHtmlContentType(response.contentType)
+        && (browserRenderMode === 'always'
+          || semanticTextLength(response.payload) < minimumSemanticTextCharacters)
+        ? await this.renderHtml(currentUrl, allowedHosts, this.maxResponseBytes)
+        : response.payload;
+      if (isAntiBotChallenge(payload, response.contentType)) {
+        throw new SourceConnectorError('SOURCE_ANTI_BOT_CHALLENGE', true, response.statusCode);
+      }
       return {
         finalUrl: currentUrl.toString(),
         statusCode: response.statusCode,
         contentType: response.contentType,
-        checksum: createHash('sha256').update(response.payload).digest('hex'),
-        payload: response.payload,
+        checksum: createHash('sha256').update(payload).digest('hex'),
+        payload,
         etag: response.etag,
         lastModified: response.lastModified,
         redirects,
@@ -221,7 +286,7 @@ export class OfficialHtmlSourceConnector {
         path: `${url.pathname}${url.search}`,
         servername: url.protocol === 'https:' ? url.hostname : undefined,
         headers: {
-          accept: 'text/html,application/xhtml+xml,application/ld+json,application/json;q=0.9',
+          accept: 'text/html,application/xhtml+xml,*/*;q=0.8',
           'accept-encoding': 'gzip, deflate, br',
           host: url.host,
           'user-agent': 'PlatformaKnowledgeSource/1.0',
@@ -305,10 +370,166 @@ export class OfficialHtmlSourceConnector {
     }
     return hosts;
   }
+
+  private readBrowserRenderMode(value: unknown) {
+    if (!isRecord(value) || value.browserRenderMode === undefined) return 'when-empty';
+    if (value.browserRenderMode !== 'when-empty' && value.browserRenderMode !== 'always') {
+      throw new SourceConnectorError('SOURCE_CONNECTOR_CONFIG_INVALID', false);
+    }
+    return value.browserRenderMode;
+  }
+
+  private async renderWithBrowser(url: URL, allowedHosts: Set<string>, maximumBytes: number) {
+    const deadline = Date.now() + this.browserTimeoutMs;
+    const pinnedHosts = new Map<string, string>();
+    const initialHostname = normalizeHostname(url.hostname);
+    for (const hostname of allowedHosts) {
+      try {
+        const addresses = await this.resolveAddresses(hostname);
+        pinnedHosts.set(hostname, selectAddress(addresses));
+      } catch (error) {
+        if (hostname === initialHostname) throw error;
+        // Optional redirect counterparts must not make the initial rendered page unavailable.
+      }
+    }
+    const browserAllowedHosts = new Set(pinnedHosts.keys());
+    let browser: Browser;
+    try {
+      browser = await chromium.launch({
+        headless: true,
+        args: [`--host-resolver-rules=${createBrowserResolverRules(pinnedHosts)}`],
+        timeout: remainingBrowserTime(deadline),
+        ...(this.browserExecutablePath ? { executablePath: this.browserExecutablePath } : {}),
+      });
+    } catch {
+      throw new SourceConnectorError('SOURCE_BROWSER_UNAVAILABLE', true);
+    }
+
+    let context: BrowserContext | undefined;
+    try {
+      context = await browser.newContext({
+        acceptDownloads: false,
+        javaScriptEnabled: true,
+        permissions: [],
+        serviceWorkers: 'block',
+      });
+      const page = await context.newPage();
+      const capturedJsonResponses: Array<Promise<CapturedBrowserJson | null>> = [];
+      page.on('response', (response) => {
+        if (capturedJsonResponses.length >= maximumCapturedJsonResponses
+          || !this.isCapturableBrowserJson(response, browserAllowedHosts)) return;
+        capturedJsonResponses.push(this.captureBrowserJson(
+          response,
+          maximumBytes,
+        ));
+      });
+      await this.installBrowserGuards(context, page, url, browserAllowedHosts);
+      await page.goto(url.toString(), {
+        waitUntil: 'domcontentloaded',
+        timeout: remainingBrowserTime(deadline),
+      });
+      await page.waitForFunction(
+        (minimumLength) => (document.body?.innerText.trim().length ?? 0) >= minimumLength,
+        minimumSemanticTextCharacters,
+        { timeout: remainingBrowserTime(deadline) },
+      );
+      await page.waitForLoadState('networkidle', {
+        timeout: Math.min(2_500, remainingBrowserTime(deadline)),
+      }).catch(() => undefined);
+      const finalUrl = this.parseUrl(page.url());
+      if (!browserAllowedHosts.has(normalizeHostname(finalUrl.hostname))) {
+        throw new SourceConnectorError('SOURCE_BROWSER_NAVIGATION_NOT_ALLOWED', false);
+      }
+      const captures = (await Promise.allSettled(capturedJsonResponses))
+        .flatMap((result) => result.status === 'fulfilled' && result.value ? [result.value] : []);
+      const html = appendCapturedBrowserJson(await page.content(), captures);
+      const renderedPayload = Buffer.from(html, 'utf8');
+      if (renderedPayload.length > maximumBytes) {
+        throw new SourceConnectorError('SOURCE_RESPONSE_TOO_LARGE', false, 200);
+      }
+      return renderedPayload;
+    } catch (error) {
+      if (error instanceof SourceConnectorError) throw error;
+      throw new SourceConnectorError('SOURCE_BROWSER_TIMEOUT', true);
+    } finally {
+      await context?.close().catch(() => undefined);
+      await browser.close().catch(() => undefined);
+    }
+  }
+
+  private async captureBrowserJson(
+    response: BrowserResponse,
+    maximumBytes: number,
+  ): Promise<CapturedBrowserJson | null> {
+    const responseUrl = this.parseUrl(response.url());
+    const declaredBytes = Number(response.headers()['content-length'] ?? 0);
+    const limit = Math.min(maximumBytes, maximumCapturedJsonBytes);
+    if (Number.isFinite(declaredBytes) && declaredBytes > limit) return null;
+    const payload = await response.body().catch(() => null);
+    if (!payload || payload.length > limit) return null;
+    return { url: responseUrl.toString(), payload };
+  }
+
+  private isCapturableBrowserJson(response: BrowserResponse, allowedHosts: Set<string>) {
+    try {
+      const responseUrl = this.parseUrl(response.url());
+      const contentType = normalizeContentType(response.headers()['content-type'] ?? null);
+      return allowedHosts.has(normalizeHostname(responseUrl.hostname))
+        && response.status() >= 200
+        && response.status() < 300
+        && (contentType === 'application/json' || contentType === 'application/ld+json');
+    } catch {
+      return false;
+    }
+  }
+
+  private async installBrowserGuards(
+    context: BrowserContext,
+    page: Page,
+    initialUrl: URL,
+    allowedHosts: Set<string>,
+  ) {
+    context.on('page', (candidate) => {
+      if (candidate !== page) void candidate.close().catch(() => undefined);
+    });
+    page.on('dialog', (dialog) => void dialog.dismiss().catch(() => undefined));
+    await context.routeWebSocket('**/*', (webSocket) => webSocket.close());
+    await context.route('**/*', async (route) => {
+      const request = route.request();
+      let destination: URL;
+      try {
+        destination = this.parseUrl(request.url());
+      } catch {
+        await route.abort();
+        return;
+      }
+      const allowed = ['GET', 'HEAD'].includes(request.method().toLocaleUpperCase('en-US'))
+        && allowedHosts.has(normalizeHostname(destination.hostname))
+        && !['font', 'image', 'media', 'websocket'].includes(request.resourceType())
+        && (!request.isNavigationRequest()
+          || (request.frame() === page.mainFrame() && isSameBrowserNavigation(destination, initialUrl)));
+      if (allowed) await route.fallback();
+      else await route.abort();
+    });
+  }
 }
 
 function boundedInteger(value: number | undefined, fallback: number, minimum: number, maximum: number) {
   return Number.isInteger(value) && value! >= minimum && value! <= maximum ? value! : fallback;
+}
+
+function readOptionalIntegerEnvironment(value: string | undefined, code: string) {
+  if (value === undefined || value.trim() === '') return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) throw new SourceConnectorError(code, false);
+  return parsed;
+}
+
+function readBooleanEnvironment(value: string | undefined, fallback: boolean, code: string) {
+  if (value === undefined || value.trim() === '') return fallback;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  throw new SourceConnectorError(code, false);
 }
 
 function readSingleHeader(value: string | string[] | undefined) {
@@ -317,6 +538,71 @@ function readSingleHeader(value: string | string[] | undefined) {
 
 function normalizeContentType(value: string | null) {
   return (value ?? '').split(';', 1)[0]!.trim().toLocaleLowerCase('en-US');
+}
+
+function isHtmlContentType(value: string) {
+  return value === 'text/html' || value === 'application/xhtml+xml';
+}
+
+function semanticTextLength(payload: Buffer) {
+  const $ = load(payload.toString('utf8'));
+  $('script,style,noscript,template,svg,canvas,iframe,form,nav,header,footer,aside').remove();
+  return $('body').text().replace(/\s+/gu, ' ').trim().length;
+}
+
+function isAntiBotChallenge(payload: Buffer, contentType: string) {
+  if (!isHtmlContentType(contentType)) return false;
+  const html = payload.toString('utf8').toLocaleLowerCase('en-US');
+  const servicePipeChallenge = html.includes('servicepipe.tech')
+    && (html.includes('js-challenge-loader')
+      || html.includes('get_cookie_spsn')
+      || html.includes('id_captcha_frame_div'));
+  const cloudflareChallenge = html.includes('cf-chl-')
+    && (html.includes('just a moment') || html.includes('challenge-platform'));
+  return servicePipeChallenge || cloudflareChallenge;
+}
+
+function appendCapturedBrowserJson(html: string, captures: CapturedBrowserJson[]) {
+  if (captures.length === 0) return html;
+  const evidence = captures.map(({ url, payload }) => {
+    const safeUrl = url
+      .replace(/&/gu, '&amp;')
+      .replace(/"/gu, '&quot;')
+      .replace(/</gu, '&lt;')
+      .replace(/>/gu, '&gt;');
+    const safeJson = payload.toString('utf8')
+      .replace(/&/gu, '\\u0026')
+      .replace(/</gu, '\\u003c')
+      .replace(/>/gu, '\\u003e');
+    return `<script type="application/json" data-platforma-source-url="${safeUrl}">${safeJson}</script>`;
+  }).join('');
+  return html.includes('</body>')
+    ? html.replace('</body>', `${evidence}</body>`)
+    : `${html}${evidence}`;
+}
+
+function selectAddress(addresses: ResolvedAddress[]) {
+  const selected = addresses.find(({ family }) => family === 4) ?? addresses[0];
+  if (!selected) throw new SourceConnectorError('SOURCE_DNS_FAILED', true);
+  return selected.address;
+}
+
+function createBrowserResolverRules(hosts: Map<string, string>) {
+  return [...hosts].map(([hostname, address]) => (
+    `MAP ${hostname} ${address.includes(':') ? `[${address}]` : address}`
+  )).join(',');
+}
+
+function isSameBrowserNavigation(left: URL, right: URL) {
+  return left.origin === right.origin
+    && left.pathname === right.pathname
+    && left.search === right.search;
+}
+
+function remainingBrowserTime(deadline: number) {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) throw new SourceConnectorError('SOURCE_BROWSER_TIMEOUT', true);
+  return remaining;
 }
 
 function normalizeHostname(value: string) {

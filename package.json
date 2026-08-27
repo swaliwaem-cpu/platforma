@@ -21,6 +21,7 @@
     "benchmark:assistant:embeddings": "pnpm build:api && node --env-file-if-exists=.env apps/api/scripts/assistant-embedding-benchmark.cjs",
     "test:assistant:fix-token:postgres": "pnpm build:api && node apps/api/tests/assistant-fix-token-postgres.cjs",
     "test:assistant:t03:postgres": "pnpm build:api && node apps/api/tests/assistant-t03-postgres.cjs",
+    "test:assistant:t03:browser": "pnpm build:api && node apps/api/tests/assistant-t03-browser-runtime.cjs",
     "test:assistant:t05:postgres": "pnpm build:api && node apps/api/tests/assistant-t05-postgres.cjs",
     "test:assistant:t06:postgres": "pnpm build:api && node apps/api/tests/assistant-t06-postgres.cjs",
     "test:assistant:t06:browser": "pnpm --filter @platforma/web test:assistant:t06:browser",

@@ -164,7 +164,7 @@ export function createAssistantPlannerSchema() {
     properties: {
       budgetMinRub: { ...nullableNumber, minimum: 0, maximum: 1_000_000_000_000 },
       budgetMaxRub: { ...nullableNumber, minimum: 0, maximum: 1_000_000_000_000 },
-      rooms: { type: 'array', uniqueItems: true, maxItems: 11, items: { type: 'integer', minimum: 0, maximum: 10 } },
+      rooms: { type: 'array', maxItems: 11, items: { type: 'integer', minimum: 0, maximum: 10 } },
       district: nullableString,
       metro: nullableString,
       developer: nullableString,
@@ -195,7 +195,6 @@ export function createAssistantPlannerSchema() {
       taskType: { type: 'string', enum: ['SEARCH', 'COMPARE', 'FACT', 'LEGAL_TAX'] },
       comparisonTargets: {
         type: 'array',
-        uniqueItems: true,
         maxItems: 2,
         items: { type: 'string', minLength: 1, maxLength: 160 },
       },
@@ -203,7 +202,6 @@ export function createAssistantPlannerSchema() {
       softPreferences: filters,
       requiredFacts: {
         type: 'array',
-        uniqueItems: true,
         maxItems: 11,
         items: {
           type: 'string',

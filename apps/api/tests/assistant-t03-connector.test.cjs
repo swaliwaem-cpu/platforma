@@ -36,6 +36,21 @@ before(async () => {
       response.end(body);
       return;
     }
+    if (request.url === '/content-negotiated') {
+      if (String(request.headers.accept).includes('application/json')) {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ page: { title: 'МЫС' } }));
+        return;
+      }
+      response.writeHead(200, { 'content-type': 'text/html' });
+      response.end('<html><body><h1>ЖК МЫС</h1><p>Официальный проект MR Group.</p></body></html>');
+      return;
+    }
+    if (request.url === '/json-source') {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ project: 'ЖК Тестовый', developer: 'Developer Example' }));
+      return;
+    }
     if (request.url === '/redirect') {
       response.writeHead(302, { location: '/official' });
       response.end();
@@ -44,6 +59,21 @@ before(async () => {
     if (request.url === '/redirect-loop') {
       response.writeHead(302, { location: '/redirect-loop' });
       response.end();
+      return;
+    }
+    if (request.url === '/shell') {
+      response.writeHead(200, { 'content-type': 'text/html' });
+      response.end('<html><body><div id="app"></div><script src="/app.js"></script></body></html>');
+      return;
+    }
+    if (request.url === '/semantic-shell') {
+      response.writeHead(200, { 'content-type': 'text/html' });
+      response.end('<html><body><main>Статическое описание официального каталога застройщика, которое уже длиннее минимального порога.</main><script src="/app.js"></script></body></html>');
+      return;
+    }
+    if (request.url === '/anti-bot') {
+      response.writeHead(200, { 'content-type': 'text/html' });
+      response.end('<html><body><js-challenge-loader></js-challenge-loader><script src="https://servicepipe.tech/check.js"></script></body></html>');
       return;
     }
     if (request.url === '/slow') {
@@ -116,6 +146,18 @@ test('Assistant T03 connector follows bounded allowlisted redirects and returns 
   assert.equal(result.redirects.length, 1);
 });
 
+test('Assistant T03 connector prefers HTML during negotiation and still accepts JSON-only sources', async () => {
+  const connector = createTestConnector();
+
+  const negotiated = await connector.fetch(createSource('/content-negotiated'));
+  const json = await connector.fetch(createSource('/json-source'));
+
+  assert.equal(negotiated.contentType, 'text/html');
+  assert.match(negotiated.payload.toString('utf8'), /MR Group/u);
+  assert.equal(json.contentType, 'application/json');
+  assert.match(json.payload.toString('utf8'), /Developer Example/u);
+});
+
 test('Assistant T03 connector classifies timeout and retryable HTTP failures safely', async () => {
   const connector = createTestConnector({ timeoutMs: 30 });
 
@@ -177,6 +219,57 @@ test('Assistant T03 connector blocks private DNS results unless the explicit tes
       address,
     );
   }
+});
+
+test('Assistant T03 connector uses a bounded browser fallback only for an empty HTML shell', async () => {
+  const renderCalls = [];
+  const connector = createTestConnector({
+    browserFallbackEnabled: true,
+    renderHtml: async (url, allowedHosts, maximumBytes) => {
+      renderCalls.push({ url: url.toString(), allowedHosts: [...allowedHosts], maximumBytes });
+      return Buffer.from('<html><body><main><h1>ЖК Тестовый</h1><p>Официальный проект Developer Example с содержательным описанием жилого комплекса.</p></main></body></html>');
+    },
+  });
+
+  const result = await connector.fetch(createSource('/shell'));
+
+  assert.equal(renderCalls.length, 1);
+  assert.equal(renderCalls[0].url, `${origin}/shell`);
+  assert.deepEqual(renderCalls[0].allowedHosts, ['official.test']);
+  assert.match(result.payload.toString('utf8'), /содержательным описанием/iu);
+  assert.match(result.checksum, /^[0-9a-f]{64}$/u);
+});
+
+test('Assistant T03 connector can force a bounded render for a dynamic developer catalog', async () => {
+  const renderCalls = [];
+  const connector = createTestConnector({
+    browserFallbackEnabled: true,
+    renderHtml: async (url) => {
+      renderCalls.push(url.toString());
+      return Buffer.from('<html><body><main>City Bay — проект из динамического официального каталога MR Group.</main></body></html>');
+    },
+  });
+  const source = createSource('/semantic-shell');
+  source.connectorConfig.browserRenderMode = 'always';
+
+  const result = await connector.fetch(source);
+
+  assert.deepEqual(renderCalls, [`${origin}/semantic-shell`]);
+  assert.match(result.payload.toString('utf8'), /динамического официального каталога/iu);
+});
+
+test('Assistant T03 connector classifies an anti-bot page before launching Chromium', async () => {
+  let renderCalls = 0;
+  const connector = createTestConnector({
+    browserFallbackEnabled: true,
+    renderHtml: async () => {
+      renderCalls += 1;
+      throw new Error('must not render an anti-bot challenge');
+    },
+  });
+
+  await assertConnectorCode(connector.fetch(createSource('/anti-bot')), 'SOURCE_ANTI_BOT_CHALLENGE');
+  assert.equal(renderCalls, 0);
 });
 
 test('Assistant T03 extractor creates source-revision facts, searchable chunks and a direct official lot link', async () => {

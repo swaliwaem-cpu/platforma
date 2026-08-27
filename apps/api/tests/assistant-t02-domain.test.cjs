@@ -659,6 +659,7 @@ test('Assistant T02 OpenAI gateway uses a bounded local HTTP stub and validates 
     assert.equal(body.store, false);
     assert.equal(body.tools, undefined);
     assert.equal(body.tool_choice, undefined);
+    assert.equal(JSON.stringify(body.text.format.schema).includes('uniqueItems'), false);
     response.writeHead(200, {
       'content-type': 'application/json',
       'x-request-id': 'stub-request-id',
