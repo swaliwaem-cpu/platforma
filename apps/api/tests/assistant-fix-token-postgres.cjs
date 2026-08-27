@@ -328,7 +328,7 @@ test('FIX-TOKEN recovers an expired AssistantRun lease and starts a new executio
   assert.equal(oldAttempt.chargedCostUsd.toFixed(8), '0.10000000');
   assert.equal(newAttempt.outcome, 'ACCEPTED');
   assert.equal(newAttempt.chargedCostUsd.toFixed(8), '0.00002890');
-  const budget = await readBudgetSnapshot(oldReservation.usageDate);
+  const budget = await readBudget(oldReservation.usageDate);
   assert.equal(budget.reservedCostUsd.toFixed(8), '0.00000000');
   assert.equal(budget.settledCostUsd.toFixed(8), '0.10002890');
 });
@@ -381,7 +381,7 @@ test('FIX-TOKEN keeps provider/day budget atomic while settlement races reconcil
   assert.equal(raceAttempts.every(({ status }) => status === 'RESERVED'), true);
   assert.ok(raceAttempts.filter(({ operation }) => operation === 'PLANNER').length >= 2);
   assert.ok(raceAttempts.filter(({ operation }) => operation === 'SOURCE_DISCOVERY').length >= 2);
-  const beforeRaceBudget = await readBudgetSnapshot(fourthDay);
+  const beforeRaceBudget = await readBudget(fourthDay);
   assert.equal(beforeRaceBudget.reservedCostUsd.toFixed(8), '0.30000000');
   assert.equal(beforeRaceBudget.settledCostUsd.toFixed(8), '0.00000000');
   assert.equal(
@@ -406,7 +406,7 @@ test('FIX-TOKEN keeps provider/day budget atomic while settlement races reconcil
   const chargedCostUsd = settledAttempt.chargedCostUsd.toFixed(8);
   assert.equal(['0.00002890', '0.05000000'].includes(chargedCostUsd), true);
   assert.equal(['ACCEPTED', 'UNKNOWN_AFTER_CRASH'].includes(settledAttempt.outcome), true);
-  const afterRaceBudget = await readBudgetSnapshot(fourthDay);
+  const afterRaceBudget = await readBudget(fourthDay);
   assert.equal(afterRaceBudget.reservedCostUsd.toFixed(8), '0.25000000');
   assert.equal(afterRaceBudget.settledCostUsd.toFixed(8), chargedCostUsd);
   assert.equal(
@@ -433,7 +433,7 @@ test('FIX-TOKEN keeps provider/day budget atomic while settlement races reconcil
     serializeAttemptSnapshot(await readAttemptSnapshot(target.reservation.id)),
     immutableAttempt,
   );
-  assert.deepEqual(serializeBudgetSnapshot(await readBudgetSnapshot(fourthDay)), immutableBudget);
+  assert.deepEqual(serializeBudgetSnapshot(await readBudget(fourthDay)), immutableBudget);
 });
 
 async function createExpiredAssistantRun() {
@@ -512,20 +512,6 @@ function readAttemptSnapshot(attemptId) {
   });
 }
 
-function readBudgetSnapshot(usageDate) {
-  return prisma.assistantAiDailyBudget.findUniqueOrThrow({
-    where: { provider_usageDate: { provider, usageDate } },
-    select: {
-      provider: true,
-      usageDate: true,
-      budgetLimitUsd: true,
-      reservedCostUsd: true,
-      settledCostUsd: true,
-      updatedAt: true,
-    },
-  });
-}
-
 function serializeAttemptSnapshot(attempt) {
   return {
     id: attempt.id,
@@ -599,5 +585,13 @@ function settleLuna(reservation) {
 function readBudget(usageDate) {
   return prisma.assistantAiDailyBudget.findUniqueOrThrow({
     where: { provider_usageDate: { provider, usageDate } },
+    select: {
+      provider: true,
+      usageDate: true,
+      budgetLimitUsd: true,
+      reservedCostUsd: true,
+      settledCostUsd: true,
+      updatedAt: true,
+    },
   });
 }

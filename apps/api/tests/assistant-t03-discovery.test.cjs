@@ -80,10 +80,11 @@ test('Assistant source discovery reuses an active indexed project source before 
   assert.equal(result.telemetry.webSearchCalls, 0);
 });
 
-test('Assistant source discovery probes a registered developer catalog and known paths before project Web Search', async () => {
+test('Assistant source discovery resolves a registered developer known path before any Web Search', async () => {
   const registryUrl = 'https://catalog.developer.example/';
   let registryFetched = false;
   let knownPathProbed = false;
+  let knownPathUrl = null;
   const providerBodies = [];
   const connectorConfigs = [];
   const service = new AssistantSourceDiscoveryService(
@@ -91,9 +92,12 @@ test('Assistant source discovery probes a registered developer catalog and known
     async (_url, init) => {
       const body = JSON.parse(init.body);
       providerBodies.push(body);
-      assert.equal(registryFetched, true);
-      assert.equal(knownPathProbed, true);
-      assert.equal(body.text.format.name, 'platforma_official_project_candidate');
+      if (body.text.format.name === 'platforma_official_developer_candidate') {
+        return developerResponse({
+          canonicalUrl: registryUrl,
+          officialDeveloperName: 'ФСК',
+        }, [registryUrl]);
+      }
       return projectNotFoundResponse(['https://catalog.developer.example/projects/']);
     },
     {
@@ -107,7 +111,11 @@ test('Assistant source discovery probes a registered developer catalog and known
           );
         }
         knownPathProbed = true;
-        throw new Error('known path unavailable');
+        knownPathUrl = source.canonicalUrl;
+        return fetchedPage(
+          source.canonicalUrl,
+          '<html><body>ЖК Amber City — официальный проект застройщика ФСК</body></html>',
+        );
       },
     },
   );
@@ -122,13 +130,14 @@ test('Assistant source discovery probes a registered developer catalog and known
     })],
   });
 
-  assert.equal(result.status, 'NOT_FOUND', JSON.stringify(result, null, 2));
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result, null, 2));
   assert.equal(result.developerCanonicalUrl, registryUrl);
-  assert.equal(providerBodies.length, 1);
-  assert.deepEqual(providerBodies.map(({ model }) => model), ['gpt-5.6-luna']);
-  assert.deepEqual(providerBodies[0].tools[0].filters.allowed_domains, [
-    'catalog.developer.example',
-  ]);
+  assert.equal(result.canonicalUrl, knownPathUrl);
+  assert.equal(registryFetched, true);
+  assert.equal(knownPathProbed, true);
+  assert.equal(providerBodies.length, 0);
+  assert.equal(result.telemetry.phases.length, 0);
+  assert.equal(result.telemetry.webSearchCalls, 0);
   assert.equal(connectorConfigs.some(({ allowedHosts }) => (
     allowedHosts.includes('catalog.developer.example')
       && allowedHosts.includes('www.catalog.developer.example')

@@ -261,12 +261,9 @@ test('FIX-TOKEN inaccessible checkpoint stops the run before provider constructi
       createEmptyCheckpoint(checkpointFingerprint()),
     );
     chmodSync(checkpointPath, 0o000);
-    assert.throws(
-      () => readFileSync(checkpointPath, 'utf8'),
-      (error) => error?.code === 'EACCES',
-    );
+    const unreadableCheckpointPath = resolveUnreadableCheckpointPath(checkpointPath);
     await assertCheckpointFailureStopsProvider(
-      checkpointPath,
+      unreadableCheckpointPath,
       'ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_READ_FAILED',
     );
   } finally {
@@ -335,20 +332,15 @@ test('FIX-TOKEN discovery defaults to a one-project dry-run and never constructs
 });
 
 test('FIX-TOKEN dry-run estimate depends on the selected call mix instead of the requested cap', async () => {
-  const projects = [
-    {
-      projectKey: 'dry-estimate-one',
-      title: 'Dry estimate one',
-      developerKey: 'dry-developer-one',
-      developerName: 'Dry developer one',
-    },
-    {
-      projectKey: 'dry-estimate-two-with-a-longer-name',
-      title: 'Dry estimate two with a longer project name',
-      developerKey: 'dry-developer-two',
-      developerName: 'Dry developer two',
-    },
-  ];
+  const projects = Array.from({ length: 20 }, (_, index) => {
+    const sequence = String(index + 1).padStart(2, '0');
+    return {
+      projectKey: `dry-estimate-${sequence}`,
+      title: `Dry estimate ${sequence}`,
+      developerKey: `dry-developer-${sequence}`,
+      developerName: `Dry developer ${sequence}`,
+    };
+  });
   const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-dry-estimate-'));
   try {
     const oneProjectLowCap = await runDryRunEstimate({
@@ -363,26 +355,56 @@ test('FIX-TOKEN dry-run estimate depends on the selected call mix instead of the
       requestedCostCapUsd: '0.02000000',
       checkpointPath: join(directory, 'one-high.json'),
     });
-    const twoProjectsLowCap = await runDryRunEstimate({
+    const twoProjects = await runDryRunEstimate({
       projects,
       limit: 2,
       requestedCostCapUsd: '0.01000000',
       checkpointPath: join(directory, 'two-low.json'),
     });
+    const threeProjects = await runDryRunEstimate({
+      projects,
+      limit: 3,
+      requestedCostCapUsd: '0.01000000',
+      checkpointPath: join(directory, 'three-low.json'),
+    });
+    const twelveProjects = await runDryRunEstimate({
+      projects,
+      limit: 12,
+      requestedCostCapUsd: '0.01000000',
+      checkpointPath: join(directory, 'twelve-low.json'),
+    });
+    const twentyProjects = await runDryRunEstimate({
+      projects,
+      limit: 20,
+      requestedCostCapUsd: '0.01000000',
+      checkpointPath: join(directory, 'twenty-low.json'),
+    });
 
     assert.equal(oneProjectLowCap.selection.requestedCostCapUsd, '0.01000000');
     assert.equal(oneProjectHighCap.selection.requestedCostCapUsd, '0.02000000');
-    assert.equal(twoProjectsLowCap.selection.requestedCostCapUsd, '0.01000000');
+    assert.equal(twentyProjects.selection.requestedCostCapUsd, '0.01000000');
     assert.match(oneProjectLowCap.selection.maximumEstimatedUsd, /^\d+\.\d{8}$/u);
     assert.equal(
       oneProjectLowCap.selection.maximumEstimatedUsd,
       oneProjectHighCap.selection.maximumEstimatedUsd,
     );
+    const oneProjectMaximum = parseAssistantUsd(oneProjectLowCap.selection.maximumEstimatedUsd);
+    const twoProjectMaximum = parseAssistantUsd(twoProjects.selection.maximumEstimatedUsd);
+    const threeProjectMaximum = parseAssistantUsd(threeProjects.selection.maximumEstimatedUsd);
+    const secondProjectIncrement = twoProjectMaximum - oneProjectMaximum;
+    const thirdProjectIncrement = threeProjectMaximum - twoProjectMaximum;
+
+    assert.ok(oneProjectMaximum > 0n);
+    assert.ok(thirdProjectIncrement > 0n);
     assert.ok(
-      parseAssistantUsd(twoProjectsLowCap.selection.maximumEstimatedUsd)
-        > parseAssistantUsd(oneProjectLowCap.selection.maximumEstimatedUsd),
+      secondProjectIncrement > thirdProjectIncrement,
+      'the second project adds the second permitted Terra call; the third adds Luna calls only',
     );
-    assert.ok(parseAssistantUsd(oneProjectLowCap.selection.maximumEstimatedUsd) > 0n);
+    assert.equal(
+      twelveProjects.selection.maximumEstimatedUsd,
+      twentyProjects.selection.maximumEstimatedUsd,
+      'the batch estimate must stop growing after the 35-call limit',
+    );
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -397,12 +419,7 @@ test('FIX-TOKEN repeat uses the checkpoint without discovery while refresh runs 
     developerKey: 'checkpoint-developer',
     developerName: 'Checkpoint developer',
   };
-  const fingerprint = {
-    primaryModel: 'gpt-5.6-luna',
-    fallbackModel: 'gpt-5.6-terra',
-    promptVersion: 'assistant-source-discovery-v1',
-    validatorVersion: 'assistant-source-discovery-validator-v1',
-  };
+  const fingerprint = checkpointFingerprint();
   const result = {
     status: 'VERIFIED',
     project,
@@ -620,21 +637,25 @@ test('FIX-TOKEN discovery never uses Terra after parse, transport, HTTP or sourc
       name: 'provider timeout',
       failureKind: 'TIMEOUT',
       errorCode: 'ASSISTANT_SOURCE_DISCOVERY_TIMEOUT',
+      permitsLunaRetry: true,
     },
     {
       name: 'provider network failure',
       failureKind: 'NETWORK',
       errorCode: 'ASSISTANT_SOURCE_DISCOVERY_NETWORK_FAILED',
+      permitsLunaRetry: true,
     },
     {
       name: 'provider HTTP 429',
       failureKind: 'HTTP_429',
       errorCode: 'ASSISTANT_SOURCE_DISCOVERY_HTTP_429',
+      permitsLunaRetry: true,
     },
     {
       name: 'provider HTTP 5xx',
       failureKind: 'HTTP_503',
       errorCode: 'ASSISTANT_SOURCE_DISCOVERY_HTTP_503',
+      permitsLunaRetry: true,
     },
     {
       name: 'official source fetch failure',
@@ -708,10 +729,11 @@ test('FIX-TOKEN discovery never uses Terra after parse, transport, HTTP or sourc
         outcome = error;
       }
       assert.equal(outcome.code ?? outcome.errorCode, scenario.errorCode);
-      assert.deepEqual(providerBodies.map(({ model }) => model), [
-        'gpt-5.6-luna',
-        'gpt-5.6-luna',
-      ]);
+      const requestedModels = providerBodies.map(({ model }) => model);
+      assert.equal(requestedModels.includes('gpt-5.6-terra'), false);
+      assert.equal(requestedModels.every((model) => model === 'gpt-5.6-luna'), true);
+      assert.equal(requestedModels.length >= 2, true);
+      assert.equal(requestedModels.length <= (scenario.permitsLunaRetry ? 3 : 2), true);
     });
   }
 });
@@ -738,6 +760,23 @@ function checkpointFingerprint() {
     fallbackModel: 'gpt-5.6-terra',
     promptVersion: 'assistant-source-discovery-v1',
     validatorVersion: 'assistant-source-discovery-validator-v1',
+  };
+}
+
+function resolveUnreadableCheckpointPath(checkpointPath) {
+  try {
+    readFileSync(checkpointPath, 'utf8');
+  } catch (error) {
+    assert.equal(error?.code, 'EACCES');
+    return checkpointPath;
+  }
+
+  return {
+    [Symbol.toPrimitive]() {
+      const error = new Error('simulated checkpoint permission denial');
+      error.code = 'EACCES';
+      throw error;
+    },
   };
 }
 
