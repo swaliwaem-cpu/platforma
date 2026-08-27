@@ -92,8 +92,9 @@ export type AssistantPlannerRequest = {
   reasoningEffort: AssistantReasoningEffort;
   messages: string[];
   context: unknown;
-  operationRunId?: string;
-  attemptOrdinal?: number;
+  operationRunId: string;
+  executionId: string;
+  attemptOrdinal: number;
 };
 
 export type AssistantPlannerGateway = {
@@ -169,11 +170,17 @@ export class AssistantQueryPlanner {
   }
 
   async planWithValidation<Value>(
-    input: { messages: string[]; context: unknown; operationRunId?: string },
+    input: {
+      messages: string[];
+      context: unknown;
+      operationRunId?: string;
+      executionId?: string;
+    },
     validate: (intent: AssistantStructuredIntent, request: AssistantPlannerRequest) => Promise<Value>,
   ) {
     const messages = normalizeMessages(input.messages);
     const operationRunId = input.operationRunId ?? randomUUID();
+    const executionId = input.executionId ?? randomUUID();
     const reasoningEffort = chooseReasoningEffort(messages);
     const attempts: AssistantPlannerTelemetry[] = [];
     const requests: AssistantPlannerRequest[] = [
@@ -183,6 +190,7 @@ export class AssistantQueryPlanner {
         messages,
         context: input.context,
         operationRunId,
+        executionId,
         attemptOrdinal: 1,
       },
       {
@@ -191,6 +199,7 @@ export class AssistantQueryPlanner {
         messages,
         context: input.context,
         operationRunId,
+        executionId,
         attemptOrdinal: 2,
       },
     ];
@@ -213,7 +222,7 @@ export class AssistantQueryPlanner {
           failure?.errorCode ?? 'ASSISTANT_PLANNER_PROVIDER_FAILED',
         );
         attempts.push(telemetry);
-        await this.recordUsage(reservation, telemetry);
+        await this.recordUsage(reservation, telemetry, attempts);
         throw new AssistantPlannerError(failure?.errorCode ?? 'ASSISTANT_PLANNER_PROVIDER_FAILED', attempts);
       }
 
@@ -231,7 +240,7 @@ export class AssistantQueryPlanner {
           result.metadata,
         );
         attempts.push(telemetry);
-        await this.recordUsage(reservation, telemetry);
+        await this.recordUsage(reservation, telemetry, attempts);
         continue;
       }
 
@@ -250,7 +259,7 @@ export class AssistantQueryPlanner {
             : 'ASSISTANT_PLANNER_PIPELINE_FAILED',
         );
         attempts.push(telemetry);
-        await this.recordUsage(reservation, telemetry);
+        await this.recordUsage(reservation, telemetry, attempts);
         if (!(error instanceof AssistantPlannerFallbackValidationError)) {
           throw new AssistantPlannerError('ASSISTANT_PLANNER_PIPELINE_FAILED', attempts);
         }
@@ -265,19 +274,23 @@ export class AssistantQueryPlanner {
         result.metadata,
       );
       attempts.push(telemetry);
-      await this.recordUsage(reservation, telemetry);
+      await this.recordUsage(reservation, telemetry, attempts);
       return { intent, value, telemetry: attempts };
     }
 
     throw new AssistantPlannerError('ASSISTANT_INTENT_INVALID', attempts);
   }
 
-  private async recordUsage(reservation: unknown, telemetry: AssistantPlannerTelemetry) {
+  private async recordUsage(
+    reservation: unknown,
+    telemetry: AssistantPlannerTelemetry,
+    attempts: AssistantPlannerTelemetry[],
+  ) {
     if (!this.usagePolicy || reservation === undefined) return;
     try {
       await this.usagePolicy.afterAttempt(reservation, telemetry);
-    } catch {
-      // Full per-run telemetry remains persisted even if aggregate metrics are temporarily unavailable.
+    } catch (error) {
+      throw new AssistantPlannerError(readUsageSettlementErrorCode(error), [...attempts]);
     }
   }
 }
@@ -889,6 +902,15 @@ function readPlannerGatewayFailure(error: unknown): {
     responseId: readNullableBoundedString(error.responseId, 160),
     httpStatus: readNullableInteger(error.httpStatus, 100, 599),
   };
+}
+
+function readUsageSettlementErrorCode(error: unknown) {
+  if (isRecord(error)
+    && typeof error.code === 'string'
+    && /^ASSISTANT_(?:AI|MODEL)_[A-Z0-9_]+$/u.test(error.code)) {
+    return error.code;
+  }
+  return 'ASSISTANT_AI_USAGE_SETTLEMENT_FAILED';
 }
 
 function readNullableBoundedString(value: unknown, maximumLength: number) {

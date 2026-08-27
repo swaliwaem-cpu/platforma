@@ -730,11 +730,13 @@ model AssistantAiDailyBudget {
 model AssistantAiUsageAttempt {
   id                    String    @id @default(uuid()) @db.Uuid
   operationRunId        String    @map("operation_run_id") @db.VarChar(160)
+  executionId           String    @map("execution_id") @db.Uuid
   attemptOrdinal        Int       @map("attempt_ordinal") @db.SmallInt
   operation             String    @db.VarChar(40)
   provider              String    @db.VarChar(40)
   requestedModel        String    @map("requested_model") @db.VarChar(160)
   actualModel           String?   @map("actual_model") @db.VarChar(160)
+  serviceTier           String    @default("default") @map("service_tier") @db.VarChar(24)
   reasoningEffort       String?   @map("reasoning_effort") @db.VarChar(20)
   promptVersion         String?   @map("prompt_version") @db.VarChar(120)
   validatorVersion      String?   @map("validator_version") @db.VarChar(120)
@@ -751,15 +753,18 @@ model AssistantAiUsageAttempt {
   webSearchCalls        Int?      @map("web_search_calls")
   pricingCatalogVersion String    @map("pricing_catalog_version") @db.VarChar(120)
   pricingStatus         String    @map("pricing_status") @db.VarChar(32)
+  dailyBudgetUsd        Decimal   @map("daily_budget_usd") @db.Decimal(18, 8)
   reservedCostUsd       Decimal   @map("reserved_cost_usd") @db.Decimal(18, 8)
   estimatedCostUsd      Decimal?  @map("estimated_cost_usd") @db.Decimal(18, 8)
   chargedCostUsd        Decimal?  @map("charged_cost_usd") @db.Decimal(18, 8)
   durationMs            Int?      @map("duration_ms")
   usageDate             DateTime  @map("usage_date") @db.Date
+  reservationExpiresAt  DateTime  @map("reservation_expires_at")
   createdAt             DateTime  @default(now()) @map("created_at")
   settledAt             DateTime? @map("settled_at")
 
-  @@unique([operationRunId, attemptOrdinal])
+  @@unique([operationRunId, executionId, attemptOrdinal], map: "assistant_ai_usage_attempts_run_execution_ordinal_key")
+  @@index([operationRunId, status, reservationExpiresAt], map: "assistant_ai_usage_attempts_run_status_expiry_idx")
   @@index([provider, usageDate, status])
   @@index([operation, createdAt])
   @@map("assistant_ai_usage_attempts")

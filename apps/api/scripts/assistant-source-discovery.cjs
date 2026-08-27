@@ -92,6 +92,7 @@ async function runAssistantSourceDiscovery(input = {}) {
       !checkpointProjectKeys.has(projectKey)
     ));
     const runId = dependencies.runId ?? randomUUID();
+    const executionId = dependencies.executionId ?? randomUUID();
     const maximumEstimatedUsd = options.maxCostUsd;
     if (!options.live) {
       const report = createReport(options, [], [], {
@@ -115,6 +116,11 @@ async function runAssistantSourceDiscovery(input = {}) {
       environment.ASSISTANT_MODEL_DAILY_BUDGET_USD,
       true,
     );
+    const usageBudgets = dependencies.usageBudgets ?? new AssistantAiUsageBudgetService(prisma);
+    if (typeof usageBudgets.reconcileExpiredReservations !== 'function') {
+      throw new Error('ASSISTANT_SOURCE_DISCOVERY_USAGE_RECONCILIATION_REQUIRED');
+    }
+    await usageBudgets.reconcileExpiredReservations({ operationRunId: runId });
     const results = pendingProjects.length === 0
       ? []
       : await discoverProjects(
@@ -125,10 +131,11 @@ async function runAssistantSourceDiscovery(input = {}) {
             undefined,
             serviceOptions,
           )))({
-          usageBudgets: dependencies.usageBudgets ?? new AssistantAiUsageBudgetService(prisma),
+          usageBudgets,
           dailyBudgetUsd,
           maximumRunCostUsd: options.maxCostUsd,
           operationRunId: runId,
+          executionId,
         }),
         pendingProjects,
         options.concurrency,

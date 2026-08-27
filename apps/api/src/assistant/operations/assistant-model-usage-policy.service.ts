@@ -8,10 +8,15 @@ import type {
 import {
   ASSISTANT_PLANNER_PROMPT_VERSION,
   createAssistantPlannerRequestBody,
+  readAssistantOpenAiTimeoutMs,
 } from '../assistant-planner-gateway';
-import { estimateAssistantAiCallCost } from './assistant-ai-cost';
+import {
+  ASSISTANT_AI_SERVICE_TIER,
+  estimateAssistantAiCallCost,
+} from './assistant-ai-cost';
 import {
   AssistantAiUsageBudgetService,
+  createAssistantAiReservationExpiresAt,
   readAssistantDailyUsdBudget,
   type AssistantAiUsageReservation,
 } from './assistant-ai-usage-budget.service';
@@ -29,6 +34,7 @@ export class AssistantModelUsagePolicyService implements AssistantPlannerUsagePo
   private readonly perMinuteLimit: number;
   private readonly dailyLimit: number;
   private readonly dailyBudgetUsd: string;
+  private readonly providerTimeoutMs: number;
 
   constructor(
     private readonly budgets: AssistantUsageBudgetService,
@@ -57,6 +63,7 @@ export class AssistantModelUsagePolicyService implements AssistantPlannerUsagePo
       environment.ASSISTANT_MODEL_DAILY_BUDGET_USD,
       this.provider === 'openai',
     );
+    this.providerTimeoutMs = readAssistantOpenAiTimeoutMs(environment);
   }
 
   async beforeAttempt(request: AssistantPlannerRequest) {
@@ -73,6 +80,7 @@ export class AssistantModelUsagePolicyService implements AssistantPlannerUsagePo
       if (!this.aiBudgets) throw new Error('ASSISTANT_AI_USAGE_BUDGET_SERVICE_REQUIRED');
       const estimated = estimateAssistantAiCallCost({
         model: request.model,
+        serviceTier: ASSISTANT_AI_SERVICE_TIER,
         requestBytes: Buffer.byteLength(
           JSON.stringify(createAssistantPlannerRequestBody(request)),
           'utf8',
@@ -87,14 +95,17 @@ export class AssistantModelUsagePolicyService implements AssistantPlannerUsagePo
         provider: this.provider,
         model: request.model,
         operation: 'PLANNER',
-        operationRunId: request.operationRunId ?? 'assistant-planner-missing-run',
-        attemptOrdinal: request.attemptOrdinal ?? 1,
+        operationRunId: request.operationRunId,
+        executionId: request.executionId,
+        attemptOrdinal: request.attemptOrdinal,
         dailyBudgetUsd: this.dailyBudgetUsd,
         reservedCostUsd: estimated.estimatedUsd,
+        serviceTier: ASSISTANT_AI_SERVICE_TIER,
         reasoningEffort: request.reasoningEffort,
         promptVersion: ASSISTANT_PLANNER_PROMPT_VERSION,
         validatorVersion: 'assistant-query-planner-validator-v1',
         isFallback: request.model.endsWith('-terra'),
+        reservationExpiresAt: createAssistantAiReservationExpiresAt(this.providerTimeoutMs),
       });
     } catch (error) {
       try {

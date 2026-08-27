@@ -53,11 +53,13 @@ import {
   uniqueUrls,
 } from './assistant-source-discovery-policy';
 import {
+  ASSISTANT_AI_SERVICE_TIER,
   estimateAssistantAiCallCost,
   parseAssistantUsd,
 } from '../operations/assistant-ai-cost';
 import {
   AssistantAiUsageBudgetService,
+  createAssistantAiReservationExpiresAt,
   type AssistantAiUsageReservation,
 } from '../operations/assistant-ai-usage-budget.service';
 
@@ -75,6 +77,7 @@ type AssistantSourceDiscoveryServiceOptions = {
   dailyBudgetUsd: string;
   maximumRunCostUsd: string;
   operationRunId: string;
+  executionId: string;
 };
 
 export const ASSISTANT_SOURCE_DISCOVERY_MODEL = 'gpt-5.6-luna';
@@ -1017,6 +1020,7 @@ export class AssistantSourceDiscoveryService {
     if (!this.live) return null;
     const estimated = estimateAssistantAiCallCost({
       model,
+      serviceTier: ASSISTANT_AI_SERVICE_TIER,
       requestBytes: Buffer.byteLength(JSON.stringify(requestBody), 'utf8'),
       maxOutputTokens: 1_600,
       maxWebSearchCalls: 1,
@@ -1039,13 +1043,16 @@ export class AssistantSourceDiscoveryService {
         model,
         operation: 'SOURCE_DISCOVERY',
         operationRunId: this.serviceOptions!.operationRunId,
+        executionId: this.serviceOptions!.executionId,
         attemptOrdinal,
         dailyBudgetUsd: this.serviceOptions!.dailyBudgetUsd,
         reservedCostUsd: estimated.estimatedUsd,
+        serviceTier: ASSISTANT_AI_SERVICE_TIER,
         reasoningEffort: 'medium',
         promptVersion: ASSISTANT_SOURCE_DISCOVERY_PROMPT_VERSION,
         validatorVersion: ASSISTANT_SOURCE_DISCOVERY_VALIDATOR_VERSION,
         isFallback,
+        reservationExpiresAt: createAssistantAiReservationExpiresAt(this.timeoutMs),
       });
     } catch (error) {
       this.runReservedCostUnits -= estimated.estimatedUsdUnits;

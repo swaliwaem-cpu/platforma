@@ -1,6 +1,7 @@
 require('reflect-metadata');
 
 const assert = require('node:assert/strict');
+const { randomUUID } = require('node:crypto');
 const { test } = require('node:test');
 
 const {
@@ -563,6 +564,7 @@ test('Assistant source discovery keeps the run USD cap atomic across concurrent 
       dailyBudgetUsd: '1.00000000',
       maximumRunCostUsd: oneCallBudget,
       operationRunId: 'fix-token-concurrent-cost-cap',
+      executionId: randomUUID(),
     },
   );
 

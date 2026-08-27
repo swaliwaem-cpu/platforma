@@ -60,16 +60,20 @@ after(async () => {
 test('FIX-TOKEN atomically shares one provider/day USD budget across planner and discovery', async () => {
   const lunaRunId = runId('luna-planner');
   const terraRunId = runId('terra-discovery');
+  const lunaExecutionId = randomUUID();
+  const terraExecutionId = randomUUID();
   const luna = await reserve({
     model: 'gpt-5.6-luna',
     operation: 'PLANNER',
     operationRunId: lunaRunId,
+    executionId: lunaExecutionId,
     now: firstDay,
   });
   const terra = await reserve({
     model: 'gpt-5.6-terra',
     operation: 'SOURCE_DISCOVERY',
     operationRunId: terraRunId,
+    executionId: terraExecutionId,
     now: firstDay,
   });
 
@@ -77,6 +81,7 @@ test('FIX-TOKEN atomically shares one provider/day USD budget across planner and
     model: index % 2 === 0 ? 'gpt-5.6-luna' : 'gpt-5.6-terra',
     operation: index % 2 === 0 ? 'SOURCE_DISCOVERY' : 'PLANNER',
     operationRunId: runId(`race-${index}`),
+    executionId: randomUUID(),
     now: firstDay,
   })));
   const raceReservations = race
@@ -96,14 +101,33 @@ test('FIX-TOKEN atomically shares one provider/day USD budget across planner and
   assert.equal(budget.reservedCostUsd.toFixed(8), '0.30000000');
   assert.equal(budget.settledCostUsd.toFixed(8), '0.00000000');
 
+  const idempotentLuna = await reserve({
+    model: 'gpt-5.6-luna',
+    operation: 'PLANNER',
+    operationRunId: lunaRunId,
+    executionId: lunaExecutionId,
+    now: firstDay,
+  });
+  assert.equal(idempotentLuna.id, luna.id);
+  assert.equal(await prisma.assistantAiUsageAttempt.count({ where: { provider } }), 3);
+
   await assert.rejects(
-    reserve({
+    service.reserve({
+      provider,
       model: 'gpt-5.6-luna',
       operation: 'PLANNER',
       operationRunId: lunaRunId,
+      executionId: lunaExecutionId,
+      attemptOrdinal: 1,
+      dailyBudgetUsd: '0.30000000',
+      reservedCostUsd: '0.09000000',
+      reasoningEffort: 'medium',
+      promptVersion: 'test-prompt-v1',
+      validatorVersion: 'test-validator-v1',
+      isFallback: false,
       now: firstDay,
     }),
-    (error) => error.code === 'ASSISTANT_AI_ATTEMPT_DUPLICATE',
+    (error) => error.code === 'ASSISTANT_AI_ATTEMPT_CONFLICT',
   );
   assert.equal(await prisma.assistantAiUsageAttempt.count({ where: { provider } }), 3);
 
@@ -151,6 +175,7 @@ test('FIX-TOKEN atomically shares one provider/day USD budget across planner and
       model: 'gpt-5.6-luna',
       operation: 'PLANNER',
       operationRunId: runId('same-day-after-crash'),
+      executionId: randomUUID(),
       now: firstDay,
     }),
     (error) => error.code === 'ASSISTANT_AI_DAILY_BUDGET_EXHAUSTED',
@@ -160,6 +185,7 @@ test('FIX-TOKEN atomically shares one provider/day USD budget across planner and
     model: 'gpt-5.6-luna',
     operation: 'PLANNER',
     operationRunId: runId('utc-rollover'),
+    executionId: randomUUID(),
     now: secondDay,
   });
   assert.equal(rollover.usageDate.toISOString(), secondDay.toISOString());
@@ -172,6 +198,7 @@ test('FIX-TOKEN records an actual charge above reserve without hiding the overag
     model: 'gpt-5.6-terra',
     operation: 'SOURCE_DISCOVERY',
     operationRunId: runId('reserve-exceeded'),
+    executionId: randomUUID(),
     attemptOrdinal: 1,
     dailyBudgetUsd: '0.30000000',
     reservedCostUsd: '0.00000100',
@@ -333,6 +360,52 @@ test('FIX-TOKEN recovers an expired AssistantRun lease and starts a new executio
   assert.equal(budget.settledCostUsd.toFixed(8), '0.10002890');
 });
 
+test('FIX-TOKEN defers a recovered AssistantRun while its previous provider reservation is active', async () => {
+  const fixture = await createExpiredAssistantRun();
+  assistantFixtures.push(fixture);
+  const reservationExpiresAt = new Date(Date.now() + 120_000);
+  const reservation = await service.reserve({
+    provider,
+    model: 'gpt-5.6-luna',
+    operation: 'PLANNER',
+    operationRunId: fixture.run.id,
+    executionId: randomUUID(),
+    attemptOrdinal: 1,
+    dailyBudgetUsd: '0.50000000',
+    reservedCostUsd: '0.10000000',
+    reasoningEffort: 'medium',
+    promptVersion: 'test-prompt-v1',
+    validatorVersion: 'test-validator-v1',
+    reservationExpiresAt,
+  });
+  let answerCalls = 0;
+  const processor = new AssistantRunProcessor(prisma, {
+    async answer() {
+      answerCalls += 1;
+      throw new Error('active reservation must defer the run');
+    },
+  }, service);
+
+  let deferredRun;
+  try {
+    await processor.onModuleInit();
+    deferredRun = await waitForDeferredRun(fixture.run.id, reservationExpiresAt);
+  } finally {
+    await processor.onModuleDestroy();
+  }
+
+  assert.equal(answerCalls, 0);
+  assert.equal(deferredRun.status, 'RUNNING');
+  assert.equal(deferredRun.leaseExpiresAt.toISOString(), reservationExpiresAt.toISOString());
+  const attempt = await prisma.assistantAiUsageAttempt.findUniqueOrThrow({
+    where: { id: reservation.id },
+    select: { status: true, chargedCostUsd: true, settledAt: true },
+  });
+  assert.equal(attempt.status, 'RESERVED');
+  assert.equal(attempt.chargedCostUsd, null);
+  assert.equal(attempt.settledAt, null);
+});
+
 test('FIX-TOKEN keeps provider/day budget atomic while settlement races reconciliation', async () => {
   const gate = deferred();
   const reservationInputs = Array.from({ length: 8 }, (_, index) => ({
@@ -437,12 +510,13 @@ test('FIX-TOKEN keeps provider/day budget atomic while settlement races reconcil
 });
 
 async function createExpiredAssistantRun() {
+  const fixtureSuffix = randomUUID().replaceAll('-', '').slice(0, 12);
   const role = await prisma.role.create({
-    data: { name: `fix-token-${suffix}` },
+    data: { name: `fix-token-${suffix}-${fixtureSuffix}` },
   });
   const user = await prisma.user.create({
     data: {
-      email: `fix-token-${suffix}@example.test`,
+      email: `fix-token-${suffix}-${fixtureSuffix}@example.test`,
       passwordHash: 'not-used',
       name: 'FIX-TOKEN recovery fixture',
       status: 'ACTIVE',
@@ -494,6 +568,21 @@ async function waitForTerminalRun(runIdValue) {
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   throw new Error('FIX_TOKEN_ASSISTANT_RUN_TERMINAL_TIMEOUT');
+}
+
+async function waitForDeferredRun(runIdValue, reservationExpiresAt) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const run = await prisma.assistantRun.findUniqueOrThrow({
+      where: { id: runIdValue },
+      select: { status: true, leaseOwner: true, leaseExpiresAt: true },
+    });
+    if (run.status === 'RUNNING'
+      && run.leaseOwner
+      && run.leaseExpiresAt?.getTime() === reservationExpiresAt.getTime()) return run;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error('FIX_TOKEN_ASSISTANT_RUN_DEFER_TIMEOUT');
 }
 
 function readAttemptSnapshot(attemptId) {
@@ -548,12 +637,13 @@ function runId(label) {
   return `fix-token-${suffix}-${label}`;
 }
 
-function reserve({ model, operation, operationRunId, now }) {
+function reserve({ model, operation, operationRunId, executionId, now }) {
   return service.reserve({
     provider,
     model,
     operation,
     operationRunId,
+    executionId,
     attemptOrdinal: 1,
     dailyBudgetUsd: '0.30000000',
     reservedCostUsd: '0.10000000',

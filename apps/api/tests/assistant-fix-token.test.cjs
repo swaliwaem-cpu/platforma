@@ -8,6 +8,7 @@ const {
 } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
+const { randomUUID } = require('node:crypto');
 const { test } = require('node:test');
 const { Prisma } = require('@prisma/client');
 
@@ -19,8 +20,14 @@ const {
   parseAssistantUsd,
 } = require('../dist/assistant/operations/assistant-ai-cost.js');
 const {
+  AssistantAiUsageBudgetService,
+} = require('../dist/assistant/operations/assistant-ai-usage-budget.service.js');
+const {
   AssistantModelUsagePolicyService,
 } = require('../dist/assistant/operations/assistant-model-usage-policy.service.js');
+const {
+  AssistantQueryPlanner,
+} = require('../dist/assistant/assistant-query-planner.js');
 const {
   createAssistantPlannerGateway,
   parseAssistantOpenAiUsage,
@@ -135,6 +142,88 @@ test('FIX-TOKEN cost catalog prices cached, cache-write and Web Search usage sep
 
   assert.equal(priced.estimatedUsd, '0.14500000');
   assert.equal(conservative.estimatedUsd, '0.00102425');
+});
+
+test('FIX-TOKEN rejects an unsupported service tier before creating a reservation', async () => {
+  let transactionCalls = 0;
+  const service = new AssistantAiUsageBudgetService({
+    async $transaction() {
+      transactionCalls += 1;
+      throw new Error('transaction must not start');
+    },
+  });
+
+  await assert.rejects(service.reserve({
+    provider: 'openai',
+    model: 'gpt-5.6-luna',
+    serviceTier: 'flex',
+    operation: 'PLANNER',
+    operationRunId: randomUUID(),
+    executionId: randomUUID(),
+    attemptOrdinal: 1,
+    dailyBudgetUsd: '1.00000000',
+    reservedCostUsd: '0.10000000',
+  }), (error) => error.code === 'ASSISTANT_AI_SERVICE_TIER_UNPRICED');
+  assert.equal(transactionCalls, 0);
+});
+
+test('FIX-TOKEN retries settlement database failures within a bounded limit', async () => {
+  let transactionCalls = 0;
+  const service = new AssistantAiUsageBudgetService({
+    async $transaction() {
+      transactionCalls += 1;
+      if (transactionCalls < 3) throw new Error('simulated transient database error');
+      return false;
+    },
+  });
+
+  assert.equal(await service.settle(settlementFixture()), false);
+  assert.equal(transactionCalls, 3);
+});
+
+test('FIX-TOKEN surfaces a safe error after bounded settlement retries are exhausted', async () => {
+  let transactionCalls = 0;
+  const service = new AssistantAiUsageBudgetService({
+    async $transaction() {
+      transactionCalls += 1;
+      throw new Error('simulated persistent database error');
+    },
+  });
+
+  await assert.rejects(
+    service.settle(settlementFixture()),
+    (error) => error.code === 'ASSISTANT_AI_USAGE_SETTLEMENT_FAILED',
+  );
+  assert.equal(transactionCalls, 3);
+});
+
+test('FIX-TOKEN surfaces the final settlement failure without attempting Terra', async () => {
+  let gatewayCalls = 0;
+  let settlementCalls = 0;
+  const planner = new AssistantQueryPlanner({
+    async plan(request) {
+      gatewayCalls += 1;
+      assert.equal(request.attemptOrdinal, 1);
+      return createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' }).plan(request);
+    },
+  }, {
+    async beforeAttempt() { return {}; },
+    async afterAttempt() {
+      settlementCalls += 1;
+      const error = new Error('safe settlement failure');
+      error.code = 'ASSISTANT_AI_USAGE_SETTLEMENT_FAILED';
+      throw error;
+    },
+  });
+
+  await assert.rejects(
+    planner.planWithValidation({ messages: ['Подбери квартиру'], context: null }, async () => null),
+    (error) => error.code === 'ASSISTANT_AI_USAGE_SETTLEMENT_FAILED'
+      && error.telemetry.length === 1
+      && error.telemetry[0].outcome === 'ACCEPTED',
+  );
+  assert.equal(gatewayCalls, 1);
+  assert.equal(settlementCalls, 1);
 });
 
 test('FIX-TOKEN OpenAI mode requires an explicit daily USD budget', () => {
@@ -475,7 +564,9 @@ test('FIX-TOKEN repeat uses the checkpoint without discovery while refresh runs 
   };
   const dependencies = {
     async createApplicationContext() { return application; },
-    usageBudgets: {},
+    usageBudgets: {
+      async reconcileExpiredReservations() { return 0; },
+    },
     createDiscovery() {
       return {
         async discover(candidate) {
@@ -512,6 +603,120 @@ test('FIX-TOKEN repeat uses the checkpoint without discovery while refresh runs 
     });
     assert.equal(discoveryCalls, 1);
     assert.equal(refreshed.summary.verified, 1);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('FIX-TOKEN CLI reconciles before provider construction and isolates each execution', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-execution-'));
+  const checkpointPath = join(directory, 'checkpoint.json');
+  const project = {
+    projectKey: 'execution-project',
+    title: 'Execution project',
+    developerKey: 'execution-developer',
+    developerName: 'Execution developer',
+  };
+  const reconciledRunIds = [];
+  const providerRunIds = [];
+  const executionIds = [];
+  const prisma = {
+    assistantKnowledgeSource: {
+      async findMany() { return []; },
+    },
+    realEstateObject: {
+      async findMany() {
+        return [{
+          title: project.title,
+          slug: project.projectKey,
+          address: null,
+          feedUnitsCount: 10,
+          developer: {
+            name: project.developerName,
+            normalizedName: project.developerKey,
+            slug: project.developerKey,
+          },
+        }];
+      },
+    },
+  };
+  const application = {
+    get() { return prisma; },
+    async close() {},
+  };
+  const dependencies = {
+    async createApplicationContext() { return application; },
+    usageBudgets: {
+      async reconcileExpiredReservations({ operationRunId }) {
+        reconciledRunIds.push(operationRunId);
+        return 0;
+      },
+    },
+    createDiscovery(options) {
+      assert.ok(
+        reconciledRunIds.includes(options.operationRunId),
+        'reservation reconciliation must finish before provider construction',
+      );
+      providerRunIds.push(options.operationRunId);
+      executionIds.push(options.executionId);
+      return {
+        async discover(candidate) {
+          return {
+            status: 'VERIFIED',
+            project: candidate,
+            developerCanonicalUrl: 'https://developer.example/',
+            officialDeveloperName: project.developerName,
+            canonicalUrl: 'https://developer.example/execution-project',
+            officialProjectName: project.title,
+            matchKind: 'EXACT',
+            reason: 'bounded local stub',
+            errorCode: null,
+            citations: [],
+            developerCitations: [],
+            projectCitations: [],
+            matchedProjectAlias: 'execution project',
+            matchedPlatformProjectAlias: 'execution project',
+            matchedOfficialProjectAlias: 'execution project',
+            matchedDeveloperAlias: 'execution developer',
+            matchedAddress: false,
+            contentChecksum: 'c'.repeat(64),
+            developerCacheHit: false,
+            telemetry: null,
+          };
+        },
+      };
+    },
+  };
+  const environment = {
+    OPENAI_API_KEY: 'bounded-local-stub',
+    ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+    ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
+    ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath,
+  };
+
+  try {
+    await runAssistantSourceDiscovery({
+      argv: ['--live', '--refresh'],
+      environment,
+      silent: true,
+      dependencies,
+    });
+    await runAssistantSourceDiscovery({
+      argv: ['--live', '--refresh'],
+      environment,
+      silent: true,
+      dependencies,
+    });
+
+    assert.equal(reconciledRunIds.length, 2);
+    assert.deepEqual(providerRunIds, reconciledRunIds);
+    assert.notEqual(reconciledRunIds[0], reconciledRunIds[1]);
+    assert.equal(executionIds.length, 2);
+    assert.notEqual(executionIds[0], executionIds[1]);
+    executionIds.forEach((executionId) => assert.match(
+      executionId,
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+    ));
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -800,7 +1005,9 @@ async function assertCheckpointFailureStopsProvider(checkpointPath, expectedCode
       dependencies: {
         async createApplicationContext() { return application; },
         async selectProjects() { return [fixTokenProject()]; },
-        usageBudgets: {},
+        usageBudgets: {
+          async reconcileExpiredReservations() { return 0; },
+        },
         createDiscovery() {
           providerConstructed = true;
           return {
@@ -1058,5 +1265,36 @@ function fixTokenProject() {
     developerKey: 'fsk',
     developerName: 'ФСК',
     address: 'Москва, Шелепихинская набережная, дом 34',
+  };
+}
+
+function settlementFixture() {
+  const operationRunId = randomUUID();
+  const executionId = randomUUID();
+  const usageDate = new Date('2026-08-27T00:00:00.000Z');
+  return {
+    reservation: {
+      id: randomUUID(),
+      operationRunId,
+      executionId,
+      attemptOrdinal: 1,
+      provider: 'openai',
+      model: 'gpt-5.6-luna',
+      serviceTier: 'default',
+      usageDate,
+      reservationExpiresAt: new Date('2026-08-27T00:03:00.000Z'),
+      reservedCostUsd: '0.10000000',
+    },
+    actualModel: 'gpt-5.6-luna',
+    outcome: 'ACCEPTED',
+    errorCode: null,
+    inputTokens: 100,
+    cachedInputTokens: 20,
+    cacheWriteInputTokens: 10,
+    outputTokens: 10,
+    reasoningTokens: 5,
+    totalTokens: 110,
+    webSearchCalls: 0,
+    durationMs: 25,
   };
 }

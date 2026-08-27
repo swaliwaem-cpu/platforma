@@ -1,3 +1,4 @@
+import { ASSISTANT_AI_SERVICE_TIER } from '../operations/assistant-ai-cost';
 import { normalizeCandidateUrl } from './assistant-source-discovery-identity';
 
 const maximumReasonLength = 500;
@@ -77,7 +78,7 @@ export function createDeveloperDiscoveryRequestBody(
 ) {
   return {
     model,
-    service_tier: 'default',
+    service_tier: ASSISTANT_AI_SERVICE_TIER,
     reasoning: { effort: 'medium' },
     store: false,
     max_output_tokens: 1_600,
@@ -146,7 +147,7 @@ export function createProjectDiscoveryRequestBody(
 ) {
   return {
     model,
-    service_tier: 'default',
+    service_tier: ASSISTANT_AI_SERVICE_TIER,
     reasoning: { effort: 'medium' },
     store: false,
     max_output_tokens: 1_600,

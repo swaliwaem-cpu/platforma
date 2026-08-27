@@ -7,6 +7,7 @@ import {
   type AssistantPlannerRequest,
   type AssistantStructuredIntent,
 } from './assistant-query-planner';
+import { ASSISTANT_AI_SERVICE_TIER } from './operations/assistant-ai-cost';
 
 type AssistantEnvironment = NodeJS.ProcessEnv | Record<string, string | undefined>;
 type AssistantAiMode = 'fake' | 'openai';
@@ -41,8 +42,12 @@ export function createAssistantPlannerGateway(
   const apiKey = environment.OPENAI_API_KEY?.trim() ?? '';
   if (!apiKey) throw new AssistantPlannerGatewayError('OPENAI_API_KEY_MISSING');
   const baseUrl = environment.ASSISTANT_OPENAI_BASE_URL?.trim() || 'https://api.openai.com/v1';
-  const timeoutMs = readBoundedInteger(environment.ASSISTANT_OPENAI_TIMEOUT_MS, 20_000, 1_000, 120_000);
+  const timeoutMs = readAssistantOpenAiTimeoutMs(environment);
   return new AssistantOpenAiPlannerGateway(apiKey, fetchImplementation, baseUrl, timeoutMs);
+}
+
+export function readAssistantOpenAiTimeoutMs(environment: AssistantEnvironment = process.env) {
+  return readBoundedInteger(environment.ASSISTANT_OPENAI_TIMEOUT_MS, 20_000, 1_000, 120_000);
 }
 
 export class AssistantFakePlannerGateway implements AssistantPlannerGateway {
@@ -217,7 +222,7 @@ export function createAssistantPlannerSchema() {
 export function createAssistantPlannerRequestBody(request: AssistantPlannerRequest) {
   return {
     model: request.model,
-    service_tier: 'default',
+    service_tier: ASSISTANT_AI_SERVICE_TIER,
     reasoning: { effort: request.reasoningEffort },
     store: false,
     max_output_tokens: 2_500,

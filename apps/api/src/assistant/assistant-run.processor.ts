@@ -22,6 +22,10 @@ import { AssistantAnswerService } from './assistant-answer.service';
 import { buildAssistantRunAudit } from './audit/assistant-run-audit';
 import { AssistantPlannerError } from './assistant-query-planner';
 import { parseAssistantGeoSearchInput } from './geo/assistant-geo-contract';
+import {
+  AssistantAiUsageBudgetError,
+  AssistantAiUsageBudgetService,
+} from './operations/assistant-ai-usage-budget.service';
 import { isAssistantModuleEnabled } from './assistant-runtime-config';
 
 const assistantRunPollIntervalMs = 1_000;
@@ -52,6 +56,7 @@ export class AssistantRunProcessor implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly prisma: PrismaService,
     private readonly answerService: AssistantAnswerService,
+    private readonly aiUsageBudgets: AssistantAiUsageBudgetService,
   ) {}
 
   async onModuleInit() {
@@ -136,6 +141,18 @@ export class AssistantRunProcessor implements OnModuleInit, OnModuleDestroy {
     if (claimed.count !== 1) return;
 
     try {
+      try {
+        await this.aiUsageBudgets.reconcileExpiredReservations({ operationRunId: runId });
+      } catch (error) {
+        if (error instanceof AssistantAiUsageBudgetError
+          && error.code === 'ASSISTANT_AI_RESERVATION_ACTIVE'
+          && error.retryAt) {
+          await this.deferRunUntilReservationExpiry(runId, error.retryAt);
+          return;
+        }
+        throw error;
+      }
+      const executionId = randomUUID();
       const run = await this.prisma.assistantRun.findUniqueOrThrow({
         where: { id: runId },
         include: { userMessage: true },
@@ -172,6 +189,7 @@ export class AssistantRunProcessor implements OnModuleInit, OnModuleDestroy {
           context: this.parseContext(run.userMessage.contextJson),
           geo: this.parseGeoContext(run.userMessage.geoContextJson),
           operationRunId: runId,
+          executionId,
         });
       });
       const latencyMs = Math.max(0, Date.now() - startedAt.getTime());
@@ -236,7 +254,7 @@ export class AssistantRunProcessor implements OnModuleInit, OnModuleDestroy {
           },
           data: {
             status: AssistantRunStatus.FAILED,
-            errorCode: 'ASSISTANT_GROUNDED_RUN_FAILED',
+            errorCode: readAssistantRunErrorCode(error),
             telemetryJson: telemetry as unknown as Prisma.InputJsonValue,
             auditJson: {
               schemaVersion: 1,
@@ -274,6 +292,18 @@ export class AssistantRunProcessor implements OnModuleInit, OnModuleDestroy {
       },
     });
     return renewed.count === 1;
+  }
+
+  private async deferRunUntilReservationExpiry(runId: string, retryAt: Date) {
+    const deferred = await this.prisma.assistantRun.updateMany({
+      where: {
+        id: runId,
+        status: AssistantRunStatus.RUNNING,
+        leaseOwner: this.instanceId,
+      },
+      data: { leaseExpiresAt: retryAt },
+    });
+    if (deferred.count !== 1) throw new Error('ASSISTANT_RUN_LEASE_LOST');
   }
 
   private async withLeaseHeartbeat<Value>(runId: string, action: () => Promise<Value>) {
@@ -337,4 +367,12 @@ export class AssistantRunProcessor implements OnModuleInit, OnModuleDestroy {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function readAssistantRunErrorCode(error: unknown) {
+  if ((error instanceof AssistantPlannerError || error instanceof AssistantAiUsageBudgetError)
+    && /^ASSISTANT_(?:AI|MODEL)_[A-Z0-9_]+$/u.test(error.code)) {
+    return error.code;
+  }
+  return 'ASSISTANT_GROUNDED_RUN_FAILED';
 }

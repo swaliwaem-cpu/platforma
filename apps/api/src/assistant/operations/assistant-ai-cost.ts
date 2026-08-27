@@ -1,4 +1,5 @@
 export const ASSISTANT_AI_PRICING_CATALOG_VERSION = 'openai-standard-pricing-2026-08-27';
+export const ASSISTANT_AI_SERVICE_TIER = 'default';
 
 const usdScale = 100_000_000n;
 const longContextThreshold = 272_000;
@@ -26,6 +27,7 @@ const pricingCatalog: Record<string, Record<AssistantAiPricingTier, AssistantAiR
 
 export type AssistantAiCostInput = {
   model: string;
+  serviceTier?: string;
   inputTokens: number | null;
   cachedInputTokens: number | null;
   cacheWriteInputTokens: number | null;
@@ -36,12 +38,15 @@ export type AssistantAiCostInput = {
 
 export type AssistantAiCostResult = {
   catalogVersion: typeof ASSISTANT_AI_PRICING_CATALOG_VERSION;
-  status: 'PRICED' | 'MODEL_UNPRICED' | 'USAGE_INCOMPLETE' | 'USAGE_INVALID';
+  status: 'PRICED' | 'MODEL_UNPRICED' | 'SERVICE_TIER_UNPRICED' | 'USAGE_INCOMPLETE' | 'USAGE_INVALID';
   estimatedUsd: string | null;
   estimatedUsdUnits: bigint | null;
 };
 
 export function calculateAssistantAiCost(input: AssistantAiCostInput): AssistantAiCostResult {
+  if ((input.serviceTier ?? ASSISTANT_AI_SERVICE_TIER) !== ASSISTANT_AI_SERVICE_TIER) {
+    return unpriced('SERVICE_TIER_UNPRICED');
+  }
   const tiers = pricingCatalog[input.model];
   if (!tiers) return unpriced('MODEL_UNPRICED');
   const counts = [
@@ -81,6 +86,7 @@ export function calculateAssistantAiCost(input: AssistantAiCostInput): Assistant
 
 export function estimateAssistantAiCallCost(input: {
   model: string;
+  serviceTier?: string;
   requestBytes: number;
   maxOutputTokens: number;
   maxWebSearchCalls: number;
@@ -89,6 +95,7 @@ export function estimateAssistantAiCallCost(input: {
   const searchContextTokensUpperBound = Math.max(0, Math.trunc(input.maxWebSearchCalls)) * 20_000;
   return calculateAssistantAiCost({
     model: input.model,
+    serviceTier: input.serviceTier,
     inputTokens: requestTokensUpperBound + searchContextTokensUpperBound,
     cachedInputTokens: 0,
     cacheWriteInputTokens: requestTokensUpperBound + searchContextTokensUpperBound,
