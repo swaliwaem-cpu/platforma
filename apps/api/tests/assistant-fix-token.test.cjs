@@ -50,6 +50,7 @@ const {
   discoverProjects,
   parseArguments,
   runAssistantSourceDiscovery,
+  selectPilotProjects,
 } = require('../scripts/assistant-source-discovery.cjs');
 
 const fixture = JSON.parse(readFileSync(
@@ -608,6 +609,210 @@ test('FIX-TOKEN repeat uses the checkpoint without discovery while refresh runs 
   }
 });
 
+test('FIX-TOKEN active indexed project registry source takes priority over a checkpoint entry', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-registry-priority-'));
+  const checkpointPath = join(directory, 'checkpoint.json');
+  const project = {
+    projectKey: 'registry-priority-project',
+    title: 'Registry priority project',
+    developerKey: 'registry-priority-developer',
+    developerName: 'Registry priority developer',
+  };
+  const registryUrl = 'https://developer.example/registry-priority-project/';
+  const checkpointResult = {
+    status: 'NOT_FOUND',
+    project,
+    developerCanonicalUrl: null,
+    officialDeveloperName: project.developerName,
+    canonicalUrl: null,
+    officialProjectName: null,
+    matchKind: null,
+    reason: 'stale checkpoint result',
+    errorCode: null,
+    citations: [],
+    developerCitations: [],
+    projectCitations: [],
+    matchedProjectAlias: null,
+    matchedPlatformProjectAlias: null,
+    matchedOfficialProjectAlias: null,
+    matchedDeveloperAlias: null,
+    matchedAddress: false,
+    contentChecksum: null,
+    developerCacheHit: false,
+    telemetry: null,
+  };
+  let providerCalls = 0;
+  let connectorCalls = 0;
+  const prisma = {
+    assistantKnowledgeSource: {
+      async findMany(query) {
+        assert.equal(query.select.revisions.where.processingStatus, 'INDEXED');
+        return [{
+          id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          state: 'ACTIVE',
+          type: 'DEVELOPMENT_PAGE',
+          canonicalUrl: registryUrl,
+          projectKey: project.projectKey,
+          developerKey: project.developerKey,
+          connectorKey: 'OFFICIAL_HTML',
+          connectorConfigJson: {
+            allowedHosts: ['developer.example', 'www.developer.example'],
+          },
+          revisions: [{ processingStatus: 'INDEXED', checksum: 'e'.repeat(64) }],
+        }];
+      },
+    },
+  };
+  const application = {
+    get() { return prisma; },
+    async close() {},
+  };
+  const environment = {
+    OPENAI_API_KEY: 'bounded-local-stub',
+    ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+    ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
+    ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath,
+  };
+
+  try {
+    writeAssistantSourceDiscoveryCheckpoint(
+      checkpointPath,
+      checkpointAssistantSourceDiscoveryResult(
+        createEmptyCheckpoint(checkpointFingerprint()),
+        checkpointResult,
+      ),
+    );
+    const report = await runAssistantSourceDiscovery({
+      argv: ['--live'],
+      environment,
+      silent: true,
+      dependencies: {
+        async createApplicationContext() { return application; },
+        async selectProjects() { return [project]; },
+        usageBudgets: {
+          async reconcileExpiredReservations() { return 0; },
+        },
+        createDiscovery(serviceOptions) {
+          return new AssistantSourceDiscoveryService(
+            {
+              ...environment,
+              ASSISTANT_SOURCE_DISCOVERY_LIVE: 'true',
+            },
+            async () => {
+              providerCalls += 1;
+              throw new Error('provider must not be called for a registry hit');
+            },
+            {
+              async fetch() {
+                connectorCalls += 1;
+                throw new Error('connector must not be called for a project registry hit');
+              },
+            },
+            serviceOptions,
+          );
+        },
+      },
+    });
+
+    assert.equal(report.summary.verified, 1);
+    assert.equal(report.summary.checkpointEntriesSkipped, 0);
+    const updatedCheckpoint = readAssistantSourceDiscoveryCheckpoint(
+      checkpointPath,
+      checkpointFingerprint(),
+    );
+    assert.equal(updatedCheckpoint.entries[project.projectKey].canonicalUrl, registryUrl);
+    assert.equal(providerCalls, 0);
+    assert.equal(connectorCalls, 0);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('FIX-TOKEN checkpoint identity includes the current developer key', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-checkpoint-developer-'));
+  const checkpointPath = join(directory, 'checkpoint.json');
+  const project = {
+    projectKey: 'shared-project-key',
+    title: 'Shared project',
+    developerKey: 'new-developer',
+    developerName: 'New developer',
+  };
+  const oldProject = {
+    ...project,
+    developerKey: 'old-developer',
+    developerName: 'Old developer',
+  };
+  const oldResult = {
+    status: 'NOT_FOUND',
+    project: oldProject,
+    developerCanonicalUrl: null,
+    officialDeveloperName: oldProject.developerName,
+    canonicalUrl: null,
+    officialProjectName: null,
+    matchKind: null,
+    reason: 'old developer result',
+    errorCode: null,
+    citations: [],
+    developerCitations: [],
+    projectCitations: [],
+    matchedProjectAlias: null,
+    matchedPlatformProjectAlias: null,
+    matchedOfficialProjectAlias: null,
+    matchedDeveloperAlias: null,
+    matchedAddress: false,
+    contentChecksum: null,
+    developerCacheHit: false,
+    telemetry: null,
+  };
+  let discoveryCalls = 0;
+  const application = {
+    get() { return {}; },
+    async close() {},
+  };
+  const environment = {
+    OPENAI_API_KEY: 'bounded-local-stub',
+    ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+    ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
+    ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath,
+  };
+
+  try {
+    writeAssistantSourceDiscoveryCheckpoint(
+      checkpointPath,
+      checkpointAssistantSourceDiscoveryResult(
+        createEmptyCheckpoint(checkpointFingerprint()),
+        oldResult,
+      ),
+    );
+    const report = await runAssistantSourceDiscovery({
+      argv: ['--live'],
+      environment,
+      silent: true,
+      dependencies: {
+        async createApplicationContext() { return application; },
+        async selectProjects() { return [project]; },
+        usageBudgets: {
+          async reconcileExpiredReservations() { return 0; },
+        },
+        createDiscovery() {
+          return {
+            async discover(candidate) {
+              discoveryCalls += 1;
+              return { ...oldResult, status: 'NOT_FOUND', project: candidate };
+            },
+          };
+        },
+      },
+    });
+
+    assert.equal(discoveryCalls, 1);
+    assert.equal(report.summary.checkpointEntriesSkipped, 0);
+    assert.equal(report.summary.notFound, 1);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('FIX-TOKEN CLI keeps one logical operation while isolating each execution', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-execution-'));
   const checkpointPath = join(directory, 'checkpoint.json');
@@ -831,6 +1036,133 @@ test('FIX-TOKEN discovery report counts a failed paid provider attempt without p
   assert.equal(report.results[0].providerRequests, 1);
 });
 
+test('FIX-TOKEN discovery orchestration passes the persisted registry seed before provider work', async () => {
+  const project = fixTokenProject();
+  const registrySource = {
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    state: 'ACTIVE',
+    type: 'DEVELOPER_PROMOTION',
+    canonicalUrl: 'https://catalog.developer.example/',
+    projectKey: null,
+    developerKey: project.developerKey,
+    connectorKey: 'OFFICIAL_HTML',
+    connectorConfig: {
+      allowedHosts: ['catalog.developer.example', 'www.catalog.developer.example'],
+    },
+    latestRevision: {
+      processingStatus: 'INDEXED',
+      checksum: 'd'.repeat(64),
+    },
+  };
+  let receivedSeed = null;
+  const results = await discoverProjects({
+    async discover(candidate, seed) {
+      receivedSeed = seed;
+      return { status: 'VERIFIED', project: candidate, telemetry: { phases: [] } };
+    },
+  }, [project], 1, {}, {
+    registrySources: [registrySource],
+    includeProjectSources: true,
+  });
+
+  assert.equal(results[0].status, 'VERIFIED');
+  assert.deepEqual(receivedSeed, { registrySources: [registrySource] });
+});
+
+test('FIX-TOKEN missing-only selection reuses only active indexed project sources', async () => {
+  const selected = await selectPilotProjects({
+    assistantKnowledgeSource: {
+      async findMany(query) {
+        assert.equal(query.select.revisions.where.processingStatus, 'INDEXED');
+        return [
+          {
+            id: '11111111-1111-4111-8111-111111111111',
+            projectKey: 'already-indexed',
+            developerKey: 'developer',
+            type: 'DEVELOPMENT_PAGE',
+            state: 'ACTIVE',
+            canonicalUrl: 'https://developer.example/projects/already-indexed/',
+            connectorKey: 'OFFICIAL_HTML',
+            connectorConfigJson: {
+              allowedHosts: ['developer.example', 'www.developer.example'],
+            },
+            revisions: [{ processingStatus: 'INDEXED', checksum: '1'.repeat(64) }],
+          },
+          {
+            id: '22222222-2222-4222-8222-222222222222',
+            projectKey: 'needs-refresh',
+            developerKey: 'developer',
+            type: 'DEVELOPMENT_PAGE',
+            state: 'DISABLED',
+            canonicalUrl: 'https://developer.example/projects/needs-refresh/',
+            connectorKey: 'OFFICIAL_HTML',
+            connectorConfigJson: {
+              allowedHosts: ['developer.example', 'www.developer.example'],
+            },
+            revisions: [{ processingStatus: 'INDEXED', checksum: '2'.repeat(64) }],
+          },
+        ];
+      },
+    },
+    realEstateObject: {
+      async findMany() {
+        return [
+          {
+            title: 'Already indexed',
+            slug: 'already-indexed',
+            address: null,
+            feedUnitsCount: 20,
+            developer: { name: 'Developer', normalizedName: 'developer', slug: 'developer' },
+          },
+          {
+            title: 'Needs refresh',
+            slug: 'needs-refresh',
+            address: null,
+            feedUnitsCount: 10,
+            developer: { name: 'Developer', normalizedName: 'developer', slug: 'developer' },
+          },
+        ];
+      },
+    },
+  }, 1, true, new Set());
+
+  assert.deepEqual(selected.map(({ projectKey }) => projectKey), ['needs-refresh']);
+});
+
+test('FIX-TOKEN pilot capacity uses the selected project-key union', async () => {
+  const registered = Array.from({ length: 20 }, (_, index) => ({
+    id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+    projectKey: index === 0 ? 'needs-refresh' : `registered-${index}`,
+    developerKey: 'developer',
+    type: 'DEVELOPMENT_PAGE',
+    state: index === 0 ? 'DISABLED' : 'ACTIVE',
+    canonicalUrl: `https://developer.example/projects/${index}/`,
+    connectorKey: 'OFFICIAL_HTML',
+    connectorConfigJson: {
+      allowedHosts: ['developer.example', 'www.developer.example'],
+    },
+    revisions: [{ processingStatus: 'INDEXED', checksum: 'f'.repeat(64) }],
+  }));
+  const selected = await selectPilotProjects({
+    assistantKnowledgeSource: {
+      async findMany() { return registered; },
+    },
+    realEstateObject: {
+      async findMany() {
+        return [{
+          title: 'Needs refresh',
+          slug: 'needs-refresh',
+          address: null,
+          feedUnitsCount: 10,
+          developer: { name: 'Developer', normalizedName: 'developer', slug: 'developer' },
+        }];
+      },
+    },
+  }, 1, true, new Set());
+
+  assert.deepEqual(selected.map(({ projectKey }) => projectKey), ['needs-refresh']);
+});
+
 test('FIX-TOKEN discovery never uses Terra after parse, transport, HTTP or source-fetch failure', async (context) => {
   const scenarios = [
     {
@@ -963,8 +1295,8 @@ function checkpointFingerprint() {
   return {
     primaryModel: 'gpt-5.6-luna',
     fallbackModel: 'gpt-5.6-terra',
-    promptVersion: 'assistant-source-discovery-v1',
-    validatorVersion: 'assistant-source-discovery-validator-v1',
+    promptVersion: 'assistant-source-discovery-v2',
+    validatorVersion: 'assistant-source-discovery-validator-v2',
   };
 }
 

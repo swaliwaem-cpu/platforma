@@ -6,15 +6,16 @@ import {
   type SourceConnectorFetchResult,
 } from './official-html-source.connector';
 import {
-  deriveParentDomain,
+  extractLinkedOfficialDeveloperUrls,
   extractOfficialProjectLinks,
   findDeveloperAlias,
   findProjectCatalogEvidence,
   hasMultipleProjectCatalogEntries,
+  inferOfficialProjectNameFromPage,
   isBlockedDomain,
-  isUrlWithinDomain,
+  isUrlWithinAllowedHosts,
+  normalizeHostname,
   normalizeCandidateUrl,
-  readAllowedDomain,
   readProjectIdentityError,
   relatedHosts,
   verifyProjectIdentity,
@@ -53,6 +54,11 @@ import {
   uniqueUrls,
 } from './assistant-source-discovery-policy';
 import {
+  findRegisteredDeveloperSources,
+  findRegisteredProjectSource,
+  type AssistantSourceDiscoveryRegistrySource,
+} from './assistant-source-discovery-registry';
+import {
   ASSISTANT_AI_SERVICE_TIER,
   estimateAssistantAiCallCost,
   parseAssistantUsd,
@@ -88,6 +94,12 @@ export type AssistantSourceDiscoveryProject = AssistantSourceIdentityProject;
 
 export type AssistantSourceDiscoveryMatchKind = AssistantSourceIdentityMatchKind;
 
+export type { AssistantSourceDiscoveryRegistrySource } from './assistant-source-discovery-registry';
+
+export type AssistantSourceDiscoverySeed = {
+  registrySources?: readonly AssistantSourceDiscoveryRegistrySource[];
+};
+
 export type AssistantSourceDiscoveryResult = {
   status: 'VERIFIED' | 'NOT_FOUND' | 'REJECTED';
   project: AssistantSourceDiscoveryProject;
@@ -115,7 +127,8 @@ type SourceConnector = Pick<OfficialHtmlSourceConnector, 'fetch'>;
 
 type VerifiedDeveloper = {
   canonicalUrl: string;
-  allowedDomain: string;
+  allowedHosts: string[];
+  catalogUrls: string[];
   officialName: string;
   matchedAlias: string;
   citations: string[];
@@ -225,11 +238,14 @@ export class AssistantSourceDiscoveryService {
     }
   }
 
-  async discover(projectValue: AssistantSourceDiscoveryProject): Promise<AssistantSourceDiscoveryResult> {
+  async discover(
+    projectValue: AssistantSourceDiscoveryProject,
+    seed: AssistantSourceDiscoverySeed = {},
+  ): Promise<AssistantSourceDiscoveryResult> {
     const projectKey = projectValue.projectKey;
     this.projectCallCounts.set(projectKey, 0);
     try {
-      return await this.discoverWithinBudget(projectValue);
+      return await this.discoverWithinBudget(projectValue, seed);
     } finally {
       this.projectCallCounts.delete(projectKey);
     }
@@ -237,9 +253,14 @@ export class AssistantSourceDiscoveryService {
 
   private async discoverWithinBudget(
     projectValue: AssistantSourceDiscoveryProject,
+    seed: AssistantSourceDiscoverySeed,
   ): Promise<AssistantSourceDiscoveryResult> {
     const project = parseProject(projectValue);
-    const developerResolution = await this.resolveDeveloper(project);
+    const registeredProjectSource = findRegisteredProjectSource(project, seed.registrySources ?? []);
+    if (registeredProjectSource) {
+      return registeredProjectSourceResult(project, registeredProjectSource, this.model);
+    }
+    const developerResolution = await this.resolveDeveloper(project, seed.registrySources ?? []);
     if (developerResolution.status !== 'VERIFIED') {
       return rejectedResult({
         status: developerResolution.status,
@@ -259,39 +280,47 @@ export class AssistantSourceDiscoveryService {
     } = developerResolution;
     const developerCitations = developer.citations;
     let catalogEvidence = await this.findDeveloperCatalogEvidence(project, developer);
-    const knownPath = await this.findProjectByKnownPaths(project, developer);
+    const knownPath = await this.findProjectByKnownPaths(
+      project,
+      developer,
+      catalogEvidence,
+    );
     if (knownPath) {
       const matchedProjectAlias = knownPath.identity.matchedPlatformProjectAlias
         ?? knownPath.identity.matchedOfficialProjectAlias;
       const matchKind = catalogEvidence
         ? inferCatalogMatchKind(project, catalogEvidence)
         : inferKnownPathMatchKind(project, matchedProjectAlias);
-      if (catalogEvidence || matchKind === 'EXACT') {
-        return {
-          status: 'VERIFIED',
-          project,
-          developerCanonicalUrl: developer.canonicalUrl,
-          officialDeveloperName: developer.officialName,
-          canonicalUrl: normalizeCandidateUrl(knownPath.page.finalUrl),
-          officialProjectName: catalogEvidence?.officialProjectName ?? project.title,
-          matchKind,
-          reason: catalogEvidence
-            ? 'Источник найден локально по официальному каталогу и ограниченному набору известных путей.'
-            : 'Источник найден до обращения к модели по ограниченному набору известных путей и независимо проверен.',
-          errorCode: null,
-          citations: [],
-          developerCitations,
-          projectCitations: [],
-          matchedProjectAlias,
-          matchedPlatformProjectAlias: knownPath.identity.matchedPlatformProjectAlias,
-          matchedOfficialProjectAlias: knownPath.identity.matchedOfficialProjectAlias,
-          matchedDeveloperAlias: knownPath.identity.matchedDeveloperAlias ?? developer.matchedAlias,
-          matchedAddress: knownPath.identity.matchedAddress,
-          contentChecksum: knownPath.page.checksum,
-          developerCacheHit,
-          telemetry: telemetryFromPhases(developerPhaseTelemetries, this.model),
-        };
-      }
+      const canonicalPage = await this.findCanonicalProjectPage(
+        project,
+        knownPath.officialProjectName,
+        knownPath.page,
+        developer.allowedHosts,
+      );
+      return {
+        status: 'VERIFIED',
+        project,
+        developerCanonicalUrl: developer.canonicalUrl,
+        officialDeveloperName: developer.officialName,
+        canonicalUrl: normalizeCandidateUrl(canonicalPage.finalUrl),
+        officialProjectName: knownPath.officialProjectName,
+        matchKind,
+        reason: catalogEvidence
+          ? 'Источник найден локально по официальному каталогу и ограниченному набору известных путей.'
+          : 'Источник найден до обращения к модели по ограниченному набору известных путей и независимо проверен.',
+        errorCode: null,
+        citations: [],
+        developerCitations,
+        projectCitations: [],
+        matchedProjectAlias,
+        matchedPlatformProjectAlias: knownPath.identity.matchedPlatformProjectAlias,
+        matchedOfficialProjectAlias: knownPath.identity.matchedOfficialProjectAlias,
+        matchedDeveloperAlias: knownPath.identity.matchedDeveloperAlias ?? developer.matchedAlias,
+        matchedAddress: knownPath.identity.matchedAddress,
+        contentChecksum: canonicalPage.checksum,
+        developerCacheHit,
+        telemetry: telemetryFromPhases(developerPhaseTelemetries, this.model),
+      };
     }
     let projectModel = this.model;
     let projectProviderResult = await this.requestCandidate(
@@ -350,7 +379,7 @@ export class AssistantSourceDiscoveryService {
         const resolvedCatalogEvidence = catalogEvidence;
         const catalogCitationUrl = resolvedCatalogEvidence
           ? projectCitations.find((citation) => (
-            isUrlWithinDomain(citation, developer.allowedDomain)
+            isUrlWithinAllowedHosts(citation, developer.allowedHosts)
               && catalogCodeMatchesUrl(resolvedCatalogEvidence, citation)
           )) ?? null
           : null;
@@ -411,12 +440,14 @@ export class AssistantSourceDiscoveryService {
           'ASSISTANT_SOURCE_DISCOVERY_PROJECT_URL_INVALID',
         );
       }
-      if (bridgeUrl && !isUrlWithinDomain(bridgeUrl, developer.allowedDomain)) {
+      if (bridgeUrl && !isUrlWithinAllowedHosts(bridgeUrl, developer.allowedHosts)) {
         projectCandidateErrorCode = 'ASSISTANT_SOURCE_DISCOVERY_PROJECT_OUTSIDE_DEVELOPER_DOMAIN';
       }
       if (!projectCandidateErrorCode
         && bridgeUrl
-        && !projectCitations.some((citation) => isUrlWithinDomain(citation, developer.allowedDomain))) {
+        && !projectCitations.some((citation) => (
+          isUrlWithinAllowedHosts(citation, developer.allowedHosts)
+        ))) {
         projectCandidateErrorCode = 'ASSISTANT_SOURCE_DISCOVERY_PROJECT_CITATION_MISSING';
       }
       if (!bridgeUrl || projectCandidateErrorCode) {
@@ -446,7 +477,11 @@ export class AssistantSourceDiscoveryService {
 
       let bridgePage: SourceConnectorFetchResult;
       try {
-        bridgePage = await this.fetchOfficialSource(bridgeUrl);
+        bridgePage = await this.fetchOfficialSource(
+          bridgeUrl,
+          'when-empty',
+          developer.allowedHosts,
+        );
       } catch (error) {
         if (error instanceof SourceConnectorError
           && error.code === 'SOURCE_ANTI_BOT_CHALLENGE') {
@@ -456,7 +491,7 @@ export class AssistantSourceDiscoveryService {
           ));
           const catalogCitationUrl = catalogEvidence
             ? projectCitations.find((citation) => (
-              isUrlWithinDomain(citation, developer.allowedDomain)
+              isUrlWithinAllowedHosts(citation, developer.allowedHosts)
                 && catalogCodeMatchesUrl(catalogEvidence!, citation)
             )) ?? null
             : null;
@@ -527,7 +562,7 @@ export class AssistantSourceDiscoveryService {
       }
 
       const finalBridgeUrl = normalizeCandidateUrl(bridgePage.finalUrl);
-      if (!isUrlWithinDomain(finalBridgeUrl, developer.allowedDomain)) {
+      if (!isUrlWithinAllowedHosts(finalBridgeUrl, developer.allowedHosts)) {
         if (projectModel === this.model) {
           await requestTerraFallback();
           continue projectValidation;
@@ -584,28 +619,12 @@ export class AssistantSourceDiscoveryService {
         });
       }
 
-      let canonicalPage = bridgePage;
-      for (const externalUrl of extractOfficialProjectLinks(
+      const canonicalPage = await this.findCanonicalProjectPage(
+        project,
+        projectCandidate.officialProjectName,
         bridgePage,
-        developer.allowedDomain,
-      )) {
-        try {
-          const fetchedExternalPage = await this.fetchOfficialSource(externalUrl);
-          const finalExternalUrl = normalizeCandidateUrl(fetchedExternalPage.finalUrl);
-          if (isBlockedDomain(new URL(finalExternalUrl).hostname)) continue;
-          const externalIdentity = verifyProjectIdentity(
-            project,
-            projectCandidate.officialProjectName,
-            fetchedExternalPage,
-          );
-          if (!externalIdentity.matchedPlatformProjectAlias
-            && !externalIdentity.matchedOfficialProjectAlias) continue;
-          canonicalPage = fetchedExternalPage;
-          break;
-        } catch {
-          // The verified developer bridge remains canonical if its optional external link is unavailable.
-        }
-      }
+        developer.allowedHosts,
+      );
 
       return {
         status: 'VERIFIED',
@@ -660,8 +679,10 @@ export class AssistantSourceDiscoveryService {
 
     let developerCandidateUrl: string | null = null;
     let developerCandidateErrorCode: string | null = null;
+    let developerAllowedHosts: string[] = [];
     try {
       developerCandidateUrl = normalizeCandidateUrl(developerCandidate.canonicalUrl);
+      developerAllowedHosts = relatedHosts(new URL(developerCandidateUrl).hostname);
     } catch (error) {
       developerCandidateErrorCode = readDiscoveryCode(
         error,
@@ -672,12 +693,8 @@ export class AssistantSourceDiscoveryService {
       developerCandidateErrorCode = 'ASSISTANT_SOURCE_DISCOVERY_DEVELOPER_DOMAIN_BLOCKED';
     }
     if (developerCandidateUrl) {
-      const candidateDomain = readAllowedDomain(developerCandidateUrl);
-      const candidateParentDomain = deriveParentDomain(candidateDomain);
       const hasDeveloperPerimeterCitation = developerCitations.some((citation) => (
-        isUrlWithinDomain(citation, candidateDomain)
-          || (candidateParentDomain !== null
-            && isUrlWithinDomain(citation, candidateParentDomain))
+        isUrlWithinAllowedHosts(citation, developerAllowedHosts)
       ));
       if (!hasDeveloperPerimeterCitation) {
         developerCandidateErrorCode = 'ASSISTANT_SOURCE_DISCOVERY_DEVELOPER_CITATION_MISSING';
@@ -698,14 +715,16 @@ export class AssistantSourceDiscoveryService {
 
     let developerPage: SourceConnectorFetchResult | null = null;
     try {
-      developerPage = await this.fetchOfficialSource(developerCandidateUrl);
+      developerPage = await this.fetchOfficialSource(
+        developerCandidateUrl,
+        'when-empty',
+        developerAllowedHosts,
+      );
     } catch (error) {
       if (error instanceof SourceConnectorError && error.code === 'SOURCE_ANTI_BOT_CHALLENGE') {
-        const candidateDomain = readAllowedDomain(developerCandidateUrl);
-        const corporateDomain = deriveParentDomain(candidateDomain) ?? candidateDomain;
         const alternative = await this.findAlternativeDeveloperPage(
           project,
-          corporateDomain,
+          developerAllowedHosts,
           developerCitations,
         );
         developerPhaseTelemetries.push(alternative.phaseTelemetry);
@@ -731,12 +750,33 @@ export class AssistantSourceDiscoveryService {
       }
     }
 
+    const initialMatchedDeveloperAlias = findDeveloperAlias(project, developerPage);
+    if (!initialMatchedDeveloperAlias) {
+      return {
+        status: 'REJECTED',
+        reason: developerCandidate.reason,
+        errorCode: 'ASSISTANT_SOURCE_DISCOVERY_DEVELOPER_MISMATCH',
+        developerCanonicalUrl: normalizeCandidateUrl(developerPage.finalUrl),
+        officialDeveloperName: developerCandidate.officialDeveloperName,
+        developerCitations,
+        telemetry: aggregateTelemetry(developerPhaseTelemetries),
+      };
+    }
+    const linkedDeveloperPages = await this.findLinkedDeveloperPages(
+      project,
+      developerPage,
+      developerAllowedHosts,
+    );
+    developerAllowedHosts = linkedDeveloperPages.allowedHosts;
+
     if (isNarrowNonResidentialDeveloperUrl(developerCandidateUrl)) {
-      const candidateDomain = readAllowedDomain(developerCandidateUrl);
-      const corporateDomain = deriveParentDomain(candidateDomain) ?? candidateDomain;
       let renderedCandidate: SourceConnectorFetchResult | null = null;
       try {
-        renderedCandidate = await this.fetchOfficialSource(developerCandidateUrl, 'always');
+        renderedCandidate = await this.fetchOfficialSource(
+          developerCandidateUrl,
+          'always',
+          developerAllowedHosts,
+        );
       } catch {
         // A narrow page without project evidence is replaced through the bounded alternative search below.
       }
@@ -744,10 +784,18 @@ export class AssistantSourceDiscoveryService {
         developerPage = renderedCandidate;
         this.developerCatalogCache.set(developerCandidateUrl, Promise.resolve(renderedCandidate));
         this.renderedDeveloperCatalogUrls.add(developerCandidateUrl);
+      } else if (linkedDeveloperPages.pages.some(({ page }) => (
+        findProjectCatalogEvidence(project, page) !== null
+      ))) {
+        const linkedCatalog = linkedDeveloperPages.pages.find(({ page }) => (
+          findProjectCatalogEvidence(project, page) !== null
+        ))!;
+        developerPage = linkedCatalog.page;
+        developerCandidateUrl = linkedCatalog.canonicalUrl;
       } else {
         const alternative = await this.findAlternativeDeveloperPage(
           project,
-          corporateDomain,
+          developerAllowedHosts,
           developerCitations,
         );
         developerPhaseTelemetries.push(alternative.phaseTelemetry);
@@ -760,7 +808,7 @@ export class AssistantSourceDiscoveryService {
       }
     }
 
-    let developerCanonicalUrl = normalizeCandidateUrl(developerPage.finalUrl);
+    const developerCanonicalUrl = normalizeCandidateUrl(developerPage.finalUrl);
     if (isBlockedDomain(new URL(developerCanonicalUrl).hostname)) {
       return {
         status: 'REJECTED',
@@ -772,7 +820,7 @@ export class AssistantSourceDiscoveryService {
         telemetry: aggregateTelemetry(developerPhaseTelemetries),
       };
     }
-    let matchedDeveloperAlias = findDeveloperAlias(project, developerPage);
+    const matchedDeveloperAlias = findDeveloperAlias(project, developerPage);
     if (!matchedDeveloperAlias) {
       return {
         status: 'REJECTED',
@@ -785,26 +833,13 @@ export class AssistantSourceDiscoveryService {
       };
     }
 
-    const parentDomain = deriveParentDomain(readAllowedDomain(developerCanonicalUrl));
-    if (parentDomain) {
-      try {
-        const parentPage = await this.fetchOfficialSource(`https://${parentDomain}/`);
-        const parentFinalUrl = normalizeCandidateUrl(parentPage.finalUrl);
-        const parentAlias = isUrlWithinDomain(parentFinalUrl, parentDomain)
-          ? findDeveloperAlias(project, parentPage)
-          : null;
-        if (parentAlias) {
-          developerCanonicalUrl = parentFinalUrl;
-          matchedDeveloperAlias = parentAlias;
-        }
-      } catch {
-        // A verified subdomain remains usable when the optional corporate-root promotion fails.
-      }
-    }
-
     const developer: VerifiedDeveloper = {
       canonicalUrl: developerCanonicalUrl,
-      allowedDomain: parentDomain ?? readAllowedDomain(developerCanonicalUrl),
+      allowedHosts: developerAllowedHosts,
+      catalogUrls: uniqueUrls(
+        [developerCanonicalUrl],
+        linkedDeveloperPages.pages.map(({ canonicalUrl }) => canonicalUrl),
+      ),
       officialName: developerCandidate.officialDeveloperName,
       matchedAlias: matchedDeveloperAlias,
       citations: developerCitations,
@@ -820,8 +855,11 @@ export class AssistantSourceDiscoveryService {
 
   private async resolveDeveloper(
     project: AssistantSourceDiscoveryProject,
+    registrySources: readonly AssistantSourceDiscoveryRegistrySource[],
   ): Promise<DeveloperResolutionSuccess | DeveloperResolutionFailure> {
-    const key = createDeveloperCacheKey(project);
+    const registeredSources = findRegisteredDeveloperSources(project, registrySources);
+    const registeredSourceKey = registeredSources.map(({ source }) => source.id).join(',');
+    const key = `${createDeveloperCacheKey(project)}\u0000${registeredSourceKey}`;
     const now = Date.now();
     const existing = this.developerCache.get(key);
     if (existing && existing.expiresAt > now) {
@@ -837,7 +875,9 @@ export class AssistantSourceDiscoveryService {
       const oldestKey = this.developerCache.keys().next().value as string | undefined;
       if (oldestKey) this.developerCache.delete(oldestKey);
     }
-    const promise = this.discoverDeveloper(project);
+    const promise = registeredSources.length > 0
+      ? this.resolveRegisteredDeveloper(project, registeredSources)
+      : this.discoverDeveloper(project);
     this.developerCache.set(key, { expiresAt: now + developerCacheTtlMs, promise });
     try {
       const resolved = await promise;
@@ -849,12 +889,67 @@ export class AssistantSourceDiscoveryService {
     }
   }
 
+  private async resolveRegisteredDeveloper(
+    project: AssistantSourceDiscoveryProject,
+    registeredSources: ReturnType<typeof findRegisteredDeveloperSources>,
+  ): Promise<DeveloperResolutionSuccess | DeveloperResolutionFailure> {
+    const selectedSources: typeof registeredSources = [];
+    const selectedAllowedHosts = new Set<string>();
+    for (const registered of registeredSources) {
+      const expandedHosts = new Set([...selectedAllowedHosts, ...registered.allowedHosts]);
+      if (expandedHosts.size > 10) continue;
+      registered.allowedHosts.forEach((host) => selectedAllowedHosts.add(host));
+      selectedSources.push(registered);
+    }
+    let allowedHosts = [...selectedAllowedHosts];
+    const catalogUrls = new Set(selectedSources.map(({ canonicalUrl }) => canonicalUrl));
+    for (const registered of selectedSources) {
+      try {
+        const page = await this.fetchOfficialSource(
+          registered.canonicalUrl,
+          'always',
+          registered.allowedHosts,
+        );
+        const canonicalUrl = normalizeCandidateUrl(page.finalUrl);
+        const matchedAlias = findDeveloperAlias(project, page);
+        if (!matchedAlias) continue;
+        catalogUrls.add(canonicalUrl);
+        this.developerCatalogCache.set(canonicalUrl, Promise.resolve(page));
+        this.renderedDeveloperCatalogUrls.add(canonicalUrl);
+        const linkedDeveloperPages = await this.findLinkedDeveloperPages(
+          project,
+          page,
+          allowedHosts,
+        );
+        allowedHosts = linkedDeveloperPages.allowedHosts;
+        linkedDeveloperPages.pages.forEach(({ canonicalUrl: linkedCanonicalUrl }) => {
+          catalogUrls.add(linkedCanonicalUrl);
+        });
+      } catch {
+        // Try the next independently registered developer source.
+      }
+    }
+    return {
+      status: 'VERIFIED',
+      developer: {
+        canonicalUrl: selectedSources[0]!.canonicalUrl,
+        allowedHosts,
+        catalogUrls: [...catalogUrls],
+        officialName: project.developerName,
+        matchedAlias: project.developerName,
+        citations: [],
+      },
+      phaseTelemetries: [],
+      cacheHit: false,
+    };
+  }
+
   private async requestCandidate(
     phase: AssistantSourceDiscoveryPhase,
     project: AssistantSourceDiscoveryProject,
     developer?: VerifiedDeveloper,
     projectEvidence?: VerifiedProjectCatalogEvidence,
-    developerAlternativeDomain?: string,
+    developerAlternativeHosts?: readonly string[],
     model = this.model,
   ) {
     const projectCalls = this.projectCallCounts.get(project.projectKey) ?? 0;
@@ -868,7 +963,7 @@ export class AssistantSourceDiscoveryService {
       }
     }
     const requestBody = phase === 'DEVELOPER'
-      ? createDeveloperDiscoveryRequestBody(model, project, developerAlternativeDomain)
+      ? createDeveloperDiscoveryRequestBody(model, project, developerAlternativeHosts)
       : createProjectDiscoveryRequestBody(
         model,
         project,
@@ -1090,41 +1185,89 @@ export class AssistantSourceDiscoveryService {
     });
   }
 
-  private fetchOfficialSource(
+  private async fetchOfficialSource(
     canonicalUrl: string,
     browserRenderMode: 'when-empty' | 'always' = 'when-empty',
+    allowedHosts?: readonly string[],
   ) {
-    const hostname = new URL(canonicalUrl).hostname.toLocaleLowerCase('en-US');
-    return this.sourceConnector.fetch({
+    const hostname = normalizeHostname(new URL(canonicalUrl).hostname);
+    const trustedHosts = [...new Set((allowedHosts ?? relatedHosts(hostname)).map(normalizeHostname))];
+    if (trustedHosts.length === 0 || trustedHosts.length > 10
+      || !isUrlWithinAllowedHosts(canonicalUrl, trustedHosts)) {
+      throw new SourceConnectorError('SOURCE_REDIRECT_HOST_NOT_ALLOWED', false);
+    }
+    const page = await this.sourceConnector.fetch({
       id: randomUUID(),
       canonicalUrl,
       connectorKey: 'OFFICIAL_HTML',
-      connectorConfig: { allowedHosts: relatedHosts(hostname), browserRenderMode },
+      connectorConfig: {
+        allowedHosts: [...trustedHosts],
+        browserRenderMode,
+      },
     });
+    if (!isUrlWithinAllowedHosts(page.finalUrl, trustedHosts)
+      || page.redirects.some((redirect) => !isUrlWithinAllowedHosts(redirect, trustedHosts))) {
+      throw new SourceConnectorError('SOURCE_REDIRECT_HOST_NOT_ALLOWED', false);
+    }
+    return page;
   }
 
   private async findDeveloperCatalogEvidence(
     project: AssistantSourceDiscoveryProject,
     developer: VerifiedDeveloper,
   ): Promise<VerifiedProjectCatalogEvidence | null> {
-    let page = await (this.developerCatalogCache.get(developer.canonicalUrl)
-      ?? Promise.resolve(null));
-    let evidence = page ? findProjectCatalogEvidence(project, page) : null;
-    if (evidence) return { ...evidence, page: page! };
-    if (this.renderedDeveloperCatalogUrls.has(developer.canonicalUrl)) return null;
-    const catalogPromise = this.fetchOfficialSource(developer.canonicalUrl, 'always')
-      .catch(() => null);
-    this.developerCatalogCache.set(developer.canonicalUrl, catalogPromise);
-    this.renderedDeveloperCatalogUrls.add(developer.canonicalUrl);
-    page = await catalogPromise;
-    if (!page) return null;
-    evidence = findProjectCatalogEvidence(project, page);
-    return evidence ? { ...evidence, page } : null;
+    for (const catalogUrl of uniqueUrls([developer.canonicalUrl], developer.catalogUrls)) {
+      let page = await (this.developerCatalogCache.get(catalogUrl) ?? Promise.resolve(null));
+      let evidence = page ? findProjectCatalogEvidence(project, page) : null;
+      if (evidence) return { ...evidence, page: page! };
+      if (this.renderedDeveloperCatalogUrls.has(catalogUrl)) continue;
+      const catalogPromise = this.fetchOfficialSource(
+        catalogUrl,
+        'always',
+        developer.allowedHosts,
+      ).catch(() => null);
+      this.developerCatalogCache.set(catalogUrl, catalogPromise);
+      this.renderedDeveloperCatalogUrls.add(catalogUrl);
+      page = await catalogPromise;
+      if (!page) continue;
+      evidence = findProjectCatalogEvidence(project, page);
+      if (evidence) return { ...evidence, page };
+    }
+    return null;
+  }
+
+  private async findLinkedDeveloperPages(
+    project: AssistantSourceDiscoveryProject,
+    page: SourceConnectorFetchResult,
+    currentAllowedHosts: readonly string[],
+  ) {
+    const allowedHosts = [...currentAllowedHosts];
+    const pages: Array<{ canonicalUrl: string; page: SourceConnectorFetchResult }> = [];
+    for (const linked of extractLinkedOfficialDeveloperUrls(page, currentAllowedHosts)) {
+      const linkedUrl = linked.url;
+      const linkedHosts = relatedHosts(new URL(linkedUrl).hostname);
+      const expandedHosts = [...new Set([...allowedHosts, ...linkedHosts])];
+      if (expandedHosts.length > 10) continue;
+      try {
+        const linkedPage = await this.fetchOfficialSource(linkedUrl, 'always', linkedHosts);
+        if (!findDeveloperAlias(project, linkedPage)) continue;
+        allowedHosts.splice(0, allowedHosts.length, ...expandedHosts);
+        const canonicalUrl = normalizeCandidateUrl(linkedPage.finalUrl);
+        pages.push({ canonicalUrl, page: linkedPage });
+        this.developerCatalogCache.set(canonicalUrl, Promise.resolve(linkedPage));
+        this.renderedDeveloperCatalogUrls.add(canonicalUrl);
+      } catch {
+        if (linked.trustWithoutFetch) {
+          allowedHosts.splice(0, allowedHosts.length, ...expandedHosts);
+        }
+      }
+    }
+    return { allowedHosts, pages };
   }
 
   private async findAlternativeDeveloperPage(
     project: AssistantSourceDiscoveryProject,
-    corporateDomain: string,
+    allowedHosts: readonly string[],
     existingCitations: string[],
   ): Promise<AlternativeDeveloperPage> {
     const providerResult = await this.requestCandidate(
@@ -1132,7 +1275,7 @@ export class AssistantSourceDiscoveryService {
       project,
       undefined,
       undefined,
-      corporateDomain,
+      allowedHosts,
     );
     const candidate = parseDeveloperCandidate(providerResult.value);
     const phaseTelemetry = createPhaseTelemetry('DEVELOPER', this.model, providerResult);
@@ -1146,7 +1289,7 @@ export class AssistantSourceDiscoveryService {
       }
     }
     const citedAlternatives = citations.filter((citation) => (
-      isUrlWithinDomain(citation, corporateDomain)
+      isUrlWithinAllowedHosts(citation, allowedHosts)
       && !isBlockedDomain(new URL(citation).hostname)
     ));
     const orderedAlternatives = uniqueUrls(
@@ -1160,7 +1303,7 @@ export class AssistantSourceDiscoveryService {
     let broadCatalogVerified: { url: string; page: SourceConnectorFetchResult } | null = null;
     for (const canonicalUrl of orderedAlternatives) {
       try {
-        const page = await this.fetchOfficialSource(canonicalUrl, 'always');
+        const page = await this.fetchOfficialSource(canonicalUrl, 'always', allowedHosts);
         if (!findDeveloperAlias(project, page)) continue;
         firstVerified ??= { url: canonicalUrl, page };
         if (findProjectCatalogEvidence(project, page)) {
@@ -1191,20 +1334,77 @@ export class AssistantSourceDiscoveryService {
   private async findProjectByKnownPaths(
     project: AssistantSourceDiscoveryProject,
     developer: VerifiedDeveloper,
+    catalogEvidence: VerifiedProjectCatalogEvidence | null,
   ) {
-    for (const candidateUrl of buildKnownProjectUrls(project.projectKey, developer.allowedDomain)) {
+    const projectIdentifiers = catalogEvidence?.officialProjectCode
+      ? [catalogEvidence.officialProjectCode, project.projectKey]
+      : [project.projectKey];
+    const catalogProjectUrls = catalogEvidence?.officialProjectUrl
+      && isUrlWithinAllowedHosts(catalogEvidence.officialProjectUrl, developer.allowedHosts)
+      ? [catalogEvidence.officialProjectUrl]
+      : [];
+    const candidateUrls = uniqueUrls(
+      catalogProjectUrls,
+      buildKnownProjectUrls(projectIdentifiers, developer.allowedHosts),
+    ).slice(0, 20);
+    for (const candidateUrl of candidateUrls) {
       try {
-        const page = await this.fetchOfficialSource(candidateUrl);
+        const page = await this.fetchOfficialSource(
+          candidateUrl,
+          'when-empty',
+          developer.allowedHosts,
+        );
         const finalUrl = normalizeCandidateUrl(page.finalUrl);
-        if (!isUrlWithinDomain(finalUrl, developer.allowedDomain)) continue;
-        const identity = verifyProjectIdentity(project, project.title, page, { includeFinalUrl: false });
+        if (!isUrlWithinAllowedHosts(finalUrl, developer.allowedHosts)) continue;
+        const officialProjectName = catalogEvidence?.officialProjectName
+          ?? inferOfficialProjectNameFromPage(project, page)
+          ?? project.title;
+        const identity = verifyProjectIdentity(
+          project,
+          officialProjectName,
+          page,
+          { includeFinalUrl: false },
+        );
         if (!identity.matchedPlatformProjectAlias || !identity.matchedOfficialProjectAlias) continue;
-        return { page, identity };
+        return { page, identity, officialProjectName };
       } catch {
         // Missing and protected guessed paths are expected; the bounded candidate list is exhausted safely.
       }
     }
     return null;
+  }
+
+  private async findCanonicalProjectPage(
+    project: AssistantSourceDiscoveryProject,
+    officialProjectName: string,
+    bridgePage: SourceConnectorFetchResult,
+    developerAllowedHosts: readonly string[],
+  ) {
+    for (const externalUrl of extractOfficialProjectLinks(
+      bridgePage,
+      developerAllowedHosts,
+    )) {
+      try {
+        const fetchedExternalPage = await this.fetchOfficialSource(
+          externalUrl,
+          'when-empty',
+          relatedHosts(new URL(externalUrl).hostname),
+        );
+        const finalExternalUrl = normalizeCandidateUrl(fetchedExternalPage.finalUrl);
+        if (isBlockedDomain(new URL(finalExternalUrl).hostname)) continue;
+        const externalIdentity = verifyProjectIdentity(
+          project,
+          officialProjectName,
+          fetchedExternalPage,
+        );
+        if (!externalIdentity.matchedPlatformProjectAlias
+          && !externalIdentity.matchedOfficialProjectAlias) continue;
+        return fetchedExternalPage;
+      } catch {
+        // The verified developer bridge remains canonical if its optional external link is unavailable.
+      }
+    }
+    return bridgePage;
   }
 }
 
@@ -1227,6 +1427,35 @@ function createFailedPhaseTelemetry(
     reasoningTokens: null,
     totalTokens: null,
     webSearchCalls: null,
+  };
+}
+
+function registeredProjectSourceResult(
+  project: AssistantSourceDiscoveryProject,
+  registered: NonNullable<ReturnType<typeof findRegisteredProjectSource>>,
+  model: string,
+): AssistantSourceDiscoveryResult {
+  return {
+    status: 'VERIFIED',
+    project,
+    developerCanonicalUrl: null,
+    officialDeveloperName: project.developerName,
+    canonicalUrl: registered.canonicalUrl,
+    officialProjectName: project.title,
+    matchKind: 'EXACT',
+    reason: 'Использован существующий активный и проиндексированный официальный источник проекта.',
+    errorCode: null,
+    citations: [],
+    developerCitations: [],
+    projectCitations: [],
+    matchedProjectAlias: null,
+    matchedPlatformProjectAlias: null,
+    matchedOfficialProjectAlias: null,
+    matchedDeveloperAlias: null,
+    matchedAddress: false,
+    contentChecksum: registered.source.latestRevision!.checksum,
+    developerCacheHit: false,
+    telemetry: telemetryFromPhases([], model),
   };
 }
 

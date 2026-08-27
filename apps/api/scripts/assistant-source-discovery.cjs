@@ -39,6 +39,12 @@ const {
 const {
   AssistantSourceRegistryService,
 } = require('../dist/assistant/sources/assistant-source-registry.service.js');
+const {
+  findRegisteredProjectSource,
+} = require('../dist/assistant/sources/assistant-source-discovery-registry.js');
+const {
+  relatedHosts,
+} = require('../dist/assistant/sources/assistant-source-discovery-identity.js');
 const { PrismaService } = require('../dist/prisma/prisma.service.js');
 
 const maximumPilotDevelopers = 7;
@@ -74,9 +80,11 @@ async function runAssistantSourceDiscovery(input = {}) {
       || join(process.cwd(), '.assistant-source-discovery', 'checkpoint-v1.json');
     const fingerprint = createCheckpointFingerprint();
     let checkpoint = readAssistantSourceDiscoveryCheckpoint(checkpointPath, fingerprint);
-    const checkpointProjectKeys = new Set(options.refresh
+    const checkpointIdentities = new Set(options.refresh
       ? []
-      : Object.keys(checkpoint.entries));
+      : Object.values(checkpoint.entries).map(({ projectKey, developerKey }) => (
+        `${projectKey}\u0000${developerKey}`
+      )));
     const excludedProjectKeys = new Set(options.excludedProjectKeys);
     const selectProjects = dependencies.selectProjects ?? selectPilotProjects;
     const projects = await selectProjects(
@@ -85,11 +93,26 @@ async function runAssistantSourceDiscovery(input = {}) {
       options.missingOnly,
       excludedProjectKeys,
     );
-    const checkpointHits = projects.filter(({ projectKey }) => (
-      checkpointProjectKeys.has(projectKey)
+    const registrySources = projects.length === 0
+      ? []
+      : await (dependencies.loadRegistrySources ?? loadDiscoveryRegistrySources)(
+        prisma,
+        projects,
+      );
+    const registryProjectIdentities = new Set(options.refresh
+      ? []
+      : projects.flatMap((project) => (
+        findRegisteredProjectSource(project, registrySources)
+          ? [`${project.projectKey}\u0000${project.developerKey}`]
+          : []
+      )));
+    const checkpointHits = projects.filter(({ projectKey, developerKey }) => (
+      checkpointIdentities.has(`${projectKey}\u0000${developerKey}`)
+        && !registryProjectIdentities.has(`${projectKey}\u0000${developerKey}`)
     )).length;
-    const pendingProjects = projects.filter(({ projectKey }) => (
-      !checkpointProjectKeys.has(projectKey)
+    const pendingProjects = projects.filter(({ projectKey, developerKey }) => (
+      registryProjectIdentities.has(`${projectKey}\u0000${developerKey}`)
+        || !checkpointIdentities.has(`${projectKey}\u0000${developerKey}`)
     ));
     const runId = dependencies.runId
       ?? createAssistantSourceDiscoveryOperationRunId(checkpointPath);
@@ -144,6 +167,10 @@ async function runAssistantSourceDiscovery(input = {}) {
         pendingProjects,
         options.concurrency,
         environment,
+        {
+          registrySources,
+          includeProjectSources: !options.refresh,
+        },
       );
     rejectDuplicateCanonicalUrls(results);
 
@@ -261,14 +288,34 @@ async function selectPilotProjects(prisma, limit, missingOnly, excludedProjectKe
       where: {
         type: { in: ['DEVELOPMENT_PAGE', 'DEVELOPER_PROMOTION', 'BANK_PROMOTION'] },
       },
-      select: { projectKey: true, developerKey: true },
+      select: {
+        id: true,
+        projectKey: true,
+        developerKey: true,
+        type: true,
+        state: true,
+        canonicalUrl: true,
+        connectorKey: true,
+        connectorConfigJson: true,
+        revisions: {
+          where: { processingStatus: 'INDEXED' },
+          orderBy: [{ fetchedAt: 'desc' }, { id: 'desc' }],
+          take: 1,
+          select: { processingStatus: true, checksum: true },
+        },
+      },
     })
     : [];
-  const registeredProjectKeys = new Set(registered.flatMap(({ projectKey }) => projectKey ? [projectKey] : []));
+  const allRegisteredProjectKeys = new Set(registered.flatMap(({ projectKey }) => (
+    projectKey ? [projectKey] : []
+  )));
+  const registrySources = registered.map(({ connectorConfigJson, revisions, ...source }) => ({
+    ...source,
+    connectorConfig: connectorConfigJson,
+    latestRevision: revisions[0] ?? null,
+  }));
   const developerKeys = new Set(registered.flatMap(({ developerKey }) => developerKey ? [developerKey] : []));
-  if (registeredProjectKeys.size + limit > maximumPilotProjects) {
-    throw new Error('ASSISTANT_SOURCE_DISCOVERY_PILOT_PROJECT_LIMIT');
-  }
+  const pilotProjectKeys = new Set(allRegisteredProjectKeys);
   const objects = await prisma.realEstateObject.findMany({
     where: {
       type: 'RESIDENTIAL',
@@ -294,14 +341,24 @@ async function selectPilotProjects(prisma, limit, missingOnly, excludedProjectKe
       || left.title.localeCompare(right.title, 'ru')
   ));
   const selected = [];
+  let capacityBlocked = false;
   for (const object of objects) {
     if (!object.developer) continue;
-    if (registeredProjectKeys.has(object.slug) || excludedProjectKeys.has(object.slug)) continue;
     const developerKey = object.developer.slug
       || object.developer.normalizedName
       || object.developer.name;
+    if (excludedProjectKeys.has(object.slug)
+      || findRegisteredProjectSource({
+        projectKey: object.slug,
+        developerKey,
+      }, registrySources)) continue;
+    if (!pilotProjectKeys.has(object.slug) && pilotProjectKeys.size >= maximumPilotProjects) {
+      capacityBlocked = true;
+      continue;
+    }
     if (!developerKeys.has(developerKey) && developerKeys.size >= maximumPilotDevelopers) continue;
     developerKeys.add(developerKey);
+    pilotProjectKeys.add(object.slug);
     selected.push({
       projectKey: object.slug,
       title: object.title,
@@ -312,12 +369,58 @@ async function selectPilotProjects(prisma, limit, missingOnly, excludedProjectKe
     if (selected.length === limit) break;
   }
   if (selected.length !== limit) {
+    if (capacityBlocked) throw new Error('ASSISTANT_SOURCE_DISCOVERY_PILOT_PROJECT_LIMIT');
     throw new Error('ASSISTANT_SOURCE_DISCOVERY_PILOT_SELECTION_INSUFFICIENT');
   }
   return selected;
 }
 
-async function discoverProjects(discovery, projects, concurrency, environment = process.env) {
+async function loadDiscoveryRegistrySources(prisma, projects) {
+  if (typeof prisma.assistantKnowledgeSource?.findMany !== 'function') return [];
+  const projectKeys = [...new Set(projects.map(({ projectKey }) => projectKey))];
+  const developerKeys = [...new Set(projects.map(({ developerKey }) => developerKey))];
+  const sources = await prisma.assistantKnowledgeSource.findMany({
+    where: {
+      state: 'ACTIVE',
+      connectorKey: 'OFFICIAL_HTML',
+      OR: [
+        { type: 'DEVELOPMENT_PAGE', projectKey: { in: projectKeys } },
+        { type: 'DEVELOPER_PROMOTION', projectKey: null, developerKey: { in: developerKeys } },
+      ],
+    },
+    orderBy: [{ priority: 'desc' }, { createdAt: 'asc' }, { id: 'asc' }],
+    select: {
+      id: true,
+      state: true,
+      type: true,
+      canonicalUrl: true,
+      projectKey: true,
+      developerKey: true,
+      connectorKey: true,
+      connectorConfigJson: true,
+      revisions: {
+        where: { processingStatus: 'INDEXED' },
+        orderBy: [{ fetchedAt: 'desc' }, { id: 'desc' }],
+        take: 1,
+        select: { processingStatus: true, checksum: true },
+      },
+    },
+  });
+  return sources.map(({ connectorConfigJson, revisions, ...source }) => ({
+    ...source,
+    connectorConfig: connectorConfigJson,
+    latestRevision: revisions[0] ?? null,
+  }));
+}
+
+async function discoverProjects(
+  discovery,
+  projects,
+  concurrency,
+  environment = process.env,
+  seedOptions = {},
+) {
+  const registrySources = seedOptions.registrySources ?? [];
   const results = new Array(projects.length);
   let nextIndex = 0;
   const workers = Array.from({ length: Math.min(concurrency, projects.length) }, async () => {
@@ -326,7 +429,16 @@ async function discoverProjects(discovery, projects, concurrency, environment = 
       nextIndex += 1;
       const project = projects[index];
       try {
-        results[index] = await discovery.discover(project);
+        const projectRegistrySources = registrySources.filter((source) => (
+          source.developerKey === project.developerKey
+            && ((seedOptions.includeProjectSources !== false
+                && source.type === 'DEVELOPMENT_PAGE'
+                && source.projectKey === project.projectKey)
+              || (source.type === 'DEVELOPER_PROMOTION' && source.projectKey === null))
+        ));
+        results[index] = await discovery.discover(project, {
+          registrySources: projectRegistrySources,
+        });
       } catch (error) {
         results[index] = {
           status: 'ERROR',
@@ -577,11 +689,6 @@ function createCheckpointFingerprint() {
   };
 }
 
-function relatedHosts(hostname) {
-  const counterpart = hostname.startsWith('www.') ? hostname.slice(4) : `www.${hostname}`;
-  return [...new Set([hostname, counterpart])];
-}
-
 function readErrorCode(error) {
   if (error && typeof error === 'object'
     && typeof error.code === 'string'
@@ -595,6 +702,7 @@ module.exports = {
   assertPaidCallsAllowed,
   createReport,
   discoverProjects,
+  loadDiscoveryRegistrySources,
   parseArguments,
   runAssistantSourceDiscovery,
   selectPilotProjects,

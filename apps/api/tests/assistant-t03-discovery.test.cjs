@@ -16,6 +16,12 @@ const {
 const {
   SourceConnectorError,
 } = require('../dist/assistant/sources/official-html-source.connector.js');
+const {
+  buildKnownProjectUrls,
+} = require('../dist/assistant/sources/assistant-source-discovery-policy.js');
+const {
+  relatedHosts,
+} = require('../dist/assistant/sources/assistant-source-discovery-identity.js');
 
 const project = {
   projectKey: 'zhiloj-kompleks-amber-city',
@@ -79,6 +85,150 @@ test('Assistant source discovery reuses an active indexed project source before 
   assert.equal(providerBodies.length, 0);
   assert.equal(result.telemetry.phases.length, 0);
   assert.equal(result.telemetry.webSearchCalls, 0);
+});
+
+test('Assistant source discovery accepts an explicitly stored www counterpart for a project source', async () => {
+  const canonicalUrl = 'https://www.developer.example/residences/amber-city-official';
+  let providerCalls = 0;
+  const service = new AssistantSourceDiscoveryService(
+    discoveryEnvironment(),
+    async () => {
+      providerCalls += 1;
+      throw new Error('provider must not be called for a normalized www registry hit');
+    },
+    {
+      async fetch() {
+        throw new Error('connector must not be called for a project registry hit');
+      },
+    },
+  );
+
+  const result = await service.discover(project, {
+    registrySources: [activeRegistrySource({
+      type: 'DEVELOPMENT_PAGE',
+      canonicalUrl,
+      projectKey: project.projectKey,
+      developerKey: project.developerKey,
+      allowedHosts: ['developer.example'],
+    })],
+  });
+
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result, null, 2));
+  assert.equal(result.canonicalUrl, canonicalUrl);
+  assert.equal(providerCalls, 0);
+});
+
+test('Assistant source discovery preserves explicit registry hosts before optional www variants', async () => {
+  const canonicalUrl = 'https://developer.example/residences/amber-city-official';
+  let providerCalls = 0;
+  const service = new AssistantSourceDiscoveryService(
+    discoveryEnvironment(),
+    async () => {
+      providerCalls += 1;
+      throw new Error('provider must not be called for an explicit registry allowlist');
+    },
+    {
+      async fetch() {
+        throw new Error('connector must not be called for a project registry hit');
+      },
+    },
+  );
+
+  const result = await service.discover(project, {
+    registrySources: [activeRegistrySource({
+      type: 'DEVELOPMENT_PAGE',
+      canonicalUrl,
+      projectKey: project.projectKey,
+      developerKey: project.developerKey,
+      allowedHosts: [
+        'developer.example',
+        'catalog-1.developer.example',
+        'catalog-2.developer.example',
+        'catalog-3.developer.example',
+        'catalog-4.developer.example',
+        'catalog-5.developer.example',
+      ],
+    })],
+  });
+
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result, null, 2));
+  assert.equal(result.canonicalUrl, canonicalUrl);
+  assert.equal(providerCalls, 0);
+});
+
+test('Assistant source discovery does not synthesize www trust for IP or single-label hosts', () => {
+  assert.deepEqual(relatedHosts('127.0.0.1'), ['127.0.0.1']);
+  assert.deepEqual(relatedHosts('localhost'), ['localhost']);
+});
+
+test('Assistant source discovery rejects invalid registry seeds instead of trusting them', async (context) => {
+  const baseProjectSource = () => activeRegistrySource({
+    type: 'DEVELOPMENT_PAGE',
+    canonicalUrl: 'https://developer.example/residences/amber-city-official',
+    projectKey: project.projectKey,
+    developerKey: project.developerKey,
+    allowedHosts: ['developer.example', 'www.developer.example'],
+  });
+  const baseDeveloperSource = () => activeRegistrySource({
+    type: 'DEVELOPER_PROMOTION',
+    canonicalUrl: 'https://developer.example/',
+    projectKey: null,
+    developerKey: project.developerKey,
+    allowedHosts: ['developer.example', 'www.developer.example'],
+  });
+  const scenarios = [
+    ['disabled project source', () => ({ ...baseProjectSource(), state: 'DISABLED' })],
+    ['failed project revision', () => ({
+      ...baseProjectSource(),
+      latestRevision: { processingStatus: 'FAILED', checksum: 'c'.repeat(64) },
+    })],
+    ['wrong project key', () => ({ ...baseProjectSource(), projectKey: 'other-project' })],
+    ['wrong developer key', () => ({ ...baseProjectSource(), developerKey: 'other-developer' })],
+    ['invalid project checksum', () => ({
+      ...baseProjectSource(),
+      latestRevision: { processingStatus: 'INDEXED', checksum: 'invalid' },
+    })],
+    ['malformed project allowed hosts', () => ({
+      ...baseProjectSource(),
+      connectorConfig: { allowedHosts: ['developer.example/path'] },
+    })],
+    ['missing explicit project allowed hosts', () => ({
+      ...baseProjectSource(),
+      connectorConfig: {},
+    })],
+    ['failed developer revision', () => ({
+      ...baseDeveloperSource(),
+      latestRevision: { processingStatus: 'FAILED', checksum: 'c'.repeat(64) },
+    })],
+    ['malformed developer allowed hosts', () => ({
+      ...baseDeveloperSource(),
+      connectorConfig: { allowedHosts: ['sibling.developer.example'] },
+    })],
+  ];
+
+  for (const [name, createSource] of scenarios) {
+    await context.test(name, async () => {
+      let providerCalls = 0;
+      const service = new AssistantSourceDiscoveryService(
+        discoveryEnvironment(),
+        async () => {
+          providerCalls += 1;
+          return developerNotFoundResponse([]);
+        },
+        {
+          async fetch() {
+            throw new Error('invalid registry source must not reach the connector');
+          },
+        },
+      );
+
+      const result = await service.discover(project, { registrySources: [createSource()] });
+
+      assert.equal(result.status, 'NOT_FOUND');
+      assert.equal(providerCalls, 1);
+      assert.equal(result.telemetry.phases.length, 1);
+    });
+  }
 });
 
 test('Assistant source discovery resolves a registered developer known path before any Web Search', async () => {
@@ -145,9 +295,259 @@ test('Assistant source discovery resolves a registered developer known path befo
   )), true);
 });
 
+test('Assistant source discovery probes a catalog-derived project code before Web Search', async () => {
+  const registryUrl = 'https://catalog.developer.example/';
+  const catalogProjectUrl = 'https://catalog.developer.example/projects/amber-official/';
+  let providerCalls = 0;
+  const service = new AssistantSourceDiscoveryService(
+    discoveryEnvironment(),
+    async () => {
+      providerCalls += 1;
+      throw new Error('provider must not be called after deterministic catalog evidence');
+    },
+    {
+      async fetch(source) {
+        if (source.canonicalUrl === registryUrl) {
+          return fetchedPage(source.canonicalUrl, [
+            '<html><body>Официальный каталог жилых проектов застройщика ФСК',
+            '<script type="application/json">',
+            JSON.stringify({ items: [{ name: 'Amber City', code: 'amber-official' }] }),
+            '</script></body></html>',
+          ].join(''));
+        }
+        if (source.canonicalUrl === catalogProjectUrl) {
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>ЖК Amber City — официальный проект застройщика ФСК</body></html>',
+          );
+        }
+        throw new Error('known path unavailable');
+      },
+    },
+  );
+
+  const result = await service.discover(project, {
+    registrySources: [activeRegistrySource({
+      type: 'DEVELOPER_PROMOTION',
+      canonicalUrl: registryUrl,
+      projectKey: null,
+      developerKey: project.developerKey,
+      allowedHosts: ['catalog.developer.example', 'www.catalog.developer.example'],
+    })],
+  });
+
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result, null, 2));
+  assert.equal(result.canonicalUrl, catalogProjectUrl);
+  assert.equal(providerCalls, 0);
+  assert.equal(result.telemetry.phases.length, 0);
+});
+
+test('Assistant source discovery fetches an exact project URL supplied by the official catalog before Web Search', async () => {
+  const registryUrl = 'https://catalog.developer.example/';
+  const catalogProjectUrl = 'https://catalog.developer.example/residences/amber-official/';
+  let providerCalls = 0;
+  const service = new AssistantSourceDiscoveryService(
+    discoveryEnvironment(),
+    async () => {
+      providerCalls += 1;
+      throw new Error('provider must not be called after an exact official catalog URL');
+    },
+    {
+      async fetch(source) {
+        if (source.canonicalUrl === registryUrl) {
+          return fetchedPage(source.canonicalUrl, [
+            '<html><body>Официальный каталог жилых проектов застройщика ФСК',
+            '<script type="application/json">',
+            JSON.stringify({
+              items: [{
+                name: 'Amber City',
+                code: 'amber-official',
+                url: '/residences/amber-official/',
+              }],
+            }),
+            '</script></body></html>',
+          ].join(''));
+        }
+        if (source.canonicalUrl === catalogProjectUrl) {
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>ЖК Amber City — официальный проект застройщика ФСК</body></html>',
+          );
+        }
+        throw new Error('hardcoded known path unavailable');
+      },
+    },
+  );
+
+  const result = await service.discover(project, {
+    registrySources: [activeRegistrySource({
+      type: 'DEVELOPER_PROMOTION',
+      canonicalUrl: registryUrl,
+      projectKey: null,
+      developerKey: project.developerKey,
+      allowedHosts: ['catalog.developer.example', 'www.catalog.developer.example'],
+    })],
+  });
+
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result, null, 2));
+  assert.equal(result.canonicalUrl, catalogProjectUrl);
+  assert.equal(providerCalls, 0);
+  assert.equal(result.telemetry.phases.length, 0);
+});
+
+test('Assistant source discovery follows an exact same-host project link from an HTML catalog before Web Search', async () => {
+  const registryUrl = 'https://catalog.developer.example/';
+  const catalogProjectUrl = 'https://catalog.developer.example/residences/amber-city/';
+  let providerCalls = 0;
+  const service = new AssistantSourceDiscoveryService(
+    discoveryEnvironment(),
+    async () => {
+      providerCalls += 1;
+      throw new Error('provider must not be called after an exact HTML catalog link');
+    },
+    {
+      async fetch(source) {
+        if (source.canonicalUrl === registryUrl) {
+          return fetchedPage(source.canonicalUrl, [
+            '<html><body>Официальный каталог жилых проектов застройщика ФСК',
+            `<a href="${catalogProjectUrl}">ЖК Amber City</a>`,
+            '</body></html>',
+          ].join(''));
+        }
+        if (source.canonicalUrl === catalogProjectUrl) {
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>ЖК Amber City — официальный проект застройщика ФСК</body></html>',
+          );
+        }
+        throw new Error('hardcoded known path unavailable');
+      },
+    },
+  );
+
+  const result = await service.discover(project, {
+    registrySources: [activeRegistrySource({
+      type: 'DEVELOPER_PROMOTION',
+      canonicalUrl: registryUrl,
+      projectKey: null,
+      developerKey: project.developerKey,
+      allowedHosts: ['catalog.developer.example', 'www.catalog.developer.example'],
+    })],
+  });
+
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result, null, 2));
+  assert.equal(result.canonicalUrl, catalogProjectUrl);
+  assert.equal(providerCalls, 0);
+  assert.equal(result.telemetry.phases.length, 0);
+});
+
+test('Assistant source discovery follows a proven catalog link from a registered developer source before Web Search', async () => {
+  const registryUrl = 'https://developer.example/';
+  const catalogUrl = 'https://catalog.developer.example/';
+  const catalogProjectUrl = 'https://catalog.developer.example/projects/amber-official/';
+  let providerCalls = 0;
+  const service = new AssistantSourceDiscoveryService(
+    discoveryEnvironment(),
+    async () => {
+      providerCalls += 1;
+      throw new Error('provider must not be called after a proven catalog link');
+    },
+    {
+      async fetch(source) {
+        if (source.canonicalUrl === registryUrl) {
+          return fetchedPage(source.canonicalUrl, [
+            '<html><body>Официальный сайт застройщика ФСК',
+            `<a href="${catalogUrl}">Официальный каталог жилых проектов</a>`,
+            '</body></html>',
+          ].join(''));
+        }
+        if (source.canonicalUrl === catalogUrl) {
+          return fetchedPage(source.canonicalUrl, [
+            '<html><body>Официальный каталог жилых проектов застройщика ФСК',
+            '<script type="application/json">',
+            JSON.stringify({ items: [{ name: 'Amber City', code: 'amber-official' }] }),
+            '</script></body></html>',
+          ].join(''));
+        }
+        if (source.canonicalUrl === catalogProjectUrl) {
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>ЖК Amber City — официальный проект застройщика ФСК</body></html>',
+          );
+        }
+        throw new Error('known path unavailable');
+      },
+    },
+  );
+
+  const result = await service.discover(project, {
+    registrySources: [activeRegistrySource({
+      type: 'DEVELOPER_PROMOTION',
+      canonicalUrl: registryUrl,
+      projectKey: null,
+      developerKey: project.developerKey,
+      allowedHosts: ['developer.example', 'www.developer.example'],
+    })],
+  });
+
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result, null, 2));
+  assert.equal(result.canonicalUrl, catalogProjectUrl);
+  assert.equal(providerCalls, 0);
+  assert.equal(result.telemetry.phases.length, 0);
+});
+
+test('Assistant source discovery exhausts deterministic catalog and known paths before project Web Search', async () => {
+  const registryUrl = 'https://developer.example/';
+  const events = [];
+  const service = new AssistantSourceDiscoveryService(
+    discoveryEnvironment(),
+    async (_url, init) => {
+      const body = JSON.parse(init.body);
+      events.push(`provider:${body.text.format.name}`);
+      return projectNotFoundResponse(['https://developer.example/projects/']);
+    },
+    {
+      async fetch(source) {
+        if (source.canonicalUrl === registryUrl) {
+          events.push('fetch:catalog');
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>Официальный каталог жилых проектов застройщика ФСК</body></html>',
+          );
+        }
+        events.push(`fetch:known:${source.canonicalUrl}`);
+        throw new Error('known path unavailable');
+      },
+    },
+  );
+
+  const result = await service.discover(project, {
+    registrySources: [activeRegistrySource({
+      type: 'DEVELOPER_PROMOTION',
+      canonicalUrl: registryUrl,
+      projectKey: null,
+      developerKey: project.developerKey,
+      allowedHosts: ['developer.example', 'www.developer.example'],
+    })],
+  });
+
+  assert.equal(result.status, 'NOT_FOUND', JSON.stringify(result, null, 2));
+  assert.equal(events[0], 'fetch:catalog');
+  assert.equal(
+    events.filter((event) => event.startsWith('fetch:known:')).length,
+    buildKnownProjectUrls(
+      [project.projectKey],
+      ['developer.example', 'www.developer.example'],
+    ).length,
+  );
+  assert.equal(events.at(-1), 'provider:platforma_official_project_candidate');
+  assert.equal(events.filter((event) => event.startsWith('provider:')).length, 1);
+});
+
 test('Assistant source discovery never widens an exact co.jp host to the public suffix or a sibling', async () => {
   const providerBodies = [];
   const fetchedUrls = [];
+  const nestedUrl = 'https://evil.x.example.co.jp/projects/amber-city';
   const unrelatedUrl = 'https://unrelated.co.jp/projects/amber-city';
   const service = new AssistantSourceDiscoveryService(
     discoveryEnvironment(),
@@ -160,11 +560,12 @@ test('Assistant source discovery never widens an exact co.jp host to the public 
           officialDeveloperName: 'ФСК',
         }, ['https://www.x.example.co.jp/']);
       }
+      const candidateUrl = body.model === 'gpt-5.6-luna' ? nestedUrl : unrelatedUrl;
       return projectResponse({
-        canonicalUrl: unrelatedUrl,
+        canonicalUrl: candidateUrl,
         officialProjectName: 'Amber City',
         matchKind: 'EXACT',
-      }, [unrelatedUrl]);
+      }, [candidateUrl]);
     },
     {
       async fetch(source) {
@@ -182,6 +583,12 @@ test('Assistant source discovery never widens an exact co.jp host to the public 
           );
         }
         if (source.canonicalUrl === unrelatedUrl) {
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>ЖК Amber City — проект ФСК</body></html>',
+          );
+        }
+        if (source.canonicalUrl === nestedUrl) {
           return fetchedPage(
             source.canonicalUrl,
             '<html><body>ЖК Amber City — проект ФСК</body></html>',
@@ -212,7 +619,144 @@ test('Assistant source discovery never widens an exact co.jp host to the public 
     host === 'x.example.co.jp' || host === 'www.x.example.co.jp'
   )), true);
   assert.equal(fetchedUrls.includes('https://co.jp/'), false);
+  assert.equal(fetchedUrls.includes(nestedUrl), false);
   assert.equal(fetchedUrls.includes(unrelatedUrl), false);
+});
+
+test('Assistant source discovery rejects an off-list connector final URL before project search', async () => {
+  let providerCalls = 0;
+  const service = new AssistantSourceDiscoveryService(
+    discoveryEnvironment(),
+    async () => {
+      providerCalls += 1;
+      return developerResponse({
+        canonicalUrl: 'https://developer.example/',
+        officialDeveloperName: 'ФСК',
+      }, ['https://developer.example/']);
+    },
+    {
+      async fetch() {
+        return fetchedPage(
+          'https://unrelated.example/',
+          '<html><body>Официальный сайт застройщика ФСК</body></html>',
+        );
+      },
+    },
+  );
+
+  const result = await service.discover(project);
+
+  assert.equal(result.status, 'REJECTED');
+  assert.equal(result.errorCode, 'SOURCE_REDIRECT_HOST_NOT_ALLOWED');
+  assert.equal(providerCalls, 1);
+});
+
+test('Assistant source discovery rejects an off-list connector redirect before project search', async () => {
+  let providerCalls = 0;
+  const service = new AssistantSourceDiscoveryService(
+    discoveryEnvironment(),
+    async () => {
+      providerCalls += 1;
+      return developerResponse({
+        canonicalUrl: 'https://developer.example/',
+        officialDeveloperName: 'ФСК',
+      }, ['https://developer.example/']);
+    },
+    {
+      async fetch() {
+        return {
+          ...fetchedPage(
+            'https://developer.example/',
+            '<html><body>Официальный сайт застройщика ФСК</body></html>',
+          ),
+          redirects: ['https://unrelated.example/landing'],
+        };
+      },
+    },
+  );
+
+  const result = await service.discover(project);
+
+  assert.equal(result.status, 'REJECTED');
+  assert.equal(result.errorCode, 'SOURCE_REDIRECT_HOST_NOT_ALLOWED');
+  assert.equal(providerCalls, 1);
+});
+
+test('Assistant source discovery keeps post-fetch validation isolated from connector mutations', async () => {
+  let providerCalls = 0;
+  const service = new AssistantSourceDiscoveryService(
+    discoveryEnvironment(),
+    async () => {
+      providerCalls += 1;
+      return developerResponse({
+        canonicalUrl: 'https://developer.example/',
+        officialDeveloperName: 'ФСК',
+      }, ['https://developer.example/']);
+    },
+    {
+      async fetch(source) {
+        source.connectorConfig.allowedHosts.push('unrelated.example');
+        return fetchedPage(
+          'https://unrelated.example/',
+          '<html><body>Официальный сайт застройщика ФСК</body></html>',
+        );
+      },
+    },
+  );
+
+  const result = await service.discover(project);
+
+  assert.equal(result.status, 'REJECTED');
+  assert.equal(result.errorCode, 'SOURCE_REDIRECT_HOST_NOT_ALLOWED');
+  assert.equal(providerCalls, 1);
+});
+
+test('Assistant source discovery rejects unsafe final and redirect URLs on an allowed host', async (context) => {
+  const scenarios = [
+    {
+      name: 'http final URL',
+      finalUrl: 'http://developer.example/',
+      redirects: [],
+    },
+    {
+      name: 'credentialed redirect URL',
+      finalUrl: 'https://developer.example/',
+      redirects: ['https://user:password@developer.example/landing'],
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    await context.test(scenario.name, async () => {
+      let providerCalls = 0;
+      const service = new AssistantSourceDiscoveryService(
+        discoveryEnvironment(),
+        async () => {
+          providerCalls += 1;
+          return developerResponse({
+            canonicalUrl: 'https://developer.example/',
+            officialDeveloperName: 'ФСК',
+          }, ['https://developer.example/']);
+        },
+        {
+          async fetch() {
+            return {
+              ...fetchedPage(
+                scenario.finalUrl,
+                '<html><body>Официальный сайт застройщика ФСК</body></html>',
+              ),
+              redirects: scenario.redirects,
+            };
+          },
+        },
+      );
+
+      const result = await service.discover(project);
+
+      assert.equal(result.status, 'REJECTED');
+      assert.equal(result.errorCode, 'SOURCE_REDIRECT_HOST_NOT_ALLOWED');
+      assert.equal(providerCalls, 1);
+    });
+  }
 });
 
 test('Assistant source discovery allows one Terra only after a seeded Luna candidate fails local identity validation', async () => {
@@ -293,7 +837,7 @@ test('Assistant source discovery verifies the developer first and restricts proj
     developerResponse({
       canonicalUrl: 'https://developer.example/?utm_source=search',
       officialDeveloperName: 'ФСК',
-    }, ['https://catalog.developer.example/']),
+    }, ['https://developer.example/']),
     projectResponse({
       canonicalUrl: 'https://developer.example/projects/amber-city?utm_source=search',
       officialProjectName: 'Amber City',
@@ -344,7 +888,7 @@ test('Assistant source discovery verifies the developer first and restricts proj
   assert.deepEqual(projectRequest.tools, [{
     type: 'web_search',
     search_context_size: 'low',
-    filters: { allowed_domains: ['developer.example'] },
+    filters: { allowed_domains: ['developer.example', 'www.developer.example'] },
   }]);
   assert.match(projectRequest.instructions, /сначала подтвержден/u);
   assert.match(projectRequest.instructions, /устарев/u);
@@ -461,8 +1005,8 @@ test('Assistant source discovery stops before a fourth provider call for one pro
     developerResponse({
       canonicalUrl: 'https://developer.example/',
       officialDeveloperName: 'ФСК',
-    }, ['https://developer.example/', 'https://catalog.developer.example/']),
-    developerNotFoundResponse(['https://catalog.developer.example/']),
+    }, ['https://developer.example/', 'https://developer.example/catalog/']),
+    developerNotFoundResponse(['https://developer.example/catalog/']),
     projectNotFoundResponse(['https://developer.example/projects/']),
   ];
   const service = new AssistantSourceDiscoveryService(
@@ -476,7 +1020,7 @@ test('Assistant source discovery stops before a fourth provider call for one pro
         if (source.canonicalUrl === 'https://developer.example/') {
           throw new SourceConnectorError('SOURCE_ANTI_BOT_CHALLENGE', true, 200);
         }
-        if (source.canonicalUrl === 'https://catalog.developer.example/') {
+        if (source.canonicalUrl === 'https://developer.example/catalog/') {
           return fetchedPage(source.canonicalUrl, [
             '<html><body>Официальный каталог застройщика ФСК',
             '<script type="application/json">',
@@ -603,7 +1147,7 @@ test('Assistant source discovery rejects a cited site that does not prove the de
   assert.equal(providerCalls, 1);
 });
 
-test('Assistant source discovery expands a verified official subdomain to the corporate search perimeter', async () => {
+test('Assistant source discovery expands an exact host only through a verified official link', async () => {
   const calls = [];
   const responses = [
     developerResponse({
@@ -625,7 +1169,11 @@ test('Assistant source discovery expands a verified official subdomain to the co
     {
       async fetch(source) {
         if (source.canonicalUrl === 'https://mortgage.developer.example/') {
-          return fetchedPage(source.canonicalUrl, '<html><body>Ипотечные программы застройщика ФСК</body></html>');
+          return fetchedPage(source.canonicalUrl, [
+            '<html><body>Ипотечные программы застройщика ФСК',
+            '<a href="https://developer.example/">Официальный корпоративный сайт</a>',
+            '</body></html>',
+          ].join(''));
         }
         if (source.canonicalUrl === 'https://developer.example/') {
           return fetchedPage(source.canonicalUrl, '<html><body>Корпоративный сайт застройщика ФСК</body></html>');
@@ -639,10 +1187,15 @@ test('Assistant source discovery expands a verified official subdomain to the co
   const result = await service.discover(project);
 
   assert.equal(result.status, 'VERIFIED', JSON.stringify(result, null, 2));
-  assert.deepEqual(calls[1].tools[0].filters.allowed_domains, ['developer.example']);
+  assert.deepEqual(calls[1].tools[0].filters.allowed_domains, [
+    'mortgage.developer.example',
+    'www.mortgage.developer.example',
+    'developer.example',
+    'www.developer.example',
+  ]);
 });
 
-test('Assistant source discovery keeps the corporate perimeter when its protected root cannot be fetched', async () => {
+test('Assistant source discovery keeps an explicitly official linked host when its target is protected', async () => {
   const calls = [];
   const responses = [
     developerResponse({
@@ -664,7 +1217,11 @@ test('Assistant source discovery keeps the corporate perimeter when its protecte
     {
       async fetch(source) {
         if (source.canonicalUrl === 'https://catalog.developer.example/') {
-          return fetchedPage(source.canonicalUrl, '<html><body>Официальный каталог застройщика ФСК</body></html>');
+          return fetchedPage(source.canonicalUrl, [
+            '<html><body>Официальный каталог застройщика ФСК',
+            '<a href="https://developer.example/">Официальный сайт проектов</a>',
+            '</body></html>',
+          ].join(''));
         }
         if (source.canonicalUrl === 'https://developer.example/') {
           throw Object.assign(new Error('anti-bot'), { code: 'SOURCE_ANTI_BOT_CHALLENGE' });
@@ -679,10 +1236,75 @@ test('Assistant source discovery keeps the corporate perimeter when its protecte
 
   assert.equal(result.status, 'VERIFIED', JSON.stringify(result, null, 2));
   assert.equal(result.developerCanonicalUrl, 'https://catalog.developer.example/');
-  assert.deepEqual(calls[1].tools[0].filters.allowed_domains, ['developer.example']);
+  assert.deepEqual(calls[1].tools[0].filters.allowed_domains, [
+    'catalog.developer.example',
+    'www.catalog.developer.example',
+    'developer.example',
+    'www.developer.example',
+  ]);
 });
 
-test('Assistant source discovery replaces an anti-bot developer root with a grounded official subdomain', async () => {
+test('Assistant source discovery does not expand trust when a linked catalog fails developer identity', async () => {
+  const unrelatedProjectUrl = 'https://unrelated.example/projects/amber-city';
+  const providerBodies = [];
+  const responses = [
+    developerResponse({
+      canonicalUrl: 'https://developer.example/',
+      officialDeveloperName: 'ФСК',
+    }, ['https://developer.example/']),
+    projectResponse({
+      canonicalUrl: unrelatedProjectUrl,
+      officialProjectName: 'Amber City',
+      matchKind: 'EXACT',
+    }, [unrelatedProjectUrl]),
+    projectResponse({
+      canonicalUrl: unrelatedProjectUrl,
+      officialProjectName: 'Amber City',
+      matchKind: 'EXACT',
+    }, [unrelatedProjectUrl]),
+  ];
+  const service = new AssistantSourceDiscoveryService(
+    discoveryEnvironment(),
+    async (_url, init) => {
+      providerBodies.push(JSON.parse(init.body));
+      return responses.shift();
+    },
+    {
+      async fetch(source) {
+        if (source.canonicalUrl === 'https://developer.example/') {
+          return fetchedPage(source.canonicalUrl, [
+            '<html><body>Официальный сайт застройщика ФСК',
+            '<a href="https://unrelated.example/">Каталог проектов партнёра</a>',
+            '</body></html>',
+          ].join(''));
+        }
+        if (source.canonicalUrl === 'https://unrelated.example/') {
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>Каталог другого девелопера Amber City</body></html>',
+          );
+        }
+        if (source.canonicalUrl === unrelatedProjectUrl) {
+          return fetchedPage(source.canonicalUrl, '<html><body>Amber City</body></html>');
+        }
+        throw new Error('known path unavailable');
+      },
+    },
+  );
+
+  const result = await service.discover(project);
+
+  assert.equal(result.status, 'REJECTED', JSON.stringify(result, null, 2));
+  assert.equal(result.errorCode, 'ASSISTANT_SOURCE_DISCOVERY_PROJECT_OUTSIDE_DEVELOPER_DOMAIN');
+  assert.equal(providerBodies.length, 3);
+  assert.equal(providerBodies.slice(1).every(({ tools }) => (
+    tools[0].filters.allowed_domains.every((host) => (
+      host === 'developer.example' || host === 'www.developer.example'
+    ))
+  )), true);
+});
+
+test('Assistant source discovery does not trust an anti-bot sibling proposed only by model citations', async () => {
   const providerBodies = [];
   const responses = [
     developerResponse({
@@ -737,27 +1359,29 @@ test('Assistant source discovery replaces an anti-bot developer root with a grou
 
   const result = await service.discover(project);
 
-  assert.equal(result.status, 'VERIFIED', JSON.stringify(result, null, 2));
-  assert.equal(result.developerCanonicalUrl, 'https://catalog.developer.example/');
+  assert.equal(result.status, 'REJECTED', JSON.stringify(result, null, 2));
+  assert.equal(result.errorCode, 'SOURCE_ANTI_BOT_CHALLENGE');
   assert.equal(result.telemetry.totalTokens, 66);
   assert.equal(result.telemetry.phases.length, 2);
   assert.deepEqual(providerBodies[1].tools, [{
     type: 'web_search',
-      search_context_size: 'low',
-    filters: { allowed_domains: ['developer.example'] },
+    search_context_size: 'low',
+    filters: { allowed_domains: ['developer.example', 'www.developer.example'] },
   }]);
   const alternativeInput = JSON.parse(providerBodies[1].input[0].content[0].text);
-  assert.equal(alternativeInput.protected_official_domain, 'developer.example');
+  assert.deepEqual(alternativeInput.protected_official_hosts, [
+    'developer.example',
+    'www.developer.example',
+  ]);
   assert.equal(providerBodies.length, 2);
 });
 
-test('Assistant source discovery replaces a narrow office page with a cited residential catalog', async () => {
+test('Assistant source discovery uses a proven linked catalog before project Web Search', async () => {
   const responses = [
     developerResponse({
       canonicalUrl: 'https://office.developer.example/',
       officialDeveloperName: 'ФСК',
     }, ['https://office.developer.example/', 'https://catalog.developer.example/']),
-    developerNotFoundResponse(['https://office.developer.example/']),
     projectResponse({
       canonicalUrl: 'https://developer.example/projects/amber-city',
       officialProjectName: 'Amber City',
@@ -770,7 +1394,11 @@ test('Assistant source discovery replaces a narrow office page with a cited resi
     {
       async fetch(source) {
         if (source.canonicalUrl === 'https://office.developer.example/') {
-          return fetchedPage(source.canonicalUrl, '<html><body>Офисные инвестиции застройщика ФСК</body></html>');
+          return fetchedPage(source.canonicalUrl, [
+            '<html><body>Офисные инвестиции застройщика ФСК',
+            '<a href="https://catalog.developer.example/">Официальный каталог жилых проектов</a>',
+            '</body></html>',
+          ].join(''));
         }
         if (source.canonicalUrl === 'https://catalog.developer.example/') {
           return fetchedPage(source.canonicalUrl, [
@@ -792,8 +1420,8 @@ test('Assistant source discovery replaces a narrow office page with a cited resi
 
   assert.equal(result.status, 'VERIFIED', JSON.stringify(result, null, 2));
   assert.equal(result.developerCanonicalUrl, 'https://catalog.developer.example/');
-  assert.equal(result.telemetry.phases.length, 2);
-  assert.equal(result.telemetry.totalTokens, 66);
+  assert.equal(result.telemetry.phases.length, 1);
+  assert.equal(result.telemetry.totalTokens, 33);
 });
 
 test('Assistant source discovery deduplicates concurrent developer verification and token billing', async () => {
@@ -875,7 +1503,9 @@ test('Assistant source discovery rejects a project URL without a citation from t
 
   assert.equal(result.status, 'REJECTED');
   assert.equal(result.errorCode, 'ASSISTANT_SOURCE_DISCOVERY_PROJECT_CITATION_MISSING');
-  assert.equal(fetchedUrls.every((url) => url.startsWith('https://developer.example/')), true);
+  assert.equal(fetchedUrls.every((value) => (
+    ['developer.example', 'www.developer.example'].includes(new URL(value).hostname)
+  )), true);
   assert.equal(result.telemetry.phases.at(-1).model, 'gpt-5.6-terra');
 });
 
@@ -901,7 +1531,7 @@ test('Assistant source discovery accepts a standalone project site only through 
         if (source.canonicalUrl === 'https://mr.example/') {
           return fetchedPage(source.canonicalUrl, '<html><body>Девелопер MR Group</body></html>');
         }
-        if (source.canonicalUrl === 'https://mr.example/projects/cityzen') {
+        if (source.canonicalUrl.replace(/\/$/u, '') === 'https://mr.example/projects/cityzen') {
           return fetchedPage(source.canonicalUrl, [
             '<html><body>',
             '<h1>Жилой квартал CITYZEN</h1><p>Проект MR Group</p>',
@@ -925,7 +1555,9 @@ test('Assistant source discovery accepts a standalone project site only through 
   assert.equal(result.status, 'VERIFIED', JSON.stringify(result, null, 2));
   assert.equal(result.canonicalUrl, 'https://cityzen.moscow/');
   assert.equal(result.matchKind, 'TRANSLITERATION');
-  assert.equal(fetchedUrls.includes('https://mr.example/projects/cityzen'), true);
+  assert.equal(fetchedUrls.some((url) => (
+    url.replace(/\/$/u, '') === 'https://mr.example/projects/cityzen'
+  )), true);
   assert.equal(fetchedUrls.includes('https://cityzen.moscow/'), true);
   assert.equal(fetchedUrls.includes('https://retail.cityzen.moscow/'), false);
 });
@@ -1146,13 +1778,18 @@ test('Assistant source discovery retries from a rendered developer catalog and g
           if (source.connectorConfig.browserRenderMode === 'always') {
             return fetchedPage(source.canonicalUrl, [
               '<html><body><main>Официальный каталог застройщика ФСК</main>',
+              '<a href="https://developer.example/">Официальный сайт проектов</a>',
               '<div>City Bay</div>',
               '<script type="application/json">',
               JSON.stringify({ items: [{ name: 'City Bay', code: 'citybay' }] }),
               '</script></body></html>',
             ].join(''));
           }
-          return fetchedPage(source.canonicalUrl, '<html><body>Официальный каталог застройщика ФСК</body></html>');
+          return fetchedPage(source.canonicalUrl, [
+            '<html><body>Официальный каталог застройщика ФСК',
+            '<a href="https://developer.example/">Официальный сайт проектов</a>',
+            '</body></html>',
+          ].join(''));
         }
         throw new SourceConnectorError('SOURCE_ANTI_BOT_CHALLENGE', true, 200);
       },
@@ -1176,7 +1813,10 @@ test('Assistant source discovery retries from a rendered developer catalog and g
   const retryInput = JSON.parse(providerBodies[2].input[0].content[0].text);
   assert.equal(retryInput.verified_catalog_project_name, 'City Bay');
   assert.equal(retryInput.verified_catalog_project_code, 'citybay');
-  assert.equal(connectorCalls.filter(({ connectorConfig }) => connectorConfig.browserRenderMode === 'always').length, 1);
+  assert.equal(connectorCalls.filter(({ canonicalUrl, connectorConfig }) => (
+    canonicalUrl === 'https://catalog.developer.example/'
+      && connectorConfig.browserRenderMode === 'always'
+  )).length, 1);
 });
 
 test('Assistant source discovery rejects a narrow parking URL even when its code matches the catalog', async () => {
@@ -1204,6 +1844,7 @@ test('Assistant source discovery rejects a narrow parking URL even when its code
         if (source.canonicalUrl === 'https://catalog.developer.example/') {
           return fetchedPage(source.canonicalUrl, [
             '<html><body>Официальный каталог застройщика ФСК City Bay',
+            '<a href="https://developer.example/">Официальный сайт проектов</a>',
             '<script type="application/json">',
             JSON.stringify({ items: [{ name: 'City Bay', code: 'zhk-citybay' }] }),
             '</script></body></html>',
@@ -1247,6 +1888,7 @@ test('Assistant source discovery replaces a narrow cited surface with the exact 
         if (source.canonicalUrl === 'https://catalog.developer.example/') {
           return fetchedPage(source.canonicalUrl, [
             '<html><body>Официальный каталог застройщика ФСК МИRA',
+            '<a href="https://developer.example/">Официальный сайт проектов</a>',
             '<script type="application/json">',
             JSON.stringify({ items: [{ name: 'МИRA', code: 'mira' }] }),
             '</script></body></html>',
@@ -1287,12 +1929,17 @@ test('Assistant source discovery accepts an exact cited catalog path after struc
           if (source.connectorConfig.browserRenderMode === 'always') {
             return fetchedPage(source.canonicalUrl, [
               '<html><body>Официальный каталог застройщика ФСК City Bay',
+              '<a href="https://developer.example/">Официальный сайт проектов</a>',
               '<script type="application/json">',
               JSON.stringify({ items: [{ name: 'City Bay', code: 'zhk-citybay' }] }),
               '</script></body></html>',
             ].join(''));
           }
-          return fetchedPage(source.canonicalUrl, '<html><body>Официальный каталог застройщика ФСК</body></html>');
+          return fetchedPage(source.canonicalUrl, [
+            '<html><body>Официальный каталог застройщика ФСК',
+            '<a href="https://developer.example/">Официальный сайт проектов</a>',
+            '</body></html>',
+          ].join(''));
         }
         throw new SourceConnectorError('SOURCE_ANTI_BOT_CHALLENGE', true, 200);
       },
@@ -1352,6 +1999,55 @@ test('Assistant source discovery verifies a bounded known project path before pr
   assert.equal(result.telemetry.phases.length, 1);
   assert.match(result.reason, /до обращения к модели/iu);
   assert.ok(fetchedUrls.length <= 21);
+});
+
+test('Assistant source discovery accepts a locally verified transliterated known path before Web Search', async () => {
+  const transliteratedProject = {
+    projectKey: 'zhk-sitidzen',
+    title: 'Жилой квартал СИТИДЗЕН',
+    developerKey: 'mr-group',
+    developerName: 'MR Group',
+  };
+  const registryUrl = 'https://mr.example/';
+  const knownPathUrl = 'https://mr.example/projects/sitidzen/';
+  let providerCalls = 0;
+  const service = new AssistantSourceDiscoveryService(
+    discoveryEnvironment(),
+    async () => {
+      providerCalls += 1;
+      throw new Error('provider must not be called after a verified transliterated known path');
+    },
+    {
+      async fetch(source) {
+        if (source.canonicalUrl === registryUrl) {
+          return fetchedPage(source.canonicalUrl, '<html><body>MR Group</body></html>');
+        }
+        if (source.canonicalUrl === knownPathUrl) {
+          return fetchedPage(
+            source.canonicalUrl,
+            '<html><body>Жилой квартал CITYZEN — проект MR Group</body></html>',
+          );
+        }
+        throw new Error('known path unavailable');
+      },
+    },
+  );
+
+  const result = await service.discover(transliteratedProject, {
+    registrySources: [activeRegistrySource({
+      type: 'DEVELOPER_PROMOTION',
+      canonicalUrl: registryUrl,
+      projectKey: null,
+      developerKey: transliteratedProject.developerKey,
+      allowedHosts: ['mr.example', 'www.mr.example'],
+    })],
+  });
+
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result, null, 2));
+  assert.equal(result.canonicalUrl, knownPathUrl);
+  assert.equal(result.matchKind, 'TRANSLITERATION');
+  assert.equal(providerCalls, 0);
+  assert.equal(result.telemetry.phases.length, 0);
 });
 
 function twoPhaseService(options) {

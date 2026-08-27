@@ -1,3 +1,5 @@
+import { isIP } from 'node:net';
+
 import { load } from 'cheerio';
 
 import type { SourceConnectorFetchResult } from './official-html-source.connector';
@@ -49,6 +51,7 @@ export type AssistantSourceIdentityMatchKind = 'EXACT' | 'TRANSLITERATION' | 'RE
 export type AssistantSourceCatalogProjectEvidence = {
   officialProjectName: string;
   officialProjectCode: string | null;
+  officialProjectUrl: string | null;
   identity: ReturnType<typeof verifyProjectIdentity>;
 };
 
@@ -102,6 +105,27 @@ export function verifyProjectIdentity(
   };
 }
 
+export function inferOfficialProjectNameFromPage(
+  project: AssistantSourceIdentityProject,
+  fetched: SourceConnectorFetchResult,
+) {
+  const words = extractSearchableText(fetched, false)
+    .split(' ')
+    .filter((word) => /^[a-z0-9]+$/u.test(word));
+  const phoneticAliases = new Set(createProjectAliases(
+    project.title,
+    project.projectKey,
+    project.developerName,
+  ).filter((alias) => /[a-z]/u.test(alias)).map(normalizeLatinBrandPhonetics));
+  for (let width = 1; width <= Math.min(4, words.length); width += 1) {
+    for (let index = 0; index + width <= words.length; index += 1) {
+      const candidate = words.slice(index, index + width).join(' ');
+      if (phoneticAliases.has(normalizeLatinBrandPhonetics(candidate))) return candidate;
+    }
+  }
+  return null;
+}
+
 export function readProjectIdentityError(
   matchKind: AssistantSourceIdentityMatchKind,
   identity: ReturnType<typeof verifyProjectIdentity>,
@@ -129,6 +153,7 @@ export function findProjectCatalogEvidence(
     const officialProjectCode = normalizeProjectCode(
       readCatalogString(record.code) ?? readCatalogString(record.slug),
     );
+    const officialProjectUrl = readCatalogProjectUrl(record, fetched.finalUrl);
     const evidencePage: SourceConnectorFetchResult = {
       ...fetched,
       finalUrl: fetched.finalUrl,
@@ -141,13 +166,18 @@ export function findProjectCatalogEvidence(
       { includeFinalUrl: false },
     );
     if (identity.matchedPlatformProjectAlias && identity.matchedOfficialProjectAlias) {
-      return { officialProjectName, officialProjectCode, identity };
+      return { officialProjectName, officialProjectCode, officialProjectUrl, identity };
     }
   }
 
   const identity = verifyProjectIdentity(project, project.title, fetched, { includeFinalUrl: false });
   return identity.matchedPlatformProjectAlias && identity.matchedOfficialProjectAlias
-    ? { officialProjectName: project.title, officialProjectCode: null, identity }
+    ? {
+      officialProjectName: project.title,
+      officialProjectCode: null,
+      officialProjectUrl: findHtmlCatalogProjectUrl(project, fetched),
+      identity,
+    }
     : null;
 }
 
@@ -167,7 +197,7 @@ export function hasMultipleProjectCatalogEntries(fetched: SourceConnectorFetchRe
 
 export function extractOfficialProjectLinks(
   fetched: SourceConnectorFetchResult,
-  developerDomain: string,
+  developerAllowedHosts: readonly string[],
 ) {
   if (fetched.contentType === 'application/json' || fetched.contentType === 'application/ld+json') {
     return [];
@@ -186,7 +216,7 @@ export function extractOfficialProjectLinks(
       return;
     }
     const url = new URL(normalizedUrl);
-    if (isUrlWithinDomain(normalizedUrl, developerDomain)
+    if (isUrlWithinAllowedHosts(normalizedUrl, developerAllowedHosts)
       || isBlockedDomain(url.hostname)
       || /\.(?:pdf|docx?|xlsx?|zip|jpe?g|png|webp)(?:$|\?)/iu.test(url.pathname)) return;
     const linkSignal = normalizeIdentityText([
@@ -202,41 +232,65 @@ export function extractOfficialProjectLinks(
   return links;
 }
 
-export function readAllowedDomain(canonicalUrl: string) {
-  return new URL(canonicalUrl).hostname
-    .toLocaleLowerCase('en-US')
-    .replace(/\.$/u, '')
-    .replace(/^www\./u, '');
+export function extractLinkedOfficialDeveloperUrls(
+  fetched: SourceConnectorFetchResult,
+  allowedHosts: readonly string[],
+) {
+  if (fetched.contentType === 'application/json' || fetched.contentType === 'application/ld+json') {
+    return [];
+  }
+  const $ = load(fetched.payload.toString('utf8'));
+  const links: Array<{ url: string; trustWithoutFetch: boolean }> = [];
+  $('a[href]').each((_index, element) => {
+    if (links.length >= 4) return;
+    const href = $(element).attr('href');
+    if (!href || href.length > 2_048) return;
+    let normalizedUrl: string;
+    try {
+      normalizedUrl = normalizeCandidateUrl(new URL(href, fetched.finalUrl).toString());
+    } catch {
+      return;
+    }
+    const url = new URL(normalizedUrl);
+    if (isUrlWithinAllowedHosts(normalizedUrl, allowedHosts)
+      || isBlockedDomain(url.hostname)
+      || /\.(?:pdf|docx?|xlsx?|zip|jpe?g|png|webp)(?:$|\?)/iu.test(url.pathname)) return;
+    const linkSignal = normalizeIdentityText([
+      $(element).text(),
+      $(element).attr('title') ?? '',
+      $(element).attr('aria-label') ?? '',
+    ].join(' '));
+    if (!/(?:официальн|корпоративн|каталог|жил\w* проект|проекты|projects?|catalog|residential)/iu
+      .test(linkSignal)) return;
+    const trustWithoutFetch = /(?:официальн|корпоративн|official|corporate)/iu.test(linkSignal)
+      && /(?:сайт|каталог|site|catalog)/iu.test(linkSignal);
+    if (!links.some(({ url }) => url === normalizedUrl)) {
+      links.push({ url: normalizedUrl, trustWithoutFetch });
+    }
+  });
+  return links;
 }
 
-export function deriveParentDomain(hostname: string) {
-  const labels = hostname.split('.').filter(Boolean);
-  if (labels.length <= 2) return null;
-  const lastTwoLabels = labels.slice(-2).join('.');
-  const multiLabelPublicSuffixes = new Set([
-    'co.uk', 'org.uk', 'ac.uk',
-    'com.au', 'net.au', 'org.au',
-    'com.br', 'com.cn', 'com.tr',
-    'com.ru', 'net.ru', 'org.ru', 'pp.ru',
-  ]);
-  return multiLabelPublicSuffixes.has(lastTwoLabels)
-    ? labels.slice(-3).join('.')
-    : lastTwoLabels;
-}
-
-export function isUrlWithinDomain(value: string, allowedDomain: string) {
+export function isUrlWithinAllowedHosts(value: string, allowedHosts: readonly string[]) {
   try {
-    const hostname = new URL(value).hostname.toLocaleLowerCase('en-US').replace(/\.$/u, '');
-    return hostname === allowedDomain || hostname.endsWith(`.${allowedDomain}`);
+    const hostname = normalizeHostname(new URL(normalizeCandidateUrl(value)).hostname);
+    return allowedHosts.some((allowedHost) => normalizeHostname(allowedHost) === hostname);
   } catch {
     return false;
   }
 }
 
 export function relatedHosts(hostname: string) {
-  const normalized = hostname.toLocaleLowerCase('en-US');
+  const normalized = normalizeHostname(hostname);
+  if (isIP(normalized.replace(/^\[|\]$/gu, '')) !== 0
+    || !normalized.includes('.')
+    || normalized.includes(':')) return [normalized];
   const counterpart = normalized.startsWith('www.') ? normalized.slice(4) : `www.${normalized}`;
   return [...new Set([normalized, counterpart])];
+}
+
+export function normalizeHostname(hostname: string) {
+  return hostname.toLocaleLowerCase('en-US').replace(/\.$/u, '');
 }
 
 export function isBlockedDomain(hostname: string) {
@@ -343,6 +397,64 @@ function readCatalogString(value: unknown) {
   return typeof value === 'string' && value.trim().length > 0 && value.length <= 500
     ? value.trim()
     : null;
+}
+
+function readCatalogProjectUrl(record: Record<string, unknown>, baseUrl: string) {
+  const value = readCatalogString(record.url)
+    ?? readCatalogString(record.href)
+    ?? readCatalogString(record.link);
+  if (!value) return null;
+  try {
+    return normalizeCandidateUrl(new URL(value, baseUrl).toString());
+  } catch {
+    return null;
+  }
+}
+
+function findHtmlCatalogProjectUrl(
+  project: AssistantSourceIdentityProject,
+  fetched: SourceConnectorFetchResult,
+) {
+  if (fetched.contentType === 'application/json' || fetched.contentType === 'application/ld+json') {
+    return null;
+  }
+  const baseHostname = normalizeHostname(new URL(normalizeCandidateUrl(fetched.finalUrl)).hostname);
+  const $ = load(fetched.payload.toString('utf8'));
+  let matchedUrl: string | null = null;
+  let inspectedLinks = 0;
+  $('a[href]').each((_index, element) => {
+    if (matchedUrl || inspectedLinks >= 200) return;
+    inspectedLinks += 1;
+    const href = $(element).attr('href');
+    if (!href || href.length > 2_048) return;
+    let normalizedUrl: string;
+    try {
+      normalizedUrl = normalizeCandidateUrl(new URL(href, fetched.finalUrl).toString());
+    } catch {
+      return;
+    }
+    if (normalizeHostname(new URL(normalizedUrl).hostname) !== baseHostname) return;
+    const linkEvidence = [
+      normalizedUrl,
+      $(element).text(),
+      $(element).attr('title') ?? '',
+      $(element).attr('aria-label') ?? '',
+    ].join(' ');
+    const identity = verifyProjectIdentity(
+      project,
+      project.title,
+      {
+        ...fetched,
+        finalUrl: normalizedUrl,
+        payload: Buffer.from(`<main>${escapeHtml(linkEvidence)}</main>`),
+      },
+      { includeFinalUrl: false },
+    );
+    if (identity.matchedPlatformProjectAlias && identity.matchedOfficialProjectAlias) {
+      matchedUrl = normalizedUrl;
+    }
+  });
+  return matchedUrl;
 }
 
 function normalizeProjectCode(value: string | null) {

@@ -65,9 +65,36 @@ export function isNarrowNonResidentialDeveloperUrl(value: string) {
   }
 }
 
-export function buildKnownProjectUrls(projectKey: string, developerDomain: string) {
+export function buildKnownProjectUrls(
+  projectIdentifiers: readonly string[],
+  developerHosts: readonly string[],
+) {
+  const candidateGroups = [...new Set(projectIdentifiers)]
+    .map((projectIdentifier) => buildKnownProjectUrlsForIdentifier(
+      projectIdentifier,
+      developerHosts,
+    ));
+  const urls: string[] = [];
+  for (let index = 0; urls.length < 20; index += 1) {
+    let foundCandidate = false;
+    for (const candidates of candidateGroups) {
+      const candidate = candidates[index];
+      if (!candidate) continue;
+      foundCandidate = true;
+      if (!urls.includes(candidate)) urls.push(candidate);
+      if (urls.length === 20) return urls;
+    }
+    if (!foundCandidate) break;
+  }
+  return urls;
+}
+
+function buildKnownProjectUrlsForIdentifier(
+  projectIdentifier: string,
+  developerHosts: readonly string[],
+) {
   const genericKeyWords = new Set(['zhiloj', 'zhilye', 'kompleks', 'kvartal', 'zhk', 'dom', 'project']);
-  const normalizedKey = projectKey
+  const normalizedKey = projectIdentifier
     .toLocaleLowerCase('en-US')
     .replace(/[^a-z0-9-]+/gu, '-')
     .replace(/-{2,}/gu, '-')
@@ -95,8 +122,9 @@ export function buildKnownProjectUrls(projectKey: string, developerDomain: strin
       `/flats/zhk-${slug}/`,
       `/flats/${slug}/`,
     ]) {
-      urls.push(`https://${developerDomain}${path}`);
-      if (urls.length === 20) return urls;
+      for (const developerHost of developerHosts) {
+        urls.push(`https://${developerHost}${path}`);
+      }
     }
   }
   return urls;
