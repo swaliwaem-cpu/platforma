@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { AssistantKnowledgeSourceState, AssistantSourceFactKind, Prisma } from '@prisma/client';
@@ -19,6 +19,11 @@ import {
   AssistantGeoLandmarkService,
   type AssistantTrustedLandmark,
 } from './assistant-geo-landmark.service';
+import {
+  normalizeAssistantGeoIdentityText,
+  resolveAssistantGeoLandmarkIdentity,
+} from './assistant-geo-landmark-identity';
+import { AssistantGeoUsageLedgerService } from './assistant-geo-usage-ledger.service';
 import { parseAssistantGeoDistanceClause } from './assistant-geo-query';
 import {
   AssistantGeoProviderError,
@@ -32,6 +37,14 @@ import {
 
 type ParsedResolveInput = {
   placeQuery: string;
+  normalizedQuery: string;
+  userAlias: string;
+  aliases: string[];
+  providerQuery: string;
+  expectedKind: AssistantGeoKind | null;
+  expectedCity: string | null;
+  expectedCountry: string | null;
+  overpassTagValues: string[];
   mode: 'NEAR' | 'INSIDE';
   explicitDistanceMeters: number | null;
   /** @deprecated Temporary compatibility for T05 callers. */
@@ -51,18 +64,17 @@ type CachedLandmark = {
   point?: { latitude: number; longitude: number };
 };
 
-const geoCacheRetentionMs = 30 * 24 * 60 * 60 * 1_000;
+const overpassGeometryRetentionMs = 30 * 24 * 60 * 60 * 1_000;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 @Injectable()
 export class AssistantPlaceResolverService {
-  private readonly singleFlight = new Map<string, Promise<{ landmarks: AssistantTrustedLandmark[]; calls: number }>>();
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly provider: AssistantGeoProviderPolicyService,
     private readonly landmarks?: AssistantGeoLandmarkService,
     private readonly overpass?: AssistantOverpassCollector,
+    private readonly usageLedger?: AssistantGeoUsageLedgerService,
   ) {}
 
   async resolve(body: unknown, actorUserId: string | null = null): Promise<AssistantGeoResolution> {
@@ -75,7 +87,8 @@ export class AssistantPlaceResolverService {
 
     const confirmed = filterLandmarksForMode(
       await this.landmarks.findTrustedByQuery({
-        normalizedQuery: normalizePlaceQuery(input.placeQuery),
+        normalizedQuery: input.normalizedQuery,
+        normalizedQueries: [...new Set([input.normalizedQuery, ...input.aliases, input.userAlias])],
         mode: input.mode,
         locale: input.locale,
         country: input.country,
@@ -106,81 +119,143 @@ export class AssistantPlaceResolverService {
       await this.prisma.assistantGeoCache.deleteMany({ where: { cacheKey } });
     }
 
+    const usageLedger = this.provider.getProviderName() === 'locationiq' ? this.usageLedger : undefined;
+    const operationId = usageLedger
+      ? await this.beginProviderOperation(input, actorUserId)
+      : null;
+    if (usageLedger && !operationId) return unavailable(input);
     try {
-      const providerResult = await this.resolveProviderSingleFlight(cacheKey, input);
-      await this.writeLandmarkCache(cacheKey, input, providerResult.landmarks);
+      const providerTask = () => this.resolveFromProviders(input);
+      const providerResult = operationId && usageLedger
+        ? await usageLedger.runResolution(operationId, providerTask)
+        : await providerTask();
+      await this.writeLandmarkCache(cacheKey, input, providerResult.landmarks, providerResult.cacheExpiresAt);
       const compatible = filterLandmarksForMode(providerResult.landmarks, input.mode);
       const result = compatible.length > 0
         ? resolved(input, compatible.map((landmark) => toCandidate(input, landmark)))
         : notFound(input);
-      await this.recordOperation(
-        input,
-        actorUserId,
-        this.provider.getProviderName(),
-        result.status,
-        startedAt,
-        false,
-        providerResult.calls,
-        null,
-      );
+      if (operationId) {
+        const finalized = await this.finalizeProviderOperation(
+          operationId,
+          result.status,
+          startedAt,
+          null,
+        );
+        if (!finalized) return unavailable(input);
+      } else {
+        await this.recordOperation(
+          input,
+          actorUserId,
+          providerResult.provider,
+          result.status,
+          startedAt,
+          false,
+          providerResult.calls,
+          null,
+        );
+      }
       return result;
     } catch (error) {
-      if (!(error instanceof AssistantGeoProviderError)) throw error;
+      if (!(error instanceof AssistantGeoProviderError)) {
+        if (operationId) {
+          await this.finalizeProviderOperation(
+            operationId,
+            'UNAVAILABLE',
+            startedAt,
+            'ASSISTANT_GEO_RESOLUTION_INTERNAL_ERROR',
+          );
+        }
+        throw error;
+      }
       const result = unavailable(input);
-      await this.recordOperation(
-        input,
-        actorUserId,
-        this.provider.getProviderName(),
-        result.status,
-        startedAt,
-        false,
-        error.providerCallCount,
-        error.code,
-      );
+      const errorProvider = error.code.startsWith('ASSISTANT_OVERPASS') ? 'overpass' : this.provider.getProviderName();
+      if (operationId) {
+        await this.finalizeProviderOperation(operationId, result.status, startedAt, error.code);
+      } else {
+        await this.recordOperation(
+          input,
+          actorUserId,
+          errorProvider,
+          result.status,
+          startedAt,
+          false,
+          error.providerCallCount,
+          error.code,
+        );
+      }
       return result;
     }
   }
 
-  private resolveProviderSingleFlight(cacheKey: string, input: ParsedResolveInput) {
-    const active = this.singleFlight.get(cacheKey);
-    if (active) return active;
-    const pending = this.resolveFromProviders(input).finally(() => this.singleFlight.delete(cacheKey));
-    this.singleFlight.set(cacheKey, pending);
-    return pending;
-  }
-
   private async resolveFromProviders(input: ParsedResolveInput) {
-    if (!this.landmarks) return { landmarks: [], calls: 0 };
+    if (!this.landmarks) return {
+      landmarks: [], calls: 0, provider: this.provider.getProviderName(),
+      cacheExpiresAt: new Date(Date.now() + this.provider.getCacheRetentionMs()),
+    };
     const lookup = await this.provider.searchWithTelemetry({
-      query: input.placeQuery,
+      query: input.providerQuery,
       locale: input.locale,
       country: input.country,
       viewbox: input.viewbox,
     });
     let calls = lookup.providerCallCount;
-    const providerCandidates = selectGeometryCandidates(lookup.candidates, input.mode);
+    if (lookup.candidates.length === 0) {
+      return {
+        landmarks: [], calls, provider: this.provider.getProviderName(),
+        cacheExpiresAt: new Date(Date.now() + this.provider.getCacheRetentionMs()),
+      };
+    }
+    const providerCandidates = selectGeometryCandidates(lookup.candidates, input, this.provider.getProviderName());
     const saved: AssistantTrustedLandmark[] = [];
+    const savedExpiries: Date[] = [];
+    let finalProvider: 'fake' | 'locationiq' | 'overpass' = this.provider.getProviderName();
+    let cityLookupPromise: Promise<AssistantGeoProviderCandidate | null> | null = null;
+    let overpassPromise: ReturnType<AssistantOverpassCollector['collect']> | null = null;
+    const resolveCityArea = (city: string) => {
+      cityLookupPromise ??= this.provider.searchWithTelemetry({
+        query: city,
+        locale: input.locale,
+        country: input.expectedCountry ?? input.country,
+        viewbox: null,
+      }).then((cityLookup) => {
+        calls += cityLookup.providerCallCount;
+        const areas = cityLookup.candidates.filter((item) => isExpectedAdministrativeArea(item, {
+          expectedCity: city,
+          expectedCountry: input.expectedCountry ?? input.country,
+        }));
+        return areas.length === 1 ? areas[0]! : null;
+      });
+      return cityLookupPromise;
+    };
+    const collectRoad = (candidate: AssistantGeoProviderCandidate) => {
+      if (!candidate.city || !this.overpass) {
+        throw new AssistantOverpassError('ASSISTANT_OVERPASS_GEOMETRY_UNAVAILABLE', false);
+      }
+      overpassPromise ??= resolveCityArea(candidate.city).then((cityArea) => {
+        if (!cityArea?.boundingBox) {
+          throw new AssistantOverpassError('ASSISTANT_OVERPASS_CITY_AREA_UNAVAILABLE', false);
+        }
+        calls += 1;
+        return this.overpass!.collect({
+          name: input.providerQuery,
+          tagValues: input.overpassTagValues,
+          city: candidate.city!,
+          cityBounds: cityArea.boundingBox,
+        });
+      });
+      return overpassPromise;
+    };
     for (const candidate of providerCandidates) {
       try {
-        const landmark = await this.persistProviderCandidate(input, candidate, async (city) => {
-          const cityLookup = await this.provider.searchWithTelemetry({
-            query: city,
-            locale: input.locale,
-            country: input.country,
-            viewbox: null,
-          });
-          calls += cityLookup.providerCallCount;
-          const areas = cityLookup.candidates.filter((item) =>
-            item.geometryKind === 'AREA' && item.geometryComplete && item.boundingBox && item.referenceGeometry);
-          return areas.length === 1 ? areas[0]! : null;
-        }, () => {
-          calls += 1;
-        });
-        if (landmark) saved.push(landmark);
+        const persisted = await this.persistProviderCandidate(input, candidate, collectRoad);
+        if (persisted) {
+          saved.push(persisted.landmark);
+          savedExpiries.push(persisted.expiresAt);
+          if (persisted.provider === 'overpass') finalProvider = 'overpass';
+        }
       } catch (error) {
         if (error instanceof AssistantGeoLandmarkGeometryError) {
-          // An invalid provider geometry is rejected as a whole; other independent candidates may survive.
-          continue;
+          throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_GEOMETRY_REJECTED', false);
         }
         if (error instanceof AssistantGeoProviderError) {
           error.providerCallCount += calls;
@@ -194,14 +269,21 @@ export class AssistantPlaceResolverService {
         throw error;
       }
     }
-    return { landmarks: deduplicateLandmarks(saved).slice(0, 3), calls };
+    if (saved.length === 0) {
+      throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_IDENTITY_REJECTED', false);
+    }
+    const providerCacheExpiry = new Date(Date.now() + this.provider.getCacheRetentionMs());
+    const earliestLandmarkExpiry = Math.min(...savedExpiries.map((expiry) => expiry.getTime()));
+    return {
+      landmarks: deduplicateLandmarks(saved).slice(0, 3), calls, provider: finalProvider,
+      cacheExpiresAt: new Date(Math.min(providerCacheExpiry.getTime(), earliestLandmarkExpiry)),
+    };
   }
 
   private async persistProviderCandidate(
     input: ParsedResolveInput,
     candidate: AssistantGeoProviderCandidate,
-    resolveCityArea: (city: string) => Promise<AssistantGeoProviderCandidate | null>,
-    onOverpassCall: () => void,
+    collectRoad: (candidate: AssistantGeoProviderCandidate) => ReturnType<AssistantOverpassCollector['collect']>,
   ) {
     if (!this.landmarks) return null;
     const kind = candidate.geometryKind ?? 'POINT';
@@ -217,15 +299,7 @@ export class AssistantPlaceResolverService {
     let entityType = candidate.entityType ?? null;
 
     if (kind === 'LINE' && !candidate.geometryComplete) {
-      if (!candidate.city || !this.overpass) return null;
-      const cityArea = await resolveCityArea(candidate.city);
-      if (!cityArea?.boundingBox) return null;
-      onOverpassCall();
-      const collected = await this.overpass.collect({
-        name: input.placeQuery,
-        city: candidate.city,
-        cityBounds: cityArea.boundingBox,
-      });
+      const collected = await collectRoad(candidate);
       geometry = collected.geometry;
       sourceProvider = 'overpass';
       sourceExternalId = collected.externalId;
@@ -233,23 +307,31 @@ export class AssistantPlaceResolverService {
     }
     if (!geometry) return null;
 
-    return this.landmarks.saveVerified({
+    const expiresAt = sourceProvider === 'overpass'
+      ? new Date(Date.now() + overpassGeometryRetentionMs)
+      : new Date(Date.now() + this.provider.getCacheRetentionMs());
+    const landmark = await this.landmarks.saveVerified({
       kind,
-      label: kind === 'LINE' ? input.placeQuery : candidate.label,
-      normalizedQuery: normalizePlaceQuery(input.placeQuery),
-      aliases: [normalizePlaceQuery(input.placeQuery)],
+      label: input.placeQuery,
+      normalizedQuery: input.normalizedQuery,
+      aliases: [...new Set([...input.aliases, input.userAlias])],
       locale: input.locale,
       country: candidate.countryCode ?? input.country,
       city: candidate.city,
       geometry,
       sourceProvider,
       sourceExternalId,
+      expiresAt,
       sourceMetadata: {
         entityType,
         fetchedAt: new Date().toISOString(),
         version: 1,
+        identityVersion: 1,
+        userAlias: input.userAlias,
+        providerQuery: input.providerQuery,
       },
     });
+    return { landmark, provider: sourceProvider, expiresAt };
   }
 
   private async rehydrateCached(cached: CachedLandmark[]) {
@@ -271,6 +353,7 @@ export class AssistantPlaceResolverService {
     cacheKey: string,
     input: ParsedResolveInput,
     landmarks: AssistantTrustedLandmark[],
+    expiresAt: Date,
   ) {
     const candidatesJson = landmarks.map((landmark) => ({
       id: landmark.id,
@@ -283,18 +366,62 @@ export class AssistantPlaceResolverService {
     }));
     await this.prisma.assistantGeoCache.upsert({
       where: { cacheKey },
-      update: { candidatesJson, expiresAt: new Date(Date.now() + geoCacheRetentionMs) },
+      update: { candidatesJson, expiresAt },
       create: {
         cacheKey,
-        normalizedQuery: normalizePlaceQuery(input.placeQuery),
+        normalizedQuery: input.normalizedQuery,
         locale: input.locale,
         country: input.country ?? '',
         viewboxKey: createViewboxKey(input.viewbox),
         provider: `${this.provider.getProviderName()}-geometry-v2`,
         candidatesJson,
-        expiresAt: new Date(Date.now() + geoCacheRetentionMs),
+        expiresAt,
       },
     });
+  }
+
+  private async beginProviderOperation(input: ParsedResolveInput, actorUserId: string | null) {
+    const id = randomUUID();
+    try {
+      await this.prisma.assistantGeoOperation.create({
+        data: {
+          id,
+          actorUserId,
+          normalizedQuery: input.normalizedQuery,
+          provider: this.provider.getProviderName(),
+          status: 'RUNNING',
+          durationMs: 0,
+          cacheHit: false,
+          providerCallCount: 0,
+          errorCode: null,
+        },
+      });
+      return id;
+    } catch {
+      return null;
+    }
+  }
+
+  private async finalizeProviderOperation(
+    id: string,
+    status: AssistantGeoResolution['status'],
+    startedAt: number,
+    errorCode: string | null,
+  ) {
+    try {
+      await this.prisma.assistantGeoOperation.update({
+        where: { id },
+        data: {
+          status,
+          durationMs: Math.max(0, Date.now() - startedAt),
+          cacheHit: false,
+          errorCode,
+        },
+      });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private async resolvePointCompatibility(
@@ -318,7 +445,7 @@ export class AssistantPlaceResolverService {
     }
     try {
       const response = await this.provider.searchWithTelemetry({
-        query: input.placeQuery,
+        query: input.providerQuery,
         locale: input.locale,
         country: input.country,
         viewbox: input.viewbox,
@@ -361,7 +488,7 @@ export class AssistantPlaceResolverService {
     const alias = await this.prisma.assistantGeoAlias.findUnique({
       where: {
         normalizedQuery_locale_country: {
-          normalizedQuery: normalizePlaceQuery(input.placeQuery),
+          normalizedQuery: input.normalizedQuery,
           locale: input.locale,
           country: input.country ?? '',
         },
@@ -405,7 +532,7 @@ export class AssistantPlaceResolverService {
       update: { candidatesJson: safeCandidates, expiresAt },
       create: {
         cacheKey,
-        normalizedQuery: normalizePlaceQuery(input.placeQuery),
+        normalizedQuery: input.normalizedQuery,
         locale: input.locale,
         country: input.country ?? '',
         viewboxKey: createViewboxKey(input.viewbox),
@@ -465,7 +592,7 @@ export class AssistantPlaceResolverService {
       await this.prisma.assistantGeoOperation.create({
         data: {
           actorUserId,
-          normalizedQuery: normalizePlaceQuery(input.placeQuery),
+          normalizedQuery: input.normalizedQuery,
           provider,
           status,
           durationMs: Math.max(0, Date.now() - startedAt),
@@ -504,7 +631,8 @@ export function parseResolveInput(value: unknown): ParsedResolveInput | null {
   if (country === undefined) throw new BadRequestException('ASSISTANT_GEO_COUNTRY_INVALID');
   const viewbox = value.viewbox === undefined || value.viewbox === null ? null : parseViewbox(value.viewbox);
   return {
-    placeQuery: place.placeQuery,
+    ...place.identity,
+    placeQuery: place.identity.label,
     mode: place.mode,
     explicitDistanceMeters: radiusMeters,
     radiusMeters,
@@ -515,15 +643,16 @@ export function parseResolveInput(value: unknown): ParsedResolveInput | null {
 }
 
 export function normalizePlaceQuery(value: string) {
-  return value.normalize('NFKC').replace(/\u00a0/gu, ' ').replace(/\s+/gu, ' ').trim().toLocaleLowerCase('ru-RU');
+  return normalizeAssistantGeoIdentityText(value);
 }
 
 export function createCacheKey(
-  input: Pick<ParsedResolveInput, 'placeQuery' | 'mode' | 'locale' | 'country' | 'viewbox'>,
+  input: Pick<ParsedResolveInput, 'placeQuery' | 'mode' | 'locale' | 'country' | 'viewbox'>
+    & Partial<Pick<ParsedResolveInput, 'normalizedQuery'>>,
 ) {
   return createHash('sha256').update(JSON.stringify({
     version: 'geometry-v2',
-    query: normalizePlaceQuery(input.placeQuery),
+    query: input.normalizedQuery ?? normalizePlaceQuery(input.placeQuery),
     mode: input.mode,
     locale: input.locale,
     country: input.country ?? '',
@@ -531,9 +660,12 @@ export function createCacheKey(
   })).digest('hex');
 }
 
-function createLegacyCacheKey(input: Pick<ParsedResolveInput, 'placeQuery' | 'locale' | 'country' | 'viewbox'>) {
+function createLegacyCacheKey(
+  input: Pick<ParsedResolveInput, 'placeQuery' | 'locale' | 'country' | 'viewbox'>
+    & Partial<Pick<ParsedResolveInput, 'normalizedQuery'>>,
+) {
   return createHash('sha256').update(JSON.stringify({
-    query: normalizePlaceQuery(input.placeQuery),
+    query: input.normalizedQuery ?? normalizePlaceQuery(input.placeQuery),
     locale: input.locale,
     country: input.country ?? '',
     viewbox: createViewboxKey(input.viewbox),
@@ -562,26 +694,20 @@ function extractPlaceQuery(content: string, hasExplicitDistance: boolean) {
     : null;
   const candidate = explicitClause?.anchor ?? insideMatch?.[1] ?? nearbyMatch?.[1];
   if (!candidate) return null;
-  const query = normalizeLandmarkPhrase(candidate
+  const query = candidate
     .replace(/\s+(?:найди|покажи|подбери)\b.*$/iu, '')
     .split(/,\s*(?=(?:например(?=\s|,|$)|бюджет(?=\s|,|$)|\d{1,2}\s*[- ]?\s*комн|студи\p{L}*|однуш\p{L}*|однокомнат\p{L}*|двуш\p{L}*|двухкомнат\p{L}*|треш\p{L}*|трехкомнат\p{L}*))/iu, 1)[0]!
     .replace(/\s+(?=(?:бюджет(?=\s|,|$)|\d{1,2}\s*[- ]?\s*комн|студи\p{L}*|однуш\p{L}*|однокомнат\p{L}*|двуш\p{L}*|двухкомнат\p{L}*|треш\p{L}*|трехкомнат\p{L}*))[^,;.!?]*$/iu, '')
     .replace(/[,\s.!?;]+$/gu, '')
     .replace(/\s+/gu, ' ')
-    .trim());
+    .trim();
   if (!query || /^\d/u.test(query)) return null;
   const placeQuery = readText(query, 240);
-  return placeQuery ? { placeQuery, mode: insideMatch ? 'INSIDE' as const : 'NEAR' as const } : null;
-}
-
-function normalizeLandmarkPhrase(value: string) {
-  const normalized = value.replace(/\s+/gu, ' ').trim();
-  if (/^садов(?:ого|ому|ым)\s+кольц(?:а|у|ом)$/iu.test(normalized)) return 'Садовое кольцо';
-  if (/^треть(?:его|ему|им)\s+транспортн(?:ого|ому|ым)\s+кольц(?:а|у|ом)$/iu.test(normalized)) {
-    return 'Третье транспортное кольцо';
-  }
-  if (/^района\s+/iu.test(normalized)) return normalized.replace(/^района\s+/iu, 'район ');
-  return normalized;
+  return placeQuery ? {
+    placeQuery,
+    identity: resolveAssistantGeoLandmarkIdentity(placeQuery),
+    mode: insideMatch ? 'INSIDE' as const : 'NEAR' as const,
+  } : null;
 }
 
 function parseViewbox(value: unknown): [number, number, number, number] {
@@ -675,13 +801,86 @@ function legacyCandidate(
   };
 }
 
-function selectGeometryCandidates(candidates: AssistantGeoProviderCandidate[], mode: 'NEAR' | 'INSIDE') {
+function selectGeometryCandidates(
+  candidates: AssistantGeoProviderCandidate[],
+  input: ParsedResolveInput,
+  providerName: 'fake' | 'locationiq',
+) {
+  if (providerName === 'fake') return selectLegacyGeometryCandidates(candidates, input.mode);
+  if (input.expectedKind === 'AREA') {
+    const areas = candidates.filter((candidate) => isExpectedAdministrativeArea(candidate, {
+      expectedCity: input.expectedCity,
+      expectedCountry: input.expectedCountry,
+      expectedNames: [...input.aliases, input.providerQuery, input.placeQuery],
+    }));
+    if (areas.length !== 1) {
+      throw new AssistantGeoProviderError(
+        areas.length > 1 ? 'ASSISTANT_GEO_AREA_AMBIGUOUS' : 'ASSISTANT_GEO_AREA_IDENTITY_REJECTED',
+        false,
+      );
+    }
+    return areas;
+  }
+  if (input.expectedKind === 'LINE') {
+    const expectedNames = new Set(
+      [...input.aliases, input.providerQuery, ...input.overpassTagValues].map(normalizeAssistantGeoIdentityText),
+    );
+    const lines = candidates.filter((candidate) => (
+      candidate.geometryKind === 'LINE'
+      && normalizeAssistantGeoIdentityText(candidate.entityClass ?? '') === 'highway'
+      && matchesExpectedScope(candidate, input.expectedCity, input.expectedCountry)
+      && expectedNames.has(normalizeAssistantGeoIdentityText(candidate.label.split(',')[0]!))
+    ));
+    if (lines.length === 0) {
+      throw new AssistantGeoProviderError('ASSISTANT_GEO_ROAD_IDENTITY_REJECTED', false);
+    }
+    return lines;
+  }
+  return selectLegacyGeometryCandidates(candidates, input.mode);
+}
+
+function selectLegacyGeometryCandidates(
+  candidates: AssistantGeoProviderCandidate[],
+  mode: 'NEAR' | 'INSIDE',
+) {
   if (mode === 'INSIDE') return candidates.filter((candidate) => candidate.geometryKind === 'AREA');
   const lines = candidates.filter((candidate) => candidate.geometryKind === 'LINE');
   if (lines.length > 0) return lines;
   const areas = candidates.filter((candidate) => candidate.geometryKind === 'AREA');
   if (areas.length > 0) return areas;
   return candidates.filter((candidate) => (candidate.geometryKind ?? 'POINT') === 'POINT');
+}
+
+function isExpectedAdministrativeArea(
+  candidate: AssistantGeoProviderCandidate,
+  input: {
+    expectedCity: string | null;
+    expectedCountry: string | null;
+    expectedNames?: string[];
+  },
+) {
+  if (candidate.geometryKind !== 'AREA'
+    || candidate.geometryComplete !== true
+    || !candidate.referenceGeometry
+    || !candidate.boundingBox
+    || normalizeAssistantGeoIdentityText(candidate.entityClass ?? '') !== 'boundary'
+    || normalizeAssistantGeoIdentityText(candidate.entityType ?? '') !== 'administrative'
+    || normalizeAssistantGeoIdentityText(candidate.osmType ?? '') !== 'relation'
+    || !matchesExpectedScope(candidate, input.expectedCity, input.expectedCountry)) return false;
+  if (!input.expectedNames) return true;
+  const expectedNames = new Set(input.expectedNames.map(normalizeAssistantGeoIdentityText));
+  return expectedNames.has(normalizeAssistantGeoIdentityText(candidate.label.split(',')[0]!));
+}
+
+function matchesExpectedScope(
+  candidate: AssistantGeoProviderCandidate,
+  expectedCity: string | null,
+  expectedCountry: string | null,
+) {
+  return (!expectedCity
+      || normalizeAssistantGeoIdentityText(candidate.city ?? '') === normalizeAssistantGeoIdentityText(expectedCity))
+    && (!expectedCountry
+      || normalizeAssistantGeoIdentityText(candidate.countryCode ?? '') === normalizeAssistantGeoIdentityText(expectedCountry));
 }
 
 function filterLandmarksForMode(landmarks: AssistantTrustedLandmark[], mode: 'NEAR' | 'INSIDE') {

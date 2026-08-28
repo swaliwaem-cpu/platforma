@@ -280,6 +280,8 @@ test('Assistant FIX-GEO1 refresh reactivates rejected provider geometry and pres
     type: 'LineString',
     coordinates: [[37.58, 55.74], [37.62, 55.76], [37.66, 55.75]],
   };
+  const retentionMs = 7 * 60 * 1_000;
+  const refreshStartedAt = Date.now();
   for (const normalizedQuery of ['садовое кольцо тест', 'кольцо тестовый alias']) {
     const saved = await landmarks.saveVerified({
       kind: 'LINE',
@@ -292,27 +294,89 @@ test('Assistant FIX-GEO1 refresh reactivates rejected provider geometry and pres
       geometry,
       sourceProvider: 'fake',
       sourceExternalId,
+      retentionMs,
       sourceMetadata: { entityType: 'road', fetchedAt: new Date().toISOString(), version: 1 },
     });
     assert.equal(saved.id, landmarkIds.refresh);
   }
+  const refreshFinishedAt = Date.now();
   const [row] = await prisma.$queryRaw(Prisma.sql`
     SELECT
       confirmation_state::text AS state,
       aliases,
       expires_at IS NOT NULL AS "hasExpiry",
+      expires_at AS "expiresAt",
       confirmed_by_user_id AS "confirmedBy"
     FROM assistant_geo_landmarks
     WHERE id = ${landmarkIds.refresh}::uuid
   `);
   assert.equal(row.state, 'verified');
   assert.equal(row.hasExpiry, true);
+  assert.ok(row.expiresAt instanceof Date);
+  assert.ok(row.expiresAt.getTime() >= refreshStartedAt + retentionMs - 1_000);
+  assert.ok(row.expiresAt.getTime() <= refreshFinishedAt + retentionMs + 1_000);
   assert.equal(row.confirmedBy, null);
   assert.deepEqual(new Set(row.aliases), new Set([
     'старая дорога',
     'садовое кольцо тест',
     'кольцо тестовый alias',
   ]));
+});
+
+test('PIDAFIX2 confirmed landmark geometry remains non-expiring', async () => {
+  const confirmed = await landmarks.saveVerified({
+    kind: 'LINE',
+    label: 'Попытка обновить подтвержденную дорогу',
+    normalizedQuery: 'попытка обновить подтвержденную дорогу',
+    aliases: ['попытка обновить подтвержденную дорогу'],
+    locale: 'ru',
+    country: 'ru',
+    city: 'Москва',
+    geometry: { type: 'LineString', coordinates: [[37.618423, 55.70], [37.618423, 55.80]] },
+    sourceProvider: 'fake',
+    sourceExternalId: `assistant-t05-line-${suffix}`,
+    retentionMs: 7 * 60 * 1_000,
+    sourceMetadata: { entityType: 'road', fetchedAt: new Date().toISOString(), version: 1 },
+  });
+  assert.equal(confirmed.id, landmarkIds.line);
+  const rows = await prisma.$queryRaw(Prisma.sql`
+    SELECT id::text AS id, label, confirmation_state::text AS state, expires_at AS "expiresAt"
+    FROM assistant_geo_landmarks
+    WHERE id IN (${landmarkIds.line}::uuid, ${landmarkIds.area}::uuid)
+    ORDER BY id
+  `);
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map(({ expiresAt }) => expiresAt), [null, null]);
+  const line = rows.find(({ id }) => id === landmarkIds.line);
+  assert.equal(line.state, 'confirmed');
+  assert.equal(line.label, 'Тестовая длинная дорога');
+});
+
+test('PIDAFIX2 canonical DB lookup finds a bounded legacy manual alias', async () => {
+  const id = randomUUID();
+  await prisma.$executeRaw(Prisma.sql`
+    INSERT INTO assistant_geo_landmarks (
+      id, kind, label, normalized_query, aliases, locale, country, city, geometry,
+      source_provider, source_external_id, source_metadata, confirmation_state, confirmed_at, expires_at
+    ) VALUES (
+      ${id}::uuid, 'point', 'Ручная точка ТТК', 'ттк', ARRAY['ттк'], 'ru', 'ru', 'Москва',
+      ST_SetSRID(ST_MakePoint(37.62, 55.75), 4326),
+      'manual_alias', ${id}, '{"version":1}'::jsonb, 'confirmed', CURRENT_TIMESTAMP, NULL
+    )
+  `);
+  try {
+    const result = await landmarks.findTrustedByQuery({
+      normalizedQuery: 'третье транспортное кольцо',
+      normalizedQueries: ['третье транспортное кольцо', 'ттк'],
+      mode: 'NEAR',
+      locale: 'ru',
+      country: 'ru',
+      viewbox: null,
+    });
+    assert.deepEqual(result.map(({ id: resultId }) => resultId), [id]);
+  } finally {
+    await prisma.assistantGeoLandmark.delete({ where: { id } });
+  }
 });
 
 test('Assistant FIX-GEO1 DB-first lookup keeps same-name landmarks separated by viewbox', async () => {

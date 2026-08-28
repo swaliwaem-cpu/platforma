@@ -66,6 +66,7 @@ export class LocationIqGeoProvider implements AssistantGeoProvider {
     reservation: unknown,
     outcome: 'SUCCESS' | 'ERROR',
     durationMs: number,
+    errorCode: string | null,
   ) => Promise<void> = async () => {};
 
   constructor(
@@ -115,6 +116,7 @@ export class LocationIqGeoProvider implements AssistantGeoProvider {
       reservation: unknown,
       outcome: 'SUCCESS' | 'ERROR',
       durationMs: number,
+      errorCode: string | null,
     ) => Promise<void>,
   ) {
     this.beforeRequest = beforeRequest;
@@ -125,6 +127,7 @@ export class LocationIqGeoProvider implements AssistantGeoProvider {
     const startedAt = Date.now();
     const reservation = await this.beforeRequest();
     let outcome: 'SUCCESS' | 'ERROR' = 'ERROR';
+    let errorCode: string | null = null;
     const url = new URL(this.apiUrl);
     url.searchParams.set('key', this.apiKey);
     url.searchParams.set('q', request.query);
@@ -183,17 +186,20 @@ export class LocationIqGeoProvider implements AssistantGeoProvider {
       outcome = 'SUCCESS';
       return candidates;
     } catch (error) {
-      if (error instanceof AssistantGeoProviderError) throw error;
-      if (controller.signal.aborted) {
-        throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_TIMEOUT', true);
-      }
-      throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_UNAVAILABLE', true);
+      const normalized = error instanceof AssistantGeoProviderError
+        ? error
+        : controller.signal.aborted
+          ? new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_TIMEOUT', true)
+          : new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_UNAVAILABLE', true);
+      errorCode = normalized.code;
+      throw normalized;
     } finally {
       clearTimeout(timeout);
       try {
-        await this.afterRequest(reservation, outcome, Math.max(0, Date.now() - startedAt));
-      } catch {
-        // Aggregate telemetry must never change the provider result.
+        await this.afterRequest(reservation, outcome, Math.max(0, Date.now() - startedAt), errorCode);
+      } catch (error) {
+        if (error instanceof AssistantGeoProviderError) throw error;
+        throw new AssistantGeoProviderError('ASSISTANT_GEO_USAGE_SETTLEMENT_FAILED', false);
       }
     }
   }
@@ -351,11 +357,15 @@ function normalizeProviderRequest(request: AssistantGeoProviderRequest): Assista
 
 function normalizeProviderCandidates(value: unknown): AssistantGeoProviderCandidate[] {
   if (!Array.isArray(value)) throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_RESPONSE_INVALID', false);
+  if (value.length > maximumCandidates) {
+    throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_RESPONSE_INVALID', false);
+  }
   const candidates: AssistantGeoProviderCandidate[] = [];
   const seen = new Set<string>();
   for (const entry of value) {
-    if (candidates.length >= maximumCandidates) break;
-    if (!isRecord(entry)) continue;
+    if (!isRecord(entry)) {
+      throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_RESPONSE_INVALID', false);
+    }
     const idValue = typeof entry.place_id === 'number' || typeof entry.place_id === 'string'
       ? String(entry.place_id)
       : '';
@@ -363,16 +373,19 @@ function normalizeProviderCandidates(value: unknown): AssistantGeoProviderCandid
     const label = readBoundedText(entry.display_name, 300);
     const latitude = readCoordinate(entry.lat, -90, 90);
     const longitude = readCoordinate(entry.lon, -180, 180);
-    if (!id || !label || latitude === null || longitude === null) continue;
-    const key = `${latitude.toFixed(7)}:${longitude.toFixed(7)}:${normalizeText(label)}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+    if (!id || !label || latitude === null || longitude === null) {
+      throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_RESPONSE_INVALID', false);
+    }
     const address = isRecord(entry.address) ? entry.address : {};
     const geometry = parseLocationIqGeometry(entry.geojson);
     const entityClass = readBoundedText(entry.class, 80);
     const entityType = readBoundedText(entry.type, 80);
+    const osmType = readBoundedText(entry.osm_type, 24);
+    const osmId = typeof entry.osm_id === 'number' || typeof entry.osm_id === 'string'
+      ? readBoundedText(String(entry.osm_id), 80)
+      : null;
     const geometryKind = normalizeText(entityClass ?? '') === 'highway' ? 'LINE' : geometry.kind;
-    candidates.push({
+    const candidate: AssistantGeoProviderCandidate = {
       id,
       label,
       latitude,
@@ -388,12 +401,16 @@ function normalizeProviderCandidates(value: unknown): AssistantGeoProviderCandid
       geometryComplete: geometryKind !== 'LINE',
       entityClass,
       entityType,
-      osmType: readBoundedText(entry.osm_type, 24),
-      osmId: typeof entry.osm_id === 'number' || typeof entry.osm_id === 'string'
-        ? readBoundedText(String(entry.osm_id), 80)
-        : null,
+      osmType,
+      osmId,
       boundingBox: parseLocationIqBoundingBox(entry.boundingbox),
-    });
+    };
+    const key = osmType && osmId
+      ? `osm:${normalizeText(osmType)}/${osmId}`
+      : `place:${id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (candidates.length < maximumCandidates) candidates.push(candidate);
   }
   return candidates;
 }
@@ -447,7 +464,8 @@ function readProviderUrl(value: string) {
   } catch {
     throw new AssistantGeoProviderError('LOCATIONIQ_API_URL_INVALID', false);
   }
-  const localHttp = url.protocol === 'http:' && (url.hostname === '127.0.0.1' || url.hostname === 'localhost');
+  const localHttp = url.protocol === 'http:'
+    && ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(url.hostname);
   if (url.protocol !== 'https:' && !localHttp) {
     throw new AssistantGeoProviderError('LOCATIONIQ_API_URL_INVALID', false);
   }

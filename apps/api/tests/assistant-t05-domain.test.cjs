@@ -174,14 +174,6 @@ test('Assistant T05 LocationIQ adapter keeps credentials server-side and returns
         type: 'square',
         address: { city: 'Екатеринбург', country_code: 'ru' },
       },
-      {
-        place_id: 'fourth-must-be-dropped',
-        display_name: 'Лишний результат',
-        lat: '56.8',
-        lon: '60.6',
-        type: 'square',
-        address: { city: 'Екатеринбург', country_code: 'ru' },
-      },
     ]));
   });
   await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));

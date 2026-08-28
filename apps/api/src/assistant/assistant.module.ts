@@ -18,6 +18,7 @@ import { AssistantFeedbackService } from './feedback/assistant-feedback.service'
 import { AssistantSourcesModule } from './sources/assistant-sources.module';
 import { AssistantGeoAliasService } from './geo/assistant-geo-alias.service';
 import { AssistantGeoLandmarkService } from './geo/assistant-geo-landmark.service';
+import { AssistantGeoUsageLedgerService } from './geo/assistant-geo-usage-ledger.service';
 import { AssistantGeoAliasesController, AssistantGeoController } from './geo/assistant-geo.controller';
 import {
   AssistantGeoProviderPolicyService,
@@ -48,13 +49,23 @@ import { AssistantRolloutStageService } from './rollout/assistant-rollout-stage.
     AssistantAnswerService,
     AssistantSearchService,
     AssistantGeoLandmarkService,
+    AssistantUsageBudgetService,
+    {
+      provide: AssistantGeoUsageLedgerService,
+      inject: [PrismaService, AssistantUsageBudgetService],
+      useFactory: (prisma: PrismaService, budgets: AssistantUsageBudgetService) => (
+        new AssistantGeoUsageLedgerService(prisma, budgets, process.env)
+      ),
+    },
     {
       provide: AssistantOverpassCollector,
-      useFactory: () => new AssistantOverpassCollector(process.env),
+      inject: [AssistantGeoUsageLedgerService],
+      useFactory: (usageLedger: AssistantGeoUsageLedgerService) => (
+        new AssistantOverpassCollector(process.env, undefined, undefined, undefined, usageLedger)
+      ),
     },
     AssistantPlaceResolverService,
     AssistantGeoAliasService,
-    AssistantUsageBudgetService,
     AssistantAiUsageBudgetService,
     {
       provide: AssistantModelUsagePolicyService,
@@ -68,14 +79,19 @@ import { AssistantRolloutStageService } from './rollout/assistant-rollout-stage.
     AssistantRolloutStageService,
     {
       provide: AssistantGeoProviderPolicyService,
-      inject: [PrismaService, AssistantUsageBudgetService],
-      useFactory: (prisma: PrismaService, budgets: AssistantUsageBudgetService) => new AssistantGeoProviderPolicyService(
+      inject: [PrismaService, AssistantUsageBudgetService, AssistantGeoUsageLedgerService],
+      useFactory: (
+        prisma: PrismaService,
+        budgets: AssistantUsageBudgetService,
+        usageLedger: AssistantGeoUsageLedgerService,
+      ) => new AssistantGeoProviderPolicyService(
         prisma,
         createAssistantGeoProvider(),
         process.env,
         undefined,
         undefined,
         budgets,
+        usageLedger,
       ),
     },
     {

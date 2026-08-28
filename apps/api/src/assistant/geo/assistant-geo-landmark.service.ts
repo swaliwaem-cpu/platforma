@@ -16,7 +16,6 @@ import {
   type ParsedAssistantGeoBrowserInput,
 } from './assistant-geo-contract';
 
-const verifiedGeometryRetentionMs = 30 * 24 * 60 * 60 * 1_000;
 type LandmarkWriteClient = Pick<Prisma.TransactionClient, '$executeRaw'>;
 
 export class AssistantGeoLandmarkGeometryError extends Error {
@@ -59,10 +58,15 @@ export type AssistantVerifiedLandmarkInput = {
   geometry: AssistantGeoReferenceGeometry;
   sourceProvider: 'locationiq' | 'overpass' | 'fake';
   sourceExternalId: string;
+  retentionMs?: number;
+  expiresAt?: Date;
   sourceMetadata: {
     entityType: string | null;
     fetchedAt: string;
     version: 1;
+    identityVersion?: 1;
+    userAlias?: string;
+    providerQuery?: string;
   };
 };
 
@@ -141,11 +145,16 @@ export class AssistantGeoLandmarkService {
 
   async findTrustedByQuery(input: {
     normalizedQuery: string;
+    normalizedQueries?: string[];
     mode: 'NEAR' | 'INSIDE';
     locale: string;
     country: string | null;
     viewbox?: [west: number, south: number, east: number, north: number] | null;
   }): Promise<AssistantTrustedLandmark[]> {
+    const normalizedQueries = [...new Set([
+      input.normalizedQuery,
+      ...(input.normalizedQueries ?? []),
+    ].map((value) => value.trim()).filter(Boolean))].slice(0, 20);
     const rows = await this.prisma.$queryRaw<LandmarkRow[]>(Prisma.sql`
       SELECT
         l."id"::text AS id,
@@ -157,7 +166,10 @@ export class AssistantGeoLandmarkService {
         CASE WHEN l."kind" = 'point' THEN ST_Y(l."geometry") ELSE NULL END AS latitude,
         CASE WHEN l."kind" = 'point' THEN ST_X(l."geometry") ELSE NULL END AS longitude
       FROM "assistant_geo_landmarks" l
-      WHERE (l."normalized_query" = ${input.normalizedQuery} OR l."aliases" @> ARRAY[${input.normalizedQuery}]::text[])
+      WHERE (
+        l."normalized_query" = ANY(ARRAY[${Prisma.join(normalizedQueries)}]::text[])
+        OR l."aliases" && ARRAY[${Prisma.join(normalizedQueries)}]::text[]
+      )
         AND l."locale" = ${input.locale}
         AND (${input.country ?? ''} = '' OR l."country" = ${input.country ?? ''})
         AND (${input.mode} = 'NEAR' OR l."kind" = 'area')
@@ -246,7 +258,7 @@ export class AssistantGeoLandmarkService {
 
   async saveVerified(input: AssistantVerifiedLandmarkInput): Promise<AssistantTrustedLandmark> {
     const geometry = parseAssistantReferenceGeometry(input.geometry, input.kind);
-    const expiresAt = new Date(Date.now() + verifiedGeometryRetentionMs);
+    const expiresAt = readVerifiedExpiry(input);
     const aliases = [...new Set([
       input.normalizedQuery,
       ...input.aliases,
@@ -255,6 +267,9 @@ export class AssistantGeoLandmarkService {
       entityType: input.sourceMetadata.entityType,
       fetchedAt: input.sourceMetadata.fetchedAt,
       version: 1,
+      ...(input.sourceMetadata.identityVersion ? { identityVersion: input.sourceMetadata.identityVersion } : {}),
+      ...(input.sourceMetadata.userAlias ? { userAlias: input.sourceMetadata.userAlias } : {}),
+      ...(input.sourceMetadata.providerQuery ? { providerQuery: input.sourceMetadata.providerQuery } : {}),
     });
     let rows: LandmarkRow[];
     try {
@@ -388,6 +403,28 @@ export class AssistantGeoLandmarkService {
     `);
     return rows[0] ? toTrustedLandmark(rows[0]) : null;
   }
+}
+
+function readRetentionMs(value: number) {
+  const minimum = 60 * 1_000;
+  const maximum = 365 * 24 * 60 * 60 * 1_000;
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new Error('ASSISTANT_GEO_LANDMARK_RETENTION_INVALID');
+  }
+  return value;
+}
+
+function readVerifiedExpiry(input: Pick<AssistantVerifiedLandmarkInput, 'expiresAt' | 'retentionMs'>) {
+  if (input.expiresAt !== undefined) {
+    const timestamp = input.expiresAt.getTime();
+    const remainingMs = timestamp - Date.now();
+    if (!Number.isFinite(timestamp) || remainingMs < 30_000 || remainingMs > 365 * 24 * 60 * 60 * 1_000) {
+      throw new Error('ASSISTANT_GEO_LANDMARK_EXPIRY_INVALID');
+    }
+    return input.expiresAt;
+  }
+  if (input.retentionMs === undefined) throw new Error('ASSISTANT_GEO_LANDMARK_RETENTION_REQUIRED');
+  return new Date(Date.now() + readRetentionMs(input.retentionMs));
 }
 
 function toTrustedLandmark(row: LandmarkRow): AssistantTrustedLandmark {

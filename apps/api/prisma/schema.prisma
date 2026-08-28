@@ -727,12 +727,35 @@ model AssistantGeoOperation {
   errorCode         String?  @map("error_code") @db.VarChar(120)
   createdAt         DateTime @default(now()) @map("created_at")
 
-  actor User? @relation("AssistantGeoOperationActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  actor         User?                      @relation("AssistantGeoOperationActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  usageAttempts AssistantGeoUsageAttempt[]
 
   @@index([createdAt])
   @@index([provider, status, createdAt])
   @@index([actorUserId, createdAt])
   @@map("assistant_geo_operations")
+}
+
+model AssistantGeoUsageAttempt {
+  id               String   @id @default(uuid()) @db.Uuid
+  operationId      String   @map("operation_id") @db.Uuid
+  attemptOrdinal   Int      @map("attempt_ordinal") @db.SmallInt
+  provider         String   @db.VarChar(40)
+  status           String   @db.VarChar(16)
+  outcome          String?  @db.VarChar(40)
+  errorCode        String?  @map("error_code") @db.VarChar(120)
+  durationMs       Int?     @map("duration_ms")
+  minuteStartedAt  DateTime @map("minute_started_at") @db.Timestamptz(3)
+  dayStartedAt     DateTime @map("day_started_at") @db.Date
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  settledAt        DateTime? @map("settled_at") @db.Timestamptz(3)
+
+  operation AssistantGeoOperation @relation(fields: [operationId], references: [id], onDelete: Cascade)
+
+  @@unique([operationId, attemptOrdinal], map: "assistant_geo_usage_attempts_operation_ordinal_key")
+  @@index([operationId, status])
+  @@index([provider, createdAt])
+  @@map("assistant_geo_usage_attempts")
 }
 
 model AssistantUsageMetric {

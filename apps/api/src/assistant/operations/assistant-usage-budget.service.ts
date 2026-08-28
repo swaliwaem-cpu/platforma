@@ -3,6 +3,8 @@ import { AssistantUsageWindow, Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 
+type AssistantUsageWriteClient = Pick<Prisma.TransactionClient, '$queryRaw' | '$executeRaw'>;
+
 export type AssistantUsageReservation = {
   provider: string;
   model: string;
@@ -32,33 +34,45 @@ export class AssistantUsageBudgetService {
     now?: Date;
     errorPrefix: string;
   }): Promise<AssistantUsageReservation> {
+    return this.prisma.$transaction((transaction) => this.reserveWithClient(transaction, input));
+  }
+
+  async reserveWithClient(
+    transaction: AssistantUsageWriteClient,
+    input: {
+      provider: string;
+      model: string;
+      perMinuteLimit: number;
+      dailyLimit: number;
+      now?: Date;
+      errorPrefix: string;
+    },
+  ): Promise<AssistantUsageReservation> {
     const now = input.now ?? new Date();
     const minuteStartedAt = truncateUtcMinute(now);
     const dayStartedAt = truncateUtcDay(now);
-    await this.prisma.$transaction(async (transaction) => {
-      const minuteReserved = await reserveBucket(
-        transaction,
-        input.provider,
-        input.model,
-        AssistantUsageWindow.MINUTE,
-        minuteStartedAt,
-        input.perMinuteLimit,
-      );
-      if (!minuteReserved) {
-        throw new AssistantUsageBudgetError(`${input.errorPrefix}_MINUTE_BUDGET_EXHAUSTED`, input.provider);
-      }
-      const dayReserved = await reserveBucket(
-        transaction,
-        input.provider,
-        input.model,
-        AssistantUsageWindow.DAY,
-        dayStartedAt,
-        input.dailyLimit,
-      );
-      if (!dayReserved) {
-        throw new AssistantUsageBudgetError(`${input.errorPrefix}_DAILY_BUDGET_EXHAUSTED`, input.provider);
-      }
-    });
+    const minuteReserved = await reserveBucket(
+      transaction,
+      input.provider,
+      input.model,
+      AssistantUsageWindow.MINUTE,
+      minuteStartedAt,
+      input.perMinuteLimit,
+    );
+    if (!minuteReserved) {
+      throw new AssistantUsageBudgetError(`${input.errorPrefix}_MINUTE_BUDGET_EXHAUSTED`, input.provider);
+    }
+    const dayReserved = await reserveBucket(
+      transaction,
+      input.provider,
+      input.model,
+      AssistantUsageWindow.DAY,
+      dayStartedAt,
+      input.dailyLimit,
+    );
+    if (!dayReserved) {
+      throw new AssistantUsageBudgetError(`${input.errorPrefix}_DAILY_BUDGET_EXHAUSTED`, input.provider);
+    }
     return { provider: input.provider, model: input.model, minuteStartedAt, dayStartedAt };
   }
 
@@ -71,16 +85,44 @@ export class AssistantUsageBudgetService {
     totalTokens?: number | null;
     durationMs: number;
   }) {
+    return this.prisma.$transaction((transaction) => this.completeWithClient(transaction, input));
+  }
+
+  async completeWithClient(
+    transaction: AssistantUsageWriteClient,
+    input: {
+      reservation: AssistantUsageReservation;
+      outcome: 'ACCEPTED' | 'LOCAL_VALIDATION_FAILED' | 'PROVIDER_ERROR' | 'SUCCESS' | 'ERROR';
+      inputTokens?: number | null;
+      outputTokens?: number | null;
+      reasoningTokens?: number | null;
+      totalTokens?: number | null;
+      durationMs: number;
+    },
+  ) {
     const completed = input.outcome === 'ACCEPTED' || input.outcome === 'SUCCESS';
-    await this.prisma.$transaction([
-      updateBucket(this.prisma, input.reservation, AssistantUsageWindow.MINUTE, input.reservation.minuteStartedAt, input, completed),
-      updateBucket(this.prisma, input.reservation, AssistantUsageWindow.DAY, input.reservation.dayStartedAt, input, completed),
-    ]);
+    const minuteUpdated = await updateBucket(
+      transaction,
+      input.reservation,
+      AssistantUsageWindow.MINUTE,
+      input.reservation.minuteStartedAt,
+      input,
+      completed,
+    );
+    const dayUpdated = await updateBucket(
+      transaction,
+      input.reservation,
+      AssistantUsageWindow.DAY,
+      input.reservation.dayStartedAt,
+      input,
+      completed,
+    );
+    return { minuteUpdated, dayUpdated };
   }
 }
 
 async function reserveBucket(
-  transaction: Prisma.TransactionClient,
+  transaction: AssistantUsageWriteClient,
   provider: string,
   model: string,
   window: AssistantUsageWindow,
@@ -104,7 +146,7 @@ async function reserveBucket(
 }
 
 function updateBucket(
-  prisma: PrismaService,
+  prisma: AssistantUsageWriteClient,
   reservation: AssistantUsageReservation,
   window: AssistantUsageWindow,
   windowStartedAt: Date,

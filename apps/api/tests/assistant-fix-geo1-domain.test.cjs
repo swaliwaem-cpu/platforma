@@ -19,6 +19,13 @@ const {
   LocationIqGeoProvider,
 } = require('../dist/assistant/geo/assistant-geo-provider.js');
 const {
+  AssistantGeoProviderPolicyService,
+} = require('../dist/assistant/geo/assistant-geo-provider-policy.service.js');
+const {
+  AssistantGeoUsageLedgerService,
+  AssistantGeoUsageLedgerError,
+} = require('../dist/assistant/geo/assistant-geo-usage-ledger.service.js');
+const {
   AssistantOverpassCollector,
   AssistantOverpassError,
 } = require('../dist/assistant/geo/assistant-overpass-collector.js');
@@ -92,6 +99,175 @@ test('FIX-GEO1 parser separates the landmark from rooms and a budget written in 
   });
   assert.equal(reordered.placeQuery, 'Садовое кольцо');
   assert.equal(reordered.mode, 'NEAR');
+});
+
+test('PIDAFIX2 parser keeps UI label, user alias and canonical provider identity separate', () => {
+  const ttkInputs = [
+    ['ТТК', 'ттк'],
+    ['Третьего транспортного кольца', 'третьего транспортного кольца'],
+    ['Третьим транспортным кольцом', 'третьим транспортным кольцом'],
+  ];
+  for (const [phrase, userAlias] of ttkInputs) {
+    const parsed = parseResolveInput({ content: `Найди квартиру возле ${phrase}`, locale: 'ru', country: 'ru' });
+    assert.equal(parsed.placeQuery, 'ТТК');
+    assert.equal(parsed.normalizedQuery, 'третье транспортное кольцо');
+    assert.equal(parsed.providerQuery, 'третье транспортное кольцо');
+    assert.equal(parsed.userAlias, userAlias);
+    assert.deepEqual(parsed.aliases, ['ттк', 'третье транспортное кольцо']);
+  }
+
+  const mkad = parseResolveInput({
+    content: 'Найди квартиру около московской кольцевой автомобильной дороги',
+    locale: 'ru',
+    country: 'ru',
+  });
+  assert.equal(mkad.placeQuery, 'МКАД');
+  assert.equal(mkad.normalizedQuery, 'московская кольцевая автодорога');
+  assert.equal(mkad.providerQuery, 'московская кольцевая автодорога');
+  assert.deepEqual(mkad.aliases, [
+    'мкад',
+    'московская кольцевая автодорога',
+    'московская кольцевая автомобильная дорога',
+  ]);
+
+  const canonical = parseResolveInput({ content: 'Найди квартиру возле ТТК', locale: 'ru', country: 'ru' });
+  const inflected = parseResolveInput({
+    content: 'Найди квартиру возле Третьего транспортного кольца', locale: 'ru', country: 'ru',
+  });
+  assert.equal(createCacheKey(canonical), createCacheKey(inflected));
+});
+
+test('PIDAFIX2 resolver uses canonical provider query and persists bounded identity provenance', async () => {
+  const providerQueries = [];
+  const overpassRequests = [];
+  const saved = [];
+  const provider = {
+    getProviderName: () => 'locationiq',
+    getCacheRetentionMs: () => 3_600_000,
+    async searchWithTelemetry(request) {
+      providerQueries.push(request.query);
+      return providerQueries.length === 1
+        ? {
+            providerCallCount: 1,
+            candidates: [{
+              id: 'ttk-fragment',
+              label: 'Третье транспортное кольцо, Москва',
+              latitude: 55.75,
+              longitude: 37.62,
+              city: 'Москва',
+              countryCode: 'ru',
+              geometryKind: 'LINE',
+              geometryComplete: false,
+              entityClass: 'highway',
+              osmType: 'way',
+              osmId: '10',
+            }],
+          }
+        : {
+            providerCallCount: 1,
+            candidates: [{
+              id: 'moscow',
+              label: 'Москва, Россия',
+              latitude: 55.75,
+              longitude: 37.62,
+              city: 'Москва',
+              countryCode: 'ru',
+              geometryKind: 'AREA',
+              geometryComplete: true,
+              entityClass: 'boundary',
+              entityType: 'administrative',
+              osmType: 'relation',
+              osmId: 'moscow',
+              boundingBox: [37.3, 55.5, 37.9, 55.9],
+              referenceGeometry: {
+                type: 'Polygon',
+                coordinates: [[[37.3, 55.5], [37.9, 55.5], [37.9, 55.9], [37.3, 55.5]]],
+              },
+            }],
+          };
+    },
+  };
+  const landmarks = {
+    findTrustedByQuery: async () => [],
+    findTrustedById: async () => null,
+    async saveVerified(input) {
+      saved.push(input);
+      return {
+        id: '56565656-5656-4565-8565-565656565656',
+        kind: 'LINE',
+        label: input.label,
+        city: input.city,
+        countryCode: input.country,
+        source: 'PLACE',
+      };
+    },
+  };
+  const resolver = new AssistantPlaceResolverService(
+    createResolverPrisma(),
+    provider,
+    landmarks,
+    {
+      async collect(request) {
+        overpassRequests.push(request);
+        return {
+          geometry: {
+            type: 'LineString',
+            coordinates: [[37.5, 55.7], [37.6, 55.8], [37.5, 55.7]],
+          },
+          externalId: 'road/ttk',
+          entityType: 'road',
+        };
+      },
+    },
+  );
+
+  const result = await resolver.resolve({
+    content: 'Найди квартиру возле Третьего транспортного кольца',
+    locale: 'ru',
+    country: 'ru',
+  });
+
+  assert.equal(result.status, 'RESOLVED');
+  assert.equal(result.placeQuery, 'ТТК');
+  assert.deepEqual(providerQueries, ['третье транспортное кольцо', 'Москва']);
+  assert.deepEqual(overpassRequests[0].tagValues, ['ТТК', 'Третье транспортное кольцо']);
+  assert.equal(saved[0].label, 'ТТК');
+  assert.equal(saved[0].normalizedQuery, 'третье транспортное кольцо');
+  assert.deepEqual(saved[0].aliases, [
+    'ттк',
+    'третье транспортное кольцо',
+    'третьего транспортного кольца',
+  ]);
+  assert.equal(saved[0].sourceMetadata.identityVersion, 1);
+  assert.equal(saved[0].sourceMetadata.userAlias, 'третьего транспортного кольца');
+  assert.equal(saved[0].sourceMetadata.providerQuery, 'третье транспортное кольцо');
+});
+
+test('PIDAFIX2 DB-first lookup includes bounded canonical aliases for legacy manual landmarks', async () => {
+  let lookupInput;
+  const resolver = new AssistantPlaceResolverService(
+    createResolverPrisma(),
+    createUnusedProvider(),
+    {
+      async findTrustedByQuery(input) {
+        lookupInput = input;
+        return [{
+          id: '45454545-4545-4454-8454-454545454545',
+          kind: 'POINT',
+          label: 'Ручная точка ТТК',
+          city: 'Москва',
+          countryCode: 'ru',
+          source: 'ALIAS',
+          point: { latitude: 55.75, longitude: 37.62 },
+        }];
+      },
+      findTrustedById: async () => null,
+    },
+  );
+
+  const result = await resolver.resolve({ content: 'Найди квартиру возле ТТК', locale: 'ru', country: 'ru' });
+  assert.equal(result.status, 'RESOLVED');
+  assert.deepEqual(lookupInput.normalizedQueries, ['третье транспортное кольцо', 'ттк']);
 });
 
 test('FIX-GEO1 explicit distance wins and INSIDE has no distance', () => {
@@ -296,6 +472,7 @@ test('FIX-GEO1 Overpass outage is UNAVAILABLE, counted and never negative-cached
               countryCode: 'ru',
               geometryKind: 'LINE',
               geometryComplete: false,
+              entityClass: 'highway',
             }],
           }
         : {
@@ -309,6 +486,9 @@ test('FIX-GEO1 Overpass outage is UNAVAILABLE, counted and never negative-cached
               countryCode: 'ru',
               geometryKind: 'AREA',
               geometryComplete: true,
+              entityClass: 'boundary',
+              entityType: 'administrative',
+              osmType: 'relation',
               boundingBox: [37.3, 55.5, 37.9, 55.9],
               referenceGeometry: {
                 type: 'Polygon',
@@ -329,6 +509,178 @@ test('FIX-GEO1 Overpass outage is UNAVAILABLE, counted and never negative-cached
   assert.equal(cacheWrites, 0);
   assert.equal(operations.at(-1).data.providerCallCount, 3);
   assert.equal(operations.at(-1).data.errorCode, 'ASSISTANT_OVERPASS_TIMEOUT');
+});
+
+test('PIDAFIX2 resolver owns one tracked operation and memoizes city and Overpass within it', async () => {
+  const operationEvents = [];
+  const providerQueries = [];
+  let overpassCalls = 0;
+  let savedCalls = 0;
+  const prisma = createResolverPrisma({
+    onOperationCreate: (input) => operationEvents.push(['create', input]),
+    onOperationUpdate: (input) => operationEvents.push(['update', input]),
+  });
+  const provider = {
+    getProviderName: () => 'locationiq',
+    getCacheRetentionMs: () => 3_600_000,
+    async searchWithTelemetry(request) {
+      providerQueries.push(request.query);
+      if (request.query === 'Москва') {
+        return {
+          providerCallCount: 1,
+          candidates: [{
+            id: 'moscow', label: 'Москва, Россия', latitude: 55.75, longitude: 37.62,
+            city: 'Москва', countryCode: 'ru', geometryKind: 'AREA', geometryComplete: true,
+            entityClass: 'boundary', entityType: 'administrative', osmType: 'relation',
+            boundingBox: [37.3, 55.5, 37.9, 55.9],
+            referenceGeometry: {
+              type: 'Polygon',
+              coordinates: [[[37.3, 55.5], [37.9, 55.5], [37.9, 55.9], [37.3, 55.5]]],
+            },
+          }],
+        };
+      }
+      const fragment = (id) => ({
+        id, label: 'ТТК, Москва', latitude: 55.75, longitude: 37.62,
+        city: 'Москва', countryCode: 'ru', geometryKind: 'LINE', geometryComplete: false,
+        entityClass: 'highway', osmType: 'way', osmId: id,
+      });
+      return { providerCallCount: 1, candidates: [fragment('10'), fragment('11')] };
+    },
+  };
+  const landmarks = {
+    findTrustedByQuery: async () => [],
+    findTrustedById: async () => null,
+    async saveVerified(input) {
+      savedCalls += 1;
+      const remainingMs = input.expiresAt.getTime() - Date.now();
+      assert.ok(remainingMs > 29 * 24 * 60 * 60 * 1_000 && remainingMs <= 30 * 24 * 60 * 60 * 1_000);
+      return {
+        id: '67676767-6767-4676-8676-676767676767',
+        kind: 'LINE', label: input.label, city: input.city, countryCode: input.country, source: 'PLACE',
+      };
+    },
+  };
+  const usageLedger = {
+    async runResolution(operationId, task) {
+      operationEvents.push(['context', operationId]);
+      return task();
+    },
+  };
+  const resolver = new AssistantPlaceResolverService(
+    prisma,
+    provider,
+    landmarks,
+    {
+      async collect() {
+        overpassCalls += 1;
+        return {
+          geometry: { type: 'LineString', coordinates: [[37.5, 55.7], [37.6, 55.8], [37.5, 55.7]] },
+          externalId: 'overpass/ttk',
+          entityType: 'road',
+        };
+      },
+    },
+    usageLedger,
+  );
+
+  const result = await resolver.resolve({ content: 'Найди квартиру возле ТТК', locale: 'ru', country: 'ru' });
+  assert.equal(result.status, 'RESOLVED');
+  assert.deepEqual(providerQueries, ['третье транспортное кольцо', 'Москва']);
+  assert.equal(overpassCalls, 1);
+  assert.equal(savedCalls, 2);
+  assert.equal(operationEvents[0][0], 'create');
+  assert.equal(operationEvents[0][1].data.status, 'RUNNING');
+  assert.equal(operationEvents[0][1].data.provider, 'locationiq');
+  assert.equal(operationEvents[1][0], 'context');
+  assert.equal(operationEvents[1][1], operationEvents[0][1].data.id);
+  assert.equal(operationEvents.at(-1)[0], 'update');
+  assert.equal(Object.hasOwn(operationEvents.at(-1)[1].data, 'provider'), false);
+  assert.equal(operationEvents.at(-1)[1].data.status, 'RESOLVED');
+});
+
+test('PIDAFIX2 fake provider keeps legacy call-count audit when the ledger is injected', async () => {
+  const operations = [];
+  let ledgerContexts = 0;
+  const resolver = new AssistantPlaceResolverService(
+    createResolverPrisma({ onOperation: (input) => operations.push(input) }),
+    {
+      getProviderName: () => 'fake',
+      getCacheRetentionMs: () => 3_600_000,
+      searchWithTelemetry: async () => ({ providerCallCount: 1, candidates: [] }),
+    },
+    { findTrustedByQuery: async () => [], findTrustedById: async () => null },
+    undefined,
+    { runResolution: async (_operationId, task) => { ledgerContexts += 1; return task(); } },
+  );
+
+  const result = await resolver.resolve({ content: 'Найди квартиру возле тестовой точки' });
+  assert.equal(result.status, 'NOT_FOUND');
+  assert.equal(ledgerContexts, 0);
+  assert.equal(operations.length, 1);
+  assert.equal(operations[0].data.provider, 'fake');
+  assert.equal(operations[0].data.providerCallCount, 1);
+});
+
+test('PIDAFIX2 failure to create the tracked operation blocks provider HTTP', async () => {
+  let providerCalls = 0;
+  const resolver = new AssistantPlaceResolverService(
+    createResolverPrisma({ failOperationCreate: true }),
+    {
+      getProviderName: () => 'locationiq',
+      getCacheRetentionMs: () => 3_600_000,
+      async searchWithTelemetry() {
+        providerCalls += 1;
+        return { providerCallCount: 1, candidates: [] };
+      },
+    },
+    { findTrustedByQuery: async () => [], findTrustedById: async () => null },
+    undefined,
+    { runResolution: async (_operationId, task) => task() },
+  );
+  const result = await resolver.resolve({ content: 'Найди квартиру возле ТТК' });
+  assert.equal(result.status, 'UNAVAILABLE');
+  assert.equal(providerCalls, 0);
+});
+
+test('PIDAFIX2 unexpected persistence failure finalizes the tracked operation before propagating', async () => {
+  const operationUpdates = [];
+  const resolver = new AssistantPlaceResolverService(
+    createResolverPrisma({
+      failCacheWrite: true,
+      onOperationUpdate: (input) => operationUpdates.push(input),
+    }),
+    {
+      getProviderName: () => 'locationiq',
+      getCacheRetentionMs: () => 3_600_000,
+      searchWithTelemetry: async () => ({ providerCallCount: 1, candidates: [] }),
+    },
+    { findTrustedByQuery: async () => [], findTrustedById: async () => null },
+    undefined,
+    { runResolution: async (_operationId, task) => task() },
+  );
+
+  await assert.rejects(
+    resolver.resolve({ content: 'Найди квартиру возле ТТК', locale: 'ru', country: 'ru' }),
+    /CACHE_WRITE_FAILED/u,
+  );
+  assert.equal(operationUpdates.length, 1);
+  assert.equal(operationUpdates[0].data.status, 'UNAVAILABLE');
+  assert.equal(Object.hasOwn(operationUpdates[0].data, 'provider'), false);
+  assert.equal(operationUpdates[0].data.errorCode, 'ASSISTANT_GEO_RESOLUTION_INTERNAL_ERROR');
+});
+
+test('PIDAFIX2 API enforces exact per-resolution provider caps', () => {
+  assert.throws(() => new AssistantGeoUsageLedgerService({}, {}, {
+    ASSISTANT_GEO_MAX_LOCATIONIQ_ATTEMPTS_PER_RESOLVE: '3',
+    ASSISTANT_GEO_MAX_OVERPASS_ATTEMPTS_PER_RESOLVE: '1',
+  }), (error) => error instanceof AssistantGeoUsageLedgerError
+    && error.code === 'ASSISTANT_GEO_MAX_LOCATIONIQ_ATTEMPTS_PER_RESOLVE_INVALID');
+  assert.throws(() => new AssistantGeoUsageLedgerService({}, {}, {
+    ASSISTANT_GEO_MAX_LOCATIONIQ_ATTEMPTS_PER_RESOLVE: '2',
+    ASSISTANT_GEO_MAX_OVERPASS_ATTEMPTS_PER_RESOLVE: '2',
+  }), (error) => error instanceof AssistantGeoUsageLedgerError
+    && error.code === 'ASSISTANT_GEO_MAX_OVERPASS_ATTEMPTS_PER_RESOLVE_INVALID');
 });
 
 test('FIX-GEO1 GeoJSON validator is exact, bounded and fail-closed', () => {
@@ -442,6 +794,21 @@ test('FIX-GEO1 LocationIQ rejects malformed and oversized geometry responses as 
     error instanceof AssistantGeoProviderError && error.code === 'ASSISTANT_GEO_PROVIDER_GEOMETRY_INVALID'
   ));
 
+  const malformedCandidate = new LocationIqGeoProvider({
+    LOCATIONIQ_API_KEY: 'test-only-key',
+    LOCATIONIQ_API_URL: 'http://127.0.0.1:3009/v1/search',
+    ASSISTANT_GEO_PROVIDER_MAX_RETRIES: '0',
+  }, async () => new Response(JSON.stringify([{
+    place_id: 'missing-coordinate',
+    display_name: 'Malformed non-empty response',
+    lat: '55',
+  }]), { status: 200 }));
+  await assert.rejects(
+    malformedCandidate.search({ query: 'Broken', locale: 'ru', country: null, viewbox: null }),
+    (error) => error instanceof AssistantGeoProviderError
+      && error.code === 'ASSISTANT_GEO_PROVIDER_RESPONSE_INVALID',
+  );
+
   const oversized = new LocationIqGeoProvider({
     LOCATIONIQ_API_KEY: 'test-only-key',
     LOCATIONIQ_API_URL: 'http://127.0.0.1:3009/v1/search',
@@ -450,9 +817,253 @@ test('FIX-GEO1 LocationIQ rejects malformed and oversized geometry responses as 
   await assert.rejects(oversized.search({ query: 'Huge', locale: 'ru', country: null, viewbox: null }), (error) => (
     error instanceof AssistantGeoProviderError && error.code === 'ASSISTANT_GEO_PROVIDER_RESPONSE_TOO_LARGE'
   ));
+
+  const tooMany = new LocationIqGeoProvider({
+    LOCATIONIQ_API_KEY: 'test-only-key',
+    LOCATIONIQ_API_URL: 'http://127.0.0.1:3009/v1/search',
+    ASSISTANT_GEO_PROVIDER_MAX_RETRIES: '0',
+  }, async () => new Response(JSON.stringify(Array.from({ length: 4 }, (_, index) => ({
+    place_id: `candidate-${index}`,
+    display_name: `Candidate ${index}`,
+    lat: String(55 + index / 100),
+    lon: String(37 + index / 100),
+  }))), { status: 200 }));
+  await assert.rejects(
+    tooMany.search({ query: 'Too many', locale: 'ru', country: null, viewbox: null }),
+    (error) => error instanceof AssistantGeoProviderError
+      && error.code === 'ASSISTANT_GEO_PROVIDER_RESPONSE_INVALID',
+  );
 });
 
-test('FIX-GEO1 Overpass uses one bounded single-flight request and returns the whole multiline road', async () => {
+test('PIDAFIX2 AREA accepts one Moscow administrative relation and rejects wrong, ambiguous or centroid-only identity', async (t) => {
+  const valid = {
+    id: 'arbat-1', label: 'район Арбат, Москва', latitude: 55.7522, longitude: 37.5906,
+    city: 'Москва', countryCode: 'ru', geometryKind: 'AREA', geometryComplete: true,
+    entityClass: 'boundary', entityType: 'administrative', osmType: 'relation', osmId: '123',
+    boundingBox: [37.565, 55.744, 37.606, 55.765],
+    referenceGeometry: {
+      type: 'Polygon',
+      coordinates: [[[37.565, 55.744], [37.606, 55.744], [37.606, 55.765], [37.565, 55.744]]],
+    },
+  };
+  const cases = [
+    ['valid', [valid], 'RESOLVED', 1],
+    ['wrong city', [{ ...valid, id: 'wrong-city', city: 'Екатеринбург' }], 'UNAVAILABLE', 0],
+    ['wrong country', [{ ...valid, id: 'wrong-country', countryCode: 'kz' }], 'UNAVAILABLE', 0],
+    ['wrong class', [{ ...valid, id: 'wrong-class', entityClass: 'place' }], 'UNAVAILABLE', 0],
+    ['wrong osm type', [{ ...valid, id: 'wrong-osm', osmType: 'way' }], 'UNAVAILABLE', 0],
+    ['centroid only', [{
+      ...valid,
+      id: 'centroid',
+      geometryKind: 'POINT',
+      geometryComplete: true,
+      referenceGeometry: undefined,
+      boundingBox: null,
+    }], 'UNAVAILABLE', 0],
+    ['ambiguous', [valid, { ...valid, id: 'arbat-2', osmId: '124' }], 'UNAVAILABLE', 0],
+  ];
+  for (const [name, candidates, expectedStatus, expectedSaves] of cases) {
+    await t.test(name, async () => {
+      let cacheWrites = 0;
+      let saves = 0;
+      const resolver = new AssistantPlaceResolverService(
+        createResolverPrisma({ onCacheWrite: () => { cacheWrites += 1; } }),
+        {
+          getProviderName: () => 'locationiq',
+          getCacheRetentionMs: () => 3_600_000,
+          searchWithTelemetry: async () => ({ providerCallCount: 1, candidates }),
+        },
+        {
+          findTrustedByQuery: async () => [],
+          findTrustedById: async () => null,
+          async saveVerified(input) {
+            saves += 1;
+            const remainingMs = input.expiresAt.getTime() - Date.now();
+            assert.ok(remainingMs > 3_590_000 && remainingMs <= 3_600_000);
+            return {
+              id: '78787878-7878-4787-8787-787878787878',
+              kind: 'AREA', label: input.label, city: input.city, countryCode: input.country, source: 'PLACE',
+            };
+          },
+        },
+      );
+      const result = await resolver.resolve({
+        content: 'Найди квартиру внутри района Арбат',
+        locale: 'ru',
+        country: 'ru',
+      });
+      assert.equal(result.status, expectedStatus);
+      assert.equal(saves, expectedSaves);
+      assert.equal(cacheWrites, expectedStatus === 'RESOLVED' ? 1 : 0);
+    });
+  }
+});
+
+test('PIDAFIX2 LocationIQ preserves distinct AREA relation identities until resolver ambiguity check', async () => {
+  const areaFixture = (placeId, osmId) => ({
+    place_id: placeId,
+    display_name: 'район Арбат, Москва',
+    lat: '55.7522',
+    lon: '37.5906',
+    class: 'boundary',
+    type: 'administrative',
+    osm_type: 'relation',
+    osm_id: osmId,
+    boundingbox: ['55.744', '55.765', '37.565', '37.606'],
+    address: { city: 'Москва', country_code: 'ru' },
+    geojson: {
+      type: 'Polygon',
+      coordinates: [[[37.565, 55.744], [37.606, 55.744], [37.606, 55.765], [37.565, 55.744]]],
+    },
+  });
+  const adapter = new LocationIqGeoProvider({
+    LOCATIONIQ_API_KEY: 'test-only-key',
+    LOCATIONIQ_API_URL: 'http://127.0.0.1:3009/v1/search',
+    ASSISTANT_GEO_PROVIDER_MAX_RETRIES: '0',
+  }, async () => new Response(JSON.stringify([
+    areaFixture('arbat-one', '111'),
+    areaFixture('arbat-two', '222'),
+  ]), { status: 200 }));
+  let cacheWrites = 0;
+  let landmarkWrites = 0;
+  const resolver = new AssistantPlaceResolverService(
+    createResolverPrisma({ onCacheWrite: () => { cacheWrites += 1; } }),
+    {
+      getProviderName: () => 'locationiq',
+      getCacheRetentionMs: () => 3_600_000,
+      async searchWithTelemetry(request) {
+        return { providerCallCount: 1, candidates: await adapter.search(request) };
+      },
+    },
+    {
+      findTrustedByQuery: async () => [],
+      findTrustedById: async () => null,
+      saveVerified: async () => { landmarkWrites += 1; throw new Error('UNEXPECTED_LANDMARK_WRITE'); },
+    },
+  );
+
+  const result = await resolver.resolve({
+    content: 'Найди квартиру внутри района Арбат',
+    locale: 'ru',
+    country: 'ru',
+  });
+  assert.equal(result.status, 'UNAVAILABLE');
+  assert.equal(cacheWrites, 0);
+  assert.equal(landmarkWrites, 0);
+});
+
+test('PIDAFIX2 LocationIQ reserves every physical fetch and blocks attempt N+1 before HTTP', async () => {
+  let fetchCalls = 0;
+  let reservations = 0;
+  const settlements = [];
+  const usageLedger = {
+    async reserve(provider) {
+      assert.equal(provider, 'locationiq');
+      reservations += 1;
+      if (reservations > 2) {
+        throw new AssistantGeoUsageLedgerError('ASSISTANT_GEO_LOCATIONIQ_RESOLUTION_BUDGET_EXHAUSTED');
+      }
+      return { id: `attempt-${reservations}` };
+    },
+    async settle(reservation, input) {
+      settlements.push({ reservation, input });
+    },
+  };
+  const environment = {
+    ASSISTANT_GEO_PROVIDER_ENABLED: 'true',
+    ASSISTANT_GEO_PROVIDER_MODE: 'locationiq',
+    LOCATIONIQ_API_KEY: 'test-only-key',
+    LOCATIONIQ_API_URL: 'http://127.0.0.1:3009/v1/search',
+    ASSISTANT_GEO_PROVIDER_MAX_RETRIES: '0',
+    ASSISTANT_GEO_PROVIDER_RPS: '20',
+    ASSISTANT_GEO_PROVIDER_REQUESTS_PER_MINUTE: '20',
+    ASSISTANT_GEO_PROVIDER_DAILY_BUDGET: '100',
+    ASSISTANT_GEO_CACHE_TTL_SECONDS: '3600',
+  };
+  const provider = new LocationIqGeoProvider(environment, async () => {
+    fetchCalls += 1;
+    return new Response(JSON.stringify([{
+      place_id: `place-${fetchCalls}`,
+      display_name: 'Точка, Москва',
+      lat: '55.75',
+      lon: '37.62',
+      address: { city: 'Москва', country_code: 'ru' },
+      geojson: { type: 'Point', coordinates: [37.62, 55.75] },
+    }]), { status: 200 });
+  });
+  const policy = new AssistantGeoProviderPolicyService(
+    { $queryRaw: async () => [{ requestCount: 1 }] },
+    provider,
+    environment,
+    () => new Date('2026-08-28T12:00:00.000Z'),
+    async () => {},
+    undefined,
+    usageLedger,
+  );
+  const request = { query: 'Точка', locale: 'ru', country: 'ru', viewbox: null };
+
+  await policy.searchWithTelemetry(request);
+  await policy.searchWithTelemetry(request);
+  await assert.rejects(policy.searchWithTelemetry(request), (error) => (
+    error instanceof AssistantGeoProviderError
+      && error.code === 'ASSISTANT_GEO_LOCATIONIQ_RESOLUTION_BUDGET_EXHAUSTED'
+  ));
+  assert.equal(fetchCalls, 2);
+  assert.equal(reservations, 3);
+  assert.deepEqual(settlements.map(({ input }) => input.outcome), ['SUCCESS', 'SUCCESS']);
+});
+
+test('PIDAFIX2 Overpass reserves and settles every physical fetch and blocks attempt N+1', async () => {
+  let fetchCalls = 0;
+  let reserveCalls = 0;
+  const settlements = [];
+  const collector = new AssistantOverpassCollector({
+    ASSISTANT_OVERPASS_ENABLED: 'true',
+    ASSISTANT_OVERPASS_URL: 'http://127.0.0.1:3010/api/interpreter',
+    ASSISTANT_OVERPASS_RPS: '5',
+  }, async () => {
+    fetchCalls += 1;
+    return new Response(JSON.stringify({
+      elements: [{
+        type: 'relation', id: 1, tags: { type: 'route', route: 'road', ref: 'ТТК' },
+        members: [{
+          type: 'way', ref: 10,
+          geometry: [
+            { lat: 55.7, lon: 37.5 },
+            { lat: 55.8, lon: 37.6 },
+            { lat: 55.7, lon: 37.5 },
+          ],
+        }],
+      }],
+    }), { status: 200 });
+  }, Date.now, async () => {}, {
+    async reserve(provider) {
+      assert.equal(provider, 'overpass');
+      reserveCalls += 1;
+      if (reserveCalls > 1) {
+        throw new AssistantGeoUsageLedgerError('ASSISTANT_GEO_OVERPASS_RESOLUTION_BUDGET_EXHAUSTED');
+      }
+      return { id: 'attempt-1' };
+    },
+    async settle(reservation, input) {
+      settlements.push({ reservation, input });
+    },
+  });
+  const request = {
+    name: 'ТТК', tagValues: ['ТТК'], city: 'Москва', cityBounds: [37.3, 55.5, 37.9, 55.9],
+  };
+
+  await collector.collect(request);
+  await assert.rejects(collector.collect(request), (error) => (
+    error instanceof AssistantOverpassError
+      && error.code === 'ASSISTANT_GEO_OVERPASS_RESOLUTION_BUDGET_EXHAUSTED'
+  ));
+  assert.equal(fetchCalls, 1);
+  assert.equal(reserveCalls, 2);
+  assert.deepEqual(settlements.map(({ input }) => input.outcome), ['SUCCESS']);
+});
+
+test('PIDAFIX2 Overpass uses exact allowlisted tags and one complete road relation', async () => {
   let fetchCalls = 0;
   let postedQuery = '';
   const collector = new AssistantOverpassCollector({
@@ -465,30 +1076,164 @@ test('FIX-GEO1 Overpass uses one bounded single-flight request and returns the w
     postedQuery = new URLSearchParams(init.body).get('data');
     await new Promise((resolve) => setTimeout(resolve, 5));
     return new Response(JSON.stringify({
-      elements: [
-        {
-          type: 'way', id: 10, tags: { name: 'Садовое кольцо' },
-          geometry: [{ lat: 55.74, lon: 37.58 }, { lat: 55.76, lon: 37.61 }],
-        },
-        {
-          type: 'way', id: 11, tags: { name: 'Садовое кольцо' },
-          geometry: [{ lat: 55.76, lon: 37.61 }, { lat: 55.75, lon: 37.65 }],
-        },
-      ],
+      elements: [{
+        type: 'relation',
+        id: 100,
+        tags: { type: 'route', route: 'road', short_name: 'Садовое кольцо' },
+        members: [
+          {
+            type: 'way', ref: 10,
+            geometry: [{ lat: 55.74, lon: 37.58 }, { lat: 55.76, lon: 37.61 }],
+          },
+          {
+            type: 'way', ref: 11,
+            geometry: [{ lat: 55.76, lon: 37.61 }, { lat: 55.74, lon: 37.58 }],
+          },
+        ],
+      }],
     }), { status: 200, headers: { 'content-type': 'application/json' } });
   });
   const request = {
     name: 'Садовое кольцо',
+    tagValues: ['Садовое кольцо', 'ТТК'],
     city: 'Москва',
     cityBounds: [37.3, 55.5, 37.9, 55.9],
   };
-  const [first, second] = await Promise.all([collector.collect(request), collector.collect(request)]);
+  const first = await collector.collect(request);
   assert.equal(fetchCalls, 1);
   assert.equal(first.geometry.type, 'MultiLineString');
-  assert.deepEqual(second, first);
   assert.match(postedQuery, /\[out:json\]\[timeout:\d+\]\[maxsize:\d+\]/u);
   assert.match(postedQuery, /\(55\.5,37\.3,55\.9,37\.9\)/u);
+  for (const key of ['name', 'official_name', 'short_name', 'alt_name', 'ref']) {
+    assert.match(postedQuery, new RegExp(`relation\\["${key}"="ТТК"\\]`, 'u'));
+  }
+  assert.doesNotMatch(postedQuery, /way\[/u);
   assert.match(postedQuery, /out geom;/u);
+});
+
+test('PIDAFIX2 Overpass rejects ways-only, incomplete, unrelated and exactly open rings', async (t) => {
+  const request = {
+    name: 'ТТК',
+    tagValues: ['ТТК', 'Третье транспортное кольцо'],
+    city: 'Москва',
+    cityBounds: [37.3, 55.5, 37.9, 55.9],
+  };
+  const cases = [
+    ['ways-only', {
+      elements: [{
+        type: 'way', id: 10, tags: { ref: 'ТТК' },
+        geometry: [{ lat: 55.74, lon: 37.58 }, { lat: 55.76, lon: 37.61 }],
+      }],
+    }, 'ASSISTANT_OVERPASS_GEOMETRY_INCOMPLETE'],
+    ['missing member geometry', {
+      elements: [{
+        type: 'relation', id: 100, tags: { type: 'route', route: 'road', ref: 'ТТК' },
+        members: [{ type: 'way', ref: 10 }],
+      }],
+    }, 'ASSISTANT_OVERPASS_GEOMETRY_INCOMPLETE'],
+    ['unrelated relation', {
+      elements: [{
+        type: 'relation', id: 100, tags: { type: 'route', route: 'bus', ref: 'ТТК' },
+        members: [{
+          type: 'way', ref: 10,
+          geometry: [{ lat: 55.74, lon: 37.58 }, { lat: 55.74, lon: 37.58 }],
+        }],
+      }],
+    }, 'ASSISTANT_OVERPASS_GEOMETRY_NOT_FOUND'],
+    ['sibling name', {
+      elements: [{
+        type: 'relation', id: 100, tags: { type: 'route', route: 'road', ref: 'ТТК-север' },
+        members: [{
+          type: 'way', ref: 10,
+          geometry: [
+            { lat: 55.74, lon: 37.58 },
+            { lat: 55.76, lon: 37.61 },
+            { lat: 55.74, lon: 37.58 },
+          ],
+        }],
+      }],
+    }, 'ASSISTANT_OVERPASS_GEOMETRY_NOT_FOUND'],
+    ['invalid point', {
+      elements: [{
+        type: 'relation', id: 100, tags: { type: 'route', route: 'road', ref: 'ТТК' },
+        members: [{
+          type: 'way', ref: 10,
+          geometry: [{ lat: 55.74, lon: 37.58 }, { lat: 55.76, lon: 200 }],
+        }],
+      }],
+    }, 'ASSISTANT_OVERPASS_GEOMETRY_INVALID'],
+    ['exact endpoint gap', {
+      elements: [{
+        type: 'relation', id: 100, tags: { type: 'route', route: 'road', ref: 'ТТК' },
+        members: [
+          {
+            type: 'way', ref: 10,
+            geometry: [{ lat: 55.74, lon: 37.58 }, { lat: 55.76, lon: 37.61 }],
+          },
+          {
+            type: 'way', ref: 11,
+            geometry: [{ lat: 55.76, lon: 37.61 }, { lat: 55.7400001, lon: 37.58 }],
+          },
+        ],
+      }],
+    }, 'ASSISTANT_OVERPASS_GEOMETRY_INCOMPLETE'],
+  ];
+  for (const [name, payload, code] of cases) {
+    await t.test(name, async () => {
+      const collector = createOverpassCollectorForPayload(payload);
+      await assert.rejects(collector.collect(request), (error) => (
+        error instanceof AssistantOverpassError && error.code === code
+      ));
+    });
+  }
+});
+
+test('PIDAFIX2 Overpass ignores duplicate top-level ways, dedupes equal relations and rejects distinct fingerprints', async () => {
+  const request = {
+    name: 'МКАД',
+    tagValues: ['МКАД'],
+    city: 'Москва',
+    cityBounds: [37.3, 55.5, 37.9, 55.9],
+  };
+  const members = [
+    {
+      type: 'way', ref: 10,
+      geometry: [{ lat: 55.7, lon: 37.4 }, { lat: 55.8, lon: 37.8 }],
+    },
+    {
+      type: 'way', ref: 11,
+      geometry: [{ lat: 55.8, lon: 37.8 }, { lat: 55.7, lon: 37.4 }],
+    },
+  ];
+  const duplicate = createOverpassCollectorForPayload({
+    elements: [
+      { type: 'way', id: 10, tags: { ref: 'МКАД' }, geometry: members[0].geometry },
+      { type: 'relation', id: 100, tags: { type: 'route', route: 'road', ref: 'МКАД' }, members },
+      { type: 'relation', id: 101, tags: { type: 'route', route: 'road', name: 'мкад' }, members: [...members].reverse() },
+    ],
+  });
+  const result = await duplicate.collect(request);
+  assert.equal(result.geometry.type, 'MultiLineString');
+
+  const ambiguous = createOverpassCollectorForPayload({
+    elements: [
+      { type: 'relation', id: 100, tags: { type: 'route', route: 'road', ref: 'МКАД' }, members },
+      {
+        type: 'relation', id: 102, tags: { type: 'road', name: 'МКАД' },
+        members: [{
+          type: 'way', ref: 99,
+          geometry: [
+            { lat: 55.6, lon: 37.3 },
+            { lat: 55.65, lon: 37.35 },
+            { lat: 55.6, lon: 37.3 },
+          ],
+        }],
+      },
+    ],
+  });
+  await assert.rejects(ambiguous.collect(request), (error) => (
+    error instanceof AssistantOverpassError && error.code === 'ASSISTANT_OVERPASS_GEOMETRY_AMBIGUOUS'
+  ));
 });
 
 test('FIX-GEO1 Overpass fails closed on a truncated success payload', async () => {
@@ -528,10 +1273,18 @@ test('FIX-GEO1 Overpass is opt-in and serializes rate slots for distinct request
     requestTimes.push(clock);
     return new Response(JSON.stringify({
       elements: [{
-        type: 'way',
+        type: 'relation',
         id: index + 1,
-        tags: { name: requestNames[index] },
-        geometry: [{ lat: 55.7 + index * 0.01, lon: 37.5 }, { lat: 55.71 + index * 0.01, lon: 37.6 }],
+        tags: { type: 'route', route: 'road', name: requestNames[index] },
+        members: [{
+          type: 'way',
+          ref: index + 1,
+          geometry: [
+            { lat: 55.7 + index * 0.01, lon: 37.5 },
+            { lat: 55.71 + index * 0.01, lon: 37.6 },
+            { lat: 55.7 + index * 0.01, lon: 37.5 },
+          ],
+        }],
       }],
     }), { status: 200 });
   }, () => clock, (milliseconds) => new Promise((resolve) => {
@@ -567,12 +1320,19 @@ function createResolverPrisma(options = {}) {
       },
       upsert: async (input) => {
         options.onCacheWrite?.(input);
+        if (options.failCacheWrite) throw new Error('CACHE_WRITE_FAILED');
         return {};
       },
     },
     assistantGeoOperation: {
       create: async (input) => {
+        if (options.failOperationCreate) throw new Error('OPERATION_CREATE_FAILED');
+        options.onOperationCreate?.(input);
         options.onOperation?.(input);
+        return {};
+      },
+      update: async (input) => {
+        options.onOperationUpdate?.(input);
         return {};
       },
     },
@@ -587,4 +1347,11 @@ function createUnusedProvider() {
       throw new Error('UNEXPECTED_PROVIDER_CALL');
     },
   };
+}
+
+function createOverpassCollectorForPayload(payload) {
+  return new AssistantOverpassCollector({
+    ASSISTANT_OVERPASS_ENABLED: 'true',
+    ASSISTANT_OVERPASS_URL: 'http://127.0.0.1:3010/api/interpreter',
+  }, async () => new Response(JSON.stringify(payload), { status: 200 }));
 }

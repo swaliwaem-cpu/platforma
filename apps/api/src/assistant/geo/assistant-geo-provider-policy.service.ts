@@ -19,6 +19,11 @@ import {
   type AssistantGeoProviderCandidate,
   type AssistantGeoProviderRequest,
 } from './assistant-geo-provider';
+import {
+  AssistantGeoUsageLedgerError,
+  AssistantGeoUsageLedgerService,
+  type AssistantGeoUsageReservation,
+} from './assistant-geo-usage-ledger.service';
 
 type GeoPolicyEnvironment = NodeJS.ProcessEnv | Record<string, string | undefined>;
 type GeoRequestContext = { providerCallCount: number };
@@ -51,6 +56,7 @@ export class AssistantGeoProviderPolicyService {
     private readonly now: () => Date = () => new Date(),
     private readonly delay: (milliseconds: number) => Promise<void> = wait,
     private readonly budgets?: AssistantUsageBudgetService,
+    private readonly geoUsageLedger?: Pick<AssistantGeoUsageLedgerService, 'reserve' | 'settle'>,
   ) {
     this.enabled = isAssistantGeoProviderEnabled(environment);
     this.providerName = readMode(environment.ASSISTANT_GEO_PROVIDER_MODE);
@@ -95,10 +101,11 @@ export class AssistantGeoProviderPolicyService {
     if (provider instanceof LocationIqGeoProvider) {
       provider.setRequestLifecycle(
         () => this.reservePhysicalAttempt(),
-        (reservation, outcome, durationMs) => this.recordUsage(
-          reservation as AssistantUsageReservation | undefined,
+        (reservation, outcome, durationMs, errorCode) => this.recordUsage(
+          reservation as AssistantUsageReservation | AssistantGeoUsageReservation | undefined,
           outcome,
           durationMs,
+          errorCode,
         ),
       );
     }
@@ -137,9 +144,14 @@ export class AssistantGeoProviderPolicyService {
           const reservation = await this.reservePhysicalAttempt();
           try {
             candidates = await this.provider.search(request);
-            await this.recordUsage(reservation, 'SUCCESS', Math.max(0, Date.now() - attemptStartedAt));
+            await this.recordUsage(reservation, 'SUCCESS', Math.max(0, Date.now() - attemptStartedAt), null);
           } catch (error) {
-            await this.recordUsage(reservation, 'ERROR', Math.max(0, Date.now() - attemptStartedAt));
+            await this.recordUsage(
+              reservation,
+              'ERROR',
+              Math.max(0, Date.now() - attemptStartedAt),
+              error instanceof AssistantGeoProviderError ? error.code : 'ASSISTANT_GEO_PROVIDER_UNAVAILABLE',
+            );
             throw error;
           }
         }
@@ -166,8 +178,17 @@ export class AssistantGeoProviderPolicyService {
 
   private async reservePhysicalAttempt() {
     await this.waitForRateSlot();
-    let reservation: AssistantUsageReservation | undefined;
-    if (this.budgets) {
+    let reservation: AssistantUsageReservation | AssistantGeoUsageReservation | undefined;
+    if (this.geoUsageLedger && this.providerName === 'locationiq') {
+      try {
+        reservation = await this.geoUsageLedger.reserve('locationiq');
+      } catch (error) {
+        if (error instanceof AssistantGeoUsageLedgerError) {
+          throw new AssistantGeoProviderError(error.code, false);
+        }
+        throw error;
+      }
+    } else if (this.budgets) {
       try {
         reservation = await this.budgets.reserve({
           provider: this.providerName,
@@ -192,11 +213,24 @@ export class AssistantGeoProviderPolicyService {
   }
 
   private async recordUsage(
-    reservation: AssistantUsageReservation | undefined,
+    reservation: AssistantUsageReservation | AssistantGeoUsageReservation | undefined,
     outcome: 'SUCCESS' | 'ERROR',
     durationMs: number,
+    errorCode: string | null,
   ) {
-    if (!reservation || !this.budgets) return;
+    if (!reservation) return;
+    if ('id' in reservation && this.geoUsageLedger) {
+      try {
+        await this.geoUsageLedger.settle(reservation, { outcome, durationMs, errorCode });
+      } catch (error) {
+        const code = error instanceof AssistantGeoUsageLedgerError
+          ? error.code
+          : 'ASSISTANT_GEO_USAGE_SETTLEMENT_FAILED';
+        throw new AssistantGeoProviderError(code, false);
+      }
+      return;
+    }
+    if (!this.budgets) return;
     try {
       await this.budgets.complete({
         reservation,
