@@ -66,7 +66,7 @@ test('Assistant source discovery reuses an active indexed project source before 
             '<html><body>ЖК Amber City — проект ФСК</body></html>',
           );
         }
-        throw new Error('known path unavailable');
+        throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
       },
     },
   );
@@ -322,7 +322,7 @@ test('Assistant source discovery probes a catalog-derived project code before We
             '<html><body>ЖК Amber City — официальный проект застройщика ФСК</body></html>',
           );
         }
-        throw new Error('known path unavailable');
+        throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
       },
     },
   );
@@ -375,7 +375,7 @@ test('Assistant source discovery fetches an exact project URL supplied by the of
             '<html><body>ЖК Amber City — официальный проект застройщика ФСК</body></html>',
           );
         }
-        throw new Error('hardcoded known path unavailable');
+        throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
       },
     },
   );
@@ -421,7 +421,7 @@ test('Assistant source discovery follows an exact same-host project link from an
             '<html><body>ЖК Amber City — официальный проект застройщика ФСК</body></html>',
           );
         }
-        throw new Error('hardcoded known path unavailable');
+        throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
       },
     },
   );
@@ -481,7 +481,7 @@ test('Assistant source discovery accepts HTML catalog project links on every exp
                 '<html><body>ЖК Amber City — официальный проект застройщика ФСК</body></html>',
               );
             }
-            throw new Error('hardcoded known path unavailable');
+            throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
           },
         },
       );
@@ -538,7 +538,7 @@ test('Assistant source discovery follows a proven catalog link from a registered
             '<html><body>ЖК Amber City — официальный проект застройщика ФСК</body></html>',
           );
         }
-        throw new Error('known path unavailable');
+        throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
       },
     },
   );
@@ -593,7 +593,7 @@ test('Assistant source discovery follows a bounded same-host catalog link before
             '<html><body>ЖК Amber City — официальный проект застройщика ФСК</body></html>',
           );
         }
-        throw new Error('known path unavailable');
+        throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
       },
     },
   );
@@ -652,7 +652,7 @@ test('Assistant source discovery keeps the stored allowlist for an already trust
             '<html><body>ЖК Amber City — официальный проект застройщика ФСК</body></html>',
           );
         }
-        throw new Error('known path unavailable');
+        throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
       },
     },
   );
@@ -707,7 +707,7 @@ test('Assistant source discovery follows an exact stored catalog host when the a
             '<html><body>ЖК Amber City — официальный проект застройщика ФСК</body></html>',
           );
         }
-        throw new Error('known path unavailable');
+        throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
       },
     },
   );
@@ -758,7 +758,7 @@ test('Assistant source discovery exhausts deterministic catalog and known paths 
           );
         }
         events.push(`fetch:known:${source.canonicalUrl}`);
-        throw new Error('known path unavailable');
+        throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
       },
     },
   );
@@ -784,6 +784,38 @@ test('Assistant source discovery exhausts deterministic catalog and known paths 
   );
   assert.equal(events.at(-1), 'provider:platforma_official_project_candidate');
   assert.equal(events.filter((event) => event.startsWith('provider:')).length, 1);
+});
+
+test('Assistant source discovery fails closed on an unknown connector error before project Web Search', async () => {
+  const registryUrl = 'https://developer.example/';
+  const connectorFailure = new Error('unexpected connector runtime failure');
+  let providerCalls = 0;
+  const service = new AssistantSourceDiscoveryService(
+    discoveryEnvironment(),
+    async () => {
+      providerCalls += 1;
+      return projectNotFoundResponse([]);
+    },
+    {
+      async fetch() {
+        throw connectorFailure;
+      },
+    },
+  );
+
+  await assert.rejects(
+    service.discover(project, {
+      registrySources: [activeRegistrySource({
+        type: 'DEVELOPER_PROMOTION',
+        canonicalUrl: registryUrl,
+        projectKey: null,
+        developerKey: project.developerKey,
+        allowedHosts: ['developer.example', 'www.developer.example'],
+      })],
+    }),
+    (error) => error === connectorFailure,
+  );
+  assert.equal(providerCalls, 0);
 });
 
 test('Assistant source discovery preserves a retryable catalog error before project Web Search', async () => {
@@ -814,7 +846,7 @@ test('Assistant source discovery preserves a retryable catalog error before proj
           }
           throw new SourceConnectorError('SOURCE_NETWORK_FAILED', true);
         }
-        throw new Error('known path unavailable');
+        throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
       },
     },
   );
@@ -923,7 +955,7 @@ test('Assistant source discovery never widens an exact co.jp host to the public 
             '<html><body>ЖК Amber City — проект ФСК</body></html>',
           );
         }
-        throw new Error('known path unavailable');
+        throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
       },
     },
   );
@@ -1129,7 +1161,7 @@ test('Assistant source discovery allows one Terra only after a seeded Luna candi
             '<html><body>ЖК Amber City — проект ФСК</body></html>',
           );
         }
-        throw new Error('known path unavailable');
+        throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
       },
     },
   );
@@ -1214,7 +1246,7 @@ test('Assistant source discovery requires Terra to provide its own allowed-host 
             '<html><body>ЖК Amber City — проект ФСК</body></html>',
           );
         }
-        throw new Error('known path unavailable');
+        throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
       },
     },
   );
@@ -1264,7 +1296,9 @@ test('Assistant source discovery verifies the developer first and restricts proj
         if (source.canonicalUrl === 'https://developer.example/') {
           return fetchedPage(source.canonicalUrl, '<html><body>Официальный сайт застройщика ФСК</body></html>');
         }
-        if (source.canonicalUrl.endsWith('/')) throw new Error('known path unavailable');
+        if (source.canonicalUrl.endsWith('/')) {
+          throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
+        }
         return fetchedPage(
           source.canonicalUrl,
           '<html><title>Amber City — официальный сайт</title><body>ЖК Amber City</body></html>',
@@ -1415,7 +1449,7 @@ test('Assistant source discovery reserves and settles every Luna retry before th
             '<html><body>ЖК Amber City — проект ФСК</body></html>',
           );
         }
-        throw new Error('known path unavailable');
+        throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
       },
     },
     {
@@ -1480,7 +1514,7 @@ test('Assistant source discovery stops after settlement failure without retry or
             '<html><body>Официальный сайт застройщика ФСК</body></html>',
           );
         }
-        throw new Error('known path unavailable');
+        throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
       },
     },
     {
@@ -1635,7 +1669,7 @@ test('Assistant source discovery reports batch call exhaustion before another HT
             '<html><body>Официальный сайт застройщика ФСК</body></html>',
           );
         }
-        throw new Error('known path unavailable');
+        throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
       },
     },
   );
@@ -1678,7 +1712,7 @@ test('Assistant source discovery reports Terra exhaustion before fallback HTTP',
             '<html><body>Другой жилой проект застройщика ФСК</body></html>',
           );
         }
-        throw new Error('known path unavailable');
+        throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
       },
     },
   );
@@ -1736,7 +1770,7 @@ test('Assistant source discovery reports run USD exhaustion before retry reserva
             '<html><body>Официальный сайт застройщика ФСК</body></html>',
           );
         }
-        throw new Error('known path unavailable');
+        throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
       },
     },
     {
@@ -1917,7 +1951,7 @@ test('Assistant source discovery accepts one developer Terra fallback inside the
         if (source.canonicalUrl === projectUrl) {
           return fetchedPage(source.canonicalUrl, '<html><body>ЖК Amber City — проект ФСК</body></html>');
         }
-        throw new Error('known path unavailable');
+        throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
       },
     },
   );
@@ -2011,7 +2045,9 @@ test('Assistant source discovery expands an exact host only through a verified o
         if (source.canonicalUrl === 'https://developer.example/') {
           return fetchedPage(source.canonicalUrl, '<html><body>Корпоративный сайт застройщика ФСК</body></html>');
         }
-        if (source.canonicalUrl.endsWith('/')) throw new Error('known path unavailable');
+        if (source.canonicalUrl.endsWith('/')) {
+          throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
+        }
         return fetchedPage(source.canonicalUrl, '<html><body>ЖК Amber City</body></html>');
       },
     },
@@ -2057,9 +2093,11 @@ test('Assistant source discovery keeps an explicitly official linked host when i
           ].join(''));
         }
         if (source.canonicalUrl === 'https://developer.example/') {
-          throw Object.assign(new Error('anti-bot'), { code: 'SOURCE_ANTI_BOT_CHALLENGE' });
+          throw new SourceConnectorError('SOURCE_ANTI_BOT_CHALLENGE', true, 200);
         }
-        if (source.canonicalUrl.endsWith('/')) throw new Error('known path unavailable');
+        if (source.canonicalUrl.endsWith('/')) {
+          throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
+        }
         return fetchedPage(source.canonicalUrl, '<html><body>ЖК Amber City</body></html>');
       },
     },
@@ -2120,7 +2158,7 @@ test('Assistant source discovery does not expand trust when a linked catalog fai
         if (source.canonicalUrl === unrelatedProjectUrl) {
           return fetchedPage(source.canonicalUrl, '<html><body>Amber City</body></html>');
         }
-        throw new Error('known path unavailable');
+        throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
       },
     },
   );
@@ -2430,7 +2468,7 @@ test('Assistant source discovery preserves a retryable standalone project connec
           standaloneFetches += 1;
           throw new SourceConnectorError('SOURCE_NETWORK_FAILED', true);
         }
-        throw new Error('known path unavailable');
+        throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
       },
     },
   );
@@ -2868,7 +2906,7 @@ test('Assistant source discovery verifies a bounded known project path before pr
         if (source.canonicalUrl === 'https://developer.example/projects/amber-city/') {
           return fetchedPage(source.canonicalUrl, '<html><body>ЖК Amber City</body></html>');
         }
-        throw new Error('not found');
+        throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
       },
     },
   );
@@ -2913,7 +2951,7 @@ test('Assistant source discovery accepts a locally verified transliterated known
             '<html><body>Жилой квартал CITYZEN — проект MR Group</body></html>',
           );
         }
-        throw new Error('known path unavailable');
+        throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
       },
     },
   );

@@ -253,7 +253,7 @@ async function runAssistantSourceDiscovery(input = {}) {
     }
     writeAssistantSourceDiscoveryCheckpoint(checkpointPath, checkpoint);
 
-    const persistedAttempts = await loadAssistantUsageAttempts(prisma, runId);
+    const persistedAttempts = await loadAssistantUsageAttempts(prisma, runId, executionId);
     const applyResults = options.apply
       ? await applyVerifiedSources(application, prisma, results)
       : [];
@@ -685,10 +685,10 @@ function createReport(options, results, applyResults, context) {
   };
 }
 
-async function loadAssistantUsageAttempts(prisma, operationRunId) {
+async function loadAssistantUsageAttempts(prisma, operationRunId, executionId) {
   try {
     return await prisma.assistantAiUsageAttempt.findMany({
-      where: { operationRunId, operation: 'SOURCE_DISCOVERY' },
+      where: { operationRunId, executionId, operation: 'SOURCE_DISCOVERY' },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       select: {
         requestedModel: true,
@@ -893,7 +893,11 @@ function assertLocalApplyEnvironment(environment) {
   if (environment.ASSISTANT_SOURCE_DISCOVERY_LOCAL_APPLY !== 'true') {
     throw new Error('ASSISTANT_SOURCE_DISCOVERY_LOCAL_APPLY_CONFIRMATION_REQUIRED');
   }
-  if ((environment.DEPLOYMENT_ENV || '').trim().toLocaleLowerCase('en-US') === 'production') {
+  const isProduction = [environment.DEPLOYMENT_ENV, environment.NODE_ENV]
+    .some((value) => ['production', 'prod'].includes(
+      (value || '').trim().toLocaleLowerCase('en-US'),
+    ));
+  if (isProduction) {
     throw new Error('ASSISTANT_SOURCE_DISCOVERY_PRODUCTION_APPLY_FORBIDDEN');
   }
   const databaseUrl = environment.DATABASE_URL;

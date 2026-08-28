@@ -5,7 +5,9 @@ const { randomUUID } = require('node:crypto');
 const { test } = require('node:test');
 
 const {
+  AssistantSourceDiscoveryError,
   AssistantSourceDiscoveryProviderBoundary,
+  readBoundedJson,
 } = require('../dist/assistant/sources/assistant-source-discovery-provider.js');
 
 const project = {
@@ -92,6 +94,33 @@ test('Assistant source discovery provider boundary owns retry, ledger and phase 
     totalTokens: 30,
     webSearchCalls: 1,
   });
+});
+
+test('Assistant source discovery provider reader stops before buffering an oversized body', async () => {
+  let pulledChunks = 0;
+  let cancelled = false;
+  const response = new Response(new ReadableStream({
+    pull(controller) {
+      pulledChunks += 1;
+      controller.enqueue(new Uint8Array(1_024).fill(120));
+      if (pulledChunks === 100) controller.close();
+    },
+    cancel() {
+      cancelled = true;
+    },
+  }), {
+    status: 200,
+    headers: { 'x-request-id': 'oversized-response-request' },
+  });
+
+  await assert.rejects(
+    readBoundedJson(response, 2_048),
+    (error) => error instanceof AssistantSourceDiscoveryError
+      && error.code === 'ASSISTANT_SOURCE_DISCOVERY_RESPONSE_TOO_LARGE'
+      && error.requestId === 'oversized-response-request',
+  );
+  assert.ok(pulledChunks <= 4, `reader consumed ${pulledChunks} chunks before rejecting`);
+  assert.equal(cancelled, true);
 });
 
 function developerResponse() {

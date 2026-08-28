@@ -385,9 +385,14 @@ export class OfficialHtmlSourceConnector {
     const initialHostname = normalizeHostname(url.hostname);
     for (const hostname of allowedHosts) {
       try {
-        const addresses = await this.resolveAddresses(hostname);
+        const addresses = await withBrowserDeadline(
+          this.resolveAddresses(hostname),
+          deadline,
+        );
         pinnedHosts.set(hostname, selectAddress(addresses));
       } catch (error) {
+        if (error instanceof SourceConnectorError
+          && error.code === 'SOURCE_BROWSER_TIMEOUT') throw error;
         if (hostname === initialHostname) throw error;
         // Optional redirect counterparts must not make the initial rendered page unavailable.
       }
@@ -401,19 +406,28 @@ export class OfficialHtmlSourceConnector {
         timeout: remainingBrowserTime(deadline),
         ...(this.browserExecutablePath ? { executablePath: this.browserExecutablePath } : {}),
       });
-    } catch {
-      throw new SourceConnectorError('SOURCE_BROWSER_UNAVAILABLE', true);
+    } catch (error) {
+      if (error instanceof SourceConnectorError) throw error;
+      throw new SourceConnectorError(
+        isBrowserTimeoutError(error, deadline)
+          ? 'SOURCE_BROWSER_TIMEOUT'
+          : 'SOURCE_BROWSER_UNAVAILABLE',
+        true,
+      );
     }
 
     let context: BrowserContext | undefined;
     try {
-      context = await browser.newContext({
-        acceptDownloads: false,
-        javaScriptEnabled: true,
-        permissions: [],
-        serviceWorkers: 'block',
-      });
-      const page = await context.newPage();
+      context = await withBrowserDeadline(
+        browser.newContext({
+          acceptDownloads: false,
+          javaScriptEnabled: true,
+          permissions: [],
+          serviceWorkers: 'block',
+        }),
+        deadline,
+      );
+      const page = await withBrowserDeadline(context.newPage(), deadline);
       const capturedJsonResponses: Array<Promise<CapturedBrowserJson | null>> = [];
       page.on('response', (response) => {
         if (capturedJsonResponses.length >= maximumCapturedJsonResponses
@@ -423,7 +437,10 @@ export class OfficialHtmlSourceConnector {
           maximumBytes,
         ));
       });
-      await this.installBrowserGuards(context, page, url, browserAllowedHosts);
+      await withBrowserDeadline(
+        this.installBrowserGuards(context, page, url, browserAllowedHosts),
+        deadline,
+      );
       await page.goto(url.toString(), {
         waitUntil: 'domcontentloaded',
         timeout: remainingBrowserTime(deadline),
@@ -440,9 +457,15 @@ export class OfficialHtmlSourceConnector {
       if (!browserAllowedHosts.has(normalizeHostname(finalUrl.hostname))) {
         throw new SourceConnectorError('SOURCE_BROWSER_NAVIGATION_NOT_ALLOWED', false);
       }
-      const captures = (await Promise.allSettled(capturedJsonResponses))
+      const captures = (await withBrowserDeadline(
+        Promise.allSettled(capturedJsonResponses),
+        deadline,
+      ))
         .flatMap((result) => result.status === 'fulfilled' && result.value ? [result.value] : []);
-      const html = appendCapturedBrowserJson(await page.content(), captures);
+      const html = appendCapturedBrowserJson(
+        await withBrowserDeadline(page.content(), deadline),
+        captures,
+      );
       const renderedPayload = Buffer.from(html, 'utf8');
       if (renderedPayload.length > maximumBytes) {
         throw new SourceConnectorError('SOURCE_RESPONSE_TOO_LARGE', false, 200);
@@ -450,7 +473,12 @@ export class OfficialHtmlSourceConnector {
       return renderedPayload;
     } catch (error) {
       if (error instanceof SourceConnectorError) throw error;
-      throw new SourceConnectorError('SOURCE_BROWSER_TIMEOUT', true);
+      throw new SourceConnectorError(
+        isBrowserTimeoutError(error, deadline)
+          ? 'SOURCE_BROWSER_TIMEOUT'
+          : 'SOURCE_BROWSER_UNAVAILABLE',
+        true,
+      );
     } finally {
       await context?.close().catch(() => undefined);
       await browser.close().catch(() => undefined);
@@ -603,6 +631,29 @@ function remainingBrowserTime(deadline: number) {
   const remaining = deadline - Date.now();
   if (remaining <= 0) throw new SourceConnectorError('SOURCE_BROWSER_TIMEOUT', true);
   return remaining;
+}
+
+async function withBrowserDeadline<Value>(operation: Promise<Value>, deadline: number) {
+  const remaining = remainingBrowserTime(deadline);
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          reject(new SourceConnectorError('SOURCE_BROWSER_TIMEOUT', true));
+        }, remaining);
+        timeout.unref();
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+function isBrowserTimeoutError(error: unknown, deadline: number) {
+  return Date.now() >= deadline
+    || (error instanceof Error && error.name === 'TimeoutError');
 }
 
 function normalizeHostname(value: string) {

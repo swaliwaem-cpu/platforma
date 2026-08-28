@@ -189,6 +189,36 @@ test('Assistant T03 connector classifies timeout and retryable HTTP failures saf
   );
 });
 
+test('Assistant T03 connector bounds browser DNS by the browser deadline and preserves timeout classification', async () => {
+  const connector = new OfficialHtmlSourceConnector({
+    allowHttp: true,
+    allowPrivateNetwork: true,
+    browserFallbackEnabled: true,
+    browserTimeoutMs: 1_000,
+    resolveHost: async () => {
+      await new Promise((resolveDelay) => {
+        const timeout = setTimeout(resolveDelay, 2_000);
+        timeout.unref();
+      });
+      return [{ address: '127.0.0.1', family: 4 }];
+    },
+  });
+  const startedAt = Date.now();
+
+  await assert.rejects(
+    connector.renderWithBrowser(
+      new URL('http://slow-browser.test/'),
+      new Set(['slow-browser.test']),
+      1_024,
+    ),
+    (error) => error instanceof SourceConnectorError
+      && error.code === 'SOURCE_BROWSER_TIMEOUT'
+      && error.retryable === true,
+  );
+
+  assert.ok(Date.now() - startedAt < 1_700, 'browser DNS exceeded the shared deadline');
+});
+
 test('Assistant T03 connector rejects redirect loops, unsupported content and oversized responses', async () => {
   const connector = createTestConnector({ maxResponseBytes: 1024, maxRedirects: 2 });
 

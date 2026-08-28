@@ -36,6 +36,9 @@ export function createAssistantPlannerGateway(
 ): AssistantPlannerGateway {
   const mode = readAssistantAiMode(environment);
   if (mode === 'fake') return new AssistantFakePlannerGateway();
+  if (environment.ASSISTANT_QUERY_PLANNER_LIVE !== 'true') {
+    throw new AssistantPlannerGatewayError('ASSISTANT_QUERY_PLANNER_LIVE_REQUIRED');
+  }
   if (environment.ASSISTANT_PAID_CALLS_CONFIRMED !== 'true') {
     throw new AssistantPlannerGatewayError('ASSISTANT_PAID_CALLS_CONFIRMATION_REQUIRED');
   }

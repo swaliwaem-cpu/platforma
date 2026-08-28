@@ -769,7 +769,7 @@ export class AssistantSourceDiscoveryService {
           developerAllowedHosts,
         );
       } catch (error) {
-        rethrowRetryableSourceConnectorError(error);
+        rethrowUnskippableSourceConnectorError(error);
         // A narrow page without project evidence is replaced through the bounded alternative search below.
       }
       const linkedCatalog = linkedDeveloperPages.pages.find(({ page }) => (
@@ -920,7 +920,7 @@ export class AssistantSourceDiscoveryService {
           catalogUrls.add(linkedCanonicalUrl);
         });
       } catch (error) {
-        rethrowRetryableSourceConnectorError(error);
+        rethrowUnskippableSourceConnectorError(error);
         // Try the next independently registered developer source.
       }
     }
@@ -996,7 +996,7 @@ export class AssistantSourceDiscoveryService {
         'always',
         developer.allowedHosts,
       ).catch((error) => {
-        rethrowRetryableSourceConnectorError(error);
+        rethrowUnskippableSourceConnectorError(error);
         return null;
       });
       this.developerCatalogCache.set(catalogUrl, catalogPromise);
@@ -1036,7 +1036,7 @@ export class AssistantSourceDiscoveryService {
         this.developerCatalogCache.set(canonicalUrl, Promise.resolve(linkedPage));
         this.renderedDeveloperCatalogUrls.add(canonicalUrl);
       } catch (error) {
-        rethrowRetryableSourceConnectorError(error);
+        rethrowUnskippableSourceConnectorError(error);
         if (linked.trustWithoutFetch) {
           allowedHosts.splice(0, allowedHosts.length, ...expandedHosts);
         }
@@ -1092,7 +1092,7 @@ export class AssistantSourceDiscoveryService {
           }
         }
       } catch (error) {
-        rethrowRetryableSourceConnectorError(error);
+        rethrowUnskippableSourceConnectorError(error);
         // Anti-bot, unavailable and unrelated cited pages are skipped within the bounded perimeter.
       }
     }
@@ -1147,7 +1147,7 @@ export class AssistantSourceDiscoveryService {
         if (!identity.matchedPlatformProjectAlias || !identity.matchedOfficialProjectAlias) continue;
         return { page, identity, officialProjectName };
       } catch (error) {
-        rethrowRetryableSourceConnectorError(error);
+        rethrowUnskippableSourceConnectorError(error);
         // Missing and protected guessed paths are expected; the bounded candidate list is exhausted safely.
       }
     }
@@ -1181,7 +1181,7 @@ export class AssistantSourceDiscoveryService {
           && !externalIdentity.matchedOfficialProjectAlias) continue;
         return fetchedExternalPage;
       } catch (error) {
-        rethrowRetryableSourceConnectorError(error);
+        rethrowUnskippableSourceConnectorError(error);
         // The verified developer bridge remains canonical if its optional external link is unavailable.
       }
     }
@@ -1189,9 +1189,9 @@ export class AssistantSourceDiscoveryService {
   }
 }
 
-function rethrowRetryableSourceConnectorError(error: unknown): void {
-  if (error instanceof SourceConnectorError
-    && isRetryableSourceConnectorError(error.code)) {
+function rethrowUnskippableSourceConnectorError(error: unknown): void {
+  if (!(error instanceof SourceConnectorError)
+    || isRetryableSourceConnectorError(error.code)) {
     throw error;
   }
 }

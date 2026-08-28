@@ -245,11 +245,57 @@ test('FIX-TOKEN planner refuses paid OpenAI calls without explicit confirmation'
   assert.throws(
     () => createAssistantPlannerGateway({
       ASSISTANT_AI_MODE: 'openai',
+      ASSISTANT_QUERY_PLANNER_LIVE: 'true',
       ASSISTANT_PAID_CALLS_CONFIRMED: 'false',
       OPENAI_API_KEY: 'key-alone-is-not-permission',
     }),
     /ASSISTANT_PAID_CALLS_CONFIRMATION_REQUIRED/u,
   );
+});
+
+test('FIX-TOKEN planner refuses paid OpenAI calls without its explicit live flag', () => {
+  let httpCalls = 0;
+
+  assert.throws(
+    () => createAssistantPlannerGateway({
+      ASSISTANT_AI_MODE: 'openai',
+      ASSISTANT_QUERY_PLANNER_LIVE: 'false',
+      ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+      OPENAI_API_KEY: 'key-and-confirmation-are-not-live-permission',
+    }, async () => {
+      httpCalls += 1;
+      throw new Error('HTTP must not be reached without the planner live flag');
+    }),
+    /ASSISTANT_QUERY_PLANNER_LIVE_REQUIRED/u,
+  );
+  assert.equal(httpCalls, 0);
+});
+
+test('FIX-TOKEN local apply guard rejects NODE_ENV production before application startup', async () => {
+  let applicationContextCalls = 0;
+
+  await assert.rejects(
+    runAssistantSourceDiscovery({
+      argv: ['--live', '--apply'],
+      environment: {
+        NODE_ENV: 'production',
+        ASSISTANT_AI_MODE: 'openai',
+        ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+        ASSISTANT_SOURCE_DISCOVERY_LOCAL_APPLY: 'true',
+        OPENAI_API_KEY: 'bounded-local-stub',
+        DATABASE_URL: 'postgresql://user:password@postgres:5432/platforma?schema=public',
+      },
+      silent: true,
+      dependencies: {
+        async createApplicationContext() {
+          applicationContextCalls += 1;
+          throw new Error('application context must not start in production apply mode');
+        },
+      },
+    }),
+    /ASSISTANT_SOURCE_DISCOVERY_PRODUCTION_APPLY_FORBIDDEN/u,
+  );
+  assert.equal(applicationContextCalls, 0);
 });
 
 test('FIX-TOKEN usage parser keeps cache categories and counts actual Web Search calls', () => {
@@ -1933,7 +1979,7 @@ test('FIX-TOKEN discovery never uses Terra after parse, transport, HTTP or sourc
               failedSourceFetches += 1;
               throw new SourceConnectorError(scenario.sourceErrorCode, true, 504);
             }
-            throw new Error('known path unavailable');
+            throw new SourceConnectorError('SOURCE_HTTP_NON_RETRYABLE', false, 404);
           },
         },
       );
@@ -2073,7 +2119,13 @@ async function runDryRunEstimate({
   });
 }
 
-async function runPersistedDiscoveryReport({ runId, attempts, discoveryError, ledgerError = null }) {
+async function runPersistedDiscoveryReport({
+  runId,
+  attempts,
+  discoveryError,
+  ledgerError = null,
+  executionId = randomUUID(),
+}) {
   const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-persisted-report-'));
   const checkpointPath = join(directory, 'checkpoint.json');
   const project = fixTokenProject();
@@ -2081,6 +2133,7 @@ async function runPersistedDiscoveryReport({ runId, attempts, discoveryError, le
     assistantAiUsageAttempt: {
       async findMany(query) {
         assert.equal(query.where.operationRunId, runId);
+        assert.equal(query.where.executionId, executionId);
         assert.ok(query.select);
         if (ledgerError) throw ledgerError;
         return attempts;
@@ -2104,6 +2157,7 @@ async function runPersistedDiscoveryReport({ runId, attempts, discoveryError, le
       silent: true,
       dependencies: {
         runId,
+        executionId,
         async createApplicationContext() { return application; },
         async selectProjects() { return [project]; },
         usageBudgets: {
@@ -2111,6 +2165,7 @@ async function runPersistedDiscoveryReport({ runId, attempts, discoveryError, le
         },
         createDiscovery(options) {
           assert.equal(options.operationRunId, runId);
+          assert.equal(options.executionId, executionId);
           return {
             async discover(candidate) {
               assert.equal(candidate.projectKey, project.projectKey);
@@ -2130,6 +2185,7 @@ function emptyAssistantUsageLedger() {
     async findMany(query) {
       assert.equal(query.where.operation, 'SOURCE_DISCOVERY');
       assert.equal(typeof query.where.operationRunId, 'string');
+      assert.equal(typeof query.where.executionId, 'string');
       assert.ok(query.select);
       return [];
     },

@@ -750,21 +750,49 @@ export function aggregateTelemetry(
 }
 
 export async function readBoundedJson(response: Response, maximumBytes: number) {
-  const text = await response.text();
-  if (Buffer.byteLength(text, 'utf8') > maximumBytes) {
+  const requestId = readOptionalString(response.headers.get('x-request-id'), 160);
+  const declaredBytes = Number(response.headers.get('content-length') ?? 0);
+  if (Number.isFinite(declaredBytes) && declaredBytes > maximumBytes) {
+    await response.body?.cancel().catch(() => undefined);
     throw new AssistantSourceDiscoveryError(
       'ASSISTANT_SOURCE_DISCOVERY_RESPONSE_TOO_LARGE',
-      readOptionalString(response.headers.get('x-request-id'), 160),
+      requestId,
       null,
       response.status,
     );
   }
+
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  if (response.body) {
+    const reader = response.body.getReader();
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        totalBytes += value.byteLength;
+        if (totalBytes > maximumBytes) {
+          await reader.cancel().catch(() => undefined);
+          throw new AssistantSourceDiscoveryError(
+            'ASSISTANT_SOURCE_DISCOVERY_RESPONSE_TOO_LARGE',
+            requestId,
+            null,
+            response.status,
+          );
+        }
+        chunks.push(Buffer.from(value));
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+  const text = Buffer.concat(chunks, totalBytes).toString('utf8');
   try {
     return JSON.parse(text) as unknown;
   } catch {
     throw new AssistantSourceDiscoveryError(
       'ASSISTANT_SOURCE_DISCOVERY_RESPONSE_INVALID',
-      readOptionalString(response.headers.get('x-request-id'), 160),
+      requestId,
       null,
       response.status,
     );
