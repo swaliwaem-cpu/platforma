@@ -57,8 +57,30 @@ async function runAssistantLocalPaidSmoke(input = {}) {
       providerCalls: 0,
     };
   }
-  const limits = readLiveLimits(argv);
   const environment = input.environment ?? process.env;
+  const lifecycle = { ledger: null, disconnectAttempted: false };
+  try {
+    return await runLiveAssistantLocalPaidSmoke(input, environment, lifecycle);
+  } finally {
+    delete environment.ASSISTANT_LOCAL_PAID_SMOKE_ACCESS_TOKEN;
+    if (lifecycle.ledger !== null && !lifecycle.disconnectAttempted) {
+      try {
+        await runBounded(
+          () => lifecycle.ledger.disconnect?.(),
+          Date.now() + ledgerOperationTimeoutMs,
+          ledgerOperationTimeoutMs,
+          'ASSISTANT_LOCAL_PAID_SMOKE_DISCONNECT_FAILED',
+        );
+      } catch {
+        // Preserve the primary initialization/runtime failure.
+      }
+    }
+  }
+}
+
+async function runLiveAssistantLocalPaidSmoke(input, environment, lifecycle) {
+  const argv = input.argv ?? process.argv.slice(2);
+  const limits = readLiveLimits(argv);
   const runtime = input.runtime ?? readApiRuntime();
   const readiness = readAssistantLocalPaidSmokeReadiness(
     runtime.apiEnvironment ?? {},
@@ -67,11 +89,11 @@ async function runAssistantLocalPaidSmoke(input = {}) {
     limits,
   );
   if (!readiness.passed) {
-    delete environment.ASSISTANT_LOCAL_PAID_SMOKE_ACCESS_TOKEN;
     throw new Error('ASSISTANT_LOCAL_PAID_SMOKE_READINESS_FAILED');
   }
   const operationTimeoutMs = readInternalOperationTimeout(input.operationTimeoutMs);
-  const ledger = input.ledger ?? createDefaultLedger(runtime.apiEnvironment, operationTimeoutMs);
+  lifecycle.ledger = input.ledger ?? createDefaultLedger(runtime.apiEnvironment, operationTimeoutMs);
+  const ledger = lifecycle.ledger;
   const api = input.api ?? createLoopbackApi(runtime.apiEnvironment, input.fetchImpl ?? fetch);
   const sleep = input.sleep ?? ((durationMs) => new Promise((resolve) => setTimeout(resolve, durationMs)));
   const conversationIds = [];
@@ -134,6 +156,9 @@ async function runAssistantLocalPaidSmoke(input = {}) {
         { deadline: workDeadline, operationTimeoutMs, sleep },
       );
       const conversationId = requireUuid(created?.conversationId);
+      if (conversationIds.includes(conversationId)) {
+        throw new Error('ASSISTANT_LOCAL_PAID_SMOKE_CONVERSATION_ID_REUSED');
+      }
       conversationIds.push(conversationId);
       const runKey = randomUUID();
       const runRecord = {
@@ -164,6 +189,9 @@ async function runAssistantLocalPaidSmoke(input = {}) {
       const runId = requireUuid(started?.runId);
       runRecord.runId = runId;
       runRecord.status = readRunStatus(started?.status);
+      if (runRecords.some((record) => record !== runRecord && record.runId === runId)) {
+        throw new Error('ASSISTANT_LOCAL_PAID_SMOKE_RUN_ID_REUSED');
+      }
       const terminal = await waitForTerminalRun(api, {
         accessToken,
         runId,
@@ -184,6 +212,7 @@ async function runAssistantLocalPaidSmoke(input = {}) {
         workDeadline,
         operationTimeoutMs,
       );
+      assertPaidSmokeRunCoverage(settledAttempts, [runId]);
       assertPaidSmokeLedger(summarizePaidSmokeAttempts(settledAttempts), limits);
     }
   } catch (error) {
@@ -216,13 +245,15 @@ async function runAssistantLocalPaidSmoke(input = {}) {
   let ledgerSummary = null;
   if (runRecords.length > 0 && unresolvedRuns === 0) {
     try {
-      ledgerSummary = summarizePaidSmokeAttempts(await loadAttempts(
+      const finalAttempts = await loadAttempts(
         ledger,
         runIds,
         totalDeadline,
         operationTimeoutMs,
-      ));
+      );
+      ledgerSummary = summarizePaidSmokeAttempts(finalAttempts);
       try {
+        assertPaidSmokeRunCoverage(finalAttempts, runIds);
         assertPaidSmokeLedger(ledgerSummary, limits);
       } catch (error) {
         ledgerErrorCode = normalizeSmokeError(error).message;
@@ -246,7 +277,10 @@ async function runAssistantLocalPaidSmoke(input = {}) {
   }
   try {
     await runBounded(
-      () => ledger.disconnect?.(),
+      () => {
+        lifecycle.disconnectAttempted = true;
+        return ledger.disconnect?.();
+      },
       totalDeadline,
       operationTimeoutMs,
       'ASSISTANT_LOCAL_PAID_SMOKE_DISCONNECT_FAILED',
@@ -254,7 +288,6 @@ async function runAssistantLocalPaidSmoke(input = {}) {
   } catch {
     cleanupErrorCode ??= 'ASSISTANT_LOCAL_PAID_SMOKE_DISCONNECT_FAILED';
   }
-  delete environment.ASSISTANT_LOCAL_PAID_SMOKE_ACCESS_TOKEN;
 
   if (runRecords.length === 0) {
     throw new Error(failureCode ?? ledgerErrorCode ?? cleanupErrorCode
@@ -398,6 +431,23 @@ function summarizePaidSmokeAttempts(attempts) {
     reservedAttempts,
     unknownWebSearchAttempts,
   };
+}
+
+function assertPaidSmokeRunCoverage(attempts, runIds) {
+  const expectedRunIds = new Set(runIds);
+  if (expectedRunIds.size !== runIds.length) {
+    throw new Error('ASSISTANT_LOCAL_PAID_SMOKE_RUN_ID_REUSED');
+  }
+  const coveredRunIds = new Set();
+  for (const attempt of attempts) {
+    if (!attempt || !expectedRunIds.has(attempt.operationRunId)) {
+      throw new Error('ASSISTANT_LOCAL_PAID_SMOKE_LEDGER_RUN_COVERAGE_INVALID');
+    }
+    coveredRunIds.add(attempt.operationRunId);
+  }
+  if (coveredRunIds.size !== expectedRunIds.size) {
+    throw new Error('ASSISTANT_LOCAL_PAID_SMOKE_LEDGER_RUN_COVERAGE_INVALID');
+  }
 }
 
 function assertPaidSmokeLedger(summary, limits) {

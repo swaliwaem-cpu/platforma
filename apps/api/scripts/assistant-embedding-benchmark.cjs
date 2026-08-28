@@ -22,6 +22,7 @@ const {
 
 const benchmarkName = 'assistant-embedding-retrieval-v1';
 const datasetPath = resolve(__dirname, '../tests/fixtures/assistant/embedding-benchmark-v1.json');
+const ledgerOperationTimeoutMs = 10_000;
 
 async function runAssistantEmbeddingBenchmark(input = {}) {
   const environment = input.environment ?? process.env;
@@ -38,8 +39,9 @@ async function runAssistantEmbeddingBenchmark(input = {}) {
 
   const limits = readLiveLimits(argv);
   assertLiveReadiness(environment, plan, limits);
+  const operationTimeoutMs = readInternalOperationTimeout(input.operationTimeoutMs);
   const ids = input.ids ?? { operationRunId: randomUUID(), executionId: randomUUID() };
-  const ledger = input.ledger ?? createDefaultLedger(environment);
+  const ledger = input.ledger ?? createDefaultLedger(environment, operationTimeoutMs);
   const createGateway = input.createGateway ?? ((candidate) => new AssistantEmbeddingGateway({
     ...environment,
     ASSISTANT_EMBEDDING_MODE: 'openai',
@@ -81,12 +83,20 @@ async function runAssistantEmbeddingBenchmark(input = {}) {
   let ledgerFailureCode = null;
   let disconnectFailureCode = null;
   try {
-    attempts = await ledger.loadAttempts(ids.operationRunId, ids.executionId);
+    attempts = await runBounded(
+      () => ledger.loadAttempts(ids.operationRunId, ids.executionId),
+      operationTimeoutMs,
+      'ASSISTANT_EMBEDDING_BENCHMARK_LEDGER_READ_FAILED',
+    );
   } catch {
     ledgerFailureCode = 'ASSISTANT_EMBEDDING_BENCHMARK_LEDGER_READ_FAILED';
   }
   try {
-    await ledger.disconnect?.();
+    await runBounded(
+      () => ledger.disconnect?.(),
+      operationTimeoutMs,
+      'ASSISTANT_EMBEDDING_BENCHMARK_DISCONNECT_FAILED',
+    );
   } catch {
     disconnectFailureCode = 'ASSISTANT_EMBEDDING_BENCHMARK_DISCONNECT_FAILED';
   }
@@ -314,11 +324,38 @@ function summarizeAttempts(attempts, ids) {
   };
 }
 
-function createDefaultLedger(environment) {
+function createDefaultLedger(environment, operationTimeoutMs) {
   const { PrismaClient } = require('@prisma/client');
-  const prisma = new PrismaClient({ datasources: { db: { url: environment.DATABASE_URL } } });
+  const prisma = new PrismaClient({
+    datasources: {
+      db: { url: createBoundedDatabaseUrl(environment.DATABASE_URL, operationTimeoutMs) },
+    },
+  });
+  const usageBudgetService = new AssistantAiUsageBudgetService(prisma);
   return {
-    usageBudgets: new AssistantAiUsageBudgetService(prisma),
+    usageBudgets: {
+      reserve(input) {
+        return runBounded(
+          () => usageBudgetService.reserve(input),
+          operationTimeoutMs,
+          'ASSISTANT_EMBEDDING_BENCHMARK_RESERVATION_TIMEOUT',
+        );
+      },
+      settle(input) {
+        return runBounded(
+          () => usageBudgetService.settle(input),
+          operationTimeoutMs,
+          'ASSISTANT_EMBEDDING_BENCHMARK_SETTLEMENT_TIMEOUT',
+        );
+      },
+      reconcileExpiredReservations(input) {
+        return runBounded(
+          () => usageBudgetService.reconcileExpiredReservations(input),
+          operationTimeoutMs,
+          'ASSISTANT_EMBEDDING_BENCHMARK_RECONCILIATION_TIMEOUT',
+        );
+      },
+    },
     async loadAttempts(operationRunId, executionId) {
       return prisma.assistantAiUsageAttempt.findMany({
         where: { operationRunId, executionId, operation: 'EMBEDDING_BENCHMARK' },
@@ -337,6 +374,37 @@ function createDefaultLedger(environment) {
     },
     async disconnect() { await prisma.$disconnect(); },
   };
+}
+
+function createBoundedDatabaseUrl(value, operationTimeoutMs) {
+  const url = new URL(value);
+  const timeoutSeconds = String(Math.max(1, Math.ceil(operationTimeoutMs / 1_000)));
+  for (const name of ['connect_timeout', 'pool_timeout', 'socket_timeout']) {
+    if (!url.searchParams.has(name)) url.searchParams.set(name, timeoutSeconds);
+  }
+  return url.toString();
+}
+
+function readInternalOperationTimeout(value) {
+  if (value === undefined) return ledgerOperationTimeoutMs;
+  if (!Number.isSafeInteger(value) || value < 1 || value > ledgerOperationTimeoutMs) {
+    throw new Error('ASSISTANT_EMBEDDING_BENCHMARK_INTERNAL_TIMEOUT_INVALID');
+  }
+  return value;
+}
+
+async function runBounded(operation, timeoutMs, timeoutCode) {
+  let timeout;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(operation),
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(timeoutCode)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function readDataset(bytes) {
@@ -488,4 +556,8 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseCandidates, runAssistantEmbeddingBenchmark };
+module.exports = {
+  createBoundedDatabaseUrl,
+  parseCandidates,
+  runAssistantEmbeddingBenchmark,
+};

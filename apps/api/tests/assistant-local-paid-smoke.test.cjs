@@ -225,6 +225,114 @@ test('PIDAFIX1 local paid smoke runs two requests sequentially and reports persi
   assert.equal(serialized.includes('ипотек'), false);
 });
 
+test('PIDAFIX1 local paid smoke rejects a reused conversation id before the second run', async () => {
+  const runId = '10000000-0000-4000-8000-000000000001';
+  let startCalls = 0;
+  const report = await runAssistantLocalPaidSmoke({
+    argv: ['--live', '--limit', '2', '--max-attempts', '4', '--max-cost-usd', '0.50'],
+    environment: { ASSISTANT_LOCAL_PAID_SMOKE_ACCESS_TOKEN: 'temporary-access-token' },
+    runtime: {
+      isContainer: true,
+      isApiProcess: true,
+      apiEnvironment: readyApiEnvironment(),
+    },
+    sleep: async () => {},
+    api: {
+      async checkConfig() { return { enabled: true }; },
+      async createConversation() {
+        return { conversationId: '30000000-0000-4000-8000-000000000001' };
+      },
+      async startRun() {
+        startCalls += 1;
+        return { runId, status: 'PENDING' };
+      },
+      async getRun() { return { runId, status: 'COMPLETED', errorCode: null }; },
+    },
+    ledger: settledSmokeLedger(new Map([[runId, [paidAttempt({ operationRunId: runId })]]])),
+  });
+
+  assert.equal(report.passed, false);
+  assert.equal(report.errorCode, 'ASSISTANT_LOCAL_PAID_SMOKE_CONVERSATION_ID_REUSED');
+  assert.equal(startCalls, 1);
+});
+
+test('PIDAFIX1 local paid smoke rejects a reused run id across distinct conversations', async () => {
+  const runId = '10000000-0000-4000-8000-000000000001';
+  let conversationOrdinal = 0;
+  const report = await runAssistantLocalPaidSmoke({
+    argv: ['--live', '--limit', '2', '--max-attempts', '4', '--max-cost-usd', '0.50'],
+    environment: { ASSISTANT_LOCAL_PAID_SMOKE_ACCESS_TOKEN: 'temporary-access-token' },
+    runtime: {
+      isContainer: true,
+      isApiProcess: true,
+      apiEnvironment: readyApiEnvironment(),
+    },
+    sleep: async () => {},
+    api: {
+      async checkConfig() { return { enabled: true }; },
+      async createConversation() {
+        conversationOrdinal += 1;
+        return {
+          conversationId: `30000000-0000-4000-8000-${String(conversationOrdinal).padStart(12, '0')}`,
+        };
+      },
+      async startRun() { return { runId, status: 'PENDING' }; },
+      async getRun() { return { runId, status: 'COMPLETED', errorCode: null }; },
+    },
+    ledger: settledSmokeLedger(new Map([[runId, [paidAttempt({ operationRunId: runId })]]])),
+  });
+
+  assert.equal(report.passed, false);
+  assert.equal(report.errorCode, 'ASSISTANT_LOCAL_PAID_SMOKE_RUN_ID_REUSED');
+});
+
+test('PIDAFIX1 local paid smoke requires final ledger coverage for both exact run ids', async () => {
+  const firstRunId = '10000000-0000-4000-8000-000000000001';
+  const secondRunId = '10000000-0000-4000-8000-000000000002';
+  const attempts = new Map([
+    [firstRunId, [paidAttempt({ operationRunId: firstRunId })]],
+    [secondRunId, [paidAttempt({
+      operationRunId: secondRunId,
+      executionId: '20000000-0000-4000-8000-000000000002',
+    })]],
+  ]);
+  let conversationOrdinal = 0;
+  let runOrdinal = 0;
+  const ledger = settledSmokeLedger(attempts);
+  ledger.loadAttempts = async (runIds) => (
+    runIds.length === 2 ? attempts.get(firstRunId) : attempts.get(runIds[0]) ?? []
+  );
+
+  const report = await runAssistantLocalPaidSmoke({
+    argv: ['--live', '--limit', '2', '--max-attempts', '4', '--max-cost-usd', '0.50'],
+    environment: { ASSISTANT_LOCAL_PAID_SMOKE_ACCESS_TOKEN: 'temporary-access-token' },
+    runtime: {
+      isContainer: true,
+      isApiProcess: true,
+      apiEnvironment: readyApiEnvironment(),
+    },
+    sleep: async () => {},
+    api: {
+      async checkConfig() { return { enabled: true }; },
+      async createConversation() {
+        conversationOrdinal += 1;
+        return {
+          conversationId: `30000000-0000-4000-8000-${String(conversationOrdinal).padStart(12, '0')}`,
+        };
+      },
+      async startRun() {
+        runOrdinal += 1;
+        return { runId: runOrdinal === 1 ? firstRunId : secondRunId, status: 'PENDING' };
+      },
+      async getRun({ runId }) { return { runId, status: 'COMPLETED', errorCode: null }; },
+    },
+    ledger,
+  });
+
+  assert.equal(report.passed, false);
+  assert.equal(report.errorCode, 'ASSISTANT_LOCAL_PAID_SMOKE_LEDGER_RUN_COVERAGE_INVALID');
+});
+
 test('PIDAFIX1 local paid smoke reports a red RESERVED attempt at full persisted reserve', async () => {
   let createCalls = 0;
   const runId = '10000000-0000-4000-8000-000000000001';
@@ -351,6 +459,27 @@ test('PIDAFIX1 local paid smoke bounds a stalled ledger before HTTP', async () =
   assert.equal(apiCalls, 0);
 });
 
+test('PIDAFIX1 local paid smoke finalizes an initialized ledger when API construction fails', async () => {
+  const environment = { ASSISTANT_LOCAL_PAID_SMOKE_ACCESS_TOKEN: 'temporary-access-token' };
+  let disconnected = false;
+  await assert.rejects(runAssistantLocalPaidSmoke({
+    argv: ['--live', '--limit', '2', '--max-attempts', '4', '--max-cost-usd', '0.50'],
+    environment,
+    runtime: {
+      isContainer: true,
+      isApiProcess: true,
+      apiEnvironment: readyApiEnvironment({ PORT: 'invalid' }),
+    },
+    operationTimeoutMs: 10,
+    ledger: {
+      async disconnect() { disconnected = true; },
+    },
+  }), /ASSISTANT_LOCAL_PAID_SMOKE_API_PORT_INVALID/u);
+
+  assert.equal(disconnected, true);
+  assert.equal('ASSISTANT_LOCAL_PAID_SMOKE_ACCESS_TOKEN' in environment, false);
+});
+
 test('PIDAFIX1 Compose can disable every background worker and passes the token outside argv', () => {
   const compose = readFileSync(resolve(__dirname, '../../../docker-compose.yml'), 'utf8');
   const packageJson = JSON.parse(readFileSync(resolve(__dirname, '../../../package.json'), 'utf8'));
@@ -410,5 +539,18 @@ function paidAttempt(overrides = {}) {
     chargedCostUsd: '0.01000000',
     webSearchCalls: 0,
     ...overrides,
+  };
+}
+
+function settledSmokeLedger(attempts) {
+  return {
+    async inspectReadiness() {
+      return { pendingOrRunningRuns: 0, reservedAttempts: 0 };
+    },
+    async loadAttempts(runIds) {
+      return [...new Set(runIds)].flatMap((runId) => attempts.get(runId) ?? []);
+    },
+    async cleanupConversations() {},
+    async disconnect() {},
   };
 }

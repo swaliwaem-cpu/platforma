@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 
 const {
+  createBoundedDatabaseUrl,
   runAssistantEmbeddingBenchmark,
 } = require('../scripts/assistant-embedding-benchmark.cjs');
 
@@ -178,6 +179,56 @@ test('PIDAFIX1 embedding benchmark reports an unavailable ledger instead of zero
   assert.equal(report.rolloutGate, null);
 });
 
+test('PIDAFIX1 embedding benchmark bounds a stalled final ledger read after provider calls', async () => {
+  let disconnected = false;
+  const report = await withTestDeadline(runAssistantEmbeddingBenchmark({
+    argv: ['--live', '--max-http-attempts', '4', '--max-cost-usd', '0.50'],
+    environment: readyEnvironment(),
+    operationTimeoutMs: 10,
+    createGateway: successfulGateway,
+    ledger: {
+      async loadAttempts() { return new Promise(() => {}); },
+      async disconnect() { disconnected = true; },
+    },
+  }));
+
+  assert.equal(report.passed, false);
+  assert.equal(report.errorCode, 'ASSISTANT_EMBEDDING_BENCHMARK_LEDGER_READ_FAILED');
+  assert.equal(report.providerCalls, null);
+  assert.equal(disconnected, true);
+});
+
+test('PIDAFIX1 embedding benchmark bounds disconnect and reports it as red', async () => {
+  const report = await withTestDeadline(runAssistantEmbeddingBenchmark({
+    argv: ['--live', '--max-http-attempts', '4', '--max-cost-usd', '0.50'],
+    environment: readyEnvironment(),
+    operationTimeoutMs: 10,
+    createGateway: successfulGateway,
+    ledger: {
+      async loadAttempts(operationRunId, executionId) {
+        return benchmarkAttempts(operationRunId, executionId);
+      },
+      async disconnect() { return new Promise(() => {}); },
+    },
+  }));
+
+  assert.equal(report.passed, false);
+  assert.equal(report.errorCode, 'ASSISTANT_EMBEDDING_BENCHMARK_DISCONNECT_FAILED');
+  assert.equal(report.providerCalls, 4);
+});
+
+test('PIDAFIX1 embedding benchmark default database URL has bounded Prisma timeouts', () => {
+  const result = new URL(createBoundedDatabaseUrl(
+    'postgresql://local:local@localhost:5432/embedding_benchmark_disposable?schema=private&pool_timeout=7',
+    10_000,
+  ));
+
+  assert.equal(result.searchParams.get('schema'), 'private');
+  assert.equal(result.searchParams.get('connect_timeout'), '10');
+  assert.equal(result.searchParams.get('pool_timeout'), '7');
+  assert.equal(result.searchParams.get('socket_timeout'), '10');
+});
+
 function readyEnvironment() {
   return {
     NODE_ENV: 'development',
@@ -195,4 +246,46 @@ function vector(dimensions, seed) {
   const result = Array.from({ length: dimensions }, () => 0);
   result[seed % dimensions] = 1;
   return result;
+}
+
+function successfulGateway(candidate) {
+  return {
+    async embed(values, context) {
+      context.nextAttemptOrdinal();
+      return {
+        model: candidate.model,
+        vectors: values.map((_value, index) => vector(candidate.dimensions, index)),
+      };
+    },
+  };
+}
+
+function benchmarkAttempts(operationRunId, executionId) {
+  return [1, 2, 3, 4].map((attemptOrdinal) => ({
+    operationRunId,
+    executionId,
+    attemptOrdinal,
+    operation: 'EMBEDDING_BENCHMARK',
+    status: 'SETTLED',
+    reservedCostUsd: '0.01000000',
+    chargedCostUsd: '0.00100000',
+    inputTokens: 10,
+  }));
+}
+
+async function withTestDeadline(operation) {
+  let timeout;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error('TEST_OPERATION_DID_NOT_RESOLVE')),
+          250,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
