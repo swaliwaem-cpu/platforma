@@ -3,7 +3,111 @@ import {
   type AssistantSourceCatalogProjectEvidence,
 } from './assistant-source-discovery-identity';
 
+export const ASSISTANT_SOURCE_DISCOVERY_MODEL = 'gpt-5.6-luna';
+export const ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL = 'gpt-5.6-terra';
+export const maximumSourceDiscoveryProviderCalls = 35;
+export const maximumSourceDiscoveryCallsPerProject = 3;
+export const maximumSourceDiscoveryTerraFallbacks = 2;
+
 export type AssistantSourceDiscoveryModelRole = 'LUNA' | 'TERRA';
+
+type AssistantSourceDiscoveryCallReceipt = {
+  projectKey: string;
+  isFallback: boolean;
+  reservedCostUnits: bigint;
+  active: boolean;
+};
+
+type AssistantSourceDiscoveryCallAuthorization =
+  | { allowed: true; receipt: AssistantSourceDiscoveryCallReceipt }
+  | { allowed: false; errorCode: string };
+
+export class AssistantSourceDiscoveryCallPolicy {
+  private providerCallCount = 0;
+  private terraFallbackCount = 0;
+  private runReservedCostUnits = 0n;
+  private readonly projectCallCounts = new Map<string, number>();
+
+  constructor(
+    private readonly maximumProviderCalls: number,
+    private readonly maximumTerraFallbacks: number,
+  ) {}
+
+  async withProject<Value>(projectKey: string, operation: () => Promise<Value>): Promise<Value> {
+    this.projectCallCounts.set(projectKey, 0);
+    try {
+      return await operation();
+    } finally {
+      this.projectCallCounts.delete(projectKey);
+    }
+  }
+
+  authorizeProviderCall(input: {
+    projectKey: string;
+    isFallback: boolean;
+    reservedCostUnits: bigint;
+    maximumRunCostUnits: bigint | null;
+  }): AssistantSourceDiscoveryCallAuthorization {
+    const projectCalls = this.projectCallCounts.get(input.projectKey);
+    if (projectCalls === undefined) {
+      return {
+        allowed: false,
+        errorCode: 'ASSISTANT_SOURCE_DISCOVERY_PROJECT_CALL_STATE_INVALID',
+      };
+    }
+    if (projectCalls >= maximumSourceDiscoveryCallsPerProject) {
+      return {
+        allowed: false,
+        errorCode: 'ASSISTANT_SOURCE_DISCOVERY_PROJECT_CALL_BUDGET_EXHAUSTED',
+      };
+    }
+    if (this.providerCallCount >= this.maximumProviderCalls) {
+      return {
+        allowed: false,
+        errorCode: 'ASSISTANT_SOURCE_DISCOVERY_BATCH_CALL_BUDGET_EXHAUSTED',
+      };
+    }
+    if (input.isFallback && this.terraFallbackCount >= this.maximumTerraFallbacks) {
+      return {
+        allowed: false,
+        errorCode: 'ASSISTANT_SOURCE_DISCOVERY_TERRA_BUDGET_EXHAUSTED',
+      };
+    }
+    if (input.maximumRunCostUnits !== null
+      && this.runReservedCostUnits + input.reservedCostUnits > input.maximumRunCostUnits) {
+      return {
+        allowed: false,
+        errorCode: 'ASSISTANT_SOURCE_DISCOVERY_COST_BUDGET_EXHAUSTED',
+      };
+    }
+
+    const receipt: AssistantSourceDiscoveryCallReceipt = {
+      projectKey: input.projectKey,
+      isFallback: input.isFallback,
+      reservedCostUnits: input.reservedCostUnits,
+      active: true,
+    };
+    this.projectCallCounts.set(input.projectKey, projectCalls + 1);
+    this.providerCallCount += 1;
+    if (input.isFallback) this.terraFallbackCount += 1;
+    this.runReservedCostUnits += input.reservedCostUnits;
+    return { allowed: true, receipt };
+  }
+
+  rollbackProviderCall(receipt: AssistantSourceDiscoveryCallReceipt) {
+    if (!receipt.active) return;
+    receipt.active = false;
+    const projectCalls = this.projectCallCounts.get(receipt.projectKey);
+    if (projectCalls !== undefined) {
+      this.projectCallCounts.set(receipt.projectKey, Math.max(0, projectCalls - 1));
+    }
+    this.providerCallCount = Math.max(0, this.providerCallCount - 1);
+    if (receipt.isFallback) {
+      this.terraFallbackCount = Math.max(0, this.terraFallbackCount - 1);
+    }
+    this.runReservedCostUnits -= receipt.reservedCostUnits;
+  }
+}
 
 export type AssistantSourceDiscoveryTransitionInput =
   | {
@@ -55,6 +159,13 @@ export function decideAssistantSourceDiscoveryTransition(
     return 'FALLBACK_TERRA';
   }
   return 'STOP';
+}
+
+export function assistantSourceDiscoveryModelRole(
+  model: string,
+  lunaModel: string,
+): AssistantSourceDiscoveryModelRole {
+  return model === lunaModel ? 'LUNA' : 'TERRA';
 }
 
 export function createDeveloperCacheKey(project: { developerKey: string; developerName: string }) {

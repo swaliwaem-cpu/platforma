@@ -158,7 +158,15 @@ export class AssistantRunProcessor implements OnModuleInit, OnModuleDestroy {
       }
       const run = await this.prisma.assistantRun.findUniqueOrThrow({
         where: { id: runId },
-        include: { userMessage: true },
+        select: {
+          conversationId: true,
+          userMessage: {
+            select: {
+              contextJson: true,
+              geoContextJson: true,
+            },
+          },
+        },
       });
       const events: AssistantProgressEvent[] = [];
       const delayMs = this.getFakeStepDelayMs();

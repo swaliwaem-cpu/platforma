@@ -1,7 +1,27 @@
-import { ASSISTANT_AI_SERVICE_TIER } from '../operations/assistant-ai-cost';
+import { randomUUID } from 'node:crypto';
+
+import {
+  ASSISTANT_AI_SERVICE_TIER,
+  estimateAssistantAiCallCost,
+  parseAssistantUsd,
+} from '../operations/assistant-ai-cost';
+import type {
+  AssistantAiUsageBudgetService,
+  AssistantAiUsageReservation,
+} from '../operations/assistant-ai-usage-budget.service';
 import { normalizeCandidateUrl } from './assistant-source-discovery-identity';
+import {
+  ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL,
+  ASSISTANT_SOURCE_DISCOVERY_MODEL,
+  AssistantSourceDiscoveryCallPolicy,
+  assistantSourceDiscoveryModelRole,
+  decideAssistantSourceDiscoveryTransition,
+  maximumSourceDiscoveryProviderCalls,
+  maximumSourceDiscoveryTerraFallbacks,
+} from './assistant-source-discovery-policy';
 
 const maximumReasonLength = 500;
+const defaultTimeoutMs = 60_000;
 
 export const ASSISTANT_SOURCE_DISCOVERY_PROMPT_VERSION = 'assistant-source-discovery-v2';
 
@@ -61,6 +81,36 @@ type ProviderProjectEvidence = {
   officialProjectCode: string | null;
 };
 
+type AssistantEnvironment = NodeJS.ProcessEnv | Record<string, string | undefined>;
+
+export type AssistantSourceDiscoveryProviderServiceOptions = {
+  usageBudgets: Pick<AssistantAiUsageBudgetService, 'reserve' | 'settle'>;
+  dailyBudgetUsd: string;
+  maximumRunCostUsd: string;
+  operationRunId: string;
+  executionId: string;
+};
+
+type AssistantSourceDiscoveryProviderBoundaryOptions = {
+  environment?: AssistantEnvironment;
+  fetchImplementation?: typeof fetch;
+  serviceOptions?: AssistantSourceDiscoveryProviderServiceOptions;
+  validatorVersion: string;
+};
+
+type AssistantSourceDiscoveryProviderRequest = {
+  phase: AssistantSourceDiscoveryPhase;
+  project: ProviderProject;
+  developer?: ProviderDeveloper;
+  projectEvidence?: ProviderProjectEvidence;
+  developerAlternativeHosts?: readonly string[];
+  model?: string;
+};
+
+export type AssistantSourceDiscoveryProviderAttempt = AssistantSourceDiscoveryProviderResult & {
+  phaseTelemetry: AssistantSourceDiscoveryPhaseTelemetry;
+};
+
 export class AssistantSourceDiscoveryError extends Error {
   constructor(
     readonly code: string,
@@ -71,6 +121,348 @@ export class AssistantSourceDiscoveryError extends Error {
   ) {
     super(code);
     this.name = 'AssistantSourceDiscoveryError';
+  }
+}
+
+export class AssistantSourceDiscoveryProviderBoundary {
+  readonly primaryModel: string;
+
+  private readonly apiKey: string;
+  private readonly baseUrl: string;
+  private readonly timeoutMs: number;
+  private readonly live: boolean;
+  private readonly fetchImplementation: typeof fetch;
+  private readonly serviceOptions?: AssistantSourceDiscoveryProviderServiceOptions;
+  private readonly validatorVersion: string;
+  private readonly callPolicy: AssistantSourceDiscoveryCallPolicy;
+  private nextAttemptOrdinal = 1;
+
+  constructor(options: AssistantSourceDiscoveryProviderBoundaryOptions) {
+    const environment = options.environment ?? process.env;
+    this.fetchImplementation = options.fetchImplementation ?? fetch;
+    this.serviceOptions = options.serviceOptions;
+    this.validatorVersion = readBoundedString(
+      options.validatorVersion,
+      120,
+      'ASSISTANT_SOURCE_DISCOVERY_VALIDATOR_VERSION_INVALID',
+    );
+    this.apiKey = environment.OPENAI_API_KEY?.trim() ?? '';
+    if (!this.apiKey) throw new AssistantSourceDiscoveryError('OPENAI_API_KEY_MISSING');
+    this.baseUrl = environment.ASSISTANT_OPENAI_BASE_URL?.trim() || 'https://api.openai.com/v1';
+    this.primaryModel = readBoundedString(
+      environment.ASSISTANT_SOURCE_DISCOVERY_MODEL?.trim() || ASSISTANT_SOURCE_DISCOVERY_MODEL,
+      160,
+      'ASSISTANT_SOURCE_DISCOVERY_MODEL_INVALID',
+    );
+    if (this.primaryModel !== ASSISTANT_SOURCE_DISCOVERY_MODEL) {
+      throw new AssistantSourceDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_MODEL_INVALID');
+    }
+    this.timeoutMs = readBoundedInteger(
+      environment.ASSISTANT_SOURCE_DISCOVERY_TIMEOUT_MS,
+      defaultTimeoutMs,
+      5_000,
+      120_000,
+      'ASSISTANT_SOURCE_DISCOVERY_TIMEOUT_MS_INVALID',
+    );
+    const maximumProviderCalls = readBoundedInteger(
+      environment.ASSISTANT_SOURCE_DISCOVERY_MAX_PROVIDER_CALLS,
+      maximumSourceDiscoveryProviderCalls,
+      1,
+      maximumSourceDiscoveryProviderCalls,
+      'ASSISTANT_SOURCE_DISCOVERY_MAX_PROVIDER_CALLS_INVALID',
+    );
+    const maximumTerraFallbacks = readBoundedInteger(
+      environment.ASSISTANT_SOURCE_DISCOVERY_MAX_TERRA_FALLBACKS,
+      maximumSourceDiscoveryTerraFallbacks,
+      0,
+      maximumSourceDiscoveryTerraFallbacks,
+      'ASSISTANT_SOURCE_DISCOVERY_MAX_TERRA_FALLBACKS_INVALID',
+    );
+    this.callPolicy = new AssistantSourceDiscoveryCallPolicy(
+      maximumProviderCalls,
+      maximumTerraFallbacks,
+    );
+    this.live = environment.ASSISTANT_SOURCE_DISCOVERY_LIVE === 'true';
+    if (this.live
+      && (environment.ASSISTANT_AI_MODE ?? 'fake').trim().toLocaleLowerCase('en-US') !== 'openai') {
+      throw new AssistantSourceDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_OPENAI_MODE_REQUIRED');
+    }
+    if (this.live && environment.ASSISTANT_PAID_CALLS_CONFIRMED !== 'true') {
+      throw new AssistantSourceDiscoveryError('ASSISTANT_PAID_CALLS_CONFIRMATION_REQUIRED');
+    }
+    if (this.live && !this.serviceOptions) {
+      throw new AssistantSourceDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_USAGE_BUDGET_REQUIRED');
+    }
+    if (!this.live && this.fetchImplementation === fetch) {
+      throw new AssistantSourceDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_LIVE_REQUIRED');
+    }
+  }
+
+  withProject<Value>(projectKey: string, operation: () => Promise<Value>) {
+    return this.callPolicy.withProject(projectKey, operation);
+  }
+
+  async requestCandidate(
+    input: AssistantSourceDiscoveryProviderRequest,
+  ): Promise<AssistantSourceDiscoveryProviderAttempt> {
+    const model = input.model ?? this.primaryModel;
+    let retryCount = 0;
+    for (;;) {
+      try {
+        return await this.requestCandidateAttempt(input, model);
+      } catch (error) {
+        const decision = decideAssistantSourceDiscoveryTransition({
+          outcome: 'PROVIDER_ERROR',
+          model: assistantSourceDiscoveryModelRole(model, this.primaryModel),
+          errorCode: readDiscoveryCode(
+            error,
+            'ASSISTANT_SOURCE_DISCOVERY_PROVIDER_FAILED',
+          ),
+          retryCount,
+        });
+        if (decision !== 'RETRY_LUNA') throw error;
+        retryCount += 1;
+      }
+    }
+  }
+
+  private async requestCandidateAttempt(
+    input: AssistantSourceDiscoveryProviderRequest,
+    model: string,
+  ): Promise<AssistantSourceDiscoveryProviderAttempt> {
+    const requestBody = input.phase === 'DEVELOPER'
+      ? createDeveloperDiscoveryRequestBody(
+        model,
+        input.project,
+        input.developerAlternativeHosts,
+      )
+      : createProjectDiscoveryRequestBody(
+        model,
+        input.project,
+        requireProviderDeveloper(input.developer),
+        input.projectEvidence,
+      );
+    if (Buffer.byteLength(JSON.stringify(requestBody), 'utf8') > maximumProviderRequestBytes) {
+      throw new AssistantSourceDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_REQUEST_TOO_LARGE');
+    }
+
+    let reservedCostUsd: string | null = null;
+    let reservedCostUnits = 0n;
+    let maximumRunCostUnits: bigint | null = null;
+    if (this.live) {
+      const estimated = estimateAssistantAiCallCost({
+        model,
+        serviceTier: ASSISTANT_AI_SERVICE_TIER,
+        requestBytes: Buffer.byteLength(JSON.stringify(requestBody), 'utf8'),
+        maxOutputTokens: maximumProviderOutputTokens,
+        maxWebSearchCalls: maximumProviderWebSearchCalls,
+      });
+      if (estimated.status !== 'PRICED'
+        || estimated.estimatedUsd === null
+        || estimated.estimatedUsdUnits === null) {
+        throw new AssistantSourceDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_COST_UNPRICED');
+      }
+      reservedCostUsd = estimated.estimatedUsd;
+      reservedCostUnits = estimated.estimatedUsdUnits;
+      maximumRunCostUnits = parseAssistantUsd(this.serviceOptions!.maximumRunCostUsd);
+    }
+
+    const isFallback = model === ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL;
+    const authorization = this.callPolicy.authorizeProviderCall({
+      projectKey: input.project.projectKey,
+      isFallback,
+      reservedCostUnits,
+      maximumRunCostUnits,
+    });
+    if (!authorization.allowed) {
+      throw new AssistantSourceDiscoveryError(authorization.errorCode);
+    }
+
+    const attemptOrdinal = this.nextAttemptOrdinal;
+    this.nextAttemptOrdinal += 1;
+    let aiReservation: AssistantAiUsageReservation | null = null;
+    try {
+      if (this.live) {
+        aiReservation = await this.serviceOptions!.usageBudgets.reserve({
+          provider: 'openai',
+          model,
+          operation: 'SOURCE_DISCOVERY',
+          operationRunId: this.serviceOptions!.operationRunId,
+          executionId: this.serviceOptions!.executionId,
+          attemptOrdinal,
+          dailyBudgetUsd: this.serviceOptions!.dailyBudgetUsd,
+          reservedCostUsd: reservedCostUsd!,
+          serviceTier: ASSISTANT_AI_SERVICE_TIER,
+          reasoningEffort: 'medium',
+          promptVersion: ASSISTANT_SOURCE_DISCOVERY_PROMPT_VERSION,
+          validatorVersion: this.validatorVersion,
+          isFallback,
+          providerTimeoutMs: this.timeoutMs,
+        });
+      }
+    } catch (error) {
+      this.callPolicy.rollbackProviderCall(authorization.receipt);
+      throw error;
+    }
+
+    const startedAt = Date.now();
+    const controller = new AbortController();
+    const clientRequestId = `assistant-source-${input.phase.toLocaleLowerCase('en-US')}-${randomUUID()}`
+      .slice(0, 160);
+    let timeout: NodeJS.Timeout | null = null;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        controller.abort();
+        reject(new AssistantSourceDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_TIMEOUT'));
+      }, this.timeoutMs);
+      timeout.unref();
+    });
+    let providerResult: AssistantSourceDiscoveryProviderResult;
+    try {
+      providerResult = await Promise.race([
+        this.fetchCandidate(requestBody, clientRequestId, controller.signal),
+        deadline,
+      ]);
+    } catch (error) {
+      if (timeout) clearTimeout(timeout);
+      const providerError = error instanceof AssistantSourceDiscoveryError
+        ? error
+        : new AssistantSourceDiscoveryError(controller.signal.aborted
+          ? 'ASSISTANT_SOURCE_DISCOVERY_TIMEOUT'
+          : 'ASSISTANT_SOURCE_DISCOVERY_NETWORK_FAILED');
+      const phaseTelemetry = createFailedPhaseTelemetry(input.phase, model, providerError);
+      try {
+        await this.settleAiUsage(
+          aiReservation,
+          model,
+          'PROVIDER_ERROR',
+          providerError.code,
+          null,
+          Date.now() - startedAt,
+        );
+      } catch (settlementError) {
+        throw new AssistantSourceDiscoveryError(
+          readDiscoveryCode(
+            settlementError,
+            'ASSISTANT_SOURCE_DISCOVERY_USAGE_SETTLEMENT_FAILED',
+          ),
+          providerError.requestId,
+          providerError.responseId,
+          providerError.httpStatus,
+          phaseTelemetry,
+        );
+      }
+      throw new AssistantSourceDiscoveryError(
+        providerError.code,
+        providerError.requestId,
+        providerError.responseId,
+        providerError.httpStatus,
+        phaseTelemetry,
+      );
+    }
+
+    const phaseTelemetry = createPhaseTelemetry(input.phase, model, providerResult);
+    try {
+      await this.settleAiUsage(
+        aiReservation,
+        model,
+        'PROVIDER_SUCCESS',
+        null,
+        { phase: input.phase, providerResult },
+        Date.now() - startedAt,
+      );
+    } catch (error) {
+      throw new AssistantSourceDiscoveryError(
+        readDiscoveryCode(error, 'ASSISTANT_SOURCE_DISCOVERY_USAGE_SETTLEMENT_FAILED'),
+        providerResult.requestId,
+        providerResult.responseId,
+        providerResult.httpStatus,
+        phaseTelemetry,
+      );
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+    return { ...providerResult, phaseTelemetry };
+  }
+
+  private async fetchCandidate(
+    requestBody: ReturnType<typeof createDeveloperDiscoveryRequestBody>
+      | ReturnType<typeof createProjectDiscoveryRequestBody>,
+    clientRequestId: string,
+    signal: AbortSignal,
+  ): Promise<AssistantSourceDiscoveryProviderResult> {
+    const response = await this.fetchImplementation(`${this.baseUrl.replace(/\/$/u, '')}/responses`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        'Content-Type': 'application/json',
+        'X-Client-Request-Id': clientRequestId,
+      },
+      body: JSON.stringify(requestBody),
+      signal,
+    });
+    const requestId = readOptionalString(response.headers.get('x-request-id'), 160);
+    let body: unknown;
+    try {
+      body = await readBoundedJson(response, maximumProviderResponseBytes);
+    } catch (error) {
+      if (response.ok) throw error;
+      throw new AssistantSourceDiscoveryError(
+        `ASSISTANT_SOURCE_DISCOVERY_HTTP_${response.status}`,
+        requestId,
+        null,
+        response.status,
+      );
+    }
+    const responseId = isRecord(body) ? readOptionalString(body.id, 160) : null;
+    if (!response.ok) {
+      throw new AssistantSourceDiscoveryError(
+        `ASSISTANT_SOURCE_DISCOVERY_HTTP_${response.status}`,
+        requestId,
+        responseId,
+        response.status,
+      );
+    }
+    if (!isRecord(body)) {
+      throw new AssistantSourceDiscoveryError(
+        'ASSISTANT_SOURCE_DISCOVERY_RESPONSE_INVALID',
+        requestId,
+        responseId,
+        response.status,
+      );
+    }
+    return { value: body, requestId, responseId, httpStatus: response.status };
+  }
+
+  private async settleAiUsage(
+    reservation: AssistantAiUsageReservation | null,
+    requestedModel: string,
+    outcome: string,
+    errorCode: string | null,
+    success: {
+      phase: AssistantSourceDiscoveryPhase;
+      providerResult: AssistantSourceDiscoveryProviderResult;
+    } | null,
+    durationMs: number,
+  ) {
+    if (!reservation) return;
+    const telemetry = success
+      ? createPhaseTelemetry(success.phase, requestedModel, success.providerResult)
+      : null;
+    await this.serviceOptions!.usageBudgets.settle({
+      reservation,
+      actualModel: telemetry?.model ?? requestedModel,
+      outcome,
+      errorCode,
+      inputTokens: telemetry?.inputTokens ?? null,
+      cachedInputTokens: telemetry?.cachedInputTokens ?? null,
+      cacheWriteInputTokens: telemetry?.cacheWriteInputTokens ?? null,
+      outputTokens: telemetry?.outputTokens ?? null,
+      reasoningTokens: telemetry?.reasoningTokens ?? null,
+      totalTokens: telemetry?.totalTokens ?? null,
+      webSearchCalls: telemetry?.webSearchCalls ?? null,
+      durationMs,
+    });
   }
 }
 
@@ -411,6 +803,35 @@ export function readDiscoveryCode(error: unknown, fallback: string) {
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function requireProviderDeveloper(value: ProviderDeveloper | undefined) {
+  if (!value) {
+    throw new AssistantSourceDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_DEVELOPER_REQUIRED');
+  }
+  return value;
+}
+
+function createFailedPhaseTelemetry(
+  phase: AssistantSourceDiscoveryPhase,
+  model: string,
+  error: AssistantSourceDiscoveryError,
+): AssistantSourceDiscoveryPhaseTelemetry {
+  return {
+    phase,
+    provider: 'openai',
+    model,
+    requestId: error.requestId,
+    responseId: error.responseId,
+    httpStatus: error.httpStatus,
+    inputTokens: null,
+    cachedInputTokens: null,
+    cacheWriteInputTokens: null,
+    outputTokens: null,
+    reasoningTokens: null,
+    totalTokens: null,
+    webSearchCalls: null,
+  };
 }
 
 function parseCandidateOutput(value: Record<string, unknown>) {

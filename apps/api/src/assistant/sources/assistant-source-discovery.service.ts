@@ -25,30 +25,24 @@ import {
 } from './assistant-source-discovery-identity';
 import {
   AssistantSourceDiscoveryError,
-  ASSISTANT_SOURCE_DISCOVERY_PROMPT_VERSION,
+  AssistantSourceDiscoveryProviderBoundary,
   aggregateTelemetry,
   collectCitationUrls,
-  createDeveloperDiscoveryRequestBody,
-  createPhaseTelemetry,
-  createProjectDiscoveryRequestBody,
   isRecord,
-  maximumProviderOutputTokens,
-  maximumProviderRequestBytes,
-  maximumProviderResponseBytes,
-  maximumProviderWebSearchCalls,
   parseDeveloperCandidate,
   parseProjectCandidate,
-  readBoundedInteger,
-  readBoundedJson,
   readBoundedString,
   readDiscoveryCode,
-  readOptionalString,
+  type AssistantSourceDiscoveryProviderServiceOptions,
   type AssistantSourceDiscoveryPhase,
   type AssistantSourceDiscoveryPhaseTelemetry,
   type AssistantSourceDiscoveryTelemetry,
 } from './assistant-source-discovery-provider';
 import { ASSISTANT_SOURCE_DISCOVERY_VALIDATOR_VERSION } from './assistant-source-discovery-checkpoint';
 import {
+  ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL,
+  ASSISTANT_SOURCE_DISCOVERY_MODEL,
+  assistantSourceDiscoveryModelRole,
   buildKnownProjectUrls,
   catalogCodeMatchesUrl,
   createDeveloperCacheKey,
@@ -56,47 +50,32 @@ import {
   isNarrowNonResidentialDeveloperUrl,
   isRetryableSourceConnectorError,
   isSameCanonicalPage,
+  maximumSourceDiscoveryCallsPerProject,
+  maximumSourceDiscoveryProviderCalls,
+  maximumSourceDiscoveryTerraFallbacks,
   uniqueUrls,
-  type AssistantSourceDiscoveryModelRole,
 } from './assistant-source-discovery-policy';
 import {
   findRegisteredDeveloperSources,
   findRegisteredProjectSource,
   type AssistantSourceDiscoveryRegistrySource,
 } from './assistant-source-discovery-registry';
-import {
-  ASSISTANT_AI_SERVICE_TIER,
-  estimateAssistantAiCallCost,
-  parseAssistantUsd,
-} from '../operations/assistant-ai-cost';
-import {
-  AssistantAiUsageBudgetService,
-  type AssistantAiUsageReservation,
-} from '../operations/assistant-ai-usage-budget.service';
-
 export { AssistantSourceDiscoveryError } from './assistant-source-discovery-provider';
 export type {
   AssistantSourceDiscoveryPhase,
   AssistantSourceDiscoveryPhaseTelemetry,
   AssistantSourceDiscoveryTelemetry,
 } from './assistant-source-discovery-provider';
+export {
+  ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL,
+  ASSISTANT_SOURCE_DISCOVERY_MODEL,
+  maximumSourceDiscoveryCallsPerProject,
+  maximumSourceDiscoveryProviderCalls,
+  maximumSourceDiscoveryTerraFallbacks,
+} from './assistant-source-discovery-policy';
 
 type AssistantEnvironment = NodeJS.ProcessEnv | Record<string, string | undefined>;
 
-type AssistantSourceDiscoveryServiceOptions = {
-  usageBudgets: AssistantAiUsageBudgetService;
-  dailyBudgetUsd: string;
-  maximumRunCostUsd: string;
-  operationRunId: string;
-  executionId: string;
-};
-
-export const ASSISTANT_SOURCE_DISCOVERY_MODEL = 'gpt-5.6-luna';
-export const ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL = 'gpt-5.6-terra';
-export const maximumSourceDiscoveryProviderCalls = 35;
-export const maximumSourceDiscoveryCallsPerProject = 3;
-export const maximumSourceDiscoveryTerraFallbacks = 2;
-const defaultTimeoutMs = 60_000;
 const developerCacheTtlMs = 15 * 60_000;
 const maximumDeveloperCacheEntries = 50;
 export type AssistantSourceDiscoveryProject = AssistantSourceIdentityProject;
@@ -178,18 +157,8 @@ type AlternativeDeveloperPage = {
 };
 
 export class AssistantSourceDiscoveryService {
-  private readonly apiKey: string;
-  private readonly baseUrl: string;
   private readonly model: string;
-  private readonly timeoutMs: number;
-  private readonly maximumProviderCalls: number;
-  private readonly maximumTerraFallbacks: number;
-  private providerCallCount = 0;
-  private terraFallbackCount = 0;
-  private readonly projectCallCounts = new Map<string, number>();
-  private readonly live: boolean;
-  private runReservedCostUnits = 0n;
-  private nextAttemptOrdinal = 1;
+  private readonly providerBoundary: AssistantSourceDiscoveryProviderBoundary;
   private readonly developerCache = new Map<string, DeveloperCacheEntry>();
   private readonly developerCatalogCache = new Map<
     string,
@@ -199,56 +168,17 @@ export class AssistantSourceDiscoveryService {
 
   constructor(
     environment: AssistantEnvironment = process.env,
-    private readonly fetchImplementation: typeof fetch = fetch,
+    fetchImplementation: typeof fetch = fetch,
     private readonly sourceConnector: SourceConnector = new OfficialHtmlSourceConnector(),
-    private readonly serviceOptions?: AssistantSourceDiscoveryServiceOptions,
+    serviceOptions?: AssistantSourceDiscoveryProviderServiceOptions,
   ) {
-    this.apiKey = environment.OPENAI_API_KEY?.trim() ?? '';
-    if (!this.apiKey) throw new AssistantSourceDiscoveryError('OPENAI_API_KEY_MISSING');
-    this.baseUrl = environment.ASSISTANT_OPENAI_BASE_URL?.trim() || 'https://api.openai.com/v1';
-    this.model = readBoundedString(
-      environment.ASSISTANT_SOURCE_DISCOVERY_MODEL?.trim() || ASSISTANT_SOURCE_DISCOVERY_MODEL,
-      160,
-      'ASSISTANT_SOURCE_DISCOVERY_MODEL_INVALID',
-    );
-    if (this.model !== ASSISTANT_SOURCE_DISCOVERY_MODEL) {
-      throw new AssistantSourceDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_MODEL_INVALID');
-    }
-    this.timeoutMs = readBoundedInteger(
-      environment.ASSISTANT_SOURCE_DISCOVERY_TIMEOUT_MS,
-      defaultTimeoutMs,
-      5_000,
-      120_000,
-      'ASSISTANT_SOURCE_DISCOVERY_TIMEOUT_MS_INVALID',
-    );
-    this.maximumProviderCalls = readBoundedInteger(
-      environment.ASSISTANT_SOURCE_DISCOVERY_MAX_PROVIDER_CALLS,
-      maximumSourceDiscoveryProviderCalls,
-      1,
-      maximumSourceDiscoveryProviderCalls,
-      'ASSISTANT_SOURCE_DISCOVERY_MAX_PROVIDER_CALLS_INVALID',
-    );
-    this.maximumTerraFallbacks = readBoundedInteger(
-      environment.ASSISTANT_SOURCE_DISCOVERY_MAX_TERRA_FALLBACKS,
-      maximumSourceDiscoveryTerraFallbacks,
-      0,
-      maximumSourceDiscoveryTerraFallbacks,
-      'ASSISTANT_SOURCE_DISCOVERY_MAX_TERRA_FALLBACKS_INVALID',
-    );
-    this.live = environment.ASSISTANT_SOURCE_DISCOVERY_LIVE === 'true';
-    if (this.live
-      && (environment.ASSISTANT_AI_MODE ?? 'fake').trim().toLocaleLowerCase('en-US') !== 'openai') {
-      throw new AssistantSourceDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_OPENAI_MODE_REQUIRED');
-    }
-    if (this.live && environment.ASSISTANT_PAID_CALLS_CONFIRMED !== 'true') {
-      throw new AssistantSourceDiscoveryError('ASSISTANT_PAID_CALLS_CONFIRMATION_REQUIRED');
-    }
-    if (this.live && !serviceOptions) {
-      throw new AssistantSourceDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_USAGE_BUDGET_REQUIRED');
-    }
-    if (!this.live && fetchImplementation === fetch) {
-      throw new AssistantSourceDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_LIVE_REQUIRED');
-    }
+    this.providerBoundary = new AssistantSourceDiscoveryProviderBoundary({
+      environment,
+      fetchImplementation,
+      serviceOptions,
+      validatorVersion: ASSISTANT_SOURCE_DISCOVERY_VALIDATOR_VERSION,
+    });
+    this.model = this.providerBoundary.primaryModel;
   }
 
   async discover(
@@ -256,12 +186,10 @@ export class AssistantSourceDiscoveryService {
     seed: AssistantSourceDiscoverySeed = {},
   ): Promise<AssistantSourceDiscoveryResult> {
     const projectKey = projectValue.projectKey;
-    this.projectCallCounts.set(projectKey, 0);
-    try {
-      return await this.discoverWithinBudget(projectValue, seed);
-    } finally {
-      this.projectCallCounts.delete(projectKey);
-    }
+    return this.providerBoundary.withProject(
+      projectKey,
+      () => this.discoverWithinBudget(projectValue, seed),
+    );
   }
 
   private async discoverWithinBudget(
@@ -336,38 +264,33 @@ export class AssistantSourceDiscoveryService {
       };
     }
     let projectModel = this.model;
-    let projectProviderResult = await this.requestCandidate(
-      'PROJECT',
+    let projectProviderResult = await this.providerBoundary.requestCandidate({
+      phase: 'PROJECT',
       project,
       developer,
-      catalogEvidence ?? undefined,
-    );
+      projectEvidence: catalogEvidence ?? undefined,
+    });
     let currentProjectCitations = collectCitationUrls(projectProviderResult.value);
     let projectCitations = currentProjectCitations;
     const phaseTelemetries = [
       ...developerPhaseTelemetries,
-      createPhaseTelemetry('PROJECT', this.model, projectProviderResult),
+      projectProviderResult.phaseTelemetry,
     ];
     const requestTerraFallback = async () => {
-      projectProviderResult = await this.requestCandidate(
-        'PROJECT',
+      projectProviderResult = await this.providerBoundary.requestCandidate({
+        phase: 'PROJECT',
         project,
         developer,
-        catalogEvidence ?? undefined,
-        undefined,
-        ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL,
-      );
+        projectEvidence: catalogEvidence ?? undefined,
+        model: ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL,
+      });
       projectModel = ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL;
       currentProjectCitations = collectCitationUrls(projectProviderResult.value);
       projectCitations = uniqueUrls(
         projectCitations,
         currentProjectCitations,
       );
-      phaseTelemetries.push(createPhaseTelemetry(
-        'PROJECT',
-        ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL,
-        projectProviderResult,
-      ));
+      phaseTelemetries.push(projectProviderResult.phaseTelemetry);
     };
     const transitionProject = async (
       outcome: 'MALFORMED_OUTPUT'
@@ -378,7 +301,7 @@ export class AssistantSourceDiscoveryService {
     ) => {
       const decision = decideAssistantSourceDiscoveryTransition({
         outcome,
-        model: modelRole(projectModel, this.model),
+        model: assistantSourceDiscoveryModelRole(projectModel, this.model),
       });
       if (decision !== 'FALLBACK_TERRA') return decision;
       await requestTerraFallback();
@@ -677,41 +600,34 @@ export class AssistantSourceDiscoveryService {
     project: AssistantSourceDiscoveryProject,
   ): Promise<DeveloperResolutionSuccess | DeveloperResolutionFailure> {
     let developerModel = this.model;
-    let developerProviderResult = await this.requestCandidate('DEVELOPER', project);
+    let developerProviderResult = await this.providerBoundary.requestCandidate({
+      phase: 'DEVELOPER',
+      project,
+    });
     let developerCandidate = parseDeveloperCandidate(developerProviderResult.value);
-    const developerPhaseTelemetries = [createPhaseTelemetry(
-      'DEVELOPER',
-      developerModel,
-      developerProviderResult,
-    )];
+    const developerPhaseTelemetries = [developerProviderResult.phaseTelemetry];
     let currentDeveloperCitations = collectCitationUrls(developerProviderResult.value);
     let developerCitations = currentDeveloperCitations;
     let developerCandidateUrl: string | null = null;
     let developerAllowedHosts: string[] = [];
     let developerPage: SourceConnectorFetchResult | null = null;
     const requestTerraFallback = async () => {
-      developerProviderResult = await this.requestCandidate(
-        'DEVELOPER',
+      developerProviderResult = await this.providerBoundary.requestCandidate({
+        phase: 'DEVELOPER',
         project,
-        undefined,
-        undefined,
-        developerAllowedHosts,
-        ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL,
-      );
+        developerAlternativeHosts: developerAllowedHosts,
+        model: ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL,
+      });
       developerModel = ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL;
       developerCandidate = parseDeveloperCandidate(developerProviderResult.value);
       currentDeveloperCitations = collectCitationUrls(developerProviderResult.value);
       developerCitations = uniqueUrls(developerCitations, currentDeveloperCitations);
-      developerPhaseTelemetries.push(createPhaseTelemetry(
-        'DEVELOPER',
-        developerModel,
-        developerProviderResult,
-      ));
+      developerPhaseTelemetries.push(developerProviderResult.phaseTelemetry);
     };
     const transitionDeveloper = async () => {
       const decision = decideAssistantSourceDiscoveryTransition({
         outcome: 'LOCAL_VALIDATION_REJECTED',
-        model: modelRole(developerModel, this.model),
+        model: assistantSourceDiscoveryModelRole(developerModel, this.model),
       });
       if (decision === 'FALLBACK_TERRA') await requestTerraFallback();
       return decision;
@@ -1023,303 +939,6 @@ export class AssistantSourceDiscoveryService {
     };
   }
 
-  private async requestCandidate(
-    phase: AssistantSourceDiscoveryPhase,
-    project: AssistantSourceDiscoveryProject,
-    developer?: VerifiedDeveloper,
-    projectEvidence?: VerifiedProjectCatalogEvidence,
-    developerAlternativeHosts?: readonly string[],
-    model = this.model,
-  ) {
-    let retryCount = 0;
-    for (;;) {
-      try {
-        return await this.requestCandidateAttempt(
-          phase,
-          project,
-          developer,
-          projectEvidence,
-          developerAlternativeHosts,
-          model,
-        );
-      } catch (error) {
-        const decision = decideAssistantSourceDiscoveryTransition({
-          outcome: 'PROVIDER_ERROR',
-          model: modelRole(model, this.model),
-          errorCode: readDiscoveryCode(
-            error,
-            'ASSISTANT_SOURCE_DISCOVERY_PROVIDER_FAILED',
-          ),
-          retryCount,
-        });
-        if (decision !== 'RETRY_LUNA') throw error;
-        retryCount += 1;
-      }
-    }
-  }
-
-  private async requestCandidateAttempt(
-    phase: AssistantSourceDiscoveryPhase,
-    project: AssistantSourceDiscoveryProject,
-    developer?: VerifiedDeveloper,
-    projectEvidence?: VerifiedProjectCatalogEvidence,
-    developerAlternativeHosts?: readonly string[],
-    model = this.model,
-  ) {
-    const projectCalls = this.projectCallCounts.get(project.projectKey) ?? 0;
-    if (projectCalls >= maximumSourceDiscoveryCallsPerProject) {
-      throw new AssistantSourceDiscoveryError(
-        'ASSISTANT_SOURCE_DISCOVERY_PROJECT_CALL_BUDGET_EXHAUSTED',
-      );
-    }
-    if (this.providerCallCount >= this.maximumProviderCalls) {
-      throw new AssistantSourceDiscoveryError(
-        'ASSISTANT_SOURCE_DISCOVERY_BATCH_CALL_BUDGET_EXHAUSTED',
-      );
-    }
-    const isFallback = model === ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL;
-    if (isFallback) {
-      if (this.terraFallbackCount >= this.maximumTerraFallbacks) {
-        throw new AssistantSourceDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_TERRA_BUDGET_EXHAUSTED');
-      }
-    }
-    const requestBody = phase === 'DEVELOPER'
-      ? createDeveloperDiscoveryRequestBody(model, project, developerAlternativeHosts)
-      : createProjectDiscoveryRequestBody(
-        model,
-        project,
-        requireDeveloper(developer),
-        projectEvidence,
-      );
-    if (Buffer.byteLength(JSON.stringify(requestBody), 'utf8') > maximumProviderRequestBytes) {
-      throw new AssistantSourceDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_REQUEST_TOO_LARGE');
-    }
-    this.projectCallCounts.set(project.projectKey, projectCalls + 1);
-    this.providerCallCount += 1;
-    if (isFallback) this.terraFallbackCount += 1;
-    let aiReservation: AssistantAiUsageReservation | null;
-    try {
-      aiReservation = await this.reserveAiUsage(
-        phase,
-        model,
-        requestBody,
-        isFallback,
-      );
-    } catch (error) {
-      this.projectCallCounts.set(project.projectKey, projectCalls);
-      this.providerCallCount -= 1;
-      if (isFallback) this.terraFallbackCount -= 1;
-      throw error;
-    }
-    const startedAt = Date.now();
-    const controller = new AbortController();
-    const clientRequestId = `assistant-source-${phase.toLocaleLowerCase('en-US')}-${randomUUID()}`
-      .slice(0, 160);
-    let timeout: NodeJS.Timeout | null = null;
-    const deadline = new Promise<never>((_resolve, reject) => {
-      timeout = setTimeout(() => {
-        controller.abort();
-        reject(new AssistantSourceDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_TIMEOUT'));
-      }, this.timeoutMs);
-      timeout.unref();
-    });
-    let providerResult: Awaited<ReturnType<AssistantSourceDiscoveryService['fetchCandidate']>>;
-    try {
-      providerResult = await Promise.race([
-        this.fetchCandidate(
-          requestBody,
-          clientRequestId,
-          controller.signal,
-        ),
-        deadline,
-      ]);
-    } catch (error) {
-      if (timeout) clearTimeout(timeout);
-      const providerError = error instanceof AssistantSourceDiscoveryError
-        ? error
-        : new AssistantSourceDiscoveryError(controller.signal.aborted
-          ? 'ASSISTANT_SOURCE_DISCOVERY_TIMEOUT'
-          : 'ASSISTANT_SOURCE_DISCOVERY_NETWORK_FAILED');
-      const phaseTelemetry = createFailedPhaseTelemetry(phase, model, providerError);
-      try {
-        await this.settleAiUsage(
-          aiReservation,
-          model,
-          'PROVIDER_ERROR',
-          providerError.code,
-          null,
-          Date.now() - startedAt,
-        );
-      } catch (settlementError) {
-        throw new AssistantSourceDiscoveryError(
-          readDiscoveryCode(
-            settlementError,
-            'ASSISTANT_SOURCE_DISCOVERY_USAGE_SETTLEMENT_FAILED',
-          ),
-          providerError.requestId,
-          providerError.responseId,
-          providerError.httpStatus,
-          phaseTelemetry,
-        );
-      }
-      throw new AssistantSourceDiscoveryError(
-        providerError.code,
-        providerError.requestId,
-        providerError.responseId,
-        providerError.httpStatus,
-        phaseTelemetry,
-      );
-    }
-    const phaseTelemetry = createPhaseTelemetry(phase, model, providerResult);
-    try {
-      await this.settleAiUsage(aiReservation, model, 'PROVIDER_SUCCESS', null, {
-        phase,
-        providerResult,
-      }, Date.now() - startedAt);
-    } catch (error) {
-      throw new AssistantSourceDiscoveryError(
-        readDiscoveryCode(error, 'ASSISTANT_SOURCE_DISCOVERY_USAGE_SETTLEMENT_FAILED'),
-        providerResult.requestId,
-        providerResult.responseId,
-        providerResult.httpStatus,
-        phaseTelemetry,
-      );
-    } finally {
-      if (timeout) clearTimeout(timeout);
-    }
-    return providerResult;
-  }
-
-  private async fetchCandidate(
-    requestBody: ReturnType<typeof createDeveloperDiscoveryRequestBody>
-      | ReturnType<typeof createProjectDiscoveryRequestBody>,
-    clientRequestId: string,
-    signal: AbortSignal,
-  ) {
-    const response = await this.fetchImplementation(`${this.baseUrl.replace(/\/$/u, '')}/responses`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        'Content-Type': 'application/json',
-        'X-Client-Request-Id': clientRequestId,
-      },
-      body: JSON.stringify(requestBody),
-      signal,
-    });
-    const requestId = readOptionalString(response.headers.get('x-request-id'), 160);
-    let body: unknown;
-    try {
-      body = await readBoundedJson(response, maximumProviderResponseBytes);
-    } catch (error) {
-      if (response.ok) throw error;
-      throw new AssistantSourceDiscoveryError(
-        `ASSISTANT_SOURCE_DISCOVERY_HTTP_${response.status}`,
-        requestId,
-        null,
-        response.status,
-      );
-    }
-    const responseId = isRecord(body) ? readOptionalString(body.id, 160) : null;
-    if (!response.ok) {
-      throw new AssistantSourceDiscoveryError(
-        `ASSISTANT_SOURCE_DISCOVERY_HTTP_${response.status}`,
-        requestId,
-        responseId,
-        response.status,
-      );
-    }
-    if (!isRecord(body)) {
-      throw new AssistantSourceDiscoveryError(
-        'ASSISTANT_SOURCE_DISCOVERY_RESPONSE_INVALID',
-        requestId,
-        responseId,
-        response.status,
-      );
-    }
-    return { value: body, requestId, responseId, httpStatus: response.status };
-  }
-
-  private async reserveAiUsage(
-    phase: AssistantSourceDiscoveryPhase,
-    model: string,
-    requestBody: ReturnType<typeof createDeveloperDiscoveryRequestBody>
-      | ReturnType<typeof createProjectDiscoveryRequestBody>,
-    isFallback: boolean,
-  ) {
-    if (!this.live) return null;
-    const estimated = estimateAssistantAiCallCost({
-      model,
-      serviceTier: ASSISTANT_AI_SERVICE_TIER,
-      requestBytes: Buffer.byteLength(JSON.stringify(requestBody), 'utf8'),
-      maxOutputTokens: maximumProviderOutputTokens,
-      maxWebSearchCalls: maximumProviderWebSearchCalls,
-    });
-    if (estimated.status !== 'PRICED'
-      || estimated.estimatedUsd === null
-      || estimated.estimatedUsdUnits === null) {
-      throw new AssistantSourceDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_COST_UNPRICED');
-    }
-    const maximumRunCostUnits = parseAssistantUsd(this.serviceOptions!.maximumRunCostUsd);
-    if (this.runReservedCostUnits + estimated.estimatedUsdUnits > maximumRunCostUnits) {
-      throw new AssistantSourceDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_COST_BUDGET_EXHAUSTED');
-    }
-    const attemptOrdinal = this.nextAttemptOrdinal;
-    this.nextAttemptOrdinal += 1;
-    this.runReservedCostUnits += estimated.estimatedUsdUnits;
-    try {
-      return await this.serviceOptions!.usageBudgets.reserve({
-        provider: 'openai',
-        model,
-        operation: 'SOURCE_DISCOVERY',
-        operationRunId: this.serviceOptions!.operationRunId,
-        executionId: this.serviceOptions!.executionId,
-        attemptOrdinal,
-        dailyBudgetUsd: this.serviceOptions!.dailyBudgetUsd,
-        reservedCostUsd: estimated.estimatedUsd,
-        serviceTier: ASSISTANT_AI_SERVICE_TIER,
-        reasoningEffort: 'medium',
-        promptVersion: ASSISTANT_SOURCE_DISCOVERY_PROMPT_VERSION,
-        validatorVersion: ASSISTANT_SOURCE_DISCOVERY_VALIDATOR_VERSION,
-        isFallback,
-        providerTimeoutMs: this.timeoutMs,
-      });
-    } catch (error) {
-      this.runReservedCostUnits -= estimated.estimatedUsdUnits;
-      throw error;
-    }
-  }
-
-  private async settleAiUsage(
-    reservation: AssistantAiUsageReservation | null,
-    requestedModel: string,
-    outcome: string,
-    errorCode: string | null,
-    success: {
-      phase: AssistantSourceDiscoveryPhase;
-      providerResult: Awaited<ReturnType<AssistantSourceDiscoveryService['fetchCandidate']>>;
-    } | null,
-    durationMs: number,
-  ) {
-    if (!reservation) return;
-    const telemetry = success
-      ? createPhaseTelemetry(success.phase, requestedModel, success.providerResult)
-      : null;
-    await this.serviceOptions!.usageBudgets.settle({
-      reservation,
-      actualModel: telemetry?.model ?? requestedModel,
-      outcome,
-      errorCode,
-      inputTokens: telemetry?.inputTokens ?? null,
-      cachedInputTokens: telemetry?.cachedInputTokens ?? null,
-      cacheWriteInputTokens: telemetry?.cacheWriteInputTokens ?? null,
-      outputTokens: telemetry?.outputTokens ?? null,
-      reasoningTokens: telemetry?.reasoningTokens ?? null,
-      totalTokens: telemetry?.totalTokens ?? null,
-      webSearchCalls: telemetry?.webSearchCalls ?? null,
-      durationMs,
-    });
-  }
-
   private async fetchOfficialSource(
     canonicalUrl: string,
     browserRenderMode: 'when-empty' | 'always' = 'when-empty',
@@ -1431,15 +1050,13 @@ export class AssistantSourceDiscoveryService {
     allowedHosts: readonly string[],
     existingCitations: string[],
   ): Promise<AlternativeDeveloperPage> {
-    const providerResult = await this.requestCandidate(
-      'DEVELOPER',
+    const providerResult = await this.providerBoundary.requestCandidate({
+      phase: 'DEVELOPER',
       project,
-      undefined,
-      undefined,
-      allowedHosts,
-    );
+      developerAlternativeHosts: allowedHosts,
+    });
     const candidate = parseDeveloperCandidate(providerResult.value);
-    const phaseTelemetry = createPhaseTelemetry('DEVELOPER', this.model, providerResult);
+    const phaseTelemetry = providerResult.phaseTelemetry;
     const citations = uniqueUrls(existingCitations, collectCitationUrls(providerResult.value));
     let proposedUrl: string | null = null;
     if (candidate.status === 'FOUND') {
@@ -1579,32 +1196,6 @@ function rethrowRetryableSourceConnectorError(error: unknown): void {
   }
 }
 
-function createFailedPhaseTelemetry(
-  phase: AssistantSourceDiscoveryPhase,
-  model: string,
-  error: AssistantSourceDiscoveryError,
-): AssistantSourceDiscoveryPhaseTelemetry {
-  return {
-    phase,
-    provider: 'openai',
-    model,
-    requestId: error.requestId,
-    responseId: error.responseId,
-    httpStatus: error.httpStatus,
-    inputTokens: null,
-    cachedInputTokens: null,
-    cacheWriteInputTokens: null,
-    outputTokens: null,
-    reasoningTokens: null,
-    totalTokens: null,
-    webSearchCalls: null,
-  };
-}
-
-function modelRole(model: string, lunaModel: string): AssistantSourceDiscoveryModelRole {
-  return model === lunaModel ? 'LUNA' : 'TERRA';
-}
-
 function registeredProjectSourceResult(
   project: AssistantSourceDiscoveryProject,
   registered: NonNullable<ReturnType<typeof findRegisteredProjectSource>>,
@@ -1667,11 +1258,6 @@ function telemetryFromPhases(
     webSearchCalls: 0,
     phases: [],
   };
-}
-
-function requireDeveloper(value: VerifiedDeveloper | undefined) {
-  if (!value) throw new AssistantSourceDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_DEVELOPER_REQUIRED');
-  return value;
 }
 
 function inferCatalogMatchKind(

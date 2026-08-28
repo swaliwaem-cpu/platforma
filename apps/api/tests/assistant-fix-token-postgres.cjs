@@ -33,6 +33,8 @@ const suffix = randomUUID().replaceAll('-', '').slice(0, 12);
 const provider = `openai-fix-${suffix}`;
 const expiryProvider = `openai-expiry-${suffix}`;
 const reconcileProvider = `openai-reconcile-${suffix}`;
+const planProvider = `openai-plan-${suffix}`;
+const planUsageDate = new Date('2100-01-01T00:00:00.000Z');
 const firstDay = new Date('2098-08-27T00:00:00.000Z');
 const secondDay = new Date('2098-08-28T00:00:00.000Z');
 const thirdDay = new Date('2098-08-29T00:00:00.000Z');
@@ -52,13 +54,13 @@ before(async () => {
 
 after(async () => {
   await prisma.assistantAiUsageAttempt.deleteMany({
-    where: { provider: { in: [provider, expiryProvider, reconcileProvider] } },
+    where: { provider: { in: [provider, expiryProvider, reconcileProvider, planProvider] } },
   });
   await prisma.assistantAiExecutionFence.deleteMany({
     where: { operationRunId: { startsWith: `fix-token-${suffix}-` } },
   });
   await prisma.assistantAiDailyBudget.deleteMany({
-    where: { provider: { in: [provider, expiryProvider, reconcileProvider] } },
+    where: { provider: { in: [provider, expiryProvider, reconcileProvider, planProvider] } },
   });
   for (const fixture of assistantFixtures) {
     await prisma.assistantRun.deleteMany({ where: { id: fixture.run.id } });
@@ -68,6 +70,155 @@ after(async () => {
     await prisma.role.deleteMany({ where: { id: fixture.role.id } });
   }
   await prisma.$disconnect();
+});
+
+test('FIX-TOKEN keeps only indexes used by real budget, reconciliation and report queries', async () => {
+  const planOperationRunId = runId('query-plan-target');
+  const planExecutionId = randomUUID();
+  await prisma.$executeRaw`
+    INSERT INTO "assistant_ai_daily_budgets" (
+      "provider", "usage_date", "budget_limit_usd", "reserved_cost_usd", "settled_cost_usd"
+    )
+    SELECT
+      ${planProvider},
+      ${planUsageDate}::date + "series" AS "usage_date",
+      CAST('1.00000000' AS numeric),
+      CAST('0.00000000' AS numeric),
+      CAST('0.00000000' AS numeric)
+    FROM generate_series(0, 1023) AS "series"
+    ON CONFLICT ("provider", "usage_date") DO NOTHING
+  `;
+  await prisma.$executeRaw`
+    INSERT INTO "assistant_ai_usage_attempts" (
+      "id", "operation_run_id", "execution_id", "execution_attempt_ordinal",
+      "operation", "provider", "requested_model", "service_tier",
+      "reasoning_effort", "prompt_version", "validator_version", "is_fallback",
+      "status", "outcome", "pricing_catalog_version", "pricing_status",
+      "reserved_cost_usd", "charged_cost_usd", "usage_date", "reservation_expires_at"
+    )
+    SELECT
+      md5(${`fix-token-${suffix}-plan-attempt-`} || "series"::text)::uuid,
+      ${`fix-token-${suffix}-plan-noise-`} || "series"::text,
+      md5(${`fix-token-${suffix}-plan-execution-`} || "series"::text)::uuid,
+      1,
+      'SOURCE_DISCOVERY',
+      ${planProvider},
+      'gpt-5.6-luna',
+      'default',
+      'medium',
+      'query-plan-prompt-v1',
+      'query-plan-validator-v1',
+      false,
+      'SETTLED',
+      'ACCEPTED',
+      'openai-standard-pricing-2026-08-27',
+      'PRICED',
+      CAST('0.00010000' AS numeric),
+      CAST('0.00010000' AS numeric),
+      ${planUsageDate},
+      ${planUsageDate}
+    FROM generate_series(1, 2048) AS "series"
+  `;
+  await prisma.$executeRaw`
+    INSERT INTO "assistant_ai_usage_attempts" (
+      "id", "operation_run_id", "execution_id", "execution_attempt_ordinal",
+      "operation", "provider", "requested_model", "service_tier",
+      "reasoning_effort", "prompt_version", "validator_version", "is_fallback",
+      "status", "pricing_catalog_version", "pricing_status",
+      "reserved_cost_usd", "usage_date", "reservation_expires_at"
+    ) VALUES (
+      CAST(${randomUUID()} AS uuid),
+      ${planOperationRunId},
+      CAST(${planExecutionId} AS uuid),
+      1,
+      'SOURCE_DISCOVERY',
+      ${planProvider},
+      'gpt-5.6-luna',
+      'default',
+      'medium',
+      'query-plan-prompt-v1',
+      'query-plan-validator-v1',
+      false,
+      'RESERVED',
+      'openai-standard-pricing-2026-08-27',
+      'RESERVED',
+      CAST('0.10000000' AS numeric),
+      ${planUsageDate},
+      ${new Date('2100-01-01T00:10:00.000Z')}
+    )
+  `;
+  await prisma.$executeRaw`ANALYZE "assistant_ai_daily_budgets"`;
+  await prisma.$executeRaw`ANALYZE "assistant_ai_usage_attempts"`;
+
+  const obsoleteIndexes = await prisma.$queryRaw`
+    SELECT "indexname"
+    FROM "pg_indexes"
+    WHERE "schemaname" = 'public'
+      AND "indexname" IN (
+        'assistant_ai_daily_budgets_usage_date_idx',
+        'assistant_ai_usage_attempts_provider_usage_date_status_idx',
+        'assistant_ai_usage_attempts_operation_created_at_idx'
+      )
+    ORDER BY "indexname"
+  `;
+  assert.deepEqual(obsoleteIndexes, []);
+
+  const reconciliationPlan = explainPlanText(await prisma.$queryRaw`
+    EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT JSON)
+    SELECT
+      "id",
+      "execution_id" AS "executionId",
+      "provider",
+      "usage_date" AS "usageDate",
+      "reserved_cost_usd" AS "reservedCostUsd",
+      "reservation_expires_at" AS "reservationExpiresAt"
+    FROM "assistant_ai_usage_attempts"
+    WHERE "operation_run_id" = ${planOperationRunId}
+      AND "status" = 'RESERVED'
+    ORDER BY "provider", "usage_date", "id"
+    FOR UPDATE
+  `);
+  assert.match(
+    reconciliationPlan,
+    /assistant_ai_usage_attempts_(?:operation_run_id_attempt_ordinal_ke|run_execution_ordinal_key)/u,
+  );
+
+  const reportPlan = explainPlanText(await prisma.$queryRaw`
+    EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT JSON)
+    SELECT
+      "requested_model",
+      "is_fallback",
+      "status",
+      "input_tokens",
+      "cached_input_tokens",
+      "cache_write_input_tokens",
+      "output_tokens",
+      "reasoning_tokens",
+      "total_tokens",
+      "web_search_calls",
+      "pricing_catalog_version",
+      "reserved_cost_usd",
+      "estimated_cost_usd",
+      "charged_cost_usd"
+    FROM "assistant_ai_usage_attempts"
+    WHERE "operation_run_id" = ${planOperationRunId}
+      AND "operation" = 'SOURCE_DISCOVERY'
+    ORDER BY "created_at", "id"
+  `);
+  assert.match(
+    reportPlan,
+    /assistant_ai_usage_attempts_(?:operation_run_id_attempt_ordinal_ke|run_execution_ordinal_key)/u,
+  );
+
+  const dailyBudgetPlan = explainPlanText(await prisma.$queryRaw`
+    EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT JSON)
+    SELECT "provider"
+    FROM "assistant_ai_daily_budgets"
+    WHERE "provider" = ${planProvider}
+      AND "usage_date" = ${planUsageDate}
+    FOR UPDATE
+  `);
+  assert.match(dailyBudgetPlan, /assistant_ai_daily_budgets_pkey/u);
 });
 
 test('FIX-TOKEN atomically shares one provider/day USD budget across planner and discovery', async () => {
@@ -172,6 +323,14 @@ test('FIX-TOKEN atomically shares one provider/day USD budget across planner and
   const attempts = await prisma.assistantAiUsageAttempt.findMany({
     where: { id: { in: [luna.id, terra.id] } },
     orderBy: { requestedModel: 'asc' },
+    select: {
+      id: true,
+      pricingStatus: true,
+      cachedInputTokens: true,
+      cacheWriteInputTokens: true,
+      webSearchCalls: true,
+      chargedCostUsd: true,
+    },
   });
   const lunaAttempt = attempts.find(({ id }) => id === luna.id);
   const terraAttempt = attempts.find(({ id }) => id === terra.id);
@@ -495,6 +654,11 @@ test('FIX-TOKEN migration keeps a fail-closed compatibility path for the previou
 
   const legacy = await prisma.assistantAiUsageAttempt.findUniqueOrThrow({
     where: { id: firstAttemptId },
+    select: {
+      executionId: true,
+      reservationExpiresAt: true,
+      dailyBudgetUsd: true,
+    },
   });
   assert.match(legacy.executionId, /^[0-9a-f-]{36}$/u);
   assert.ok(legacy.reservationExpiresAt > new Date());
@@ -540,6 +704,11 @@ test('FIX-TOKEN records an actual charge above reserve without hiding the overag
 
   const attempt = await prisma.assistantAiUsageAttempt.findUniqueOrThrow({
     where: { id: reservation.id },
+    select: {
+      pricingStatus: true,
+      reservedCostUsd: true,
+      chargedCostUsd: true,
+    },
   });
   assert.equal(attempt.pricingStatus, 'RESERVE_EXCEEDED');
   assert.equal(attempt.reservedCostUsd.toFixed(8), '0.00000100');
@@ -724,6 +893,7 @@ test('FIX-TOKEN defers a recovered AssistantRun while its previous provider rese
 test('FIX-TOKEN keeps provider/day budget atomic while settlement races reconciliation', async () => {
   assert.equal(await prisma.assistantAiDailyBudget.findUnique({
     where: { provider_usageDate: { provider, usageDate: fourthDay } },
+    select: { provider: true },
   }), null);
   const gate = deferred();
   const reservationInputs = Array.from({ length: 8 }, (_, index) => ({
@@ -1010,4 +1180,11 @@ function readBudget(usageDate) {
       updatedAt: true,
     },
   });
+}
+
+function explainPlanText(rows) {
+  assert.equal(rows.length, 1);
+  const plan = rows[0]['QUERY PLAN'];
+  assert.ok(plan);
+  return JSON.stringify(plan);
 }

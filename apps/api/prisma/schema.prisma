@@ -723,7 +723,6 @@ model AssistantAiDailyBudget {
   updatedAt       DateTime @updatedAt @map("updated_at")
 
   @@id([provider, usageDate])
-  @@index([usageDate])
   @@map("assistant_ai_daily_budgets")
 }
 
@@ -776,8 +775,6 @@ model AssistantAiUsageAttempt {
 
   @@unique([operationRunId, executionId, attemptOrdinal], map: "assistant_ai_usage_attempts_run_execution_ordinal_key")
   @@unique([operationRunId, compatibilityOrdinal], map: "assistant_ai_usage_attempts_operation_run_id_attempt_ordinal_ke")
-  @@index([provider, usageDate, status])
-  @@index([operation, createdAt])
   @@map("assistant_ai_usage_attempts")
 }
 
