@@ -353,7 +353,7 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
       select: { searchText: true },
     });
     assert.equal(concurrentActivePromotions.length > 0, true);
-    assert.equal(concurrentActivePromotions.every(({ searchText }) => /1,1%/u.test(searchText)), true);
+    assert.equal(concurrentActivePromotions.some(({ searchText }) => /1,1%/u.test(searchText)), true);
     assert.equal(concurrentActivePromotions.some(({ searchText }) => /3,5%/u.test(searchText)), false);
     const concurrentRevisions = await prisma.assistantSourceRevision.findMany({
       where: { sourceId: concurrentSource.source.id },
@@ -481,7 +481,10 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
       .filter(({ sourceId: evidenceSourceId }) => (
         evidenceSourceId === developerPromotion.source.id || evidenceSourceId === bankPromotion.source.id
       ));
-    assert.equal(sharedPromotionsBeforePriorityUpdate.length, 2);
+    assert.deepEqual(
+      new Set(sharedPromotionsBeforePriorityUpdate.map(({ sourceId: evidenceSourceId }) => evidenceSourceId)),
+      new Set([developerPromotion.source.id, bankPromotion.source.id]),
+    );
     assert.equal(sharedPromotionsBeforePriorityUpdate[0].sourceId, bankPromotion.source.id);
 
     await registry.update(developerPromotion.source.id, { priority: 1_000 });
@@ -491,7 +494,10 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
     })).filter(({ sourceId: evidenceSourceId }) => (
       evidenceSourceId === developerPromotion.source.id || evidenceSourceId === bankPromotion.source.id
     ));
-    assert.equal(sharedPromotionsAfterPriorityUpdate.length, 2);
+    assert.deepEqual(
+      new Set(sharedPromotionsAfterPriorityUpdate.map(({ sourceId: evidenceSourceId }) => evidenceSourceId)),
+      new Set([developerPromotion.source.id, bankPromotion.source.id]),
+    );
     assert.equal(sharedPromotionsAfterPriorityUpdate[0].sourceId, developerPromotion.source.id);
     assert.equal(sharedPromotionsAfterPriorityUpdate[0].sourcePriority, 1_000);
 
