@@ -32,7 +32,10 @@ import {
   createPhaseTelemetry,
   createProjectDiscoveryRequestBody,
   isRecord,
+  maximumProviderOutputTokens,
+  maximumProviderRequestBytes,
   maximumProviderResponseBytes,
+  maximumProviderWebSearchCalls,
   parseDeveloperCandidate,
   parseProjectCandidate,
   readBoundedInteger,
@@ -90,6 +93,9 @@ type AssistantSourceDiscoveryServiceOptions = {
 
 export const ASSISTANT_SOURCE_DISCOVERY_MODEL = 'gpt-5.6-luna';
 export const ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL = 'gpt-5.6-terra';
+export const maximumSourceDiscoveryProviderCalls = 35;
+export const maximumSourceDiscoveryCallsPerProject = 3;
+export const maximumSourceDiscoveryTerraFallbacks = 2;
 const defaultTimeoutMs = 60_000;
 const developerCacheTtlMs = 15 * 60_000;
 const maximumDeveloperCacheEntries = 50;
@@ -217,16 +223,16 @@ export class AssistantSourceDiscoveryService {
     );
     this.maximumProviderCalls = readBoundedInteger(
       environment.ASSISTANT_SOURCE_DISCOVERY_MAX_PROVIDER_CALLS,
-      35,
+      maximumSourceDiscoveryProviderCalls,
       1,
-      35,
+      maximumSourceDiscoveryProviderCalls,
       'ASSISTANT_SOURCE_DISCOVERY_MAX_PROVIDER_CALLS_INVALID',
     );
     this.maximumTerraFallbacks = readBoundedInteger(
       environment.ASSISTANT_SOURCE_DISCOVERY_MAX_TERRA_FALLBACKS,
-      2,
+      maximumSourceDiscoveryTerraFallbacks,
       0,
-      2,
+      maximumSourceDiscoveryTerraFallbacks,
       'ASSISTANT_SOURCE_DISCOVERY_MAX_TERRA_FALLBACKS_INVALID',
     );
     this.live = environment.ASSISTANT_SOURCE_DISCOVERY_LIVE === 'true';
@@ -1061,7 +1067,7 @@ export class AssistantSourceDiscoveryService {
     model = this.model,
   ) {
     const projectCalls = this.projectCallCounts.get(project.projectKey) ?? 0;
-    if (projectCalls >= 3) {
+    if (projectCalls >= maximumSourceDiscoveryCallsPerProject) {
       throw new AssistantSourceDiscoveryError(
         'ASSISTANT_SOURCE_DISCOVERY_PROJECT_CALL_BUDGET_EXHAUSTED',
       );
@@ -1085,6 +1091,9 @@ export class AssistantSourceDiscoveryService {
         requireDeveloper(developer),
         projectEvidence,
       );
+    if (Buffer.byteLength(JSON.stringify(requestBody), 'utf8') > maximumProviderRequestBytes) {
+      throw new AssistantSourceDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_REQUEST_TOO_LARGE');
+    }
     this.projectCallCounts.set(project.projectKey, projectCalls + 1);
     this.providerCallCount += 1;
     if (isFallback) this.terraFallbackCount += 1;
@@ -1242,8 +1251,8 @@ export class AssistantSourceDiscoveryService {
       model,
       serviceTier: ASSISTANT_AI_SERVICE_TIER,
       requestBytes: Buffer.byteLength(JSON.stringify(requestBody), 'utf8'),
-      maxOutputTokens: 1_600,
-      maxWebSearchCalls: 1,
+      maxOutputTokens: maximumProviderOutputTokens,
+      maxWebSearchCalls: maximumProviderWebSearchCalls,
     });
     if (estimated.status !== 'PRICED'
       || estimated.estimatedUsd === null

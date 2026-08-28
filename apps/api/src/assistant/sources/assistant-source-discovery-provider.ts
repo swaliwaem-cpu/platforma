@@ -5,7 +5,10 @@ const maximumReasonLength = 500;
 
 export const ASSISTANT_SOURCE_DISCOVERY_PROMPT_VERSION = 'assistant-source-discovery-v2';
 
+export const maximumProviderRequestBytes = 32 * 1024;
 export const maximumProviderResponseBytes = 2 * 1024 * 1024;
+export const maximumProviderOutputTokens = 1_600;
+export const maximumProviderWebSearchCalls = 1;
 
 export type AssistantSourceDiscoveryPhase = 'DEVELOPER' | 'PROJECT';
 
@@ -81,8 +84,8 @@ export function createDeveloperDiscoveryRequestBody(
     service_tier: ASSISTANT_AI_SERVICE_TIER,
     reasoning: { effort: 'medium' },
     store: false,
-    max_output_tokens: 1_600,
-    max_tool_calls: 1,
+    max_output_tokens: maximumProviderOutputTokens,
+    max_tool_calls: maximumProviderWebSearchCalls,
     tools: [alternativeHosts ? {
       type: 'web_search',
       search_context_size: 'low',
@@ -150,8 +153,8 @@ export function createProjectDiscoveryRequestBody(
     service_tier: ASSISTANT_AI_SERVICE_TIER,
     reasoning: { effort: 'medium' },
     store: false,
-    max_output_tokens: 1_600,
-    max_tool_calls: 1,
+    max_output_tokens: maximumProviderOutputTokens,
+    max_tool_calls: maximumProviderWebSearchCalls,
     tools: [{
       type: 'web_search',
       search_context_size: 'low',

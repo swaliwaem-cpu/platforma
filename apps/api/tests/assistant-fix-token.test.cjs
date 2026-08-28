@@ -571,8 +571,9 @@ test('FIX-TOKEN refresh rotates a mismatched fingerprint through a sanitized bac
     },
   };
   let providerConstructedAfterBackup = false;
+  const prisma = { assistantAiUsageAttempt: emptyAssistantUsageLedger() };
   const application = {
-    get() { return {}; },
+    get() { return prisma; },
     async close() {},
   };
   try {
@@ -708,9 +709,18 @@ test('FIX-TOKEN discovery defaults to a one-project dry-run and never constructs
 
   assert.equal(providerConstructed, false);
   assert.equal(report.mode, 'DRY_RUN');
+  assert.equal(report.stopReason, 'ASSISTANT_SOURCE_DISCOVERY_DRY_RUN_COST_CAP_MAY_STOP');
+  assert.equal(report.pricingCatalogVersion, ASSISTANT_AI_PRICING_CATALOG_VERSION);
   assert.equal(report.selection.requestedProjects, 1);
-  assert.equal(report.selection.maximumEstimatedUsd, '0.10000000');
+  assert.equal(report.selection.requestedCostCapUsd, '0.10000000');
+  assert.notEqual(report.selection.maximumEstimatedUsd, report.selection.requestedCostCapUsd);
+  assert.equal(report.selection.costCapMayStopBeforeCompletion, true);
+  assert.deepEqual(report.selection.selectedProjectKeys, ['dry-run-project']);
+  assert.deepEqual(report.selection.checkpointProjectKeys, []);
   assert.equal(report.summary.providerRequests, 0);
+  assert.equal(report.summary.reservedUsd, '0.00000000');
+  assert.equal(report.summary.estimatedUsd, '0.00000000');
+  assert.equal(report.summary.chargedUsd, '0.00000000');
 });
 
 test('FIX-TOKEN dry-run estimate depends on the selected call mix instead of the requested cap', async () => {
@@ -736,6 +746,12 @@ test('FIX-TOKEN dry-run estimate depends on the selected call mix instead of the
       limit: 1,
       requestedCostCapUsd: '0.02000000',
       checkpointPath: join(directory, 'one-high.json'),
+    });
+    const oneProjectSufficientCap = await runDryRunEstimate({
+      projects,
+      limit: 1,
+      requestedCostCapUsd: '100.00000000',
+      checkpointPath: join(directory, 'one-sufficient.json'),
     });
     const twoProjects = await runDryRunEstimate({
       projects,
@@ -765,10 +781,21 @@ test('FIX-TOKEN dry-run estimate depends on the selected call mix instead of the
     assert.equal(oneProjectLowCap.selection.requestedCostCapUsd, '0.01000000');
     assert.equal(oneProjectHighCap.selection.requestedCostCapUsd, '0.02000000');
     assert.equal(twentyProjects.selection.requestedCostCapUsd, '0.01000000');
+    assert.equal(oneProjectLowCap.selection.costCapMayStopBeforeCompletion, true);
+    assert.equal(oneProjectHighCap.selection.costCapMayStopBeforeCompletion, true);
+    assert.equal(oneProjectSufficientCap.selection.costCapMayStopBeforeCompletion, false);
+    assert.equal(
+      oneProjectSufficientCap.stopReason,
+      'ASSISTANT_SOURCE_DISCOVERY_DRY_RUN_COMPLETE',
+    );
     assert.match(oneProjectLowCap.selection.maximumEstimatedUsd, /^\d+\.\d{8}$/u);
     assert.equal(
       oneProjectLowCap.selection.maximumEstimatedUsd,
       oneProjectHighCap.selection.maximumEstimatedUsd,
+    );
+    assert.equal(
+      oneProjectLowCap.selection.maximumEstimatedUsd,
+      oneProjectSufficientCap.selection.maximumEstimatedUsd,
     );
     const oneProjectMaximum = parseAssistantUsd(oneProjectLowCap.selection.maximumEstimatedUsd);
     const twoProjectMaximum = parseAssistantUsd(twoProjects.selection.maximumEstimatedUsd);
@@ -826,6 +853,7 @@ test('FIX-TOKEN repeat uses the checkpoint without discovery while refresh runs 
   };
   let discoveryCalls = 0;
   const prisma = {
+    assistantAiUsageAttempt: emptyAssistantUsageLedger(),
     assistantKnowledgeSource: {
       async findMany() { return []; },
     },
@@ -888,6 +916,10 @@ test('FIX-TOKEN repeat uses the checkpoint without discovery while refresh runs 
     });
     assert.equal(discoveryCalls, 0);
     assert.equal(repeated.summary.checkpointEntriesSkipped, 1);
+    assert.deepEqual(repeated.selection.checkpointProjectKeys, ['checkpoint-project']);
+    assert.equal(repeated.summary.reservedUsd, '0.00000000');
+    assert.equal(repeated.summary.estimatedUsd, '0.00000000');
+    assert.equal(repeated.summary.chargedUsd, '0.00000000');
 
     const refreshed = await runAssistantSourceDiscovery({
       argv: ['--live', '--refresh'],
@@ -907,8 +939,9 @@ test('FIX-TOKEN refresh error removes the stale selected entry instead of maskin
   const checkpointPath = join(directory, 'checkpoint.json');
   const project = fixTokenProject();
   const fingerprint = checkpointFingerprint();
+  const prisma = { assistantAiUsageAttempt: emptyAssistantUsageLedger() };
   const application = {
-    get() { return {}; },
+    get() { return prisma; },
     async close() {},
   };
   try {
@@ -961,8 +994,9 @@ test('FIX-TOKEN checkpoint filtering never backfills beyond the selected candida
   }));
   let selectionCalls = 0;
   const discoveryProjectKeys = [];
+  const prisma = { assistantAiUsageAttempt: emptyAssistantUsageLedger() };
   const application = {
-    get() { return {}; },
+    get() { return prisma; },
     async close() {},
   };
   try {
@@ -1006,6 +1040,7 @@ test('FIX-TOKEN checkpoint filtering never backfills beyond the selected candida
 
     assert.equal(selectionCalls, 1);
     assert.deepEqual(report.selection.selectedProjectKeys, ['checkpoint-hit', 'pending-selected']);
+    assert.deepEqual(report.selection.checkpointProjectKeys, ['checkpoint-hit']);
     assert.equal(report.summary.checkpointEntriesSkipped, 1);
     assert.deepEqual(discoveryProjectKeys, ['pending-selected']);
   } finally {
@@ -1096,6 +1131,7 @@ test('FIX-TOKEN active indexed project registry source takes priority over a che
   let providerCalls = 0;
   let connectorCalls = 0;
   const prisma = {
+    assistantAiUsageAttempt: emptyAssistantUsageLedger(),
     assistantKnowledgeSource: {
       async findMany(query) {
         assert.equal(query.select.revisions.where.processingStatus, 'INDEXED');
@@ -1218,8 +1254,9 @@ test('FIX-TOKEN checkpoint identity includes the current developer key', async (
     telemetry: null,
   };
   let discoveryCalls = 0;
+  const prisma = { assistantAiUsageAttempt: emptyAssistantUsageLedger() };
   const application = {
-    get() { return {}; },
+    get() { return prisma; },
     async close() {},
   };
   const environment = {
@@ -1279,6 +1316,7 @@ test('FIX-TOKEN CLI keeps one logical operation while isolating each execution',
   const providerRunIds = [];
   const executionIds = [];
   const prisma = {
+    assistantAiUsageAttempt: emptyAssistantUsageLedger(),
     assistantKnowledgeSource: {
       async findMany() { return []; },
     },
@@ -1415,11 +1453,27 @@ test('FIX-TOKEN live report preserves an early successful attempt when a later p
     discoveryError: failedDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_NETWORK_FAILED'),
   });
 
+  assert.equal(report.runId, runId);
+  assert.equal(report.mode, 'LIVE_PREVIEW');
+  assert.equal(report.stopReason, 'ASSISTANT_SOURCE_DISCOVERY_NETWORK_FAILED');
+  assert.equal(report.pricingCatalogVersion, ASSISTANT_AI_PRICING_CATALOG_VERSION);
+  assert.deepEqual(report.pricingCatalogVersions, [ASSISTANT_AI_PRICING_CATALOG_VERSION]);
+  assert.deepEqual(report.selection.selectedProjectKeys, [fixTokenProject().projectKey]);
+  assert.deepEqual(report.selection.checkpointProjectKeys, []);
   assert.equal(report.summary.providerRequests, 2);
   assert.equal(report.summary.lunaCalls, 2);
   assert.equal(report.summary.terraCalls, 0);
   assert.equal(report.summary.fallbackCalls, 0);
   assert.deepEqual(report.summary.tokenUsage, {
+    inputTokens: null,
+    cachedInputTokens: null,
+    cacheWriteInputTokens: null,
+    outputTokens: null,
+    reasoningTokens: null,
+    totalTokens: null,
+    webSearchCalls: null,
+  });
+  assert.deepEqual(report.summary.knownTokenUsage, {
     inputTokens: 20,
     cachedInputTokens: 0,
     cacheWriteInputTokens: 0,
@@ -1428,6 +1482,7 @@ test('FIX-TOKEN live report preserves an early successful attempt when a later p
     totalTokens: 33,
     webSearchCalls: 1,
   });
+  assert.equal(report.summary.usageUnknownAttempts, 1);
   assert.equal(report.summary.reservedUsd, '0.02234567');
   assert.equal(report.summary.estimatedUsd, null);
   assert.equal(report.summary.chargedUsd, '0.01236567');
@@ -1439,24 +1494,152 @@ test('FIX-TOKEN live report charges the full reserve for failed persisted usage 
   const runId = 'fix-token-unknown-usage-report';
   const report = await runPersistedDiscoveryReport({
     runId,
-    attempts: [persistedUsageAttempt({
-      id: '33333333-3333-4333-8333-333333333333',
-      runId,
-      attemptOrdinal: 1,
-      outcome: 'PROVIDER_ERROR',
-      errorCode: 'ASSISTANT_SOURCE_DISCOVERY_TIMEOUT',
-      reservedCostUsd: '0.01234567',
-      estimatedCostUsd: null,
-      chargedCostUsd: '0.01234567',
-    })],
+    attempts: [{
+      ...persistedUsageAttempt({
+        id: '33333333-3333-4333-8333-333333333333',
+        runId,
+        attemptOrdinal: 1,
+        outcome: 'PROVIDER_ERROR',
+        errorCode: 'ASSISTANT_SOURCE_DISCOVERY_TIMEOUT',
+        reservedCostUsd: '0.01234567',
+        estimatedCostUsd: null,
+        chargedCostUsd: '0.01234567',
+      }),
+      prompt: 'must-not-enter-report',
+      rawProviderResponse: 'raw-provider-secret',
+      apiKey: 'sk-test-secret',
+      canonicalUrl: 'https://user:password@example.test/path?token=secret#fragment',
+    }],
     discoveryError: failedDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_TIMEOUT'),
   });
 
   assert.equal(report.pricingCatalogVersion, ASSISTANT_AI_PRICING_CATALOG_VERSION);
+  assert.deepEqual(report.summary.tokenUsage, {
+    inputTokens: null,
+    cachedInputTokens: null,
+    cacheWriteInputTokens: null,
+    outputTokens: null,
+    reasoningTokens: null,
+    totalTokens: null,
+    webSearchCalls: null,
+  });
+  assert.deepEqual(report.summary.knownTokenUsage, {
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    cacheWriteInputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    totalTokens: 0,
+    webSearchCalls: 0,
+  });
+  assert.equal(report.summary.usageUnknownAttempts, 1);
   assert.equal(report.summary.providerRequests, 1);
   assert.equal(report.summary.reservedUsd, '0.01234567');
   assert.equal(report.summary.estimatedUsd, null);
   assert.equal(report.summary.chargedUsd, '0.01234567');
+  const serialized = JSON.stringify(report);
+  for (const forbidden of [
+    'must-not-enter-report',
+    'raw-provider-secret',
+    'sk-test-secret',
+    'password',
+    'token=secret',
+    '#fragment',
+  ]) {
+    assert.equal(serialized.includes(forbidden), false);
+  }
+});
+
+test('FIX-TOKEN live report preserves every pricing catalog version across recovery', async () => {
+  const runId = 'fix-token-mixed-pricing-catalog-report';
+  const nextPricingCatalogVersion = 'assistant-ai-pricing-test-v2';
+  const report = await runPersistedDiscoveryReport({
+    runId,
+    attempts: [
+      persistedUsageAttempt({
+        id: '55555555-5555-4555-8555-555555555555',
+        runId,
+        attemptOrdinal: 1,
+        outcome: 'ACCEPTED',
+        inputTokens: 10n,
+        cachedInputTokens: 0n,
+        cacheWriteInputTokens: 0n,
+        outputTokens: 5n,
+        reasoningTokens: 2n,
+        totalTokens: 15n,
+        webSearchCalls: 1,
+        reservedCostUsd: '0.01000000',
+        estimatedCostUsd: '0.00001000',
+        chargedCostUsd: '0.00001000',
+      }),
+      persistedUsageAttempt({
+        id: '66666666-6666-4666-8666-666666666666',
+        runId,
+        attemptOrdinal: 2,
+        outcome: 'NOT_FOUND',
+        inputTokens: 12n,
+        cachedInputTokens: 1n,
+        cacheWriteInputTokens: 0n,
+        outputTokens: 6n,
+        reasoningTokens: 3n,
+        totalTokens: 18n,
+        webSearchCalls: 1,
+        pricingCatalogVersion: nextPricingCatalogVersion,
+        reservedCostUsd: '0.02000000',
+        estimatedCostUsd: '0.00002000',
+        chargedCostUsd: '0.00002000',
+      }),
+    ],
+    discoveryError: failedDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_NOT_FOUND'),
+  });
+
+  assert.equal(report.pricingCatalogVersion, null);
+  assert.deepEqual(report.pricingCatalogVersions, [
+    ASSISTANT_AI_PRICING_CATALOG_VERSION,
+    nextPricingCatalogVersion,
+  ]);
+  assert.equal(report.summary.providerRequests, 2);
+  assert.equal(report.summary.chargedUsd, '0.00003000');
+});
+
+test('FIX-TOKEN live report counts Terra fallback and conservatively charges an unresolved reserve', async () => {
+  const runId = 'fix-token-unresolved-terra-report';
+  const report = await runPersistedDiscoveryReport({
+    runId,
+    attempts: [persistedUsageAttempt({
+      id: '44444444-4444-4444-8444-444444444444',
+      runId,
+      attemptOrdinal: 1,
+      requestedModel: 'gpt-5.6-terra',
+      isFallback: true,
+      status: 'RESERVED',
+      outcome: null,
+      reservedCostUsd: '0.04567890',
+      estimatedCostUsd: null,
+      chargedCostUsd: null,
+    })],
+    discoveryError: failedDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_USAGE_SETTLEMENT_FAILED'),
+  });
+
+  assert.equal(report.summary.providerRequests, 1);
+  assert.equal(report.summary.lunaCalls, 0);
+  assert.equal(report.summary.terraCalls, 1);
+  assert.equal(report.summary.fallbackCalls, 1);
+  assert.equal(report.summary.reservedUsd, '0.04567890');
+  assert.equal(report.summary.estimatedUsd, null);
+  assert.equal(report.summary.chargedUsd, '0.04567890');
+});
+
+test('FIX-TOKEN live report fails closed when the persisted usage ledger cannot be read', async () => {
+  await assert.rejects(
+    runPersistedDiscoveryReport({
+      runId: 'fix-token-ledger-read-failure',
+      attempts: [],
+      discoveryError: failedDiscoveryError('ASSISTANT_SOURCE_DISCOVERY_TIMEOUT'),
+      ledgerError: new Error('database query contained sensitive diagnostics'),
+    }),
+    (error) => error?.message === 'ASSISTANT_SOURCE_DISCOVERY_USAGE_LEDGER_READ_FAILED',
+  );
 });
 
 test('FIX-TOKEN discovery report counts a failed paid provider attempt without pretending it cost zero', async () => {
@@ -1890,7 +2073,7 @@ async function runDryRunEstimate({
   });
 }
 
-async function runPersistedDiscoveryReport({ runId, attempts, discoveryError }) {
+async function runPersistedDiscoveryReport({ runId, attempts, discoveryError, ledgerError = null }) {
   const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-persisted-report-'));
   const checkpointPath = join(directory, 'checkpoint.json');
   const project = fixTokenProject();
@@ -1899,6 +2082,7 @@ async function runPersistedDiscoveryReport({ runId, attempts, discoveryError }) 
       async findMany(query) {
         assert.equal(query.where.operationRunId, runId);
         assert.ok(query.select);
+        if (ledgerError) throw ledgerError;
         return attempts;
       },
     },
@@ -1941,10 +2125,24 @@ async function runPersistedDiscoveryReport({ runId, attempts, discoveryError }) 
   }
 }
 
+function emptyAssistantUsageLedger() {
+  return {
+    async findMany(query) {
+      assert.equal(query.where.operation, 'SOURCE_DISCOVERY');
+      assert.equal(typeof query.where.operationRunId, 'string');
+      assert.ok(query.select);
+      return [];
+    },
+  };
+}
+
 function persistedUsageAttempt({
   id,
   runId,
   attemptOrdinal,
+  requestedModel = 'gpt-5.6-luna',
+  isFallback = false,
+  status = 'SETTLED',
   outcome,
   errorCode = null,
   inputTokens = null,
@@ -1954,6 +2152,7 @@ function persistedUsageAttempt({
   reasoningTokens = null,
   totalTokens = null,
   webSearchCalls = null,
+  pricingCatalogVersion = ASSISTANT_AI_PRICING_CATALOG_VERSION,
   reservedCostUsd,
   estimatedCostUsd,
   chargedCostUsd,
@@ -1964,13 +2163,13 @@ function persistedUsageAttempt({
     attemptOrdinal,
     operation: 'SOURCE_DISCOVERY',
     provider: 'openai',
-    requestedModel: 'gpt-5.6-luna',
-    actualModel: 'gpt-5.6-luna',
+    requestedModel,
+    actualModel: status === 'SETTLED' ? requestedModel : null,
     reasoningEffort: 'medium',
     promptVersion: 'assistant-source-discovery-v1',
     validatorVersion: 'assistant-source-discovery-validator-v1',
-    isFallback: false,
-    status: 'SETTLED',
+    isFallback,
+    status,
     outcome,
     errorCode,
     inputTokens,
@@ -1980,11 +2179,11 @@ function persistedUsageAttempt({
     reasoningTokens,
     totalTokens,
     webSearchCalls,
-    pricingCatalogVersion: ASSISTANT_AI_PRICING_CATALOG_VERSION,
+    pricingCatalogVersion,
     pricingStatus: estimatedCostUsd === null ? 'USAGE_INCOMPLETE' : 'PRICED',
     reservedCostUsd: new Prisma.Decimal(reservedCostUsd),
     estimatedCostUsd: estimatedCostUsd === null ? null : new Prisma.Decimal(estimatedCostUsd),
-    chargedCostUsd: new Prisma.Decimal(chargedCostUsd),
+    chargedCostUsd: chargedCostUsd === null ? null : new Prisma.Decimal(chargedCostUsd),
     durationMs: 25,
     usageDate: new Date('2026-08-27T00:00:00.000Z'),
     createdAt: new Date('2026-08-27T12:00:00.000Z'),

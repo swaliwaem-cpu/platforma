@@ -12,10 +12,16 @@ const {
   ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL,
   ASSISTANT_SOURCE_DISCOVERY_MODEL,
   AssistantSourceDiscoveryService,
+  maximumSourceDiscoveryCallsPerProject,
+  maximumSourceDiscoveryProviderCalls,
+  maximumSourceDiscoveryTerraFallbacks,
 } = require('../dist/assistant/sources/assistant-source-discovery.service.js');
 const {
   ASSISTANT_SOURCE_DISCOVERY_PROMPT_VERSION,
   aggregateTelemetry,
+  maximumProviderOutputTokens,
+  maximumProviderRequestBytes,
+  maximumProviderWebSearchCalls,
 } = require('../dist/assistant/sources/assistant-source-discovery-provider.js');
 const {
   ASSISTANT_SOURCE_DISCOVERY_VALIDATOR_VERSION,
@@ -26,8 +32,10 @@ const {
   writeAssistantSourceDiscoveryCheckpoint,
 } = require('../dist/assistant/sources/assistant-source-discovery-checkpoint.js');
 const {
+  ASSISTANT_AI_PRICING_CATALOG_VERSION,
   addAssistantUsd,
   calculateAssistantAiCost,
+  estimateAssistantAiCallCost,
   formatAssistantUsd,
   parseAssistantUsd,
 } = require('../dist/assistant/operations/assistant-ai-cost.js');
@@ -51,6 +59,15 @@ const { PrismaService } = require('../dist/prisma/prisma.service.js');
 
 const maximumPilotDevelopers = 7;
 const maximumPilotProjects = 20;
+const assistantUsageReportFields = [
+  'inputTokens',
+  'cachedInputTokens',
+  'cacheWriteInputTokens',
+  'outputTokens',
+  'reasoningTokens',
+  'totalTokens',
+  'webSearchCalls',
+];
 const discoveryRegistrySourceSelect = {
   id: true,
   projectKey: true,
@@ -151,24 +168,29 @@ async function runAssistantSourceDiscovery(input = {}) {
           ? [`${project.projectKey}\u0000${project.developerKey}`]
           : []
       )));
-    const checkpointHits = projects.filter(({ projectKey, developerKey }) => (
+    const checkpointProjects = projects.filter(({ projectKey, developerKey }) => (
       checkpointIdentities.has(`${projectKey}\u0000${developerKey}`)
         && !registryProjectIdentities.has(`${projectKey}\u0000${developerKey}`)
-    )).length;
+    ));
+    const checkpointHits = checkpointProjects.length;
     const pendingProjects = projects.filter(({ projectKey, developerKey }) => (
       registryProjectIdentities.has(`${projectKey}\u0000${developerKey}`)
         || !checkpointIdentities.has(`${projectKey}\u0000${developerKey}`)
     ));
+    const providerEligibleProjects = pendingProjects.filter(({ projectKey, developerKey }) => (
+      !registryProjectIdentities.has(`${projectKey}\u0000${developerKey}`)
+    ));
     const runId = dependencies.runId
       ?? createAssistantSourceDiscoveryOperationRunId(checkpointPath);
     const executionId = dependencies.executionId ?? randomUUID();
-    const maximumEstimatedUsd = options.maxCostUsd;
+    const maximumEstimatedUsd = estimateMaximumDiscoveryCost(providerEligibleProjects.length);
     if (!options.live) {
       const report = createReport(options, [], [], {
         runId,
         selectedProjects: projects,
         maximumEstimatedUsd,
         checkpointHits,
+        checkpointProjectKeys: checkpointProjects.map(({ projectKey }) => projectKey),
       });
       if (!input.silent) process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
       return report;
@@ -177,8 +199,14 @@ async function runAssistantSourceDiscovery(input = {}) {
     const discoveryEnvironment = {
       ...environment,
       ASSISTANT_SOURCE_DISCOVERY_MODEL,
-      ASSISTANT_SOURCE_DISCOVERY_MAX_PROVIDER_CALLS: String(Math.min(35, pendingProjects.length * 3)),
-      ASSISTANT_SOURCE_DISCOVERY_MAX_TERRA_FALLBACKS: String(Math.min(2, pendingProjects.length)),
+      ASSISTANT_SOURCE_DISCOVERY_MAX_PROVIDER_CALLS: String(Math.min(
+        maximumSourceDiscoveryProviderCalls,
+        pendingProjects.length * maximumSourceDiscoveryCallsPerProject,
+      )),
+      ASSISTANT_SOURCE_DISCOVERY_MAX_TERRA_FALLBACKS: String(Math.min(
+        maximumSourceDiscoveryTerraFallbacks,
+        pendingProjects.length,
+      )),
       ASSISTANT_SOURCE_DISCOVERY_LIVE: 'true',
     };
     const dailyBudgetUsd = readAssistantDailyUsdBudget(
@@ -225,6 +253,7 @@ async function runAssistantSourceDiscovery(input = {}) {
     }
     writeAssistantSourceDiscoveryCheckpoint(checkpointPath, checkpoint);
 
+    const persistedAttempts = await loadAssistantUsageAttempts(prisma, runId);
     const applyResults = options.apply
       ? await applyVerifiedSources(application, prisma, results)
       : [];
@@ -233,6 +262,8 @@ async function runAssistantSourceDiscovery(input = {}) {
       selectedProjects: projects,
       maximumEstimatedUsd,
       checkpointHits,
+      checkpointProjectKeys: checkpointProjects.map(({ projectKey }) => projectKey),
+      persistedAttempts,
     });
     if (!input.silent) process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     if (report.summary.verified + checkpointHits !== projects.length
@@ -581,40 +612,28 @@ async function applyVerifiedSources(application, prisma, results) {
 }
 
 function createReport(options, results, applyResults, context) {
-  const tokenUsage = results.reduce((total, result) => {
-    const usage = result.telemetry;
-    total.inputTokens += usage?.inputTokens ?? 0;
-    total.cachedInputTokens += usage?.cachedInputTokens ?? 0;
-    total.cacheWriteInputTokens += usage?.cacheWriteInputTokens ?? 0;
-    total.outputTokens += usage?.outputTokens ?? 0;
-    total.reasoningTokens += usage?.reasoningTokens ?? 0;
-    total.totalTokens += usage?.totalTokens ?? 0;
-    total.webSearchCalls += usage?.webSearchCalls ?? 0;
-    return total;
-  }, {
-    inputTokens: 0,
-    cachedInputTokens: 0,
-    cacheWriteInputTokens: 0,
-    outputTokens: 0,
-    reasoningTokens: 0,
-    totalTokens: 0,
-    webSearchCalls: 0,
-  });
   const phases = results.flatMap((result) => result.telemetry?.phases ?? []);
-  const phaseCosts = phases.map((phase) => calculateAssistantAiCost({
-    model: phase.model,
-    inputTokens: phase.inputTokens,
-    cachedInputTokens: phase.cachedInputTokens,
-    cacheWriteInputTokens: phase.cacheWriteInputTokens,
-    outputTokens: phase.outputTokens,
-    webSearchCalls: phase.webSearchCalls,
-  }));
-  const estimatedUsd = phaseCosts.every((cost) => cost.status === 'PRICED')
-    ? addAssistantUsd(phaseCosts.map((cost) => cost.estimatedUsd))
-    : null;
+  if (options.live && !Array.isArray(context.persistedAttempts)) {
+    throw new Error('ASSISTANT_SOURCE_DISCOVERY_USAGE_LEDGER_REQUIRED');
+  }
+  if (options.live && context.persistedAttempts.length < phases.length) {
+    throw new Error('ASSISTANT_SOURCE_DISCOVERY_USAGE_LEDGER_INCOMPLETE');
+  }
+  const usageSummary = options.live
+    ? summarizePersistedAttempts(context.persistedAttempts)
+    : summarizeInMemoryPhases(phases);
+  const costCapMayStopBeforeCompletion = parseAssistantUsd(options.maxCostUsd)
+    < parseAssistantUsd(context.maximumEstimatedUsd);
   return {
     runId: context.runId,
     mode: options.live ? (options.apply ? 'LIVE_APPLY' : 'LIVE_PREVIEW') : 'DRY_RUN',
+    stopReason: options.live
+      ? readLiveStopReason(results, applyResults)
+      : costCapMayStopBeforeCompletion
+        ? 'ASSISTANT_SOURCE_DISCOVERY_DRY_RUN_COST_CAP_MAY_STOP'
+        : 'ASSISTANT_SOURCE_DISCOVERY_DRY_RUN_COMPLETE',
+    pricingCatalogVersion: usageSummary.pricingCatalogVersion,
+    pricingCatalogVersions: usageSummary.pricingCatalogVersions,
     generatedAt: new Date().toISOString(),
     selection: {
       requestedProjects: options.limit,
@@ -623,7 +642,10 @@ function createReport(options, results, applyResults, context) {
       missingOnly: options.missingOnly,
       refresh: options.refresh,
       selectedProjectKeys: context.selectedProjects.map(({ projectKey }) => projectKey),
+      checkpointProjectKeys: context.checkpointProjectKeys ?? [],
+      requestedCostCapUsd: options.maxCostUsd,
       maximumEstimatedUsd: context.maximumEstimatedUsd,
+      costCapMayStopBeforeCompletion,
     },
     summary: {
       verified: results.filter(({ status }) => status === 'VERIFIED').length,
@@ -634,14 +656,18 @@ function createReport(options, results, applyResults, context) {
       indexed: applyResults.filter(({ ingestion }) => ingestion?.outcome === 'INDEXED'
         || ingestion?.outcome === 'UNCHANGED').length,
       ingestionFailed: applyResults.filter(({ ingestionErrorCode }) => ingestionErrorCode !== null).length,
-      providerRequests: phases.length,
-      lunaCalls: phases.filter(({ model }) => model === ASSISTANT_SOURCE_DISCOVERY_MODEL).length,
-      terraCalls: phases.filter(({ model }) => model === ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL).length,
-      fallbackCalls: phases.filter(({ model }) => model === ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL).length,
+      providerRequests: usageSummary.providerRequests,
+      lunaCalls: usageSummary.lunaCalls,
+      terraCalls: usageSummary.terraCalls,
+      fallbackCalls: usageSummary.fallbackCalls,
       developerCacheHits: results.filter(({ developerCacheHit }) => developerCacheHit).length,
       checkpointEntriesSkipped: context.checkpointHits,
-      tokenUsage,
-      estimatedUsd,
+      tokenUsage: usageSummary.tokenUsage,
+      knownTokenUsage: usageSummary.knownTokenUsage,
+      usageUnknownAttempts: usageSummary.usageUnknownAttempts,
+      reservedUsd: usageSummary.reservedUsd,
+      estimatedUsd: usageSummary.estimatedUsd,
+      chargedUsd: usageSummary.chargedUsd,
     },
     results: results.map((result) => ({
       projectKey: result.project.projectKey,
@@ -657,6 +683,203 @@ function createReport(options, results, applyResults, context) {
       ingestionErrorCode: result.ingestionErrorCode,
     })),
   };
+}
+
+async function loadAssistantUsageAttempts(prisma, operationRunId) {
+  try {
+    return await prisma.assistantAiUsageAttempt.findMany({
+      where: { operationRunId, operation: 'SOURCE_DISCOVERY' },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      select: {
+        requestedModel: true,
+        isFallback: true,
+        status: true,
+        inputTokens: true,
+        cachedInputTokens: true,
+        cacheWriteInputTokens: true,
+        outputTokens: true,
+        reasoningTokens: true,
+        totalTokens: true,
+        webSearchCalls: true,
+        pricingCatalogVersion: true,
+        reservedCostUsd: true,
+        estimatedCostUsd: true,
+        chargedCostUsd: true,
+      },
+    });
+  } catch {
+    throw new Error('ASSISTANT_SOURCE_DISCOVERY_USAGE_LEDGER_READ_FAILED');
+  }
+}
+
+function summarizePersistedAttempts(attempts) {
+  const usage = summarizeUsageRecords(attempts, assistantUsageReportFields);
+  const pricingCatalogVersions = attempts.length === 0
+    ? [ASSISTANT_AI_PRICING_CATALOG_VERSION]
+    : [...new Set(attempts.map(({ pricingCatalogVersion }) => (
+      readPricingCatalogVersion(pricingCatalogVersion)
+    )))];
+  const reservedUsd = addAssistantUsd(attempts.map(({ reservedCostUsd }) => (
+    readPersistedUsd(reservedCostUsd)
+  )));
+  const estimatedUsd = attempts.every(({ estimatedCostUsd }) => estimatedCostUsd !== null)
+    ? addAssistantUsd(attempts.map(({ estimatedCostUsd }) => readPersistedUsd(estimatedCostUsd)))
+    : null;
+  const chargedUsd = addAssistantUsd(attempts.map((attempt) => {
+    if (attempt.chargedCostUsd !== null) return readPersistedUsd(attempt.chargedCostUsd);
+    if (attempt.status === 'RESERVED') return readPersistedUsd(attempt.reservedCostUsd);
+    throw new Error('ASSISTANT_SOURCE_DISCOVERY_USAGE_LEDGER_INVALID');
+  }));
+  const lunaCalls = attempts.filter(({ requestedModel }) => (
+    requestedModel === ASSISTANT_SOURCE_DISCOVERY_MODEL
+  )).length;
+  const terraCalls = attempts.filter(({ requestedModel }) => (
+    requestedModel === ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL
+  )).length;
+  if (lunaCalls + terraCalls !== attempts.length
+    || attempts.some(({ isFallback, status }) => (
+      typeof isFallback !== 'boolean' || (status !== 'RESERVED' && status !== 'SETTLED')
+    ))) {
+    throw new Error('ASSISTANT_SOURCE_DISCOVERY_USAGE_LEDGER_INVALID');
+  }
+  return {
+    pricingCatalogVersion: pricingCatalogVersions.length === 1
+      ? pricingCatalogVersions[0]
+      : null,
+    pricingCatalogVersions,
+    providerRequests: attempts.length,
+    lunaCalls,
+    terraCalls,
+    fallbackCalls: attempts.filter(({ isFallback }) => isFallback).length,
+    ...usage,
+    reservedUsd,
+    estimatedUsd,
+    chargedUsd,
+  };
+}
+
+function summarizeInMemoryPhases(phases) {
+  const usage = summarizeUsageRecords(phases, assistantUsageReportFields);
+  const phaseCosts = phases.map((phase) => calculateAssistantAiCost({
+    model: phase.model,
+    inputTokens: phase.inputTokens,
+    cachedInputTokens: phase.cachedInputTokens,
+    cacheWriteInputTokens: phase.cacheWriteInputTokens,
+    outputTokens: phase.outputTokens,
+    webSearchCalls: phase.webSearchCalls,
+  }));
+  const estimatedUsd = phaseCosts.every((cost) => cost.status === 'PRICED')
+    ? addAssistantUsd(phaseCosts.map((cost) => cost.estimatedUsd))
+    : null;
+  return {
+    pricingCatalogVersion: ASSISTANT_AI_PRICING_CATALOG_VERSION,
+    pricingCatalogVersions: [ASSISTANT_AI_PRICING_CATALOG_VERSION],
+    providerRequests: phases.length,
+    lunaCalls: phases.filter(({ model }) => model === ASSISTANT_SOURCE_DISCOVERY_MODEL).length,
+    terraCalls: phases.filter(({ model }) => model === ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL).length,
+    fallbackCalls: phases.filter(({ model }) => (
+      model === ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL
+    )).length,
+    ...usage,
+    reservedUsd: phases.length === 0 ? '0.00000000' : null,
+    estimatedUsd,
+    chargedUsd: phases.length === 0 ? '0.00000000' : null,
+  };
+}
+
+function summarizeUsageRecords(records, fields) {
+  const knownTokenUsage = Object.fromEntries(fields.map((field) => [
+    field,
+    toSafeUsageNumber(records.reduce((sum, record) => (
+      record[field] === null ? sum : sum + readUsageCount(record[field])
+    ), 0n)),
+  ]));
+  const tokenUsage = Object.fromEntries(fields.map((field) => [
+    field,
+    records.every((record) => record[field] !== null)
+      ? knownTokenUsage[field]
+      : null,
+  ]));
+  return {
+    tokenUsage,
+    knownTokenUsage,
+    usageUnknownAttempts: records.filter((record) => (
+      fields.some((field) => record[field] === null)
+    )).length,
+  };
+}
+
+function readUsageCount(value) {
+  if (typeof value === 'bigint' && value >= 0n) return value;
+  if (Number.isSafeInteger(value) && value >= 0) return BigInt(value);
+  throw new Error('ASSISTANT_SOURCE_DISCOVERY_USAGE_LEDGER_INVALID');
+}
+
+function readPricingCatalogVersion(value) {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 120) {
+    throw new Error('ASSISTANT_SOURCE_DISCOVERY_USAGE_LEDGER_INVALID');
+  }
+  return value;
+}
+
+function toSafeUsageNumber(value) {
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error('ASSISTANT_SOURCE_DISCOVERY_USAGE_LEDGER_INVALID');
+  }
+  return Number(value);
+}
+
+function readPersistedUsd(value) {
+  if (!value || typeof value.toFixed !== 'function') {
+    throw new Error('ASSISTANT_SOURCE_DISCOVERY_USAGE_LEDGER_INVALID');
+  }
+  try {
+    return formatAssistantUsd(parseAssistantUsd(value.toFixed(8)));
+  } catch {
+    throw new Error('ASSISTANT_SOURCE_DISCOVERY_USAGE_LEDGER_INVALID');
+  }
+}
+
+function estimateMaximumDiscoveryCost(providerEligibleProjectCount) {
+  const totalCalls = Math.min(
+    maximumSourceDiscoveryProviderCalls,
+    providerEligibleProjectCount * maximumSourceDiscoveryCallsPerProject,
+  );
+  const terraCalls = Math.min(
+    maximumSourceDiscoveryTerraFallbacks,
+    providerEligibleProjectCount,
+    totalCalls,
+  );
+  const lunaCalls = totalCalls - terraCalls;
+  const estimateCall = (model) => {
+    const estimate = estimateAssistantAiCallCost({
+      model,
+      requestBytes: maximumProviderRequestBytes,
+      maxOutputTokens: maximumProviderOutputTokens,
+      maxWebSearchCalls: maximumProviderWebSearchCalls,
+    });
+    if (estimate.status !== 'PRICED' || estimate.estimatedUsd === null) {
+      throw new Error('ASSISTANT_SOURCE_DISCOVERY_COST_UNPRICED');
+    }
+    return estimate.estimatedUsd;
+  };
+  return addAssistantUsd([
+    ...Array.from({ length: lunaCalls }, () => estimateCall(ASSISTANT_SOURCE_DISCOVERY_MODEL)),
+    ...Array.from({ length: terraCalls }, () => estimateCall(
+      ASSISTANT_SOURCE_DISCOVERY_FALLBACK_MODEL,
+    )),
+  ]);
+}
+
+function readLiveStopReason(results, applyResults) {
+  const discoveryError = results.find(({ status, errorCode }) => (
+    status === 'ERROR' && errorCode
+  ))?.errorCode;
+  if (discoveryError) return discoveryError;
+  const ingestionError = applyResults.find(({ ingestionErrorCode }) => (
+    ingestionErrorCode
+  ))?.ingestionErrorCode;
+  return ingestionError ?? 'ASSISTANT_SOURCE_DISCOVERY_COMPLETED';
 }
 
 function createAssistantSourceDiscoveryOperationRunId(checkpointPath) {
