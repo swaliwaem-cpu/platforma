@@ -7,11 +7,21 @@ import type { AssistantSourceDiscoveryResult } from './assistant-source-discover
 export const ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_VERSION = 1;
 export const ASSISTANT_SOURCE_DISCOVERY_VALIDATOR_VERSION = 'assistant-source-discovery-validator-v2';
 
+const assistantSourceDiscoveryCheckpointStatuses = [
+  'VERIFIED',
+  'NOT_FOUND',
+  'REJECTED',
+] as const;
+
+type AssistantSourceDiscoveryCheckpointStatus =
+  typeof assistantSourceDiscoveryCheckpointStatuses[number];
+
 export type AssistantSourceDiscoveryCheckpointErrorCode =
   | 'ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_BACKUP_FAILED'
   | 'ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_INVALID'
   | 'ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_FINGERPRINT_MISMATCH'
   | 'ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_READ_FAILED'
+  | 'ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_TEMP_CLEANUP_FAILED'
   | 'ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_WRITE_FAILED';
 
 export class AssistantSourceDiscoveryCheckpointError extends Error {
@@ -34,7 +44,7 @@ export type AssistantSourceDiscoveryCheckpointFingerprint = {
 export type AssistantSourceDiscoveryCheckpointEntry = {
   projectKey: string;
   developerKey: string;
-  status: 'VERIFIED' | 'NOT_FOUND' | 'REJECTED';
+  status: AssistantSourceDiscoveryCheckpointStatus;
   errorCode: string | null;
   canonicalUrl: string | null;
   developerCanonicalUrl: string | null;
@@ -145,7 +155,9 @@ export function writeAssistantSourceDiscoveryCheckpoint(
       try {
         rmSync(temporaryPath, { force: true });
       } catch {
-        // The caller still receives a single safe fail-closed checkpoint error.
+        throw new AssistantSourceDiscoveryCheckpointError(
+          'ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_TEMP_CLEANUP_FAILED',
+        );
       }
     }
     throw new AssistantSourceDiscoveryCheckpointError(
@@ -181,25 +193,31 @@ export function checkpointAssistantSourceDiscoveryResult(
   processedAt = new Date(),
 ) {
   if (!isCheckpointStatus(result.status)) return checkpoint;
+  const entry: AssistantSourceDiscoveryCheckpointEntry = {
+    projectKey: result.project.projectKey,
+    developerKey: result.project.developerKey,
+    status: result.status,
+    errorCode: boundedNullable(result.errorCode, 120),
+    canonicalUrl: sanitizeCheckpointUrl(result.canonicalUrl),
+    developerCanonicalUrl: sanitizeCheckpointUrl(result.developerCanonicalUrl),
+    officialProjectName: boundedNullable(result.officialProjectName, 160),
+    officialDeveloperName: boundedNullable(result.officialDeveloperName, 160),
+    matchKind: result.matchKind,
+    contentChecksum: /^[a-f0-9]{64}$/u.test(result.contentChecksum ?? '')
+      ? result.contentChecksum
+      : null,
+    processedAt: processedAt.toISOString(),
+  };
+  if (!isSemanticallyValidEntry(entry)) {
+    throw new AssistantSourceDiscoveryCheckpointError(
+      'ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_INVALID',
+    );
+  }
   return {
     ...checkpoint,
     entries: {
       ...checkpoint.entries,
-      [result.project.projectKey]: {
-        projectKey: result.project.projectKey,
-        developerKey: result.project.developerKey,
-        status: result.status,
-        errorCode: boundedNullable(result.errorCode, 120),
-        canonicalUrl: sanitizeCheckpointUrl(result.canonicalUrl),
-        developerCanonicalUrl: sanitizeCheckpointUrl(result.developerCanonicalUrl),
-        officialProjectName: boundedNullable(result.officialProjectName, 160),
-        officialDeveloperName: boundedNullable(result.officialDeveloperName, 160),
-        matchKind: result.matchKind,
-        contentChecksum: /^[a-f0-9]{64}$/u.test(result.contentChecksum ?? '')
-          ? result.contentChecksum
-          : null,
-        processedAt: processedAt.toISOString(),
-      },
+      [result.project.projectKey]: entry,
     },
   };
 }
@@ -218,7 +236,7 @@ function parseEntry(value: unknown): AssistantSourceDiscoveryCheckpointEntry | n
   if (!isRecord(value)
     || !isBoundedString(value.projectKey, 120)
     || !isBoundedString(value.developerKey, 120)
-    || !['VERIFIED', 'NOT_FOUND', 'REJECTED'].includes(String(value.status))
+    || !isCheckpointStatus(value.status)
     || !isNullableBoundedString(value.errorCode, 120)
     || !isCheckpointUrl(value.canonicalUrl)
     || !isCheckpointUrl(value.developerCanonicalUrl)
@@ -232,7 +250,7 @@ function parseEntry(value: unknown): AssistantSourceDiscoveryCheckpointEntry | n
       && (typeof value.contentChecksum !== 'string'
         || !/^[a-f0-9]{64}$/u.test(value.contentChecksum)))
     || !isIsoTimestamp(value.processedAt)) return null;
-  return {
+  const entry: AssistantSourceDiscoveryCheckpointEntry = {
     projectKey: value.projectKey,
     developerKey: value.developerKey,
     status: value.status as AssistantSourceDiscoveryCheckpointEntry['status'],
@@ -245,12 +263,33 @@ function parseEntry(value: unknown): AssistantSourceDiscoveryCheckpointEntry | n
     contentChecksum: value.contentChecksum,
     processedAt: value.processedAt,
   };
+  return isSemanticallyValidEntry(entry) ? entry : null;
 }
 
 function isCheckpointStatus(
-  status: AssistantSourceDiscoveryResult['status'],
+  status: unknown,
 ): status is AssistantSourceDiscoveryCheckpointEntry['status'] {
-  return status === 'VERIFIED' || status === 'NOT_FOUND' || status === 'REJECTED';
+  return typeof status === 'string'
+    && (assistantSourceDiscoveryCheckpointStatuses as readonly string[]).includes(status);
+}
+
+function isSemanticallyValidEntry(entry: AssistantSourceDiscoveryCheckpointEntry) {
+  if (entry.status === 'VERIFIED') {
+    return entry.errorCode === null
+      && entry.canonicalUrl !== null
+      && entry.officialProjectName !== null
+      && entry.officialDeveloperName !== null
+      && entry.matchKind !== null
+      && entry.contentChecksum !== null;
+  }
+  if (entry.status === 'NOT_FOUND') {
+    return entry.errorCode === null
+      && entry.canonicalUrl === null
+      && entry.officialProjectName === null
+      && entry.matchKind === null
+      && entry.contentChecksum === null;
+  }
+  return entry.errorCode !== null;
 }
 
 function parseFingerprint(value: unknown): AssistantSourceDiscoveryCheckpointFingerprint | null {

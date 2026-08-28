@@ -515,6 +515,38 @@ test('FIX-TOKEN malformed checkpoint entry stops the run before provider constru
   }
 });
 
+test('FIX-TOKEN semantically incomplete VERIFIED checkpoint entry stops before provider construction', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-verified-entry-checkpoint-'));
+  const checkpointPath = join(directory, 'checkpoint.json');
+  const project = fixTokenProject();
+  try {
+    writeFileSync(checkpointPath, JSON.stringify({
+      ...createEmptyCheckpoint(checkpointFingerprint()),
+      entries: {
+        [project.projectKey]: {
+          projectKey: project.projectKey,
+          developerKey: project.developerKey,
+          status: 'VERIFIED',
+          errorCode: null,
+          canonicalUrl: null,
+          developerCanonicalUrl: null,
+          officialProjectName: null,
+          officialDeveloperName: null,
+          matchKind: null,
+          contentChecksum: null,
+          processedAt: '2026-08-28T06:00:00.000Z',
+        },
+      },
+    }), { mode: 0o600 });
+    await assertCheckpointFailureStopsProvider(
+      checkpointPath,
+      'ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_INVALID',
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('FIX-TOKEN refresh rotates a mismatched fingerprint through a sanitized backup before provider work', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-rotate-checkpoint-'));
   const checkpointPath = join(directory, 'checkpoint.json');
