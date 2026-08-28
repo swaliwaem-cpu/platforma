@@ -7,6 +7,9 @@ import {
 } from '@prisma/client';
 import type {
   AssistantAlternativeDeviation,
+  AssistantGeoAreaGeometry,
+  AssistantGeoReferenceGeometry,
+  AssistantGeoSearchContext,
   AssistantPageContext,
 } from '@platforma/shared' with { 'resolution-mode': 'import' };
 
@@ -18,10 +21,8 @@ import {
   type AssistantSearchFilters,
   type AssistantStructuredIntent,
 } from './assistant-query-planner';
-import type {
-  AssistantGeoPolygon,
-  AssistantGeoSearchInput,
-} from './geo/assistant-geo-contract';
+import { parseAssistantGeoStoredContext, parseAssistantReferenceGeometry } from './geo/assistant-geo-contract';
+import { AssistantGeoLandmarkService } from './geo/assistant-geo-landmark.service';
 import type { AssistantSearchEvidence } from './assistant-search-ranking';
 
 const candidateLimit = 120;
@@ -122,26 +123,34 @@ type SearchOptions = {
   comparisonTargets?: string[];
   comparisonTargetModes?: AssistantComparisonTargetMode[];
   softPreferences?: AssistantSearchFilters;
-  geo?: AssistantGeoSearchInput | null;
+  geo?: AssistantGeoSearchContext | null;
 };
 
-export type AssistantGeoSearchResult = AssistantGeoSearchInput & {
-  polygon: AssistantGeoPolygon;
+export type AssistantGeoSearchResult = AssistantGeoSearchContext & {
+  referenceGeometry: AssistantGeoReferenceGeometry;
+  searchArea: AssistantGeoAreaGeometry;
 };
 
 @Injectable()
 export class AssistantSearchService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly landmarks?: AssistantGeoLandmarkService,
+  ) {}
 
   async search(
     intent: AssistantStructuredIntent,
     context: AssistantPageContext | null,
-    geo: AssistantGeoSearchInput | null = null,
+    geoInput: AssistantGeoSearchContext | null = null,
   ): Promise<{
     exact: AssistantSearchEvidence[];
     alternatives: AssistantSearchEvidence[];
     geo: AssistantGeoSearchResult | null;
   }> {
+    const geo = geoInput ? parseAssistantGeoStoredContext(geoInput, {
+      ASSISTANT_GEO_RADIUS_MIN_METERS: '1',
+      ASSISTANT_GEO_RADIUS_MAX_METERS: '100000',
+    }) : null;
     const [contextOptions, geoResult] = await Promise.all([
       this.resolveContextOptions(context),
       geo ? this.createGeoResult(geo) : Promise.resolve(null),
@@ -209,19 +218,27 @@ export class AssistantSearchService {
     return { exact: [], alternatives: [...alternativesByUnitId.values()], geo: geoResult };
   }
 
-  private async createGeoResult(geo: AssistantGeoSearchInput): Promise<AssistantGeoSearchResult> {
-    const rows = await this.prisma.$queryRaw<Array<{ polygon: string }>>(Prisma.sql`
-      SELECT ST_AsGeoJSON(
-        ST_Buffer(
-          ST_SetSRID(ST_MakePoint(${geo.anchor.longitude}, ${geo.anchor.latitude}), 4326)::geography,
-          ${geo.radiusMeters}
-        )::geometry,
-        7
-      ) AS polygon
+  private async createGeoResult(geo: AssistantGeoSearchContext): Promise<AssistantGeoSearchResult> {
+    const referenceGeometry = this.landmarks
+      ? await this.landmarks.loadReferenceGeometry(geo)
+      : createPointReferenceGeometry(geo);
+    const reference = Prisma.sql`ST_SetSRID(ST_GeomFromGeoJSON(${JSON.stringify(referenceGeometry)}), 4326)`;
+    const searchGeometry = geo.mode === 'INSIDE'
+      ? reference
+      : geo.kind === 'AREA'
+        ? Prisma.sql`ST_Buffer(ST_Boundary(${reference})::geography, ${geo.distanceMeters})::geometry`
+        : Prisma.sql`ST_Buffer(${reference}::geography, ${geo.distanceMeters})::geometry`;
+    const rows = await this.prisma.$queryRaw<Array<{ searchArea: string }>>(Prisma.sql`
+      SELECT ST_AsGeoJSON(${searchGeometry}, 7) AS "searchArea"
     `);
-    const polygon = rows[0]?.polygon ? JSON.parse(rows[0].polygon) as unknown : null;
-    if (!isGeoPolygon(polygon)) throw new Error('ASSISTANT_GEO_POLYGON_INVALID');
-    return { ...geo, polygon };
+    let decoded: unknown;
+    try {
+      decoded = rows[0]?.searchArea ? JSON.parse(rows[0].searchArea) : null;
+    } catch {
+      throw new Error('ASSISTANT_GEO_SEARCH_AREA_INVALID');
+    }
+    const searchArea = parseAssistantReferenceGeometry(decoded, 'AREA') as AssistantGeoAreaGeometry;
+    return { ...geo, referenceGeometry, searchArea } as AssistantGeoSearchResult;
   }
 
   private async findNearbyDistrictAlternatives(
@@ -329,11 +346,8 @@ export class AssistantSearchService {
     const conditions = this.createSqlConditions(filters, context, options);
     const softPreferenceScore = this.createSoftPreferenceScore(options.softPreferences);
     const comparisonTargetPriority = this.createComparisonTargetPriority(options);
-    const distance = options.geo
-      ? Prisma.sql`ST_Distance(
-          o.search_point,
-          ST_SetSRID(ST_MakePoint(${options.geo.anchor.longitude}, ${options.geo.anchor.latitude}), 4326)::geography
-        )`
+    const distance = options.geo?.mode === 'NEAR'
+      ? Prisma.sql`ST_Distance(o.search_point, ${createGeoDistanceOperand(options.geo)}::geography)`
       : Prisma.sql`NULL::double precision`;
     return transaction.$queryRaw<Array<{ id: string; distanceMeters: number | null }>>(Prisma.sql`
       SELECT fu.id::text AS id
@@ -451,12 +465,16 @@ export class AssistantSearchService {
     if (filters.floorMax !== null) conditions.push(Prisma.sql`fu.floor <= ${filters.floorMax}`);
 
     if (options.geo) {
-      const anchor = Prisma.sql`ST_SetSRID(
-        ST_MakePoint(${options.geo.anchor.longitude}, ${options.geo.anchor.latitude}),
-        4326
-      )::geography`;
       conditions.push(Prisma.sql`o.search_point IS NOT NULL`);
-      conditions.push(Prisma.sql`ST_DWithin(o.search_point, ${anchor}, ${options.geo.radiusMeters})`);
+      if (options.geo.mode === 'INSIDE') {
+        conditions.push(Prisma.sql`ST_Covers(${createGeoReferenceOperand(options.geo)}, o.search_point::geometry)`);
+      } else {
+        conditions.push(Prisma.sql`ST_DWithin(
+          o.search_point,
+          ${createGeoDistanceOperand(options.geo)}::geography,
+          ${options.geo.distanceMeters}
+        )`);
+      }
     }
 
     if (options.nearbyDistrictParentIds?.length) {
@@ -765,15 +783,28 @@ function escapeLikePattern(value: string) {
   return value.replace(/[\\%_]/gu, '\\$&');
 }
 
-function isGeoPolygon(value: unknown): value is AssistantGeoPolygon {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const polygon = value as { type?: unknown; coordinates?: unknown };
-  if (polygon.type !== 'Polygon' || !Array.isArray(polygon.coordinates) || polygon.coordinates.length !== 1) {
-    return false;
+function createPointReferenceGeometry(geo: AssistantGeoSearchContext): AssistantGeoReferenceGeometry {
+  if (geo.kind !== 'POINT') throw new Error('ASSISTANT_GEO_LANDMARK_REPOSITORY_REQUIRED');
+  return { type: 'Point', coordinates: [geo.point.longitude, geo.point.latitude] };
+}
+
+function createGeoReferenceOperand(geo: AssistantGeoSearchContext) {
+  if (geo.kind === 'POINT') {
+    return Prisma.sql`ST_SetSRID(ST_MakePoint(${geo.point.longitude}, ${geo.point.latitude}), 4326)`;
   }
-  const ring = polygon.coordinates[0];
-  return Array.isArray(ring) && ring.length >= 4 && ring.every((coordinate) =>
-    Array.isArray(coordinate)
-    && coordinate.length === 2
-    && coordinate.every((part) => typeof part === 'number' && Number.isFinite(part)));
+  return Prisma.sql`(
+    SELECT l."geometry"
+    FROM "assistant_geo_landmarks" l
+    WHERE l."id" = ${geo.landmarkId}::uuid
+      AND l."kind" = ${geo.kind.toLocaleLowerCase('en-US')}::assistant_geo_landmark_kind
+      AND (
+        l."confirmation_state" = 'confirmed'
+        OR (l."confirmation_state" = 'verified' AND l."expires_at" > CURRENT_TIMESTAMP)
+      )
+  )`;
+}
+
+function createGeoDistanceOperand(geo: Exclude<AssistantGeoSearchContext, { mode: 'INSIDE' }>) {
+  const reference = createGeoReferenceOperand(geo);
+  return geo.kind === 'AREA' ? Prisma.sql`ST_Boundary(${reference})` : reference;
 }

@@ -1,4 +1,4 @@
-const radiusClausePattern = /(?:в\s+радиусе|радиус(?:ом)?|не\s+дальше)\s*\d+(?:[.,]\d+)?\s*(?:км|километр(?:а|ов)?|м|метр(?:а|ов)?)\s+от\s+/iu;
+const radiusClausePattern = /(?:в\s+радиусе|радиус(?:ом)?|не\s+дальше|в\s+пределах|на\s+расстоянии(?:\s+не\s+более)?|до|в)\s*\d+(?:[.,]\d+)?\s*(?:км|километр(?:а|ов)?|метр(?:а|ов)?|м)(?!\p{L})\s+от\s+/iu;
 const numericValuePattern = String.raw`\d[\d\s]*(?:[.,]\d+)?`;
 const moneyUnitPattern = String.raw`(?:млн\p{L}*|миллион(?:а|ов)?|тыс\p{L}*|тысяч(?:а|и)?|руб\p{L}*|рубл(?:ь|я|ей)|₽)`;
 const hardFilterClausePattern = [

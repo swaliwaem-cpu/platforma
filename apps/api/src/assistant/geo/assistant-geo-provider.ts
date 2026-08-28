@@ -1,3 +1,11 @@
+import type {
+  AssistantGeoAreaGeometry,
+  AssistantGeoKind,
+  AssistantGeoLineGeometry,
+} from '@platforma/shared' with { 'resolution-mode': 'import' };
+
+import { parseAssistantReferenceGeometry } from './assistant-geo-contract';
+
 const defaultLocationIqUrl = 'https://us1.locationiq.com/v1/search';
 const defaultTimeoutMs = 3_000;
 const defaultMaximumRetries = 1;
@@ -21,6 +29,14 @@ export type AssistantGeoProviderCandidate = {
   longitude: number;
   city: string | null;
   countryCode: string | null;
+  geometryKind?: AssistantGeoKind;
+  referenceGeometry?: AssistantGeoLineGeometry | AssistantGeoAreaGeometry;
+  geometryComplete?: boolean;
+  entityClass?: string | null;
+  entityType?: string | null;
+  osmType?: string | null;
+  osmId?: string | null;
+  boundingBox?: [west: number, south: number, east: number, north: number] | null;
 };
 
 export type AssistantGeoProvider = {
@@ -114,6 +130,9 @@ export class LocationIqGeoProvider implements AssistantGeoProvider {
     url.searchParams.set('q', request.query);
     url.searchParams.set('format', 'json');
     url.searchParams.set('normalizeaddress', '1');
+    url.searchParams.set('normalizecity', '1');
+    url.searchParams.set('addressdetails', '1');
+    url.searchParams.set('polygon_geojson', '1');
     url.searchParams.set('limit', String(maximumCandidates));
     url.searchParams.set('accept-language', request.locale);
     if (request.country) url.searchParams.set('countrycodes', request.country);
@@ -131,6 +150,10 @@ export class LocationIqGeoProvider implements AssistantGeoProvider {
         redirect: 'error',
         signal: controller.signal,
       });
+      if (response.status === 404) {
+        outcome = 'SUCCESS';
+        return [];
+      }
       if (!response.ok) {
         const retryable = response.status === 429 || response.status >= 500;
         const error = new AssistantGeoProviderError(
@@ -149,10 +172,7 @@ export class LocationIqGeoProvider implements AssistantGeoProvider {
       if (Number.isFinite(declaredLength) && declaredLength > maximumResponseBytes) {
         throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_RESPONSE_TOO_LARGE', false, response.status);
       }
-      const body = await response.text();
-      if (Buffer.byteLength(body, 'utf8') > maximumResponseBytes) {
-        throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_RESPONSE_TOO_LARGE', false, response.status);
-      }
+      const body = await readBoundedResponseBody(response, maximumResponseBytes);
       let payload: unknown;
       try {
         payload = JSON.parse(body);
@@ -195,7 +215,59 @@ export class FakeAssistantGeoProvider implements AssistantGeoProvider {
         longitude: 37.61 + index * 0.01,
         city,
         countryCode: request.country,
+        geometryKind: 'POINT' as const,
+        geometryComplete: true,
       }));
+    }
+    if (/садов.*кольц|ттк|треть.*транспортн.*кольц|мкад/u.test(normalized)) {
+      const coordinates: [number, number][] = [
+        [37.5804, 55.7663],
+        [37.6216, 55.7765],
+        [37.6576, 55.7554],
+        [37.6427, 55.7243],
+        [37.6004, 55.7175],
+        [37.5741, 55.7412],
+        [37.5804, 55.7663],
+      ];
+      return [{
+        id: `fake-${normalized.includes('мкад') ? 'mkad' : normalized.includes('ттк') ? 'ttk' : 'sadovoe-ring'}`,
+        label: normalized.includes('мкад') ? 'МКАД' : normalized.includes('ттк') ? 'Третье транспортное кольцо' : 'Садовое кольцо',
+        latitude: 55.748,
+        longitude: 37.615,
+        city: 'Москва',
+        countryCode: request.country ?? 'ru',
+        geometryKind: 'LINE',
+        referenceGeometry: { type: 'LineString', coordinates },
+        geometryComplete: true,
+        entityClass: 'highway',
+        entityType: 'ring_road',
+        osmType: 'relation',
+        osmId: `fake-${normalized}`,
+        boundingBox: [37.5741, 55.7175, 37.6576, 55.7765],
+      }];
+    }
+    if (/район\s+арбат|^арбат$/u.test(normalized)) {
+      return [{
+        id: 'fake-arbat-area',
+        label: 'район Арбат',
+        latitude: 55.7522,
+        longitude: 37.5906,
+        city: 'Москва',
+        countryCode: request.country ?? 'ru',
+        geometryKind: 'AREA',
+        referenceGeometry: {
+          type: 'Polygon',
+          coordinates: [[
+            [37.565, 55.744], [37.603, 55.744], [37.606, 55.763], [37.571, 55.765], [37.565, 55.744],
+          ]],
+        },
+        geometryComplete: true,
+        entityClass: 'boundary',
+        entityType: 'administrative',
+        osmType: 'relation',
+        osmId: 'fake-arbat-area',
+        boundingBox: [37.565, 55.744, 37.606, 55.765],
+      }];
     }
     const knownMoscowPlace = readFakeMoscowPlace(normalized);
     if (knownMoscowPlace) {
@@ -206,6 +278,8 @@ export class FakeAssistantGeoProvider implements AssistantGeoProvider {
         longitude: knownMoscowPlace.longitude,
         city: 'Москва',
         countryCode: request.country,
+        geometryKind: 'POINT',
+        geometryComplete: true,
       }];
     }
     return [{
@@ -215,6 +289,8 @@ export class FakeAssistantGeoProvider implements AssistantGeoProvider {
       longitude: city?.toLocaleLowerCase('ru-RU').includes('екатеринбург') ? 60.603753 : 37.618423,
       city,
       countryCode: request.country,
+      geometryKind: 'POINT',
+      geometryComplete: true,
     }];
   }
 }
@@ -292,6 +368,10 @@ function normalizeProviderCandidates(value: unknown): AssistantGeoProviderCandid
     if (seen.has(key)) continue;
     seen.add(key);
     const address = isRecord(entry.address) ? entry.address : {};
+    const geometry = parseLocationIqGeometry(entry.geojson);
+    const entityClass = readBoundedText(entry.class, 80);
+    const entityType = readBoundedText(entry.type, 80);
+    const geometryKind = normalizeText(entityClass ?? '') === 'highway' ? 'LINE' : geometry.kind;
     candidates.push({
       id,
       label,
@@ -301,9 +381,63 @@ function normalizeProviderCandidates(value: unknown): AssistantGeoProviderCandid
       countryCode: typeof address.country_code === 'string' && /^[a-z]{2}$/u.test(address.country_code)
         ? address.country_code
         : null,
+      geometryKind,
+      ...(geometry.referenceGeometry && geometry.kind === geometryKind
+        ? { referenceGeometry: geometry.referenceGeometry }
+        : {}),
+      geometryComplete: geometryKind !== 'LINE',
+      entityClass,
+      entityType,
+      osmType: readBoundedText(entry.osm_type, 24),
+      osmId: typeof entry.osm_id === 'number' || typeof entry.osm_id === 'string'
+        ? readBoundedText(String(entry.osm_id), 80)
+        : null,
+      boundingBox: parseLocationIqBoundingBox(entry.boundingbox),
     });
   }
   return candidates;
+}
+
+function parseLocationIqGeometry(value: unknown): {
+  kind: AssistantGeoKind;
+  referenceGeometry?: AssistantGeoLineGeometry | AssistantGeoAreaGeometry;
+} {
+  if (value === undefined || value === null) return { kind: 'POINT' };
+  if (!isRecord(value) || typeof value.type !== 'string') {
+    throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_GEOMETRY_INVALID', false);
+  }
+  try {
+    if (value.type === 'Point') {
+      parseAssistantReferenceGeometry(value, 'POINT');
+      return { kind: 'POINT' };
+    }
+    if (value.type === 'LineString' || value.type === 'MultiLineString') {
+      return {
+        kind: 'LINE',
+        referenceGeometry: parseAssistantReferenceGeometry(value, 'LINE') as AssistantGeoLineGeometry,
+      };
+    }
+    if (value.type === 'Polygon' || value.type === 'MultiPolygon') {
+      return {
+        kind: 'AREA',
+        referenceGeometry: parseAssistantReferenceGeometry(value, 'AREA') as AssistantGeoAreaGeometry,
+      };
+    }
+  } catch {
+    throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_GEOMETRY_INVALID', false);
+  }
+  throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_GEOMETRY_INVALID', false);
+}
+
+function parseLocationIqBoundingBox(value: unknown): [number, number, number, number] | null {
+  if (!Array.isArray(value) || value.length !== 4) return null;
+  const south = readCoordinate(value[0], -90, 90);
+  const north = readCoordinate(value[1], -90, 90);
+  const west = readCoordinate(value[2], -180, 180);
+  const east = readCoordinate(value[3], -180, 180);
+  return south !== null && north !== null && west !== null && east !== null && south < north && west < east
+    ? [west, south, east, north]
+    : null;
 }
 
 function readProviderUrl(value: string) {
@@ -349,8 +483,41 @@ function normalizeViewbox(value: AssistantGeoProviderRequest['viewbox']) {
 }
 
 function readCoordinate(value: unknown, minimum: number, maximum: number) {
-  const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : Number.NaN;
+  const parsed = typeof value === 'number'
+    ? value
+    : typeof value === 'string' && /^-?\d+(?:\.\d+)?$/u.test(value.trim())
+      ? Number(value)
+      : Number.NaN;
   return Number.isFinite(parsed) && parsed >= minimum && parsed <= maximum ? parsed : null;
+}
+
+async function readBoundedResponseBody(response: Response, maximumBytes: number) {
+  if (!response.body) {
+    const body = await response.text();
+    if (Buffer.byteLength(body, 'utf8') > maximumBytes) {
+      throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_RESPONSE_TOO_LARGE', false, response.status);
+    }
+    return body;
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let total = 0;
+  let result = '';
+  try {
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      total += chunk.value.byteLength;
+      if (total > maximumBytes) {
+        await reader.cancel();
+        throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_RESPONSE_TOO_LARGE', false, response.status);
+      }
+      result += decoder.decode(chunk.value, { stream: true });
+    }
+    return result + decoder.decode();
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 function readBoundedText(value: unknown, maximumLength: number) {

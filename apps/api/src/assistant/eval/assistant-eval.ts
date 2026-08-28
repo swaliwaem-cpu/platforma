@@ -21,6 +21,10 @@ import {
   type AssistantSearchEvidence,
 } from '../assistant-search-ranking';
 import { assistantBudgetRelaxationRub } from '../assistant-search.service';
+import {
+  parseAssistantGeoStoredContext,
+  parseAssistantReferenceGeometry,
+} from '../geo/assistant-geo-contract';
 
 export const assistantEvalCategories = [
   'FACTUAL',
@@ -715,20 +719,20 @@ function persistedGeoSatisfiesExpectation(
   markers: Record<string, unknown>[],
   evidenceById: Map<string, Record<string, unknown>>,
 ) {
-  if (!geo || !isRecord(geo.anchor) || !isRecord(geoContextValue)
-    || !isRecord(geoContextValue.anchor)
-    || readFiniteNumber(geo.radiusMeters) !== expected.radiusMeters
-    || readFiniteNumber(geoContextValue.radiusMeters) !== expected.radiusMeters
-    || normalize(readString(geo.anchor.label) ?? '') !== normalize(expected.anchorLabel)
-    || normalize(readString(geoContextValue.anchor.label) ?? '') !== normalize(expected.anchorLabel)
-    || !['PLACE', 'ALIAS', 'KNOWLEDGE'].includes(readString(geoContextValue.anchor.source) ?? '')
-    || !anchorMatchesExpected(geo.anchor, expected)
-    || !anchorMatchesExpected(geoContextValue.anchor, expected)
+  const answerGeo = readPersistedEvalPointGeo(geo, 'ANSWER');
+  const contextGeo = readPersistedEvalPointGeo(geoContextValue, 'CONTEXT');
+  if (!answerGeo || !contextGeo
+    || answerGeo.distanceMeters !== expected.radiusMeters
+    || contextGeo.distanceMeters !== expected.radiusMeters
+    || normalize(answerGeo.label) !== normalize(expected.anchorLabel)
+    || normalize(contextGeo.label) !== normalize(expected.anchorLabel)
+    || !anchorMatchesExpected(answerGeo.point, expected)
+    || !anchorMatchesExpected(contextGeo.point, expected)
     || assistantGeoDistanceMeters(
-      readFiniteNumber(geo.anchor.latitude),
-      readFiniteNumber(geo.anchor.longitude),
-      readFiniteNumber(geoContextValue.anchor.latitude) ?? Number.NaN,
-      readFiniteNumber(geoContextValue.anchor.longitude) ?? Number.NaN,
+      answerGeo.point.latitude,
+      answerGeo.point.longitude,
+      contextGeo.point.latitude,
+      contextGeo.point.longitude,
     ) > 5
     || results.length === 0
     || markers.length !== results.length) return false;
@@ -737,8 +741,8 @@ function persistedGeoSatisfiesExpectation(
   if (resultIds.some((id) => id === null)
     || markerIds.some((id) => id === null)
     || !sameStringSet(resultIds as string[], markerIds as string[])) return false;
-  const anchorLatitude = readFiniteNumber(geo.anchor.latitude);
-  const anchorLongitude = readFiniteNumber(geo.anchor.longitude);
+  const anchorLatitude = answerGeo.point.latitude;
+  const anchorLongitude = answerGeo.point.longitude;
   return results.every((result) => {
     const evidence = evidenceById.get(readString(result.unitId) ?? '');
     if (!evidence) return false;
@@ -770,13 +774,78 @@ function persistedGeoSatisfiesExpectation(
   });
 }
 
+type PersistedEvalPointGeo = {
+  label: string;
+  point: { latitude: number; longitude: number };
+  distanceMeters: number;
+};
+
+function readPersistedEvalPointGeo(
+  value: unknown,
+  role: 'ANSWER' | 'CONTEXT',
+): PersistedEvalPointGeo | null {
+  if (!isRecord(value)) return null;
+
+  if (isRecord(value.anchor)) {
+    const label = readString(value.anchor.label);
+    const latitude = readCoordinate(value.anchor.latitude, -90, 90);
+    const longitude = readCoordinate(value.anchor.longitude, -180, 180);
+    const distanceMeters = readFiniteNumber(value.radiusMeters);
+    const source = readString(value.anchor.source);
+    if (!label || latitude === null || longitude === null || distanceMeters === null
+      || (role === 'CONTEXT' && !['MANUAL', 'PLACE', 'ALIAS', 'KNOWLEDGE'].includes(source ?? ''))) {
+      return null;
+    }
+    return { label, point: { latitude, longitude }, distanceMeters };
+  }
+
+  const storedContext = {
+    kind: value.kind,
+    mode: value.mode,
+    label: value.label,
+    point: value.point,
+    distanceMeters: value.distanceMeters,
+    source: value.source,
+    ...(Object.hasOwn(value, 'landmarkId') ? { landmarkId: value.landmarkId } : {}),
+  };
+  let parsed;
+  try {
+    parsed = parseAssistantGeoStoredContext(storedContext);
+  } catch {
+    return null;
+  }
+  if (parsed.kind !== 'POINT' || parsed.mode !== 'NEAR') return null;
+
+  if (role === 'ANSWER') {
+    try {
+      const referenceGeometry = parseAssistantReferenceGeometry(value.referenceGeometry, 'POINT');
+      parseAssistantReferenceGeometry(value.searchArea, 'AREA');
+      if (referenceGeometry.type !== 'Point'
+        || assistantGeoDistanceMeters(
+          parsed.point.latitude,
+          parsed.point.longitude,
+          referenceGeometry.coordinates[1],
+          referenceGeometry.coordinates[0],
+        ) > 5) return null;
+    } catch {
+      return null;
+    }
+  }
+
+  return {
+    label: parsed.label,
+    point: parsed.point,
+    distanceMeters: parsed.distanceMeters,
+  };
+}
+
 function anchorMatchesExpected(
-  anchor: Record<string, unknown>,
+  anchor: { latitude: number; longitude: number },
   expected: NonNullable<AssistantEvalExpectation['expectedGeo']>,
 ) {
   return assistantGeoDistanceMeters(
-    readFiniteNumber(anchor.latitude),
-    readFiniteNumber(anchor.longitude),
+    anchor.latitude,
+    anchor.longitude,
     expected.latitude,
     expected.longitude,
   ) <= expected.maximumAnchorErrorMeters;

@@ -444,6 +444,22 @@ enum AssistantSourceJobTrigger {
   @@map("assistant_source_job_trigger")
 }
 
+enum AssistantGeoLandmarkKind {
+  POINT @map("point")
+  LINE  @map("line")
+  AREA  @map("area")
+
+  @@map("assistant_geo_landmark_kind")
+}
+
+enum AssistantGeoConfirmationState {
+  VERIFIED  @map("verified")
+  CONFIRMED @map("confirmed")
+  REJECTED  @map("rejected")
+
+  @@map("assistant_geo_confirmation_state")
+}
+
 model User {
   id                    String     @id @default(uuid()) @db.Uuid
   email                 String     @unique @db.VarChar(320)
@@ -553,6 +569,32 @@ model AssistantGeoAlias {
   @@unique([normalizedQuery, locale, country])
   @@index([createdByUserId, updatedAt])
   @@map("assistant_geo_aliases")
+}
+
+model AssistantGeoLandmark {
+  id                  String                        @id @default(uuid()) @db.Uuid
+  kind                AssistantGeoLandmarkKind
+  label               String                        @db.VarChar(300)
+  normalizedQuery     String                        @map("normalized_query") @db.VarChar(240)
+  aliases             String[]                      @default([])
+  locale              String                        @db.VarChar(16)
+  country             String                        @default("") @db.VarChar(2)
+  city                String?                       @db.VarChar(160)
+  geometry            Unsupported("geometry(Geometry, 4326)")
+  sourceProvider      String                        @map("source_provider") @db.VarChar(40)
+  sourceExternalId    String?                       @map("source_external_id") @db.VarChar(160)
+  sourceMetadata      Json                          @default("{}") @map("source_metadata")
+  confirmationState   AssistantGeoConfirmationState @default(VERIFIED) @map("confirmation_state")
+  confirmedByUserId   String?                       @map("confirmed_by_user_id") @db.Uuid
+  confirmedAt         DateTime?                     @map("confirmed_at")
+  expiresAt           DateTime?                     @map("expires_at")
+  createdAt           DateTime                      @default(now()) @map("created_at")
+  updatedAt           DateTime                      @updatedAt @map("updated_at")
+
+  @@index([normalizedQuery, locale, country])
+  @@index([confirmationState, expiresAt])
+  @@index([confirmedByUserId, updatedAt])
+  @@map("assistant_geo_landmarks")
 }
 
 model AssistantGeoCache {

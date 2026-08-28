@@ -6,6 +6,7 @@ import type {
   AssistantFeedbackReason,
   AssistantExternalLotCard,
   AssistantGeoCandidate,
+  AssistantGeoBrowserInput,
   AssistantGeoResolution,
   AssistantGeoSearchContext,
   AssistantKnowledgeFactCard,
@@ -69,7 +70,7 @@ type AssistantGeometry = {
 type PendingSubmission = {
   content: string;
   context: AssistantPageContext | null;
-  geo: AssistantGeoSearchContext | null;
+  geo: AssistantGeoBrowserInput | null;
   conversationId: string | null;
   idempotencyKey: string;
 };
@@ -397,7 +398,7 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
     const submission: PendingSubmission = {
       content,
       context: pageContext,
-      geo,
+      geo: geo ? geoToBrowserInput(geo) : null,
       conversationId: conversation?.id ?? null,
       idempotencyKey: crypto.randomUUID(),
     };
@@ -435,7 +436,7 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
         if (resolution.status === 'RESOLVED') {
           const candidate = resolution.candidates[0];
           if (candidate) {
-            const geo = candidateToGeo(candidate, resolution.radiusMeters);
+            const geo = candidateToGeo(candidate);
             setActiveGeo(geo);
             beginSubmission(content, geo);
             return;
@@ -457,7 +458,7 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
   const handleCandidateSelect = (candidate: AssistantGeoCandidate) => {
     if (!pendingGeoSubmission || !geoResolution
       || (geoResolution.status !== 'AMBIGUOUS' && geoResolution.status !== 'RESOLVED')) return;
-    const geo = candidateToGeo(candidate, geoResolution.radiusMeters);
+    const geo = candidateToGeo(candidate);
     setActiveGeo(geo);
     beginSubmission(pendingGeoSubmission.content, geo);
   };
@@ -773,9 +774,11 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
                 {activeGeo ? (
                   <div className="assistant-context-chip assistant-context-chip--geo" data-assistant-geo-chip>
                     <MapPinIcon aria-hidden="true" />
-                    <span>{activeGeo.anchor.label} · {formatDistance(activeGeo.radiusMeters)}</span>
+                    <span>{formatGeoChip(activeGeo)}</span>
                     <button
-                      aria-label="Изменить точку и радиус"
+                      aria-label={activeGeo.kind === 'POINT'
+                        ? 'Изменить точку и расстояние'
+                        : 'Заменить ориентир ручной точкой'}
                       type="button"
                       onClick={editGeoPicker}
                     >
@@ -1159,14 +1162,6 @@ function AssistantGeoResolutionPanel({
       </div>
     );
   }
-  if (resolution.status === 'RADIUS_REQUIRED') {
-    return (
-      <div className="assistant-geo-resolution" role="alert">
-        <p>Для геопоиска нужен точный радиус: например, 1, 2, 3 или 5 км.</p>
-        <button className="assistant-geo-refine" type="button" onClick={onRefine}>Добавить радиус</button>
-      </div>
-    );
-  }
   return (
     <div className="assistant-geo-resolution" role="alert">
       <p>{resolution.status === 'UNAVAILABLE'
@@ -1180,16 +1175,89 @@ function AssistantGeoResolutionPanel({
   );
 }
 
-function candidateToGeo(candidate: AssistantGeoCandidate, radiusMeters: number): AssistantGeoSearchContext {
-  return {
-    anchor: {
-      latitude: candidate.latitude,
-      longitude: candidate.longitude,
+function candidateToGeo(candidate: AssistantGeoCandidate): AssistantGeoSearchContext {
+  if (candidate.kind === 'POINT') {
+    const point = candidate.point ?? (typeof candidate.latitude === 'number' && typeof candidate.longitude === 'number'
+      ? { latitude: candidate.latitude, longitude: candidate.longitude }
+      : null);
+    if (!point || candidate.mode !== 'NEAR' || typeof candidate.distanceMeters !== 'number') {
+      throw new Error('ASSISTANT_GEO_CANDIDATE_INVALID');
+    }
+    return {
+      kind: 'POINT',
+      mode: 'NEAR',
       label: candidate.label,
-      source: candidate.source,
-    },
-    radiusMeters,
+      landmarkId: candidate.id,
+      point,
+      distanceMeters: candidate.distanceMeters,
+      source: 'LANDMARK',
+    };
+  }
+  if (candidate.kind === 'LINE') {
+    if (candidate.mode !== 'NEAR' || typeof candidate.distanceMeters !== 'number') {
+      throw new Error('ASSISTANT_GEO_CANDIDATE_INVALID');
+    }
+    return {
+      kind: 'LINE',
+      mode: 'NEAR',
+      label: candidate.label,
+      landmarkId: candidate.id,
+      distanceMeters: candidate.distanceMeters,
+      source: 'LANDMARK',
+    };
+  }
+  if (candidate.mode === 'INSIDE') {
+    return {
+      kind: 'AREA',
+      mode: 'INSIDE',
+      label: candidate.label,
+      landmarkId: candidate.id,
+      source: 'LANDMARK',
+    };
+  }
+  if (typeof candidate.distanceMeters !== 'number') {
+    throw new Error('ASSISTANT_GEO_CANDIDATE_INVALID');
+  }
+  return {
+    kind: 'AREA',
+    mode: 'NEAR',
+    label: candidate.label,
+    landmarkId: candidate.id,
+    distanceMeters: candidate.distanceMeters,
+    source: 'LANDMARK',
   };
+}
+
+function geoToBrowserInput(geo: AssistantGeoSearchContext): AssistantGeoBrowserInput {
+  if (geo.source === 'LANDMARK' && geo.landmarkId) {
+    return {
+      referenceType: 'LANDMARK',
+      landmarkId: geo.landmarkId,
+      mode: geo.mode,
+      ...(geo.mode === 'NEAR' ? { distanceMeters: geo.distanceMeters } : {}),
+    };
+  }
+  if (geo.kind !== 'POINT') throw new Error('ASSISTANT_GEO_LANDMARK_ID_REQUIRED');
+  return {
+    referenceType: 'MANUAL_POINT',
+    point: { ...geo.point, label: geo.label },
+    mode: 'NEAR',
+    distanceMeters: geo.distanceMeters,
+  };
+}
+
+function formatGeoChip(geo: AssistantGeoSearchContext) {
+  if (geo.mode === 'INSIDE') {
+    const areaLabel = /^район\s+/iu.test(geo.label)
+      ? geo.label.replace(/^район\s+/iu, 'района ')
+      : /^района\s+/iu.test(geo.label)
+        ? geo.label
+        : `района ${geo.label}`;
+    return `внутри ${areaLabel}`;
+  }
+  if (geo.kind === 'LINE') return `${geo.label} · до ${formatDistance(geo.distanceMeters)} от всей дороги`;
+  if (geo.kind === 'AREA') return `${geo.label} · до ${formatDistance(geo.distanceMeters)} от всей границы`;
+  return `${geo.label} · до ${formatDistance(geo.distanceMeters)}`;
 }
 
 function readLatestGeoContext(messages: AssistantMessage[]) {

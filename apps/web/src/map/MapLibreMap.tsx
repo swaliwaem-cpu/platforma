@@ -21,7 +21,7 @@ import {
   setOpenMapTilesAmenityVisibility,
   type OpenMapTilesAmenityCategory,
 } from './openMapTilesAmenities';
-import type { MapBounds, MapCoordinate, MapPoint, MapPolygon, MapStatus, MapViewport, PlatformMapProps } from './mapTypes';
+import type { MapBounds, MapCoordinate, MapGeometry, MapPoint, MapStatus, MapViewport, PlatformMapProps } from './mapTypes';
 
 type MapLibreMapProps = Omit<PlatformMapProps, 'emptyState' | 'renderWithoutPoints'> & {
   styleUrl: string;
@@ -50,7 +50,7 @@ const NEARBY_TRANSIT_LOOKUP_TIMEOUT_MS = 4_000;
 const MEASUREMENT_SOURCE_ID = 'platforma-measurement';
 const MEASUREMENT_LINE_LAYER_ID = 'platforma-measurement-line';
 const MEASUREMENT_POINT_LAYER_ID = 'platforma-measurement-points';
-const ASSISTANT_GEO_SOURCE_ID = 'platforma-assistant-geo-polygons';
+const ASSISTANT_GEO_SOURCE_ID = 'platforma-assistant-geo-geometries';
 const ASSISTANT_GEO_FILL_LAYER_ID = 'platforma-assistant-geo-fill';
 const ASSISTANT_GEO_LINE_LAYER_ID = 'platforma-assistant-geo-line';
 const amenityCategories: OpenMapTilesAmenityCategory[] = ['education', 'recreation', 'healthcare'];
@@ -75,7 +75,7 @@ export default function MapLibreMap({
   enableMeasurement = true,
   initialViewport,
   points,
-  polygons = [],
+  geometries = [],
   selectedPointId = null,
   styleUrl,
   onBoundsChange,
@@ -107,11 +107,11 @@ export default function MapLibreMap({
     () => points.map((point) => `${point.id}:${point.coordinates[0]}:${point.coordinates[1]}`).join('|'),
     [points],
   );
-  const polygonCoordinatesKey = useMemo(
-    () => polygons.map((polygon) => (
-      `${polygon.id}:${polygon.variant ?? 'RADIUS'}:${JSON.stringify(polygon.coordinates)}`
+  const geometryCoordinatesKey = useMemo(
+    () => geometries.map((geometry) => (
+      `${geometry.id}:${geometry.variant}:${JSON.stringify(geometry.geometry)}`
     )).join('|'),
-    [polygons],
+    [geometries],
   );
   const prefersReducedMotion = useMemo(
     () => typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
@@ -312,8 +312,8 @@ export default function MapLibreMap({
     const map = mapRef.current;
     if (!map || status !== 'ready') return;
     const source = map.getSource(ASSISTANT_GEO_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
-    if (source) void source.setData(createPolygonGeoJson(polygons));
-  }, [polygonCoordinatesKey, status]);
+    if (source) void source.setData(createMapGeometryGeoJson(geometries));
+  }, [geometries, geometryCoordinatesKey, status]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -340,8 +340,8 @@ export default function MapLibreMap({
       return;
     }
 
-    fitMapToContent(map, points, polygons, prefersReducedMotion);
-  }, [pointCoordinatesKey, polygonCoordinatesKey, prefersReducedMotion, status]);
+    fitMapToContent(map, points, geometries, prefersReducedMotion);
+  }, [geometries, geometryCoordinatesKey, pointCoordinatesKey, prefersReducedMotion, status]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -634,7 +634,7 @@ function ensureAssistantGeoLayers(map: maplibregl.Map) {
   if (!map.getSource(ASSISTANT_GEO_SOURCE_ID)) {
     map.addSource(ASSISTANT_GEO_SOURCE_ID, {
       type: 'geojson',
-      data: createPolygonGeoJson([]),
+      data: createMapGeometryGeoJson([]),
     });
   }
   if (!map.getLayer(ASSISTANT_GEO_FILL_LAYER_ID)) {
@@ -642,6 +642,7 @@ function ensureAssistantGeoLayers(map: maplibregl.Map) {
       id: ASSISTANT_GEO_FILL_LAYER_ID,
       type: 'fill',
       source: ASSISTANT_GEO_SOURCE_ID,
+      filter: ['==', ['get', 'variant'], 'SEARCH_AREA'],
       paint: { 'fill-color': '#e85a18', 'fill-opacity': 0.12 },
     });
   }
@@ -650,18 +651,22 @@ function ensureAssistantGeoLayers(map: maplibregl.Map) {
       id: ASSISTANT_GEO_LINE_LAYER_ID,
       type: 'line',
       source: ASSISTANT_GEO_SOURCE_ID,
-      paint: { 'line-color': '#d84f12', 'line-opacity': 0.88, 'line-width': 2.5 },
+      paint: {
+        'line-color': ['match', ['get', 'variant'], 'REFERENCE', '#8f3412', '#d84f12'],
+        'line-opacity': ['match', ['get', 'variant'], 'REFERENCE', 1, 0.72],
+        'line-width': ['match', ['get', 'variant'], 'REFERENCE', 4, 2],
+      },
     });
   }
 }
 
-function createPolygonGeoJson(polygons: MapPolygon[]) {
+function createMapGeometryGeoJson(geometries: MapGeometry[]) {
   return {
     type: 'FeatureCollection' as const,
-    features: polygons.map((polygon) => ({
+    features: geometries.map((geometry) => ({
       type: 'Feature' as const,
-      properties: { id: polygon.id, variant: polygon.variant ?? 'RADIUS' },
-      geometry: { type: 'Polygon' as const, coordinates: polygon.coordinates },
+      properties: { id: geometry.id, variant: geometry.variant },
+      geometry: geometry.geometry,
     })),
   };
 }
@@ -854,18 +859,25 @@ function fitMapToPoints(map: maplibregl.Map, points: MapPoint[], prefersReducedM
 function fitMapToContent(
   map: maplibregl.Map,
   points: MapPoint[],
-  polygons: MapPolygon[],
+  geometries: MapGeometry[],
   prefersReducedMotion: boolean,
 ) {
-  const polygonPoints: MapPoint[] = polygons.flatMap((polygon) => polygon.coordinates.flatMap((ring) => (
-    ring.map(([longitude, latitude], index) => ({
-      id: `${polygon.id}-${index}-${latitude}-${longitude}`,
-      title: polygon.id,
-      hint: polygon.id,
+  const geometryPoints: MapPoint[] = geometries.flatMap((geometry) => flattenGeometryPositions(geometry.geometry).map(
+    ([longitude, latitude], index) => ({
+      id: `${geometry.id}-${index}-${latitude}-${longitude}`,
+      title: geometry.id,
+      hint: geometry.id,
       coordinates: [latitude, longitude],
-    }))
-  )));
-  fitMapToPoints(map, [...points, ...polygonPoints], prefersReducedMotion);
+    }),
+  ));
+  fitMapToPoints(map, [...points, ...geometryPoints], prefersReducedMotion);
+}
+
+function flattenGeometryPositions(geometry: MapGeometry['geometry']): [number, number][] {
+  if (geometry.type === 'Point') return [geometry.coordinates];
+  if (geometry.type === 'LineString') return geometry.coordinates;
+  if (geometry.type === 'MultiLineString' || geometry.type === 'Polygon') return geometry.coordinates.flat();
+  return geometry.coordinates.flat(2);
 }
 
 function notifyMapPosition(map: maplibregl.Map, callbacks: MapCallbacks) {

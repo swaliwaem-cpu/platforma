@@ -15,11 +15,12 @@ const defaultCenter: MapCoordinate = [55.751244, 37.618423];
 
 export function AssistantGeoPicker({ initialGeo, onCancel, onConfirm }: AssistantGeoPickerProps) {
   const initialCenter = useMemo<MapCoordinate>(() => initialGeo
-    ? [initialGeo.anchor.latitude, initialGeo.anchor.longitude]
+    && initialGeo.kind === 'POINT'
+    ? [initialGeo.point.latitude, initialGeo.point.longitude]
     : defaultCenter, [initialGeo]);
   const [center, setCenter] = useState<MapCoordinate>(initialCenter);
   const [radiusKilometers, setRadiusKilometers] = useState(
-    initialGeo ? String(initialGeo.radiusMeters / 1_000) : '2',
+    initialGeo?.mode === 'NEAR' ? String(initialGeo.distanceMeters / 1_000) : '2',
   );
   const [mapStatus, setMapStatus] = useState<MapStatus>('loading');
   const radiusMeters = parseRadiusKilometers(radiusKilometers);
@@ -113,13 +114,12 @@ export function AssistantGeoPicker({ initialGeo, onCancel, onConfirm }: Assistan
           disabled={radiusMeters === null}
           type="button"
           onClick={() => radiusMeters && onConfirm({
-            anchor: {
-              latitude: center[0],
-              longitude: center[1],
-              label: 'Точка на карте',
-              source: 'MANUAL',
-            },
-            radiusMeters,
+            kind: 'POINT',
+            mode: 'NEAR',
+            label: 'Точка на карте',
+            point: { latitude: center[0], longitude: center[1] },
+            distanceMeters: radiusMeters,
+            source: 'MANUAL',
           })}
         >
           Подтвердить точку

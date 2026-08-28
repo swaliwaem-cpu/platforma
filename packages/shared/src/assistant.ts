@@ -40,16 +40,99 @@ export type AssistantGeoAnchor = {
   source: 'MANUAL' | 'PLACE' | 'ALIAS' | 'KNOWLEDGE';
 };
 
-export type AssistantGeoSearchContext = {
-  anchor: AssistantGeoAnchor;
-  radiusMeters: number;
+export type AssistantGeoKind = 'POINT' | 'LINE' | 'AREA';
+export type AssistantGeoMode = 'NEAR' | 'INSIDE';
+export type AssistantGeoPoint = { latitude: number; longitude: number };
+
+export type AssistantGeoPointGeometry = {
+  type: 'Point';
+  coordinates: [longitude: number, latitude: number];
 };
+
+export type AssistantGeoLineGeometry =
+  | { type: 'LineString'; coordinates: [longitude: number, latitude: number][] }
+  | { type: 'MultiLineString'; coordinates: [longitude: number, latitude: number][][] };
+
+export type AssistantGeoPolygon = {
+  type: 'Polygon';
+  coordinates: [longitude: number, latitude: number][][];
+};
+
+export type AssistantGeoMultiPolygon = {
+  type: 'MultiPolygon';
+  coordinates: [longitude: number, latitude: number][][][];
+};
+
+export type AssistantGeoAreaGeometry = AssistantGeoPolygon | AssistantGeoMultiPolygon;
+export type AssistantGeoReferenceGeometry =
+  | AssistantGeoPointGeometry
+  | AssistantGeoLineGeometry
+  | AssistantGeoAreaGeometry;
+
+export type AssistantGeoPointSearchContext = {
+  kind: 'POINT';
+  mode: 'NEAR';
+  label: string;
+  point: AssistantGeoPoint;
+  distanceMeters: number;
+  source: 'MANUAL' | 'LANDMARK';
+  landmarkId?: string;
+};
+
+export type AssistantGeoLineSearchContext = {
+  kind: 'LINE';
+  mode: 'NEAR';
+  label: string;
+  landmarkId: string;
+  distanceMeters: number;
+  source: 'LANDMARK';
+};
+
+export type AssistantGeoAreaSearchContext =
+  | {
+      kind: 'AREA';
+      mode: 'NEAR';
+      label: string;
+      landmarkId: string;
+      distanceMeters: number;
+      source: 'LANDMARK';
+    }
+  | {
+      kind: 'AREA';
+      mode: 'INSIDE';
+      label: string;
+      landmarkId: string;
+      source: 'LANDMARK';
+    };
+
+export type AssistantGeoSearchContext =
+  | AssistantGeoPointSearchContext
+  | AssistantGeoLineSearchContext
+  | AssistantGeoAreaSearchContext;
+
+export type AssistantGeoBrowserInput =
+  | {
+      referenceType: 'LANDMARK';
+      landmarkId: string;
+      mode: AssistantGeoMode;
+      distanceMeters?: number | null;
+    }
+  | {
+      referenceType: 'MANUAL_POINT';
+      point: AssistantGeoPoint & { label?: string };
+      mode: 'NEAR';
+      distanceMeters?: number | null;
+    };
 
 export type AssistantGeoCandidate = {
   id: string;
   label: string;
-  latitude: number;
-  longitude: number;
+  kind: AssistantGeoKind;
+  mode: AssistantGeoMode;
+  distanceMeters?: number;
+  point?: AssistantGeoPoint;
+  latitude?: number;
+  longitude?: number;
   city: string | null;
   countryCode: string | null;
   source: 'ALIAS' | 'PLACE' | 'KNOWLEDGE';
@@ -57,17 +140,18 @@ export type AssistantGeoCandidate = {
 
 export type AssistantGeoResolution =
   | { status: 'NOT_APPLICABLE' }
-  | { status: 'RADIUS_REQUIRED'; placeQuery: string; actions: ['REFINE'] }
   | {
       status: 'RESOLVED' | 'AMBIGUOUS';
       placeQuery: string;
-      radiusMeters: number;
+      /** @deprecated Present only for point-only compatibility clients. */
+      radiusMeters?: number;
       candidates: AssistantGeoCandidate[];
     }
   | {
       status: 'NOT_FOUND' | 'UNAVAILABLE';
       placeQuery: string;
-      radiusMeters: number;
+      /** @deprecated Present only for point-only compatibility clients. */
+      radiusMeters?: number;
       actions: ['MANUAL', 'REFINE'];
     };
 
@@ -82,24 +166,26 @@ export type AssistantGeoAliasInput = {
   query: string;
   locale: string;
   country: string | null;
-  candidate: Omit<AssistantGeoCandidate, 'id' | 'source'>;
-};
-
-export type AssistantGeoPolygon = {
-  type: 'Polygon';
-  coordinates: [longitude: number, latitude: number][][];
+  candidate: {
+    label: string;
+    latitude: number;
+    longitude: number;
+    city: string | null;
+    countryCode: string | null;
+  };
 };
 
 export type AssistantGeoResultMarker = {
   unitId: string;
   latitude: number;
   longitude: number;
-  distanceMeters: number;
+  distanceMeters?: number;
   kind: 'PRIMARY' | 'ALTERNATIVE';
 };
 
 export type AssistantGeoSearchView = AssistantGeoSearchContext & {
-  polygon: AssistantGeoPolygon;
+  referenceGeometry: AssistantGeoReferenceGeometry;
+  searchArea: AssistantGeoAreaGeometry;
   markers: AssistantGeoResultMarker[];
 };
 
@@ -214,7 +300,7 @@ export type AssistantRunResponse = {
 export type AssistantSendMessageInput = {
   content: string;
   context?: AssistantPageContext | null;
-  geo?: AssistantGeoSearchContext | null;
+  geo?: AssistantGeoBrowserInput | null;
 };
 
 export type AssistantFeedbackInput = {

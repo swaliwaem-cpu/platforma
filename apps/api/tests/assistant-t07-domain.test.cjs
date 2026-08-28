@@ -166,13 +166,11 @@ test('Assistant T07 frozen standalone queries reproduce their canonical persiste
   const planner = new AssistantQueryPlanner(new AssistantFakePlannerGateway());
   for (const item of dataset.cases.filter(({ expected }) => expected.expectedIntent)) {
     const geo = item.expected.expectedGeo ? {
-      anchor: {
-        latitude: item.expected.expectedGeo.latitude,
-        longitude: item.expected.expectedGeo.longitude,
-        label: item.expected.expectedGeo.anchorLabel,
-        source: 'PLACE',
-      },
-      radiusMeters: item.expected.expectedGeo.radiusMeters,
+      hasGeoConstraint: true,
+      kind: 'POINT',
+      mode: 'NEAR',
+      label: item.expected.expectedGeo.anchorLabel,
+      distanceMeters: item.expected.expectedGeo.radiusMeters,
     } : null;
     const planned = await planner.plan({
       messages: [item.query],
@@ -478,6 +476,57 @@ test('Assistant T07 eval derives verdicts from persisted runs and blocks every z
   wrongGeoAnchor[geoIndex].answer.geo.anchor.latitude += 0.1;
   const wrongGeoReport = evaluateAssistantEvalArtifact(dataset, artifact, wrongGeoAnchor, now);
   assert.equal(wrongGeoReport.results[geoIndex].violations.includes('HARD_FILTER_VIOLATION'), true);
+  const canonicalGeo = structuredClone(runRecords);
+  const expectedGeo = dataset.cases[geoIndex].expected.expectedGeo;
+  const legacyMarkers = canonicalGeo[geoIndex].answer.geo.markers;
+  canonicalGeo[geoIndex].answer.geo = {
+    kind: 'POINT',
+    mode: 'NEAR',
+    label: expectedGeo.anchorLabel,
+    point: { latitude: expectedGeo.latitude, longitude: expectedGeo.longitude },
+    distanceMeters: expectedGeo.radiusMeters,
+    source: 'LANDMARK',
+    referenceGeometry: {
+      type: 'Point',
+      coordinates: [expectedGeo.longitude, expectedGeo.latitude],
+    },
+    searchArea: {
+      type: 'Polygon',
+      coordinates: [[
+        [expectedGeo.longitude - 0.01, expectedGeo.latitude - 0.01],
+        [expectedGeo.longitude + 0.01, expectedGeo.latitude - 0.01],
+        [expectedGeo.longitude + 0.01, expectedGeo.latitude + 0.01],
+        [expectedGeo.longitude - 0.01, expectedGeo.latitude + 0.01],
+        [expectedGeo.longitude - 0.01, expectedGeo.latitude - 0.01],
+      ]],
+    },
+    markers: legacyMarkers,
+  };
+  canonicalGeo[geoIndex].geoContext = {
+    kind: 'POINT',
+    mode: 'NEAR',
+    label: expectedGeo.anchorLabel,
+    point: { latitude: expectedGeo.latitude, longitude: expectedGeo.longitude },
+    distanceMeters: expectedGeo.radiusMeters,
+    source: 'LANDMARK',
+  };
+  const canonicalGeoReport = evaluateAssistantEvalArtifact(dataset, artifact, canonicalGeo, now);
+  assert.equal(
+    canonicalGeoReport.results[geoIndex].violations.includes('HARD_FILTER_VIOLATION'),
+    false,
+  );
+  const mismatchedCanonicalGeometry = structuredClone(canonicalGeo);
+  mismatchedCanonicalGeometry[geoIndex].answer.geo.referenceGeometry.coordinates[1] += 0.1;
+  const mismatchedCanonicalGeometryReport = evaluateAssistantEvalArtifact(
+    dataset,
+    artifact,
+    mismatchedCanonicalGeometry,
+    now,
+  );
+  assert.equal(
+    mismatchedCanonicalGeometryReport.results[geoIndex].violations.includes('HARD_FILTER_VIOLATION'),
+    true,
+  );
   const forgedGeoDistance = structuredClone(runRecords);
   forgedGeoDistance[geoIndex].evidence[0].latitude += 0.1;
   const forgedGeoReport = evaluateAssistantEvalArtifact(dataset, artifact, forgedGeoDistance, now);

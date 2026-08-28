@@ -29,14 +29,24 @@ test('Assistant T05 browser keeps LocationIQ backend-only and exposes explicit d
   assert.match(chatSource, /PROPERTY_SEARCH_UNAVAILABLE|readErrorMessage/u);
 });
 
-test('Assistant T05 map renders radius plus distinct bounded marker kinds and remains container-responsive', () => {
-  assert.match(resultMapSource, /polygons=\{\[\{ id: 'assistant-radius'/u);
+test('Assistant FIX-GEO1 map renders reference plus search geometry and remains container-responsive', () => {
+  assert.match(resultMapSource, /geometry: geo\.searchArea, variant: 'SEARCH_AREA'/u);
+  assert.match(resultMapSource, /geometry: geo\.referenceGeometry, variant: 'REFERENCE'/u);
+  assert.match(resultMapSource, /renderWithoutPoints/u);
+  assert.match(resultMapSource, /geo\.kind === 'POINT'/u);
   assert.match(resultMapSource, /variant: marker\.kind/u);
   assert.match(mapSource, /ResizeObserver/u);
   assert.match(mapSource, /ASSISTANT_GEO_FILL_LAYER_ID/u);
   assert.match(mapSource, /fitMapToContent/u);
   assert.match(styles, /\.map-price-marker--alternative/u);
   assert.match(styles, /\.assistant-geo-picker-map \.platform-map-shell/u);
+});
+
+test('Assistant FIX-GEO1 uses trusted landmark ids, defaults and explicit line or area chips', () => {
+  assert.match(chatSource, /referenceType: 'LANDMARK'/u);
+  assert.match(chatSource, /до \$\{formatDistance\(geo\.distanceMeters\)\} от всей дороги/u);
+  assert.match(chatSource, /внутри \$\{/u);
+  assert.doesNotMatch(chatSource, /RADIUS_REQUIRED|Добавить радиус/u);
 });
 
 test('Assistant T05 conversation restore respects a geo chip removed from the latest user message', () => {

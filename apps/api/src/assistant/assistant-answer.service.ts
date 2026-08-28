@@ -17,6 +17,7 @@ import {
   type AssistantSearchEvidence,
 } from './assistant-search-ranking';
 import { AssistantSearchService } from './assistant-search.service';
+import type { AssistantGeoSearchResult } from './assistant-search.service';
 import { buildAssistantKnowledgeAnswer } from './sources/assistant-knowledge-answer';
 import {
   AssistantKnowledgeRetrievalService,
@@ -53,7 +54,16 @@ export class AssistantAnswerService {
       {
         messages: input.messages,
         context: input.geo
-          ? { pageContext: input.context, geo: input.geo }
+          ? {
+              pageContext: input.context,
+              geo: {
+                hasGeoConstraint: true,
+                kind: input.geo.kind,
+                mode: input.geo.mode,
+                label: input.geo.label,
+                ...(input.geo.mode === 'NEAR' ? { distanceMeters: input.geo.distanceMeters } : {}),
+              },
+            }
           : input.context,
         operationRunId: input.operationRunId,
         executionId: input.executionId,
@@ -165,7 +175,7 @@ export class AssistantAnswerService {
 }
 
 function createGeoSearchView(
-  geo: Omit<AssistantGeoSearchView, 'markers'>,
+  geo: AssistantGeoSearchResult,
   evidence: AssistantSearchEvidence[],
   primaryIds: Set<string>,
 ): AssistantGeoSearchView {
@@ -174,9 +184,8 @@ function createGeoSearchView(
   return {
     ...geo,
     markers: evidence.flatMap((candidate) => {
-      if (typeof candidate.latitude !== 'number'
-        || typeof candidate.longitude !== 'number'
-        || typeof candidate.distanceMeters !== 'number') return [];
+      if (typeof candidate.latitude !== 'number' || typeof candidate.longitude !== 'number') return [];
+      if (geo.mode === 'NEAR' && typeof candidate.distanceMeters !== 'number') return [];
       const kind = primaryIds.has(candidate.unitId) ? 'PRIMARY' as const : 'ALTERNATIVE' as const;
       if (kind === 'PRIMARY' && primaryCount >= 3) return [];
       if (kind === 'ALTERNATIVE' && alternativeCount >= 2) return [];
@@ -186,7 +195,7 @@ function createGeoSearchView(
         unitId: candidate.unitId,
         latitude: candidate.latitude,
         longitude: candidate.longitude,
-        distanceMeters: candidate.distanceMeters,
+        ...(typeof candidate.distanceMeters === 'number' ? { distanceMeters: candidate.distanceMeters } : {}),
         kind,
       }];
     }),

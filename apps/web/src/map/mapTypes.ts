@@ -19,10 +19,15 @@ export type MapPoint = {
   variant?: 'DEFAULT' | 'ANCHOR' | 'PRIMARY' | 'ALTERNATIVE';
 };
 
-export type MapPolygon = {
+export type MapGeometry = {
   id: string;
-  coordinates: [longitude: number, latitude: number][][];
-  variant?: 'RADIUS';
+  geometry:
+    | { type: 'Point'; coordinates: [longitude: number, latitude: number] }
+    | { type: 'LineString'; coordinates: [longitude: number, latitude: number][] }
+    | { type: 'MultiLineString'; coordinates: [longitude: number, latitude: number][][] }
+    | { type: 'Polygon'; coordinates: [longitude: number, latitude: number][][] }
+    | { type: 'MultiPolygon'; coordinates: [longitude: number, latitude: number][][][] };
+  variant: 'REFERENCE' | 'SEARCH_AREA';
 };
 
 export type MapFallbackState = {
@@ -53,7 +58,7 @@ export type PlatformMapProps = {
   enableMeasurement?: boolean;
   initialViewport?: MapViewport;
   points: MapPoint[];
-  polygons?: MapPolygon[];
+  geometries?: MapGeometry[];
   renderWithoutPoints?: boolean;
   selectedPointId?: string | null;
   onBoundsChange?: (bounds: MapBounds) => void;

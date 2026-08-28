@@ -146,7 +146,7 @@ export type {
   MapFallbackState,
   MapNearbyTransitResult,
   MapNearbyTransitStation,
-  MapPolygon,
+  MapGeometry,
   MapPoint,
   MapStatus,
   MapViewport,

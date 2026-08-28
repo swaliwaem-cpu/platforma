@@ -29,7 +29,12 @@ import type {
 import { createHash } from 'node:crypto';
 
 import { PrismaService } from '../prisma/prisma.service';
-import { parseAssistantGeoSearchInput } from './geo/assistant-geo-contract';
+import {
+  parseAssistantGeoBrowserInput,
+  parseAssistantGeoStoredContext,
+  parseAssistantReferenceGeometry,
+} from './geo/assistant-geo-contract';
+import { AssistantGeoLandmarkService } from './geo/assistant-geo-landmark.service';
 import {
   AssistantRunProcessor,
   assistantProgressDefinitions,
@@ -103,12 +108,14 @@ type StoredConversationSummary = Prisma.AssistantConversationGetPayload<{
 type StoredRun = Prisma.AssistantRunGetPayload<{ include: typeof runInclude }>;
 type StoredMessage = Prisma.AssistantMessageGetPayload<{ select: typeof messageSelect }>;
 type AssistantHistoryCursor = { id: string; updatedAt: Date };
+type ParsedAssistantSendMessageInput = AssistantSendMessageInput & { requestHashGeo: unknown };
 
 @Injectable()
 export class AssistantService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly runProcessor: AssistantRunProcessor,
+    private readonly geoLandmarks: AssistantGeoLandmarkService,
   ) {}
 
   async createConversation(ownerUserId: string, idempotencyKeyValue: unknown) {
@@ -185,6 +192,15 @@ export class AssistantService {
 
     if (existing) return this.replayExistingRun(existing, conversationId, requestHash);
 
+    const ownedConversation = await this.prisma.assistantConversation.findFirst({
+      where: { id: conversationId, ownerUserId: input.ownerUserId },
+      select: { id: true },
+    });
+    if (!ownedConversation) throw new NotFoundException('ASSISTANT_CONVERSATION_NOT_FOUND');
+    const canonicalGeo = messageInput.geo
+      ? await this.geoLandmarks.materializeBrowserInput(messageInput.geo)
+      : null;
+
     let transactionResult: { run: StoredRun; created: boolean };
     try {
       transactionResult = await this.prisma.$transaction(async (transaction) => {
@@ -192,6 +208,7 @@ export class AssistantService {
           SELECT "id"
           FROM "assistant_conversations"
           WHERE "id" = ${conversationId}::uuid
+            AND "owner_user_id" = ${input.ownerUserId}::uuid
           FOR UPDATE
         `);
         const concurrent = await transaction.assistantRun.findUnique({
@@ -226,8 +243,8 @@ export class AssistantService {
             contextJson: messageInput.context
               ? messageInput.context as unknown as Prisma.InputJsonValue
               : Prisma.JsonNull,
-            geoContextJson: messageInput.geo
-              ? messageInput.geo as unknown as Prisma.InputJsonValue
+            geoContextJson: canonicalGeo
+              ? canonicalGeo as unknown as Prisma.InputJsonValue
               : Prisma.DbNull,
           },
         });
@@ -329,7 +346,7 @@ export class AssistantService {
     });
   }
 
-  private parseMessageInput(value: unknown): AssistantSendMessageInput {
+  private parseMessageInput(value: unknown): ParsedAssistantSendMessageInput {
     if (!this.isRecord(value)) throw new BadRequestException('ASSISTANT_MESSAGE_INVALID');
     const content = this.parseString(value.content, 'content', assistantMessageMaxLength);
     const context = value.context === undefined || value.context === null
@@ -337,8 +354,21 @@ export class AssistantService {
       : this.parseContext(value.context);
     const geo = value.geo === undefined || value.geo === null
       ? null
-      : parseAssistantGeoSearchInput(value.geo);
-    return { content, context, geo };
+      : parseAssistantGeoBrowserInput(value.geo);
+    const requestHashGeo = geo?.referenceType === 'MANUAL_POINT'
+      && this.isRecord(value.geo)
+      && this.isRecord(value.geo.anchor)
+      ? {
+          anchor: {
+            latitude: geo.point.latitude,
+            longitude: geo.point.longitude,
+            label: geo.point.label,
+            source: 'MANUAL',
+          },
+          radiusMeters: geo.distanceMeters,
+        }
+      : geo;
+    return { content, context, geo, requestHashGeo };
   }
 
   private parseContext(value: unknown): AssistantPageContext {
@@ -395,13 +425,13 @@ export class AssistantService {
     return value;
   }
 
-  private hashRequest(conversationId: string, input: AssistantSendMessageInput) {
+  private hashRequest(conversationId: string, input: ParsedAssistantSendMessageInput) {
     return createHash('sha256')
       .update(JSON.stringify({
         conversationId,
         content: input.content,
         context: input.context ?? null,
-        geo: input.geo ?? null,
+        geo: input.requestHashGeo ?? null,
       }))
       .digest('hex');
   }
@@ -483,7 +513,7 @@ export class AssistantService {
 
   private parseStoredGeoContext(value: Prisma.JsonValue | null): AssistantGeoSearchContext | null {
     try {
-      return value === null ? null : parseAssistantGeoSearchInput(value, {
+      return value === null ? null : parseAssistantGeoStoredContext(value, {
         ASSISTANT_GEO_RADIUS_MIN_METERS: '1',
         ASSISTANT_GEO_RADIUS_MAX_METERS: '100000',
       });
@@ -522,20 +552,28 @@ export class AssistantService {
 
   private parseStoredGeoView(value: unknown): AssistantGeoSearchView | null {
     if (!this.isRecord(value)) return null;
-    const context = this.parseStoredGeoContext({
-      anchor: value.anchor,
-      radiusMeters: value.radiusMeters,
-    } as Prisma.JsonObject);
-    if (!context || !this.isRecord(value.polygon) || value.polygon.type !== 'Polygon'
-      || !Array.isArray(value.polygon.coordinates) || value.polygon.coordinates.length !== 1) return null;
-    const ring = value.polygon.coordinates[0];
-    if (!Array.isArray(ring) || ring.length < 4 || ring.length > 513) return null;
-    const coordinates = ring.flatMap((coordinate) => {
-      if (!Array.isArray(coordinate) || coordinate.length !== 2
-        || coordinate.some((part) => typeof part !== 'number' || !Number.isFinite(part))) return [];
-      return [[coordinate[0] as number, coordinate[1] as number] as [number, number]];
-    });
-    if (coordinates.length !== ring.length || !Array.isArray(value.markers) || value.markers.length > 5) return null;
+    const legacy = this.isRecord(value.anchor) && typeof value.radiusMeters === 'number';
+    const contextValue = legacy
+      ? { anchor: value.anchor, radiusMeters: value.radiusMeters }
+      : extractCanonicalGeoContext(value);
+    const context = this.parseStoredGeoContext(contextValue as Prisma.JsonObject);
+    if (!context || !Array.isArray(value.markers) || value.markers.length > 5) return null;
+    let referenceGeometry: AssistantGeoSearchView['referenceGeometry'];
+    let searchArea: AssistantGeoSearchView['searchArea'];
+    try {
+      referenceGeometry = legacy
+        ? parseAssistantReferenceGeometry({
+            type: 'Point',
+            coordinates: [context.kind === 'POINT' ? context.point.longitude : 0, context.kind === 'POINT' ? context.point.latitude : 0],
+          }, 'POINT')
+        : parseAssistantReferenceGeometry(value.referenceGeometry, context.kind);
+      searchArea = parseAssistantReferenceGeometry(
+        legacy ? value.polygon : value.searchArea,
+        'AREA',
+      ) as AssistantGeoSearchView['searchArea'];
+    } catch {
+      return null;
+    }
     const markers = value.markers.flatMap((marker) => {
       if (!this.isRecord(marker)
         || typeof marker.unitId !== 'string' || !uuidPattern.test(marker.unitId)
@@ -543,23 +581,27 @@ export class AssistantService {
         || marker.latitude < -90 || marker.latitude > 90
         || typeof marker.longitude !== 'number' || !Number.isFinite(marker.longitude)
         || marker.longitude < -180 || marker.longitude > 180
-        || typeof marker.distanceMeters !== 'number' || !Number.isFinite(marker.distanceMeters)
-        || marker.distanceMeters < 0 || marker.distanceMeters > context.radiusMeters + 2
+        || (context.mode === 'NEAR' && (typeof marker.distanceMeters !== 'number'
+          || !Number.isFinite(marker.distanceMeters)
+          || marker.distanceMeters < 0
+          || marker.distanceMeters > context.distanceMeters + 2))
+        || (context.mode === 'INSIDE' && marker.distanceMeters !== undefined)
         || (marker.kind !== 'PRIMARY' && marker.kind !== 'ALTERNATIVE')) return [];
       return [{
         unitId: marker.unitId,
         latitude: marker.latitude,
         longitude: marker.longitude,
-        distanceMeters: marker.distanceMeters,
+        ...(context.mode === 'NEAR' ? { distanceMeters: marker.distanceMeters as number } : {}),
         kind: marker.kind as 'PRIMARY' | 'ALTERNATIVE',
       }];
     });
     if (markers.length !== value.markers.length) return null;
     return {
       ...context,
-      polygon: { type: 'Polygon', coordinates: [coordinates] },
+      referenceGeometry,
+      searchArea,
       markers,
-    };
+    } as AssistantGeoSearchView;
   }
 
   private geoMarkersMatchResults(
@@ -574,9 +616,12 @@ export class AssistantService {
     return geo.markers.length === expected.size
       && geo.markers.every((marker) => expected.get(marker.unitId) === marker.kind)
       && [...exactResults, ...alternatives].every((result) =>
-        typeof result.distanceMeters === 'number'
-        && geo.markers.some((marker) => marker.unitId === result.unitId
-          && Math.abs(marker.distanceMeters - result.distanceMeters!) < 0.01));
+        geo.mode === 'INSIDE'
+          ? result.distanceMeters === undefined
+          : typeof result.distanceMeters === 'number'
+            && geo.markers.some((marker) => marker.unitId === result.unitId
+              && typeof marker.distanceMeters === 'number'
+              && Math.abs(marker.distanceMeters - result.distanceMeters!) < 0.01));
   }
 
   private parseStoredKnowledgeAnswer(value: Record<string, unknown>): AssistantAnswer | null {
@@ -716,4 +761,17 @@ export class AssistantService {
   private isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
   }
+}
+
+function extractCanonicalGeoContext(value: Record<string, unknown>): Prisma.JsonObject {
+  const base: Prisma.JsonObject = {
+    kind: value.kind as Prisma.JsonValue,
+    mode: value.mode as Prisma.JsonValue,
+    label: value.label as Prisma.JsonValue,
+    source: value.source as Prisma.JsonValue,
+  };
+  if (value.landmarkId !== undefined) base.landmarkId = value.landmarkId as Prisma.JsonValue;
+  if (value.point !== undefined) base.point = value.point as Prisma.JsonValue;
+  if (value.distanceMeters !== undefined) base.distanceMeters = value.distanceMeters as Prisma.JsonValue;
+  return base;
 }

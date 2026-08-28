@@ -5,12 +5,16 @@ import { chromium } from '@playwright/test';
 const baseUrl = process.env.ASSISTANT_T05_WEB_TEST_URL;
 if (!baseUrl) throw new Error('ASSISTANT_T05_WEB_TEST_URL is required');
 
+const LINE_LANDMARK_ID = '55555555-5555-4555-8555-555555555555';
+const AREA_LANDMARK_ID = '66666666-6666-4666-8666-666666666666';
+
 const browser = await chromium.launch({ headless: true });
 
 try {
   await verifyDesktopGeoFlow();
+  await verifyDesktopLineGeometry();
   await verifyRenderedMarkerVariants();
-  await verifyMobilePicker();
+  await verifyMobilePickerAndAreaGeometry();
   process.stdout.write('ASSISTANT_T05_BROWSER_OK\n');
 } finally {
   await browser.close();
@@ -61,22 +65,26 @@ async function verifyDesktopGeoFlow() {
     await page.getByText('ЖК Радиус 1', { exact: true }).waitFor();
     assert.equal(state.messageBodies.length, 1, 'confirm must start exactly one run');
     assert.equal(state.resolveBodies.length, 0, 'manual picker must bypass geocoder');
-    assert.equal(state.messageBodies[0].geo.anchor.source, 'MANUAL');
-    assert.equal(state.messageBodies[0].geo.radiusMeters, 3_000);
-    await page.getByText('Точка на карте · 3 км', { exact: true }).waitFor();
+    assert.deepEqual(state.messageBodies[0].geo, {
+      referenceType: 'MANUAL_POINT',
+      point: { latitude: 55.751244, longitude: 37.618423, label: 'Точка на карте' },
+      mode: 'NEAR',
+      distanceMeters: 3_000,
+    });
+    await page.getByText('Точка на карте · до 3 км', { exact: true }).waitFor();
     await page.getByText('650 м по прямой', { exact: true }).waitFor();
     await page.getByText('Карта временно отключена', { exact: true }).waitFor();
 
-    await page.getByRole('button', { name: 'Изменить точку и радиус' }).click();
+    await page.getByRole('button', { name: 'Изменить точку и расстояние' }).click();
     await picker.getByRole('button', { name: '2 км' }).click();
     await picker.getByRole('button', { name: 'Отмена' }).click();
-    await page.getByText('Точка на карте · 3 км', { exact: true }).waitFor();
+    await page.getByText('Точка на карте · до 3 км', { exact: true }).waitFor();
     assert.equal(state.messageBodies.length, 1);
 
-    await page.getByRole('button', { name: 'Изменить точку и радиус' }).click();
+    await page.getByRole('button', { name: 'Изменить точку и расстояние' }).click();
     await picker.getByRole('button', { name: '5 км' }).click();
     await picker.getByRole('button', { name: 'Подтвердить точку' }).click();
-    await page.getByText('Точка на карте · 5 км', { exact: true }).waitFor();
+    await page.getByText('Точка на карте · до 5 км', { exact: true }).waitFor();
     assert.equal(state.messageBodies.length, 2);
     assert.equal(state.resolveBodies.length, 0, 'moving confirmed manual anchor must bypass geocoder');
 
@@ -88,7 +96,7 @@ async function verifyDesktopGeoFlow() {
     assert.equal(await candidates.count(), 3);
     assert.equal(state.messageBodies.length, 2, 'ambiguity must not start property search');
     await candidates.nth(2).click();
-    await page.getByText('Плотинка · вариант 3 · 2 км', { exact: true }).waitFor();
+    await page.getByText('Плотинка · вариант 3 · до 2 км', { exact: true }).waitFor();
     assert.equal(state.messageBodies.length, 3);
 
     await page.getByRole('button', { name: 'Убрать геопоиск' }).click();
@@ -101,7 +109,7 @@ async function verifyDesktopGeoFlow() {
     await page.getByRole('button', { name: 'Указать на карте' }).click();
     await picker.getByRole('button', { name: 'Подтвердить точку' }).click();
     await page.getByText('PROPERTY_SEARCH_UNAVAILABLE', { exact: true }).waitFor();
-    await page.getByText('Точка на карте · 2 км', { exact: true }).waitFor();
+    await page.getByText('Точка на карте · до 2 км', { exact: true }).waitFor();
     assert.equal(state.messageBodies.length, 4);
 
     assert.equal(
@@ -109,6 +117,51 @@ async function verifyDesktopGeoFlow() {
       false,
     );
     assert.deepEqual(runtimeIssues.filter((message) => !message.includes('503 (Service Unavailable)')), []);
+  } finally {
+    await context.close();
+  }
+}
+
+async function verifyDesktopLineGeometry() {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 960 } });
+  const page = await context.newPage();
+  const state = createState();
+  const runtimeIssues = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error' || message.type() === 'warning') runtimeIssues.push(message.text());
+  });
+  page.on('pageerror', (error) => runtimeIssues.push(error.message));
+  await enableFixtureMap(page);
+  await installRoutes(page, state);
+
+  try {
+    await page.goto(`${baseUrl}/cabinet`, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: 'Открыть ИИ-помощника' }).click();
+    const content = 'Найди мне квартиру возле Садового кольца, например, однокомнатную, бюджет до 35 миллионов.';
+    await page.getByLabel('Сообщение помощнику').fill(content);
+    await page.getByRole('button', { name: 'Отправить' }).click();
+
+    await page.getByText('Садовое кольцо · до 5 км от всей дороги', { exact: true }).waitFor();
+    assert.equal(await page.locator('[data-assistant-geo-picker]').count(), 0, 'default must not open radius dialog');
+    assert.deepEqual(state.resolveBodies, [{ content, locale: 'ru', country: null }]);
+    assert.equal(state.messageBodies.length, 1);
+    assert.equal(state.messageBodies[0].content, content, 'rooms and budget must survive geo resolution');
+    assert.deepEqual(state.messageBodies[0].geo, {
+      referenceType: 'LANDMARK',
+      landmarkId: LINE_LANDMARK_ID,
+      mode: 'NEAR',
+      distanceMeters: 5_000,
+    });
+    const map = page.getByRole('region', {
+      name: 'Результаты до 5 км от всей дороги Садовое кольцо',
+    });
+    await map.locator('canvas').waitFor();
+    const geometry = page.locator('.assistant-geo-result-map');
+    assert.equal(await geometry.getAttribute('data-reference-geometry'), 'LineString');
+    assert.equal(await geometry.getAttribute('data-search-area-geometry'), 'Polygon');
+    assert.equal(await page.locator('.map-price-marker--anchor').count(), 0);
+    await page.locator('[aria-label="Обозначения карты"]').getByText('Ориентир', { exact: true }).waitFor();
+    assert.deepEqual(runtimeIssues.filter((message) => !message.includes('GL Driver Message')), []);
   } finally {
     await context.close();
   }
@@ -148,11 +201,12 @@ async function verifyRenderedMarkerVariants() {
   }
 }
 
-async function verifyMobilePicker() {
+async function verifyMobilePickerAndAreaGeometry() {
   const context = await browser.newContext({ viewport: { width: 375, height: 812 } });
   const page = await context.newPage();
-  await disableMapTiles(page);
-  await installRoutes(page, createState());
+  const state = createState();
+  await enableFixtureMap(page);
+  await installRoutes(page, state);
 
   try {
     await page.goto(`${baseUrl}/cabinet`, { waitUntil: 'domcontentloaded' });
@@ -169,6 +223,27 @@ async function verifyMobilePicker() {
       const control = await page.getByRole('button', { name: label }).boundingBox();
       assert.ok(control && control.width >= 44 && control.height >= 44);
     }
+    await page.getByRole('button', { name: 'Отмена' }).click();
+
+    const content = 'Покажи квартиры внутри района Арбат';
+    await page.getByLabel('Сообщение помощнику').fill(content);
+    await page.getByRole('button', { name: 'Отправить' }).click();
+    await page.getByText('внутри района Арбат', { exact: true }).waitFor();
+    assert.equal(await page.locator('[data-assistant-geo-picker]').count(), 0);
+    assert.equal(state.messageBodies.length, 1);
+    assert.equal(state.messageBodies[0].content, content);
+    assert.deepEqual(state.messageBodies[0].geo, {
+      referenceType: 'LANDMARK',
+      landmarkId: AREA_LANDMARK_ID,
+      mode: 'INSIDE',
+    });
+    const resultMap = page.getByRole('region', { name: 'Результаты внутри области Арбат' });
+    await resultMap.locator('canvas').waitFor();
+    const geometry = page.locator('.assistant-geo-result-map');
+    assert.equal(await geometry.getAttribute('data-reference-geometry'), 'Polygon');
+    assert.equal(await geometry.getAttribute('data-search-area-geometry'), 'Polygon');
+    assert.equal(await page.locator('.map-price-marker--anchor').count(), 0);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
   } finally {
     await context.close();
   }
@@ -249,15 +324,52 @@ async function installRoutes(page, state) {
         await json(route, { message: 'GEOCODER_UNAVAILABLE' }, 503);
         return;
       }
+      if (body.content.includes('Садового кольца')) {
+        await json(route, {
+          status: 'RESOLVED',
+          placeQuery: 'Садовое кольцо',
+          candidates: [{
+            id: LINE_LANDMARK_ID,
+            label: 'Садовое кольцо',
+            kind: 'LINE',
+            mode: 'NEAR',
+            distanceMeters: 5_000,
+            city: 'Москва',
+            countryCode: 'ru',
+            source: 'PLACE',
+          }],
+        });
+        return;
+      }
+      if (body.content.includes('внутри района Арбат')) {
+        await json(route, {
+          status: 'RESOLVED',
+          placeQuery: 'Арбат',
+          candidates: [{
+            id: AREA_LANDMARK_ID,
+            label: 'район Арбат',
+            kind: 'AREA',
+            mode: 'INSIDE',
+            city: 'Москва',
+            countryCode: 'ru',
+            source: 'PLACE',
+          }],
+        });
+        return;
+      }
       await json(route, {
         status: 'AMBIGUOUS',
         placeQuery: 'Плотинка',
-        radiusMeters: 2_000,
         candidates: [1, 2, 3].map((value) => ({
-          id: `candidate-${value}`,
+          id: `77777777-7777-4777-8777-${String(value).padStart(12, '0')}`,
           label: `Плотинка · вариант ${value}`,
-          latitude: 56.837 + value * 0.001,
-          longitude: 60.603 + value * 0.001,
+          kind: 'POINT',
+          mode: 'NEAR',
+          distanceMeters: 2_000,
+          point: {
+            latitude: 56.837 + value * 0.001,
+            longitude: 60.603 + value * 0.001,
+          },
           city: 'Екатеринбург',
           countryCode: 'ru',
           source: 'PLACE',
@@ -305,13 +417,14 @@ function userMessage(body) {
     role: 'USER',
     content: body.content,
     context: body.context ?? null,
-    geo: body.geo ?? null,
+    geo: body.geo ? materializeGeo(body.geo) : null,
     answer: null,
     createdAt: '2026-08-26T00:00:00.000Z',
   };
 }
 
 function assistantMessage(geo, mode = 'PRIMARY', resultCount = 1) {
+  const canonicalGeo = materializeGeo(geo);
   const unitIds = mode === 'PRIMARY'
     ? [
         '70000001-7000-4000-8000-700000000001',
@@ -323,7 +436,7 @@ function assistantMessage(geo, mode = 'PRIMARY', resultCount = 1) {
         '80000002-8000-4000-8000-800000000002',
       ];
   const results = unitIds.slice(0, resultCount).map((unitId, index) => {
-    const distanceMeters = 650 + index * 150;
+    const distanceMeters = canonicalGeo.mode === 'NEAR' ? 650 + index * 150 : undefined;
     return {
       unitId,
       title: `ЖК Радиус ${index + 1}`,
@@ -336,9 +449,15 @@ function assistantMessage(geo, mode = 'PRIMARY', resultCount = 1) {
       facts: [],
       pdfs: [],
       deviations: mode === 'ALTERNATIVE' ? [{ type: 'BUDGET', label: 'Выше бюджета' }] : [],
-      distanceMeters,
+      ...(distanceMeters === undefined ? {} : { distanceMeters }),
     };
   });
+  const geometry = geometryFixture(canonicalGeo);
+  const markerOrigin = canonicalGeo.kind === 'POINT'
+    ? canonicalGeo.point
+    : canonicalGeo.kind === 'LINE'
+      ? { latitude: 55.75, longitude: 37.62 }
+      : { latitude: 55.752, longitude: 37.594 };
   return {
     id: crypto.randomUUID(),
     role: 'ASSISTANT',
@@ -350,21 +469,104 @@ function assistantMessage(geo, mode = 'PRIMARY', resultCount = 1) {
       exactResults: mode === 'PRIMARY' ? results : [],
       alternatives: mode === 'ALTERNATIVE' ? results : [],
       geo: {
-        ...geo,
-        polygon: {
-          type: 'Polygon',
-          coordinates: [[[37.60, 55.74], [37.64, 55.74], [37.64, 55.77], [37.60, 55.74]]],
-        },
+        ...canonicalGeo,
+        ...geometry,
         markers: results.map((result, index) => ({
           unitId: result.unitId,
-          latitude: geo.anchor.latitude + index * 0.001,
-          longitude: geo.anchor.longitude + index * 0.001,
-          distanceMeters: result.distanceMeters,
+          latitude: markerOrigin.latitude + index * 0.001,
+          longitude: markerOrigin.longitude + index * 0.001,
+          ...(result.distanceMeters === undefined ? {} : { distanceMeters: result.distanceMeters }),
           kind: mode,
         })),
       },
     },
     createdAt: '2026-08-26T00:00:01.000Z',
+  };
+}
+
+function materializeGeo(geo) {
+  if (geo.referenceType === 'MANUAL_POINT') {
+    return {
+      kind: 'POINT',
+      mode: 'NEAR',
+      label: geo.point.label ?? 'Точка на карте',
+      point: { latitude: geo.point.latitude, longitude: geo.point.longitude },
+      distanceMeters: geo.distanceMeters ?? 2_000,
+      source: 'MANUAL',
+    };
+  }
+  if (geo.landmarkId === LINE_LANDMARK_ID) {
+    return {
+      kind: 'LINE',
+      mode: 'NEAR',
+      label: 'Садовое кольцо',
+      landmarkId: LINE_LANDMARK_ID,
+      distanceMeters: geo.distanceMeters ?? 5_000,
+      source: 'LANDMARK',
+    };
+  }
+  if (geo.landmarkId === AREA_LANDMARK_ID) {
+    return geo.mode === 'INSIDE'
+      ? {
+          kind: 'AREA',
+          mode: 'INSIDE',
+          label: 'Арбат',
+          landmarkId: AREA_LANDMARK_ID,
+          source: 'LANDMARK',
+        }
+      : {
+          kind: 'AREA',
+          mode: 'NEAR',
+          label: 'Арбат',
+          landmarkId: AREA_LANDMARK_ID,
+          distanceMeters: geo.distanceMeters ?? 5_000,
+          source: 'LANDMARK',
+        };
+  }
+  if (geo.referenceType === 'LANDMARK') {
+    const value = Number.parseInt(geo.landmarkId.slice(-1), 10);
+    return {
+      kind: 'POINT',
+      mode: 'NEAR',
+      label: `Плотинка · вариант ${value}`,
+      landmarkId: geo.landmarkId,
+      point: { latitude: 56.837 + value * 0.001, longitude: 60.603 + value * 0.001 },
+      distanceMeters: geo.distanceMeters ?? 2_000,
+      source: 'LANDMARK',
+    };
+  }
+  return geo;
+}
+
+function geometryFixture(geo) {
+  if (geo.kind === 'LINE') {
+    return {
+      referenceGeometry: {
+        type: 'LineString',
+        coordinates: [[37.58, 55.73], [37.60, 55.76], [37.64, 55.76], [37.66, 55.73]],
+      },
+      searchArea: {
+        type: 'Polygon',
+        coordinates: [[[37.52, 55.69], [37.72, 55.69], [37.72, 55.81], [37.52, 55.81], [37.52, 55.69]]],
+      },
+    };
+  }
+  if (geo.kind === 'AREA') {
+    const area = {
+      type: 'Polygon',
+      coordinates: [[[37.57, 55.74], [37.61, 55.74], [37.61, 55.765], [37.57, 55.765], [37.57, 55.74]]],
+    };
+    return { referenceGeometry: area, searchArea: area };
+  }
+  return {
+    referenceGeometry: {
+      type: 'Point',
+      coordinates: [geo.point.longitude, geo.point.latitude],
+    },
+    searchArea: {
+      type: 'Polygon',
+      coordinates: [[[37.60, 55.74], [37.64, 55.74], [37.64, 55.77], [37.60, 55.74]]],
+    },
   };
 }
 

@@ -522,10 +522,10 @@ test('Assistant T05 resolver keeps another city explicit, prefers aliases and se
   assert.equal(providerRequests[14].query, 'Павелецкой Плаза');
 
   const noViewbox = createCacheKey({
-    placeQuery: 'Плотинка', locale: 'ru', country: 'ru', viewbox: null,
+    placeQuery: 'Плотинка', mode: 'NEAR', locale: 'ru', country: 'ru', viewbox: null,
   });
   const ekbViewbox = createCacheKey({
-    placeQuery: 'Плотинка', locale: 'ru', country: 'ru', viewbox: [60.4, 56.7, 60.8, 56.95],
+    placeQuery: 'Плотинка', mode: 'NEAR', locale: 'ru', country: 'ru', viewbox: [60.4, 56.7, 60.8, 56.95],
   });
   assert.notEqual(noViewbox, ekbViewbox);
 

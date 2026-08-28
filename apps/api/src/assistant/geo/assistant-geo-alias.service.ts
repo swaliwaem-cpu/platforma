@@ -3,10 +3,14 @@ import type { AssistantGeoAliasInput } from '@platforma/shared' with { 'resoluti
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { normalizePlaceQuery } from './assistant-place-resolver.service';
+import { AssistantGeoLandmarkService } from './assistant-geo-landmark.service';
 
 @Injectable()
 export class AssistantGeoAliasService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly landmarks: AssistantGeoLandmarkService,
+  ) {}
 
   async list() {
     const aliases = await this.prisma.assistantGeoAlias.findMany({
@@ -17,35 +21,54 @@ export class AssistantGeoAliasService {
 
   async save(actorId: string, body: unknown) {
     const input = parseAliasInput(body);
-    const alias = await this.prisma.assistantGeoAlias.upsert({
-      where: {
-        normalizedQuery_locale_country: {
-          normalizedQuery: normalizePlaceQuery(input.query),
+    const normalizedQuery = normalizePlaceQuery(input.query);
+    const alias = await this.prisma.$transaction(async (transaction) => {
+      const saved = await transaction.assistantGeoAlias.upsert({
+        where: {
+          normalizedQuery_locale_country: {
+            normalizedQuery,
+            locale: input.locale,
+            country: input.country ?? '',
+          },
+        },
+        update: {
+          query: input.query,
+          ...input.candidate,
+          createdByUserId: actorId,
+        },
+        create: {
+          normalizedQuery,
+          query: input.query,
           locale: input.locale,
           country: input.country ?? '',
+          ...input.candidate,
+          createdByUserId: actorId,
         },
-      },
-      update: {
+      });
+      await this.landmarks.confirmManualAlias({
+        id: saved.id,
         query: input.query,
-        ...input.candidate,
-        createdByUserId: actorId,
-      },
-      create: {
-        normalizedQuery: normalizePlaceQuery(input.query),
-        query: input.query,
+        normalizedQuery,
+        label: input.candidate.label,
         locale: input.locale,
-        country: input.country ?? '',
-        ...input.candidate,
-        createdByUserId: actorId,
-      },
+        country: input.country,
+        city: input.candidate.city,
+        latitude: input.candidate.latitude,
+        longitude: input.candidate.longitude,
+        actorId,
+      }, transaction);
+      return saved;
     });
     return { alias: serializeAlias(alias) };
   }
 
   async remove(aliasId: string) {
     if (!isUuid(aliasId)) throw new BadRequestException('ASSISTANT_GEO_ALIAS_ID_INVALID');
-    const result = await this.prisma.assistantGeoAlias.deleteMany({ where: { id: aliasId } });
-    if (result.count === 0) throw new NotFoundException('ASSISTANT_GEO_ALIAS_NOT_FOUND');
+    await this.prisma.$transaction(async (transaction) => {
+      await this.landmarks.rejectManualAlias(aliasId, transaction);
+      const result = await transaction.assistantGeoAlias.deleteMany({ where: { id: aliasId } });
+      if (result.count === 0) throw new NotFoundException('ASSISTANT_GEO_ALIAS_NOT_FOUND');
+    });
     return { deleted: true };
   }
 }

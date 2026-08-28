@@ -17,12 +17,14 @@ import { AssistantFeedbackController } from './feedback/assistant-feedback.contr
 import { AssistantFeedbackService } from './feedback/assistant-feedback.service';
 import { AssistantSourcesModule } from './sources/assistant-sources.module';
 import { AssistantGeoAliasService } from './geo/assistant-geo-alias.service';
+import { AssistantGeoLandmarkService } from './geo/assistant-geo-landmark.service';
 import { AssistantGeoAliasesController, AssistantGeoController } from './geo/assistant-geo.controller';
 import {
   AssistantGeoProviderPolicyService,
   createAssistantGeoProvider,
 } from './geo/assistant-geo-provider-policy.service';
 import { AssistantPlaceResolverService } from './geo/assistant-place-resolver.service';
+import { AssistantOverpassCollector } from './geo/assistant-overpass-collector';
 import { AssistantModelUsagePolicyService } from './operations/assistant-model-usage-policy.service';
 import { AssistantAiUsageBudgetService } from './operations/assistant-ai-usage-budget.service';
 import { AssistantRetentionService } from './operations/assistant-retention.service';
@@ -45,6 +47,11 @@ import { AssistantRolloutStageService } from './rollout/assistant-rollout-stage.
     AssistantRunProcessor,
     AssistantAnswerService,
     AssistantSearchService,
+    AssistantGeoLandmarkService,
+    {
+      provide: AssistantOverpassCollector,
+      useFactory: () => new AssistantOverpassCollector(process.env),
+    },
     AssistantPlaceResolverService,
     AssistantGeoAliasService,
     AssistantUsageBudgetService,

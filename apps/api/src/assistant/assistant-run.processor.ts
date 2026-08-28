@@ -21,7 +21,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AssistantAnswerService } from './assistant-answer.service';
 import { buildAssistantRunAudit } from './audit/assistant-run-audit';
 import { AssistantPlannerError } from './assistant-query-planner';
-import { parseAssistantGeoSearchInput } from './geo/assistant-geo-contract';
+import { parseAssistantGeoStoredContext } from './geo/assistant-geo-contract';
 import {
   AssistantAiUsageBudgetError,
   AssistantAiUsageBudgetService,
@@ -354,14 +354,10 @@ export class AssistantRunProcessor implements OnModuleInit, OnModuleDestroy {
   }
 
   private parseGeoContext(value: Prisma.JsonValue | null): AssistantGeoSearchContext | null {
-    try {
-      return value === null ? null : parseAssistantGeoSearchInput(value, {
-        ASSISTANT_GEO_RADIUS_MIN_METERS: '1',
-        ASSISTANT_GEO_RADIUS_MAX_METERS: '100000',
-      });
-    } catch {
-      return null;
-    }
+    return value === null ? null : parseAssistantGeoStoredContext(value, {
+      ASSISTANT_GEO_RADIUS_MIN_METERS: '1',
+      ASSISTANT_GEO_RADIUS_MAX_METERS: '100000',
+    });
   }
 
   private getFakeStepDelayMs() {

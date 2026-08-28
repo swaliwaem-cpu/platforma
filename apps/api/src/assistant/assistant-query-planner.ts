@@ -527,17 +527,17 @@ function extractExplicitFilters(text: string): Partial<AssistantSearchFilters> &
   const normalized = text.toLocaleLowerCase('ru-RU').replace(/ё/gu, 'е');
   const textWithoutGeoDistance = stripGeoDistancePhrases(text);
   const rangeMatch = normalized.match(
-    /(?:бюджет\s*)?(?:от\s*)?(\d[\d\s]*(?:[.,]\d+)?)\s*(млн\p{L}*|тыс\p{L}*|руб\p{L}*)?\s*(?:до|-|–|—)\s*(\d[\d\s]*(?:[.,]\d+)?)\s*(млн\p{L}*|тыс\p{L}*|руб\p{L}*)/iu,
+    /(?:бюджет\s*)?(?:от\s*)?(\d[\d\s]*(?:[.,]\d+)?)\s*(млн\p{L}*|миллион(?:а|ов)?|тыс\p{L}*|руб\p{L}*)?\s*(?:до|-|–|—)\s*(\d[\d\s]*(?:[.,]\d+)?)\s*(млн\p{L}*|миллион(?:а|ов)?|тыс\p{L}*|руб\p{L}*)/iu,
   );
   if (rangeMatch) {
     filters.budgetMinRub = parseMoneyText(rangeMatch[1]!, rangeMatch[2] ?? rangeMatch[4]!);
     filters.budgetMaxRub = parseMoneyText(rangeMatch[3]!, rangeMatch[4]!);
   } else {
     const maximumMatch = normalized.match(
-      /(?:бюджет\s*)?(?:до|не\s+дороже|максимум)\s*(\d[\d\s]*(?:[.,]\d+)?)\s*(млн\p{L}*|тыс\p{L}*|руб\p{L}*)/iu,
+      /(?:бюджет\s*)?(?:до|не\s+дороже|максимум)\s*(\d[\d\s]*(?:[.,]\d+)?)\s*(млн\p{L}*|миллион(?:а|ов)?|тыс\p{L}*|руб\p{L}*)/iu,
     );
     const minimumMatch = normalized.match(
-      /(?:бюджет\s*)?(?:от|не\s+дешевле|минимум)\s*(\d[\d\s]*(?:[.,]\d+)?)\s*(млн\p{L}*|тыс\p{L}*|руб\p{L}*)/iu,
+      /(?:бюджет\s*)?(?:от|не\s+дешевле|минимум)\s*(\d[\d\s]*(?:[.,]\d+)?)\s*(млн\p{L}*|миллион(?:а|ов)?|тыс\p{L}*|руб\p{L}*)/iu,
     );
     if (maximumMatch) filters.budgetMaxRub = parseMoneyText(maximumMatch[1]!, maximumMatch[2]!);
     if (minimumMatch) filters.budgetMinRub = parseMoneyText(minimumMatch[1]!, minimumMatch[2]!);
@@ -678,7 +678,7 @@ function extractNamedCondition(text: string, pattern: RegExp) {
 
 function parseMoneyText(value: string, unit: string) {
   const amount = Number(value.replace(/\s+/gu, '').replace(',', '.'));
-  const multiplier = unit.startsWith('млн')
+  const multiplier = unit.startsWith('млн') || unit.startsWith('миллион')
     ? 1_000_000
     : unit.startsWith('тыс')
       ? 1_000
@@ -703,14 +703,10 @@ function readPageContext(context: unknown) {
 }
 
 function hasGeoContext(context: unknown) {
-  if (!isRecord(context) || !isRecord(context.geo) || !isRecord(context.geo.anchor)) return false;
-  return typeof context.geo.anchor.latitude === 'number'
-    && Number.isFinite(context.geo.anchor.latitude)
-    && typeof context.geo.anchor.longitude === 'number'
-    && Number.isFinite(context.geo.anchor.longitude)
-    && typeof context.geo.radiusMeters === 'number'
-    && Number.isFinite(context.geo.radiusMeters)
-    && context.geo.radiusMeters > 0;
+  if (!isRecord(context) || !isRecord(context.geo)) return false;
+  return context.geo.hasGeoConstraint === true
+    && ['POINT', 'LINE', 'AREA'].includes(String(context.geo.kind))
+    && ['NEAR', 'INSIDE'].includes(String(context.geo.mode));
 }
 
 function joinRussianList(values: string[]) {

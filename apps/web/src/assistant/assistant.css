@@ -1041,6 +1041,8 @@
   right: 8px;
   bottom: 28px;
   display: flex;
+  max-width: calc(100% - 16px);
+  flex-wrap: wrap;
   padding: 6px 8px;
   background: rgb(255 253 251 / 92%);
   border: 1px solid rgb(78 49 32 / 14%);
@@ -1050,7 +1052,7 @@
   gap: 9px;
 }
 
-.assistant-geo-map-legend span::before {
+.assistant-geo-map-legend span[data-marker-kind]::before {
   display: inline-block;
   width: 8px;
   height: 8px;
@@ -1062,6 +1064,22 @@
 
 .assistant-geo-map-legend span[data-marker-kind='alternative']::before {
   background: #526170;
+}
+
+.assistant-geo-map-legend span[data-geometry-kind]::before {
+  display: inline-block;
+  width: 12px;
+  height: 7px;
+  margin-right: 4px;
+  border: 2px solid #8f3412;
+  border-radius: 2px;
+  content: '';
+  vertical-align: -1px;
+}
+
+.assistant-geo-map-legend span[data-geometry-kind='search-area']::before {
+  border-color: #d84f12;
+  background: rgb(232 90 24 / 14%);
 }
 
 .assistant-chat .map-price-marker--alternative .map-price-marker-dot {

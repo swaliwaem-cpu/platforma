@@ -7,7 +7,7 @@ const { resolve } = require('node:path');
 const { after, before, test } = require('node:test');
 const { NestFactory } = require('@nestjs/core');
 const { JwtService } = require('@nestjs/jwt');
-const { PrismaClient } = require('@prisma/client');
+const { Prisma, PrismaClient } = require('@prisma/client');
 
 const databaseUrl = process.env.ASSISTANT_T05_TEST_DATABASE_URL;
 
@@ -16,7 +16,7 @@ if (!databaseUrl) throw new Error('ASSISTANT_T05_TEST_DATABASE_URL_REQUIRED');
 process.env.DATABASE_URL = databaseUrl;
 process.env.NODE_ENV = 'test';
 process.env.ASSISTANT_MODULE_ENABLED = 'true';
-process.env.ASSISTANT_ROLLOUT_STAGE = 'ALL';
+process.env.ASSISTANT_ROLLOUT_STAGE = 'ADMINS';
 process.env.ASSISTANT_AI_MODE = 'fake';
 process.env.ASSISTANT_EMBEDDING_MODE = 'fake';
 process.env.ASSISTANT_GEO_PROVIDER_MODE = 'fake';
@@ -33,9 +33,11 @@ process.env.JWT_ACCESS_SECRET = 'assistant-t05-postgres-secret';
 
 const { createEmptyAssistantSearchFilters } = require('../dist/assistant/assistant-query-planner.js');
 const { AssistantSearchService } = require('../dist/assistant/assistant-search.service.js');
+const { AssistantGeoLandmarkService } = require('../dist/assistant/geo/assistant-geo-landmark.service.js');
 
 const prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
-const search = new AssistantSearchService(prisma);
+const landmarks = new AssistantGeoLandmarkService(prisma);
+const search = new AssistantSearchService(prisma, landmarks);
 const suffix = randomUUID().slice(0, 8);
 const anchor = {
   latitude: 55.751244,
@@ -44,14 +46,32 @@ const anchor = {
   source: 'MANUAL',
 };
 const geo = { anchor, radiusMeters: 2_000 };
+const landmarkIds = {
+  line: randomUUID(),
+  area: randomUUID(),
+  refresh: randomUUID(),
+  moscowPoint: randomUUID(),
+  yekaterinburgPoint: randomUUID(),
+};
 let fixture;
 
 before(async () => {
   await prisma.$connect();
   fixture = await createFixture();
+  await createGeometryLandmarks();
 });
 
 after(async () => {
+  await prisma.$executeRaw(Prisma.sql`
+    DELETE FROM assistant_geo_landmarks
+    WHERE id IN (
+      ${landmarkIds.line}::uuid,
+      ${landmarkIds.area}::uuid,
+      ${landmarkIds.refresh}::uuid,
+      ${landmarkIds.moscowPoint}::uuid,
+      ${landmarkIds.yekaterinburgPoint}::uuid
+    )
+  `);
   if (fixture?.source?.id) await prisma.feedSource.deleteMany({ where: { id: fixture.source.id } });
   await prisma.realEstateObject.deleteMany({
     where: { slug: { startsWith: `assistant-t05-${suffix}-` } },
@@ -69,10 +89,16 @@ test('Assistant T05 radius search keeps inside and boundary FeedUnits, excludes 
     fixture.units.boundary.id,
   ]);
   assert.deepEqual(result.exact.map(({ distanceMeters }) => Math.round(distanceMeters)), [500, 1_000, 2_000]);
-  assert.deepEqual(result.geo.anchor, anchor);
-  assert.equal(result.geo.radiusMeters, 2_000);
-  assert.equal(result.geo.polygon.type, 'Polygon');
-  assert.equal(result.geo.polygon.coordinates[0].length >= 33, true);
+  assert.equal(result.geo.kind, 'POINT');
+  assert.equal(result.geo.mode, 'NEAR');
+  assert.equal(result.geo.label, anchor.label);
+  assert.deepEqual(result.geo.point, {
+    latitude: anchor.latitude,
+    longitude: anchor.longitude,
+  });
+  assert.equal(result.geo.distanceMeters, 2_000);
+  assert.equal(result.geo.referenceGeometry.type, 'Point');
+  assert.match(result.geo.searchArea.type, /^(?:Multi)?Polygon$/u);
 });
 
 test('Assistant T05 migration backfills pre-existing valid coordinates without changing canonical values', async () => {
@@ -148,6 +174,199 @@ test('Assistant T05 radius remains a hard filter while existing lot filters are 
   assert.equal(result.alternatives.every(({ distanceMeters }) => distanceMeters <= geo.radiusMeters), true);
 });
 
+test('Assistant FIX-GEO1 searches from the full road and keeps lot filters combined', async () => {
+  const lineGeo = {
+    kind: 'LINE',
+    mode: 'NEAR',
+    label: 'Тестовая длинная дорога',
+    landmarkId: landmarkIds.line,
+    distanceMeters: 1_500,
+    source: 'LANDMARK',
+  };
+  const result = await search.search(createIntent({}), null, lineGeo);
+  assert.deepEqual(new Set(result.exact.map(({ unitId }) => unitId)), new Set([
+    fixture.units.inside500.id,
+    fixture.units.inside1000.id,
+    fixture.units.boundary.id,
+  ]));
+  assert.equal(result.geo.referenceGeometry.type, 'LineString');
+  assert.match(result.geo.searchArea.type, /^(?:Multi)?Polygon$/u);
+  assert.equal(result.exact.every(({ distanceMeters }) => distanceMeters <= 1_500), true);
+
+  const bothSides = await search.search(createIntent({}), null, {
+    ...lineGeo,
+    distanceMeters: 2_200,
+  });
+  assert.equal(bothSides.exact.some(({ unitId }) => unitId === fixture.units.inside1000.id), true);
+  assert.equal(bothSides.exact.some(({ unitId }) => unitId === fixture.units.outside.id), true);
+
+  const filtered = await search.search(
+    createIntent({ rooms: [2], floorMin: 7, budgetMaxRub: 19_000_000 }),
+    null,
+    lineGeo,
+  );
+  assert.deepEqual(filtered.exact.map(({ unitId }) => unitId), [fixture.units.boundary.id]);
+});
+
+test('Assistant FIX-GEO1 uses the full area boundary for NEAR and ST_Covers for INSIDE', async () => {
+  const near = await search.search(createIntent({}), null, {
+    kind: 'AREA',
+    mode: 'NEAR',
+    label: 'Тестовый район',
+    landmarkId: landmarkIds.area,
+    distanceMeters: 950,
+    source: 'LANDMARK',
+  });
+  assert.deepEqual(new Set(near.exact.map(({ unitId }) => unitId)), new Set([
+    fixture.units.inside500.id,
+    fixture.units.inside1000.id,
+    fixture.units.boundary.id,
+  ]));
+  assert.equal(near.exact.every(({ distanceMeters }) => typeof distanceMeters === 'number' && distanceMeters > 0), true);
+  assert.equal(near.geo.referenceGeometry.type, 'Polygon');
+
+  const inside = await search.search(createIntent({}), null, {
+    kind: 'AREA',
+    mode: 'INSIDE',
+    label: 'Тестовый район',
+    landmarkId: landmarkIds.area,
+    source: 'LANDMARK',
+  });
+  assert.deepEqual(new Set(inside.exact.map(({ unitId }) => unitId)), new Set([
+    fixture.units.inside500.id,
+    fixture.units.inside1000.id,
+  ]));
+  assert.equal(inside.exact.every(({ distanceMeters }) => distanceMeters === null), true);
+  assert.deepEqual(inside.geo.searchArea, inside.geo.referenceGeometry);
+});
+
+test('Assistant FIX-GEO1 landmark constraints reject invalid geometry and GiST index is usable', async () => {
+  await assert.rejects(prisma.$executeRaw(Prisma.sql`
+    INSERT INTO assistant_geo_landmarks (
+      kind, label, normalized_query, aliases, locale, country, geometry,
+      source_provider, source_external_id, source_metadata, confirmation_state, expires_at
+    ) VALUES (
+      'area', 'Невалидная область', 'invalid', ARRAY['invalid'], 'ru', 'ru',
+      ST_SetSRID(ST_GeomFromText('POLYGON((37 55, 38 56, 38 55, 37 56, 37 55))'), 4326),
+      'fake', ${randomUUID()}, '{"version":1}'::jsonb, 'verified', CURRENT_TIMESTAMP + interval '1 day'
+    )
+  `), /assistant_geo_landmarks_geometry_valid/u);
+
+  const planRows = await prisma.$transaction(async (transaction) => {
+    await transaction.$executeRawUnsafe('SET LOCAL enable_seqscan = off');
+    return transaction.$queryRawUnsafe(`
+      EXPLAIN (FORMAT JSON)
+      SELECT id FROM assistant_geo_landmarks
+      WHERE geometry && ST_MakeEnvelope(37.5, 55.6, 37.7, 55.9, 4326)
+    `);
+  });
+  assert.equal(findPlanIndex(planRows[0]['QUERY PLAN'][0].Plan, 'assistant_geo_landmarks_geometry_gist'), true);
+});
+
+test('Assistant FIX-GEO1 refresh reactivates rejected provider geometry and preserves aliases', async () => {
+  const sourceExternalId = `refresh-${suffix}`;
+  await prisma.$executeRaw(Prisma.sql`
+    INSERT INTO assistant_geo_landmarks (
+      id, kind, label, normalized_query, aliases, locale, country, city, geometry,
+      source_provider, source_external_id, source_metadata, confirmation_state, expires_at
+    ) VALUES (
+      ${landmarkIds.refresh}::uuid, 'line', 'Старая дорога', 'старая дорога', ARRAY['старая дорога'],
+      'ru', 'ru', 'Москва',
+      ST_SetSRID(ST_GeomFromText('LINESTRING(37.58 55.74, 37.66 55.76)'), 4326),
+      'fake', ${sourceExternalId}, '{"version":1}'::jsonb, 'rejected', NULL
+    )
+  `);
+  const geometry = {
+    type: 'LineString',
+    coordinates: [[37.58, 55.74], [37.62, 55.76], [37.66, 55.75]],
+  };
+  for (const normalizedQuery of ['садовое кольцо тест', 'кольцо тестовый alias']) {
+    const saved = await landmarks.saveVerified({
+      kind: 'LINE',
+      label: 'Садовое кольцо тест',
+      normalizedQuery,
+      aliases: [normalizedQuery],
+      locale: 'ru',
+      country: 'ru',
+      city: 'Москва',
+      geometry,
+      sourceProvider: 'fake',
+      sourceExternalId,
+      sourceMetadata: { entityType: 'road', fetchedAt: new Date().toISOString(), version: 1 },
+    });
+    assert.equal(saved.id, landmarkIds.refresh);
+  }
+  const [row] = await prisma.$queryRaw(Prisma.sql`
+    SELECT
+      confirmation_state::text AS state,
+      aliases,
+      expires_at IS NOT NULL AS "hasExpiry",
+      confirmed_by_user_id AS "confirmedBy"
+    FROM assistant_geo_landmarks
+    WHERE id = ${landmarkIds.refresh}::uuid
+  `);
+  assert.equal(row.state, 'verified');
+  assert.equal(row.hasExpiry, true);
+  assert.equal(row.confirmedBy, null);
+  assert.deepEqual(new Set(row.aliases), new Set([
+    'старая дорога',
+    'садовое кольцо тест',
+    'кольцо тестовый alias',
+  ]));
+});
+
+test('Assistant FIX-GEO1 DB-first lookup keeps same-name landmarks separated by viewbox', async () => {
+  const normalizedQuery = `центральная площадь ${suffix}`;
+  await prisma.$executeRaw(Prisma.sql`
+    INSERT INTO assistant_geo_landmarks (
+      id, kind, label, normalized_query, aliases, locale, country, city, geometry,
+      source_provider, source_external_id, source_metadata, confirmation_state, expires_at
+    ) VALUES
+      (
+        ${landmarkIds.moscowPoint}::uuid, 'point', 'Центральная площадь, Москва', ${normalizedQuery},
+        ARRAY[${normalizedQuery}], 'ru', 'ru', 'Москва',
+        ST_SetSRID(ST_MakePoint(37.618423, 55.751244), 4326),
+        'fake', ${`moscow-${suffix}`}, '{"version":1}'::jsonb, 'verified', CURRENT_TIMESTAMP + interval '30 days'
+      ),
+      (
+        ${landmarkIds.yekaterinburgPoint}::uuid, 'point', 'Центральная площадь, Екатеринбург', ${normalizedQuery},
+        ARRAY[${normalizedQuery}], 'ru', 'ru', 'Екатеринбург',
+        ST_SetSRID(ST_MakePoint(60.603753, 56.837700), 4326),
+        'fake', ${`yekaterinburg-${suffix}`}, '{"version":1}'::jsonb, 'verified', CURRENT_TIMESTAMP + interval '30 days'
+      )
+  `);
+
+  const ambiguous = await landmarks.findTrustedByQuery({
+    normalizedQuery,
+    mode: 'NEAR',
+    locale: 'ru',
+    country: 'ru',
+    viewbox: null,
+  });
+  assert.deepEqual(new Set(ambiguous.map(({ id }) => id)), new Set([
+    landmarkIds.moscowPoint,
+    landmarkIds.yekaterinburgPoint,
+  ]));
+
+  const moscow = await landmarks.findTrustedByQuery({
+    normalizedQuery,
+    mode: 'NEAR',
+    locale: 'ru',
+    country: 'ru',
+    viewbox: [37.3, 55.5, 37.9, 55.9],
+  });
+  assert.deepEqual(moscow.map(({ id }) => id), [landmarkIds.moscowPoint]);
+
+  const yekaterinburg = await landmarks.findTrustedByQuery({
+    normalizedQuery,
+    mode: 'NEAR',
+    locale: 'ru',
+    country: 'ru',
+    viewbox: [60.4, 56.7, 60.8, 56.95],
+  });
+  assert.deepEqual(yekaterinburg.map(({ id }) => id), [landmarkIds.yekaterinburgPoint]);
+});
+
 test('Assistant T05 representative radius plan uses the generated geography GiST index', async () => {
   await prisma.$executeRawUnsafe(`
     INSERT INTO real_estate_objects (
@@ -190,10 +409,17 @@ test('Assistant T05 persists confirmed geo separately and serializes one grounde
     update: {},
     create: { key: 'objects:read', description: 'Read objects' },
   });
+  const adminAccess = await prisma.permission.upsert({
+    where: { key: 'admin:access' },
+    update: {},
+    create: { key: 'admin:access', description: 'Access admin area' },
+  });
   const role = await prisma.role.create({
     data: {
       name: `assistant-t05-role-${suffix}`,
-      permissions: { create: { permissionId: permission.id } },
+      permissions: {
+        create: [permission.id, adminAccess.id].map((permissionId) => ({ permissionId })),
+      },
     },
   });
   const user = await prisma.user.create({
@@ -247,8 +473,16 @@ test('Assistant T05 persists confirmed geo separately and serializes one grounde
       run.assistantMessage.answer.exactResults.map(({ distanceMeters }) => Math.round(distanceMeters)),
       [500, 2_000],
     );
-    assert.deepEqual(run.assistantMessage.answer.geo.anchor, anchor);
-    assert.equal(run.assistantMessage.answer.geo.radiusMeters, 2_000);
+    assert.equal(run.assistantMessage.answer.geo.kind, 'POINT');
+    assert.equal(run.assistantMessage.answer.geo.mode, 'NEAR');
+    assert.equal(run.assistantMessage.answer.geo.label, anchor.label);
+    assert.deepEqual(run.assistantMessage.answer.geo.point, {
+      latitude: anchor.latitude,
+      longitude: anchor.longitude,
+    });
+    assert.equal(run.assistantMessage.answer.geo.distanceMeters, 2_000);
+    assert.equal(run.assistantMessage.answer.geo.referenceGeometry.type, 'Point');
+    assert.match(run.assistantMessage.answer.geo.searchArea.type, /^(?:Multi)?Polygon$/u);
     assert.deepEqual(
       run.assistantMessage.answer.geo.markers.map(({ unitId, kind }) => [unitId, kind]),
       [
@@ -262,7 +496,17 @@ test('Assistant T05 persists confirmed geo separately and serializes one grounde
       `/assistant/conversations/${created.body.conversation.id}`,
       { token },
     );
-    assert.deepEqual(detail.body.conversation.messages[0].geo, geo);
+    assert.deepEqual(detail.body.conversation.messages[0].geo, {
+      kind: 'POINT',
+      mode: 'NEAR',
+      label: anchor.label,
+      point: {
+        latitude: anchor.latitude,
+        longitude: anchor.longitude,
+      },
+      distanceMeters: 2_000,
+      source: 'MANUAL',
+    });
     assert.deepEqual(detail.body.conversation.messages[1].answer.geo, run.assistantMessage.answer.geo);
     assert.equal(JSON.stringify(detail.body).includes('search_point'), false);
   } finally {
@@ -282,6 +526,11 @@ test('Assistant T05 alias registry is permission-gated, separate from cache, and
     update: {},
     create: { key: 'objects:read', description: 'Read objects' },
   });
+  const adminAccess = await prisma.permission.upsert({
+    where: { key: 'admin:access' },
+    update: {},
+    create: { key: 'admin:access', description: 'Access admin area' },
+  });
   const manageAliases = await prisma.permission.upsert({
     where: { key: 'assistant:sources:manage' },
     update: {},
@@ -290,7 +539,9 @@ test('Assistant T05 alias registry is permission-gated, separate from cache, and
   const readRole = await prisma.role.create({
     data: {
       name: `assistant-t05-read-${suffix}`,
-      permissions: { create: { permissionId: objectsRead.id } },
+      permissions: {
+        create: [objectsRead.id, adminAccess.id].map((permissionId) => ({ permissionId })),
+      },
     },
   });
   const adminRole = await prisma.role.create({
@@ -405,6 +656,9 @@ test('Assistant T05 alias registry is permission-gated, separate from cache, and
   } finally {
     await app.close();
     await prisma.assistantGeoAlias.deleteMany({ where: { createdByUserId: adminUser.id } });
+    await prisma.assistantGeoOperation.deleteMany({
+      where: { actorUserId: { in: [readUser.id, adminUser.id] } },
+    });
     await prisma.user.deleteMany({ where: { id: { in: [readUser.id, adminUser.id] } } });
     await prisma.role.deleteMany({ where: { id: { in: [readRole.id, adminRole.id] } } });
   }
@@ -481,6 +735,53 @@ async function createFixture() {
     });
   }
   return { developer, objects, source, units };
+}
+
+async function createGeometryLandmarks() {
+  await prisma.$executeRaw(Prisma.sql`
+    INSERT INTO assistant_geo_landmarks (
+      id, kind, label, normalized_query, aliases, locale, country, city, geometry,
+      source_provider, source_external_id, source_metadata, confirmation_state, confirmed_at, expires_at
+    ) VALUES (
+      ${landmarkIds.line}::uuid,
+      'line',
+      'Тестовая длинная дорога',
+      'тестовая длинная дорога',
+      ARRAY['тестовая длинная дорога'],
+      'ru',
+      'ru',
+      'Москва',
+      ST_SetSRID(ST_MakeLine(
+        ST_MakePoint(37.618423, 55.70),
+        ST_MakePoint(37.618423, 55.80)
+      ), 4326),
+      'fake',
+      ${`assistant-t05-line-${suffix}`},
+      '{"entityType":"road","version":1}'::jsonb,
+      'confirmed',
+      CURRENT_TIMESTAMP,
+      NULL
+    ), (
+      ${landmarkIds.area}::uuid,
+      'area',
+      'Тестовый район',
+      'тестовый район',
+      ARRAY['тестовый район'],
+      'ru',
+      'ru',
+      'Москва',
+      ST_Buffer(
+        ST_SetSRID(ST_MakePoint(37.618423, 55.751244), 4326)::geography,
+        1100
+      )::geometry,
+      'fake',
+      ${`assistant-t05-area-${suffix}`},
+      '{"entityType":"district","version":1}'::jsonb,
+      'confirmed',
+      CURRENT_TIMESTAMP,
+      NULL
+    )
+  `);
 }
 
 function createIntent(overrides) {
