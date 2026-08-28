@@ -1,9 +1,12 @@
 const assert = require('node:assert/strict');
 const {
   chmodSync,
+  mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } = require('node:fs');
 const { tmpdir } = require('node:os');
@@ -321,11 +324,94 @@ test('FIX-TOKEN checkpoint is versioned, reusable and omits provider narrative a
     assert.equal(serialized.includes('provider-generated'), false);
     assert.equal(serialized.includes('secret'), false);
     assert.equal(serialized.includes('source.example'), false);
-    assert.equal(loaded.entries['safe-project'].canonicalUrl, 'https://developer.example/project');
-    assert.equal(loaded.entries['safe-project'].status, 'REJECTED');
+    assert.equal(loaded.checkpoint.entries['safe-project'].canonicalUrl, 'https://developer.example/project');
+    assert.equal(loaded.checkpoint.entries['safe-project'].status, 'REJECTED');
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('FIX-TOKEN checkpoint read distinguishes a missing file from a valid checkpoint', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-checkpoint-state-'));
+  const checkpointPath = join(directory, 'checkpoint.json');
+  const fingerprint = checkpointFingerprint();
+  try {
+    const missing = readAssistantSourceDiscoveryCheckpoint(checkpointPath, fingerprint);
+    assert.equal(missing.state, 'MISSING');
+    assert.deepEqual(missing.checkpoint, createEmptyCheckpoint(fingerprint));
+
+    writeAssistantSourceDiscoveryCheckpoint(checkpointPath, missing.checkpoint);
+    const valid = readAssistantSourceDiscoveryCheckpoint(checkpointPath, fingerprint);
+    assert.equal(valid.state, 'VALID');
+    assert.deepEqual(valid.checkpoint, missing.checkpoint);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('FIX-TOKEN checkpoint writer preserves unrelated temp files and leaves a private atomic result', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-checkpoint-atomic-'));
+  const checkpointPath = join(directory, 'checkpoint.json');
+  const staleTemporaryPath = `${checkpointPath}.tmp`;
+  try {
+    writeFileSync(staleTemporaryPath, 'unrelated-stale-temp', { mode: 0o600 });
+    writeAssistantSourceDiscoveryCheckpoint(
+      checkpointPath,
+      createEmptyCheckpoint(checkpointFingerprint()),
+    );
+
+    assert.equal(readFileSync(staleTemporaryPath, 'utf8'), 'unrelated-stale-temp');
+    assert.equal(statSync(checkpointPath).mode & 0o777, 0o600);
+    assert.deepEqual(
+      readdirSync(directory).sort(),
+      ['checkpoint.json', 'checkpoint.json.tmp'],
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('FIX-TOKEN checkpoint writer cleans its temp file and returns a safe error when rename fails', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-checkpoint-write-failure-'));
+  const checkpointPath = join(directory, 'checkpoint.json');
+  try {
+    mkdirSync(checkpointPath);
+    assert.throws(
+      () => writeAssistantSourceDiscoveryCheckpoint(
+        checkpointPath,
+        createEmptyCheckpoint(checkpointFingerprint()),
+      ),
+      (error) => error?.code === 'ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_WRITE_FAILED',
+    );
+    assert.deepEqual(readdirSync(directory), ['checkpoint.json']);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('FIX-TOKEN checkpoint persists terminal outcomes but never masks ERROR as processed', () => {
+  const fingerprint = checkpointFingerprint();
+  const projects = ['VERIFIED', 'NOT_FOUND', 'REJECTED', 'ERROR'].map((status, index) => ({
+    ...fixTokenProject(),
+    projectKey: `checkpoint-status-${index + 1}`,
+    title: `Checkpoint status ${status}`,
+  }));
+  const checkpoint = projects.reduce((current, project, index) => (
+    checkpointAssistantSourceDiscoveryResult(
+      current,
+      fixTokenCheckpointResult(project, ['VERIFIED', 'NOT_FOUND', 'REJECTED', 'ERROR'][index]),
+    )
+  ), createEmptyCheckpoint(fingerprint));
+
+  assert.deepEqual(Object.keys(checkpoint.entries), [
+    'checkpoint-status-1',
+    'checkpoint-status-2',
+    'checkpoint-status-3',
+  ]);
+  assert.deepEqual(
+    Object.values(checkpoint.entries).map(({ status }) => status),
+    ['VERIFIED', 'NOT_FOUND', 'REJECTED'],
+  );
 });
 
 test('FIX-TOKEN corrupted checkpoint stops the run before provider construction', async () => {
@@ -336,6 +422,11 @@ test('FIX-TOKEN corrupted checkpoint stops the run before provider construction'
     await assertCheckpointFailureStopsProvider(
       checkpointPath,
       'ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_INVALID',
+    );
+    await assertCheckpointFailureStopsProvider(
+      checkpointPath,
+      'ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_INVALID',
+      ['--live', '--refresh'],
     );
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -377,6 +468,175 @@ test('FIX-TOKEN fingerprint mismatch stops the run before provider construction'
       checkpointPath,
       'ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_FINGERPRINT_MISMATCH',
     );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('FIX-TOKEN unknown checkpoint version stops the run before provider construction', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-version-checkpoint-'));
+  const checkpointPath = join(directory, 'checkpoint.json');
+  try {
+    writeFileSync(checkpointPath, JSON.stringify({
+      ...createEmptyCheckpoint(checkpointFingerprint()),
+      version: 2,
+    }), { mode: 0o600 });
+    await assertCheckpointFailureStopsProvider(
+      checkpointPath,
+      'ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_INVALID',
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('FIX-TOKEN malformed checkpoint entry stops the run before provider construction', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-entry-checkpoint-'));
+  const checkpointPath = join(directory, 'checkpoint.json');
+  const project = fixTokenProject();
+  try {
+    writeFileSync(checkpointPath, JSON.stringify({
+      ...createEmptyCheckpoint(checkpointFingerprint()),
+      entries: {
+        [project.projectKey]: {
+          projectKey: project.projectKey,
+          developerKey: project.developerKey,
+          status: 'VERIFIED',
+          processedAt: 'not-a-timestamp',
+        },
+      },
+    }), { mode: 0o600 });
+    await assertCheckpointFailureStopsProvider(
+      checkpointPath,
+      'ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_INVALID',
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('FIX-TOKEN refresh rotates a mismatched fingerprint through a sanitized backup before provider work', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-rotate-checkpoint-'));
+  const checkpointPath = join(directory, 'checkpoint.json');
+  const backupDirectory = join(directory, 'backups');
+  const project = fixTokenProject();
+  const currentFingerprint = checkpointFingerprint();
+  const oldCheckpoint = checkpointAssistantSourceDiscoveryResult(
+    createEmptyCheckpoint({
+      ...currentFingerprint,
+      validatorVersion: 'assistant-source-discovery-validator-v1',
+    }),
+    fixTokenCheckpointResult(project),
+  );
+  const rawCheckpoint = {
+    ...oldCheckpoint,
+    prompt: 'must-not-survive-backup',
+    entries: {
+      [project.projectKey]: {
+        ...oldCheckpoint.entries[project.projectKey],
+        rawProviderPayload: 'https://user:password@provider.example/?api_key=secret',
+      },
+    },
+  };
+  let providerConstructedAfterBackup = false;
+  const application = {
+    get() { return {}; },
+    async close() {},
+  };
+  try {
+    writeFileSync(checkpointPath, `${JSON.stringify(rawCheckpoint, null, 2)}\n`, { mode: 0o600 });
+    const report = await runAssistantSourceDiscovery({
+      argv: ['--live', '--refresh'],
+      environment: {
+        OPENAI_API_KEY: 'bounded-local-stub',
+        ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+        ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
+        ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath,
+      },
+      silent: true,
+      dependencies: {
+        async createApplicationContext() { return application; },
+        async selectProjects() { return [project]; },
+        usageBudgets: {
+          async reconcileExpiredReservations() { return 0; },
+        },
+        createDiscovery() {
+          const backupFiles = readdirSync(backupDirectory);
+          assert.equal(backupFiles.length, 1);
+          assert.equal(statSync(backupDirectory).mode & 0o777, 0o700);
+          const backupPath = join(backupDirectory, backupFiles[0]);
+          const backup = readFileSync(backupPath, 'utf8');
+          assert.equal(backup.includes('must-not-survive-backup'), false);
+          assert.equal(backup.includes('rawProviderPayload'), false);
+          assert.equal(backup.includes('password'), false);
+          assert.equal(backup.includes('secret'), false);
+          assert.equal(statSync(backupPath).mode & 0o777, 0o600);
+          providerConstructedAfterBackup = true;
+          return {
+            async discover() { return fixTokenCheckpointResult(project); },
+          };
+        },
+      },
+    });
+
+    assert.equal(providerConstructedAfterBackup, true);
+    assert.equal(report.summary.verified, 1);
+    const current = readAssistantSourceDiscoveryCheckpoint(checkpointPath, currentFingerprint);
+    assert.equal(current.state, 'VALID');
+    assert.equal(current.checkpoint.entries[project.projectKey].status, 'VERIFIED');
+    assert.equal(statSync(checkpointPath).mode & 0o777, 0o600);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('FIX-TOKEN refresh stops before provider work when a fingerprint backup cannot be written', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-backup-failure-'));
+  const checkpointPath = join(directory, 'checkpoint.json');
+  const blockingBackupPath = join(directory, 'backups');
+  const project = fixTokenProject();
+  let providerConstructed = false;
+  const application = {
+    get() { return {}; },
+    async close() {},
+  };
+  try {
+    writeAssistantSourceDiscoveryCheckpoint(
+      checkpointPath,
+      checkpointAssistantSourceDiscoveryResult(
+        createEmptyCheckpoint({
+          ...checkpointFingerprint(),
+          validatorVersion: 'assistant-source-discovery-validator-v1',
+        }),
+        fixTokenCheckpointResult(project),
+      ),
+    );
+    const originalCheckpoint = readFileSync(checkpointPath, 'utf8');
+    writeFileSync(blockingBackupPath, 'backup-directory-blocker', { mode: 0o600 });
+
+    await assert.rejects(
+      runAssistantSourceDiscovery({
+        argv: ['--live', '--refresh'],
+        environment: {
+          OPENAI_API_KEY: 'bounded-local-stub',
+          ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+          ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
+          ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath,
+        },
+        silent: true,
+        dependencies: {
+          async createApplicationContext() { return application; },
+          createDiscovery() {
+            providerConstructed = true;
+            throw new Error('provider must not be constructed');
+          },
+        },
+      }),
+      (error) => error?.code === 'ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_BACKUP_FAILED',
+    );
+
+    assert.equal(providerConstructed, false);
+    assert.equal(readFileSync(checkpointPath, 'utf8'), originalCheckpoint);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -610,6 +870,165 @@ test('FIX-TOKEN repeat uses the checkpoint without discovery while refresh runs 
   }
 });
 
+test('FIX-TOKEN refresh error removes the stale selected entry instead of masking it as processed', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-refresh-error-'));
+  const checkpointPath = join(directory, 'checkpoint.json');
+  const project = fixTokenProject();
+  const fingerprint = checkpointFingerprint();
+  const application = {
+    get() { return {}; },
+    async close() {},
+  };
+  try {
+    writeAssistantSourceDiscoveryCheckpoint(
+      checkpointPath,
+      checkpointAssistantSourceDiscoveryResult(
+        createEmptyCheckpoint(fingerprint),
+        fixTokenCheckpointResult(project),
+      ),
+    );
+    const report = await runAssistantSourceDiscovery({
+      argv: ['--live', '--refresh'],
+      environment: {
+        OPENAI_API_KEY: 'bounded-local-stub',
+        ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+        ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
+        ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath,
+      },
+      silent: true,
+      dependencies: {
+        async createApplicationContext() { return application; },
+        async selectProjects() { return [project]; },
+        usageBudgets: {
+          async reconcileExpiredReservations() { return 0; },
+        },
+        createDiscovery() {
+          return {
+            async discover() { return fixTokenCheckpointResult(project, 'ERROR'); },
+          };
+        },
+      },
+    });
+
+    assert.equal(report.summary.errors, 1);
+    const refreshed = readAssistantSourceDiscoveryCheckpoint(checkpointPath, fingerprint);
+    assert.equal(refreshed.state, 'VALID');
+    assert.equal(refreshed.checkpoint.entries[project.projectKey], undefined);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('FIX-TOKEN checkpoint filtering never backfills beyond the selected candidate set', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-candidate-set-'));
+  const checkpointPath = join(directory, 'checkpoint.json');
+  const projects = ['checkpoint-hit', 'pending-selected', 'must-not-backfill'].map((projectKey) => ({
+    ...fixTokenProject(),
+    projectKey,
+    title: projectKey,
+  }));
+  let selectionCalls = 0;
+  const discoveryProjectKeys = [];
+  const application = {
+    get() { return {}; },
+    async close() {},
+  };
+  try {
+    writeAssistantSourceDiscoveryCheckpoint(
+      checkpointPath,
+      checkpointAssistantSourceDiscoveryResult(
+        createEmptyCheckpoint(checkpointFingerprint()),
+        fixTokenCheckpointResult(projects[0]),
+      ),
+    );
+    const report = await runAssistantSourceDiscovery({
+      argv: ['--live', '--limit', '2', '--max-cost-usd', '0.20000000'],
+      environment: {
+        OPENAI_API_KEY: 'bounded-local-stub',
+        ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+        ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
+        ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath,
+      },
+      silent: true,
+      dependencies: {
+        async createApplicationContext() { return application; },
+        async selectProjects(_prisma, limit, missingOnly) {
+          selectionCalls += 1;
+          assert.equal(limit, 2);
+          assert.equal(missingOnly, true);
+          return projects.slice(0, limit);
+        },
+        usageBudgets: {
+          async reconcileExpiredReservations() { return 0; },
+        },
+        createDiscovery() {
+          return {
+            async discover(project) {
+              discoveryProjectKeys.push(project.projectKey);
+              return fixTokenCheckpointResult(project);
+            },
+          };
+        },
+      },
+    });
+
+    assert.equal(selectionCalls, 1);
+    assert.deepEqual(report.selection.selectedProjectKeys, ['checkpoint-hit', 'pending-selected']);
+    assert.equal(report.summary.checkpointEntriesSkipped, 1);
+    assert.deepEqual(discoveryProjectKeys, ['pending-selected']);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('FIX-TOKEN live run fails closed and cleans temporary output when checkpoint write fails', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-live-write-failure-'));
+  const checkpointPath = join(directory, 'checkpoint.json');
+  const project = fixTokenProject();
+  let discoveryCalls = 0;
+  const application = {
+    get() { return {}; },
+    async close() {},
+  };
+  try {
+    await assert.rejects(
+      runAssistantSourceDiscovery({
+        argv: ['--live'],
+        environment: {
+          OPENAI_API_KEY: 'bounded-local-stub',
+          ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+          ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50000000',
+          ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath,
+        },
+        silent: true,
+        dependencies: {
+          async createApplicationContext() { return application; },
+          async selectProjects() { return [project]; },
+          usageBudgets: {
+            async reconcileExpiredReservations() { return 0; },
+          },
+          createDiscovery() {
+            return {
+              async discover() {
+                discoveryCalls += 1;
+                mkdirSync(checkpointPath);
+                return fixTokenCheckpointResult(project);
+              },
+            };
+          },
+        },
+      }),
+      (error) => error?.code === 'ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_WRITE_FAILED',
+    );
+
+    assert.equal(discoveryCalls, 1);
+    assert.deepEqual(readdirSync(directory), ['checkpoint.json']);
+    assert.deepEqual(readdirSync(checkpointPath), []);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('FIX-TOKEN active indexed project registry source takes priority over a checkpoint entry', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-registry-priority-'));
   const checkpointPath = join(directory, 'checkpoint.json');
@@ -722,7 +1141,7 @@ test('FIX-TOKEN active indexed project registry source takes priority over a che
       checkpointPath,
       checkpointFingerprint(),
     );
-    assert.equal(updatedCheckpoint.entries[project.projectKey].canonicalUrl, registryUrl);
+    assert.equal(updatedCheckpoint.checkpoint.entries[project.projectKey].canonicalUrl, registryUrl);
     assert.equal(providerCalls, 0);
     assert.equal(connectorCalls, 0);
   } finally {
@@ -1362,7 +1781,11 @@ function resolveUnreadableCheckpointPath(checkpointPath) {
   };
 }
 
-async function assertCheckpointFailureStopsProvider(checkpointPath, expectedCode) {
+async function assertCheckpointFailureStopsProvider(
+  checkpointPath,
+  expectedCode,
+  argv = ['--live'],
+) {
   let providerConstructed = false;
   let runError = null;
   const application = {
@@ -1371,7 +1794,7 @@ async function assertCheckpointFailureStopsProvider(checkpointPath, expectedCode
   };
   try {
     await runAssistantSourceDiscovery({
-      argv: ['--live'],
+      argv,
       environment: {
         OPENAI_API_KEY: 'bounded-local-stub',
         ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
@@ -1659,6 +2082,33 @@ function fixTokenProject() {
     developerKey: 'fsk',
     developerName: 'ФСК',
     address: 'Москва, Шелепихинская набережная, дом 34',
+  };
+}
+
+function fixTokenCheckpointResult(project, status = 'VERIFIED') {
+  return {
+    status,
+    project,
+    developerCanonicalUrl: status === 'VERIFIED' ? 'https://developer.example/' : null,
+    officialDeveloperName: project.developerName,
+    canonicalUrl: status === 'VERIFIED'
+      ? `https://developer.example/${project.projectKey}`
+      : null,
+    officialProjectName: status === 'VERIFIED' ? project.title : null,
+    matchKind: status === 'VERIFIED' ? 'EXACT' : null,
+    reason: 'test-only narrative',
+    errorCode: status === 'REJECTED' ? 'ASSISTANT_SOURCE_DISCOVERY_PROJECT_MISMATCH' : null,
+    citations: [],
+    developerCitations: [],
+    projectCitations: [],
+    matchedProjectAlias: null,
+    matchedPlatformProjectAlias: null,
+    matchedOfficialProjectAlias: null,
+    matchedDeveloperAlias: null,
+    matchedAddress: false,
+    contentChecksum: status === 'VERIFIED' ? 'a'.repeat(64) : null,
+    developerCacheHit: false,
+    telemetry: { phases: [] },
   };
 }
 

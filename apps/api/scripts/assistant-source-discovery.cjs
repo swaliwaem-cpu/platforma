@@ -19,7 +19,9 @@ const {
 } = require('../dist/assistant/sources/assistant-source-discovery-provider.js');
 const {
   ASSISTANT_SOURCE_DISCOVERY_VALIDATOR_VERSION,
+  backupAssistantSourceDiscoveryCheckpoint,
   checkpointAssistantSourceDiscoveryResult,
+  createEmptyCheckpoint,
   readAssistantSourceDiscoveryCheckpoint,
   writeAssistantSourceDiscoveryCheckpoint,
 } = require('../dist/assistant/sources/assistant-source-discovery-checkpoint.js');
@@ -95,7 +97,25 @@ async function runAssistantSourceDiscovery(input = {}) {
     const checkpointPath = environment.ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH
       || join(process.cwd(), '.assistant-source-discovery', 'checkpoint-v1.json');
     const fingerprint = createCheckpointFingerprint();
-    let checkpoint = readAssistantSourceDiscoveryCheckpoint(checkpointPath, fingerprint);
+    let checkpointRead;
+    try {
+      checkpointRead = readAssistantSourceDiscoveryCheckpoint(checkpointPath, fingerprint);
+    } catch (error) {
+      if (options.refresh
+        && error?.code === 'ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_FINGERPRINT_MISMATCH'
+        && error.checkpoint) {
+        if (options.live) {
+          backupAssistantSourceDiscoveryCheckpoint(checkpointPath, error.checkpoint);
+        }
+        checkpointRead = {
+          state: 'MISSING',
+          checkpoint: createEmptyCheckpoint(fingerprint),
+        };
+      } else {
+        throw error;
+      }
+    }
+    let checkpoint = checkpointRead.checkpoint;
     const checkpointIdentities = new Set(options.refresh
       ? []
       : Object.values(checkpoint.entries).map(({ projectKey, developerKey }) => (
@@ -109,6 +129,15 @@ async function runAssistantSourceDiscovery(input = {}) {
       options.missingOnly,
       excludedProjectKeys,
     );
+    if (options.refresh) {
+      const selectedProjectKeys = new Set(projects.map(({ projectKey }) => projectKey));
+      checkpoint = {
+        ...checkpoint,
+        entries: Object.fromEntries(Object.entries(checkpoint.entries).filter(([projectKey]) => (
+          !selectedProjectKeys.has(projectKey)
+        ))),
+      };
+    }
     const registrySources = projects.length === 0
       ? []
       : await (dependencies.loadRegistrySources ?? loadDiscoveryRegistrySources)(
