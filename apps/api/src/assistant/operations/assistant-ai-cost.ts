@@ -1,4 +1,5 @@
 export const ASSISTANT_AI_PRICING_CATALOG_VERSION = 'openai-standard-pricing-2026-08-27';
+export const ASSISTANT_EMBEDDING_PRICING_CATALOG_VERSION = 'openai-embedding-pricing-2026-08-28';
 export const ASSISTANT_AI_SERVICE_TIER = 'default';
 
 const usdScale = 100_000_000n;
@@ -25,6 +26,11 @@ const pricingCatalog: Record<string, Record<AssistantAiPricingTier, AssistantAiR
   },
 };
 
+const embeddingPricingCatalog: Record<string, { maximumDimensions: number; input: bigint }> = {
+  'text-embedding-3-small': { maximumDimensions: 1_536, input: 2n },
+  'text-embedding-3-large': { maximumDimensions: 3_072, input: 13n },
+};
+
 export type AssistantAiCostInput = {
   model: string;
   serviceTier?: string;
@@ -41,6 +47,11 @@ export type AssistantAiCostResult = {
   status: 'PRICED' | 'MODEL_UNPRICED' | 'SERVICE_TIER_UNPRICED' | 'USAGE_INCOMPLETE' | 'USAGE_INVALID';
   estimatedUsd: string | null;
   estimatedUsdUnits: bigint | null;
+};
+
+export type AssistantEmbeddingCostResult = Omit<AssistantAiCostResult, 'catalogVersion' | 'status'> & {
+  catalogVersion: typeof ASSISTANT_EMBEDDING_PRICING_CATALOG_VERSION;
+  status: AssistantAiCostResult['status'] | 'DIMENSIONS_UNSUPPORTED';
 };
 
 export function calculateAssistantAiCost(input: AssistantAiCostInput): AssistantAiCostResult {
@@ -104,6 +115,50 @@ export function estimateAssistantAiCallCost(input: {
   });
 }
 
+export function calculateAssistantEmbeddingCost(input: {
+  model: string;
+  inputTokens: number | null;
+  serviceTier?: string;
+}): AssistantEmbeddingCostResult {
+  if ((input.serviceTier ?? ASSISTANT_AI_SERVICE_TIER) !== ASSISTANT_AI_SERVICE_TIER) {
+    return unpricedEmbedding('SERVICE_TIER_UNPRICED');
+  }
+  const pricing = embeddingPricingCatalog[input.model];
+  if (!pricing) return unpricedEmbedding('MODEL_UNPRICED');
+  if (input.inputTokens === null) return unpricedEmbedding('USAGE_INCOMPLETE');
+  if (!isTokenCount(input.inputTokens)) return unpricedEmbedding('USAGE_INVALID');
+  const estimatedUsdUnits = BigInt(input.inputTokens) * pricing.input;
+  return {
+    catalogVersion: ASSISTANT_EMBEDDING_PRICING_CATALOG_VERSION,
+    status: 'PRICED',
+    estimatedUsd: formatAssistantUsd(estimatedUsdUnits),
+    estimatedUsdUnits,
+  };
+}
+
+export function estimateAssistantEmbeddingCallCost(input: {
+  model: string;
+  dimensions: number;
+  inputBytes: number;
+  serviceTier?: string;
+}): AssistantEmbeddingCostResult {
+  const pricing = embeddingPricingCatalog[input.model];
+  if (!pricing) return unpricedEmbedding('MODEL_UNPRICED');
+  if (!Number.isSafeInteger(input.dimensions)
+    || input.dimensions < 1
+    || input.dimensions > pricing.maximumDimensions) {
+    return unpricedEmbedding('DIMENSIONS_UNSUPPORTED');
+  }
+  if (!Number.isSafeInteger(input.inputBytes) || input.inputBytes < 0) {
+    return unpricedEmbedding('USAGE_INVALID');
+  }
+  return calculateAssistantEmbeddingCost({
+    model: input.model,
+    inputTokens: input.inputBytes,
+    serviceTier: input.serviceTier,
+  });
+}
+
 export function addAssistantUsd(values: string[]) {
   const total = values.reduce(
     (sum, value) => sum + parseAssistantUsd(value),
@@ -130,6 +185,17 @@ export function formatAssistantUsd(value: bigint) {
 function unpriced(status: Exclude<AssistantAiCostResult['status'], 'PRICED'>): AssistantAiCostResult {
   return {
     catalogVersion: ASSISTANT_AI_PRICING_CATALOG_VERSION,
+    status,
+    estimatedUsd: null,
+    estimatedUsdUnits: null,
+  };
+}
+
+function unpricedEmbedding(
+  status: Exclude<AssistantEmbeddingCostResult['status'], 'PRICED'>,
+): AssistantEmbeddingCostResult {
+  return {
+    catalogVersion: ASSISTANT_EMBEDDING_PRICING_CATALOG_VERSION,
     status,
     estimatedUsd: null,
     estimatedUsdUnits: null,

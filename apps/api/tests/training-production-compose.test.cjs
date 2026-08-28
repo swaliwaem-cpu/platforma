@@ -35,7 +35,8 @@ test('production Compose has one dedicated voice worker and no API worker', () =
   assert.equal(countServiceDeclarations(base, 'training-voice-worker'), 1);
   assert.equal(countServiceDeclarations(production, 'training-voice-worker'), 1);
   assert.match(baseApi, /TRAINING_VOICE_WORKER_ENABLED: "false"/u);
-  assert.match(baseWorker, /TRAINING_VOICE_WORKER_ENABLED: "true"/u);
+  assert.match(baseWorker,
+    /TRAINING_VOICE_WORKER_ENABLED:\s*\$\{TRAINING_VOICE_WORKER_ENABLED:-true\}/u);
   assert.match(productionApi, /TRAINING_VOICE_WORKER_ENABLED: "false"/u);
   assert.match(productionWorker, /TRAINING_VOICE_WORKER_ENABLED: "true"/u);
   assert.match(productionApi, /TRAINING_MATERIAL_WORKER_ENABLED: "true"/u);

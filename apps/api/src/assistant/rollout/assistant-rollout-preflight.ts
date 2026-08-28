@@ -5,6 +5,7 @@ import {
   isAssistantGeoProviderEnabled,
   type AssistantRolloutStage,
 } from '../assistant-runtime-config';
+import { readAssistantPaidProviderReadiness } from '../operations/assistant-paid-readiness';
 
 type AssistantEnvironment = NodeJS.ProcessEnv | Record<string, string | undefined>;
 
@@ -230,15 +231,15 @@ export function assessAssistantSourceHealth(
 export function readAssistantRolloutBudgetReadiness(
   environment: AssistantEnvironment = process.env,
 ) {
-  const required = [
-    'ASSISTANT_MODEL_REQUESTS_PER_MINUTE',
-    'ASSISTANT_MODEL_REQUESTS_PER_DAY',
-    ...(isAssistantGeoProviderEnabled(environment) ? [
+  const providerReadiness = readAssistantPaidProviderReadiness(environment);
+  const required = isAssistantGeoProviderEnabled(environment) ? [
       'ASSISTANT_GEO_PROVIDER_REQUESTS_PER_MINUTE',
       'ASSISTANT_GEO_PROVIDER_DAILY_BUDGET',
-    ] : []),
+    ] : [];
+  const missing = [
+    ...providerReadiness.missing,
+    ...required.filter((name) => !isPositiveInteger(environment[name])),
   ];
-  const missing = required.filter((name) => !isPositiveInteger(environment[name]));
   return { passed: missing.length === 0, missing };
 }
 

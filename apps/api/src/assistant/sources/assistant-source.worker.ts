@@ -159,6 +159,7 @@ export class AssistantSourceWorker implements OnModuleInit, OnModuleDestroy {
   }
 
   private async processJob(jobId: string, now: Date) {
+    const executionId = randomUUID();
     const job = await this.prisma.$transaction(async (transaction) => {
       const claimed = await transaction.assistantSourceJob.updateMany({
         where: {
@@ -186,6 +187,7 @@ export class AssistantSourceWorker implements OnModuleInit, OnModuleDestroy {
     try {
       await this.withHeartbeat(jobId, () => this.ingestion.ingest(job.sourceId, {
         jobId,
+        executionId,
         leaseOwner: this.instanceId,
         attemptStartedAt,
       }));

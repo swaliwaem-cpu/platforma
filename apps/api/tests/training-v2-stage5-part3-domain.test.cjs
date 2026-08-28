@@ -365,7 +365,8 @@ test('Docker and ordinary-test contracts preserve signal, ffmpeg and opt-in Open
   assert.match(compose, /training-voice-worker:\s*\n[\s\S]*training-voice-worker\.main\.js/u);
   assert.match(compose, /training-voice-worker:\s*[\s\S]*deploy:\s*\n\s+replicas: 1/u);
   assert.match(compose, /api:\s*[\s\S]*TRAINING_VOICE_WORKER_ENABLED: "false"/u);
-  assert.match(compose, /training-voice-worker:\s*[\s\S]*TRAINING_VOICE_WORKER_ENABLED: "true"/u);
+  assert.match(compose,
+    /training-voice-worker:\s*[\s\S]*TRAINING_VOICE_WORKER_ENABLED:\s*\$\{TRAINING_VOICE_WORKER_ENABLED:-true\}/u);
   assert.match(ordinaryTests, /TRAINING_AI_MODE = 'fake'/u);
   assert.match(ordinaryTests, /delete environment\.OPENAI_API_KEY/u);
   assert.notEqual(packageJson.scripts.test, packageJson.scripts['test:training:openai:smoke']);

@@ -554,9 +554,12 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
       releaseOlderValidAttempt = resolveAttempt;
     });
     let olderValidHealthAt;
+    let olderValidExecutionId;
     const olderValidWorker = new AssistantSourceWorker(prisma, {
       async ingest(_workerSourceId, fence) {
         assert.ok(fence.attemptStartedAt instanceof Date);
+        assert.match(fence.executionId, /^[0-9a-f-]{36}$/u);
+        olderValidExecutionId = fence.executionId;
         olderValidHealthAt = fence.attemptStartedAt;
         signalOlderValidAttempt();
         await olderValidAttemptReleased;
@@ -571,9 +574,12 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
       data: { availableAt: new Date('2000-01-01T00:00:00.000Z') },
     });
     let newerValidHealthAt;
+    let newerValidExecutionId;
     const newerValidWorker = new AssistantSourceWorker(prisma, {
       async ingest(_workerSourceId, fence) {
         assert.ok(fence.attemptStartedAt instanceof Date);
+        assert.match(fence.executionId, /^[0-9a-f-]{36}$/u);
+        newerValidExecutionId = fence.executionId;
         newerValidHealthAt = fence.attemptStartedAt;
         await prisma.assistantKnowledgeSource.update({
           where: { id: sourceId },
@@ -589,6 +595,7 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
     });
     await newerValidWorker.runOnce(new Date());
     assert.equal(newerValidHealthAt > olderValidHealthAt, true);
+    assert.notEqual(newerValidExecutionId, olderValidExecutionId);
     releaseOlderValidAttempt();
     await olderValidRun;
     const latestValidHealth = await prisma.assistantKnowledgeSource.findUniqueOrThrow({ where: { id: sourceId } });
@@ -611,6 +618,7 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
     await assert.rejects(
       ingestion.ingest(sourceId, {
         jobId: fencedJob.job.id,
+        executionId: randomUUID(),
         leaseOwner: 'expired-worker',
         attemptStartedAt: new Date('2026-08-25T06:00:00.000Z'),
       }),

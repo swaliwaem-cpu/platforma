@@ -6,11 +6,20 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   ASSISTANT_AI_PRICING_CATALOG_VERSION,
+  ASSISTANT_EMBEDDING_PRICING_CATALOG_VERSION,
   ASSISTANT_AI_SERVICE_TIER,
   calculateAssistantAiCost,
+  calculateAssistantEmbeddingCost,
   formatAssistantUsd,
   parseAssistantUsd,
 } from './assistant-ai-cost';
+
+export type AssistantAiUsageOperation =
+  | 'PLANNER'
+  | 'SOURCE_DISCOVERY'
+  | 'EMBEDDING_RETRIEVAL'
+  | 'EMBEDDING_INGESTION'
+  | 'EMBEDDING_BENCHMARK';
 
 export type AssistantAiUsageReservation = {
   id: string;
@@ -75,7 +84,7 @@ export class AssistantAiUsageBudgetService {
   async reserve(input: {
     provider: string;
     model: string;
-    operation: 'PLANNER' | 'SOURCE_DISCOVERY';
+    operation: AssistantAiUsageOperation;
     operationRunId: string;
     executionId: string;
     attemptOrdinal: number;
@@ -125,15 +134,17 @@ export class AssistantAiUsageBudgetService {
     if (parseAssistantUsd(dailyBudgetUsd) === 0n || parseAssistantUsd(reservedCostUsd) === 0n) {
       throw new AssistantAiUsageBudgetError('ASSISTANT_AI_BUDGET_VALUE_INVALID');
     }
-    const priceability = calculateAssistantAiCost({
-      model,
-      serviceTier,
-      inputTokens: 0,
-      cachedInputTokens: 0,
-      cacheWriteInputTokens: 0,
-      outputTokens: 0,
-      webSearchCalls: 0,
-    });
+    const priceability = isEmbeddingOperation(input.operation)
+      ? calculateAssistantEmbeddingCost({ model, serviceTier, inputTokens: 0 })
+      : calculateAssistantAiCost({
+          model,
+          serviceTier,
+          inputTokens: 0,
+          cachedInputTokens: 0,
+          cacheWriteInputTokens: 0,
+          outputTokens: 0,
+          webSearchCalls: 0,
+        });
     if (priceability.status === 'MODEL_UNPRICED') {
       throw new AssistantAiUsageBudgetError('ASSISTANT_AI_MODEL_UNPRICED');
     }
@@ -143,6 +154,9 @@ export class AssistantAiUsageBudgetService {
     if (priceability.status !== 'PRICED') {
       throw new AssistantAiUsageBudgetError('ASSISTANT_AI_COST_UNPRICED');
     }
+    const pricingCatalogVersion = isEmbeddingOperation(input.operation)
+      ? ASSISTANT_EMBEDDING_PRICING_CATALOG_VERSION
+      : ASSISTANT_AI_PRICING_CATALOG_VERSION;
 
     return this.prisma.$transaction(async (transaction) => {
       const fence = await lockOrCreateExecutionFence(
@@ -165,7 +179,7 @@ export class AssistantAiUsageBudgetService {
           CAST(${id} AS uuid), ${operationRunId}, CAST(${executionId} AS uuid), ${attemptOrdinal},
           ${input.operation}, ${provider}, ${model}, ${serviceTier},
           ${reasoningEffort}, ${promptVersion}, ${validatorVersion}, ${isFallback},
-          'RESERVED', ${ASSISTANT_AI_PRICING_CATALOG_VERSION}, 'RESERVED',
+          'RESERVED', ${pricingCatalogVersion}, 'RESERVED',
           CAST(${dailyBudgetUsd} AS numeric), CAST(${reservedCostUsd} AS numeric),
           ${usageDate}, ${reservationExpiresAtSql}, ${providerTimeoutMs}
         )
@@ -201,7 +215,7 @@ export class AssistantAiUsageBudgetService {
           FOR UPDATE
         `);
         const existing = existingRows[0];
-        if (!existing || !sameReservationParameters(existing, {
+        if (!existing || existing.status !== 'RESERVED' || !sameReservationParameters(existing, {
           operationRunId,
           executionId,
           attemptOrdinal,
@@ -217,6 +231,7 @@ export class AssistantAiUsageBudgetService {
           dailyBudgetUsd,
           reservedCostUsd,
           reservationExpiresAt: requestedReservationExpiresAt,
+          pricingCatalogVersion,
         })) {
           throw new AssistantAiUsageBudgetError('ASSISTANT_AI_ATTEMPT_CONFLICT');
         }
@@ -307,6 +322,7 @@ export class AssistantAiUsageBudgetService {
 
     return this.withSettlementRetry(() => this.prisma.$transaction(async (transaction) => {
       const attempts = await transaction.$queryRaw<Array<{
+        operation: string;
         provider: string;
         usageDate: Date;
         status: string;
@@ -315,6 +331,7 @@ export class AssistantAiUsageBudgetService {
         reservedCostUsd: Prisma.Decimal;
       }>>(Prisma.sql`
         SELECT
+          "operation",
           "provider",
           "usage_date" AS "usageDate",
           "status",
@@ -340,15 +357,21 @@ export class AssistantAiUsageBudgetService {
       }
 
       const actualModel = requestedActualModel ?? attempt.requestedModel;
-      const cost = calculateAssistantAiCost({
-        model: actualModel,
-        serviceTier: attempt.serviceTier,
-        inputTokens: input.inputTokens,
-        cachedInputTokens: input.cachedInputTokens,
-        cacheWriteInputTokens: input.cacheWriteInputTokens,
-        outputTokens: input.outputTokens,
-        webSearchCalls: input.webSearchCalls,
-      });
+      const cost = isEmbeddingOperation(attempt.operation)
+        ? calculateAssistantEmbeddingCost({
+            model: actualModel,
+            serviceTier: attempt.serviceTier,
+            inputTokens: input.inputTokens,
+          })
+        : calculateAssistantAiCost({
+            model: actualModel,
+            serviceTier: attempt.serviceTier,
+            inputTokens: input.inputTokens,
+            cachedInputTokens: input.cachedInputTokens,
+            cacheWriteInputTokens: input.cacheWriteInputTokens,
+            outputTokens: input.outputTokens,
+            webSearchCalls: input.webSearchCalls,
+          });
       const reservedCostUsd = attempt.reservedCostUsd.toFixed(8);
       const chargedCostUsd = cost.estimatedUsd ?? reservedCostUsd;
       const reserveExceeded = cost.estimatedUsdUnits !== null
@@ -587,6 +610,7 @@ function sameReservationParameters(
     dailyBudgetUsd: string;
     reservedCostUsd: string;
     reservationExpiresAt: Date | null;
+    pricingCatalogVersion: string;
   },
 ) {
   return existing.operationRunId === expected.operationRunId
@@ -600,7 +624,7 @@ function sameReservationParameters(
     && existing.promptVersion === expected.promptVersion
     && existing.validatorVersion === expected.validatorVersion
     && existing.isFallback === expected.isFallback
-    && existing.pricingCatalogVersion === ASSISTANT_AI_PRICING_CATALOG_VERSION
+    && existing.pricingCatalogVersion === expected.pricingCatalogVersion
     && existing.providerTimeoutMs === expected.providerTimeoutMs
     && existing.dailyBudgetUsd?.toFixed(8) === expected.dailyBudgetUsd
     && existing.reservedCostUsd.toFixed(8) === expected.reservedCostUsd
@@ -690,6 +714,13 @@ function bounded(value: string, maximumLength: number) {
     throw new AssistantAiUsageBudgetError('ASSISTANT_AI_TELEMETRY_INVALID');
   }
   return normalized;
+}
+
+function isEmbeddingOperation(operation: string): operation is Extract<
+  AssistantAiUsageOperation,
+  `EMBEDDING_${string}`
+> {
+  return operation.startsWith('EMBEDDING_');
 }
 
 function boundedNullable(value: string | null | undefined, maximumLength: number) {

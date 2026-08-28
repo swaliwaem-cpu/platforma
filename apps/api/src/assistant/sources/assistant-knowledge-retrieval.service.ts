@@ -9,6 +9,7 @@ import type { AssistantPageContext } from '@platforma/shared' with { 'resolution
 import { PrismaService } from '../../prisma/prisma.service';
 import type { AssistantStructuredIntent } from '../assistant-query-planner';
 import { AssistantEmbeddingGateway } from './assistant-embedding.gateway';
+import type { AssistantEmbeddingOperationContext } from './assistant-embedding.gateway';
 import {
   assistantKnowledgeAuthorityScore,
   normalizeAssistantKnowledgeRegistryKey,
@@ -85,6 +86,7 @@ export class AssistantKnowledgeRetrievalService {
     includeExternalLots: boolean;
     context?: AssistantPageContext | null;
     now?: Date;
+    embeddingOperation?: Omit<AssistantEmbeddingOperationContext, 'operation'>;
   }) {
     const now = input.now ?? new Date();
     const query = normalizeQuery(input.query);
@@ -99,7 +101,11 @@ export class AssistantKnowledgeRetrievalService {
 
     const structured = await this.retrieveStructured(input.intent, input.includeExternalLots, scope);
     const ftsRevisions = await this.retrieveFtsRevisionScores(query, scope);
-    const vectorRevisions = await this.retrieveVectorRevisionScores(query, scope);
+    const vectorRevisions = await this.retrieveVectorRevisionScores(
+      query,
+      scope,
+      input.embeddingOperation,
+    );
     const revisionIds = [...new Set([
       ...ftsRevisions.keys(),
       ...vectorRevisions.keys(),
@@ -308,12 +314,19 @@ export class AssistantKnowledgeRetrievalService {
     return new Map(rows.map(({ sourceRevisionId, score }) => [sourceRevisionId, Number(score)]));
   }
 
-  private async retrieveVectorRevisionScores(query: string, scope: KnowledgeScope) {
+  private async retrieveVectorRevisionScores(
+    query: string,
+    scope: KnowledgeScope,
+    embeddingOperation?: Omit<AssistantEmbeddingOperationContext, 'operation'>,
+  ) {
     if (!this.embeddings.isEnabled()) return new Map<string, number>();
     const model = this.embeddings.getModel();
     const dimensions = this.embeddings.getDimensions();
     if (!model || !dimensions) return new Map<string, number>();
-    const embedded = await this.embeddings.embed([query]);
+    const embedded = await this.embeddings.embed(
+      [query],
+      embeddingOperation ? { operation: 'EMBEDDING_RETRIEVAL', ...embeddingOperation } : undefined,
+    );
     const vector = formatVector(embedded.vectors[0]!);
     const rows = await this.prisma.$queryRaw<Array<{ sourceRevisionId: string; score: number }>>(Prisma.sql`
       SELECT

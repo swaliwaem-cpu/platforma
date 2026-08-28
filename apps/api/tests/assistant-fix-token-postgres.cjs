@@ -21,6 +21,9 @@ const {
   AssistantAiUsageBudgetService,
 } = require('../dist/assistant/operations/assistant-ai-usage-budget.service.js');
 const {
+  AssistantUsageBudgetService,
+} = require('../dist/assistant/operations/assistant-usage-budget.service.js');
+const {
   AssistantRunProcessor,
 } = require('../dist/assistant/assistant-run.processor.js');
 const {
@@ -29,11 +32,14 @@ const {
 
 const prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
 const service = new AssistantAiUsageBudgetService(prisma);
+const requestBudgets = new AssistantUsageBudgetService(prisma);
 const suffix = randomUUID().replaceAll('-', '').slice(0, 12);
 const provider = `openai-fix-${suffix}`;
 const expiryProvider = `openai-expiry-${suffix}`;
 const reconcileProvider = `openai-reconcile-${suffix}`;
 const planProvider = `openai-plan-${suffix}`;
+const embeddingProvider = `openai-embedding-${suffix}`;
+const requestProvider = `openai-request-${suffix}`;
 const planUsageDate = new Date('2100-01-01T00:00:00.000Z');
 const firstDay = new Date('2098-08-27T00:00:00.000Z');
 const secondDay = new Date('2098-08-28T00:00:00.000Z');
@@ -43,6 +49,9 @@ const fifthDay = new Date('2098-08-31T00:00:00.000Z');
 const sixthDay = new Date('2098-09-01T00:00:00.000Z');
 const seventhDay = new Date('2098-09-02T00:00:00.000Z');
 const eighthDay = new Date('2098-09-03T00:00:00.000Z');
+const ninthDay = new Date('2098-09-04T00:00:00.000Z');
+const tenthDay = new Date('2098-09-05T00:00:00.000Z');
+const eleventhDay = new Date('2098-09-06T12:00:00.000Z');
 const assistantFixtures = [];
 
 process.env.ASSISTANT_MODULE_ENABLED = 'true';
@@ -53,14 +62,27 @@ before(async () => {
 });
 
 after(async () => {
+  await prisma.assistantUsageMetric.deleteMany({ where: { provider: requestProvider } });
   await prisma.assistantAiUsageAttempt.deleteMany({
-    where: { provider: { in: [provider, expiryProvider, reconcileProvider, planProvider] } },
+    where: { provider: { in: [
+      provider,
+      expiryProvider,
+      reconcileProvider,
+      planProvider,
+      embeddingProvider,
+    ] } },
   });
   await prisma.assistantAiExecutionFence.deleteMany({
     where: { operationRunId: { startsWith: `fix-token-${suffix}-` } },
   });
   await prisma.assistantAiDailyBudget.deleteMany({
-    where: { provider: { in: [provider, expiryProvider, reconcileProvider, planProvider] } },
+    where: { provider: { in: [
+      provider,
+      expiryProvider,
+      reconcileProvider,
+      planProvider,
+      embeddingProvider,
+    ] } },
   });
   for (const fixture of assistantFixtures) {
     await prisma.assistantRun.deleteMany({ where: { id: fixture.run.id } });
@@ -221,6 +243,103 @@ test('FIX-TOKEN keeps only indexes used by real budget, reconciliation and repor
   assert.match(dailyBudgetPlan, /assistant_ai_daily_budgets_pkey/u);
 });
 
+test('PIDAFIX1 persists an embedding reservation before provider work and settles actual input tokens', async () => {
+  const operationRunId = runId('embedding-persisted-before-provider');
+  const executionId = randomUUID();
+  const reservation = await service.reserve({
+    provider: embeddingProvider,
+    model: 'text-embedding-3-small',
+    operation: 'EMBEDDING_RETRIEVAL',
+    operationRunId,
+    executionId,
+    attemptOrdinal: 1,
+    dailyBudgetUsd: '0.10000000',
+    reservedCostUsd: '0.00100000',
+    validatorVersion: 'assistant-embedding-v1:256',
+    now: ninthDay,
+  });
+  const beforeProvider = await prisma.assistantAiUsageAttempt.findUniqueOrThrow({
+    where: { id: reservation.id },
+  });
+  assert.equal(beforeProvider.status, 'RESERVED');
+  assert.equal(beforeProvider.operation, 'EMBEDDING_RETRIEVAL');
+  assert.equal(beforeProvider.pricingCatalogVersion, 'openai-embedding-pricing-2026-08-28');
+
+  await service.settle({
+    reservation,
+    actualModel: 'text-embedding-3-small',
+    outcome: 'ACCEPTED',
+    errorCode: null,
+    inputTokens: 1_000,
+    cachedInputTokens: 0,
+    cacheWriteInputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    totalTokens: 1_000,
+    webSearchCalls: 0,
+    durationMs: 25,
+  });
+  const settled = await prisma.assistantAiUsageAttempt.findUniqueOrThrow({
+    where: { id: reservation.id },
+  });
+  assert.equal(settled.status, 'SETTLED');
+  assert.equal(settled.estimatedCostUsd.toFixed(8), '0.00002000');
+  assert.equal(settled.chargedCostUsd.toFixed(8), '0.00002000');
+});
+
+test('PIDAFIX1 applies one atomic provider-day USD ceiling across planner and embeddings', async () => {
+  const operationRunId = runId('shared-planner-embedding-ceiling');
+  const executionId = randomUUID();
+  const common = {
+    provider: embeddingProvider,
+    operationRunId,
+    executionId,
+    dailyBudgetUsd: '0.15000000',
+    reservedCostUsd: '0.10000000',
+    now: tenthDay,
+  };
+  const race = await Promise.allSettled([
+    service.reserve({
+      ...common,
+      model: 'gpt-5.6-luna',
+      operation: 'PLANNER',
+      attemptOrdinal: 1,
+    }),
+    service.reserve({
+      ...common,
+      model: 'text-embedding-3-small',
+      operation: 'EMBEDDING_RETRIEVAL',
+      attemptOrdinal: 2,
+    }),
+  ]);
+  assert.equal(race.filter(({ status }) => status === 'fulfilled').length, 1);
+  assert.equal(race.filter(({ status }) => status === 'rejected').length, 1);
+  assert.equal(race.find(({ status }) => status === 'rejected').reason.code,
+    'ASSISTANT_AI_DAILY_BUDGET_EXHAUSTED');
+});
+
+test('PIDAFIX1 request caps allow two Luna and two Terra attempts but reject the fifth', async () => {
+  const reserveRequest = (model) => requestBudgets.reserve({
+    provider: requestProvider,
+    model,
+    perMinuteLimit: 2,
+    dailyLimit: 2,
+    now: eleventhDay,
+    errorPrefix: 'ASSISTANT_MODEL',
+  });
+  await reserveRequest('gpt-5.6-luna');
+  await reserveRequest('gpt-5.6-luna');
+  await reserveRequest('gpt-5.6-terra');
+  await reserveRequest('gpt-5.6-terra');
+  await assert.rejects(
+    reserveRequest('gpt-5.6-luna'),
+    (error) => error.code === 'ASSISTANT_MODEL_MINUTE_BUDGET_EXHAUSTED',
+  );
+  assert.equal(await prisma.assistantUsageMetric.count({
+    where: { provider: requestProvider, window: 'DAY' },
+  }), 2);
+});
+
 test('FIX-TOKEN atomically shares one provider/day USD budget across planner and discovery', async () => {
   const lunaRunId = runId('luna-planner');
   const terraRunId = runId('terra-discovery');
@@ -319,6 +438,21 @@ test('FIX-TOKEN atomically shares one provider/day USD budget across planner and
   const settledBudget = await readBudget(firstDay);
   assert.equal(settledBudget.reservedCostUsd.toFixed(8), '0.10000000');
   assert.equal(settledBudget.settledCostUsd.toFixed(8), '0.10002890');
+
+  await assert.rejects(
+    reserve({
+      model: 'gpt-5.6-luna',
+      operation: 'PLANNER',
+      operationRunId: lunaRunId,
+      executionId: lunaExecutionId,
+      now: firstDay,
+    }),
+    (error) => error.code === 'ASSISTANT_AI_ATTEMPT_CONFLICT',
+  );
+  const budgetAfterFinalizedReuse = await readBudget(firstDay);
+  assert.equal(budgetAfterFinalizedReuse.reservedCostUsd.toFixed(8), '0.10000000');
+  assert.equal(budgetAfterFinalizedReuse.settledCostUsd.toFixed(8), '0.10002890');
+  assert.equal(await prisma.assistantAiUsageAttempt.count({ where: { provider } }), 3);
 
   const attempts = await prisma.assistantAiUsageAttempt.findMany({
     where: { id: { in: [luna.id, terra.id] } },

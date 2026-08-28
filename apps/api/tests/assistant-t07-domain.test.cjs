@@ -49,6 +49,9 @@ const {
   readAssistantRolloutBudgetReadiness,
   computeAssistantRolloutApprovalDigest,
 } = require('../dist/assistant/rollout/assistant-rollout-preflight.js');
+const {
+  readAssistantPaidProviderReadiness,
+} = require('../dist/assistant/operations/assistant-paid-readiness.js');
 
 const datasetPath = resolve(
   __dirname,
@@ -1140,6 +1143,44 @@ test('Assistant T07 rollout preflight fails closed on stale sources, implicit bu
   assert.equal(assessAssistantRolloutStageRecord('PILOT', [
     { ...pilotEvent, startedAt: new Date('2026-08-26T13:00:00.000Z') },
   ], now).passed, false);
+});
+
+test('PIDAFIX1 paid readiness is shared, fail-closed and redacts the OpenAI key', () => {
+  const blocked = readAssistantPaidProviderReadiness({ ASSISTANT_AI_MODE: 'openai' });
+  assert.equal(blocked.passed, false);
+  assert.deepEqual(blocked.missing, [
+    'ASSISTANT_MODEL_REQUESTS_PER_MINUTE',
+    'ASSISTANT_MODEL_REQUESTS_PER_DAY',
+    'ASSISTANT_MODEL_DAILY_BUDGET_USD',
+    'ASSISTANT_QUERY_PLANNER_LIVE',
+    'ASSISTANT_PAID_CALLS_CONFIRMED',
+    'OPENAI_API_KEY',
+  ]);
+  assert.equal(blocked.effective.apiKeyPresent, false);
+
+  const ready = readAssistantPaidProviderReadiness({
+    ASSISTANT_AI_MODE: 'openai',
+    ASSISTANT_MODEL_REQUESTS_PER_MINUTE: '2',
+    ASSISTANT_MODEL_REQUESTS_PER_DAY: '2',
+    ASSISTANT_MODEL_DAILY_BUDGET_USD: '0.50',
+    ASSISTANT_QUERY_PLANNER_LIVE: 'true',
+    ASSISTANT_PAID_CALLS_CONFIRMED: 'true',
+    OPENAI_API_KEY: 'must-not-be-returned',
+  });
+  assert.deepEqual(ready, {
+    passed: true,
+    missing: [],
+    effective: {
+      aiMode: 'openai',
+      requestsPerMinute: 2,
+      requestsPerDay: 2,
+      dailyBudgetUsd: '0.50000000',
+      queryPlannerLive: true,
+      paidCallsConfirmed: true,
+      apiKeyPresent: true,
+    },
+  });
+  assert.equal(JSON.stringify(ready).includes('must-not-be-returned'), false);
 });
 
 test('Assistant T07 rollout flags and explicit budgets are documented in env and Compose without frontend provider keys', () => {

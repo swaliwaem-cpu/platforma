@@ -68,7 +68,7 @@ export class AssistantAnswerService {
         operationRunId: input.operationRunId,
         executionId: input.executionId,
       },
-      async (intent) => {
+      async (intent, request, attempts) => {
         if (intent.taskType === 'LEGAL_TAX') {
           return {
             content: [
@@ -97,6 +97,11 @@ export class AssistantAnswerService {
             includeExternalLots: false,
             context: input.context,
             now,
+            embeddingOperation: {
+              operationRunId: request.operationRunId,
+              executionId: request.executionId,
+              nextAttemptOrdinal: attempts.nextAttemptOrdinal,
+            },
           });
           const grounded = buildAssistantKnowledgeAnswer(evidence, now);
           if (grounded.answer.facts.length > 0) return { ...grounded, candidateEvidence: evidence };
@@ -116,6 +121,11 @@ export class AssistantAnswerService {
             includeExternalLots: true,
             context: input.context,
             now,
+            embeddingOperation: {
+              operationRunId: request.operationRunId,
+              executionId: request.executionId,
+              nextAttemptOrdinal: attempts.nextAttemptOrdinal,
+            },
           });
           const knowledgeAnswer = buildAssistantKnowledgeAnswer(knowledgeEvidence, now);
           if (knowledgeAnswer.answer.externalLots.length > 0) {

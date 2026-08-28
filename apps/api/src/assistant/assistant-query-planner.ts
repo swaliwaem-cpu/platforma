@@ -101,6 +101,10 @@ export type AssistantPlannerGateway = {
   plan(request: AssistantPlannerRequest): Promise<unknown>;
 };
 
+export type AssistantPhysicalAttemptAllocator = {
+  nextAttemptOrdinal(): number;
+};
+
 export type AssistantPlannerUsagePolicy = {
   beforeAttempt(request: AssistantPlannerRequest): Promise<unknown>;
   afterAttempt(reservation: unknown, telemetry: AssistantPlannerTelemetry): Promise<void>;
@@ -176,35 +180,44 @@ export class AssistantQueryPlanner {
       operationRunId?: string;
       executionId?: string;
     },
-    validate: (intent: AssistantStructuredIntent, request: AssistantPlannerRequest) => Promise<Value>,
+    validate: (
+      intent: AssistantStructuredIntent,
+      request: AssistantPlannerRequest,
+      attempts: AssistantPhysicalAttemptAllocator,
+    ) => Promise<Value>,
   ) {
     const messages = normalizeMessages(input.messages);
     const operationRunId = input.operationRunId ?? randomUUID();
     const executionId = input.executionId ?? randomUUID();
     const reasoningEffort = chooseReasoningEffort(messages);
     const attempts: AssistantPlannerTelemetry[] = [];
-    const requests: AssistantPlannerRequest[] = [
+    let attemptOrdinal = 0;
+    const attemptsAllocator: AssistantPhysicalAttemptAllocator = {
+      nextAttemptOrdinal: () => {
+        attemptOrdinal += 1;
+        return attemptOrdinal;
+      },
+    };
+    const requestTemplates: Array<Pick<AssistantPlannerRequest, 'model' | 'reasoningEffort'>> = [
       {
         model: ASSISTANT_LUNA_MODEL,
         reasoningEffort,
-        messages,
-        context: input.context,
-        operationRunId,
-        executionId,
-        attemptOrdinal: 1,
       },
       {
         model: ASSISTANT_TERRA_MODEL,
-        reasoningEffort: 'medium',
+        reasoningEffort: 'medium' as const,
+      },
+    ];
+
+    for (const [attemptIndex, template] of requestTemplates.entries()) {
+      const request: AssistantPlannerRequest = {
+        ...template,
         messages,
         context: input.context,
         operationRunId,
         executionId,
-        attemptOrdinal: 2,
-      },
-    ];
-
-    for (const [attemptIndex, request] of requests.entries()) {
+        attemptOrdinal: attemptsAllocator.nextAttemptOrdinal(),
+      };
       const startedAt = Date.now();
       let gatewayResult: unknown;
       let reservation: unknown;
@@ -246,7 +259,7 @@ export class AssistantQueryPlanner {
 
       let value: Value;
       try {
-        value = await validate(intent, request);
+        value = await validate(intent, request, attemptsAllocator);
       } catch (error) {
         const telemetry = createTelemetry(
           request,

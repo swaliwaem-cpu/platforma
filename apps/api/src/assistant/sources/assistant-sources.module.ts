@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 
 import { AuthModule } from '../../auth/auth.module';
 import { PrismaModule } from '../../prisma/prisma.module';
+import { AssistantAiUsageBudgetService } from '../operations/assistant-ai-usage-budget.service';
 import { AssistantEmbeddingGateway } from './assistant-embedding.gateway';
 import { AssistantKnowledgeRetrievalService } from './assistant-knowledge-retrieval.service';
 import { AssistantSourceConnectorRegistry } from './assistant-source-connector.registry';
@@ -20,13 +21,19 @@ import { OfficialSourceExtractor } from './official-source.extractor';
     AssistantKnowledgeRetrievalService,
     AssistantSourceWorker,
     OfficialSourceExtractor,
+    AssistantAiUsageBudgetService,
     {
       provide: AssistantSourceConnectorRegistry,
       useFactory: () => new AssistantSourceConnectorRegistry(),
     },
     {
       provide: AssistantEmbeddingGateway,
-      useFactory: () => new AssistantEmbeddingGateway(),
+      inject: [AssistantAiUsageBudgetService],
+      useFactory: (budgets: AssistantAiUsageBudgetService) => new AssistantEmbeddingGateway(
+        process.env,
+        fetch,
+        budgets,
+      ),
     },
   ],
   exports: [AssistantKnowledgeRetrievalService, AssistantSourceRegistryService],

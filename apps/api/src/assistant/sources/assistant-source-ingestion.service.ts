@@ -35,6 +35,7 @@ type PreparedChunk = ExtractedSourceChunk & {
 
 export type AssistantSourceIngestionFence = {
   jobId: string;
+  executionId: string;
   leaseOwner: string;
   attemptStartedAt: Date;
 };
@@ -49,6 +50,9 @@ export class AssistantSourceIngestionService {
   ) {}
 
   async ingest(sourceId: string, fence?: AssistantSourceIngestionFence) {
+    if (fence) {
+      await this.embeddings.reconcileExecution?.(fence.jobId, fence.executionId);
+    }
     const source = await this.prisma.assistantKnowledgeSource.findUnique({
       where: { id: sourceId },
       select: {
@@ -106,7 +110,7 @@ export class AssistantSourceIngestionService {
       if (extracted.facts.length === 0 && extracted.chunks.length === 0) {
         throw new AssistantSourceIngestionError('SOURCE_EXTRACTION_EMPTY', false);
       }
-      chunks = await this.prepareEmbeddings(source.id, extracted.chunks);
+      chunks = await this.prepareEmbeddings(source.id, extracted.chunks, fence);
       await this.persistExtraction({
         sourceId: source.id,
         revisionId: persisted.id,
@@ -177,7 +181,11 @@ export class AssistantSourceIngestionService {
     });
   }
 
-  private async prepareEmbeddings(sourceId: string, chunks: ExtractedSourceChunk[]) {
+  private async prepareEmbeddings(
+    sourceId: string,
+    chunks: ExtractedSourceChunk[],
+    fence?: AssistantSourceIngestionFence,
+  ) {
     if (!this.embeddings.isEnabled() || chunks.length === 0) {
       return chunks.map((chunk) => ({
         ...chunk,
@@ -209,9 +217,21 @@ export class AssistantSourceIngestionService {
     `);
     const vectorsByHash = new Map(reusable.map((row) => [row.contentHash, parseVector(row.embedding)]));
     const changed = chunks.filter(({ contentHash }) => !vectorsByHash.has(contentHash));
+    let attemptOrdinal = 0;
     for (let offset = 0; offset < changed.length; offset += embeddingBatchSize) {
       const batch = changed.slice(offset, offset + embeddingBatchSize);
-      const result = await this.embeddings.embed(batch.map(({ text }) => text));
+      const result = await this.embeddings.embed(
+        batch.map(({ text }) => text),
+        fence ? {
+          operation: 'EMBEDDING_INGESTION',
+          operationRunId: fence.jobId,
+          executionId: fence.executionId,
+          nextAttemptOrdinal: () => {
+            attemptOrdinal += 1;
+            return attemptOrdinal;
+          },
+        } : undefined,
+      );
       batch.forEach((chunk, index) => vectorsByHash.set(chunk.contentHash, result.vectors[index]!));
     }
     return chunks.map((chunk) => ({

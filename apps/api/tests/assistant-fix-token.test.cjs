@@ -17,8 +17,11 @@ const { Prisma } = require('@prisma/client');
 
 const {
   ASSISTANT_AI_PRICING_CATALOG_VERSION,
+  ASSISTANT_EMBEDDING_PRICING_CATALOG_VERSION,
   addAssistantUsd,
   calculateAssistantAiCost,
+  calculateAssistantEmbeddingCost,
+  estimateAssistantEmbeddingCallCost,
   estimateAssistantAiCallCost,
   parseAssistantUsd,
 } = require('../dist/assistant/operations/assistant-ai-cost.js');
@@ -148,6 +151,37 @@ test('FIX-TOKEN cost catalog prices cached, cache-write and Web Search usage sep
   assert.equal(conservative.estimatedUsd, '0.00102425');
 });
 
+test('PIDAFIX1 embedding catalog prices only supported models and dimensions conservatively', () => {
+  assert.deepEqual(calculateAssistantEmbeddingCost({
+    model: 'text-embedding-3-small',
+    inputTokens: 1_000_000,
+  }), {
+    catalogVersion: ASSISTANT_EMBEDDING_PRICING_CATALOG_VERSION,
+    status: 'PRICED',
+    estimatedUsd: '0.02000000',
+    estimatedUsdUnits: 2_000_000n,
+  });
+  assert.equal(calculateAssistantEmbeddingCost({
+    model: 'text-embedding-3-large',
+    inputTokens: 1_000_000,
+  }).estimatedUsd, '0.13000000');
+  assert.equal(calculateAssistantEmbeddingCost({
+    model: 'text-embedding-ada-002',
+    inputTokens: 1,
+  }).status, 'MODEL_UNPRICED');
+
+  assert.equal(estimateAssistantEmbeddingCallCost({
+    model: 'text-embedding-3-small',
+    dimensions: 256,
+    inputBytes: 4,
+  }).estimatedUsd, '0.00000008');
+  assert.equal(estimateAssistantEmbeddingCallCost({
+    model: 'text-embedding-3-small',
+    dimensions: 1_537,
+    inputBytes: 4,
+  }).status, 'DIMENSIONS_UNSUPPORTED');
+});
+
 test('FIX-TOKEN rejects an unsupported service tier before creating a reservation', async () => {
   let transactionCalls = 0;
   const service = new AssistantAiUsageBudgetService({
@@ -228,6 +262,29 @@ test('FIX-TOKEN surfaces the final settlement failure without attempting Terra',
   );
   assert.equal(gatewayCalls, 1);
   assert.equal(settlementCalls, 1);
+});
+
+test('PIDAFIX1 planner never reaches the provider after reservation rejection', async () => {
+  let gatewayCalls = 0;
+  const planner = new AssistantQueryPlanner({
+    async plan() {
+      gatewayCalls += 1;
+      throw new Error('provider must not be called');
+    },
+  }, {
+    async beforeAttempt() {
+      const error = new Error('budget conflict');
+      error.code = 'ASSISTANT_AI_ATTEMPT_CONFLICT';
+      throw error;
+    },
+    async afterAttempt() { throw new Error('settlement must not run'); },
+  });
+
+  await assert.rejects(
+    planner.planWithValidation({ messages: ['Подбери квартиру'], context: null }, async () => null),
+    (error) => error.code === 'ASSISTANT_PLANNER_PROVIDER_FAILED',
+  );
+  assert.equal(gatewayCalls, 0);
 });
 
 test('FIX-TOKEN OpenAI mode requires an explicit daily USD budget', () => {

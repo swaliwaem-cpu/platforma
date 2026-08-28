@@ -27,6 +27,7 @@
     "test:assistant:fix-geo1:postgres": "pnpm build:api && node apps/api/tests/assistant-t05-postgres.cjs",
     "test:assistant:fix-geo1:browser": "pnpm --filter @platforma/web test:assistant:t05:browser",
     "smoke:assistant:fix-geo1:live": "node --env-file-if-exists=.env apps/api/scripts/assistant-fix-geo1-live-smoke.cjs",
+    "smoke:assistant:local-paid": "docker compose exec -T -e ASSISTANT_LOCAL_PAID_SMOKE_ACCESS_TOKEN api node apps/api/scripts/assistant-local-paid-smoke.cjs",
     "test:assistant:t06:postgres": "pnpm build:api && node apps/api/tests/assistant-t06-postgres.cjs",
     "test:assistant:t06:browser": "pnpm --filter @platforma/web test:assistant:t06:browser",
     "test:assistant:t07:domain": "pnpm build:api && node apps/api/tests/assistant-t07-domain.test.cjs",
