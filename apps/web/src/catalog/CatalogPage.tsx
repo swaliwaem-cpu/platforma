@@ -1469,7 +1469,9 @@ function CatalogMapView({
     [objects, selectedObjectId],
   );
   const handleBoundsChange = useCallback((bounds: MapBounds) => {
-    setVisibleBounds(bounds);
+    setVisibleBounds((current) => (
+      current && areMapBoundsEqual(current, bounds) ? current : bounds
+    ));
   }, []);
   const handleSelectObject = useCallback((objectId: string) => {
     setSelectedObjectId(objectId);
@@ -2470,6 +2472,13 @@ function isMapObjectInBounds(object: MapObject, bounds: MapBounds) {
     object.longitude >= minLongitude &&
     object.longitude <= maxLongitude
   );
+}
+
+function areMapBoundsEqual(first: MapBounds, second: MapBounds) {
+  return Math.abs(first[0][0] - second[0][0]) < 0.0000001
+    && Math.abs(first[0][1] - second[0][1]) < 0.0000001
+    && Math.abs(first[1][0] - second[1][0]) < 0.0000001
+    && Math.abs(first[1][1] - second[1][1]) < 0.0000001;
 }
 
 function buildMapPopup(object: MapObject, filters: CatalogFilters) {

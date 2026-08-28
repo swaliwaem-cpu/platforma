@@ -39,6 +39,80 @@ mobile assistant без горизонтального scroll. Тот же authe
 desktop/mobile touch targets и отсутствие Yandex/provider requests. Реальные
 providers не включались; их bounded smoke остаётся отдельным разрешаемым gate ниже.
 
+## Фактическая приёмка PIDAFIX3 29.08.2026
+
+Свежий isolated run `platforma-pidafix3-65223eca` выполнен из HEAD
+`491e21dacd1b4e5c1d4e62cbcd6cf7280ddc2201` с task-specific diff SHA-256
+`cafe2f892604df899bcbdd7ddd8bdafcaf854bced8577aa5f9aa60d98ddd11b1`.
+PostgreSQL/PostGIS, API и web были пересобраны из текущего worktree. Основная база и
+четыре отдельные gate-базы прошли полный migration replay и `prisma migrate status`.
+Readiness подтвердил PostGIS 3.5, таблицу `assistant_geo_landmarks`, пустой assistant
+backlog, HTTP `200/401/200` для health, unauthenticated и authenticated assistant
+config, а также минимальный RBAC без общего `db:seed`. Использован локальный Docker
+target `desktop-linux` через Unix socket (`docker-desktop` 29.4.1).
+
+| Gate | Exit | Tests | Duration |
+| --- | ---: | ---: | ---: |
+| `t07-domain` | 0 | 11 | 7 461 ms |
+| `t07-targeted` | 0 | 60 | 11 959 ms |
+| `t07-connected-e2e` | 0 | 1 suite | 273 252 ms |
+| `fix-token-unit` | 0 | 59 | 997 ms |
+| `t03-discovery-unit` | 0 | 75 | 495 ms |
+| `t03-connector-unit` | 0 | 12 | 1 452 ms |
+| `fix-token-postgres` | 0 | 15 | 10 613 ms |
+| `t03-postgres` | 0 | 2 | 7 176 ms |
+| `t03-browser` | 0 | 1 suite | 8 198 ms |
+| `fix-geo1-targeted` | 0 | 86 | 15 004 ms |
+| `fix-geo1-postgres` | 0 | 18 | 12 070 ms |
+| `fix-geo1-browser` | 0 | 1 suite | 9 352 ms |
+| `pnpm test` | 0 | 1 190 | 16 832 ms |
+| `pnpm build` | 0 | n/a | 10 229 ms |
+| task diff check | 0 | n/a | 17 ms |
+
+Connected E2E завершился `ASSISTANT_T07_E2E_OK`. На desktop `1440×960` проверены
+POINT и LINE, на mobile `390×844` — AREA. LINE прошёл через resolver, persisted
+landmark, run/message и `ST_DWithin`; AREA — через persisted polygon и `ST_Covers`.
+Подтверждены default 5 км, explicit 1 км, hard filters, inclusion/exclusion на границе,
+полные reference/search geometry, отсутствие centroid anchor, предел `3 primary +
+2 alternative`, отдельный LINE alternative при пустом exact set, attribution и отсутствие
+horizontal overflow.
+
+Вручную просмотрены свежие screenshots `desktop-assistant-geo`,
+`desktop-assistant-geo-alternatives`, `desktop-assistant-geo-line`,
+`desktop-assistant-geo-line-alternative`, `desktop-catalog-map`, `desktop-admin-source-health`,
+`desktop-map-style-degradation`, `desktop-map-tile-degradation`, `mobile-assistant`
+и `mobile-assistant-geo-area`.
+
+Интерактивная browser-приёмка того же product worktree подтвердила:
+
+| Case | Result |
+| --- | --- |
+| launcher, close/open, history и новый разговор | PASS |
+| принудительный `503`, видимый retry и успешное повторение | PASS |
+| POINT, LINE exact/alternative и AREA | PASS |
+| Escape/cancel без изменения geo context; confirm создаёт новый run | PASS |
+| geocoder, style и tile degradation с сохранённым списком | PASS |
+| desktop и mobile `390×844` без horizontal overflow | PASS |
+| обычная роль: audit UI закрыт сообщением «Недостаточно прав»; API gate — `403` | PASS |
+
+Перед финальным run дополнительно проверены безопасный storage env для полного test suite,
+abort-aware readiness и bounded `SIGTERM` → `SIGKILL` cleanup process group, включая потомка,
+игнорирующего `SIGTERM`. Cleanup standalone T07 удаляет все containers текущего run по точному
+ownership label и повторяет sweep после signal cleanup, поэтому migration container не может
+удержать временную network.
+Финальный run прошёл все connected browser journeys; новые screenshots просмотрены уже из него.
+Backend transport evidence и outbound deny hook
+подтвердили `0` OpenAI, `0` LocationIQ и `0` Overpass calls, `0` persisted provider attempts
+и `0` denied remote requests; browser Network — `0` OpenFreeMap/Yandex/provider requests.
+Стоимость run — `$0` на fake modes без provider credentials.
+
+OpenAI и Geo Provider smoke намеренно не запускались: для каждого требуется новая
+явная команда с отдельными caps. Cleanup удалил только ticket containers, network,
+volume и три точных ticket image tag; residual containers/networks/volumes/nested
+resources/images отсутствуют, исходные шесть local containers сохранены. Production
+не использовался. Машиночитаемый отчёт:
+`/var/folders/jg/7zrmwgln1n37nv0260tjyt2w0000gn/T/platforma-pidafix3-qa-65223eca-p0vwq3/pidafix3-baseline-report.json`.
+
 ## Ручная приёмка fake-контура
 
 Проверять на desktop `1440×960` и mobile `390×844` с fake AI/embedding/geo,
@@ -74,31 +148,40 @@ Worker внешних источников не входит в default Compose 
 
 ## Bounded smoke реальных providers
 
-Эти проверки выполняются только вручную после отдельного разрешения и с уже
-настроенными credentials. Они не входят в CI и не должны запускаться этим тикетом.
+Эти две проверки выполняются только после новой явной команды пользователя с
+указанными caps. Они не входят в baseline/CI, не запускаются друг с другом и по
+умолчанию оба работают как dry-run без внешних вызовов. Credentials передаются только
+через окружение процесса: не в CLI arguments, env-файле, screenshots или report.
 
 ### OpenAI
 
-- включить реальный AI mode только в disposable/local окружении;
-- выполнить один простой structured search и один сложный mortgage/installment query;
-- лимит: не более двух пользовательских запросов и не более четырёх model attempts;
-- подтвердить telemetry, token budget, fallback и отсутствие invented facts;
-- сразу вернуть fake mode и удалить временный credential из окружения процесса.
+После свежего fake baseline и отдельного разрешения запустить PIDAFIX1 CLI с точными
+пределами `2` user requests, `4` model attempts и `$0.50`. Geo/Overpass, embeddings,
+connectors и source worker в этом runtime выключены. Результат принимается только после
+сверки structured search, mortgage/installment, отсутствия invented facts/Web Search и
+persisted ledger. После любого исхода runtime сразу возвращается в fake mode.
 
-### LocationIQ
+### Geo Provider
 
-- включить Geo Provider отдельно от assistant и MapLibre renderer;
-- выполнить один resolve `Павелецкая Плаза, Москва` с радиусом 2 км;
-- лимит: один пользовательский resolve и не более двух HTTP attempts с retry;
-- подтвердить provider call counter, cache и degraded state при искусственном timeout;
-- сразу вернуть fake mode.
+Харнес запускается только после новой команды с точными caps `8 LocationIQ + 3 Overpass = 11`
+и ссылкой на свежий `pidafix3-baseline-report.json` того же HEAD/diff:
 
-### OpenFreeMap
+```bash
+pnpm smoke:assistant:pidafix3:geo -- \
+  --run-live-geo \
+  --max-locationiq-attempts 8 \
+  --max-overpass-attempts 3 \
+  --max-total-attempts 11 \
+  --baseline-report /absolute/path/pidafix3-baseline-report.json
+```
 
-- включить renderer с утверждённым style URL без изменения Geo Provider flag;
-- открыть один catalog map и одну object detail map;
-- подтвердить Moscow tiles, attribution, marker/list sync и отсутствие Yandex requests;
-- не выполнять crawl, tile prefetch или нагрузочный тест.
+Runner сам создаёт clean Compose/PostGIS runtime, требует `MAX_RETRIES=0`, отклоняет legacy
+`ASSISTANT_FIX_GEO1_LIVE_ALLOW_REMOTE` и идёт строго последовательно: POINT Белорусского вокзала,
+Садовое кольцо, ТТК, МКАД и `INSIDE` района Арбат. Для каждого case сверяются receipts,
+canonical identity, `cacheHit=false` и digest полной PostGIS geometry. Browser затем переиспользует
+saved LINE/AREA landmark; provider counters до/после обязаны совпасть. Style остаётся local stub,
+любой OpenFreeMap/Yandex/provider request из browser делает gate красным. Реальный Geo smoke в этом
+выполнении не запускался.
 
 ## Rollout gate
 

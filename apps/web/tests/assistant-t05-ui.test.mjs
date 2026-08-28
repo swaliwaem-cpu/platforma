@@ -17,7 +17,14 @@ test('Assistant T05 picker keeps map movement as draft and searches only from ex
   assert.match(pickerSource, /onConfirm\(\{[\s\S]*source: 'MANUAL'/u);
   assert.doesNotMatch(pickerSource, /sendAssistantMessage|resolveAssistantGeo/u);
   assert.match(chatSource, /handleGeoPickerConfirm[\s\S]*beginSubmission\(pendingGeoSubmission\.content, geo\)/u);
-  assert.match(chatSource, /handleGeoPickerCancel[\s\S]*geoPickerPurpose === 'EDIT'/u);
+  assert.match(
+    chatSource,
+    /shouldDiscardPendingGeoSubmissionOnPickerCancel[\s\S]*geoPickerPurpose === 'EDIT'[\s\S]*draft\.trim\(\)\.length > 0/u,
+  );
+  assert.match(
+    chatSource,
+    /handleGeoPickerCancel[\s\S]*shouldDiscardPendingGeoSubmissionOnPickerCancel/u,
+  );
   assert.match(chatSource, /openGeoPicker[\s\S]*setPendingGeoSubmission\(\{ content \}\)/u);
 });
 
@@ -40,6 +47,17 @@ test('Assistant FIX-GEO1 map renders reference plus search geometry and remains 
   assert.match(mapSource, /fitMapToContent/u);
   assert.match(styles, /\.map-price-marker--alternative/u);
   assert.match(styles, /\.assistant-geo-picker-map \.platform-map-shell/u);
+});
+
+test('Assistant FIX-GEO1 map fits stable geometry content without identity feedback loops', () => {
+  assert.match(mapSource, /const emptyMapGeometries: MapGeometry\[\] = \[\]/u);
+  assert.match(mapSource, /geometries = emptyMapGeometries/u);
+  assert.match(mapSource, /\[geometryCoordinatesKey, status\]/u);
+  assert.match(
+    mapSource,
+    /\[geometryCoordinatesKey, pointCoordinatesKey, prefersReducedMotion, status\]/u,
+  );
+  assert.doesNotMatch(mapSource, /\[geometries, geometryCoordinatesKey/u);
 });
 
 test('Assistant FIX-GEO1 uses trusted landmark ids, defaults and explicit line or area chips', () => {

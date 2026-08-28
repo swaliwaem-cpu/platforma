@@ -4,6 +4,7 @@ import { chromium } from '@playwright/test';
 
 const baseUrl = process.env.ASSISTANT_T05_WEB_TEST_URL;
 if (!baseUrl) throw new Error('ASSISTANT_T05_WEB_TEST_URL is required');
+const apiBaseUrl = process.env.ASSISTANT_T05_API_TEST_URL ?? 'http://localhost:3000';
 
 const LINE_LANDMARK_ID = '55555555-5555-4555-8555-555555555555';
 const AREA_LANDMARK_ID = '66666666-6666-4666-8666-666666666666';
@@ -51,6 +52,17 @@ async function verifyDesktopGeoFlow() {
     await picker.getByRole('button', { name: 'Отмена' }).click();
     assert.equal(await input.inputValue(), 'Найди квартиры до 25 млн');
     assert.equal(state.messageBodies.length, 0, 'cancel must not start property search');
+
+    await input.fill('Скрытый запрос после Escape');
+    await page.getByRole('button', { name: 'Выбрать точку на карте' }).click();
+    await page.keyboard.press('Escape');
+    await picker.waitFor({ state: 'hidden' });
+    await input.fill('');
+    await page.getByRole('button', { name: 'Выбрать точку на карте' }).click();
+    await picker.getByRole('button', { name: 'Подтвердить точку' }).click();
+    await page.waitForTimeout(200);
+    assert.equal(state.messageBodies.length, 0, 'Escape must discard the hidden pending draft');
+    await page.getByRole('button', { name: 'Убрать геопоиск' }).click();
 
     await input.fill('');
     await page.getByRole('button', { name: 'Выбрать точку на карте' }).click();
@@ -250,17 +262,25 @@ async function verifyMobilePickerAndAreaGeometry() {
 }
 
 async function disableMapTiles(page) {
-  await page.addInitScript(() => {
-    window.__PLATFORMA_RUNTIME_CONFIG__ = { mapProviderEnabled: false };
+  await page.route(`${baseUrl}/runtime-config.js`, async (route) => {
+    await route.fulfill({
+      body: 'window.__PLATFORMA_RUNTIME_CONFIG__ = { mapProviderEnabled: false };\n',
+      contentType: 'text/javascript; charset=utf-8',
+      status: 200,
+    });
   });
 }
 
 async function enableFixtureMap(page) {
-  await page.addInitScript(() => {
-    window.__PLATFORMA_RUNTIME_CONFIG__ = {
-      mapProviderEnabled: true,
-      mapStyleUrl: 'https://map-fixtures.test/style.json',
-    };
+  await page.route(`${baseUrl}/runtime-config.js`, async (route) => {
+    await route.fulfill({
+      body: `window.__PLATFORMA_RUNTIME_CONFIG__ = ${JSON.stringify({
+        mapProviderEnabled: true,
+        mapStyleUrl: 'https://map-fixtures.test/style.json',
+      })};\n`,
+      contentType: 'text/javascript; charset=utf-8',
+      status: 200,
+    });
   });
   await page.route('https://map-fixtures.test/style.json', async (route) => {
     await json(route, { version: 8, sources: {}, layers: [] });
@@ -280,7 +300,7 @@ function createState(overrides = {}) {
 }
 
 async function installRoutes(page, state) {
-  await page.route('http://localhost:3000/**', async (route) => {
+  await page.route(`${apiBaseUrl}/**`, async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
     if (path === '/auth/refresh') {

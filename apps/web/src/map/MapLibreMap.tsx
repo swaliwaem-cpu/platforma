@@ -59,6 +59,7 @@ const initialAmenityVisibility: Record<OpenMapTilesAmenityCategory, boolean> = {
   recreation: false,
   healthcare: false,
 };
+const emptyMapGeometries: MapGeometry[] = [];
 
 const providerErrorState = {
   eyebrow: 'Карта',
@@ -75,7 +76,7 @@ export default function MapLibreMap({
   enableMeasurement = true,
   initialViewport,
   points,
-  geometries = [],
+  geometries = emptyMapGeometries,
   selectedPointId = null,
   styleUrl,
   onBoundsChange,
@@ -313,7 +314,7 @@ export default function MapLibreMap({
     if (!map || status !== 'ready') return;
     const source = map.getSource(ASSISTANT_GEO_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
     if (source) void source.setData(createMapGeometryGeoJson(geometries));
-  }, [geometries, geometryCoordinatesKey, status]);
+  }, [geometryCoordinatesKey, status]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -341,7 +342,7 @@ export default function MapLibreMap({
     }
 
     fitMapToContent(map, points, geometries, prefersReducedMotion);
-  }, [geometries, geometryCoordinatesKey, pointCoordinatesKey, prefersReducedMotion, status]);
+  }, [geometryCoordinatesKey, pointCoordinatesKey, prefersReducedMotion, status]);
 
   useEffect(() => {
     const map = mapRef.current;

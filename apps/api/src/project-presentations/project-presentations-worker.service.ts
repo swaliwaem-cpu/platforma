@@ -11,10 +11,18 @@ const pollIntervalMs = 2_000;
 const staleJobMs = 15 * 60_000;
 const maxAttempts = 3;
 
+export function isProjectPresentationsWorkerEnabled(environment: NodeJS.ProcessEnv = process.env) {
+  const value = environment.PROJECT_PRESENTATIONS_WORKER_ENABLED?.trim().toLowerCase();
+  if (!value || value === 'true') return true;
+  if (value === 'false') return false;
+  throw new Error('PROJECT_PRESENTATIONS_WORKER_ENABLED_INVALID');
+}
+
 @Injectable()
 export class ProjectPresentationsWorkerService implements OnModuleInit, OnModuleDestroy {
   private timer: ReturnType<typeof setInterval> | null = null;
   private active = false;
+  private readonly enabled = isProjectPresentationsWorkerEnabled();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -23,6 +31,7 @@ export class ProjectPresentationsWorkerService implements OnModuleInit, OnModule
   ) {}
 
   async onModuleInit() {
+    if (!this.enabled) return;
     const staleBefore = new Date(Date.now() - staleJobMs);
     await this.prisma.projectPresentationDocument.updateMany({
       where: {
@@ -50,6 +59,7 @@ export class ProjectPresentationsWorkerService implements OnModuleInit, OnModule
   }
 
   kick() {
+    if (!this.enabled) return;
     void this.drain();
   }
 

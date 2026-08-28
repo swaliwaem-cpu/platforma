@@ -3,7 +3,7 @@ require('reflect-metadata');
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
-const { cp, mkdir, mkdtemp, readFile, readdir, rm } = require('node:fs/promises');
+const { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } = require('node:fs/promises');
 const { createServer } = require('node:http');
 const { tmpdir } = require('node:os');
 const { join, resolve } = require('node:path');
@@ -19,15 +19,58 @@ const {
 const {
   loadAssistantEvalRunRecordsByIds,
 } = require('../scripts/assistant-eval-runtime.cjs');
+const {
+  createT07OwnershipFilters,
+  installTerminationHandlers,
+  removeT07OwnedDockerResources,
+  runCommand: runRuntimeCommand,
+} = require('../scripts/assistant-pidafix3-runtime.cjs');
+
+const lineReferenceGeometry = {
+  type: 'LineString',
+  coordinates: [
+    [37.5804, 55.7663],
+    [37.6216, 55.7765],
+    [37.6576, 55.7554],
+    [37.6427, 55.7243],
+    [37.6004, 55.7175],
+    [37.5741, 55.7412],
+    [37.5804, 55.7663],
+  ],
+};
+const areaReferenceGeometry = {
+  type: 'Polygon',
+  coordinates: [[
+    [37.565, 55.744],
+    [37.603, 55.744],
+    [37.606, 55.763],
+    [37.571, 55.765],
+    [37.565, 55.744],
+  ]],
+};
 
 const root = resolve(__dirname, '../../..');
 const apiRoot = resolve(root, 'apps/api');
 const webRoot = resolve(root, 'apps/web');
 const prismaRoot = resolve(apiRoot, 'prisma');
-const container = `platforma-assistant-t07-${randomUUID().slice(0, 8)}`;
+const resourceSuffix = process.env.ASSISTANT_T07_RESOURCE_SUFFIX ?? randomUUID().slice(0, 8);
+assert.match(resourceSuffix, /^[a-f0-9]{8}$/u, 'ASSISTANT_T07_RESOURCE_SUFFIX_INVALID');
+const parentProject = process.env.ASSISTANT_T07_PARENT_PROJECT ?? null;
+if (parentProject !== null) {
+  assert.match(parentProject, /^platforma-pidafix3-[a-f0-9]{8}$/u, 'ASSISTANT_T07_PARENT_PROJECT_INVALID');
+}
+const dockerOwnership = createT07OwnershipFilters(resourceSuffix);
+const dockerResourceLabels = [
+  '--label', dockerOwnership.label,
+  ...(parentProject ? ['--label', `com.platforma.assistant-t07.parent=${parentProject}`] : []),
+];
+const container = `platforma-assistant-t07-${resourceSuffix}`;
 const network = `${container}-network`;
 const databasePassword = `assistant-t07-${randomUUID()}`;
+const apiImage = process.env.ASSISTANT_T07_API_IMAGE || 'platforma-api:local';
+const postgresImage = process.env.ASSISTANT_T07_POSTGRES_IMAGE || 'platforma-postgres:16-postgis3.5-pgvector0.8.6';
 const password = 'AssistantT07!';
+const manualQaEnabled = process.env.ASSISTANT_T07_MANUAL_QA_HOLD === 'true';
 let postgresPort;
 let apiOrigin;
 let webOrigin;
@@ -36,26 +79,36 @@ let apiApp;
 let browser;
 let sourceServer;
 let sourceRequests = [];
+let providerStubRequests = { openai: 0, locationiq: 0, overpass: 0 };
+let deniedOutboundRequests = [];
+const originalFetch = globalThis.fetch;
 let webProcess;
+let cleanupPromise = null;
 
+const termination = installTerminationHandlers({
+  onSignal: () => { void cleanup().catch(() => {}); },
+});
 void main().catch((error) => {
   process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
-  process.exitCode = 1;
-});
+  process.exitCode = termination.exitCode ?? 1;
+}).finally(() => termination.dispose());
 
 async function main() {
+  let primaryError = null;
   try {
     if (process.env.ASSISTANT_T07_SKIP_DOCKER_BUILD !== 'true') {
       await run('docker', ['compose', 'build', 'postgres', 'api'], { timeout: 300_000 });
     }
     postgresPort = await reservePort();
-    await run('docker', ['network', 'create', network]);
+    await run('docker', ['network', 'create', ...dockerResourceLabels, network]);
     await startPostgres();
     await verifyMigrationReplay();
     configureSafeEnvironment(databaseUrl('platforma'));
     prisma = new PrismaClient({ datasources: { db: { url: databaseUrl('platforma') } } });
     await prisma.$connect();
     const sourceOrigin = await startSourceStub();
+    configureProviderStubs(sourceOrigin);
+    installOutboundDenyHook();
     const fixtures = await seed(sourceOrigin);
 
     const { AppModule } = require('../dist/app.module.js');
@@ -78,7 +131,7 @@ async function main() {
       /ASSISTANT_ROLLOUT_EVENTS_ARE_IMMUTABLE/u,
     );
     await ingestSource(fixtures.admin.user.id, sourceOrigin);
-    await startWeb(webPort);
+    await startWeb(webPort, sourceOrigin);
     browser = await chromium.launch({ headless: true });
 
     const journey = await userJourney(fixtures);
@@ -98,22 +151,38 @@ async function main() {
     await mobileJourney(fixtures);
     await mapDegradationJourney(fixtures, 'style');
     await mapDegradationJourney(fixtures, 'tile');
+    fixtures.connectedGeo = await seedConnectedGeoFixtures(fixtures.connectedGeoSeed);
+    await lineGeoJourney(fixtures);
+    await areaGeoJourney(fixtures);
+    await holdForManualQa(fixtures.regular.user.email);
     assert.equal(sourceRequests.length >= 1, true, 'stub source connector was not used');
-    process.stdout.write('ASSISTANT_T07_E2E_OK\n');
-  } finally {
-    await cleanup();
+    await writeProviderEvidence(await assertOutboundProviderIsolation());
+  } catch (error) {
+    primaryError = error;
   }
+  let cleanupError = null;
+  try {
+    await cleanup();
+  } catch (error) {
+    cleanupError = error;
+  }
+  if (primaryError && cleanupError) {
+    throw new AggregateError([primaryError, cleanupError], 'ASSISTANT_T07_E2E_AND_CLEANUP_FAILED');
+  }
+  if (cleanupError) throw cleanupError;
+  if (primaryError) throw primaryError;
+  process.stdout.write('ASSISTANT_T07_E2E_OK\n');
 }
 
 async function startPostgres() {
   await run('docker', [
-    'run', '--detach', '--rm', '--name', container, '--platform', 'linux/amd64',
+    'run', '--detach', '--rm', ...dockerResourceLabels, '--name', container, '--platform', 'linux/amd64',
     '--env', 'POSTGRES_DB=platforma', '--env', 'POSTGRES_USER=platforma',
-    '--env', `POSTGRES_PASSWORD=${databasePassword}`, '--network', network,
+    '--env', 'POSTGRES_PASSWORD', '--network', network,
     '--network-alias', 'postgres',
     '--publish', `127.0.0.1:${postgresPort}:5432`,
-    'platforma-postgres:16-postgis3.5-pgvector0.8.6',
-  ]);
+    postgresImage,
+  ], { env: { POSTGRES_PASSWORD: databasePassword } });
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const ready = await run('docker', [
       'exec', container, 'pg_isready', '--host', '127.0.0.1',
@@ -179,24 +248,24 @@ async function createPreGeoPrisma() {
 
 function migrate(directory, url) {
   return run('docker', [
-    'run', '--rm', '--network', network,
-    '--env', `DATABASE_URL=${url}`,
+    'run', '--rm', ...dockerResourceLabels, '--network', network,
+    '--env', 'DATABASE_URL',
     '--volume', `${directory}:/app/apps/api/prisma:ro`,
-    'platforma-api:local',
+    apiImage,
     'pnpm', '--dir', 'apps/api', 'exec', 'prisma', 'migrate', 'deploy',
     '--schema', '/app/apps/api/prisma/schema.prisma',
-  ], { timeout: 120_000 });
+  ], { env: { DATABASE_URL: url }, timeout: 120_000 });
 }
 
 function migrationStatus(directory, url) {
   return run('docker', [
-    'run', '--rm', '--network', network,
-    '--env', `DATABASE_URL=${url}`,
+    'run', '--rm', ...dockerResourceLabels, '--network', network,
+    '--env', 'DATABASE_URL',
     '--volume', `${directory}:/app/apps/api/prisma:ro`,
-    'platforma-api:local',
+    apiImage,
     'pnpm', '--dir', 'apps/api', 'exec', 'prisma', 'migrate', 'status',
     '--schema', '/app/apps/api/prisma/schema.prisma',
-  ], { timeout: 60_000 });
+  ], { env: { DATABASE_URL: url }, timeout: 60_000 });
 }
 
 function configureSafeEnvironment(url) {
@@ -222,8 +291,65 @@ function configureSafeEnvironment(url) {
 
 async function startSourceStub() {
   const html = await readFile(resolve(__dirname, 'fixtures/assistant/official-development.html'));
+  const mapTile = createDeterministicMapTile();
   sourceServer = createServer((request, response) => {
-    sourceRequests.push(request.url ?? '/');
+    const pathname = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
+    const provider = Object.keys(providerStubRequests).find((key) => (
+      pathname.startsWith(`/__provider_stub__/${key}`)
+    ));
+    if (provider) {
+      providerStubRequests[provider] += 1;
+      response.writeHead(503, { 'content-type': 'application/json' });
+      response.end('{"error":"provider transport is disabled in ASSISTANT_T07"}');
+      return;
+    }
+    if (pathname === '/__map_fixture__/style.json') {
+      const fixtureOrigin = `http://${request.headers.host}`;
+      const style = JSON.stringify({
+        version: 8,
+        sources: {
+          rasterFixture: {
+            type: 'raster',
+            tiles: [`${fixtureOrigin}/__map_fixture__/tiles/{z}/{x}/{y}.png`],
+            tileSize: 256,
+            minzoom: 0,
+            maxzoom: 14,
+          },
+          localAttribution: {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] },
+            attribution: '<a href="https://openfreemap.org">OpenFreeMap</a> · <a href="https://openstreetmap.org/copyright">OpenStreetMap</a>',
+          },
+        },
+        layers: [
+          { id: 'background', type: 'background', paint: { 'background-color': '#eef2f0' } },
+          {
+            id: 'raster-fixture',
+            type: 'raster',
+            source: 'rasterFixture',
+            paint: { 'raster-opacity': 0.9, 'raster-fade-duration': 0 },
+          },
+          { id: 'attribution-source', type: 'circle', source: 'localAttribution', paint: { 'circle-radius': 0 } },
+        ],
+      });
+      response.writeHead(200, {
+        'access-control-allow-origin': '*',
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(style),
+      });
+      response.end(style);
+      return;
+    }
+    if (pathname.startsWith('/__map_fixture__/tiles/')) {
+      response.writeHead(200, {
+        'access-control-allow-origin': '*',
+        'content-type': 'image/png',
+        'content-length': mapTile.length,
+      });
+      response.end(mapTile);
+      return;
+    }
+    sourceRequests.push(pathname);
     response.writeHead(200, {
       'content-type': 'text/html; charset=utf-8', etag: '"assistant-t07-fixture"',
       'last-modified': 'Wed, 26 Aug 2026 08:00:00 GMT',
@@ -232,6 +358,58 @@ async function startSourceStub() {
   });
   await new Promise((done) => sourceServer.listen(0, '127.0.0.1', done));
   return `http://127.0.0.1:${sourceServer.address().port}`;
+}
+
+function configureProviderStubs(sourceOrigin) {
+  Object.assign(process.env, {
+    ASSISTANT_OPENAI_BASE_URL: `${sourceOrigin}/__provider_stub__/openai`,
+    LOCATIONIQ_API_URL: `${sourceOrigin}/__provider_stub__/locationiq`,
+    ASSISTANT_OVERPASS_URL: `${sourceOrigin}/__provider_stub__/overpass`,
+  });
+}
+
+function installOutboundDenyHook() {
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url);
+    if (/^(?:api\.openai\.com|[^.]+\.locationiq\.com|overpass-api\.de)$/iu.test(url.hostname)) {
+      const safeTarget = `${url.protocol}//${url.hostname}${url.pathname}`;
+      deniedOutboundRequests.push(safeTarget);
+      throw new Error(`ASSISTANT_T07_OUTBOUND_DENIED:${safeTarget}`);
+    }
+    return originalFetch(input, init);
+  };
+}
+
+async function assertOutboundProviderIsolation() {
+  assert.deepEqual(providerStubRequests, { openai: 0, locationiq: 0, overpass: 0 });
+  assert.deepEqual(deniedOutboundRequests, []);
+  const locationIqAttempts = await prisma.assistantGeoUsageAttempt.count({
+    where: { provider: { in: ['locationiq', 'overpass'] } },
+  });
+  const openAiAttempts = await prisma.assistantAiUsageAttempt.count({
+    where: { provider: 'openai' },
+  });
+  assert.equal(locationIqAttempts, 0);
+  assert.equal(openAiAttempts, 0);
+  return {
+    version: 1,
+    transportStubCalls: { ...providerStubRequests },
+    persistedUsageAttempts: { openai: openAiAttempts, locationiq: 0, overpass: 0 },
+    deniedRemoteRequests: deniedOutboundRequests.length,
+  };
+}
+
+async function writeProviderEvidence(evidence) {
+  const evidencePath = process.env.ASSISTANT_T07_PROVIDER_EVIDENCE_PATH;
+  const nonce = process.env.ASSISTANT_T07_PROVIDER_EVIDENCE_NONCE;
+  if (evidencePath === undefined && nonce === undefined) return;
+  assert.equal(typeof evidencePath, 'string', 'ASSISTANT_T07_PROVIDER_EVIDENCE_PATH_REQUIRED');
+  assert.equal(resolve(evidencePath), evidencePath, 'ASSISTANT_T07_PROVIDER_EVIDENCE_PATH_MUST_BE_ABSOLUTE');
+  assert.match(nonce ?? '', /^[a-f0-9]{16}$/u, 'ASSISTANT_T07_PROVIDER_EVIDENCE_NONCE_INVALID');
+  await writeFile(evidencePath, `${JSON.stringify({ ...evidence, nonce }, null, 2)}\n`, {
+    flag: 'wx',
+    mode: 0o600,
+  });
 }
 
 async function seed(sourceOrigin) {
@@ -331,7 +509,188 @@ async function seed(sourceOrigin) {
       },
     }));
   }
-  return { regular, other, admin, objects, units };
+  const connectedGeoSeed = {
+    sourceOrigin,
+    developerId: developer.id,
+    districtId: district.id,
+    areaId: area.id,
+  };
+  return { regular, other, admin, objects, units, connectedGeoSeed };
+}
+
+async function seedConnectedGeoFixtures({ sourceOrigin, developerId, districtId, areaId }) {
+  const [points] = await prisma.$queryRawUnsafe(`
+    WITH
+      line AS (
+        SELECT ST_SetSRID(ST_GeomFromGeoJSON($1), 4326) AS geometry
+      ),
+      area AS (
+        SELECT ST_SetSRID(ST_GeomFromGeoJSON($2), 4326) AS geometry
+      ),
+      line_buffer_1km AS (
+        SELECT dumped.geom
+        FROM line
+        CROSS JOIN LATERAL ST_Dump(ST_Buffer(line.geometry::geography, 1025)::geometry) dumped
+        ORDER BY ST_Area(dumped.geom) DESC
+        LIMIT 1
+      ),
+      line_buffer_5km AS (
+        SELECT dumped.geom
+        FROM line
+        CROSS JOIN LATERAL ST_Dump(ST_Buffer(line.geometry::geography, 5025)::geometry) dumped
+        ORDER BY ST_Area(dumped.geom) DESC
+        LIMIT 1
+      ),
+      area_buffer AS (
+        SELECT dumped.geom
+        FROM area
+        CROSS JOIN LATERAL ST_Dump(ST_Buffer(area.geometry::geography, 25)::geometry) dumped
+        ORDER BY ST_Area(dumped.geom) DESC
+        LIMIT 1
+      ),
+      fixture_points AS (
+        SELECT
+          ST_LineInterpolatePoint(line.geometry, 0.05) AS line_a,
+          ST_LineInterpolatePoint(line.geometry, 0.55) AS line_b,
+          ST_PointN(ST_ExteriorRing(line_buffer_1km.geom), 1) AS line_override_outside,
+          ST_PointN(ST_ExteriorRing(line_buffer_5km.geom), 1) AS line_default_outside,
+          ST_LineInterpolatePoint(
+            ST_MakeLine(
+              ST_LineInterpolatePoint(ST_ExteriorRing(area.geometry), 0.1),
+              ST_PointOnSurface(area.geometry)
+            ),
+            0.05
+          ) AS area_inside,
+          ST_PointN(ST_ExteriorRing(area_buffer.geom), 1) AS area_outside,
+          line.geometry AS line_geometry,
+          area.geometry AS area_geometry
+        FROM line, area, line_buffer_1km, line_buffer_5km, area_buffer
+      )
+    SELECT
+      ST_X(line_a)::double precision AS "lineALongitude",
+      ST_Y(line_a)::double precision AS "lineALatitude",
+      ST_X(line_b)::double precision AS "lineBLongitude",
+      ST_Y(line_b)::double precision AS "lineBLatitude",
+      ST_X(line_override_outside)::double precision AS "lineOverrideLongitude",
+      ST_Y(line_override_outside)::double precision AS "lineOverrideLatitude",
+      ST_Distance(line_geometry::geography, line_override_outside::geography)::double precision
+        AS "lineOverrideDistance",
+      ST_X(line_default_outside)::double precision AS "lineDefaultOutsideLongitude",
+      ST_Y(line_default_outside)::double precision AS "lineDefaultOutsideLatitude",
+      ST_Distance(line_geometry::geography, line_default_outside::geography)::double precision
+        AS "lineDefaultOutsideDistance",
+      ST_X(area_inside)::double precision AS "areaInsideLongitude",
+      ST_Y(area_inside)::double precision AS "areaInsideLatitude",
+      ST_Covers(area_geometry, area_inside) AS "areaInsideCovered",
+      ST_Distance(ST_PointOnSurface(area_geometry)::geography, area_inside::geography)::double precision
+        AS "areaInsideCentroidDistance",
+      ST_X(area_outside)::double precision AS "areaOutsideLongitude",
+      ST_Y(area_outside)::double precision AS "areaOutsideLatitude",
+      ST_Covers(area_geometry, area_outside) AS "areaOutsideCovered",
+      ST_Distance(ST_Boundary(area_geometry)::geography, area_outside::geography)::double precision
+        AS "areaOutsideBoundaryDistance"
+    FROM fixture_points
+  `, JSON.stringify(lineReferenceGeometry), JSON.stringify(areaReferenceGeometry));
+  assert.ok(points, 'connected geo fixture points were not created');
+  assert.ok(points.lineOverrideDistance > 1_000 && points.lineOverrideDistance < 1_100);
+  assert.ok(points.lineDefaultOutsideDistance > 5_000 && points.lineDefaultOutsideDistance < 5_100);
+  assert.equal(points.areaInsideCovered, true);
+  assert.ok(points.areaInsideCentroidDistance > 500);
+  assert.equal(points.areaOutsideCovered, false);
+  assert.ok(points.areaOutsideBoundaryDistance > 0 && points.areaOutsideBoundaryDistance < 60);
+
+  const shared = { sourceOrigin, developerId, districtId, areaId };
+  const units = {
+    lineA: await createConnectedGeoOffer(shared, {
+      key: 'line-a', title: 'ЖК Линия A', rooms: 1, priceRub: 24_000_000,
+      latitude: points.lineALatitude, longitude: points.lineALongitude,
+    }),
+    lineB: await createConnectedGeoOffer(shared, {
+      key: 'line-b', title: 'ЖК Линия B', rooms: 1, priceRub: 26_000_000,
+      latitude: points.lineBLatitude, longitude: points.lineBLongitude,
+    }),
+    lineOverrideOutside: await createConnectedGeoOffer(shared, {
+      key: 'line-override-outside', title: 'ЖК Линия дальше 1 км', rooms: 1, priceRub: 28_000_000,
+      latitude: points.lineOverrideLatitude, longitude: points.lineOverrideLongitude,
+    }),
+    lineDefaultOutside: await createConnectedGeoOffer(shared, {
+      key: 'line-default-outside', title: 'ЖК Линия дальше 5 км', rooms: 1, priceRub: 25_000_000,
+      latitude: points.lineDefaultOutsideLatitude, longitude: points.lineDefaultOutsideLongitude,
+    }),
+    lineWrongRooms: await createConnectedGeoOffer(shared, {
+      key: 'line-wrong-rooms', title: 'ЖК Линия неверная комнатность', rooms: 2, priceRub: 24_000_000,
+      latitude: points.lineALatitude, longitude: points.lineALongitude,
+    }),
+    lineOverBudget: await createConnectedGeoOffer(shared, {
+      key: 'line-over-budget', title: 'ЖК Линия выше бюджета', rooms: 1, priceRub: 35_000_000,
+      latitude: points.lineBLatitude, longitude: points.lineBLongitude,
+    }),
+    areaInside: await createConnectedGeoOffer(shared, {
+      key: 'area-inside', title: 'ЖК Внутри Арбата', rooms: 3, priceRub: 36_000_000,
+      latitude: points.areaInsideLatitude, longitude: points.areaInsideLongitude,
+    }),
+    areaOutside: await createConnectedGeoOffer(shared, {
+      key: 'area-outside', title: 'ЖК За границей Арбата', rooms: 3, priceRub: 36_000_000,
+      latitude: points.areaOutsideLatitude, longitude: points.areaOutsideLongitude,
+    }),
+    areaWrongRooms: await createConnectedGeoOffer(shared, {
+      key: 'area-wrong-rooms', title: 'ЖК Арбат неверная комнатность', rooms: 2, priceRub: 36_000_000,
+      latitude: points.areaInsideLatitude, longitude: points.areaInsideLongitude,
+    }),
+    areaOverBudget: await createConnectedGeoOffer(shared, {
+      key: 'area-over-budget', title: 'ЖК Арбат выше бюджета', rooms: 3, priceRub: 45_000_000,
+      latitude: points.areaInsideLatitude, longitude: points.areaInsideLongitude,
+    }),
+  };
+  return { units, metrics: points };
+}
+
+async function createConnectedGeoOffer(shared, input) {
+  const object = await prisma.realEstateObject.create({
+    data: {
+      title: input.title,
+      slug: `assistant-t07-${input.key}`,
+      status: 'PUBLISHED',
+      type: 'RESIDENTIAL',
+      address: `Москва, PIDAFIX3 ${input.key}`,
+      developerId: shared.developerId,
+      primaryLocationId: shared.districtId,
+      feedUpdatedAt: oldDate(),
+      latitude: input.latitude,
+      longitude: input.longitude,
+      publishedAt: new Date(),
+      locations: { create: { locationId: shared.areaId } },
+    },
+  });
+  const source = await prisma.feedSource.create({
+    data: {
+      sourceKind: 'URL',
+      url: `${shared.sourceOrigin}/feeds/${input.key}.xml`,
+      format: 'CIAN_XML',
+      developerId: shared.developerId,
+      objectId: object.id,
+      isActive: true,
+      lastSuccessAt: new Date(),
+    },
+  });
+  return prisma.feedUnit.create({
+    data: {
+      sourceId: source.id,
+      objectId: object.id,
+      externalId: `assistant-t07-${input.key}`,
+      type: 'RESIDENTIAL',
+      status: 'AVAILABLE',
+      title: `${input.rooms}-комнатная квартира ${input.key}`,
+      rooms: input.rooms,
+      effectivePrice: input.priceRub,
+      effectivePricePerMeter: 400_000,
+      currency: 'RUB',
+      area: 60 + input.rooms * 10,
+      floor: 8,
+      createdAt: oldDate(),
+      updatedAt: oldDate(),
+    },
+  });
 }
 
 function rolloutEventData(stage, pilotUserIds) {
@@ -424,7 +783,7 @@ async function ingestSource(actorId, origin) {
   });
 }
 
-async function startWeb(port) {
+async function startWeb(port, sourceOrigin) {
   await run('pnpm', ['--filter', '@platforma/web', 'build'], {
     env: { VITE_API_URL: apiOrigin }, timeout: 120_000,
   });
@@ -432,7 +791,9 @@ async function startWeb(port) {
     cwd: webRoot,
     env: {
       ...process.env, HOST: '127.0.0.1', PORT: String(port), MAP_PROVIDER_ENABLED: 'true',
-      MAP_STYLE_URL: 'https://map-fixtures.test/style.json',
+      MAP_STYLE_URL: manualQaEnabled
+        ? `${sourceOrigin}/__map_fixture__/style.json`
+        : 'https://map-fixtures.test/style.json',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -445,6 +806,38 @@ async function startWeb(port) {
   throw new Error('ASSISTANT_T07_WEB_NOT_READY');
 }
 
+async function holdForManualQa(email) {
+  if (!manualQaEnabled) return;
+  let resume;
+  let timeoutId;
+  let handleInterrupt;
+  const resumed = new Promise((resolveResume) => { resume = resolveResume; });
+  const timedOut = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error('ASSISTANT_T07_MANUAL_QA_TIMEOUT')), 20 * 60_000);
+  });
+  const interrupted = new Promise((_, reject) => {
+    handleInterrupt = () => reject(
+      termination.abortSignal.reason ?? new Error('ASSISTANT_T07_MANUAL_QA_INTERRUPTED'),
+    );
+    if (termination.abortSignal.aborted) handleInterrupt();
+    else termination.abortSignal.addEventListener('abort', handleInterrupt, { once: true });
+  });
+  const handleResume = () => resume();
+  process.once('SIGUSR1', handleResume);
+  process.stdout.write(`ASSISTANT_T07_MANUAL_QA_READY ${JSON.stringify({
+    webOrigin,
+    email,
+    resumeSignal: 'SIGUSR1',
+  })}\n`);
+  try {
+    await Promise.race([resumed, timedOut, interrupted]);
+  } finally {
+    clearTimeout(timeoutId);
+    process.off('SIGUSR1', handleResume);
+    termination.abortSignal.removeEventListener('abort', handleInterrupt);
+  }
+}
+
 async function userJourney(fixtures) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 960 } });
   const page = await context.newPage();
@@ -453,6 +846,7 @@ async function userJourney(fixtures) {
   const unauthorizedUrls = [];
   const serviceUnavailableUrls = [];
   const runtimeErrors = [];
+  const runtimeErrorDetailPromises = [];
   page.on('request', (request) => requestedUrls.push(request.url()));
   page.on('requestfailed', (request) => failedRequestUrls.push({
     url: request.url(),
@@ -466,6 +860,17 @@ async function userJourney(fixtures) {
   page.on('console', (message) => {
     if (message.type() === 'error' || message.type() === 'warning') {
       runtimeErrors.push(`${message.type()}: ${message.text()}`);
+      runtimeErrorDetailPromises.push(Promise.all(message.args().slice(1).map(async (argument) => {
+        try {
+          return String(await argument.jsonValue());
+        } catch {
+          return '<unavailable>';
+        }
+      })).then((arguments_) => ({
+        arguments: arguments_,
+        location: message.location(),
+        pageUrl: page.url(),
+      })));
     }
   });
   await installMapFixture(page);
@@ -605,7 +1010,7 @@ async function userJourney(fixtures) {
     await startNewConversation(page);
     const namedGeoQuery = 'Найди двушку до 25 млн рядом с Павелецкая Плаза в радиусе 2 км';
     await submit(page, input, namedGeoQuery);
-    await page.getByText('Павелецкая Плаза · 2 км', { exact: true }).waitFor();
+    await page.getByText('Павелецкая Плаза · до 2 км', { exact: true }).waitFor();
     const distances = page.locator('.assistant-result-distance');
     await distances.last().waitFor();
     for (const text of await distances.allTextContents()) {
@@ -660,7 +1065,7 @@ async function userJourney(fixtures) {
     assert.equal(await prisma.assistantGeoOperation.count(), operationsBeforeManual);
     await waitForAssistantArticle(page, 'Найди в радиусе 2 км от geocoder unavailable');
     const runsBeforeMove = await countUserRuns(fixtures.regular.user.id);
-    await page.getByRole('button', { name: 'Изменить точку и радиус' }).click();
+    await page.getByRole('button', { name: 'Изменить точку и расстояние' }).click();
     await picker.getByRole('button', { name: '3 км' }).click();
     await picker.getByRole('button', { name: 'Подтвердить точку' }).click();
     await waitForCount(() => countUserRuns(fixtures.regular.user.id), runsBeforeMove + 1);
@@ -681,6 +1086,8 @@ async function userJourney(fixtures) {
     assert.equal(new URL(page.url()).searchParams.get('lotRooms'), '2');
     assert.equal(new URL(page.url()).searchParams.get('lotPriceMax'), '25000000');
     await captureQaScreenshot(page, 'desktop-catalog-map.png', catalogMap);
+    await catalogMap.getByRole('button', { name: 'Скрыть/показать' }).click();
+    await catalogMap.getByRole('button', { name: 'Показать список' }).waitFor();
     await catalogMap.getByRole('button', { name: 'Открыть карту на весь экран' }).click();
     const closeFullscreen = catalogMap.getByRole('button', { name: 'Закрыть полноэкранную карту' });
     await closeFullscreen.focus();
@@ -692,20 +1099,33 @@ async function userJourney(fixtures) {
     await page.getByRole('region', { name: 'Карта объекта' }).locator('.map-price-marker').waitFor();
 
     assertProviderIsolation(requestedUrls);
-    assert.equal(requestedUrls.some((url) => url.startsWith('https://map-fixtures.test/tiles/')), true);
+    assert.equal(requestedUrls.some((url) => (
+      url.startsWith('https://map-fixtures.test/tiles/')
+      || url.includes('/__map_fixture__/tiles/')
+    )), true);
     assert.deepEqual(failedRequestUrls.filter(({ url, errorText }) => (
       !/\.(?:woff2?|ttf)(?:\?.*)?$/u.test(url)
       && !(url === `${apiOrigin}/assistant/config` && errorText === 'net::ERR_ABORTED')
-      && !(url.startsWith('https://map-fixtures.test/tiles/') && errorText === 'net::ERR_ABORTED')
+      && !((
+        url.startsWith('https://map-fixtures.test/tiles/')
+        || url.includes('/__map_fixture__/tiles/')
+      ) && errorText === 'net::ERR_ABORTED')
     )), []);
     assert.equal(unauthorizedUrls.length >= 1, true);
     assert.deepEqual(unauthorizedUrls.filter((url) => url !== `${apiOrigin}/auth/refresh`), []);
     assert.deepEqual([...new Set(serviceUnavailableUrls)], [`${apiOrigin}/assistant/conversations`]);
-    assert.deepEqual(runtimeErrors.filter((message) => (
+    const filteredRuntimeErrors = runtimeErrors.filter((message) => (
       !/Failed to load resource: the server responded with a status of 503/iu.test(message)
       && !/Failed to load resource: the server responded with a status of 401/iu.test(message)
       && !/GL Driver Message .*GPU stall due to ReadPixels/iu.test(message)
-    )), []);
+    ));
+    if (filteredRuntimeErrors.length > 0) {
+      process.stderr.write(`${JSON.stringify({
+        filteredRuntimeErrors,
+        runtimeErrorDetails: await Promise.all(runtimeErrorDetailPromises),
+      }, null, 2)}\n`);
+    }
+    assert.deepEqual(filteredRuntimeErrors, []);
     return { accessToken: session.accessToken, exactRun, exactQuery, primaryMarkerColor };
   } finally {
     process.env.ASSISTANT_MODULE_ENABLED = 'true';
@@ -728,7 +1148,7 @@ async function alternativeGeoJourney(fixtures, primaryMarkerColor) {
     await submit(page, input, query);
     const article = await waitForAssistantArticle(page, query);
     await article.getByRole('heading', { name: 'Альтернативы' }).waitFor();
-    await page.getByText('Павелецкая Плаза · 2 км', { exact: true }).waitFor();
+    await page.getByText('Павелецкая Плаза · до 2 км', { exact: true }).waitFor();
     const distances = article.locator('.assistant-result-distance');
     await distances.last().waitFor();
     for (const text of await distances.allTextContents()) {
@@ -756,6 +1176,392 @@ async function alternativeGeoJourney(fixtures, primaryMarkerColor) {
   } finally {
     await context.close();
   }
+}
+
+async function lineGeoJourney(fixtures) {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 960 } });
+  const page = await context.newPage();
+  const requestedUrls = [];
+  page.on('request', (request) => requestedUrls.push(request.url()));
+  await installMapFixture(page);
+  try {
+    await login(page, fixtures.regular.user);
+    await page.getByRole('button', { name: 'Открыть ИИ-помощника' }).click();
+    await startNewConversation(page);
+    const input = page.getByLabel('Сообщение помощнику');
+    const operationIdsBeforeDefault = await readGeoOperationIds(fixtures.regular.user.id, 'садовое кольцо');
+    const query = 'Найди однокомнатную квартиру до 30 млн рядом с Садовым кольцом';
+    await submit(page, input, query);
+    const article = await waitForAssistantArticle(page, query);
+    await article.getByRole('heading', { name: 'Лучшие по этим критериям' }).waitFor();
+    await assertResultTitles(article, ['ЖК Линия A', 'ЖК Линия B', 'ЖК Линия дальше 1 км']);
+    for (const title of ['ЖК Линия дальше 5 км', 'ЖК Линия неверная комнатность', 'ЖК Линия выше бюджета']) {
+      assert.equal(await article.getByText(title, { exact: true }).count(), 0);
+    }
+    await page.getByText('Садовое кольцо · до 5 км от всей дороги', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('region', { name: 'Выбор точки и радиуса' }).count(), 0);
+    await assertGeoResultMap(article, {
+      ariaLabel: 'Результаты до 5 км от всей дороги Садовое кольцо',
+      mode: 'NEAR', referenceType: 'LineString', primaryMarkers: 3,
+    });
+    const defaultRun = await assertConnectedGeoRun({
+      fixtures,
+      query,
+      expectedKeys: ['lineA', 'lineB', 'lineOverrideOutside'],
+      excludedKeys: ['lineDefaultOutside', 'lineWrongRooms', 'lineOverBudget'],
+      kind: 'LINE', mode: 'NEAR', label: 'Садовое кольцо', distanceMeters: 5_000,
+      rooms: [1], budgetMaxRub: 30_000_000,
+    });
+    await assertLandmarkGeometry(defaultRun.answer.geo, 'LINE');
+    await assertNewGeoOperation({
+      actorUserId: fixtures.regular.user.id,
+      normalizedQuery: 'садовое кольцо',
+      previousIds: operationIdsBeforeDefault,
+      provider: 'fake',
+      providerCallCount: 1,
+    });
+
+    await page.getByRole('button', { name: 'Убрать геопоиск' }).click();
+    await startNewConversation(page);
+    const operationIdsBeforeOverride = await readGeoOperationIds(fixtures.regular.user.id, 'садовое кольцо');
+    const overrideQuery = 'Найди однокомнатную квартиру до 30 млн в радиусе 1 км от Садового кольца';
+    await submit(page, input, overrideQuery);
+    const overrideArticle = await waitForAssistantArticle(page, overrideQuery);
+    await overrideArticle.getByRole('heading', { name: 'Лучшие по этим критериям' }).waitFor();
+    await assertResultTitles(overrideArticle, ['ЖК Линия A', 'ЖК Линия B']);
+    for (const title of [
+      'ЖК Линия дальше 1 км', 'ЖК Линия дальше 5 км',
+      'ЖК Линия неверная комнатность', 'ЖК Линия выше бюджета',
+    ]) {
+      assert.equal(await overrideArticle.getByText(title, { exact: true }).count(), 0);
+    }
+    await page.getByText('Садовое кольцо · до 1 км от всей дороги', { exact: true }).waitFor();
+    await assertGeoResultMap(overrideArticle, {
+      ariaLabel: 'Результаты до 1 км от всей дороги Садовое кольцо',
+      mode: 'NEAR', referenceType: 'LineString', primaryMarkers: 2,
+    });
+    const overrideRun = await assertConnectedGeoRun({
+      fixtures,
+      query: overrideQuery,
+      expectedKeys: ['lineA', 'lineB'],
+      excludedKeys: [
+        'lineOverrideOutside', 'lineDefaultOutside', 'lineWrongRooms', 'lineOverBudget',
+      ],
+      kind: 'LINE', mode: 'NEAR', label: 'Садовое кольцо', distanceMeters: 1_000,
+      rooms: [1], budgetMaxRub: 30_000_000,
+    });
+    assert.equal(overrideRun.answer.geo.landmarkId, defaultRun.answer.geo.landmarkId);
+    await assertLandmarkGeometry(overrideRun.answer.geo, 'LINE');
+    await assertNewGeoOperation({
+      actorUserId: fixtures.regular.user.id,
+      normalizedQuery: 'садовое кольцо',
+      previousIds: operationIdsBeforeOverride,
+      provider: 'landmark_db',
+      providerCallCount: 0,
+    });
+    const dialog = page.getByRole('dialog', { name: 'ИИ-помощник по недвижимости' });
+    await overrideArticle.locator('.assistant-geo-result-map').scrollIntoViewIfNeeded();
+    assert.equal(await page.evaluate(() => (
+      document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1
+    )), true);
+    assert.equal(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth + 1), true);
+    await captureQaScreenshot(page, 'desktop-assistant-geo-line.png', dialog);
+
+    await page.getByRole('button', { name: 'Убрать геопоиск' }).click();
+    await startNewConversation(page);
+    const operationIdsBeforeAlternative = await readGeoOperationIds(fixtures.regular.user.id, 'садовое кольцо');
+    const alternativeQuery = 'Найди однокомнатную квартиру до 18 млн рядом с Садовым кольцом';
+    await submit(page, input, alternativeQuery);
+    const alternativeArticle = await waitForAssistantArticle(page, alternativeQuery);
+    await alternativeArticle.getByText(
+      'Точных совпадений нет. Показываю ближайшие альтернативы с явными отклонениями.',
+      { exact: true },
+    ).waitFor();
+    await alternativeArticle.getByText('Точных совпадений нет.', { exact: true }).waitFor();
+    await alternativeArticle.getByRole('heading', { name: 'Альтернативы' }).waitFor();
+    await assertResultTitles(alternativeArticle, ['ЖК Линия A']);
+    await alternativeArticle.getByText('Бюджет выше на 6 млн ₽', { exact: true }).waitFor();
+    for (const title of [
+      'ЖК Линия B', 'ЖК Линия дальше 1 км', 'ЖК Линия дальше 5 км',
+      'ЖК Линия неверная комнатность', 'ЖК Линия выше бюджета',
+    ]) {
+      assert.equal(await alternativeArticle.getByText(title, { exact: true }).count(), 0);
+    }
+    await page.getByText('Садовое кольцо · до 5 км от всей дороги', { exact: true }).waitFor();
+    await assertGeoResultMap(alternativeArticle, {
+      ariaLabel: 'Результаты до 5 км от всей дороги Садовое кольцо',
+      mode: 'NEAR', referenceType: 'LineString', primaryMarkers: 0, alternativeMarkers: 1,
+    });
+    const alternativeRun = await assertConnectedGeoRun({
+      fixtures,
+      query: alternativeQuery,
+      expectedKeys: [],
+      alternativeKeys: ['lineA'],
+      excludedKeys: [
+        'lineB', 'lineOverrideOutside', 'lineDefaultOutside', 'lineWrongRooms', 'lineOverBudget',
+      ],
+      kind: 'LINE', mode: 'NEAR', label: 'Садовое кольцо', distanceMeters: 5_000,
+      rooms: [1], budgetMaxRub: 18_000_000,
+    });
+    assert.equal(alternativeRun.answer.geo.landmarkId, defaultRun.answer.geo.landmarkId);
+    assert.deepEqual(alternativeRun.answer.alternatives[0].deviations, [
+      { type: 'BUDGET', label: 'Бюджет выше на 6 млн ₽' },
+    ]);
+    assert.deepEqual(alternativeRun.run.evidenceJson[0].deviations, [
+      { type: 'BUDGET', label: 'Бюджет выше на 6 млн ₽' },
+    ]);
+    assert.deepEqual(
+      alternativeRun.answer.geo.markers.map(({ unitId, kind: markerKind }) => ({ unitId, kind: markerKind })),
+      [{ unitId: fixtures.connectedGeo.units.lineA.id, kind: 'ALTERNATIVE' }],
+    );
+    assert.ok(alternativeRun.answer.geo.markers[0].distanceMeters <= 5_000);
+    await assertLandmarkGeometry(alternativeRun.answer.geo, 'LINE');
+    await assertNewGeoOperation({
+      actorUserId: fixtures.regular.user.id,
+      normalizedQuery: 'садовое кольцо',
+      previousIds: operationIdsBeforeAlternative,
+      provider: 'landmark_db',
+      providerCallCount: 0,
+    });
+    await alternativeArticle.locator('.assistant-geo-result-map').scrollIntoViewIfNeeded();
+    await captureQaScreenshot(page, 'desktop-assistant-geo-line-alternative.png', dialog);
+    assertProviderIsolation(requestedUrls);
+  } finally {
+    await context.close();
+  }
+}
+
+async function areaGeoJourney(fixtures) {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true });
+  const page = await context.newPage();
+  const requestedUrls = [];
+  page.on('request', (request) => requestedUrls.push(request.url()));
+  await installMapFixture(page);
+  try {
+    await login(page, fixtures.regular.user);
+    await page.getByRole('button', { name: 'Открыть ИИ-помощника' }).click();
+    await startNewConversation(page);
+    const input = page.getByLabel('Сообщение помощнику');
+    const operationIdsBefore = await readGeoOperationIds(fixtures.regular.user.id, 'район арбат');
+    const query = 'Найди трёхкомнатную квартиру до 40 млн внутри района Арбат';
+    await submit(page, input, query);
+    const article = await waitForAssistantArticle(page, query);
+    await article.getByRole('heading', { name: 'Лучшие по этим критериям' }).waitFor();
+    await assertResultTitles(article, ['ЖК Внутри Арбата']);
+    for (const title of ['ЖК За границей Арбата', 'ЖК Арбат неверная комнатность', 'ЖК Арбат выше бюджета']) {
+      assert.equal(await article.getByText(title, { exact: true }).count(), 0);
+    }
+    await page.getByText('внутри района Арбат', { exact: true }).waitFor();
+    assert.equal(await article.locator('.assistant-result-distance').count(), 0);
+    await assertGeoResultMap(article, {
+      ariaLabel: 'Результаты внутри области район Арбат',
+      mode: 'INSIDE', referenceType: 'Polygon', searchAreaType: 'Polygon', primaryMarkers: 1,
+    });
+    const run = await assertConnectedGeoRun({
+      fixtures,
+      query,
+      expectedKeys: ['areaInside'],
+      excludedKeys: ['areaOutside', 'areaWrongRooms', 'areaOverBudget'],
+      kind: 'AREA', mode: 'INSIDE', label: 'район Арбат', distanceMeters: null,
+      rooms: [3], budgetMaxRub: 40_000_000,
+    });
+    await assertLandmarkGeometry(run.answer.geo, 'AREA');
+    await assertNewGeoOperation({
+      actorUserId: fixtures.regular.user.id,
+      normalizedQuery: 'район арбат',
+      previousIds: operationIdsBefore,
+      provider: 'fake',
+      providerCallCount: 1,
+    });
+    const dialog = page.getByRole('dialog', { name: 'ИИ-помощник по недвижимости' });
+    await article.locator('.assistant-geo-result-map').scrollIntoViewIfNeeded();
+    assert.equal(await page.evaluate(() => (
+      document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1
+    )), true);
+    assert.equal(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth + 1), true);
+    await captureQaScreenshot(page, 'mobile-assistant-geo-area.png', dialog);
+    assertProviderIsolation(requestedUrls);
+  } finally {
+    await context.close();
+  }
+}
+
+async function assertResultTitles(article, expectedTitles) {
+  const titles = article.locator('a.assistant-result-title');
+  await titles.last().waitFor();
+  assert.deepEqual(
+    new Set((await titles.allTextContents()).map((title) => title.trim())),
+    new Set(expectedTitles),
+  );
+}
+
+async function assertGeoResultMap(article, {
+  ariaLabel,
+  mode,
+  referenceType,
+  searchAreaType = null,
+  primaryMarkers,
+  alternativeMarkers = 0,
+}) {
+  const wrapper = article.locator('.assistant-geo-result-map');
+  await wrapper.waitFor();
+  assert.equal(await wrapper.getAttribute('data-geo-mode'), mode);
+  assert.equal(await wrapper.getAttribute('data-reference-geometry'), referenceType);
+  const actualSearchAreaType = await wrapper.getAttribute('data-search-area-geometry');
+  if (searchAreaType) {
+    assert.equal(actualSearchAreaType, searchAreaType);
+  } else {
+    assert.match(actualSearchAreaType ?? '', /^(?:Multi)?Polygon$/u);
+  }
+  const map = article.getByRole('region', { name: ariaLabel });
+  await map.locator('canvas').waitFor();
+  await map.getByText('OpenFreeMap', { exact: true }).waitFor();
+  await map.getByText('OpenStreetMap', { exact: true }).waitFor();
+  assert.equal(await wrapper.locator('.map-price-marker--anchor').count(), 0);
+  assert.equal(await wrapper.locator('.map-price-marker--primary').count(), primaryMarkers);
+  assert.equal(await wrapper.locator('.map-price-marker--alternative').count(), alternativeMarkers);
+}
+
+async function assertConnectedGeoRun({
+  fixtures,
+  query,
+  expectedKeys,
+  alternativeKeys = [],
+  excludedKeys,
+  kind,
+  mode,
+  label,
+  distanceMeters,
+  rooms,
+  budgetMaxRub,
+}) {
+  const run = await prisma.assistantRun.findFirstOrThrow({
+    where: {
+      ownerUserId: fixtures.regular.user.id,
+      userMessage: { content: query },
+    },
+    orderBy: { createdAt: 'desc' },
+    include: {
+      userMessage: { select: { content: true, geoContextJson: true } },
+      assistantMessage: { select: { answerJson: true } },
+    },
+  });
+  const expected = expectedKeys.map((key) => fixtures.connectedGeo.units[key]);
+  const alternatives = alternativeKeys.map((key) => fixtures.connectedGeo.units[key]);
+  const selected = [...expected, ...alternatives];
+  const excluded = excludedKeys.map((key) => fixtures.connectedGeo.units[key]);
+  const answer = run.assistantMessage.answerJson;
+  assert.deepEqual(run.intentJson.hardFilters.rooms, rooms);
+  assert.equal(run.intentJson.hardFilters.budgetMaxRub, budgetMaxRub);
+  assert.equal(run.intentJson.hardFilters.objectType, 'RESIDENTIAL');
+  for (const key of ['district', 'metro', 'developer']) {
+    assert.equal(run.intentJson.hardFilters[key], null);
+  }
+  assert.deepEqual(run.userMessage.geoContextJson, {
+    kind,
+    mode,
+    label,
+    landmarkId: answer.geo.landmarkId,
+    ...(distanceMeters === null ? {} : { distanceMeters }),
+    source: 'LANDMARK',
+  });
+  assert.equal(answer.geo.kind, kind);
+  assert.equal(answer.geo.mode, mode);
+  assert.equal(answer.geo.label, label);
+  if (distanceMeters === null) {
+    assert.equal(answer.geo.distanceMeters, undefined);
+  } else {
+    assert.equal(answer.geo.distanceMeters, distanceMeters);
+  }
+  assert.equal(Object.hasOwn(answer.geo, 'anchor'), false);
+  assert.ok(answer.geo.markers.filter(({ kind: markerKind }) => markerKind === 'PRIMARY').length <= 3);
+  assert.ok(answer.geo.markers.filter(({ kind: markerKind }) => markerKind === 'ALTERNATIVE').length <= 2);
+  assert.deepEqual(
+    new Set(answer.exactResults.map(({ unitId }) => unitId)),
+    new Set(expected.map(({ id }) => id)),
+  );
+  assert.deepEqual(
+    new Set(answer.alternatives.map(({ unitId }) => unitId)),
+    new Set(alternatives.map(({ id }) => id)),
+  );
+  assert.deepEqual(
+    new Set(run.evidenceJson.map(({ unitId }) => unitId)),
+    new Set(selected.map(({ id }) => id)),
+  );
+  assert.deepEqual(
+    new Set(run.evidenceJson.map(({ objectId }) => objectId)),
+    new Set(selected.map(({ objectId }) => objectId)),
+  );
+  for (const offer of excluded) {
+    assert.equal(run.evidenceJson.some(({ unitId, objectId }) => (
+      unitId === offer.id || objectId === offer.objectId
+    )), false);
+  }
+  const landmark = await prisma.assistantGeoLandmark.findUniqueOrThrow({
+    where: { id: answer.geo.landmarkId },
+    select: {
+      kind: true,
+      label: true,
+      normalizedQuery: true,
+      sourceProvider: true,
+      confirmationState: true,
+      expiresAt: true,
+    },
+  });
+  assert.equal(landmark.kind, kind);
+  assert.equal(landmark.label, label);
+  assert.equal(landmark.normalizedQuery, kind === 'LINE' ? 'садовое кольцо' : 'район арбат');
+  assert.equal(landmark.sourceProvider, 'fake');
+  assert.equal(landmark.confirmationState, 'VERIFIED');
+  assert.ok(landmark.expiresAt instanceof Date);
+  return { answer, run };
+}
+
+async function assertLandmarkGeometry(geo, kind) {
+  const [row] = kind === 'AREA'
+    ? await prisma.$queryRawUnsafe(`
+        SELECT ST_AsGeoJSON("geometry", 7)::jsonb AS "referenceGeometry"
+        FROM "assistant_geo_landmarks"
+        WHERE "id" = $1::uuid
+      `, geo.landmarkId)
+    : await prisma.$queryRawUnsafe(`
+        SELECT
+          ST_AsGeoJSON("geometry", 7)::jsonb AS "referenceGeometry",
+          ST_AsGeoJSON(ST_Buffer("geometry"::geography, $1)::geometry, 7)::jsonb AS "searchArea"
+        FROM "assistant_geo_landmarks"
+        WHERE "id" = $2::uuid
+      `, geo.distanceMeters, geo.landmarkId);
+  assert.ok(row, `missing persisted ${kind} landmark geometry`);
+  assert.deepEqual(geo.referenceGeometry, row.referenceGeometry);
+  assert.deepEqual(geo.searchArea, kind === 'AREA' ? row.referenceGeometry : row.searchArea);
+}
+
+async function readGeoOperationIds(actorUserId, normalizedQuery) {
+  return new Set((await prisma.assistantGeoOperation.findMany({
+    where: { actorUserId, normalizedQuery },
+    select: { id: true },
+  })).map(({ id }) => id));
+}
+
+async function assertNewGeoOperation({
+  actorUserId,
+  normalizedQuery,
+  previousIds,
+  provider,
+  providerCallCount,
+}) {
+  const operations = (await prisma.assistantGeoOperation.findMany({
+    where: { actorUserId, normalizedQuery },
+    include: { usageAttempts: { orderBy: { attemptOrdinal: 'asc' } } },
+  })).filter(({ id }) => !previousIds.has(id));
+  assert.equal(operations.length, 1);
+  const [operation] = operations;
+  assert.equal(operation.provider, provider);
+  assert.equal(operation.status, 'RESOLVED');
+  assert.equal(operation.cacheHit, false);
+  assert.equal(operation.providerCallCount, providerCallCount);
+  assert.equal(operation.errorCode, null);
+  assert.deepEqual(operation.usageAttempts, []);
 }
 
 async function securityJourney(fixtures, journey) {
@@ -943,20 +1749,24 @@ async function navigateSpa(page, pathname) {
 
 async function installMapFixture(page, options = {}) {
   if (options.styleStatus) {
-    await page.route('https://map-fixtures.test/style.json', (route) => route.fulfill({
+    const fulfillStyleFailure = (route) => route.fulfill({
       status: options.styleStatus,
       contentType: 'text/plain',
       body: 'fixture style unavailable',
-    }));
+    });
+    await page.route('https://map-fixtures.test/style.json', fulfillStyleFailure);
+    await page.route(/\/__map_fixture__\/style\.json(?:\?.*)?$/u, fulfillStyleFailure);
     await page.route(/\.(?:woff2?|ttf)(?:\?.*)?$/u, (route) => route.abort());
     return;
   }
   const tileFixture = createDeterministicMapTile();
-  await page.route(/https:\/\/map-fixtures\.test\/tiles\/.*\.png/u, (route) => route.fulfill({
+  const fulfillTile = (route) => route.fulfill({
     status: options.tileStatus ?? 200,
     contentType: options.tileStatus ? 'text/plain' : 'image/png',
     body: options.tileStatus ? 'fixture tile unavailable' : tileFixture,
-  }));
+  });
+  await page.route(/https:\/\/map-fixtures\.test\/tiles\/.*\.png/u, fulfillTile);
+  await page.route(/\/__map_fixture__\/tiles\/.*\.png(?:\?.*)?$/u, fulfillTile);
   await page.route('https://map-fixtures.test/style.json', (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -1090,7 +1900,7 @@ function crc32(buffer) {
 
 function assertProviderIsolation(urls) {
   assert.deepEqual(urls.filter((url) => (
-    /openai|locationiq|api-maps\.yandex|yandex\.net\/maps|tiles\.openfreemap|openrouteservice/iu.test(url)
+    /openai|locationiq|overpass|api-maps\.yandex|yandex\.net\/maps|openfreemap|openrouteservice/iu.test(url)
   )), []);
 }
 
@@ -1150,29 +1960,11 @@ async function reservePort() {
 }
 
 async function run(command, args, options = {}) {
-  const result = await new Promise((done, reject) => {
-    const child = spawn(command, args, {
-      cwd: options.cwd ?? root,
-      env: { ...process.env, ...(options.env ?? {}) },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    const stdout = [];
-    const stderr = [];
-    const timer = setTimeout(() => {
-      child.kill('SIGTERM');
-      reject(new Error(`${command} timed out`));
-    }, options.timeout ?? 60_000);
-    child.stdout.on('data', (chunk) => stdout.push(chunk));
-    child.stderr.on('data', (chunk) => stderr.push(chunk));
-    child.once('error', reject);
-    child.once('close', (status) => {
-      clearTimeout(timer);
-      done({
-        status: status ?? 1,
-        stdout: Buffer.concat(stdout).toString('utf8'),
-        stderr: Buffer.concat(stderr).toString('utf8'),
-      });
-    });
+  const result = await runRuntimeCommand(command, args, {
+    cwd: options.cwd ?? root,
+    env: { ...process.env, ...(options.env ?? {}) },
+    timeoutMs: options.timeout ?? 60_000,
+    allowDuringShutdown: options.allowDuringShutdown,
   });
   if (result.status !== 0 && !options.allowFailure) {
     throw new Error(`${command} ${args.join(' ')} failed (${result.status})\n${result.stdout}\n${result.stderr}`);
@@ -1180,14 +1972,73 @@ async function run(command, args, options = {}) {
   return result;
 }
 
-async function cleanup() {
-  if (browser) await browser.close().catch(() => undefined);
-  if (webProcess && !webProcess.killed) webProcess.kill('SIGTERM');
-  if (apiApp) await apiApp.close().catch(() => undefined);
-  if (prisma) await prisma.$disconnect().catch(() => undefined);
-  if (sourceServer) await new Promise((done) => sourceServer.close(done));
-  await run('docker', ['rm', '--force', container], { allowFailure: true, timeout: 15_000 })
-    .catch(() => undefined);
-  await run('docker', ['network', 'rm', network], { allowFailure: true, timeout: 15_000 })
-    .catch(() => undefined);
+function cleanup() {
+  if (cleanupPromise === null) {
+    cleanupPromise = cleanupOnce();
+    return cleanupPromise;
+  }
+  cleanupPromise = cleanupPromise.then(
+    () => cleanupOwnedDockerResources(),
+    async (initialError) => {
+      try {
+        await cleanupOwnedDockerResources();
+      } catch (resweepError) {
+        throw new AggregateError(
+          [initialError, resweepError],
+          'ASSISTANT_T07_CLEANUP_AND_RESWEEP_FAILED',
+        );
+      }
+      throw initialError;
+    },
+  );
+  return cleanupPromise;
+}
+
+async function cleanupOnce() {
+  globalThis.fetch = originalFetch;
+  const errors = [];
+  await collectCleanupError(errors, async () => browser?.close());
+  await collectCleanupError(errors, async () => stopChildProcess(webProcess, 5_000));
+  await collectCleanupError(errors, async () => apiApp?.close());
+  await collectCleanupError(errors, async () => prisma?.$disconnect());
+  await collectCleanupError(errors, async () => {
+    if (sourceServer?.listening) {
+      await new Promise((done, reject) => sourceServer.close((error) => (error ? reject(error) : done())));
+    }
+  });
+  await collectCleanupError(errors, cleanupOwnedDockerResources);
+  if (errors.length > 0) throw new AggregateError(errors, 'ASSISTANT_T07_CLEANUP_FAILED');
+}
+
+async function cleanupOwnedDockerResources() {
+  await removeOwnedDockerResources('container');
+  await removeOwnedDockerResources('network');
+}
+
+async function collectCleanupError(errors, cleanupTask) {
+  try {
+    await cleanupTask();
+  } catch (error) {
+    errors.push(error);
+  }
+}
+
+async function stopChildProcess(child, graceMs) {
+  if (!child || child.exitCode !== null) return;
+  child.kill('SIGTERM');
+  const exited = new Promise((resolveExit) => child.once('close', resolveExit));
+  const reachedGrace = await Promise.race([
+    exited.then(() => false),
+    delay(graceMs).then(() => true),
+  ]);
+  if (!reachedGrace) return;
+  child.kill('SIGKILL');
+  await exited;
+}
+
+async function removeOwnedDockerResources(kind) {
+  await removeT07OwnedDockerResources(kind, dockerOwnership, (args) => run('docker', args, {
+    timeout: 15_000,
+    allowDuringShutdown: true,
+  }));
 }

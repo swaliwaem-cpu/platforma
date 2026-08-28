@@ -115,6 +115,9 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [geometry, setGeometry] = useState<AssistantGeometry>(() => readGeometry(userId));
+  const shouldDiscardPendingGeoSubmissionOnPickerCancel = (
+    geoPickerPurpose === 'EDIT' || draft.trim().length > 0
+  );
   const chatRef = useRef<HTMLElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
@@ -212,7 +215,7 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
       if (event.key !== 'Escape') return;
       if (isGeoPickerOpen) {
         setIsGeoPickerOpen(false);
-        if (geoPickerPurpose === 'EDIT') setPendingGeoSubmission(null);
+        if (shouldDiscardPendingGeoSubmissionOnPickerCancel) setPendingGeoSubmission(null);
         setGeoPickerPurpose('SELECT');
         return;
       }
@@ -223,7 +226,7 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
       window.cancelAnimationFrame(frameId);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [geoPickerPurpose, isGeoPickerOpen, isOpen]);
+  }, [isGeoPickerOpen, isOpen, shouldDiscardPendingGeoSubmissionOnPickerCancel]);
 
   useEffect(() => {
     const container = messagesRef.current;
@@ -472,7 +475,7 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
 
   const handleGeoPickerCancel = () => {
     setIsGeoPickerOpen(false);
-    if (geoPickerPurpose === 'EDIT' || draft.trim()) setPendingGeoSubmission(null);
+    if (shouldDiscardPendingGeoSubmissionOnPickerCancel) setPendingGeoSubmission(null);
     setGeoPickerPurpose('SELECT');
   };
 
