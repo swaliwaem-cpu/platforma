@@ -462,6 +462,42 @@ test('Assistant T02 ranking applies hard filters before soft ranking and keeps a
   assert.deepEqual(answer.alternatives, []);
 });
 
+test('Assistant T02 renders a feed-backed studio card with current commercial facts', () => {
+  const intent = validIntent({
+    hardFilters: { ...emptyFilters(), budgetMaxRub: 19_000_000, rooms: [0] },
+  });
+  const evidence = candidate('11111111-1111-4111-8111-111111111111', {
+    lotTitle: null,
+    priceRub: 18_500_000,
+    rooms: 0,
+    area: 31.5,
+    floor: 7,
+    updatedAt: '2026-08-24T11:30:00.000Z',
+  });
+  const now = new Date('2026-08-24T12:00:00.000Z');
+
+  const answer = buildAssistantSearchAnswer(intent, [evidence], [], now);
+
+  assert.equal(answer.exactResults.length, 1);
+  assert.deepEqual(answer.exactResults[0], {
+    unitId: evidence.unitId,
+    title: 'ЖК Тест',
+    subtitle: 'Студия · 31,5 м² · 7 этаж',
+    priceRub: 18_500_000,
+    availabilityLabel: 'В продаже',
+    freshnessLabel: 'обновлено менее часа назад',
+    isStale: false,
+    href: `/objects/zhk-test/lots/${evidence.unitId}`,
+    facts: ['Хамовники', 'м. Спортивная', 'Тест Девелопмент', '3 кв. 2027'],
+    pdfs: [{
+      title: 'Презентация проекта',
+      href: '/media/files/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/content?download=true',
+    }],
+    deviations: [],
+  });
+  validateAssistantSearchAnswer(answer, [evidence], intent, now);
+});
+
 test('Assistant T02 ranking keeps an exact total and exposes only the next five grounded results', () => {
   const intent = validIntent();
   const candidates = Array.from({ length: 10 }, (_, index) => candidate(

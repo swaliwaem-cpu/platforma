@@ -79,10 +79,14 @@ let apiApp;
 let browser;
 let sourceServer;
 let sourceRequests = [];
+let feedSourceRequests = [];
+let feedFixtureMode = 'STUDIO';
 let providerStubRequests = { openai: 0, locationiq: 0, overpass: 0 };
 let deniedOutboundRequests = [];
 const originalFetch = globalThis.fetch;
 let webProcess;
+let adminFeedToken = null;
+const pendingFeedRunIds = new Set();
 let cleanupPromise = null;
 
 const termination = installTerminationHandlers({
@@ -154,6 +158,8 @@ async function main() {
     fixtures.connectedGeo = await seedConnectedGeoFixtures(fixtures.connectedGeoSeed);
     await lineGeoJourney(fixtures);
     await areaGeoJourney(fixtures);
+    await prepareStudioFeed(fixtures);
+    await connectedStudioJourney(fixtures);
     await holdForManualQa(fixtures.regular.user.email);
     assert.equal(sourceRequests.length >= 1, true, 'stub source connector was not used');
     await writeProviderEvidence(await assertOutboundProviderIsolation());
@@ -303,6 +309,18 @@ async function startSourceStub() {
       response.end('{"error":"provider transport is disabled in ASSISTANT_T07"}');
       return;
     }
+    if (pathname === '/feeds/studio.xml') {
+      const xml = createStudioFeedXml(
+        feedFixtureMode === 'STUDIO' ? 'ЖК Студийный контур' : 'ЖК Чужой нулевой маршрут',
+      );
+      feedSourceRequests.push({ pathname, mode: feedFixtureMode });
+      response.writeHead(200, {
+        'content-type': 'application/xml; charset=utf-8',
+        'content-length': Buffer.byteLength(xml),
+      });
+      response.end(xml);
+      return;
+    }
     if (pathname === '/__map_fixture__/style.json') {
       const fixtureOrigin = `http://${request.headers.host}`;
       const style = JSON.stringify({
@@ -358,6 +376,23 @@ async function startSourceStub() {
   });
   await new Promise((done) => sourceServer.listen(0, '127.0.0.1', done));
   return `http://127.0.0.1:${sourceServer.address().port}`;
+}
+
+function createStudioFeedXml(projectName) {
+  return `<?xml version="1.0" encoding="utf-8"?>
+    <feed>
+      <object>
+        <ExternalId>assistant-t07-studio-unit</ExternalId>
+        <Category>newBuildingFlatSale</Category>
+        <Title>Студия</Title>
+        <Address>Москва, Студийная улица, 1</Address>
+        <FloorNumber>7</FloorNumber>
+        <FlatRoomsCount>Студия</FlatRoomsCount>
+        <TotalArea>31.5</TotalArea>
+        <JKSchema><Name>${projectName}</Name><House><Name>Корпус 1</Name></House></JKSchema>
+        <BargainTerms><Price>18500000</Price><Currency>RUR</Currency></BargainTerms>
+      </object>
+    </feed>`;
 }
 
 function configureProviderStubs(sourceOrigin) {
@@ -416,6 +451,7 @@ async function seed(sourceOrigin) {
   const keys = [
     'objects:read', 'developers:read', 'locations:read', 'metro:read',
     'assistant:audit:read', 'assistant:sources:manage', 'admin:access',
+    'feeds:read', 'feeds:run',
   ];
   const permissionIds = new Map();
   for (const key of keys) {
@@ -509,13 +545,50 @@ async function seed(sourceOrigin) {
       },
     }));
   }
+  const studioObject = await prisma.realEstateObject.create({
+    data: {
+      title: 'ЖК Студийный контур',
+      slug: 'assistant-t07-studio',
+      status: 'PUBLISHED',
+      type: 'RESIDENTIAL',
+      address: 'Москва, Студийная улица, 1',
+      developerId: developer.id,
+      primaryLocationId: district.id,
+      feedUpdatedAt: oldDate(),
+      latitude: 55.751244,
+      longitude: 37.618423,
+      publishedAt: new Date(),
+      locations: { create: { locationId: area.id } },
+      metroStations: { create: { metroStationId: metro.id } },
+    },
+  });
+  const studioSource = await prisma.feedSource.create({
+    data: {
+      sourceKind: 'URL',
+      url: `${sourceOrigin}/feeds/studio.xml`,
+      format: 'CIAN_XML',
+      filterJson: { projectNames: [studioObject.title] },
+      developerId: developer.id,
+      objectId: studioObject.id,
+      isActive: true,
+      lastSuccessAt: oldDate(),
+    },
+  });
   const connectedGeoSeed = {
     sourceOrigin,
     developerId: developer.id,
     districtId: district.id,
     areaId: area.id,
   };
-  return { regular, other, admin, objects, units, connectedGeoSeed };
+  return {
+    regular,
+    other,
+    admin,
+    objects,
+    units,
+    studio: { object: studioObject, source: studioSource },
+    connectedGeoSeed,
+  };
 }
 
 async function seedConnectedGeoFixtures({ sourceOrigin, developerId, districtId, areaId }) {
@@ -1148,6 +1221,229 @@ async function userJourney(fixtures) {
     process.env.ASSISTANT_MODULE_ENABLED = 'true';
     await context.close();
   }
+}
+
+async function prepareStudioFeed(fixtures) {
+  const session = await loginApi(fixtures.admin.user);
+  adminFeedToken = session.accessToken;
+  const requestsBefore = feedSourceRequests.length;
+
+  const preview = await httpJson(`/feeds/sources/${fixtures.studio.source.id}/preview`, {
+    method: 'POST',
+    token: adminFeedToken,
+  });
+  assert.equal(preview.status, 201, JSON.stringify(preview.body));
+  assert.equal(preview.body.run.status, 'SUCCESS');
+  assert.equal(preview.body.run.summaryJson.unitsParsed, 1);
+  assert.equal(preview.body.run.summaryJson.created, 1);
+  assert.equal(preview.body.run.summaryJson.archived, 0);
+
+  const queued = await httpJson(`/feeds/sources/${fixtures.studio.source.id}/run`, {
+    method: 'POST',
+    token: adminFeedToken,
+  });
+  assert.equal(queued.status, 201, JSON.stringify(queued.body));
+  assert.equal(queued.body.run.status, 'PENDING');
+  pendingFeedRunIds.add(queued.body.run.id);
+  const applied = await waitForFeedRun(queued.body.run.id, adminFeedToken);
+  assert.equal(applied.status, 'SUCCESS', JSON.stringify(applied));
+  assert.equal(applied.summaryJson.unitsParsed, 1);
+  assert.equal(applied.summaryJson.created, 1);
+  assert.equal(applied.summaryJson.archived, 0);
+
+  const state = await readStudioState(fixtures);
+  assert.equal(state.unit.rooms, 0);
+  assert.equal(state.unit.status, 'AVAILABLE');
+  assert.equal(state.unit.archivedAt, null);
+  assert.equal(state.unit.effectivePrice, '18500000');
+  assert.equal(state.object.feedUnitsCount, 1);
+  assert.equal(state.object.feedPriceFrom, '18500000');
+  assert.equal(feedSourceRequests.length - requestsBefore, 2);
+  assert.deepEqual(
+    feedSourceRequests.slice(requestsBefore).map(({ mode }) => mode),
+    ['STUDIO', 'STUDIO'],
+  );
+  fixtures.studio.unitId = state.unit.id;
+}
+
+async function connectedStudioJourney(fixtures) {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 960 } });
+  const page = await context.newPage();
+  try {
+    await login(page, fixtures.regular.user);
+    await page.getByRole('button', { name: 'Открыть ИИ-помощника' }).click();
+    await startNewConversation(page);
+    const input = page.getByLabel('Сообщение помощнику');
+
+    await assertStudioAssistantSearch(page, input, fixtures, 'Найди студию до 19 млн в районе Хамовники');
+    await assertZeroRoutedFeedFailure(fixtures);
+    await startNewConversation(page);
+    await assertStudioAssistantSearch(page, input, fixtures, 'Покажи студию до 19 млн в районе Хамовники');
+  } finally {
+    await context.close();
+  }
+}
+
+async function assertStudioAssistantSearch(page, input, fixtures, query) {
+  const stateBefore = await readStudioState(fixtures);
+  const runsBefore = await prisma.feedImportRun.count({
+    where: { sourceId: fixtures.studio.source.id },
+  });
+  const requestsBefore = feedSourceRequests.length;
+
+  await submit(page, input, query);
+  const article = await waitForAssistantArticle(page, query);
+  const card = article.locator('.assistant-result-card').filter({ hasText: 'ЖК Студийный контур' }).first();
+  await card.waitFor();
+  await card.locator('.assistant-result-subtitle').getByText('Студия', { exact: true }).waitFor();
+  await card.locator('.assistant-result-price').getByText('18 500 000 ₽', { exact: true }).waitFor();
+  await card.getByText('В продаже', { exact: true }).waitFor();
+  await card.locator('.assistant-result-freshness').getByText(/обновлено/iu).waitFor();
+  assert.equal(
+    await card.locator('a.assistant-result-title').getAttribute('href'),
+    `/objects/assistant-t07-studio/lots/${fixtures.studio.unitId}`,
+  );
+
+  const run = await prisma.assistantRun.findFirstOrThrow({
+    where: { ownerUserId: fixtures.regular.user.id, userMessage: { content: query } },
+    select: {
+      intentJson: true,
+      evidenceJson: true,
+      assistantMessage: { select: { answerJson: true } },
+    },
+  });
+  assert.deepEqual(run.intentJson.hardFilters.rooms, [0]);
+  assert.equal(run.intentJson.hardFilters.budgetMaxRub, 19_000_000);
+  const evidence = run.evidenceJson.find(({ unitId }) => unitId === fixtures.studio.unitId);
+  assert.ok(evidence, 'assistant run must persist evidence for the imported studio unit');
+  assert.equal(evidence.unitExternalId, 'assistant-t07-studio-unit');
+  assert.equal(evidence.rooms, 0);
+  assert.equal(evidence.priceRub, 18_500_000);
+  assert.equal(evidence.availability, 'AVAILABLE');
+  assert.equal(evidence.updatedAt, stateBefore.unit.updatedAt);
+  const persistedCard = run.assistantMessage.answerJson.exactResults.find(
+    ({ unitId }) => unitId === fixtures.studio.unitId,
+  );
+  assert.ok(persistedCard, 'assistant answer must contain the imported studio unit');
+  assert.equal(persistedCard.subtitle, 'Студия');
+  assert.equal(persistedCard.priceRub, 18_500_000);
+  assert.equal(persistedCard.availabilityLabel, 'В продаже');
+  assert.equal(persistedCard.isStale, false);
+  assert.match(persistedCard?.freshnessLabel ?? '', /обновлено/iu);
+
+  const stateAfter = await readStudioState(fixtures);
+  assert.equal(await prisma.feedImportRun.count({
+    where: { sourceId: fixtures.studio.source.id },
+  }), runsBefore, 'assistant chat must not start a feed import');
+  assert.equal(feedSourceRequests.length, requestsBefore, 'assistant chat must not download a feed');
+  assert.deepEqual(stateAfter.source, stateBefore.source, 'assistant chat must not change feed timestamps');
+  assert.deepEqual(stateAfter.unit, stateBefore.unit, 'assistant chat must not mutate the feed unit');
+  assert.deepEqual(stateAfter.object, stateBefore.object, 'assistant chat must not mutate feed aggregates');
+}
+
+async function assertZeroRoutedFeedFailure(fixtures) {
+  feedFixtureMode = 'ZERO_ROUTED';
+  const stateBefore = await readStudioState(fixtures);
+  const requestsBefore = feedSourceRequests.length;
+
+  const preview = await httpJson(`/feeds/sources/${fixtures.studio.source.id}/preview`, {
+    method: 'POST',
+    token: adminFeedToken,
+  });
+  assert.equal(preview.status, 201, JSON.stringify(preview.body));
+  assertFailedZeroUnitRun(preview.body.run);
+  const stateAfterPreview = await readStudioState(fixtures);
+  assertStudioDataUnchanged(stateBefore, stateAfterPreview);
+  assert.equal(stateAfterPreview.source.lastSuccessAt, stateBefore.source.lastSuccessAt);
+  assert.notEqual(stateAfterPreview.source.lastPreviewAt, stateBefore.source.lastPreviewAt);
+
+  const queued = await httpJson(`/feeds/sources/${fixtures.studio.source.id}/run`, {
+    method: 'POST',
+    token: adminFeedToken,
+  });
+  assert.equal(queued.status, 201, JSON.stringify(queued.body));
+  assert.equal(queued.body.run.status, 'PENDING');
+  pendingFeedRunIds.add(queued.body.run.id);
+  const failedRun = await waitForFeedRun(queued.body.run.id, adminFeedToken);
+  assertFailedZeroUnitRun(failedRun);
+
+  const stateAfterRun = await readStudioState(fixtures);
+  assertStudioDataUnchanged(stateBefore, stateAfterRun);
+  assert.equal(stateAfterRun.source.lastSuccessAt, stateBefore.source.lastSuccessAt);
+  assert.notEqual(stateAfterRun.source.lastRunAt, stateBefore.source.lastRunAt);
+  assert.equal(feedSourceRequests.length - requestsBefore, 2);
+  assert.deepEqual(
+    feedSourceRequests.slice(requestsBefore).map(({ mode }) => mode),
+    ['ZERO_ROUTED', 'ZERO_ROUTED'],
+  );
+}
+
+function assertFailedZeroUnitRun(run) {
+  assert.equal(run.status, 'FAILED', JSON.stringify(run));
+  assert.equal(run.summaryJson.unitsParsed, 0);
+  assert.equal(run.summaryJson.created, 0);
+  assert.equal(run.summaryJson.updated, 0);
+  assert.equal(run.summaryJson.archived, 0);
+  assert.equal(run.errorsJson[0].code, 'FEED_IMPORT_ZERO_UNITS');
+}
+
+function assertStudioDataUnchanged(before, after) {
+  assert.deepEqual(after.unit, before.unit, 'zero-unit import must preserve the existing unit');
+  assert.deepEqual(after.object, before.object, 'zero-unit import must preserve object aggregates');
+}
+
+async function readStudioState(fixtures) {
+  const [source, unit, object] = await Promise.all([
+    prisma.feedSource.findUniqueOrThrow({
+      where: { id: fixtures.studio.source.id },
+      select: { lastPreviewAt: true, lastRunAt: true, lastSuccessAt: true, updatedAt: true },
+    }),
+    prisma.feedUnit.findFirstOrThrow({
+      where: { sourceId: fixtures.studio.source.id, externalId: 'assistant-t07-studio-unit' },
+      select: {
+        id: true, objectId: true, externalId: true, status: true, archivedAt: true,
+        updatedAt: true, title: true, rooms: true, effectivePrice: true, area: true, floor: true,
+        residentialDetails: true,
+        media: { select: { mediaAssetId: true, sortOrder: true, label: true, createdAt: true } },
+      },
+    }),
+    prisma.realEstateObject.findUniqueOrThrow({
+      where: { id: fixtures.studio.object.id },
+      select: {
+        updatedAt: true, feedUpdatedAt: true, feedUnitsCount: true, feedUnitsCountText: true,
+        feedPriceFrom: true, feedPricePerMeterFrom: true, feedAreaRange: true, feedFloorRange: true,
+        feedCompletionYear: true, feedCompletionQuarter: true,
+      },
+    }),
+  ]);
+  return {
+    source: normalizePrismaValue(source),
+    unit: normalizePrismaValue(unit),
+    object: normalizePrismaValue(object),
+  };
+}
+
+function normalizePrismaValue(value) {
+  if (value instanceof Date) return value.toISOString();
+  if (value?.constructor?.isDecimal?.(value)) return value.toString();
+  if (Array.isArray(value)) return value.map(normalizePrismaValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, nested]) => [key, normalizePrismaValue(nested)]));
+  }
+  return value;
+}
+
+async function waitForFeedRun(runId, token) {
+  for (let attempt = 0; attempt < 600; attempt += 1) {
+    const response = await httpJson(`/feeds/runs/${runId}`, { token });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    if (response.body.run.status !== 'PENDING') {
+      pendingFeedRunIds.delete(runId);
+      return response.body.run;
+    }
+    await delay(250);
+  }
+  throw new Error(`ASSISTANT_T07_FEED_RUN_TIMEOUT:${runId}`);
 }
 
 async function alternativeGeoJourney(fixtures, primaryMarkerColor) {
@@ -2021,6 +2317,7 @@ async function cleanupOnce() {
   const errors = [];
   await collectCleanupError(errors, async () => browser?.close());
   await collectCleanupError(errors, async () => stopChildProcess(webProcess, 5_000));
+  await collectCleanupError(errors, stopPendingFeedRuns);
   await collectCleanupError(errors, async () => apiApp?.close());
   await collectCleanupError(errors, async () => prisma?.$disconnect());
   await collectCleanupError(errors, async () => {
@@ -2030,6 +2327,39 @@ async function cleanupOnce() {
   });
   await collectCleanupError(errors, cleanupOwnedDockerResources);
   if (errors.length > 0) throw new AggregateError(errors, 'ASSISTANT_T07_CLEANUP_FAILED');
+}
+
+async function stopPendingFeedRuns() {
+  if (!apiApp || !apiOrigin || !adminFeedToken) return;
+  for (const runId of [...pendingFeedRunIds]) {
+    let settled = false;
+    for (let attempt = 0; attempt < 20 && !settled; attempt += 1) {
+      const current = await httpJson(`/feeds/runs/${runId}`, { token: adminFeedToken });
+      if (current.status === 200 && current.body.run.status !== 'PENDING') {
+        settled = true;
+        break;
+      }
+      if (current.status !== 200) {
+        throw new Error(`ASSISTANT_T07_FEED_READ_FAILED:${runId}:${current.status}`);
+      }
+      const stopped = await httpJson(`/feeds/runs/${runId}/stop`, {
+        method: 'POST',
+        token: adminFeedToken,
+      });
+      if (stopped.status === 201) {
+        settled = true;
+        break;
+      }
+      if (stopped.status !== 409) {
+        throw new Error(`ASSISTANT_T07_FEED_STOP_FAILED:${runId}:${stopped.status}`);
+      }
+      await delay(100);
+    }
+    if (!settled) {
+      throw new Error(`ASSISTANT_T07_FEED_STOP_TIMEOUT:${runId}`);
+    }
+    pendingFeedRunIds.delete(runId);
+  }
 }
 
 async function cleanupOwnedDockerResources() {

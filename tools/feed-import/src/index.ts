@@ -1095,6 +1095,30 @@ function normalizeInteger(
   return numeric;
 }
 
+function normalizeRoomsInteger(
+  value: unknown,
+  externalId: string,
+  warnings: FeedParserWarning[],
+): number | null {
+  if (isExactStudioRoomMarker(value)) {
+    return 0;
+  }
+
+  return normalizeInteger(value, 'rooms', externalId, warnings);
+}
+
+function isExactStudioRoomMarker(value: unknown) {
+  const raw = getText(value);
+
+  if (raw === null) {
+    return false;
+  }
+
+  const normalized = normalizeFilterText(raw);
+
+  return normalized === 'студия' || normalized === 'studio';
+}
+
 function normalizeFirstInteger(
   values: unknown[],
   field: string,
@@ -1229,7 +1253,7 @@ function normalizeYandexRooms(
   warnings: FeedParserWarning[],
 ): number | null {
   if (getText(offer.rooms) !== null) {
-    return normalizeInteger(offer.rooms, 'rooms', externalId, warnings);
+    return normalizeRoomsInteger(offer.rooms, externalId, warnings);
   }
 
   if (normalizeBoolean(offer.studio) === true || isMangazeyaSeparateRoomsStudio(offer)) {
@@ -1697,10 +1721,10 @@ function normalizeCianRooms(
   warnings: FeedParserWarning[],
 ): number | null {
   if (getText(object.RoomsCount) !== null) {
-    return normalizeInteger(object.RoomsCount, 'rooms', externalId, warnings);
+    return normalizeRoomsInteger(object.RoomsCount, externalId, warnings);
   }
 
-  const flatRoomsCount = normalizeInteger(object.FlatRoomsCount, 'rooms', externalId, warnings);
+  const flatRoomsCount = normalizeRoomsInteger(object.FlatRoomsCount, externalId, warnings);
 
   return flatRoomsCount === 9 ? 0 : flatRoomsCount;
 }
@@ -1718,15 +1742,11 @@ function normalizeAvitoRooms(
 
   const normalized = normalizeFilterText(text);
 
-  if (normalized.includes('студ')) {
-    return 0;
-  }
-
   if (normalized.includes('свобод')) {
     return null;
   }
 
-  return normalizeInteger(value, 'rooms', externalId, warnings);
+  return normalizeRoomsInteger(value, externalId, warnings);
 }
 
 function formatDecimal(value: number): string {
@@ -2049,7 +2069,7 @@ function normalizeFskRooms(flat: XmlRecord, externalId: string, warnings: FeedPa
     return 0;
   }
 
-  return normalizeInteger(getXmlAttribute(flat, 'Rooms'), 'rooms', externalId, warnings);
+  return normalizeRoomsInteger(getXmlAttribute(flat, 'Rooms'), externalId, warnings);
 }
 
 function parseFskCompletion(value: string | null): { year: number | null; quarter: number | null } {
@@ -2171,11 +2191,11 @@ function buildTektaTitle(unit: XmlRecord, kind: TektaUnitKind, number: string | 
 function normalizeTektaRooms(unit: XmlRecord, externalId: string, warnings: FeedParserWarning[]) {
   const layoutType = normalizeFilterText(getText(unit.Roominess) ?? '');
 
-  if (layoutType.includes('ст') || /^[0-9]*с$/u.test(layoutType)) {
+  if (isExactStudioRoomMarker(unit.Roominess) || /^[0-9]*с$/u.test(layoutType)) {
     return 0;
   }
 
-  return normalizeInteger(unit.IntRoomCount, 'rooms', externalId, warnings);
+  return normalizeRoomsInteger(unit.IntRoomCount, externalId, warnings);
 }
 
 function parseTektaCompletion(value: string | null): { year: number | null; quarter: number | null } {
@@ -2341,6 +2361,16 @@ type FeedSourceFormat = 'YANDEX_REALTY' | 'CIAN_XML' | 'AVITO_XML' | 'FSK_XML' |
 type FeedAnalyzeFormat = FeedSourceFormat | 'AUTO';
 type FeedSourceKind = 'URL' | 'FILE' | 'INDEX_URL';
 type FeedUnitStatusValue = NormalizedFeedUnitStatus;
+
+class FeedImportZeroUnitsError extends Error {
+  readonly code = 'FEED_IMPORT_ZERO_UNITS';
+
+  constructor() {
+    super('Feed import produced zero routed units');
+    this.name = 'FeedImportZeroUnitsError';
+  }
+}
+
 type DecimalLike = string | number | { toString: () => string };
 type ParsedFeedIndexResult = {
   format: FeedSourceFormat;
@@ -4388,6 +4418,10 @@ export async function executeFeedImport(options: ExecuteFeedImportOptions): Prom
     warnings.push(...parsed.warnings);
     const routedUnits = routeFeedUnitsForSource(parsed.units, source);
 
+    if (routedUnits.length === 0) {
+      throw new FeedImportZeroUnitsError();
+    }
+
     const plan = await buildFeedImportPlan(options.db, source.id, routedUnits);
 
     if (options.mode === 'run') {
@@ -5364,7 +5398,7 @@ function toImportModeValue(mode: FeedImportCommand): ImportModeValue {
 
 function toFeedImportIssue(error: unknown): FeedParserWarning {
   return {
-    code: 'FEED_IMPORT_FAILED',
+    code: error instanceof FeedImportZeroUnitsError ? error.code : 'FEED_IMPORT_FAILED',
     message: getErrorMessage(error),
   };
 }

@@ -324,6 +324,30 @@ test('YandexRealtyFeedParser normalizes Etalon-style Yandex fields', () => {
   assert.equal(unit.residentialDetails.detailsJson.yandexBuildingId, '2133018');
 });
 
+test('YandexRealtyFeedParser normalizes only exact textual studio room markers', () => {
+  const parser = new YandexRealtyFeedParser();
+  const xml = `<?xml version="1.0"?>
+    <realty-feed>
+      <offer internal-id="yandex-studio-ru"><rooms> Студия </rooms></offer>
+      <offer internal-id="yandex-studio-en"><rooms> STUDIO </rooms></offer>
+      <offer internal-id="yandex-numeric"><rooms>2</rooms></offer>
+      <offer internal-id="yandex-not-exact"><rooms>studio apartment</rooms></offer>
+    </realty-feed>`;
+
+  const result = parser.parse(xml);
+
+  assert.deepEqual(result.units.map(({ externalId, rooms }) => [externalId, rooms]), [
+    ['yandex-studio-ru', 0],
+    ['yandex-studio-en', 0],
+    ['yandex-numeric', 2],
+    ['yandex-not-exact', null],
+  ]);
+  assert.deepEqual(
+    result.warnings.map(({ code, externalId, field }) => [code, externalId, field]),
+    [['INVALID_INTEGER', 'yandex-not-exact', 'rooms']],
+  );
+});
+
 test('YandexRealtyFeedParser treats Aura separate rooms type as studio only when room count is missing', () => {
   const parser = new YandexRealtyFeedParser();
   const xml = `<?xml version="1.0"?>
@@ -752,6 +776,54 @@ test('CianXmlFeedParser reads Kortros promotion_date old price as base price', (
   assert.equal(unit.pricePerMeter, '602489.99');
   assert.equal(unit.discountPricePerMeter, '500066.69');
   assert.equal(unit.effectivePricePerMeter, '500066.69');
+});
+
+test('CianXmlFeedParser normalizes only exact studio room markers', () => {
+  const parser = new CianXmlFeedParser();
+  const xml = `<?xml version="1.0"?>
+    <feed>
+      <object>
+        <ExternalId>studio-ru</ExternalId>
+        <Category>newBuildingFlatSale</Category>
+        <RoomsCount>  Студия  </RoomsCount>
+        <TotalArea>25</TotalArea>
+        <BargainTerms><Price>12000000</Price><Currency>RUR</Currency></BargainTerms>
+      </object>
+      <object>
+        <ExternalId>studio-en</ExternalId>
+        <Category>newBuildingFlatSale</Category>
+        <FlatRoomsCount> STUDIO </FlatRoomsCount>
+        <TotalArea>26</TotalArea>
+        <BargainTerms><Price>12500000</Price><Currency>RUR</Currency></BargainTerms>
+      </object>
+      <object>
+        <ExternalId>numeric-room</ExternalId>
+        <Category>newBuildingFlatSale</Category>
+        <RoomsCount>2</RoomsCount>
+        <TotalArea>50</TotalArea>
+        <BargainTerms><Price>20000000</Price><Currency>RUR</Currency></BargainTerms>
+      </object>
+      <object>
+        <ExternalId>not-exact-studio</ExternalId>
+        <Category>newBuildingFlatSale</Category>
+        <RoomsCount>Студия с террасой</RoomsCount>
+        <TotalArea>35</TotalArea>
+        <BargainTerms><Price>18000000</Price><Currency>RUR</Currency></BargainTerms>
+      </object>
+    </feed>`;
+
+  const result = parser.parse(xml);
+
+  assert.deepEqual(result.units.map(({ externalId, rooms }) => [externalId, rooms]), [
+    ['studio-ru', 0],
+    ['studio-en', 0],
+    ['numeric-room', 2],
+    ['not-exact-studio', null],
+  ]);
+  assert.deepEqual(
+    result.warnings.map(({ code, externalId, field }) => [code, externalId, field]),
+    [['INVALID_INTEGER', 'not-exact-studio', 'rooms']],
+  );
 });
 
 test('CianXmlFeedParser reads Strana lowercase price and oldprice values', () => {
@@ -1188,6 +1260,30 @@ test('AvitoXmlFeedParser normalizes residential units, studio rooms and media', 
   assert.equal(unit.commercialDetails, null);
 });
 
+test('AvitoXmlFeedParser accepts exact Russian and English studio markers without fuzzy matching', () => {
+  const parser = new AvitoXmlFeedParser();
+  const xml = `<?xml version="1.0"?>
+    <Ads>
+      <Ad><Id>avito-studio-ru</Id><Category>Квартиры</Category><Rooms> Студия </Rooms></Ad>
+      <Ad><Id>avito-studio-en</Id><Category>Квартиры</Category><Rooms> STUDIO </Rooms></Ad>
+      <Ad><Id>avito-numeric</Id><Category>Квартиры</Category><Rooms>2</Rooms></Ad>
+      <Ad><Id>avito-not-exact</Id><Category>Квартиры</Category><Rooms>нестудия</Rooms></Ad>
+    </Ads>`;
+
+  const result = parser.parse(xml);
+
+  assert.deepEqual(result.units.map(({ externalId, rooms }) => [externalId, rooms]), [
+    ['avito-studio-ru', 0],
+    ['avito-studio-en', 0],
+    ['avito-numeric', 2],
+    ['avito-not-exact', null],
+  ]);
+  assert.deepEqual(
+    result.warnings.map(({ code, externalId, field }) => [code, externalId, field]),
+    [['INVALID_INTEGER', 'avito-not-exact', 'rooms']],
+  );
+});
+
 test('createFeedSourceAnalysis summarizes Avito development groups', () => {
   const parser = new AvitoXmlFeedParser();
   const xml = `<?xml version="1.0" encoding="utf-8"?>
@@ -1292,6 +1388,35 @@ test('FskXmlFeedParser normalizes only residential units and maps FSK studios to
   assert.equal(studio.residentialDetails.apartmentNumber, '260');
   assert.equal(studio.residentialDetails.layoutType, 'Студия');
   assert.equal(result.units.some((unit) => unit.externalId === '248212'), false);
+});
+
+test('FskXmlFeedParser normalizes exact textual studio room markers for regular residential types', () => {
+  const parser = new FskXmlFeedParser();
+  const xml = `<?xml version="1.0"?>
+    <Data>
+      <FlatTypes><FlatType ID="0" Name="Квартира"/></FlatTypes>
+      <Regions><Region Region_name="Москва"><Object Complex_name="Exact studios"><Buildings>
+        <Corpus Num="1"><Section Num="1"><Floor Num="1">
+          <Flat Id1C="fsk-studio-ru" Type="0" Rooms=" Студия "/>
+          <Flat Id1C="fsk-studio-en" Type="0" Rooms=" STUDIO "/>
+          <Flat Id1C="fsk-numeric" Type="0" Rooms="2"/>
+          <Flat Id1C="fsk-not-exact" Type="0" Rooms="Студия с террасой"/>
+        </Floor></Section></Corpus>
+      </Buildings></Object></Region></Regions>
+    </Data>`;
+
+  const result = parser.parse(xml);
+
+  assert.deepEqual(result.units.map(({ externalId, rooms }) => [externalId, rooms]), [
+    ['fsk-studio-ru', 0],
+    ['fsk-studio-en', 0],
+    ['fsk-numeric', 2],
+    ['fsk-not-exact', null],
+  ]);
+  assert.deepEqual(
+    result.warnings.map(({ code, externalId, field }) => [code, externalId, field]),
+    [['INVALID_INTEGER', 'fsk-not-exact', 'rooms']],
+  );
 });
 
 test('FskXmlFeedParser keeps base price and sale price as discount price', () => {
@@ -1412,6 +1537,27 @@ test('TektaXmlFeedParser normalizes flats and offices while skipping hidden stat
   assert.equal(result.units.some((unit) => unit.externalId === 'tekta-flat-106'), false);
   assert.equal(result.units.some((unit) => unit.externalId === 'tekta-flat-107'), false);
   assert.equal(result.units.some((unit) => unit.externalId === 'tekta-parking-301'), false);
+});
+
+test('TektaXmlFeedParser uses exact studio markers without overriding numeric rooms on fuzzy layout text', () => {
+  const parser = new TektaXmlFeedParser();
+  const xml = `<?xml version="1.0"?>
+    <projects><project><IntName>Exact studios</IntName><flats>
+      <flat><ObjectId>tekta-studio-ru</ObjectId><Status>Свободен</Status><Roominess> Студия </Roominess></flat>
+      <flat><ObjectId>tekta-studio-en</ObjectId><Status>Свободен</Status><Roominess> STUDIO </Roominess></flat>
+      <flat><ObjectId>tekta-numeric</ObjectId><Status>Свободен</Status><Roominess>2Е</Roominess><IntRoomCount>2</IntRoomCount></flat>
+      <flat><ObjectId>tekta-not-exact</ObjectId><Status>Свободен</Status><Roominess>нестандартная</Roominess><IntRoomCount>3</IntRoomCount></flat>
+    </flats></project></projects>`;
+
+  const result = parser.parse(xml);
+
+  assert.deepEqual(result.units.map(({ externalId, rooms }) => [externalId, rooms]), [
+    ['tekta-studio-ru', 0],
+    ['tekta-studio-en', 0],
+    ['tekta-numeric', 2],
+    ['tekta-not-exact', 3],
+  ]);
+  assert.deepEqual(result.warnings, []);
 });
 
 test('createFeedSourceAnalysis summarizes Tekta XML objects for automatic mapping', () => {

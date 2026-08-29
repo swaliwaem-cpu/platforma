@@ -1087,6 +1087,42 @@ test('FeedsService protects one source from parallel preview/run commands', asyn
   assert.equal(result.run.id, runId);
 });
 
+test('FeedsService returns the persisted zero-unit preview failure from the importer', async () => {
+  const failedRun = runRecord({
+    status: 'FAILED',
+    summaryJson: {
+      unitsParsed: 0,
+      created: 0,
+      updated: 0,
+      archived: 0,
+    },
+    errorsJson: [
+      {
+        code: 'FEED_IMPORT_ZERO_UNITS',
+        message: 'Feed import produced zero routed units',
+      },
+    ],
+  });
+  const prisma = {
+    feedSource: {
+      findUnique: async () => ({ id: sourceId, deletedAt: null }),
+    },
+    feedImportRun: {
+      findFirst: async () => failedRun,
+    },
+  };
+  const service = new FeedsService(prisma);
+  service.runFeedImportCli = async () => {
+    throw new Error('Feed import produced zero routed units');
+  };
+
+  const result = await service.runFeedImportCommand(sourceId, 'preview');
+
+  assert.equal(result.run.status, 'FAILED');
+  assert.equal(result.run.summaryJson.archived, 0);
+  assert.deepEqual(result.run.errorsJson.map(({ code }) => code), ['FEED_IMPORT_ZERO_UNITS']);
+});
+
 test('FeedsService auto import cycle previews active sources and queues runs only for changed previews', async () => {
   let sourceFindArgs;
   const calls = [];

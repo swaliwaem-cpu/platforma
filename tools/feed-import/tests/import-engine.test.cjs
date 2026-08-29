@@ -421,6 +421,74 @@ test('parseFeedAnalyzeCliArgs accepts auto format for index URLs', () => {
   );
 });
 
+const zeroUnitScenarios = [
+  {
+    label: 'valid empty XML',
+    format: 'CIAN_XML',
+    xml: () => '<?xml version="1.0"?><feed><feed_version>2</feed_version></feed>',
+  },
+  {
+    label: 'routing filters every parsed unit',
+    format: 'YANDEX_REALTY',
+    xml: () => makeYandexFeed(),
+  },
+];
+
+for (const scenario of zeroUnitScenarios) {
+  for (const mode of ['preview', 'run']) {
+    test(`executeFeedImport ${mode} fails closed before archive planning for ${scenario.label}`, async () => {
+      const previousSuccessAt = new Date('2026-05-20T08:00:00.000Z');
+      const previousPreviewAt = new Date('2026-05-21T08:00:00.000Z');
+      const previousRunAt = new Date('2026-05-22T08:00:00.000Z');
+      const { db, state } = createFakeDb({
+        source: {
+          format: scenario.format,
+          objectId: null,
+          lastPreviewAt: previousPreviewAt,
+          lastRunAt: previousRunAt,
+          lastSuccessAt: previousSuccessAt,
+          mappings: [
+            makeSourceMapping({
+              id: 'mapping-without-matches',
+              objectId: 'object-1',
+              sourceKey: 'missing-project',
+              sourceTitle: 'Missing project',
+              filterJson: {
+                buildingNames: ['Project absent from the feed'],
+              },
+            }),
+          ],
+        },
+        units: [
+          makeUnit({ id: 'existing-1', externalId: 'existing-1', status: 'AVAILABLE' }),
+        ],
+      });
+      const unitsBefore = structuredClone(state.units);
+      const objectBefore = structuredClone(state.object);
+
+      await assert.rejects(() => executeFeedImport({
+        mode,
+        sourceId: 'source-1',
+        db,
+        storage: state.storage,
+        xmlFetcher: async () => scenario.xml(),
+        now: () => fixedDate,
+      }));
+
+      assert.equal(state.runs[0].status, 'FAILED');
+      assert.deepEqual(state.runs[0].errorsJson.map(({ code }) => code), ['FEED_IMPORT_ZERO_UNITS']);
+      assert.equal(state.runs[0].summaryJson.archived, 0);
+      assert.equal(state.feedUnitFindManyCalls.length, 0);
+      assert.deepEqual(state.units, unitsBefore);
+      assert.deepEqual(state.object, objectBefore);
+      assert.deepEqual(state.source.lastSuccessAt, previousSuccessAt);
+      assert.deepEqual(state.source.lastPreviewAt, mode === 'preview' ? fixedDate : previousPreviewAt);
+      assert.deepEqual(state.source.lastRunAt, mode === 'run' ? fixedDate : previousRunAt);
+      assert.equal(state.storagePuts.length, 0);
+    });
+  }
+}
+
 test('executeFeedImport preview counts changes without writing feed units or media', async () => {
   const { db, state } = createFakeDb({
     units: [
