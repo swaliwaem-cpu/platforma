@@ -1,7 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { AssistantKnowledgeSourceState, AssistantSourceFactKind, Prisma } from '@prisma/client';
+import {
+  AssistantKnowledgeSourceState,
+  AssistantSourceFactKind,
+  Prisma,
+} from '@prisma/client';
 import type {
   AssistantGeoCandidate,
   AssistantGeoKind,
@@ -9,6 +13,7 @@ import type {
 } from '@platforma/shared' with { 'resolution-mode': 'import' };
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { extractAssistantExplicitDistrict } from '../assistant-query-planner';
 import {
   assistantGeoDefaultLandmarkDistanceMeters,
   assistantGeoDefaultPointDistanceMeters,
@@ -54,6 +59,11 @@ type ParsedResolveInput = {
   viewbox: [number, number, number, number] | null;
 };
 
+type ParsedDistrictFallback = {
+  district: string;
+  input: ParsedResolveInput;
+};
+
 type CachedLandmark = {
   id: string;
   kind: AssistantGeoKind;
@@ -79,8 +89,13 @@ export class AssistantPlaceResolverService {
 
   async resolve(body: unknown, actorUserId: string | null = null): Promise<AssistantGeoResolution> {
     const startedAt = Date.now();
-    const input = parseResolveInput(body);
+    const directInput = parseResolveInput(body);
+    const districtFallback = directInput ? null : parseDistrictFallbackInput(body);
+    const input = directInput ?? districtFallback?.input;
     if (!input) return { status: 'NOT_APPLICABLE' };
+    if (districtFallback && await this.findAdministrativeDistrict(districtFallback.district)) {
+      return { status: 'NOT_APPLICABLE' };
+    }
 
     // Direct unit-test callers from T05 do not inject the new repository. Production always does.
     if (!this.landmarks) return this.resolvePointCompatibility(input, actorUserId, startedAt);
@@ -578,6 +593,36 @@ export class AssistantPlaceResolverService {
     }).slice(0, 3);
   }
 
+  async findAdministrativeDistrict(name: string) {
+    const normalizedName = normalizeAssistantGeoIdentityText(name);
+    const pattern = `%${escapeLikePattern(normalizedName)}%`;
+    const districts = await this.prisma.$queryRaw<Array<{ id: string; name: string }>>(Prisma.sql`
+      SELECT "id"::text AS id, "name"
+      FROM "locations"
+      WHERE "type"::text = 'district' AND (
+        replace(lower(coalesce("name", '')), 'ё', 'е') LIKE ${pattern} ESCAPE '\\'
+        OR to_tsvector('russian', replace(lower(coalesce("name", '')), 'ё', 'е'))
+          @@ plainto_tsquery('russian', ${normalizedName})
+      )
+      ORDER BY
+        (replace(lower(coalesce("name", '')), 'ё', 'е') = ${normalizedName}) DESC,
+        length("name") ASC,
+        "id" ASC
+      LIMIT 1
+    `);
+    return districts[0] ?? null;
+  }
+
+  async matchesTrustedLandmark(id: string, query: string) {
+    if (!this.landmarks) return false;
+    const identity = resolveAssistantGeoLandmarkIdentity(query);
+    return this.landmarks.matchesTrustedIdentity(id, [
+      identity.userAlias,
+      identity.normalizedQuery,
+      ...identity.aliases,
+    ]);
+  }
+
   private async recordOperation(
     input: ParsedResolveInput,
     actorUserId: string | null,
@@ -642,6 +687,16 @@ export function parseResolveInput(value: unknown): ParsedResolveInput | null {
   };
 }
 
+function parseDistrictFallbackInput(value: unknown): ParsedDistrictFallback | null {
+  if (!isRecord(value)) throw new BadRequestException('ASSISTANT_GEO_RESOLVE_INPUT_INVALID');
+  const content = readText(value.content, 2_000);
+  if (!content) throw new BadRequestException('ASSISTANT_GEO_CONTENT_INVALID');
+  const district = extractAssistantExplicitDistrict(content, true);
+  if (!district) return null;
+  const input = parseResolveInput({ ...value, content: `возле ${district}` });
+  return input ? { district, input } : null;
+}
+
 export function normalizePlaceQuery(value: string) {
   return normalizeAssistantGeoIdentityText(value);
 }
@@ -696,8 +751,8 @@ function extractPlaceQuery(content: string, hasExplicitDistance: boolean) {
   if (!candidate) return null;
   const query = candidate
     .replace(/\s+(?:найди|покажи|подбери)\b.*$/iu, '')
-    .split(/,\s*(?=(?:например(?=\s|,|$)|бюджет(?=\s|,|$)|\d{1,2}\s*[- ]?\s*комн|студи\p{L}*|однуш\p{L}*|однокомнат\p{L}*|двуш\p{L}*|двухкомнат\p{L}*|треш\p{L}*|трехкомнат\p{L}*))/iu, 1)[0]!
-    .replace(/\s+(?=(?:бюджет(?=\s|,|$)|\d{1,2}\s*[- ]?\s*комн|студи\p{L}*|однуш\p{L}*|однокомнат\p{L}*|двуш\p{L}*|двухкомнат\p{L}*|треш\p{L}*|трехкомнат\p{L}*))[^,;.!?]*$/iu, '')
+    .split(/,\s*(?=(?:например(?=\s|,|$)|бюджет(?=\s|,|$)|(?:до|не\s+дороже|максимум)\s+\d|\d{1,2}\s*[- ]?\s*комн|студи\p{L}*|однуш\p{L}*|однокомнат\p{L}*|двуш\p{L}*|двухкомнат\p{L}*|треш\p{L}*|трехкомнат\p{L}*))/iu, 1)[0]!
+    .replace(/\s+(?=(?:в\s+район(?:е)?(?=\s)|бюджет(?=\s|,|$)|(?:до|не\s+дороже|максимум)\s+\d|\d{1,2}\s*[- ]?\s*комн|студи\p{L}*|однуш\p{L}*|однокомнат\p{L}*|двуш\p{L}*|двухкомнат\p{L}*|треш\p{L}*|трехкомнат\p{L}*))[^,;.!?]*$/iu, '')
     .replace(/[,\s.!?;]+$/gu, '')
     .replace(/\s+/gu, ' ')
     .trim();
@@ -726,6 +781,10 @@ function parseViewbox(value: unknown): [number, number, number, number] {
 
 function createViewboxKey(viewbox: ParsedResolveInput['viewbox']) {
   return viewbox ? viewbox.map((coordinate) => coordinate.toFixed(6)).join(',') : '';
+}
+
+function escapeLikePattern(value: string) {
+  return value.replace(/[\\%_]/gu, '\\$&');
 }
 
 function resolved(

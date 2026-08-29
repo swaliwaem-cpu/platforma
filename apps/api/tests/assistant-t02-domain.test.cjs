@@ -145,6 +145,142 @@ test('Assistant T02 fake planner keeps a district from the previous turn and acc
   assert.equal(result.intent.needsClarification, false);
 });
 
+test('Assistant T02 planner consumes a district filter resolved as the same trusted landmark', async () => {
+  const planner = new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' }));
+
+  const result = await planner.plan({
+    messages: ['двухкомнатная до 50 млн в районе Павелецкая Плаза'],
+    context: {
+      pageContext: null,
+      districtResolution: {
+        input: 'Павелецкая Плаза',
+        canonicalName: null,
+        resolvedByGeo: true,
+      },
+      geo: {
+        hasGeoConstraint: true,
+        kind: 'POINT',
+        mode: 'NEAR',
+        label: 'Павелецкая Плаза',
+        source: 'LANDMARK',
+        landmarkId: '11111111-1111-4111-8111-111111111111',
+        distanceMeters: 2_000,
+      },
+    },
+  });
+
+  assert.equal(result.intent.hardFilters.district, null);
+  assert.deepEqual(result.intent.hardFilters.rooms, [2]);
+  assert.equal(result.intent.hardFilters.budgetMaxRub, 50_000_000);
+  assert.equal(result.intent.needsClarification, false);
+});
+
+test('Assistant T02 planner preserves a district separate from the trusted landmark', async () => {
+  const planner = new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' }));
+
+  const result = await planner.plan({
+    messages: ['двухкомнатная до 50 млн в районе Хамовники рядом с Павелецкая Плаза'],
+    context: {
+      pageContext: null,
+      geo: {
+        hasGeoConstraint: true,
+        kind: 'POINT',
+        mode: 'NEAR',
+        label: 'Павелецкая Плаза',
+        source: 'LANDMARK',
+        landmarkId: '11111111-1111-4111-8111-111111111111',
+        distanceMeters: 2_000,
+      },
+    },
+  });
+
+  assert.equal(result.intent.hardFilters.district, 'Хамовники');
+  assert.deepEqual(result.intent.hardFilters.rooms, [2]);
+  assert.equal(result.intent.hardFilters.budgetMaxRub, 50_000_000);
+  assert.equal(result.intent.needsClarification, false);
+});
+
+test('Assistant T02 planner keeps a district when a manual point reuses its label', async () => {
+  const planner = new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' }));
+
+  const result = await planner.plan({
+    messages: ['двухкомнатная до 50 млн в районе Хамовники'],
+    context: {
+      pageContext: null,
+      geo: {
+        hasGeoConstraint: true,
+        kind: 'POINT',
+        mode: 'NEAR',
+        label: 'Хамовники',
+        source: 'MANUAL',
+        distanceMeters: 2_000,
+      },
+    },
+  });
+
+  assert.equal(result.intent.hardFilters.district, 'Хамовники');
+});
+
+test('Assistant T02 planner consumes punctuation and a canonical alias resolved as a trusted landmark', async () => {
+  const planner = new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' }));
+  const cases = [
+    ['двухкомнатная до 50 млн в районе Павелецкая Плаза?', 'Павелецкая Плаза'],
+    ['двухкомнатная до 50 млн в районе Третьего транспортного кольца', 'ТТК'],
+  ];
+
+  for (const [message, label] of cases) {
+    const result = await planner.plan({
+      messages: [message],
+      context: {
+        pageContext: null,
+        districtResolution: {
+          input: message.includes('Третьего') ? 'Третьего транспортного кольца' : 'Павелецкая Плаза',
+          canonicalName: null,
+          resolvedByGeo: true,
+        },
+        geo: {
+          hasGeoConstraint: true,
+          kind: 'POINT',
+          mode: 'NEAR',
+          label,
+          source: 'LANDMARK',
+          landmarkId: '11111111-1111-4111-8111-111111111111',
+          distanceMeters: 2_000,
+        },
+      },
+    });
+
+    assert.equal(result.intent.hardFilters.district, null, message);
+  }
+});
+
+test('Assistant T02 planner consumes a server-verified landmark alias even when the display label differs', async () => {
+  const planner = new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' }));
+
+  const result = await planner.plan({
+    messages: ['двухкомнатная до 50 млн в районе Павелецкой Плазы'],
+    context: {
+      pageContext: null,
+      districtResolution: {
+        input: 'Павелецкой Плазы',
+        canonicalName: null,
+        resolvedByGeo: true,
+      },
+      geo: {
+        hasGeoConstraint: true,
+        kind: 'POINT',
+        mode: 'NEAR',
+        label: 'Ручная точка Павелецкая',
+        source: 'LANDMARK',
+        landmarkId: '11111111-1111-4111-8111-111111111111',
+        distanceMeters: 2_000,
+      },
+    },
+  });
+
+  assert.equal(result.intent.hardFilters.district, null);
+});
+
 test('Assistant T02 planner promotes model-extracted soft values marked as mandatory by the user', async () => {
   const planner = new AssistantQueryPlanner({
     async plan() {
@@ -751,6 +887,104 @@ test('Assistant T02 answer service skips search for clarification and legal boun
   assert.equal(legal.answer.kind, 'SAFE_BOUNDARY');
   assert.match(legal.content, /не заменяет консультацию/iu);
   assert.equal(searchCalls, 0);
+});
+
+test('Assistant T02 answer service forwards trusted geo provenance to the planner', async () => {
+  let plannerContext = null;
+  const service = new AssistantAnswerService(
+    new AssistantQueryPlanner({
+      async plan(request) {
+        plannerContext = request.context;
+        return validIntent();
+      },
+    }),
+    { async search() { throw new Error('UNEXPECTED_SEARCH'); } },
+  );
+
+  await service.answer({
+    messages: ['Какой налог будет по договору?'],
+    context: null,
+    geo: {
+      kind: 'POINT',
+      mode: 'NEAR',
+      label: 'Павелецкая Плаза',
+      point: { latitude: 55.7312, longitude: 37.6364 },
+      distanceMeters: 2_000,
+      source: 'LANDMARK',
+      landmarkId: '11111111-1111-4111-8111-111111111111',
+    },
+  });
+
+  assert.equal(plannerContext.geo.source, 'LANDMARK');
+  assert.equal(plannerContext.geo.landmarkId, '11111111-1111-4111-8111-111111111111');
+});
+
+test('Assistant T02 answer service canonicalizes a DB district in a natural Russian case', async () => {
+  let searchedIntent = null;
+  const service = new AssistantAnswerService(
+    new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' })),
+    {
+      async search(intent) {
+        searchedIntent = intent;
+        return { exact: [], alternatives: [] };
+      },
+    },
+    undefined,
+    {
+      async findAdministrativeDistrict(name) {
+        assert.equal(name, 'Хамовников');
+        return { id: 'district-hamovniki', name: 'Хамовники' };
+      },
+    },
+  );
+
+  await service.answer({
+    messages: ['двухкомнатная до 50 млн в районе Хамовников'],
+    context: null,
+  });
+
+  assert.equal(searchedIntent.hardFilters.district, 'Хамовники');
+});
+
+test('Assistant T02 answer service consumes only a server-verified landmark alias', async () => {
+  let searchedIntent = null;
+  const landmarkId = '11111111-1111-4111-8111-111111111111';
+  const service = new AssistantAnswerService(
+    new AssistantQueryPlanner(createAssistantPlannerGateway({ ASSISTANT_AI_MODE: 'fake' })),
+    {
+      async search(intent) {
+        searchedIntent = intent;
+        return { exact: [], alternatives: [] };
+      },
+    },
+    undefined,
+    {
+      async findAdministrativeDistrict() {
+        return null;
+      },
+      async matchesTrustedLandmark(id, query) {
+        assert.equal(id, landmarkId);
+        assert.equal(query, 'Павелецкой Плазы');
+        return true;
+      },
+    },
+  );
+
+  await service.answer({
+    messages: ['двухкомнатная до 50 млн в районе Павелецкой Плазы'],
+    context: null,
+    geo: {
+      kind: 'POINT',
+      mode: 'NEAR',
+      label: 'Ручная точка Павелецкая',
+      point: { latitude: 55.7312, longitude: 37.6364 },
+      distanceMeters: 2_000,
+      source: 'LANDMARK',
+      landmarkId,
+    },
+  });
+
+  assert.equal(searchedIntent.hardFilters.district, null);
 });
 
 test('Assistant T02 answer service returns grounded public cards and keeps internals separate', async () => {

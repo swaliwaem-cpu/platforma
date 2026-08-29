@@ -8,6 +8,7 @@ import type {
 
 import {
   AssistantQueryPlanner,
+  extractAssistantExplicitHardFilters,
   type AssistantPlannerTelemetry,
   type AssistantStructuredIntent,
 } from './assistant-query-planner';
@@ -18,6 +19,7 @@ import {
 } from './assistant-search-ranking';
 import { AssistantSearchService } from './assistant-search.service';
 import type { AssistantGeoSearchResult } from './assistant-search.service';
+import { AssistantPlaceResolverService } from './geo/assistant-place-resolver.service';
 import { buildAssistantKnowledgeAnswer } from './sources/assistant-knowledge-answer';
 import {
   AssistantKnowledgeRetrievalService,
@@ -39,6 +41,7 @@ export class AssistantAnswerService {
     private readonly planner: AssistantQueryPlanner,
     private readonly search: AssistantSearchService,
     private readonly knowledge?: AssistantKnowledgeRetrievalService,
+    private readonly places?: AssistantPlaceResolverService,
   ) {}
 
   async answer(input: {
@@ -50,19 +53,25 @@ export class AssistantAnswerService {
     now?: Date;
   }): Promise<AssistantAnswerResult> {
     const now = input.now ?? new Date();
+    const districtResolution = await this.resolveDistrict(input.messages, input.geo ?? null);
     const planned = await this.planner.planWithValidation(
       {
         messages: input.messages,
-        context: input.geo
+        context: input.geo || districtResolution
           ? {
               pageContext: input.context,
-              geo: {
-                hasGeoConstraint: true,
-                kind: input.geo.kind,
-                mode: input.geo.mode,
-                label: input.geo.label,
-                ...(input.geo.mode === 'NEAR' ? { distanceMeters: input.geo.distanceMeters } : {}),
-              },
+              ...(districtResolution ? { districtResolution } : {}),
+              ...(input.geo ? {
+                geo: {
+                  hasGeoConstraint: true,
+                  kind: input.geo.kind,
+                  mode: input.geo.mode,
+                  label: input.geo.label,
+                  source: input.geo.source,
+                  ...(input.geo.source === 'LANDMARK' ? { landmarkId: input.geo.landmarkId } : {}),
+                  ...(input.geo.mode === 'NEAR' ? { distanceMeters: input.geo.distanceMeters } : {}),
+                },
+              } : {}),
             }
           : input.context,
         operationRunId: input.operationRunId,
@@ -181,6 +190,22 @@ export class AssistantAnswerService {
       intent: planned.intent,
       telemetry: planned.telemetry,
     };
+  }
+
+  private async resolveDistrict(messages: string[], geo: AssistantGeoSearchContext | null) {
+    const district = extractAssistantExplicitHardFilters(messages).district;
+    if (!district || !this.places) return null;
+    const administrativeDistrict = await this.places.findAdministrativeDistrict(district);
+    if (administrativeDistrict) {
+      return {
+        input: district,
+        canonicalName: administrativeDistrict.name,
+        resolvedByGeo: false,
+      };
+    }
+    if (geo?.source !== 'LANDMARK' || !geo.landmarkId) return null;
+    const resolvedByGeo = await this.places.matchesTrustedLandmark(geo.landmarkId, district);
+    return resolvedByGeo ? { input: district, canonicalName: null, resolvedByGeo: true } : null;
   }
 }
 

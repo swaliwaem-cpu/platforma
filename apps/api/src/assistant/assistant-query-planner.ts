@@ -396,9 +396,10 @@ function normalizeIntentAgainstRequest(
     ...contextFilters,
     rooms: contextFilters.rooms ?? explicitFilters.rooms ?? intent.hardFilters.rooms,
   };
-  const hardFilters = isCombinedComparisonDeveloper(mergedHardFilters.developer, comparisonTargets)
+  const comparisonNormalizedFilters = isCombinedComparisonDeveloper(mergedHardFilters.developer, comparisonTargets)
     ? { ...mergedHardFilters, developer: null }
     : mergedHardFilters;
+  const hardFilters = consumeDistrictResolvedAsGeo(comparisonNormalizedFilters, context);
   const isLegalOrTax = messages.some((message) => legalOrTaxPattern.test(message));
   if (isLegalOrTax) {
     return {
@@ -439,6 +440,30 @@ function isCombinedComparisonDeveloper(value: string | null, comparisonTargets: 
   if (!value || comparisonTargets.length !== 2) return false;
   const normalizedValue = normalizeComparableText(value);
   return comparisonTargets.every((target) => normalizedValue.includes(normalizeComparableText(target)));
+}
+
+function consumeDistrictResolvedAsGeo(filters: AssistantSearchFilters, context: unknown): AssistantSearchFilters {
+  if (!filters.district || !isRecord(context) || !isRecord(context.districtResolution)) {
+    return filters;
+  }
+  const resolution = context.districtResolution;
+  if (typeof resolution.input !== 'string'
+    || normalizeComparableText(filters.district) !== normalizeComparableText(resolution.input)) return filters;
+  if (resolution.resolvedByGeo === true
+    && resolution.canonicalName === null
+    && hasGeoContext(context)
+    && isRecord(context.geo)
+    && context.geo.source === 'LANDMARK'
+    && typeof context.geo.landmarkId === 'string') {
+    return { ...filters, district: null };
+  }
+  if (resolution.resolvedByGeo === false
+    && typeof resolution.canonicalName === 'string'
+    && resolution.canonicalName.trim()
+    && resolution.canonicalName.length <= 160) {
+    return { ...filters, district: resolution.canonicalName.trim() };
+  }
+  return filters;
 }
 
 export function extractAssistantComparisonTargets(messages: string[]) {
@@ -535,6 +560,18 @@ export function extractAssistantExplicitHardFilters(
   return extractExplicitFilters(messages.join('\n'));
 }
 
+export function extractAssistantExplicitDistrict(text: string, requireInPrefix = false) {
+  const textWithoutGeoDistance = stripGeoDistancePhrases(text);
+  const prefix = requireInPrefix ? '(?:^|[\\s,;])в\\s+' : '(?:в\\s+)?';
+  return extractNamedCondition(
+    textWithoutGeoDistance,
+    new RegExp(
+      `${prefix}район(?:е)?\\s+[«"]?(.+?)[»"]?(?=\\s+(?:рядом\\s+с|возле|около|вокруг|у\\s+метро|метро|от\\s+[\\p{L}«"]|сдач\\p{L}*|\\d+\\s*квартал|площад\\p{L}*|этаж\\p{L}*|готов\\p{L}*|в\\s+готов\\p{L}*|класс\\p{L}*|до\\s+\\d|не\\s+(?:дороже|дешевле|позднее|раньше|меньше|больше))|[,.!?;\\r\\n]|$)`,
+      'iu',
+    ),
+  );
+}
+
 function extractExplicitFilters(text: string): Partial<AssistantSearchFilters> & { rooms?: number[] } {
   const filters: Partial<AssistantSearchFilters> & { rooms?: number[] } = {};
   const normalized = text.toLocaleLowerCase('ru-RU').replace(/ё/gu, 'е');
@@ -567,10 +604,7 @@ function extractExplicitFilters(text: string): Partial<AssistantSearchFilters> &
   if (/(?:треш\p{L}*|трехкомнат\p{L}*)/iu.test(normalized)) rooms.add(3);
   if (rooms.size > 0) filters.rooms = [...rooms].sort((left, right) => left - right);
 
-  const district = extractNamedCondition(
-    textWithoutGeoDistance,
-    /(?:в\s+)?район(?:е)?\s+[«"]?(.+?)[»"]?(?=\s+(?:у\s+метро|метро|от\s+[\p{L}«"]|сдач\p{L}*|\d+\s*квартал|площад\p{L}*|этаж\p{L}*|готов\p{L}*|в\s+готов\p{L}*|класс\p{L}*|до\s+\d|не\s+(?:дороже|дешевле|позднее|раньше|меньше|больше))|[,.;\r\n]|$)/iu,
-  );
+  const district = extractAssistantExplicitDistrict(text);
   if (district) filters.district = district;
   const metro = extractNamedCondition(
     textWithoutGeoDistance,

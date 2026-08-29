@@ -15,6 +15,9 @@ const {
   extractAssistantExplicitHardFilters,
 } = require('../dist/assistant/assistant-query-planner.js');
 const {
+  AssistantGeoLandmarkService,
+} = require('../dist/assistant/geo/assistant-geo-landmark.service.js');
+const {
   AssistantGeoProviderError,
   LocationIqGeoProvider,
 } = require('../dist/assistant/geo/assistant-geo-provider.js');
@@ -99,6 +102,155 @@ test('FIX-GEO1 parser separates the landmark from rooms and a budget written in 
   });
   assert.equal(reordered.placeQuery, 'Садовое кольцо');
   assert.equal(reordered.mode, 'NEAR');
+});
+
+test('Assistant geo resolver treats a district-shaped unknown place as a landmark candidate', async () => {
+  const resolver = new AssistantPlaceResolverService(
+    createResolverPrisma(),
+    createUnusedProvider(),
+    {
+      async findTrustedByQuery() {
+        return [{
+          id: landmarkId,
+          kind: 'POINT',
+          label: 'Павелецкая Плаза',
+          city: 'Москва',
+          countryCode: 'ru',
+          source: 'PLACE',
+          point: { latitude: 55.7312, longitude: 37.6364 },
+        }];
+      },
+    },
+  );
+
+  const result = await resolver.resolve({
+    content: 'двухкомнатная до 50 млн в районе Павелецкая Плаза',
+    locale: 'ru',
+    country: 'ru',
+  });
+
+  assert.equal(result.status, 'RESOLVED');
+  assert.equal(result.placeQuery, 'Павелецкая Плаза');
+  assert.equal(result.candidates[0].kind, 'POINT');
+  assert.equal(result.candidates[0].distanceMeters, 2_000);
+});
+
+test('Assistant geo resolver leaves a known administrative district to the query planner', async () => {
+  const resolver = new AssistantPlaceResolverService(
+    createResolverPrisma({ districtNames: ['Хамовники'] }),
+    createUnusedProvider(),
+    {
+      async findTrustedByQuery() {
+        throw new Error('UNEXPECTED_LANDMARK_LOOKUP');
+      },
+    },
+  );
+
+  const result = await resolver.resolve({
+    content: 'двухкомнатная до 50 млн в районе Хамовники',
+    locale: 'ru',
+    country: 'ru',
+  });
+
+  assert.deepEqual(result, { status: 'NOT_APPLICABLE' });
+});
+
+test('Assistant geo resolver does not treat a generic question about a district as a landmark fallback', async () => {
+  const resolver = new AssistantPlaceResolverService(
+    createResolverPrisma(),
+    createUnusedProvider(),
+    {
+      async findTrustedByQuery() {
+        throw new Error('UNEXPECTED_LANDMARK_LOOKUP');
+      },
+    },
+  );
+
+  const result = await resolver.resolve({
+    content: 'Какой район лучше для семьи?',
+    locale: 'ru',
+    country: 'ru',
+  });
+
+  assert.deepEqual(result, { status: 'NOT_APPLICABLE' });
+});
+
+test('Assistant geo resolver uses the same ё/e normalization as district search', async () => {
+  const resolver = new AssistantPlaceResolverService(
+    createResolverPrisma({ districtNames: ['Хорошёво-Мнёвники'] }),
+    createUnusedProvider(),
+    {
+      async findTrustedByQuery() {
+        throw new Error('UNEXPECTED_LANDMARK_LOOKUP');
+      },
+    },
+  );
+
+  const result = await resolver.resolve({
+    content: 'двухкомнатная до 50 млн в районе Хорошево-Мневники',
+    locale: 'ru',
+    country: 'ru',
+  });
+
+  assert.deepEqual(result, { status: 'NOT_APPLICABLE' });
+});
+
+test('Assistant geo resolver checks the original district before landmark identity canonicalization', async () => {
+  const resolver = new AssistantPlaceResolverService(
+    createResolverPrisma({ districtNames: ['Арбат'] }),
+    createUnusedProvider(),
+    {
+      async findTrustedByQuery() {
+        throw new Error('UNEXPECTED_LANDMARK_LOOKUP');
+      },
+    },
+  );
+
+  const result = await resolver.resolve({
+    content: 'двухкомнатная до 50 млн в районе Арбат',
+    locale: 'ru',
+    country: 'ru',
+  });
+
+  assert.deepEqual(result, { status: 'NOT_APPLICABLE' });
+});
+
+test('Assistant geo resolver recognizes an administrative district in a natural Russian case', async () => {
+  const resolver = new AssistantPlaceResolverService(
+    createResolverPrisma({
+      districtNames: ['Хамовники'],
+      districtMorphology: { хамовников: 'Хамовники' },
+    }),
+    createUnusedProvider(),
+    {
+      async findTrustedByQuery() {
+        throw new Error('UNEXPECTED_LANDMARK_LOOKUP');
+      },
+    },
+  );
+
+  const result = await resolver.resolve({
+    content: 'двухкомнатная до 50 млн в районе Хамовников',
+    locale: 'ru',
+    country: 'ru',
+  });
+
+  assert.deepEqual(result, { status: 'NOT_APPLICABLE' });
+});
+
+test('Assistant parsers preserve a separate district and landmark in either order', () => {
+  for (const content of [
+    'двухкомнатная до 50 млн в районе Хамовники рядом с Павелецкая Плаза',
+    'двухкомнатная до 50 млн рядом с Павелецкая Плаза в районе Хамовники',
+    'двухкомнатная рядом с Павелецкая Плаза в районе Хамовники, до 60 млн',
+    'двухкомнатная в районе Хамовники рядом с Павелецкая Плаза до 60 млн',
+  ]) {
+    const geo = parseResolveInput({ content, locale: 'ru', country: 'ru' });
+    const filters = extractAssistantExplicitHardFilters([content]);
+
+    assert.equal(geo.placeQuery, 'Павелецкая Плаза', content);
+    assert.equal(filters.district, 'Хамовники', content);
+  }
 });
 
 test('PIDAFIX2 parser keeps UI label, user alias and canonical provider identity separate', () => {
@@ -268,6 +420,28 @@ test('PIDAFIX2 DB-first lookup includes bounded canonical aliases for legacy man
   const result = await resolver.resolve({ content: 'Найди квартиру возле ТТК', locale: 'ru', country: 'ru' });
   assert.equal(result.status, 'RESOLVED');
   assert.deepEqual(lookupInput.normalizedQueries, ['третье транспортное кольцо', 'ттк']);
+});
+
+test('PIDAFIX2 trusted landmark identity matches a stored alias independently of its display label', async () => {
+  let lookup;
+  const landmarks = new AssistantGeoLandmarkService({
+    $queryRaw: async (query) => {
+      lookup = query;
+      return [{ id: landmarkId }];
+    },
+  });
+
+  const matched = await landmarks.matchesTrustedIdentity(landmarkId, [
+    'Павелецкой Плазы',
+    'Павелецкая Плаза',
+  ]);
+
+  assert.equal(matched, true);
+  assert.match(lookup.strings.join(''), /normalized_query"::text/u);
+  assert.deepEqual(
+    lookup.values.filter((value) => typeof value === 'string' && value.includes('павелецк')),
+    ['павелецкой плазы', 'павелецкая плаза'],
+  );
 });
 
 test('FIX-GEO1 explicit distance wins and INSIDE has no distance', () => {
@@ -1312,6 +1486,30 @@ test('FIX-GEO1 Overpass is opt-in and serializes rate slots for distinct request
 
 function createResolverPrisma(options = {}) {
   return {
+    location: {
+      findFirst: async ({ where }) => {
+        const query = where.name.contains.toLocaleLowerCase('ru-RU');
+        const match = (options.districtNames ?? []).find((name) => (
+          name.toLocaleLowerCase('ru-RU').includes(query)
+        ));
+        return match ? { id: `district-${match}` } : null;
+      },
+    },
+    $queryRaw: async (query) => {
+      const pattern = query.values.find((value) => typeof value === 'string' && value.startsWith('%'));
+      const needle = pattern
+        ?.slice(1, -1)
+        .replace(/\\([\\%_])/gu, '$1')
+        .toLocaleLowerCase('ru-RU')
+        .replace(/ё/gu, 'е');
+      const containsMatch = needle && (options.districtNames ?? []).find((name) => (
+        name.toLocaleLowerCase('ru-RU').replace(/ё/gu, 'е').includes(needle)
+      ));
+      const usesMorphology = query.strings.join('').includes('plainto_tsquery');
+      const morphologyName = usesMorphology && needle ? options.districtMorphology?.[needle] : null;
+      const match = containsMatch ?? morphologyName;
+      return match ? [{ id: `district-${match}` }] : [];
+    },
     assistantGeoCache: {
       findFirst: async () => options.cache ?? null,
       deleteMany: async () => {

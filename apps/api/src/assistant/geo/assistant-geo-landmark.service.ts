@@ -15,6 +15,7 @@ import {
   parseAssistantReferenceGeometry,
   type ParsedAssistantGeoBrowserInput,
 } from './assistant-geo-contract';
+import { normalizeAssistantGeoIdentityText } from './assistant-geo-landmark-identity';
 
 type LandmarkWriteClient = Pick<Prisma.TransactionClient, '$executeRaw'>;
 
@@ -215,6 +216,28 @@ export class AssistantGeoLandmarkService {
       LIMIT 1
     `);
     return rows[0] ? toTrustedLandmark(rows[0]) : null;
+  }
+
+  async matchesTrustedIdentity(id: string, queries: string[]) {
+    const normalizedQueries = [...new Set(queries
+      .map(normalizeAssistantGeoIdentityText)
+      .filter(Boolean))]
+      .slice(0, 20);
+    if (normalizedQueries.length === 0) return false;
+    const rows = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT l."id"::text AS id
+      FROM "assistant_geo_landmarks" l
+      WHERE l."id" = ${id}::uuid
+        AND (
+          ARRAY[l."normalized_query"::text] || coalesce(l."aliases", ARRAY[]::text[])
+        ) && ARRAY[${Prisma.join(normalizedQueries)}]::text[]
+        AND (
+          l."confirmation_state" = 'confirmed'
+          OR (l."confirmation_state" = 'verified' AND l."expires_at" > CURRENT_TIMESTAMP)
+        )
+      LIMIT 1
+    `);
+    return rows.length > 0;
   }
 
   async loadReferenceGeometry(context: AssistantGeoSearchContext): Promise<AssistantGeoReferenceGeometry> {
