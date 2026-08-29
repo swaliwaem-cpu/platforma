@@ -9,6 +9,11 @@
       "types": "./src/search-normalization.d.cts",
       "import": "./src/search-normalization.mjs",
       "require": "./src/search-normalization.cjs"
+    },
+    "./assistant-product-submission": {
+      "types": "./src/assistant-product-submission.d.cts",
+      "import": "./src/assistant-product-submission.cjs",
+      "require": "./src/assistant-product-submission.cjs"
     }
   },
   "scripts": {

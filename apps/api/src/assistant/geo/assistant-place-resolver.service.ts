@@ -15,7 +15,7 @@ import type {
 } from '@platforma/shared' with { 'resolution-mode': 'import' };
 
 import { PrismaService } from '../../prisma/prisma.service';
-import { extractAssistantExplicitDistrict } from '../assistant-query-planner';
+import { extractAssistantDistrictFromText } from './assistant-district-query';
 import {
   assistantGeoDefaultLandmarkDistanceMeters,
   assistantGeoDefaultPointDistanceMeters,
@@ -41,9 +41,10 @@ import {
   AssistantOverpassError,
 } from './assistant-overpass-collector';
 
-type ParsedResolveInput = {
+export type ParsedResolveInput = {
   slotId: string;
   sourceText: string;
+  sourceSpan: { start: number; end: number };
   category: AssistantGeoCategory | null;
   resolutionPolicy: 'LOOKUP' | 'REFINE_REQUIRED';
   placeQuery: string;
@@ -127,13 +128,9 @@ export class AssistantPlaceResolverService {
         for (const input of parsed.constraints) {
           const slotStartedAt = Date.now();
           const result = input.resolutionPolicy === 'REFINE_REQUIRED'
-            ? notFound(input)
+            ? refineRequired(input)
             : await this.resolveInput(input, actorUserId, slotStartedAt, providerOperation);
-          constraints.push({
-            ...result,
-            slotId: input.slotId,
-            sourceText: input.sourceText,
-          });
+          constraints.push(result);
         }
       } catch (error) {
         if (providerOperation?.operationId) {
@@ -154,11 +151,9 @@ export class AssistantPlaceResolverService {
           providerOperation.errorCode,
         );
         if (!finalized) {
-          constraints = parsed.constraints.map((input) => ({
-            ...(input.resolutionPolicy === 'REFINE_REQUIRED' ? notFound(input) : unavailable(input)),
-            slotId: input.slotId,
-            sourceText: input.sourceText,
-          }));
+          constraints = parsed.constraints.map((input) => (
+            input.resolutionPolicy === 'REFINE_REQUIRED' ? refineRequired(input) : unavailable(input)
+          ));
         }
       }
       return { status: 'COMPOSITE', operator: 'ALL', constraints };
@@ -172,7 +167,7 @@ export class AssistantPlaceResolverService {
     if (districtFallback && await this.findAdministrativeDistrict(districtFallback.district)) {
       return { status: 'NOT_APPLICABLE' };
     }
-    if (input.resolutionPolicy === 'REFINE_REQUIRED') return notFound(input);
+    if (input.resolutionPolicy === 'REFINE_REQUIRED') return refineRequired(input);
     return this.resolveInput(input, actorUserId, startedAt);
   }
 
@@ -181,7 +176,7 @@ export class AssistantPlaceResolverService {
     actorUserId: string | null,
     startedAt: number,
     compositeOperation?: CompositeProviderOperation,
-  ): Promise<Exclude<AssistantGeoSingleResolution, { status: 'NOT_APPLICABLE' }>> {
+  ): Promise<AssistantGeoResolutionSlot> {
     // Direct unit-test callers from T05 do not inject the new repository. Production always does.
     if (!this.landmarks) return this.resolvePointCompatibility(input, actorUserId, startedAt);
 
@@ -552,7 +547,7 @@ export class AssistantPlaceResolverService {
     input: ParsedResolveInput,
     actorUserId: string | null,
     startedAt: number,
-  ): Promise<Exclude<AssistantGeoSingleResolution, { status: 'NOT_APPLICABLE' }>> {
+  ): Promise<AssistantGeoResolutionSlot> {
     const radiusMeters = input.explicitDistanceMeters ?? assistantGeoDefaultPointDistanceMeters;
     const alias = await this.findLegacyAlias(input);
     if (alias) {
@@ -775,8 +770,10 @@ const genericGeoCategories: Array<{ category: AssistantGeoCategory; pattern: Reg
 
 export function parseResolveInputs(value: unknown): ParsedResolveInputs {
   if (!isRecord(value)) throw new BadRequestException('ASSISTANT_GEO_RESOLVE_INPUT_INVALID');
-  const content = readText(value.content, 2_000);
-  if (!content) throw new BadRequestException('ASSISTANT_GEO_CONTENT_INVALID');
+  const content = typeof value.content === 'string'
+    ? normalizeAssistantMessageContent(value.content)
+    : '';
+  if (!content || content.length > 4_000) throw new BadRequestException('ASSISTANT_GEO_CONTENT_INVALID');
   const locale = typeof value.locale === 'string' && /^[a-z]{2}(?:-[A-Z]{2})?$/u.test(value.locale)
     ? value.locale
     : 'ru';
@@ -823,6 +820,7 @@ export function parseResolveInputs(value: unknown): ParsedResolveInputs {
     }
     const sourceText = trailingDistance.placeQuery;
     if (!sourceText) throw new BadRequestException('ASSISTANT_GEO_CLAUSE_INVALID');
+    if (/^(?:выбранн\p{L}*\s+точк\p{L}*|точк\p{L}*\s+на\s+карт\p{L}*)$/iu.test(sourceText)) continue;
     const normalized = normalizeGeoCategoryPhrase(sourceText);
     const placeQuery = readText(normalized.placeQuery, 240);
     if (!placeQuery || /^\d/u.test(placeQuery)) {
@@ -836,9 +834,11 @@ export function parseResolveInputs(value: unknown): ParsedResolveInputs {
       });
     }
     const identity = resolveAssistantGeoLandmarkIdentity(placeQuery);
+    const sourceSpan = createGeoSourceSpan(content, marker, rawSource, sourceText, suffixDistanceMeters);
     constraints.push({
       slotId: `geo-${constraints.length + 1}`,
       sourceText,
+      sourceSpan,
       category: normalized.category,
       resolutionPolicy: isGenericGeoPhrase(normalized.placeQuery, normalized.category)
         ? 'REFINE_REQUIRED'
@@ -863,11 +863,49 @@ export function parseResolveInput(value: unknown): ParsedResolveInput | null {
   return parseResolveInputs(value).constraints[0] ?? null;
 }
 
+export function stripAssistantGeoClauses(content: string): string {
+  if (content.length > 4_000) {
+    return content.split('\n').map((message) => stripAssistantGeoClauses(message)).join('\n');
+  }
+  const normalizedContent = normalizeAssistantMessageContent(content);
+  const spans = parseResolveInputs({ content: normalizedContent }).constraints
+    .map(({ sourceSpan }) => sourceSpan)
+    .sort((left, right) => right.start - left.start);
+  const stripped = spans.reduce(
+    (result, span) => `${result.slice(0, span.start)} ${result.slice(span.end)}`,
+    normalizedContent,
+  ).replace(/\s+/gu, ' ').trim();
+  return stripped.replace(/^(?:и|,)\s+/iu, '').replace(/\s+(?:и|,)$/iu, '').trim();
+}
+
+function createGeoSourceSpan(
+  content: string,
+  marker: { start: number; bodyStart: number },
+  rawSource: string,
+  sourceText: string,
+  trailingDistanceMeters: number | null,
+) {
+  const markerPrefix = content.slice(marker.start, marker.bodyStart);
+  const leadingDelimiterLength = /^[\s,;]/u.test(markerPrefix) ? 1 : 0;
+  const sourceOffset = rawSource.toLocaleLowerCase('ru-RU').indexOf(sourceText.toLocaleLowerCase('ru-RU'));
+  let bodyLength = sourceOffset >= 0 ? sourceOffset + sourceText.length : rawSource.trimEnd().length;
+  if (trailingDistanceMeters !== null) {
+    const trailing = trailingGeoDistancePattern.exec(rawSource);
+    if (trailing?.index !== undefined) bodyLength = trailing.index + trailing[0].length;
+  }
+  return {
+    start: marker.start + leadingDelimiterLength,
+    end: Math.min(content.length, marker.bodyStart + bodyLength),
+  };
+}
+
 function parseDistrictFallbackInput(value: unknown): ParsedDistrictFallback | null {
   if (!isRecord(value)) throw new BadRequestException('ASSISTANT_GEO_RESOLVE_INPUT_INVALID');
-  const content = readText(value.content, 2_000);
-  if (!content) throw new BadRequestException('ASSISTANT_GEO_CONTENT_INVALID');
-  const district = extractAssistantExplicitDistrict(content, true);
+  const content = typeof value.content === 'string'
+    ? normalizeAssistantMessageContent(value.content)
+    : '';
+  if (!content || content.length > 2_000) throw new BadRequestException('ASSISTANT_GEO_CONTENT_INVALID');
+  const district = extractAssistantDistrictFromText(content, true);
   if (!district) return null;
   const input = parseResolveInput({ ...value, content: `возле ${district}` });
   return input ? { district, input } : null;
@@ -912,9 +950,11 @@ function parseDistance(amount: string, unit: string) {
 function cleanGeoClauseText(value: string) {
   const quoted = protectQuotedText(value);
   const cleaned = quoted.value
+    .replace(/[.!?;]+$/gu, '')
     .replace(/^\s*(?:(?:и)(?=\s|,)|,)+\s*/iu, '')
     .replace(/\s+и\s*$/iu, '')
     .replace(/\s+(?:найди|покажи|подбери)(?=$|[^\p{L}\p{N}_]).*$/iu, '')
+    .split(/[,;]\s*(?=(?:в\s+)?район(?:е)?\s+)/iu, 1)[0]!
     .split(/,\s*(?=(?:например(?=\s|,|$)|бюджет(?=\s|,|$)|(?:до|не\s+дороже|максимум)\s+\d|\d{1,2}\s*[- ]?\s*комн|студи\p{L}*|однуш\p{L}*|однокомнат\p{L}*|двуш\p{L}*|двухкомнат\p{L}*|треш\p{L}*|трехкомнат\p{L}*))/iu, 1)[0]!
     .replace(/\s+(?=(?:в\s+район(?:е)?(?=\s)|у\s+метро(?=\s)|(?<!станции\s)(?<!станция\s)(?<!станцию\s)(?<!станцией\s)(?<!ст\.\s)метро(?=\s)|(?:от\s+)?застройщик\p{L}*|бюджет(?=\s|,|$)|(?:до|не\s+дороже|максимум)\s+\d|(?:от|не\s+дешевле|минимум)\s+\d+(?:[.,]\d+)?(?:\s+до\s+\d+(?:[.,]\d+)?)?\s*(?:млн\p{L}*|миллион\p{L}*|тыс\p{L}*|руб\p{L}*)|(?:от|не\s+ниже|не\s+выше)\s+-?\d+\s*этаж\p{L}*|(?:от|до|не\s+меньше|не\s+больше)\s+\d+(?:[.,]\d+)?\s*(?:м2|м²|кв)|(?:комфорт|бизнес|премиум|элит)\s*[- ]?класс\p{L}*|\d{1,2}\s*[- ]?\s*комн|студи\p{L}*|однуш\p{L}*|однокомнат\p{L}*|двуш\p{L}*|двухкомнат\p{L}*|треш\p{L}*|трехкомнат\p{L}*|жил\p{L}*|коммерчес\p{L}*|квартир\p{L}*|апартамент\p{L}*|площад\p{L}*|этаж\p{L}*|сдач\p{L}*|готов\p{L}*|класс\p{L}*))[^,;.!?]*$/iu, '')
     .replace(/\s+и\s*$/iu, '')
@@ -1058,36 +1098,66 @@ function resolved(
   input: ParsedResolveInput,
   candidates: AssistantGeoCandidate[],
   compatibilityRadius?: number,
-): Exclude<AssistantGeoSingleResolution, { status: 'NOT_APPLICABLE' }> {
+): AssistantGeoResolutionSlot {
   return {
     status: candidates.length === 1 ? 'RESOLVED' : 'AMBIGUOUS',
     placeQuery: input.placeQuery,
     ...(compatibilityRadius ? { radiusMeters: compatibilityRadius } : {}),
     candidates: candidates.slice(0, 3),
+    slotId: input.slotId,
+    sourceText: input.sourceText,
+    sourceSpan: input.sourceSpan,
+    mode: input.mode,
+    ...(input.explicitDistanceMeters !== null ? { distanceMeters: input.explicitDistanceMeters } : {}),
   };
 }
 
 function notFound(
   input: ParsedResolveInput,
   compatibilityRadius?: number,
-): Exclude<AssistantGeoSingleResolution, { status: 'NOT_APPLICABLE' }> {
+): AssistantGeoResolutionSlot {
   return {
     status: 'NOT_FOUND',
     placeQuery: input.placeQuery,
     ...(compatibilityRadius ? { radiusMeters: compatibilityRadius } : {}),
     actions: ['MANUAL', 'REFINE'],
+    slotId: input.slotId,
+    sourceText: input.sourceText,
+    sourceSpan: input.sourceSpan,
+    mode: input.mode,
+    ...(input.explicitDistanceMeters !== null ? { distanceMeters: input.explicitDistanceMeters } : {}),
   };
 }
 
 function unavailable(
   input: ParsedResolveInput,
   compatibilityRadius?: number,
-): Exclude<AssistantGeoSingleResolution, { status: 'NOT_APPLICABLE' }> {
+): AssistantGeoResolutionSlot {
   return {
     status: 'UNAVAILABLE',
     placeQuery: input.placeQuery,
     ...(compatibilityRadius ? { radiusMeters: compatibilityRadius } : {}),
     actions: ['MANUAL', 'REFINE'],
+    slotId: input.slotId,
+    sourceText: input.sourceText,
+    sourceSpan: input.sourceSpan,
+    mode: input.mode,
+    ...(input.explicitDistanceMeters !== null ? { distanceMeters: input.explicitDistanceMeters } : {}),
+  };
+}
+
+function refineRequired(
+  input: ParsedResolveInput,
+): AssistantGeoResolutionSlot {
+  return {
+    status: 'REFINE_REQUIRED',
+    placeQuery: input.placeQuery,
+    actions: ['REFINE', 'MANUAL'],
+    slotId: input.slotId,
+    sourceText: input.sourceText,
+    sourceSpan: input.sourceSpan,
+    mode: input.mode,
+    ...(input.explicitDistanceMeters !== null ? { distanceMeters: input.explicitDistanceMeters } : {}),
   };
 }
 
@@ -1096,6 +1166,7 @@ function summarizeCompositeOperationStatus(
 ): Exclude<AssistantGeoSingleResolution, { status: 'NOT_APPLICABLE' }>['status'] {
   if (statuses.includes('UNAVAILABLE')) return 'UNAVAILABLE';
   if (statuses.includes('NOT_FOUND')) return 'NOT_FOUND';
+  if (statuses.includes('REFINE_REQUIRED')) return 'REFINE_REQUIRED';
   if (statuses.includes('AMBIGUOUS')) return 'AMBIGUOUS';
   return 'RESOLVED';
 }
@@ -1339,6 +1410,10 @@ function readCountryCode(value: unknown) {
 
 function readText(value: unknown, maximum: number) {
   return typeof value === 'string' && value.trim() && value.trim().length <= maximum ? value.trim() : null;
+}
+
+export function normalizeAssistantMessageContent(value: string) {
+  return value.trim().replace(/\s+/gu, ' ');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

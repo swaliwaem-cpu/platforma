@@ -40,6 +40,11 @@ import {
 } from './geo/assistant-geo-contract';
 import { AssistantGeoLandmarkService } from './geo/assistant-geo-landmark.service';
 import {
+  normalizeAssistantMessageContent,
+  parseResolveInputs,
+  type ParsedResolveInputs,
+} from './geo/assistant-place-resolver.service';
+import {
   AssistantRunProcessor,
   assistantProgressDefinitions,
 } from './assistant-run.processor';
@@ -191,6 +196,7 @@ export class AssistantService {
     const conversationId = this.parseUuid(input.conversationId, 'conversationId');
     const idempotencyKey = this.parseUuid(input.idempotencyKey, 'Idempotency-Key');
     const messageInput = this.parseMessageInput(input.body);
+    const inspectedGeo = this.assertCanonicalGeoContext(messageInput);
     const requestHash = this.hashRequest(conversationId, messageInput);
     const existing = await this.findRunByIdempotencyKey(input.ownerUserId, idempotencyKey);
 
@@ -201,6 +207,7 @@ export class AssistantService {
       select: { id: true },
     });
     if (!ownedConversation) throw new NotFoundException('ASSISTANT_CONVERSATION_NOT_FOUND');
+    await this.assertCanonicalGeoIdentity(messageInput, inspectedGeo);
     const canonicalGeo = messageInput.geo
       ? await this.geoLandmarks.materializeBrowserContext(messageInput.geo)
       : null;
@@ -375,6 +382,54 @@ export class AssistantService {
     return { content, context, geo, requestHashGeo };
   }
 
+  private assertCanonicalGeoContext(messageInput: ParsedAssistantSendMessageInput) {
+    const inspected = parseResolveInputs({ content: messageInput.content });
+    if (inspected.constraints.length === 0) return inspected;
+    const browserConstraints = messageInput.geo
+      ? 'operator' in messageInput.geo ? messageInput.geo.constraints : [messageInput.geo]
+      : [];
+    const operatorMatches = inspected.constraints.length > 1
+      ? Boolean(messageInput.geo && 'operator' in messageInput.geo)
+      : Boolean(messageInput.geo && !('operator' in messageInput.geo));
+    const matches = operatorMatches && browserConstraints.length === inspected.constraints.length
+      && inspected.constraints.every((expected, index) => {
+        const actual = browserConstraints[index];
+        if (!actual || actual.mode !== expected.mode) return false;
+        const confirmedManual = actual.referenceType === 'MANUAL_POINT';
+        const confirmedSingleManualWithoutMetadata = inspected.constraints.length === 1
+          && actual.referenceType === 'MANUAL_POINT'
+          && actual.slotId === undefined
+          && actual.sourceSpan === undefined;
+        if (!confirmedSingleManualWithoutMetadata && (actual.slotId !== expected.slotId
+          || actual.sourceSpan?.start !== expected.sourceSpan.start
+          || actual.sourceSpan?.end !== expected.sourceSpan.end)) return false;
+        return confirmedManual || expected.explicitDistanceMeters === null
+          || actual.distanceMeters === expected.explicitDistanceMeters;
+      });
+    if (!matches) throw new BadRequestException('ASSISTANT_GEO_CONTEXT_REQUIRED');
+    return inspected;
+  }
+
+  private async assertCanonicalGeoIdentity(
+    messageInput: ParsedAssistantSendMessageInput,
+    inspected: ParsedResolveInputs,
+  ) {
+    if (inspected.constraints.length === 0 || !messageInput.geo) return;
+    const browserConstraints = 'operator' in messageInput.geo
+      ? messageInput.geo.constraints
+      : [messageInput.geo];
+    for (const [index, expected] of inspected.constraints.entries()) {
+      const actual = browserConstraints[index];
+      if (!actual || actual.referenceType === 'MANUAL_POINT') continue;
+      const matches = await this.geoLandmarks.matchesTrustedIdentity(actual.landmarkId, [
+        expected.placeQuery,
+        expected.userAlias,
+        ...expected.aliases,
+      ]);
+      if (!matches) throw new BadRequestException('ASSISTANT_GEO_CONTEXT_REQUIRED');
+    }
+  }
+
   private parseContext(value: unknown): AssistantPageContext {
     if (!this.isRecord(value)) throw new BadRequestException('ASSISTANT_CONTEXT_INVALID');
     const kind = this.parseString(value.kind, 'context.kind', 32);
@@ -415,7 +470,7 @@ export class AssistantService {
 
   private parseString(value: unknown, field: string, maxLength: number) {
     if (typeof value !== 'string') throw new BadRequestException(`${field} is required`);
-    const normalized = value.trim().replace(/\s+/gu, ' ');
+    const normalized = normalizeAssistantMessageContent(value);
     if (!normalized || normalized.length > maxLength) {
       throw new BadRequestException(`${field} is invalid`);
     }

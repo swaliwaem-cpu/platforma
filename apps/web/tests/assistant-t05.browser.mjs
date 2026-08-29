@@ -8,6 +8,7 @@ const apiBaseUrl = process.env.ASSISTANT_T05_API_TEST_URL ?? 'http://localhost:3
 
 const LINE_LANDMARK_ID = '55555555-5555-4555-8555-555555555555';
 const AREA_LANDMARK_ID = '66666666-6666-4666-8666-666666666666';
+const BELORUSSKY_LANDMARK_ID = '88888888-8888-4888-8888-888888888888';
 
 const browser = await chromium.launch({ headless: true });
 
@@ -67,6 +68,19 @@ async function verifyCompositeGeoFlow() {
       await page.locator('.assistant-geo-result-map').getAttribute('data-geo-constraint-count'),
       '2',
     );
+
+    await page.getByRole('button', { name: 'Изменить точку и расстояние для «Павелецкая Плаза»' }).click();
+    await page.getByRole('region', { name: 'Выбор точки и радиуса' })
+      .getByRole('button', { name: 'Подтвердить точку' }).click();
+    assert.equal(state.messageBodies.length, 2, 'editing one composite constraint starts one prepared run');
+    assert.deepEqual(state.messageBodies[1].geo.constraints[0], {
+      referenceType: 'MANUAL_POINT',
+      point: { latitude: 55.7312, longitude: 37.6364, label: 'Ориентир: Павелецкая Плаза' },
+      mode: 'NEAR',
+      distanceMeters: 2_000,
+      slotId: 'geo-1',
+      sourceSpan: span(namedContent, 'возле Павелецкой Плаза'),
+    });
   } finally {
     await context.close();
   }
@@ -134,6 +148,7 @@ async function verifyDesktopGeoFlow() {
       mode: 'NEAR',
       distanceMeters: 3_000,
     });
+
     await page.getByText('Точка на карте · до 3 км', { exact: true }).waitFor();
     await page.getByText('650 м по прямой', { exact: true }).waitFor();
     await page.getByText('Карта временно отключена', { exact: true }).waitFor();
@@ -165,15 +180,50 @@ async function verifyDesktopGeoFlow() {
     await page.getByRole('button', { name: 'Убрать геопоиск' }).click();
     await input.fill('Найди в радиусе 2 км от geocoder unavailable');
     await page.getByRole('button', { name: 'Отправить' }).click();
-    await page.getByText('Не удалось определить место. Можно указать точку вручную или уточнить название.').waitFor();
+    await page.getByText('Геокодер сейчас недоступен. Поиск по ручной точке продолжает работать.').waitFor();
     assert.equal(state.messageBodies.length, 3);
 
     state.failNextPropertySearch = true;
     await page.getByRole('button', { name: 'Указать на карте' }).click();
     await picker.getByRole('button', { name: 'Подтвердить точку' }).click();
     await page.getByText('PROPERTY_SEARCH_UNAVAILABLE', { exact: true }).waitFor();
-    await page.getByText('Точка на карте · до 2 км', { exact: true }).waitFor();
+    await page.getByText('Ориентир: geocoder unavailable · до 2 км', { exact: true }).waitFor();
     assert.equal(state.messageBodies.length, 4);
+
+    const belorussky = 'Найди в 900 м от Белорусского вокзала';
+    await input.fill(belorussky);
+    await page.getByRole('button', { name: 'Отправить' }).click();
+    await page.getByText('Белорусский вокзал · до 900 м', { exact: true }).waitFor();
+    assert.equal(state.resolveBodies.at(-1).content, belorussky, 'active geo must not bypass resolver');
+    assert.deepEqual(state.messageBodies.at(-1).geo, {
+      referenceType: 'LANDMARK',
+      landmarkId: BELORUSSKY_LANDMARK_ID,
+      mode: 'NEAR',
+      distanceMeters: 900,
+      slotId: 'geo-1',
+      sourceSpan: span(belorussky, 'в 900 м от Белорусского вокзала'),
+    });
+
+    await page.getByRole('button', { name: 'Убрать геопоиск' }).click();
+    const missingBelorussky = 'Найди в 900 м от Белорусского вокзала not found';
+    await input.fill(missingBelorussky);
+    await page.getByRole('button', { name: 'Отправить' }).click();
+    await page.getByRole('button', { name: 'Указать на карте' }).click();
+    assert.equal(await picker.getByLabel('Другой радиус, км').inputValue(), '0.9');
+    await picker.getByRole('button', { name: 'Подтвердить точку' }).click();
+    assert.equal(state.messageBodies.at(-1).geo.distanceMeters, 900);
+
+    await page.getByRole('button', { name: 'Убрать геопоиск' }).click();
+    const runsBeforeResolverError = state.messageBodies.length;
+    const resolverErrorContent = 'Найди внутри района resolver network error';
+    await input.fill(resolverErrorContent);
+    await page.getByRole('button', { name: 'Отправить' }).click();
+    const resolverError = page.locator('.assistant-geo-resolution--error');
+    await resolverError.getByText('Не удалось проверить географическое условие.', { exact: false }).waitFor();
+    assert.equal(await resolverError.getByRole('button', { name: 'Указать на карте' }).count(), 0);
+    assert.equal(state.messageBodies.length, runsBeforeResolverError);
+    await resolverError.getByRole('button', { name: 'Уточнить запрос' }).click();
+    assert.equal(await input.inputValue(), resolverErrorContent);
 
     assert.equal(
       requestedUrls.some((url) => /locationiq|api-maps\.yandex|tiles\.openfreemap/iu.test(url)),
@@ -214,6 +264,8 @@ async function verifyDesktopLineGeometry() {
       landmarkId: LINE_LANDMARK_ID,
       mode: 'NEAR',
       distanceMeters: 5_000,
+      slotId: 'geo-1',
+      sourceSpan: span(content, 'возле Садового кольца'),
     });
     const map = page.getByRole('region', {
       name: 'Результаты до 5 км от всей дороги Садовое кольцо',
@@ -299,6 +351,8 @@ async function verifyMobilePickerAndAreaGeometry() {
       referenceType: 'LANDMARK',
       landmarkId: AREA_LANDMARK_ID,
       mode: 'INSIDE',
+      slotId: 'geo-1',
+      sourceSpan: span(content, 'внутри района Арбат'),
     });
     const resultMap = page.getByRole('region', { name: 'Результаты внутри области Арбат' });
     await resultMap.locator('canvas').waitFor();
@@ -307,6 +361,14 @@ async function verifyMobilePickerAndAreaGeometry() {
     assert.equal(await geometry.getAttribute('data-search-area-geometry'), 'Polygon');
     assert.equal(await page.locator('.map-price-marker--anchor').count(), 0);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+
+    await page.getByRole('button', { name: 'Убрать геопоиск' }).click();
+    await page.getByLabel('Сообщение помощнику').fill('Покажи квартиры внутри района Неизвестный');
+    await page.getByRole('button', { name: 'Отправить' }).click();
+    const insideFailure = page.locator('.assistant-geo-resolution[role="alert"]');
+    await insideFailure.getByText('Не удалось определить область.', { exact: false }).waitFor();
+    assert.equal(await insideFailure.getByRole('button', { name: 'Указать на карте' }).count(), 0);
+    assert.equal(state.messageBodies.length, 1, 'unresolved INSIDE must remain fail closed');
   } finally {
     await context.close();
   }
@@ -402,11 +464,13 @@ async function installRoutes(page, state) {
             ['моста', 'мост'],
             ['школы такой-то', 'школа такой-то'],
           ].map(([sourceText, placeQuery], index) => ({
-            status: 'NOT_FOUND',
+            status: 'REFINE_REQUIRED',
             slotId: `geo-${index + 1}`,
             sourceText,
+            sourceSpan: span(body.content, index === 0 ? 'у воды' : `${index === 1 ? 'у' : index === 2 ? 'возле' : index === 3 ? 'возле' : 'около'} ${sourceText}`),
+            mode: 'NEAR',
             placeQuery,
-            actions: ['MANUAL', 'REFINE'],
+            actions: ['REFINE', 'MANUAL'],
           })),
         });
         return;
@@ -420,6 +484,8 @@ async function installRoutes(page, state) {
               status: 'RESOLVED',
               slotId: 'geo-1',
               sourceText: 'Павелецкой Плаза',
+              sourceSpan: span(body.content, 'возле Павелецкой Плаза'),
+              mode: 'NEAR',
               placeQuery: 'Павелецкая Плаза',
               candidates: [{
                 id: '99999999-9999-4999-8999-999999999991',
@@ -437,6 +503,8 @@ async function installRoutes(page, state) {
               status: 'RESOLVED',
               slotId: 'geo-2',
               sourceText: 'Белорусского вокзала',
+              sourceSpan: span(body.content, 'около Белорусского вокзала'),
+              mode: 'NEAR',
               placeQuery: 'Белорусский вокзал',
               candidates: [{
                 id: '99999999-9999-4999-8999-999999999992',
@@ -454,13 +522,66 @@ async function installRoutes(page, state) {
         });
         return;
       }
+      if (body.content.includes('900 м от Белорусского вокзала') && body.content.includes('not found')) {
+        await json(route, {
+          status: 'NOT_FOUND',
+          slotId: 'geo-1',
+          sourceText: 'Белорусского вокзала not found',
+          sourceSpan: span(body.content, 'в 900 м от Белорусского вокзала not found'),
+          mode: 'NEAR',
+          distanceMeters: 900,
+          placeQuery: 'Белорусский вокзал not found',
+          actions: ['MANUAL', 'REFINE'],
+        });
+        return;
+      }
+      if (body.content.includes('900 м от Белорусского вокзала')) {
+        await json(route, {
+          status: 'RESOLVED',
+          slotId: 'geo-1',
+          sourceText: 'Белорусского вокзала',
+          sourceSpan: span(body.content, 'в 900 м от Белорусского вокзала'),
+          mode: 'NEAR',
+          distanceMeters: 900,
+          placeQuery: 'Белорусский вокзал',
+          candidates: [{
+            id: BELORUSSKY_LANDMARK_ID,
+            label: 'Белорусский вокзал',
+            kind: 'POINT',
+            mode: 'NEAR',
+            distanceMeters: 900,
+            point: { latitude: 55.7763, longitude: 37.5801 },
+            city: 'Москва',
+            countryCode: 'ru',
+            source: 'PLACE',
+          }],
+        });
+        return;
+      }
       if (body.content.includes('geocoder unavailable')) {
+        await json(route, {
+          status: 'UNAVAILABLE',
+          slotId: 'geo-1',
+          sourceText: 'geocoder unavailable',
+          sourceSpan: span(body.content, 'в радиусе 2 км от geocoder unavailable'),
+          mode: 'NEAR',
+          distanceMeters: 2_000,
+          placeQuery: 'geocoder unavailable',
+          actions: ['MANUAL', 'REFINE'],
+        });
+        return;
+      }
+      if (body.content.includes('resolver network error')) {
         await json(route, { message: 'GEOCODER_UNAVAILABLE' }, 503);
         return;
       }
       if (body.content.includes('Садового кольца')) {
         await json(route, {
           status: 'RESOLVED',
+          slotId: 'geo-1',
+          sourceText: 'Садового кольца',
+          sourceSpan: span(body.content, 'возле Садового кольца'),
+          mode: 'NEAR',
           placeQuery: 'Садовое кольцо',
           candidates: [{
             id: LINE_LANDMARK_ID,
@@ -478,6 +599,10 @@ async function installRoutes(page, state) {
       if (body.content.includes('внутри района Арбат')) {
         await json(route, {
           status: 'RESOLVED',
+          slotId: 'geo-1',
+          sourceText: 'района Арбат',
+          sourceSpan: span(body.content, 'внутри района Арбат'),
+          mode: 'INSIDE',
           placeQuery: 'Арбат',
           candidates: [{
             id: AREA_LANDMARK_ID,
@@ -491,8 +616,29 @@ async function installRoutes(page, state) {
         });
         return;
       }
+      if (body.content.includes('внутри района Неизвестный')) {
+        await json(route, {
+          status: 'NOT_FOUND',
+          slotId: 'geo-1',
+          sourceText: 'района Неизвестный',
+          sourceSpan: span(body.content, 'внутри района Неизвестный'),
+          mode: 'INSIDE',
+          placeQuery: 'район Неизвестный',
+          actions: ['MANUAL', 'REFINE'],
+        });
+        return;
+      }
+      if (!body.content.includes('Плотинки ambiguous')) {
+        await json(route, { status: 'NOT_APPLICABLE' });
+        return;
+      }
       await json(route, {
         status: 'AMBIGUOUS',
+        slotId: 'geo-1',
+        sourceText: 'Плотинки ambiguous',
+        sourceSpan: { start: 6, end: body.content.length },
+        mode: 'NEAR',
+        distanceMeters: 2_000,
         placeQuery: 'Плотинка',
         candidates: [1, 2, 3].map((value) => ({
           id: `77777777-7777-4777-8777-${String(value).padStart(12, '0')}`,
@@ -532,6 +678,12 @@ async function installRoutes(page, state) {
     }
     await json(route, { message: `Unexpected ${request.method()} ${path}` }, 404);
   });
+}
+
+function span(content, clause) {
+  const start = content.indexOf(clause);
+  assert.notEqual(start, -1, `missing clause: ${clause}`);
+  return { start, end: start + clause.length };
 }
 
 function conversation(messages) {

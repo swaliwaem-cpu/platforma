@@ -1039,7 +1039,24 @@ async function userJourney(fixtures) {
     await assistantDialog.locator('.assistant-geo-result-map').last().scrollIntoViewIfNeeded();
     await captureQaScreenshot(page, 'desktop-assistant-geo.png', assistantDialog);
 
-    await page.getByRole('button', { name: 'Убрать геопоиск' }).click();
+    await startNewConversation(page);
+    const compositeGeoQuery = 'Найди двушку до 25 млн в 5 км от ТТК и в 2 км от Павелецкая Плаза';
+    await submit(page, input, compositeGeoQuery);
+    const compositeArticle = await waitForAssistantArticle(page, compositeGeoQuery);
+    await compositeArticle.locator('a.assistant-result-title').first().waitFor();
+    assert.equal(await compositeArticle.locator('.assistant-geo-result-map').getAttribute('data-geo-constraint-count'), '2');
+    const compositeRun = await prisma.assistantRun.findFirstOrThrow({
+      where: { ownerUserId: fixtures.regular.user.id, userMessage: { content: compositeGeoQuery } },
+      include: { userMessage: true, assistantMessage: true },
+    });
+    assert.equal(compositeRun.userMessage.geoContextJson.operator, 'ALL');
+    assert.deepEqual(
+      compositeRun.userMessage.geoContextJson.constraints.map(({ slotId, distanceMeters }) => ({ slotId, distanceMeters })),
+      [{ slotId: 'geo-1', distanceMeters: 5_000 }, { slotId: 'geo-2', distanceMeters: 2_000 }],
+    );
+    assert.equal(compositeRun.assistantMessage.answerJson.geo.operator, 'ALL');
+    assert.equal(compositeRun.assistantMessage.answerJson.geo.constraints.length, 2);
+
     await startNewConversation(page);
     const ambiguityQuery = 'Найди в радиусе 2 км от Площадь неоднознач';
     await submit(page, input, ambiguityQuery);
@@ -1457,7 +1474,8 @@ async function assertConnectedGeoRun({
   for (const key of ['district', 'metro', 'developer']) {
     assert.equal(run.intentJson.hardFilters[key], null);
   }
-  assert.deepEqual(run.userMessage.geoContextJson, {
+  const { slotId, sourceSpan, ...storedGeo } = run.userMessage.geoContextJson;
+  assert.deepEqual(storedGeo, {
     kind,
     mode,
     label,
@@ -1465,6 +1483,10 @@ async function assertConnectedGeoRun({
     ...(distanceMeters === null ? {} : { distanceMeters }),
     source: 'LANDMARK',
   });
+  assert.equal(slotId, 'geo-1');
+  assert.equal(typeof sourceSpan?.start, 'number');
+  assert.equal(typeof sourceSpan?.end, 'number');
+  assert.equal(query.slice(sourceSpan.start, sourceSpan.end).length > 0, true);
   assert.equal(answer.geo.kind, kind);
   assert.equal(answer.geo.mode, mode);
   assert.equal(answer.geo.label, label);

@@ -16,7 +16,10 @@ test('Assistant T05 picker keeps map movement as draft and searches only from ex
   assert.match(pickerSource, /data-assistant-geo-confirm/u);
   assert.match(pickerSource, /onConfirm\(\{[\s\S]*source: 'MANUAL'/u);
   assert.doesNotMatch(pickerSource, /sendAssistantMessage|resolveAssistantGeo/u);
-  assert.match(chatSource, /handleGeoPickerConfirm[\s\S]*beginSubmission\(pendingGeoSubmission\.content, geo\)/u);
+  assert.match(
+    chatSource,
+    /handleGeoPickerConfirm[\s\S]*beginSubmission\(confirmedGeoSubmission\(pendingGeoSubmission\.content, geo\)\)/u,
+  );
   assert.match(
     chatSource,
     /geoPickerTarget\?\.kind !== 'PENDING_SLOT'[\s\S]*geoPickerTarget\?\.kind === 'ACTIVE_CONSTRAINT'[\s\S]*draft\.trim\(\)\.length > 0/u,
@@ -26,6 +29,24 @@ test('Assistant T05 picker keeps map movement as draft and searches only from ex
     /handleGeoPickerCancel[\s\S]*setGeoPickerTarget\(null\)/u,
   );
   assert.match(chatSource, /openGeoPicker[\s\S]*setPendingGeoSubmission\(\{ content \}\)/u);
+});
+
+test('ZAEBAL1 UI sends the shared prepared body and preserves composite slot metadata', () => {
+  assert.match(chatSource, /mapAssistantProductSubmission\([\s\S]*beginSubmission\(productDecision\.body\)/u);
+  assert.match(
+    chatSource,
+    /const replacement = withGeoSlotMetadata\([\s\S]*labelManualGeoConstraint\(geo, current\.label\)[\s\S]*current/u,
+  );
+  assert.match(chatSource, /constraint\.mode === 'NEAR'[\s\S]*editGeoPicker\(index\)/u);
+  assert.match(chatSource, /allowsManualPoint = resolution\.mode === 'NEAR'/u);
+});
+
+test('ZAEBAL1 generic resolver errors stay fail closed without an unbound manual point', () => {
+  assert.match(chatSource, /Не удалось проверить географическое условие/u);
+  assert.doesNotMatch(
+    chatSource,
+    /assistant-geo-resolution--error[\s\S]{0,500}openGeoPicker/u,
+  );
 });
 
 test('Assistant T05 browser keeps LocationIQ backend-only and exposes explicit degraded actions', () => {

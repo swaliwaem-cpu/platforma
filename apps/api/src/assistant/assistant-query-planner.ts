@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { stripAssistantGeoDistanceClause } from './geo/assistant-geo-query';
+import { extractAssistantDistrictFromText } from './geo/assistant-district-query';
 
 export const ASSISTANT_LUNA_MODEL = 'gpt-5.6-luna';
 export const ASSISTANT_TERRA_MODEL = 'gpt-5.6-terra';
@@ -560,14 +561,7 @@ export function extractAssistantExplicitHardFilters(
 
 export function extractAssistantExplicitDistrict(text: string, requireInPrefix = false) {
   const textWithoutGeoDistance = stripGeoDistancePhrases(text);
-  const prefix = requireInPrefix ? '(?:^|[\\s,;])в\\s+' : '(?:в\\s+)?';
-  return extractNamedCondition(
-    textWithoutGeoDistance,
-    new RegExp(
-      `${prefix}район(?:е)?\\s+[«"]?(.+?)[»"]?(?=\\s+(?:рядом\\s+с|возле|около|вокруг|у\\s+метро|метро|от\\s+[\\p{L}«"]|сдач\\p{L}*|\\d+\\s*квартал|площад\\p{L}*|этаж\\p{L}*|готов\\p{L}*|в\\s+готов\\p{L}*|класс\\p{L}*|до\\s+\\d|не\\s+(?:дороже|дешевле|позднее|раньше|меньше|больше))|[,.!?;\\r\\n]|$)`,
-      'iu',
-    ),
-  );
+  return extractAssistantDistrictFromText(textWithoutGeoDistance, requireInPrefix);
 }
 
 function extractExplicitFilters(text: string): Partial<AssistantSearchFilters> & { rooms?: number[] } {

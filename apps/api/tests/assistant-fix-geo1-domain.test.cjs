@@ -13,6 +13,7 @@ const {
   createCacheKey,
   parseResolveInput,
   parseResolveInputs,
+  stripAssistantGeoClauses,
 } = require('../dist/assistant/geo/assistant-place-resolver.service.js');
 const {
   extractAssistantExplicitHardFilters,
@@ -107,6 +108,24 @@ test('Assistant composite geo accepts a bounded ALL set and rejects duplicate or
   ]) {
     assert.throws(() => parseAssistantGeoBrowserContext(invalid), /ASSISTANT_GEO_INPUT_INVALID/u);
   }
+});
+
+test('ZAEBAL1 browser geo preserves resolver slot identity and source span', () => {
+  assert.deepEqual(parseAssistantGeoBrowserContext({
+    referenceType: 'LANDMARK',
+    landmarkId,
+    mode: 'NEAR',
+    distanceMeters: 900,
+    slotId: 'geo-1',
+    sourceSpan: { start: 0, end: 34 },
+  }), {
+    referenceType: 'LANDMARK',
+    landmarkId,
+    mode: 'NEAR',
+    distanceMeters: 900,
+    slotId: 'geo-1',
+    sourceSpan: { start: 0, end: 34 },
+  });
 });
 
 test('FIX-GEO1 stored legacy point is normalized into the canonical discriminated union', () => {
@@ -444,11 +463,11 @@ test('Assistant composite geo resolver keeps generic landmark slots explicit wit
   assert.equal(result.status, 'COMPOSITE');
   assert.equal(result.operator, 'ALL');
   assert.deepEqual(result.constraints.map(({ slotId, sourceText, status }) => ({ slotId, sourceText, status })), [
-    { slotId: 'geo-1', sourceText: 'воды', status: 'NOT_FOUND' },
-    { slotId: 'geo-2', sourceText: 'реки', status: 'NOT_FOUND' },
-    { slotId: 'geo-3', sourceText: 'парка такого-то', status: 'NOT_FOUND' },
-    { slotId: 'geo-4', sourceText: 'моста', status: 'NOT_FOUND' },
-    { slotId: 'geo-5', sourceText: 'школы такой-то', status: 'NOT_FOUND' },
+    { slotId: 'geo-1', sourceText: 'воды', status: 'REFINE_REQUIRED' },
+    { slotId: 'geo-2', sourceText: 'реки', status: 'REFINE_REQUIRED' },
+    { slotId: 'geo-3', sourceText: 'парка такого-то', status: 'REFINE_REQUIRED' },
+    { slotId: 'geo-4', sourceText: 'моста', status: 'REFINE_REQUIRED' },
+    { slotId: 'geo-5', sourceText: 'школы такой-то', status: 'REFINE_REQUIRED' },
   ]);
   assert.equal(landmarkCalls, 0);
 });
@@ -864,6 +883,133 @@ test('FIX-GEO1 explicit distance wins and INSIDE has no distance', () => {
   assert.equal(inside.placeQuery, 'район Арбат');
   assert.equal(inside.mode, 'INSIDE');
   assert.equal(inside.explicitDistanceMeters, null);
+});
+
+test('ZAEBAL1 deterministic inspector covers required geo phrases with stable slots and spans', () => {
+  const cases = [
+    ['в 900 м от Белорусского вокзала', 'Белорусский вокзал', 'NEAR', 900],
+    ['у МКАД', 'МКАД', 'NEAR', null],
+    ['внутри района Арбат', 'район Арбат', 'INSIDE', null],
+  ];
+  for (const [content, placeQuery, mode, explicitDistanceMeters] of cases) {
+    const parsed = parseResolveInputs({ content });
+    assert.equal(parsed.constraints.length, 1, content);
+    assert.deepEqual({
+      slotId: parsed.constraints[0].slotId,
+      sourceSpan: parsed.constraints[0].sourceSpan,
+      placeQuery: parsed.constraints[0].placeQuery,
+      mode: parsed.constraints[0].mode,
+      explicitDistanceMeters: parsed.constraints[0].explicitDistanceMeters,
+    }, {
+      slotId: 'geo-1',
+      sourceSpan: { start: 0, end: content.length },
+      placeQuery,
+      mode,
+      explicitDistanceMeters,
+    });
+  }
+
+  const composite = parseResolveInputs({ content: 'рядом с ТТК и рядом с Москва-Сити' });
+  assert.equal(composite.operator, 'ALL');
+  assert.deepEqual(composite.constraints.map(({ slotId, placeQuery }) => ({ slotId, placeQuery })), [
+    { slotId: 'geo-1', placeQuery: 'ТТК' },
+    { slotId: 'geo-2', placeQuery: 'Москва-Сити' },
+  ]);
+
+  const full = 'Двухкомнатная в районе Хамовники и внутри района Арбат до 50 млн';
+  const inspected = parseResolveInput({ content: full });
+  assert.equal(full.slice(inspected.sourceSpan.start, inspected.sourceSpan.end), 'внутри района Арбат');
+  const sanitized = stripAssistantGeoClauses(full);
+  assert.equal(sanitized.includes('Арбат'), false);
+  assert.equal(extractAssistantExplicitHardFilters([sanitized]).district, 'Хамовники');
+
+  assert.equal(parseResolveInputs({ content: 'Найди рядом с выбранной точкой' }).constraints.length, 0);
+});
+
+test('ZAEBAL1 sanitizer preserves a comma-delimited district between composite geo clauses', () => {
+  for (const districtClause of ['в районе Хамовники', 'район Хамовники']) {
+    const content = `Найди в 5 км от ТТК, ${districtClause}, и в 2 км от Москва-Сити`;
+    const parsed = parseResolveInputs({ content });
+    assert.deepEqual(parsed.constraints.map(({ placeQuery }) => placeQuery), ['ТТК', 'Москва-Сити']);
+
+    const sanitized = stripAssistantGeoClauses(content);
+    assert.equal(sanitized.includes('ТТК'), false);
+    assert.equal(sanitized.includes('Москва-Сити'), false);
+    assert.equal(extractAssistantExplicitHardFilters([sanitized]).district, 'Хамовники');
+  }
+});
+
+test('ZAEBAL1 direct geo-bearing message fails before persistence without canonical geo', async () => {
+  let sideEffects = 0;
+  const fail = async () => {
+    sideEffects += 1;
+    throw new Error('UNEXPECTED_SIDE_EFFECT');
+  };
+  const service = new AssistantService({
+    assistantRun: { findUnique: fail },
+    assistantConversation: { findFirst: fail },
+    $transaction: fail,
+  }, { enqueue: fail }, { materializeBrowserContext: fail });
+
+  await assert.rejects(service.startRun({
+    conversationId: '10000000-0000-4000-8000-000000000001',
+    ownerUserId: '20000000-0000-4000-8000-000000000001',
+    idempotencyKey: '30000000-0000-4000-8000-000000000001',
+    body: { content: 'в 900 м от Белорусского вокзала' },
+  }), /ASSISTANT_GEO_CONTEXT_REQUIRED/u);
+  assert.equal(sideEffects, 0);
+});
+
+test('ZAEBAL1 message boundary preserves source spans when content contains repeated whitespace', async () => {
+  const content = 'Найди   в 900 м от Белорусского вокзала';
+  const inspected = parseResolveInput({ content });
+  const afterGuard = new Error('AFTER_CANONICAL_GEO_GUARD');
+  const service = new AssistantService({
+    assistantRun: { async findUnique() { throw afterGuard; } },
+  }, {}, {});
+
+  await assert.rejects(service.startRun({
+    conversationId: '10000000-0000-4000-8000-000000000001',
+    ownerUserId: '20000000-0000-4000-8000-000000000001',
+    idempotencyKey: '30000000-0000-4000-8000-000000000001',
+    body: {
+      content,
+      geo: {
+        referenceType: 'MANUAL_POINT',
+        point: { latitude: 55.7763, longitude: 37.5801, label: 'Белорусский вокзал' },
+        mode: 'NEAR',
+        distanceMeters: 900,
+        slotId: inspected.slotId,
+        sourceSpan: inspected.sourceSpan,
+      },
+    },
+  }), (error) => error === afterGuard);
+});
+
+test('ZAEBAL1 confirmed manual point keeps matching slot metadata while overriding distance', async () => {
+  const content = 'Найди в радиусе 2 км от geocoder unavailable';
+  const inspected = parseResolveInput({ content });
+  const afterGuard = new Error('AFTER_CANONICAL_GEO_GUARD');
+  const service = new AssistantService({
+    assistantRun: { async findUnique() { throw afterGuard; } },
+  }, {}, {});
+
+  await assert.rejects(service.startRun({
+    conversationId: '10000000-0000-4000-8000-000000000001',
+    ownerUserId: '20000000-0000-4000-8000-000000000001',
+    idempotencyKey: '30000000-0000-4000-8000-000000000001',
+    body: {
+      content,
+      geo: {
+        referenceType: 'MANUAL_POINT',
+        point: { latitude: 55.751244, longitude: 37.618423, label: 'Точка на карте' },
+        mode: 'NEAR',
+        distanceMeters: 3_000,
+        slotId: inspected.slotId,
+        sourceSpan: inspected.sourceSpan,
+      },
+    },
+  }), (error) => error === afterGuard);
 });
 
 test('FIX-GEO1 geometry cache keeps NEAR and INSIDE negative results isolated', () => {

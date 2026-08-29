@@ -23,7 +23,7 @@
     "test:assistant:t03:postgres": "pnpm build:api && node apps/api/tests/assistant-t03-postgres.cjs",
     "test:assistant:t03:browser": "pnpm build:api && node apps/api/tests/assistant-t03-browser-runtime.cjs",
     "test:assistant:t05:postgres": "pnpm build:api && node apps/api/tests/assistant-t05-postgres.cjs",
-    "test:assistant:fix-geo1:targeted": "pnpm build:api && node --test apps/api/tests/assistant-fix-geo1-domain.test.cjs apps/api/tests/assistant-fix-geo1-live-smoke.test.cjs apps/api/tests/assistant-pidafix3-geo-live.test.cjs apps/api/tests/assistant-t05-domain.test.cjs && pnpm build:web && pnpm --filter @platforma/web exec node --test tests/assistant-t05-ui.test.mjs tests/map-module.test.mjs",
+    "test:assistant:fix-geo1:targeted": "pnpm build:api && node --test apps/api/tests/assistant-fix-geo1-domain.test.cjs apps/api/tests/assistant-fix-geo1-live-smoke.test.cjs apps/api/tests/assistant-local-paid-smoke.test.cjs apps/api/tests/assistant-pidafix3-geo-live.test.cjs apps/api/tests/assistant-t05-domain.test.cjs && pnpm build:web && pnpm --filter @platforma/web exec node --test tests/assistant-t05-ui.test.mjs tests/map-module.test.mjs",
     "test:assistant:fix-geo1:postgres": "pnpm build:api && node apps/api/tests/assistant-t05-postgres.cjs && node --test apps/api/tests/assistant-pidafix2-postgres.cjs",
     "test:assistant:fix-geo1:browser": "pnpm --filter @platforma/web test:assistant:t05:browser",
     "smoke:assistant:fix-geo1:local-stub": "docker compose exec -T -e ASSISTANT_FIX_GEO1_LOCAL_STUB_ACCESS_TOKEN api node apps/api/scripts/assistant-fix-geo1-live-smoke.cjs",

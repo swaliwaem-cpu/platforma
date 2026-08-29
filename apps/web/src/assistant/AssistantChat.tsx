@@ -17,7 +17,9 @@ import type {
   AssistantPageContext,
   AssistantRun,
   AssistantSearchResultCard,
+  AssistantSendMessageInput,
 } from '@platforma/shared';
+import { mapAssistantProductSubmission } from '@platforma/shared/assistant-product-submission';
 import {
   Clock3Icon,
   MessageCircleIcon,
@@ -87,6 +89,7 @@ type PendingGeoSubmission = {
 
 type GeoPickerTarget =
   | { kind: 'NEW' }
+  | { kind: 'PENDING_SINGLE' }
   | { kind: 'PENDING_SLOT'; slotId: string }
   | { kind: 'ACTIVE_CONSTRAINT'; index: number };
 
@@ -421,11 +424,11 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
     }
   }, [accessToken, finishRun]);
 
-  const beginSubmission = useCallback((content: string, geo: AssistantGeoSearchSelection | null) => {
+  const beginSubmission = useCallback((body: AssistantSendMessageInput) => {
     const submission: PendingSubmission = {
-      content,
+      content: body.content,
       context: pageContext,
-      geo: geo ? geoToBrowserInput(geo) : null,
+      geo: body.geo ?? null,
       conversationId: conversation?.id ?? null,
       idempotencyKey: crypto.randomUUID(),
     };
@@ -442,11 +445,6 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
     event.preventDefault();
     const content = draft.trim();
     if (!content || isSending || isResolvingGeo || isConversationLoading) return;
-    if (activeGeo) {
-      beginSubmission(content, activeGeo);
-      return;
-    }
-
     geoResolveRequestRef.current?.abort();
     const controller = new AbortController();
     geoResolveRequestRef.current = controller;
@@ -457,23 +455,28 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
     void resolveAssistantGeo(accessToken, { content, locale: 'ru', country: null }, controller.signal)
       .then((resolution) => {
         if (controller.signal.aborted) return;
-        if (resolution.status === 'NOT_APPLICABLE') {
-          beginSubmission(content, null);
+        const productDecision = mapAssistantProductSubmission(
+          content,
+          resolution,
+          activeGeo ? geoToBrowserInput(activeGeo) : null,
+        );
+        if (resolution.status === 'NOT_APPLICABLE' && productDecision.status === 'READY') {
+          beginSubmission(productDecision.body);
           return;
         }
-        if (resolution.status === 'RESOLVED') {
+        if (resolution.status === 'RESOLVED' && productDecision.status === 'READY') {
           const candidate = resolution.candidates[0];
           if (candidate) {
-            const geo = candidateToGeo(candidate);
+            const geo = candidateToGeo(candidate, resolution);
             setActiveGeo(geo);
-            beginSubmission(content, geo);
+            beginSubmission(productDecision.body);
             return;
           }
         }
         if (resolution.status === 'COMPOSITE') {
           const selections = Object.fromEntries(resolution.constraints.flatMap((constraint) => {
             const candidate = constraint.status === 'RESOLVED' ? constraint.candidates[0] : null;
-            return candidate ? [[constraint.slotId, candidateToGeo(candidate)]] : [];
+            return candidate ? [[constraint.slotId, candidateToGeo(candidate, constraint)]] : [];
           }));
           if (hasDuplicateGeoConstraints(Object.values(selections))) {
             setPendingGeoSelections(selections);
@@ -483,9 +486,9 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
             return;
           }
           const geo = completeCompositeGeo(resolution, selections);
-          if (geo) {
+          if (geo && productDecision.status === 'READY') {
             setActiveGeo(geo);
-            beginSubmission(content, geo);
+            beginSubmission(productDecision.body);
             return;
           }
           setPendingGeoSelections(selections);
@@ -504,8 +507,11 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
   };
 
   const handleCandidateSelect = (candidate: AssistantGeoCandidate, slotId?: string) => {
-    if (!pendingGeoSubmission || !geoResolution) return;
-    const geo = candidateToGeo(candidate);
+    if (!pendingGeoSubmission || !geoResolution || geoResolution.status === 'NOT_APPLICABLE') return;
+    const metadata = geoResolution.status === 'COMPOSITE'
+      ? geoResolution.constraints.find((constraint) => constraint.slotId === slotId)
+      : geoResolution;
+    const geo = candidateToGeo(candidate, metadata ?? undefined);
     if (geoResolution.status === 'COMPOSITE') {
       if (!slotId || !geoResolution.constraints.some((constraint) => constraint.slotId === slotId)) return;
       const selections = { ...pendingGeoSelections, [slotId]: geo };
@@ -518,13 +524,13 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
       setPendingGeoSelections(selections);
       if (complete) {
         setActiveGeo(complete);
-        beginSubmission(pendingGeoSubmission.content, complete);
+        beginSubmission(confirmedGeoSubmission(pendingGeoSubmission.content, complete));
       }
       return;
     }
     if (geoResolution.status !== 'AMBIGUOUS' && geoResolution.status !== 'RESOLVED') return;
     setActiveGeo(geo);
-    beginSubmission(pendingGeoSubmission.content, geo);
+    beginSubmission(confirmedGeoSubmission(pendingGeoSubmission.content, geo));
   };
 
   const handleGeoPickerConfirm = (geo: AssistantGeoSearchContext) => {
@@ -532,8 +538,8 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
     setGeoPickerTarget(null);
     if (target?.kind === 'PENDING_SLOT' && geoResolution?.status === 'COMPOSITE') {
       const slot = geoResolution.constraints.find(({ slotId }) => slotId === target.slotId);
-      if (!slot) return;
-      const labelledGeo = labelManualGeoConstraint(geo, slot.sourceText);
+      if (!slot || slot.mode !== 'NEAR') return;
+      const labelledGeo = withGeoSlotMetadata(labelManualGeoConstraint(geo, slot.sourceText), slot);
       const selections = { ...pendingGeoSelections, [target.slotId]: labelledGeo };
       if (hasDuplicateGeoConstraints(Object.values(selections))) {
         setGeoError(duplicateGeoConstraintError);
@@ -544,16 +550,28 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
       setPendingGeoSelections(selections);
       if (complete && pendingGeoSubmission) {
         setActiveGeo(complete);
-        beginSubmission(pendingGeoSubmission.content, complete);
+        beginSubmission(confirmedGeoSubmission(pendingGeoSubmission.content, complete));
       }
+      return;
+    }
+    if (target?.kind === 'PENDING_SINGLE' && geoResolution && geoResolution.status !== 'COMPOSITE'
+      && geoResolution.status !== 'NOT_APPLICABLE' && pendingGeoSubmission) {
+      if (geoResolution.mode !== 'NEAR') return;
+      const confirmed = withGeoSlotMetadata(
+        labelManualGeoConstraint(geo, geoResolution.sourceText ?? geoResolution.placeQuery),
+        geoResolution,
+      );
+      setActiveGeo(confirmed);
+      beginSubmission(confirmedGeoSubmission(pendingGeoSubmission.content, confirmed));
       return;
     }
     if (target?.kind === 'ACTIVE_CONSTRAINT' && activeGeo) {
       const current = geoConstraints(activeGeo)[target.index];
-      if (!current) return;
-      const replacement = 'operator' in activeGeo
-        ? labelManualGeoConstraint(geo, current.label)
-        : geo;
+      if (!current || current.mode !== 'NEAR') return;
+      const replacement = withGeoSlotMetadata(
+        'operator' in activeGeo ? labelManualGeoConstraint(geo, current.label) : geo,
+        current,
+      );
       const next = replaceGeoConstraint(activeGeo, target.index, replacement);
       if (hasDuplicateGeoConstraints(geoConstraints(next))) {
         setGeoError(duplicateGeoConstraintError);
@@ -562,11 +580,15 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
       }
       setGeoError(null);
       setActiveGeo(next);
-      if (pendingGeoSubmission) beginSubmission(pendingGeoSubmission.content, next);
+      if (pendingGeoSubmission) {
+        beginSubmission(confirmedGeoSubmission(pendingGeoSubmission.content, next));
+      }
       return;
     }
     setActiveGeo(geo);
-    if (pendingGeoSubmission) beginSubmission(pendingGeoSubmission.content, geo);
+    if (pendingGeoSubmission) {
+      beginSubmission(confirmedGeoSubmission(pendingGeoSubmission.content, geo));
+    }
   };
 
   const handleGeoPickerCancel = () => {
@@ -659,6 +681,10 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
   };
 
   const openGeoPicker = (slotId?: string) => {
+    if (slotId && geoResolution?.status === 'COMPOSITE'
+      && geoResolution.constraints.find((constraint) => constraint.slotId === slotId)?.mode !== 'NEAR') return;
+    if (!slotId && pendingGeoSubmission && geoResolution && geoResolution.status !== 'COMPOSITE'
+      && geoResolution.status !== 'NOT_APPLICABLE' && geoResolution.mode !== 'NEAR') return;
     if (!slotId) {
       const content = draft.trim();
       if (content) setPendingGeoSubmission({ content });
@@ -670,10 +696,16 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
         height: Math.max(current.height, Math.min(760, window.innerHeight - 48)),
       }));
     }
-    setGeoPickerTarget(slotId ? { kind: 'PENDING_SLOT', slotId } : { kind: 'NEW' });
+    setGeoPickerTarget(slotId
+      ? { kind: 'PENDING_SLOT', slotId }
+      : pendingGeoSubmission && geoResolution && geoResolution.status !== 'COMPOSITE'
+        && geoResolution.status !== 'NOT_APPLICABLE'
+        ? { kind: 'PENDING_SINGLE' }
+        : { kind: 'NEW' });
   };
 
   const editGeoPicker = (index: number) => {
+    if (activeGeo && geoConstraints(activeGeo)[index]?.mode !== 'NEAR') return;
     const content = draft.trim() || readLatestUserContent(conversation?.messages ?? []);
     if (content) setPendingGeoSubmission({ content });
     if (!isMobileViewport()) {
@@ -769,6 +801,7 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
                 : geoPickerTarget?.kind === 'PENDING_SLOT'
                   ? pendingGeoSelections[geoPickerTarget.slotId] ?? null
                   : null}
+              initialDistanceMeters={readPendingGeoDistance(geoPickerTarget, geoResolution)}
               onCancel={handleGeoPickerCancel}
               onConfirm={handleGeoPickerConfirm}
             />
@@ -898,20 +931,22 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
                   >
                     <MapPinIcon aria-hidden="true" />
                     <span>{formatGeoChip(constraint)}</span>
-                    <button
-                      aria-label={'operator' in activeGeo
-                        ? constraint.kind === 'POINT'
-                          ? `Изменить точку и расстояние для «${constraint.label}»`
-                          : `Заменить ориентир «${constraint.label}» ручной точкой`
-                        : constraint.kind === 'POINT'
-                          ? 'Изменить точку и расстояние'
-                          : 'Заменить ориентир ручной точкой'}
-                      disabled={isSending || isConversationLoading || isResolvingGeo}
-                      type="button"
-                      onClick={() => editGeoPicker(index)}
-                    >
-                      <PencilIcon aria-hidden="true" />
-                    </button>
+                    {constraint.mode === 'NEAR' ? (
+                      <button
+                        aria-label={'operator' in activeGeo
+                          ? constraint.kind === 'POINT'
+                            ? `Изменить точку и расстояние для «${constraint.label}»`
+                            : `Заменить ориентир «${constraint.label}» ручной точкой`
+                          : constraint.kind === 'POINT'
+                            ? 'Изменить точку и расстояние'
+                            : 'Заменить ориентир ручной точкой'}
+                        disabled={isSending || isConversationLoading || isResolvingGeo}
+                        type="button"
+                        onClick={() => editGeoPicker(index)}
+                      >
+                        <PencilIcon aria-hidden="true" />
+                      </button>
+                    ) : null}
                     <button
                       aria-label={'operator' in activeGeo
                         ? `Убрать ориентир «${constraint.label}»`
@@ -942,12 +977,9 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
                   <div className="assistant-geo-resolution assistant-geo-resolution--error" role="alert">
                     <p>{geoError === duplicateGeoConstraintError
                       ? geoError
-                      : 'Не удалось определить место. Можно указать точку вручную или уточнить название.'}</p>
+                      : 'Не удалось проверить географическое условие. Верните запрос и попробуйте ещё раз.'}</p>
                     {geoError !== duplicateGeoConstraintError ? (
-                      <div>
-                        <button type="button" onClick={() => openGeoPicker()}>Указать на карте</button>
-                        <button type="button" onClick={handleGeoRefine}>Уточнить название</button>
-                      </div>
+                      <button type="button" onClick={handleGeoRefine}>Уточнить запрос</button>
                     ) : null}
                   </div>
                 ) : null}
@@ -1385,13 +1417,15 @@ function AssistantGeoResolutionPanel({
                   <>
                     <p>Выбрано: {selected.label}</p>
                     <div className="assistant-geo-selected-actions">
-                      <button
-                        aria-label={`Изменить ориентир «${constraint.sourceText}» на карте`}
-                        type="button"
-                        onClick={() => onManual(constraint.slotId)}
-                      >
-                        Изменить на карте
-                      </button>
+                      {selected.mode === 'NEAR' ? (
+                        <button
+                          aria-label={`Изменить ориентир «${constraint.sourceText}» на карте`}
+                          type="button"
+                          onClick={() => onManual(constraint.slotId)}
+                        >
+                          Изменить на карте
+                        </button>
+                      ) : null}
                       <button
                         aria-label={`Сбросить ориентир «${constraint.sourceText}»`}
                         type="button"
@@ -1416,16 +1450,20 @@ function AssistantGeoResolutionPanel({
                   </div>
                 ) : (
                   <>
-                    <p>{constraint.status === 'UNAVAILABLE'
-                      ? 'Сервис определения места сейчас недоступен.'
-                      : 'Нужно уточнить конкретное место или указать точку.'}</p>
-                    <button
-                      aria-label={`Указать ориентир «${constraint.sourceText}» на карте`}
-                      type="button"
-                      onClick={() => onManual(constraint.slotId)}
-                    >
-                      Указать на карте
-                    </button>
+                    <p>{constraint.mode === 'INSIDE'
+                      ? 'Не удалось определить границы области. Уточните её название.'
+                      : constraint.status === 'UNAVAILABLE'
+                        ? 'Сервис определения места сейчас недоступен.'
+                        : 'Нужно уточнить конкретное место или указать точку.'}</p>
+                    {constraint.mode === 'NEAR' ? (
+                      <button
+                        aria-label={`Указать ориентир «${constraint.sourceText}» на карте`}
+                        type="button"
+                        onClick={() => onManual(constraint.slotId)}
+                      >
+                        Указать на карте
+                      </button>
+                    ) : null}
                   </>
                 )}
               </section>
@@ -1452,20 +1490,30 @@ function AssistantGeoResolutionPanel({
       </div>
     );
   }
+  const allowsManualPoint = resolution.mode === 'NEAR';
   return (
     <div className="assistant-geo-resolution" role="alert">
-      <p>{resolution.status === 'UNAVAILABLE'
-        ? 'Геокодер сейчас недоступен. Поиск по ручной точке продолжает работать.'
-        : 'Место не найдено. Укажите точку вручную или уточните название.'}</p>
+      <p>{resolution.mode === 'INSIDE'
+        ? 'Не удалось определить область. Уточните её название, чтобы сохранить поиск внутри границ.'
+        : resolution.status === 'REFINE_REQUIRED'
+          ? 'Назовите конкретный объект — например, реку, набережную, парк или школу.'
+          : resolution.status === 'UNAVAILABLE'
+            ? 'Геокодер сейчас недоступен. Поиск по ручной точке продолжает работать.'
+            : 'Место не найдено. Укажите точку вручную или уточните название.'}</p>
       <div>
-        <button type="button" onClick={() => onManual()}>Указать на карте</button>
+        {allowsManualPoint ? (
+          <button type="button" onClick={() => onManual()}>Указать на карте</button>
+        ) : null}
         <button type="button" onClick={onRefine}>Уточнить название</button>
       </div>
     </div>
   );
 }
 
-function candidateToGeo(candidate: AssistantGeoCandidate): AssistantGeoSearchContext {
+function candidateToGeo(
+  candidate: AssistantGeoCandidate,
+  metadata?: { slotId?: string; sourceSpan?: { start: number; end: number } },
+): AssistantGeoSearchContext {
   if (candidate.kind === 'POINT') {
     const point = candidate.point ?? (typeof candidate.latitude === 'number' && typeof candidate.longitude === 'number'
       ? { latitude: candidate.latitude, longitude: candidate.longitude }
@@ -1481,6 +1529,7 @@ function candidateToGeo(candidate: AssistantGeoCandidate): AssistantGeoSearchCon
       point,
       distanceMeters: candidate.distanceMeters,
       source: 'LANDMARK',
+      ...(metadata?.slotId ? { slotId: metadata.slotId, sourceSpan: metadata.sourceSpan } : {}),
     };
   }
   if (candidate.kind === 'LINE') {
@@ -1494,6 +1543,7 @@ function candidateToGeo(candidate: AssistantGeoCandidate): AssistantGeoSearchCon
       landmarkId: candidate.id,
       distanceMeters: candidate.distanceMeters,
       source: 'LANDMARK',
+      ...(metadata?.slotId ? { slotId: metadata.slotId, sourceSpan: metadata.sourceSpan } : {}),
     };
   }
   if (candidate.mode === 'INSIDE') {
@@ -1503,6 +1553,7 @@ function candidateToGeo(candidate: AssistantGeoCandidate): AssistantGeoSearchCon
       label: candidate.label,
       landmarkId: candidate.id,
       source: 'LANDMARK',
+      ...(metadata?.slotId ? { slotId: metadata.slotId, sourceSpan: metadata.sourceSpan } : {}),
     };
   }
   if (typeof candidate.distanceMeters !== 'number') {
@@ -1515,6 +1566,7 @@ function candidateToGeo(candidate: AssistantGeoCandidate): AssistantGeoSearchCon
     landmarkId: candidate.id,
     distanceMeters: candidate.distanceMeters,
     source: 'LANDMARK',
+    ...(metadata?.slotId ? { slotId: metadata.slotId, sourceSpan: metadata.sourceSpan } : {}),
   };
 }
 
@@ -1528,6 +1580,13 @@ function geoToBrowserInput(geo: AssistantGeoSearchSelection): AssistantGeoBrowse
   return geoConstraintToBrowserInput(geo);
 }
 
+function confirmedGeoSubmission(
+  content: string,
+  geo: AssistantGeoSearchSelection,
+): AssistantSendMessageInput {
+  return { content, geo: geoToBrowserInput(geo) };
+}
+
 function geoConstraintToBrowserInput(geo: AssistantGeoSearchContext): AssistantGeoBrowserConstraint {
   if (geo.source === 'LANDMARK' && geo.landmarkId) {
     return {
@@ -1535,6 +1594,7 @@ function geoConstraintToBrowserInput(geo: AssistantGeoSearchContext): AssistantG
       landmarkId: geo.landmarkId,
       mode: geo.mode,
       ...(geo.mode === 'NEAR' ? { distanceMeters: geo.distanceMeters } : {}),
+      ...(geo.slotId ? { slotId: geo.slotId, sourceSpan: geo.sourceSpan } : {}),
     };
   }
   if (geo.kind !== 'POINT') throw new Error('ASSISTANT_GEO_LANDMARK_ID_REQUIRED');
@@ -1543,6 +1603,7 @@ function geoConstraintToBrowserInput(geo: AssistantGeoSearchContext): AssistantG
     point: { ...geo.point, label: geo.label },
     mode: 'NEAR',
     distanceMeters: geo.distanceMeters,
+    ...(geo.slotId ? { slotId: geo.slotId, sourceSpan: geo.sourceSpan } : {}),
   };
 }
 
@@ -1567,6 +1628,29 @@ function labelManualGeoConstraint(geo: AssistantGeoSearchContext, sourceText: st
     ...geo,
     label: `Ориентир: ${sourceLabel}`.slice(0, 160),
   };
+}
+
+function withGeoSlotMetadata(
+  geo: AssistantGeoSearchContext,
+  metadata: { slotId?: string; sourceSpan?: { start: number; end: number } },
+): AssistantGeoSearchContext {
+  return metadata.slotId
+    ? { ...geo, slotId: metadata.slotId, sourceSpan: metadata.sourceSpan }
+    : geo;
+}
+
+function readPendingGeoDistance(
+  target: GeoPickerTarget | null,
+  resolution: AssistantGeoResolution | null,
+) {
+  if (!target || !resolution || resolution.status === 'NOT_APPLICABLE') return null;
+  if (target.kind === 'PENDING_SINGLE' && resolution.status !== 'COMPOSITE') {
+    return resolution.distanceMeters ?? null;
+  }
+  if (target.kind === 'PENDING_SLOT' && resolution.status === 'COMPOSITE') {
+    return resolution.constraints.find(({ slotId }) => slotId === target.slotId)?.distanceMeters ?? null;
+  }
+  return null;
 }
 
 function hasDuplicateGeoConstraints(constraints: AssistantGeoSearchContext[]) {

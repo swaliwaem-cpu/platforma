@@ -77,6 +77,8 @@ export type AssistantGeoPointSearchContext = {
   distanceMeters: number;
   source: 'MANUAL' | 'LANDMARK';
   landmarkId?: string;
+  slotId?: string;
+  sourceSpan?: AssistantGeoSourceSpan;
 };
 
 export type AssistantGeoLineSearchContext = {
@@ -86,6 +88,8 @@ export type AssistantGeoLineSearchContext = {
   landmarkId: string;
   distanceMeters: number;
   source: 'LANDMARK';
+  slotId?: string;
+  sourceSpan?: AssistantGeoSourceSpan;
 };
 
 export type AssistantGeoAreaSearchContext =
@@ -96,6 +100,8 @@ export type AssistantGeoAreaSearchContext =
       landmarkId: string;
       distanceMeters: number;
       source: 'LANDMARK';
+      slotId?: string;
+      sourceSpan?: AssistantGeoSourceSpan;
     }
   | {
       kind: 'AREA';
@@ -103,6 +109,8 @@ export type AssistantGeoAreaSearchContext =
       label: string;
       landmarkId: string;
       source: 'LANDMARK';
+      slotId?: string;
+      sourceSpan?: AssistantGeoSourceSpan;
     };
 
 export type AssistantGeoConstraint =
@@ -118,19 +126,31 @@ export type AssistantGeoConstraintSet = {
 export type AssistantGeoSearchContext = AssistantGeoConstraint;
 export type AssistantGeoSearchSelection = AssistantGeoSearchContext | AssistantGeoConstraintSet;
 
+export type AssistantGeoSourceSpan = { start: number; end: number };
+
+export type AssistantGeoSlotMetadata = {
+  slotId?: string;
+  sourceSpan?: AssistantGeoSourceSpan;
+};
+
+export type AssistantGeoResolutionMetadata = AssistantGeoSlotMetadata & {
+  mode: AssistantGeoMode;
+  distanceMeters?: number;
+};
+
 export type AssistantGeoBrowserConstraint =
-  | {
+  | (AssistantGeoSlotMetadata & {
       referenceType: 'LANDMARK';
       landmarkId: string;
       mode: AssistantGeoMode;
       distanceMeters?: number | null;
-    }
-  | {
+    })
+  | (AssistantGeoSlotMetadata & {
       referenceType: 'MANUAL_POINT';
       point: AssistantGeoPoint & { label?: string };
       mode: 'NEAR';
       distanceMeters?: number | null;
-    };
+    });
 
 export type AssistantGeoBrowserInput = AssistantGeoBrowserConstraint | {
   operator: 'ALL';
@@ -153,24 +173,33 @@ export type AssistantGeoCandidate = {
 
 export type AssistantGeoSingleResolution =
   | { status: 'NOT_APPLICABLE' }
-  | {
+  | (AssistantGeoResolutionMetadata & {
       status: 'RESOLVED' | 'AMBIGUOUS';
+      sourceText?: string;
       placeQuery: string;
       /** @deprecated Present only for point-only compatibility clients. */
       radiusMeters?: number;
       candidates: AssistantGeoCandidate[];
-    }
-  | {
+    })
+  | (AssistantGeoResolutionMetadata & {
       status: 'NOT_FOUND' | 'UNAVAILABLE';
+      sourceText?: string;
       placeQuery: string;
       /** @deprecated Present only for point-only compatibility clients. */
       radiusMeters?: number;
       actions: ['MANUAL', 'REFINE'];
-    };
+    })
+  | (AssistantGeoResolutionMetadata & {
+      status: 'REFINE_REQUIRED';
+      placeQuery: string;
+      sourceText?: string;
+      actions: ['REFINE', 'MANUAL'];
+    });
 
 export type AssistantGeoResolutionSlot = {
   slotId: string;
   sourceText: string;
+  sourceSpan: AssistantGeoSourceSpan;
 } & Exclude<AssistantGeoSingleResolution, { status: 'NOT_APPLICABLE' }>;
 
 export type AssistantGeoResolution = AssistantGeoSingleResolution | {

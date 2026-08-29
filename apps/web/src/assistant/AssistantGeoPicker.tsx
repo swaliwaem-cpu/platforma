@@ -6,6 +6,7 @@ import { PlatformMap, type MapCoordinate, type MapStatus, type MapViewport } fro
 
 type AssistantGeoPickerProps = {
   initialGeo: AssistantGeoSearchContext | null;
+  initialDistanceMeters?: number | null;
   onCancel: () => void;
   onConfirm: (geo: AssistantGeoSearchContext) => void;
 };
@@ -13,14 +14,16 @@ type AssistantGeoPickerProps = {
 const presetKilometers = [1, 2, 3, 5];
 const defaultCenter: MapCoordinate = [55.751244, 37.618423];
 
-export function AssistantGeoPicker({ initialGeo, onCancel, onConfirm }: AssistantGeoPickerProps) {
+export function AssistantGeoPicker({ initialGeo, initialDistanceMeters, onCancel, onConfirm }: AssistantGeoPickerProps) {
   const initialCenter = useMemo<MapCoordinate>(() => initialGeo
     && initialGeo.kind === 'POINT'
     ? [initialGeo.point.latitude, initialGeo.point.longitude]
     : defaultCenter, [initialGeo]);
   const [center, setCenter] = useState<MapCoordinate>(initialCenter);
   const [radiusKilometers, setRadiusKilometers] = useState(
-    initialGeo?.mode === 'NEAR' ? String(initialGeo.distanceMeters / 1_000) : '2',
+    initialGeo?.mode === 'NEAR'
+      ? String(initialGeo.distanceMeters / 1_000)
+      : typeof initialDistanceMeters === 'number' ? String(initialDistanceMeters / 1_000) : '2',
   );
   const [mapStatus, setMapStatus] = useState<MapStatus>('loading');
   const radiusMeters = parseRadiusKilometers(radiusKilometers);

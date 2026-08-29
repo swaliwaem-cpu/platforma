@@ -47,10 +47,6 @@ export function parseAssistantGeoDistanceClause(value: string): AssistantGeoDist
 }
 
 export function stripAssistantGeoDistanceClause(value: string) {
-  let result = value;
-  for (;;) {
-    const clause = parseAssistantGeoDistanceClause(result);
-    if (!clause) return result;
-    result = `${result.slice(0, clause.start)}${result.slice(clause.end)}`;
-  }
+  return stripAssistantGeoClauses(value);
 }
+import { stripAssistantGeoClauses } from './assistant-place-resolver.service';

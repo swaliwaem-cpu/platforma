@@ -545,6 +545,35 @@ test('Assistant T05 persists confirmed geo separately and serializes one grounde
       idempotencyKey: randomUUID(),
     });
     assert.equal(created.status, 201);
+    const beforeBypass = {
+      messages: await prisma.assistantMessage.count({ where: { conversationId: created.body.conversation.id } }),
+      runs: await prisma.assistantRun.count({ where: { conversationId: created.body.conversation.id } }),
+      aiAttempts: await prisma.assistantAiUsageAttempt.count(),
+      geoOperations: await prisma.assistantGeoOperation.count(),
+      geoAttempts: await prisma.assistantGeoUsageAttempt.count(),
+    };
+    for (const content of [
+      'Найди в 900 м от Белорусского вокзала',
+      'Найди в 3 км от ТТК и в 900 м от Москва-Сити',
+      'Найди рядом с МКАД',
+      'Найди внутри района Арбат',
+      'Найди квартиру у воды',
+    ]) {
+      const blocked = await httpJson(
+        baseUrl,
+        `/assistant/conversations/${created.body.conversation.id}/messages`,
+        { method: 'POST', token, idempotencyKey: randomUUID(), body: { content } },
+      );
+      assert.equal(blocked.status, 400, content);
+      assert.equal(blocked.body.message, 'ASSISTANT_GEO_CONTEXT_REQUIRED', content);
+    }
+    assert.deepEqual({
+      messages: await prisma.assistantMessage.count({ where: { conversationId: created.body.conversation.id } }),
+      runs: await prisma.assistantRun.count({ where: { conversationId: created.body.conversation.id } }),
+      aiAttempts: await prisma.assistantAiUsageAttempt.count(),
+      geoOperations: await prisma.assistantGeoOperation.count(),
+      geoAttempts: await prisma.assistantGeoUsageAttempt.count(),
+    }, beforeBypass);
     const queued = await httpJson(
       baseUrl,
       `/assistant/conversations/${created.body.conversation.id}/messages`,

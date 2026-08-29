@@ -31,12 +31,16 @@ export type ParsedAssistantGeoBrowserConstraint =
       landmarkId: string;
       mode: 'NEAR' | 'INSIDE';
       distanceMeters: number | null;
+      slotId?: string;
+      sourceSpan?: { start: number; end: number };
     }
   | {
       referenceType: 'MANUAL_POINT';
       point: { latitude: number; longitude: number; label: string };
       mode: 'NEAR';
       distanceMeters: number;
+      slotId?: string;
+      sourceSpan?: { start: number; end: number };
     };
 
 export type ParsedAssistantGeoBrowserInput = ParsedAssistantGeoBrowserConstraint;
@@ -96,7 +100,7 @@ function parseAssistantGeoBrowserConstraint(
   if (!isRecord(value)) throw invalidInput();
 
   if (value.referenceType === 'LANDMARK') {
-    assertExactKeys(value, ['referenceType', 'landmarkId', 'mode', 'distanceMeters']);
+    assertExactKeys(value, ['referenceType', 'landmarkId', 'mode', 'distanceMeters', 'slotId', 'sourceSpan']);
     if (typeof value.landmarkId !== 'string' || !uuidPattern.test(value.landmarkId)) throw invalidInput();
     if (value.mode !== 'NEAR' && value.mode !== 'INSIDE') throw invalidInput();
     if (value.mode === 'INSIDE' && value.distanceMeters !== undefined && value.distanceMeters !== null) {
@@ -109,14 +113,18 @@ function parseAssistantGeoBrowserConstraint(
       distanceMeters: value.mode === 'NEAR'
         ? parseOptionalDistance(value.distanceMeters, environment)
         : null,
+      ...parseSlotMetadata(value),
     };
   }
 
   if (value.referenceType === 'MANUAL_POINT') {
-    assertExactKeys(value, ['referenceType', 'point', 'mode', 'distanceMeters']);
+    assertExactKeys(value, ['referenceType', 'point', 'mode', 'distanceMeters', 'slotId', 'sourceSpan']);
     if (value.mode !== 'NEAR' || !isRecord(value.point)) throw invalidInput();
     assertExactKeys(value.point, ['latitude', 'longitude', 'label']);
-    return parseManualPoint(value.point, value.distanceMeters, environment);
+    return {
+      ...parseManualPoint(value.point, value.distanceMeters, environment),
+      ...parseSlotMetadata(value),
+    };
   }
 
   // A short compatibility window for the old manual picker. Provider-labelled points stay rejected.
@@ -188,7 +196,7 @@ function parseAssistantGeoStoredConstraint(
   }
 
   if (kind === 'POINT' && mode === 'NEAR') {
-    assertExactKeys(value, ['kind', 'mode', 'label', 'point', 'distanceMeters', 'source', 'landmarkId']);
+    assertExactKeys(value, ['kind', 'mode', 'label', 'point', 'distanceMeters', 'source', 'landmarkId', 'slotId', 'sourceSpan']);
     if (!isRecord(value.point)) throw new BadRequestException('ASSISTANT_GEO_CONTEXT_INVALID');
     assertExactKeys(value.point, ['latitude', 'longitude']);
     const point = readPoint(value.point);
@@ -206,11 +214,12 @@ function parseAssistantGeoStoredConstraint(
       distanceMeters,
       source,
       ...(landmarkId ? { landmarkId } : {}),
+      ...parseSlotMetadata(value),
     };
   }
 
   if (kind === 'LINE' && mode === 'NEAR') {
-    assertExactKeys(value, ['kind', 'mode', 'label', 'landmarkId', 'distanceMeters', 'source']);
+    assertExactKeys(value, ['kind', 'mode', 'label', 'landmarkId', 'distanceMeters', 'source', 'slotId', 'sourceSpan']);
     const landmarkId = readOptionalUuid(value.landmarkId);
     if (!landmarkId || source !== 'LANDMARK') throw new BadRequestException('ASSISTANT_GEO_CONTEXT_INVALID');
     return {
@@ -220,13 +229,14 @@ function parseAssistantGeoStoredConstraint(
       landmarkId,
       distanceMeters: parseRequiredDistance(value.distanceMeters, environment),
       source,
+      ...parseSlotMetadata(value),
     };
   }
 
   if (kind === 'AREA' && (mode === 'NEAR' || mode === 'INSIDE')) {
     const allowed = mode === 'NEAR'
-      ? ['kind', 'mode', 'label', 'landmarkId', 'distanceMeters', 'source']
-      : ['kind', 'mode', 'label', 'landmarkId', 'source'];
+      ? ['kind', 'mode', 'label', 'landmarkId', 'distanceMeters', 'source', 'slotId', 'sourceSpan']
+      : ['kind', 'mode', 'label', 'landmarkId', 'source', 'slotId', 'sourceSpan'];
     assertExactKeys(value, allowed);
     const landmarkId = readOptionalUuid(value.landmarkId);
     if (!landmarkId || source !== 'LANDMARK') throw new BadRequestException('ASSISTANT_GEO_CONTEXT_INVALID');
@@ -238,8 +248,9 @@ function parseAssistantGeoStoredConstraint(
           landmarkId,
           distanceMeters: parseRequiredDistance(value.distanceMeters, environment),
           source,
+          ...parseSlotMetadata(value),
         }
-      : { kind, mode, label, landmarkId, source };
+      : { kind, mode, label, landmarkId, source, ...parseSlotMetadata(value) };
   }
 
   throw new BadRequestException('ASSISTANT_GEO_CONTEXT_INVALID');
@@ -439,6 +450,24 @@ function invalidGeometry() {
   return new BadRequestException('ASSISTANT_GEO_GEOMETRY_INVALID');
 }
 
+function parseSlotMetadata(value: Record<string, unknown>) {
+  const slotId = value.slotId === undefined || value.slotId === null ? null : value.slotId;
+  if (slotId !== null && (typeof slotId !== 'string' || !/^geo-[1-5]$/u.test(slotId))) throw invalidInput();
+  const sourceSpan = value.sourceSpan === undefined || value.sourceSpan === null ? null : value.sourceSpan;
+  if (sourceSpan !== null && (!isRecord(sourceSpan)
+    || Object.keys(sourceSpan).sort().join(',') !== 'end,start'
+    || !Number.isInteger(sourceSpan.start)
+    || !Number.isInteger(sourceSpan.end)
+    || Number(sourceSpan.start) < 0
+    || Number(sourceSpan.end) <= Number(sourceSpan.start)
+    || Number(sourceSpan.end) > 4_000)) throw invalidInput();
+  if ((slotId === null) !== (sourceSpan === null)) throw invalidInput();
+  return slotId === null ? {} : {
+    slotId,
+    sourceSpan: sourceSpan as { start: number; end: number },
+  };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -464,6 +493,7 @@ function toAssistantGeoBrowserConstraint(context: AssistantGeoConstraint): Assis
       landmarkId: context.landmarkId,
       mode: context.mode,
       ...(context.mode === 'NEAR' ? { distanceMeters: context.distanceMeters } : {}),
+      ...(context.slotId ? { slotId: context.slotId, sourceSpan: context.sourceSpan } : {}),
     };
   }
   if (context.kind !== 'POINT') throw new Error('ASSISTANT_GEO_LANDMARK_ID_REQUIRED');
@@ -472,6 +502,7 @@ function toAssistantGeoBrowserConstraint(context: AssistantGeoConstraint): Assis
     point: { ...context.point, label: context.label },
     mode: 'NEAR',
     distanceMeters: context.distanceMeters,
+    ...(context.slotId ? { slotId: context.slotId, sourceSpan: context.sourceSpan } : {}),
   };
 }
 

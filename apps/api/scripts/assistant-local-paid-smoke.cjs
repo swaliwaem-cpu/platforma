@@ -4,6 +4,7 @@
 
 const { existsSync, readFileSync } = require('node:fs');
 const { randomUUID } = require('node:crypto');
+const { mapAssistantProductSubmission } = require('@platforma/shared/assistant-product-submission');
 
 const {
   addAssistantUsd,
@@ -132,6 +133,9 @@ async function runLiveAssistantLocalPaidSmoke(input, environment, lifecycle) {
     if (parseAssistantUsd(maximumEstimatedCostUsd) > parseAssistantUsd(limits.maximumCostUsd)) {
       throw new Error('ASSISTANT_LOCAL_PAID_SMOKE_ESTIMATE_EXCEEDS_CAP');
     }
+    if (typeof api.resolveGeo !== 'function') {
+      throw new Error('ASSISTANT_LOCAL_PAID_SMOKE_GEO_RESOLVER_REQUIRED');
+    }
     const accessToken = readAccessToken(environment);
     const config = await callApi(
       () => api.checkConfig({ accessToken }),
@@ -142,6 +146,12 @@ async function runLiveAssistantLocalPaidSmoke(input, environment, lifecycle) {
 
     for (const smokeCase of canaryCases) {
       assertWithinDeadline(workDeadline);
+      const resolution = await callApi(
+        () => api.resolveGeo({ accessToken, content: smokeCase.content, caseId: smokeCase.id }),
+        workDeadline,
+        operationTimeoutMs,
+      );
+      const preparedBody = prepareAssistantProductSubmission(smokeCase.content, resolution);
       const conversationKey = randomUUID();
       const created = await callApiWithRecovery(
         async () => {
@@ -176,7 +186,7 @@ async function runLiveAssistantLocalPaidSmoke(input, environment, lifecycle) {
             conversationId,
             idempotencyKey: runKey,
             caseId: smokeCase.id,
-            content: smokeCase.content,
+            body: preparedBody,
           });
           return {
             runId: requireUuid(value?.runId),
@@ -663,12 +673,20 @@ function createLoopbackApi(apiEnvironment, fetchImpl) {
       });
       return { conversationId: payload?.conversation?.id };
     },
-    async startRun({ accessToken, conversationId, idempotencyKey, content }) {
+    async resolveGeo({ accessToken, content }) {
+      return request('/assistant/geo/resolve', {
+        accessToken,
+        method: 'POST',
+        body: { content, locale: 'ru', country: null },
+        expectedStatuses: [200, 201],
+      });
+    },
+    async startRun({ accessToken, conversationId, idempotencyKey, body }) {
       const payload = await request(`/assistant/conversations/${conversationId}/messages`, {
         accessToken,
         idempotencyKey,
         method: 'POST',
-        body: { content },
+        body,
         expectedStatuses: [202],
       });
       return {
@@ -689,6 +707,12 @@ function createLoopbackApi(apiEnvironment, fetchImpl) {
       };
     },
   };
+}
+
+function prepareAssistantProductSubmission(content, resolution) {
+  const decision = mapAssistantProductSubmission(content, resolution);
+  if (decision.status !== 'READY') throw new Error('ASSISTANT_GEO_CONFIRMATION_REQUIRED');
+  return decision.body;
 }
 
 async function requestBoundedJson(fetchImpl, url, input) {
@@ -1085,5 +1109,6 @@ if (require.main === module) {
 }
 
 module.exports = {
+  prepareAssistantProductSubmission,
   runAssistantLocalPaidSmoke,
 };

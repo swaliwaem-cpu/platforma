@@ -21,7 +21,10 @@ import {
 } from './assistant-search-ranking';
 import { AssistantSearchService } from './assistant-search.service';
 import type { AssistantGeoSearchResult } from './assistant-search.service';
-import { AssistantPlaceResolverService } from './geo/assistant-place-resolver.service';
+import {
+  AssistantPlaceResolverService,
+  stripAssistantGeoClauses,
+} from './geo/assistant-place-resolver.service';
 import { buildAssistantKnowledgeAnswer } from './sources/assistant-knowledge-answer';
 import {
   AssistantKnowledgeRetrievalService,
@@ -55,10 +58,11 @@ export class AssistantAnswerService {
     now?: Date;
   }): Promise<AssistantAnswerResult> {
     const now = input.now ?? new Date();
-    const districtResolution = await this.resolveDistrict(input.messages, input.geo ?? null);
+    const plannerMessages = input.messages.map((message) => stripAssistantGeoClauses(message));
+    const districtResolution = await this.resolveDistrict(plannerMessages, input.geo ?? null);
     const planned = await this.planner.planWithValidation(
       {
-        messages: input.messages,
+        messages: plannerMessages,
         context: input.geo || districtResolution
           ? {
               pageContext: input.context,

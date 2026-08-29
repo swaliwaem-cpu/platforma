@@ -4,8 +4,99 @@ const { resolve } = require('node:path');
 const { test } = require('node:test');
 
 const {
+  prepareAssistantProductSubmission,
   runAssistantLocalPaidSmoke,
 } = require('../scripts/assistant-local-paid-smoke.cjs');
+const {
+  mapAssistantProductSubmission,
+} = require('@platforma/shared/assistant-product-submission');
+
+test('ZAEBAL1 product submission prepares canonical geo and blocks unresolved input', () => {
+  const content = 'в 900 м от Белорусского вокзала';
+  const resolution = {
+    status: 'RESOLVED',
+    slotId: 'geo-1',
+    sourceSpan: { start: 0, end: content.length },
+    candidates: [{
+      id: '11111111-1111-4111-8111-111111111111',
+      mode: 'NEAR',
+      distanceMeters: 900,
+    }],
+  };
+  assert.deepEqual(prepareAssistantProductSubmission(content, resolution), {
+    content,
+    geo: {
+      referenceType: 'LANDMARK',
+      landmarkId: '11111111-1111-4111-8111-111111111111',
+      mode: 'NEAR',
+      distanceMeters: 900,
+      slotId: 'geo-1',
+      sourceSpan: { start: 0, end: content.length },
+    },
+  });
+  for (const status of ['AMBIGUOUS', 'NOT_FOUND', 'UNAVAILABLE', 'REFINE_REQUIRED']) {
+    assert.throws(
+      () => prepareAssistantProductSubmission(content, { ...resolution, status }),
+      /ASSISTANT_GEO_CONFIRMATION_REQUIRED/u,
+    );
+  }
+});
+
+test('ZAEBAL1 product submission retains confirmed geo for non-geo follow-up text', () => {
+  const retainedGeo = {
+    referenceType: 'MANUAL_POINT',
+    point: { latitude: 55.751244, longitude: 37.618423, label: 'Точка на карте' },
+    mode: 'NEAR',
+    distanceMeters: 2_000,
+  };
+  assert.deepEqual(
+    mapAssistantProductSubmission('Теперь только с отделкой', { status: 'NOT_APPLICABLE' }, retainedGeo),
+    {
+      status: 'READY',
+      body: { content: 'Теперь только с отделкой', geo: retainedGeo },
+    },
+  );
+});
+
+test('ZAEBAL1 local paid smoke stops before conversation on unresolved geo', async () => {
+  let createCalls = 0;
+  await assert.rejects(runAssistantLocalPaidSmoke({
+    argv: ['--live', '--limit', '2', '--max-attempts', '4', '--max-cost-usd', '0.50'],
+    environment: { ASSISTANT_LOCAL_PAID_SMOKE_ACCESS_TOKEN: 'temporary-access-token' },
+    runtime: { isContainer: true, isApiProcess: true, apiEnvironment: readyApiEnvironment() },
+    api: {
+      async checkConfig() { return { enabled: true }; },
+      async resolveGeo() { return { status: 'REFINE_REQUIRED' }; },
+      async createConversation() { createCalls += 1; },
+    },
+    ledger: {
+      async inspectReadiness() { return { pendingOrRunningRuns: 0, reservedAttempts: 0 }; },
+      async cleanupConversations() {},
+      async disconnect() {},
+    },
+  }), /ASSISTANT_GEO_CONFIRMATION_REQUIRED/u);
+  assert.equal(createCalls, 0);
+});
+
+test('ZAEBAL1 local paid smoke fails closed when the product resolver adapter is missing', async () => {
+  let apiCalls = 0;
+  await assert.rejects(runAssistantLocalPaidSmoke({
+    argv: ['--live', '--limit', '2', '--max-attempts', '4', '--max-cost-usd', '0.50'],
+    environment: { ASSISTANT_LOCAL_PAID_SMOKE_ACCESS_TOKEN: 'temporary-access-token' },
+    runtime: { isContainer: true, isApiProcess: true, apiEnvironment: readyApiEnvironment() },
+    api: {
+      async checkConfig() { apiCalls += 1; },
+      async createConversation() { apiCalls += 1; },
+      async startRun() { apiCalls += 1; },
+    },
+    ledger: {
+      async inspectReadiness() { return { pendingOrRunningRuns: 0, reservedAttempts: 0 }; },
+      async cleanupConversations() {},
+      async disconnect() {},
+    },
+  }), /ASSISTANT_LOCAL_PAID_SMOKE_GEO_RESOLVER_REQUIRED/u);
+  assert.equal(apiCalls, 0);
+});
 
 test('PIDAFIX1 local paid smoke defaults to dry-run with zero API and ledger calls', async () => {
   let apiCalls = 0;
@@ -156,12 +247,17 @@ test('PIDAFIX1 local paid smoke runs two requests sequentially and reports persi
         events.push('api:config');
         return { enabled: true };
       },
+      async resolveGeo({ caseId }) {
+        events.push(`api:resolve:${caseId}`);
+        return { status: 'NOT_APPLICABLE' };
+      },
       async createConversation({ caseId }) {
         nextConversation += 1;
         events.push(`api:create:${caseId}`);
         return { conversationId: `30000000-0000-4000-8000-${String(nextConversation).padStart(12, '0')}` };
       },
-      async startRun({ caseId, idempotencyKey }) {
+      async startRun({ caseId, idempotencyKey, body }) {
+        assert.equal(typeof body.content, 'string');
         runKeys.push(idempotencyKey);
         events.push(`api:start:${caseId}`);
         if (caseId === 'structured_search' && runKeys.length === 2) {
@@ -217,6 +313,8 @@ test('PIDAFIX1 local paid smoke runs two requests sequentially and reports persi
     unknownWebSearchAttempts: 0,
   });
   assert.equal(events.indexOf('ledger:load:1') < events.indexOf('api:create:mortgage_installment'), true);
+  assert.equal(events.indexOf('api:resolve:structured_search') < events.indexOf('api:create:structured_search'), true);
+  assert.equal(events.filter((event) => event === 'api:resolve:structured_search').length, 1);
   assert.equal(events.includes('ledger:recover-run'), true);
   assert.equal(runKeys[0], runKeys[1]);
   assert.deepEqual(events.slice(-2), ['ledger:cleanup:2', 'ledger:disconnect']);
@@ -239,6 +337,7 @@ test('PIDAFIX1 local paid smoke rejects a reused conversation id before the seco
     sleep: async () => {},
     api: {
       async checkConfig() { return { enabled: true }; },
+      async resolveGeo() { return { status: 'NOT_APPLICABLE' }; },
       async createConversation() {
         return { conversationId: '30000000-0000-4000-8000-000000000001' };
       },
@@ -270,6 +369,7 @@ test('PIDAFIX1 local paid smoke rejects a reused run id across distinct conversa
     sleep: async () => {},
     api: {
       async checkConfig() { return { enabled: true }; },
+      async resolveGeo() { return { status: 'NOT_APPLICABLE' }; },
       async createConversation() {
         conversationOrdinal += 1;
         return {
@@ -314,6 +414,7 @@ test('PIDAFIX1 local paid smoke requires final ledger coverage for both exact ru
     sleep: async () => {},
     api: {
       async checkConfig() { return { enabled: true }; },
+      async resolveGeo() { return { status: 'NOT_APPLICABLE' }; },
       async createConversation() {
         conversationOrdinal += 1;
         return {
@@ -347,6 +448,7 @@ test('PIDAFIX1 local paid smoke reports a red RESERVED attempt at full persisted
     sleep: async () => {},
     api: {
       async checkConfig() { return { enabled: true }; },
+      async resolveGeo() { return { status: 'NOT_APPLICABLE' }; },
       async createConversation() {
         createCalls += 1;
         return { conversationId: '30000000-0000-4000-8000-000000000001' };
@@ -401,6 +503,7 @@ test('PIDAFIX1 local paid smoke does not report final provider calls for a non-t
     sleep: async () => {},
     api: {
       async checkConfig() { return { enabled: true }; },
+      async resolveGeo() { return { status: 'NOT_APPLICABLE' }; },
       async createConversation() {
         return { conversationId: '30000000-0000-4000-8000-000000000001' };
       },

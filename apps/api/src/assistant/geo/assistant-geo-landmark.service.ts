@@ -153,10 +153,18 @@ export class AssistantGeoLandmarkService {
     value: AssistantGeoBrowserInput | ParsedAssistantGeoBrowserContext,
   ): Promise<AssistantGeoSearchSelection> {
     const input = parseAssistantGeoBrowserContext(value);
-    if (!('operator' in input)) return this.materializeBrowserInput(input);
+    if (!('operator' in input)) {
+      return {
+        ...await this.materializeBrowserInput(input),
+        ...(input.slotId ? { slotId: input.slotId, sourceSpan: input.sourceSpan } : {}),
+      };
+    }
     const constraints = [];
     for (const constraint of input.constraints) {
-      constraints.push(await this.materializeBrowserInput(constraint));
+      constraints.push({
+        ...await this.materializeBrowserInput(constraint),
+        ...(constraint.slotId ? { slotId: constraint.slotId, sourceSpan: constraint.sourceSpan } : {}),
+      });
     }
     assertAssistantGeoUniqueConstraints(constraints);
     return { operator: 'ALL', constraints };
