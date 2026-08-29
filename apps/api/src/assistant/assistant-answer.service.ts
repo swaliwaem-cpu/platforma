@@ -21,6 +21,7 @@ import {
 } from './assistant-search-ranking';
 import { AssistantSearchService } from './assistant-search.service';
 import type { AssistantGeoSearchResult } from './assistant-search.service';
+import { buildAssistantComparisonAnswer } from './assistant-comparison-answer';
 import {
   AssistantPlaceResolverService,
   stripAssistantGeoClauses,
@@ -30,6 +31,14 @@ import {
   AssistantKnowledgeRetrievalService,
   type AssistantKnowledgeEvidence,
 } from './sources/assistant-knowledge-retrieval.service';
+import { AssistantCurrentFactRefreshCoordinator } from './sources/assistant-current-fact-refresh.service';
+import {
+  createAssistantKnowledgePageContext,
+  createAssistantKnowledgeQueryContext,
+  extractAssistantKnowledgeProjectReferenceClause,
+  hasExplicitAssistantKnowledgeProjectReference,
+  requiresAssistantKnowledgeCurrentVerification,
+} from './sources/assistant-knowledge-policy';
 
 export type AssistantAnswerResult = {
   content: string;
@@ -47,6 +56,7 @@ export class AssistantAnswerService {
     private readonly search: AssistantSearchService,
     private readonly knowledge?: AssistantKnowledgeRetrievalService,
     private readonly places?: AssistantPlaceResolverService,
+    private readonly currentFactRefresh?: AssistantCurrentFactRefreshCoordinator,
   ) {}
 
   async answer(input: {
@@ -56,6 +66,7 @@ export class AssistantAnswerService {
     operationRunId?: string;
     executionId?: string;
     now?: Date;
+    deadlineAt?: Date;
   }): Promise<AssistantAnswerResult> {
     const now = input.now ?? new Date();
     const plannerMessages = input.messages.map((message) => stripAssistantGeoClauses(message));
@@ -94,13 +105,40 @@ export class AssistantAnswerService {
           };
         }
 
-        const query = input.messages[input.messages.length - 1] ?? '';
+        const query = createAssistantKnowledgeQueryContext(plannerMessages, input.context);
+        let knowledgeContext = createAssistantKnowledgePageContext(plannerMessages, input.context);
         if (intent.taskType === 'FACT' && this.knowledge) {
+          const currentVerificationRequested = requiresAssistantKnowledgeCurrentVerification(query);
+          const projectReferenceClause = extractAssistantKnowledgeProjectReferenceClause(query);
+          if (projectReferenceClause) {
+            const canResolveProject = typeof this.knowledge.resolveProjectContext === 'function';
+            const resolvedProjectContext = await this.knowledge.resolveProjectContext?.(query);
+            if (resolvedProjectContext === null
+              || (canResolveProject
+                && resolvedProjectContext === undefined
+                && hasExplicitAssistantKnowledgeProjectReference(query))) {
+              return sourceNotConnectedResult([]);
+            }
+            if (resolvedProjectContext) {
+              knowledgeContext = resolvedProjectContext;
+            } else if (input.context?.kind === 'OBJECT') {
+              knowledgeContext = input.context;
+            } else {
+              return knowledgeScopeRequiredResult([]);
+            }
+          } else {
+            knowledgeContext = input.context;
+          }
+          if (currentVerificationRequested
+            && knowledgeContext?.kind !== 'OBJECT'
+            && knowledgeContext?.kind !== 'DEVELOPER') {
+            return knowledgeScopeRequiredResult([]);
+          }
           const evidence = await this.knowledge.retrieve({
             query,
             intent,
             includeExternalLots: false,
-            context: input.context,
+            context: knowledgeContext,
             now,
             embeddingOperation: {
               operationRunId: request.operationRunId,
@@ -108,7 +146,42 @@ export class AssistantAnswerService {
               nextAttemptOrdinal: attempts.nextAttemptOrdinal,
             },
           });
-          const grounded = buildAssistantKnowledgeAnswer(evidence, now);
+          const grounded = buildAssistantKnowledgeAnswer(evidence, now, query);
+          const refreshRequired = currentVerificationRequested
+            || grounded.evidence.some((item) => isStaleKnowledgeEvidence(item, now));
+          if (refreshRequired) {
+            if (!this.currentFactRefresh || !request.operationRunId) {
+              return currentVerificationFailure(evidence);
+            }
+            const refresh = await this.currentFactRefresh.refreshForRun({
+              operationRunId: request.operationRunId,
+              context: knowledgeContext,
+              preferredSourceId: grounded.evidence[0]?.sourceId ?? null,
+              deadlineAt: input.deadlineAt ?? new Date(now.getTime() + 15_000),
+            });
+            if (refresh.status === 'SOURCE_NOT_CONNECTED') {
+              return sourceNotConnectedResult(evidence);
+            }
+            if (refresh.status !== 'COMPLETED') return currentVerificationFailure(evidence);
+            const refreshedEvidence = await this.knowledge.retrieve({
+              query,
+              intent,
+              includeExternalLots: false,
+              context: knowledgeContext,
+              now,
+              embeddingOperation: {
+                operationRunId: request.operationRunId,
+                executionId: request.executionId,
+                nextAttemptOrdinal: attempts.nextAttemptOrdinal,
+              },
+            });
+            const refreshedGrounded = buildAssistantKnowledgeAnswer(refreshedEvidence, now, query);
+            if (refreshedGrounded.answer.facts.length > 0
+              && !refreshedGrounded.evidence.some((item) => isStaleKnowledgeEvidence(item, now))) {
+              return { ...refreshedGrounded, candidateEvidence: refreshedEvidence };
+            }
+            return currentVerificationFailure(refreshedEvidence);
+          }
           if (grounded.answer.facts.length > 0) return { ...grounded, candidateEvidence: evidence };
           return {
             content: 'Не могу подтвердить ответ по доступным источникам.',
@@ -118,13 +191,45 @@ export class AssistantAnswerService {
           };
         }
 
+        if (intent.taskType === 'COMPARE' && intent.comparisonTargets.length === 2) {
+          const comparisonContext = input.context?.kind === 'CATALOG_FILTERS'
+            ? input.context
+            : null;
+          const comparisonResults = await Promise.all(intent.comparisonTargets.map((target, index) => (
+            this.search.search({
+              ...intent,
+              comparisonTargets: [target],
+              comparisonTargetModes: [intent.comparisonTargetModes?.[index] ?? 'EXACT'],
+            }, comparisonContext, input.geo ?? null)
+          )));
+          const grounded = buildAssistantComparisonAnswer(intent, comparisonResults.map((result, index) => ({
+            target: intent.comparisonTargets[index]!,
+            evidence: result.exact,
+            totalExactResults: result.totalExactResults,
+            summary: result.summary,
+          })), now);
+          const geoResult = comparisonResults.find(({ geo }) => geo !== null)?.geo ?? null;
+          const geo = geoResult
+            ? createGeoSearchView(
+                geoResult,
+                grounded.evidence,
+                new Set(grounded.evidence.map(({ unitId }) => unitId)),
+              )
+            : null;
+          return {
+            ...grounded,
+            answer: { ...grounded.answer, ...(geo ? { geo } : {}) },
+            candidateEvidence: uniqueSearchEvidence(comparisonResults.flatMap(({ exact }) => exact)),
+          };
+        }
+
         const searchResult = await this.search.search(intent, input.context, input.geo ?? null);
         if (!input.geo && searchResult.exact.length === 0 && this.knowledge) {
           const knowledgeEvidence = await this.knowledge.retrieve({
             query,
             intent,
             includeExternalLots: true,
-            context: input.context,
+            context: knowledgeContext,
             now,
             embeddingOperation: {
               operationRunId: request.operationRunId,
@@ -132,7 +237,7 @@ export class AssistantAnswerService {
               nextAttemptOrdinal: attempts.nextAttemptOrdinal,
             },
           });
-          const knowledgeAnswer = buildAssistantKnowledgeAnswer(knowledgeEvidence, now);
+          const knowledgeAnswer = buildAssistantKnowledgeAnswer(knowledgeEvidence, now, query);
           if (knowledgeAnswer.answer.externalLots.length > 0) {
             return { ...knowledgeAnswer, candidateEvidence: knowledgeEvidence };
           }
@@ -221,6 +326,42 @@ export class AssistantAnswerService {
     }
     return null;
   }
+}
+
+function isStaleKnowledgeEvidence(evidence: AssistantKnowledgeEvidence, now: Date) {
+  const verifiedAt = Date.parse(evidence.verifiedAt);
+  return !Number.isFinite(verifiedAt) || now.getTime() - verifiedAt >= 24 * 60 * 60 * 1_000;
+}
+
+function currentVerificationFailure(candidateEvidence: AssistantKnowledgeEvidence[]) {
+  return {
+    content: 'Не удалось подтвердить текущие условия по зарегистрированному источнику.',
+    answer: { kind: 'REFUSAL' } as const,
+    evidence: [] as AssistantKnowledgeEvidence[],
+    candidateEvidence,
+  };
+}
+
+function sourceNotConnectedResult(candidateEvidence: AssistantKnowledgeEvidence[]) {
+  return {
+    content: 'Для этого объекта не найден доверенный зарегистрированный источник.',
+    answer: { kind: 'REFUSAL', code: 'SOURCE_NOT_CONNECTED' } as const,
+    evidence: [] as AssistantKnowledgeEvidence[],
+    candidateEvidence,
+  };
+}
+
+function knowledgeScopeRequiredResult(candidateEvidence: AssistantKnowledgeEvidence[]) {
+  return {
+    content: 'Нужно указать ЖК или открыть страницу объекта, чтобы подтвердить ответ.',
+    answer: { kind: 'REFUSAL' } as const,
+    evidence: [] as AssistantKnowledgeEvidence[],
+    candidateEvidence,
+  };
+}
+
+function uniqueSearchEvidence(evidence: AssistantSearchEvidence[]) {
+  return [...new Map(evidence.map((item) => [item.unitId, item])).values()];
 }
 
 function createGeoSearchView(

@@ -69,6 +69,14 @@ export class AssistantSourceWorker implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  async runTargetedJob(jobId: string, now = new Date()) {
+    await this.processJob(jobId, now);
+    return this.prisma.assistantSourceJob.findUniqueOrThrow({
+      where: { id: jobId },
+      select: { status: true, errorCode: true },
+    });
+  }
+
   private schedule() {
     if (this.shuttingDown || this.tick) return;
     this.tick = this.runOnce().catch(() => {

@@ -15,12 +15,18 @@ const {
   validateAssistantSearchAnswer,
 } = require('../dist/assistant/assistant-search-ranking.js');
 const {
+  buildAssistantComparisonAnswer,
+} = require('../dist/assistant/assistant-comparison-answer.js');
+const {
   AssistantOpenAiPlannerGateway,
   createAssistantPlannerGateway,
 } = require('../dist/assistant/assistant-planner-gateway.js');
 const {
   AssistantAnswerService,
 } = require('../dist/assistant/assistant-answer.service.js');
+const {
+  AssistantSearchService,
+} = require('../dist/assistant/assistant-search.service.js');
 const {
   AssistantService,
 } = require('../dist/assistant/assistant.service.js');
@@ -677,40 +683,199 @@ test('Assistant T02 comparison fallback total counts every eligible candidate be
   assert.equal(answer.additionalExactResults.length, 5);
 });
 
-test('Assistant T02 comparison refuses partial evidence that covers only one explicit target', () => {
+test('Assistant T02 comparison keeps independent grounded groups when both targets match', () => {
   const intent = validIntent({
     taskType: 'COMPARE',
     comparisonTargets: ['ПИК', 'Самолёт'],
-    hardFilters: { ...emptyFilters(), budgetMaxRub: 25_000_000, rooms: [2], metro: 'Спортивная' },
+    hardFilters: { ...emptyFilters(), budgetMaxRub: 25_000_000, rooms: [2] },
   });
+  const answer = buildAssistantComparisonAnswer(intent, [
+    {
+      target: 'ПИК',
+      evidence: [candidate('11111111-1111-4111-8111-111111111111', {
+        developer: 'ПИК',
+        priceRub: 20_000_000,
+        completionYear: 2027,
+        completionQuarter: 3,
+        metros: ['Спортивная'],
+      })],
+      totalExactResults: 121,
+    },
+    {
+      target: 'Самолёт',
+      evidence: [candidate('22222222-2222-4222-8222-222222222222', {
+        developer: 'Самолёт',
+        priceRub: 24_000_000,
+        completionYear: 2026,
+        completionQuarter: 4,
+        metros: ['Фили'],
+      })],
+      totalExactResults: 1,
+    },
+  ], new Date('2026-08-24T12:00:00.000Z'));
 
-  const answer = buildAssistantSearchAnswer(intent, [
-    candidate('11111111-1111-4111-8111-111111111111', { developer: 'ПИК' }),
-  ], [], new Date('2026-08-24T12:00:00.000Z'));
+  assert.equal(answer.answer.kind, 'COMPARISON_RESULTS');
+  assert.deepEqual(answer.answer.groups.map(({ target, status, totalExactResults }) => ({
+    target,
+    status,
+    totalExactResults,
+  })), [
+    { target: 'ПИК', status: 'MATCHED', totalExactResults: 121 },
+    { target: 'Самолёт', status: 'MATCHED', totalExactResults: 1 },
+  ]);
+  assert.deepEqual(answer.answer.groups[0].summary, {
+    minimumPriceRub: 20_000_000,
+    completion: ['3 кв. 2027'],
+    metros: ['Спортивная'],
+  });
+});
 
-  assert.equal(answer.exactResults.length, 0);
-  assert.equal(answer.totalExactResults, 0);
-  assert.match(answer.content, /Не могу подтвердить/iu);
+test('Assistant T02 comparison preserves one matched target and one exact no-data state', () => {
+  const intent = validIntent({ taskType: 'COMPARE', comparisonTargets: ['ПИК', 'Самолёт'] });
+  const answer = buildAssistantComparisonAnswer(intent, [
+    {
+      target: 'ПИК',
+      evidence: [candidate('11111111-1111-4111-8111-111111111111', { developer: 'ПИК' })],
+      totalExactResults: 1,
+    },
+    { target: 'Самолёт', evidence: [], totalExactResults: 0 },
+  ], new Date('2026-08-24T12:00:00.000Z'));
 
-  const authoritativeAnswer = buildAssistantSearchAnswer(
-    intent,
-    [candidate('11111111-1111-4111-8111-111111111111', { developer: 'ПИК' })],
-    [],
-    new Date('2026-08-24T12:00:00.000Z'),
-    1,
+  assert.deepEqual(answer.answer.groups.map(({ status }) => status), ['MATCHED', 'NO_MATCH']);
+  assert.equal(answer.answer.groups[0].exactResults.length, 1);
+  assert.deepEqual(answer.answer.groups[1], {
+    target: 'Самолёт',
+    status: 'NO_MATCH',
+    totalExactResults: 0,
+    exactResults: [],
+    additionalExactResults: [],
+    summary: { minimumPriceRub: null, completion: [], metros: [] },
+  });
+  assert.doesNotMatch(answer.content, /не могу подтвердить/iu);
+});
+
+test('Assistant T02 comparison returns two specific no-data groups when neither target matches', () => {
+  const intent = validIntent({ taskType: 'COMPARE', comparisonTargets: ['ПИК', 'Самолёт'] });
+  const answer = buildAssistantComparisonAnswer(intent, [
+    { target: 'ПИК', evidence: [], totalExactResults: 0 },
+    { target: 'Самолёт', evidence: [], totalExactResults: 0 },
+  ], new Date('2026-08-24T12:00:00.000Z'));
+
+  assert.equal(answer.answer.kind, 'COMPARISON_RESULTS');
+  assert.deepEqual(answer.answer.groups.map(({ target, status }) => ({ target, status })), [
+    { target: 'ПИК', status: 'NO_MATCH' },
+    { target: 'Самолёт', status: 'NO_MATCH' },
+  ]);
+});
+
+test('Assistant T02 comparison bounds summary values and survives stored-answer round trip', () => {
+  const intent = validIntent({ taskType: 'COMPARE', comparisonTargets: ['ПИК', 'Самолёт'] });
+  const metros = Array.from({ length: 21 }, (_, index) => `Метро ${String(index + 1).padStart(2, '0')}`);
+  const built = buildAssistantComparisonAnswer(intent, [
+    {
+      target: 'ПИК',
+      evidence: [candidate('11111111-1111-4111-8111-111111111111', { developer: 'ПИК', metros })],
+      totalExactResults: 1,
+    },
+    { target: 'Самолёт', evidence: [], totalExactResults: 0 },
+  ], new Date('2026-08-24T12:00:00.000Z'));
+  const service = Object.create(AssistantService.prototype);
+
+  assert.equal(built.answer.groups[0].summary.metros.length, 20);
+  assert.deepEqual(service.parseStoredAnswer(built.answer), built.answer);
+});
+
+test('Assistant T02 stored answer parser restores the comparison contract and rejects status drift', () => {
+  const intent = validIntent({ taskType: 'COMPARE', comparisonTargets: ['ПИК', 'Самолёт'] });
+  const built = buildAssistantComparisonAnswer(intent, [
+    {
+      target: 'ПИК',
+      evidence: [candidate('11111111-1111-4111-8111-111111111111', { developer: 'ПИК' })],
+      totalExactResults: 1,
+    },
+    { target: 'Самолёт', evidence: [], totalExactResults: 0 },
+  ], new Date('2026-08-24T12:00:00.000Z'));
+  const service = Object.create(AssistantService.prototype);
+
+  assert.deepEqual(service.parseStoredAnswer(built.answer), built.answer);
+  const invalid = structuredClone(built.answer);
+  invalid.groups[1].status = 'MATCHED';
+  assert.equal(service.parseStoredAnswer(invalid), null);
+  const missingMatchedMinimum = structuredClone(built.answer);
+  missingMatchedMinimum.groups[0].summary.minimumPriceRub = null;
+  assert.equal(service.parseStoredAnswer(missingMatchedMinimum), null);
+  const inflatedMatchedMinimum = structuredClone(built.answer);
+  inflatedMatchedMinimum.groups[0].summary.minimumPriceRub =
+    inflatedMatchedMinimum.groups[0].exactResults[0].priceRub + 1;
+  assert.equal(service.parseStoredAnswer(inflatedMatchedMinimum), null);
+  const duplicateMetro = structuredClone(built.answer);
+  duplicateMetro.groups[0].summary.metros.push(duplicateMetro.groups[0].summary.metros[0]);
+  assert.equal(service.parseStoredAnswer(duplicateMetro), null);
+  const duplicateAcrossGroups = structuredClone(built.answer);
+  duplicateAcrossGroups.groups[1] = {
+    ...structuredClone(duplicateAcrossGroups.groups[0]),
+    target: 'Самолёт',
+  };
+  assert.equal(service.parseStoredAnswer(duplicateAcrossGroups), null);
+  const sparseMatchedSummary = structuredClone(built.answer);
+  sparseMatchedSummary.groups[0].summary.completion = [];
+  sparseMatchedSummary.groups[0].summary.metros = [];
+  assert.notEqual(service.parseStoredAnswer(sparseMatchedSummary), null);
+});
+
+test('Assistant T02 computes full summary aggregates only for comparison searches with exact rows', async () => {
+  const searchService = new AssistantSearchService({
+    async $transaction(callback) {
+      return callback({ feedUnit: { async findMany() { return []; } } });
+    },
+  });
+  let total = 1;
+  let summaryCalls = 0;
+  searchService.resolveComparisonOptions = async (_transaction, _filters, _context, options) => options;
+  searchService.countCandidateRows = async () => total;
+  searchService.summarizeCandidateRows = async () => {
+    summaryCalls += 1;
+    return { minimumPriceRub: 20_000_000, completion: [], metros: [] };
+  };
+  searchService.findCandidateRows = async () => [];
+
+  await searchService.findEvidence(emptyFilters(), null, { includeComparisonSummary: false });
+  assert.equal(summaryCalls, 0);
+  await searchService.findEvidence(emptyFilters(), null, { includeComparisonSummary: true });
+  assert.equal(summaryCalls, 1);
+  total = 0;
+  const empty = await searchService.findEvidence(
+    emptyFilters(),
+    null,
+    { includeComparisonSummary: true },
   );
-  assert.equal(authoritativeAnswer.totalExactResults, 0);
-  assert.deepEqual(authoritativeAnswer.exactResults, []);
+  assert.equal(summaryCalls, 1);
+  assert.deepEqual(empty.summary, { minimumPriceRub: null, completion: [], metros: [] });
+});
 
-  const normalizedSearchAnswer = buildAssistantSearchAnswer(
-    { ...intent, taskType: 'SEARCH' },
-    [candidate('11111111-1111-4111-8111-111111111111', { developer: 'ПИК' })],
-    [],
-    new Date('2026-08-24T12:00:00.000Z'),
-    1,
+test('Assistant T02 comparison resolves raw exact priority for a single instrumental target', async () => {
+  const searchService = new AssistantSearchService({});
+  let rawCountCalls = 0;
+  searchService.countCandidateRows = async (_transaction, _filters, _context, options) => {
+    rawCountCalls += 1;
+    assert.deepEqual(options.comparisonTargets, ['Ростелеком']);
+    assert.deepEqual(options.comparisonTargetModes, ['EXACT']);
+    return 1;
+  };
+
+  const resolved = await searchService.resolveComparisonOptions(
+    {},
+    emptyFilters(),
+    null,
+    {
+      comparisonTargets: ['Ростелеком'],
+      comparisonTargetModes: ['INSTRUMENTAL'],
+      includeComparisonSummary: true,
+    },
   );
-  assert.equal(normalizedSearchAnswer.totalExactResults, 0);
-  assert.deepEqual(normalizedSearchAnswer.exactResults, []);
+
+  assert.equal(rawCountCalls, 1);
+  assert.deepEqual(resolved.comparisonTargetModes, ['EXACT']);
 });
 
 test('Assistant T02 comparison finds a distinct pair when the best candidate matches both targets', () => {
@@ -1234,6 +1399,145 @@ test('Assistant T02 answer service returns grounded public cards and keeps inter
   assert.equal(result.evidence.length, 1);
   assert.equal(result.telemetry.length, 1);
   assert.equal(knowledgeCalls, 0);
+});
+
+test('Assistant T02 comparison searches both explicit targets outside a single page context', async () => {
+  const intent = validIntent({
+    taskType: 'COMPARE',
+    comparisonTargets: ['ЖК Первый', 'ЖК Второй'],
+    comparisonTargetModes: ['EXACT', 'EXACT'],
+  });
+  const receivedContexts = [];
+  const service = new AssistantAnswerService(
+    new AssistantQueryPlanner({ async plan() { return intent; } }),
+    {
+      async search(searchIntent, context) {
+        receivedContexts.push(context);
+        const first = receivedContexts.length === 1;
+        const evidence = candidate(first
+          ? '11111111-1111-4111-8111-111111111111'
+          : '22222222-2222-4222-8222-222222222222', {
+          objectTitle: first ? 'ЖК Первый' : 'ЖК Второй',
+        });
+        return {
+          exact: [evidence],
+          totalExactResults: 1,
+          alternatives: [],
+          geo: null,
+          summary: {
+            minimumPriceRub: evidence.priceRub,
+            completion: ['3 кв. 2027'],
+            metros: ['Спортивная'],
+          },
+        };
+      },
+    },
+  );
+
+  const result = await service.answer({
+    messages: ['Сравни ЖК Первый и ЖК Второй по цене, нужны двушки до 25 млн'],
+    context: { kind: 'OBJECT', key: 'zhk-pervyy', label: 'ЖК Первый' },
+    now: new Date('2026-08-24T12:00:00.000Z'),
+  });
+
+  assert.deepEqual(receivedContexts, [null, null]);
+  assert.deepEqual(result.answer.groups.map(({ status }) => status), ['MATCHED', 'MATCHED']);
+
+  const catalogContext = {
+    kind: 'CATALOG_FILTERS',
+    key: 'locationId=10000000-0000-4000-8000-000000000001',
+    label: 'Фильтры каталога',
+  };
+  receivedContexts.length = 0;
+  await service.answer({
+    messages: ['Сравни ЖК Первый и ЖК Второй по цене, нужны двушки до 25 млн'],
+    context: catalogContext,
+    now: new Date('2026-08-24T12:00:00.000Z'),
+  });
+  assert.deepEqual(receivedContexts, [catalogContext, catalogContext]);
+
+  receivedContexts.length = 0;
+  await service.answer({
+    messages: ['Сравни ЖК Первый и ЖК Второй по цене, нужны двушки до 25 млн'],
+    context: {
+      kind: 'DEVELOPER',
+      key: '10000000-0000-4000-8000-000000000002',
+      label: 'Текущий застройщик',
+    },
+    now: new Date('2026-08-24T12:00:00.000Z'),
+  });
+  assert.deepEqual(receivedContexts, [null, null]);
+});
+
+test('Assistant T02 answer service assigns one matching lot to only one comparison group', async () => {
+  const intent = validIntent({
+    taskType: 'COMPARE',
+    comparisonTargets: ['ЖК Первый', 'ЖК Второй'],
+    comparisonTargetModes: ['EXACT', 'EXACT'],
+  });
+  const shared = candidate('11111111-1111-4111-8111-111111111111', {
+    objectTitle: 'ЖК Первый',
+    developer: 'ЖК Второй',
+    priceRub: 10_000_000,
+  });
+  const alphaOnly = candidate('22222222-2222-4222-8222-222222222222', {
+    objectTitle: 'ЖК Первый',
+    developer: 'Other',
+    priceRub: 20_000_000,
+  });
+  const betaOnly = candidate('33333333-3333-4333-8333-333333333333', {
+    objectTitle: 'Other',
+    developer: 'ЖК Второй',
+    priceRub: 21_000_000,
+  });
+  let searchCall = 0;
+  const service = new AssistantAnswerService(
+    new AssistantQueryPlanner({ async plan() { return intent; } }),
+    {
+      async search() {
+        const first = searchCall === 0;
+        searchCall += 1;
+        const exact = first ? [shared, alphaOnly] : [shared, betaOnly];
+        return {
+          exact,
+          totalExactResults: 2,
+          alternatives: [],
+          geo: null,
+          summary: {
+            minimumPriceRub: 10_000_000,
+            completion: ['3 кв. 2027'],
+            metros: ['Спортивная'],
+          },
+        };
+      },
+    },
+  );
+
+  const result = await service.answer({
+    messages: ['Сравни ЖК Первый и ЖК Второй по цене, нужны двушки до 25 млн в районе Хамовники у метро Спортивная'],
+    context: null,
+    now: new Date('2026-08-24T12:00:00.000Z'),
+  });
+  assert.equal(result.answer.kind, 'COMPARISON_RESULTS', JSON.stringify(result.answer));
+  const groupIds = result.answer.groups.map((group) => [
+    ...group.exactResults,
+    ...group.additionalExactResults,
+  ].map(({ unitId }) => unitId));
+  const allIds = groupIds.flat();
+
+  assert.deepEqual(result.answer.groups.map(({ status, totalExactResults }) => ({
+    status,
+    totalExactResults,
+  })), [
+    { status: 'MATCHED', totalExactResults: 2 },
+    { status: 'MATCHED', totalExactResults: 2 },
+  ]);
+  assert.deepEqual(groupIds, [
+    [shared.unitId, alphaOnly.unitId],
+    [betaOnly.unitId],
+  ]);
+  assert.equal(new Set(allIds).size, allIds.length);
+  assert.deepEqual(result.evidence.map(({ unitId }) => unitId), allIds);
 });
 
 function validIntent(overrides = {}) {

@@ -2,9 +2,11 @@ import { Module } from '@nestjs/common';
 
 import { AuthModule } from '../../auth/auth.module';
 import { PrismaModule } from '../../prisma/prisma.module';
+import { PrismaService } from '../../prisma/prisma.service';
 import { AssistantAiUsageBudgetService } from '../operations/assistant-ai-usage-budget.service';
 import { AssistantEmbeddingGateway } from './assistant-embedding.gateway';
 import { AssistantKnowledgeRetrievalService } from './assistant-knowledge-retrieval.service';
+import { AssistantCurrentFactRefreshCoordinator } from './assistant-current-fact-refresh.service';
 import { AssistantSourceConnectorRegistry } from './assistant-source-connector.registry';
 import { AssistantSourceIngestionService } from './assistant-source-ingestion.service';
 import { AssistantSourceRegistryService } from './assistant-source-registry.service';
@@ -19,6 +21,13 @@ import { OfficialSourceExtractor } from './official-source.extractor';
     AssistantSourceRegistryService,
     AssistantSourceIngestionService,
     AssistantKnowledgeRetrievalService,
+    {
+      provide: AssistantCurrentFactRefreshCoordinator,
+      inject: [PrismaService, AssistantSourceWorker],
+      useFactory: (prisma: PrismaService, worker: AssistantSourceWorker) => (
+        new AssistantCurrentFactRefreshCoordinator(prisma, worker, process.env)
+      ),
+    },
     AssistantSourceWorker,
     OfficialSourceExtractor,
     AssistantAiUsageBudgetService,
@@ -36,6 +45,10 @@ import { OfficialSourceExtractor } from './official-source.extractor';
       ),
     },
   ],
-  exports: [AssistantKnowledgeRetrievalService, AssistantSourceRegistryService],
+  exports: [
+    AssistantKnowledgeRetrievalService,
+    AssistantCurrentFactRefreshCoordinator,
+    AssistantSourceRegistryService,
+  ],
 })
 export class AssistantSourcesModule {}

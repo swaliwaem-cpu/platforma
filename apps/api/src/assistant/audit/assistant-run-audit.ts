@@ -161,6 +161,16 @@ function selectedOutcomes(answer: AssistantAnswer) {
       answerRank: index + 1,
       reason: deviations.map(({ label }) => label).join('; ') || 'Selected bounded alternative',
     }));
+  } else if (answer.kind === 'COMPARISON_RESULTS') {
+    answer.groups.flatMap((group) => [
+      ...group.exactResults,
+      ...group.additionalExactResults,
+    ]).forEach(({ unitId }, index) => outcomes.set(unitId, {
+      evidenceId: unitId,
+      outcome: 'PRIMARY',
+      answerRank: index + 1,
+      reason: 'Selected for an exact comparison target group',
+    }));
   } else if (answer.kind === 'KNOWLEDGE_RESULTS') {
     [...answer.facts, ...answer.externalLots].forEach(({ id }, index) => outcomes.set(id, {
       evidenceId: id,
@@ -211,10 +221,13 @@ function serializeCandidate(evidence: AssistantRunEvidence): Record<string, unkn
     label: evidence.label,
     value: structuredClone(evidence.value),
     canonicalUrl: evidence.canonicalUrl,
+    sourceLabel: evidence.sourceLabel,
+    sourceUrl: evidence.sourceUrl,
     projectKey: evidence.projectKey,
     developerKey: evidence.developerKey,
     observedAt: evidence.observedAt,
     fetchedAt: evidence.fetchedAt,
+    verifiedAt: evidence.verifiedAt,
     retrievalChannels: [...evidence.retrievalChannels],
     retrievalScore: evidence.retrievalScore,
   };
@@ -283,15 +296,14 @@ function hasStalePriceWithoutLabel(
   evidence: AssistantRunEvidence[],
   now: Date,
 ) {
-  if (answer.kind !== 'SEARCH_RESULTS') return false;
+  if (answer.kind !== 'SEARCH_RESULTS' && answer.kind !== 'COMPARISON_RESULTS') return false;
   const updatedById = new Map(evidence.flatMap((item) => isSearchEvidence(item)
     ? [[item.unitId, Date.parse(item.updatedAt)] as const]
     : []));
-  return [
-    ...answer.exactResults,
-    ...(answer.additionalExactResults ?? []),
-    ...answer.alternatives,
-  ].some((result) => {
+  const results = answer.kind === 'SEARCH_RESULTS'
+    ? [...answer.exactResults, ...(answer.additionalExactResults ?? []), ...answer.alternatives]
+    : answer.groups.flatMap((group) => [...group.exactResults, ...group.additionalExactResults]);
+  return results.some((result) => {
     const updatedAt = updatedById.get(result.unitId);
     const staleByEvidence = updatedAt !== undefined && now.getTime() - updatedAt >= 24 * 60 * 60 * 1_000;
     return (result.isStale || staleByEvidence)
@@ -300,17 +312,17 @@ function hasStalePriceWithoutLabel(
 }
 
 function hasBrokenLink(answer: AssistantAnswer) {
-  if (answer.kind === 'SEARCH_RESULTS') {
-    return [
-      ...answer.exactResults,
-      ...(answer.additionalExactResults ?? []),
-      ...answer.alternatives,
-    ].some((result) =>
+  if (answer.kind === 'SEARCH_RESULTS' || answer.kind === 'COMPARISON_RESULTS') {
+    const results = answer.kind === 'SEARCH_RESULTS'
+      ? [...answer.exactResults, ...(answer.additionalExactResults ?? []), ...answer.alternatives]
+      : answer.groups.flatMap((group) => [...group.exactResults, ...group.additionalExactResults]);
+    return results.some((result) =>
       !/^\/objects\/[^/]+\/lots\/[0-9a-f-]+$/iu.test(result.href)
       || result.pdfs.some(({ href }) => !/^\/media\/files\/[0-9a-f-]+\/content\?download=true$/iu.test(href)));
   }
   if (answer.kind === 'KNOWLEDGE_RESULTS') {
-    return answer.externalLots.some(({ href }) => !isSafeOfficialHttpsUrl(href));
+    return answer.externalLots.some(({ href }) => !isSafeOfficialHttpsUrl(href))
+      || answer.facts.some((fact) => fact.sourceUrl !== undefined && !isSafeOfficialHttpsUrl(fact.sourceUrl));
   }
   return false;
 }

@@ -877,7 +877,9 @@ export function AssistantChat({ accessToken, logoUrl, pathname, search, userId }
                     className={[
                       'assistant-message',
                       `assistant-message--${message.role.toLocaleLowerCase('en-US')}`,
-                      message.answer?.kind === 'SEARCH_RESULTS' || message.answer?.kind === 'KNOWLEDGE_RESULTS'
+                      message.answer?.kind === 'SEARCH_RESULTS'
+                        || message.answer?.kind === 'COMPARISON_RESULTS'
+                        || message.answer?.kind === 'KNOWLEDGE_RESULTS'
                         ? 'assistant-message--results'
                         : '',
                     ].filter(Boolean).join(' ')}
@@ -1049,6 +1051,9 @@ function AssistantMessageContent({ message }: { message: AssistantMessage }) {
       {message.answer?.kind === 'SEARCH_RESULTS' ? (
         <AssistantSearchResults answer={message.answer} messageId={message.id} />
       ) : null}
+      {message.answer?.kind === 'COMPARISON_RESULTS' ? (
+        <AssistantComparisonResults answer={message.answer} messageId={message.id} />
+      ) : null}
       {message.answer?.kind === 'KNOWLEDGE_RESULTS' ? (
         <div className="assistant-results">
           {message.answer.facts.length > 0 ? (
@@ -1074,6 +1079,105 @@ function AssistantMessageContent({ message }: { message: AssistantMessage }) {
         </div>
       ) : null}
     </>
+  );
+}
+
+function AssistantComparisonResults({
+  answer,
+  messageId,
+}: {
+  answer: Extract<AssistantAnswer, { kind: 'COMPARISON_RESULTS' }>;
+  messageId: string;
+}) {
+  return (
+    <div className="assistant-results">
+      <div className="assistant-comparison-grid">
+        {answer.groups.map((group, index) => (
+          <AssistantComparisonGroup
+            group={group}
+            headingId={`assistant-comparison-${messageId}-${index}`}
+            key={`${group.target}-${index}`}
+          />
+        ))}
+      </div>
+      {answer.geo ? <AssistantGeoResultMap geo={answer.geo} /> : null}
+    </div>
+  );
+}
+
+function AssistantComparisonGroup({
+  group,
+  headingId,
+}: {
+  group: Extract<AssistantAnswer, { kind: 'COMPARISON_RESULTS' }>['groups'][number];
+  headingId: string;
+}) {
+  const [showAdditional, setShowAdditional] = useState(false);
+  const firstAdditionalResultRef = useRef<HTMLAnchorElement>(null);
+  const visibleResults = showAdditional
+    ? [...group.exactResults, ...group.additionalExactResults]
+    : group.exactResults;
+  const resultsId = `${headingId}-results`;
+
+  useEffect(() => {
+    if (showAdditional) firstAdditionalResultRef.current?.focus();
+  }, [showAdditional]);
+
+  return (
+    <section className="assistant-comparison-group" aria-labelledby={headingId}>
+      <header className="assistant-comparison-heading">
+        <h3 id={headingId}>{group.target}</h3>
+        <span data-status={group.status}>
+          {group.status === 'MATCHED' ? 'Есть предложения' : 'Нет совпадений'}
+        </span>
+      </header>
+      {group.status === 'MATCHED' ? (
+        <>
+          <p className="assistant-results-total">
+            Точных совпадений: {group.totalExactResults.toLocaleString('ru-RU')}
+          </p>
+          <dl className="assistant-comparison-summary">
+            <div>
+              <dt>Минимальная цена</dt>
+              <dd>{group.summary.minimumPriceRub === null ? '—' : formatRub(group.summary.minimumPriceRub)}</dd>
+            </div>
+            <div>
+              <dt>Срок сдачи</dt>
+              <dd>{group.summary.completion.join(', ') || '—'}</dd>
+            </div>
+            <div>
+              <dt>Метро</dt>
+              <dd>{group.summary.metros.join(', ') || '—'}</dd>
+            </div>
+          </dl>
+          <div className="assistant-result-list" id={resultsId}>
+            {visibleResults.map((result, index) => (
+              <AssistantResultCard
+                key={result.unitId}
+                result={result}
+                titleRef={index === group.exactResults.length ? firstAdditionalResultRef : undefined}
+              />
+            ))}
+          </div>
+          {group.additionalExactResults.length > 0 && !showAdditional ? (
+            <Button
+              aria-controls={resultsId}
+              className="min-h-11 w-full justify-start"
+              type="button"
+              variant="ghost"
+              onClick={() => setShowAdditional(true)}
+            >
+              Показать далее
+            </Button>
+          ) : null}
+          <span aria-live="polite" className="sr-only" role="status">
+            {showAdditional ? `Показано ${visibleResults.length} вариантов в группе ${group.target}` : ''}
+          </span>
+        </>
+      ) : (
+        <p className="assistant-results-empty">Данных по точным критериям нет.</p>
+      )}
+    </section>
   );
 }
 
@@ -1283,6 +1387,14 @@ function AssistantKnowledgeFact({ fact }: { fact: AssistantKnowledgeFactCard }) 
     <section className="assistant-result-card" aria-label={fact.label}>
       <strong className="assistant-knowledge-label">{fact.label}</strong>
       <p className="assistant-knowledge-value">{fact.value}</p>
+      {fact.sourceUrl && fact.sourceLabel && fact.verifiedAt ? (
+        <div className="assistant-knowledge-source">
+          <a href={fact.sourceUrl} rel="noopener noreferrer" target="_blank">{fact.sourceLabel}</a>
+          <time dateTime={fact.verifiedAt}>
+            Проверено {new Date(fact.verifiedAt).toLocaleString('ru-RU')}
+          </time>
+        </div>
+      ) : null}
       <span className={fact.isStale ? 'assistant-result-freshness assistant-result-freshness--stale' : 'assistant-result-freshness'}>
         {fact.freshnessLabel}
       </span>

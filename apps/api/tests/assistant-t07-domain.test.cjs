@@ -576,6 +576,71 @@ test('Assistant T07 eval derives verdicts from persisted runs and blocks every z
   forgedGeoDistance[geoIndex].evidence[0].latitude += 0.1;
   const forgedGeoReport = evaluateAssistantEvalArtifact(dataset, artifact, forgedGeoDistance, now);
   assert.equal(forgedGeoReport.results[geoIndex].violations.includes('HARD_FILTER_VIOLATION'), true);
+  const groupedComparison = structuredClone(runRecords);
+  const groupedComparisonIndex = dataset.cases.findIndex(({ category }) => category === 'COMPARISON');
+  const groupedRun = groupedComparison[groupedComparisonIndex];
+  const [firstComparisonCard, secondComparisonCard] = groupedRun.answer.exactResults;
+  const [firstComparisonTarget, secondComparisonTarget] = groupedRun.intent.comparisonTargets;
+  groupedRun.answer = {
+    kind: 'COMPARISON_RESULTS',
+    content: 'Сравнил подтверждённые предложения отдельно по каждому выбранному ЖК.',
+    groups: [{
+      target: firstComparisonTarget,
+      status: 'MATCHED',
+      totalExactResults: 1,
+      exactResults: [firstComparisonCard],
+      additionalExactResults: [],
+      summary: { minimumPriceRub: firstComparisonCard.priceRub, completion: ['3 кв. 2027'], metros: ['Спортивная'] },
+    }, {
+      target: secondComparisonTarget,
+      status: 'MATCHED',
+      totalExactResults: 1,
+      exactResults: [secondComparisonCard],
+      additionalExactResults: [],
+      summary: { minimumPriceRub: secondComparisonCard.priceRub, completion: ['3 кв. 2027'], metros: ['Спортивная'] },
+    }],
+  };
+  const groupedComparisonReport = evaluateAssistantEvalArtifact(
+    dataset,
+    artifact,
+    groupedComparison,
+    now,
+  );
+  assert.equal(groupedComparisonReport.results[groupedComparisonIndex].passed, true);
+  const groupedComparisonWithoutMinimum = structuredClone(groupedComparison);
+  groupedComparisonWithoutMinimum[groupedComparisonIndex]
+    .answer.groups[0].summary.minimumPriceRub = null;
+  assert.throws(() => evaluateAssistantEvalArtifact(
+    dataset,
+    artifact,
+    groupedComparisonWithoutMinimum,
+    now,
+  ), /ASSISTANT_EVAL_PERSISTED_ANSWER_INVALID/u);
+  const partialGroupedComparison = structuredClone(groupedComparison);
+  const partialGroupedRun = partialGroupedComparison[groupedComparisonIndex];
+  const removedCard = partialGroupedRun.answer.groups[1].exactResults[0];
+  partialGroupedRun.answer.groups[1] = {
+    target: partialGroupedRun.answer.groups[1].target,
+    status: 'NO_MATCH',
+    totalExactResults: 0,
+    exactResults: [],
+    additionalExactResults: [],
+    summary: { minimumPriceRub: null, completion: [], metros: [] },
+  };
+  partialGroupedRun.evidence = partialGroupedRun.evidence.filter(({ unitId }) => unitId !== removedCard.unitId);
+  partialGroupedRun.audit.candidateSet = partialGroupedRun.audit.candidateSet.filter(
+    ({ evidenceId }) => evidenceId !== removedCard.unitId,
+  );
+  partialGroupedRun.audit.rankingDecisions = partialGroupedRun.audit.rankingDecisions.filter(
+    ({ evidenceId }) => evidenceId !== removedCard.unitId,
+  );
+  const partialGroupedReport = evaluateAssistantEvalArtifact(
+    dataset,
+    artifact,
+    partialGroupedComparison,
+    now,
+  );
+  assert.equal(partialGroupedReport.results[groupedComparisonIndex].passed, true);
   const incompleteComparison = structuredClone(runRecords);
   const comparisonIndex = dataset.cases.findIndex(({ category }) => category === 'COMPARISON');
   incompleteComparison[comparisonIndex].answer.exactResults.pop();
@@ -721,6 +786,30 @@ test('Assistant T07 eval derives verdicts from persisted runs and blocks every z
   const sourceConflictIndex = dataset.cases.findIndex((item) => (
     item.expected.deterministicSourcePriorityRequired
   ));
+  const semanticSourceConflict = structuredClone(runRecords);
+  const semanticConflictRun = semanticSourceConflict[sourceConflictIndex];
+  const [selectedConflictCandidate, rejectedConflictCandidate] = semanticConflictRun.audit.candidateSet;
+  selectedConflictCandidate.label = 'Семейная ипотека застройщика';
+  selectedConflictCandidate.value = 'Условия акции: ставка семейной ипотеки 4,4%.';
+  selectedConflictCandidate.projectKey = 'konflikt-1';
+  selectedConflictCandidate.developerKey = 'developer-example';
+  rejectedConflictCandidate.label = 'Семейная ипотека банка';
+  rejectedConflictCandidate.value = 'Условия акции: ставка семейной ипотеки 5,5%.';
+  rejectedConflictCandidate.projectKey = null;
+  rejectedConflictCandidate.developerKey = null;
+  semanticConflictRun.evidence[0].label = selectedConflictCandidate.label;
+  semanticConflictRun.evidence[0].value = selectedConflictCandidate.value;
+  semanticConflictRun.evidence[0].projectKey = selectedConflictCandidate.projectKey;
+  semanticConflictRun.evidence[0].developerKey = selectedConflictCandidate.developerKey;
+  semanticConflictRun.answer.facts[0].label = selectedConflictCandidate.label;
+  semanticConflictRun.answer.facts[0].value = selectedConflictCandidate.value;
+  const semanticSourceConflictReport = evaluateAssistantEvalArtifact(
+    dataset,
+    artifact,
+    semanticSourceConflict,
+    now,
+  );
+  assert.equal(semanticSourceConflictReport.results[sourceConflictIndex].passed, true);
   const missingActualConflict = structuredClone(runRecords);
   missingActualConflict[sourceConflictIndex].audit.candidateSet.pop();
   missingActualConflict[sourceConflictIndex].audit.rankingDecisions.pop();
@@ -1094,6 +1183,16 @@ test('Assistant T07 rollout preflight fails closed on stale sources, implicit bu
   assert.deepEqual(assessAssistantSourceHealth([], now), {
     passed: false,
     activeSourceCount: 0,
+    unhealthySourceIds: [],
+  });
+  assert.deepEqual(assessAssistantSourceHealth([{
+    id: 'source-unchanged-but-reverified',
+    lastSuccessAt: new Date('2026-08-26T11:55:00.000Z'),
+    lastIndexedAt: new Date('2026-08-20T10:00:00.000Z'),
+    lastErrorCode: null,
+  }], now), {
+    passed: true,
+    activeSourceCount: 1,
     unhealthySourceIds: [],
   });
 

@@ -486,6 +486,84 @@
   gap: 14px;
 }
 
+.assistant-comparison-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.assistant-comparison-group {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  padding: 10px;
+  background: rgb(255 247 242 / 55%);
+  border: 1px solid rgb(78 49 32 / 12%);
+  border-radius: 13px;
+  gap: 9px;
+}
+
+.assistant-comparison-heading {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.assistant-results .assistant-comparison-heading h3 {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.assistant-comparison-heading span {
+  padding: 3px 6px;
+  flex: 0 0 auto;
+  color: #326447;
+  background: #edf8f1;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.assistant-comparison-heading span[data-status='NO_MATCH'] {
+  color: #756a64;
+  background: #f2eeeb;
+}
+
+.assistant-comparison-summary {
+  display: grid;
+  margin: 0;
+  gap: 6px;
+}
+
+.assistant-comparison-summary > div {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  gap: 6px;
+}
+
+.assistant-comparison-summary dt,
+.assistant-comparison-summary dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.assistant-comparison-summary dt {
+  color: var(--color-muted, #756a64);
+}
+
+.assistant-comparison-summary dd {
+  color: var(--color-text, #251d19);
+  font-weight: 700;
+}
+
 .assistant-results-total {
   margin: 0;
   color: var(--color-text, #251d19);
@@ -571,6 +649,35 @@
   color: var(--color-text, #251d19);
   font-size: 12px;
   line-height: 1.55;
+}
+
+.assistant-knowledge-source {
+  display: grid;
+  color: var(--color-muted-foreground, #756a64);
+  font-size: 10px;
+  line-height: 1.45;
+  gap: 2px;
+}
+
+.assistant-knowledge-source a {
+  display: inline-flex;
+  min-height: 44px;
+  width: fit-content;
+  max-width: 100%;
+  align-items: center;
+  overflow-wrap: anywhere;
+  color: #b94713;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.assistant-knowledge-source a:hover {
+  color: #8f320c;
+}
+
+.assistant-knowledge-source a:focus-visible {
+  outline: 3px solid rgb(232 90 24 / 35%);
+  outline-offset: 2px;
 }
 
 .assistant-result-status {
@@ -1149,6 +1256,10 @@
 }
 
 @media (max-width: 760px) {
+  .assistant-comparison-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .assistant-launcher {
     right: 16px;
     bottom: 16px;

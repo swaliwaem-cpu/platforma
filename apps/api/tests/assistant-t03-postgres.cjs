@@ -52,6 +52,9 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
     AssistantSourceWorker,
   } = require('../dist/assistant/sources/assistant-source.worker.js');
   const {
+    AssistantCurrentFactRefreshCoordinator,
+  } = require('../dist/assistant/sources/assistant-current-fact-refresh.service.js');
+  const {
     OfficialSourceExtractor,
   } = require('../dist/assistant/sources/official-source.extractor.js');
   const {
@@ -174,6 +177,26 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
       embeddings,
     );
     const actorId = await createActor();
+    await Promise.all([
+      prisma.realEstateObject.upsert({
+        where: { slug: 'severny-sad' },
+        update: {
+          title: 'ЖК Северный сад', status: 'PUBLISHED', type: 'RESIDENTIAL', archivedAt: null, deletedAt: null,
+        },
+        create: {
+          title: 'ЖК Северный сад', slug: 'severny-sad', status: 'PUBLISHED', type: 'RESIDENTIAL',
+        },
+      }),
+      prisma.realEstateObject.upsert({
+        where: { slug: 'yuzhny-sad' },
+        update: {
+          title: 'ЖК Южный сад', status: 'PUBLISHED', type: 'RESIDENTIAL', archivedAt: null, deletedAt: null,
+        },
+        create: {
+          title: 'ЖК Южный сад', slug: 'yuzhny-sad', status: 'PUBLISHED', type: 'RESIDENTIAL',
+        },
+      }),
+    ]);
     const sourceCanonicalUrl = `http://developer.example:${address.port}/projects/severny-sad/${randomUUID()}`;
     const registered = await registry.register(actorId, {
       canonicalUrl: sourceCanonicalUrl,
@@ -187,6 +210,51 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
       developerKey: 'developer-example',
     });
     const sourceId = registered.source.id;
+
+    const runningOperationRunId = randomUUID();
+    const runningJob = await prisma.assistantSourceJob.create({
+      data: {
+        sourceId,
+        trigger: AssistantSourceJobTrigger.MANUAL,
+        status: AssistantSourceJobStatus.RUNNING,
+        idempotencyKey: `current-fact:${runningOperationRunId}`,
+        requestedByUserId: null,
+        attempt: 1,
+        maxAttempts: 1,
+        leaseOwner: 'assistant-t03-other-worker',
+        leaseExpiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+    const runningCoordinator = new AssistantCurrentFactRefreshCoordinator(
+      prisma,
+      {
+        async runTargetedJob(jobId) {
+          assert.equal(jobId, runningJob.id);
+          return { status: AssistantSourceJobStatus.RUNNING, errorCode: null };
+        },
+      },
+      process.env,
+    );
+    const externalCompletion = (async () => {
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 75));
+      await prisma.assistantSourceJob.update({
+        where: { id: runningJob.id },
+        data: {
+          status: AssistantSourceJobStatus.COMPLETED,
+          completedAt: new Date(),
+          leaseOwner: null,
+          leaseExpiresAt: null,
+        },
+      });
+    })();
+    const runningResult = await runningCoordinator.refreshForRun({
+      operationRunId: runningOperationRunId,
+      context: { kind: 'OBJECT', key: 'severny-sad', label: 'Текущий ЖК' },
+      preferredSourceId: sourceId,
+      deadlineAt: new Date(Date.now() + 2_000),
+    });
+    await externalCompletion;
+    assert.deepEqual(runningResult, { status: 'COMPLETED' });
 
     const disabledAggregator = await registry.register(actorId, {
       canonicalUrl: `https://aggregator.example/projects/${randomUUID()}`,
@@ -215,6 +283,9 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
     const firstRevision = await prisma.assistantSourceRevision.findUniqueOrThrow({
       where: { id: first.revisionId },
     });
+    const sourceAfterFirstRevision = await prisma.assistantKnowledgeSource.findUniqueOrThrow({
+      where: { id: sourceId },
+    });
     assert.deepEqual(gunzipSync(firstRevision.rawPayload), originalHtml);
     assert.equal(firstRevision.processingStatus, 'INDEXED');
     assert.equal(firstRevision.previousRevisionId, null);
@@ -235,9 +306,183 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
     assert.equal(unchanged.revisionId, first.revisionId);
     assert.equal(await prisma.assistantSourceRevision.count({ where: { sourceId } }), 1);
     assert.equal(embeddingCalls.length, 1);
+    const sourceAfterUnchanged = await prisma.assistantKnowledgeSource.findUniqueOrThrow({
+      where: { id: sourceId },
+    });
+    const unchangedRevision = await prisma.assistantSourceRevision.findUniqueOrThrow({
+      where: { id: first.revisionId },
+    });
+    assert.equal(unchangedRevision.fetchedAt.toISOString(), firstRevision.fetchedAt.toISOString());
+    assert.equal(sourceAfterUnchanged.lastIndexedAt.toISOString(), sourceAfterFirstRevision.lastIndexedAt.toISOString());
+    assert.equal(sourceAfterUnchanged.lastSuccessAt > sourceAfterFirstRevision.lastSuccessAt, true);
+
+    const publicSourceUrl = sourceCanonicalUrl.replace(/^http:/u, 'https:');
+    await prisma.assistantKnowledgeSource.update({
+      where: { id: sourceId },
+      data: { canonicalUrl: publicSourceUrl },
+    });
 
     const intent = createIntent({ taskType: 'FACT' });
     const retrieval = new AssistantKnowledgeRetrievalService(prisma, baseEmbeddings);
+    const expectedProjectContext = {
+      kind: 'OBJECT', key: 'severny-sad', label: 'ЖК Северный сад',
+    };
+    for (const query of [
+      'Какая ипотека в ЖК Северный сад?',
+      'Какая ипотека в ЖК Северный сад актуальна сегодня?',
+      'Какая ипотека в ЖК Северный сад на данный момент?',
+      'Какая ипотека в ЖК Северный сад доступна сейчас?',
+      'Какая ипотека в ЖК Северный сад на текущих условиях?',
+      'Какая ипотека в ЖК Северный сад по актуальным условиям?',
+      'Какая ипотека в ЖК Северный сад по состоянию на сегодня?',
+      'Есть ли в ЖК «Северный сад» с паркингом?',
+      'Есть ли в ЖК Северный сад с паркингом?',
+      'Есть ли в ЖК Северный сад по инфраструктуре?',
+      'Есть ли в ЖК Северный сад детский сад?',
+      'Что есть в ЖК Северный сад из инфраструктуры?',
+      'Есть ли в ЖК Северный сад подземный паркинг на 100 мест?',
+      'Какие акции в ЖК Северный сад для ипотеки?',
+      'Есть ли в ЖК «Северный сад» детский сад?',
+      'Какая ипотека сейчас доступна в ЖК «Северный сад» для семей с детьми?',
+      'Действует ли ипотека в ЖК Северный сад только для семей с детьми?',
+      'Какая ипотека сейчас в ЖК Северный сад доступна многодетным семьям?',
+      'Какая ипотека сейчас в ЖК Северный сад доступна семьям с детьми?',
+      'Какая ипотека сейчас в ЖК Северный сад подходит семьям с детьми?',
+      'Какая рассрочка действует в ЖК Северный сад с первоначальным взносом?',
+      'Какая ипотека действует в ЖК Северный сад со ставкой 5%?',
+      'Какая ипотека действует в ЖК Северный сад сейчас для семей с детьми?',
+      'Какая ипотека в ЖК Северный сад актуальна сегодня для семей с детьми?',
+      'Какие акции в ЖК Северный сад всё ещё действуют для семей с детьми?',
+      'Какая ипотека в ЖК Северный сад для семей с детьми доступна сейчас?',
+    ]) {
+      assert.deepEqual(await retrieval.resolveProjectContext(query), expectedProjectContext);
+    }
+    assert.equal(await retrieval.resolveProjectContext('Какая ипотека в ЖК Сад?'), null);
+    assert.equal(await retrieval.resolveProjectContext('Какая ипотека в ЖК Несуществующий?'), null);
+    assert.equal(await retrieval.resolveProjectContext('Какая ипотека в ЖК Северный сад 2?'), null);
+    assert.equal(await retrieval.resolveProjectContext('Какая ипотека в ЖК Сегодня?'), null);
+    assert.equal(await retrieval.resolveProjectContext('Есть ли в ЖК южный паркс ипотека?'), null);
+    assert.equal(await retrieval.resolveProjectContext('Какая ипотека в ЖК сад у моря?'), null);
+    assert.equal(await retrieval.resolveProjectContext('Что в ЖК есть из инфраструктуры?'), undefined);
+    assert.equal(await retrieval.resolveProjectContext('Что в ЖК с паркингом?'), undefined);
+    assert.equal(await retrieval.resolveProjectContext('Что в ЖК по инфраструктуре?'), undefined);
+    assert.equal(await retrieval.resolveProjectContext('Есть ли в ЖК детский сад?'), undefined);
+    assert.equal(await retrieval.resolveProjectContext('Какая ипотека в ЖК на сегодня?'), undefined);
+    assert.equal(await retrieval.resolveProjectContext('Какая ипотека в ЖК на текущий момент?'), undefined);
+    assert.equal(await retrieval.resolveProjectContext('Есть ли в ЖК семейная ипотека?'), undefined);
+    assert.equal(await retrieval.resolveProjectContext('Есть ли в ЖК подземный паркинг?'), undefined);
+    assert.equal(
+      await retrieval.resolveProjectContext('Какая ипотека действует в ЖК для семей с детьми?'),
+      undefined,
+    );
+    assert.equal(
+      await retrieval.resolveProjectContext('Действует ли в ЖК ипотека для семей с детьми?'),
+      undefined,
+    );
+    assert.equal(
+      await retrieval.resolveProjectContext('Действует ли в ЖК семейная ипотека?'),
+      undefined,
+    );
+    assert.equal(
+      await retrieval.resolveProjectContext('Действует ли в ЖК рассрочка без первоначального взноса?'),
+      undefined,
+    );
+    assert.equal(
+      await retrieval.resolveProjectContext('Какая ипотека действует в ЖК для IT-специалистов?'),
+      undefined,
+    );
+    assert.equal(
+      await retrieval.resolveProjectContext('Действует ли в ЖК рассрочка без процентов?'),
+      undefined,
+    );
+    assert.equal(
+      await retrieval.resolveProjectContext('Действует ли в ЖК ипотека для самозанятых?'),
+      undefined,
+    );
+    assert.equal(
+      await retrieval.resolveProjectContext('Действует ли в ЖК ипотека для граждан РФ?'),
+      undefined,
+    );
+    assert.equal(
+      await retrieval.resolveProjectContext('Действует ли в ЖК семейная ипотека для IT-специалистов?'),
+      undefined,
+    );
+    const contextCollisionProjects = await Promise.all([
+      ['ЖК Сегодня', 'today'],
+      ['ЖК Семейная ипотека', 'family-mortgage'],
+      ['ЖК Детский сад', 'kindergarten'],
+    ].map(([title, slug]) => prisma.realEstateObject.create({
+      data: {
+        title, slug: `context-collision-${slug}-${randomUUID()}`,
+        status: 'PUBLISHED', type: 'RESIDENTIAL',
+      },
+    })));
+    assert.equal(await retrieval.resolveProjectContext('Что доступно в ЖК сегодня?'), undefined);
+    assert.equal(await retrieval.resolveProjectContext('Есть ли в ЖК семейная ипотека?'), undefined);
+    assert.equal(await retrieval.resolveProjectContext('Есть ли в ЖК детский сад?'), undefined);
+    await prisma.realEstateObject.deleteMany({
+      where: { id: { in: contextCollisionProjects.map(({ id }) => id) } },
+    });
+    assert.equal(await retrieval.resolveProjectContext('Что действует в ЖК «Сегодня»?'), null);
+    const shortTitleProject = await prisma.realEstateObject.create({
+      data: {
+        title: 'ЖК Тестовый дом', slug: `test-short-title-${randomUUID()}`,
+        status: 'PUBLISHED', type: 'RESIDENTIAL',
+      },
+    });
+    assert.equal(
+      await retrieval.resolveProjectContext('Какая ипотека в ЖК «Тестовый дом у метро»?'),
+      null,
+    );
+    assert.equal(
+      await retrieval.resolveProjectContext('Какая ипотека в ЖК Тестовый дом на Набережной на покупку?'),
+      null,
+    );
+    for (const query of [
+      'Какая ипотека действует в ЖК Тестовый дом без Границ?',
+      'Какая ипотека действует в ЖК Тестовый дом с Маяком?',
+      'Какая ипотека действует в ЖК Тестовый дом для Новой жизни?',
+      'Какая ипотека действует в ЖК Тестовый дом у метро?',
+      'Какая ипотека действует в ЖК Тестовый дом рядом с метро?',
+      'Какая ипотека действует в ЖК Тестовый дом с паркингом?',
+      'Есть ли ипотека в ЖК Тестовый дом с паркингом?',
+      'Есть ли сейчас действующая ипотека в ЖК Тестовый дом с Паркингом?',
+      'Паркинг не интересует. Какая ипотека в ЖК Тестовый дом с Паркингом?',
+      'Паркинг не интересует\nКакая ипотека в ЖК Тестовый дом с Паркингом?',
+      'Паркинг не интересует\r\nКакая ипотека в ЖК Тестовый дом с Паркингом?',
+      'Паркинг не интересует… Какая ипотека в ЖК Тестовый дом с Паркингом?',
+      'Паркинг не интересует — Какая ипотека в ЖК Тестовый дом с Паркингом?',
+      'Паркинг не интересует - Какая ипотека в ЖК Тестовый дом с Паркингом?',
+      'Паркинг не интересует – Какая ипотека в ЖК Тестовый дом с Паркингом?',
+    ]) {
+      assert.equal(await retrieval.resolveProjectContext(query), null, query);
+    }
+    await prisma.realEstateObject.delete({ where: { id: shortTitleProject.id } });
+    const contextCueProject = await prisma.realEstateObject.create({
+      data: {
+        title: 'ЖК Новая', slug: `context-cue-project-${randomUUID()}`,
+        status: 'PUBLISHED', type: 'RESIDENTIAL',
+      },
+    });
+    assert.equal(await retrieval.resolveProjectContext('Есть ли в ЖК новая ипотека?'), undefined);
+    await prisma.realEstateObject.delete({ where: { id: contextCueProject.id } });
+    const upperYoProject = await prisma.realEstateObject.create({
+      data: {
+        title: 'ЖК Ёлки Парк', slug: `elki-park-${randomUUID()}`,
+        status: 'PUBLISHED', type: 'RESIDENTIAL',
+      },
+    });
+    assert.deepEqual(await retrieval.resolveProjectContext('Какая ипотека в ЖК Ёлки Парк?'), {
+      kind: 'OBJECT', key: upperYoProject.slug, label: 'ЖК Ёлки Парк',
+    });
+    await prisma.realEstateObject.delete({ where: { id: upperYoProject.id } });
+    assert.deepEqual(await retrieval.retrieve({
+      query: 'Какая ипотека сейчас действует?',
+      intent,
+      includeExternalLots: false,
+      context: null,
+      now: new Date('2026-08-25T18:00:00.000Z'),
+    }), []);
     const evidence = await retrieval.retrieve({
       query: 'Какая семейная ипотека в ЖК Северный сад?',
       intent,
@@ -251,6 +496,10 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
     assert.equal(promotion.retrievalChannels.includes('STRUCTURED_SQL'), true);
     assert.equal(promotion.retrievalChannels.includes('POSTGRES_FTS'), true);
     assert.equal(promotion.retrievalChannels.includes('PGVECTOR'), true);
+    assert.equal(promotion.fetchedAt, firstRevision.fetchedAt.toISOString());
+    assert.equal(promotion.verifiedAt, sourceAfterUnchanged.lastSuccessAt.toISOString());
+    assert.equal(promotion.sourceUrl, publicSourceUrl);
+    assert.equal(promotion.sourceLabel, 'Официальный сайт проекта · developer.example');
 
     const lotEvidence = await retrieval.retrieve({
       query: 'Двушка в Северном саду до 24 млн',
@@ -287,6 +536,11 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
       now: new Date('2026-08-25T18:00:00.000Z'),
     });
     assert.equal(matchingLotEvidence.filter(({ kind }) => kind === 'EXTERNAL_LOT').length, 1);
+
+    await prisma.assistantKnowledgeSource.update({
+      where: { id: sourceId },
+      data: { canonicalUrl: sourceCanonicalUrl },
+    });
 
     currentHtml = Buffer.from(originalHtml.toString('utf8').replace(
       'Ставка 3,5% при покупке до 30 сентября 2026 года.',
@@ -454,6 +708,22 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
       <p>Ставка 4,4% для проектов developer-example.</p>
     </main></body></html>`);
     await ingestion.ingest(developerPromotion.source.id);
+    const globalBankPromotion = await registry.register(actorId, {
+      canonicalUrl: `http://developer.example:${address.port}/promotions/global-bank/${randomUUID()}`,
+      type: 'BANK_PROMOTION',
+      state: 'ACTIVE',
+      priority: 1_000,
+      scheduleMinutes: 1_440,
+      connectorKey: 'OFFICIAL_HTML',
+      connectorConfig: { allowedHosts: ['developer.example'] },
+      projectKey: null,
+      developerKey: null,
+    });
+    currentHtml = Buffer.from(`<!doctype html><html><body><main>
+      <h1>Глобальные акции банка</h1><h2>Семейная ипотека чужого партнёрского списка</h2>
+      <p>Ставка 0,1% без подтверждённой связи с проектом.</p>
+    </main></body></html>`);
+    await ingestion.ingest(globalBankPromotion.source.id);
     const bankPromotion = await registry.register(actorId, {
       canonicalUrl: `http://developer.example:${address.port}/promotions/bank/${randomUUID()}`,
       type: 'BANK_PROMOTION',
@@ -463,7 +733,7 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
       connectorKey: 'OFFICIAL_HTML',
       connectorConfig: { allowedHosts: ['developer.example'] },
       projectKey: null,
-      developerKey: null,
+      developerKey: 'developer-example',
     });
     currentHtml = Buffer.from(`<!doctype html><html><body><main>
       <h1>Акции банка</h1><h2>Семейная ипотека банка</h2>
@@ -477,7 +747,11 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
       context: { kind: 'OBJECT', key: 'severny-sad', label: 'ЖК Северный сад' },
       now: new Date('2026-08-25T18:03:00.000Z'),
     };
-    const sharedPromotionsBeforePriorityUpdate = (await retrieval.retrieve(sharedPromotionInput))
+    const objectScopedPromotionEvidence = await retrieval.retrieve(sharedPromotionInput);
+    assert.equal(objectScopedPromotionEvidence.some(({ sourceId: evidenceSourceId }) => (
+      evidenceSourceId === globalBankPromotion.source.id
+    )), false);
+    const sharedPromotionsBeforePriorityUpdate = objectScopedPromotionEvidence
       .filter(({ sourceId: evidenceSourceId }) => (
         evidenceSourceId === developerPromotion.source.id || evidenceSourceId === bankPromotion.source.id
       ));
@@ -485,7 +759,22 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
       new Set(sharedPromotionsBeforePriorityUpdate.map(({ sourceId: evidenceSourceId }) => evidenceSourceId)),
       new Set([developerPromotion.source.id, bankPromotion.source.id]),
     );
-    assert.equal(sharedPromotionsBeforePriorityUpdate[0].sourceId, bankPromotion.source.id);
+    assert.equal(
+      sharedPromotionsBeforePriorityUpdate[0].retrievalScore
+        >= sharedPromotionsBeforePriorityUpdate[1].retrievalScore,
+      true,
+    );
+    const bankPromotionFact = sharedPromotionsBeforePriorityUpdate.find(({
+      sourceId: evidenceSourceId,
+      label,
+    }) => evidenceSourceId === bankPromotion.source.id && label === 'Семейная ипотека банка');
+    assert.ok(bankPromotionFact);
+    const beforePriorityAnswer = buildAssistantKnowledgeAnswer(
+      sharedPromotionsBeforePriorityUpdate.map(withPublicTestUrls),
+      new Date('2026-08-25T18:03:00.000Z'),
+      sharedPromotionInput.query,
+    );
+    assert.deepEqual(beforePriorityAnswer.answer.facts.map(({ id }) => id), [bankPromotionFact.factId]);
 
     await registry.update(developerPromotion.source.id, { priority: 1_000 });
     const sharedPromotionsAfterPriorityUpdate = (await retrieval.retrieve({
@@ -498,9 +787,55 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
       new Set(sharedPromotionsAfterPriorityUpdate.map(({ sourceId: evidenceSourceId }) => evidenceSourceId)),
       new Set([developerPromotion.source.id, bankPromotion.source.id]),
     );
-    assert.equal(sharedPromotionsAfterPriorityUpdate[0].sourceId, developerPromotion.source.id);
-    assert.equal(sharedPromotionsAfterPriorityUpdate[0].sourcePriority, 1_000);
+    const updatedDeveloperPromotion = sharedPromotionsAfterPriorityUpdate.find(({
+      sourceId: evidenceSourceId,
+      label,
+    }) => evidenceSourceId === developerPromotion.source.id && label === 'Семейная ипотека застройщика');
+    assert.ok(updatedDeveloperPromotion);
+    assert.equal(updatedDeveloperPromotion.sourcePriority, 1_000);
+    const afterPriorityAnswer = buildAssistantKnowledgeAnswer(
+      sharedPromotionsAfterPriorityUpdate.map(withPublicTestUrls),
+      new Date('2026-08-25T18:04:00.000Z'),
+      sharedPromotionInput.query,
+    );
+    assert.deepEqual(afterPriorityAnswer.answer.facts.map(({ id }) => id), [updatedDeveloperPromotion.factId]);
+    assert.match(afterPriorityAnswer.content, /источники расходятся/iu);
 
+    const unscopedProjectPromotions = await retrieval.retrieve({
+      ...sharedPromotionInput,
+      query: 'Какая семейная ипотека действует в ЖК Северный сад?',
+      context: null,
+      now: new Date('2026-08-25T18:05:00.000Z'),
+    });
+    const unscopedSourceIds = new Set(unscopedProjectPromotions.map(({ sourceId: evidenceSourceId }) => (
+      evidenceSourceId
+    )));
+    assert.equal(unscopedSourceIds.has(sourceId), true);
+    assert.equal(unscopedSourceIds.has(developerPromotion.source.id), true);
+    assert.equal(unscopedSourceIds.has(bankPromotion.source.id), true);
+    assert.equal(unscopedSourceIds.has(globalBankPromotion.source.id), false);
+    assert.equal(unscopedSourceIds.has(otherSource.source.id), false);
+
+    const unknownProjectPromotions = await retrieval.retrieve({
+      ...sharedPromotionInput,
+      query: 'Какая семейная ипотека действует в ЖК Несуществующий?',
+      context: null,
+      now: new Date('2026-08-25T18:06:00.000Z'),
+    });
+    assert.deepEqual(unknownProjectPromotions, []);
+    const ambiguousProject = await prisma.realEstateObject.create({
+      data: {
+        title: 'Северный сад', slug: `severny-sad-duplicate-${randomUUID()}`,
+        status: 'PUBLISHED', type: 'RESIDENTIAL',
+      },
+    });
+    assert.equal(await retrieval.resolveProjectContext('Какая ипотека в ЖК Северный сад?'), null);
+    await prisma.realEstateObject.delete({ where: { id: ambiguousProject.id } });
+
+    await prisma.assistantKnowledgeSource.update({
+      where: { id: sourceId },
+      data: { canonicalUrl: sourceCanonicalUrl },
+    });
     const activeFactIdsBeforeFailedExtraction = (await prisma.assistantSourceFact.findMany({
       where: { sourceId, isActive: true },
       orderBy: { id: 'asc' },
@@ -819,6 +1154,14 @@ if (!databaseUrl) throw new Error('ASSISTANT_T03_TEST_DATABASE_URL_REQUIRED');
       await new Promise((resolveDelay) => setTimeout(resolveDelay, 10));
     }
     throw new Error(`REVISION_STATUS_TIMEOUT:${processingStatus}`);
+  }
+
+  function withPublicTestUrls(evidence) {
+    return {
+      ...evidence,
+      canonicalUrl: evidence.canonicalUrl.replace(/^http:/u, 'https:'),
+      sourceUrl: evidence.sourceUrl.replace(/^http:/u, 'https:'),
+    };
   }
 
   function createIntent(overrides = {}) {

@@ -329,11 +329,21 @@ if (!databaseUrl) {
       const completed = await waitForRun(queued.body.run.id, ownerToken);
 
       assert.equal(completed.status, 'COMPLETED');
-      assert.equal(completed.assistantMessage.answer.kind, 'SEARCH_RESULTS');
-      assert.equal(completed.assistantMessage.answer.totalExactResults, 122);
-      assert.equal(completed.assistantMessage.answer.exactResults.length, 3);
-      assert.equal(completed.assistantMessage.answer.additionalExactResults.length, 5);
-      const facts = completed.assistantMessage.answer.exactResults.flatMap(({ facts: resultFacts }) => resultFacts);
+      assert.equal(completed.assistantMessage.answer.kind, 'COMPARISON_RESULTS');
+      assert.deepEqual(completed.assistantMessage.answer.groups.map((group) => ({
+        target: group.target,
+        status: group.status,
+        totalExactResults: group.totalExactResults,
+      })), [
+        { target: 'Первый', status: 'MATCHED', totalExactResults: 121 },
+        { target: 'Сердцем Столицы', status: 'MATCHED', totalExactResults: 1 },
+      ]);
+      assert.equal(completed.assistantMessage.answer.groups[0].exactResults.length, 3);
+      assert.equal(completed.assistantMessage.answer.groups[0].additionalExactResults.length, 5);
+      assert.equal(completed.assistantMessage.answer.groups[1].exactResults.length, 1);
+      const facts = completed.assistantMessage.answer.groups.flatMap((group) => (
+        group.exactResults.flatMap(({ facts: resultFacts }) => resultFacts)
+      ));
       assert.equal(facts.includes(fixture.firstDeveloper.name), true);
       assert.equal(facts.includes(fixture.secondDeveloper.name), true);
 
@@ -344,7 +354,35 @@ if (!databaseUrl) {
       ]);
       assert.deepEqual(persisted.intentJson.comparisonTargetModes, ['EXACT', 'INSTRUMENTAL']);
       assert.equal(persisted.intentJson.hardFilters.developer, null);
-      assert.equal(persisted.evidenceJson.length, 8);
+      assert.equal(persisted.evidenceJson.length, 9);
+
+      const summaryOutlier = await prisma.feedUnit.findFirstOrThrow({
+        where: { sourceId: fixture.firstSource.id },
+        orderBy: { effectivePrice: 'desc' },
+        select: { id: true },
+      });
+      await prisma.feedUnit.update({
+        where: { id: summaryOutlier.id },
+        data: { effectivePrice: 1_000_000, completionYear: 2039, completionQuarter: 4 },
+      });
+      const summaryIntent = createSearchIntent({
+        budgetMaxRub: 25_000_000,
+        rooms: [2],
+        district: fixture.district.name,
+        metro: fixture.metro.name,
+      });
+      summaryIntent.taskType = 'COMPARE';
+      summaryIntent.comparisonTargets = ['ПИК'];
+      summaryIntent.comparisonTargetModes = ['EXACT'];
+      summaryIntent.softPreferences = {
+        ...createEmptyAssistantSearchFilters(),
+        completionYearMax: 2028,
+      };
+      const summarizedSearch = await app.get(AssistantSearchService).search(summaryIntent, null);
+      assert.equal(summarizedSearch.totalExactResults, 121);
+      assert.equal(summarizedSearch.exact.some(({ unitId }) => unitId === summaryOutlier.id), false);
+      assert.equal(summarizedSearch.summary.minimumPriceRub, 1_000_000);
+      assert.equal(summarizedSearch.summary.completion.includes('4 кв. 2039'), true);
 
       const softIntent = createSearchIntent({
         budgetMaxRub: 25_000_000,
@@ -380,6 +418,12 @@ if (!databaseUrl) {
         rawPreferredSearch.totalExactResults,
       );
       assert.equal(rawPreferredAnswer.totalExactResults, 122);
+
+      rawPreferredIntent.comparisonTargets = ['Ростелеком'];
+      rawPreferredIntent.comparisonTargetModes = ['INSTRUMENTAL'];
+      const singleTargetRawPreferredSearch = await app.get(AssistantSearchService).search(rawPreferredIntent, null);
+      assert.equal(singleTargetRawPreferredSearch.totalExactResults, 1);
+      assert.equal(singleTargetRawPreferredSearch.exact.some(({ developer }) => developer === 'Ростелек'), false);
     } finally {
       await deleteComparisonFixture(fixture);
     }
@@ -640,7 +684,7 @@ if (!databaseUrl) {
 
   function hashAssistantRequest(conversationId, content) {
     return createHash('sha256')
-      .update(JSON.stringify({ conversationId, content, context: null }))
+      .update(JSON.stringify({ conversationId, content, context: null, geo: null }))
       .digest('hex');
   }
 

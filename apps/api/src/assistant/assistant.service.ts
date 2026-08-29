@@ -11,6 +11,7 @@ import {
 } from '@prisma/client';
 import type {
   AssistantAnswer,
+  AssistantComparisonGroup,
   AssistantConversation,
   AssistantConversationSummary,
   AssistantExternalLotCard,
@@ -48,6 +49,7 @@ import {
   AssistantRunProcessor,
   assistantProgressDefinitions,
 } from './assistant-run.processor';
+import { parseAssistantComparisonSummary } from './assistant-comparison-answer';
 import { isSafeOfficialHttpsUrl } from './sources/assistant-knowledge-policy';
 
 const assistantHistoryDays = 30;
@@ -60,7 +62,7 @@ const assistantConversationTitleMaxLength = 80;
 const assistantHistoryCursorMaxLength = 512;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const contextKinds = new Set(['OBJECT', 'LOT', 'DEVELOPER', 'CATALOG_FILTERS']);
-const answerKinds = new Set(['SEARCH_RESULTS', 'KNOWLEDGE_RESULTS', 'CLARIFICATION', 'REFUSAL', 'SAFE_BOUNDARY']);
+const answerKinds = new Set(['SEARCH_RESULTS', 'COMPARISON_RESULTS', 'KNOWLEDGE_RESULTS', 'CLARIFICATION', 'REFUSAL', 'SAFE_BOUNDARY']);
 const deviationTypes = new Set(['BUDGET', 'DISTRICT', 'DEVELOPER', 'ROOMS']);
 
 const messageSelect = {
@@ -584,6 +586,13 @@ export class AssistantService {
   private parseStoredAnswer(value: Prisma.JsonValue | null): AssistantAnswer | null {
     if (!this.isRecord(value) || typeof value.kind !== 'string' || !answerKinds.has(value.kind)) return null;
     if (value.kind === 'KNOWLEDGE_RESULTS') return this.parseStoredKnowledgeAnswer(value);
+    if (value.kind === 'COMPARISON_RESULTS') return this.parseStoredComparisonAnswer(value);
+    if (value.kind === 'REFUSAL') {
+      if (value.code === undefined) return { kind: 'REFUSAL' };
+      return value.code === 'SOURCE_NOT_CONNECTED'
+        ? { kind: 'REFUSAL', code: value.code }
+        : null;
+    }
     if (value.kind !== 'SEARCH_RESULTS') return { kind: value.kind } as AssistantAnswer;
     if (!Array.isArray(value.exactResults) || !Array.isArray(value.alternatives)) return null;
     if (value.exactResults.length > 3 || value.alternatives.length > 2) return null;
@@ -648,6 +657,69 @@ export class AssistantService {
       additionalExactResults,
       alternatives,
       ...(geo ? { geo } : {}),
+    };
+  }
+
+  private parseStoredComparisonAnswer(value: Record<string, unknown>): AssistantAnswer | null {
+    if (!Array.isArray(value.groups) || value.groups.length !== 2) return null;
+    const groups = value.groups.flatMap((group) => {
+      const parsed = this.parseStoredComparisonGroup(group);
+      return parsed ? [parsed] : [];
+    });
+    if (groups.length !== 2 || groups[0]!.target === groups[1]!.target) return null;
+    const exactResults = groups.flatMap((group) => [
+      ...group.exactResults,
+      ...group.additionalExactResults,
+    ]);
+    const exactResultIds = exactResults.map(({ unitId }) => unitId);
+    if (new Set(exactResultIds).size !== exactResultIds.length) return null;
+    const geo = value.geo === undefined ? undefined : this.parseStoredGeoView(value.geo);
+    if (value.geo !== undefined && !geo) return null;
+    if (geo && (!this.geoMarkersMatchResults(geo, exactResults.slice(0, 3), [])
+      || !this.geoResultsMatchConstraint(geo, exactResults))) return null;
+    return {
+      kind: 'COMPARISON_RESULTS',
+      groups: groups as [AssistantComparisonGroup, AssistantComparisonGroup],
+      ...(geo ? { geo } : {}),
+    };
+  }
+
+  private parseStoredComparisonGroup(value: unknown): AssistantComparisonGroup | null {
+    if (!this.isRecord(value)
+      || typeof value.target !== 'string' || !this.isBoundedText(value.target, 160)
+      || (value.status !== 'MATCHED' && value.status !== 'NO_MATCH')
+      || !Number.isSafeInteger(value.totalExactResults) || (value.totalExactResults as number) < 0
+      || !Array.isArray(value.exactResults) || value.exactResults.length > 3
+      || !Array.isArray(value.additionalExactResults) || value.additionalExactResults.length > 5) return null;
+    const summary = parseAssistantComparisonSummary(value.summary, value.status);
+    if (!summary) return null;
+    const exactResults = value.exactResults.flatMap((item) => {
+      const parsed = this.parseStoredResultCard(item, false);
+      return parsed ? [parsed] : [];
+    });
+    const additionalExactResults = value.additionalExactResults.flatMap((item) => {
+      const parsed = this.parseStoredResultCard(item, false);
+      return parsed ? [parsed] : [];
+    });
+    if (exactResults.length !== value.exactResults.length
+      || additionalExactResults.length !== value.additionalExactResults.length) return null;
+    const cards = [...exactResults, ...additionalExactResults];
+    const cardIds = cards.map(({ unitId }) => unitId);
+    if (new Set(cardIds).size !== cardIds.length) return null;
+    const totalExactResults = value.totalExactResults as number;
+    const matched = value.status === 'MATCHED';
+    if (matched !== (totalExactResults > 0)
+      || matched !== (cardIds.length > 0)
+      || totalExactResults < cardIds.length
+      || (matched && (summary.minimumPriceRub === null
+        || summary.minimumPriceRub > Math.min(...cards.map(({ priceRub }) => priceRub))))) return null;
+    return {
+      target: value.target,
+      status: value.status,
+      totalExactResults,
+      exactResults,
+      additionalExactResults,
+      summary,
     };
   }
 
@@ -819,12 +891,27 @@ export class AssistantService {
       || typeof value.value !== 'string' || !this.isBoundedText(value.value, 2_000)
       || typeof value.freshnessLabel !== 'string' || !this.isBoundedText(value.freshnessLabel, 160)
       || typeof value.isStale !== 'boolean') return null;
-    return {
+    const hasSourceMetadata = value.sourceLabel !== undefined
+      || value.sourceUrl !== undefined
+      || value.verifiedAt !== undefined;
+    if (hasSourceMetadata && (
+      typeof value.sourceLabel !== 'string' || !this.isBoundedText(value.sourceLabel, 300)
+      || typeof value.sourceUrl !== 'string' || !isSafeOfficialHttpsUrl(value.sourceUrl)
+      || typeof value.verifiedAt !== 'string' || !Number.isFinite(Date.parse(value.verifiedAt))
+    )) return null;
+    const baseFact = {
       id: value.id,
       label: value.label,
       value: value.value,
       freshnessLabel: value.freshnessLabel,
       isStale: value.isStale,
+    };
+    if (!hasSourceMetadata) return baseFact;
+    return {
+      ...baseFact,
+      sourceLabel: value.sourceLabel as string,
+      sourceUrl: value.sourceUrl as string,
+      verifiedAt: value.verifiedAt as string,
     };
   }
 

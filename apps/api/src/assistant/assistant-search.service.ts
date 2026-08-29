@@ -28,6 +28,10 @@ import {
 import { parseAssistantGeoStoredValue, parseAssistantReferenceGeometry } from './geo/assistant-geo-contract';
 import { AssistantGeoLandmarkService } from './geo/assistant-geo-landmark.service';
 import type { AssistantSearchEvidence } from './assistant-search-ranking';
+import {
+  assistantComparisonSummaryItemLimit,
+  type AssistantComparisonSearchGroup,
+} from './assistant-comparison-answer';
 
 const candidateLimit = 120;
 export const assistantBudgetRelaxationRub = 7_000_000;
@@ -129,6 +133,7 @@ type SearchOptions = {
   softPreferences?: AssistantSearchFilters;
   requiredFacts?: AssistantRequiredFact[];
   geo?: AssistantGeoSearchSelection | null;
+  includeComparisonSummary?: boolean;
 };
 
 export type AssistantGeoSearchResult = AssistantGeoConstraintView | {
@@ -152,6 +157,7 @@ export class AssistantSearchService {
     totalExactResults: number;
     alternatives: AssistantSearchEvidence[];
     geo: AssistantGeoSearchResult | null;
+    summary: NonNullable<AssistantComparisonSearchGroup['summary']>;
   }> {
     const geo = geoInput ? parseAssistantGeoStoredValue(geoInput, {
       ASSISTANT_GEO_RADIUS_MIN_METERS: '1',
@@ -168,6 +174,7 @@ export class AssistantSearchService {
       softPreferences: intent.softPreferences,
       requiredFacts: intent.requiredFacts,
       geo,
+      includeComparisonSummary: intent.taskType === 'COMPARE',
     };
     const exactSearch = await this.findEvidence(intent.hardFilters, context, searchOptions);
     if (exactSearch.evidence.length > 0) {
@@ -176,6 +183,7 @@ export class AssistantSearchService {
         totalExactResults: exactSearch.total,
         alternatives: [],
         geo: geoResult,
+        summary: exactSearch.summary,
       };
     }
 
@@ -234,6 +242,7 @@ export class AssistantSearchService {
       totalExactResults: 0,
       alternatives: [...alternativesByUnitId.values()],
       geo: geoResult,
+      summary: emptyComparisonSummary(),
     };
   }
 
@@ -343,6 +352,9 @@ export class AssistantSearchService {
       const total = includeTotal
         ? await this.countCandidateRows(transaction, filters, context, resolvedOptions)
         : 0;
+      const summary = includeTotal && resolvedOptions.includeComparisonSummary && total > 0
+        ? await this.summarizeCandidateRows(transaction, filters, context, resolvedOptions)
+        : emptyComparisonSummary();
 
       for (const comparisonGroup of comparisonGroups) {
         const rows = await this.findCandidateRows(
@@ -363,7 +375,7 @@ export class AssistantSearchService {
           rowDistances.set(id, distanceMeters);
         }
       }
-      if (rowIds.length === 0) return { evidence: [], total };
+      if (rowIds.length === 0) return { evidence: [], total, summary };
 
       const records = await transaction.feedUnit.findMany({
         where: { id: { in: rowIds } },
@@ -375,7 +387,7 @@ export class AssistantSearchService {
         const candidate = record ? this.toEvidence(record, filters) : null;
         return candidate ? [{ ...candidate, distanceMeters: rowDistances.get(id) ?? null }] : [];
       });
-      return { evidence, total };
+      return { evidence, total, summary };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
   }
 
@@ -385,7 +397,7 @@ export class AssistantSearchService {
     context: AssistantPageContext | null,
     options: SearchOptions,
   ): Promise<SearchOptions> {
-    if (options.comparisonTargets?.length !== 2) return options;
+    if (!options.comparisonTargets?.length) return options;
     const resolvedModes: AssistantComparisonTargetMode[] = [];
     for (const [index, target] of options.comparisonTargets.entries()) {
       const mode = options.comparisonTargetModes?.[index] ?? 'EXACT';
@@ -419,6 +431,74 @@ export class AssistantSearchService {
       WHERE ${Prisma.join(conditions, ' AND ')}
     `);
     return toSafeCount(rows[0]?.count);
+  }
+
+  private async summarizeCandidateRows(
+    transaction: Prisma.TransactionClient,
+    filters: AssistantSearchFilters,
+    context: AssistantPageContext | null,
+    options: SearchOptions,
+  ): Promise<NonNullable<AssistantComparisonSearchGroup['summary']>> {
+    const conditions = this.createSqlConditions(filters, context, options);
+    const rows = await transaction.$queryRaw<Array<{
+      minimumPriceRub: Prisma.Decimal | null;
+      completion: unknown;
+      metros: unknown;
+    }>>(Prisma.sql`
+      WITH candidates AS (
+        SELECT
+          fu.id,
+          o.id AS object_id,
+          COALESCE(fu.effective_price, fu.discount_price, fu.price) AS price,
+          COALESCE(fu.completion_year, o.feed_completion_year, o.completion_year) AS completion_year,
+          COALESCE(fu.completion_quarter, o.feed_completion_quarter, o.completion_quarter) AS completion_quarter
+        FROM feed_units fu
+        JOIN feed_sources fs ON fs.id = fu.source_id
+        JOIN real_estate_objects o ON o.id = fu.object_id
+        LEFT JOIN developers d ON d.id = o.developer_id
+        WHERE ${Prisma.join(conditions, ' AND ')}
+      )
+      SELECT
+        (SELECT MIN(price) FROM candidates) AS "minimumPriceRub",
+        COALESCE((
+          SELECT jsonb_agg(label ORDER BY year, quarter NULLS LAST)
+          FROM (
+            SELECT
+              year,
+              quarter,
+              CASE
+                WHEN quarter IS NULL THEN year::text || ' год'
+                ELSE quarter::text || ' кв. ' || year::text
+              END AS label
+            FROM (
+              SELECT DISTINCT completion_year AS year, completion_quarter AS quarter
+              FROM candidates
+              WHERE completion_year IS NOT NULL
+            ) unique_completion
+            ORDER BY year, quarter NULLS LAST
+            LIMIT ${assistantComparisonSummaryItemLimit}
+          ) completion_values
+        ), '[]'::jsonb) AS completion,
+        COALESCE((
+          SELECT jsonb_agg(name ORDER BY name)
+          FROM (
+            SELECT DISTINCT BTRIM(ms.name) AS name
+            FROM candidates candidate
+            JOIN object_metro_stations oms ON oms.object_id = candidate.object_id
+            JOIN metro_stations ms ON ms.id = oms.metro_station_id
+            WHERE BTRIM(ms.name) <> ''
+            ORDER BY name
+            LIMIT ${assistantComparisonSummaryItemLimit}
+          ) metro_values
+        ), '[]'::jsonb) AS metros
+    `);
+    const row = rows[0];
+    const minimumPriceRub = toFiniteNumber(row?.minimumPriceRub ?? null);
+    if (!row || !isStringArray(row.completion) || !isStringArray(row.metros)
+      || (minimumPriceRub !== null && minimumPriceRub <= 0)) {
+      throw new Error('ASSISTANT_SEARCH_SUMMARY_INVALID');
+    }
+    return { minimumPriceRub, completion: row.completion, metros: row.metros };
   }
 
   private async findCandidateRows(
@@ -820,6 +900,14 @@ function toSafeCount(value: bigint | undefined) {
     throw new Error('ASSISTANT_SEARCH_COUNT_INVALID');
   }
   return Number(value);
+}
+
+function emptyComparisonSummary(): NonNullable<AssistantComparisonSearchGroup['summary']> {
+  return { minimumPriceRub: null, completion: [], metros: [] };
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
 }
 
 function createNormalizedContains(field: Prisma.Sql, value: string) {

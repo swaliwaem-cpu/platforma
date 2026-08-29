@@ -215,10 +215,9 @@ export function assessAssistantSourceHealth(
   const oldestHealthyTimestamp = now.getTime() - maximumSourceAgeMs;
   const unhealthySourceIds = sources.filter((source) => {
     const lastSuccessAt = source.lastSuccessAt?.getTime() ?? 0;
-    const lastIndexedAt = source.lastIndexedAt?.getTime() ?? 0;
     return source.lastErrorCode !== null
       || lastSuccessAt < oldestHealthyTimestamp
-      || lastIndexedAt < oldestHealthyTimestamp;
+      || source.lastIndexedAt === null;
   }).map(({ id }) => id);
 
   return {

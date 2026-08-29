@@ -268,13 +268,29 @@ export type AssistantSearchResultCard = {
   distanceMeters?: number;
 };
 
-export type AssistantKnowledgeFactCard = {
+type AssistantKnowledgeFactCardBase = {
   id: string;
   label: string;
   value: string;
   freshnessLabel: string;
   isStale: boolean;
 };
+
+type AssistantLegacyKnowledgeFactCard = AssistantKnowledgeFactCardBase & {
+  sourceLabel?: never;
+  sourceUrl?: never;
+  verifiedAt?: never;
+};
+
+type AssistantSourcedKnowledgeFactCard = AssistantKnowledgeFactCardBase & {
+  sourceLabel: string;
+  sourceUrl: string;
+  verifiedAt: string;
+};
+
+export type AssistantKnowledgeFactCard =
+  | AssistantLegacyKnowledgeFactCard
+  | AssistantSourcedKnowledgeFactCard;
 
 export type AssistantExternalLotCard = {
   id: string;
@@ -304,16 +320,38 @@ type AssistantExpandedSearchResultsAnswer = AssistantSearchResultsBase & {
   additionalExactResults: AssistantSearchResultCard[];
 };
 
+export type AssistantComparisonSummary = {
+  minimumPriceRub: number | null;
+  completion: string[];
+  metros: string[];
+};
+
+export type AssistantComparisonGroup = {
+  target: string;
+  status: 'MATCHED' | 'NO_MATCH';
+  totalExactResults: number;
+  exactResults: AssistantSearchResultCard[];
+  additionalExactResults: AssistantSearchResultCard[];
+  summary: AssistantComparisonSummary;
+};
+
+export type AssistantComparisonResultsAnswer = {
+  kind: 'COMPARISON_RESULTS';
+  groups: [AssistantComparisonGroup, AssistantComparisonGroup];
+  geo?: AssistantGeoView;
+};
+
 export type AssistantAnswer =
   | AssistantLegacySearchResultsAnswer
   | AssistantExpandedSearchResultsAnswer
+  | AssistantComparisonResultsAnswer
   | {
       kind: 'KNOWLEDGE_RESULTS';
       facts: AssistantKnowledgeFactCard[];
       externalLots: AssistantExternalLotCard[];
     }
   | { kind: 'CLARIFICATION' }
-  | { kind: 'REFUSAL' }
+  | { kind: 'REFUSAL'; code?: 'SOURCE_NOT_CONNECTED' }
   | { kind: 'SAFE_BOUNDARY' };
 
 export type AssistantMessage = {

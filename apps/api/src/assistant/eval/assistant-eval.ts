@@ -6,7 +6,7 @@ import {
 
 import {
   assistantKnowledgeAuthorityScore,
-  assistantKnowledgeConflictKey,
+  assistantKnowledgeSemanticConflictKey,
   normalizeAssistantKnowledgeRegistryKey,
 } from '../sources/assistant-knowledge-policy';
 import {
@@ -14,6 +14,7 @@ import {
   parseAssistantStructuredIntent,
   type AssistantStructuredIntent,
 } from '../assistant-query-planner';
+import { parseAssistantComparisonSummary } from '../assistant-comparison-answer';
 import {
   isValidAssistantAlternativeEvidence,
   isValidAssistantSearchEvidence,
@@ -53,7 +54,7 @@ export const assistantEvalZeroToleranceViolations = [
 
 type AssistantEvalCategory = (typeof assistantEvalCategories)[number];
 type AssistantEvalViolation = (typeof assistantEvalZeroToleranceViolations)[number];
-type AssistantAnswerKind = 'SEARCH_RESULTS' | 'KNOWLEDGE_RESULTS' | 'CLARIFICATION' | 'REFUSAL' | 'SAFE_BOUNDARY';
+type AssistantAnswerKind = 'SEARCH_RESULTS' | 'COMPARISON_RESULTS' | 'KNOWLEDGE_RESULTS' | 'CLARIFICATION' | 'REFUSAL' | 'SAFE_BOUNDARY';
 
 type AssistantEvalExpectation = {
   answerKinds: AssistantAnswerKind[];
@@ -208,6 +209,7 @@ const caseIdPattern = /^[A-Z_]+-\d{3}$/u;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const answerKinds = new Set<AssistantAnswerKind>([
   'SEARCH_RESULTS',
+  'COMPARISON_RESULTS',
   'KNOWLEDGE_RESULTS',
   'CLARIFICATION',
   'REFUSAL',
@@ -389,7 +391,10 @@ function evaluateObservation(
     || expected.expectedKnowledge !== undefined;
   const linksSupported = observation.links.every(({ supported }) => supported);
   const checks = [
-    expected.answerKinds.includes(observation.answerKind),
+    expected.answerKinds.includes(observation.answerKind)
+      || (observation.answerKind === 'COMPARISON_RESULTS'
+        && expected.answerKinds.includes('SEARCH_RESULTS')
+        && expected.expectedIntent?.taskType === 'COMPARE'),
     observation.authorizationPreserved,
     observation.priceAvailabilityGrounded,
     !observation.evidenceLeaked,
@@ -534,9 +539,15 @@ function observeAssistantEvalRun(
   }
   const audit = isRecord(record.audit) ? record.audit : {};
   const qualityFlags = new Set(record.qualityFlags);
+  const comparisonGroups = answerKind === 'COMPARISON_RESULTS'
+    ? readPersistedComparisonGroups(record.answer.groups)
+    : [];
   const exactResults = answerKind === 'SEARCH_RESULTS'
     ? readPersistedAnswerArray(record.answer.exactResults)
-    : [];
+    : comparisonGroups.flatMap((group) => [
+        ...readPersistedAnswerArray(group.exactResults),
+        ...readPersistedAnswerArray(group.additionalExactResults),
+      ]);
   const hasTotalExactResults = answerKind === 'SEARCH_RESULTS'
     && record.answer.totalExactResults !== undefined;
   const hasAdditionalExactResults = answerKind === 'SEARCH_RESULTS'
@@ -627,12 +638,13 @@ function observeAssistantEvalRun(
     facts,
     externalLots,
   );
-  const geo = answerKind === 'SEARCH_RESULTS' && isRecord(record.answer.geo) ? record.answer.geo : null;
+  const geo = (answerKind === 'SEARCH_RESULTS' || answerKind === 'COMPARISON_RESULTS')
+    && isRecord(record.answer.geo) ? record.answer.geo : null;
   if (geo && (!Array.isArray(geo.markers) || geo.markers.some((marker) => !isRecord(marker)))) {
     throw new Error('ASSISTANT_EVAL_PERSISTED_ANSWER_INVALID');
   }
   const markers = geo ? geo.markers as Record<string, unknown>[] : [];
-  const requiredSearchResultMissing = answerKind === 'SEARCH_RESULTS'
+  const requiredSearchResultMissing = (answerKind === 'SEARCH_RESULTS' || answerKind === 'COMPARISON_RESULTS')
     && resultCards.length === 0
     && (expected.hardFiltersRequired === true
       || expected.radiusHardFilterRequired === true
@@ -655,6 +667,7 @@ function observeAssistantEvalRun(
       evidenceById,
       record.intent,
       expected,
+      comparisonGroups,
     );
   const knowledgeExpectationSatisfied = persistedKnowledgeSatisfiesExpectation(
     facts,
@@ -669,7 +682,7 @@ function observeAssistantEvalRun(
   );
   const sourcePriority = deriveSourcePriority(evidence, audit, expected, selectedIds, evidenceById);
   const links = [
-    ...collectAnswerLinks(resultCards, externalLots).map(({ url, evidenceId }) => ({
+    ...collectAnswerLinks(resultCards, facts, externalLots).map(({ url, evidenceId }) => ({
       url,
       supported: !qualityFlags.has('BROKEN_LINK')
         && isSupportedPersistedLink(url, evidenceById.get(evidenceId)),
@@ -737,6 +750,47 @@ function readPersistedAnswerArray(value: unknown) {
     throw new Error('ASSISTANT_EVAL_PERSISTED_ANSWER_INVALID');
   }
   return value as Record<string, unknown>[];
+}
+
+function readPersistedComparisonGroups(value: unknown) {
+  if (!Array.isArray(value) || value.length !== 2 || value.some((group) => !isRecord(group))) {
+    throw new Error('ASSISTANT_EVAL_PERSISTED_ANSWER_INVALID');
+  }
+  const groups = value as Record<string, unknown>[];
+  const targets = groups.map((group) => readString(group.target));
+  for (const group of groups) {
+    const status = group.status;
+    if ((status !== 'MATCHED' && status !== 'NO_MATCH')
+      || !isNonNegativeInteger(group.totalExactResults)
+      || !Array.isArray(group.exactResults) || group.exactResults.length > 3
+      || !Array.isArray(group.additionalExactResults) || group.additionalExactResults.length > 5
+      || !isRecord(group.summary)) {
+      throw new Error('ASSISTANT_EVAL_PERSISTED_ANSWER_INVALID');
+    }
+    const summary = parseAssistantComparisonSummary(group.summary, status);
+    if (!summary) throw new Error('ASSISTANT_EVAL_PERSISTED_ANSWER_INVALID');
+    const cards = [
+      ...readPersistedAnswerArray(group.exactResults),
+      ...readPersistedAnswerArray(group.additionalExactResults),
+    ];
+    const total = group.totalExactResults as number;
+    const matched = status === 'MATCHED';
+    const cardPrices = cards.map(({ priceRub }) => readFiniteNumber(priceRub));
+    if (matched !== (total > 0)
+      || matched !== (cards.length > 0)
+      || total < cards.length) {
+      throw new Error('ASSISTANT_EVAL_PERSISTED_ANSWER_INVALID');
+    }
+    if (matched && (summary.minimumPriceRub === null
+      || cardPrices.some((price) => price === null || price <= 0)
+      || summary.minimumPriceRub > Math.min(...cardPrices as number[]))) {
+      throw new Error('ASSISTANT_EVAL_PERSISTED_ANSWER_INVALID');
+    }
+  }
+  if (targets.some((target) => target === null) || targets[0] === targets[1]) {
+    throw new Error('ASSISTANT_EVAL_PERSISTED_ANSWER_INVALID');
+  }
+  return groups;
 }
 
 function persistedGeoSatisfiesExpectation(
@@ -890,6 +944,7 @@ function persistedIntentAndResultsSatisfyExpectation(
   evidenceById: Map<string, Record<string, unknown>>,
   intentValue: unknown,
   expected: AssistantEvalExpectation,
+  comparisonGroups: Record<string, unknown>[],
 ) {
   let intent;
   try {
@@ -931,13 +986,41 @@ function persistedIntentAndResultsSatisfyExpectation(
     const evidence = evidenceById.get(readString(result.unitId) ?? '');
     return evidence ? [evidence] : [];
   });
+  const comparisonModes = intent.comparisonTargetModes
+    ?? intent.comparisonTargets.map(() => 'EXACT' as const);
   const comparisonPassed = intent.taskType !== 'COMPARE'
-    || comparisonTargetsGrounded(
-      selectedEvidence,
-      intent.comparisonTargets,
-      intent.comparisonTargetModes ?? intent.comparisonTargets.map(() => 'EXACT' as const),
-    );
+    || (comparisonGroups.length > 0
+      ? comparisonGroupsGrounded(
+          comparisonGroups,
+          evidenceById,
+          intent.comparisonTargets,
+          comparisonModes,
+        )
+      : comparisonTargetsGrounded(selectedEvidence, intent.comparisonTargets, comparisonModes));
   return exactPassed && alternativesPassed && comparisonPassed;
+}
+
+function comparisonGroupsGrounded(
+  groups: Record<string, unknown>[],
+  evidenceById: Map<string, Record<string, unknown>>,
+  targets: string[],
+  modes: Array<'EXACT' | 'INSTRUMENTAL'>,
+) {
+  if (groups.length !== 2 || targets.length !== 2 || modes.length !== 2) return false;
+  return groups.every((group, index) => {
+    if (readString(group.target) !== targets[index]) return false;
+    if (group.status === 'NO_MATCH') return group.totalExactResults === 0;
+    const cards = [
+      ...readPersistedAnswerArray(group.exactResults),
+      ...readPersistedAnswerArray(group.additionalExactResults),
+    ];
+    const variants = createAssistantComparisonTargetVariants(targets[index]!, modes[index]);
+    return cards.length > 0 && cards.every((card) => {
+      const evidence = evidenceById.get(readString(card.unitId) ?? '');
+      return evidence !== undefined
+        && variants.some((variant) => evidenceMatchesComparisonTarget(evidence, variant));
+    });
+  });
 }
 
 function comparisonTargetsGrounded(
@@ -1022,13 +1105,19 @@ function persistedAnswerContentMatchesProductionContract(
         : 'Не могу подтвердить подходящие предложения по текущим данным Platforma.';
     return content === expectedContent;
   }
+  if (answerKind === 'COMPARISON_RESULTS') {
+    return content === (exactResults.length > 0
+      ? 'Сравнил подтверждённые предложения отдельно по каждому выбранному ЖК.'
+      : 'По каждому выбранному ЖК показываю отдельный результат: подтверждённых предложений нет.');
+  }
   if (answerKind === 'KNOWLEDGE_RESULTS') {
     const expectedContent = facts.length > 0 && externalLots.length > 0
       ? 'Нашёл подтверждённые факты и доступные лоты по официальным данным.'
       : externalLots.length > 0
         ? 'В Platforma подходящего лота нет, но он найден на официальном сайте застройщика.'
         : 'Нашёл подтверждённую информацию по официальным данным.';
-    return content === expectedContent;
+    return content === expectedContent
+      || content.startsWith(`${expectedContent} Источники расходятся; выбраны данные `);
   }
   if (answerKind === 'CLARIFICATION') {
     const intent = isRecord(intentValue) ? intentValue : null;
@@ -1038,7 +1127,9 @@ function persistedAnswerContentMatchesProductionContract(
   }
   if (answerKind === 'REFUSAL') {
     return content === 'Не могу подтвердить ответ по доступным источникам.'
-      || content === 'Не могу подтвердить подходящие предложения по текущим данным Platforma.';
+      || content === 'Не могу подтвердить подходящие предложения по текущим данным Platforma.'
+      || content === 'Для этого объекта не найден доверенный зарегистрированный источник.'
+      || content === 'Не удалось подтвердить текущие условия по зарегистрированному источнику.';
   }
   const intent = isRecord(intentValue) ? intentValue : null;
   return intent?.taskType === 'LEGAL_TAX' && content === [
@@ -1159,7 +1250,7 @@ function hasDeterministicHighestAuthoritySelection(
   for (const candidate of candidates) {
     const parsed = parseKnowledgeCandidate(candidate);
     if (parsed === null) return false;
-    const key = assistantKnowledgeConflictKey(parsed);
+    const key = assistantKnowledgeSemanticConflictKey(parsed);
     const authority = assistantKnowledgeAuthorityScore(parsed);
     highestAuthorityByFact.set(key, Math.max(highestAuthorityByFact.get(key) ?? Number.NEGATIVE_INFINITY, authority));
     candidatesByFact.set(key, [
@@ -1193,7 +1284,7 @@ function hasDeterministicHighestAuthoritySelection(
       if (parsed === null
         || parsedEvidence === null
         || stableSerialize(parsed) !== stableSerialize(parsedEvidence)) return false;
-      const key = assistantKnowledgeConflictKey(parsed);
+      const key = assistantKnowledgeSemanticConflictKey(parsed);
       return actualConflictKeys.has(key)
         && assistantKnowledgeAuthorityScore(parsed) === highestAuthorityByFact.get(key);
     });
@@ -1233,6 +1324,7 @@ function sameStringSet(left: string[], right: string[]) {
 
 function collectAnswerLinks(
   results: Record<string, unknown>[],
+  facts: Record<string, unknown>[],
   externalLots: Record<string, unknown>[],
 ) {
   return [
@@ -1247,6 +1339,10 @@ function collectAnswerLinks(
     ]),
     ...externalLots.map((item) => ({
       url: readString(item.href),
+      evidenceId: readString(item.id),
+    })),
+    ...facts.map((item) => ({
+      url: readString(item.sourceUrl),
       evidenceId: readString(item.id),
     })),
   ].filter((item): item is { url: string; evidenceId: string } => (
@@ -1282,11 +1378,13 @@ function isSupportedPersistedLink(
     ));
   }
   return /^https:\/\//u.test(url)
-    && readString(evidence.canonicalUrl) === url;
+    && (readString(evidence.canonicalUrl) === url || readString(evidence.sourceUrl) === url);
 }
 
 function isPersistedEvidenceStale(evidence: Record<string, unknown>, completedAt: number) {
-  const timestamp = readString(evidence.updatedAt) ?? readString(evidence.fetchedAt);
+  const timestamp = readString(evidence.updatedAt)
+    ?? readString(evidence.verifiedAt)
+    ?? readString(evidence.fetchedAt);
   if (!timestamp || !Number.isFinite(completedAt)) return false;
   const observedAt = Date.parse(timestamp);
   return Number.isFinite(observedAt) && completedAt - observedAt >= 24 * 60 * 60 * 1_000;

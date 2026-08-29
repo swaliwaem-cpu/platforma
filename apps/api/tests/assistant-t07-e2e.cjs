@@ -3,6 +3,7 @@ require('reflect-metadata');
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
+const dnsPromises = require('node:dns').promises;
 const { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } = require('node:fs/promises');
 const { createServer } = require('node:http');
 const { tmpdir } = require('node:os');
@@ -84,6 +85,7 @@ let feedFixtureMode = 'STUDIO';
 let providerStubRequests = { openai: 0, locationiq: 0, overpass: 0 };
 let deniedOutboundRequests = [];
 const originalFetch = globalThis.fetch;
+const originalDnsLookup = dnsPromises.lookup;
 let webProcess;
 let adminFeedToken = null;
 const pendingFeedRunIds = new Set();
@@ -111,6 +113,7 @@ async function main() {
     prisma = new PrismaClient({ datasources: { db: { url: databaseUrl('platforma') } } });
     await prisma.$connect();
     const sourceOrigin = await startSourceStub();
+    installSourceDnsStub();
     configureProviderStubs(sourceOrigin);
     installOutboundDenyHook();
     const fixtures = await seed(sourceOrigin);
@@ -415,6 +418,17 @@ function installOutboundDenyHook() {
   };
 }
 
+function installSourceDnsStub() {
+  dnsPromises.lookup = async (hostname, options) => {
+    if (String(hostname).toLocaleLowerCase('en-US') === 'developer.example') {
+      return typeof options === 'object' && options?.all === true
+        ? [{ address: '127.0.0.1', family: 4 }]
+        : { address: '127.0.0.1', family: 4 };
+    }
+    return originalDnsLookup.call(dnsPromises, hostname, options);
+  };
+}
+
 async function assertOutboundProviderIsolation() {
   assert.deepEqual(providerStubRequests, { openai: 0, locationiq: 0, overpass: 0 });
   assert.deepEqual(deniedOutboundRequests, []);
@@ -589,6 +603,32 @@ async function seed(sourceOrigin) {
     studio: { object: studioObject, source: studioSource },
     connectedGeoSeed,
   };
+}
+
+async function seedComparisonAdditionalUnits(fixtures) {
+  const base = fixtures.units[0];
+  return Promise.all([23_100_000, 23_200_000, 23_300_000].map((effectivePrice, index) => (
+    prisma.feedUnit.create({
+      data: {
+        sourceId: base.sourceId,
+        objectId: base.objectId,
+        externalId: `assistant-t07-comparison-extra-${index + 1}`,
+        type: 'RESIDENTIAL',
+        status: 'AVAILABLE',
+        title: `2-комнатная квартира comparison extra ${index + 1}`,
+        rooms: 2,
+        effectivePrice,
+        effectivePricePerMeter: 380_000 + index * 1_000,
+        currency: 'RUB',
+        area: 61 + index,
+        floor: 12 + index,
+        completionYear: 2027,
+        completionQuarter: 3,
+        createdAt: oldDate(),
+        updatedAt: oldDate(),
+      },
+    })
+  )));
 }
 
 async function seedConnectedGeoFixtures({ sourceOrigin, developerId, districtId, areaId }) {
@@ -846,10 +886,6 @@ async function ingestSource(actorId, origin) {
   });
   const result = await ingestion.ingest(registered.source.id);
   assert.equal(result.outcome, 'INDEXED');
-  await prisma.assistantKnowledgeSource.update({
-    where: { id: registered.source.id },
-    data: { canonicalUrl: 'https://developer.example/projects/severny-sad' },
-  });
   await prisma.assistantSourceFact.updateMany({
     where: { sourceId: registered.source.id, kind: { not: 'EXTERNAL_LOT' } },
     data: { canonicalUrl: 'https://developer.example/projects/severny-sad' },
@@ -1020,6 +1056,69 @@ async function userJourney(fixtures) {
     assert.equal(await alternativeArticle.locator('.assistant-result-card').count(), 2);
 
     await startNewConversation(page);
+    const comparisonAdditionalUnits = await seedComparisonAdditionalUnits(fixtures);
+    const comparisonQuery = 'Сравни ЖК Северный сад с ЖК T07 2 по цене, двушки до 25 млн в районе Хамовники у метро Спортивная';
+    await submit(page, input, comparisonQuery);
+    const comparisonArticle = await waitForAssistantArticle(page, comparisonQuery);
+    const comparisonGroups = comparisonArticle.locator('.assistant-comparison-group');
+    await comparisonGroups.nth(1).waitFor();
+    assert.equal(await comparisonGroups.count(), 2);
+    await comparisonArticle.getByRole('heading', { name: 'Северный сад', exact: true }).waitFor();
+    await comparisonArticle.getByRole('heading', { name: 'ЖК T07 2', exact: true }).waitFor();
+    assert.equal(await comparisonArticle.getByText('Есть предложения', { exact: true }).count(), 2);
+    const firstComparisonGroup = comparisonGroups.nth(0);
+    assert.equal(await firstComparisonGroup.locator('.assistant-result-card').count(), 3);
+    assert.equal(await comparisonGroups.nth(1).locator('.assistant-result-card').count(), 1);
+    const showMoreComparisonResults = firstComparisonGroup.getByRole('button', { name: 'Показать далее' });
+    const controlledResultsId = await showMoreComparisonResults.getAttribute('aria-controls');
+    assert.ok(controlledResultsId);
+    const controlledResults = firstComparisonGroup.locator(`[id="${controlledResultsId}"]`);
+    assert.equal(await controlledResults.count(), 1);
+    const comparisonLiveStatus = firstComparisonGroup.locator('[role="status"][aria-live="polite"]');
+    await showMoreComparisonResults.focus();
+    assert.equal(await showMoreComparisonResults.evaluate((element) => element === document.activeElement), true);
+    await page.keyboard.press('Enter');
+    await controlledResults.locator('.assistant-result-card').nth(3).waitFor();
+    assert.equal(await controlledResults.locator('.assistant-result-card').count(), 4);
+    assert.equal(await showMoreComparisonResults.count(), 0);
+    const firstAdditionalComparisonLink = controlledResults.locator('a.assistant-result-title').nth(3);
+    const firstAdditionalComparisonHref = await firstAdditionalComparisonLink.getAttribute('href');
+    await page.waitForFunction((href) => document.activeElement?.getAttribute('href') === href, firstAdditionalComparisonHref);
+    assert.equal(
+      await firstAdditionalComparisonLink.evaluate((element) => element === document.activeElement),
+      true,
+    );
+    assert.equal(
+      (await comparisonLiveStatus.textContent())?.trim(),
+      'Показано 4 вариантов в группе Северный сад',
+    );
+    const [firstComparisonBox, secondComparisonBox] = await Promise.all([
+      comparisonGroups.nth(0).boundingBox(),
+      comparisonGroups.nth(1).boundingBox(),
+    ]);
+    assert.ok(firstComparisonBox && secondComparisonBox);
+    assert.ok(Math.abs(firstComparisonBox.y - secondComparisonBox.y) < 8, 'desktop comparison groups must share one row');
+    assert.ok(secondComparisonBox.x > firstComparisonBox.x + firstComparisonBox.width - 2);
+    const comparisonRun = await prisma.assistantRun.findFirstOrThrow({
+      where: { ownerUserId: fixtures.regular.user.id, userMessage: { content: comparisonQuery } },
+      include: { assistantMessage: true },
+    });
+    assert.equal(comparisonRun.assistantMessage.answerJson.kind, 'COMPARISON_RESULTS');
+    assert.deepEqual(comparisonRun.assistantMessage.answerJson.groups.map(({ status }) => status), ['MATCHED', 'MATCHED']);
+    assert.deepEqual(comparisonRun.assistantMessage.answerJson.groups.map((group) => ({
+      totalExactResults: group.totalExactResults,
+      exactResults: group.exactResults.length,
+      additionalExactResults: group.additionalExactResults.length,
+    })), [
+      { totalExactResults: 4, exactResults: 3, additionalExactResults: 1 },
+      { totalExactResults: 1, exactResults: 1, additionalExactResults: 0 },
+    ]);
+    await captureQaScreenshot(page, 'desktop-assistant-comparison.png', comparisonArticle);
+    await prisma.feedUnit.deleteMany({
+      where: { id: { in: comparisonAdditionalUnits.map(({ id }) => id) } },
+    });
+
+    await startNewConversation(page);
     await navigateSpa(page, '/objects/severny-sad');
     await page.getByText('Текущий ЖК', { exact: true }).waitFor();
     const factualQuery = 'Что известно об архитектуре ЖК Северный сад?';
@@ -1041,12 +1140,36 @@ async function userJourney(fixtures) {
       })}`);
     }
     await factualArticle.getByText(/Кирпичные фасады/u).first().waitFor();
+    const factualSource = factualArticle.getByRole('link', { name: /Официальный сайт проекта/u }).first();
+    await factualSource.waitFor();
+    assert.match(await factualSource.getAttribute('href'), /^https:\/\/developer\.example\//u);
+    assert.equal(await factualArticle.locator('time[datetime]').count() > 0, true);
     await startNewConversation(page);
+    const sourceRequestsBeforeInstallment = sourceRequests.length;
     const installmentQuery = 'Какие точные условия ступенчатой рассрочки действуют в Северном саду?';
     await submit(page, input, installmentQuery);
     const installmentArticle = await waitForAssistantArticle(page, installmentQuery);
     await installmentArticle.getByRole('heading', { name: 'Подтверждённые факты' }).waitFor();
-    await installmentArticle.getByText('Ступенчатая рассрочка', { exact: true }).waitFor();
+    try {
+      await installmentArticle.getByText('Ступенчатая рассрочка', { exact: true }).waitFor();
+    } catch (error) {
+      const latest = await prisma.assistantRun.findFirst({
+        where: { ownerUserId: fixtures.regular.user.id, userMessage: { content: installmentQuery } },
+        include: { assistantMessage: true },
+      });
+      const facts = await prisma.assistantSourceFact.findMany({
+        where: { kind: 'PROMOTION', isActive: true },
+        select: {
+          label: true,
+          valueJson: true,
+          source: { select: { canonicalUrl: true, lastSuccessAt: true, projectKey: true } },
+        },
+      });
+      throw new Error(`${error.message}\nT07 installment: ${JSON.stringify({
+        run: latest && { status: latest.status, intent: latest.intentJson, answer: latest.assistantMessage?.answerJson },
+        facts,
+      })}`);
+    }
     const installmentFact = await prisma.assistantSourceFact.findFirstOrThrow({
       where: { kind: 'PROMOTION', label: 'Ступенчатая рассрочка', isActive: true },
       select: { valueJson: true },
@@ -1054,6 +1177,7 @@ async function userJourney(fixtures) {
     assert.match(String(installmentFact.valueJson), /Первоначальный взнос 30%/u);
     assert.match(String(installmentFact.valueJson), /12 ежемесячных платежей/u);
     assert.match(String(installmentFact.valueJson), /15 декабря 2027 года/u);
+    assert.equal(sourceRequests.length, sourceRequestsBeforeInstallment + 1);
     await startNewConversation(page);
     const externalQuery = 'Найди двушку от 66 м² до 24 млн в Северном саду';
     await submit(page, input, externalQuery);
@@ -1944,9 +2068,15 @@ async function adminJourney(fixtures, journey) {
 async function mobileJourney(fixtures) {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true });
   const page = await context.newPage();
+  const runtimeErrors = [];
+  page.on('pageerror', (error) => runtimeErrors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error' || message.type() === 'warning') runtimeErrors.push(message.text());
+  });
   await installMapFixture(page);
   try {
     await login(page, fixtures.regular.user);
+    runtimeErrors.length = 0;
     await page.getByRole('button', { name: 'Открыть ИИ-помощника' }).click();
     const box = await page.getByRole('dialog', { name: 'ИИ-помощник по недвижимости' }).boundingBox();
     assert.deepEqual(box && {
@@ -1959,6 +2089,22 @@ async function mobileJourney(fixtures) {
       'mobile-assistant.png',
       page.getByRole('dialog', { name: 'ИИ-помощник по недвижимости' }),
     );
+    const input = page.getByLabel('Сообщение помощнику');
+    const comparisonQuery = 'Сравни ЖК Северный сад с ЖК T07 2 по цене, двушки до 25 млн в районе Хамовники у метро Спортивная';
+    await submit(page, input, comparisonQuery);
+    const comparisonArticle = await waitForAssistantArticle(page, comparisonQuery);
+    const comparisonGroups = comparisonArticle.locator('.assistant-comparison-group');
+    await comparisonGroups.nth(1).waitFor();
+    assert.equal(await comparisonGroups.count(), 2);
+    const [firstGroupBox, secondGroupBox] = await Promise.all([
+      comparisonGroups.nth(0).boundingBox(),
+      comparisonGroups.nth(1).boundingBox(),
+    ]);
+    assert.ok(firstGroupBox && secondGroupBox);
+    assert.ok(secondGroupBox.y >= firstGroupBox.y + firstGroupBox.height - 2, 'mobile comparison groups must stack');
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await captureQaScreenshot(page, 'mobile-assistant-comparison.png', comparisonArticle);
+    assert.deepEqual(runtimeErrors, []);
     await page.getByRole('button', { name: 'Закрыть помощника' }).click();
     await navigateSpa(page, '/catalog/map?lotRooms=2&lotPriceMax=25000000');
     const map = page.getByRole('region', { name: 'Карта объектов' });
@@ -2314,6 +2460,7 @@ function cleanup() {
 
 async function cleanupOnce() {
   globalThis.fetch = originalFetch;
+  dnsPromises.lookup = originalDnsLookup;
   const errors = [];
   await collectCleanupError(errors, async () => browser?.close());
   await collectCleanupError(errors, async () => stopChildProcess(webProcess, 5_000));

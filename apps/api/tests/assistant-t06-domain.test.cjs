@@ -193,6 +193,62 @@ test('Assistant T06 audit treats expanded exact results as primary ranks 4 throu
   assert.deepEqual(audit.qualityFlags, ['STALE_PRICE_UNLABELED', 'BROKEN_LINK']);
 });
 
+test('Assistant T06 audit preserves selected outcomes for independent comparison groups', () => {
+  const intent = {
+    taskType: 'COMPARE',
+    comparisonTargets: ['ЖК Первый', 'ЖК Второй'],
+    hardFilters: emptyFilters,
+    softPreferences: { ...emptyFilters, budgetMaxRub: null },
+    requiredFacts: ['PRICE', 'AVAILABILITY', 'FRESHNESS', 'LINK'],
+    needsClarification: false,
+    clarificationQuestion: null,
+  };
+  const candidate = createCandidate('61111111-1111-4111-8111-111111111111', 20_000_000);
+  const card = {
+    unitId: candidate.unitId,
+    title: 'ЖК Первый',
+    subtitle: '2-комнатная',
+    priceRub: candidate.priceRub,
+    availabilityLabel: 'В продаже',
+    freshnessLabel: 'обновлено менее часа назад',
+    isStale: false,
+    href: `/objects/audit/lots/${candidate.unitId}`,
+    facts: [],
+    pdfs: [],
+    deviations: [],
+  };
+  const audit = buildAssistantRunAudit({
+    intent,
+    answer: {
+      kind: 'COMPARISON_RESULTS',
+      groups: [{
+        target: 'ЖК Первый',
+        status: 'MATCHED',
+        totalExactResults: 1,
+        exactResults: [card],
+        additionalExactResults: [],
+        summary: { minimumPriceRub: candidate.priceRub, completion: ['3 кв. 2027'], metros: [] },
+      }, {
+        target: 'ЖК Второй',
+        status: 'NO_MATCH',
+        totalExactResults: 0,
+        exactResults: [],
+        additionalExactResults: [],
+        summary: { minimumPriceRub: null, completion: [], metros: [] },
+      }],
+    },
+    candidateEvidence: [candidate],
+    selectedEvidence: [candidate],
+    telemetry: [],
+    latencyMs: 0,
+    now: new Date('2026-08-26T12:00:00.000Z'),
+  });
+
+  assert.equal(audit.rankingDecisions[0].outcome, 'PRIMARY');
+  assert.equal(audit.rankingDecisions[0].answerRank, 1);
+  assert.deepEqual(audit.qualityFlags, []);
+});
+
 test('Assistant T06 planner completes safe telemetry when downstream validation unexpectedly fails', async () => {
   const recorded = [];
   const planner = new AssistantQueryPlanner({

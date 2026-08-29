@@ -11,8 +11,15 @@ import type { AssistantStructuredIntent } from '../assistant-query-planner';
 import { AssistantEmbeddingGateway } from './assistant-embedding.gateway';
 import type { AssistantEmbeddingOperationContext } from './assistant-embedding.gateway';
 import {
-  assistantKnowledgeAuthorityScore,
+  assistantKnowledgeAuthorityTier,
+  assistantKnowledgeMatchesPromotionTopic,
+  assistantKnowledgePromotionTopic,
+  extractAssistantKnowledgeProjectReferenceClause,
+  hasExplicitAssistantKnowledgeProjectReference,
+  isDelimitedAssistantKnowledgeProjectReference,
   normalizeAssistantKnowledgeRegistryKey,
+  requiresAssistantKnowledgeCurrentVerification,
+  resolveAssistantKnowledgeProjectIdentity,
 } from './assistant-knowledge-policy';
 
 const maximumRetrievalCacheMilliseconds = 6 * 60 * 60 * 1_000;
@@ -36,6 +43,8 @@ type FactRow = {
   projectKey: string | null;
   developerKey: string | null;
   fetchedAt: Date;
+  verifiedAt: Date;
+  sourceUrl: string;
 };
 
 export type AssistantKnowledgeEvidence = {
@@ -49,8 +58,11 @@ export type AssistantKnowledgeEvidence = {
   label: string;
   value: Prisma.JsonValue;
   canonicalUrl: string;
+  sourceLabel: string;
+  sourceUrl: string;
   observedAt: string;
   fetchedAt: string;
+  verifiedAt: string;
   projectKey: string | null;
   developerKey: string | null;
   retrievalChannels: RetrievalChannel[];
@@ -68,6 +80,11 @@ type KnowledgeScope = {
   developerKey: string | null;
 };
 
+type ProjectIdentityRow = {
+  projectKey: string;
+  objectTitle: string;
+};
+
 @Injectable()
 export class AssistantKnowledgeRetrievalService {
   private readonly cache = new Map<string, RetrievalCacheEntry>();
@@ -78,6 +95,60 @@ export class AssistantKnowledgeRetrievalService {
     private readonly embeddings: AssistantEmbeddingGateway,
   ) {
     this.cacheTtlMs = readCacheTtl(process.env.ASSISTANT_RETRIEVAL_CACHE_TTL_MS);
+  }
+
+  async resolveProjectContext(query: string): Promise<AssistantPageContext | null | undefined> {
+    const projectReference = extractAssistantKnowledgeProjectReferenceClause(query);
+    if (!projectReference) return undefined;
+    if (!hasExplicitAssistantKnowledgeProjectReference(query)) return undefined;
+    const normalizedTitle = Prisma.sql`
+      TRIM(REGEXP_REPLACE(
+        REGEXP_REPLACE(
+          REPLACE(LOWER(o."title"), 'ё', 'е'),
+          '^[[:space:]]*(жк|жилой[[:space:]]+комплекс)[[:space:]]+',
+          ''
+        ),
+        '[^[:alnum:]]+',
+        ' ',
+        'g'
+      ))
+    `;
+    const normalizedProjectKey = Prisma.sql`
+      TRIM(REGEXP_REPLACE(
+        REPLACE(LOWER(o."slug"), 'ё', 'е'),
+        '[^[:alnum:]]+',
+        ' ',
+        'g'
+      ))
+    `;
+    const rows = await this.prisma.$queryRaw<ProjectIdentityRow[]>(Prisma.sql`
+      SELECT DISTINCT
+        o."slug" AS "projectKey",
+        o."title" AS "objectTitle"
+      FROM "real_estate_objects" o
+      WHERE o."status" = 'published'::object_status
+        AND o."type" = 'residential'::real_estate_object_type
+        AND o."deleted_at" IS NULL
+        AND o."archived_at" IS NULL
+        AND (
+          ${normalizedTitle} = ${projectReference}
+          OR ${projectReference} LIKE (${normalizedTitle} || ' %')
+          OR ${normalizedProjectKey} = ${projectReference}
+          OR ${projectReference} LIKE (${normalizedProjectKey} || ' %')
+        )
+      ORDER BY o."slug" ASC
+    `);
+    const identity = resolveAssistantKnowledgeProjectIdentity(projectReference, rows, {
+      allowReferenceTail: !isDelimitedAssistantKnowledgeProjectReference(query),
+      referenceQuery: query,
+    });
+    if (!identity) {
+      return null;
+    }
+    const projectKey = normalizeAssistantKnowledgeRegistryKey(identity.projectKey);
+    return projectKey
+      ? { kind: 'OBJECT', key: projectKey, label: identity.objectTitle }
+      : null;
   }
 
   async retrieve(input: {
@@ -91,7 +162,19 @@ export class AssistantKnowledgeRetrievalService {
     const now = input.now ?? new Date();
     const query = normalizeQuery(input.query);
     if (!query) return [];
-    const scope = createKnowledgeScope(input.context);
+    let scope = createKnowledgeScope(input.context);
+    const projectReferenceClause = extractAssistantKnowledgeProjectReferenceClause(input.query);
+    if (input.intent.taskType === 'FACT'
+      && !projectReferenceClause
+      && requiresAssistantKnowledgeCurrentVerification(input.query)
+      && scope.projectKey === null
+      && scope.developerKey === null) return [];
+    if (input.intent.taskType === 'FACT' && projectReferenceClause) {
+      const resolvedContext = await this.resolveProjectContext(input.query);
+      if (resolvedContext === null) return [];
+      if (resolvedContext === undefined && scope.projectKey === null) return [];
+      if (resolvedContext) scope = createKnowledgeScope(resolvedContext);
+    }
     const fingerprint = await this.readRevisionFingerprint();
     const cacheKey = createCacheKey(query, input.intent, input.includeExternalLots, scope);
     const cached = this.cache.get(cacheKey);
@@ -138,18 +221,26 @@ export class AssistantKnowledgeRetrievalService {
     }
 
     let candidateValues = [...candidates.values()].filter(({ score }) => score > 0);
+    const inferredProjectKey = input.intent.taskType === 'FACT' && !scope.developerKey
+      ? scope.projectKey ?? (projectReferenceClause ? null : chooseMostRelevantProjectKey(candidateValues))
+      : null;
+    const inferredDeveloperKeys = new Set(candidateValues
+      .filter(({ row }) => row.projectKey === inferredProjectKey && row.developerKey !== null)
+      .map(({ row }) => row.developerKey!));
+    candidateValues = candidateValues.filter(({ row }) => isRelevantCandidate(query, row));
     if (input.intent.taskType === 'FACT' && !scope.developerKey) {
-      const projectKey = scope.projectKey ?? chooseMostRelevantProjectKey(candidateValues);
-      if (projectKey) {
-        candidateValues = candidateValues.filter(({ row }) => row.projectKey === projectKey
-          || (scope.projectKey !== null
-            && row.projectKey === null
-            && row.kind === AssistantSourceFactKind.PROMOTION));
+      if (inferredProjectKey) {
+        candidateValues = candidateValues.filter(({ row }) => row.projectKey === inferredProjectKey
+          || (
+            row.projectKey === null
+            && row.developerKey !== null
+            && row.kind === AssistantSourceFactKind.PROMOTION
+            && (scope.projectKey !== null || inferredDeveloperKeys.has(row.developerKey))
+          ));
       }
     }
     const evidence = candidateValues
       .sort(compareCandidates)
-      .filter(deduplicateCanonicalFacts())
       .slice(0, maximumEvidenceItems)
       .map(({ row, channels, score }) => ({
         evidenceType: 'KNOWLEDGE_SOURCE' as const,
@@ -162,8 +253,11 @@ export class AssistantKnowledgeRetrievalService {
         label: row.label,
         value: row.valueJson,
         canonicalUrl: row.canonicalUrl,
+        sourceLabel: createSourceLabel(row.sourceType, row.sourceUrl),
+        sourceUrl: row.sourceUrl,
         observedAt: row.observedAt.toISOString(),
         fetchedAt: row.fetchedAt.toISOString(),
+        verifiedAt: row.verifiedAt.toISOString(),
         projectKey: row.projectKey,
         developerKey: row.developerKey,
         retrievalChannels: [...channels].sort(),
@@ -420,7 +514,12 @@ const factSelectSql = Prisma.sql`
     s."priority"::integer AS "sourcePriority",
     s."project_key" AS "projectKey",
     s."developer_key" AS "developerKey",
-    r."fetched_at" AS "fetchedAt"
+    r."fetched_at" AS "fetchedAt",
+    COALESCE(s."last_success_at", r."fetched_at") AS "verifiedAt",
+    CASE
+      WHEN s."canonical_url" ~* '^https://' THEN s."canonical_url"
+      ELSE f."canonical_url"
+    END AS "sourceUrl"
   FROM "assistant_source_facts" f
   JOIN "assistant_knowledge_sources" s ON s."id" = f."source_id"
   JOIN "assistant_source_revisions" r ON r."id" = f."source_revision_id"
@@ -430,11 +529,13 @@ function compareCandidates(
   left: { row: FactRow; score: number },
   right: { row: FactRow; score: number },
 ) {
-  const authority = assistantKnowledgeAuthorityScore(right.row) - assistantKnowledgeAuthorityScore(left.row);
-  if (authority !== 0) return authority;
   const relevance = right.score - left.score;
   if (relevance !== 0) return relevance;
-  const freshness = right.row.observedAt.getTime() - left.row.observedAt.getTime();
+  const authority = assistantKnowledgeAuthorityTier(right.row) - assistantKnowledgeAuthorityTier(left.row);
+  if (authority !== 0) return authority;
+  const sourcePriority = right.row.sourcePriority - left.row.sourcePriority;
+  if (sourcePriority !== 0) return sourcePriority;
+  const freshness = right.row.verifiedAt.getTime() - left.row.verifiedAt.getTime();
   if (freshness !== 0) return freshness;
   return left.row.id.localeCompare(right.row.id, 'en-US');
 }
@@ -476,18 +577,11 @@ function chooseMostRelevantProjectKey(
     ?.row.projectKey ?? null;
 }
 
-function deduplicateCanonicalFacts() {
-  const seen = new Set<string>();
-  return ({ row }: { row: FactRow }) => {
-    const key = row.kind === AssistantSourceFactKind.EXTERNAL_LOT
-      ? `${row.kind}:${row.canonicalUrl}`
-      : row.kind === AssistantSourceFactKind.PROMOTION
-        ? `${row.kind}:${row.projectKey ?? row.developerKey ?? row.sourceId}:${normalizeQuery(row.label)}`
-      : `${row.kind}:${row.projectKey ?? row.developerKey ?? row.sourceId}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  };
+function isRelevantCandidate(query: string, row: FactRow) {
+  const topic = assistantKnowledgePromotionTopic(query);
+  if (!topic) return true;
+  if (row.kind !== AssistantSourceFactKind.PROMOTION) return false;
+  return assistantKnowledgeMatchesPromotionTopic(`${row.label} ${row.searchText}`, topic);
 }
 
 function createCacheKey(
@@ -528,15 +622,17 @@ function createKnowledgeScopeSql(scope: KnowledgeScope) {
     OR (
       s."project_key" IS NULL
       AND (
-        s."type" = 'bank_promotion'::assistant_knowledge_source_type
-        OR (
-          s."type" = 'developer_promotion'::assistant_knowledge_source_type
-          AND s."developer_key" IN (
-            SELECT project_source."developer_key"
-            FROM "assistant_knowledge_sources" project_source
-            WHERE project_source."project_key" = ${scope.projectKey}
-              AND project_source."developer_key" IS NOT NULL
-          )
+        s."type" IN (
+          'developer_promotion'::assistant_knowledge_source_type,
+          'bank_promotion'::assistant_knowledge_source_type
+        )
+        AND s."developer_key" IN (
+          SELECT project_source."developer_key"
+          FROM "assistant_knowledge_sources" project_source
+          WHERE project_source."project_key" = ${scope.projectKey}
+            AND project_source."developer_key" IS NOT NULL
+            AND project_source."type" = 'development_page'::assistant_knowledge_source_type
+            AND project_source."state" = 'active'::assistant_knowledge_source_state
         )
       )
     )
@@ -551,6 +647,17 @@ function copyEvidence(evidence: AssistantKnowledgeEvidence): AssistantKnowledgeE
     value: structuredClone(evidence.value),
     retrievalChannels: [...evidence.retrievalChannels],
   };
+}
+
+function createSourceLabel(sourceType: AssistantKnowledgeSourceType, sourceUrl: string) {
+  const prefix = sourceType === AssistantKnowledgeSourceType.DEVELOPMENT_PAGE
+    ? 'Официальный сайт проекта'
+    : sourceType === AssistantKnowledgeSourceType.DEVELOPER_PROMOTION
+      ? 'Официальный сайт застройщика'
+      : sourceType === AssistantKnowledgeSourceType.BANK_PROMOTION
+        ? 'Официальный сайт банка'
+        : 'Зарегистрированный источник';
+  return `${prefix} · ${new URL(sourceUrl).hostname.toLocaleLowerCase('ru-RU')}`;
 }
 
 function normalizeQuery(value: string) {
