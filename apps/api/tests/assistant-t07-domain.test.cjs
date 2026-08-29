@@ -381,6 +381,48 @@ test('Assistant T07 eval derives verdicts from persisted runs and blocks every z
   );
   const falseAvailability = structuredClone(runRecords);
   const searchIndex = dataset.cases.findIndex(({ category }) => category === 'STRUCTURED_SEARCH');
+  const expandedStructuredSearch = structuredClone(runRecords);
+  const expandedSearchRun = expandedStructuredSearch[searchIndex];
+  const originalSearchResult = expandedSearchRun.answer.exactResults[0];
+  const originalSearchEvidence = expandedSearchRun.evidence[0];
+  const extraSearchResults = Array.from({ length: 7 }, (_, index) => {
+    const unitId = `23000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`;
+    return {
+      ...originalSearchResult,
+      unitId,
+      href: `/objects/eval-project/lots/${unitId}`,
+    };
+  });
+  const extraSearchEvidence = extraSearchResults.map((result, index) => ({
+    ...originalSearchEvidence,
+    unitId: result.unitId,
+    unitExternalId: `eval-expanded-${index + 1}`,
+    lotTitle: result.title,
+  }));
+  expandedSearchRun.answer.totalExactResults = 8;
+  expandedSearchRun.answer.exactResults.push(...extraSearchResults.slice(0, 2));
+  expandedSearchRun.answer.additionalExactResults = extraSearchResults.slice(2);
+  expandedSearchRun.evidence.push(...extraSearchEvidence);
+  expandedSearchRun.audit.candidateSet.push(...extraSearchEvidence.map((evidence) => ({
+    evidenceId: evidence.unitId,
+    ...evidence,
+  })));
+  expandedSearchRun.audit.rankingDecisions.push(...extraSearchEvidence.map((evidence) => ({
+    evidenceId: evidence.unitId,
+    outcome: 'PRIMARY',
+  })));
+  expandedSearchRun.audit.evidenceRevisions.push(...extraSearchEvidence.map((evidence) => ({
+    evidenceId: evidence.unitId,
+  })));
+  const expandedStructuredSearchReport = evaluateAssistantEvalArtifact(
+    dataset,
+    artifact,
+    expandedStructuredSearch,
+    now,
+  );
+  assert.equal(dataset.cases[searchIndex].expected.maximumPrimaryResults, 3);
+  assert.equal(expandedStructuredSearchReport.results[searchIndex].passed, true);
+
   falseAvailability[searchIndex].answer.exactResults[0].availabilityLabel = 'Продано';
   const falseAvailabilityReport = evaluateAssistantEvalArtifact(
     dataset,
@@ -548,6 +590,60 @@ test('Assistant T07 eval derives verdicts from persisted runs and blocks every z
   );
   assert.equal(
     incompleteComparisonReport.results[comparisonIndex].violations.includes('HARD_FILTER_VIOLATION'),
+    true,
+  );
+  const expandedGeo = structuredClone(runRecords);
+  const expandedGeoRun = expandedGeo[geoIndex];
+  const originalGeoResult = expandedGeoRun.answer.exactResults[0];
+  const originalGeoEvidence = expandedGeoRun.evidence[0];
+  const extraGeoResults = [2, 3, 4].map((ordinal) => {
+    const unitId = `${ordinal}2000000-0000-4000-8000-${originalGeoResult.unitId.slice(-12)}`;
+    return {
+      ...originalGeoResult,
+      unitId,
+      href: `/objects/eval-project/lots/${unitId}`,
+    };
+  });
+  const extraGeoEvidence = extraGeoResults.map((result) => ({
+    ...originalGeoEvidence,
+    unitId: result.unitId,
+    unitExternalId: `eval-extra-${result.unitId.slice(-12)}`,
+    lotTitle: result.title,
+  }));
+  expandedGeoRun.answer.totalExactResults = 4;
+  expandedGeoRun.answer.exactResults.push(...extraGeoResults.slice(0, 2));
+  expandedGeoRun.answer.additionalExactResults = extraGeoResults.slice(2);
+  expandedGeoRun.answer.geo.markers.push(...extraGeoResults.slice(0, 2).map((result) => ({
+    ...expandedGeoRun.answer.geo.markers[0],
+    unitId: result.unitId,
+  })));
+  expandedGeoRun.evidence.push(...extraGeoEvidence);
+  expandedGeoRun.audit.candidateSet.push(...extraGeoEvidence.map((evidence) => ({
+    evidenceId: evidence.unitId,
+    ...evidence,
+  })));
+  expandedGeoRun.audit.rankingDecisions.push(...extraGeoEvidence.map((evidence) => ({
+    evidenceId: evidence.unitId,
+    outcome: 'PRIMARY',
+  })));
+  expandedGeoRun.audit.evidenceRevisions.push(...extraGeoEvidence.map((evidence) => ({
+    evidenceId: evidence.unitId,
+  })));
+  const expandedGeoReport = evaluateAssistantEvalArtifact(dataset, artifact, expandedGeo, now);
+  assert.equal(
+    expandedGeoReport.results[geoIndex].violations.includes('HARD_FILTER_VIOLATION'),
+    false,
+  );
+  const additionalOutsideRadius = structuredClone(expandedGeo);
+  additionalOutsideRadius[geoIndex].evidence.at(-1).latitude += 0.1;
+  const additionalOutsideRadiusReport = evaluateAssistantEvalArtifact(
+    dataset,
+    artifact,
+    additionalOutsideRadius,
+    now,
+  );
+  assert.equal(
+    additionalOutsideRadiusReport.results[geoIndex].violations.includes('HARD_FILTER_VIOLATION'),
     true,
   );
   const substringComparison = structuredClone(runRecords);

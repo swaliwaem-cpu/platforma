@@ -49,7 +49,9 @@ export type AssistantSearchEvidence = {
 export type AssistantSearchAnswer = {
   kind: 'SEARCH_RESULTS';
   content: string;
+  totalExactResults: number;
   exactResults: AssistantSearchResultCard[];
+  additionalExactResults: AssistantSearchResultCard[];
   alternatives: AssistantSearchResultCard[];
 };
 
@@ -79,24 +81,47 @@ export function buildAssistantSearchAnswer(
   exactEvidence: AssistantSearchEvidence[],
   alternativeEvidence: AssistantSearchEvidence[],
   now = new Date(),
+  totalExactResults?: number,
 ): AssistantSearchAnswer {
   const rankedExactCandidates = rankCandidates(
-    exactEvidence.filter((candidate) =>
+    uniqueCandidatesByUnitId(exactEvidence.filter((candidate) =>
       isValidAssistantSearchEvidence(candidate)
       && hasRequiredFacts(candidate, intent.requiredFacts)
-      && matchesAssistantSearchFilters(candidate, intent.hardFilters)),
+      && matchesAssistantSearchFilters(candidate, intent.hardFilters))),
     intent.softPreferences,
   );
-  const exactResults = selectComparisonCandidates(
+  const exactSelection = selectComparisonCandidates(
     rankedExactCandidates,
     intent.comparisonTargets,
     intent.comparisonTargetModes,
-    3,
-  )
+    8,
+  );
+  const selectedExactCandidates = exactSelection.selected;
+  const exactResults = selectedExactCandidates
+    .slice(0, 3)
     .map((candidate) => createResultCard(candidate, now));
+  const additionalExactResults = selectedExactCandidates
+    .slice(3, 8)
+    .map((candidate) => createResultCard(candidate, now));
+  if (totalExactResults !== undefined
+    && (!Number.isSafeInteger(totalExactResults) || totalExactResults < 0)) {
+    throw new AssistantAnswerValidationError('ASSISTANT_SEARCH_TOTAL_INVALID');
+  }
+  const comparesExplicitTargets = intent.comparisonTargets.length === 2;
+  const incompleteComparison = comparesExplicitTargets
+    && rankedExactCandidates.length > 0
+    && selectedExactCandidates.length === 0;
+  const resolvedTotalExactResults = incompleteComparison
+    ? 0
+    : totalExactResults ?? exactSelection.eligibleCount;
+  if (!incompleteComparison
+    && totalExactResults !== undefined
+    && selectedExactCandidates.length !== Math.min(resolvedTotalExactResults, 8)) {
+    throw new AssistantAnswerValidationError('ASSISTANT_SEARCH_TOTAL_INVALID');
+  }
   const rankedAlternatives = rankCandidates(
-    alternativeEvidence.filter((candidate) =>
-      isValidAssistantAlternativeEvidence(candidate) && hasRequiredFacts(candidate, intent.requiredFacts)),
+    uniqueCandidatesByUnitId(alternativeEvidence.filter((candidate) =>
+      isValidAssistantAlternativeEvidence(candidate) && hasRequiredFacts(candidate, intent.requiredFacts))),
     intent.softPreferences,
   );
   const alternatives = exactResults.length === 0
@@ -105,7 +130,7 @@ export function buildAssistantSearchAnswer(
         intent.comparisonTargets,
         intent.comparisonTargetModes,
         2,
-      ).map((candidate) => createResultCard(candidate, now))
+      ).selected.map((candidate) => createResultCard(candidate, now))
     : [];
 
   return {
@@ -117,7 +142,9 @@ export function buildAssistantSearchAnswer(
       : alternatives.length > 0
         ? 'Точных совпадений нет. Показываю ближайшие альтернативы с явными отклонениями.'
         : 'Не могу подтвердить подходящие предложения по текущим данным Platforma.',
+    totalExactResults: resolvedTotalExactResults,
     exactResults,
+    additionalExactResults,
     alternatives,
   };
 }
@@ -128,7 +155,9 @@ function selectComparisonCandidates(
   comparisonTargetModes: AssistantComparisonTargetMode[] | undefined,
   limit: number,
 ) {
-  if (comparisonTargets.length !== 2) return candidates.slice(0, limit);
+  if (comparisonTargets.length !== 2) {
+    return { selected: candidates.slice(0, limit), eligibleCount: candidates.length };
+  }
   const selected: AssistantSearchEvidence[] = [];
   const resolvedTargets = comparisonTargets.map((target, index) => {
     const rawMatches = candidates.filter((item) => matchesComparisonTarget(item, target));
@@ -138,21 +167,31 @@ function selectComparisonCandidates(
       comparisonTargetModes?.[index] ?? 'EXACT',
     ).slice(1);
   });
-  for (const [index, target] of comparisonTargets.entries()) {
-    const available = candidates.filter((item) =>
-      !selected.some(({ unitId }) => unitId === item.unitId));
-    const candidate = available.find((item) =>
-      resolvedTargets[index]!.some((variant) => matchesComparisonTarget(item, variant)));
-    if (!candidate) return [];
-    selected.push(candidate);
+  const candidatesByTarget = resolvedTargets.map((variants) => candidates.filter((candidate) =>
+    variants.some((variant) => matchesComparisonTarget(candidate, variant))));
+  for (const firstCandidate of candidatesByTarget[0]!) {
+    const secondCandidate = candidatesByTarget[1]!.find(({ unitId }) => unitId !== firstCandidate.unitId);
+    if (!secondCandidate) continue;
+    selected.push(firstCandidate, secondCandidate);
+    break;
   }
+  if (selected.length !== 2) return { selected: [], eligibleCount: 0 };
   const eligibleCandidates = candidates.filter((candidate) => resolvedTargets.some((variants) =>
     variants.some((variant) => matchesComparisonTarget(candidate, variant))));
   for (const candidate of eligibleCandidates) {
     if (selected.length >= limit) break;
     if (!selected.some(({ unitId }) => unitId === candidate.unitId)) selected.push(candidate);
   }
-  return selected;
+  return { selected, eligibleCount: eligibleCandidates.length };
+}
+
+function uniqueCandidatesByUnitId(candidates: AssistantSearchEvidence[]) {
+  const seen = new Set<string>();
+  return candidates.filter(({ unitId }) => {
+    if (seen.has(unitId)) return false;
+    seen.add(unitId);
+    return true;
+  });
 }
 
 function matchesComparisonTarget(candidate: AssistantSearchEvidence, target: string) {
@@ -172,10 +211,17 @@ export function validateAssistantSearchAnswer(
   evidence: AssistantSearchEvidence[],
   intent: AssistantStructuredIntent,
   now = new Date(),
+  totalExactResults?: number,
 ) {
   const exactEvidence = evidence.filter((candidate) => candidate.deviations.length === 0);
   const alternativeEvidence = evidence.filter((candidate) => candidate.deviations.length > 0);
-  const expected = buildAssistantSearchAnswer(intent, exactEvidence, alternativeEvidence, now);
+  const expected = buildAssistantSearchAnswer(
+    intent,
+    exactEvidence,
+    alternativeEvidence,
+    now,
+    totalExactResults,
+  );
   if (JSON.stringify(answer) !== JSON.stringify(expected)) {
     throw new AssistantAnswerValidationError();
   }
@@ -413,8 +459,9 @@ function hasRequiredFacts(
     if (fact === 'FRESHNESS') return Number.isFinite(Date.parse(candidate.updatedAt));
     if (fact === 'LINK') return uuidPattern.test(candidate.unitId) && candidate.objectSlug.trim().length > 0;
     if (fact === 'ROOMS') return candidate.rooms !== null;
-    if (fact === 'LOCATION') return Boolean(candidate.district) || candidate.metros.length > 0;
-    if (fact === 'DEVELOPER') return Boolean(candidate.developer);
+    if (fact === 'LOCATION') return Boolean(candidate.district?.trim())
+      || candidate.metros.some((metro) => metro.trim().length > 0);
+    if (fact === 'DEVELOPER') return Boolean(candidate.developer?.trim());
     if (fact === 'COMPLETION') return candidate.completionYear !== null;
     if (fact === 'AREA') return candidate.area !== null;
     if (fact === 'FLOOR') return candidate.floor !== null;

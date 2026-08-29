@@ -14,6 +14,9 @@ const {
   assistantEmbeddingBenchmarkDatasetSha256,
 } = require('../dist/assistant/sources/assistant-embedding.gateway.js');
 const {
+  AssistantSourceRegistryService,
+} = require('../dist/assistant/sources/assistant-source-registry.service.js');
+const {
   buildAssistantKnowledgeAnswer,
 } = require('../dist/assistant/sources/assistant-knowledge-answer.js');
 const {
@@ -35,6 +38,81 @@ test('Assistant T03 source administration uses one independent additive permissi
   assert.equal(Reflect.getMetadata(PERMISSIONS_KEY, AssistantSourcesController.prototype.list), undefined);
   assert.equal(Reflect.getMetadata(PERMISSIONS_KEY, AssistantSourcesController.prototype.refresh), undefined);
   assert.equal(Reflect.getMetadata(PERMISSIONS_KEY, AssistantSourcesController.prototype.refreshProject), undefined);
+});
+
+test('Assistant T03 source registry accepts catalog coverage beyond the former pilot caps', async () => {
+  const now = new Date('2026-08-29T12:00:00.000Z');
+  const createdSource = {
+    id: '99999999-9999-4999-8999-999999999999',
+    canonicalUrl: 'https://developer-eight.example/projects/project-21',
+    type: 'DEVELOPMENT_PAGE',
+    state: 'ACTIVE',
+    priority: 100,
+    scheduleMinutes: 1440,
+    connectorKey: 'OFFICIAL_HTML',
+    connectorConfigJson: { allowedHosts: ['developer-eight.example'] },
+    projectKey: 'project-21',
+    developerKey: 'developer-eight',
+    nextRefreshAt: now,
+    lastAttemptAt: null,
+    lastSuccessAt: null,
+    lastIndexedAt: null,
+    lastErrorCode: null,
+    lastErrorMessage: null,
+    createdAt: now,
+    updatedAt: now,
+    revisions: [],
+    jobs: [],
+    _count: { revisions: 0, facts: 0, chunks: 0 },
+  };
+  let createCalls = 0;
+  const registered = Array.from({ length: 20 }, (_, index) => ({
+    projectKey: `registered-${index}`,
+    developerKey: `developer-${index % 7}`,
+  }));
+  const transaction = {
+    async $executeRaw() { return 1; },
+    assistantKnowledgeSource: {
+      async findUnique() { return null; },
+      async findMany() { return registered; },
+      async create() {
+        createCalls += 1;
+        return createdSource;
+      },
+    },
+  };
+  const service = new AssistantSourceRegistryService({
+    async $transaction(operation) { return operation(transaction); },
+    assistantKnowledgeSource: {
+      async findMany() { return []; },
+    },
+  }, {
+    get() { return {}; },
+    list() { return []; },
+  });
+
+  const registeredResult = await service.register(
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    {
+      canonicalUrl: createdSource.canonicalUrl,
+      type: 'DEVELOPMENT_PAGE',
+      state: 'ACTIVE',
+      priority: 100,
+      scheduleMinutes: 1440,
+      connectorKey: 'OFFICIAL_HTML',
+      connectorConfig: { allowedHosts: ['developer-eight.example'] },
+      projectKey: createdSource.projectKey,
+      developerKey: createdSource.developerKey,
+    },
+  );
+  const listResult = await service.list();
+
+  assert.equal(createCalls, 1);
+  assert.equal(registeredResult.source.projectKey, 'project-21');
+  assert.deepEqual(listResult.coverage, {
+    mode: 'ALL_PUBLISHED_RESIDENTIAL_PROJECTS_WITH_DEVELOPER',
+  });
+  assert.equal(listResult.pilot, undefined);
 });
 
 test('Assistant T03 fake planner routes official project and promotion questions to grounded facts', async () => {

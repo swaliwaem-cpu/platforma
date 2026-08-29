@@ -16,7 +16,7 @@ if (!databaseUrl) {
 } else {
   process.env.DATABASE_URL = databaseUrl;
   process.env.ASSISTANT_MODULE_ENABLED = 'true';
-  process.env.ASSISTANT_ROLLOUT_STAGE = 'ALL';
+  process.env.ASSISTANT_ROLLOUT_STAGE = 'ADMINS';
   process.env.ASSISTANT_FAKE_STEP_DELAY_MS = '1';
   process.env.FEED_AUTO_IMPORT_ENABLED = 'false';
   process.env.JWT_ACCESS_SECRET = 'assistant-t01-http-access-secret';
@@ -44,9 +44,9 @@ if (!databaseUrl) {
   before(async () => {
     await prisma.$connect();
     await clearData();
-    owner = await createUser('owner', true);
-    otherUser = await createUser('other', true);
-    deniedUser = await createUser('denied', false);
+    owner = await createUser('owner', ['objects:read', 'admin:access']);
+    otherUser = await createUser('other', ['objects:read', 'admin:access']);
+    deniedUser = await createUser('denied', ['admin:access']);
     ownerToken = signAccessToken(owner);
     otherToken = signAccessToken(otherUser);
     deniedToken = signAccessToken(deniedUser);
@@ -160,7 +160,12 @@ if (!databaseUrl) {
 
       assert.equal(first.status, 'COMPLETED');
       assert.equal(first.assistantMessage.answer.kind, 'SEARCH_RESULTS');
+      assert.equal(first.assistantMessage.answer.totalExactResults, 4);
       assert.equal(first.assistantMessage.answer.exactResults.length, 3);
+      assert.deepEqual(
+        first.assistantMessage.answer.additionalExactResults.map(({ priceRub }) => priceRub),
+        [23_000_000],
+      );
       assert.equal(first.assistantMessage.answer.alternatives.length, 0);
       assert.deepEqual(first.assistantMessage.answer.exactResults.map(({ priceRub }) => priceRub), [20_000_000, 21_000_000, 22_000_000]);
       assert.equal(first.assistantMessage.answer.exactResults[0].pdfs[0].href, `/media/files/${fixture.file.id}/content?download=true`);
@@ -169,10 +174,20 @@ if (!databaseUrl) {
 
       const persistedFirst = await prisma.assistantRun.findUniqueOrThrow({ where: { id: first.id } });
       assert.equal(persistedFirst.intentJson.hardFilters.budgetMaxRub, 25_000_000);
-      assert.equal(persistedFirst.evidenceJson.length, 3);
+      assert.equal(persistedFirst.evidenceJson.length, 4);
       assert.deepEqual(persistedFirst.telemetryJson.map(({ model, reasoningEffort, outcome }) => [model, reasoningEffort, outcome]), [
         ['gpt-5.6-luna', 'medium', 'ACCEPTED'],
       ]);
+      const restoredFirstConversation = await request(
+        `/assistant/conversations/${firstConversation.body.conversation.id}`,
+        { token: ownerToken },
+      );
+      const restoredFirstAnswer = restoredFirstConversation.body.conversation.messages.at(-1).answer;
+      assert.equal(restoredFirstAnswer.totalExactResults, 4);
+      assert.deepEqual(
+        restoredFirstAnswer.additionalExactResults.map(({ priceRub }) => priceRub),
+        [23_000_000],
+      );
 
       const catalogConversation = await createConversation();
       const catalogParams = new URLSearchParams({
@@ -212,6 +227,11 @@ if (!databaseUrl) {
       const second = await waitForRun(secondQueued.body.run.id, ownerToken);
 
       assert.deepEqual(second.assistantMessage.answer.exactResults.map(({ priceRub }) => priceRub), [19_000_000, 20_000_000, 22_000_000]);
+      assert.equal(second.assistantMessage.answer.totalExactResults, 4);
+      assert.deepEqual(
+        second.assistantMessage.answer.additionalExactResults.map(({ priceRub }) => priceRub),
+        [23_000_000],
+      );
       const persistedSecond = await prisma.assistantRun.findUniqueOrThrow({ where: { id: second.id } });
       assert.equal(persistedSecond.evidenceJson[0].priceRub, 19_000_000);
     } finally {
@@ -260,6 +280,44 @@ if (!databaseUrl) {
     }
   });
 
+  test('exact totals require a downloadable PDF and a non-empty location fact', async () => {
+    const fixture = await createSearchFixture();
+    const searchService = app.get(AssistantSearchService);
+    let orphanAsset = null;
+    try {
+      orphanAsset = await prisma.feedMediaAsset.create({
+        data: {
+          sourceUrl: `https://example.test/${randomUUID()}/missing.pdf`,
+          contentType: 'application/pdf',
+        },
+      });
+      await prisma.feedUnitMedia.create({
+        data: { unitId: fixture.units[0].id, mediaAssetId: orphanAsset.id },
+      });
+      await prisma.objectFile.deleteMany({ where: { objectId: fixture.object.id } });
+      const pdfIntent = createSearchIntent({ budgetMaxRub: 25_000_000 });
+      pdfIntent.requiredFacts = [...pdfIntent.requiredFacts, 'PDF'];
+
+      const pdfSearch = await searchService.search(pdfIntent, null);
+
+      assert.equal(pdfSearch.totalExactResults, 0);
+      assert.deepEqual(pdfSearch.exact, []);
+
+      await prisma.objectMetroStation.deleteMany({ where: { objectId: fixture.object.id } });
+      await prisma.location.update({ where: { id: fixture.district.id }, data: { name: '   ' } });
+      const locationIntent = createSearchIntent({ budgetMaxRub: 25_000_000 });
+      locationIntent.requiredFacts = [...locationIntent.requiredFacts, 'LOCATION'];
+
+      const locationSearch = await searchService.search(locationIntent, null);
+
+      assert.equal(locationSearch.totalExactResults, 0);
+      assert.deepEqual(locationSearch.exact, []);
+    } finally {
+      if (orphanAsset) await prisma.feedMediaAsset.deleteMany({ where: { id: orphanAsset.id } });
+      await deleteSearchFixture(fixture);
+    }
+  });
+
   test('planner and PostgreSQL comparison keep evidence for an inflected multiword target beyond the global candidate limit', async () => {
     const fixture = await createComparisonFixture();
     try {
@@ -272,7 +330,9 @@ if (!databaseUrl) {
 
       assert.equal(completed.status, 'COMPLETED');
       assert.equal(completed.assistantMessage.answer.kind, 'SEARCH_RESULTS');
+      assert.equal(completed.assistantMessage.answer.totalExactResults, 122);
       assert.equal(completed.assistantMessage.answer.exactResults.length, 3);
+      assert.equal(completed.assistantMessage.answer.additionalExactResults.length, 5);
       const facts = completed.assistantMessage.answer.exactResults.flatMap(({ facts: resultFacts }) => resultFacts);
       assert.equal(facts.includes(fixture.firstDeveloper.name), true);
       assert.equal(facts.includes(fixture.secondDeveloper.name), true);
@@ -284,6 +344,7 @@ if (!databaseUrl) {
       ]);
       assert.deepEqual(persisted.intentJson.comparisonTargetModes, ['EXACT', 'INSTRUMENTAL']);
       assert.equal(persisted.intentJson.hardFilters.developer, null);
+      assert.equal(persisted.evidenceJson.length, 8);
 
       const softIntent = createSearchIntent({
         budgetMaxRub: 25_000_000,
@@ -298,6 +359,27 @@ if (!databaseUrl) {
       const softSearch = await app.get(AssistantSearchService).search(softIntent, null);
       const softAnswer = buildAssistantSearchAnswer(softIntent, softSearch.exact, [], new Date());
       assert.equal(softAnswer.exactResults[0].facts.includes(fixture.secondDeveloper.name), true);
+
+      const rawPreferredIntent = createSearchIntent({
+        budgetMaxRub: 25_000_000,
+        rooms: [2],
+        district: fixture.district.name,
+        metro: fixture.metro.name,
+      });
+      rawPreferredIntent.taskType = 'COMPARE';
+      rawPreferredIntent.comparisonTargets = ['ПИК', 'Ростелеком'];
+      rawPreferredIntent.comparisonTargetModes = ['EXACT', 'INSTRUMENTAL'];
+      const rawPreferredSearch = await app.get(AssistantSearchService).search(rawPreferredIntent, null);
+      assert.equal(rawPreferredSearch.totalExactResults, 122);
+      assert.equal(rawPreferredSearch.exact.some(({ developer }) => developer === 'Ростелек'), false);
+      const rawPreferredAnswer = buildAssistantSearchAnswer(
+        rawPreferredIntent,
+        rawPreferredSearch.exact,
+        [],
+        new Date(),
+        rawPreferredSearch.totalExactResults,
+      );
+      assert.equal(rawPreferredAnswer.totalExactResults, 122);
     } finally {
       await deleteComparisonFixture(fixture);
     }
@@ -614,20 +696,22 @@ if (!databaseUrl) {
     );
   }
 
-  async function createUser(label, canReadObjects) {
-    const permission = canReadObjects
-      ? await prisma.permission.upsert({
-          where: { key: 'objects:read' },
-          update: {},
-          create: { key: 'objects:read', description: 'Read objects' },
-        })
-      : null;
+  async function createUser(label, permissionKeys) {
+    const descriptions = {
+      'objects:read': 'Read objects',
+      'admin:access': 'Access administration',
+    };
+    const permissions = await Promise.all(permissionKeys.map((key) => prisma.permission.upsert({
+      where: { key },
+      update: {},
+      create: { key, description: descriptions[key] },
+    })));
     const role = await prisma.role.create({
       data: {
         name: `assistant-t01-${label}-${randomUUID().slice(0, 8)}`,
         description: label,
-        ...(permission
-          ? { permissions: { create: { permissionId: permission.id } } }
+        ...(permissions.length > 0
+          ? { permissions: { create: permissions.map(({ id }) => ({ permissionId: id })) } }
           : {}),
       },
     });
@@ -763,9 +847,10 @@ if (!databaseUrl) {
 
   async function createComparisonFixture() {
     const suffix = randomUUID().slice(0, 8);
-    const [firstDeveloper, secondDeveloper] = await Promise.all([
+    const [firstDeveloper, secondDeveloper, fallbackDeveloper] = await Promise.all([
       prisma.developer.create({ data: { name: 'ПИК' } }),
-      prisma.developer.create({ data: { name: 'Самолёт' } }),
+      prisma.developer.create({ data: { name: 'Ростелеком' } }),
+      prisma.developer.create({ data: { name: 'Ростелек' } }),
     ]);
     const district = await prisma.location.create({
       data: { name: `Хамовники ${suffix}`, slug: `compare-district-${suffix}`, type: 'DISTRICT' },
@@ -799,13 +884,36 @@ if (!databaseUrl) {
         metroStations: { create: { metroStationId: metro.id } },
       },
     });
-    const [firstSource, secondSource] = await Promise.all([
+    const fallbackObject = await prisma.realEstateObject.create({
+      data: {
+        title: `ЖК Запасной ${suffix}`,
+        slug: `compare-fallback-${suffix}`,
+        status: 'PUBLISHED',
+        type: 'RESIDENTIAL',
+        developerId: fallbackDeveloper.id,
+        primaryLocationId: district.id,
+        completionYear: 2027,
+        feedUpdatedAt: new Date(),
+        metroStations: { create: { metroStationId: metro.id } },
+      },
+    });
+    const [firstSource, fallbackSource, secondSource] = await Promise.all([
       prisma.feedSource.create({
         data: {
           url: `https://example.test/compare-first-${suffix}.xml`,
           format: 'CIAN_XML',
           developerId: firstDeveloper.id,
           objectId: firstObject.id,
+          isActive: true,
+          lastSuccessAt: new Date(),
+        },
+      }),
+      prisma.feedSource.create({
+        data: {
+          url: `https://example.test/compare-fallback-${suffix}.xml`,
+          format: 'CIAN_XML',
+          developerId: fallbackDeveloper.id,
+          objectId: fallbackObject.id,
           isActive: true,
           lastSuccessAt: new Date(),
         },
@@ -853,29 +961,52 @@ if (!databaseUrl) {
         completionYear: 2027,
       },
     });
+    await prisma.feedUnit.create({
+      data: {
+        sourceId: fallbackSource.id,
+        objectId: fallbackObject.id,
+        externalId: `compare-fallback-${suffix}`,
+        type: 'RESIDENTIAL',
+        status: 'AVAILABLE',
+        title: 'Квартира fallback',
+        rooms: 2,
+        effectivePrice: 19_000_000,
+        currency: 'RUB',
+        area: 60,
+        floor: 8,
+        completionYear: 2027,
+      },
+    });
     return {
       firstDeveloper,
       secondDeveloper,
+      fallbackDeveloper,
       district,
       metro,
       firstObject,
       secondObject,
+      fallbackObject,
       firstSource,
       secondSource,
+      fallbackSource,
     };
   }
 
   async function deleteComparisonFixture(fixture) {
     await prisma.feedSource.deleteMany({
-      where: { id: { in: [fixture.firstSource.id, fixture.secondSource.id] } },
+      where: { id: { in: [fixture.firstSource.id, fixture.secondSource.id, fixture.fallbackSource.id] } },
     });
     await prisma.realEstateObject.deleteMany({
-      where: { id: { in: [fixture.firstObject.id, fixture.secondObject.id] } },
+      where: { id: { in: [fixture.firstObject.id, fixture.secondObject.id, fixture.fallbackObject.id] } },
     });
     await prisma.metroStation.deleteMany({ where: { id: fixture.metro.id } });
     await prisma.location.deleteMany({ where: { id: fixture.district.id } });
     await prisma.developer.deleteMany({
-      where: { id: { in: [fixture.firstDeveloper.id, fixture.secondDeveloper.id] } },
+      where: { id: { in: [
+        fixture.firstDeveloper.id,
+        fixture.secondDeveloper.id,
+        fixture.fallbackDeveloper.id,
+      ] } },
     });
   }
 

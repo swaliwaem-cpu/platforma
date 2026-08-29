@@ -149,6 +149,12 @@ function selectedOutcomes(answer: AssistantAnswer) {
       answerRank: index + 1,
       reason: 'Passed hard filters, evidence validation and deterministic ranking',
     }));
+    (answer.additionalExactResults ?? []).forEach(({ unitId }, index) => outcomes.set(unitId, {
+      evidenceId: unitId,
+      outcome: 'PRIMARY',
+      answerRank: answer.exactResults.length + index + 1,
+      reason: 'Passed hard filters, evidence validation and deterministic ranking',
+    }));
     answer.alternatives.forEach(({ unitId, deviations }, index) => outcomes.set(unitId, {
       evidenceId: unitId,
       outcome: 'ALTERNATIVE',
@@ -281,7 +287,11 @@ function hasStalePriceWithoutLabel(
   const updatedById = new Map(evidence.flatMap((item) => isSearchEvidence(item)
     ? [[item.unitId, Date.parse(item.updatedAt)] as const]
     : []));
-  return [...answer.exactResults, ...answer.alternatives].some((result) => {
+  return [
+    ...answer.exactResults,
+    ...(answer.additionalExactResults ?? []),
+    ...answer.alternatives,
+  ].some((result) => {
     const updatedAt = updatedById.get(result.unitId);
     const staleByEvidence = updatedAt !== undefined && now.getTime() - updatedAt >= 24 * 60 * 60 * 1_000;
     return (result.isStale || staleByEvidence)
@@ -291,7 +301,11 @@ function hasStalePriceWithoutLabel(
 
 function hasBrokenLink(answer: AssistantAnswer) {
   if (answer.kind === 'SEARCH_RESULTS') {
-    return [...answer.exactResults, ...answer.alternatives].some((result) =>
+    return [
+      ...answer.exactResults,
+      ...(answer.additionalExactResults ?? []),
+      ...answer.alternatives,
+    ].some((result) =>
       !/^\/objects\/[^/]+\/lots\/[0-9a-f-]+$/iu.test(result.href)
       || result.pdfs.some(({ href }) => !/^\/media\/files\/[0-9a-f-]+\/content\?download=true$/iu.test(href)));
   }

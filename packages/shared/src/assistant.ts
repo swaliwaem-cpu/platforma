@@ -223,13 +223,26 @@ export type AssistantExternalLotCard = {
   href: string;
 };
 
+type AssistantSearchResultsBase = {
+  kind: 'SEARCH_RESULTS';
+  exactResults: AssistantSearchResultCard[];
+  alternatives: AssistantSearchResultCard[];
+  geo?: AssistantGeoSearchView;
+};
+
+type AssistantLegacySearchResultsAnswer = AssistantSearchResultsBase & {
+  totalExactResults?: never;
+  additionalExactResults?: never;
+};
+
+type AssistantExpandedSearchResultsAnswer = AssistantSearchResultsBase & {
+  totalExactResults: number;
+  additionalExactResults: AssistantSearchResultCard[];
+};
+
 export type AssistantAnswer =
-  | {
-      kind: 'SEARCH_RESULTS';
-      exactResults: AssistantSearchResultCard[];
-      alternatives: AssistantSearchResultCard[];
-      geo?: AssistantGeoSearchView;
-    }
+  | AssistantLegacySearchResultsAnswer
+  | AssistantExpandedSearchResultsAnswer
   | {
       kind: 'KNOWLEDGE_RESULTS';
       facts: AssistantKnowledgeFactCard[];

@@ -147,8 +147,15 @@ export class AssistantAnswerService {
           searchResult.exact,
           searchResult.alternatives,
           now,
+          searchResult.totalExactResults,
         );
-        validateAssistantSearchAnswer(grounded, evidence, intent, now);
+        validateAssistantSearchAnswer(
+          grounded,
+          evidence,
+          intent,
+          now,
+          searchResult.totalExactResults,
+        );
         if (grounded.exactResults.length === 0
           && grounded.alternatives.length === 0
           && !searchResult.geo) {
@@ -161,13 +168,18 @@ export class AssistantAnswerService {
         }
         const selectedIds = new Set([
           ...grounded.exactResults.map(({ unitId }) => unitId),
+          ...grounded.additionalExactResults.map(({ unitId }) => unitId),
           ...grounded.alternatives.map(({ unitId }) => unitId),
         ]);
         const selectedEvidence = evidence.filter(({ unitId }) => selectedIds.has(unitId));
+        const geoVisibleIds = new Set([
+          ...grounded.exactResults.map(({ unitId }) => unitId),
+          ...grounded.alternatives.map(({ unitId }) => unitId),
+        ]);
         const geo = searchResult.geo
           ? createGeoSearchView(
               searchResult.geo,
-              selectedEvidence,
+              evidence.filter(({ unitId }) => geoVisibleIds.has(unitId)),
               new Set(grounded.exactResults.map(({ unitId }) => unitId)),
             )
           : null;
@@ -175,7 +187,9 @@ export class AssistantAnswerService {
           content: grounded.content,
           answer: {
             kind: 'SEARCH_RESULTS',
+            totalExactResults: grounded.totalExactResults,
             exactResults: grounded.exactResults,
+            additionalExactResults: grounded.additionalExactResults,
             alternatives: grounded.alternatives,
             ...(geo ? { geo } : {}),
           } as const,

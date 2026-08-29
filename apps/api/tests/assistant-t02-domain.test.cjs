@@ -21,6 +21,9 @@ const {
 const {
   AssistantAnswerService,
 } = require('../dist/assistant/assistant-answer.service.js');
+const {
+  AssistantService,
+} = require('../dist/assistant/assistant.service.js');
 
 test('Assistant T02 planner routes ordinary and complex requests to the required Luna effort', async () => {
   const calls = [];
@@ -459,6 +462,105 @@ test('Assistant T02 ranking applies hard filters before soft ranking and keeps a
   assert.deepEqual(answer.alternatives, []);
 });
 
+test('Assistant T02 ranking keeps an exact total and exposes only the next five grounded results', () => {
+  const intent = validIntent();
+  const candidates = Array.from({ length: 10 }, (_, index) => candidate(
+    `${String(index + 1).padStart(8, '0')}-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+    { priceRub: 20_000_000 + index * 1_000_000 },
+  ));
+  const now = new Date('2026-08-24T12:00:00.000Z');
+
+  const answer = buildAssistantSearchAnswer(intent, candidates, [], now, 17);
+
+  assert.equal(answer.totalExactResults, 17);
+  assert.deepEqual(
+    answer.exactResults.map(({ unitId }) => unitId),
+    candidates.slice(0, 3).map(({ unitId }) => unitId),
+  );
+  assert.deepEqual(
+    answer.additionalExactResults.map(({ unitId }) => unitId),
+    candidates.slice(3, 8).map(({ unitId }) => unitId),
+  );
+  assert.deepEqual(answer.alternatives, []);
+  validateAssistantSearchAnswer(answer, candidates, intent, now, 17);
+  assert.equal(buildAssistantSearchAnswer(intent, candidates, [], now).totalExactResults, 10);
+
+  for (const mutation of [
+    (copy) => { copy.totalExactResults = 7; },
+    (copy) => { copy.additionalExactResults[0] = structuredClone(copy.exactResults[0]); },
+    (copy) => { copy.additionalExactResults[0].href = '/objects/invented'; },
+  ]) {
+    const tampered = structuredClone(answer);
+    mutation(tampered);
+    assert.throws(
+      () => validateAssistantSearchAnswer(tampered, candidates, intent, now, 17),
+      (error) => error instanceof AssistantAnswerValidationError,
+    );
+  }
+});
+
+test('Assistant T02 ranking deduplicates evidence and rejects a total that cannot be restored', () => {
+  const intent = validIntent();
+  const first = candidate('11111111-1111-4111-8111-111111111111');
+  const second = candidate('22222222-2222-4222-8222-222222222222', { priceRub: 21_000_000 });
+  const now = new Date('2026-08-24T12:00:00.000Z');
+
+  const answer = buildAssistantSearchAnswer(intent, [first, { ...first }, second], [], now, 2);
+
+  assert.deepEqual(answer.exactResults.map(({ unitId }) => unitId), [first.unitId, second.unitId]);
+  assert.throws(
+    () => buildAssistantSearchAnswer(intent, [first, second], [], now, 3),
+    (error) => error instanceof AssistantAnswerValidationError
+      && error.code === 'ASSISTANT_SEARCH_TOTAL_INVALID',
+  );
+  assert.throws(
+    () => buildAssistantSearchAnswer(intent, [], [], now, 1),
+    (error) => error instanceof AssistantAnswerValidationError
+      && error.code === 'ASSISTANT_SEARCH_TOTAL_INVALID',
+  );
+});
+
+test('Assistant T02 stored answer parser keeps legacy results and rejects a partial new contract', () => {
+  const now = new Date('2026-08-24T12:00:00.000Z');
+  const answer = buildAssistantSearchAnswer(
+    validIntent(),
+    [candidate('11111111-1111-4111-8111-111111111111')],
+    [],
+    now,
+  );
+  const legacy = structuredClone(answer);
+  delete legacy.totalExactResults;
+  delete legacy.additionalExactResults;
+  const service = Object.create(AssistantService.prototype);
+
+  const restored = service.parseStoredAnswer(legacy);
+
+  assert.equal(restored.kind, 'SEARCH_RESULTS');
+  assert.deepEqual(restored.exactResults, legacy.exactResults);
+  assert.equal(restored.totalExactResults, undefined);
+  assert.equal(restored.additionalExactResults, undefined);
+  assert.equal(service.parseStoredAnswer({ ...legacy, totalExactResults: 1 }), null);
+
+  const boundaryAnswer = structuredClone(legacy);
+  boundaryAnswer.exactResults[0].distanceMeters = 2_001.5;
+  boundaryAnswer.geo = {
+    anchor: { latitude: 55.7, longitude: 37.5, label: 'Тестовая точка', source: 'MANUAL' },
+    radiusMeters: 2_000,
+    polygon: {
+      type: 'Polygon',
+      coordinates: [[[37.49, 55.69], [37.51, 55.69], [37.5, 55.71], [37.49, 55.69]]],
+    },
+    markers: [{
+      unitId: boundaryAnswer.exactResults[0].unitId,
+      latitude: 55.7,
+      longitude: 37.5,
+      distanceMeters: 2_001.5,
+      kind: 'PRIMARY',
+    }],
+  };
+  assert.notEqual(service.parseStoredAnswer(boundaryAnswer), null);
+});
+
 test('Assistant T02 ranking exposes at most two allowed alternatives only when exact results are absent', () => {
   const intent = validIntent({
     hardFilters: {
@@ -513,6 +615,32 @@ test('Assistant T02 comparison returns grounded representatives for both explici
   assert.match(answer.content, /двум выбранным вариантам/iu);
 });
 
+test('Assistant T02 comparison fallback total counts every eligible candidate beyond the eight-card preview', () => {
+  const intent = validIntent({
+    taskType: 'COMPARE',
+    comparisonTargets: ['ПИК', 'Самолёт'],
+    hardFilters: { ...emptyFilters(), budgetMaxRub: 25_000_000, rooms: [2], metro: 'Спортивная' },
+  });
+  const candidates = Array.from({ length: 10 }, (_, index) => candidate(
+    `60000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+    {
+      developer: index < 5 ? 'ПИК' : 'Самолёт',
+      priceRub: 20_000_000 + index * 100_000,
+    },
+  ));
+
+  const answer = buildAssistantSearchAnswer(
+    intent,
+    candidates,
+    [],
+    new Date('2026-08-24T12:00:00.000Z'),
+  );
+
+  assert.equal(answer.totalExactResults, 10);
+  assert.equal(answer.exactResults.length, 3);
+  assert.equal(answer.additionalExactResults.length, 5);
+});
+
 test('Assistant T02 comparison refuses partial evidence that covers only one explicit target', () => {
   const intent = validIntent({
     taskType: 'COMPARE',
@@ -525,7 +653,59 @@ test('Assistant T02 comparison refuses partial evidence that covers only one exp
   ], [], new Date('2026-08-24T12:00:00.000Z'));
 
   assert.equal(answer.exactResults.length, 0);
+  assert.equal(answer.totalExactResults, 0);
   assert.match(answer.content, /Не могу подтвердить/iu);
+
+  const authoritativeAnswer = buildAssistantSearchAnswer(
+    intent,
+    [candidate('11111111-1111-4111-8111-111111111111', { developer: 'ПИК' })],
+    [],
+    new Date('2026-08-24T12:00:00.000Z'),
+    1,
+  );
+  assert.equal(authoritativeAnswer.totalExactResults, 0);
+  assert.deepEqual(authoritativeAnswer.exactResults, []);
+
+  const normalizedSearchAnswer = buildAssistantSearchAnswer(
+    { ...intent, taskType: 'SEARCH' },
+    [candidate('11111111-1111-4111-8111-111111111111', { developer: 'ПИК' })],
+    [],
+    new Date('2026-08-24T12:00:00.000Z'),
+    1,
+  );
+  assert.equal(normalizedSearchAnswer.totalExactResults, 0);
+  assert.deepEqual(normalizedSearchAnswer.exactResults, []);
+});
+
+test('Assistant T02 comparison finds a distinct pair when the best candidate matches both targets', () => {
+  const intent = validIntent({
+    taskType: 'COMPARE',
+    comparisonTargets: ['Alpha', 'Beta'],
+    hardFilters: { ...emptyFilters(), budgetMaxRub: 25_000_000, rooms: [2], metro: 'Спортивная' },
+  });
+  const sharedCandidate = candidate('11111111-1111-4111-8111-111111111111', {
+    objectTitle: 'Alpha',
+    developer: 'Beta',
+    priceRub: 10_000_000,
+  });
+  const alphaOnlyCandidate = candidate('22222222-2222-4222-8222-222222222222', {
+    objectTitle: 'Alpha',
+    developer: 'Other',
+    priceRub: 20_000_000,
+  });
+
+  const answer = buildAssistantSearchAnswer(
+    intent,
+    [sharedCandidate, alphaOnlyCandidate],
+    [],
+    new Date('2026-08-24T12:00:00.000Z'),
+    2,
+  );
+
+  assert.deepEqual(answer.exactResults.map(({ unitId }) => unitId), [
+    alphaOnlyCandidate.unitId,
+    sharedCandidate.unitId,
+  ]);
 });
 
 test('Assistant T02 comparison does not confirm a target through a partial brand substring', () => {
@@ -624,6 +804,8 @@ test('Assistant T02 comparison keeps an exact -ом brand ahead of an instrument
     '22222222-2222-4222-8222-222222222222',
     '33333333-3333-4333-8333-333333333333',
   ]);
+  assert.equal(answer.totalExactResults, 2);
+  assert.notEqual(Object.create(AssistantService.prototype).parseStoredAnswer(answer), null);
 });
 
 test('Assistant T02 evidence validation rejects invented price, freshness and links', () => {

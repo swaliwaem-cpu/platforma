@@ -98,7 +98,28 @@ try {
   await desktop.getByText('Понимаю запрос').waitFor();
   await desktop.getByText('Тестовый помощник получил запрос: «Найди квартиру рядом».').waitFor();
   await desktop.getByRole('heading', { name: 'Лучшие по этим критериям' }).waitFor();
-  assert.equal(await desktop.getByRole('link', { name: 'ЖК Тест' }).getAttribute('href'), '/objects/zhk-test/lots/77777777-7777-4777-8777-777777777777');
+  await desktop.getByText('Всего найдено: 37', { exact: true }).waitFor();
+  const exactResultsRegion = desktop.getByRole('region', { name: 'Лучшие по этим критериям' });
+  assert.equal(await exactResultsRegion.locator('.assistant-result-card').count(), 3);
+  assert.equal(await desktop.getByRole('link', { name: 'ЖК Тест 4' }).count(), 0);
+  const showMoreResults = desktop.getByRole('button', { name: 'Показать далее' });
+  const showMoreBox = await showMoreResults.boundingBox();
+  assert.ok(showMoreBox && showMoreBox.height >= 44);
+  assert.ok(await showMoreResults.getAttribute('aria-controls'));
+  assert.equal(await showMoreResults.getAttribute('aria-expanded'), null);
+  await showMoreResults.focus();
+  await desktop.keyboard.press('Enter');
+  await desktop.getByRole('link', { name: 'ЖК Тест 8' }).waitFor();
+  assert.equal(await exactResultsRegion.locator('.assistant-result-card').count(), 8);
+  assert.equal(await showMoreResults.count(), 0);
+  assert.equal(
+    await desktop.evaluate(() => document.activeElement?.textContent?.trim()),
+    'ЖК Тест 4',
+  );
+  assert.equal(
+    await desktop.getByRole('link', { name: 'ЖК Тест', exact: true }).getAttribute('href'),
+    '/objects/zhk-test/lots/77777777-7777-4777-8777-777777777777',
+  );
   await desktop.getByText('25 000 000 ₽').waitFor();
   await desktop.getByText('обновлено 10 часов назад').first().waitFor();
   assert.equal(await desktop.getByRole('link', { name: 'Презентация проекта' }).getAttribute('href'), '/media/files/88888888-8888-4888-8888-888888888888/content?download=true');
@@ -166,7 +187,7 @@ try {
   await disabled.close();
 
   const mobile = await browser.newPage({ viewport: { width: 375, height: 900 } });
-  await installRoutes(mobile, createAssistantState(), ['objects:read']);
+  await installRoutes(mobile, createAssistantState({ conversationPosts: 1, messagePosts: 1 }), ['objects:read']);
   await mobile.goto(`${baseUrl}/objects/zhk-mobile`, { waitUntil: 'domcontentloaded' });
   await mobile.getByRole('button', { name: 'Открыть ИИ-помощника' }).click();
   const mobileDialog = mobile.getByRole('dialog', { name: 'ИИ-помощник по недвижимости' });
@@ -181,6 +202,20 @@ try {
   const mobileSendBox = await mobile.getByRole('button', { name: 'Отправить' }).boundingBox();
   assert.ok(mobileContextCloseBox && mobileContextCloseBox.width >= 44 && mobileContextCloseBox.height >= 44);
   assert.ok(mobileSendBox && mobileSendBox.width >= 44 && mobileSendBox.height >= 44);
+  await mobile.getByLabel('Сообщение помощнику').fill('Найди квартиру рядом');
+  await mobile.getByRole('button', { name: 'Отправить' }).click();
+  await mobile.getByText('Всего найдено: 37', { exact: true }).waitFor();
+  const mobileExactResults = mobile.getByRole('region', { name: 'Лучшие по этим критериям' });
+  assert.equal(await mobileExactResults.locator('.assistant-result-card').count(), 3);
+  const mobileShowMore = mobile.getByRole('button', { name: 'Показать далее' });
+  const mobileShowMoreBox = await mobileShowMore.boundingBox();
+  assert.ok(mobileShowMoreBox && mobileShowMoreBox.height >= 44);
+  await mobileShowMore.click();
+  assert.equal(
+    await mobileExactResults.locator('.assistant-result-card').count(),
+    8,
+  );
+  assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
   await mobile.close();
 
   process.stdout.write('ASSISTANT_T01_BROWSER_OK\n');
@@ -385,29 +420,36 @@ function assistantMessage() {
     context: null,
     answer: {
       kind: 'SEARCH_RESULTS',
-      exactResults: [
-        {
-          unitId: '77777777-7777-4777-8777-777777777777',
-          title: 'ЖК Тест',
-          subtitle: '2-комнатная · 60 м² · 8 этаж',
-          priceRub: 25_000_000,
-          availabilityLabel: 'В продаже',
-          freshnessLabel: 'обновлено 10 часов назад',
-          isStale: false,
-          href: '/objects/zhk-test/lots/77777777-7777-4777-8777-777777777777',
-          facts: ['Хамовники', 'м. Спортивная', '3 кв. 2027'],
-          pdfs: [
-            {
-              title: 'Презентация проекта',
-              href: '/media/files/88888888-8888-4888-8888-888888888888/content?download=true',
-            },
-          ],
-          deviations: [],
-        },
-      ],
+      totalExactResults: 37,
+      exactResults: Array.from({ length: 3 }, (_, index) => searchResultCard(index)),
+      additionalExactResults: Array.from({ length: 5 }, (_, index) => searchResultCard(index + 3)),
       alternatives: [],
     },
     createdAt: '2026-08-24T12:00:01.000Z',
+  };
+}
+
+function searchResultCard(index) {
+  const unitId = index === 0
+    ? '77777777-7777-4777-8777-777777777777'
+    : `${String(index).padStart(8, '0')}-7777-4777-8777-${String(index).padStart(12, '0')}`;
+  return {
+    unitId,
+    title: index === 0 ? 'ЖК Тест' : `ЖК Тест ${index + 1}`,
+    subtitle: `2-комнатная · ${60 + index} м² · ${8 + index} этаж`,
+    priceRub: 25_000_000 + index * 1_000_000,
+    availabilityLabel: 'В продаже',
+    freshnessLabel: 'обновлено 10 часов назад',
+    isStale: false,
+    href: index === 0
+      ? '/objects/zhk-test/lots/77777777-7777-4777-8777-777777777777'
+      : `/objects/zhk-test-${index + 1}/lots/${unitId}`,
+    facts: ['Хамовники', 'м. Спортивная', '3 кв. 2027'],
+    pdfs: index === 0 ? [{
+      title: 'Презентация проекта',
+      href: '/media/files/88888888-8888-4888-8888-888888888888/content?download=true',
+    }] : [],
+    deviations: [],
   };
 }
 

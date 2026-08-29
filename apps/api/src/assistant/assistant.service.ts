@@ -528,23 +528,65 @@ export class AssistantService {
     if (value.kind !== 'SEARCH_RESULTS') return { kind: value.kind } as AssistantAnswer;
     if (!Array.isArray(value.exactResults) || !Array.isArray(value.alternatives)) return null;
     if (value.exactResults.length > 3 || value.alternatives.length > 2) return null;
+    const hasTotalExactResults = value.totalExactResults !== undefined;
+    const hasAdditionalExactResults = value.additionalExactResults !== undefined;
+    if (hasTotalExactResults !== hasAdditionalExactResults) return null;
+    if (hasAdditionalExactResults
+      && (!Array.isArray(value.additionalExactResults) || value.additionalExactResults.length > 5)) return null;
 
     const exactResults = value.exactResults.flatMap((item) => {
       const parsed = this.parseStoredResultCard(item, false);
       return parsed ? [parsed] : [];
     });
+    const additionalExactResults = hasAdditionalExactResults
+      ? (value.additionalExactResults as unknown[]).flatMap((item) => {
+          const parsed = this.parseStoredResultCard(item, false);
+          return parsed ? [parsed] : [];
+        })
+      : [];
     const alternatives = value.alternatives.flatMap((item) => {
       const parsed = this.parseStoredResultCard(item, true);
       return parsed ? [parsed] : [];
     });
-    if (exactResults.length !== value.exactResults.length || alternatives.length !== value.alternatives.length) return null;
-    if (exactResults.length > 0 && alternatives.length > 0) return null;
+    if (exactResults.length !== value.exactResults.length
+      || (hasAdditionalExactResults
+        && additionalExactResults.length !== (value.additionalExactResults as unknown[]).length)
+      || alternatives.length !== value.alternatives.length) return null;
+    if ((exactResults.length > 0 || additionalExactResults.length > 0) && alternatives.length > 0) return null;
+    let totalExactResults: number | undefined;
+    if (hasTotalExactResults) {
+      if (!Number.isSafeInteger(value.totalExactResults) || (value.totalExactResults as number) < 0) return null;
+      totalExactResults = value.totalExactResults as number;
+      if (exactResults.length !== Math.min(totalExactResults, 3)
+        || additionalExactResults.length !== Math.min(5, Math.max(totalExactResults - 3, 0))
+        || (alternatives.length > 0 && totalExactResults !== 0)) return null;
+      const resultIds = [
+        ...exactResults,
+        ...additionalExactResults,
+        ...alternatives,
+      ].map(({ unitId }) => unitId);
+      if (new Set(resultIds).size !== resultIds.length) return null;
+    }
     const geo = value.geo === undefined ? undefined : this.parseStoredGeoView(value.geo);
     if (value.geo !== undefined && !geo) return null;
     if (geo && !this.geoMarkersMatchResults(geo, exactResults, alternatives)) return null;
+    if (geo && !this.geoResultsMatchConstraint(
+      geo,
+      [...exactResults, ...additionalExactResults, ...alternatives],
+    )) return null;
+    if (totalExactResults === undefined) {
+      return {
+        kind: 'SEARCH_RESULTS',
+        exactResults,
+        alternatives,
+        ...(geo ? { geo } : {}),
+      };
+    }
     return {
       kind: 'SEARCH_RESULTS',
+      totalExactResults,
       exactResults,
+      additionalExactResults,
       alternatives,
       ...(geo ? { geo } : {}),
     };
@@ -622,6 +664,16 @@ export class AssistantService {
             && geo.markers.some((marker) => marker.unitId === result.unitId
               && typeof marker.distanceMeters === 'number'
               && Math.abs(marker.distanceMeters - result.distanceMeters!) < 0.01));
+  }
+
+  private geoResultsMatchConstraint(
+    geo: AssistantGeoSearchView,
+    results: AssistantSearchResultCard[],
+  ) {
+    return results.every((result) => geo.mode === 'INSIDE'
+      ? result.distanceMeters === undefined
+      : typeof result.distanceMeters === 'number'
+        && result.distanceMeters <= geo.distanceMeters + 2);
   }
 
   private parseStoredKnowledgeAnswer(value: Record<string, unknown>): AssistantAnswer | null {

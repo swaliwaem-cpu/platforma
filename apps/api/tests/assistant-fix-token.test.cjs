@@ -56,7 +56,7 @@ const {
   discoverProjects,
   parseArguments,
   runAssistantSourceDiscovery,
-  selectPilotProjects,
+  selectDiscoveryProjects,
 } = require('../scripts/assistant-source-discovery.cjs');
 
 const fixture = JSON.parse(readFileSync(
@@ -1087,7 +1087,7 @@ test('FIX-TOKEN refresh error removes the stale selected entry instead of maskin
   }
 });
 
-test('FIX-TOKEN checkpoint filtering never backfills beyond the selected candidate set', async () => {
+test('FIX-TOKEN missing-only selection advances past checkpointed projects within the same batch', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-candidate-set-'));
   const checkpointPath = join(directory, 'checkpoint.json');
   const projects = ['checkpoint-hit', 'pending-selected', 'must-not-backfill'].map((projectKey) => ({
@@ -1121,11 +1121,24 @@ test('FIX-TOKEN checkpoint filtering never backfills beyond the selected candida
       silent: true,
       dependencies: {
         async createApplicationContext() { return application; },
-        async selectProjects(_prisma, limit, missingOnly) {
+        async selectProjects(_prisma, limit, missingOnly, excludedProjectKeys, selectionContext) {
           selectionCalls += 1;
           assert.equal(limit, 2);
           assert.equal(missingOnly, true);
-          return projects.slice(0, limit);
+          assert.equal(excludedProjectKeys.has('checkpoint-hit'), false);
+          assert.equal(
+            selectionContext.excludedProjectIdentities.has(
+              `checkpoint-hit\u0000${projects[0].developerKey}`,
+            ),
+            true,
+          );
+          return projects.filter(({ projectKey, developerKey }) => {
+            const excluded = selectionContext.excludedProjectIdentities.has(
+              `${projectKey}\u0000${developerKey}`,
+            );
+            if (excluded) selectionContext.checkpointProjectKeys.add(projectKey);
+            return !excluded && !excludedProjectKeys.has(projectKey);
+          }).slice(0, limit);
         },
         usageBudgets: {
           async reconcileExpiredReservations() { return 0; },
@@ -1142,10 +1155,10 @@ test('FIX-TOKEN checkpoint filtering never backfills beyond the selected candida
     });
 
     assert.equal(selectionCalls, 1);
-    assert.deepEqual(report.selection.selectedProjectKeys, ['checkpoint-hit', 'pending-selected']);
+    assert.deepEqual(report.selection.selectedProjectKeys, ['pending-selected', 'must-not-backfill']);
     assert.deepEqual(report.selection.checkpointProjectKeys, ['checkpoint-hit']);
     assert.equal(report.summary.checkpointEntriesSkipped, 1);
-    assert.deepEqual(discoveryProjectKeys, ['pending-selected']);
+    assert.deepEqual(discoveryProjectKeys, ['pending-selected', 'must-not-backfill']);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -1357,7 +1370,27 @@ test('FIX-TOKEN checkpoint identity includes the current developer key', async (
     telemetry: null,
   };
   let discoveryCalls = 0;
-  const prisma = { assistantAiUsageAttempt: emptyAssistantUsageLedger() };
+  const prisma = {
+    assistantAiUsageAttempt: emptyAssistantUsageLedger(),
+    assistantKnowledgeSource: {
+      async findMany() { return []; },
+    },
+    realEstateObject: {
+      async findMany() {
+        return [{
+          title: project.title,
+          slug: project.projectKey,
+          address: null,
+          feedUnitsCount: 0,
+          developer: {
+            name: project.developerName,
+            normalizedName: project.developerKey,
+            slug: project.developerKey,
+          },
+        }];
+      },
+    },
+  };
   const application = {
     get() { return prisma; },
     async close() {},
@@ -1383,7 +1416,6 @@ test('FIX-TOKEN checkpoint identity includes the current developer key', async (
       silent: true,
       dependencies: {
         async createApplicationContext() { return application; },
-        async selectProjects() { return [project]; },
         usageBudgets: {
           async reconcileExpiredReservations() { return 0; },
         },
@@ -1401,6 +1433,67 @@ test('FIX-TOKEN checkpoint identity includes the current developer key', async (
     assert.equal(discoveryCalls, 1);
     assert.equal(report.summary.checkpointEntriesSkipped, 0);
     assert.equal(report.summary.notFound, 1);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('FIX-TOKEN missing-only report ignores checkpoint projects outside the current eligible catalog', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'platforma-discovery-stale-checkpoint-'));
+  const checkpointPath = join(directory, 'checkpoint.json');
+  const staleProject = {
+    ...fixTokenProject(),
+    projectKey: 'archived-project',
+    title: 'Archived project',
+  };
+  const eligibleProject = {
+    ...fixTokenProject(),
+    projectKey: 'eligible-project',
+    title: 'Eligible project',
+  };
+  const prisma = {
+    assistantKnowledgeSource: { async findMany() { return []; } },
+    realEstateObject: {
+      async findMany() {
+        return [{
+          title: eligibleProject.title,
+          slug: eligibleProject.projectKey,
+          address: null,
+          feedUnitsCount: 0,
+          developer: {
+            name: eligibleProject.developerName,
+            normalizedName: eligibleProject.developerKey,
+            slug: eligibleProject.developerKey,
+          },
+        }];
+      },
+    },
+  };
+  const application = {
+    get() { return prisma; },
+    async close() {},
+  };
+
+  try {
+    writeAssistantSourceDiscoveryCheckpoint(
+      checkpointPath,
+      checkpointAssistantSourceDiscoveryResult(
+        createEmptyCheckpoint(checkpointFingerprint()),
+        fixTokenCheckpointResult(staleProject),
+      ),
+    );
+    const report = await runAssistantSourceDiscovery({
+      argv: [],
+      environment: { ASSISTANT_SOURCE_DISCOVERY_CHECKPOINT_PATH: checkpointPath },
+      silent: true,
+      dependencies: {
+        async createApplicationContext() { return application; },
+      },
+    });
+
+    assert.deepEqual(report.selection.selectedProjectKeys, [eligibleProject.projectKey]);
+    assert.deepEqual(report.selection.checkpointProjectKeys, []);
+    assert.equal(report.summary.checkpointEntriesSkipped, 0);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -1809,7 +1902,7 @@ test('FIX-TOKEN discovery orchestration passes the persisted registry seed befor
 });
 
 test('FIX-TOKEN missing-only selection reuses only active indexed project sources', async () => {
-  const selected = await selectPilotProjects({
+  const selected = await selectDiscoveryProjects({
     assistantKnowledgeSource: {
       async findMany(query) {
         assert.equal(query.select.revisions.where.processingStatus, 'INDEXED');
@@ -1868,13 +1961,13 @@ test('FIX-TOKEN missing-only selection reuses only active indexed project source
   assert.deepEqual(selected.map(({ projectKey }) => projectKey), ['needs-refresh']);
 });
 
-test('FIX-TOKEN pilot capacity uses the selected project-key union', async () => {
+test('FIX-TOKEN discovery covers published residential projects beyond the old project and developer caps', async () => {
   const registered = Array.from({ length: 20 }, (_, index) => ({
     id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
-    projectKey: index === 0 ? 'needs-refresh' : `registered-${index}`,
-    developerKey: 'developer',
+    projectKey: `registered-${index}`,
+    developerKey: `developer-${index % 7}`,
     type: 'DEVELOPMENT_PAGE',
-    state: index === 0 ? 'DISABLED' : 'ACTIVE',
+    state: 'ACTIVE',
     canonicalUrl: `https://developer.example/projects/${index}/`,
     connectorKey: 'OFFICIAL_HTML',
     connectorConfigJson: {
@@ -1882,24 +1975,74 @@ test('FIX-TOKEN pilot capacity uses the selected project-key union', async () =>
     },
     revisions: [{ processingStatus: 'INDEXED', checksum: 'f'.repeat(64) }],
   }));
-  const selected = await selectPilotProjects({
+  const selected = await selectDiscoveryProjects({
     assistantKnowledgeSource: {
       async findMany() { return registered; },
     },
     realEstateObject: {
-      async findMany() {
+      async findMany(query) {
+        assert.equal(query.take, undefined);
+        assert.deepEqual(query.where, {
+          type: 'RESIDENTIAL',
+          status: 'PUBLISHED',
+          archivedAt: null,
+          deletedAt: null,
+          developerId: { not: null },
+        });
         return [{
-          title: 'Needs refresh',
-          slug: 'needs-refresh',
+          title: 'Project without Platforma lots',
+          slug: 'project-without-lots',
           address: null,
-          feedUnitsCount: 10,
-          developer: { name: 'Developer', normalizedName: 'developer', slug: 'developer' },
+          feedUnitsCount: 0,
+          developer: { name: 'Developer Eight', normalizedName: 'developer-eight', slug: 'developer-eight' },
+        }, {
+          title: 'Project 21',
+          slug: 'project-21',
+          address: null,
+          feedUnitsCount: 1,
+          developer: { name: 'Developer Nine', normalizedName: 'developer-nine', slug: 'developer-nine' },
         }];
       },
     },
-  }, 1, true, new Set());
+  }, 20, true, new Set());
 
-  assert.deepEqual(selected.map(({ projectKey }) => projectKey), ['needs-refresh']);
+  assert.deepEqual(selected.map(({ projectKey }) => projectKey), ['project-21', 'project-without-lots']);
+});
+
+test('FIX-TOKEN identity-aware selection traverses the full catalog in 20, 20 and final 2 batches', async () => {
+  const objects = Array.from({ length: 42 }, (_, index) => ({
+    title: `Project ${String(index + 1).padStart(2, '0')}`,
+    slug: `project-${String(index + 1).padStart(2, '0')}`,
+    address: null,
+    feedUnitsCount: 42 - index,
+    developer: {
+      name: `Developer ${index + 1}`,
+      normalizedName: `developer-${index + 1}`,
+      slug: `developer-${index + 1}`,
+    },
+  }));
+  const prisma = {
+    assistantKnowledgeSource: { async findMany() { return []; } },
+    realEstateObject: { async findMany() { return objects; } },
+  };
+  const excludedProjectIdentities = new Set();
+  const batches = [];
+
+  for (let batchIndex = 0; batchIndex < 4; batchIndex += 1) {
+    const batch = await selectDiscoveryProjects(prisma, 20, true, new Set(), {
+      excludedProjectIdentities,
+      checkpointProjectKeys: new Set(),
+    });
+    batches.push(batch);
+    batch.forEach(({ projectKey, developerKey }) => {
+      excludedProjectIdentities.add(`${projectKey}\u0000${developerKey}`);
+    });
+  }
+
+  assert.deepEqual(batches.map(({ length }) => length), [20, 20, 2, 0]);
+  const selectedProjectKeys = batches.flatMap((batch) => batch.map(({ projectKey }) => projectKey));
+  assert.equal(selectedProjectKeys.length, 42);
+  assert.equal(new Set(selectedProjectKeys).size, 42);
 });
 
 test('FIX-TOKEN discovery never uses Terra after parse, transport, HTTP or source-fetch failure', async (context) => {
@@ -2069,6 +2212,10 @@ test('FIX-TOKEN discovery requires both live flag and explicit paid-call confirm
   assert.throws(
     () => parseArguments(['--live', '--limit', '20']),
     /ASSISTANT_SOURCE_DISCOVERY_ARGUMENT_REQUIRED|ASSISTANT_SOURCE_DISCOVERY_BATCH_LIMITS_REQUIRED/u,
+  );
+  assert.throws(
+    () => parseArguments(['--limit', '21', '--max-cost-usd', '0.20000000']),
+    /ASSISTANT_SOURCE_DISCOVERY_ARGUMENT_INVALID:--limit/u,
   );
   assert.equal(parseArguments(['--refresh']).missingOnly, false);
 });

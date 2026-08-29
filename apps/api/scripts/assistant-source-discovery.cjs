@@ -57,8 +57,7 @@ const {
 } = require('../dist/assistant/sources/assistant-source-discovery-identity.js');
 const { PrismaService } = require('../dist/prisma/prisma.service.js');
 
-const maximumPilotDevelopers = 7;
-const maximumPilotProjects = 20;
+const maximumDiscoveryBatchProjects = 20;
 const assistantUsageReportFields = [
   'inputTokens',
   'cachedInputTokens',
@@ -139,12 +138,17 @@ async function runAssistantSourceDiscovery(input = {}) {
         `${projectKey}\u0000${developerKey}`
       )));
     const excludedProjectKeys = new Set(options.excludedProjectKeys);
-    const selectProjects = dependencies.selectProjects ?? selectPilotProjects;
+    const selectionContext = {
+      excludedProjectIdentities: options.missingOnly ? checkpointIdentities : new Set(),
+      checkpointProjectKeys: new Set(),
+    };
+    const selectProjects = dependencies.selectProjects ?? selectDiscoveryProjects;
     const projects = await selectProjects(
       prisma,
       options.limit,
       options.missingOnly,
       excludedProjectKeys,
+      selectionContext,
     );
     if (options.refresh) {
       const selectedProjectKeys = new Set(projects.map(({ projectKey }) => projectKey));
@@ -173,6 +177,11 @@ async function runAssistantSourceDiscovery(input = {}) {
         && !registryProjectIdentities.has(`${projectKey}\u0000${developerKey}`)
     ));
     const checkpointHits = checkpointProjects.length;
+    const reportedCheckpointProjectKeys = [...new Set([
+      ...selectionContext.checkpointProjectKeys,
+      ...checkpointProjects.map(({ projectKey }) => projectKey),
+    ])];
+    const reportedCheckpointHits = reportedCheckpointProjectKeys.length;
     const pendingProjects = projects.filter(({ projectKey, developerKey }) => (
       registryProjectIdentities.has(`${projectKey}\u0000${developerKey}`)
         || !checkpointIdentities.has(`${projectKey}\u0000${developerKey}`)
@@ -189,8 +198,8 @@ async function runAssistantSourceDiscovery(input = {}) {
         runId,
         selectedProjects: projects,
         maximumEstimatedUsd,
-        checkpointHits,
-        checkpointProjectKeys: checkpointProjects.map(({ projectKey }) => projectKey),
+        checkpointHits: reportedCheckpointHits,
+        checkpointProjectKeys: reportedCheckpointProjectKeys,
       });
       if (!input.silent) process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
       return report;
@@ -261,8 +270,8 @@ async function runAssistantSourceDiscovery(input = {}) {
       runId,
       selectedProjects: projects,
       maximumEstimatedUsd,
-      checkpointHits,
-      checkpointProjectKeys: checkpointProjects.map(({ projectKey }) => projectKey),
+      checkpointHits: reportedCheckpointHits,
+      checkpointProjectKeys: reportedCheckpointProjectKeys,
       persistedAttempts,
     });
     if (!input.silent) process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
@@ -283,7 +292,7 @@ function parseArguments(values) {
   const missingOnly = !refresh;
   const limitExplicit = values.includes('--limit');
   const maxCostExplicit = values.includes('--max-cost-usd');
-  const limit = readIntegerArgument(values, '--limit', 1, 1, maximumPilotProjects);
+  const limit = readIntegerArgument(values, '--limit', 1, 1, maximumDiscoveryBatchProjects);
   const concurrency = readIntegerArgument(values, '--concurrency', 1, 1, 4);
   const maxCostUsd = readUsdArgument(values, '--max-cost-usd', limit === 1 ? '0.10000000' : null);
   if (live && limit > 1 && (!limitExplicit || !maxCostExplicit)) {
@@ -358,7 +367,13 @@ function readUsdArgument(values, name, fallback) {
   }
 }
 
-async function selectPilotProjects(prisma, limit, missingOnly, excludedProjectKeys) {
+async function selectDiscoveryProjects(
+  prisma,
+  limit,
+  missingOnly,
+  excludedProjectKeys,
+  selectionContext = { excludedProjectIdentities: new Set(), checkpointProjectKeys: new Set() },
+) {
   const registered = missingOnly
     ? await prisma.assistantKnowledgeSource.findMany({
       where: {
@@ -367,12 +382,7 @@ async function selectPilotProjects(prisma, limit, missingOnly, excludedProjectKe
       select: discoveryRegistrySourceSelect,
     })
     : [];
-  const allRegisteredProjectKeys = new Set(registered.flatMap(({ projectKey }) => (
-    projectKey ? [projectKey] : []
-  )));
   const registrySources = registered.map(mapDiscoveryRegistrySource);
-  const developerKeys = new Set(registered.flatMap(({ developerKey }) => developerKey ? [developerKey] : []));
-  const pilotProjectKeys = new Set(allRegisteredProjectKeys);
   const objects = await prisma.realEstateObject.findMany({
     where: {
       type: 'RESIDENTIAL',
@@ -391,31 +401,27 @@ async function selectPilotProjects(prisma, limit, missingOnly, excludedProjectKe
       },
     },
     orderBy: [{ title: 'asc' }, { id: 'asc' }],
-    take: 500,
   });
   objects.sort((left, right) => (
     (right.feedUnitsCount ?? 0) - (left.feedUnitsCount ?? 0)
       || left.title.localeCompare(right.title, 'ru')
   ));
   const selected = [];
-  let capacityBlocked = false;
   for (const object of objects) {
     if (!object.developer) continue;
     const developerKey = object.developer.slug
       || object.developer.normalizedName
       || object.developer.name;
-    if (excludedProjectKeys.has(object.slug)
-      || findRegisteredProjectSource({
+    const projectIdentity = `${object.slug}\u0000${developerKey}`;
+    if (excludedProjectKeys.has(object.slug)) continue;
+    if (selectionContext.excludedProjectIdentities.has(projectIdentity)) {
+      selectionContext.checkpointProjectKeys.add(object.slug);
+      continue;
+    }
+    if (findRegisteredProjectSource({
         projectKey: object.slug,
         developerKey,
       }, registrySources)) continue;
-    if (!pilotProjectKeys.has(object.slug) && pilotProjectKeys.size >= maximumPilotProjects) {
-      capacityBlocked = true;
-      continue;
-    }
-    if (!developerKeys.has(developerKey) && developerKeys.size >= maximumPilotDevelopers) continue;
-    developerKeys.add(developerKey);
-    pilotProjectKeys.add(object.slug);
     selected.push({
       projectKey: object.slug,
       title: object.title,
@@ -424,10 +430,6 @@ async function selectPilotProjects(prisma, limit, missingOnly, excludedProjectKe
       address: object.address,
     });
     if (selected.length === limit) break;
-  }
-  if (selected.length !== limit) {
-    if (capacityBlocked) throw new Error('ASSISTANT_SOURCE_DISCOVERY_PILOT_PROJECT_LIMIT');
-    throw new Error('ASSISTANT_SOURCE_DISCOVERY_PILOT_SELECTION_INSUFFICIENT');
   }
   return selected;
 }
@@ -637,7 +639,8 @@ function createReport(options, results, applyResults, context) {
     generatedAt: new Date().toISOString(),
     selection: {
       requestedProjects: options.limit,
-      maximumDevelopers: maximumPilotDevelopers,
+      maximumBatchProjects: maximumDiscoveryBatchProjects,
+      selectedProjects: context.selectedProjects.length,
       concurrency: options.concurrency,
       missingOnly: options.missingOnly,
       refresh: options.refresh,
@@ -947,5 +950,5 @@ module.exports = {
   loadDiscoveryRegistrySources,
   parseArguments,
   runAssistantSourceDiscovery,
-  selectPilotProjects,
+  selectDiscoveryProjects,
 };

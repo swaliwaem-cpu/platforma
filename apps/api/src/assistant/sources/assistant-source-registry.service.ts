@@ -16,8 +16,6 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AssistantSourceConnectorRegistry } from './assistant-source-connector.registry';
 import { normalizeAssistantKnowledgeRegistryKey } from './assistant-knowledge-policy';
 
-const maximumPilotProjects = 20;
-const maximumPilotDevelopers = 7;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const officialTypes = new Set<AssistantKnowledgeSourceType>([
   AssistantKnowledgeSourceType.DEVELOPMENT_PAGE,
@@ -77,7 +75,7 @@ export class AssistantSourceRegistryService {
     return {
       items: sources.map((source) => this.serialize(source)),
       connectors: this.connectors.list(),
-      pilot: { maximumProjects: maximumPilotProjects, maximumDevelopers: maximumPilotDevelopers },
+      coverage: { mode: 'ALL_PUBLISHED_RESIDENTIAL_PROJECTS_WITH_DEVELOPER' as const },
     };
   }
 
@@ -95,7 +93,6 @@ export class AssistantSourceRegistryService {
         if (this.matchesCreateInput(existing, input)) return existing;
         throw new ConflictException('ASSISTANT_SOURCE_CANONICAL_URL_EXISTS');
       }
-      await this.assertPilotCapacity(transaction, input.projectKey, input.developerKey);
       return transaction.assistantKnowledgeSource.create({
         data: {
           ...input,
@@ -377,23 +374,6 @@ export class AssistantSourceRegistryService {
       throw new BadRequestException(`${field} is invalid`);
     }
     return value;
-  }
-
-  private async assertPilotCapacity(
-    transaction: Prisma.TransactionClient,
-    projectKey: string | null,
-    developerKey: string | null,
-  ) {
-    const registered = await transaction.assistantKnowledgeSource.findMany({
-      where: { type: { in: [...officialTypes] } },
-      select: { projectKey: true, developerKey: true },
-    });
-    const projectKeys = new Set(registered.flatMap(({ projectKey: key }) => key ? [key] : []));
-    const developerKeys = new Set(registered.flatMap(({ developerKey: key }) => key ? [key] : []));
-    if (projectKey) projectKeys.add(projectKey);
-    if (developerKey) developerKeys.add(developerKey);
-    if (projectKeys.size > maximumPilotProjects) throw new ConflictException('ASSISTANT_SOURCE_PILOT_PROJECT_LIMIT');
-    if (developerKeys.size > maximumPilotDevelopers) throw new ConflictException('ASSISTANT_SOURCE_PILOT_DEVELOPER_LIMIT');
   }
 
   private matchesCreateInput(source: SourceHealthRecord, input: ReturnType<AssistantSourceRegistryService['parseCreateInput']>) {

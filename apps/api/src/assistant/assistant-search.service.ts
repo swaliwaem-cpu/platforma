@@ -17,6 +17,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { findCatalogSearchObjectIds } from '../objects/object-search';
 import {
   createAssistantComparisonTargetVariants,
+  type AssistantRequiredFact,
   type AssistantComparisonTargetMode,
   type AssistantSearchFilters,
   type AssistantStructuredIntent,
@@ -123,6 +124,7 @@ type SearchOptions = {
   comparisonTargets?: string[];
   comparisonTargetModes?: AssistantComparisonTargetMode[];
   softPreferences?: AssistantSearchFilters;
+  requiredFacts?: AssistantRequiredFact[];
   geo?: AssistantGeoSearchContext | null;
 };
 
@@ -144,6 +146,7 @@ export class AssistantSearchService {
     geoInput: AssistantGeoSearchContext | null = null,
   ): Promise<{
     exact: AssistantSearchEvidence[];
+    totalExactResults: number;
     alternatives: AssistantSearchEvidence[];
     geo: AssistantGeoSearchResult | null;
   }> {
@@ -160,10 +163,18 @@ export class AssistantSearchService {
       comparisonTargets: intent.comparisonTargets,
       comparisonTargetModes: intent.comparisonTargetModes,
       softPreferences: intent.softPreferences,
+      requiredFacts: intent.requiredFacts,
       geo,
     };
-    const exact = await this.findEvidence(intent.hardFilters, context, searchOptions);
-    if (exact.length > 0) return { exact, alternatives: [], geo: geoResult };
+    const exactSearch = await this.findEvidence(intent.hardFilters, context, searchOptions);
+    if (exactSearch.evidence.length > 0) {
+      return {
+        exact: exactSearch.evidence,
+        totalExactResults: exactSearch.total,
+        alternatives: [],
+        geo: geoResult,
+      };
+    }
 
     const relaxationRequests: Array<Promise<AssistantSearchEvidence[]>> = [];
     if (intent.hardFilters.district) {
@@ -215,7 +226,12 @@ export class AssistantSearchService {
         if (!alternativesByUnitId.has(candidate.unitId)) alternativesByUnitId.set(candidate.unitId, candidate);
       }
     }
-    return { exact: [], alternatives: [...alternativesByUnitId.values()], geo: geoResult };
+    return {
+      exact: [],
+      totalExactResults: 0,
+      alternatives: [...alternativesByUnitId.values()],
+      geo: geoResult,
+    };
   }
 
   private async createGeoResult(geo: AssistantGeoSearchContext): Promise<AssistantGeoSearchResult> {
@@ -275,7 +291,7 @@ export class AssistantSearchService {
     createDeviation: (candidate: AssistantSearchEvidence) => AssistantAlternativeDeviation | null,
     options: SearchOptions = {},
   ) {
-    const candidates = await this.findEvidence(filters, context, options);
+    const { evidence: candidates } = await this.findEvidence(filters, context, options, false);
     return candidates.flatMap((candidate) => {
       const deviation = createDeviation(candidate);
       return deviation ? [{ ...candidate, deviations: [deviation] }] : [];
@@ -286,21 +302,31 @@ export class AssistantSearchService {
     filters: AssistantSearchFilters,
     context: AssistantPageContext | null,
     options: SearchOptions = {},
+    includeTotal = true,
   ) {
     return this.prisma.$transaction(async (transaction) => {
-      const comparisonGroups = options.comparisonTargets?.length === 2
-        ? options.comparisonTargets.map((target, index) => ({
+      const resolvedOptions = await this.resolveComparisonOptions(
+        transaction,
+        filters,
+        context,
+        options,
+      );
+      const comparisonGroups = resolvedOptions.comparisonTargets?.length === 2
+        ? resolvedOptions.comparisonTargets.map((target, index) => ({
             targets: [target],
-            modes: [options.comparisonTargetModes?.[index] ?? 'EXACT'] as AssistantComparisonTargetMode[],
+            modes: [resolvedOptions.comparisonTargetModes?.[index] ?? 'EXACT'] as AssistantComparisonTargetMode[],
           }))
         : [{
-            targets: options.comparisonTargets,
-            modes: options.comparisonTargetModes,
+            targets: resolvedOptions.comparisonTargets,
+            modes: resolvedOptions.comparisonTargetModes,
           }];
       const groupLimit = comparisonGroups.length === 2 ? Math.ceil(candidateLimit / 2) : candidateLimit;
       const rowIds: string[] = [];
       const rowDistances = new Map<string, number | null>();
       const seenRowIds = new Set<string>();
+      const total = includeTotal
+        ? await this.countCandidateRows(transaction, filters, context, resolvedOptions)
+        : 0;
 
       for (const comparisonGroup of comparisonGroups) {
         const rows = await this.findCandidateRows(
@@ -308,7 +334,7 @@ export class AssistantSearchService {
           filters,
           context,
           {
-            ...options,
+            ...resolvedOptions,
             comparisonTargets: comparisonGroup.targets,
             comparisonTargetModes: comparisonGroup.modes,
           },
@@ -321,19 +347,62 @@ export class AssistantSearchService {
           rowDistances.set(id, distanceMeters);
         }
       }
-      if (rowIds.length === 0) return [];
+      if (rowIds.length === 0) return { evidence: [], total };
 
       const records = await transaction.feedUnit.findMany({
         where: { id: { in: rowIds } },
         select: candidateSelect,
       });
       const recordsById = new Map(records.map((record) => [record.id, record]));
-      return rowIds.flatMap((id) => {
+      const evidence = rowIds.flatMap((id) => {
         const record = recordsById.get(id);
-        const evidence = record ? this.toEvidence(record) : null;
-        return evidence ? [{ ...evidence, distanceMeters: rowDistances.get(id) ?? null }] : [];
+        const candidate = record ? this.toEvidence(record, filters) : null;
+        return candidate ? [{ ...candidate, distanceMeters: rowDistances.get(id) ?? null }] : [];
       });
+      return { evidence, total };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+  }
+
+  private async resolveComparisonOptions(
+    transaction: Prisma.TransactionClient,
+    filters: AssistantSearchFilters,
+    context: AssistantPageContext | null,
+    options: SearchOptions,
+  ): Promise<SearchOptions> {
+    if (options.comparisonTargets?.length !== 2) return options;
+    const resolvedModes: AssistantComparisonTargetMode[] = [];
+    for (const [index, target] of options.comparisonTargets.entries()) {
+      const mode = options.comparisonTargetModes?.[index] ?? 'EXACT';
+      if (mode !== 'INSTRUMENTAL') {
+        resolvedModes.push('EXACT');
+        continue;
+      }
+      const rawMatchCount = await this.countCandidateRows(transaction, filters, context, {
+        ...options,
+        comparisonTargets: [target],
+        comparisonTargetModes: ['EXACT'],
+      });
+      resolvedModes.push(rawMatchCount > 0 ? 'EXACT' : 'INSTRUMENTAL');
+    }
+    return { ...options, comparisonTargetModes: resolvedModes };
+  }
+
+  private async countCandidateRows(
+    transaction: Prisma.TransactionClient,
+    filters: AssistantSearchFilters,
+    context: AssistantPageContext | null,
+    options: SearchOptions,
+  ) {
+    const conditions = this.createSqlConditions(filters, context, options);
+    const rows = await transaction.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
+      SELECT COUNT(DISTINCT fu.id)::bigint AS count
+      FROM feed_units fu
+      JOIN feed_sources fs ON fs.id = fu.source_id
+      JOIN real_estate_objects o ON o.id = fu.object_id
+      LEFT JOIN developers d ON d.id = o.developer_id
+      WHERE ${Prisma.join(conditions, ' AND ')}
+    `);
+    return toSafeCount(rows[0]?.count);
   }
 
   private async findCandidateRows(
@@ -424,11 +493,13 @@ export class AssistantSearchService {
     const conditions: Prisma.Sql[] = [
       Prisma.sql`fu.status = 'available'::feed_unit_status`,
       Prisma.sql`fu.archived_at IS NULL`,
-      Prisma.sql`${price} IS NOT NULL`,
+      Prisma.sql`${price} > 0`,
       Prisma.sql`fs.deleted_at IS NULL`,
       Prisma.sql`fs.is_active = TRUE`,
       Prisma.sql`o.status = 'published'::object_status`,
       Prisma.sql`o.deleted_at IS NULL`,
+      Prisma.sql`btrim(o.title) <> ''`,
+      Prisma.sql`btrim(o.slug) <> ''`,
       Prisma.sql`fu.type = ${filters.objectType === 'RESIDENTIAL' ? 'residential' : 'commercial'}::feed_unit_type`,
       Prisma.sql`o.type = ${filters.objectType === 'RESIDENTIAL' ? 'residential' : 'commercial'}::real_estate_object_type`,
     ];
@@ -512,8 +583,68 @@ export class AssistantSearchService {
         )`));
       conditions.push(Prisma.sql`(${Prisma.join(targetConditions, ' OR ')})`);
     }
+    this.applyRequiredFactConditions(conditions, options.requiredFacts, completionYear);
     this.applyContextConditions(conditions, context);
     return conditions;
+  }
+
+  private applyRequiredFactConditions(
+    conditions: Prisma.Sql[],
+    requiredFacts: AssistantRequiredFact[] | undefined,
+    completionYear: Prisma.Sql,
+  ) {
+    if (!requiredFacts) return;
+    const facts = new Set(requiredFacts);
+    if (facts.has('ROOMS')) conditions.push(Prisma.sql`fu.rooms IS NOT NULL`);
+    if (facts.has('LOCATION')) conditions.push(Prisma.sql`(
+      EXISTS (
+        SELECT 1
+        FROM locations pl
+        WHERE pl.id = o.primary_location_id
+          AND pl.type = 'district'::location_type
+          AND btrim(pl.name) <> ''
+      ) OR EXISTS (
+        SELECT 1
+        FROM object_locations ol
+        JOIN locations l ON l.id = ol.location_id
+        WHERE ol.object_id = o.id
+          AND l.type = 'district'::location_type
+          AND btrim(l.name) <> ''
+      ) OR EXISTS (
+        SELECT 1
+        FROM object_metro_stations oms
+        JOIN metro_stations ms ON ms.id = oms.metro_station_id
+        WHERE oms.object_id = o.id
+          AND btrim(ms.name) <> ''
+      )
+    )`);
+    if (facts.has('DEVELOPER')) conditions.push(Prisma.sql`btrim(coalesce(d.name, '')) <> ''`);
+    if (facts.has('COMPLETION')) conditions.push(Prisma.sql`${completionYear} IS NOT NULL`);
+    if (facts.has('AREA')) conditions.push(Prisma.sql`fu.area IS NOT NULL`);
+    if (facts.has('FLOOR')) conditions.push(Prisma.sql`fu.floor IS NOT NULL`);
+    if (facts.has('PDF')) conditions.push(Prisma.sql`(
+      EXISTS (
+        SELECT 1
+        FROM object_files ofile
+        JOIN files object_pdf ON object_pdf.id = ofile.file_id
+        WHERE ofile.object_id = o.id
+          AND ofile.type IN ('presentation'::object_file_type, 'floor_plan'::object_file_type)
+          AND (
+            lower(coalesce(object_pdf.mime_type, '')) = 'application/pdf'
+            OR lower(coalesce(object_pdf.original_name, '')) LIKE '%.pdf'
+          )
+      ) OR EXISTS (
+        SELECT 1
+        FROM feed_unit_media fum
+        JOIN feed_media_assets fma ON fma.id = fum.media_asset_id
+        JOIN files unit_pdf ON unit_pdf.id = fma.file_id
+        WHERE fum.unit_id = fu.id
+          AND (
+            lower(coalesce(fma.content_type, unit_pdf.mime_type, '')) = 'application/pdf'
+            OR lower(coalesce(unit_pdf.original_name, '')) LIKE '%.pdf'
+          )
+      )
+    )`);
   }
 
   private async resolveContextOptions(context: AssistantPageContext | null): Promise<SearchOptions> {
@@ -613,13 +744,23 @@ export class AssistantSearchService {
     if (krtName) conditions.push(Prisma.sql`lower(o.krt_name) = lower(${krtName.slice(0, 240)})`);
   }
 
-  private toEvidence(record: CandidateRecord): AssistantSearchEvidence | null {
+  private toEvidence(
+    record: CandidateRecord,
+    filters: AssistantSearchFilters,
+  ): AssistantSearchEvidence | null {
     if (record.status !== FeedUnitStatus.AVAILABLE) return null;
     const priceRub = toFiniteNumber(record.effectivePrice ?? record.discountPrice ?? record.price);
     if (priceRub === null || priceRub <= 0) return null;
-    const district = record.object.primaryLocation?.type === LocationType.DISTRICT
-      ? record.object.primaryLocation.name
-      : record.object.locations.find(({ location }) => location.type === LocationType.DISTRICT)?.location.name ?? null;
+    const districts = [
+      ...(record.object.primaryLocation?.type === LocationType.DISTRICT
+        ? [record.object.primaryLocation.name]
+        : []),
+      ...record.object.locations.flatMap(({ location }) =>
+        location.type === LocationType.DISTRICT ? [location.name] : []),
+    ].map((name) => name.trim()).filter(Boolean);
+    const district = filters.district
+      ? districts.find((name) => containsNormalized(name, filters.district!)) ?? districts[0] ?? null
+      : districts[0] ?? null;
     const updatedAt = record.updatedAt;
 
     return {
@@ -635,7 +776,9 @@ export class AssistantSearchService {
       updatedAt: updatedAt.toISOString(),
       rooms: record.rooms,
       district,
-      metros: record.object.metroStations.map(({ metroStation }) => metroStation.name),
+      metros: record.object.metroStations
+        .map(({ metroStation }) => metroStation.name.trim())
+        .filter(Boolean),
       developer: record.object.developer?.name ?? null,
       completionYear: record.completionYear ?? record.object.feedCompletionYear ?? record.object.completionYear,
       completionQuarter: record.completionQuarter
@@ -651,6 +794,13 @@ export class AssistantSearchService {
       deviations: [],
     };
   }
+}
+
+function toSafeCount(value: bigint | undefined) {
+  if (value === undefined || value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error('ASSISTANT_SEARCH_COUNT_INVALID');
+  }
+  return Number(value);
 }
 
 function createNormalizedContains(field: Prisma.Sql, value: string) {

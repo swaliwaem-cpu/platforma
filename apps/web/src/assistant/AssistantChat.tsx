@@ -1,4 +1,5 @@
 import type {
+  AssistantAnswer,
   AssistantConversation,
   AssistantConversationSummary,
   AssistantFeedback,
@@ -30,12 +31,15 @@ import {
 import {
   FormEvent,
   PointerEvent as ReactPointerEvent,
+  type Ref,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from 'react';
+
+import { Button } from '@/components/ui/button';
 
 import {
   createAssistantConversation,
@@ -879,31 +883,7 @@ function AssistantMessageContent({ message }: { message: AssistantMessage }) {
     <>
       <p>{message.content}</p>
       {message.answer?.kind === 'SEARCH_RESULTS' ? (
-        <div className="assistant-results">
-          {message.answer.geo ? <AssistantGeoResultMap geo={message.answer.geo} /> : null}
-          <section aria-labelledby={`assistant-exact-${message.id}`}>
-            <h3 id={`assistant-exact-${message.id}`}>Лучшие по этим критериям</h3>
-            {message.answer.exactResults.length > 0 ? (
-              <div className="assistant-result-list">
-                {message.answer.exactResults.map((result) => (
-                  <AssistantResultCard key={result.unitId} result={result} />
-                ))}
-              </div>
-            ) : (
-              <p className="assistant-results-empty">Точных совпадений нет.</p>
-            )}
-          </section>
-          {message.answer.alternatives.length > 0 ? (
-            <section aria-labelledby={`assistant-alternatives-${message.id}`}>
-              <h3 id={`assistant-alternatives-${message.id}`}>Альтернативы</h3>
-              <div className="assistant-result-list">
-                {message.answer.alternatives.map((result) => (
-                  <AssistantResultCard key={result.unitId} result={result} />
-                ))}
-              </div>
-            </section>
-          ) : null}
-        </div>
+        <AssistantSearchResults answer={message.answer} messageId={message.id} />
       ) : null}
       {message.answer?.kind === 'KNOWLEDGE_RESULTS' ? (
         <div className="assistant-results">
@@ -930,6 +910,77 @@ function AssistantMessageContent({ message }: { message: AssistantMessage }) {
         </div>
       ) : null}
     </>
+  );
+}
+
+function AssistantSearchResults({
+  answer,
+  messageId,
+}: {
+  answer: Extract<AssistantAnswer, { kind: 'SEARCH_RESULTS' }>;
+  messageId: string;
+}) {
+  const [showAdditional, setShowAdditional] = useState(false);
+  const firstAdditionalResultRef = useRef<HTMLAnchorElement>(null);
+  const additionalExactResults = answer.additionalExactResults ?? [];
+  const visibleExactResults = showAdditional
+    ? [...answer.exactResults, ...additionalExactResults]
+    : answer.exactResults;
+  const exactResultsId = `assistant-exact-results-${messageId}`;
+
+  useEffect(() => {
+    if (showAdditional) firstAdditionalResultRef.current?.focus();
+  }, [showAdditional]);
+
+  return (
+    <div className="assistant-results">
+      {answer.totalExactResults !== undefined ? (
+        <p className="assistant-results-total">
+          Всего найдено: {answer.totalExactResults.toLocaleString('ru-RU')}
+        </p>
+      ) : null}
+      <section aria-labelledby={`assistant-exact-${messageId}`}>
+        <h3 id={`assistant-exact-${messageId}`}>Лучшие по этим критериям</h3>
+        {visibleExactResults.length > 0 ? (
+          <div className="assistant-result-list" id={exactResultsId}>
+            {visibleExactResults.map((result, index) => (
+              <AssistantResultCard
+                key={result.unitId}
+                result={result}
+                titleRef={index === answer.exactResults.length ? firstAdditionalResultRef : undefined}
+              />
+            ))}
+          </div>
+        ) : (
+          <p className="assistant-results-empty">Точных совпадений нет.</p>
+        )}
+        {additionalExactResults.length > 0 && !showAdditional ? (
+          <Button
+            aria-controls={exactResultsId}
+            className="min-h-11 w-full justify-start"
+            type="button"
+            variant="ghost"
+            onClick={() => setShowAdditional(true)}
+          >
+            Показать далее
+          </Button>
+        ) : null}
+        <span aria-live="polite" className="sr-only" role="status">
+          {showAdditional ? `Показано ${visibleExactResults.length} вариантов` : ''}
+        </span>
+      </section>
+      {answer.geo ? <AssistantGeoResultMap geo={answer.geo} /> : null}
+      {answer.alternatives.length > 0 ? (
+        <section aria-labelledby={`assistant-alternatives-${messageId}`}>
+          <h3 id={`assistant-alternatives-${messageId}`}>Альтернативы</h3>
+          <div className="assistant-result-list">
+            {answer.alternatives.map((result) => (
+              <AssistantResultCard key={result.unitId} result={result} />
+            ))}
+          </div>
+        </section>
+      ) : null}
+    </div>
   );
 }
 
@@ -1098,7 +1149,13 @@ function AssistantExternalLot({ lot }: { lot: AssistantExternalLotCard }) {
   );
 }
 
-function AssistantResultCard({ result }: { result: AssistantSearchResultCard }) {
+function AssistantResultCard({
+  result,
+  titleRef,
+}: {
+  result: AssistantSearchResultCard;
+  titleRef?: Ref<HTMLAnchorElement>;
+}) {
   return (
     <section className="assistant-result-card" aria-label={`${result.title}, ${formatRub(result.priceRub)}`}>
       {result.deviations.length > 0 ? (
@@ -1108,7 +1165,7 @@ function AssistantResultCard({ result }: { result: AssistantSearchResultCard }) 
           ))}
         </div>
       ) : null}
-      <a className="assistant-result-title" href={result.href}>{result.title}</a>
+      <a className="assistant-result-title" href={result.href} ref={titleRef}>{result.title}</a>
       <p className="assistant-result-subtitle">{result.subtitle}</p>
       <strong className="assistant-result-price">{formatRub(result.priceRub)}</strong>
       {result.distanceMeters !== undefined ? (

@@ -537,10 +537,37 @@ function observeAssistantEvalRun(
   const exactResults = answerKind === 'SEARCH_RESULTS'
     ? readPersistedAnswerArray(record.answer.exactResults)
     : [];
+  const hasTotalExactResults = answerKind === 'SEARCH_RESULTS'
+    && record.answer.totalExactResults !== undefined;
+  const hasAdditionalExactResults = answerKind === 'SEARCH_RESULTS'
+    && record.answer.additionalExactResults !== undefined;
+  if (hasTotalExactResults !== hasAdditionalExactResults) {
+    throw new Error('ASSISTANT_EVAL_PERSISTED_ANSWER_INVALID');
+  }
+  const additionalExactResults = hasAdditionalExactResults
+    ? readPersistedAnswerArray(record.answer.additionalExactResults)
+    : [];
   const alternatives = answerKind === 'SEARCH_RESULTS'
     ? readPersistedAnswerArray(record.answer.alternatives)
     : [];
-  const resultCards = [...exactResults, ...alternatives];
+  if (hasTotalExactResults) {
+    if (!isNonNegativeInteger(record.answer.totalExactResults)) {
+      throw new Error('ASSISTANT_EVAL_PERSISTED_ANSWER_INVALID');
+    }
+    const totalExactResults = record.answer.totalExactResults as number;
+    const resultIds = [...exactResults, ...additionalExactResults, ...alternatives]
+      .map((item) => readString(item.unitId));
+    if (exactResults.length !== Math.min(totalExactResults, 3)
+      || additionalExactResults.length !== Math.min(5, Math.max(totalExactResults - 3, 0))
+      || ((exactResults.length > 0 || additionalExactResults.length > 0) && alternatives.length > 0)
+      || (alternatives.length > 0 && totalExactResults !== 0)
+      || resultIds.some((id) => id === null)
+      || new Set(resultIds).size !== resultIds.length) {
+      throw new Error('ASSISTANT_EVAL_PERSISTED_ANSWER_INVALID');
+    }
+  }
+  const allExactResults = [...exactResults, ...additionalExactResults];
+  const resultCards = [...allExactResults, ...alternatives];
   const facts = answerKind === 'KNOWLEDGE_RESULTS'
     ? readPersistedAnswerArray(record.answer.facts)
     : [];
@@ -615,14 +642,15 @@ function observeAssistantEvalRun(
       geo,
       record.geoContext,
       expected.expectedGeo,
-      resultCards,
+      [...allExactResults, ...alternatives],
+      [...exactResults, ...alternatives],
       markers,
       evidenceById,
     )
   );
   const nonGeoHardFiltersSatisfied = (!expected.hardFiltersRequired && !expected.expectedIntent)
     || persistedIntentAndResultsSatisfyExpectation(
-      exactResults,
+      allExactResults,
       alternatives,
       evidenceById,
       record.intent,
@@ -715,7 +743,8 @@ function persistedGeoSatisfiesExpectation(
   geo: Record<string, unknown> | null,
   geoContextValue: unknown,
   expected: NonNullable<AssistantEvalExpectation['expectedGeo']>,
-  results: Record<string, unknown>[],
+  allResults: Record<string, unknown>[],
+  markerResults: Record<string, unknown>[],
   markers: Record<string, unknown>[],
   evidenceById: Map<string, Record<string, unknown>>,
 ) {
@@ -734,16 +763,16 @@ function persistedGeoSatisfiesExpectation(
       contextGeo.point.latitude,
       contextGeo.point.longitude,
     ) > 5
-    || results.length === 0
-    || markers.length !== results.length) return false;
-  const resultIds = results.map((result) => readString(result.unitId));
+    || allResults.length === 0
+    || markers.length !== markerResults.length) return false;
+  const markerResultIds = markerResults.map((result) => readString(result.unitId));
   const markerIds = markers.map((marker) => readString(marker.unitId));
-  if (resultIds.some((id) => id === null)
+  if (markerResultIds.some((id) => id === null)
     || markerIds.some((id) => id === null)
-    || !sameStringSet(resultIds as string[], markerIds as string[])) return false;
+    || !sameStringSet(markerResultIds as string[], markerIds as string[])) return false;
   const anchorLatitude = answerGeo.point.latitude;
   const anchorLongitude = answerGeo.point.longitude;
-  return results.every((result) => {
+  return allResults.every((result) => {
     const evidence = evidenceById.get(readString(result.unitId) ?? '');
     if (!evidence) return false;
     const actualDistance = assistantGeoDistanceMeters(
