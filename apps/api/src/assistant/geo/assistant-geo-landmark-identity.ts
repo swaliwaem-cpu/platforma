@@ -140,5 +140,5 @@ export function normalizeAssistantGeoIdentityText(value: string) {
 }
 
 function normalizeDisplayText(value: string) {
-  return value.normalize('NFKC').replace(/\u00a0/gu, ' ').replace(/\s+/gu, ' ').trim();
+  return value.normalize('NFC').replace(/\u00a0/gu, ' ').replace(/\s+/gu, ' ').trim();
 }

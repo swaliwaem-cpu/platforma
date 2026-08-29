@@ -105,12 +105,20 @@ export type AssistantGeoAreaSearchContext =
       source: 'LANDMARK';
     };
 
-export type AssistantGeoSearchContext =
+export type AssistantGeoConstraint =
   | AssistantGeoPointSearchContext
   | AssistantGeoLineSearchContext
   | AssistantGeoAreaSearchContext;
 
-export type AssistantGeoBrowserInput =
+export type AssistantGeoConstraintSet = {
+  operator: 'ALL';
+  constraints: AssistantGeoConstraint[];
+};
+
+export type AssistantGeoSearchContext = AssistantGeoConstraint;
+export type AssistantGeoSearchSelection = AssistantGeoSearchContext | AssistantGeoConstraintSet;
+
+export type AssistantGeoBrowserConstraint =
   | {
       referenceType: 'LANDMARK';
       landmarkId: string;
@@ -123,6 +131,11 @@ export type AssistantGeoBrowserInput =
       mode: 'NEAR';
       distanceMeters?: number | null;
     };
+
+export type AssistantGeoBrowserInput = AssistantGeoBrowserConstraint | {
+  operator: 'ALL';
+  constraints: AssistantGeoBrowserConstraint[];
+};
 
 export type AssistantGeoCandidate = {
   id: string;
@@ -138,7 +151,7 @@ export type AssistantGeoCandidate = {
   source: 'ALIAS' | 'PLACE' | 'KNOWLEDGE';
 };
 
-export type AssistantGeoResolution =
+export type AssistantGeoSingleResolution =
   | { status: 'NOT_APPLICABLE' }
   | {
       status: 'RESOLVED' | 'AMBIGUOUS';
@@ -154,6 +167,17 @@ export type AssistantGeoResolution =
       radiusMeters?: number;
       actions: ['MANUAL', 'REFINE'];
     };
+
+export type AssistantGeoResolutionSlot = {
+  slotId: string;
+  sourceText: string;
+} & Exclude<AssistantGeoSingleResolution, { status: 'NOT_APPLICABLE' }>;
+
+export type AssistantGeoResolution = AssistantGeoSingleResolution | {
+  status: 'COMPOSITE';
+  operator: 'ALL';
+  constraints: AssistantGeoResolutionSlot[];
+};
 
 export type AssistantGeoResolveInput = {
   content: string;
@@ -183,11 +207,22 @@ export type AssistantGeoResultMarker = {
   kind: 'PRIMARY' | 'ALTERNATIVE';
 };
 
-export type AssistantGeoSearchView = AssistantGeoSearchContext & {
+export type AssistantGeoConstraintView = AssistantGeoConstraint & {
   referenceGeometry: AssistantGeoReferenceGeometry;
   searchArea: AssistantGeoAreaGeometry;
+};
+
+export type AssistantGeoSearchView = AssistantGeoConstraintView & {
   markers: AssistantGeoResultMarker[];
 };
+
+export type AssistantGeoCompositeSearchView = {
+  operator: 'ALL';
+  constraints: AssistantGeoConstraintView[];
+  markers: AssistantGeoResultMarker[];
+};
+
+export type AssistantGeoView = AssistantGeoSearchView | AssistantGeoCompositeSearchView;
 
 export type AssistantSearchResultCard = {
   unitId: string;
@@ -227,7 +262,7 @@ type AssistantSearchResultsBase = {
   kind: 'SEARCH_RESULTS';
   exactResults: AssistantSearchResultCard[];
   alternatives: AssistantSearchResultCard[];
-  geo?: AssistantGeoSearchView;
+  geo?: AssistantGeoView;
 };
 
 type AssistantLegacySearchResultsAnswer = AssistantSearchResultsBase & {
@@ -257,7 +292,7 @@ export type AssistantMessage = {
   role: AssistantMessageRole;
   content: string;
   context: AssistantPageContext | null;
-  geo: AssistantGeoSearchContext | null;
+  geo: AssistantGeoSearchSelection | null;
   answer: AssistantAnswer | null;
   feedback: AssistantFeedback | null;
   createdAt: string;

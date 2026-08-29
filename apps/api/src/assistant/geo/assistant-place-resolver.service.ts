@@ -10,6 +10,8 @@ import type {
   AssistantGeoCandidate,
   AssistantGeoKind,
   AssistantGeoResolution,
+  AssistantGeoResolutionSlot,
+  AssistantGeoSingleResolution,
 } from '@platforma/shared' with { 'resolution-mode': 'import' };
 
 import { PrismaService } from '../../prisma/prisma.service';
@@ -29,7 +31,6 @@ import {
   resolveAssistantGeoLandmarkIdentity,
 } from './assistant-geo-landmark-identity';
 import { AssistantGeoUsageLedgerService } from './assistant-geo-usage-ledger.service';
-import { parseAssistantGeoDistanceClause } from './assistant-geo-query';
 import {
   AssistantGeoProviderError,
   type AssistantGeoProviderCandidate,
@@ -41,6 +42,10 @@ import {
 } from './assistant-overpass-collector';
 
 type ParsedResolveInput = {
+  slotId: string;
+  sourceText: string;
+  category: AssistantGeoCategory | null;
+  resolutionPolicy: 'LOOKUP' | 'REFINE_REQUIRED';
   placeQuery: string;
   normalizedQuery: string;
   userAlias: string;
@@ -59,9 +64,25 @@ type ParsedResolveInput = {
   viewbox: [number, number, number, number] | null;
 };
 
+type AssistantGeoCategory = 'WATER' | 'RIVER' | 'PARK' | 'BRIDGE' | 'SCHOOL';
+
+export type ParsedResolveInputs = {
+  operator: 'ALL';
+  constraints: ParsedResolveInput[];
+};
+
 type ParsedDistrictFallback = {
   district: string;
   input: ParsedResolveInput;
+};
+
+type CompositeProviderOperation = {
+  operationId: string | null;
+  normalizedQuery: string;
+  startedAt: number;
+  exhausted: boolean;
+  errorCode: string | null;
+  providerStatuses: Array<Exclude<AssistantGeoSingleResolution, { status: 'NOT_APPLICABLE' }>['status']>;
 };
 
 type CachedLandmark = {
@@ -88,15 +109,79 @@ export class AssistantPlaceResolverService {
   ) {}
 
   async resolve(body: unknown, actorUserId: string | null = null): Promise<AssistantGeoResolution> {
+    const parsed = parseResolveInputs(body);
+    if (parsed.constraints.length > 1) {
+      const startedAt = Date.now();
+      const providerOperation = this.provider.getProviderName() === 'locationiq' && this.usageLedger
+        ? {
+            operationId: null,
+            normalizedQuery: createCompositeOperationQuery(parsed.constraints),
+            startedAt,
+            exhausted: false,
+            errorCode: null,
+            providerStatuses: [],
+          }
+        : undefined;
+      let constraints: AssistantGeoResolutionSlot[] = [];
+      try {
+        for (const input of parsed.constraints) {
+          const slotStartedAt = Date.now();
+          const result = input.resolutionPolicy === 'REFINE_REQUIRED'
+            ? notFound(input)
+            : await this.resolveInput(input, actorUserId, slotStartedAt, providerOperation);
+          constraints.push({
+            ...result,
+            slotId: input.slotId,
+            sourceText: input.sourceText,
+          });
+        }
+      } catch (error) {
+        if (providerOperation?.operationId) {
+          await this.finalizeProviderOperation(
+            providerOperation.operationId,
+            'UNAVAILABLE',
+            providerOperation.startedAt,
+            'ASSISTANT_GEO_RESOLUTION_INTERNAL_ERROR',
+          );
+        }
+        throw error;
+      }
+      if (providerOperation?.operationId) {
+        const finalized = await this.finalizeProviderOperation(
+          providerOperation.operationId,
+          summarizeCompositeOperationStatus(providerOperation.providerStatuses),
+          providerOperation.startedAt,
+          providerOperation.errorCode,
+        );
+        if (!finalized) {
+          constraints = parsed.constraints.map((input) => ({
+            ...(input.resolutionPolicy === 'REFINE_REQUIRED' ? notFound(input) : unavailable(input)),
+            slotId: input.slotId,
+            sourceText: input.sourceText,
+          }));
+        }
+      }
+      return { status: 'COMPOSITE', operator: 'ALL', constraints };
+    }
+
     const startedAt = Date.now();
-    const directInput = parseResolveInput(body);
+    const directInput = parsed.constraints[0] ?? null;
     const districtFallback = directInput ? null : parseDistrictFallbackInput(body);
     const input = directInput ?? districtFallback?.input;
     if (!input) return { status: 'NOT_APPLICABLE' };
     if (districtFallback && await this.findAdministrativeDistrict(districtFallback.district)) {
       return { status: 'NOT_APPLICABLE' };
     }
+    if (input.resolutionPolicy === 'REFINE_REQUIRED') return notFound(input);
+    return this.resolveInput(input, actorUserId, startedAt);
+  }
 
+  private async resolveInput(
+    input: ParsedResolveInput,
+    actorUserId: string | null,
+    startedAt: number,
+    compositeOperation?: CompositeProviderOperation,
+  ): Promise<Exclude<AssistantGeoSingleResolution, { status: 'NOT_APPLICABLE' }>> {
     // Direct unit-test callers from T05 do not inject the new repository. Production always does.
     if (!this.landmarks) return this.resolvePointCompatibility(input, actorUserId, startedAt);
 
@@ -135,10 +220,24 @@ export class AssistantPlaceResolverService {
     }
 
     const usageLedger = this.provider.getProviderName() === 'locationiq' ? this.usageLedger : undefined;
+    if (usageLedger && compositeOperation?.exhausted) return unavailable(input);
+    const ownsOperation = Boolean(usageLedger && !compositeOperation);
     const operationId = usageLedger
-      ? await this.beginProviderOperation(input, actorUserId)
+      ? compositeOperation
+        ? compositeOperation.operationId ??= await this.beginProviderOperation(
+            input,
+            actorUserId,
+            compositeOperation.normalizedQuery,
+          )
+        : await this.beginProviderOperation(input, actorUserId)
       : null;
-    if (usageLedger && !operationId) return unavailable(input);
+    if (usageLedger && !operationId) {
+      if (compositeOperation) {
+        compositeOperation.exhausted = true;
+        compositeOperation.errorCode = 'ASSISTANT_GEO_OPERATION_CREATE_FAILED';
+      }
+      return unavailable(input);
+    }
     try {
       const providerTask = () => this.resolveFromProviders(input);
       const providerResult = operationId && usageLedger
@@ -149,7 +248,8 @@ export class AssistantPlaceResolverService {
       const result = compatible.length > 0
         ? resolved(input, compatible.map((landmark) => toCandidate(input, landmark)))
         : notFound(input);
-      if (operationId) {
+      compositeOperation?.providerStatuses.push(result.status);
+      if (operationId && ownsOperation) {
         const finalized = await this.finalizeProviderOperation(
           operationId,
           result.status,
@@ -157,7 +257,7 @@ export class AssistantPlaceResolverService {
           null,
         );
         if (!finalized) return unavailable(input);
-      } else {
+      } else if (!operationId) {
         await this.recordOperation(
           input,
           actorUserId,
@@ -172,7 +272,7 @@ export class AssistantPlaceResolverService {
       return result;
     } catch (error) {
       if (!(error instanceof AssistantGeoProviderError)) {
-        if (operationId) {
+        if (operationId && ownsOperation) {
           await this.finalizeProviderOperation(
             operationId,
             'UNAVAILABLE',
@@ -184,9 +284,14 @@ export class AssistantPlaceResolverService {
       }
       const result = unavailable(input);
       const errorProvider = error.code.startsWith('ASSISTANT_OVERPASS') ? 'overpass' : this.provider.getProviderName();
-      if (operationId) {
+      if (compositeOperation) {
+        compositeOperation.providerStatuses.push(result.status);
+        compositeOperation.exhausted ||= shouldExhaustCompositeProviderOperation(error.code);
+        compositeOperation.errorCode ??= error.code;
+      }
+      if (operationId && ownsOperation) {
         await this.finalizeProviderOperation(operationId, result.status, startedAt, error.code);
-      } else {
+      } else if (!operationId) {
         await this.recordOperation(
           input,
           actorUserId,
@@ -395,14 +500,18 @@ export class AssistantPlaceResolverService {
     });
   }
 
-  private async beginProviderOperation(input: ParsedResolveInput, actorUserId: string | null) {
+  private async beginProviderOperation(
+    input: ParsedResolveInput,
+    actorUserId: string | null,
+    normalizedQuery = input.normalizedQuery,
+  ) {
     const id = randomUUID();
     try {
       await this.prisma.assistantGeoOperation.create({
         data: {
           id,
           actorUserId,
-          normalizedQuery: input.normalizedQuery,
+          normalizedQuery,
           provider: this.provider.getProviderName(),
           status: 'RUNNING',
           durationMs: 0,
@@ -443,7 +552,7 @@ export class AssistantPlaceResolverService {
     input: ParsedResolveInput,
     actorUserId: string | null,
     startedAt: number,
-  ): Promise<AssistantGeoResolution> {
+  ): Promise<Exclude<AssistantGeoSingleResolution, { status: 'NOT_APPLICABLE' }>> {
     const radiusMeters = input.explicitDistanceMeters ?? assistantGeoDefaultPointDistanceMeters;
     const alias = await this.findLegacyAlias(input);
     if (alias) {
@@ -652,19 +761,22 @@ export class AssistantPlaceResolverService {
   }
 }
 
-export function parseResolveInput(value: unknown): ParsedResolveInput | null {
+const geoClauseMarkerPattern = /(?:^|[\s,;])(?:(?<distance>(?:в\s+радиусе|радиус(?:ом)?|не\s+дальше|в\s+пределах|на\s+расстоянии(?:\s+не\s+более)?|до|в)\s*(?<amount>\d+(?:[.,]\d+)?)\s*(?<unit>км|километр(?:а|ов)?|метр(?:а|ов)?|м)(?!\p{L})\s+от)|(?<inside>внутри)|(?<near>рядом\s+с|возле|около|вокруг)|(?<at>у))\s+/giu;
+const trailingGeoDistancePattern = /\s+(?:(?:в\s+радиусе|радиус(?:ом)?|не\s+дальше|в\s+пределах|на\s+расстоянии(?:\s+не\s+более)?|до)\s*)(?<amount>\d+(?:[.,]\d+)?)\s*(?<unit>км|километр(?:а|ов)?|метр(?:а|ов)?|м)(?!\p{L})\s*$/iu;
+const genericGeoPlaceholderSequencePattern = /^(?:(?:(?:так|как)\p{L}*(?:-|\s+)(?:то|нибудь)|ближайш\p{L}*|люб\p{L}*)(?:\s+|$))+$/iu;
+const nonGeoAtSubjectPattern = /^(?:метро|застройщик\p{L}*|собственник\p{L}*|владелец\p{L}*|ри[еэ]лтор\p{L}*|агент\p{L}*|девелопер\p{L}*|брокер\p{L}*|меня|нас|вас|него|нее|неё|них|кого|чего|котор\p{L}*)(?=$|[^\p{L}\p{N}_])/iu;
+const genericGeoCategories: Array<{ category: AssistantGeoCategory; pattern: RegExp; canonical: string }> = [
+  { category: 'WATER', pattern: /^(?:вода|воды|водоем\p{L}*|водоём\p{L}*)$/iu, canonical: 'вода' },
+  { category: 'RIVER', pattern: /^(?:река|реки|реке|реку|рекой|рекою)$/iu, canonical: 'река' },
+  { category: 'PARK', pattern: /^(?:парк|парка|парке|парком|сквер|сквера|сквере|сквером)$/iu, canonical: 'парк' },
+  { category: 'BRIDGE', pattern: /^(?:мост|моста|мосте|мостом)$/iu, canonical: 'мост' },
+  { category: 'SCHOOL', pattern: /^(?:школа|школы|школе|школу|школой|гимнази\p{L}*|лице\p{L}*)$/iu, canonical: 'школа' },
+];
+
+export function parseResolveInputs(value: unknown): ParsedResolveInputs {
   if (!isRecord(value)) throw new BadRequestException('ASSISTANT_GEO_RESOLVE_INPUT_INVALID');
   const content = readText(value.content, 2_000);
   if (!content) throw new BadRequestException('ASSISTANT_GEO_CONTENT_INVALID');
-  const radiusMeters = extractDistanceMeters(content);
-  const place = extractPlaceQuery(content, radiusMeters !== null);
-  if (!place) return null;
-  if (radiusMeters !== null) {
-    parseAssistantGeoSearchInput({
-      anchor: { latitude: 0, longitude: 0, label: place.placeQuery, source: 'PLACE' },
-      radiusMeters,
-    });
-  }
   const locale = typeof value.locale === 'string' && /^[a-z]{2}(?:-[A-Z]{2})?$/u.test(value.locale)
     ? value.locale
     : 'ru';
@@ -675,16 +787,80 @@ export function parseResolveInput(value: unknown): ParsedResolveInput | null {
       : undefined;
   if (country === undefined) throw new BadRequestException('ASSISTANT_GEO_COUNTRY_INVALID');
   const viewbox = value.viewbox === undefined || value.viewbox === null ? null : parseViewbox(value.viewbox);
-  return {
-    ...place.identity,
-    placeQuery: place.identity.label,
-    mode: place.mode,
-    explicitDistanceMeters: radiusMeters,
-    radiusMeters,
-    locale,
-    country,
-    viewbox,
-  };
+  const markers = [...content.matchAll(geoClauseMarkerPattern)].flatMap((match) => {
+    if (match.index === undefined || isInsideQuotedText(content, match.index)) return [];
+    const bodyStart = match.index + match[0].length;
+    const groups = match.groups ?? {};
+    if (groups.at && nonGeoAtSubjectPattern.test(content.slice(bodyStart).trimStart())) {
+      return [{ start: match.index, bodyStart, isGeo: false, mode: 'NEAR' as const, distanceMeters: null }];
+    }
+    const distanceMeters = groups.distance
+      ? parseDistance(groups.amount ?? '', groups.unit ?? '')
+      : null;
+    return [{
+      start: match.index,
+      bodyStart,
+      isGeo: true,
+      mode: groups.inside ? 'INSIDE' as const : 'NEAR' as const,
+      distanceMeters,
+    }];
+  });
+
+  const constraints: ParsedResolveInput[] = [];
+  for (const [markerIndex, marker] of markers.entries()) {
+    if (!marker.isGeo) continue;
+    const nextMarker = markers.slice(markerIndex + 1).find(({ start }) => start >= marker.bodyStart);
+    const rawSource = content.slice(marker.bodyStart, nextMarker?.start ?? content.length);
+    if (nextMarker && hasTrailingUnquotedDisjunction(rawSource)) {
+      throw new BadRequestException('ASSISTANT_GEO_BOOLEAN_OPERATOR_UNSUPPORTED');
+    }
+    const rawTrailingDistance = extractTrailingGeoDistance(rawSource);
+    const cleanedSource = cleanGeoClauseText(rawTrailingDistance.placeQuery);
+    const trailingDistance = extractTrailingGeoDistance(cleanedSource);
+    const suffixDistanceMeters = rawTrailingDistance.distanceMeters ?? trailingDistance.distanceMeters;
+    if (marker.distanceMeters !== null && suffixDistanceMeters !== null) {
+      throw new BadRequestException('ASSISTANT_GEO_CLAUSE_INVALID');
+    }
+    const sourceText = trailingDistance.placeQuery;
+    if (!sourceText) throw new BadRequestException('ASSISTANT_GEO_CLAUSE_INVALID');
+    const normalized = normalizeGeoCategoryPhrase(sourceText);
+    const placeQuery = readText(normalized.placeQuery, 240);
+    if (!placeQuery || /^\d/u.test(placeQuery)) {
+      throw new BadRequestException('ASSISTANT_GEO_CLAUSE_INVALID');
+    }
+    const distanceMeters = marker.distanceMeters ?? suffixDistanceMeters;
+    if (distanceMeters !== null) {
+      parseAssistantGeoSearchInput({
+        anchor: { latitude: 0, longitude: 0, label: placeQuery, source: 'PLACE' },
+        radiusMeters: distanceMeters,
+      });
+    }
+    const identity = resolveAssistantGeoLandmarkIdentity(placeQuery);
+    constraints.push({
+      slotId: `geo-${constraints.length + 1}`,
+      sourceText,
+      category: normalized.category,
+      resolutionPolicy: isGenericGeoPhrase(normalized.placeQuery, normalized.category)
+        ? 'REFINE_REQUIRED'
+        : 'LOOKUP',
+      ...identity,
+      placeQuery: identity.label,
+      mode: marker.mode,
+      explicitDistanceMeters: distanceMeters,
+      radiusMeters: distanceMeters,
+      locale,
+      country,
+      viewbox,
+    });
+    if (constraints.length > 5) {
+      throw new BadRequestException('ASSISTANT_GEO_TOO_MANY_CONSTRAINTS');
+    }
+  }
+  return { operator: 'ALL', constraints };
+}
+
+export function parseResolveInput(value: unknown): ParsedResolveInput | null {
+  return parseResolveInputs(value).constraints[0] ?? null;
 }
 
 function parseDistrictFallbackInput(value: unknown): ParsedDistrictFallback | null {
@@ -727,42 +903,133 @@ function createLegacyCacheKey(
   })).digest('hex');
 }
 
-function extractDistanceMeters(content: string) {
-  const match = content.match(/(?:в\s+радиусе|радиус(?:ом)?|не\s+дальше|в\s+пределах|на\s+расстоянии(?:\s+не\s+более)?|до|в)\s*(\d+(?:[.,]\d+)?)\s*(км|километр(?:а|ов)?|метр(?:а|ов)?|м)(?!\p{L})/iu);
-  if (!match) return null;
-  const value = Number(match[1]!.replace(',', '.'));
+function parseDistance(amount: string, unit: string) {
+  const value = Number(amount.replace(',', '.'));
   if (!Number.isFinite(value) || value <= 0) throw new BadRequestException('ASSISTANT_GEO_RADIUS_INVALID');
-  return Math.round(value * (/^(?:км|километр)/iu.test(match[2]!) ? 1_000 : 1));
+  return Math.round(value * (/^(?:км|километр)/iu.test(unit) ? 1_000 : 1));
 }
 
-function extractPlaceQuery(content: string, hasExplicitDistance: boolean) {
-  const explicitClause = hasExplicitDistance ? parseAssistantGeoDistanceClause(content) : null;
-  const contentWithoutDistance = hasExplicitDistance && explicitClause === null
-      ? content.replace(
-        /(?:в\s+радиусе|радиус(?:ом)?|не\s+дальше|в\s+пределах|на\s+расстоянии(?:\s+не\s+более)?|до|в)\s*\d+(?:[.,]\d+)?\s*(?:км|километр(?:а|ов)?|метр(?:а|ов)?|м)(?!\p{L})/giu,
-        ' ',
-      )
-    : content;
-  const insideMatch = explicitClause === null ? contentWithoutDistance.match(/(?:^|\s)внутри\s+(.+)$/iu) : null;
-  const nearbyMatch = explicitClause === null && !insideMatch
-    ? contentWithoutDistance.match(/(?:рядом\s+с|возле|около|вокруг)\s+(.+)$/iu)
-    : null;
-  const candidate = explicitClause?.anchor ?? insideMatch?.[1] ?? nearbyMatch?.[1];
-  if (!candidate) return null;
-  const query = candidate
-    .replace(/\s+(?:найди|покажи|подбери)\b.*$/iu, '')
+function cleanGeoClauseText(value: string) {
+  const quoted = protectQuotedText(value);
+  const cleaned = quoted.value
+    .replace(/^\s*(?:(?:и)(?=\s|,)|,)+\s*/iu, '')
+    .replace(/\s+и\s*$/iu, '')
+    .replace(/\s+(?:найди|покажи|подбери)(?=$|[^\p{L}\p{N}_]).*$/iu, '')
     .split(/,\s*(?=(?:например(?=\s|,|$)|бюджет(?=\s|,|$)|(?:до|не\s+дороже|максимум)\s+\d|\d{1,2}\s*[- ]?\s*комн|студи\p{L}*|однуш\p{L}*|однокомнат\p{L}*|двуш\p{L}*|двухкомнат\p{L}*|треш\p{L}*|трехкомнат\p{L}*))/iu, 1)[0]!
-    .replace(/\s+(?=(?:в\s+район(?:е)?(?=\s)|бюджет(?=\s|,|$)|(?:до|не\s+дороже|максимум)\s+\d|\d{1,2}\s*[- ]?\s*комн|студи\p{L}*|однуш\p{L}*|однокомнат\p{L}*|двуш\p{L}*|двухкомнат\p{L}*|треш\p{L}*|трехкомнат\p{L}*))[^,;.!?]*$/iu, '')
+    .replace(/\s+(?=(?:в\s+район(?:е)?(?=\s)|у\s+метро(?=\s)|(?<!станции\s)(?<!станция\s)(?<!станцию\s)(?<!станцией\s)(?<!ст\.\s)метро(?=\s)|(?:от\s+)?застройщик\p{L}*|бюджет(?=\s|,|$)|(?:до|не\s+дороже|максимум)\s+\d|(?:от|не\s+дешевле|минимум)\s+\d+(?:[.,]\d+)?(?:\s+до\s+\d+(?:[.,]\d+)?)?\s*(?:млн\p{L}*|миллион\p{L}*|тыс\p{L}*|руб\p{L}*)|(?:от|не\s+ниже|не\s+выше)\s+-?\d+\s*этаж\p{L}*|(?:от|до|не\s+меньше|не\s+больше)\s+\d+(?:[.,]\d+)?\s*(?:м2|м²|кв)|(?:комфорт|бизнес|премиум|элит)\s*[- ]?класс\p{L}*|\d{1,2}\s*[- ]?\s*комн|студи\p{L}*|однуш\p{L}*|однокомнат\p{L}*|двуш\p{L}*|двухкомнат\p{L}*|треш\p{L}*|трехкомнат\p{L}*|жил\p{L}*|коммерчес\p{L}*|квартир\p{L}*|апартамент\p{L}*|площад\p{L}*|этаж\p{L}*|сдач\p{L}*|готов\p{L}*|класс\p{L}*))[^,;.!?]*$/iu, '')
+    .replace(/\s+и\s*$/iu, '')
     .replace(/[,\s.!?;]+$/gu, '')
     .replace(/\s+/gu, ' ')
     .trim();
-  if (!query || /^\d/u.test(query)) return null;
-  const placeQuery = readText(query, 240);
-  return placeQuery ? {
-    placeQuery,
-    identity: resolveAssistantGeoLandmarkIdentity(placeQuery),
-    mode: insideMatch ? 'INSIDE' as const : 'NEAR' as const,
-  } : null;
+  return unwrapQuotedClause(quoted.restore(cleaned));
+}
+
+function normalizeGeoCategoryPhrase(value: string) {
+  const parts = value.split(/\s+/u);
+  const matches = parts.flatMap((part, index) => {
+    const category = genericGeoCategories.find(({ pattern }) => pattern.test(part));
+    return category ? [{ category, index }] : [];
+  });
+  const match = matches.find(({ index }) => index === 0)
+    ?? matches.find(({ index }) => isGenericGeoPlaceholderText(parts.slice(0, index).join(' ')))
+    ?? null;
+  if (match) parts[match.index] = match.category.canonical;
+  return {
+    category: match?.category.category ?? null,
+    placeQuery: match ? parts.join(' ') : value,
+  };
+}
+
+function isGenericGeoPhrase(value: string, category: AssistantGeoCategory | null) {
+  if (!category) return false;
+  const categoryPattern = genericGeoCategories.find((entry) => entry.category === category)?.pattern;
+  const remainder = value
+    .split(/\s+/u)
+    .filter((part) => !categoryPattern?.test(part))
+    .join(' ')
+    .trim();
+  return remainder.length === 0 || isGenericGeoPlaceholderText(remainder);
+}
+
+function isInsideQuotedText(value: string, index: number) {
+  return findQuotedSpans(value).some(({ start, end }) => index > start && index < end);
+}
+
+function hasTrailingUnquotedDisjunction(value: string) {
+  const quoted = protectQuotedText(value);
+  return /(?:^|[^\p{L}\p{N}_])(?:или|либо)(?:\s+же)?[\s,;—–-]*$/iu.test(quoted.value);
+}
+
+function extractTrailingGeoDistance(value: string) {
+  const quoted = protectQuotedText(value);
+  const match = trailingGeoDistancePattern.exec(quoted.value);
+  if (!match?.groups || match.index === undefined) {
+    return { placeQuery: value, distanceMeters: null };
+  }
+  return {
+    placeQuery: trimTrailingGeoConnector(
+      unwrapQuotedClause(quoted.restore(quoted.value.slice(0, match.index)).trim()),
+    ),
+    distanceMeters: parseDistance(match.groups.amount ?? '', match.groups.unit ?? ''),
+  };
+}
+
+function trimTrailingGeoConnector(value: string) {
+  return value
+    .replace(/[,;—–\s-]+$/gu, '')
+    .replace(/\s+и$/iu, '')
+    .replace(/[,;—–\s-]+$/gu, '')
+    .trim();
+}
+
+function isGenericGeoPlaceholderText(value: string) {
+  const withoutPerspective = value
+    .replace(/(?:^|\s+)ко\s+мне(?=$|\s+)/iu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim();
+  return withoutPerspective.length > 0
+    && genericGeoPlaceholderSequencePattern.test(withoutPerspective);
+}
+
+function protectQuotedText(value: string) {
+  const spans = findQuotedSpans(value);
+  let cursor = 0;
+  let protectedValue = '';
+  const replacements: string[] = [];
+  for (const { start, end } of spans) {
+    protectedValue += value.slice(cursor, start);
+    const token = `\uE000${replacements.length}\uE001`;
+    replacements.push(value.slice(start, end + 1));
+    protectedValue += token;
+    cursor = end + 1;
+  }
+  protectedValue += value.slice(cursor);
+  return {
+    value: protectedValue,
+    restore(input: string) {
+      return input.replace(/\uE000(\d+)\uE001/gu, (_token, index: string) => replacements[Number(index)] ?? '');
+    },
+  };
+}
+
+function findQuotedSpans(value: string) {
+  const spans: Array<{ start: number; end: number }> = [];
+  const quotePairs: Record<string, string> = { '«': '»', '"': '"', '“': '”', '„': '”' };
+  for (let index = 0; index < value.length; index += 1) {
+    const close = quotePairs[value[index] ?? ''];
+    if (!close) continue;
+    const end = value.indexOf(close, index + 1);
+    if (end < 0) continue;
+    spans.push({ start: index, end });
+    index = end;
+  }
+  return spans;
+}
+
+function unwrapQuotedClause(value: string) {
+  const pairs: Array<[string, string]> = [['«', '»'], ['"', '"'], ['“', '”'], ['„', '”']];
+  const pair = pairs.find(([open, close]) => value.startsWith(open) && value.endsWith(close));
+  return pair ? value.slice(pair[0].length, -pair[1].length).trim() : value;
 }
 
 function parseViewbox(value: unknown): [number, number, number, number] {
@@ -791,7 +1058,7 @@ function resolved(
   input: ParsedResolveInput,
   candidates: AssistantGeoCandidate[],
   compatibilityRadius?: number,
-): AssistantGeoResolution {
+): Exclude<AssistantGeoSingleResolution, { status: 'NOT_APPLICABLE' }> {
   return {
     status: candidates.length === 1 ? 'RESOLVED' : 'AMBIGUOUS',
     placeQuery: input.placeQuery,
@@ -800,7 +1067,10 @@ function resolved(
   };
 }
 
-function notFound(input: ParsedResolveInput, compatibilityRadius?: number): AssistantGeoResolution {
+function notFound(
+  input: ParsedResolveInput,
+  compatibilityRadius?: number,
+): Exclude<AssistantGeoSingleResolution, { status: 'NOT_APPLICABLE' }> {
   return {
     status: 'NOT_FOUND',
     placeQuery: input.placeQuery,
@@ -809,13 +1079,45 @@ function notFound(input: ParsedResolveInput, compatibilityRadius?: number): Assi
   };
 }
 
-function unavailable(input: ParsedResolveInput, compatibilityRadius?: number): AssistantGeoResolution {
+function unavailable(
+  input: ParsedResolveInput,
+  compatibilityRadius?: number,
+): Exclude<AssistantGeoSingleResolution, { status: 'NOT_APPLICABLE' }> {
   return {
     status: 'UNAVAILABLE',
     placeQuery: input.placeQuery,
     ...(compatibilityRadius ? { radiusMeters: compatibilityRadius } : {}),
     actions: ['MANUAL', 'REFINE'],
   };
+}
+
+function summarizeCompositeOperationStatus(
+  statuses: Array<Exclude<AssistantGeoSingleResolution, { status: 'NOT_APPLICABLE' }>['status']>,
+): Exclude<AssistantGeoSingleResolution, { status: 'NOT_APPLICABLE' }>['status'] {
+  if (statuses.includes('UNAVAILABLE')) return 'UNAVAILABLE';
+  if (statuses.includes('NOT_FOUND')) return 'NOT_FOUND';
+  if (statuses.includes('AMBIGUOUS')) return 'AMBIGUOUS';
+  return 'RESOLVED';
+}
+
+function createCompositeOperationQuery(constraints: ParsedResolveInput[]) {
+  const providerQueries = constraints
+    .filter(({ resolutionPolicy }) => resolutionPolicy === 'LOOKUP')
+    .map(({ normalizedQuery }) => normalizedQuery);
+  const fingerprint = createHash('sha256').update(JSON.stringify(providerQueries)).digest('hex');
+  return `composite-all:${fingerprint}`;
+}
+
+function shouldExhaustCompositeProviderOperation(code: string) {
+  return code === 'ASSISTANT_GEO_LOCATIONIQ_RESOLUTION_BUDGET_EXHAUSTED'
+    || code === 'ASSISTANT_GEO_TOTAL_RESOLUTION_BUDGET_EXHAUSTED'
+    || code === 'ASSISTANT_GEO_PROVIDER_DISABLED'
+    || code === 'ASSISTANT_GEO_PROVIDER_CIRCUIT_OPEN'
+    || code.startsWith('ASSISTANT_GEO_PROVIDER_MINUTE_BUDGET_EXHAUSTED')
+    || code.startsWith('ASSISTANT_GEO_PROVIDER_DAILY_BUDGET_EXHAUSTED')
+    || code.startsWith('ASSISTANT_GEO_OPERATION_')
+    || code === 'ASSISTANT_GEO_RESOLUTION_CONTEXT_REQUIRED'
+    || code.startsWith('ASSISTANT_GEO_USAGE_');
 }
 
 function toCandidate(input: ParsedResolveInput, landmark: AssistantTrustedLandmark): AssistantGeoCandidate {

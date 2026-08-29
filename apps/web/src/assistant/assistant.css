@@ -772,6 +772,30 @@
   color: var(--color-muted, #756a64);
 }
 
+.assistant-geo-constraint-list {
+  display: grid;
+  max-height: min(42vh, 360px);
+  padding-right: 2px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  gap: 6px;
+}
+
+.assistant-geo-constraint-list section {
+  display: grid;
+  padding: 8px;
+  background: rgb(255 255 255 / 58%);
+  border: 1px solid rgb(122 53 21 / 12%);
+  border-radius: 9px;
+  gap: 6px;
+}
+
+.assistant-geo-selected-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
 .assistant-geo-resolution .assistant-geo-refine {
   min-height: 36px;
   text-align: center;

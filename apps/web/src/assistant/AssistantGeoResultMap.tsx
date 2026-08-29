@@ -1,14 +1,16 @@
-import type { AssistantGeoSearchView } from '@platforma/shared';
+import type { AssistantGeoView } from '@platforma/shared';
 
 import { PlatformMap, type MapGeometry, type MapPoint } from '../map/PlatformMap';
 
-export function AssistantGeoResultMap({ geo }: { geo: AssistantGeoSearchView }) {
+export function AssistantGeoResultMap({ geo }: { geo: AssistantGeoView }) {
+  const constraints = 'operator' in geo ? geo.constraints : [geo];
+  const isComposite = 'operator' in geo;
   const points: MapPoint[] = [
-    ...(geo.kind === 'POINT' ? [{
-      id: 'assistant-geo-anchor',
-      title: geo.label,
-      hint: `Точка поиска: ${geo.label}`,
-      coordinates: [geo.point.latitude, geo.point.longitude] as [number, number],
+    ...constraints.flatMap((constraint, index) => constraint.kind === 'POINT' ? [{
+      id: `assistant-geo-anchor-${index}`,
+      title: constraint.label,
+      hint: `Точка поиска: ${constraint.label}`,
+      coordinates: [constraint.point.latitude, constraint.point.longitude] as [number, number],
       markerLabel: 'Точка',
       variant: 'ANCHOR' as const,
     }] : []),
@@ -17,23 +19,31 @@ export function AssistantGeoResultMap({ geo }: { geo: AssistantGeoSearchView }) 
       title: marker.kind === 'PRIMARY' ? 'Лучшее предложение' : 'Альтернатива',
       hint: typeof marker.distanceMeters === 'number'
         ? `${marker.kind === 'PRIMARY' ? 'Лучшее предложение' : 'Альтернатива'}, ${formatDistance(marker.distanceMeters)}`
-        : marker.kind === 'PRIMARY' ? 'Лучшее предложение внутри выбранной области' : 'Альтернатива внутри выбранной области',
+        : isComposite
+          ? marker.kind === 'PRIMARY'
+            ? 'Лучшее предложение, подходит под все географические условия'
+            : 'Альтернатива, подходит под все географические условия'
+          : marker.kind === 'PRIMARY'
+            ? 'Лучшее предложение внутри выбранной области'
+            : 'Альтернатива внутри выбранной области',
       coordinates: [marker.latitude, marker.longitude] as [number, number],
       markerLabel: typeof marker.distanceMeters === 'number' ? formatDistance(marker.distanceMeters) : undefined,
       variant: marker.kind,
     })),
   ];
-  const geometries: MapGeometry[] = [
-    { id: 'assistant-search-area', geometry: geo.searchArea, variant: 'SEARCH_AREA' },
-    { id: 'assistant-reference', geometry: geo.referenceGeometry, variant: 'REFERENCE' },
-  ];
+  const geometries: MapGeometry[] = constraints.flatMap((constraint, index) => [
+    { id: `assistant-search-area-${index}`, geometry: constraint.searchArea, variant: 'SEARCH_AREA' as const },
+    { id: `assistant-reference-${index}`, geometry: constraint.referenceGeometry, variant: 'REFERENCE' as const },
+  ]);
+  const single = constraints.length === 1 ? constraints[0]! : null;
 
   return (
     <div
       className="assistant-geo-result-map"
-      data-geo-mode={geo.mode}
-      data-reference-geometry={geo.referenceGeometry.type}
-      data-search-area-geometry={geo.searchArea.type}
+      data-geo-constraint-count={constraints.length}
+      data-geo-mode={single?.mode ?? 'ALL'}
+      data-reference-geometry={single?.referenceGeometry.type ?? 'Multiple'}
+      data-search-area-geometry={single?.searchArea.type ?? 'Multiple'}
     >
       <PlatformMap
         ariaLabel={formatMapAriaLabel(geo)}
@@ -53,7 +63,10 @@ export function AssistantGeoResultMap({ geo }: { geo: AssistantGeoSearchView }) 
   );
 }
 
-function formatMapAriaLabel(geo: AssistantGeoSearchView) {
+function formatMapAriaLabel(geo: AssistantGeoView) {
+  if ('operator' in geo) {
+    return `Результаты по всем ${geo.constraints.length} географическим условиям: ${geo.constraints.map(({ label }) => label).join(', ')}`;
+  }
   if (geo.mode === 'INSIDE') return `Результаты внутри области ${geo.label}`;
   if (geo.kind === 'LINE') return `Результаты до ${formatDistance(geo.distanceMeters)} от всей дороги ${geo.label}`;
   if (geo.kind === 'AREA') return `Результаты до ${formatDistance(geo.distanceMeters)} от границы ${geo.label}`;

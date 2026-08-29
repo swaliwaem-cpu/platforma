@@ -1,18 +1,23 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type {
+  AssistantGeoBrowserConstraint,
   AssistantGeoBrowserInput,
   AssistantGeoKind,
   AssistantGeoReferenceGeometry,
   AssistantGeoSearchContext,
+  AssistantGeoSearchSelection,
 } from '@platforma/shared' with { 'resolution-mode': 'import' };
 
 import { PrismaService } from '../../prisma/prisma.service';
 import {
+  assertAssistantGeoUniqueConstraints,
   assistantGeoDefaultLandmarkDistanceMeters,
   assistantGeoDefaultPointDistanceMeters,
+  parseAssistantGeoBrowserContext,
   parseAssistantGeoBrowserInput,
   parseAssistantReferenceGeometry,
+  type ParsedAssistantGeoBrowserContext,
   type ParsedAssistantGeoBrowserInput,
 } from './assistant-geo-contract';
 import { normalizeAssistantGeoIdentityText } from './assistant-geo-landmark-identity';
@@ -80,7 +85,7 @@ export class AssistantGeoLandmarkService {
   }
 
   async materializeBrowserInput(
-    value: AssistantGeoBrowserInput | ParsedAssistantGeoBrowserInput,
+    value: AssistantGeoBrowserConstraint | ParsedAssistantGeoBrowserInput,
   ): Promise<AssistantGeoSearchContext> {
     const input = parseAssistantGeoBrowserInput(value);
     if (input.referenceType === 'MANUAL_POINT') {
@@ -142,6 +147,19 @@ export class AssistantGeoLandmarkService {
           distanceMeters,
           source: 'LANDMARK',
         };
+  }
+
+  async materializeBrowserContext(
+    value: AssistantGeoBrowserInput | ParsedAssistantGeoBrowserContext,
+  ): Promise<AssistantGeoSearchSelection> {
+    const input = parseAssistantGeoBrowserContext(value);
+    if (!('operator' in input)) return this.materializeBrowserInput(input);
+    const constraints = [];
+    for (const constraint of input.constraints) {
+      constraints.push(await this.materializeBrowserInput(constraint));
+    }
+    assertAssistantGeoUniqueConstraints(constraints);
+    return { operator: 'ALL', constraints };
   }
 
   async findTrustedByQuery(input: {

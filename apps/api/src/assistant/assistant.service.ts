@@ -15,8 +15,11 @@ import type {
   AssistantConversationSummary,
   AssistantExternalLotCard,
   AssistantFeedback,
+  AssistantGeoConstraintView,
   AssistantGeoSearchContext,
+  AssistantGeoSearchSelection,
   AssistantGeoSearchView,
+  AssistantGeoView,
   AssistantKnowledgeFactCard,
   AssistantMessage,
   AssistantPageContext,
@@ -30,8 +33,9 @@ import { createHash } from 'node:crypto';
 
 import { PrismaService } from '../prisma/prisma.service';
 import {
-  parseAssistantGeoBrowserInput,
+  parseAssistantGeoBrowserContext,
   parseAssistantGeoStoredContext,
+  parseAssistantGeoStoredValue,
   parseAssistantReferenceGeometry,
 } from './geo/assistant-geo-contract';
 import { AssistantGeoLandmarkService } from './geo/assistant-geo-landmark.service';
@@ -198,7 +202,7 @@ export class AssistantService {
     });
     if (!ownedConversation) throw new NotFoundException('ASSISTANT_CONVERSATION_NOT_FOUND');
     const canonicalGeo = messageInput.geo
-      ? await this.geoLandmarks.materializeBrowserInput(messageInput.geo)
+      ? await this.geoLandmarks.materializeBrowserContext(messageInput.geo)
       : null;
 
     let transactionResult: { run: StoredRun; created: boolean };
@@ -354,8 +358,8 @@ export class AssistantService {
       : this.parseContext(value.context);
     const geo = value.geo === undefined || value.geo === null
       ? null
-      : parseAssistantGeoBrowserInput(value.geo);
-    const requestHashGeo = geo?.referenceType === 'MANUAL_POINT'
+      : parseAssistantGeoBrowserContext(value.geo);
+    const requestHashGeo = geo && !('operator' in geo) && geo.referenceType === 'MANUAL_POINT'
       && this.isRecord(value.geo)
       && this.isRecord(value.geo.anchor)
       ? {
@@ -511,9 +515,9 @@ export class AssistantService {
     }
   }
 
-  private parseStoredGeoContext(value: Prisma.JsonValue | null): AssistantGeoSearchContext | null {
+  private parseStoredGeoContext(value: Prisma.JsonValue | null): AssistantGeoSearchSelection | null {
     try {
-      return value === null ? null : parseAssistantGeoStoredContext(value, {
+      return value === null ? null : parseAssistantGeoStoredValue(value, {
         ASSISTANT_GEO_RADIUS_MIN_METERS: '1',
         ASSISTANT_GEO_RADIUS_MAX_METERS: '100000',
       });
@@ -592,13 +596,22 @@ export class AssistantService {
     };
   }
 
-  private parseStoredGeoView(value: unknown): AssistantGeoSearchView | null {
+  private parseStoredGeoView(value: unknown): AssistantGeoView | null {
     if (!this.isRecord(value)) return null;
+    if (value.operator === 'ALL') return this.parseStoredCompositeGeoView(value);
     const legacy = this.isRecord(value.anchor) && typeof value.radiusMeters === 'number';
     const contextValue = legacy
       ? { anchor: value.anchor, radiusMeters: value.radiusMeters }
       : extractCanonicalGeoContext(value);
-    const context = this.parseStoredGeoContext(contextValue as Prisma.JsonObject);
+    let context: AssistantGeoSearchContext;
+    try {
+      context = parseAssistantGeoStoredContext(contextValue, {
+        ASSISTANT_GEO_RADIUS_MIN_METERS: '1',
+        ASSISTANT_GEO_RADIUS_MAX_METERS: '100000',
+      });
+    } catch {
+      return null;
+    }
     if (!context || !Array.isArray(value.markers) || value.markers.length > 5) return null;
     let referenceGeometry: AssistantGeoSearchView['referenceGeometry'];
     let searchArea: AssistantGeoSearchView['searchArea'];
@@ -646,8 +659,54 @@ export class AssistantService {
     } as AssistantGeoSearchView;
   }
 
+  private parseStoredCompositeGeoView(value: Record<string, unknown>): AssistantGeoView | null {
+    if (!Array.isArray(value.constraints) || !Array.isArray(value.markers) || value.markers.length > 5) {
+      return null;
+    }
+    const rawConstraints = value.constraints;
+    const context = this.parseStoredGeoContext({
+      operator: 'ALL',
+      constraints: rawConstraints.map((constraint) => this.isRecord(constraint)
+        ? extractCanonicalGeoContext(constraint)
+        : constraint as Prisma.JsonValue),
+    });
+    if (!context || !('operator' in context) || context.constraints.length !== rawConstraints.length) return null;
+    const constraints = context.constraints.flatMap((constraint, index) => {
+      const raw = rawConstraints[index];
+      if (!this.isRecord(raw)) return [];
+      let referenceGeometry: AssistantGeoConstraintView['referenceGeometry'];
+      let searchArea: AssistantGeoConstraintView['searchArea'];
+      try {
+        referenceGeometry = parseAssistantReferenceGeometry(raw.referenceGeometry, constraint.kind);
+        searchArea = parseAssistantReferenceGeometry(raw.searchArea, 'AREA') as AssistantGeoConstraintView['searchArea'];
+      } catch {
+        return [];
+      }
+      return [{ ...constraint, referenceGeometry, searchArea } as AssistantGeoConstraintView];
+    });
+    if (constraints.length !== context.constraints.length) return null;
+    const markers = value.markers.flatMap((marker) => {
+      if (!this.isRecord(marker)
+        || typeof marker.unitId !== 'string' || !uuidPattern.test(marker.unitId)
+        || typeof marker.latitude !== 'number' || !Number.isFinite(marker.latitude)
+        || marker.latitude < -90 || marker.latitude > 90
+        || typeof marker.longitude !== 'number' || !Number.isFinite(marker.longitude)
+        || marker.longitude < -180 || marker.longitude > 180
+        || marker.distanceMeters !== undefined
+        || (marker.kind !== 'PRIMARY' && marker.kind !== 'ALTERNATIVE')) return [];
+      return [{
+        unitId: marker.unitId,
+        latitude: marker.latitude,
+        longitude: marker.longitude,
+        kind: marker.kind as 'PRIMARY' | 'ALTERNATIVE',
+      }];
+    });
+    if (markers.length !== value.markers.length) return null;
+    return { operator: 'ALL', constraints, markers };
+  }
+
   private geoMarkersMatchResults(
-    geo: AssistantGeoSearchView,
+    geo: AssistantGeoView,
     exactResults: AssistantSearchResultCard[],
     alternatives: AssistantSearchResultCard[],
   ) {
@@ -655,10 +714,15 @@ export class AssistantService {
       ...exactResults.map((result) => [result.unitId, 'PRIMARY'] as const),
       ...alternatives.map((result) => [result.unitId, 'ALTERNATIVE'] as const),
     ]);
+    const markerIds = geo.markers.map(({ unitId }) => unitId);
     return geo.markers.length === expected.size
+      && new Set(markerIds).size === markerIds.length
       && geo.markers.every((marker) => expected.get(marker.unitId) === marker.kind)
+      && [...expected.keys()].every((unitId) => markerIds.includes(unitId))
       && [...exactResults, ...alternatives].every((result) =>
-        geo.mode === 'INSIDE'
+        'operator' in geo
+          ? result.distanceMeters === undefined
+          : geo.mode === 'INSIDE'
           ? result.distanceMeters === undefined
           : typeof result.distanceMeters === 'number'
             && geo.markers.some((marker) => marker.unitId === result.unitId
@@ -667,9 +731,10 @@ export class AssistantService {
   }
 
   private geoResultsMatchConstraint(
-    geo: AssistantGeoSearchView,
+    geo: AssistantGeoView,
     results: AssistantSearchResultCard[],
   ) {
+    if ('operator' in geo) return results.every((result) => result.distanceMeters === undefined);
     return results.every((result) => geo.mode === 'INSIDE'
       ? result.distanceMeters === undefined
       : typeof result.distanceMeters === 'number'

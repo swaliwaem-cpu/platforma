@@ -452,9 +452,7 @@ function consumeDistrictResolvedAsGeo(filters: AssistantSearchFilters, context: 
   if (resolution.resolvedByGeo === true
     && resolution.canonicalName === null
     && hasGeoContext(context)
-    && isRecord(context.geo)
-    && context.geo.source === 'LANDMARK'
-    && typeof context.geo.landmarkId === 'string') {
+    && plannerGeoHasTrustedLandmark(context.geo)) {
     return { ...filters, district: null };
   }
   if (resolution.resolvedByGeo === false
@@ -751,9 +749,28 @@ function readPageContext(context: unknown) {
 
 function hasGeoContext(context: unknown) {
   if (!isRecord(context) || !isRecord(context.geo)) return false;
-  return context.geo.hasGeoConstraint === true
-    && ['POINT', 'LINE', 'AREA'].includes(String(context.geo.kind))
+  if (context.geo.hasGeoConstraint !== true) return false;
+  if (context.geo.operator === 'ALL') {
+    return Array.isArray(context.geo.constraints)
+      && context.geo.constraints.length >= 1
+      && context.geo.constraints.length <= 5
+      && context.geo.constraints.every((constraint) => isRecord(constraint)
+        && ['POINT', 'LINE', 'AREA'].includes(String(constraint.kind))
+        && ['NEAR', 'INSIDE'].includes(String(constraint.mode)));
+  }
+  return ['POINT', 'LINE', 'AREA'].includes(String(context.geo.kind))
     && ['NEAR', 'INSIDE'].includes(String(context.geo.mode));
+}
+
+function plannerGeoHasTrustedLandmark(value: unknown) {
+  if (!isRecord(value)) return false;
+  if (value.operator === 'ALL') {
+    return Array.isArray(value.constraints) && value.constraints.some((constraint) =>
+      isRecord(constraint)
+      && constraint.source === 'LANDMARK'
+      && typeof constraint.landmarkId === 'string');
+  }
+  return value.source === 'LANDMARK' && typeof value.landmarkId === 'string';
 }
 
 function joinRussianList(values: string[]) {

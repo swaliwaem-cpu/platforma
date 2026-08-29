@@ -19,11 +19,11 @@ test('Assistant T05 picker keeps map movement as draft and searches only from ex
   assert.match(chatSource, /handleGeoPickerConfirm[\s\S]*beginSubmission\(pendingGeoSubmission\.content, geo\)/u);
   assert.match(
     chatSource,
-    /shouldDiscardPendingGeoSubmissionOnPickerCancel[\s\S]*geoPickerPurpose === 'EDIT'[\s\S]*draft\.trim\(\)\.length > 0/u,
+    /geoPickerTarget\?\.kind !== 'PENDING_SLOT'[\s\S]*geoPickerTarget\?\.kind === 'ACTIVE_CONSTRAINT'[\s\S]*draft\.trim\(\)\.length > 0/u,
   );
   assert.match(
     chatSource,
-    /handleGeoPickerCancel[\s\S]*shouldDiscardPendingGeoSubmissionOnPickerCancel/u,
+    /handleGeoPickerCancel[\s\S]*setGeoPickerTarget\(null\)/u,
   );
   assert.match(chatSource, /openGeoPicker[\s\S]*setPendingGeoSubmission\(\{ content \}\)/u);
 });
@@ -37,10 +37,10 @@ test('Assistant T05 browser keeps LocationIQ backend-only and exposes explicit d
 });
 
 test('Assistant FIX-GEO1 map renders reference plus search geometry and remains container-responsive', () => {
-  assert.match(resultMapSource, /geometry: geo\.searchArea, variant: 'SEARCH_AREA'/u);
-  assert.match(resultMapSource, /geometry: geo\.referenceGeometry, variant: 'REFERENCE'/u);
+  assert.match(resultMapSource, /geometry: constraint\.searchArea, variant: 'SEARCH_AREA'/u);
+  assert.match(resultMapSource, /geometry: constraint\.referenceGeometry, variant: 'REFERENCE'/u);
   assert.match(resultMapSource, /renderWithoutPoints/u);
-  assert.match(resultMapSource, /geo\.kind === 'POINT'/u);
+  assert.match(resultMapSource, /constraint\.kind === 'POINT'/u);
   assert.match(resultMapSource, /variant: marker\.kind/u);
   assert.match(mapSource, /ResizeObserver/u);
   assert.match(mapSource, /ASSISTANT_GEO_FILL_LAYER_ID/u);
@@ -65,6 +65,40 @@ test('Assistant FIX-GEO1 uses trusted landmark ids, defaults and explicit line o
   assert.match(chatSource, /до \$\{formatDistance\(geo\.distanceMeters\)\} от всей дороги/u);
   assert.match(chatSource, /внутри \$\{/u);
   assert.doesNotMatch(chatSource, /RADIUS_REQUIRED|Добавить радиус/u);
+});
+
+test('Assistant composite geo keeps separate constraint chips and renders every reference geometry', () => {
+  assert.match(chatSource, /'operator' in geo/u);
+  assert.match(chatSource, /constraints\.map/u);
+  assert.match(chatSource, /operator: 'ALL'/u);
+  assert.match(resultMapSource, /constraints\.flatMap/u);
+  assert.match(resultMapSource, /assistant-reference-\$\{index\}/u);
+  assert.match(resultMapSource, /assistant-search-area-\$\{index\}/u);
+  assert.match(resultMapSource, /подходит под все географические условия/u);
+  assert.match(resultMapSource, /по всем \$\{geo\.constraints\.length\} географическим условиям/u);
+  assert.match(styles, /\.assistant-geo-constraint-list[\s\S]*max-height:[\s\S]*overflow-y: auto/u);
+  assert.match(chatSource, /Все выбранные условия применяются одновременно/u);
+  assert.match(chatSource, /labelManualGeoConstraint/u);
+  assert.match(chatSource, /hasDuplicateGeoConstraints/u);
+});
+
+test('Assistant composite geo isolates pending resolution state between conversations', () => {
+  assert.match(
+    chatSource,
+    /const loadConversation[\s\S]*setIsResolvingGeo\(false\)[\s\S]*setGeoResolution\(null\)[\s\S]*setPendingGeoSubmission\(null\)[\s\S]*setPendingGeoSelections\(\{\}\)/u,
+  );
+  assert.match(
+    chatSource,
+    /disabled=\{isConversationLoading \|\| isResolvingGeo \|\| geoResolution !== null \|\| geoError !== null\}/u,
+  );
+  assert.match(
+    chatSource,
+    /if \(!slotId\) \{[\s\S]*setPendingGeoSubmission\(\{ content \}\)/u,
+  );
+  assert.doesNotMatch(
+    chatSource,
+    /setConversation\(detail\.conversation\);[\s\S]{0,160}setActiveGeo\(null\)/u,
+  );
 });
 
 test('Assistant T05 conversation restore respects a geo chip removed from the latest user message', () => {

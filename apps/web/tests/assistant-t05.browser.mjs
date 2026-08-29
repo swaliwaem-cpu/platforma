@@ -13,12 +13,63 @@ const browser = await chromium.launch({ headless: true });
 
 try {
   await verifyDesktopGeoFlow();
+  await verifyCompositeGeoFlow();
   await verifyDesktopLineGeometry();
   await verifyRenderedMarkerVariants();
   await verifyMobilePickerAndAreaGeometry();
   process.stdout.write('ASSISTANT_T05_BROWSER_OK\n');
 } finally {
   await browser.close();
+}
+
+async function verifyCompositeGeoFlow() {
+  const context = await browser.newContext({ viewport: { width: 390, height: 700 } });
+  const page = await context.newPage();
+  const state = createState();
+  await disableMapTiles(page);
+  await installRoutes(page, state);
+
+  try {
+    await page.goto(`${baseUrl}/cabinet`, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: 'Открыть ИИ-помощника' }).click();
+    const input = page.getByLabel('Сообщение помощнику');
+    const genericContent = 'у воды у реки возле парка такого-то возле моста около школы такой-то';
+    await input.fill(genericContent);
+    await page.getByRole('button', { name: 'Отправить' }).click();
+
+    const panel = page.locator('[data-assistant-geo-candidates]');
+    await panel.getByText('Уточните ориентиры: 0 из 5', { exact: false }).waitFor();
+    await panel.getByText('Все выбранные условия применяются одновременно.', { exact: false }).waitFor();
+    assert.equal(await panel.locator('[data-assistant-geo-constraint]').count(), 5);
+    assert.equal(state.messageBodies.length, 0, 'unresolved composite must not start property search');
+    const listIsScrollable = await panel.locator('.assistant-geo-constraint-list').evaluate((element) => (
+      element.scrollHeight > element.clientHeight && getComputedStyle(element).overflowY === 'auto'
+    ));
+    assert.equal(listIsScrollable, true, 'five mobile constraints must remain scrollable');
+    await panel.getByRole('button', { name: 'Уточнить названия' }).click();
+    assert.equal(await input.inputValue(), genericContent);
+
+    const namedContent = 'возле Павелецкой Плаза около Белорусского вокзала';
+    await input.fill(namedContent);
+    await page.getByRole('button', { name: 'Отправить' }).click();
+    await page.getByText('ЖК Радиус 1', { exact: true }).waitFor();
+    assert.equal(state.messageBodies.length, 1, 'resolved composite must start exactly one run');
+    assert.equal(state.messageBodies[0].geo.operator, 'ALL');
+    assert.deepEqual(
+      state.messageBodies[0].geo.constraints.map(({ landmarkId }) => landmarkId),
+      [
+        '99999999-9999-4999-8999-999999999991',
+        '99999999-9999-4999-8999-999999999992',
+      ],
+    );
+    assert.equal(await page.locator('[data-assistant-geo-chip]').count(), 2);
+    assert.equal(
+      await page.locator('.assistant-geo-result-map').getAttribute('data-geo-constraint-count'),
+      '2',
+    );
+  } finally {
+    await context.close();
+  }
 }
 
 async function verifyDesktopGeoFlow() {
@@ -340,6 +391,69 @@ async function installRoutes(page, state) {
     if (path === '/assistant/geo/resolve' && request.method() === 'POST') {
       const body = request.postDataJSON();
       state.resolveBodies.push(body);
+      if (body.content === 'у воды у реки возле парка такого-то возле моста около школы такой-то') {
+        await json(route, {
+          status: 'COMPOSITE',
+          operator: 'ALL',
+          constraints: [
+            ['воды', 'вода'],
+            ['реки', 'река'],
+            ['парка такого-то', 'парк такого-то'],
+            ['моста', 'мост'],
+            ['школы такой-то', 'школа такой-то'],
+          ].map(([sourceText, placeQuery], index) => ({
+            status: 'NOT_FOUND',
+            slotId: `geo-${index + 1}`,
+            sourceText,
+            placeQuery,
+            actions: ['MANUAL', 'REFINE'],
+          })),
+        });
+        return;
+      }
+      if (body.content === 'возле Павелецкой Плаза около Белорусского вокзала') {
+        await json(route, {
+          status: 'COMPOSITE',
+          operator: 'ALL',
+          constraints: [
+            {
+              status: 'RESOLVED',
+              slotId: 'geo-1',
+              sourceText: 'Павелецкой Плаза',
+              placeQuery: 'Павелецкая Плаза',
+              candidates: [{
+                id: '99999999-9999-4999-8999-999999999991',
+                label: 'Павелецкая Плаза',
+                kind: 'POINT',
+                mode: 'NEAR',
+                distanceMeters: 2_000,
+                point: { latitude: 55.7312, longitude: 37.6364 },
+                city: 'Москва',
+                countryCode: 'ru',
+                source: 'PLACE',
+              }],
+            },
+            {
+              status: 'RESOLVED',
+              slotId: 'geo-2',
+              sourceText: 'Белорусского вокзала',
+              placeQuery: 'Белорусский вокзал',
+              candidates: [{
+                id: '99999999-9999-4999-8999-999999999992',
+                label: 'Белорусский вокзал',
+                kind: 'POINT',
+                mode: 'NEAR',
+                distanceMeters: 2_000,
+                point: { latitude: 55.7763, longitude: 37.5801 },
+                city: 'Москва',
+                countryCode: 'ru',
+                source: 'PLACE',
+              }],
+            },
+          ],
+        });
+        return;
+      }
       if (body.content.includes('geocoder unavailable')) {
         await json(route, { message: 'GEOCODER_UNAVAILABLE' }, 503);
         return;
@@ -445,6 +559,8 @@ function userMessage(body) {
 
 function assistantMessage(geo, mode = 'PRIMARY', resultCount = 1) {
   const canonicalGeo = materializeGeo(geo);
+  const composite = canonicalGeo.operator === 'ALL';
+  const primaryGeo = composite ? canonicalGeo.constraints[0] : canonicalGeo;
   const unitIds = mode === 'PRIMARY'
     ? [
         '70000001-7000-4000-8000-700000000001',
@@ -456,7 +572,7 @@ function assistantMessage(geo, mode = 'PRIMARY', resultCount = 1) {
         '80000002-8000-4000-8000-800000000002',
       ];
   const results = unitIds.slice(0, resultCount).map((unitId, index) => {
-    const distanceMeters = canonicalGeo.mode === 'NEAR' ? 650 + index * 150 : undefined;
+    const distanceMeters = !composite && canonicalGeo.mode === 'NEAR' ? 650 + index * 150 : undefined;
     return {
       unitId,
       title: `ЖК Радиус ${index + 1}`,
@@ -472,10 +588,12 @@ function assistantMessage(geo, mode = 'PRIMARY', resultCount = 1) {
       ...(distanceMeters === undefined ? {} : { distanceMeters }),
     };
   });
-  const geometry = geometryFixture(canonicalGeo);
-  const markerOrigin = canonicalGeo.kind === 'POINT'
-    ? canonicalGeo.point
-    : canonicalGeo.kind === 'LINE'
+  const geometry = composite
+    ? null
+    : geometryFixture(canonicalGeo);
+  const markerOrigin = primaryGeo.kind === 'POINT'
+    ? primaryGeo.point
+    : primaryGeo.kind === 'LINE'
       ? { latitude: 55.75, longitude: 37.62 }
       : { latitude: 55.752, longitude: 37.594 };
   return {
@@ -488,7 +606,19 @@ function assistantMessage(geo, mode = 'PRIMARY', resultCount = 1) {
       kind: 'SEARCH_RESULTS',
       exactResults: mode === 'PRIMARY' ? results : [],
       alternatives: mode === 'ALTERNATIVE' ? results : [],
-      geo: {
+      geo: composite ? {
+        operator: 'ALL',
+        constraints: canonicalGeo.constraints.map((constraint) => ({
+          ...constraint,
+          ...geometryFixture(constraint),
+        })),
+        markers: results.map((result, index) => ({
+          unitId: result.unitId,
+          latitude: markerOrigin.latitude + index * 0.001,
+          longitude: markerOrigin.longitude + index * 0.001,
+          kind: mode,
+        })),
+      } : {
         ...canonicalGeo,
         ...geometry,
         markers: results.map((result, index) => ({
@@ -505,6 +635,12 @@ function assistantMessage(geo, mode = 'PRIMARY', resultCount = 1) {
 }
 
 function materializeGeo(geo) {
+  if (geo.operator === 'ALL') {
+    return {
+      operator: 'ALL',
+      constraints: geo.constraints.map(materializeGeo),
+    };
+  }
   if (geo.referenceType === 'MANUAL_POINT') {
     return {
       kind: 'POINT',

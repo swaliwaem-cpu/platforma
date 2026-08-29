@@ -8,8 +8,11 @@ import {
 import type {
   AssistantAlternativeDeviation,
   AssistantGeoAreaGeometry,
+  AssistantGeoConstraint,
+  AssistantGeoConstraintView,
   AssistantGeoReferenceGeometry,
   AssistantGeoSearchContext,
+  AssistantGeoSearchSelection,
   AssistantPageContext,
 } from '@platforma/shared' with { 'resolution-mode': 'import' };
 
@@ -22,7 +25,7 @@ import {
   type AssistantSearchFilters,
   type AssistantStructuredIntent,
 } from './assistant-query-planner';
-import { parseAssistantGeoStoredContext, parseAssistantReferenceGeometry } from './geo/assistant-geo-contract';
+import { parseAssistantGeoStoredValue, parseAssistantReferenceGeometry } from './geo/assistant-geo-contract';
 import { AssistantGeoLandmarkService } from './geo/assistant-geo-landmark.service';
 import type { AssistantSearchEvidence } from './assistant-search-ranking';
 
@@ -125,12 +128,12 @@ type SearchOptions = {
   comparisonTargetModes?: AssistantComparisonTargetMode[];
   softPreferences?: AssistantSearchFilters;
   requiredFacts?: AssistantRequiredFact[];
-  geo?: AssistantGeoSearchContext | null;
+  geo?: AssistantGeoSearchSelection | null;
 };
 
-export type AssistantGeoSearchResult = AssistantGeoSearchContext & {
-  referenceGeometry: AssistantGeoReferenceGeometry;
-  searchArea: AssistantGeoAreaGeometry;
+export type AssistantGeoSearchResult = AssistantGeoConstraintView | {
+  operator: 'ALL';
+  constraints: AssistantGeoConstraintView[];
 };
 
 @Injectable()
@@ -143,14 +146,14 @@ export class AssistantSearchService {
   async search(
     intent: AssistantStructuredIntent,
     context: AssistantPageContext | null,
-    geoInput: AssistantGeoSearchContext | null = null,
+    geoInput: AssistantGeoSearchSelection | null = null,
   ): Promise<{
     exact: AssistantSearchEvidence[];
     totalExactResults: number;
     alternatives: AssistantSearchEvidence[];
     geo: AssistantGeoSearchResult | null;
   }> {
-    const geo = geoInput ? parseAssistantGeoStoredContext(geoInput, {
+    const geo = geoInput ? parseAssistantGeoStoredValue(geoInput, {
       ASSISTANT_GEO_RADIUS_MIN_METERS: '1',
       ASSISTANT_GEO_RADIUS_MAX_METERS: '100000',
     }) : null;
@@ -234,7 +237,20 @@ export class AssistantSearchService {
     };
   }
 
-  private async createGeoResult(geo: AssistantGeoSearchContext): Promise<AssistantGeoSearchResult> {
+  private async createGeoResult(geo: AssistantGeoSearchSelection): Promise<AssistantGeoSearchResult> {
+    if ('operator' in geo) {
+      return {
+        operator: 'ALL',
+        constraints: await Promise.all(geo.constraints.map((constraint) =>
+          this.createGeoConstraintResult(constraint))),
+      };
+    }
+    return this.createGeoConstraintResult(geo);
+  }
+
+  private async createGeoConstraintResult(
+    geo: AssistantGeoConstraint,
+  ): Promise<AssistantGeoConstraintView> {
     const referenceGeometry = this.landmarks
       ? await this.landmarks.loadReferenceGeometry(geo)
       : createPointReferenceGeometry(geo);
@@ -254,7 +270,7 @@ export class AssistantSearchService {
       throw new Error('ASSISTANT_GEO_SEARCH_AREA_INVALID');
     }
     const searchArea = parseAssistantReferenceGeometry(decoded, 'AREA') as AssistantGeoAreaGeometry;
-    return { ...geo, referenceGeometry, searchArea } as AssistantGeoSearchResult;
+    return { ...geo, referenceGeometry, searchArea } as AssistantGeoConstraintView;
   }
 
   private async findNearbyDistrictAlternatives(
@@ -415,8 +431,9 @@ export class AssistantSearchService {
     const conditions = this.createSqlConditions(filters, context, options);
     const softPreferenceScore = this.createSoftPreferenceScore(options.softPreferences);
     const comparisonTargetPriority = this.createComparisonTargetPriority(options);
-    const distance = options.geo?.mode === 'NEAR'
-      ? Prisma.sql`ST_Distance(o.search_point, ${createGeoDistanceOperand(options.geo)}::geography)`
+    const singleGeo = options.geo && !('operator' in options.geo) ? options.geo : null;
+    const distance = singleGeo?.mode === 'NEAR'
+      ? Prisma.sql`ST_Distance(o.search_point, ${createGeoDistanceOperand(singleGeo)}::geography)`
       : Prisma.sql`NULL::double precision`;
     return transaction.$queryRaw<Array<{ id: string; distanceMeters: number | null }>>(Prisma.sql`
       SELECT fu.id::text AS id
@@ -537,14 +554,16 @@ export class AssistantSearchService {
 
     if (options.geo) {
       conditions.push(Prisma.sql`o.search_point IS NOT NULL`);
-      if (options.geo.mode === 'INSIDE') {
-        conditions.push(Prisma.sql`ST_Covers(${createGeoReferenceOperand(options.geo)}, o.search_point::geometry)`);
-      } else {
-        conditions.push(Prisma.sql`ST_DWithin(
-          o.search_point,
-          ${createGeoDistanceOperand(options.geo)}::geography,
-          ${options.geo.distanceMeters}
-        )`);
+      for (const constraint of geoConstraints(options.geo)) {
+        if (constraint.mode === 'INSIDE') {
+          conditions.push(Prisma.sql`ST_Covers(${createGeoReferenceOperand(constraint)}, o.search_point::geometry)`);
+        } else {
+          conditions.push(Prisma.sql`ST_DWithin(
+            o.search_point,
+            ${createGeoDistanceOperand(constraint)}::geography,
+            ${constraint.distanceMeters}
+          )`);
+        }
       }
     }
 
@@ -936,6 +955,10 @@ function escapeLikePattern(value: string) {
 function createPointReferenceGeometry(geo: AssistantGeoSearchContext): AssistantGeoReferenceGeometry {
   if (geo.kind !== 'POINT') throw new Error('ASSISTANT_GEO_LANDMARK_REPOSITORY_REQUIRED');
   return { type: 'Point', coordinates: [geo.point.longitude, geo.point.latitude] };
+}
+
+function geoConstraints(geo: AssistantGeoSearchSelection): AssistantGeoConstraint[] {
+  return 'operator' in geo ? geo.constraints : [geo];
 }
 
 function createGeoReferenceOperand(geo: AssistantGeoSearchContext) {

@@ -1,8 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import type {
   AssistantAnswer,
+  AssistantGeoConstraint,
   AssistantGeoSearchContext,
-  AssistantGeoSearchView,
+  AssistantGeoSearchSelection,
+  AssistantGeoView,
   AssistantPageContext,
 } from '@platforma/shared' with { 'resolution-mode': 'import' };
 
@@ -47,7 +49,7 @@ export class AssistantAnswerService {
   async answer(input: {
     messages: string[];
     context: AssistantPageContext | null;
-    geo?: AssistantGeoSearchContext | null;
+    geo?: AssistantGeoSearchSelection | null;
     operationRunId?: string;
     executionId?: string;
     now?: Date;
@@ -61,17 +63,7 @@ export class AssistantAnswerService {
           ? {
               pageContext: input.context,
               ...(districtResolution ? { districtResolution } : {}),
-              ...(input.geo ? {
-                geo: {
-                  hasGeoConstraint: true,
-                  kind: input.geo.kind,
-                  mode: input.geo.mode,
-                  label: input.geo.label,
-                  source: input.geo.source,
-                  ...(input.geo.source === 'LANDMARK' ? { landmarkId: input.geo.landmarkId } : {}),
-                  ...(input.geo.mode === 'NEAR' ? { distanceMeters: input.geo.distanceMeters } : {}),
-                },
-              } : {}),
+              ...(input.geo ? { geo: createPlannerGeoSummary(input.geo) } : {}),
             }
           : input.context,
         operationRunId: input.operationRunId,
@@ -206,7 +198,7 @@ export class AssistantAnswerService {
     };
   }
 
-  private async resolveDistrict(messages: string[], geo: AssistantGeoSearchContext | null) {
+  private async resolveDistrict(messages: string[], geo: AssistantGeoSearchSelection | null) {
     const district = extractAssistantExplicitHardFilters(messages).district;
     if (!district || !this.places) return null;
     const administrativeDistrict = await this.places.findAdministrativeDistrict(district);
@@ -217,9 +209,13 @@ export class AssistantAnswerService {
         resolvedByGeo: false,
       };
     }
-    if (geo?.source !== 'LANDMARK' || !geo.landmarkId) return null;
-    const resolvedByGeo = await this.places.matchesTrustedLandmark(geo.landmarkId, district);
-    return resolvedByGeo ? { input: district, canonicalName: null, resolvedByGeo: true } : null;
+    const landmarks = geo ? geoConstraints(geo).filter((constraint) =>
+      constraint.source === 'LANDMARK' && Boolean(constraint.landmarkId)) : [];
+    for (const constraint of landmarks) {
+      const resolvedByGeo = await this.places.matchesTrustedLandmark(constraint.landmarkId!, district);
+      if (resolvedByGeo) return { input: district, canonicalName: null, resolvedByGeo: true };
+    }
+    return null;
   }
 }
 
@@ -227,14 +223,15 @@ function createGeoSearchView(
   geo: AssistantGeoSearchResult,
   evidence: AssistantSearchEvidence[],
   primaryIds: Set<string>,
-): AssistantGeoSearchView {
+): AssistantGeoView {
   let primaryCount = 0;
   let alternativeCount = 0;
+  const isComposite = 'operator' in geo;
   return {
     ...geo,
     markers: evidence.flatMap((candidate) => {
       if (typeof candidate.latitude !== 'number' || typeof candidate.longitude !== 'number') return [];
-      if (geo.mode === 'NEAR' && typeof candidate.distanceMeters !== 'number') return [];
+      if (!isComposite && geo.mode === 'NEAR' && typeof candidate.distanceMeters !== 'number') return [];
       const kind = primaryIds.has(candidate.unitId) ? 'PRIMARY' as const : 'ALTERNATIVE' as const;
       if (kind === 'PRIMARY' && primaryCount >= 3) return [];
       if (kind === 'ALTERNATIVE' && alternativeCount >= 2) return [];
@@ -244,9 +241,29 @@ function createGeoSearchView(
         unitId: candidate.unitId,
         latitude: candidate.latitude,
         longitude: candidate.longitude,
-        ...(typeof candidate.distanceMeters === 'number' ? { distanceMeters: candidate.distanceMeters } : {}),
+        ...(!isComposite && typeof candidate.distanceMeters === 'number'
+          ? { distanceMeters: candidate.distanceMeters }
+          : {}),
         kind,
       }];
     }),
-  };
+  } as AssistantGeoView;
+}
+
+function geoConstraints(geo: AssistantGeoSearchSelection): AssistantGeoConstraint[] {
+  return 'operator' in geo ? geo.constraints : [geo];
+}
+
+function createPlannerGeoSummary(geo: AssistantGeoSearchSelection) {
+  const summarize = (constraint: AssistantGeoSearchContext) => ({
+    kind: constraint.kind,
+    mode: constraint.mode,
+    label: constraint.label,
+    source: constraint.source,
+    ...(constraint.source === 'LANDMARK' ? { landmarkId: constraint.landmarkId } : {}),
+    ...(constraint.mode === 'NEAR' ? { distanceMeters: constraint.distanceMeters } : {}),
+  });
+  return 'operator' in geo
+    ? { hasGeoConstraint: true, operator: 'ALL' as const, constraints: geo.constraints.map(summarize) }
+    : { hasGeoConstraint: true, ...summarize(geo) };
 }

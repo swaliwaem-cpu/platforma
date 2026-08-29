@@ -3,17 +3,21 @@ const test = require('node:test');
 
 const {
   parseAssistantGeoBrowserInput,
+  parseAssistantGeoBrowserContext,
   parseAssistantGeoStoredContext,
+  parseAssistantGeoStoredValue,
   parseAssistantReferenceGeometry,
 } = require('../dist/assistant/geo/assistant-geo-contract.js');
 const {
   AssistantPlaceResolverService,
   createCacheKey,
   parseResolveInput,
+  parseResolveInputs,
 } = require('../dist/assistant/geo/assistant-place-resolver.service.js');
 const {
   extractAssistantExplicitHardFilters,
 } = require('../dist/assistant/assistant-query-planner.js');
+const { AssistantService } = require('../dist/assistant/assistant.service.js');
 const {
   AssistantGeoLandmarkService,
 } = require('../dist/assistant/geo/assistant-geo-landmark.service.js');
@@ -67,6 +71,44 @@ test('FIX-GEO1 browser accepts only a trusted landmark id or a validated manual 
   }
 });
 
+test('Assistant composite geo accepts a bounded ALL set and rejects duplicate or oversized input', () => {
+  const secondLandmarkId = '22222222-2222-4222-8222-222222222222';
+  assert.deepEqual(parseAssistantGeoBrowserContext({
+    operator: 'ALL',
+    constraints: [
+      { referenceType: 'LANDMARK', landmarkId, mode: 'NEAR', distanceMeters: 1_000 },
+      { referenceType: 'LANDMARK', landmarkId: secondLandmarkId, mode: 'NEAR' },
+    ],
+  }), {
+    operator: 'ALL',
+    constraints: [
+      { referenceType: 'LANDMARK', landmarkId, mode: 'NEAR', distanceMeters: 1_000 },
+      { referenceType: 'LANDMARK', landmarkId: secondLandmarkId, mode: 'NEAR', distanceMeters: null },
+    ],
+  });
+
+  for (const invalid of [
+    { operator: 'ALL', constraints: [] },
+    {
+      operator: 'ALL',
+      constraints: Array.from({ length: 6 }, (_, index) => ({
+        referenceType: 'LANDMARK',
+        landmarkId: `${String(index + 1).padStart(8, '0')}-1111-4111-8111-111111111111`,
+        mode: 'NEAR',
+      })),
+    },
+    {
+      operator: 'ALL',
+      constraints: [
+        { referenceType: 'LANDMARK', landmarkId, mode: 'NEAR' },
+        { referenceType: 'LANDMARK', landmarkId, mode: 'NEAR' },
+      ],
+    },
+  ]) {
+    assert.throws(() => parseAssistantGeoBrowserContext(invalid), /ASSISTANT_GEO_INPUT_INVALID/u);
+  }
+});
+
 test('FIX-GEO1 stored legacy point is normalized into the canonical discriminated union', () => {
   assert.deepEqual(parseAssistantGeoStoredContext({
     anchor: {
@@ -86,6 +128,129 @@ test('FIX-GEO1 stored legacy point is normalized into the canonical discriminate
   });
 });
 
+test('Assistant composite geo stored context keeps independently validated constraints', () => {
+  const secondLandmarkId = '22222222-2222-4222-8222-222222222222';
+  assert.deepEqual(parseAssistantGeoStoredValue({
+    operator: 'ALL',
+    constraints: [
+      {
+        kind: 'POINT', mode: 'NEAR', label: 'Школа № 123',
+        point: { latitude: 55.75, longitude: 37.61 },
+        distanceMeters: 1_000, source: 'LANDMARK', landmarkId,
+      },
+      {
+        kind: 'AREA', mode: 'NEAR', label: 'Парк Горького',
+        landmarkId: secondLandmarkId, distanceMeters: 2_000, source: 'LANDMARK',
+      },
+    ],
+  }), {
+    operator: 'ALL',
+    constraints: [
+      {
+        kind: 'POINT', mode: 'NEAR', label: 'Школа № 123',
+        point: { latitude: 55.75, longitude: 37.61 },
+        distanceMeters: 1_000, source: 'LANDMARK', landmarkId,
+      },
+      {
+        kind: 'AREA', mode: 'NEAR', label: 'Парк Горького',
+        landmarkId: secondLandmarkId, distanceMeters: 2_000, source: 'LANDMARK',
+      },
+    ],
+  });
+});
+
+test('Assistant composite browser geo materializes every trusted landmark in input order', async () => {
+  const secondLandmarkId = '22222222-2222-4222-8222-222222222222';
+  const service = new AssistantGeoLandmarkService({});
+  service.findTrustedById = async (id) => id === landmarkId
+    ? {
+        id,
+        kind: 'POINT',
+        label: 'Школа № 123',
+        city: 'Москва',
+        countryCode: 'ru',
+        source: 'PLACE',
+        point: { latitude: 55.75, longitude: 37.61 },
+      }
+    : {
+        id: secondLandmarkId,
+        kind: 'AREA',
+        label: 'Парк Горького',
+        city: 'Москва',
+        countryCode: 'ru',
+        source: 'PLACE',
+      };
+
+  const result = await service.materializeBrowserContext({
+    operator: 'ALL',
+    constraints: [
+      { referenceType: 'LANDMARK', landmarkId, mode: 'NEAR', distanceMeters: 500 },
+      { referenceType: 'LANDMARK', landmarkId: secondLandmarkId, mode: 'INSIDE' },
+    ],
+  });
+
+  assert.equal(result.operator, 'ALL');
+  assert.deepEqual(result.constraints.map(({ label, mode }) => ({ label, mode })), [
+    { label: 'Школа № 123', mode: 'NEAR' },
+    { label: 'Парк Горького', mode: 'INSIDE' },
+  ]);
+  assert.equal(result.constraints[0].distanceMeters, 500);
+});
+
+test('Assistant composite browser geo rejects duplicates created by canonical default distances', async () => {
+  const service = new AssistantGeoLandmarkService({});
+  service.findTrustedById = async () => ({
+    id: landmarkId,
+    kind: 'POINT',
+    label: 'Школа № 123',
+    city: 'Москва',
+    countryCode: 'ru',
+    source: 'PLACE',
+    point: { latitude: 55.75, longitude: 37.61 },
+  });
+
+  await assert.rejects(service.materializeBrowserContext({
+    operator: 'ALL',
+    constraints: [
+      { referenceType: 'LANDMARK', landmarkId, mode: 'NEAR' },
+      { referenceType: 'LANDMARK', landmarkId, mode: 'NEAR', distanceMeters: 2_000 },
+    ],
+  }), /ASSISTANT_GEO_INPUT_INVALID/u);
+});
+
+test('Assistant composite geo answer view survives the persisted response boundary', () => {
+  const service = Object.create(AssistantService.prototype);
+  const view = service.parseStoredGeoView({
+    operator: 'ALL',
+    constraints: [
+      {
+        kind: 'POINT', mode: 'NEAR', label: 'Школа',
+        point: { latitude: 55.75, longitude: 37.61 },
+        distanceMeters: 1_000, source: 'MANUAL',
+        referenceGeometry: { type: 'Point', coordinates: [37.61, 55.75] },
+        searchArea: {
+          type: 'Polygon',
+          coordinates: [[[37.60, 55.74], [37.62, 55.74], [37.62, 55.76], [37.60, 55.76], [37.60, 55.74]]],
+        },
+      },
+      {
+        kind: 'POINT', mode: 'NEAR', label: 'Парк',
+        point: { latitude: 55.76, longitude: 37.62 },
+        distanceMeters: 2_000, source: 'MANUAL',
+        referenceGeometry: { type: 'Point', coordinates: [37.62, 55.76] },
+        searchArea: {
+          type: 'Polygon',
+          coordinates: [[[37.59, 55.73], [37.65, 55.73], [37.65, 55.79], [37.59, 55.79], [37.59, 55.73]]],
+        },
+      },
+    ],
+    markers: [],
+  });
+
+  assert.equal(view.operator, 'ALL');
+  assert.deepEqual(view.constraints.map(({ label }) => label), ['Школа', 'Парк']);
+});
+
 test('FIX-GEO1 parser separates the landmark from rooms and a budget written in millions', () => {
   const phrase = 'Найди мне квартиру возле Садового кольца, например, однокомнатную, бюджет до 35 миллионов.';
   const parsed = parseResolveInput({ content: phrase, locale: 'ru', country: 'ru' });
@@ -102,6 +267,241 @@ test('FIX-GEO1 parser separates the landmark from rooms and a budget written in 
   });
   assert.equal(reordered.placeQuery, 'Садовое кольцо');
   assert.equal(reordered.mode, 'NEAR');
+});
+
+test('Assistant composite geo parser preserves repeated natural-language landmarks as ALL constraints', () => {
+  const content = 'у воды у реки возле парка такого-то возле моста около школы такой-то';
+  const parsed = parseResolveInputs({ content, locale: 'ru', country: 'ru' });
+
+  assert.equal(parsed.operator, 'ALL');
+  assert.deepEqual(parsed.constraints.map((constraint) => ({
+    sourceText: constraint.sourceText,
+    placeQuery: constraint.placeQuery,
+    mode: constraint.mode,
+    category: constraint.category,
+    resolutionPolicy: constraint.resolutionPolicy,
+  })), [
+    { sourceText: 'воды', placeQuery: 'вода', mode: 'NEAR', category: 'WATER', resolutionPolicy: 'REFINE_REQUIRED' },
+    { sourceText: 'реки', placeQuery: 'река', mode: 'NEAR', category: 'RIVER', resolutionPolicy: 'REFINE_REQUIRED' },
+    { sourceText: 'парка такого-то', placeQuery: 'парк такого-то', mode: 'NEAR', category: 'PARK', resolutionPolicy: 'REFINE_REQUIRED' },
+    { sourceText: 'моста', placeQuery: 'мост', mode: 'NEAR', category: 'BRIDGE', resolutionPolicy: 'REFINE_REQUIRED' },
+    { sourceText: 'школы такой-то', placeQuery: 'школа такой-то', mode: 'NEAR', category: 'SCHOOL', resolutionPolicy: 'REFINE_REQUIRED' },
+  ]);
+});
+
+test('Assistant geo parser rejects disjunctions instead of silently turning them into ALL', () => {
+  for (const connector of ['или', 'либо', 'либо же']) {
+    assert.throws(() => parseResolveInputs({
+      content: `возле парка Горького ${connector} около школы № 123`,
+    }), /ASSISTANT_GEO_BOOLEAN_OPERATOR_UNSUPPORTED/u);
+  }
+
+  assert.doesNotThrow(() => parseResolveInputs({
+    content: 'возле парка Горького, 2 или 3 комнаты',
+  }));
+  assert.equal(parseResolveInput({ content: 'возле кафе Или' }).placeQuery, 'кафе Или');
+});
+
+test('Assistant geo parser excludes non-landmark subjects introduced by у', async () => {
+  const phrases = [
+    'у метро Белорусская',
+    'у застройщика ПИК',
+    'у собственника',
+    'у риелтора',
+    'у агента',
+    'у девелопера',
+    'у меня',
+  ];
+  let providerCalls = 0;
+  const resolver = new AssistantPlaceResolverService(
+    createResolverPrisma(),
+    {
+      ...createUnusedProvider(),
+      async searchWithTelemetry() {
+        providerCalls += 1;
+        return { providerCallCount: 1, candidates: [] };
+      },
+    },
+    { findTrustedByQuery: async () => { throw new Error('UNEXPECTED_LANDMARK_LOOKUP'); } },
+  );
+
+  for (const content of phrases) {
+    assert.equal(parseResolveInputs({ content }).constraints.length, 0);
+    assert.deepEqual(await resolver.resolve({ content }), { status: 'NOT_APPLICABLE' });
+  }
+  assert.equal(providerCalls, 0);
+});
+
+test('Assistant geo parser keeps legacy trailing radius syntax outside the place name', () => {
+  for (const [content, distanceMeters] of [
+    ['рядом с Павелецкая Плаза в радиусе 2 км', 2_000],
+    ['рядом с Садовым кольцом до 3 км', 3_000],
+    ['рядом с Садовым кольцом до 500 м', 500],
+    ['рядом с Павелецкая Плаза, в радиусе 2 км', 2_000],
+    ['рядом с Павелецкая Плаза и в радиусе 2 км', 2_000],
+    ['рядом с Павелецкая Плаза — в радиусе 2 км', 2_000],
+  ]) {
+    const parsed = parseResolveInput({ content });
+    assert.equal(parsed.placeQuery, content.includes('Садовым') ? 'Садовое кольцо' : 'Павелецкая Плаза');
+    assert.equal(parsed.explicitDistanceMeters, distanceMeters);
+  }
+});
+
+test('Assistant geo parser trims hard-filter conjunctions from the landmark query', () => {
+  for (const content of [
+    'в 2 км от парка Горького и до 35 млн',
+    'в 2 км от парка Горького и двухкомнатную',
+  ]) {
+    const parsed = parseResolveInput({ content });
+    assert.equal(parsed.placeQuery, 'парк Горького');
+    assert.equal(parsed.explicitDistanceMeters, 2_000);
+  }
+});
+
+test('Assistant geo parser keeps prefix placeholders explicit and provider-free', async () => {
+  const content = 'у ближайшей ко мне реки у какой-то школы возле какого-нибудь парка около школы такой то';
+  const parsed = parseResolveInputs({ content });
+  assert.deepEqual(parsed.constraints.map(({ category, resolutionPolicy }) => ({ category, resolutionPolicy })), [
+    { category: 'RIVER', resolutionPolicy: 'REFINE_REQUIRED' },
+    { category: 'SCHOOL', resolutionPolicy: 'REFINE_REQUIRED' },
+    { category: 'PARK', resolutionPolicy: 'REFINE_REQUIRED' },
+    { category: 'SCHOOL', resolutionPolicy: 'REFINE_REQUIRED' },
+  ]);
+
+  let providerCalls = 0;
+  const resolver = new AssistantPlaceResolverService(
+    createResolverPrisma(),
+    {
+      ...createUnusedProvider(),
+      async searchWithTelemetry() {
+        providerCalls += 1;
+        return { providerCallCount: 1, candidates: [] };
+      },
+    },
+    { findTrustedByQuery: async () => { throw new Error('UNEXPECTED_LANDMARK_LOOKUP'); } },
+  );
+  const result = await resolver.resolve({ content });
+  assert.equal(result.status, 'COMPOSITE');
+  assert.equal(providerCalls, 0);
+});
+
+test('Assistant geo parser protects common quote styles from clause and hard-filter splitting', () => {
+  for (const quotedName of [
+    '«Парк до 35 млн у реки»',
+    '"Парк до 35 млн у реки"',
+    '“Парк до 35 млн у реки”',
+    '„Парк до 35 млн у реки”',
+  ]) {
+    const parsed = parseResolveInputs({ content: `возле ${quotedName} до 40 млн` });
+    assert.equal(parsed.constraints.length, 1);
+    assert.equal(parsed.constraints[0].placeQuery, 'парк до 35 млн у реки');
+  }
+  const named = parseResolveInput({ content: 'возле “кафе у реки”' });
+  assert.equal(named.placeQuery, 'кафе у реки');
+  assert.equal(named.category, null);
+});
+
+test('Assistant composite geo parser separates named landmarks, distances and hard filters', () => {
+  const content = [
+    'Двухкомнатную до 35 млн в районе Хамовники',
+    'не дальше 500 м от школы № 123 и в 2 км от парка Горького',
+  ].join(' ');
+  const parsed = parseResolveInputs({ content, locale: 'ru', country: 'ru' });
+  const filters = extractAssistantExplicitHardFilters([content]);
+
+  assert.deepEqual(parsed.constraints.map((constraint) => ({
+    placeQuery: constraint.placeQuery,
+    explicitDistanceMeters: constraint.explicitDistanceMeters,
+    resolutionPolicy: constraint.resolutionPolicy,
+  })), [
+    { placeQuery: 'школа № 123', explicitDistanceMeters: 500, resolutionPolicy: 'LOOKUP' },
+    { placeQuery: 'парк Горького', explicitDistanceMeters: 2_000, resolutionPolicy: 'LOOKUP' },
+  ]);
+  assert.deepEqual(filters.rooms, [2]);
+  assert.equal(filters.budgetMaxRub, 35_000_000);
+  assert.equal(filters.district, 'Хамовники');
+});
+
+test('Assistant composite geo resolver keeps generic landmark slots explicit without provider calls', async () => {
+  let landmarkCalls = 0;
+  const resolver = new AssistantPlaceResolverService(
+    createResolverPrisma(),
+    createUnusedProvider(),
+    {
+      async findTrustedByQuery() {
+        landmarkCalls += 1;
+        throw new Error('UNEXPECTED_LANDMARK_LOOKUP');
+      },
+    },
+  );
+
+  const result = await resolver.resolve({
+    content: 'у воды у реки возле парка такого-то возле моста около школы такой-то',
+    locale: 'ru',
+    country: 'ru',
+  });
+
+  assert.equal(result.status, 'COMPOSITE');
+  assert.equal(result.operator, 'ALL');
+  assert.deepEqual(result.constraints.map(({ slotId, sourceText, status }) => ({ slotId, sourceText, status })), [
+    { slotId: 'geo-1', sourceText: 'воды', status: 'NOT_FOUND' },
+    { slotId: 'geo-2', sourceText: 'реки', status: 'NOT_FOUND' },
+    { slotId: 'geo-3', sourceText: 'парка такого-то', status: 'NOT_FOUND' },
+    { slotId: 'geo-4', sourceText: 'моста', status: 'NOT_FOUND' },
+    { slotId: 'geo-5', sourceText: 'школы такой-то', status: 'NOT_FOUND' },
+  ]);
+  assert.equal(landmarkCalls, 0);
+});
+
+test('Assistant composite geo resolver resolves named slots independently from trusted storage', async () => {
+  const schoolId = '33333333-3333-4333-8333-333333333333';
+  const parkId = '44444444-4444-4444-8444-444444444444';
+  const resolver = new AssistantPlaceResolverService(
+    createResolverPrisma(),
+    createUnusedProvider(),
+    {
+      async findTrustedByQuery({ normalizedQuery }) {
+        if (normalizedQuery === 'школа no 123') {
+          return [{
+            id: schoolId,
+            kind: 'POINT',
+            label: 'Школа № 123',
+            city: 'Москва',
+            countryCode: 'ru',
+            source: 'PLACE',
+            point: { latitude: 55.75, longitude: 37.61 },
+          }];
+        }
+        if (normalizedQuery === 'парк горького') {
+          return [{
+            id: parkId,
+            kind: 'AREA',
+            label: 'Парк Горького',
+            city: 'Москва',
+            countryCode: 'ru',
+            source: 'PLACE',
+          }];
+        }
+        return [];
+      },
+    },
+  );
+
+  const result = await resolver.resolve({
+    content: 'не дальше 500 м от школы № 123 и в 2 км от парка Горького',
+    locale: 'ru',
+    country: 'ru',
+  });
+
+  assert.equal(result.status, 'COMPOSITE');
+  assert.deepEqual(result.constraints.map((constraint) => ({
+    status: constraint.status,
+    label: constraint.status === 'RESOLVED' ? constraint.candidates[0].label : null,
+    distanceMeters: constraint.status === 'RESOLVED' ? constraint.candidates[0].distanceMeters : null,
+  })), [
+    { status: 'RESOLVED', label: 'Школа № 123', distanceMeters: 500 },
+    { status: 'RESOLVED', label: 'Парк Горького', distanceMeters: 2_000 },
+  ]);
 });
 
 test('Assistant geo resolver treats a district-shaped unknown place as a landmark candidate', async () => {
@@ -771,6 +1171,98 @@ test('PIDAFIX2 resolver owns one tracked operation and memoizes city and Overpas
   assert.equal(operationEvents.at(-1)[0], 'update');
   assert.equal(Object.hasOwn(operationEvents.at(-1)[1].data, 'provider'), false);
   assert.equal(operationEvents.at(-1)[1].data.status, 'RESOLVED');
+});
+
+test('Assistant composite geo shares one physical-attempt budget across all named slots', async () => {
+  const providerQueries = [];
+  const operationEvents = [];
+  const operationIds = [];
+  let resolutionContexts = 0;
+  const resolver = new AssistantPlaceResolverService(
+    createResolverPrisma({
+      onOperationCreate: (input) => operationEvents.push(['create', input]),
+      onOperationUpdate: (input) => operationEvents.push(['update', input]),
+    }),
+    {
+      getProviderName: () => 'locationiq',
+      getCacheRetentionMs: () => 3_600_000,
+      async searchWithTelemetry(request) {
+        providerQueries.push(request.query);
+        return { providerCallCount: 1, candidates: [] };
+      },
+    },
+    { findTrustedByQuery: async () => [], findTrustedById: async () => null },
+    undefined,
+    {
+      async runResolution(operationId, task) {
+        operationIds.push(operationId);
+        resolutionContexts += 1;
+        if (resolutionContexts > 2) {
+          throw new AssistantGeoProviderError(
+            'ASSISTANT_GEO_LOCATIONIQ_RESOLUTION_BUDGET_EXHAUSTED',
+            false,
+          );
+        }
+        return task();
+      },
+    },
+  );
+
+  const result = await resolver.resolve({
+    content: 'возле парка Горького около школы № 123 у моста Багратион у реки Москва',
+    locale: 'ru',
+    country: 'ru',
+  });
+
+  assert.equal(result.status, 'COMPOSITE');
+  assert.deepEqual(result.constraints.map(({ status }) => status), [
+    'NOT_FOUND', 'NOT_FOUND', 'UNAVAILABLE', 'UNAVAILABLE',
+  ]);
+  assert.equal(providerQueries.length, 2);
+  assert.equal(new Set(operationIds).size, 1);
+  assert.equal(operationEvents.filter(([event]) => event === 'create').length, 1);
+  assert.equal(operationEvents.filter(([event]) => event === 'update').length, 1);
+  assert.match(operationEvents[0][1].data.normalizedQuery, /^composite-all:[0-9a-f]{64}$/u);
+  assert.equal(operationEvents.at(-1)[1].data.status, 'UNAVAILABLE');
+  assert.equal(
+    operationEvents.at(-1)[1].data.errorCode,
+    'ASSISTANT_GEO_LOCATIONIQ_RESOLUTION_BUDGET_EXHAUSTED',
+  );
+});
+
+test('Assistant composite geo keeps slot-specific provider failures isolated', async () => {
+  let providerCalls = 0;
+  const operationUpdates = [];
+  const resolver = new AssistantPlaceResolverService(
+    createResolverPrisma({ onOperationUpdate: (input) => operationUpdates.push(input) }),
+    {
+      getProviderName: () => 'locationiq',
+      getCacheRetentionMs: () => 3_600_000,
+      async searchWithTelemetry() {
+        providerCalls += 1;
+        if (providerCalls === 1) {
+          throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_GEOMETRY_REJECTED', false);
+        }
+        return { providerCallCount: 1, candidates: [] };
+      },
+    },
+    { findTrustedByQuery: async () => [], findTrustedById: async () => null },
+    undefined,
+    { runResolution: async (_operationId, task) => task() },
+  );
+
+  const result = await resolver.resolve({
+    content: 'возле парка Горького около школы № 123',
+    locale: 'ru',
+    country: 'ru',
+  });
+
+  assert.equal(result.status, 'COMPOSITE');
+  assert.deepEqual(result.constraints.map(({ status }) => status), ['UNAVAILABLE', 'NOT_FOUND']);
+  assert.equal(providerCalls, 2);
+  assert.equal(operationUpdates.length, 1);
+  assert.equal(operationUpdates[0].data.status, 'UNAVAILABLE');
+  assert.equal(operationUpdates[0].data.errorCode, 'ASSISTANT_GEO_PROVIDER_GEOMETRY_REJECTED');
 });
 
 test('PIDAFIX2 fake provider keeps legacy call-count audit when the ledger is injected', async () => {

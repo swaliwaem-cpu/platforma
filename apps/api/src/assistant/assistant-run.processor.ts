@@ -11,7 +11,7 @@ import {
 } from '@prisma/client';
 import type {
   AssistantPageContext,
-  AssistantGeoSearchContext,
+  AssistantGeoSearchSelection,
   AssistantProgressEvent,
   AssistantProgressStep,
 } from '@platforma/shared' with { 'resolution-mode': 'import' };
@@ -21,7 +21,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AssistantAnswerService } from './assistant-answer.service';
 import { buildAssistantRunAudit } from './audit/assistant-run-audit';
 import { AssistantPlannerError } from './assistant-query-planner';
-import { parseAssistantGeoStoredContext } from './geo/assistant-geo-contract';
+import { parseAssistantGeoStoredValue } from './geo/assistant-geo-contract';
 import {
   AssistantAiUsageBudgetError,
   AssistantAiUsageBudgetService,
@@ -353,8 +353,8 @@ export class AssistantRunProcessor implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  private parseGeoContext(value: Prisma.JsonValue | null): AssistantGeoSearchContext | null {
-    return value === null ? null : parseAssistantGeoStoredContext(value, {
+  private parseGeoContext(value: Prisma.JsonValue | null): AssistantGeoSearchSelection | null {
+    return value === null ? null : parseAssistantGeoStoredValue(value, {
       ASSISTANT_GEO_RADIUS_MIN_METERS: '1',
       ASSISTANT_GEO_RADIUS_MAX_METERS: '100000',
     });

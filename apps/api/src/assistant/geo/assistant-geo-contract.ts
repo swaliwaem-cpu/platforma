@@ -2,12 +2,15 @@ import { BadRequestException } from '@nestjs/common';
 import type {
   AssistantGeoAnchor,
   AssistantGeoAreaGeometry,
+  AssistantGeoBrowserConstraint,
   AssistantGeoBrowserInput,
+  AssistantGeoConstraint,
   AssistantGeoKind,
   AssistantGeoLineGeometry,
   AssistantGeoPointGeometry,
   AssistantGeoReferenceGeometry,
   AssistantGeoSearchContext,
+  AssistantGeoSearchSelection,
 } from '@platforma/shared' with { 'resolution-mode': 'import' };
 
 const defaultMinimumDistanceMeters = 100;
@@ -16,12 +19,13 @@ export const assistantGeoDefaultPointDistanceMeters = 2_000;
 export const assistantGeoDefaultLandmarkDistanceMeters = 5_000;
 const maximumLabelLength = 160;
 const maximumGeometryVertices = 20_000;
+export const assistantGeoMaximumConstraints = 5;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 type AssistantGeoEnvironment = NodeJS.ProcessEnv | Record<string, string | undefined>;
 type Position = [longitude: number, latitude: number];
 
-export type ParsedAssistantGeoBrowserInput =
+export type ParsedAssistantGeoBrowserConstraint =
   | {
       referenceType: 'LANDMARK';
       landmarkId: string;
@@ -34,6 +38,12 @@ export type ParsedAssistantGeoBrowserInput =
       mode: 'NEAR';
       distanceMeters: number;
     };
+
+export type ParsedAssistantGeoBrowserInput = ParsedAssistantGeoBrowserConstraint;
+export type ParsedAssistantGeoBrowserContext = ParsedAssistantGeoBrowserConstraint | {
+  operator: 'ALL';
+  constraints: ParsedAssistantGeoBrowserConstraint[];
+};
 
 export type AssistantGeoLegacySearchContext = {
   anchor: AssistantGeoAnchor;
@@ -50,10 +60,39 @@ export class AssistantGeoConfigError extends Error {
 }
 
 /** Strict public ingress. Full geometry, kind and labels for landmarks remain server-owned. */
+export function parseAssistantGeoBrowserContext(
+  value: unknown,
+  environment: AssistantGeoEnvironment = process.env,
+): ParsedAssistantGeoBrowserContext {
+  if (!isRecord(value)) throw invalidInput();
+
+  if (value.operator === 'ALL') {
+    assertExactKeys(value, ['operator', 'constraints']);
+    if (!Array.isArray(value.constraints)
+      || value.constraints.length < 1
+      || value.constraints.length > assistantGeoMaximumConstraints) throw invalidInput();
+    const constraints = value.constraints.map((constraint) => parseAssistantGeoBrowserConstraint(
+      constraint,
+      environment,
+    ));
+    assertUniqueConstraints(constraints, invalidInput);
+    return { operator: 'ALL', constraints };
+  }
+
+  return parseAssistantGeoBrowserConstraint(value, environment);
+}
+
 export function parseAssistantGeoBrowserInput(
   value: unknown,
   environment: AssistantGeoEnvironment = process.env,
 ): ParsedAssistantGeoBrowserInput {
+  return parseAssistantGeoBrowserConstraint(value, environment);
+}
+
+function parseAssistantGeoBrowserConstraint(
+  value: unknown,
+  environment: AssistantGeoEnvironment,
+): ParsedAssistantGeoBrowserConstraint {
   if (!isRecord(value)) throw invalidInput();
 
   if (value.referenceType === 'LANDMARK') {
@@ -91,10 +130,39 @@ export function parseAssistantGeoBrowserInput(
 }
 
 /** Dual-read persistence boundary: canonical v2 plus legacy point/radius history. */
+export function parseAssistantGeoStoredValue(
+  value: unknown,
+  environment: AssistantGeoEnvironment = process.env,
+): AssistantGeoSearchSelection {
+  if (!isRecord(value)) throw new BadRequestException('ASSISTANT_GEO_CONTEXT_INVALID');
+  if (value.operator === 'ALL') {
+    assertExactKeys(value, ['operator', 'constraints']);
+    if (!Array.isArray(value.constraints)
+      || value.constraints.length < 1
+      || value.constraints.length > assistantGeoMaximumConstraints) {
+      throw new BadRequestException('ASSISTANT_GEO_CONTEXT_INVALID');
+    }
+    const constraints = value.constraints.map((constraint) => parseAssistantGeoStoredConstraint(
+      constraint,
+      environment,
+    ));
+    assertUniqueConstraints(constraints, () => new BadRequestException('ASSISTANT_GEO_CONTEXT_INVALID'));
+    return { operator: 'ALL', constraints };
+  }
+  return parseAssistantGeoStoredConstraint(value, environment);
+}
+
 export function parseAssistantGeoStoredContext(
   value: unknown,
   environment: AssistantGeoEnvironment = process.env,
 ): AssistantGeoSearchContext {
+  return parseAssistantGeoStoredConstraint(value, environment);
+}
+
+function parseAssistantGeoStoredConstraint(
+  value: unknown,
+  environment: AssistantGeoEnvironment,
+): AssistantGeoConstraint {
   if (!isRecord(value)) throw new BadRequestException('ASSISTANT_GEO_CONTEXT_INVALID');
   if (isRecord(value.anchor)) {
     const legacy = parseLegacyPointContext(value, environment);
@@ -375,7 +443,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export function toAssistantGeoBrowserInput(context: AssistantGeoSearchContext): AssistantGeoBrowserInput {
+export function toAssistantGeoBrowserContext(context: AssistantGeoSearchSelection): AssistantGeoBrowserInput {
+  if ('operator' in context) {
+    return {
+      operator: 'ALL',
+      constraints: context.constraints.map(toAssistantGeoBrowserConstraint),
+    };
+  }
+  return toAssistantGeoBrowserConstraint(context);
+}
+
+export function toAssistantGeoBrowserInput(context: AssistantGeoSearchContext): AssistantGeoBrowserConstraint {
+  return toAssistantGeoBrowserConstraint(context);
+}
+
+function toAssistantGeoBrowserConstraint(context: AssistantGeoConstraint): AssistantGeoBrowserConstraint {
   if (context.source === 'LANDMARK' && context.landmarkId) {
     return {
       referenceType: 'LANDMARK',
@@ -391,4 +473,28 @@ export function toAssistantGeoBrowserInput(context: AssistantGeoSearchContext): 
     mode: 'NEAR',
     distanceMeters: context.distanceMeters,
   };
+}
+
+function assertUniqueConstraints(
+  constraints: Array<ParsedAssistantGeoBrowserConstraint | AssistantGeoConstraint>,
+  createError: () => Error,
+) {
+  const keys = constraints.map((constraint) => {
+    if ('referenceType' in constraint) {
+      return constraint.referenceType === 'LANDMARK'
+        ? `LANDMARK:${constraint.landmarkId}:${constraint.mode}:${constraint.distanceMeters ?? ''}`
+        : `MANUAL:${constraint.point.latitude}:${constraint.point.longitude}:${constraint.distanceMeters}`;
+    }
+    if (constraint.source === 'LANDMARK' && constraint.landmarkId) {
+      return `LANDMARK:${constraint.landmarkId}:${constraint.mode}:${constraint.mode === 'NEAR' ? constraint.distanceMeters : ''}`;
+    }
+    return constraint.kind === 'POINT'
+      ? `MANUAL:${constraint.point.latitude}:${constraint.point.longitude}:${constraint.distanceMeters}`
+      : `${constraint.kind}:${constraint.label}:${constraint.mode}`;
+  });
+  if (new Set(keys).size !== keys.length) throw createError();
+}
+
+export function assertAssistantGeoUniqueConstraints(constraints: AssistantGeoConstraint[]) {
+  assertUniqueConstraints(constraints, invalidInput);
 }

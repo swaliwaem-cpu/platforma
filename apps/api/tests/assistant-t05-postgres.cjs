@@ -240,6 +240,40 @@ test('Assistant FIX-GEO1 uses the full area boundary for NEAR and ST_Covers for 
   assert.deepEqual(inside.geo.searchArea, inside.geo.referenceGeometry);
 });
 
+test('Assistant composite geo intersects every landmark constraint with SQL AND semantics', async () => {
+  const result = await search.search(createIntent({}), null, {
+    operator: 'ALL',
+    constraints: [
+      {
+        kind: 'LINE',
+        mode: 'NEAR',
+        label: 'Тестовая длинная дорога',
+        landmarkId: landmarkIds.line,
+        distanceMeters: 1_500,
+        source: 'LANDMARK',
+      },
+      {
+        kind: 'AREA',
+        mode: 'INSIDE',
+        label: 'Тестовый район',
+        landmarkId: landmarkIds.area,
+        source: 'LANDMARK',
+      },
+    ],
+  });
+
+  assert.deepEqual(new Set(result.exact.map(({ unitId }) => unitId)), new Set([
+    fixture.units.inside500.id,
+    fixture.units.inside1000.id,
+  ]));
+  assert.equal(result.exact.every(({ distanceMeters }) => distanceMeters === null), true);
+  assert.equal(result.geo.operator, 'ALL');
+  assert.deepEqual(result.geo.constraints.map(({ kind, mode }) => ({ kind, mode })), [
+    { kind: 'LINE', mode: 'NEAR' },
+    { kind: 'AREA', mode: 'INSIDE' },
+  ]);
+});
+
 test('Assistant FIX-GEO1 landmark constraints reject invalid geometry and GiST index is usable', async () => {
   await assert.rejects(prisma.$executeRaw(Prisma.sql`
     INSERT INTO assistant_geo_landmarks (
