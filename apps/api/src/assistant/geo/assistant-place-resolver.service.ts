@@ -27,8 +27,11 @@ import {
   type AssistantTrustedLandmark,
 } from './assistant-geo-landmark.service';
 import {
+  isExpectedAssistantGeoAdministrativeBounds,
   normalizeAssistantGeoIdentityText,
   resolveAssistantGeoLandmarkIdentity,
+  selectAssistantGeoProviderCandidates,
+  type AssistantGeoCandidateIdentityPolicy,
 } from './assistant-geo-landmark-identity';
 import { AssistantGeoUsageLedgerService } from './assistant-geo-usage-ledger.service';
 import {
@@ -55,7 +58,11 @@ export type ParsedResolveInput = {
   expectedKind: AssistantGeoKind | null;
   expectedCity: string | null;
   expectedCountry: string | null;
+  providerViewbox: [west: number, south: number, east: number, north: number] | null;
+  candidatePolicy: AssistantGeoCandidateIdentityPolicy | null;
+  version: 2;
   overpassTagValues: string[];
+  overpassRelationIds: string[] | null;
   mode: 'NEAR' | 'INSIDE';
   explicitDistanceMeters: number | null;
   /** @deprecated Temporary compatibility for T05 callers. */
@@ -186,8 +193,9 @@ export class AssistantPlaceResolverService {
         normalizedQueries: [...new Set([input.normalizedQuery, ...input.aliases, input.userAlias])],
         mode: input.mode,
         locale: input.locale,
-        country: input.country,
-        viewbox: input.viewbox,
+        country: input.expectedCountry ?? input.country,
+        viewbox: input.providerViewbox ?? input.viewbox,
+        minimumIdentityVersion: input.candidatePolicy ? input.version : undefined,
       }),
       input.mode,
     );
@@ -308,10 +316,14 @@ export class AssistantPlaceResolverService {
       cacheExpiresAt: new Date(Date.now() + this.provider.getCacheRetentionMs()),
     };
     const lookup = await this.provider.searchWithTelemetry({
+      purpose: input.expectedKind === 'AREA' || (input.expectedKind === null && input.mode === 'INSIDE')
+        ? 'FULL_GEOMETRY'
+        : 'METADATA',
+      expectedKind: input.expectedKind ?? (input.mode === 'INSIDE' ? 'AREA' : null),
       query: input.providerQuery,
       locale: input.locale,
-      country: input.country,
-      viewbox: input.viewbox,
+      country: input.expectedCountry ?? input.country,
+      viewbox: input.providerViewbox ?? input.viewbox,
     });
     let calls = lookup.providerCallCount;
     if (lookup.candidates.length === 0) {
@@ -320,7 +332,11 @@ export class AssistantPlaceResolverService {
         cacheExpiresAt: new Date(Date.now() + this.provider.getCacheRetentionMs()),
       };
     }
-    const providerCandidates = selectGeometryCandidates(lookup.candidates, input, this.provider.getProviderName());
+    const providerCandidates = selectAssistantGeoProviderCandidates(
+      lookup.candidates,
+      input,
+      this.provider.getProviderName(),
+    );
     const saved: AssistantTrustedLandmark[] = [];
     const savedExpiries: Date[] = [];
     let finalProvider: 'fake' | 'locationiq' | 'overpass' = this.provider.getProviderName();
@@ -328,25 +344,29 @@ export class AssistantPlaceResolverService {
     let overpassPromise: ReturnType<AssistantOverpassCollector['collect']> | null = null;
     const resolveCityArea = (city: string) => {
       cityLookupPromise ??= this.provider.searchWithTelemetry({
+        purpose: 'BOUNDS',
+        expectedKind: 'AREA',
         query: city,
         locale: input.locale,
         country: input.expectedCountry ?? input.country,
-        viewbox: null,
+        viewbox: input.providerViewbox,
       }).then((cityLookup) => {
         calls += cityLookup.providerCallCount;
-        const areas = cityLookup.candidates.filter((item) => isExpectedAdministrativeArea(item, {
+        const areas = cityLookup.candidates.filter((item) => isExpectedAssistantGeoAdministrativeBounds(item, {
           expectedCity: city,
           expectedCountry: input.expectedCountry ?? input.country,
+          expectedBounds: input.providerViewbox,
         }));
         return areas.length === 1 ? areas[0]! : null;
       });
       return cityLookupPromise;
     };
     const collectRoad = (candidate: AssistantGeoProviderCandidate) => {
-      if (!candidate.city || !this.overpass) {
+      const city = input.expectedCity ?? candidate.city;
+      if (!city || !this.overpass) {
         throw new AssistantOverpassError('ASSISTANT_OVERPASS_GEOMETRY_UNAVAILABLE', false);
       }
-      overpassPromise ??= resolveCityArea(candidate.city).then((cityArea) => {
+      overpassPromise ??= resolveCityArea(city).then((cityArea) => {
         if (!cityArea?.boundingBox) {
           throw new AssistantOverpassError('ASSISTANT_OVERPASS_CITY_AREA_UNAVAILABLE', false);
         }
@@ -354,7 +374,8 @@ export class AssistantPlaceResolverService {
         return this.overpass!.collect({
           name: input.providerQuery,
           tagValues: input.overpassTagValues,
-          city: candidate.city!,
+          relationIds: input.overpassRelationIds,
+          city,
           cityBounds: cityArea.boundingBox,
         });
       });
@@ -431,8 +452,8 @@ export class AssistantPlaceResolverService {
       normalizedQuery: input.normalizedQuery,
       aliases: [...new Set([...input.aliases, input.userAlias])],
       locale: input.locale,
-      country: candidate.countryCode ?? input.country,
-      city: candidate.city,
+      country: candidate.countryCode ?? input.expectedCountry ?? input.country,
+      city: candidate.city ?? input.expectedCity,
       geometry,
       sourceProvider,
       sourceExternalId,
@@ -440,8 +461,8 @@ export class AssistantPlaceResolverService {
       sourceMetadata: {
         entityType,
         fetchedAt: new Date().toISOString(),
-        version: 1,
-        identityVersion: 1,
+        version: 2,
+        identityVersion: input.version,
         userAlias: input.userAlias,
         providerQuery: input.providerQuery,
       },
@@ -486,9 +507,9 @@ export class AssistantPlaceResolverService {
         cacheKey,
         normalizedQuery: input.normalizedQuery,
         locale: input.locale,
-        country: input.country ?? '',
-        viewboxKey: createViewboxKey(input.viewbox),
-        provider: `${this.provider.getProviderName()}-geometry-v2`,
+        country: input.expectedCountry ?? input.country ?? '',
+        viewboxKey: createViewboxKey(input.providerViewbox ?? input.viewbox),
+        provider: `${this.provider.getProviderName()}-geometry-v3`,
         candidatesJson,
         expiresAt,
       },
@@ -564,6 +585,8 @@ export class AssistantPlaceResolverService {
     }
     try {
       const response = await this.provider.searchWithTelemetry({
+        purpose: 'METADATA',
+        expectedKind: 'POINT',
         query: input.providerQuery,
         locale: input.locale,
         country: input.country,
@@ -917,15 +940,15 @@ export function normalizePlaceQuery(value: string) {
 
 export function createCacheKey(
   input: Pick<ParsedResolveInput, 'placeQuery' | 'mode' | 'locale' | 'country' | 'viewbox'>
-    & Partial<Pick<ParsedResolveInput, 'normalizedQuery'>>,
+    & Partial<Pick<ParsedResolveInput, 'normalizedQuery' | 'expectedCountry' | 'providerViewbox'>>,
 ) {
   return createHash('sha256').update(JSON.stringify({
-    version: 'geometry-v2',
+    version: 'geometry-v3',
     query: input.normalizedQuery ?? normalizePlaceQuery(input.placeQuery),
     mode: input.mode,
     locale: input.locale,
-    country: input.country ?? '',
-    viewbox: createViewboxKey(input.viewbox),
+    country: input.expectedCountry ?? input.country ?? '',
+    viewbox: createViewboxKey(input.providerViewbox ?? input.viewbox),
   })).digest('hex');
 }
 
@@ -1231,88 +1254,6 @@ function legacyCandidate(
     countryCode: candidate.countryCode,
     source: 'PLACE',
   };
-}
-
-function selectGeometryCandidates(
-  candidates: AssistantGeoProviderCandidate[],
-  input: ParsedResolveInput,
-  providerName: 'fake' | 'locationiq',
-) {
-  if (providerName === 'fake') return selectLegacyGeometryCandidates(candidates, input.mode);
-  if (input.expectedKind === 'AREA') {
-    const areas = candidates.filter((candidate) => isExpectedAdministrativeArea(candidate, {
-      expectedCity: input.expectedCity,
-      expectedCountry: input.expectedCountry,
-      expectedNames: [...input.aliases, input.providerQuery, input.placeQuery],
-    }));
-    if (areas.length !== 1) {
-      throw new AssistantGeoProviderError(
-        areas.length > 1 ? 'ASSISTANT_GEO_AREA_AMBIGUOUS' : 'ASSISTANT_GEO_AREA_IDENTITY_REJECTED',
-        false,
-      );
-    }
-    return areas;
-  }
-  if (input.expectedKind === 'LINE') {
-    const expectedNames = new Set(
-      [...input.aliases, input.providerQuery, ...input.overpassTagValues].map(normalizeAssistantGeoIdentityText),
-    );
-    const lines = candidates.filter((candidate) => (
-      candidate.geometryKind === 'LINE'
-      && normalizeAssistantGeoIdentityText(candidate.entityClass ?? '') === 'highway'
-      && matchesExpectedScope(candidate, input.expectedCity, input.expectedCountry)
-      && expectedNames.has(normalizeAssistantGeoIdentityText(candidate.label.split(',')[0]!))
-    ));
-    if (lines.length === 0) {
-      throw new AssistantGeoProviderError('ASSISTANT_GEO_ROAD_IDENTITY_REJECTED', false);
-    }
-    return lines;
-  }
-  return selectLegacyGeometryCandidates(candidates, input.mode);
-}
-
-function selectLegacyGeometryCandidates(
-  candidates: AssistantGeoProviderCandidate[],
-  mode: 'NEAR' | 'INSIDE',
-) {
-  if (mode === 'INSIDE') return candidates.filter((candidate) => candidate.geometryKind === 'AREA');
-  const lines = candidates.filter((candidate) => candidate.geometryKind === 'LINE');
-  if (lines.length > 0) return lines;
-  const areas = candidates.filter((candidate) => candidate.geometryKind === 'AREA');
-  if (areas.length > 0) return areas;
-  return candidates.filter((candidate) => (candidate.geometryKind ?? 'POINT') === 'POINT');
-}
-
-function isExpectedAdministrativeArea(
-  candidate: AssistantGeoProviderCandidate,
-  input: {
-    expectedCity: string | null;
-    expectedCountry: string | null;
-    expectedNames?: string[];
-  },
-) {
-  if (candidate.geometryKind !== 'AREA'
-    || candidate.geometryComplete !== true
-    || !candidate.referenceGeometry
-    || !candidate.boundingBox
-    || normalizeAssistantGeoIdentityText(candidate.entityClass ?? '') !== 'boundary'
-    || normalizeAssistantGeoIdentityText(candidate.entityType ?? '') !== 'administrative'
-    || normalizeAssistantGeoIdentityText(candidate.osmType ?? '') !== 'relation'
-    || !matchesExpectedScope(candidate, input.expectedCity, input.expectedCountry)) return false;
-  if (!input.expectedNames) return true;
-  const expectedNames = new Set(input.expectedNames.map(normalizeAssistantGeoIdentityText));
-  return expectedNames.has(normalizeAssistantGeoIdentityText(candidate.label.split(',')[0]!));
-}
-
-function matchesExpectedScope(
-  candidate: AssistantGeoProviderCandidate,
-  expectedCity: string | null,
-  expectedCountry: string | null,
-) {
-  return (!expectedCity
-      || normalizeAssistantGeoIdentityText(candidate.city ?? '') === normalizeAssistantGeoIdentityText(expectedCity))
-    && (!expectedCountry
-      || normalizeAssistantGeoIdentityText(candidate.countryCode ?? '') === normalizeAssistantGeoIdentityText(expectedCountry));
 }
 
 function filterLandmarksForMode(landmarks: AssistantTrustedLandmark[], mode: 'NEAR' | 'INSIDE') {

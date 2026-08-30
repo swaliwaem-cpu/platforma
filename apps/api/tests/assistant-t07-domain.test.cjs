@@ -1155,7 +1155,10 @@ test('Assistant T07 disabled Geo Provider degrades without a provider call or bu
   );
 
   await assert.rejects(
-    policy.searchWithTelemetry({ query: 'Павелецкая Плаза', locale: 'ru', country: 'ru', viewbox: null }),
+    policy.searchWithTelemetry({
+      purpose: 'METADATA', expectedKind: 'POINT',
+      query: 'Павелецкая Плаза', locale: 'ru', country: 'ru', viewbox: null,
+    }),
     (error) => error instanceof AssistantGeoProviderError
       && error.code === 'ASSISTANT_GEO_PROVIDER_DISABLED'
       && error.providerCallCount === 0,
@@ -1228,6 +1231,7 @@ test('Assistant T07 rollout preflight fails closed on stale sources, implicit bu
     ASSISTANT_MODEL_REQUESTS_PER_DAY: '5000',
     ASSISTANT_GEO_PROVIDER_REQUESTS_PER_MINUTE: '60',
     ASSISTANT_GEO_PROVIDER_DAILY_BUDGET: '1000',
+    ASSISTANT_GEO_CACHE_TTL_SECONDS: '3600',
   }), {
     passed: true,
     missing: [],
@@ -1241,8 +1245,22 @@ test('Assistant T07 rollout preflight fails closed on stale sources, implicit bu
       'ASSISTANT_MODEL_REQUESTS_PER_DAY',
       'ASSISTANT_GEO_PROVIDER_REQUESTS_PER_MINUTE',
       'ASSISTANT_GEO_PROVIDER_DAILY_BUDGET',
+      'ASSISTANT_GEO_CACHE_TTL_SECONDS',
     ],
   });
+  for (const invalidTtl of ['59', '31536001', 'not-a-number']) {
+    assert.deepEqual(readAssistantRolloutBudgetReadiness({
+      ASSISTANT_GEO_PROVIDER_ENABLED: 'true',
+      ASSISTANT_MODEL_REQUESTS_PER_MINUTE: '60',
+      ASSISTANT_MODEL_REQUESTS_PER_DAY: '5000',
+      ASSISTANT_GEO_PROVIDER_REQUESTS_PER_MINUTE: '60',
+      ASSISTANT_GEO_PROVIDER_DAILY_BUDGET: '1000',
+      ASSISTANT_GEO_CACHE_TTL_SECONDS: invalidTtl,
+    }), {
+      passed: false,
+      missing: ['ASSISTANT_GEO_CACHE_TTL_SECONDS'],
+    });
+  }
 
   assert.equal(countAssistantRolloutCriticalErrors([
     { status: 'COMPLETED', qualityFlags: [] },

@@ -69,8 +69,8 @@ export type AssistantVerifiedLandmarkInput = {
   sourceMetadata: {
     entityType: string | null;
     fetchedAt: string;
-    version: 1;
-    identityVersion?: 1;
+    version: 1 | 2;
+    identityVersion?: 1 | 2;
     userAlias?: string;
     providerQuery?: string;
   };
@@ -177,6 +177,7 @@ export class AssistantGeoLandmarkService {
     locale: string;
     country: string | null;
     viewbox?: [west: number, south: number, east: number, north: number] | null;
+    minimumIdentityVersion?: 1 | 2;
   }): Promise<AssistantTrustedLandmark[]> {
     const normalizedQueries = [...new Set([
       input.normalizedQuery,
@@ -210,7 +211,20 @@ export class AssistantGeoLandmarkService {
           : Prisma.empty}
         AND (
           l."confirmation_state" = 'confirmed'
-          OR (l."confirmation_state" = 'verified' AND l."expires_at" > CURRENT_TIMESTAMP)
+          OR (
+            l."confirmation_state" = 'verified'
+            AND l."expires_at" > CURRENT_TIMESTAMP
+            ${input.minimumIdentityVersion
+              ? Prisma.sql`AND COALESCE(
+                  CASE
+                    WHEN l."source_metadata"->>'identityVersion' ~ '^[0-9]+$'
+                      THEN (l."source_metadata"->>'identityVersion')::integer
+                    ELSE 0
+                  END,
+                  0
+                ) >= ${input.minimumIdentityVersion}`
+              : Prisma.empty}
+          )
         )
       ORDER BY
         (l."confirmation_state" = 'confirmed') DESC,
@@ -315,7 +329,7 @@ export class AssistantGeoLandmarkService {
     const metadata = JSON.stringify({
       entityType: input.sourceMetadata.entityType,
       fetchedAt: input.sourceMetadata.fetchedAt,
-      version: 1,
+      version: input.sourceMetadata.version,
       ...(input.sourceMetadata.identityVersion ? { identityVersion: input.sourceMetadata.identityVersion } : {}),
       ...(input.sourceMetadata.userAlias ? { userAlias: input.sourceMetadata.userAlias } : {}),
       ...(input.sourceMetadata.providerQuery ? { providerQuery: input.sourceMetadata.providerQuery } : {}),

@@ -15,7 +15,11 @@ const maximumCandidates = 3;
 type GeoProviderEnvironment = NodeJS.ProcessEnv | Record<string, string | undefined>;
 type FetchLike = typeof fetch;
 
+export type AssistantGeoProviderPurpose = 'FULL_GEOMETRY' | 'METADATA' | 'BOUNDS';
+
 export type AssistantGeoProviderRequest = {
+  purpose: AssistantGeoProviderPurpose;
+  expectedKind: AssistantGeoKind | null;
   query: string;
   locale: string;
   country: string | null;
@@ -36,6 +40,7 @@ export type AssistantGeoProviderCandidate = {
   entityType?: string | null;
   osmType?: string | null;
   osmId?: string | null;
+  names?: string[];
   boundingBox?: [west: number, south: number, east: number, north: number] | null;
 };
 
@@ -135,7 +140,8 @@ export class LocationIqGeoProvider implements AssistantGeoProvider {
     url.searchParams.set('normalizeaddress', '1');
     url.searchParams.set('normalizecity', '1');
     url.searchParams.set('addressdetails', '1');
-    url.searchParams.set('polygon_geojson', '1');
+    url.searchParams.set('namedetails', '1');
+    if (request.purpose === 'FULL_GEOMETRY') url.searchParams.set('polygon_geojson', '1');
     url.searchParams.set('limit', String(maximumCandidates));
     url.searchParams.set('accept-language', request.locale);
     if (request.country) url.searchParams.set('countrycodes', request.country);
@@ -182,7 +188,7 @@ export class LocationIqGeoProvider implements AssistantGeoProvider {
       } catch {
         throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_RESPONSE_INVALID', false, response.status);
       }
-      const candidates = normalizeProviderCandidates(payload);
+      const candidates = normalizeProviderCandidates(payload, request);
       outcome = 'SUCCESS';
       return candidates;
     } catch (error) {
@@ -336,6 +342,19 @@ function readFakeMoscowPlace(normalizedQuery: string) {
 }
 
 function normalizeProviderRequest(request: AssistantGeoProviderRequest): AssistantGeoProviderRequest {
+  const purpose = ['FULL_GEOMETRY', 'METADATA', 'BOUNDS'].includes(request.purpose)
+    ? request.purpose
+    : null;
+  const expectedKind = ['POINT', 'LINE', 'AREA'].includes(String(request.expectedKind))
+    ? request.expectedKind
+    : request.expectedKind === null
+      ? null
+      : undefined;
+  if (!purpose || expectedKind === undefined
+    || (purpose === 'FULL_GEOMETRY' && expectedKind !== 'AREA')
+    || (purpose === 'BOUNDS' && expectedKind !== 'AREA')) {
+    throw new AssistantGeoProviderError('ASSISTANT_GEO_PURPOSE_INVALID', false);
+  }
   const query = readBoundedText(request.query, 240);
   if (!query) throw new AssistantGeoProviderError('ASSISTANT_GEO_QUERY_INVALID', false);
   const locale = typeof request.locale === 'string' && /^[a-z]{2}(?:-[A-Z]{2})?$/u.test(request.locale)
@@ -352,10 +371,13 @@ function normalizeProviderRequest(request: AssistantGeoProviderRequest): Assista
   if (request.viewbox !== null && !viewbox) {
     throw new AssistantGeoProviderError('ASSISTANT_GEO_VIEWBOX_INVALID', false);
   }
-  return { query, locale, country, viewbox };
+  return { purpose, expectedKind, query, locale, country, viewbox };
 }
 
-function normalizeProviderCandidates(value: unknown): AssistantGeoProviderCandidate[] {
+function normalizeProviderCandidates(
+  value: unknown,
+  request: Pick<AssistantGeoProviderRequest, 'purpose' | 'expectedKind'>,
+): AssistantGeoProviderCandidate[] {
   if (!Array.isArray(value)) throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_RESPONSE_INVALID', false);
   if (value.length > maximumCandidates) {
     throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_RESPONSE_INVALID', false);
@@ -377,13 +399,15 @@ function normalizeProviderCandidates(value: unknown): AssistantGeoProviderCandid
       throw new AssistantGeoProviderError('ASSISTANT_GEO_PROVIDER_RESPONSE_INVALID', false);
     }
     const address = isRecord(entry.address) ? entry.address : {};
-    const geometry = parseLocationIqGeometry(entry.geojson);
     const entityClass = readBoundedText(entry.class, 80);
     const entityType = readBoundedText(entry.type, 80);
     const osmType = readBoundedText(entry.osm_type, 24);
     const osmId = typeof entry.osm_id === 'number' || typeof entry.osm_id === 'string'
       ? readBoundedText(String(entry.osm_id), 80)
       : null;
+    const geometry = request.purpose === 'FULL_GEOMETRY'
+      ? parseLocationIqGeometry(entry.geojson)
+      : { kind: inferMetadataGeometryKind(entityClass, request.expectedKind) };
     const geometryKind = normalizeText(entityClass ?? '') === 'highway' ? 'LINE' : geometry.kind;
     const candidate: AssistantGeoProviderCandidate = {
       id,
@@ -398,11 +422,15 @@ function normalizeProviderCandidates(value: unknown): AssistantGeoProviderCandid
       ...(geometry.referenceGeometry && geometry.kind === geometryKind
         ? { referenceGeometry: geometry.referenceGeometry }
         : {}),
-      geometryComplete: geometryKind !== 'LINE',
+      geometryComplete: geometryKind === 'POINT'
+        || (request.purpose === 'FULL_GEOMETRY'
+          && geometryKind === 'AREA'
+          && geometry.referenceGeometry !== undefined),
       entityClass,
       entityType,
       osmType,
       osmId,
+      names: parseLocationIqNames(entry.namedetails),
       boundingBox: parseLocationIqBoundingBox(entry.boundingbox),
     };
     const key = osmType && osmId
@@ -413,6 +441,32 @@ function normalizeProviderCandidates(value: unknown): AssistantGeoProviderCandid
     if (candidates.length < maximumCandidates) candidates.push(candidate);
   }
   return candidates;
+}
+
+function inferMetadataGeometryKind(entityClass: string | null, expectedKind: AssistantGeoKind | null) {
+  const normalizedClass = normalizeText(entityClass ?? '');
+  if (normalizedClass === 'highway') return 'LINE' as const;
+  if (normalizedClass === 'boundary') return 'AREA' as const;
+  return expectedKind === 'LINE' ? 'LINE' as const : 'POINT' as const;
+}
+
+function parseLocationIqNames(value: unknown) {
+  if (!isRecord(value)) return [];
+  const allowedKeys = [
+    'name', 'name:ru', 'official_name', 'official_name:ru', 'short_name', 'short_name:ru',
+    'alt_name', 'alt_name:ru', 'loc_name', 'loc_name:ru',
+  ];
+  const names: string[] = [];
+  const normalizedNames = new Set<string>();
+  for (const key of allowedKeys) {
+    const name = readBoundedText(value[key], 300);
+    if (!name) continue;
+    const normalized = normalizeText(name);
+    if (normalizedNames.has(normalized)) continue;
+    normalizedNames.add(normalized);
+    names.push(name);
+  }
+  return names;
 }
 
 function parseLocationIqGeometry(value: unknown): {

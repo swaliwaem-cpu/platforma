@@ -16,6 +16,7 @@ const {
   createTerminationAwareFetch,
   executeGeoCasesSequentially,
   exactCaps,
+  geoIdentityVersion,
   geoLiveCases,
   parseGeoLiveArguments,
   summarizeProviderAttemptRows,
@@ -63,6 +64,9 @@ test('PIDAFIX3 Geo live cases have deterministic order and exact aggregate caps'
   assert.deepEqual(geoLiveCases.filter(({ kind }) => kind === 'LINE').map(({ provider }) => provider), [
     'overpass', 'overpass', 'overpass',
   ]);
+  assert.equal(geoIdentityVersion, 2);
+  assert.equal(geoLiveCases[0].label, 'Белорусский вокзал');
+  assert.equal(geoLiveCases[0].normalizedQuery, 'белорусский вокзал');
 });
 
 test('PIDAFIX3 Geo live budget stops before a next physical case and rejects overspend', () => {

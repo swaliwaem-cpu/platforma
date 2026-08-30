@@ -52,6 +52,9 @@ const landmarkIds = {
   refresh: randomUUID(),
   moscowPoint: randomUUID(),
   yekaterinburgPoint: randomUUID(),
+  identityV1: randomUUID(),
+  identityV2: randomUUID(),
+  identityConfirmed: randomUUID(),
 };
 let fixture;
 
@@ -69,7 +72,10 @@ after(async () => {
       ${landmarkIds.area}::uuid,
       ${landmarkIds.refresh}::uuid,
       ${landmarkIds.moscowPoint}::uuid,
-      ${landmarkIds.yekaterinburgPoint}::uuid
+      ${landmarkIds.yekaterinburgPoint}::uuid,
+      ${landmarkIds.identityV1}::uuid,
+      ${landmarkIds.identityV2}::uuid,
+      ${landmarkIds.identityConfirmed}::uuid
     )
   `);
   if (fixture?.source?.id) await prisma.feedSource.deleteMany({ where: { id: fixture.source.id } });
@@ -411,6 +417,60 @@ test('PIDAFIX2 canonical DB lookup finds a bounded legacy manual alias', async (
   } finally {
     await prisma.assistantGeoLandmark.delete({ where: { id } });
   }
+});
+
+test('ZAEBAL5 strict DB lookup ignores stale verified identity but preserves confirmed landmarks', async () => {
+  const normalizedQuery = `identity version ${suffix}`;
+  await prisma.$executeRaw(Prisma.sql`
+    INSERT INTO assistant_geo_landmarks (
+      id, kind, label, normalized_query, aliases, locale, country, city, geometry,
+      source_provider, source_external_id, source_metadata, confirmation_state, confirmed_at, expires_at
+    ) VALUES
+      (
+        ${landmarkIds.identityV1}::uuid, 'point', 'Старая verified identity', ${normalizedQuery},
+        ARRAY[${normalizedQuery}], 'ru', 'ru', 'Москва', ST_SetSRID(ST_MakePoint(37.60, 55.75), 4326),
+        'locationiq', ${`identity-v1-${suffix}`}, '{"identityVersion":1}'::jsonb,
+        'verified', NULL, CURRENT_TIMESTAMP + interval '1 day'
+      ),
+      (
+        ${landmarkIds.identityV2}::uuid, 'point', 'Актуальная verified identity', ${normalizedQuery},
+        ARRAY[${normalizedQuery}], 'ru', 'ru', 'Москва', ST_SetSRID(ST_MakePoint(37.61, 55.75), 4326),
+        'locationiq', ${`identity-v2-${suffix}`}, '{"identityVersion":2}'::jsonb,
+        'verified', NULL, CURRENT_TIMESTAMP + interval '1 day'
+      ),
+      (
+        ${landmarkIds.identityConfirmed}::uuid, 'point', 'Ручная confirmed identity', ${normalizedQuery},
+        ARRAY[${normalizedQuery}], 'ru', 'ru', 'Москва', ST_SetSRID(ST_MakePoint(37.62, 55.75), 4326),
+        'manual_alias', ${`identity-confirmed-${suffix}`}, '{"identityVersion":1}'::jsonb,
+        'confirmed', CURRENT_TIMESTAMP, NULL
+      )
+  `);
+
+  const strict = await landmarks.findTrustedByQuery({
+    normalizedQuery,
+    mode: 'NEAR',
+    locale: 'ru',
+    country: 'ru',
+    viewbox: [37.3, 55.5, 37.9, 55.9],
+    minimumIdentityVersion: 2,
+  });
+  assert.deepEqual(new Set(strict.map(({ id }) => id)), new Set([
+    landmarkIds.identityV2,
+    landmarkIds.identityConfirmed,
+  ]));
+
+  const legacyCompatible = await landmarks.findTrustedByQuery({
+    normalizedQuery,
+    mode: 'NEAR',
+    locale: 'ru',
+    country: 'ru',
+    viewbox: [37.3, 55.5, 37.9, 55.9],
+  });
+  assert.deepEqual(new Set(legacyCompatible.map(({ id }) => id)), new Set([
+    landmarkIds.identityV1,
+    landmarkIds.identityV2,
+    landmarkIds.identityConfirmed,
+  ]));
 });
 
 test('Assistant FIX-GEO1 DB-first lookup keeps same-name landmarks separated by viewbox', async () => {

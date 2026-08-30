@@ -47,6 +47,9 @@ test('PIDAFIX2 smoke readiness rejects fake, remote, real-key and non-disposable
     ['ASSISTANT_FIX_GEO1_LOCAL_STUB_API_URL', 'http://127.0.0.1:33091/api'],
     ['ASSISTANT_GEO_PROVIDER_MAX_RETRIES', '1'],
     ['ASSISTANT_OVERPASS_ENABLED', 'false'],
+    ['ASSISTANT_GEO_CACHE_TTL_SECONDS', '59'],
+    ['ASSISTANT_GEO_CACHE_TTL_SECONDS', '31536001'],
+    ['ASSISTANT_GEO_CACHE_TTL_SECONDS', 'not-a-number'],
   ];
   for (const [key, value] of mutations) {
     const snapshot = createRuntimeSnapshot();
@@ -219,9 +222,15 @@ test('PIDAFIX2 node:http stubs accept canonical local provider requests only', a
       key: config.dummyApiKey,
       q: smokeCases.ttk.canonicalQuery,
       format: 'json',
-      polygon_geojson: '1',
       addressdetails: '1',
+      namedetails: '1',
+      normalizeaddress: '1',
+      normalizecity: '1',
+      limit: '3',
+      'accept-language': 'ru',
       countrycodes: 'ru',
+      viewbox: '37.3,55.5,37.9,55.9',
+      bounded: '1',
     })) initial.searchParams.set(key, value);
     assert.equal((await fetch(initial)).status, 200);
     initial.searchParams.set('q', 'Москва');
@@ -231,7 +240,12 @@ test('PIDAFIX2 node:http stubs accept canonical local provider requests only', a
       body: new URLSearchParams({ data: `relation["ref"="ТТК"];out geom;` }),
     });
     assert.equal(overpass.status, 200);
-    assert.deepEqual(stubs.readTotals(), { locationiq: 2, overpass: 1 });
+    stubs.setCase(smokeCases.arbat);
+    const area = new URL(initial);
+    area.searchParams.set('q', smokeCases.arbat.canonicalQuery);
+    area.searchParams.set('polygon_geojson', '1');
+    assert.equal((await fetch(area)).status, 200);
+    assert.deepEqual(stubs.readTotals(), { locationiq: 3, overpass: 1 });
   } finally {
     await stubs.close();
   }
@@ -252,6 +266,7 @@ function createRuntimeSnapshot() {
       ASSISTANT_GEO_PROVIDER_MAX_RETRIES: '0',
       ASSISTANT_GEO_PROVIDER_REQUESTS_PER_MINUTE: '20',
       ASSISTANT_GEO_PROVIDER_DAILY_BUDGET: '100',
+      ASSISTANT_GEO_CACHE_TTL_SECONDS: '3600',
       ASSISTANT_GEO_MAX_LOCATIONIQ_ATTEMPTS_PER_RESOLVE: '2',
       ASSISTANT_GEO_MAX_OVERPASS_ATTEMPTS_PER_RESOLVE: '1',
       ASSISTANT_OVERPASS_ENABLED: 'true',

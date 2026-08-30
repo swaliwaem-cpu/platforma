@@ -6,17 +6,17 @@ const smokeCases = Object.freeze({
   sadovoe: {
     slug: 'sadovoe', label: 'Садовое кольцо', canonicalQuery: 'садовое кольцо',
     content: 'Найди квартиру возле Садового кольца', kind: 'LINE', mode: 'NEAR', sourceProvider: 'overpass',
-    attempts: ['locationiq', 'locationiq', 'overpass'], tagValue: 'Садовое кольцо',
+    attempts: ['locationiq', 'locationiq', 'overpass'], tagValue: 'Садовое кольцо', relationId: 2094267,
   },
   ttk: {
     slug: 'ttk', label: 'ТТК', canonicalQuery: 'третье транспортное кольцо',
     content: 'Найди квартиру возле ТТК', kind: 'LINE', mode: 'NEAR', sourceProvider: 'overpass',
-    attempts: ['locationiq', 'locationiq', 'overpass'], tagValue: 'ТТК',
+    attempts: ['locationiq', 'locationiq', 'overpass'], tagValue: 'ТТК', relationId: 2094286,
   },
   mkad: {
     slug: 'mkad', label: 'МКАД', canonicalQuery: 'московская кольцевая автодорога',
     content: 'Найди квартиру возле МКАД', kind: 'LINE', mode: 'NEAR', sourceProvider: 'overpass',
-    attempts: ['locationiq', 'locationiq', 'overpass'], tagValue: 'МКАД',
+    attempts: ['locationiq', 'locationiq', 'overpass'], tagValue: 'МКАД', relationId: 2094222,
   },
   arbat: {
     slug: 'arbat', label: 'район Арбат', canonicalQuery: 'район арбат',
@@ -155,6 +155,8 @@ function validateRuntimeSnapshot(snapshot, invocationEnvironment = process.env) 
     'ASSISTANT_OVERPASS_REQUESTS_PER_MINUTE', 'ASSISTANT_OVERPASS_DAILY_BUDGET']) {
     readPositiveInteger(environment[key], `${key}_REQUIRED`);
   }
+  readBoundedInteger(environment.ASSISTANT_GEO_CACHE_TTL_SECONDS, null, 60, 31_536_000,
+    'ASSISTANT_GEO_CACHE_TTL_SECONDS_REQUIRED');
   const dummyApiKey = environment.LOCATIONIQ_API_KEY;
   if (dummyApiKey !== 'pidafix2-local-stub') throw new Error('ASSISTANT_FIX_GEO1_LOCAL_STUB_DUMMY_KEY_REQUIRED');
   const locationIqUrl = readLoopbackUrl(environment.LOCATIONIQ_API_URL, 'LOCATIONIQ_API_URL');
@@ -271,11 +273,18 @@ function createSmokeApiClient(apiUrl, accessToken, timeoutMs) {
 async function handleLocationIqStub(request, response, config, activeCase, counts) {
   if (!activeCase) throw new Error('ASSISTANT_FIX_GEO1_STUB_CASE_REQUIRED');
   const url = new URL(request.url, config.locationIqUrl);
+  const query = url.searchParams.get('q');
+  const expectsFullGeometry = activeCase.kind === 'AREA' && query === activeCase.canonicalQuery;
   if (request.method !== 'GET' || url.pathname !== config.locationIqUrl.pathname
     || url.searchParams.get('key') !== config.dummyApiKey || url.searchParams.get('format') !== 'json'
-    || url.searchParams.get('polygon_geojson') !== '1' || url.searchParams.get('addressdetails') !== '1'
-    || url.searchParams.get('countrycodes') !== 'ru') return sendJson(response, 400, { error: 'LOCATIONIQ_STUB_REQUEST_INVALID' });
-  const query = url.searchParams.get('q');
+    || url.searchParams.get('addressdetails') !== '1' || url.searchParams.get('namedetails') !== '1'
+    || url.searchParams.get('normalizeaddress') !== '1' || url.searchParams.get('normalizecity') !== '1'
+    || url.searchParams.get('limit') !== '3' || url.searchParams.get('accept-language') !== 'ru'
+    || url.searchParams.get('countrycodes') !== 'ru' || url.searchParams.get('viewbox') !== '37.3,55.5,37.9,55.9'
+    || url.searchParams.get('bounded') !== '1'
+    || url.searchParams.get('polygon_geojson') !== (expectsFullGeometry ? '1' : null)) {
+    return sendJson(response, 400, { error: 'LOCATIONIQ_STUB_REQUEST_INVALID' });
+  }
   counts.get(activeCase.slug).locationiq += 1;
   if (query === 'Москва' && activeCase.kind === 'LINE') return sendJson(response, 200, [moscowAreaFixture()]);
   if (query !== activeCase.canonicalQuery) return sendJson(response, 400, { error: 'LOCATIONIQ_STUB_QUERY_INVALID' });
@@ -283,8 +292,8 @@ async function handleLocationIqStub(request, response, config, activeCase, count
   return sendJson(response, 200, [{
     place_id: `road-${activeCase.slug}`, display_name: `${activeCase.label}, Москва`, lat: '55.75', lon: '37.62',
     class: 'highway', type: 'primary', osm_type: 'way', osm_id: `10${activeCase.slug.length}`,
-    boundingbox: ['55.5', '55.9', '37.3', '37.9'], address: { city: 'Москва', country_code: 'ru' },
-    geojson: { type: 'Point', coordinates: [37.62, 55.75] },
+    boundingbox: ['55.5', '55.9', '37.3', '37.9'], address: { country_code: 'ru' },
+    namedetails: { name: activeCase.label },
   }]);
 }
 
@@ -299,10 +308,9 @@ async function handleOverpassStub(request, response, config, activeCase, counts)
   counts.get(activeCase.slug).overpass += 1;
   const roadIndex = ['sadovoe', 'ttk', 'mkad'].indexOf(activeCase.slug);
   if (roadIndex < 0) throw new Error('ASSISTANT_FIX_GEO1_STUB_ROAD_IDENTITY_INVALID');
-  const relationId = 500 + roadIndex;
   const memberRef = 1_000 + roadIndex * 10;
   return sendJson(response, 200, { elements: [{
-    type: 'relation', id: relationId, tags: { type: 'route', route: 'road', ref: activeCase.tagValue },
+    type: 'relation', id: activeCase.relationId, tags: { type: 'route', route: 'road', ref: activeCase.tagValue },
     members: [
       { type: 'way', ref: memberRef + 1, geometry: [{ lat: 55.7, lon: 37.5 }, { lat: 55.8, lon: 37.7 }] },
       { type: 'way', ref: memberRef + 2, geometry: [{ lat: 55.8, lon: 37.7 }, { lat: 55.7, lon: 37.5 }] },
@@ -423,13 +431,12 @@ function parseNullSeparated(buffer) {
 function moscowAreaFixture() {
   return { place_id: 'moscow-area', display_name: 'Москва, Россия', lat: '55.75', lon: '37.62', class: 'boundary',
     type: 'administrative', osm_type: 'relation', osm_id: '2555133', boundingbox: ['55.5', '55.9', '37.3', '37.9'],
-    address: { city: 'Москва', country_code: 'ru' }, geojson: { type: 'Polygon',
-      coordinates: [[[37.3, 55.5], [37.9, 55.5], [37.9, 55.9], [37.3, 55.5]]] } };
+    address: { country_code: 'ru' }, namedetails: { name: 'Москва' } };
 }
 function arbatAreaFixture() {
   return { place_id: 'arbat-area', display_name: 'район Арбат, Москва', lat: '55.7522', lon: '37.5906', class: 'boundary',
     type: 'administrative', osm_type: 'relation', osm_id: '1255910', boundingbox: ['55.744', '55.765', '37.565', '37.606'],
-    address: { city: 'Москва', country_code: 'ru' }, geojson: { type: 'Polygon',
+    address: { country_code: 'ru' }, namedetails: { name: 'район Арбат' }, geojson: { type: 'Polygon',
       coordinates: [[[37.565, 55.744], [37.606, 55.744], [37.606, 55.765], [37.565, 55.744]]] } };
 }
 function listenExact(server, endpoint) {

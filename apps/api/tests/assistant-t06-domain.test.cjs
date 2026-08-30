@@ -305,7 +305,10 @@ test('Assistant T06 geo budgets and operation telemetry count every physical ret
     ASSISTANT_GEO_PROVIDER_REQUESTS_PER_MINUTE: '10',
     ASSISTANT_GEO_CACHE_TTL_SECONDS: '60',
   };
-  const request = { query: 'Плотинка', locale: 'ru', country: 'ru', viewbox: null };
+  const request = {
+    purpose: 'METADATA', expectedKind: 'POINT',
+    query: 'Плотинка', locale: 'ru', country: 'ru', viewbox: null,
+  };
   let fetchCalls = 0;
   const completed = [];
   const budgets = {

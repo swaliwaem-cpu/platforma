@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto';
-
 import type { AssistantGeoLineGeometry } from '@platforma/shared' with { 'resolution-mode': 'import' };
 
 import { parseAssistantReferenceGeometry } from './assistant-geo-contract';
@@ -21,6 +19,7 @@ type OverpassEnvironment = NodeJS.ProcessEnv | Record<string, string | undefined
 export type AssistantOverpassRequest = {
   name: string;
   tagValues?: string[];
+  relationIds: string[] | null;
   city: string;
   cityBounds: [west: number, south: number, east: number, north: number];
 };
@@ -244,7 +243,8 @@ function parseOverpassResult(value: unknown, request: AssistantOverpassRequest):
     throw new AssistantOverpassError('ASSISTANT_OVERPASS_RESPONSE_INVALID', false);
   }
   const expectedValues = new Set(normalizeRequest(request).tagValues!.map(normalizeText));
-  const relations = new Map<string, { lines: [number, number][][]; fingerprint: string }>();
+  const allowedRelationIds = request.relationIds === null ? null : new Set(request.relationIds);
+  const relations = new Map<string, { lines: [number, number][][]; fingerprint: string; relationIds: Set<string> }>();
   let sawExpectedWay = false;
   for (const element of value.elements) {
     if (!isRecord(element) || typeof element.type !== 'string') {
@@ -256,9 +256,11 @@ function parseOverpassResult(value: unknown, request: AssistantOverpassRequest):
       continue;
     }
     if (element.type !== 'relation') continue;
-    if (!readOsmId(element.id)) {
+    const relationId = readOsmId(element.id);
+    if (!relationId) {
       throw new AssistantOverpassError('ASSISTANT_OVERPASS_RESPONSE_INVALID', false);
     }
+    if (allowedRelationIds !== null && !allowedRelationIds.has(relationId)) continue;
     const tags = isRecord(element.tags) ? element.tags : null;
     if (!tags || !isRoadRelation(tags) || !hasExpectedIdentityTag(tags, expectedValues)) continue;
     if (!Array.isArray(element.members) || element.members.length === 0) {
@@ -285,7 +287,8 @@ function parseOverpassResult(value: unknown, request: AssistantOverpassRequest):
     if (previous && JSON.stringify(previous.lines) !== JSON.stringify(lines)) {
       throw new AssistantOverpassError('ASSISTANT_OVERPASS_GEOMETRY_AMBIGUOUS', false);
     }
-    relations.set(fingerprint, { lines, fingerprint });
+    if (previous) previous.relationIds.add(relationId);
+    else relations.set(fingerprint, { lines, fingerprint, relationIds: new Set([relationId]) });
   }
   if (relations.size === 0) {
     throw new AssistantOverpassError(
@@ -304,9 +307,15 @@ function parseOverpassResult(value: unknown, request: AssistantOverpassRequest):
   const geometry = parseAssistantReferenceGeometry(raw, 'LINE') as AssistantGeoLineGeometry;
   return {
     geometry,
-    externalId: createHash('sha256').update(relation.fingerprint).digest('hex'),
+    externalId: `relation/${[...relation.relationIds].sort(compareOsmIds)[0]!}`,
     entityType: 'road',
   };
+}
+
+function compareOsmIds(left: string, right: string) {
+  const leftId = BigInt(left);
+  const rightId = BigInt(right);
+  return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
 }
 
 function parseOverpassLine(value: unknown): [number, number][] {
@@ -343,15 +352,37 @@ function hasExpectedIdentityTag(tags: Record<string, unknown>, expectedValues: S
 
 function assertClosedMemberGraph(lines: [number, number][][]) {
   const degrees = new Map<string, number>();
+  const adjacent = new Map<string, Set<string>>();
   for (const line of lines) {
     const first = coordinateKey(line[0]!);
     const last = coordinateKey(line.at(-1)!);
     degrees.set(first, (degrees.get(first) ?? 0) + (first === last ? 2 : 1));
     if (first !== last) degrees.set(last, (degrees.get(last) ?? 0) + 1);
+    addAdjacent(adjacent, first, last);
+    addAdjacent(adjacent, last, first);
   }
-  if ([...degrees.values()].some((degree) => degree === 1)) {
+  if ([...degrees.values()].some((degree) => degree !== 2)) {
     throw new AssistantOverpassError('ASSISTANT_OVERPASS_GEOMETRY_INCOMPLETE', false);
   }
+  const start = degrees.keys().next().value as string | undefined;
+  if (!start) throw new AssistantOverpassError('ASSISTANT_OVERPASS_GEOMETRY_INCOMPLETE', false);
+  const visited = new Set<string>();
+  const pending = [start];
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    for (const neighbor of adjacent.get(current) ?? []) pending.push(neighbor);
+  }
+  if (visited.size !== degrees.size) {
+    throw new AssistantOverpassError('ASSISTANT_OVERPASS_GEOMETRY_INCOMPLETE', false);
+  }
+}
+
+function addAdjacent(adjacency: Map<string, Set<string>>, from: string, to: string) {
+  const neighbors = adjacency.get(from) ?? new Set<string>();
+  neighbors.add(to);
+  adjacency.set(from, neighbors);
 }
 
 function coordinateKey(point: [number, number]) {
@@ -420,7 +451,19 @@ function normalizeRequest(request: AssistantOverpassRequest): AssistantOverpassR
   if (tagValues.length === 0 || tagValues.length > 10 || tagValues.some((value) => value === null)) {
     throw new AssistantOverpassError('ASSISTANT_OVERPASS_INPUT_INVALID', false);
   }
-  return { name, tagValues: tagValues as string[], city, cityBounds: [west, south, east, north] };
+  let relationIds: string[] | null = null;
+  if (request.relationIds !== null) {
+    if (!Array.isArray(request.relationIds)) {
+      throw new AssistantOverpassError('ASSISTANT_OVERPASS_INPUT_INVALID', false);
+    }
+    relationIds = [...new Set(request.relationIds.map(readOsmId))]
+      .filter((value): value is string => value !== null)
+      .sort(compareOsmIds);
+    if (relationIds.length !== request.relationIds.length || relationIds.length === 0 || relationIds.length > 10) {
+      throw new AssistantOverpassError('ASSISTANT_OVERPASS_INPUT_INVALID', false);
+    }
+  }
+  return { name, tagValues: tagValues as string[], relationIds, city, cityBounds: [west, south, east, north] };
 }
 
 function readEndpoint(value: string) {

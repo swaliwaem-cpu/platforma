@@ -190,6 +190,8 @@ test('Assistant T05 LocationIQ adapter keeps credentials server-side and returns
   });
 
   const result = await provider.search({
+    purpose: 'METADATA',
+    expectedKind: 'POINT',
     query: 'Плотинка, Екатеринбург',
     locale: 'ru',
     country: 'ru',
@@ -276,7 +278,9 @@ test('Assistant T05 LocationIQ adapter bounds retries for 4xx, 5xx, 429 and time
     ASSISTANT_GEO_PROVIDER_TIMEOUT_MS: '100',
     ASSISTANT_GEO_PROVIDER_MAX_RETRIES: '1',
   }, fetch, async () => {});
-  const request = (query) => ({ query, locale: 'ru', country: null, viewbox: null });
+  const request = (query) => ({
+    purpose: 'METADATA', expectedKind: 'POINT', query, locale: 'ru', country: null, viewbox: null,
+  });
 
   await assert.rejects(provider.search(request('bad request')), (error) => (
     error instanceof AssistantGeoProviderError && error.httpStatus === 400 && !error.retryable
@@ -314,7 +318,9 @@ test('Assistant T05 provider policy enforces persisted budget and opens a retrya
     ASSISTANT_GEO_CIRCUIT_FAILURE_THRESHOLD: '2',
     ASSISTANT_GEO_CIRCUIT_OPEN_MS: '1000',
   }, () => new Date(timestamp), async (delay) => { timestamp += delay; });
-  const request = { query: 'Плотинка', locale: 'ru', country: 'ru', viewbox: null };
+  const request = {
+    purpose: 'METADATA', expectedKind: 'POINT', query: 'Плотинка', locale: 'ru', country: 'ru', viewbox: null,
+  };
   await assert.rejects(policy.search(request), /RETRYABLE/u);
   await assert.rejects(policy.search(request), /RETRYABLE/u);
   await assert.rejects(policy.search(request), /ASSISTANT_GEO_PROVIDER_CIRCUIT_OPEN/u);
@@ -363,6 +369,7 @@ test('Assistant T05 LocationIQ retries reserve RPS and daily budget per physical
     async (delay) => { timestamp += delay; },
   );
   assert.deepEqual(await policy.search({
+    purpose: 'METADATA', expectedKind: 'POINT',
     query: 'Плотинка', locale: 'ru', country: 'ru', viewbox: null,
   }), []);
   assert.equal(fetchCalls, 2);

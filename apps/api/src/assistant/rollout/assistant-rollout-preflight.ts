@@ -284,12 +284,15 @@ export function readAssistantRolloutBudgetReadiness(
 ) {
   const providerReadiness = readAssistantPaidProviderReadiness(environment);
   const required = isAssistantGeoProviderEnabled(environment) ? [
-      'ASSISTANT_GEO_PROVIDER_REQUESTS_PER_MINUTE',
-      'ASSISTANT_GEO_PROVIDER_DAILY_BUDGET',
+      { name: 'ASSISTANT_GEO_PROVIDER_REQUESTS_PER_MINUTE', minimum: 1, maximum: 1_000_000 },
+      { name: 'ASSISTANT_GEO_PROVIDER_DAILY_BUDGET', minimum: 1, maximum: 1_000_000 },
+      { name: 'ASSISTANT_GEO_CACHE_TTL_SECONDS', minimum: 60, maximum: 31_536_000 },
     ] : [];
   const missing = [
     ...providerReadiness.missing,
-    ...required.filter((name) => !isPositiveInteger(environment[name])),
+    ...required.filter(({ name, minimum, maximum }) => (
+      !isBoundedInteger(environment[name], minimum, maximum)
+    )).map(({ name }) => name),
   ];
   return { passed: missing.length === 0, missing };
 }
@@ -453,6 +456,12 @@ function isPositiveInteger(value: string | undefined) {
   if (value === undefined || value.trim() === '') return false;
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0;
+}
+
+function isBoundedInteger(value: string | undefined, minimum: number, maximum: number) {
+  if (!isPositiveInteger(value)) return false;
+  const parsed = Number(value);
+  return parsed >= minimum && parsed <= maximum;
 }
 
 function readAssistantProviderUsd(

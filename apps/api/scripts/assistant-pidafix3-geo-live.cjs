@@ -30,6 +30,7 @@ const root = resolve(__dirname, '../../..');
 const composeFile = resolve(root, 'docker-compose.assistant-pidafix3.yml');
 const liveComposeFile = resolve(root, 'docker-compose.assistant-pidafix3-geo-live.yml');
 const exactCaps = Object.freeze({ locationiq: 8, overpass: 3, total: 11 });
+const geoIdentityVersion = 2;
 const baselineMaximumAgeMs = 24 * 60 * 60_000;
 const requiredBaselineSetupIds = Object.freeze([
   'compose-config', 'compose-build', 'postgres-up',
@@ -45,8 +46,8 @@ const geoLiveCases = Object.freeze([
   {
     slug: 'point',
     content: 'Найди квартиру возле Белорусского вокзала',
-    label: 'Белорусского вокзала',
-    normalizedQuery: 'белорусского вокзала',
+    label: 'Белорусский вокзал',
+    normalizedQuery: 'белорусский вокзал',
     kind: 'POINT', mode: 'NEAR', provider: 'locationiq', attempts: ['locationiq'],
   },
   {
@@ -591,7 +592,7 @@ async function readCaseAudit(prisma, actorUserId, smokeCase, payload) {
   assert.equal(landmark.confirmationState, 'VERIFIED');
   assert.equal(landmark.aliases.includes(smokeCase.normalizedQuery), true);
   assert.match(landmark.sourceExternalId ?? '', /^(?:node|way|relation)\/\d+$/u);
-  assert.equal(landmark.sourceMetadata?.identityVersion, 1);
+  assert.equal(landmark.sourceMetadata?.identityVersion, geoIdentityVersion);
   assert.equal(typeof landmark.sourceMetadata?.providerQuery, 'string');
   const [geometry] = await prisma.$queryRawUnsafe(`
     SELECT
@@ -1209,6 +1210,7 @@ module.exports = {
   createTerminationAwareFetch,
   executeGeoCasesSequentially,
   exactCaps,
+  geoIdentityVersion,
   geoLiveCases,
   parseGeoLiveArguments,
   summarizeProviderAttemptRows,
