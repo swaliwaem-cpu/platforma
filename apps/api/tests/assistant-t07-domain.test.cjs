@@ -2,6 +2,7 @@ require('reflect-metadata');
 
 const assert = require('node:assert/strict');
 const { GUARDS_METADATA } = require('@nestjs/common/constants');
+const { PERMISSIONS_KEY } = require('../dist/auth/permissions.decorator.js');
 const { readFileSync } = require('node:fs');
 const { resolve } = require('node:path');
 const test = require('node:test');
@@ -17,9 +18,13 @@ const {
 const {
   assessAssistantRolloutTransition,
   AssistantExternalConnectorsGuard,
+  AssistantFeatureGuard,
   getAssistantRuntimeConfig,
   isAssistantEnabledForActor,
 } = require('../dist/assistant/assistant-runtime-config.js');
+const {
+  AssistantController,
+} = require('../dist/assistant/assistant.controller.js');
 const {
   AssistantQueryPlanner,
   extractAssistantExplicitHardFilters,
@@ -54,6 +59,9 @@ const {
 const {
   readAssistantPaidProviderReadiness,
 } = require('../dist/assistant/operations/assistant-paid-readiness.js');
+const {
+  createAssistantEvalRuntimeContract,
+} = require('../dist/assistant/eval/assistant-eval-runtime-contract.js');
 
 const datasetPath = resolve(
   __dirname,
@@ -970,6 +978,74 @@ test('Assistant T07 eval derives verdicts from persisted runs and blocks every z
   }
 });
 
+test('ZAEBAL6 API runtime handshake exposes a secret-free database and provider fingerprint', () => {
+  const databaseIdentity = {
+    databaseName: 'platforma_eval_disposable',
+    schemaName: 'public',
+    serverAddress: '127.0.0.1',
+    serverPort: 5432,
+    serverStartedAt: '2026-08-30T07:00:00.000Z',
+  };
+  const environment = {
+    NODE_ENV: 'test',
+    DEPLOYMENT_ENV: 'local',
+    ASSISTANT_AI_MODE: 'fake',
+    ASSISTANT_MODEL_REQUESTS_PER_MINUTE: '10',
+    ASSISTANT_MODEL_REQUESTS_PER_DAY: '220',
+    ASSISTANT_GEO_PROVIDER_ENABLED: 'false',
+    ASSISTANT_EXTERNAL_CONNECTORS_ENABLED: 'false',
+    ASSISTANT_SOURCE_DISCOVERY_LIVE: 'false',
+    ASSISTANT_EMBEDDING_MODE: 'fake',
+    OPENAI_API_KEY: 'must-not-leak',
+  };
+
+  const contract = createAssistantEvalRuntimeContract(databaseIdentity, environment);
+
+  assert.equal(contract.version, 'assistant-eval-runtime-v1');
+  assert.match(contract.databaseFingerprint, /^[a-f0-9]{64}$/u);
+  assert.deepEqual(contract.provider, {
+    readinessPassed: true,
+    missing: [],
+    aiMode: 'fake',
+    requestsPerMinute: 10,
+    requestsPerDay: 220,
+    dailyBudgetUsd: null,
+    queryPlannerLive: false,
+    paidCallsConfirmed: false,
+    apiKeyPresent: true,
+  });
+  assert.deepEqual(contract.runtime, {
+    nodeEnvironment: 'test',
+    deploymentEnvironment: 'local',
+    geoProviderEnabled: false,
+    externalConnectorsEnabled: false,
+    sourceDiscoveryLive: false,
+    embeddingMode: 'fake',
+    embeddingLive: false,
+    openAiBaseUrlOfficial: true,
+  });
+  assert.equal(JSON.stringify(contract).includes('must-not-leak'), false);
+  assert.notEqual(
+    createAssistantEvalRuntimeContract({ ...databaseIdentity, databaseName: 'other' }, environment)
+      .databaseFingerprint,
+    contract.databaseFingerprint,
+  );
+
+  const controller = new AssistantController({
+    getEvalRuntimeContract: () => contract,
+  });
+  assert.equal(controller.getEvalRuntime(), contract);
+  assert.deepEqual(
+    Reflect.getMetadata(PERMISSIONS_KEY, AssistantController.prototype.getEvalRuntime),
+    ['objects:read', 'assistant:audit:read'],
+  );
+  assert.equal(
+    (Reflect.getMetadata(GUARDS_METADATA, AssistantController.prototype.getEvalRuntime) ?? [])
+      .includes(AssistantFeatureGuard),
+    true,
+  );
+});
+
 test('Assistant T07 eval fails closed on version drift, missing cases and frozen threshold breaches', () => {
   const dataset = loadAssistantEvalDataset(JSON.parse(readFileSync(datasetPath, 'utf8')));
   const results = dataset.cases.map(({ id }, index) => ({
@@ -1220,9 +1296,9 @@ test('Assistant T07 rollout preflight fails closed on stale sources, implicit bu
     lastIndexedAt: new Date('2026-08-20T10:00:00.000Z'),
     lastErrorCode: null,
   }], now), {
-    passed: true,
+    passed: false,
     activeSourceCount: 1,
-    unhealthySourceIds: [],
+    unhealthySourceIds: ['source-unchanged-but-reverified'],
   });
 
   assert.deepEqual(readAssistantRolloutBudgetReadiness({
@@ -1371,6 +1447,15 @@ test('Assistant T07 rollout preflight fails closed on stale sources, implicit bu
     blocker: null,
   });
   assert.equal(assessAssistantRolloutStageRecord('ALL', [adminsEvent, pilotEvent], now).passed, true);
+  const fakeApproval = {
+    ...pilotApproval,
+    eval: { ...pilotApproval.eval, providerMode: 'fake' },
+  };
+  assert.equal(assessAssistantRolloutStageRecord('ALL', [adminsEvent, {
+    ...pilotEvent,
+    approvalJson: fakeApproval,
+    gateDigest: computeAssistantRolloutApprovalDigest(fakeApproval),
+  }], now).blocker, 'ASSISTANT_ROLLOUT_STAGE_APPROVAL_INVALID');
   assert.equal(assessAssistantRolloutStageRecord('ALL', [adminsEvent, {
     ...pilotEvent,
     approvalJson: { ...pilotEvent.approvalJson, passed: false },
@@ -2143,7 +2228,14 @@ function rolloutApproval(stage, startedAt) {
     currentStage: stage === 'PILOT' ? 'ADMINS' : 'PILOT',
     targetStage: stage,
     stageStartedAt: startedAt.toISOString(),
-    eval: { version: 'assistant-eval-v1', passed: true, caseCount: 200 },
+    eval: {
+      version: 'assistant-eval-v1',
+      passed: true,
+      caseCount: 200,
+      providerMode: 'openai',
+      evidenceCoreSha256: 'a'.repeat(64),
+      finalizedEvidenceSha256: 'b'.repeat(64),
+    },
     sourceHealth: { passed: true, activeSourceCount: 1, unhealthySourceIds: [] },
     budgets: { passed: true, missing: [] },
     pilotCohort: {

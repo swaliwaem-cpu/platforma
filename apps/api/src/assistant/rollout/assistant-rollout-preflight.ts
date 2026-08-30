@@ -181,10 +181,22 @@ function hasValidAssistantRolloutApproval(event: AssistantRolloutEventRecord) {
     && approval.stageStartedAt === event.startedAt.toISOString()
     && approval.criticalErrorCount === 0
     && evalGate !== null
-    && hasExactKeys(evalGate, ['version', 'passed', 'caseCount'])
+    && hasExactKeys(evalGate, [
+      'version',
+      'passed',
+      'caseCount',
+      'providerMode',
+      'evidenceCoreSha256',
+      'finalizedEvidenceSha256',
+    ])
     && evalGate.version === 'assistant-eval-v1'
     && evalGate.passed === true
     && evalGate.caseCount === 200
+    && evalGate.providerMode === 'openai'
+    && typeof evalGate.evidenceCoreSha256 === 'string'
+    && /^[0-9a-f]{64}$/u.test(evalGate.evidenceCoreSha256)
+    && typeof evalGate.finalizedEvidenceSha256 === 'string'
+    && /^[0-9a-f]{64}$/u.test(evalGate.finalizedEvidenceSha256)
     && sourceHealth !== null
     && hasExactKeys(sourceHealth, ['passed', 'activeSourceCount', 'unhealthySourceIds'])
     && sourceHealth.passed === true
@@ -267,9 +279,10 @@ export function assessAssistantSourceHealth(
   const oldestHealthyTimestamp = now.getTime() - maximumSourceAgeMs;
   const unhealthySourceIds = sources.filter((source) => {
     const lastSuccessAt = source.lastSuccessAt?.getTime() ?? 0;
+    const lastIndexedAt = source.lastIndexedAt?.getTime() ?? 0;
     return source.lastErrorCode !== null
       || lastSuccessAt < oldestHealthyTimestamp
-      || source.lastIndexedAt === null;
+      || lastIndexedAt < oldestHealthyTimestamp;
   }).map(({ id }) => id);
 
   return {

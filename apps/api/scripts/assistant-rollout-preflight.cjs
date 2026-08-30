@@ -7,9 +7,7 @@ const { resolve } = require('node:path');
 const { PrismaClient } = require('@prisma/client');
 
 const {
-  evaluateAssistantEvalArtifact,
   loadAssistantEvalDataset,
-  scoreAssistantEval,
 } = require('../dist/assistant/eval/assistant-eval.js');
 const {
   assessAssistantRolloutTransition,
@@ -27,19 +25,17 @@ const {
   countAssistantRolloutCriticalErrors,
   readAssistantRolloutBudgetReadiness,
 } = require('../dist/assistant/rollout/assistant-rollout-preflight.js');
-const { loadAssistantEvalRunRecords } = require('./assistant-eval-runtime.cjs');
-
-void run().catch((error) => {
-  process.stderr.write(`${error instanceof Error ? error.message : 'ASSISTANT_ROLLOUT_PREFLIGHT_FAILED'}\n`);
-  process.exitCode = 1;
-});
+const {
+  readAssistantEvalFinalizedEvidenceBundle,
+} = require('./assistant-eval-runtime.cjs');
 
 async function run() {
-  const recordStage = process.argv.includes('--record-stage');
-  const resultsPath = readArgument('--eval-results') ?? process.env.ASSISTANT_EVAL_RESULTS_PATH;
-  const targetStage = readArgument('--target-stage') ?? process.env.ASSISTANT_ROLLOUT_TARGET_STAGE;
-  if (!resultsPath) throw new Error('ASSISTANT_EVAL_RESULTS_PATH_REQUIRED');
-  if (!targetStage) throw new Error('ASSISTANT_ROLLOUT_TARGET_STAGE_REQUIRED');
+  const options = parseAssistantRolloutPreflightArguments(process.argv.slice(2), process.env);
+  const {
+    evidencePath,
+    recordStage,
+    targetStage,
+  } = options;
 
   const runtime = getAssistantRuntimeConfig(process.env);
   const now = new Date();
@@ -47,22 +43,22 @@ async function run() {
     resolve(__dirname, '../tests/fixtures/assistant/assistant-eval-v1.json'),
     'utf8',
   )));
-  const artifact = JSON.parse(readFileSync(resolve(resultsPath), 'utf8'));
+  const evidence = readJsonFile(evidencePath, 'ASSISTANT_EVAL_RELEASE_EVIDENCE_INVALID');
+  const validatedEvidence = readAssistantEvalFinalizedEvidenceBundle(evidence, dataset, now);
   const budgets = readAssistantRolloutBudgetReadiness(process.env);
   const prisma = new PrismaClient();
-  let evalSummary;
+  const evalSummary = validatedEvidence.verdict;
+  const evalProviderMode = validatedEvidence.runner.providerMode;
+  const evalGatePassed = evalSummary.passed && evalProviderMode === 'openai';
   let sourceHealth;
   let criticalErrorCount;
   let providerBudgetContract;
   let pilotCohort;
   let observation;
   let stageRecord;
+  const evidenceCoreSha256 = validatedEvidence.evidenceCoreSha256;
+  const finalizedEvidenceSha256 = validatedEvidence.finalizedEvidenceSha256;
   try {
-    const evalRunRecords = await loadAssistantEvalRunRecords(prisma, dataset, artifact);
-    evalSummary = scoreAssistantEval(
-      dataset,
-      evaluateAssistantEvalArtifact(dataset, artifact, evalRunRecords),
-    );
     const rolloutEvents = await prisma.assistantRolloutEvent.findMany({
       select: { stage: true, gateDigest: true, approvalJson: true, startedAt: true },
     });
@@ -216,7 +212,7 @@ async function run() {
   const transition = assessAssistantRolloutTransition({
     currentStage: runtime.rolloutStage,
     targetStage,
-    evalPassed: evalSummary.passed,
+    evalPassed: evalGatePassed,
     sourceHealthPassed: sourceHealth.passed,
     budgetsConfigured: budgets.passed,
     criticalErrorCount,
@@ -231,8 +227,11 @@ async function run() {
     blockers: transition.blockers,
     eval: {
       version: evalSummary.datasetVersion,
-      passed: evalSummary.passed,
+      passed: evalGatePassed,
       caseCount: evalSummary.caseCount,
+      providerMode: evalProviderMode,
+      evidenceCoreSha256,
+      finalizedEvidenceSha256,
     },
     sourceHealth,
     budgets,
@@ -276,9 +275,52 @@ async function run() {
   if (!transition.passed) process.exitCode = 2;
 }
 
-function readArgument(name) {
-  const index = process.argv.indexOf(name);
-  return index >= 0 ? process.argv[index + 1] : undefined;
+function parseAssistantRolloutPreflightArguments(argv, environment) {
+  const valueArguments = new Set([
+    '--eval-evidence',
+    '--target-stage',
+  ]);
+  for (let index = 0; index < argv.length;) {
+    const argument = argv[index];
+    if (argument === '--record-stage') {
+      index += 1;
+      continue;
+    }
+    if (!valueArguments.has(argument) || !argv[index + 1] || argv[index + 1].startsWith('--')) {
+      throw new Error('ASSISTANT_ROLLOUT_ARGUMENT_INVALID');
+    }
+    index += 2;
+  }
+  if (argv.filter((value) => value === '--record-stage').length > 1) {
+    throw new Error('ASSISTANT_ROLLOUT_ARGUMENT_DUPLICATED');
+  }
+  const evidenceValue = readArgument(argv, '--eval-evidence')
+    ?? environment.ASSISTANT_EVAL_EVIDENCE_PATH;
+  const targetStage = readArgument(argv, '--target-stage')
+    ?? environment.ASSISTANT_ROLLOUT_TARGET_STAGE;
+  if (!evidenceValue) throw new Error('ASSISTANT_EVAL_RELEASE_EVIDENCE_REQUIRED');
+  if (!targetStage) throw new Error('ASSISTANT_ROLLOUT_TARGET_STAGE_REQUIRED');
+  const evidencePath = resolve(evidenceValue);
+  return {
+    recordStage: argv.includes('--record-stage'),
+    evidencePath,
+    targetStage,
+  };
+}
+
+function readArgument(argv, name) {
+  const indexes = argv.flatMap((value, index) => value === name ? [index] : []);
+  if (indexes.length === 0) return undefined;
+  if (indexes.length !== 1) throw new Error('ASSISTANT_ROLLOUT_ARGUMENT_DUPLICATED');
+  return argv[indexes[0] + 1];
+}
+
+function readJsonFile(path, code) {
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    throw new Error(code);
+  }
 }
 
 function readAssistantOpenAiReportedUsage(operationRunId, telemetryJson) {
@@ -298,3 +340,12 @@ function readAssistantOpenAiReportedUsage(operationRunId, telemetryJson) {
     }];
   });
 }
+
+if (require.main === module) {
+  void run().catch((error) => {
+    process.stderr.write(`${error instanceof Error ? error.message : 'ASSISTANT_ROLLOUT_PREFLIGHT_FAILED'}\n`);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { parseAssistantRolloutPreflightArguments, run };

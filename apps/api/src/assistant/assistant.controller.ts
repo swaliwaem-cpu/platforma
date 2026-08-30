@@ -30,6 +30,13 @@ export class AssistantController {
     return { enabled: isAssistantEnabledForActor(actor) };
   }
 
+  @Get('eval/runtime')
+  @UseGuards(AssistantFeatureGuard)
+  @RequirePermissions('objects:read', 'assistant:audit:read')
+  getEvalRuntime() {
+    return this.assistant.getEvalRuntimeContract();
+  }
+
   @Get('conversations')
   @UseGuards(AssistantFeatureGuard)
   listConversations(

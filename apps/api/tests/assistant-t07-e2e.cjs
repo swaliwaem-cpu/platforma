@@ -814,7 +814,14 @@ function rolloutEventData(stage, pilotUserIds) {
     currentStage: stage === 'PILOT' ? 'ADMINS' : 'PILOT',
     targetStage: stage,
     stageStartedAt: startedAt.toISOString(),
-    eval: { version: 'assistant-eval-v1', passed: true, caseCount: 200 },
+    eval: {
+      version: 'assistant-eval-v1',
+      passed: true,
+      caseCount: 200,
+      providerMode: 'openai',
+      evidenceCoreSha256: 'a'.repeat(64),
+      finalizedEvidenceSha256: 'b'.repeat(64),
+    },
     sourceHealth: { passed: true, activeSourceCount: 1, unhealthySourceIds: [] },
     budgets: { passed: true, missing: [] },
     pilotCohort: {
@@ -2008,6 +2015,7 @@ async function assertNewGeoOperation({
 
 async function securityJourney(fixtures, journey) {
   assert.equal((await fetch(`${apiOrigin}/assistant/conversations`)).status, 401);
+  assert.equal((await fetch(`${apiOrigin}/assistant/eval/runtime`)).status, 401);
   const own = await httpJson(`/assistant/conversations/${journey.exactRun.conversationId}`, {
     token: journey.accessToken,
   });
@@ -2024,11 +2032,22 @@ async function securityJourney(fixtures, journey) {
     token: journey.accessToken,
   })).status, 404);
   assert.equal((await httpJson('/assistant/audit/runs', { token: journey.accessToken })).status, 403);
+  assert.equal((await httpJson('/assistant/eval/runtime', {
+    token: journey.accessToken,
+  })).status, 403);
   const runtimeConfig = await (await fetch(`${webOrigin}/runtime-config.js`)).text();
   assert.doesNotMatch(runtimeConfig, /OPENAI|LOCATIONIQ|API_KEY|test-only/iu);
 }
 
 async function adminJourney(fixtures, journey) {
+  const adminSession = await loginApi(fixtures.admin.user);
+  const evalRuntime = await httpJson('/assistant/eval/runtime', {
+    token: adminSession.accessToken,
+  });
+  assert.equal(evalRuntime.status, 200);
+  assert.equal(evalRuntime.body.version, 'assistant-eval-runtime-v1');
+  assert.match(evalRuntime.body.databaseFingerprint, /^[a-f0-9]{64}$/u);
+  assert.doesNotMatch(JSON.stringify(evalRuntime.body), /secret|password|token/iu);
   const context = await browser.newContext({ viewport: { width: 1440, height: 960 } });
   const page = await context.newPage();
   await installMapFixture(page);

@@ -51,6 +51,7 @@ import {
 } from './assistant-run.processor';
 import { parseAssistantComparisonSummary } from './assistant-comparison-answer';
 import { isSafeOfficialHttpsUrl } from './sources/assistant-knowledge-policy';
+import { loadAssistantEvalRuntimeContract } from './eval/assistant-eval-runtime-contract';
 
 const assistantHistoryDays = 30;
 const assistantHistoryPageSize = 50;
@@ -128,6 +129,10 @@ export class AssistantService {
     private readonly runProcessor: AssistantRunProcessor,
     private readonly geoLandmarks: AssistantGeoLandmarkService,
   ) {}
+
+  getEvalRuntimeContract() {
+    return loadAssistantEvalRuntimeContract(this.prisma);
+  }
 
   async createConversation(ownerUserId: string, idempotencyKeyValue: unknown) {
     const creationKey = this.parseUuid(idempotencyKeyValue, 'Idempotency-Key');
